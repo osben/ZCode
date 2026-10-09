@@ -84,6 +84,10 @@ import type {
   ConversationTurnWorkSegment,
 } from "@/v4/conversationTurnRenderUnits.js";
 import { formatConversationWorkDuration } from "@/v4/conversationWorkDuration.js";
+import {
+  resolveSegmentStreamingContent,
+  useStreamingThroughput,
+} from "@/v4/conversationStreamingThroughput.js";
 import { formatTokensPerSecond, useSessionThroughput } from "@/hooks/useSessionThroughput.js";
 import { ConversationTurnRow, resolveAssistantCopyText } from "@/v4/ConversationTurnRow.js";
 import { ConversationHookDetailsAction } from "@/v4/ConversationHookDetailsAction.js";
@@ -587,6 +591,17 @@ function AssistantHistoryStatus({
     workspaceIdentity: context.workspaceIdentity,
     workspacePath: context.workspacePath,
   });
+  // 流式期间（含思考）优先显示实时估算：精确值只在请求完成时产生，单次长回复
+  // 中途不会刷新。估算取自正在流式的行，按累计平均（累计 token / 累计时长）计算，
+  // 带 ~ 前缀展示；字符流静默（工具执行/请求间隙）超过窗口后自动回落到精确值。
+  const segmentStreamingContent = resolveSegmentStreamingContent(segment.assistantWorkRows);
+  const streamingTokensPerSecond = useStreamingThroughput({
+    enabled: isRunning,
+    contentKey: segmentStreamingContent.key,
+    text: segmentStreamingContent.text,
+  });
+  const isEstimate = streamingTokensPerSecond !== null;
+  const throughputTokensPerSecond = isEstimate ? streamingTokensPerSecond : tokensPerSecond;
   const label =
     segment.workStatus?.state === "interrupted"
       ? intl.formatMessage({ id: "chat.history.stopped" })
@@ -617,14 +632,22 @@ function AssistantHistoryStatus({
           ) : null}
         </button>
       </CollapsibleTrigger>
-      {isRunning && tokensPerSecond !== null ? (
-        // 运行中段右缘显示最近一次已完成模型请求的精确 tok/s（与开发者工具面板 TPS 同源）。
+      {isRunning && throughputTokensPerSecond !== null ? (
+        // 右缘对齐的实时吞吐：流式期间 = 滑动窗口估算（~ 前缀）；否则 = 最近一次
+        // 已完成模型请求的精确 tok/s（与开发者工具面板 TPS 同源）。两者都缺席
+        // （首个请求未完成且样本跨度不足）时整段隐藏。
         <span
           data-testid="chat-working-throughput"
-          title={intl.formatMessage({ id: "chat.history.workingThroughputTitle" })}
+          data-throughput-estimated={isEstimate ? "true" : undefined}
+          title={intl.formatMessage({
+            id: isEstimate
+              ? "chat.history.workingThroughputEstimateTitle"
+              : "chat.history.workingThroughputTitle",
+          })}
           className="ml-auto shrink-0 pl-2 text-ui-base tabular-nums text-foreground-subtle"
         >
-          {formatTokensPerSecond(locale, tokensPerSecond)} tok/s
+          {isEstimate ? "~" : ""}
+          {formatTokensPerSecond(locale, throughputTokensPerSecond)} tok/s
         </span>
       ) : null}
     </div>
