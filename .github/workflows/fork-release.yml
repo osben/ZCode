@@ -17,12 +17,12 @@ defaults:
 jobs:
   resolve-version:
     name: Resolve next fork version
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 5
     outputs:
       version: ${{ steps.version.outputs.version }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 1
 
@@ -52,7 +52,7 @@ jobs:
       ZCODE_TARGET_OS: darwin
       ZCODE_TARGET_ARCH: arm64
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - uses: pnpm/action-setup@v4
 
@@ -99,7 +99,7 @@ jobs:
       ZCODE_TARGET_OS: win32
       ZCODE_TARGET_ARCH: x64
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - uses: pnpm/action-setup@v4
 
@@ -134,7 +134,7 @@ jobs:
   release:
     name: Tag and create GitHub Release
     needs: [resolve-version, build-macos-arm64, build-windows-x64]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 5
     permissions:
       contents: write
