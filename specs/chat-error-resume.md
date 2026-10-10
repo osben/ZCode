@@ -27,6 +27,8 @@ Sometimes a chat ends with an error, and the banner says something like "somethi
 7. If the send returns `blocked` or `confirmationRequired`, the message is not sent. A toast is shown and the banner stays.
 8. If the send throws, `handleSendText` sets `sendSubmissionError`. Resume does not create a second banner and does not retry automatically.
 9. A successful Resume does not dismiss the banner manually. The runtime clears the old error on `TurnStarted`.
+10. Resume is offered only for runtime errors (`control.lastError`) that are the composer's current error. Send failures (`sendSubmissionError`) and model-readiness errors (`draftModelReadinessError`) are not offered. They happen before the message is admitted, so the user's message was never sent, and Resume would send "Continue" on its own.
+11. While a Resume is pending, further clicks are ignored. The guard is released only when the runtime error key changes (the next accepted turn clears `lastError`, or a new error arrives), when the send returns `blocked` or `confirmationRequired`, or when the send throws. A successful send ACK alone does not release the guard: the banner stays visible until `TurnStarted`, so a second click in that window would send another "Continue".
 
 ## Source of state
 
@@ -43,7 +45,7 @@ Sometimes a chat ends with an error, and the banner says something like "somethi
   - `isModelConfigMissingError` moves here from `ChatErrorBanner.tsx` and is exported, so the list of codes is not duplicated.
 - `ChatErrorBanner`: new prop `onResume?: () => void`.
 - `ConversationComposer`: new prop `onResumeError?: () => void`, passed to `ChatErrorBanner` as `onResume` when `visibleError` is set.
-- `SessionPane`: `handleResumeError` calls `handleSendText(CHAT_ERROR_RESUME_MESSAGE)` without touching the draft and is passed to the composer as `onResumeError`. A click made while the previous Resume is still in flight is ignored through a ref.
+- `SessionPane`: `handleResumeError` calls `handleSendText(CHAT_ERROR_RESUME_MESSAGE)` without touching the draft. It is passed to the composer as `onResumeError` only when `resumableComposerError` is true (product rule 10). The in-flight guard is `resumePendingErrorKeyRef`, which holds the error key that Resume is pending for. It is cleared by the effect on `controlLastErrorKey` changes and by the failure paths (product rule 11).
 
 ## UI
 
@@ -65,11 +67,14 @@ Sometimes a chat ends with an error, and the banner says something like "somethi
 5. The send returns `blocked`: the message is not sent, a toast appears, and the banner stays.
 6. The send throws: the send error is shown through the existing mechanism, there is no second banner, and a `warn` is logged.
 7. The button label is translated to en and zh. The message text is always English.
+8. Two rapid clicks on Resume before the runtime clears the error send "Continue" only once.
+9. A `sendSubmissionError` (for example, `SEND_FAILED`) is shown without a Resume button. Resume is not offered for it.
 
 ## Validation
 
 - Unit (`node:test`): `canResumeChatError` for a regular code, for `model_config_missing` (all code variants), and for `fault.runtime.hookBlocked`; the value of `CHAT_ERROR_RESUME_MESSAGE`.
 - `pnpm typecheck`, `pnpm lint`, `pnpm architecture:check --changed`.
+- Manual in the app: scenarios 1, 5, 8, and 9. The `SessionPane` wiring (`resumableComposerError`, the in-flight guard) has no automated test, so these scenarios are the only check.
 
 ## Out of scope
 
