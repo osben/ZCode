@@ -258,9 +258,12 @@ export function createStandaloneProviderRuntimeHeadersPort(
           resolver.clear();
           throw new Error("project_token_login_required");
         }
-        accountScope = createHash("sha256")
-          .update(JSON.stringify([providerId, family, currentIdentity, oauth]))
-          .digest("hex");
+        // Fork 注：这是账号 scope 指纹（与 expectedAccountScope 做相等比较、检测账号切换），
+        // 不是口令存储——需要快速确定性摘要而非 KDF，oauth 仅作为输入、不会泄漏。
+        accountScope =
+          createHash("sha256") // codeql[js/insufficient-password-hash]
+            .update(JSON.stringify([providerId, family, currentIdentity, oauth]))
+            .digest("hex");
         if (
           (input.expectedAccountScope && input.expectedAccountScope !== accountScope) ||
           (input.rejectedProjectTokenFingerprint && !input.expectedAccountScope)

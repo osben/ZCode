@@ -33,6 +33,10 @@ const forkIsolatedTests = [
   "packages/services/test/mcpSyncService.test.ts",
   "packages/services/test/providerRuntimeResolver.test.ts",
   "packages/services/test/runtimeToolResolver.test.ts",
+  // Bugfix（CI 稳定性）：该用例用真实 fs watcher 验证「目录被替换时丢弃在途读取」，
+  // 边界约 5s。GitHub 2 核 runner 上并行 worker 的磁盘调度会打穿时限（本地 3/3 绿）。
+  // 沿用本组先例：串行 fork 隔离，收敛调度竞争。
+  "packages/services/test/subagentRuntimeConfig.test.ts",
   // 该集成测试会真实启动 tsx、Supervisor 与多代 Core；放在普通 threads 中时，
   // 并行 worker 的进程启动压力会让 15 秒 ready barrier 偶发超时。
   "packages/zcode-server-cli/test/runtimeUpdateIntegration.test.ts",

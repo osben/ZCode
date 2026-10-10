@@ -73,6 +73,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
+  vi.unstubAllGlobals();
   await rm(tempRoot, { recursive: true, force: true });
 });
 
@@ -771,6 +772,11 @@ describe("browserDataManager", () => {
   });
 
   it("先复制 LocalStorage 快照，再从快照发现 origin", async () => {
+    // Bugfix（CI 稳定性）：GitHub runner 预装 Chrome 并导出 CHROME_PATH/CHROME_EXECUTABLE，
+    // resolver 会先读这两个变量，platform:"aix" 的“找不到可执行文件”分支就被绕过了。
+    // 置空两个变量让发现路径在本机与 CI 上行为一致。
+    vi.stubEnv("CHROME_PATH", "");
+    vi.stubEnv("CHROME_EXECUTABLE", "");
     const profilePath = join(tempRoot, "Default");
     const levelDbPath = join(profilePath, "Local Storage", "leveldb");
     await mkdir(levelDbPath, { recursive: true });

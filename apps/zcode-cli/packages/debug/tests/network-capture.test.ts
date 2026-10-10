@@ -47,7 +47,8 @@ describe("network capture", () => {
     const upstream = createServer((incoming, response) => {
       response.writeHead(200, {
         "content-type": "text/plain",
-        "set-cookie": "debug-secret=1",
+        // Fork 注：测试桩故意下发 cookie 以验证 capture 记录，loopback 环境无传输风险。
+        "set-cookie": "debug-secret=1", // codeql[js/client-exposed-cookie] codeql[js/clear-text-cookie]
       });
       response.end(`ok:${incoming.url ?? "/"}`);
     });
