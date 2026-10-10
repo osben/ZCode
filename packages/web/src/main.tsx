@@ -7,7 +7,6 @@ import {
   generateMobileDeviceFingerprint,
   playTaskNotificationSound,
   setStreamClientId,
-  type Theme,
 } from "@zcode/ui";
 import "@zcode/ui/styles.css";
 import { connectViaWebSocket } from "@zcode/client";
@@ -29,41 +28,14 @@ import {
   resolveConversationShareCodeFromPath,
 } from "./share/conversationShareRoute.js";
 import type { IPlatformService, RemoteTarget, ServerRemoteInfo } from "@zcode/shared";
-import { WEB_DEFAULT_THEME, resolveWebInitialTheme } from "./webThemeSeed.js";
+import { applyTheme, readStoredThemeSelection } from "@zcode/ui/useTheme";
 
-function resolveWebThemePreference(defaultTheme: Theme = WEB_DEFAULT_THEME): Theme {
-  const saved = localStorage.getItem("zcode-theme");
-  return resolveWebInitialTheme({ storedTheme: saved, defaultTheme });
-}
-
-// 初始化主题：默认 Zai dark，后续由 useTheme hook 接管
-// system 模式下需要查询系统偏好；非 system 模式直接用存储值
+// 启动时同步应用明暗模式与配色，避免首屏闪烁。分享页没有本地配置时默认浅色，其他 Web 页面默认深色。
 {
-  // 分享页没有本地主题配置时使用浅色，已有配置仍然沿用；其他 Web 页面继续默认深色。
-  const saved = resolveWebThemePreference(
-    isConversationSharePath(window.location.pathname) ? "zai-light" : undefined,
+  const selection = readStoredThemeSelection(
+    isConversationSharePath(window.location.pathname) ? "light" : "dark",
   );
-  const resolved =
-    saved === "system"
-      ? window.matchMedia("(prefers-color-scheme: dark)").matches
-        ? "dark"
-        : "light"
-      : saved === "dark" || saved === "zai-dark"
-        ? "dark"
-        : "light";
-  const appliedTheme =
-    saved === "system"
-      ? resolved === "dark"
-        ? "zai-dark"
-        : "zai-light"
-      : saved === "dark"
-        ? "zai-dark"
-        : saved === "light"
-          ? "zai-light"
-          : saved;
-  document.documentElement.classList.toggle("dark", resolved === "dark");
-  document.documentElement.classList.toggle("theme-zai-light", appliedTheme === "zai-light");
-  document.documentElement.classList.toggle("theme-zai-dark", appliedTheme === "zai-dark");
+  applyTheme(selection.mode, selection.palette);
 }
 
 async function resolveFeedbackUrl(): Promise<string | undefined> {
@@ -182,7 +154,7 @@ async function renderConversationSharePage(): Promise<void> {
       }}
       onLogout={onLogout}
       locale={routeLocale}
-      theme={resolveWebThemePreference("zai-light")}
+      theme={readStoredThemeSelection("light").mode}
     />,
   );
 }

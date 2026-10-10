@@ -3,6 +3,7 @@ import { shouldExposeE2EStoreBridge } from "@/lib/e2eStoreBridge.js";
 import type { IZCodeAgentService } from "@zcode/services";
 import type { Locale } from "@zcode/shared";
 import type { TaskListE2EActions } from "@/lib/taskListE2EActions.js";
+import type { Theme } from "@/useTheme.js";
 import { useEffect } from "react";
 
 // Vite 注入的 import.meta.env 类型声明
@@ -20,7 +21,7 @@ export interface TestActions extends TaskListE2EActions {
   /** 获取当前主题 */
   getTheme: () => string;
   /** 设置主题 */
-  setTheme: (theme: "light" | "dark" | "zai-light" | "zai-dark" | "system") => void;
+  setTheme: (theme: Theme) => void;
   /** 获取当前语言，仅供跨语言展示 E2E */
   getLocale: () => Locale;
   /** 设置当前语言，仅供跨语言展示 E2E */

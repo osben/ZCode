@@ -57,6 +57,7 @@ export const SETTINGS_USER_ACTION_FEATURES = {
   "settings.locale": ["change_locale"],
   "settings.appearance": [
     "change_theme",
+    "change_palette",
     "change_ui_font_size",
     "change_code_light_theme",
     "change_code_dark_theme",
@@ -64,7 +65,12 @@ export const SETTINGS_USER_ACTION_FEATURES = {
     "toggle_code_line_wrap",
     "change_code_font_size",
   ],
-  "settings.terminal": ["toggle_system_profile", "save_font_family", "change_shell"],
+  "settings.terminal": [
+    "toggle_system_profile",
+    "save_font_family",
+    "change_shell",
+    "toggle_terminal_webgl",
+  ],
   "settings.search": ["toggle_native_search"],
   "settings.network": ["save_http_proxy", "save_no_proxy", "save_ca_certificate"],
   "settings.desktop": ["toggle_hardware_acceleration", "toggle_close_to_tray", "toggle_keep_awake"],

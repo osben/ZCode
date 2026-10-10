@@ -59,6 +59,7 @@ export function GeneralSectionContent({
   dataBaseDir,
   terminalInheritSystemProfile = true,
   terminalFontFamily = "",
+  terminalWebglEnabled = false,
   integratedTerminalShell = { mode: "auto" },
   integratedTerminalShellOptions = [],
   nativeSearchEnhancementsEnabled,
@@ -86,6 +87,7 @@ export function GeneralSectionContent({
   onSelectDataBaseDir,
   onTerminalInheritSystemProfileChange = async () => {},
   onTerminalFontFamilyChange = async () => {},
+  onTerminalWebglEnabledChange = () => {},
   onIntegratedTerminalShellChange = async () => {},
   onNativeSearchEnhancementsEnabledChange,
   onHttpProxyChange = async () => {},
@@ -121,6 +123,7 @@ export function GeneralSectionContent({
   dataBaseDir: string;
   terminalInheritSystemProfile: boolean;
   terminalFontFamily: string;
+  terminalWebglEnabled: boolean;
   integratedTerminalShell?: IntegratedTerminalShellSelection;
   integratedTerminalShellOptions?: IntegratedTerminalShellOption[];
   nativeSearchEnhancementsEnabled: boolean;
@@ -149,6 +152,7 @@ export function GeneralSectionContent({
   onSelectDataBaseDir: () => Promise<string | null>;
   onTerminalInheritSystemProfileChange: (enabled: boolean) => Promise<void>;
   onTerminalFontFamilyChange: (fontFamily: string) => Promise<void>;
+  onTerminalWebglEnabledChange: (enabled: boolean) => void;
   onIntegratedTerminalShellChange?: (selection: IntegratedTerminalShellSelection) => Promise<void>;
   onNativeSearchEnhancementsEnabledChange: (enabled: boolean) => Promise<void>;
   onHttpProxyChange?: (httpProxy: string) => Promise<void>;
@@ -398,6 +402,18 @@ export function GeneralSectionContent({
                 }
               }}
               className="max-w-[520px] font-mono"
+            />
+          }
+        />
+        <SettingsRow
+          label={intl.formatMessage({ id: "settings.terminalWebgl" })}
+          description={intl.formatMessage({ id: "settings.terminalWebglDescription" })}
+          control={
+            <Switch
+              checked={terminalWebglEnabled}
+              onCheckedChange={(checked) => {
+                onTerminalWebglEnabledChange(checked);
+              }}
             />
           }
         />

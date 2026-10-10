@@ -84,6 +84,7 @@ import { useZCodeStore } from "@/store/StoreProvider.js";
 import { useTabStore } from "@/store/TabStoreProvider.js";
 import { isWorkspaceTab } from "@/store/tabStore.js";
 import type { Theme } from "@/useTheme.js";
+import { isThemePalette } from "@/lib/themePalettes.js";
 import { WindowsTopLeftLogo } from "@/WindowsTopLeftLogo.js";
 
 import { DesktopWindowControls } from "@/DesktopWindowControls.js";
@@ -339,6 +340,10 @@ export function SettingsPage({
   const setInterfaceMode = useZCodeStore((state) => state.setInterfaceMode);
   const theme = useZCodeStore((state) => state.theme);
   const setTheme = useZCodeStore((state) => state.setTheme);
+  const palette = useZCodeStore((state) => state.palette);
+  const setPalette = useZCodeStore((state) => state.setPalette);
+  const terminalWebglEnabled = useZCodeStore((state) => state.terminalWebglEnabled);
+  const setTerminalWebglEnabled = useZCodeStore((state) => state.setTerminalWebglEnabled);
   const codePreviewSettings = useZCodeStore((state) => state.codePreviewSettings);
   const setCodePreviewSettings = useZCodeStore((state) => state.setCodePreviewSettings);
   const uiFontSizePx = useZCodeStore((state) => state.uiFontSizePx);
@@ -1288,13 +1293,7 @@ export function SettingsPage({
   );
   const handleFooterThemeChange = useCallback(
     (value: string) => {
-      if (
-        value === "light" ||
-        value === "dark" ||
-        value === "zai-light" ||
-        value === "zai-dark" ||
-        value === "system"
-      ) {
+      if (value === "light" || value === "dark" || value === "system") {
         runUserAction({
           input: { featureId: "settings.appearance", action: "change_theme", trigger: "select" },
           operation: () => setTheme(value as Theme),
@@ -1304,6 +1303,19 @@ export function SettingsPage({
       }
     },
     [setTheme],
+  );
+  const handleFooterPaletteChange = useCallback(
+    (value: string) => {
+      if (isThemePalette(value)) {
+        runUserAction({
+          input: { featureId: "settings.appearance", action: "change_palette", trigger: "select" },
+          operation: () => setPalette(value),
+          completed: { resultSource: "local_commit", valueAfter: value },
+          failureStage: "local_commit",
+        });
+      }
+    },
+    [setPalette],
   );
   const handleCodePreviewSettingsChange = useCallback(
     (patch: Parameters<typeof setCodePreviewSettings>[0]) => {
@@ -1671,6 +1683,7 @@ export function SettingsPage({
                             dataBaseDir={dataBaseDir}
                             terminalInheritSystemProfile={terminalInheritSystemProfile}
                             terminalFontFamily={terminalFontFamily}
+                            terminalWebglEnabled={terminalWebglEnabled}
                             integratedTerminalShell={integratedTerminalShell}
                             integratedTerminalShellOptions={integratedTerminalShellOptions}
                             nativeSearchEnhancementsEnabled={nativeSearchEnhancementsEnabled}
@@ -1728,6 +1741,21 @@ export function SettingsPage({
                               handleTerminalInheritSystemProfileChange
                             }
                             onTerminalFontFamilyChange={handleTerminalFontFamilyChange}
+                            onTerminalWebglEnabledChange={(enabled) =>
+                              runUserAction({
+                                input: {
+                                  featureId: "settings.terminal",
+                                  action: "toggle_terminal_webgl",
+                                  trigger: "switch",
+                                },
+                                operation: () => setTerminalWebglEnabled(enabled),
+                                completed: {
+                                  resultSource: "local_commit",
+                                  stateAfter: enabled ? "enabled" : "disabled",
+                                },
+                                failureStage: "local_commit",
+                              })
+                            }
                             onIntegratedTerminalShellChange={handleIntegratedTerminalShellChange}
                             onNativeSearchEnhancementsEnabledChange={
                               handleNativeSearchEnhancementsEnabledChange
@@ -1787,6 +1815,8 @@ export function SettingsPage({
                             setCodePreviewSettings={handleCodePreviewSettingsChange}
                             theme={theme}
                             setTheme={(nextTheme) => handleFooterThemeChange(nextTheme)}
+                            palette={palette}
+                            setPalette={(nextPalette) => handleFooterPaletteChange(nextPalette)}
                             uiFontSizePx={uiFontSizePx}
                             setUiFontSizePx={(fontSizePx) =>
                               runUserAction({

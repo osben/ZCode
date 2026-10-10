@@ -16,19 +16,33 @@
     <script>
       (() => {
         // JS bundle 执行前先按本地主题偏好决定首屏底色，避免 dark 用户在这一帧看到白底闪烁。
+        // 此脚本先于 JS bundle 执行，无法 import useTheme.ts，因此复制了 migrateThemeSelection 与 applyTheme 的最小逻辑。
         const STORAGE_KEY = "zcode-theme";
-        const DEFAULT_THEME = "zai-dark";
+        const PALETTE_STORAGE_KEY = "zcode-theme-palette";
+        const DEFAULT_THEME = "dark";
+        const DEFAULT_PALETTE = "zai";
+        const ACCENT_PALETTES = [
+          "ocean",
+          "forest",
+          "ember",
+          "violet",
+          "slate",
+          "rose",
+          "sand",
+          "mint",
+        ];
+        const KNOWN_PALETTES = ["neutral", DEFAULT_PALETTE, ...ACCENT_PALETTES];
         const BROWSER_THEME_COLORS = {
           dark: "#161616",
           light: "#f8f8f8",
         };
 
-        const normalizeResolvedTheme = (theme) => {
-          if (theme === "dark") return "dark";
-          if (theme === "light") return "light";
-          if (theme === "zai-dark") return "dark";
-          if (theme === "zai-light") return "light";
-          return theme;
+        // 旧版把配色写进模式值（zai-dark 等），统一迁移为模式。无法识别的值回退为 dark。
+        const normalizeMode = (saved) => {
+          if (saved === "light" || saved === "zai-light") return "light";
+          if (saved === "dark" || saved === "zai-dark") return "dark";
+          if (saved === "system") return "system";
+          return DEFAULT_THEME;
         };
 
         const syncBrowserThemeSurface = (theme) => {
@@ -41,23 +55,35 @@
         };
 
         try {
-          const saved = localStorage.getItem(STORAGE_KEY) || DEFAULT_THEME;
+          const savedMode = normalizeMode(localStorage.getItem(STORAGE_KEY));
           const resolved =
-            saved === "system"
+            savedMode === "system"
               ? window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches
                 ? "dark"
                 : "light"
-              : normalizeResolvedTheme(saved);
-          const finalTheme = resolved === "dark" ? "dark" : "light";
-          document.documentElement.setAttribute("data-zcode-bootstrap-theme", finalTheme);
-          syncBrowserThemeSurface(finalTheme);
-          if (finalTheme === "dark") {
-            document.documentElement.classList.add("dark");
+              : savedMode;
+          const savedPalette = localStorage.getItem(PALETTE_STORAGE_KEY);
+          const palette = KNOWN_PALETTES.includes(savedPalette) ? savedPalette : DEFAULT_PALETTE;
+          const root = document.documentElement;
+          root.setAttribute("data-zcode-bootstrap-theme", resolved);
+          syncBrowserThemeSurface(resolved);
+          root.classList.toggle("dark", resolved === "dark");
+          root.classList.toggle(
+            "theme-zai-light",
+            palette === DEFAULT_PALETTE && resolved === "light",
+          );
+          root.classList.toggle(
+            "theme-zai-dark",
+            palette === DEFAULT_PALETTE && resolved === "dark",
+          );
+          if (ACCENT_PALETTES.includes(palette)) {
+            root.classList.add(`palette-${palette}`);
           }
         } catch {
           document.documentElement.setAttribute("data-zcode-bootstrap-theme", "dark");
           syncBrowserThemeSurface("dark");
           document.documentElement.classList.add("dark");
+          document.documentElement.classList.add("theme-zai-dark");
         }
       })();
     </script>

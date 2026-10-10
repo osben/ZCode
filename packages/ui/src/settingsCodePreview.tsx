@@ -1,6 +1,7 @@
-import type { Theme } from "@/useTheme.js";
+import type { Theme, ThemePalette } from "@/useTheme.js";
 import { useState } from "react";
 import { resolveTheme } from "@/useTheme.js";
+import { THEME_PALETTE_IDS } from "@/lib/themePalettes.js";
 import { Card, CardContent } from "@/components/ui/card.js";
 import { Input } from "@/components/ui/input.js";
 import { Switch } from "@/components/ui/switch.js";
@@ -83,6 +84,8 @@ export function AppearanceSectionContent({
   setCodePreviewSettings,
   theme,
   setTheme,
+  palette,
+  setPalette,
   uiFontSizePx,
   setUiFontSizePx,
 }: {
@@ -90,6 +93,8 @@ export function AppearanceSectionContent({
   setCodePreviewSettings: (settings: Partial<CodePreviewSettings>) => void;
   theme: Theme;
   setTheme: (theme: Theme) => void;
+  palette: ThemePalette;
+  setPalette: (palette: ThemePalette) => void;
   uiFontSizePx: number;
   setUiFontSizePx: (fontSizePx: number) => void;
 }) {
@@ -130,6 +135,29 @@ export function AppearanceSectionContent({
                             id: `settings.themeMode.${mode}`,
                           })}
                         </div>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              }
+            />
+            <SettingsRow
+              label={intl.formatMessage({ id: "settings.themePalette" })}
+              description={intl.formatMessage({
+                id: "settings.themePaletteDescription",
+              })}
+              control={
+                <Select
+                  value={palette}
+                  onValueChange={(value) => setPalette(value as ThemePalette)}
+                >
+                  <SelectTrigger size="lg" className="w-[260px] min-w-0 justify-between">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {THEME_PALETTE_IDS.map((id) => (
+                      <SelectItem key={id} value={id}>
+                        {intl.formatMessage({ id: `settings.themePalette.${id}` })}
                       </SelectItem>
                     ))}
                   </SelectContent>

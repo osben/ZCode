@@ -317,6 +317,7 @@ export function createCommandCenter(deps: CommandCenterDeps): TuiSubmitPrompt {
           locale: app.getLocale?.(),
           model: app.getModel?.(),
           theme: app.getTheme?.(),
+          palette: app.getPalette?.(),
           resetSessionProjection: true,
           response: formatNewSessionResult(app.sessionId),
           sessionId: app.sessionId,
@@ -363,6 +364,7 @@ export function createCommandCenter(deps: CommandCenterDeps): TuiSubmitPrompt {
         locale: app.getLocale?.(),
         model: app.getModel?.(),
         theme: app.getTheme?.(),
+        palette: app.getPalette?.(),
         ...(restoredMessages !== undefined
           ? {
               resetSessionProjection: true,

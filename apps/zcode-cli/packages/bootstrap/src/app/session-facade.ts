@@ -61,6 +61,7 @@ type SessionFacade = Pick<
   | "getDefaultThoughtLevel"
   | "getThoughtLevel"
   | "getTheme"
+  | "getPalette"
   | "listCheckpoints"
   | "listMcpServers"
   | "listModels"
@@ -310,6 +311,7 @@ export function createSessionFacade(deps: CreateSessionFacadeDeps): SessionFacad
     getModel: () => formatLegacyRuntimeModelValue(deps.runtime.getSessionModelSelection()),
     getLocale: () => currentLocale,
     getTheme: () => deps.configResult.config.ui.theme as UiThemePreference,
+    getPalette: () => deps.configResult.config.ui.palette,
     getDefaultThoughtLevel: () => {
       const registryState = currentRegistrySelection();
       return registryState.owned

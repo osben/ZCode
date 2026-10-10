@@ -77,6 +77,7 @@ export const ConfigKey = {
   // UI
   UiLocale: "ui.locale",
   UiTheme: "ui.theme",
+  UiPalette: "ui.palette",
 } as const;
 
 export type ConfigKey = (typeof ConfigKey)[keyof typeof ConfigKey];
@@ -148,7 +149,9 @@ export type ConfigValue<K extends ConfigKey> = K extends "modelStream.idleTimeou
                                                 ? UiLocale
                                                 : K extends "ui.theme"
                                                   ? UiThemePreference
-                                                  : unknown;
+                                                  : K extends "ui.palette"
+                                                    ? UiThemePalette
+                                                    : unknown;
 
 // ============================================================
 // Config Scope
@@ -254,6 +257,7 @@ export interface RuntimeConfig {
   ui: {
     locale: UiLocale;
     theme: UiThemePreference;
+    palette: UiThemePalette;
   };
 }
 
@@ -280,6 +284,20 @@ export type SupportedLocale = "en-US" | "zh-CN" | "uk-UA";
 export type UiLocale = SupportedLocale | "auto";
 export type UiThemeMode = "dark" | "light";
 export type UiThemePreference = UiThemeMode | "auto";
+// 与桌面端 packages/ui/src/lib/themePalettes.ts 的 THEME_PALETTE_IDS 保持一致。
+export const UI_THEME_PALETTES = [
+  "neutral",
+  "zai",
+  "ocean",
+  "forest",
+  "ember",
+  "violet",
+  "slate",
+  "rose",
+  "sand",
+  "mint",
+] as const;
+export type UiThemePalette = (typeof UI_THEME_PALETTES)[number];
 
 export const DEFAULT_MODEL_STREAM_IDLE_TIMEOUT_MS = 600_000;
 
@@ -355,6 +373,7 @@ export const DefaultRuntimeConfig: RuntimeConfig = {
   ui: {
     locale: "en-US",
     theme: "auto",
+    palette: "neutral",
   },
 };
 

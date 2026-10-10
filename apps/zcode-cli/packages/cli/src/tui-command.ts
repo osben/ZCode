@@ -72,6 +72,7 @@ export const runTuiCommand = async (
             loginRequired: metadata.loginRequired,
             locale: metadata.locale ?? startupLocale,
             theme: metadata.theme ?? "auto",
+            palette: metadata.palette ?? "neutral",
             modelOptions: metadata.modelOptions,
             effortOptions: metadata.effortOptions,
             slashCommands: listSlashCommandSuggestions(customCommands),

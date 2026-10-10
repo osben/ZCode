@@ -1,9 +1,34 @@
-import { useEffect, useState, useCallback } from "react";
+import { readSafeLocalStorage } from "./lib/browserEnvironment.js";
+import {
+  DEFAULT_THEME_PALETTE,
+  THEME_PALETTE_IDS,
+  isAccentPalette,
+  isThemePalette,
+  type ThemePalette,
+} from "./lib/themePalettes.js";
 
-export type Theme = "light" | "dark" | "zai-light" | "zai-dark" | "system";
+export {
+  DEFAULT_THEME_PALETTE,
+  THEME_PALETTES,
+  THEME_PALETTE_IDS,
+  isAccentPalette,
+  isThemePalette,
+  type ThemeAccentPaletteId,
+  type ThemePalette,
+  type ThemePaletteDefinition,
+} from "./lib/themePalettes.js";
+
+/** 明暗模式。配色由 ThemePalette 单独决定。 */
+export type Theme = "light" | "dark" | "system";
 export type ResolvedTheme = "light" | "dark";
 
-const STORAGE_KEY = "zcode-theme";
+export interface ThemeSelection {
+  mode: Theme;
+  palette: ThemePalette;
+}
+
+export const THEME_STORAGE_KEY = "zcode-theme";
+export const THEME_PALETTE_STORAGE_KEY = "zcode-theme-palette";
 const BROWSER_THEME_SURFACE_ATTRIBUTE = "data-zcode-browser-theme-surface";
 
 function getSystemTheme(): ResolvedTheme {
@@ -15,13 +40,50 @@ export function resolveTheme(theme: Theme): ResolvedTheme {
     return getSystemTheme();
   }
 
-  return theme === "dark" || theme === "zai-dark" ? "dark" : "light";
+  return theme === "dark" ? "dark" : "light";
 }
 
-export function normalizeThemePreference(theme: Theme): Theme {
-  if (theme === "dark") return "zai-dark";
-  if (theme === "light") return "zai-light";
-  return theme;
+/**
+ * 读取持久化的主题选择。旧版 `zcode-theme` 曾把配色写进值里（`zai-dark` 等），
+ * 这些值统一迁移为 `zai` 配色 + 对应模式，外观与旧版一致。
+ * 只在读取时转换，不回写旧值。缺失或无法识别的模式使用 fallbackMode。
+ */
+export function migrateThemeSelection(
+  storedMode: string | null,
+  storedPalette: string | null,
+  fallbackMode: Theme = "dark",
+): ThemeSelection {
+  let mode: Theme;
+  switch (storedMode) {
+    case "light":
+    case "zai-light":
+      mode = "light";
+      break;
+    case "dark":
+    case "zai-dark":
+      mode = "dark";
+      break;
+    case "system":
+      mode = "system";
+      break;
+    default:
+      mode = fallbackMode;
+      break;
+  }
+
+  return {
+    mode,
+    palette: isThemePalette(storedPalette) ? storedPalette : DEFAULT_THEME_PALETTE,
+  };
+}
+
+/** 读取当前持久化的主题选择，供不经过 store 的页面（如分享页）使用。 */
+export function readStoredThemeSelection(fallbackMode: Theme = "dark"): ThemeSelection {
+  return migrateThemeSelection(
+    readSafeLocalStorage(THEME_STORAGE_KEY),
+    readSafeLocalStorage(THEME_PALETTE_STORAGE_KEY),
+    fallbackMode,
+  );
 }
 
 function setThemeMetaContent(name: "theme-color" | "color-scheme", content: string) {
@@ -55,55 +117,20 @@ function syncBrowserThemeSurface(resolved: ResolvedTheme) {
   }
 }
 
-export function applyTheme(theme: Theme) {
-  const resolved = resolveTheme(theme);
-  const appliedTheme =
-    theme === "system"
-      ? resolved === "dark"
-        ? "zai-dark"
-        : "zai-light"
-      : normalizeThemePreference(theme);
-  document.documentElement.classList.toggle("dark", resolved === "dark");
-  document.documentElement.classList.toggle("theme-zai-light", appliedTheme === "zai-light");
-  document.documentElement.classList.toggle("theme-zai-dark", appliedTheme === "zai-dark");
+/**
+ * 把明暗模式与配色应用到 <html>。配色 class 与明暗 class 互不影响：
+ * `theme-zai-*` 只属于 zai 配色；accent 配色通过 `palette-<id>` 覆盖品牌色变量。
+ */
+export function applyTheme(mode: Theme, palette: ThemePalette = DEFAULT_THEME_PALETTE) {
+  const resolved = resolveTheme(mode);
+  const root = document.documentElement;
+  root.classList.toggle("dark", resolved === "dark");
+  root.classList.toggle("theme-zai-light", palette === "zai" && resolved === "light");
+  root.classList.toggle("theme-zai-dark", palette === "zai" && resolved === "dark");
+  for (const id of THEME_PALETTE_IDS) {
+    if (isAccentPalette(id)) {
+      root.classList.toggle(`palette-${id}`, id === palette);
+    }
+  }
   syncBrowserThemeSurface(resolved);
-}
-
-function isTheme(value: string | null): value is Theme {
-  return (
-    value === "light" ||
-    value === "dark" ||
-    value === "zai-light" ||
-    value === "zai-dark" ||
-    value === "system"
-  );
-}
-
-export function useTheme() {
-  const [theme, setThemeState] = useState<Theme>(() => {
-    const saved = localStorage.getItem(STORAGE_KEY);
-    // 默认主题统一收敛到 Zai dark，避免旧 hook 兜底值和 Zustand store 默认值分叉。
-    return isTheme(saved) ? normalizeThemePreference(saved) : "zai-dark";
-  });
-
-  const setTheme = useCallback((t: Theme) => {
-    const normalizedTheme = normalizeThemePreference(t);
-    localStorage.setItem(STORAGE_KEY, normalizedTheme);
-    setThemeState(normalizedTheme);
-    applyTheme(normalizedTheme);
-  }, []);
-
-  // 初始化 + system 模式下监听系统偏好变化
-  useEffect(() => {
-    applyTheme(theme);
-
-    if (theme !== "system") return;
-
-    const mq = window.matchMedia("(prefers-color-scheme: dark)");
-    const handler = () => applyTheme("system");
-    mq.addEventListener("change", handler);
-    return () => mq.removeEventListener("change", handler);
-  }, [theme]);
-
-  return { theme, setTheme } as const;
 }

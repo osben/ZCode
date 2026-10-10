@@ -6,7 +6,12 @@ import React from "react";
 import { TuiApp } from "./app.js";
 import { TuiStartupScreen } from "./app-startup.js";
 import { createSelectionCopyHandler, hasCopyableSelectionText } from "./app-copy.js";
-import { activeTuiTheme, resolveTuiThemeMode, setActiveTuiThemeMode } from "./theme/index.js";
+import {
+  activeTuiTheme,
+  resolveTuiThemeMode,
+  setActiveTuiThemeMode,
+  setActiveTuiThemePalette,
+} from "./theme/index.js";
 import { resolveInitialTerminalThemeMode } from "./theme/terminal.js";
 import type { TuiOptions } from "./types.js";
 
@@ -19,6 +24,7 @@ export const runTui = async (options: TuiOptions): Promise<number> => {
 
   const startupThemeMode = resolveTuiThemeMode(options.theme, null);
   setActiveTuiThemeMode(startupThemeMode);
+  setActiveTuiThemePalette(options.palette);
 
   const renderer = await createCliRenderer({
     backgroundColor: activeTuiTheme(startupThemeMode).background,
@@ -87,6 +93,7 @@ async function runTuiWithRenderer(options: TuiOptions, renderer: CliRenderer): P
     if (destroyed) return;
     const initialThemeMode = resolveTuiThemeMode(readyOptions.theme, terminalThemeMode);
     setActiveTuiThemeMode(initialThemeMode);
+    setActiveTuiThemePalette(readyOptions.palette);
     renderer.setBackgroundColor(activeTuiTheme(initialThemeMode).background);
     appMounted = true;
     root.render(

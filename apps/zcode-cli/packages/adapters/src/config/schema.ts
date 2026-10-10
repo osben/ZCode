@@ -1,6 +1,6 @@
 /* eslint-disable max-lines -- zcode-cli 配置 schema 需要集中维护文件解析和 provider 继承，拆散会让配置语义更难对齐。 */
 import { z } from "zod";
-import type { RuntimeConfigPatch } from "@zcode/contracts";
+import { UI_THEME_PALETTES, type RuntimeConfigPatch } from "@zcode/contracts";
 
 const stringRecordSchema = z.record(z.string(), z.string());
 const unknownRecordSchema = z.record(z.string(), z.unknown());
@@ -213,6 +213,8 @@ const uiSchema = z.object({
   // 未知 locale（新版本写入后回退到旧版本）忽略为未设置，避免整份配置解析抛错。
   locale: z.enum(["auto", "en-US", "zh-CN", "uk-UA"]).optional().catch(undefined),
   theme: z.enum(["auto", "dark", "light"]).optional(),
+  // 未知 palette（新版本写入后回退到旧版本）忽略为未设置，与 locale 的兼容策略一致。
+  palette: z.enum(UI_THEME_PALETTES).optional().catch(undefined),
 });
 
 const toolConcurrencySchema = z.object({

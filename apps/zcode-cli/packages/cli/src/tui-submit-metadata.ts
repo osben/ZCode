@@ -14,6 +14,7 @@ export function withTuiMetadata(
       mode,
       model: result.model ?? activeApp.getModel?.(),
       theme: result.theme ?? activeApp.getTheme?.(),
+      palette: result.palette ?? activeApp.getPalette?.(),
       thoughtLevel: result.thoughtLevel ?? activeApp.getThoughtLevel?.(),
     },
   };
