@@ -210,7 +210,8 @@ const loggingSchema = z.object({
 });
 
 const uiSchema = z.object({
-  locale: z.enum(["auto", "en-US", "zh-CN"]).optional(),
+  // 未知 locale（新版本写入后回退到旧版本）忽略为未设置，避免整份配置解析抛错。
+  locale: z.enum(["auto", "en-US", "zh-CN", "uk-UA"]).optional().catch(undefined),
   theme: z.enum(["auto", "dark", "light"]).optional(),
 });
 

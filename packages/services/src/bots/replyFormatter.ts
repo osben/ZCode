@@ -5,10 +5,7 @@ import type {
   ZCodeTaskChangeSummary,
   Locale,
 } from "@zcode/shared";
-import {
-  getCompactToolCallSummary,
-  getPermissionRequestPreview,
-} from "@zcode/shared";
+import { getCompactToolCallSummary, getPermissionRequestPreview } from "@zcode/shared";
 import { normalizeBotMessageLocale } from "./messages.js";
 
 export interface BotReplyToolCallState {
@@ -82,10 +79,53 @@ const formatterMessages = {
     moreToolCalls: "{count} more tool calls",
     moreFiles: "{count} more files",
   },
+  "uk-UA": {
+    toolCalls: "Виклики інструментів:",
+    completed: "Завершено",
+    failed: "Помилка",
+    denied: "Відхилено",
+    inProgress: "Виконується",
+    pending: "Очікує",
+    permissionRequired: "Потрібен дозвіл:",
+    editWriting: "Запис",
+    editUpdating: "Оновлення",
+    editDeleting: "Видалення",
+    editEditing: "Редагування",
+    changeSummary: "Зведення змін",
+    moreToolCalls: "Ще викликів інструментів: {count}",
+    moreFiles: "Ще файлів: {count}",
+  },
 } as const;
 
 function t(locale: Locale | undefined, key: keyof (typeof formatterMessages)["zh-CN"]): string {
   return formatterMessages[normalizeBotMessageLocale(locale)][key];
+}
+
+const UK_FILE_NOUN: Record<Intl.LDMLPluralRule, string> = {
+  zero: "файлів",
+  one: "файл",
+  two: "файли",
+  few: "файли",
+  many: "файлів",
+  other: "файлу",
+};
+
+function formatChangeSummaryHeader(
+  locale: Locale | undefined,
+  fileCount: number,
+  diffCount: string,
+): string {
+  const title = t(locale, "changeSummary");
+  switch (normalizeBotMessageLocale(locale)) {
+    case "zh-CN":
+      return `${title}：${fileCount} 个文件，${diffCount}`;
+    case "uk-UA": {
+      const noun = UK_FILE_NOUN[new Intl.PluralRules("uk-UA").select(fileCount)];
+      return `${title}: ${fileCount} ${noun}, ${diffCount}`;
+    }
+    default:
+      return `${title}: ${fileCount} files, ${diffCount}`;
+  }
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -162,7 +202,9 @@ function formatCompactSummaryDetail(
 ): string | undefined {
   const parts: string[] = [];
   if (summary.secondaryText) {
-    parts.push(formatMarkdownInlineCode(truncateMiddleText(normalizeInlineText(summary.secondaryText))));
+    parts.push(
+      formatMarkdownInlineCode(truncateMiddleText(normalizeInlineText(summary.secondaryText))),
+    );
   }
   if (summary.changeStat) {
     const stat = formatBotDiffCount(summary.changeStat);
@@ -206,7 +248,10 @@ function formatPermissionRequestTitle(
     titleWithoutEdit && titleWithoutEdit !== preview.title
       ? titleWithoutEdit
       : preview.filePaths.length === 1 || preview.fileChanges.length === 1
-        ? toWorkspaceRelativePath((preview.filePaths[0] ?? preview.fileChanges[0]?.path)!, options?.workspacePath)
+        ? toWorkspaceRelativePath(
+            (preview.filePaths[0] ?? preview.fileChanges[0]?.path)!,
+            options?.workspacePath,
+          )
         : "";
   return targetText ? `${label} ${targetText}` : label;
 }
@@ -221,14 +266,19 @@ function formatEditPermissionKindLabel(
     request.description,
     isRecord(request.raw) && typeof request.raw.kind === "string" ? request.raw.kind : undefined,
     isRecord(request.raw) && typeof request.raw.title === "string" ? request.raw.title : undefined,
-  ].filter((value): value is string => typeof value === "string").join(" ");
+  ]
+    .filter((value): value is string => typeof value === "string")
+    .join(" ");
   const normalizedText = rawText.trim().toLowerCase();
   const fileChangeType = preview.fileChange?.type;
 
   if (/\b(delete|deleted|remove|removed|erase|erased|unlink|rm)\b/u.test(normalizedText)) {
     return t(locale, "editDeleting");
   }
-  if (fileChangeType === "add" || /\b(write|wrote|create|created|add|added|save|saved|new)\b/u.test(normalizedText)) {
+  if (
+    fileChangeType === "add" ||
+    /\b(write|wrote|create|created|add|added|save|saved|new)\b/u.test(normalizedText)
+  ) {
     return t(locale, "editWriting");
   }
   if (/\b(update|updating|updated)\b/u.test(normalizedText)) {
@@ -261,7 +311,8 @@ function formatToolStatus(
   locale?: Locale,
 ): string {
   if (status === "completed") return t(locale, "completed");
-  if (status === "failed") return `${t(locale, "failed")}${error ? `: ${truncateText(normalizeInlineText(error))}` : ""}`;
+  if (status === "failed")
+    return `${t(locale, "failed")}${error ? `: ${truncateText(normalizeInlineText(error))}` : ""}`;
   if (status === "denied") return t(locale, "denied");
   if (status === "in_progress") return t(locale, "inProgress");
   return t(locale, "pending");
@@ -318,9 +369,10 @@ export function formatBotPermissionRequestSummary(
   if (preview.command) {
     return `${header}\n${formatMarkdownInlineCode(truncateMiddleText(preview.command))}`;
   }
-  const previewFilePaths = preview.filePaths.length > 0
-    ? preview.filePaths
-    : preview.fileChanges.map((change) => change.path);
+  const previewFilePaths =
+    preview.filePaths.length > 0
+      ? preview.filePaths
+      : preview.fileChanges.map((change) => change.path);
   if (previewFilePaths.length > 0) {
     const paths = previewFilePaths
       .slice(0, 3)
@@ -332,13 +384,10 @@ export function formatBotPermissionRequestSummary(
   return header;
 }
 
-export function isBotToolCallReplyTerminal(
-  status?: BotReplyToolCallState["status"],
-): boolean {
-  return status === "completed" ||
-    status === "failed" ||
-    status === "denied" ||
-    status === "stopped";
+export function isBotToolCallReplyTerminal(status?: BotReplyToolCallState["status"]): boolean {
+  return (
+    status === "completed" || status === "failed" || status === "denied" || status === "stopped"
+  );
 }
 
 function formatBotChangeSummary(
@@ -349,15 +398,19 @@ function formatBotChangeSummary(
     return "";
   }
   const lines = [
-    options?.locale === "en-US"
-      ? `${t(options.locale, "changeSummary")}: ${changeSummary.fileCount} files, ${formatBotDiffCount(changeSummary)}`
-      : `${t(options?.locale, "changeSummary")}：${changeSummary.fileCount} 个文件，${formatBotDiffCount(changeSummary)}`,
+    formatChangeSummaryHeader(
+      options?.locale,
+      changeSummary.fileCount,
+      formatBotDiffCount(changeSummary),
+    ),
   ];
   for (const file of changeSummary.files.slice(0, MAX_TOOL_SUMMARY_ITEMS)) {
     lines.push(`- ${formatMarkdownInlineCode(file.path)} (${formatBotDiffCount(file)})`);
   }
   if (changeSummary.files.length > MAX_TOOL_SUMMARY_ITEMS) {
-    lines.push(`- ${t(options?.locale, "moreFiles").replace("{count}", String(changeSummary.files.length - MAX_TOOL_SUMMARY_ITEMS))}`);
+    lines.push(
+      `- ${t(options?.locale, "moreFiles").replace("{count}", String(changeSummary.files.length - MAX_TOOL_SUMMARY_ITEMS))}`,
+    );
   }
   return lines.join("\n");
 }

@@ -1068,6 +1068,42 @@ function ReadonlyTurn({
   );
 }
 
+const READONLY_LABELS: Record<Locale, ReadonlyLabels> = {
+  "zh-CN": {
+    history: "思考过程",
+    computerUse: "电脑操作",
+    explore: "探索",
+    execute: "执行",
+    changes: "修改",
+    artifactPreview: "下载文件",
+    markerCompact: "上下文已压缩",
+    markerModelChange: "模型已切换",
+    unsupportedRows: "部分内容需要更新 ZCode 查看",
+  },
+  "en-US": {
+    history: "Reasoning",
+    computerUse: "Computer use",
+    explore: "Explore",
+    execute: "Execute",
+    changes: "Changes",
+    artifactPreview: "Download file",
+    markerCompact: "Context compacted",
+    markerModelChange: "Model switched",
+    unsupportedRows: "Some content requires a newer version of ZCode",
+  },
+  "uk-UA": {
+    history: "Міркування",
+    computerUse: "Computer Use",
+    explore: "Дослідження",
+    execute: "Виконання",
+    changes: "Зміни",
+    artifactPreview: "Завантажити файл",
+    markerCompact: "Контекст стиснуто",
+    markerModelChange: "Модель змінено",
+    unsupportedRows: "Щоб переглянути частину вмісту, оновіть ZCode",
+  },
+};
+
 export function ConversationShareReadonlyTimeline({
   rows,
   locale = "zh-CN",
@@ -1094,30 +1130,7 @@ export function ConversationShareReadonlyTimeline({
       // 外链来自不可信 Markdown；解析失败时保持不可操作，不交给浏览器未知协议。
     }
   }, []);
-  const labels: ReadonlyLabels =
-    locale === "zh-CN"
-      ? {
-          history: "思考过程",
-          computerUse: "电脑操作",
-          explore: "探索",
-          execute: "执行",
-          changes: "修改",
-          artifactPreview: "下载文件",
-          markerCompact: "上下文已压缩",
-          markerModelChange: "模型已切换",
-          unsupportedRows: "部分内容需要更新 ZCode 查看",
-        }
-      : {
-          history: "Reasoning",
-          computerUse: "Computer use",
-          explore: "Explore",
-          execute: "Execute",
-          changes: "Changes",
-          artifactPreview: "Download file",
-          markerCompact: "Context compacted",
-          markerModelChange: "Model switched",
-          unsupportedRows: "Some content requires a newer version of ZCode",
-        };
+  const labels = READONLY_LABELS[locale] ?? READONLY_LABELS["en-US"];
   const artifactOpenContext = useMemo<ArtifactOpenContextValue | null>(() => {
     if (
       !workspacePath ||

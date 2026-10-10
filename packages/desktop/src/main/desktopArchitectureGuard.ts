@@ -79,6 +79,19 @@ function formatArchitectureMismatchDialogText(
     };
   }
 
+  if (locale === "uk-UA") {
+    return {
+      title: "Невідповідна архітектура",
+      message: "Встановлена збірка не відповідає вашому комп'ютеру",
+      detail:
+        `Запущено збірку ${mismatch.binaryArch}, а цей комп'ютер має архітектуру ${mismatch.nativeArch}. ` +
+        `Зараз застосунок працює через системну трансляцію, тому повільніший і витрачає більше енергії.\n\n` +
+        `Для найкращої продуктивності завантажте та встановіть нативну збірку ${mismatch.nativeArch}.`,
+      downloadButton: "Завантажити",
+      dismissButton: "Не зараз",
+    };
+  }
+
   return {
     title: "Architecture Mismatch",
     message: "The installed build does not match your machine",

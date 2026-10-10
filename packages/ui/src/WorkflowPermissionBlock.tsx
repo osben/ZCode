@@ -189,9 +189,7 @@ export function WorkflowPermissionBlock({
     id: scriptOpen ? "chat.permission.workflow.hideScript" : "chat.permission.workflow.showScript",
   });
   const detail =
-    model === undefined
-      ? undefined
-      : workflowPhasesDetail(intl.formatMessage.bind(intl), model, causalityGraph);
+    model === undefined ? undefined : workflowPhasesDetail(intl, model, causalityGraph);
 
   return (
     <div className="space-y-3" data-workflow-permission-block="true">

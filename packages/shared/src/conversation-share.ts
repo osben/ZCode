@@ -14,6 +14,8 @@ import {
 const CONVERSATION_SHARE_LOCALE_PATH_PREFIX: Readonly<Record<Locale, string>> = {
   "zh-CN": "/cn",
   "en-US": "",
+  // 分享站只有中英两版，uk 走英文站。
+  "uk-UA": "",
 };
 
 const CONVERSATION_SHARE_PATHNAME_RE = /^\/(cn\/)?share\/([^/]+)\/?$/u;

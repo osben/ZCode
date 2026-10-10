@@ -1,8 +1,10 @@
 import {
   DEFAULT_FEEDBACK_TICKET_FRAMEWORK,
+  toServiceLocale,
   type FeedbackTicketModule,
   type FeedbackTicketSeverity,
   type FeedbackTicketType,
+  type Locale,
 } from "@zcode/shared";
 import type { IFeedbackService } from "@zcode/services";
 import { persistFeedbackContactPreference } from "@/feedback/feedbackContactPreference.js";
@@ -53,7 +55,7 @@ export async function startSimplifiedFeedbackSubmission({
   ticketSeverity: FeedbackTicketSeverity;
   ticketModule: FeedbackTicketModule;
   modelContext: FeedbackAgentModelContext;
-  locale: "zh-CN" | "en-US";
+  locale: Locale;
   copy: FeedbackSubmissionCopy;
   formatMessage: (descriptor: { id: string }, values?: Record<string, string>) => string;
   onTicketCreated?: (ticketId: string) => void;
@@ -101,7 +103,7 @@ export async function startSimplifiedFeedbackSubmission({
       },
       source: "desktop-app",
       contact: trimmedContact || undefined,
-      locale,
+      locale: toServiceLocale(locale),
     },
     screenshots: attachmentDrafts,
     includeLogs,

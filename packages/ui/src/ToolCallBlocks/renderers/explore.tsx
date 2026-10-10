@@ -4,6 +4,7 @@ import { extractPlanStepsFromToolInput, extractPlanStepsFromToolOutput } from "@
 import { ToolCallBlock } from "@/ToolCallBlocks.js";
 import { ToolSnapshotFieldNotice } from "@/ToolCallBlocks/ToolSnapshotFieldNotice.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
+import type { IntlInstance } from "@/i18n/createIntl.js";
 import { getExecuteSecondaryText } from "@/ToolCallBlocks/renderers/execute.js";
 import { buildReadSummary, ReadFileChip } from "@/ToolCallBlocks/renderers/read.js";
 import { getSearchPrimaryText } from "@/ToolCallBlocks/renderers/search.js";
@@ -17,9 +18,7 @@ import type { ZCodePlanStep } from "@zcode/shared";
 
 const EXPLORE_TOOL_ICON = <SearchIcon className="size-4 shrink-0 text-foreground-subtle" />;
 
-type IntlLike = {
-  formatMessage: (descriptor: { id: string }, values?: Record<string, string>) => string;
-};
+type IntlLike = Pick<IntlInstance, "formatMessage" | "formatPlural">;
 
 type ExploreChildSummary = {
   animationKey: string;
@@ -126,26 +125,11 @@ type ExploreBucket = "search" | "list" | "file";
 function getBucketLabel(intl: IntlLike, bucket: ExploreBucket, count: number) {
   switch (bucket) {
     case "search":
-      return intl.formatMessage({
-        id:
-          count === 1
-            ? "chat.toolCall.explore.bucket.search.one"
-            : "chat.toolCall.explore.bucket.search.other",
-      });
+      return intl.formatPlural({ id: "chat.toolCall.explore.bucket.search" }, count);
     case "list":
-      return intl.formatMessage({
-        id:
-          count === 1
-            ? "chat.toolCall.explore.bucket.list.one"
-            : "chat.toolCall.explore.bucket.list.other",
-      });
+      return intl.formatPlural({ id: "chat.toolCall.explore.bucket.list" }, count);
     case "file":
-      return intl.formatMessage({
-        id:
-          count === 1
-            ? "chat.toolCall.explore.bucket.file.one"
-            : "chat.toolCall.explore.bucket.file.other",
-      });
+      return intl.formatPlural({ id: "chat.toolCall.explore.bucket.file" }, count);
     default:
       return intl.formatMessage({ id: "chat.toolCall.explore.bucket.items" });
   }

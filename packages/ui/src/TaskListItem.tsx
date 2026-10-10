@@ -46,11 +46,12 @@ import { TaskTitleOverflowText } from "@/components/TaskTitleOverflowText.js";
 import { createTaskWorkbenchDragPreview } from "@/lib/taskWorkbenchDragPreview.js";
 import { runUserAction } from "@/lib/userActionTelemetry.js";
 import { TaskRowActionButton } from "@/workspace-grouped-tasks/task-row-action-button.js";
-import { TaskWorkflowRunLines } from "@/components/workflow-run-line/TaskWorkflowRunLines.js";
+import {
+  TaskWorkflowRunLines,
+  type TaskWorkflowRunLinesIntl,
+} from "@/components/workflow-run-line/TaskWorkflowRunLines.js";
 
-type TaskListItemIntl = {
-  formatMessage: (desc: { id: string }, values?: Record<string, string>) => string;
-};
+type TaskListItemIntl = TaskWorkflowRunLinesIntl;
 
 interface TaskListItemProps {
   workspacePath: string;

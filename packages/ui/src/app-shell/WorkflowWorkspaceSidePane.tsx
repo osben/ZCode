@@ -78,15 +78,13 @@ function WorkspaceNotice({ text, testId }: { text: string; testId: string }) {
   );
 }
 
-/** `1 step` / `3 steps`——词典没有复数语法，单数另配一条。 */
+/** `1 step` / `3 steps`：按当前语言的复数规则选形态。 */
 function countLabel(
-  format: ReturnType<typeof useZCodeIntl>["intl"]["formatMessage"],
+  intl: ReturnType<typeof useZCodeIntl>["intl"],
   noun: "steps" | "phases",
   count: number,
 ): string {
-  return count === 1
-    ? format({ id: `chat.toolCall.workflow.script.summary.${noun}.one` })
-    : format({ id: `chat.toolCall.workflow.script.summary.${noun}` }, { count: String(count) });
+  return intl.formatPlural({ id: `chat.toolCall.workflow.script.summary.${noun}` }, count);
 }
 
 /** 章头：阶段名 · ⟳n · 横线 · `3 steps · 2m 06s`。没有阶段的章不画头。 */
@@ -112,7 +110,7 @@ function ChapterHeader({ chapter }: { chapter: WorkspaceChapter }) {
       ) : null}
       <span aria-hidden className="wf-ws-rule h-0 flex-1 border-t border-border" />
       <span className="whitespace-nowrap font-mono text-ui-xs tabular-nums text-foreground-subtlest">
-        {countLabel(format, "steps", chapter.cards.length)}
+        {countLabel(intl, "steps", chapter.cards.length)}
         {" · "}
         {formatWorkspaceDuration(chapter.endedAt - chapter.startedAt)}
       </span>
@@ -272,8 +270,8 @@ const WorkflowWorkspaceContent = memo(function WorkflowWorkspaceContent({
   // 表头第二行：`3 phases · 9 steps · 4m 12s`——清单到齐且非空才说。
   const summaryParts: string[] = [];
   if (workspace.loaded && cards.length > 0) {
-    if (summary.phases > 0) summaryParts.push(countLabel(format, "phases", summary.phases));
-    summaryParts.push(countLabel(format, "steps", summary.steps));
+    if (summary.phases > 0) summaryParts.push(countLabel(intl, "phases", summary.phases));
+    summaryParts.push(countLabel(intl, "steps", summary.steps));
     summaryParts.push(formatWorkspaceDuration(summary.durationMs));
   }
 

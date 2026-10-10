@@ -13,7 +13,7 @@ export type RunContext = {
   stdout: NodeJS.WriteStream;
 };
 
-export type GlobalLocale = "auto" | "en-US" | "zh-CN";
+export type GlobalLocale = "auto" | "en-US" | "zh-CN" | "uk-UA";
 export type GlobalDetectedLocale = Exclude<GlobalLocale, "auto">;
 
 /**

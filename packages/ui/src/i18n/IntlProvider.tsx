@@ -9,26 +9,30 @@ import {
 } from "react";
 import type { ReactNode } from "react";
 import type { Locale, LocalePreference } from "@zcode/shared";
-import { DEFAULT_LOCALE } from "@zcode/shared";
+import {
+  isLocale,
+  isLocalePreference,
+  resolveSystemLocale as resolveSystemLanguageTag,
+} from "@zcode/shared";
 import type { BroadcastMessage, IBroadcastService, ISettingService } from "@zcode/services";
 import {
   readNavigatorLanguage,
   readSafeLocalStorage,
   writeSafeLocalStorage,
 } from "@/lib/browserEnvironment.js";
+import { createIntl, type IntlInstance } from "./createIntl.js";
 import zhCN from "./locales/zh-CN.js";
 import enUS from "./locales/en-US.js";
+import ukUA from "./locales/uk-UA.js";
 
 /** 语言 → 翻译消息映射 */
 const MESSAGES: Record<Locale, Record<string, string>> = {
   "zh-CN": zhCN,
   "en-US": enUS,
+  "uk-UA": ukUA,
 };
 
-/** 简易 intl 工具：根据 id 查找翻译，支持 {key} 占位符替换 */
-export interface IntlInstance {
-  formatMessage(descriptor: { id: string }, values?: Record<string, string | number>): string;
-}
+export type { IntlInstance };
 
 const LOCALE_PREFERENCE_KEY = "zcode-locale-preference";
 const STATE_LOCALE_CHANNEL = "state:locale";
@@ -36,14 +40,6 @@ const STATE_LOCALE_CHANNEL = "state:locale";
 interface LocaleBroadcastPayload {
   preference: LocalePreference;
   resolvedLocale: Locale;
-}
-
-function isLocale(value: unknown): value is Locale {
-  return value === "zh-CN" || value === "en-US";
-}
-
-function isLocalePreference(value: unknown): value is LocalePreference {
-  return value === "system" || isLocale(value);
 }
 
 function resolveLocaleBroadcastPayload(payload: unknown): LocaleBroadcastPayload | null {
@@ -110,22 +106,6 @@ function shouldApplyLocaleBroadcastMessage(
   return true;
 }
 
-function createIntl(locale: Locale): IntlInstance {
-  // noUncheckedIndexedAccess：用 ?? 回退到默认语言的翻译
-  const messages = MESSAGES[locale] ?? MESSAGES[DEFAULT_LOCALE]!;
-  return {
-    formatMessage({ id }, values) {
-      let msg = messages[id] ?? id;
-      if (values) {
-        for (const [key, val] of Object.entries(values)) {
-          msg = msg.replaceAll(`{${key}}`, String(val));
-        }
-      }
-      return msg;
-    },
-  };
-}
-
 interface IntlContextValue {
   intl: IntlInstance;
   locale: Locale;
@@ -158,14 +138,10 @@ export function ZCodeIntlProvider({
   const applyingBroadcastRef = useRef(false);
   const ignoredLocalLocaleBroadcastPayloadRef = useRef<LocaleBroadcastPayload | null>(null);
   const localePreferenceOperationSeqRef = useRef(0);
-  const resolveNavigatorSystemLocale = useCallback((): Locale => {
-    const language = readNavigatorLanguage();
-    if (!language) {
-      return DEFAULT_LOCALE;
-    }
-
-    return language.toLowerCase().startsWith("zh") ? "zh-CN" : "en-US";
-  }, []);
+  const resolveNavigatorSystemLocale = useCallback(
+    (): Locale => resolveSystemLanguageTag(readNavigatorLanguage()),
+    [],
+  );
   const resolveSystemLocale = useCallback(async (): Promise<Locale> => {
     const resolvedLocale = await resolveHostSystemLocale?.();
     if (isLocale(resolvedLocale)) {
@@ -354,7 +330,7 @@ export function ZCodeIntlProvider({
     [setLocalePreference],
   );
 
-  const intl = useMemo(() => createIntl(locale), [locale]);
+  const intl = useMemo(() => createIntl(locale, MESSAGES), [locale]);
 
   const value = useMemo<IntlContextValue>(
     () => ({ intl, locale, localePreference, setLocale, setLocalePreference }),

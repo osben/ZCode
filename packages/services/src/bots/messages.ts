@@ -1,6 +1,6 @@
 import type { Locale } from "@zcode/shared";
 
-export type BotMessageLocale = Extract<Locale, "zh-CN" | "en-US">;
+export type BotMessageLocale = Locale;
 
 type MessageValues = Record<string, string | number | undefined>;
 
@@ -246,12 +246,141 @@ const messages = {
     replyMissing: "Reply detail option not found.",
     replyChanged: "Third-party reply detail changed to {mode}.",
   },
+  "uk-UA": {
+    botDisabled: "Цього бота не ввімкнено.",
+    privateChatOnly: "Боти поки не підтримують групові чати. Скористайтеся приватним чатом.",
+    bindPrivateOnly: "Прив'язати бота можна лише в приватному чаті.",
+    userNotBound:
+      "Цей бот не прив'язаний. Згенеруйте код прив'язки в інтерфейсі zcode, а потім надішліть **/bind <code>**.",
+    commandNotAllowed: "Цю команду вимкнено для поточного бота.",
+    noWorkspaceAllowed:
+      "Немає доступного робочого простору. Спершу дозвольте робочий простір у налаштуваннях ботів.",
+    workspaceOutOfScope:
+      "Робочий простір у цьому чаті більше не дозволено. Виберіть **/workspace** ще раз.",
+    bindCodeInvalid:
+      "Код прив'язки недійсний або прострочений. Згенеруйте новий код в інтерфейсі zcode.",
+    bindBotMissing: "Не вдалося прив'язати: бота не існує.",
+    bindSuccess: "Прив'язку виконано. Надішліть **/help**, щоб переглянути доступні команди.",
+    weixinActivatedWelcome:
+      "Бот Weixin активний. Надішліть **/help**, щоб переглянути команди, або опишіть, що потрібно зробити.",
+    helpTitle: "Команди бота ZCode:",
+    helpHelp: "**/help** — показати цю довідку",
+    helpBind: "**/bind <code>** — прив'язати цей чат",
+    helpStatus: "**/status** — показати стан робочого простору, моделі й завдання",
+    helpNew: "/new або /clear — почати чернетку нового завдання",
+    helpWorkspace: "**/project** — змінити робочий простір",
+    helpModel: "**/model** — змінити модель",
+    helpMode: "**/mode** — змінити режим виконання",
+    helpThoughtLevel: "**/think** — змінити рівень міркувань",
+    helpReply: "**/reply** — змінити детальність відповідей",
+    webhookSecretInvalid: "Не вдалося перевірити секрет вебхука.",
+    callbackFailed: "Не вдалося обробити зворотний виклик бота: {message}",
+    sessionExpiredNewTaskHint:
+      "Сеанс поточного завдання завершився. Можливо, його очищено або це повідомлення бота застаріло. Надішліть **/new task**, щоб створити нове завдання й продовжити.",
+    deletedTaskReplaced:
+      "Попереднє завдання видалено, тому я створив для вас нове. Це повідомлення буде оброблено в новому завданні без історії попередньої розмови.",
+    received: "Отримано.",
+    attachmentOnlyPrompt: "Перегляньте вкладення й допоможіть на основі його вмісту.",
+    attachmentRejected: "Не вдалося обробити вкладення: {message}",
+    attachmentDownloadUnavailable:
+      "Не вдалося завантажити вкладення. Можливо, термін дії файлу минув, його видалено або бот не має дозволу на його читання. Надішліть вкладення ще раз і повторіть спробу.",
+    attachmentTooLarge: "Вкладення перевищує 5 МБ. Стисніть його й надішліть ще раз.",
+    selectionCancelled: "Скасовано.",
+    selectionCancelOption: "Скасувати",
+    selectionTextHint: "Надішліть номер, щоб вибрати, або 0, щоб скасувати.",
+    selectionTextHintNoCancel: "Надішліть номер, щоб вибрати.",
+    newTaskDraft: "Створено чернетку нового завдання в {workspacePath}.",
+    workspaceSelectTitle: "Поточний робочий простір: {workspace}\nВиберіть робочий простір",
+    workspaceMissing: "Доступних робочих просторів не знайдено.",
+    modelSelectTitle: "Виберіть модель",
+    modelProviderSelectTitle: "Поточна модель: {model}\nВиберіть постачальника моделі",
+    modelModelSelectTitle: "Поточна модель: {model}\nВиберіть модель",
+    modelMissing: "Модель не знайдено.",
+    sessionModelUnavailable:
+      "Вибрана для сеансу модель недоступна. Виберіть її знову за допомогою /model. Ваш збережений вибір не змінено.",
+    modeSelectTitle: "Поточний режим: {mode}\nВиберіть режим",
+    modeMissing: "Варіант режиму не знайдено.",
+    modeChanged: "Режим поточного завдання змінено на {mode}.",
+    modeLocked: "Цей бот заблоковано в режимі виконання **yolo**, змінити його не можна.",
+    thoughtLevelSelectTitle: "Поточний рівень міркувань: {level}\nВиберіть рівень міркувань",
+    thoughtLevelMissing: "Поточна модель не підтримує рівні міркувань.",
+    thoughtLevelChanged: "Рівень міркувань поточного завдання змінено на {level}.",
+    modelProviderMissing: "Постачальника моделі не знайдено.",
+    modelChanged: "Модель поточного завдання змінено на {model}.",
+    taskMissing: "Завдання не знайдено.",
+    taskChanged: "Перемкнуто на завдання: {title}",
+    noActiveTask: "Немає активного завдання.",
+    permissionExpired: "Термін дії цього запиту дозволу минув. Обробіть його в інтерфейсі zcode.",
+    permissionHandled: "Запит дозволу вже оброблено.",
+    permissionDenied: "Запит дозволу відхилено.",
+    permissionSubmitted: "Відповідь на запит дозволу надіслано.",
+    elicitationExpired: "Термін дії цього запитання минув. Обробіть його в інтерфейсі zcode.",
+    elicitationHandled: "Запитання вже оброблено.",
+    elicitationSubmitted: "Відповідь на запитання надіслано.",
+    elicitationCancelled: "Запитання скасовано.",
+    elicitationCustomOption: "Власна відповідь",
+    elicitationCustomPlaceholder: "Введіть власну відповідь",
+    elicitationQuestionTitle: "Запитання",
+    planApprovalTitle: "Перегляньте цей план реалізації.",
+    planApprovalHeader: "План реалізації",
+    planApprovalApprove: "Схвалити",
+    planApprovalApproveDescription: "Вийти з режиму планування й почати реалізацію.",
+    elicitationCancelledCard: "✅ Запитання скасовано",
+    elicitationSubmitOption: "Готово",
+    elicitationSkipOption: "Пропустити",
+    elicitationMultiSelectHint:
+      "Можна вибрати кілька варіантів; виберіть варіант ще раз, щоб зняти вибір, а потім натисніть «Готово».",
+    elicitationTextHint: "Також можна надіслати текст як власну відповідь.",
+    statusWorkspace: "Робочий простір",
+    statusModel: "Модель",
+    statusTask: "Завдання",
+    statusState: "Стан",
+    statusWorked: "Тривалість роботи",
+    statusProgress: "Прогрес",
+    statusDraft: "чернетка",
+    statusRemoteDisconnected: "віддалене з'єднання розірвано",
+    statusCancelled: "скасовано",
+    statusStopped: "зупинено",
+    streamingStatusRunning: "Виконується",
+    streamingStatusCompleted: "Завершено",
+    streamingStatusFailed: "Помилка",
+    streamingWorking: "Виконується...",
+    streamingToolSummaries: "Підсумки інструментів",
+    stopSubmitted: "Генерацію поточного завдання зупинено.",
+    unknownCommand: "Невідома команда: **/{command}**",
+    taskFailed: "Не вдалося виконати завдання: {message}",
+    taskRunning:
+      "Поточне завдання ще виконується. Спробуйте пізніше або зупиніть його командою **/stop**.",
+    taskSelectTitle: "Поточне завдання: {task}\nВиберіть завдання",
+    noHistoryTasks: "У поточному робочому просторі немає завдань в історії.",
+    remoteDisconnected:
+      "Віддалений робочий простір {workspacePath} не підключено. Спершу надішліть **/reconnect**, а потім повторіть спробу. Попередній запит не виконано.",
+    remoteDisconnectedStatus:
+      "Віддалений робочий простір {workspacePath} не підключено. Надішліть **/reconnect**, щоб відновити з'єднання.",
+    remoteWorkspaceSelectedDisconnected:
+      "Перемкнуто на {workspacePath}, але віддалений робочий простір не підключено. Перш ніж виконувати завдання, надішліть **/reconnect**.",
+    remoteReconnectStarting:
+      "Віддалений робочий простір {workspacePath} не підключено. Підключаємо знову...",
+    remoteReconnectFailed:
+      "Не вдалося знову підключити віддалений робочий простір {workspacePath}: {message}\nПопередній запит не виконано.",
+    remoteReconnectUnavailable:
+      "Віддалений робочий простір {workspacePath} не підключено, а бот не має доступу до служби віддаленого підключення. Відкрийте цей віддалений проєкт у ZCode і повторіть спробу.",
+    remoteReconnectLocal:
+      "Поточний робочий простір локальний, тому повторно підключати його не потрібно. Надішліть **/workspace**, щоб перейти до віддаленого проєкту.",
+    remoteReconnectAlreadyConnected: "Віддалений робочий простір {workspacePath} підключено.",
+    replySelectTitle:
+      "Поточна детальність відповідей для сторонніх сервісів: {mode}\nВиберіть детальність відповідей",
+    replyMissing: "Варіант детальності відповідей не знайдено.",
+    replyChanged: "Детальність відповідей для сторонніх сервісів змінено на {mode}.",
+  },
 } as const;
 
 export type BotMessageId = keyof (typeof messages)[BotMessageLocale];
 
 export function normalizeBotMessageLocale(locale: Locale | undefined): BotMessageLocale {
-  return locale === "en-US" ? "en-US" : DEFAULT_BOT_MESSAGE_LOCALE;
+  // 未指定语言时保持中文默认；Bot 文案覆盖全部界面语言（含 uk-UA），
+  // 不再经 toServiceLocale 折叠成 en-US，否则乌克兰语用户只能看到英文。
+  return locale ?? DEFAULT_BOT_MESSAGE_LOCALE;
 }
 
 export function formatBotMessage(
