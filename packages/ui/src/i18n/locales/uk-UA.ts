@@ -6971,6 +6971,78 @@ const ukUA: Record<string, string> = {
   "scheduledPreview.toast.running": "Виконується «{title}»…",
   "scheduledPreview.toast.view": "Переглянути",
   "scheduledPreview.addSchedule": "Додати розклад",
+  "settings.instructions.title": "Інструкції",
+  "settings.instructions.description":
+    "Глобальні інструкції в ~/.zcode/AGENTS.md на хості активного робочого простору. Вони об'єднуються з проєктним AGENTS.md і застосовуються до нових і перезапущених сеансів.",
+  "settings.instructions.desktopOnly":
+    "Глобальні інструкції можна редагувати лише в настільній версії.",
+  "settings.instructions.host.local": "Цей комп'ютер",
+  "settings.instructions.linkTarget": "Посилання → {target}",
+  "settings.instructions.dockerHint":
+    "Файл розташований усередині контейнера і може зникнути після перестворення контейнера.",
+  "settings.instructions.pinnedHostNotice":
+    "Активний робочий простір на іншому хості. Редактор усе ще працює з {host}, доки ви не збережете або не відхилите чернетку.",
+  "settings.instructions.effectHint":
+    "Застосовується до нових і перезапущених сеансів. Запущені сеанси та відкриті чернетки зберігають попередні інструкції.",
+  "settings.instructions.waitingRemote": "Очікуємо з'єднання з віддаленим хостом...",
+  "settings.instructions.unsupportedHost":
+    "Цей хост поки не підтримує редагування глобальних інструкцій. Оновіть ZCode на віддаленому хості та спробуйте ще раз.",
+  "settings.instructions.loadFailed": "Не вдалося прочитати файл глобальних інструкцій.",
+  "settings.instructions.retry": "Повторити",
+  "settings.instructions.error.BROKEN_LINK":
+    "~/.zcode/AGENTS.md — непрацездатне символічне посилання. Виправте або видаліть його та спробуйте ще раз.",
+  "settings.instructions.error.NOT_REGULAR_FILE":
+    "~/.zcode/AGENTS.md — не звичайний файл. Видаліть його або замініть звичайним файлом і спробуйте ще раз.",
+  "settings.instructions.error.NOT_UTF8":
+    "Файл не є коректним текстом UTF-8, тому його не можна редагувати тут.",
+  "settings.instructions.error.TOO_LARGE_TO_EDIT":
+    "Файл завеликий для редагування тут ({size}). Відредагуйте його в зовнішньому редакторі.",
+  "settings.instructions.error.READ_FAILED":
+    "Не вдалося прочитати файл. Перевірте дозволи та спробуйте ще раз.",
+  "settings.instructions.reveal": "Показати у файловому менеджері",
+  "settings.instructions.missingHint":
+    "Файл ще не створено. Під час збереження його буде створено.",
+  "settings.instructions.mixedLineEndings":
+    "У файлі змішані закінчення рядків. Під час збереження їх буде нормалізовано до {eol}.",
+  "settings.instructions.linkDuplicateHint":
+    "Якщо ціль посилання — проєктний AGENTS.md, його вміст буде додано двічі, коли цей проєкт відкрито.",
+  "settings.instructions.tab.edit": "Редагування",
+  "settings.instructions.tab.preview": "Перегляд",
+  "settings.instructions.placeholder":
+    "Напишіть інструкції, що застосовуються до кожного проєкту...",
+  "settings.instructions.editorLabel": "Глобальні інструкції",
+  "settings.instructions.previewEmpty": "Немає чого переглядати.",
+  "settings.instructions.size": "{size} із {limit} зчитано агентом",
+  "settings.instructions.overAgentLimit": "Агент зчитує лише перші {limit}.",
+  "settings.instructions.save": "Зберегти",
+  "settings.instructions.discardChanges": "Відхилити зміни",
+  "settings.instructions.unsaved": "Незбережені зміни",
+  "settings.instructions.saved":
+    "Глобальні інструкції збережено. Вони застосовуються до нових і перезапущених сеансів.",
+  "settings.instructions.saveFailed": "Не вдалося зберегти глобальні інструкції ({code}).",
+  "settings.instructions.saveFailedGeneric": "Не вдалося зберегти глобальні інструкції.",
+  "settings.instructions.import.action": "Імпортувати з CLAUDE.md",
+  "settings.instructions.import.missing": "~/.claude/CLAUDE.md не знайдено на цьому хості.",
+  "settings.instructions.import.failed": "Не вдалося імпортувати CLAUDE.md ({code}).",
+  "settings.instructions.import.failedGeneric": "Не вдалося імпортувати CLAUDE.md.",
+  "settings.instructions.import.confirmTitle": "Замінити поточну чернетку?",
+  "settings.instructions.import.confirmDescription":
+    "Ваші незбережені зміни буде замінено вмістом ~/.claude/CLAUDE.md.",
+  "settings.instructions.import.confirmAction": "Замінити",
+  "settings.instructions.import.done":
+    "CLAUDE.md імпортовано до чернетки. Збережіть, щоб застосувати.",
+  "settings.instructions.import.doneWithAtImports":
+    "CLAUDE.md імпортовано до чернетки. ZCode не розгортає @-імпорти. Збережіть, щоб застосувати.",
+  "settings.instructions.discard.title": "Відхилити незбережені інструкції?",
+  "settings.instructions.discard.leave": "Незбережені зміни глобальних інструкцій буде втрачено.",
+  "settings.instructions.discard.hostChanged":
+    "Активний робочий простір перемкнено на інший хост. Відхилити чернетку та редагувати інструкції цього хоста?",
+  "settings.instructions.discard.confirm": "Відхилити",
+  "settings.instructions.conflict.title": "Файл змінено на диску",
+  "settings.instructions.conflict.description":
+    "~/.zcode/AGENTS.md було змінено після відкриття. Перезавантажте, щоб відхилити чернетку, або перезапишіть файл своєю чернеткою.",
+  "settings.instructions.conflict.reload": "Перезавантажити",
+  "settings.instructions.conflict.overwrite": "Перезаписати",
 };
 
 export default ukUA;

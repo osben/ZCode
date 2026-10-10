@@ -25,9 +25,7 @@
           pathname.startsWith("/cn/share/") ||
           pathname === "/share" ||
           pathname.startsWith("/share/");
-        const DEFAULT_THEME = isConversationSharePath(window.location.pathname)
-          ? "light"
-          : "dark";
+        const DEFAULT_THEME = isConversationSharePath(window.location.pathname) ? "light" : "dark";
         const DEFAULT_PALETTE = "zai";
         const ACCENT_PALETTES = [
           "ocean",
