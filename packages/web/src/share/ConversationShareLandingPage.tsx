@@ -13,7 +13,7 @@ import { BIGMODEL_PROVIDER_ID, ZAI_PROVIDER_ID } from "@zcode/shared";
 import type { ConversationSharePreview } from "@zcode/shared";
 import { ConversationShareReadonlyTimeline } from "@zcode/ui/conversation-share-readonly";
 import { renderOAuthProviderIcon } from "@zcode/ui/oauth-provider-icon";
-import { applyTheme, resolveTheme, type Theme } from "@zcode/ui/useTheme";
+import { applyTheme, readStoredThemeSelection, resolveTheme, type Theme } from "@zcode/ui/useTheme";
 import "./conversationShareLandingPage.css";
 import type { WebOAuthProviderId } from "../auth/browserOAuthCredentialRepo.js";
 import {
@@ -202,7 +202,7 @@ function ShareThemeToggle({
   onThemeChange?: (theme: Theme) => void;
 }) {
   const resolvedTheme = resolveTheme(theme);
-  const nextTheme = resolvedTheme === "dark" ? "zai-light" : "zai-dark";
+  const nextTheme = resolvedTheme === "dark" ? "light" : "dark";
   const label = resolvedTheme === "dark" ? copy.switchToLightTheme : copy.switchToDarkTheme;
   const Icon = resolvedTheme === "dark" ? SunIcon : MoonIcon;
 
@@ -272,7 +272,7 @@ export function ConversationShareLandingPage({
 }) {
   const resolvedLocale = localeOf(locale);
   const copy = COPY[resolvedLocale];
-  const activeTheme = theme ?? "zai-light";
+  const activeTheme = theme ?? "light";
   // preview 到手后把会话标题写进浏览器标签；main.tsx 只能先给一个语言正确的兜底标题。
   const shareTitle = preview.share.title;
   useEffect(() => {
@@ -707,16 +707,18 @@ export function ConversationShareLandingLoader({
   theme?: Theme;
 }) {
   const [state, setState] = useState<ConversationShareLandingState>({ kind: "loading" });
-  const [activeTheme, setActiveTheme] = useState<Theme>(theme ?? "zai-light");
+  const [activeTheme, setActiveTheme] = useState<Theme>(theme ?? "light");
   const handleThemeChange = useCallback((nextTheme: Theme) => {
     localStorage.setItem("zcode-theme", nextTheme);
     setActiveTheme(nextTheme);
-    applyTheme(nextTheme);
+    // 分享页只切换明暗模式；配色沿用用户在设置里选的 palette，避免被静默重置为默认值。
+    applyTheme(nextTheme, readStoredThemeSelection("light").palette);
   }, []);
   useEffect(() => {
     if (activeTheme !== "system") return;
     const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
-    const handleSystemThemeChange = () => applyTheme("system");
+    const handleSystemThemeChange = () =>
+      applyTheme("system", readStoredThemeSelection("light").palette);
     mediaQuery.addEventListener("change", handleSystemThemeChange);
     return () => mediaQuery.removeEventListener("change", handleSystemThemeChange);
   }, [activeTheme]);

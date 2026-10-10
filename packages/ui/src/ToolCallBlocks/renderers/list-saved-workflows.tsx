@@ -166,24 +166,10 @@ export function ListSavedWorkflowsToolCallBlock(context: ToolCallBlockRenderCont
 
   const workflowCount = result?.workflows.length ?? 0;
   const invalidCount = result?.invalid.length ?? 0;
-  // 轻量 intl 没有 ICU 复数，单复数各用独立 message key（同 workflow.error/errors 的先例）。
-  const countLabel = intl.formatMessage(
-    {
-      id:
-        workflowCount === 1
-          ? "chat.toolCall.workflow.list.countOne"
-          : "chat.toolCall.workflow.list.count",
-    },
-    { count: workflowCount },
-  );
-  const invalidLabel = intl.formatMessage(
-    {
-      id:
-        invalidCount === 1
-          ? "chat.toolCall.workflow.list.invalidOne"
-          : "chat.toolCall.workflow.list.invalid",
-    },
-    { count: invalidCount },
+  const countLabel = intl.formatPlural({ id: "chat.toolCall.workflow.list.count" }, workflowCount);
+  const invalidLabel = intl.formatPlural(
+    { id: "chat.toolCall.workflow.list.invalid" },
+    invalidCount,
   );
 
   // ToolLayout 是 memo 组件：内联 JSX prop 每次渲染都是新引用，会让记忆化失效。

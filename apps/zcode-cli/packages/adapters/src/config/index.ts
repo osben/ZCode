@@ -212,6 +212,9 @@ class ConfigStore {
     if (config.ui?.theme !== undefined) {
       this.set(ConfigKey.UiTheme, config.ui.theme, scope);
     }
+    if (config.ui?.palette !== undefined) {
+      this.set(ConfigKey.UiPalette, config.ui.palette, scope);
+    }
   }
 
   subscribe<K extends ConfigKey>(key: K, handler: Handler<K>): Unsubscribe {
@@ -332,6 +335,7 @@ export class ConfigPortImpl implements ConfigPort {
       ui: {
         locale: this.store.get(ConfigKey.UiLocale) ?? DefaultConfig.ui.locale,
         theme: this.store.get(ConfigKey.UiTheme) ?? DefaultConfig.ui.theme,
+        palette: this.store.get(ConfigKey.UiPalette) ?? DefaultConfig.ui.palette,
       },
     };
   }
@@ -443,6 +447,8 @@ function getDefaultValue(key: ConfigKey): unknown {
       return defaults.ui.locale;
     case ConfigKey.UiTheme:
       return defaults.ui.theme;
+    case ConfigKey.UiPalette:
+      return defaults.ui.palette;
     default:
       return undefined;
   }

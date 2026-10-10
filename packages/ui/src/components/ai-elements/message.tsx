@@ -849,9 +849,7 @@ function resolveMessageCodeTheme(
       : codePreviewSettings.lightTheme;
   }
 
-  return theme === "dark" || theme === "zai-dark"
-    ? codePreviewSettings.darkTheme
-    : codePreviewSettings.lightTheme;
+  return theme === "dark" ? codePreviewSettings.darkTheme : codePreviewSettings.lightTheme;
 }
 
 export function buildMessageStreamdownRenderKey(params: {

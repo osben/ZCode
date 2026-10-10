@@ -1,4 +1,12 @@
-type WebAuthLocale = "zh-CN" | "en-US";
+import {
+  FALLBACK_UI_LOCALE,
+  resolveSystemLocale,
+  toServiceLocale,
+  type ServiceLocale,
+} from "@zcode/shared";
+
+// 登录页文案只提供中英文：系统语言先解析为界面语言，再映射到服务语言。
+type WebAuthLocale = ServiceLocale;
 
 interface WebAuthPageCopy {
   brand: string;
@@ -58,7 +66,7 @@ function resolveWebAuthLocale(language?: string): WebAuthLocale {
     navigator.languages?.[0] ??
     "";
 
-  return candidate.toLowerCase().startsWith("zh") ? "zh-CN" : "en-US";
+  return toServiceLocale(resolveSystemLocale(candidate, FALLBACK_UI_LOCALE));
 }
 
 export function getWebAuthCopy(locale: WebAuthLocale = resolveWebAuthLocale()): WebAuthPageCopy {

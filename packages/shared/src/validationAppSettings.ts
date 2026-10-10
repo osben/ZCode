@@ -32,8 +32,8 @@ export const appSettingsOccupationEnum = appSettingsOccupationSchema;
 
 const nonEmptyStringSchema = z.string().trim().min(1);
 
-export const localeSchema = z.enum(["zh-CN", "en-US"]);
-const localePreferenceSchema = z.enum(["system", "zh-CN", "en-US"]);
+export const localeSchema = z.enum(["zh-CN", "en-US", "uk-UA"]);
+const localePreferenceSchema = z.enum(["system", "zh-CN", "en-US", "uk-UA"]);
 const zcodeInteractionBehaviorSchema = z.enum(["queue", "guide"]);
 const electronReleaseChannelSchema = z.enum(["stable", "preview"]);
 const desktopZoomLevelSchema = z.number().int().min(-3).max(5);
@@ -419,10 +419,12 @@ function migrateLegacyWorkspaceSession(value: unknown): unknown {
 
 const appSettingsObjectSchema = z.object({
   recentProjects: z.array(z.string()).default([]),
-  locale: localeSchema.default("zh-CN"),
+  // 未知 locale（如更新版本写入的新语言后回退到旧版本）只回落为默认值：
+  // 严格 enum 失败会让整个 setting.json 解析失败，settingService 退回 defaultSettings() 并在下次写入时抹掉全部设置。
+  locale: localeSchema.default("zh-CN").catch("zh-CN"),
   // 快捷键用户覆盖（语义校验在 ui/src/shortcuts 生效表阶段容错，schema 只管形状）
   shortcutBindings: z.record(z.string(), z.array(z.string())).optional(),
-  localePreference: localePreferenceSchema.default("system"),
+  localePreference: localePreferenceSchema.default("system").catch("system"),
   terminalInheritSystemProfile: z.boolean().default(true),
   terminalFontFamily: nonEmptyStringSchema.optional(),
   integratedTerminalShell: integratedTerminalShellSelectionSchema.optional(),
@@ -466,7 +468,8 @@ const appSettingsObjectSchema = z.object({
   lastActiveTabIndex: z.number().int().nonnegative().default(0),
   lastActiveTaskByWorkspace: z.record(z.string(), z.string()).optional(),
   dataBaseDir: z.string().trim().min(1).optional(),
-  pendingPostUpdateReleaseNotes: postUpdateReleaseNotesPayloadSchema.optional(),
+  // releaseNotesByLocale 以 localeSchema 为 key，未知语言会让整份设置解析失败；丢弃待展示的更新说明代价远小于丢失全部设置。
+  pendingPostUpdateReleaseNotes: postUpdateReleaseNotesPayloadSchema.optional().catch(undefined),
   receivePreviewUpdates: z.boolean().default(false),
   autoDownloadAndInstallUpdates: z.boolean().default(false),
   skippedElectronUpdateVersions: skippedElectronUpdateVersionsSchema,

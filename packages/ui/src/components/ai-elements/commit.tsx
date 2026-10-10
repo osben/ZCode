@@ -10,6 +10,7 @@ import { Avatar, AvatarFallback } from "../ui/avatar.js";
 import { Button } from "../ui/button.js";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "../ui/collapsible.js";
 import { cn } from "../lib/utils.js";
+import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { CheckIcon, CopyIcon, FileIcon, GitCommitIcon, MinusIcon, PlusIcon } from "lucide-react";
 import type { ComponentProps, HTMLAttributes } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -103,21 +104,19 @@ export type CommitTimestampProps = HTMLAttributes<HTMLTimeElement> & {
   date: Date;
 };
 
-const relativeTimeFormat = new Intl.RelativeTimeFormat("en", {
-  numeric: "auto",
-});
-
-const formatRelativeDate = (date: Date) => {
+// 上游写死 "en"，在中文/乌克兰文界面里也会显示「2 days ago」；改为跟随应用语言。
+const formatRelativeDate = (date: Date, locale: string) => {
   const days = Math.round((date.getTime() - Date.now()) / (1000 * 60 * 60 * 24));
-  return relativeTimeFormat.format(days, "day");
+  return new Intl.RelativeTimeFormat(locale, { numeric: "auto" }).format(days, "day");
 };
 
 export const CommitTimestamp = ({ date, className, children, ...props }: CommitTimestampProps) => {
+  const { locale } = useZCodeIntl();
   const [formatted, setFormatted] = useState("");
 
   const updateFormatted = useCallback(() => {
-    setFormatted(formatRelativeDate(date));
-  }, [date]);
+    setFormatted(formatRelativeDate(date, locale));
+  }, [date, locale]);
 
   useEffect(() => {
     updateFormatted();

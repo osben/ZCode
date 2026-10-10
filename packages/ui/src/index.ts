@@ -23,8 +23,7 @@ export type {
   GitGraphRefKind,
 } from "./git-graph/layout.js";
 export { SSHDialog, RemoteConnectionDialog } from "./SSHDialog.js";
-export { useTheme } from "./useTheme.js";
-export type { Theme } from "./useTheme.js";
+export type { Theme, ThemePalette, ThemeSelection } from "./useTheme.js";
 export { useTestActions } from "./test-actions.js";
 export type { TestActions } from "./test-actions.js";
 export { StoreProvider, useZCodeStore } from "./store/StoreProvider.js";

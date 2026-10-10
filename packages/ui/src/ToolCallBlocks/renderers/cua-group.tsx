@@ -185,26 +185,10 @@ export function CuaGroupToolCallBlock(context: CuaGroupRenderProps) {
   const isRunning = context.isRunning || toolCall.status === "in_progress";
   const eventCount = events.length;
   const messageCount = events.filter((event) => event.kind === "assistantMessage").length;
-  const eventCountText = intl.formatMessage(
-    {
-      id:
-        eventCount === 1
-          ? "chat.toolCall.cua.group.event.one"
-          : "chat.toolCall.cua.group.event.other",
-    },
-    { count: eventCount },
-  );
+  const eventCountText = intl.formatPlural({ id: "chat.toolCall.cua.group.event" }, eventCount);
   const messageCountText =
     messageCount > 0 || !isRunning
-      ? intl.formatMessage(
-          {
-            id:
-              messageCount === 1
-                ? "chat.toolCall.cua.group.message.one"
-                : "chat.toolCall.cua.group.message.other",
-          },
-          { count: messageCount },
-        )
+      ? intl.formatPlural({ id: "chat.toolCall.cua.group.message" }, messageCount)
       : null;
   const animatedTextClass = isRunning
     ? "cua-group-gradient-text min-w-0 truncate"

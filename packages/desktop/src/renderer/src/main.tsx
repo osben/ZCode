@@ -16,6 +16,12 @@ import {
   setReactErrorArmsReporter,
 } from "@zcode/ui";
 import "@zcode/ui/styles.css";
+import {
+  applyTheme,
+  migrateThemeSelection,
+  THEME_PALETTE_STORAGE_KEY,
+  THEME_STORAGE_KEY,
+} from "@zcode/ui/useTheme";
 import { connectViaMessagePort, createMessagePortServiceConnection } from "@zcode/client";
 import {
   InternalChannels,
@@ -26,6 +32,7 @@ import {
   LAUNCH_MARKS_QUERY_KEY,
   type LaunchMarks,
   DEFAULT_LOCALE,
+  isLocale,
 } from "@zcode/shared";
 import type { Locale } from "@zcode/shared";
 import type { IServiceAccessor } from "@zcode/services";
@@ -73,30 +80,13 @@ function registerE2EStoreBridgesIfEnabled() {
   });
 }
 
-// 初始化主题：默认 Zai dark，后续由 useTheme hook 接管
+// 首屏前应用已保存的明暗模式与配色，避免主题闪烁；运行后由 store 接管。
 {
-  const saved = localStorage.getItem("zcode-theme") || "zai-dark";
-  const resolved =
-    saved === "system"
-      ? window.matchMedia("(prefers-color-scheme: dark)").matches
-        ? "dark"
-        : "light"
-      : saved === "dark" || saved === "zai-dark"
-        ? "dark"
-        : "light";
-  const appliedTheme =
-    saved === "system"
-      ? resolved === "dark"
-        ? "zai-dark"
-        : "zai-light"
-      : saved === "dark"
-        ? "zai-dark"
-        : saved === "light"
-          ? "zai-light"
-          : saved;
-  if (resolved === "dark") document.documentElement.classList.add("dark");
-  document.documentElement.classList.toggle("theme-zai-light", appliedTheme === "zai-light");
-  document.documentElement.classList.toggle("theme-zai-dark", appliedTheme === "zai-dark");
+  const { mode, palette } = migrateThemeSelection(
+    localStorage.getItem(THEME_STORAGE_KEY),
+    localStorage.getItem(THEME_PALETTE_STORAGE_KEY),
+  );
+  applyTheme(mode, palette);
 }
 
 const isMacDesktop = navigator.userAgent.includes("Mac");
@@ -133,10 +123,7 @@ const initialWorkspacePurpose = readStringFlag("initialWorkspacePurpose");
 const unavailableWorkspacePath = readStringFlag("unavailableWorkspacePath");
 const windowKind = readStringFlag("windowKind");
 const initialLocaleFlag = readStringFlag("locale");
-const initialLocale: Locale =
-  initialLocaleFlag === "zh-CN" || initialLocaleFlag === "en-US"
-    ? initialLocaleFlag
-    : DEFAULT_LOCALE;
+const initialLocale: Locale = isLocale(initialLocaleFlag) ? initialLocaleFlag : DEFAULT_LOCALE;
 let baseServicesForRemoteSessions: IServiceAccessor | null = null;
 const pendingRemoteWorkspaceServicePorts: RemoteWorkspaceServicePortRegistration[] = [];
 

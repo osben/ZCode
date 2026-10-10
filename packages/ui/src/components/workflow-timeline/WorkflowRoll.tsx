@@ -93,15 +93,7 @@ export function WorkflowRoll({
           className="col-span-2 mt-1.5 min-w-0 text-ui-xs text-foreground-subtlest"
           data-testid="workflow-roll-unlisted"
         >
-          {intl.formatMessage(
-            {
-              id:
-                unlisted === 1
-                  ? "chat.toolCall.workflow.timeline.roster.unlisted.one"
-                  : "chat.toolCall.workflow.timeline.roster.unlisted.many",
-            },
-            { count: unlisted },
-          )}
+          {intl.formatPlural({ id: "chat.toolCall.workflow.timeline.roster.unlisted" }, unlisted)}
         </p>
       )}
     </div>

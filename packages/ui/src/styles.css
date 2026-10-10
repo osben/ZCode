@@ -750,6 +750,279 @@ body {
 }
 
 /*
+ * 强调色调色板同时覆盖 --color-brand、--color-accent 与 --color-primary（按钮、开关、复选框、徽标的主色块），
+ * 否则选择结果在界面上几乎不可见。主色前景色在 light 下为浅色、dark 下为深色，由 test/themeContrast.test.ts 校验 4.5:1。
+ * 表面 token（background、sidebar、header、panel、card、popover、input）以及窗口根背景 --color-background-win-alt（可见的侧栏）同样按调色板覆盖，原因同上。
+ * light 块 (0,1,0) 排在 @theme 输出的 :root 之后生效；dark 块 (0,2,0) 在 .dark 下覆盖。
+ * 十六进制值必须与 lib/themePalettes.ts 的 accent 一致，由 test/themeContrast.test.ts 校验。
+ * --color-ring 同样跟随主色：styles.css 中未定义该 token，否则 ring-ring 与 outline 焦点样式无颜色。
+ * var() 在元素上解析，因此 dark 下 --color-primary 取深色块的值，无需单独声明 dark 块。
+ */
+.palette-ocean {
+  --color-brand: #2563eb;
+  --color-accent: color-mix(in oklab, #2563eb 12%, transparent);
+  --color-primary: #2563eb;
+  --color-primary-foreground: #fafafa;
+  --color-ring: var(--color-primary);
+  --color-background: #e4ecfb;
+  --color-sidebar: #c6d7f7;
+  --color-background-win-alt: #ced7e8;
+  --color-background-alt: color-mix(in oklab, var(--color-background-win-alt) 60%, transparent);
+  --color-header: #c6d7f7;
+  --color-panel: #c6d7f7;
+  --color-card: #f4f8ff;
+  --color-popover: #f4f8ff;
+  --color-input: #f4f8ff;
+}
+
+.palette-ocean.dark {
+  --color-brand: #60a5fa;
+  --color-accent: color-mix(in oklab, #60a5fa 16%, transparent);
+  --color-primary: #60a5fa;
+  --color-primary-foreground: #0a0a0a;
+  --color-background: #20262e;
+  --color-sidebar: #12171d;
+  --color-background-win-alt: #2d343c;
+  --color-background-alt: color-mix(in oklab, var(--color-background-win-alt) 60%, transparent);
+  --color-header: #20262e;
+  --color-panel: #20262e;
+  --color-card: #2c3037;
+  --color-popover: #2c3037;
+  --color-input: #2c3037;
+}
+
+.palette-forest {
+  --color-brand: #15803d;
+  --color-accent: color-mix(in oklab, #15803d 12%, transparent);
+  --color-primary: #15803d;
+  --color-primary-foreground: #fafafa;
+  --color-ring: var(--color-primary);
+  --color-background: #e5eee6;
+  --color-sidebar: #c8dbcb;
+  --color-background-win-alt: #ced9d0;
+  --color-background-alt: color-mix(in oklab, var(--color-background-win-alt) 60%, transparent);
+  --color-header: #c8dbcb;
+  --color-panel: #c8dbcb;
+  --color-card: #f4f9f5;
+  --color-popover: #f4f9f5;
+  --color-input: #f4f9f5;
+}
+
+.palette-forest.dark {
+  --color-brand: #4ade80;
+  --color-accent: color-mix(in oklab, #4ade80 16%, transparent);
+  --color-primary: #4ade80;
+  --color-primary-foreground: #0a0a0a;
+  --color-background: #202b23;
+  --color-sidebar: #121b14;
+  --color-background-win-alt: #2e3930;
+  --color-background-alt: color-mix(in oklab, var(--color-background-win-alt) 60%, transparent);
+  --color-header: #202b23;
+  --color-panel: #202b23;
+  --color-card: #2c342e;
+  --color-popover: #2c342e;
+  --color-input: #2c342e;
+}
+
+.palette-ember {
+  --color-brand: #c2410c;
+  --color-accent: color-mix(in oklab, #c2410c 12%, transparent);
+  --color-primary: #c2410c;
+  --color-primary-foreground: #fafafa;
+  --color-ring: var(--color-primary);
+  --color-background: #f7e8e3;
+  --color-sidebar: #efcfc5;
+  --color-background-win-alt: #e4d2cd;
+  --color-background-alt: color-mix(in oklab, var(--color-background-win-alt) 60%, transparent);
+  --color-header: #efcfc5;
+  --color-panel: #efcfc5;
+  --color-card: #fdf6f3;
+  --color-popover: #fdf6f3;
+  --color-input: #fdf6f3;
+}
+
+.palette-ember.dark {
+  --color-brand: #fb923c;
+  --color-accent: color-mix(in oklab, #fb923c 16%, transparent);
+  --color-primary: #fb923c;
+  --color-primary-foreground: #0a0a0a;
+  --color-background: #2e241e;
+  --color-sidebar: #1d1610;
+  --color-background-win-alt: #3d322b;
+  --color-background-alt: color-mix(in oklab, var(--color-background-win-alt) 60%, transparent);
+  --color-header: #2e241e;
+  --color-panel: #2e241e;
+  --color-card: #372f2a;
+  --color-popover: #372f2a;
+  --color-input: #372f2a;
+}
+
+.palette-violet {
+  --color-brand: #7c3aed;
+  --color-accent: color-mix(in oklab, #7c3aed 12%, transparent);
+  --color-primary: #7c3aed;
+  --color-primary-foreground: #fafafa;
+  --color-ring: var(--color-primary);
+  --color-background: #ece9fb;
+  --color-sidebar: #d7d0f7;
+  --color-background-win-alt: #d6d3e9;
+  --color-background-alt: color-mix(in oklab, var(--color-background-win-alt) 60%, transparent);
+  --color-header: #d7d0f7;
+  --color-panel: #d7d0f7;
+  --color-card: #f7f6ff;
+  --color-popover: #f7f6ff;
+  --color-input: #f7f6ff;
+}
+
+.palette-violet.dark {
+  --color-brand: #a78bfa;
+  --color-accent: color-mix(in oklab, #a78bfa 16%, transparent);
+  --color-primary: #a78bfa;
+  --color-primary-foreground: #0a0a0a;
+  --color-background: #25242e;
+  --color-sidebar: #16151d;
+  --color-background-win-alt: #33313c;
+  --color-background-alt: color-mix(in oklab, var(--color-background-win-alt) 60%, transparent);
+  --color-header: #25242e;
+  --color-panel: #25242e;
+  --color-card: #302f37;
+  --color-popover: #302f37;
+  --color-input: #302f37;
+}
+
+.palette-slate {
+  --color-brand: #475569;
+  --color-accent: color-mix(in oklab, #475569 12%, transparent);
+  --color-primary: #475569;
+  --color-primary-foreground: #fafafa;
+  --color-ring: var(--color-primary);
+  --color-background: #e7e8eb;
+  --color-sidebar: #cccfd5;
+  --color-background-win-alt: #d1d3d5;
+  --color-background-alt: color-mix(in oklab, var(--color-background-win-alt) 60%, transparent);
+  --color-header: #cccfd5;
+  --color-panel: #cccfd5;
+  --color-card: #f5f6f7;
+  --color-popover: #f5f6f7;
+  --color-input: #f5f6f7;
+}
+
+.palette-slate.dark {
+  --color-brand: #94a3b8;
+  --color-accent: color-mix(in oklab, #94a3b8 16%, transparent);
+  --color-primary: #94a3b8;
+  --color-primary-foreground: #0a0a0a;
+  --color-background: #242527;
+  --color-sidebar: #151618;
+  --color-background-win-alt: #323335;
+  --color-background-alt: color-mix(in oklab, var(--color-background-win-alt) 60%, transparent);
+  --color-header: #242527;
+  --color-panel: #242527;
+  --color-card: #2f3031;
+  --color-popover: #2f3031;
+  --color-input: #2f3031;
+}
+
+.palette-rose {
+  --color-brand: #be185d;
+  --color-accent: color-mix(in oklab, #be185d 12%, transparent);
+  --color-primary: #be185d;
+  --color-primary-foreground: #fafafa;
+  --color-ring: var(--color-primary);
+  --color-background: #f7e6e9;
+  --color-sidebar: #efcad1;
+  --color-background-win-alt: #e4cfd4;
+  --color-background-alt: color-mix(in oklab, var(--color-background-win-alt) 60%, transparent);
+  --color-header: #efcad1;
+  --color-panel: #efcad1;
+  --color-card: #fef5f6;
+  --color-popover: #fef5f6;
+  --color-input: #fef5f6;
+}
+
+.palette-rose.dark {
+  --color-brand: #f472b6;
+  --color-accent: color-mix(in oklab, #f472b6 16%, transparent);
+  --color-primary: #f472b6;
+  --color-primary-foreground: #0a0a0a;
+  --color-background: #2e2227;
+  --color-sidebar: #1d1318;
+  --color-background-win-alt: #3c2f35;
+  --color-background-alt: color-mix(in oklab, var(--color-background-win-alt) 60%, transparent);
+  --color-header: #2e2227;
+  --color-panel: #2e2227;
+  --color-card: #372d31;
+  --color-popover: #372d31;
+  --color-input: #372d31;
+}
+
+.palette-sand {
+  --color-brand: #a16207;
+  --color-accent: color-mix(in oklab, #a16207 12%, transparent);
+  --color-primary: #a16207;
+  --color-primary-foreground: #fafafa;
+  --color-ring: var(--color-primary);
+  --color-background: #f2eae4;
+  --color-sidebar: #e4d4c5;
+  --color-background-win-alt: #ded5cd;
+  --color-background-alt: color-mix(in oklab, var(--color-background-win-alt) 60%, transparent);
+  --color-header: #e4d4c5;
+  --color-panel: #e4d4c5;
+  --color-card: #fbf7f3;
+  --color-popover: #fbf7f3;
+  --color-input: #fbf7f3;
+}
+
+.palette-sand.dark {
+  --color-brand: #facc15;
+  --color-accent: color-mix(in oklab, #facc15 16%, transparent);
+  --color-primary: #facc15;
+  --color-primary-foreground: #0a0a0a;
+  --color-background: #2d291e;
+  --color-sidebar: #1d1a11;
+  --color-background-win-alt: #3c382c;
+  --color-background-alt: color-mix(in oklab, var(--color-background-win-alt) 60%, transparent);
+  --color-header: #2d291e;
+  --color-panel: #2d291e;
+  --color-card: #36332a;
+  --color-popover: #36332a;
+  --color-input: #36332a;
+}
+
+.palette-mint {
+  --color-brand: #0f766e;
+  --color-accent: color-mix(in oklab, #0f766e 12%, transparent);
+  --color-primary: #0f766e;
+  --color-primary-foreground: #fafafa;
+  --color-ring: var(--color-primary);
+  --color-background: #e4eceb;
+  --color-sidebar: #c7d8d6;
+  --color-background-win-alt: #ced7d6;
+  --color-background-alt: color-mix(in oklab, var(--color-background-win-alt) 60%, transparent);
+  --color-header: #c7d8d6;
+  --color-panel: #c7d8d6;
+  --color-card: #f4f8f7;
+  --color-popover: #f4f8f7;
+  --color-input: #f4f8f7;
+}
+
+.palette-mint.dark {
+  --color-brand: #2dd4bf;
+  --color-accent: color-mix(in oklab, #2dd4bf 16%, transparent);
+  --color-primary: #2dd4bf;
+  --color-primary-foreground: #0a0a0a;
+  --color-background: #1f2a28;
+  --color-sidebar: #111a18;
+  --color-background-win-alt: #2d3836;
+  --color-background-alt: color-mix(in oklab, var(--color-background-win-alt) 60%, transparent);
+  --color-header: #1f2a28;
+  --color-panel: #1f2a28;
+  --color-card: #2b3432;
+  --color-popover: #2b3432;
+  --color-input: #2b3432;
+}
+
+/*
  * 之前只有 task 列表单独定制了滚动条，其他面板、下拉列表、代码区仍然保留系统默认样式，
  * 同一套界面里会出现粗细、圆角和轨道背景都不一致的问题。这里把这套透明轨道 + 圆角 thumb
  * 提升成全局原生滚动条样式，让 desktop/web、明暗主题下的视觉表现保持统一。

@@ -8,6 +8,8 @@ import type { ILink, ILinkHandler, ITheme, IWindowsPty } from "@xterm/xterm";
 import type { IServiceAccessor } from "@zcode/services";
 import type { IDisposable } from "@zcode/rpc";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
+import { useZCodeStoreWithDefault } from "@/store/StoreProvider.js";
+import type { ZCodeState } from "@/store/index.js";
 import { logger } from "@/logger.js";
 import {
   ContextMenu,
@@ -30,6 +32,7 @@ import {
 import { normalizePowerShellReadlineRedraw } from "@/terminal/terminalDataTransform.js";
 import { getHttpLinksForTerminalBufferLine } from "@/terminal/terminalLinks.js";
 import { mergeTerminalTheme } from "@/terminal/terminalTheme.js";
+import { setTerminalWebglRenderer } from "@/terminal/terminalWebglRenderer.js";
 import {
   sidePaneTerminalSessionRegistry,
   type SidePaneTerminalSessionEntry,
@@ -38,6 +41,8 @@ import {
 const DEFAULT_TERMINAL_FONT_FAMILY =
   "ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Monaco, Consolas, 'Cascadia Mono', 'JetBrains Mono', 'MesloLGS NF', 'Hack Nerd Font', monospace";
 const TERMINAL_RESIZE_DRAG_THROTTLE_MS = 300;
+// 模块级稳定 selector：useZCodeStoreWithDefault 要求 selector 引用稳定，否则会无限重渲染。
+const selectTerminalWebglEnabled = (state: ZCodeState) => state.terminalWebglEnabled;
 const TERMINAL_INPUT_FALLBACK_RECENT_DATA_MS = 150;
 const TERMINAL_INPUT_FALLBACK_KEYDOWN_INPUT_MS = 40;
 const TERMINAL_INPUT_FALLBACK_FLUSH_DELAY_MS = 150;
@@ -148,6 +153,10 @@ export function TerminalSession({
   exitedMessageRef.current = intl.formatMessage({ id: "terminal.exited" });
   exitHandlerRef.current = onExit;
   openBrowserUrlRef.current = onOpenBrowserUrl;
+  // 无 StoreProvider 时（如单测宿主）回退为关闭，保持 DOM 渲染器。
+  const terminalWebglEnabled = useZCodeStoreWithDefault(selectTerminalWebglEnabled, false);
+  const terminalWebglEnabledRef = useRef(terminalWebglEnabled);
+  terminalWebglEnabledRef.current = terminalWebglEnabled;
 
   const flushTerminalServiceResize = useCallback(() => {
     if (resizeInFlightRef.current) {
@@ -414,6 +423,7 @@ export function TerminalSession({
       term.loadAddon(fitAddon);
       term.loadAddon(new ClipboardAddon());
       term.open(hostEl);
+      setTerminalWebglRenderer(term, terminalWebglEnabledRef.current);
 
       let initialTerminalSize: TerminalSize | null = null;
       if (isVisibleRef.current && hostEl.clientWidth > 0 && hostEl.clientHeight > 0) {
@@ -781,6 +791,7 @@ export function TerminalSession({
     // 接入 ClipboardAddon 以支持 OSC 52，并让 xterm 的 copy 事件把选区写入系统剪贴板。
     term.loadAddon(new ClipboardAddon());
     term.open(el);
+    setTerminalWebglRenderer(term, terminalWebglEnabledRef.current);
     let initialTerminalSize: TerminalSize | null = null;
     if (isVisibleRef.current && el.clientWidth > 0 && el.clientHeight > 0) {
       try {
@@ -1083,6 +1094,13 @@ export function TerminalSession({
     sessionId,
     persistentKey,
   ]);
+
+  // 开关切换需要作用到已存在的 xterm 实例（含 registry 复用的实例），创建 effect 之后声明以保证 termRef 已就绪。
+  useEffect(() => {
+    const term = termRef.current;
+    if (!term) return;
+    setTerminalWebglRenderer(term, terminalWebglEnabled);
+  }, [terminalWebglEnabled]);
 
   const handleCopy = () => {
     const term = termRef.current;

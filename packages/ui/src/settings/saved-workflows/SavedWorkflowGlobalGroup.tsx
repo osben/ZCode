@@ -230,13 +230,7 @@ export function SavedWorkflowGlobalGroup(props: SavedWorkflowGlobalGroupProps) {
           className="mt-4 space-y-0.5 rounded-lg border border-warning/40 px-2.5 py-2"
         >
           <p className="text-ui-sm text-warning">
-            {intl.formatMessage(
-              {
-                id:
-                  state.invalid.length === 1 ? "workflows.hub.invalidOne" : "workflows.hub.invalid",
-              },
-              { count: String(state.invalid.length) },
-            )}
+            {intl.formatPlural({ id: "workflows.hub.invalid" }, state.invalid.length)}
           </p>
           {state.invalid.map((entry) => (
             <p

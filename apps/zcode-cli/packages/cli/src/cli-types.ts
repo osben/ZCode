@@ -1,5 +1,5 @@
 import type { TuiReadClipboardImage, TuiWriteClipboardText } from "@zcode/tui";
-import type { UiLocale } from "@zcode/i18n";
+import type { SupportedLocale, UiLocale } from "@zcode/i18n";
 import type { Logger } from "@zcode/contracts";
 import type {
   createManagedCdpBrowserRuntime,
@@ -129,7 +129,7 @@ export interface CliTargetRequest {
 
 export type ModeCapableApp = Awaited<ReturnType<typeof createZCodeApp>> & {
   getMode?: () => CliRuntimeMode;
-  setLocale?: (locale: UiLocale) => Promise<{ locale: "en-US" | "zh-CN" }>;
+  setLocale?: (locale: UiLocale) => Promise<{ locale: SupportedLocale }>;
   setMode?: (mode: CliRuntimeMode) => Promise<{ mode: CliRuntimeMode }>;
 };
 

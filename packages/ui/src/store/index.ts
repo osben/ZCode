@@ -36,8 +36,16 @@ import {
   persistTaskNotificationEnabled,
   persistTaskNotificationSoundEnabled,
 } from "@/lib/taskNotificationPreferences.js";
-import type { Theme } from "../useTheme.js";
-import { applyTheme, normalizeThemePreference, resolveTheme } from "../useTheme.js";
+import type { Theme, ThemePalette } from "../useTheme.js";
+import {
+  THEME_PALETTE_STORAGE_KEY,
+  THEME_STORAGE_KEY,
+  applyTheme,
+  isThemePalette,
+  migrateThemeSelection,
+  readStoredThemeSelection,
+} from "../useTheme.js";
+import { createSystemThemeSync } from "./systemThemeSync.js";
 
 import {
   INTERFACE_MODE_STORAGE_KEY,
@@ -69,6 +77,7 @@ export interface LoginEntryAttempt {
 
 const CODE_PREVIEW_SETTINGS_KEY = "zcode-code-preview-settings";
 const PERFORMANCE_MODE_STORAGE_KEY = "zcode-performance-mode";
+const TERMINAL_WEBGL_STORAGE_KEY = "zcode-terminal-webgl";
 
 function loadCodePreviewSettings(): CodePreviewSettings {
   try {
@@ -95,6 +104,11 @@ function loadPerformanceMode(): boolean {
   return readSafeLocalStorage(PERFORMANCE_MODE_STORAGE_KEY) === "true";
 }
 
+/** 终端 WebGL 渲染默认关闭；仅本机偏好，不随服务端同步。 */
+function loadTerminalWebglEnabled(): boolean {
+  return readSafeLocalStorage(TERMINAL_WEBGL_STORAGE_KEY) === "true";
+}
+
 // ============================================================================
 // State 定义
 // ============================================================================
@@ -104,9 +118,13 @@ export interface ZCodeState {
   interfaceMode: InterfaceMode;
   setInterfaceMode: (mode: InterfaceMode) => void;
 
-  /** 当前主题 */
+  /** 当前明暗模式 */
   theme: Theme;
   setTheme: (theme: Theme) => void;
+
+  /** 当前配色，与明暗模式独立 */
+  palette: ThemePalette;
+  setPalette: (palette: ThemePalette) => void;
 
   /** 当前语言 */
   locale: string;
@@ -123,6 +141,10 @@ export interface ZCodeState {
   /** 是否启用性能模式 */
   performanceMode: boolean;
   setPerformanceMode: (enabled: boolean) => void;
+
+  /** 终端是否使用 WebGL 渲染（失败或上下文丢失时自动回退 DOM） */
+  terminalWebglEnabled: boolean;
+  setTerminalWebglEnabled: (enabled: boolean) => void;
 
   /** 是否启用任务通知（桌面通知；提示音由子开关控制） */
   notificationEnabled: boolean;
@@ -211,9 +233,9 @@ export interface ZCodeState {
 // 需要广播的字段 —— 只有这些字段的变更会发送给其他窗口
 // ============================================================================
 
-const BROADCAST_FIELDS = new Set(["theme", "locale", "uiFontSizePx", "interfaceMode"]);
+const BROADCAST_FIELDS = new Set(["theme", "palette", "locale", "uiFontSizePx", "interfaceMode"]);
 
-type BroadcastField = "theme" | "locale" | "uiFontSizePx" | "interfaceMode";
+type BroadcastField = "theme" | "palette" | "locale" | "uiFontSizePx" | "interfaceMode";
 
 /** 广播频道名前缀 */
 const STATE_CHANNEL_PREFIX = "state:";
@@ -236,8 +258,11 @@ export function createZCodeStore(
   /** 标记：正在应用来自广播的更新，此时不再重复广播（防止循环） */
   let applyingBroadcast = false;
   let loginEntryRequestSeq = 0;
-  let cleanupSystemThemeListener: (() => void) | null = null;
-  let syncSystemThemeListener = (_theme: Theme) => {};
+  const syncSystemThemeListener = createSystemThemeSync(() => ({
+    mode: useStore.getState().theme,
+    palette: useStore.getState().palette,
+  }));
+  const initialThemeSelection = readStoredThemeSelection();
 
   const useStore = create<ZCodeState>()((set, get) => ({
     interfaceMode: normalizeInterfaceMode(readSafeLocalStorage(INTERFACE_MODE_STORAGE_KEY)),
@@ -252,16 +277,22 @@ export function createZCodeStore(
       writeSafeLocalStorage(INTERFACE_MODE_STORAGE_KEY, interfaceMode);
       set({ interfaceMode });
     },
-    // 默认主题统一收敛到 Zai dark，避免首次启动时 store 与其他主题入口表现不一致。
-    // 仍然优先尊重 localStorage 中已保存的用户选择，不覆盖已有偏好。
-    theme: normalizeThemePreference((readSafeLocalStorage("zcode-theme") as Theme) || "zai-dark"),
+    // 旧版 zcode-theme 可能保存为 zai-dark 等组合值，migrateThemeSelection 会拆成明暗模式 + zai 配色，
+    // 外观与旧版保持一致。无已保存值时默认为暗色 + zai 配色。
+    theme: initialThemeSelection.mode,
     setTheme: (theme: Theme) => {
-      const normalizedTheme = normalizeThemePreference(theme);
-      writeSafeLocalStorage("zcode-theme", normalizedTheme);
-      syncSystemThemeListener(normalizedTheme);
-      applyTheme(normalizedTheme);
+      writeSafeLocalStorage(THEME_STORAGE_KEY, theme);
+      syncSystemThemeListener(theme);
+      applyTheme(theme, get().palette);
 
-      set({ theme: normalizedTheme });
+      set({ theme });
+    },
+    palette: initialThemeSelection.palette,
+    setPalette: (palette: ThemePalette) => {
+      writeSafeLocalStorage(THEME_PALETTE_STORAGE_KEY, palette);
+      applyTheme(get().theme, palette);
+
+      set({ palette });
     },
 
     locale: readSafeLocalStorage("zcode-locale") || "zh-CN",
@@ -297,6 +328,12 @@ export function createZCodeStore(
     setPerformanceMode: (enabled: boolean) => {
       writeSafeLocalStorage(PERFORMANCE_MODE_STORAGE_KEY, enabled ? "true" : "false");
       set({ performanceMode: enabled });
+    },
+
+    terminalWebglEnabled: loadTerminalWebglEnabled(),
+    setTerminalWebglEnabled: (enabled: boolean) => {
+      writeSafeLocalStorage(TERMINAL_WEBGL_STORAGE_KEY, enabled ? "true" : "false");
+      set({ terminalWebglEnabled: enabled });
     },
 
     notificationEnabled: isTaskNotificationEnabled(),
@@ -397,41 +434,6 @@ export function createZCodeStore(
     clearOnboardingDialogRequest: () => set({ onboardingDialogRequested: false }),
   }));
 
-  syncSystemThemeListener = (theme: Theme) => {
-    cleanupSystemThemeListener?.();
-    cleanupSystemThemeListener = null;
-
-    if (theme !== "system" || typeof window === "undefined") {
-      return;
-    }
-
-    const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
-    const handleSystemThemeChange = () => {
-      if (useStore.getState().theme !== "system") {
-        return;
-      }
-
-      // system 模式需要持续订阅系统亮暗变化，不能只在切换到 system 的瞬间应用一次。
-      // 否则用户后续切系统主题时，DOM 上的 dark class 不会同步更新，看起来就像“跟随系统失效”。
-      applyTheme("system");
-    };
-
-    if (typeof mediaQuery.addEventListener === "function") {
-      mediaQuery.addEventListener("change", handleSystemThemeChange);
-      cleanupSystemThemeListener = () => {
-        mediaQuery.removeEventListener("change", handleSystemThemeChange);
-      };
-      return;
-    }
-
-    // 某些 Electron / Chromium 组合仍然只支持旧版 MediaQueryList listener API。
-    // 如果这里只调用 addEventListener，system 模式切系统主题时会完全收不到通知。
-    mediaQuery.addListener(handleSystemThemeChange);
-    cleanupSystemThemeListener = () => {
-      mediaQuery.removeListener(handleSystemThemeChange);
-    };
-  };
-
   // Zustand v5 的 setState 在 replace=true/false 上使用了不同重载，
   // 之前直接包一层并透传 replace，会在严格类型下落到互不兼容的签名分支。
   // 这里改成订阅状态变化后再广播，只比较真正需要跨窗口同步的字段，逻辑更直观，也避免重载冲突。
@@ -472,7 +474,10 @@ export function createZCodeStore(
       // 调用对应的 setter，确保副作用（localStorage、DOM）也执行
       const state = useStore.getState();
       if (field === "theme" && typeof msg.payload === "string") {
-        state.setTheme(msg.payload as Theme);
+        // 经迁移函数归一化，兼容旧版窗口广播的 zai-dark 等值
+        state.setTheme(migrateThemeSelection(msg.payload, null).mode);
+      } else if (field === "palette" && isThemePalette(msg.payload)) {
+        state.setPalette(msg.payload);
       } else if (field === "locale" && typeof msg.payload === "string") {
         state.setLocale(msg.payload);
       } else if (
@@ -489,12 +494,8 @@ export function createZCodeStore(
   });
 
   syncSystemThemeListener(useStore.getState().theme);
-  applyTheme(useStore.getState().theme);
+  applyTheme(useStore.getState().theme, useStore.getState().palette);
   applyUiFontSizePx(useStore.getState().uiFontSizePx);
-  document.documentElement.classList.toggle(
-    "dark",
-    resolveTheme(useStore.getState().theme) === "dark",
-  );
 
   return useStore;
 }

@@ -50,12 +50,7 @@ export function MemorySettingsViewer({
     return () => window.clearInterval(interval);
   }, []);
   const formatMemoryCount = (count: number) =>
-    intl.formatMessage(
-      {
-        id: `settings.memory.viewer.memoryCount.${count === 1 ? "one" : "other"}`,
-      },
-      { count },
-    );
+    intl.formatPlural({ id: "settings.memory.viewer.memoryCount" }, count);
   const normalizedSearchQuery = searchQuery.trim().toLocaleLowerCase();
   const visibleFiles = useMemo(
     () =>

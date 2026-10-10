@@ -82,14 +82,9 @@ export function ConversationFileSummaryPanel({
   const [applying, setApplying] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const filesChangedLabel = intl.formatMessage(
-    {
-      id:
-        summary?.files === 1
-          ? "chat.changeSummary.filesChanged.one"
-          : "chat.changeSummary.filesChanged.other",
-    },
-    { count: String(summary?.files ?? 0) },
+  const filesChangedLabel = intl.formatPlural(
+    { id: "chat.changeSummary.filesChanged" },
+    summary?.files ?? 0,
   );
   const isReverted = summary?.state === "reverted";
   const canUndo =

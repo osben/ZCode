@@ -204,6 +204,17 @@ function formatForceUpdateDialogText(
     };
   }
 
+  if (locale === "uk-UA") {
+    return {
+      title: "Оновіть ZCode",
+      message: "Цією версією більше не можна користуватися",
+      detail: `Поточна версія: v${requirement.currentVersion}\nМінімальна підтримувана версія: v${requirement.minimalVersion}`,
+      autoUpdateButton: "Оновити автоматично",
+      manualUpdateButton: "Оновити вручну",
+      quitButton: "Вийти",
+    };
+  }
+
   return {
     title: "Update ZCode",
     message: "The current version can no longer be used",

@@ -187,17 +187,11 @@ export function ChangesGroupToolCallBlock(context: ToolCallBlockRenderContext) {
   const count = hasResolvedFiles ? files.length : childToolCalls.length;
   // Write/Edit 的流式 JSON 可能先到 content、后到 file_path。
   // 路径尚不可解析时按已进入分组的 tool 计数，避免悬空分隔符和误导性的 0 files。
-  const countText = intl.formatMessage(
+  const countText = intl.formatPlural(
     {
-      id: hasResolvedFiles
-        ? files.length === 1
-          ? "chat.toolCall.changesGroup.file.one"
-          : "chat.toolCall.changesGroup.file.other"
-        : count === 1
-          ? "chat.toolCall.changesGroup.tool.one"
-          : "chat.toolCall.changesGroup.tool.other",
+      id: hasResolvedFiles ? "chat.toolCall.changesGroup.file" : "chat.toolCall.changesGroup.tool",
     },
-    { count: String(count) },
+    count,
   );
   const actionText = latest
     ? intl.formatMessage({

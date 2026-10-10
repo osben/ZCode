@@ -7,6 +7,10 @@ function isZh(locale: string): boolean {
   return locale.toLowerCase().startsWith("zh");
 }
 
+function isUk(locale: string): boolean {
+  return locale.toLowerCase().startsWith("uk");
+}
+
 /** 「在对话里修订」：只预填、不自动发送——用户接着写要改什么。 */
 export function buildSavedWorkflowRevisePrompt(input: {
   name: string;
@@ -19,6 +23,13 @@ export function buildSavedWorkflowRevisePrompt(input: {
     input.scope === "global" ? '它是全局工作流，保存时保持 scope: "global"。' : "";
   const globalReminderEn =
     input.scope === "global" ? 'It is a global workflow; keep scope: "global" when saving. ' : "";
+  if (isUk(input.locale)) {
+    const globalReminderUk =
+      input.scope === "global"
+        ? 'Це глобальний робочий процес; під час збереження залиш scope: "global". '
+        : "";
+    return `Доопрацюй збережений робочий процес «${input.name}» (${input.path}): ${globalReminderUk}`;
+  }
   return isZh(input.locale)
     ? `请修订已保存的工作流「${input.name}」（${input.path}）：${globalReminderZh}`
     : `Please revise the saved workflow "${input.name}" (${input.path}): ${globalReminderEn}`;
@@ -29,6 +40,11 @@ export function buildSavedWorkflowCreatePrompt(
   locale: string,
   scope?: "project" | "global",
 ): string {
+  if (isUk(locale)) {
+    return scope === "global"
+      ? 'Допоможи спроєктувати робочий процес і, коли він запрацює, збережи його через SaveWorkflow як глобальний (scope: "global"): '
+      : "Допоможи спроєктувати робочий процес і, коли він запрацює, збережи його в цьому проєкті: ";
+  }
   if (scope === "global") {
     return isZh(locale)
       ? '帮我设计一个工作流，跑通后用 SaveWorkflow 保存为全局工作流（scope: "global"）：'
@@ -60,6 +76,17 @@ export function buildSavedWorkflowPromotePrompt(input: {
       '4. 用 SaveWorkflow 以 scope: "global" 保存。名字可以沿用，也可以取一个更贴切的名字。不要改动原来的项目工作流文件。',
       "5. 最后用几句话总结你概括了什么、哪些点被抽成了参数。",
       "如果这个工作流本质上就绑定在这个项目上、无法有意义地概括，请说明原因并停下，不要保存。",
+    ].join("\n");
+  }
+  if (isUk(input.locale)) {
+    return [
+      `Перетвори збережений робочий процес проєкту «${input.name}» (${input.path}) на глобальний. Глобальні робочі процеси видно в усіх проєктах і їх можна запускати з будь-якого з них, тому він не повинен залежати ні від чого в цьому репозиторії. Виконай такі кроки:`,
+      "1. Прочитай файл і зрозумій його причинно-наслідкову структуру (які субагенти, в якому порядку, як передають роботу).",
+      "2. Знайди все, що посилається на цей репозиторій: конкретні шляхи, команди, структуру каталогів, правила іменування, назви гілок тощо.",
+      "3. Винеси це в оголошення `args` (з описами й розумними значеннями за замовчуванням) або переформулюй нейтрально щодо проєкту, зберігши причинно-наслідкову структуру.",
+      '4. Збережи його через SaveWorkflow із scope: "global". Назву можна залишити або вибрати точнішу. Не змінюй початковий файл робочого процесу проєкту.',
+      "5. Наприкінці коротко підсумуй, що саме узагальнено і які пункти стали аргументами.",
+      "Якщо робочий процес за своєю суттю прив'язаний до цього проєкту й узагальнити його осмислено не можна, поясни чому й зупинись, нічого не зберігаючи.",
     ].join("\n");
   }
   return [

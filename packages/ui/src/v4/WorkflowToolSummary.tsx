@@ -35,15 +35,7 @@ export function WorkflowToolSummary({
         >
           {agents === undefined
             ? null
-            : intl.formatMessage(
-                {
-                  id:
-                    agents === 1
-                      ? "chat.toolCall.workflow.card.agent"
-                      : "chat.toolCall.workflow.card.agents",
-                },
-                { count: agents },
-              )}
+            : intl.formatPlural({ id: "chat.toolCall.workflow.card.agents" }, agents)}
           {onOpen ? <ArrowUpRightIcon aria-hidden className="size-4 shrink-0" /> : null}
         </span>
       </span>

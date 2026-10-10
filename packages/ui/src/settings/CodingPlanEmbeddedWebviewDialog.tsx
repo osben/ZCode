@@ -9,7 +9,7 @@ import { Button } from "@/components/ui/button.js";
 import { EmbeddedWebsiteHeader } from "@/components/EmbeddedWebsiteHeader.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { useZCodeStoreWithDefault } from "@/store/StoreProvider.js";
-import { normalizeThemePreference, resolveTheme } from "@/useTheme.js";
+import { resolveTheme } from "@/useTheme.js";
 import type { CodingPlanProviderId } from "@/settings/model-provider-section/constants.js";
 import type { CodingPlanFunnelContext } from "@/lib/codingPlanFunnelTelemetry.js";
 import {
@@ -31,6 +31,7 @@ import {
 import {
   CodingPlanWebviewChannels,
   type CodingPlanPurchaseCompletePayload,
+  toServiceLocale,
   ZCODE_VERSION,
 } from "@zcode/shared";
 
@@ -85,13 +86,13 @@ export function CodingPlanEmbeddedWebviewDialog({
 }: CodingPlanEmbeddedWebviewDialogProps) {
   const { intl, locale } = useZCodeIntl();
   const platform = usePlatform();
-  const theme = useZCodeStoreWithDefault((state) => state.theme, "zai-dark");
+  const theme = useZCodeStoreWithDefault((state) => state.theme, "dark");
   const userId = useZCodeStoreWithDefault((state) => state.user?.id ?? null, null);
   const webviewRef = useRef<ElectronWebviewTag | null>(null);
   const onOpenResultRef = useRef(onOpenResult);
   onOpenResultRef.current = onOpenResult;
-  // 当前 locale 作为 webview 语言 hint / 注入值；Locale 与 CodingPlanWebviewLocale 同构。
-  const webviewLocale = locale;
+  // 官网只支持中英文：界面语言先映射为服务语言，再作为 webview 语言 hint / 注入值。
+  const webviewLocale = toServiceLocale(locale);
   const webviewCleanupRef = useRef<(() => void) | null>(null);
   // webview 是否已 dom-ready：executeJavaScript 只在 ready 后调用，
   // 否则会抛 "WebView must be attached to the DOM and dom-ready emitted"。
@@ -116,10 +117,9 @@ export function CodingPlanEmbeddedWebviewDialog({
     isLoading: false,
   });
   const provider = resolveCodingPlanWebsiteProvider(providerId);
+  // 官网 webview 的 zcode-theme 合约仍是 zai-*，与 App 的 palette 无关，只跟随明暗模式。
   const embeddedTheme: CodingPlanEmbeddedTheme =
-    normalizeThemePreference(theme) === "zai-dark" || resolveTheme(theme) === "dark"
-      ? "zai-dark"
-      : "zai-light";
+    resolveTheme(theme) === "dark" ? "zai-dark" : "zai-light";
   const computedWebviewUrl = useMemo(() => {
     const env = readCodingPlanWebviewImportMetaEnv();
     const origin = resolveCodingPlanEmbeddedOrigin({

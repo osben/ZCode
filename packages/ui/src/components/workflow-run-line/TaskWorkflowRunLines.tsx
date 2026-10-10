@@ -29,6 +29,7 @@ import { useWorkflowRunOpen } from "@/v4/workflowRunOpenContext.js";
 
 export interface TaskWorkflowRunLinesIntl {
   formatMessage: (desc: { id: string }, values?: Record<string, string>) => string;
+  formatPlural: (desc: { id: string }, count: number, values?: Record<string, string>) => string;
 }
 
 interface TaskWorkflowRunLinesProps {
@@ -154,10 +155,7 @@ function runTooltipDescription(
   else if (run.currentPhase !== undefined) parts.push(run.currentPhase);
   if (isSessionWorkflowRunLive(run.status) && run.agentsWorking > 0) {
     parts.push(
-      intl.formatMessage(
-        { id: "chat.toolCall.workflow.card.agentsWorking" },
-        { count: String(run.agentsWorking) },
-      ),
+      intl.formatPlural({ id: "chat.toolCall.workflow.card.agentsWorking" }, run.agentsWorking),
     );
   }
   if (run.startedAt !== undefined) parts.push(formatTaskRelativeTime(run.startedAt, intl));

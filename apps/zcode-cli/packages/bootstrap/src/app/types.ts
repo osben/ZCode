@@ -86,6 +86,7 @@ import type {
   ModelToolCall,
   SupportedLocale,
   UiLocale,
+  UiThemePalette,
   UiThemePreference,
   WorkflowEvent,
   WorkflowRunListItem,
@@ -322,6 +323,7 @@ export interface ZCodeApp {
   getModelOption?(selection: ModelSelection): ZCodeModelOption | undefined;
   getLocale(): SupportedLocale;
   getTheme(): UiThemePreference;
+  getPalette(): UiThemePalette;
   getDefaultThoughtLevel(): string | undefined;
   getThoughtLevel(): string | undefined;
   loadSessionTranscript(): Promise<SessionTranscriptMessage[]>;

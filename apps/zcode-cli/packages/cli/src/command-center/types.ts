@@ -192,6 +192,7 @@ export type CommandCenterApp = {
   getCurrentModelOption?(): CommandCenterModelOption | undefined;
   getLocale?(): TuiSubmitPromptResult["locale"];
   getTheme?(): TuiSubmitPromptResult["theme"];
+  getPalette?(): TuiSubmitPromptResult["palette"];
   getThoughtLevel?(): string | undefined;
   loadSessionTranscript?(): Promise<NonNullable<TuiSubmitPromptResult["restoredMessages"]>>;
   readSubagents?: import("@zcode/tui").TuiReadSubagents;

@@ -345,10 +345,14 @@ function notifyForceAutoUpdate(state: ForceAutoUpdateState) {
   activeForceAutoUpdateListener?.(state);
 }
 
+const FORCE_AUTO_UPDATE_NO_UPDATE_MESSAGE: Record<Locale, string> = {
+  "zh-CN": "未找到可安装更新，请使用手动升级。",
+  "en-US": "No installable update was found. Use manual update instead.",
+  "uk-UA": "Не знайдено оновлення для встановлення. Оновіть вручну.",
+};
+
 function getForceAutoUpdateNoUpdateMessage(): string {
-  return menuLocale === "zh-CN"
-    ? "未找到可安装更新，请使用手动升级。"
-    : "No installable update was found. Use manual update instead.";
+  return FORCE_AUTO_UPDATE_NO_UPDATE_MESSAGE[menuLocale];
 }
 
 function normalizeProgressPercent(progress: unknown): string | undefined {
@@ -777,10 +781,13 @@ function applyManifestUpdateProvider(options: InitAutoUpdaterOptions): void {
 function pickFallbackReleaseNotesMarkdown(
   localized: PostUpdateReleaseNotesPayload["releaseNotesByLocale"] | undefined,
 ): string | null {
+  // 中文界面优先回退中文，其他语言优先回退英文，最后才使用另一种语言。
+  const [primaryFallback, secondaryFallback] =
+    menuLocale === "zh-CN" ? (["zh-CN", "en-US"] as const) : (["en-US", "zh-CN"] as const);
   return (
     localized?.[menuLocale]?.markdown ??
-    localized?.["zh-CN"]?.markdown ??
-    localized?.["en-US"]?.markdown ??
+    localized?.[primaryFallback]?.markdown ??
+    localized?.[secondaryFallback]?.markdown ??
     null
   );
 }
