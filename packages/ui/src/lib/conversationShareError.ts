@@ -1,4 +1,5 @@
 import type { ConversationShareFailureIssue } from "@zcode/services";
+import { isLocale, type Locale } from "@zcode/shared";
 
 interface ConversationShareErrorDetails {
   name: string;
@@ -279,22 +280,32 @@ const WARNING_MESSAGE_IDS: Readonly<
   input_attachment_unavailable: "conversationShare.warning.inputAttachmentUnavailable",
 };
 
-const ARTIFACT_TYPE_LABELS: Readonly<Record<string, { zh: string; en: string }>> = {
-  pdf: { zh: "PDF", en: "PDF" },
-  pptx: { zh: "PPT", en: "PowerPoint" },
-  docx: { zh: "Word 文档", en: "Word document" },
-  xlsx: { zh: "Excel 表格", en: "Excel spreadsheet" },
-  image: { zh: "图片", en: "image" },
-  html: { zh: "HTML", en: "HTML" },
-  md: { zh: "Markdown", en: "Markdown" },
-  text: { zh: "纯文本", en: "plain text" },
-  video: { zh: "视频", en: "video" },
-  audio: { zh: "音频", en: "audio" },
+const ARTIFACT_TYPE_LABELS: Readonly<Record<string, Record<Locale, string>>> = {
+  pdf: { "zh-CN": "PDF", "en-US": "PDF", "uk-UA": "PDF" },
+  pptx: { "zh-CN": "PPT", "en-US": "PowerPoint", "uk-UA": "PowerPoint" },
+  docx: { "zh-CN": "Word 文档", "en-US": "Word document", "uk-UA": "документ Word" },
+  xlsx: { "zh-CN": "Excel 表格", "en-US": "Excel spreadsheet", "uk-UA": "таблиця Excel" },
+  image: { "zh-CN": "图片", "en-US": "image", "uk-UA": "зображення" },
+  html: { "zh-CN": "HTML", "en-US": "HTML", "uk-UA": "HTML" },
+  md: { "zh-CN": "Markdown", "en-US": "Markdown", "uk-UA": "Markdown" },
+  text: { "zh-CN": "纯文本", "en-US": "plain text", "uk-UA": "звичайний текст" },
+  video: { "zh-CN": "视频", "en-US": "video", "uk-UA": "відео" },
+  audio: { "zh-CN": "音频", "en-US": "audio", "uk-UA": "аудіо" },
 };
+
+const UNAVAILABLE_LABEL: Record<Locale, string> = {
+  "zh-CN": "暂时无法获取",
+  "en-US": "temporarily unavailable",
+  "uk-UA": "тимчасово недоступно",
+};
+
+function resolveLabelLocale(locale: string): Locale {
+  return isLocale(locale) ? locale : "en-US";
+}
 
 function artifactLabel(value: string, locale: string): string {
   const key = value.replace(/^\./u, "").toLowerCase();
-  return ARTIFACT_TYPE_LABELS[key]?.[locale === "zh-CN" ? "zh" : "en"] ?? value.toUpperCase();
+  return ARTIFACT_TYPE_LABELS[key]?.[resolveLabelLocale(locale)] ?? value.toUpperCase();
 }
 
 export function formatConversationShareArtifactType(
@@ -318,7 +329,7 @@ export function formatConversationShareAllowedArtifacts(
   if (issue.allowedFormats && issue.allowedFormats.length > 0) {
     return issue.allowedFormats.join(locale === "zh-CN" ? "、" : ", ");
   }
-  return locale === "zh-CN" ? "暂时无法获取" : "temporarily unavailable";
+  return UNAVAILABLE_LABEL[resolveLabelLocale(locale)];
 }
 
 export function resolveConversationShareWarningMessageId(

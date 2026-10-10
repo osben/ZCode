@@ -66,6 +66,34 @@ function buildForceUpdatePromptMessages(locale: Locale) {
     };
   }
 
+  if (locale === "uk-UA") {
+    return {
+      checkingTitle: "Перевірка оновлень",
+      checkingMessage: "Не закривайте це вікно, поки ZCode шукає оновлення.",
+      downloadingTitle: "Завантаження оновлення",
+      downloadingVersionTitle: "Завантаження оновлення v{version}",
+      downloadingMessage: "ZCode встановить оновлення автоматично після завантаження.",
+      readyTitle: "Оновлення завантажено",
+      readyMessage: "ZCode готується до перезапуску та встановлення оновлення.",
+      installingTitle: "Встановлення оновлення",
+      installingMessage: "ZCode перезапуститься, щоб завершити встановлення.",
+      errorTitle: "Не вдалося оновити автоматично",
+      errorMessage: "Повторіть автоматичне оновлення або оновіть вручну.",
+      devSkippedTitle: "Автоматичне оновлення недоступне в режимі розробки",
+      devSkippedMessage:
+        "Автоматичне оновлення працює лише в зібраному застосунку. Оновіть вручну або перевірте на зібраній версії.",
+      confirmCloseTitle: "Триває автоматичне оновлення",
+      confirmCloseMessage:
+        "Якщо закрити вікно, автоматичне оновлення буде перервано, а ця стара версія все одно не відкриє застосунок. Можна зачекати або закрити й вийти.",
+      confirmCloseButton: "Усе одно закрити",
+      continueUpdateButton: "Продовжити оновлення",
+      retryButton: "Повторити оновлення",
+      checkingButton: "Перевірка...",
+      downloadingButton: "Завантаження...",
+      installingButton: "Встановлення...",
+    };
+  }
+
   return {
     checkingTitle: "Checking for updates",
     checkingMessage: "Keep this window open while ZCode checks for updates.",

@@ -61,12 +61,19 @@ function resolveEmbeddedBrowserDialogSource(frameUrl: string, guestUrl?: string)
   return "This page says";
 }
 
+const EMBEDDED_BROWSER_DIALOG_BUTTON_LABELS: Record<Locale, { ok: string; cancel: string }> = {
+  "zh-CN": { ok: "确定", cancel: "取消" },
+  "en-US": { ok: "OK", cancel: "Cancel" },
+  "uk-UA": { ok: "OK", cancel: "Скасувати" },
+};
+
 function resolveEmbeddedBrowserDialogButtons(
   locale: Locale,
   type: EmbeddedBrowserDialogRequest["type"],
 ): string[] {
-  if (type === "alert") return [locale === "zh-CN" ? "确定" : "OK"];
-  return locale === "zh-CN" ? ["取消", "确定"] : ["Cancel", "OK"];
+  const labels = EMBEDDED_BROWSER_DIALOG_BUTTON_LABELS[locale];
+  if (type === "alert") return [labels.ok];
+  return [labels.cancel, labels.ok];
 }
 
 /**
