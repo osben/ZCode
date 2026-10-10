@@ -139,10 +139,18 @@ jobs:
     permissions:
       contents: write
     env:
-      GH_TOKEN: ${{ github.token }}
+      # GitHub's GITHUB_TOKEN cannot create a release for a commit that changes workflows.
+      GH_TOKEN: ${{ secrets.FORK_RELEASE_TOKEN }}
       GH_REPO: ${{ github.repository }}
       VERSION: ${{ needs.resolve-version.outputs.version }}
     steps:
+      - name: Verify release token
+        run: |
+          if [[ -z "$GH_TOKEN" ]]; then
+            echo "::error::Repository Actions secret FORK_RELEASE_TOKEN is required (Contents: write, Workflows: write)."
+            exit 1
+          fi
+
       - name: Download artifacts
         uses: actions/download-artifact@v4
         with:
