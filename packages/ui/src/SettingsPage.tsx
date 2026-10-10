@@ -4,6 +4,7 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ButtonHTMLAttributes,
   type ReactNode,
@@ -19,6 +20,7 @@ import type {
 } from "@zcode/shared";
 import {
   BUILTIN_MODEL_PROVIDER_IDS,
+  DesktopCommandIds,
   TID_SETTINGS_BACK_BUTTON,
   TID_SETTINGS_PAGE,
   TID_SETTINGS_SECTION_NAV,
@@ -70,6 +72,10 @@ import { PluginsSection } from "@/settings/PluginsSection.js";
 import { HooksSection } from "@/settings/HooksSection.js";
 import { WorkspaceFileSearchSection } from "@/settings/WorkspaceFileSearchSection.js";
 import { MemorySettingsSection } from "@/settings/MemorySettingsSection.js";
+import { UserInstructionsSettingsSection } from "@/settings/UserInstructionsSettingsSection.js";
+import type { UserInstructionsHostTarget } from "@/settings/userInstructionsEditorModel.js";
+import { useConfirmDialogStore } from "@/store/confirmDialogStore.js";
+import { CLOSE_ACTIVE_CONTEXT_REQUEST_EVENT } from "@/lib/closeActiveContext.js";
 import { BrowserSettingsSection } from "@/settings/BrowserSettingsSection.js";
 import { ComputerUseSection } from "@/settings/ComputerUseSection.js";
 import { ShortcutSettingsSection } from "@/settings/ShortcutSettingsSection.js";
@@ -611,14 +617,55 @@ export function SettingsPage({
     },
     [openCodingPlanUpgrade],
   );
+  // 「指令」分区的草稿只由分区自己持有；设置页只记录"是否脏"，用于离开前确认。
+  const instructionsDirtyRef = useRef(false);
+  const handleInstructionsDirtyChange = useCallback((dirty: boolean) => {
+    instructionsDirtyRef.current = dirty;
+  }, []);
+  const confirmLeaveInstructionsDraft = useCallback(async (): Promise<boolean> => {
+    if (activeSection !== "instructions" || !instructionsDirtyRef.current) return true;
+    return useConfirmDialogStore.getState().requestConfirmation({
+      title: intl.formatMessage({ id: "settings.instructions.discard.title" }),
+      description: intl.formatMessage({ id: "settings.instructions.discard.leave" }),
+      confirmLabel: intl.formatMessage({ id: "settings.instructions.discard.confirm" }),
+      confirmVariant: "destructive",
+    });
+  }, [activeSection, intl]);
+  const handleGuardedBack = useCallback(() => {
+    void confirmLeaveInstructionsDraft().then((confirmed) => {
+      if (confirmed) onBack?.();
+    });
+  }, [confirmLeaveInstructionsDraft, onBack]);
+  useEffect(() => {
+    if (!isDesktop) return;
+    const handleCloseActiveContextRequest = (event: Event) => {
+      if (activeSection !== "instructions" || !instructionsDirtyRef.current) return;
+      // Cmd/Ctrl+W 在设置页会回落为关闭窗口；有未保存的全局指令草稿时先拦下并确认。
+      event.preventDefault();
+      void confirmLeaveInstructionsDraft().then((confirmed) => {
+        if (confirmed) void platform.executeDesktopCommand(DesktopCommandIds.CloseWindow);
+      });
+    };
+    window.addEventListener(CLOSE_ACTIVE_CONTEXT_REQUEST_EVENT, handleCloseActiveContextRequest);
+    return () => {
+      window.removeEventListener(
+        CLOSE_ACTIVE_CONTEXT_REQUEST_EVENT,
+        handleCloseActiveContextRequest,
+      );
+    };
+  }, [activeSection, confirmLeaveInstructionsDraft, isDesktop, platform]);
   const handleOpenModelProviderSettings = useCallback(() => {
-    setActiveSettingsSection("modelProvider");
-  }, [setActiveSettingsSection]);
+    void confirmLeaveInstructionsDraft().then((confirmed) => {
+      if (confirmed) setActiveSettingsSection("modelProvider");
+    });
+  }, [confirmLeaveInstructionsDraft, setActiveSettingsSection]);
   const handleOpenUsageSettings = useCallback(() => {
     // 设置页 sidebar footer 里的齿轮/返回按钮复用 onBack，
     // 但头像菜单的“使用统计”应该停留在设置页并切到 Usage，不能跟着返回工作区。
-    setActiveSettingsSection("usage");
-  }, [setActiveSettingsSection]);
+    void confirmLeaveInstructionsDraft().then((confirmed) => {
+      if (confirmed) setActiveSettingsSection("usage");
+    });
+  }, [confirmLeaveInstructionsDraft, setActiveSettingsSection]);
   const activeWorkspacePath = useTabStore((state) => state.activeWorkspacePath);
   const tabs = useTabStore((state) => state.tabs);
   const workspaceTabs = useMemo(() => tabs.filter(isWorkspaceTab), [tabs]);
@@ -644,6 +691,23 @@ export function SettingsPage({
       null
     );
   });
+  const userInstructionsRemoteSessionId = activeWorkspaceTab?.remoteSessionId;
+  const userInstructionsRemoteTarget = activeWorkspaceTab?.remoteTarget;
+  // 全局指令写入活动 workspace 所在主机；无 workspace 时为本机。字段逐个依赖，保持引用稳定。
+  const userInstructionsActiveTarget = useMemo<UserInstructionsHostTarget>(
+    () => ({
+      workspacePath: activeWorkspacePath ?? null,
+      workspaceIdentity: activeWorkspaceIdentity,
+      remoteSessionId: userInstructionsRemoteSessionId,
+      remoteTarget: userInstructionsRemoteTarget,
+    }),
+    [
+      activeWorkspaceIdentity,
+      activeWorkspacePath,
+      userInstructionsRemoteSessionId,
+      userInstructionsRemoteTarget,
+    ],
+  );
   const localModelProviderConnectivityWorkspacePath = useMemo(
     () =>
       resolveModelProviderConnectivityWorkspacePath({
@@ -742,29 +806,37 @@ export function SettingsPage({
   useEffect(
     () =>
       addPendingSettingsSectionListener((section, detail) => {
-        // SettingsPage 已打开时再次从 quickpick 点“个性化/MCP”等设置入口，
-        // 页面不会重新挂载，之前写入的 pending section 无人消费，看起来像点击没反应。
-        // 这里订阅同窗口跳转意图，立即切换当前设置分区。
-        setActiveSettingsSection(section, activeSection);
-        // 设置入口是一级路由边界。即使仍落在同一 section，也必须销毁旧的 New/Edit/Detail 子状态。
-        setSettingsSectionNavigationVersion((version) => version + 1);
-        if (section === "usage" && detail?.usageTab) {
-          setUsageActiveTab(detail.usageTab);
-        }
-        if (resolveSettingsSection(section) === "plugin" && detail?.pluginTab) {
-          setPluginTab(detail.pluginTab);
-          setPluginNavigationOrigin(detail.pluginOrigin);
-          setPluginScopeKey(detail.pluginScopeKey);
-        } else if (resolveSettingsSection(section) !== "plugin") {
-          setPluginNavigationOrigin(undefined);
-        }
-        if (section === "modelProvider" && detail?.modelProviderId) {
-          setPendingModelProviderTarget({
-            providerId: detail.modelProviderId,
-          });
-        }
+        // 目标仍是当前分区时不离开，不需要确认放弃草稿。
+        const leaveConfirmation =
+          resolveSettingsSection(section, activeSection) === activeSection
+            ? Promise.resolve(true)
+            : confirmLeaveInstructionsDraft();
+        void leaveConfirmation.then((confirmed) => {
+          if (!confirmed) return;
+          // SettingsPage 已打开时再次从 quickpick 点“个性化/MCP”等设置入口，
+          // 页面不会重新挂载，之前写入的 pending section 无人消费，看起来像点击没反应。
+          // 这里订阅同窗口跳转意图，立即切换当前设置分区。
+          setActiveSettingsSection(section, activeSection);
+          // 设置入口是一级路由边界。即使仍落在同一 section，也必须销毁旧的 New/Edit/Detail 子状态。
+          setSettingsSectionNavigationVersion((version) => version + 1);
+          if (section === "usage" && detail?.usageTab) {
+            setUsageActiveTab(detail.usageTab);
+          }
+          if (resolveSettingsSection(section) === "plugin" && detail?.pluginTab) {
+            setPluginTab(detail.pluginTab);
+            setPluginNavigationOrigin(detail.pluginOrigin);
+            setPluginScopeKey(detail.pluginScopeKey);
+          } else if (resolveSettingsSection(section) !== "plugin") {
+            setPluginNavigationOrigin(undefined);
+          }
+          if (section === "modelProvider" && detail?.modelProviderId) {
+            setPendingModelProviderTarget({
+              providerId: detail.modelProviderId,
+            });
+          }
+        });
       }),
-    [activeSection, setActiveSettingsSection],
+    [activeSection, confirmLeaveInstructionsDraft, setActiveSettingsSection],
   );
 
   useEffect(() => {
@@ -1407,20 +1479,23 @@ export function SettingsPage({
                       })}
                       className="m-1 w-[calc(100%-0.5rem)] justify-start gap-2 rounded-xl px-1.5 text-foreground-subtle hover:bg-surface-hover hover:text-foreground max-lg:m-1 max-lg:size-10 max-lg:justify-center max-lg:px-0"
                       onClick={() => {
-                        runUserAction({
-                          input: {
-                            featureId: "settings.navigation",
-                            action: "back_to_workspace",
-                            trigger: "button",
-                          },
-                          operation: () => {
-                            if (pluginNavigationOrigin === "plugin-store") {
-                              requestPluginStoreOpen("user");
-                            }
-                            onBack?.();
-                          },
-                          completed: { resultSource: "local_commit" },
-                          failureStage: "navigation_commit",
+                        void confirmLeaveInstructionsDraft().then((confirmed) => {
+                          if (!confirmed) return;
+                          runUserAction({
+                            input: {
+                              featureId: "settings.navigation",
+                              action: "back_to_workspace",
+                              trigger: "button",
+                            },
+                            operation: () => {
+                              if (pluginNavigationOrigin === "plugin-store") {
+                                requestPluginStoreOpen("user");
+                              }
+                              onBack?.();
+                            },
+                            completed: { resultSource: "local_commit" },
+                            failureStage: "navigation_commit",
+                          });
                         });
                       }}
                     >
@@ -1481,19 +1556,27 @@ export function SettingsPage({
                               aria-current={isActive ? "page" : undefined}
                               data-testid={testId(TID_SETTINGS_SECTION_NAV, id)}
                               onClick={() => {
-                                runUserAction({
-                                  input: {
-                                    featureId: "settings.navigation",
-                                    action: "open_section",
-                                    trigger: "button",
-                                  },
-                                  operation: () => {
-                                    setPluginNavigationOrigin(undefined);
-                                    setSettingsSectionNavigationVersion((version) => version + 1);
-                                    setActiveSettingsSection(id);
-                                  },
-                                  completed: { resultSource: "local_commit", sectionId: id },
-                                  failureStage: "navigation_commit",
+                                const navigate = () =>
+                                  runUserAction({
+                                    input: {
+                                      featureId: "settings.navigation",
+                                      action: "open_section",
+                                      trigger: "button",
+                                    },
+                                    operation: () => {
+                                      setPluginNavigationOrigin(undefined);
+                                      setSettingsSectionNavigationVersion((version) => version + 1);
+                                      setActiveSettingsSection(id);
+                                    },
+                                    completed: { resultSource: "local_commit", sectionId: id },
+                                    failureStage: "navigation_commit",
+                                  });
+                                if (id === activeSection) {
+                                  navigate();
+                                  return;
+                                }
+                                void confirmLeaveInstructionsDraft().then((confirmed) => {
+                                  if (confirmed) navigate();
                                 });
                               }}
                             >
@@ -1535,7 +1618,7 @@ export function SettingsPage({
                   localeMenuValue={localePreference}
                   onLocaleChange={handleFooterLocaleChange}
                   onThemeChange={handleFooterThemeChange}
-                  onSettingsButtonClick={onBack}
+                  onSettingsButtonClick={onBack ? handleGuardedBack : undefined}
                   onUsageClick={handleOpenUsageSettings}
                   onUpgradeClick={handleOpenCodingPlanUpgradeSettings}
                   onLogin={onLogin}
@@ -1832,6 +1915,12 @@ export function SettingsPage({
                               workspaceDisplayNames={memoryWorkspaceDisplayNames}
                             />
                           </ServiceProvider>
+                        ) : activeSection === "instructions" ? (
+                          <UserInstructionsSettingsSection
+                            isDesktop={Boolean(isDesktop)}
+                            activeTarget={userInstructionsActiveTarget}
+                            onDirtyChange={handleInstructionsDirtyChange}
+                          />
                         ) : activeSection === "plugin" ? (
                           <PluginsSection
                             key={`plugin:${settingsSectionNavigationVersion}`}

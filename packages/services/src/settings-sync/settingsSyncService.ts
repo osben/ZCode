@@ -22,18 +22,24 @@ import type {
   SettingsSyncTaskImportResult,
 } from "@zcode/shared";
 import {
-  copyFile,
   cp,
   link,
   lstat,
   mkdir,
   readFile,
   readdir,
+  stat,
   symlink,
   writeFile,
 } from "node:fs/promises";
-import { homedir } from "node:os";
 import { basename, dirname, join, relative, resolve } from "node:path";
+import {
+  atomicWriteFile,
+  getClaudeUserInstructionsFilePath,
+  getUserZcodeAgentsFilePath,
+  resolveAgentUserHomeDir,
+  withFileLock,
+} from "@zcode/shared/node";
 import { parse as parseYaml } from "yaml";
 import { parse as parseToml } from "smol-toml";
 import { CommandFileParser } from "../commands/commandFileParser.js";
@@ -416,10 +422,8 @@ const CLAUDE_PLUGIN_MANIFEST_PATH = [".claude-plugin", "plugin.json"] as const;
 const CODEX_PLUGIN_MANIFEST_PATH = [".codex-plugin", "plugin.json"] as const;
 const INLINE_PLUGIN_MARKETPLACE = "inline";
 
-function resolveUserHomeDir(): string {
-  const envHome = process.env.HOME?.trim() || process.env.USERPROFILE?.trim();
-  return envHome && envHome.length > 0 ? envHome : homedir();
-}
+// 与 CLI 共用同一个 home 解析，避免迁移写入与 Agent 读取的 AGENTS.md 不一致。
+const resolveUserHomeDir = resolveAgentUserHomeDir;
 
 function getWorkspaceZcodeSkillRoot(workspacePath: string): string {
   return join(workspacePath, ".zcode", "skills");
@@ -451,14 +455,6 @@ function getUserZcodeCliConfigPath(): string {
 
 function getWorkspaceZcodeConfigPath(workspacePath: string): string {
   return join(workspacePath, ".zcode", "config.json");
-}
-
-function getClaudeUserAgentsFileSourcePath(): string {
-  return join(resolveUserHomeDir(), ".claude", "CLAUDE.md");
-}
-
-function getUserZcodeAgentsFilePath(): string {
-  return join(resolveUserHomeDir(), ".zcode", "AGENTS.md");
 }
 
 function resolveTargetRootForScope(
@@ -2203,7 +2199,7 @@ function shouldScanMcpServers(request: {
 }
 
 async function getClaudeAgentsFileMigrationStatus(): Promise<SettingsSyncClaudeAgentsFileMigrationStatus> {
-  const sourcePath = getClaudeUserAgentsFileSourcePath();
+  const sourcePath = getClaudeUserInstructionsFilePath();
   const sourceExists = await pathExists(sourcePath);
   const targetPath = getUserZcodeAgentsFilePath();
   const targetExists = await pathExists(targetPath);
@@ -2221,7 +2217,7 @@ async function getClaudeAgentsFileMigrationStatus(): Promise<SettingsSyncClaudeA
 async function copyClaudeAgentsFileToZcodeAgentsFile(params: {
   overwrite?: boolean;
 }): Promise<SettingsSyncClaudeAgentsFileCopyResult> {
-  const sourcePath = getClaudeUserAgentsFileSourcePath();
+  const sourcePath = getClaudeUserInstructionsFilePath();
   const targetPath = getUserZcodeAgentsFilePath();
   const sourceExists = await pathExists(sourcePath);
   const targetExists = await pathExists(targetPath);
@@ -2246,14 +2242,40 @@ async function copyClaudeAgentsFileToZcodeAgentsFile(params: {
     };
   }
 
-  await mkdir(dirname(targetPath), { recursive: true });
-  await copyFile(sourcePath, targetPath);
+  // 与设置页「指令」编辑器共用同一把文件锁，避免两条写入路径交错覆盖。
+  // 锁外的 targetExists 只是快速路径；覆盖判断必须在锁内重新检查，
+  // 否则编辑器可能在检查与复制之间创建文件，随后被复制覆盖。
+  // 写入用 atomicWriteFile + rename：目标若是 symlink，原地 copyFile 会
+  // 穿透链接写入，绕过编辑器对普通文件的检查。
+  const copyOutcome = await withFileLock(targetPath, async () => {
+    const targetExistsUnderLock = await pathExists(targetPath);
+    if (targetExistsUnderLock && params.overwrite !== true) {
+      return { skipped: true, overwritten: false };
+    }
+    // 与 copyFile 一致，保留源文件权限（atomicWriteFile 默认走 umask）。
+    // 权限取 stat 而非 lstat：源是 symlink 时应使用目标文件的 mode，
+    // 链接本身的 mode 恒为 0777，会泄漏文件内容给本机其他用户。
+    const sourceBytes = await readFile(sourcePath);
+    const sourceMode = (await stat(sourcePath)).mode & 0o7777;
+    await atomicWriteFile(targetPath, sourceBytes, { mode: sourceMode });
+    return { skipped: false, overwritten: targetExistsUnderLock };
+  });
+
+  if (copyOutcome.skipped) {
+    return {
+      sourcePath,
+      targetPath,
+      status: "skipped",
+      overwritten: false,
+      skippedReason: "targetExists",
+    };
+  }
 
   return {
     sourcePath,
     targetPath,
     status: "copied",
-    overwritten: targetExists,
+    overwritten: copyOutcome.overwritten,
   };
 }
 

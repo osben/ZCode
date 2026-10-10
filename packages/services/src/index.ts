@@ -217,6 +217,21 @@ export {
 } from "./memory/memory.js";
 export type { ProjectMemoryFileSummary, ProjectMemoryWorkspaceSummary } from "./memory/memory.js";
 
+// User instructions service — IUserInstructionsService is both a type (interface) and value (descriptor).
+export {
+  IUserInstructionsService,
+  USER_INSTRUCTIONS_AGENT_READ_LIMIT_BYTES,
+  USER_INSTRUCTIONS_EDIT_LIMIT_BYTES,
+} from "./user-instructions/userInstructions.js";
+export type {
+  UserInstructionsEol,
+  UserInstructionsImportSource,
+  UserInstructionsReadErrorCode,
+  UserInstructionsReadResult,
+  UserInstructionsWriteParams,
+  UserInstructionsWriteResult,
+} from "./user-instructions/userInstructions.js";
+
 export type { SessionRealtimePort } from "./session/sessionRealtimePort.js";
 
 // FileWatcher service — IFileWatcherService is both a type (interface) and value (descriptor)

@@ -85,10 +85,20 @@ export async function withFileLock<T>(
   }
 }
 
-export async function atomicWritePrivateTextFile(
+export interface AtomicWriteFileOptions {
+  /** 目标文件权限位；省略时使用进程默认权限（受 umask 影响）。 */
+  mode?: number;
+  renameRetryDelaysMs?: readonly number[];
+}
+
+/**
+ * 同目录临时文件 + rename 的原子写入。rename 会替换目标 inode，
+ * 因此会断开硬链接；需要保留原权限时由调用方传入 mode。
+ */
+export async function atomicWriteFile(
   filePath: string,
-  content: string,
-  renameRetryDelaysMs: readonly number[] = DEFAULT_RENAME_RETRY_DELAYS_MS,
+  data: string | Uint8Array,
+  options: AtomicWriteFileOptions = {},
 ): Promise<void> {
   const directory = dirname(filePath);
   const tempPath = join(
@@ -97,12 +107,32 @@ export async function atomicWritePrivateTextFile(
   );
   await mkdir(directory, { recursive: true });
   try {
-    await writeFile(tempPath, content, { encoding: "utf-8", mode: 0o600 });
-    await renameWithRetry(tempPath, filePath, renameRetryDelaysMs);
+    await writeFile(
+      tempPath,
+      data,
+      options.mode === undefined ? undefined : { mode: options.mode },
+    );
+    if (options.mode !== undefined) {
+      // writeFile 的 mode 会被 umask 裁剪；显式 chmod 才能完整保留原文件权限。
+      await chmod(tempPath, options.mode);
+    }
+    await renameWithRetry(
+      tempPath,
+      filePath,
+      options.renameRetryDelaysMs ?? DEFAULT_RENAME_RETRY_DELAYS_MS,
+    );
   } catch (error) {
     await rm(tempPath, { force: true }).catch(() => undefined);
     throw error;
   }
+}
+
+export async function atomicWritePrivateTextFile(
+  filePath: string,
+  content: string,
+  renameRetryDelaysMs: readonly number[] = DEFAULT_RENAME_RETRY_DELAYS_MS,
+): Promise<void> {
+  await atomicWriteFile(filePath, content, { mode: 0o600, renameRetryDelaysMs });
 }
 
 export async function backupCorruptFile(filePath: string): Promise<string> {
