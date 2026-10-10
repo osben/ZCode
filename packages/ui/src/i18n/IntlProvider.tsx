@@ -1,12 +1,4 @@
-import {
-  createContext,
-  useContext,
-  useState,
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-} from "react";
+import { createContext, useContext, useState, useCallback, useEffect, useMemo, useRef } from "react";
 import type { ReactNode } from "react";
 import type { Locale, LocalePreference } from "@zcode/shared";
 import {
@@ -55,7 +47,10 @@ function resolveLocaleBroadcastPayload(payload: unknown): LocaleBroadcastPayload
   }
 
   const candidate = payload as Partial<LocaleBroadcastPayload>;
-  if (isLocalePreference(candidate.preference) && isLocale(candidate.resolvedLocale)) {
+  if (
+    isLocalePreference(candidate.preference) &&
+    isLocale(candidate.resolvedLocale)
+  ) {
     return {
       preference: candidate.preference,
       resolvedLocale: candidate.resolvedLocale,
@@ -65,7 +60,7 @@ function resolveLocaleBroadcastPayload(payload: unknown): LocaleBroadcastPayload
   return null;
 }
 
-function resolveLocalePreferenceFromSettings({
+export function resolveLocalePreferenceFromSettings({
   storedPreference,
   settingsLocale,
   settingsLocalePreference,
@@ -86,7 +81,7 @@ function resolveLocalePreferenceFromSettings({
   return storedPreference ?? settingsLocalePreference ?? settingsLocale ?? null;
 }
 
-function shouldApplyLocaleBroadcastMessage(
+export function shouldApplyLocaleBroadcastMessage(
   message: Pick<BroadcastMessage, "channel" | "payload" | "sourceWindowId">,
   options: {
     ignoredLocalPayload?: LocaleBroadcastPayload | null;
@@ -175,14 +170,12 @@ export function ZCodeIntlProvider({
       // Provider 层不能把持久化 RPC 串成无界等待链。
       // 一次 settingService.update 永久 pending 时，后续语言选择仍要继续尝试落盘；
       // 底层 settingService 负责文件写入顺序，这里只做最新操作校验和错误收口。
-      void settingService
-        ?.update({
-          locale: resolvedLocale,
-          localePreference: preference,
-        })
-        .catch(() => {
-          // 持久化失败不阻断 UI 状态和跨窗口广播，下一次语言操作会再次尝试写入。
-        });
+      void settingService?.update({
+        locale: resolvedLocale,
+        localePreference: preference,
+      }).catch(() => {
+        // 持久化失败不阻断 UI 状态和跨窗口广播，下一次语言操作会再次尝试写入。
+      });
     },
     [settingService],
   );
@@ -214,7 +207,10 @@ export function ZCodeIntlProvider({
         }
         if (nextPreference === "system") {
           const resolvedLocale = await resolveSystemLocale();
-          if (disposed || localePreferenceOperationSeqRef.current !== initialOperationSeq) {
+          if (
+            disposed ||
+            localePreferenceOperationSeqRef.current !== initialOperationSeq
+          ) {
             return;
           }
           setSystemLocale(resolvedLocale);
@@ -266,21 +262,17 @@ export function ZCodeIntlProvider({
           // 跨窗口语言同步不能等待 settingService 持久化 RPC。
           // 持久化可能超时或拒绝，但本地 UI 与其他窗口应先按用户最后一次选择同步。
           ignoredLocalLocaleBroadcastPayloadRef.current = broadcastPayload;
-          void broadcastService
-            .send({
-              channel: STATE_LOCALE_CHANNEL,
-              payload: broadcastPayload,
-            })
-            .finally(() => {
-              if (
-                ignoredLocalLocaleBroadcastPayloadRef.current?.preference ===
-                  broadcastPayload.preference &&
-                ignoredLocalLocaleBroadcastPayloadRef.current.resolvedLocale ===
-                  broadcastPayload.resolvedLocale
-              ) {
-                ignoredLocalLocaleBroadcastPayloadRef.current = null;
-              }
-            });
+          void broadcastService.send({
+            channel: STATE_LOCALE_CHANNEL,
+            payload: broadcastPayload,
+          }).finally(() => {
+            if (
+              ignoredLocalLocaleBroadcastPayloadRef.current?.preference === broadcastPayload.preference &&
+              ignoredLocalLocaleBroadcastPayloadRef.current.resolvedLocale === broadcastPayload.resolvedLocale
+            ) {
+              ignoredLocalLocaleBroadcastPayloadRef.current = null;
+            }
+          });
         }
         enqueueLocalePreferenceUpdate(operationSeq, resolvedLocale, newPreference);
       })();

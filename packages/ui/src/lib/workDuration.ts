@@ -48,3 +48,15 @@ export function workDurationParts(
 export function workDurationUnitSeparator(locale: string): string {
   return locale === "en-US" ? "" : " ";
 }
+
+export function formatWorkDuration(
+  durationMs: number | undefined,
+  formatMessage: FormatMessage,
+  locale: string,
+): string | null {
+  if (durationMs === undefined) return null;
+  const separator = workDurationUnitSeparator(locale);
+  return workDurationParts(durationMs, formatMessage)
+    .map((part) => `${part.value}${separator}${part.unit}`)
+    .join(" ");
+}

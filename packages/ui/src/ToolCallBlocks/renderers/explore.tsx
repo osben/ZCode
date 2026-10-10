@@ -20,7 +20,7 @@ const EXPLORE_TOOL_ICON = <SearchIcon className="size-4 shrink-0 text-foreground
 
 type IntlLike = Pick<IntlInstance, "formatMessage" | "formatPlural">;
 
-type ExploreChildSummary = {
+export type ExploreChildSummary = {
   animationKey: string;
   primaryText: ReactNode;
   secondaryText?: ReactNode;
