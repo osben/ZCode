@@ -1,4 +1,5 @@
 import type {
+  GitBranchMergeStatus,
   GitBranchMutationResult,
   GitChangeKind,
   GitCommitGraphCommit,
@@ -88,6 +89,7 @@ export interface GitCliRepo {
   ): Promise<GitBranchMutationResult>;
   getDiff(params: GitDiffQuery): Promise<GitDiffResult>;
   getBranchComparison(workspacePath: string): Promise<GitBranchComparisonSnapshot>;
+  getBranchMergeStatus(workspacePath: string): Promise<GitBranchMergeStatus>;
   stage(workspacePath: string, paths: string[]): Promise<void>;
   unstage(workspacePath: string, paths: string[]): Promise<void>;
   discard(workspacePath: string, paths: string[], staged: boolean): Promise<void>;

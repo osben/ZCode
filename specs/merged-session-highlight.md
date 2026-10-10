@@ -1,6 +1,10 @@
 # Подсветка смерженных сессий и popup с информацией о merge
 
-Статус: спека утверждена. Реализация не начата.
+Статус: реализовано в `feat/merged-session-highlight` (unit-покрытие сценариев 1–5; E2E-инфраструктуры сайдбара в репо нет — сценарии 6–9 проверяются вручную до её появления).
+
+## Уточнение по данным (выяснено при реализации)
+
+Per-session веток в модели данных нет: ни в `ZCodeTaskMeta`, ни в session-событиях, ни в UI. Ветка есть только у workspace (`GitRepositorySummary.branchName`). Поэтому «ветка сессии» = текущая ветка workspace, в котором живёт сессия; наблюдение имеет гранулярность workspace + ветка (совпадает с ключом кэша ниже). Все строки одного workspace показывают один статус.
 
 ## Проблема
 
@@ -45,15 +49,15 @@
 ```ts
 type MergeStatus = {
   state: "merged" | "not_merged" | "unknown";
-  baseRef?: string;
-  headRef?: string;
-  lastCommitAt?: string; // ISO, дата tip ветки
+  baseRef: string | null;
+  headRef: string | null;
+  lastCommitAt: string | null; // ISO, дата tip ветки
 };
 ```
 
-Схема zod в `packages/shared`, протокол в `packages/shared/src/zcode-protocol/index.ts`. Строгая типизация и runtime-валидация.
+Фактическая интеграция (реализация): типы `GitBranchMergeStatus` в `packages/shared/src/git.ts` (конвенция файла — `| null` вместо optional); метод `IGitService.getBranchMergeStatus` в `packages/services/src/git/git.ts` — существующая сервисная поверхность UI↔host (та же, что `getBranchComparison`). Отдельная запись в `zcode-protocol/index.ts` не нужна: это наблюдение по запросу, а не событие сессии.
 
-**Версии:** старый UI игнорирует новое поле. Старый CLI отдаёт `unknown`, UI скрывает бейдж.
+**Версии:** старый host без метода отклоняет вызов — hook ловит ошибку, бейдж скрыт (деградация как со `unknown`).
 
 **Граница:** состояние merge не идёт в `desktop-continuous` stream и не записывается в `SessionEvent`/journal. Это наблюдение, а не событие сессии (тот же принцип, что у `session-token-throughput.md`).
 
@@ -63,10 +67,10 @@ type MergeStatus = {
 - Popup: переиспользовать `packages/ui/src/components/ui/hover-card.tsx` или текущий Tooltip. Текст `text-ui-sm` (`DESIGN.md:226`). Все размеры через `text-ui-*` (`DESIGN.md:11`), без `text-sm`/`text-xs` и произвольных `text-[13px]`.
 - Блок добавляется в существующий popup строки, второй popup не создаётся.
 - Интерактивные overlay выше пассивных tooltip (`DESIGN.md:427`).
-- Строки через intl: новые ключи в `en-US`, `zh-CN`, `uk-UA` (`packages/ui/src/i18n/locales/`, ключи `taskList.*`).
-- Состояние в `packages/ui/src/store/`, получение через hook в `packages/ui/src/hooks/`, `.tsx` для JSX.
+- Строки через intl: новые ключи в `en-US`, `zh-CN`, `uk-UA` (`packages/ui/src/i18n/locales/`, ключи `taskList.branchMerged*`).
+- Состояние в `packages/ui/src/store/branchMergeStatusStore.ts`, проба — hook `useBranchMergeStatuses` (`packages/ui/src/hooks/`); невидимый probe-компонент `BranchMergeStatusProbes` монтируется в `WorkspaceSidebar` один раз и покрывает grouped, flat и archived виды (для `.tsx` с JSX).
 - Внешние ссылки только через `IPlatformService` (`packages/shared/src/platform.ts`), не `window.zcode`.
-- Вторая строка `packages/ui/src/TaskListItem.tsx` имеет собственную логику внимания. Нужно проверить, отображается ли в ней тот же бейдж, и применить правило приоритета там же.
+- Вторая строка `packages/ui/src/TaskListItem.tsx`: бейдж добавлен в обе её цепочки статусов с тем же правилом приоритета (после pendingInteraction и внимания).
 
 ## Платформы (desktop, web и mobile remote)
 
@@ -95,8 +99,7 @@ type MergeStatus = {
 ## Валидация
 
 - `pnpm typecheck`, `pnpm lint`, `pnpm architecture:check --changed`.
-- Unit: маппинг exit code `git merge-base --is-ancestor` в `MergeStatus`; TTL и сброс кэша; ключ identity.
-- E2E: бейдж и popup по сценариям 1–5.
+- Unit: маппинг exit code `git merge-base --is-ancestor` в `MergeStatus`; TTL и сброс кэша; ключ identity. Реализовано в `packages/services/test/branchMergeStatusService.test.ts` (включая сценарии 1–5 на реальном временном git-репозитории; сайдбар-E2E в репо отсутствует, сценарии 6–9 — ручная проверка).
 
 ## Вне скоупа
 
