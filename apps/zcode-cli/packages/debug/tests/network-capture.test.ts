@@ -48,7 +48,9 @@ describe("network capture", () => {
       response.writeHead(200, {
         "content-type": "text/plain",
         // Fork 注：测试桩故意下发 cookie 以验证 capture 记录，loopback 环境无传输风险。
-        "set-cookie": "debug-secret=1", // codeql[js/client-exposed-cookie] codeql[js/clear-text-cookie]
+        // codeql[js/client-exposed-cookie]
+        // codeql[js/clear-text-cookie]
+        "set-cookie": "debug-secret=1",
       });
       response.end(`ok:${incoming.url ?? "/"}`);
     });

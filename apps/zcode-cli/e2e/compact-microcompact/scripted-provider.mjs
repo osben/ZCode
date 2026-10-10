@@ -56,7 +56,8 @@ export async function startScriptedProvider(input) {
       });
       response.writeHead(500, { "content-type": "application/json" });
       // Fork 注：E2E 假 provider 的职责就是把错误细节（含栈）回给被测端。
-      response.end(responseBody); // codeql[js/stack-trace-exposure]
+      // codeql[js/stack-trace-exposure]
+      response.end(responseBody);
     }
   });
 

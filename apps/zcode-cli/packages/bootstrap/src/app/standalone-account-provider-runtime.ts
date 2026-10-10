@@ -116,6 +116,8 @@ export function standaloneAccountProviderCredentialKey(input: {
 export function createStandaloneAccountIdentityFromSecret(secret: string): string {
   const normalized = secret.trim();
   if (!normalized) throw new Error("Standalone Account Secret 不能为空");
+  // Fork 注：从高熵 API key 派生展示用连接身份（截断摘要），不是口令存储，无法离线爆破原文。
+  // codeql[js/insufficient-password-hash]
   return `key-${createHash("sha256").update(normalized).digest("hex").slice(0, 24)}`;
 }
 
@@ -260,10 +262,10 @@ export function createStandaloneProviderRuntimeHeadersPort(
         }
         // Fork 注：这是账号 scope 指纹（与 expectedAccountScope 做相等比较、检测账号切换），
         // 不是口令存储——需要快速确定性摘要而非 KDF，oauth 仅作为输入、不会泄漏。
-        accountScope =
-          createHash("sha256") // codeql[js/insufficient-password-hash]
-            .update(JSON.stringify([providerId, family, currentIdentity, oauth]))
-            .digest("hex");
+        accountScope = createHash("sha256").update(
+          // codeql[js/insufficient-password-hash]
+          JSON.stringify([providerId, family, currentIdentity, oauth]),
+        ).digest("hex");
         if (
           (input.expectedAccountScope && input.expectedAccountScope !== accountScope) ||
           (input.rejectedProjectTokenFingerprint && !input.expectedAccountScope)

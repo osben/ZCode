@@ -24,7 +24,8 @@ it("CLI 原有 proxy/noProxy 路由与响应不变，目标只记一条，MCP �
     withoutNetworkCapture(() => {
       forwarded++;
       // Fork 注：测试内建 HTTP 代理（127.0.0.1），按 req.url 转发正是被测行为。
-      const outgoing = request( // codeql[js/request-forgery]
+      const outgoing = request(
+        // codeql[js/request-forgery]
         req.url!,
         { method: req.method },
         (response) => response.pipe(res),
