@@ -1,6 +1,7 @@
 import assert from "assert/strict";
 import test from "node:test";
 import type { GitBranchMergeStatus } from "@zcode/shared";
+import { useBranchMergeStatusStore } from "../src/store/branchMergeStatusStore.js";
 import {
   createBranchMergeStatusProber,
   type BranchMergeProbeStore,
@@ -125,8 +126,15 @@ test("forget clears per-workspace bookkeeping", async () => {
   await prober.probe([failing]);
   assert.equal(warnings.length, 1);
 
-  // Workspace покинул сайдбар и вернулся — счётчик warn-onse начинается заново.
+  // Workspace покинул сайдбар и вернулся — счётчик warn-once начинается заново.
   prober.forget("w");
   await prober.probe([failing]);
   assert.equal(warnings.length, 2);
+});
+
+test("requestRefresh bumps the mutation-signal version", () => {
+  // In-app мутация (смена ветки/коммит) будит пробы через этот счётчик.
+  const before = useBranchMergeStatusStore.getState().refreshVersion;
+  useBranchMergeStatusStore.getState().requestRefresh();
+  assert.equal(useBranchMergeStatusStore.getState().refreshVersion, before + 1);
 });

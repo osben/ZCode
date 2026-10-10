@@ -26,6 +26,11 @@ export function useBranchMergeStatuses(
   const active = options?.active ?? true;
   const setBranchMergeStatus = useBranchMergeStatusStore((state) => state.setBranchMergeStatus);
   const dropWorkspace = useBranchMergeStatusStore((state) => state.dropWorkspace);
+  // Сигнал успешной git-мутации (смена ветки/коммит): сервисный кэш инвалидирован
+  // самим сервисом — здесь остаётся немедленно переопросить. Остальные re-run'ы
+  // эффекта (mount, смена targets при reconnect, открытие сайдбара) тоже пробят:
+  // повторная проба дешёвая и упирается в сервисный TTL.
+  const refreshVersion = useBranchMergeStatusStore((state) => state.refreshVersion);
 
   const prober = useMemo(
     () => createBranchMergeStatusProber({ setBranchMergeStatus, dropWorkspace }),
@@ -48,7 +53,7 @@ export function useBranchMergeStatuses(
     return () => {
       window.removeEventListener("focus", onFocus);
     };
-  }, [prober, targets, active]);
+  }, [prober, targets, active, refreshVersion]);
 
   // Drop store entries for workspaces that left the sidebar.
   useEffect(() => {

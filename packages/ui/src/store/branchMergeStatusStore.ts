@@ -10,12 +10,22 @@ import type { GitBranchMergeStatus } from "@zcode/shared";
  */
 interface BranchMergeStatusState {
   statusByWorkspaceKey: Record<string, GitBranchMergeStatus>;
+  /**
+   * Счётчик запросов на re-proбу после успешной мутации git (смена ветки,
+   * создание ветки, коммит). In-app мутация инвалидирует сервисный кэш, но
+   * сама по себе не будит пробу — этот счётчик и есть сигнал «мутация
+   * прошла, опроси заново». Глобальный: untouched workspace'ы всё равно
+   * попадают в сервисный TTL-кэш и стоят один symbolic-ref.
+   */
+  refreshVersion: number;
   setBranchMergeStatus: (workspaceKey: string, status: GitBranchMergeStatus) => void;
   dropWorkspace: (workspaceKey: string) => void;
+  requestRefresh: () => void;
 }
 
 export const useBranchMergeStatusStore = create<BranchMergeStatusState>((set) => ({
   statusByWorkspaceKey: {},
+  refreshVersion: 0,
   setBranchMergeStatus: (workspaceKey, status) =>
     set((state) => {
       const previous = state.statusByWorkspaceKey[workspaceKey];
@@ -35,6 +45,7 @@ export const useBranchMergeStatusStore = create<BranchMergeStatusState>((set) =>
       delete next[workspaceKey];
       return { statusByWorkspaceKey: next };
     }),
+  requestRefresh: () => set((state) => ({ refreshVersion: state.refreshVersion + 1 })),
 }));
 
 export function selectBranchMergeStatus(
