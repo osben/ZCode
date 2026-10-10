@@ -28,6 +28,7 @@ import {
   mkdir,
   readFile,
   readdir,
+  stat,
   symlink,
   writeFile,
 } from "node:fs/promises";
@@ -2252,8 +2253,10 @@ async function copyClaudeAgentsFileToZcodeAgentsFile(params: {
       return { skipped: true, overwritten: false };
     }
     // 与 copyFile 一致，保留源文件权限（atomicWriteFile 默认走 umask）。
+    // 权限取 stat 而非 lstat：源是 symlink 时应使用目标文件的 mode，
+    // 链接本身的 mode 恒为 0777，会泄漏文件内容给本机其他用户。
     const sourceBytes = await readFile(sourcePath);
-    const sourceMode = (await lstat(sourcePath)).mode & 0o7777;
+    const sourceMode = (await stat(sourcePath)).mode & 0o7777;
     await atomicWriteFile(targetPath, sourceBytes, { mode: sourceMode });
     return { skipped: false, overwritten: targetExistsUnderLock };
   });
