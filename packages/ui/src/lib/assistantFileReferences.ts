@@ -198,7 +198,9 @@ export function extractAssistantFileReferences(
   }
 
   for (const match of content.matchAll(FILE_URL_RE)) {
-    const raw = (match[0] ?? "").replace(/(?:[*_`]+|[.,;:!?，。！？；：、]+)+$/g, "");
+    // 与 assistantPreviewCards 的 normalizeTrailingUrlText 同理：摊平嵌套量词，
+    // 消除指数回溯（code-scanning js/redos），字符集合与匹配语言保持不变。
+    const raw = (match[0] ?? "").replace(/[*_`.,;:!?，。！？；：、]+$/g, "");
     const path = parseAssistantFileUrlPath(raw);
     const definition = path ? getAssistantPreviewFileTypeDefinition(path) : null;
     const start = match.index ?? 0;
