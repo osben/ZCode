@@ -2,7 +2,7 @@ import type { ApiClient } from "@zcode/shared";
 import {
   buildRuntimeZCodeEndpointUrls,
   normalizeOfficialGlmModelId,
-  ZCODE_VERSION,
+  ZCODE_UPSTREAM_BASE_VERSION,
 } from "@zcode/shared";
 import { readApiJson } from "../providers/api/apiJson.js";
 
@@ -64,7 +64,8 @@ export function buildZaiStartPlanBalanceUrl(): string {
   const url = new URL(ZAI_START_PLAN_BALANCE_URL);
   // Start Plan balance 接口按真实 app_version 判定能力；
   // 开发环境也不能固定 3.0.0，否则本地验证会绕过当前 App 版本的后端策略。
-  url.searchParams.set("app_version", ZCODE_VERSION);
+  // 对外只发上游基线：fork 的 -fork.N 后缀按 semver 低于同基线正式版，会误触发旧客户端策略。
+  url.searchParams.set("app_version", ZCODE_UPSTREAM_BASE_VERSION);
   return url.toString();
 }
 
