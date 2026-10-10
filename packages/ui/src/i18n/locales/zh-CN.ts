@@ -5488,6 +5488,8 @@ const zhCN: Record<string, string> = {
   "chat.error.processExited": "代理进程意外退出",
   "chat.error.dismiss": "关闭错误提示",
   "chat.error.retry": "重试",
+  "chat.error.resume": "继续",
+  "chat.error.resumeBlocked": "暂时无法继续，请检查会话后重试。",
   "chat.error.reloginProvider": "重新登录 {provider}",
   "chat.error.action.relogin": "重新登录",
   "chat.error.action.refreshQuota": "刷新额度",

@@ -57,6 +57,7 @@ import type {
 } from "@zcode/services";
 import { toast } from "@/components/ui/toast.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
+import { CHAT_ERROR_RESUME_MESSAGE } from "@/lib/chatErrorResume.js";
 import { DEFAULT_CODE_PREVIEW_SETTINGS } from "@/lib/codePreviewSettings.js";
 import type { CodeViewerSource } from "@/lib/codeViewer.js";
 import type { OpenAutomationsMain } from "@/lib/taskNavigationHistory.js";
@@ -3958,6 +3959,39 @@ export function SessionPane({
     draftModelReadinessError ??
     sendSubmissionError ??
     (quotaBanner.takesOverError ? null : projectedComposerError);
+  // Resume is offered only for runtime errors (control.lastError). Send failures and
+  // model-readiness errors happen before admission, so the user's message was never sent;
+  // resuming them would send "Continue" on its own.
+  const resumableComposerError =
+    projectedComposerError !== null && composerError === projectedComposerError;
+  // The guard is released when the error key changes: the next accepted turn clears
+  // lastError, and a new error gets a new key. A successful ACK alone does not release it,
+  // otherwise a second click before TurnStarted would send another "Continue".
+  const resumePendingErrorKeyRef = useRef<string | null>(null);
+  useEffect(() => {
+    const pendingKey = resumePendingErrorKeyRef.current;
+    if (pendingKey !== null && pendingKey !== controlLastErrorKey) {
+      resumePendingErrorKeyRef.current = null;
+    }
+  }, [controlLastErrorKey]);
+  const handleResumeError = useCallback(() => {
+    if (!controlLastErrorKey || resumePendingErrorKeyRef.current !== null) return;
+    resumePendingErrorKeyRef.current = controlLastErrorKey;
+    // Resume bypasses the composer submit path, so the draft and attachments stay untouched.
+    void handleSendText(CHAT_ERROR_RESUME_MESSAGE)
+      .then((result) => {
+        if (result === "blocked" || result === "confirmationRequired") {
+          resumePendingErrorKeyRef.current = null;
+          toast(intl.formatMessage({ id: "chat.error.resumeBlocked" }));
+        }
+      })
+      .catch((error: unknown) => {
+        resumePendingErrorKeyRef.current = null;
+        logger.warn("[v4-pane] Resume send failed", {
+          error: error instanceof Error ? error.message : String(error),
+        });
+      });
+  }, [controlLastErrorKey, handleSendText, intl]);
   useEffect(() => {
     setSendSubmissionError(null);
   }, [sessionId]);
@@ -4426,6 +4460,7 @@ export function SessionPane({
       onSendCompressionCommand={handleSendCompressionCommand}
       error={composerError}
       onDismissError={handleDismissComposerError}
+      onResumeError={resumableComposerError ? handleResumeError : undefined}
       onOpenModelSettings={handleOpenModelSettings}
       onOpenModelUpgrade={handleOpenModelUpgrade}
       onOpenCodeViewer={onOpenCodeViewer}
