@@ -3003,12 +3003,14 @@ export function SessionPane({
     [dispatchSendText, focusTimelineToLatest, intl, sessionId],
   );
 
-  // 连点 Resume 会在首个 ack 前重复发送“继续”，这里用 ref 合并同一次点击的在途请求。
+  // Rapid repeated clicks would send "Continue" again before the first send is acknowledged.
+  // The ref coalesces clicks while a Resume is in flight.
   const resumeInFlightRef = useRef(false);
   const handleResumeError = useCallback(() => {
     if (resumeInFlightRef.current) return;
     resumeInFlightRef.current = true;
-    // Resume 不经过 Composer submit，草稿与附件保持原样；失败结果在此收口为 toast/日志。
+    // Resume bypasses the composer submit path, so the draft and attachments stay untouched.
+    // Failure results are handled here as a toast or a log entry.
     void handleSendText(CHAT_ERROR_RESUME_MESSAGE)
       .then((result) => {
         if (result === "blocked" || result === "confirmationRequired") {
@@ -3016,7 +3018,7 @@ export function SessionPane({
         }
       })
       .catch((error: unknown) => {
-        logger.warn("[v4-pane] Resume 发送失败", {
+        logger.warn("[v4-pane] Resume send failed", {
           error: error instanceof Error ? error.message : String(error),
         });
       })

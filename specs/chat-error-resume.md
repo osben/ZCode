@@ -1,79 +1,79 @@
-# Кнопка Resume для ошибок чата
+# Resume button for chat errors
 
-Статус: реализовано, ожидает ревью.
+Status: implemented, pending review.
 
-## Проблема
+## Problem
 
-Иногда чат завершается ошибкой, и баннер говорит «что-то пошло не так». Чтобы продолжить, пользователь вручную пишет новое сообщение. Нужна кнопка Resume в баннере, которая одним нажатием отправляет в чат обычное сообщение `Continue from where you left off`.
+Sometimes a chat ends with an error, and the banner says something like "something went wrong". To continue, the user has to type a new message by hand. The error banner needs a Resume button that sends the ordinary message `Continue from where you left off` to the chat with one click.
 
-## Факты из кода (на момент спеки)
+## Facts from the code (at the time of the spec)
 
-- Баннер: `packages/ui/src/ChatErrorBanner.tsx`. Кнопка Retry уже есть (~309), но она вызывает `onRetry`, который в композере не передаётся. Существующий timeline Retry (`SessionPane.tsx` ~3085–3117, `retryTurn`) повторяет turn и не создаёт новое сообщение пользователя, поэтому Resume его не заменяет.
-- Единственное место рендера баннера: `packages/ui/src/v4/ConversationComposer.tsx` (~2216–2223), видимость через `visibleError` (~1622).
-- Путь отправки: `SessionPane.tsx` `handleSendText` (~2962) → `dispatchSendText` (~2921). Он же проверяет routing, модель и режим.
-- Ошибка из runtime: `control.lastError` → `projectedComposerError` → `composerError` (`SessionPane.tsx` ~3937–3960). Закрытие баннера по `handleDismissComposerError` (~3964) записывает ключ в `dismissedErrorKeys`.
-- Runtime сбрасывает transient `lastError` на следующем `TurnStarted` (`apps/zcode-cli/packages/bootstrap/src/zcode-protocol-v4/product-projection.ts` ~1647). Поэтому после успешного Resume баннер уходит сам.
+- Banner: `packages/ui/src/ChatErrorBanner.tsx`. A Retry button already exists (~309), but it calls `onRetry`, which the composer does not pass. The existing timeline Retry (`SessionPane.tsx` ~3085–3117, `retryTurn`) repeats the turn and does not create a new user message, so Resume does not replace it.
+- The only place the banner is rendered is `packages/ui/src/v4/ConversationComposer.tsx` (~2216–2223). Visibility is controlled by `visibleError` (~1622).
+- Send path: `SessionPane.tsx` `handleSendText` (~2962) → `dispatchSendText` (~2921). It also checks routing, model, and mode.
+- Runtime error: `control.lastError` → `projectedComposerError` → `composerError` (`SessionPane.tsx` ~3937–3960). Dismissing the banner through `handleDismissComposerError` (~3964) records the key in `dismissedErrorKeys`.
+- The runtime clears the transient `lastError` on the next `TurnStarted` (`apps/zcode-cli/packages/bootstrap/src/zcode-protocol-v4/product-projection.ts` ~1647). So after a successful Resume, the banner goes away by itself.
 
-## Продуктовые правила
+## Product rules
 
-1. Кнопка Resume показывается в баннере ошибки чата рядом с Retry, если передан обработчик и ошибка допускает повтор.
-2. Нажатие отправляет текст `Continue from where you left off` как обычное сообщение пользователя. Используется тот же путь, что и отправка из композера: routing, очередь, модель и режим текущей сессии.
-3. Текст сообщения не локализуется, потому что он уходит в диалог и модель. Локализуется только подпись кнопки (`chat.error.resume`).
-4. Черновик в композере не меняется. Resume не читает и не очищает редактор.
-5. Resume скрыт при:
-   - `model_config_missing` (повтор не исправит отсутствие модели; сейчас так же скрыты Copy и Feedback);
-   - `fault.runtime.hookBlocked` (хук заблокирует повтор).
-6. Resume не использует `retryTurn` и не добавляет новый тип команды.
-7. Если отправка вернула `blocked` или `confirmationRequired`, сообщение не уходит. Показывается toast, баннер остаётся.
-8. Если отправка бросила исключение, `handleSendText` ставит `sendSubmissionError`. Resume не создаёт второй баннер и не повторяет отправку автоматически.
-9. Успешный Resume не закрывает баннер вручную. Старую ошибку снимает runtime на `TurnStarted`.
+1. The Resume button appears in the chat error banner next to Retry when a handler is passed and the error allows a retry.
+2. Clicking it sends the text `Continue from where you left off` as an ordinary user message. It uses the same path as sending from the composer: routing, queue, and the current session's model and mode.
+3. The message text is not localized, because it goes into the conversation and to the model. Only the button label is localized (`chat.error.resume`).
+4. The composer draft does not change. Resume does not read or clear the editor.
+5. Resume is hidden for:
+   - `model_config_missing` (resending cannot fix a missing model; Copy and Feedback are already hidden for this error);
+   - `fault.runtime.hookBlocked` (the hook would block the resend).
+6. Resume does not use `retryTurn` and does not add a new command type.
+7. If the send returns `blocked` or `confirmationRequired`, the message is not sent. A toast is shown and the banner stays.
+8. If the send throws, `handleSendText` sets `sendSubmissionError`. Resume does not create a second banner and does not retry automatically.
+9. A successful Resume does not dismiss the banner manually. The runtime clears the old error on `TurnStarted`.
 
-## Источник состояния
+## Source of state
 
-- Ошибка turn: runtime (`control.lastError`).
-- Ошибка отправки: `SessionPane` (`sendSubmissionError`).
-- Resume не владеет состоянием. Он вызывает существующий `handleSendText`. Новых полей в store и протоколе нет.
-- Busy-сессия: Resume ведёт себя как обычная отправка, routing решает существующая логика.
+- Turn error: runtime (`control.lastError`).
+- Send error: `SessionPane` (`sendSubmissionError`).
+- Resume owns no state. It calls the existing `handleSendText`. No new fields in the store or the protocol.
+- On a busy session, Resume behaves like a normal send, and the existing routing logic decides what happens.
 
-## Интерфейс
+## Interface
 
-- `packages/ui/src/lib/chatErrorResume.ts` (новый, чистый модуль, только type-импорты):
+- `packages/ui/src/lib/chatErrorResume.ts` (new pure module, type-only imports):
   - `CHAT_ERROR_RESUME_MESSAGE = "Continue from where you left off"`;
   - `canResumeChatError(error: Pick<ZCodeUiError, "code" | "message">): boolean`;
-  - `isModelConfigMissingError` переносится сюда из `ChatErrorBanner.tsx` и экспортируется, чтобы не дублировать список кодов.
-- `ChatErrorBanner`: новый проп `onResume?: () => void`.
-- `ConversationComposer`: новый проп `onResumeError?: () => void`, передаётся в `ChatErrorBanner` как `onResume` при `visibleError`.
-- `SessionPane`: `handleResumeError` вызывает `handleSendText(CHAT_ERROR_RESUME_MESSAGE)` без черновика и передаётся в композер как `onResumeError`. Повторный клик, пока предыдущий Resume не завершился, игнорируется через ref.
+  - `isModelConfigMissingError` moves here from `ChatErrorBanner.tsx` and is exported, so the list of codes is not duplicated.
+- `ChatErrorBanner`: new prop `onResume?: () => void`.
+- `ConversationComposer`: new prop `onResumeError?: () => void`, passed to `ChatErrorBanner` as `onResume` when `visibleError` is set.
+- `SessionPane`: `handleResumeError` calls `handleSendText(CHAT_ERROR_RESUME_MESSAGE)` without touching the draft and is passed to the composer as `onResumeError`. A click made while the previous Resume is still in flight is ignored through a ref.
 
 ## UI
 
-- Кнопка: `Button variant="outline" size="sm"` из `packages/ui/src/components/ui/button.tsx`, без custom CSS (правило пользователя: только стандартные компоненты design system).
-- Подпись: `chat.error.resume` в `en-US` и `zh-CN`.
-- Порядок в баннере: Retry, Resume, Dismiss.
+- Button: `Button variant="outline" size="sm"` from `packages/ui/src/components/ui/button.tsx`, no custom CSS (user rule: standard design-system components only).
+- Label: `chat.error.resume` in `en-US` and `zh-CN`.
+- Order in the banner: Retry, Resume, Dismiss.
 
-## Логирование
+## Logging
 
-- `SessionPane` использует `logger` из `@/logger.js`. При исключении: `logger.warn("[v4-pane] Resume 发送失败", ...)`.
-- Toast для `blocked` и `confirmationRequired` используется существующий `toast` из `@/components/ui/toast.js` с ключом `chat.error.resumeBlocked` (en и zh).
+- `SessionPane` uses `logger` from `@/logger.js`. On an exception it logs `logger.warn("[v4-pane] Resume send failed", ...)`.
+- For `blocked` and `confirmationRequired`, the existing `toast` from `@/components/ui/toast.js` is shown with the key `chat.error.resumeBlocked` (en and zh).
 
 ## Acceptance scenarios
 
-1. Ошибка с обычным кодом: в баннере видна кнопка Resume. Клик добавляет в ленту сообщение `Continue from where you left off`, начинается новый turn, баннер исчезает.
-2. Во время Resume черновик в композере не меняется.
-3. `model_config_missing`: Resume не показан, Copy и Feedback без изменений.
-4. `fault.runtime.hookBlocked`: Resume не показан.
-5. Отправка вернула `blocked`: сообщение не уходит, появляется toast, баннер остаётся.
-6. Отправка бросила исключение: ошибка отправки показывается через существующий механизм, второго баннера нет, пишется `warn`.
-7. Подпись кнопки переведена на en и zh. Текст сообщения всегда английский.
+1. Error with a regular code: the Resume button is visible in the banner. Clicking it adds the message `Continue from where you left off` to the timeline, a new turn starts, and the banner disappears.
+2. During Resume, the composer draft does not change.
+3. `model_config_missing`: Resume is not shown; Copy and Feedback are unchanged.
+4. `fault.runtime.hookBlocked`: Resume is not shown.
+5. The send returns `blocked`: the message is not sent, a toast appears, and the banner stays.
+6. The send throws: the send error is shown through the existing mechanism, there is no second banner, and a `warn` is logged.
+7. The button label is translated to en and zh. The message text is always English.
 
-## Валидация
+## Validation
 
-- Unit (`node:test`): `canResumeChatError` для обычного кода, `model_config_missing` (все варианты кода), `fault.runtime.hookBlocked`; значение `CHAT_ERROR_RESUME_MESSAGE`.
+- Unit (`node:test`): `canResumeChatError` for a regular code, for `model_config_missing` (all code variants), and for `fault.runtime.hookBlocked`; the value of `CHAT_ERROR_RESUME_MESSAGE`.
 - `pnpm typecheck`, `pnpm lint`, `pnpm architecture:check --changed`.
 
-## Вне скоупа
+## Out of scope
 
-- Автоматический Resume без нажатия.
-- Resume после перезапуска приложения.
-- Изменение Retry (`retryTurn`).
-- Resume для ошибок, которые не выводятся через `ChatErrorBanner`.
+- Automatic Resume without a click.
+- Resume after the app restarts.
+- Changes to Retry (`retryTurn`).
+- Resume for errors that are not rendered through `ChatErrorBanner`.
