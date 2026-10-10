@@ -39,6 +39,8 @@ export function formatTokensPerSecond(locale: string, tokensPerSecond: number): 
 /**
  * 会话实时吞吐（tok/s）。事实源是 agent 侧 session/debug 观测（每个已完成模型请求
  * 的 outputTokens / 解码时长），这里只按秒轮询读取，不做本地 Δtoken/Δt 推导。
+ * 轮询出错（旧 CLI 报 sessionUnavailable、detached child 被回收）时上一次快照
+ * 不能冒充当前事实，按规格静默隐藏。
  */
 export function useSessionThroughput({
   enabled,
@@ -57,6 +59,9 @@ export function useSessionThroughput({
     workspaceIdentity,
     workspacePath,
   });
-  const rounds = debugState.rounds;
-  return useMemo(() => ({ tokensPerSecond: resolveLatestTokensPerSecond(rounds) }), [rounds]);
+  const { rounds, error } = debugState;
+  return useMemo(
+    () => ({ tokensPerSecond: error ? null : resolveLatestTokensPerSecond(rounds) }),
+    [rounds, error],
+  );
 }
