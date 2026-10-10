@@ -19,6 +19,7 @@ import {
   Keyboard,
   FileSearch,
   ScrollText,
+  Mic,
 } from "lucide-react";
 import { isSettingsSectionEnabled, type SettingsSectionId } from "@/lib/settingsNavigation.js";
 import type { Theme } from "@/useTheme.js";
@@ -150,6 +151,13 @@ const BASE_SETTINGS_SECTIONS: SettingsSectionDefinition[] = [
     titleId: "settings.shortcuts.title",
     groupId: "basics",
   },
+  // 语音输入紧跟快捷键：录音快捷键在快捷键分区可改，这里管理模型、麦克风与录音方式。
+  {
+    id: "voiceDictation",
+    icon: Mic,
+    titleId: "settings.voiceDictation.title",
+    groupId: "basics",
+  },
   // 工作区搜索范围（.zcodeignore）：面向所有用户的基础工作区行为配置，收在基础设置末尾。
   {
     id: "workspaceFileSearch",
@@ -168,7 +176,10 @@ const BASE_SETTINGS_SECTIONS: SettingsSectionDefinition[] = [
 // 兼容既有只读消费者：默认配置代表不带桌面平台能力的 Web 视图；
 // macOS/Windows/Linux 必须继续通过 createSettingsPageConfig 动态加入 Computer Use。
 export const SETTINGS_SECTIONS = BASE_SETTINGS_SECTIONS.filter(
-  (section) => section.id !== "computerUse" && isSettingsSectionEnabled(section.id),
+  (section) =>
+    section.id !== "computerUse" &&
+    section.id !== "voiceDictation" &&
+    isSettingsSectionEnabled(section.id),
 );
 
 export interface SettingsPageConfigOptions {
@@ -185,6 +196,8 @@ export function createSettingsPageConfig({
   const showComputerUse = isDesktop || isMacDesktop || isWindowsDesktop;
   const settingsSections = BASE_SETTINGS_SECTIONS.filter((section) => {
     if (section.id === "computerUse" && !showComputerUse) return false;
+    // 语音输入的模型与转写只存在于本机 Desktop Host，Web/远端设置页不展示。
+    if (section.id === "voiceDictation" && !isDesktop) return false;
     return isSettingsSectionEnabled(section.id);
   });
   const settingsSectionGroups = BASE_SETTINGS_SECTION_GROUPS.map((group) => ({

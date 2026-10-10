@@ -5210,6 +5210,7 @@ export function SessionPane({
   const composerNode = readOnly ? null : (
     <ConversationComposer
       key="conversation-composer"
+      voiceDictationEnabled={isDesktop}
       // Snapshot 仍服务用量、路由与运行态；工具栏的 mode/model 只读下方 Composer Draft。
       snapshot={snapshot}
       sessionId={sessionId}

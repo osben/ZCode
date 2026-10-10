@@ -165,6 +165,8 @@ import type { CodeViewerSource } from "@/lib/codeViewer.js";
 import { useConversationSelectionReferences } from "@/v4/composer/useConversationSelectionReferences.js";
 import { ConversationBackgroundWorkTrigger } from "@/v4/composer/ConversationBackgroundWorkTrigger.js";
 import { V4ComposerCuaEntry } from "@/v4/composer/V4ComposerCuaEntry.js";
+import { V4ComposerVoiceButton } from "@/v4/composer/V4ComposerVoiceButton.js";
+import { useVoiceDictation } from "@/hooks/useVoiceDictation.js";
 import {
   V4ComposerModeSwitch,
   V4ComposerModelControls,
@@ -501,6 +503,8 @@ export interface ConversationComposerProps {
   appSlashCommands?: readonly AppSlashCommand[];
   /** 把 composer 的 drop 路由暴露给整个对话 pane / 桌面草稿标题栏。 */
   onDropTargetControllerChange?: (controller: ConversationDropTargetController | null) => void;
+  /** 语音输入仅本机桌面端可用（转写在 Desktop Host 执行）；Web/远端入口不显示麦克风。 */
+  voiceDictationEnabled?: boolean;
 }
 
 function formatAttachmentLineCount(attachment: ChatComposerAttachment, locale: string): string {
@@ -568,6 +572,7 @@ function ConversationComposerImpl({
   suppressGoalCommands = false,
   appSlashCommands,
   onDropTargetControllerChange,
+  voiceDictationEnabled = false,
 }: ConversationComposerProps) {
   const { intl, locale } = useZCodeIntl();
   const services = useOptionalServices();
@@ -660,6 +665,19 @@ function ConversationComposerImpl({
   const activeShareContext = resolveAttachableShareContext(snapshot?.sharedContextImport);
   const pendingShareContext = activeShareContext?.status === "pending" ? activeShareContext : null;
   const inputApiRef = useRef<LexicalChatInputHandle | null>(null);
+  const voiceScopeRef = useRef<HTMLDivElement | null>(null);
+  const insertVoiceTranscript = useCallback((text: string) => {
+    const api = inputApiRef.current;
+    if (!api) return;
+    const current = api.getText().trimEnd();
+    api.setText(current ? `${current} ${text}` : text);
+    api.focus();
+  }, []);
+  const voiceDictation = useVoiceDictation({
+    enabled: voiceDictationEnabled,
+    onTranscript: insertVoiceTranscript,
+    scopeRef: voiceScopeRef,
+  });
   const reportedErrorKeysRef = useRef(new Set<string>());
   const isMobileTextInputViewport = useIsMobileTextInputViewport();
   const primaryModifierPressed = usePrimaryFollowupModifier();
@@ -2303,6 +2321,13 @@ function ConversationComposerImpl({
           onOpen={onOpenRunningBackgroundWorks}
           openTarget={backgroundWorkOpenTarget}
         />
+        {voiceDictationEnabled ? (
+          <V4ComposerVoiceButton
+            phase={voiceDictation.phase}
+            disabled={disabled}
+            onToggle={() => void voiceDictation.toggle()}
+          />
+        ) : null}
       </>
     ),
     [
@@ -2319,6 +2344,9 @@ function ConversationComposerImpl({
       remoteSessionId,
       runningSubagentCount,
       snapshot?.backgroundWorks,
+      voiceDictation.phase,
+      voiceDictation.toggle,
+      voiceDictationEnabled,
       workspaceIdentity,
       workspacePath,
     ],
@@ -2371,6 +2399,7 @@ function ConversationComposerImpl({
       <div
         data-highspeed-composer={highspeedCard ? "true" : undefined}
         data-highspeed-entrance={highspeedCard ? highspeedEntrance : undefined}
+        ref={voiceScopeRef}
         className={cn(
           "chat-composer-input-surface relative w-full",
           contextHeader && "rounded-2xl bg-surface shadow-xl/5",

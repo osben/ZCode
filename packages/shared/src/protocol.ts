@@ -249,6 +249,17 @@ export interface ResourceUsageSnapshot {
   processes: ResourceUsageProcess[];
 }
 
+export interface VoiceDictationSettings {
+  /** 选中的语音模型 id（见 services/voice-dictation 的模型目录）；null/缺省表示未选择。 */
+  modelId?: string | null;
+  /** 麦克风 deviceId；null/缺省使用系统默认输入。 */
+  microphoneDeviceId?: string | null;
+  /** 转写语言：`auto` 表示由模型自动识别，否则为语言码（如 `en`、`ru`）。 */
+  language?: string;
+  /** true：按住快捷键录音，松开即转写；false：按一下开始，再按一下结束。 */
+  pushToTalk?: boolean;
+}
+
 export interface AppSettings {
   /** 当前 App/Host 不再显示提交前体验套餐推荐；不改变任何入口的模型选择。 */
   startPlanRecommendationDismissed?: boolean;
@@ -260,6 +271,8 @@ export interface AppSettings {
    * 覆盖语义为整组替换（如 openCommandCenter 的双默认绑定被覆盖时同时失效）。
    */
   shortcutBindings?: Record<string, string[]>;
+  /** 语音输入（本机离线转写）偏好；模型文件与转写引擎由 services/voice-dictation 持有。 */
+  voiceDictation?: VoiceDictationSettings;
   /** 界面语言偏好；locale 保存偏好解析后的实际语言，供 main/menu/远控等非浏览器上下文使用。 */
   localePreference?: LocalePreference;
   /** 是否尽量继承系统终端 profile、shell 环境和字体 */

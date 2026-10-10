@@ -7358,6 +7358,53 @@ const enUS: Record<string, string> = {
   "cuaPermission.ready": "Permissions ready",
   "cuaPermission.ready.sessionValidationHint":
     "ZCode will verify the Computer Use tools against the exact session when your first session starts.",
+  "settings.voiceDictation.title": "Voice dictation",
+  "settings.shortcuts.command.voiceDictation": "Voice dictation",
+  "voiceDictation.inputDevice.title": "Input device",
+  "voiceDictation.inputDevice.description": "Microphone used when recording.",
+  "voiceDictation.inputDevice.default": "System default",
+  "voiceDictation.inputDevice.unnamed": "Microphone {index}",
+  "voiceDictation.inputDevice.unavailable": "Selected device unavailable",
+  "voiceDictation.micTest.title": "Test microphone",
+  "voiceDictation.micTest.description":
+    "Record 3 seconds to check that the selected input picks up sound.",
+  "voiceDictation.micTest.button": "Test mic",
+  "voiceDictation.micTest.recording": "Recording…",
+  "voiceDictation.micTest.result": "Peak level {level}%",
+  "voiceDictation.micTest.silent":
+    "No sound detected. Check the input device and microphone permission.",
+  "voiceDictation.shortcut.title": "Shortcut",
+  "voiceDictation.shortcut.description":
+    "Starts voice input in the composer. Change it in Keyboard Shortcuts.",
+  "voiceDictation.shortcut.unassigned": "Not assigned",
+  "voiceDictation.pushToTalk.title": "Push to talk",
+  "voiceDictation.pushToTalk.description":
+    "Hold the shortcut to record and release to transcribe. When off, press once to start and again to stop.",
+  "voiceDictation.language.title": "Language",
+  "voiceDictation.language.description":
+    "Spoken language. Auto-detect works with multilingual models.",
+  "voiceDictation.language.auto": "Auto-detect",
+  "voiceDictation.models.title": "Transcription models",
+  "voiceDictation.models.description":
+    "Runs entirely on this device. Download a model to get started. A model stays in memory for 5 minutes after use.",
+  "voiceDictation.models.languages": "{count} languages",
+  "voiceDictation.models.streaming": "Streaming",
+  "voiceDictation.models.license": "License: {license}",
+  "voiceDictation.models.download": "Download",
+  "voiceDictation.models.cancel": "Cancel",
+  "voiceDictation.models.use": "Use",
+  "voiceDictation.models.selected": "Selected",
+  "voiceDictation.models.remove": "Delete",
+  "voiceDictation.models.downloading": "Downloading {percent}%",
+  "voiceDictation.noModelSelected":
+    "Choose a transcription model in Settings → Voice dictation first.",
+  "voiceDictation.microphoneFailed":
+    "Could not access the microphone. Check the input device and permissions.",
+  "voiceDictation.transcribeFailed": "Voice transcription failed.",
+  "voiceDictation.downloadFailed": "Model download failed.",
+  "voiceDictation.saveFailed": "Could not save voice dictation settings.",
+  "voiceDictation.composer.start": "Voice input",
+  "voiceDictation.composer.stop": "Stop voice input",
   "settings.computerUse.title": "Computer Use",
   "settings.computerUse.toggleLabel": "Enable Computer Use",
   "settings.computerUse.toggleDescription":

@@ -86,6 +86,7 @@ import { CLOSE_ACTIVE_CONTEXT_REQUEST_EVENT } from "@/lib/closeActiveContext.js"
 import { BrowserSettingsSection } from "@/settings/BrowserSettingsSection.js";
 import { ComputerUseSection } from "@/settings/ComputerUseSection.js";
 import { ShortcutSettingsSection } from "@/settings/ShortcutSettingsSection.js";
+import { VoiceDictationSection } from "@/settings/VoiceDictationSection.js";
 import { MigrationSection } from "@/settings/MigrationSection.js";
 import { SETTINGS_FRAME_CONTENT_CLASSNAME } from "@/settings/SettingsPageParts.js";
 import {
@@ -1973,6 +1974,11 @@ export function SettingsPage({
                           />
                         ) : activeSection === "shortcuts" ? (
                           <ShortcutSettingsSection isDesktop={Boolean(isDesktop)} />
+                        ) : activeSection === "voiceDictation" ? (
+                          <ServiceProvider services={localHostServices}>
+                            {/* 语音模型与麦克风属于本机设备；与模型配置同样固定使用本机 Host。 */}
+                            <VoiceDictationSection />
+                          </ServiceProvider>
                         ) : activeSection === "modelProvider" ? (
                           <ServiceProvider services={localHostServices}>
                             {/* 模型配置属于本机全局事实源；激活远端 workspace 时也不能注入远端 Host。 */}

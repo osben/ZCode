@@ -13,12 +13,14 @@ import {
   PERSONAL_PROVIDER_CONFIG_FILE_NAME,
 } from "@zcode/provider-node";
 import { getAppConfigDir as resolveAppConfigDir } from "./paths.js";
+import { createVoiceDictationService, IVoiceDictationService } from "./voice-dictation/index.js";
 import {
   buildLocalMediaPreviewUrl,
   type DynamicWorkflowMode,
   type ProviderProvisioningTrigger,
 } from "@zcode/shared";
 
+export * from "./voice-dictation/index.js";
 export {
   materializeZCodeBuiltinProviderConfig,
   ZCODE_BUILTIN_PROVIDER_CONFIG_FILE_ENV,
@@ -2399,6 +2401,7 @@ export function createLocalServices(options: {
     .register(IZCodeAgentService, zcodeAgentService)
     .register(IZCodeSessionService, zcodeSessionService)
     .register(ICuaPermissionService, cuaPermissionService)
+    .register(IVoiceDictationService, createVoiceDictationService())
     .register(ICuaPipSessionService, cuaPipSessionService)
     .register(IConversationShareService, conversationShareService)
     .register(

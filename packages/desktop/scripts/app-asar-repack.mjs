@@ -1,6 +1,6 @@
 import { access, rename, rm } from "node:fs/promises";
 
-export const ASAR_UNPACK_NATIVE_GLOB = "*.{node,dll,dylib,exe}";
+export const ASAR_UNPACK_NATIVE_GLOB = "*.{node,dll,dylib,exe,so}";
 
 async function pathExists(path) {
   try {

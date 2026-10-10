@@ -460,6 +460,13 @@ function migrateLegacyWorkspaceSession(value: unknown): unknown {
   return migrated;
 }
 
+const voiceDictationSettingsSchema = z.object({
+  modelId: nonEmptyStringSchema.nullable().optional(),
+  microphoneDeviceId: nonEmptyStringSchema.nullable().optional(),
+  language: nonEmptyStringSchema.optional(),
+  pushToTalk: z.boolean().optional(),
+});
+
 const appSettingsObjectSchema = z.object({
   recentProjects: z.array(z.string()).default([]),
   // 未知 locale（如更新版本写入的新语言后回退到旧版本）只回落为默认值：
@@ -468,6 +475,7 @@ const appSettingsObjectSchema = z.object({
   // 快捷键用户覆盖（语义校验在 ui/src/shortcuts 生效表阶段容错，schema 只管形状）
   shortcutBindings: z.record(z.string(), z.array(z.string())).optional(),
   localePreference: localePreferenceSchema.default("system").catch("system"),
+  voiceDictation: voiceDictationSettingsSchema.optional(),
   terminalInheritSystemProfile: z.boolean().default(true),
   terminalFontFamily: nonEmptyStringSchema.optional(),
   integratedTerminalShell: integratedTerminalShellSelectionSchema.optional(),
@@ -550,6 +558,7 @@ export const appSettingsPatchSchema = z.object({
   recentProjects: z.array(z.string()).optional(),
   locale: localeSchema.optional(),
   shortcutBindings: z.record(z.string(), z.array(z.string())).optional(),
+  voiceDictation: voiceDictationSettingsSchema.optional(),
   localePreference: localePreferenceSchema.optional(),
   terminalInheritSystemProfile: z.boolean().optional(),
   terminalFontFamily: nonEmptyStringSchema.optional(),

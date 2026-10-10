@@ -7,6 +7,7 @@ settings:
 overrides:
   react: 19.2.7
   react-dom: 19.2.7
+  koffi: 2.15.6
 
 patchedDependencies:
   '@ai-sdk/anthropic@3.0.81':
@@ -1266,6 +1267,9 @@ importers:
       smol-toml:
         specifier: ^1.9.0
         version: 1.9.1
+      transcribe-cpp:
+        specifier: 0.3.1
+        version: 0.3.1
       undici:
         specifier: ^6.23.0
         version: 6.24.1
@@ -5638,6 +5642,33 @@ packages:
 
   '@tootallnate/quickjs-emscripten@0.23.0':
     resolution: {integrity: sha512-C5Mc6rdnsaJDjO3UpGW/CQTHtCKaYlScZTly4JIu97Jxo/odCiH0ITnDXSJPTOrEKk/ycSZ0AOgTmkDtkOsvIA==}
+
+  '@transcribe-cpp/darwin-arm64-metal@0.3.1':
+    resolution: {integrity: sha512-Fk6crfpnFmbelnDNIVJ8NzJbQHMwQIZcd3ZquVMTjNxPIoU1xqABKV5iKPcCnxtRk48g6QRDgH2tEIN8nTp7qw==}
+    cpu: [arm64]
+    os: [darwin]
+
+  '@transcribe-cpp/darwin-x64-cpu@0.3.1':
+    resolution: {integrity: sha512-g3CwO033BO53kQfzZr9m8TeTEzjmz4rEItrBzwVo2WbRw2s/vCs+XyIWPPHYtwdOtaE7ryjeXoXRbVP8A9bf0g==}
+    cpu: [x64]
+    os: [darwin]
+
+  '@transcribe-cpp/linux-arm64-cpu-vulkan@0.3.1':
+    resolution: {integrity: sha512-HvHDDVlyk37eDVkbud+eL9iqXYOpmJkhtIaV3TbI7RB2fCYcQkdpYsO3W25bOsavDZsyF0TxROKjCs2cEvPS4g==}
+    cpu: [arm64]
+    os: [linux]
+    libc: [glibc]
+
+  '@transcribe-cpp/linux-x64-cpu-vulkan@0.3.1':
+    resolution: {integrity: sha512-Q5EW/1Tt5NMZ6koyvYpQRHnFMVwy+KWBkcTzllp0g9OOkK71Z9sTL0kk2gQtpeSd4RgtgBX7PaCS0gX93Zcb3g==}
+    cpu: [x64]
+    os: [linux]
+    libc: [glibc]
+
+  '@transcribe-cpp/win32-x64-cpu-vulkan@0.3.1':
+    resolution: {integrity: sha512-h2ND0lEFvQAk3ljKQg3TNu2Hc5KxXqDLUf0X3uzjg/2JTuI7rRhGW+pg+SnvjFIHYFQcAv0mFV6+pHCgjK63oQ==}
+    cpu: [x64]
+    os: [win32]
 
   '@ts-morph/common@0.27.0':
     resolution: {integrity: sha512-Wf29UqxWDpc+i61k3oIOzcUfQt79PIT9y/MWfAGlrkjg6lBC1hwDECLXPVJAhWjiGbfBCxZd65F/LIZF3+jeJQ==}
@@ -11023,6 +11054,10 @@ packages:
     resolution: {integrity: sha512-bLVMLPtstlZ4iMQHpFHTR7GAGj2jxi8Dg0s2h2MafAE4uSWF98FC/3MomU51iQAMf8/qDUbKWf5GxuvvVcXEhw==}
     engines: {node: '>=20'}
 
+  transcribe-cpp@0.3.1:
+    resolution: {integrity: sha512-psWHG4uoLlLHGG1bg3NnpO1o92IpOTeLxxlWyfnetQS2/QcRg7MNM59/MTR67Ka6OzN0UoG6L1agPL63sfnbFg==}
+    engines: {node: '>=22'}
+
   tree-kill@1.2.2:
     resolution: {integrity: sha512-L0Orpi8qGpRG//Nd+H90vFB+3iHnue1zSSGmNOOCh1GLJ7rUKVwV2HvijphGQS2UmhUZewS9VgvxYIdgr+fG1A==}
     hasBin: true
@@ -15564,6 +15599,21 @@ snapshots:
 
   '@tootallnate/quickjs-emscripten@0.23.0': {}
 
+  '@transcribe-cpp/darwin-arm64-metal@0.3.1':
+    optional: true
+
+  '@transcribe-cpp/darwin-x64-cpu@0.3.1':
+    optional: true
+
+  '@transcribe-cpp/linux-arm64-cpu-vulkan@0.3.1':
+    optional: true
+
+  '@transcribe-cpp/linux-x64-cpu-vulkan@0.3.1':
+    optional: true
+
+  '@transcribe-cpp/win32-x64-cpu-vulkan@0.3.1':
+    optional: true
+
   '@ts-morph/common@0.27.0':
     dependencies:
       fast-glob: 3.3.3
@@ -15975,7 +16025,7 @@ snapshots:
       obug: 2.1.1
       std-env: 4.0.0
       tinyrainbow: 3.1.0
-      vitest: 4.1.7(patch_hash=11fdb66aa985e1d77e68752deeb7c1130ae33c9a4e2968f23aae8adaf8bc9ba0)(@opentelemetry/api@1.9.1)(@types/node@24.12.2)(@vitest/coverage-v8@4.1.7)(jsdom@29.1.1(@noble/hashes@2.2.0))(msw@2.13.3(@types/node@24.12.2)(typescript@6.0.2))(vite@8.0.8(@types/node@24.12.2)(esbuild@0.27.7)(jiti@2.6.1)(tsx@4.21.0)(yaml@2.9.0))
+      vitest: 4.1.7(patch_hash=11fdb66aa985e1d77e68752deeb7c1130ae33c9a4e2968f23aae8adaf8bc9ba0)(@opentelemetry/api@1.9.1)(@types/node@24.12.2)(@vitest/coverage-v8@4.1.7)(jsdom@29.1.1(@noble/hashes@2.2.0))(msw@2.13.3(@types/node@24.12.2)(typescript@5.9.3))(vite@8.0.8(@types/node@24.12.2)(esbuild@0.25.12)(jiti@2.6.1)(tsx@4.21.0)(yaml@2.9.0))
 
   '@vitest/expect@4.1.4':
     dependencies:
@@ -22262,6 +22312,16 @@ snapshots:
   tr46@6.0.0:
     dependencies:
       punycode: 2.3.1
+
+  transcribe-cpp@0.3.1:
+    dependencies:
+      koffi: 2.15.6
+    optionalDependencies:
+      '@transcribe-cpp/darwin-arm64-metal': 0.3.1
+      '@transcribe-cpp/darwin-x64-cpu': 0.3.1
+      '@transcribe-cpp/linux-arm64-cpu-vulkan': 0.3.1
+      '@transcribe-cpp/linux-x64-cpu-vulkan': 0.3.1
+      '@transcribe-cpp/win32-x64-cpu-vulkan': 0.3.1
 
   tree-kill@1.2.2: {}
 
