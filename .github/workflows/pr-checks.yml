@@ -39,6 +39,9 @@ jobs:
       - name: Lint
         run: pnpm lint
 
+      - name: Tests
+        run: pnpm test
+
       # Full check: `--changed` diffs against HEAD, which is the merge commit in PR CI, so it would miss the PR's changes.
       - name: Architecture check
         run: pnpm architecture:check
