@@ -44,9 +44,10 @@ jobs:
         run: pnpm architecture:check
 
       # Only files touched by this PR; the repo has pre-existing format drift elsewhere.
+      # oxfmt ignores lockfiles and similar files, so a PR with only those would otherwise fail on "no target files".
       - name: Format check (changed files)
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
           git diff --name-only --diff-filter=ACMR -z "$BASE_SHA...HEAD" \
-            | xargs -0 -r pnpm exec oxfmt --check
+            | xargs -0 -r pnpm exec oxfmt --check --no-error-on-unmatched-pattern
