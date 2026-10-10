@@ -46,8 +46,8 @@ import {
   sortableKeyboardCoordinates,
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
-import type { Locale, RemoteTarget, UserInfo, ZCodeTaskMeta } from "@zcode/shared";
-import { BUILTIN_MODEL_PROVIDER_IDS } from "@zcode/shared";
+import type { RemoteTarget, UserInfo, ZCodeTaskMeta } from "@zcode/shared";
+import { BUILTIN_MODEL_PROVIDER_IDS, isLocale } from "@zcode/shared";
 import {
   TID_CONVERSATION_NEW_TASK,
   TID_CONVERSATION_SECTION,
@@ -742,8 +742,8 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebarComponent({
         setLocalePreference("system");
         return;
       }
-      if (value === "zh-CN" || value === "en-US") {
-        setLocalePreference(value as Locale);
+      if (isLocale(value)) {
+        setLocalePreference(value);
       }
     },
     [setLocalePreference],

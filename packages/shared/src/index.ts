@@ -28,6 +28,16 @@ export type {
 } from "./protocol.js";
 export type { WorkspacePurpose } from "./workspacePurpose.js";
 export { DEFAULT_LOCALE } from "./protocol.js";
+export {
+  FALLBACK_UI_LOCALE,
+  SUPPORTED_LOCALES,
+  isLocale,
+  isLocalePreference,
+  matchSupportedLocale,
+  resolveSystemLocale,
+  toServiceLocale,
+} from "./locale.js";
+export type { ServiceLocale } from "./locale.js";
 export { ZCODE_VERSION, ZCODE_COMMIT, ZCODE_BUILD_TIME } from "./version.js";
 export type { HelloMessage, HelloAckMessage } from "./handshake.js";
 export type { ArmsRumEnv, ZCodeEnv, ZCodeProductFlavor } from "./env.js";

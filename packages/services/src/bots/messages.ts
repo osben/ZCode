@@ -1,6 +1,7 @@
-import type { Locale } from "@zcode/shared";
+import { toServiceLocale } from "@zcode/shared";
+import type { Locale, ServiceLocale } from "@zcode/shared";
 
-export type BotMessageLocale = Extract<Locale, "zh-CN" | "en-US">;
+export type BotMessageLocale = ServiceLocale;
 
 type MessageValues = Record<string, string | number | undefined>;
 
@@ -251,7 +252,8 @@ const messages = {
 export type BotMessageId = keyof (typeof messages)[BotMessageLocale];
 
 export function normalizeBotMessageLocale(locale: Locale | undefined): BotMessageLocale {
-  return locale === "en-US" ? "en-US" : DEFAULT_BOT_MESSAGE_LOCALE;
+  // 未指定语言时保持中文默认；其余界面语言映射到 Bot 支持的服务语言，非中文一律英文。
+  return locale ? toServiceLocale(locale) : DEFAULT_BOT_MESSAGE_LOCALE;
 }
 
 export function formatBotMessage(

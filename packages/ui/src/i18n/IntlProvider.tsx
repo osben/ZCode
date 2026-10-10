@@ -9,7 +9,12 @@ import {
 } from "react";
 import type { ReactNode } from "react";
 import type { Locale, LocalePreference } from "@zcode/shared";
-import { DEFAULT_LOCALE } from "@zcode/shared";
+import {
+  DEFAULT_LOCALE,
+  isLocale,
+  isLocalePreference,
+  resolveSystemLocale as resolveSystemLanguageTag,
+} from "@zcode/shared";
 import type { BroadcastMessage, IBroadcastService, ISettingService } from "@zcode/services";
 import {
   readNavigatorLanguage,
@@ -36,14 +41,6 @@ const STATE_LOCALE_CHANNEL = "state:locale";
 interface LocaleBroadcastPayload {
   preference: LocalePreference;
   resolvedLocale: Locale;
-}
-
-function isLocale(value: unknown): value is Locale {
-  return value === "zh-CN" || value === "en-US";
-}
-
-function isLocalePreference(value: unknown): value is LocalePreference {
-  return value === "system" || isLocale(value);
 }
 
 function resolveLocaleBroadcastPayload(payload: unknown): LocaleBroadcastPayload | null {
@@ -158,14 +155,10 @@ export function ZCodeIntlProvider({
   const applyingBroadcastRef = useRef(false);
   const ignoredLocalLocaleBroadcastPayloadRef = useRef<LocaleBroadcastPayload | null>(null);
   const localePreferenceOperationSeqRef = useRef(0);
-  const resolveNavigatorSystemLocale = useCallback((): Locale => {
-    const language = readNavigatorLanguage();
-    if (!language) {
-      return DEFAULT_LOCALE;
-    }
-
-    return language.toLowerCase().startsWith("zh") ? "zh-CN" : "en-US";
-  }, []);
+  const resolveNavigatorSystemLocale = useCallback(
+    (): Locale => resolveSystemLanguageTag(readNavigatorLanguage()),
+    [],
+  );
   const resolveSystemLocale = useCallback(async (): Promise<Locale> => {
     const resolvedLocale = await resolveHostSystemLocale?.();
     if (isLocale(resolvedLocale)) {

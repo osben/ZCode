@@ -53,6 +53,7 @@ import {
   type ModelSelection,
   type BotsConfigFile,
   type Locale,
+  type ServiceLocale,
   type SelectionPrompt,
 } from "@zcode/shared";
 import type { IZCodeTaskService } from "../session/zcodeTaskService.js";
@@ -108,7 +109,7 @@ import {
   pollWeixinRegistration as pollWeixinQrRegistration,
 } from "./providers/weixinRegistration.js";
 import { createFeishuBotProvider } from "./providers/feishuProvider.js";
-import { formatBotMessage, type BotMessageId } from "./messages.js";
+import { formatBotMessage, normalizeBotMessageLocale, type BotMessageId } from "./messages.js";
 import {
   extractBotAssistantResponseMessages,
   formatBotAssistantReplyBlocks,
@@ -205,7 +206,7 @@ const BOT_REPLY_GRANULARITY_OPTIONS = [
   },
 ] as const satisfies ReadonlyArray<{
   id: BotReplyGranularity;
-  label: Record<"zh-CN" | "en-US", string>;
+  label: Record<ServiceLocale, string>;
   aliases: readonly string[];
 }>;
 
@@ -404,7 +405,7 @@ function normalizeText(value: string): string {
 }
 
 function getReplyGranularityOptions(locale: Locale | undefined, provider?: BotProvider) {
-  const messageLocale = locale === "en-US" ? "en-US" : "zh-CN";
+  const messageLocale = normalizeBotMessageLocale(locale);
   const supportedIds = provider ? new Set(getSupportedBotReplyGranularities(provider)) : null;
   return BOT_REPLY_GRANULARITY_OPTIONS.filter(
     (option) => !supportedIds || supportedIds.has(option.id),
@@ -548,7 +549,7 @@ function sortBotPermissionOptions(
 
 function formatBotPermissionOptionLabel(option: ZCodePermissionOption, locale?: Locale): string {
   const displayKind = getBotPermissionOptionDisplayKind(option);
-  if (locale === "en-US") {
+  if (normalizeBotMessageLocale(locale) === "en-US") {
     switch (displayKind) {
       case "allowOnce":
         return "Allow";
@@ -586,7 +587,7 @@ function formatBotPermissionOptionDescription(
     return option.kind;
   }
   const scope = getPermissionRequestPreview(request).scope;
-  if (locale === "en-US") {
+  if (normalizeBotMessageLocale(locale) === "en-US") {
     if (displayKind === "allowOnce") {
       return "Allow this time only";
     }
@@ -650,7 +651,7 @@ function formatWorkspaceOptionLabel(workspace: BotWorkspaceRef, locale?: Locale)
   if (!workspace.workspaceIdentity) {
     return workspace.label;
   }
-  const remoteLabel = locale === "en-US" ? "[Remote]" : "[远端]";
+  const remoteLabel = normalizeBotMessageLocale(locale) === "zh-CN" ? "[远端]" : "[Remote]";
   return `${workspace.label} ${remoteLabel}`;
 }
 
@@ -1318,7 +1319,7 @@ export function createBotsService(
   }
 
   function currentOptionSuffix(locale: Locale | undefined): string {
-    return locale === "en-US" ? "current" : "当前";
+    return normalizeBotMessageLocale(locale) === "zh-CN" ? "当前" : "current";
   }
 
   function formatReplyGranularityLabel(
@@ -1432,7 +1433,7 @@ export function createBotsService(
     if (!provider) {
       return option.label;
     }
-    const isEnglish = locale === "en-US";
+    const isEnglish = !(normalizeBotMessageLocale(locale) === "zh-CN");
     const labels: Partial<Record<ZCodeProvider, Record<string, string>>> = {
       glm: {
         default: isEnglish ? "Default" : "默认",
@@ -4176,7 +4177,10 @@ export function createBotsService(
         if (replyMessages.length === 0 && !sentAnyAssistantReply) {
           await sendOutbound(
             bot,
-            createOutbound(actor, locale === "en-US" ? "Task completed." : "任务已完成。"),
+            createOutbound(
+              actor,
+              normalizeBotMessageLocale(locale) === "zh-CN" ? "任务已完成。" : "Task completed.",
+            ),
           );
           return;
         }
@@ -4600,7 +4604,7 @@ export function createBotsService(
   }
 
   function formatStatusStateValue(locale: Locale | undefined, state: string): string {
-    if (locale === "en-US") {
+    if (normalizeBotMessageLocale(locale) === "en-US") {
       return state;
     }
     switch (state) {

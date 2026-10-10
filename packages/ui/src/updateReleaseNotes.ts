@@ -18,12 +18,18 @@ export function getLocalizedUpdateReleaseNotes(
     markdown: payload.markdown,
   };
 
-  return (
-    payload.releaseNotesByLocale?.[locale] ??
-    (locale === "zh-CN"
-      ? defaultReleaseNotes
-      : (payload.releaseNotesByLocale?.["zh-CN"] ?? defaultReleaseNotes))
-  );
+  const byLocale = payload.releaseNotesByLocale;
+  if (byLocale?.[locale]) {
+    return byLocale[locale];
+  }
+  if (locale === "zh-CN") {
+    return defaultReleaseNotes;
+  }
+  // 默认正文是中文：英文界面沿用原有的 zh 回退；其他语言优先英文，避免直接展示中文（D14）。
+  if (locale === "en-US") {
+    return byLocale?.["zh-CN"] ?? defaultReleaseNotes;
+  }
+  return byLocale?.["en-US"] ?? defaultReleaseNotes;
 }
 
 export function formatUpdateReleaseDate(
