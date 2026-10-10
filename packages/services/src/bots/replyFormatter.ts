@@ -79,10 +79,53 @@ const formatterMessages = {
     moreToolCalls: "{count} more tool calls",
     moreFiles: "{count} more files",
   },
+  "uk-UA": {
+    toolCalls: "Виклики інструментів:",
+    completed: "Завершено",
+    failed: "Помилка",
+    denied: "Відхилено",
+    inProgress: "Виконується",
+    pending: "Очікує",
+    permissionRequired: "Потрібен дозвіл:",
+    editWriting: "Запис",
+    editUpdating: "Оновлення",
+    editDeleting: "Видалення",
+    editEditing: "Редагування",
+    changeSummary: "Зведення змін",
+    moreToolCalls: "Ще викликів інструментів: {count}",
+    moreFiles: "Ще файлів: {count}",
+  },
 } as const;
 
 function t(locale: Locale | undefined, key: keyof (typeof formatterMessages)["zh-CN"]): string {
   return formatterMessages[normalizeBotMessageLocale(locale)][key];
+}
+
+const UK_FILE_NOUN: Record<Intl.LDMLPluralRule, string> = {
+  zero: "файлів",
+  one: "файл",
+  two: "файли",
+  few: "файли",
+  many: "файлів",
+  other: "файлу",
+};
+
+function formatChangeSummaryHeader(
+  locale: Locale | undefined,
+  fileCount: number,
+  diffCount: string,
+): string {
+  const title = t(locale, "changeSummary");
+  switch (normalizeBotMessageLocale(locale)) {
+    case "zh-CN":
+      return `${title}：${fileCount} 个文件，${diffCount}`;
+    case "uk-UA": {
+      const noun = UK_FILE_NOUN[new Intl.PluralRules("uk-UA").select(fileCount)];
+      return `${title}: ${fileCount} ${noun}, ${diffCount}`;
+    }
+    default:
+      return `${title}: ${fileCount} files, ${diffCount}`;
+  }
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -355,9 +398,11 @@ function formatBotChangeSummary(
     return "";
   }
   const lines = [
-    normalizeBotMessageLocale(options?.locale) === "zh-CN"
-      ? `${t(options?.locale, "changeSummary")}：${changeSummary.fileCount} 个文件，${formatBotDiffCount(changeSummary)}`
-      : `${t(options?.locale, "changeSummary")}: ${changeSummary.fileCount} files, ${formatBotDiffCount(changeSummary)}`,
+    formatChangeSummaryHeader(
+      options?.locale,
+      changeSummary.fileCount,
+      formatBotDiffCount(changeSummary),
+    ),
   ];
   for (const file of changeSummary.files.slice(0, MAX_TOOL_SUMMARY_ITEMS)) {
     lines.push(`- ${formatMarkdownInlineCode(file.path)} (${formatBotDiffCount(file)})`);

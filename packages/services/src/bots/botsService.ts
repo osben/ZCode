@@ -53,7 +53,6 @@ import {
   type ModelSelection,
   type BotsConfigFile,
   type Locale,
-  type ServiceLocale,
   type SelectionPrompt,
 } from "@zcode/shared";
 import type { IZCodeTaskService } from "../session/zcodeTaskService.js";
@@ -186,29 +185,47 @@ function parseBotModelOptionValue(value: string): ModelSelection | undefined {
 const BOT_REPLY_GRANULARITY_OPTIONS = [
   {
     id: "assistant_changes",
-    label: { "zh-CN": "标准回复", "en-US": "Standard reply" },
+    label: { "zh-CN": "标准回复", "en-US": "Standard reply", "uk-UA": "Стандартна відповідь" },
     aliases: ["assistant", "assistant_changes", "normal", "default", "standard", "标准回复"],
   },
   {
     id: "assistant_toolcalls_changes",
-    label: { "zh-CN": "完整回复", "en-US": "Full reply" },
+    label: { "zh-CN": "完整回复", "en-US": "Full reply", "uk-UA": "Повна відповідь" },
     aliases: ["full", "tool", "toolcalls", "assistant_toolcalls_changes", "完整回复"],
   },
   {
     id: "summary_changes",
-    label: { "zh-CN": "摘要回复", "en-US": "Summary reply" },
+    label: { "zh-CN": "摘要回复", "en-US": "Summary reply", "uk-UA": "Підсумкова відповідь" },
     aliases: ["summary", "summary_changes", "latest", "摘要回复"],
   },
   {
     id: "streaming_card",
-    label: { "zh-CN": "流式卡片", "en-US": "Streaming card" },
+    label: { "zh-CN": "流式卡片", "en-US": "Streaming card", "uk-UA": "Потокова картка" },
     aliases: ["stream", "streaming", "streaming_card", "流式", "流式卡片"],
   },
 ] as const satisfies ReadonlyArray<{
   id: BotReplyGranularity;
-  label: Record<ServiceLocale, string>;
+  label: Record<Locale, string>;
   aliases: readonly string[];
 }>;
+
+const CURRENT_OPTION_SUFFIX: Record<Locale, string> = {
+  "zh-CN": "当前",
+  "en-US": "current",
+  "uk-UA": "вибрано",
+};
+
+const GLM_MODE_LABELS: Record<Locale, { default: string; plan: string }> = {
+  "zh-CN": { default: "默认", plan: "计划" },
+  "en-US": { default: "Default", plan: "Plan" },
+  "uk-UA": { default: "За замовчуванням", plan: "Планування" },
+};
+
+const TASK_COMPLETED_MESSAGE: Record<Locale, string> = {
+  "zh-CN": "任务已完成。",
+  "en-US": "Task completed.",
+  "uk-UA": "Завдання виконано.",
+};
 
 const BOT_EXCLUSIVE_CREDENTIAL_PROVIDERS = new Set<BotProvider>(["telegram", "feishu", "lark"]);
 const FEISHU_STREAMING_CARD_MIN_UPDATE_INTERVAL_MS = 1_000;
@@ -549,7 +566,22 @@ function sortBotPermissionOptions(
 
 function formatBotPermissionOptionLabel(option: ZCodePermissionOption, locale?: Locale): string {
   const displayKind = getBotPermissionOptionDisplayKind(option);
-  if (normalizeBotMessageLocale(locale) === "en-US") {
+  const messageLocale = normalizeBotMessageLocale(locale);
+  if (messageLocale === "uk-UA") {
+    switch (displayKind) {
+      case "allowOnce":
+        return "Дозволити";
+      case "allowAlways":
+        return "Завжди дозволяти";
+      case "rejectOnce":
+        return "Відхилити";
+      case "rejectAlways":
+        return "Завжди відхиляти";
+      case "custom":
+        return option.name;
+    }
+  }
+  if (messageLocale === "en-US") {
     switch (displayKind) {
       case "allowOnce":
         return "Allow";
@@ -587,7 +619,28 @@ function formatBotPermissionOptionDescription(
     return option.kind;
   }
   const scope = getPermissionRequestPreview(request).scope;
-  if (normalizeBotMessageLocale(locale) === "en-US") {
+  const messageLocale = normalizeBotMessageLocale(locale);
+  if (messageLocale === "uk-UA") {
+    if (displayKind === "allowOnce") {
+      return "Дозволити лише цього разу";
+    }
+    if (displayKind === "rejectOnce") {
+      return "Відхилити цього разу";
+    }
+    if (displayKind === "allowAlways") {
+      return scope === "command"
+        ? "Більше не запитувати для такої самої команди"
+        : scope === "file"
+          ? "Більше не запитувати для такої самої дії з файлом"
+          : "Більше не запитувати для такого самого запиту дозволу";
+    }
+    return scope === "command"
+      ? "Завжди відхиляти таку саму команду"
+      : scope === "file"
+        ? "Завжди відхиляти таку саму дію з файлом"
+        : "Завжди відхиляти такий самий запит дозволу";
+  }
+  if (messageLocale === "en-US") {
     if (displayKind === "allowOnce") {
       return "Allow this time only";
     }
@@ -647,11 +700,17 @@ function stripModelProviderDescriptionsForTextSelection(
   };
 }
 
+const REMOTE_WORKSPACE_LABEL: Record<Locale, string> = {
+  "zh-CN": "[远端]",
+  "en-US": "[Remote]",
+  "uk-UA": "[Віддалений]",
+};
+
 function formatWorkspaceOptionLabel(workspace: BotWorkspaceRef, locale?: Locale): string {
   if (!workspace.workspaceIdentity) {
     return workspace.label;
   }
-  const remoteLabel = normalizeBotMessageLocale(locale) === "zh-CN" ? "[远端]" : "[Remote]";
+  const remoteLabel = REMOTE_WORKSPACE_LABEL[normalizeBotMessageLocale(locale)];
   return `${workspace.label} ${remoteLabel}`;
 }
 
@@ -1319,7 +1378,7 @@ export function createBotsService(
   }
 
   function currentOptionSuffix(locale: Locale | undefined): string {
-    return normalizeBotMessageLocale(locale) === "zh-CN" ? "当前" : "current";
+    return CURRENT_OPTION_SUFFIX[normalizeBotMessageLocale(locale)];
   }
 
   function formatReplyGranularityLabel(
@@ -1433,12 +1492,12 @@ export function createBotsService(
     if (!provider) {
       return option.label;
     }
-    const isEnglish = !(normalizeBotMessageLocale(locale) === "zh-CN");
+    const modeLabels = GLM_MODE_LABELS[normalizeBotMessageLocale(locale)];
     const labels: Partial<Record<ZCodeProvider, Record<string, string>>> = {
       glm: {
-        default: isEnglish ? "Default" : "默认",
+        default: modeLabels.default,
         yolo: "Yolo",
-        plan: isEnglish ? "Plan" : "计划",
+        plan: modeLabels.plan,
       },
     };
     return labels[provider]?.[option.id] ?? option.label;
@@ -4177,10 +4236,7 @@ export function createBotsService(
         if (replyMessages.length === 0 && !sentAnyAssistantReply) {
           await sendOutbound(
             bot,
-            createOutbound(
-              actor,
-              normalizeBotMessageLocale(locale) === "zh-CN" ? "任务已完成。" : "Task completed.",
-            ),
+            createOutbound(actor, TASK_COMPLETED_MESSAGE[normalizeBotMessageLocale(locale)]),
           );
           return;
         }
