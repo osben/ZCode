@@ -82,7 +82,7 @@ export function createCoreError(
 ): CoreError {
   const error = new Error(message) as CoreError;
   error.type = type;
-  error.code = type.toUpperCase().replace(/_/g, "_");
+  error.code = type.toUpperCase();
   error.cause = options?.cause;
   error.context = options?.context;
   error.recoverable = options?.recoverable ?? false;

@@ -88,7 +88,9 @@ interface PositionedCard {
 }
 
 function normalizeTrailingUrlText(url: string): string {
-  return url.trim().replace(/(?:[*_`]+|[.,;:!?，。！？；：、]+)+$/g, "");
+  // 修复依据：嵌套量词 (?:[*_`]+|[…]+)+$ 属于指数回溯形态（code-scanning js/redos），
+  // 长符号串可挂起渲染。摊平为单层字符类后匹配语言不变，指数路径被消除。
+  return url.trim().replace(/[*_`.,;:!?，。！？；：、]+$/g, "");
 }
 
 export function isValidAssistantPreviewWebsiteUrl(url: string): boolean {
