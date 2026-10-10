@@ -34,6 +34,10 @@ import { useModelTrajectoryStore } from "@/store/modelTrajectoryStore.js";
 import { buildTaskFeedbackDescription } from "@/lib/taskFeedbackDraft.js";
 import { toast } from "@/components/ui/toast.js";
 import { buildTaskWorkspaceKey } from "@/lib/taskQueryCache.js";
+import {
+  useBranchMergeStatusStore,
+  selectBranchMergeStatus,
+} from "@/store/branchMergeStatusStore.js";
 import { useV4SplitPaneEntry } from "@/v4/splitPaneEntryContext.js";
 import { buildWorkbenchSessionKey, useWorkbenchGroupStore } from "@/v4/workbenchGroupStore.js";
 import { useTaskInteractionAutoResolutionSnooze } from "@/hooks/useTaskInteractionAutoResolutionSnooze.js";
@@ -414,6 +418,22 @@ export const MemoTaskItem = memo(function TaskListItem({
   );
   const workspaceLabel = getPathLeaf(task.workspacePath);
   const taskItemKey = `${buildTaskWorkspaceKey(task.workspacePath, task.workspaceIdentity)}:${task.taskId}`;
+  // Merged ranks below attention/interaction, same as the grouped task row.
+  const branchMergeStatus = useBranchMergeStatusStore((state) =>
+    selectBranchMergeStatus(
+      state,
+      buildTaskWorkspaceKey(task.workspacePath, task.workspaceIdentity),
+    ),
+  );
+  const branchMergedBadge =
+    branchMergeStatus?.state === "merged" ? (
+      <Badge
+        data-branch-merged-badge="true"
+        className="h-5 shrink-0 border-transparent bg-primary/14 px-2 text-ui-xs font-medium text-primary dark:bg-primary/18"
+      >
+        {intl.formatMessage({ id: "taskList.branchMergedTag" })}
+      </Badge>
+    ) : null;
   // 工作流运行行：标题下的第二条通道，
   // 与前置 16px 槽（error > unread > spinner）互不占位。只在会话带 run 摘要时挂组件。
   const hasWorkflowRunLines = taskActivity?.workflowActivity !== undefined;
@@ -682,7 +702,9 @@ export const MemoTaskItem = memo(function TaskListItem({
               <Badge className="h-5 shrink-0 border-transparent bg-success/14 px-2 text-ui-base font-medium text-success dark:bg-success/18">
                 {taskAttentionDisplay}
               </Badge>
-            ) : null}
+            ) : (
+              branchMergedBadge
+            )}
           </div>
           <div className="flex min-w-0 items-center justify-between gap-2 text-ui-base text-foreground-subtle h-6">
             <div className="flex min-w-0 items-center gap-1.5">
@@ -788,7 +810,9 @@ export const MemoTaskItem = memo(function TaskListItem({
                 <Badge className="h-5 shrink-0 border-transparent bg-success/14 px-2 text-ui-sm font-medium text-success dark:bg-success/18">
                   {taskAttentionDisplay}
                 </Badge>
-              ) : null}
+              ) : (
+                branchMergedBadge
+              )}
             </div>
 
             {!hasPendingInteraction ? (

@@ -121,7 +121,9 @@ if (files.length === 0) {
 
 const vitestArgs =
   mode === "run"
-    ? ["exec", "vitest", "run", "--exclude", ROOT_UNIT_E2E_GLOB, ...files]
+    ? // Bugfix：Fork 的 node:test 文件在 vitest.config 里被排除、由 test:node 执行；
+      // 当次变更只含这类文件时 vitest 找不到目标会退出 1，按 related 模式先例放行。
+      ["exec", "vitest", "run", "--passWithNoTests", "--exclude", ROOT_UNIT_E2E_GLOB, ...files]
     : [
         "exec",
         "vitest",

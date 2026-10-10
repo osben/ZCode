@@ -1,5 +1,11 @@
 import { resolve } from "node:path";
-import type { GitBranchComparison, GitFileChange, GitChangeSectionId } from "@zcode/shared";
+import type {
+  GitBranchComparison,
+  GitBranchMergeStatus,
+  GitFileChange,
+  GitChangeSectionId,
+} from "@zcode/shared";
+import { createServiceLogger, type ServiceLogger } from "#src/logger/serviceLogger.js";
 import { isPathInWorkspaceScope, normalizeGitPath, toWorkspaceRelativeGitPath } from "./config.js";
 import { filterCommitMessageFilesByCurrentSession } from "./commitMessageFileScope.js";
 import type { IGitService } from "./git.js";
@@ -147,6 +153,17 @@ function toBranchComparisonChange(
 
 const COMMIT_MESSAGE_DIFF_FILE_LIMIT = 8;
 
+// merged-session-highlight spec: the merge observation is cached for 60s;
+// branch switches and new commits invalidate it immediately.
+const BRANCH_MERGE_STATUS_TTL_MS = 60_000;
+
+interface BranchMergeStatusCacheEntry {
+  workspacePath: string;
+  headRef: string | null;
+  status: GitBranchMergeStatus;
+  fetchedAt: number;
+}
+
 function getCommitMessageDiffQueries(
   files: readonly GitFileChange[],
   includeUnstaged: boolean,
@@ -170,8 +187,37 @@ function getCommitMessageDiffQueries(
 export function createGitService(options?: {
   repo?: GitCliRepo;
   commitMessageGenerator?: GitCommitMessageGenerator;
+  logger?: ServiceLogger;
+  now?: () => number;
 }): IGitService {
   const repo = options?.repo ?? createGitCliRepo();
+  const branchMergeLog = options?.logger ?? createServiceLogger("branch-merge-status");
+  const now = options?.now ?? Date.now;
+  const branchMergeStatusCache = new Map<string, BranchMergeStatusCacheEntry>();
+  // Bugfix: проба, ожидающая repo.getBranchMergeStatus, могла дописать в кэш
+  // результат, вычисленный ДО инвалидации (смена ветки/коммит во время полёта),
+  // и снова отравить кэш до конца TTL. Generation per key инкрементируется при
+  // инвалидации; запись разрешена только неизменившемуся поколению. Ключ
+  // регистрируется на СТАРТЕ пробы — в полёте кэш-записи ещё нет, а инвалидация
+  // обязана добраться и до неё.
+  const branchMergeGeneration = new Map<string, number>();
+  const branchMergeKeyWorkspaces = new Map<string, string>();
+
+  function workspaceMergeCacheKey(params: {
+    workspacePath: string;
+    workspaceIdentity?: string;
+  }): string {
+    return params.workspaceIdentity?.trim() || params.workspacePath;
+  }
+
+  function invalidateBranchMergeStatus(workspacePath: string): void {
+    for (const [key, registeredPath] of branchMergeKeyWorkspaces) {
+      if (registeredPath === workspacePath) {
+        branchMergeStatusCache.delete(key);
+        branchMergeGeneration.set(key, (branchMergeGeneration.get(key) ?? 0) + 1);
+      }
+    }
+  }
 
   return {
     async getRepositorySummary(params) {
@@ -200,15 +246,19 @@ export function createGitService(options?: {
     },
 
     async switchBranch(params) {
-      return await repo.switchBranch(params.workspacePath, params.targetBranchName);
+      const result = await repo.switchBranch(params.workspacePath, params.targetBranchName);
+      invalidateBranchMergeStatus(params.workspacePath);
+      return result;
     },
 
     async createBranchAndSwitch(params) {
-      return await repo.createBranchAndSwitch(
+      const result = await repo.createBranchAndSwitch(
         params.workspacePath,
         params.branchName,
         params.startPoint,
       );
+      invalidateBranchMergeStatus(params.workspacePath);
+      return result;
     },
 
     async getChanges(params) {
@@ -237,6 +287,47 @@ export function createGitService(options?: {
           .map((change) => toBranchComparisonChange(comparison, change))
           .filter((change): change is GitFileChange => Boolean(change)),
       };
+    },
+
+    async getBranchMergeStatus(params): Promise<GitBranchMergeStatus> {
+      const key = workspaceMergeCacheKey(params);
+      const cached = branchMergeStatusCache.get(key);
+      if (cached && now() - cached.fetchedAt < BRANCH_MERGE_STATUS_TTL_MS) {
+        // Bugfix: ключ кэша не содержал ветку, и внешний checkout (мимо
+        // инвалидаций приложения) до 60 с подавал статус предыдущей ветки.
+        // Попадание принимается только при совпадении HEAD: один дешёвый
+        // symbolic-ref вместо полной пробы; HEAD не читается — принимаем.
+        const headBranch = await repo.readHeadBranch(params.workspacePath);
+        const headMoved =
+          headBranch !== null &&
+          cached.status.headRef !== null &&
+          headBranch !== cached.status.headRef;
+        if (!headMoved) {
+          return cached.status;
+        }
+      }
+
+      const generation = branchMergeGeneration.get(key) ?? 0;
+      branchMergeKeyWorkspaces.set(key, params.workspacePath);
+      const status = await repo.getBranchMergeStatus(params.workspacePath);
+      if ((branchMergeGeneration.get(key) ?? 0) === generation) {
+        branchMergeStatusCache.set(key, {
+          workspacePath: params.workspacePath,
+          headRef: status.headRef,
+          status,
+          fetchedAt: now(),
+        });
+      }
+      if (cached && cached.status.state !== status.state) {
+        branchMergeLog.info(undefined, "branch merge state changed", {
+          workspacePath: params.workspacePath,
+          previous: cached?.status.state ?? null,
+          next: status.state,
+          headRef: status.headRef,
+          baseRef: status.baseRef,
+        });
+      }
+      return status;
     },
 
     async stagePaths(params) {
@@ -302,6 +393,7 @@ export function createGitService(options?: {
       const result = await repo.commit(params.workspacePath, params.message, params.paths, {
         stagedOnly: params.stagedOnly,
       });
+      invalidateBranchMergeStatus(params.workspacePath);
       const status = await repo.getStatus(params.workspacePath);
       return {
         commitHash: result.commitHash,

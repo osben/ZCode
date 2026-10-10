@@ -121,6 +121,7 @@ import { SidebarBottomActivity } from "@/sidebar-activity/SidebarBottomActivity.
 import { WorkspacePinnedTasksSection } from "@/WorkspacePinnedTasksSection.js";
 import { WorkspaceTimelineTasksSection } from "@/WorkspaceTimelineTasksSection.js";
 import { WorkspaceGroupedTasksSection } from "@/WorkspaceGroupedTasksSection.js";
+import { BranchMergeStatusProbes } from "@/BranchMergeStatusProbes.js";
 import { StickyGroupHeaderSlot } from "@/workspace-grouped-tasks/sticky-group-header-slot.js";
 import type { CreateTaskRequest } from "@/app-shell/types.js";
 import { useWebRemoteControlFeatureEnabled } from "@/WebRemoteControlFeatureProvider.js";
@@ -254,7 +255,7 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebarComponent({
   isWebRemoteControl = false,
   isMacDesktop: _isMacDesktop = false,
   isWindowsDesktop = false,
-  isSidebarVisible: _isSidebarVisible = true,
+  isSidebarVisible = true,
   onToggleSidebar: _onToggleSidebar,
   toggleSidebarShortcutLabel: _toggleSidebarShortcutLabel,
   canGoBack: _canGoBack = false,
@@ -1576,6 +1577,11 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebarComponent({
               style={workspaceScrollMaskStyle}
             >
               {!isWebRemoteControlSidebar ? workspaceTaskToolbar() : null}
+              {/* Merge observation lives at sidebar level so the grouped, flat,
+                  and archived views share one store keyed by workspaceKey.
+                  Панель прячется через CSS и не размонтируется, поэтому
+                  видимость передаётся пропом: каждое открытие — новая проба. */}
+              <BranchMergeStatusProbes workspaceTabs={workspaceTabs} active={isSidebarVisible} />
               {shouldShowPinnedTasks ? (
                 // 归档切换主任务区时不应隐藏 pinned。
                 // pinned 是全局置顶区，归档态保持置顶区可见。

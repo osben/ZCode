@@ -51,8 +51,10 @@ const forkIsolatedTests = [
 // 必须从 unit include 中排除，否则报 "No test suite found"。
 const forkNodeTestFiles = [
   "packages/services/test/botMessagesLocale.test.ts",
+  "packages/services/test/branchMergeStatusService.test.ts",
   "packages/services/test/userInstructionsService.test.ts",
   "packages/ui/test/chatErrorResume.test.ts",
+  "packages/ui/test/branchMergeStatusProbeRunner.test.ts",
   "packages/ui/test/i18nCatalogParity.test.ts",
   "packages/ui/test/intlPlural.test.ts",
   "packages/ui/test/localeContentCatalogs.test.ts",

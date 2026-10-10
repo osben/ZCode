@@ -1,4 +1,6 @@
 import type {
+  GitBranchMergeStatus,
+  GitBranchMergeStatusRequest,
   GitBranchMutationResult,
   GitBranchComparison,
   GitCommitGraphRequest,
@@ -40,6 +42,7 @@ export interface IGitService {
   getIgnoredPaths(params: GitIgnoredPathsRequest): Promise<string[]>;
   getDiff(params: GitDiffQuery): Promise<GitDiffResult>;
   getBranchComparison(params: GitRepositoryRequest): Promise<GitBranchComparison>;
+  getBranchMergeStatus(params: GitBranchMergeStatusRequest): Promise<GitBranchMergeStatus>;
   stagePaths(params: GitPathMutationRequest): Promise<void>;
   unstagePaths(params: GitPathMutationRequest): Promise<void>;
   discardPaths(params: GitDiscardPathsRequest): Promise<void>;

@@ -1,5 +1,5 @@
 /* eslint-disable max-lines -- grouped row 同时承载 drag overlay 与常规交互，状态徽标需共用同一渲染语义。 */
-import { memo, useState } from "react";
+import { memo, useMemo, useState } from "react";
 import type { KeyboardEvent, MouseEvent } from "react";
 import { useDraggable, useDroppable } from "@dnd-kit/core";
 import type { UniqueIdentifier } from "@dnd-kit/core";
@@ -49,6 +49,10 @@ import {
 } from "@/workspace-grouped-tasks/types.js";
 import { TaskWorkflowRunLines } from "@/components/workflow-run-line/TaskWorkflowRunLines.js";
 import { useTaskInteractionAutoResolutionSnooze } from "@/hooks/useTaskInteractionAutoResolutionSnooze.js";
+import {
+  useBranchMergeStatusStore,
+  selectBranchMergeStatus,
+} from "@/store/branchMergeStatusStore.js";
 import { useOptionalTabStore } from "@/store/TabStoreProvider.js";
 import { isWorkspaceReadOnly } from "@/store/tabStore.js";
 import { TaskTitleOverflowText } from "@/components/TaskTitleOverflowText.js";
@@ -102,25 +106,22 @@ function GroupedTaskRowComponent({
   dragOverlay?: boolean;
   tooltipsDisabled?: boolean;
 }) {
-  const { intl } = useZCodeIntl();
+  const { intl, locale } = useZCodeIntl();
   const workspaceActionsDisabled = useOptionalTabStore((state) =>
     isWorkspaceReadOnly(state, task.workspacePath, task.workspaceIdentity),
   );
   const workspaceActionsDisabledReason = workspaceActionsDisabled
     ? intl.formatMessage({ id: "workspaceSidebar.unavailableLocalDirectory" })
     : undefined;
-  const snoozeInteractionAutoResolution =
-    useTaskInteractionAutoResolutionSnooze({
-      workspacePath: task.workspacePath,
-      ...(task.workspaceIdentity
-        ? { workspaceIdentity: task.workspaceIdentity }
-        : {}),
-      ...(remoteSessionId ? { remoteSessionId } : {}),
-      sessionId: task.taskId,
-    });
-  const workspaceKey = buildTaskWorkspaceKey(
-    task.workspacePath,
-    task.workspaceIdentity,
+  const snoozeInteractionAutoResolution = useTaskInteractionAutoResolutionSnooze({
+    workspacePath: task.workspacePath,
+    ...(task.workspaceIdentity ? { workspaceIdentity: task.workspaceIdentity } : {}),
+    ...(remoteSessionId ? { remoteSessionId } : {}),
+    sessionId: task.taskId,
+  });
+  const workspaceKey = buildTaskWorkspaceKey(task.workspacePath, task.workspaceIdentity);
+  const branchMergeStatus = useBranchMergeStatusStore((state) =>
+    selectBranchMergeStatus(state, workspaceKey),
   );
   const taskActivity = getTaskListRowActivity(task);
   const taskAttention = getTaskListAttention(task);
@@ -174,6 +175,27 @@ function GroupedTaskRowComponent({
           "bg-sky-500 dark:bg-sky-400"
         : null;
   const canShowHoverActions = !dragOverlay;
+  const branchMergedCommitAtMs = branchMergeStatus?.lastCommitAt
+    ? Date.parse(branchMergeStatus.lastCommitAt)
+    : Number.NaN;
+  const mergedCommitAbsoluteFormatter = useMemo(
+    () => new Intl.DateTimeFormat(locale, { dateStyle: "medium", timeStyle: "short" }),
+    [locale],
+  );
+  // Merged ranks below attention/interaction: the row keeps a single right-side
+  // status badge, and the merged details always stay available in the popup.
+  const branchMergedBadge =
+    branchMergeStatus?.state === "merged" ? (
+      <Badge
+        data-branch-merged-badge="true"
+        className={cn(
+          "h-5 border-transparent bg-primary/14 px-2 text-ui-xs font-medium text-primary dark:bg-primary/18",
+          canShowHoverActions && "group-hover/task-row:hidden",
+        )}
+      >
+        {intl.formatMessage({ id: "taskList.branchMergedTag" })}
+      </Badge>
+    ) : null;
   // 工作流运行行：分组行同样长在标题下；
   // drag overlay 只是纯展示，不挂确认副作用与点击入口。
   const workflowRunLinesNode =
@@ -236,7 +258,9 @@ function GroupedTaskRowComponent({
             >
               {taskAttentionDisplay}
             </Badge>
-          ) : null}
+          ) : (
+            branchMergedBadge
+          )}
           <span
             className={cn(
               "flex shrink-0 items-center gap-1",
@@ -449,6 +473,8 @@ function GroupedTaskRowComponent({
             >
               {taskAttentionDisplay}
             </Badge>
+          ) : !shouldSuppressTaskMetadata ? (
+            branchMergedBadge
           ) : null}
           {!shouldSuppressTaskMetadata ? (
             <span className="flex shrink-0 items-center gap-1">
@@ -540,9 +566,43 @@ function GroupedTaskRowComponent({
               ) : (
                 <Folder aria-hidden="true" className="size-3.5 shrink-0" />
               )}
-              <span className="min-w-0 max-w-48 truncate">
-                {workspaceLabel}
-              </span>
+              <span className="min-w-0 max-w-48 truncate">{workspaceLabel}</span>
+              {branchMergeStatus?.state === "merged" && branchMergeStatus.baseRef ? (
+                <>
+                  <span className="text-tooltip-foreground/60">·</span>
+                  <span
+                    className="inline-flex min-w-0 shrink-0 flex-col gap-0.5"
+                    data-branch-merged-popup="true"
+                  >
+                    <span className="truncate">
+                      {intl.formatMessage(
+                        { id: "taskList.branchMergedInto" },
+                        { baseRef: branchMergeStatus.baseRef },
+                      )}
+                      {Number.isFinite(branchMergedCommitAtMs) ? (
+                        <>
+                          {" "}
+                          <span
+                            className="text-foreground-subtle"
+                            title={mergedCommitAbsoluteFormatter.format(branchMergedCommitAtMs)}
+                          >
+                            {formatTaskRelativeTime(branchMergedCommitAtMs, intl)}
+                          </span>
+                        </>
+                      ) : null}
+                    </span>
+                    <span className="truncate text-foreground-subtle">
+                      {intl.formatMessage(
+                        { id: "taskList.branchMergedRefLine" },
+                        {
+                          baseRef: branchMergeStatus.baseRef,
+                          headRef: branchMergeStatus.headRef ?? "HEAD",
+                        },
+                      )}
+                    </span>
+                  </span>
+                </>
+              ) : null}
               {taskChangeParts.length > 0 ? (
                 <>
                   <span className="text-tooltip-foreground/60">·</span>

@@ -15,6 +15,7 @@ import { useWorkspaceProviderConfigFile } from "@/hooks/useWorkspaceProviderConf
 import { useWorkspaceActiveTaskState } from "@/hooks/useWorkspaceActiveTaskState.js";
 import { useEnsureWorkspaceMcpLoaded } from "@/hooks/useEnsureWorkspaceMcpLoaded.js";
 import { useTabStore } from "@/store/TabStoreProvider.js";
+import { useBranchMergeStatusStore } from "@/store/branchMergeStatusStore.js";
 import { isWorkspaceReadOnly, isWorkspaceTab } from "@/store/tabStore.js";
 import type { TaskChatMessage as TestChatMessage } from "@/lib/taskChatMessageTypes.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
@@ -436,6 +437,10 @@ export function App({
   const hasGitTab = sidePaneState?.tabs.some((tab) => tab.type === "git") ?? false;
   const handleRefreshGit = useCallback(() => {
     setGitRefreshVersion((value) => value + 1);
+    // Сигнал успешной git-мутации (смена ветки/создание/коммит) для проб
+    // merge-статуса: сервисный кэш уже инвалидирован, пробе остаётся
+    // переопросить. Untouched workspace'ы упрутся в сервисный TTL — дешёво.
+    useBranchMergeStatusStore.getState().requestRefresh();
   }, []);
   const openSettingsTab = useTabStore((state) => state.openSettingsTab);
   const gitState = useGitRepository({
