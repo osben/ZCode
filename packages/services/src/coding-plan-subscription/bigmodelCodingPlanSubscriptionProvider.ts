@@ -74,7 +74,7 @@ import {
   resolveBigModelApiOrigin,
   resolveZaiBusinessBaseUrl,
   ZAI_PROVIDER_ID,
-  ZCODE_VERSION,
+  ZCODE_UPSTREAM_BASE_VERSION,
   DEFAULT_ZCODE_MODEL_CONTEXT_BUDGET_STRATEGY,
   createDynamicWorkflowClientConfig,
   normalizeDynamicWorkflowMode,
@@ -277,7 +277,7 @@ export class BigModelCodingPlanSubscriptionProvider {
   async getManualClaimPlanPreviews(): Promise<ManualClaimPlanPreviewSnapshot> {
     const token = (await this.credentialService.load(ZCODE_JWT_TOKEN_KEY))?.trim();
     const url = new URL(buildRuntimeZCodeApiUrl(process.env, "/api/v1/zcode-plan/billing/preview"));
-    url.searchParams.set("app_version", ZCODE_VERSION);
+    url.searchParams.set("app_version", ZCODE_UPSTREAM_BASE_VERSION);
     url.searchParams.set("platform", resolveClientPlatformKey());
     const payload = await readCodingPlanApiJson<RemoteEnvelope<ManualClaimPlanPreviewPayload>>(
       this.apiClient,
@@ -350,7 +350,7 @@ export class BigModelCodingPlanSubscriptionProvider {
           Authorization: `Bearer ${token}`,
           "Content-Type": "application/json",
           ...requestVerificationClaimHeaders(request),
-          "X-ZCode-App-Version": ZCODE_VERSION,
+          "X-ZCode-App-Version": ZCODE_UPSTREAM_BASE_VERSION,
           "X-Platform": resolveClientPlatformKey(),
         },
         body: JSON.stringify({ plan_id: request.planId }),
@@ -809,7 +809,7 @@ export class BigModelCodingPlanSubscriptionProvider {
     // client/configs 和其他 ZCode 平台接口必须共享运行时 endpoint；
     // E2E/测试环境会通过 ZCODE_BASE_URL 指向本地 mock，硬编码线上域名会让套餐状态不可控。
     const url = resolveCodingPlanClientConfigUrl(process.env);
-    url.searchParams.set("app_version", ZCODE_VERSION);
+    url.searchParams.set("app_version", ZCODE_UPSTREAM_BASE_VERSION);
     url.searchParams.set("platform", resolveClientPlatformKey());
     // StartPlanCard 和套餐列表都来自同一个 client/configs。
     // 同屏分别读取 preview/products 时必须合并请求，避免未登录设置页重复打远端配置。

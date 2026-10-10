@@ -7,6 +7,7 @@ import {
   buildZCodeSourceHeadersFromContext,
   rewriteZCodeEndpointUrl,
   sanitizeTelemetryEventDetail,
+  stripZcodeForkVersionSuffix,
   type TelemetryEventPayload,
   type TelemetryRendererContext,
   type OAuthLoginAttribution,
@@ -444,7 +445,8 @@ export function createTelemetryCore(dependencies: TelemetryCoreDependencies = {}
       ),
       user_id: userId,
       screen_resolution: context.screenResolution,
-      app_version: appVersion,
+      // 对外版本只发上游基线；appVersion 本地仍可能是带 -fork.N 后缀的完整版本。
+      app_version: stripZcodeForkVersionSuffix(appVersion),
       device_os_category: normalizeOsCategory(platform),
       device_os_version: osVersion,
       device_mid: deviceMid,

@@ -53,6 +53,8 @@ const forkNodeTestFiles = [
   "packages/services/test/botMessagesLocale.test.ts",
   "packages/services/test/branchMergeStatusService.test.ts",
   "packages/services/test/userInstructionsService.test.ts",
+  // 该文件使用 node:test；随 test:node 运行，避免被 Vitest 二次收集。
+  "packages/services/test/zcodeUpstreamBaseVersion.test.ts",
   "packages/ui/test/chatErrorResume.test.ts",
   "packages/ui/test/branchMergeStatusProbeRunner.test.ts",
   "packages/ui/test/i18nCatalogParity.test.ts",
