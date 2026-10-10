@@ -1,8 +1,14 @@
 # Ukrainian Locale（украинский язык интерфейса `uk-UA`）
 
-> Статус: **план, готовый к передаче исполнителю**. Код не менялся. Все пути, символы и номера строк проверены на checkout `dev` (номера строк — ориентир: перед правкой ищи по символу).
+> Статус: **реализовано** (PR `feat/theme-palettes` → osben/ZCode#9, 2026-10-10). Ниже — исходный план (ревизия 2) сохранён как исторический контракт; итерации I0–I8 выполнены в одной ветке (не отдельными PR), поведение соответствует разделам 1, 8 и 9.
 >
-> Базовая линия на момент плана: `pnpm typecheck` — OK; `pnpm lint` — 0 ошибок, 70 предупреждений; `pnpm architecture:check --changed` — 0 нарушений; `pnpm --dir apps/zcode-cli/packages/i18n typecheck` — OK.
+> Что сошлось с планом: I0 (`.catch` в `appSettingsObjectSchema` + CLI `uiSchema.locale`), I1 (`shared/src/locale.ts`, явные ветки вместо «не en — значит zh»), I2 (`createIntl.ts` с `formatPlural`, `.many` → `.other`, CLDR-формы uk), I3 (`Locale = "zh-CN" | "en-US" | "uk-UA"` в `protocol.ts`, выбор языка, `electronLanguages: ["en-US","zh-CN","uk"]`), I4 (полный перевод каталога `packages/ui/src/i18n/locales/uk-UA.ts`), I5–I6 (`Intl.*`-форматирование, контентные каталоги), I7 (боты: uk-сообщения, команды en по D10), I8 (CLI/TUI `@zcode/i18n`: `normalizeLocale` `uk*` → `uk-UA`, каталог `ZCodeCopy`).
+>
+> Проверка реализации: `pnpm typecheck`; `packages/ui`: `node --import tsx --test test/localeSettingsSchema.test.ts test/localeSupport.test.ts test/updateReleaseNotes.test.ts test/intlPlural.test.ts test/i18nCatalogParity.test.ts test/localeContentCatalogs.test.ts test/localeFormatting.test.ts`; `packages/services`: `node --import tsx --test test/botMessagesLocale.test.ts`. Ручные сценарии раздела 9 (I9/QA) выполнялись на `pnpm dev:desktop` / `pnpm dev:web` в рамках ветки.
+>
+> Известные исключения — по решениям D10–D14 (community в web остаётся `zh-CN`, алиасов команд uk нет, release notes могут дать zh только если в фиде нет en).
+>
+> Базовая линия плана на момент написания: `pnpm typecheck` — OK; `pnpm lint` — 0 ошибок, 70 предупреждений; `pnpm architecture:check --changed` — 0 нарушений; `pnpm --dir apps/zcode-cli/packages/i18n typecheck` — OK.
 >
 > Ревизия 2 (ревью плана по коду `dev` 66b0293): дополнены F2 (`autoUpdater`), F4 (три конвенции плюралов, 35 семейств), F10 (`cuaPermissionPanelMessages`, тернарник CUA), F14 (баг community в web), таблица монтирований Provider, I0 (третий потребитель `localeSchema`: `pendingPostUpdateReleaseNotes` тоже может сбросить все настройки), I1/I3 (preload Coding Plan не трогать), раздел 6 (`pnpm install`); добавлены решения D13–D14.
 
