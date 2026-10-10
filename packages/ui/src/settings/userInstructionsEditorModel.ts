@@ -55,6 +55,15 @@ export function isUserInstructionsDraftDirty(
   return loaded !== null && draft !== loaded.content;
 }
 
+// 远端连接断开时即使已加载过文件也要展示 waiting：草稿保留在 hook 状态里，
+// 重连后不重载即可恢复 ready，避免断线期间仍允许保存或导入到已失效的代理。
+export function resolveUserInstructionsEditorStatus<TStatus extends string>(params: {
+  status: TStatus;
+  rpcReady: boolean;
+}): TStatus | "waiting" {
+  return params.rpcReady ? params.status : "waiting";
+}
+
 export function canSaveUserInstructions(params: {
   loaded: UserInstructionsLoadedFile | null;
   draft: string;

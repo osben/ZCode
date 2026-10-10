@@ -14,6 +14,7 @@ import {
   isRemoteUserInstructionsTarget,
   isUnknownChannelError,
   isUserInstructionsDraftDirty,
+  resolveUserInstructionsEditorStatus,
   type UserInstructionsHostTarget,
   type UserInstructionsLoadedFile,
 } from "@/settings/userInstructionsEditorModel.js";
@@ -155,8 +156,10 @@ export function useUserInstructionsEditor(
     void load(hostKey);
   }, [hostKey, load, resetForHost, rpcReady]);
 
+  // 展示状态由 rpcReady 派生：断线即使已加载过文件也显示 waiting，草稿仍保留在 state 中。
+  const effectiveStatus = resolveUserInstructionsEditorStatus({ status, rpcReady });
   const dirty = isUserInstructionsDraftDirty(loaded, draft);
-  const canSave = status === "ready" && canSaveUserInstructions({ loaded, draft, saving });
+  const canSave = effectiveStatus === "ready" && canSaveUserInstructions({ loaded, draft, saving });
 
   const reload = useCallback(() => {
     if (!rpcReady) return;
@@ -166,7 +169,8 @@ export function useUserInstructionsEditor(
 
   const write = useCallback(
     async (expectedRevision: string | null) => {
-      if (!loaded) return;
+      // 断线时服务代理已失效，不能再发起写入。
+      if (!loaded || !rpcReady) return;
       const key = hostKey;
       const content = draft;
       setSaving(true);
@@ -215,7 +219,7 @@ export function useUserInstructionsEditor(
         setSaving(false);
       }
     },
-    [draft, hostKey, intl, loaded],
+    [draft, hostKey, intl, loaded, rpcReady],
   );
 
   const save = useCallback(async () => {
@@ -238,6 +242,7 @@ export function useUserInstructionsEditor(
   );
 
   const importFromClaude = useCallback(async () => {
+    if (!rpcReady) return;
     const key = hostKey;
     try {
       const source = await serviceRef.current.readClaudeImportSource();
@@ -276,12 +281,12 @@ export function useUserInstructionsEditor(
       logger.warn("[UserInstructions] Failed to read CLAUDE.md", { error: errorMessage(error) });
       toast(intl.formatMessage({ id: "settings.instructions.import.failedGeneric" }));
     }
-  }, [dirty, draft, hostKey, intl]);
+  }, [dirty, draft, hostKey, intl, rpcReady]);
 
   return {
     hostKey,
     isRemote,
-    status,
+    status: effectiveStatus,
     loaded,
     readError,
     draft,

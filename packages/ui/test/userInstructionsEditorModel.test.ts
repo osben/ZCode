@@ -10,6 +10,7 @@ import {
   isUnknownChannelError,
   isUserInstructionsDraftDirty,
   resolvePinnedUserInstructionsTarget,
+  resolveUserInstructionsEditorStatus,
   type UserInstructionsLoadedFile,
 } from "../src/settings/userInstructionsEditorModel.js";
 
@@ -118,6 +119,22 @@ test("utf-8 byte count, @ import detection and unknown channel errors", () => {
   assert.equal(isUnknownChannelError(unknown), true);
   assert.equal(isUnknownChannelError(new Error("boom")), false);
   assert.equal(isUnknownChannelError(undefined), false);
+});
+
+test("editor status shows waiting while disconnected even if a file was loaded", () => {
+  assert.equal(
+    resolveUserInstructionsEditorStatus({ status: "ready", rpcReady: false }),
+    "waiting",
+  );
+  assert.equal(
+    resolveUserInstructionsEditorStatus({ status: "loading", rpcReady: false }),
+    "waiting",
+  );
+});
+
+test("editor status passes through the stored status once rpc is ready", () => {
+  assert.equal(resolveUserInstructionsEditorStatus({ status: "ready", rpcReady: true }), "ready");
+  assert.equal(resolveUserInstructionsEditorStatus({ status: "failed", rpcReady: true }), "failed");
 });
 
 test("reveal directory strips the file name for posix and windows paths", () => {
