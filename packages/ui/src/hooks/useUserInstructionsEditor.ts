@@ -135,7 +135,7 @@ export function useUserInstructionsEditor(
       setDraft("");
       const unsupported = isUnknownChannelError(error);
       setStatus(unsupported ? "unsupported" : "failed");
-      logger.warn("[UserInstructions] 读取全局指令失败", {
+      logger.warn("[UserInstructions] Failed to read global instructions", {
         unsupported,
         error: errorMessage(error),
       });
@@ -192,7 +192,7 @@ export function useUserInstructionsEditor(
         } else if (result.kind === "conflict") {
           setConflict({ currentRevision: result.currentRevision });
         } else {
-          logger.warn("[UserInstructions] 保存全局指令被拒绝", {
+          logger.warn("[UserInstructions] Saving global instructions was rejected", {
             code: result.code,
             message: result.message,
           });
@@ -201,7 +201,9 @@ export function useUserInstructionsEditor(
           );
         }
       } catch (error) {
-        logger.warn("[UserInstructions] 保存全局指令失败", { error: errorMessage(error) });
+        logger.warn("[UserInstructions] Failed to save global instructions", {
+          error: errorMessage(error),
+        });
         toast(
           intl.formatMessage({
             id: isUnknownChannelError(error)
@@ -271,7 +273,7 @@ export function useUserInstructionsEditor(
         }),
       );
     } catch (error) {
-      logger.warn("[UserInstructions] 读取 CLAUDE.md 失败", { error: errorMessage(error) });
+      logger.warn("[UserInstructions] Failed to read CLAUDE.md", { error: errorMessage(error) });
       toast(intl.formatMessage({ id: "settings.instructions.import.failedGeneric" }));
     }
   }, [dirty, draft, hostKey, intl]);
