@@ -9,9 +9,9 @@ import {
 const BUILT_IN_NODE_REPL_SERVER_NAME = "node_repl";
 
 /**
- * node_repl 是官方能力共用的宿主工具，不是任何插件 manifest 声明的 plugin MCP。产物由独立的
- * `node-repl-host` seed 单元携带（无 listing、不对用户露出）；Browser Use 与 Computer Use
- * 各自只贡献自己的 skill、docs 与 native 依赖 root。
+ * node_repl is a host tool shared by official capabilities, not a plugin MCP declared in any plugin
+ * manifest. Its artifacts are carried by the separate `node-repl-host` seed unit (not listed or
+ * exposed to users); Browser Use and Computer Use contribute only their own skills, docs, and native dependency roots.
  */
 export function resolveBuiltInNodeReplMcpServers(input: {
   pluginOutcome: Pick<PluginLoadOutcome, "plugins">;
@@ -24,8 +24,9 @@ export function resolveBuiltInNodeReplMcpServers(input: {
     (plugin) => plugin.id === OFFICIAL_CUA_PLUGIN_ID && plugin.enabled,
   );
   if (!browserUsePackage && !cuaPackage) return {};
-  // 宿主自己不参与启用判断：它没有 skill、不对用户露出，缺失就意味着没有宿主可跑，
-  // 必须安全地不注册，而不是回退到某个插件包里的旧产物。
+  // The host itself does not participate in enablement checks: it has no skill and is not exposed to
+  // users. If it is missing, there is no host to run, so safely skip registration instead of falling
+  // back to stale artifacts in a plugin package.
   const hostPackage = input.pluginOutcome.plugins.find(
     (plugin) => plugin.id === OFFICIAL_NODE_REPL_HOST_PLUGIN_ID,
   );
@@ -34,7 +35,7 @@ export function resolveBuiltInNodeReplMcpServers(input: {
   const nodeRepl = createBundledMcpRuntimeConfig({
     cwd: input.workingDirectory,
     env: {
-      // 领域 root 各自注入，且只在对应能力启用时注入：宿主据此决定哪一半文档可用。
+      // Inject each domain root only when its capability is enabled; the host uses this to determine which docs are available.
       ...(browserUsePackage ? { ZCODE_PLUGIN_ROOT: browserUsePackage.rootPath } : {}),
       ...(cuaPackage ? { ZCODE_CUA_PLUGIN_ROOT: cuaPackage.rootPath } : {}),
     },

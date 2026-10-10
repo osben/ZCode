@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { defineConfig } from "tsup";
-// tsup 配置自身会被打包，构建工具需保留原始文件位置，不能被内联后重定位。
+// This tsup config is itself bundled; the build tool must preserve its original location instead of inlining and relocating it.
 const { loadBuiltinProviderConfig } = await import(
   pathToFileURL(resolve(import.meta.dirname, "../../scripts/builtin-provider-config.mjs")).href
 );
@@ -10,7 +10,7 @@ const { stageThirdPartyNotices } = await import(
   pathToFileURL(resolve(import.meta.dirname, "../../scripts/third-party-notices.mjs")).href
 );
 
-// tsup config 可能从不同 cwd 加载，基于配置文件自身目录解析仓库根 package.json。
+// tsup.config may be loaded from different working directories; resolve the repository-root package.json relative to this config file.
 const rootPackageJsonPath = resolve(import.meta.dirname, "../../package.json");
 const { version } = JSON.parse(readFileSync(rootPackageJsonPath, "utf-8"));
 
@@ -36,15 +36,16 @@ export const SERVER_HTTP_EXTERNAL_DEPENDENCIES = [
   "combined-stream",
   "proxy-from-env",
   "follow-redirects",
-  // node-forge 内部用动态 require("crypto")，内联进 server ESM bundle 后 Node 会报
-  // Dynamic require of "crypto" is not supported；这里和 desktop main/host 构建保持同一外置策略。
+  // node-forge uses dynamic require("crypto"); after inlining into the server ESM bundle, Node reports
+  // "Dynamic require of crypto is not supported." Keep it external, matching desktop main/host builds.
   "node-forge",
   "yaml",
-  // services 的反馈日志压缩链路引入 CJS 包 yazl，被内联进 ESM bundle 后
-  // 运行时命中 require("fs") 动态 require，entry-http 启动即崩；保留外部依赖交给 Node 原生加载。
+  // The services feedback-log compression path uses the CJS package yazl. Inlining it into the ESM
+  // bundle leaves a runtime require("fs") call and crashes entry-http at startup. Keep it external for
+  // Node's native loader.
   "yazl",
-  // 云内容 ZIP 解包链路引入 yauzl，其 CommonJS require("fs") 在 ESM
-  // bundle 加载时崩溃；与 desktop 相同，外置后交给 Node 原生加载。
+  // Cloud-content ZIP extraction uses yauzl, whose CommonJS require("fs") crashes when loaded in the ESM
+  // bundle. As in desktop, keep it external for Node's native loader.
   "yauzl",
 ];
 
@@ -57,7 +58,7 @@ export default defineConfig({
   format: "esm",
   platform: "node",
   target: "node22",
-  // workspace 包的 exports 指向 .ts 源码，node 运行时无法直接加载，需要 bundle 进来
+  // Workspace package exports point to .ts source, which Node cannot load directly at runtime; bundle it.
   noExternal: [
     "@zcode/shared",
     "@zcode/rpc",
@@ -65,12 +66,13 @@ export default defineConfig({
     "@zcode/services/node",
     "@zcode/client",
   ],
-  // ssh2 / node-pty 含 .node native addon，不能被 esbuild 处理。
-  // undici / axios 这类 CJS 依赖被内联进 ESM bundle 后，运行时会走到
-  // require("assert") / require("util") / require("url") 等动态 require，Node 的 ESM wrapper 下会直接报 Dynamic require not supported。
-  // HTTP server 场景保留为外部依赖，交给 Node 原生加载；remote 单文件 bundle 仍由 build-remote.ts 负责内联。
+  // ssh2 / node-pty contain .node native addons and cannot be processed by esbuild.
+  // If CJS dependencies such as undici / axios are inlined into the ESM bundle, runtime dynamic requires
+  // for assert/util/url fail under Node's ESM wrapper with "Dynamic require not supported." Keep them
+  // external for the HTTP server so Node loads them natively; build-remote.ts still inlines them for the
+  // single-file remote bundle.
   external: SERVER_HTTP_EXTERNAL_DEPENDENCIES,
   define: createSharedDefines(),
-  // esbuild 不认识 tsconfig.json 里的 es2025，用专门的 tsconfig.build.json 消除 warning
+  // esbuild does not recognize es2025 from tsconfig.json; use tsconfig.build.json to remove the warning.
   tsconfig: "tsconfig.build.json",
 });

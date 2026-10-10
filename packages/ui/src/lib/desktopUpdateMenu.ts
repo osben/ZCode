@@ -4,7 +4,7 @@ import {
   type UpdateStatePayload,
 } from "@zcode/shared";
 
-// 更新入口跟随产品身份而不是后端环境：Preview 身份（含生产后端的 Preview）禁用更新器。
+// The update entry follows product identity rather than backend environment: Preview identity (including Preview on a production backend) disables the updater.
 export function shouldShowDesktopUpdateEntry(
   flavor: ZCodeProductFlavor = ZCODE_PRODUCT_FLAVOR,
 ): boolean {

@@ -36,8 +36,8 @@ function resolvePathField(
 }
 
 /**
- * 旧版把 workspaceIdentity 当成 cwd，或追加到真实 workspacePath 后落库。
- * 这里只修复两种已知且可证明的污染形态；包含 identity 但前缀不匹配的数据拒绝猜测。
+ * Older versions persisted workspaceIdentity as cwd or appended it to the actual workspacePath.
+ * Repair only these two known, provable corruption patterns; do not guess when data contains the identity but the prefix does not match.
  */
 export async function repairPersistedRemoteSessionPaths(
   sessionStore: RemoteSessionPathRepairStore,
@@ -131,7 +131,7 @@ export async function repairPersistedRemoteSessionPaths(
       );
     }
 
-    // CAS 未命中说明路径或 identity 已被并发写入；必须基于新事实重新裁决，不能返回旧快照。
+      // A CAS miss means the path or identity was concurrently updated; reassess using the new facts instead of returning the old snapshot.
     const refreshedIdentity = refreshed.workspaceID?.trim();
     if (refreshedIdentity !== workspaceIdentity) {
       throw createCoreError(
@@ -176,8 +176,8 @@ export async function repairPersistedRemoteSessionPaths(
     }
     if (refreshedDirectory !== "repair" && refreshedPath !== "repair") return refreshed;
 
-    // adapter 拒绝 CAS 且持久值仍是同一已知污染形态时，只使用基于最新元数据构造的
-    // 确定性内存修复；下次冷读会重试，不覆盖任何并发 session 事实。
+      // If the adapter rejects CAS while the persisted value is still the same known corruption pattern, use only a deterministic in-memory repair
+      // built from the latest metadata. The next cold read retries; no concurrent session facts are overwritten.
     options?.onPersistenceFailure?.(new Error("Remote session path repair CAS did not match"));
     return {
       ...refreshed,
@@ -188,7 +188,7 @@ export async function repairPersistedRemoteSessionPaths(
     if (isCoreError(error) && error.type === CoreErrorType.SessionCorrupted) {
       throw error;
     }
-    // 路径已可确定时，暂时性写盘失败不应继续阻断本次恢复；下次读取仍会重试。
+    // Once the path is determined, a transient disk-write failure should not keep blocking this recovery; the next read will retry.
     options?.onPersistenceFailure?.(error);
     return repairedSession;
   }

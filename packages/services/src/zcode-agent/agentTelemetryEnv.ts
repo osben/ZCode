@@ -24,8 +24,8 @@ export function buildAgentTelemetrySpawnEnv(
     ...(userId
       ? {
           ZCODE_TELEMETRY_IDENTITY_STATE: "authenticated",
-          // Desktop 原始账号只在 Host 凭据边界可见；Agent 仅收到不可读的 subject，
-          // Trace 可以按用户关联，但不会上传账号、邮箱或登录名。
+          // The raw Desktop account is visible only at the Host credential boundary; the Agent receives only an opaque subject.
+          // Traces can be associated by user without uploading the account, email, or login name.
           ZCODE_TELEMETRY_USER_SUBJECT_ID: createHash("sha256").update(userId).digest("hex"),
         }
       : {

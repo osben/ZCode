@@ -9,20 +9,20 @@ import { workflowRunQuestionWaitedLabel } from "@/app-shell/workflowRunQuestions
 import { WorkflowNotificationArtifactChips } from "@/v4/WorkflowNotificationArtifactChips.js";
 
 /**
- * 后台 workflow 通知行。
+ * Background workflow notification row.
  *
- * manifest 台账形态已否决（判为「too flowery」），改走既有工具卡语法：
- * 通知行与普通工具调用行视觉完全同族（ToolLayout：图标 + kindLabel + primaryText + 展开体）。
- * 数据契约 / 发射侧 / hydration / pendingQuestions 联查全部不动——这里只是表现层。
+ * The manifest-ledger design was rejected as "too flowery," so use the existing tool-card syntax:
+ * notification rows share the same visual family as ordinary tool-call rows (ToolLayout: icon + kindLabel + primaryText + expanded body).
+ * Data contracts, emitters, hydration, and pendingQuestions joins are unchanged; this is presentation only.
  *
- * 纯展示：join 结果（onOpenRun / pendingQids）由宿主从投影解析后注入，组件不自取 store，
- * 好让它在 renderToStaticMarkup 下可测（展开态经 forceOpen 透传给 ToolLayout）。
+ * Presentation only: the host resolves joins (onOpenRun / pendingQids) from the projection and passes them in; the component does not read the store,
+ * making it testable with renderToStaticMarkup (expanded state is passed to ToolLayout through forceOpen).
  */
 
-/** 通知行根节点的 testid 基名。 */
+/** Base testid for the notification-row root. */
 const TID_CHAT_WORKFLOW_NOTIFICATION_ROW = "chat-workflow-notification-row";
 
-/** 折叠头部单行概要上限，照 escalate 卡：概要只是「大概问了什么」，全文在展开体里。 */
+/** Single-line summary limit for the collapsed header, matching the escalation card: the summary says roughly what was asked; the expanded body shows the full text. */
 const INLINE_PREVIEW_MAX_LENGTH = 160;
 
 const TERMINAL_ICON = <Workflow className="size-4 shrink-0 text-foreground-subtle" />;
@@ -30,14 +30,14 @@ const ESCALATION_ICON = (
   <MessageCircleQuestion className="size-4 shrink-0 text-foreground-subtle" />
 );
 
-/** 面板正文（问题 / 结果 prose）：照 escalate / submit-result 的 border-border bg-panel 惯例。 */
+/** Panel body (question/result prose), matching the border-border bg-panel convention in escalation/submit-result. */
 const PANEL_CLASS =
   "whitespace-pre-wrap break-words rounded-lg border border-border bg-panel px-4 py-3 text-ui-base leading-5";
-/** 失败 error 面板：照 resolve-question outcome 的 border-destructive/40 惯例（不是行级失败装置）。 */
+/** Failure error panel, matching resolve-question outcome's border-destructive/40 convention (not a row-level failure treatment). */
 const ERROR_PANEL_CLASS =
   "whitespace-pre-wrap break-words rounded-lg border border-destructive/40 bg-panel px-4 py-3 text-ui-base leading-5 text-foreground";
 
-/** 折叠成单行概要：换行折成空格，超长截断（照 escalate 卡 toInlinePreview）。 */
+/** Collapse to a one-line summary: replace newlines with spaces and truncate long text (matching toInlinePreview in the escalation card). */
 function toInlinePreview(value: string): string | undefined {
   const collapsed = value.replace(/\s+/gu, " ").trim();
   if (collapsed.length === 0) return undefined;
@@ -52,11 +52,11 @@ const TERMINAL_KIND_LABEL_ID: Record<"completed" | "errored" | "stopped", string
   stopped: "chat.backgroundResult.workflow.stopped",
 };
 
-/** stall 行的 kindLabel：run 还在跑，只是 20 分钟没有一次成功的模型请求。 */
+/** kindLabel for a stalled row: the run is still active but has had no successful model request for 20 minutes. */
 const STALL_KIND_LABEL_ID = "chat.backgroundResult.workflow.stall";
 const STALL_ICON = <Hourglass className="size-4 shrink-0 text-foreground-subtle" />;
 
-/** 展开体里的一个 `label: value` 事实行（stall 的等待时长 / 原因 / 并发数）。 */
+/** A `label: value` fact row in the expanded body (stall duration/reason/concurrency). */
 function factLine(label: string, value: string, key: string) {
   return (
     <p key={key} className="text-ui-sm text-foreground-subtle">
@@ -66,11 +66,11 @@ function factLine(label: string, value: string, key: string) {
 }
 
 /**
- * 升级行 kindLabel 三态（按 pendingQuestions 在场性联查活翻转，与 manifest 同一逻辑）：
- *   pendingQids 含 qid → waiting（正在等待回答）；
- *   run 在场且 qid 缺席 → answered（问题已回答）；
- *   run 不在场（pendingQids === undefined）→ asked（中性：提出了问题）。
- * 不闪不 shimmer——shimmer 语义是「正在干活」，停驻问题等的是主代理。
+ * Three kindLabel states for escalation rows (live lookup by pendingQuestions presence, same logic as manifest):
+ *   pendingQids contains qid → waiting (waiting for an answer);
+ *   run is present and qid is absent → answered (the question was answered);
+ *   run is absent (pendingQids === undefined) → asked (neutral: a question was raised).
+ * No blinking or shimmer—shimmer means "actively working," while a raised question waits for the main agent.
  */
 function escalationState(
   pendingQids: ReadonlySet<string> | undefined,
@@ -82,22 +82,22 @@ function escalationState(
 
 interface WorkflowNotificationToolRowProps {
   notification: WorkflowNotificationMeta;
-  /** run 名 = originMeta.title（CLI 权威给出，不本地化）。 */
+  /** Run name = originMeta.title (authoritative from CLI, not localized). */
   runName: string;
-  /** testid 后缀 + ToolLayout persist key，取 unit.key。 */
+  /** testid suffix + ToolLayout persist key, taken from unit.key. */
   testIdKey: string;
-  /** CodeBlock 的应用主题（json result 走它）。 */
+  /** Application theme for CodeBlock (used for JSON results). */
   theme: Theme;
-  /** 预绑定的打开 run 详情回调；不可得时展开体内不渲染「打开运行详情」链接。 */
+  /** Pre-bound callback to open run details; if unavailable, do not render the "Open run details" link in the expanded body. */
   onOpenRun?: () => void;
   /**
-   * 预绑定的打开产物 tab 回调（宿主从 join 注入，同 `onOpenRun`）。缺席时 chips 仍然渲染，
-   * 只是不可点——「交付了什么」是事实，「能不能打开」是能力。
+   * Pre-bound callback to open an artifact tab (injected by the host from the join, like `onOpenRun`). If absent, chips still render
+   * but are not clickable—what was delivered is a fact; whether it can be opened is a capability.
    */
   onOpenArtifact?: (artifactId: string) => void;
-  /** 升级行的在场性联查：undefined = run 不在活投影；Set 含 qid = Waiting；不含 = Answered。 */
+  /** Presence join for escalation rows: undefined = run absent from the live projection; Set containing qid = Waiting; missing qid = Answered. */
   pendingQids?: ReadonlySet<string>;
-  /** 测试/宿主强制展开（透传 ToolLayout.forceOpen）；产品默认折叠。 */
+  /** Force expanded state for tests/host (passed through to ToolLayout.forceOpen); collapsed by default in product. */
   forceOpen?: boolean;
 }
 
@@ -113,7 +113,7 @@ export function WorkflowNotificationToolRow({
 }: WorkflowNotificationToolRowProps) {
   const { intl } = useZCodeIntl();
 
-  // 等待时长要在没有事件流时也照走（停驻的 run 恰恰不发事件），按固定间隔喂新的"现在"。
+  // Waiting duration must keep advancing without an event stream (a stalled run emits no events); provide a fresh "now" on a fixed interval.
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     const timer = setInterval(() => setNow(Date.now()), 30_000);
@@ -133,10 +133,10 @@ export function WorkflowNotificationToolRow({
   const isEscalation = notification.kind === "escalation";
   const isStall = notification.kind === "stall";
 
-  // kindLabel + primaryText + 展开体，按三类通知分别铸造。
+  // Build kindLabel + primaryText + expanded body separately for the three notification types.
   const escalationView = isEscalation ? escalationState(pendingQids, notification.qid) : undefined;
 
-  // stopped 的原因词跟在 kindLabel 后。
+  // For stopped runs, append the reason after kindLabel.
   const stopReason =
     notification.kind === "terminal" && notification.status === "stopped"
       ? notification.stopReason
@@ -162,9 +162,9 @@ export function WorkflowNotificationToolRow({
     return <span className="min-w-0 truncate">{preview ?? runName}</span>;
   }, [notification, runName]);
 
-  // 折叠头部尾部的产物 chips。
-  // 走 ToolLayout 的 `secondaryText` 槽，配合已有的 `hideSecondaryTextWhenOpen`——
-  // 只在**折叠头部**展示：展开之后正文自己在说结果，chips 再挂着只是重复。
+  // Artifact chips at the end of the collapsed header.
+  // Use ToolLayout's `secondaryText` slot with its existing `hideSecondaryTextWhenOpen` behavior—
+  // show them only in the **collapsed header**; once expanded, the body already shows the result and the chips would be redundant.
   const artifactChips =
     notification.kind === "terminal" &&
     notification.artifacts !== undefined &&
@@ -181,8 +181,8 @@ export function WorkflowNotificationToolRow({
       </span>
     ) : undefined;
 
-  // 展开门：终态看 artifact（errored / provider 停下的 error，否则 result），升级恒有问题正文，
-  // stall 恒有等待事实。
+  // Expanded content: terminal states show the artifact (error for errored/provider-stopped, otherwise result); escalation always shows the question,
+  // and stalled rows always show wait facts.
   const hasDetails =
     notification.kind === "escalation" || notification.kind === "stall"
       ? true
@@ -202,7 +202,8 @@ export function WorkflowNotificationToolRow({
       const contextHeading = intl.formatMessage({ id: "chat.toolCall.workflow.escalate.context" });
       return (
         <div className="space-y-3">
-          {/* 问题全文（不引用答案原文——答案在相邻 ResolveWorkflowQuestion 卡里）。 */}
+          {/* Show the full question without quoting the answer; the answer is in the adjacent
+              ResolveWorkflowQuestion card. */}
           <p className={`${PANEL_CLASS} text-foreground`}>{notification.question}</p>
           {notification.context !== undefined ? (
             <section className="space-y-1.5">
@@ -242,7 +243,7 @@ export function WorkflowNotificationToolRow({
       );
     }
 
-    // errored，或 stopped 而带错误明细（provider / interrupted）：错误面板。
+    // Errored, or stopped with error details (provider/interrupted): show the error panel.
     if (notification.error !== undefined) {
       return (
         <div className="space-y-3">
@@ -252,14 +253,14 @@ export function WorkflowNotificationToolRow({
       );
     }
 
-    // completed / stopped：只显示 result（prose <p> / json CodeBlock，照 submit-result 惯例）。
+    // completed/stopped: show only result (prose <p> / JSON CodeBlock, following submit-result convention).
     const { result, resultForm } = notification;
     let resultCode = result ?? "";
     if (resultForm === "json") {
       try {
         resultCode = JSON.stringify(JSON.parse(resultCode), null, 2);
       } catch {
-        /* 历史截断的 JSON 保留原文，不丢弃结果。 */
+        /* Preserve historical truncated JSON as-is; do not discard the result. */
       }
     }
     return (
@@ -293,15 +294,15 @@ export function WorkflowNotificationToolRow({
         toolId={toolId}
         persistOpenKey={toolId}
         icon={isEscalation ? ESCALATION_ICON : isStall ? STALL_ICON : TERMINAL_ICON}
-        // 图标已由 kind 区分；showIcon 缺省即显示。
+        // kind already distinguishes the icon; showIcon defaults to visible.
         canToggle={hasDetails}
         forceOpen={forceOpen && hasDetails}
         hideSecondaryTextWhenOpen
         kindLabel={kindLabel}
         primaryText={primaryText}
         secondaryText={artifactChips}
-        // 关键：**不**走 ToolLayout 的 failure status 装置（那是「这次调用坏了」的语义）；
-        // 「工作流失败」由 kindLabel 说出，错误详情在展开体。也不设 isRunning（无 shimmer）。
+        // Important: **do not** use ToolLayout's failure-status treatment (that means "this call failed");
+        // kindLabel communicates "workflow failed," and the expanded body shows error details. Do not set isRunning either (no shimmer).
         title={runName}
         renderContent={hasDetails ? renderContent : undefined}
       />

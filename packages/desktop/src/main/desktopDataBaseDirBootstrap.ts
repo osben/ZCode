@@ -39,8 +39,8 @@ function readBootstrapDataBaseDirFromDisk(
 export function applyEarlyDataBaseDirBootstrap(): string | null {
   const dataBaseDir = readBootstrapDataBaseDirFromDisk();
   if (dataBaseDir) {
-    // 启动早期就把 dataBaseDir 注入进来，避免 logger / crashReporter 先按默认 HOME 建目录，
-    // 导致后续再切换到自定义目录时，日志和 crash dump 落在两套路径里。
+    // Inject dataBaseDir early in startup so logger / crashReporter do not first create directories under the default HOME,
+    // which would leave logs and crash dumps in two different locations after switching to a custom directory.
     setDataBaseDir(dataBaseDir);
   }
   return dataBaseDir;

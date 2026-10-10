@@ -82,8 +82,8 @@ export class NodePersonalProviderConfigRepository implements PersonalProviderCon
         });
         const committed = await this.#writeLocked(update);
         const snapshot = snapshotFromUpdate(committed);
-        // 原子写可能产生多次文件系统事件。写入完成后先记录内容版本，
-        // polling 随后读取到同一版本时不会再次发布失效通知。
+        // Atomic writes may produce multiple filesystem events. Record the content revision after writing,
+        // so polling the same revision does not publish another invalidation notification.
         this.#observedRevision = snapshot.revision;
         return snapshot;
       });
@@ -109,8 +109,8 @@ export class NodePersonalProviderConfigRepository implements PersonalProviderCon
   }
 
   async #readCurrent(): Promise<ProviderConfigLayerSnapshot> {
-    // 多个进程纯读取也争排他锁，慢 IO 会把轮询放大成锁超时。
-    // 正式文件通过同目录临时文件原子替换，纯读可以直接观察已提交的完整文档。
+    // Pure reads across processes also contended for the exclusive lock, so slow I/O could amplify polling into lock timeouts.
+    // The official file is atomically replaced by a temporary file in the same directory; reads can directly observe the complete committed document.
     const file = await readJsonFileIfExists(this.#filePath);
     if (file === null && !this.#importLegacy) return snapshotFromUpdate(emptyUpdate());
     if (file !== null) {
@@ -119,7 +119,7 @@ export class NodePersonalProviderConfigRepository implements PersonalProviderCon
         return snapshotFromUpdate(update);
       }
     }
-    // 导入和规范化仍会写盘。拿锁后必须重读，不能用加锁前的旧内容覆盖其他 writer。
+    // Import and normalization still write to disk. Reread after acquiring the lock so stale pre-lock content cannot overwrite another writer's changes.
     return withFileLock(this.#filePath, () => this.#readLocked());
   }
 
@@ -141,8 +141,8 @@ export class NodePersonalProviderConfigRepository implements PersonalProviderCon
   }
 
   async #writeLocked(update: ProviderConfigLayerUpdate): Promise<ProviderConfigLayerUpdate> {
-    // 同一入口写入规则与默认选择；先严格验证整份结果，不能落盘后才发现来源越权/坏值。
-    // 使用与读取相同的规范形态再计算版本，避免外层规则键顺序使“写成功”的版本读回就变化。
+    // This entry point writes both rules and default selection; strictly validate the full result first so invalid sources/values are not discovered only after writing.
+    // Calculate the revision from the same canonical form used for reads, so outer rule-key order does not change the revision after a successful write/readback.
     const canonical = decodeProviderConfigFile(encodeProviderConfigFile(update));
     const encoded = encodeProviderConfigFile(canonical);
     await atomicWritePrivateTextFile(this.#filePath, JSON.stringify(encoded, null, 2));
@@ -157,8 +157,8 @@ export class NodePersonalProviderConfigRepository implements PersonalProviderCon
   }
 
   #recoverInvalidFile(error: unknown): ProviderConfigLayerSnapshot {
-    // 正式文件无效时必须原样保留，不能备份后覆盖成空配置；本进程仅以内存空
-    // Overlay 降级，等待用户修复原文件。
+    // If the official file is invalid, preserve it as-is; do not back it up and replace it with empty config. This process falls back only to an in-memory empty
+    // Overlay while waiting for the user to repair the original file.
     this.#reportRecovery({ error });
     return snapshotFromUpdate(emptyUpdate());
   }
@@ -167,12 +167,12 @@ export class NodePersonalProviderConfigRepository implements PersonalProviderCon
     try {
       this.#onRecovery?.(Object.freeze(event));
     } catch {
-      // 观测回调不是配置事实，不能反向阻断恢复。
+      // An observation callback is not config state and must not block recovery.
     }
   }
 
   #ensurePolling(): void {
-    // 轮询在飞时 timer 已清空；显式 read/update 的 finally 不能再排入第二轮。
+    // The timer is cleared while polling is in flight; an explicit read/update finally block must not enqueue a second poll.
     if (
       this.#pollingIntervalMs === false ||
       this.#pollingTimer ||
@@ -192,21 +192,21 @@ export class NodePersonalProviderConfigRepository implements PersonalProviderCon
     const writeGeneration = this.#writeGeneration;
     try {
       const snapshot = await this.#readPollingSnapshot();
-      // 去掉读锁后，旧轮询可能晚于本进程保存返回；丢弃它，避免版本倒退及重复通知。
+      // After removing the read lock, an old poll may return after this process saves; discard it to avoid revision rollback and duplicate notifications.
       if (writeGeneration !== this.#writeGeneration) return;
       this.#pollingErrorActive = false;
       if (this.#disposed || snapshot.revision === this.#observedRevision) return;
       this.#observedRevision = snapshot.revision;
       this.#emit("poll-changed");
     } catch (error) {
-      // 成功保存也使旧轮询的失败失效，不能在新版本之后再发布旧读操作的故障。
+      // A successful save also invalidates failures from an old poll; do not publish an old read error after the new revision.
       if (this.#disposed || writeGeneration !== this.#writeGeneration) return;
       if (!this.#pollingErrorActive) {
         this.#pollingErrorActive = true;
         try {
           this.#onPollingError?.(error);
         } catch {
-          // 观测回调不能反向阻断下一轮自愈。
+          // An observation callback must not block the next self-recovery attempt.
         }
         this.#emit("poll-error");
       }
@@ -265,7 +265,7 @@ function snapshotFromUpdate(update: ProviderConfigLayerUpdate): ProviderConfigLa
     revision: createHash("sha256").update(content).digest("hex"),
     providers: update.providers,
     models: update.models,
-    // 快照必须与 revision 对应的磁盘内容一致；补空数组会让未声明排序的文件在 CAS 时误报变化。
+    // The snapshot must match the disk contents for its revision; adding empty arrays would make files with no declared ordering falsely report a change during CAS.
     providerOrder: update.providerOrder,
     defaultModelSelection: update.defaultModelSelection,
   });

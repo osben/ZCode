@@ -18,7 +18,7 @@ function payload(
 }
 
 const defaults = { title: "默认标题", markdown: "默认" };
-// 新语言在 I3 前还不在 Locale 联合类型中，测试里先用类型断言模拟。
+// Before I3, the new language is not yet in the Locale union type, so simulate it in the test with a type assertion.
 const otherLocale = "xx-XX" as Locale;
 
 describe("getLocalizedUpdateReleaseNotes", () => {

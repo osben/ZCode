@@ -1,18 +1,18 @@
 // ============================================================
-// workflow run 的 run 中通知与 provider 停下文案表
+// Copy table for in-run workflow notifications and provider stops.
 // ============================================================
-// 从 notification.ts 拆出（eslint max-lines 400 行门）：那个文件承载四种任务的终态通知骨架，
-// 这里是 dwf 专属的三段文案——升级问答、run 级停滞与
-// provider 停下；后者由终态通知与 GetWorkflowRun 共用。
+// Split from notification.ts (the ESLint max-lines limit is 400): that file holds the terminal notification structure for four task types,
+// while this file contains three DWF-specific messages—escalation questions, run-level stalls, and
+// provider stops. The provider-stop copy is shared by terminal notifications and GetWorkflowRun.
 
 import type { DynamicWorkflowRunError } from "@zcode/contracts";
 import { escapeXml, truncateTaskNotification } from "./notification.js";
 
 /**
- * `stopped(provider)` 的 `<error>` 块：
- * 按 `providerStop.kind` 选两句（什么错了 / 做什么），后接固定的事实行与 provider 原文行。
- * 文案里的每个占位都有兜底（provider 显示名缺席用 providerId，再缺席用 "the provider"）——
- * 一条通知绝不因为少一个字段就退化成空句。GetWorkflowRun 的 `<error>` 块共用同一函数。
+ * The `<error>` block for `stopped(provider)`:
+ * choose two sentences by `providerStop.kind` (what went wrong / what to do), followed by fixed fact and provider-text lines.
+ * Every copy placeholder has a fallback (use providerId when the provider display name is absent, then "the provider")—
+ * a notification never degrades into an empty sentence because a field is missing. GetWorkflowRun's `<error>` block uses the same function.
  */
 export function formatWorkflowProviderStopError(
   failure: DynamicWorkflowRunError,
@@ -85,10 +85,10 @@ export function formatWorkflowProviderStopError(
 }
 
 /**
- * run 级停滞的 run 中通知。与升级问答同族：
- * 播报的不是终态而是一个正在发生的事实——run 还在跑、只是 20 分钟没有一次模型请求成功。
- * 文案必须把两件事说死：它**不需要**模型做任何事（尤其不要取消 / 重建），以及用户若在等
- * 就该被告知。每个 stall 段恰好一条，不催办。
+ * In-run notification for a run-level stall. Like an escalation question,
+ * it reports an event in progress rather than a terminal state—the run is still running, but no model request has succeeded for 20 minutes.
+ * Copy must make two things explicit: the model **does not need** to do anything (especially cancel or recreate the run), and the user should be told if they are waiting.
+ * Emit exactly one notification per stall interval; do not nag.
  */
 export interface WorkflowStallNotificationInput {
   runLabel: string;
@@ -129,22 +129,22 @@ export function formatWorkflowStallNotification(input: WorkflowStallNotification
 }
 
 /**
- * 一个 actor 从**正在跑的** run 里升级上来的阻塞问题。
+ * A blocking question escalated by an actor from a **running** workflow run.
  *
- * 与上面几个 formatter 的关键差别：它们播报的是**终态**（活干完了，读一下结果），这条播报的
- * 是**一个还没被满足的义务**——有一个 actor 此刻正停在那儿等回答，而且没有超时会替它兜底。
- * 所以文案必须把三件事说死：问题是什么、逐字的下一步（带 qid 的工具调用）、以及 run 并没有
- * 因此停下（否则模型会误以为整条工作流在等它，从而放下手上一切事）。
+ * Unlike the formatters above, which report a **terminal state** (the work is done; read the result), this notification reports
+ * **an unmet obligation**—an actor is paused and waiting for an answer, with no timeout to resolve it.
+ * The copy must make three things explicit: the question, the exact next step (a tool call with qid), and that the run has not
+ * stopped because of it (otherwise the model may think the whole workflow is waiting and abandon its current work).
  *
- * 结构化那半用 XML-ish 节（与 `<task-notification>` 同族，字段可被人和模型稳定定位），
- * 散文那半给下一步与边界条件。**不重发、不催办**：丢弃兜底是快照查询，不是重试。
+ * The structured half uses an XML-like section (matching `<task-notification>`, with fields that people and models can locate reliably);
+ * the prose half gives the next step and boundaries. **Do not resend or nag**: discard recovery is a snapshot query, not a retry.
  */
 export interface WorkflowEscalationNotificationInput {
-  /** run 的展示名（registry 里的 description；缺席时调用方已回落到 runId）。 */
+  /** Display name of the run (the registry description; callers fall back to runId when absent). */
   runLabel: string;
   runId: string;
   qid: string;
-  /** actor 的人类可读名；匿名 actor 缺席，调用方给结构化 ref 作兜底。 */
+  /** Human-readable actor name; anonymous actors omit it, and callers provide the structured ref as a fallback. */
   actor: string;
   question: string;
   context?: string;

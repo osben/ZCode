@@ -214,7 +214,7 @@ function determineNormalPath(params: {
       vertex = parentVertex;
       parentVertex = vertex.getNextParent();
       if (parentVertex === missingParent) {
-        // 分页窗口外的 parent 没有可见节点，不能继续把线画到窗口底部。
+        // A parent outside the paginated window has no visible node, so do not continue its edge to the bottom of the window.
         vertex.registerParentProcessed();
         break;
       }

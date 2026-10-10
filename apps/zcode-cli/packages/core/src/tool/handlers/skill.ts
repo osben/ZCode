@@ -71,7 +71,7 @@ const skillHandler: ToolHandler = async (input, context) => {
 };
 
 function expandSkillContextVariables(content: string, baseDirectory: string): string {
-  // 只有 Skill 工具加载后才有明确的当前 skill 目录，因此变量替换限定在这里完成。
+  // Only after the Skill tool loads do we know the current skill directory, so resolve variables here.
   return content.replace(/\$\{(CLAUDE_SKILL_DIR|ZCODE_SKILL_DIR)\}/gu, baseDirectory);
 }
 

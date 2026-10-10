@@ -74,8 +74,9 @@ export async function executeToolCall(
     entry && toolCall.name !== entry.metadata.name
       ? { ...toolCall, name: entry.metadata.name }
       : toolCall;
-  // 隐私与基数边界：未注册工具名来自模型输出，不能假定是受控枚举。
-  // 业务错误仍保留真实名称供模型自修复，远端 Trace 统一落入固定 unknown 桶。
+  // Privacy and cardinality boundary: unregistered tool names come from model output
+  // and cannot be treated as a controlled enum. Keep the real name in business errors
+  // so the model can self-correct, but map it to a fixed `unknown` bucket in remote traces.
   const telemetryToolCall = entry ? canonicalToolCall : { ...toolCall, name: "unknown" };
   return runToolCallWithTelemetry(deps, telemetryToolCall, options, (telemetry) =>
     executeToolCallImpl(deps, backgroundTasks, toolCall, totalStartedAt, options, telemetry),
@@ -133,12 +134,14 @@ async function executeToolCallImpl(
       ),
     );
     if (emptyToolName) {
-      // 空名在 admission 阶段停止会让模型永远收不到配对结果。复用
-      // registry-miss 生命周期，但 provider 内容严格保留模型返回的原始空白名称。
+      // Stopping an empty name at admission would leave the model without a paired
+      // result. Reuse the registry-miss lifecycle, while preserving the original blank
+      // name from the model in provider content.
       result.modelContent = `<tool_use_error>Error: No such tool available: ${toolCall.name}</tool_use_error>`;
     }
-    // registry miss 发生在 handler/ToolCallStarted 之前；旧代码只把失败
-    // 返回给 provider，没有发布 ToolCallError，V4 tool row 因而永久停在 inputStreaming。
+    // A registry miss occurs before the handler/ToolCallStarted. Previously, failure
+    // was returned only to the provider, without emitting ToolCallError, leaving the V4
+    // tool row permanently in inputStreaming.
     await emitToolCallError(deps, toolCall.id, traceContext, turnId, result.error);
     deps.logger?.warn("Tool call rejected because the tool is not registered", {
       ...traceContextToLogContext(traceContext),
@@ -176,9 +179,10 @@ async function executeToolCallImpl(
   );
   if (initialInputValidation) {
     const result = createErrorResult(canonicalToolCall, initialInputValidation);
-    // schema 失败与 registry miss 同属 handler/ToolCallStarted 之前的早退；旧代码
-    // 只把失败回灌模型，没有发布 ToolCallError，V4 tool row 因而在整个 turn 里停在
-    // inputStreaming（CreateWorkflow 卡持续显示「正在编写工作流」），模型重试后又叠一张。
+    // Schema failures and registry misses both exit before the handler/ToolCallStarted.
+    // Previously, failure was sent only back to the model, without emitting
+    // ToolCallError, leaving the V4 row in inputStreaming for the entire turn (the
+    // CreateWorkflow card kept showing “Writing workflow”), with another card added on retry.
     await emitToolCallError(deps, canonicalToolCall.id, traceContext, turnId, result.error);
     telemetry?.finishFailed("validation", "parse", result.error);
     return result;
@@ -188,22 +192,25 @@ async function executeToolCallImpl(
     runtimeTaskRegistry: deps.runtimeTaskRegistry,
   });
   if (toolInputValidation && isToolHandlerFailure(toolInputValidation)) {
-    // tool-specific 语义校验原先只能放在 handler，导致无效调用仍先执行
-    // PreToolUse、权限和 failure hook；语义校验必须在 hook 前结束。
+    // Tool-specific semantic validation used to live only in the handler, so invalid
+    // calls still ran PreToolUse, permission, and failure hooks. Semantic validation
+    // must finish before hooks run.
     const result = createErrorResult(
       canonicalToolCall,
       createToolHandlerFailureError(canonicalToolCall, toolInputValidation),
     );
     await emitToolCallError(deps, canonicalToolCall.id, traceContext, turnId, result.error);
-    // 工具专属校验以普通失败结果返回，不走 handler 执行的 try/catch 失败收口。
-    // 先发出 ToolCallError 更新工具行，再显式标记遥测失败，避免被记录为 abandoned。
+    // Return tool-specific validation failures as ordinary failures, outside the
+    // handler execution try/catch. Emit ToolCallError to update the tool row, then mark
+    // telemetry as failed so the call is not recorded as abandoned.
     telemetry?.finishFailed("validation", "parse", result.error);
     return result;
   }
 
-  // 归一化：把模型发出的入参换成「将要发生的执行事实」。位置刻意在 hook **之前**——此后
-  // hook、权限规则、确认窗载荷、prepareApproval 与 handler 读的都是同一份输入，于是
-  // 「策略看得到真正的脚本」「跨版本可见」「确认与执行同字节」三件事一次到位。
+  // Normalize model arguments into the facts that will be executed. This deliberately
+  // happens **before** hooks, so hooks, permission rules, approval-dialog payloads,
+  // prepareApproval, and the handler all read the same input. Policies then see the real
+  // script, the input is visible across versions, and approval uses the same bytes as execution.
   if (entry.resolveInput) {
     const workingDirectory = deps.getWorkingDirectory?.();
     const resolution = await entry.resolveInput(executionInput, {
@@ -217,8 +224,9 @@ async function executeToolCallImpl(
       ...(deps.hasLoadedSkill === undefined ? {} : { hasLoadedSkill: deps.hasLoadedSkill }),
     });
     if (isToolHandlerFailure(resolution)) {
-      // 与 validateInput 同一条生命周期出口：解析不出来是模型该立刻拿回去修的东西，
-      // 不该先弹一次注定失败的确认窗。
+      // Use the same lifecycle exit as validateInput: an unparseable value should be
+      // returned to the model for immediate correction, rather than showing an approval
+      // dialog for a call that is certain to fail.
       const result = createErrorResult(
         canonicalToolCall,
         createToolHandlerFailureError(canonicalToolCall, resolution),
@@ -275,9 +283,10 @@ async function executeToolCallImpl(
     });
     const hookInputValidation = validateInput(executionInput, entry);
     if (hookInputValidation) {
-      // Hook 修改后的输入校验失败会在 handler 前直接返回，旧分支没有走
-      // PreToolUse context 的统一追加逻辑，导致模型只看到 schema error，看不到 Hook
-      // 已产生的诊断上下文；与 deny、permission-deny 的提前失败契约不一致。
+      // When hook-modified input fails validation, this branch returns before the
+      // handler. Previously it skipped the shared PreToolUse-context append logic, so
+      // the model saw only the schema error and not hook diagnostics. That differed from
+      // the early-failure contract for deny and permission-deny.
       const result = appendPreToolAdditionalContextsToErrorResult(
         createErrorResult(canonicalToolCall, hookInputValidation),
         preToolHookResult.additionalContexts,
@@ -325,8 +334,10 @@ async function executeToolCallImpl(
   const permissionWaitMs = permissionResult.permissionWaitMs;
 
   const startTime = Date.now();
-  // 按**执行入参**解析一次副作用旗标（Bash 的只读命令判定就在这里落定），随 ToolCallStarted 发出：
-  // 事件先于 handler，所以订阅者（dynamic-workflow driver 的导入缓存关门）在第一个字节落盘前就知道。
+  // Resolve side-effect flags once from the **execution input** (including Bash's
+  // read-only command decision) and emit them with ToolCallStarted. The event precedes
+  // the handler, so subscribers (the dynamic-workflow driver's import-cache barrier)
+  // know before the first byte is written.
   await emitToolCallStarted(
     deps,
     canonicalToolCall,
@@ -351,8 +362,9 @@ async function executeToolCallImpl(
   });
   const executionAbortController = new AbortController();
   const unlinkParentAbort = linkAbortSignal(options?.signal, executionAbortController);
-  // 可暂停的 deadline：本次调用内部的模型请求在准入闸门前排队时暂停计时。排队的两端
-  // 以本 toolCallId 的 ModelNetworkStatus 会话事件到达，所以在事件出口拦一层即可，handler 无感。
+  // Pausable deadline: pause timing while model requests made by this call queue at the
+  // admission gate. Queue boundaries arrive as this toolCallId's ModelNetworkStatus
+  // session events, so intercept them at the event sink without involving the handler.
   const deadline = new ToolDeadline(timeoutMs);
   const emitEvent =
     deps.emitEvent === undefined
@@ -390,7 +402,8 @@ async function executeToolCallImpl(
       httpClientPort: deps.httpClientPort,
       imageProcessorPort: deps.imageProcessorPort,
       pdfDocumentPort: deps.pdfDocumentPort,
-      // 工具内部的模型请求默认把状态事件发进会话：deadline 暂停与 driver 相位都靠这条流。
+      // Model requests inside tools emit status events to the session by default; both
+      // deadline pausing and driver phases depend on this stream.
       model: withDefaultToolModelStatusSink(
         model,
         createToolModelStatusSink({ emitEvent, sessionId: deps.sessionId, turnId, traceId }),
@@ -450,14 +463,17 @@ async function executeToolCallImpl(
     );
     const durationMs = Date.now() - startTime;
     if (isToolHandlerFailure(output)) {
-      // handler 用返回值表达可预期业务失败；这里只转换到既有异常控制流，
-      // 继续复用原来的 failure hook、事件和日志，不引入第二套执行生命周期。
+      // The handler expresses expected business failures in its return value. Convert
+      // them into the existing exception flow here so the existing failure hooks,
+      // events, and logs are reused without introducing a second execution lifecycle.
       throw createToolHandlerFailureError(canonicalToolCall, output);
     }
     validateOutput(output, entry);
-    // node_repl 同时承载 Browser Use 与 CUA，不能在注册时把整个 server 标成 official。
-    // CUA SDK 结果带 producer integrity metadata 时，才为本次序列化临时打开原子帧保护；
-    // 否则通用 resultBudget 会截断/重排 image_ref，或非 authority 路径会把引用剥掉。
+    // node_repl hosts both Browser Use and CUA, so the entire server cannot be marked
+    // official at registration. Enable atomic-frame protection for this serialization
+    // only when the CUA SDK result carries producer integrity metadata; otherwise the
+    // generic resultBudget may truncate/reorder image_ref, or a non-authority path may
+    // strip the reference.
     const modelOutputEntry = resolveModelOutputEntry(entry, output);
     failureStage = "serialize";
     let serialization = await serializeOutput(
@@ -489,8 +505,9 @@ async function executeToolCallImpl(
     });
     const perf = mergeToolExecutionTelemetry(readToolExecutionTelemetry(output), {
       permissionWaitMs,
-      // totalMs 是用户感知的工具生命周期：registry lookup、校验、Hook、权限等待、
-      // handler、序列化与 PostToolUse。durationMs 继续只表示 handler 主执行段。
+      // totalMs is the user-visible tool lifecycle: registry lookup, validation, hooks,
+      // permission wait, handler, serialization, and PostToolUse. durationMs continues
+      // to represent only the handler's main execution segment.
       totalMs: Date.now() - totalStartedAt,
     });
 
@@ -596,8 +613,9 @@ async function executeToolCallImpl(
       toolName: canonicalToolCall.name,
     });
 
-    // Skill 已解析成功后，serialize/post_hook 仍可能失败；错误事件也要保留
-    // resolved metadata，否则失败的 Skill agent_step 无法归因到具体 skill。
+    // Serialization or post-hook processing can still fail after a Skill resolves
+    // successfully. Preserve the resolved metadata on the error event so a failed Skill
+    // agent_step can still be attributed to the specific skill.
     await emitToolCallError(
       deps,
       canonicalToolCall.id,
@@ -627,8 +645,9 @@ async function executeToolCallImpl(
       telemetry?.finishFailed(
         failureStage,
         errorCategoryForToolError(result.error?.type),
-        // 原始异常只交给 Telemetry 做受控脱敏；result.error 是面向业务协议重新包装后的错误，
-        // 不能覆盖 Trace 中用于定位根因的 source message/type/code。
+        // Only Telemetry receives the original exception for controlled redaction.
+        // result.error is repackaged for the business protocol and must not overwrite the
+        // source message/type/code in the Trace, which are needed to locate the cause.
         error,
       );
     }
@@ -692,8 +711,9 @@ function appendPreToolAdditionalContextsToErrorResult(
 ): ToolExecutionResult {
   if (result.success || !result.error || additionalContexts.length === 0) return result;
 
-  // PreToolUse deny 和权限拒绝会在 handler 前提前返回，旧逻辑只在 handler 的
-  // 成功/异常路径追加 context，导致 Hook 明明返回了 additionalContext，模型却看不到。
+  // PreToolUse denial and permission denial return before the handler. Previously,
+  // context was appended only on handler success/error paths, so the model could not see
+  // additionalContext returned by the hook.
   const baseModelContent =
     typeof result.modelContent === "string" ? result.modelContent : result.error.message;
   return {

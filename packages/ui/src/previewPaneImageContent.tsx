@@ -48,7 +48,7 @@ export function ImagePreviewContent({
     }
 
     return {
-      // Retina 文件名里的 @2x/@3x 表示物理像素倍率，预览时折算为 CSS 像素，避免素材被放大显示。
+      // The @2x/@3x suffix in Retina filenames indicates the physical-pixel scale; convert it to CSS pixels in the preview to avoid enlarging the asset.
       height: naturalSize.height / pixelRatio,
       width: naturalSize.width / pixelRatio,
     };

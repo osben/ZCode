@@ -86,7 +86,7 @@ export function inferAttachmentMimeFromPath(path: string): string {
   if (extension === "json") return "application/json";
   if (extension === "csv") return "text/csv";
   if (extension === "md") return "text/markdown";
-  // video 扩展名映射复用 attachment-video 的唯一事实源，避免两处维护同一张表。
+  // Reuse attachment-video as the single source for video extension mappings instead of maintaining the same table in two places.
   const videoMime = inferVideoMimeFromPath(path);
   if (videoMime) return videoMime;
   return isTextLikePath(path) ? "text/plain" : "application/octet-stream";

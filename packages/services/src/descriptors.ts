@@ -1,13 +1,13 @@
 /**
- * ServiceDescriptor — 以频道名称标识服务并通过泛型关联类型。
+ * ServiceDescriptor — identifies a service by channel name and associates types through generics.
  *
- * 利用 TypeScript 允许同名 interface + const（类型和值在不同命名空间）的特性，
- * 让调用方使用同一个名称引用服务类型和运行时描述符。
+ * Uses TypeScript's support for an interface and const with the same name (types and values are in different namespaces),
+ * allowing callers to use one name for both the service type and its runtime descriptor.
  */
 
 export interface ServiceDescriptor<T> {
   readonly channelName: string;
-  /** Phantom type — 仅用于类型推断，运行时不存在 */
+  /** Phantom type — used only for type inference; does not exist at runtime. */
   readonly _brand?: T;
 }
 

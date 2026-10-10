@@ -1,4 +1,4 @@
-/* eslint-disable max-lines -- timeline 同时承载本地 scoped 查询、远端主动缓存和任务操作分发，先集中保持链路清晰。 */
+/* eslint-disable max-lines -- The timeline handles local scoped queries, active remote caching, and task-action dispatch; keep the flow together for clarity. */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { MouseEvent as ReactMouseEvent } from "react";
 import type { ZCodeTaskMeta } from "@zcode/shared";
@@ -96,8 +96,8 @@ export function WorkspaceTimelineTasksSection({
   const [renamingItemKey, setRenamingItemKey] = useState<string | null>(null);
   const [contextMenuItemKey, setContextMenuItemKey] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState("");
-  // timeline 不应沿用 10 条首屏限制，和其它 sidebar 列表的 20 条基准保持一致。
-  // 这里把首屏和每次“显示更多”的阶梯统一成 20，避免用户误以为列表只加载到 10/20 就结束。
+  // Timeline should not inherit the 10-item first-screen limit; match the 20-item baseline used by other sidebar lists.
+  // Set the first screen and each “Show more” step to 20 so users do not think the list stops loading at 10/20 items.
   const collapsedLimit = 20;
   const [visibleTaskLimit, setVisibleTaskLimit] = useState(collapsedLimit);
   const renameInputRef = useRef<HTMLInputElement | null>(null);
@@ -239,8 +239,8 @@ export function WorkspaceTimelineTasksSection({
   const loading = localLoading || syncingRemoteWorkspaces;
   const hasKnownMore = localHasMore || remoteHasMore || total > items.length;
   const currentLimitFilled = sortedItems.length >= visibleTaskLimit;
-  // 远端/本地 hasMore 偶尔会在下一轮请求完成前保持旧值。
-  // 如果当前已加载数量没有填满 limit，说明这轮已经到底了，不能继续显示 show more。
+  // Remote/local hasMore may occasionally retain its old value until the next request completes.
+  // If the loaded count has not reached the limit, this page is already at the end and should not keep showing Show more.
   const canLoadMore = loading ? hasKnownMore : currentLimitFilled && hasKnownMore;
 
   useEffect(() => {
@@ -248,8 +248,8 @@ export function WorkspaceTimelineTasksSection({
   }, [taskSortBy, workspaceTabsSignature]);
 
   useEffect(() => {
-    // 这条日志会随着远端 timeline 同步和 tab 恢复多次触发。
-    // 生产环境只需要保留生命周期和异常，列表同步细节降为 debug，避免任务多时持续落盘。
+    // This log can fire repeatedly during remote timeline sync and tab restoration.
+    // Production needs only lifecycle and error logs; lower list-sync details to debug to avoid constant disk writes when there are many tasks.
     logger.debug("[WorkspaceTimelineTasksSection] scopedWorkspaceTabs", {
       workspaceTabs: workspaceTabs.map((tab) => ({
         workspacePath: tab.workspacePath,
@@ -282,8 +282,8 @@ export function WorkspaceTimelineTasksSection({
       if (!workspaceServices?.isRemoteWorkspace) {
         continue;
       }
-      // timeline 不能复用 useGlobalTaskList 的远端混合查询，否则 active services 切到远端时会影响本地缓存。
-      // 远端数据跟 pinned 一样走独立 store，show more 时只把 limit 按 20 条阶梯增加，避免一次性拉全量。
+      // Timeline cannot reuse useGlobalTaskList's mixed remote query; switching active services to remote would affect the local cache.
+      // Like pinned, remote data uses a separate store. “Show more” increases the limit in steps of 20 instead of fetching everything at once.
       void useRemoteTimelineTaskStore.getState().refreshWorkspace({
         workspacePath: tab.workspacePath,
         ...(tab.workspaceIdentity ? { workspaceIdentity: tab.workspaceIdentity } : {}),
@@ -502,8 +502,8 @@ export function WorkspaceTimelineTasksSection({
     [getCurrentItemContext],
   );
   const openTimelineItemContextMenu = useCallback((itemKey: string) => {
-    // timeline row 现在会按 itemKey 缓存 action handler。
-    // 打开菜单时必须通过 ref 读取最新确认态，避免把 pendingArchiveItemKey 放进依赖后重建所有 row callback。
+    // Timeline rows now cache action handlers by itemKey.
+    // Read the latest confirmation state through a ref when opening the menu so pendingArchiveItemKey does not recreate every row callback as a dependency.
     if (pendingArchiveItemKeyRef.current === itemKey) {
       setPendingArchiveItemKey(null);
     }
@@ -513,8 +513,8 @@ export function WorkspaceTimelineTasksSection({
     (itemKey: string) => {
       let handlers = taskItemHandlersByKeyRef.current.get(itemKey);
       if (!handlers) {
-        // trace 显示 timeline row 的所有 action prop 都因 map 内 inline closure 变更。
-        // 每个 itemKey 只创建一次 handler，handler 运行时再通过 ref 读取最新 item/services，兼顾 memo 稳定性和实时数据。
+        // Traces showed that every action prop on timeline rows changed because of inline closures in map.
+        // Create one handler per itemKey and read the latest item/services through refs when it runs, preserving memo stability and fresh data.
         handlers = {
           onSelectTask: () => {
             selectTimelineItem(itemKey);
@@ -704,7 +704,7 @@ export function WorkspaceTimelineTasksSection({
                           isPinned={false}
                           variant={taskRowVariant}
                           isActive={
-                            // timeline 是跨 workspace 视图，active 判断必须使用 workspaceKey，避免同路径远端串高亮。
+                            // Timeline spans workspaces; determine active state by workspaceKey to avoid highlighting a remote workspace with the same path.
                             buildTaskWorkspaceKey(item.workspacePath, item.workspaceIdentity) ===
                               activeWorkspaceKey && item.taskId === activeTaskId
                           }
@@ -735,8 +735,8 @@ export function WorkspaceTimelineTasksSection({
             isPinned={false}
             intl={intl}
             onTogglePinTask={(_taskId, pinned) => {
-              // timeline 现在本地和远端分属两套缓存，pin 时需要同时维护成员关系。
-              // 否则远端任务会进入 pinned 后仍残留在 timeline 缓存里。
+              // Timeline now has separate local and remote caches, so pinning must update membership in both.
+              // Otherwise, a remote task remains in the timeline cache after it moves to pinned.
               if (contextMenuItem.workspaceIdentity && pinned) {
                 useRemoteTimelineTaskStore
                   .getState()
@@ -906,8 +906,8 @@ export function WorkspaceTimelineTasksSection({
           <span
             className="text-ui-base text-foreground-subtlest hover:text-foreground-subtle"
             onClick={() => {
-              // timeline 目标是单向分页，每次点击只增加一个 20 条阶梯。
-              // 不再复用“显示更少”的旧展开/收起方案，避免按钮状态和真实分页语义冲突。
+              // Timeline uses one-way pagination; each click adds one 20-item step.
+              // Do not reuse the old “Show less” expand/collapse behavior, which conflicts with the actual pagination semantics.
               setVisibleTaskLimit((current) => current + collapsedLimit);
             }}
           >

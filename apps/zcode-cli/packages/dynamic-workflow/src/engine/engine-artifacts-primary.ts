@@ -1,22 +1,23 @@
 /**
- * 交付物的 primary 标记：全 run 至多一个 ID 带有该标记。
- * 内容成员与预置成员共用同一组准入判据。
+ * Primary marking for artifacts: at most one ID per run can carry this marker.
+ * Content members and preset members share the same admission criteria.
  *
- * 这些函数只读 `state.artifacts`，不落库、不发事件；状态从 journal 派生，resume 后保持一致。
- * 调用方根据判据决定拒绝发布还是使整个 run 失败。
+ * These functions only read `state.artifacts`; they do not persist data or emit events. State is
+ * derived from the journal and remains consistent after resume.
+ * Callers use the criteria to decide whether to reject publication or fail the entire run.
  */
 
 import type { EngineState } from "./engine-state.js";
 import type { InstanceRef } from "./types.js";
 import { refToString } from "./types.js";
 
-/** 本 run 目前的 primary id（至多一个）；没有则 undefined。从 `state.artifacts` 派生，resume 后自然一致。 */
+/** Current primary ID for this run (at most one), or undefined. Derived from `state.artifacts`, so it remains consistent after resume. */
 export function primaryArtifactId(state: EngineState): string | undefined {
   for (const [id, idState] of state.artifacts) if (idState.primary) return id;
   return undefined;
 }
 
-/** `id` 想当 primary 而**别的** id 已经是 ⇒ 返回那个 id；否则 undefined（不想当 / 就是它自己）。 */
+/** If `id` wants to be primary but **another** ID already is, return that ID; otherwise undefined (not a candidate or already the primary). */
 export function primaryConflict(
   state: EngineState,
   id: string,

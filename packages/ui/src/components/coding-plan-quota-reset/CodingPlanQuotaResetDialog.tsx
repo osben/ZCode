@@ -85,13 +85,13 @@ function resetTypeAriaId(resetType: CodingPlanResetType) {
 }
 
 interface ResetRowCount {
-  /** 服务端最近一次稳定读数给出的可用张数。 */
+  /** Available count from the server's latest stable reading. */
   authoritative: number;
-  /** 本弹框内已成功核销、但服务端读数尚未反映的张数。 */
+  /** Count successfully redeemed in this dialog but not yet reflected in the server reading. */
   consumedLocally: number;
 }
 
-/** 展示张数 = 权威张数 − 本地已核销，钳到 0；无本地记录时回退到 config 的 count。 */
+/** Displayed count = authoritative count − locally redeemed, clamped at 0; fall back to config.count when there is no local record. */
 function remainingResetCount(state: ResetRowCount | undefined, fallback: number): number {
   return state ? Math.max(0, state.authoritative - state.consumedLocally) : fallback;
 }
@@ -120,8 +120,8 @@ export function CodingPlanQuotaResetDialog({
   const [resettingType, setResettingType] = useState<CodingPlanResetType | null>(null);
   const [successfulType, setSuccessfulType] = useState<CodingPlanResetType | null>(null);
   const [exitingType, setExitingType] = useState<CodingPlanResetType | null>(null);
-  // 同一类型可能持有多张机会。按类型维护 { 权威张数, 本地已核销张数 }，成功后只减 1，
-  // 归零才隐藏该行——避免核销一张就把整行（含剩余机会）隐藏，逼用户关闭再打开。
+  // The same type may have multiple opportunities. Track { authoritative count, locally redeemed count } by type, decrementing only one after success.
+  // Hide the row only at zero, so redeeming one does not hide the remaining opportunities and force the user to close/reopen the dialog.
   const [rowCounts, setRowCounts] = useState<Map<CodingPlanResetType, ResetRowCount>>(
     () => new Map(),
   );
@@ -132,7 +132,7 @@ export function CodingPlanQuotaResetDialog({
 
   useEffect(() => {
     if (open !== wasOpenRef.current) {
-      // 成功反馈使用延时任务收起行；若用户中途关闭并重新打开，旧任务会污染新弹框状态。
+      // A delayed task collapses the row after success feedback; if the user closes and reopens meanwhile, the old task would contaminate the new dialog state.
       for (const timer of timersRef.current) window.clearTimeout(timer);
       timersRef.current = [];
     }
@@ -157,10 +157,10 @@ export function CodingPlanQuotaResetDialog({
     if (viewport) setScrollMasks(readScrollMasks(viewport));
   }, [config.resetItems.length, rowCounts]);
 
-  // 用服务端权威读数对账本地张数：读数抬高视为新发放机会，读数下降视为核销已被反映
-  // 并抵扣等量的本地待确认张数。count===0（processing/completed 过渡态）与动画进行中
-  // 都不回填，避免核销前快照或完成占位把刚核销的行“复活”。列表已移除的类型（服务端确认
-  // 耗尽）清除本地记录以隐藏该行。
+  // Reconcile local counts with authoritative server readings: an increase means new opportunities were granted; a decrease means redemption was reflected
+  // and reduces the same amount from locally pending counts. Do not backfill while count===0 (processing/completed transition) or during animation,
+  // so a pre-redemption snapshot or completion placeholder cannot "revive" a redeemed row. Clear local state for types removed from the list
+  // (the server confirmed they are exhausted) to hide the row.
   useEffect(() => {
     if (!open) return;
     setRowCounts((current) => {
@@ -194,8 +194,8 @@ export function CodingPlanQuotaResetDialog({
             consumedLocally: Math.max(0, state.consumedLocally - drop),
           });
         }
-        // item.count === state.authoritative：服务端仍停在核销前的张数（读数尚未追上），
-        // 保持本地乐观值不动，避免刚核销的行被旧读数复活。
+        // item.count === state.authoritative means the server is still reporting the pre-redemption count;
+        // keep the local optimistic value to prevent an old reading from reviving a redeemed row.
       }
       for (const type of current.keys()) {
         if (!presentTypes.has(type)) {
@@ -243,8 +243,8 @@ export function CodingPlanQuotaResetDialog({
       burstCodingPlanQuotaResetConfetti(origin);
       const exitTimer = window.setTimeout(() => setExitingType(item.resetType), SUCCESS_DISPLAY_MS);
       const removeTimer = window.setTimeout(() => {
-        // 只把该类型的本地已核销张数 +1（钳到权威张数），归零才隐藏；多张时行会以剩余
-        // 张数的形态继续展示，无需关闭重开。服务端读数追上后由对账 effect 抵扣该本地值。
+        // Increment the locally redeemed count for this type only (clamped to the authoritative count), hiding the row only at zero.
+        // When multiple remain, keep showing the row with the remaining count; no need to close/reopen. The reconciliation effect removes this local count after the server catches up.
         setRowCounts((current) => {
           const next = new Map(current);
           const state = next.get(item.resetType) ?? {
@@ -263,7 +263,7 @@ export function CodingPlanQuotaResetDialog({
       }, ROW_EXIT_MS);
       timersRef.current.push(exitTimer, removeTimer);
     } catch {
-      // 失败原因与 toast 由 useCodingPlanQuotaResetUi 统一处理；弹框只恢复可点击状态。
+      // useCodingPlanQuotaResetUi handles failure reasons and toasts; the dialog only restores the clickable state.
       setResettingType(null);
     }
   };
@@ -324,10 +324,9 @@ export function CodingPlanQuotaResetDialog({
                   const isExiting = exitingType === item.resetType;
                   const effectiveProcessing = item.processing || resettingType === item.resetType;
                   const remainingSeconds = getRemainingSeconds(item.expiresAt, now);
-                  // 同一类型可能持有多张机会，但服务端 /use 不支持指定核销哪一张，entry 只保留
-                  // 张数与最早到期时刻。展示张数取本地对账后的剩余值：核销一张后行会以剩余
-                  // 张数继续展示。多张时显式标注张数与「最快」，避免用户把最早到期时间误读成
-                  // 全部机会的统一期限。
+                  // The same type may have multiple opportunities, but server /use cannot specify which one to redeem; entry keeps only
+                  // the count and earliest expiry. Display the remaining count after local reconciliation: after one redemption, the row stays
+                  // visible with the remainder. When there are multiple, label the count and "soonest" explicitly so users do not mistake the earliest expiry for a deadline shared by all opportunities.
                   const remaining = remainingResetCount(rowCounts.get(item.resetType), item.count);
                   const hasMultipleOpportunities = remaining > 1;
                   return (

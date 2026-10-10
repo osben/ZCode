@@ -19,7 +19,7 @@ function ensureCachedBinaryExecutable(binaryPath, targetPlatform) {
   if (process.platform === "win32" || targetPlatform === "win32") return;
   if ((statSync(binaryPath).mode & 0o111) !== 0) return;
 
-  // 缓存元数据只校验内容，不能让意外丢失的 Unix 可执行权限随 skip 流程继续传递。
+  // Cache metadata validates content only; do not let accidentally missing Unix executable permissions pass through the skip path.
   chmodSync(binaryPath, 0o755);
 }
 

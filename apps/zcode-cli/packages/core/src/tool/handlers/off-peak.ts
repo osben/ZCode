@@ -1,11 +1,11 @@
 // ============================================================
 // Off-Peak Tool Handlers
 // ============================================================
-// 与 cron.ts 兄弟并列。关键差异（勿照抄 cron 的防御方向）：
-// - deny 边界是「闲时派发轮」（context.offPeakTurn），不是 automation 轮——
-//   cron automation 自动轮明确放行 OffPeakCreate（定时派生闲时任务）。
-// - create 走判别联合结果：额度(3103)/资格(3101)等业务失败由 host 分类后跨协议保真，
-//   此处翻译为稳定的 CoreError，模型据此向用户转述可行动信息。
+// This is a sibling of cron.ts. Key differences (do not copy cron's boundary):
+// - The deny boundary is an “off-peak dispatch turn” (`context.offPeakTurn`), not an automation turn; cron automation turns explicitly
+//   allow OffPeakCreate to schedule an off-peak task.
+// - create returns a discriminated union; business failures such as quota (3103) and eligibility (3101) are classified by the host and
+//   preserved across the protocol. Translate them here to stable CoreErrors so the model can give the user actionable information.
 
 import {
   CoreErrorType,
@@ -30,11 +30,11 @@ const OFF_PEAK_TOOL_TIMEOUT_MS = 30_000;
 const OFF_PEAK_MODEL_BYTES = 32_000;
 
 /**
- * 闲时派发轮的 handler 级拒绝（turn denylist 之外的第二层纵深）。
- * provider denylist 只是可见性约束；异常 provider 仍可能直接提交。handler 以
- * executor 传入的本轮事实做最终拒绝。注意：刻意不检查 automationTurn（cron 轮放行）。
- * SendMessage / Workflow 复用本函数——它们会绕开本轮 modelExecution 重新启动子 Agent
- * 并落到用户套餐；拒绝时给模型可恢复的替代路径提示。
+ * Handler-level rejection for off-peak dispatch turns (defense in depth beyond the turn denylist).
+ * Provider denylist only controls visibility; an unexpected provider may still submit directly. The handler makes the final decision
+ * from this turn's executor facts. Intentionally do not check automationTurn (cron turns are allowed).
+ * SendMessage / Workflow reuse this function; they bypass the current modelExecution and start a child Agent on the user's plan, so
+ * rejection includes a recoverable alternative for the model.
  */
 export function assertNotOffPeakTurn(
   context: ToolExecutionContext,
@@ -77,7 +77,7 @@ function assertOffPeakPort(
   );
 }
 
-/** 业务失败翻译为模型可转述的稳定错误；分类驱动文案，禁止靠 message 猜。 */
+/** Translate business failures into stable errors the model can report; choose wording by category, never by guessing from message text. */
 function throwOffPeakCreateFailure(
   context: ToolExecutionContext,
   outcome: Extract<OffPeakCreateOutcome, { ok: false }>,
@@ -124,7 +124,7 @@ const offPeakCreateHandler: ToolHandler = async (input, context) => {
   assertOffPeakPort(context, "OffPeakCreate");
 
   const outcome = await context.offPeakPort.create(parsed, {
-    // 本会话即闲时任务的绑定会话，派发时 resume 本会话执行（对齐 CronCreate targetTaskId）。
+    // This session is the off-peak task's bound session; dispatch resumes it (matching CronCreate targetTaskId).
     sessionId: context.sessionId,
   });
   if (!outcome.ok) {

@@ -1,4 +1,4 @@
-/* eslint-disable max-lines -- 外部 Agent 导入弹窗复用 skills/commands 的交互状态机，业务扫描与导入在服务层按类别分开 */
+/* eslint-disable max-lines -- The external-agent import dialog reuses the skills/commands interaction state machine; the service layer separates scanning and import by category. */
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   AlertCircleIcon,
@@ -71,9 +71,9 @@ interface ExternalAgentImportDialogProps {
   open: boolean;
   workspacePath: string | null | undefined;
   workspaceIdentity?: string;
-  // detect/importSelected 携带调用方传入的 target 路径，但 service 曾取自
-  // useServices()（当前激活 workspace）。跨 host 时会在 A 的主机上按 B 的路径解析并做
-  // symlink/copy 落盘。改为必传，由调用方按 Scope target 解析后注入。
+  // detect/importSelected carries a target path from the caller, but the service used to come from
+  // useServices() (the currently active workspace). Across hosts, this resolved and wrote symlinks/copies on host A using host B's path.
+  // Make the service required and inject it after the caller resolves the Scope target.
   settingsSyncService: ISettingsSyncService;
   onOpenChange: (open: boolean) => void;
   onImported: () => Promise<void> | void;

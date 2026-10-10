@@ -51,18 +51,19 @@ export function createWindow(options: {
   initialWindowSize?: DesktopWindowSize;
   currentApplicationLocale?: () => Locale;
   persistWindowSize?: (state: DesktopWindowSize) => Promise<void>;
-  /** Main 模块初始化期已开始的异步环境采集；通常在 renderer dom-ready 前完成。 */
+  /** Asynchronous environment collection started during Main module initialization; usually completes before renderer dom-ready. */
   runtimeProcessEnvPatchPromise?: Promise<Record<string, string>>;
-  /** 不执行 shell 即可计算的完整降级 patch；预热失败/超时时仍要注入 Local Host。 */
+  /** Complete fallback patch that can be computed without executing a shell; inject it into Local Host if warmup fails/times out. */
   runtimeProcessEnvFallbackPatch: Record<string, string>;
-  /** 仅供启动门禁和测试注入；超过该时间必须 fail-open 创建 Local Host。 */
+  /** Injected only for startup gating and tests; after this time, fail open and create Local Host. */
   runtimeProcessEnvWaitTimeoutMs?: number;
   /**
-   * 首个 Local Host 创建前的有界灰度裁决门。
+   * Bounded rollout decision gate before creating the first Local Host.
    *
-   * 缺省（undefined）时完全不触发 await，dom-ready handler 同步执行——保证既有调用方
-   * 与测试零回归。仅 desktop main 注入：在 spawnLocalHost 之前等待一次 rollout 裁决，
-   * 避免冷启动快照 { enabled:false } 被烤进首 Host env 后无法被异步成功结果覆盖。
+   * When omitted (undefined), do not await at all; the dom-ready handler runs synchronously, keeping
+   * existing callers and tests unchanged. Only desktop main injects this: await one rollout decision
+   * before spawnLocalHost so a cold-start snapshot of { enabled:false } is not frozen into the first
+   * Host environment and made impossible to override with a later successful result.
    */
   awaitFirstHostSpawnDecision?: () => Promise<void>;
   /** Local Host map insertion completed; presentation facts can now be replayed safely. */
@@ -117,7 +118,7 @@ export function createWindow(options: {
 
   const wcId = win.webContents.id;
   const browserWindowId = win.id;
-  // 资源遥测据此把主窗口 renderer 归 renderer_main；辅助窗口与 DevTools 归 chromium_other。
+  // Resource telemetry uses this to classify the main-window renderer as renderer_main and auxiliary windows/DevTools as chromium_other.
   registerMainApplicationWindow(wcId);
   let domReadyGeneration = 0;
   let cancelRuntimeProcessEnvWait: (() => void) | null = null;
@@ -134,12 +135,12 @@ export function createWindow(options: {
     }
 
     const oldChild = options.windowHostProcessMap.get(wcId);
-    // renderer 刷新（reload）
-    // 曾经无条件杀掉旧 host 进程再重建——host 连带 CLI agent 一起死，运行中的会话直接消失，
-    // 这正是「会话身份易失」病根。host/CLI 的生命周期属于窗口而非
-    // renderer 加载周期：reload 只需给存活的 host 补挂一条新 RPC MessagePort
-    // （复用 web 远控的 AttachServicePort 通道），renderer 重新订阅即可恢复投影。
-    // 旧端口的 ChannelServer 会随 renderer 上下文销毁触发 close 自行回收。
+    // Renderer reload used to unconditionally kill and recreate the Host process, also killing the
+    // CLI Agent and losing active sessions. That was the root cause of unstable session identity.
+    // Host/CLI lifetimes belong to the window, not the renderer load cycle: on reload, attach a new
+    // RPC MessagePort to the existing Host (reusing the web remote-control AttachServicePort channel)
+    // and let the renderer resubscribe to restore its projection. The old ChannelServer closes and
+    // cleans itself up when the renderer context is destroyed.
     if (oldChild && oldChild.pid !== undefined) {
       try {
         const startupPayload = getDatabaseStartupPortPayload(oldChild);
@@ -178,9 +179,10 @@ export function createWindow(options: {
       options.disposeHostProcess(oldChild, `${label}:reload`, 150);
     }
 
-    // 首个 Local Host 创建前的有界灰度裁决门。用 `if` 守卫而非 `await cb?.()`——
-    // cb 缺省时不触发任何 await，async handler 同步跑完，保证既有调用方与测试零回归。
-    // 仅在需要 spawn 新 Host 的路径上等待（reattach 早退路径已在上方 return，不触发）。
+    // Bounded rollout decision gate before creating the first Local Host. Use an `if` guard instead
+    // of `await cb?.()` so a missing callback causes no await and the async handler completes
+    // synchronously, preserving existing callers and tests. Wait only when spawning a new Host; the
+    // reattach path returns above and does not trigger this gate.
     if (options.awaitFirstHostSpawnDecision) {
       await options.awaitFirstHostSpawnDecision();
     }
@@ -199,8 +201,9 @@ export function createWindow(options: {
           ? { agentWarmupTargets: [...options.agentWarmupTargets] }
           : {}),
         runtimeProcessEnvPatch,
-        // 同一窗口会后台索引所有已恢复 workspace，不只索引启动时的 active workspace。
-        // fallback 必须跟随 local Host 生命周期常驻，否则非 active 历史目录被删除后会用失效 cwd 反复 spawn。
+        // The same window indexes every restored workspace in the background, not just the active
+        // workspace at startup. The fallback must live for the Local Host's lifetime; otherwise,
+        // deleting a non-active historical directory could cause repeated spawns with a stale cwd.
         agentSpawnFallbackCwd: options.agentSpawnFallbackCwd,
       });
       options.windowHostProcessMap.set(wcId, child);
@@ -253,8 +256,9 @@ export function createWindow(options: {
         `[createWindow] runtime env prewarm failed (${label}), using shell-free fallback:`,
         error,
       );
-      // 旧 rejection 分支传 undefined，Host 随后又同步执行同一个 login shell，
-      // 可能把 Main 的白屏转移成 Host 卡死。Main 路径始终传入预计算 fallback patch。
+      // The old rejection branch passed undefined, causing Host to synchronously run the same login
+      // shell and possibly move a Main white screen into a Host hang. The Main path always passes a
+      // precomputed fallback patch.
       completeWait(options.runtimeProcessEnvFallbackPatch);
     });
   });

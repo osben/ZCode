@@ -48,10 +48,10 @@ export function parseCustomProviderIdFromSupplierKey(supplierKey: string): strin
     identity = encodedIdentity;
   }
 
-  // custom provider 配置被修改后，当前模型可能处在 ghost
-  // supplier 状态，key 形如 ghost:glm:no-preference:provider=provider-demo...
-  // 只识别 custom:* 会导致后续 provider registry 刷新无法定位自定义 provider。
-  // 这里从 ghost identity 中恢复 provider 元数据，确保保存配置后能刷新对应配置。
+  // After custom-provider configuration changes, the current model may be in a ghost
+  // supplier state, with a key such as ghost:glm:no-preference:provider=provider-demo...
+  // Recognizing only custom:* would prevent later provider-registry refreshes from locating the custom provider.
+  // Recover provider metadata from the ghost identity here so the corresponding configuration can refresh after saving.
   const providerSegment = identity
     .split(",")
     .map((segment) => segment.trim())
@@ -115,9 +115,9 @@ export function resolveWorkspaceModelConfigSyncScope(
   }
 
   if (activeTaskProvider === snapshot.selectedProvider) {
-    // 自定义供应商运行中的 ZCode Agent 回包经常只带纯模型名（如 glm-5.1），
-    // 直接按模型值推导会误判成 native supplier，导致设置页保存后刷新到错误的 scope。
-    // 当前 provider 与 selectedProvider 一致时，纯模型名不能证明 supplier 已变化，所以继续沿用 selectedSupplierKey。
+    // A running ZCode Agent using a custom provider often returns only the model name (such as glm-5.1),
+    // so inferring the supplier from the model value would incorrectly classify it as native and refresh the wrong scope after saving in Settings.
+    // When the current provider matches selectedProvider, a bare model name does not prove the supplier changed, so continue using selectedSupplierKey.
     return {
       provider: activeTaskProvider,
       supplierKey: snapshot.selectedSupplierKey,

@@ -94,7 +94,7 @@ export async function extractSkillSyncArchive(
       extractedBytes = nextExtractedBytes;
     }
   } finally {
-    // 发现大小超限或归档损坏时主动销毁流，避免 gzip 在后台继续膨胀或触发未处理错误。
+    // Destroy the stream when its size limit is exceeded or the archive is corrupt, preventing gzip from growing in the background or raising an unhandled error.
     input.destroy();
     gunzipStream.destroy();
   }

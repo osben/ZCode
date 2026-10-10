@@ -1,4 +1,4 @@
-/** HTTP 头名不区分大小写；后来的值替换旧值，避免不同大小写被 SDK 拼成重复头。 */
+/** HTTP header names are case-insensitive; later values replace earlier ones to prevent the SDK from combining differently cased duplicates. */
 export function mergeModelRequestHeaders(
   ...sources: (Readonly<Record<string, string>> | undefined)[]
 ): Record<string, string> {

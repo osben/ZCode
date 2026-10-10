@@ -13,11 +13,12 @@ import {
 } from "./server-types.js";
 
 /**
- * ProtocolBrowserControlBroker —— agent 侧 BrowserControlPort 实现。
+ * ProtocolBrowserControlBroker — agent-side BrowserControlPort implementation.
  *
- * browser-client 的 agent.browsers.* 每个调用经此把一条 BrowserCommand 变成
- * ZCode Protocol 的 interaction/browserExecute 反向请求，由 app（host→main WebContentsView/CDP）
- * 执行并返回结果。与 permission broker 并列注入（server-operations 的 createWorkspaceZCodeApp options）。
+ * Each browser-client `agent.browsers.*` call uses this to turn a BrowserCommand into a ZCode
+ * Protocol interaction/browserExecute reverse request. The app executes it (host → main
+ * WebContentsView/CDP) and returns the result. Injected alongside the permission broker through
+ * server-operations' createWorkspaceZCodeApp options.
  */
 export function createProtocolBrowserControlBroker(
   context: ZCodeProtocolAgentServerContext,
@@ -82,9 +83,10 @@ export function createProtocolBrowserControlBroker(
         traceContext,
       });
       const cancelBackendRequest = () => {
-        // 只取消 agent 侧 requestClient 会让 host/main 的 CDP 动作继续执行。
-        // 这里用同一 backend/generation 发送内部 cancelRequest，main 再按原 requestId 中断 waiter；
-        // 已下发动作无法证明无副作用时由 manager 返回 uncertain 标记。
+        // Cancelling only the agent-side requestClient would leave the host/main CDP action running.
+        // Send an internal cancelRequest with the same backend/generation so main interrupts the
+        // waiter by the original requestId. If the dispatched action cannot be proven side-effect
+        // free, the manager returns an uncertain marker.
         void context
           .requestClient(
             zcodeProtocolMethods.interactionBrowserExecute,
@@ -148,8 +150,8 @@ function buildBrowserRequestContext(
     ...((input.turnId ?? input.traceContext?.turnId)
       ? { turnId: String(input.turnId ?? input.traceContext?.turnId) }
       : {}),
-    // workspacePath 可能在不同 remote workspace 中相同，隔离 key 必须优先使用
-    // workspaceIdentity，避免 browser backend/tab ownership 跨工作区串线。
+    // workspacePath may be the same in different remote workspaces. Prefer workspaceIdentity as the
+    // isolation key so browser backend/tab ownership cannot cross between workspaces.
     workspaceKey: workspaceIdentity ?? workspacePath,
     workspacePath,
     ...(workspaceIdentity ? { workspaceIdentity } : {}),

@@ -77,8 +77,8 @@ export function createZodDedupePlugin({ expectedV4Version }) {
     setup(builder) {
       const packages = new Map();
       const cache = new Map();
-      // hoisted 安装可能给多个消费者留下字节相同、路径不同的 Zod。
-      // 必须先按原消费者解析版本和 exports，再归并安装根，不能把 v3 alias 成 v4。
+      // A hoisted install can leave byte-identical copies of Zod at different paths for multiple consumers.
+      // Resolve versions and exports for each original consumer before merging installation roots; do not alias v3 as v4.
       builder.onResolve({ filter: /^zod(?:\/|$)/ }, async (args) => {
         if (args.pluginData?.zcodeZodResolving) return;
         const resolved = await builder.resolve(args.path, {
@@ -94,7 +94,7 @@ export function createZodDedupePlugin({ expectedV4Version }) {
         if (!packages.has(pkg.version)) packages.set(pkg.version, pkg.root);
         return {
           ...resolved,
-          // 保留 exports 已选出的子入口和 .js/.cjs，不能再用 require.resolve 改写条件。
+          // Preserve the subpath and .js/.cjs extension selected by exports; do not rewrite the conditions with require.resolve.
           path: resolve(packages.get(pkg.version), relative(pkg.root, resolved.path)),
           pluginData: args.pluginData,
         };
@@ -125,8 +125,8 @@ export const resolveBuildOptions = (args = [], env = process.env) => {
   const e2eCoverage = env.ZCODE_E2E_COVERAGE === "1";
 
   return {
-    // desktop-agent 正常发布仍需压缩且不携带 map；E2E coverage
-    // 专用构建必须保留原始符号和 source map，c8 才能回映到各 package 的 TS 源码。
+    // Normal desktop-agent releases must remain minified and omit maps. E2E coverage builds must
+    // preserve original symbols and source maps so c8 can map back to each package's TypeScript source.
     minify: desktopAgent && !e2eCoverage,
     sourcemap: e2eCoverage || !desktopAgent,
   };
@@ -137,29 +137,30 @@ export const resolveBuildAliases = ({
   rootDirectory = projectRoot,
 } = {}) => ({
   "@zcode/shared-types": resolve(cliDirectory, "../shared-types/dist/index.js"),
-  // plugin-host 启动只需这些独立入口，不能经通用 alias 重新求值 shared 总入口。
+  // The plugin host needs only these standalone entry points; do not route them through the generic alias and reevaluate the shared root entry.
   "@zcode/shared/runtime-env": resolve(rootDirectory, "../../packages/shared/src/runtimeEnv.ts"),
   "@zcode/shared/mcp": resolve(rootDirectory, "../../packages/shared/src/mcp.ts"),
   "@zcode/shared/runtime-tool-runtime": resolve(
     rootDirectory,
     "../../packages/shared/src/runtime-tool-runtime.ts",
   ),
-  // esbuild alias 按前缀改写导入路径。所有 shared subpath 必须在通用入口前精确声明，
-  // 否则会被错误解析为 `src/index.ts/<subpath>` 并让 Desktop agent/SEA 打包失败。
+  // esbuild aliases rewrite import paths by prefix. Declare every shared subpath exactly before the
+  // generic entry, or it will resolve incorrectly as `src/index.ts/<subpath>` and break Desktop agent/SEA packaging.
   "@zcode/shared/zcode-protocol-v4": resolve(
     rootDirectory,
     "../../packages/shared/src/zcode-protocol-v4/index.ts",
   ),
-  // ModelSelection schema 改为 shared 单一事实源后新增了本子路径引用。
-  // esbuild alias 按前缀改写；若不在通用入口前精确声明，会错误拼到
-  // `src/index.ts/model-selection`，导致 Desktop agent 打包失败。
+  // This subpath reference was added when the ModelSelection schema moved to a single source of truth
+  // in shared. esbuild rewrites aliases by prefix; unless declared exactly before the generic entry,
+  // it will incorrectly resolve to `src/index.ts/model-selection` and break Desktop agent packaging.
   "@zcode/shared/model-selection": resolve(
     rootDirectory,
     "../../packages/shared/src/model-selection.ts",
   ),
-  // 共享 Model Schema 新增的子路径不能被通用 alias 拼到 index.ts 后面。
+  // The new shared Model Schema subpath must not be appended to index.ts by the generic alias.
   "@zcode/shared/model-config": resolve(rootDirectory, "../../packages/shared/src/model-config.ts"),
-  // 进程异常边界在 bootstrap 之前使用该轻量契约，不能落入 shared 的通用前缀 alias。
+  // The process exception boundary uses this lightweight contract before bootstrap, so it must not
+  // match shared's generic prefix alias.
   "@zcode/shared/process-diagnostic": resolve(
     rootDirectory,
     "../../packages/shared/src/process-diagnostic.ts",
@@ -172,22 +173,21 @@ export const resolveBuildAliases = ({
     rootDirectory,
     "../../packages/shared/src/workspace-hook-discovery.ts",
   ),
-  // review controller 直连 WorkspaceHookMutationError 需要本精确
-  // alias（esbuild 前缀改写规则同上，漏声明会在 Desktop agent/SEA 打包失败）。
+  // The review controller imports WorkspaceHookMutationError directly, so it needs this exact alias.
+  // As above, omitting it breaks Desktop agent/SEA packaging because esbuild rewrites by prefix.
   "@zcode/shared/workspace-hook-mutation": resolve(
     rootDirectory,
     "../../packages/shared/src/workspace-hook-mutation.ts",
   ),
-  // verdict 直连 import 需要本精确 alias；漏声明会被通用
-  // "@zcode/shared" 前缀改写成 `src/index.ts/workspace-hook-review-monotonicity`，
-  // Desktop agent/SEA 打包直接失败。
+  // The verdict's direct import needs this exact alias. Without it, the generic "@zcode/shared"
+  // prefix rewrites the path to `src/index.ts/workspace-hook-review-monotonicity`, breaking Desktop agent/SEA packaging.
   "@zcode/shared/workspace-hook-review-monotonicity": resolve(
     rootDirectory,
     "../../packages/shared/src/workspace-hook-review-monotonicity.ts",
   ),
-  // trust store 文件 schema 单源下沉后的新 subpath；漏声明会被通用
-  // "@zcode/shared" 前缀改写成 `src/index.ts/workspace-hook-trust-store-file`，
-  // Desktop agent/SEA 打包失败（同上两类既有规则）。
+  // This subpath was added when the trust-store file schema moved to its single source of truth.
+  // Without an exact declaration, the generic "@zcode/shared" prefix rewrites it to
+  // `src/index.ts/workspace-hook-trust-store-file`, breaking Desktop agent/SEA packaging as above.
   "@zcode/shared/workspace-hook-trust-store-file": resolve(
     rootDirectory,
     "../../packages/shared/src/workspace-hook-trust-store-file.ts",
@@ -224,7 +224,7 @@ export const buildCli = async ({
 
   await build({
     banner: {
-      // SEA 与普通 CLI 共用入口；声明必须在 Agent 初始化和原生资源解压前可独立读取。
+      // SEA and the regular CLI share this entry point; it must be readable independently before Agent initialization and native-resource extraction.
       js: `#!/usr/bin/env node\n"use strict";\nif (process.argv.length === 3 && process.argv[2] === "--licenses") { const sea = require("node:sea"); const nodeNotice = sea.isSea() ? "\\n\\n## Bundled Node.js runtime\\n\\n" + sea.getAsset("zcode-node-license", "utf8") : ""; process.stdout.write(${JSON.stringify(notices.toString("utf8"))} + nodeNotice, () => process.exit(0)); } else {`,
     },
     footer: { js: "}" },
@@ -235,16 +235,17 @@ export const buildCli = async ({
     entryPoints: [resolve(cliDirectory, "src/main.ts")],
     // Ink 7 and yoga-layout use top-level await, so the CJS CLI bundle loads the TUI
     // through Node's native dynamic import path instead of forcing esbuild to lower it.
-    // playwright-core 依赖运行时 package assets 与 require.resolve，相比内联 bundle 必须保持外置。
-    // managed headless adapter 只在显式 --browser-use=headless 时延迟加载，不影响 app-server/普通 CLI。
-    // koffi 会按当前平台动态 require 原生 `.node` 文件；内联会让 esbuild 遍历所有
-    // 平台产物并直接报 "No loader is configured for .node"。运行时仍从依赖包加载，
-    // SEA 资源由 build-sea 的 native asset 收集阶段单独处理。
+    // playwright-core depends on runtime package assets and require.resolve, so it must remain external rather than being bundled inline.
+    // The managed headless adapter is loaded lazily only with explicit --browser-use=headless; app-server and the regular CLI are unaffected.
+    // koffi dynamically requires native `.node` files for the current platform. Inlining it makes
+    // esbuild traverse artifacts for every platform and fail with "No loader is configured for .node".
+    // Runtime loading still comes from the dependency package; build-sea collects SEA native assets separately.
     external: resolveBuildExternal(),
     format: "cjs",
-    // 桌面 app 集成只内置 zcode.cjs，旧 desktop-agent 构建复用 CLI 调试产物，
-    // 未压缩且会留下指向未随包复制的 sourcemap。桌面 agent 模式压缩 JS，同时保留
-    // 函数/类名，避免依赖 name 的诊断与注册逻辑被 esbuild 标识符压缩影响。
+    // Desktop app integration embeds only zcode.cjs. The old desktop-agent build reused the CLI
+    // debug artifact, which was unminified and left source maps pointing to files not copied into the package.
+    // Desktop agent mode minifies JavaScript while preserving function/class names so diagnostics
+    // and registration logic that depend on name are not affected by esbuild identifier mangling.
     keepNames: minify,
     legalComments: "none",
     logLevel: "info",
@@ -254,9 +255,9 @@ export const buildCli = async ({
     outfile,
     platform: "node",
     sourcemap,
-    // target 取所有承载运行时里最低的 Node 版本：桌面用 Electron 内置 Node 24，
-    // 远端 SSH 复用已部署的独立 Node v22.16 跑同一份 zcode.cjs。降到 node22 保证这份产物
-    // 在两端都不会用到目标运行时不支持的语法/特性。
+    // Target the lowest Node version across all runtimes: Desktop uses Electron's bundled Node 24,
+    // while remote SSH uses the already-installed standalone Node v22.16 to run the same zcode.cjs.
+    // Targeting Node 22 keeps the artifact from using syntax or features unsupported by either runtime.
     target: "node22",
     alias: resolveBuildAliases({ cliDirectory, rootDirectory }),
   });

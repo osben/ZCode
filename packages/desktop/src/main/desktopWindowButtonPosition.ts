@@ -48,7 +48,7 @@ function resolveWindowsTitleBarOverlayHeightForZoomLevel(zoomLevel: number) {
 
 function resolveWindowsWindowControlsOverlayMetricsForZoomLevel(zoomLevel: number) {
   return {
-    // 原生按钮宽度不随页面缩放；固定 CSS 边距只适用于下面的自绘窗控分支。
+    // Native button width does not change with page zoom; fixed CSS margins apply only to the custom window-controls branch below.
     rightPaddingPx: Math.round(
       WINDOWS_WINDOW_CONTROLS_BASE_RIGHT_PADDING_PX / resolveDesktopZoomFactorForLevel(zoomLevel),
     ),
@@ -78,9 +78,11 @@ export function syncWindowControlsOverlayForZoomLevel(
   if (process.platform === "darwin") {
     const { buttonPosition, metrics } =
       resolveMacOSWindowControlsOverlayMetricsForZoomLevel(zoomLevel);
-    // 页面缩放会改变 renderer 顶部栏的视觉尺寸，但 macOS 原生红绿灯不会随页面缩放。
-    // 每次缩放后按同一 zoom factor 调整原生按钮纵向位置；横向位置先保持系统初始值，避免和固定宽度安全区重复补偿。
-    // 红绿灯自身宽度不随页面 zoom 变化，所以 renderer 的 CSS padding 要按 zoom factor 反向补偿。
+    // Page zoom changes the renderer title bar's visual size, but the native macOS traffic lights do
+    // not scale with it. After each zoom, adjust the native buttons' vertical position by the same
+    // zoom factor; keep the horizontal position at the system default to avoid compensating twice
+    // alongside the fixed-width safe area. Since the traffic lights' own width does not scale, apply
+    // inverse zoom compensation to the renderer's CSS padding.
     targetWindow.setWindowButtonPosition(buttonPosition);
     targetWindow.webContents.send(PlatformChannels.WindowControlsOverlayChanged, metrics);
     return;
@@ -88,16 +90,18 @@ export function syncWindowControlsOverlayForZoomLevel(
 
   if (process.platform === "win32") {
     if (hasCustomWindowsControls(targetWindow)) {
-      // 自绘按钮随页面缩放，安全区也使用固定 CSS 像素，不能再反向补偿原生按钮宽度。
+      // Custom buttons scale with the page, and the safe area uses fixed CSS pixels, so do not apply inverse compensation for native button width.
       targetWindow.webContents.send(PlatformChannels.WindowControlsOverlayChanged, {
         rightPaddingPx: WINDOWS_WINDOW_CONTROLS_BASE_RIGHT_PADDING_PX,
       });
       return;
     }
-    // Windows titleBarOverlay 的原生窗控不会跟 renderer 页面缩放自动同步。
-    // 只同步高度会让右上角按钮和标题栏垂直尺寸一致，但固定 136px 安全区会被页面 zoom 一起放大，
-    // 导致左侧按钮组和右侧窗控越拉越远；缩小时如果高度还被基线钳住，窗控也会提前停止变化。
-    // 这里同时同步 overlay.height，并把 renderer 的右侧安全区按 zoomFactor 反向补偿，让两侧布局继续同频缩放。
+    // Native Windows titleBarOverlay controls do not automatically follow renderer page zoom.
+    // Syncing only the height aligns the top-right controls with the title bar vertically, but the
+    // fixed 136px safe area would also grow with page zoom, pushing the left button group farther
+    // from the right controls. When zooming out, a baseline-clamped height would also stop changing
+    // too early. Sync overlay.height and apply inverse zoom compensation to the renderer's right safe
+    // area so both sides continue to scale together.
     targetWindow.setTitleBarOverlay(
       buildWindowsTitleBarOverlayForZoomLevel(
         zoomLevel,

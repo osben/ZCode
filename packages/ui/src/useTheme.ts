@@ -18,7 +18,7 @@ export {
   type ThemePaletteDefinition,
 } from "./lib/themePalettes.js";
 
-/** 明暗模式。配色由 ThemePalette 单独决定。 */
+/** Light/dark mode. The color scheme is determined separately by ThemePalette. */
 export type Theme = "light" | "dark" | "system";
 export type ResolvedTheme = "light" | "dark";
 
@@ -44,9 +44,9 @@ export function resolveTheme(theme: Theme): ResolvedTheme {
 }
 
 /**
- * 读取持久化的主题选择。旧版 `zcode-theme` 曾把配色写进值里（`zai-dark` 等），
- * 这些值统一迁移为 `zai` 配色 + 对应模式，外观与旧版一致。
- * 只在读取时转换，不回写旧值。缺失或无法识别的模式使用 fallbackMode。
+ * Read the persisted theme selection. Older versions of `zcode-theme` stored the color scheme in the value (such as `zai-dark`),
+ * so these values are migrated to the `zai` palette plus the corresponding mode, preserving the old appearance.
+ * Convert only when reading; do not write back the old value. Use fallbackMode when the mode is missing or unrecognized.
  */
 export function migrateThemeSelection(
   storedMode: string | null,
@@ -77,7 +77,7 @@ export function migrateThemeSelection(
   };
 }
 
-/** 读取当前持久化的主题选择，供不经过 store 的页面（如分享页）使用。 */
+/** Read the current persisted theme selection for pages that do not use the store (such as the share page). */
 export function readStoredThemeSelection(fallbackMode: Theme = "dark"): ThemeSelection {
   return migrateThemeSelection(
     readSafeLocalStorage(THEME_STORAGE_KEY),
@@ -105,8 +105,8 @@ function syncBrowserThemeSurface(resolved: ResolvedTheme) {
     return;
   }
 
-  // Electron 为 vibrancy 保持透明根背景，但普通浏览器需要从文档根和标准 meta
-  // 获得页面主题。只切换 React 的 dark class 会让浏览器工具栏、原生控件和 overscroll 留在旧主题。
+  // Electron keeps the root background transparent for vibrancy, but regular browsers need the document root and standard meta
+  // to receive the page theme. Changing only React’s dark class leaves the browser toolbar, native controls, and overscroll in the old theme.
   root.setAttribute(BROWSER_THEME_SURFACE_ATTRIBUTE, resolved);
   root.style.colorScheme = resolved;
   setThemeMetaContent("color-scheme", resolved);
@@ -118,8 +118,8 @@ function syncBrowserThemeSurface(resolved: ResolvedTheme) {
 }
 
 /**
- * 把明暗模式与配色应用到 <html>。配色 class 与明暗 class 互不影响：
- * `theme-zai-*` 只属于 zai 配色；accent 配色通过 `palette-<id>` 覆盖品牌色变量。
+ * Apply the light/dark mode and palette to <html>. Palette classes and mode classes are independent:
+ * `theme-zai-*` is only for the zai palette; accent palettes override brand-color variables through `palette-<id>`.
  */
 export function applyTheme(mode: Theme, palette: ThemePalette = DEFAULT_THEME_PALETTE) {
   const resolved = resolveTheme(mode);

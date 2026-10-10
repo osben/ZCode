@@ -1,6 +1,6 @@
-// subscribe ACK activation barrier：notification 可能先于 RPC response 抵达 renderer。
-// transport 先按 topic 有界暂存，store 写入 ACK subscriptionId 后显式 activate；
-// 这里只暂存 physical wire；logical assembly 在 ownership 激活后执行。
+// Subscribe ACK activation barrier: notifications may reach the renderer before the RPC response.
+// The transport first buffers a bounded amount per topic; the store explicitly activates after writing the ACK subscriptionId.
+// This buffers only the physical wire; logical assembly runs after ownership is activated.
 interface PendingFrameSubscription<T> {
   topic: string;
   subscriptionId: string | null;
@@ -26,11 +26,11 @@ interface AckActivationBarrier<T extends { topic: string; subscriptionId: string
   ): { topic: string; previousSubscriptionId: string | null } | undefined;
   forget(subscriptionId: string): void;
   accept(frame: T): void;
-  /** runtime/attachment generation invalidation：丢弃全部 active/pending ownership。 */
+  /** Invalidate runtime/attachment generations: discard all active/pending ownership. */
   clear(): void;
 }
 
-/** transport-local physical-wire barrier；同 topic 并发 pending 各自等 ACK 决定 owner。 */
+/** Transport-local physical-wire barrier; concurrent pending subscriptions to the same topic each wait for their ACK to determine ownership. */
 export function createAckActivationBarrier<T extends { topic: string; subscriptionId: string }>(
   deliver: (frame: T) => void,
 ): AckActivationBarrier<T> {
@@ -118,8 +118,8 @@ export function createAckActivationBarrier<T extends { topic: string; subscripti
           pending.frames.length + 1 > MAX_STAGED_FRAMES ||
           pending.stagedBytes + bytes > MAX_STAGED_BYTES
         ) {
-          // 通过 shift 头部来“维持上限”会留下一个看似可激活、
-          // 实际缺片的 physical batch。越界必须整批清空并让 subscribe 明确失败。
+          // Using shift on the head to “stay under the limit” leaves a physical batch that appears activatable
+          // but is actually missing chunks. Overflow must clear the entire batch and make subscribe fail explicitly.
           pending.frames.length = 0;
           pending.stagedBytes = 0;
           pending.overflowReason = STAGING_OVERFLOW_REASON;

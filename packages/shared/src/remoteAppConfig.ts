@@ -74,8 +74,8 @@ export function getCommunityUrlFromConfigs(
   const remoteUrls = getCommunityUrlsFromConfig(remoteConfig);
   const localUrls = getCommunityUrlsFromConfig(localConfig);
 
-  // 社群渠道具有语言边界。只允许远端覆盖同语言的内置入口，
-  // 对应语言缺失时保持隐藏，避免中文和英文用户被导向错误渠道。
+  // Community channels are language-specific. Allow remote config to override only built-in entries in the same language,
+  // and keep the entry hidden when that language is missing, so Chinese and English users are not sent to the wrong channel.
   const serviceLocale = toServiceLocale(locale);
   return remoteUrls[serviceLocale] ?? localUrls[serviceLocale];
 }

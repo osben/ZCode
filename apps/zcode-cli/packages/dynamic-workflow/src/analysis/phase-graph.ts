@@ -4,62 +4,69 @@ import { KIND_RANK, reduceOrdering, type OrderKind } from "./causality-reduce.js
 import type { CausalityGraph, Certainty, OrderEdge, Phase, Step } from "./causality-graph.js";
 
 /**
- * 阶段视图：作者用 `phase("名字")` 标记施加的分组，以及它在因果图上的**商图**
+ * Phase view: the grouping applied by the author's `phase("name")` markers, and its **quotient graph**
  *
- * 因果图本体一字不动——这里只做两件事，都是对已完成的图的机械改写：
+ * of the causal graph. The causal graph itself remains untouched; this mechanically transforms
+ * the completed graph in two ways:
  *
- *  - **跨阶段拷贝**：被 k>1 个阶段认领的 step 变成 k 份拷贝（`~` 后缀 id + `source` 联
- *    key，与 may-set 车道拷贝同机制、同分隔符），使「每个 step 恰有一个 phase」的全划分
- *    成立；
- *  - **商图**：归约后的 step 边按认领关系投影到阶段对上，去重后跑同一个
+ *  - **Cross-phase copies**: a step claimed by k>1 phases becomes k copies (`~`-suffixed IDs and
+ *    a `source` link, using the same mechanism and separator as may-set lane copies), ensuring a
+ *    complete partition where every step belongs to exactly one phase;
+ *  - **Quotient graph**: project reduced step edges onto phase pairs according to claim relations,
+ *    deduplicate them, and apply the same
  *    {@link reduceOrdering}。
  *
- * 零标记脚本这里整体是恒等函数：三个字段全部缺席，既有快照逐字节不动。这不是优化，是
- * 契约——UI 的视图切换条件就是「阶段词汇表在场与否」。
+ * With no markers, this is an identity function: all three fields are absent and existing snapshots
+ * remain byte-for-byte unchanged. This is a contract, not an optimization; the UI switches views
+ * based on whether the phase vocabulary is present.
  *
- * 单独一个模块而不是塞进 causality-graph.ts：那份文件已经在 max-lines 上，而阶段是它
- * 上面的一层视图，正如因果图是站点图上面的一层视图。
+ * This has its own module instead of living in causality-graph.ts: that file is already at its
+ * max-lines limit, and phases are a view layered on top of it, just as the causal graph is layered
+ * on top of the site graph.
  */
 
-/** 拷贝 id 分隔符：与 may-set 车道拷贝同一个（两种展开叠加时形如 `ask#2~actor#1~phase#2`）。 */
+/** Copy ID separator, shared with may-set lane copies (combined expansions look like `ask#2~actor#1~phase#2`). */
 const COPY_SEPARATOR = "~";
 
-/** 认领关系：谁属于哪个阶段，以及该认领有多确定。全部按**站点 id** 键。 */
+/** Claim relations: which phase owns each site and how certain the claim is. All keys are **site IDs**. */
 interface PhaseClaims {
-  /** 站点 -> 认领它的阶段，按 issue 顺序去重。 */
+  /** Site -> phases claiming it, deduplicated in issue order. */
   bySite: Map<string, string[]>;
-  /** `${site}|${phase}` -> 该阶段内部的认领 certainty。 */
+  /** `${site}|${phase}` -> claim certainty within that phase. */
   certainty: Map<string, Certainty>;
-  /** 阶段 -> 首个成员 issue 的时钟位置；商图事实的排序键。 */
+  /** Phase -> clock position of the first member issue; sort key for quotient-graph facts. */
   position: Map<string, number>;
-  /** `${site}|${phase}` -> 该站点在该阶段的首次 / 末次 issue 位置（时间可行性判定）。 */
+  /** `${site}|${phase}` -> first/last issue positions for this site in the phase (temporal feasibility checks). */
   firstIssue: Map<string, number>;
   lastIssue: Map<string, number>;
 }
 
-/** 商图的输入：归约后的 step 边（sink 边已剔除），certainty 已按端点继承过。 */
+/** Quotient-graph input: reduced step edges (sink edges removed), with certainty inherited from endpoints. */
 export interface PhaseSourceFact {
   from: string;
   to: string;
   kind: OrderKind;
   certainty: Certainty;
-  /** carry 边改型前的底层 kind；carry 最小化按它判见证强度。 */
+  /** Underlying kind before a carry edge is retyped; carry minimization uses it to judge witness strength. */
   carryOf?: Exclude<OrderKind, "carry">;
   /**
-   * 见证这条事实的 issue 事件所在的阶段集（只有 await 屏障产生的 seq 事实带它；见
-   * causality-graph.ts 的 `Fact.toPhases`）。头端收窄按 {@link headPhasesOf}。
+   * Set of phases containing the issue events that witness this fact (present only on seq facts
+   * produced by await barriers; see `Fact.toPhases` in causality-graph.ts). Narrow the head with
+   * {@link headPhasesOf}.
    */
   toPhases?: ReadonlySet<string>;
 }
 
 /**
- * 一条边的头端应落在哪些阶段上：**有来源信息就取交集，没有就全展开**。
+ * Phases in which an edge's head may land: **intersect when provenance is available; otherwise expand fully**.
  *
- * 拷贝改写与商图投影必须用同一条规则，否则 `phaseEdges` 和下钻里的 step 边会讲两个不同的
- * 故事——这是把两个消费者绑在一个函数上的全部理由。
+ * Copy rewriting and quotient projection must use the same rule, or `phaseEdges` and the step
+ * edges shown when drilling down would tell different stories. This is why both consumers share
+ * this function.
  *
- * 交集在实践中等于 `toPhases` 自己（屏障事实的见证阶段必然是头站点的认领阶段），交集写出来
- * 是为了让「阶段被丢弃/收窄」这类上游变化不会把边挂到不存在的阶段上。
+ * In practice, the intersection equals `toPhases` (the witness phase of a barrier fact must be a
+ * claimed phase of the head site). Writing the intersection explicitly ensures upstream changes
+ * that discard/narrow phases cannot attach an edge to a nonexistent phase.
  */
 function headPhasesOf(claiming: readonly string[], toPhases: ReadonlySet<string> | undefined): string[] {
   if (toPhases === undefined) return [...claiming];
@@ -68,12 +75,14 @@ function headPhasesOf(claiming: readonly string[], toPhases: ReadonlySet<string>
 }
 
 /**
- * 从 issue 事件读出认领关系。issue 是 step 的身份时刻，所以这一趟就是全部的归属逻辑。
+ * Read claim relations from issue events. An issue is the identity point of a step, so this pass
+ * contains all ownership logic.
  *
- * 每个 (站点, 阶段) 的 certainty 单独推导：该阶段内**存在**一次区域链确定的 issue，且该
- * step 不是 control 边的目标。逐字对应 causality-graph.ts 的 `certaintyOf`，只是把「所有
- * issue」换成「该阶段的 issue」——共享 helper 在 preflight（顶层）与 gate（循环+分支内）
- * 各一份拷贝时，两份的 certainty 因此可以不同，这正是拷贝要单独推导的理由。
+ * Derive certainty independently for each (site, phase): within that phase, **at least one** issue
+ * must be region-chain-certain, and the step must not be the target of a control edge. This mirrors
+ * `certaintyOf` in causality-graph.ts, replacing "all issues" with "issues in this phase." When a
+ * shared helper is copied into preflight (top level) and gate (inside a loop and branch), the two
+ * copies can therefore have different certainty, which is why copies need independent derivation.
  */
 export function collectPhaseClaims(
   events: readonly OrderEvent[],
@@ -86,7 +95,7 @@ export function collectPhaseClaims(
   const firstIssue = new Map<string, number>();
   const lastIssue = new Map<string, number>();
   const certainSeen = new Set<string>();
-  // 与 causality-graph.ts 同一个时钟：每个 issue 事件走一格，不论它是否落在图里的 step 上。
+  // Use the same clock as causality-graph.ts: advance once per issue event, whether or not it is a graph step.
   let clock = 0;
   for (const event of events) {
     if (event.at !== "issue") continue;
@@ -114,10 +123,11 @@ export function collectPhaseClaims(
 }
 
 /**
- * 把阶段词汇表加到完成的因果图上：拷贝、`Step.phase`、阶段表、阶段边。
+ * Add the phase vocabulary to a completed causal graph: copies, `Step.phase`, the phase table, and phase edges.
  *
- * 在 `expandMaySetLanes` **之后**运行（对车道拷贝逐份认领），且与它同为「对成品图的机械
- * 改写」：步骤集、车道、region、step 边的既有内容都不重算。
+ * Run **after** `expandMaySetLanes` (claim each lane copy separately). Like that function, this
+ * mechanically rewrites the completed graph without recomputing the existing steps, lanes,
+ * regions, or step edges.
  */
 export function projectPhaseGraph(
   graph: CausalityGraph,
@@ -126,51 +136,56 @@ export function projectPhaseGraph(
   facts: readonly PhaseSourceFact[],
   sharesIteration: (a: string, b: string) => boolean,
 ): CausalityGraph {
-  if (phases.length === 0) return graph; // 零标记 → 零词汇表，图逐字节不动
+  if (phases.length === 0) return graph; // No markers -> no vocabulary; graph remains byte-for-byte unchanged.
 
   const claimsOf = (siteId: string): string[] => claims.bySite.get(siteId) ?? [UNPHASED_ID];
   const certaintyOfClaim = (siteId: string, phase: string): Certainty =>
     claims.certainty.get(`${siteId}|${phase}`) ?? "maybe";
 
   /**
-   * 时间可行性：一条 a→b 的边能不能落在拷贝对 (a@P, b@Q) 上。
+   * Temporal feasibility: whether an edge a→b can land on the copy pair (a@P, b@Q).
    *
-   * 每份阶段拷贝**占据一个时间位置**，这是它与 may-set 车道拷贝的根本差别——车道拷贝同 rank
-   * 并排，全展开不会断言任何顺序；阶段拷贝全展开会断言假的顺序（「gate 的 bench settle 在
-   * preflight 的 bench issue 之前」）。而这里的信息 walk 是有的：每个 (站点, 阶段) 的 issue
-   * 位置。多序是被许可的方向，错序不是。
+   * Each phase copy **occupies a position in time**, the key difference from may-set lane copies:
+   * lane copies are adjacent at the same rank, so full expansion asserts no order; full phase
+   * expansion would assert false order (for example, gate's bench settle before preflight's bench
+   * issue). The issue positions for each (site, phase) are available from the walk. A permitted
+   * order is allowed; an impossible order is not.
    *
-   * 两条通道，或关系：
-   *  - **位置**：b 在 Q 里至少有一次 issue 落在 a 在 P 里首次 issue 之后；
-   *  - **重复**：两个站点共享一个封闭迭代区域。这条**不是可选项**——第 k 轮的生产者喂第
-   *    k+1 轮的拷贝，位置上是「在前」而实际可实现（reduce-accumulator 的教训）。去掉它，
-   *    跨阶段的循环携带数据会整片消失，而那是凭空造出并发，唯一被禁止的方向。
+   * Two alternatives, joined by OR:
+   *  - **Position**: at least one issue of b in Q occurs after the first issue of a in P;
+   *  - **Repetition**: the sites share a closed iteration region. This is **required**: the producer
+   *    in iteration k feeds the copy in iteration k+1, which is positionally "after" and realizable
+   *    (the reduce-accumulator lesson). Removing this would erase all cross-phase loop-carried data,
+   *    inventing concurrency in the only forbidden direction.
    *
-   * 与 causality-graph.ts 的 `realizableCarry` 共用同一个 `sharesIteration`：同一个关系上的
-   * 同一个问题，两处不能各答一次。
+   * Share `sharesIteration` with `realizableCarry` in causality-graph.ts: both ask the same question
+   * about the same relation, and must not answer it independently.
    */
   const admits = (from: string, fromPhase: string, to: string, toPhase: string): boolean => {
     const firstFrom = claims.firstIssue.get(`${from}|${fromPhase}`);
     const lastTo = claims.lastIssue.get(`${to}|${toPhase}`);
-    if (firstFrom === undefined || lastTo === undefined) return true; // 无位置可判：不拦
+    if (firstFrom === undefined || lastTo === undefined) return true; // No positions to compare: do not reject.
     return lastTo > firstFrom || sharesIteration(from, to);
   };
   /**
-   * 受时间可行性约束的 kind。`carry` 不在内：它自己的可实现性在 `realizableCarry` 已经判过，
-   * 而且 carry 断言的就是「下一轮」，位置比较对它无意义。`fifo` 不在内：车道规则已经决定了
-   * 它，且同站点的两份拷贝共享车道、确实彼此 FIFO 排序。
+   * Edge kinds constrained by temporal feasibility. `carry` is excluded because `realizableCarry`
+   * already checks its feasibility, and carry itself asserts "next iteration," making positional
+   * comparison meaningless. `fifo` is excluded because lane rules already decide it, and copies
+   * of the same site share a lane and are genuinely FIFO-ordered.
    */
   const ADMITTED_KINDS = new Set<OrderKind>(["data", "control", "seq"]);
 
-  // --- 1. 跨阶段拷贝 ---------------------------------------------------------------
-  // 拷贝是 **both-run，不是候选**——不要顺手按 may-set 拷贝的类比改成 maybe。站点真的从
-  // 两个调用方各自发出（共享 helper 在 preflight 与 gate 各跑一次），两份都会执行；每份的
-  // certainty 只反映**它自己那个阶段**的认领有多确定，不表示「二者之一」。
+  // --- 1. Cross-phase copies -------------------------------------------------------
+  // Copies are **both-run, not candidates**; do not change them to maybe by analogy with may-set
+  // copies. The site is actually issued by both callers (the shared helper runs once in preflight
+  // and once in gate), so both copies execute. Each copy's certainty reflects only the certainty
+  // of its own phase's claim, not "one or the other."
   //
-  // `region` 与 `repeat` 是**站点级事实**（取自站点首次 issue），故意不按阶段重算：拷贝是
-  // 对成品图的机械改写，重算区域归属要的是每阶段一份的 region 树，那是另一个决定。所以
-  // gate 那份 bench 拷贝带着 preflight 首个 issue 的 `region` 和 `stack`——不要在没有决定
-  // 的情况下把它「修好」。
+  // `region` and `repeat` are **site-level facts** (from the site's first issue), intentionally not
+  // recomputed per phase. Copies mechanically rewrite the completed graph; recomputing region
+  // ownership would require a separate region tree for each phase, which is a different decision.
+  // Thus gate's bench copy carries the `region` and `stack` from preflight's first issue; do not
+  // "fix" this without a decision.
   const copiesOf = new Map<string, (Step & { phase: string })[]>();
   for (const step of graph.steps) {
     const siteId = step.source ?? step.id;
@@ -183,7 +198,7 @@ export function projectPhaseGraph(
         certainty: weakest([step.certainty, certaintyOfClaim(siteId, phase)]),
         id: `${step.id}${COPY_SEPARATOR}${phase}`,
         phase,
-        // `source` 是运行时实际上报的站点 id，**只设一次**：车道拷贝已经带上了，沿用。
+        // `source` is the site ID reported by the runtime; set it **only once** because lane copies already carry it.
         source: siteId,
       })),
     );
@@ -192,19 +207,19 @@ export function projectPhaseGraph(
   const steps: Step[] = graph.steps.flatMap((step) => {
     const copies = copiesOf.get(step.id);
     if (copies !== undefined) return copies;
-    // k = 1：认领唯一，所以该阶段的 certainty 与 step 自己的逐字相等（全部 issue 都在
-    // 这个阶段里），不必覆盖。
+    // k = 1: the claim is unique, so this phase's certainty is identical to the step's (all issues
+    // belong to this phase); no override is needed.
     return [{ ...step, phase: claimsOf(step.source ?? step.id)[0] as string }];
   });
 
-  // --- 2. 边改写：镜像 expandMaySetLanes 的机制 --------------------------------------
+  // --- 2. Edge rewriting: mirror expandMaySetLanes ---------------------------------
   const stepById = new Map(graph.steps.map((step) => [step.id, step]));
   const siteOf = (id: string): string => {
     const step = stepById.get(id);
     return step === undefined ? id : (step.source ?? step.id);
   };
-  // 事实的来源信息按**站点对**索引（事实先于两种拷贝存在，且每个有序对只有一条），所以
-  // 车道拷贝的边先折算回站点对再查。
+  // Fact provenance is indexed by **site pairs** (facts predate both kinds of copies, with one
+  // fact per ordered pair), so lane-copy edges are first mapped back to site pairs for lookup.
   const provenance = new Map<string, ReadonlySet<string>>();
   for (const fact of facts) {
     if (fact.toPhases !== undefined) provenance.set(`${fact.from}|${fact.to}`, fact.toPhases);
@@ -239,25 +254,26 @@ export function projectPhaseGraph(
 
   const edges: OrderEdge[] = [];
   for (const edge of graph.edges) {
-    // 两端都不是拷贝 → 原样保留。这条早退也是「零标记逐字节不变」的构造性保证：单端点对
-    // 从不经过下面任何一条规则。
+    // Neither endpoint is a copy -> preserve as-is. This early return also guarantees byte-for-byte
+    // identity with no markers: single-endpoint pairs never pass through any rules below.
     if (!copiesOf.has(edge.from) && !copiesOf.has(edge.to)) {
       edges.push(edge);
       continue;
     }
     const fromSite = siteOf(edge.from);
     const toSite = siteOf(edge.to);
-    // 尾端不按 provenance 收窄（settle 事件不带阶段），但**尾端同样受时间可行性约束**——
-    // 这就是那条尾侧伪边（拷贝排在产出它自己实参的那个 ask 之前）的归宿。
+    // Do not narrow the tail by provenance (settle events have no phase), but the **tail is also
+    // constrained by temporal feasibility**; this removes the spurious tail edge where a copy is
+    // placed before the ask that produced its own argument.
     const pairs: { certainty: Certainty; from: string; to: string }[] = [];
     const admitted: typeof pairs = [];
     for (const tail of endpointsOf(edge.from)) {
       for (const head of endpointsOf(edge.to, provenance.get(`${fromSite}|${toSite}`))) {
-        // fifo 按车道匹配，与车道展开同一条规则。同站点的阶段拷贝共享车道，所以它们之间的
-        // fifo 边幸存——这是对的：一个站点的两次发出确实彼此 FIFO 排序。
+        // Match fifo by lane, using the same rule as lane expansion. Phase copies of one site share
+        // a lane, so fifo edges between them survive, correctly: the site's two issues are FIFO-ordered.
         if (edge.kind === "fifo" && tail.lane !== head.lane) continue;
-        // 同一份拷贝到自己：只有原边本来就是自边时才成立（不同站点的拷贝 id 不可能相等），
-        // 所以这是把不变量写下来，不是语料里到达过的分支。
+        // A copy can point to itself only when the original edge was already a self-edge (copies of
+        // different sites cannot share an ID). This documents an invariant; the branch is not reached by the corpus.
         if (tail.id === head.id && edge.from !== edge.to) continue;
         const pair = {
           certainty: weakest([edge.certainty, tail.certainty, head.certainty]),
@@ -270,30 +286,31 @@ export function projectPhaseGraph(
         }
       }
     }
-    // 全被拦下 → 退回全展开，与 {@link headPhasesOf} 同一个姿态：一条真实的序在哪儿都不
-    // 可实现，说明位置判断误导了我们，而静默删掉一条真实的序就是凭空造出并发。
+    // If all candidates are rejected, fall back to full expansion, matching {@link headPhasesOf}:
+    // a real ordering that is infeasible everywhere means the position check misled us, and silently
+    // deleting a real ordering would invent concurrency.
     for (const pair of admitted.length > 0 ? admitted : pairs) {
       edges.push({ ...edge, ...pair });
     }
   }
 
-  // --- 3. 阶段表：有成员的阶段，unphased 排最前 -------------------------------------
+  // --- 3. Phase table: nonempty phases, with unphased first -------------------------
   const members = new Set<string>(steps.map((step) => step.phase as string));
   const phaseList: Phase[] = [];
   if (members.has(UNPHASED_ID)) phaseList.push({ id: UNPHASED_ID });
   for (const phase of phases) {
-    // 成员为零的阶段丢掉（may-set 收窄可能把某阶段的全部 step 拿走）——空节点没有家可指。
+    // Drop phases with no members (may-set narrowing may remove every step from a phase); an empty node has no home to reference.
     if (!members.has(phase.id)) continue;
     phaseList.push({ id: phase.id, loc: phase.loc, name: phase.name });
   }
   const live = new Set(phaseList.map((phase) => phase.id));
 
-  // --- 4. 商图：在认领关系上算，不依赖拷贝的物化 ------------------------------------
+  // --- 4. Quotient graph: compute from claim relations, independent of materialized copies ---
   const quotient: PhaseSourceFact[] = [];
   for (const fact of facts) {
-    // 与拷贝改写逐条同规则：头端收窄（{@link headPhasesOf}）+ 时间可行性（{@link admits}），
-    // 且同样只在至少一端被拷贝时生效。两个消费者不能各讲一个故事——`phaseEdges` 与下钻里的
-    // step 边讲的必须是同一件事。
+    // Match copy rewriting exactly: narrow the head ({@link headPhasesOf}) and check temporal
+    // feasibility ({@link admits}), applying only when at least one endpoint is copied. The two
+    // consumers must tell the same story: `phaseEdges` and the drilled-down step edges must agree.
     const tails = claimsOf(fact.from);
     const heads = headPhasesOf(claimsOf(fact.to), fact.toPhases);
     const copied = tails.length > 1 || claimsOf(fact.to).length > 1;
@@ -308,7 +325,8 @@ export function projectPhaseGraph(
     }
     for (const { from, to } of admitted.length > 0 ? admitted : pairs) {
       if (!live.has(from) || !live.has(to)) continue;
-      // 阶段内序不出图；阶段内的 carry 是「循环整个住在一个阶段里」的画法，留成自环。
+      // Do not draw within-phase ordering; a within-phase carry means the loop stays entirely in
+      // one phase, so retain it as a self-loop.
       if (from === to && fact.kind !== "carry") continue;
       quotient.push({
         certainty: fact.certainty,
@@ -327,7 +345,7 @@ export function projectPhaseGraph(
       position(a.to) - position(b.to) ||
       a.kind.localeCompare(b.kind),
   );
-  // 阶段边不携带 `exact`：那是 data 边的 taint 见证位，在商上无定义。
+  // Phase edges do not carry `exact`: it witnesses taint on data edges and is undefined on the quotient.
   const phaseEdges: OrderEdge[] = reduceOrdering(deduped).map((fact) => ({
     certainty: fact.certainty,
     from: fact.from,
@@ -343,7 +361,7 @@ export function projectPhaseGraph(
     phases: phaseList,
     regions: graph.regions,
     steps,
-    // 阶段级 sink 边不出图（UI 由 fedBy step 的 phase 推导），但 fedBy 自己要跟着拷贝走。
+    // Do not draw phase-level sink edges (the UI derives them from the fedBy step's phase), but fedBy itself must follow copies.
     ...(sink === undefined
       ? {}
       : { sink: { fedBy: sink.fedBy.flatMap((id) => endpointsOf(id).map((end) => end.id)) } }),
@@ -351,9 +369,9 @@ export function projectPhaseGraph(
 }
 
 /**
- * 每个有序阶段对留一条事实：kind 取最强（{@link KIND_RANK}）、certainty maybe-wins——
- * **逐字镜像 step 级 `dedupeFacts`**，一致性优先（「任一 always 见证即 always」在商上
- * 语义更准）。
+ * Keep one fact per ordered phase pair: use the strongest kind ({@link KIND_RANK}) and let maybe
+ * win certainty. This **mirrors step-level `dedupeFacts` exactly**, prioritizing consistency ("any
+ * always witness means always" is semantically more accurate in the quotient).
  */
 function dedupePhaseFacts(facts: readonly PhaseSourceFact[]): PhaseSourceFact[] {
   const byPair = new Map<string, PhaseSourceFact>();

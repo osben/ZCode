@@ -1,11 +1,11 @@
 import { OffPeakPermanentDispatchError } from "@zcode/services/node";
 
 /**
- * 闲时派发三分支：
- * - resume：conversation_id 已回填 = 已跑过，续跑同一 session 并发续跑提示词；
- * - bound-first-run：会话内创建绑定了 session_id 但尚未跑过，resume 绑定会话并发任务原 prompt
- *   （对齐 dispatchCronRun 的 targetTaskId 路径）；
- * - init：表单创建，新建专属 session。
+ * Three off-peak dispatch branches:
+ * - resume: conversation_id is set, so it has already run; resume the same session with the continuation prompt.
+ * - bound-first-run: created in a session and bound to session_id, but has not run yet; resume the bound session and send the task's original prompt
+ *   (matching dispatchCronRun's targetTaskId path).
+ * - init: created from the form; create a dedicated session.
  */
 type OffPeakDispatchKind = "resume" | "bound-first-run" | "init";
 
@@ -18,7 +18,7 @@ export function resolveOffPeakDispatchKind(request: {
   return "init";
 }
 
-/** 绑定会话已被用户删除：重试无意义，permanent（否则会一直退避到票过期再重取号）。 */
+/** The bound session was deleted by the user: retrying is pointless, so mark permanent (otherwise it will keep backing off until the lease expires and is reacquired). */
 class OffPeakBoundSessionDeletedError extends OffPeakPermanentDispatchError {
   constructor(readonly sessionId: string) {
     super(`off-peak bound session was deleted: ${sessionId}`);
@@ -27,9 +27,9 @@ class OffPeakBoundSessionDeletedError extends OffPeakPermanentDispatchError {
 }
 
 /**
- * 绑定会话正在跑用户 turn：transient，交给调度器退避重试。
- * 必须在写入会话 mode 之前抛出——CLI 的 session/send 会以 -32010 拒绝，
- * 但 setMode 没有活跃 turn 检查，先写配置再撞忙会把用户会话悄悄切成任务的权限模式。
+ * The bound session is running a user turn: this is transient; let the scheduler retry with backoff.
+ * Throw before writing the session mode: CLI session/send rejects with -32010,
+ * but setMode does not check for an active turn, so writing the config first would silently switch the user's session to the task's permission mode before the busy rejection.
  */
 class OffPeakBoundSessionBusyError extends Error {
   constructor(readonly sessionId: string) {

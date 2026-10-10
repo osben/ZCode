@@ -34,10 +34,10 @@ export function ConversationShareMenu({
       alreadyActive: currentlyActive,
     });
     if (currentlyActive) {
-      // 再次点击不能只切换面板：无法退出分享；复用取消操作清理当前会话的草稿和 dock。
+      // A second click must do more than toggle the panel; otherwise sharing cannot be exited. Reuse the cancel action to clear this conversation’s draft and dock.
       finishSelection(taskId);
     } else {
-      // 首次进入默认全选；面板收起到 timeline，用户可通过左侧 reopen 入口调整范围。
+      // Select all by default on first entry. When the panel collapses to the timeline, users can adjust the scope through the reopen entry on the left.
       setScope(taskId, "partial");
       showTimeline(taskId);
     }
@@ -47,7 +47,7 @@ export function ConversationShareMenu({
     <Button
       type="button"
       variant="ghost"
-      // 分享曾使用更大的热区和独立 mask 缩放；复用相邻工具栏按钮的尺寸与图标规范。
+      // Sharing previously used a larger hit area and a separate mask scale; reuse the size and icon rules of adjacent toolbar buttons.
       size="icon-md"
       className={cn(
         "text-foreground hover:bg-hover hover:text-foreground [app-region:no-drag]",

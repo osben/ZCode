@@ -16,12 +16,12 @@ import { StationMeta } from "./WorkflowStationMeta.js";
 import { stationLampClass } from "./WorkflowTimelineLedge.js";
 
 /**
- * 站头：名字 + 元数据，一枚没有背景的
- * 药丸。没有带时它排在轨道行上、灯的右边；有带时它搬到站台行，
- * 灯留在自己那条轨道上——两处的标记完全一样，所以从 `WorkflowTimeline.tsx` 拆出来共用一份。
+ * Station header: name + metadata, a pill with no background.
+ * Without lanes, it sits on the track row to the right of the light; with lanes, it moves to the platform row while
+ * the light stays on its own track. The marker is identical in both places, so it is shared outside `WorkflowTimeline.tsx`.
  *
- * 不可点的站头是 `span` 而不是禁用的 `button`：浏览器对禁用控件不派发
- * click，整块开关就收不到；span 没有语义，点击照常冒泡。
+ * A non-clickable station header uses `span` rather than a disabled `button`: browsers do not dispatch clicks on disabled controls,
+ * which would prevent the host card toggle from receiving the event. A span has no button semantics and clicks bubble normally.
  */
 export function StationHead({
   caret,
@@ -33,11 +33,11 @@ export function StationHead({
 }: {
   station: TimelineStation;
   name: string;
-  /** 草稿里跟着笔走的光标；其余时候 null。 */
+  /** Cursor that follows the typewriter in a draft; null otherwise. */
   caret: ReactNode;
   foldClass: string;
   title: string;
-  /** 缺席即站头不是控件——点击冒泡给宿主（轮尾摘要的整块开关）。 */
+  /** Absent means the header is not a control; clicks bubble to the host (the whole end-of-turn summary toggle). */
   onSelect?: () => void;
 }) {
   const pending = station.status === undefined || station.status === "pending";
@@ -83,7 +83,7 @@ export function StationHead({
 
 interface RowProps {
   stations: readonly TimelineStation[];
-  /** 站的全名，按下标；草稿里笔只写出前几个字。 */
+  /** Full station names by index; in a draft, the typewriter reveals only the first few characters. */
   fullNames: readonly string[];
   folded: ReadonlySet<number>;
   titleOf: (station: TimelineStation) => string;
@@ -91,8 +91,9 @@ interface RowProps {
 }
 
 /**
- * 轨道行（没有带时）：站头（灯 + 名字 + 元数据）与到下一站的轨道段，一站一格。折到檐上的站只留
- * 轨道段；药丸列不折（用户修订：两侧对称）——它们只随滚动走，在视口真正的边界处渐隐。
+ * Track row (without lanes): station header (light + name + metadata) and track segment to the next station, one cell per station.
+ * A station collapsed onto the ledge keeps only its track segment. Pill columns do not collapse (user revision: symmetric on both sides);
+ * they move with scrolling and fade only at the actual viewport edges.
  */
 export function WorkflowStationRow({
   draft,
@@ -106,7 +107,7 @@ export function WorkflowStationRow({
   top,
   width,
 }: RowProps & {
-  /** 相邻两站之间的轨道段，按 `railKey` 查。 */
+  /** Track segment between adjacent stations, looked up by `railKey`. */
   rails: ReadonlyMap<string, TimelineRail>;
   draft: boolean;
   pen: TypewriterState;
@@ -144,7 +145,7 @@ export function WorkflowStationRow({
             <StationHead
               caret={
                 penHere ? (
-                  // 光标跟着笔：写字时稳住，追上流时闪烁。
+                  // Cursor follows the typewriter: steady while writing and blinking when it catches up with the stream.
                   <span
                     aria-hidden
                     className={cn(
@@ -171,7 +172,7 @@ export function WorkflowStationRow({
                   "wf-ink relative h-0 min-w-3 flex-1 rounded-full border-t border-foreground-subtlest",
                   draft && "wf-rail-grow",
                   rail === undefined && "invisible",
-                  // 行进的段照常画底线，再叠一道不动的光（`.wf-rail-march::after`）：朝着灯渐亮。
+                  // Draw the moving segment's base line as usual, then overlay a stationary light (`.wf-rail-march::after`) that brightens toward the light.
                   rail?.ink === "march" && "wf-rail-march",
                 )}
                 data-rail-from={i}
@@ -189,9 +190,9 @@ export function WorkflowStationRow({
 }
 
 /**
- * 站台行：有带时站头一律搬到轨道下面
- * 这一行，灯留在自己的轨道上，分支轨道的站由一条点状引线接回名字——主线的站不需要，它的灯就在
- * 名字正上方。草稿永远没有带，所以这里不必管笔。
+ * Platform row: with lanes, all station headers move to this row below the tracks while their lights stay on their own tracks.
+ * Branch-track stations connect back to their names with dotted guides; main-line stations need none because their light is directly above the name.
+ * Drafts never have lanes, so the typewriter is not needed here.
  */
 export function WorkflowStationPlatform({
   folded,

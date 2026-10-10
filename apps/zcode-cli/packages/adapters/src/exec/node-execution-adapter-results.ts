@@ -47,7 +47,8 @@ export class NodeExecutionAdapterResults extends NodeExecutionAdapterBase {
         outputLimitExceeded ? "none" : (request.outputLimit?.persistOutput ?? "none"),
       );
     }
-    // 仅对空输出且非零退出进行文件系统诊断，不把正常无输出命令误报为丢失。
+    // Diagnose the filesystem only for empty output with a nonzero exit, so normal commands with no
+    // output are not reported as missing.
     if (result.text === "" && exit.code !== undefined && exit.code !== 0 && exit.code !== 137) {
       const diagnostic = await diagnoseLostBashOutput(file.path);
       if (diagnostic) result = { ...result, text: diagnostic };
@@ -101,7 +102,8 @@ export class NodeExecutionAdapterResults extends NodeExecutionAdapterBase {
       originalPersistOutput === "always"
         ? stream.artifactPath !== undefined
         : originalPersistOutput === "on_truncate" && stream.truncated;
-    // Bash 直写保留完整原始文件；仅通用 pipe 执行在结算时应用 artifact 预算。
+    // Bash direct writes retain the complete raw file; artifact budgets are applied at settlement
+    // only for generic pipe execution.
     if (shouldKeepArtifact && originalMaxArtifactBytes === undefined) return stream;
     if (
       shouldKeepArtifact &&
@@ -115,8 +117,9 @@ export class NodeExecutionAdapterResults extends NodeExecutionAdapterBase {
       try {
         await rm(path, { force: true });
       } catch {
-        // foreground lifecycle 的主结算曾与 artifact 清理耦合，删除异常会让
-        // outcome 永久悬空。清理仅是 best-effort；结果仍按 foreground 契约隐藏冗余路径。
+        // The foreground lifecycle's main settlement was once coupled to artifact cleanup; a delete
+        // failure would leave the outcome pending forever. Cleanup is best effort, and the result
+        // still hides redundant paths under the foreground contract.
       }
     }
     if (
@@ -150,7 +153,8 @@ export class NodeExecutionAdapterResults extends NodeExecutionAdapterBase {
         await handle.close();
       }
     } catch {
-      // 截断失败不能阻塞已经完成的命令；保留真实 artifact 元数据，避免伪报已截断。
+      // Truncation failures must not block a completed command; retain the actual artifact metadata
+      // instead of falsely reporting truncation.
       return stream;
     }
     return {

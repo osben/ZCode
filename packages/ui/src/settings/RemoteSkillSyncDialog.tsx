@@ -1,4 +1,4 @@
-/* eslint-disable max-lines -- 远端 Skill 同步弹窗集中维护加载、选择、预检和结果状态，拆分会增加跨状态传递复杂度。 */
+/* eslint-disable max-lines -- The remote Skill sync dialog centralizes loading, selection, preflight, and result state; splitting it would increase cross-state complexity. */
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Loader2, UploadCloud } from "lucide-react";
 import {
@@ -84,8 +84,8 @@ function formatRemoteSkillSyncError(
   error: unknown,
   intl: Pick<IntlInstance, "formatMessage">,
 ): string {
-  // RPC 原始错误中的字节数和阶段信息不能直接作为用户文案；
-  // 这里只识别稳定错误码，按阶段和当前语言生成可操作提示，其他错误保留原始信息。
+  // Byte counts and phase details from raw RPC errors are not suitable user-facing copy.
+  // Recognize only stable error codes and generate actionable, localized messages by phase; preserve the original text for other errors.
   const normalizedError = normalizeUnknownError(error);
   if (normalizedError.code !== SKILL_SYNC_SIZE_LIMIT_ERROR_CODE) {
     return normalizedError.message;
@@ -271,7 +271,7 @@ export function RemoteSkillSyncDialog(props: RemoteSkillSyncDialogProps) {
   const [importResult, setImportResult] = useState<SkillSyncImportResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const syncInFlightRef = useRef(false);
-  // 加载请求可能跨越语言切换，effect 闭包中的 intl 会过期；错误提示必须读取最近一次渲染的实例。
+  // A load request may span a language change, making the intl in the effect closure stale; error messages must use the latest rendered instance.
   const latestIntlRef = useRef(intl);
   latestIntlRef.current = intl;
 
@@ -421,8 +421,9 @@ export function RemoteSkillSyncDialog(props: RemoteSkillSyncDialogProps) {
           />
         </DialogHeader>
 
-        {/* 筛选会改变可见 rows 数量，DialogContent 固定高度后由列表区内部滚动；
-            否则空态按内容收缩会造成弹窗跳动，长列表也会把底部操作栏挤出窗口。 */}
+        {/* Filtering changes the number of visible rows. Keep DialogContent at a fixed height and
+              scroll within the list; otherwise, the dialog jumps when the empty state shrinks to
+              fit, and long lists push the footer controls out of the window. */}
         <div className="min-h-0 flex-1 overflow-y-auto">
           {error ? (
             <div className="mb-3 rounded-lg border border-destructive/40 bg-surface px-3 py-2 text-ui-base text-destructive">

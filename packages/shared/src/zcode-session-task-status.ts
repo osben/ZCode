@@ -1,6 +1,6 @@
-// ── 旧协议兼容面（过渡期）──────────────────────────────
-// 剩余 1 个导出：deriveZCodeTaskStatusFromSessionSnapshot。
-// 消费者：zcodeTaskServiceAdapter/zcodeTaskIndexSyncer/zcodeSessionProjection（旧投影栈）。
+// ── Legacy protocol compatibility surface (transitional) ──────────────────────────────
+// One remaining export: deriveZCodeTaskStatusFromSessionSnapshot.
+// Consumers: zcodeTaskServiceAdapter/zcodeTaskIndexSyncer/zcodeSessionProjection (legacy projection stack).
 import type { ZCodeSessionStateSnapshot } from "./zcode-protocol/index.js";
 import { getZCodeUserVisibleMessages } from "./zcode-session-visible-content.js";
 import type { ZCodeTaskMeta } from "./zcode-task-types-core.js";
@@ -21,8 +21,8 @@ function hasBlockingActiveSnapshotRuntime(snapshot: ZCodeSessionStateSnapshot): 
   if (snapshot.runtime.activeTurnId || snapshot.runtime.activeTurnKind) {
     return true;
   }
-  // projection.currentTurnId 是最后一次投影的 turn 边界，完成后会保留；
-  // 只有 runtime active 字段、权限或工具调用才能证明当前仍有真实阻塞运行态。
+  // projection.currentTurnId is the boundary of the last projected turn and remains after completion;
+  // Only runtime-active fields, permissions, or tool calls prove that a real blocking runtime state still exists.
   if ((snapshot.projection.pendingPermissions ?? []).length > 0) {
     return true;
   }
@@ -66,9 +66,9 @@ export function deriveZCodeTaskStatusFromSessionSnapshot(
     return status;
   }
   if (hasCompletedVisibleAssistantTurn(snapshot) && !hasBlockingActiveSnapshotRuntime(snapshot)) {
-    // desktop continuous 的 session/read 依赖 runtime projection。
-    // 旧投影有可能只 replay 到 model_streaming finish，漏掉 turn_complete，导致 currentTurnId
-    // 短暂或长期残留。此时持久化 assistant 已有 completed 时间，比 stale currentTurnId 更权威。
+    // Desktop continuous session/read depends on the runtime projection.
+    // A legacy projection may replay only through model_streaming finish and miss turn_complete, leaving currentTurnId
+    // stale temporarily or indefinitely. In that case, the persisted assistant already has a completed timestamp, which is more authoritative than the stale currentTurnId.
     return "completed";
   }
   if (hasActiveSnapshotRuntime(snapshot)) {

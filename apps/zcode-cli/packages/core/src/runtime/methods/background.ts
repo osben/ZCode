@@ -24,19 +24,19 @@ import {
   isTerminalRuntimeTask,
 } from "../../runtime-task/registry.js";
 
-// 停止分派的类型集中在 background-stop-types.ts（供各分支模块共用）；这里 re-export
-// 保持既有 import 路径不变。
+// Stop-dispatch types are defined in background-stop-types.ts for sharing across branch modules; re-export them here
+// to preserve existing import paths.
 export type {
   RuntimeBackgroundStopOptions,
   RuntimeBackgroundStopResult,
 } from "./background-stop-types.js";
 
 /**
- * Session 常驻池的同步权威查询。
+ * Synchronous authoritative query for the Session resident pool.
  *
- * 协议层的 activeAbortController 只覆盖前台 turn，后台 Bash/Agent/Workflow
- * 已经从前台 turn 脱离但仍需要当前 runtime 接收终态与唤醒通知。回收判定必须直接读取
- * runtime task registry，不能从协议投影或 UI 状态猜测。
+ * The protocol-layer activeAbortController covers only foreground turns. Background Bash/Agent/Workflow tasks
+ * have detached from the foreground turn but still need the current runtime to receive terminal states and wake notifications. Reclamation decisions must read
+ * the runtime task registry directly, not infer from protocol projection or UI state.
  */
 export function hasRunningBackgroundTasks(this: AgentRuntimeInternal): boolean {
   return hasRunningBackgroundRuntimeTask(this.runtimeTaskRegistry);
@@ -47,7 +47,7 @@ export async function cancelBackgroundTask(
   taskId: string,
   options: { traceContext?: TraceContext } = {},
 ): Promise<BackgroundTaskCancelResult> {
-  // cancelBackgroundTask 只有 GUI 与后台面板会调（v4 cancelBackgroundWork）：这就是用户的手。
+  // Only the GUI and background panel call cancelBackgroundTask (v4 cancelBackgroundWork); this marks it as a user action.
   const result = await this.stopBackgroundTask(taskId, {
     initiator: "user",
     traceContext: options.traceContext,
@@ -367,7 +367,7 @@ export function buildBackgroundTaskPayload(
     taskId,
     toolCallId: existing?.toolCallId,
     toolName: existing?.toolName,
-    // 此构造器只服务 local Bash stop/update；Agent 终态由 subagent runner 产生。
+      // This constructor serves only local Bash stop/update; the subagent runner produces Agent terminal states.
     taskKind: "bash",
     blocked: existing?.blocked,
     blockedReason: existing?.blockedReason,
@@ -415,8 +415,8 @@ function commandFromRuntimeTask(
   task: RuntimeTaskSnapshot | undefined,
   existing: BackgroundTaskInfo | undefined,
 ): string | undefined {
-  // TaskStop 对 local_agent 返回短 description；旧 projection 的 command
-  // 可能已保存为完整 prompt，因此运行时任务必须先于 existing.command 取值。
+  // TaskStop returns a short description for local_agent; the old projection's command
+  // may already contain the full prompt, so prefer the runtime task before existing.command.
   if (task?.type === "local_agent") return task.description;
   if (!task && existing?.toolName === "Agent") return existing.description;
   if (existing?.command) return existing.command;

@@ -68,7 +68,7 @@ export const personalModelConfigRulesSchema = z
   })
   .strict()
   .superRefine((rules, context) => {
-    // 不能通过最后一次覆盖掩盖矛盾模式；身份用元组编码，避免模型 ID 自带分隔符碰撞。
+    // Do not let the final override conceal a conflicting mode; encode identity as a tuple to avoid collisions with separators in model IDs.
     const smartIds = new Set(
       rules.providerModelRules.map((rule) => JSON.stringify([rule.providerId, rule.modelId])),
     );
@@ -83,7 +83,7 @@ export const personalModelConfigRulesSchema = z
     });
   });
 
-// 身份、模板引用和实例名属于规则，不再成为可向执行配置叠加的叶子。
+// Identity, template references, and instance names belong to the rule and are no longer leaves that can be overlaid onto execution config.
 export const providerConfigRuleSchema = z
   .object({
     providerId: idSchema,

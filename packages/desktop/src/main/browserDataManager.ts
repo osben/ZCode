@@ -100,8 +100,9 @@ export async function importChromeBrowserData(options: {
         options.chromeExecutableDiscovery ?? (() => resolveChromeExecutablePath({ platform }))
       )()) ?? undefined;
     if (!detectedChromeExecutablePath) {
-      // 过去会先扫描默认 Profile，导致“Chrome 未安装”被误报为 Profile 缺失，
-      // 也无法识别注册在非默认目录的浏览器。先完成可执行文件发现，失败时不访问源数据。
+      // Scanning the default Profile first caused "Chrome is not installed" to be reported as a
+      // missing Profile and failed to recognize browsers registered outside the default directory.
+      // Discover the executable first; do not access source data if discovery fails.
       return emptyImportResult("chrome_executable_not_found");
     }
   }
@@ -189,15 +190,15 @@ export async function importChromeBrowserData(options: {
     return result;
   } catch (error) {
     if (error instanceof ChromeCookieAccessDeniedError) {
-      // macOS 用户拒绝钥匙串授权后，导入必须作为一个整体停止，不能再进入
-      // LocalStorage 阶段；返回稳定错误码给 renderer 展示明确提示。
+      // If a macOS user denies Keychain authorization, the import must stop as a whole and must not
+      // continue to the LocalStorage phase. Return a stable error code so the renderer can show a clear message.
       options.logger.warn("[browser-data] Chrome 数据导入已取消：macOS 钥匙串授权被拒绝");
       return {
         ...result,
         error: "chrome_cookie_access_denied",
       };
     }
-    // 只记录错误类型/错误码，不记录 Cookie、LocalStorage 值或绝对 Profile 路径。
+    // Log only the error type/code; never log Cookie or LocalStorage values or an absolute Profile path.
     options.logger.warn("[browser-data] Chrome 数据导入失败", toSafeBrowserDataError(error));
     return {
       ...result,
@@ -219,7 +220,7 @@ export async function clearEmbeddedBrowserData(options: {
     if (options.mode === "all") {
       await targetSession.clearStorageData();
     } else {
-      // 普通缓存清理不能删除承载登录态的 LocalStorage/IndexedDB。
+      // Ordinary cache cleanup must not delete LocalStorage/IndexedDB, which hold the login state.
       await targetSession.clearStorageData({ storages: CACHE_STORAGE_TYPES });
     }
     options.logger.info("[browser-data] 内置浏览器数据清理完成", { mode: options.mode });

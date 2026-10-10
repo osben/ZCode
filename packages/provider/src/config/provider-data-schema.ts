@@ -74,7 +74,7 @@ export const providerApiDataSchema = z
     baseUrl: z.string().url().nullable().optional(),
   })
   .strict();
-// Personal 允许暂存编辑中的 endpoint；完整 schema 仍拒绝，且只影响该 Provider 的准入。
+// Personal may temporarily store an endpoint while it is being edited; the full schema still rejects it, and admission is affected only for that Provider.
 export const personalProviderApiDataSchema = providerApiDataSchema.extend({
   baseUrl: z.string().nullable().optional(),
 });

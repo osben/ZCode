@@ -1,4 +1,4 @@
-/* eslint-disable max-lines -- 已发布旧 Provider store 只在单向 importer 边界建模。 */
+/* eslint-disable max-lines -- The released legacy Provider store is modeled only at the one-way importer boundary. */
 import { z } from "zod";
 
 export interface ClaudeModelMapping {
@@ -9,25 +9,25 @@ export interface ClaudeModelMapping {
 }
 
 /**
- * 各 ZCode Agent Provider 的模型槽位映射（按 provider 区分）。
- * 目前只实现 claude，后续扩展其他 provider 时在此加字段。
+ * Model slot mapping for each ZCode Agent Provider (distinguished by provider).
+ * Only claude is implemented now; add fields here when extending to other providers.
  */
 export interface ProviderModelMappings {
   [provider: string]: unknown;
-  /** @deprecated Claude 槽位不再写入 v2 provider store，仅用于读取旧配置后迁移清理。 */
+  /** @deprecated Claude slots are no longer written to the v2 provider store; retained only to read and clean up legacy config during migration. */
   claude?: ClaudeModelMapping;
 }
 
 export interface ModelProviderEndpoints {
-  /** @deprecated 仅用于读取旧 provider 配置；新 store 使用 baseURL + paths。 */
+  /** @deprecated Read only from legacy provider config; the new store uses baseURL + paths. */
   anthropic?: string;
-  /** @deprecated 仅用于读取旧 provider 配置；新 store 使用 baseURL + paths。 */
+  /** @deprecated Read only from legacy provider config; the new store uses baseURL + paths. */
   openai?: string;
-  /** @deprecated Gemini custom provider 已统一走 endpoints.openai + compat，仅保留旧数据兼容读取。 */
+  /** @deprecated Gemini custom providers now use endpoints.openai + compat; retained only to read legacy data compatibly. */
   gemini?: string;
-  /** v2 catalog endpoint base URL；旧字段保留给迁移期 UI/连通性代码读取。 */
+  /** v2 catalog endpoint base URL; legacy field retained for migration-period UI/connectivity code. */
   baseURL?: string;
-  /** v2 catalog endpoint paths，key 使用公开 runtime kind。 */
+  /** v2 catalog endpoint paths; keys use the public runtime kind. */
   paths?: Partial<Record<ModelProviderKind, string>>;
 }
 
@@ -101,11 +101,11 @@ export type ModelProviderSystemDisabledReason =
 export interface ModelProviderConfig {
   id: string;
   name: string;
-  /** 缺省等同启用；false 时仅从聊天框模型列表隐藏，不删除供应商配置。 */
+  /** Defaults to enabled; false hides it only from the chat model list and does not delete provider config. */
   enabled?: boolean;
   /**
-   * 系统自动关闭 provider 的原因。enabled=false 且该字段为空时表示用户手动关闭，
-   * 后续权益校验成功也不能自动打开。
+   * Reason the system automatically disabled the provider. When enabled=false and this field is empty, the user disabled it manually,
+   * so later successful entitlement checks must not turn it back on.
    */
   systemDisabledReason?: ModelProviderSystemDisabledReason;
   endpoints: ModelProviderEndpoints;
@@ -121,9 +121,9 @@ export interface ModelProviderConfig {
   apiKeyUrl?: string;
   models: ModelProviderModelEntry[];
   defaultKind?: ModelProviderKind;
-  /** @deprecated 旧模型显示名 map 只用于 v1 自动迁移。 */
+  /** @deprecated Legacy model display-name map, used only for v1 automatic migration. */
   modelDisplayNames?: Record<string, string>;
-  /** @deprecated 旧模型格式 map 只用于 v1 自动迁移。 */
+  /** @deprecated Legacy model format map, used only for v1 automatic migration. */
   modelSupportedFormats?: Record<string, ModelProviderSupportedFormat[]>;
   providerMappings?: ProviderModelMappings;
   createdAt: number;
@@ -310,14 +310,14 @@ export function stripLegacyClaudeProviderMappings(
     return undefined;
   }
   const { claude: _legacyClaudeMapping, ...remainingMappings } = providerMappings;
-  // v2 store 不再持久化旧 Claude 槽位，但 providerMappings 本身要保留给
-  // 后续 ZCode CLI 等 provider 的槽位配置；这里只删历史子字段，未知后续 key 原样保留。
+  // The v2 store no longer persists legacy Claude slots, but providerMappings must remain for future slot configuration
+  // for providers such as ZCode CLI; remove only historical child fields here and preserve unknown future keys unchanged.
   return remainingMappings;
 }
 
 export const MODEL_PROVIDER_NEW_MODEL_CONTEXT_WINDOW = 200_000;
-// 老配置和缺 metadata 的模型没有可靠 catalog 事实时，应和设置页新增模型
-// 使用同一个保守默认值，避免 agent registry 与 UI 新增模型出现 128k/200k 分歧。
+// When legacy config or a model without metadata has no reliable catalog facts, use the same conservative default as models added in the settings UI
+// to avoid 128k/200k disagreements between the agent registry and the UI.
 const LEGACY_MODEL_CONTEXT_WINDOW = MODEL_PROVIDER_NEW_MODEL_CONTEXT_WINDOW;
 
 export function resolveModelProviderContextWindow(contextWindow: number | undefined): number {
@@ -344,8 +344,8 @@ export function getModelProviderModelIds(
 
   return (
     provider.models
-      // 模型删除现在以 tombstone 保留在 provider.models 中用于持久化和远端合并；
-      // 所有可选/下发模型目录都必须把 tombstone 当成不存在，避免聊天框和 CLI 继续看到已删模型。
+      // Model deletion now retains a tombstone in provider.models for persistence and remote merging;
+      // all selectable/distributed model catalogs must treat tombstones as absent so deleted models do not remain visible in chat or the CLI.
       .filter((model) => !isModelProviderModelConfig(model) || model.deleted !== true)
       .map((model) => (isModelProviderModelConfig(model) ? model.id.trim() : model.trim()))
       .filter((modelId) => modelId.length > 0)
@@ -512,8 +512,8 @@ function collapseDuplicatedAbsoluteRuntimeBaseUrl(value: string): string {
     const firstUrl = normalized.slice(0, secondMarkerIndex).replace(/\/+$/, "");
     const secondUrl = normalized.slice(secondMarkerIndex).replace(/\/+$/, "");
     if (firstUrl === secondUrl) {
-      // 旧设置页保存时可能把 runtime baseURL 当作 path 再拼一次，
-      // 形成 https://host/path/https://host/path；这里只折叠完全重复的安全形态。
+      // The old settings page may append runtime baseURL as a path a second time,
+      // producing https://host/path/https://host/path; collapse only this exact duplicated safe form.
       return firstUrl;
     }
   } catch {
@@ -530,8 +530,8 @@ function joinBaseUrlAndPath(baseURL: string, path: string): string {
     return trimmedBase;
   }
   if (isAbsoluteHttpUrl(trimmedPath)) {
-    // 旧 endpoints.paths 可能已保存成完整 runtime baseURL。
-    // 这种情况下不能再叠加 endpoints.baseURL，否则会写回重复 URL。
+    // Legacy endpoints.paths may already contain the full runtime baseURL.
+    // Do not prepend endpoints.baseURL in that case, or a duplicated URL will be written back.
     return trimmedPath;
   }
   if (!trimmedBase) {
@@ -552,8 +552,8 @@ export function normalizeModelProviderBaseUrlForKind(
 ): string {
   const suffixes: Record<ModelProviderKind, string[]> = {
     anthropic: ["/v1/messages", "/messages"],
-    // OpenAI Responses 的 SDK baseURL 通常包含 /v1，运行时只会追加 /responses。
-    // 不能把 /v1/responses 整段剥掉，否则用户填写 https://host/v1 会被展示/落盘成 https://host。
+    // The OpenAI Responses SDK baseURL usually includes /v1, and runtime appends only /responses.
+    // Do not strip the full /v1/responses suffix; otherwise a user-entered https://host/v1 would be displayed/persisted as https://host.
     openai: ["/responses"],
     "openai-compatible": ["/chat/completions"],
   };
@@ -568,8 +568,8 @@ export function normalizeModelProviderBaseUrlForKind(
 }
 
 export function normalizeModelProviderConfiguredBaseUrl(baseURL: string): string {
-  // 设置页和 config.json 的 Base URL 是用户显式配置值，不能按 API 格式
-  // 自动删除 /v1、/responses 或 /chat/completions 等路径段；这里只做安全的重复 URL 折叠和收尾清理。
+  // Base URLs in the settings page and config.json are explicit user values, so do not automatically remove path segments
+  // such as /v1, /responses, or /chat/completions based on the API format; only collapse safe duplicate URLs and clean up trailing separators.
   return collapseDuplicatedAbsoluteRuntimeBaseUrl(baseURL).replace(/\/+$/, "");
 }
 
@@ -582,14 +582,14 @@ export function resolveModelProviderRuntimeBaseUrl(
   if (!provider.endpoints.baseURL?.trim() && !provider.endpoints.paths) {
     return "";
   }
-  // baseURL 只是公共前缀，只有 paths 显式声明的 kind 才代表可用协议。
-  // 否则 OpenAI-only provider 会被错误探测/同步成 Anthropic 可用。
+  // baseURL is only a shared prefix; only kinds explicitly declared in paths represent supported protocols.
+  // Otherwise, OpenAI-only providers could be incorrectly detected/synced as supporting Anthropic.
   if (paths[kind] === undefined) {
     return "";
   }
-  // catalog 的 baseURL + path 表示完整请求地址，而 OpenAI/Anthropic
-  // runtime SDK 接收的是 API base URL，会自行追加 /chat/completions、/responses 或 /messages。
-  // 若直接透传完整请求地址，真实发送会拼成 .../chat/completions/chat/completions。
+  // The catalog's baseURL + path is a complete request URL, while OpenAI/Anthropic
+  // runtime SDKs expect an API base URL and append /chat/completions, /responses, or /messages themselves.
+  // Passing the complete request URL through would produce .../chat/completions/chat/completions on the actual request.
   return normalizeModelProviderBaseUrlForKind(joinBaseUrlAndPath(baseURL, paths[kind] ?? ""), kind);
 }
 
@@ -671,8 +671,8 @@ export function migrateLegacyModelProviderConfig(
   provider: z.infer<typeof legacyModelProviderConfigSchema>,
 ): ModelProviderConfig {
   const defaultKind = resolveLegacyModelProviderDefaultKind(provider);
-  // 旧 provider 可能同时配置 Anthropic 与 OpenAI，迁移阶段先保留历史路径，
-  // 后续服务层存储边界会按 OpenCode runtime config 收敛为单一 kind。
+  // A legacy provider may configure both Anthropic and OpenAI. Preserve historical paths during migration;
+  // the service storage boundary will later converge on one kind according to OpenCode runtime config.
   const legacyEntries: Array<[ModelProviderKind, string]> = [];
   const anthropicEndpoint = provider.endpoints.anthropic?.trim();
   if (anthropicEndpoint) {
@@ -784,8 +784,8 @@ export function resolveModelProviderApiFormat(
     return resolveModelProviderKindApiFormat(provider.defaultKind);
   }
 
-  // 旧迁移数据可能同时声明多个协议，未显式 defaultKind/apiFormat 时
-  // 仍按 Anthropic-compatible 主链路优先，避免 Claude 语义 provider 被误切到 OpenAI。
+  // Legacy migration data may declare multiple protocols. Without an explicit defaultKind/apiFormat,
+  // continue to prefer the Anthropic-compatible primary path so Claude-oriented providers are not switched to OpenAI by mistake.
   if (provider.endpoints.paths?.anthropic !== undefined) {
     return "anthropic-messages";
   }
@@ -801,4 +801,4 @@ export function resolveModelProviderApiFormat(
   return "anthropic-messages";
 }
 
-/** 连通性测试错误分类 */
+/** Connectivity test error category. */

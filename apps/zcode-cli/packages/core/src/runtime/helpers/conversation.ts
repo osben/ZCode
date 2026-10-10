@@ -46,8 +46,8 @@ export function findLatestRealUserMessageIndex(
 ): number {
   for (let index = messages.length - 1; index >= 0; index--) {
     const message = messages[index]!;
-    // provider projection 会在剥离 metadata 前传入 latest real user 的 request-local index。
-    // 这里仅作为缺失该 index 时的兜底，避免把用户输入的 literal meta tag 当成 runtime meta。
+    // Provider projection passes the request-local index of the latest real user before stripping metadata.
+    // Use this only as a fallback when that index is absent, preventing a literal meta tag in user input from being treated as runtime metadata.
     if (message.role === "user" && !isMetaUserContextMessage(message)) {
       return index;
     }
@@ -71,7 +71,7 @@ export function buildUserContentFromTurn(
   if (attachments.length === 0) return input;
 
   const blocks: ModelMessageContentBlock[] = [];
-  // video 跟随正文，避免影响既有非粘贴 image/@file/url 的顺序。
+  // Keep video after the body so existing ordering of non-pasted image/@file/url attachments remains unchanged.
   const videoBlocks: ModelMessageContentBlock[] = [];
   const pastedImageBlocks: ModelMessageContentBlock[] = [];
   for (const attachment of attachments) {
@@ -227,8 +227,8 @@ function promptAttachmentInputForResolvedAttachment(
     return {
       content: attachment.contentBlock.text,
       kind: "file",
-      // provider-visible 的 Read 输入要和用户提交的附件引用一致。
-      // local file 的 filename 只是展示名；只有缺少 source 时才用它兜底，避免 live/hydrate 轨迹漂移。
+      // Provider-visible Read input must match the attachment reference submitted by the user.
+      // A local file's filename is only a display name; use it as a fallback only when source is missing to prevent live/hydrated traces from diverging.
       label: attachment.source.text.value ?? attachment.filename,
       preview: attachment.metadata.preview,
     };

@@ -13,7 +13,7 @@ export interface AiSdkToolTransformOptions {
   supportsNativeWebSearch?: boolean;
   providerKind?: "openai" | "anthropic" | "openai-compatible" | "gateway" | "custom";
 
-  /** 本次请求的模型 id，仅用于首方 strict 资格判定；缺席即不启用 strict。 */
+  /** Model ID for this request, used only to determine first-party strict eligibility; strict is disabled when absent. */
   modelId?: string;
 }
 
@@ -79,8 +79,10 @@ export function toAiSdkTools(
 }
 
 /**
- * contract 声明 strict、provider 能力匹配、模型具备首方资格且 schema 可表达时，返回严格 schema；
- * 任一条件不满足都返回 undefined，调用方继续发送原 schema，避免兼容端收到陌生字段或非法形状。
+ * Return a strict schema when the contract declares strict, provider capabilities match, the model
+ * is eligible as a first-party model, and the schema is representable. If any condition fails,
+ * return undefined so the caller sends the original schema and compatible providers do not receive
+ * unknown fields or invalid shapes.
  */
 function resolveStrictToolSchema(
   contract: ModelToolContract,
@@ -140,8 +142,9 @@ function hoistLocalJsonSchemaRefsToDefs(toolName: string, schema: JsonSchema): J
     hoistedDefs[defKey] = rewriteJsonSchemaRefs(resolveLocalJsonPointer(schema, ref), defKeyByRef);
   }
 
-  // MCP schema 会复用 #/properties/...，但 K3 只接受 #/$defs/...。
-  // 在模型适配边界复制引用目标并改写引用，既不修改原 tool contract，也不影响其他模型。
+  // MCP schemas reuse #/properties/..., but K3 accepts only #/$defs/.... Copy the referenced target
+  // and rewrite the reference at the model adapter boundary, without changing the original tool
+  // contract or affecting other models.
   return {
     ...rewrittenRoot,
     $defs: {

@@ -10,8 +10,9 @@ import {
 } from "./agent-trace-support.js";
 
 /**
- * 外部语义约定只在这里投影。`zcode.*` 始终是内部查询的权威字段；
- * GenAI、标准 HTTP/Server 字段只用于兼容外部分析工具，避免标准漂移侵入 Writer API。
+ * Project external semantic conventions only here. `zcode.*` remains authoritative for internal
+ * queries; GenAI and standard HTTP/Server fields exist only for compatibility with external
+ * analysis tools, keeping convention drift out of the Writer API.
  */
 export function toolCompatibilityAttributes(input: {
   toolCallId: string;

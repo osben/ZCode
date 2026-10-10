@@ -29,9 +29,10 @@ const storage: StorageManagementBridge = {
 };
 
 /**
- * 资源管理器窗口专用 preload —— 资源快照拉取 + 存储管理命令面。
- * 不需要 MessagePort 转发，因为资源管理器窗口不使用 RPC 服务，也不接入桌面 continuous 主链路；
- * 存储服务由 main 持有，这里只是 ipc 桥。
+ * Dedicated preload for the resource manager window, exposing resource snapshot reads and storage
+ * management commands.
+ * It does not need MessagePort forwarding because the resource manager uses no RPC services and does not
+ * join the desktop continuous main channel. Main owns the storage service; this is only an IPC bridge.
  */
 contextBridge.exposeInMainWorld("resourceManager", {
   setSamplingActive: (active: boolean): void =>

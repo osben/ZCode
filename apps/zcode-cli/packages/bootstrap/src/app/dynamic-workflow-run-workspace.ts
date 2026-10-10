@@ -1,24 +1,23 @@
 // ============================================================
-// 工作区 transcript 的读面（DynamicWorkflowRunPort 的两个 workspace 方法的实现体）
+// Read surface for the workspace transcript (implementations of the two workspace methods on DynamicWorkflowRunPort).
 // ============================================================
 //
-// 一个 run 的 `files.*` / `git.*` / `world.run` 调用在 journal 里是 `kind ∈ {world-read,
-// world-run}` 的 `dwf_node` 行：`input_json`（迁移 0030）是 op 与实参，`result_json` 是正文。
-// UI 把它们回放成工具卡片——清单（不带正文）先来，正文展开时才取。
+// A run's `files.*` / `git.*` / `world.run` calls are `dwf_node` rows with `kind ∈ {world-read,
+// world-run}` in the journal: `input_json` (migration 0030) contains the operation and arguments; `result_json` is the body.
+// The UI replays them as tool cards: first the manifest (without bodies), then fetches each body when expanded.
 //
-// 从 dynamic-workflow-run-service.ts 拆出（那个文件已在 max-lines 的既有欠账里），与产物的
-// artifact-read.ts 同一条理由。
+// Split from dynamic-workflow-run-service.ts (already over its max-lines limit), for the same reason as artifact-read.ts.
 //
-// **授权链**（与 readArtifact 同一条纪律，两条查询都走）：
+// **Authorization chain** (same invariant as readArtifact; both queries follow it):
 //
-//   调用方给的 runId
-//        ├─① dwf_run 行存在吗？                              否 ⇒ undefined
-//        ├─② 该行的 parent_session_id == 本服务的父会话吗？   否 ⇒ undefined
-//        └─③ 才碰节点行
+//   Caller-provided runId
+//        ├─① Does a dwf_run row exist?                              No ⇒ undefined
+//        ├─② Does its parent_session_id match this service's parent session? No ⇒ undefined
+//        └─③ Only then access node rows
 //
-// 清单也授权而不只正文：`files.read` 的正文是工作区文件内容，而清单上的 args 已经是路径与
-// 命令行——两者对「不是你的 run」都不该放行。三种拒绝归一成 undefined（网关归一成空清单 /
-// not found），不告诉一个越权的调用方它猜对了哪一半。
+// Authorize the manifest as well as the body: the body of `files.read` contains workspace file content, while manifest args already contain paths
+// and command lines. Neither should be exposed for a run the caller does not own. Normalize all three rejections to undefined (the gateway maps this to an empty manifest /
+// not found), so an unauthorized caller cannot learn which check it guessed correctly.
 
 import type { DwfRunIntrospectionQueries, DwfWorldNodeRow } from "@zcode/adapters/storage";
 import type {
@@ -30,37 +29,37 @@ import type {
 } from "@zcode/contracts";
 import type { JournalStorePort, NodeRecord } from "@zcode/dynamic-workflow";
 
-/** 失败信息的展示长度（= 协议侧 `WORKFLOW_WORKSPACE_LIMITS.maxErrorMessageLength`）。 */
+/** Display length for failure messages (= protocol-side `WORKFLOW_WORKSPACE_LIMITS.maxErrorMessageLength`). */
 const ERROR_MESSAGE_MAX_CHARS = 2000;
 
 /**
- * 带工作区读面的 journal。签名的唯一来源是 adapters 的 {@link DwfRunIntrospectionQueries}
- * （`import type`，运行时零依赖）——与产物读面同一条论证：`listWorldNodes` 不在引擎的
- * {@link JournalStorePort} 上（引擎从不按 kind 枚举节点），只能靠能力探测接上。
+ * Journal with the workspace-read surface. The sole source of the signature is adapters' {@link DwfRunIntrospectionQueries}
+ * (`import type`, zero runtime dependency). As with the artifact read surface, `listWorldNodes` is not on the engine's
+ * {@link JournalStorePort} (the engine never enumerates nodes by kind), so this is connected through capability detection.
  */
 interface WorkspaceReadableJournal
   extends JournalStorePort, Pick<DwfRunIntrospectionQueries, "listWorldNodes"> {}
 
-/** journal 是否带工作区读面。刻意是 `supportsArtifactReads` 的兄弟而不是把它扩宽（同一条论证）。 */
+/** Whether the journal provides workspace reads. Deliberately a sibling of `supportsArtifactReads`, not an expansion of it (same rationale). */
 function supportsWorkspaceReads(journal: JournalStorePort): journal is WorkspaceReadableJournal {
   return typeof (journal as Partial<DwfRunIntrospectionQueries>).listWorldNodes === "function";
 }
 
 interface WorkflowWorkspaceReadDeps {
   journal: JournalStorePort;
-  /** 本服务的父会话（= 本 app 的会话）。授权链第 ② 步的比对对象。 */
+  /** This service's parent session (= this app's session), used for authorization step ②. */
   parentSessionId: string;
 }
 
-/** 授权链 ①②。`getRun` 在引擎端口上，不需要内省能力探测。 */
+/** Authorization steps ①②. `getRun` is on the engine port, so no introspection capability detection is needed. */
 function authorizeRun(deps: WorkflowWorkspaceReadDeps, runId: string): boolean {
   const run = deps.journal.getRun(runId);
   if (run === undefined) return false;
-  // parent_session_id 为 NULL 的老行**不放行**：「无从判定」不是「判定通过」。
+  // **Do not allow** legacy rows with NULL parent_session_id: "cannot determine" does not mean "authorized."
   return run.parentSessionId !== undefined && run.parentSessionId === deps.parentSessionId;
 }
 
-/** 工作区 transcript 的清单：world 行按落库先后，不带正文。 */
+/** Workspace transcript manifest: world rows in insertion order, without their bodies. */
 export async function listWorkspaceNodesFrom(
   deps: WorkflowWorkspaceReadDeps,
   runId: string,
@@ -91,7 +90,7 @@ function toWorkspaceNode(row: DwfWorldNodeRow): DynamicWorkflowRunWorkspaceNode 
   };
 }
 
-/** 存储层在库内算好的摘要 → 端口形状；只有结算成功（有正文）的行才有。 */
+/** Convert the summary computed in storage into the port shape; only successfully settled rows (with a body) have one. */
 function summaryOf(row: DwfWorldNodeRow): DynamicWorkflowRunWorkspaceNodeSummary | undefined {
   if (row.status !== "completed" || row.resultBytes === undefined) return undefined;
   return {
@@ -103,7 +102,7 @@ function summaryOf(row: DwfWorldNodeRow): DynamicWorkflowRunWorkspaceNodeSummary
   };
 }
 
-/** journal 的 `WorkflowErrorJson` → 端口的 code + message（其余字段不出端口；message 切尾）。 */
+/** Convert journal `WorkflowErrorJson` into the port's code + message (other fields stay internal; truncate the message at the end). */
 function toRunError(error: { code: string; message: string }): DynamicWorkflowRunError {
   const message =
     error.message.length > ERROR_MESSAGE_MAX_CHARS
@@ -112,7 +111,7 @@ function toRunError(error: { code: string; message: string }): DynamicWorkflowRu
   return { code: error.code, message };
 }
 
-/** 一个节点的正文，按 `query.maxBytes` 保形有界化。 */
+/** One node body, shape-preserving and bounded by `query.maxBytes`. */
 export async function readWorkspaceNodeResultFrom(
   deps: WorkflowWorkspaceReadDeps,
   runId: string,
@@ -148,20 +147,20 @@ function toNodeResult(node: NodeRecord, maxBytes: number): DynamicWorkflowRunWor
   };
 }
 
-// ── 保形有界化 ──────────────────────────────────────────────────────────────
-// 引擎侧 `WORLD_READ_CAPS` 的政策是「溢出即拒绝、绝不截断后加个标志位」——那是脚本的取数面，
-// 半份 grep 结果会让脚本做错决定。这里是审计面：一张卡片要的是「跑了什么、前几百行是什么」，
-// 截断并**说明**截断（`truncated` + `totalBytes`）比一个「太大读不了」有用得多。
+// ── Shape-preserving bounds ─────────────────────────────────────────────────
+// The engine-side `WORLD_READ_CAPS` policy is "reject on overflow; never truncate and add a flag"—that is the script's data surface,
+// where half a grep result could lead it to a wrong decision. This is the audit surface: a card needs to show what ran and the first few hundred lines.
+// Truncating and **indicating** truncation (`truncated` + `totalBytes`) is more useful than saying the result is too large to read.
 
 function utf8ByteLength(text: string): number {
   return Buffer.byteLength(text, "utf8");
 }
 
-/** 把字符串切到 ≤ maxBytes 个 UTF-8 字节，不切在代理对中间。 */
+/** Truncate a string to ≤ maxBytes UTF-8 bytes without splitting a surrogate pair. */
 function truncateUtf8(text: string, maxBytes: number): string {
   if (utf8ByteLength(text) <= maxBytes) return text;
   const bytes = Buffer.from(text, "utf8").subarray(0, Math.max(0, maxBytes));
-  // 去掉尾部不完整的多字节序列：decode 会把它换成 U+FFFD，我们宁可少一个字符。
+  // Remove an incomplete trailing multibyte sequence: decode would replace it with U+FFFD, so we prefer to omit one character.
   let end = bytes.length;
   while (end > 0 && (bytes[end - 1]! & 0b1100_0000) === 0b1000_0000) end -= 1;
   if (end > 0 && (bytes[end - 1]! & 0b1100_0000) === 0b1100_0000) end -= 1;
@@ -169,11 +168,11 @@ function truncateUtf8(text: string, maxBytes: number): string {
 }
 
 /**
- * 按正文形状有界化：
- * - 字符串（read / diff / status）：切尾；
- * - 数组（glob / grep / changedFiles / log）：逐项累加，放不下的去尾；
- * - `world.run` 的 `{exitCode, stdout, stderr}`：exitCode 恒保留，两路输出各分一半预算；
- * - 其它：序列化后不超限原样，超限退化成切尾的 JSON 文本（形状已不可保）。
+ * Bound content according to its shape:
+ * - Strings (read / diff / status): truncate the end.
+ * - Arrays (glob / grep / changedFiles / log): add items in order and drop those that do not fit.
+ * - `world.run`'s `{exitCode, stdout, stderr}`: always preserve exitCode and split the remaining budget evenly between both output streams.
+ * - Other values: return unchanged if serialization fits; otherwise fall back to truncated JSON text (the shape can no longer be preserved).
  */
 function boundWorkspaceResult(
   result: unknown,
@@ -188,7 +187,7 @@ function boundWorkspaceResult(
   }
   if (Array.isArray(result)) {
     const kept: unknown[] = [];
-    let used = 2; // 方括号
+    let used = 2; // Square brackets.
     for (const item of result) {
       const itemBytes = utf8ByteLength(JSON.stringify(item) ?? "null") + 1;
       if (used + itemBytes > maxBytes) break;
@@ -202,7 +201,7 @@ function boundWorkspaceResult(
     const budget = Math.max(0, maxBytes - overhead);
     const stderrWant = utf8ByteLength(result.stderr);
     const stdoutWant = utf8ByteLength(result.stdout);
-    // 各分一半；一路用不完的余额让给另一路。
+    // Split the budget evenly; let the other stream use any remainder.
     const stderrBudget = Math.min(stderrWant, Math.max(budget >> 1, budget - stdoutWant));
     const stdoutBudget = Math.max(0, budget - stderrBudget);
     return {

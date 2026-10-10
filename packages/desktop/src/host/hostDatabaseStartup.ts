@@ -60,7 +60,7 @@ export function createHostDatabaseStartup(options: {
           : [options.cwd];
         const directories = new Set<string>();
         for (const candidate of candidates) {
-          // 历史项目 ENOTDIR/无权限不是数据库失败；与普通 Agent 使用同一 cwd 选择规则。
+          // ENOTDIR/permission errors in legacy projects are not database failures; use the same cwd selection rules as a regular Agent.
           const { cwd } = await resolveZCodeAgentSpawnCwd({
             requestedCwd: candidate,
             workspacePath: candidate,
@@ -68,7 +68,7 @@ export function createHostDatabaseStartup(options: {
           });
           directories.add(cwd);
         }
-        // 相对 sessionDbPath 按实际进程 cwd 解析；不能先准备 fallback 下的另一个空库。
+        // Resolve a relative sessionDbPath against the actual process cwd; do not prepare a different empty database under the fallback first.
         const pendingDirectories = [...directories];
         for (const [index, cwd] of pendingDirectories.entries())
           await prepareSessionStorage({
@@ -90,7 +90,7 @@ export function createHostDatabaseStartup(options: {
         try {
           options.onFailure(error);
         } catch {
-          /* 诊断失败不覆盖原始错误。 */
+          /* Diagnostic failures must not replace the original error. */
         }
         throw error;
       } finally {

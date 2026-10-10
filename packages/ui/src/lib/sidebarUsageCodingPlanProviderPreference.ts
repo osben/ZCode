@@ -38,8 +38,8 @@ function getLocalStorage(): Storage | null {
   try {
     return window.localStorage;
   } catch (error) {
-    // WebView 隐私模式或移动端远控容器可能禁用 localStorage。
-    // 这里只影响 footer 的 provider 选择记忆，失败时降级为本次默认选择即可。
+    // WebView private mode or a mobile remote-control container may disable localStorage.
+    // This affects only the footer's remembered provider choice, so fall back to this session's default when persistence fails.
     logger.warn("[sidebarUsageCodingPlanProviderPreference] localStorage 不可用", {
       error: error instanceof Error ? error.message : String(error),
     });

@@ -37,13 +37,13 @@ interface DownloadOptions {
   destination: string;
   sha256: string;
   expectedSizeBytes?: number;
-  /** 无数据活动时的超时；收到数据后会重新计时。 */
+  /** Timeout for inactivity; reset whenever data arrives. */
   timeoutMs?: number;
-  /** 可选的总时长上限；未提供时按 expectedSizeBytes 动态计算。 */
+  /** Optional overall timeout; when omitted, calculate it dynamically from expectedSizeBytes. */
   overallTimeoutMs?: number;
-  /** 短暂网络错误的最大尝试次数，默认为 3。 */
+  /** Maximum retry attempts for transient network errors; defaults to 3. */
   maxAttempts?: number;
-  /** 重试基础退避时长，主要供测试或诊断缩短。 */
+  /** Base retry backoff duration, mainly to shorten retries in tests or diagnostics. */
   retryDelayMs?: number;
 }
 

@@ -1,21 +1,21 @@
-/* 官方 Server MCP 在 tool 调用被拦截 / 失败时下发的结构化标识。
+/* Structured identifiers returned by the official Server MCP when a tool call is blocked or fails.
  *
- * 服务端把它渲染成 **tool error content 的 JSON 文本**（不是 `_meta`）：
+ * The server renders this as **JSON text in tool error content** (not `_meta`):
  * `{"error_code":"quota_exceeded","message":"...","request_id":"..."}`
- * 见 zcode-server `internal/domain/servermcp/toolerror.go` 的 `ToolError.Error()`。
+ * See `ToolError.Error()` in zcode-server's `internal/domain/servermcp/toolerror.go`.
  *
- * 放在 shared 是因为有三个分属不同包的消费者：
- * - `apps/zcode-cli/packages/core`：解析 MCP 结果，把 code 带进 tool result display；
- * - `packages/shared/src/zcode-protocol-v4/rows.ts`：row schema 校验该 code；
- * - `packages/ui`：按 code 决定输入框上方提示的文案与动作。
- * 三处必须同源，否则新增 code 时会出现一侧识别、另一侧丢弃。
+ * It lives in shared because it has three consumers in separate packages:
+ * - `apps/zcode-cli/packages/core`: parses MCP results and passes the code to the tool result display;
+ * - `packages/shared/src/zcode-protocol-v4/rows.ts`: validates the code in the row schema;
+ * - `packages/ui`: selects the copy and action for the prompt above the input based on the code.
+ * All three must use the same source; otherwise, adding a code could make one side recognize it while another drops it.
  */
 
 /**
- * 客户端会据此改变界面行为的 code。
+ * Codes that cause the client to change UI behavior.
  *
- * 服务端还有 `internal_error`，**故意不在这里**：它是"其它一切失败"的兜底掩码
- * （详情只留在服务端日志），用户无法自助解决，不该弹提示。
+ * The server also has `internal_error`, **intentionally omitted here**: it is the fallback mask for "all other failures"
+ * (details stay in server logs). Users cannot resolve it themselves, so it should not trigger a prompt.
  */
 export const OFFICIAL_MCP_TOOL_ERROR_CODES = ["quota_exceeded", "coding_plan_required"] as const;
 
@@ -25,9 +25,9 @@ const OFFICIAL_MCP_TOOL_ERROR_CODE_SET = new Set<string>(OFFICIAL_MCP_TOOL_ERROR
 
 export interface OfficialMcpToolError {
   code: OfficialMcpToolErrorCode;
-  /** 服务端给的英文可读文案；仅用于日志与排障，界面文案走 i18n。 */
+  /** Human-readable English text from the server; used only for logs and troubleshooting, while UI copy comes from i18n. */
   message?: string;
-  /** 服务端 request id，便于与后端日志对账。 */
+  /** Server request id, used to correlate with backend logs. */
   requestId?: string;
 }
 
@@ -36,14 +36,14 @@ function readString(value: unknown): string | undefined {
 }
 
 /**
- * 从 tool error 文本里解析结构化标识。
+ * Parses a structured identifier from tool error text.
  *
- * 严格解析：必须是 JSON 对象且 `error_code` 命中已知 code，否则返回 undefined。
- * 不做文案匹配兜底——那会让服务端改一句话就静默失效。
+ * Strict parsing: the value must be a JSON object and `error_code` must match a known code; otherwise, returns undefined.
+ * Do not fall back to matching copy; that would silently break if the server changes a sentence.
  */
 export function parseOfficialMcpToolError(text: string): OfficialMcpToolError | undefined {
   const trimmed = text.trim();
-  // 先按首字符快速排除绝大多数普通错误文本，避免每次失败都进 JSON.parse。
+  // Quickly rule out most ordinary error text by its first character, so every failure does not reach JSON.parse.
   if (!trimmed.startsWith("{")) return undefined;
 
   let payload: unknown;

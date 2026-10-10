@@ -17,8 +17,8 @@ export function useConversationWorkspaceActions({
 }) {
   const handleSelectConversationWorkspace = useCallback(
     (path: string) => {
-      // 对话工作区是 app 管理的共享 cwd，不属于用户项目：不走跨窗口项目激活，
-      // 也不写 recentProjects，只用 purpose 让展示层把它归到“对话”。
+      // The conversation workspace is an app-managed shared cwd, not a user project: do not activate it across windows
+      // or write it to recentProjects; use purpose only so the display layer classifies it as “Conversation.”
       logger.info("[Root] select conversation workspace", { path });
       addTab(path, { workspacePurpose: "conversation" });
       setWorkspaceActionError(null);
@@ -49,12 +49,12 @@ export function useConversationWorkspaceActions({
     try {
       const path = await handleResolveConversationWorkspace();
       handleSelectConversationWorkspace(path);
-      // “对话 +”是显式目标，不应被当前 split pane / workbench group 的项目绑定覆盖。
+      // “Conversation +” is an explicit target and must not be overridden by the project binding of the current split pane/workbench group.
       useWorkbenchGroupStore.getState().deactivateActiveGroup();
       usePaneLayoutStore.getState().resetToPrimaryPane();
       useZCodeSessionStore.getState().startDraft(path);
     } catch {
-      // handleResolveConversationWorkspace 已记录错误并保留当前 workspace。
+      // handleResolveConversationWorkspace already logs the error and preserves the current workspace.
     }
   }, [handleResolveConversationWorkspace, handleSelectConversationWorkspace]);
 

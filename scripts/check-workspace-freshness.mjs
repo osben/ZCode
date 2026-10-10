@@ -1,18 +1,21 @@
 #!/usr/bin/env node
-// 开工前基线新鲜度检查 —— 当前分支落后自己的远端、或（非特性分支时）落后
-// origin/main 超阈值，直接失败，防止在旧架构上分析、写测试、修已经消失的问题。
+// Check baseline freshness before work. Fail if the current branch is behind its own remote,
+// or (for non-feature branches) behind origin/main beyond the threshold. This prevents analysis,
+// tests, and fixes against an outdated architecture or problems that have already disappeared.
 //
-// 背景：本地 zcode-cua 曾落后 origin/main 140 个提交（本地 Skill 仍
-// 558 行、主线已收敛到 128 行），z-code 集成分支曾落后自己的远端 29 个提交，都曾在
-// 旧基线上开工。任何会话开始前先跑本脚本（zcode-cua 仓库用它的 python 等价物）。
+// Background: local zcode-cua was once 140 commits behind origin/main (its Skill was still
+// 558 lines while main had converged to 128); the z-code integration branch was once 29 commits
+// behind its own remote. Both started work on stale baselines. Run this before every session
+// (the zcode-cua repository uses its equivalent Python script).
 //
-// 判定规则：
-//   1) 落后自己的远端跟踪分支（任何数量）→ 失败：先 git merge --ff-only <upstream>。
-//   2) ahead==0 且落后 origin/main 超阈值 → 失败：本地 main 类分支纯过期。
-//   3) ahead>0（特性/MR 分支）且落后 origin/main 超阈值 → 警告不失败：分叉是正常的，
-//      但数字会打出来，由你决定是否 rebase（有未合并的草稿变更时不要盲目 rebase）。
+// Rules:
+//   1) Behind the branch's own upstream by any amount → fail; first run git merge --ff-only <upstream>.
+//   2) ahead==0 and behind origin/main beyond the threshold → fail; a local main-like branch is stale.
+//   3) ahead>0 (feature/MR branch) and behind origin/main beyond the threshold → warn, but do not fail:
+//      divergence is normal. Print the counts so you can decide whether to rebase (do not rebase blindly
+//      when draft changes are unmerged).
 //
-// 用法：node scripts/check-workspace-freshness.mjs [--max-behind-main 50] [--no-fetch]
+// Usage: node scripts/check-workspace-freshness.mjs [--max-behind-main 50] [--no-fetch]
 
 import { execFile as execFileCallback } from "node:child_process";
 import { promisify } from "node:util";

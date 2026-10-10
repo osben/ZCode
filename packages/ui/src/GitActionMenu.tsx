@@ -1,4 +1,4 @@
-/* eslint-disable max-lines -- 顶部 Git 操作当前集中承载 trigger、commit dialog 和 push dialog；先按工作流边界收口，避免为了拆行数把状态机打散。 */
+/* eslint-disable max-lines -- Top-level Git actions currently combine the trigger, commit dialog, and push dialog; keep them together by workflow boundary rather than splitting the state machine just to reduce line count. */
 import {
   useCallback,
   useEffect,
@@ -287,7 +287,7 @@ function GitCommitDialog({
     }
 
     const frameId = window.requestAnimationFrame(() => {
-      // 打开弹窗后的默认焦点要落在提交信息里，方便立即编辑或生成后微调。
+      // After opening the dialog, focus the commit message by default so it can be edited immediately or refined after generation.
       messageTextareaRef.current?.focus();
       messageInputFocusedOnOpenRef.current = true;
     });
@@ -295,7 +295,7 @@ function GitCommitDialog({
   }, [actionPending, loading, open, state]);
 
   useEffect(() => {
-    // 弹窗加载 Git 状态前提交动作会短暂不可用，不能在 loading 阶段把默认选择跳到推送。
+    // The commit action is briefly unavailable before the dialog loads Git state; do not switch the default selection to push while loading.
     if (!open || loading || !state || actionPending) {
       return;
     }
@@ -359,7 +359,7 @@ function GitCommitDialog({
         isCommitMessageTextAreaTarget(event.target) &&
         (event.key === "ArrowDown" || event.key === "ArrowUp")
       ) {
-        // 输入框保持焦点时也允许切换下方 Command 操作，避免键盘流断掉。
+        // Allow switching the Command action below while the input retains focus, preserving keyboard flow.
         event.preventDefault();
         event.stopPropagation();
         selectAdjacentAction(event.key === "ArrowDown" ? 1 : -1);
@@ -764,8 +764,8 @@ function GitPushDialog({
                   </Button>
                 </div>
                 <Textarea
-                  // Textarea 默认带 field-sizing-content，长错误文本会按内容扩张并把弹窗横向撑爆。
-                  // 这里改成固定尺寸模式，并允许长内容换行，保证错误详情始终被限制在弹窗宽度内。
+                  // Textarea defaults to field-sizing-content, so long error text expands it and stretches the dialog horizontally.
+                  // Use fixed sizing and allow long content to wrap so error details remain within the dialog width.
                   className="field-sizing-fixed w-full max-w-full min-h-56 rounded-lg border-input-border bg-background/50 px-3 py-3 text-ui-base text-foreground whitespace-pre-wrap break-words placeholder:text-foreground-subtlest focus-visible:border-input-border-focused focus-visible:bg-input-focused focus-visible:ring-0 md:text-ui-base"
                   readOnly
                 >
@@ -870,9 +870,9 @@ export function GitActionMenu({
   const isStatusRowTrigger = triggerLayout === "status-row";
 
   useEffect(() => {
-    // 顶部 commit 入口改成“始终展示、异常时置灰”后，
-    // 这里记录低频可用性日志，方便继续区分是仓库探测失败，
-    // 还是 UI 交互本身出现了禁用/启用状态不一致。
+    // After the top commit entry changed to “always visible, disabled on error,”
+    // record low-frequency availability logs to distinguish repository detection failures
+    // from UI interaction inconsistencies in enabled/disabled state.
     logger.info("[GitActionMenu] 顶部 Git 操作入口可用性变化", {
       workspacePath,
       available: actionAvailable,
@@ -1307,10 +1307,10 @@ export function GitActionMenu({
       <div
         onClick={isStatusRowTrigger && !triggerIconOnly ? handleStatusRowContainerClick : undefined}
         className={cn(
-          // macOS/Windows 小窗口下，顶部 Git 主按钮的中文文案会和分支入口、窗口控制区挤在同一行。
-          // 在 header 容器变窄时只隐藏主按钮文字，保留图标入口，避免丢失核心 Git 操作。
-          // transition-all 会把 scrollbar-color 等非合成属性也启动动画，
-          // 进而触发整页 UpdateLayoutTree；Git 入口只需要颜色反馈，不动画尺寸和滚动条属性。
+          // In small macOS/Windows windows, the Chinese label on the top Git primary button competes for space with the branch entry and window controls.
+          // When the Header container narrows, hide only the primary-button text and keep its icon so core Git actions remain available.
+          // transition-all also animates non-composited properties such as scrollbar-color,
+          // triggering a full-page UpdateLayoutTree. Git entries need only color feedback, not size or scrollbar-property animation.
           "flex h-7 items-center overflow-hidden rounded-lg border border-border bg-input transition-colors hover:border-border-hover @max-[560px]/workspace-header:w-7 @max-[560px]/workspace-header:justify-center",
           triggerIconOnly && "w-7 justify-center",
           isStatusRowTrigger &&
@@ -1335,7 +1335,7 @@ export function GitActionMenu({
           )}
           onClick={isStatusRowTrigger && !triggerIconOnly ? undefined : handlePrimaryAction}
         >
-          {/* 主按钮进入 pending 时直接替换左侧动作图标，避免在紧凑头部里额外追加 loading 图标把按钮挤宽。*/}
+          {/* When the primary button enters pending, replace its leading action icon so an extra loading icon does not widen the compact header button.*/}
           {triggerPending ? (
             <LoaderIcon className="size-4 animate-spin text-foreground-subtle" />
           ) : primaryActionId === "push" ? (

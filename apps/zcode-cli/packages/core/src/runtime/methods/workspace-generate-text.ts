@@ -23,7 +23,7 @@ import { auxiliaryModelOptions } from "../../model/auxiliary-model-options.js";
 
 const WORKSPACE_GENERATE_TEXT_TIMEOUT_MS = 60_000;
 const CONNECTIVITY_PROBE_MAX_OUTPUT_TOKENS = 1;
-// 探测请求使用固定最小 prompt，避免多余推理开销；不可改写角色、文本或混入会话历史。
+// Probe requests use a fixed minimal prompt to avoid unnecessary reasoning; do not change the role/text or include session history.
 const CONNECTIVITY_PROBE_SYSTEM = "You are ZCode connectivity probe.";
 const CONNECTIVITY_PROBE_USER = "hi";
 const GIT_COMMIT_MESSAGE_QUERY_SOURCE = "git_commit_message";
@@ -55,8 +55,8 @@ export async function testModelConnectivity(
   options?: { abortSignal?: AbortSignal; traceContext?: TraceContext },
 ): Promise<void> {
   const baseModel = createRuntimeModel(this, { selection: input.selection });
-  // 连接探测不需要生成正文；复用辅助生成的 5,000 预算会等待多余推理和输出。
-  // 独立限制为 1 Token，仍使用最低公开档位，不改变其他辅助调用的预算。
+  // Connection probes do not need body text; reusing the 5,000-token auxiliary-generation budget waits for unnecessary reasoning and output.
+  // Set a separate limit of 1 token while keeping the lowest public tier; do not change budgets for other auxiliary calls.
   const model = baseModel.bind({
     reasoningLevel: baseModel.optionSpecs.reasoningLevel.values[0]!,
     maxOutputTokens: CONNECTIVITY_PROBE_MAX_OUTPUT_TOKENS,
@@ -145,7 +145,7 @@ async function generateWorkspaceTextImpl(
   const requestedSelection = input.selection;
   const querySource = input.querySource.trim() || "workspace_generate_text";
   const baseModel = createRuntimeModel(this, { selection: requestedSelection });
-  // 辅助请求需要的是最低公开档位，不是扫描 off/nothink 等名称后强制关闭。
+  // Auxiliary requests need the lowest public tier, not forced disabling based on names such as off/nothink.
   const model =
     querySource === GIT_COMMIT_MESSAGE_QUERY_SOURCE
       ? baseModel.bind(auxiliaryModelOptions(baseModel))
@@ -181,8 +181,8 @@ async function generateWorkspaceTextImpl(
   const networkEventStartIndex = events.length;
   const abortSignal =
     options?.abortSignal ?? AbortSignal.timeout(WORKSPACE_GENERATE_TEXT_TIMEOUT_MS);
-  // Git Commit 调用方曾传入固定 256，Core 又按 querySource 丢弃，形成虚假接口。
-  // 通用生成入口只处理调用方真实提供的预算；Git 辅助调用不再由上游伪造固定上限。
+  // The Git Commit caller once supplied a fixed 256, which Core then discarded based on querySource, creating a fake interface.
+  // The general generation entry point handles only budgets actually supplied by callers; Git auxiliary calls no longer get a fabricated cap from upstream.
   const requestMaxOutputTokens =
     querySource === GIT_COMMIT_MESSAGE_QUERY_SOURCE ? undefined : input.maxOutputTokens;
 

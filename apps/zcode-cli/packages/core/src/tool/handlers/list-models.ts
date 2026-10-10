@@ -1,15 +1,15 @@
 // ============================================================
 // ListModels Tool Handler
 // ============================================================
-// 列出本宿主已配置的模型。
+// List models configured on this host.
 //
-// 存在的理由只有一个：主代理要给一次 workflow run 挑子代理模型（`subagent_model`）。它**不是选模
-// 开关**——本工具改不了会话自己的模型，描述里必须把这句话说穿，否则模型会把它当成
-// 「切换我自己」的入口，然后向用户报告一个没有发生过的切换。
+// This tool has one purpose: let the primary agent choose a subagent model (`subagent_model`) for a workflow run. It is **not a model
+// switch** and cannot change the session's own model. The description must say so clearly, or the model may treat it as a way to
+// “switch my own model” and tell the user a change happened when it did not.
 //
-// 与解析器（model-reference.ts）是两条互补的路：那条是被动的（用户说了个名字，解不出来时
-// 连同候选一起退回），这条是主动的（「我们有哪些模型可用？」）。两条读的是同一份**活**目录
-// ——端口每次调用现读注册表视图，绝不返回构造期的冻结拷贝。
+// This and the resolver (model-reference.ts) are complementary paths: the resolver is passive (the user names a model, and if it
+// cannot resolve it, returns the candidates); this tool is proactive (“which models are available?”). Both read the same **live**
+// catalog—the port reads the registry view on every call and never returns a frozen construction-time copy.
 
 import {
   LIST_MODELS_TOOL_NAME,
@@ -24,13 +24,12 @@ import type { ToolEntry, ToolHandler, ToolHandlerFailure } from "../types.js";
 import { formatModelCatalogId } from "./model-reference.js";
 
 const LIST_MODELS_TIMEOUT_MS = 10_000;
-/** 照 ListSavedWorkflows：目录刻意轻（一次内存读可答），24k 足够几十行还留着余量。 */
+/** As with ListSavedWorkflows, keep the catalog lightweight (answered from one in-memory read); 24k is enough for dozens of rows with room to spare. */
 const LIST_MODELS_MODEL_BYTES = 24_000;
 
 /**
- * 业务失败码。数值只是日志位（executor 投影成 `code: "N"`），判别键在 message 前缀。
- * 从 31 起编只为与 workflow 内省表（1/2）、ResumeWorkflowRun（11–15）、AmendWorkflow（21–23）
- * 视觉不撞车。
+ * Business failure code. The number is only for logs (the executor projects it as `code: "N"`); the discriminator is the message
+ * prefix. Start at 31 to avoid visual collisions with workflow introspection codes (1/2), ResumeWorkflowRun (11–15), and AmendWorkflow (21–23).
  */
 const LIST_MODELS_ERROR_CODE = { CATALOG_UNAVAILABLE: 31 } as const;
 
@@ -44,9 +43,9 @@ const LIST_MODELS_DESCRIPTION = [
 ].join("\n");
 
 /**
- * 「本会话没有模型目录」。**绝不**静默回空列表：那会让模型把「这台机器没配模型」和
- * 「这个会话读不到目录」混成同一个结论（`workflow_introspection_unavailable` 同款理由），
- * 然后据此告诉用户他一个模型都没有——而他正在用一个。
+ * “This session has no model catalog.” **Never** silently return an empty list: that would conflate “no models configured on this
+ * machine” with “this session cannot read the catalog” (same reason as `workflow_introspection_unavailable`), leading the model to
+ * tell the user there are no models even though one is in use.
  */
 function modelCatalogUnavailableFailure(): ToolHandlerFailure {
   return {
@@ -67,16 +66,16 @@ const listModelsHandler: ToolHandler = async (input, context) => {
   const current = entries.find((entry) => entry.current);
 
   return {
-    // 目录里一条都没标 current 时缺席（端口契约允许：会话的选择可能指向一个已被删掉的
-    // provider）。造一个空字符串会让模型把"没有当前模型"读成"当前模型叫空"。
+    // Omit when no catalog entry is marked current (allowed by the port contract: the session selection may point to a deleted
+    // provider). An empty string would make the model read “no current model” as “the current model is named empty.”
     ...(current === undefined ? {} : { current: formatModelCatalogId(current) }),
     models: entries.map((entry) => ({
       id: formatModelCatalogId(entry),
       providerId: entry.providerId,
       modelId: entry.modelId,
       ...(entry.providerLabel === undefined ? {} : { providerLabel: entry.providerLabel }),
-      // 没有档位的模型给空数组而不是缺席：读侧据此知道"接 `$` 是错的"，而缺席读起来像
-      // "这一行没说"。
+      // Use an empty array for a model with no tiers rather than omitting it: readers can tell that appending `$` is invalid, while
+      // omission would look like “this row did not say.”
       reasoningLevels: [...entry.reasoningLevels],
       ...(entry.defaultReasoningLevel === undefined
         ? {}
@@ -88,11 +87,11 @@ const listModelsHandler: ToolHandler = async (input, context) => {
 };
 
 /**
- * 模型面：一行一个模型。
+ * Model-facing format: one row per model.
  *
- * 与 ListSavedWorkflows 的**多行块**式刻意不同（那边一条要带描述、使用时机与参数表）：目录行
- * 是低信息密度的高基数实体——几十行都长一个样，而模型在这里只做一件事，把某一行的 `id`
- * 抄进 `subagent_model`。挤成一行正好，也让 24k 预算装得下一整份目录。
+ * Intentionally differs from ListSavedWorkflows' **multi-line block** format (each saved workflow needs a description, usage context,
+ * and argument table). Model rows are low-information, high-cardinality entities: dozens look alike, and the model only needs to copy
+ * a row's `id` into `subagent_model`. One line per model is sufficient and keeps the full catalog within the 24k budget.
  */
 function formatListModelsModelContent(output: unknown): ModelMessageContent {
   const parsed = ListModelsOutputSchema.safeParse(output);
@@ -100,7 +99,7 @@ function formatListModelsModelContent(output: unknown): ModelMessageContent {
   const { current, models } = parsed.data;
 
   if (models.length === 0) {
-    // 「一个都没配」必须说成一句话：空容器容易被读成「工具没答上来」。
+    // Explicitly say when none are configured; an empty container can look like the tool failed to answer.
     return [
       '<models count="0">',
       "No models are configured on this host. Omit `subagent_model`: the workflow's subagents run on the session model.",
@@ -117,8 +116,8 @@ function formatListModelsModelContent(output: unknown): ModelMessageContent {
         model.defaultReasoningLevel === undefined ? "" : ` (default ${model.defaultReasoningLevel})`;
       parts.push(`; levels: ${levels}${fallback}`);
     }
-    // current 与 disabled 排在行尾且各用方括号：它们是模型据以**排除**一行的两个标记，
-    // 放在中段会被更长的档位表推出视线。
+    // Put current and disabled at the end of each row, each in brackets: the model uses them to **exclude** a row, and a longer tier
+    // list in the middle could push them out of view.
     if (model.id === current) parts.push(" [current]");
     if (model.disabledReason !== undefined) parts.push(` [disabled: ${model.disabledReason}]`);
     return parts.join("");
@@ -153,12 +152,12 @@ export const listModelsToolEntry: ToolEntry = {
     riskLevel: "low",
     sideEffectScope: "none",
     needsApproval: false,
-    // 入参是空对象，所以模式只按工具名匹配（同 ListSavedWorkflows）。
+    // Input is an empty object, so match only by tool name (same as ListSavedWorkflows).
     patternSources: ["toolName"],
     alwaysAllowPatternSources: ["toolName"],
     denyPriority: "beforeAsk",
-    // 刻意**不**继承 CreateWorkflow 的 alwaysAsk：那道门的理由是「执行整块代码」，
-    // 读一张已配置模型的表不属于它。
+    // Intentionally **do not** inherit CreateWorkflow's alwaysAsk: that gate exists because it executes a full code block, which does
+    // not apply to reading the configured model list.
   },
   resultBudget: {
     maxInlineBytes: LIST_MODELS_MODEL_BYTES,

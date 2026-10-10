@@ -33,8 +33,8 @@ export function deriveUpdateStatusViewModel({
     readyVersion ??
     progressVersion ??
     availableVersion ??
-    // download-progress.version 是协议可选字段。下载态必须按 kind 保持 UI，
-    // 否则某一帧缺少版本号会让入口卸载并关闭已打开弹窗。
+    // download-progress.version is optional in the protocol. Keep the UI for download states based on kind,
+    // or a frame without a version could unmount the entry and close an open dialog.
     (isDownloadingUpdate ? "…" : null);
 
   return {
@@ -65,9 +65,9 @@ export function isUpdateActionCompleted(
   updateState: UpdateStatePayload | null,
 ) {
   return (
-    // 点击下载后 main 侧可能先广播 checking/idle 等过渡态。
-    // 这些状态不代表下载已经进入可观察阶段，不能释放按钮锁并触发弹窗卸载；
-    // 只有真正进入下载进度或下载完成，才算下载命令完成。
+    // After Download is clicked, main may first broadcast transitional states such as checking/idle.
+    // These states do not mean the download has entered an observable phase, so do not release the button lock and unmount the dialog;
+    // the download command is complete only after download progress begins or the download finishes.
     (action === "download" &&
       (updateState?.kind === "download-progress" || updateState?.kind === "update-downloaded")) ||
     (action === "cancel" && updateState?.kind !== "download-progress") ||
@@ -94,8 +94,8 @@ function getUpdateDownloadProgressLabel(updateState: UpdateStatePayload | null) 
     return `${formatMegabytes(transferredBytes)} / ${formatMegabytes(totalBytes)}`;
   }
 
-  // 下载进度文案已经改为展示已下载/总大小。只有百分比时继续显示
-  // “0% / 42%” 会和新的大小口径冲突，且启动下载的临时态会残留一个 0%。
+  // Download progress now shows downloaded/total size. Showing only a percentage would conflict with
+  // the new size format, and the initial download state could leave a stale 0% visible.
   return null;
 }
 
@@ -110,9 +110,9 @@ function resolveReadyVersion({
     return updateState.version;
   }
 
-  // legacy UpdateReady 只是一份“曾经 ready”的缓存。
-  // 一旦新的 UpdateState 已明确同步到 renderer，idle/checking/error 都应以新状态为准，
-  // 不能继续用旧 version 撑出“重启以更新”按钮。
+  // Legacy UpdateReady is only a cached indication that the update was once ready.
+  // Once a new UpdateState has reached the renderer, idle/checking/error must take precedence;
+  // do not keep showing a "Restart to update" button based on the old version.
   return updateState === null ? legacyReadyVersion : null;
 }
 

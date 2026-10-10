@@ -80,14 +80,15 @@ export interface PluginMarketplaceEntry {
   description?: string;
   version?: string;
   source?: unknown;
-  // 内置 official 插件 seed 时写入的缓存目录绝对路径（source 为 "filesystem"/"sea"）。
-  // describe/解析时据此直接定位已落盘的插件根目录，无需把 source 当路径解析。
+  // Absolute cache directory written when seeding a built-in official plugin (source is
+  // "filesystem"/"sea"). describe/parsing uses this to locate the persisted plugin root without
+  // resolving source as a path.
   cachePath?: string;
   dependencies?: string[];
   strict?: boolean;
   tags?: string[];
-  // 商店信息（displayName/icon/hero/示例提示词/链接等展示元数据），从条目 raw 解析；
-  // 全部可选，见 contracts PluginStoreListing。
+  // Store information (displayName/icon/hero/example prompts/links and other presentation
+  // metadata), parsed from the raw entry; all fields are optional. See contracts PluginStoreListing.
   listing?: PluginStoreListing;
   raw: Record<string, unknown>;
 }
@@ -98,7 +99,8 @@ export interface PluginMarketplaceManifest {
   plugins: PluginMarketplaceEntry[];
   allowCrossMarketplaceDependenciesOn?: string[];
   pluginRoot?: string;
-  // 商店「公开」分段 Featured 区的策展名单（插件 name，按序）；由目录 JSON 顶层 featured 字段远程控制。
+  // Curated list (plugin names, in order) for the store's public Featured section; controlled
+  // remotely by the top-level featured field in the catalog JSON.
   featured?: string[];
   raw: Record<string, unknown>;
 }
@@ -112,7 +114,7 @@ export interface KnownMarketplaceRecord {
   lastUpdated?: string;
   lastRefreshFailure?: MarketplaceRefreshFailure;
   pluginCount: number;
-  /** 内部崩溃恢复代际；协议/UI 投影不暴露。 */
+  /** Internal crash-recovery generation; not exposed in protocol/UI projections. */
   cacheTransactionId?: string;
 }
 
@@ -133,7 +135,7 @@ export interface InstalledPluginRecord {
   scope: "user" | "workspace";
   dependencies?: string[];
   source?: unknown;
-  /** 内部崩溃恢复代际；协议/UI 投影不暴露。 */
+  /** Internal crash-recovery generation; not exposed in protocol/UI projections. */
   cacheTransactionId?: string;
 }
 
@@ -155,7 +157,8 @@ export interface PluginValidationDiagnostic {
   severity: PluginDiagnostic["severity"];
 }
 
-// 组件枚举的类型定义在 plugin-components.ts；这里再导出，保持 adapter barrel 的对外契约稳定。
+// Component enumeration types are defined in plugin-components.ts and re-exported here to keep
+// the adapter barrel's public contract stable.
 export type {
   PluginComponentGroup,
   PluginComponentItem,
@@ -165,7 +168,8 @@ export type {
 export interface DescribeMarketplacePluginResult {
   components: PluginComponentGroup[];
   diagnostics: PluginValidationDiagnostic[];
-  // 插件包内 plugin.json 的展示性回退字段（作者/主页/版本）；商店信息缺失时详情页信息区用它兜底。
+  // Presentation fallback fields from the plugin package's plugin.json (author/homepage/version);
+  // the detail page uses them when store information is missing.
   metadata?: PluginManifestDisplayMetadata;
 }
 
@@ -180,8 +184,9 @@ function buildMarketplaceGitEnv(
   sourceEnv: NodeJS.ProcessEnv = process.env,
 ): Record<string, string> {
   const env = sanitizeZCodeRuntimeEnv(sourceEnv);
-  // marketplace 安装会启动 Git 子进程，不能只依赖父进程继承的 shell 代理。
-  // 这里统一从 ZCode 显式网络环境恢复 HTTP(S)/NO_PROXY/CA，避免安装按钮卡到协议超时。
+  // Marketplace installation starts a Git child process, so it cannot rely only on shell proxies
+  // inherited from the parent process. Restore HTTP(S)/NO_PROXY/CA from ZCode's explicit network
+  // environment here to avoid installation timing out at the protocol layer.
   return applyNetworkEgressEnv(env, { sourceEnv });
 }
 
@@ -317,8 +322,9 @@ export async function ensureMarketplaceManifestAvailable(input: {
     (item) => item.id === input.marketplace,
   );
   if (!record) return null;
-  // 受信任的内部懒加载：用 known record 的规范 source 拉取，并以 record.id 作为 trustedId，
-  // 使官方 id 只能由本来就是该官方 id 的记录刷新得到。
+  // Trusted internal lazy-load: fetch using the canonical source from the known record and use
+  // record.id as trustedId, so an official ID can only be refreshed from a record that already
+  // has that official ID.
   return await addMarketplace({
     signal: input.signal,
     source: record.source,
@@ -332,16 +338,20 @@ export async function addMarketplace(input: {
   signal?: AbortSignal;
   source: MarketplaceSource;
   storageRoot: string;
-  // 受信任的内部刷新传入正在刷新的 known record 规范 id。守卫只在 manifest 声明了官方 id
-  // 且该 id 不等于本次刷新的 trustedId 时拒绝，避免来源在刷新过程中被改名冒用：
-  //   - 用户侧新增（trustedId 缺失）声明官方 id → 拒绝；
-  //   - 非官方市场日后把 manifest 改名成官方 id，刷新时 trustedId 不匹配 → 拒绝；
-  // 非官方 manifest 名不受此约束，保持既有行为。
+  // Trusted internal refresh passes the canonical ID of the known record being refreshed. The
+  // guard rejects only when a manifest claims an official ID different from this refresh's
+  // trustedId, preventing a source from being renamed to impersonate an official plugin during
+  // refresh:
+  //   - A user-added source (no trustedId) claiming an official ID → reject.
+  //   - A nonofficial marketplace later renaming its manifest to an official ID → trustedId
+  //     mismatch during refresh, so reject.
+  // Nonofficial manifest names are not constrained; preserve existing behavior.
   trustedId?: string;
 }): Promise<KnownMarketplaceRecord> {
-  // persist:false 先只解析 manifest，不落盘——否则 marketplace 目录激活会用
-  // 不可信 manifest.name 作为 target，先 rm 掉本地官方目录再 cp，等守卫抛错时
-  // 官方 manifest 已被污染；守卫通过后才持久化。
+  // With persist:false, parse the manifest without writing it first. Otherwise marketplace
+  // directory activation could trust an untrusted manifest.name as the target, remove the local
+  // official directory, then copy over it; by the time the guard rejects, the official manifest
+  // would already be corrupted. Persist only after the guard passes.
   throwIfPluginOperationAborted(input.signal);
   const operationSignal = input.signal;
   let loaded: LoadMarketplaceResult | undefined;
@@ -380,8 +390,9 @@ export async function addMarketplace(input: {
             }),
           )
         : loaded.manifest;
-    // 旧流程先删 marketplace target 再复制 source，刷新失败会丢失最后成功快照。
-    // source tree 与规范 manifest 在同一 staging 目录准备完毕后一次 rename 激活。
+    // The old flow deleted the marketplace target before copying the source, so refresh failure
+    // lost the last successful snapshot. Prepare the source tree and canonical manifest in the
+    // same staging directory, then activate them with one rename.
     if (loaded.sourceRoot) {
       marketplaceActivation = await stageMarketplaceDirectoryPlugins(
         loaded.sourceRoot,
@@ -414,7 +425,8 @@ export async function addMarketplace(input: {
     if (marketplaceActivation) {
       throwIfPluginOperationAborted(operationSignal);
     }
-    // authority state 已落盘后才进入不可取消的提交尾声，随后清理 backup/marker。
+    // Enter the non-cancellable commit tail only after authority state is persisted, then clean
+    // up backup/marker.
     await marketplaceActivation?.finalize();
     knownMarketplaceActivation.finalize();
     return record;
@@ -429,7 +441,8 @@ export async function addMarketplace(input: {
       if (rollbackError === undefined) {
         await marketplaceActivation?.rollback();
       } else {
-        // authority 无法恢复时保留其指向的新 manifest，避免再次制造跨代状态。
+        // If authority cannot be restored, preserve the new manifest it points to rather than
+        // creating another cross-generation state.
         await marketplaceActivation?.finalize();
       }
     } catch (currentRollbackError) {
@@ -473,8 +486,9 @@ async function requestMarketplaceJson(
         throw new Error(`Marketplace redirect is missing Location header: ${currentUrl}`);
       }
       const redirectUrl = new URL(location, currentUrl);
-      // 代理/自定义 CA 分支的 http.request 不会执行 redirect:follow；
-      // 这里统一有界跟随，并在跨 origin 时清理市场自定义 header，避免凭据泄露给 CDN。
+      // The http.request path for proxies/custom CAs does not perform redirect:follow. Follow
+      // redirects here with a fixed bound, and remove marketplace-specific headers across origins
+      // to avoid leaking credentials to a CDN.
       if (redirectUrl.origin !== new URL(currentUrl).origin) {
         currentHeaders = undefined;
       }
@@ -510,8 +524,8 @@ export async function updateMarketplace(input: {
   for (const record of selected) {
     throwIfPluginOperationAborted(input.signal);
 
-    // 受信任的刷新会重新拉取已知 marketplace 自带的 source；record.id 作为 trustedId，
-    // 使官方 id 只能由原本就是该 id 的记录刷新得到。
+    // A trusted refresh fetches the source from the known marketplace again; record.id is the
+    // trustedId, so an official ID can only be refreshed from a record that already has that ID.
     try {
       updated.push(
         await addMarketplace({
@@ -522,8 +536,9 @@ export async function updateMarketplace(input: {
         }),
       );
     } catch (error) {
-      // 取消是当前 operation 的控制流，不是 Marketplace 健康状态；不得把 AbortError
-      // 持久化成 refresh failure，避免后续普通商店页面误报官方源故障。
+      // Cancellation is control flow for the current operation, not Marketplace health state.
+      // Do not persist AbortError as a refresh failure, or later ordinary store pages may
+      // incorrectly report an official-source failure.
       if (input.signal?.aborted) throw error;
       const diagnostic = toValidationDiagnostic(error, record.id);
       await persistMarketplaceRefreshFailure(input.storageRoot, record.id, {
@@ -551,8 +566,9 @@ export function loadMarketplaceManifestSync(
   marketplace: string,
 ): PluginMarketplaceManifest | null {
   const manifestPath = getMarketplaceManifestPath(storageRoot, marketplace);
-  // 崩溃残留先恢复；若 writer 仍活跃，则在权威 known state 落盘前读 backup，
-  // 落盘后读新 target，避免 overview 看见跨代 manifest/summary。
+  // Recover crash remnants first. If a writer is still active, read the backup until the
+  // authoritative known state is persisted, then read the new target. This prevents overview
+  // from seeing a manifest/summary across generations.
   const readableDirectory = recoverAtomicTargetSync(dirname(manifestPath));
   const parsed = readJsonFileSync(join(readableDirectory, basename(manifestPath)));
   return parseMarketplaceManifest(parsed);
@@ -649,7 +665,7 @@ export async function uninstallMarketplacePlugin(input: {
   pluginId: string;
   storageRoot: string;
   removeCache?: boolean;
-  /** `zcode plugins uninstall --keep-data`：删安装缓存但保留 data/<plugin-id> 用户数据目录。 */
+  /** `zcode plugins uninstall --keep-data`: remove installation cache but preserve the user's data/<plugin-id> directory. */
   keepData?: boolean;
 }): Promise<InstalledPluginRecord | null> {
   const state = loadInstalledPluginsSync(input.storageRoot);
@@ -659,8 +675,9 @@ export async function uninstallMarketplacePlugin(input: {
   await saveInstalledPlugins(input.storageRoot, state);
   if (removed && input.removeCache === true) {
     await rm(removed.installPath, { force: true, recursive: true });
-    // 彻底卸载：data/<plugin-id> 是持久化的 per-plugin 目录（含 materialize 的 generated-commands）。
-    // 按「卸载最后一份安装时一并删除」语义，保证重装是干净的。
+    // Full uninstall: data/<plugin-id> is a persistent per-plugin directory (including
+    // materialized generated-commands). Follow the rule "delete it with the last installation"
+    // so reinstall starts clean.
 
     if (input.keepData !== true) {
       await rm(getPluginDataDir(input.storageRoot, removed.id), { force: true, recursive: true });
@@ -736,12 +753,16 @@ export async function validateMarketplacePlugin(input: {
 }
 
 /**
- * 按需枚举单个插件的组件「名称 + 描述」，供 marketplace 详情 UI 使用。
- * - 已安装插件：直接读本地缓存/安装目录，无需联网。
- * - 未安装候选：解析并按需临时 clone 插件源（finally 清理临时目录），参照 validateMarketplacePlugin。
- * 组件名称与描述来自组件目录的 frontmatter（command/agent 的 .md、skill 的 SKILL.md）、
- * 以及 manifest（hooks 事件名、mcpServers 名称、object 形式声明的 commands/agents）。
- * 任何一类组件读取失败都降级为「能拿到多少返回多少」+ 诊断，不抛断整个详情。
+ * Enumerate one plugin's components as "name + description" on demand for the marketplace
+ * detail UI.
+ * - Installed plugin: read the local cache/installation directory without network access.
+ * - Uninstalled candidate: resolve and temporarily clone the plugin source as needed (clean up
+ *   the temporary directory in finally), following validateMarketplacePlugin.
+ * Component names/descriptions come from component-directory frontmatter (.md for command/agent,
+ * SKILL.md for skill) and the manifest (hook event names, mcpServers names, and object-form
+ * commands/agents declarations).
+ * If reading any component category fails, return whatever is available with diagnostics instead
+ * of failing the entire detail view.
  */
 export async function describeMarketplacePlugin(input: {
   marketplace: string;
@@ -751,7 +772,7 @@ export async function describeMarketplacePlugin(input: {
   const diagnostics: PluginValidationDiagnostic[] = [];
   const pluginId = `${input.name}@${input.marketplace}`;
 
-  // 已安装优先：本地目录无需 clone，速度快且离线可用。
+  // Prefer installed plugins: read the local directory without cloning; this is fast and works offline.
   const installedRecord = loadInstalledPluginsSync(input.storageRoot).plugins.find(
     (record) => record.marketplace === input.marketplace && record.name === input.name,
   );
@@ -769,7 +790,8 @@ export async function describeMarketplacePlugin(input: {
         ...(read.metadata ? { metadata: read.metadata } : {}),
       };
     }
-    // 安装记录存在但缓存缺失（被清理）——继续走源解析兜底，而不是直接报错。
+    // The install record exists but the cache is missing (was cleaned up); continue to the source
+    // resolution fallback instead of failing immediately.
   }
 
   let manifest: PluginMarketplaceManifest | null = null;
@@ -829,7 +851,8 @@ export async function describeMarketplacePlugin(input: {
   }
 }
 
-/** 读插件根目录的 manifest（失败按 null 降级），再交给纯枚举器列出组件名称+描述。 */
+/** Read the plugin-root manifest (fall back to null on failure), then pass it to the pure
+ * enumerator for component names and descriptions. */
 function readComponentsAtRoot(input: {
   diagnostics: PluginValidationDiagnostic[];
   entry?: PluginMarketplaceEntry;
@@ -843,7 +866,7 @@ function readComponentsAtRoot(input: {
       input.entry ?? { name: "__describe__", raw: {} },
     );
   } catch {
-    // manifest 解析失败不致命：仍可按默认目录约定扫描组件。
+    // Manifest parsing failure is non-fatal; still scan components using the default directory convention.
     loadedManifest = null;
   }
   const loaded = loadedManifest
@@ -864,7 +887,7 @@ function readComponentsAtRoot(input: {
   return { components, ...(metadata ? { metadata } : {}) };
 }
 
-/** 抽取 plugin.json 里可展示的回退字段；一个都没有时返回 undefined。 */
+/** Extract displayable fallback fields from plugin.json; return undefined if none are present. */
 function toManifestDisplayMetadata(
   manifest: PluginManifest,
 ): PluginManifestDisplayMetadata | undefined {
@@ -969,8 +992,9 @@ export async function validateMarketplaceSource(input: {
         );
       } catch (error) {
         diagnostics.push(toValidationDiagnostic(error, `${entry.name}@${loaded.manifest.name}`));
-        // validate source 是 dry-run, 但也必须给 UI 展示 marketplace 条目里声明的能力风险。
-        // 当远端/相对 plugin source 暂时不可解析时, 仍基于 entry 原文输出 diagnostic-only 能力诊断。
+        // Source validation is a dry run, but the UI must still show capability risks declared
+        // in the marketplace entry. If a remote/relative plugin source cannot currently be
+        // resolved, emit diagnostic-only capability findings based on the original entry.
         pushEntryCompatibilityDiagnostics({
           diagnostics,
           entry,
@@ -989,8 +1013,9 @@ export async function validateMarketplaceSource(input: {
 }
 
 /**
- * 校验本地插件或 marketplace 路径，只读解析 manifest 并返回结构化诊断，不写入 storage。
- * 输入可以是目录或 manifest 文件；目录按 marketplace 优先、插件根目录其次的顺序识别。
+ * Validate a local plugin or marketplace path by parsing the manifest read-only and returning
+ * structured diagnostics without writing to storage. Input may be a directory or manifest file;
+ * directories are recognized as marketplace first, then plugin root.
  */
 export async function validateLocalPluginPath(input: {
   path: string;
@@ -1043,8 +1068,8 @@ export async function validateLocalPluginPath(input: {
       },
     ];
   }
-  // 本地目录没有 marketplace 条目：用 manifest 自己的 name 合成一个 strict 条目，
-  // 让 validatePluginRoot 走与已安装插件完全相同的 manifest/MCP 校验。
+  // A local directory has no marketplace entry: synthesize a strict entry from the manifest's
+  // own name, so validatePluginRoot uses the same manifest/MCP checks as for an installed plugin.
   return validatePluginRoot({
     entry: { name: name || basename(rootPath), raw: {} },
     marketplace: "inline",
@@ -1053,7 +1078,7 @@ export async function validateLocalPluginPath(input: {
   });
 }
 
-/** 用户传入 manifest 文件时，回推对应的插件根目录。 */
+/** When the user provides a manifest file, resolve its corresponding plugin root directory. */
 function resolveManifestRootFromFile(filePath: string): string {
   const dir = dirname(filePath);
   const dirName = basename(dir);
@@ -1122,21 +1147,25 @@ async function cacheMarketplacePlugin(input: {
   let target: string;
   let activation: AtomicDirectoryActivation | undefined;
   try {
-    // 多顶层 ZIP 未显式 path 时 resolver 会回退到 extract root，
-    // 原安装流程未在删除旧 cache 前校验 manifest，仍会写 installed record 并默认启用，最终 runtime
-    // 无法 discover。ZIP 源必须先确认根目录可形成合法插件；strict:false 继续复用 synthetic manifest。
+    // When a ZIP has multiple top-level entries and no explicit path, the resolver falls back to
+    // the extract root. The old install flow did not validate the manifest before deleting the
+    // old cache; it still wrote an installed record and enabled the plugin by default, leaving
+    // runtime unable to discover it. For ZIP sources, first ensure the root can form a valid
+    // plugin; strict:false continues using the synthetic manifest.
     if (isZipPluginUrlSource(input.entry.source)) {
       assertZipPluginInstallRoot(sourceRoot.path, input.entry, input.marketplace);
     }
-    // 缓存目录的版本段与安装记录的 version 不能取自 marketplace 条目的
-    // version 字段：git/url 源插件的条目通常不带 version，取了也只会兜底成
-    // "0.0.0"，导致 Root path 落到 .../<name>/0.0.0；而 UI 展示读的是插件自带 plugin.json 里的
-    // 真实版本，两者割裂。因此在 clone/拷贝后的源根目录上按加载器同样的规则解析真实
-    // 版本（详见 resolveInstalledPluginVersion），让缓存路径段与安装记录、UI 展示版本一致。
+    // Do not take the cache-directory version segment or installed-record version from the
+    // marketplace entry's version field: git/url plugin entries usually omit it, falling back
+    // to "0.0.0" and placing the root under .../<name>/0.0.0, while the UI reads the real version
+    // from the plugin's plugin.json. Resolve the real version from the cloned/copied source root
+    // using the same rule as the loader (see resolveInstalledPluginVersion), keeping the cache
+    // path, install record, and UI display in sync.
     version = resolveInstalledPluginVersion(sourceRoot.path, input.entry);
     target = getPluginCacheDir(input.storageRoot, input.marketplace, input.entry.name, version);
-    // 内置 filesystem/sea 插件的 cachePath 即缓存目录本身，源根目录可能与 target 相同；
-    // 此时无需（也不能）先 rm 再自我拷贝，否则会把源删掉。
+    // For built-in filesystem/sea plugins, cachePath is the cache directory itself, so the
+    // source root may equal the target. No copy is needed in this case; deleting the target
+    // before copying would delete the source.
     if (resolve(sourceRoot.path) !== resolve(target)) {
       throwIfPluginOperationAborted(input.signal);
       activation = await activateDirectoryAtomically({
@@ -1153,7 +1182,8 @@ async function cacheMarketplacePlugin(input: {
       await ensureMarketplaceEntryManifest({ entry: input.entry, target });
     }
   } finally {
-    // cache 已复制成功后，临时目录 cleanup 失败不能阻断 installed record 落盘。
+    // After the cache is copied successfully, a temporary-directory cleanup failure must not
+    // prevent persisting the installed record.
     await cleanupPluginSourceBestEffort(sourceRoot.cleanup);
   }
 
@@ -1201,11 +1231,13 @@ async function resolvePluginSourceRoot(input: {
   const manifest =
     input.manifest ?? loadMarketplaceManifestSync(input.storageRoot, input.marketplace);
   const pluginBaseDir = resolveMarketplacePluginBaseDir(marketplaceDir, manifest);
-  // 内置 official 插件 seed 到 marketplace.json 时 source 写的是裸 kind 字符串
-  // "filesystem"/"sea"（见 bootstrap/app/bundled-plugins.ts writeOfficialMarketplace），
-  // 原逻辑落到下面的 `typeof source === "string"` 分支，把 "filesystem" 当相对路径解析后抛
-  // "Unsupported or missing plugin source: filesystem"，导致市场详情页对内置插件枚举不出组件。
-  // 这类插件已落盘在 cachePath（缺失时按 cache/<marketplace>/<name>/<version> 兜底），直接定位即可。
+  // When seeding built-in official plugins into marketplace.json, source is written as the bare
+  // kind string "filesystem"/"sea" (see writeOfficialMarketplace in
+  // bootstrap/app/bundled-plugins.ts). The old logic fell through to the `typeof source ===
+  // "string"` branch, resolved "filesystem" as a relative path, and threw "Unsupported or
+  // missing plugin source: filesystem," preventing the marketplace detail page from listing
+  // built-in plugin components. These plugins already exist at cachePath (fall back to
+  // cache/<marketplace>/<name>/<version> if absent), so locate them directly.
   if (source === "filesystem" || source === "sea") {
     const cachePath = input.entry.cachePath;
     if (cachePath && directoryExists(cachePath)) return { path: cachePath };
@@ -1290,7 +1322,8 @@ async function resolvePluginSourceRoot(input: {
     if (sourceKind === "npm" || sourceKind === "pip") {
       throw new UnsupportedPluginSourceError(sourceKind);
     }
-    // 显式 object source 配置错误时不能降级到 marketplace 内同名目录，否则会安装错误来源。
+    // If an explicit object source is misconfigured, do not fall back to a same-named directory
+    // in the marketplace; that would install the wrong source.
     throw new Error(
       `Plugin source is invalid or unsupported for ${input.entry.name}@${input.marketplace}: ${sourceKind || "missing kind"}`,
     );
@@ -1310,7 +1343,7 @@ export function readPluginSourceIdentityPin(source: unknown): string | undefined
   if (zipSha256) return zipSha256;
   if (typeof source.sha === "string") return source.sha;
 
-  // 兼容旧版及第三方 marketplace 的 source identity 写法。
+  // Compatibility for legacy and third-party marketplace source-identity formats.
   if (typeof source.commit === "string") return source.commit;
   return undefined;
 }
@@ -1486,8 +1519,9 @@ function createManifestFromMarketplaceEntry(
   delete raw.category;
   delete raw.tags;
   delete raw.strict;
-  // 商店信息（Store Listing）是目录层展示元数据，不属于插件 manifest；
-  // 合成 manifest 时剔除，避免污染 plugin.json 语义（author/homepage 是合法 manifest 字段，保留）。
+  // Store Listing is catalog-level presentation metadata, not part of the plugin manifest.
+  // Omit it when synthesizing the manifest to preserve plugin.json semantics (author/homepage
+  // are valid manifest fields and remain).
   delete raw.displayName;
   delete raw.displayName_i18n;
   delete raw.description_i18n;
@@ -1615,9 +1649,10 @@ async function resolveRepositoryMarketplaceSource(
   sparsePaths: string[] | undefined,
   signal?: AbortSignal,
 ): Promise<ResolvedPluginSourceRoot> {
-  // sparsePaths 是既有 MarketplaceSource 契约。Archive 需要先下载整仓，
-  // 会让原本能 sparse clone 的大仓库因下载上限失败；在 Archive 尚未实现等价投影前，
-  // 显式保留系统 Git 的 sparse checkout 路由。
+  // sparsePaths is part of the existing MarketplaceSource contract. Archive must download the
+  // entire repository first, which would make large repositories that work with sparse clone
+  // fail at download limits. Keep the system Git sparse-checkout path explicitly until Archive
+  // supports an equivalent projection.
   if (!sparsePaths?.length) {
     try {
       return await resolveGitHubArchiveSource({ pin: ref, signal, url });
@@ -1679,8 +1714,9 @@ async function execGitCloneWithRetry(
       if (attempt >= GIT_CLONE_MAX_ATTEMPTS || !isRetryableGitCloneError(error)) {
         throw error;
       }
-      // GitHub 偶发 RPC/recv timeout 会让官方 marketplace add 失败。
-      // 仅对明确的网络型 clone 错误做短重试，避免掩盖权限、路径或仓库不存在等确定性错误。
+      // Occasional GitHub RPC/recv timeouts can fail official marketplace adds.
+      // Retry briefly only for clearly network-related clone errors, so deterministic failures
+      // such as permissions, paths, or a missing repository are not masked.
       await delay(GIT_CLONE_RETRY_DELAY_MS * attempt, signal);
     }
   }
@@ -1690,8 +1726,9 @@ async function execGitCloneWithRetry(
 async function execGitCommand(args: string[], signal?: AbortSignal): Promise<void> {
   throwIfPluginOperationAborted(signal);
   try {
-    // 显式二进制覆盖既支持非标准 Git 安装位置，也让跨进程 E2E 能把 Git 指向不存在的
-    // 绝对路径，真实证明 Archive 主链路不依赖开发机上偶然存在的 Git。
+    // Explicit binary override supports nonstandard Git locations and lets cross-process E2E
+    // point Git to a nonexistent absolute path, proving the Archive main path does not depend on
+    // Git merely being present on the developer's machine.
     const gitBinary = process.env.ZCODE_GIT_BINARY?.trim() || "git";
     await execFileAsync(gitBinary, args, {
       env: buildMarketplaceGitEnv(),
@@ -1784,9 +1821,10 @@ async function stageMarketplaceManifest(
   signal?: AbortSignal,
 ): Promise<AtomicDirectoryActivation> {
   const targetDir = dirname(getMarketplaceManifestPath(storageRoot, marketplace));
-  // URL/settings source 没有 sourceRoot；直接覆盖 manifest 时若写入期间
-  // deadline 到达或 known state 落盘失败就无法回滚。prepare-only activation 让 manifest
-  // 与 known_marketplaces.json 使用同一个 transactionId 提交，失败时继续读取上一代快照。
+  // URL/settings sources have no sourceRoot. Directly replacing the manifest would be
+  // impossible to roll back if the deadline expires during write or known state persistence
+  // fails. Prepare-only activation commits the manifest and known_marketplaces.json with the
+  // same transactionId, so the previous snapshot remains readable on failure.
   return activateDirectoryAtomically({
     authorityPath: join(storageRoot, KNOWN_MARKETPLACES_FILE),
     prepare: async (stagedPath) => {
@@ -2021,7 +2059,7 @@ function normalizeMarketplaceManifest(
         (item): item is string => typeof item === "string",
       )
     : undefined;
-  // 目录顶层的 Featured 策展名单：仅接受非空字符串数组，去掉空白项。
+  // Featured curation list at the catalog root: accept only arrays of nonempty strings and trim whitespace.
   const featured = Array.isArray(value.featured)
     ? value.featured.filter(
         (item): item is string => typeof item === "string" && item.trim().length > 0,
@@ -2043,8 +2081,9 @@ function normalizeMarketplaceManifest(
 }
 
 /**
- * 从目录条目解析可选的商店展示信息。兼容字符串或对象形式的 author、i18n map 和多值字段；
- * 解析不到有效内容时返回 undefined，避免给每个条目挂空对象。
+ * Parse optional store presentation information from a catalog entry. Supports string or object
+ * forms of author, i18n maps, and multi-value fields. Return undefined when no valid content is
+ * found, rather than attaching an empty object to every entry.
  */
 export function parseEntryStoreListing(
   entry: Record<string, unknown>,
@@ -2103,13 +2142,13 @@ export function parseEntryStoreListing(
   if (examplePrompts && examplePrompts.length > 0) listing.examplePrompts = examplePrompts;
   const examplePromptsI18n = readStringListMap("examplePrompts_i18n");
   if (examplePromptsI18n) listing.examplePromptsI18n = examplePromptsI18n;
-  // 付费套餐提示只认显式布尔 true；字符串 "true"、1 等歧义写法一律按无需套餐处理，
-  // 避免目录写错就给免费插件挂上付费提示。
+  // Paid-plan hints accept only explicit boolean true; ambiguous values such as string "true" or
+  // 1 mean no paid plan, preventing a catalog typo from marking a free plugin as paid.
   if (entry.requiresPaidPlan === true) listing.requiresPaidPlan = true;
   return Object.keys(listing).length > 0 ? listing : undefined;
 }
 
-/** author 字段兼容 string 与 {name,url}（plugin.json 与目录条目共用此规则）。 */
+/** The author field supports string and {name,url} forms (shared by plugin.json and catalog entries). */
 export function normalizeAuthorValue(value: unknown): { name?: string; url?: string } | undefined {
   if (typeof value === "string") {
     const name = value.trim();
@@ -2155,9 +2194,11 @@ function findPluginManifestPath(rootPath: string): string | null {
   return null;
 }
 
-// 缓存路径段与安装记录的版本来源。优先取插件落盘 plugin.json 里的真实
-// version（与加载器 readPluginManifestFromRoot/index.ts 展示版本同源），缺失时才回退到 marketplace
-// 条目的 version，最后兜底 DEFAULT_VERSION。读取失败保持宽松回退，校验交给 validateMarketplacePlugin。
+// Source of the version used in the cache path segment and install record. Prefer the actual
+// version in the persisted plugin.json (same source as the loader's displayed version in
+// readPluginManifestFromRoot/index.ts); fall back to the marketplace entry's version, then
+// DEFAULT_VERSION. On read failure, fall back permissively and leave validation to
+// validateMarketplacePlugin.
 function resolveInstalledPluginVersion(rootPath: string, entry: PluginMarketplaceEntry): string {
   const manifestPath = findPluginManifestPath(rootPath);
   if (manifestPath) {
@@ -2171,7 +2212,8 @@ function resolveInstalledPluginVersion(rootPath: string, entry: PluginMarketplac
         return parsed.version;
       }
     } catch {
-      // 落到下方回退：manifest 不可读/非法时不应中断安装，版本以条目或默认值兜底。
+      // Fall through to the fallback below: an unreadable/invalid manifest should not interrupt
+      // installation; use the catalog version or default.
     }
   }
   return entry.version ?? DEFAULT_VERSION;
@@ -2441,8 +2483,9 @@ function getMarketplaceSourceValidationDeferral(
   return {
     code: "plugin_validation_deferred",
 
-    // 聚合市场可能包含大量外部 git source；市场级 validate 不逐个 clone，单插件安装或校验时
-    // 再深扫目标 root，避免设置页被网络操作拖到协议超时。
+    // An aggregate marketplace may contain many external git sources. Marketplace-level validate
+    // does not clone each one; deeply scan a target root only when installing or validating one
+    // plugin, so network operations do not make the Settings page time out.
     message: `Remote plugin source validation is deferred until install or single-plugin validate: ${sourceLabel}`,
     pluginId,
     severity: "warning",
@@ -2642,7 +2685,7 @@ function getPluginCacheDir(
 }
 
 export function getPluginDataDir(storageRoot: string, pluginId: string): string {
-  // 与 NodePluginAdapter.discoverPluginsSync 的 dataPath 解析保持一致：<storageRoot>/data/<sanitized-id>。
+  // Match dataPath resolution in NodePluginAdapter.discoverPluginsSync: <storageRoot>/data/<sanitized-id>.
   return join(storageRoot, "data", sanitizePluginId(pluginId));
 }
 

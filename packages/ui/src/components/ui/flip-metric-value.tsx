@@ -64,8 +64,8 @@ function MetricCharacter({
 }) {
   const widthClass = getCharacterWidthClass(character);
 
-  // 数字槽以前用 baseline + 负偏移，冒号和 K/M 单位走静态 inline，
-  // 混排时视觉中线不一致；所有字符统一固定高度并居中，翻页只发生在槽内。
+  // The number slot previously used a baseline plus negative offset, while colons and K/M units used static inline layout,
+  // causing the visual center to differ in mixed content; give every character the same fixed height and center alignment, with flips confined to the slot.
   if (!isDigitCharacter(character) || reducedMotion) {
     return (
       <span

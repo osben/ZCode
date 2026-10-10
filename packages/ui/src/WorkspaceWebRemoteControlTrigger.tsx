@@ -46,7 +46,7 @@ export function WorkspaceWebRemoteControlTrigger({
             className,
           )}
         >
-          {/* 入口统一使用远程控制图标，具体 Bot 渠道在弹层内区分。 */}
+          {/* Use the remote-control icon for the entry point; distinguish the specific Bot channel inside the popover. */}
           <Smartphone className="size-4 text-foreground-subtle" />
           {compact ? (
             <span className="sr-only">

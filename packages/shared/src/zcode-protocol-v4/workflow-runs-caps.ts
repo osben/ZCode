@@ -1,14 +1,14 @@
 // ============================================================
-// 界留下的痕迹：被拒实例的计数器、整键的条目预算、以及读面唯一的步数读法
+// Boundary accounting: rejected-instance counters, the whole-key entry budget, and the single step-counting rule for readers
 // ============================================================
-// 纯函数，负责容量与计数规则，不读取时钟或执行 I/O。
+// Pure functions for capacity and counting rules; no clock reads or I/O.
 //
-// 触界时无法入表的实例也需要计数；已有条目照常更新，淘汰与重新入表由对应规则处理。
-// 三类规则分别负责：
-//   - 计数器让它们**可数**——`truncated` 只说得出「有东西没进来」，说不出多少；
-//   - 条目预算让整个状态键**有界**——单条 run 的界乘以 maxRuns 离快照上限太近；
-//   - workflowRunStepCounts 是唯一允许的步数读法——表内 + 表外，读面三处（run 卡、时间线摘要、
-//     TUI 镜像）共用同一计算，保证同一条 run 的显示步数一致。
+// Instances rejected at the limit still need to be counted. Existing entries continue to update; eviction and reinsertion follow their respective rules.
+// The three rules serve distinct purposes:
+//   - Counters make rejected instances **countable**; `truncated` only says that some data was omitted, not how much.
+//   - The entry budget keeps the entire state key **bounded**; the per-run limit multiplied by maxRuns comes too close to the snapshot limit.
+//   - workflowRunStepCounts is the only permitted way to count steps. It combines listed and unlisted entries, and the three readers (run card, timeline summary,
+//     TUI mirror) share the same calculation so a run shows the same step count everywhere.
 
 import {
   WORKFLOW_RUNS_LIMITS,
@@ -16,28 +16,26 @@ import {
   type WorkflowRunUsage,
 } from "./workflow-runs.js";
 
-/** 一条被拒实例的事件对两个计数器的影响。 */
+/** How an event for a rejected instance affects the two counters. */
 export interface UnlistedInstanceEvent {
-  /** 这条实例没能进表（upsert 因触界拒了它），而不是「表里已有、原地更新」。 */
+  /** This instance was rejected by the upsert limit, rather than already being in the table and updated in place. */
   rejected: boolean;
-  /** 本条事件抬过了该 run 的水位。false = 重传/迟到，计数器一个都不动。 */
+  /** Whether this event advanced the run's watermark. False means a replay or late event; leave both counters unchanged. */
   advancesWaterMark: boolean;
   eventType: string;
-  /** `node-settled` 的 `cached` 标记：缓存命中的结算没有 queued，它自己就是出生事件。 */
+  /** The `cached` flag on `node-settled`: a cache-hit settlement has no queued event, so it is itself the birth event. */
   cached: boolean;
 }
 
 /**
- * 把一条**被拒**实例的事件记进 usage 的两个计数器。
+ * Record an event for a **rejected** instance in the two usage counters.
  *
- * 出生事件有两条（与归约主文件里 phaseName / node-progress 的判定逐字同一条）：`node-queued`，
- * 以及 replay 命中时直接发的 `node-settled { cached: true }`。中间相位一条都不计——它们描述的是
- * 同一个实例在动，不是又多了一个实例。
+ * There are two birth events (matching the phaseName / node-progress checks in the main reducer): `node-queued`
+ * and `node-settled { cached: true }` emitted directly on a replay cache hit. Intermediate phases are not counted; they describe
+ * the same instance progressing, not a new instance.
  *
- * 为什么 `nodesUnlistedSettled` 不需要夹到 `nodesUnlisted` 以下：引擎在**一世之内**对同一实例
- * 最多发一条 `node-queued`（repair / nudge 不重新入队，也没有退避重试），最多发一条
- * `node-settled`（scheduler 的 settled 闩），而缓存命中的结算自带出生。所以「结算数 ≤ 出生数」
- * 是结构性的。真要是哪天不成立了，那是引擎或 `run-started` 清零出了问题——夹一下只会把它藏起来。
+ * Why `nodesUnlistedSettled` does not need clamping to `nodesUnlisted`: within one run, the engine emits at most one `node-queued` per instance
+ * (repair / nudge does not requeue, and there are no backoff retries) and at most one `node-settled` (guarded by the scheduler's settled latch); a cache-hit settlement includes its own birth. Therefore, settled count ≤ birth count is structural. If that ever stops being true, the engine or `run-started` reset is broken; clamping would only hide the bug.
  */
 export function countUnlistedInstance(
   usage: WorkflowRunUsage,
@@ -51,20 +49,17 @@ export function countUnlistedInstance(
   const nodesUnlistedSettled = (usage.nodesUnlistedSettled ?? 0) + (settled ? 1 : 0);
   return {
     ...usage,
-    // 零时整个键缺席（与 reports / pendingQuestions 同规）：没撞过界的 run 一个新键都不多。
+    // Omit the entire key when zero, matching reports / pendingQuestions: runs that never hit a limit gain no extra key.
     ...(nodesUnlisted > 0 ? { nodesUnlisted } : {}),
     ...(nodesUnlistedSettled > 0 ? { nodesUnlistedSettled } : {}),
   };
 }
 
 /**
- * 一条**表外**实例回到了节点表（workflow-runs-eviction.ts 的 activation：它被派活了，于是
- * 连人带活重新入座）：`nodesUnlisted` 减一。
+ * A **previously unlisted** instance returned to the node table (activation in workflow-runs-eviction.ts dispatched work and reinserted it):
+ * decrement `nodesUnlisted`.
  *
- * 夹零而不是让它变负：这个计数器是**加出来**的，没有可去重的身份，而回表的实例理论上总该
- * 先被计过一次（被拒的出生，或被淘汰的那一刻）。夹一下只会少算一条，不夹会在协议线上发出
- * 一个负数，而读面把它直接加进步数总和。归零即整个键缺席（与 {@link countUnlistedInstance}
- * 同规），所以这里要显式摘键而不是写一个 0。
+ * Clamp at zero instead of allowing a negative value: this counter is **incremented** without identities for deduplication, and an instance returning to the table should have been counted already (at rejected birth or eviction). Clamping may undercount by one; without it, a negative value goes over the protocol and readers add it directly to the step total. When it reaches zero, omit the whole key (matching {@link countUnlistedInstance}), so remove the key instead of writing zero.
  */
 export function discountUnlistedInstance(usage: WorkflowRunUsage): WorkflowRunUsage {
   const current = usage.nodesUnlisted ?? 0;
@@ -78,15 +73,14 @@ export function discountUnlistedInstance(usage: WorkflowRunUsage): WorkflowRunUs
 }
 
 /**
- * 整键的条目预算（{@link WORKFLOW_RUNS_LIMITS.maxTotalEntries}）：超了就淘汰**最旧的终态 run**，
- * 直到回到预算内或者没有可淘汰的为止。
+ * Whole-key entry budget ({@link WORKFLOW_RUNS_LIMITS.maxTotalEntries}): when exceeded, evict the **oldest terminal run**
+ * until within budget or no eligible run remains.
  *
- * 三条不动的：在跑的 run（`pending` / `running`）——它正在产生事实，把它的表抽掉等于让面板当场
- * 失明；事件所属的那条 run——刚到的事实必须留得住；以及任何一条 run 的**部分**条目——这个协议
- * 没有条目删除语法，砍一半会让下游的增量对不上（diff 只能整键重发）。
+ * Three things are never evicted: active runs (`pending` / `running`), because removing their entries while they produce facts would blind the panel;
+ * the run receiving the event, because the new fact must be retained; and **partial** entries from any run, because this protocol has no entry-deletion operation and removing only some entries would break downstream deltas (diffs can resend only a whole key).
  *
- * 纯且确定：只看 `runs` 的顺序（最旧在前）与各自的 status，所以冷回放逐条重放会淘汰出同一个集合。
- * 预算之内时返回**同一个数组**，让未改动 run 的引用与增量的快路径都留着。
+ * Pure and deterministic: only the order of `runs` (oldest first) and each status matter, so replaying events from a cold start evicts the same set.
+ * Within budget, return **the same array** to preserve unchanged run references and the delta fast path.
  */
 export function evictForEntryBudget(
   runs: WorkflowRunState[],
@@ -100,8 +94,8 @@ export function evictForEntryBudget(
     const index = remaining.findIndex(
       (run) => run.runId !== eventRunId && run.status !== "pending" && run.status !== "running",
     );
-    // 一条都淘汰不动（全在跑，或只剩事件自己那条）：超预算也照留。诚实地超一点，
-    // 好过为了守住一个数字把一条活着的 run 从面板上抹掉。
+    // Nothing is eligible (all runs are active, or only the event's run remains): keep the over-budget state.
+    // Exceeding the budget honestly is better than erasing a live run from the panel to preserve a number.
     if (index < 0) break;
     total -= remaining[index]!.nodes.length + remaining[index]!.actors.length;
     remaining = [...remaining.slice(0, index), ...remaining.slice(index + 1)];
@@ -110,10 +104,10 @@ export function evictForEntryBudget(
 }
 
 /**
- * 一条 run 走了多少步、结算了多少步——**表内 + 表外**。
+ * Count how many steps a run has taken and settled — **listed + unlisted**.
  *
- * 读面（run 卡、时间线摘要、TUI 镜像）必须都走这一个函数：它们此前各自数 `nodes`，于是同一条
- * 撞过界的 run 在三个地方显示三个数字，而且三个都比真实步数小。
+ * All readers (run card, timeline summary, TUI mirror) must use this function. They previously counted `nodes` independently, so the same
+ * run that hit the limit showed three different counts, all below its actual step count.
  */
 export function workflowRunStepCounts(run: WorkflowRunState): { total: number; settled: number } {
   let settledInList = 0;

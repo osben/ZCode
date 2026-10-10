@@ -1,15 +1,15 @@
-// 附件命令面：AttachmentRef（引用模型）→ core TurnAttachment 的协议边界映射。
+// Attachment command surface: map the AttachmentRef reference model across the protocol boundary to core TurnAttachment.
 //
-// ref 的两种形态（与投影侧 buildUserInputRow 的「本地路径 / artifact URI」注释对偶）：
-// 1. URI ref（zcode-artifact:// 等带 scheme:/）——经 attachment chunk transaction 寄存的内容引用：
-//    - 图片：content 直接携带 URI，core 的 attachment-artifacts 解析链在模型请求时
-//      读回 data URL（与 externalizePromptAttachments 的产物同形，不在这里内联解码，
-//      避免大图在命令层放大内存）。
-//    - PDF：保留 URI 交给 core 的 PDF resolver；其他非图片：读回 artifact 并按旧
-//      decodeTextProtocolAttachment 语义解成 ≤64KiB 文本
-//      内容（超限/解不开 → 只保留展示元信息，不伪造内容）。
-// 2. 本地路径 ref（desktop 直传绝对路径）——按旧 mapProtocolPromptAttachment 的
-//    localPath 分支映射为 path 引用，core 已有读取阈值与降级策略。
+// Two ref forms (paired with the "local path / artifact URI" comment on projection-side buildUserInputRow):
+// 1. URI refs (scheme-based, such as zcode-artifact://): content references registered through an attachment chunk transaction.
+//    - Images: content carries the URI; core's attachment-artifacts resolution chain reads back the
+//      data URL when making the model request (same form as externalizePromptAttachments output).
+//      Do not decode inline here, which could inflate memory use for large images at the command layer.
+//    - PDFs: preserve the URI for core's PDF resolver. Other non-image files: read the artifact and
+//      decode it as text up to 64 KiB, following the old decodeTextProtocolAttachment semantics
+//      (over the limit or undecodable: keep display metadata only; do not fabricate content).
+// 2. Local-path refs (absolute paths passed directly by Desktop): map to a path reference through
+//    the old mapProtocolPromptAttachment localPath branch; core already applies read limits and fallback behavior.
 import type { TurnAttachment } from "@zcode/core";
 import type { AttachmentRef } from "@zcode/shared/zcode-protocol-v4";
 import type { ZCodeApp } from "../../app/types.js";
@@ -43,7 +43,7 @@ function isPdfRef(ref: AttachmentRef): boolean {
   return ref.mime.split(";", 1)[0]?.trim().toLowerCase() === "application/pdf";
 }
 
-/** data URL（data:<mime>;base64,<payload>）→ utf8 文本；非 base64 data URL 原样返回正文。 */
+/** Convert a data URL (data:<mime>;base64,<payload>) to UTF-8 text; return non-base64 data URL bodies as-is. */
 function decodeDataUrlText(content: string): string | undefined {
   if (!content.startsWith("data:")) return content;
   const commaIndex = content.indexOf(",");
@@ -61,7 +61,7 @@ function decodeDataUrlText(content: string): string | undefined {
 async function mapAttachmentRef(app: ZCodeApp, ref: AttachmentRef): Promise<TurnAttachment> {
   const displayMeta = displayMetaOf(ref);
   if (!isUriAttachmentRef(ref.ref)) {
-    // 本地路径引用：交给 core 的文件/图片读取链路（阈值与降级已内建）。
+    // Local path ref: delegate to core's file/image read path (limits and fallback behavior are built in).
     if (isVideoRef(ref)) {
       return { path: ref.ref, type: "video", ...displayMeta };
     }
@@ -72,19 +72,19 @@ async function mapAttachmentRef(app: ZCodeApp, ref: AttachmentRef): Promise<Turn
     };
   }
   if (isImageRef(ref)) {
-    // 图片 URI ref：content 携带 artifact URI，模型请求阶段由 resolveAttachmentDataUrl
-    // 读回（与 externalizePromptAttachments 产物同形，天然免二次外置）。
+    // Image URI ref: content carries the artifact URI, which resolveAttachmentDataUrl reads back
+    // during the model request (same form as externalizePromptAttachments output, so no second externalization is needed).
     return { content: ref.ref, path: ref.fileName, type: "image", ...displayMeta };
   }
   if (isVideoRef(ref)) {
-    // video URI ref：与图片同构——content 携带 artifact URI，模型请求阶段读回 data URL。
+    // Video URI ref: same shape as an image; content carries the artifact URI and is read back as a data URL during the model request.
     return { content: ref.ref, path: ref.fileName, type: "video", ...displayMeta };
   }
   if (isPdfRef(ref)) {
-    // PDF URI ref 必须保留 durable URI，交给 core 读取 data URL；不能按 UTF-8 文本解码。
+    // A PDF URI ref must retain its durable URI for core to read as a data URL; do not decode it as UTF-8 text.
     return { content: ref.ref, path: ref.fileName, type: "pdf", ...displayMeta };
   }
-  // 非图片 URI ref：按旧 decodeTextProtocolAttachment 语义还原 ≤64KiB 文本内容。
+  // Non-image URI ref: restore up to 64 KiB of text using the old decodeTextProtocolAttachment semantics.
   if (ref.bytes > INLINE_TEXT_ATTACHMENT_MAX_BYTES) {
     return { type: "file", ...displayMeta };
   }
@@ -95,14 +95,14 @@ async function mapAttachmentRef(app: ZCodeApp, ref: AttachmentRef): Promise<Turn
       ? { content: text, path: ref.fileName, type: "file", ...displayMeta }
       : { type: "file", ...displayMeta };
   } catch {
-    // 引用失效（TTL 回收/写失败）：保留展示元信息，不让整次发送失败。
+    // If the ref is invalid (TTL cleanup/write failure), keep display metadata and do not fail the entire send.
     return { type: "file", ...displayMeta };
   }
 }
 
 /**
- * sendText/createSession/editUserQuery 共用：attachments 引用数组 → core TurnAttachment[]。
- * 空数组/缺省 → undefined（sendInput 语义：无附件不带字段）。
+ * Shared by sendText/createSession/editUserQuery: map the attachment ref array to core TurnAttachment[].
+ * Empty or omitted array -> undefined (sendInput semantics: omit the field when there are no attachments).
  */
 export async function mapAttachmentRefsToTurnAttachments(
   app: ZCodeApp,

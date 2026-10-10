@@ -71,10 +71,10 @@ export const WebRemoteControlDialog = memo(function WebRemoteControlDialogCompon
             type="button"
             variant="ghost"
             size="icon-sm"
-            // Bugfix: 这个弹窗会贴近桌面窗口顶部显示，默认 close 在 Electron drag 区里容易点不中。
-            // 这里改成显式点击关闭，并把按钮本身标成 no-drag，保证右上角关闭动作能稳定命中。
-            // Bugfix: 远控弹层内可点击控件之前没有显式 pointer cursor，桌面端 hover 时不像可操作元素。
-            // 这里仅给启用态补手指指针，禁用态仍沿用 Button 的 disabled 交互语义。
+            // Bug fix: This dialog appears near the top of the desktop window, where the default close button can be hard to click inside Electron’s drag region.
+            // Use an explicit click-to-close action and mark the button itself no-drag so the upper-right close action is reliably clickable.
+            // Bug fix: Clickable controls in the remote-control popover previously lacked an explicit pointer cursor and did not look interactive on desktop hover.
+            // Add the pointer cursor only when enabled; disabled controls keep the Button’s disabled interaction semantics.
             className="absolute top-2 right-2 enabled:cursor-pointer [app-region:no-drag]"
             onClick={() => onOpenChange(false)}
           >
@@ -124,8 +124,8 @@ export const WebRemoteControlDialog = memo(function WebRemoteControlDialogCompon
                         className="flex min-h-0 cursor-pointer items-start gap-3 rounded-lg border border-transparent bg-surface px-3 py-3 text-left transition-colors hover:border-input-border-focused hover:bg-surface-hover focus-visible:border-input-border-focused"
                         onClick={() => handleOpenBotEntry(entry.provider)}
                       >
-                        {/* Bugfix: 远控 Bot Channel 入口原来用通用 lucide 图标，用户无法一眼区分微信、飞书和 Telegram。
-                            这里直接复用 BotsDialog 的渠道 logo，不再额外包裹容器，保证品牌图标本身作为视觉识别。 */}
+                        {/* Bug fix: The remote-control Bot Channel entry used a generic Lucide icon, so users could not distinguish WeChat, Feishu, and Telegram at a glance.
+                            Reuse the channel logos from BotsDialog directly without an extra wrapper, so the brand icon itself provides recognition. */}
                         <ProviderIcon provider={entry.provider} className="size-12 shrink-0" />
                         <span className="min-w-0 flex-1 space-y-1">
                           <span className="flex min-w-0 items-center gap-1.5 text-ui-base font-medium text-foreground">

@@ -104,8 +104,8 @@ export function ConversationFileSummaryPanel({
     if (!open || !context.fetchFileChanges || !target) return;
 
     let disposed = false;
-    // 运行中的 fileChanges 是某个 projection revision 的局部结果；turn
-    // 进入终态后必须废弃局部 details，并用可持久缓存的终态策略重新读取。
+    // fileChanges while running is a local result for a projection revision. Once the turn reaches a terminal state,
+    // discard local details and read again using the persistently cacheable terminal-state strategy.
     setDetails(null);
     setLoadingDetails(true);
     void context
@@ -286,8 +286,10 @@ export function ConversationFileSummaryPanel({
                             }}
                           />
                         </div>
-                        {/* writeCount 是撤销预检使用的操作轨迹，摘要行已经用 +/- 表达最终结果；
-                            在这里展示会把内部操作次数误当成变更指标，因此只在撤销弹窗保留。 */}
+                        {/* writeCount is an operation trace used by undo preflight, while the summary
+                            row already shows the final result with +/-. Showing it here would make
+                            internal operation counts look like change metrics, so keep it only in
+                            the undo dialog. */}
                         <span className="flex shrink-0 items-center gap-2 tabular-nums text-ui-base">
                           {item.additions > 0 ? (
                             <span className="text-diff-added">+{item.additions}</span>

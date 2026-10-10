@@ -49,22 +49,24 @@ function resolveLegacyProviderApiType(
   return "openai-chat-completions";
 }
 
-/** 把旧 CLI 用户文件中的显式 Provider 定义迁移到新的 Personal Overlay。 */
+/** Migrate explicit Provider definitions from the legacy CLI user file to the new Personal Overlay. */
 function importLegacyCliPersonalProviderConfig(
   input: LegacyCliPersonalProviderConfigImportInput,
 ): ProviderConfigLayerUpdate {
   const runtimePatch = parseLegacyCliModelConfig(input.input);
-  // 通用 ZCodeConfigFileSchema 刻意把旧 provider 留在 passthrough unknown，
-  // 迁移器却从该结果取类型，导致 Bootstrap build 无法证明 model/provider 结构。
-  // 这里只消费专用旧格式 parser 的已校验投影，保持兼容逻辑封闭在读取边界。
+  // The generic ZCodeConfigFileSchema intentionally leaves legacy providers in passthrough unknown,
+  // so reading their types from that result prevents the Bootstrap build from verifying the
+  // model/provider structure. Consume only the validated projection from the dedicated legacy
+  // format parser here, keeping compatibility logic within the read boundary.
   let providers = ProviderConfigMap.empty();
   let models = ModelConfigRules.empty();
 
   for (const [rawProviderId, provider] of Object.entries(runtimePatch.provider ?? {})) {
     const providerId = rawProviderId.trim();
     if (!providerId) continue;
-    // Standalone 也会读取旧 Desktop 写出的 builtin:* / source=custom。
-    // 与 Desktop 导入一致：旧内置静态配置和账号凭据不迁，按量 API 只留下 Key。
+    // Standalone also reads builtin:* / source=custom values written by the legacy Desktop app.
+    // Match Desktop import behavior: do not migrate legacy built-in static configuration or account
+    // credentials; retain only the Key for metered APIs.
     const templateId =
       providerId === "builtin:bigmodel"
         ? BUILTIN_PROVIDER_TEMPLATE_IDS.bigmodel
@@ -120,8 +122,9 @@ function importLegacyCliPersonalProviderConfig(
     }
   }
 
-  // 默认选择与 Provider 由同一次旧文件读取生成，只在 Personal 文件首次创建时导入。
-  // 后续清空默认不能再次读取旧 main，也不能先创建半份配置阻止剩余字段迁移。
+  // The default selection and Provider are derived from the same legacy-file read and imported only
+  // when the Personal file is first created. Clearing the default later must not read the legacy
+  // main again, and creating a partial config first must not block migration of the remaining fields.
   const defaultModelSelection = importLegacyCliConfiguredDefault(input.input) ?? undefined;
   return Object.freeze({ providers, models, defaultModelSelection });
 }
@@ -135,14 +138,14 @@ export async function readLegacyCliPersonalProviderConfig(input: {
     return importLegacyCliPersonalProviderConfig({ input: raw });
   } catch (error) {
     if (isFileNotFound(error)) return null;
-    // 迁移必须是全有或全无。正式 Config 尚不能表达旧执行字段时保留旧链路，
-    // 不写一个部分 Personal 文件阻止未来版本重新迁移。
+    // Migration must be all or nothing. While the formal Config cannot represent legacy execution
+    // fields, keep the legacy path and do not write a partial Personal file that would block a future migration.
     if (error instanceof UnsupportedLegacyCliProviderConfigError) return null;
     throw error;
   }
 }
 
-/** 旧 CLI 用户文件中的 main model 只迁移为 Environment 默认选择。 */
+/** Migrate only the main model in the legacy CLI user file as the Environment default selection. */
 function importLegacyCliConfiguredDefault(input: unknown): ModelSelection | null {
   const main = parseLegacyCliModelConfig(input).model?.main;
   if (!main || main.provider === RETIRED_ZAPI_PROVIDER_ID) return null;

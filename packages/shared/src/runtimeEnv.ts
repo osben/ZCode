@@ -1,14 +1,14 @@
 export const ZCODE_RUNTIME_ENV_KEY = "ZCODE_RUNTIME_ENV";
 export const ZCODE_HTTP_PROXY_ENV_KEY = "ZCODE_HTTP_PROXY";
 export const ZCODE_NO_PROXY_ENV_KEY = "ZCODE_NO_PROXY";
-/** Desktop Host 只向 desktop-attached remote server 传递一次的网络配置。 */
+/** Network configuration passed once by the Desktop Host to a desktop-attached remote server. */
 export const ZCODE_REMOTE_RUNTIME_NETWORK_AUTHORITY_ENV_KEY =
   "ZCODE_REMOTE_RUNTIME_NETWORK_AUTHORITY";
 export const ZCODE_REMOTE_HTTP_PROXY_ENV_KEY = "ZCODE_REMOTE_HTTP_PROXY";
 export const ZCODE_REMOTE_NO_PROXY_ENV_KEY = "ZCODE_REMOTE_NO_PROXY";
 export const ZCODE_AGENT_CA_CERT_ENV_KEY = "ZCODE_AGENT_CA_CERT";
 export const ZCODE_TOOL_ENV_PASSTHROUGH_ENV_KEY = "ZCODE_TOOL_ENV_PASSTHROUGH_JSON";
-/** Desktop Main 将服务端裁决的单功能灰度结果传给 Local/Remote Host。 */
+/** Desktop Main passes the server-decided single-feature rollout result to the Local/Remote Host. */
 export const ZCODE_DESKTOP_CONTEXT_PROMPT_ENABLED_ENV = "ZCODE_DESKTOP_CONTEXT_PROMPT_ENABLED";
 export const ZCODE_CUA_PRODUCT_HELPER_ENV_KEY = "ZCODE_CUA_PRODUCT_HELPER";
 export const ZCODE_CUA_BROKER_SOCKET_ENV_KEY = "ZCODE_CUA_PERMISSION_BROKER_SOCKET";
@@ -18,8 +18,8 @@ export const ZCODE_CUA_NODE_REPL_HOST_ENV_KEY = "ZCODE_CUA_NODE_REPL_HOST";
 // flag (below) plus the local-helper relaxations wired in packages/services (unsigned/
 // unauthenticated local helper, dev install variant, "Dev.app" naming). It exists so a developer
 // can launch the full local CUA loop with a single env var instead of the historical four-var
-// incantation. 这些开关只在未打包本地构建生效；正式 desktop/Helper bundle 会在编译期关闭并在
-// main→host 边界删除，不能用于 signed release 的 runtime override。
+// incantation. These switches apply only to unpackaged local builds; official desktop/Helper bundles
+// disable them at compile time and remove them at the main→host boundary, so they cannot override a signed release at runtime.
 export const ZCODE_CUA_DEV_MODE_ENV_KEY = "ZCODE_CUA_DEV_MODE";
 
 export type ZCodeRuntimeEnv = "development" | "production" | "test";
@@ -32,8 +32,8 @@ export function isCuaDevModeRequested(env: EnvRecord = process.env): boolean {
 }
 
 export function isZCodeCuaInternalFeatureEnabled(env: EnvRecord = process.env): boolean {
-  // CUA 现已默认打包进正式版（plugin staged + Helper enabled），不再需要显式 env flag。
-  // DEV_MODE 仍然 implied（开发一键），PRODUCT_HELPER=0/off/false 可显式关闭。
+  // CUA is now included in official builds by default (plugin staged + Helper enabled), so no explicit env flag is needed.
+  // DEV_MODE still implies it (one-switch development setup); PRODUCT_HELPER=0/off/false explicitly disables it.
   if (isCuaDevModeRequested(env)) return true;
   const explicit = env[ZCODE_CUA_PRODUCT_HELPER_ENV_KEY]?.trim().toLowerCase();
   if (explicit === "0" || explicit === "false" || explicit === "off") return false;
@@ -57,21 +57,24 @@ const SANITIZED_RUNTIME_ENV_KEYS = [
   ZCODE_REMOTE_RUNTIME_NETWORK_AUTHORITY_ENV_KEY,
   ZCODE_REMOTE_HTTP_PROXY_ENV_KEY,
   ZCODE_REMOTE_NO_PROXY_ENV_KEY,
-  // CUA broker socket 是只该给目标 zcode-cua MCP server 的连接材料（由 desktop/CLI 在
-  // 解析该 server 时定向注入其 env）。绝不能随 agent 全局 env 泄漏给其它 MCP server / Bash / tool
-  // 子进程 —— 否则同 agent 内的恶意 MCP 或被 prompt-injection 触发的命令能直接驱动
-  // 已授权 Helper（confused-deputy）。这里统一从所有子进程 env 剔除；zcode-cua server 的定向
-  // env 注入在 buildMcpStdioEnv 之后 spread，因此仍能拿到（见 adapters/mcp StdioClientTransport）。
+  // The CUA broker socket is connection material for the target zcode-cua MCP server only (desktop/CLI
+  // injects it into that server's env when resolving it). Never leak it through the agent's global env
+  // to other MCP servers / Bash / tool subprocesses; a malicious MCP or prompt-injection-triggered command
+  // in the same agent could otherwise drive the authorized Helper (confused deputy). Strip it from all
+  // subprocess envs here; the targeted zcode-cua env is spread after buildMcpStdioEnv and remains available
+  // to that server (see adapters/mcp StdioClientTransport).
   ZCODE_CUA_BROKER_SOCKET_ENV_KEY,
-  // 遗留 bearer token：当前 broker 是 identity 模式（socket + authority，无口令，见
-  // captureZCodeCuaBrokerCredentials），本进程不再产生也不再消费它。仍然剔除，因为用户机上
-  // 可能装着旧版 Helper —— 那些版本认 bearer token，一旦这个变量随 agent 全局 env 漏给别的
-  // MCP server / Bash 子进程，同一个 confused-deputy 又成立。剔除一个已不用的键是零成本的。
+  // Legacy bearer token: the current broker uses identity mode (socket + authority, no password; see
+  // captureZCodeCuaBrokerCredentials), and this process no longer creates or consumes the token. Keep
+  // stripping it because users may have an older Helper installed that accepts bearer tokens. If this
+  // variable leaks through the agent's global env to another MCP server / Bash subprocess, the same
+  // confused-deputy risk applies. Stripping an unused key has no cost.
   "ZCODE_CUA_PERMISSION_BROKER_TOKEN",
   "ZCODE_CUA_PERMISSION_BROKER_REFRESH_MARKER",
   "ZCODE_CUA_PLUGIN_AUTHORITY",
-  // Agent OTLP Endpoint/Auth/Identity 只属于 CLI telemetry bootstrap，不能继续泄漏给
-  // Bash、MCP 或模型工具子进程。sanitize 前会捕获到本进程私有 Map，供 Agent 启动边界读取。
+  // Agent OTLP endpoint/auth/identity belong only to CLI telemetry bootstrap and must not leak to
+  // Bash, MCP, or model-tool subprocesses. Capture them in a process-private Map before sanitizing,
+  // so the Agent startup boundary can read them.
   "OTEL_EXPORTER_OTLP_ENDPOINT",
   "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT",
   "OTEL_EXPORTER_OTLP_HEADERS",
@@ -83,8 +86,8 @@ const SANITIZED_RUNTIME_ENV_KEYS = [
   "OTEL_EXPORTER_OTLP_COMPRESSION",
   "ZCODE_MODEL_TELEMETRY_ENABLED",
   "ZCODE_TELEMETRY_DEVICE_MID",
-  // 历史身份变量不再受支持，但仍须从所有子进程环境剔除，避免旧配置把原始账号
-  // 或可伪造 hash 泄漏给 Host、Bash 与 MCP。
+  // Legacy identity variables are no longer supported, but must still be stripped from all subprocess
+  // environments to prevent old configuration from leaking raw account IDs or spoofable hashes to Host, Bash, and MCP.
   "ZCODE_TELEMETRY_USER_ID",
   "ZCODE_TELEMETRY_USER_ID_HASH",
   "ZCODE_TELEMETRY_USER_SUBJECT_ID",
@@ -97,7 +100,7 @@ const NON_TOOL_PASSTHROUGH_RUNTIME_ENV_KEYS = [
   "NODE_ENV",
   "ELECTRON_RUN_AS_NODE",
   "NODE_NO_WARNINGS",
-  // CUA broker 凭据不得经 tool-env-passthrough 恢复到 Bash/tool 子进程（否则等于绕过上面的剔除）。
+  // Do not restore CUA broker credentials to Bash/tool subprocesses through tool-env-passthrough; that would bypass the stripping above.
   ZCODE_CUA_BROKER_SOCKET_ENV_KEY,
   "ZCODE_CUA_PERMISSION_BROKER_REFRESH_MARKER",
   "ZCODE_CUA_PLUGIN_AUTHORITY",
@@ -137,19 +140,20 @@ interface CapturedCuaBrokerCredentials {
 let capturedCuaBrokerCredentials: Readonly<CapturedCuaBrokerCredentials> | undefined;
 const capturedZCodeAgentTelemetryEnv: Record<string, string> = {};
 
-// CUA broker socket 会被上面的 sanitize 从子进程 env 中剔除（confused-deputy 防护 —— 不能让
-// 其它 MCP server / Bash / tool 子进程直接驱动已授权 Helper）。但 CLI 入口在 bootstrap
-// 解析全局 ~/.zcode/cli/config.json 里的 `zcode-cua` server 之前就会先 sanitize process.env，导致
-// 定向注入时已经读不到凭据 → 全局 zcode-cua 回退 `--backend auto`，让 Python/uvx 成为 TCC 主体
-// （fail-open，违反 "Python/uvx must never become the implicit permission owner"）。因此在剔除前把
-// 凭据捕获进本进程私有存储，只经 getCapturedZCodeCuaBrokerCredentials() 暴露给 bootstrap 的定向
-// 注入路径，绝不写回任何子进程 env。
+// The sanitize step above strips the CUA broker socket from subprocess envs to prevent a confused deputy:
+// other MCP servers / Bash / tool subprocesses must not drive the authorized Helper directly. However,
+// the CLI entry point sanitizes process.env before bootstrap reads the `zcode-cua` server from global
+// ~/.zcode/cli/config.json. Targeted injection would then lose the credentials, causing the global
+// zcode-cua server to fall back to `--backend auto` and make Python/uvx the TCC owner (fail-open, contrary
+// to "Python/uvx must never become the implicit permission owner"). Capture the credentials in private
+// process storage before stripping them, and expose them to bootstrap's targeted injection path only
+// through getCapturedZCodeCuaBrokerCredentials(); never write them back to any subprocess env.
 function captureZCodeCuaBrokerCredentials(env: Record<string, string | undefined>): void {
   const socket = env[ZCODE_CUA_BROKER_SOCKET_ENV_KEY]?.trim();
   const pluginAuthority = env[ZCODE_CUA_PLUGIN_AUTHORITY_ENV_KEY]?.trim();
   const refreshMarker = env["ZCODE_CUA_PERMISSION_BROKER_REFRESH_MARKER"]?.trim();
-  // 连接没有口令：socket + authority（config-provenance 随机数）同批出现才构成有效凭据组；
-  // 半组说明上游注入不完整或正在轮换。
+  // The connection has no password: socket + authority (a config-provenance nonce) form a valid credential
+  // set only when both are present; a partial set means upstream injection is incomplete or rotating.
   if (socket && pluginAuthority) {
     capturedCuaBrokerCredentials = Object.freeze({
       socket,
@@ -159,7 +163,8 @@ function captureZCodeCuaBrokerCredentials(env: Record<string, string | undefined
     return;
   }
   if (socket || pluginAuthority) {
-    // 发现半组凭据说明上游注入不完整或正在轮换；清掉旧快照并 fail-closed，不能复用另一半。
+    // A partial credential set means upstream injection is incomplete or rotating; clear the old snapshot
+    // and fail closed rather than reusing the other half.
     capturedCuaBrokerCredentials = undefined;
   }
 }
@@ -169,8 +174,8 @@ function captureZCodeAgentTelemetryEnv(env: Record<string, string | undefined>):
 }
 
 /**
- * 只提取供 Agent telemetry bootstrap 使用的配置。宿主可在经过通用 env 清洗后，
- * 将这组值定向传给 host/Agent；不得把它并入 Bash/MCP 的 tool env。
+ * Extract only the configuration used by Agent telemetry bootstrap. After general env sanitization,
+ * the host may pass these values specifically to the host/Agent; do not include them in the Bash/MCP tool env.
  */
 export function readZCodeAgentTelemetryEnv(
   env: Record<string, string | undefined>,
@@ -198,7 +203,7 @@ export function getCapturedZCodeCuaBrokerCredentials(): {
     : { socket: undefined, pluginAuthority: undefined };
 }
 
-// 仅供测试重置进程内捕获状态。
+// For resetting process-captured state in tests only.
 export function resetCapturedZCodeCuaBrokerCredentialsForTest(): void {
   capturedCuaBrokerCredentials = undefined;
 }

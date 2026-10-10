@@ -1,22 +1,20 @@
 // ============================================================
-// workflowRuns 归约里的用户面产物部分
+// User-facing artifacts portion of the workflowRuns reducer
 // ============================================================
-// 从 workflow-runs-reducer.ts 拆出（max-lines 门），与 workflow-runs-concurrency.ts 同一先例：
-// 主归约只剩 switch 的分派，产物的三条规则住在这里。同一条纪律：纯函数、无时钟、无 I/O。
+// Split out of workflow-runs-reducer.ts to meet the max-lines limit, following workflow-runs-concurrency.ts:
+// the main reducer now only dispatches the switch, and the three artifact rules live here. Same constraints: pure functions, no clock, no I/O.
 //
-// ⚠ 术语：本模块的 artifact 是脚本经
-// `artifact.*` 发布给**用户**看的产出。主归约里 `resultPreview` 调用的
-// `serializeWorkflowArtifact`（workflow-artifact.ts，单数）里那个 artifact 是**另一个意思**
-// ——引擎内部对「脚本顶层返回值」的叫法，给模型看的。两者无关。
+// ⚠ Terminology: artifact in this module means output published by a script through
+// `artifact.*` for **users**. The artifact in `serializeWorkflowArtifact` (workflow-artifact.ts, singular), called by `resultPreview` in the main reducer, has a **different meaning**:
+// the engine's name for a script's top-level return value, which is shown to the model. The two are unrelated.
 //
-// 三条规则各有各的键，这是本模块最要紧的一句话：
-//   artifact-published ⇒ 按**产物 id** upsert。同 id 再发布是新版本，必须覆盖同一张卡；
-//                        而同一个 id 的两个版本来自两个不同的**站点实例**，所以这里不能
-//                        用 nodes/actors/reports 那把 (siteId, ordinal) 钥匙。
-//   artifact-failed    ⇒ 不动状态（在主归约里，只有一行 return）。失败行不认领 id / 种类 /
-//                        版本，没有可 upsert 的东西。
-//   report(artifactId) ⇒ 该 id 的 itemCount 加一。去重键回到 (siteId, ordinal)——它是一条
-//                        report，身份仍是 report 的身份。
+// Each of the three rules has its own key; this is the most important distinction in this module:
+//   artifact-published ⇒ upsert by **artifact id**. Republishing the same id creates a new version and must update the same card;
+//                        versions of one id come from different **site instances**, so do not use the (siteId, ordinal) key from nodes/actors/reports here.
+//   artifact-failed    ⇒ leave state unchanged (the main reducer has a single return for this case). A failed record claims no id, kind,
+//                        or version, so there is nothing to upsert.
+//   report(artifactId) ⇒ increment itemCount for that id. Deduplicate by (siteId, ordinal), because this is a report
+//                        and its identity remains the report's identity.
 
 import {
   WORKFLOW_ARTIFACT_LIMITS,
@@ -24,7 +22,7 @@ import {
   type WorkflowRunArtifactSummary,
 } from "./workflow-artifacts.js";
 
-/** 产物的六个成员种类。归约不校验 schema，所以这里自带一张闭集表判读。 */
+/** The six supported artifact kinds. The reducer does not validate the schema, so it keeps this closed set for classification. */
 const ARTIFACT_KINDS: ReadonlySet<string> = new Set<WorkflowRunArtifactKind>([
   "file",
   "markdown",
@@ -35,14 +33,14 @@ const ARTIFACT_KINDS: ReadonlySet<string> = new Set<WorkflowRunArtifactKind>([
 ]);
 
 /**
- * `artifact-published` 载荷里的 `ArtifactVersionRecord` → 快照里的**最新版元数据**。
+ * Convert `ArtifactVersionRecord` from an `artifact-published` payload to the snapshot's **latest-version metadata**.
  *
- * 裁剪掉 `versions` / `spec` / `description` / `uri` / `sourcePath` / `publishedAt`：快照是
- * 高频状态键，它的读者只需要「有哪些产物、现在第几版、变了没有」。全量元数据走
- * `workflowRunArtifacts` 查询，字节走 `workflowRunArtifactRead`——权威始终在 journal。
+ * Drop `versions` / `spec` / `description` / `uri` / `sourcePath` / `publishedAt`: snapshots are
+ * high-frequency state keys, and readers only need to know which artifacts exist, their current version, and whether they changed. Fetch full metadata through
+ * `workflowRunArtifacts` and bytes through `workflowRunArtifactRead`; the journal remains authoritative.
  *
- * `id` / `kind` / `version` 缺任一即无从展示（返回 undefined，只抬水位）：一张认不出种类的卡
- * 既选不出图标也分派不了渲染器。其余字段有则带、无则整键缺席。
+ * Without any of `id` / `kind` / `version`, the artifact cannot be displayed (return undefined and only advance the watermark): a card with an
+ * unknown kind has neither an icon nor a renderer. Include other fields when present; omit each key when absent.
  */
 export function workflowArtifactSummary(value: unknown): WorkflowRunArtifactSummary | undefined {
   if (!isPlainRecord(value)) return undefined;
@@ -68,13 +66,13 @@ export function workflowArtifactSummary(value: unknown): WorkflowRunArtifactSumm
 }
 
 /**
- * 按**产物 id** upsert 进有界的产物表，并**保留已有条目的 `itemCount`**。
+ * Upsert into the bounded artifact table by **artifact id**, while **preserving an existing entry's `itemCount`**.
  *
- * 保留计数是这个函数与 `upsertBoundedByInstance` 唯一的实质差别，也是它存在的理由：新版本
- * 的记录里没有 `itemCount`（那是标签 report 数出来的，不是发布时刻的事实），整条替换会把
- * 一块正在被喂数据的看板的计数清零——刷新信号归零，看板从此不再增量取数。
+ * Preserving the count is the only substantive difference from `upsertBoundedByInstance` and the reason this function exists: a new version
+ * has no `itemCount` (it comes from tagged reports, not from publication). Replacing the whole entry would reset the count on a dashboard receiving data;
+ * its refresh signal would reset, and it would stop fetching incremental updates.
  *
- * 触界语义与其他三张表同族：拒绝新条目、已有条目照常更新。
+ * Limit behavior matches the other three tables: reject new entries and continue updating existing ones.
  */
 export function upsertBoundedByArtifactId(
   list: readonly WorkflowRunArtifactSummary[],
@@ -96,18 +94,16 @@ export function upsertBoundedByArtifactId(
 }
 
 /**
- * 一条打了标签的 `report` 落在某个产物上：把该 id 的 `itemCount` 加一。
+ * A tagged `report` refers to an artifact: increment that id's `itemCount`.
  *
- * 表里没有这个 id 时**忽略计数**（返回原表，条目仍照常进 `reports`）。运行期这是不可能的
- * ——`report(item, tag)` 的 tag 必须先被声明为预置产物，否则引擎 failRun——所以这里纯粹是
- * 防御：事件乱序或载荷残缺时，宁可少一个计数，也不要凭空造出一张没有 spec、渲染不了的卡。
+ * **Ignore the count** when the table has no such id (return the original table; the entry still goes into `reports`). This cannot happen at runtime:
+ * the tag for `report(item, tag)` must be declared as a preset artifact or the engine calls failRun. This is defensive handling for out-of-order events or incomplete payloads;
+ * an undercount is preferable to inventing a card with no spec that cannot be rendered.
  *
- * **计数的失准方向是有意的。** 去重键 (siteId, ordinal) 来自 `reports` 表，而那张表在 64 条
- * 之后拒收新条目——超界之后一条被重放的标签 report 认不出自己是重放，会多数一次。选择这个
- * 方向是因为 `itemCount` 的职责只是**刷新信号**：多数一次让看板多发一次带 `afterSequence`
- * 的增量查询、拿回零行，无害；少数一次（例如改成"超界就不再计数"）会让折线在第 64 个点上
- * 永远冻住，而那正是这个特性存在的理由。触界时 `truncated` 已置位，读者据此知道 `reports`
- * 与 `itemCount` 都已是近似值；条目的**权威**计数在 journal，经 `workflowRunArtifactData` 翻页得到。
+ * **The direction of count inaccuracy is intentional.** The deduplication key (siteId, ordinal) comes from the `reports` table, which rejects entries
+ * after 64. Beyond that limit, a replayed tagged report cannot be recognized as a replay and may be counted twice. This direction is chosen because `itemCount` is only a
+ * **refresh signal**: an extra incremental query with `afterSequence` that returns no rows is harmless. An undercount (for example, stopping all counting at the limit) would freeze the chart at point 64,
+ * which defeats this feature. At the limit, `truncated` is set so readers know that both `reports` and `itemCount` are approximate; the journal has the **authoritative** count, paged through `workflowRunArtifactData`.
  */
 export function countTaggedReport(
   list: readonly WorkflowRunArtifactSummary[] | undefined,
@@ -115,8 +111,8 @@ export function countTaggedReport(
 ): WorkflowRunArtifactSummary[] | undefined {
   if (list === undefined) return undefined;
   const index = list.findIndex((item) => item.id === artifactId);
-  // 返回 undefined = **这个键不用动**：调用方整个不写 artifacts，于是幂等重放得到
-  // 逐字节相同的 run 对象，顶层的 JSON 比对随即返回 null。
+  // Returning undefined means **leave this key unchanged**: the caller omits artifacts entirely, so an idempotent replay produces
+  // a byte-for-byte identical run object and the top-level JSON comparison returns null.
   if (index < 0) return undefined;
   const previous = list[index]!;
   const next = [...list];

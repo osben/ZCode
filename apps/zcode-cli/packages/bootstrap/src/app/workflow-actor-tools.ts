@@ -1,16 +1,14 @@
 // ============================================================
-// workflow actor 的工具面（AgentRuntime 工具配置）
+// Tool surface for workflow actors (AgentRuntime tool configuration).
 // ============================================================
 //
-// 子代理的工具面必须落到 child runtime 的工具注册上，否则实盘 transcript
-// 里裁判 actor 也拿到了整套交互工具。两类风险：
-//   1. 悬挂：AskUserQuestion / EnterPlanMode 在 headless child 里没有人可问，turn 永远不结束；
-//   2. 越权与递归：CreateWorkflow 让 actor 能再提交一条工作流，ReadSessionContext 越界读父会话。
-// 本模块是那个缺失的映射，由 driver 侧的 runtime 工厂在造 AgentRuntime 时展开。
+// The child runtime's tool registry must enforce the subagent tool surface; otherwise the judge actor in a real transcript also receives the full set of interactive tools. There are two risks:
+//   1. Hanging: AskUserQuestion / EnterPlanMode have nobody to ask in a headless child, so the turn never ends.
+//   2. Privilege escalation and recursion: CreateWorkflow lets an actor submit another workflow, and ReadSessionContext can read the parent session.
+// This module provides the missing mapping, expanded by the driver-side runtime factory when creating AgentRuntime.
 //
-// persona 无工具档位：每个 actor 都拿完整工作工具集减去下面这份减法表；
-// 「裁判不要改文件」由 ask 文本说清——普通子代理也是这么做的（Explore 保留 Bash，
-// 只读靠提示）。
+// Personas have no tool tiers: every actor gets the full work-tool set minus the exclusion list below.
+// "The judge must not edit files" is stated in the ask text, as for ordinary subagents (Explore retains Bash and relies on the prompt for read-only behavior).
 
 import {
   ASK_USER_QUESTION_TOOL_NAME,
@@ -20,36 +18,35 @@ import {
   RESOLVE_WORKFLOW_QUESTION_TOOL_NAME,
 } from "@zcode/contracts";
 
-/** AgentRuntimeConfig 的工具面切片。 */
+/** Tool-surface slice of AgentRuntimeConfig. */
 interface WorkflowActorToolPolicy {
   toolDisallowlist: readonly string[];
 }
 
 /**
- * 从全集里减掉的工具：前三个会阻塞在一个不存在的人类上（headless child 无人应答，
- * turn 不结束）；CreateWorkflow 会让 actor 递归提交工作流；ReadSessionContext 越界读父会话。
- * 其余（Bash / Edit / Write / 搜索 / web）照常保留——actor 就是要干活的。
+ * Tools excluded from the full set: the first three block waiting for a human who does not exist (no one can answer in a headless child, so the turn never ends);
+ * CreateWorkflow lets an actor recursively submit workflows; ReadSessionContext reads outside the parent session.
+ * All others (Bash / Edit / Write / search / web) remain enabled—the actor is meant to do work.
  */
 const ACTOR_DISALLOWED_TOOLS: readonly string[] = [
   ASK_USER_QUESTION_TOOL_NAME,
   ENTER_PLAN_MODE_TOOL_NAME,
   EXIT_PLAN_MODE_TOOL_NAME,
   "CreateWorkflow",
-  // 修订入口与 CreateWorkflow 同一种嵌套编排，同一个根因入列。
+  // The amend entry point has the same nested-orchestration root cause as CreateWorkflow.
   "AmendWorkflow",
   READ_SESSION_CONTEXT_TOOL_NAME,
-  // 子代理不许替主代理回答升级问题。
-  // 与上面几条的根因不同：这不是悬挂也不是越权读，而是**身份**——升级的整个意义是把判断权
-  // 交给创建这条工作流的那一方；让另一个 actor 顺手作答，等于把它悄悄退化成 actor 之间的
-  // 互相说服。actor 提问用 `escalate`（恒注册），作答只属于主会话。
+  // Subagents must not answer escalation questions for the main agent.
+  // The root cause differs from the exclusions above: this is about **identity**, not hanging or unauthorized reads. Escalation exists to give the decision
+  // to the party that created the workflow; letting another actor answer would quietly reduce it to persuasion between actors. Actors ask through `escalate` (always registered); only the main session answers.
   RESOLVE_WORKFLOW_QUESTION_TOOL_NAME,
 ];
 
 /**
- * workflow actor 的 AgentRuntime 工具配置。纯函数，供 driver 侧 runtime 工厂展开进
- * AgentRuntimeConfig：不收窄，只减掉会悬挂或越权的交互/元工具。
+ * AgentRuntime tool configuration for workflow actors. Pure function expanded into
+ * AgentRuntimeConfig by the driver-side runtime factory: it does not narrow the set, only removes interactive/meta tools that could hang or exceed authority.
  *
- * 只覆盖内建工具；MCP / plugin 工具的过滤留待生产接线时处理（同一个工厂 seam）。
+ * Covers built-in tools only; MCP / plugin filtering is handled in production wiring (at the same factory seam).
  */
 export function workflowActorToolPolicy(): WorkflowActorToolPolicy {
   return { toolDisallowlist: ACTOR_DISALLOWED_TOOLS };

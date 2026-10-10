@@ -55,17 +55,17 @@ async function downloadFile(url: string, destinationPath: string): Promise<void>
   if (!response.ok || !response.body) {
     throw new Error(`Download failed: HTTP ${response.status} (${url})`);
   }
-  // DOM fetch 的 ReadableStream 与 node:stream/web 的同名类型在 @types/node 下不兼容，
-  // 这里做一次显式桥接；运行时对象本身就是 Node 的 web stream。
+  // DOM fetch's ReadableStream and the identically named type from node:stream/web are incompatible under @types/node,
+  // so bridge them explicitly here; at runtime the object is already a Node web stream.
   const body = response.body as unknown as NodeWebReadableStream<Uint8Array>;
   await pipeline(Readable.fromWeb(body), createWriteStream(destinationPath, { flags: "w" }));
 }
 
 /**
- * 准备目标平台的 Node 二进制（固定 v22.16.0）。查找顺序：
- * 1. 现有远端资产链的 mock-cdn 缓存（避免重复下载）；
- * 2. 本包自有缓存；
- * 3. 从 Node dist 镜像（见 resolveNodeDistBase）下载 tar.xz 并解出 bin/node 后写入自有缓存。
+ * Prepare the Node binary for the target platform (pinned to v22.16.0). Lookup order:
+ * 1. mock-cdn cache from the existing remote-asset pipeline (avoid duplicate downloads);
+ * 2. this package's own cache;
+ * 3. download tar.xz from the Node dist mirror (see resolveNodeDistBase), extract bin/node, and write it to this package's cache.
  */
 async function ensureNodeBinary(repoRoot: string, target: ServerTarget): Promise<string> {
   const mockCdnReleasesDir = join(repoRoot, "packages/desktop/mock-cdn/releases");
@@ -159,8 +159,8 @@ export async function resolveNativeToolsDir(
   repoRoot: string,
   target: ServerTarget,
 ): Promise<string> {
-  // 远端 macOS 资源使用 rg13，不能仅凭文件存在就复用为本地发行包。
-  // 统一走目标平台的仓库归档校验；自有缓存也必须通过版本、哈希和架构检查。
+  // Remote macOS assets use rg13, so file existence alone is not enough to reuse them for a local release package.
+  // Use the target platform's repository archive validation consistently; the package's own cache must also pass version, hash, and architecture checks.
   const [platform, arch] = target.split("-");
   const cacheDir = join(repoRoot, "node_modules/.cache/zcode-server-cli", "tools", target);
   log(`prepare local native search target assets: ${target}`);
@@ -193,7 +193,7 @@ async function resolveWorkspacePackageDirs(repoRoot: string): Promise<Map<string
         };
         if (packageJson.name) map.set(packageJson.name, join(root, entry.name));
       } catch {
-        // 非 package 目录不影响其它 workspace 包 staging。
+        // A non-package directory does not affect staging for other workspace packages.
       }
     }
   }
@@ -217,7 +217,7 @@ async function main(): Promise<void> {
   const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
   const repoRoot = await findRepoRoot(packageRoot);
   const target = parseTarget(argv);
-  // 构建只读取并附带已有声明，校验由显式命令负责；运行时 server 不依赖仓库脚本。
+  // The build only reads and includes existing declarations; explicit commands perform validation, and the runtime server does not depend on repository scripts.
   const { readThirdPartyNotices, readNodeNotices } = await import(
     pathToFileURL(join(repoRoot, "scripts/third-party-notices.mjs")).href
   );

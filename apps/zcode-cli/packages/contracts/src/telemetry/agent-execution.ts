@@ -76,8 +76,9 @@ export interface AgentTelemetryExecutionContext {
 }
 
 /**
- * 可跨异步/进程边界保存的因果引用。SpanContext 字段保持 OTel 原义；
- * session/turn 只用于 ARMS 无法 Link Join 时的受控查询投影。
+ * Causal reference that can be persisted across asynchronous/process boundaries. SpanContext
+ * fields retain their OTel meaning; session/turn are used only for controlled query projection
+ * when ARMS cannot join links.
  */
 export interface AgentTelemetryCausation {
   isRemote: boolean;

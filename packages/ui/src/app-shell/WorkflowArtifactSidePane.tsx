@@ -28,10 +28,7 @@ import type { SessionLease } from "@/v4/sessionDataLayer.js";
 import { useConversationProjection } from "@/v4/useConversationProjection.js";
 import { useV4Conversation, V4PaneConversationProvider } from "@/v4/V4ConversationContext.js";
 
-/**
- * 稳定引用的空摘要列表：`artifacts` 键在零产物时**缺席**，坍缩成一个每帧新造的 `[]`
- * 会让合并 hook 的依赖每帧都变，于是每帧重查一次 journal。
- */
+/** Stable empty artifact list: the `artifacts` key is **absent** when there are no artifacts; collapsing that to a new `[]` each frame changes the merged hook dependency and re-queries the journal every frame. */
 const EMPTY_SUMMARIES: readonly WorkflowRunArtifactSummary[] = [];
 
 const WorkflowArtifactContent = memo(function WorkflowArtifactContent({
@@ -48,8 +45,8 @@ const WorkflowArtifactContent = memo(function WorkflowArtifactContent({
   const [lease, setLease] = useState<SessionLease | null>(null);
   const theme = useZCodeStoreWithDefault((state) => state.theme, "system");
 
-  // 订阅**父会话**的投影（照 PlanDetail / WorkflowRun 详情页）：产物的新鲜元数据是父会话
-  // 投影的一部分，不是这个面板的本地缓存。
+  // Subscribe to the **parent session** projection (as in PlanDetail / WorkflowRun details): fresh artifact metadata belongs to the parent session
+  // projection, not a local cache in this panel.
   useEffect(() => {
     const nextLease = layer.acquire(tab.parentSessionId);
     setLease(nextLease);
@@ -60,7 +57,7 @@ const WorkflowArtifactContent = memo(function WorkflowArtifactContent({
     () => state.snapshot?.workflowRuns?.runs.find((candidate) => candidate.runId === tab.runId),
     [state.snapshot?.workflowRuns, tab.runId],
   );
-  // run 不在活投影里（冷恢复 / 被 8-run 上限淘汰）⇒ 整份清单走 journal；在场但零产物 ⇒ 空数组。
+  // A run absent from the live projection (cold recovery / evicted by the 8-run limit) ⇒ load the full list from the journal; a present run with no artifacts ⇒ empty array.
   const live = run === undefined ? undefined : (run.artifacts ?? EMPTY_SUMMARIES);
   const {
     artifacts,
@@ -86,9 +83,9 @@ const WorkflowArtifactContent = memo(function WorkflowArtifactContent({
       data-workflow-run-id={tab.runId}
     >
       {artifact === undefined ? (
-        // 三态必须分开：还在读 / 这个会话读不到产物详情（老 CLI）/ 读完了但这个 id 不在
-        // （run 的 journal 已被清理，或 chip 指向的产物不存在）。合并成一句「正在读取」的
-        // 结果是最后一种情形永远停在加载文案上。
+        // Keep the three states separate: still loading / this session cannot read artifact details (older CLI) / finished loading but this id is absent
+        // (the run journal was cleaned up, or the artifact referenced by the chip does not exist). Collapsing them into “Loading”
+        // would leave the last case stuck on the loading message forever.
         <div className="flex h-full items-center justify-center p-6 text-center">
           <p
             className="text-ui-base text-foreground-subtle"
@@ -117,10 +114,7 @@ const WorkflowArtifactContent = memo(function WorkflowArtifactContent({
   );
 });
 
-/**
- * 头部 + 正文。产物已确定在场时才挂载，所以字节与条目的两个 hook 在这里可以无条件调用
- * （产物缺席那一帧根本不渲染这个组件，hooks 数量因此恒定）。
- */
+/** Header + body. Mount only after the artifact is confirmed to exist, so byte/item hooks can be called unconditionally here (the component is not rendered when the artifact is absent, keeping the hook count constant). */
 function WorkflowArtifactView({
   artifact,
   metadataLoading,
@@ -130,7 +124,7 @@ function WorkflowArtifactView({
   onRevealFileInTree,
 }: {
   artifact: WorkflowRunArtifactView;
-  /** 元数据（含预置看板的 spec）还在读；正文据此区分「还没到」与「真的没有」。 */
+  /** Metadata (including preset dashboard spec) is still loading; the body uses this to distinguish “not here yet” from “does not exist.” */
   metadataLoading: boolean;
   tab: WorkflowArtifactSidePaneTab;
   theme: Theme;
@@ -140,9 +134,9 @@ function WorkflowArtifactView({
   const { intl } = useZCodeIntl();
   const preset = isArtifactPresetKind(artifact.kind);
 
-  // 版本步进器的落点。tab 上的 `version` 只是**打开时**的初始值（chip 从不带版本号，
-  // 缺席即最新版）；之后由用户翻。产物换了（同一个 tab 不会，但组件可能被复用）或最新版
-  // 抬升时重置回最新版——正在看历史版本时新版落地，跳走会很突兀，所以只在 id 变化时重置。
+  // Version stepper position. The tab’s `version` is only the **initial** value on open (chips never include a version,
+  // so it defaults to latest); afterward, the user controls it. Reset to latest when the artifact changes (normally the same tab does not, but the component may be reused) or a new latest version arrives.
+  // Reset to latest when the new version arrives; jumping away while the user is viewing history would be jarring, so reset only when the ID changes.
   const [selectedVersion, setSelectedVersion] = useState<number | undefined>(tab.version);
   useEffect(() => {
     setSelectedVersion(tab.version);
@@ -152,8 +146,8 @@ function WorkflowArtifactView({
     if (artifact.versions !== undefined && artifact.versions.length > 0) {
       return artifact.versions.map((entry) => entry.version);
     }
-    // journal 读不到（老 CLI / 读失败）时只有最新版可看——不要凭 `version` 编造 1..n，
-    // 那会让步进器指向一批取不到字节的版本号。
+    // If the journal cannot be read (older CLI / read failure), only the latest version is viewable. Do not invent versions 1..n from `version`,
+    // which would make the stepper point to versions whose bytes cannot be fetched.
     return [artifact.version];
   }, [artifact.version, artifact.versions]);
 
@@ -179,8 +173,8 @@ function WorkflowArtifactView({
     enabled: preset,
   });
 
-  // 「在工作区显示」与 html 的「在浏览器中打开」共用这一条路径：工作区相对的 `sourcePath`
-  // 拼上 workspacePath 才是本机上真实存在的位置。远程 workspace 与无出处的产物都得不到它。
+  // “Show in workspace” and HTML’s “Open in browser” share this path: combine the workspace-relative `sourcePath`
+  // with workspacePath to get a real local path. Remote workspaces and artifacts without a source do not have one.
   const sourcePath = artifact.sourcePath;
   const localSourcePath =
     sourcePath !== undefined &&
@@ -215,7 +209,7 @@ function WorkflowArtifactView({
     <>
       <header className="shrink-0 border-b border-border px-4 py-3">
         <div className="flex min-w-0 items-center gap-2">
-          {/* 与产物药丸同一枚方形瓦片：tab 头就是那枚药丸长大了。 */}
+          {/* Same square tile icon as the artifact pill: the tab header is that pill expanded. */}
           <span className="flex size-[22px] shrink-0 items-center justify-center rounded-md bg-surface-hover text-foreground-subtle">
             <ArtifactKindIcon className="size-3.5" kind={artifact.kind} />
           </span>
@@ -266,7 +260,7 @@ function WorkflowArtifactView({
             ) : null}
           </div>
         </div>
-        {/* 作者写的说明（用户语言）；缺席即整行不渲染。 */}
+        {/* Author-written description (in the user’s language); omit the whole row when absent. */}
         {artifact.description === undefined ? null : (
           <p className="mt-1.5 text-ui-sm text-foreground-subtle">{artifact.description}</p>
         )}
@@ -297,12 +291,7 @@ function WorkflowArtifactView({
   );
 }
 
-/**
- * 版本步进器 `‹ v2 / 3 ›`。只有一版时整块缺席——一个永远两端禁用的步进器只是噪声。
- *
- * 按**已知版本的数组**翻而不是按数字加减：journal 读不到时数组里只有最新版一个数，
- * 那时步进器自然消失，而不是给出一批取不到字节的版本号。
- */
+/** Version stepper `‹ v2 / 3 ›`. Omit the entire control when there is only one version—a stepper disabled at both ends is noise. Navigate through the **known version array**, not by incrementing numbers: if the journal cannot be read, that array contains only the latest version, so the stepper disappears instead of offering versions whose bytes cannot be fetched. */
 function ArtifactVersionStepper({
   availableVersions,
   version,
@@ -370,15 +359,11 @@ function ArtifactVersionStepper({
 }
 
 /**
- * 一个 dwf 产物的全尺寸查看 tab。
+ * Full-size viewer tab for a dwf artifact.
  *
- * ⚠ 术语：这里的 artifact 是脚本经 `artifact.*` 交付给用户的产出，不是引擎内部那个
- * 「脚本顶层返回值」的同名词。
+ * ⚠ Terminology: artifact here means output delivered to the user by a script through `artifact.*`, not the engine’s similarly named “top-level script return value.”
  *
- * 数据分三条：**元数据**走 `useWorkflowRunArtifacts`（活投影 + journal 合并），
- * **字节**走 `useWorkflowRunArtifactBytes`（分块拼 Blob），**看板条目**走
- * `useWorkflowRunArtifactData`（`itemCount` 抬升即增量续拉）。三条互不相干，
- * 所以一个看板永远不会去读字节，一份 pdf 也永远不会去翻 journal 的 report 行。
+ * Data comes from three paths: **metadata** through `useWorkflowRunArtifacts` (live projection + journal merge), **bytes** through `useWorkflowRunArtifactBytes` (chunked into a Blob), and **dashboard items** through `useWorkflowRunArtifactItems` (journal pagination).
  */
 export const WorkflowArtifactSidePane = memo(function WorkflowArtifactSidePane({
   tab,
@@ -386,9 +371,9 @@ export const WorkflowArtifactSidePane = memo(function WorkflowArtifactSidePane({
   onRevealFileInTree,
 }: {
   tab: WorkflowArtifactSidePaneTab;
-  /** html 产物的「在浏览器中打开」。 */
+  /** HTML artifact’s “Open in browser” action. */
   onOpenBrowserUrl?: (url: string) => void;
-  /** 「在工作区显示」：复用既有的文件树 reveal（与 Git 面板同一条路径）。 */
+  /** “Show in workspace”: reuse the existing file-tree reveal path (same as the Git panel). */
   onRevealFileInTree?: (path: string) => void;
 }) {
   const scope = useMemo<PaneWorkspaceScope>(

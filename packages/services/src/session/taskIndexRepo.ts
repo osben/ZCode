@@ -2,7 +2,7 @@ import {
   isTasksStorageMigrated,
   isTasksStoragePrepared,
 } from "#src/session/tasksDatabase/prepared.js";
-/* eslint-disable max-lines -- task 索引仓库集中维护 sqlite schema、查询和状态写入，迁移稳定后再按读写职责拆分。 */
+/* eslint-disable max-lines -- The task index repository keeps SQLite schema, queries, and state writes together; split by read/write responsibility after migrations stabilize. */
 import { mkdir } from "node:fs/promises";
 import { createHash, randomUUID } from "node:crypto";
 import { createRequire } from "node:module";
@@ -47,7 +47,7 @@ function appendZCodeAgentIndexedProviderFilter(
   args: Array<string | number>,
   provider: ZCodeProvider,
 ): void {
-  // 列表按当前 runtime provider 过滤；历史导入来源不改变此边界。
+  // Filter lists by the current runtime provider; historical import source does not change this boundary.
   where.push("provider = ?");
   args.push(provider);
 }
@@ -124,10 +124,10 @@ interface TaskIndexWriteRecord {
   archived: boolean;
   deleted: boolean;
   titleOverridden: boolean;
-  // 只有 unread 专属写路径可以修改现有行，其他 metadata/snapshot 写必须保留当前 CAS marker。
+  // Only the dedicated unread write path may modify an existing row; other metadata/snapshot writes must preserve the current CAS marker.
   writeUnreadAt?: boolean;
-  // searchableText 可空：传入 undefined 表示保留 existing 行的现有值。
-  // 这样 applyAgentPatch / updateTaskState 这类不带 messages 上下文的写入不会把已索引的正文清空。
+  // searchableText is optional: undefined means retain the existing value for an existing row.
+  // Writes such as applyAgentPatch / updateTaskState without message context therefore do not clear already indexed content.
   searchableText?: string;
 }
 
@@ -145,8 +145,8 @@ interface TaskIndexStatePatch {
   updatedAt?: number;
 }
 
-// 关键业务逻辑：聊天内容搜索只需要可匹配文本，不需要把完整超长会话无限塞进 sqlite 索引。
-// 这里做上限截断，避免长任务把 tasks-index.sqlite 放大到影响启动和列表查询。
+// Key business rule: chat search needs only matchable text, not an unlimited full copy of a long session in the SQLite index.
+// Truncate at the limit so long tasks do not grow tasks-index.sqlite enough to affect startup or list queries.
 const TASK_SEARCH_TEXT_MAX_CHARS = 200_000;
 const TASK_SEARCH_SNIPPET_PREFIX_RADIUS = 20;
 const TASK_SEARCH_SNIPPET_SUFFIX_RADIUS = 72;
@@ -192,13 +192,13 @@ function resolveTaskIndexRowWorkspaceIdentity(row: TaskIndexRow): string | undef
   if (columnIdentity === row.workspace_key) {
     return columnIdentity;
   }
-  // workspace_key 是 SQLite 查询与主键隔离的真实依据；只要它是统一格式的远端 identity，
-  // 返回值就必须与它一致，不能让残留的 workspace_identity 列把实体投影到另一个远端。
+  // workspace_key is the actual basis for SQLite queries and primary-key isolation. If it is a normalized remote identity,
+  // the returned value must match it; a stale workspace_identity column must not project the entity into another remote workspace.
   if (isRemoteWorkspaceIdentity(row.workspace_key)) {
     return row.workspace_key;
   }
-  // identity 投影与主键不一致时不能采用，也不能把远端实体退回 workspacePath，
-  // 否则相同路径的不同远端会在侧栏 activity join 时串行。
+  // Do not use an identity projection that disagrees with the primary key, and do not fall back to workspacePath for a remote entity;
+  // different remote workspaces at the same path would then collide in the sidebar activity join.
   return undefined;
 }
 
@@ -209,18 +209,17 @@ function rowToMeta(row: TaskIndexRow): ZCodeTaskMeta {
     if (parsed.success) {
       return {
         ...(parsed.data as ZCodeTaskMeta),
-        // SQLite 使用这些字段查询并隔离实体，旧 meta_json 里的 identity
-        // 可能缺失或属于旧远端。读取时必须与行主键投影一致，sessions-index 才能
-        // 按 workspaceKey + taskId 附加 running activity。
+        // SQLite uses these fields to query and isolate entities; identity in old meta_json may be missing or refer to an old remote.
+        // On read, match the row's primary-key projection so sessions-index can attach running activity by workspaceKey + taskId.
         taskId: row.task_id,
         workspacePath: row.workspace_path,
         workspaceIdentity,
-        // unread 是 tasks-index 产品壳状态；标量列必须覆盖可能来自其他 Host 的旧 meta_json。
+        // unread is product-shell state in tasks-index; scalar columns must override stale meta_json that may come from another Host.
         unreadAt: row.unread_at ?? undefined,
-        // cron 身份以 meta_json 为准；cron_automation_id 列是索引投影，仅作兜底：
-        // 历史行 meta_json 里可能还没有该字段，回退读列，下次写入会自动回填进 meta_json。
+        // meta_json is authoritative for cron identity; cron_automation_id is an indexed projection used only as a fallback.
+        // Historical meta_json may lack this field, so read the column as fallback; the next write backfills it into meta_json.
         cronAutomationId: parsed.data.cronAutomationId ?? row.cron_automation_id ?? undefined,
-        // off-peak 身份同款策略：meta_json 为准、列兜底——存量迁移只写列即可生效。
+        // Use the same strategy for off-peak identity: meta_json is authoritative, with the column as fallback, so migrating existing rows needs to write only the column.
         offPeakTaskId: parsed.data.offPeakTaskId ?? row.off_peak_task_id ?? undefined,
         titleOverridden: row.title_overridden === 1,
       };
@@ -255,7 +254,7 @@ function rowToMeta(row: TaskIndexRow): ZCodeTaskMeta {
   };
 }
 
-/** 序列化 meta 到 meta_json。cron 身份随 meta 一起写入（单一来源），另在 writeRecord 投影到 cron_automation_id 索引列。 */
+/** Serialize meta to meta_json. Store cron identity with meta as the single source of truth, and project it to the cron_automation_id index column in writeRecord. */
 function serializeMetaJson(meta: ZCodeTaskMeta): string {
   return JSON.stringify(meta);
 }
@@ -285,7 +284,7 @@ function normalizeWorkspaceBootstrapScopes(
   const result: WorkspaceBootstrapScope[] = [];
   for (const scope of scopes) {
     if (scope.workspacePurpose === "conversation") {
-      // 对话 backing workspace 只是 cwd，不是项目；迁移期不能为它生成同名项目分组。
+      // A conversation's backing workspace is only its cwd, not a project; do not create a same-named project group during migration.
       continue;
     }
     const key = workspaceKey(scope);
@@ -306,9 +305,9 @@ function normalizeSearchSnippetText(text: string): string {
   return text.replace(/\s+/g, " ").trim().slice(0, TASK_SEARCH_SNIPPET_MAX_CHARS);
 }
 
-// 全局会话搜索 (TaskSearchDialog) 期望命中正文时返回若干片段做摘要展示。
-// 以匹配点为中心截窗，去重相近窗口，最多 4 条；
-// 全部未命中（title 命中）时回退一条整段摘要，避免下方空白。
+// Global session search (TaskSearchDialog) returns snippets for summary display when the body matches.
+// Center windows on matches, deduplicate nearby windows, and return at most four;
+// if the title matches but no body text does, fall back to one full-body snippet to avoid an empty area.
 function buildSearchSnippets(searchableText: string, search: string | null): string[] {
   if (!search || !searchableText.trim()) {
     return [];
@@ -339,7 +338,7 @@ function buildSearchSnippets(searchableText: string, search: string | null): str
     const overlapsExistingSnippet = snippetRanges.some(
       (range) => Math.min(range.end, end) - Math.max(range.start, start) > 0,
     );
-    // 同一个关键词在很近的位置多次出现时，摘要窗口会高度重叠；服务端先合并近重复摘要。
+    // Multiple nearby matches for the same term create heavily overlapping snippets; merge near-duplicates on the server first.
     if (snippet && !overlapsExistingSnippet) {
       snippets.push(snippet);
       snippetRanges.push({ start, end });
@@ -348,7 +347,7 @@ function buildSearchSnippets(searchableText: string, search: string | null): str
   }
 
   if (snippets.length === 0) {
-    // title 命中但正文没命中时，仍给一条整段摘要兜底，避免标题下方空白。
+    // If the title matches but the body does not, still return one full-body snippet to avoid a blank area below the title.
     const fallbackSnippet = normalizeSearchSnippetText(searchableText);
     return fallbackSnippet ? [fallbackSnippet] : [];
   }
@@ -417,8 +416,8 @@ function taskOrderNodeKey(params: {
   workspaceIdentity?: string;
   taskId: string;
 }): string {
-  // task_group_view_node_orders.node_key 不能使用 "\u0000" 分隔；
-  // node:sqlite 读 TEXT 时会截断 NUL 后面的 taskId，导致 grouped 视图排序写入后查询匹配不上。
+  // Do not delimit task_group_view_node_orders.node_key with "\u0000";
+  // node:sqlite truncates TEXT when reading after NUL, so grouped-view ordering would no longer match the taskId after being written.
   return JSON.stringify([workspaceKey(params), params.taskId]);
 }
 
@@ -455,8 +454,8 @@ function compareGroupedNodes(
 }
 
 function compareCronGroupTasks(left: ZCodeTaskListItem, right: ZCodeTaskListItem): number {
-  // cron 系统分组固定按创建时间倒序：最新的定时任务结果始终展示在最前面，
-  // 不参与用户手动排序（sort_order），新 session 到达时天然排到组顶部。
+  // The cron system group is always ordered by creation time descending so the latest scheduled-task result appears first.
+  // It does not use the user's manual sort_order; a new session naturally appears at the top of the group.
   if (right.createdAt !== left.createdAt) {
     return right.createdAt - left.createdAt;
   }
@@ -495,7 +494,7 @@ export class TaskIndexRepo {
     }
     if (!this.initializePromise) {
       this.initializePromise = this.initialize(path).catch((error) => {
-        // 释放失败连接；迁移后修复可能已部分提交，重试仍走原幂等初始化。
+        // Release the failed connection; migration repair may have partially committed, and retry still uses the original idempotent initialization.
         this.close();
         throw error;
       });
@@ -523,13 +522,13 @@ export class TaskIndexRepo {
     if (!this.db) {
       this.db = new DatabaseSync(path);
       this.dbPath = path;
-      // 多窗口 Host 共用 tasks-index；写事务和首次 schema 升级应短暂等待，而不是立即 SQLITE_BUSY。
+      // Multiple-window Hosts share tasks-index; write transactions and initial schema upgrades should wait briefly instead of immediately returning SQLITE_BUSY.
       this.db.exec(`PRAGMA busy_timeout = ${this.startupBusyTimeoutMs}`);
       this.db.exec("PRAGMA foreign_keys = ON");
       this.db.exec("PRAGMA journal_mode = WAL");
       this.db.exec("PRAGMA synchronous = NORMAL");
     }
-    // Worker 已完成该路径的原始准备，业务连接不再重复全表修复。
+    // The Worker already performed the initial preparation for this path; the business connection must not repeat the full-table repair.
     if (isTasksStoragePrepared(path, this.db)) return;
     if (!isTasksStorageMigrated(path, this.db)) runTasksDatabaseMigrations(this.db);
     this.backfillOffPeakTaskMarkers();
@@ -538,10 +537,9 @@ export class TaskIndexRepo {
   }
 
   /**
-   * 存量回填（幂等，每次 bootstrap 自愈）：打点上线前产生的 off-peak 会话行没有
-   * offPeakTaskId。off_peak_tasks 与 tasks 同库（tasks-index.sqlite），按 session 绑定
-   * join 只补投影列——rowToMeta 以列兜底即可生效，下次 syncTaskMeta 会自动回填 meta_json。
-   * 全新安装时 off_peak_tasks 可能尚未由 OffPeakTaskRepo 建表，需 guard。
+   * Backfill existing rows (idempotent, self-healing on each bootstrap): off-peak session rows created before tracking launched have no
+   * offPeakTaskId. off_peak_tasks shares the tasks database (tasks-index.sqlite); join by session and fill only the projection column.
+   * rowToMeta can use the column fallback immediately, and the next syncTaskMeta call backfills meta_json. Guard for fresh installs where OffPeakTaskRepo may not have created off_peak_tasks yet.
    */
   private backfillOffPeakTaskMarkers(): void {
     const database = this.getDatabase();
@@ -567,10 +565,10 @@ export class TaskIndexRepo {
   }
 
   /**
-   * 成员关系回填（幂等，每次 bootstrap 自愈）：历史回填只补了 off_peak_task_id
-   * 投影列，syncTaskMeta 的"首次获得标记"钩子对这些存量永远不会再触发（existing 已带
-   * 标记），必须在 bootstrap 里补一次系统分组归属。OR IGNORE 保证用户手动整理不被覆盖，
-   * 也保证重复执行零副作用；无标记行时不创建空组（从未用过闲时的用户不会看到组）。
+   * Backfill membership (idempotent, self-healing on each bootstrap): historical backfill added only the off_peak_task_id
+   * projection column, so syncTaskMeta's “first marker” hook will never run for these existing rows (they already have the marker).
+   * Add their system-group membership during bootstrap. OR IGNORE preserves the user's manual organization and makes repeated runs have no side effects;
+   * do not create an empty group when there are no marked rows, so users who never used off-peak tasks do not see one.
    */
   private backfillOffPeakGroupMemberships(): void {
     const database = this.getDatabase();
@@ -586,9 +584,9 @@ export class TaskIndexRepo {
       task_id: string;
     }>;
     for (const row of rows) {
-      // 闲时任务暂不支持远程 workspace：远程存量行不归组。历史行的 workspace_identity
-      // 列可能缺失，remote 判定必须看主键 workspace_key——否则 ensureSystemGroupMembership
-      // 会用 workspacePath 重算出本地 key，把成员关系串写到同路径本地 workspace 上。
+      // Off-peak tasks do not yet support remote workspaces, so do not group existing remote rows. Historical rows may lack workspace_identity;
+      // determine remote status from the primary key workspace_key, or ensureSystemGroupMembership may recompute a local key from workspacePath
+      // and write membership into a local workspace at the same path.
       if (isRemoteWorkspaceIdentity(row.workspace_key)) {
         continue;
       }
@@ -631,8 +629,8 @@ export class TaskIndexRepo {
 
     database.exec("BEGIN IMMEDIATE");
     try {
-      // 旧版本删除 task 时只写 tasks.deleted，membership/顶层顺序仍会被
-      // sessions-index 历史摘要重新投影；初始化时幂等收敛已经落盘的脏引用。
+      // Older versions set only tasks.deleted when deleting a task, leaving membership/top-level order to be reprojected from
+      // historical sessions-index summaries. Idempotently converge already persisted stale references during initialization.
       for (const row of rows) {
         this.deleteTaskGroupingReferencesReady(row.workspace_key, row.task_id);
       }
@@ -1076,16 +1074,16 @@ export class TaskIndexRepo {
 
     database.exec("BEGIN IMMEDIATE");
     try {
-      // grouped workspace bootstrap 是迁移期的一次性初始化。记录全局 marker，
-      // 避免后续新 workspace 出现时再次自动生成 workspace group。
+      // Grouped workspace bootstrap is a one-time migration initialization. Record a global marker
+      // to prevent automatically creating workspace groups again when later workspaces appear.
       markBootstrapRun.run(GROUPED_WORKSPACE_BOOTSTRAP_ONCE_KEY, now, now);
       for (const scope of params.scopes) {
         const rows = candidateRowsByWorkspaceKey.get(scope.workspaceKey);
         if (!rows) {
           continue;
         }
-        // 初始化按没有分组功能时的 workspace 视角重建 membership，
-        // 旧 group 不参与归属判断，避免历史分组把 task 留在非 workspace group 里。
+        // Rebuild membership from the workspace view that existed before grouping was available.
+        // Ignore old groups when determining ownership so historical groups do not leave tasks in non-workspace groups.
         const groupedRows = rows.sort((left, right) => {
           if (right.updated_at !== left.updated_at) {
             return right.updated_at - left.updated_at;
@@ -1139,8 +1137,8 @@ export class TaskIndexRepo {
   }
 
   private writeRecord(record: TaskIndexWriteRecord): ZCodeTaskMeta {
-    // searchable_text 传 undefined 表示"不动现有值"。读一次 row 拿到当前值，
-    // 否则 ON CONFLICT 时 excluded.searchable_text 会被赋成空字符串，把已索引正文清空。
+    // searchable_text = undefined means “leave the current value unchanged.” Read the existing row once;
+    // otherwise ON CONFLICT could set excluded.searchable_text to an empty string and clear indexed body text.
     const existing =
       record.searchableText === undefined
         ? this.getTaskRow({
@@ -1246,9 +1244,9 @@ export class TaskIndexRepo {
         model: record.meta.model ?? null,
         migration_source: record.meta.migrationSource ?? null,
         forked_from_task_id: record.meta.forkedFromTaskId ?? null,
-        // cron automation 身份从 meta 投影到索引列（meta_json 里也保留一份，见 serializeMetaJson）。
+        // Project cron automation identity from meta to the index column (also retained in meta_json; see serializeMetaJson).
         cron_automation_id: record.meta.cronAutomationId ?? null,
-        // off-peak 身份同款投影。
+        // Project off-peak identity the same way.
         off_peak_task_id: record.meta.offPeakTaskId ?? null,
         created_at: record.meta.createdAt,
         updated_at: record.meta.updatedAt,
@@ -1275,15 +1273,15 @@ export class TaskIndexRepo {
     archived?: boolean;
     deleted?: boolean;
     titleOverridden?: boolean;
-    // 调用方可以从 snapshot.messages 计算正文，传进来同步刷新 searchable_text。
-    // 不传则保留 sqlite 已有的 searchable_text（在 writeRecord 里兜底）。
+    // The caller may calculate body text from snapshot.messages and pass it in to refresh searchable_text.
+    // If omitted, retain the searchable_text already in SQLite (fallback in writeRecord).
     searchableText?: string;
   }): Promise<ZCodeTaskMeta> {
     const result = await this.syncTaskMetaWithGroupedAdmission(params, false);
     return result.meta;
   }
 
-  /** 首次公开 root task 时，原子提交 task row 与 grouped 顶层顺序。 */
+  /** Atomically commit the task row and grouped top-level order when first exposing a root task. */
   async syncTaskMetaAtGroupedTop(params: {
     meta: ZCodeTaskMeta;
     pinned?: boolean;
@@ -1314,10 +1312,9 @@ export class TaskIndexRepo {
         const existing = this.getTaskRow(params.meta);
         const existingMeta = existing ? rowToMeta(existing) : null;
         const titleOverridden = params.titleOverridden ?? existing?.title_overridden === 1;
-        // snapshot 来源的 updatedAt 是 runtime sessionStore 里的"最后一次结构变更"时间，
-        // 不一定包含 session.titleUpdated / turn.completed 这些事件触发的 Date.now() 增量。
-        // 如果这里直接用 params.meta.updatedAt 覆盖，会把刚刚走 applyAgentPatch 写入的更新时间戳冲回旧值，
-        // 表现为新会话第一次 prompt 后又被压回列表底部。这里取与 sqlite 已有值的 max，保证单调不回退。
+        // snapshot.updatedAt is the “last structural change” time from the runtime sessionStore and may not include the Date.now() updates
+        // triggered by events such as session.titleUpdated / turn.completed. Overwriting directly with params.meta.updatedAt could roll back the timestamp
+        // just written by applyAgentPatch and push a new session back to the bottom after its first prompt. Use the maximum of this and the SQLite value so time never moves backward.
         const updatedAt = Math.max(params.meta.updatedAt, existingMeta?.updatedAt ?? 0);
         const preserveExistingTerminalStatus = shouldPreserveNewerTerminalStatus(
           existingMeta,
@@ -1325,13 +1322,12 @@ export class TaskIndexRepo {
         );
         const meta: ZCodeTaskMeta = {
           ...params.meta,
-          // agent 只负责 session 核心标题，用户手动重命名属于 app 侧 task 状态。
-          // 同步 agent snapshot 时保留已覆盖标题，避免后台状态刷新把用户标题冲掉。
+          // The Agent owns the session's core title; a user rename is app-side task state.
+          // Preserve an overridden title while syncing Agent snapshots so background refreshes do not overwrite the user's title.
           title: titleOverridden && existingMeta ? existingMeta.title : params.meta.title,
           titleOverridden,
-          // turn.completed 会先通过 applyAgentPatch 写入较新的 completed/error。
-          // 随后到达的 protocol snapshot 可能仍带较旧 running；如果这里降级 status，
-          // 手机 replayable 切回 task 时就会把已完成任务恢复成“工作中”。
+          // turn.completed first writes a newer completed/error state through applyAgentPatch.
+          // A protocol snapshot arriving afterward may still say running; downgrading status here would restore a completed task as “working” when mobile replayable returns to it.
           status: preserveExistingTerminalStatus ? existingMeta?.status : params.meta.status,
           lastError: preserveExistingTerminalStatus
             ? existingMeta?.lastError
@@ -1339,14 +1335,13 @@ export class TaskIndexRepo {
           target: Object.prototype.hasOwnProperty.call(params.meta, "target")
             ? params.meta.target
             : existingMeta?.target,
-          // Claude Code 导入升级成真实 ZCode session 后，protocol snapshot
-          // 本身不知道迁移来源。同步运行态快照时保留已有 migrationSource，避免
-          // 列表过滤和后续切模型把导入任务重新当成普通 ZCode 任务。
+          // After a Claude Code import is upgraded to a real ZCode session, the protocol snapshot itself does not know the migration source.
+          // Preserve the existing migrationSource when syncing runtime snapshots so list filtering and later model changes do not treat the imported task as a regular ZCode task.
           migrationSource: params.meta.migrationSource ?? existingMeta?.migrationSource,
-          // 同步运行态快照时保留已有 cron automation 身份：运行态 protocol snapshot 的 meta 不带 cron 标记，
-          // 不用已存值兜底会在后续 sync 时把 cron 身份冲掉，导致 icon / 分组 / 关联查询失效。
+          // Preserve existing cron automation identity when syncing runtime snapshots: runtime protocol snapshot meta has no cron marker.
+          // Without the stored value as a fallback, a later sync would erase cron identity and break its icon/group/association queries.
           cronAutomationId: params.meta.cronAutomationId ?? existingMeta?.cronAutomationId,
-          // off-peak 身份同款兜底：快照不带标记时保全既有归属。
+          // Apply the same fallback for off-peak identity: preserve existing ownership when the snapshot has no marker.
           offPeakTaskId: params.meta.offPeakTaskId ?? existingMeta?.offPeakTaskId,
           updatedAt,
           unreadAt: params.meta.unreadAt ?? existingMeta?.unreadAt,
@@ -1359,18 +1354,18 @@ export class TaskIndexRepo {
           titleOverridden,
           searchableText: params.searchableText,
         });
-        // cron session 首次获得 cronAutomationId 时归入固定 cron 分组。
-        // 会话内 CronCreate 是给已有 task 补 cron 标记，不能只判断 !existing，否则左侧列表不会归入定时任务分组。
-        // INSERT OR IGNORE 不覆盖已有成员关系——用户后续把它拖出 cron 组后不会被自动拖回。
+        // Add a cron session to the fixed cron group when it first receives cronAutomationId.
+        // An in-session CronCreate adds the cron marker to an existing task, so checking only !existing would leave it out of the scheduled-task group.
+        // INSERT OR IGNORE preserves existing membership, so a user who later moves it out of the cron group will not have it moved back automatically.
         if (meta.cronAutomationId && !existingMeta?.cronAutomationId) {
           this.ensureCronGroupMembership(meta);
         }
-        // 闲时会话首次获得 offPeakTaskId 时归入固定闲时系统分组（机制同 cron）。
+        // Add an off-peak session to the fixed off-peak system group when it first receives offPeakTaskId (same mechanism as cron).
         if (meta.offPeakTaskId && !existingMeta?.offPeakTaskId) {
           this.ensureOffPeakGroupMembership(meta);
         }
-        // root draft 首发过去先提交 task row，再另一次写 sort_order；
-        // sessions-index 在两次写之间公开 task 时，Renderer 会把缺序节点补到末尾。
+        // Root draft first input previously committed the task row and then wrote sort_order separately.
+        // If sessions-index exposed the task between writes, Renderer appended the unordered node to the end.
         const initializedGroupedOrder = initializeGroupedAtTop
           ? this.initializeGroupedTaskAtTopReady(meta)
           : false;
@@ -1384,9 +1379,9 @@ export class TaskIndexRepo {
   }
 
   /**
-   * 把一条 cron session 归入固定的 cron 系统分组（见 CRON_DEFAULT_GROUP_ID）。
-   * 幂等：分组行、视图排序、成员关系都用 INSERT OR IGNORE，绝不覆盖用户手动整理的结果。
-   * 仅在 session 首次获得 cronAutomationId 时由 syncTaskMeta 调用一次。
+   * Add a cron session to the fixed cron system group (see CRON_DEFAULT_GROUP_ID).
+   * Idempotent: use INSERT OR IGNORE for the group row, view order, and membership so user organization is never overwritten.
+   * Called once by syncTaskMeta when a session first receives cronAutomationId.
    */
   private ensureCronGroupMembership(meta: ZCodeTaskMeta): void {
     this.ensureSystemGroupMembership(meta, {
@@ -1397,14 +1392,14 @@ export class TaskIndexRepo {
   }
 
   /**
-   * 把一条闲时会话归入固定的闲时系统分组（见 OFF_PEAK_DEFAULT_GROUP_ID）。
-   * 机制与 cron 完全同构；仅在首次获得 offPeakTaskId 时由 syncTaskMeta 调用，
-   * 或由 bootstrap 为存量回填补齐。
+   * Add an off-peak session to the fixed off-peak system group (see OFF_PEAK_DEFAULT_GROUP_ID).
+   * Uses the same mechanism as cron; called by syncTaskMeta when offPeakTaskId is first received,
+   * or by bootstrap to backfill existing rows.
    */
   private ensureOffPeakGroupMembership(
     meta: Pick<ZCodeTaskMeta, "workspacePath" | "workspaceIdentity" | "taskId">,
   ): void {
-    // 闲时任务暂不支持远程 workspace：远程会话即使带标记也不归入闲时系统分组。
+    // Off-peak tasks do not yet support remote workspaces; do not add remote sessions to the off-peak system group even if they have a marker.
     if (meta.workspaceIdentity && isRemoteWorkspaceIdentity(meta.workspaceIdentity)) {
       return;
     }
@@ -1427,14 +1422,14 @@ export class TaskIndexRepo {
         VALUES (?, ?, ?, ?, ?)`,
       )
       .run(params.groupId, params.title, params.color, now, now);
-    // 分组视图排序：不存在才插入（OR IGNORE），避免每次新建系统分组 session 都把该组顺序打乱。
+    // Group view order: insert only if absent (OR IGNORE) so each new system-group session does not change the group's order.
     database
       .prepare(
         `INSERT OR IGNORE INTO task_group_view_node_orders (node_type, node_key, sort_order, created_at, updated_at)
         VALUES ('group', ?, ?, ?, ?)`,
       )
       .run(params.groupId, this.getNextGroupedTopSortOrder(), now, now);
-    // OR IGNORE：若该 task 已有成员关系（用户已手动分组），保持不动。
+    // OR IGNORE: preserve an existing membership if the user has already grouped this task manually.
     database
       .prepare(
         `INSERT OR IGNORE INTO task_group_members (
@@ -1462,11 +1457,11 @@ export class TaskIndexRepo {
   }
 
   /**
-   * 只在索引行不存在时写入基线元数据；已存在（含已删除）的产品壳状态原样保留。
+   * Write baseline metadata only when the index row does not exist; preserve product-shell state exactly for existing rows, including deleted ones.
    *
-   * 远端 workspace 的 V4 会话路径可能晚于会话创建才建立 sessions-index
-   * 订阅。首次 snapshot 必须能补齐全新的 tasks-index.sqlite，但不能用摘要默认值
-   * 覆盖已有的 pin/archive/unread/手动标题，也不能与随后到达的完整 snapshot 竞态回写。
+   * A V4 session path in a remote workspace may create its sessions-index subscription after the session itself.
+   * The first snapshot must populate a new tasks-index.sqlite, but must not overwrite existing pin/archive/unread/manual-title state with summary defaults
+   * or race with a later full snapshot write.
    */
   async seedTaskMetaIfMissing(meta: ZCodeTaskMeta): Promise<ZCodeTaskMeta> {
     await this.ensureReady();
@@ -1510,8 +1505,8 @@ export class TaskIndexRepo {
           ...current,
           unreadAt: undefined,
         };
-        // 手机已读请求可能晚于新的终态未读到达。比较和写入必须持有同一
-        // SQLite 写事务，否则旧点击会把随后产生的 unreadAt 无条件清掉。
+        // A mobile mark-read request may arrive after a new terminal unread state. Compare and write within the same
+        // SQLite write transaction, or an old click can unconditionally clear a later unreadAt.
         const persistedMeta = this.writeRecord({
           meta: nextMeta,
           pinned: row.pinned === 1,
@@ -1540,8 +1535,8 @@ export class TaskIndexRepo {
       database.exec("BEGIN IMMEDIATE");
       try {
         const row = this.getTaskRow(params);
-        // 确认框可能停留期间被另一端恢复；归档检查必须与 tombstone 写入同事务，
-        // 不能先读后删。已删除/不存在也跳过，避免重试从 CLI seed 后复活。
+        // Another client may restore the task while the confirmation dialog is open. Check archive state and write the tombstone in one transaction;
+        // do not read and then delete. Skip already deleted/missing tasks so a retry after a CLI seed does not resurrect them.
         if (!row || row.deleted === 1 || row.archived !== 1) {
           database.exec("COMMIT");
           return null;
@@ -1586,9 +1581,9 @@ export class TaskIndexRepo {
           throw new Error(`task index 中不存在 task: ${params.taskId}`);
         }
         const current = rowToMeta(row);
-        // 毫秒时间戳可能让同一 task 的两个逻辑未读得到相同版本，
-        // 且清除 unreadAt 后只看当前值会再次复用旧版本。必须在 SQLite 写锁内
-        // 基于不会随清除重置的持久 watermark 分配严格递增 marker。
+        // Millisecond timestamps can assign the same version to two logical unreads for one task,
+        // and after clearing unreadAt, using only the current value may reuse an old version. Allocate a strictly increasing marker
+        // under the SQLite write lock using a persistent watermark that is not reset on clearing.
         const lastUnreadAt = Math.max(
           row.last_unread_at,
           row.unread_at ?? 0,
@@ -1619,8 +1614,8 @@ export class TaskIndexRepo {
           writeUnreadAt: mutatingUnreadAt,
         });
         if (deleting) {
-          // 删除标记和 grouped 引用必须原子提交；否则任一写入失败都会让
-          // sessions-index 内容、task 可见性和 SQLite 分组归属长期处于互相矛盾的状态。
+          // Commit the deletion marker and grouped references atomically; otherwise a failure in either write leaves
+          // sessions-index content, task visibility, and SQLite group ownership inconsistent.
           this.deleteTaskGroupingReferencesReady(row.workspace_key, row.task_id);
         }
         if (transactional) database.exec("COMMIT");
@@ -1674,8 +1669,8 @@ export class TaskIndexRepo {
     includeDeleted?: boolean;
   }): Promise<ZCodeTaskMeta[]> {
     await this.ensureReady();
-    // listTaskMetas 支持不传 workspacePath 查询全部任务，但 workspaceKey 只接受必填路径。
-    // 先把可选入参收窄成明确的 workspace target，避免类型层把全量查询和 workspace 查询混在一起。
+    // listTaskMetas supports querying all tasks when workspacePath is omitted, but workspaceKey requires a path.
+    // Narrow the optional argument into an explicit workspace target first so types do not mix global and workspace queries.
     const targetWorkspaceKey = params.workspacePath
       ? workspaceKey({
           workspacePath: params.workspacePath,
@@ -1710,7 +1705,7 @@ export class TaskIndexRepo {
         FROM tasks
         WHERE (@workspace_key IS NULL OR workspace_key = @workspace_key)
           AND (@include_deleted = 1 OR deleted = 0)
-          -- 按请求指定的 runtime provider 过滤；迁移来源另存于 migration_source。
+          -- Filter by the runtime provider specified in the request; the migration source is stored separately in migration_source.
           AND (@provider IS NULL OR provider = @provider)
           AND (@pinned IS NULL OR pinned = @pinned)
           AND (@archived IS NULL OR archived = @archived)
@@ -1727,10 +1722,10 @@ export class TaskIndexRepo {
   }
 
   /**
-   * 读取 workspace 下的删除 tombstone。
+   * Read deletion tombstones for a workspace.
    *
-   * CLI session store 会继续保留会话内容；如果列表 join 只读取 active/pinned/archived，
-   * deleted task 会因“不在 archived 集合”被误判成普通 task，并在冷启动后重新出现。
+   * The CLI session store keeps session content. If list joins read only active/pinned/archived,
+   * a deleted task is mistaken for an ordinary task because it is not archived and reappears after a cold start.
    */
   async listDeletedTaskIds(params: {
     workspacePath: string;
@@ -1759,8 +1754,8 @@ export class TaskIndexRepo {
   }
 
   /**
-   * 列出某条 automation 产生的所有 cron session（用于 automation 详情展开、关联查询）。
-   * 走 cron_automation_id 索引列，只返回未删除的 session，按创建时间倒序。
+   * List all cron sessions produced by an automation (for expanded automation details and association queries).
+   * Use the cron_automation_id index column; return only undeleted sessions in descending creation time.
    */
   async listSessionsByAutomation(automationId: string): Promise<ZCodeTaskMeta[]> {
     await this.ensureReady();
@@ -1823,8 +1818,8 @@ export class TaskIndexRepo {
       where.push("pinned = 0", "archived = 0");
     }
     if (normalizedSearchLike) {
-      // 之前只按 title 模糊匹配，没有命中聊天正文；TaskSearchDialog 长期搜不到内容。
-      // 现在 title 或 searchable_text 任一命中即视为匹配，正文摘要在结果阶段构建。
+      // Previously, fuzzy matching searched only title and never matched chat body, so TaskSearchDialog could not find content.
+      // Now a match in either title or searchable_text is sufficient; body snippets are built in the result stage.
       where.push("(LOWER(title) LIKE ? OR LOWER(searchable_text) LIKE ?)");
     }
 
@@ -1913,8 +1908,8 @@ export class TaskIndexRepo {
         ) VALUES (?, ?, ?, ?, ?)`,
       )
       .run(id, title, color, now, now);
-    // 新建内容必须立即进入用户排序，并插到当前混排列表顶部；
-    // 不能依赖 created_at 和已有 sort_order 混排，否则两套坐标量级不同会导致刷新后位置漂移。
+    // New items must immediately enter user ordering and appear at the top of the current mixed list.
+    // Do not mix created_at with existing sort_order; their different scales cause positions to drift after refresh.
     this.upsertGroupedTopOrder({
       nodeType: "group",
       nodeKey: id,
@@ -2057,9 +2052,9 @@ export class TaskIndexRepo {
       return false;
     }
     const now = Date.now();
-    // session 可见与首标题缺行都可能并发触发完整 snapshot 回源。
-    // 顶层顺序只能在第一次出现时初始化；重复回源若再次分配最小 sort_order，
-    // 较慢完成的旧任务会越过之后创建的新任务，使最终顺序依赖异步完成时序。
+    // Session visibility and a missing first-title row may concurrently trigger a full snapshot fetch.
+    // Initialize top-level ordering only on first appearance; if repeated fetches allocate the minimum sort_order again,
+    // a slower old task can move above a newer task, making final order depend on asynchronous completion timing.
     this.upsertGroupedTopOrder({
       nodeType: "task",
       nodeKey,
@@ -2069,9 +2064,9 @@ export class TaskIndexRepo {
     return true;
   }
 
-  // 过渡面：grouped 列表消费已切 sessions-index + queryGroupedTaskViewStructure，
-  // 本方法仅剩 applyGroupedTaskViewOrder 的回包复用（UI 已不采信该回包），
-  // 随 applyGroupedTaskViewOrder 返回面收敛一并收口。
+  // Transitional surface: grouped lists now consume sessions-index + queryGroupedTaskViewStructure.
+  // This method remains only to reuse the applyGroupedTaskViewOrder response (the UI no longer trusts that response);
+  // remove it when the applyGroupedTaskViewOrder return surface is consolidated.
   async queryGroupedTaskView(
     params: ZCodeGroupedTaskViewQuery & { provider?: ZCodeProvider },
   ): Promise<ZCodeGroupedTaskView> {
@@ -2089,8 +2084,8 @@ export class TaskIndexRepo {
     ];
     const activeTaskArgs: Array<string | number> = includeAllWorkspaces ? [] : [...workspaceKeys];
     if (params.provider) {
-      // grouped 和 workspace 都是 ZCode Agent 任务列表入口，必须共享旧 provider
-      // 残留过滤口径；否则历史 claude/codex/gemini 索引行会只在 grouped 里冒出来。
+      // Grouped and workspace views are both ZCode Agent task-list entry points and must share the legacy provider filtering rule;
+      // otherwise historical claude/codex/gemini index rows appear only in grouped lists.
       appendZCodeAgentIndexedProviderFilter(activeTaskWhere, activeTaskArgs, params.provider);
     }
     const activeTasks =
@@ -2219,7 +2214,7 @@ export class TaskIndexRepo {
         .map((member) => activeTaskByKey.get(`${member.workspace_key}\u0000${member.task_id}`))
         .filter((task): task is ZCodeTaskListItem => Boolean(task));
       if (group.id === CRON_DEFAULT_GROUP_ID) {
-        // cron 系统分组不走用户手动排序，固定按创建时间倒序展示最新结果。
+        // The cron system group does not use user manual ordering; always show the latest result first by creation time.
         groupTasks.sort(compareCronGroupTasks);
       } else {
         this.normalizeGroupMemberOrders(group.id, groupTasks, memberByTaskKey);
@@ -2250,16 +2245,16 @@ export class TaskIndexRepo {
       });
     }
 
-    // 首次查询时把当前可见顶层节点全部补齐成用户排序，之后展示只认 sort_order。
+    // On the first query, initialize user ordering for all currently visible top-level nodes; subsequent display uses only sort_order.
     this.normalizeGroupedTopNodeOrders(nodes, orderByNodeKey);
     nodes.sort(compareGroupedNodes);
     return { nodes };
   }
 
   /**
-   * grouped 原始结构读取（不 join tasks 表、无 bootstrap / normalize 写回）。
-   * 任务内容改由 sessions-index 提供，客户端 join；这里只回 group / member / 顶层排序三张表。
-   * 组可见性沿用 queryGroupedTaskView 口径：bootstrap workspace group 只在其 workspace 可见。
+   * Read the raw grouped structure (no join to tasks table and no bootstrap/normalization writes).
+   * Task content now comes from sessions-index and is joined by the client; return only group/member/top-level ordering tables here.
+   * Group visibility follows queryGroupedTaskView: a bootstrap workspace group is visible only in its workspace.
    */
   async queryGroupedTaskViewStructure(params: {
     workspaceScopes: Array<{ workspacePath: string; workspaceIdentity?: string }>;
@@ -2340,7 +2335,7 @@ export class TaskIndexRepo {
         });
         continue;
       }
-      // task node_key = JSON.stringify([workspaceKey, taskId])（NUL 分隔在 sqlite TEXT 会被截断）。
+      // task node_key = JSON.stringify([workspaceKey, taskId]); SQLite TEXT is truncated at NUL delimiters.
       try {
         const parsed = JSON.parse(row.node_key) as unknown;
         if (
@@ -2356,7 +2351,7 @@ export class TaskIndexRepo {
           });
         }
       } catch {
-        // 历史脏 node_key 跳过：客户端会按 createdAt 补内存序，不致崩溃。
+        // Skip malformed historical node_key values; the client fills in-memory order by createdAt, so it will not crash.
       }
     }
     return { groups, members, topLevelOrders };
@@ -2387,8 +2382,8 @@ export class TaskIndexRepo {
         throw new Error("Grouped task order 包含不可见 task");
       }
       if (params.provider && row.provider !== params.provider) {
-        // grouped 保存回包之前没有 provider 边界，旧 gemini/codex/claude 排序残留会在保存后重新展示。
-        // 带 provider 的 ZCode Agent 视图只接受当前 glm task；旧 provider 引用作为不可见遗留数据跳过。
+        // Before provider boundaries were added to grouped save responses, old gemini/codex/claude ordering references could reappear after save.
+        // A ZCode Agent view with a provider accepts only current glm tasks; skip old provider references as invisible legacy data.
         return null;
       }
       return key;
@@ -2462,8 +2457,8 @@ export class TaskIndexRepo {
         ON CONFLICT(workspace_key) DO UPDATE SET
           updated_at = excluded.updated_at`,
       );
-      // 用户已经显式保存 grouped 排序时，后续查询不能再执行 workspace 自动初始化。
-      // 这里写全局 marker，避免新 workspace 出现后又触发迁移式 workspace group 初始化。
+      // Once the user explicitly saves grouped ordering, later queries must not automatically initialize workspaces.
+      // Write a global marker here to prevent migration-style workspace group initialization when a new workspace appears.
       markWorkspaceBootstrapDisabled.run(GROUPED_WORKSPACE_BOOTSTRAP_ONCE_KEY, now, now);
       const deleteMembership = database.prepare(
         `DELETE FROM task_group_members
@@ -2512,13 +2507,13 @@ export class TaskIndexRepo {
         });
       }
 
-      // 一次提交最终排序，避免菜单/草稿/取消分组等 grouped 视图变更留下部分写入状态。
+      // Commit the final ordering once so grouped-view changes such as menu/draft/ungrouping do not leave partial writes.
       database.prepare("DELETE FROM task_group_view_node_orders WHERE node_type = 'group'").run();
       const deleteTaskOrder = database.prepare(
         `DELETE FROM task_group_view_node_orders
         WHERE node_type = 'task' AND (node_key = ? OR node_key = ?)`,
       );
-      // 只清理当前 workspace scope 里的 task 排序；否则远端/未展开 workspace 的混排位置会被本次变更误删。
+      // Clear task ordering only in the current workspace scope; otherwise this change could delete mixed-list positions for remote/unexpanded workspaces.
       for (const nodeKey of scopedTaskOrderKeys) {
         const [targetWorkspaceKey, taskId] = nodeKey.split("\u0000");
         if (!targetWorkspaceKey || !taskId) {

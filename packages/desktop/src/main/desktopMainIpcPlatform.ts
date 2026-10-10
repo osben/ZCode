@@ -1,4 +1,4 @@
-/* eslint-disable max-lines -- 桌面平台 IPC 集中装配，拆散会让权限边界更难审计；行数随平台能力增长。 */
+/* eslint-disable max-lines -- Desktop platform IPC is assembled centrally because splitting it would make permission boundaries harder to audit; this file grows with platform capabilities. */
 import { BrowserWindow, dialog, ipcMain, nativeTheme } from "electron";
 import { readZCodeStdioTapDevState } from "@zcode/services/node";
 import {
@@ -88,17 +88,17 @@ export function registerPlatformIpcHandlers(options: {
   }>;
   setAutoDownloadAndInstallUpdates: (enabled: boolean) => Promise<void>;
   syncAppSettings: (patch: unknown) => void;
-  /** 快捷键设置页录制态开关：true 时 main 重建菜单摘除可配置 accelerator */
+  /** Shortcut-settings recording toggle: when true, main rebuilds the menu without configurable accelerators. */
   setShortcutRecordingActive?: (active: boolean, ownerWebContentsId?: number | null) => void;
-  /** 桌面端设备标识符（基于 userData 路径的 SHA-256） */
+  /** Desktop device identifier (SHA-256 based on the userData path). */
   deviceMid: string;
-  /** CDP-on-guest pivot：renderer `<webview>` 上报 guest webContentsId → main attach。 */
+  /** CDP-on-guest pivot: renderer reports the guest webContentsId for a `<webview>` so main can attach. */
   attachBrowserGuest?: AttachBrowserGuest;
-  /** renderer 自由尺寸变化 → 当前窗口所属的受控 tab。 */
+  /** Renderer free-size changes → controlled tab belonging to the current window. */
   updateBrowserGuestViewport?: UpdateBrowserGuestViewport;
-  /** 可信 owner renderer 上报的后台截图表面 ready。 */
+  /** Background screenshot-surface ready signal reported by the trusted owner renderer. */
   reportBrowserScreenshotSurfaceReady?: ReportBrowserScreenshotSurfaceReady;
-  /** Browser tab 关闭、挂起、恢复与跨重启 shell IPC。 */
+  /** IPC for closing, suspending, and restoring browser tabs and their cross-restart shells. */
   browserViewResidencyHandlers?: BrowserViewResidencyIpcHandlers;
 }) {
   ipcMain.handle(PlatformChannels.SelectDirectory, async () => {
@@ -272,8 +272,8 @@ export function registerPlatformIpcHandlers(options: {
         return;
       }
 
-      // preload 早于 React 页面运行，用它同步到的 zoom 档位先调整 macOS 红绿灯，
-      // 避免等 RootStartupLoading 切到 App 页面后才重置位置。
+      // The preload runs before the React page. Use its synchronized zoom level to adjust the macOS
+      // traffic lights first, rather than waiting until RootStartupLoading switches to the App page.
       syncWindowControlsOverlayForZoomLevel(senderWindow, payload.zoomLevel);
     },
   );
@@ -291,9 +291,10 @@ export function registerPlatformIpcHandlers(options: {
     options.syncAppSettings(result.data);
   });
 
-  // 快捷键录制态：renderer 设置页进入/退出录制时通知。macOS 系统菜单会先于 renderer
-  // 吃掉按键，录制 menu 通道命令必须先摘掉可配置 accelerator，否则按键直接触发原命令。
-  // 附带发起方 webContents id：录制中窗口销毁时 main 侧据此复位（见 index.ts）。
+  // Shortcut recording state: the renderer notifies main when the settings page enters/exits
+  // recording. On macOS, the system menu consumes keys before the renderer, so recording commands
+  // must first remove configurable accelerators or the key will trigger the original command.
+  // Include the originating webContents ID so main can reset the state if that window is destroyed (see index.ts).
   ipcMain.on(PlatformChannels.SetShortcutRecordingActive, (event, payload: unknown) => {
     if (typeof payload !== "boolean") {
       options.logger.warn("[shortcuts] invalid recording-active payload:", payload);
@@ -404,7 +405,7 @@ export function registerPlatformIpcHandlers(options: {
       return;
     }
 
-    // 返回值直通 renderer 的 executeDesktopCommand promise（GetCuaOsSupport 依赖此行为）。
+    // Return the renderer's executeDesktopCommand promise directly (GetCuaOsSupport relies on this behavior).
     return await options.executeDesktopCommand(command as DesktopCommandId, senderWindow);
   });
 }

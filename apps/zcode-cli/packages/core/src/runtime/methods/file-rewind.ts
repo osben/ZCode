@@ -100,7 +100,7 @@ export async function applyWorkspaceFileRewind(
     targetMessageIds?: MessageId[];
     targetTurnId?: TurnId;
     traceContext?: TraceContext;
-    /** 组合 rewind 的提交闸：文件全部写成功后、workspace event 发布前提交 branch cut。 */
+    /** Commit gate for compound rewind: commit the branch cut after all files are written successfully and before publishing the workspace event. */
     commitAfterApply?: () => Promise<void>;
   } = {},
 ): Promise<WorkspaceFileRewindApplyResult> {
@@ -181,8 +181,8 @@ export async function applyWorkspaceFileRewind(
     }
     await options.commitAfterApply?.();
   } catch (error) {
-    // 多文件 rewind 过去在第 N 次写失败时会留下半回滚 workspace。
-    // journal 按写入逆序恢复命令执行前内容；补偿失败升级为不可恢复错误。
+    // Previously, a multi-file rewind could leave the workspace partially rolled back if the Nth write failed.
+    // The journal restores pre-command contents in reverse write order; compensation failure is escalated as unrecoverable.
     try {
       await compensateFileRewindJournal.call(this, journal, traceContext);
     } catch (compensationError) {
@@ -371,9 +371,9 @@ async function buildWorkspaceFileRewindPlan(
     }
 
     for (const file of artifact.files) {
-      // Write/ApplyPatch checkpoint 会保留模型传入的工作区相对路径，而
-      // FileSystemPort 只接受绝对路径。若不在计划阶段按 runtime workspace root
-      // 解析，安全文件会被误报 file_read_failed，组合 rewind 只返回 blocked。
+      // Write/ApplyPatch checkpoints preserve workspace-relative paths from the model, while
+      // FileSystemPort accepts only absolute paths. Without resolving them against the runtime workspace root during planning,
+      // valid files are incorrectly reported as file_read_failed and compound rewind returns only blocked.
       const filePath = resolveCheckpointFilePath(this.workspaceRoot, file.path);
       const afterContent = resolveCheckpointAfterContent(file);
       if (afterContent === undefined) {
@@ -500,9 +500,9 @@ function resolveTargetCheckpoints(
   }
 
   if (target.targetTurnId && !String(target.targetTurnId).includes("~")) {
-    // 旧 TurnStarted 没有 user messageId，无法通过 rowId->messageId
-    // 找到 workspace checkpoint；普通 turn 可用事件 turnId 精确兜底。split
-    // product turn 带 "~q" 后缀，不能按 runtime turnId 兜底，避免串到其他 queued turn。
+    // Old TurnStarted events have no user messageId, so a workspace checkpoint cannot be found through rowId->messageId.
+    // Ordinary turns can fall back to the event turnId. Split product turns have a "~q" suffix and cannot fall back to
+    // runtime turnId, which would risk matching another queued turn.
     return events
       .filter((event) => event.type === SessionEventType.CheckpointCreated)
       .filter((event) => String(event.turnId ?? "") === String(target.targetTurnId))

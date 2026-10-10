@@ -1,8 +1,8 @@
 /* oxlint-disable eslint(max-lines) */
 /**
- * WelcomeScreen —— OAuth / API Key 登录入口
+ * WelcomeScreen — OAuth / API Key sign-in entry
  *
- * 通过 useOAuth hook 驱动 OAuth 流程。
+ * Drives the OAuth flow through the useOAuth hook.
  */
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Loader2Icon, LoaderIcon, TriangleAlertIcon } from "lucide-react";
@@ -116,11 +116,11 @@ function LoginPanel({ active, onComplete }: LoginPanelProps) {
     ) => {
       const activeAttempt = activeLoginEntryAttemptRef.current;
       if (activeAttempt && activeAttempt.id !== loginEntryAttemptId) {
-        // 用户在统一登录页开始另一条登录流程时，旧购买意图不能继续等待。
+        // When users start another sign-in flow from the unified sign-in page, the previous purchase intent must stop waiting.
         finishActiveLoginEntryAttempt("cancelled");
       }
-      // 上一次失败遗留的 store oauthError 若不清掉，新流程进入等待态后
-      // 失败提示会和等待提示同屏（如失败后关闭登录入口，再从设置页自动续接登录）。
+      // If the store oauthError left by the previous failure is not cleared, the new flow enters its waiting state while
+      // the failure and waiting messages appear together (for example, after closing sign-in following a failure and automatically resuming it from Settings).
       setOAuthError(null);
       if (loginEntryAttemptId !== undefined) {
         activeLoginEntryAttemptRef.current = {
@@ -162,9 +162,9 @@ function LoginPanel({ active, onComplete }: LoginPanelProps) {
 
     consumedLoginRequestRef.current = loginEntryRequest.id;
     clearLoginEntryRequest(loginEntryRequest.id);
-    // Model Provider 的登录/连接入口以前绕过统一登录入口直接发起 OAuth，
-    // 导致用户看不到统一的等待、取消和错误状态。这里在 WelcomeScreen 打开后自动启动指定 provider，
-    // 复用登录入口的 loading 流程，同时用 request id 防止 React 严格模式下重复发起。
+    // The Model Provider sign-in/connection entry previously started OAuth directly, bypassing the unified sign-in entry,
+    // so users could not see the shared waiting, cancellation, and error states. Automatically start the specified provider when WelcomeScreen opens,
+    // reusing the sign-in entry’s loading flow and using a request ID to prevent duplicate starts in React Strict Mode.
     void startTrackedLogin(
       loginEntryRequest.providerId,
       {
@@ -174,12 +174,12 @@ function LoginPanel({ active, onComplete }: LoginPanelProps) {
     );
   }, [active, clearLoginEntryRequest, loginEntryRequest, startTrackedLogin]);
 
-  // Root 层 OAuth 回调失败时写入 Zustand oauthError，统一登录入口负责显示错误。
+  // When an OAuth callback fails in Root, it writes Zustand oauthError; the unified sign-in entry displays the error.
   useEffect(() => {
     if (oauthError && active) {
       finishActiveLoginEntryAttempt("failed");
-      reset(); // 重置 useOAuth 的 waiting 状态
-      // oauthError 已在 store 中，下方 UI 会读取并显示
+      reset(); // Reset the useOAuth waiting state
+      // oauthError is already in the store, and the UI below reads and displays it
     }
   }, [active, finishActiveLoginEntryAttempt, oauthError, reset]);
 
@@ -189,7 +189,7 @@ function LoginPanel({ active, onComplete }: LoginPanelProps) {
     }
   }, [active, finishActiveLoginEntryAttempt, status]);
 
-  // OAuth 回调成功后 Root 层设置 user，统一登录入口自动关闭。
+  // After a successful OAuth callback, Root sets the user and the unified sign-in entry closes automatically.
   useEffect(() => {
     if (
       active &&
@@ -198,8 +198,8 @@ function LoginPanel({ active, onComplete }: LoginPanelProps) {
         attempt: activeLoginEntryAttemptRef.current,
       })
     ) {
-      // 全局 user 可能来自另一个 Provider，不能把刚发起的购买登录
-      // 误判为成功；Provider-specific attempt 只由匹配的 OAuth success 完成。
+      // The global user may belong to another Provider, so do not treat a just-started purchase sign-in
+      // as successful; a provider-specific attempt is complete only after its matching OAuth success.
       reset();
       setOAuthError(null);
       void onComplete("oauth");
@@ -225,8 +225,8 @@ function LoginPanel({ active, onComplete }: LoginPanelProps) {
         successProvider: lastOAuthSuccessProvider,
       })
     ) {
-      // provider connection 复用同一个登录入口视觉流程，
-      // 但成功后不会写 App user；这里用 Root 的成功信号关闭登录入口，保持用户交互不变。
+      // Provider connection reuses the same sign-in entry flow and appearance,
+      // but it does not write the App user on success. Use Root’s success signal to close the sign-in entry while preserving the user interaction.
       finishActiveLoginEntryAttempt("succeeded");
       reset();
       setOAuthError(null);
@@ -288,9 +288,9 @@ function LoginPanel({ active, onComplete }: LoginPanelProps) {
       </LoginPanelHeader>
 
       <div className="space-y-6">
-        {/* Root 层写入 oauthError（轮询/回调失败）后 effect 会把 useOAuth reset 回 idle，
-            若只判断 status==="idle" 会让失败块和渠道按钮列表同屏、状态纠缠。
-            失败期间统一由下方失败块接管（重新登录/取消），渠道列表等错误清掉后再回来。 */}
+        {/* After Root writes oauthError (polling/callback failure), an effect resets useOAuth to idle,
+            so checking only status==="idle" would show the failure block alongside the provider buttons and mix their states.
+            While failed, the error block below takes over (retry/cancel); the provider list returns after the error is cleared. */}
         {status === "idle" && !oauthError && loginMode === "providers" && (
           <div className="space-y-4">
             {loadingProviders ? (
@@ -383,8 +383,8 @@ function LoginPanel({ active, onComplete }: LoginPanelProps) {
               size="lg"
               data-testid={TID_OAUTH_CANCEL}
               onClick={() => {
-                // OAuth 等待态里的“取消”只应取消浏览器授权等待，
-                // 不能关闭整个登录入口，否则用户需要重新从入口打开才能换登录方式。
+                // “Cancel” in the OAuth waiting state should cancel only the browser authorization wait,
+                // not close the entire sign-in entry, or users would have to reopen it to choose another sign-in method.
                 finishActiveLoginEntryAttempt("cancelled");
                 void cancel(pendingProvider ?? undefined);
               }}
@@ -403,8 +403,8 @@ function LoginPanel({ active, onComplete }: LoginPanelProps) {
             >
               <TriangleAlertIcon className="size-4" />
               <AlertDescription className="text-center">
-                {/* 登录失败通常是可重试/可切换提供方的状态，不能用 destructive 红色误导为破坏性错误。
-                    这里统一用 warning 语义，并居中文案以匹配登录面板的居中视觉节奏。 */}
+                {/* Sign-in failures are usually retryable or allow switching providers; the destructive red style would misleadingly imply a destructive error.
+                    Use warning semantics consistently and center the message to match the sign-in panel’s visual alignment. */}
                 {oauthError || error}
               </AlertDescription>
             </Alert>
@@ -420,9 +420,9 @@ function LoginPanel({ active, onComplete }: LoginPanelProps) {
                 if (!retryProvider) {
                   return;
                 }
-                // OAuth 回调失败会触发 reset()，它会清空 pendingProvider。
-                // 重新登录必须沿用刚才失败的渠道，不能因为 providers[0] 的原始顺序退回 BigModel。
-                // store 残留错误由 startTrackedLogin 发起前统一清理。
+                // An OAuth callback failure triggers reset(), which clears pendingProvider.
+                // Retry with the provider that just failed; do not fall back to BigModel based on the original providers[0] order.
+                // Clear any stale store error before starting startTrackedLogin.
                 void startTrackedLogin(retryProvider);
               }}
             >
@@ -434,9 +434,9 @@ function LoginPanel({ active, onComplete }: LoginPanelProps) {
               size="lg"
               data-testid={TID_OAUTH_CANCEL}
               onClick={() => {
-                // 失败态不能只有「重新登录」沿原渠道重试：想换渠道只能关闭
-                // 登录入口重开，容易在同一条失败链路上反复失败。这里对齐等待态取消的
-                // 语义：结束本次失败流程回到渠道列表，登录入口不关闭。
+                // The failure state must offer more than “Sign in again” on the same provider; switching providers should not require closing
+                // and reopening the sign-in entry, which can repeat the same failure flow. Match the waiting-state cancellation
+                // semantics: end this failed attempt and return to the provider list without closing the sign-in entry.
                 finishActiveLoginEntryAttempt("cancelled");
                 setOAuthError(null);
                 void cancel(pendingProvider ?? undefined);
@@ -474,7 +474,7 @@ function LoginPanelHeader({
 
 function LoginPanelLogo() {
   return (
-    // 登录 logo 壳是固定深色底，边框不能跟随浅色主题 token，否则浅色主题下边框过重。
+    // The sign-in logo shell has a fixed dark background; its border must not follow the light-theme token or it will look too heavy in light mode.
     <div
       className="relative mb-1 flex size-16 items-center justify-center rounded-2xl bg-[linear-gradient(180deg,#000000_0%,#151718_100%)] text-[#ffffff] shadow-lg/20 before:pointer-events-none before:absolute before:inset-0 before:rounded-2xl before:border before:border-[rgba(255,255,255,0.1)]"
       aria-label="ZCode"
@@ -524,9 +524,9 @@ function LoginOAuthRegionTag({ providerId }: { providerId: string }) {
 
 function getProviderPriority(provider: OAuthProviderMeta): number {
   switch (provider.id) {
-    // Windows 登录入口里 z.ai 入口需要固定排在最上面，
-    // 之前把 BigModel 设成更高优先级后，用户首屏会先看到次要入口。
-    // 这里直接调整排序权重，只改展示顺序，不影响 OAuth provider 的真实配置来源。
+    // In the Windows sign-in entry, the z.ai option must always appear first,
+    // because giving BigModel higher priority made users see the secondary entry first.
+    // Adjust the sort weight here; this changes only display order, not the actual OAuth provider configuration source.
     case ZAI_PROVIDER_ID:
       return 0;
     case BIGMODEL_PROVIDER_ID:
@@ -537,8 +537,8 @@ function getProviderPriority(provider: OAuthProviderMeta): number {
 }
 
 function resolveVisibleLoginProviders(providers: OAuthProviderMeta[]): OAuthProviderMeta[] {
-  // ZAI / BigModel 现在共享 App 登录事实源，未登录时登录入口必须同时展示两个入口。
-  // 不能临时隐藏 BigModel，否则用户无法主动选择 BigModel 作为 active provider。
+  // ZAI / BigModel now share the App sign-in source of truth, so the sign-in entry must show both options when signed out.
+  // Do not temporarily hide BigModel, or users cannot explicitly select it as the active provider.
   return [...providers].sort((left, right) => {
     return getProviderPriority(left) - getProviderPriority(right);
   });

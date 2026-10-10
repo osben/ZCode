@@ -2,45 +2,45 @@ import { laneClassOf, type LaneClass, type WorkflowLaneData } from "./types.js";
 import { formatNamePattern, type NamePattern } from "./name-pattern.js";
 
 /**
- * 车道显示名的唯一策略点。
+ * The single policy point for lane display names.
  *
- * 站点 id（`actor#3`）是**身份**：journal 的 key、hover 标题里的锚、排查问题时的抓手。
- * 显示名是**表现**。两者混在一起时，界面上就会出现一行叫「actor#3」的车道——那是把 key
- * 当名字用。名字的来源只有两个：脚本里写下的名字（原样显示，本地化它就是改作者的话），
- * 以及分析拿不到名字时的本地化兜底。
+ * A station ID (`actor#3`) is **identity**: a journal key, an anchor in hover titles, and a handle for investigating issues.
+ * A display name is **presentation**. If they are conflated, the UI shows a lane named "actor#3"—using the key as the name.
+ * Names come from only two sources: a name written in the script (shown as-is; localizing it would change the author's words),
+ * or a localized fallback when analysis cannot retrieve a name.
  *
- * 为什么兜底必须发生在渲染时：投影（flow-elements.ts）是被 memo 住的纯函数，与语言无关；
- * 把本地化文案烘进投影，用户中途切语言时那串文字就成了过期文本（工作区/未解析两条车道
- * 一直在渲染时本地化，正是这个道理）。所以投影只搬数据，文案在这里成型。
+ * Why the fallback must be applied at render time: the projection (flow-elements.ts) is a memoized pure function, independent of language.
+ * Baking localized copy into the projection would leave stale text when users switch languages (workspace/unresolved lanes have always
+ * been localized at render time for this reason). The projection therefore carries data only; copy is produced here.
  */
 
 /**
- * 决定一条车道显示名所需的全部输入——不含 id：id 是身份，从不参与命名。
- * `LaneHead` 与候选车道引用（`LaneRef`）都满足这个形状，两个调用点因此共用一条策略。
+ * All inputs needed to determine a lane's display name, excluding id: id is identity and never participates in naming.
+ * Both `LaneHead` and candidate lane references (`LaneRef`) have this shape, so both call sites share one policy.
  */
 export interface LaneNaming {
   laneClass: LaneClass;
-  /** 脚本里 `agent("planner")` 给出的名字；分析拿不到字面量时缺席。 */
+  /** Name given in the script by `agent("planner")`; absent when analysis cannot retrieve a literal. */
   name?: string;
   /**
-   * 名字是插值出来的（`` agent(`研究员${i + 1}`) ``）时，模板两端的字面量。排在 `name`
-   * 之后、匿名兜底之前：它比「未命名智能体」多说了一件真事，又不是作者原样写下的那个词。
+   * Literal text around a name interpolation (`` agent(`researcher${i + 1}`) ``). It follows `name`
+   * and precedes the anonymous fallback: it conveys more than "Unnamed agent" without presenting a word the author wrote as-is.
    */
   namePattern?: NamePattern;
-  /** 同一张图里并存多条匿名 agent 车道时的 1-based 序号；唯一一条时缺席。 */
+  /** 1-based index when multiple anonymous agent lanes coexist in a graph; absent when there is only one. */
   anonymousIndex?: number;
 }
 
 /**
- * `IntlInstance["formatMessage"]` 的最小形状。helper 只要这个函数，不碰 React，
- * 于是能用假 formatter 单测策略本身。
+ * Minimal shape of `IntlInstance["formatMessage"]`. The helper needs only this function and does not touch React,
+ * so the policy itself can be unit tested with a fake formatter.
  */
 export type LaneNameFormatter = (
   descriptor: { id: string },
   values?: Record<string, string | number>,
 ) => string;
 
-/** 合成车道不靠名字识别：它们是「什么在这里跑」，文案固定。 */
+/** Identify synthetic lanes by class rather than name: they describe what runs here and have fixed copy. */
 const NAME_ID_BY_CLASS: Partial<Record<LaneClass, string>> = {
   unresolved: "chat.toolCall.workflow.graph.lane.unresolved",
   workspace: "chat.toolCall.workflow.graph.lane.script",
@@ -49,12 +49,12 @@ const NAME_ID_BY_CLASS: Partial<Record<LaneClass, string>> = {
 export function laneDisplayName(lane: LaneNaming, formatMessage: LaneNameFormatter): string {
   const classNameId = NAME_ID_BY_CLASS[lane.laneClass];
   if (classNameId !== undefined) return formatMessage({ id: classNameId });
-  // 作者原词原样显示：本地化它就是改作者的话。
+  // Show the author's exact words; localizing them would change what the author wrote.
   if (lane.name !== undefined) return lane.name;
-  // 名字是插值出来的：形状仍然是作者的话，所以同样不本地化，只是补一个省略号。
+  // An interpolated name is still in the author's words, so do not localize it; only add an ellipsis.
   const patterned = formatNamePattern(lane.namePattern);
   if (patterned !== undefined) return patterned;
-  // 编号只在需要区分时才出现：图里只有一条匿名车道，「未命名智能体 1」里的 1 什么也没说。
+  // Show an index only when needed to distinguish lanes: for one anonymous lane, the "1" in "Unnamed agent 1" conveys nothing.
   return lane.anonymousIndex === undefined
     ? formatMessage({ id: "chat.toolCall.workflow.graph.lane.anonymous" })
     : formatMessage(
@@ -64,22 +64,22 @@ export function laneDisplayName(lane: LaneNaming, formatMessage: LaneNameFormatt
 }
 
 /**
- * 对一条车道的引用：身份（`id`）加上做显示名所需的全部素材。**从不是拼好的显示串**——
- * 匿名兜底文案在渲染时才由 `laneDisplayName` 成型，见文件头那段。
+ * Reference to one lane: identity (`id`) plus all material needed to form its display name. **Never a preformatted display string**—
+ * the anonymous fallback copy is created by `laneDisplayName` at render time; see the file header.
  */
 export interface LaneRef extends LaneNaming {
   id: string;
 }
 
 /**
- * 1-based 序号，按车道顺序发给「没有名字的 agent 车道」，且只在并存两条以上时才发：
- * 图里只有一条匿名车道时，「未命名智能体 1」里的 1 没有区分对象，只是噪声。
+ * Assign 1-based indices in lane order to "unnamed agent lanes" only when two or more coexist:
+ * when a graph has one anonymous lane, the "1" in "Unnamed agent 1" distinguishes nothing and is noise.
  *
- * **带 pattern 的车道算「有名字」**，不进这份计数：它头上写着「研究员…」，再挂一个匿名序号
- * 只会让序号与画面上看得见的匿名车道数量对不上。两条 pattern 恰好相同时会撞名——那和两条
- * 都字面叫 `"worker"` 的车道撞名是同一件事，这里不欠新的消歧。
+ * **A lane with a pattern counts as named** and is excluded from this count: showing "researcher…" plus an anonymous index
+ * would make the index disagree with the number of visibly anonymous lanes. Two identical patterns can still collide, just as two lanes
+ * literally named `"worker"` can; this helper does not add another disambiguation rule.
  *
- * 计数与语言无关，所以它属于这一层（并且可单测）；文案本身在渲染时才成型。
+ * Counting is language-independent, so it belongs in this layer and can be tested on its own; the copy is formed at render time.
  */
 function anonymousLaneIndexes(lanes: readonly WorkflowLaneData[]): Map<string, number> {
   const anonymous = lanes.filter(
@@ -93,15 +93,15 @@ function anonymousLaneIndexes(lanes: readonly WorkflowLaneData[]): Map<string, n
 }
 
 /**
- * 车道 id → 命名素材（不是显示串）。
+ * Lane ID to naming material (not a display string).
  *
- * 三个消费者共用这一份：图的名册、step 卡片的候选车道、以及 transcript 下钻的实例选择器。
- * **必须同源**——匿名编号是「图里第几条匿名车道」，各算一次总有一天不相等，表现是选择器里的
- * 「未命名智能体 2」对着图上的「未命名智能体 1」。
+ * Shared by three consumers: the graph roster, candidate lanes in step cards, and the instance selector for transcript drill-down.
+ * **They must use the same source**: the anonymous index is the lane's position among anonymous lanes in the graph. Computing it separately
+ * will eventually disagree, so the selector may show "Unnamed agent 2" while the graph shows "Unnamed agent 1".
  *
- * 它住在这里而不是投影层（flow-elements.ts），是为了让不画图的消费者（下钻解析是纯函数）
- * 不必为一份命名素材把 React Flow 拖进依赖里。图里没有的车道 id 由调用方兜底成
- * `{id, laneClass}`：站点特化之类的将来变化不该让下钻崩掉。
+ * It lives here rather than in the projection layer (flow-elements.ts) so consumers that do not render a graph (drill-down parsing is pure)
+ * do not need to pull React Flow in just to access naming material. Callers provide `{id, laneClass}` as a fallback for lane IDs missing
+ * from the graph, so future changes such as station specialization do not break drill-down.
  */
 export function laneRefsById(lanes: readonly WorkflowLaneData[]): Map<string, LaneRef> {
   const anonymousIndexes = anonymousLaneIndexes(lanes);

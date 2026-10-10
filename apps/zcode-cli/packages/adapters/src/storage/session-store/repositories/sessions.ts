@@ -127,7 +127,8 @@ export async function updateSession(
         time_title_updated = ?,
         time_compacting = ?,
         time_archived = ?,
-        -- 路径自愈可能携带并发读取前的旧时间，不能回退真实活动时间。
+        -- Path self-healing may carry a timestamp from before a concurrent read; do not roll back
+        -- the actual activity time.
         time_updated = max(time_updated, ?)
       where id = ?
       `,
@@ -236,9 +237,9 @@ export function claimLegacySessionWorkspace(
 ): number {
   const sessionIDs = [...new Set(input.sessionIDs)];
   if (sessionIDs.length === 0) return 0;
-  // 3.3.6 的 SSH/WSL session 没有 workspace_id，3.4 sessions-index 又按完整
-  // identity 严格查询，升级后历史任务全部不可见。这里只认 host tasks-index 给出的精确
-  // taskId allowlist，并叠加实际目录和 NULL identity，不能退化成按路径批量认领。
+  // SSH/WSL sessions from 3.3.6 have no workspace_id, while the 3.4 sessions index queries by the full
+  // identity. This made all historical tasks invisible after upgrade. Accept only exact entries from the host tasks index
+  // taskId allowlist, together with the actual directory and NULL identity; never fall back to bulk claims by path.
   const result = db
     .prepare(
       `update session
@@ -255,8 +256,8 @@ export function repairLegacyRemoteSessionWorkspace(
   db: DatabaseSync,
   input: RepairLegacyRemoteSessionWorkspaceInput,
 ): boolean {
-  // 3.4.2 把 WSL identity 当成执行路径，生产路径还可能先被 path.resolve
-  // 拼到真实 cwd 后落库。只按单 session 和完整旧目录精确迁移，禁止模糊搜索或批量认领。
+  // Version 3.4.2 treated the WSL identity as an execution path; production paths may also be path.resolve’d
+  // against the real cwd before persistence. Migrate only an exact single session and full old directory; do not search ambiguously or claim in bulk.
   const result = db
     .prepare(
       `update session
@@ -282,8 +283,8 @@ export function repairRemoteSessionPaths(
   db: DatabaseSync,
   input: RepairRemoteSessionPathsInput,
 ): boolean {
-  // 路径自愈曾复用全字段 updateSession，把读取快照中的标题、权限、回滚和
-  // 归档状态覆盖到并发新值上。维护性迁移只能拥有路径字段，并用旧路径做 CAS。
+  // Path repair previously reused the full-field updateSession, overwriting concurrent title, permission, rollback, and
+  // archive changes with values from the read snapshot. This maintenance migration may update only path fields and must use the old path for CAS.
   const result = db
     .prepare(
       `update session

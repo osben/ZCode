@@ -89,8 +89,8 @@ function toCompleteDiffContents(
   beforeContent: string | null,
   afterContent: string | null,
 ): GitDiffContents | null {
-  // 完整 diff 的任一侧读取失败后若被补成空字符串，UI 会把“不可读”误判成
-  // “文件为空”，进而把整个文件渲染成新增或删除。完整内容对必须一起成功或一起降级。
+  // If either side of a full diff fails to load and is replaced with an empty string, the UI mistakes “unreadable” for
+  // “empty file” and renders the whole file as added or deleted. The pair of full contents must either both succeed or both fall back.
   if (beforeContent === null || afterContent === null) {
     return null;
   }
@@ -145,18 +145,18 @@ function buildAutoRefreshWatchPaths(params: {
   gitCommonDir: string;
 }): GitResolvedRepository["autoRefreshWatchPaths"] {
   const paths: GitResolvedRepository["autoRefreshWatchPaths"] = [];
-  // Linux 上对 workspacePath 做 recursive fs.watch 会为整棵 workspace
-  // 分配 watcher；慢挂载或大型生成目录会阻塞 workspace Host。workspace 内容 watcher
-  // 由 UI 按 workspace Host 平台决定，这里只输出 Git 元数据边界。
+  // Recursive fs.watch on workspacePath allocates a watcher for the entire workspace on Linux;
+  // slow mounts or large generated directories can block the workspace Host. The UI chooses workspace-content watchers based on the Host platform;
+  // this service exposes only the Git metadata boundary.
 
-  // Git 元数据可能在 linked worktree 或 separate git-dir 中位于 repoRoot 之外。
-  // UI 只知道工作区路径，不能猜 `.git` 布局；这里用 Git 自身解析出的目录作为刷新边界。
+  // Git metadata may be outside repoRoot in a linked worktree or separate git-dir.
+  // The UI knows only the workspace path and cannot infer the `.git` layout; use the directory resolved by Git itself as the refresh boundary.
   addAutoRefreshWatchPath(paths, params.absoluteGitDir, true);
   const resolvedCommonDir = params.gitCommonDir
     ? isAbsolute(params.gitCommonDir)
       ? params.gitCommonDir
-      : // `git rev-parse --git-common-dir` 的相对结果以命令 cwd 为基准，
-        // 子目录 workspace 若误用 repoRoot 会把 `/root` + `../.git` 解析成 `/.git`。
+      : // A relative result from `git rev-parse --git-common-dir` is resolved against the command cwd,
+        // For a subdirectory workspace, using repoRoot here could resolve `/root` + `../.git` to `/.git`.
         resolve(params.workspacePath, params.gitCommonDir)
     : params.absoluteGitDir;
   addAutoRefreshWatchPath(paths, resolvedCommonDir, true);
@@ -178,7 +178,7 @@ async function readWorkingTreePreviewContent(absolutePath: string): Promise<stri
     const content = await readFile(absolutePath, "utf-8");
     return isPreviewableText(content) ? content : null;
   } catch {
-    // 文件删除和原子保存窗口都会让 stat/readFile 失败；这里不能猜成合法空文件。
+    // File deletion and atomic-save windows can both make stat/readFile fail; do not infer a valid empty file.
     return null;
   }
 }
@@ -300,7 +300,7 @@ function withDiffContents(diff: GitDiffResult, contents: GitDiffContents | null)
   }
 
   if (!contents) {
-    // Git patch 已经成功生成时，全文预览失败只应关闭 MultiFileDiff，不能把正确 patch 一并丢弃。
+    // Once the Git patch has been generated successfully, a full-text preview failure should only disable MultiFileDiff, not discard the valid patch.
     return diff;
   }
 
@@ -559,9 +559,9 @@ export function createGitCliRepo(options?: { commandProvider?: GitCommandProvide
       return result;
     }
 
-    // 大仓库的逐文件未跟踪状态可能超过输出上限；直接放大上限会让后续行数统计
-    // 并发读取上万个文件。首次超限后按 repoRoot 记住目录折叠模式，既保留可用的 Git
-    // 摘要和变更入口，也避免每次自动刷新都重复执行一次必然失败的详细命令。
+    // Per-file untracked status in large repositories may exceed the output limit; raising the limit directly would make later line-count aggregation
+    // read tens of thousands of files concurrently. After the first overflow, remember directory-collapsed mode by repoRoot to preserve useful Git
+    // summaries and change entry points, while avoiding a detailed command that is certain to fail on every automatic refresh.
     collapsedUntrackedRepoRoots.add(resolution.repoRoot);
     log.warn(
       undefined,
@@ -614,8 +614,8 @@ export function createGitCliRepo(options?: { commandProvider?: GitCommandProvide
   }
 
   async function hasOperationInProgress(resolution: GitResolvedRepository): Promise<boolean> {
-    // 进行中的 merge / rebase / cherry-pick 在不同 Git 版本上的报错并不完全稳定，
-    // 这里先通过 git-dir 标记位做一次轻量探测，让上层能拿到更稳定的阻塞原因。
+    // Error messages for in-progress merge/rebase/cherry-pick operations vary across Git versions;
+    // use a lightweight git-dir marker probe first so the caller gets a more stable blocking reason.
     const gitPathResult = await commandProvider.run({
       cwd: resolution.repoRoot,
       args: ["rev-parse", ...GIT_OPERATION_MARKERS.flatMap((marker) => ["--git-path", marker])],
@@ -710,8 +710,8 @@ export function createGitCliRepo(options?: { commandProvider?: GitCommandProvide
     invalidate,
 
     async resolveRepository(workspacePath: string): Promise<GitResolvedRepository> {
-      // 启动阶段 summary / changes / branch / identity 会并发读取同一个 workspace，
-      // 这里复用进行中的仓库解析，避免一轮刷新里重复执行多次 `git rev-parse`。
+      // During startup, summary/changes/branch/identity are read concurrently for the same workspace;
+      // reuse the in-flight repository resolution to avoid running `git rev-parse` multiple times in one refresh.
       return await reuseInFlightRequest(repositoryResolutionRequests, workspacePath, async () => {
         const gitBinary = await commandProvider.resolveGitBinary();
         if (!gitBinary) {
@@ -737,9 +737,9 @@ export function createGitCliRepo(options?: { commandProvider?: GitCommandProvide
           timeoutMs: DEFAULT_GIT_COMMAND_TIMEOUT_MS,
         });
         if (result.exitCode !== 0) {
-          // 测试/窗口切换时 workspace 目录可能在并发请求过程中被删除（例如临时目录清理）。
-          // 之前这里会直接抛错，若调用方是 fire-and-forget 链路就会形成 unhandled rejection，
-          // 进而把 Vitest 跑挂成超时。目录缺失不属于“Git 协议失败”，应按“当前非可用仓库”降级返回。
+          // During tests/window switches, the workspace directory may be removed while requests are in flight (for example, temporary directory cleanup).
+          // Previously this threw directly; if the caller was fire-and-forget, it produced an unhandled rejection
+          // and could make Vitest time out. A missing directory is not a “Git protocol failure”; degrade to “repository currently unavailable.”
           if (isMissingWorkingDirectoryResult(result)) {
             return {
               workspacePath,
@@ -824,10 +824,10 @@ export function createGitCliRepo(options?: { commandProvider?: GitCommandProvide
                   : "";
                 const normalizedGitDir = resolvedGitDir ? resolvedGitDir.replace(/\\/g, "/") : "";
 
-                // 关键业务逻辑：linked worktree 的 `.git` 文件会指向
-                // `<main-tree>/.git/worktrees/<name>`；这里只要命中这个结构就判为 worktree。
-                // 其它 `.git` 文件形态（如 submodule / separate-git-dir）一律按 main-tree 放行，
-                // 因为迁移过滤不是强依赖，宁可少过滤也不要误杀正常记录。
+                // Important logic: a linked worktree's `.git` file points to
+                // `<main-tree>/.git/worktrees/<name>`; classify it as a worktree only when this structure matches.
+                // Allow other `.git` file forms (such as submodule/separate-git-dir) as main-tree,
+                // because migration filtering is not a hard requirement and should avoid excluding valid records.
                 if (normalizedGitDir.includes("/.git/worktrees/")) {
                   return {
                     workspacePath,
@@ -838,9 +838,9 @@ export function createGitCliRepo(options?: { commandProvider?: GitCommandProvide
               }
             }
           } catch {
-            // 这里的 worktree 识别只用于迁移候选过滤，不是 Git 主功能的强一致前置。
-            // 因此遇到 `.git` 缺失、权限异常或非常规布局时，选择 fail-open 当成 main-tree，
-            // 避免把本来可迁移的记录误过滤掉。
+            // Worktree detection here is used only to filter migration candidates and is not a strong consistency prerequisite for core Git features.
+            // If `.git` is missing, inaccessible, or uses an unusual layout, fail open and treat it as main-tree
+            // to avoid incorrectly filtering out records that could otherwise be migrated.
           }
 
           return {
@@ -853,8 +853,8 @@ export function createGitCliRepo(options?: { commandProvider?: GitCommandProvide
     },
 
     async getStatus(workspacePath: string): Promise<GitStatusSnapshot> {
-      // staged / unstaged / summary / branch 比较都依赖同一份状态快照，
-      // 并发复用可以把一次渲染里的重复 `status + diff --numstat` 合并成一轮 Git CLI 调用。
+      // Staged/unstaged/summary/branch comparisons all depend on the same status snapshot;
+      // concurrent reuse combines duplicate `status + diff --numstat` calls during one render into a single Git CLI invocation.
       return await reuseInFlightRequest(statusRequests, workspacePath, async () => {
         const resolution = await this.resolveRepository(workspacePath);
         if (!resolution.isGitAvailable || !resolution.isRepository) {
@@ -869,7 +869,7 @@ export function createGitCliRepo(options?: { commandProvider?: GitCommandProvide
         }
 
         const [statusResult, stagedStatsResult, unstagedStatsResult] = await Promise.all([
-          // 默认保留逐文件未跟踪状态；只有确认当前 repoRoot 超限后，runGitStatus 才降级为目录折叠。
+          // Keep per-file untracked status by default; runGitStatus falls back to directory collapsing only after confirming the current repoRoot exceeds the limit.
           runGitStatus(resolution),
           commandProvider.run({
             cwd: resolution.repoRoot,
@@ -962,8 +962,8 @@ export function createGitCliRepo(options?: { commandProvider?: GitCommandProvide
 
       const ignoredRepoRelativePaths = new Set(
         ignoredResult.stdout
-          // 修复：`git check-ignore -z` 只能和 `--stdin` 一起使用；这里通过 argv 传路径，
-          // 所以必须解析普通换行输出，否则命令会直接失败，文件树永远拿不到 ignored 状态。
+          // Fix: `git check-ignore -z` can be used only with `--stdin`; paths are passed through argv here,
+          // so parse the normal newline output, or the command fails and the file tree never gets ignored status.
           .split(/\r?\n/)
           .filter(Boolean)
           .map((path) => path.replace(/\\/g, "/")),
@@ -1026,8 +1026,8 @@ export function createGitCliRepo(options?: { commandProvider?: GitCommandProvide
         cwd: resolution.repoRoot,
         args: [
           "log",
-          // --all 会把 refs/zcode/checkpoints 等内部 hidden refs 拉进 Git Graph。
-          // Graph 只展示用户可见历史，因此限定到 HEAD、分支、标签和远端分支。
+          // --all includes internal hidden refs such as refs/zcode/checkpoints in Git Graph.
+          // Graph shows only user-visible history, so limit it to HEAD, branches, tags, and remote branches.
           "HEAD",
           "--branches",
           "--tags",
@@ -1097,7 +1097,7 @@ export function createGitCliRepo(options?: { commandProvider?: GitCommandProvide
         });
       }
 
-      // 这里优先返回当前仓库已知的阻塞状态，避免 UI 只能看到一条模糊的 Git 原生错误。
+      // Prefer the known blocking state for the current repository so the UI does not show only a vague native Git error.
       if (status.entries.some((entry) => entry.isConflicted)) {
         return toBranchMutationFailure({
           action: "switch",
@@ -1218,9 +1218,9 @@ export function createGitCliRepo(options?: { commandProvider?: GitCommandProvide
       }
 
       const normalizedStartPoint = startPoint?.trim();
-      // startPoint 可能来自外部输入；如果值本身以 `-` 开头，
-      // Git 会把它继续当成 switch 的选项解析，而不是起始引用。
-      // 这里显式插入 `--` 终止选项解析，确保后面的值始终按位置参数处理。
+      // startPoint may come from external input; if its value begins with `-`,
+      // Git continues parsing it as a switch option instead of a starting ref.
+      // Insert `--` explicitly to end option parsing and ensure subsequent values are treated as positional arguments.
       const result = await commandProvider.run({
         cwd: resolution.repoRoot,
         args: normalizedStartPoint
@@ -1333,8 +1333,8 @@ export function createGitCliRepo(options?: { commandProvider?: GitCommandProvide
         return withDiffContents(parsedDiff, contents);
       }
 
-      // 未跟踪文件不会出现在 `git diff` 里，所以这里先生成一份稳定的单文件 patch。
-      // 如果文件无法按文本预览，再退回 `--no-index`，继续兼容二进制等特殊场景。
+      // Untracked files do not appear in `git diff`, so generate a stable single-file patch first.
+      // If the file cannot be previewed as text, fall back to `--no-index` to support binary and other special cases.
       if (!(await fileExists(absolutePath))) {
         return parsedDiff;
       }
@@ -1599,8 +1599,8 @@ export function createGitCliRepo(options?: { commandProvider?: GitCommandProvide
           ensureGitCommandSucceeded("git rev-parse selected commit HEAD", hashResult);
           const commitHash = hashResult.stdout.trim();
 
-          // 提交当前会话文件时不能把真实 index 整体替换成临时 index。
-          // 这里只把已提交的路径同步到新 HEAD，保留其它已暂存文件继续等待用户手动提交。
+          // Do not replace the real index with the temporary index when committing current-session files.
+          // Sync only committed paths to the new HEAD and leave other staged files for the user to commit manually.
           const resetSelectedResult = await commandProvider.run({
             cwd: resolution.repoRoot,
             args: ["reset", "--quiet", "HEAD", "--", ...cleanupRepoPaths],
@@ -1652,11 +1652,11 @@ export function createGitCliRepo(options?: { commandProvider?: GitCommandProvide
         args: hasTrackingBranch
           ? ["push"]
           : ["push", "--set-upstream", remoteName ?? "origin", branchName],
-        // 关键业务逻辑：push 是显式用户动作，而且可能被 pre-push hook 拉长。
-        // 这里单独使用更长超时，避免测试/校验脚本尚未跑完就被前端误判成 push 失败。
+        // Important logic: push is an explicit user action and may take longer because of pre-push hooks.
+        // Use a longer timeout so the frontend does not report push failure before tests/check scripts finish.
         timeoutMs: DEFAULT_GIT_PUSH_TIMEOUT_MS,
-        // 关键业务逻辑：pre-push hook 可能输出完整测试日志。
-        // 这里单独放宽输出上限，避免在 push 真正完成前因为 hook 输出过多被截断。
+        // Important logic: pre-push hooks may output full test logs.
+        // Raise the output limit here so excessive hook output does not truncate the result before push actually completes.
         maxOutputBytes: DEFAULT_GIT_PUSH_OUTPUT_BYTES,
       });
       ensureGitCommandSucceeded("git push", pushResult);

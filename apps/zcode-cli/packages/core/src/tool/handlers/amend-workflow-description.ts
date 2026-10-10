@@ -1,9 +1,9 @@
-// AmendWorkflow 的常驻描述。
+// Persistent description for AmendWorkflow.
 //
-// 缓存如何命中、省略即沿用的三个字段、`path` 与 `script` 两条来路、确认窗
-// 何时出现，都在 `dynamic-workflows` 技能的「Tool reference」里，由技能门保证读过。这里只留
-// 路由——什么情况该来修订而不是重建、不要先停、不要等——因为它决定的是「要不要调这个工具」，
-// 必须在技能加载之前就被读到。
+// Cache matching, the three fields where omission means reuse, the `path` and `script` inputs, and when the confirmation dialog
+// appears are documented in the `dynamic-workflows` skill's “Tool reference,” which the skill gate ensures has been read. Keep only
+// routing guidance here—when to revise instead of recreate, and not to stop first or wait—because it determines whether to call this
+// tool and must be available before the skill is loaded.
 
 import { DYNAMIC_WORKFLOW_SKILL_NAME } from "@zcode/contracts";
 

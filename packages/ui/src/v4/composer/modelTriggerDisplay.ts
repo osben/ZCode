@@ -18,7 +18,7 @@ export function formatModelChangeLabel(
   intl: Pick<IntlInstance, "formatMessage">,
 ): string {
   let planLabelId: string;
-  // 切换记录必须保留当时的套餐身份，不能从当前连接或可用模型目录反推历史套餐。
+  // A switch record must retain the plan identity from that time; do not infer the historical plan from the current connection or available-model catalog.
   switch (providerId) {
     case BUILTIN_MODEL_PROVIDER_IDS.zaiIndividualCodingPlan:
     case BUILTIN_MODEL_PROVIDER_IDS.bigmodelIndividualCodingPlan:
@@ -43,8 +43,8 @@ export function formatProviderModelLabel(
   providerName: string | undefined,
   modelName: string,
 ): string {
-  // Z.ai / BigModel 的内置连接名属于产品固定入口，拼进模型文案会重复展示
-  // “Coding Plan”等连接信息；切换提示额外通过 formatModelChangeLabel 标明套餐类型。
+  // Z.ai / BigModel built-in connection names are fixed product entry points. Including them in model copy would duplicate
+  // connection details such as "Coding Plan"; formatModelChangeLabel separately identifies the plan type in switch notices.
   if (providerId && resolveModelProviderFamilyIdByProviderId(providerId)) {
     return modelName;
   }
@@ -74,7 +74,7 @@ export function resolveV4ModelTriggerLabel({
     return fallbackLabel;
   }
 
-  // 仅当前菜单中存在的连接按 ID 兜底；历史记录的通用格式化保留原有语义。
+  // Fall back by ID only for connections present in the current menu; preserve existing semantics for generic history formatting.
   return formatProviderModelLabel(
     providerId,
     providerName?.trim() || providerId,
@@ -95,8 +95,8 @@ export function resolveV4ModelTriggerDisplay({
   providerId: string | undefined;
   providerName?: string;
 }): V4ModelTriggerDisplay {
-  // 把 provider/model 预先拼成单一字符串后，响应式布局只能整段隐藏或依赖
-  // 平台 JS 分支裁剪；这里保留结构化前缀，让 composer 容器断点统一决定可见密度。
+  // If provider/model is combined into one string in advance, responsive layout can only hide the whole string or rely on
+  // platform-specific JavaScript branches. Keep the prefix structured so Composer container breakpoints can decide the visible density consistently.
   const fullLabel = resolveV4ModelTriggerLabel({
     modelGroups,
     normalizedValue,

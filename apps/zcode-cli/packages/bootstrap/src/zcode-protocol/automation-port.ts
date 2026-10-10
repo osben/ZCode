@@ -33,28 +33,33 @@ const AUTOMATION_CREATE_BOUND_SESSION_CHECK_ERROR =
 
 export function createProtocolAutomationPort(
   context: ZCodeProtocolAgentServerContext,
-  // 归属会话解析器：automation-port 是按 session 构造的，直接绑定「自己所服务的 session
-  // record」。避免依赖 context.sessions 查找——V4/desktop 会话未必登记在该 legacy map 里，
-  // 之前会导致 activeSession 命中失败、权限/思考等级丢失（模型有 createContext 兜底才幸存）。
+  // Session ownership resolver: automation-port is constructed per session, so bind directly to
+  // the session record it serves. Do not rely on context.sessions lookup; V4/desktop sessions may
+  // not be registered in that legacy map. Previously, this caused activeSession lookup to fail and
+  // lose permission/reasoning level (only model creation survived due to its createContext fallback).
   resolveOwnSession?: () => ZCodeProtocolSessionRecord | undefined,
 ): AutomationPort {
   return {
     async create(input, createContext) {
-      // 优先用归属 session（本工具运行所在会话）；退回按 createContext.sessionId 查 legacy map。
+      // Prefer the owned session (the session where this tool is running); fall back to looking up
+      // createContext.sessionId in the legacy map.
       const activeSession =
         resolveOwnSession?.() ??
         (createContext?.sessionId ? context.sessions.get(createContext.sessionId) : undefined);
       if (activeSession?.activeAutomationId?.trim()) {
-        // 当前 turn 已经由 automationId 派发；继续 CronCreate 会形成递归定时任务链。
-        // 这个判断发生在 automation-port 内，命中时不会调用 protocol automation/create。
+        // This turn was dispatched by automationId; another CronCreate would create a recursive
+        // scheduled-task chain. This check happens within automation-port, so a match does not call
+        // protocol automation/create.
         throw new Error(AUTOMATION_CREATE_FROM_AUTOMATION_RUN_ERROR);
       }
-      // 桌面交互输入直连 CLI（绕过 host adapter 的 toolDenylist 注入），普通用户在
-      // 一个已归属定时任务的会话里继续输入时，CronCreate 仍被注册且没有 per-turn 过滤，会绕过
-      // 前面所有守卫再次创建定时任务。这里在创建入口按 targetTaskId 做与入口路径无关的兜底：
-      // 只要当前会话已经是某个 automation 的绑定会话（= 定时任务会话），就拒绝再次创建；普通会话
-      // 首次创建时还没有绑定，正常放行。归属判断必须走专用 EXISTS 协议，不能读取完整列表；否则
-      // 任意历史任务的展示字段损坏都会让当前会话误报“无法验证”。
+      // Desktop interactive input connects directly to the CLI (bypassing host adapter's
+      // toolDenylist injection). If a user continues in a session bound to a scheduled task,
+      // CronCreate remains registered with no per-turn filter and could bypass all previous guards.
+      // Add an entry-point-independent guard based on targetTaskId: reject if the current session is
+      // already bound to an automation (a scheduled-task session); allow the first creation in a
+      // regular unbound session. Check ownership through the dedicated EXISTS protocol rather than
+      // reading the full list, since a damaged display field in any historical task could otherwise
+      // falsely make the current session "unverifiable."
       const ownSessionId = createContext?.sessionId ?? activeSession?.app.sessionId;
       if (ownSessionId) {
         let bound: boolean;
@@ -70,9 +75,11 @@ export function createProtocolAutomationPort(
             if (!(error instanceof ProtocolRequestError && error.code === -32601)) {
               throw error;
             }
-            // 协议版本仍为 1，新 CLI 连接升级前仍存活或远端的旧 Host 时，专用归属
-            // 方法会返回 -32601。只有“方法不存在”能证明是能力差异，此时回退旧版列表筛选；
-            // 数据库、传输和协议错误仍交给外层 fail-closed，不能误判为未绑定。
+            // The protocol version is still 1, so the dedicated ownership method may return -32601
+            // when an older Host remains connected before upgrading, or when connected remotely.
+            // Only "method not found" proves a capability difference; fall back to filtering the old
+            // list in that case. Database, transport, and protocol errors must remain fail-closed and
+            // must not be mistaken for an unbound session.
             const legacyResult = await context.requestClient(
               zcodeProtocolMethods.automationList,
               {},
@@ -88,16 +95,18 @@ export function createProtocolAutomationPort(
             event: "automation.create.bound_session_check.failed",
             sessionId: ownSessionId,
           });
-          // 会话归属查询是阻止递归 CronCreate 的授权边界；未知不能等同于未绑定，
-          // 否则 host / 数据库短暂故障会重新开放创建能力。查询失败必须 fail-closed。
+          // Session ownership lookup is the authorization boundary preventing recursive CronCreate.
+          // Unknown must not mean unbound, or a temporary host/database failure would re-enable
+          // creation. Fail closed when the query fails.
           throw new Error(AUTOMATION_CREATE_BOUND_SESSION_CHECK_ERROR);
         }
         if (bound) {
           throw new Error(AUTOMATION_CREATE_IN_BOUND_SESSION_ERROR);
         }
       }
-      // CronCreate 的工具上下文只携带了部分配置，导致权限或思考等级在跨层时丢失。
-      // 协议边界按 sessionId 读取活跃 runtime，确保保存的是用户触发工具当下看到的配置。
+      // CronCreate's tool context carries only part of the configuration, causing permission or
+      // reasoning level to be lost across layers. Read the active runtime by sessionId at the
+      // protocol boundary so the saved settings match what the user saw when invoking the tool.
       const runtimeModelSelection =
         activeSession?.app.runtime.getSessionModelSelection() ??
         (() => {
@@ -114,9 +123,11 @@ export function createProtocolAutomationPort(
         result = await context.requestClient(
           zcodeProtocolMethods.automationCreate,
           {
-            // 相对时间不由模型换算绝对时刻；兼容协议仍要求 cronExpr，服务层会用真实时钟覆盖占位值。
-            // `!== null` 判定会把省略 delayMinutes 的普通 cron 调用误走相对分支，
-            // 强制 recurring=false；相对任务的唯一口径是 hasRelativeDelayMinutes（显式数字）。
+            // Do not have the model convert relative time to an absolute instant; the compatibility
+            // protocol still requires cronExpr, and the service replaces the placeholder using the
+            // real clock. Checking `!== null` would send a regular cron call with omitted delayMinutes
+            // down the relative path and force recurring=false. hasRelativeDelayMinutes (an explicit
+            // number) is the sole indication of a relative task.
             cronExpr: input.cron ?? "* * * * *",
             ...(hasRelativeDelayMinutes(input) ? { relativeDelayMinutes: input.delayMinutes } : {}),
             prompt: input.prompt,
@@ -126,7 +137,7 @@ export function createProtocolAutomationPort(
               : hasIntervalCarrier
                 ? true
                 : (input.recurring ?? true),
-            // workspace 仍由 protocol server 从当前 session 注入。
+            // The protocol server still injects workspace from the current session.
             ...(runtimeModelSelection ? { modelSelection: runtimeModelSelection } : {}),
             ...(runtimeMode ? { mode: runtimeMode === "auto" ? "build" : runtimeMode } : {}),
             ...(createContext?.sessionId ? { targetTaskId: createContext.sessionId } : {}),
@@ -135,7 +146,8 @@ export function createProtocolAutomationPort(
               : {}),
             ...(hasIntervalCarrier
               ? {
-                  // 新建 carrier 不透传有限上限；create 协议没有 maxRuns=null 清除语义。
+                  // Do not forward a finite limit when creating a new carrier; the create protocol
+                  // has no maxRuns=null semantics for clearing it.
                   intervalUnit: input.intervalUnit,
                   interval: input.interval,
                 }
@@ -147,9 +159,10 @@ export function createProtocolAutomationPort(
         );
       } catch (error) {
         if (!isAutomationCreateLimitError(error)) throw error;
-        // 协议错误过去以普通 Error 进入工具循环，模型会把错误里的删除建议当成
-        // 可执行恢复步骤，继而反复 CronList/CronDelete/CronCreate。映射成稳定领域错误，
-        // 让 core 能在不依赖 shared 实现的情况下关闭当前 turn 的工具恢复边界。
+        // Protocol errors used to enter the tool loop as ordinary Error values. The model treated
+        // deletion advice in the error as an executable recovery step and repeatedly called
+        // CronList/CronDelete/CronCreate. Map them to stable domain errors so core can close the
+        // current turn's tool-recovery boundary without depending on shared implementation details.
         throw new AutomationCreateLimitError(
           error instanceof Error ? error.message : String(error),
           error,
@@ -159,9 +172,10 @@ export function createProtocolAutomationPort(
       const title = automation.title.trim();
       if (activeSession && title.length > 0) {
         try {
-          // 会话内 CronCreate 会在首轮回复中创建 automation，但首条消息触发的
-          // session_title sidecar 可能迟到并根据助手解释生成标题，导致标题变成“我无法...”。
-          // CronCreate 成功后把当前会话标题固定为 automation 标题，阻止 generated 标题覆盖。
+          // CronCreate within a session creates an automation during the first reply, but the
+          // session_title sidecar triggered by the first message may arrive later and generate a title
+          // from the assistant's explanation, such as "I can't...". After CronCreate succeeds, pin
+          // the current session title to the automation title so generated titles cannot overwrite it.
           await activeSession.app.setCustomSessionTitle({
             title,
             traceContext: activeSession.traceContext,
@@ -187,8 +201,9 @@ export function createProtocolAutomationPort(
           ...(input.prompt !== undefined ? { prompt: input.prompt } : {}),
           ...(hasIntervalCarrier
             ? {
-                // 历史一次性任务只透传 carrier 会保留 recurring=false，首次派发后
-                // 被 repository 标记 completed。carrier 必须在协议边界原子切换为无限循环。
+                // A historical one-shot task would preserve recurring=false when forwarded through
+                // the carrier and be marked completed by the repository after its first dispatch.
+                // Atomically switch the carrier to an unbounded recurrence at the protocol boundary.
                 recurring: true,
                 maxRuns: null,
                 intervalUnit: input.intervalUnit,
@@ -257,10 +272,12 @@ function toCronAutomation(input: ZCodeAutomationProtocol): CronAutomation {
     recurring: input.recurring,
     maxRuns: input.maxRuns,
     modelSelection: input.modelSelection,
-    // 显式按既有 session 权限语义降级，协议以后新增 mode 时由穷尽检查强制同步处理。
+    // Explicitly fall back to the existing session-permission semantics; exhaustive checks will
+    // require synchronization if the protocol adds another mode.
     mode: normalizeCronAutomationMode(input.mode),
-    // 透传权威 scheduleRule；会话卡片必须读到本字段才能展示 cron 无法表达的真实间隔
-    // （如每50小时、每40天），否则只能从兼容 cronExpr 推断出「每小时的第00分」等错误展示。
+    // Forward the authoritative scheduleRule. Session cards need this field to display real
+    // intervals that cron cannot represent (such as every 50 hours or every 40 days); otherwise,
+    // they can only infer incorrect displays such as "at minute 00 every hour" from cronExpr.
     scheduleRule: input.scheduleRule,
   };
 }

@@ -1,9 +1,10 @@
 #!/usr/bin/env node
-// 编译 macOS 窗口 bounds 辅助程序（CUA 权限浮窗的吸附数据源）。
+// Compile the macOS window-bounds helper, which provides snap targets for the CUA permission panel.
 //
-// 非 darwin 直接跳过：这个二进制只服务 macOS 的 TCC 授权引导，其他平台没有对应流程。
-// 缺少 swiftc（未装 Xcode CLT）时也只警告不失败 —— 吸附是观感增强，拿不到 bounds 时浮窗
-// 会 fail-open 到屏幕底部照样可用，不该因此让整个 desktop 构建挂掉。
+// Skip on non-darwin platforms: this binary is only used by the macOS TCC permission flow.
+// If swiftc is unavailable (Xcode CLT is not installed), warn and continue. Snapping is a visual
+// enhancement; without bounds, the panel falls back to the bottom of the screen and remains usable, so
+// this should not fail the desktop build.
 
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync } from "node:fs";
@@ -43,7 +44,7 @@ if (!hasSwiftc()) {
 mkdirSync(outputDir, { recursive: true });
 
 try {
-  // 同时产出 arm64 与 x86_64 的 universal 二进制，避免发布包在另一架构上无法执行。
+  // Build a universal binary for both arm64 and x86_64 so the release package works on either architecture.
   execFileSync(
     "xcrun",
     ["swiftc", "-O", "-target", "arm64-apple-macos11", sourcePath, "-o", `${outputPath}-arm64`],

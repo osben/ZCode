@@ -44,8 +44,8 @@ function normalizeThoughtLevelText(value: string): string {
 }
 
 /**
- * 档位值 → 词条 id；表里没有的值返回 undefined（调用方原样显示 provider 自己的档位名）。
- * 工具条之外也有人要说这个词（工作流的子代理模型），两处必须查同一张表。
+ * Level value → message key; return undefined when absent from the map (the caller displays the provider’s level name as-is).
+ * This label is also used outside the toolbar (for workflow subagent models), so both places must use the same map.
  */
 export function thoughtLevelLabelId(value: string): string | undefined {
   return THOUGHT_LEVEL_LABEL_IDS[normalizeThoughtLevelText(value)];
@@ -62,7 +62,7 @@ export function getNextThoughtLevelValue(
     return null;
   }
 
-  // 配置已声明档位顺序；名称别名只用于展示，不能改变菜单或快捷键顺序。
+  // Configuration defines level order; name aliases are for display only and must not change menu or shortcut order.
   const entries = option.options;
   const currentValue = String(option.currentValue);
   const currentIndex = entries.findIndex((candidate) => candidate.value === currentValue);

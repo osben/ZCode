@@ -2,7 +2,7 @@ import { z } from "zod";
 
 export const BACKGROUND_BASH_OUTPUT_MAX_BYTES = 8192;
 
-/** 后台详情的单次文件快照；不进入 conversation snapshot 或持久化事件。 */
+/** One-time file snapshot for background details; it is not included in conversation snapshots or persisted events. */
 export const backgroundBashOutputSchema = z.strictObject({
   kind: z.literal("output"),
   workId: z.string().min(1),

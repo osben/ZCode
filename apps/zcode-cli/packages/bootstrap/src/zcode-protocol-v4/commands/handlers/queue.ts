@@ -1,8 +1,8 @@
-// queue 命令组：deleteQueueItem / editQueueItem / reorderQueueItem / setAutoDrain /
-// setFollowupMode / sendQueuedNow（原生重做，组文件样板见 session-flow.ts）。
-// 决策逻辑直驱 core（app 层 queue API，批1 已搬运）；queueItemId ≡ core 的
-// pendingInputId（同一 id 空间，无需翻译）。queue 变更的事件由 core runtime 自发，
-// 经 gateway ingest 推进 v4 投影——本组不需要 legacy 广播钩子。
+// Queue command group: deleteQueueItem / editQueueItem / reorderQueueItem / setAutoDrain /
+// setFollowupMode / sendQueuedNow (native implementation; see session-flow.ts for the group template).
+// Decision logic directly invokes core (the app-level queue API was migrated in batch 1). queueItemId ≡
+// core pendingInputId (same ID space, no translation needed). Queue-change events originate in the
+// core runtime and advance the v4 projection through gateway ingest, so this group needs no legacy broadcast hook.
 import type {
   CommandEnvelope,
   CommandPayloadMap,
@@ -24,7 +24,7 @@ import { V4CommandNoopError } from "../../v4-gateway.js";
 import { commandExecutionContextOf } from "../executor.js";
 export { V4SessionIdleTimeoutError } from "./session-flow.js";
 
-/** sendQueuedNow 在投影里查不到该项原文（已被 drain/删除或 id 无效）→ 拒绝。 */
+/** sendQueuedNow cannot find the item's source text in the projection (drained/deleted or invalid ID) -> reject. */
 class V4QueueItemTextUnavailableError extends Error {
   constructor(queueItemId: string) {
     super(`v4 sendQueuedNow queue item text unavailable: ${queueItemId}`);
@@ -74,15 +74,17 @@ async function deleteQueueItem(
 ): Promise<CommandResult | undefined> {
   const payload = envelope.payload as CommandPayloadMap["deleteQueueItem"];
   const record = requireRecord(host, envelope.sessionId);
-  // 未命中（并发 drain/重复删除的竞态）= noop，不算失败；留 warn 供观测。
+  // A miss caused by concurrent drain or duplicate deletion is a no-op, not a failure; keep a
+  // warning for observability.
   const removed = await record.app.removeQueueItem(payload.queueItemId);
   if (!removed) {
     host.logger?.warn?.("v4 deleteQueueItem missed", {
       queueItemId: payload.queueItemId,
       sessionId: record.app.sessionId,
     });
-    // 未命中曾返回 undefined，gateway 会把并发 drain/重复删除误报为 accepted；
-    // queue 撤回编辑因此可能把已消费的旧投影再次恢复到 composer。
+    // A miss previously returned undefined, which the gateway treated as accepted during a
+    // concurrent drain or duplicate delete. Queue undo could then restore an already-consumed old
+    // projection to the composer.
     throw new V4CommandNoopError("queue.itemMissing");
   }
   return undefined;
@@ -96,11 +98,13 @@ async function editQueueItem(
   const record = requireRecord(host, envelope.sessionId);
   const queueItem = host.getQueueItem?.(record.app.sessionId, payload.queueItemId) ?? null;
   if (queueItem?.kind === "compact") {
-    // compact 是 typed maintenance intent；允许改文本会把它伪装成普通输入，
-    // 但 commandKind 仍是 compact，消费时产生与 UI 文案不一致的压缩副作用。
+    // compact is a typed maintenance intent. Allowing its text to change would make it look like
+    // ordinary input while commandKind remained compact, causing a compaction side effect that
+    // does not match the UI copy when consumed.
     throw new V4QueueItemNotEditableError(payload.queueItemId);
   }
-  // core reducer 同 id 原地更新（保位）；未命中 = noop + warn（同 delete 的竞态语义）。
+  // The core reducer updates the same id in place without changing its position. A miss is a
+  // no-op plus a warning, matching delete's race semantics.
   const edited = await record.app.editQueueItem(payload.queueItemId, payload.newText);
   if (!edited) {
     host.logger?.warn?.("v4 editQueueItem missed", {
@@ -117,7 +121,8 @@ async function reorderQueueItem(
 ): Promise<CommandResult | undefined> {
   const payload = envelope.payload as CommandPayloadMap["reorderQueueItem"];
   const record = requireRecord(host, envelope.sessionId);
-  // beforeQueueItemId = null → 移到队尾（协议与 app API 同形，直传）。
+  // beforeQueueItemId = null moves the item to the end (the protocol matches the app API, so pass
+  // it through).
   const moved = await record.app.reorderQueueItem(payload.queueItemId, payload.beforeQueueItemId);
   if (!moved) {
     host.logger?.warn?.("v4 reorderQueueItem missed", {
@@ -136,8 +141,9 @@ async function setAutoDrain(
   const record = requireRecord(host, envelope.sessionId);
   await record.app.setQueueAutoDrain(payload.autoDrain);
   if (payload.autoDrain) {
-    // 不能只翻授权位：idle 暂停队列没有 active turn 可替它启动队首。复用 CLI
-    // 权威 ready hook，busy 时只武装，idle 时立即按 sendQueuedNow 原子路径提升。
+    // Toggling authorization alone is insufficient: an idle paused queue has no active turn to
+    // start its head item. Reuse the CLI's authoritative ready hook; arm it while busy, and promote
+    // atomically through sendQueuedNow when idle.
     await host.afterLegacyStateMutation?.(record, "queue_auto_drain_resumed");
   }
   return undefined;
@@ -155,12 +161,15 @@ async function setFollowupMode(
 
 /**
  * sendQueuedNow：reserve → Core promotion lease → stop barrier → start/promote → remove。
- * - 必须读取完整 QueueItem；text-only fallback 会丢 sourceCommandId/附件/client/order，禁止使用。
- * - stop 复用 session-flow 的语义：goal-pause barrier（否则 verifier 未收 abort 时
- *   queue 无法 drain）→ abort；只 abort 不 await。
- * - 等 idle 语义：锁由后台 turn 的 finally 释放（见 prompt-turn 文件头 3），
- *   abort 后立刻重发会撞 "A prompt is already running"，必须轮询等锁释放。
- * - start 之前任一步失败都 release reservation，原项原位保留；start 成功后才 remove。
+ * - Read the complete QueueItem; do not use the text-only fallback because it loses
+ *   sourceCommandId, attachments, client, and order.
+ * - Reuse session-flow stop semantics: cross the goal-pause barrier (otherwise the queue cannot
+ *   drain before the verifier receives abort), then abort without awaiting.
+ * - To wait for idle, wait for the background turn's finally block to release the lock (see item 3
+ *   in prompt-turn's file header). Resending immediately after abort can hit "A prompt is already
+ *   running", so poll until the lock is released.
+ * - If any step fails before start, release the reservation and keep the item in place; remove it
+ *   only after start succeeds.
  */
 async function sendQueuedNow(
   host: V4CommandCoreHost,
@@ -247,15 +256,17 @@ async function sendQueuedNow(
       const started = await startPromptTurn(host, record, {
         content: queueItem.text,
         inputId: queueItem.sourceCommandId,
-        // 手动提升若实际抢占旧执行，同样是 human steer；自动 drain 不产生此标记。
+        // A manual promotion that actually preempts an old execution is also a human steer;
+        // automatic drain does not set this marker.
         ...(preempted && !attachments?.length ? { inputPresentation: "user_steer" as const } : {}),
         intent,
         requireIdle: true,
         toolDisallowlist: queueItem.toolDisallowlist,
         ...(attachments ? { attachments } : {}),
       });
-      // 旧 fake app/兼容命令可能不返回 admission receipt；真实 app 已在 Core admission
-      // 处完成 started 校验。只有明确 queued/rejected 才能判定 promotion 未启动。
+      // Older fake apps or compatibility commands may not return an admission receipt; the real
+      // app already validates started at Core admission. Only explicit queued/rejected receipts
+      // mean the promotion did not start.
       if (started.admission.kind === "queued" || started.admission.kind === "rejected") {
         throw new V4QueuePromotionLeaseUnavailableError();
       }
@@ -268,9 +279,10 @@ async function sendQueuedNow(
     });
     if (!removed) throw new V4QueuePromotionCommitError(payload.queueItemId);
     if (queueItem.kind === "compact") {
-      // no-op compact 可能在 promoting 项删除前就完成；它的 ready hook 此时看见的
-      // 仍是 dispatch=promoting，无法继续消费下一条 typed intent。删除后再过一次 mutation
-      // 边界可关闭这个竞态；正常慢 compact 因 active controller 存在不会重复 drain。
+      // A no-op compact may finish before the promoting item is deleted. Its ready hook still sees
+      // dispatch=promoting and cannot consume the next typed intent. Cross another mutation
+      // boundary after deletion to close this race; a normally slow compact has an active
+      // controller and will not drain twice.
       await host.afterLegacyStateMutation?.(record, "queue_compact_promoted");
     }
     return undefined;
@@ -278,8 +290,9 @@ async function sendQueuedNow(
     if (foregroundPromotionLeaseAcquired && !leaseReleaseOwnedByBackground) {
       record.app.runtime.releaseForegroundPromotionLease(foregroundPromotionLeaseId);
     }
-    // start 一旦 admitted 就不能 release，否则 remove 异常时另一端会重复执行；此时保持
-    // promoting 供显式 resync/故障处理。start 前失败则安全回滚到 queued。
+    // Once start is admitted, do not release the reservation: if remove fails, another side could
+    // execute the item again. Keep it promoting for explicit resync/failure handling. A failure
+    // before start can safely roll back to queued.
     if (queueItemReserved && !startAdmitted) {
       await record.app.releaseQueueItemReservation(
         payload.queueItemId,

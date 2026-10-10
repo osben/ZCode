@@ -123,8 +123,8 @@ export function buildServerList(
       name,
       config: serverConfig,
       enabled: enabledStates[serverId] ?? prev?.enabled ?? enabledBySource ?? true,
-      // MCP 配置保存后会触发设置页状态刷新；如果继续沿用旧健康状态，
-      // 用户修改 timeoutMs 后会短暂看到上一版连接结果，依赖 changed 的检查也不会重新执行。
+      // Saving MCP configuration refreshes settings-page state. If the old health status is reused,
+      // users briefly see the previous connection result after changing timeoutMs, and checks that depend on changed will not run again.
       changed: prev ? prev.changed || configChanged : true,
       status: configChanged ? "unknown" : (prev?.status ?? "unknown"),
       error: configChanged ? undefined : prev?.error,

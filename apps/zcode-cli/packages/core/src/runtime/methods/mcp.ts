@@ -11,8 +11,8 @@ import type { AgentRuntimeInternal } from "../internal.js";
 const MCP_SESSION_OAUTH_AUTHORIZATION_TIMEOUT_MS = 15_000;
 
 /**
- * 只有同时携带 resolver 注入的官方 plugin id 和本进程私有 authority 的 server 才能共享
- * Computer Use 项目授权。server 名、tool 名和 manifest env 都可被第三方仿造，不能单独作为信任依据。
+ * Only servers carrying both the official plugin ID injected by the resolver and this process's private authority may share
+ * Computer Use project authorization. Server names, tool names, and manifest env can all be spoofed by third parties and cannot be trusted alone.
  */
 export function computeOfficialCuaServerNames(
   servers: Record<string, McpServerConfig>,
@@ -70,8 +70,8 @@ export function startMcpStartup(
   const startedAt = Date.now();
   const startup = this.mcpPort
     .connectConfiguredServers(servers, {
-      // authorization_code MCP 无人完成浏览器授权时，session 启动过去会等默认 5 分钟，
-      // 导致模型请求迟迟不发出；session 只等 15s，授权入口由设置页 mcp/list 展示。
+      // If nobody completes browser authorization for an authorization_code MCP, session startup previously waited for the default five minutes,
+      // delaying model requests. Wait only 15 seconds; settings exposes the authorization entry point through mcp/list.
       oauthAuthorizationTimeoutMs: MCP_SESSION_OAUTH_AUTHORIZATION_TIMEOUT_MS,
       trace: traceContext,
       workingDirectory: this.workingDirectory,

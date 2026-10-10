@@ -39,8 +39,8 @@ export async function runWorkspaceOperation(
       workspacePath,
       ...(workspaceIdentity ? { workspaceIdentity } : {}),
     });
-    // operationId 只是共享的 UI 忙碌指示器。自动刷新可能在当前操作完成前覆盖它，
-    // 但不能因此把已经成功落盘的添加/安装操作报告成失败，否则调用方会保留弹窗。
+    // operationId is only a shared UI busy indicator. An automatic refresh may replace it before the current operation completes,
+    // but that must not cause an add/install operation already persisted successfully to be reported as failed, or the caller will keep the dialog open.
     if (!isCurrentContext()) return false;
     await loadInto(set, get, {
       workspacePath,
@@ -50,18 +50,18 @@ export async function runWorkspaceOperation(
     });
     return isCurrentContext();
   } catch (error) {
-    // marketplace add/update 等通用操作失败：无插件目标，归属清空。
+    // Generic operation failure such as marketplace add/update: no plugin target, so clear the association.
     logger.error("[plugins] operation failed", { operationId, error: toMessage(error) });
-    // 旧操作不能覆盖同一配置层中新操作的错误态；只有仍持有可见 operationId 的操作才回写。
+    // An old operation must not overwrite the error state of a newer operation in the same config layer; write back only if it still owns the visible operationId.
     if (ownsVisibleOperation()) {
       set({ error: toMessage(error), lastFailedPluginId: null });
     }
     return false;
   } finally {
-    // 防止旧操作结束时清掉后来操作的忙碌态。
-    // Scope/workspace 切换后当前上下文可能已经变化，不能再用 isCurrentContext 判断；
-    // 只要 operationId 仍然属于这次已结束的操作，就应该清掉它。否则用户在 User
-    // 配置保存完成、刷新尚未结束时切到 Workspace，新的配置视图会一直被旧操作锁成只读。
+    // Prevent an old operation from clearing the busy state of a later operation when it finishes.
+    // After a Scope/workspace switch, the current context may have changed, so do not use isCurrentContext to decide;
+    // clear it as long as the operationId still belongs to the operation that just ended. Otherwise, if the user switches to User
+    // settings after saving config but before the refresh finishes, the new view will remain read-only due to the old operation.
     if (get().operationId === operationId && get().operationVersion === operationVersion) {
       set({ operationId: null });
     }
@@ -123,10 +123,10 @@ async function runLoadInto(
     set(partial);
   };
   try {
-    // React StrictMode、settings service 引用刷新或快速切换设置页时，
-    // 同一 workspace 会并发触发 initialize。每次触发都发成独立 plugins/list 的话，
-    // agent 已经 stale 时这些请求会排队产生多个 30s timeout。按 workspaceKey 复用 in-flight
-    // 请求，并在仍处于同一 workspace 时才回写结果，避免过期响应覆盖当前设置页。
+    // React StrictMode, settings service reference refreshes, or rapid settings-page switches
+    // can trigger concurrent initialize calls for the same workspace. Separate plugins/list requests would queue up multiple 30s timeouts
+    // when the agent is already stale. Reuse in-flight requests by workspaceKey and write results only if that workspace is still current,
+    // preventing stale responses from overwriting the current settings page.
     const [listResult, overviewResult] = await Promise.all([
       params.pluginService.listPlugins({
         workspacePath: params.workspacePath,
@@ -166,8 +166,8 @@ async function runLoadInto(
       setIfCurrent({
         plugins: result.plugins,
         marketplaces: [],
-        // overview 失败时空数组表示“来源状态未知”，而不是“所有来源已删除”。
-        // 保留该边界，避免 list fallback 返回的 official/cache 插件被批量误判为孤立安装。
+        // An empty array after overview failure means "source state unknown," not "all sources removed."
+        // Preserve this boundary so official/cache plugins returned by list fallback are not all misclassified as orphaned installs.
         marketplaceAvailabilityKnown: false,
         availablePlugins: [],
         installedPlugins: [],

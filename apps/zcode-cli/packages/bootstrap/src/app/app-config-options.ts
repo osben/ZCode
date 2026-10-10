@@ -18,8 +18,8 @@ export function createConfigCliOverrides(options: ZCodeAppOptions): RuntimeConfi
     permission.allowedTools = [...options.runtimeConfig.toolAllowlist];
   }
   if (options.runtimeConfig?.toolDisallowlist) {
-    // headless CLI 的 denylist 同时投影到 permission config，让执行期权限
-    // 路径与 provider-visible 工具面共享同一份禁用清单。
+    // Project the headless CLI denylist into permission config too, so the execution-time permission
+    // path and provider-visible tool surface share the same denylist.
     permission.disallowedTools = [...options.runtimeConfig.toolDisallowlist];
   }
   if (Object.keys(permission).length > 0) {

@@ -1,30 +1,30 @@
-// dwf run 的活动时长，用于完成卡的「时间」格。
-// 本 run 的每次启动，以及沿 `resumedFrom` 上溯的每个前驱，都按各自活动区间求和；
-// 停止或进程退出后、下次 resume 前的空档不计入。
+// Active duration of a dwf run, used for the completion card's time field.
+// Sum the active intervals for each launch of this run and each predecessor reached through `resumedFrom`;
+// do not count gaps after stopping or process exit and before the next resume.
 //
-// 不能只用当前注册表条目的 `completedAt - startedAt`：resume 或修订会重置该时钟，
-// 从而漏掉之前的运行时间。时长与 token 用量都应覆盖整条 lineage。
+// Do not use only the current registry entry's `completedAt - startedAt`: resume or amendment resets that clock
+// and would omit earlier runtime. Duration and token usage should cover the full lineage.
 //
-// 事件日志已记录每段区间的起点和最后活动时刻，因此只需读取求和，无须额外持久化。
+// The event log already records each interval's start and last activity time, so read and sum them without extra persistence.
 
 import type { JournalStorePort } from "@zcode/dynamic-workflow";
 import { supportsRunLifeSpans } from "./dynamic-workflow-run-journal.js";
 
 /**
- * lineage 上溯的跳数上限。一次修订一跳，链条实际是个位数；上限只为「行里的 `resumedFrom`
- * 被外力写成一条长链」留一道闸——读一条 run 的时长不该扫过任意多行。
+ * Maximum number of hops when traversing lineage. Each amendment adds one hop and chains are typically single digits; the limit guards against
+ * `resumedFrom` being externally written into an arbitrarily long chain—a duration read for one run should not scan an unlimited number of rows.
  */
 const LINEAGE_HOP_LIMIT = 64;
 
 /**
- * 本 run 及其 lineage 的活动时长（毫秒），或 `undefined`（无任何一世的证据）。
+ * Active duration in milliseconds for this run and its lineage, or `undefined` if there is no evidence from any lifecycle.
  *
- * `undefined` 与 `0` 是两件事：前者是「journal 说不出话」（读面不在场、run 的事件早于本记账、
- * 行已被清理），调用方据此退回自己观察到的那一世；后者是「确有一世，但它的时长不足 1 毫秒」。
+ * `undefined` and `0` are different: the former means "the journal has no answer" (read surface unavailable, events predate this tracking,
+ * or rows were cleaned up), so the caller falls back to the lifecycle it observed; the latter means a lifecycle exists but lasted less than 1 ms.
  *
- * 防环不是防御性编程的摆设：`resumedFrom` 是建 run 那一刻写死的元数据，理论上不成环，但这个
- * 循环的终止条件依赖的是**库里的数据**而不是本进程的逻辑——一条被外力写成自指的行会把一次
- * 读快照变成死循环，而快照读在后台追踪器的轮询路径上。
+ * Cycle prevention is not decorative defensive programming: `resumedFrom` is fixed when a run is created and should not form a cycle, but this
+ * loop's termination depends on **database data**, not process logic. An externally written self-referential row could make a snapshot read loop forever,
+ * and snapshot reads run on the background tracker's polling path.
  */
 export function runLineageActiveMs(journal: JournalStorePort, runId: string): number | undefined {
   if (!supportsRunLifeSpans(journal)) return undefined;
@@ -37,12 +37,12 @@ export function runLineageActiveMs(journal: JournalStorePort, runId: string): nu
     visited.add(cursor);
     for (const life of journal.listRunLifeSpans(cursor)) {
       sawLife = true;
-      // 钳到非负：两个时刻同源于 `dwf_event.time_created`，但那是**墙钟**——一次系统对时可以
-      // 让「最后一条」早于「第一条」。负数会从总和里减掉别的世的真实时长，那比丢掉这一世更糟。
+      // Clamp to zero or above: both timestamps come from `dwf_event.time_created`, which is **wall-clock** time; a system clock adjustment can
+      // make the "last" time earlier than the "first." A negative duration would subtract real time from another lifecycle, worse than dropping this one.
       total += Math.max(0, life.lastActivityAt - life.startedAt);
     }
-    // 只上溯 lineage，不下溯 supersededBy：修订是「同一件工作的下一版」，而被替代的前驱的活
-    // 是这一版的底座；反方向的后继与本 run 的时长无关（它有自己的卡）。
+    // Traverse lineage upward only, not down through supersededBy: an amendment is the next version of the same work, so the superseded predecessor's active
+    // time underlies this version. Later successors are unrelated to this run's duration (they have their own cards).
     cursor = journal.getRun(cursor)?.resumedFrom;
   }
   return sawLife ? total : undefined;

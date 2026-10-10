@@ -1,26 +1,32 @@
-// 输出「系统设置」主窗口的屏幕几何，供 CUA 权限浮窗吸附定位。
+// Output the screen geometry of the System Settings main window so the CUA permission panel can
+// snap to it.
 //
-// 为什么需要这个独立二进制：吸附只需要一个数据 —— 系统设置窗口的 bounds。取它的正确 API 是
-// CGWindowListCopyWindowInfo，而它**不需要任何 TCC 权限**（只有取窗口*图像*才需要 Screen
-// Recording）。这一点是整个方案成立的前提：授权引导运行时恰恰还没有辅助功能/录屏权限。
-// Electron 侧没有这个 API 的绑定，其余途径都不通 —— osascript + System Events 需要辅助功能
-// 权限（死结），desktopCapturer 只给窗口名不给 bounds，koffi 这类 FFI 自身是 native addon
-// 需要 electron-rebuild。所以用一个不到 100KB、无 bundle 的命令行程序。
+// Why this is a separate binary: snapping needs only one value, the System Settings window bounds.
+// The correct API, CGWindowListCopyWindowInfo, requires no TCC permission (only reading a window's
+// image requires Screen Recording). This is essential because the permission guide runs before
+// Accessibility or Screen Recording permissions have been granted. Electron has no binding for
+// this API, and the alternatives do not work: osascript + System Events requires Accessibility
+// permission, desktopCapturer returns the window name but not its bounds, and FFI libraries such as
+// koffi are native addons that require electron-rebuild. So use a command-line program under 100 KB
+// with no bundle.
 //
-// 常驻设计：每 interval 输出一行 JSON。父进程只 spawn 一次并读 stdout —— 每帧起一个进程的
-// 开销（~10ms × 每秒 7 次）完全不可接受。
+// Keep the process running and output one JSON line per interval. The parent spawns it once and
+// reads stdout; starting a process for each frame would cost about 10 ms seven times per second,
+// which is unacceptable.
 //
-// 用法：zcode-window-bounds [intervalMs]   默认 150ms
+// Usage: zcode-window-bounds [intervalMs] (default: 150 ms)
 
 import CoreGraphics
 import Foundation
 
 let intervalMs = UInt32(CommandLine.arguments.dropFirst().first.flatMap { UInt32($0) } ?? 150)
-// 系统设置在不同 macOS 版本/语言下的进程名不同；13+ 是 "System Settings"，更早是
-// "System Preferences"，中文系统则是本地化名称。
+// The process name for System Settings varies by macOS version and language: macOS 13+ uses
+// "System Settings", earlier versions use "System Preferences", and Chinese systems use a
+// localized name.
 let settingsOwners = ["System Settings", "System Preferences", "系统设置", "系統設定"]
 
-// 行缓冲：父进程逐行读取，默认的全缓冲会让数据卡在 stdio 缓冲区里直到写满 4KB。
+// Use line buffering: the parent reads one line at a time, while default full buffering would
+// leave data in the stdio buffer until it reaches 4 KB.
 setvbuf(stdout, nil, _IOLBF, 0)
 
 while true {
@@ -41,14 +47,16 @@ while true {
                 "y": rect.origin.y,
                 "w": rect.size.width,
                 "h": rect.size.height,
-                // 消费方只认 layer 0（普通窗口）。设置页还会带出 layer > 0 的辅助层
-                // （工具提示、弹出选择器），吸附到它们会把面板扔到屏幕角落。
+                // The consumer accepts only layer 0 (ordinary windows). The settings page also exposes auxiliary
+                // layers above 0 (tooltips and pop-up selectors); snapping to one would send the panel to a screen
+                // corner.
                 "layer": window[kCGWindowLayer as String] as? Int ?? -1,
             ])
         }
     }
 
-    // 即使没有匹配窗口也输出空数组：父进程据此知道「设置页已关闭」而不是「探测挂了」。
+    // Output an empty array even when no window matches, so the parent can distinguish a closed
+    // settings page from a failed probe.
     if let data = try? JSONSerialization.data(withJSONObject: windows),
         let line = String(data: data, encoding: .utf8)
     {

@@ -1,15 +1,15 @@
 /**
- * GetWorkflowRun 工具卡的**子代理花名册**（情势截面的另一半，阶段轨与健康行在
- * get-workflow-run-situation.tsx）。
+ * **Subagent roster** for the GetWorkflowRun tool card (the other half of the situation snapshot; phase tracks and health rows are in
+ * get-workflow-run-situation.tsx).
  *
- * 一行的读法与模型面
- * （apps/zcode-cli/packages/core/src/tool/handlers/get-workflow-run-format-roster.ts）同一句话：
- * 「谁 · 在哪 · 什么相位 · 在哪个阶段 · 正在做什么 · 花了多少 token」，其中「正在做什么」
- * 按相位分叉——在跑的说它的进度与最后一个工具，在等的说等什么、还要等多久，停驻的说等哪个
- * 问题。这正是这张卡存在的理由：一眼看出谁卡住了。
+ * Each row uses the same wording as the model-facing view
+ * (apps/zcode-cli/packages/core/src/tool/handlers/get-workflow-run-format-roster.ts):
+ * “who · where · which phase · which stage · what they are doing · how many tokens,” with “what they are doing”
+ * varying by phase — running agents show progress and the last tool, waiting agents show what they await and for how long, and parked agents show which
+ * question they await. This is the card's purpose: spot who is stuck at a glance.
  *
- * 载荷是**扁平行**（没有 `currentAsk` 嵌套），所以「有没有一次在飞的 ask」由那几个读数是否
- * 在场推出来；缺席一律不画，绝不用 0 顶替不知道。
+ * The payload is **flat rows** (no nested `currentAsk`), so whether there is an active ask is inferred from the presence of those readings;
+ * omit missing values and never use 0 to represent unknown.
  */
 
 import type { ToolCallGetWorkflowRunDisplay } from "@zcode/shared/zcode-protocol-v4";
@@ -31,9 +31,9 @@ type RosterIntl = Pick<IntlInstance, "formatMessage" | "formatPlural">;
 const I18N_PREFIX = "chat.toolCall.workflow.getRun.";
 
 /**
- * 相位词的语义色。词永远在场，颜色只是第二通道（DESIGN：状态不能只靠颜色）：
- * 在动的用活动色 warning，等待与终态未完结居中，完成 success、失败 destructive。
- * `parked` 也用活动色——它在等一个人回答，是需要注意的状态，不是安静的空闲。
+ * Semantic colors for phase labels. The label is always present; color is only a secondary channel (DESIGN: status cannot rely on color alone):
+ * active work uses warning, waiting and unresolved terminal states use neutral, completed uses success, and failed uses destructive.
+ * `parked` also uses the active color — it is waiting for a person to answer and needs attention; it is not idle.
  */
 const SUBAGENT_STATE_TEXT: Record<WorkflowRunSubagentView["state"], string> = {
   idle: "text-foreground-subtlest",
@@ -53,7 +53,7 @@ export function WorkflowRunSubagentRoster({
   generatedAt: number | undefined;
 }) {
   const { intl } = useZCodeIntl();
-  // 空花名册什么也不画：还没造出子代理是一件不需要一整块区域来说的事。
+  // Render nothing for an empty roster: not having created subagents does not need a whole section to explain it.
   if (subagents.length === 0) return null;
   return (
     <div className={SITUATION_BLOCK_CLASS} data-testid="workflow-run-subagents">
@@ -62,7 +62,7 @@ export function WorkflowRunSubagentRoster({
         return (
           <div className="min-w-0 space-y-0.5" key={`${subagent.siteId}@${subagent.ordinal}`}>
             <div className={`${SITUATION_ROW_CLASS} text-ui-sm`}>
-              {/* 匿名子代理不合成兜底名：留空，地址仍然把它认出来。 */}
+              {/* Do not synthesize a fallback name for an anonymous subagent; leave it blank so its address still identifies it. */}
               {subagent.name === undefined ? null : (
                 <span className="min-w-0 break-words text-foreground">{subagent.name}</span>
               )}
@@ -96,7 +96,7 @@ export function WorkflowRunSubagentRoster({
             </div>
             {subagent.instructionsHead === undefined ||
             subagent.instructionsHead.length === 0 ? null : (
-              // 任务行从属于上一行，不是新的一行事实：缩进而不是另起一格。
+              // The task line belongs to the preceding row rather than representing a new fact; indent it instead of starting another cell.
               <p className="min-w-0 break-words pl-3 text-ui-sm text-foreground-subtle">
                 {intl.formatMessage(
                   { id: `${I18N_PREFIX}subagent.task` },
@@ -111,7 +111,7 @@ export function WorkflowRunSubagentRoster({
   );
 }
 
-/** 那几个进度读数任意一个在场，就说明这一行背后有一次 ask（扁平载荷没有 `currentAsk` 标记）。 */
+/** If any of those progress readings is present, the row represents an ask (the flat payload has no `currentAsk` marker). */
 function hasCurrentAsk(subagent: WorkflowRunSubagentView): boolean {
   return (
     subagent.startedAt !== undefined ||
@@ -128,7 +128,7 @@ function subagentActivity(
   intl: RosterIntl,
 ): string[] {
   if (subagent.state === "parked" && subagent.parkedOn !== undefined) {
-    // 只有 qid，没有提问时刻：卡面载荷不带 pendingQuestions，所以这一行说不出「等了多久」。
+    // Only qid is available, not the question timestamp: the card payload has no pendingQuestions, so this row cannot say how long it has waited.
     return [
       intl.formatMessage({ id: `${I18N_PREFIX}subagent.parkedOn` }, { qid: subagent.parkedOn }),
     ];
@@ -139,7 +139,7 @@ function subagentActivity(
   }
   if (hasCurrentAsk(subagent)) {
     const cells = executingCells(subagent, generatedAt, intl);
-    // 一次 ask 在飞但一个读数也没有（老 journal）：退回已结算步数，别留下一行只有相位词。
+    // An ask is active but has no readings (legacy journal): fall back to settled step count instead of leaving a row with only a phase label.
     return cells.length > 0 ? cells : settledCells(subagent, intl);
   }
   return settledCells(subagent, intl);
@@ -188,7 +188,7 @@ function waitCells(
       id: `${I18N_PREFIX}subagent.${subagent.waitCause === "slot" ? "waitingSlot" : "waitingBackoff"}`,
     }),
   ];
-  // 「等了多久」贴着原因，「还要等多久」收尾：两个时长挨在一起时读者分不清哪个是哪个。
+  // Put “waiting for” next to the reason and “waited for” at the end; adjacent durations are hard to distinguish.
   const waited = formatWorkflowAge(generatedAt, subagent.waitSince);
   if (waited !== undefined) {
     cells.push(intl.formatMessage({ id: `${I18N_PREFIX}subagent.waitedFor` }, { age: waited }));

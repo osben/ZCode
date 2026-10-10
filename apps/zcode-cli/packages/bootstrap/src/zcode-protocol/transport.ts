@@ -103,7 +103,8 @@ export class ZCodeProtocolNdjsonConnection {
     }
     this.draining = true;
     this.notifyTransportClosed(new Error("ZCode Protocol client connection closed"));
-    // EOF 保留短请求半关闭响应，但挂起 handler 不能让进程永久保活。
+    // EOF preserves half-closed responses for short requests, but a hanging handler must not keep
+    // the process alive forever.
     this.drainTimer = setTimeout(() => this.finish(), PROTOCOL_EOF_DRAIN_MS);
     void this.processing.then(
       () => this.finish(),
@@ -150,7 +151,7 @@ export class ZCodeProtocolNdjsonConnection {
     this.options.input.off("end", this.onClose);
     this.options.input.off("close", this.onClose);
     this.options.signal?.removeEventListener("abort", this.onAbort);
-    // 错误 listener 保留到流本身结束，吸收已经排入事件循环的迟到 stream error。
+    // Keep the error listener until the stream itself ends, to absorb late stream errors already queued in the event loop.
   }
 
   private dispatchLine(line: string): void {
@@ -160,17 +161,19 @@ export class ZCodeProtocolNdjsonConnection {
       return;
     }
     if ("id" in message && ("result" in message || "error" in message)) {
-      // Agent 发出反向 request 前已同步登记 pending response。
-      // 若 response 等待“最后一个排队请求开始”，后续普通请求会把等待点推到当前长请求之后，
-      // 形成「当前请求等 response、response 等后续请求」的死锁。
+      // The Agent synchronously registers a pending response before sending a reverse request.
+      // If the response waits for "the last queued request to start," later ordinary requests move
+      // the wait point behind the current long request, creating a deadlock: the current request
+      // waits for the response, while the response waits for a later request.
       void this.handleMessage(message).catch((error: unknown) => {
         this.fail(error instanceof Error ? error : new Error(String(error)));
       });
       return;
     }
     if (this.shouldBypassProcessingQueue(message)) {
-      // 停止/取消控制必须等它前面的普通请求真正进入 handler、建立 abort
-      // controller，再越过该请求的异步执行；只延后一轮微任务会让控制请求提前成为空操作。
+      // Stop/cancel controls must wait for the preceding ordinary request to enter its handler and
+      // create an abort controller, then bypass its asynchronous execution. Deferring by only one
+      // microtask could make the control request a no-op by running too early.
       void this.lastQueuedMessageStarted
         .then(() => this.handleMessage(message))
         .catch((error: unknown) => {
@@ -222,8 +225,9 @@ export class ZCodeProtocolNdjsonConnection {
   }
 
   private shouldBypassProcessingQueue(message: ZCodeProtocolMessage): boolean {
-    // 模型任务占住串行队列时，停止/取消请求必须仍能进入 server，
-    // 才能把底层 AbortSignal 传给真实模型请求。控制面只旁路当前执行，普通请求仍保持串行。
+    // When a model task occupies the serial queue, stop/cancel requests must still enter the server
+    // to pass AbortSignal to the actual model request. Only the control plane bypasses the current
+    // execution; ordinary requests remain serial.
     return (
       "id" in message &&
       "method" in message &&
@@ -236,8 +240,8 @@ export class ZCodeProtocolNdjsonConnection {
     if (this.terminal) return;
     const response = await this.options.handleMessage(message);
     if (response) {
-      // 确定性时序：先一次性 take 当前 request 的 outbox，再连续写 response
-      // 与 notification。禁止 queueMicrotask/setTimeout 或依赖底层分包先后。
+      // Deterministic ordering: take the current request's outbox once, then write the response and
+      // notification consecutively. Do not use queueMicrotask/setTimeout or depend on lower-level chunk ordering.
       const postResponseBatch =
         "id" in response && ("result" in response || "error" in response)
           ? (this.options.takePostResponseBatch?.(response.id) ?? {
@@ -245,17 +249,19 @@ export class ZCodeProtocolNdjsonConnection {
               commit: () => true,
             })
           : { messages: [], commit: () => true };
-      // output EPIPE 可能发生在 subscribe handler 在途期间。fail() 已清过
-      // 当时的 outbox，但迟到 handler 仍可能新建 request entry；这里先 take 精确释放，
-      // terminal 时不再写 response/initial，避免 close 后引用泄漏或继续写坏流。
+      // output EPIPE may happen while the subscribe handler is in flight. fail() has already cleared
+      // the current outbox, but the late handler may still create a request entry. Take it here to
+      // release it precisely; after terminal state, do not write response/initial, avoiding leaked
+      // references or writes to a closed/broken stream.
       if (this.terminal) return;
       this.send(response);
       for (const postResponseMessage of postResponseBatch.messages) {
         this.send(postResponseMessage);
       }
-      // 旧 outbox 在生成 logical frame 时已推进 publisher 水位。这里以
-      // Writable.write() 未同步抛错作为“进入本 connection-owned queue”的 admission；
-      // 后续异步 EPIPE 会终结整个 connection epoch，旧 subscription 不会在新管道复用。
+      // The old outbox advanced the publisher watermark when it created the logical frame. Treat
+      // Writable.write() returning without a synchronous throw as admission into this connection-owned
+      // queue. A later asynchronous EPIPE terminates the entire connection epoch, so the old
+      // subscription is not reused by a new pipe.
       if (!this.terminal) postResponseBatch.commit();
     }
   }

@@ -1,4 +1,4 @@
-/* eslint-disable max-lines -- 企业套餐展示模型集中承载静态目录、实时定价与支付参数转换，拆分会模糊合并边界。 */
+/* eslint-disable max-lines -- Enterprise plan display models keep the static catalog, live pricing, and payment parameter conversion together; splitting them would blur their boundaries. */
 import type {
   CodingPlanStaticTeamProduct,
   EnterpriseCodingPlanPricingProduct,
@@ -29,16 +29,16 @@ export type EnterpriseCodingPlanProductDisplay = CodingPlanProductDisplay & {
   dynamicPricingAvailable?: boolean;
   staticCatalogAvailable?: boolean;
   /**
-   * 该企业套餐所属的 family（zai / bigmodel）。
-   * 原 UI 层把 team plan items 硬编码为 bigmodelCodingPlan 派生，
-   * zai family 即使有订阅也无法渲染。加 family 标记后，下游可见性函数可按
-   * product.family 找到对应 family 的 codingPlanItem 和 team key 前缀。
-   * 缺省 bigmodel 保持向后兼容。
+   * Family for this enterprise plan (zai / bigmodel).
+   * The old UI hard-coded team plan items as derived from bigmodelCodingPlan,
+   * so the zai family could not render even with a subscription. The family marker lets downstream visibility logic find the matching
+   * codingPlanItem and team key prefix from product.family.
+   * Defaulting to bigmodel preserves backward compatibility.
    */
   family?: ProviderFamilyDomain;
 };
 
-/** 旧商品缺少 family 时只在这一规范化边界解释为 BigModel。 */
+/** Interpret missing family on legacy products as BigModel only at this normalization boundary. */
 export function resolveEnterpriseCodingPlanProductFamily(
   product: Pick<EnterpriseCodingPlanProductDisplay, "family">,
 ): ProviderFamilyDomain {
@@ -126,9 +126,9 @@ function mergeEnterpriseCodingPlanProductList(
     .filter((product) => product.subscribed === true && !staticProductIds.has(product.productId))
     .map((product) => ({
       ...buildEnterpriseCodingPlanProductList([product])[0]!,
-      // client/configs 的团队静态目录只负责可购买 SKU 展示；
-      // 已购 Team Plan 身份来自 pricing/customerInfo，不能因为静态目录灰度为空或漏发商品
-      // 就把真实团队连接方式和使用统计入口隐藏。
+      // The static team catalog from client/configs is only for displaying purchasable SKUs;
+      // an existing Team Plan is identified by pricing/customerInfo. Do not hide actual team connection and usage-statistics entry points
+      // because the static catalog is empty in a rollout or a product was omitted.
       staticCatalogAvailable: false,
     }));
   return [...mergedStaticProducts, ...purchasedPricingProducts];
@@ -138,8 +138,8 @@ export function resolveEnterpriseCodingPlanProductList(
   staticProducts: CodingPlanStaticTeamProduct[] | undefined,
   pricingProducts: EnterpriseCodingPlanPricingProduct[],
 ): EnterpriseCodingPlanProductDisplay[] {
-  // 静态目录缺失或读取失败时，pricing 仍是团队订阅身份与项目上下文的权威来源；
-  // 只有成功读取到显式空数组时，才按配置语义隐藏全部团队 SKU。
+  // If the static catalog is missing or fails to load, pricing remains authoritative for team subscription identity and project context;
+  // hide all team SKUs according to configuration semantics only when an explicit empty array was read successfully.
   return !Array.isArray(staticProducts)
     ? buildEnterpriseCodingPlanProductList(pricingProducts)
     : mergeEnterpriseCodingPlanProductList(staticProducts, pricingProducts);
@@ -150,16 +150,16 @@ function resolveEnterpriseCodingPlanDisplayPayAmount(
 ): number | undefined {
   const candidateAmounts = [product.payAmount, product.renewAmount].filter(hasPositiveOrZeroAmount);
   if (candidateAmounts.length > 0) {
-    // 真实企业 pricing 年付商品会下发 payAmount=originalAmount、renewAmount=折后价。
-    // 卡片要和个人套餐一致展示“折后价 + 原价划线”，因此显示价取可用支付金额里的最低值。
+    // Real enterprise annual pricing products send payAmount=originalAmount and renewAmount=discounted price.
+    // The card should show “discounted price + strikethrough original price,” like personal plans, so use the lowest available payment amount as the display price.
     return Math.min(...candidateAmounts);
   }
   if (
     hasPositiveOrZeroAmount(product.originalAmount) &&
     hasPositiveAmount(product.discountAmount)
   ) {
-    // 个人套餐卡片展示的是折后价 + 原价划线；企业 pricing 的 discountAmount 是优惠金额，
-    // 不能直接传给通用卡片当价格，但年付商品可能只下发 originalAmount + discountAmount。
+    // Personal plan cards show discounted price + strikethrough original price; enterprise pricing's discountAmount is the discount amount,
+    // not a price to pass directly to the shared card, but annual products may send only originalAmount + discountAmount.
     return roundCurrencyAmount(Math.max(0, product.originalAmount - product.discountAmount));
   }
   return undefined;

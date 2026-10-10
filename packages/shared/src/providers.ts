@@ -1,11 +1,11 @@
 import { z } from "zod";
 
 /**
- * ZCode agent 提供方的单一真源。
+ * Single source of truth for ZCode agent providers.
  *
- * 类型 ZCodeProvider、运行时 schema zcodeProviderSchema 都从这里派生,
- * 避免各处内联 z.enum([...]) 副本随新增/删除 provider 漂移。
- * 本模块只依赖 zod(叶子),可被 validation / zcode-protocol 等无环引用。
+ * Both the ZCodeProvider type and runtime schema zcodeProviderSchema are derived here,
+ * preventing inline z.enum([...]) copies from drifting as providers are added or removed.
+ * This module depends only on zod (a leaf), so validation / zcode-protocol and others can import it without cycles.
  */
 const ZCODE_PROVIDERS = ["glm"] as const;
 

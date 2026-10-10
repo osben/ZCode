@@ -1,9 +1,9 @@
 import type { ZCodePluginMarketplaceSummary } from "@zcode/shared";
 
 /**
- * 把 marketplace id 解析为对用户友好的展示名：
- * 优先用 marketplaces 概览里的 name，缺失时回落到原始 id。
- * 纯函数，便于在目录标题栏与已安装来源标签间复用同一套命名。
+ * Resolve a marketplace id to a user-friendly display name:
+ * prefer the name from the marketplaces overview, falling back to the raw id when missing.
+ * Pure function so the catalog title bar and installed-source label can reuse the same naming logic.
  */
 export function resolveMarketplaceDisplayName(
   marketplaceId: string,

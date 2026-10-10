@@ -1,4 +1,4 @@
-/* oxlint-disable eslint(max-lines) -- 状态面板同时维护收起态摘要、展开态分区、菜单策略和宽度自适应，同文件能保证两种形态共享同一内容优先级。 */
+/* oxlint-disable eslint(max-lines) -- The status panel owns collapsed summaries, expanded sections, menu behavior, and width adaptation so both forms share the same content priority. */
 import { useIsOfficeMode } from "@/hooks/useInterfaceMode.js";
 import {
   forwardRef,
@@ -115,19 +115,19 @@ interface ConversationStatusPanelProps {
   plan?: PlanState | null;
   backgroundWorks?: readonly BackgroundWorkSummary[];
   runningSubagents?: readonly ZCodeSessionRunningSubagent[];
-  /** 本会话 `snapshot.workflowRuns.runs`；与 backgroundWorks 在模型层按 workId ≡ runId 联接。 */
+  /** This conversation's `snapshot.workflowRuns.runs`, joined with backgroundWorks in the model by workId ≡ runId. */
   workflowRuns?: readonly WorkflowRunState[];
   /**
-   * 已结束的 workflow run 条数（journal 口径，`countEndedWorkflowRuns`）。
-   * 面板不自己算：它手上的投影是 memory-only 的活状态，重启后为空，而这条计数恰恰要在重启后
-   * 仍然正确。
+   * Number of ended workflow runs (journal-based, `countEndedWorkflowRuns`).
+   * The panel does not calculate this itself: its projection is live, memory-only state and is empty after
+   * restart, while this count must remain correct across restarts.
    */
   endedWorkflowRunCount?: number;
   endedSubagentCount?: number;
   rootSessionId?: string;
   parentSessionId?: string;
-  /** 当前 pane 是否由手机 Web 远控壳承载。 */
-  /** 当前是否为粗指针手机视口。 */
+  /** Whether the current pane is hosted by the mobile Web remote-control shell. */
+  /** Whether the current viewport is a coarse-pointer mobile viewport. */
   isMobileViewport?: boolean;
   layoutMode?: "none" | "auto" | "inline";
   summaryPanelVariantOverride?: ChatViewSummaryPanelVariant | null;
@@ -152,7 +152,7 @@ interface ConversationStatusPanelProps {
   className?: string;
 }
 
-// memo 组件默认 props 不内联创建数组，避免每次渲染生成新引用触发稳定引用边界测试。
+// Do not create arrays inline in memoized component default props; a new reference on every render breaks stable-reference boundary tests.
 const EMPTY_BACKGROUND_WORKS: readonly BackgroundWorkSummary[] = [];
 const EMPTY_RUNNING_SUBAGENTS: readonly ZCodeSessionRunningSubagent[] = [];
 const EMPTY_WORKFLOW_RUNS: readonly WorkflowRunState[] = [];
@@ -214,9 +214,9 @@ function formatRunningSubagentCount(
 ) {
   return formatMessage(
     {
-      // 这里的计数至少包含 running 投影中的 subagent（可能是 mixed 胶囊总数）；
-      // subagent 又包含 foreground、background、blocked 和 waiting，复用后台任务文案
-      // 会把计数语义错误地缩窄成“后台”。
+      // This count includes at least the subagents in the running projection (and may be the mixed capsule total).
+      // Subagents include foreground, background, blocked, and waiting states; reusing the background-task label
+      // would incorrectly narrow the meaning of the count to “background.”
       id:
         count === 1
           ? "chat.statusPanel.runningAgentsValue"
@@ -239,10 +239,10 @@ const STATUS_SECTION_SCROLL_POLICY = {
   environment: null,
   goal: "max-h-48",
   sessionPlans: "max-h-48",
-  // 六个双行 Todo（6 × 52px）需要约 20rem；超过后只滚动进程区块。
+  // Six two-line Todos (6 × 52px) need about 20rem; beyond that, scroll only the process section.
   plan: "max-h-80",
   terminal: "max-h-48",
-  // workflow 行与 terminal / agent 行同高（两行 + 控制），限高沿用同一档。
+  // Workflow rows have the same height as terminal/agent rows (two lines + controls), so use the same max height.
   workflow: "max-h-48",
   agent: "max-h-48",
 } as const satisfies Record<StatusSectionKind, string | null>;
@@ -308,8 +308,9 @@ function StatusSection({
   const [uncontrolledOpen, setUncontrolledOpen] = useState(defaultOpen);
   const isControlled = open !== undefined;
   const isOpen = open ?? uncontrolledOpen;
-  // 限高过去依赖每个调用方显式传 scrollable，组合区块或新增类型时容易
-  // 旁路滚动视口。改为按完整区块类型表统一裁决，让计划等新类型漏配时直接触发类型检查。
+  // Max-height previously depended on each caller explicitly setting scrollable, which made it easy for
+  // combined sections or new types to bypass the scroll viewport. Decide centrally from the complete section
+  // type table so adding a type such as plans without handling it triggers a type error.
   const scrollViewportMaxHeightClass = STATUS_SECTION_SCROLL_POLICY[section];
   const handleOpenChange = useCallback(
     (nextOpen: boolean) => {
@@ -334,9 +335,9 @@ function StatusSection({
         </StatusSectionHeader>
         <CollapsibleContent>
           {scrollViewportMaxHeightClass ? (
-            // 长 Goal / 计划 / Todo / 终端 / 智能体列表过去保持自然高度，外层 shell
-            // 只能把超出 max-height 的内容裁掉。滚动边界必须放在折叠动画内容层内部，
-            // 既固定区块标题和控制，也不破坏 CollapsibleContent 的高度动画。
+            // Long Goal/plan/Todo/terminal/agent lists previously kept their natural height, so the outer shell
+            // could only clip content beyond max-height. Keep the scroll boundary inside the collapsible
+            // animation layer to pin section headings and controls without breaking CollapsibleContent's height animation.
             <div
               data-status-section-scroll={section}
               className={cn(
@@ -405,8 +406,8 @@ function GitStatusSection({
       }
     >
       <div className="space-y-0">
-        {/* V4 状态面板迁移时只保留了 Changes 的静态展示，
-            没有继续透传旧版 Git review 回调，导致规范中的审阅入口不可点击。 */}
+        {/* The V4 status-panel migration kept only the static Changes display and stopped forwarding
+            the old Git review callback, leaving the review entry in the spec unclickable. */}
         <button
           type="button"
           disabled={!canOpenReview}
@@ -476,9 +477,9 @@ function GoalStatusSection({
     () => (goal ? buildConversationGoalIterationSummaries(goal) : []),
     [goal],
   );
-  // 用时秒针只看「有没有在跑」这一个布尔。effect 不能以整个 goal 对象为依赖：
-  // 每个 goal 事件都同步 setNow 并重建 interval——落在投影帧的同步提交里，给 React 的嵌套更新计数
-  // 记一笔（与工作流卡 React #185 崩溃同形）。
+  // The elapsed-time ticker depends only on the boolean “is anything running?”. Do not depend on the whole goal object:
+  // every goal event would synchronously call setNow and recreate the interval during projection commits,
+  // incrementing React's nested-update counter (the same failure pattern as the workflow-card React #185 crash).
   const now = useNowTicker(isPausable && goal?.activeRunStartedAtMs != null);
 
   if (!goal) return null;
@@ -635,8 +636,8 @@ function getStatusPanelTodoFocusWindow(items: PlanState["items"]): StatusPanelTo
       : firstUnfinishedIndex >= 0
         ? firstUnfinishedIndex
         : Math.max(0, items.length - TODO_FOCUS_WINDOW_SIZE);
-  // 只取“当前 + 后两条”会让靠近列表末尾的当前项只剩一两条上下文。
-  // 从前面回补可以让精简窗口在项目数足够时始终保持三条，同时不改变 snapshot 原序。
+  // Taking only “current + next two” leaves just one or two context items when the current item is near the end.
+  // Backfill from earlier items so the compact window always has three when enough items exist, without changing snapshot order.
   const focusStartIndex = Math.max(0, Math.min(focusIndex, items.length - TODO_FOCUS_WINDOW_SIZE));
   const focusEndIndex = Math.min(items.length, focusStartIndex + TODO_FOCUS_WINDOW_SIZE);
 
@@ -690,8 +691,8 @@ const TodoPreviewTrigger = forwardRef<
       className="flex h-8 w-full min-w-0 items-center gap-2 rounded-lg px-2 text-left text-ui-base text-[var(--color-foreground-subtle)] hover:bg-[var(--color-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--color-input-border-focused)]"
       onClick={(event) => {
         onClick?.(event);
-        // HoverCard 在桌面由 hover/focus 驱动；仅无 hover 输入补充点击打开，
-        // 避免桌面点击把已经由 hover 打开的预览反向关闭。
+        // HoverCard is driven by hover/focus on desktop. Add click-to-open only for inputs without hover,
+        // so a desktop click does not close a preview already opened by hovering.
         if (
           !event.defaultPrevented &&
           typeof window !== "undefined" &&
@@ -966,8 +967,8 @@ function buildRunningSubagentOpenRequest({
 }
 
 /**
- * 运行中子 agent 的实时吞吐（该子会话自己的最近一次模型请求 tok/s）。
- * 旧 CLI 没有子会话 session/debug 观测时查询失败，hook 返回 null，本组件整体缺席。
+ * Live throughput for a running subagent (tok/s for that sub-session's most recent model request).
+ * If an older CLI cannot query sub-session session/debug telemetry, the hook returns null and this component is omitted.
  */
 function SubagentThroughputLabel({
   childSessionId,
@@ -1138,17 +1139,17 @@ function BackgroundWorkStatusSection({
 }
 
 /**
- * Workflows 分区：与 Terminals / Agents 并列的第三类实时活动，**外加**一条通往 run 目录的
- * 页脚行——已结束的 run 折进这条页脚行，不占活动列表的位置。
+ * Workflows section: the third type of live activity alongside Terminals/Agents, **plus** a footer row linking
+ * to the run directory. Ended runs are folded into that footer row and do not occupy activity-list slots.
  *
- * 行的字段分三簇（见 `ConversationStatusPanelWorkflowRun`），渲染逐簇独立缺席：
- * - 无 `status`：偏斜降级行（旧 CLI 没有 workflowRuns 投影键），没有状态词与步数；
- * - 无 `startedAt`：run 还没有配对的后台任务，没有时长；
- * - 无 `workId`：停不了，不出 Stop。
- * 把它们并成一个「有没有 work」的布尔就会漏掉偏斜形态——这三簇正是偏斜的全部表现。
+ * Row fields form three groups (see `ConversationStatusPanelWorkflowRun`), each omitted independently during rendering:
+ * - No `status`: a degraded partial row (older CLIs have no workflowRuns projection key), with no status label or steps.
+ * - No `startedAt`: the run has no paired background task, so there is no duration.
+ * - No `workId`: it cannot be stopped, so omit Stop.
+ * Combining these into one “has work?” boolean would miss partial shapes; these three groups cover all of them.
  *
- * **不排序**：顺序 = 投影 runs 序 = 启动序（模型层已经保证）。Terminals / Agents 按
- * startedAt 排是因为它们的投影无序；这里重排反而会让行在每次投影更新时跳位。
+ * **Do not sort**: projection run order is launch order (guaranteed by the model). Terminals/Agents are sorted
+ * by startedAt because their projections are unordered; sorting here would make rows jump on every projection update.
  */
 function WorkflowStatusSection({
   endedRunCount,
@@ -1175,7 +1176,7 @@ function WorkflowStatusSection({
 }) {
   const { intl } = useZCodeIntl();
   const [now, setNow] = useState(() => Date.now());
-  // 只有带 startedAt 的行需要秒级刷新；一行都没有时不必让面板每秒重渲染。
+  // Only rows with startedAt need per-second refreshes; do not rerender the panel every second when there are none.
   const tickingRunCount = runs.filter((run) => run.startedAt !== undefined).length;
   useEffect(() => {
     if (tickingRunCount === 0) return;
@@ -1183,8 +1184,9 @@ function WorkflowStatusSection({
     return () => window.clearInterval(timer);
   }, [tickingRunCount]);
 
-  // 活动行与已结束计数**都**为零才收起整个分区：只按活动数开门的那一版，重启后一个 run
-  // 都不在跑，于是入口连带目录页一起消失——而重启后回看被打断的 run 正是它的主要用途。
+  // Collapse the section only when both active rows and the ended count are zero. The previous active-only
+  // gate hid the directory after restart because no runs were running, even though reviewing interrupted runs
+  // after restart is one of its main purposes.
   if (runs.length === 0 && endedRunCount <= 0) return null;
 
   const longestElapsedMs = runs.reduce(
@@ -1207,9 +1209,9 @@ function WorkflowStatusSection({
           <span>
             {intl.formatMessage(
               {
-                // 复用 Terminals 的计数文案而不是 Agents 的：workflow run 确实是一条后台任务
-                // （它有自己的 BackgroundWorkSummary），而 subagent 可能是前台的，那条文案
-                // 才需要把语义放宽成「运行」。
+                // Reuse the Terminals count label, not the Agents label: a workflow run is a background task
+                // (it has its own BackgroundWorkSummary), while a subagent may be foreground, which is why the
+                // Agents label needs the broader meaning “running.”
                 id:
                   runs.length === 1
                     ? "chat.statusPanel.runningStatusValue"
@@ -1220,7 +1222,8 @@ function WorkflowStatusSection({
           </span>
         ) : (
           <>
-            {/* 一行都没有 startedAt 时收起态只剩计数：宁可少一段，也不显示一个 0 秒的假时长。 */}
+            {/* If no row has startedAt, the collapsed view has only the count. Omit the duration
+                rather than showing a false zero-second value. */}
             {longestElapsedMs > 0 ? (
               <>
                 <span className="min-w-0 truncate">
@@ -1239,12 +1242,12 @@ function WorkflowStatusSection({
     >
       <ul className="space-y-0">
         {runs.map((run) => {
-          // 行 → 打开意图的换算与 composer 徽标直达共用（模型层 workflowRunOpenTarget）。
+          // Row-to-open-intent mapping is shared with direct navigation from composer badges (model-layer workflowRunOpenTarget).
           const openTarget = onOpenWorkflowRun ? workflowRunOpenTarget(run) : null;
           const canOpen = openTarget !== null;
-          // 未命名的判定：`title ≡ workId`（≡ runId）就是 core 的 workflowTaskSubject 兜底到
-          // taskId 的样子，投影会把非空 description 原样抄进 title。降级行的 runId 也 ≡ workId，
-          // 所以一次比较覆盖两簇。
+          // An unnamed row has `title ≡ workId` (≡ runId), which is how core's workflowTaskSubject falls back
+          // to taskId; the projection copies a non-empty description into title unchanged. A degraded row's
+          // runId also equals workId, so one comparison covers both groups.
           const displayName =
             run.title && run.title !== run.runId
               ? run.title
@@ -1263,8 +1266,9 @@ function WorkflowStatusSection({
               )}
             >
               {openTarget ? (
-                // 与 Agent 行同款：行里已经有 Stop 这个嵌套交互，整行 button 会套出嵌套按钮。
-                // 透明同级按钮承接「打开详情页」，Stop 保持独立交互层并阻止冒泡。
+                // As with Agent rows, Stop is already a nested interaction, so wrapping the whole row in a
+                // button would create nested buttons. A transparent sibling button handles “open details,”
+                // while Stop remains an independent interaction and stops propagation.
                 <button
                   type="button"
                   data-workflow-run-details-trigger="true"
@@ -1282,7 +1286,7 @@ function WorkflowStatusSection({
                 <span className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-ui-base">
                   {run.status ? (
                     <>
-                      {/* 状态永远有词，绝不只靠颜色或动画表达（a11y）。 */}
+                      {/* Always express status in words; never rely on color or animation alone (a11y). */}
                       <span
                         aria-hidden="true"
                         data-workflow-run-status-dot={run.status}
@@ -1297,9 +1301,9 @@ function WorkflowStatusSection({
                         {intl.formatMessage(
                           { id: "chat.toolCall.workflow.card.steps" },
                           {
-                            // 步数与 status 在模型层同簇出现（present iff status present），
-                            // 但类型上是各自独立的可选字段；`?? 0` 只是补这道类型形式，
-                            // 真跑到它意味着模型违反了自己的不变量。
+                            // Steps and status appear together in the model (present iff status is present),
+                            // but are separate optional fields in the type. `?? 0` only satisfies that type
+                            // shape; reaching it at runtime means the model violated its invariant.
                             done: String(run.nodesSettled ?? 0),
                             total: String(run.nodesTotal ?? 0),
                           },
@@ -1327,8 +1331,9 @@ function WorkflowStatusSection({
           );
         })}
       </ul>
-      {/* 已结束的 run 折进这条页脚行（与 Agents 分区共用同一个 affordance）：终态 run 不占
-          活动列表的位置，但入口必须留着——被打断的那些正是最需要点进去的。 */}
+      {/* Put completed runs in this footer row, sharing the affordance with the Agents section.
+          Terminal runs do not occupy space in the active list, but keep the entry available because
+          interrupted runs are the ones users most need to open. */}
       <EndedDirectoryRow
         count={endedRunCount}
         icon={
@@ -1446,8 +1451,9 @@ function SubagentStatusSection({
               )}
             >
               {canOpenSubagentSession ? (
-                // Agent 行同时包含“打开详情”和 Stop，不能用整行 button 包住
-                // Stop 形成嵌套按钮。透明同级按钮承接详情，Stop 保持独立交互层且阻止冒泡。
+                // Agent rows contain both “open details” and Stop, so the whole row cannot be a button without
+                // nesting Stop inside another button. A transparent sibling button handles details; Stop stays
+                // independent and stops propagation.
                 <button
                   type="button"
                   data-running-subagent-session-trigger="true"
@@ -1500,13 +1506,13 @@ function SubagentStatusSection({
 }
 
 /**
- * 「已结束的 X · N ›」页脚行：分区里那条通往目录页的入口。
+ * “Ended X · N ›” footer row: the section's entry point to the directory.
  *
- * Agents 与 Workflows **共用这一个** affordance（图标/文案/计数/回调由调用方给）。抽出来的
- * 理由不是省行数，而是不出现第二套画法：两个分区的页脚行若各写一遍，两者会随时间长出不同的
- * 间距、不同的 hover、不同的计数位置，而它们在读者眼里本来是同一个动作。
+ * Agents and Workflows **share this affordance** (the caller supplies icon/label/count/callback). It is not
+ * extracted to save lines, but to avoid a second visual treatment: separately implemented footer rows could
+ * drift in spacing, hover behavior, and count placement even though they represent the same action.
  *
- * `count <= 0` 或缺回调即整行缺席：一个点了没反应的入口比没有入口更糟。
+ * Omit the entire row when `count <= 0` or when there is no callback: an entry point that does nothing is worse than none.
  */
 function EndedDirectoryRow({
   count,
@@ -1606,7 +1612,7 @@ function StatusSummaryRow({
   model,
   onVariantChange,
 }: {
-  /** 已结束 run 的目录计数；宿主给 0 表示目录入口不可渲染（缺会话或缺回调）。 */
+  /** Ended-run directory count; the host passes 0 when the directory entry cannot render (missing session or callback). */
   endedWorkflowRunCount: number;
   gitWorktreeChangeSummary?: { added: number; removed: number } | null;
   model: ConversationStatusPanelModel;
@@ -1620,8 +1626,8 @@ function StatusSummaryRow({
   const goal = model.goal;
   const goalTitle = goal ? goal.summaryTitle?.trim() || goal.objective.trim() || null : null;
   const goalStatus = goal?.status ?? null;
-  // V4 goal 在 verifier 判定未完成后会进入 notSatisfied；mini 过去漏掉
-  // 这个合法开放态并返回 null，导致只剩 2px 空 shell，也失去重新展开入口。
+  // A V4 goal enters notSatisfied when the verifier says it is incomplete. The mini view previously omitted
+  // this valid open state and returned null, leaving a 2px empty shell with no way to expand it again.
   const isActiveGoal =
     goalStatus === "active" ||
     goalStatus === "notSatisfied" ||
@@ -1632,9 +1638,10 @@ function StatusSummaryRow({
   const removed = gitWorktreeChangeSummary?.removed ?? 0;
   const hasGitMiniSummary = Boolean(model.git && added + removed > 0);
 
-  // 胶囊摘要过去把所有后台任务都写死成 Activity，纯 Subagent 因而没有复用
-  // Running 明细的 Bot 语义。规则现在是三类的：**恰好一类**沿用该类图标，混合才是 Activity
-  // （两类矩阵在 workflow 加入后就不够用了，硬写下去会漏掉 workflow+agent 这种组合）。
+  // Capsule summaries previously labeled every background task Activity, so pure Subagent did not reuse the
+  // Bot meaning from the Running details. There are now three categories: use a category's icon when **exactly
+  // one** is present, and use Activity for mixed categories (the two-category matrix became insufficient when
+  // workflows were added and would miss combinations such as workflow + agent).
   const hasRunningBash = model.runningBashWorks.length > 0;
   const hasRunningSubagent = model.runningSubagentWorks.length > 0;
   const hasRunningWorkflow = model.runningWorkflowRuns.length > 0;
@@ -1702,8 +1709,9 @@ function StatusSummaryRow({
     <StatusSummaryMetric
       icon={<RunningSummaryIcon className="size-4 text-[var(--color-foreground)]" />}
     >
-      {/* 产品规则：实时活动只能在没有 Goal/Todo/Git 等主状态时兜底，
-          避免胶囊把主状态和输入框已展示的实时计数重复拼接。 */}
+      {/* Product rule: show live activity only as a fallback when no primary status such as Goal,
+          Todo, or Git is present. This prevents the pill from duplicating the live count already
+          shown in the input. */}
       <span className="shrink-0">
         {hasRunningSubagent
           ? formatRunningSubagentCount(intl.formatMessage, runningCount)
@@ -1711,11 +1719,11 @@ function StatusSummaryRow({
       </span>
     </StatusSummaryMetric>
   ) : endedWorkflowRunCount > 0 ? (
-    // 胶囊的兜底链止步于「活动计数」，而面板级的卸载闸门（!hasContent &&
-    // !canRenderEndedWorkflows）为了保住 run 目录入口，会在**只剩已结束 run**时仍保留
-    // 整个壳——工作区无 Git 变更时 workflow 一结束，胶囊各分支全 null，只剩一条 2px
-    // 空壳线（与 goal notSatisfied 那次是同一个失效形状）。这里补上最低优先级的终态
-    // 分支：图标沿用 Workflow 域，文案与 Workflows 分区页脚同 key，点开即展开面板。
+    // The capsule fallback chain ended at “activity count,” while the panel-level unmount gate
+    // (!hasContent && !canRenderEndedWorkflows) keeps the shell when only ended runs remain so the directory
+    // stays available. When a workflow ends in a workspace without Git changes, every capsule branch is null,
+    // leaving a 2px empty line (the same failure shape as goal notSatisfied). Add a lowest-priority terminal
+    // branch here: use the Workflow icon, the same label key as the Workflows footer, and expand the panel on click.
     <StatusSummaryMetric
       icon={<Workflow className="size-4 text-[var(--color-foreground-subtle)]" />}
     >
@@ -1841,8 +1849,8 @@ function ConversationStatusPanelImpl({
   const canRenderSessionPlans = Boolean(model.sessionPlans);
   const canRenderPlan = Boolean(model.plan);
   const canRenderTerminals = model.runningBashWorks.length > 0;
-  // 已结束的 run 也开门（与 canRenderAgents 同判断）：重启后活动数为零，若只按它开门，
-  // 通往 run 目录的唯一入口会连带消失。
+  // Ended runs also open the gate (same condition as canRenderAgents): after restart the active count is zero,
+  // and gating only on it would hide the only entry to the run directory.
   const canRenderEndedWorkflows = Boolean(
     endedWorkflowRunCount > 0 && parentSessionId && onOpenWorkflowRunDirectory,
   );
@@ -1850,8 +1858,9 @@ function ConversationStatusPanelImpl({
   const canRenderEndedAgents = Boolean(
     endedSubagentCount > 0 && parentSessionId && onOpenSubagentDirectory,
   );
-  // 已结束目录入口过去渲染在 Agent StatusSection 之后，视觉和 DOM 都被提升成
-  // 并列顶层 section。Agent 的运行态和已结束目录属于同一领域，统一由 Agent 折叠分组承载。
+  // The ended-directory entry previously rendered after Agent StatusSection and was promoted to a parallel
+  // top-level section in both the visual and DOM hierarchies. Agent activity and its ended directory belong
+  // together, so keep both under the Agent collapsible group.
   const canRenderAgents = model.runningSubagentWorks.length > 0 || canRenderEndedAgents;
   const handlePanelModeChange = useCallback(
     (value: string) => {
@@ -1894,10 +1903,11 @@ function ConversationStatusPanelImpl({
     return () => observer.disconnect();
   }, [model]);
 
-  // `model.hasContent` 只认**活的**内容（模型手上的投影都是活状态），所以「只剩历史」的
-  // 会话会连整个胶囊一起消失——而那正是重启后打开一条旧对话的样子，run 目录的入口于是又没了。
-  // 已结束的 run 因此单独开这道门。（Agents 的已结束行有同一个洞：`endedSubagentCount` 也
-  // 没进 `hasContent`。那是既有行为，不在本轮一起翻。）
+  // `model.hasContent` recognizes only **live** content (all projections held by the model are live state),
+  // so a conversation with only history would lose the entire capsule. That is exactly what an old
+  // conversation looks like after restart, hiding the run-directory entry again. Ended runs therefore have
+  // their own gate. (Ended Agent rows have the same gap: `endedSubagentCount` is also excluded from
+  // `hasContent`. That behavior predates this change and is outside this pass.)
   if (!model.hasContent && !canRenderEndedWorkflows) {
     return null;
   }
@@ -1906,8 +1916,9 @@ function ConversationStatusPanelImpl({
     <div
       className={cn(
         "pointer-events-none absolute top-0 z-20 pt-4",
-        // 旧 ChatView 的 inline 面板直接钉在右侧，正文列通过独立 translate 让位。
-        // v4 若继续用 inset-x-0 + justify-end，会让面板容器宽铺满并改变宽屏下的横向对齐。
+        // The old ChatView inline panel was pinned directly to the right, with the message column making
+        // room through a separate translate. Keeping inset-x-0 + justify-end in v4 would make the panel
+        // container full-width and change horizontal alignment on wide screens.
         layoutMode === "inline"
           ? "right-4"
           : layoutMode === "auto"
@@ -1916,8 +1927,9 @@ function ConversationStatusPanelImpl({
         className,
       )}
     >
-      {/* 状态面板恢复旧 ChatView 的同 shell 收起/展开模型。
-          之前 v4 用固定展开卡片替代 summary panel，窄屏会遮挡聊天正文，也丢失用户 override。 */}
+      {/* Restore the old ChatView's collapsible shell model for the status panel. V4 previously used
+          a permanently expanded card instead of a summary panel, which covered chat content on
+          narrow screens and lost the user's override. */}
       <aside
         aria-label={intl.formatMessage({ id: "chat.summaryPanel.title" })}
         data-testid={TID_CHAT_SUMMARY_PANEL}
@@ -1998,8 +2010,9 @@ function ConversationStatusPanelImpl({
           </div>
         ) : null}
         {variant !== "mini" ? (
-          // 单个区块限高后，多区块同时展开仍可能超过 shell；外层必须提供
-          // 第二层兜底滚动，保证后续区块标题和操作始终可达，不能继续直接裁切。
+          // Even with per-section max heights, several expanded sections can exceed the shell. The outer layer
+          // needs a second fallback scroll viewport so later section headings and controls remain reachable
+          // instead of being clipped.
           <div
             className={cn(
               "min-h-0 flex-1 flex-col gap-2 overflow-x-hidden overflow-y-auto p-2",
@@ -2115,8 +2128,8 @@ function ConversationStatusPanelImpl({
         >
           <StatusSummaryRow
             model={model}
-            // 与页脚同一道门（canRenderEndedWorkflows）：缺会话或缺回调时目录打不开，
-            // 胶囊也就不该报一个点了没反应的数。
+            // Use the same gate as the footer (canRenderEndedWorkflows): when the session or callback is
+            // missing, the directory cannot open, so the capsule should not show a count that does nothing.
             endedWorkflowRunCount={canRenderEndedWorkflows ? endedWorkflowRunCount : 0}
             gitWorktreeChangeSummary={gitWorktreeChangeSummary}
             onVariantChange={onVariantChange}

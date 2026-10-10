@@ -28,7 +28,7 @@ interface WindowControllerTaskListRegistry {
 export interface WindowControllerTaskListVersion {
   controllerRevision: number;
   taskListVersionSignature: string;
-  /** 只用于让连接前缓存随 remote session 换代失效，不参与 workspace identity。 */
+  /** Used only to invalidate the pre-connection cache when the remote session changes; not part of workspace identity. */
   workspaceSourceGenerationSignature?: string;
   manualRefreshSerial?: number;
 }
@@ -54,9 +54,9 @@ function queryContainsWorkspace(
 }
 
 function cacheVersionKey(version: WindowControllerTaskListVersion): string {
-  // Controller frame 只负责触发 hook 重读；具体 query 是否失效由 delta scope/membership 决定。
-  // 若把全局 controllerRevision 放进缓存 key，一个 timeline live delta 仍会让 pinned/archived
-  // 全部 miss，重新制造每个 frame 多轮 Host RPC。legacy/manual 版本继续保留强制刷新语义。
+  // Controller frames only trigger hooks to reread; whether a specific query is invalidated depends on delta scope/membership.
+  // If a global controllerRevision were included in the cache key, a timeline live delta would still miss all pinned/archived entries,
+  // recreating multiple Host RPCs per frame. Legacy/manual versions keep their force-refresh semantics.
   return JSON.stringify({
     taskListVersionSignature: version.taskListVersionSignature,
     workspaceSourceGenerationSignature: version.workspaceSourceGenerationSignature,
@@ -64,7 +64,7 @@ function cacheVersionKey(version: WindowControllerTaskListVersion): string {
   });
 }
 
-/** 一个 Controller proxy 对应一个共享观察器；所有列表 hook 只消费其 revision。 */
+/** One shared observer per Controller proxy; all list hooks consume only its revision. */
 export function getWindowControllerTaskListRegistry(
   controller: IWindowControllerService,
 ): WindowControllerTaskListRegistry {
@@ -146,7 +146,7 @@ export function getWindowControllerTaskListRegistry(
         seq: frame.toSeq,
       });
       if (frame.topic === CONTROLLER_WORKSPACES_TOPIC) {
-        // workspace facts 不出现在 task list result；source 上下线/移除会另发 tasks-index delta。
+        // Workspace facts are not included in task-list results; source online/offline/removal emits a separate tasks-index delta.
         return;
       }
       const taskFrame = frame as WindowHostControllerTaskFrame;
@@ -168,9 +168,9 @@ export function getWindowControllerTaskListRegistry(
           for (const [queryKey, cached] of queryCache) {
             const touchesWorkspace = queryContainsWorkspace(cached.query, address);
             if (!touchesWorkspace) continue;
-            // 以前任意 task delta 都 clear 全部 query。只有明确掌握旧 row 时，
-            // 才按变更前后 membership 精确失效；缺少旧 row 时无法排除它曾属于其他 kind，
-            // 因此对当前 workspace 保守失效，避免 timeline/active 留下陈旧项。
+            // Previously, any task delta cleared every query. Invalidate precisely by before/after membership only when the old row is known;
+            // without the old row, we cannot rule out that it belonged to another kind,
+            // so conservatively invalidate this workspace to avoid stale timeline/active entries.
             if (
               !previous ||
               matchesTaskListMembershipKind(previous.membership, cached.query.kind) ||
@@ -181,7 +181,7 @@ export function getWindowControllerTaskListRegistry(
           }
         }
       }
-      // 同一 JavaScript 调度周期内的连续 task frame 合并成一个 renderer revision。
+      // Coalesce consecutive task frames in the same JavaScript scheduling cycle into one renderer revision.
       notifyOnce();
     });
     void Promise.all(

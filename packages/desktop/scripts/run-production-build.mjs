@@ -6,8 +6,9 @@ import { fileURLToPath } from "node:url";
 import { resolveSpawnRuntimeOptions } from "../../../scripts/spawn-command.mjs";
 
 export function resolveDesktopBuildCwd() {
-  // tsup / vite 配置里的入口路径都是相对 desktop 包根目录声明的。
-  // 之前默认 cwd 落在 scripts 子目录，Windows CI 上会把 src/main/index.ts 解析成 scripts/src/... 直接报找不到入口。
+  // Entry paths in the tsup/Vite configurations are relative to the desktop package root.
+  // The default cwd previously pointed to scripts, so Windows CI resolved src/main/index.ts as
+  // scripts/src/... and failed to find the entry point.
   return resolve(dirname(fileURLToPath(import.meta.url)), "..");
 }
 
@@ -28,8 +29,9 @@ export async function cleanDesktopProductionOutput({ cwd }) {
     console.log("[build] ZCODE_E2E_KEEP_BUILD_CACHE=1, skipping clean");
     return;
   }
-  // 生产构建之前如果已有开发态/旧生产态 out，tsup 不会主动删除过期 chunk。
-  // 这些旧文件会继续被 electron-builder 的 out/**/* 打进 app.asar，重新暴露未压缩 JS 和 sourcemap 尾注。
+  // If a development or previous production out directory exists, tsup does not remove stale chunks.
+  // electron-builder would then include those files through out/**/* in app.asar, reintroducing
+  // unminified JavaScript and source map comments.
   await Promise.all(
     resolveDesktopProductionCleanPaths(cwd).map((targetPath) =>
       rm(targetPath, { force: true, recursive: true }),
@@ -90,8 +92,10 @@ export async function runDesktopProductionBuild({ cwd = resolveDesktopBuildCwd()
   await cleanDesktopProductionOutput({ cwd });
   for (const step of createDesktopProductionBuildPlan({ cwd })) {
     if (step.parallel) {
-      // 之前串行跑 tsup 和 vite，但两者分别写 main/preload/host 与 renderer 目录。
-      // 这里并行执行平台无关构建，缩短 CI 关键路径，同时保持各自 cwd/env 一致以兼容 macOS/Windows/Linux runner。
+      // tsup and Vite previously ran sequentially, though they write to separate main/preload/host and
+      // renderer directories. Run these platform-independent builds in parallel to shorten the CI
+      // critical path while keeping each build's cwd and environment consistent across macOS, Windows,
+      // and Linux runners.
       await Promise.all(step.parallel.map(runCommandAsync));
       continue;
     }

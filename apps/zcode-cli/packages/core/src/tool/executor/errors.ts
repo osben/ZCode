@@ -15,13 +15,15 @@ export function createErrorResult(
     isCoreError(error) && isToolHandlerFailure(error.context?.toolHandlerFailure)
       ? error.context.toolHandlerFailure
       : undefined;
-  // 根因：通用错误层按 tool name 拼接 provider 文案会反向依赖具体工具。
-  // handler 只返回自己的 code/message；这里统一组装 envelope，并保留裸 message 给 UI 和日志。
+  // Building provider text by tool name in the generic error layer would create a
+  // reverse dependency on concrete tools. Handlers return their own code/message; this
+  // layer assembles the envelope and preserves the raw message for the UI and logs.
   const modelContent =
     getInitialInputValidationModelContent(error) ??
     (handlerFailure ? `<tool_use_error>${handlerFailure.message}</tool_use_error>` : undefined);
-  // subagent/turn/model 错误常把真实 provider 原因包在 cause 链里；
-  // tool result 是父模型和 UI hover 的共同来源，必须在这里统一投影成可读摘要。
+  // Subagent/turn/model errors often wrap the provider's actual cause in a cause chain.
+  // The tool result is shared by the parent model and UI hover, so project it to a
+  // readable summary here.
   const projectedError = projectExecutionErrorPayload(error);
   const reasonSource =
     isCoreError(error) &&
@@ -29,9 +31,11 @@ export function createErrorResult(
       error.context?.reasonSource === "workflow_refine_feedback")
       ? error.context.reasonSource
       : undefined;
-  // ExitPlanMode / workflow Refine 的用户反馈会暂存在 PermissionDenied.message，
-  // 后续还要原样转成 steer 输入；这里不能被展示摘要器截断，否则超长反馈不会触发 input_too_large。
-  // 普通拒绝附带的自由文本反馈（preserveReasonFormatting）同理原样保留。
+  // User feedback for ExitPlanMode / workflow Refine is temporarily stored in
+  // PermissionDenied.message and later passed unchanged as steer input. Do not truncate
+  // it in the display summarizer, or oversized feedback will not trigger input_too_large.
+  // Preserve free-form feedback attached to ordinary denials (preserveReasonFormatting)
+  // unchanged for the same reason.
   const message =
     reasonSource !== undefined || options?.preserveReasonFormatting === true
       ? error.message

@@ -22,11 +22,12 @@ import {
 } from "./causality-order-functions.js";
 import { innermostOpenStrand, type Frame, type StrandRecord } from "./causality-order-strands.js";
 
-// causality-order.ts 顶到 oxlint max-lines 上限（400 行），把 traceOrder 原本以
-// 闭包共享的走查状态拆到本文件：一个显式的 {@link TraceState} 对象（输入索引 + 可变累加器）、
-// 它的构造，以及只读写这份状态的原语（开区域、发 issue / jump、阶段 id 铸造）。各类语法节点
-// 的访问器（walk / loops / calls / settle）都以 `state` 为首参落在同名兄弟模块里；公开面仍从
-// causality-order.ts 导出。
+// causality-order.ts reached oxlint's max-lines limit (400), so the traversal state originally
+// shared by traceOrder's closure was moved here: an explicit {@link TraceState} object (input index
+// + mutable accumulators), its construction, and primitives that read/write it (open regions, emit
+// issues/jumps, allocate phase IDs). Visitors for syntax-node groups (walk / loops / calls / settle)
+// live in sibling modules with the same names and take `state` as their first argument; the public
+// surface is still exported from causality-order.ts.
 
 /** The walk's whole shared state: what `traceOrder` used to hold in closure. */
 export interface TraceState {

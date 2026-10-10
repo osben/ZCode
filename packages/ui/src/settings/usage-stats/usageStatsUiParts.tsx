@@ -25,7 +25,7 @@ export function formatCompactTokenUsage(locale: string, value: number): string {
 export function formatSummaryCompactTokenUsage(locale: string, value: number): string {
   const formatted = formatCompactTokenUsage(locale, value);
 
-  // 通用紧凑格式会把中文单位直接贴在数字后；摘要卡片与相邻的时长、天数指标统一保留单位间距。
+  // Generic compact formatting places Chinese units directly after the number; summary cards keep spacing before adjacent duration/day units for consistency.
   return locale.startsWith("zh") ? formatted.replace(/(?<=\d)(?=[万亿])/u, " ") : formatted;
 }
 
@@ -42,8 +42,8 @@ export function formatDay(locale: string, dateKey: string | null): string {
   }
   const date = new Date(`${dateKey}T00:00:00.000Z`);
   if (Number.isNaN(date.getTime())) {
-    // BigModel monitor 接口偶尔返回空字符串或非 yyyy-MM-dd 格式的日期,
-    // 之前直接交给 Intl.DateTimeFormat 会抛 RangeError 把整个图表炸掉。
+    // The BigModel monitor endpoint sometimes returns an empty date or one not in yyyy-MM-dd format.
+    // Passing it directly to Intl.DateTimeFormat previously threw RangeError and broke the whole chart.
     return dateKey;
   }
   return new Intl.DateTimeFormat(locale, {

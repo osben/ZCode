@@ -1,28 +1,26 @@
 // ============================================================
-// 表满时腾位：谁可以让位、什么时候入座、以及被腾掉的东西怎么继续可数
+// Make room when the table is full: who can leave, when entries can take a slot, and how evicted entries remain countable
 // ============================================================
-// 淘汰规则是纯函数，不读取时钟或执行 I/O。表外条目的分阶段计数由 workflow-runs-unlisted.ts 维护。
+// Eviction rules are pure functions with no clock or I/O. Phase-based counting of unlisted entries is maintained by workflow-runs-unlisted.ts.
 //
-// 为什么要腾位。触界的老语义是**拒新**，而读面画的是「此刻哪些子代理在跑」——于是一个宽
-// fan-out 的 run 跑过 1024 之后，新起的子代理一个都进不来，run 卡与站点花名册永远停在最早
-// 那批**已经结束**的身上，恰好把这个特性存在的理由抹掉。腾位把它反过来：终态的条目让位。
+// Why make room. The old behavior at the limit was **reject new entries**, while the read view shows “which subagents are running now” — so after a wide
+// fan-out run exceeded 1024, no newly created subagent could enter, and the run card and phase roster stayed stuck on the earliest
+// **already completed** entries, removing the reason this feature exists. Eviction reverses that: terminal entries make room.
 //
-// 只淘汰终态条目还不够：一个阶段可能
-// 在头几秒里把**全部** actor-created 与**全部** node-queued 发完，头 1024 条还排着队就把两张表
-// 塞满，一条终态都没有，于是后面 976 个连人带活全被拒；调度器随后按 FIFO 派活，从第 1025 个
-// 开始每一个**正在跑**的子代理都不在表上。一个子代理变重要是在它**被派活**的那一刻，不是在
-// 它入队的那一刻——所以 `node-dispatched` 也是一次入座机会（下面的 activation）。
+// Evicting only terminal entries is not enough: a phase may emit **all** actor-created and **all** node-queued events in its first few seconds,
+// filling both tables with the first 1024 still-queued entries before any one terminates; the remaining 976 actors and nodes are rejected.
+// The scheduler then dispatches FIFO, leaving every **running** subagent from the 1025th onward outside the table. A subagent becomes important when it is **dispatched**,
+// not when it is queued — so `node-dispatched` is also an opportunity to take a slot (activation below).
 //
-// 表内优先级从高到低，按这个子代理**此刻**在做什么：**在跑**（有节点处于 dispatched /
-// executing / waiting / repairing / nudged）> **空闲**（一条在跑的都没有、还有排着队的：它在
-// 等槽位）> **已完成**（全部已结算）。三条不变量约束了谁可以让位，每一条都对应一个看得见的后果：
-//   1. 在跑的条目绝不让位——正在跑的那些正是要留住的东西；
-//   2. 一个 actor 绝不比它最后一个**已列**节点活得久：actor 三态由它名下的节点派生
-//      （workflow-runs-actor-status.ts），没有节点的 actor 会派生成 waiting，在读面上是一枚
-//      永远不会动的 pending 徽章。所以走的时候是整组走（actor + 它全部节点），而带不进自己
-//      那条节点的已完成 actor 干脆不上表（孤儿规则）；
-//   3. 让位的条目**仍然可数**：run 级两个计数器（workflow-runs-caps.ts）之外，再按**出生阶段**
-//      记一格（workflow-runs-unlisted.ts）——读面是按站画的。
+// Table priority, highest to lowest, follows what a subagent is doing **right now**: **running** (a node is dispatched /
+// executing / waiting / repairing / nudged) > **idle** (none are running but some are queued: waiting for a slot) > **completed** (all settled).
+// Three invariants constrain eviction, each with a visible consequence:
+//   1. Running entries never leave — they are exactly what must remain visible;
+//   2. An actor never outlives its last **listed** node: actor status is derived from its nodes
+//      (workflow-runs-actor-status.ts), and an actor without nodes derives as waiting, appearing as a pending badge that never moves.
+//      Therefore evict a whole group (actor + all its nodes), and do not list a completed actor whose node cannot fit (orphan rule);
+//   3. Evicted entries **remain countable**: in addition to the two run-level counters (workflow-runs-caps.ts),
+//      count by **birth phase** (workflow-runs-unlisted.ts) — the read view is drawn by phase.
 
 import {
   WORKFLOW_RUNS_LIMITS,
@@ -33,8 +31,8 @@ import {
 import { addToUnlistedBucket, withUnlistedBuckets } from "./workflow-runs-unlisted.js";
 
 /**
- * 归约使用的三项条目容量上限，默认使用 {@link WORKFLOW_RUNS_LIMITS}。
- * 淘汰与计数规则适用于调用方传入的上限。
+ * Three entry-capacity limits used by reduction, defaulting to {@link WORKFLOW_RUNS_LIMITS}.
+ * Eviction and counting rules apply to the limits supplied by the caller.
  */
 export interface WorkflowRunEntryLimits {
   readonly maxActors: number;
@@ -47,25 +45,25 @@ interface InstanceRef {
   ordinal: number;
 }
 
-/** 一个候选受害者：类内排序要用的两个键 + 它在表里的下标。 */
+/** Candidate victim: two keys for within-class sorting plus its index in the table. */
 interface Candidate {
   index: number;
   phaseName: string | undefined;
   failed: boolean;
 }
 
-/** 一个**非 live 组**：一个 actor 加上它名下的全部已列节点（下标），以及它属于哪一类。 */
+/** One **non-live group**: an actor plus all its listed nodes (by index), and its category. */
 interface Group extends Candidate {
   nodeIndexes: number[];
-  /** 名下节点全部已结算：这个子代理的活干完了。 */
+  /** All owned nodes have settled: this subagent has finished its work. */
   finished: boolean;
-  /** 一条在跑的都没有、却还有排着队的：这个子代理在等槽位，它的活还没开始。 */
+  /** None are running but some are queued: this subagent is waiting for a slot and has not started work. */
   idle: boolean;
-  /** 名下一条已列节点都没有：还没被问过，或者它的结算是不带 actor 的缓存命中。 */
+  /** No listed nodes owned by this actor: it has not been asked yet, or its settlement was a cache hit without an actor. */
   zeroNode: boolean;
 }
 
-/** 一个离场的子代理在它那一格上的增量（`phaseName` 是它的**出生**阶段）。 */
+/** Increment for one evicted subagent in its bucket (`phaseName` is its **birth** phase). */
 interface EvictedAgent {
   phaseName: string | undefined;
   actors: number;
@@ -73,13 +71,13 @@ interface EvictedAgent {
   actorsFailed?: number;
 }
 
-/** 一条节点事件的入座结果。 */
+/** Slot-admission result for one node event. */
 export interface WorkflowNodeSeating {
-  /** 腾过位（可能已淘汰若干条目）、并且 actor 已就位的 run。 */
+  /** Run after making room (possibly evicting multiple entries) and placing the actor. */
   run: WorkflowRunState;
-  /** 这条实例可以进节点表吗（false = 照旧拒新，调用方按被拒计数）。 */
+  /** Whether this instance may enter the node table (false = reject as before; caller counts it as rejected). */
   admitNew: boolean;
-  /** 这一次把一条**表外**实例放回了节点表（调用方据此把 nodesUnlisted 减 1）。 */
+  /** This admission returned an **unlisted** instance to the node table (caller decrements nodesUnlisted). */
   activated: boolean;
 }
 
@@ -92,30 +90,29 @@ function isFailed(node: WorkflowRunNode): boolean {
 }
 
 /**
- * 这条事件可以往表里放一个**新键**吗——以及同理，可以给 `nodesUsed` 加一步吗。
+ * May this event add a **new key** to the table — and, correspondingly, add a step to `nodesUsed`?
  *
- * **只有溢出过的 run（`truncated`）才收紧**，`live` 传的是那条收紧后的条件（抬过水位的出生
- * 事件，或下面的 activation）。界之下一律放行，与腾位改造之前逐字相同。
+ * **Restrict only runs that have overflowed (`truncated`)**; `live` represents the stricter condition (a birth
+ * event that advances the high-water mark, or activation below). Below the limit, always admit, exactly as before the eviction change.
  *
- * 为什么收紧：腾位是第一件让表**变短**的事，于是一个空出来的位子可能把一条早已计进
- * `nodesUnlisted` 的实例放回来（重放的事件，或者 `queued` 被拒之后才到的中间相位），那条实例
- * 就既列又计，总数说假话。
+ * Why restrict: eviction is the first operation that makes the table **shrink**, so a newly freed slot could bring back an instance already counted in
+ * `nodesUnlisted` (a replayed event or an intermediate phase that arrives after queued was rejected), making the instance both listed and counted and falsifying the total.
  *
- * 为什么不把它推广到所有 run：归约**照常施加**水位之下的事件（它只是不肯把水位拉回去），而
- * CLI 的冷物化把 journal 重放与在线事件喂进同一个归约。真要是在线事件先给一条 run 开了头，
- * 它整段 journal 前缀就全在水位之下——无差别收紧会让那条 run 的卡片空着。这两处窟窿都以
- * 「此前发生过拒绝或淘汰」为前提，也就是 `truncated`，所以按它收口不动界下的任何一条路径。
+ * Why not apply it to all runs: reduction **still applies** events below the high-water mark (it just will not lower the mark), and
+ * CLI cold materialization feeds journal replay and live events through the same reducer. If a live event starts a run first,
+ * its entire journal prefix is below the high-water mark — restricting every run would leave that run's card empty. Both gaps require
+ * a prior rejection or eviction, represented by `truncated`, so gating on it leaves every under-limit path unchanged.
  */
 export function admitsNewEntry(run: WorkflowRunState, live: boolean): boolean {
   return run.truncated !== true || live;
 }
 
 /**
- * actor 表满时给一个**活的新人**腾位：淘汰一个已完成组。表没满、新人其实已在表里、或者一个
- * 已完成组都没有时，原样返回（调用方随后照旧 upsert，触界仍然是拒新）。
+ * Make room in the actor table for an **active newcomer** by evicting a completed group. If the table is not full, the newcomer is already listed, or there is
+ * no completed group, return the original run (the caller then upserts as usual; a full table still rejects new entries).
  *
- * 出生只挤得动**已完成**的：一个还排着队的新人凭什么把另一个还排着队的挤掉——两个都没开工，
- * 换谁上表都是同一条没有信息量的记录。空闲组只在 activation（真的开工了）面前让位。
+ * Birth events can displace only **completed** groups: a newcomer still queued has no reason to displace another queued actor — neither has started work,
+ * and either row conveys the same lack of information. Idle groups yield only to activation (actual work starting).
  */
 export function withRoomForActor(
   run: WorkflowRunState,
@@ -129,10 +126,10 @@ export function withRoomForActor(
 }
 
 /**
- * 一条节点事件的入座：腾位、B2 的拒绝、以及带出生事实的派发（activation）三件事的唯一入口。
+ * Admission for one node event: the only entry point for eviction, B2 rejection, and dispatch with birth facts (activation).
  *
- * 归约主文件因此只需要把事件原样交过来，不必自己判「这条该不该入座」——那条判据有三支，
- * 每一支都有一个只在溢出之后才存在的理由。
+ * The main reducer can therefore pass the event through unchanged without deciding “should this be admitted?” — the predicate has three branches,
+ * each with a reason that exists only after overflow.
  */
 export function seatWorkflowNode(
   run: WorkflowRunState,
@@ -140,9 +137,9 @@ export function seatWorkflowNode(
     eventType: string;
     ref: InstanceRef;
     actorRef: InstanceRef | null;
-    /** 带出生事实的 `node-dispatched` 才有：按那份事实铸好的 actor 条目。 */
+    /** Present only on `node-dispatched` with birth facts: actor entry created from those facts. */
     actor: WorkflowRunActor | null;
-    /** 这条事件是这个实例的出生事件（`node-queued`，或缓存命中的 `node-settled`）。 */
+    /** Whether this event is the instance's birth event (`node-queued` or cache-hit `node-settled`). */
     born: boolean;
     advancesWaterMark: boolean;
   },
@@ -150,13 +147,13 @@ export function seatWorkflowNode(
 ): WorkflowNodeSeating {
   const byBirth = admitsNewEntry(run, seat.born && seat.advancesWaterMark);
   if (!seat.advancesWaterMark) return { run, admitNew: byBirth, activated: false };
-  // 重放的事件既不腾位也不入座：下面两支都以「抬过水位」为前提。
+  // Replayed events neither evict nor take a slot: both branches below require advancing the high-water mark.
   if (seat.eventType === "node-dispatched" && seat.actor !== null && run.truncated === true) {
     return activateInstance(run, seat.ref, seat.actor, limits);
   }
   if (seat.eventType !== "node-queued") return { run, admitNew: byBirth, activated: false };
-  // B2：溢出过的 run 里，一条认不出主人的 queued 连位子都不该占——它画不出徽章（pill 按
-  // run.actors 过滤），而后面被派下去的活正需要那个位子。游离节点（world-read）不在此列。
+  // B2: in an overflowed run, a queued node with no recognizable owner should not take a slot — it cannot render a badge (pills are filtered by
+  // run.actors), and later dispatched work needs that slot. Unowned nodes (world-read) are not subject to this rule.
   if (
     run.truncated === true &&
     seat.actorRef !== null &&
@@ -172,13 +169,12 @@ export function seatWorkflowNode(
 }
 
 /**
- * node 表满时给一个**活的新人**腾位：先淘汰一个已结算的游离节点（world-read 不属于任何人的组，
- * 淘汰它只少一行），没有就淘汰一个已完成组。同样在腾不出位时原样返回。
+ * Make room in a full node table for an **active newcomer**: first evict a settled unowned node (world-read belongs to no group,
+ * so eviction removes only one row); if none exists, evict a completed group. Return the original run if no slot can be freed.
  *
- * `owner` 是这条新节点所属的 actor。**它自己那个组绝不当受害者**：一个连做三次 ask 的子代理
- * 在第四次撞上满表时，它前三次的组看上去「已完成」，淘汰掉就等于把这个**正在被派活**的子代理
- * 从 actor 表上摘掉——新节点留在表里，指着一个不在表上的 actor，于是它一枚徽章都没有。
- * 一个刚拿到活的组，按定义就不是完成了的。
+ * `owner` is the actor that owns the new node. **Its own group is never a victim**: when a subagent doing its fourth ask hits a full table,
+ * its first three asks appear completed; evicting that group would remove this **currently dispatched** subagent from the actor table,
+ * leaving the new node pointing to a missing actor and rendering no badge. A group that just received work is not completed by definition.
  */
 function withRoomForNode(
   run: WorkflowRunState,
@@ -195,14 +191,14 @@ function withRoomForNode(
 }
 
 /**
- * **派发即入座。** 一条带着出生事实的 `node-dispatched`（引擎在派发那一刻重发这条实例的
- * `node-queued` 与它子代理的 `actor-created` 携带过的同一份事实）把表外的实例放回节点表，
- * 需要时连它的子代理一起放回 actor 表。
+ * **Dispatch means admission.** A `node-dispatched` event with birth facts (the engine resends the same facts carried by this instance's
+ * `node-queued` and its subagent's `actor-created` at dispatch time) returns an unlisted instance to the node table,
+ * and returns its subagent to the actor table when needed.
  *
- * 腾位的顺序是「先 actor 位、后节点位」，两步各自判各自的：为 actor 位淘汰掉一个**组**会连着
- * 空出至少一行节点，而淘汰一个**零节点** actor 一行都不空——所以第二步照样要重新看一眼表长。
- * 腾不出位就整条拒绝（此前那步淘汰随之作废，返回的是原样的 run），**不**只把节点放进去——
- * 一条指着表外 actor 的节点恰好是这条规则要消灭的东西。
+ * Make room in this order: actor slot, then node slot; each step checks its own table. Evicting a **group** for an actor slot also frees
+ * at least one node row, while evicting a **zero-node** actor frees none — so the second step must still recheck the table size.
+ * If no slot can be made, reject the whole admission (the earlier eviction is discarded and the original run is returned), **do not** add only the node —
+ * a node pointing to an unlisted actor is exactly what this rule is meant to eliminate.
  */
 function activateInstance(
   run: WorkflowRunState,
@@ -220,17 +216,17 @@ function activateInstance(
     next = evictGroup(next, victim, limits);
   }
   if (!nodeListed && next.nodes.length >= limits.maxNodes) {
-    // 顺位：自己名下最老的那条已结算节点 > 已结算的游离节点 > 别人的组。先丢自己的历史，
-    // 是因为丢它只少一行、而且 actor 还在表上（徽章不动）——一个子代理在拿走别人那一行之前
-    // 先交出自己的。少了这一条，一个连做 k 次 ask 的子代理会被**自己**已经跑完的那些活挡在
-    // 表外：它们既不是可淘汰的组（自己那个组不当受害者），又占着位子。
+    // Priority: oldest settled node owned by this actor > settled unowned node > another group's node. Drop its own history first,
+    // because that removes only one row and leaves the actor in the table (its badge remains); a subagent gives up its own row before taking another's.
+    // Without this rule, a subagent doing k asks could be blocked from the table by its **own** completed work: those nodes are not an evictable group
+    // (its group cannot be a victim) but still occupy slots.
     const own = ownSettledNodes(next, actor)[0];
     if (own !== undefined) next = evictSingleNode(next, own, limits);
     else {
       const loose = pickVictim(looseSettledNodes(next));
       if (loose !== undefined) next = evictSingleNode(next, loose, limits);
       else {
-        // 零节点 actor 在这里帮不上忙（它腾的是 actor 位，不是节点位），所以不许它当受害者。
+        // A zero-node actor cannot help here (this branch needs a node slot, not an actor slot), so it cannot be a victim.
         const victim = pickGroupVictim(next, actor, false);
         if (victim === undefined) return { run, admitNew: false, activated: false };
         next = evictGroup(next, victim, limits);
@@ -238,7 +234,7 @@ function activateInstance(
     }
   }
   if (!actorListed) {
-    // 回到表上的子代理从它那一格里减回去（workflow-runs-unlisted.ts）：它不再是表外的一个。
+    // Decrement the subagent's bucket when it returns to the table (workflow-runs-unlisted.ts): it is no longer unlisted.
     next = withUnlistedBuckets(
       { ...next, actors: [...next.actors, actor] },
       addToUnlistedBucket(next.unlistedByPhase, actor.phaseName, { actors: -1 }, limits.maxPhases),
@@ -248,8 +244,8 @@ function activateInstance(
 }
 
 /**
- * 一个**被拒的** `actor-created`：run 级没有 actor 计数器，它唯一的痕迹就是自己那一格。
- * 这一格随后可加可减——它说的是「此刻不在表上的子代理数」，不是历史累计。
+ * A **rejected** `actor-created`: there is no run-level actor counter, so its only trace is its bucket.
+ * This bucket can later increase or decrease — it represents the number of subagents currently unlisted, not a historical total.
  */
 export function absorbRefusedActor(
   run: WorkflowRunState,
@@ -263,13 +259,13 @@ export function absorbRefusedActor(
 }
 
 /**
- * 一条**出生即结算**的节点被拒之表外（缓存命中的 `node-settled`，它自己就是出生事件）：
- * 记进它出生阶段那一格，并按孤儿规则把它那个一条已列节点都没有的 actor 一起摘掉。
+ * A node **settled at birth** is rejected from the table (cache-hit `node-settled`, which is itself the birth event):
+ * count it in its birth-phase bucket and remove its actor too under the orphan rule, since the actor has no listed nodes.
  *
- * actor 本来就不在表上时**只**记节点那一格：那个子代理早已作为 `actors` 计在**它自己**的出生
- * 阶段上，而节点的阶段戳未必是同一个；何况一个有两次缓存命中的子代理会因此被记两次「已结束」。
- * 记不准的归属不如不记——它仍然是个未列出的子代理，读面把它算作 pending，直到它重新上表。
- * run 级两个计数器不在这里加——那是 `countUnlistedInstance` 的活，两处加会翻倍。
+ * If the actor is already unlisted, count **only** the node bucket: that subagent was already counted as `actors` in **its own** birth-phase bucket,
+ * and the node's phase stamp may differ; moreover, a subagent with two cache-hit nodes would otherwise count twice as “completed.”
+ * When attribution is uncertain, omit it — the subagent remains unlisted and the read view counts it as pending until it returns to the table.
+ * Do not increment the two run-level counters here — that is `countUnlistedInstance`'s job, and doing it in both places would double count.
  */
 export function absorbRefusedSettledNode(
   run: WorkflowRunState,
@@ -290,7 +286,7 @@ export function absorbRefusedSettledNode(
   const actor = index < 0 ? undefined : run.actors[index]!;
   const orphan = actor !== undefined && !ownsListedNode(run, actor);
   if (orphan) {
-    // 孤儿是可归属的、而且只发生一次：这个 actor 就在表上，它的出生阶段是它自己带的那个。
+    // The orphan can be attributed and counted only once: this actor is in the table, and carries its own birth phase.
     buckets = addToUnlistedBucket(
       buckets,
       actor.phaseName,
@@ -305,11 +301,11 @@ export function absorbRefusedSettledNode(
 }
 
 /**
- * 新一世的两张表。**溢出过的 run 从空表重开**：重臂会把整段脚本前缀再发一遍，而只有空表才能
- * 让每条实例在这一世要么被列、要么被计，恰好一次。留着一张缺过条目的表则两头都算——前缀里
- * 那条被淘汰的实例先进了 `nodesUnlisted`，重发时又落回表里。
+ * The two tables for a new incarnation. **An overflowed run restarts with empty tables**: re-arming replays the entire script prefix, and only empty tables
+ * ensure every instance in this incarnation is either listed or counted exactly once. Keeping a table with prior omissions would count some entries twice — an evicted instance in the prefix
+ * was already added to `nodesUnlisted` and would return to the table on replay.
  *
- * 没溢出过的 run 原样保留（连引用都不换）：普通 resume 的历史不该被抹掉。
+ * Preserve non-overflowed runs exactly as they are (even object references): ordinary resume must not erase history.
  */
 export function workflowRunTablesForNewLife(run: WorkflowRunState): {
   actors: WorkflowRunActor[];
@@ -320,10 +316,10 @@ export function workflowRunTablesForNewLife(run: WorkflowRunState): {
 }
 
 /**
- * 一次 activation 的组受害者：已完成组 > 空闲组 > 零节点 actor。`owner` 那个组永远排除在外。
+ * Group victim for an activation: completed group > idle group > zero-node actor. Always exclude the `owner` group.
  *
- * `allowZeroNode` 只有 **actor 位**那一支传 true：一个零节点 actor 走了只空出一个 actor 位、
- * 一行节点都不空，拿它去顶节点位会让调用方以为腾到了位子，实际那条节点仍然进不去。
+ * Only the **actor-slot** branch passes `allowZeroNode = true`: removing a zero-node actor frees one actor slot but no node slots;
+ * using it to free a node slot would make the caller think it created room when the node still cannot enter.
  */
 function pickGroupVictim(
   run: WorkflowRunState,
@@ -333,12 +329,12 @@ function pickGroupVictim(
   const groups = spareGroups(run, owner);
   return (
     pickVictim(groups.filter((group) => group.finished)) ??
-    // 空闲组取表内**最靠后**的：FIFO 下最后建出来的那个最后才轮到派活，它的位子最不急着用。
+    // Choose the **last** idle group in table order: with FIFO dispatch, the most recently created one is dispatched last, so its slot is least urgent.
     groups.filter((group) => group.idle).at(-1) ??
-    // 零节点 actor 同理取最靠后的，而且是最后一档：它没有节点、没有分数、表里也没有历史，
-    // 淘汰它读者看不见任何损失，而它自己下一次被派活时会带着事实回来。少了这一档，一次
-    // resume 之后的宽 fan-out 会卡死——空表重开、前缀把 2000 个 actor 重新建出来、命中缓存的
-    // 结算又不带 actor，于是一张全是零节点 actor 的表谁都淘汰不动，此后每一次派发都被拒。
+    // Similarly choose the last zero-node actor, and only as a last resort: it has no nodes, score, or table history,
+    // so readers see no loss when it is evicted, and it returns with its facts when next dispatched. Without this tier, a wide fan-out after
+    // resume can deadlock — empty tables restart, the prefix recreates 2,000 actors, cache-hit settlements omit actors,
+    // leaving a table full of zero-node actors that nobody can evict; every later dispatch is rejected.
     (allowZeroNode ? groups.filter((group) => group.zeroNode).at(-1) : undefined)
   );
 }
@@ -350,15 +346,15 @@ function spareGroups(run: WorkflowRunState, owner: InstanceRef | null): Group[] 
 }
 
 /**
- * 类内的排序：未失败的先走（失败是读者唯一还想找回来的已结算事实），然后取候选最多的那个
- * 阶段（界花在条目拥挤的地方），最后取表内最靠前的。纯函数，所以冷回放淘汰出同一个集合。
+ * Within-class ordering: evict non-failed entries first (failures are the only completed facts readers may want to revisit), then choose the phase with the most candidates
+ * (spend the limit where entries are crowded), then choose the earliest in table order. This is pure, so cold replay evicts the same set.
  */
 function pickVictim<T extends Candidate>(candidates: readonly T[]): T | undefined {
   if (candidates.length === 0) return undefined;
   const unfailed = candidates.filter((candidate) => !candidate.failed);
   const pool = unfailed.length > 0 ? unfailed : candidates;
   const crowd = new Map<string, number>();
-  // 阶段名不可能是空串（schema 的 min(1)），所以空串拿来当「无阶段」那一格的键不会撞车。
+  // Phase names cannot be empty (schema min(1)), so the empty string is a safe key for the unphased bucket.
   for (const candidate of pool) {
     const key = candidate.phaseName ?? "";
     crowd.set(key, (crowd.get(key) ?? 0) + 1);
@@ -367,7 +363,7 @@ function pickVictim<T extends Candidate>(candidates: readonly T[]): T | undefine
   let bestCrowd = crowd.get(best.phaseName ?? "") ?? 0;
   for (const candidate of pool) {
     const size = crowd.get(candidate.phaseName ?? "") ?? 0;
-    // 只在**严格**更拥挤时换人，于是同分时留下的是表内最靠前的那个。
+    // Replace only when **strictly** more crowded, so ties keep the earliest candidate in table order.
     if (size > bestCrowd) {
       best = candidate;
       bestCrowd = size;
@@ -377,14 +373,13 @@ function pickVictim<T extends Candidate>(candidates: readonly T[]): T | undefine
 }
 
 /**
- * 表里全部**非 live** 的组，按 actor 表序。有至少一条已列节点是成组的前提——一个还没拿到活的
- * actor 不是任何人的候选（它的 `node-queued` 可能正在路上）。
+ * All **non-live** groups in the table, in actor-table order. A group must have at least one listed node — an actor not yet assigned work
+ * is not a candidate (its `node-queued` event may still be in transit).
  *
- * 分两类，按这个子代理**此刻**在做什么：一条排队中的节点都没有 = 它的活干完了（finished）；
- * 有排队中的节点 = 它在等槽位（idle），名下另有几条已结算的 ask 不改变这件事。一个连做三次
- * ask 的子代理跑完第一次、第二次还排着队时正是后者——按「全部节点都排着队」认它，它就成了
- * 一个既不 live 又谁都淘汰不动的组，于是一张塞满这种组的表会把真正在跑的新人挡在门外，
- * 那恰好是这套规则要消灭的症状（生成的引擎形状事件流里每条 run 会因此漏掉 2–4 个在跑的子代理）。
+ * Two categories based on what the subagent is doing **right now**: no queued nodes means its work is finished;
+ * any queued node means it is idle, waiting for a slot — other settled asks do not change that. A subagent doing three asks, with the first complete and the next queued,
+ * is the latter. If it were classified as “all nodes are queued,” it would become a group that is neither live nor evictable, allowing a table full of such groups to block active newcomers,
+ * exactly the symptom this rule removes (engine-shaped event streams showed each run losing 2–4 active subagents).
  */
 function listedGroups(run: WorkflowRunState): Group[] {
   const owned = new Map<
@@ -412,15 +407,15 @@ function listedGroups(run: WorkflowRunState): Group[] {
       nodeIndexes: bucket?.nodeIndexes ?? [],
       finished: bucket !== undefined && !bucket.queued,
       idle: bucket?.queued === true,
-      // 一条已列节点都没有：只有 activation 的 actor 位那一支拿它当受害者（见 pickGroupVictim），
-      // 出生那两条路径都只认 `finished`，所以这一档不会在界之下改变任何东西。
+      // No listed nodes: only the actor-slot branch of activation treats it as a victim (see pickGroupVictim);
+      // both birth paths accept only `finished`, so this tier does not change any under-limit behavior.
       zeroNode: bucket === undefined,
     });
   });
   return groups;
 }
 
-/** 游离节点：没有 actor 的已列节点（world-read）。只有已结算的才是候选。 */
+/** Unowned node: a listed node with no actor (world-read). Only settled nodes are candidates. */
 function looseSettledNodes(run: WorkflowRunState): Candidate[] {
   const candidates: Candidate[] = [];
   run.nodes.forEach((node, index) => {
@@ -431,10 +426,10 @@ function looseSettledNodes(run: WorkflowRunState): Candidate[] {
 }
 
 /**
- * 新人**自己**名下已结算的节点，按表序（最靠前 = 最老的那次 ask）。
+ * Settled nodes owned by the newcomer **itself**, in table order (earliest = oldest ask).
  *
- * 不走 {@link pickVictim}：这一类里的取舍不是「哪个最该走」而是「哪段历史最旧」，而最旧的那条
- * 恰好是读者最不会回头找的。整组仍然绝不当受害者——这里丢的是行，不是人。
+ * Does not use {@link pickVictim}: selection here is not “which one is the best victim?” but “which history is oldest?” — the oldest is least likely to be revisited by readers.
+ * The whole group still cannot be a victim; this removes a row, not a person.
  */
 function ownSettledNodes(run: WorkflowRunState, owner: InstanceRef): Candidate[] {
   const candidates: Candidate[] = [];
@@ -456,7 +451,7 @@ function instanceKey(ref: InstanceRef): string {
   return `${ref.siteId}\0${ref.ordinal}`;
 }
 
-/** 整组离场：actor 与它全部节点在**同一次**归约里从两张表上消失，其余条目保序。 */
+/** Remove a whole group: the actor and all its nodes leave both tables in **one** reduction, preserving the order of other entries. */
 function evictGroup(
   run: WorkflowRunState,
   group: Group,
@@ -465,8 +460,8 @@ function evictGroup(
   const actor = run.actors[group.index]!;
   const dropped = new Set(group.nodeIndexes);
   const evicted = group.nodeIndexes.map((index) => run.nodes[index]!);
-  // 已完成组走的时候带着「这个子代理已经结束了」；空闲组只是让位，它的活还没开始，往后还会
-  // 在自己被派活的那一刻回到表上（activation），所以不记 actorsSettled。
+  // Evicting a completed group carries the fact “this subagent has finished”; an idle group only makes room, and its work has not started yet.
+  // It will return to the table when dispatched (activation), so do not count it in actorsSettled.
   return {
     ...withUnlistedEvictions(
       run,
@@ -485,10 +480,10 @@ function evictGroup(
 }
 
 /**
- * 单独一行节点离场：一条已结算的游离节点，或者新人自己名下最老的那条已结算节点。
+ * Remove one node row: either a settled unowned node or the newcomer's oldest settled node.
  *
- * 两处用同一条记账，因为它们对**人**的账毫无影响：没有 actor 离场，所以只有节点那三笔
- * （run 级两个计数器 + 这条节点出生阶段那一格的 `settled`）。
+ * Both paths use the same accounting because neither changes the **actor** count: no actor leaves, so record only the three node counts
+ * (two run-level counters + `settled` in this node's birth-phase bucket).
  */
 function evictSingleNode(
   run: WorkflowRunState,
@@ -504,10 +499,10 @@ function evictSingleNode(
 }
 
 /**
- * 被淘汰的条目记进 run 级两个计数器与各自的出生阶段那一格。
+ * Record evicted entries in the two run-level counters and their respective birth-phase buckets.
  *
- * `nodesUnlisted` 按淘汰掉的**全部**节点加，`nodesUnlistedSettled` 只按其中**已结算**的那些：
- * 一个空闲组走的时候带的是还排着队的节点，它们还没结算，算进去会让完成度虚高。
+ * Increment `nodesUnlisted` for **all** evicted nodes, and `nodesUnlistedSettled` only for those already **settled**:
+ * an evicted idle group contains queued nodes that have not settled; counting them would inflate completion.
  */
 function withUnlistedEvictions(
   run: WorkflowRunState,
@@ -533,7 +528,7 @@ function withUnlistedEvictions(
       usage: {
         ...run.usage,
         nodesUnlisted: (run.usage.nodesUnlisted ?? 0) + nodes.length,
-        // 零时整个键缺席（与 workflow-runs-caps.ts 同规）。
+        // Omit the entire key when zero (same convention as workflow-runs-caps.ts).
         ...(settledTotal > 0 ? { nodesUnlistedSettled: settledTotal } : {}),
       },
     },

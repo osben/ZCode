@@ -79,7 +79,7 @@ async function runCuaPermissionPrompt(
   if (!(await dependencies.confirm(beforeConfirm))) return;
   assertCuaPermissionPromptActive(dependencies);
 
-  // 原因：确认框停留期间可能已从另一窗口授权，打开设置前必须再读一次 Helper 真值。
+  // The user may authorize from another window while the confirmation dialog is open, so read the Helper's current state again before opening settings.
   const afterConfirm = await readMissing();
   if (afterConfirm.length === 0) return;
   const result = await runWithOneRetry(
@@ -92,7 +92,7 @@ async function runCuaPermissionPrompt(
   );
   if (result.canceled) return;
   if (shouldRestartHelperAfterCuaPermissionReturn(result)) {
-    // 原因：Helper 重启失败时只能重试重启本身，重复打开系统设置会打断用户操作。
+    // Reason: if restarting the Helper fails, only the restart itself can be retried; reopening system settings would interrupt the user.
     await runWithOneRetry(
       dependencies,
       () =>
@@ -185,7 +185,7 @@ export function CuaPermissionObservationAttachment() {
               isDisposed: () => disposed,
             });
             if (disposed) return;
-            // 原因：只有正常终态（包括用户取消）才能去重；异常必须允许同一 observation 再次处理。
+            // Reason: deduplicate only normal terminal outcomes (including user cancellation); errors must allow the same observation to be processed again.
             handled.add(key);
             if (handled.size > 2_000) {
               const oldest = handled.values().next().value;
@@ -200,7 +200,7 @@ export function CuaPermissionObservationAttachment() {
       },
     );
     return () => {
-      // 原因：先封闭生命周期边界，避免已排队任务在 subscription 释放后继续触发旧 workspace 副作用。
+      // Reason: close the lifecycle boundary first so queued work cannot trigger side effects in the old workspace after the subscription is released.
       disposed = true;
       subscription.dispose();
       if (activeOperationId) platform.cancelCuaPermissionOnboarding?.(activeOperationId);

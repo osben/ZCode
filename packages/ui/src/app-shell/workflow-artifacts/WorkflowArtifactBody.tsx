@@ -20,21 +20,21 @@ import { usePdfViewerLabels, usePptxViewerLabels } from "@/hooks/usePreviewViewe
 import type { Theme } from "@/useTheme.js";
 
 /**
- * `workflow-artifact` tab 的正文。
+ * Body of the `workflow-artifact` tab.
  *
- * ⚠ 术语：artifact = 脚本经 `artifact.*` 发布给用户看的产出。
+ * ⚠ Terminology: artifact = output published to the user by a script through `artifact.*`.
  *
- * **零新渲染依赖**：pdf / 图片 / markdown / office / 文本全部走既有的叶子查看器，预置看板走
- * 4b 的四个渲染器。分派的判据是 journal 记录上的 `contentType`——它由 driver 按扩展名表算出、
- * 可被 `opts.contentType` 覆盖，是这条链路唯一的类型真相（store 读回来时会自己重新嗅一次，
- * 那个值刻意不用）。
+ * **No new rendering dependencies**: pdf / image / markdown / office / text use existing leaf viewers; preset dashboards use
+ * the four 4b renderers. Dispatch is based on `contentType` in the journal record—it is computed by the driver from the extension table,
+ * can be overridden by `opts.contentType`, and is the only type authority in this path (the store re-sniffs it on readback,
+ * and that value is intentionally ignored).
  *
- * **刻意不做 iframe**：renderer 没有 CSP，`allow-scripts allow-same-origin` 的 sandbox 组合
- * 等价于逃逸。html 因此走既有的浏览器 tab（见 `WorkflowArtifactHtmlCard`）。
+ * **No iframe by design**: the renderer has no CSP, and the `allow-scripts allow-same-origin` sandbox combination
+ * is equivalent to escaping the sandbox. HTML therefore uses the existing browser tab (see `WorkflowArtifactHtmlCard`).
  */
 
-// 三个重量级查看器都懒加载：pdf.js / docx-preview / xlsx wasm 各自都是几百 KB，
-// 而绝大多数会话从不打开产物 tab。既有的 previewPane* 包装本身已经带 Suspense。
+// All three heavyweight viewers are lazy-loaded: pdf.js / docx-preview / xlsx wasm are each several hundred KB,
+// while most sessions never open an artifact tab. The existing previewPane* wrappers already include Suspense.
 const PdfPreviewContent = lazy(() =>
   import("@/previewPanePdfContent.js").then((module) => ({ default: module.PdfPreviewContent })),
 );
@@ -52,7 +52,7 @@ const PPTX_CONTENT_TYPE =
 const DOCX_CONTENT_TYPE = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
 const XLSX_CONTENT_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 
-/** 文本类：正文用等宽 code viewer 呈现。`text/markdown` 不在其中——它走 MessageResponse。 */
+/** Text types: render the body in a monospace code viewer. `text/markdown` is excluded; it uses MessageResponse. */
 function textLanguageFor(contentType: string): string | undefined {
   if (contentType === "application/json") return "json";
   if (contentType === "text/csv") return "csv";
@@ -63,27 +63,27 @@ function textLanguageFor(contentType: string): string | undefined {
 
 interface WorkflowArtifactBodyProps {
   artifact: WorkflowRunArtifactView;
-  /** 正在查看的版本；内容产物的字节按它读。 */
+  /** Version currently being viewed; content artifact bytes are read for this version. */
   version: number;
   bytes: Uint8Array<ArrayBuffer> | null;
   blob: Blob | null;
   objectUrl: string | null;
-  /** 字节读取的状态：loading 与 error 都由本组件呈现（各查看器自己的 loading 只覆盖解析）。 */
+  /** Byte-read state: this component renders loading and error states (each viewer’s own loading state covers parsing only). */
   loading: boolean;
   error: string | null;
-  /** 预置看板的条目流；内容产物恒空。 */
+  /** Item stream for preset dashboards; always empty for content artifacts. */
   items: readonly ArtifactItem[];
   theme: Theme;
   resolvedTheme: "light" | "dark";
-  /** html 的「在浏览器中打开」；缺席即只显示提示。 */
+  /** “Open in browser” action for HTML; when absent, show only a hint. */
   onOpenBrowserUrl?: (url: string) => void;
-  /** 本地文件系统上的绝对路径（desktop-local ∧ `sourcePath` 在场时才有）。 */
+  /** Absolute path on the local file system (present only for desktop-local when `sourcePath` is available). */
   localSourcePath?: string;
-  /** 「在工作区显示」：已绑定好路径的文件树 reveal；缺席即无渲染器的卡片上不出这个按钮。 */
+  /** “Show in workspace”: reveal a file tree with a bound path; without it, cards with no renderer do not show this button. */
   onReveal?: () => void;
-  /** 查看的是不是最新版——旧版的工作区原文件早就被覆盖了，html 预览因此只对最新版开放。 */
+  /** Whether this is the latest version—the original workspace file for an older version has already been overwritten, so HTML preview is available only for the latest version. */
   isLatestVersion: boolean;
-  /** 元数据（含预置看板的 spec）还在读；预置正文据此区分「还没到」与「真的没有」。 */
+  /** Metadata (including preset dashboard spec) is still loading; use it to distinguish “not here yet” from “does not exist.” */
   metadataLoading: boolean;
 }
 
@@ -91,7 +91,7 @@ export function WorkflowArtifactBody(props: WorkflowArtifactBodyProps) {
   const { intl } = useZCodeIntl();
   const { artifact } = props;
 
-  // 预置看板不读字节，直接画。
+  // Preset dashboards do not read bytes; render them directly.
   if (isArtifactPresetKind(artifact.kind)) {
     const labels = buildPresetLabels((descriptor, values) =>
       intl.formatMessage(descriptor, values),
@@ -105,8 +105,8 @@ export function WorkflowArtifactBody(props: WorkflowArtifactBodyProps) {
           invalidLabel={intl.formatMessage({
             id: "chat.toolCall.workflow.run.artifacts.presetInvalid",
           })}
-          // spec 只有 journal 查询带得回来，所以**元数据读完之前**不能说「读不到」——
-          // 否则每个看板打开时都先闪一次错误文案。
+          // The spec is available only from the journal query, so **before metadata finishes loading** do not say “unavailable”—
+          // otherwise every dashboard briefly flashes an error message when opened.
           {...(props.metadataLoading
             ? {}
             : {
@@ -142,8 +142,8 @@ export function WorkflowArtifactBody(props: WorkflowArtifactBodyProps) {
 }
 
 /**
- * 字节已就绪之后的分派。拆成第二个组件的理由是 hooks：markdown 的解码、office 的 base64
- * 回程都得用 `useMemo`，而它们在「还没读到字节」的那一帧不能被跳过（hooks 数量必须恒定）。
+ * Dispatch after bytes are ready. This is a separate component because of hooks: markdown decoding and office base64
+ * conversion both use `useMemo`, and those hooks cannot be skipped on the frame where bytes are not ready (the hook count must remain constant).
  */
 function WorkflowArtifactContent({
   artifact,
@@ -162,7 +162,7 @@ function WorkflowArtifactContent({
   const pptxLabels = usePptxViewerLabels();
   const contentType = artifact.contentType ?? "application/octet-stream";
 
-  // 文本三态（markdown / 代码 / html 源）共用一次解码。TextDecoder 在 renderer 里恒在。
+  // Decode the three text states (markdown / code / HTML source) once. TextDecoder is always available in the renderer.
   const text = useMemo(() => {
     if (
       contentType !== "text/markdown" &&
@@ -174,8 +174,8 @@ function WorkflowArtifactContent({
     return new TextDecoder().decode(bytes);
   }, [bytes, contentType]);
 
-  // office 查看器只吃 `FileBinaryPreview.dataBase64`，所以这里走一次回程编码。
-  // 只在真的是 office 文件时才算——20 MiB 的 base64 不该为一份 pdf 白算一遍。
+  // The office viewer accepts only `FileBinaryPreview.dataBase64`, so encode the bytes back to base64 once here.
+  // Do this only for actual office files—do not compute 20 MiB of base64 unnecessarily for a PDF.
   const officePreview = useMemo<FileBinaryPreview | null>(() => {
     if (contentType !== DOCX_CONTENT_TYPE && contentType !== XLSX_CONTENT_TYPE) return null;
     return {
@@ -185,7 +185,7 @@ function WorkflowArtifactContent({
     };
   }, [artifact.id, artifact.sourcePath, bytes, contentType]);
 
-  // pptx 查看器吃 ArrayBuffer。`slice` 出一份独立缓冲：Uint8Array 的 buffer 可能带偏移。
+  // The PPTX viewer accepts an ArrayBuffer. `slice` creates an independent buffer because a Uint8Array buffer may have an offset.
   const pptxBuffer = useMemo(
     () =>
       contentType === PPTX_CONTENT_TYPE
@@ -196,7 +196,7 @@ function WorkflowArtifactContent({
 
   if (contentType === "text/markdown") {
     return (
-      // markdown 必须**传 theme**：portfolio 修过一次深底深字（渲染器按 theme 选代码块配色）。
+      // **Pass the theme** to markdown: a previous fix addressed dark text on a dark background (the renderer selects code-block colors by theme).
       <div className="h-full min-h-0 overflow-y-auto px-4 py-4" data-artifact-body="markdown">
         <MessageResponse
           className="mx-auto w-full min-w-0 max-w-4xl break-words text-foreground"
@@ -212,7 +212,7 @@ function WorkflowArtifactContent({
     return (
       <div className="h-full min-h-0" data-artifact-body="pdf">
         <Suspense fallback={<ArtifactNotice text={pdfLabels.loading} />}>
-          {/* PdfViewerSource 接受 Blob——不必落地成文件也不必走 range transport。 */}
+          {/* PdfViewerSource accepts a Blob; no need to write a file or use range transport. */}
           <PdfPreviewContent labels={pdfLabels} source={blob ?? new Blob([bytes])} />
         </Suspense>
       </div>
@@ -297,9 +297,9 @@ function WorkflowArtifactContent({
     );
   }
 
-  // 表外类型（`application/octet-stream` 与一切没人认得的东西）：给一张**元数据卡**，
-  // 不假装能渲染。卡上带「在工作区显示」——那是这种产物唯一能对它做的事（没有「下载」：
-  // renderer 没有任何把字节存成用户文件的宿主能力）。
+  // Types outside the table (`application/octet-stream` and everything unrecognized): show a **metadata card**
+  // without pretending they can be rendered. The card includes “Show in workspace,” the only available action for this artifact (there is no “Download”:
+  // the renderer has no host capability to save these bytes as a user file).
   return (
     <ArtifactMetadataCard
       artifact={artifact}

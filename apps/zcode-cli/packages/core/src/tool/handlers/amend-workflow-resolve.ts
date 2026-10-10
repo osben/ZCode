@@ -1,11 +1,12 @@
 // ============================================================
-// AmendWorkflow：确认之前的一切（resolveInput 与它的结构化失败）
+// AmendWorkflow: everything before confirmation (resolveInput and its structured failures)
 // ============================================================
 //
-// 从 amend-workflow.ts 拆出：那边是 handler 与工具声明，这里是**全流程唯一一次读端口**——把模型
-// 的入参归一成「将要发生的执行事实」。每个可省略的字段守同一条规则（省略即沿用前驱），三样都在这里
-// 落定：脚本（三条来路，见 amend-workflow-source.ts）、并发上界、子代理模型。此后 hook、权限、
-// 确认窗与 handler 面对的只有「一份脚本、一个数或没有、一个规范形或没有」。
+// Split from amend-workflow.ts: that file contains the handler and tool declaration; this is the **only port read in the flow**.
+// It normalizes model input into “facts about the execution that is about to happen.” Every optional field follows the same rule
+// (omission reuses the predecessor), and all three are resolved here: script (three sources; see amend-workflow-source.ts),
+// concurrency limit, and subagent model. Hooks, permissions, confirmation, and the handler then see only one script, one number
+// or none, and one canonical model or none.
 
 import {
   AmendWorkflowInputSchema,
@@ -36,7 +37,7 @@ export {
   validateAmendWorkflowSource,
 } from "./amend-workflow-source.js";
 
-/** 前驱不存在：复用内省工具的 `run_not_found`，只补一句点名 `run_id`。 */
+/** The predecessor does not exist: reuse the introspection tool's `run_not_found`, adding only a sentence naming `run_id`. */
 export function predecessorNotFoundFailure(runId: string): ToolHandlerFailure {
   const base = workflowRunNotFoundFailure(runId);
   return {
@@ -46,19 +47,21 @@ export function predecessorNotFoundFailure(runId: string): ToolHandlerFailure {
 }
 
 /**
- * 全流程唯一一次读端口：把 `run_id` 解析成 `predecessor` 事实块回填进入参。
+ * The only port read in the flow: resolve `run_id` into the predecessor facts and add them to the input.
  *
- * 权限判定（本会话的 run 免确认，permission/service.ts）与确认窗（「仍在运行，将被停止」）都
- * 读它，而两处都在 handler 之前且必须同步，所以只能在这里算好。**无条件覆盖**模型给的任何
- * `predecessor`：伪造它是无效的。前驱不存在在这里就收口——不弹一次注定失败的确认窗。
+ * Both permission checks (runs in this session do not require confirmation; permission/service.ts) and the confirmation dialog
+ * (“still running and will be stopped”) read these facts. Both run before the handler and must be synchronous, so resolve them here.
+ * **Always overwrite** any model-provided `predecessor`; a forged value is invalid. If the predecessor is missing, stop here instead
+ * of showing a confirmation dialog that is guaranteed to fail.
  *
- * 顺序不能换：前驱查找（不存在就是 `run_not_found`，与脚本无关）→ 落定脚本（读文件或读前驱
- * 存档；读不出来点名原因）→ 比字节（`script_unchanged`）。倒过来做的话，一个指向不存在的 run 的
- * 调用会先因为文件读不出来而报错，模型就会去修一个根本不是问题的东西。
+ * Keep this order: find the predecessor (missing means `run_not_found`, independent of the script) → resolve the script (read the
+ * file or predecessor snapshot; name the reason if it cannot be read) → compare bytes (`script_unchanged`). Reversing it would make
+ * a request for a missing run fail first because its file cannot be read, prompting the model to fix something that is not the problem.
  *
- * 端口缺席（未接线的宿主）时，给了脚本（内联或文件）就原样放行：handler 会走「只 typecheck、
- * 不执行」那条路，与 CreateWorkflow 同形；权限侧读不到 `predecessor` 就照常 ask。两个来源都没给
- * 则无从沿用，当场失败——不能退化成「只 typecheck」，因为没有可编译的东西。
+ * If the port is absent (an unwired host), pass through a supplied script (inline or file) as-is: the handler will only typecheck
+ * it, without executing, matching CreateWorkflow. Permissions cannot read `predecessor`, so they ask as usual. If neither script
+ * source is provided, there is nothing to reuse and the call fails immediately; it cannot fall back to typechecking because there is
+ * nothing to compile.
  */
 export async function resolveAmendWorkflowInput(
   input: unknown,
@@ -79,8 +82,8 @@ export async function resolveAmendWorkflowInput(
     void _forged;
     void _model;
     void _offset;
-    // 没有端口就既没有前驱也没有天花板：`null`（解除）与「沿用」都塌成缺席，数原样过。
-    // 归一化后的入参此后永远只有「一个数或没有」这一种形状。
+    // Without a port there is neither a predecessor nor a ceiling: `null` (clear) and omission (reuse) both become absent, while a number passes through unchanged.
+    // From here on, normalized input always has one shape: one number or none.
     const subagentModel = resolveAmendSubagentModel(
       parsed.data.subagent_model,
       undefined,
@@ -107,9 +110,9 @@ export async function resolveAmendWorkflowInput(
   const snapshot = await port.getTask(parsed.data.run_id);
   if (snapshot === undefined) return predecessorNotFoundFailure(parsed.data.run_id);
   const predecessor = describePredecessor(snapshot, context.sessionId);
-  // 路由在这里分岔，而且只能在这里：刚读完前驱（于是知道它还活不活），入参形状又摆在眼前
-  // （于是知道除并发外有没有别的要变）。命中即就地调并发——不读脚本、不继承、不编译，
-  // 归一化后的入参因此**没有 script**，那也是 handler 与 prepareApproval 认出这条路的凭据。
+  // Branch the route here and only here: the predecessor was just read (so we know whether it is live), and the input shape shows
+  // whether anything besides concurrency changes. On a match, adjust concurrency in place—without reading, inheriting, or compiling
+  // a script. Normalized input therefore has **no script**, which is how the handler and prepareApproval recognize this route.
   const retune = resolveConcurrencyRetuneRoute({
     model: parsed.data,
     port,
@@ -141,7 +144,7 @@ export async function resolveAmendWorkflowInput(
     predecessor: _forged,
     max_concurrency: _tristate,
     subagent_model: _model,
-    // 行偏移与 `predecessor` 同一姿态：解析结果，模型给的一律作废（下面按文件重算）。
+    // Like `predecessor`, this is a resolved fact; discard any model-provided offset (recomputed from the file below).
     script_line_offset: _offset,
     ...rest
   } = parsed.data;
@@ -166,17 +169,17 @@ export async function resolveAmendWorkflowInput(
 }
 
 /**
- * 子代理模型的三态归一，与并发上界
- * 同一条形状约定——三态只活到这里，确认窗与 handler 之后面对的只有「一个规范形或没有」：
+ * Normalize the subagent model's three states using the same shape convention as the concurrency limit. The three states end here;
+ * confirmation and the handler see only one canonical model or none:
  *
- *   - 字符串 → 解析；解不出来整次调用失败（什么都没停、没建，窗也不开）。
- *   - `null` → 解除，键整个消失（新 run 跑回会话模型）。
- *   - 省略 → 沿用前驱快照的那一个，并**重新解析一遍**。前驱可能是几天前起的，那个模型此后
- *     可能被删掉或停用；不重解的话失败要等到子代理第一次开口时才发生，那时看起来像运行时故障。
+ *   - String → resolve it; if resolution fails, fail the entire call (nothing is stopped or created, and no dialog opens).
+ *   - `null` → clear it, removing the key entirely (the new run uses the session model).
+ *   - Omitted → reuse the predecessor snapshot and **resolve it again**. The predecessor may be days old, and its model may since
+ *     have been removed or disabled. Without re-resolution, failure would occur only when the subagent first speaks, appearing as a runtime failure.
  *
- * 目录缺席时两种来源分开处理：模型自己给的字符串照 `CreateWorkflow` 拒掉（宿主解不了的东西
- * 不静默放行），而**沿用**的那一个原样带过去——它在前驱那一次已经被解析过，为一个这次调用
- * 根本没提到的字段让整次修订失败，是把一个宿主接线缺口记到用户头上。
+ * If the catalog is absent, handle the two sources differently: reject a model-provided string as CreateWorkflow does (do not silently
+ * pass through a value the host cannot resolve), but pass through an **inherited** model unchanged. It was already resolved for the
+ * predecessor; failing the whole revision over a field omitted from this call would blame the user for a host wiring gap.
  */
 function resolveAmendSubagentModel(
   requested: string | null | undefined,
@@ -190,8 +193,8 @@ function resolveAmendSubagentModel(
       field: choice.canonical === undefined ? {} : { subagent_model: choice.canonical },
     };
   }
-  // 沿用的那一个失败时必须说清它是**继承来的**：模型这次调用压根没提模型名，直接把解析
-  // 诊断丢给它，它会以为自己传错了参数，然后原样重试。
+  // If the inherited model fails, make clear that it was **inherited**. This call did not name a model; returning the resolution
+  // diagnostic without that context would make the model think it supplied a bad parameter and retry unchanged.
   return subagentModelFailure(
     choice.inherited
       ? `This amend inherited the predecessor run's subagent model (\`${choice.text}\`), which is no longer usable. ${choice.message}\n\nPass \`subagent_model: null\` to run the revision on the session model instead.`
@@ -200,11 +203,12 @@ function resolveAmendSubagentModel(
 }
 
 /**
- * 子代理模型三态的**判定本体**，工具与 GUI「配置」（runtime 的 amendWorkflowRunSettings）共用
- * （共享解析代码，不复制）。两者只在怎么**说**失败
- * 上不同——工具对模型说（带 `subagent_model: null` 的建议），GUI 对人说（诊断进 ACK 的 message）。
+ * The **canonical decision logic** for the subagent model's three states, shared by the tool and GUI “Configure” flow
+ * (runtime's amendWorkflowRunSettings); reuse the resolver instead of duplicating it. They differ only in how they **report** failure:
+ * the tool reports it to the model (with a suggestion to set `subagent_model: null`), while the GUI reports it to the user
+ * (the diagnostic goes in the ACK message).
  *
- * 结果：`canonical` 缺席即「会话模型」；失败带 `inherited`（失败的是沿用来的那一个）与解析诊断。
+ * Result: absent `canonical` means “use the session model”; failure includes `inherited` (whether the failed value was reused) and the resolution diagnostic.
  */
 export function resolveAmendSubagentModelChoice(
   requested: string | null | undefined,
@@ -228,7 +232,7 @@ export function resolveAmendSubagentModelChoice(
   return { ok: true, canonical: resolution.canonical };
 }
 
-/** 解析失败 → 结构化业务失败。判别键在 message 前缀（同本文件其余几个码）。 */
+/** Convert resolution failure to a structured business failure. The discriminator is the message prefix, matching this file's other codes. */
 function subagentModelFailure(message: string): ToolHandlerFailure {
   return {
     result: false,

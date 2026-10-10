@@ -28,9 +28,10 @@ import {
   worldReadLabel,
 } from "./sites-labels.js";
 
-// 拆分：本文件顶到 oxlint max-lines 上限（400 行）。名字 / 标签辅助与符号解析
-// （resolveSymbol / isFacadeDeclared）搬到 sites-labels.ts；后两者原本就从这里导出，故原样
-// 再导出，既有的 `from "./sites.js"` 引用一个不改。站点类型留在本文件（五个模块按此路径导入）。
+// Split: this file reached oxlint's max-lines limit (400). Name/label helpers and symbol
+// resolution (resolveSymbol / isFacadeDeclared) were moved to sites-labels.ts. The latter two were
+// already exported here, so they are re-exported unchanged and existing `from "./sites.js"` imports
+// need no changes. Site types remain in this file (five modules import them through this path).
 export { isFacadeDeclared, resolveSymbol } from "./sites-labels.js";
 
 /**
@@ -51,7 +52,7 @@ export interface AskSite {
   id: string;
   order: number;
   label: string;
-  /** `label` 落到兜底串时，内联 `agent()` receiver 的模板形状；见 `askLabelPattern`。 */
+  /** Template shape of an inline `agent()` receiver when `label` falls back to its default; see `askLabelPattern`. */
   labelPattern?: NamePattern;
   loc: ScriptLoc;
   /** The `x.ask(...)` call. */
@@ -66,7 +67,7 @@ export interface ActorSite {
   id: string;
   order: number;
   name: string | undefined;
-  /** `name` 缺席而首参是模板字符串时的静态形状；见 `actorNamePattern`。 */
+  /** Static shape when `name` is absent and the first argument is a template string; see `actorNamePattern`. */
   namePattern?: NamePattern;
   loc: ScriptLoc;
   /** The `agent(...)` call. */
@@ -116,8 +117,9 @@ export interface ReportSite {
  * An `artifact.*(...)` call site: one publish (`file` / `markdown`) or one preset
  * declaration (`chart` / `table` / `metrics` / `board`).
  *
- * ⚠ 术语：这里的 artifact 是**用户面产物**（脚本发布给用户看的产出），不是同名的引擎内部
- * 概念（顶层返回值 / 站点的类型化输出值，见 `analysis/artifact-types.ts`）。
+ * ⚠ Terminology: artifact here means a **user-facing output** published by a script, not the
+ * engine's internal concept with the same name (the top-level return value / typed site output; see
+ * `analysis/artifact-types.ts`).
  *
  * Like {@link ReportSite} it is **sited but drawn in neither graph**: a publish is a
  * deliverable, not a step other steps can wait for, so there is nothing an edge could
@@ -317,9 +319,10 @@ export function collectSites(workflow: WorkflowProgram): SiteTable {
           });
           return;
         }
-        // 产物成员先于 world-read 判定，两张表互斥（同一个 (容器,成员) 不可能同时在两张
-        // 表里）。身份同样按**声明容器**取，不按名字：`artifact.table` 与脚本自己的某个
-        // `table` 方法只有声明能分辨。
+        // Check artifact members before world-read; the tables are mutually exclusive (the same
+        // (container, member) cannot appear in both). Determine identity from the **declaration
+        // container**, not the name: only the declaration distinguishes `artifact.table` from a
+        // script's own `table` method.
         const artifact = artifactRowOfSymbol(propSymbol);
         if (artifact !== undefined) {
           const idExpr = node.arguments[0];
@@ -392,7 +395,8 @@ export function collectSites(workflow: WorkflowProgram): SiteTable {
     const fn = siteProducingFunctionOfSymbol(calleeSymbol);
     if (fn === "agent") {
       const name = actorName(node);
-      // pattern 只在真拿不到名字时才求：字面量名与绑定名都是**名字**，重建物不得顶掉它们。
+      // Compute pattern only when no name is actually available: literal and bound names are both
+      // **names**, and a reconstructed value must not override them.
       const namePattern = name === undefined ? actorNamePattern(node) : undefined;
       table.actors.push({
         call: node,
@@ -405,9 +409,10 @@ export function collectSites(workflow: WorkflowProgram): SiteTable {
       return;
     }
     if (fn === "report") {
-      // 第二实参是**产物标签**：只有无洞字面量才算标签，
-      // 其余（标识符、带洞模板）留给 artifacts 诊断趟按 artifactIdExpr 定位——绝不在这里
-      // 猜一个 id 出来，那会让一条指向不存在看板的 report 静默通过编译。
+      // The second argument is an **artifact label**: only a literal without substitutions counts.
+      // Other forms (identifier, interpolated template) are left to the artifacts diagnostic pass
+      // to locate via artifactIdExpr—never guess an ID here, as that would let a report targeting a
+      // nonexistent dashboard compile silently.
       const tagExpr = node.arguments[1];
       const tag = literalText(tagExpr);
       table.reports.push({

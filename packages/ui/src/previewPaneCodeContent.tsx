@@ -14,7 +14,7 @@ interface CodeContentProps {
   language: BundledLanguage;
   codePreviewSettings: CodePreviewSettings;
   codeTheme: BundledTheme;
-  /** 应用主题（store 耦合剥离）：透传给 Mermaid 预览，缺省按 "system" 兜底。 */
+  /** Applied theme (decoupled from the store): passed through to the Mermaid preview; defaults to "system". */
   theme?: Theme;
   wrapLongLines: boolean;
   firstLineNumber?: number;

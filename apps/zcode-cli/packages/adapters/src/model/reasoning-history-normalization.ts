@@ -12,9 +12,10 @@ import { getStatusCode, unwrapRetryError } from "./failure-inspection.js";
 const EMPTY_ASSISTANT_CONTENT_FALLBACK = "(no content)";
 const REJECTED_REASONING_FALLBACK = "[Thinking removed]";
 
-// 旧历史保留 builtin 身份，当前选型已迁到 account 身份；Individual/Team
-// 也会使用不同 ID。只在 reasoning 回放时识别同服务的这些明确身份，不改变选型或鉴权。
-// 不能复用套餐展示分组：Start/Off-Peak/API 接入不在这份签名兼容范围内。
+// Older history retains the builtin identity, while current selections have moved to account
+// identities; Individual/Team may also use different IDs. Recognize only these explicit identities
+// for the same service during reasoning replay; do not change model selection or authentication.
+// Do not reuse plan display groups: Start/Off-Peak/API access are outside this signature compatibility scope.
 const REASONING_PROVIDER_GROUPS: readonly (readonly string[])[] = [
   [
     "builtin:zai-coding-plan",
@@ -67,8 +68,9 @@ export function repairReasoningHistoryAfterSignatureRejection(
 ): ModelInputMessage[] | undefined {
   if (!isThinkingSignatureRejection(error)) return undefined;
 
-  // 调用方传入的已经是逻辑请求入口完成结构归一化后的副本。这里仅执行签名拒绝清理，
-  // 不能再次运行结构 passes，否则会删除刚补出的 assistant 占位并改变轮次边界。
+  // The caller passes a copy already structurally normalized at the logical request entry point.
+  // Only clean up rejected signatures here; do not run structural passes again, which would remove
+  // the assistant placeholder just added and change turn boundaries.
   const repaired = removeRejectedReasoning(projectedMessages);
   return repaired === projectedMessages ? undefined : repaired;
 }
@@ -77,8 +79,8 @@ function isThinkingSignatureRejection(error: unknown): boolean {
   const unwrapped = unwrapRetryError(error);
   if (getStatusCode(unwrapped) !== 400) return false;
 
-  // Provider 没有为该 400 提供独立错误码；这里只匹配已确认的窄化文案，
-  // 避免把其他 invalid_request 误当成可修改历史并重试。
+  // The provider has no dedicated error code for this 400. Match only the confirmed narrow message
+  // patterns so other invalid_request errors are not mistaken for fixable history that should retry.
   const message = errorMessage(unwrapped).toLowerCase();
   if (message.includes("signature in thinking block")) return true;
 
@@ -135,7 +137,8 @@ function filterReasoningBlocks(
     if (content.length === message.content.length) continue;
 
     result ??= messages.slice();
-    // 此处只过滤 reasoning block，保留消息顺序与结构；结构修复由独立阶段处理。
+    // Filter only reasoning blocks here, preserving message order and structure; a separate stage
+    // handles structural repairs.
     result[index] = { ...message, content };
   }
 

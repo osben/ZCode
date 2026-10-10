@@ -63,9 +63,9 @@ export function initializeSessionShellEnvironmentIfNeeded(
     return false;
   }
 
-  // Bash shell 是 session-start 快照。所有入口都只表达“当前候选值”，
-  // runtime 统一负责首次真实用户执行前初始化一次。candidate 可以是 lazy resolver，
-  // 这样已有 snapshot 的 session 不会在外层重复探测 shell。
+  // Bash shell is a session-start snapshot. All entry points express only the "current candidate value";
+  // runtime initializes it once before the first real user execution. candidate may be a lazy resolver,
+  // so sessions with an existing snapshot do not probe the shell again in the outer layer.
   applySessionShellEnvironment(runtime, resolveSessionShellCandidate(candidate), {
     refreshPreConversationContext: true,
   });
@@ -175,10 +175,9 @@ export function announceSessionShellEnvironmentNoticeAfterResume(
     return;
   }
 
-  // 旧 Windows 会话没有可用 shell snapshot 时，升级后可能由 auto Git Bash
-  // 接管 Bash 执行。历史上下文仍可能让模型继续沿用旧 shell 习惯，因此必须在
-  // resume 后补一个 provider-visible shell 提醒；可用 snapshot 恢复时不插，避免
-  // 破坏“shell 设置变更只对新 session 生效”的契约。
+  // An older Windows session without a usable shell snapshot may use auto Git Bash for Bash execution after an upgrade.
+  // Historical context may still lead the model to use old shell conventions, so add a provider-visible shell reminder after
+  // resume. Do not add one when restoring a usable snapshot; shell-setting changes apply only to new sessions.
   runtime.messageHistory.addAttachment("shell_environment_change", notice);
 }
 
@@ -214,9 +213,8 @@ function refreshPreConversationShellContext(
     return;
   }
 
-  // deferred draft 是隐藏预热态，首发前刷新 shell 时还没有真实
-  // conversation message。此时应把 session-start # Environment 一并刷新，
-  // 避免模型看到的 Shell 和 Bash 实际执行 shell 不一致。
+  // A deferred draft is a hidden prewarm state with no real conversation message before the first send.
+  // When refreshing the shell then, also refresh session-start # Environment so the Shell shown to the model matches the shell Bash actually executes.
   runtime.config.envInfo = applySessionShellToEnvInfo(runtime.config.envInfo, selection);
   runtime.contextSourceSnapshot = {
     ...runtime.contextSourceSnapshot,

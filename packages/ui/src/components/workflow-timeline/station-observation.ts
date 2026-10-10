@@ -4,9 +4,9 @@ import { phaseNameMatches } from "@/components/workflow-graph/phase-name.js";
 import type { WorkflowCausalityGraphData } from "@/components/workflow-graph/types.js";
 
 /**
- * 一站观察到的东西：落在这一站站点上的实例，加上界在这一站花掉的**表外**条目。
+ * What a station observed: instances assigned to that station plus **unlisted** items whose work was attributed to it.
  *
- * 与 timeline-bands.ts 一样只计算展示模型，不依赖 React、DOM 或时钟。
+ * Like timeline-bands.ts, this computes only the display model and does not depend on React, DOM, or a clock.
  */
 
 export interface ObservedPhase {
@@ -14,15 +14,15 @@ export interface ObservedPhase {
   rounds: number;
   settled: number;
   observed: number;
-  /** 控制流进入过这一站（`run.phases` 里有它的进入记录）。 */
+  /** Control flow entered this station (an entry record exists in `run.phases`). */
   entered: boolean;
 }
 
 /**
- * 归约列不出来的那些（`run.unlistedByPhase`）。`actors` 是这一站
- * 出生、此刻不在表里的子代理——出生就被拒的、排队时被淘汰的、跑完被淘汰的都算，它们没有药丸、
- * 没有脸、没有转录；`settled` 是其中已知跑完的，`failed ⊆ settled`；`nodesSettled` 是记在这一格
- * 上的表外已结算**节点**数。缺席 = 这一站一条都没少。
+ * Items omitted from the reduction listing (`run.unlistedByPhase`). `actors` are subagents born in this station and not listed now:
+ * this includes ones rejected at birth or evicted while queued/after finishing. They have no pill, face, or transcript.
+ * `settled` counts those known to have finished; `failed ⊆ settled`; `nodesSettled` is the count of settled **nodes** omitted from this station.
+ * Absent means this station has no omitted items.
  */
 export interface StationUnlisted {
   actors: number;
@@ -32,9 +32,9 @@ export interface StationUnlisted {
 }
 
 /**
- * 表外那一格按**出生阶段的戳**归位：与药丸绑定、站的观察同一个 `phaseBinder`——一次划分，不是
- * 一次广播。无 `phaseName` 的那一格因此落在无名的站上（与无戳实例同一条规则），而不是凭空
- * 挑一站。同名再入的两站各拿一份，与节点的算法一致。
+ * Attribute an unlisted bucket by the **birth-phase stamp**, using the same `phaseBinder` as pill binding and station observation:
+ * this is one partition, not a broadcast. A bucket without `phaseName` belongs to the unnamed station (same rule as unstamped instances),
+ * rather than being assigned arbitrarily. Re-entered stations with the same name each receive their own share, matching the node algorithm.
  */
 export function stationUnlisted(
   run: WorkflowRunState | undefined,
@@ -47,7 +47,7 @@ export function stationUnlisted(
   for (const bucket of buckets) {
     if (!binder.has(phaseId, bucket.phaseName)) continue;
     total.actors += bucket.actors;
-    // 归零的子键在线上缺席：缺席说的是「零个」，不是「不知道」——还没跑完的那些因此留在 pending。
+    // Zero-valued child keys are omitted on the wire. Absence means "zero", not "unknown", so unfinished items remain pending.
     total.settled += bucket.actorsSettled ?? 0;
     total.failed += bucket.actorsFailed ?? 0;
     total.nodesSettled += bucket.settled;
@@ -58,8 +58,8 @@ export function stationUnlisted(
 type WorkflowRunPhaseEntry = NonNullable<WorkflowRunState["phases"]>[number];
 
 /**
- * 一站的进入记录：按名字关联（`phaseNameMatches`，与实例绑定共用 phase-name.ts 中的规则）。同一个 128 字
- * 前缀下可能有两条记录，精确的那条优先。
+ * Station-entry records are joined by name using `phaseNameMatches` (the same phase-name.ts rule used to bind instances).
+ * Two records may share the same 128-character prefix; the exact match takes precedence.
  */
 export function phaseEntryFor(
   run: WorkflowRunState | undefined,
@@ -74,8 +74,8 @@ export function phaseEntryFor(
 }
 
 /**
- * 站点集合：成员 step 的 `source ?? id`——may-set 拷贝报的是站点 id，与 run-status.ts 的
- * 关联键同源；漏掉 `source` 会让拷贝站永远「未到」。
+ * Station set: each member step's `source ?? id`. may-set copies report the station ID, matching the join key in run-status.ts;
+ * omitting `source` would leave copied stations permanently unvisited.
  */
 export function siteIdsOf(
   steps: readonly WorkflowCausalityGraphData["steps"][number][],
@@ -84,9 +84,8 @@ export function siteIdsOf(
 }
 
 /**
- * 一站观察到的节点：站点相同还不够——同一个站点被 k 个阶段再入时 k 张卡共享站点 id，节点还要
- * 按实例的出生戳落到这一站（`belongs`），否则 visited / rounds /
- * fraction 一起虚高 k 倍。
+ * Nodes observed by a station: matching the station alone is insufficient. If k phases re-enter the same station, k cards share its station ID;
+ * nodes must also belong to the station by their instance's birth stamp (`belongs`), or visited/rounds/fraction would all be overstated k-fold.
  */
 export function observePhase(
   run: WorkflowRunState | undefined,
@@ -110,12 +109,12 @@ export function observePhase(
     if (node.ordinal > result.rounds) result.rounds = node.ordinal;
     if (node.phase === "settled") result.settled += 1;
   }
-  // 表外已结算的**节点**：分子与分母一起抬。它们确实跑过，只是详情停在界上——少算分母会让
-  // 「300/300」变成「1/1」，那是一句假话；visited / rounds 不动，那两个说的是控制流。
+  // Settled **unlisted nodes** increase both numerator and denominator. They did run; details are simply truncated at the boundary.
+  // Omitting them could turn "300/300" into "1/1", which is false. Leave visited/rounds unchanged because those describe control flow.
   result.observed += unlisted?.nodesSettled ?? 0;
   result.settled += unlisted?.nodesSettled ?? 0;
-  // 进入记录：到过 = 有节点落在这站 ∨ 控制流进入过；轮次取两者之大（单阶段循环体的第二轮
-  // 由节点数出来，零成员站的第二轮只有进入记录知道）。
+  // Entry record: visited = nodes landed in this station OR control flow entered it; rounds is the greater of the two counts.
+  // A second loop iteration in a single-stage body is inferred from node count, while a second iteration in an empty station is visible only in the entry record.
   if (entry !== undefined) {
     result.entered = true;
     result.visited = true;

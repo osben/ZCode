@@ -132,15 +132,15 @@ export interface EnsureRemoteReleaseDirOptions {
   componentIds?: string[];
   requiredReleasePaths?: string[];
   /**
-   * 将身份决策与实际物化绑定到同一份 manifest 快照。
-   * null 表示本次 transaction 已确认 manifest 缺失，不得再次请求。
+   * Bind the identity decision and materialization to the same manifest snapshot.
+   * null means this transaction confirmed the manifest is missing and must not request it again.
    */
   manifestRef?: RemoteAssetManifestRef | null;
-  /** 仅用于需要观察同 app 版本制品重发的身份检查。 */
+  /** Used only for identity checks that need to observe artifact republishes for the same app version. */
   refreshManifest?: boolean;
-  /** 忽略当前内容寻址 cache，重新下载并校验所选组件。 */
+  /** Ignore the current content-addressed cache and redownload and validate the selected components. */
   forceRefresh?: boolean;
-  /** 单个 manifest CDN 候选请求的超时时间。 */
+  /** Timeout for one manifest CDN candidate request. */
   manifestRequestTimeoutMs?: number;
   remoteAssetNetwork?: RemoteAssetNetworkPort;
 }
@@ -153,8 +153,9 @@ export function createRemoteAssetManifestRequestSignal(
       `[remote-assets] manifest request timeout must be a positive safe integer: ${String(timeoutMs)}`,
     );
   }
-  // manifest 是 server-bundle/GLM SHA 跳过判断的前置输入；网络半开时若不主动取消，
-  // 已完整部署的远端也会永久卡在初始化，且 single-flight 会把后续连接绑到同一 pending 请求。
+  // The manifest is required before deciding whether to skip a server-bundle/GLM SHA. If a half-open
+  // network request is not cancelled, even a fully deployed remote can remain stuck initializing,
+  // while single-flight binds later connections to the same pending request.
   return AbortSignal.timeout(timeoutMs);
 }
 
@@ -185,8 +186,9 @@ export async function ensureRemoteReleaseDirFromCdn(
     );
   const requiredReleasePaths = normalizeRequiredReleasePaths(options.requiredReleasePaths);
 
-  // 之前 cache 目录只按 version 区分，跨平台 remote 会话会互相覆盖资源。
-  // 这里改成 version + platformArch 双维隔离，避免 linux/darwin 互串导致部署二进制不匹配。
+  // Cache directories were previously distinguished only by version, so remote sessions on different
+  // platforms could overwrite each other's resources. Isolate by both version and platformArch to
+  // prevent Linux and macOS assets from mixing and deploying incompatible binaries.
   const releaseDir = join(remoteCacheDir, "releases", version, platformArch);
   if (
     !options.forceRefresh &&
@@ -199,10 +201,11 @@ export async function ensureRemoteReleaseDirFromCdn(
     `[remote-assets] download required: component=<release> reason=local cache missing or invalid path=${releaseDir}`,
   );
 
-  // 同一个桌面窗口可以并发创建多个 remote session。
-  // 若不加进程内锁，会出现多个会话同时下载并解压同一版本资源，最终互相覆盖或留下半成品目录。
-  // 之前锁 key 没带 remoteCacheDir，不同缓存目录会误复用同一 Promise。
-  // 这会把 A 目录的 release 路径返回给 B 调用方，破坏 cache 隔离语义。
+  // A desktop window can create multiple remote sessions concurrently. Without an in-process lock,
+  // multiple sessions could download and extract the same version at once, overwriting each other or
+  // leaving a partial directory. The old lock key omitted remoteCacheDir, so distinct cache directories
+  // could incorrectly reuse one Promise and return directory A's release path to caller B, breaking
+  // cache isolation.
   const requestedComponentLockKey = requestedComponentIds
     ? Array.from(requestedComponentIds).sort().join(",")
     : "<all>";
@@ -234,8 +237,9 @@ export async function ensureRemoteReleaseDirFromCdn(
     if (missingPaths.length === 0) {
       return lockedReleaseDir;
     }
-    // 并发 remote session 可能先复用一个“不带 required paths”的 release 下载锁。
-    // 等待该锁完成后必须按当前调用方声明的关键路径复检，缺失时继续走后续重下流程。
+    // Concurrent remote sessions may reuse a release-download lock that did not include required paths.
+    // After waiting for it, recheck the required paths declared by this caller and continue through the
+    // redownload flow if any are missing.
     loggers.logWarn(
       `[remote-assets] locked release cache still incomplete: missing=${missingPaths.join(",")}; redownloading`,
     );
@@ -380,8 +384,8 @@ async function ensureRemoteReleaseDirFromCdnInternal(
     );
   }
   if (options.manifestRef === null) {
-    // 上游已在 deploy lock 内固定“manifest 缺失”结果；
-    // 若 release materialize 再请求一次，会破坏单事务快照并翻倍超时上限。
+    // The caller fixed the "manifest missing" result inside the deploy lock. Requesting it again during
+    // release materialization would break the transaction snapshot and double the timeout budget.
     throw new Error(
       `[remote-assets] manifest not found for ${options.platformArch}: ${manifestFileName}`,
     );
@@ -442,8 +446,8 @@ async function ensureRemoteReleaseDirFromCdnInternal(
     );
   }
 
-  // 现在生产态只发布 manifest/components。manifest 缺失说明 CDN 发布不完整，
-  // 继续探测旧 remote-assets 只会增加无效请求并掩盖真正的发布问题。
+  // Production now publishes only manifest/components. A missing manifest means the CDN release is
+  // incomplete; probing legacy remote-assets would add useless requests and hide the actual release issue.
   throw new Error(
     `[remote-assets] manifest not found for ${options.platformArch}: ${manifestFileName}`,
   );
@@ -511,8 +515,9 @@ async function fetchRemoteAssetManifest(
   );
   remoteAssetManifestLocks.set(lockKey, task);
   if (shouldRefreshCachedResult) {
-    // 多个 remote session 可能同时检查内容寻址组件的 SHA。fresh manifest 也必须
-    // single-flight，否则同一批会话会重复请求，甚至在发布切换点看到不同快照。
+    // Multiple remote sessions may check the SHA of a content-addressed component at the same time.
+    // Fresh-manifest requests must also be single-flight to avoid duplicate requests or different
+    // snapshots during a release transition.
     remoteAssetManifestRefreshLocks.set(lockKey, task);
     void task.then(
       () => {
@@ -559,8 +564,9 @@ async function fetchRemoteAssetManifestInternal(
     manifestFetchResult.url,
     options.releaseBaseCandidates,
   );
-  // 组件级按需下载后，同一次部署会多次请求 releaseDir。
-  // 这里缓存 manifest，并继续优先使用 manifest 命中的 CDN 源，避免重复拉 manifest 和跨源组件不一致。
+  // Component-level on-demand downloads may request releaseDir multiple times during one deployment.
+  // Cache the manifest and keep preferring the CDN source selected by it to avoid fetching it repeatedly
+  // or mixing components from different sources.
   const releaseBaseCandidatesForComponents = manifestReleaseBase
     ? [
         manifestReleaseBase,
@@ -607,8 +613,9 @@ async function ensureRemoteReleaseDirFromManifest(
     return releaseDir;
   }
 
-  // 之前组装 releaseDir 会按 manifest 拉齐全部组件，即使后续远端版本检查会跳过。
-  // 这里只落地本次部署明确需要的组件，避免主 server 升级时额外下载已最新的工具包。
+  // Building releaseDir previously downloaded every component in the manifest, even when later remote
+  // version checks would skip some. Materialize only components explicitly needed for this deployment
+  // to avoid redownloading up-to-date tool packages during a server upgrade.
   const componentCacheEntries: Array<{
     component: RemoteAssetManifestComponent;
     componentDir: string;
@@ -664,7 +671,8 @@ async function runWithReleaseMaterializeLock(
   const currentTask = (async () => {
     if (previousTask) {
       await previousTask.catch(() => {
-        // 前一个写入失败不能阻塞后续重试；当前任务会重新物化自己的组件。
+        // A previous write failure must not block a later retry; the current task will materialize its
+        // own components again.
       });
     }
     await task();
@@ -803,8 +811,9 @@ async function ensureRemoteComponentDirFromCdn(
     return componentDir;
   }
 
-  // 组件锁 key 之前未带 remoteCacheDir，不同缓存目录会被同一组件下载锁串起来。
-  // 这里直接使用 componentDir 绝对路径做 key，保证隔离语义与落盘目录一一对应。
+  // Component lock keys previously omitted remoteCacheDir, serializing downloads for the same component
+  // across distinct cache directories. Use the componentDir absolute path as the key so lock isolation
+  // matches the on-disk directory.
   const lockKey = resolve(componentDir);
   while (true) {
     const lockedTask = remoteAssetComponentLocks.get(lockKey);
@@ -819,8 +828,9 @@ async function ensureRemoteComponentDirFromCdn(
     if (missingPaths?.length === 0) {
       return lockedComponentDir;
     }
-    // 不同部署调用会共享同一 component cache 锁。等待已有下载后，
-    // 仍要用当前调用方的关键路径复检，避免把只满足旧调用的残缺 cache 返回出去。
+    // Different deployment calls can share the same component-cache lock. After waiting for the existing
+    // download, recheck this caller's required paths so a partial cache that satisfied only the earlier
+    // call is not returned.
     loggers.logWarn(
       `[remote-assets] locked component cache still incomplete: component=${component.id} missing=${(missingPaths ?? []).join(",")}; redownloading`,
     );
@@ -858,8 +868,9 @@ async function ensureRemoteComponentDirFromCdnInternal(
     options.platformArch,
   );
   if (forceRefresh) {
-    // App 版本变化代表一次新的资源发布边界；即使 GLM SHA cache 命中，
-    // 也必须重新下载、校验并原子替换，避免本地上传把旧 cache 再次部署到远端。
+    // An app-version change marks a new resource-release boundary. Even when the GLM SHA cache hits,
+    // download, validate, and atomically replace the resource to avoid deploying an old local cache to
+    // the remote again.
     loggers.logWarn(
       `[remote-assets] forced component refresh: component=${component.id} path=${componentDir}`,
     );
@@ -872,9 +883,10 @@ async function ensureRemoteComponentDirFromCdnInternal(
     return componentDir;
   }
   if (!forceRefresh && initialMissingPaths) {
-    // 旧版本只用 .ready 判断 component cache 可用。用户先部署过只含
-    // zcode.cjs 的 glm cache 后，再补传 packages 会一直复用残缺 cache。
-    // 这里按调用方声明的关键路径校验，缺失时清掉旧 cache 并从 CDN 重下完整组件。
+    // Older versions used only .ready to determine whether a component cache was usable. If a user first
+    // deployed a GLM cache containing only zcode.cjs, later uploads of packages kept reusing that
+    // incomplete cache. Validate the required paths declared by the caller; when any are missing, clear
+    // the old cache and redownload the complete component from the CDN.
     loggers.logWarn(
       `[remote-assets] local component cache incomplete: component=${component.id} missing=${initialMissingPaths.join(",")}; redownloading`,
     );
@@ -1019,9 +1031,10 @@ async function tryMigrateComponentDirFromHashVersionComponentCache(
     return false;
   }
 
-  // 旧版组件 cache 把内容 hash 拼进目录名（如 v0.11.1+abcd）。
-  // 新版只按语义版本命中；即使线上旧 manifest 仍带 hash，也要先迁移到纯版本目录，
-  // 避免同语义版本因为 hash 后缀不同反复下载。
+  // Older component caches appended the content hash to the directory name (for example, v0.11.1+abcd).
+  // The new cache matches only semantic versions, so migrate even entries from old manifests that still
+  // include a hash to a plain version directory. This avoids repeated downloads for the same semantic
+  // version with different hash suffixes.
   await migrateComponentSourceDir(
     candidate.dir,
     componentDir,
@@ -1124,7 +1137,8 @@ async function migrateComponentSourceDir(
   await mkdir(componentStagingDir, { recursive: true });
 
   try {
-    // 迁移时仍走 staging + ready 原子提交，避免半成品目录被后续连接误判为可用 cache。
+    // Keep staging and the ready marker as an atomic commit during migration so later connections
+    // cannot mistake a partial directory for a usable cache.
     await materializeDirectoryContents(sourceDir, componentStagingDir);
     await assertExtractedArchiveNotEmpty(
       componentStagingDir,
@@ -1222,8 +1236,9 @@ async function fetchFirstAvailableManifestOrNullWhenNotFound(options: {
       if (!signal.aborted) {
         throw error;
       }
-      // fetch 在收到响应头后已经完成，但 response body 仍可能半开；
-      // body 超时也属于候选 CDN 的网络失败，应继续尝试下一个候选而不是永久等待。
+      // fetch can return after response headers arrive while the response body remains half-open. A body
+      // timeout is also a network failure for this CDN candidate, so try the next candidate instead of
+      // waiting indefinitely.
       errors.push(`${candidate} -> ${String(error)}`);
     }
   }
@@ -1299,8 +1314,9 @@ export async function parseRemoteAssetManifestFromResponse(
 
     const mountRule = REMOTE_COMPONENT_MOUNT_RULES[id];
     if (!mountRule) {
-      // 旧 release manifest 可能仍包含已退役的三方 agent 组件。
-      // 当前客户端只认识 ZCode Agent 与基础运行时，未知组件应跳过，不能阻断当前组件下载。
+      // Older release manifests may still contain retired third-party Agent components. The current
+      // client recognizes only ZCode Agent and the base runtime; skip unknown components instead of
+      // blocking downloads of supported components.
       continue;
     }
 
@@ -1370,8 +1386,9 @@ function resolveContentAddressedReleaseSegments(
 ): string[] {
   const segments: string[] = [];
   for (const componentId of Object.keys(CONTENT_ADDRESSED_COMPONENT_RELEASE_DIRS)) {
-    // 兼容历史全量 release：未指定组件时只沿用原有 GLM 内容目录；server
-    // 安装始终显式请求 server-bundle，因此仍会进入独立 SHA release。
+    // Preserve compatibility with historical full releases: when no component is specified, keep using
+    // the existing GLM content directory. Server installation always explicitly requests server-bundle,
+    // so it still uses a separate SHA release.
     if (
       requestedComponentIds === null
         ? componentId !== "glm"
@@ -1394,8 +1411,9 @@ export function resolveRemoteAssetComponentCacheVersion(version: string): string
     return version;
   }
 
-  // 已发布 manifest 里的 component.version 仍是 vX+hash。
-  // cache key 只看语义版本，因此在落盘目录层剥掉 hash；artifactPath/sha256 仍按 manifest 校验下载内容。
+  // Published manifests still use vX+hash for component.version. Cache keys use only the semantic
+  // version, so strip the hash from the on-disk directory name; artifactPath/sha256 still validate the
+  // downloaded content against the manifest.
   return version.slice(0, -contentHashPrefix.length - 1);
 }
 
@@ -1549,9 +1567,10 @@ async function renameRemoteAssetDirectoryWithRetry(from: string, to: string): Pr
         throw error;
       }
 
-      // Windows 上 AppData remote-assets-cache 目录 rename 可能被 Defender、索引器
-      // 或另一个刚退出的 host 进程短暂占用，表现为 EPERM/EBUSY/EACCES/ENOTEMPTY。
-      // 提权不能释放这些文件句柄，因此这里对目录提交做有限退避重试，避免缓存已下载完成却连接 WSL 失败。
+      // On Windows, renaming the AppData remote-assets-cache directory may be briefly blocked by
+      // Defender, an indexer, or another recently exited host process, producing EPERM/EBUSY/EACCES/
+      // ENOTEMPTY. Elevation cannot release these handles, so retry directory commits with bounded
+      // backoff to avoid a WSL connection failure after the cache has already downloaded.
       await sleep(retryDelayMs);
     }
   }
@@ -1698,8 +1717,9 @@ function createRemoteAssetProgressReporter(
       return;
     }
 
-    // 之前生产态下载阶段只打印 "downloading URL"，慢网用户无法判断是否卡死。
-    // 这里改成输出节流后的进度快照（百分比/MB/速度），让 SSH 连接日志可观测下载进展。
+    // The production download phase previously printed only "downloading URL," leaving users on slow
+    // networks unable to tell whether it was stuck. Emit throttled progress snapshots (percentage, MB,
+    // and speed) so SSH connection logs show download progress.
     if (totalMB != null && percent != null) {
       loggers.log(
         `[remote-assets] download progress: ${percent.toFixed(1)}% (${transferredMB.toFixed(1)}/${totalMB.toFixed(1)} MB, ${speedMBPerSecond.toFixed(2)} MB/s)`,
@@ -1840,8 +1860,9 @@ async function isValidReleaseDir(releaseDir: string, platformArch: string): Prom
     return false;
   }
 
-  // 分平台归档落地后，继续硬编码校验 linux 目录会把 darwin 包误判为无效。
-  // 这里改成按目标 platformArch 校验 node runtime，确保 cache 判断与下载策略一致。
+  // After archives are stored per platform, hard-coding a Linux directory check would misclassify
+  // macOS packages as invalid. Check the Node runtime for the target platformArch so cache validation
+  // matches the download strategy.
   if (!(await fileExists(releaseDir, "node", platformArch, "node"))) {
     return false;
   }

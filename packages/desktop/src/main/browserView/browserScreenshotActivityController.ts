@@ -45,7 +45,7 @@ interface CapturePumpRuntime {
   transientRetry: DesktopBrowserScreenshotTransientRetry;
 }
 
-/** 1×1 探测结果：transient 表示 Viz surface 尚未建立这类可自愈的失败。 */
+/** 1×1 probe result: transient means a self-recovering failure such as the Viz surface not yet being ready. */
 type CaptureProbeOutcome = { ok: true } | { ok: false; transient: boolean };
 
 const CAPTURE_PROBE_SUCCEEDED: CaptureProbeOutcome = { ok: true };
@@ -56,13 +56,15 @@ const ACTIVITY_CAPTURE_RECT = { x: 0, y: 0, width: 1, height: 1 };
 const CAPTURING_GUEST_MIN_INTERVAL_MS = 200;
 
 /**
- * 按 owner BrowserWindow 管理短生命周期后台活动租约。
+ * Manage short-lived background-activity leases per owner BrowserWindow.
  *
- * Electron 的 backgroundThrottling=false 会唤醒同一 BrowserWindow 内全部
- * WebContents。browser-use tab 又按进程生命周期保留，若在建窗时永久关闭节流，窗口退到后台后
- * renderer、所有 guest 与 GPU 仍会持续跑帧。动态改回 true 也不会重新触发 hidden 调度。
- * 这里在截图 preparation group 内同时为 owner renderer 和目标 guest 维持可逆的 capturer
- * count；结束后由 Chromium 原生 capture lifecycle 恢复后台节流，且同窗其他 guest 不被唤醒。
+ * Electron's backgroundThrottling=false wakes every WebContents in the same BrowserWindow.
+ * browser-use tabs also live as long as their process; permanently disabling throttling at window
+ * creation would keep the renderer, all guests, and GPU rendering after the window moves to the
+ * background. Dynamically setting it back to true does not trigger hidden scheduling again.
+ * During a screenshot preparation group, maintain reversible capturer counts for both the owner
+ * renderer and target guest. Chromium's native capture lifecycle restores background throttling at
+ * the end without waking other guests in the same window.
  */
 export class DesktopBrowserScreenshotActivityController {
   private readonly states = new Map<string, ScreenshotActivityState>();
@@ -128,7 +130,7 @@ export class DesktopBrowserScreenshotActivityController {
       this.states.set(stateKey, state);
       this.scheduleCapturePumpsAfterTransparentBootstrap(state);
     } else {
-      // 取消上一份 lease 安排的 microtask 停泵，连续截图复用同一 capturer activity。
+      // Cancel the microtask pump stop scheduled by the previous lease; consecutive screenshots reuse the same capturer activity.
       state.restoreGeneration += 1;
       state.pumps.owner.transientRetry.reset();
       state.pumps.guest.transientRetry.reset();
@@ -147,9 +149,10 @@ export class DesktopBrowserScreenshotActivityController {
         if (!leaseState || leaseState.prepared) return;
         leaseState.prepared = true;
         this.maybeReleaseTransparentWindowBootstrap(state);
-        // Ready 后继续让 owner/guest 背靠背 CopyFromSurface，最坏会把 35s
-        // watchdog 全部变成高频 GPU readback。owner 已完成 rAF 握手，应停泵；guest
-        // 只需低频推进隐藏页面，切为单 in-flight 的 5Hz 脉冲。
+        // Continuing back-to-back CopyFromSurface on the owner/guest after Ready could turn the
+        // entire 35-second watchdog into high-frequency GPU readbacks. The owner completed its rAF
+        // handshake and should stop pumping; the guest only needs low-frequency progress while
+        // hidden, so switch to single in-flight 5 Hz pulses.
         this.wakeCapturePumps(state);
         this.ensureCapturePumps(state);
       },
@@ -203,21 +206,24 @@ export class DesktopBrowserScreenshotActivityController {
         }
 
         if (mode === "continuous") {
-          // Prepare 阶段必须先启动下一份再等待前一份，保证 owner 的两帧稳定校验不会在
-          // capturer count 归零时重新被 hidden 调度；每个 target 最多两份 in-flight。
+          // During prepare, start the next probe before waiting for the previous one so the owner's
+          // two-frame stability check is not rescheduled as hidden when the capturer count reaches
+          // zero. Keep at most two in flight per target.
           const nextStartedAt = Date.now();
           const next = this.captureOnce(state, target);
           const completed = await pending;
           if (!completed.ok) {
             if (!completed.transient) {
-              // 致命错误保持快败：不等可能永远 pending 的并发探测（hidden window 下
-              // capturePage 会挂死），立即失效；pending 已落定，循环顶按 stopped 分支
-              // 排空退出，在飞那份由 captureOnce 内部消化，不会产生悬空 rejection。
+              // Preserve fast-fail behavior for fatal errors: do not wait for a concurrent probe that
+              // may remain pending forever (capturePage can hang for a hidden window). Invalidate
+              // immediately; pending is resolved, the loop drains through its stopped branch at the
+              // top, and the in-flight probe is handled inside captureOnce without an unhandled rejection.
               this.invalidateActivity(state, target);
               continue;
             }
-            // 用对象包裹补发探测：async 函数直接 return Promise 会被吸收成
-            // “等该探测落定才返回”，泵会停在串行探测上无法恢复重叠节奏。
+            // Wrap the follow-up probe in an object: an async function returning a Promise directly
+            // would adopt it and wait for it to settle before returning, stopping the pump on a
+            // serial probe and preventing the overlapping cadence from resuming.
             const recovered = await this.recoverFromPreparingCaptureFailure(
               state,
               runtime,
@@ -230,10 +236,11 @@ export class DesktopBrowserScreenshotActivityController {
           runtime.transientRetry.reset();
           pending = next;
           pendingStartedAt = nextStartedAt;
-          // hidden window 下 Electron 的 1×1 capturePage 可能立即 resolve。
-          // 若这里直接续泵，Promise continuation 会无限占用 microtask 队列，连 Ready IPC、
-          // timeout、watchdog 和 second-instance 事件都无法调度，表现为应用假死且打不开。
-          // 保留“先启动下一份”的 capturer 重叠，但每轮必须让出一次 main event loop。
+          // Electron's 1×1 capturePage may resolve immediately for a hidden window. Continuing the
+          // pump directly here would let Promise continuations occupy the microtask queue forever,
+          // preventing Ready IPC, timeouts, watchdogs, and second-instance events from running; the
+          // app would appear frozen and fail to open. Keep capturer overlap by starting the next
+          // probe first, but yield to the main event loop every round.
           await this.waitForContinuousCaptureTurn(state, runtime, target);
           continue;
         }
@@ -260,15 +267,17 @@ export class DesktopBrowserScreenshotActivityController {
   }
 
   /**
-   * 刚激活的冷 guest 首帧尚未合成时，prepare 阶段的 1×1 探测在截图请求的
-   * 同一 turn 就会撞上未建立的 Viz surface，Chromium 抛 UnknownVizError；把任何
-   * 一次探测失败都当致命错误立即 invalidate 会让首张截图 45ms 内被判死，只能靠 agent
-   * 整轮重试。
-   * UnknownVizError 是瞬态的——surface 建立后同类请求立即成功。进入本函数的首份失败
-   * 已确认瞬态；这里先等并发的下一份落定（失败处理期间不允许再并发 CopyFromSurface，
-   * surface 未就绪时的并发读回曾在 smoke 中触发 SIGSEGV），再串行退避重试；预算耗尽
-   * 或并发那份为致命错误时回到原有快败 invalidate 语义。Ready 后（paced 阶段）的
-   * 失败仍立即失效，不放宽。
+   * Before the first frame of a newly activated guest is composited, the prepare-stage 1×1 probe in
+   * the same turn as a screenshot request may encounter an uninitialized Viz surface and throw
+   * UnknownVizError. Treating every probe failure as fatal would invalidate the first screenshot
+   * within 45 ms and force the Agent to retry the whole operation.
+   * UnknownVizError is transient: the same request succeeds as soon as the surface exists. The first
+   * failure reaching this function is confirmed transient. Wait for the concurrent next probe to
+   * settle first (do not issue another CopyFromSurface concurrently while handling a failure;
+   * concurrent readback before surface readiness has triggered SIGSEGV in smoke testing), then retry
+   * serially with backoff. When the budget is exhausted or the concurrent probe has a fatal error,
+   * return to the existing fast-fail invalidate behavior. Failures after Ready (the paced stage)
+   * still invalidate immediately; do not relax them.
    */
   private async recoverFromPreparingCaptureFailure(
     state: ScreenshotActivityState,
@@ -278,7 +287,7 @@ export class DesktopBrowserScreenshotActivityController {
   ): Promise<{ pending: Promise<CaptureProbeOutcome> } | undefined> {
     const nextCompleted = await next;
     if (nextCompleted.ok) {
-      // 并发那份已成功：surface 已出现，无需退避，直接恢复常规重叠节奏。
+      // The concurrent probe succeeded, so the surface is ready; skip backoff and restore the normal overlapping cadence.
       runtime.transientRetry.reset();
       return { pending: this.captureOnce(state, target) };
     }
@@ -374,7 +383,7 @@ export class DesktopBrowserScreenshotActivityController {
     await this.waitForPumpTurn(runtime, runtime.transientRetry.retryDelayMs());
   }
 
-  /** 可被 wakeCapturePumps 提前唤醒的有界等待；pump 每轮续泵前必须让出 main event loop。 */
+  /** Bounded wait that wakeCapturePumps can interrupt; the pump must yield to the main event loop before each new round. */
   private waitForPumpTurn(runtime: CapturePumpRuntime, delayMs: number): Promise<void> {
     return new Promise<void>((resolve) => {
       let settled = false;
@@ -404,8 +413,9 @@ export class DesktopBrowserScreenshotActivityController {
       this.states.delete(state.key);
     }
     if (!state.invalidationController.signal.aborted) {
-      // 只停泵是不够的：coordinator 已拿到的 lease 仍显示有效，只能等完整的
-      // surface 准备超时。显式失效让准备阶段立即失败，Ready 后也能拒绝迟到截图。
+      // Stopping the pump alone is insufficient: the coordinator would still see its lease as valid
+      // and wait for the full surface-preparation timeout. Invalidate it explicitly so preparation
+      // fails immediately and late screenshots are also rejected after Ready.
       state.invalidationController.abort(
         new Error(`browser screenshot activity capture failed for ${target}`),
       );
@@ -451,9 +461,10 @@ export class DesktopBrowserScreenshotActivityController {
       state.capturePumpStartTimer = undefined;
       if (!state.active || this.states.get(state.key) !== state) return;
       state.capturePumpsAllowed = true;
-      // showInactive 同一 turn 内并发 CopyFromSurface 时，Viz 尚未建立 surface，
-      // Electron 会报 UnknownVizError，真实 smoke 甚至触发过 SIGSEGV。先给窗口一个有界
-      // presentation grace，再启动 capturer；若 renderer 已 Ready，只启动 guest paced pump。
+      // Concurrent CopyFromSurface in the same turn as showInactive can reach Viz before its surface
+      // is ready, causing UnknownVizError; real smoke testing has even triggered SIGSEGV. Give the
+      // window a bounded presentation grace before starting the capturer. If the renderer is already
+      // Ready, start only the guest's paced pump.
       this.ensureCapturePumps(state);
       this.maybeReleaseTransparentWindowBootstrap(state);
     }, TRANSPARENT_WINDOW_PRESENTATION_GRACE_MS);

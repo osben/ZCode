@@ -1,9 +1,9 @@
 // ============================================================
-// 设置轮的两处文字
+// Two text surfaces for a settings turn
 // ============================================================
-// 一次「配置」在两个面上留下记录：转写里 run 卡上方的一行「已调整设置 · 子代理改用 X · 最多 N 个
-// 同时运行」，与详情页的来龙去脉块「由你调整设置」下的 from → to 两行。两处读同一块 `amend` 元数据，
-// 措辞规则只在这里写一次。纯函数 + 注入的 formatMessage / providerName，与 subagent-model-label 同规。
+// One Configure action leaves a record in two places: a transcript line above the run card ("Settings changed · subagents now use X · up to N
+// running at once") and from → to rows under "You changed settings" in the details-page history. Both read the same `amend` metadata,
+// so wording rules live here once. Pure function with injected formatMessage/providerName, matching subagent-model-label's convention.
 
 import type { WorkflowSettingsAmendMeta } from "@zcode/shared/zcode-protocol-v4";
 import {
@@ -11,14 +11,14 @@ import {
   type WorkflowSubagentModelDeps,
 } from "./subagent-model-label.js";
 
-/** 模型的屏幕名：只要名字（档位留给 tooltip），与 run 卡上的模型段同一个词。 */
+/** Model name shown on screen: name only (level remains in the tooltip), using the same label as the model section on run cards. */
 function modelName(canonical: string, deps: WorkflowSubagentModelDeps): string {
   return describeWorkflowSubagentModel(canonical, deps).name;
 }
 
 /**
- * 转写行的各段（不含开头的「已调整设置」与末尾时刻）：只有改过的设置在场，模型在前、上限在后。
- * 上限的 `to` 缺席或不低于天花板，都读作「上限恢复为本机默认」。
+ * Transcript-row segments (excluding the "Settings changed" prefix and trailing timestamp): include only changed settings, model first and limit second.
+ * If the limit `to` is absent or not below the ceiling, interpret it as "limit restored to local default".
  */
 export function workflowSettingsChangeSegments(
   amend: WorkflowSettingsAmendMeta,
@@ -57,8 +57,8 @@ export interface WorkflowSettingsProvenanceRow {
 }
 
 /**
- * 详情页来龙去脉块的 from → to 行。缺席的一端写默认：模型写「会话模型」，上限写本机上限（知道
- * 天花板时带上数字，「13（本机上限）→ 4」）。
+ * from → to rows in the details-page history. Show the default at a missing endpoint: "Session model" for the model and local limit for concurrency
+ * (include the ceiling when known, e.g. "13 (local limit) → 4").
  */
 export function workflowSettingsProvenanceRows(
   amend: WorkflowSettingsAmendMeta,

@@ -1,8 +1,8 @@
-/* eslint-disable max-lines -- 编辑器检测需要集中维护跨平台路径、图标解析和缓存逻辑。 */
+/* eslint-disable max-lines -- Editor detection needs to keep cross-platform paths, icon resolution, and caching together. */
 /**
- * 编辑器检测与打开 —— 检测系统中已安装的编辑器/终端，获取图标，打开路径
+ * Editor detection and opening — detect installed editors/terminals, retrieve their icons, and open paths.
  *
- * 当前支持 macOS / Windows。Linux 后续再补。
+ * Currently supports macOS / Windows. Linux support can be added later.
  */
 
 import {
@@ -28,11 +28,11 @@ const WINDOWS_EXPLORER_PATH = pathWin32.join(process.env.WINDIR ?? "C:/Windows",
 interface EditorDef {
   id: string;
   name: string;
-  /** macOS .app bundle 路径 */
+  /** macOS .app bundle path. */
   appPath: string;
   appPathCandidates?: string[];
   windowsCommandAppNames?: string[];
-  /** CLI 命令名（如果有）。用于 open folder；null 则 fallback 到 `open -a` */
+  /** CLI command name, if available. Used to open a folder; null falls back to `open -a`. */
   command: string | null;
 }
 
@@ -61,16 +61,17 @@ interface ParsedIcnsPngCandidate {
 }
 
 const MAC_EDITOR_DEFS: EditorDef[] = [
-  // 代码编辑器
+  // Code editors.
   {
     id: "vscode",
     name: "VS Code",
     appPath: "/Applications/Visual Studio Code.app",
     command: "code",
   },
-  // 这里之前只登记了稳定版 VS Code，`getInstalledEditors()` 又完全依赖这份静态白名单做 existsSync 过滤。
-  // 用户安装的是 `Visual Studio Code - Insiders.app` 时，主进程根本不会把它纳入候选列表，UI 自然也就显示不出来。
-  // 补上独立定义后，既能识别 Insiders，也能复用现有的 `code-insiders` CLI / `open -a` 降级打开链路。
+  // Previously, only stable VS Code was listed, and getInstalledEditors() used this static allowlist
+  // for existsSync filtering. When a user installed `Visual Studio Code - Insiders.app`, main never
+  // included it as a candidate, so the UI could not display it. This separate definition recognizes
+  // Insiders and reuses the existing `code-insiders` CLI / `open -a` fallback path.
   {
     id: "vscode-insiders",
     name: "VS Code Insiders",
@@ -88,7 +89,7 @@ const MAC_EDITOR_DEFS: EditorDef[] = [
   },
   { id: "codebuddy", name: "CodeBuddy", appPath: "/Applications/CodeBuddy.app", command: null },
   { id: "qoder", name: "Qoder", appPath: "/Applications/Qoder.app", command: null },
-  // JetBrains 系列
+  // JetBrains products.
   {
     id: "idea",
     name: "IntelliJ IDEA",
@@ -109,7 +110,7 @@ const MAC_EDITOR_DEFS: EditorDef[] = [
   { id: "clion", name: "CLion", appPath: "/Applications/CLion.app", command: "clion" },
   { id: "rubymine", name: "RubyMine", appPath: "/Applications/RubyMine.app", command: "rubymine" },
   { id: "datagrip", name: "DataGrip", appPath: "/Applications/DataGrip.app", command: "datagrip" },
-  // 终端（macOS 新版系统 Terminal 在 /System/Applications 下）
+  // Terminals (the current macOS Terminal app is under /System/Applications).
   {
     id: "terminal",
     name: "Terminal",
@@ -119,14 +120,15 @@ const MAC_EDITOR_DEFS: EditorDef[] = [
   { id: "iterm2", name: "iTerm", appPath: "/Applications/iTerm.app", command: null },
   { id: "ghostty", name: "Ghostty", appPath: "/Applications/Ghostty.app", command: null },
   { id: "warp", name: "Warp", appPath: "/Applications/Warp.app", command: null },
-  // 文件管理器
+  // File managers.
   {
     id: "finder",
     name: "Finder",
     appPath: "/System/Library/CoreServices/Finder.app",
     command: null,
   },
-  // 功能扩展：QSpace / QSpace Pro 是 macOS 第三方文件管理器，默认没有 CLI，复用 open -a app bundle 打开路径。
+  // Extension: QSpace / QSpace Pro are third-party macOS file managers without a CLI by default;
+  // reuse `open -a` with the app bundle to open paths.
   {
     id: "qspace",
     name: "QSpace",
@@ -257,14 +259,14 @@ function deriveWindowsAppPathsFromCommand(command: string, appNames: string[]): 
     }
   }
 
-  // Windows PATH 常见的是 bin\code.cmd 这类 shim，真实 exe 才能提供和 mac 一致的应用图标。
+  // Windows PATH commonly contains shims such as bin\code.cmd; only the real exe provides an application icon like macOS.
   return uniquePaths(candidates).filter((candidate) => existsSync(candidate));
 }
 
 const WINDOWS_EDITOR_DEFS: EditorDef[] = [
-  // Workspace 顶部“Open in Editor”以前只把真正的 IDE 暴露给 UI，
-  // Windows 用户缺少最基础的“在资源管理器里打开”入口，只能回到其它菜单操作。
-  // 这里把系统文件管理器也作为 editor 列表的一员，让 macOS Finder / Windows 资源管理器体验对齐。
+  // The Workspace "Open in Editor" menu previously exposed only IDEs to the UI, leaving Windows
+  // users without a basic "Open in Explorer" entry and forcing them to use another menu.
+  // Include the system file manager in the editor list to align the macOS Finder and Windows Explorer experiences.
   { id: "explorer", name: "资源管理器", appPath: WINDOWS_EXPLORER_PATH, command: null },
 ];
 
@@ -336,7 +338,7 @@ export function getEditorDefsForCurrentPlatform(): EditorDef[] {
   return [];
 }
 
-/** 缓存检测结果，避免重复 IO */
+/** Cache detection results to avoid repeated I/O. */
 export function resolveEditorDefAppPath(def: EditorDef): string | null {
   const commandAppPaths =
     def.command && def.windowsCommandAppNames?.length
@@ -368,9 +370,9 @@ function getIcnsModule(): typeof import("@fiahfy/icns") | null {
   try {
     cachedIcnsModule = require("@fiahfy/icns") as typeof import("@fiahfy/icns");
   } catch (error) {
-    // 这里之前在模块顶层直接 require("@fiahfy/icns")。
-    // 一旦安装包漏掉它的子依赖（这次是 pngjs），主进程会在文件加载阶段直接崩溃，
-    // 连后面的 sips / file icon 降级路径都来不及执行。改成按需懒加载后，缺包时只降级图标解析。
+    // Previously, this required @fiahfy/icns directly at module load. If the package omitted one of
+    // its dependencies (pngjs in this case), main crashed while loading the file before reaching the
+    // sips/file-icon fallback. Lazy loading means a missing dependency only downgrades icon parsing.
     cachedIcnsModule = null;
     logger.warn("[editors] 加载 @fiahfy/icns 失败，图标解析将回退到 sips", {
       error: error instanceof Error ? error.message : String(error),
@@ -407,8 +409,8 @@ function resolveAppIconPath(appPath: string): ResolvedAppIconPath {
     };
   }
 
-  // `defaults read` 对不少第三方 .app 读不到 CFBundleIconFile，
-  // 会让所有编辑器误回退到 Electron 的通用文件图标；这里改为直接解析 Info.plist。
+  // `defaults read` cannot read CFBundleIconFile from many third-party .app bundles, causing all
+  // editors to fall back incorrectly to Electron's generic file icon. Parse Info.plist directly instead.
   const iconNames = [
     plist.CFBundleIconFile,
     ...(plist.CFBundleIconFiles ?? []),
@@ -434,9 +436,9 @@ function resolveAppIconPath(appPath: string): ResolvedAppIconPath {
 
     for (const candidateFileName of candidateFileNames) {
       const candidatePath = join(appPath, "Contents", "Resources", candidateFileName);
-      // Ghostty 这类应用会同时存在同名资源目录和真正的 .icns 文件。
-      // 之前这里只判断 existsSync，先命中目录后就会把目录当成图标文件读，
-      // 最终解析失败并退回成发白的系统 file icon。这里要求候选路径必须是文件。
+      // Applications such as Ghostty may have both a same-named resource directory and an actual
+      // .icns file. Checking only existsSync could select the directory and try to read it as an icon,
+      // then fall back to the washed-out system file icon. Require each candidate path to be a file.
       if (existsSync(candidatePath) && statSync(candidatePath).isFile()) {
         return {
           candidateIconNames: iconNames,
@@ -560,7 +562,7 @@ function loadNativeImageFromIcnsViaSips(
     try {
       rmSync(tempDirPath, { recursive: true, force: true });
     } catch {
-      // 临时目录清理失败不影响图标加载
+      // Failure to clean up the temporary directory does not affect icon loading.
     }
   }
 }
@@ -570,9 +572,9 @@ function loadNativeImageFromIcns(
   appPath: string,
   icnsPath: string,
 ): Electron.NativeImage | null {
-  // Electron 的 nativeImage 不适合直接读取 .icns，
-  // 这里优先用 npm 包解析出 PNG icon，减少每个图标都起系统子进程的成本；
-  // 只有遇到老格式或包解析不到的 case，才回退到 macOS 的 sips。
+  // Electron's nativeImage is not suitable for reading .icns directly. Prefer parsing a PNG icon
+  // with the npm package to avoid starting a system subprocess for every icon; fall back to macOS
+  // sips only for legacy formats or when the package cannot parse the icon.
   return (
     loadNativeImageFromIcnsViaPackage(editorId, appPath, icnsPath) ??
     loadNativeImageFromIcnsViaSips(editorId, appPath, icnsPath)
@@ -580,9 +582,8 @@ function loadNativeImageFromIcns(
 }
 
 /**
- * 从 .app bundle 的 Info.plist 读取多个可能的 icon 字段，
- * 然后把 .icns 转成 PNG，再生成可用于菜单的真实图标。
- * 如果解析不到真实图标，再 fallback 到 Electron 的 app.getFileIcon。
+ * Read possible icon fields from an .app bundle's Info.plist, convert .icns to PNG, and create a
+ * real icon for menus. If no real icon can be parsed, fall back to Electron's app.getFileIcon.
  */
 export function getAppIconDataUrl(editorId: string, appPath: string): Promise<string | null> {
   if (process.platform !== "darwin") {
@@ -598,12 +599,12 @@ export function getAppIconDataUrl(editorId: string, appPath: string): Promise<st
         return null;
       });
   }
-  // Step 1: 尝试从 .icns 文件加载真实 app 图标
+  // Step 1: try loading the real app icon from the .icns file.
   const resolvedIcon = resolveAppIconPath(appPath);
   if (resolvedIcon.path) {
     const icon = loadNativeImageFromIcns(editorId, appPath, resolvedIcon.path);
     if (icon && !icon.isEmpty()) {
-      // 缩放到合适大小（32x32 用于菜单显示）
+      // Scale to a suitable size (32x32 for menu display).
       const resized = icon.resize({ width: 32, height: 32 });
       return Promise.resolve(`data:image/png;base64,${resized.toPNG().toString("base64")}`);
     }
@@ -616,7 +617,7 @@ export function getAppIconDataUrl(editorId: string, appPath: string): Promise<st
     });
   }
 
-  // Step 2: fallback 到 Electron 的 app.getFileIcon
+  // Step 2: fall back to Electron's app.getFileIcon.
   return app
     .getFileIcon(appPath, { size: "normal" })
     .then((icon) => `data:image/png;base64,${icon.toPNG().toString("base64")}`)
@@ -631,8 +632,8 @@ export function getAppIconDataUrl(editorId: string, appPath: string): Promise<st
 }
 
 /**
- * 检测系统中已安装的编辑器/终端，返回带图标的列表。
- * 结果会被缓存（应用生命周期内不变）。
+ * Detect installed editors/terminals and return a list with icons.
+ * Cache the result for the lifetime of the application.
  */
 export async function getInstalledEditors(): Promise<EditorInfo[]> {
   if (cachedEditors) {

@@ -27,8 +27,9 @@ function shouldSuppressDuplicateTaskNotification(
     }
   }
 
-  // elicitation_request 和 permission_request 一样代表一次具体的人机阻塞请求。
-  // 如果仍按 taskId 去重，同一任务连续 AskUserQuestion/计划确认会在 3 秒内漏掉第二条通知。
+  // elicitation_request, like permission_request, represents a specific human-blocking request.
+  // Deduplicating by taskId would suppress a second notification if AskUserQuestion/plan confirmation
+  // occurs again in the same task within three seconds.
   const dedupeTarget =
     status === "permission_request" || status === "elicitation_request"
       ? requestId?.trim() || taskId
@@ -69,8 +70,9 @@ function focusTaskNotificationWindow(senderWindow: BrowserWindow) {
     senderWindow.show();
   }
 
-  // macOS 点通知时如果窗口曾被隐藏/最小化，必须先恢复窗口，再激活 app，
-  // 最后聚焦 BrowserWindow；否则 app.focus 抢到前台时没有可显示窗口，后续 focus 可能被系统忽略。
+  // When a macOS notification is clicked while the window is hidden/minimized, restore the window
+  // first, then activate the app, and finally focus the BrowserWindow. Otherwise app.focus may bring
+  // the app forward without a visible window, and the subsequent focus may be ignored by the system.
   if (process.platform === "darwin") {
     app.dock?.show();
     app.show();
@@ -104,8 +106,9 @@ export function dispatchTaskNotification(options: {
   const notificationTitle = title.trim();
   const notificationBody = body.trim();
   if (!notificationTitle || !notificationBody) {
-    // main process 没有 renderer 当前语言上下文，不能在这里兜底生成中文通知文案。
-    // 通知文案必须由 renderer 侧按 i18n 生成后传入；缺失时直接拒绝展示，避免英文界面弹出中文硬编码。
+    // The main process does not know the renderer's current language and cannot generate localized
+    // notification copy here. The renderer must provide i18n-generated text; reject display when it
+    // is missing to avoid hard-coded Chinese appearing in an English interface.
     options.logger.warn("[show-task-notification] missing localized notification copy", {
       taskId,
       status,
@@ -126,9 +129,9 @@ export function dispatchTaskNotification(options: {
     silent: true,
   });
 
-  // Electron 原生 Notification 如果只存在于函数局部变量里，系统通知仍能显示，
-  // 但主进程 JS 对象可能在用户点击前被回收，导致 click listener 丢失。
-  // 这里显式持有对象，等点击/关闭后释放，保证“有通知”与“点击可唤起”属于同一生命周期。
+  // An Electron native Notification can still appear if held only in a local variable, but the main
+  // process JS object may be collected before the user clicks it, losing the click listener.
+  // Keep an explicit reference and release it after click/close so display and click-to-focus share a lifecycle.
   retainTaskNotification(notification);
 
   notification.once("click", () => {

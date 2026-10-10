@@ -139,7 +139,7 @@ export function WorkspaceArchivedTasksFlatSection({
           const isRemoteTask = Boolean(task.workspaceIdentity?.trim());
           const unarchiveLabel = intl.formatMessage({ id: "taskList.unarchive" });
           const deleteLabel = intl.formatMessage({ id: "taskList.delete" });
-          // archived 平铺列表同样是跨 workspace 视图，选中态要按 workspaceKey 隔离。
+          // The flat archived-task list is also a cross-workspace view, so selection state must be isolated by workspaceKey.
           const isActive = workspaceKey === activeWorkspaceKey && task.taskId === activeTaskId;
           const isMobileActive = false;
           const taskKey = `${workspaceKey}:${task.taskId}`;
@@ -172,9 +172,9 @@ export function WorkspaceArchivedTasksFlatSection({
                         id: "taskList.mobileActive",
                       })}
                     >
-                      {/* 归档视图也可能保留手机端当前 task 的旧状态，展示同一标记避免列表间状态不一致。
-                        上一版把标记放进标题行 flex 流里，会让只有手机标记的 task 标题右移；
-                        这里用绝对定位放在标题左侧，让标题文本继续按原始位置对齐。 */}
+                      {/* The archived view may also retain stale state for the task currently viewed on mobile; show the same marker to keep list state consistent.
+                        The previous version placed the marker in the title row’s flex flow, shifting titles for tasks with only a phone marker.
+                        Position it absolutely to the left of the title so title text remains aligned at its original position. */}
                       <Smartphone className="size-3.5" />
                     </span>
                   </ControlHintTooltip>
@@ -194,8 +194,8 @@ export function WorkspaceArchivedTasksFlatSection({
                   className="flex min-w-0 flex-1 items-center gap-1.5"
                   title={task.workspacePath}
                 >
-                  {/* archived 列表以前本地和远端任务都显示 Folder，
-                    用户无法判断取消归档会作用在哪一侧。这里用 Cloud 区分远端来源。 */}
+                  {/* The archived list used to show Folder for both local and remote tasks,
+                    so users could not tell which side would be unarchived. Use Cloud to identify remote tasks. */}
                   {isRemoteTask ? (
                     <Cloud className="size-3 shrink-0" />
                   ) : (
@@ -252,8 +252,8 @@ export function WorkspaceArchivedTasksFlatSection({
                         });
                     }}
                   >
-                    {/* 取消归档按钮以前本地/远端都用 ArchiveX，
-                      在混合归档列表中看不出操作目标。远端用 CloudDownload 明确会作用到远端 task。 */}
+                    {/* The unarchive button used ArchiveX for both local and remote tasks,
+                      making the target unclear in a mixed archive list. Use CloudDownload for remote tasks to make the target explicit. */}
                     {isRemoteTask ? (
                       <CloudDownload className="size-3.5" />
                     ) : (
@@ -262,8 +262,8 @@ export function WorkspaceArchivedTasksFlatSection({
                   </Button>
                 </ControlHintTooltip>
                 <ControlHintTooltip title={deleteLabel} side="top">
-                  {/* 删除请求期间 button 会 disabled，disabled 元素不产生 hover 事件；
-                    用真实 span 承接 tooltip trigger，保持处理中仍能解释该 action。 */}
+                  {/* The button is disabled while a delete request is in progress, and disabled elements do not emit hover events.
+                    Use a real span as the tooltip trigger so the action remains explainable while processing. */}
                   <span className="inline-flex shrink-0">
                     <Button
                       type="button"
@@ -302,8 +302,8 @@ export function WorkspaceArchivedTasksFlatSection({
                                 ? { workspaceIdentity: task.workspaceIdentity }
                                 : {}),
                             });
-                            // 删除只发生在归档列表，不能把它当成“取消归档”写回普通列表。
-                            // 这里直接从 task caches 移除目标项，避免失效整表 query cache 导致列表闪空。
+                            // Deletion happens only in the archived list; do not treat it as unarchiving and write it back to the regular list.
+                            // Remove the target directly from task caches to avoid invalidating the whole query cache and briefly emptying the list.
                             removeTaskFromTaskCaches({
                               workspacePath: task.workspacePath,
                               workspaceIdentity: task.workspaceIdentity,

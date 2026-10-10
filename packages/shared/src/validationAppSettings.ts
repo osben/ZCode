@@ -1,4 +1,4 @@
-/* oxlint-disable eslint(max-lines) -- AppSettings schema 聚合历史迁移、默认值和 patch 校验，拆分会削弱设置迁移的单一入口。 */
+/* oxlint-disable eslint(max-lines) -- The AppSettings schema centralizes legacy migrations, defaults, and patch validation; splitting it would weaken the single entry point for settings migration. */
 import { z } from "zod";
 import type { AppSettings } from "./protocol.js";
 import { REMOTE_ASSET_INSTALL_MODES } from "./remoteAssetInstallMode.js";
@@ -11,7 +11,7 @@ import {
 } from "./browser-use/command-metadata.js";
 import { providerFamilyConnectionSelectionSettingsSchema } from "./provider-family-connection-selection.js";
 
-/** 引导职业枚举；单独导出供 onboarding 记录回填 settings 时做窄化校验。 */
+/** Onboarding occupation enum; exported separately for narrow validation when onboarding records backfill settings. */
 const appSettingsOccupationSchema = z.enum([
   "office",
   "developer",
@@ -93,7 +93,7 @@ const remoteWorkspaceTargetSchema = z.discriminatedUnion("kind", [
   z.object({
     kind: z.literal("wsl"),
     distro: z.string().optional(),
-    // 远程历史重连会直接使用 settings 中的 WSL user，必须和连接入口共用校验，避免绕过 UI 后污染 identity/日志。
+    // Reconnecting remote history uses the WSL user from settings directly; share validation with the connection entry point to prevent bypassing the UI and corrupting identity/logs.
     user: wslUserSchema.optional(),
   }),
   z.object({
@@ -148,7 +148,7 @@ function sanitizeZCodeEndpointOrigin(value: unknown): unknown {
     return { ...raw, zcodeEndpointOrigin: parsed.data };
   }
   const { zcodeEndpointOrigin: _zcodeEndpointOrigin, ...next } = raw;
-  // 非生产 endpoint override 是开发辅助字段，坏值只丢弃该字段，不能拖垮整个 settings 读取。
+  // Non-production endpoint overrides are developer-support fields; discard an invalid value without breaking the entire settings read.
   return next;
 }
 
@@ -165,8 +165,8 @@ function sanitizeDesktopWindowSize(value: unknown): unknown {
     return value;
   }
   const { desktopWindowSize: _desktopWindowSize, ...next } = raw;
-  // 窗口尺寸是非关键偏好，坏值若参与整份 schema 校验，会让其他合法设置全部回退默认。
-  // 读取历史设置时只丢弃损坏字段；写入 patch 仍保持严格校验，避免继续产生坏数据。
+  // Window dimensions are non-critical preferences; validating a bad value as part of the full schema would reset every other valid setting to its default.
+  // When reading historical settings, discard only corrupted fields; keep strict validation for write patches to avoid producing more bad data.
   return next;
 }
 
@@ -185,8 +185,8 @@ function sanitizeEmbeddedBrowserViewportPreference(value: unknown): unknown {
     return value;
   }
   const { embeddedBrowserViewportPreference: _embeddedBrowserViewportPreference, ...next } = raw;
-  // 显示偏好不是关键启动状态，单字段损坏不应让整份 setting.json 被隔离。
-  // 读取时只丢弃坏偏好并回到默认值；patch 写入仍严格拒绝非法尺寸与缩放。
+  // Display preferences are not critical startup state; one corrupted field should not quarantine the entire setting.json.
+  // On read, discard invalid preferences and use defaults; patch writes still strictly reject invalid dimensions and zoom values.
   return next;
 }
 
@@ -200,8 +200,8 @@ function migrateCloseToTrayOnWindowsDefault(value: unknown): unknown {
   }
   return {
     ...raw,
-    // 初始化原因：旧版会把默认 false 和用户手动关闭都保存成同一个值，无法可靠区分。
-    // 本版本统一开启一次；写入迁移标记后，后续再按用户明确选择保留 true/false。
+    // Initialization rationale: legacy versions saved both the default false and a user-selected off state as the same value, making them impossible to distinguish reliably.
+    // Enable it once for this version; after writing the migration marker, preserve true/false according to the user's explicit choice.
     closeToTrayOnWindows: true,
     closeToTrayOnWindowsMigrationInitialized: true,
   };
@@ -217,8 +217,8 @@ function migrateMessageStreamShowReasoningDefault(value: unknown): unknown {
   }
   return {
     ...raw,
-    // 初始化原因：旧版会把默认 false 和用户手动关闭都保存成同一个值，无法可靠区分。
-    // 本版本统一开启一次；写入迁移标记后，后续再按用户明确选择保留 true/false。
+    // Initialization rationale: legacy versions saved both the default false and a user-selected off state as the same value, making them impossible to distinguish reliably.
+    // Enable it once for this version; after writing the migration marker, preserve true/false according to the user's explicit choice.
     messageStreamShowReasoning: true,
     messageStreamShowReasoningMigrationInitialized: true,
   };
@@ -241,8 +241,8 @@ function migrateLegacyLocalePreference(value: unknown): unknown {
 
   return {
     ...raw,
-    // 旧 setting.json 只有 locale，无法区分“用户显式选择 zh-CN”和“默认值 zh-CN”。
-    // 对已经落盘的旧配置保留原 locale 作为显式偏好，避免升级后误切到 system。
+    // Legacy setting.json contains only locale, so it cannot distinguish "the user explicitly selected zh-CN" from "zh-CN is the default."
+    // Preserve the locale in existing legacy config as an explicit preference, avoiding an unintended switch to system after upgrade.
     localePreference: parsedLocale.data,
   };
 }
@@ -269,8 +269,8 @@ function stripHistoricalRemoteResourcePackages(target: unknown): unknown {
   }
 
   const { resourcePackages: _resourcePackages, ...nextTarget } = rawTarget;
-  // SSH 部署固定使用完整 active 资源集；旧 setting.json 里的 resourcePackages 是历史裁剪，
-  // 在配置入口清掉，避免后续重连或 tab 恢复继续读取。
+  // SSH deployment always uses the full active resource set; resourcePackages in legacy setting.json is historical filtering,
+  // so clear it at the config entry point to prevent later reconnects or tab restores from reading it.
   return nextTarget;
 }
 
@@ -305,8 +305,8 @@ function migrateLegacyWorkspaceSession(value: unknown): unknown {
         entry && typeof entry === "object" && !Array.isArray(entry)
           ? {
               ...(entry as Record<string, unknown>),
-              // 更老的 remoteWorkspaceHistory 可能保存了已退役资源包 ID。
-              // 先剥离历史选择再走 schema，避免迁移阶段误删整条远程历史。
+              // Older remoteWorkspaceHistory entries may contain retired resource-package IDs.
+              // Strip legacy selections before schema validation to avoid accidentally deleting the entire remote history during migration.
               target: stripHistoricalRemoteResourcePackages(
                 (entry as Record<string, unknown>).target,
               ),
@@ -401,10 +401,10 @@ function migrateLegacyWorkspaceSession(value: unknown): unknown {
     ),
   ];
 
-  // 旧 setting.json 把本地会话、远端历史、组合会话拆在三处存，
-  // 一旦只删掉其中一处，启动恢复就会出现“列表还在但恢复不到”或“远端数据残留”的分叉状态。
-  // 这里在 schema 解析阶段统一合并进 lastWorkspaceSession，并主动移除旧字段，
-  // 保证后续所有读写都只围绕单一真相源展开。
+  // Legacy setting.json stores local sessions, remote history, and combined sessions in three separate places,
+  // so deleting only one of them would leave startup recovery in a split state: "the list is present but cannot be restored" or "remote data remains."
+  // Merge them into lastWorkspaceSession during schema parsing and explicitly remove the legacy fields,
+  // ensuring all subsequent reads and writes use a single source of truth.
   if (
     nextWorkspaceSession.length > 0 ||
     hasLegacyRemoteEntries ||
@@ -419,10 +419,10 @@ function migrateLegacyWorkspaceSession(value: unknown): unknown {
 
 const appSettingsObjectSchema = z.object({
   recentProjects: z.array(z.string()).default([]),
-  // 未知 locale（如更新版本写入的新语言后回退到旧版本）只回落为默认值：
-  // 严格 enum 失败会让整个 setting.json 解析失败，settingService 退回 defaultSettings() 并在下次写入时抹掉全部设置。
+  // An unknown locale (such as a new language written by a newer version and then read by an older version) falls back only to the default:
+  // A strict enum failure would invalidate all of setting.json; settingService would fall back to defaultSettings() and erase all settings on the next write.
   locale: localeSchema.default("zh-CN").catch("zh-CN"),
-  // 快捷键用户覆盖（语义校验在 ui/src/shortcuts 生效表阶段容错，schema 只管形状）
+  // User shortcut overrides (semantic validation is tolerant in the effective map in ui/src/shortcuts; the schema validates shape only).
   shortcutBindings: z.record(z.string(), z.array(z.string())).optional(),
   localePreference: localePreferenceSchema.default("system").catch("system"),
   terminalInheritSystemProfile: z.boolean().default(true),
@@ -435,8 +435,8 @@ const appSettingsObjectSchema = z.object({
   embeddedBrowserViewportPreference: embeddedBrowserViewportPreferenceSchema.default(
     DEFAULT_EMBEDDED_BROWSER_VIEWPORT_PREFERENCE,
   ),
-  // 输入框电脑操作入口改为默认不展示，设置项保留、默认关闭。
-  // default 只对缺省字段生效，显式存过 false 的用户仍保持展示。
+  // Computer-control entry points in the input box are hidden by default; retain the setting and default it to off.
+  // default applies only when the field is absent; users who explicitly saved false continue to have it hidden.
   computerUseComposerEntryHidden: z.boolean().default(true),
   taskAutoArchiveEnabled: z.boolean().default(false),
   taskAutoArchiveOlderThanDays: z.number().int().positive().max(365).default(7),
@@ -468,7 +468,7 @@ const appSettingsObjectSchema = z.object({
   lastActiveTabIndex: z.number().int().nonnegative().default(0),
   lastActiveTaskByWorkspace: z.record(z.string(), z.string()).optional(),
   dataBaseDir: z.string().trim().min(1).optional(),
-  // releaseNotesByLocale 以 localeSchema 为 key，未知语言会让整份设置解析失败；丢弃待展示的更新说明代价远小于丢失全部设置。
+  // releaseNotesByLocale uses localeSchema as its key, and an unknown language would invalidate all settings; discarding update notes is far less costly than losing every setting.
   pendingPostUpdateReleaseNotes: postUpdateReleaseNotesPayloadSchema.optional().catch(undefined),
   receivePreviewUpdates: z.boolean().default(false),
   autoDownloadAndInstallUpdates: z.boolean().default(false),

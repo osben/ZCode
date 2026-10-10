@@ -1,49 +1,53 @@
 /**
- * 产物（artifact）的上限常量。
+ * Cap constants for artifacts.
  *
- * ⚠ 术语：这里的 artifact 是**用户面产物**——脚本经 `artifact.*` 发布给用户看的文件 /
- * markdown / 预置看板，不是引擎内部那个 artifact（`RunSettlement.artifact`、
- * `analysis/artifact-types.ts` 的类型化输出值，那是给模型看的顶层返回值）。
+ * ⚠ Terminology: artifact here means a **user-facing output**—a file / markdown / preset dashboard
+ * published by a script through `artifact.*`. It is not the engine's internal artifact
+ * (`RunSettlement.artifact`, the typed output value in `analysis/artifact-types.ts`), which is the
+ * top-level return value for the model.
  *
- * 与 `report-caps.ts` / `world-read-caps.ts` 同样自成一个模块，理由也一样：这批数字的
- * **执行侧是分裂的**——id 数、版本数由引擎核心执行（它才知道 journal 里这个 id 已经有几版），
- * 字节数与文本长度由 driver 执行（只有它读得到文件、写得进 store）。放进任一侧的模块都会让
- * 读者以为它们由同一侧强制；而数字是契约这一点两侧相同，所以它们必须住在纯包里、有名字，
- * 让引擎测试与 driver 测试断言同一份常量而不是各抄一份。
+ * Like `report-caps.ts` / `world-read-caps.ts`, these live in their own module for the same reason:
+ * **enforcement is split**. The engine core enforces ID and version counts (it knows how many
+ * versions the journal has for an ID), while the driver enforces bytes and text lengths (only it
+ * can read files and write to the store). Putting them in either side's module would imply one side
+ * enforces them all. Since the numbers are contracts shared by both sides, keep named constants in
+ * the pure package so engine and driver tests assert the same values instead of copying them.
  *
- * 溢出的策略**按成员族分裂**（错误码）：内容成员（`file` / `markdown`）返回
- * promise，脚本有处可 catch，所以超限是**节点级拒绝**（`ArtifactTooLarge` /
- * `ArtifactVersionCapExceeded` / `ArtifactCapExceeded`）；预置成员返回 void，没有拒绝通道，
- * 所以同样的上限在那一族是 failRun。与 world-read / report 的分界同一条论证。
+ * Overflow policy **splits by member family** (and error code): content members (`file` /
+ * `markdown`) return promises that the script can catch, so exceeding a cap is a **node-level
+ * rejection** (`ArtifactTooLarge` / `ArtifactVersionCapExceeded` / `ArtifactCapExceeded`). Preset
+ * members return void and have no rejection channel, so the same cap fails the run for that family.
+ * This follows the same reasoning as the world-read / report distinction.
  */
 
-/** 产物的数量、体积与文本上限。数字即契约（见本模块顶部）。 */
+/** Artifact count, size, and text limits. These numbers are the contract (see this module's header). */
 export const ARTIFACT_CAPS = {
-  /** 一个 run 内最多能有几个不同的产物 id。 */
+  /** Maximum number of distinct artifact IDs in one run. */
   maxArtifactsPerRun: 32,
-  /** 单个 id 最多能发布几版（内容成员每次成功发布 = 一版）。 */
+  /** Maximum number of versions per ID (each successful content-member publication is one version). */
   maxVersionsPerArtifact: 16,
-  /** `artifact.file` 的最大字节数（与 PROTOCOL_V4_LIMITS.attachmentMaxBytes 同值）。 */
+  /** Maximum bytes for `artifact.file` (same as PROTOCOL_V4_LIMITS.attachmentMaxBytes). */
   maxFileBytes: 20 * 1024 * 1024,
-  /** `artifact.markdown` 的最大字节数（UTF-8）。 */
+  /** Maximum UTF-8 bytes for `artifact.markdown`. */
   maxMarkdownBytes: 256 * 1024,
-  /** `opts.title` 的最大字符数。 */
+  /** Maximum character count for `opts.title`. */
   maxTitleLength: 120,
-  /** `opts.description` 的最大字符数。 */
+  /** Maximum character count for `opts.description`. */
   maxDescriptionLength: 500,
-  /** 预置 spec 规范化 JSON 后的最大字节数。 */
+  /** Maximum bytes for a preset spec after JSON normalization. */
   maxSpecSerializedBytes: 8 * 1024,
-  /** 产物 id 的最大字符数。 */
+  /** Maximum character count for an artifact ID. */
   maxIdLength: 64,
 } as const;
 
 /**
- * 合法产物 id 的字符集：`[A-Za-z0-9_.-]`，非空。
+ * Character set for a valid artifact ID: non-empty `[A-Za-z0-9_.-]`.
  *
- * 为什么这么窄：id 是**跨面身份**——journal 的 `dwf_node.artifact_id` 列、store 的
- * `toolCallId`、v4 查询的 params、侧板 tab 的键，都拿它当键。斜杠、空格、百分号在其中任一处
- * 都会变成一次转义争议，而一个转义争议在四处各解决一次就是四个答案。
+ * Why so narrow: the ID is a **cross-surface identity** used as a key in the journal's
+ * `dwf_node.artifact_id` column, the store's `toolCallId`, v4 query params, and the sidebar tab.
+ * Slashes, spaces, or percent signs would require escaping in one of those places; resolving the
+ * same escaping issue four times would create four different answers.
  *
- * 无 `g` 标志：带 `g` 的正则在 `test` 之间保留 `lastIndex`，同一个 id 连测两次会得到不同答案。
+ * No `g` flag: a global regex retains `lastIndex` between `test` calls, so testing the same ID twice would return different results.
  */
 export const ARTIFACT_ID_PATTERN = /^[A-Za-z0-9_.-]+$/;

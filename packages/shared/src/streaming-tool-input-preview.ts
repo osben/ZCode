@@ -42,11 +42,11 @@ const PARTIAL_JSON_STRING_FIELD_KEYS = [
   "title",
   "pattern",
   "replacement",
-  // ExitPlanMode 的正文位于 plan 字段。把它纳入半截 JSON 预览后，计划卡片与
-  // 侧边详情才能从首个流式 chunk 开始更新，而不是等 input_end 才突然出现。
+  // ExitPlanMode's body is in the plan field. Including it in the partial JSON preview lets the plan card and
+  // side details update starting with the first streaming chunk instead of appearing suddenly at input_end.
   "plan",
-  // CreateWorkflow 的脚本与名字：流式草稿
-  // 要在模型还在写脚本时就把站扫出来，半截 script 必须从首个 chunk 起就进预览。
+  // CreateWorkflow script and name: streaming drafts
+  // To discover sites while the model is still writing the script, include partial script content in the preview starting with the first chunk.
   "name",
   "script",
 ] as const;
@@ -107,8 +107,8 @@ export function shouldMaterializeZCodeStreamingToolInputPreview(
   }
   const lastPreviewAt = state.lastPreviewAt ?? 0;
   if (isZCodeFileStreamingToolInputPreviewTool(options.toolName)) {
-    // 性能修复：Write/Edit 的半截 JSON 会触发全量内容恢复和行级 diff。
-    // 大字节 chunk 不能绕过一秒窗口，否则模型输出越快，UI 反而更新越频繁。
+    // Performance fix: incomplete Write/Edit JSON triggers full content recovery and a line-level diff.
+    // Large-byte chunks must not bypass the one-second window; otherwise faster model output makes the UI update more often.
     return (
       (options.now ?? Date.now()) - lastPreviewAt >=
       ZCODE_FILE_STREAMING_TOOL_INPUT_PREVIEW_MIN_INTERVAL_MS
@@ -125,8 +125,8 @@ export function shouldMaterializeZCodeStreamingToolInputPreview(
   if (!intervalElapsed) {
     return false;
   }
-  // 性能修复：大 Write/Edit 参数通常会被 provider 以 4KB 左右的慢速 chunk 推送。
-  // 若只按时间预算，active 任务仍会每个 chunk 解析累计 JSON；超过小输入范围后改由 raw growth 控制。
+  // Performance fix: providers usually send large Write/Edit arguments in slow chunks of around 4 KB.
+  // With only a time budget, active tasks would still parse cumulative JSON on every chunk; beyond the small-input range, control work by raw growth instead.
   return state.rawInput.length <= ZCODE_ACTIVE_STREAMING_TOOL_INPUT_TIME_BUDGET_MAX_RAW_INPUT;
 }
 

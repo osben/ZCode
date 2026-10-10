@@ -1,9 +1,10 @@
 // ============================================================
-// AgentRuntime-backed WorkflowDriver：纯辅助
+// AgentRuntime-backed WorkflowDriver: pure helpers
 // ============================================================
-// workflow-driver.ts 顶到 oxlint max-lines 上限（400 行），把不碰 driver 状态的纯函数与
-// 常量（deferred、actor 会话 id 铸造、升级预算与 qid 片段、nudge / schema 尾注、裁决与统计的
-// 映射、turn 失败归一）拆到本文件；公开面（mintActorSessionId）仍从 workflow-driver.ts 导出。
+// workflow-driver.ts reached oxlint's max-lines limit (400 lines), so pure functions and constants
+// that do not touch driver state moved here (deferred, actor session ID generation, escalation
+// budget and qid fragments, nudge/schema epilogues, decision/stat mapping, turn-failure
+// normalization). The public API (mintActorSessionId) is still exported from workflow-driver.ts.
 
 import {
   CoreErrorType,
@@ -37,18 +38,20 @@ export function defer<T>(): Deferred<T> {
 }
 
 /**
- * actor 会话 id：run 作用域 + 字符集安全。
+ * Actor session ID: run-scoped and safe for the allowed character set.
  *
- * 旧方案 `createSessionId("wf-actor-" + refToString(actor))` 有两个缺陷：不含 runId，所以
- * 并发两个 run 的同 site×ordinal actor 撞成同一个 id；且带 `#`/`@`（refToString 的形态是
- * `actor#1@1`），而会话 id 会进 URL、文件路径与日志。
+ * The old `createSessionId("wf-actor-" + refToString(actor))` had two flaws: it omitted runId, so
+ * actors with the same site × ordinal in concurrent runs collided; and it included `#`/`@`
+ * (`refToString` looks like `actor#1@1`), even though session IDs appear in URLs, file paths, and logs.
  */
 /**
- * actor 会话 id：run 作用域且字符集安全。
+ * Actor session ID: run-scoped and safe for the allowed character set.
  *
- * **导出是有意的**：进度投影要在 `actor-created` 事件上带出会话 id（Boundary C 不带它），
- * 而"按 (runId, actorRef) 算会话 id"必须只有一个实现——两处各算一次，就会有一天不相等，
- * 表现是详情页打开一个不存在的会话。run service 调用的就是这个函数（测试钉住两边相等）。
+ * **The export is intentional**: progress projection needs the session ID on `actor-created`
+ * events (Boundary C does not include it), and `(runId, actorRef) -> session ID` must have one
+ * implementation. Computing it separately in two places could eventually produce different IDs,
+ * making the detail page open a nonexistent session. The run service calls this function (tests
+ * assert both sides match).
  */
 export function mintActorSessionId(runId: string, actor: ActorRef): SessionId {
   return createSessionId(
@@ -57,80 +60,86 @@ export function mintActorSessionId(runId: string, actor: ActorRef): SessionId {
 }
 
 /**
- * 把任意串折叠进 `[A-Za-z0-9.\-_]`，其中 `_` 只作为转义输出出现。
+ * Fold any string into `[A-Za-z0-9.\-_]`, using `_` only as escaped output.
  *
- * **两步，顺序是契约**：先把字面 `_` 转义成 `__`，再把 `[A-Za-z0-9.-]` 之外的字符映射成单个 `_`。
- * 顺序反了转义就失效（第二步产出的 `_` 会被第一步再翻一遍）。第一步产出的 `_` 落到第二步的
- * 映射上是恒等的，所以两步可以安全串联。
+ * **Two steps, in contractual order**: first escape literal `_` as `__`, then map characters
+ * outside `[A-Za-z0-9.-]` to a single `_`. Reversing the order breaks escaping (underscores
+ * produced by step two would be escaped again by step one). Underscores produced by step one pass
+ * unchanged through step two, so the steps can be safely chained.
  *
- * 为什么要转义那一步：没有它，`my_actor#1` 与 `my#actor#1` 都折叠成 `my_actor_1`——一次真实碰撞。
- * 单纯的白名单只在「站点 id 词汇表里没有 `_`」这个前提下无碰撞，而那个词汇表由分析器拥有、
- * 不由本文件拥有。转义把「靠别人的词汇表保持某种形状」换成了本地可证的性质。
+ * Why escape: without it, `my_actor#1` and `my#actor#1` both fold to `my_actor_1`, a real collision.
+ * A plain allowlist is collision-free only if the site-ID vocabulary contains no `_`, and that
+ * vocabulary belongs to the analyzer, not this file. Escaping replaces dependence on another
+ * module's vocabulary with a property that can be proven locally.
  *
- * 残留的（更小的）假设：两个**不同**的特殊字符仍都映射成 `_`，所以假想的 `a#b` 与 `a@b` 会撞。
- * 今天与可预见的站点 id 里，特殊字符出现在固定位置（`actor#N@M`、站点特化的 `kind#N/M`），
- * 不存在这种同形异构对；真要消除，就得给每个特殊字符一个独立编码。
+ * Remaining (smaller) assumption: two **different** special characters still map to `_`, so
+ * hypothetical `a#b` and `a@b` would collide. In current and foreseeable site IDs, special
+ * characters occur in fixed positions (`actor#N@M`, site-specific `kind#N/M`), so this pair does
+ * not arise. Eliminating the assumption entirely would require a distinct encoding per special character.
  */
 function sanitizeIdSegment(value: string): string {
   return value.replace(/_/g, "__").replace(/[^A-Za-z0-9.-]/g, "_");
 }
 
 /**
- * 一次 ask 内的升级次数上限（与 nudge 预算同族）。
+ * Maximum number of escalations within one ask (same family as the nudge budget).
  *
- * 上限之外**不是错误而是一条纪律**：第 4 次调用拿到「自行以最佳判断推进」的普通结果。
- * 升级不写 dwf_node 行（等待不是工作量），所以这个计数是唯一的界。
+ * Exceeding the limit is **a policy, not an error**: the fourth call returns an ordinary result
+ * telling the model to proceed using its best judgment. Escalations do not write dwf_node rows
+ * (waiting is not work), so this counter is the sole limit.
  */
 export const MAX_ESCALATIONS_PER_ASK = 3;
 
-/** 预算耗尽时回给模型的工具结果文案（普通结果，不是错误）。 */
+/** Tool result returned to the model when the budget is exhausted (ordinary result, not an error). */
 export const ESCALATION_BUDGET_EXHAUSTED =
   `Escalation budget exhausted: at most ${MAX_ESCALATIONS_PER_ASK} escalations per task. ` +
   "Do not call escalate again. Proceed on your best judgement with the information you have, " +
   "and state in your final result the assumptions you relied on and the doubts that remain.";
 
-/** actor 会话 id 片段之外，qid 片段的候选序列（由短到长，最后一个是完整 runId）。 */
+/** Candidate sequence of qid fragments, from shortest to longest, with the full runId last. */
 export function questionIdFragments(runId: string): string[] {
-  // `dwfrun-` 前缀对每个 run 都一样，留着只会把 qid 变长而不增加辨识度。
+  // The `dwfrun-` prefix is identical for every run; keeping it lengthens qid without making it more distinctive.
   const body = runId.startsWith("dwfrun-") ? runId.slice("dwfrun-".length) : runId;
   const full = sanitizeIdSegment(body);
   const candidates = [full.slice(0, 8), full.slice(0, 16), full];
-  // 短 runId 上三个候选会退化成同一个串；去重只为不做无谓的重复查表。
+  // For short runIds, all three candidates may collapse to the same string; deduplicate to avoid redundant lookups.
   return [...new Set(candidates)];
 }
 
 /**
- * actor 的**有效名**：直接取 `persona.name`，缺席或空串即匿名。
+ * Actor's **effective name**: use `persona.name` directly; absent or empty means anonymous.
  *
- * 不需要在这里重跑规范化——driver 收到的 persona 已经是引擎 `normalizePersona` 的产物
- * （scheduler 把 `actor.persona` 原样递进 `createActorSession`），所以 `spec.name` 就是
- * 引擎认定的那一个有效名：`actor-created` 事件上的名字、amend-resume 的缓存身份键、
- * DuplicateActorName 查重的键，全都是它。
+ * No need to normalize again here: the driver receives the persona already produced by the engine's
+ * `normalizePersona` (the scheduler passes `actor.persona` unchanged to `createActorSession`), so
+ * `spec.name` is the effective name determined by the engine. It is used for the `actor-created`
+ * event name, amend-resume cache identity key, and DuplicateActorName deduplication key.
  *
- * **刻意不 trim**，与 {@link normalizeEscalationContext} 相反：引擎的匿名判据是
- * `name !== undefined && name !== ""`（engine.ts 的 createActor），一个叫 `"  "` 的 actor
- * 对引擎是**具名的**、占着缓存身份键。这里若 trim 成匿名，同一个 actor 就会在「有没有名字」
- * 这件事上给出两个答案——而那正是升级记录要拿来标识提问者的东西。跟着引擎走。
+ * **Deliberately do not trim**, unlike {@link normalizeEscalationContext}: the engine's anonymous
+ * check is `name !== undefined && name !== ""` (createActor in engine.ts), so an actor named `"  "`
+ * is **named** to the engine and occupies a cache identity key. Trimming it to anonymous here would
+ * give the same actor two answers to "does it have a name?"—the name identifies the asker in
+ * escalation records. Follow the engine's rule.
  */
 export function effectiveActorName(persona: PersonaSpec): string | undefined {
   const name = persona.name;
   return name === undefined || name === "" ? undefined : name;
 }
 
-/** `escalate` 的可选 context：空白等同缺席（模型常传空串，落进事件里只是噪音）。 */
+/** Optional context for `escalate`: whitespace means absent (the model often sends an empty string, which is noise in events). */
 export function normalizeEscalationContext(context: string | undefined): string | undefined {
   const trimmed = context?.trim();
   return trimmed === undefined || trimmed.length === 0 ? undefined : trimmed;
 }
 
-/** turn 结束未提交时促模型提交的 nudge 提示。 */
+/** Nudge prompt asking the model to submit when the turn ended without a submission. */
 export const NUDGE_PROMPT =
   "You ended your turn without submitting a result. Call the submit_result tool now with a payload conforming to the required schema.";
 
 /**
- * typed ask 的 schema 尾注：追加到指令正文，告诉模型用 submit_result 提交符合 schema 的结果。
- * 格式（本注释即契约）：分隔线 + 一句话要求调用工具 + 缩进 2 空格的 JSON Schema + 一句 result 约束。
- * 措辞不含「exactly once」——修复回合里模型会合法地多次调用 submit_result。
+ * Schema epilogue for a typed ask: append it to the instructions, telling the model to submit a
+ * schema-conforming result through submit_result. Format (this comment is the contract): separator
+ * + one sentence requesting a tool call + JSON Schema indented by two spaces + one result constraint.
+ * Do not say "exactly once"; the model may legitimately call submit_result more than once during a repair turn.
  */
 export function schemaEpilogue(schema: unknown): string {
   const rendered = schema === undefined ? "(any JSON value)" : JSON.stringify(schema, null, 2);
@@ -147,8 +156,10 @@ export function schemaEpilogue(schema: unknown): string {
 }
 
 /**
- * mono 子代理的 typed ask 尾注：schema 已在工具声明里，这里只剩一句「做完就调工具」。与 {@link schemaEpilogue}
- * 同一格式骨架（两个空行 + 分隔线），GUI 的尾注折叠按边界索引而不是文本，不受影响。
+ * Typed-ask epilogue for a mono subagent: the schema is already in the tool declaration, so only
+ * the instruction "call the tool when done" remains. It shares the format skeleton (two blank lines
+ * + separator) with {@link schemaEpilogue}; GUI epilogue collapsing uses boundary indices, not text,
+ * so it is unaffected.
  */
 export const TYPED_TOOL_EPILOGUE = [
   "",
@@ -157,12 +168,12 @@ export const TYPED_TOOL_EPILOGUE = [
   "When you have finished, call the `submit_result` tool to submit your final result. Its `result` argument must match the tool's declared schema — pass the conforming JSON directly, do not wrap it or add commentary.",
 ].join("\n");
 
-/** 引擎 Violation → contracts SubmitViolation（结构同构，1:1）。 */
+/** Engine Violation -> contracts SubmitViolation (same shape, 1:1). */
 export function mapViolations(violations: readonly Violation[]): SubmitViolation[] {
   return violations.map((v) => ({ path: v.path, expected: v.expected, got: v.got }));
 }
 
-/** 合成一条二值 rejection（driver 本地拦截用，不经引擎）。 */
+/** Construct a binary rejection (for driver-local interception, without going through the engine). */
 export function rejectWith(message: string): ContractsSubmitVerdict {
   return {
     accept: false,
@@ -171,15 +182,18 @@ export function rejectWith(message: string): ContractsSubmitVerdict {
 }
 
 /**
- * 从 TurnResult + 工具活动面的观察提炼 AskStats。tokens 是引擎唯一强依赖字段（扣预算）；turns 与两个
- * 工具计数供 journal 记录，其中 `toolCalls === 0` 让这条 ask 成为导入缓存关门后仍可命中的**纯** ask，`worldToolCalls`
- * 是「它看过或动过外部世界」的记账——协议工具（`submit_result` / `escalate`）不计入，否则每条 typed ask
- * 都会因为交结果而不再是纯的。
+ * Derive AskStats from TurnResult and observed tool activity. `tokens` is the only field the engine
+ * depends on strongly (budget deduction); `turns` and both tool counts are recorded in the journal.
+ * `toolCalls === 0` makes an ask **pure** and eligible for an import-cache hit after the cache
+ * closes. `worldToolCalls` records whether it read or changed the external world. Protocol tools
+ * (`submit_result`/`escalate`) are excluded or every typed ask would become non-pure simply by submitting its result.
  *
- * 计数曾从 `result.events` 里数 `ToolCallStarted`，而 TurnResult 的事件数组
- * 不含工具事件——生产 journal 的 2097 条 ask 行 `toolCalls` 全是 0，包括明明写过文件的子代理。若纯 ask
- * 的判定压在这个 0 上，关门之后每条缓存条目都会被当成纯的照常命中，恰好放掉关门要防的那一类。计数因此
- * 改由 driver 的工具活动面从**会话事件流**数（那里是工具调用真正现身的地方），按 ask 累加后传进来。
+ * Counting used to look for ToolCallStarted in `result.events`, but TurnResult's event array does
+ * not contain tool events: all 2,097 ask rows in the production journal had `toolCalls` = 0,
+ * including subagents that clearly wrote files. If purity relied on that zero, every cached entry
+ * would keep hitting after the cache closed, allowing exactly what closing the cache is meant to
+ * prevent. The driver now counts from the **session event stream**, where tool calls actually
+ * appear, accumulating them per ask before passing the values in.
  */
 function statsFromTurn(result: TurnResult, toolCounts: ActorToolCounts): AskStats {
   const usage = result.usage;
@@ -191,7 +205,7 @@ function statsFromTurn(result: TurnResult, toolCounts: ActorToolCounts): AskStat
   };
 }
 
-/** 判断 executeTurn 的 reject 是否为「用户/引擎取消」（正常结束，不算 driver 失败）。 */
+/** Whether executeTurn rejected because of user/engine cancellation (normal termination, not a driver failure). */
 export function isTurnCancelled(error: unknown): boolean {
   return (
     typeof error === "object" &&
@@ -200,32 +214,32 @@ export function isTurnCancelled(error: unknown): boolean {
   );
 }
 
-/** 把任意（非模型层的）turn 失败归一成 node 级 WorkflowError（DriverError），保留原始 cause。 */
+/** Normalize any non-model-layer turn failure into a node-level WorkflowError (DriverError), preserving the original cause. */
 export function toWorkflowError(error: unknown): WorkflowError {
   if (error instanceof WorkflowError) return error;
   const message = error instanceof Error ? error.message : String(error);
   return new WorkflowError("DriverError", `Subagent turn failed: ${message}`, { cause: error });
 }
 
-// ——————————— 模型侧失败的收容：常量与纯辅助 ———————————
+// ——————————— Model-side failure handling: constants and pure helpers ———————————
 
-/** ProviderStop 明细里 provider 原文的上界（通知与 journal 都带它，不能无界）。 */
+/** Maximum length of the provider's raw ProviderStop details (included in notifications and journal, so it must be bounded). */
 export const PROVIDER_STOP_RAW_MESSAGE_MAX_CHARS = 2000;
 
-/** 瞬态重驱的续跑提示（与 nudge 同一机制：同一持久 runtime 上的一轮新 turn）。 */
+/** Continuation prompt for transient re-drive (same mechanism as nudge: a new turn on the same persistent runtime). */
 export const TRANSIENT_CONTINUE_PROMPT =
   "The previous model request failed transiently and was abandoned; continue from where you left off.";
 
 const TRANSIENT_BACKOFF_BASE_MS = 2_000;
 const TRANSIENT_BACKOFF_MAX_MS = 60_000;
 
-/** runner 同一条曲线：2s 起翻倍到 60s 封顶，乘 [0.5, 1] 的抖动。 */
+/** Same backoff curve as runner: starts at 2s, doubles up to 60s, then applies [0.5, 1] jitter. */
 export function transientBackoffMs(attempt: number, random: () => number = Math.random): number {
   const raw = Math.min(TRANSIENT_BACKOFF_MAX_MS, TRANSIENT_BACKOFF_BASE_MS * 2 ** (attempt - 1));
   return Math.round(raw * (0.5 + 0.5 * random()));
 }
 
-/** adapter 错误上的 Retry-After（`context.retryAfterMs`，一层 cause 之内），按形状读。 */
+/** Read Retry-After from an adapter error (`context.retryAfterMs`, within one cause level) by shape. */
 export function readRetryAfterMs(error: unknown): number | undefined {
   for (const candidate of [error, (error as { cause?: unknown } | undefined)?.cause]) {
     const context = (candidate as { context?: { retryAfterMs?: unknown } } | undefined)?.context;
@@ -235,7 +249,7 @@ export function readRetryAfterMs(error: unknown): number | undefined {
   return undefined;
 }
 
-/** 通知文案里子代理的称呼：有名字用名字，否则 `site@ordinal`。 */
+/** Subagent label in notifications: use its name if present, otherwise `site@ordinal`. */
 export function subagentLabel(state: Pick<SessionState, "actor" | "actorName">): string {
   return state.actorName ?? refToString(state.actor);
 }
@@ -247,11 +261,11 @@ export const defaultSchedule = (callback: () => void, delayMs: number): (() => v
 };
 
 /**
- * 一次 turn 解析向引擎回报的两条事实，顺序是载荷性的：
- *   1. `askProgress` → `node-progress`：这个 ask 跑到第几轮、用了几次工具、最近在动哪儿；
- *   2. `askStats` → `usage-updated`：这一轮花了多少 token（无论 accept / text / nudge 都报一次）。
- * 进度在前，于是读到新用量的人一定已经读到了挣来它的那次进度。两条合在一个函数里，正是为了
- * 让这个顺序有一个能被指着看的地方，而不是散在调用点的两行。
+ * Two facts reported to the engine when a turn resolves, in payload order:
+ *   1. `askProgress` -> `node-progress`: which turn this ask reached, how many tools it used, and what it most recently did;
+ *   2. `askStats` -> `usage-updated`: tokens spent in this turn (report once for accept/text/nudge).
+ * Progress comes first, so anyone reading new usage has already seen the progress that produced it.
+ * Keep both in one function so the ordering is explicit rather than split across two call-site lines.
  */
 export function reportTurnObservations(
   sink: WorkflowReportSink,

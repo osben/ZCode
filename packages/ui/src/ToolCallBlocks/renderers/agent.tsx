@@ -99,7 +99,7 @@ function AgentActivitySection({
           {label}
         </h4>
         <div className="overflow-auto max-h-64" data-markdown-table-sticky-scrollbar="disabled">
-          {/* Agent 活动内容同样可能包含长代码/路径，允许横向滚动避免窄屏截断。*/}
+          {/* Agent activity may also contain long code/paths; allow horizontal scrolling to avoid truncation on narrow screens. */}
           <MessageResponse
             className="px-3 py-2 min-w-0 break-words text-ui-base [&>*:first-child]:mt-0 [&>*:last-child]:mb-0"
             workspacePath={workspacePath}
@@ -130,8 +130,8 @@ function AgentNameText({ color, name }: { color: AgentColor; name: string }) {
   return (
     <span
       className={cn(
-        // 子智能体名在 tool summary 行内不能依赖字体基线对齐。
-        // inline-flex 负责垂直居中，1.5 倍行高保持和周围摘要文字一致的阅读节奏。
+        // Do not rely on font baseline alignment for the subagent name in the tool summary row.
+        // inline-flex vertically centers it, while a 1.5 line height matches the surrounding summary text.
         "inline-flex max-w-36 items-center truncate font-mono text-ui-base font-medium leading-[1.5]",
         SUBAGENT_TEXT_COLOR_CLASS[color],
       )}
@@ -221,8 +221,9 @@ export function AgentToolCallBlock(context: ToolCallBlockRenderContext) {
     const candidates = Object.values(state.contexts).filter(
       (candidate) => candidate.workspacePath === context.workspacePath && candidate.loaded,
     );
-    // 同一 remote path 可能对应多个 workspaceIdentity；缺少 identity 时宁可回退默认色，
-    // 也不能猜一个桶并把另一远端 workspace 的 Agent 配置串进来。
+    // The same remote path may correspond to multiple workspaceIdentity values. Without identity,
+    // fall back to the default color rather than guessing a bucket and mixing in an Agent config
+    // from another remote workspace.
     return candidates.length === 1 ? candidates[0]?.agents : undefined;
   });
   const configuredAgentsFromHook = useSubagentsStore((state) => state.agents);
@@ -248,9 +249,10 @@ export function AgentToolCallBlock(context: ToolCallBlockRenderContext) {
     : null;
   const agentNameDetail =
     agentName && agentColor ? <AgentNameText color={agentColor} name={agentName} /> : null;
-  // Agent 父块的完成/进行中边界只由父 Agent tool 决定。
-  // 子 tool 是展开区明细，不能反向续住父块运行态，否则父 Agent completed 后
-  // 仍会显示渐变和子工具摘要，和协议里的父工具生命周期不一致。
+  // The parent Agent tool alone determines whether the Agent block is complete or running.
+  // Child tools are details in the expanded area and must not extend the parent block's running
+  // state. Otherwise, the block would still show a gradient and child-tool summary after the parent
+  // Agent completes, contradicting the parent tool lifecycle in the protocol.
   const isAgentVisuallyRunning = context.isRunning;
   const collapsedChildSummary = isAgentVisuallyRunning
     ? getLatestExploreChildSummaryFromChildren(intl, childToolCalls, context, {
@@ -260,8 +262,8 @@ export function AgentToolCallBlock(context: ToolCallBlockRenderContext) {
   const backgroundAgentInfo = readBackgroundAgentInfo(toolCall);
   const activityContent = getAgentActivityContent(toolCall);
   const activityThought = toolCall.thought?.trim();
-  // Agent 块和它内部的子工具都已经通过层级表达了来源，
-  // 继续显示子智能体来源 badge 会制造重复噪音。
+  // The Agent block and its nested tools already express their origin through hierarchy; showing a
+  // subagent-origin badge would add redundant noise.
   const sourceLabel = undefined;
   const collapsedPrimaryText = useMemo(
     () => <span className="truncate">{primaryText}</span>,
@@ -372,8 +374,9 @@ export function AgentToolCallBlock(context: ToolCallBlockRenderContext) {
         canToggle={false}
         forceOpen={false}
         summaryAction={summaryAction}
-        // 产品边界：Agent/Task 在父对话中只保留单行摘要；完整 child timeline 统一从
-        // 右侧 tab / 手机抽屉查看，因此这里既不自动展开，也不提供手动展开入口。
+        // Product boundary: Agent/Task keeps only a one-line summary in the parent conversation.
+        // View the full child timeline in the right-side tab / mobile drawer, so do not auto-expand
+        // here or offer a manual expand control.
         kindLabel={fallbackLabel}
         expandedKindLabel={fallbackLabel}
         kindDetail={agentNameDetail}

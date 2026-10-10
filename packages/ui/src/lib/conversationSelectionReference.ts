@@ -147,7 +147,7 @@ export function buildPromptWithConversationSelections(
   references: readonly ConversationSelectionDisplayReference[],
 ): string {
   if (references.length === 0) return visibleContent;
-  // 文件选段曾只发正文，导致模型与历史丢失文件来源；只保留路径，不发送内部身份字段。
+  // File selections previously sent only the body, losing the file source for the model and in history; retain the path without sending internal identity fields.
   const block = [
     "# userselect:",
     "```userselect",
@@ -165,7 +165,7 @@ export function parsePromptConversationSelections(text: string): {
   if (userSelectMatch) {
     return parseConversationSelectionBlock(text, userSelectMatch, (value) => {
       if (!isConversationSelectionText(value)) return null;
-      // 与发送合同一致，历史保留文件路径，普通对话继续只恢复正文。
+      // Match the send contract: preserve file paths in history, while ordinary conversations continue to restore only the body.
       return value.path ? { path: value.path, text: value.text } : { text: value.text };
     });
   }

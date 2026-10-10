@@ -46,8 +46,8 @@ export function cloneMessageForFork(
     strictLocalReferences?: boolean;
   },
 ): MessageInfo {
-  // copy by value + provenance：child 用新 local id 排序/渲染/
-  // 续写，forkOrigin 只供溯源与 debug，不参与 child 的 UI placement。
+  // Copy by value + provenance: the child uses new local ids for ordering/rendering/
+  // continuation; forkOrigin is only for tracing and debug and does not affect child UI placement.
   const forkOrigin = {
     sessionId: String(message.sessionID),
     messageId: String(message.id),
@@ -199,9 +199,9 @@ export function clonePartForFork(
     return (mapped ?? id) as TurnId;
   };
 
-  // part 级内嵌引用 remap（不得原样拷贝父 id）。
-  // anchor 类引用参与 child 落位：可 remap 则换 local id，不可 remap 必须清空并
-  // 降级 originAnchorMessageId（不得把父 id 当 child 本地锚点）。
+  // Remap part-level embedded references (never copy parent ids as-is).
+  // Anchor references affect child placement: replace them with local ids when possible; otherwise clear them and
+  // downgrade to originAnchorMessageId (never use a parent id as a child-local anchor).
   if (cloned.type === "timeline") {
     if (cloned.anchorMessageId) {
       const mapped = messageIdMap.get(cloned.anchorMessageId);
@@ -224,7 +224,7 @@ export function clonePartForFork(
           `Fork timeline anchorTurnId has no child-local identity: ${cloned.anchorTurnId}`,
         );
       } else {
-        // legacy workspace fork 没有完整 turn identity map，只能显式降级为 provenance。
+        // Legacy workspace forks have no complete turn identity map, so explicitly downgrade to provenance.
         cloned.originAnchorTurnId = cloned.anchorTurnId;
         delete cloned.anchorTurnId;
       }
@@ -245,8 +245,8 @@ export function clonePartForFork(
       cloned.verificationId = verificationId ?? cloned.verificationId;
     }
   }
-  // compaction 内部引用是 provider-context 语义（非 UI 落位）：可 remap 则换，
-  // 否则保留原值（保持既有语义，不引入破坏性变更）。
+  // Internal compaction references have provider-context semantics, not UI placement semantics: remap when possible;
+  // otherwise retain the original value to preserve existing behavior without a breaking change.
   if (cloned.type === "compaction") {
     if (cloned.summaryMessageId) {
       cloned.summaryMessageId = mapMessage(cloned.summaryMessageId, "compaction summaryMessageId");

@@ -5,8 +5,8 @@ import { cn } from "@/components/lib/utils.js";
 import { useZCodeIntl, type IntlInstance } from "@/i18n/IntlProvider.js";
 import type { ToolCallBlockRenderContext } from "@/ToolCallBlocks/shared.js";
 
-// OffPeakCreate 的静态轮尾卡（cron-create 兄弟实现，样式契约一致）。
-// 位次是创建时快照（取自取号返回），不订阅后续状态——历史回看不产生过期活数据。
+// Static queue-tail card for OffPeakCreate (sibling implementation to cron-create with the same style contract).
+// Position is a creation-time snapshot from ticket issuance; do not subscribe to later state so history does not show stale live data.
 
 export interface OffPeakCreateTaskSummary {
   offPeakTaskId?: string;
@@ -60,7 +60,7 @@ function readOffPeakCreateTaskOutputSummary(value: unknown): OffPeakCreateTaskSu
       ? task.offPeakTaskId.trim()
       : undefined;
   const title = typeof task.title === "string" && task.title.trim() ? task.title.trim() : undefined;
-  // 卡片必须能定位任务；缺 id 视为无效输出，回退普通工具行。
+  // The card must be able to identify the task; treat missing id as invalid output and fall back to the regular tool row.
   if (!offPeakTaskId) {
     return null;
   }
@@ -105,7 +105,7 @@ export function readOffPeakCreateTaskSummary(
   return null;
 }
 
-/** 卡片第二行：创建时位次快照优先，缺位次回退「已加入闲时队列」文案。 */
+/** Second card row: prefer the creation-time position snapshot; without it, fall back to "Added to the off-peak queue." */
 function describeOffPeakCardStatus(task: OffPeakCreateTaskSummary, intl: IntlInstance): string {
   if (typeof task.queuePosition === "number" && task.queuePosition > 0) {
     return intl.formatMessage(
@@ -125,7 +125,7 @@ export function OffPeakCreateTaskCard({
 }) {
   const { intl } = useZCodeIntl();
   const title = task.title ?? intl.formatMessage({ id: "offPeak.chatCreated.defaultTitle" });
-  // 会话内创建的任务绑定并运行在当前会话；位次快照后追加一句提示。
+  // A task created within a session is bound to and runs in the current session; append a note after the position snapshot.
   const statusLine = `${describeOffPeakCardStatus(task, intl)} · ${intl.formatMessage({
     id: "offPeak.chatCreated.boundHint",
   })}`;

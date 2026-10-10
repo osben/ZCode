@@ -7,25 +7,26 @@ import {
   type ProcessRelation,
 } from "./process-probe-shared.js";
 
-/** Linux `USER_HZ`：`/proc/<pid>/stat` 的 utime/stime 以此为单位，所有支持平台上都是 100 */
+/** Linux `USER_HZ`: utime/stime in `/proc/<pid>/stat` use this unit; it is 100 on all supported platforms. */
 const LINUX_CLOCK_TICKS_PER_SECOND = 100;
 const MS_PER_SECOND = 1_000;
 /**
- * `/proc` 扫描按批读取：超时判负后剩余批次不再发起。
- * 一次性 `Promise.all` 上百个 readFile 无法取消，慢盘上会在样本已被丢弃后继续吃 IO。
+ * Scan `/proc` in batches and stop starting batches after a timeout.
+ * A single `Promise.all` of hundreds of readFile calls cannot be cancelled, so on a slow disk it would keep using
+ * IO after the sample had already been discarded.
  */
 const PROC_READ_BATCH_SIZE = 64;
 
 export interface LinuxProcReaders {
   listProcDirectory: () => Promise<readonly string[]>;
   readProcFile: (path: string) => Promise<string>;
-  /** 本次采样是否已超时；为 true 时中止剩余 `/proc` 读取并判为无样本 */
+  /** Whether this sample timed out; if true, stop remaining `/proc` reads and report no sample. */
   isExpired?: () => boolean;
 }
 
 /**
- * Linux 走两遍 `/proc`：先读全部 `stat` 拿 ppid、pgid 与 CPU 时间，
- * 再只对目标进程树内的 pid 读 `status` 的 `VmRSS`。全程不启动任何进程。
+ * Linux reads `/proc` in two passes: first read every `stat` for ppid, pgid, and CPU time,
+ * then read `VmRSS` from `status` only for pids in the target process tree. No processes are started.
  */
 export async function sampleLinuxProcessTrees(
   readers: LinuxProcReaders,
@@ -67,7 +68,7 @@ function buildLinuxSamples(
   return pids.flatMap((pid) => {
     const relation = relationByPid.get(pid);
     const rssKb = rssByPid.get(pid);
-    // 进程在两遍读取之间退出时 status 已消失，跳过该 pid，其余样本照常返回。
+    // If a process exits between the two reads, its status file is gone; skip that pid and return the other samples as usual.
     if (!relation || rssKb === undefined) return [];
     return [toSample({ ...relation, rssKb })];
   });
@@ -88,7 +89,7 @@ async function readLinuxProcessRelations(
     try {
       stat = await readers.readProcFile(`/proc/${pid}/stat`);
     } catch {
-      // 单个 pid 读失败（多数是进程刚退出）只跳过它，不影响本次采样整体。
+      // If reading one pid fails (usually because the process just exited), skip it without affecting the overall sample.
       return undefined;
     }
     const parsed = parseLinuxStat(stat);
@@ -112,7 +113,7 @@ async function readLinuxRssKb(
   return new Map(entries);
 }
 
-/** 分批并发读取 `/proc`，每批前检查超时；已超时则中止扫描并判为本次无样本。 */
+/** Read `/proc` concurrently in batches, checking for timeout before each batch; stop the scan and report no sample if expired. */
 async function readProcInBatches<T>(
   readers: LinuxProcReaders,
   pids: readonly number[],
@@ -129,7 +130,7 @@ async function readProcInBatches<T>(
   return collected;
 }
 
-/** comm 字段允许含空格与括号，必须以最后一个 `)` 为界切分。 */
+/** The comm field may contain spaces and parentheses, so split at the last `)`. */
 function parseLinuxStat(
   stat: string,
 ): { cpuTimeMs: number; parentPid: number; processGroupId: number } | undefined {
@@ -139,7 +140,7 @@ function parseLinuxStat(
     .slice(commEnd + 1)
     .trim()
     .split(/\s+/);
-  // 切分后 fields[0] 是 state（stat 的第 3 个字段），故 ppid=1、pgrp=2、utime=11、stime=12。
+  // After splitting, fields[0] is state (field 3 of stat), so ppid=1, pgrp=2, utime=11, and stime=12.
   const parentPid = Number(fields[1]);
   const processGroupId = Number(fields[2]);
   const utimeTicks = Number(fields[11]);

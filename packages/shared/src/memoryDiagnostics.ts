@@ -1,8 +1,8 @@
 /**
- * 进程内存本地诊断日志的共用纯逻辑。
+ * Shared pure logic for local process-memory diagnostic logs.
  *
- * main / renderer / host / agent CLI 四类进程各自采样，但写盘门控、行格式和计数器注册表
- * 只有这一份实现，避免四处各写一套阈值。本文件不依赖 Node / DOM API。
+ * The main / renderer / host / agent CLI processes each collect samples, but write gating, line format, and the counter registry
+ * have one implementation here to avoid maintaining separate thresholds in four places. This file has no Node/DOM API dependencies.
  */
 
 export type MemorySampleRole = "main" | "renderer" | "utility_host" | "agent_node";
@@ -19,26 +19,26 @@ export interface MemorySampleFields {
 
 export interface MemorySample extends MemorySampleFields {
   role: MemorySampleRole;
-  /** `<provider>.<key>` → 数值；只允许纯读取得到的计数。 */
+  /** `<provider>.<key>` → numeric value; only counts obtained through read-only operations are allowed. */
   counters: Record<string, number>;
 }
 
 export interface MemorySampleWriteGateOptions {
-  /** heapUsedKb 相对上一次写盘值的变化比例阈值，默认 5%。 */
+  /** Change-ratio threshold for heapUsedKb compared with the last persisted value; defaults to 5%. */
   heapDeltaRatio?: number;
   /**
-   * rssKb / externalKb 相对上一次写盘值的变化比例阈值，默认 10%。
-   * 真机上 host 进程 RSS 从 240MB 冲到 1.5GB、externalKb 冲到 1.3GB，而 heapUsed 几乎不动，
-   * 只看 heap 的门控把这一分钟判成 heartbeat 静默丢掉；native / external 内存必须单独参与判定。
+   * Change-ratio threshold for rssKb / externalKb compared with the last persisted value; defaults to 10%.
+   * On a real device, host RSS rose from 240MB to 1.5GB and externalKb to 1.3GB while heapUsed barely moved;
+   * heap-only gating treated that minute as a heartbeat and silently dropped it. Native/external memory must be evaluated separately.
    */
   nativeDeltaRatio?: number;
-  /** 无变化时的心跳间隔，默认 5 分钟。 */
+  /** Heartbeat interval when there is no change; defaults to 5 minutes. */
   heartbeatMs?: number;
 }
 
 export interface MemorySampleWriteGate {
   /**
-   * 判定本次样本是否写盘。返回非 null 时表示应写盘，并把该样本记为“上一次写盘值”。
+   * Determines whether to persist this sample. A non-null return means it should be persisted and recorded as the "last persisted value."
    */
   evaluate(sample: MemorySample, nowMs: number): MemorySampleWriteReason | null;
 }
@@ -116,7 +116,7 @@ export function bytesToKb(bytes: number): number {
   return Math.round(bytes / 1024);
 }
 
-/** 把 Node `process.memoryUsage()` 的结果换算成 KB 字段；字段缺失时省略。 */
+/** Converts Node `process.memoryUsage()` results into KB fields; omits missing fields. */
 export function memoryUsageToSampleFields(usage: {
   rss?: number;
   heapUsed?: number;
@@ -136,8 +136,8 @@ export function memoryUsageToSampleFields(usage: {
 }
 
 /**
- * 单行 `key=value` 格式：固定内存字段在前，计数器按字典序在后，全部取整。
- * 例：`[memory] role=main reason=first rssKb=1 heapUsedKb=2 app.windows=1`
+ * Single-line `key=value` format: fixed memory fields first, counters afterward in lexical order, all rounded to integers.
+ * Example: `[memory] role=main reason=first rssKb=1 heapUsedKb=2 app.windows=1`
  */
 export function formatMemorySampleLine(
   sample: MemorySample,
@@ -162,9 +162,9 @@ export function formatMemorySampleLine(
 export type MemoryDiagnosticsProvider = () => Record<string, number>;
 
 export interface MemoryDiagnosticsRegistry {
-  /** 同名重复注册时后者覆盖前者；返回的 dispose 只在仍是自己时才移除。 */
+  /** A later registration replaces an earlier one with the same name; the returned disposer removes it only if it is still the current registration. */
   register(name: string, provider: MemoryDiagnosticsProvider): { dispose(): void };
-  /** 逐个调用 provider，键以 `<name>.` 为前缀；单个 provider 抛错只跳过它自己。 */
+  /** Call providers one by one, prefixing keys with `<name>.`; an error from one provider skips only that provider. */
   collect(): Record<string, number>;
 }
 
@@ -191,7 +191,7 @@ export function createMemoryDiagnosticsRegistry(): MemoryDiagnosticsRegistry {
             }
           }
         } catch {
-          // 诊断 provider 只做纯读取；任一 provider 异常不能影响其他计数器或业务。
+          // Diagnostic providers are read-only; an exception from one must not affect other counters or application behavior.
         }
       }
       return result;

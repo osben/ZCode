@@ -1,16 +1,16 @@
 // ============================================================
-// 内联草稿记作「模型写过的文件」
+// Record an inline draft as a file the model has read
 // ============================================================
-// Edit / Write 拒绝会话没读过的文件（FILE_NOT_READ）：模型不能改它没见过的字节。内联草稿恰好是
-// 这条已经成立的文件——它的字节就是产生它的那次调用的 `script` 入参。不记这一笔，NOTE 要求的
-// 第一次 `Edit` 必然失败，补救是把模型自己刚写的两万 token 脚本整个 `Read` 一遍，正是草稿文件
-// 要省掉的那笔开销。
+// Edit / Write reject files the session has not read (FILE_NOT_READ): the model cannot change bytes it has not seen. An inline draft
+// already meets this condition because its bytes are the `script` input from the call that created it. Without recording this fact,
+// the first `Edit` requested by the NOTE would fail, forcing the model to `Read` the entire 20k-token script it just wrote—the cost the
+// draft file is meant to avoid.
 //
-// **只由内联分支调用**：saved 拷贝（带模型没见过的元数据块）、沿用前驱脚本的新草稿（脚本可能
-// 来自别的会话或压缩之前）、中枢直接启动与 GUI 设置修订写下的草稿都不是模型本次亲手写的字节，
-// 记了就是替模型担保它没看过的内容。
+// Call this **only for inline input**: saved copies (with metadata the model has not seen), new drafts of inherited predecessor
+// scripts (which may come from another session or before compaction), direct hub launches, and GUI settings revisions do not contain
+// bytes written by the model in this call. Recording them would falsely certify content the model has not seen.
 //
-// 与草稿本身一样**尽力而为**：stat 不到就不记，模型的第一次 Edit 退回「先 Read」的老路。
+// Like the draft itself, this is **best effort**: if stat fails, do not record it and let the model's first Edit fall back to the usual “Read first” path.
 
 import { createReadFileStateMetadataFromEntry } from "../read-file-state-metadata.js";
 import { createReadFileStateKey, normalizeReadFileStateMtimeMs } from "../read-file-state.js";
@@ -30,8 +30,8 @@ export async function recordAuthoredWorkflowDraft(
 
   let revision: { id: string; mtimeMs?: number; sizeBytes?: number } | undefined;
   try {
-    // 与 Edit / Write 之后的 stale 校验读同一个端口，revision 的口径因此一致。stat 发生在写之后：
-    // 记下的 mtime 不早于草稿的真实 mtime，其后任何外部改动都会让 mtime 前进并判 stale。
+    // Use the same port as stale checks after Edit / Write so revision semantics match. Stat after writing: the recorded mtime is no
+    // earlier than the draft's actual mtime, and later external changes advance it and are marked stale.
     const info = await fileSystemPort.stat(
       { path: draft.path, trace: context.traceContext },
       { signal: context.abortSignal },
@@ -44,7 +44,7 @@ export async function recordAuthoredWorkflowDraft(
 
   const entry: ReadFileStateEntry = {
     path: draft.path,
-    // 端口读回的文本统一成 LF（FileSystemReadTextResult.content），快照跟随同一口径。
+    // The port normalizes returned text to LF (FileSystemReadTextResult.content); keep the snapshot in the same form.
     content: draft.source.replace(CRLF_PATTERN, LF),
     offset: undefined,
     limit: undefined,
@@ -57,8 +57,8 @@ export async function recordAuthoredWorkflowDraft(
   };
   readFileState.set(createReadFileStateKey(draft.path, 1, undefined), entry);
 
-  // resume 只从 tool part metadata 恢复 read-state（read-file-state-hydrator.ts），不落这一笔，
-  // 会话恢复后同一个 bug 原样回来。
+  // Resume restores read-state only from tool-part metadata (read-file-state-hydrator.ts). Without recording this entry, the same
+  // bug returns after session recovery.
   const metadata = createReadFileStateMetadataFromEntry({
     completedAt: entry.readAt,
     entry,

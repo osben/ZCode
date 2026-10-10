@@ -46,8 +46,8 @@ export function inputIntentMetadata(
         : envelope.type === "sendGoalCommand"
           ? "sendGoalCommand"
           : "sendText",
-    // live intent 过去只带 kind/来源，projection 只能回退可见 command 文案；
-    // goal 的 displayText（如 `/GoAl replace X`）不是 runtime 已解析的 canonical objective。
+    // Live intent used to carry only kind/source, leaving the projection to fall back to visible command
+    // text. A goal's displayText (such as `/GoAl replace X`) is not the canonical objective resolved by runtime.
     text: options.text,
     ...(options.modelSelection ? { modelSelection: options.modelSelection } : {}),
     ...(options.mode ? { mode: options.mode } : {}),
@@ -68,7 +68,7 @@ export function inputIntentMetadata(
   };
 }
 
-/** edit/retry 以新 commandId 重建，但保留原 canonical kind/delivery/cause。 */
+/** edit/retry creates a new commandId while retaining the original canonical kind/delivery/cause. */
 export function inputIntentMetadataFromCanonical(
   envelope: CommandEnvelope,
   canonical: CanonicalCommandIntent,
@@ -105,7 +105,7 @@ export function inputIntentMetadataFromCanonical(
   };
 }
 
-/** sendQueuedNow 只能转换原 QueueItem，禁止用 promotion commandId 重建来源。 */
+/** sendQueuedNow may only convert the original QueueItem; do not reconstruct the source from the promotion commandId. */
 export function inputIntentMetadataFromQueueItem(
   item: QueueItem,
   canonicalText: string,
@@ -129,7 +129,7 @@ export function inputIntentMetadataFromQueueItem(
       : {}),
     attachmentRefs: item.attachments,
     ...(item.sharedContextRefs ? { sharedContextRefs: [...item.sharedContextRefs] } : {}),
-    // 提升只改变调度状态；重试／编辑原始输入的来源关联不能在此丢失。
+    // Promotion changes only scheduling state; do not lose the source association for a retried/edited original input.
     ...(item.provenance ? { provenance: { ...item.provenance } } : {}),
   };
 }

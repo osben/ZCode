@@ -65,8 +65,8 @@ export function buildImportedClaudeTaskFile(
     messages: [...source.messages],
   };
 
-  // Claude 原生 session 的 mode/model/provider 是来源端运行态，
-  // 直接落入 ZCode snapshot 会在恢复时污染当前 workspace 的运行时选择。
-  // 这里按显式 path 列表清洗，保留正文和 migrationSource 供列表识别迁移来源。
+  // Mode/model/provider in a native Claude session describe the source runtime;
+  // copying them directly into a ZCode snapshot would overwrite the current workspace's runtime selections on restore.
+  // Clean these fields using an explicit path list, while preserving the message body and migrationSource so lists can identify the imported source.
   return filterImportedClaudeTaskFilePaths(taskFile, filterPaths);
 }

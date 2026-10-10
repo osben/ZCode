@@ -1,5 +1,6 @@
-// Composer Skill 只读 catalog。
-// 与 Skills Settings 管理接口分离：这里的 sessionId 决定 authority，不提供启停/删除能力。
+// Read-only Skill catalog for Composer.
+// Separate from the Skills Settings management API: sessionId determines authority here; this API
+// does not start, stop, or delete skills.
 import {
   zcodeSkillsReferenceCatalogParamsSchema,
   type ZCodeSkillReferenceCatalogEntry,
@@ -24,9 +25,10 @@ export async function getSkillReferenceCatalog(
     return toResult("session", outcome);
   }
 
-  // 旧 UI cache 只在 workspace 首次挂载时扫描，用户从文件系统手动新增
-  // Skill 后，新建对话仍停在旧快照。草稿请求在 Agent 侧复用 CLI 正式发现配置，
-  // 每次新打开引用面板都读取当前 workspace catalog。
+  // The old UI cache scanned only when the workspace first mounted, so a new conversation still saw
+  // a stale snapshot after a user added a Skill through the filesystem. Draft requests reuse the
+  // CLI's normal discovery configuration on the Agent side; read the current workspace catalog each
+  // time the reference panel opens.
   const outcome = await listZCodeSkills({
     env: context.deps.env,
     logger: context.logger,
@@ -41,8 +43,9 @@ function toResult(
 ): ZCodeSkillsReferenceCatalogResult {
   return {
     authority,
-    // 内置技能包（bundled-skills.ts）不进引用面板：它由内置命令（`/workflow`）加载，不是用户
-    // 管理或引用的对象；协议的 scope 是封闭枚举，旧客户端严格校验，这里不为它扩枚举。
+    // Bundled skills (bundled-skills.ts) do not appear in the reference panel: they are loaded by
+    // the built-in `/workflow` command and are not user-managed or referenced objects. The protocol
+    // scope is a closed enum validated strictly by older clients, so do not extend it for bundled skills.
     skills: outcome.skills
       .filter((skill) => skill.source !== "bundled")
       .map(toReferenceCatalogEntry),
@@ -53,7 +56,8 @@ function toReferenceCatalogEntry(skill: SkillMetadata): ZCodeSkillReferenceCatal
   const scope =
     skill.source === "plugin" ? "plugin" : skill.scope === "project" ? "workspace" : "user";
   return {
-    // `glm:` 是现有 UI provider 过滤契约；路径使同名不同来源仍有稳定行身份。
+    // `glm:` is the existing UI provider filter contract; the path provides stable row identity for
+    // same-named skills from different sources.
     id: `glm:${scope}:${skill.path}`,
     name: skill.name,
     description: skill.description,

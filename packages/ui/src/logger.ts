@@ -13,8 +13,8 @@ type DesktopLogBridgeWindow = Window & {
 function isRendererProductionBuild(): boolean {
   const viteProduction =
     ((import.meta as ImportMeta & { env?: { readonly PROD?: boolean } }).env ?? {}).PROD === true;
-  // Vitest 的 import.meta.env.PROD 在 transform 阶段固化，NODE_ENV fallback 让生产分支
-  // 可被单测验证；实际 renderer build 仍以 Vite 的 PROD 标记为准。
+  // Vitest’s import.meta.env.PROD is fixed during transformation; the NODE_ENV fallback makes the production branch
+  // testable, while actual renderer builds still use Vite’s PROD flag.
   return (
     viteProduction || (typeof process !== "undefined" && process.env.NODE_ENV === "production")
   );
@@ -38,30 +38,30 @@ const consoleFns: Record<LogLevel, (...args: unknown[]) => void> = {
 };
 
 function isLoggerLevelEnabled(_level: LogLevel): boolean {
-  // 生产构建下 renderer 所有日志级别都禁用；暴露 guard 让调用方在构造重 payload 前退出。
+  // In production builds, all renderer log levels are disabled; expose a guard so callers can exit before constructing large payloads.
   return !isRendererProductionBuild() && !isRendererLoggingDisabled();
 }
 
 function log(level: LogLevel, ...args: unknown[]) {
-  // 生产构建下 renderer 日志直接 no-op，避免 console 格式化、IPC 转发和落盘拖慢渲染主线程。
+  // In production builds, renderer logging is a no-op, avoiding console formatting, IPC forwarding, and disk writes that slow the render thread.
   if (!isLoggerLevelEnabled(level)) {
     return;
   }
   consoleFns[level](formatLogPrefix("ui"), ...args);
-  // ui 包单独 typecheck 时拿不到 desktop renderer 注入的 window.zcode 声明，
-  // 而且 Electron bridge 只接收 info/warn/error；debug 原样透传会让类型和宿主协议都不一致。
-  // 这里显式收窄 bridge 形状，并只把主进程真正支持的级别转发过去。
+  // When typechecking the ui package on its own, the window.zcode declaration injected by the desktop renderer is unavailable,
+  // and the Electron bridge accepts only info/warn/error; forwarding debug unchanged would mismatch both the types and host protocol.
+  // Narrow the bridge shape explicitly here and forward only levels actually supported by the main process.
   if (level !== "debug" && typeof window !== "undefined") {
-    // tabStore 等纯前端状态模块现在也会在 Vitest 的 Node 环境里打 info 日志。
-    // 如果这里无条件访问 window，测试一触发日志就会直接抛 ReferenceError，
-    // 结果变成“为了排查问题而引入新的测试噪音”。先确认运行在浏览器环境，再走桌面端 bridge。
+    // Pure frontend state modules such as tabStore now also emit info logs in Vitest’s Node environment.
+    // If this accesses window unconditionally, a test will throw ReferenceError as soon as it logs,
+    // creating new test noise while troubleshooting. Check that execution is in a browser before using the desktop bridge.
     (window as DesktopLogBridgeWindow).zcode?.log?.(level, args);
   }
 }
 
 function lifecycleLog(level: DesktopLogLevel, ...args: unknown[]) {
-  // 生产包默认只保留经过筛选的生命周期诊断，避免把消息流日志重新打开。
-  // 测试和故障注入仍可通过显式全局开关关闭全部 renderer 日志。
+  // Production builds keep only filtered lifecycle diagnostics by default, so message-stream logging is not re-enabled.
+  // Tests and fault injection can still disable all renderer logging with an explicit global switch.
   if (isRendererLoggingDisabled()) {
     return;
   }
@@ -84,16 +84,16 @@ export const logger = {
     warn: (...args: unknown[]) => lifecycleLog("warn", ...args),
     error: (...args: unknown[]) => lifecycleLog("error", ...args),
   },
-  /** 带 traceId 前缀的日志，用于全链路追踪 */
+  /** Log entries prefixed with traceId for end-to-end tracing */
   trace: (traceId: string, level: LogLevel, ...args: unknown[]) => {
     log(level, `[trace:${traceId}]`, ...args);
   },
 };
 
 /**
- * 进程内存本地诊断日志的唯一 renderer 出口。
- * 它是 renderer 生产日志策略里的“正式监控链路”例外：生产构建仍经桌面桥落盘（最多每 60s 一行、
- * 有变化才写），Web 端无桥时 no-op。业务模块不得借用它绕过生产门控。
+ * The only renderer entry point for process-local in-memory diagnostic logs.
+ * It is an exception to the renderer's production logging policy for the "official monitoring pipeline": production builds still write through the desktop bridge (at most one line every 60 s,
+ * and only when values change); on Web, it is a no-op when no bridge is available. Business modules must not use it to bypass production gating.
  */
 export function logMemoryDiagnostics(line: string): void {
   if (isRendererLoggingDisabled()) {

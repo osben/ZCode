@@ -94,8 +94,8 @@ export function useClaudeSessionMigration(params: {
   );
 
   const supportState = useMemo<ClaudeSessionMigrationSupportState>(() => {
-    // 关键业务逻辑：Claude 原生历史迁移读取的是“当前机器上的 ~/.claude/projects”。
-    // 因此这里只拦 web 场景；workspace 现在只是可选筛选条件，不再决定能力是否可用。
+    // Key behavior: native Claude history migration reads ~/.claude/projects on the current machine.
+    // Therefore, block only web here; workspace is now an optional filter and does not determine whether the feature is available.
     if (!params.isDesktop) {
       return {
         supported: false,
@@ -154,8 +154,8 @@ export function useClaudeSessionMigration(params: {
         ...(scanLimit === undefined ? {} : { limit: scanLimit }),
       });
       setCandidates(nextCandidates);
-      // 关键业务逻辑：重扫后只保留仍然可见的勾选项。
-      // 这样用户调筛选条件或刷新结果时，不会把已经不在当前列表里的旧 session 混进导入请求。
+      // Key behavior: after rescanning, keep only selections that are still visible.
+      // This prevents changing filters or refreshing results from adding old sessions no longer in the current list to the import request.
       setSelectedSessionIds((previous) =>
         previous.filter((sessionId) =>
           nextCandidates.some((candidate) => candidate.sessionId === sessionId),
@@ -209,9 +209,9 @@ export function useClaudeSessionMigration(params: {
         );
         if (result.imported.length > 0) {
           const importedWorkspacePaths = new Set(result.imported.map((item) => item.workspacePath));
-          // Claude 导入之前通过 bumpTaskListVersion 让各处任务列表整轮重查，
-          // 但这里真正需要的只是把受影响 workspace 的查询结果失效并重新拉取。
-          // 改成局部失效后，仍然能让新导入任务出现在侧边栏，同时避免把无关 workspace 一起带着刷新。
+          // Claude import previously called bumpTaskListVersion to make every task list query again, but only the affected
+          // workspace results need to be invalidated and fetched again. Local invalidation still shows imported tasks in
+          // the sidebar without refreshing unrelated workspaces.
           const importedWorkspaceScopes = result.imported.map((item) => ({
             workspacePath: item.workspacePath,
           }));

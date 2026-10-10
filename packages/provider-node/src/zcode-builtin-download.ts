@@ -31,7 +31,7 @@ export interface ZCodeBuiltinDownloadOptions {
   readonly signal?: AbortSignal;
 }
 
-/** App/CLI 共用下载边界。总预算包含两次请求正文，不依赖 ApiClient 的响应头超时。 */
+/** Shared download boundary for App/CLI. The total budget includes both response bodies and does not depend on ApiClient's response-header timeout. */
 export async function downloadZCodeBuiltinRelease(
   options: ZCodeBuiltinDownloadOptions,
 ): Promise<ZCodeBuiltinRelease | null> {
@@ -56,7 +56,7 @@ export async function downloadZCodeBuiltinRelease(
     stage = "cdn";
     return decodeZCodeBuiltinRelease(await readJson(new URL(downloadUrl)));
   } catch (error) {
-    // 不能把带 query 的 URL、响应正文或 Schema 输入（可能含凭据）交给上层日志。
+    // Do not pass URLs with query strings, response bodies, or Schema input (which may contain credentials) to higher-level logs.
     const reason = signal.aborted
       ? timedOut
         ? "timeout"
@@ -73,7 +73,7 @@ export async function downloadZCodeBuiltinRelease(
 
   async function readJson(url: URL): Promise<unknown> {
     signal.throwIfAborted();
-    // 每次新建请求选项，不继承控制面鉴权；不跟随重定向把下载变成任意新来源。
+    // Create fresh request options each time without inheriting control-plane authentication; do not follow redirects and turn the download into an arbitrary new source.
     const response = await abortable(
       options
         .request(url, { method: "GET", signal, credentials: "omit", redirect: "error" })
@@ -107,7 +107,7 @@ export async function downloadZCodeBuiltinRelease(
       signal.throwIfAborted();
       return JSON.parse(chunks.join("")) as unknown;
     } catch (error) {
-      // cancel 不得成为新的无期限等待；释放 reader 后底层请求仍由同一 signal 取消。
+      // cancel must not introduce a new indefinite wait; after releasing the reader, the underlying request is still cancelled by the same signal.
       void reader.cancel().catch(() => {});
       throw error;
     } finally {

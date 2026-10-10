@@ -95,8 +95,8 @@ interface SessionResourceCloseInput {
 
 interface CreateSessionFacadeDeps {
   /**
-   * 停下本会话拥有的 dwf run：
-   * run service 的 `close()`。缺席即本装配没有 dwf 端口（journal 窄化失败、测试装配）。
+   * Stop DWF runs owned by this session using the run service's `close()`.
+   * Absence means this assembly has no DWF port (journal capability narrowing failed or this is a test setup).
    */
   closeDynamicWorkflowRuns?: () => Promise<void>;
   closeNodeReplBrowserBroker?: () => Promise<void> | undefined;
@@ -153,8 +153,8 @@ export function createSessionFacade(deps: CreateSessionFacadeDeps): SessionFacad
       target.activeRunStartedAtMs != null &&
       deps.sessionStore.recoverInterruptedTargetRun
     ) {
-      // 上次 app/agent 退出可能留下未清空的 active_run_started_at。
-      // 这里不能用当前时间结算，否则离线时间会被算进 goal 运行时长；store 会用 last_seen 收口。
+      // The previous app/agent exit may have left active_run_started_at uncleared.
+      // Do not settle it with the current time, or offline time would count toward goal runtime; the store closes it using last_seen.
       return await deps.sessionStore.recoverInterruptedTargetRun({
         sessionID: deps.sessionId,
       });
@@ -175,9 +175,9 @@ export function createSessionFacade(deps: CreateSessionFacadeDeps): SessionFacad
     const visibleObjective = action === "set" ? (input.objective ?? "").trim() : undefined;
     const visibleGoalQuery =
       action === "set" ? input.displayText?.trim() || visibleObjective : undefined;
-    // /goal 不走普通 prompt 提交流程，但它会先把 session 持久化。
-    // 必须在首次持久化前走统一用户执行边界，否则 runtime/bash_shell_selection
-    // 会因为当时 selection 为空而缺失，冷恢复时退回 legacy shell fallback。
+    // /goal does not use the normal prompt-submission flow, but it persists the session first.
+    // Apply the unified user-execution boundary before that initial persistence, or runtime/bash_shell_selection
+    // will be missing because selection is empty at that point, causing cold recovery to use the legacy shell fallback.
     await deps.prepareUserExecutionBoundary({
       traceContext: deps.traceContext,
     });
@@ -213,9 +213,9 @@ export function createSessionFacade(deps: CreateSessionFacadeDeps): SessionFacad
           traceContext: deps.traceContext,
         });
       }
-      // TUI 和协议客户端可能在重连或恢复后仍缓存旧 goal。
-      // 即使 session store 已经是空，也要把显式 clear 投影成 target:null，
-      // 让客户端不能只因为“No goal to clear.”这条文本而继续保留旧面板。
+      // The TUI and protocol clients may retain an old goal after reconnecting or recovering.
+      // Even if the session store is already empty, project an explicit clear as target:null so
+      // clients do not keep showing a stale panel just because the text says "No goal to clear."
       await deps.runtime.recordTargetChanged({
         action,
         previousTarget,
@@ -227,10 +227,11 @@ export function createSessionFacade(deps: CreateSessionFacadeDeps): SessionFacad
     }
     if (target) {
       if (visibleObjective !== undefined) {
-        // /goal 同时是控制命令和用户 query。旧路径只把解析后的 objective
-        // 落库，且 live 事件里没有这条输入；因此首轮实时列表为空，冷恢复后也丢失
-        // `/goal` / `/target` / `replace` 原文。target 继续存 canonical objective，
-        // 可见消息单独保留协议层传入的原始 display text。
+        // /goal is both a control command and a user query. The old path persisted only the parsed
+        // objective and omitted the input from live events, leaving the first live list empty and
+        // losing the original `/goal` / `/target` / `replace` text during cold recovery. Keep the
+        // canonical objective in target and preserve the original protocol display text separately
+        // as the visible message.
         await deps.runtime.recordExternalUserPrompt(visibleGoalQuery ?? visibleObjective, {
           goalSummaryTargetID: target.targetID,
           intent: input.intent,
@@ -264,20 +265,23 @@ export function createSessionFacade(deps: CreateSessionFacadeDeps): SessionFacad
   return {
     close: async () => {
       closePromise ??= (async () => {
-        // 关闭入口先阻止新调度并取消在飞 Memory Extraction，再等待取消链路收口。
+        // The close entry point first blocks new scheduling and cancels in-flight Memory Extraction,
+        // then waits for cancellation to settle.
         deps.runtime.beginShutdown();
         await deps.runtime.drainMemoryExtractions(60_000);
-        // 引擎归本 App 所有，所以关闭要主动停下它。
-        // 位置是两个约束夹出来的：在 beginShutdown **之后**，结算带出的终态通知才会被丢掉
-        // （background-notifications.ts 在 shuttingDown 时不入队），不会把正在关闭的会话的模型
-        // 叫醒；在 closeSessionResources **之前**，子代理还有 execution / MCP / session store
-        // 可以干净地中止，引擎也还有 journal 可以写自己那一笔 stopped(interrupted)。
+        // This App owns the engine, so closing must stop it explicitly.
+        // The placement satisfies two constraints: **after** beginShutdown, terminal notifications
+        // emitted during settlement are dropped (background-notifications.ts does not enqueue while
+        // shutting down), so they cannot wake a model in a closing session; **before**
+        // closeSessionResources, subagents still have execution, MCP, and session-store resources to
+        // abort cleanly, and the engine can write its stopped(interrupted) journal entry.
         if (deps.closeDynamicWorkflowRuns !== undefined) {
           try {
             await deps.closeDynamicWorkflowRuns();
           } catch (error: unknown) {
-            // 卡住或抛错的 dwf 关闭绝不能吃掉资源关闭（同下面并行关闭那条注释的论证）：
-            // 记一条 warn 继续走，最坏情况是那个 run 留成孤儿行，下一次构造时被收敛。
+            // A stuck or failed DWF shutdown must never prevent resource cleanup (see the rationale
+            // in the parallel-close comment below): log a warning and continue. At worst, that run
+            // remains orphaned until the next construction reconciles it.
             deps.logger.warn?.(
               "Closing dynamic workflow runs failed; continuing to close resources",
               {
@@ -318,7 +322,7 @@ export function createSessionFacade(deps: CreateSessionFacadeDeps): SessionFacad
         ? resolveRegistryThoughtLevel(registryState.selection)
         : deps.runtime.getSessionModelSelection()?.options?.reasoningLevel;
     },
-    // 当前档位只读会话事实；缺失时不能借默认档位伪装成已完成选择。
+    // Read the current tier only from session facts; do not use the default tier to pretend a selection was made when it is missing.
     getThoughtLevel: () => deps.runtime.getSessionModelSelection()?.options?.reasoningLevel,
     loadSessionTranscript: async () =>
       await loadSessionTranscriptFromStore({
@@ -396,7 +400,7 @@ export function createSessionFacade(deps: CreateSessionFacadeDeps): SessionFacad
       });
     },
     generateWorkspaceText: async (input, options) => {
-      // 辅助文本入口只规范化模型身份；具体的最低档位由 Core 的辅助请求调用点显式决定。
+      // The helper-text entry point normalizes only model identity; Core's helper request call site explicitly chooses the minimum tier.
       const selection =
         normalizeModelSelection(deps.providerRegistry.getView(), input.selection) ??
         input.selection;
@@ -409,7 +413,7 @@ export function createSessionFacade(deps: CreateSessionFacadeDeps): SessionFacad
       );
     },
     testModelConnectivity: async (input, options) => {
-      // 连接测试用的 Model 也要先绑定最低档位，否则严格 Factory 会先因缺档位失败。
+      // The Model used for connection testing must also be assigned the minimum tier first, or the strict Factory fails due to the missing tier.
       const selection = completeAuxiliaryRegistryModelSelection(
         deps.providerRegistry,
         input.selection,
@@ -458,8 +462,9 @@ export function createSessionFacade(deps: CreateSessionFacadeDeps): SessionFacad
       };
     },
     setModel: async (modelId, options) => {
-      // 配置命令已提交完整 Selection；转成字符串会丢档位。先整体校验再一次
-      // 更新/保存，非法档位不能留下已换模型的半次修改。旧字符串入口保留只改身份语义。
+      // The configuration command submitted a complete Selection; converting it to a string would
+      // lose the tier. Validate the whole selection before updating/saving once so an invalid tier
+      // cannot leave a partially changed model. The legacy string entry point still changes identity only.
       const registrySelection =
         typeof modelId === "string"
           ? resolveRegistryOwnedSelection(
@@ -574,7 +579,7 @@ export function createSessionFacade(deps: CreateSessionFacadeDeps): SessionFacad
 
 async function closeSessionResources(input: SessionResourceCloseInput): Promise<void> {
   try {
-    // 第一拍先关闭 runtime admission；后续 execution cancel 只能收口状态，不能再唤醒模型。
+    // First close runtime admission; later execution cancellation can settle state but must not wake the model again.
     input.beginShutdown();
   } catch (error) {
     input.logger.warn("Failed to begin runtime shutdown", {
@@ -594,8 +599,9 @@ async function closeSessionResources(input: SessionResourceCloseInput): Promise<
     ["node_repl_browser_broker", input.closeNodeReplBrowserBroker],
   ];
 
-  // 旧关闭链串行 await；Browser close 永不 settle 时，Execution/MCP 永远不会执行。
-  // 各 owner 并行、独立带 deadline，任何一个失败都不能跳过其它资源。
+  // The old close chain awaited resources serially; if Browser close never settled, Execution/MCP
+  // would never run. Close each owner in parallel with its own deadline so one failure cannot skip
+  // the other resources.
   await Promise.all(
     resources.flatMap(([name, close]) =>
       close ? [closeSessionResourceWithinDeadline(name, close, timeoutMs, input.logger)] : [],
@@ -660,9 +666,10 @@ async function persistSessionModelSelection(deps: CreateSessionFacadeDeps): Prom
       type: SESSION_ENTRY_MODEL_SELECTION,
       touchSession: false,
       time: { created: timestamp, updated: timestamp },
-      // 模型与思考档位是 session-local 原子选型；切换后立即落同一稳定 entry，
-      // 不必等下一条消息，也不会在冷恢复时读取 workspace/draft 的全局最新选择。
-      // 同时配置补写不代表用户新活动，不能触发 session.time_updated 变成“刚刚”。
+      // Model and thinking tier form one session-local selection. Persist them together to the same
+      // stable entry immediately after switching; do not wait for another message or read the latest
+      // global workspace/draft selection during cold recovery.
+      // Writing the configuration is not new user activity and must not update session.time_updated to "just now."
       data: {
         modelId: selection.modelId,
         providerId: selection.providerId,
@@ -670,7 +677,8 @@ async function persistSessionModelSelection(deps: CreateSessionFacadeDeps): Prom
       },
     });
   } catch (error) {
-    // 选型已经在当前 runtime 生效；持久化失败不能反向伪装成切换失败，但必须留生产日志。
+    // The selection has already taken effect in the current runtime; a persistence failure must not
+    // make the switch appear to have failed, but it must be recorded in production logs.
     deps.logger.warn("Session model selection persistence failed", {
       ...traceContextToLogContext(deps.traceContext),
       error: error instanceof Error ? error.message : String(error),
@@ -684,7 +692,7 @@ async function persistSessionModelSelection(deps: CreateSessionFacadeDeps): Prom
   }
 }
 
-/** 仅供仍以 provider/model 字符串工作的内部 App facade；不是 ModelSelection 序列化。 */
+/** Only for internal App facades that still use provider/model strings; this does not serialize ModelSelection. */
 function formatLegacyRuntimeModelValue(selection: ModelSelection | undefined): string {
   return selection ? `${selection.providerId}/${selection.modelId}` : "";
 }

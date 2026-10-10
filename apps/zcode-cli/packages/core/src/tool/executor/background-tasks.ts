@@ -33,9 +33,10 @@ import {
   buildWorkflowReportsNotificationSection,
   serializeWorkflowArtifact,
 } from "./workflow-artifact.js";
-// ⚠ 两个 artifact：上面那个是脚本的**顶层返回值**（引擎内部的 `RunSettlement.artifact`，进
-// `<result>`），下面这个是脚本经 `artifact.*` **发布给用户看的产出**（进 `<artifacts>`）。
-// 两者在同一条完成通知里并列出现，所以模块也分开。
+// Two artifacts: the one above is the script's **top-level return value** (the engine-internal
+// `RunSettlement.artifact`, shown in `<result>`); the one below is output the script **publishes
+// for the user** through `artifact.*` (shown in `<artifacts>`). Both appear side by side in the
+// same completion notification, so keep them as separate fields.
 import {
   buildWorkflowArtifactsManifestSection,
   buildWorkflowArtifactsNotificationSection,
@@ -47,8 +48,9 @@ type BackgroundTaskSnapshot =
   | NonNullable<Awaited<ReturnType<NonNullable<ExecutionPort["getBackgroundTask"]>>>>
   | SubagentTaskSnapshot
   | WorkflowTaskSnapshot
-  // workflow run 的快照沿用 WorkflowTaskSnapshot 的形状但把 output 放宽成 unknown（产物由脚本
-  // 的顶层返回值决定），所以它不是 WorkflowTaskSnapshot 的子类型，必须单列一支。
+  // The workflow-run snapshot keeps the WorkflowTaskSnapshot shape but widens output to unknown
+  // (the artifact comes from the script's top-level return value), so it is not a subtype of
+  // WorkflowTaskSnapshot and needs its own union branch.
   | DynamicWorkflowRunSnapshot;
 
 type BackgroundTaskWaiter = {
@@ -66,20 +68,23 @@ type WorkflowTaskWaiter = {
 };
 
 /**
- * 一个工具的后台生命周期提供者。这五件事若按工具名散在五处 `if (toolCall.name === …)`，
- * 每接一个后台工具就要记得同时改齐五处——`canCancelBackgroundTask` 对 legacy `Workflow`
- * 硬返回 false 就会是漏改的现场：它让 started payload 的 cancellable 恒假，取消入口直接死掉。
- * 按工具名查一次表拿到这个结构，五处分派退化成读它的字段。
+ * Background lifecycle provider for a tool. If these five concerns are scattered across five
+ * `if (toolCall.name === …)` checks, every new background tool requires updating all five. A
+ * missed hard-coded false in `canCancelBackgroundTask` for legacy `Workflow` is a concrete
+ * example: it makes cancellable permanently false in the started payload and disables the
+ * cancellation entry point. Look up this structure once by tool name, then each of the five
+ * dispatch sites only reads its fields.
  *
- * 缺省语义（字段缺席）与泛化前逐字一致：无 getSnapshot → 无快照提供者（不起 1s 轮询）；
- * 无 waitForTerminal → 无直接等待者；cancellable 缺省 false。
+ * Defaults (fields absent) exactly preserve the previous behavior: no getSnapshot means no
+ * snapshot provider (no 1s polling); no waitForTerminal means no direct waiter; cancellable
+ * defaults to false.
  */
 interface BackgroundTaskLifecycleProvider {
-  /** 1s 轮询的快照源。 */
+  /** Snapshot source polled every second. */
   getSnapshot?: (taskId: string) => Promise<BackgroundTaskSnapshot | undefined>;
-  /** 终态直接等待者（比轮询更及时，且轮询源缺席时是唯一终态来源）。 */
+  /** Direct waiter for terminal state (faster than polling, and the only terminal-state source when polling is absent). */
   waitForTerminal?: (taskId: string) => Promise<BackgroundTaskSnapshot | undefined>;
-  /** 运行中的任务是否可被用户取消；决定 started/updated payload 的 `cancellable`。 */
+  /** Whether the user can cancel a running task; determines `cancellable` in started/updated payloads. */
   cancellable?: boolean;
 }
 
@@ -397,21 +402,25 @@ export class BackgroundTaskTracker {
       taskId,
       toolCallId: toolCall.id,
       toolName: toolCall.name,
-      // V4 projection 过去从 toolName 手写推断类型，漏掉真实 Agent
-      // 工具名后把后台 subagent 投成 bash/process。runtime 在事实产生处一次裁决。
-      // 生命周期行为不受影响——那已经由 per-tool 的 lifecycleProvider 分派。
+      // V4 projection previously inferred type by hard-coding toolName checks. It missed the
+      // real Agent tool name and projected background subagents as bash/process. The runtime now
+      // makes this decision once where the fact is produced.
+      // Lifecycle behavior is unaffected; per-tool lifecycleProvider already dispatches it.
       taskKind: backgroundTaskKind(toolCall.name),
       childSessionId: outputMetadata.childSessionId,
       cancellable: status === "running" && this.canCancelBackgroundTask(toolCall),
       command: typeof input.command === "string" ? input.command : undefined,
-      // CreateWorkflow 的输入 schema 里没有 `description`（只有 `{name?, script}`，
-      // contracts/src/tools/create-workflow.ts），走通用的 input.description → snapshot.description
-      // 链会整字段缺席，Workflows 分区的题名于是退到 toolName，每个 run 都显示成
-      // "CreateWorkflow"。展示名与完成通知共用同一条兜底链（含 input.name），所以直接复用
-      // workflowTaskSubject。它最后一环是 taskId（≡ runId）：投影会把它原样当题名，与缺席时
-      // 退 toolName 并不相同——UI 侧约定 title ≡ workId 视同「无名」并换用 fallbackName，
-      // 所以这一环到不了用户眼前，同时保住了「description 恒非空」的简单性。
-      // dwf 分派名扩到 ResumeWorkflowRun：同一条兜底链（它也只有 run_id，无 description）。
+      // CreateWorkflow's input schema has no `description` (only `{name?, script}`;
+      // contracts/src/tools/create-workflow.ts), so the generic input.description →
+      // snapshot.description chain leaves the field absent. The Workflows section then falls
+      // back to toolName and displays every run as "CreateWorkflow." Display name and completion
+      // notification share the same fallback chain (including input.name), so reuse
+      // workflowTaskSubject. Its final fallback is taskId (≡ runId): the projection uses it as
+      // the title, but the UI treats title ≡ workId as unnamed and uses fallbackName, so users
+      // never see this fallback. This preserves the simpler invariant that description is never
+      // empty.
+      // Extend dwf dispatch to ResumeWorkflowRun: it uses the same fallback chain and also has
+      // only run_id, with no description.
       description: isDynamicWorkflowRunDispatchToolName(toolCall.name)
         ? workflowTaskSubject(toolCall, taskId, snapshot, output)
         : typeof input.description === "string"
@@ -483,10 +492,10 @@ export class BackgroundTaskTracker {
       return;
     }
 
-    // 被修订替代的 run 不发终态通知：
-    // 停下它的那次 AmendWorkflow 的工具结果就是模型对这次停止的
-    // 全部所知，再来一条「你停了 run A，现在去修订它」会把模型送进循环。仍然 claim：让稍后的
-    // TaskOutput 读取不把它当成一条没送达的通知。
+    // Do not send a terminal notification for a run superseded by an amendment. The AmendWorkflow
+    // tool result that stopped it is all the model needs to know about this stop; another
+    // message like "you stopped run A, now amend it" would send the model into a loop. Still
+    // claim it so a later TaskOutput read does not treat it as an undelivered notification.
     if (workflowSnapshotTerminal(status, snapshot)?.stopReason === "superseded") {
       claimRuntimeBackgroundTaskNotification(this.deps, toolCall, taskId);
       this.deps.logger?.info?.("Background task notification suppressed: run superseded", {
@@ -534,8 +543,9 @@ export class BackgroundTaskTracker {
       });
       return;
     }
-    // TaskOutput 读取终态会先把同一 registry task 标成 notified；
-    // completion 只有成功 claim 后才能入队，避免模型同时收到 tool result 和重复通知。
+    // A TaskOutput terminal-state read first marks the same registry task as notified. Enqueue
+    // completion only after a successful claim to prevent the model from receiving both the tool
+    // result and a duplicate notification.
     if (!claimRuntimeBackgroundTaskNotification(this.deps, toolCall, taskId)) {
       this.deps.logger?.debug?.("Background task notification already claimed", {
         ...traceContextToLogContext(traceContext),
@@ -558,10 +568,12 @@ export class BackgroundTaskTracker {
               },
             }
           : {}),
-        // workflow run 的终态回合要渲染成后台结果头，而不是退化成一条裸 model-only 消息，
-        // 所以 originMeta 必须带上（workId ≡ runId）。CreateWorkflow 与 ResumeWorkflowRun
-        // 两个入口同构（分派见 isDynamicWorkflowRunDispatchToolName）。manifest 载荷
-        // （workflowNotification）在此处发射侧铸造：GUI 渲染的唯一数据源，随 originMeta 走全管线。
+        // A workflow run's terminal turn must render as a background-result header instead of a
+        // bare model-only message, so originMeta is required (workId ≡ runId). CreateWorkflow
+        // and ResumeWorkflowRun share the same shape (see isDynamicWorkflowRunDispatchToolName
+        // for dispatch). The manifest payload (workflowNotification) is created here on the
+        // emission side; it is the GUI's only rendering source and travels through the pipeline
+        // with originMeta.
         ...(isDynamicWorkflowRunDispatchToolName(toolCall.name)
           ? {
               originMeta: buildWorkflowNotificationOriginMeta(
@@ -605,9 +617,10 @@ export class BackgroundTaskTracker {
     snapshot: BackgroundTaskSnapshot | undefined,
     output?: Record<string, unknown>,
   ): string | undefined {
-    // workflow run 复用 legacy Workflow 的通知格式（复用 formatWorkflowTaskNotification）。
-    // legacy "Workflow" 保持独立并列：它没有 dwf 的产物/reports 语义，只在共享格式器里
-    // 走自己的 output.response 回退分支。
+    // Workflow runs reuse the legacy Workflow notification format
+    // (formatWorkflowTaskNotification). Keep legacy "Workflow" as a separate case: it has no
+    // dwf artifact/report semantics and uses its own output.response fallback branch in the
+    // shared formatter.
     if (toolCall.name === "Workflow" || isDynamicWorkflowRunDispatchToolName(toolCall.name)) {
       return this.formatWorkflowTaskNotification(toolCall, taskId, status, snapshot, output);
     }
@@ -650,9 +663,10 @@ export class BackgroundTaskTracker {
         : launchOutput;
     const subject = workflowTaskSubject(toolCall, taskId, snapshot, output);
     const notificationStatus = normalizeBackgroundTaskNotificationStatus(status);
-    // dwf 的三终态词与停止原因从快照读：run service 把
-    // journal 里的 `stopReason` 投影到 `snapshot.stopReason`，所以「谁停的」不再只活在 registry。
-    // registry 的 stopInitiator 只作兼容兜底（老端口 / stub 不发 stopReason 时）。
+    // Read the three dwf terminal states and stop reason from the snapshot: the run service
+    // projects journal `stopReason` into `snapshot.stopReason`, so "who stopped it" no longer
+    // lives only in the registry. registry.stopInitiator is only a compatibility fallback for
+    // old ports/stubs that do not provide stopReason.
     const terminal = workflowSnapshotTerminal(status, snapshot);
     const stopReason =
       terminal?.stopReason ??
@@ -666,40 +680,47 @@ export class BackgroundTaskTracker {
       stopReason,
       subject,
     });
-    // dwf 与 legacy `Workflow` 在**结果**这一项上分道：
-    //   - dwf 的产物是脚本的任意顶层返回值，取 `snapshot.output` 原值并统一序列化，且**绝不**
-    //     回退到 launch output——后者的 `response` 是「run 已在后台启动」的陈旧散文，
-    //     回退过去比缺席更糟（桌面实测 bug 的第二种表现）。
-    //   - legacy `Workflow` 的 `output.response` 真实存在，launchOutput 回退是它自己的契约，
-    //     逐字节保留。
-    // subject 仍走上面那个 record 门控的 output（展示名不涉及产物形状）。
-    // dwf 分派名扩到 ResumeWorkflowRun：恢复的 run 与新启动的 run 在通知形状上同构。
+    // dwf and legacy `Workflow` diverge on **result**:
+    //   - A dwf artifact is any top-level script return value; use `snapshot.output` as-is and
+    //     serialize it uniformly. **Never** fall back to launch output: its `response` is stale
+    //     prose saying "the run started in the background," and that is worse than no result
+    //     (the second manifestation of a desktop bug observed in testing).
+    //   - legacy `Workflow` has a real `output.response`; falling back to launchOutput is part
+    //     of its contract and is preserved byte for byte.
+    // subject still uses the record-gated output above (display name does not affect artifact shape).
+    // Extend dwf dispatch to ResumeWorkflowRun so resumed and newly started runs have the same
+    // notification shape.
     const result = isDynamicWorkflowRunDispatchToolName(toolCall.name)
       ? serializeWorkflowArtifact(snapshot && "output" in snapshot ? snapshot.output : undefined)
       : stringField(output, "response");
-    // 渐进产物（`report(item)`）只属于 dwf：legacy `Workflow` 没有这个概念，它的通知逐字节不变。
-    // **三个终态一律携带**（completed / failed / cancelled）：一个死在第 12 个 ask 上的 run
-    // 仍然做完了 11 个 ask 的活，只报一句「失败」等于把它全扔了——那正是 report 存在的理由。
-    // 条目来自 journal 的 kind="report" 行（run service 放在快照上），不是 memory-only 的投影。
+    // Progressive artifacts (`report(item)`) belong only to dwf; legacy `Workflow` has no such
+    // concept and its notification remains unchanged byte for byte.
+    // **Include them for all three terminal states** (completed / failed / cancelled): a run
+    // that dies on ask 12 still completed 11 asks' worth of work. Reporting only "failed" would
+    // discard all of that, which is exactly why reports exist. Entries come from kind="report"
+    // journal rows (attached to the snapshot by the run service), not a memory-only projection.
     const isDynamicWorkflow = isDynamicWorkflowRunDispatchToolName(toolCall.name);
     const reports = isDynamicWorkflow
       ? buildWorkflowReportsNotificationSection(workflowSnapshotReports(snapshot))
       : undefined;
-    // 用户面产物同样只属于 dwf（legacy `Workflow` 没有这个概念，通知逐字节不变）。三个终态
-    // 一律携带：一个失败的 run 已经发布的产物仍然摆在用户面前，通知不提它，模型就会重述一遍。
+    // User-facing artifacts also belong only to dwf (legacy `Workflow` has no such concept, and
+    // its notification remains unchanged byte for byte). Include them for all three terminal
+    // states: artifacts published before a run failed are still visible to the user; if the
+    // notification omits them, the model may repeat the work.
     const artifacts = isDynamicWorkflow
       ? buildWorkflowArtifactsNotificationSection(
           workflowSnapshotArtifacts(snapshot),
           WORKFLOW_ARTIFACTS_NOTIFICATION_MAX_LINES,
         )
       : undefined;
-    // 脚本文件同样只属于 dwf：呈现指引据它把
-    // 下一步说成「就地编辑那个文件」。journal 存的是绝对路径，模型面给工作区相对写法——
-    // 它接下来要 Edit 这个文件，而那正是它在别处读写文件时用的那一种路径。
+    // Script files also belong only to dwf: presentation guidance uses them to say "edit that
+    // file in place" as the next step. The journal stores an absolute path, while the model sees
+    // a workspace-relative path; it should Edit the file using the same path style it uses for
+    // other file reads and writes.
     const scriptPath = isDynamicWorkflow ? workflowSnapshotScriptPath(snapshot) : undefined;
     return formatTaskNotification({
       description: subject,
-      // 交付物呈现指引同样只属于 dwf。
+      // Artifact presentation guidance also belongs only to dwf.
       ...(isDynamicWorkflow ? { deliveryGuidance: true } : {}),
       ...(scriptPath === undefined
         ? {}
@@ -742,8 +763,9 @@ export class BackgroundTaskTracker {
   }
 
   /**
-   * 按工具名解析后台生命周期提供者。每个分支只描述"这个工具的四件事分别由哪个端口承担"，
-   * 与泛化前的五处 if 一一对应，语义逐字保持。
+   * Resolve the background lifecycle provider by tool name. Each branch describes which port
+   * handles the tool's four lifecycle responsibilities, corresponding to the five pre-
+   * generalization checks while preserving their semantics exactly.
    */
   private lifecycleProvider(toolCall: ExecutableToolCall): BackgroundTaskLifecycleProvider {
     const deps = this.deps;
@@ -754,18 +776,20 @@ export class BackgroundTaskTracker {
         ...(getTask
           ? { getSnapshot: (taskId: string) => getTask.call(deps.subagentPort, taskId) }
           : {}),
-        // background Agent 的停止入口在 subagentPort.stopTask；
-        // started payload 不能沿用 Bash 的 executionPort 能力判断。
+        // The stop entry point for a background Agent is subagentPort.stopTask; the started
+        // payload must not reuse Bash's executionPort capability check.
         cancellable: Boolean(deps.subagentPort?.stopTask),
       };
     }
 
     if (isDynamicWorkflowRunDispatchToolName(toolCall.name)) {
-      // workflow run：快照/等待/取消全部来自窄端口 DynamicWorkflowRunPort（runId ≡ taskId ≡ workId）。
-      // 取消能力以 cancel 方法存在为准，而不是硬编码——端口在场即可取消，这正是详情页
-      // Cancel 按钮与后台面板停止共用的那条唯一路径的前提。CreateWorkflow（新启动）与
-      // ResumeWorkflowRun（恢复）共用同一 provider：registry 条目重臂时经 existing 合并
-      // 语义沿用原始工具行的 parentToolCallId，两条入口对 tracker 完全同构。
+      // Workflow run: snapshot/wait/cancel all come from the narrow DynamicWorkflowRunPort
+      // (runId ≡ taskId ≡ workId). Determine cancellation support by whether the cancel method
+      // exists, not by hard-coding it; port presence enables cancellation. This is required for
+      // the detail-page Cancel button and background-panel stop action to share one path.
+      // CreateWorkflow (new start) and ResumeWorkflowRun (resume) share one provider. When a
+      // registry entry is re-armed, existing-merge semantics preserve the original tool row's
+      // parentToolCallId, making both entry points identical to the tracker.
       const port = deps.dynamicWorkflowRunPort;
       if (port === undefined) return {};
       return {
@@ -778,7 +802,8 @@ export class BackgroundTaskTracker {
     }
 
     if (toolCall.name === "Workflow") {
-      // legacy Workflow：只有快照与等待，没有取消——停止入口从未接过（保持泛化前的 false）。
+      // Legacy Workflow: snapshot and wait only, no cancellation; its stop entry point was never
+      // wired (preserve the previous false value).
       const getTask = deps.workflowPort?.getTask;
       const waiter = getWorkflowTaskWaiter(deps.workflowPort);
       return {
@@ -804,7 +829,7 @@ export class BackgroundTaskTracker {
       };
     }
 
-    // 其余工具沿用 executionPort 的通用后台面（无直接等待者），与泛化前一致。
+    // Other tools keep the generic background surface from executionPort (no direct waiter), as before generalization.
     const getBackgroundTask = deps.executionPort?.getBackgroundTask;
     return {
       ...(getBackgroundTask
@@ -859,7 +884,7 @@ function buildBackgroundTaskSummary(input: {
 }): string {
   const subject = input.description ?? input.command ?? "Bash background command";
   const prefix = `Background command "${subject}"`;
-  // Provider-visible summary 保持简洁；完整输出路径由 task-notification 的 output-file 字段承载。
+  // Keep the provider-visible summary concise; task-notification's output-file field carries the full output path.
   if (input.lost) return `${prefix} failed because its in-process state was lost`;
   switch (input.status) {
     case "completed":
@@ -880,8 +905,9 @@ function buildWorkflowTaskSummary(input: {
 }): string {
   const prefix = `Workflow "${input.subject}"`;
   if (input.lost) return `${prefix} failed because its in-process state was lost.`;
-  // 一句话就要把「怎么结束的」说清：模型读 summary 比读 XML 字段更早。dwf 的三终态词优先；
-  // legacy `Workflow` 不带 runStatus，落回追踪器的通用词。
+  // The summary must say how the task ended in one sentence; the model reads it before the XML
+  // fields. Prefer the three dwf terminal states; legacy `Workflow` has no runStatus and falls
+  // back to the tracker's generic wording.
   if (input.runStatus === "errored") return `${prefix} errored: the script failed.`;
   if (input.runStatus === "stopped" || input.status === "killed") {
     switch (input.stopReason) {
@@ -905,10 +931,11 @@ function buildWorkflowTaskSummary(input: {
 type WorkflowTerminalRunStatus = "completed" | "errored" | "stopped";
 
 /**
- * dwf 快照上的三终态事实。只有 dwf 那支快照带
- * `runStatus` / `stopReason` / `failure`（端口契约 `DynamicWorkflowRunSnapshot`）；老端口或
- * stub 不发它们时按追踪器的通用词折算：`failed` → errored、`cancelled` → stopped（reason 缺席，
- * 由调用方拿 registry 兜底）。非终态回 undefined。
+ * Three terminal-state facts from a dwf snapshot. Only the dwf snapshot branch has
+ * `runStatus` / `stopReason` / `failure` (port contract `DynamicWorkflowRunSnapshot`). If an old
+ * port or stub omits them, map using the tracker's generic wording: `failed` → errored,
+ * `cancelled` → stopped (reason absent, so the caller falls back to the registry). Nonterminal
+ * states return undefined.
  */
 function workflowSnapshotTerminal(
   status: string,
@@ -975,17 +1002,21 @@ function runtimeString(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
 }
 
-/** manifest 载荷（`WorkflowNotificationMeta`）里各字段的界。发射侧就地截断——载荷随 turnHeader
- *  row 走协议 + snapshot，shared 的 `workflowNotificationMetaSchema` 用同一组 `.max()` 把关，
- *  超界会让整行落库时 zod 拒收。所以截断是**构造前**的纪律，不是可有可无的收尾。 */
+/** Bounds for fields in the manifest payload (`WorkflowNotificationMeta`). Truncate at the
+ * emission site: the payload travels through the protocol and snapshot with the turnHeader row,
+ * and the shared `workflowNotificationMetaSchema` enforces the same `.max()` limits, rejecting
+ * the entire row on persistence if exceeded. Truncation is therefore a **pre-construction**
+ * requirement, not optional cleanup. */
 const WORKFLOW_NOTIFICATION_SUMMARY_MAX_CHARS = 500;
 const WORKFLOW_NOTIFICATION_RESULT_MAX_CHARS = 4_000;
 const WORKFLOW_NOTIFICATION_ERROR_MAX_CHARS = 2_000;
 
 /**
- * workflow run 终态通知的 workflow originMeta（含 manifest 载荷）。CreateWorkflow / ResumeWorkflowRun
- * 两个入口同构，都经这里铸造：title 与 summary 同源（`workflowTaskSubject`），载荷只在**终态且
- * 快照在场**时携带（非终态 / lost 无快照 → 整字段缺席，GUI 退回裸标题行）。
+ * workflow originMeta for a workflow run terminal notification (including manifest payload).
+ * CreateWorkflow and ResumeWorkflowRun have the same shape and both are constructed here:
+ * title and summary share a source (`workflowTaskSubject`), and the payload is included only
+ * when the task is **terminal and a snapshot is present** (nonterminal / lost without a snapshot
+ * means the field is absent and the GUI falls back to a bare title row).
  */
 function buildWorkflowNotificationOriginMeta(
   toolCall: ExecutableToolCall,
@@ -1005,11 +1036,13 @@ function buildWorkflowNotificationOriginMeta(
 }
 
 /**
- * 快照级事实 → terminal 判别分支的 manifest 载荷。
+ * Snapshot facts → manifest payload for the terminal-state branch.
  *
- * 只在三个终态（completed / failed / cancelled）且快照在场时铸造。`lost`（快照缺失）与非终态
- * 一律回 `undefined`——载荷缺席即 GUI 退回现状标题行，而不是谎报一个空壳。**usage/tokens 发射
- * 时不可知**（只在内存态投影里），所以只带 durationMs，tokens 留给 GUI 渲染期按 runId 联查。
+ * Construct only for the three terminal states (completed / failed / cancelled) when a snapshot
+ * is present. `lost` (snapshot missing) and nonterminal states return `undefined`; an absent
+ * payload lets the GUI fall back to the current title row instead of reporting an empty shell.
+ * **Usage/tokens are unavailable at emission time** (only an in-memory projection is available),
+ * so include only durationMs and let the GUI look up tokens by runId at render time.
  */
 function buildWorkflowTerminalNotification(
   status: string,
@@ -1027,9 +1060,10 @@ function buildWorkflowTerminalNotification(
     summary: summary.slice(0, WORKFLOW_NOTIFICATION_SUMMARY_MAX_CHARS),
   };
 
-  // 产物：脚本的任意顶层返回值，统一序列化。截断诚实——`resultTruncated` 在场即预览是局部的，
-  // 全量经 run id / GetWorkflowRun 可取。resultForm 与 serializeWorkflowArtifact 的分叉对齐：
-  // string 原样（prose），其余 JSON.stringify（json）。
+  // Artifact: any top-level return value from the script, serialized uniformly. Truncation is
+  // explicit: when `resultTruncated` is present, the preview is partial; fetch the full value by
+  // run ID / GetWorkflowRun. resultForm matches serializeWorkflowArtifact's branches: strings
+  // are unchanged (prose), everything else uses JSON.stringify (json).
   const outputValue = snapshot && "output" in snapshot ? snapshot.output : undefined;
   const serialized = serializeWorkflowArtifact(outputValue);
   if (serialized !== undefined) {
@@ -1045,13 +1079,15 @@ function buildWorkflowTerminalNotification(
   const error = snapshot && "error" in snapshot ? runtimeString(snapshot.error) : undefined;
   if (error !== undefined) meta.error = error.slice(0, WORKFLOW_NOTIFICATION_ERROR_MAX_CHARS);
 
-  // 渐进产物三个终态一律携带：一个死在第 12 个 ask 上的 run 仍做完了 11 个 ask 的活。
+  // Include progressive artifacts for all three terminal states: a run that dies on ask 12
+  // still completed 11 asks' worth of work.
   const reports = buildWorkflowReportsManifestSection(workflowSnapshotReports(snapshot));
   if (reports !== undefined) meta.reports = reports;
 
-  // 用户面产物的 chips 载荷。这是通知行 chips 的
-  // **唯一**数据源：hydration 冷恢复把它按 shared 的 zod 原样读回，缺一个键就等于 chips 永久
-  // 消失。三个终态一律携带，理由同 reports。
+  // Chips payload for user-facing artifacts. This is the **only** data source for notification
+  // row chips: cold hydration reads it back unchanged through the shared Zod schema, and a
+  // missing key would make the chips disappear permanently. Include it for all three terminal
+  // states, as with reports.
   const artifactsSection = buildWorkflowArtifactsManifestSection(
     workflowSnapshotArtifacts(snapshot),
   );
@@ -1067,8 +1103,10 @@ function buildWorkflowTerminalNotification(
 }
 
 /**
- * 追踪器终态 status → manifest 的三个终态字面（`failed` → errored、`cancelled` → stopped）；非终态（running / lost 等）回 undefined（不携带
- * 载荷）。快照自带 `runStatus` 时以它为准（见 workflowSnapshotTerminal）。
+ * Map tracker terminal status to one of the three manifest terminal literals (`failed` → errored,
+ * `cancelled` → stopped); return undefined for nonterminal states (running / lost, etc.) and omit
+ * the payload. When the snapshot provides `runStatus`, it is authoritative (see
+ * workflowSnapshotTerminal).
  */
 function workflowTerminalNotificationStatus(
   status: string,
@@ -1086,19 +1124,22 @@ function workflowTerminalNotificationStatus(
 }
 
 /**
- * 通知里的墙钟时长（完成卡的「时间」格）。
+ * Wall-clock duration in a notification (the "time" field on the completion card).
  *
- * 两个来源，取**大**者：
- *   - 本世：`completedAt - startedAt`，结算它的这个进程自己看到的那一段；
- *   - 整条 lineage 的活动时长：`activeDurationMs`，由端口从 journal 求和（resume 的每一世 +
- *     沿 `resumedFrom` 的每个前驱），缺席即读不出。
+ * Two sources; take the **larger** value:
+ *   - This run: `completedAt - startedAt`, the interval observed by the process that settled it.
+ *   - Active duration across the full lineage: `activeDurationMs`, summed by the port from the
+ *     journal (each resumed run and every predecessor reached through `resumedFrom`); absent
+ *     means unavailable.
  *
- * 只报本次启动的墙钟时长会漏掉之前的运行时间：修订与
- * resume 各自重开一次进程内时钟，而那一世大半是缓存重放。取大而不是直接取 lineage，是为了守住
- * 「永不少报本进程亲眼所见」：老 run 的事件早于本记账、journal 读面不在场时 `activeDurationMs`
- * 缺席，退回本世；而 lineage 值正常总比本世大（它含本世）。
+ * Reporting only this run's wall-clock duration would omit earlier execution time: each amend
+ * and resume restarts the process clock, and most of that run may be cache replay. Take the
+ * larger value instead of always using lineage to preserve "never report less than this process
+ * observed": if older run events predate this accounting or the journal read surface is absent,
+ * `activeDurationMs` is missing and we fall back to this run. Normally lineage duration is at
+ * least as large because it includes this run.
  *
- * 两个来源都读不出时整字段缺席（卡上写 `—`），不写 0。
+ * If neither source is available, omit the field (the card shows `—`) instead of writing 0.
  */
 function workflowNotificationDurationMs(snapshot: BackgroundTaskSnapshot): number | undefined {
   const startedAt =
@@ -1119,20 +1160,22 @@ function workflowNotificationDurationMs(snapshot: BackgroundTaskSnapshot): numbe
   return lineageMs === undefined ? ownLifeMs : Math.max(ownLifeMs, lineageMs);
 }
 
-/** 非负有限数才算一个时长；其余（NaN / Infinity / 负数 / 非数）一律读作「说不出」。 */
+/** Only finite nonnegative numbers count as durations; NaN / Infinity / negatives / non-numbers are treated as unavailable. */
 function nonNegativeFinite(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : undefined;
 }
 
 /**
- * 快照上的 dwf 渐进产物。`BackgroundTaskSnapshot` 是个联合类型（bash / subagent / legacy
- * workflow / dwf 各一支），只有 dwf 那支有 `reports`，所以按 `in` 收窄而不是断言。
- * 形状照样防御性检查：这条路径的输入来自端口实现，而快照是跨包契约。
+ * Progressive artifacts on a dwf snapshot. `BackgroundTaskSnapshot` is a union type (bash /
+ * subagent / legacy workflow / dwf branches), and only the dwf branch has `reports`, so narrow
+ * with `in` rather than an assertion. Still validate the shape defensively: this path receives
+ * input from a port implementation, and the snapshot is a cross-package contract.
  */
 /**
- * 快照上的 dwf 脚本文件（绝对路径）。收窄方式与 {@link workflowSnapshotReports} 同款
- * （`in` 而不是断言：`BackgroundTaskSnapshot` 是四支联合，只有 dwf 那支有这个键），形状再过
- * 一遍 typeof——快照是跨包契约，老端口 / stub 完全可能不带它。
+ * dwf script file on the snapshot (absolute path). Narrow it like
+ * {@link workflowSnapshotReports} (`in`, not an assertion: `BackgroundTaskSnapshot` has four
+ * branches and only dwf has this key), then validate with typeof. The snapshot is a cross-package
+ * contract, and old ports/stubs may omit this field.
  */
 function workflowSnapshotScriptPath(
   snapshot: BackgroundTaskSnapshot | undefined,
@@ -1151,9 +1194,10 @@ function workflowSnapshotReports(
 }
 
 /**
- * 快照上的 dwf **用户面产物**（`artifact.*` 发布的产出，不是 `output` 那个返回值）。收窄方式
- * 与 {@link workflowSnapshotReports} 同款（`in` 而不是断言：`BackgroundTaskSnapshot` 是四支
- * 联合，只有 dwf 那支有这个键），形状再过一遍防御性解析——快照是跨包契约。
+ * dwf **user-facing artifacts** on the snapshot (outputs published through `artifact.*`, not
+ * the return value in `output`). Narrow it like {@link workflowSnapshotReports} (`in`, not an
+ * assertion: `BackgroundTaskSnapshot` has four branches and only dwf has this key), then parse
+ * the shape defensively; the snapshot is a cross-package contract.
  */
 function workflowSnapshotArtifacts(
   snapshot: BackgroundTaskSnapshot | undefined,
@@ -1184,15 +1228,17 @@ function getWorkflowTaskWaiter(workflowPort: unknown): WorkflowTaskWaiter | unde
 }
 
 /**
- * 后台任务的展示类别（面板分组与图标）。`taskKind` 只是装饰：生命周期语义已经由
- * per-tool 的 lifecycleProvider 分派，所以这里的分类改动不会影响观察/等待/取消。
+ * Display category for a background task (panel grouping and icon). `taskKind` is cosmetic:
+ * lifecycle semantics are already dispatched through the per-tool lifecycleProvider, so
+ * changing this classification does not affect observation/wait/cancellation.
  *
- * legacy `Workflow`（script workflow）刻意仍归 "bash"：它不可取消、面板上也没有详情页，
- * 与 workflow run 是两种不同的东西，共用一个类别会让面板把两者混在一起。
+ * Keep legacy `Workflow` (script workflow) classified as "bash": it cannot be cancelled and has
+ * no detail page in the panel. It differs from workflow runs, and sharing a category would mix
+ * them together in the panel.
  */
 function backgroundTaskKind(toolName: string): "bash" | "subagent" | "workflow" {
   if (isSubagentDispatchToolName(toolName)) return "subagent";
-  // dwf 的两个入口（CreateWorkflow / ResumeWorkflowRun）同归 "workflow"：同一个 run 的
-  // 生命周期延续，面板分组与图标不该因入口不同而换类。
+  // Both dwf entry points (CreateWorkflow / ResumeWorkflowRun) use "workflow": they continue the
+  // same run lifecycle, so panel grouping and icon should not depend on which entry point was used.
   return isDynamicWorkflowRunDispatchToolName(toolName) ? "workflow" : "bash";
 }

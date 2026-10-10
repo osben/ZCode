@@ -48,7 +48,7 @@ export interface ScriptWorkflowAgentRuntimeDeps {
   pdfDocumentPort?: PdfDocumentPort;
   logger: Logger;
   mcpPort?: McpPort;
-  /** 父会话的 model factory：child 与主 turn 从同一份 Registry 视图造 Model，不各自冻结。 */
+/** Parent-session model factory: create Models for the child and main turn from the same Registry view instead of freezing separate copies. */
   modelFactory: NonNullable<AgentRuntimeDeps["modelFactory"]>;
   permissionService: PermissionService;
   runtime: AgentRuntime;
@@ -65,36 +65,36 @@ export function createScriptWorkflowAgentRuntime(input: {
   request: WorkflowAgentCallInput;
   traceContext: TraceContext;
   /**
-   * 覆盖 child runtime 的配置切片。dwf actor 用它落工具面：`workflowActorToolPolicy` 给出
-   * `toolDisallowlist`（全集的减法），而 `request.opts.tools` 只能表达 allowlist——两者不是
-   * 同一个自由度。
+   * Configuration slice to override for the child runtime. DWF actors use it to set the tool
+   * surface: `workflowActorToolPolicy` provides a `toolDisallowlist` (subtract from the full set),
+   * while `request.opts.tools` can express only an allowlist. These are different degrees of freedom.
    */
   configOverrides?: Partial<AgentRuntimeConfig>;
   /**
-   * 会话级 submit 端口。注入即为该会话注册 submit_result 工具（core 的注册门以端口存在为准），
-   * 这是 dwf typed ask 的终止通道。
+   * Session-level submit port. Injecting it registers the submit_result tool for the session (core
+   * gates registration on the port's presence); this is the terminal channel for DWF typed asks.
    */
   workflowSubmitPort?: WorkflowSubmitPort;
   /**
-   * mono 子代理的 typed `submit_result` 声明：
-   * 在场时 core 注册 `{ result: <schema> }` 而非任意 JSON。只与 workflowSubmitPort 同在时有意义。
+   * Typed `submit_result` declaration for mono subagents:
+   * when present, core registers `{ result: <schema> }` instead of arbitrary JSON. Meaningful only when workflowSubmitPort is also present.
    */
   workflowSubmitSchema?: JsonSchema;
   /**
-   * 会话级升级端口。注入即为该会话注册 `escalate` 工具
-   * （core 的注册门同样以端口存在为准），这是 actor 遇到真阻塞时唯一的求助通道。
+   * Session-level escalation port. Injecting it registers the `escalate` tool for the session
+   * (core also gates registration on the port's presence); this is the actor's only help channel when genuinely blocked.
    */
   workflowEscalatePort?: WorkflowEscalatePort;
   /**
-   * 模型请求准入端口。dwf actor 由 driver
-   * 给出（每次模型请求尝试先过进程级闸门）；legacy `Workflow` 工具的子代理不传——不受闸门约束、
-   * 不喂信号。与两个工具端口同路进 runtime deps。
+   * Model-request admission port. The driver provides it to DWF actors (each model-request attempt
+   * passes through the process-level gate first). Subagents of the legacy `Workflow` tool omit it and
+   * are not governed by or reported to the gate. It is passed through runtime deps alongside the two tool ports.
    */
   modelRequestAdmission?: ModelRequestAdmission;
 }): AgentRuntime {
-  // dwf actor 经 configOverrides.workflowActor 走 builder 的叠加路径，此时 systemPrompt 必须
-  // 缺席（builder 对二者同在抛错）——父会话自带的 custom system prompt 不得漏给子代理，所以
-  // 从继承的配置里把它剥掉，而不是靠后面的覆盖。
+  // DWF actors use the builder's overlay path via configOverrides.workflowActor, where systemPrompt
+  // must be absent (the builder throws if both are set). The parent session's custom system prompt
+  // must not leak to the subagent, so remove it from inherited config instead of relying on a later override.
   const { systemPrompt: inheritedSystemPrompt, ...inheritedConfig } = input.deps.runtimeConfig;
   const systemPrompt =
     input.configOverrides?.workflowActor === undefined
@@ -126,10 +126,11 @@ export function createScriptWorkflowAgentRuntime(input: {
     },
     {
       ...createRuntimeDeps(input.deps, input.traceContext, input.childSessionId, {
-        // 对外交互端口只能由父 runtime 铸造：子会话不是客户端认识的身份。
-        // 这里过去直接用 `appOptions.providerRuntimeHeadersPort` /
-        // `deps.permissionBroker`，于是 actor 带着 `sess_dwf-…` 去问桌面，桌面
-        // `requireSession` 抛错、response 永不发出，子代理在首个模型请求前挂死。
+        // External interaction ports must be created by the parent runtime; the client does not
+        // recognize the child session as an identity.
+        // This previously used `appOptions.providerRuntimeHeadersPort` /
+        // `deps.permissionBroker` directly, so the actor asked Desktop with `sess_dwf-…`; Desktop's
+        // `requireSession` threw, no response was sent, and the child agent hung before its first model request.
         agentId: input.childSessionId,
         agentType: input.request.opts?.agentType ?? "zcode-workflow",
         childSessionId: input.childSessionId,
@@ -161,7 +162,7 @@ function createRuntimeDeps(
   return {
     agentTelemetry: deps.agentTelemetry,
     agentTelemetryCausation: deps.agentTelemetry.captureCausation(),
-    // Script workflow child 具有独立生命周期；用 Link 保留发起关系。
+    // A script workflow child has an independent lifecycle; use Link to retain its initiating relationship.
     agentTelemetryCausationMode: "linked_root",
     appVersion: deps.appVersion,
     artifactStore: deps.artifactStore,
@@ -169,13 +170,15 @@ function createRuntimeDeps(
       deps.contextSourcePort ??
       deps.appOptions.contextSourcePort ??
       createNodeContextSourceAdapter({ env: deps.appOptions.env }),
-    // 直播通道（照 subagent 同款）：原始子会话事件只**通知**父 runtime 的外部 sink 集，
-    // 保留子 sessionId 让协议层按 detached live session 路由；父侧不再 append，
-    // 所以共享 store 里每条事件恰好一份。
+    // Live channel (same approach as subagents): raw child-session events only **notify** the
+    // parent's external sink set. Preserve the child sessionId so the protocol can route it as a
+    // detached live session; the parent no longer appends it, leaving exactly one copy of each event
+    // in the shared store.
     //
-    // 必须在**构造期**装：`ensureSessionPersistedForExternalActivity` 把 SessionTitleUpdated
-    // 写成 sequenceNumber 1，而 v4 网关只排水连续 seq——构造之后才挂的订阅从 seq 2 起，
-    // 会永远等一个再也不会来的 seq 1（这正是旧 subscribeEvents 通道从未直播成功的原因）。
+    // Install this during **construction**: `ensureSessionPersistedForExternalActivity` writes
+    // SessionTitleUpdated as sequenceNumber 1, while the v4 gateway drains only contiguous sequence
+    // numbers. A subscription added after construction starts at seq 2 and waits forever for the
+    // missing seq 1, which is why the old subscribeEvents channel never delivered live events.
     eventSink: {
       onSessionEvent: async (event) => {
         await deps.runtime.notifyExternalChildSessionEvent({
@@ -185,9 +188,10 @@ function createRuntimeDeps(
         });
       },
     },
-    // 与父 runtime 共享 event store：子事件按子自己的 sessionId 落在同一个 store 里，
-    // v4 的 `loadPersistedEvents(childSessionId)` 因此命中。私建内存 store 时它永远读不到，
-    // transcript 就是永久空白（照 subagent.ts 的 `eventStore: this.eventStore`）。
+    // Share the event store with the parent runtime: child events are written to the same store under
+    // the child's sessionId, so v4 `loadPersistedEvents(childSessionId)` finds them. A private
+    // in-memory store would never be visible there, leaving the transcript permanently empty (as in
+    // subagent.ts with `eventStore: this.eventStore`).
     eventStore: deps.runtime.getSessionEventStore(),
     executionPort:
       deps.appOptions.executionPort ??
@@ -218,7 +222,7 @@ function createRuntimeDeps(
     mcpPort: deps.mcpPort,
     modelFactory: deps.modelFactory,
     resolveEffectiveModelSelection: deps.appOptions.resolveEffectiveModelSelection,
-    // permissionBroker + providerRuntimeHeadersPort 都在这里面：父 runtime 派生，路由身份已改写成父会话。
+    // This contains both permissionBroker and providerRuntimeHeadersPort: derive them from the parent runtime, with the routing identity rewritten to the parent session.
     ...deps.runtime.createChildClientPorts(clientPortsContext),
     permissionService: deps.permissionService,
     sessionStore: deps.sessionStore,
@@ -227,7 +231,7 @@ function createRuntimeDeps(
         ? (deps.appOptions.skillPort ??
           createNodeSkillAdapter({
             extraRoots: deps.configResult.config.skills.roots,
-            // 脚本 workflow child runtime 不能绕过用户禁用的 SKILL.md 路径。
+            // The script workflow child runtime must not bypass a user-disabled SKILL.md path.
             disabledPaths: collectDisabledPaths(deps.configResult.config.skillOverrides),
           }))
         : undefined,

@@ -1,7 +1,8 @@
-// CreateWorkflow 的常驻描述。
-// 工具描述保留用途、调用条件和技能加载要求；facade 声明、写作规则、阶段与命名规则、
-// 字段语义由 `dynamic-workflows` 技能提供。resolveInput 的技能门保证提交脚本前已加载技能。
-// 调用条件必须保留在工具描述里，让模型在加载技能前就能判断是否应使用该工具。
+// Persistent description for CreateWorkflow.
+// Keep the purpose, invocation conditions, and skill-loading requirement in the tool description. The `dynamic-workflows` skill
+// provides the facade declaration, writing rules, phase and naming rules, and field semantics. The resolveInput skill gate ensures
+// the skill is loaded before a script is submitted. Invocation conditions must remain here so the model can decide whether to use the
+// tool before loading the skill.
 
 import { DYNAMIC_WORKFLOW_SKILL_NAME } from "@zcode/contracts";
 
@@ -9,7 +10,7 @@ const INTRO =
   "Create and run a dynamic workflow: a TypeScript script that orchestrates multiple model-driven subagents with plain control flow (loops, conditionals, fan-out) and typed intermediate results. The script is typechecked, the user is asked to confirm it, and the run starts in the background; you are notified with its final result when it settles. Compilation errors come back as diagnostics.";
 
 /**
- * 只按「用户是否点名」路由：工作流只能由 `/workflow` 或明确请求发起，模型不得自行决定开一条。
+ * Route only on whether the user explicitly named it: a workflow can start only through `/workflow` or a direct request; the model must not start one on its own.
  */
 const WHEN_TO_USE = [
   "When to use:",

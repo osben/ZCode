@@ -50,7 +50,7 @@ async function handleOAuthCallbackSuccess(params: {
     try {
       selection = await params.refreshLatestModelProviderFamilySelection(params.result.provider);
     } catch (error) {
-      // selectedKey 后台校正失败只影响默认连接方式展示，不能回滚已经成功的 OAuth 登录态。
+      // A failed background selectedKey correction affects only the displayed default connection method; it must not roll back a successful OAuth login.
       logger.warn("[Root] OAuth 登录后刷新 provider family selectedKey 失败", {
         provider: params.result.provider,
         error,
@@ -59,9 +59,9 @@ async function handleOAuthCallbackSuccess(params: {
     const selectedConnection = selection ? JSON.stringify(selection) : "";
     if (selection && params.refreshAppSettings) {
       try {
-        // selectedKey 由 settingService 直接落盘，输入框和 context hover
-        // 读取的是 renderer settings 快照。登录后必须先刷新快照，再按最终套餐刷新
-        // 模型可用态和剩余额度，否则 UI 会一直拿旧 selectedKey，直到打开设置页或重启。
+        // settingService writes selectedKey directly to disk; the input and context hover
+        // read the renderer settings snapshot. After login, refresh the snapshot first, then refresh
+        // model availability and remaining quota for the final plan; otherwise the UI keeps using the old selectedKey until settings are opened or the app restarts.
         await params.refreshAppSettings();
       } catch (error) {
         logger.warn("[Root] OAuth 登录后刷新 App settings 快照失败", {
@@ -72,7 +72,7 @@ async function handleOAuthCallbackSuccess(params: {
       }
     }
   }
-  // selectedKey 与账号状态收敛后统一刷新 Account Source 与 Registry。
+  // After selectedKey and account state have settled, refresh Account Source and Registry together.
   await params.refreshProviderState();
   if (loginProvider) {
     void reportAppTelemetryEvent(
@@ -131,9 +131,9 @@ export function useRootOAuthEffects({
       logger.info("[Root] 后台启动 OAuth 本地会话恢复");
       let hasRestoredUser = false;
       try {
-        // zai / bigmodel 的 OAuth token 生命周期较短，启动时如果仍走远端校验，
-        // 用户会在 token 过期后被立刻打回“未登录”，和“已完成登录但未主动退出”的产品语义冲突。
-        // 这里改为只读取登录成功时缓存的 user_info，展示态由“是否主动退出”决定，而不是由短 token 决定。
+        // OAuth tokens for zai/bigmodel have a short lifetime; if startup still performs remote validation,
+        // users are immediately shown as signed out when the token expires, conflicting with the product meaning of “login completed and not explicitly signed out.”
+        // Read only the user_info cached at successful login; display state is determined by whether the user explicitly signed out, not by the short-lived token.
         const result = await services.oauthService.restoreCachedSessionState();
 
         if (disposed) {
@@ -158,10 +158,10 @@ export function useRootOAuthEffects({
         }
       }
 
-      // 启动恢复是异步后台流程，慢网时如果不单独暴露“恢复中”状态，
-      // sidebar 会先按 user=null 渲染成“登录”，而登录弹窗又还能读到本地 activeProvider，
-      // 用户就会看到“外面未登录、弹窗里已登录提供方”的分裂展示。
-      // 这里在恢复主流程结束后立刻落定状态，让 footer 先显示 loading，再收敛到最终登录态。
+      // Startup restoration runs asynchronously in the background. On a slow network, without an explicit “restoring” state,
+      // the sidebar first renders “Sign in” for user=null while the login dialog can still read the local activeProvider,
+      // so the user sees inconsistent states: signed out outside, but a signed-in provider inside the dialog.
+      // Set the state as soon as the main restore flow ends so the footer shows loading first, then settles into the final login state.
       setIsRestoringOAuthSession(false);
 
       try {
@@ -175,11 +175,11 @@ export function useRootOAuthEffects({
           });
         }
 
-        // OAuth 会话恢复与 Provider Runtime 刷新保持后台执行，避免首屏等待网络链路。
+        // Keep OAuth session restoration and Provider Runtime refresh in the background so the initial screen does not wait for network requests.
         await refreshProviderState();
       } catch (error) {
-        // 启动刷新失败不能跳过后续订阅，否则网络恢复后账号失效协调也永久停止。
-        // 保留当前事实，继续由 Provider View 的正常更新驱动，不另起重试循环。
+        // A failed startup refresh must not skip later subscriptions, or account invalidation coordination will remain stopped after the network recovers.
+        // Keep the current facts and let normal Provider View updates drive reconciliation; do not start a separate retry loop.
         logger.warn("[Root] 启动账号配置刷新失败，继续观察后续更新", { error });
       }
     }
@@ -221,7 +221,7 @@ export function useRootOAuthEffects({
         }
         markZcodeJwtInvalidRestart();
         if (typeof window !== "undefined" && !("zcode" in window)) {
-          // Web 没有 Electron RelaunchApp；marker 写入后立即刷新，避免停留在僵尸登录态。
+          // Web has no Electron RelaunchApp; refresh immediately after writing the marker to avoid remaining in a stale logged-in state.
           window.location.reload();
           return;
         }
@@ -323,7 +323,7 @@ export function useRootOAuthEffects({
     const disposeOAuth = platform.onOAuthCallback(async (url) => {
       try {
         const result = await services.oauthService.handleCallback(url);
-        // 取消或切换 flow 会使已接收的回调失效，正常空结果不能被当作登录异常。
+        // Canceling or switching flows invalidates callbacks already received; an expected empty result must not be treated as a login error.
         if (!result) {
           logger.info("[Root] 已忽略失效 OAuth 回调");
           return;
@@ -365,9 +365,9 @@ export function useRootOAuthEffects({
         setOAuthPollingActive(false);
         markOAuthSuccess(result.provider);
       } catch (err) {
-        // 之前把底层 OAuth 错误原文写入 UI，用户会看到 provider/token 等具体失败原因。
-        // 登录页只保留统一可重试提示，具体原因继续进入 logger 便于排查。
-        // polling 成功后可能收到迟到/重复的 deep-link；该回调失败不能覆盖已完成的登录态。
+        // The underlying OAuth error text used to be written to the UI, exposing specific failure details such as provider/token.
+        // Keep only a generic retryable message on the login page; send the specific reason to the logger for investigation.
+        // A late/duplicate deep link may arrive after polling succeeds; its failure must not overwrite the completed login state.
         const ownSuccessHandlerFailed = oauthLoginSuccessOwnerRef.current === "deep-link";
         if (ownSuccessHandlerFailed) {
           oauthLoginSuccessOwnerRef.current = null;

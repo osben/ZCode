@@ -34,8 +34,8 @@ export class ToolRegistryImpl implements ToolRegistry {
   register(entry: ToolEntry, options: ToolRegistryRegisterOptions = {}): void {
     const displacedAliasTarget = this.aliases.get(entry.metadata.name);
     if (displacedAliasTarget) {
-      // 查找时 alias 若优先于 canonical，后注册的真实同名工具会继续被旧
-      // alias 遮蔽。canonical 始终优先，并留下告警，避免兼容别名改变工具身份。
+      // If aliases take precedence during lookup, an older alias can keep shadowing a real tool registered later under the same name.
+      // Canonical names always take precedence and emit a warning so compatibility aliases cannot change tool identity.
       this.aliases.delete(entry.metadata.name);
       if (options.silentDuplicateWarning !== true) {
         console.warn(
@@ -59,8 +59,8 @@ export class ToolRegistryImpl implements ToolRegistry {
         this.tools.has(alias) ||
         (existingAliasTarget !== undefined && existingAliasTarget !== entry.metadata.name)
       ) {
-        // 兼容 alias 若静默覆盖 canonical/另一个 alias，会把一次工具调用路由到
-        // 错误权限和 handler。冲突时拒绝本 alias，保留已注册身份。
+        // If a compatibility alias silently overrides a canonical name or another alias, a tool call could route to
+        // the wrong permission and handler. Reject the alias on conflict and preserve the registered identity.
         if (options.silentDuplicateWarning !== true) {
           console.warn(`Tool alias ${alias} conflicts with an existing tool or alias; skipping`);
         }

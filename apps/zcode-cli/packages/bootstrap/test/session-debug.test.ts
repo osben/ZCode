@@ -9,7 +9,7 @@ import {
 } from "../src/zcode-protocol/session-debug.js";
 import type { ZCodeProtocolAgentServerContext } from "../src/zcode-protocol/server-types.js";
 
-// session-debug 的观测表是模块级状态，测试间不得复用同一 sessionId。
+// session-debug's observation table is module-level state; tests must not reuse a sessionId.
 let eventSeq = 0;
 
 function completedEvent(sessionId: string, requestId: string) {
@@ -37,11 +37,11 @@ function completedEvent(sessionId: string, requestId: string) {
 function fakeContext(sessions = new Map<string, { app: { sessionId: string } }>()) {
   return {
     sessions,
-    // requireSession 的缺 session 诊断会读 context.deps.sessionStore；deps 必须存在。
+    // requireSession's missing-session diagnostic reads context.deps.sessionStore, so deps must be present.
     deps: {},
     logger: {
       warn() {
-        // 静默：缺 session 的诊断日志不属于本测试断言范围。
+        // Suppress logs: missing-session diagnostics are outside this test's assertions.
       },
     },
   } as unknown as ZCodeProtocolAgentServerContext;
@@ -53,7 +53,7 @@ test("detached child 观测记录子会话自己的 main_turn round", () => {
   assert.equal(snapshot?.sessionId, "child-observe");
   assert.equal(snapshot?.rounds.length, 1);
   const round = snapshot?.rounds[0];
-  // 口径与父会话一致：解码时长 = duration - TTFT = 3s，120 tok → 40 tok/s。
+  // Match the parent session's calculation: decoding time = duration - TTFT = 3s, so 120 tokens → 40 tokens/s.
   assert.equal(round?.usage.outputTokens, 120);
   assert.equal(round?.generationDurationMs, 3_000);
   assert.equal(round?.tokensPerSecond, 40);

@@ -30,7 +30,7 @@ const messages = {
     helpThoughtLevel: "**/思考** — 切换思考级别",
     helpReply: "**/回复** — 切换回复详细程度",
     webhookSecretInvalid: "Webhook secret 校验失败。",
-    // Bugfix: 这条错误由通用 provider callback 处理路径触发，微信/飞书失败时不能误显示 Telegram。
+    // Bug fix: this error is triggered through the shared provider callback path; WeChat/Feishu failures must not be shown as Telegram failures.
     callbackFailed: "处理机器人回调失败：{message}",
     sessionExpiredNewTaskHint:
       "当前任务会话已失效，可能是任务已被清理或机器人消息已过期。请发送 **/new task** 创建新任务后再继续。",
@@ -378,8 +378,8 @@ const messages = {
 export type BotMessageId = keyof (typeof messages)[BotMessageLocale];
 
 export function normalizeBotMessageLocale(locale: Locale | undefined): BotMessageLocale {
-  // 未指定语言时保持中文默认；Bot 文案覆盖全部界面语言（含 uk-UA），
-  // 不再经 toServiceLocale 折叠成 en-US，否则乌克兰语用户只能看到英文。
+  // Keep Chinese as the default when no language is specified. Bot copy covers all UI languages (including uk-UA),
+  // so do not collapse it to en-US through toServiceLocale; otherwise Ukrainian users would see only English.
   return locale ?? DEFAULT_BOT_MESSAGE_LOCALE;
 }
 

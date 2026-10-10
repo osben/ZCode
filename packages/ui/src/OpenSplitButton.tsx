@@ -21,7 +21,7 @@ import { getWorkspaceFileRelativePath } from "@/workspace-file-tree/model.js";
 import { resolveWorkspaceEditorSelection } from "@/lib/workspaceEditorSelection.js";
 import { logger } from "@/logger.js";
 
-// 导出类型供共用时间线以 import type 引用（构建期擦除，不把 open-with 子树带进公开页 bundle）。
+// Export the type for the shared timeline to import as a type (erased at build time, so the open-with subtree is not included in the public-page bundle).
 export type OpenSplitButtonTarget =
   | {
       type: "website";

@@ -55,12 +55,12 @@ export function computeLineChangeStat(
     return { added: 0, removed: trimmedBefore.length };
   }
 
-  // UI 的 edit 卡片和任务摘要都需要“真实改动行数”，
-  // 不能把 before/after 总行数直接当成 +/-。这里统一做一次行级 LCS 统计，
-  // 再由各端复用同一份结果，避免不同入口展示出不同计数。
+  // UI edit cards and task summaries both need the "actual number of changed lines,"
+  // which cannot be calculated from total before/after line counts alone. Compute line-level LCS statistics once here,
+  // then reuse the same result across clients to avoid different counts in different entry points.
   //
-  // 另外超大文件如果强行算完整 LCS，会让列表和消息面板明显卡顿，
-  // 所以超过阈值时退回到保守估算，优先保证交互流畅。
+  // For very large files, computing a full LCS would also make lists and message panels noticeably lag,
+  // so fall back to a conservative estimate above the threshold to keep interactions responsive.
   if (trimmedBefore.length * trimmedAfter.length > MAX_LCS_CELLS) {
     return { added: trimmedAfter.length, removed: trimmedBefore.length };
   }

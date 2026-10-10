@@ -32,9 +32,10 @@ export function projectOfficialCuaStructuredContent(
 ): { content: ModelMessageContentBlock[]; truncated: boolean } | undefined {
   const pair = findOfficialCuaFrameContentPair(content);
   if (!pair) return undefined;
-  // 官方 producer 的 canonical pair 必须已经位于结果首部。consumer 只校验、
-  // 预算并保序，不再猜测或提升非 canonical 布局。这里直接失败，避免后续通用
-  // 小结果直通路径重新把带前缀的 frame authority 交给模型。
+  // The official producer's canonical pair must already be at the start of the result.
+  // The consumer only validates, budgets, and preserves order; it does not infer or
+  // promote non-canonical layouts. Fail here so a later generic small-result fast path
+  // cannot expose a prefixed frame authority to the model again.
   if (pair.imageIndex !== 0 || pair.imageRefIndex !== 1) {
     throw new OfficialCuaFrameContractError();
   }
@@ -109,14 +110,16 @@ export function appendHookWithoutReorderingStructuredContent(
   return {
     ...serialization,
     content,
-    // 只能在原始块之后追加 hook。这样 raster 仍然是首块、image_ref 仍紧随其后，
-    // 即使 hook 超出预算也不会把文本搬到图片前或用字符串替换图片。
+    // Append hooks only after the original blocks. This keeps the raster first and
+    // image_ref immediately after it, even if hooks exceed the budget; text cannot move
+    // before the image or replace it.
     modelContent:
       fittedHookContext.length > 0
         ? [...modelContent, { type: "text", text: fittedHookContext }]
         : modelContent,
-    // returnedBytes 已包含受保护 raster；追加 hook 只增加实际新增的文本 bytes，
-    // 避免重新拆分文本/媒体并维护第二份计量状态。
+    // returnedBytes already includes the protected raster. Appended hooks add only the
+    // bytes of newly added text, avoiding a second split between text/media and a second
+    // accounting state to maintain.
     returnedBytes: serialization.returnedBytes + Buffer.byteLength(fittedSuffix, "utf8"),
     truncated: serialization.truncated || hookTruncated,
   };

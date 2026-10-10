@@ -57,8 +57,8 @@ export async function runMemoryAgentLoop(input: {
 
   for (; turns < input.maxTurns; turns += 1) {
     input.abortSignal?.throwIfAborted();
-    // 只在 Memory 初始快照投影会漏掉 Read 等工具后续产生的媒体；每一次
-    // provider 请求都必须在 request-local 副本上执行同一套 capability + budget 策略。
+    // Projecting only the initial Memory snapshot would miss media produced later by tools such as Read; every
+    // provider request must apply the same capability + budget policy to a request-local copy.
     const mediaProjection = projectMessagesForModelMediaPolicy(
       messages.map(cloneModelMessage),
       input.model.properties.inputFormat,
@@ -67,7 +67,7 @@ export async function runMemoryAgentLoop(input: {
       abortSignal: input.abortSignal,
       messages: mediaProjection.messages,
       options: auxiliaryModelOptions(input.model),
-      // Memory agent 的 provider request 必须保留 Main 的真实工具目录；执行权限只在 tool-use 边界收窄。
+      // The Memory agent's provider request must preserve Main's real tool catalog; execution permissions are narrowed only at the tool-use boundary.
       tools: input.tools as ModelToolContract[],
     };
     const response = await input.model.generateText(request);
@@ -122,8 +122,8 @@ function evaluateMemoryAgentToolPolicy(
   input: MemoryAgentToolPolicyInput,
 ): MemoryAgentToolPolicyDecision {
   const contract = input.tools.find((tool) => tool.name === input.toolCall.name);
-  // catalog miss 被合并进 Memory 权限拒绝会让未注册工具没有先走
-  // No such tool 错误处理。此分支只闭合原 call id，不进入工具执行面。
+  // If a catalog miss is merged into a Memory permission rejection, an unregistered tool will not first receive
+  // the "No such tool" handling. This branch only closes the original call ID and does not enter tool execution.
   if (!contract) return denyUnavailableMemoryAgentTool(input.toolCall.name);
 
   if (
@@ -141,7 +141,7 @@ function evaluateMemoryAgentToolPolicy(
 
   if (input.toolCall.name === "Bash") {
     const command = stringProperty(input.toolCall.input, "command");
-    // Memory Agent 直接复用既有只读分类器，避免在此处二次收窄安全 env、redirect 和后台执行。
+    // The Memory Agent reuses the existing read-only classifier to avoid narrowing safe env, redirect, and background execution a second time here.
     if (
       command &&
       (isRuntimeReadOnlyBashCommand(command, {
@@ -269,7 +269,7 @@ function stringProperty(value: unknown, property: string): string | undefined {
   return typeof propertyValue === "string" ? propertyValue : undefined;
 }
 
-// 拒绝结果会进入下一轮 provider request，需按基线区分 Bash 与其他工具的固定文案。
+// Rejection results enter the next provider request; follow the baseline by using different fixed messages for Bash and other tools.
 function denyMemoryAgentBash(rootDir: string): MemoryAgentToolPolicyDecision {
   return {
     allowed: false,

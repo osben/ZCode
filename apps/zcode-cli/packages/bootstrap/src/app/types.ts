@@ -118,7 +118,7 @@ export type RevokeWorkspaceHookTrustInput =
   | (WorkspaceHookReviewTarget & { reviewItemIds: string[] })
   | WorkspaceHookTrustRevokeTarget;
 
-/** 新 Session 可使用 Environment 默认选择；恢复 Session 允许保持未绑定，不补默认模型。 */
+/** New Sessions may use the Environment default selection; restored Sessions may remain unbound without a default model. */
 export type ZCodeAppRuntimeConfigInput = AgentRuntimeConfig;
 
 export interface ZCodeAppOptions {
@@ -128,8 +128,8 @@ export interface ZCodeAppOptions {
   traceContext?: TraceContext;
   runtimeConfig?: ZCodeAppRuntimeConfigInput;
   /**
-   * stdio 协议模式的 agent 进程由 Electron host 拉起，模型服务需要看到 electron 来源。
-   * 普通 CLI 不传，继续使用 cli 默认值。
+   * In stdio protocol mode, the Electron host launches the agent process, so model services need
+   * to see the electron source. Regular CLI does not pass this and continues using the cli default.
    */
   sourceTitle?: ModelProviderSourceTitle;
   eventStore?: SessionEventStorePort;
@@ -137,28 +137,28 @@ export interface ZCodeAppOptions {
   sessionMailboxPort?: SessionMailboxPort;
   inputHistoryStore?: InputHistoryStorePort;
   modelAdapter?: AiSdkModelAdapter;
-  /** Worker 进程拥有的 Registry；App 只借用，不负责释放。 */
+  /** Registry owned by the worker process; App borrows it and does not release it. */
   providerRegistry: ProviderRegistryModelSource;
   resolveEffectiveModelSelection?: (selection: ModelSelection) => EffectiveModelSelectionResult;
-  /** 新 Session 使用的 Environment 默认选择；仅在没有显式 runtime modelSelection 时参与初始化。 */
+  /** Environment default selection for new Sessions; used for initialization only when runtime modelSelection is not explicit. */
   configuredDefaultModelSelection?: ModelSelection;
   modelIoFullRetentionEnabled?: boolean;
-  /** 同进程嵌入宿主可注入完整的 borrowed 进程级 Owner；Endpoint 配置不得覆盖它。 */
+  /** Same-process embedded hosts may inject the full borrowed process-level Owner; Endpoint config must not override it. */
   telemetryOwner?: AgentTelemetryRuntimeOwner;
   /**
-   * provider runtime headers 端口：主 runtime 每次调用报自己的会话；child runtime 一律向父
-   * runtime 取派生实例。
+   * Provider runtime headers port: the main runtime reports its own session on every call;
+   * child runtimes always obtain a derived instance from the parent runtime.
    */
   providerRuntimeHeadersPort?: ProviderRuntimeHeadersPort;
   loggerFactory?: LoggerFactory;
   officialPluginRoots?: string[];
   pluginStorageRoot?: string;
   executionPort?: ExecutionPort;
-  /** 资源遥测旁路；由协议宿主注入，主任务和 workflow 的执行适配器共用。 */
+  /** Resource-telemetry side channel; injected by the protocol host and shared by main-task and workflow execution adapters. */
   onToolExecResource?: (sample: ZCodeToolExecResource) => void;
-  /** browser-use 控制端口；注入后 node_repl 的 agent.browsers.* 可用。缺省则不可用。 */
+  /** browser-use control port; when injected, node_repl's agent.browsers.* is available. Unavailable by default. */
   browserControlPort?: BrowserControlPort;
-  /** 可由协议宿主注入的进程级 node_repl Browser broker；缺省时 app 自建并拥有。 */
+  /** Process-level node_repl Browser broker injectable by the protocol host; the app creates and owns it by default. */
   nodeReplBrowserBroker?: NodeReplBrowserBroker;
   fileSystemPort?: FileSystemPort;
   httpClientPort?: HttpClientPort;
@@ -168,7 +168,7 @@ export interface ZCodeAppOptions {
   contextSourcePort?: ContextSourcePort;
   skillPort?: SkillPort;
   mcpPort?: McpPort;
-  /** 由宿主提供 per-app lease；产出的端口归 app 所有。 */
+  /** Per-app lease supplied by the host; the resulting port is owned by the app. */
   mcpPortFactory?: (input: { workingDirectory?: string }) => McpPort;
   permissionBroker?: PermissionBrokerPort;
   eventSink?: SessionEventSink;
@@ -182,7 +182,7 @@ export interface ZCodeAppOptions {
   onWorkflowEvent?: (event: WorkflowEvent) => void | Promise<void>;
   automationPort?: AutomationPort;
   offPeakPort?: OffPeakPort;
-  /** 首次真实用户执行或 cold-resume fallback 时解析一次，之后由 app 生命周期缓存。 */
+  /** Resolve once on the first real user execution or cold-resume fallback, then cache for the app lifetime. */
   resolveInitialBashShellSelection?: () => Promise<ExecutionShellSelection | undefined>;
   /** Trusted embedder policy; workspace/project files cannot populate this field. */
   workspaceHookPolicy?: WorkspaceHookPolicy;
@@ -202,13 +202,13 @@ export interface SubmitPromptOptionsBase {
   intent?: TurnInputIntentMetadata;
   sharedContextRefs?: TurnInputIntentMetadata["sharedContextRefs"];
   onEvent?: (event: SessionEvent) => void | Promise<void>;
-  /** 内部 admission 观察点：只表示 runtime sink 看见 TurnStarted，不代表 projection 已 apply。 */
+  /** Internal admission observation point: means only that the runtime sink saw TurnStarted, not that the projection applied it. */
   onTurnStartedObserved?: (event: SessionEvent) => void;
-  /** 仅当前 turn 从 provider 工具列表移除；不会永久改变 session runtime。 */
+  /** Remove a tool from the provider tool list for the current turn only; does not permanently change the session runtime. */
   toolDisallowlist?: readonly string[];
-  /** App 只读提供的 provider-only IAB 环境状态，不进入 UI transcript。 */
+  /** Read-only provider-only IAB environment state provided by the App; not added to the UI transcript. */
   browserAmbientContext?: ExecuteTurnOptions["browserAmbientContext"];
-  /** 标准 Selection 的单次执行约束；不进入 Session Selection 或持久化。 */
+  /** Per-execution constraint for the standard Selection; not included in Session Selection or persistence. */
   modelExecution?: ModelExecutionContext;
 }
 
@@ -224,11 +224,11 @@ export interface SteerTurnOptions {
   queryId?: QueryId;
   expectedTurnId?: TurnId;
   commandKind?: "sendText" | "sendGoalCommand" | "compact";
-  /** 投递语义：queue=消费时切新轮；guide=内联当前轮。缺省 queue。 */
+  /** Delivery semantics: queue starts a new turn on consumption; guide is inline in the current turn. Defaults to queue. */
   delivery?: "guide" | "queue";
   intent?: TurnInputIntentMetadata;
   attachments?: TurnAttachment[];
-  /** 当前 queued/guide 输入消费时不向 provider 暴露的工具名。 */
+  /** Tool names hidden from the provider while consuming the current queued/guide input. */
   toolDisallowlist?: readonly string[];
   onEvent?: (event: SessionEvent) => void | Promise<void>;
   traceContext?: TraceContext;
@@ -236,10 +236,10 @@ export interface SteerTurnOptions {
 
 export type SendInputOptions = SubmitPromptOptions & {
   inputId?: string;
-  /** 可信消费入口确定的呈现标记；不改变原始用户内容或调度语义。 */
+  /** Presentation marker determined by the trusted consumption entry point; does not change original user content or scheduling semantics. */
   inputPresentation?: ExecuteTurnOptions["inputPresentation"];
   delivery?: InputDelivery;
-  /** sendText 的产品 guide/queue 意图；是否 busy 仍由 Core admission 判断。 */
+  /** Product guide/queue intent for sendText; Core admission still determines whether the session is busy. */
   queueDelivery?: "guide" | "queue";
   requireIdle?: boolean;
   expectedTurnId?: TurnId;
@@ -255,7 +255,7 @@ export type PromptInput = string | UserPromptInput;
 
 export type SendInputResult =
   | {
-      /** Core 已完成 admission；completion 只供生命周期清理，不是 ACK 等待边界。 */
+      /** Core completed admission; completion is only for lifecycle cleanup, not an ACK wait boundary. */
       completion: Promise<TurnResult>;
       kind: "started_turn";
       turnId: TurnId;
@@ -266,7 +266,7 @@ export interface ResumeOptions {
   abortSignal?: AbortSignal;
   traceContext?: TraceContext;
   onEvent?: (event: SessionEvent) => void | Promise<void>;
-  /** 同一次冷恢复的调用级已物化结果；不进入 app 生命周期缓存。compact 修补后须按返回值刷新。 */
+  /** Call-level materialized result for this cold restore; not cached for the app lifetime. Refresh from the returned value after compact repair. */
   persistedMessages?: MessageWithParts[];
 }
 
@@ -277,7 +277,7 @@ export interface ZCodePluginSetResult {
 }
 
 export interface ZCodePluginUninstallResult {
-  // null 表示该 plugin id 当前未安装（幂等 no-op），调用方据此提示"未安装"。
+  // null means this plugin ID is not currently installed (idempotent no-op); the caller uses it to show "not installed."
   removed: ZCodeInstalledPluginData | null;
 }
 
@@ -302,24 +302,25 @@ export interface ZCodeApp {
   revokeWorkspaceHookTrust(
     input: RevokeWorkspaceHookTrustInput,
   ): Promise<WorkspaceHookReviewCommandResult>;
-  /** 软门禁:按需开审核 flow,无 pending 项时为安全 no-op */
+  /** Soft gate: open the review flow on demand; safely no-op when there are no pending items. */
   requestWorkspaceHookReview(input: {
     workspaceIdentity: string;
     bundleDigest: string;
   }): Promise<WorkspaceHookReviewCommandResult>;
   /**
-   * Trust store 落盘后本 session 的 coordinator
-   * 内存镜像不会自动更新（per-session，仅创建时 load 一次）。Settings 无 task 的
-   * pretrust 授权成功后，server 会按 workspace 逐个调用本方法，把文件重载进
-   * coordinator 并重发 admission 状态，否则已信任 Hook 继续被拒、banner 不刷新。
+   * After the Trust store is persisted, this session's coordinator does not automatically
+   * update its in-memory mirror (per-session, loaded only once at creation). After task-free
+   * pretrust succeeds in Settings, the server calls this method for each workspace to reload the
+   * file into the coordinator and resend admission state. Otherwise, an already trusted Hook
+   * continues to be rejected and the banner does not refresh.
    */
   reloadWorkspaceHookTrust(): Promise<void>;
   close?(): Promise<void>;
   getMode(): CollaborationMode;
   getModel(): string;
-  /** current-only 协议快照精确读取当前 Registry 模型，避免枚举整个目录。 */
+  /** Read the current Registry model exactly for a current-only protocol snapshot, avoiding enumeration of the whole directory. */
   getCurrentModelOption?(): ZCodeModelOption | undefined;
-  /** 只读 Registry 元数据；不要求选项完整，也不绑定执行模型。 */
+  /** Read-only Registry metadata; does not require a complete selection or bind an execution model. */
   getModelOption?(selection: ModelSelection): ZCodeModelOption | undefined;
   getLocale(): SupportedLocale;
   getTheme(): UiThemePreference;
@@ -338,13 +339,13 @@ export interface ZCodeApp {
   readTarget(): Promise<SessionGoal | null>;
   setCustomSessionTitle(input: { title: string; traceContext?: TraceContext }): Promise<void>;
   readToolResultArtifact(uri: string): Promise<ToolArtifactReadResult>;
-  /** chunk transaction commit 后把完整二进制原子寄存到 session artifact store。 */
+  /** Atomically register complete binary content in the session artifact store after chunk transaction commit. */
   writePromptAttachment(input: {
     fileName: string;
     mime: string;
     bytes: Uint8Array;
   }): Promise<{ ref: string }>;
-  /** 已发送 image/video 预览：在拥有 session 的 runtime 内读取 artifact 或实际路径。 */
+  /** Preview a sent image/video: read its artifact or actual path inside the runtime that owns the session. */
   readPromptAttachment(input: {
     ref: string;
     mime: string;
@@ -352,14 +353,14 @@ export interface ZCodeApp {
     messageId?: string;
     attachmentIndex?: number;
   }): Promise<{ bytes: Uint8Array; mediaType: string }>;
-  /** Share 选择阶段只读 userInput 附件元数据；不读取完整内容。 */
+  /** During Share selection, read only userInput attachment metadata; do not read full contents. */
   statPromptAttachment?(input: {
     ref: string;
     mime: string;
     messageId?: string;
     attachmentIndex?: number;
   }): Promise<{ totalBytes: number; mediaType: string; mtimeMs?: number }>;
-  /** Desktop local 已发送视频：解析 artifact-first 本地播放源；否则保持分片读取。 */
+  /** For a sent video on local Desktop, resolve an artifact-first local playback source; otherwise keep chunked reading. */
   resolvePromptAttachmentPreviewSource(input: {
     ref: string;
     mime: string;
@@ -368,7 +369,7 @@ export interface ZCodeApp {
   }): Promise<{ kind: "local_path"; path: string; mediaType: string } | { kind: "chunked" }>;
   setTarget(input: {
     objective: string;
-    /** 用户提交的原始 goal 命令；target 仍只存 objective，聊天行按该文本展示。 */
+    /** Original goal command submitted by the user; target stores only the objective, while the chat row displays this text. */
     displayText?: string;
     status?: GoalStatus;
     tokenBudget?: number | null;
@@ -388,12 +389,12 @@ export interface ZCodeApp {
   setPluginEnabled(plugin: string, enabled: boolean): Promise<ZCodePluginSetResult>;
   uninstallPlugin(plugin: string): Promise<ZCodePluginUninstallResult>;
   /**
-   * Session 冻结的 Plugin 身份 catalog。
-   * 在 App 创建时由 resolveStartupPlugins 结果构建一次，之后只读；
-   * `plugins/referenceCatalog` 带 sessionId 时以此为 session authority。
+   * Session-frozen Plugin identity catalog.
+   * Built once from resolveStartupPlugins when the App is created and read-only afterward;
+   * this is the session authority for `plugins/referenceCatalog` requests with a sessionId.
    */
   getPluginReferenceCatalog(): PluginReferenceCatalog;
-  /** 当前 Session 的 AgentRuntime Skill 发现快照；冷恢复重建 runtime 后重新发现。 */
+  /** AgentRuntime Skill discovery snapshot for the current Session; rediscovered after runtime reconstruction on cold restore. */
   getSkillCatalog(): Promise<SkillLoadOutcome>;
   listMcpServers(): Promise<Record<string, McpServerStatus>>;
   connectMcpServer(name: string): Promise<McpServerStatus>;
@@ -403,12 +404,13 @@ export interface ZCodeApp {
     options?: { traceContext?: TraceContext },
   ): Promise<BackgroundTaskCancelResult>;
   /**
-   * workflow run 的事件日志分页（详情页审计面）。可选能力：dwf journal 不可用时 run service
-   * 整个不构造，此方法随之缺席，网关据此回结构化的能力不支持错误而不是空页——
-   * 「没有事件」与「这个会话没有这个能力」是两件事。
+   * Paginated event log for a workflow run (detail-page audit surface). Optional capability: if
+   * the dwf journal is unavailable, the run service is not constructed and this method is absent.
+   * The gateway then returns a structured unsupported-capability error instead of an empty page;
+   * "no events" and "this session lacks the capability" are different facts.
    *
-   * cursor = journal sequence（`appendEvent` 单调分配），与 workflowRuns[].lastEventSequence
-   * 同一把尺；越界 cursor 返回空页而不报错。
+   * cursor = journal sequence (assigned monotonically by `appendEvent`), using the same scale as
+   * workflowRuns[].lastEventSequence. An out-of-range cursor returns an empty page without error.
    */
   listDynamicWorkflowRunEvents?(input: {
     runId: string;
@@ -416,25 +418,30 @@ export interface ZCodeApp {
     limit?: number;
   }): Promise<DynamicWorkflowRunEvent[]>;
   /**
-   * 恢复一个 dwf run。可选能力，缺席条件同
-   * {@link listDynamicWorkflowRunEvents}。成功路径除了 port.resume 之外还负责**追踪重臂**
-   * （runtime.trackResumedDynamicWorkflowRun）：漏掉它，恢复的 run 不可取消、完成通知丢失、
-   * 会话被回收护栏当成空闲。失败以结构化 reason 返回（不是 throw）——五种原因全是调用方
-   * 可预期的业务分支。
+   * Resume a dwf run. Optional capability, with the same absence condition as
+   * {@link listDynamicWorkflowRunEvents}. On success, in addition to port.resume it must
+   * **re-arm tracking** (runtime.trackResumedDynamicWorkflowRun). Omitting this would make the
+   * resumed run uncancellable, lose its completion notification, and make the session appear
+   * idle to the reclamation guard. Failures return a structured reason (not throw); all five
+   * reasons are expected business branches for the caller.
    */
   resumeWorkflowRun?(input: {
     workId: string;
     name?: string;
   }): Promise<DynamicWorkflowRunResumeResult>;
   /**
-   * 中枢直接启动一个已保存的工作流。GUI 在目标项目里建一个
-   * 空会话后向它发 `startSavedWorkflow`：agent 解析 saved 来源 + 校验实参 + 编译，干净则以一条
-   * controlOnly「启动轮」把用户的真实动作落进会话并 `port.submit` 启动 run（不经模型回合、不弹
-   * `CreateWorkflow` 确认窗——用户在中枢里的点击就是同意）。可选能力，缺席条件同
-   * {@link resumeWorkflowRun}（无 dwf 端口即不注册；网关回能力不支持错误）。失败以结构化 `reason`
-   * 返回（不是 throw）——六种原因全是调用方可预期的业务分支，`message` 携带人可读诊断供实参窗行内展示；
-   * ①② 阶段失败在**任何持久化之前**（无 run、无消息、无事件、无任务），GUI 据此 `deleteSession`
-   * 收回空会话，转写里只出现真正启动了的 run。
+   * Start a saved workflow directly from the hub. After the GUI creates an empty session in the
+   * target project, it sends `startSavedWorkflow`: the agent resolves the saved source, validates
+   * arguments, and compiles. If valid, it records the user's real action in the session as a
+   * controlOnly "launch turn" and starts the run with `port.submit` (no model turn or
+   * `CreateWorkflow` confirmation dialog; the user's hub click is consent). Optional capability,
+   * with the same absence condition as {@link resumeWorkflowRun} (not registered without a dwf
+   * port; the gateway returns unsupported-capability). Failures return a structured `reason`
+   * rather than throwing; all six reasons are expected caller branches. `message` carries a
+   * human-readable diagnostic for inline display in the argument dialog. Failures in stages 1–2
+   * happen **before any persistence** (no run, message, event, or task), so the GUI can call
+   * `deleteSession` to remove the empty session; the transcript then includes only runs that
+   * actually started.
    */
   startSavedWorkflow?(input: {
     name: string;
@@ -442,45 +449,53 @@ export interface ZCodeApp {
     args?: Record<string, unknown>;
   }): Promise<StartSavedWorkflowRunResult>;
   /**
-   * GUI「配置」改一个 run 的子代理模型与并发上界：以同一份脚本修订出新 run，不经模型轮、不开确认窗。可选能力：端口
-   * 缺席、或端口不带 `amend` / `getScript` 时不注册（网关回能力不支持错误）。失败以结构化 `reason`
-   * 返回——每一种都发生在停下或新建任何东西之前。
+   * GUI "configure": change a run's subagent model and concurrency cap by amending the same
+   * script into a new run, without a model turn or confirmation dialog. Optional capability: do
+   * not register if the port or its `amend` / `getScript` methods are absent (the gateway returns
+   * unsupported-capability). Failures return a structured `reason`; each occurs before stopping
+   * or creating anything.
    */
   amendWorkflowRunSettings?(
     input: Omit<AmendWorkflowRunSettingsInput, "traceContext">,
   ): Promise<AmendWorkflowRunSettingsResult>;
   /**
-   * workflow run 的枚举面（重启后的发现查询）。可选能力，缺席条件同
-   * {@link listDynamicWorkflowRunEvents}；journal 无枚举窄查询时回空列表（诚实答案——
-   * 内存 journal 的 run 本就不会活过进程）。`resumable` 按 resume 门的同一个谓词算好。
+   * Enumeration surface for workflow runs (discovery query after restart). Optional capability,
+   * with the same absence condition as {@link listDynamicWorkflowRunEvents}. If the journal has
+   * no narrow enumeration query, return an empty list (the honest answer; in-memory journal runs
+   * do not survive process exit). `resumable` is computed with the same predicate as the resume gate.
    */
   listDynamicWorkflowRuns?(input: { limit?: number }): Promise<DynamicWorkflowRunSessionSummary[]>;
   /**
-   * workflow run 的冷回放：本会话名下、`excludeRunIds`
-   * 之外的 run 从 journal 回放成进度事件载荷，冷物化把它们当内存事件喂给同一个 reducer——
-   * `workflowRuns` 投影因此在重启前后一致。可选能力，缺席条件同 {@link listDynamicWorkflowRuns}。
+   * Cold replay for workflow runs: replay journal entries for runs owned by this session, except
+   * `excludeRunIds`, into progress-event payloads. Cold materialization feeds them to the same
+   * reducer as in-memory events, keeping the `workflowRuns` projection consistent before and
+   * after restart. Optional capability, with the same absence condition as
+   * {@link listDynamicWorkflowRuns}.
    */
   replayDynamicWorkflowRuns?(input: {
     excludeRunIds: ReadonlySet<string>;
   }): Promise<DynamicWorkflowRunProgressPayload[]>;
   /**
-   * workflow run 的**用户面产物**读面。三条能力
-   * 一起注册、一起缺席：它们是同一个 journal 读面的三个切片，部分在场只会让 UI 拿到一张
-   * 有卡片却打不开的侧板。缺席条件同 {@link listDynamicWorkflowRunEvents}，另加端口的三个
-   * 可选成员必须都在。
+   * **User-facing artifact** read surface for workflow runs. Register all three capabilities
+   * together or omit them together: they are three slices of the same journal read surface, and
+   * partial presence would give the UI a card with a side panel that cannot open. Same absence
+   * condition as {@link listDynamicWorkflowRunEvents}, plus all three optional port members must
+   * be present.
    *
-   * ⚠ 术语：这里的 artifact 是脚本经 `artifact.*` 发布给**用户**看的产出，不是引擎内部对
-   * 「脚本顶层返回值」的同名叫法。
+   * Terminology: artifact here means output the script publishes for the **user** through
+   * `artifact.*`, not the engine-internal term for the script's top-level return value.
    *
-   * 未知 runId 回 `undefined`（网关归一成 not found）；零件的 run 回空数组。
+   * Unknown runId returns `undefined` (the gateway normalizes it to not found); a run with no
+   * artifacts returns an empty array.
    */
   listDynamicWorkflowRunArtifacts?(input: {
     runId: string;
   }): Promise<readonly DynamicWorkflowRunArtifact[] | undefined>;
   /**
-   * 喂给某个预置看板的 `report` 条目分页（cursor = journal sequence，严格大于）。
-   * `limit` 由网关钳好再传下来，这里**精确**兑现——调用方传「上限 + 1」探测 hasMore。
-   * 缺席条件同 {@link listDynamicWorkflowRunArtifacts}。
+   * Paginate `report` entries for a predeclared dashboard (cursor = journal sequence, strictly
+   * greater than). The gateway clamps `limit` before passing it here; honor it **exactly** so the
+   * caller can pass "limit + 1" to detect hasMore. Same absence condition as
+   * {@link listDynamicWorkflowRunArtifacts}.
    */
   listDynamicWorkflowRunArtifactItems?(input: {
     runId: string;
@@ -489,11 +504,14 @@ export interface ZCodeApp {
     limit: number;
   }): Promise<readonly DynamicWorkflowRunArtifactItem[]>;
   /**
-   * 读一个产物版本的**全部**字节；分块归网关（≤ 512 KiB 一块）。授权链在端口实现侧：
-   * 该 run 必须属于本会话 ∧ journal 里有 `(artifactId, version)` 的 completed 行，然后才拿
-   * **行上的** uri 去 store 读——调用方传来的任何 id 绝不直接成为路径。
-   * 无此版本 / 预置看板（没有字节）/ store 缺席都回 `undefined`。
-   * 缺席条件同 {@link listDynamicWorkflowRunArtifacts}。
+   * Read **all** bytes for one artifact version; the gateway handles chunking (≤ 512 KiB per
+   * chunk). Authorization belongs to the port implementation: the run must belong to this
+   * session and the journal must contain a completed row for `(artifactId, version)`. Only then
+   * read from the store using the URI from the **journal row**; never use caller-supplied IDs
+   * directly as paths.
+   * Return `undefined` if the version is missing, the item is a predeclared dashboard (no bytes),
+   * or the store is unavailable. Same absence condition as
+   * {@link listDynamicWorkflowRunArtifacts}.
    */
   readDynamicWorkflowRunArtifact?(input: {
     runId: string;
@@ -501,10 +519,11 @@ export interface ZCodeApp {
     version: number;
   }): Promise<DynamicWorkflowRunArtifactBytes | undefined>;
   /**
-   * workflow run 的工作区 transcript：`files.*` /
-   * `git.*` / `world.run` 的 journal 行，两条一起注册、一起缺席（清单 + 一个节点的有界正文）。
-   * 授权在端口实现侧（run 必须属于本会话）；不是你的 run / 未知 run 都回 `undefined`。
-   * 缺席条件同 {@link listDynamicWorkflowRunArtifacts}。
+   * Workspace transcript for a workflow run: journal rows for `files.*` / `git.*` / `world.run`.
+   * Register or omit both methods together (list + bounded body for one node). Authorization is
+   * in the port implementation (the run must belong to this session); return `undefined` for a
+   * run owned by another session or an unknown run. Same absence condition as
+   * {@link listDynamicWorkflowRunArtifacts}.
    */
   listDynamicWorkflowRunWorkspaceNodes?(input: {
     runId: string;
@@ -620,8 +639,9 @@ export interface ZCodeApp {
     modelId: string | ModelSelection,
     options?: {
       /**
-       * per-turn（off-peak idle plan）：true = 仅切运行态——不写磁盘模型选择、
-       * 不产出 modelChange 聊天通知。用于 turn 级临时切换（应用/还原成对出现）。
+       * Per-turn (off-peak idle plan): true means change runtime state only—do not write the
+       * persisted model selection or emit a modelChange chat notification. Used for temporary
+       * turn-level switches (apply/restore as a pair).
        */
       transient?: boolean;
     },
@@ -658,13 +678,13 @@ export interface ZCodeApp {
     options?: SubmitPromptOptions,
   ): Promise<ExpertWorkflowCommandResult>;
   /**
-   * v4 deferred queue：busy 但没有 steerable active turn（compact / goal verifier /
-   * goal continuation 边界）时，普通输入必须先落 TurnSteerQueued，不能因
-   * runtime.steerTurn(no_active_turn/turn_not_steerable) 从 composer 消失。
+   * v4 deferred queue: when busy but there is no steerable active turn (compact / goal verifier /
+   * goal continuation boundary), ordinary input must first be persisted as TurnSteerQueued; it
+   * must not disappear from the composer due to runtime.steerTurn(no_active_turn/turn_not_steerable).
    */
   enqueueDeferredInput?(input: string, options?: SteerTurnOptions): Promise<TurnSteerResult>;
   steerTurn(input: string, options?: SteerTurnOptions): Promise<TurnSteerResult>;
-  /** v4 queue 单项删除：按 pendingInputId 移除一条排队输入。返回是否命中。 */
+  /** v4 queue item deletion: remove one queued input by pendingInputId. Returns whether it matched. */
   removeQueueItem(
     pendingInputId: string,
     options?: {
@@ -673,7 +693,7 @@ export interface ZCodeApp {
       traceContext?: TraceContext;
     },
   ): Promise<boolean>;
-  /** sendQueuedNow 原子提升：reserve 后普通 drain/delete 不得消费该项。 */
+  /** Atomic promotion for sendQueuedNow: after reserve, ordinary drain/delete must not consume this item. */
   reserveQueueItem(
     pendingInputId: string,
     reservationId: string,
@@ -689,25 +709,25 @@ export interface ZCodeApp {
     reservationId: string,
     options?: { traceContext?: TraceContext },
   ): Promise<boolean>;
-  /** v4 queue 单项编辑：按 pendingInputId 替换排队输入文本（保位）。返回是否命中。 */
+  /** v4 queue item edit: replace queued input text by pendingInputId without changing its position. Returns whether it matched. */
   editQueueItem(
     pendingInputId: string,
     newText: string,
     options?: { traceContext?: TraceContext },
   ): Promise<boolean>;
-  /** v4 queue 重排：移动 pendingInputId 到 beforePendingInputId 之前（null=队尾）。 */
+  /** v4 queue reorder: move pendingInputId before beforePendingInputId (null = end of queue). */
   reorderQueueItem(
     pendingInputId: string,
     beforePendingInputId: string | null,
     options?: { traceContext?: TraceContext },
   ): Promise<boolean>;
-  /** v4 heldQueueDisposition=clearQueueAndSend：清空全部排队输入，返回丢弃条数。 */
+  /** v4 heldQueueDisposition=clearQueueAndSend: clear all queued inputs and return the number discarded. */
   clearQueueItems(options?: { traceContext?: TraceContext }): Promise<number>;
-  /** v4 setAutoDrain：翻转 queue autoDrain 授权位（会话级配置）。 */
+  /** v4 setAutoDrain: toggle the queue autoDrain authorization bit (session-level setting). */
   setQueueAutoDrain(autoDrain: boolean, options?: { traceContext?: TraceContext }): Promise<void>;
-  /** 暂停队列已由 CLI 外层消费到空：恢复 core 对后续 running queue 的行内 drain。 */
+  /** The CLI outer layer drained the paused queue; resume core's inline drain for later running queue items. */
   completeExternalQueueDrain(): void;
-  /** v4 setFollowupMode：翻转 followup 路由模式（queue/guide，会话级配置）。 */
+  /** v4 setFollowupMode: toggle followup routing mode (queue/guide, session-level setting). */
   setFollowupMode(
     mode: "queue" | "guide",
     options?: { traceContext?: TraceContext },
@@ -730,13 +750,13 @@ export interface ResolveLatestSessionOptions {
 }
 
 export interface RunZCodeProtocolAgentOptions {
-  /** 入口拥有退出时限；bootstrap 只编排取消和资源清理，不直接退出进程。 */
+  /** The entry point owns the exit deadline; bootstrap only coordinates cancellation and cleanup, and does not exit the process directly. */
   lifecycle?: {
     readonly signal: AbortSignal;
     readonly deadlineAt: number | undefined;
     requestShutdown(error?: Error): void;
   };
-  /** Desktop 内部命令：只运行原存储准备并退出。 */
+  /** Internal Desktop command: run only the existing storage preparation, then exit. */
   prepareStorageOnly?: boolean;
   cwd?: string;
   env?: NodeJS.ProcessEnv;

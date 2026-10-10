@@ -25,7 +25,7 @@ import { boundDisplayText } from "./display-text.js";
 import { createCreateWorkflowDisplay } from "./create-workflow-display.js";
 import { createWorkflowObservationDisplay } from "./workflow-observation-display.js";
 
-// 拆到 create-workflow-display.ts 后保持既有导出面（handlers/create-workflow.ts 仍从这里 import）。
+// Preserve the existing exports after moving the builder to create-workflow-display.ts (handlers/create-workflow.ts still imports from here).
 export { createCreateWorkflowDisplay } from "./create-workflow-display.js";
 import { isRecord } from "./utils.js";
 import { parseOfficialMcpToolError, type OfficialMcpToolErrorCode } from "@zcode/shared";
@@ -70,12 +70,15 @@ export function createMcpToolDisplay(
 }
 
 /**
- * 官方 Server MCP 在配额耗尽 / 无 Coding Plan 时把结构化标识渲染进 tool error content 的
- * JSON 文本（服务端 `ToolError.Error()`）。这里只读该标识，不解析普通错误文案。
+ * When quota is exhausted or no Coding Plan is available, the official Server MCP
+ * renders a structured identifier in the JSON text of tool error content (server-side
+ * `ToolError.Error()`). Read only that identifier here; do not parse ordinary error text.
  *
- * 仅在 `metadata.official` 为真时才会走到，而该标记只对 **http** 官方 MCP 置位——那种形态的
- * 响应来自已校验 origin 的 ZCode 后端。stdio 官方 MCP 与第三方 MCP 塞同样的 payload 一律忽略：
- * 它们的结果由插件进程自己产出，可以伪造一条 Coding Plan 提示误导用户去购买。
+ * This path runs only when `metadata.official` is true, and that flag is set only for
+ * **HTTP** official MCP, whose response comes from a ZCode backend with a validated
+ * origin. Ignore the same payload from stdio official MCP and third-party MCPs: their
+ * results come from plugin processes, which could forge a Coding Plan message to mislead
+ * users into purchasing one.
  */
 function readOfficialMcpUnavailable(
   output: unknown,
@@ -121,14 +124,14 @@ export function createToolResultDisplay(
   if (workflowObservation) return workflowObservation;
 
   if (options?.mcp) {
-    // 结果级构造：官方 MCP 的不可用标识只能从本次结果里读，因此把 output 一起传进去。
+    // Build from the result: the official MCP unavailability identifier is available only in this result, so pass output too.
     return createMcpToolDisplay(options.mcp, output);
   }
 
   if (toolName === SEND_MESSAGE_TOOL_NAME) {
     const parsed = SendMessageOutputSchema.safeParse(output);
     if (!parsed.success) return undefined;
-    // display 不经过 tool result budget，必须在进入实时事件和持久化 metadata 前单独限长。
+    // Display bypasses the tool-result budget and must be bounded separately before entering live events and persisted metadata.
     const error =
       parsed.data.error === undefined
         ? undefined
@@ -177,8 +180,8 @@ export function createToolResultDisplay(
     const hasOutput = fullOutput !== undefined && fullOutput.trim().length > 0;
     const truncated = hasOutput && fullOutput.length > TASK_OUTPUT_DISPLAY_MAX_OUTPUT_CHARS;
 
-    // UI display 是独立于 provider content 的有界投影；禁止把完整 TaskOutput XML
-    // 或结果对象塞进实时事件和持久化 metadata。
+    // UI display is a bounded projection separate from provider content; do not put the
+    // full TaskOutput XML or result object in live events or persisted metadata.
     return {
       kind: "task_output",
       retrievalStatus: parsed.data.retrieval_status,
@@ -223,9 +226,10 @@ function boundMcpDisplayText(value: string, maxChars: number): string | undefine
   const trimmed = value.trim();
   if (!trimmed) return undefined;
   const bounded = trimmed.slice(0, maxChars);
-  // MCP discovery 是外部输入，直接 slice 可能在 UTF-16 surrogate pair
-  // 中间截断，生成无法稳定跨事件、持久化和 replayable snapshot 的字符串。
-  // 若边界落在高位 surrogate 后，丢弃这个半字符，保证 display 始终可安全序列化。
+  // MCP discovery is external input. A direct slice may split a UTF-16 surrogate pair
+  // and produce a string that cannot be serialized consistently across events,
+  // persistence, and replayable snapshots. If the boundary follows a high surrogate,
+  // drop the partial character so display remains safe to serialize.
   const lastCodeUnit = bounded.charCodeAt(bounded.length - 1);
   return lastCodeUnit >= 0xd800 && lastCodeUnit <= 0xdbff ? bounded.slice(0, -1) : bounded;
 }
@@ -235,9 +239,10 @@ const MAX_CUA_INLINE_MEDIA_BYTES = 256 * 1024;
 const MAX_CUA_INLINE_MEDIA_TOTAL_BYTES = 512 * 1024;
 
 function readCuaToolName(toolName: string): string | undefined {
-  // 兼容两种 CUA 工具命名：直接的 `mcp__computer_use__<action>` 与 plugin
-  // 命名空间形式 `mcp__plugin_zcode-cua_computer-use__<action>`。
-  // 归一化（小写 + `-`→`_`）后：名字包含 `computer_use`，且 action 是最后一个 `__` 之后的子串。
+  // Support both CUA tool naming forms: direct `mcp__computer_use__<action>` and the
+  // plugin namespace form `mcp__plugin_zcode-cua_computer-use__<action>`. After
+  // normalization (lowercase and `-` → `_`), the name contains `computer_use`, and the
+  // action is the substring after the last `__`.
   const normalized = toolName.trim().toLowerCase().replaceAll("-", "_");
   if (!normalized.includes("computer_use")) return undefined;
   const lastSep = normalized.lastIndexOf("__");
@@ -266,8 +271,9 @@ function createCuaToolResultDisplay(
       ? undefined
       : boundDisplayText(safeJson(structuredContent), MAX_CUA_DISPLAY_FIELD_BYTES);
   const boundedText = text ? boundDisplayText(text, MAX_CUA_DISPLAY_FIELD_BYTES) : undefined;
-  // artifact URI 只在 Agent 本地可读，直接投影会让多端 UI 收到无法渲染的媒体。
-  // 在受控读取 API 建立前，display 只承载可直接渲染的内联图片。
+  // Artifact URIs are readable only on the Agent's machine; projecting them directly
+  // would send media that other UI clients cannot render. Until a controlled read API
+  // exists, display carries only inline images that can be rendered directly.
   const media: Array<{ mimeType: string; data: string }> = [];
   let inlineMediaBytes = 0;
   let mediaTruncated = false;
@@ -284,7 +290,7 @@ function createCuaToolResultDisplay(
       projectedMedia = { mimeType: item.mimeType, data: item.data };
     }
     if (!projectedMedia) continue;
-    // media 配额只约束真实媒体，前置 text block 不能吞掉截图位置。
+    // The media quota applies only to actual media; leading text blocks must not consume the screenshot slot.
     if (media.length >= 4) {
       mediaTruncated = true;
       break;
@@ -310,8 +316,9 @@ function createCuaToolResultDisplay(
       ? cuaRequestAccessStatusSchema.safeParse(meta?.[CUA_REQUEST_ACCESS_STATUS_META_KEY])
       : undefined;
 
-  // MCP modelContent 会把 structuredContent 展平成文本；在展平前生成独立、有限长的
-  // display，才能让实时事件和历史会话稳定区分 CUA 错误与结构化结果。
+  // MCP modelContent flattens structuredContent into text. Build a separate, bounded
+  // display before flattening so live events and session history can consistently
+  // distinguish CUA errors from structured results.
   return {
     kind: "cua",
     schemaVersion: 1,
@@ -339,12 +346,13 @@ function safeJson(value: unknown): string {
 }
 
 /**
- * 读取宿主写入的 CUA 目标应用身份。
+ * Read the host-written identity of the CUA target application.
  *
- * 只认 `zcode/nodeReplCuaApp`：producer 自己的 `zcode.cua/app-associations-v1` 也可能出现在
- * `_meta` 里，但那个键经模型可写的 `nodeRepl.setResponseMeta` /
- * `nodeRepl.emitStructuredResult` 同样能到达，宿主已在 toMcpRunResult 里把它删掉。这里不做
- * 第二次兜底解析，避免把已经判定为不可信的来源重新接回展示面。
+ * Accept only `zcode/nodeReplCuaApp`. A producer's `zcode.cua/app-associations-v1` may
+ * also appear in `_meta`, but that key can be supplied through model-writable
+ * `nodeRepl.setResponseMeta` / `nodeRepl.emitStructuredResult`; the host removes it in
+ * toMcpRunResult. Do not add a second fallback parser here, which could reconnect an
+ * already untrusted source to the display.
  */
 function readNodeReplCuaApp(output: Record<string, unknown>): NodeReplCuaAppDisplay | undefined {
   const meta = isRecord(output._meta) ? output._meta : undefined;
@@ -396,8 +404,9 @@ function createNodeReplDisplay(
     images.push({ base64, mimeType });
   }
 
-  // 纯动作 cell（点击、输入）没有截图，但仍要把 App 身份投影给工具卡的 leading icon；
-  // 因此不能再以「有图」作为产出 display 的唯一条件。
+  // Action-only cells (click, input) have no screenshot, but still need to project the
+  // App identity to the tool card's leading icon. An image cannot be the only condition
+  // for producing display.
   const app = readNodeReplCuaApp(output);
   if (images.length === 0 && !app) return undefined;
   return {
@@ -417,8 +426,8 @@ function compactTaskStopDisplayMessage(output: {
     return output.message;
   }
 
-  // TaskStop 的标准成功文案会把 command 再拼进括号；display 已有
-  // 独立 command 字段，结果行只保留停止结论。
+  // TaskStop's standard success message repeats the command in parentheses. Display
+  // already has a separate command field, so keep only the stop outcome in the result row.
   const standardMessage = `Successfully stopped task: ${output.task_id} (${output.command})`;
   return output.message === standardMessage
     ? `Successfully stopped task: ${output.task_id}`

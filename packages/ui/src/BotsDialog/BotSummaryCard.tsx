@@ -52,7 +52,7 @@ export function BotSummaryCard({
   const nameMeasureButtonRef = useRef<HTMLButtonElement | null>(null);
   const [nameEditorWidth, setNameEditorWidth] = useState<number | null>(null);
   const isBound = Boolean(bot.providerUserId);
-  // 修复原因：连接失败会直接阻断 /bind，不能再用“未绑定”覆盖真正的阻塞状态。
+  // Cause of fix: A connection failure directly blocks /bind, so it must not be replaced by the misleading “not bound” state.
   const summaryStatusText =
     runtime?.status === "error"
       ? intl.formatMessage({
@@ -100,7 +100,7 @@ export function BotSummaryCard({
             tabIndex={-1}
             aria-hidden="true"
             className="pointer-events-none absolute left-0 top-0 invisible max-w-md overflow-hidden rounded-sm px-1 text-left text-ui-lg font-medium"
-            // 隐藏测量节点默认会折叠首尾空格，导致输入名称带空格时宽度偏小；保留空白才能和 input 的实际内容宽度一致。
+            // Hidden measurement nodes collapse leading/trailing spaces by default, underestimating names with spaces; preserve whitespace to match the input's actual content width.
             style={{ whiteSpace: "pre" }}
           >
             {nameEditorText}

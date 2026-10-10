@@ -1,6 +1,7 @@
-// project 级权限规则的读取与持久化（从 permission-flow.ts 拆出）。
-// 拆分原因：permission-flow.ts 引入 responder 竞速后超过单文件 400 行上限；
-// 这三个 helper 只与 sessionStore 的 project permission 存取内聚，与 ask 时序无关。
+// Read and persist project-level permission rules (split from permission-flow.ts).
+// This split keeps permission-flow.ts below its 400-line limit after adding responder
+// racing. These three helpers are grouped around sessionStore project-permission
+// access and are independent of ask timing.
 import {
   traceContextToLogContext,
   type PermissionRuleset,

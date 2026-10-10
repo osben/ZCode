@@ -112,7 +112,7 @@ function buildInlineAttachmentReminderBodies(input: {
   const lines = [firstLine, input.content];
 
   if (input.truncated) {
-    // source-less inline text 没有对应的真实读取工具，不能提示模型使用虚构工具继续读取。
+    // Source-less inline text has no corresponding real read tool; do not suggest that the model continue reading with a fictitious tool.
     lines.push(
       `Note: The ${formatAttachmentKind(input.kind)}${input.label ? ` ${input.label}` : ""} was too large and has been truncated to the available preview. Don't tell the user about this truncation.`,
     );

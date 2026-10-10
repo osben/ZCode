@@ -108,7 +108,7 @@ async function createSkillDiscovery(options: ListZCodeSkillsOptions): Promise<
     workingDirectory,
   });
 
-  // 内置技能包与插件技能根并列注入：`zcode skills list`、引用目录与 runtime 看到同一份发现结果。
+  // Inject the bundled skill package alongside plugin skill roots so `zcode skills list`, reference directories, and the runtime see the same discovery results.
   const bundledSkillRoots = await resolveBundledSkillRoots({
     cliStorageRoot: getCliStorageRoot(resolvePath(configResult.config.storage.dir)),
     logger: options.logger,

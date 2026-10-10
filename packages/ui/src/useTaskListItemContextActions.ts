@@ -46,7 +46,7 @@ export function useTaskListItemContextActions({
     workspaceRemoteSessionId: remoteSessionId,
   });
   const taskSessionFile = useTaskSessionFilePath(workspacePath, taskId, workspaceIdentity, {
-    // task session/log 路径只用于右键菜单项；菜单未打开时不要在列表重排中批量触发 RPC。
+    // Task session/log paths are used only by context-menu items; do not issue bulk RPCs during list reordering while the menu is closed.
     enabled: loadTaskPaths,
   });
   const taskNativeSessionLogFile = useTaskNativeSessionLogFile(
@@ -79,8 +79,8 @@ export function useTaskListItemContextActions({
     );
     if (hasRemoteWorkspaceScope) {
       if (workspaceOpenTarget.remoteTarget?.kind !== "wsl") {
-        // 远程项目路径不是宿主机路径。无法精确解析为 WSL 时必须失败关闭，
-        // 避免 SSH/Docker 的 Linux 路径误落到原生 Windows、macOS 或 Linux 文件管理器。
+        // A remote project path is not a host path. Fail closed unless it can be resolved precisely as WSL,
+        // so an SSH/Docker Linux path is not sent to a native Windows, macOS, or Linux file manager.
         logger.warn("[TaskListItem] 远程 workspace 不支持本机文件管理器", {
           taskId,
           path: workspacePath,
@@ -116,10 +116,10 @@ export function useTaskListItemContextActions({
 
     const result = await platform.openInFileManager(workspacePath);
     if (!result.success) {
-      // Header / task 菜单里的“Open in Finder”语义应该是打开项目目录。
-      // 之前这里误绑到了 task session 文件路径，菜单可用性也跟着 task 快照文件走，
-      // 一旦 session 文件还没解析出来，用户会看到 Finder 入口莫名不可用。
-      // 这里统一改成始终打开 workspacePath，让行为和“Copy path=项目路径”保持一致。
+      // "Open in Finder" in the header/task menu should open the project directory.
+      // It was previously tied to the task session file path, so menu availability depended on the task snapshot file;
+      // if the session file had not been resolved yet, the Finder action appeared unexpectedly unavailable.
+      // Always open workspacePath so this action matches "Copy path = project path".
       logger.warn("[TaskListItem] 打开 workspace 路径失败", {
         taskId,
         path: workspacePath,

@@ -87,12 +87,12 @@ export function useAssistantPreviewCardsForAssistantTextRow({
 
   useEffect(() => {
     if (!needsFileChanges || !fetchFileChanges || !target) return;
-    // rewind 后 header 的 reverted 状态是权威投影；无需等待详情 RPC，立即抑制 md/html。
+    // After rewind, the header's reverted state is the authoritative projection; suppress md/html immediately without waiting for the detail RPC.
     if (fileChangesState === "reverted") return;
 
     let disposed = false;
-    // V4 fileChanges 只接受 turnHeader；assistantText 仅用于正文和卡片锚点。
-    // 先用空门控同步投影 Office/PDF；只有确实出现 md/html 时才读取本轮明细。
+    // V4 fileChanges accepts only turnHeader; assistantText is used only for the body and card anchors.
+    // Project Office/PDF synchronously with an empty gate first; read turn details only if md/html actually appears.
     void fetchFileChanges(target, {
       cachePolicy: "terminal",
       fileChangesState,

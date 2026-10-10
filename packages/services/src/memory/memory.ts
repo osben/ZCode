@@ -7,7 +7,7 @@ export const PROJECT_MEMORY_FILE_CHANGED_ERROR_CODE = "PROJECT_MEMORY_FILE_CHANG
 
 export interface ProjectMemoryFileSummary {
   name: string;
-  /** 已由 MemoryService 校验并限制在本地 Project Memory 根目录内的实际路径。 */
+  /** Actual path validated by MemoryService and constrained to the local Project Memory root. */
   path: string;
   kind: "index" | "item";
   size: number;
@@ -22,10 +22,10 @@ export interface ProjectMemoryWorkspaceSummary {
 }
 
 export interface IMemoryService {
-  /** 列出当前本地 profile 中可查看的 Project Memory。 */
+  /** List Project Memory files viewable in the current local profile. */
   listProjectMemories(): Promise<ProjectMemoryWorkspaceSummary[]>;
 
-  /** 原样读取一个 Project Memory Markdown 文件。 */
+  /** Read a Project Memory Markdown file without modification. */
   readProjectMemoryFile(params: {
     workspaceId: string;
     fileName: string;

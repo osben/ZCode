@@ -12,8 +12,8 @@ export function createLockInstanceObserver(): ObserveLockInstance {
       return previous.firstObservedAt;
     }
 
-    // 双重非法时间戳只能从当前锁实例首次被看见时起算 grace。
-    // 锁被后来 writer 替换后必须重置，不能继承等待者在旧锁上的等待时长。
+    // When both timestamps are invalid, grace starts only when the current lock instance is first observed.
+    // Reset when a later writer replaces the lock; do not inherit the waiter's elapsed time on the old lock.
     observations.set(lockPath, { firstObservedAt: observedAt, identity });
     return observedAt;
   };

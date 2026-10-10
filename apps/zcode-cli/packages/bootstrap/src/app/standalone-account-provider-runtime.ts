@@ -85,7 +85,7 @@ export function standaloneAccountIdentityCredentialKey(providerId: string): stri
   return `account-provider:${normalized}:identity`;
 }
 
-/** Standalone Credential Store 私有键；不得进入 Provider Config、Model 或 Protocol。 */
+/** Private Standalone Credential Store key; it must not enter Provider Config, Model, or Protocol. */
 export function standaloneAccountProviderCredentialKey(input: {
   readonly providerId: string;
   readonly accountIdentity: string;
@@ -97,7 +97,7 @@ export function standaloneAccountProviderCredentialKey(input: {
   return `account-provider:coding-plan:${providerId}:account:${encodeURIComponent(accountIdentity)}:api-key`;
 }
 
-/** 没有账号 Profile 的手工 Key 登录使用稳定、不可逆的连接身份。 */
+/** Manual Key sign-ins without an account Profile use a stable, irreversible connection identity. */
 export function createStandaloneAccountIdentityFromSecret(secret: string): string {
   const normalized = secret.trim();
   if (!normalized) throw new Error("Standalone Account Secret 不能为空");
@@ -135,8 +135,9 @@ export async function readStandaloneAccountProviderConfigSnapshot(
       const candidate = candidateByProviderId.get(providerId);
       const apiKey = candidate ? apiKeyByCredentialKey[candidate.credentialKey]?.trim() : undefined;
       if (!candidate || !apiKey) {
-        // 账号 Overlay 缺少成员表示“不覆盖”，不能表达账号已断开；必须显式
-        // entitled=false，才能让 Built-in 账号 Provider 在凭据删除后从 Registry 退出。
+        // A missing account Overlay member means "do not override" and cannot represent a disconnected
+        // account. Set entitled=false explicitly so the built-in account Provider leaves the Registry
+        // after its credentials are deleted.
         return [
           providerId,
           new ProviderConfig({

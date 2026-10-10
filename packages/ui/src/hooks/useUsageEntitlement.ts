@@ -1,4 +1,4 @@
-/* eslint-disable max-lines -- entitlement hook 集中处理缓存、共享 in-flight、轮询和 Team Plan 上下文，后续拆分需保持刷新策略一致。 */
+/* eslint-disable max-lines -- The entitlement hook centralizes caching, shared in-flight requests, polling, and Team Plan context; any future split must preserve the refresh strategy. */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   UsageEntitlementSnapshot,
@@ -72,9 +72,10 @@ function getSharedEntitlementSnapshot(params: {
     return inflight;
   }
 
-  // 侧栏、工具栏、设置页和 Usage 页会在启动/打开设置时同时读取同一份
-  // Coding Plan entitlement。生产日志里同一分钟出现 12 个相同 quota RPC，直接拖慢 renderer。
-  // 这里按服务实例 + 请求参数合并 in-flight 请求，保留各组件自己的状态更新语义。
+  // The sidebar, toolbar, Settings, and Usage page can all read the same Coding Plan entitlement
+  // during startup or when Settings opens. Production logs showed 12 identical quota RPCs in one
+  // minute, directly slowing the renderer. Merge in-flight requests by service instance and request
+  // parameters while preserving each component's own state update semantics.
   const upstreamRequest = params.usageStatsService.getEntitlementSnapshot({
     ...(params.options.invalidateBalanceCache ? { invalidateBalanceCache: true } : {}),
     includeSubscription: params.options.includeSubscription,
@@ -158,12 +159,14 @@ export function useUsageEntitlementWithService(
   const requestVersionRef = useRef(0);
   const activeFreshnessKeyRef = useRef<string | null>(null);
   const latestSnapshotRef = useRef<UsageEntitlementSnapshot | null>(null);
-  // Web/SSR 场景可能只渲染侧栏或设置入口，没有挂载 ServiceProvider。
-  // 这里降级为空快照，避免 Usage banner 因服务上下文缺失阻断整棵 UI。
+  // Web/SSR may render only the sidebar or Settings entry without mounting ServiceProvider.
+  // Fall back to an empty snapshot so a missing service context does not block the entire UI through
+  // the Usage banner.
   const enabled = (options.enabled ?? true) && Boolean(usageStatsService);
   const includeSubscription = options.includeSubscription ?? false;
   const preferredProviderId = options.preferredProviderId;
-  // Provider Settings schema 每次解析会产生等值新对象，不能因引用变化重启权益请求。
+  // Parsing the Provider Settings schema creates an equivalent new object each time;
+  // do not restart the entitlement request when only its reference changes.
   const accountAccess = useStableAccountAccess(options.accountAccess);
   const allowDisabledPreferredProvider = options.allowDisabledPreferredProvider === true;
   const requirePreferredProvider = options.requirePreferredProvider === true;
@@ -218,8 +221,9 @@ export function useUsageEntitlementWithService(
             : reason === "access"
               ? shouldUseSharedEntitlementSnapshot({
                   freshnessKey,
-                  // Context hover、套餐卡和 Usage 页打开会在短时间内
-                  // 读取同一份额度。访问刷新必须共享一分钟窗口，避免反复 hover 放大 quota RPC。
+                  // Context hover, the plan card, and opening the Usage page can read the same quota
+                  // within a short period. Access refreshes must share a one-minute window so repeated
+                  // hovers do not multiply quota RPCs.
                   intervalMs: USAGE_ENTITLEMENT_ACCESS_REFRESH_MS,
                   now: Date.now(),
                   usageStatsService,
@@ -286,8 +290,9 @@ export function useUsageEntitlementWithService(
       });
       setState((current) => ({
         snapshot: current.snapshot,
-        // Plan Card 已有短 TTL 缓存时，进入 provider 只需要后台校正权益。
-        // 继续把 loading 置 true 会让卡片从缓存态跳回 checking，用户每次进入都像重新加载。
+        // When the Plan Card has a short-TTL cache, entering the provider only needs a background
+        // entitlement refresh. Setting loading to true would move the card from its cached state back
+        // to checking, making every visit look like a reload.
         loading: refreshOptions.silent && current.snapshot ? false : true,
         error: null,
       }));
@@ -350,16 +355,18 @@ export function useUsageEntitlementWithService(
             (refreshOptions.silent || current.snapshot.subscription?.details.length)
           ) {
             return {
-              // 后台刷新或已确认订阅的手动刷新失败时，保留上次成功结果。
-              // 否则网络抖动会把 Plan Card 从可用状态打回空态/错误态。
+              // Preserve the last successful result if a background refresh or a manual refresh for
+              // a confirmed subscription fails. Otherwise, network instability would move the Plan
+              // Card from an available state to empty/error.
               snapshot: current.snapshot,
               loading: false,
               error: message,
             };
           }
           return {
-            // 切换 BigModel/Z.AI 后如果新 provider 查询失败，继续保留旧 snapshot 会让 banner/浮窗显示上一家供应商。
-            // 出错时清空快照，避免用过期品牌和额度误导用户。
+            // If a query fails after switching between BigModel and Z.AI, keeping the old snapshot
+            // would make the banner/popover show the previous provider. Clear the snapshot on error
+            // to avoid displaying stale branding and quota.
             snapshot: null,
             loading: false,
             error: message,
@@ -391,8 +398,9 @@ export function useUsageEntitlementWithService(
   useEffect(() => {
     if (!enabled) {
       setState({
-        // Coding Plan 缺少 API Key 或切换供应商时会临时禁用查询。
-        // 保留上一轮 snapshot 会让 UI 继续显示旧账号的套餐状态，并诱发无 key 的入口被误判为可查。
+        // Queries are temporarily disabled when Coding Plan has no API Key or while switching providers.
+        // Keeping the previous snapshot would make the UI show the old account's plan status and could
+        // make an entry without a key appear queryable.
         snapshot: null,
         loading: false,
         error: null,
@@ -404,9 +412,10 @@ export function useUsageEntitlementWithService(
 
     const freshnessKeyChanged = activeFreshnessKeyRef.current !== freshnessKey;
     if (freshnessKeyChanged) {
-      // Team Plan 切换团队项目后，旧团队 active snapshot 会让 initial refresh
-      // 被 freshness 策略跳过，设置页继续显示上一个团队的用量。freshness key 变化时必须
-      // 先废掉旧请求和旧快照，再用新团队的缓存/共享快照启动刷新。
+      // After switching Team Plan projects, the previous team's active snapshot can cause the initial
+      // refresh to be skipped by the freshness policy, leaving Settings showing that team's usage.
+      // When the freshness key changes, invalidate the old request and snapshot first, then start
+      // the refresh from the new team's cache/shared snapshot.
       requestVersionRef.current += 1;
       activeFreshnessKeyRef.current = freshnessKey;
       latestSnapshotRef.current = null;
@@ -419,8 +428,9 @@ export function useUsageEntitlementWithService(
       : null;
     const initialSnapshot = sharedSnapshot ?? cachedSnapshot;
     if (initialSnapshot) {
-      // Coding Plan 状态打开设置页时不必等待 quota 接口返回才变绿。
-      // 先用同 provider 指纹下的短 TTL 缓存回显，再由 refresh 后台校正真实权益。
+      // When opening Settings, Coding Plan status does not need to wait for the quota API to return
+      // before showing as active. First display the short-TTL cache for the same provider fingerprint,
+      // then let refresh correct the actual entitlement in the background.
       setState({
         snapshot: initialSnapshot,
         loading: false,

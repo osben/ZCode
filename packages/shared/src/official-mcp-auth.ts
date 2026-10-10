@@ -1,19 +1,20 @@
-/* ZCode 官方 Server MCP 鉴权的共享常量与类型。
-   放在 shared 是因为头集合有两个消费者且分属不同包：
-   - `packages/services` 侧生产身份头；
-   - `apps/zcode-cli/packages/adapters` 侧（Plugin parser + MCP adapter）拦截保留头。
-   两侧必须同源，否则新增身份头时会漏掉黑名单，出现静态 header 覆盖凭证的缺口。 */
+/* Shared constants and types for ZCode official Server MCP authentication.
+   This belongs in shared because two consumers in separate packages use the header set:
+   - `packages/services` produces the identity headers;
+   - `apps/zcode-cli/packages/adapters` (Plugin parser + MCP adapter) intercepts and preserves them.
+   Both sides must use the same source. Otherwise, a new identity header could be omitted from the
+   blocklist, allowing a static header to overwrite credentials. */
 
-/** `.mcp.json` 中 `auth.type` 的唯一合法值；区分大小写，不接受别名。 */
+/** The only valid value for `auth.type` in `.mcp.json`; case-sensitive and aliases are not accepted. */
 export const ZCODE_OFFICIAL_MCP_AUTH_TYPE = "zcode_official" as const;
 
-/** 第一阶段唯一合法的 provider。后续新增短期 Token 应新增 provider 值，不改变本值语义。 */
+/** The only valid provider in phase one. Add a new provider value for future short-lived tokens; do not change this value's meaning. */
 export const ZCODE_OFFICIAL_MCP_AUTH_PROVIDER_JWT_TOKEN = "jwt_token" as const;
 
 /**
- * 官方 MCP 使用用户身份和套餐身份两组独立凭据。
- * codingPlanAuthorization 必须携带 MaaS 登录 JWT；不能用 Coding Plan 业务 API key
- * 代替。服务端按 JWT 中的 customer_id 校验它与当前用户的关联。
+ * Official MCP uses two independent credentials: user identity and plan identity.
+ * codingPlanAuthorization must carry the MaaS login JWT; it cannot be replaced with a Coding Plan business API key.
+ * The server uses customer_id in the JWT to verify its association with the current user.
  */
 export const OFFICIAL_MCP_AUTH_HEADER_NAMES = {
   authorization: "Authorization",
@@ -24,25 +25,25 @@ export const OFFICIAL_MCP_AUTH_HEADER_NAMES = {
 } as const;
 
 /**
- * stdio 官方 MCP 的身份头在所有出站请求与通知的 `params._meta` 上使用的键。
+ * Key used for the identity header of stdio official MCP in `params._meta` for all outbound requests and notifications.
  *
- * 这是与插件进程之间的**跨语言协议常量**——Plugin 侧（如插件的 Python server）
- * 按同一字符串读取。改名即破坏所有已发布插件，等同于协议 breaking change。
- * 命名空间前缀沿用 `com.zcode/`，与既有的 `com.zcode/request-context` 一致。
+ * This is a **cross-language protocol constant** shared with plugin processes; the Plugin side (such as a plugin's Python server)
+ * reads the same string. Renaming it breaks all published plugins and is equivalent to a protocol breaking change.
+ * The namespace prefix follows `com.zcode/`, consistent with the existing `com.zcode/request-context`.
  */
 export const OFFICIAL_MCP_AUTH_META_KEY = "com.zcode/official-mcp-auth" as const;
 
 /**
- * 静态 Plugin `headers` 中禁止出现的保留头（小写，比较时大小写不敏感）。
+ * Reserved headers that are forbidden in static Plugin `headers` (lowercase; compared case-insensitively).
  *
- * 身份头部分：避免 Plugin 静态配置伪造或覆盖凭证。
- * 协议头部分（mcp-session-id / mcp-protocol-version）：SDK 组装请求头时
- * `requestInit.headers` 优先级高于协议头，静态配置能覆盖 session id，故一并禁止。
+ * Identity headers prevent static Plugin config from forging or overriding credentials.
+ * Protocol headers (mcp-session-id / mcp-protocol-version) are included because the SDK gives
+ * `requestInit.headers` priority over protocol headers, allowing static config to override the session ID.
  *
- * `x-coding-plan-api-key` 已不再由客户端发送（已切到 MaaS JWT 通道），但**必须继续留在
- * 黑名单里**：服务端那条通道仍然有效（`credential := cmp.Or(Authorization, APIKey)`），
- * 放开就等于允许 Plugin 用静态 header 自带一份 Coding Plan 凭证冒用官方端点。
- * 这里显式列出而不是从头名表推导，正是因为表里已经没有它了。
+ * `x-coding-plan-api-key` is no longer sent by clients (they switched to the MaaS JWT channel), but **must remain
+ * on the denylist**: the server channel is still active (`credential := cmp.Or(Authorization, APIKey)`),
+ * and allowing it would let a Plugin impersonate an official endpoint with a Coding Plan credential in a static header.
+ * It is listed explicitly rather than derived from the header-name table precisely because it is no longer in that table.
  */
 export const OFFICIAL_MCP_RESERVED_HEADER_NAMES: readonly string[] = [
   ...Object.values(OFFICIAL_MCP_AUTH_HEADER_NAMES).map((name) => name.toLowerCase()),
@@ -53,12 +54,12 @@ export const OFFICIAL_MCP_RESERVED_HEADER_NAMES: readonly string[] = [
 
 const RESERVED_HEADER_SET = new Set(OFFICIAL_MCP_RESERVED_HEADER_NAMES);
 
-/** 大小写不敏感地判断是否为保留头。 */
+/** Check whether a header is reserved, case-insensitively. */
 export function isOfficialMcpReservedHeaderName(name: string): boolean {
   return RESERVED_HEADER_SET.has(name.trim().toLowerCase());
 }
 
-/** 返回静态 header 记录中命中的保留头（小写，去重且稳定排序），无命中时为空数组。 */
+/** Return reserved headers found in a static header record (lowercase, deduplicated, and sorted deterministically), or an empty array if none match. */
 export function findOfficialMcpReservedHeaders(
   headers: Record<string, string> | undefined,
 ): string[] {
@@ -71,12 +72,12 @@ export function findOfficialMcpReservedHeaders(
   return [...hits].sort();
 }
 
-/** 服务端 `Bigmodel-Target-Type` 的取值（对齐 zcode-server 的 CodingPlanTargetType）。 */
+/** Values for the server's `Bigmodel-Target-Type` (aligned with zcode-server's CodingPlanTargetType). */
 export type OfficialMcpTargetType = "PERSONAL" | "TEAM";
 
 /**
- * 端口/协议层的失败分类（"不发任何请求"的两类）。
- * 网络层失败（401/403/3xx）由 MCP adapter 在收到响应后自行分类，不经过该枚举。
+ * Port/protocol-level failure categories (the two cases where "no request is sent").
+ * Network failures (401/403/3xx) are classified by the MCP adapter after receiving a response and do not use this enum.
  */
 export const OFFICIAL_MCP_AUTH_FAILURE_REASONS = [
   "official_auth_unavailable",
@@ -93,7 +94,7 @@ export const OFFICIAL_MCP_AUTH_PORT_FAILURE_REASONS = [
 export type OfficialMcpAuthPortFailureReason =
   (typeof OFFICIAL_MCP_AUTH_PORT_FAILURE_REASONS)[number];
 
-/** MCP adapter 侧的完整失败分类，包含网络层结果。仅用于 record status 与日志。 */
+/** Complete failure categories on the MCP adapter side, including network results. Used only for status recording and logs. */
 export type OfficialMcpAuthFailureKind =
   | OfficialMcpAuthFailureReason
   | "official_mcp_origin_untrusted"
@@ -101,17 +102,17 @@ export type OfficialMcpAuthFailureKind =
   | "official_auth_forbidden"
   | "official_auth_redirect_blocked";
 
-// ── 官方 MCP 信任判定──
-// 放在 shared 而非 CLI bootstrap，是因为有两个消费者且分属互不可见的包：
-//   - apps/zcode-cli/packages/adapters：请求发出前的本地校验；
-//   - packages/services（host）：身份权威边界的二次校验（只依赖 @zcode/shared，
-//     无法 import CLI 侧包）。
-// 单源是硬要求：双处判定分叉会让一侧放行、另一侧拒绝。
+// ── Official MCP trust validation ──
+// Located in shared rather than CLI bootstrap because there are two consumers in packages that cannot see each other:
+//   - apps/zcode-cli/packages/adapters: local validation before sending a request;
+//   - packages/services (host): a second check at the identity-authority boundary (depends only on @zcode/shared
+//     and cannot import CLI packages).
+// A single source of truth is required: divergent checks could let one side allow a request while the other rejects it.
 
 /**
- * 归一化 origin：必须是 https、无 username/password，且 URL 本身即 origin 形态。
- * 拒绝带凭证的 URL 是因为 `https://user:pass@a.example` 的 origin 是 `https://a.example`，
- * 只比 origin 会让它通过。
+ * Normalize an origin: it must use https, have no username/password, and the URL itself must be origin-shaped.
+ * Reject URLs containing credentials because `https://user:pass@a.example` has origin `https://a.example`,
+ * and comparing only origins would allow it.
  */
 function normalizeHttpsOrigin(candidate: string): string | undefined {
   try {
@@ -137,10 +138,10 @@ function normalizeLoopbackOrigin(candidate: string): string | undefined {
 
 export const OFFICIAL_MCP_DEV_TRUSTED_ORIGINS_ENV = "ZCODE_OFFICIAL_MCP_DEV_TRUSTED_ORIGINS";
 
-/** Host 在 spawn 时注入的真实 workspace identity；只用于隔离/审计，不用于文件执行。 */
+/** Actual workspace identity injected by Host at spawn time; used only for isolation/auditing, never for file execution. */
 export const ZCODE_WORKSPACE_IDENTITY_ENV = "ZCODE_WORKSPACE_IDENTITY";
 
-/** 身份头的安全日志摘要：只含 header 名、Team 成对性与 TargetType，不含任何值。 */
+/** Safe log summary for identity headers: contains only header names, Team pairing, and TargetType; no values. */
 export function summarizeOfficialMcpIdentityHeaders(
   headers: Record<string, string>,
 ): Record<string, unknown> {
@@ -162,30 +163,30 @@ export function summarizeOfficialMcpIdentityHeaders(
 
 export interface OfficialMcpTrustResult {
   trusted: boolean;
-  /** 拒绝时的可读原因，仅用于日志，不用于流程分流。 */
+  /** Human-readable rejection reason, for logs only and not for flow control. */
   detail: "ok" | "invalid_input" | "origin_mismatch" | "zcode_origin_unresolved";
 }
 
 export interface IsOfficialMcpOriginTrustedInput {
-  /** 本地自测开关的原始值（通常来自 env），只放开 http loopback。 */
+  /** Raw local self-test switch value (usually from env); allows only http loopback. */
   devTrustedOriginsRaw?: string | undefined;
   origin: string;
   /**
-   * 声明该 MCP 的插件 id。**不参与信任判定**，仅用于日志与凭证解析的
-   * 归属标识。保留在入参里是为了让日志能回答"是哪个插件在要凭证"。
+   * Declared plugin ID for this MCP. **Not used for trust decisions**; used only for log attribution and credential-resolution
+   * ownership. Included in the input so logs can answer "which plugin requested the credentials?"
    */
   pluginId: string;
-  /** 当前 ZCode API origin，由调用方按各自口径解析后传入。 */
+  /** Current ZCode API origin, resolved by the caller according to its own conventions. */
   zcodeApiOrigin: string | undefined;
 }
 
 /**
- * 校验官方 MCP 的凭据目标：要求 HTTPS origin 与运行时 ZCode API origin 相等，
- * 且 URL 不携带 username/password。开发配置只允许显式列出的 HTTP loopback origin。
+ * Validate the credential target for official MCP: require an HTTPS origin equal to the runtime ZCode API origin,
+ * with no username/password in the URL. Development config allows only explicitly listed HTTP loopback origins.
  *
- * pluginId 用于归属和日志，不是授权过滤条件；任何已加载插件都可以请求官方鉴权。
- * 目的地校验不能替代逐接口的用户权限、套餐和配额校验，也不提供逐插件授权确认。
- * 使用 stdio 鉴权的插件会持有凭据，应按受信任的可执行代码管理。
+ * pluginId is for attribution and logs, not an authorization filter; any loaded plugin may request official authentication.
+ * Destination validation does not replace per-endpoint user permission, plan, or quota checks and does not provide per-plugin authorization.
+ * Plugins using stdio authentication hold credentials and must be managed as trusted executable code.
  */
 export function isOfficialMcpOriginTrusted(
   input: IsOfficialMcpOriginTrustedInput,
@@ -195,9 +196,9 @@ export function isOfficialMcpOriginTrusted(
     return { detail: "invalid_input", trusted: false };
   }
 
-  // 本地自测开关：只接受 http loopback，因此无法把凭证导向远端。
-  // 必须先确认**目标 origin 本身是 loopback**：否则两侧 normalize 都得到 undefined，
-  // `undefined === undefined` 会让该开关放开任意 origin（含 https 远端站点）。
+  // Local self-test switch: accepts only http loopback, so credentials cannot be sent to a remote host.
+  // First verify that the **target origin itself is loopback**; otherwise both normalization calls return undefined,
+  // and `undefined === undefined` would let this switch allow any origin (including remote https sites).
   const loopbackOrigin = normalizeLoopbackOrigin(origin);
   if (loopbackOrigin) {
     for (const candidate of parseDevTrustedOrigins(input.devTrustedOriginsRaw)) {
@@ -216,9 +217,9 @@ export function isOfficialMcpOriginTrusted(
 }
 
 /**
- * 本地自测开关，值为逗号分隔的 loopback origin，例如 `http://127.0.0.1:3999`。
- * 只对 http loopback 生效：最坏情况是把自己的 JWT 发给本机进程，而本机任意程序本来就能
- * 读到同一份凭证，不构成新的信任面扩张。不设置时行为与未实现该开关时完全一致。
+ * Local self-test switch; value is a comma-separated list of loopback origins, for example `http://127.0.0.1:3999`.
+ * Applies only to http loopback: the worst case is sending one's own JWT to a local process, where any local program could already
+ * read the same credential, so this does not expand the trust surface. When unset, behavior is identical to builds without this switch.
  */
 function parseDevTrustedOrigins(raw: string | undefined): string[] {
   const value = raw?.trim();
@@ -230,9 +231,9 @@ function parseDevTrustedOrigins(raw: string | undefined): string[] {
 }
 
 /**
- * 信任判定器。保持 `isTrusted` 这一 DI 形状不变，便于 adapter 与 host 共用同一实现。
- * 异步是为了让 host 能按 settings 覆盖解析 origin（与闲时任务同口径），避免出现
- * "闲时任务能连、官方 MCP 连不上"的割裂。
+ * Trust validator. Keep the `isTrusted` DI shape unchanged so the adapter and host can share one implementation.
+ * It is asynchronous so the host can resolve origin overrides from settings (using the same rules as off-peak tasks), avoiding
+ * inconsistent behavior where "off-peak tasks connect, but official MCP does not."
  */
 export interface OfficialMcpTrustedOriginRegistry {
   isTrusted(input: {
@@ -243,9 +244,9 @@ export interface OfficialMcpTrustedOriginRegistry {
 }
 
 export interface CreateOfficialMcpTrustedOriginRegistryOptions {
-  /** 本地自测开关原始值（逗号分隔的 loopback origin），通常来自 env。 */
+  /** Raw local self-test switch (comma-separated loopback origins), usually from env. */
   devTrustedOriginsRaw?: string | undefined;
-  /** 当前 ZCode API origin 的解析器；两侧必须用等价口径，否则会一侧放行一侧拒绝。 */
+  /** Resolver for the current ZCode API origin; both sides must use equivalent rules or one could allow while the other rejects. */
   resolveZCodeApiOrigin: () => string | undefined | Promise<string | undefined>;
 }
 
@@ -258,7 +259,7 @@ export function createOfficialMcpTrustedOriginRegistry(
       try {
         zcodeApiOrigin = await options.resolveZCodeApiOrigin();
       } catch {
-        // 解析失败按不可信处理，绝不因为拿不到 origin 就放行。
+        // Treat resolution errors as untrusted; never allow a request because the origin could not be resolved.
         return { detail: "zcode_origin_unresolved", trusted: false };
       }
       return isOfficialMcpOriginTrusted({

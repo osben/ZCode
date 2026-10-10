@@ -3,57 +3,57 @@ import type {
   CodingPlanResetType,
   UsageQuotaLimit,
 } from "@zcode/shared";
-// 完成后“额度已重置”提示的停留时长，随后自动收起提示（额度条保持 100%）。
+// How long to show the "quota reset" message before hiding it automatically (the quota bar remains at 100%).
 export const CODING_PLAN_QUOTA_RESET_DONE_DISPLAY_MS = 2_600;
-// 自动/运营重置在 Composer 触发器上先合成一小段“正在重置”的时长，随后切换为“已重置”。
-// 后端没有 processing 信号，这里仅在客户端还原一次“处理中→已重置”的观感。
+// For automatic/operational resets, briefly synthesize a "resetting" state on the Composer trigger, then switch to "reset".
+// The backend has no processing signal; this only recreates the "processing → reset" transition in the client.
 export const CODING_PLAN_QUOTA_RESET_AUTOMATIC_PROCESSING_MS = 1_000;
 const FIVE_HOURS_MS = 5 * 60 * 60 * 1_000;
 const WEEK_MS = 7 * 24 * 60 * 60 * 1_000;
 
-// 完成后乐观改写“下一次重置时间”的周期：五小时额度按 5 小时，周额度按 7 天。
+// Optimistically update the "next reset" interval after completion: 5 hours for the five-hour quota and 7 days for the weekly quota.
 function resolveCodingPlanQuotaResetDurationMs(resetType: CodingPlanResetType): number {
   return resetType === "WEEK" ? WEEK_MS : FIVE_HOURS_MS;
 }
 
-// available：服务端下发了可用的五小时重置机会。
-// processing：用户已发起手动核销，正在等待 use + status 对账。
-// completed：status 已返回服务端 used_at；自动/运营重置不会经过 processing。
+// available: the server returned a usable five-hour reset opportunity.
+// processing: the user started a manual redemption; waiting to reconcile use + status.
+// completed: status returned the server's used_at; automatic/operational resets do not pass through processing.
 export type CodingPlanQuotaResetUiStatus = "available" | "processing" | "completed";
 
 export interface CodingPlanQuotaResetUiEntry {
   status: CodingPlanQuotaResetUiStatus;
-  /** 剩余重置机会次数；processing/completed 归零。 */
+  /** Number of reset opportunities remaining; zero in processing/completed states. */
   opportunityCount: number;
-  /** 最早的重置机会到期时刻；仅 available 有效。 */
+  /** Earliest expiration time among reset opportunities; valid only while available. */
   opportunityExpiresAt: number | null;
-  /** 本地手动核销开始时刻；自动/运营重置为 null。 */
+  /** Local start time for manual redemption; null for automatic/operational resets. */
   startedAt: number | null;
-  /** 服务端 latest_{five_hour,week}_reset_history.used_at。 */
+  /** Server's latest_{five_hour,week}_reset_history.used_at. */
   completedAt: number | null;
-  /** 客户端首次观察到当前 completedAt 的时间，仅用于短提示和动效。 */
+  /** When the client first observed the current completedAt; used only for the brief message and animation. */
   observedAt: number | null;
-  /** entitlement 刷新成功前允许临时把额度覆盖为 100%。 */
+  /** Temporarily allow the quota to be shown as 100% until entitlement refresh succeeds. */
   quotaOverridePending: boolean;
   nextResetAt: number | null;
-  /** 同一次失败重试必须复用的幂等键；成功对账后清空。 */
+  /** Idempotency key reused by retries of the same failed request; cleared after successful reconciliation. */
   idempotencyKey: string | null;
   error: string | null;
 }
 
 export interface CodingPlanQuotaResetCelebrationState {
   sourceKey: string | null;
-  /** 已从触发器为该 used_at 撒过花；同一次完成在重复渲染/轮询时不得重播。 */
+  /** The trigger already played confetti for this used_at; do not replay it on repeated renders or polling. */
   celebratedCompletedAt: number | null;
 }
 
-/** 同一 source 下五小时与周额度各自独立的重置状态。 */
+/** Independent reset state for the five-hour and weekly quotas under the same source. */
 export interface CodingPlanQuotaResetUiEntries {
   fiveHour: CodingPlanQuotaResetUiEntry | null;
   week: CodingPlanQuotaResetUiEntry | null;
 }
 
-/** 五小时/周共用同一份重置状态机，只在读取机会/历史字段时按类型区分。 */
+/** The five-hour and weekly quotas share one reset state machine; type only distinguishes which opportunity/history fields to read. */
 export const CODING_PLAN_QUOTA_RESET_TYPES = [
   "FIVE_HOUR",
   "WEEK",
@@ -64,16 +64,16 @@ export function advanceCodingPlanQuotaResetCelebration(
   input: {
     sourceKey: string | null;
     completedAt: number | null;
-    /** 自动/运营完成（startedAt 为空）的短提示窗口；手动重置由按钮自身撒花，触发器不参与。 */
+    /** Brief message window for automatic/operational completion (startedAt is null); manual reset confetti comes from the button, not the trigger. */
     automaticCompletion: boolean;
   },
 ): {
   state: CodingPlanQuotaResetCelebrationState;
   shouldCelebrate: boolean;
 } {
-  // 手动核销同样会经过 processing，“见过 processing”不能再作为触发器撒花依据，
-  // 否则手动重置会叠加按钮和触发器两处动画。触发器只认自动完成的新 used_at，
-  // source 切换时清空轨迹，避免 Team/个人套餐之间重复撒花或漏掉自动重置动效。
+  // Manual redemption also passes through processing, so "saw processing" cannot be used as the trigger's confetti condition,
+  // otherwise manual reset would animate both on the button and trigger. The trigger only recognizes a new used_at from automatic completion,
+  // and clears the trail when source changes to avoid duplicate confetti or missed automatic-reset animation between Team and personal plans.
   const sourceChanged = previous?.sourceKey !== input.sourceKey;
   const celebratedCompletedAt = sourceChanged ? null : (previous?.celebratedCompletedAt ?? null);
   const shouldCelebrate = Boolean(
@@ -123,17 +123,17 @@ function createCompletedEntry(
     status: "completed",
     opportunityCount: 0,
     opportunityExpiresAt: null,
-    // 手动点击和完成历史可能由不同入口观察。只依赖当前 source 的 processing
-    // 会让 Composer 把设置页发起的手动重置误判成自动重置，重复显示 Tooltip 和烟花。
-    // 同一完成历史重复对账时也必须保留原分类，不能在下一次轮询时退化为自动完成。
+    // A manual click and completion history may be observed through different entry points. Relying only on processing for the current source
+    // would make Composer misclassify a manual reset started on the settings page as automatic, showing the tooltip and confetti twice.
+    // Reconciliation of the same completion history must preserve its original classification; a later poll must not reclassify it as automatic.
     startedAt: isSameCompletion
       ? previous.startedAt
       : previous?.status === "processing"
         ? previous.startedAt
         : manualStartedAt,
     completedAt,
-    // 自动/运营重置可能在 used_at 之后最多 60 秒才被轮询发现。
-    // 短提示必须从首次观察时刻起算；同一 used_at 的重复轮询则不能续期。
+    // Polling may discover an automatic/operational reset up to 60 seconds after used_at.
+    // Start the brief message at first observation; repeated polls of the same used_at must not extend it.
     observedAt: isSameCompletion ? (previous.observedAt ?? observedAt) : observedAt,
     quotaOverridePending: isSameCompletion ? previous.quotaOverridePending : true,
     nextResetAt: completedAt + nextResetMs,
@@ -142,16 +142,7 @@ function createCompletedEntry(
   };
 }
 
-/**
- * 把服务端 status 应用到窗口内共享 UI 状态。
- *
- * 旧历史且 has_unread_history=false 不能在首次挂载时进入 completed，
- * 否则客户端会把几小时前的历史重置错误覆盖成当前 100% 剩余额度。
- *
- * resetType 决定读取五小时还是周额度的机会/历史。has_unread_history 是两种重置
- * 类型共享的单一游标，因此只有 used_at 最新的那一类“拥有”这个未读标记：否则一次
- * 周重置就会把过期的五小时历史误判为刚完成，反之亦然。
- */
+/** Apply server status to shared UI state within this window. Old history with has_unread_history=false must not enter completed on initial mount, or the client could incorrectly treat a reset from hours ago as the current 100% remaining quota. resetType determines whether to read opportunities/history for the five-hour or weekly quota. has_unread_history is a single cursor shared by both reset types, so only the type with the newest used_at owns this unread marker. Otherwise a weekly reset could make stale five-hour history look newly completed, or vice versa. */
 export function applyCodingPlanQuotaResetStatus(
   previous: CodingPlanQuotaResetUiEntry | null,
   status: CodingPlanResetStatusSnapshot,
@@ -169,8 +160,8 @@ export function applyCodingPlanQuotaResetStatus(
     (resetType === "WEEK"
       ? status.latestFiveHourResetHistory?.usedAt
       : status.latestWeekResetHistory?.usedAt) ?? null;
-  // 共享 has_unread_history 只归属 used_at 最新的一类；相等时按当前类型归属，
-  // 保证有新历史时至少有一类能进入完成态，且不会两类同时抢占。
+  // The shared has_unread_history belongs only to the type with the latest used_at; on a tie, assign it to the current type.
+  // This ensures at least one type can enter completed when there is new history, without both types claiming it.
   const ownsUnread =
     status.hasUnreadHistory &&
     latestUsedAt !== null &&
@@ -178,12 +169,12 @@ export function applyCodingPlanQuotaResetStatus(
   const validOpportunities = availableResets
     .filter((item) => Number.isFinite(item.expireAt) && item.expireAt > now)
     .sort((left, right) => left.expireAt - right.expireAt);
-  // 同一 used_at 的粘滞完成态与共享手动轨迹归因只在“没有新机会”时生效。
-  // 后端可能在同一重置周期内（used_at 未变）再次发放机会；若完成态继续优先，新机会
-  // 会被 UI 永久吞掉，用户重新登录（清空窗口内存态）才能看到入口。有效机会到来即视为
-  // 进入新一轮周期，回到 AVAILABLE。ownsUnread（刚发现的未读完成）不受影响：完成提示
-  // 与额度校正先播，history/read 后的下一轮再让位；processing 对账也不受影响：机会
-  // 余额 >0 时手动 /use 确认循环仍必须看到 completed。
+  // Sticky completion for the same used_at and attribution of shared manual history apply only when there is no new opportunity.
+  // The backend may grant another opportunity in the same reset cycle (without changing used_at). If completed keeps taking priority,
+  // the UI permanently hides the new opportunity until the user signs in again and clears the window's in-memory state. A valid new
+  // opportunity starts a new cycle and returns to AVAILABLE. ownsUnread (a newly discovered unread completion) is unaffected: show the
+  // completion message and correct the quota first, then yield on the next cycle after history/read. Processing reconciliation is also
+  // unaffected: while opportunities remain, the manual /use confirmation loop must still see completed.
   const hasValidOpportunity = validOpportunities.length > 0;
   const shouldComplete = Boolean(
     latestUsedAt !== null &&
@@ -203,8 +194,8 @@ export function applyCodingPlanQuotaResetStatus(
     );
   }
 
-  // 手动 use 期间 status 轮询可能仍读到消费前快照。此时保持 processing，
-  // 只有服务端 used_at 才能确认成功，不能被旧 opportunity 回退成可再次点击。
+  // While manual use is in progress, status polling may still return the pre-redemption snapshot. Keep processing in that case;
+  // only server used_at confirms success, and an old opportunity must not revert the state to clickable.
   if (previous?.status === "processing") {
     return previous;
   }
@@ -233,7 +224,7 @@ export function startCodingPlanQuotaResetManualUse(
   return {
     ...entry,
     status: "processing",
-    // processing 时保留点击前的机会快照，失败后才能无损恢复并复用幂等键。
+    // Preserve the opportunity snapshot from before the click while processing, so a failure can restore it without loss and reuse the idempotency key.
     opportunityCount: entry.opportunityCount,
     opportunityExpiresAt: entry.opportunityExpiresAt,
     startedAt: now,
@@ -257,8 +248,8 @@ export function failCodingPlanQuotaResetManualUse(
   return {
     ...entry,
     status: "available",
-    // 失败恢复必须保留点击前的机会数量和过期时间，否则入口会消失，
-    // 用户也无法用原幂等键重试同一次核销。
+    // Failure recovery must preserve the pre-click opportunity count and expiration time; otherwise the entry disappears
+    // and the user cannot retry the same redemption with its original idempotency key.
     opportunityCount: entry.opportunityCount,
     opportunityExpiresAt: entry.opportunityExpiresAt,
     startedAt: null,
@@ -270,11 +261,7 @@ export function failCodingPlanQuotaResetManualUse(
   };
 }
 
-/**
- * 合并五小时与周额度的机会徽标展示：一个礼物徽标、次数累加，
- * 倒计时取可见机会中最早到期的一档；某档到期/隐藏后自动回落到剩余档。
- * 仅影响徽标展示，重置按钮仍按类型各自独立。
- */
+/** Combine opportunity badges for five-hour and weekly quotas: show one gift badge and add their counts. Use the earliest expiration among visible opportunities for the countdown; when one type expires or is hidden, fall back to the remaining type. This affects only the badge; reset buttons remain independent by type. */
 export function mergeCodingPlanQuotaResetOpportunityBadges(
   items: ReadonlyArray<{
     count: number;
@@ -319,10 +306,10 @@ export function resolveCodingPlanQuotaResetLimit(
     return limit;
   }
   if (!entry.quotaOverridePending) {
-    // 重置后额度池没有活跃窗口（新窗口从下一条 prompt 才开始），刷新回来的真实
-    // 额度可能缺失 nextResetTime。entitlement 刷新几乎与完成同 tick，乐观改写只存活几百
-    // 毫秒，「重置时间」会闪现即消失。完成态期间继续用 completedAt + 周期 兜底展示；
-    // 服务端一旦给出真实窗口（用户已发新消息）则立即让位。percentage 不再覆盖，以刷新为准。
+    // After reset, the quota pool has no active window (a new window starts with the next prompt), so refreshed quota data may lack
+    // nextResetTime. Entitlement refresh happens almost at the same time as completion, so the optimistic update lasts only a few
+    // hundred milliseconds and the "reset time" disappears almost immediately. Keep using completedAt + interval as a fallback while
+    // completed; yield as soon as the server provides a real window (after the user sends a new message). Do not override percentage; use refreshed data.
     return limit.nextResetTime == null && entry.nextResetAt !== null
       ? { ...limit, nextResetTime: entry.nextResetAt }
       : limit;
@@ -330,15 +317,15 @@ export function resolveCodingPlanQuotaResetLimit(
 
   return {
     ...limit,
-    // quota 接口的 percentage 表示已使用占比；UI 完成态覆盖为 0% 已使用，即 100% 剩余。
+    // The quota API's percentage is the share already used; in the completed UI state, override it to 0% used (100% remaining).
     percentage: 0,
     nextResetTime: entry.nextResetAt ?? limit.nextResetTime,
   };
 }
 
-// available 由礼物徽标 +「重置」按钮承载，因此不打开工具栏 Tooltip。
-// 手动重置已经由按钮自身展示 loading，并在成功后播放烟花；如果这里再展示
-// processing/completed Tooltip，会形成重复反馈。只有自动/运营完成（startedAt 为空）保留短提示。
+// available is represented by the gift badge + "Reset" button, so do not open the toolbar tooltip.
+// The button already shows loading for manual reset and plays confetti on success; showing a processing/completed tooltip here
+// would duplicate feedback. Keep the brief message only for automatic/operational completion (startedAt is null).
 export function resolveCodingPlanQuotaResetStatusVisible(
   entry: CodingPlanQuotaResetUiEntry | null,
   now: number,
@@ -350,10 +337,10 @@ export function resolveCodingPlanQuotaResetStatusVisible(
   return now - entry.observedAt < doneDisplayMs;
 }
 
-// Composer 触发器上自动/运营重置提示的合成阶段：
-// - processing：首次观察后约 1 秒展示“正在重置”，还原服务端处理中的观感（后端无 processing 信号）。
-// - completed：随后切换为“已重置”，并一直保留，直到用户 hover 触发器查看额度面板后由组件收起。
-// dismissed=true（已 hover 收起）或非自动完成（手动 startedAt 不为空 / 未完成 / 未观察）时返回 null。
+// Synthesized phases for the automatic/operational reset message on the Composer trigger:
+// - processing: about 1 second after first observation, show "Resetting" to recreate server processing (the backend has no processing signal).
+// - completed: then switch to "Reset" and keep it until the user hovers over the trigger to view the quota panel and the component dismisses it.
+// Return null when dismissed=true (already dismissed on hover) or when this is not an automatic completion (manual startedAt, incomplete, or not observed).
 export type CodingPlanQuotaResetAutomaticPhase = "processing" | "completed";
 
 export function resolveCodingPlanQuotaResetAutomaticPhase(
@@ -371,11 +358,7 @@ export function resolveCodingPlanQuotaResetAutomaticPhase(
   return now - entry.observedAt < processingMs ? "processing" : "completed";
 }
 
-/**
- * 清除已失效的补播撒花 arm：armed 的 used_at 不再是当前生效的自动完成
- * （被跨窗口抑制置空 observedAt，或被更新的 used_at 取代）时必须清 arm，
- * 否则其他窗口 hover 面板时仍会从「已重置」位置撒花，违背“多窗口只播一次”。
- */
+/** Clear a stale replay-confetti arm: if its used_at is no longer the active automatic completion (observedAt was cleared by cross-window suppression, or a newer used_at replaced it), clear the arm. Otherwise another window could still play confetti from the "Reset" state on panel hover, violating the one-play-across-windows rule. */
 export function pruneCodingPlanQuotaResetConfettiArms(
   arms: Record<CodingPlanResetType, number | null>,
   automaticCompletedAtByType: Record<CodingPlanResetType, number | null>,

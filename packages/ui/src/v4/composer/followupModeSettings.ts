@@ -11,7 +11,7 @@ export function resolveAppFollowupMode(
 export function resolveOppositeFollowupDelivery(
   mode: SessionConfigState["followupMode"],
 ): "startNow" | "queue" {
-  // queue 模式的修饰键发送曾被解释成 guide；“立即发送”实际是队列既有的抢占语义。
+  // A modifier-key send in queue mode used to be interpreted as guide; "send immediately" is the queue's existing preemption behavior.
   return mode === "guide" ? "queue" : "startNow";
 }
 

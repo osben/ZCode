@@ -2,21 +2,21 @@
 // Skill scan policy (pure, no I/O)
 // ============================================================
 //
-// 技能目录扫描的共享策略，被 @zcode/services（桌面端递归扫描）与
-// apps/zcode-cli 的 @zcode/adapters（agent 端单层扫描）共同消费，
-// 避免两端对“什么目录该进入”产生分歧。
+// Shared policy for scanning skill directories, used by @zcode/services (recursive desktop scan) and
+// @zcode/adapters in apps/zcode-cli (single-level Agent scan),
+// to prevent the two sides from disagreeing about which directories to enter.
 //
-// 必须保持纯逻辑、不引入 node:* 依赖，否则会破坏 web bundle。
+// Keep this as pure logic with no node:* dependencies, or the Web bundle will break.
 
-/** 技能定义文件名。 */
+/** Skill definition filename. */
 export const SKILL_FILE_NAME = "SKILL.md";
 
 /**
- * 递归扫描技能目录时直接跳过的子目录名。
+ * Child directory names to skip during recursive skill-directory scans.
  *
- * 只跳过 `.` 开头目录是不够的：
- * `node_modules` 等内容目录会被整棵递归吃进去，在 Windows 上把单次
- * `skills.list` 放大到 69–256s。这些目录里不会存放用户技能，统一排除。
+ * Skipping only directories beginning with `.` is not enough:
+ * content directories such as `node_modules` would be recursively scanned in full, making a single
+ * `skills.list` take 69–256 seconds on Windows. These directories do not contain user skills, so exclude them consistently.
  */
 export const SKILL_SCAN_EXCLUDED_DIRECTORY_NAMES: ReadonlySet<string> = new Set([
   "node_modules",
@@ -34,22 +34,22 @@ export const SKILL_SCAN_EXCLUDED_DIRECTORY_NAMES: ReadonlySet<string> = new Set(
 ]);
 
 /**
- * 递归扫描的最大深度（相对扫描根，根自身为 0）。
+ * Maximum recursive scan depth (relative to the scan root, which is depth 0).
  *
- * 真实技能布局很浅：`root/<name>/SKILL.md`，分组场景至多
- * `root/<group>/<name>/SKILL.md`。给到 8 层留足冗余，同时作为
- * symlink/junction 形成的超深目录链的兜底刹车。
+ * Real skill layouts are shallow: `root/<name>/SKILL.md`, or at most
+ * `root/<group>/<name>/SKILL.md` when grouped. A depth of 8 leaves ample room and serves as a fallback brake for
+ * unusually deep directory chains created by symlinks/junctions.
  */
 export const MAX_SKILL_SCAN_DEPTH = 8;
 
 /**
- * 技能目录（含 ~/.zcode/skills 等）下默认不进入以 . 开头的子目录，
- * 避免 .agents/.cursor 等 vendored 副本与软链镜像重复列出；
- * 同时跳过 node_modules 等内容目录。
+ * By default, do not enter dot-prefixed subdirectories under skill directories (including ~/.zcode/skills),
+ * to avoid listing vendored copies such as .agents/.cursor and symlink mirrors more than once;
+ * also skip content directories such as node_modules.
  */
 const SKILL_DISCOVERY_DOT_DIR_ALLOWLIST = new Set([".system"]);
 
-/** 判断递归扫描是否应进入某个子目录项。 */
+/** Determines whether a recursive scan should enter a child directory. */
 export function shouldWalkSkillDirectoryEntry(entryName: string): boolean {
   if (SKILL_SCAN_EXCLUDED_DIRECTORY_NAMES.has(entryName)) {
     return false;

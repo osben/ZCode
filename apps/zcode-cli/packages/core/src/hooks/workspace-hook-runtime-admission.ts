@@ -29,9 +29,9 @@ export type WorkspaceHookDispatchDecision =
       skipLifecycle?: boolean;
     };
 
-// 软门禁:准入层完成评估后通过此 port 上报 pending 状态。
-// pendingCount = configuredEnabled && admissionClass === "pending" 的声明数。
-// pendingCount === 0 也要上报(供投影层清空提示条)。
+// Soft gate: after admission evaluation, report the pending state through this port.
+// pendingCount = number of declarations where configuredEnabled && admissionClass === "pending".
+// Report pendingCount === 0 as well so the projection layer can clear the banner.
 export interface WorkspaceHookAdmissionState {
   pendingCount: number;
   bundleDigest: string;
@@ -53,7 +53,7 @@ export interface WorkspaceHookRuntimeAdmissionOptions {
   enabled?: boolean;
   logger?: Logger;
   ready: Promise<void>;
-  /** 软门禁:activate() 完成评估后回调,上报 pending 状态 */
+  /** Soft gate: called after activate() evaluates admission to report the pending state. */
   onAdmissionStateChanged?: WorkspaceHookAdmissionStateCallback;
   snapshot: WorkspaceHookBundleSnapshot;
 }
@@ -93,7 +93,7 @@ export class WorkspaceHookRuntimeAdmission implements WorkspaceHookRuntimeAdmiss
           reasonCode: "workspace_hooks_feature_disabled",
           source,
         });
-        // 功能关闭时 pendingCount = 0,上报清空状态
+        // When the feature is disabled, pendingCount is 0; report the cleared state.
         this.emitAdmissionState();
       }
       return;
@@ -103,13 +103,13 @@ export class WorkspaceHookRuntimeAdmission implements WorkspaceHookRuntimeAdmiss
         await waitForWorkspaceHookAdmission(this.ready, signal);
       } catch (error) {
         if (signal?.aborted) throw signal.reason ?? error;
-        // Trust store bootstrap 失败不能扩大执行面；主任务和其他来源 Hook 仍可继续。
+        // A failed Trust store bootstrap must not expand execution; the main task and Hooks from other sources can continue.
         this.bootstrapFailed = true;
       }
       this.activated = true;
     }
     this.safeRefreshEvaluation();
-    // 软门禁:不等待 review,直接上报 pending 状态供投影层/使用
+    // Soft gate: report the pending state immediately for the projection layer without waiting for review.
     this.emitAdmissionState();
   }
 
@@ -152,9 +152,9 @@ export class WorkspaceHookRuntimeAdmission implements WorkspaceHookRuntimeAdmiss
         this.validatedRevision,
       )
     ) {
-      // 懒刷新曾只更新 evaluation 漏发 admission 状态——外部写入 Trust store
-      // （如 Settings pretrust）bump revision 后，banner pendingCount 停留旧值直到下一
-      // 次 activate。刷新后必须重发（pendingCount === 0 也会发，用于清空提示条）。
+      // Lazy refresh used to update only the evaluation and omit the admission state. After an external Trust store write
+      // (such as Settings pretrust) bumped the revision, the banner pendingCount stayed stale until the next activate.
+      // Re-report after refresh (including pendingCount === 0, which clears the banner).
       this.refreshEvaluation();
       this.emitAdmissionState();
     }
@@ -196,13 +196,13 @@ export class WorkspaceHookRuntimeAdmission implements WorkspaceHookRuntimeAdmiss
 
   replaceSnapshot(snapshot: WorkspaceHookBundleSnapshot): void {
     if (snapshot.workspaceIdentity !== this.snapshot.workspaceIdentity) {
-      // 不变式：调用方只能用同一 workspaceIdentity 的快照替换当前快照。跨 identity
-      // 替换意味着调用方混淆了 workspace 边界——这是编程错误而非运行时条件，故抛错
-      // 而非静默 no-op 或返回软结果（fail-loud）。调用方必须：
-      //   1. 在调用前完成其自身的写入提交（本 Runtime 不回滚外部写入）；
-      //   2. 用 try/catch 包裹本调用——抛出的异常不得冒泡到 turn 级别。
-      // 当前唯一调用方：workspace-hook-review-controller.ts 的 toggle 路径，
-      // 其 writeCommitted 逻辑已满足上述条件。新增调用方，必须在调用点单独处理此异常。
+      // Invariant: callers may replace the current snapshot only with one for the same workspaceIdentity. Replacing across identities
+      // means the caller confused workspace boundaries—a programming error, not a runtime condition—so throw rather than silently no-op
+      // or return a soft result (fail loudly). Callers must:
+      //   1. Commit their own write before calling (this Runtime does not roll back external writes).
+      //   2. Wrap this call in try/catch; the exception must not bubble to the turn level.
+      // The only current caller is the toggle path in workspace-hook-review-controller.ts, whose writeCommitted logic satisfies these conditions.
+      // Any new caller must handle this exception at its call site.
       throw new Error("Cannot replace a Workspace Hook snapshot across workspace identities");
     }
     this.snapshot = snapshot;
@@ -236,7 +236,7 @@ export class WorkspaceHookRuntimeAdmission implements WorkspaceHookRuntimeAdmiss
     );
   }
 
-  // 软门禁:上报 pending 状态。pendingCount = configuredEnabled && admissionClass === "pending"。
+  // Soft gate: report the pending state. pendingCount = configuredEnabled && admissionClass === "pending".
   private emitAdmissionState(): void {
     if (!this.onAdmissionStateChanged) return;
     const evaluation = this.evaluation;
@@ -278,15 +278,15 @@ export class WorkspaceHookRuntimeAdmission implements WorkspaceHookRuntimeAdmiss
   }
 
   /**
-   * refreshEvaluation 调用 coordinator.evaluateSnapshot，
-   * 后者在持久状态畸形（zod parse 失败）时会抛错。该异常不能直接冒泡出 activate →
-   * runSessionStartHooks → 整个 turn，导致用户/插件 Hook 也一并失败，且每轮重试
-   * （文件本身的注释也说"主任务和其他来源 Hook 仍可继续"）。
+   * refreshEvaluation calls coordinator.evaluateSnapshot,
+   * which throws if persisted state is malformed (Zod parsing fails). This exception must not bubble from activate →
+   * runSessionStartHooks → the whole turn, causing user/plugin Hooks to fail too and retrying every turn
+   * (the file itself says "the main task and Hooks from other sources can continue").
    *
-   * 对比 evaluateDispatch 路径已通过 resolveHookRunAdmission 的 try/catch 兜底，
-   * activate 路径也必须有同等兜底：捕获后置 bootstrapFailed=true——fail-closed，
-   * evaluateDispatch 命中该标志即返回 workspace_hooks_trust_store_corrupt 拒绝执行，
-   * refreshEvaluation 自身也被该标志短路不再重试。turn 继续推进，非 workspace Hook 不受影响。
+   * The evaluateDispatch path already has a try/catch fallback through resolveHookRunAdmission;
+   * activate needs the same fallback: set bootstrapFailed=true after catching (fail closed).
+   * evaluateDispatch then returns a workspace_hooks_trust_store_corrupt denial when it sees the flag,
+   * and refreshEvaluation is short-circuited so it does not retry. The turn continues and non-workspace Hooks are unaffected.
    */
   private safeRefreshEvaluation(): void {
     if (!this.enabled || this.bootstrapFailed || this.invalidatedReason) return;

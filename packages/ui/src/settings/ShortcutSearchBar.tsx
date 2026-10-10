@@ -9,13 +9,13 @@ interface ShortcutSearchBarProps {
   query: string;
   onQueryChange: (value: string) => void;
   keySearch: ShortcutKeySearch;
-  /** 武装态与行内录制互斥：激活按键搜索前先取消进行中的行内录制。 */
+  /** Armed key search is mutually exclusive with inline recording: cancel any active inline recording first. */
   onArmKeySearch: () => void;
-  /** 搜索条右侧操作区（「全部恢复默认」按钮）。 */
+  /** Action area to the right of the search bar ("Restore all defaults" button). */
   actions?: ReactNode;
 }
 
-/** 快捷键设置页搜索条：文本搜索框 + VSCode 式「按组合键搜索」按钮。 */
+/** Shortcut-settings search bar: text search input + VS Code-style "Search by key combination" button. */
 export function ShortcutSearchBar({
   query,
   onQueryChange,
@@ -24,8 +24,8 @@ export function ShortcutSearchBar({
   actions,
 }: ShortcutSearchBarProps) {
   const { intl } = useZCodeIntl();
-  // VSCode 同款展示：捕获的组合键作为输入框文本从左侧显示（替代文本搜索词，
-  // 文本过滤条件仍在内部生效，× 清除后回到纯文本搜索）。
+  // VS Code-style display: show the captured key combination as input text on the left (in place of the text search term;
+  // text filtering remains active internally, and clearing with × returns to text-only search).
   const keyLabel =
     keySearch.binding !== null ? formatShortcutBindingLabel(keySearch.binding) : null;
 
@@ -42,8 +42,8 @@ export function ShortcutSearchBar({
           }
           value={keyLabel ?? query}
           onChange={(e) => onQueryChange(e.target.value)}
-          // 武装态键盘事件被 window capture 独占；捕获后展示的是组合 label 而非可编辑文本，
-          // 两者都 readOnly，防止 IME/焦点残留造成的视觉歧义
+          // While armed, keyboard events are exclusively handled by window capture; after capture, the displayed value is a shortcut label rather than editable text.
+          // Both fields are read-only to avoid visual ambiguity from a lingering IME or focus state.
           readOnly={keySearch.armed || keyLabel !== null}
           data-testid="settings-shortcut-search-input"
         />

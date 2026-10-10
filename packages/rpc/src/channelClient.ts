@@ -21,8 +21,8 @@ export class ChannelClient implements IChannelClient, IDisposable {
   private isDisposed = false;
   private activeRequests = new Set<IDisposable>();
   private handlers = new Map<number, IHandler>();
-  // Promise 请求和事件监听共用 handlers，但只有前者需要在连接终结时 reject。
-  // 单独维护 reject map，避免 dispose 把事件订阅误当成挂起的 RPC 请求。
+  // Promise requests and event listeners share handlers, but only requests need to be rejected when the connection ends.
+  // Keep a separate reject map so dispose does not mistake event subscriptions for pending RPC requests.
   private pendingRejections = new Map<number, (error: Error) => void>();
   private lastRequestId = 0;
   private protocolListener: IDisposable | null;
@@ -67,8 +67,8 @@ export class ChannelClient implements IChannelClient, IDisposable {
     const result = new Promise<any>((resolve, reject) => {
       this.pendingRejections.set(id, reject);
       const doRequest = () => {
-        // dispose/cancel 可能发生在 Initialize 之前；此时不能再把已经 rejected
-        // 的请求发送到新连接或已终结的传输上。
+        // dispose/cancel may happen before Initialize; do not send an already-rejected
+        // request to a new connection or a terminated transport.
         if (this.isDisposed || !this.pendingRejections.has(id)) {
           return;
         }
@@ -258,8 +258,8 @@ export class ChannelClient implements IChannelClient, IDisposable {
     if (!reason) {
       rejection.name = "ConnectionClosed";
     }
-    // 传输已终结时，所有已发出以及排队等待 Initialize 的 Promise 请求都必须
-    // fail-closed。否则上层的 in-flight 去重 Promise 会永久占用 workspace key。
+    // When the transport ends, fail closed for all sent Promise requests and those queued while waiting for Initialize.
+    // Otherwise, an in-flight deduplication Promise at a higher layer can hold the workspace key forever.
     for (const [id, reject] of this.pendingRejections) {
       this.pendingRejections.delete(id);
       this.handlers.delete(id);

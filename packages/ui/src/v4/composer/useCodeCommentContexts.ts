@@ -100,8 +100,8 @@ export function useCodeCommentContexts({
       ) {
         return;
       }
-      // V4 迁移只保留了 PreviewPane 的事件发送端，没有任何 composer
-      // 消费端；claim 后由唯一 primary pane 接管，避免分屏时重复写入多个输入区。
+      // The V4 migration retained the PreviewPane event sender but had no Composer consumer.
+      // After claim, the single primary pane takes ownership to prevent duplicate writes to multiple inputs in split view.
       event.preventDefault();
       if (!event.defaultPrevented) return;
       const attachment: CodeCommentComposerAttachment = {

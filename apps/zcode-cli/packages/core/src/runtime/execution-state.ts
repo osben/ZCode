@@ -39,7 +39,7 @@ export function buildExecutionStateEntry(
   };
 }
 
-/** 权限与 Plan 是一个已消费状态；保存失败不发布成功快照，也不提前改内存。 */
+/** Permission and Plan form one consumed state; on save failure, do not publish a success snapshot or update memory early. */
 export async function applyRuntimeExecutionState(
   runtime: AgentRuntimeInternal,
   input: { mode?: string; planEnabled?: boolean },

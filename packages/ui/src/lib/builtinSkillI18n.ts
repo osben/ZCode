@@ -236,7 +236,7 @@ export function resolveSkillDisplayDescription(
   const descriptions = isOfficialBuiltinSkill(skill)
     ? BUILTIN_SKILL_DESCRIPTIONS[skill.name]
     : undefined;
-  // 未翻译的语言回退英文描述，避免露出 skill 自带的（可能是中文的）原始描述。
+  // For untranslated locales, fall back to the English description so the skill’s original description (which may be Chinese) is not exposed.
   const localized = descriptions?.[locale ?? "en-US"] ?? descriptions?.["en-US"];
   return localized ?? skill.description;
 }

@@ -1,4 +1,4 @@
-/* eslint-disable max-lines -- Main 的完整薄转发契约集中维护请求与端口关联。 */
+/* eslint-disable max-lines -- Keep Main's complete thin-forwarding contract for request/port association in one place. */
 import { randomUUID } from "node:crypto";
 import { BrowserWindow, MessageChannelMain } from "electron";
 import type { MessagePortMain, UtilityProcess as ElectronUtilityProcess } from "electron";
@@ -40,7 +40,7 @@ interface PendingConnect {
 
 interface RemoteAttachmentRoute {
   webContentsId: number;
-  // Main 只保留端口转发所需的 request/session 关联和脱敏 descriptor；连接/任务事实归 Host。
+  // Main retains only request/session associations and redacted descriptors needed to forward ports; connection/task facts belong to Host.
   descriptor: WindowHostRemoteWorkspaceDescriptor;
   rendererAttachmentId?: string;
   pendingRendererAttachment?: {
@@ -129,7 +129,7 @@ function closeMessagePort(port: MessagePortMain | undefined): void {
   try {
     port.close();
   } catch {
-    // MessagePort 关闭失败不影响 Host 内 attachment 的 close/dispose 幂等收口。
+    // Failure to close the MessagePort does not affect idempotent close/dispose cleanup of the attachment in Host.
   }
 }
 
@@ -207,8 +207,9 @@ export function createRemoteWorkspaceSessionManager(options: {
       level: payload.level,
       source: "window-host-controller",
       message: payload.message,
-      // 改造曾把完整 ISO 时间直接交给连接日志 UI，长时间戳会挤压 flex 日志列并换行。
-      // 这里恢复既有的紧凑时钟展示契约，Host 的 requestId 路由和原始日志内容保持不变。
+      // A previous change passed full ISO timestamps to the connection-log UI, where long timestamps
+      // compressed the flex log column and caused wrapping. Restore the existing compact clock format
+      // without changing Host requestId routing or raw log content.
       timestamp: new Date().toLocaleTimeString(undefined, {
         hour12: false,
         hour: "2-digit",
@@ -229,7 +230,7 @@ export function createRemoteWorkspaceSessionManager(options: {
         attachmentId,
       });
     } catch (error) {
-      // 候选 port 的回收属于幂等清理，不能因 Host 已退出导致 ready promise 再次悬空。
+      // Reclaiming a candidate port is idempotent cleanup; a Host exit must not leave the ready promise pending again.
       options.logger.warn("[window-host-remote] detach renderer attachment failed", {
         attachmentId,
         reason,
@@ -357,8 +358,9 @@ export function createRemoteWorkspaceSessionManager(options: {
     }
     route.rendererAttachmentId = pending.attachmentId;
     if (pending.previousAttachmentId) {
-      // Host generation bind 会 fail-closed 立即失效 A；Main 仍需等 renderer 注册 B
-      // 后再提升 route 并做幂等清理。reload 复挂没有 generation 换代，也因此不会提前拆掉可用旧 port。
+      // A Host generation bind fails closed and immediately invalidates A. Main must still wait for
+      // the renderer to register B before promoting the route and cleaning up idempotently. A reload
+      // reattach does not change generation, so it does not tear down a usable old port prematurely.
       detachServicePort(child, pending.previousAttachmentId, "candidate-promoted");
     }
     options.logger.info(
@@ -506,7 +508,7 @@ export function createRemoteWorkspaceSessionManager(options: {
     try {
       options.reportRemoteConnectionStateChanged?.({ ...common, transition: reason });
     } catch (error) {
-      // telemetry 是连接生命周期的旁路，不能因 reporter 异常回滚 route 退出状态。
+      // Telemetry is a side channel of connection lifecycle and a reporter error must not roll back the route's exit state.
       options.logger.warn("[remote-usage-arms] disconnect gauge reporter failed", { error });
     }
     try {
@@ -548,8 +550,9 @@ export function createRemoteWorkspaceSessionManager(options: {
       route.attachmentState = "closed";
     });
     route.providerProvisioningDispose?.();
-    // 连接断开只把 route 标成 closed，已暴露的 desktop attachment 仍留在窗口 Host；
-    // sessionId 换代后 Main 又会删除 route，导致旧 ChannelServer 永久失去回收入口。
+    // Disconnecting only marks the route closed; the exposed desktop attachment remains in the
+    // window Host. If Main then deletes the route after sessionId changes, the old ChannelServer
+    // permanently loses its cleanup path.
     detachRouteAttachments(
       route,
       "session-connection-closed",
@@ -582,8 +585,9 @@ export function createRemoteWorkspaceSessionManager(options: {
       if (parsed.data.type === HostResponseTypes.RemoteWorkspaceConnectionLog) {
         const pending = pendingByRequestKey.get(requestKey(webContentsId, parsed.data.requestId));
         if (!pending) return;
-        // 多个远程连接共享 window Host，不能再从进程 label/stdout 猜日志归属；
-        // Host 已带上连接 requestId，Main 只向对应发起窗口做薄转发。
+        // Multiple remote connections share one window Host, so log ownership cannot be inferred
+        // from process label/stdout. Host includes the connection requestId, and Main only forwards
+        // it to the corresponding initiating window.
         emitConnectionLog(pending.win, {
           requestId: parsed.data.requestId,
           level: parsed.data.level,
@@ -610,8 +614,9 @@ export function createRemoteWorkspaceSessionManager(options: {
             pending.reject(new Error(`Provider Provisioning 首次同步失败 (${parsed.data.status})`));
             return;
           }
-          // Target 错误可能来自任意远端实现并携带请求材料；过渡期只记录可定位的状态事实，
-          // 不转抄不可证明已脱敏的自由文本，避免 Provisioning 日志成为凭据泄露入口。
+          // A Target error may come from any remote implementation and contain request material.
+          // During migration, record only locatable state facts; do not copy free text that is not
+          // proven redacted, or Provisioning logs could expose credentials.
           options.logger.warn("[provider-provisioning] Environment sync did not apply", logContext);
         } else {
           options.logger.info("[provider-provisioning] Environment sync completed", logContext);
@@ -683,8 +688,9 @@ export function createRemoteWorkspaceSessionManager(options: {
         ? await options.resolveWslTarget(target)
         : target;
     if (appShutdownStarted) {
-      // WSL identity 解析跨 await，期间退出屏障可能已清空 Main 请求关联并开始回收 Host。
-      // 恢复后必须重新验证生命周期，禁止在 shutdown barrier 之后注册迟到请求。
+      // WSL identity resolution crosses an await, during which the shutdown barrier may clear Main's
+      // request association and begin reclaiming Host. Revalidate lifecycle after resuming; do not
+      // register a late request after the shutdown barrier.
       throw new Error("应用正在退出，无法创建远程工作区连接");
     }
     if (win.isDestroyed() || win.webContents.isDestroyed()) {
@@ -758,7 +764,7 @@ export function createRemoteWorkspaceSessionManager(options: {
       workspaceIdentity,
       generation: route.descriptor.generation + 1,
     };
-    // 同一 parentPort 上 Bind 先于 Attach 处理；IPC 只在 renderer 注册新 port 后返回。
+    // Bind is processed before Attach on the same parentPort; IPC returns only after the renderer registers the new port.
     await attachRendererPort(win, route, "workspace-context-bound");
   }
 
@@ -1027,7 +1033,7 @@ export function createRemoteWorkspaceSessionManager(options: {
     },
     cancelPendingRemoteWorkspaceSessionsForWindow,
     handleWorkspaceRunningTaskCountChanged: () => {
-      // Running-task 事实现在由窗口 Host registry/ControllerProjection 持有；Main 不再维护 WSL pool。
+      // Running-task facts now belong to the window Host registry/ControllerProjection; Main no longer maintains a WSL pool.
     },
   };
 }

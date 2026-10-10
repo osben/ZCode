@@ -1,9 +1,9 @@
 // ============================================================
-// workflowRuns 归约里的自适应并发部分
+// Adaptive concurrency portion of the workflowRuns reducer
 // ============================================================
-// 从 workflow-runs-reducer.ts 拆出（max-lines 门）：主归约只剩 switch 的分派，
-// `concurrency-changed` 的规则住在这里。与主归约同一条纪律：纯函数、无时钟——事件上的
-// `cooldownMs` 是相对量，deadline 由 UI 按收到状态的时刻推算。
+// Split out of workflow-runs-reducer.ts to meet the max-lines limit: the main reducer only dispatches the switch,
+// and the `concurrency-changed` rules live here. Like the main reducer, this module uses pure functions and does not read the clock.
+// Event `cooldownMs` is relative; the UI derives the deadline from when it receives the state.
 
 import {
   WORKFLOW_RUNS_LIMITS,
@@ -11,19 +11,18 @@ import {
   type WorkflowRunState,
 } from "./workflow-runs.js";
 
-/** 事件里的 `reason` 值：桶空闲重置回天花板——它不是冷却，收到即清掉旧的 cooldown。 */
+/** Event `reason` for resetting an idle bucket to its ceiling. This is not a cooldown; clear any old cooldown when received. */
 const CONCURRENCY_IDLE_RESET_REASON = "idle_reset";
 
 /**
- * `concurrency-changed` → `run.concurrency`。
+ * Reduce `concurrency-changed` into `run.concurrency`.
  *
- * ceiling 由本 run 见过的最大 `previous` / `next` 推导（事件不带它；桶从天花板起步，所以首条
- * 事件的 `previous` 就是天花板，只降不升的序列里它也恒是最大值）。`cooldownMs` 只在带
- * Retry-After 的限流上在场；`idle_reset` 清掉它。`next` 读不动（缺席 / 非正整数）时整条只抬水位：
- * 没有 cap 就没有可显示的东西。
+ * Derive the ceiling from the greatest `previous` / `next` seen by this run (the event omits it; the bucket starts at the ceiling, so the first
+ * event's `previous` is the ceiling and remains the maximum in a sequence that only decreases). `cooldownMs` is present only for rate limits with Retry-After;
+ * `idle_reset` clears it. If `next` is invalid or absent, return unchanged: without a cap there is nothing to display.
  *
- * `limit` 照搬：它是本 run 自己的界（`run-started` 带来的），与共享桶的涨落无关——治理器压低
- * 或放开一个 provider key，不会改变用户给这次 run 定的上限。
+ * Preserve `limit`: it is this run's own bound from `run-started`, independent of shared bucket changes. The governor lowering
+ * or raising a provider key does not change the limit the user set for this run.
  */
 export function reduceConcurrencyChanged(
   run: WorkflowRunState,
@@ -52,16 +51,15 @@ export function reduceConcurrencyChanged(
 }
 
 /**
- * `run-started` → `run.concurrency.limit`：本 run **自己的**那条界。载荷带引擎的
- * `caps.maxConcurrency` 与 CLI 在铸载荷那一刻算出的 `concurrencyCeiling`（天花板是进程事实，
- * 不是引擎事实，所以它由 CLI 拼进载荷，与 `resumedFrom` 同一先例）。
+ * Reduce `run-started` into `run.concurrency.limit`, the bound **for this run**. The payload includes the engine's
+ * `caps.maxConcurrency` and the `concurrencyCeiling` computed by the CLI when it creates the payload (the ceiling is a process fact,
+ * not an engine fact, so the CLI adds it, following the precedent of `resumedFrom`).
  *
- * 只在 `maxConcurrency < ceiling` 时记：跑在天花板上的 run 与从前逐字节相同，一个键都不多。
- * 老 CLI 不发 `concurrencyCeiling`，读不出天花板就无从判断这个 run 是否被压低——什么都不改。
+ * Record it only when `maxConcurrency < ceiling`: a run at the ceiling stays byte-for-byte identical, with no extra keys.
+ * Older CLIs do not send `concurrencyCeiling`; without a readable ceiling, we cannot tell whether the run was lowered, so leave it unchanged.
  *
- * 共享桶那一侧（`cap` / `key` / `cooldownMs`）原样留着：resume 会为同一个 runId 再发一条
- * `run-started`，而那时进程里很可能已经学到了一个被限流压低的 cap，用天花板把它盖掉就是把
- * 读数抬回一个假值。同理 `ceiling` 只升不降——与 `reduceConcurrencyChanged` 同一条水位规则。
+ * Preserve shared bucket fields (`cap` / `key` / `cooldownMs`): resume emits another `run-started` for the same runId, and by then the process may
+ * have learned a rate-limited lower cap. Replacing it with the ceiling would report a false value. Likewise, `ceiling` only increases, following the watermark rule in `reduceConcurrencyChanged`.
  */
 export function reduceRunStartedConcurrency(
   run: WorkflowRunState,
@@ -73,8 +71,8 @@ export function reduceRunStartedConcurrency(
     readCeiling !== undefined && readCeiling <= WORKFLOW_RUNS_LIMITS.maxConcurrencyCeiling
       ? readCeiling
       : undefined;
-  // 天花板本身单独记一份（`run.concurrencyCeiling`）：「配置」弹层的步进器要知道停在哪，而
-  // 跑在天花板上的 run 没有 `concurrency` 可挂。读不出就沿用已知值——与 subagentModel 同一条退化规则。
+  // Store the ceiling separately in `run.concurrencyCeiling`: the settings stepper needs to know its upper bound,
+  // and a run at the ceiling has no `concurrency` object. If it cannot be read, retain the known value, following the subagentModel fallback rule.
   const withCeiling =
     ceiling === undefined || run.concurrencyCeiling === ceiling
       ? run
@@ -82,8 +80,7 @@ export function reduceRunStartedConcurrency(
   if (limit === undefined || ceiling === undefined || limit >= ceiling) return withCeiling;
   const existing = withCeiling.concurrency;
   const concurrency: WorkflowRunConcurrency = {
-    // 没有共享桶读数时，cap 从天花板起步——桶本来就是从那里开始的（同 reduceConcurrencyChanged
-    // 推导 ceiling 的那条依据）。
+    // Without shared bucket data, start cap at the ceiling: that is where the bucket starts, as also assumed when reduceConcurrencyChanged derives the ceiling.
     ...(existing ?? { cap: ceiling }),
     ceiling: Math.max(existing?.ceiling ?? 0, ceiling),
     limit,
@@ -92,18 +89,18 @@ export function reduceRunStartedConcurrency(
 }
 
 /**
- * `run-caps-changed` → `run.concurrency.limit`：run **在飞时**它自己的那条界被改了。只改 `max_concurrency` 的修订就地生效——不停这次 run、
- * 不另起一次——引擎改完 caps 发这条事件，载荷与 `run-started` 同形（引擎的 `caps.maxConcurrency`
- * 加 CLI 拼进来的 `concurrencyCeiling`）。所以这里与 `reduceRunStartedConcurrency` 读同两个字段、
- * 守同一条「只在低于天花板时记」：同一个数经两条路进来不能得出两份读数。
+ * Reduce `run-caps-changed` into `run.concurrency.limit`: this run's own bound changed **while it was active**. A revision that changes only
+ * `max_concurrency` takes effect in place; the run is not stopped or restarted. The engine emits this event after updating caps, with the same payload shape as `run-started`
+ * (engine `caps.maxConcurrency` plus CLI-provided `concurrencyCeiling`). Read the same two fields and apply the same “record only below the ceiling” rule as
+ * `reduceRunStartedConcurrency`, so the same value produces the same result through either path.
  *
- * 天花板按「载荷 → 本 run 已知值」取。它是进程事实、整条 run 恒定，`run-started` 已经把它记在
- * `run.concurrencyCeiling` 上了，所以这条事件比 `run-started` 多一层退路；两个都没有才无从判断
- * 这个数是否被压低，什么都不改。`caps` 读不动同理。
+ * Resolve the ceiling from the payload, then the value already known for this run. It is a process fact that remains constant for the run, and `run-started` stores it
+ * in `run.concurrencyCeiling`, giving this event an extra fallback. If neither is available, whether the value was lowered cannot be determined, so leave it unchanged.
+ * The same applies when `caps` cannot be read.
  *
- * 升回天花板要把 `limit` **摘掉**而不是写成天花板：跑在天花板上的 run 按协议没有自己的界。摘完
- * 若共享桶那一侧也无话可说（cap 在水位上、不在冷却），整个 `concurrency` 键随之缺席——与一个
- * 从没被压低过的 run 逐字节相同。本来就没有 `limit` 时一个字不动（幂等的支点）。
+ * When the limit rises to the ceiling, **remove** `limit` instead of setting it to the ceiling: by protocol, a run at the ceiling has no per-run bound. After removal,
+ * if shared bucket state has nothing to report (cap is at its ceiling and not cooling down), omit the entire `concurrency` key, making the run byte-for-byte identical to one that was never lowered.
+ * If `limit` was already absent, leave everything unchanged to preserve idempotency.
  */
 export function reduceRunCapsChanged(
   run: WorkflowRunState,
@@ -124,7 +121,7 @@ export function reduceRunCapsChanged(
   const existing = withCeiling.concurrency;
   if (maxConcurrency < ceiling) {
     const concurrency: WorkflowRunConcurrency = {
-      // 没有共享桶读数时 cap 从天花板起步——与 reduceRunStartedConcurrency 同一条依据。
+      // Without shared bucket data, start cap at the ceiling, following the same assumption as reduceRunStartedConcurrency.
       ...(existing ?? { cap: ceiling }),
       ceiling: Math.max(existing?.ceiling ?? 0, ceiling),
       limit: maxConcurrency,
@@ -138,16 +135,15 @@ export function reduceRunCapsChanged(
     : { ...withCeiling, concurrency: shared };
 }
 
-/** 摘掉整个 `concurrency` 键（不是留一个空对象）：协议上「跑在天花板上」就是这个键不在。 */
+/** Remove the entire `concurrency` key instead of leaving an empty object: by protocol, a run at the ceiling has no such key. */
 function withoutConcurrency(run: WorkflowRunState): WorkflowRunState {
   const { concurrency: _cleared, ...rest } = run;
   return rest;
 }
 
 /**
- * 摘掉 `concurrency.cooldownMs`（run 终态：不再派发任何东西，冷却没有对象）。没有可摘的就
- * 原样返回——幂等重放的支点，与主归约的 withoutPendingQuestions 同理。cap / ceiling 照留：
- * 它们是这次 run 跑在什么并发下的历史事实。
+ * Remove `concurrency.cooldownMs` for a terminal run: nothing is dispatched afterward, so there is nothing to cool down. If absent, return the original value
+ * as an idempotency anchor, following the main reducer's withoutPendingQuestions. Preserve cap / ceiling as historical facts about the concurrency under which the run operated.
  */
 export function withoutCooldown(run: WorkflowRunState): WorkflowRunState {
   if (run.concurrency?.cooldownMs === undefined) return run;

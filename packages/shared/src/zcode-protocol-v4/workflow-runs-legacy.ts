@@ -1,14 +1,14 @@
 // ============================================================
-// 给**没有** `workflowRunDeltas` 能力的消费者的 workflowRuns 裁剪
+// Truncate workflowRuns for consumers **without** `workflowRunDeltas` capability.
 // ============================================================
-// 这一条不是展示预算，是 wire 兼容：旧消费者二进制里的 actors / nodes 校验界是 256
-// （{@link WORKFLOW_RUNS_LEGACY_LIMITS}），而已知键上的解析错误**不会被剥掉一个键**——它让整个
-// `state.updated` patch 失败、整帧被丢，那条订阅从此静默。所以我们把界抬到 1024 之后，发给旧
-// 消费者的每一帧（增量折叠出来的整键 patch，以及快照）都必须先过这里。
+// This is not a display budget; it is wire compatibility: older consumer binaries validate actors/nodes with a limit of 256
+// ({@link WORKFLOW_RUNS_LEGACY_LIMITS}), and parse errors on a known key **do not strip just that key** — they make the entire
+// `state.updated` patch fail and the entire frame be dropped, silently ending that subscription. So after raising the limit to 1024, every frame sent to an old
+// consumer (both whole-key patches folded from deltas and snapshots) must pass through this function first.
 //
-// 留下的是哪 256 条，则与归约侧的腾位同一条道理（workflow-runs-eviction.ts）：**还在动的先留**。
-// 旧手机画的和新客户端画的是同一件事——此刻谁在跑——而一刀切「前 256 条」会让一个宽 run 在
-// 那一代客户端上永远停在最早那批已经结束的身上。名额有余时按表序补最早的条目，输出仍按原表序。
+// Which 256 entries remain follows the same eviction principle as reduction (workflow-runs-eviction.ts): **keep active entries first**.
+// Old mobile and new clients show the same thing — who is active now — while blindly taking "the first 256" would leave a wide run showing only
+// the earliest already-finished entries on that client generation forever. Fill remaining slots with the earliest entries in table order; output stays in original table order.
 
 import { canonicalWorkflowRun } from "./workflow-runs-delta.js";
 import {
@@ -19,13 +19,13 @@ import {
 } from "./workflow-runs.js";
 
 /**
- * 按旧界裁剪；裁过的 run 置 `truncated: true`（读面据它显示「仅展示 N/M 步的详情」）。
+ * Truncate to the legacy bounds; set `truncated: true` on truncated runs (the read side uses it to show "showing details for only N/M steps").
  *
- * **不裁别的**：旧消费者认不出的新可选键是无害的（容器非 strict，多余的键被剥掉而已），
- * 而为了"干净"去剥它们反而要维护第二份字段表，增加字段不一致的风险。
+ * **Do not truncate anything else**: new optional keys unknown to old consumers are harmless (the container is not strict, so extra keys are simply stripped),
+ * while stripping them for "cleanliness" would require maintaining a second field list and increase the risk of mismatches.
  *
- * 无需裁剪时返回**同一个对象**：这个函数在每次 flush 上都会跑一遍，白白造一份新状态会让
- * 下游所有按引用 memo 的地方失效。
+ * Return the **same object** when no truncation is needed: this function runs on every flush, and creating a new state object unnecessarily would invalidate
+ * downstream memoization by reference.
  */
 export function clampWorkflowRunsForLegacy(state: WorkflowRunsState): WorkflowRunsState {
   let clamped = false;
@@ -42,19 +42,19 @@ export function clampWorkflowRunsForLegacy(state: WorkflowRunsState): WorkflowRu
     );
     if (actors === run.actors && nodes === run.nodes) return run;
     clamped = true;
-    // 走规范键序：`truncated` 可能是这条 run 上的新键，直接展开会把它缀在对象尾部，
-    // 而同一份状态在别处（归约出口、增量 apply）都是 schema 序。
+    // Use canonical key order: `truncated` may be a new key on this run, and spreading it directly would append it to the end of the object,
+    // while the same state uses schema order elsewhere (reduction output, delta apply).
     return canonicalWorkflowRun({ ...run, actors, nodes, truncated: true });
   });
   return clamped ? { revision: state.revision, runs } : state;
 }
 
 /**
- * 裁到 `limit` 条：先按表序收下**还在动的**，名额有余再按表序补最早的条目，最后按**原表序**
- * 输出（两遍取下标、一遍 filter，所以顺序是表序而不是「活的在前」）。
+ * Truncate to `limit` entries: first keep **active entries** in table order, then fill remaining slots with the earliest entries in table order, and finally output in **original table order**
+ * (two passes to select indices and one filter, so output order is table order rather than "active first").
  *
- * 活条目本身多过名额时按表序取前 `limit` 条——这一条仍然要有界，旧消费者的校验界不接受
- * 任何解释。界内时返回同一个数组。
+ * If active entries alone exceed the limit, take the first `limit` in table order — this still must be bounded, and older consumers' validation limits do not allow
+ * exceptions. Return the same array when it is within bounds.
  */
 function clampKeepingLive<T>(
   list: readonly T[],

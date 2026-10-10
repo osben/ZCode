@@ -34,7 +34,7 @@ function parseArgs(argv) {
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
 
-    // pnpm run 在透传参数时会保留一个裸 --，这里需要显式跳过，避免把它误当成待分析路径。
+    // pnpm run preserves a bare -- when forwarding arguments. Skip it explicitly so it is not treated as a path to analyze.
     if (arg === "--") {
       continue;
     }

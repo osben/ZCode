@@ -10,12 +10,11 @@ import type { BroadcastMessage } from "@zcode/services";
 import { logger } from "./logger.js";
 
 /**
- * BroadcastHub —— main 进程中的广播中转站
+ * BroadcastHub — broadcast relay in the main process.
  *
- * 管理所有活跃的 host process，当某个 host 发来广播消息时，
- * 转发给所有其他 host process。
+ * Manages all active Host processes and forwards a broadcast message from one Host to every other Host process.
  *
- * 广播路径：
+ * Broadcast path:
  *   Renderer A → (RPC) → Host A → (parentPort) → Main(BroadcastHub)
  *     → (postMessage) → Host B → (RPC event) → Renderer B
  *     → (postMessage) → Host C → (RPC event) → Renderer C
@@ -39,15 +38,15 @@ function createClaimToken(windowId: number, requestId: string): string {
 
 export class BroadcastHub {
   private processes = new Map<number, ElectronUtilityProcess>();
-  /** 通用 opaque reservation/claim；不保存 Coding Plan 等业务状态。 */
+  /** Generic opaque reservation/claim; does not store business state such as Coding Plan. */
   private readonly claims = new Map<string, BroadcastClaimRecord>();
 
-  /** 内存诊断计数器；只读 size。 */
+  /** In-memory diagnostic counter; read-only size. */
   collectMemoryDiagnostics(): Record<string, number> {
     return { claims: this.claims.size, processes: this.processes.size };
   }
 
-  /** 注册 host process 并监听其广播消息 */
+  /** Register a Host process and listen for its broadcast messages. */
   register(windowId: number, child: ElectronUtilityProcess): void {
     this.processes.set(windowId, child);
 
@@ -75,11 +74,12 @@ export class BroadcastHub {
     });
   }
 
-  /** 注销 host process（窗口关闭时调用） */
+  /** Unregister a Host process (called when its window closes). */
   unregister(windowId: number): void {
     this.processes.delete(windowId);
-    // 窗口在 reservation 返回前关闭时无法主动 release；只回收该窗口未 commit
-    // 的占用，已 commit claim 继续保留，避免后来打开的窗口重播同一次完成提示。
+    // If the window closes before reservation is returned, it cannot release it explicitly. Reclaim
+    // only this window's uncommitted reservations; retain committed claims so a later window does
+    // not replay the same completion notification.
     for (const [key, claim] of this.claims) {
       if (claim.ownerWindowId === windowId && claim.status === "reserved") {
         this.claims.delete(key);
@@ -103,8 +103,9 @@ export class BroadcastHub {
   }
 
   /**
-   * 原子申请 opaque key 的临时 reservation。Main 单线程保证 first-wins；reservation
-   * 必须由 winner 在展示边界 commit，否则可按 token release，并受 TTL/host 注销兜底回收。
+   * Atomically reserve an opaque key temporarily. Main's single thread guarantees first-wins.
+   * The winner must commit at the display boundary; otherwise release by token. TTL/Host
+   * unregistration provide fallback cleanup.
    */
   private handleClaim(
     windowId: number,
@@ -176,7 +177,7 @@ export class BroadcastHub {
     }
   }
 
-  /** 将广播消息转发给除发送源以外的所有 host process */
+  /** Forward a broadcast message to every Host process except the sender. */
   private relay(sourceWindowId: number, message: BroadcastMessage): void {
     const result = broadcastMessageSchema.safeParse(message);
     if (!result.success) {
@@ -184,7 +185,7 @@ export class BroadcastHub {
       return;
     }
 
-    // 填充来源信息，接收端可用于去重
+    // Add source information so receivers can deduplicate.
     const enriched: BroadcastMessage = { ...result.data, sourceWindowId };
 
     for (const [id, proc] of this.processes) {

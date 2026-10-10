@@ -77,8 +77,8 @@ export function createStdioServer(services: ServiceCollection) {
       return stopPromise;
     }
 
-    // 先同步摘掉 protocol listener，保证从这一刻起不再接收新的 service RPC；
-    // connection scope 的异步退订完成后再关闭底层 stdio。
+    // Remove the protocol listener synchronously first so no new service RPCs are accepted from this point;
+    // close the underlying stdio after connection-scope unsubscription completes asynchronously.
     channelServer.dispose();
     stopPromise = (async () => {
       try {

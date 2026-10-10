@@ -177,20 +177,20 @@ export function buildConversationTurnNavigatorItems(
   };
 
   return units.flatMap((unit, unitIndex) => {
-    // provider/store 的物理 role=user 还包含 background/goal/mailbox
-    // 等系统上下文；目录代表用户主动 query，只能使用投影明确裁决的 realUser。
+    // The provider/store's physical role=user also includes system context such as background/goal/mailbox;
+    // the navigator represents user-initiated queries and must use only realUser, as explicitly classified by the projection.
     const realUserInputs = unit.visibleUserInputs.filter((row) => row.origin === "realUser");
     if (unit.timelineOnly || realUserInputs.length === 0) {
       return [];
     }
 
-    // 导航项按 query 拆分，但 hover 的 assistant 摘要保持旧产品语义：
-    // 取所属 product turn 的文本结果，不在 renderer 猜测 guide 回复分段。
+    // Split navigator items by query, but preserve the old product semantics for the assistant hover summary:
+    // use the text result from the owning product turn; do not infer guide-response segments in the renderer.
     const { assistantPreview, assistantPreviewKind } = buildAssistantPreview(unit, resolvedOptions);
     return realUserInputs.map((row, queryIndex) => ({
-      // 不能以 product turn 为目录粒度，并把同一 turn 的 steer query
-      // 全部拼进一个 preview。目录真正导航的是用户可见 query，必须用稳定 row
-      // 身份逐条建项，turnId 只负责把虚拟列表先定位到所属容器。
+      // Do not use product turns as navigator entries and concatenate every steer query from the same turn into one preview.
+      // The navigator represents user-visible queries, so create one entry per query using stable row identity;
+      // turnId only locates the owning container in the virtual list.
       key: `${unit.key}:query:${row.entityId ?? row.rowId}`,
       turnId: unit.turnId,
       unitIndex,
@@ -203,8 +203,8 @@ export function buildConversationTurnNavigatorItems(
       }),
       assistantPreview,
       assistantPreviewKind,
-      // 同一 running product turn 可能已有多个已结束 guide segment；只有最后一条
-      // query 仍代表当前工作，避免所有旧 query 一起呈现 running 强调。
+      // One running product turn may already contain several completed guide segments; only the last
+      // query represents current work, preventing all old queries from appearing highlighted as running.
       isRunning: unit.isRunning && queryIndex === realUserInputs.length - 1,
     }));
   });

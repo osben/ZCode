@@ -1,13 +1,12 @@
 // ============================================================
-// AgentRuntime-backed WorkflowDriver：升级问答桥接（escalate）
+// AgentRuntime-backed WorkflowDriver: escalation question bridge (escalate).
 // ============================================================
-// workflow-driver.ts 顶到 oxlint max-lines 上限（400 行），把第四条时序（升级问答）的四个方法——会话级 escalate 端口、qid 铸造、作答结算、
-// 整会话撤下——拆到本文件成自由函数；driver 类上只留薄薄的委托。公开面不变，仍从
-// workflow-driver.ts 导出。
+// workflow-driver.ts reached oxlint's 400-line max-lines limit, so the four methods for the fourth sequence (escalation Q&A)—session-level escalate port, qid minting, answer settlement,
+// and removing all questions for a session—were moved here as free functions; the driver class keeps only thin delegates. The public surface is unchanged and remains exported from workflow-driver.ts.
 //
-// 四个函数对 driver 状态的全部触碰都经 {@link EscalationHost} 显式递进来（会话表、qid 反查表、
-// deps、per-run 序号、双轨 record），本文件不持有任何自己的状态——原方法体逐字保留，只把
-// `this.` 换成 `host.`。
+// All access to driver state by these four functions is passed explicitly through {@link EscalationHost} (session table, qid lookup table,
+// dependencies, per-run sequence, dual-track record). This file owns no state; the original method bodies are preserved, with only
+// `this.` changed to `host.`.
 
 import type {
   EscalateQuestionRequest,
@@ -33,26 +32,25 @@ import {
 import type { AgentRuntimeWorkflowDriverDeps, SessionState } from "./workflow-driver-types.js";
 
 /**
- * driver 交给升级桥接的宿主面。全是 driver 私有状态的**引用**（不是副本）：`sessions` /
- * `qidToSession` 就是类里的那两张表，`nextEscalationSeq` 递增类里的 per-run 序号，`record` 是
- * 类的双轨落地（journal + emit，顺序不可换——见 driver 的 record 注释）。
+ * Host surface the driver supplies to the escalation bridge. These are all **references** to private driver state, not copies: `sessions` /
+ * `qidToSession` are the class's two tables, `nextEscalationSeq` increments its per-run sequence, and `record` writes on both tracks
+ * (journal + emit; order must not change—see the driver's record comment).
  */
 export interface EscalationHost {
   readonly deps: AgentRuntimeWorkflowDriverDeps;
   readonly sessions: ReadonlyMap<string, SessionState>;
   readonly qidToSession: Map<string, SessionState>;
-  /** 取下一个 per-run 单调的升级序号（qid 的第二段）。 */
+  /** Get the next monotonically increasing per-run escalation sequence (the second qid segment). */
   nextEscalationSeq(): number;
   record(event: RunEvent): void;
 }
 
 /**
- * 结算一个停驻中的升级问答（run service 经注册表调进来）。与 {@link AgentRuntimeWorkflowDriver.respondToSubmit} 同族：
- * 解开 deferred，让 `escalate` 的工具结果变成这段答案，actor 的轮次就地继续。
+ * Settle a parked escalation question (called by run service through the registry). Like {@link AgentRuntimeWorkflowDriver.respondToSubmit}:
+ * resolve the deferred so this answer becomes the `escalate` tool result, and the actor continues in the same turn.
  *
- * 返回 false 表示本 driver 没有这个 qid（run 不对，或它刚被 cancelAsk 撤下）。注册表在调用
- * 本方法之前已经把 qid 退场，所以这里不再回写注册表——两处各删一次会让「已回答」与
- * 「被撤下」这两个退场原因互相覆盖。
+ * Return false if this driver does not have the qid (wrong run or it was just removed by cancelAsk). The registry retires the qid before calling
+ * this method, so do not write to it again here—retiring in both places could overwrite the distinction between "answered" and "removed".
  */
 export function respondToParkedEscalation(
   host: EscalationHost,
@@ -68,9 +66,9 @@ export function respondToParkedEscalation(
   try {
     host.record({ type: "escalation-resolved", qid, answer });
   } catch (error) {
-    // 与 raise 路径**相反**的取舍，理由也相反：那里写不进去就没人看得见这个问题，停驻只会
-    // 让 actor 永久阻塞，所以撤回并上抛；到了这里 actor 已经在等这段答案，为了一条观察事件
-    // 把它继续挂着才是更坏的结果。记 warn，答案照送。
+    // The tradeoff is **opposite** to the raise path, for the opposite reason: if the question cannot be recorded there, nobody can see it and the actor would
+    // block forever, so the registration is revoked and the error rethrown. Here the actor is already waiting for this answer; keeping it blocked over an observation
+    // event would be worse. Log a warning and deliver the answer.
     host.deps.logger?.warn?.("Dynamic workflow escalation resolved event not journaled", {
       errorMessage: error instanceof Error ? error.message : String(error),
       event: "dynamic_workflow.escalation.resolved_journal_failed",
@@ -84,12 +82,12 @@ export function respondToParkedEscalation(
 }
 
 /**
- * 撤下某会话上所有停驻中的升级问答：deferred 拒绝（handler 不再悬挂），注册表条目退场
- * （之后对这些 qid 作答得到 `run_not_in_flight`）。
+ * Remove all parked escalation questions for a session: reject each deferred (so handlers do not hang) and retire each registry entry
+ * (later answers for those qids receive `run_not_in_flight`).
  *
- * 三个调用点覆盖了 ask 结束的全部异常路径：`cancelAsk`（引擎主动取消）、`onTurnRejected`
- * （turn 自己抛错——此时没有人再读工具结果了）、`startAsk`（同一会话上换了下一个 ask）。
- * 正常路径不需要它：停驻中的 escalate 会阻塞住 turn，ask 不可能在还欠着答案时结算。
+ * Three call sites cover all abnormal paths that end an ask: `cancelAsk` (engine cancellation), `onTurnRejected`
+ * (the turn throws—nobody will read the tool result), and `startAsk` (starting the next ask in the same session).
+ * The normal path does not need this: a parked escalate blocks the turn, so the ask cannot settle while an answer is outstanding.
  */
 export function withdrawSessionEscalations(host: EscalationHost, state: SessionState): void {
   if (state.pendingEscalations.size === 0) return;
@@ -105,15 +103,15 @@ export function withdrawSessionEscalations(host: EscalationHost, state: SessionS
 }
 
 /**
- * 造一个会话级升级端口：`escalate` handler mid-turn 调用它并阻塞等主代理作答。
+ * Create a session-level escalation port: the `escalate` handler calls it mid-turn and blocks until the main agent answers.
  *
- * 与 {@link AgentRuntimeWorkflowDriver.makeSubmitPort} 逐条对称，唯二的不同都源于对端不是引擎而是主代理：
- *   1. **不上报 sink**。引擎核心零改动——升级全程发生在 driver 执行 ask 的边界内（与
- *      repair / nudge 轮次同层），零 I/O 状态机不感知它。事件走的是 journal + emit 两条轨。
- *   2. **停驻项可以有多个**（键 = qid），因为一轮里模型可以并行发出几个 escalate 调用。
+ * Symmetric with {@link AgentRuntimeWorkflowDriver.makeSubmitPort}; both differences come from the other side being the main agent rather than the engine:
+ *   1. **Do not report to sink.** The engine core is unchanged—the whole escalation occurs within the driver's ask boundary (at the same level as
+ *      repair / nudge turns), so the zero-I/O state machine is unaware of it. Events go through both journal + emit tracks.
+ *   2. **Multiple parked entries are allowed** (key = qid), because the model may issue several escalate calls in parallel during one turn.
  *
- * 两条早退都返回**普通工具结果**而不是抛错：预算耗尽时抛错只会让模型把它
- * 当成可重试的故障，反复撞同一堵墙——而这个特性存在的理由正是消灭那种空转。
+ * Both early exits return **normal tool results** instead of throwing: when the budget is exhausted, an exception would look like a retryable failure
+ * and make the model hit the same wall repeatedly—the exact spin this feature is meant to eliminate.
  */
 export function makeSessionEscalatePort(
   host: EscalationHost,
@@ -126,7 +124,7 @@ export function makeSessionEscalatePort(
     escalate: (request: EscalateQuestionRequest): Promise<WorkflowEscalateOutcome> => {
       const state = host.sessions.get(sessionId);
       if (state === undefined || state.currentInstance === undefined) {
-        // 无在飞 ask：问题无处停驻。不停驻、不悬挂（与 submit 的同名守卫同一条论证）。
+        // No active ask: there is nowhere to park the question. Do not park or hang (same rationale as the identically named submit guard).
         return Promise.resolve({
           kind: "refused",
           reason: "no_active_ask",
@@ -136,7 +134,7 @@ export function makeSessionEscalatePort(
         });
       }
       if (state.escalationsUsed >= MAX_ESCALATIONS_PER_ASK) {
-        // per-ask 上限（nudge 预算同族）：第 4 次起短路，绝不停驻。
+        // Per-ask limit (same family as the nudge budget): short-circuit from the fourth call onward; never park.
         return Promise.resolve({
           kind: "refused",
           reason: "budget_exhausted",
@@ -150,8 +148,8 @@ export function makeSessionEscalatePort(
       state.pendingEscalations.set(qid, deferred);
       host.qidToSession.set(qid, state);
       const context = normalizeEscalationContext(request.context);
-      // 时钟**只读一次**，事件与停驻记录共用：两处各调一次 Date.now() 会让同一个问题在事件轨
-      // 与快照上带着相差几毫秒的两个提问时刻，而下游要拿它算「等了多久」。
+      // Read the clock **once** and share it between the event and parked record. Calling Date.now() separately would give the same question different ask times
+      // in the event stream and snapshot by a few milliseconds, but downstream uses it to calculate how long it has been waiting.
       const askedAt = Date.now();
       host.deps.escalationRegistry.park(
         {
@@ -178,8 +176,8 @@ export function makeSessionEscalatePort(
           askedAt,
         });
       } catch (error) {
-        // journal 写不进去就没有 durable 的问答记录，而停驻会让 actor 无限期阻塞在一个
-        // 谁也看不见的问题上。撤回登记并把错误交给 handler，比悄悄停驻诚实。
+        // If the journal write fails, there is no durable question record, and parking would block the actor indefinitely on a question nobody can see.
+        // Revoke the registration and return the error to the handler; this is more honest than silently parking.
         state.pendingEscalations.delete(qid);
         host.qidToSession.delete(qid);
         host.deps.escalationRegistry.withdraw(qid);
@@ -191,13 +189,12 @@ export function makeSessionEscalatePort(
 }
 
 /**
- * 铸一个全局唯一的问题 id：`dwfq-<runId 片段>-<seq>`。
+ * Mint a globally unique question ID: `dwfq-<runId fragment>-<seq>`.
  *
- * 片段供人类调试辨认（语义上不透明——模型只把它当 token 传回来），seq 是 per-run 单调的。
- * 短片段（8 字符）在极端情况下可能撞上另一个 run 的片段，所以候选按长度递进，取第一个
- * 注册表里没占用的：**最后一个候选是完整 runId**，而「runId 唯一 × per-run 单调 seq」按构造
- * 无碰撞，因此这个循环必然终止在一个未占用的 id 上。全都占用只可能意味着两个 driver 共用了
- * 同一个 runId（装配错误），此时大声失败而不是发一个会错配答案的 id。
+ * The fragment helps humans recognize IDs while debugging (semantically opaque—the model only returns it as a token); seq increases monotonically per run.
+ * Short fragments (8 characters) could collide with another run in extreme cases, so try candidates of increasing length and take the first unused in the registry.
+ * The **last candidate is the full runId**; by construction, unique runId × per-run monotonic seq cannot collide, so the loop must end with an unused ID.
+ * If every candidate is used, two drivers are sharing a runId (wiring error); fail loudly instead of issuing an ID that could mismatch answers.
  */
 function mintEscalationQuestionId(host: EscalationHost): string {
   const seq = host.nextEscalationSeq();

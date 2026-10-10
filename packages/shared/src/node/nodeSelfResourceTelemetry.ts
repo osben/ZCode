@@ -1,9 +1,9 @@
 /**
- * host 与 scheduler 两个 utilityProcess 自采 CPU / 内存的共用换算逻辑
+ * Shared conversion logic for CPU/memory samples collected by the host and scheduler utilityProcesses.
  *
- * 只做差分换算：不持有定时器、也不负责发送。host 复用内存诊断日志既有的 60 秒定时器，
- * scheduler 自己起唯一的一个 unref 定时器，两边都把同一次 `process.memoryUsage()` 读数
- * 交给这里换算成一条样本。零外部进程，只用进程内 API。
+ * Performs only delta conversion: it owns no timer and does not send data. The host reuses the existing 60-second timer
+ * for memory diagnostic logs; the scheduler starts its single unref timer. Both pass the same `process.memoryUsage()` reading
+ * here to convert into one sample. No external processes are involved; only in-process APIs are used.
  */
 
 import { availableParallelism } from "node:os";
@@ -15,7 +15,7 @@ interface NodeCpuUsageSnapshot {
   system: number;
 }
 
-/** Node 进程自采周期：60 秒，与本地内存诊断日志同节拍。 */
+/** Node process self-sampling interval: 60 seconds, aligned with local memory diagnostic logs. */
 export const NODE_SELF_RESOURCE_SAMPLE_INTERVAL_MS = 60_000;
 
 export interface NodeSelfResourceSamplerOptions {
@@ -26,8 +26,8 @@ export interface NodeSelfResourceSamplerOptions {
 
 export interface NodeSelfResourceSampler {
   /**
-   * 用调用方刚读到的 `memoryUsage` 换算一条样本。
-   * 基线不可用（首次读数失败、时钟未前进、CPU 计数回退）时返回 null，只丢当前样本。
+   * Converts the caller's latest `memoryUsage` reading into a sample.
+   * Returns null when the baseline is unavailable (first read failed, clock did not advance, or CPU counter decreased); only the current sample is dropped.
    */
   sample(memoryUsage: NodeJS.MemoryUsage): NodeSelfResourceSample | null;
 }
@@ -37,7 +37,7 @@ interface SamplerBaseline {
   monotonicTimeNs: bigint;
 }
 
-/** CPU 百分比保留 4 位小数，与 CLI 自采样本同口径。 */
+/** CPU percentage is rounded to 4 decimal places, matching CLI self-sampled values. */
 function roundResourceMetric(value: number): number {
   return Math.round(value * 10_000) / 10_000;
 }
@@ -60,7 +60,7 @@ export function createNodeSelfResourceSampler(
     }
   };
 
-  // 构造时就建立基线，第一个 60 秒 tick 才能直接产出样本而不是空转一轮。
+  // Establish the baseline during construction so the first 60-second tick produces a sample instead of an empty cycle.
   let baseline = readBaseline();
 
   return {

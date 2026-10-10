@@ -14,10 +14,12 @@ import {
 import { barrier, bindSteps, recordControl, settlesAt } from "./causality-order-settle.js";
 import { bindStrands, strandMark, strandsSince } from "./causality-order-strands.js";
 
-// causality-order.ts 顶到 oxlint max-lines 上限（400 行），把节点访问器本体
-// （语句表走查、await / 赋值 / 短路 / 分支 / switch / try / 跳转的分支）拆到本文件；循环与
-// 调用两组各在同名兄弟模块。公开面仍从 causality-order.ts 导出。if 链的判定顺序与原文件
-// 逐字一致：`walkLoop` 占原来四个循环分支的位置，之后才落到 forEachChild 兜底。
+// causality-order.ts reached oxlint's max-lines limit (400), so the node-visitor implementation
+// (statement-list traversal and branches for await / assignments / short-circuiting / conditionals
+// / switch / try / jumps) was moved here. Loops and calls are in their respective sibling modules.
+// The public surface is still exported from causality-order.ts. The if-chain decision order exactly
+// matches the original: `walkLoop` occupies the four original loop-branch positions, then control
+// falls through to the forEachChild fallback.
 
 /** Open a guarded `branch` region and record its control dependence, if any. */
 function guarded(

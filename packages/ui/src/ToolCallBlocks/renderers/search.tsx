@@ -66,7 +66,8 @@ export function getSearchPrimaryText(intl: IntlLike, input: unknown): string {
     "query",
     "pattern",
     "path",
-    // WebFetch 同时带 url 和 prompt 时，权限/工具摘要展示 prompt 会遮住真正需要用户确认的目标地址。
+    // When WebFetch has both url and prompt, showing prompt in permission/tool summaries hides the
+    // destination address the user actually needs to confirm.
     "url",
     "prompt",
     "target",
@@ -110,8 +111,8 @@ export function SearchToolCallBlock(context: ToolCallBlockRenderContext) {
           })
         }
         sourceLabel={context.sourceLabel}
-        // search 的主文本直接拼成一句完整摘要，不再拆 secondaryText；
-        // 这样能避免 title 干扰，也更适合列表/目录查询这类操作。
+        // Compose the search primary text as a complete summary instead of splitting out secondaryText.
+        // This avoids title interference and better suits list/catalog queries.
         primaryText={primaryText}
         statusLabel={statusLabel}
         statusTooltip={toolCall.status === "failed" ? errorText : undefined}

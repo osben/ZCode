@@ -53,7 +53,7 @@ interface ZaiUserInfoPayload {
   picture?: string;
 }
 
-/** OAuth 启动恢复允许的最长等待时间（1 分钟） */
+/** Maximum wait allowed for OAuth startup restoration (1 minute). */
 const OAUTH_USERINFO_TIMEOUT_MS = 60_000;
 const ZAI_BUSINESS_TOKEN_TIMEOUT_MS = 10_000;
 const log = (...args: unknown[]) => console.log(formatLogPrefix("zaiOAuth", process.pid), ...args);
@@ -130,8 +130,8 @@ function normalizeBackendAvatarUrl(avatar: string | undefined): string | undefin
     return dataUrl;
   }
 
-  // ZAI 后端现在稳定返回可展示 URL 或 base64，客户端继续拼 chat.z.ai 前缀会改坏服务端语义。
-  // 这里只保留原值，避免把后端返回的 avatar 二次加工成错误地址。
+  // The ZAI backend now consistently returns a displayable URL or base64 value; adding a chat.z.ai prefix would change its semantics.
+  // Keep the value as-is to avoid turning the backend avatar into an invalid URL.
   return trimmed;
 }
 
@@ -145,8 +145,8 @@ function toBackendUserProfile(user: ZaiBackendUserPayload | undefined): OAuthUse
   }
 
   const id = user.user_id ?? "unknown";
-  // ZAI 后端 token body 里的 user.name 才是用户可见昵称，之前只读 email，
-  // 导致登录成功后侧栏和日志都显示 phone.local 邮箱；avatar 只做必要的 base64 展示格式归一化。
+  // user.name in the ZAI backend token body is the display name. Previously, only email was read,
+  // causing the sidebar and logs to show a phone.local email after login; normalize the avatar only as needed for base64 display.
   const username = user.name?.trim() || user.email || id;
   const avatarUrl = normalizeBackendAvatarUrl(user.avatar);
 
@@ -227,8 +227,8 @@ function logTokenResponseError(error: unknown): void {
     return;
   }
 
-  // 后端 4xx/5xx 排查需要响应里的 request id；直接记录完整 headers 会把 cookie 等敏感值落盘。
-  // readApiJson 只透出安全的链路追踪头，这里把它们和状态码一起打印出来，方便后端按 x-request-id 定位。
+  // Troubleshooting backend 4xx/5xx responses requires the request ID; logging full headers would persist sensitive values such as cookies.
+  // readApiJson exposes only safe trace headers; log them with the status code so the backend can locate requests by x-request-id.
   log("token response error", {
     method: error.method,
     url: error.url,
@@ -237,7 +237,7 @@ function logTokenResponseError(error: unknown): void {
   });
 }
 
-/** ZAI OAuth 协议适配器 */
+/** ZAI OAuth protocol adapter. */
 export class ZaiProviderAdapter implements OAuthProviderAdapter {
   readonly providerId = ZAI_PROVIDER_ID;
   readonly meta: OAuthProviderMeta;
@@ -263,8 +263,8 @@ export class ZaiProviderAdapter implements OAuthProviderAdapter {
     this.apiClient = apiClient;
     this.businessTokenResolver = new ZaiBusinessTokenResolver({
       apiClient,
-      // 测试 OAuth app 返回的 ZAI access_token 需要打到测试业务域换业务 token；
-      // 如果继续硬编码生产 api.z.ai，本地测试登录会在 OAuth token 成功后失败。
+      // A ZAI access_token returned by the test OAuth app must be exchanged for a business token on the test business domain;
+      // continuing to hardcode production api.z.ai would make local test login fail after OAuth token exchange succeeds.
       loginUrl: config.businessLoginUrl ?? "https://api.z.ai/api/auth/z/login",
       timeoutMs: ZAI_BUSINESS_TOKEN_TIMEOUT_MS,
     });
@@ -296,9 +296,9 @@ export class ZaiProviderAdapter implements OAuthProviderAdapter {
   }
 
   async normalizePolledTokenSet(tokenSet: OAuthTokenSet): Promise<OAuthTokenSet> {
-    // CLI flow 的 ready.access_token 仍是 Z.AI OAuth token，而 Desktop
-    // oauth:zai:access_token 的既有契约是 /api/auth/z/login 返回的业务 token。
-    // polling 与 deep link 必须在同一 adapter 边界完成转换，避免两种登录方式落盘语义分裂。
+    // The CLI flow's ready.access_token is still a Z.AI OAuth token, while Desktop's
+    // oauth:zai:access_token contract expects the business token returned by /api/auth/z/login.
+    // Convert at the same adapter boundary for polling and deep links so the two login methods persist the same semantics.
     return {
       ...tokenSet,
       accessToken: await this.businessTokenResolver.resolve(tokenSet.accessToken),
@@ -309,8 +309,8 @@ export class ZaiProviderAdapter implements OAuthProviderAdapter {
     params: OAuthCallbackParams,
     context: OAuthProviderContext,
   ): Promise<OAuthTokenSet> {
-    // 后端 OAuth token 路由排查时，原日志只记录了 404 结果，看不到客户端实际请求形态。
-    // 这里记录 method/url/headers/body 结构，同时脱敏一次性 code，避免敏感授权码落盘。
+    // During troubleshooting of the backend OAuth token route, the old logs recorded only a 404 result and not the actual client request.
+    // Log the method/url/header/body shape here and redact the one-time code so the sensitive authorization code is not persisted.
     log("token request", {
       method: "POST",
       url: this.config.tokenUrl,
@@ -332,8 +332,8 @@ export class ZaiProviderAdapter implements OAuthProviderAdapter {
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          // zcode OAuth token 后端现在同时服务 Z.ai 和 BigModel。
-          // 显式传 provider 枚举值，避免只依赖 redirect_uri 推断登录域导致兑换错路由。
+          // The zcode OAuth token backend now serves both Z.AI and BigModel.
+          // Pass the provider enum explicitly so the token exchange does not route incorrectly by inferring the login domain from redirect_uri alone.
           body: JSON.stringify({
             provider: ZAI_PROVIDER_ID,
             code: params.code,
@@ -347,9 +347,9 @@ export class ZaiProviderAdapter implements OAuthProviderAdapter {
       throw error;
     }
 
-    // ZAI token 响应在 adapter 内会立刻映射成 OAuthTokenSet，Root 层只能看到归一化后的登录结果，
-    // 因此排查线上返回结构时看不到最终 response body。这里在映射前打印脱敏 body，保留 code/msg/data 结构，
-    // 同时避免完整 access token 落盘。
+    // The ZAI token response is immediately mapped to OAuthTokenSet in the adapter, so the Root layer sees only the normalized login result
+    // and cannot inspect the final response body when troubleshooting production responses. Log a redacted body before mapping, preserving the code/msg/data structure,
+    // without persisting the full access token.
     log("token final response body", sanitizeTokenPayloadForLog(tokenPayload));
 
     if (tokenPayload.code !== 0) {
@@ -365,8 +365,8 @@ export class ZaiProviderAdapter implements OAuthProviderAdapter {
     if (!accessToken) {
       throw new Error("Token 交换失败：响应缺少 data.zai.access_token");
     }
-    // Z.AI 业务接口只认 /api/auth/z/login 返回的平台 JWT。
-    // 这里在登录阶段完成转换，让 oauth:zai:access_token 持久化的就是业务 token，后续不再做兜底二次交换。
+    // Z.AI business endpoints accept only the platform JWT returned by /api/auth/z/login.
+    // Convert it during login so oauth:zai:access_token stores the business token and no fallback exchange is needed later.
     const businessAccessToken = await this.businessTokenResolver.resolve(accessToken);
 
     const backendUser = tokenPayload.data?.user ?? undefined;
@@ -376,8 +376,8 @@ export class ZaiProviderAdapter implements OAuthProviderAdapter {
         profile: toBackendUserProfile(backendUser),
       };
     } else {
-      // 后端偶发不返回 data.user（或只返回空对象）时，之前会缓存 unknown/User 并短路后续 userinfo。
-      // 这样登录后 UI 会长期显示兜底文案。缺失有效 user 时不缓存，允许 fetchUserInfo 走远端补偿。
+      // When the backend occasionally omits data.user (or returns an empty object), the old code cached unknown/User and skipped later userinfo calls.
+      // This left the UI showing fallback text after login. Do not cache an invalid user; allow fetchUserInfo to recover from the remote endpoint.
       this.lastBackendUserProfile = null;
     }
     const expiresAt = normalizeExpiresIn(tokenPayload.data?.expires_in, context.now);
@@ -404,9 +404,9 @@ export class ZaiProviderAdapter implements OAuthProviderAdapter {
       this.config.userinfoUrl,
       {
         method: "GET",
-        // 启动恢复登录态会阻塞 UI 的“恢复中”落定。
-        // 如果这里没有超时兜底，弱网下请求可能长期挂起，界面会一直停在 loading。
-        // 这里统一限制为 1 分钟，超时后按失败路径收敛状态，避免无限等待。
+        // Startup session restoration blocks the UI from leaving the "restoring" state.
+        // Without a timeout fallback, a request on a weak network could hang and leave the interface loading indefinitely.
+        // Set a consistent one-minute limit here so timeout follows the failure path and cannot wait forever.
         timeoutMs: OAUTH_USERINFO_TIMEOUT_MS,
         headers: {
           Authorization: `Bearer ${tokenSet.accessToken}`,

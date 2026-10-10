@@ -78,11 +78,11 @@ export interface ConfigResult {
       uiThemePath: string | undefined;
       workspaceHookSnapshot?: WorkspaceHookBundleSnapshot;
       /**
-       * 审核请求与「审核中 toggle」曾各自推导 runtimeRoot（前者遍历
-       * default/user/project/env/cli 全部层，后者只读单层 runtimeConfig.hooks），
-       * 两者只要有一处不同就产生不同 bundleDigest，toggle 会被误判为
-       * workspace_hooks_snapshot_mismatch。这里导出快照实际使用的 runtimeRoot，
-       * 让下游复用同一个值，把一致性变成结构性约束而不是巧合。
+       * The review request and “toggle while reviewing” previously derived runtimeRoot separately (the former
+       * traversed all default/user/project/env/cli layers, while the latter read only runtimeConfig.hooks at one
+       * layer). Any difference produced a different bundleDigest and falsely reported
+       * workspace_hooks_snapshot_mismatch. Export the runtimeRoot used by the snapshot so downstream code reuses
+       * the same value and consistency is structural rather than accidental.
        */
       workspaceHookRuntimeRoot?: WorkspaceHookRuntimeRoot;
     };
@@ -160,15 +160,16 @@ export function createConfig(options: ConfigFactoryOptions = {}): ConfigResult {
           }),
         ])
       : summarizeProjectConfigs([]);
-  // explicit 配置曾在 auto-discovery 之后手工追加并自行编号，绕过 shared
-  // canonical-path dedup；同一文件会进入 snapshot 两次并使既有 Trust 全部 stale。
-  // 修法：有 workspace 时由 loadProjectConfigs 统一走 discoverWorkspaceHookConfigPaths，
-  // 去重、失败候选占位和 discoveryOrder 均与 Settings builder 同源。
+  // Explicit configuration used to be appended and numbered manually after auto-discovery, bypassing shared
+  // canonical-path deduplication. The same file could enter the snapshot twice and stale all existing Trust.
+  // When a workspace exists, route it through discoverWorkspaceHookConfigPaths in loadProjectConfigs so
+  // deduplication, failed-candidate placeholders, and discoveryOrder match the Settings builder.
   const projectConfigFiles = discoveredProjectConfigs.files;
   const projectSummary = discoveredProjectConfigs;
   const projectDiagnostics = discoveredProjectConfigs.diagnostics;
-  // 配置 diagnostics 过去只返回给调用方，用户导出日志时看不到加载失败或被跳过的 MCP server。
-  // 在汇总入口统一写 warn，保留具体文件路径和 JSON path，方便定位迁移配置问题。
+  // Configuration diagnostics were only returned to callers, so exported logs omitted MCP servers that failed
+  // to load or were skipped. Log them as warnings at the aggregation entry point, preserving file paths and JSON
+  // paths to help diagnose configuration migration issues.
   logConfigDiagnostics({
     env: options.env,
     loggerFactory: options.loggerFactory,

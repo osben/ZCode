@@ -36,8 +36,8 @@ export function ConversationShareSuccessDock({
   const { intl, locale } = useZCodeIntl();
 
   return (
-    // 分享 dock 曾在同一输入区额外叠加 popover ring、阴影和固定宽度，
-    // 切换时会产生不必要的层级光晕；这里只继承普通 Composer 的基础输入 surface。
+    // The share dock previously added a popover ring, shadow, and fixed width to the same input area,
+    // creating an unnecessary layered glow during transitions. Inherit only the regular Composer's base input surface.
     <section
       data-conversation-share-keep-open="success-dock"
       data-testid="conversation-share-success-dock"

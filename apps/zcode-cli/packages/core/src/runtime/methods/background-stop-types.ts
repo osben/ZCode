@@ -1,12 +1,12 @@
 // ============================================================
-// 后台停止分派的共享类型
+// Shared types for background-stop dispatch.
 // ============================================================
-// 从 background.ts 抽出，供它与按 RuntimeTaskType 分派出去的各个停止分支模块共用
-// （见 background-stop-dynamic-workflow.ts）。单独成文件是为了让分支模块不必 import
-// background.ts，避免两者互相 import 类型，也限制 background.ts 的规模。
+// Extracted from background.ts for use by that module and the stop-branch modules dispatched by RuntimeTaskType
+// (see background-stop-dynamic-workflow.ts). Kept in a separate file so branch modules need not import
+// background.ts, avoiding circular type imports and keeping background.ts small.
 //
-// background.ts 继续对外 re-export 这些名字，所以 agent-runtime.ts /
-// internal-turn-methods.ts 的既有 import 路径不变。
+// background.ts continues to re-export these names, so existing import paths in agent-runtime.ts /
+// internal-turn-methods.ts remain unchanged.
 
 import type { BackgroundTaskInfo, BackgroundTaskInfoStatus } from "../deps.js";
 import type { RuntimeTaskSnapshot, RuntimeTaskType } from "../../runtime-task/registry.js";
@@ -37,10 +37,9 @@ export type RuntimeBackgroundStopResult =
     };
 
 /**
- * GUI / 后台面板经
- * `runtime.cancelBackgroundTask` 进来的是 `"user"`，模型的 `TaskStop` 是 `"model"`；运行时
- * 清扫等系统路径不填。dwf 分支把它记到 registry 条目上，终态通知据此告诉模型「这是用户的
- * 决定，不要自行恢复」。
+ * Calls from the GUI/background panel through `runtime.cancelBackgroundTask` use `"user"`, while the model's `TaskStop` uses `"model"`;
+ * system paths such as runtime cleanup omit it. The dwf branch records it on the registry entry, allowing terminal notifications to tell the model
+ * "the user made this decision; do not resume on your own."
  */
 export type RuntimeBackgroundStopInitiator = "user" | "model";
 
@@ -58,7 +57,7 @@ export interface RuntimeBackgroundStopTarget {
   taskType: RuntimeTaskType | undefined;
 }
 
-/** 已确定 taskType 的停止目标；各分支模块只接受这一形态。 */
+/** Stop target with taskType already resolved; branch modules accept only this shape. */
 export type TypedRuntimeBackgroundStopTarget = RuntimeBackgroundStopTarget & {
   taskType: RuntimeTaskType;
 };

@@ -63,8 +63,8 @@ export function resolveCurrentOwnedIdentities(
   const rootPid = child.pid!;
   const knownRootIdentity = knownIdentities.find((identity) => identity.pid === rootPid);
   const childHasNotExited = !hasChildExited(child);
-  // root PID 在 exit 回调落到 JS 前也可能进入延迟回收窗口。
-  // 没有固定 root 身份或生前身份已不匹配时，都禁止沿裸 PID 抓 fresh tree。
+  // The root PID may enter a delayed-reclamation window before the exit callback reaches JavaScript.
+  // Without a fixed root identity, or when the live identity no longer matches, never capture a fresh tree by bare PID.
   if (!childHasNotExited) {
     return {
       childStillOwned: false,
@@ -86,8 +86,8 @@ export function resolveCurrentOwnedIdentities(
   }
 
   if (!knownRootIdentity && !allowRootDiscovery) {
-    // 首次查询失败后若在 force timer 中重新沿 rootPid 建立身份，
-    // 原 PID 已复用时会把无关进程树认领成 runtime；本轮回收必须永久 fail closed。
+    // If the force timer retries establishing identity from rootPid after the first query fails,
+    // a reused PID could cause an unrelated process tree to be claimed as the runtime; fail closed for the rest of this cleanup.
     return {
       childStillOwned: false,
       currentIdentities: [],
@@ -121,8 +121,8 @@ export function resolveCurrentOwnedIdentities(
   );
   const currentIdentities = filterCurrentProcessIdentities(mergedIdentities, options);
   return {
-    // root 可能在前一次身份核对与 fresh capture 之间退出；只有最终
-    // 复核集合仍包含 root，才能向 root PID/PGID 发信号，禁止信任过期布尔状态。
+    // The root may exit between the previous identity check and fresh capture; signal the root PID/PGID only if the final
+    // revalidated set still contains the root. Never trust a stale boolean result.
     childStillOwned: currentIdentities.some((identity) => identity.pid === rootPid),
     currentIdentities,
     knownIdentities: mergedIdentities,

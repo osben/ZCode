@@ -1,21 +1,22 @@
 import { ModelRetryBudget } from "@zcode/contracts";
 
 /**
- * 重试预算档位的判定。
+ * Determine the retry budget tier.
  *
- * 「无上限」**只**放宽瞬态失败的放弃条件：runner 的 attempt 循环、失败后「还能不能再试」两处闸门；
- * 退避曲线（2s→60s、jitter、Retry-After 优先）、`isRetryableFailure` 的分类、
- * `emittedRetryBoundaryEvent` 之后不重试、空补全重试与 compact 路径一律不动。
+ * "Unbounded" **only** relaxes when to give up on transient failures: the runner attempt loop and
+ * the post-failure "can retry?" gate. The backoff curve (2s→60s, jitter, Retry-After precedence),
+ * `isRetryableFailure` classification, no-retry behavior after `emittedRetryBoundaryEvent`, empty
+ * completion retries, and compact path are all unchanged.
  */
 
-/** 状态事件里 `maxAttempts` 表示「无上限」的哨兵（Infinity 不可序列化，0 不占用合法计数）。 */
+/** Sentinel for "unbounded" in the status event's `maxAttempts` (Infinity is not serializable; 0 is not a valid count). */
 export const UNBOUNDED_RETRY_MAX_ATTEMPTS = 0;
 
 export function isUnboundedRetryBudget(budget: ModelRetryBudget | undefined): boolean {
   return budget === ModelRetryBudget.Unbounded;
 }
 
-/** 失败之后还允许再试一次吗（等价于既有的 `retryBudgetAttempt < maxAttempts`，unbounded 恒真）。 */
+/** Whether another attempt is allowed after failure (equivalent to the existing `retryBudgetAttempt < maxAttempts`; always true when unbounded). */
 export function retryBudgetAllows(
   budget: ModelRetryBudget | undefined,
   retryBudgetAttempt: number,
@@ -24,7 +25,7 @@ export function retryBudgetAllows(
   return isUnboundedRetryBudget(budget) || retryBudgetAttempt < maxAttempts;
 }
 
-/** attempt 循环的继续条件（等价于既有的 `attempt <= loopMaxAttempts`，unbounded 恒真）。 */
+/** Continue condition for the attempt loop (equivalent to the existing `attempt <= loopMaxAttempts`; always true when unbounded). */
 export function retryAttemptLoopContinues(
   budget: ModelRetryBudget | undefined,
   attempt: number,
@@ -33,7 +34,7 @@ export function retryAttemptLoopContinues(
   return isUnboundedRetryBudget(budget) || attempt <= loopMaxAttempts;
 }
 
-/** 写进状态事件 / 日志的 maxAttempts：unbounded 下是哨兵 0。 */
+/** `maxAttempts` value written to status events / logs; the unbounded sentinel is 0. */
 export function retryBudgetMaxAttempts(
   budget: ModelRetryBudget | undefined,
   maxAttempts: number,

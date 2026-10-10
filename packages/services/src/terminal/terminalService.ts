@@ -31,9 +31,9 @@ async function loadNodePtyModule(): Promise<NodePtyModule> {
     nodePtyModulePromise = import("node-pty").catch((error: unknown) => {
       nodePtyModulePromise = null;
       const message = error instanceof Error ? error.message : String(error);
-      // remote server 启动时会先创建所有服务，之前这里顶层 import node-pty，
-      // 只要当前平台缺少 pty.node，就会在服务注册阶段直接崩掉，整条远程连接链路都失败。
-      // 改成延迟加载后，server 可以先完成握手，仅在真正创建终端时再暴露“terminal 不可用”的错误。
+      // A remote server creates all services during startup. Previously, importing node-pty at the top level
+      // crashed service registration whenever the current platform lacked pty.node, breaking the entire remote connection flow.
+      // Lazy loading lets the server complete its handshake and report “terminal unavailable” only when a terminal is actually created.
       throw new Error(`node-pty is unavailable in this runtime: ${message}`);
     }) as Promise<NodePtyModule>;
   }
@@ -126,10 +126,10 @@ function ensureNodePtySpawnHelperExecutable(): void {
     accessSync(helperPath, constants.X_OK);
     return;
   } catch {
-    // 当前环境里的 node-pty spawn-helper 丢了执行权限，
-    // child_process.spawn 还能工作，但 node-pty 在 macOS 上启动伪终端时会先调用这个 helper，
-    // helper 不可执行就会直接报 posix_spawnp failed。
-    // 这里在真正 spawn 前把 helper 修正为 0755，避免终端因为安装产物权限漂移而无法打开。
+    // The node-pty spawn-helper in the current environment lost its executable permission.
+    // child_process.spawn still works, but node-pty calls this helper before creating a pseudo-terminal on macOS,
+    // and a non-executable helper fails with posix_spawnp failed.
+    // Restore its mode to 0755 before spawn so permission drift in packaged artifacts does not prevent the terminal from opening.
   }
 
   try {
@@ -199,25 +199,25 @@ function resolveTerminalEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.Proces
   const nextEnv = { ...env };
   const fallbackLocale = resolveFallbackUtf8Locale(env);
 
-  // macOS 从 Dock/Finder/登录项启动 Electron 时，父进程通常只带 /usr/bin:/bin:/usr/sbin:/sbin，
-  // 甚至缺失 PATH；内置终端虽然打开了登录 shell，但 zsh/bash 仍会先继承这个过窄 PATH，
-  // 导致 ls 以外的 npm/node/pnpm 等常用命令找不到，部分用户的 profile 又不会重新补齐。
-  // 这里仅在传给 terminal 的环境里补常见 Homebrew 与系统路径，不改全局 process.env，并保留用户已有顺序。
+  // When Electron launches from the macOS Dock/Finder/login item, the parent often has only /usr/bin:/bin:/usr/sbin:/sbin,
+  // or may lack PATH entirely. Although the built-in terminal opens a login shell, zsh/bash first inherits this narrow PATH,
+  // so common commands such as npm/node/pnpm (besides ls) are unavailable, and some user profiles do not restore them.
+  // Add common Homebrew and system paths only to the terminal environment, without changing global process.env, and preserve the user's existing order.
   if (process.platform === "darwin") {
     nextEnv.PATH = resolveDarwinTerminalPath(env);
   }
 
-  // runtime 登录 shell 环境采集会用 TERM=dumb / CI=1 来避免 profile 脚本进入交互分支，
-  // 但真实 terminal panel 必须作为交互终端启动，否则 starship、p10k、颜色能力检测等会降级成无样式输出。
+  // Runtime login-shell environment collection uses TERM=dumb / CI=1 to keep profile scripts out of interactive branches,
+  // but the actual terminal panel must start as an interactive terminal or starship, p10k, and color detection degrade to unstyled output.
   nextEnv.TERM = "xterm-256color";
   nextEnv.COLORTERM = nextEnv.COLORTERM?.trim() || "truecolor";
   if (nextEnv.CI === "1" && env.TERM === "dumb") {
     delete nextEnv.CI;
   }
 
-  // Electron 从 GUI 启动时 host process 可能继承不到登录 shell 的 UTF-8 locale，
-  // 子 shell 会落到 C/POSIX locale，中文路径会被 zsh/bash 显示成 \M-^ 这类转义乱码。
-  // 这里只在 locale 缺失或明确为 C/POSIX 时补 UTF-8，保留用户已经配置好的 UTF-8 locale。
+  // When Electron starts from the GUI, the host process may not inherit the login shell's UTF-8 locale,
+  // leaving child shells in the C/POSIX locale and rendering non-ASCII paths as escape sequences in zsh/bash.
+  // Add UTF-8 only when locale is missing or explicitly C/POSIX, preserving any UTF-8 locale already configured by the user.
   if (isMissingOrCLocale(nextEnv.LANG)) {
     nextEnv.LANG = fallbackLocale;
   }
@@ -272,9 +272,9 @@ function spawnTerminalProcess(params: {
       throw error;
     }
 
-    // Windows 下开启 node-pty 的实验性 useConptyDll 时，某些 Electron/安装包环境会在 shell 真正启动前
-    // 就因为 conpty.node / conpty.dll 的原生模块定位失败直接报错，导致终端整个打不开。
-    // 这里仅在命中这类 DLL 加载错误时回退到系统内置 ConPTY，既保留新版路径的优先级，也避免把普通启动失败误判成可重试。
+    // On Windows, enabling node-pty's experimental useConptyDll may fail in some Electron/packaged environments before the shell starts
+    // because conpty.node / conpty.dll cannot be located, preventing the terminal from opening at all.
+    // Fall back to the system ConPTY only for these DLL loading errors, preserving the newer path's priority and avoiding retries for ordinary startup failures.
     return nodePty.spawn(shell, [], {
       ...windowsBaseOptions,
       useConptyDll: false,
@@ -284,8 +284,8 @@ function spawnTerminalProcess(params: {
 
 function resolveTerminalShell(): string {
   if (process.platform === "win32") {
-    // Windows PowerShell 5.1 的 PSReadLine 在 ConPTY 下更容易把输入行空白重绘成 ANSI black 背景。
-    // PowerShell 7+ 的终端兼容性更接近桌面端，优先使用已安装的 pwsh，找不到再回退到系统自带 shell。
+    // PSReadLine in Windows PowerShell 5.1 is more likely to redraw input-line whitespace with an ANSI black background under ConPTY.
+    // PowerShell 7+ is closer to desktop terminal behavior; prefer installed pwsh and fall back to the system shell if unavailable.
     const candidates = ["pwsh.exe", "powershell.exe", process.env.ComSpec, "cmd.exe"];
 
     for (const candidate of candidates) {
@@ -295,9 +295,9 @@ function resolveTerminalShell(): string {
     throw new Error("No usable Windows shell found for terminal startup");
   }
 
-  // 之前直接信任 SHELL 环境变量，外部环境如果残留了一个不存在的 shell 路径，
-  // node-pty 底层会把这个坏路径直接交给 posix_spawnp，终端创建时就会报错。
-  // 这里先校验 SHELL 是否真的可执行，不可用时再按常见 shell 顺序回退，避免启动直接失败。
+  // Previously, SHELL was trusted directly; if the environment retained a nonexistent shell path,
+  // node-pty passed it to posix_spawnp and terminal creation failed.
+  // Validate that SHELL is executable first and fall back through common shells if it is not, preventing startup failure.
   const candidates = [process.env.SHELL, "/bin/zsh", "/bin/bash", "/bin/sh"];
 
   for (const candidate of candidates) {
@@ -308,9 +308,9 @@ function resolveTerminalShell(): string {
 }
 
 function resolveTerminalCwd(cwd?: string): string {
-  // 工作区目录可能已经被删除、移动，或者启动时传进来的是一个失效路径。
-  // 之前把这个 cwd 原样传给 node-pty，同样会在 spawn 阶段失败。
-  // 这里优先使用传入目录，不可用时回退到 HOME / 系统 home / 根目录，保证终端还能拉起。
+  // The workspace directory may have been deleted or moved, or startup may have received an invalid path.
+  // Passing this cwd directly to node-pty would also fail during spawn.
+  // Prefer the supplied directory and fall back to HOME / system home / root when unavailable so the terminal can still start.
   const candidates = [cwd, process.env.HOME, homedir(), "/"];
 
   for (const candidate of candidates) {
@@ -325,8 +325,8 @@ export function createTerminalService(dependencies: {
 }): ITerminalService {
   const terminals = new Map<string, TerminalInstance>();
   let nextId = 0;
-  // 内存诊断计数器：客户端断连不回收 pty 时
-  // 这里会只增不减。
+  // In-memory diagnostic counter: if a client disconnect does not reclaim its pty,
+  // this count will only increase.
   const memoryDiagnostics = registerMemoryDiagnosticsProvider("terminal", () => ({
     open: terminals.size,
   }));
@@ -434,8 +434,8 @@ export function createTerminalService(dependencies: {
 
     disposeAll(): void {
       memoryDiagnostics.dispose();
-      // app 关闭时 host process 以前只会结束自身，terminal 里的子 shell 没有逐个显式 kill。
-      // 这里补一个本地清理入口，让 host 在退出链路里能同步回收所有仍存活的终端进程。
+      // When the app closed, the host process previously exited without explicitly killing each terminal child shell.
+      // Add a local cleanup entry point so Host can synchronously reclaim all still-running terminal processes during shutdown.
       for (const id of Array.from(terminals.keys())) {
         cleanupTerminal(id);
       }

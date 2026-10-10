@@ -13,8 +13,8 @@ export async function unregisterInstalledService(layout: ServerLayout): Promise<
   const platform = currentServicePlatform();
   const descriptor = createDaemonServiceDescriptor({ platform, layout });
   const descriptorPath = serviceDescriptorPath(layout, descriptor);
-  // 卸载先解除 OS 服务注册，再清理 descriptor/data root；否则 systemd/launchd 可能
-  // 在目录删除后继续拉起一个找不到 runtime 的孤儿服务。
+  // Unregister the OS service before removing the descriptor/data root; otherwise systemd/launchd may
+  // start an orphaned service after its directory is deleted and fail to find the runtime.
   if (await pathExists(descriptorPath)) await unregisterService(descriptor, descriptorPath);
   await unregisterRootScopedAliasServices(layout, platform, descriptorPath);
   await unregisterLegacyServiceForRoot(layout);
@@ -91,8 +91,8 @@ async function unregisterRootScopedAliasServices(
   platform: ServicePlatform,
   currentDescriptorPath: string,
 ): Promise<void> {
-  // 过去只按当前拼写的 stablePathId 卸载 descriptor，root 别名留下的旧注册会
-  // 在卸载后继续被 launchd/systemd 拉起。扫描同一 service 目录并按 canonical root 比对。
+  // Previously, descriptor uninstall matched only the current stablePathId spelling, so old registrations under a root alias
+  // could still be started by launchd/systemd after uninstall. Scan the same service directory and compare canonical roots.
   const extension = platform === "darwin" ? ".plist" : platform === "linux" ? ".service" : ".json";
   const legacyEntry =
     platform === "darwin"

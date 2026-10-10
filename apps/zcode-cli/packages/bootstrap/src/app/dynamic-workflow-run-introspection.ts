@@ -1,10 +1,11 @@
 // ============================================================
-// Dynamic Workflow Run Service：run 内省读面（ListWorkflowRuns / GetWorkflowRun）
+// Dynamic Workflow Run Service: run introspection read surface (ListWorkflowRuns / GetWorkflowRun)
 // ============================================================
-// dynamic-workflow-run-service.ts 顶到 oxlint max-lines 上限（400 行），把 `listRuns` /
-// `getRunDetail` 两个可选端口成员及其 pendingQuestions 切片拆到本文件；公开面仍从
-// dynamic-workflow-run-service.ts 导出。两个成员只在 journal 带内省查询时装进服务对象——
-// 缺席时整个不实现的判定仍在 service（见那边的 `introspection` 字段注释）。
+// dynamic-workflow-run-service.ts reached oxlint's max-lines limit (400 lines), so its two optional
+// port members, `listRuns` and `getRunDetail`, and their pendingQuestions slice moved here. The
+// public exports still come from dynamic-workflow-run-service.ts. The service object includes these
+// members only when the journal supports introspection queries; the service still decides whether
+// to omit the entire implementation (see the `introspection` field comment there).
 
 import type {
   DynamicWorkflowRunDetail,
@@ -37,45 +38,49 @@ import { buildWorkflowRunRoster } from "./dynamic-workflow-run-roster.js";
 import type { WorkflowEscalationRegistry } from "./workflow-escalation-registry.js";
 
 /**
- * `getRunDetail` 默认取的 `log()` 尾巴条数。尾巴是叙事进展的取样而不是完整日志——完整事件
- * 日志有 {@link DynamicWorkflowRunPort.listEvents} 的分页面。
+ * Default number of trailing `log()` entries returned by `getRunDetail`. The tail samples narrative
+ * progress rather than providing the full log; use the paginated full event log in
+ * {@link DynamicWorkflowRunPort.listEvents}.
  */
 const DEFAULT_LOG_TAIL_LIMIT = 20;
 
-/** 内省读面要读的 service 内部状态：注册表与停驻表都是**同一实例**的引用，不是副本。 */
+/** Internal service state read by the introspection surface: registry and parked table are references to the **same instances**, not copies. */
 interface DynamicWorkflowRunIntrospectionContext {
-  /** 已按能力探测窄化的 journal（与 `journal` 是同一个对象，只是类型更宽）。 */
+  /** Journal narrowed by capability detection (same object as `journal`, only a wider type). */
   introspection: DynamicWorkflowIntrospectableJournal;
   journal: JournalStorePort;
   parentSessionId: string;
-  /** service 的内存注册表（在飞 + 有界终态）。 */
+  /** Service's in-memory registry (in-flight + bounded terminal states). */
   runs: ReadonlyMap<string, RunRegistryEntry>;
-  /** 升级问答的停驻表，pendingQuestions 切片的唯一投影源。 */
+  /** Parked table for upgrade questions, the sole projection source for the pendingQuestions slice. */
   escalations: WorkflowEscalationRegistry;
   /**
-   * 本进程的并发天花板（service 的那一份实现）。详情面据它判断一个 run 的上界值不值得一提
-   * （{@link runConcurrencyField}）。是函数而不是数：内省成员在服务构造时造好一次，而天花板
-   * 是每次读时的事实。
+   * This process's concurrency ceiling (the service's implementation). The detail view uses it to
+   * decide whether a run's limit is worth reporting ({@link runConcurrencyField}). This is a
+   * function rather than a number because the introspection members are created once when the
+   * service is constructed, while the ceiling is a fact read on each query.
    */
   concurrencyCeiling: () => number;
 }
 
-/** 造 `listRuns` / `getRunDetail` 两个成员，由 service 展开进返回的端口对象。 */
+/** Build the `listRuns` and `getRunDetail` members for the service to spread into its returned port object. */
 export function createRunIntrospectionMethods(
   ctx: DynamicWorkflowRunIntrospectionContext,
 ): Required<Pick<DynamicWorkflowRunPort, "listRuns" | "getRunDetail">> {
   const { introspection, journal, parentSessionId, runs, escalations, concurrencyCeiling } = ctx;
   return {
     /**
-     * 按项目枚举 run：journal 行 ∪ 本会话注册表。**只读**——`possiblyInterrupted` 是
-     * 读面的标注，绝不改写 journal（替兄弟会话在飞的 run 收尸 = 把活着的 run 标死；
-     * 孤儿收敛的执行权只属于 owning 会话的构造时刻，见文件头不变式 4）。
+     * List runs by project: journal rows ∪ this session's registry. **Read-only**:
+     * `possiblyInterrupted` is a read-side annotation and must never rewrite the journal (cleaning
+     * up an in-flight run owned by a sibling session would mark a live run dead; orphan cleanup
+     * belongs exclusively to construction of the owning session, see invariant 4 in the header).
      */
     async listRuns(query: DynamicWorkflowRunListQuery): Promise<DynamicWorkflowRunListResult> {
       const limit = Math.max(0, query.limit);
-      // 多取一条**只为判定 truncated**，它不进结果页。判据绝不能是 `length === limit`：
-      // 条数正好等于 limit 时那会误报，而误报会让模型去追一页不存在的历史。同一个惯例在
-      // v4 网关的事件分页（hasMore）上已经用过一次。
+      // Fetch one extra row **only to detect truncation**; it does not go in the result page. Never
+      // use `length === limit` as the test: an exact-limit result would be a false positive, sending
+      // the model to fetch a nonexistent history page. The v4 gateway event pagination (`hasMore`)
+      // uses the same convention.
       const rows = introspection.listRuns({
         cwd: query.cwd,
         limit: limit + 1,
@@ -86,46 +91,51 @@ export function createRunIntrospectionMethods(
         spentTokens: row.spentTokens,
       }));
 
-      // 注册表补集：submit 已返回、引擎还没 createRun 的那几个微任务里，journal 里
-      // 没有任何痕迹。少了这一支，模型刚起的 run 会在自己的项目列表里整个消失。
+      // Registry complement: during the few microtasks after submit returns and before the engine
+      // calls createRun, the journal has no trace of the run. Without this branch, a newly started
+      // run would disappear from its own project list.
       const listed = new Set(rows.map((row) => row.runId));
       const gapItems: DynamicWorkflowRunListItem[] = [];
       for (const [runId, entry] of runs) {
         if (listed.has(runId) || entry.cwd !== query.cwd) continue;
-        // 行已存在却没被这次查询选中，说明它是被 limit / statuses 排除的——补集绝不
-        // 把它捞回来（那等于让一个显式传下来的过滤器静默失效）。
+        // If a row exists but was not selected by this query, limit/statuses excluded it; the
+        // complement must not pull it back in, which would silently invalidate an explicit filter.
         if (journal.getRun(runId) !== undefined) continue;
         const summary = registryRunSummary(runId, entry);
         if (query.statuses !== undefined && !query.statuses.includes(summary.status)) continue;
-        // 用量：行还没落，但修订 run 的起点在 submit 那一刻就已确定（见 RunRegistryEntry.inheritedTokens）。
-        // 全新 run 没有起点 ⇒ 0，与之前一致。
+        // Usage: the row is not persisted yet, but a revision run's starting point was fixed at
+        // submit time (see RunRegistryEntry.inheritedTokens). A fresh run has no starting point -> 0,
+        // consistent with previous behavior.
         gapItems.push({ ...summary, spentTokens: entry.inheritedTokens ?? 0 });
       }
 
-      // 间隙里的 run 一定是最新提交的（journal 行落下之前只有几个微任务），所以按
-      // 提交时间倒序排在 time_updated desc 的 journal 行之前；limit 是整页的界。
+      // A run in this gap is necessarily the most recently submitted (only a few microtasks precede
+      // its journal row), so sort it by submit time ahead of journal rows ordered by time_updated
+      // descending. The limit applies to the whole page.
       gapItems.sort((left, right) => right.createdAt - left.createdAt);
       const merged = [...gapItems, ...journalItems];
       const truncated = merged.length > limit;
       return {
         runs: truncated ? merged.slice(0, limit) : merged,
-        // 为真时才在场：`false` 是每一页都要带的噪音字段。
+        // Present only when true; `false` would be a noisy field on every page.
         ...(truncated ? { truncated: true } : {}),
       };
     },
 
-    /** 单 run 详情：dwf_run 行 + 节点计数 + actors + log 尾巴 + 内存终态产物。 */
+    /** Single-run detail: dwf_run row + node counts + actors + log tail + in-memory terminal artifacts. */
     async getRunDetail(runId: string): Promise<DynamicWorkflowRunDetail | undefined> {
       const row = introspection.getRunRow(runId);
       const entry = runs.get(runId);
       if (row === undefined) {
-        // 两者都没有 → 真的未知（工具层归一成 run_not_found）。只有注册表有 → 正是
-        // 上面那个间隙：run 确实存在，报 not_found 会是一句谎。
+        // Neither source has it -> genuinely unknown (normalized to run_not_found by the tool
+        // layer). Registry only -> the gap described above: the run exists, so reporting not_found
+        // would be false.
         if (entry === undefined) return undefined;
         const gapSummary = registryRunSummary(runId, entry);
-        // 情势截面的间隙形态：一条事件、一个节点行都还没有，所以阶段表缺席、花名册为空、
-        // 健康全零。唯一有内容的是 `pendingQuestionsKnown` —— 条目就在本会话手里，
-        // 停驻表当然查得到（而这一刻恰恰**最可能**停着问题，见下面的 pendingQuestions 注释）。
+        // Gap form of the situation snapshot: no events or node rows exist yet, so the phase table
+        // is absent, roster is empty, and health counts are zero. Only `pendingQuestionsKnown` has
+        // content: this session owns the entry and can read the parked table (and this is exactly
+        // when a question is **most likely** parked; see the pendingQuestions comment below).
         const gapRoster = buildWorkflowRunRoster({
           run: undefined,
           events: [],
@@ -137,15 +147,17 @@ export function createRunIntrospectionMethods(
         });
         return {
           ...gapSummary,
-          // 并发上界的间隙副本（见 RunRegistryEntry.maxConcurrency）：行还没落，但这个值在
-          // submit 那一刻就已确定，详情面没有理由在这几个微任务里装作不知道。
+          // Gap copy of the concurrency limit (see RunRegistryEntry.maxConcurrency): the row is
+          // not persisted, but the value was fixed at submit, so the detail view need not pretend
+          // it does not know during these few microtasks.
           ...runConcurrencyField(entry.maxConcurrency, concurrencyCeiling()),
-          // 子代理模型的间隙副本，同一条论证（见 RunRegistryEntry.subagentModel）。
+          // Gap copy of the subagent model, for the same reason (see RunRegistryEntry.subagentModel).
           ...runSubagentModelField(entry.subagentModel),
-          // 脚本文件的间隙副本，同一条论证（见 RunRegistryEntry.scriptPath）。
+          // Gap copy of the script file, for the same reason (see RunRegistryEntry.scriptPath).
           ...runScriptPathField(entry.scriptPath),
-          // 计数此刻还没有任何权威来源，诚实地为 0；用量的起点却是已知的（修订 run 继承前驱的
-          // 累计值，见 RunRegistryEntry.inheritedTokens），报 0 会说「这条 lineage 没花钱」。
+          // Counts have no authoritative source yet, so honestly report 0. The starting usage is
+          // known (a revision inherits its predecessor's cumulative value; see
+          // RunRegistryEntry.inheritedTokens), and reporting 0 would claim this lineage spent nothing.
           usage: {
             spentTokens: entry.inheritedTokens ?? 0,
             nodesObserved: 0,
@@ -158,47 +170,52 @@ export function createRunIntrospectionMethods(
           ...gapRoster,
           ...terminalResultField(gapSummary.status, entry),
           ...terminalErrorField(gapSummary.status, entry),
-          // 这条间隙分支正是「run 在飞、journal 行还没落」的那一刻，也就是问题**最可能**
-          // 停驻的时刻——漏掉它，刚起步的 run 里那个被挡住的 actor 在模型侧不可见。
+          // This gap branch is exactly when the run is in flight but its journal row is not yet
+          // persisted, also when a question is **most likely** parked. Without this branch, the
+          // blocked actor in a newly started run would be invisible to the model.
           ...pendingQuestionsField(escalations, runId),
-          // 产物：这条间隙分支里 dwf_run 行还没落，
-          // 但**节点行可能已经落了**——引擎在 createRun 之后立刻就能 putNode 一条 artifact
-          // 行。所以这里照样取一次，而不是想当然地给空：一个刚声明完看板就被查详情的 run
-          // 不该在模型侧显得什么都没产出。零件时 artifactsOf 让整个字段缺席。
+          // Artifacts: the dwf_run row is not persisted in this gap branch, but **node rows may
+          // already exist**—the engine can put an artifact row immediately after createRun. Read
+          // them here rather than assuming the list is empty: a run queried just after declaring a
+          // board should not appear to have produced nothing. If empty, artifactsOf omits the field.
           ...artifactsOf(runId, journal),
         };
       }
 
       const summary = journalRunSummary(row, entry, parentSessionId);
       const counts = introspection.countNodesByStatus(runId);
-      // 事件**只读一遍**：同一份序列
-      // 先经冷回放那条铸造链归约成 run 面板同款状态，再连同节点行 / actor 行喂给情势截面。
-      // 两边各读一次就是为同一份数据付两遍钱，而这条查询在长 run 上正是最贵的一段。
+      // Read events **once**: reduce the same sequence through the cold-replay path into the same
+      // state used by the run panel, then pass it with node/actor rows to the situation snapshot.
+      // Reading twice would pay twice for the same data, and this query is the most expensive part
+      // for long runs.
       const stored = journal.listEvents(runId, {});
       const pendingQuestions = pendingQuestionsOf(escalations, runId, summary.status, entry);
       return {
         ...summary,
-        // 落库的上界（`dwf_run.caps_max_concurrency`），只在低于天花板时在场。刻意不进
-        // journalRunSummary——那是列表行的共同截面，一个很少设置的字段不该把每一行都加宽。
+        // Persisted limit (`dwf_run.caps_max_concurrency`), present only when below the ceiling.
+        // Deliberately omit it from journalRunSummary, the shared list-row projection: a rarely set
+        // field should not widen every row.
         ...runConcurrencyField(row.caps.maxConcurrency, concurrencyCeiling()),
-        // 本 run 的子代理模型，只在设过时在场。它不在 dwf_run 的列上（刻意不做迁移）——
-        // 权威是 `run-launched` 事件。与快照同一条规则：有条目就读条目（三条建条目的路都落值），
-        // 只有冷行才去扫一次事件头。与并发上界同规地刻意不进 journalRunSummary：一个很少设置
-        // 的字段不该把列表的每一行都加宽。
+        // Subagent model for this run, present only when set. It has no dwf_run column (deliberately
+        // no migration); the `run-launched` event is authoritative. As with the snapshot, use the
+        // registry entry when present (all three creation paths set it), and scan event headers
+        // only for cold rows. Like the concurrency limit, deliberately omit it from
+        // journalRunSummary so a rarely set field does not widen every list row.
         ...runSubagentModelField(
           entry === undefined ? readRunSubagentModel(journal, runId) : entry.subagentModel,
         ),
-        // 本 run 的脚本文件，只在记过时在场。与子代理模型逐条同规：权威是 `run-launched`
-        // 事件（dwf_run 上没有这一列），有条目就读条目，只有冷行才去扫一次事件头；同样刻意
-        // 不进 journalRunSummary——列表行不该为一个只有 AmendWorkflow 用得上的字段加宽。
+        // Script file for this run, present only when recorded. Same rules as the subagent model:
+        // the `run-launched` event is authoritative (dwf_run has no such column); use the registry
+        // entry when present and scan event headers only for cold rows. Deliberately omit it from
+        // journalRunSummary too; a field used only by AmendWorkflow should not widen list rows.
         ...runScriptPathField(
           entry === undefined ? readRunScriptPath(journal, runId) : entry.scriptPath,
         ),
         usage: {
-          // 直读 dwf_run.spent_tokens：run 级 token 用量的唯一权威。
+          // Read dwf_run.spent_tokens directly: the sole authority for run-level token usage.
           spentTokens: row.spentTokens,
-          // 已落库节点的行数之和，**不是**「总步数」：动态工作流没有静态总数，
-          // 而 queued 只存在于事件相位、不落库。
+          // Sum of persisted node rows, **not** "total steps": dynamic workflows have no static
+          // total, and queued nodes exist only in event phases, not in the journal.
           nodesObserved: counts.running + counts.completed + counts.failed,
           nodesRunning: counts.running,
           nodesCompleted: counts.completed,
@@ -207,7 +224,7 @@ export function createRunIntrospectionMethods(
         actors: journal.listActors(runId).map((actor) => ({
           siteId: actor.siteId,
           ordinal: actor.ordinal,
-          // persona 刻意不出：整段 system prompt 是端口上天然无界的那类字段。
+          // Deliberately omit persona: the full system prompt is inherently unbounded at the port.
           ...(actor.name === undefined ? {} : { name: actor.name }),
         })),
         logTail: introspection
@@ -227,10 +244,11 @@ export function createRunIntrospectionMethods(
         ...(pendingQuestions === undefined || pendingQuestions.length === 0
           ? {}
           : { pendingQuestions }),
-        // 产物截面：任意状态都附，含 failed / cancelled
-        // ——一个死在第 12 步的 run 仍然交付了它前面产出的那张图。与 `listArtifacts` 和终态
-        // 快照走**同一个** artifactsOf，三处给出同一份清单（三处各归并一份，迟早会在
-        // 「失败行算不算一版」这种地方分叉）。零件时整个字段缺席。
+        // Artifact snapshot is attached for every state, including failed/cancelled: a run that
+        // stopped at step 12 may still have delivered a board produced earlier. Share the **same**
+        // artifactsOf implementation with `listArtifacts` and terminal snapshots so all three
+        // return the same list (separate implementations would eventually diverge on questions such
+        // as whether a failed row counts as a version). If empty, omit the entire field.
         ...artifactsOf(runId, journal),
       };
     },
@@ -238,14 +256,15 @@ export function createRunIntrospectionMethods(
 }
 
 /**
- * `getRunDetail` 的 pendingQuestions 切片。
+ * pendingQuestions slice for `getRunDetail`.
  *
- * 与 `getTask` 快照**同一个投影源**（内存的升级停驻表），刻意不走 journal 重放：journal 里有
- * raised / resolved 两类事件，但「现在还欠谁一个答案」是进程内的活事实——重放出来的未配对
- * raised 在进程亡故后只会说谎（停驻的 deferred 早已随进程消失）。
+ * Uses the **same projection source** as the `getTask` snapshot (the in-memory upgrade parked table),
+ * deliberately not journal replay. The journal has raised/resolved events, but "who is still owed
+ * an answer" is a live process fact; an unmatched raised event replayed after process death would
+ * lie because its parked deferred is gone.
  *
- * 零条时整字段缺席（不发空数组，与快照同规）：空数组读起来像「问过、已答完」，缺席读起来
- * 才是「没人在等」。
+ * Omit the entire field when empty (same as snapshots): an empty array reads as "asked and answered";
+ * only absence means "no one is waiting."
  */
 function pendingQuestionsField(
   escalations: WorkflowEscalationRegistry,
@@ -256,14 +275,15 @@ function pendingQuestionsField(
 }
 
 /**
- * 这次读**能不能**回答「有没有问题在等答案」，以及答案本身
+ * Whether this read **can** answer "is any question awaiting a response," and the answer itself.
  * （`health.pendingQuestionsKnown`）。
  *
- * `undefined` = 查不到，不是「没有」。停驻表是**本进程内存**里的表（见 {@link pendingQuestionsField}
- * 的论证），所以只有两种情况下这次读说得出实话：run 就在本会话的注册表里，或者 run 已终态
- * ——终态 run 按定义没有还在听的人。其余情况（兄弟会话在飞的 run、死进程的遗物）
- * 空表与「不知道」长得一模一样，而这两者对模型是两个不同的下一步：一个可以继续等，
- * 另一个得换条路去问。
+ * `undefined` means unknown, not "none." The parked table is **in this process's memory** (see the
+ * rationale in {@link pendingQuestionsField}), so this read can answer truthfully only in two
+ * cases: the run is in this session's registry, or the run is terminal (by definition, no one is
+ * still listening). For other cases (a sibling session's in-flight run or remains of a dead
+ * process), an empty table looks identical to "unknown," but these imply different next steps for
+ * the model: one can keep waiting; the other must ask another way.
  */
 function pendingQuestionsOf(
   escalations: WorkflowEscalationRegistry,
@@ -276,12 +296,13 @@ function pendingQuestionsOf(
 }
 
 /**
- * journal 事件 → run 面板同款归约状态。`node-queued` 的任务摘要与 `node-progress` 的进度读数
- * 只活在事件上，而把它们摘出来的规则已经在 reducer 里写过一遍——这里复用那一遍，而不是在读面
- * 再写一个解析器（两个解析器迟早会在「重新排队要不要清掉轮次」这种地方分叉）。
+ * Reduce journal events into the same state used by the run panel. `node-queued` task summaries and
+ * `node-progress` readings exist only in events, and the reducer already contains the rules for
+ * extracting them. Reuse it instead of writing another parser in this read path (two parsers would
+ * eventually diverge on questions such as whether requeueing resets the turn count).
  *
- * 事件由调用方读好递进来；`replayRunProgressFromEvents` 是冷回放那条铸造链本身，所以这里
- * 归约出的状态与重启后 UI 看到的逐字节相同。
+ * The caller reads and passes in events. `replayRunProgressFromEvents` is the cold-replay path itself,
+ * so the state reduced here matches what the UI sees after restart byte-for-byte.
  */
 function reduceRunState(
   row: Parameters<typeof replayRunProgressFromEvents>[0],

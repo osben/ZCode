@@ -31,7 +31,7 @@ export interface AccountProviderConfigSnapshot {
   readonly states?: AccountProviderStates;
 }
 
-/** 首次 Account 事实尚未到达时，基于当前 Built-in 生成可发布的 fail-closed Overlay。 */
+/** Before the first Account facts arrive, generate a publishable fail-closed Overlay from current Built-in data. */
 export function createFailClosedAccountProviderConfigSnapshot(
   config: ProviderConfigSnapshot,
 ): AccountProviderConfigSnapshot {
@@ -72,10 +72,10 @@ const EMPTY_ACCOUNT_PROVIDER_CONFIG_SNAPSHOT: AccountProviderConfigSnapshot = Ob
 });
 
 /**
- * 由进程外围适配器更新的账号 Provider 可用范围。
+ * Account Provider availability scope, updated by an adapter outside the process.
  *
- * Source 只保存账号状态投影出的第三层 Provider Config Overlay。
- * models 是账号权益约束；Token、API Key、Header 与账号身份不得写入 Config。
+ * Source stores only the third-layer Provider Config Overlay projected from account state.
+ * models are account entitlement constraints; tokens, API keys, headers, and account identity must not be written to Config.
  */
 export class MutableAccountProviderConfigSource implements ProviderSource<AccountProviderConfigSnapshot> {
   readonly #listeners = new Set<(reason: string) => void>();

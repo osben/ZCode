@@ -71,7 +71,7 @@ export function readTaskWorkedDurationMs(
     if (startedAt === null) {
       return null;
     }
-    // Bugfix: 第三方 /status 之前把运行时长塞进 Task 行；这里按 UI 的已工作时长语义单独输出 Worked。
+    // Bug fix: third-party /status previously placed runtime in the Task row; display Worked separately to match the UI's elapsed-work semantics.
     return Math.max(Date.now() - startedAt, 0);
   }
   const completedDurationMs = snapshot?.messages.findLast(
@@ -103,8 +103,8 @@ export function readLatestAssistantTurnChangeSummary(
     return null;
   }
 
-  // Bugfix: meta.changeSummary 是任务级聚合摘要，会把历史轮次合并进第三方消息。
-  // 第三方完成回复只应该展示本轮 assistant 对应 turnIndex 的文件变更。
+  // Bug fix: meta.changeSummary is an aggregate task summary and includes changes from prior turns in third-party messages.
+  // A third-party completion reply should show only file changes for this turn's assistant turnIndex.
   const summary =
     buildPerTurnChangeSummaries(snapshot.fileChanges).get(latestAssistantTurnIndex) ?? null;
   return summary && summary.fileCount > 0 && summary.files.length > 0 ? summary : null;
@@ -176,9 +176,9 @@ export function readLatestTaskProgress(snapshot: ZCodeSessionFile | null): strin
     if (latestMessage.role !== "assistant") {
       continue;
     }
-    // Bugfix: /status 的 Progress 之前直接读最后一条 message，最后落盘如果是用户 prompt，
-    // 第三方客户端看到的就会是“用户刚问了什么”，不是 task 的真实执行进展。
-    // 这里只从最近的 assistant 消息读取 content/thought/tool-call，避免把用户输入误报为进度。
+    // Bug fix: /status Progress previously read the last message directly. If the last persisted message was a user prompt,
+    // third-party clients showed "what the user just asked" instead of the task's actual progress.
+    // Read content/thought/tool-call only from the most recent assistant message so user input is not misreported as progress.
     for (const part of [...(latestMessage.parts ?? [])].reverse()) {
       if ((part.type === "content" || part.type === "thought") && part.content.trim()) {
         return truncateStatusProgressText(normalizeStatusProgressText(part.content));

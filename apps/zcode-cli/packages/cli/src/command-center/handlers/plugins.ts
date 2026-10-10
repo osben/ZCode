@@ -94,7 +94,7 @@ async function handlePluginsUninstall(
   if (!app.uninstallPlugin) {
     return unavailable(deps);
   }
-  // 斜杠命令是无状态的，无法做交互式 y/N；卸载这种破坏性操作改用显式 --force 作为确认闸门。
+  // Slash commands are stateless and cannot ask an interactive y/N question; require explicit --force to confirm destructive uninstalls.
   if (!force) {
     return {
       mode: deps.getMode?.(),

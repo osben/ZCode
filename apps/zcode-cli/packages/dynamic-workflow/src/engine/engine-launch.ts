@@ -1,30 +1,33 @@
 // ============================================================
-// run-launched：发起 run 那一轮的宿主元数据 → 事件
+// run-launched: host metadata for the run invocation → event
 // ============================================================
-// 引擎不读这些元数据（锚点、阶段表、并行表、子代理选型），只在建 run 那一世紧跟首条
-// `run-started` 逐字转录一次（engine.ts）。构造独立成模块，engine.ts 与 types.ts 才都留在
-// 400 行的 lint 上限之内——它们是两侧同时增长的文件。
+// The engine does not read this metadata (anchor, phase table, parallelism table, subagent model);
+// it transcribes it verbatim once after the first `run-started` event when the run is created
+// (engine.ts). Keeping the construction in a separate module lets both engine.ts and types.ts
+// remain under the 400-line lint limit; both files grow from this data.
 
 import type { RunEvent } from "./types.js";
 
 /**
- * 发起 run 那一轮随 `run-launched` 同车的宿主元数据（EngineConfig.launch）：锚点 `inputId`、
- * 脚本声明的阶段表 `phaseNames`、与之按位置对齐的 `phaseAlongside`、本 run 子代理的选型
- * `subagentModel`、脚本来自哪个文件 `scriptPath`。五者引擎都不读——字段语义见 types.ts 里
- * `run-launched` 的注释。
+ * Host metadata shipped with `run-launched` for the run invocation (EngineConfig.launch): anchor
+ * `inputId`, script-declared phase table `phaseNames`, positionally aligned `phaseAlongside`, the
+ * subagent model choice for this run `subagentModel`, and the script source file `scriptPath`. The
+ * engine reads none of these five values; see the `run-launched` comment in types.ts for field
+ * semantics.
  */
 export interface RunLaunchConfig {
   inputId: string;
   phaseNames?: string[];
   subagentModel?: string;
-  /** 本 run 脚本文件的绝对路径。 */
+  /** Absolute path to this run's script file. */
   scriptPath?: string;
   phaseAlongside?: number[][];
 }
 
 /**
- * 把 launch 元数据转录成 `run-launched`。未设的键**缺席**而不是落成 undefined 值：读侧
- * （AmendWorkflow 的三态、投影）把「没设」与「设了个空」当两件事。
+ * Transcribe launch metadata into `run-launched`. Unset keys are **omitted** rather than written
+ * with undefined values: readers (AmendWorkflow's tri-state and projections) distinguish “unset”
+ * from “set to empty.”
  */
 export function runLaunchedEvent(
   launch: RunLaunchConfig,

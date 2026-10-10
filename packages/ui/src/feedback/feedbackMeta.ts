@@ -24,8 +24,8 @@ export const STATUS_META: Record<FeedbackTicketStatus, StatusMeta> = {
     className: "text-emerald-700 dark:text-emerald-300",
     dot: "bg-emerald-500",
   },
-  // 公开反馈接口会把历史「答复关闭」归一为「已归档」返回。
-  // 客户端必须同时识别两种终态，否则我的反馈列表渲染状态标记时会拿不到 meta 而崩溃。
+  // The public feedback API normalizes the legacy “reply closed” state to “archived”.
+  // The client must recognize both terminal states, or the My Feedback list may crash when rendering a status badge without meta.
   已归档: {
     className: "text-emerald-700 dark:text-emerald-300",
     dot: "bg-emerald-500",
@@ -53,8 +53,8 @@ const FEEDBACK_STATUS_MESSAGE_IDS: Record<FeedbackTicketStatus, string> = {
   信息不足: "feedback.status.needInfo",
   已采纳: "feedback.status.accepted",
   答复关闭: "feedback.status.closedByReply",
-  // 后端 closed 仍归一为「已归档」兼容值，但不能把接口内部命名直接暴露给用户。
-  // 这里映射到 completed 展示文案，让“我的反馈”列表和详情统一显示为「已完成」。
+  // The backend closed state is still normalized to the compatibility value “archived”, but the API internal name must not be exposed to users.
+  // Map it to the completed display label so the My Feedback list and detail view both show “Completed”.
   已归档: "feedback.status.completed",
   已拒绝: "feedback.status.rejected",
   开发中: "feedback.status.inDevelopment",

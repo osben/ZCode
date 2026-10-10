@@ -25,7 +25,7 @@ export async function openPathInDefaultApp(
   try {
     target = await realpath(normalized);
   } catch {
-    // 路径不存在或无法解析时仍尝试用规范化后的原路径，让系统返回更具体的错误。
+    // If the path is missing or cannot be resolved, still try the normalized original path so the system can return a more specific error.
   }
 
   try {
@@ -56,7 +56,7 @@ export async function openPathInFileManager(
   try {
     target = await realpath(normalized);
   } catch {
-    // 路径不存在或无法解析时仍尝试用规范化后的原路径打开，便于定位权限等问题。
+    // If the path is missing or cannot be resolved, still try opening the normalized original path to help diagnose permission issues.
   }
 
   if (process.platform === "darwin") {
@@ -79,8 +79,8 @@ export async function captureWindowScreenshot(senderWindow: BrowserWindow | null
     return null;
   }
 
-  // 报错横幅里的反馈需要带上用户看到的现场。
-  // 这里在 main 进程截当前窗口，避免 renderer 走屏幕录制权限或只能截到局部 DOM。
+  // Feedback from the error banner should include what the user saw.
+  // Capture the current window in the main process to avoid requiring screen-recording permission in the renderer or capturing only a portion of the DOM.
   const image = await senderWindow.webContents.capturePage();
   const buffer = image.toPNG();
   return {

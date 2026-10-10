@@ -1,14 +1,17 @@
 /**
- * engine.ts 顶到 oxlint max-lines 上限（400 行），把引擎私有状态的显式接缝拆到本文件；
- * 公开面仍从 engine.ts 导出。
+ * engine.ts reached oxlint's max-lines limit (400), so the explicit seam for private engine state
+ * was moved to this file; the public surface is still exported from engine.ts.
  *
- * WorkflowEngine 的几组方法（用户面产物、report、world 节点与导入缓存、run 结算）被拆成兄弟
- * 模块里的自由函数（engine-artifacts.ts / engine-report.ts / engine-world.ts / engine-settlement.ts）。
- * 它们不各自持有状态，而是经这张接缝读写引擎的私有字段：接缝由引擎在构造函数里用箭头闭包
- * 装配，字段本身仍是 private，所以引擎的公开面零变化；类上只留薄薄一层委托方法。
+ * Several WorkflowEngine method groups (user-facing artifacts, reports, world nodes and imported
+ * cache, run settlement) were split into free functions in sibling modules (engine-artifacts.ts /
+ * engine-report.ts / engine-world.ts / engine-settlement.ts). They do not own state; they read and
+ * write the engine's private fields through this seam. The engine assembles the seam with arrow
+ * closures in its constructor, and the fields remain private, so the public engine surface does
+ * not change; the class retains only thin delegate methods.
  *
- * 可变标量（报告计数、导入门）以「读方法 + 单向写方法」暴露，而不是 getter/setter——写法只有
- * 一种（计数只增、门只关），接缝面上就说清了这一点。
+ * Mutable scalars (report count, import gate) are exposed through a “read method + one-way write
+ * method” rather than getter/setter pairs. Each has only one allowed write direction (count only
+ * increases; gate only closes), which the seam makes explicit.
  */
 
 import type { ImportedWorldQueue } from "./imported-cache.js";
@@ -24,9 +27,9 @@ import type {
 } from "./types.js";
 
 /**
- * run 的最终结算：`completed`（脚本 return）/
- * `errored`（脚本之错，不可 resume）/ `stopped`（被停下，一律可 resume；`error` 只对
- * `provider` / `interrupted` 在场）。
+ * Final settlement for a run: `completed` (script return), `errored` (script error, not resumable),
+ * or `stopped` (stopped and always resumable; `error` is present only for `provider` /
+ * `interrupted`).
  */
 export type RunSettlement =
   | { status: "completed"; artifact: unknown }
@@ -34,65 +37,67 @@ export type RunSettlement =
   | { status: "stopped"; reason: RunStopReason; supersededBy?: string; error?: WorkflowError };
 
 /**
- * 一个用户面产物 id 在本 run 内的状态：它属于哪个成员种类、已成功几版、（预置才有）它的
- * 规范化 spec。三样都从 journal 行派生，所以 resume 重建与 live 记账得到同一份表。
+ * State of one user-facing artifact ID within this run: its member kind, number of successful
+ * versions, and (for presets only) its normalized spec. All three are derived from journal rows, so
+ * resume reconstruction and live bookkeeping produce the same table.
  */
 export interface ArtifactIdState {
   kind: ArtifactOp;
-  /** 已成功的版本数（内容成员每成功一次 +1；预置声明恒为 1）。 */
+  /** Number of successful versions (content members increment on each success; preset declarations are always 1). */
   versions: number;
-  /** 预置 spec 的 canonicalJson（重复声明的幂等判定按它比对）。内容成员缺席。 */
+  /** canonicalJson for a preset spec, used to determine whether a duplicate declaration is idempotent. Absent for content members. */
   spec?: string;
-  /** 这个 id 是 run 的交付物（primary）。全 run 至多一个 id 带它；从 completed 行重建。 */
+  /** Whether this ID is the run's primary artifact. At most one ID per run has this marker; reconstructed from the completed row. */
   primary?: true;
 }
 
-/** 引擎私有状态的接缝：兄弟模块里的自由函数经它读写 WorkflowEngine 的私有字段。 */
+/** Seam for private engine state: sibling-module free functions use it to read/write WorkflowEngine's private fields. */
 export interface EngineState {
   readonly runId: string;
   readonly driver: WorkflowDriver;
   readonly journal: JournalStorePort;
   /**
-   * 本 run 每个**用户面产物** id 的状态。resume 时从 journal
-   * 的 `kind: "artifact"` 行重建，此后在内存里维护——上限与版本号都是 run 级事实，跨 resume 连续。
+   * State of each **user-facing artifact** ID in this run. Reconstructed on resume from journal
+   * rows with `kind: "artifact"`, then maintained in memory; caps and version numbers are run-level
+   * facts that continue across resume.
    *
-   * ⚠ 术语：artifact = 用户面产物，不是 `RunSettlement.artifact`（顶层返回值）。
+   * ⚠ Terminology: artifact means a user-facing output, not `RunSettlement.artifact` (the top-level return value).
    */
   readonly artifacts: Map<string, ArtifactIdState>;
-  /** amend-resume 的导入缓存（纯数据，缺席即本次不是修订续跑）。 */
+  /** Imported cache for amend-resume (plain data; absent means this is not an amended resume). */
   readonly importedCache: ImportedRunCache | undefined;
-  /** world 导入队列的消费游标（第 n 次出现对第 n 条）。 */
+  /** Consumption cursor for the world-import queue (the nth occurrence maps to the nth entry). */
   readonly importedWorld: ImportedWorldQueue;
 
   isRunSettled(): boolean;
-  /** run 已结算时用于 reject / throw 的错误。 */
+  /** Error used to reject/throw after the run is settled. */
   runError(): WorkflowError;
-  /** run 级失败（first-wins；见 engine-settlement.ts 的 settleFailed）。 */
+  /** Run-level failure (first-wins; see settleFailed in engine-settlement.ts). */
   failRun(error: WorkflowError): void;
-  /** 事件既落 journal 又扇出（Boundary C）；出生阶段在引擎的漏斗里补上。 */
+  /** Persist and fan out events (Boundary C); the engine's funnel adds their creation phase. */
   record(event: RunEvent): void;
-  /** 站点序号的唯一铸造点。 */
+  /** Sole allocator for site ordinals. */
   nextOrdinal(siteId: string): number;
   /**
-   * 受 replay 结算次序约束地释放一次命中。
-   * 非 resume、或次序表里没有这个实例时立即执行 `release`。
+   * Release a hit subject to replay settlement order.
+   * Immediately execute `release` when this is not a resume or the order table has no entry for this instance.
    */
   holdForReplay(instance: InstanceRef, release: () => void): void;
 
-  /** 本 run 已发布的报告条数（REPORT_CAPS.maxItemsPerRun 的计数器，跨 resume 连续）。 */
+  /** Number of reports published in this run (counter for REPORT_CAPS.maxItemsPerRun, continuous across resume). */
   reportCount(): number;
-  /** 一条报告过了上限检查、即将落库：计数 +1。 */
+  /** Increment the counter when a report passes the cap check and is about to be stored. */
   countReport(): void;
 
-  /** 导入缓存是否已关闭。 */
+  /** Whether the imported cache is closed. */
   importClosed(): boolean;
-  /** 关门（永不重开）。 */
+  /** Close the gate (never reopen). */
   closeImport(): void;
 
-  /** 置 run 为已结算；带 failure 时同时记下 run 级失败原因（供 runError 复用）。 */
+  /** Mark the run as settled; when failure is present, also record the run-level reason for reuse by runError. */
   markSettled(failure?: WorkflowError): void;
-  /** 中止所有在飞 ask（委托调度器）。 */
+  /** Abort all in-flight asks (delegated to the scheduler). */
   abortInFlight(error: WorkflowError, emitCancelled: boolean): void;
-  /** 兑现 `engine.settled`。 */
+  /** Resolve `engine.settled`. */
   resolveSettled(settlement: RunSettlement): void;
 }

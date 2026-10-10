@@ -19,9 +19,9 @@ export function ensureConversationShareAttempt(
   const disclosureAcceptedAt = now();
   const requestSuffix = factory.randomUUID?.() ?? `${sessionId}-${disclosureAcceptedAt}`;
 
-  // 重试时必须复用同一份幂等请求体。之前只复用了 clientRequestId，
-  // 却在 SessionPane 每次点击时重新生成 disclosureAcceptedAt，导致 payload_sha256 变化，
-  // 服务端将同一个幂等键识别为请求体冲突并返回 409。
+  // Retries must reuse the same idempotent request body. Previously, only clientRequestId was reused,
+  // while disclosureAcceptedAt was regenerated on each SessionPane click, changing payload_sha256
+  // and causing the server to reject the same idempotency key as a body conflict with 409.
   return {
     key: attemptKey,
     clientRequestId: `share-${requestSuffix}`,

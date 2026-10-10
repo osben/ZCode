@@ -5,15 +5,15 @@ import type { WorkflowTimelineModel } from "./timeline-model.js";
 import type { IntlInstance } from "@/i18n/createIntl.js";
 
 /**
- * 卡片表头细节与页脚摘要行的文案素材。侧栏状态头的摘要行也读这里——同一个 run 在两个面上必须说同一句话。
+ * Copy data for card-header details and the footer summary row. The sidebar status header also reads this summary row—one run must use the same wording in both places.
  *
- * 纯函数 + 注入的 intl：计数文案走 formatPlural，按各语言复数规则选形态。
+ * Pure functions with injected intl: count copy uses formatPlural to choose the correct form for each language's plural rules.
  */
 type TimelineIntl = Pick<IntlInstance, "formatMessage" | "formatPlural">;
 
 export interface TimelineCounts {
   phases: number;
-  /** 不重复的子代理车道数（合成车道不算）。 */
+  /** Number of unique subagent lanes (excluding synthetic lanes). */
   agents: number;
   steps: number;
 }
@@ -26,12 +26,12 @@ export function timelineCounts(
   for (const station of model.stations) {
     for (const pill of station.pills) if (pill.laneClass === "agent") lanes.add(pill.lane.id);
   }
-  // 草稿不画药丸，子代理数由扫描器直接给。
+  // Drafts do not render pills; the scanner provides the subagent count directly.
   const agents = model.draft?.agents ?? lanes.size;
   return { agents, phases: model.stations.length, steps: graph?.steps.length ?? 0 };
 }
 
-/** 循环上的站到过的最多轮次；没有循环或还没到过时 0。 */
+/** Maximum iteration reached by a station on a loop; 0 when there is no loop or it has not been reached. */
 export function timelineRounds(model: WorkflowTimelineModel): number {
   let rounds = 0;
   for (const station of model.stations) {
@@ -45,8 +45,8 @@ function countLabel(intl: TimelineIntl, id: string, value: number): string {
 }
 
 /**
- * 确认窗表头右侧只说阶段数——子代理数与步数
- * 在下方时间线上一眼可见，表头再复述只是噪音。
+ * The right side of the confirmation-dialog header shows only the phase count; subagent and step counts are visible in the timeline below,
+ * so repeating them in the header would add noise.
  */
 export function workflowPhasesDetail(
   intl: TimelineIntl,
@@ -57,7 +57,7 @@ export function workflowPhasesDetail(
   return countLabel(intl, "chat.toolCall.workflow.card.phases", counts.phases);
 }
 
-/** 子代理那一段：跑着时数工作中的，结束后数总数（投影与静态图取大）。 */
+/** Subagent segment: count active subagents while running; show the total after completion (take the larger projected/static count). */
 function agentsPart(
   intl: TimelineIntl,
   model: WorkflowTimelineModel,
@@ -72,10 +72,9 @@ function agentsPart(
 }
 
 /**
- * 卡片表头右侧的细节：**只说阶段数与子代理数**（卡上不要出现「步」，只留
- * 阶段与子代理）。编写中 / 待确认按静态图数；联接到 run 后阶段数不变、子代理改成
- * 「n 个工作中」（跑着）或总数（结束）。步数、token、轮次、产物数都不再上表头——它们留在
- * run 详情页的摘要行（`workflowSummaryParts`）。
+ * Details on the right side of the card header: **show only phase and subagent counts** (no "steps" on the card header).
+ * Drafting / awaiting-confirmation states use static graph counts. After attaching to a run, the phase count stays fixed and the subagent count
+ * becomes "n working" while running or the total after completion. Steps, tokens, rounds, and artifacts stay in the run details summary row (`workflowSummaryParts`).
  */
 export function workflowHeaderDetail(
   intl: TimelineIntl,
@@ -83,9 +82,9 @@ export function workflowHeaderDetail(
   graph: WorkflowCausalityGraphData | undefined,
   run: WorkflowRunState | undefined,
   /**
-   * 子代理模型名（已解析，见 subagent-model-label.ts）：细节串已经在说「几个子代理」，模型名
-   * 跟在它后面当最后一段，同一段淡色文字——不加芯片、不加前缀。强度与规范串留给 tooltip。
-   * 没指定过模型的 run 缺席这一段。
+   * Resolved subagent model name (see subagent-model-label.ts): since the detail string already reports the number of subagents, put the model name
+   * after it as the final segment in the same muted text—no chip or prefix. Keep the effort and canonical model ID in the tooltip.
+   * Omit this segment when the run did not specify a model.
    */
   subagentModelName?: string,
 ): string {
@@ -97,15 +96,15 @@ export function workflowHeaderDetail(
 }
 
 /**
- * 表头细节串 + 它的 tooltip，一次算完：两张卡（v4 轮尾摘要、旧宿主运行卡）必须说同一句话，
- * 所以「模型名加不加」「tooltip 里放什么」只有这一份实现。建不出时间线模型时整块缺席。
+ * Compute the header-detail string and tooltip together: both card types (v4 timeline tail summary and legacy host run card) must say the same thing,
+ * so there is one implementation for whether to include the model name and what to put in the tooltip. Omit the whole detail when a timeline model cannot be built.
  */
 export function workflowCardDetail(
   intl: TimelineIntl,
   model: WorkflowTimelineModel | undefined,
   graph: WorkflowCausalityGraphData | undefined,
   run: WorkflowRunState | undefined,
-  /** providerId → provider 名；缺席即拼名退回裸 modelId（永远不显示 provider id）。 */
+  /** providerId to provider name; if missing, use the bare modelId (never display the provider ID). */
   providerName?: (providerId: string) => string | undefined,
 ): { detail: string; title?: string } | undefined {
   if (model === undefined) {
@@ -122,12 +121,12 @@ export function workflowCardDetail(
 }
 
 /**
- * run 详情页摘要行的各段：`1 agent working · 4/7 steps · 42,118 tokens · round 2`；终态换成
- * `3 agents · 11/11 steps · … · 3 rounds · 2 artifacts`。返回值只是字符串，间隔符由渲染方画。
- * 末段数的是**产物**（脚本经 `artifact.*` 交付给用户的产出），不是 `report` 条目：Results 区已
- * 撤走，「results」在屏幕上再没有落点。
- * 聊天里的卡片（工具卡页脚、轮尾摘要）不再用它——卡上只说阶段与子代理
- * （`workflowHeaderDetail`）；这一行只剩详情页在读。
+ * Segments for the run details summary row: `1 agent working · 4/7 steps · 42,118 tokens · round 2`; terminal runs use
+ * `3 agents · 11/11 steps · … · 3 rounds · 2 artifacts`. Returns strings only; the renderer supplies separators.
+ * The last segment counts **artifacts** (outputs delivered to the user through `artifact.*`), not `report` entries: the Results section was removed,
+ * so "results" no longer has a place in the UI.
+ * Chat cards (tool-card footer and timeline tail summary) no longer use this; they show only phases and subagents (`workflowHeaderDetail`).
+ * This row is now used only on the details page.
  */
 export function workflowSummaryParts(
   intl: TimelineIntl,
@@ -136,8 +135,8 @@ export function workflowSummaryParts(
   options: {
     tokens?: boolean;
     /**
-     * 子代理模型名（已解析，见 subagent-model-label.ts）：在场时是摘要行的**第一段**——
-     * 这一行本来就是「这条 run 的几个数」，模型是它的第一个词。状态头因此不再摆模型芯片。
+     * Resolved subagent model name (see subagent-model-label.ts): when present, this is the **first segment** of the summary row—
+     * the row lists facts about the run, and the model is its first word. The status header therefore no longer shows a model chip.
      */
     subagentModelName?: string;
   } = {},
@@ -159,7 +158,7 @@ export function workflowSummaryParts(
     const agents = Math.max(run.actors.length, timelineCounts(model, undefined).agents);
     parts.push(countLabel(intl, "chat.toolCall.workflow.card.agents", agents));
   }
-  // 步数走 @zcode/shared 的唯一实现：表内 + 表外（撞界后没进表的实例仍算步数）。
+  // Use the single @zcode/shared step-count implementation: visible + omitted (instances beyond the cap still count as steps).
   const { settled, total } = workflowRunStepCounts(run);
   parts.push(
     intl.formatMessage({ id: "chat.toolCall.workflow.card.steps" }, { done: settled, total }),

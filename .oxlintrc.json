@@ -7,8 +7,8 @@
   },
   "overrides": [
     {
-      // 测试文件天然会堆叠大量场景与断言，继续复用生产代码的行数上限会造成误报，
-      // 因此只对 test/spec 文件关闭 max-lines，避免放宽业务代码约束。
+      // Test files naturally accumulate scenarios and assertions, so the production line limit would create false positives.
+      // Disable max-lines only for test/spec files to avoid relaxing the business-code constraint.
       "files": ["**/*.test.ts", "**/*.test.tsx", "**/*.spec.ts", "**/*.spec.tsx"],
       "rules": {
         "max-lines": "off"

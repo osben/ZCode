@@ -22,10 +22,10 @@ interface EmitStructuredLogEntry extends HostStructuredLog {
 }
 
 /**
- * host 现在会同时通过 stdout/stderr 和 postMessage 上报日志。
- * 如果 main 两边都立刻写盘，同一条日志会重复出现两次。
- * 这里优先相信结构化的 postMessage；只有 host 在退出前都没发出结构化日志时，
- * 才把早期缓存的 stdout/stderr 当兜底日志回放出来。
+ * The host now reports logs through both stdout/stderr and postMessage.
+ * If main writes both streams to disk immediately, each log appears twice.
+ * Prefer structured postMessage logs; replay the early stdout/stderr buffer as a fallback only
+ * when the host has not emitted structured logs before exiting.
  */
 export function createHostLogRelay(
   label: string,
@@ -112,15 +112,17 @@ export function createHostLogRelay(
 }
 
 function isNodeWarning(message: string): boolean {
-  // Electron utility process 启动早期的 Node warning 只会出现在 stderr。
-  // 这类 warning 不是连接失败，兜底回放时应保持 warn 语义，避免远端连接日志被误染成 error。
+  // Early Node warnings from an Electron utility process appear only on stderr.
+  // These warnings are not connection failures; keep their warn severity during fallback replay
+  // so remote-connection logs are not mislabeled as errors.
   return /^\(node:\d+\)\s+(?:ExperimentalWarning|DeprecationWarning|Warning):/u.test(
     message.trimStart(),
   );
 }
 
 function formatNodeWarning(message: string): string {
-  // Node warning 的第二行通常只是 --trace-warnings 提示，连接页展示它会显得像错误详情。
-  // 远端连接日志只保留首行核心 warning，完整排查可通过开发启动参数再开启 trace。
+  // The second line of a Node warning is usually just a --trace-warnings hint and looks like error
+  // details on the connection page. Keep only the core first warning line in remote-connection logs;
+  // enable trace through development startup arguments for full diagnostics.
   return message.trimStart().split(/\r?\n/u)[0]?.trimEnd() ?? message.trim();
 }

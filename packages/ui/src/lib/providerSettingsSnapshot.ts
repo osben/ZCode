@@ -55,7 +55,7 @@ export function connectProviderSettingsSnapshot(
     } catch (cause) {
       if (generation !== connectionGeneration) throw cause;
       const error = cause instanceof Error ? cause : new Error(String(cause));
-      // 已有成功快照时保留 Last Known Good；首次失败才进入可重试 error。
+      // Keep the Last Known Good snapshot when one exists; only an initial failure enters the retryable error state.
       if (snapshot.status !== "ready") {
         snapshot = { status: "error", error };
         publish();
@@ -64,7 +64,7 @@ export function connectProviderSettingsSnapshot(
     }
   };
 
-  // 先订阅再读取，避免 getView 与 Registry 更新之间丢失事件。
+  // Subscribe before reading to avoid missing an event between getView and a Registry update.
   const subscription = service.onDidChange(commit);
   const ready = read();
   activeReload = read;

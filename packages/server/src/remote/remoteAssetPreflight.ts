@@ -122,8 +122,8 @@ async function collectStdout(stream: StdioStream): Promise<string> {
     stream.stdout.on("end", settle);
     stream.stdout.on("close", settle);
     stream.stdout.on("error", settle);
-    // ssh2 的 exit/onClose 可能早于 stdout data；不能在 onClose 立刻结束收集。
-    // 这里给 stdout 一个短暂排空窗口，同时仍兜底处理 stdout 不触发 end/close 的后端实现，避免 preflight 卡住。
+    // ssh2 exit/onClose may arrive before stdout data; do not stop collecting immediately on onClose.
+    // Give stdout a brief drain window while also handling backends that never emit end/close, to prevent preflight from hanging.
     stream.onClose(scheduleCloseFallback);
   });
 }

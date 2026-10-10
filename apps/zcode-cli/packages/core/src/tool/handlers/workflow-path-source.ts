@@ -1,14 +1,14 @@
 // ============================================================
-// `path` 来源：把一个磁盘上的脚本文件读成执行事实
+// `path` source: read a script file from disk as an execution fact
 // ============================================================
 //
-// 四个工具共用这一段（`CreateWorkflow.path`、`AmendWorkflow.path`、`SaveWorkflow.script_path`、
-// `EvalWorkflowSnippet.path`）。共用的理由不是省几行：它们对「这个文件是什么」必须给出同一个
-// 答案，否则同一份草稿在 Create 里是「带元数据块的保存定义」、在 Save 里却成了「正文第一行是
-// 一段注释」的脚本——而那种分叉只会在用户把草稿存成定义的那一次才被发现。
+// Four tools share this logic (`CreateWorkflow.path`, `AmendWorkflow.path`, `SaveWorkflow.script_path`, and
+// `EvalWorkflowSnippet.path`). The reason is not fewer lines: all four must agree about what a file is. Otherwise the same draft is a
+// “saved definition with a metadata block” in Create but a script whose first line is a comment in Save—a divergence discovered only
+// when the user saves a draft as a definition.
 //
-// 读一次、只读一次：读出来的字节此后一路带到 hook、确认窗与 handler（`resolveInput` 的契约），
-// 批准之后再改文件也改不了将要执行的东西。
+// Read once, and only once: carry those bytes through hooks, confirmation, and the handler (`resolveInput` contract), so editing the
+// file after approval cannot change what will execute.
 
 import { readFile } from "node:fs/promises";
 import path from "node:path";
@@ -16,19 +16,19 @@ import type { SavedWorkflowMeta } from "@zcode/contracts";
 import { SAVED_WORKFLOW_SENTINEL, parseSavedWorkflow } from "./saved-workflows/index.js";
 import { describeWorkflowScriptPath } from "./workflow-script-path.js";
 
-/** 读成功的脚本文件。 */
+/** A successfully read script file. */
 interface WorkflowScriptFile {
-  /** 绝对路径（journal 与模型面各取所需：前者存它，后者显示 {@link described}）。 */
+  /** Absolute path (the journal stores it; the model uses {@link described}). */
   path: string;
-  /** 模型面该看到的写法：工作区之下给相对路径，否则绝对路径。 */
+  /** Model-facing form: relative to the workspace when inside it, absolute otherwise. */
   described: string;
-  /** 文件原文，逐字节。 */
+  /** Original file contents, byte for byte. */
   source: string;
-  /** 要执行 / 要保存的那一段：有元数据块时是正文，没有时就是整个文件。 */
+  /** Content to execute/save: the body when there is a metadata block, otherwise the entire file. */
   script: string;
-  /** 元数据块解析出来的声明；文件没有块时缺席。 */
+  /** Declarations parsed from the metadata block; absent when the file has no block. */
   meta?: SavedWorkflowMeta;
-  /** 正文之前的行数（无块即 0）；诊断按文件行报出来时加它。 */
+  /** Number of lines before the body (0 when there is no block); add this when reporting diagnostics by file line. */
   bodyLineOffset: number;
 }
 
@@ -37,23 +37,23 @@ type WorkflowScriptFileResult =
   | { ok: false; message: string };
 
 /**
- * 相对路径按会话工作目录解析，绝对路径原样归一——与 `Read` 收下一个路径的规则同一条
- * （core/src/tool/path-policy.ts 的 `resolveWorkspacePath`）。
+ * Resolve relative paths against the session working directory and normalize absolute paths as-is, matching the path rule used by
+ * `Read` (core/src/tool/path-policy.ts `resolveWorkspacePath`).
  *
- * 这里没有走那个 helper：它要求一个 `workspaceRoot`，而 `resolveInput` 的上下文
- * （`ToolInputResolutionContext`）刻意窄到只有 `workingDirectory`。两者在 `operation: "read"`
- * 上的行为本就相同——那个函数当前不硬拦工作区之外的路径，只做同一条 resolve/normalize。
+ * This does not use that helper because it requires `workspaceRoot`, while `resolveInput`'s context (`ToolInputResolutionContext`)
+ * intentionally contains only `workingDirectory`. For `operation: "read"`, both have the same behavior: the helper currently does not
+ * block paths outside the workspace, and only resolves/normalizes them.
  */
 function resolveWorkflowScriptFilePath(cwd: string, inputPath: string): string {
   return path.isAbsolute(inputPath) ? path.normalize(inputPath) : path.resolve(cwd, inputPath);
 }
 
 /**
- * 读一个脚本文件。读不出来、或元数据块坏了，都回**点名文件**的结构化失败文案——不点名的话
- * 模型只会以为是自己刚写错了什么，然后原样重试一遍。
+ * Read a script file. If reading fails or its metadata block is malformed, return a structured failure that **names the file**;
+ * without that information, the model may assume it just made a mistake and retry the same input.
  *
- * `parseFrontmatter: false` 用于 `EvalWorkflowSnippet`：片段没有保存定义那套语义，整个文件
- * 就是代码，一段恰好以 `/* zcode-workflow` 开头的片段也不该被当成声明块吞掉。
+ * `parseFrontmatter: false` is for `EvalWorkflowSnippet`: snippets do not use saved-definition semantics, so the entire file is code;
+ * even one that happens to start with `/* zcode-workflow` must not be consumed as a declaration block.
  */
 export async function readWorkflowScriptFile(options: {
   cwd: string;
@@ -97,8 +97,8 @@ export async function readWorkflowScriptFile(options: {
 }
 
 /**
- * 首个非空行是不是起始标记。判据与 {@link parseSavedWorkflow} 自己的入口逐字一致——两处对
- * 「这是不是一个保存定义」给出不同答案，就会出现「工具说没有块、解析器说块坏了」的死角。
+ * Check whether the first nonblank line is an opening marker. Keep the predicate identical to {@link parseSavedWorkflow}'s entry
+ * point; if the two disagree about whether this is a saved definition, the tool may say there is no block while the parser reports a malformed one.
  */
 function startsWithSentinel(source: string): boolean {
   for (const line of source.split("\n")) {

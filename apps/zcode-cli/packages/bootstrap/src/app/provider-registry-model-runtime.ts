@@ -28,7 +28,7 @@ interface ApiProviderModelRuntimeOptions {
 }
 
 /**
- * 从业务 Registry 精确查找一次完整事实，并直接创建冻结静态配置的 Model。
+ * Look up a complete fact from the business Registry and directly create a Model with frozen static configuration.
  */
 export class ApiProviderModelRuntime {
   readonly #registry: ProviderRegistryModelSource;
@@ -68,8 +68,9 @@ export class ApiProviderModelRuntime {
     target: Parameters<RuntimeModelFactory>[0],
   ): Model {
     const config = registryModel.config;
-    // 输出预算属于单次请求，由 Agent 执行链显式决定，不能在 ModelFactory 中静默绑定。
-    // Selection 已在上面的 Registry 边界完成校验，Factory 不再承担任何缺省修复。
+    // Output budget belongs to an individual request and must be explicitly determined by the Agent
+    // execution chain, not silently bound in ModelFactory. Selection was validated at the Registry
+    // boundary above, so Factory must not repair missing defaults.
     const normalReasoningLevel = target.selection.options!.reasoningLevel!;
     return this.#modelAdapter.createModel({
       providerId: provider.providerId,

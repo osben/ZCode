@@ -7,7 +7,7 @@ import type { RemoteAssetNetworkPort } from "@zcode/server/remote/remoteAssetNet
 export const REMOTE_BASE = "~/.zcode/server";
 
 export interface RemoteAssetDeployOptions {
-  /** 取消当前连接初始化；共享 cache 仍可独立完成，但不得继续写入远端 staging。 */
+  /** Cancel initialization for the current connection; shared cache work may finish independently but must not continue writing to remote staging. */
   signal?: AbortSignal;
   releaseDir?: string | null;
   resolveReleaseDir?: (
@@ -56,14 +56,14 @@ export function formatOptionalValues(values?: string[]): string {
 }
 
 export function buildRemoteMoveCommand(sourcePath: string, targetPath: string): string {
-  // 部分远端 shell 会把 mv 定义成 alias/function（例如 mv -i）。
-  // 部署通过非交互 SSH exec 执行时，覆盖确认没人输入会卡死；这里用 command 绕过 alias/function，
-  // 同时加 -f 明确强制覆盖，保证临时文件替换不会等待交互确认。
+  // Some remote shells define mv as an alias/function (for example, mv -i).
+  // During non-interactive SSH exec, no one can answer the overwrite prompt; use command to bypass aliases/functions
+  // and add -f to force replacement so swapping the temporary file never waits for interactive input.
   return `command mv -f ${quotePosixPathArg(sourcePath)} ${quotePosixPathArg(targetPath)}`;
 }
 
 export function buildRemoteChmodExecutableCommand(filePath: string): string {
-  // 和 mv 一样，chmod 也可能被远端 shell 自定义；用 command 确保调用真实命令。
+  // Like mv, chmod may also be customized by the remote shell; use command to invoke the real executable.
   return `command chmod +x ${quotePosixPathArg(filePath)}`;
 }
 
@@ -79,9 +79,9 @@ export function createRemoteAssetPlaceholderError(
   options: RemoteAssetDeployOptions,
   resourceLabel: string,
 ): Error {
-  // 远端部署资源在生产态需要走 CDN + 本地缓存。
-  // 如果这里仍然只报“本地文件缺失”，排障时会误判成打包漏文件；
-  // 统一把错误指向配置（CDN 基址/缓存目录）和缓存内容，避免定位方向跑偏。
+  // In production, remote deployment assets must come from the CDN and local cache.
+  // Reporting only "local file missing" here could mislead diagnosis toward a packaging omission;
+  // point the error to configuration (CDN base/cache directory) and cache contents instead.
   return new Error(
     `[deploy] ${resourceLabel} missing for ${platformArch}. ` +
       `Development should read from mock-cdn/releases; production should download and cache remote assets from CDN ` +
@@ -100,8 +100,8 @@ export function waitForClose(stream: StdioStream): Promise<void> {
     });
 
     stream.onClose((code) => {
-      // 之前只等待 close 不校验退出码，远端命令失败会被当成成功继续执行。
-      // 这会导致部署链路把失败写成“已完成”（甚至继续写 version），形成假成功状态。
+      // Previously, the code waited only for close and did not check the exit code, so a failed remote command was treated as success.
+      // The deployment flow could then mark a failure as "complete" (and even write the version), creating a false-success state.
       if (code !== 0) {
         const stderrSummary = stderrText.trim();
         reject(

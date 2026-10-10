@@ -71,8 +71,8 @@ export function createStreamingToolCoordinator(
 
   return {
     accept(toolCall) {
-      // model.ts 已完成 runtime admission。这里必须保留空名原值，使正常 finish
-      // 走 end-of-stream registry miss，同时让 finish 前断流保留 synthetic interrupted error。
+      // model.ts already performed runtime admission. Preserve the original empty name here so a normal finish
+      // reaches the end-of-stream registry miss, while a pre-finish interruption retains a synthetic interrupted error.
       const normalizedToolCall = { ...toolCall };
       if (normalizedToolCall.providerExecuted) return;
       acceptedToolCalls.set(normalizedToolCall.id, normalizedToolCall);
@@ -81,7 +81,7 @@ export function createStreamingToolCoordinator(
       const promise = executeDuringStream(runtime, state, {
         abortSignal: abortController.signal,
         assistantMessageId: options.assistantMessageId,
-        // model admission 已去重；只读工具可能先落盘，序号必须来自全部本地声明。
+        // Model admission already deduplicated calls; read-only tools may be persisted first, so sequence numbers must come from all local declarations.
         declarationIndex: acceptedToolCalls.size - 1,
         model: options.model,
         toolCall: normalizedToolCall,
@@ -186,8 +186,8 @@ export function createStreamingToolCoordinator(
       state.modelStepCount += 1;
       recordModelHistoryRound(state);
       state.toolCallCount += streamedToolResults.length;
-      // 合并修复：恢复请求依赖 assistant tool-call 与随后 tool result 成对出现。
-      // 因此必须同步推进本轮 request history，不能只更新 canonical history。
+      // Combined fix: recovery requests require the assistant tool-call and subsequent tool result to appear as a pair.
+      // Therefore, also advance this turn's request history instead of updating only canonical history.
       commitTurnRequestEntries(runtime, state.turnRequestState, [
         createRuntimeAssistantEntry("", toolCalls, undefined, options.model),
       ]);
@@ -248,8 +248,8 @@ async function executeDuringStream(
   const metadata = mcpToolPartMetadata(
     runtime.registry.getMetadata(toolCall.name)?.mcpPresentation,
   );
-  // during_stream 是 pending/running part 的首个 durable writer；若绕过
-  // turn-tools 的 metadata 写入，Stop 发生在 drain 前时冷恢复只能退化成通用工具卡。
+  // during_stream is the first durable writer for pending/running parts. If it bypasses metadata writing in
+  // turn-tools, a Stop before drain leaves cold recovery able to render only a generic tool card.
   await persistPendingToolPart(runtime, {
     assistantMessageId: options.assistantMessageId,
     declarationIndex: options.declarationIndex,

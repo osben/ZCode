@@ -3,17 +3,19 @@ import type { SessionDebugSnapshot } from "@zcode/shared";
 import { useSessionDebug } from "@/hooks/useSessionDebug.js";
 
 /**
- * 解码窗口的可信下限。响应被代理/网络整包缓冲后一次到达时，
- * durationMs - TTFT 会塌缩到几十毫秒以内，此时 outputTokens / 窗口 会算出
- * 数万 tok/s 的假尖峰（实测环境：Clash 类代理的 SSE 缓冲）。低于该窗口的
- * round 不作为展示事实；开发者面板继续显示原始值以便诊断。
+ * Minimum trustworthy decoding window. When a proxy or network buffers an entire response and
+ * delivers it at once, durationMs - TTFT can collapse to a few dozen milliseconds, making
+ * outputTokens / window produce a false spike of tens of thousands of tok/s (observed with
+ * SSE buffering by Clash-like proxies). Rounds below this window are not shown as facts;
+ * the developer panel continues to show raw values for diagnosis.
  */
 export const MIN_RELIABLE_GENERATION_DURATION_MS = 100;
 
 /**
- * 最近一次**可信**模型请求的输出吞吐。从末尾向前找第一条解码窗口达标的
- * round；突发到达的 round 被跳过而不是冒充当前事实。找不到可信 round 或
- * 其吞吐未知（null）时保持缺席。
+ * Output throughput for the most recent **trustworthy** model request. Search backward for the
+ * first round whose decoding window meets the threshold; skip burst-delivered rounds rather than
+ * treating them as current facts. Remain absent if no trustworthy round is found or its throughput
+ * is unknown (null).
  */
 export function resolveLatestTokensPerSecond(
   rounds: readonly SessionDebugSnapshot["rounds"][number][],
@@ -32,15 +34,16 @@ export function resolveLatestTokensPerSecond(
 }
 
 export function formatTokensPerSecond(locale: string, tokensPerSecond: number): string {
-  // 与开发者工具面板 TPS 列同格式：一位小数，tabular 渲染由样式负责。
+  // Match the TPS column in the developer tools panel: one decimal place; styles handle tabular rendering.
   return new Intl.NumberFormat(locale, { maximumFractionDigits: 1 }).format(tokensPerSecond);
 }
 
 /**
- * 会话实时吞吐（tok/s）。事实源是 agent 侧 session/debug 观测（每个已完成模型请求
- * 的 outputTokens / 解码时长），这里只按秒轮询读取，不做本地 Δtoken/Δt 推导。
- * 轮询出错（旧 CLI 报 sessionUnavailable、detached child 被回收）时上一次快照
- * 不能冒充当前事实，按规格静默隐藏。
+ * Live session throughput (tok/s). The source of truth is agent-side session/debug telemetry
+ * (outputTokens / decoding time for each completed model request). This hook only polls once per
+ * second; it does not derive a local Δtoken/Δt. If polling fails (an older CLI reports
+ * sessionUnavailable or a detached child has been reclaimed), the previous snapshot must not be
+ * presented as current; hide it silently as specified.
  */
 export function useSessionThroughput({
   enabled,

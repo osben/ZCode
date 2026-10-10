@@ -1,4 +1,4 @@
-/* eslint-disable max-lines -- 投影状态、V4 帧与离线替换属于同一个一致性边界。 */
+/* eslint-disable max-lines -- Projection state, V4 frames, and offline replacement belong to one consistency boundary. */
 import { isDeepStrictEqual } from "node:util";
 import type { ZCodeTaskMeta } from "@zcode/shared";
 import type { ZCodeArchivedTaskDeletionResult } from "@zcode/services";
@@ -107,8 +107,8 @@ function taskKey(address: WindowHostTaskAddress): string {
 }
 
 function defaultLiveStatus(meta: ZCodeTaskMeta): WindowHostControllerTaskRow["liveStatus"] {
-  // live overlay 缺失表示当前没有可证明的 runtime；SQLite 里的 running/interaction
-  // 可能来自上次进程退出，不能重新解释成当前运行或等待事实。
+  // A missing live overlay means there is no runtime that can be verified as current; running/interaction in SQLite
+  // may come from the previous process and must not be reinterpreted as current running or waiting state.
   switch (meta.status) {
     case "completed":
       return "completed";
@@ -356,8 +356,8 @@ export function createWindowHostControllerProjection(options: { createId: () => 
           ? replacementCandidate
           : undefined;
       if (replacedSource) {
-        // 重连的 remoteSessionId 会变化；先在内存里摘掉旧 source，再用一个 task delta frame
-        // 同时发布 old removals + new upserts，消费者不会看到中间空投影。
+        // remoteSessionId changes on reconnect. Remove the old source in memory, then publish old removals and new upserts in one task delta frame
+        // so consumers never see an empty intermediate projection.
         sources.delete(sourceKey(replacedSource.scope));
       }
       const previousRows = source.rows;

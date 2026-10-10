@@ -61,7 +61,7 @@ export function ConversationQuotaBanner({
   const bannerRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!onShown || !state.visible || !bannerRef.current) return;
-    // 后台任务也会计算额度状态，只有实际可见时才能消耗该桶周期的一次提醒。
+    // Background tasks also compute quota state; consume the bucket's one reminder per period only when it is actually visible.
     let intersecting = false;
     const report = () => {
       if (intersecting && document.visibilityState === "visible") onShown();
@@ -86,7 +86,7 @@ export function ConversationQuotaBanner({
           { id: resolveMessageId(state) },
           {
             model: state.modelName ?? "",
-            // MCP 提示点名具体 server；服务端那句是英文的，界面文案一律走 i18n。
+            // The MCP notice names a specific server; the server-side text is English, so all UI copy must use i18n.
             server: state.mcpServerName ?? "",
             remaining:
               state.remainingTokens === null

@@ -4,28 +4,33 @@ import { logger } from "@/logger.js";
 import { useV4Conversation } from "@/v4/V4ConversationContext.js";
 
 /**
- * dwf run 的发现查询。
+ * Discovery query for dwf runs.
  *
- * 它不再给卡片 join 兜底——
- * 重启后投影由 CLI 冷物化从 journal 回放补齐。剩下的消费者是 run 目录页与任务列表的
- * 「已结束的工作流 · N」计数：目录列最近 64 条，而投影只留 8 条。冷开首查仍可能先于订阅落地
- * 而失败，所以下面的重试语义原样保留。
+ * It no longer provides a fallback for card joins: after restart, the CLI cold-materializes the
+ * projection by replaying the journal. Its remaining consumers are the run catalog and the task
+ * list's "Completed workflows · N" count. The catalog lists the latest 64 runs, while the projection
+ * keeps only 8. The initial query on cold start can still fail before the subscription is established,
+ * so the retry semantics below remain in place.
  *
- * 这段逻辑原本内联在 `SessionPane`，一次性发出、失败即静默 `null`。
- * 而发现查询的 effect 声明在 lease/订阅 effect 之前，CLI 又严格串行派发请求，于是重启后
- * 打开历史会话时它必然先于订阅落地，宿主 record 还没在册 → `sessionNotFound` → 回退整块
- * 消失，卡片余生停在「编过但无 run」的编译态（点开只有脚本与静态图，没有详情页入口）。
- * CLI 侧已补上冷会话前置；这里补第二半：可重试的那一跳真的重试。
+ * This logic was originally inline in `SessionPane`: it issued one request and silently returned
+ * `null` on failure. The discovery-query effect was declared before the lease/subscription effect,
+ * and the CLI dispatches requests serially. On restart, opening a historical session therefore always
+ * queried before the subscription was established; the host record was not registered yet, causing
+ * `sessionNotFound` and hiding the entire fallback. The card then remained in a compiled-with-no-runs
+ * state (opening it showed only the script and static graph, with no details page entry point).
+ * The CLI now prepares cold sessions first; this hook provides the second half by retrying that query.
  */
 
 /**
- * 能力缺席（旧 CLI 没有这个 query / dwf journal 不可用，run service 整个没构造）与普通失败
- * 必须分开：前者是稳定事实，重试只会每换一个 pane 就多打一次注定失败的 RPC；后者（冷会话、
- * 连接抖动）再问一次就好了。
+ * Distinguish a missing capability (an older CLI has no such query, the dwf journal is unavailable,
+ * or the run service was not constructed) from ordinary failures. The former is a stable fact, so
+ * retries would only send another doomed RPC every time the pane changes. The latter (a cold session
+ * or a connection hiccup) can be resolved by asking again.
  *
- * 与 `isWorkflowRunEventsCapabilityMissing` 同一读法：错误跨 JSON-RPC 之后只剩 message 可靠，
- * 所以两个模式都收——reasonCode 若被透传就命中它，否则命中构造函数写死的能力名。
- * 刻意**不**把 `sessionNotFound` 算成能力缺席：那正是值得重试的那一种。
+ * Use the same approach as `isWorkflowRunEventsCapabilityMissing`: after an error crosses JSON-RPC,
+ * only its message is reliable. Match both patterns: use reasonCode if it was forwarded; otherwise,
+ * match the capability name embedded in the constructor. Deliberately **do not** classify
+ * `sessionNotFound` as a missing capability; that is exactly the kind of error worth retrying.
  */
 function isWorkflowRunsCapabilityMissing(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
@@ -33,30 +38,34 @@ function isWorkflowRunsCapabilityMissing(error: unknown): boolean {
 }
 
 /**
- * 某会话名下的 journal run 摘要；查不到（或还没查到）为 `null`——回退整体缺席，卡片保持
- * 「编过但无 run」形态，绝不假装有入口。
+ * Journal run summaries for a session. `null` means none were found (or the query has not completed);
+ * the overall fallback remains absent and the card stays in its compiled-with-no-runs state, without
+ * pretending there is an entry point.
  *
- * `live` 是「宿主 record 一定在册」的现成信号（订阅 ACK 已回）。冷开时 false→true 的那一跳
- * 是唯一值得重试的时刻，所以这里不轮询、不退避：`live` 之后仍失败就是真失败。
+ * `live` is an existing signal that the host record is registered (the subscription ACK has arrived).
+ * The false→true transition on cold start is the only time worth retrying, so there is no polling or
+ * backoff here: a failure after `live` is a real failure.
  *
- * `refreshKey` 是收口之后**主动**重取的唯一缝（run 目录页与任务列表计数的新鲜度来源）：调用方按「已结算 run 的单调计数」
- * 给它，于是会话中途跑完一个 run 才多一次分页读。刻意不接投影的 `revision`——那个键每来一个
- * 节点事件就抬一次，会把一次读变成一条流。
+ * `refreshKey` is the only way to **explicitly** fetch again after settlement (the freshness source
+ * for the run catalog and task-list count). Callers provide a monotonic count of settled runs, so a
+ * session gets one extra paginated read when a run finishes. Deliberately do not use the projection's
+ * `revision`; it increments on every node event and would turn one read into a stream.
  */
 export function useWorkflowRunJournalSummaries(options: {
   sessionId: string | null;
   live: boolean;
   /**
-   * 调用方声明「这条查询对本 pane 有意义」的闸门；缺省 true。
+   * Caller-provided gate declaring that this query is relevant to the pane; defaults to true.
    *
-   * journal 按**父会话**建键，而嵌套只读 transcript
-   * （dwf actor / subagent）的 SessionPane 曾无差别地带着子会话 id 发出这条查询。
-   * 空手而归只是小头；大头是 CLI 的冷会话前置会为一条**正在运行**的 detached 会话
-   * 物化第二个（幽灵）runtime——双写同一份事件日志，直播冻结在「已工作 xx 秒」。
-   * CLI 侧已按 hasLiveConversation 收口；这里是 UI 侧的那半：不该问的 pane 根本不问。
+   * The journal is keyed by the **parent session**, but SessionPane for nested read-only transcripts
+   * (dwf actors / subagents) used to issue this query with the child session id indiscriminately.
+   * Returning no results was the smaller issue; the bigger one was that the CLI cold-session preparation
+   * could materialize a second (ghost) runtime for a **running** detached session, writing the same
+   * event log twice and freezing the live view at "worked for xx seconds". The CLI now gates this by
+   * hasLiveConversation; this is the UI half: panes that should not ask do not issue the query.
    */
   enabled?: boolean;
-  /** 缺省不带这个键，条数由 CLI 侧裁决（缺省 16 / 上限 64）。 */
+  /** Omit this key by default; the CLI decides the count (default 16 / maximum 64). */
   limit?: number;
   refreshKey?: number | string;
 }): readonly V4ConversationWorkflowRunSummary[] | null {
@@ -66,15 +75,17 @@ export function useWorkflowRunJournalSummaries(options: {
     null,
   );
   /**
-   * **最近**收口的那个会话及其答案（成功的摘要，或能力缺席时的 `null`）。
+   * The **most recently** settled session and its answer (successful summaries, or `null` when the capability is absent).
    *
-   * 记的是「会话 + 答案」而不只是一个「问过了」的布尔：pane 的 `effectiveSessionId` 会变
-   * （草稿转正、fork、切任务），而只记会话 id 的话，切回一个问过的会话就会两头落空——
-   * 既早退不重查，又因为换会话清了状态而永远空着。换到别的会话再切回来会重查一页 journal，
-   * 这很便宜；一个永远空着的入口不便宜。
+   * Store the "session + answer", not just a boolean meaning "queried": a pane's `effectiveSessionId`
+   * can change (draft promotion, fork, task switch). If only the session id were stored, switching
+   * back to a previously queried session would both skip the query and remain empty because its state
+   * was cleared on the previous switch. Querying one journal page after switching away and back is
+   * cheap; a permanently empty entry point is not.
    *
-   * `refreshKey` 一并记下：抬升即视为「这个答案过期了」而重取。**但能力缺席不受它影响**
-   * （见下），所以那一档单独记一个标记而不是塞进这里比较。
+   * Store `refreshKey` too: an increase means "this answer is stale" and triggers another query.
+   * **Missing capability is unaffected by it** (see below), so track that case separately instead
+   * of comparing it here.
    */
   const settledRef = useRef<{
     sessionId: string;
@@ -82,9 +93,10 @@ export function useWorkflowRunJournalSummaries(options: {
     summaries: readonly V4ConversationWorkflowRunSummary[] | null;
   } | null>(null);
   /**
-   * 能力缺席是**按会话**的终局事实：旧 CLI / journal 不可用不会因为跑完一个 run 就变了。
-   * 与上面的收口分开记，正是为了让 `refreshKey` 抬升穿不过这一档——否则每跑完一个 run
-   * 都要再打一次注定失败的 RPC，而那恰是这条分类当初写下来要避免的抖动。
+   * Missing capability is a terminal fact **per session**: an older CLI or unavailable journal will
+   * not change when a run completes. Track it separately from the answer above so an increased
+   * `refreshKey` cannot bypass this state. Otherwise every completed run would send another doomed RPC,
+   * the very churn this classification was introduced to prevent.
    */
   const capabilityMissingSessionRef = useRef<string | null>(null);
 
@@ -99,12 +111,13 @@ export function useWorkflowRunJournalSummaries(options: {
     }
     const settled = settledRef.current;
     if (settled?.sessionId === sessionId && settled.refreshKey === refreshKey) {
-      // 已有答案：`live` 抬升不再多打一次 RPC（活 run 归投影，journal 只补历史）。
+      // An answer already exists; a `live` transition does not need another RPC (live runs come from
+      // the projection, and the journal only fills in history).
       setSummaries(settled.summaries);
       return;
     }
-    // 换会话：上一个会话的 run 拿来给这个会话的卡片做 join 就是错的 join。
-    // （`refreshKey` 抬升走的是同一条路：清空 → 重取，新答案落地前不显示旧的。）
+    // On session switch, joining the previous session's runs to this session's card would be incorrect.
+    // (`refreshKey` increases use the same path: clear → refetch, and do not show the old answer while waiting.)
     setSummaries(null);
     let alive = true;
     workflowRuns({ sessionId, ...(limit === undefined ? {} : { limit }) }).then(
@@ -118,7 +131,8 @@ export function useWorkflowRunJournalSummaries(options: {
         if (isWorkflowRunsCapabilityMissing(error)) {
           capabilityMissingSessionRef.current = sessionId;
         } else {
-          // 冷会话是这里最常见的一种，`live` 抬升时会自动再来一次；日志留痕便于排查其余。
+          // Cold sessions are the most common case here; the `live` transition retries automatically.
+          // Keep a log entry to help investigate other failures.
           logger.warn("[workflow-run] 读取 run 摘要失败（journal 回退暂缺）", {
             error: error instanceof Error ? error.message : String(error),
             live,

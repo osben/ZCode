@@ -39,15 +39,15 @@ import { useConfirmDialogStore } from "@/store/confirmDialogStore.js";
 
 interface UserInstructionsSettingsSectionProps {
   isDesktop: boolean;
-  /** 当前活动 workspace 对应的目标主机；无 workspace 时 workspacePath 为 null（本机）。 */
+  /** Target host for the currently active workspace; workspacePath is null when there is no workspace (local machine). */
   activeTarget: UserInstructionsHostTarget;
-  /** 只向设置页暴露"是否存在脏草稿"，用于导航拦截；草稿内容仍由本分区持有。 */
+  /** Expose only "whether a dirty draft exists" to Settings for navigation blocking; this section still owns the draft content. */
   onDirtyChange: (dirty: boolean) => void;
 }
 
 /**
- * 设置页「指令」分区：编辑目标主机上的全局 ~/.zcode/AGENTS.md。
- * 仅 Desktop 提供；Web / 手机远控显示占位，不加载文件。
+ * Settings "Instructions" section: edit the target host's global ~/.zcode/AGENTS.md.
+ * Desktop only; Web / mobile remote control shows a placeholder without loading the file.
  */
 export function UserInstructionsSettingsSection({
   isDesktop,
@@ -90,14 +90,14 @@ function DesktopUserInstructionsEditor({
   onDirtyChange: (dirty: boolean) => void;
 }) {
   const { intl } = useZCodeIntl();
-  // 编辑器绑定的主机：有脏草稿时活动 workspace 切到另一台主机，草稿不能被"带"过去写错文件。
+  // Host bound to the editor: when there is a dirty draft and the active workspace switches hosts, do not carry the draft over and write the wrong file.
   const [pinnedTarget, setPinnedTarget] = useState(activeTarget);
   const editor = useUserInstructionsEditor(pinnedTarget);
   const activeHostKey = getUserInstructionsHostKey(activeTarget);
   const pinnedHostKey = editor.hostKey;
   const declinedHostKeyRef = useRef<string | null>(null);
   const editorDirty = editor.dirty;
-  // 弹窗期间 activeTarget 可能只换了引用（如 remoteSessionId 更新）；确认后应采用最新目标。
+  // activeTarget may only change reference while the dialog is open (such as a remoteSessionId update); use the latest target after confirmation.
   const activeTargetRef = useRef(activeTarget);
   useLayoutEffect(() => {
     activeTargetRef.current = activeTarget;
@@ -105,7 +105,7 @@ function DesktopUserInstructionsEditor({
 
   useEffect(() => {
     if (activeHostKey === pinnedHostKey) {
-      // 同一主机只更新连接元数据（如 remoteSessionId），不弹窗也不丢草稿。
+      // When only connection metadata changes for the same host (such as remoteSessionId), do not show a dialog or discard the draft.
       declinedHostKeyRef.current = null;
       setPinnedTarget(activeTarget);
       return;
@@ -115,7 +115,7 @@ function DesktopUserInstructionsEditor({
       setPinnedTarget(activeTarget);
       return;
     }
-    // 对同一个新主机只询问一次；用户取消后编辑器继续指向原主机，直到保存或放弃。
+    // Ask only once for each new host; after the user cancels, keep the editor pointed at the original host until Save or Discard.
     if (declinedHostKeyRef.current === activeHostKey) return;
     declinedHostKeyRef.current = activeHostKey;
     const requestedHostKey = activeHostKey;
@@ -129,7 +129,7 @@ function DesktopUserInstructionsEditor({
       })
       .then((confirmed) => {
         const latest = activeTargetRef.current;
-        // 弹窗期间活动主机又变了：本次回答针对的是旧主机，忽略，由 effect 重新询问。
+        // If the active host changes again while the dialog is open, the answer applies to the old host; ignore it and let the effect ask again.
         if (!confirmed || getUserInstructionsHostKey(latest) !== requestedHostKey) return;
         declinedHostKeyRef.current = null;
         setPinnedTarget(latest);
@@ -302,7 +302,7 @@ function ConflictDialog({ editor }: { editor: UserInstructionsEditor }) {
     <AlertDialog
       open={editor.conflict !== null}
       onOpenChange={(open) => {
-        // 关闭弹窗（Esc / 遮罩）保持草稿不变。
+        // Closing the dialog (Esc / backdrop) preserves the draft.
         if (!open) void editor.resolveConflict("keep");
       }}
     >

@@ -17,7 +17,7 @@ function tryResolveHttpUrl(resolve: () => string | URL): URL | null {
   }
 }
 
-// 这里只判定候选请求；实际退出须由 OAuthService 在会话变更队列内复核，不能依赖异步旧快照。
+// This only identifies candidate requests; OAuthService must recheck them inside the session-change queue before signing out, rather than relying on a stale async snapshot.
 export async function isCurrentOAuthCredentialRequest(options: {
   input: string | URL;
   headers: Headers;
@@ -29,16 +29,16 @@ export async function isCurrentOAuthCredentialRequest(options: {
   const currentJwt = (await options.credentialService.load("zcodejwttoken"))?.trim() ?? "";
   if (currentJwt && authorization === `Bearer ${currentJwt}`) return true;
 
-  // 原观察器只识别 ZCode JWT，业务 access token 的 userinfo 401
-  // 只会变成普通请求错误。仅扩展用户/团队身份查询，避免支付和 API key 接口跟随全局退出。
+  // The old observer recognized only ZCode JWTs, so a userinfo 401 from a business access token
+  // became an ordinary request error. Extend only user/team identity queries to avoid global sign-out for payment and API-key endpoints.
   const provider = await options.credentialService.load("oauth:active_provider");
   if (provider !== BIGMODEL_PROVIDER_ID && provider !== ZAI_PROVIDER_ID) return false;
   const env = options.env ?? process.env;
   const requestUrl = tryResolveHttpUrl(() => options.input);
   if (!requestUrl) return false;
   const customerInfoPath = "/api/biz/customer/getCustomerInfo";
-  // 单个候选 URL 构造失败曾阻断其它有效接口的 401 识别。
-  // 分别延迟构造并解析，只读取 userinfo 所需配置，避免无关授权/登录配置的异常。
+  // A failure constructing one candidate URL used to block 401 recognition for other valid endpoints.
+  // Construct and parse each URL independently, reading only the configuration needed for userinfo to avoid unrelated authorization/login configuration errors.
   const urls =
     provider === BIGMODEL_PROVIDER_ID
       ? [() => buildBigModelApiUrl(env, customerInfoPath), () => resolveBigModelUserinfoUrl(env)]
@@ -60,6 +60,6 @@ export async function isCurrentOAuthCredentialRequest(options: {
   )?.trim();
   if (!accessToken || (authorization !== accessToken && authorization !== `Bearer ${accessToken}`))
     return false;
-  // 读取磁盘期间可能切换平台，不能拿上一平台残留 token 的 401 清理当前登录。
+  // The platform may change while reading from disk; do not use a 401 from a token left by the previous platform to clear the current login.
   return (await options.credentialService.load("oauth:active_provider")) === provider;
 }

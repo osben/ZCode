@@ -68,13 +68,13 @@ function resolveBootstrapWithRemoteEnv(baseEnv = process.env) {
   const pathEntries = [resolvePinnedNodeBin(), resolveUserPnpmBin()].filter(Boolean);
 
   return {
-    // bootstrap:with-remote 是手动远程资源初始化入口，自动化等非 TTY 环境里
-    // pnpm install 可能要求确认清理 node_modules。只在该入口禁用确认，不改变 CI/生产构建命令。
+    // bootstrap:with-remote is the manual entry point for initializing remote resources. In automated non-TTY environments,
+    // pnpm install may ask for confirmation before clearing node_modules. Disable confirmation only for this entry point; do not change CI/production build commands.
     HUSKY: "0",
     PNPM_CONFIG_CONFIRM_MODULES_PURGE: "false",
     npm_config_confirm_modules_purge: "false",
-    // remote assets 和 bootstrap build 同一轮里会触发大量 workspace 构建。
-    // 这里把降峰值限制在 bootstrap:with-remote 子进程，不修改 build/build:bootstrap 的全局语义。
+    // Remote assets and the bootstrap build trigger many workspace builds in the same run.
+    // Limit peak-memory reduction to the bootstrap:with-remote child process; do not change the global semantics of build/build:bootstrap.
     PNPM_CONFIG_WORKSPACE_CONCURRENCY: "1",
     ZCODE_BOOTSTRAP_WITH_REMOTE: "1",
     ...(pathEntries.length > 0
@@ -109,10 +109,10 @@ function runPnpm(args, options = {}) {
 function runBootstrapServerBuild() {
   const serverDir = resolve(rootDir, "packages/server");
 
-  // bootstrap:with-remote 的最终构建过去复用 build:bootstrap，导致 @zcode/server build
-  // 内部再次嵌套 pnpm run build:remote；在本地低内存环境中 tsx/esbuild 子进程容易卡住或被停掉。
-  // 同时不能按 dist 文件存在就跳过构建：开发时 version 经常不变，旧 entry-http 或 remote bundle
-  // 会让本地/远端继续运行旧协议。这里仅保留直接执行等价入口的低内存优化，CI 和生产 build 脚本保持原样。
+  // The final bootstrap:with-remote build used to reuse build:bootstrap, causing @zcode/server build
+  // to nest another pnpm run build:remote. tsx/esbuild child processes can hang or be killed in low-memory local environments.
+  // A build also cannot be skipped just because dist files exist: development versions often stay the same, and stale entry-http or remote bundles
+  // would keep local/remote environments on an old protocol. Keep only the low-memory optimization that directly runs the equivalent entry point; leave CI and production build scripts unchanged.
   runCommand(process.execPath, [resolve(rootDir, "node_modules/tsup/dist/cli-default.js")], {
     cwd: serverDir,
     env: {
@@ -135,9 +135,9 @@ function runBootstrapServerBuild() {
 
 function runBootstrapDesktopBuild() {
   const desktopDir = resolve(rootDir, "packages/desktop");
-  // bootstrap:with-remote 的目标是完成远程资源和本地 runtime 初始化。
-  // 继续触发 desktop app bundle 会进入生产构建脚本里的 tsup/vite 路径，在本地低内存环境中被 SIGKILL。
-  // 这里仅在 bootstrap runner 中保留 build meta，生产/CI 的 build:no-runtime-assets 仍保持原语义。
+  // bootstrap:with-remote initializes remote resources and the local runtime.
+  // Building the desktop app bundle enters the production tsup/vite path, which is killed with SIGKILL in low-memory local environments.
+  // Keep build metadata only in the bootstrap runner; preserve the production/CI semantics of build:no-runtime-assets.
   runCommand(process.execPath, ["scripts/build-metadata.mjs"], {
     cwd: desktopDir,
     env: {
@@ -150,8 +150,8 @@ function runBootstrapDesktopBuild() {
 
 function runBootstrapWithRemoteBuild() {
   for (const filter of ["@zcode/rpc", "@zcode/web", "@zcode/formal-proof"]) {
-    // pnpm -r 会在 bootstrap:with-remote 的最终构建阶段并发启动多个 Vite/esbuild/tsup。
-    // remote assets 已经占过一轮内存峰值，这里显式串行包构建，且不改变 build:bootstrap/CI 命令。
+    // During the final bootstrap:with-remote build, pnpm -r starts multiple Vite/esbuild/tsup processes concurrently.
+    // Remote assets have already reached a memory peak, so build packages serially here without changing build:bootstrap/CI commands.
     runPnpm(["--filter", filter, "build"]);
   }
   runBootstrapServerBuild();
@@ -166,9 +166,9 @@ runPnpm(["prepare:desktop-runtime"], {
   env: withRemoteAssets
     ? {}
     : {
-        // 本地 bootstrap 过去默认准备 remote mock-cdn，
-        // 每次都会重新打包跨平台组件，导致普通初始化很慢。
-        // 默认只准备桌面端本地 runtime；需要远程资源时使用 bootstrap:with-remote。
+        // Local bootstrap used to prepare the remote mock-cdn by default,
+        // repackaging cross-platform components every time and making ordinary initialization slow.
+        // Prepare only the desktop local runtime by default; use bootstrap:with-remote when remote resources are needed.
         ZCODE_SKIP_REMOTE_ASSETS: "1",
       },
 });

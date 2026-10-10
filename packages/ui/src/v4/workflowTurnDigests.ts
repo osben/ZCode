@@ -8,42 +8,41 @@ import { readWorkflowName } from "@/ToolCallBlocks/renderers/createWorkflowInput
 import type { AssistantWorkRow } from "@/v4/conversationTurnFlowItems.js";
 
 /**
- * 轮尾 run 卡的解析：这一轮里哪些**来源**点名了
- * 一条 run。纯函数，照 `resolveCronAutomationTurnCards` 的同一条缝。
+ * Resolves end-of-turn run cards: which **sources** in this turn named
+ * a run. Pure function, following the same seam as `resolveCronAutomationTurnCards`.
  *
- * 三种来源，一条规则——凡点名了 runId 的来源都出一张卡：
- * - 直接启动轮（`unit.workflowLaunch`）：元数据自带 runId / toolCallId /
- *   名字；它是这一轮唯一的呈现（用户行不可见）。
- * - CreateWorkflow 行：按 toolCallId 联接（投影 `run.toolCallId` 就是发起行）；行本身不点名 runId，
- *   所以没联接到 run 的行（被拒绝 / 编不过）没有卡。
- * - ResumeWorkflowRun 行：display 载荷带 runId（投影的 toolCallId 跨 resume 沿用发起行，按 toolCallId
- *   永远查不到）。
+ * Three sources, one rule—every source that names a runId gets a card:
+ * - Direct launch turn (`unit.workflowLaunch`): metadata includes runId / toolCallId /
+ *   name; this is the turn's only presentation (the user row is hidden).
+ * - CreateWorkflow row: join by toolCallId (`run.toolCallId` in the projection is the launching row); the row itself does not name runId,
+ *   so a row with no joined run (rejected / failed to compile) gets no card.
+ * - ResumeWorkflowRun row: display payload includes runId (the projection's toolCallId reuses the launching row across resume, so lookup by toolCallId
+ *   will never find it).
  *
- * 图是 run 的属性：按 run 的**发起** toolCallId 到宿主建的图表里取，不问卡挂在哪种行上——resume 行
- * 因此与发起行同一张图。联接不到活投影（淘汰 / 冷恢复）的来源仍出卡，`summary` 缺席，卡退成中性
- * 单行。同一轮里同 run 只出一张（首见来源）。
+ * Charts belong to the run: look them up from the host chart map by the run's **launching** toolCallId, regardless of which row owns the card—so a resume row
+ * uses the same chart as the launching row. A source still gets a card when it cannot join the live projection (evicted / cold recovery), with `summary` absent and the card falling back to a neutral
+ * single row. Show only one card per run in a turn (the first source wins).
  *
- * 一个例外：**就地生效的设置轮**（`rowOnly`）点名了一条 run，却既没启动它也没恢复它——它只是改了
- * 那条 run 的并发上限。那条 run 的卡已经在它启动的那一轮里，所以这条来源只出上方那一行。
+ * One exception: a **settings turn with an in-place change** (`rowOnly`) names a run without launching or resuming it—it only changed
+ * that run's concurrency limit. Its card already appeared in the turn that launched it, so this source renders only the line above.
  */
 export interface WorkflowTurnDigest {
   key: string;
-  /** 这张卡挂在的来源 id（打开侧板时经 `resolveWorkflowRunOpenToolCallId` 换成发起行 id）。 */
+  /** Source id owning this card (mapped to the launching row id by `resolveWorkflowRunOpenToolCallId` when opening the side panel). */
   toolCallId: string;
   runId: string;
-  /** 脚本 `name`；缺席时由渲染方本地化兜底名。 */
+  /** Script `name`; the renderer supplies a localized fallback when absent. */
   name: string | undefined;
   graph: WorkflowCausalityGraphData | undefined;
-  /** 活投影的联接摘要；缺席 = run 不在投影里，卡退成中性单行（「已结束」）。 */
+  /** Joined summary from the live projection; absent means the run is not projected and the card falls back to a neutral one-line "ended" state. */
   summary: WorkflowRunCardSummary | undefined;
   /**
-   * 设置轮：这张卡的 run 是「配置」
-   * 从哪个 run 修订来的、改了什么。在场时卡上方多一行「已调整设置 · …」；`at` 是那一轮的时刻。
+   * Settings turn: which run this card's run was amended from by "Configure," and what changed. When present, add a line above the card saying "Settings adjusted · …"; `at` is the turn's timestamp.
    */
   settings?: { amend: WorkflowSettingsAmendMeta; at?: number };
   /**
-   * **只出那一行、不出卡**：就地生效的设置轮（只改并发上限、run 仍在运行，`amend` 不带 `predecessorRunId`）。它点名的 run 没有被替代、身份没变，
-   * 卡已经在它启动的那一轮里——这里再画一张会读成第二次运行。恒与 `settings` 同在。
+   * **Render only the line, not a card**: an in-place settings turn (only the concurrency limit changed; the run is still running and `amend` has no `predecessorRunId`). The named run was not replaced and its identity is unchanged;
+   * its card already appeared in the launch turn, so rendering another one here would look like a second run. Always present with `settings`.
    */
   rowOnly?: true;
 }
@@ -51,7 +50,7 @@ export interface WorkflowTurnDigest {
 interface WorkflowTurnDigestSource {
   workflowLaunch?: WorkflowLaunchMeta;
   assistantWorkRows: readonly AssistantWorkRow[];
-  /** 这一轮的开始时刻（设置轮那一行的时间）。 */
+  /** Start time for this turn (timestamp shown on the settings line). */
   startedAt?: number;
 }
 
@@ -72,9 +71,9 @@ export function resolveWorkflowTurnDigests(
 
   const launch = unit.workflowLaunch;
   if (launch !== undefined) {
-    // 就地生效的设置轮：`amend` 不带 predecessorRunId（缺席即「没有前驱、改的就是自己」，
-    // workflow-row-meta.ts）。它是唯一一个点名了 run 却不是「启动 / 恢复了它」的来源，所以
-    // **不占**这一轮的出卡名额——同一轮里真的发起了这条 run 的来源照常出它的卡。
+    // In-place settings turn: `amend` has no predecessorRunId (absence means "no predecessor; the run amended itself,"
+    // workflow-row-meta.ts). It is the only source that names a run without launching/resuming it, so it does **not** consume a card slot for this turn;
+    // a source that actually launched the run in this turn still gets its card.
     const rowOnly = launch.amend !== undefined && launch.amend.predecessorRunId === undefined;
     if (!rowOnly) seen.add(launch.runId);
     digests.push({
@@ -118,7 +117,7 @@ export function resolveWorkflowTurnDigests(
     seen.add(runId);
     const resumed = join.byRunId?.get(runId);
     digests.push({
-      // 发起行 id 只有联接到投影才知道；不在投影里的 resume 卡没有图可找。
+      // The launching-row id is known only after joining the projection; a resume card without a projected run has no chart to look up.
       graph: graphOf(resumed?.toolCallId),
       key: `${row.rowId}:${row.toolCallId}`,
       name: undefined,

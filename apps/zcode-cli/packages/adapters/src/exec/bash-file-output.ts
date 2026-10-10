@@ -10,7 +10,7 @@ const OUTPUT_WATCH_INTERVAL_MS = 5_000;
 const OUTPUT_FILE_MODE = 0o600;
 const PROGRESS_TAIL_MAX_BYTES = 4096;
 
-/** Bash 只持有文件身份和观察器；原始输出由子进程写入，不经过 Node collector。 */
+/** Bash keeps only file identity and observers; the child process writes raw output without a Node collector. */
 export class BashFileOutput {
   private handle?: FileHandle;
   private created = false;
@@ -35,7 +35,7 @@ export class BashFileOutput {
       if (error.code !== "ENOENT") throw error;
       return undefined;
     });
-    // Windows 的 append-only 句柄被 MSYS 判为只读；Windows 必须用 w。
+    // MSYS treats append-only handles as read-only on Windows, so Windows must use w.
 
     const flags =
       this.platform === "win32"
@@ -49,14 +49,15 @@ export class BashFileOutput {
   async close(): Promise<void> {
     const handle = this.handle;
     this.handle = undefined;
-    // fd 清理失败不能覆盖取消/退出结果，也不能阻止 adapter 释放其它生命周期资源。
+    // File-descriptor cleanup failures must not override cancellation or exit results, or prevent the
+    // adapter from releasing other lifecycle resources.
     await handle?.close().catch(() => undefined);
   }
 
   async discard(): Promise<void> {
     await this.close();
     if (this.created) {
-      // 清理失败不能覆盖取消/spawn 的真实结果，也不能删除原有文件。
+      // Cleanup failures must not override the actual cancellation/spawn result or delete the existing file.
       await rm(this.path, { force: true }).catch(() => undefined);
     }
     this.prepared = false;
@@ -71,7 +72,7 @@ export class BashFileOutput {
       void stat(this.path)
         .then(
           (file) => {
-            // stat 可以在 exit 或后台移交之后才返回；旧观察器不能终止新状态。
+            // stat may return after exit or background handoff; an old observer must not terminate the new state.
             if (this.watchTimer !== timer || file.size <= maxBytes) return;
             this.stopWatching();
             onLimit();
@@ -114,7 +115,8 @@ export class BashFileOutput {
           true,
           this.legacyEncoding,
         );
-        // 共享 interval 仍在服务其他任务；取消/重订阅后必须丢弃本订阅迟到的读取。
+        // The shared interval still serves other tasks; discard reads that arrive late for this
+        // subscription after cancellation or resubscription.
         if (!isActive()) return;
         const preview = buildBashOutputPreview(
           output.text,

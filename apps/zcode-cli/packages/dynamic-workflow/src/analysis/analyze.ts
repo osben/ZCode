@@ -43,9 +43,10 @@ export interface AnalyzeResult {
   /** Who takes part in each phase and who hands off to whom. */
   handoff?: HandoffGraph;
   /**
-   * 脚本声明的**用户面产物**：`[{id, kind}]`，去重、按 id
-   * 排序。与 world.run 的命令集同族的编译产物——运行前就能说出这个工作流会产出什么。
-   * 与图不同，它在诊断非空时**照常给出**（它是从站点表直接读的事实，不依赖解释）。
+   * **User-facing artifacts** declared by the script: `[{id, kind}]`, deduplicated and sorted by
+   * ID. Like the world.run command set, this compile artifact can state what the workflow will
+   * produce before execution. Unlike the graph, it is **still returned** when diagnostics are
+   * present (it is read directly from the site table and does not depend on interpretation).
    */
   declaredArtifacts: DeclaredArtifact[];
 }
@@ -64,24 +65,28 @@ export interface AnalyzeResult {
 export function analyzeWorkflowScript(scriptText: string): AnalyzeResult {
   const workflow = createWorkflowProgram(scriptText);
   const diagnostics = collectDiagnostics(workflow.program);
-  // 编译不过 / facade 逃逸时连站点表都不可信，产物清单只能是空的（缺省而不是缺席：读者
-  // 拿到的永远是一个数组，不必在每个消费点分辨"没有产物"与"没能分析"）。
+  // If compilation fails or the facade is escaped, even the site table is untrustworthy, so the
+  // artifact manifest must be empty (defaulted rather than absent: readers always receive an array
+  // and need not distinguish “no artifacts” from “analysis failed” at every use site).
   if (diagnostics.length > 0) return { declaredArtifacts: [], diagnostics, ok: false };
 
   const table = collectSites(workflow);
   const misuse = collectFacadeMisuse(workflow, table);
   if (misuse.length > 0) return { declaredArtifacts: [], diagnostics: misuse, ok: false };
 
-  // world.run 的字面量 cmd 检查与 misuse 同席：一个运行期才成形的命令没有可展示的授权
-  // 对象（确认窗展示的命令集在编译期闭合），所以它和「facade 调用必须有站点」一样是
-  // 编译期教改写的那类错误。phase 标记同理：非字面量
-  // 名字与非语句位置的标记都没有可指的东西。
-  // 字面量 actor 重名同席：规则的正门在运行期（引擎 createActor 的 DuplicateActorName），
-  // 这一趟只是把字面量能看穿的那部分提前到便宜的一侧。
-  // 三趟一起报——作者一次就能看全要改什么。
+  // Validate world.run's literal cmd with misuse: a command formed only at runtime has no
+  // authorization item to display (the confirmation dialog's command set is closed at compile
+  // time), making it the same kind of compile-time correction as “facade calls must have a site.”
+  // Phase markers follow the same rule: non-literal names or markers outside statement positions
+  // do not point to a valid object.
+  // Literal duplicate actor names are checked here too; the real gate is runtime
+  // (DuplicateActorName in engine createActor), and this pass moves only statically visible cases
+  // to the cheaper stage.
+  // Report all three passes together so authors can see everything to fix at once.
   const worldRun = collectWorldRunCommands(workflow, table);
-  // 产物的编译期规则同席：id 是编译期字面量、标签指向一个
-  // 已声明的预置、同 id 不横跨两种成员——三条都是「运行期才炸不如现在就教改写」的那一类。
+  // Artifact compile-time rules are included too: IDs must be compile-time literals, tags must
+  // point to a declared preset, and one ID cannot span two member families. All three should teach
+  // corrections now rather than fail at runtime.
   const artifacts = collectArtifactDeclarations(workflow, table);
   const authoring = [
     ...worldRun.diagnostics,
@@ -89,11 +94,14 @@ export function analyzeWorkflowScript(scriptText: string): AnalyzeResult {
     ...collectPhaseMarkerDiagnostics(workflow, table),
     ...collectDuplicateActorNames(workflow, table),
   ];
-  // fan-out 里的静态 actor 名（9006）是这批里唯一**不扣下图**的一条：它说的是这个脚本跑起来
-  // 会撞 DuplicateActorName，而不是「这段代码没法分析」——形状本身完全可分析，把图扣下来只会
-  // 在作者最需要看图定位是哪个 fan-out 的时候把图拿走。它照常清掉 `ok`（提交仍被挡住）。
-  // 顺带的好处：分析语料因此还能钉住「fan-out 里的静态名」这个形状的图产物，否则一条挡路的
-  // 编译期诊断会让它自己的形状在语料里变得不可表达。
+  // Static actor names in fan-out (9006) are the only diagnostics in this group that **do not
+  // suppress the graph**: they mean the script will hit DuplicateActorName at runtime, not that the
+  // code cannot be analyzed. The shape is fully analyzable; suppressing the graph would hide which
+  // fan-out caused the issue exactly when the author needs it for diagnosis. It still clears `ok`
+  // (submission remains blocked).
+  // As a side effect, analysis fixtures can retain graph output for the “static name in fan-out”
+  // shape; otherwise a blocking compile-time diagnostic would make the shape itself inexpressible
+  // in the fixtures.
   const withholding = authoring.filter((d) => d.code !== FANOUT_ACTOR_NAME_CODE);
   if (withholding.length > 0) {
     return { declaredArtifacts: artifacts.declaredArtifacts, diagnostics: authoring, ok: false };

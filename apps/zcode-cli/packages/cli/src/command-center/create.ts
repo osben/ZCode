@@ -208,17 +208,19 @@ export function createCommandCenter(deps: CommandCenterDeps): TuiSubmitPrompt {
       if (command.name === "init") {
         const app = await deps.getApp();
         const prompt = command.args ? `/init ${command.args}` : "/init";
-        // TUI 已知 slash command 若没有显式分支，会落到文件末尾的
-        // resume 兜底。/init 是普通 prompt command，必须交给 app.submitPrompt
-        // 进入 bootstrap resolver，才能和 app --stdio 复用同一套展开逻辑。
+        // A known TUI slash command without an explicit branch falls through to the
+        // resume fallback at the end of this file. /init is an ordinary prompt command
+        // and must go through app.submitPrompt into the bootstrap resolver, so it shares
+        // expansion logic with app --stdio.
         return attachCurrentSessionMetadata(await app.submitPrompt(prompt, options), deps, app);
       }
 
       if (command.name === "workflow") {
         const app = await deps.getApp();
         const prompt = command.args ? `/workflow ${command.args}` : "/workflow";
-        // 与 /init 同款：原文交给 app.submitPrompt，由 bootstrap 的 builtin resolver 展开成
-        // 「先加载 dynamic-workflows 技能，再写脚本调 CreateWorkflow」的提示词。
+        // Same as /init: pass the original text to app.submitPrompt and let bootstrap's
+        // built-in resolver expand it into a prompt to load the dynamic-workflows skill
+        // and then write a script that calls CreateWorkflow.
         return attachCurrentSessionMetadata(await app.submitPrompt(prompt, options), deps, app);
       }
 

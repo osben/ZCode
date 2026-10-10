@@ -5,7 +5,7 @@ import {
   type RemoteWorkspaceIdentityKind,
 } from "./remote-workspace-identity.js";
 
-/** 只提取场景枚举；未知远端身份仍为 remote，禁止向业务埋点暴露地址或路径。 */
+/** Extracts only the scenario enum; unknown remote identities remain remote. Never expose addresses or paths in product telemetry. */
 export function resolveWorkspaceTelemetryDetail(scope: {
   workspaceIdentity?: string | null;
   remoteSessionId?: string | null;
@@ -62,7 +62,7 @@ function readErrorSearchText(error: unknown): string {
 }
 
 /**
- * 原始错误只在本地参与匹配，返回值固定为低基数枚举，禁止把远端目标或错误消息带入埋点。
+ * The raw error is used only for local matching; the return value is a fixed low-cardinality enum. Never include remote targets or error messages in telemetry.
  */
 export function classifyRemoteUsageError(error: unknown): RemoteUsageErrorCategory {
   const value = readErrorSearchText(error);

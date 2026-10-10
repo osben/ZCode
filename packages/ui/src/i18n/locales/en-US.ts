@@ -5064,7 +5064,7 @@ const enUS: Record<string, string> = {
     "{count} more subagents · list everyone in the run pane",
   "chat.toolCall.workflow.timeline.roster.door.list": "{count} more subagents · list them here",
   "chat.toolCall.workflow.timeline.roster.door.fold": "{count} more subagents · fold",
-  // 门后名单末尾的那一行：被淘汰的子代理没有行，差额在这里说明（本仓的轻量 intl 无 ICU 复数）。
+  // Final row after the list: evicted subagents have no row, so this reports the difference (the lightweight intl implementation here has no ICU plural support).
   "chat.toolCall.workflow.timeline.roster.unlisted.one": "1 more agent not listed",
   "chat.toolCall.workflow.timeline.roster.unlisted.other": "{count} more agents not listed",
   "chat.toolCall.workflow.timeline.ledge.earlier": "{count} earlier phase(s), scrolled out of view",
@@ -5345,7 +5345,7 @@ const enUS: Record<string, string> = {
   "chat.backgroundResult.workflow.completed": "Workflow completed",
   "chat.backgroundResult.workflow.errored": "Workflow errored",
   "chat.backgroundResult.workflow.stopped": "Workflow stopped",
-  // run 级停滞通知：run 还在跑，只是没有进展。
+  // Run-level stalled notice: the run is still active but has made no progress.
   "chat.backgroundResult.workflow.stall": "Workflow waiting on the model",
   "chat.backgroundResult.workflow.stall.body":
     "No model request in this run has succeeded for {minutes} min. It is still running and retrying with backoff; stop it from the run card if you no longer need it.",
@@ -5356,7 +5356,7 @@ const enUS: Record<string, string> = {
   "chat.backgroundResult.workflow.asked": "Subagent asked a question",
   "chat.backgroundResult.workflow.artifacts.more": "+{count}",
   // ── Escalation tool cards ──
-  // escalate：子代理把阻塞问题升级给主代理，停驻等答案。asking 相可能持续很久，措辞要平静。
+  // Escalation: a subagent raises a blocking question to the main agent and waits for an answer. The asking phase may last a long time, so keep the wording calm.
   "chat.toolCall.workflow.escalate.asking": "Asking the main agent",
   "chat.toolCall.workflow.escalate.asked": "Asked the main agent",
   "chat.toolCall.workflow.escalate.question": "Question",
@@ -5375,7 +5375,7 @@ const enUS: Record<string, string> = {
   "chat.toolCall.workflow.run.status.completed": "Completed",
   "chat.toolCall.workflow.run.status.errored": "Errored",
   "chat.toolCall.workflow.run.status.stopped": "Stopped",
-  // stopped 的原因词，跟在状态词后。
+  // Reason label for stopped, following the status label.
   "chat.toolCall.workflow.run.stopReason.user": "by you",
   "chat.toolCall.workflow.run.stopReason.model": "by the agent",
   "chat.toolCall.workflow.run.stopReason.provider": "model error",
@@ -5390,8 +5390,8 @@ const enUS: Record<string, string> = {
   "chat.toolCall.workflow.run.usage.label": "Usage",
   "chat.toolCall.workflow.run.usage.tokens": "{tokens} tokens",
   "chat.toolCall.workflow.run.usage.value": "{tokens} tokens · {steps} steps",
-  // 实例表撞界后卡与详情页各有的那一句：停的是每一步的**详情**，不是 run，
-  // 它上面那些计数已经把表外的实例算进来了。
+  // The sentence shown on both the card and detail page after the instance table hits its limit: only each step's **detail** is stopped, not the run;
+  // the counts above already include instances beyond the table.
   "chat.toolCall.workflow.run.truncated": "Details shown for {shown} of {total} steps",
   "chat.toolCall.workflow.run.cancel": "Stop run",
   "chat.toolCall.workflow.run.cancelling": "Stopping…",
@@ -5445,7 +5445,7 @@ const enUS: Record<string, string> = {
     "Continues as a new run with these settings; finished steps are kept.",
   "chat.toolCall.workflow.run.settings.consequence.errored":
     "Retries as a new run with these settings; finished steps are kept.",
-  // 只改并发上限、而且运行正在跑：就地生效。
+  // Only the concurrency limit changes while the run is active: apply in place.
   "chat.toolCall.workflow.run.settings.consequence.concurrencyLive":
     "Applies to this run right away; no new run is started.",
   "chat.toolCall.workflow.run.settings.apply": "Apply",
@@ -5516,8 +5516,8 @@ const enUS: Record<string, string> = {
   "chat.toolCall.workflow.run.artifacts.preset.otherColumn": "Other",
   "chat.toolCall.workflow.run.artifacts.preset.empty": "No data yet",
   "chat.toolCall.workflow.run.artifacts.preset.items": "{count} items",
-  // 待答问题区（升级问答）：actor 停驻在自己那次 ask 里等
-  // 主代理回话。只读——应答者是主代理，不是用户，所以文案不能读起来像在请用户作答。
+  // Pending questions (escalations): an actor is parked on its ask, waiting for
+  // the main agent to reply. Read-only — the main agent answers, not the user, so the copy must not sound like a request for the user to respond.
   "chat.toolCall.workflow.run.questions.title": "Waiting on an answer",
   "chat.toolCall.workflow.run.graph.unavailable":
     "The workflow graph is not in this conversation's visible history.",
@@ -5584,7 +5584,7 @@ const enUS: Record<string, string> = {
     "Waiting for provider ({reason}) · retry in {seconds}s",
   "chat.toolCall.workflow.run.event.nodeExecuting": "Request sent",
   "chat.toolCall.workflow.run.event.concurrencyChanged": "Concurrency {previous} → {next}",
-  // 上一条是治理器在压共享桶；这一条是用户改了这次 run 自己的上限（就地生效，不另起一次运行）。
+  // The previous entry is the governor clamping the shared bucket; this one is the user changing this run's own limit (applied in place without starting another run).
   "chat.toolCall.workflow.run.event.runCapsChanged": "Concurrency limit {previous} → {next}",
   "chat.toolCall.workflow.run.throttle.reason.rateLimited": "rate limited",
   "chat.toolCall.workflow.run.throttle.reason.overloaded": "overloaded",

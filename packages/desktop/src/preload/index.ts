@@ -3,18 +3,18 @@ import {
   databaseStartupStateSchema,
   databaseStartupPortPayloadSchema,
 } from "@zcode/shared";
-/* eslint-disable max-lines -- preload bridge 集中暴露桌面平台 IPC，拆散会让 contextBridge 权限边界更难审计。 */
+/* eslint-disable max-lines -- The preload bridge centralizes desktop platform IPC; splitting it would make contextBridge permissions harder to audit. */
 import { contextBridge, ipcRenderer, webFrame, webUtils } from "electron";
 import {
   installArmsRumBridgeIpcForward,
   scheduleArmsEventBridgePatch,
 } from "../shared/armsRumBridgeForward.js";
 
-// ARMS frame preload 闭包内的 send 不会随后序 ipcRenderer.send 补丁生效，须同步包装 Bridge.send
+// The send closure in the ARMS frame preload does not receive the later ipcRenderer.send patch, so wrap Bridge.send as well.
 installArmsRumBridgeIpcForward(ipcRenderer);
 scheduleArmsEventBridgePatch();
 
-/** 从 command-line 参数中解析 --device-id= */
+/** Parse --device-id= from the command-line arguments. */
 function parseDeviceIdFromArgs(): string {
   for (const arg of process.argv) {
     if (arg.startsWith("--device-id=")) {
@@ -24,7 +24,7 @@ function parseDeviceIdFromArgs(): string {
   return "";
 }
 
-// 在 contextBridge 建立之前就暴露同步值，让 renderer 在 React 渲染前就能读到
+// Expose this synchronous value before creating contextBridge so the renderer can read it before React renders.
 contextBridge.exposeInMainWorld("__ZCODE_DEVICE_ID__", parseDeviceIdFromArgs());
 
 import type {
@@ -160,8 +160,8 @@ function readCurrentWindowControlsOverlayMetrics(): WindowControlsOverlayMetrics
 const initialWindowControlsOverlayPayload = readCurrentWindowControlsOverlayReadyPayload();
 latestDesktopZoomLevel = initialWindowControlsOverlayPayload.zoomLevel;
 latestWindowControlsOverlayMetrics = initialWindowControlsOverlayPayload.metrics;
-// RootStartupLoading 渲染前 main 进程就需要拿到当前 zoom 对应的红绿灯位置。
-// preload 比 React 页面更早运行，这里主动通知 main，避免等进入 App 页面后才调整。
+// Main needs the traffic-light position for the current zoom level before RootStartupLoading renders.
+// Preload runs before the React page, so notify main now instead of waiting until the App page opens.
 ipcRenderer.send(PlatformChannels.WindowControlsOverlayReady, initialWindowControlsOverlayPayload);
 
 ipcRenderer.on(
@@ -182,9 +182,9 @@ ipcRenderer.on(
 
 ipcRenderer.on(PlatformChannels.OpenWorkspacePath, (_event: unknown, path: string) => {
   if (openWorkspacePathCallbacks.size === 0) {
-    // 冷启动 open-workspace 会在 renderer ready 后立刻从 main 进程投递，
-    // 但 React 的 platform effect 可能尚未注册 onOpenWorkspacePath。preload 先接住
-    // 这条 IPC，等 UI 订阅建立后再回放，避免只打开 App 而不打开目录。
+    // On cold start, main sends open-workspace as soon as the renderer is ready, but React's platform
+    // effect may not yet have registered onOpenWorkspacePath. Hold the IPC here and replay it after the
+    // UI subscribes, so the app opens the workspace as well as the window.
     pendingOpenWorkspacePaths.push(path);
     return;
   }
@@ -222,27 +222,27 @@ function notifyPostUpdateReleaseNotesCallbacks(payload: PostUpdateReleaseNotesPa
 
 function notifyUpdateStateCallbacks(payload: UpdateStatePayload): void {
   latestUpdateState = payload;
-  // UpdateReady 是兼容旧交互的一次性缓存，但 update-downloaded
-  // 之后 Squirrel.Mac 可能再上报 staging error。此时 main 会广播 idle/error，
-  // preload 必须同步清掉旧 ready，否则 React 重新订阅时会把已失效版本回放出来。
+  // UpdateReady is a one-time cache for compatibility with the old interaction, but Squirrel.Mac may
+  // report a staging error after update-downloaded. Main then broadcasts idle/error, so preload must
+  // clear the old ready state at the same time; otherwise React receives a stale version when it subscribes again.
   latestReadyUpdateVersion = payload.kind === "update-downloaded" ? payload.version : null;
   for (const callback of updateStateCallbacks) {
     callback(payload);
   }
 }
 
-// 进程检索体验优化：renderer 在系统里通常只会显示成通用 helper 名称，
-// 这里在 preload 阶段补上 zcode-* title，便于按窗口角色筛选。
+// Improve process search: the renderer usually appears in the system as a generic helper name, so add a
+// zcode-* title during preload to make filtering by window role easier.
 updateRendererProcessTitle();
 window.addEventListener("DOMContentLoaded", updateRendererProcessTitle, {
   once: true,
 });
 
 /**
- * Preload bridge —— 仅暴露需要 main 进程参与的平台操作
+ * Preload bridge exposing only platform operations that require main-process participation.
  *
- * 凭据管理已迁移到 host process 的 ICredentialService，
- * 通过 MessagePort RPC 访问，不再经过此 bridge。
+ * Credential management has moved to the host process's ICredentialService and is accessed through
+ * MessagePort RPC instead of this bridge.
  */
 contextBridge.exposeInMainWorld("zcode", {
   connectRemote: (
@@ -282,47 +282,48 @@ contextBridge.exposeInMainWorld("zcode", {
     ipcRenderer.invoke(PlatformChannels.SaveMcpToUserDirectory, payload),
   migrateLegacyCommonMcp: (payload?: MigrateLegacyCommonMcpRequest) =>
     ipcRenderer.invoke(PlatformChannels.MigrateLegacyCommonMcp, payload ?? {}),
-  /** renderer 日志通过 IPC 传到 main 进程统一存储 */
+  /** Send renderer logs through IPC for centralized storage in main. */
   log: (level: "info" | "warn" | "error", args: unknown[]) =>
     ipcRenderer.send(PlatformChannels.Log, { level, args }),
-  /** 打开系统目录选择框，返回选中路径或 null */
+  /** Open the system directory picker and return the selected path or null. */
   selectDirectory: (): Promise<string | null> =>
     ipcRenderer.invoke(PlatformChannels.SelectDirectory),
-  /** 打开系统文件选择框，返回选中文件路径或 null */
+  /** Open the system file picker and return the selected file path or null. */
   selectFile: (): Promise<string | null> => ipcRenderer.invoke(PlatformChannels.SelectFile),
-  /** 打开系统多文件选择框，返回选中文件路径；取消时返回空数组 */
+  /** Open the system multi-file picker and return selected paths; return an empty array when cancelled. */
   selectFiles: (): Promise<string[]> => ipcRenderer.invoke(PlatformChannels.SelectFiles),
-  /** 通过 main process 的原生另存为对话框明确落盘 */
+  /** Save to disk through the native Save As dialog in main. */
   saveFile: (payload: SaveFileRequest): Promise<SaveFileResult> =>
     ipcRenderer.invoke(PlatformChannels.SaveFile, payload),
-  /** 将当前页面的 print 媒体版面导出为 PDF（Chromium 打印引擎，矢量文本） */
+  /** Export the current page's print layout as a PDF using Chromium's print engine and vector text. */
   printPageToPdf: (): Promise<PrintPageToPdfResult> =>
     ipcRenderer.invoke(PlatformChannels.PrintToPdf),
-  /** 从系统拖拽/文件输入得到的 Web File 解析真实本地路径 */
+  /** Resolve the real local path for a Web File obtained from a system drag or file input. */
   getPathForFile: (file: File): string | null => {
-    // Electron 32 起移除了非标准 File.path，renderer 不能再直接从拖拽 File 上取路径。
-    // webUtils 只能在 preload 安全使用；取不到路径时返回 null，让 Web/内联附件逻辑继续兜底。
+    // Electron 32 removed the non-standard File.path, so the renderer cannot read a path from a dropped
+    // File directly. webUtils is safe to use only in preload; return null when no path is available so
+    // Web/inline attachment handling can fall back.
     const path = webUtils.getPathForFile(file).trim();
     return path.length > 0 ? path : null;
   },
-  /** 长文本粘贴落盘为真正的本地附件，避免正文和 prompt payload 被撑大 */
+  /** Persist a long-text paste as a local attachment so the message body and prompt payload stay small. */
   createTempTextAttachment: (payload: CreateTempTextAttachmentRequest) =>
     ipcRenderer.invoke(PlatformChannels.CreateTempTextAttachment, payload),
-  /** 订阅当前窗口内远程连接过程日志，返回 disposer */
+  /** Subscribe to remote connection progress logs in the current window; return a disposer. */
   onRemoteConnectionLog: (callback: (entry: RemoteConnectionRuntimeLog) => void) => {
     const handler = (_event: unknown, payload: unknown) =>
       callback(payload as RemoteConnectionRuntimeLog);
     ipcRenderer.on(PlatformChannels.RemoteConnectionLog, handler);
     return () => ipcRenderer.removeListener(PlatformChannels.RemoteConnectionLog, handler);
   },
-  /** 订阅当前窗口内远程 session 关闭事件，返回 disposer */
+  /** Subscribe to remote session close events in the current window; return a disposer. */
   onRemoteSessionClosed: (callback: (event: RemoteSessionClosedEvent) => void) => {
     const handler = (_event: unknown, payload: unknown) =>
       callback(payload as RemoteSessionClosedEvent);
     ipcRenderer.on(PlatformChannels.RemoteSessionClosed, handler);
     return () => ipcRenderer.removeListener(PlatformChannels.RemoteSessionClosed, handler);
   },
-  /** 订阅 Bot 触发的远程 workspace 重连成功事件，返回 disposer */
+  /** Subscribe to successful remote workspace reconnects triggered by a Bot; return a disposer. */
   onBotRemoteWorkspaceReconnected: (
     callback: (event: BotRemoteWorkspaceReconnectedEvent) => void,
   ) => {
@@ -332,49 +333,49 @@ contextBridge.exposeInMainWorld("zcode", {
     return () =>
       ipcRenderer.removeListener(PlatformChannels.BotRemoteWorkspaceReconnected, handler);
   },
-  /** 检查目录是否已在其他窗口打开 */
+  /** Check whether the directory is already open in another window. */
   activateOrSetWorkspace: (path: string): Promise<{ activated: boolean }> =>
     ipcRenderer.invoke(PlatformChannels.ActivateOrSetWorkspace, path),
-  /** 同步当前窗口所有 tab 的 workspace 路径到 main 进程 */
+  /** Sync the workspace paths for all tabs in this window to main. */
   syncWindowTabs: (paths: string[]) => ipcRenderer.send(PlatformChannels.SyncWindowTabs, paths),
-  /** 同步当前窗口里 Web 远程控制允许切换的 workspace */
-  /** 同步当前窗口里 Web 远程控制可展示的 task 快照 */
-  /** 同步当前窗口的未读 task 数到 main 进程 */
+  /** Sync the workspaces that Web remote control may switch to in this window. */
+  /** Sync task snapshots that Web remote control may display in this window. */
+  /** Sync the unread task count for this window to main. */
   syncWindowUnreadCount: (count: number) =>
     ipcRenderer.send(PlatformChannels.SyncWindowUnreadCount, count),
   syncActiveTaskSession: (sessionId: string | null) =>
     ipcRenderer.send(PlatformChannels.SyncActiveTaskSession, sessionId),
-  /** 同步需要 main 进程即时感知的应用设置 */
+  /** Sync application settings that main needs to observe immediately. */
   syncAppSettings: (patch: Partial<AppSettings>) =>
     ipcRenderer.send(PlatformChannels.SyncAppSettings, patch),
-  /** 快捷键设置页录制态开关：main 暂时摘除可配置菜单 accelerator，防止录制按键触发原命令 */
+  /** Shortcut settings recording toggle: temporarily remove configurable menu accelerators in main so recorded keys do not trigger their commands. */
   setShortcutRecordingActive: (active: boolean) =>
     ipcRenderer.send(PlatformChannels.SetShortcutRecordingActive, active),
-  /** 注册 main 进程要求聚焦指定 workspace tab 的回调，返回 disposer */
+  /** Register a callback for main to focus a workspace tab; return a disposer. */
   onFocusTab: (callback: (path: string) => void): (() => void) => {
     const handler = (_event: unknown, path: string) => callback(path);
     ipcRenderer.on(PlatformChannels.FocusTab, handler);
     return () => ipcRenderer.removeListener(PlatformChannels.FocusTab, handler);
   },
-  /** 注册 main 进程触发新建 tab 的回调，返回 disposer */
+  /** Register a callback for main to create a new tab; return a disposer. */
   onNewTab: (callback: () => void): (() => void) => {
     const handler = () => callback();
     ipcRenderer.on(PlatformChannels.NewTab, handler);
     return () => ipcRenderer.removeListener(PlatformChannels.NewTab, handler);
   },
-  /** 注册 main 进程请求关闭当前上下文的回调，返回 disposer */
+  /** Register a callback for main to close the current context; return a disposer. */
   onCloseActiveContextRequest: (callback: () => void): (() => void) => {
     const handler = () => callback();
     ipcRenderer.on(PlatformChannels.CloseActiveContextRequest, handler);
     return () => ipcRenderer.removeListener(PlatformChannels.CloseActiveContextRequest, handler);
   },
-  /** 注册内置 webview 的受控新页面请求，返回 disposer */
+  /** Register requests for controlled new pages from the built-in webview; return a disposer. */
   onOpenBrowserUrl: (callback: (request: EmbeddedBrowserOpenUrlRequest) => void): (() => void) => {
     const handler = (_event: unknown, request: EmbeddedBrowserOpenUrlRequest) => callback(request);
     ipcRenderer.on(PlatformChannels.OpenBrowserUrl, handler);
     return () => ipcRenderer.removeListener(PlatformChannels.OpenBrowserUrl, handler);
   },
-  /** 注册 agent 首次 browser 命令建好受控 view 的回调（自动开 browser-use tab），返回 disposer */
+  /** Register a callback when the agent's first browser command creates a controlled view (automatically open a browser-use tab); return a disposer. */
   onBrowserViewReady: (
     callback: (payload: {
       workspaceKey: string;
@@ -399,7 +400,7 @@ contextBridge.exposeInMainWorld("zcode", {
     ipcRenderer.on(PlatformChannels.BrowserViewReady, handler);
     return () => ipcRenderer.removeListener(PlatformChannels.BrowserViewReady, handler);
   },
-  /** 注册 agent browser-use 命中真实 tab 的操作状态回调，返回 disposer。 */
+  /** Register a callback for agent browser-use operations on a real tab; return a disposer. */
   onBrowserViewOperation: (
     callback: (payload: BrowserViewOperationPayload) => void,
   ): (() => void) => {
@@ -407,7 +408,7 @@ contextBridge.exposeInMainWorld("zcode", {
     ipcRenderer.on(PlatformChannels.BrowserViewOperation, handler);
     return () => ipcRenderer.removeListener(PlatformChannels.BrowserViewOperation, handler);
   },
-  /** 注册当前受控 tab viewport 变化回调，Agent 设置时用于同步自由尺寸模式。 */
+  /** Register a callback for viewport changes in the controlled tab, used to sync free-size mode while the Agent configures it. */
   onBrowserViewViewportChanged: (
     callback: (payload: BrowserViewViewportChangedPayload) => void,
   ): (() => void) => {
@@ -463,7 +464,7 @@ contextBridge.exposeInMainWorld("zcode", {
     ipcRenderer.on(PlatformChannels.BrowserViewVisibility, handler);
     return () => ipcRenderer.removeListener(PlatformChannels.BrowserViewVisibility, handler);
   },
-  /** 注册 agent close 命令要求卸载受控 tab 的回调，返回 disposer */
+  /** Register a callback for the agent's close command to unload a controlled tab; return a disposer. */
   onBrowserViewCloseTab: (
     callback: (payload: BrowserViewCloseTabNotification) => void,
   ): (() => void) => {
@@ -488,19 +489,19 @@ contextBridge.exposeInMainWorld("zcode", {
     ipcRenderer.on(PlatformChannels.BrowserViewRestore, handler);
     return () => ipcRenderer.removeListener(PlatformChannels.BrowserViewRestore, handler);
   },
-  /** 注册 main 进程触发新建任务的回调，返回 disposer */
+  /** Register a callback for main to create a new task; return a disposer. */
   onNewTask: (callback: () => void): (() => void) => {
     const handler = () => callback();
     ipcRenderer.on(PlatformChannels.NewTask, handler);
     return () => ipcRenderer.removeListener(PlatformChannels.NewTask, handler);
   },
-  /** 注册 main 进程触发打开工作区的回调，返回 disposer */
+  /** Register a callback for main to open a workspace; return a disposer. */
   onOpenWorkspace: (callback: () => void): (() => void) => {
     const handler = () => callback();
     ipcRenderer.on(PlatformChannels.OpenWorkspace, handler);
     return () => ipcRenderer.removeListener(PlatformChannels.OpenWorkspace, handler);
   },
-  /** 注册 deep link 直接打开本地工作区目录回调，返回 disposer */
+  /** Register a callback to open a local workspace directory directly from a deep link; return a disposer. */
   onOpenWorkspacePath: (callback: (path: string) => void): (() => void) => {
     openWorkspacePathCallbacks.add(callback);
     while (pendingOpenWorkspacePaths.length > 0) {
@@ -521,16 +522,16 @@ contextBridge.exposeInMainWorld("zcode", {
     ipcRenderer.on(PlatformChannels.OpenTicketsPanel, handler);
     return () => ipcRenderer.removeListener(PlatformChannels.OpenTicketsPanel, handler);
   },
-  /** 注册窗口全屏状态变化回调，返回 disposer */
+  /** Register a callback for window fullscreen changes; return a disposer. */
   onWindowFullscreenChanged: (callback: (isFullscreen: boolean) => void): (() => void) => {
     const handler = (_event: unknown, isFullscreen: boolean) => callback(isFullscreen);
     ipcRenderer.on(PlatformChannels.WindowFullscreenChanged, handler);
     return () => ipcRenderer.removeListener(PlatformChannels.WindowFullscreenChanged, handler);
   },
-  /** 读取窗口最大化状态与系统原生圆角能力 */
+  /** Read the window's maximized state and native system corner support. */
   getDesktopWindowChromeState: (): Promise<DesktopWindowChromeState> =>
     ipcRenderer.invoke(PlatformChannels.GetDesktopWindowChromeState),
-  /** 注册窗口最大化状态与系统原生圆角能力变化回调 */
+  /** Register a callback for changes to the window's maximized state and native system corner support. */
   onDesktopWindowChromeStateChanged: (
     callback: (state: DesktopWindowChromeState) => void,
   ): (() => void) => {
@@ -539,10 +540,10 @@ contextBridge.exposeInMainWorld("zcode", {
     return () =>
       ipcRenderer.removeListener(PlatformChannels.DesktopWindowChromeStateChanged, handler);
   },
-  /** 同步读取当前原生窗口控制区安全边距 */
+  /** Synchronously read the current safe inset for the native window controls. */
   getWindowControlsOverlayMetrics: (): WindowControlsOverlayMetrics =>
     latestWindowControlsOverlayMetrics ?? readCurrentWindowControlsOverlayMetrics(),
-  /** 注册原生窗口控制区安全边距变化回调，返回 disposer */
+  /** Register a callback for changes to the native window-control safe inset; return a disposer. */
   onWindowControlsOverlayChanged: (
     callback: (metrics: WindowControlsOverlayMetrics) => void,
   ): (() => void) => {
@@ -551,7 +552,7 @@ contextBridge.exposeInMainWorld("zcode", {
     ipcRenderer.on(PlatformChannels.WindowControlsOverlayChanged, handler);
     return () => ipcRenderer.removeListener(PlatformChannels.WindowControlsOverlayChanged, handler);
   },
-  /** 同步读取当前桌面窗口页面缩放档位 */
+  /** Synchronously read the page zoom level for the current desktop window. */
   getDesktopZoomLevel: async (): Promise<DesktopZoomState> => {
     const state = await ipcRenderer.invoke(PlatformChannels.GetDesktopZoomLevel);
     if (Number.isFinite(state?.zoomLevel)) {
@@ -559,7 +560,7 @@ contextBridge.exposeInMainWorld("zcode", {
     }
     return { zoomLevel: latestDesktopZoomLevel };
   },
-  /** 注册当前桌面窗口页面缩放档位变化回调，返回 disposer */
+  /** Register a callback for page zoom changes in the current desktop window; return a disposer. */
   onDesktopZoomLevelChanged: (callback: (state: DesktopZoomState) => void): (() => void) => {
     const handler = (_event: unknown, state: DesktopZoomState) => {
       if (!Number.isFinite(state.zoomLevel)) {
@@ -572,39 +573,39 @@ contextBridge.exposeInMainWorld("zcode", {
     ipcRenderer.on(PlatformChannels.DesktopZoomLevelChanged, handler);
     return () => ipcRenderer.removeListener(PlatformChannels.DesktopZoomLevelChanged, handler);
   },
-  /** 注册用户点击系统通知后跳转到对应任务的回调，返回 disposer */
+  /** Register a callback to open the relevant task when the user clicks a system notification; return a disposer. */
   onTaskNotificationClick: (callback: (taskId: string) => void): (() => void) => {
     const handler = (_event: unknown, taskId: string) => callback(taskId);
     ipcRenderer.on(PlatformChannels.TaskNotificationClick, handler);
     return () => ipcRenderer.removeListener(PlatformChannels.TaskNotificationClick, handler);
   },
-  /** 打开外部 URL（用于 OAuth 跳转浏览器） */
+  /** Open an external URL, for example to continue OAuth in a browser. */
   openExternal: (url: string) => ipcRenderer.send(PlatformChannels.OpenExternal, url),
-  /** 查询当前语言下是否存在可用的用户社群入口 */
+  /** Check whether a user community entry is available for the current language. */
   canOpenCommunity: (locale: Locale): Promise<boolean> =>
     ipcRenderer.invoke(PlatformChannels.CanOpenCommunity, locale),
-  /** 在系统文件管理器中打开指定路径 */
+  /** Open the specified path in the system file manager. */
   openInFileManager: (path: string) => ipcRenderer.invoke(PlatformChannels.OpenInFileManager, path),
-  /** 使用系统默认应用打开本地文件 */
+  /** Open a local file with the system's default application. */
   openExternalFile: (path: string) => ipcRenderer.invoke(PlatformChannels.OpenExternalFile, path),
-  /** 打开 ZCode Computer Use 完整权限引导 */
+  /** Open the full ZCode Computer Use permission guide. */
   openCuaPermissionOnboarding: (options?: OpenCuaPermissionOnboardingOptions) =>
     ipcRenderer.invoke(PlatformChannels.OpenCuaPermissionOnboarding, options),
-  /** 只取消当前 renderer 以 operationId 发起的 onboarding participant。 */
+  /** Cancel only the onboarding participant started by this renderer with operationId. */
   cancelCuaPermissionOnboarding: (operationId: string) =>
     ipcRenderer.send(PlatformChannels.CancelCuaPermissionOnboarding, {
       operationId,
     }),
-  /** 预热并缓存已验证的 Helper 路径，使 dragstart 能同步 startDrag（避免异步 I/O 错过手势） */
+  /** Warm and cache the verified Helper path so dragstart can call startDrag synchronously without missing the gesture due to async I/O. */
   prepareCuaHelperPermissionDrag: () =>
     ipcRenderer.invoke(PlatformChannels.PrepareCuaHelperPermissionDrag),
-  /** 从权限浮窗拖拽 Helper.app 到 macOS 权限列表。必须是 send —— invoke 的往返会错过手势。 */
+  /** Drag Helper.app from the permission panel into the macOS permission list. Use send; invoke's round trip misses the gesture. */
   startCuaHelperPermissionDrag: () =>
     ipcRenderer.send(PlatformChannels.StartCuaHelperPermissionDrag),
-  /** 上报 OAuth state 用于 deep link 路由 */
+  /** Report OAuth state for deep-link routing. */
   registerOAuthState: (payload: OAuthStateRegistration) =>
     ipcRenderer.send(PlatformChannels.OAuthRegisterState, payload),
-  /** 注册 OAuth deep link 回调，返回 disposer */
+  /** Register an OAuth deep-link callback; return a disposer. */
   onOAuthCallback: (cb: (url: string) => void): (() => void) => {
     const handler = createOAuthCallbackHandler(cb, () => {
       ipcRenderer.send(PlatformChannels.OAuthCallbackHandled);
@@ -612,7 +613,7 @@ contextBridge.exposeInMainWorld("zcode", {
     ipcRenderer.on(PlatformChannels.OAuthCallback, handler);
     return () => ipcRenderer.removeListener(PlatformChannels.OAuthCallback, handler);
   },
-  /** 注册支付 deep link 回调，返回 disposer */
+  /** Register a payment deep-link callback; return a disposer. */
   onPaymentCallback: (callback: (url: string) => void): (() => void) => {
     const handler = (_event: unknown, url: string) => callback(url);
     ipcRenderer.on(PlatformChannels.PaymentCallback, handler);
@@ -626,12 +627,12 @@ contextBridge.exposeInMainWorld("zcode", {
     }
     return () => shareImportCallbacks.delete(callback);
   },
-  /** 通知 main process renderer 已就绪 */
+  /** Notify main that the renderer is ready. */
   notifyRendererReady: () => ipcRenderer.send(PlatformChannels.RendererReady),
-  /** 同步 renderer telemetry 上下文到 main process */
+  /** Sync renderer telemetry context to main. */
   syncTelemetryContext: (context: TelemetryRendererContext) =>
     ipcRenderer.send(PlatformChannels.SyncTelemetryContext, context),
-  /** 通过 main process 统一上报业务 telemetry 事件 */
+  /** Report product telemetry events through main. */
   reportTelemetryEvent: (payload: {
     context: TelemetryRendererContext;
     elementName: string;
@@ -643,17 +644,17 @@ contextBridge.exposeInMainWorld("zcode", {
     talkId?: string;
     messageId?: string;
   }) => ipcRenderer.invoke(PlatformChannels.ReportTelemetryEvent, payload),
-  /** 通过 main process 统一上报 ARMS 自定义事件 */
+  /** Report custom ARMS events through main. */
   reportArmsCustomEvent: (payload: {
     name: string;
     group: string;
     value?: number;
     properties?: Record<string, string | number | boolean | undefined>;
   }) => ipcRenderer.invoke(PlatformChannels.ReportArmsCustomEvent, payload),
-  /** 读取 Renderer 用户操作 Trace 灰度配置。 */
+  /** Read the rollout configuration for Renderer user-action tracing. */
   getRendererActionTraceConfig: (): Promise<RendererActionTraceConfigV1> =>
     ipcRenderer.invoke(PlatformChannels.GetRendererActionTraceConfig),
-  /** 订阅 Main 推送的 Renderer 用户操作 Trace 配置变化。 */
+  /** Subscribe to Renderer user-action trace configuration changes sent by Main. */
   onRendererActionTraceConfigChanged: (
     callback: (config: RendererActionTraceConfigV1) => void,
   ): (() => void) => {
@@ -662,29 +663,29 @@ contextBridge.exposeInMainWorld("zcode", {
     return () =>
       ipcRenderer.removeListener(PlatformChannels.RendererActionTraceConfigChanged, handler);
   },
-  /** 发送已结束 Span；使用 send 避免遥测往返阻塞业务。 */
+  /** Send a completed span; use send so a telemetry round trip does not block product behavior. */
   reportLocalTtftBatch: (batch: import("@zcode/shared").LocalTtftBatch): void =>
     ipcRenderer.send(PlatformChannels.ReportLocalTtftBatch, batch),
   reportRendererActionTraceBatch: (batch: RendererActionTraceBatchV1): void =>
     ipcRenderer.send(PlatformChannels.ReportRendererActionTraceBatch, batch),
   /**
-   * 主窗口 renderer 的 60 秒 heap 读数。
-   * 只提供单向 send：main 不回执，renderer 也不能靠它反查 main 的进程事实。
+   * 60-second heap readings from the main-window renderer.
+   * This is a one-way send: main does not acknowledge it, and the renderer cannot use it to inspect main-process state.
    */
   reportRendererHeapSample: (sample: RendererHeapSample): void =>
     ipcRenderer.send(PlatformChannels.ReportRendererHeapSample, sample),
-  /** 通过 main process 触发原生任务通知 */
+  /** Trigger a native task notification through main. */
   showTaskNotification: (payload: TaskNotificationPayload) =>
     ipcRenderer.send(PlatformChannels.ShowTaskNotification, payload),
-  /** 导出日志：打包 ~/.zcode/v2 及外部 agent 日志为 zip 并在 Finder 中显示 */
+  /** Export logs by zipping ~/.zcode/v2 and external agent logs, then reveal the archive in Finder. */
   exportLogs: (): Promise<{
     success: boolean;
     path?: string;
     error?: string;
   }> => ipcRenderer.invoke(PlatformChannels.ExportLogs),
-  /** 截取当前窗口，用于错误反馈携带现场画面 */
+  /** Capture the current window so an error report can include the current screen. */
   captureWindowScreenshot: () => ipcRenderer.invoke(PlatformChannels.CaptureWindowScreenshot),
-  // CDP-on-guest pivot：`<webview>` guest dom-ready 后上报 webContentsId 给 main attach。
+  // CDP-on-guest pivot: report the `<webview>` guest webContentsId to main for attachment after dom-ready.
   browserViewAttachGuest: (payload: {
     key: string;
     webContentsId: number;
@@ -695,7 +696,7 @@ contextBridge.exposeInMainWorld("zcode", {
     residencyGeneration?: number;
   }): Promise<BrowserGuestAttachResult> =>
     ipcRenderer.invoke(PlatformChannels.BrowserViewAttachGuest, payload),
-  /** React 卸载旧 `<webview>` 前同步等待 main 断开 native CDP session。 */
+  /** Synchronously wait for main to disconnect the native CDP session before React unloads the old `<webview>`. */
   browserViewDetachGuest: (payload: { key: string; webContentsId: number }): Promise<boolean> =>
     ipcRenderer.invoke(PlatformChannels.BrowserViewDetachGuest, payload),
   browserViewCloseTab: (payload: BrowserViewCloseTabRequest): Promise<void> =>
@@ -710,31 +711,31 @@ contextBridge.exposeInMainWorld("zcode", {
     payload: BrowserViewRestoreTabsRequest,
   ): Promise<BrowserViewRestoredTabShell[]> =>
     ipcRenderer.invoke(PlatformChannels.BrowserViewRestoreTabs, payload),
-  /** 将 UI 自由尺寸同步为当前受控 tab 的真实 viewport。 */
+  /** Sync the UI's free-size setting to the actual viewport of the currently controlled tab. */
   browserViewUpdateViewport: (payload: { tabId: string; viewport: BrowserViewportSize | null }) =>
     ipcRenderer.invoke(PlatformChannels.BrowserViewUpdateViewport, payload),
-  /** 从自动发现的 Chrome Profile 一次性导入内置浏览器数据。 */
+  /** Import built-in browser data once from an automatically discovered Chrome profile. */
   importChromeBrowserData: (options?: import("@zcode/shared").ChromeBrowserDataImportOptions) =>
     ipcRenderer.invoke(PlatformChannels.ImportChromeBrowserData, options),
-  /** 清理内置浏览器缓存或全部站点数据。 */
+  /** Clear the built-in browser cache or all site data. */
   clearEmbeddedBrowserData: (mode: "cache" | "all") =>
     ipcRenderer.invoke(PlatformChannels.ClearEmbeddedBrowserData, mode),
-  /** 读取开发态 stdio tap proxy 开关状态 */
+  /** Read whether the stdio tap proxy is enabled in development. */
   getZCodeStdioTapDevState: (): Promise<ZCodeStdioTapDevState> =>
     ipcRenderer.invoke(PlatformChannels.GetZCodeStdioTapDevState),
-  /** 注册 main 进程修改 settings 后的通知，返回 disposer */
+  /** Register a callback for settings changes made by main; return a disposer. */
   onSettingsChanged: (callback: () => void): (() => void) => {
     const handler = () => callback();
     ipcRenderer.on(PlatformChannels.SettingsChanged, handler);
     return () => ipcRenderer.removeListener(PlatformChannels.SettingsChanged, handler);
   },
-  /** 注册应用语言变化，返回 disposer */
+  /** Register a callback for application language changes; return a disposer. */
   onApplicationLocaleChanged: (callback: (locale: Locale) => void): (() => void) => {
     const handler = (_event: unknown, locale: Locale) => callback(locale);
     ipcRenderer.on(PlatformChannels.ApplicationLocaleChanged, handler);
     return () => ipcRenderer.removeListener(PlatformChannels.ApplicationLocaleChanged, handler);
   },
-  /** 注册"手动检查更新"结果的回调，返回 disposer */
+  /** Register a callback for the result of a manual update check; return a disposer. */
   onUpdateCheckResult: (callback: (payload: UpdateCheckResultPayload) => void): (() => void) => {
     const handler = (_event: unknown, payload: UpdateCheckResultPayload) => callback(payload);
     ipcRenderer.on(PlatformChannels.UpdateCheckResult, handler);
@@ -742,19 +743,19 @@ contextBridge.exposeInMainWorld("zcode", {
   },
   getUpdateState: (): Promise<UpdateStatePayload> =>
     ipcRenderer.invoke(PlatformChannels.GetUpdateState),
-  /** 开始下载当前已发现的更新 */
+  /** Start downloading the currently available update. */
   downloadUpdate: () => ipcRenderer.invoke(PlatformChannels.DownloadUpdate),
-  /** 取消当前正在下载的更新 */
+  /** Cancel the update download in progress. */
   cancelUpdateDownload: () => ipcRenderer.invoke(PlatformChannels.CancelUpdateDownload),
-  /** 打开独立更新窗口 */
+  /** Open the standalone update window. */
   openUpdateStatusWindow: () => ipcRenderer.invoke(PlatformChannels.OpenUpdateStatusWindow),
-  /** 读取自动更新偏好 */
+  /** Read the automatic update preference. */
   getAutoUpdatePreferences: () => ipcRenderer.invoke(PlatformChannels.GetAutoUpdatePreferences),
-  /** 写入“自动下载并安装更新”偏好 */
+  /** Write the "automatically download and install updates" preference. */
   setAutoDownloadAndInstallUpdates: (enabled: boolean) =>
     ipcRenderer.invoke(PlatformChannels.SetAutoDownloadAndInstallUpdates, enabled),
   getDesktopSessionActivity: () => ipcRenderer.invoke(PlatformChannels.GetDesktopSessionActivity),
-  /** 注册自动更新持续状态变化，返回 disposer */
+  /** Register a callback for ongoing automatic update status changes; return a disposer. */
   onUpdateStateChanged: (callback: (payload: UpdateStatePayload) => void): (() => void) => {
     updateStateCallbacks.add(callback);
     if (latestUpdateState) {
@@ -764,11 +765,11 @@ contextBridge.exposeInMainWorld("zcode", {
       updateStateCallbacks.delete(callback);
     };
   },
-  /** 注册新版本已下载完毕的回调，返回 disposer */
+  /** Register a callback for when a new version finishes downloading; return a disposer. */
   onUpdateReady: (callback: (version: string) => void): (() => void) => {
-    // 主进程的 update-ready 是一次性事件，常常早于 React effect 注册。
-    // 这里在 preload 层先缓存最新版本，并在订阅时立即回放，
-    // 这样 UI 即使晚挂载，也能拿到“更新已下载完毕”的稳定状态。
+    // Main's update-ready is a one-time event and often arrives before React registers its effect.
+    // Cache the latest version in preload and replay it immediately when a subscription is created so
+    // the UI receives a stable "update downloaded" state even if it mounts later.
     updateReadyCallbacks.add(callback);
     if (latestReadyUpdateVersion) {
       callback(latestReadyUpdateVersion);
@@ -777,7 +778,7 @@ contextBridge.exposeInMainWorld("zcode", {
       updateReadyCallbacks.delete(callback);
     };
   },
-  /** 注册更新安装后的版本说明，返回 disposer */
+  /** Register a callback for release notes after an update is installed; return a disposer. */
   onPostUpdateReleaseNotes: (
     callback: (payload: PostUpdateReleaseNotesPayload) => void,
   ): (() => void) => {
@@ -789,44 +790,44 @@ contextBridge.exposeInMainWorld("zcode", {
       postUpdateReleaseNotesCallbacks.delete(callback);
     };
   },
-  /** 标记当前版本说明已读 */
+  /** Mark the current release notes as read. */
   acknowledgePostUpdateReleaseNotes: (version: string) =>
     ipcRenderer.invoke(PlatformChannels.AcknowledgePostUpdateReleaseNotes, version),
-  /** 跳过当前已发现的更新版本 */
+  /** Skip the currently available update version. */
   skipUpdateVersion: (version: string) =>
     ipcRenderer.invoke(PlatformChannels.SkipUpdateVersion, version),
-  /** 用户确认重启安装更新 */
+  /** Restart to install an update after user confirmation. */
   quitAndInstallUpdate: () => ipcRenderer.invoke(PlatformChannels.QuitAndInstallUpdate),
-  /** 获取已安装的编辑器/终端列表（含图标） */
+  /** Get installed editors/terminals, including their icons. */
   getInstalledEditors: () => ipcRenderer.invoke(PlatformChannels.GetInstalledEditors),
   getApplicationIcon: (request: string | ApplicationIconRequest) =>
     ipcRenderer.invoke(PlatformChannels.GetApplicationIcon, request),
-  /** 用指定编辑器打开路径 */
+  /** Open a path with the specified editor. */
   openInEditor: (editorId: string, path: string, options?: OpenInEditorOptions) =>
     ipcRenderer.invoke(PlatformChannels.OpenInEditor, {
       editorId,
       path,
       options,
     }),
-  /** 执行桌面窗口级命令 */
+  /** Execute a desktop window-level command. */
   executeDesktopCommand: (command: DesktopCommandId) =>
     ipcRenderer.invoke(PlatformChannels.ExecuteDesktopCommand, command),
-  /** 同步应用菜单语言 */
+  /** Sync the application menu language. */
   setApplicationLocale: (locale: Locale) =>
     ipcRenderer.invoke(PlatformChannels.SetApplicationLocale, locale),
-  /** 读取宿主系统语言 */
+  /** Read the host system language. */
   getSystemLocale: (): Promise<Locale> => ipcRenderer.invoke(PlatformChannels.GetSystemLocale),
-  /** 同步标题栏亮暗色 */
+  /** Sync the title bar's light/dark appearance. */
   setTitleBarTheme: (theme: DesktopTitleBarTheme) =>
     ipcRenderer.invoke(PlatformChannels.SetTitleBarTheme, theme),
-  /** 获取桌面端设备标识符（deviceMid） */
+  /** Get the desktop device identifier (deviceMid). */
   getDeviceId: () => ipcRenderer.invoke(PlatformChannels.GetDeviceId),
 });
 
 /**
- * MessagePort 不能通过 contextBridge 传递（contextBridge 会把它包成 Proxy，
- * 丢失 addEventListener 等原生方法）。改用 window.postMessage 的 transfer
- * 机制将 MessagePort 原样传递到 renderer 的 window context 中。
+ * A MessagePort cannot pass through contextBridge because contextBridge wraps it in a Proxy and removes
+ * native methods such as addEventListener. Use window.postMessage's transfer mechanism to pass the
+ * MessagePort unchanged to the renderer's window context.
  */
 ipcRenderer.on(InternalChannels.ServicePort, (event, payload: unknown) => {
   const [port] = event.ports;
@@ -880,8 +881,9 @@ window.addEventListener("message", (event) => {
   ) {
     return;
   }
-  // MessagePort 注册发生在隔离的 renderer world，Main 不能把“已投递”误当作“已可用”。
-  // preload 只把 renderer 的 ready ACK 薄转发给 Main，业务 attachment 状态仍由窗口 session manager 管理。
+  // MessagePort registration happens in the isolated renderer world, so Main must not treat "delivered"
+  // as "available." Preload only forwards the renderer's ready ACK to Main; the window session manager
+  // continues to own business attachment state.
   ipcRenderer.send(InternalChannels.ScopedServicePortReady, {
     attachmentId: payload.attachmentId,
     sessionId: payload.sessionId,
@@ -907,10 +909,11 @@ ipcRenderer.on(
   },
 );
 
-// dom-ready autoInject 之后 Bridge 若被重置，再尝试一次包装
+// If Bridge is reset after dom-ready autoInject, try wrapping it once more.
 scheduleArmsEventBridgePatch();
 
-// 启动控制面先于普通 RPC；reload 从 Main 的通知镜像补齐，不触发新迁移。
+// The startup control plane precedes regular RPC. On reload, restore it from Main's notification mirror
+// without triggering another migration.
 ipcRenderer.on(InternalChannels.DatabaseStartupState, (_event, raw: unknown) => {
   const parsed = databaseStartupStateSchema.safeParse(raw);
   if (parsed.success)

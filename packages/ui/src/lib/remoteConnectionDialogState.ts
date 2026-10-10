@@ -32,8 +32,8 @@ export function getRemoteConnectionCompletionDialogState(
   status: RemoteConnectionCompletionStatus,
 ): RemoteConnectionCompletionDialogState {
   return {
-    // 远程连接弹窗收起后，连接完成只更新内部步骤但没有重新展示弹窗，
-    // 用户会停留在其它页面且看不到选目录或失败原因。连接完成后统一拉起弹窗到结果步骤。
+    // If the remote connection dialog is dismissed, completion previously updated only its internal step and did not show it again,
+    // leaving users on another page without the directory picker or failure reason. Show the dialog at the result step after connection completes.
     open: true,
     step: status === "success" ? "directory" : "connecting",
   };
@@ -50,8 +50,8 @@ export function getRemoteConnectionDirectoryFailureState(params: {
     };
   }
 
-  // workspace 初始化失败会回收未确认 logical session。
-  // 目录步骤继续持有旧 sessionId 时只能拿到空 services，并永久显示“加载中”。
+  // Workspace initialization failure releases the unconfirmed logical session.
+  // If the directory step keeps the old sessionId, it receives empty services and remains in “loading” forever.
   return {
     connectedSessionId: null,
     step: "settings",

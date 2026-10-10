@@ -1,12 +1,13 @@
-// goal/compact 命令组：compact / sendGoalCommand / pauseGoal / resumeGoal。
-// 语义自旧 server-operations compactSession/goalSession/continueGoalAfterChange 搬运，
-// 决策逻辑（compact 去重 / active turn barrier / goal 续跑）直驱 core，不经旧协议 op。
+// Goal/compact command group: compact / sendGoalCommand / pauseGoal / resumeGoal.
+// Semantics were moved from the old server-operations compactSession/goalSession/
+// continueGoalAfterChange. Decisions (compact deduplication / active-turn barrier / goal
+// continuation) call core directly instead of going through old protocol operations.
 //
-// 与旧协议路径的映射（保真基线）：
+// Mapping to the old protocol path (fidelity baseline):
 // - compactSession（server-operations.ts:1805）→ compact
-// - goalSession action:"set"（:1919，含重复 set 收敛 replace）→ sendGoalCommand
+// - goalSession action:"set" (:1919, including duplicate-set replacement) → sendGoalCommand
 // - goalSession action:"resume"（:1980）→ resumeGoal
-// - continueGoalAfterChange / runGoalContinuationInBackground（:2204-2269）→ 组内私有共用函数
+// - continueGoalAfterChange / runGoalContinuationInBackground (:2204-2269) → a shared private function in this group
 import type {
   CommandEnvelope,
   CommandPayloadMap,
@@ -24,7 +25,7 @@ import {
   V4InputAdmissionRejectedError,
 } from "./session-flow.js";
 
-/** goal/compact 组的裁决拒绝（gateway 捕获后进 ACK failed，message 透传给客户端）。 */
+/** Rejection reasons for the goal/compact group (gateway catches them into a failed ACK and passes the message through to the client). */
 export class V4GoalCompactRejectedError extends Error {
   constructor(
     readonly reasonCode:
@@ -40,18 +41,19 @@ export class V4GoalCompactRejectedError extends Error {
   }
 }
 
-// 手动 compact 在后台 turn 真正登记前，下一条 command 已可能完成 admission。
-// 仅看 runtime activeTurn 会留下一个极短的重复 compact 窗口；controller WeakSet 只补齐
-// operation lock 的同步边界，不复制 queue 或 lifecycle 业务状态。
+// Before a manual compact is actually registered as a background turn, the next command
+// may already complete admission. Checking only runtime activeTurn leaves a small window
+// for duplicate compaction; the controller WeakSet closes only the synchronous boundary
+// of the operation lock and does not duplicate queue or lifecycle state.
 const manualCompactControllers = new WeakSet<AbortController>();
 
 /**
- * compact：手动上下文压缩（v4 payload 为空对象，无 instructions 变体）。
+ * compact: manual context compaction (v4 payload is an empty object; there is no instructions variant).
  *
- * barrier 语义：
- * 1. running/goal verifier/goal continuation/tool work → typed compact intent 入 FIFO。
- * 2. held queue → 追加队尾，不绕过既有 future intent。
- * 3. running 或 queued compact 已存在 → compactOperationLock，禁止重复压缩。
+ * Barrier semantics:
+ * 1. Running / goal verifier / goal continuation / tool work → enqueue a typed compact intent in FIFO order.
+ * 2. Held queue → append at the tail; do not bypass existing future intents.
+ * 3. If a compact is running or queued → use compactOperationLock to prevent duplicates.
  */
 async function compact(
   host: V4CommandCoreHost,
@@ -76,7 +78,7 @@ async function compact(
     );
   }
   if (record.restoreWarning) {
-    // 与 prompt-turn 相同的闸门：恢复失败的会话不能静默续写（含 compact turn）。
+    // Same gate as prompt-turn: do not silently continue a session whose restoration failed (including a compact turn).
     throw new V4GoalCompactRejectedError("restoreWarning", record.restoreWarning.message);
   }
 
@@ -117,7 +119,7 @@ async function compact(
   return undefined;
 }
 
-/** queue promotion 与直接命令共用唯一手动 compact 启动路径。 */
+/** Queue promotion and direct commands share the only manual compact launch path. */
 export async function startManualCompact(
   host: V4CommandCoreHost,
   record: V4SessionRecordView,
@@ -127,12 +129,13 @@ export async function startManualCompact(
   if (record.restoreWarning) {
     throw new V4GoalCompactRejectedError("restoreWarning", record.restoreWarning.message);
   }
-  // 冷恢复后用户可能直接触发 /compact（不先经 sendText），compact 的后台模型请求
-  // 同样需要模型就绪检查——钩子（见 types.ts）。
+  // After cold recovery, the user may invoke /compact directly without sendText. Its
+  // background model request also needs a model-readiness check; see the hook in types.ts.
   await host.ensureModelReady?.(record);
   const abortController = new AbortController();
-  // compact 的真实模型请求在后台执行，但 Stop 仍通过
-  // record.activeAbortController 中断。不登记 controller，压缩中的请求会跑到自然结束。
+  // The compact model request runs in the background, but Stop still interrupts it via
+  // record.activeAbortController. Without registering the controller, compaction would
+  // continue until the request finishes naturally.
   record.activeAbortController = abortController;
   manualCompactControllers.add(abortController);
   void runWithSessionResidencyFinalization(record, () =>
@@ -142,7 +145,7 @@ export async function startManualCompact(
       inputId,
     }),
   ).catch(() => {
-    // 后台 compact 的错误经事件流（CompactStarted/终态 marker）降级上报；兜底防 unhandled rejection。
+    // Report background-compact errors through the event stream (CompactStarted/terminal marker); guard against unhandled rejection.
   });
 }
 
@@ -174,8 +177,9 @@ async function runCompactTurnInBackground(
       lifecycleStatus === "cancelled" ? "session_compact_cancelled" : "session_compact_failed";
     if ((host.getQueueLength?.(record.app.sessionId) ?? 0) > 0) {
       try {
-        // queued compact 是 FIFO barrier；失败/Stop 后若继续 auto-drain，
-        // 后续文本会越过用户显式维护意图。与普通 Stop 一致切为 held。
+        // A queued compact is a FIFO barrier. If auto-drain continued after failure/Stop,
+        // later text would overtake the user's explicit maintenance intent. Move it to
+        // held, matching ordinary Stop behavior.
         await record.app.setQueueAutoDrain(false);
       } catch (holdError) {
         host.logger?.warn?.("v4 compact failed to hold following queue", {
@@ -198,14 +202,16 @@ async function runCompactTurnInBackground(
     }
     manualCompactControllers.delete(params.abortController);
     if (record.activeAbortController === params.abortController) {
-      // ready 边界（关键约束）：compact 结束后必须先释放 active lock 再广播；
-      // 否则 queued prompt 或后续 /compact 会在 ready 边界短暂撞上旧 controller。
+      // Ready-boundary constraint: release the active lock before broadcasting after
+      // compaction; otherwise a queued prompt or next /compact can briefly encounter the
+      // old controller at the ready boundary.
       record.activeAbortController = undefined;
     }
   }
   try {
-    // compact 没有 user message，不能依赖 SessionInputPromoted 解 pin；无论 lifecycle
-    // 成功/失败/取消，都用 timeline command fact 阻止重启后把已执行命令再次提示重放。
+    // compact has no user message, so it cannot rely on SessionInputPromoted to unpin it.
+    // Regardless of lifecycle success/failure/cancellation, record the timeline command
+    // fact so a restart does not prompt to replay an already executed command.
     await host.recordPersistentCommandFact?.(
       record.app.sessionId,
       "timeline",
@@ -217,26 +223,28 @@ async function runCompactTurnInBackground(
       { lifecycleStatus },
     );
   } catch (error) {
-    // compact 已执行，不能因查重旁路写失败伪装为模型执行失败。
+    // Compaction already ran; a failure in the deduplication side write must not be misreported as model execution failure.
     host.logger?.warn?.("v4 compact persistent command fact failed", {
       commandId: params.inputId,
       error: error instanceof Error ? error.message : String(error),
       sessionId: record.app.sessionId,
     });
   }
-  // 旧协议路径在此调 afterStateMutation → 用钩子等价替代（随旧广播删除）。
+  // The old protocol path called afterStateMutation here; this hook is the equivalent (removed with the old broadcast).
   await host.afterLegacyStateMutation?.(record, mutationReason);
 }
 
 /**
- * sendGoalCommand：设置/更新 goal（旧 goalSession action:"set"）。
+ * sendGoalCommand: set/update the goal (old goalSession action:"set").
  *
- * barrier 语义（自旧协议路径保真 + v4 队列补齐）：
- * 1. active turn → 入队为 sendGoalCommand：/goal 是目标状态写入，不是普通 prompt；
- *    运行中不能直接改 target，但也不能丢弃。队列项必须保留命令身份，等 ready 边界执行。
- * 2. 重复 set 收敛 replace 语义（关键约束）：输入框里的 `/goal 新目标` 是用户
- *    显式提交的新目标；已有目标时继续要求 replace 会让用户以为目标已变更但数据库仍保留
- *    旧目标。这里读到已有 target 就按替换路径处理（差异只体现在广播 reason）。
+ * Barrier semantics (preserving the old protocol path and completing v4 queue behavior):
+ * 1. Active turn → enqueue as sendGoalCommand: /goal writes target state, it is not an
+ *    ordinary prompt. Do not change the target while running, but do not discard the
+ *    command either. Preserve its command identity in the queue and execute it at the ready boundary.
+ * 2. Repeated set converges on replacement semantics (key constraint): `/goal new target`
+ *    in the input box is the user's explicit new target. Continuing to require replace
+ *    when a target exists would make the user think it changed while the database kept
+ *    the old target. If a target exists, use the replacement path (only the broadcast reason differs).
  */
 async function sendGoalCommand(
   host: V4CommandCoreHost,
@@ -259,10 +267,11 @@ async function sendGoalCommand(
     inputIntentMetadata(envelope, { ...options, ...submittedExecutionState });
   const routingMode = host.getInputRoutingMode?.(record.app.sessionId) ?? null;
   if (record.activeAbortController || routingMode === "enqueue" || routingMode === "guide") {
-    // /goal 是目标控制命令，active turn 中不能直接写 target；
-    // 但产品语义要求 running/compacting/goal verifier 可入队。busy projection 可能
-    // 早于 controller 登记，因此同时消费 inputRouting；commandKind 保住控制命令身份，
-    // 后续消费时走 sendGoalCommand，而不是普通 user prompt。
+    // /goal is a target-control command and cannot write the target during an active
+    // turn, but product semantics allow it to queue while running/compacting/goal
+    // verification is active. The busy projection may arrive before controller
+    // registration, so also inspect inputRouting. commandKind preserves control-command
+    // identity so the item is later consumed by sendGoalCommand, not as an ordinary user prompt.
     const queuedText = goalCommandQueueText(payload.displayText, objective);
     if (
       await enqueueDeferredInputForBusyWork(record, queuedText, {
@@ -316,7 +325,7 @@ export async function applyGoalCommand(
     intent?: SteerTurnOptions["intent"];
   },
 ): Promise<void> {
-  // held choice 裁决（同 sendText；sendGoalCommand）。
+  // Resolve the held-queue choice (same as sendText / sendGoalCommand).
   await applyHeldQueueDisposition(
     host,
     record,
@@ -324,7 +333,7 @@ export async function applyGoalCommand(
     params.expectedHeldQueueItemIds,
   );
   const replacesExistingGoal = Boolean(await record.app.readTarget());
-  // Goal 的提交也已冻结执行状态；先关闭本次明确取消的 Plan，不能按旧 Runtime 状态拦住续跑。
+  // Goal submission also freezes execution state; first close the Plan explicitly cancelled by this request, rather than blocking continuation based on stale runtime state.
   if (params.intent?.planEnabled !== undefined) {
     if (params.intent.planEnabled)
       throw new V4GoalCompactRejectedError(
@@ -364,9 +373,10 @@ function goalCommandQueueText(displayText: string | undefined, objective: string
 }
 
 /**
- * pauseGoal：独立 target 控制，不复用通用 stop 的 queue hold/disposition。
- * 旧 V4 只有 stop，导致没有 active controller 时无法暂停目标，也让 UI 无法
- * 准确表达“暂停目标”与“终止本轮”的差别。先结算 target active run，再终止当前 goal work。
+ * pauseGoal: independent target control; do not reuse the generic stop queue hold/disposition.
+ * Old V4 supported only stop, so it could not pause a target without an active controller
+ * and the UI could not accurately distinguish “pause target” from “end this turn”. First
+ * settle the target's active run, then terminate the current goal work.
  */
 async function pauseGoal(
   host: V4CommandCoreHost,
@@ -388,8 +398,8 @@ async function pauseGoal(
 }
 
 /**
- * resumeGoal：paused → active（stopPausesActiveGoalTarget 的逆操作）。
- * 无 target → 幂等成功（旧协议路径返回 "No goal to resume." 且不改状态，不抛错）。
+ * resumeGoal: paused → active (the inverse of stopPausesActiveGoalTarget).
+ * No target → idempotent success (the old protocol path returned "No goal to resume." without changing state or throwing).
  */
 async function resumeGoal(
   host: V4CommandCoreHost,
@@ -397,13 +407,13 @@ async function resumeGoal(
 ): Promise<CommandResult | undefined> {
   const record = requireRecord(host, envelope.sessionId);
   if (record.activeAbortController) {
-    // 同 sendGoalCommand：resume 属旧 goalSession 的非 pause 动作，运行中拒绝。
+    // As with sendGoalCommand, resume is a non-pause action from old goalSession and is rejected while running.
     throw new V4GoalCompactRejectedError(
       "activeTurn",
       "Cannot manage goals while a prompt is running",
     );
   }
-  // 只跳过续跑仍会留下 active Goal + Plan；恢复目标前就检查，不能先写入再拒绝。
+  // Skipping only the continuation would leave an active Goal + Plan; check before resuming the target instead of writing first and rejecting afterward.
   const planEnabled = record.app.runtime?.getPlanEnabled?.() ?? record.app.getMode?.() === "plan";
   if (planEnabled && (await record.app.readTarget())) {
     throw new V4GoalCompactRejectedError(
@@ -427,9 +437,10 @@ async function resumeGoal(
 }
 
 /**
- * goal 变更后的续跑（旧 continueGoalAfterChange 搬运，set/resume 两处共用）：
- * plan 模式或已有 active turn 时不续跑（只落库目标，用户后续显式推进）；
- * 否则模型就绪检查 → 上锁 → 后台 continueActiveTarget。
+ * Continue after a goal change (moved from old continueGoalAfterChange and shared by set/resume):
+ * do not continue in plan mode or when an active turn exists (persist only the goal and
+ * let the user explicitly proceed later); otherwise check model readiness, acquire the
+ * lock, and call continueActiveTarget in the background.
  */
 async function continueGoalAfterChange(
   host: V4CommandCoreHost,
@@ -442,7 +453,7 @@ async function continueGoalAfterChange(
   },
 ): Promise<void> {
   const isPlanMode = record.app.runtime?.getPlanEnabled?.() ?? record.app.getMode?.() === "plan";
-  // continueActiveTarget 是 App 的必选能力；能否继续只取决于当前模式和是否已有活跃 turn。
+  // continueActiveTarget is a required App capability; continuation depends only on the current mode and whether a turn is already active.
   const canContinue = !isPlanMode && !record.activeAbortController;
   if (canContinue) {
     await host.ensureModelReady?.(record);
@@ -456,11 +467,12 @@ async function continueGoalAfterChange(
         intent: params.intent,
       }),
     ).catch(() => {
-      // 后台 goal continuation 的失败经事件流降级上报；兜底防 unhandled rejection。
+      // Report background goal-continuation failures through the event stream; guard against unhandled rejection.
     });
   }
-  // 旧协议路径在续跑起跑后立即 afterStateMutation(goal_set/goal_replaced/goal_resumed)
-  // → 钩子等价替代；v4 投影经 TargetChanged 事件自然收口。
+  // The old protocol path called afterStateMutation(goal_set/goal_replaced/goal_resumed)
+  // immediately after continuation started; this is the equivalent hook. The v4
+  // projection settles naturally through the TargetChanged event.
   await host.afterLegacyStateMutation?.(record, params.reason);
 }
 
@@ -489,8 +501,9 @@ async function runGoalContinuationInBackground(
       record.app.runtime.releaseForegroundPromotionLease(params.foregroundPromotionLeaseId);
     }
     if (record.activeAbortController === params.abortController) {
-      // 续跑结束后应立刻释放活跃锁；广播只是后续动作，
-      // 如果继续占锁，连续 /goal 会被误判为已有活跃 turn。
+      // Release the active lock as soon as continuation ends; broadcasting is a later
+      // action. Holding the lock longer would make a subsequent /goal look like an
+      // already-active turn.
       record.activeAbortController = undefined;
     }
   }

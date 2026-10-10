@@ -26,11 +26,11 @@ export function useWorkspaceHookInlineTrust(input: {
 }) {
   const { intl } = useZCodeIntl();
   const contextServices = useServices();
-  // Settings 的 PluginScopeMenu 可以选中非当前激活的（远程）workspace。
-  // 信任后的列表刷新与 settings 预信任回退若走 useServices() 的 context 服务（指向激活
-  // tab 的 host），RPC 会打到错误 host；remote-waiting 时 fallback 更会把越界 RPC 发给
-  // 断连代理。因此 hooksService 必须由调用方传入按 target workspace 解析的服务，且
-  // rpcReady=false 时禁用 fallback 与 refresh——信任链路宁可不可用，不可打错 host。
+  // Settings' PluginScopeMenu can select a workspace (including remote) that is not currently active.
+  // If post-trust list refresh or the settings pre-trust fallback uses the context service from useServices() (which points to the active
+  // tab's host), the RPC goes to the wrong host; while remote-waiting, the fallback may send an out-of-scope RPC to a
+  // disconnected proxy. Therefore hooksService must be supplied by the caller, resolved for the target workspace, and
+  // when rpcReady=false both fallback and refresh must be disabled — the trust path may be unavailable, but must not target the wrong host.
   const hooksService =
     input.rpcReady === false
       ? undefined
@@ -62,7 +62,7 @@ export function useWorkspaceHookInlineTrust(input: {
       ),
   );
 
-  // 审核绑定结束后刷新列表，避免 Trust 已落盘但行内按钮仍停留在旧快照。
+  // Refresh the list after the review binding ends so a persisted Trust does not leave the inline button on a stale snapshot.
   const previousReviewInteractionId = useRef(activeReviewInteractionId);
   useEffect(() => {
     const settled = didWorkspaceHookReviewSettle({
@@ -71,7 +71,7 @@ export function useWorkspaceHookInlineTrust(input: {
     });
     previousReviewInteractionId.current = activeReviewInteractionId;
     if (!settled || !input.workspacePath || !canUseHooksService) return;
-    // 三元组与 service 同刻捕获，防止 refresh 等待期间 scope 切换后污染新 workspace。
+    // Capture the tuple and service at the same time to avoid contaminating a new workspace if scope changes while refresh is pending.
     const service = hooksService!;
     const target = {
       workspacePath: input.workspacePath,
@@ -124,7 +124,7 @@ export function useWorkspaceHookInlineTrust(input: {
           }
           return;
         }
-        // 成功后按发起时的 target 原子刷新；等待期间 scope 已切换则由 store 守卫丢弃。
+        // After success, refresh atomically for the target captured at invocation; if scope changed while waiting, the store guard discards it.
         await refreshHooks(service, {
           workspacePath: input.workspacePath,
           workspaceIdentity: input.workspaceIdentity,

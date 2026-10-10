@@ -14,7 +14,7 @@ interface ProviderSettingsRead {
 }
 
 interface ProviderSettingsServiceRead extends ProviderSettingsRead {
-  /** 提交 mutation 返回的权威 View；不依赖异步 onDidChange 事件才能收敛 UI。 */
+  /** The authoritative View returned by the mutation; UI convergence does not depend on an asynchronous onDidChange event. */
   commit(view: ProviderSettingsView): void;
 }
 
@@ -39,7 +39,7 @@ interface OwnedProviderSettingsState {
   state: ProviderSettingsState;
 }
 
-/** Settings 编辑器按当前 ServiceProvider 读取目标 Environment，并显式暴露失败与重试。 */
+/** Read the target Environment for the current ServiceProvider in the Settings editor, exposing errors and retry explicitly. */
 export function useProviderSettingsServiceView(
   service: IProviderSettingsService,
 ): ProviderSettingsServiceRead {
@@ -58,8 +58,9 @@ export function useProviderSettingsServiceView(
 
   const commitView = useCallback(
     (view: ProviderSettingsView): boolean => {
-      // 远端 workspace attachment 换代时，旧 mutation 可能晚于新 Service 返回。
-      // 只允许当前 Service 的最新 revision 提交，避免旧 Environment 回写新页面。
+      // When a remote workspace attachment changes, an old mutation may return after the new Service.
+      // Only allow the latest revision from the current Service to commit, preventing an old Environment
+      // from writing into the new page.
       if (serviceRef.current !== service || ownedRef.current.service !== service) {
         return false;
       }
@@ -69,7 +70,8 @@ export function useProviderSettingsServiceView(
       if (view.revision < latestRevision) {
         return false;
       }
-      // 同一 revision 的事件与 mutation response 表示同一份 Registry 事实，避免重复渲染。
+      // An event and mutation response with the same revision represent the same Registry fact;
+      // avoid rendering twice.
       if (view.revision === latestRevision && current.status === "ready") {
         return false;
       }

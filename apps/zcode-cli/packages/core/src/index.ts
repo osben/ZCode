@@ -20,14 +20,14 @@ export type { ToolSchedule, ToolScheduleItem, ToolDependency } from "./tool/sche
 export { createToolRegistry, ToolRegistry, ToolRegistryImpl } from "./tool/registry.js";
 export { createToolExecutor, ToolExecutor, ToolExecutorImpl } from "./tool/executor.js";
 export { builtInTools, registerBuiltInTools } from "./tool/handlers/index.js";
-// dwf driver 的 submit profile 运行时守卫要把 typed 声明换回通用声明。
+// The DWF driver's submit-profile runtime guard converts the typed declaration back to a generic declaration.
 export {
   createSubmitResultToolEntry,
   submitResultToolEntry,
 } from "./tool/handlers/submit-result.js";
-// 已保存工作流的 store / codec：GUI 中枢的协议处理器住在
-// bootstrap，但解析器与序列化器只能有一份——写侧与读侧各自演化的症状是「刚保存的 workflow
-// 列不出来」，所以从这里导出而不是让 bootstrap 再抄一份。
+// Store/codec for saved workflows: the GUI hub's protocol handler lives in
+// bootstrap, but there must be only one parser and serializer. If the read and write sides evolve separately, a newly saved workflow
+// may not appear in the list, so export these here instead of duplicating them in bootstrap.
 export {
   SAVED_WORKFLOW_SENTINEL,
   findSavedWorkflowShadowing,
@@ -82,7 +82,7 @@ export * from "./hooks/index.js";
 // MCP components
 export * from "./mcp/index.js";
 
-// Plugin 对话引用（@ Plugin capability hint）
+// Plugin conversation references (@ Plugin capability hint)
 export * from "./plugin-reference/index.js";
 
 // Node REPL/browser-use plugin runtime primitives
@@ -132,10 +132,10 @@ export type { PermissionConfig } from "./permission/index.js";
 export { AgentRuntime } from "./runtime.js";
 export { createExternalTurnFaultError } from "./runtime/helpers/turn-errors.js";
 export { repairPersistedRemoteSessionPaths } from "./runtime/helpers/persisted-remote-session-path-repair.js";
-// 「按值把一段转录复制进另一个会话」的克隆器。fork 之外的第二个消费者是 dwf 的 amend-resume
-// 转录截断（bootstrap 的 workflow-actor-transcript.ts）：同一个动作——新会话用本地 id 续写，
-// parentID / part 内嵌锚点随之重映射。导出而不是让它再写一份，是因为漏掉任何一处重映射的症状
-// （悬空 parentID、指向父会话的锚点）离成因都很远。
+// Clone a transcript by value into another session. The second consumer besides fork is DWF amend-resume
+// transcript truncation (bootstrap's workflow-actor-transcript.ts): both perform the same operation—continue with local IDs in the new session,
+// remapping parentID and anchors embedded in parts. Export this instead of duplicating it because symptoms of a missed remap
+// (a dangling parentID or an anchor pointing to the parent session) are far from the cause.
 export { cloneMessageForFork, clonePartForFork } from "./runtime/helpers/steering.js";
 export type {
   ChildClientPortsContext,

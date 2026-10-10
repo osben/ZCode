@@ -272,8 +272,10 @@ function completeAssistantMessage(
   }
   const recorded = next[previous.length];
   if (recorded?.role !== "assistant" || !Array.isArray(recorded.content)) return summary;
-  // response 摘要没有完整 thinking/签名，直接比较会误分段。
-  // 只从前缀连续且正文/工具完全匹配的下一请求补全；已有历史的 thinking 仍严格比较。
+  // The response summary does not contain complete thinking/signatures, so comparing it
+  // directly would split the trajectory incorrectly.
+  // Complete it only from the next request with a matching prefix and identical text/tool
+  // content; continue comparing thinking strictly for existing history.
   const comparable = {
     ...recorded,
     content: recorded.content.filter((block: unknown) => {

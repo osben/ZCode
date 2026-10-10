@@ -8,13 +8,14 @@ import { splitArgs } from "../utils.js";
 
 const DWF_USAGE = "Usage: /dwf [list|cancel [runId]|resume <runId>]";
 
-/** `/dwf list` 的默认条数；服务端自己还有上限，这里只表达「一屏够看」。 */
+/** Default row count for `/dwf list`; the server has its own cap, and this value only aims to fit one screen. */
 const DWF_LIST_LIMIT = 20;
 
 /**
- * 非终态 run 的状态集合。`/dwf cancel` 缺 runId 时的候选就是这一集：
- * pending 是「已建未起」，running 是「在飞」，两者都还有可中止的东西；
- * completed / errored / stopped 已结算，取消无意义。
+ * Set of non-terminal run states. These are the candidates when `/dwf cancel` has no
+ * runId: pending means created but not started, and running means active; both still
+ * have work that can be stopped. completed / errored / stopped are settled, so
+ * cancellation has no effect.
  */
 const IN_FLIGHT_STATUSES: readonly DynamicWorkflowRunSessionSummary["status"][] = [
   "pending",
@@ -62,8 +63,9 @@ async function handleCancel(
 
   let targetRunId = runId;
   if (!targetRunId) {
-    // 缺 runId 时只在「恰好一个在飞」时替用户决定。多个候选就列出来让用户点名：
-    // 取消是花掉的钱和丢掉的进度，猜错的代价不对称。
+    // Without a runId, choose for the user only when exactly one run is active. List
+    // multiple candidates and ask the user to specify one: cancellation spends money
+    // and loses progress, so the cost of guessing incorrectly is asymmetric.
     if (!app.listDynamicWorkflowRuns) return respond(deps, DWF_USAGE);
     const runs = await app.listDynamicWorkflowRuns({ limit: DWF_LIST_LIMIT });
     const inFlight = runs.filter((run) => IN_FLIGHT_STATUSES.includes(run.status));
@@ -84,7 +86,7 @@ async function handleCancel(
     targetRunId = inFlight[0]!.runId;
   }
 
-  // runId ≡ taskId：workflow run 在后台任务注册表里就是用 runId 登记的。
+  // runId ≡ taskId: workflow runs are registered under runId in the background-task registry.
   const result = await app.cancelBackgroundTask(targetRunId);
   if (!result.cancelled) {
     const reason = result.reason ? `: ${result.reason}` : ".";
@@ -106,28 +108,31 @@ function formatRunList(runs: DynamicWorkflowRunSessionSummary[]): string {
 }
 
 /**
- * 一行 = `runId · label · status · resumable · updated` + 失败后缀。
+ * One row = `runId · label · status · resumable · updated` + failure suffix.
  *
- * `label` 与 `updatedAt` 都是 additive optional（老服务端不发这两个键）：标签回落 runId、
- * 时间整段省略。少一列是退化，不是错误——绝不因此把整行藏起来。label 恰好等于 runId 时
- * 不重复印：服务端的兜底最后一档就是 runId，照抄会得到「dwfrun_x dwfrun_x」。
+ * `label` and `updatedAt` are additive optional fields (older servers omit them): fall
+ * back to runId for the label and omit the timestamp. A missing column is degraded data,
+ * not an error; never hide the whole row for it. If label equals runId, do not print it
+ * twice; runId is the server's final fallback and would produce `dwfrun_x dwfrun_x`.
  */
 function formatRunLine(run: DynamicWorkflowRunSessionSummary): string {
   const columns = [run.runId];
   const label = run.label ?? run.runId;
   if (label !== run.runId) columns.push(label);
-  // stopped 带原因词：`stopped/provider`。
+  // stopped includes a reason: `stopped/provider`.
   columns.push(run.stopReason === undefined ? run.status : `${run.status}/${run.stopReason}`);
-  // resumable 直接印服务端的裁定，不按 status + failureCode 重新推导：
-  // 两处谓词总有一天不一致，届时提示说可恢复而命令被拒。
+  // Print the server's resumable decision directly; do not derive it again from status
+  // + failureCode. The predicates could eventually diverge, showing “resumable” while
+  // the command is rejected.
   if (run.resumable) columns.push("resumable");
   if (run.updatedAt !== undefined) columns.push(`updated ${formatUpdatedAt(run.updatedAt)}`);
   return `${columns.join(" · ")}${formatFailure(run)}`;
 }
 
 /**
- * epoch 毫秒 → 可读时间。用本地时区的 ISO 风格短格式：终端用户看的是自己机器上的时间，
- * 而 UTC 的 `Z` 后缀在本地排查时每次都要在脑子里换算一遍。
+ * Convert epoch milliseconds to readable time using a short ISO-style format in the
+ * local timezone. Terminal users see their machine's local time; a UTC `Z` suffix would
+ * require mental conversion during local debugging.
  */
 function formatUpdatedAt(updatedAt: number): string {
   const date = new Date(updatedAt);

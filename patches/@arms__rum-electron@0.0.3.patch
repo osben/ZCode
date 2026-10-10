@@ -3,7 +3,7 @@ index d26925cd014c42b6c6d470f9d2d4d75196203339..ce203cba549db3b21cddf71bb7a2c741
 --- a/dist/index.mjs
 +++ b/dist/index.mjs
 @@ -505,6 +505,48 @@ const p = /* @__PURE__ */ new WeakMap(), _ = class _ {
- /** 初始化窗口期时长(ms)，用于合并框架路由重定向 */
+ /** Initialization window duration (ms), used to combine framework route redirects. */
  F(_, "INITIAL_LOAD_WINDOW_MS", 200);
  let kA = _;
 +// ZCode 修复：main logger 把公共前缀、业务消息和上下文作为多个 console.error 参数传入。

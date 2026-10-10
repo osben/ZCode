@@ -1,4 +1,4 @@
-/* eslint-disable max-lines -- 与对外暴露的 Playwright 对象图一一对应，集中可避免 builder/终结操作契约漂移。 */
+/* eslint-disable max-lines -- This mirrors the exposed Playwright object graph; keeping it together avoids contract drift between builders and final operations. */
 import type {
   BrowserCommand,
   BrowserCommandResult,
@@ -156,8 +156,8 @@ function withContext(error: unknown, context: string): Error {
   const message = error instanceof Error ? error.message : String(error);
   const wrapped = new Error(`${message}\n${context}`, { cause: error });
   if (error instanceof Error && error.stack) {
-    // 把包含 message 的完整原始 stack 接到新 stack 后，tool result 会把同一个
-    // timeout 输出两遍。只继承 stack frames，message 保留一次并通过 cause 保存原始错误。
+    // Appending the full original stack, including its message, to the new stack makes the tool result print the same
+    // timeout twice. Inherit only stack frames, keep the message once, and preserve the original error through cause.
     const frames = error.stack.split("\n").slice(1).join("\n");
     if (frames) wrapped.stack = `${wrapped.name}: ${wrapped.message}\n${frames}`;
   }
@@ -169,8 +169,8 @@ function serializeMatcher(value: TextMatcher, exact: boolean, method: string): s
     const suffix = exact ? "s" : "i";
     return `${JSON.stringify(value)}${suffix}`;
   }
-  // node_repl 在独立 VM Realm 中创建 matcher，跨 Realm 正则无法通过 instanceof。
-  // 使用 Node 原生类型判定，既支持真实跨 Realm RegExp，也不会被 Symbol.toStringTag 冒充。
+  // node_repl creates matchers in a separate VM Realm, where cross-Realm regexes fail instanceof checks.
+  // Use Node's native type check to support real cross-Realm RegExp values without allowing Symbol.toStringTag spoofing.
   if (isRegExp(value)) return value.toString();
   throw new Error(`${method} requires a string or RegExp`);
 }

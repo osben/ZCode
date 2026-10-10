@@ -4,8 +4,8 @@ import { ConfirmDialogHost } from "@/ConfirmDialog.js";
 import { CuaPermissionObservationAttachment } from "@/cua-permission/CuaPermissionObservationAttachment.js";
 
 export function RootShell({ children }: { children: ReactNode }) {
-  // Web 远控在手机浏览器里不能用固定 100vh，
-  // 地址栏收放会让底部输入区被裁到视口外；根节点改用动态视口高度。
+  // Web remote control cannot use fixed 100vh in mobile browsers,
+  // because showing/hiding the address bar can clip the bottom input area outside the viewport; use dynamic viewport height on the root.
   return (
     <div className="relative h-dvh">
       {children}

@@ -1,9 +1,11 @@
 /**
- * 权限拖拽浮窗的几何计算。
+ * Geometry calculations for the permission-drag panel.
  *
- * 刻意做成不依赖 Electron 的纯函数：吸附需要「系统设置窗口的 bounds」这一外部数据，而该数据随时
- * 可能拿不到（提供它的 CLI 未随包、被杀、或设置页根本没开）。把几何与数据获取分离后，fail-open
- * 行为才可被穷举测试 —— 吸附是观感增强，不是可用性前提，拿不到 bounds 必须退回一个确定可用的位置。
+ * Intentionally keep this as a pure function without an Electron dependency. Snapping needs the
+ * external System Settings window bounds, which may be unavailable (the CLI that provides them may
+ * be missing from the package or killed, or Settings may not be open). Separating geometry from data
+ * acquisition makes fail-open behavior exhaustively testable: snapping is a visual enhancement, not
+ * a usability requirement, so missing bounds must fall back to a known usable position.
  */
 
 export interface Rect {
@@ -19,25 +21,25 @@ export interface PanelSize {
 }
 
 interface ResolvePanelBoundsInput {
-  /** 系统设置主窗口的屏幕坐标；null 表示当前拿不到（fail-open 到屏幕底部）。 */
+  /** System Settings main-window screen coordinates; null means unavailable (fail open at the bottom of the screen). */
   settings: Rect | null;
-  /** 目标显示器的可用工作区（已排除菜单栏/Dock）。 */
+  /** Available work area of the target display (excluding the menu bar/Dock). */
   display: Rect;
   panel: PanelSize;
 }
 
-/** 吸附时与设置页底边的微重叠，观感上让面板与设置页连成一体。 */
+/** Slight overlap with the bottom edge of Settings when snapped, making the panel appear connected to it. */
 const ANCHOR_OVERLAP_PX = 6;
-/** fail-open 时距屏幕底部的留白。 */
+/** Bottom margin when failing open. */
 const SCREEN_BOTTOM_INSET_PX = 28;
 
 function clamp(value: number, min: number, max: number): number {
-  // max < min 时（面板比可视区还大）优先保证不超出上/左边界
+  // When max < min (the panel is larger than the visible area), prioritize keeping it within the top/left boundaries.
   return Math.max(min, Math.min(value, max));
 }
 
 function isUsableRect(rect: Rect | null): rect is Rect {
-  // CGWindowList 偶尔返回 0 尺寸的过渡态窗口；吸附到它会把面板扔到屏幕角落，按不可用处理。
+  // CGWindowList occasionally returns a transient window with zero size; snapping to it would put the panel in a screen corner, so treat it as unavailable.
   return rect !== null && rect.width > 0 && rect.height > 0;
 }
 

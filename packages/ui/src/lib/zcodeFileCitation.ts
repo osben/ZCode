@@ -96,9 +96,9 @@ export function extractZCodeFileCitations(content: string): ZCodeFileCitation[] 
 }
 
 /**
- * 仅在流式尾部隐藏未闭合 citation。完整 citation 继续交给 remark 插件投影为正文链接，
- * 卡片是否生成仍由终态 row gate 决定。异常模型输出若已换行继续正文，则保留原文，避免
- * 一个缺失 `}` 的指令把后续回答全部吞掉；代码块中的协议样例也不参与隐藏。
+ * Hide an unclosed citation only at the streaming tail. Complete citations are still projected as body links by the remark plugin,
+ * and the terminal row gate still decides whether to create a card. If malformed model output continues as body text on a new line, preserve it to avoid
+ * a missing `}` swallowing the rest of the response; protocol examples in code blocks are not hidden either.
  */
 export function projectZCodeFileCitations(
   content: string,

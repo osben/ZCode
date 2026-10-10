@@ -1,5 +1,5 @@
 /**
- * useSettingService —— 设置服务 hooks
+ * useSettingService — settings-service hooks
  */
 import { useState, useEffect, useCallback } from "react";
 import { APP_RUNTIME_PREFERENCES_CHANGED_BROADCAST_CHANNEL, type AppSettings } from "@zcode/shared";
@@ -19,9 +19,9 @@ interface SettingsStore {
   listeners: Set<(snapshot: SettingsSnapshot) => void>;
 }
 
-// SettingsPage 外层与模型配置页内层可能分别绑定 Local/Remote Service；
-// 共享一份 snapshot/inflight 会让一次 Environment 的刷新结果覆盖另一份事实源。
-// 按 Service 实例隔离 store，保持同一 Environment 内的组件共享，同时阻断跨 Environment 串写。
+// The outer SettingsPage and inner model-configuration page may bind to separate Local/Remote Services.
+// Sharing one snapshot/inflight could let a refresh from one Environment overwrite another source of truth.
+// Isolate stores by Service instance, sharing within one Environment while preventing writes across Environments.
 const stores = new WeakMap<object, SettingsStore>();
 const unavailableSettingsStore: SettingsStore = {
   snapshot: {
@@ -90,7 +90,7 @@ async function refreshSettingsStore(settingService: ISettingService | undefined)
       emitSettingsSnapshot(store);
     } catch (error) {
       store.snapshot = {
-        // 设置读取失败时保留旧快照，避免一次刷新错误把已可用的设置页降级为空状态。
+        // Preserve the old snapshot on a settings-read failure so one refresh error does not downgrade a usable Settings page to an empty state.
         settings: store.snapshot.settings,
         loading: false,
         error,
@@ -104,7 +104,7 @@ async function refreshSettingsStore(settingService: ISettingService | undefined)
   return store.inflightRefresh;
 }
 
-/** 获取和更新应用设置 */
+/** Read and update application settings. */
 export function useSettings() {
   const { botsService, broadcastService, settingService, zcodeAgentService } = useServices();
   const platform = usePlatform();
@@ -190,7 +190,7 @@ export function useSettings() {
   };
 }
 
-/** 最近项目列表的便捷 hook */
+/** Convenience hook for the recent-project list. */
 export function useRecentProjects() {
   const { settings, loading, update } = useSettings();
   return {

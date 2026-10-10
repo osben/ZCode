@@ -1,5 +1,5 @@
-// commands/query 的 session-scoped lazy index。
-// loader 每 session 只执行一次；新 transcript/marker/child/discarded 事实用 record 增量并入。
+// Session-scoped lazy index for commands/query.
+// Run the loader once per session; merge new transcript/marker/child/discarded facts incrementally through record.
 import type { CommandAck, CommandKey } from "@zcode/shared/zcode-protocol-v4";
 
 export type PersistentCommandFactSource = "transcript" | "timeline" | "child" | "discarded";
@@ -49,8 +49,8 @@ export class PersistentCommandIndex {
   }
 
   /**
-   * transcript append / marker settle / child create / discarded ledger 写入后调用；不重扫全量。
-   * expected target 与首次 load 得到的 workspaceKey 不一致时明确拒绝，防同路径远端串线。
+   * Call after transcript append, marker settlement, child creation, or discarded-ledger write; do not rescan everything.
+   * Reject explicitly when the expected target differs from the workspaceKey from the initial load, preventing same-path remote cross-wiring.
    */
   async record(
     target: PersistentCommandIndexTarget,
@@ -81,13 +81,13 @@ export class PersistentCommandIndex {
         }
         return { workspaceKey: workspaceKey(seed), facts };
       });
-      // 读取失败不缓存 rejected Promise；下次 query 可在 store 恢复后重试。
+      // Do not cache a rejected Promise on read failure; the next query can retry after the store recovers.
       pending.catch(() => {
         if (this.sessions.get(sessionId) === pending) this.sessions.delete(sessionId);
       });
       pending.then(
         (index) => {
-          // unknown/session-not-found 不是事实，不能缓存；后续 transcript 落盘后必须可见。
+          // unknown/session-not-found are not facts and must not be cached; later persisted transcript entries must become visible.
           if (index === null && this.sessions.get(sessionId) === pending) {
             this.sessions.delete(sessionId);
           }

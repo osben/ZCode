@@ -9,7 +9,7 @@ import {
   subscribeRecommendedPrompts,
   unregisterRecommendedPromptPane,
 } from "@/v4/featureSuggestedPromptRotation.js";
-/* oxlint-disable eslint(max-lines) -- 推荐 Prompt 同时收口 latest-wins、取消、可信解析、操作反馈和 Composer 收尾，拆分会打散这条状态机。 */
+/* oxlint-disable eslint(max-lines) -- Recommended prompts centralize latest-wins, cancellation, trusted parsing, operation feedback, and Composer cleanup; splitting them would scatter this state machine. */
 import {
   useCallback,
   useEffect,
@@ -111,9 +111,9 @@ export function ConversationDraftSuggestedPromptsContainer({
   const closeRecommendations = async () => {
     setClosing(true);
     try {
-      // 关闭按钮与引导、设置页共用持久化设置，避免另一份本地开关重新显示推荐。
+      // The close button shares the persisted setting with onboarding and settings so a separate local switch cannot show suggestions again.
       await update({ proactiveSuggestionsEnabled: false });
-      // 手动修改反向回写 record，换号同步时不会把已关闭的推荐复活；失败不阻塞关闭流程。
+      // Write manual changes back to the record so account synchronization does not revive dismissed suggestions; failure does not block closing.
       await onboardingRecordService
         ?.updateRecordPreferences({ proactiveSuggestionsEnabled: false })
         .catch((cause: unknown) => {
@@ -131,7 +131,7 @@ export function ConversationDraftSuggestedPromptsContainer({
     remoteSessionId,
     workspaceIdentity,
   );
-  // Plugin RPC 是异步的；草稿、Popover 和 chip 都只允许最后一次点击收尾。
+  // Plugin RPC is asynchronous; only the latest click may finalize the draft, Popover, and chip.
   const requestVersionRef = useRef(0);
   const activeOperationRef = useRef<DraftSuggestedPluginOperation | null>(null);
   const [cancelling, setCancelling] = useState(false);
@@ -208,7 +208,7 @@ export function ConversationDraftSuggestedPromptsContainer({
 
   useEffect(() => {
     return () => {
-      // workspace/attachment 切换后立即移除旧反馈，远端迟到结果继续由版本与 abort 双重拦截。
+      // Remove old feedback immediately after workspace/attachment switches; version and abort checks still block late remote results.
       requestVersionRef.current += 1;
       clearOperationFeedback();
       const active = activeOperationRef.current;
@@ -219,8 +219,8 @@ export function ConversationDraftSuggestedPromptsContainer({
   const prependResolvedPlugin = useCallback(
     (plugin: { stableId: string; label: string }, requestVersion: number, icon?: string) => {
       if (requestVersion !== requestVersionRef.current) return null;
-      // 推荐流程的状态与展示图标都由目标 Host 的同一次可信解析返回；当前不存在
-      // workspace 级 Plugin，再读取 referenceCatalog 会重复校验并引入额外 RPC。
+      // The recommendation state and display icon both come from the target Host's same trusted resolution. There is currently no
+      // workspace-level Plugin, so reading referenceCatalog again would repeat validation and add another RPC.
       const mention = buildDraftSuggestedPluginMention(plugin, icon);
       return useZCodeSessionStore
         .getState()
@@ -266,8 +266,8 @@ export function ConversationDraftSuggestedPromptsContainer({
         return null;
       }
       if (prompt.includes("](plugin://")) {
-        // 正文已有插件引用时交给 Composer 解析全部内联提及。目标插件已在正文中就保留
-        // 原位置，否则只补一次前置引用；单个 mention 的旧路径会让其余引用退化为裸文本。
+        // When the body already contains plugin references, let Composer resolve all inline mentions. Keep the target plugin in
+        // its existing position if present; otherwise add one leading reference. The old single-mention path left other references as plain text.
         const hasTarget = prompt.includes(`(plugin://${plugin.stableId})`);
         const text = hasTarget
           ? prompt
@@ -320,7 +320,7 @@ export function ConversationDraftSuggestedPromptsContainer({
     (flow: DraftSuggestedPluginFlow, kind: PluginMutationKind, succeeded: boolean) => {
       const active = activeOperationRef.current;
       if (active?.operationId === flow.operationId) activeOperationRef.current = null;
-      // 成功态不能固定使用 installSucceeded，否则仅启用已安装插件时误显示“安装成功”。
+      // Do not always use installSucceeded for success; enabling an already-installed plugin would incorrectly show “Installation succeeded.”
       const messageId = `chat.draft.suggestedPrompt.pluginFlow.${kind}${
         succeeded ? "Succeeded" : "Failed"
       }`;
@@ -353,8 +353,8 @@ export function ConversationDraftSuggestedPromptsContainer({
             ) {
               return;
             }
-            // 确认态曾依赖固定倒计时退出，既会打断仍在阅读的用户，也无法表达明确取消意图。
-            // 现在仅由 Popover 外部主指针点击关闭，并取消同一 operation 以继续拦截迟到结果。
+            // The confirmation state previously exited on a fixed countdown, interrupting users who were still reading and providing no explicit cancel intent.
+            // Now it closes only on a primary pointer click outside the Popover and cancels the same operation to keep blocking late results.
             clearOperationFeedback(operation.operationId);
             void cancelOperation(operation);
           },
@@ -392,8 +392,8 @@ export function ConversationDraftSuggestedPromptsContainer({
       let installTimedOut = false;
       let mutationCompleted = false;
       const restoreInstallConfirmation = (errorMessage: string) => {
-        // 安装失败结果态会把操作入口一起收走；恢复同一 PopoverContent 并换新 operation，
-        // 既允许立即重试，也防止超时或失败的旧 operation 迟到覆盖新状态。
+        // Installation failure used to remove the action entry with the result state. Restore the same PopoverContent with a new operation,
+        // allowing immediate retry while preventing a late timeout/failure from the old operation from overwriting new state.
         operation.abort.abort();
         const retryOperation = createDraftSuggestedPluginOperation(requestVersion);
         const retryFlow: DraftSuggestedPluginFlow = {
@@ -436,7 +436,7 @@ export function ConversationDraftSuggestedPromptsContainer({
             if (timeoutHandle !== undefined) clearTimeout(timeoutHandle);
           });
           const timeoutRequest = new Promise<never>((_, reject) => {
-            // 安装超时后必须主动取消同一 operation；仅结束 UI 等待会允许远端迟到成功继续污染草稿。
+            // Cancel the same operation after an install timeout; ending only the UI wait would let a late remote success keep changing the draft.
             timeoutHandle = setTimeout(() => {
               installTimedOut = true;
               void cancelOperation(operation);
@@ -533,7 +533,7 @@ export function ConversationDraftSuggestedPromptsContainer({
       const templateName = resolveDraftSuggestedPromptText(item.label, locale);
       const prompt = resolveDraftSuggestedPromptText(item.prompt, locale);
       if (isDesktop) {
-        // 埋点是旁路观测，必须早于导航或异步插件解析，且不能阻塞既有交互。
+        // Telemetry is side-channel observation; run it before navigation or async plugin resolution without blocking existing interactions.
         void reportPromptTemplateClick(platform, {
           templateId: item.id,
           templateName,
@@ -561,15 +561,15 @@ export function ConversationDraftSuggestedPromptsContainer({
           }
         : undefined;
 
-      // 无 Plugin 的推荐项没有远端校验，继续立即替换普通草稿；Plugin-backed 推荐项必须等
-      // 可信解析后一次性决定写入纯 prompt 还是 Plugin + prompt，避免 Composer 两阶段更新。
+      // Recommendations without a Plugin need no remote validation, so replace the ordinary draft immediately. Plugin-backed recommendations must wait
+      // for trusted resolution and then decide at once whether to write a plain prompt or Plugin + prompt, avoiding a two-stage Composer update.
       if (!plugin || !resolution.rpcReady) {
         replacePlainPrompt(prompt, requestVersion);
       }
 
       const previous = activeOperationRef.current;
       if (previous) {
-        // 手动切换推荐项属于预期接管：关闭旧反馈，但不显示取消或中断提示。
+        // Manually switching recommendations is an expected takeover: close old feedback without showing a cancel/interruption notice.
         clearOperationFeedback(previous.operationId);
         setCancelling(true);
         await cancelOperation(previous);
@@ -577,8 +577,8 @@ export function ConversationDraftSuggestedPromptsContainer({
         setCancelling(false);
       }
       if (!plugin || !resolution.rpcReady) return;
-      // 在旧 operation 取消收敛后再取基线：旧 operation 可能刚把自己的普通 prompt
-      // 交给 Composer 消费；它属于本次推荐流程的程序性写入，不应让新推荐项被误判为用户编辑。
+      // Capture the baseline after the old operation's cancellation settles: it may just have passed its ordinary prompt
+      // to Composer. That is a procedural write from the recommendation flow and should not make the new recommendation look user-edited.
       const draftRevision = getComposerDraftRevision(workspacePath, workspaceIdentity);
 
       const operation = createDraftSuggestedPluginOperation(requestVersion);
@@ -589,9 +589,9 @@ export function ConversationDraftSuggestedPromptsContainer({
         plugin,
         stage: "unavailable",
       };
-      // missing 的可信解析需要等待官方 Marketplace 刷新，旧流程直到请求完成才
-      // 打开确认 Popover，网络等待期间看起来像点击卡住。先订阅同一 operation 的本地检查结果，
-      // 只更新现有唯一 Popover 的 phase，后续确认/操作/结果继续复用同一挂载点。
+      // Trusted resolution for a missing item must wait for the official Marketplace refresh. Previously, the flow did not open
+      // the confirmation Popover until the request completed, making the click appear stuck during network latency. Subscribe to the same operation's local check result first,
+      // updating only the phase of the existing single Popover; confirmation/action/result continue to reuse the same mount point.
       const progressSubscription =
         resolution.services.pluginManagementService.onDynamicPluginOperationProgress(
           operation.operationId,
@@ -650,8 +650,8 @@ export function ConversationDraftSuggestedPromptsContainer({
           return;
         }
         if (flow.stage === "missing" || flow.stage === "disabled") {
-          // disabled 无需刷新 Marketplace，不一定有 Agent 进度通知；在写入纯 prompt 前也先让
-          // 同一个 Popover 进入 checking，随后等待 Composer 落地并原地切换确认态。
+          // disabled does not require a Marketplace refresh and may not produce an Agent progress notice. Before writing a plain prompt,
+          // move the same Popover into checking, then wait for Composer to apply it and switch to confirmation in place.
           showPluginActionPopover(
             flow,
             "chat.draft.suggestedPrompt.pluginFlow.checking",
@@ -663,8 +663,8 @@ export function ConversationDraftSuggestedPromptsContainer({
             activeOperationRef.current = null;
             return;
           }
-          // 确认 Popover 先于 Composer 消费纯 prompt 打开时，输入区随后增高会让
-          // 推荐项锚点整体移动，浮层因而先按旧坐标出现再跳位。安装与开启都等插入落地后再测量锚点。
+          // If the confirmation Popover opens before Composer consumes the plain prompt, the input area later grows and moves
+          // the recommendation anchor, causing the overlay to appear at the old coordinates before jumping. Wait until insertion settles before measuring the anchor for install/enable.
           const applied = await trackDraftSuggestedPluginOperation(
             operation,
             waitForComposerTextInsertApplied(composerRequestId, operation.abort.signal),
@@ -728,8 +728,8 @@ export function ConversationDraftSuggestedPromptsContainer({
   return (
     <div data-v4-draft-suggested-prompts-slot="true" className={cn(!proactive && "h-8", className)}>
       <ConversationDraftSuggestedPrompts
-        // 绝对定位让推荐区脱离 Composer 的正常结构，调试和间距语义都不直观。
-        // 旧场景推荐保留固定槽位；主动推荐列表必须由内容撑高，否则多行会溢出并覆盖下方内容。
+        // Absolute positioning removes recommendations from Composer's normal structure, making debugging and spacing unintuitive.
+        // Keep a fixed slot for legacy recommendations; active recommendation lists must grow with their content or multiple lines overflow and cover content below.
         items={items}
         layout={proactive ? "list" : "chips"}
         onSelect={handleSelect}

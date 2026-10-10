@@ -6,8 +6,8 @@ import type { ProviderModelInputFormatDraft } from "@/settings/model-provider-se
 import { modelEditorControlStyle } from "@/settings/model-provider-section/modelEditorControlStyle.js";
 import { ModelOptionCheckbox } from "@/settings/model-provider-section/ProviderModelMetadataFields.js";
 
-// PDF 已经是正式的模型输入事实和可执行附件能力，旧列表漏掉它后用户无法修正该事实。
-// Audio 仍没有设置页附件入口，因此继续只在 Draft 中无损保留。
+// PDF is an established model-input fact and supported attachment capability; omitting it from the old list prevented users from correcting this setting.
+// Audio still has no attachment entry in Settings, so continue preserving it losslessly only in the Draft.
 const INPUT_MODALITY_OPTIONS = ["text", "image", "video", "pdf"] as const;
 
 const INPUT_MODALITY_FIELDS = {

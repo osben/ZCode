@@ -59,8 +59,8 @@ const highlighterCache = new Map<
 >();
 const tokensCache = new Map<string, TokenizedCode>();
 const subscribers = new Map<string, Set<(result: TokenizedCode) => void>>();
-// 内存诊断计数器：tokensCache 目前无淘汰，是审计里
-// renderer 最可疑的增长点，先把条数落到日志里。
+// In-memory diagnostic counter: tokensCache currently has no eviction and is the renderer's most suspicious growth point in the audit;
+// log its size first.
 uiMemoryDiagnosticsRegistry.register("shiki", () => ({
   tokensCache: tokensCache.size,
   highlighters: highlighterCache.size,
@@ -117,7 +117,7 @@ const createRawCodeTokens = (code: string): TokenizedCode => ({
   ),
 });
 
-// 带缓存的异步高亮入口；React 组件只应在 effect 中调用。
+// Cached asynchronous highlighting entry point; React components should call it only in an effect.
 export const highlightCode = (
   code: string,
   language: string,
@@ -126,9 +126,9 @@ export const highlightCode = (
   callback?: (result: TokenizedCode) => void,
 ): TokenizedCode | null => {
   if (!shouldUseSyntaxHighlighting(language)) {
-    // 文本/日志代码块没有语法高亮收益，却会在聊天流式渲染和历史恢复时进入
-    // Shiki 的异步状态机。之前修掉了 render 阶段 setState，但这条纯文本路径仍可能把
-    // CodeViewer 拖进 React #185；这里直接返回 raw tokens，避免启动高亮副作用。
+    // Plain-text/log code blocks gain nothing from syntax highlighting, yet enter
+    // Shiki's async state machine during chat streaming and history restoration. The render-phase setState issue was fixed earlier, but this plain-text path could still put
+    // CodeViewer into React #185; return raw tokens directly to avoid starting highlighting side effects.
     return createRawCodeTokens(code);
   }
 
@@ -138,9 +138,9 @@ export const highlightCode = (
 
   const cached = tokensCache.get(tokensCacheKey);
   if (cached) {
-    // 缓存命中时也需要通知 effect，但不能同步触发 setState。
-    // 历史消息恢复时大量代码块会在同一次提交后挂载；同步 callback 会把 cache-hit 变成嵌套更新，
-    // 和 Streamdown 的重渲染叠在一起时容易触发 React #185。推迟到微任务后再交给幂等 setter。
+    // Notify the effect on a cache hit too, but do not trigger setState synchronously.
+    // Many code blocks mount in the same commit when restoring history; a synchronous callback turns a cache hit into a nested update,
+    // which can trigger React #185 when combined with Streamdown rerenders. Defer to a microtask, then use the idempotent setter.
     if (callback) {
       queueMicrotask(() => callback(cached));
     }
@@ -185,7 +185,7 @@ export const highlightCode = (
     })
     // oxlint-disable-next-line eslint-plugin-promise(prefer-await-to-then), eslint-plugin-promise(prefer-await-to-callbacks)
     .catch((error) => {
-      // Shiki 加载或 tokenize 失败，组件会停留在无高亮的 rawTokens 状态。
+      // If Shiki loading or tokenization fails, the component stays in the unhighlighted rawTokens state.
       logger.error(
         `[ShikiHighlighter] 代码高亮失败: language=${resolvedLanguage}, theme=${resolvedTheme}`,
         error,

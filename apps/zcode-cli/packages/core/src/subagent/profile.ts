@@ -82,7 +82,7 @@ export function createBuiltInExploreAgentProfile(
 export function isBuiltInExploreAgentProfile(
   profile: Pick<AgentProfile, "name" | "source">,
 ): boolean {
-  // 用户/项目 profile 可以同名覆盖内置 Explore，不能只按名称套用内置行为。
+  // User or project profiles can override built-in Explore by name; apply built-in behavior only when the source also matches.
   return profile.name === EXPLORE_AGENT_TYPE && profile.source === "built-in";
 }
 
@@ -119,7 +119,7 @@ export function createBuiltInGeneralPurposeAgentProfile(
     name: DEFAULT_SUBAGENT_TYPE,
     description:
       "General-purpose agent for researching complex questions, searching for code, and executing multi-step tasks. When you are searching for a keyword or file and are not confident that you will find the right match in the first few tries use this agent to perform the search for you.",
-    // 内置子智能体使用显式身份色，避免 UI 按名称 hash 后把 general-purpose 显示为红色。
+    // Built-in subagents use an explicit identity color so the UI does not hash the name and display general-purpose in red.
     color: "blue",
     injectAgentsMd: true,
     ...(options.modelSelection ? { modelSelection: options.modelSelection } : {}),
@@ -180,8 +180,8 @@ export function parseAgentProfileFromMarkdown(input: {
   const modelSelection = resolveProfileModelSelection(frontmatter);
   const color = normalizeColor(scalarString(frontmatter.color));
   const parsedPermissionMode = normalizePermissionMode(scalarString(frontmatter.permissionMode));
-  // 项目级 subagent markdown 属于仓库输入，不能通过 frontmatter 把
-  // child runtime 提升到 bypass/yolo；权限模式只接受用户级或受信插件配置。
+  // Project-level subagent Markdown is repository input and must not use frontmatter to
+  // elevate the child runtime to bypass/yolo; permission modes are accepted only from user-level or trusted plugin configuration.
   const permissionMode = input.source === "project" ? undefined : parsedPermissionMode;
   const maxTurns = normalizePositiveInteger(frontmatter.maxTurns);
   const memory = parseAgentMemoryScope(frontmatter.memory);

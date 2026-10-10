@@ -11,7 +11,7 @@ export function shouldRestoreChatInputFocusAfterPickerClose({
 }: {
   isCoarseTouchDevice: boolean;
 }): boolean {
-  // 手机触控设备关闭工具栏弹层后，如果继续把焦点送回 contenteditable，
-  // 系统软键盘会再次弹出并遮挡远控界面；桌面端仍保留关闭后继续输入的键盘流。
+  // On mobile touch devices, returning focus to contenteditable after closing the toolbar popover
+  // reopens the system keyboard and obscures the remote-control interface. Desktop keeps the keyboard flow for continued typing after close.
   return !coarseTouch;
 }

@@ -1,6 +1,6 @@
-// 分屏 Layout 层持久化（localStorage）：try/catch 静默降级；
-// 损坏数据整体丢弃回初始布局（不部分救回）。
-// 兼容读取旧版 v1（单值 splitPane），仅当 v1 workspaceKey 是可信本地路径时迁移。
+// Persist the split-view layout in localStorage; gracefully degrade on try/catch.
+// Discard corrupted data as a whole and return to the initial layout (do not partially recover it).
+// Continue reading legacy v1 (single splitPane value), migrating only when the v1 workspaceKey is a trusted local path.
 import {
   clampSplitRatio,
   leafPaneIds,
@@ -15,10 +15,10 @@ import {
 } from "@/v4/paneLayoutTree.js";
 
 const PANE_LAYOUT_STORAGE_KEY = "zcode-v4-pane-layout:v2";
-/** 旧版单值分屏的 key（只读迁移，不再写入）。 */
+/** Key for the legacy single-value split view (read-only migration; no longer written). */
 const PANE_LAYOUT_STORAGE_KEY_V1 = "zcode-v4-pane-layout:v1";
 
-/** v1 迁移用的保留 pane id（旧版 split pane 固定 id，e2e/testid 契约沿用）。 */
+/** Reserved pane ID for v1 migration (the legacy split pane had a fixed ID retained by the e2e/testid contract). */
 const V4_LEGACY_SPLIT_PANE_ID = "split";
 
 interface PersistedScopeV2 {
@@ -104,10 +104,10 @@ function sanitizeScope(raw: unknown): PaneWorkspaceScope | null {
 }
 
 /**
- * 把任意（可能损坏的）v2 持久化值归一为合法布局快照；不可救回 null（调用方回初始布局）。
- * 完整性要求（任一不满足即整体丢弃）：树结构合法、叶子 id 唯一、恰含一个 primary、
- * 叶子数 ≤ 上限、每个非 primary 叶子有合法绑定。恢复出的 session 绑定补
- * restoredUnvalidated（等 sessions-index 验证）；focusedPaneId 不在树中回 primary。
+ * Normalize any (possibly corrupted) v2 persisted value into a valid layout snapshot; return null if it cannot be recovered (the caller uses the initial layout).
+ * Integrity requirements (discard the entire value if any fail): valid tree structure, unique leaf IDs, exactly one primary,
+ * number of leaves ≤ limit, and a valid binding for each non-primary leaf. Add restoredUnvalidated to restored
+ * session bindings (pending sessions-index validation); if focusedPaneId is not in the tree, use the primary.
  */
 function sanitizePersistedPaneLayout(raw: unknown): PaneLayoutSnapshot | null {
   if (typeof raw !== "object" || raw === null) {
@@ -159,14 +159,14 @@ function sanitizePersistedPaneLayout(raw: unknown): PaneLayoutSnapshot | null {
   return { root, panes, focusedPaneId };
 }
 
-/** v1 workspaceKey 只在是可信本地绝对路径时才能当 workspacePath 迁移（POSIX / Windows 盘符）。 */
+/** Migrate a v1 workspaceKey to workspacePath only if it is a trusted local absolute path (POSIX / Windows drive letter). */
 function isPlausibleLocalPath(value: string): boolean {
   return value.startsWith("/") || /^[A-Za-z]:[\\/]/.test(value);
 }
 
 /**
- * 旧版 v1（单值 splitPane）→ v2 迁移：v1 只存了 workspaceKey（identity ?? path），
- * 无法还原远程 scope——仅当它是可信本地路径时迁移为双叶子树，否则丢弃回单 pane（null）。
+ * Migrate legacy v1 (single splitPane value) → v2: v1 stored only workspaceKey (identity ?? path),
+ * which cannot restore remote scope — migrate to a two-leaf tree only if it is a trusted local path; otherwise discard it and return to a single pane (null).
  */
 function migratePersistedPaneLayoutV1(raw: unknown): PaneLayoutSnapshot | null {
   if (typeof raw !== "object" || raw === null) {
@@ -213,7 +213,7 @@ function migratePersistedPaneLayoutV1(raw: unknown): PaneLayoutSnapshot | null {
   };
 }
 
-/** 读取持久化布局（v2 优先，缺失时尝试 v1 迁移）；无记录/损坏/无 storage 环境返回 null。 */
+/** Read the persisted layout (prefer v2 and try v1 migration if absent); return null if no record, data is corrupted, or storage is unavailable. */
 export function readPersistedPaneLayout(): PaneLayoutSnapshot | null {
   try {
     const rawV2 = localStorage.getItem(PANE_LAYOUT_STORAGE_KEY);
@@ -244,8 +244,8 @@ function serializeNode(node: PaneLayoutNode): PersistedNodeV2 {
   };
 }
 
-// 去重写入：subscribe 对任何状态变化都触发，序列化相同（例如 restoredUnvalidated
-// 清除，不进持久化面）时跳过 setItem。
+// Deduplicate writes: subscribe fires on every state change, so skip setItem when serialization is unchanged (for example, clearing restoredUnvalidated
+// does not affect persisted data).
 let lastPersistedPaneLayout: string | null = null;
 
 export function persistPaneLayout(snapshot: PaneLayoutSnapshot): void {
@@ -277,6 +277,6 @@ export function persistPaneLayout(snapshot: PaneLayoutSnapshot): void {
     localStorage.setItem(PANE_LAYOUT_STORAGE_KEY, serialized);
     lastPersistedPaneLayout = serialized;
   } catch {
-    // 无 storage 环境（测试/隐身）静默降级：刷新恢复不可用，但不影响正常分屏。
+    // Gracefully degrade when storage is unavailable (tests/private browsing): layout restoration after refresh is unavailable, but split view still works normally.
   }
 }

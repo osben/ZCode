@@ -21,14 +21,14 @@ export function resolvePluginRuntimeFeatures(
     return {};
   }
   return {
-    // Node REPL 已迁到真实 MCP server；这里仅启用 BrowserControlPort 注入，不再注册 core 裸 js*。
+    // Node REPL has moved to a real MCP server; enable only BrowserControlPort injection here and do not register core's raw js* tools.
     ...(browserUsePlugin ? { browserUse: true } : {}),
     ...(browserUsePlugin
       ? { browserDocumentationRoot: join(browserUsePlugin.rootPath, "docs") }
       : {}),
-    // CUA 与 Browser Use 共用同一个无状态 node_repl MCP server；这里只记录 CUA
-    // SDK 是否需要由 bootstrap 注入 broker。不要设置 nodeRepl：那个字段会重新注册
-    // 已迁移前的 core 裸 js 工具，导致 MCP 与 core 重复投影。
+    // CUA and Browser Use share the same stateless node_repl MCP server. Record only whether the CUA
+    // SDK needs bootstrap to inject a broker. Do not set nodeRepl: that field re-registers the old raw
+    // core js tools and projects the same tools through both MCP and core.
     ...(cuaPlugin ? { computerUse: true } : {}),
   };
 }

@@ -56,8 +56,8 @@ export async function ensureServerInstallOwnership(
       mode: 0o600,
     });
     try {
-      // 直接 open install.json 后再写入会先暴露空文件，并发 ensure 可能把
-      // 它判成损坏 marker。hard-link 只在临时文件完整落盘后原子发布且不会覆盖旧标记。
+      // Opening install.json and then writing would expose an empty file first, which a concurrent ensure could classify as a corrupt marker.
+      // A hard link publishes atomically only after the temporary file is complete and does not overwrite an existing marker.
       await link(temporary, layout.installFile);
       return ownership;
     } catch (error) {

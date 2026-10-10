@@ -12,7 +12,7 @@ interface CreateCoordinatorResponsePortOptions {
   childSessionId: SessionId;
   parentToolCallId?: string;
   createResponseId?: () => string;
-  // void 会接受 async callback；undefined 才能让类型系统守住同步入队 ack。
+  // void accepts async callbacks; undefined lets the type system enforce a synchronous enqueue acknowledgment.
   enqueue(input: EnqueueSubagentMessageInput): undefined;
 }
 

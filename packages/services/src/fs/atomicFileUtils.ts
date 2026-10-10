@@ -99,9 +99,9 @@ async function cleanupStaleTempFilesForTarget(
 }
 
 /**
- * 使用临时文件 + rename 实现原子写入。
- * rename 在同文件系统上是原子的，可避免 read-modify-write 并发时的数据覆盖风险。
- * 临时文件写在目标文件同目录下，避免 Windows 跨卷 rename 失败。
+ * Perform an atomic write with a temporary file and rename.
+ * rename is atomic on the same filesystem and prevents data-overwrite risks during concurrent read-modify-write operations.
+ * Place the temporary file in the target's directory to avoid cross-volume rename failures on Windows.
  */
 export async function atomicWriteText(
   filePath: string,
@@ -115,9 +115,9 @@ export async function atomicWriteText(
   );
   maybeThrowInjectedFsFault({ operation: "mkdir", path: dir });
   await mkdir(dir, { recursive: true });
-  // Windows 上多个窗口/host process 可能同时保存同一个 task JSON，
-  // 进程内 writeChains 无法覆盖这种抢写，最终在 rename 替换目标文件时高频 EPERM。
-  // 这里用同目录 lock 文件做 ZCode 进程间协作串行化，再保留 rename 重试处理杀软/索引器的短暂占用。
+  // On Windows, multiple windows/host processes may save the same task JSON at once.
+  // In-process writeChains cannot prevent this race, which often causes EPERM when rename replaces the target file.
+  // Use a same-directory lock file to serialize ZCode processes, and retain rename retries for brief antivirus/indexer locks.
   const releaseLock =
     options?.useFileLock === false
       ? null
@@ -128,8 +128,8 @@ export async function atomicWriteText(
           options?.lockMaxWaitMs ?? DEFAULT_LOCK_MAX_WAIT_MS,
         );
   try {
-    // 旧版本或崩溃后的失败 rename 会留下 config.json.*.tmp。
-    // 只清理同一目标文件且超过阈值的临时文件，避免误删另一个进程刚创建的 active temp。
+    // A failed rename from an older version or a crash can leave config.json.*.tmp files behind.
+    // Clean only temporary files for this target that exceed the age threshold, avoiding another process's active temp file.
     await cleanupStaleTempFilesForTarget(
       filePath,
       tempFile,
@@ -138,9 +138,9 @@ export async function atomicWriteText(
     maybeThrowInjectedFsFault({ operation: "writeFile", path: tempFile });
     await writeFile(tempFile, content, "utf-8");
     await options?.beforeRename?.();
-    // Windows Defender、索引服务或另一个窗口可能短暂占用目标 JSON，
-    // 导致原子替换 rename 抛 EPERM/EBUSY/EACCES。这里只对这类临时锁做短暂重试，
-    // 仍然把真实权限问题原样抛出，避免静默丢失会话快照。
+    // Windows Defender, indexing services, or another window may briefly hold the target JSON,
+    // causing the atomic-replace rename to throw EPERM/EBUSY/EACCES. Retry briefly only for these transient locks,
+    // while propagating real permission errors to avoid silently losing a session snapshot.
     const renameFile = () => renameWithRetry(tempFile, filePath, options?.renameRetryDelaysMs);
     if (options?.runRename) {
       await options.runRename(renameFile);

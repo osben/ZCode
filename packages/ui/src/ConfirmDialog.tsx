@@ -29,9 +29,9 @@ export function ConfirmDialogHost() {
 
   const displayedRequestRef = useRef(pendingRequest);
   if (pendingRequest) {
-    // Promise 结算后 store 会立刻清空 pendingRequest，但 Radix 关闭动画还会保留一帧内容层。
-    // 如果这里直接读取 pendingRequest，退场动画期间标题/描述会先变空，只剩“确认 / 取消”按钮闪一下。
-    // 因此关闭完成前继续沿用最后一次可见内容，只让 open 状态控制弹窗退场。
+    // After the Promise settles, the store immediately clears pendingRequest, but Radix keeps the content layer for one frame during its close animation.
+    // Reading pendingRequest directly would clear the title and description first, briefly leaving only the “Confirm / Cancel” buttons.
+    // Keep the last visible content until closing finishes, and let the open state control the dialog exit.
     displayedRequestRef.current = pendingRequest;
   }
   const displayedRequest = pendingRequest ?? displayedRequestRef.current;
@@ -48,8 +48,8 @@ export function ConfirmDialogHost() {
 
   const handleOpenChange = useCallback(
     (nextOpen: boolean) => {
-      // Radix 在点击遮罩或按 Esc 时只会回调 onOpenChange(false)。
-      // 如果这里不主动把 Promise 结算为 false，调用侧会一直悬挂，后续删除操作也会被卡住。
+      // Radix calls only onOpenChange(false) when the overlay is clicked or Esc is pressed.
+      // Settle the Promise with false here; otherwise the caller remains suspended and subsequent delete operations can get stuck.
       if (!nextOpen) {
         settleChoice("dismiss");
       }
@@ -71,15 +71,15 @@ export function ConfirmDialogHost() {
         return;
       }
 
-      // 带复选框的选择对话框保留焦点按钮的键盘语义，避免“不了”按 Enter 变成切换。
+      // Preserve the focused button’s keyboard behavior in checkbox selection dialogs so pressing Enter on “No” does not toggle the checkbox.
       if (
         displayedRequest?.checkbox &&
         event.target instanceof HTMLElement &&
         event.target.closest("button,input")
       )
         return;
-      // 二次确认场景下如果不接 Enter，键盘用户会只能切到按钮再触发，
-      // 体验和桌面端的确认弹窗不一致。这里在弹窗打开时统一兜住 Enter，保持可预期的确认手势。
+      // Without Enter handling in a second-confirmation dialog, keyboard users would have to move focus to a button first,
+      // unlike the desktop confirmation dialog. Handle Enter consistently while the dialog is open to keep confirmation behavior predictable.
       event.preventDefault();
       event.stopPropagation();
       settleConfirmation(true);
@@ -101,8 +101,8 @@ export function ConfirmDialogHost() {
         }
         className={cn(
           "gap-5 rounded-2xl border-none bg-popover/98 p-5 ring-border shadow-2xl",
-          // 仅依赖共享弹框的响应式 max-width 时，不同入口所在 viewport 会让
-          // 同一删除确认框看起来尺寸不一致。定时任务删除按设计固定同一 presentation。
+          // Relying only on the shared dialog’s responsive max-width makes the same delete confirmation look different across entry-point viewports.
+          // Scheduled-task deletion uses a fixed presentation by design.
           isAutomationConfirmation ? AUTOMATION_CONFIRM_DIALOG_CONTENT_CLASS : "sm:max-w-md",
           displayedRequest?.compact && "top-[44%] min-h-[161px] gap-4 sm:max-w-[400px]",
         )}
@@ -126,7 +126,7 @@ export function ConfirmDialogHost() {
           className={cn(
             "gap-2 sm:justify-end",
             displayedRequest?.checkbox && "flex-row flex-wrap items-center",
-            // Automation 弹窗的最小高度会拉伸 Grid footer 行，按钮停在行顶导致视觉底距超过 20px。
+            // The Automation dialog’s minimum height stretches the Grid footer row, leaving the buttons at its top and creating a visual bottom gap greater than 20px.
             isAutomationConfirmation && "mt-auto",
           )}
         >
@@ -165,7 +165,7 @@ export function ConfirmDialogHost() {
             <Button
               type="button"
               autoFocus
-              // 普通确认沿用主按钮；仅显式声明 destructive 的不可恢复动作使用危险色。
+              // Regular confirmations use the primary button; use the danger color only for irreversible actions explicitly marked destructive.
               variant={displayedRequest?.confirmVariant ?? "default"}
               size={"lg"}
               data-testid={TID_CONFIRM_DIALOG_CONFIRM}

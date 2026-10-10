@@ -91,7 +91,7 @@ export function CommandForm({
     let valid = true;
     const trimmedName = name.trim();
     const nameRegex = NAME_REGEX;
-    // 命令表单字段曾直接硬编码英文，导致中文界面下校验错误仍显示英文。
+    // Command-form fields used to hardcode English, so validation errors still appeared in English in the Chinese UI.
     if (initial) {
       setNameError(null);
     } else if (trimmedName.length < MIN_NAME_LENGTH || trimmedName.length > MAX_NAME_LENGTH) {

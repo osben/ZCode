@@ -1,4 +1,4 @@
-/* eslint-disable max-lines -- 强制升级提示窗口包含内联 HTML/CSS 和状态脚本，启动前不能依赖 renderer 包 */
+/* eslint-disable max-lines -- The forced-update prompt includes inline HTML/CSS and state scripts, so it cannot depend on the renderer bundle at startup. */
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { type Locale } from "@zcode/shared";
@@ -162,7 +162,7 @@ function renderForceUpdatePromptHtml(text: ForceUpdateDialogText, locale: Locale
       background: #f8f8f8;
       display: flex;
     }
-    /* 强更截图范围就是完整 BrowserWindow；外层留白加内层圆角会把宿主底色显示成黑框。*/
+    /* The forced-update screenshot covers the full BrowserWindow; outer padding plus inner rounded corners would expose the host background as a black border. */
     .panel {
       width: 100%;
       height: 100%;
@@ -222,7 +222,7 @@ function renderForceUpdatePromptHtml(text: ForceUpdateDialogText, locale: Locale
       cursor: pointer;
       -webkit-app-region: no-drag;
     }
-    /* 字体字符 × 的字形基线会让视觉中心偏移，改用两条线保证和主窗口关闭按钮一致居中。*/
+    /* The font glyph for × shifts the visual center; use two lines to center it like the main-window close button. */
     .close::before,
     .close::after {
       content: "";
@@ -412,7 +412,7 @@ function renderForceUpdatePromptHtml(text: ForceUpdateDialogText, locale: Locale
       return kind === 'checking' || kind === 'downloading' || kind === 'ready' || kind === 'installing';
     }
     function showCloseConfirmation() {
-      // 自动升级会禁用主按钮，但关闭窗口仍应给用户二次确认，避免误关中断下载。
+      // Automatic updates disable the primary button, but closing the window still requires confirmation to avoid accidentally interrupting the download.
       resizePromptHeight(${FORCE_UPDATE_PROMPT_HEIGHT});
       previousAutoState = isActiveAutoState(currentState.kind) ? currentState : previousAutoState;
       currentState = { kind: 'confirm-close' };
@@ -571,7 +571,7 @@ export async function showForceUpdatePrompt(
       if (win.isDestroyed()) {
         return;
       }
-      // 下载态隐藏版本说明后需要收回窗口高度，避免出现大片空白；确认关闭/错误态再恢复默认高度。
+      // When the download state hides version details, reduce the window height to avoid a large blank area; restore the default height for confirmation-to-close/error states.
       win.setSize(FORCE_UPDATE_PROMPT_WIDTH, height);
       win.center();
     };
@@ -612,7 +612,7 @@ export async function showForceUpdatePrompt(
       }
       win.show();
       win.focus();
-      // 启动前没有主窗口时，原生消息框在部分开发环境不可见；显式置顶保证用户能看到强制升级提示。
+      // Before startup there may be no main window, and native message boxes can be invisible in some development environments; explicitly bring the forced-update prompt to the front.
       if (!parentWindow) {
         win.setAlwaysOnTop(true, "modal-panel");
       }
@@ -621,7 +621,7 @@ export async function showForceUpdatePrompt(
     win.on("closed", () => {
       autoUpdateDispose?.();
       if (!resolved) {
-        // 自动升级是异步流程，用户关闭保留中的强更窗口时仍要把最终退出动作交还给 guard。
+        // Automatic updates are asynchronous. If the user closes a still-open forced-update window, hand the final quit action back to the guard.
         resolveOnce("quit", false);
       }
     });

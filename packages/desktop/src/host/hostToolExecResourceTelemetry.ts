@@ -15,7 +15,7 @@ export function registerHostToolExecResourceTelemetry(options: {
         sample,
       });
     } catch {
-      // main 退出或通道关闭只丢当前完成事实，不影响 Bash 生命周期。
+      // If Main exits or the channel closes, drop only the current completion fact; do not affect the Bash lifecycle.
     }
   });
 }

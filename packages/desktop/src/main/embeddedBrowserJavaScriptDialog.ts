@@ -54,10 +54,10 @@ function resolveEmbeddedBrowserDialogSource(frameUrl: string, guestUrl?: string)
         }
       }
     } catch {
-      // 继续尝试 Chromium 维护的下一层可信 URL。
+      // Continue with the next trusted URL maintained by Chromium.
     }
   }
-  // 非法或无 host URL 统一使用不可伪造的中性来源标签。
+  // Use a neutral, non-spoofable origin label for invalid URLs or URLs without a host.
   return "This page says";
 }
 
@@ -77,9 +77,9 @@ function resolveEmbeddedBrowserDialogButtons(
 }
 
 /**
- * 用户 Browser 的 preload 在网页调用原生 alert/confirm 之前同步进入这里，因此用户路径
- * 不会先创建 Chromium Dialog。自动化期间返回 handled=false，由 preload 调回原生 API，
- * 继续让 BrowserGuestManager 的 getDialog/handleDialog 处理。
+ * The user Browser preload enters here synchronously before the page calls native alert/confirm,
+ * so the user path does not create a Chromium dialog first. During automation, return handled=false
+ * so the preload invokes the native API and BrowserGuestManager can handle it through getDialog/handleDialog.
  */
 export class EmbeddedBrowserJavaScriptDialogController {
   private readonly guests = new Map<number, RegisteredGuest>();
@@ -145,8 +145,8 @@ export class EmbeddedBrowserJavaScriptDialogController {
         buttons: resolveEmbeddedBrowserDialogButtons(this.options.getLocale(), request.type),
         defaultId: request.type === "alert" ? 0 : 1,
         cancelId: 0,
-        // 同源 iframe 的可信 frame URL 可能是 about:blank；该 URL 没有
-        // 可展示 host，必须继续使用 Chromium 维护的 guest 主文档 URL。
+        // A same-origin iframe's trusted frame URL may be about:blank, which has no host to display.
+        // Continue using the guest main-document URL maintained by Chromium.
         message: resolveEmbeddedBrowserDialogSource(frameUrl, registration.guest.getURL()),
         detail: request.message,
         noLink: true,
@@ -158,7 +158,7 @@ export class EmbeddedBrowserJavaScriptDialogController {
         ...(request.type === "confirm" ? { value: selected === 1 } : {}),
       };
     } catch (error) {
-      // 系统框创建失败时不能伪造用户选择；通知 preload 调回网页原生 API。
+      // Do not fabricate a user choice if creating the system dialog fails; tell the preload to invoke the page's native API.
       this.options.logger.warn("[browser-pane] failed to handle JavaScript dialog with source", {
         error: error instanceof Error ? error.message : String(error),
         tabId: registration.tabId,

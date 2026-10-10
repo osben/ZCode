@@ -1,16 +1,16 @@
 #!/usr/bin/env node
-/* eslint-disable max-lines -- 三方 license 盘点/声明/门禁一体脚本，数据表与校验逻辑集中维护。 */
-// 三方 license 盘点/声明/门禁 一体脚本
+/* eslint-disable max-lines -- Unified third-party license inventory, notice generation, and gate script; keep the data table and validation logic together. */
+// Unified third-party license inventory, notice generation, and gate script.
 //
-// 用法：
-//   node scripts/licenses.mjs notices   生成 THIRD-PARTY-NOTICES.md（精确版本、原始版权和许可文本）
-//   node scripts/licenses.mjs check     手动门禁：出现 allowlist 之外或许可未知的包即退出码 1
+// Usage:
+//   node scripts/licenses.mjs notices   Generate THIRD-PARTY-NOTICES.md (exact versions, original copyright, and license text)
+//   node scripts/licenses.mjs check     Manual gate: exit with code 1 if a package is not allowlisted or its license is unknown
 //
-// 数据口径：
-// - 实装清单 = 全 workspace node_modules 的递归集合，含嵌套版本与符号链接。
-// - 声明生成：third-party-npm.mjs 按生产依赖的精确版本收集真实许可文件。
-// - prod 判定按锁文件生产图中的精确版本。
-// - 商用/半开放检查作用于全量实装包（prod+dev）
+// Data sources:
+// - Installed inventory = recursive contents of all workspace node_modules, including nested versions and symlinks.
+// - Notice generation: third-party-npm.mjs collects actual license files for exact production dependency versions.
+// - Production status is determined by exact versions in the lockfile's production graph.
+// - Commercial/semi-open checks apply to all installed packages (prod + dev).
 import { generateThirdPartyNotices } from "./generate-third-party-notices.mjs";
 import { readVerifiedNotices } from "./third-party-notices.mjs";
 import { readFile } from "node:fs/promises";
@@ -29,16 +29,16 @@ if (command === "notices") {
   process.exit(0);
 }
 
-// 标识门禁与声明生成共用 workspace 图和递归扫描，不按包名猜测生产范围。
+// The license gate and notice generation share the workspace graph and recursive scan; production scope is not guessed from package names.
 const { required, projects } = await readWorkspaceProductionGraph(ROOT);
 const ownNames = new Set(projects.map((project) => project.name));
 const installed = new Map();
 const MANUAL_LICENSE = {
-  "exif-parser": "MIT", // 包内 LICENSE.md
-  khroma: "MIT", // 包内 license 文件
-  semaphore: "MIT", // 包内 README License 段
-  "css-value": "MIT", // 包内 Readme License 段
-  "@fig/autocomplete-helpers": "MIT", // 包内 LICENSE
+  "exif-parser": "MIT", // LICENSE.md in the package
+  khroma: "MIT", // License file in the package
+  semaphore: "MIT", // License section in the package README
+  "css-value": "MIT", // License section in the package Readme
+  "@fig/autocomplete-helpers": "MIT", // LICENSE in the package
 };
 function normLicense(value) {
   if (typeof value === "string") return value.trim();
@@ -56,7 +56,7 @@ for (const [key, { pkg }] of scanned) {
     isProd: required.has(key),
   });
 }
-// ---------- 分类 ----------
+// ---------- Categories ----------
 const GREEN =
   /^(MIT|MIT-0|ISC|BSD-2-Clause|BSD-3-Clause|BSD-4-Clause|0BSD|Unlicense|Apache-2\.0|Zlib|WTFPL|Artistic-2\.0|BlueOak-1\.0\.0|CC0-1\.0|CC-BY-4\.0|CC-BY-3\.0|BSD|Python-2\.0)$/i;
 function classify(raw) {
@@ -85,7 +85,7 @@ function classify(raw) {
 }
 for (const r of installed.values()) r.bucket = classify(r.license);
 
-// ---------- 构建工具许可标识复核（不是二进制发行义务豁免） ----------
+// ---------- Build-tool license identifier review (does not waive binary distribution obligations) ----------
 const WEAK_ALLOW = [[/^lightningcss/, "当前仅构建依赖；进入生产图时需重新核对 MPL 源码提供义务"]];
 function weakAllowReason(r) {
   if (r.isProd) return null;

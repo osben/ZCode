@@ -1,9 +1,9 @@
 import type { WebContents } from "electron";
 
 /**
- * autoInject 在 dom-ready 才 executeJavaScript init，Vite 场景下 window.load 往往更早结束，
- * perf-collector 的 onLoad/sendPerf 不会跑（webvitals 仍可上报，故 beforeReport 里 perf=0）。
- * 在 did-finish-load 与 dom-ready 后补发 load，且等待 RumSDK 就绪。
+ * autoInject initializes executeJavaScript at dom-ready, but in Vite, window.load often finishes earlier,
+ * so perf-collector's onLoad/sendPerf never runs (webvitals still reports, so beforeReport has perf=0).
+ * Dispatch load after did-finish-load and dom-ready, and wait until RumSDK is ready.
  */
 const ARMS_BROWSER_PERF_LOAD_NUDGE_SCRIPT = `(function () {
   function dispatchLoad() {
@@ -43,12 +43,12 @@ export function scheduleArmsBrowserPerfLoadNudge(webContents: WebContents): void
       return;
     }
     void webContents.executeJavaScript(ARMS_BROWSER_PERF_LOAD_NUDGE_SCRIPT, true).catch(() => {
-      // 非主窗口或注入失败时忽略
+      // Ignore non-main windows or injection failures.
     });
   };
 
   webContents.on("did-finish-load", nudge);
-  // 与 SDK autoInject 同挂在 dom-ready，延迟一拍等待 RumSDK.default.init 完成
+  // Register alongside SDK autoInject on dom-ready, delaying one tick for RumSDK.default.init to finish.
   webContents.on("dom-ready", () => {
     setTimeout(nudge, 0);
     setTimeout(nudge, 150);

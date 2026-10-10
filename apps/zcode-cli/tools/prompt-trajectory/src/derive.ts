@@ -276,7 +276,8 @@ export function createAnthropicRequestBody(
     ...rest
   } = bodyWithoutMessages;
   const systemBlocks = normalizeAnthropicContentBlocks(system);
-  // MCS 下真实 Anthropic body 的 messages 可以保留 role:system，已有顶层 system 时不能再二次提升。
+  // Under MCS, messages in a real Anthropic body may retain role:system; do not promote them
+  // again when a top-level system field is already present.
   const messages =
     system !== undefined
       ? sourceMessages.map(toAnthropicProviderMessage)
@@ -306,8 +307,8 @@ function toAnthropicProviderMessage(message: OpenAiMessage): OpenAiMessage {
   }
 
   const text = singlePlainTextBlock(message.content);
-  // 通用 model-io artifact 必须保留录制 shape；只有生成 Anthropic
-  // provider artifact 时，才复现最终 fetch boundary 的 MCS string 投影。
+  // Generic model-io artifacts must preserve the recorded shape. Reproduce the MCS string
+  // projection at the final fetch boundary only when generating an Anthropic provider artifact.
   return text === undefined ? clonedMessage : { ...clonedMessage, content: text };
 }
 

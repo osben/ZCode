@@ -5,17 +5,18 @@ import {
   type ZCodeProcessResourceSample,
 } from "@zcode/shared";
 
-/** 采样周期与 app 侧聚合共用 shared 的同一个常量，避免两侧节拍各自漂移。 */
+/** Sampling interval shared with app-side aggregation, preventing the two cadences from drifting. */
 const ZCODE_PROCESS_RESOURCE_SAMPLE_INTERVAL_MS = ZCODE_CLI_RESOURCE_SAMPLE_INTERVAL_MS;
 
 let processInstanceToken: string | undefined;
 
 /**
- * 本 CLI 进程的实例标识：首次采样时生成一次，之后整个进程生命周期内不变（sampler 重建也不变）。
+ * Instance ID for this CLI process: generate once at the first sample and keep it for the process
+ * lifetime, including when the sampler is recreated.
  *
- * 只供 app 侧 main 统计「同时存活几个 CLI 进程」与「最大单进程 RSS」。
+ * Used only by app-side main to count simultaneously alive CLI processes and measure maximum per-process RSS.
  *
- * 不含 pid、不出本机；用随机 token 而不是 pid 是隐私红线要求。
+ * Contains no PID and never leaves the machine; using a random token instead of a PID is a privacy requirement.
  */
 function resolveProcessInstanceToken(): string {
   processInstanceToken ??= randomBytes(8).toString("hex");
@@ -27,7 +28,7 @@ interface CpuUsageSnapshot {
   system: number;
 }
 
-/** 与 Node `process.memoryUsage()` 同形；本地内存诊断日志需要 heap 细分，协议样本只取 rss。 */
+/** Same shape as Node `process.memoryUsage()`; local memory diagnostics need heap details, while protocol samples include only rss. */
 interface ProcessMemoryUsageSnapshot {
   rss: number;
   heapTotal: number;
@@ -47,8 +48,8 @@ interface ResourceSamplerTimer {
 
 interface CreateZCodeProcessResourceSamplerOptions {
   /**
-   * 第二个参数是本周期完整的内存快照，供进程内本地诊断日志使用；
-   * 协议样本自身只带 rss 与 heapUsed 两项内存字段。
+   * The second argument is the full memory snapshot for this cycle, used by local in-process
+   * diagnostics. The protocol sample itself contains only rss and heapUsed memory fields.
    */
   onSample(sample: ZCodeProcessResourceSample, memoryUsage: ProcessMemoryUsageSnapshot): void;
   platform?: ZCodeProcessResourceSample["platform"];
@@ -57,11 +58,11 @@ interface CreateZCodeProcessResourceSamplerOptions {
   readCpuUsage?: () => CpuUsageSnapshot;
   readMonotonicTimeNs?: () => bigint;
   readMemoryUsage?: () => ProcessMemoryUsageSnapshot;
-  /** 运行机物理内存，构造时读一次（同一进程内不会变）。 */
+/** Physical memory on the machine running this process, read once at construction (does not change within the process). */
   readTotalMemoryBytes?: () => number;
-  /** 本进程运行时长；平台侧按运行时长分桶发现内存随时间增长。 */
+/** Process uptime; the platform buckets by uptime to detect memory growth over time. */
   readUptimeSeconds?: () => number;
-  /** 只供单测注入可预期的实例标识；生产走进程级随机 token。 */
+/** Allows tests to inject a predictable instance ID; production uses the process-level random token. */
   instanceToken?: string;
   timer?: ResourceSamplerTimer;
 }
@@ -90,8 +91,8 @@ function roundResourceMetric(value: number): number {
 }
 
 /**
- * 读数不可用时该字段直接缺席（协议里两项都是可选），不用 0 冒充。
- * 读数本身抛错由外层的采样 try/catch 兜（红线 6「失败即丢」）。
+ * If a reading is unavailable, omit the field (both are optional in the protocol); do not substitute 0.
+ * Errors thrown while reading are handled by the outer sampling try/catch (rule 6: drop on failure).
  */
 function toRoundedUnit(value: number, divisor: number): number | undefined {
   return Number.isFinite(value) && value >= 0 ? Math.round(value / divisor) : undefined;
@@ -108,12 +109,13 @@ export function createZCodeProcessResourceSampler(
   );
   const readCpuUsage = options.readCpuUsage ?? (() => process.cpuUsage());
   const readMonotonicTimeNs = options.readMonotonicTimeNs ?? (() => process.hrtime.bigint());
-  // 一次 memoryUsage() 同时拿到 rss 与 heap 细分；单独的 memoryUsage.rss() 在 Linux 上
-  // 也要读 /proc，合并成一次调用不增加成本。
+  // One memoryUsage() call returns rss and heap details; memoryUsage.rss() alone also reads /proc
+  // on Linux, so combining them does not add cost.
   const readMemoryUsage = options.readMemoryUsage ?? (() => process.memoryUsage());
   const readUptimeSeconds = options.readUptimeSeconds ?? (() => process.uptime());
   const instanceToken = options.instanceToken ?? resolveProcessInstanceToken();
-  // 运行机物理内存构造时读一次：远端 CLI 的样本要用它覆盖桌面机的 total_memory_gb。
+  // Read physical memory for the running machine once at construction: remote CLI samples use this
+  // value instead of the desktop machine's total_memory_gb.
   const totalMemoryGb = toRoundedUnit(
     (options.readTotalMemoryBytes ?? (() => totalmem()))(),
     1024 ** 3,
@@ -167,10 +169,10 @@ export function createZCodeProcessResourceSampler(
       try {
         options.onSample(resourceSample, memoryUsage);
       } catch {
-        // 上报端关闭或背压时只丢当前样本，不能把异常带回 Agent 主循环。
+        // If reporting is closed or backpressured, drop only the current sample; do not propagate the error to the Agent main loop.
       }
     } catch {
-      // 进程指标 API 异常只跳过当前周期，保留最近一次成功基线供后续恢复。
+      // If the process metrics API fails, skip only this cycle and retain the most recent successful baseline for recovery.
     }
   };
 
@@ -193,7 +195,7 @@ export function createZCodeProcessResourceSampler(
       try {
         timerHandle.unref?.();
       } catch {
-        // unref 不可用时仍保留 timer owner，确保 stop 可以回收定时器。
+        // If unref is unavailable, retain the timer owner so stop can still clean up the timer.
       }
     },
     stop() {
@@ -206,7 +208,7 @@ export function createZCodeProcessResourceSampler(
       try {
         timer.clearInterval(handle);
       } catch {
-        // sampler 清理失败不能阻塞 CLI 既有退出流程。
+        // Sampler cleanup failure must not block the CLI's existing exit flow.
       }
     },
   };

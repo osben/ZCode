@@ -1,4 +1,4 @@
-/* eslint-disable max-lines -- AI SDK 模型执行装配集中维护 provider factory、鉴权和网络错误适配，拆分会让状态同步更脆弱。 */
+/* eslint-disable max-lines -- AI SDK model execution assembly centralizes provider factories, authentication, and network error adaptation; splitting it would make state synchronization more fragile. */
 // ============================================================
 // Vercel AI SDK model execution
 // ============================================================
@@ -43,7 +43,7 @@ interface AiSdkProviderConfig {
 }
 
 export interface AiSdkModelExecutionConfig {
-  /** 执行环境提供的默认来源信息，不属于 Provider 持久化配置。 */
+  /** Default source information provided by the execution environment; not part of persisted Provider configuration. */
   defaultHeaders?: Readonly<Record<string, string>>;
   env?: EnvRecord;
   network?: AiSdkNetworkConfig;
@@ -168,10 +168,10 @@ export class AiSdkModelExecution {
   }
 
   /**
-   * 固定一个 Model 创建时使用的 Provider 静态事实。
+   * Freeze the Provider static facts used when creating a Model.
    *
-   * 请求期鉴权只覆盖 API Key 与 Header；Registry 后续热更新不会让已经创建的
-   * Model 静默切换 Endpoint、协议、Provider Options 或 SDK Factory。
+   * Request-time authentication overrides only API Key and Header. Later Registry hot updates do not
+   * silently switch an already-created Model's Endpoint, protocol, Provider Options, or SDK Factory.
    */
   bindModel(input: {
     readonly providerId: string;
@@ -186,7 +186,8 @@ export class AiSdkModelExecution {
     const snapshot = this.captureModelSnapshot(input);
     const optionMaps = compileModelOptionMaps(input.optionSpecs);
     return {
-      // 这里只构造不执行请求的基础 Model；真正请求必须通过 resolveRequest 绑定完整 options。
+      // Construct only the base Model here without making a request; actual requests must go through
+      // resolveRequest with complete options bound.
       resolved: this.resolveSnapshot(snapshot, undefined, undefined, undefined),
       resolveRequest: ({ options, requestAuth }) =>
         this.resolveSnapshot(snapshot, requestAuth, optionMaps, options),
@@ -200,8 +201,9 @@ export class AiSdkModelExecution {
     readonly supportsJsonSchemaOutput: boolean;
   }): AiSdkModelSnapshot {
     const configuredProvider = toAiSdkProviderConfig(input.providerId, input.providerConfig);
-    // 重构后模型 SDK 曾只接到用户 Header，漏掉版本和站点归因；在公共绑定边界恢复，
-    // 不依赖签名成功，不给各业务重复补头，也不修改 Provider 或已绑定 Model 的配置。
+    // After the refactor, the model SDK received only user headers and lost version and site attribution.
+    // Restore them at the shared binding boundary, without depending on signing success, duplicating
+    // header logic across business code, or changing Provider or bound Model configuration.
     configuredProvider.headers = mergeModelRequestHeaders(
       withOpenRouterAttributionHeaders(this.defaultHeaders, configuredProvider.baseURL),
       configuredProvider.headers,
@@ -229,8 +231,9 @@ export class AiSdkModelExecution {
     optionValues: ModelOptionValues | undefined,
   ): AiSdkResolvedModel {
     const providerConfig = applyModelRequestAuth(snapshot.providerConfig, requestAuth);
-    // Model 创建时的 Provider 事实必须被冻结在当前 binding 中。若按 providerId 缓存
-    // factory，配置更新后创建的新 Model 会错误复用旧 Endpoint / Header / API Key。
+    // Provider facts from Model creation must be frozen in the current binding. Caching the factory
+    // by providerId would make a new Model incorrectly reuse the old Endpoint / Header / API Key after
+    // configuration changes.
     const rawRequestBodyCapture: RawRequestBodyCapture = {};
     const factory = this.createFactory(
       snapshot.providerId,
@@ -306,10 +309,11 @@ export class AiSdkModelExecution {
           apiKey,
           fetch: optionFetch,
           headers,
-          // OpenAI Compatible 流式 usage 需要显式请求，Usage 是执行结果的一部分。
+          // OpenAI Compatible streaming usage must be explicitly requested; Usage is part of the execution result.
           includeUsage: true,
-          // 缺少这一装配时 SDK 默认 false，会把已声明支持的 Schema 静默降为 JSON object。
-          // 使用 binding 冻结的模型事实，不按供应商或实时 Registry 另查一套能力。
+          // Without this setup, the SDK defaults to false and silently downgrades a supported Schema
+          // to a JSON object. Use model facts frozen in the binding instead of looking up capabilities
+          // again by provider or from the live Registry.
           supportsStructuredOutputs: supportsJsonSchemaOutput,
         });
         return provider as LanguageModelFactory;
@@ -326,8 +330,8 @@ export class AiSdkModelExecution {
     if (current) {
       return current;
     }
-    // 官方 Coding Plan 端点先替换为平台网关端点，再进入用户 HTTP 代理 fetch，
-    // httpProxy / noProxy 按实际发送地址判定。
+    // Replace official Coding Plan endpoints with platform gateway endpoints before entering the
+    // user's HTTP proxy fetch, so httpProxy / noProxy are evaluated using the actual destination.
     const transport = createProviderTransportFetch({
       caCertFile: this.network.caCertFile,
       env: this.env,
@@ -393,7 +397,8 @@ function withAnthropicAuthorizationHeader(
     return headers;
   }
 
-  // Anthropic 兼容网关会同时读取 x-api-key 和 Bearer Authorization；显式配置的 Authorization 保持优先。
+  // Anthropic-compatible gateways read both x-api-key and Bearer Authorization; an explicitly
+  // configured Authorization retains precedence.
   return {
     [AUTHORIZATION_HEADER_NAME]: `Bearer ${apiKey}`,
     ...headers,
@@ -447,9 +452,10 @@ export function createProviderBusinessErrorFetch(
       throw normalizeModelTlsFailure(error);
     }
 
-    // zcode-plan 安全校验拒绝（3007）等场景返回 HTTP 403 + JSON，但未必带
-    // Content-Type: application/json。若只在启发式命中时才读 body，fetch 会把 403 原样交给
-    // AI SDK，流式请求可能以空 completion 结束，core 最终误报 suspicious empty。
+    // Security validation failures by zcode-plan (3007), for example, return HTTP 403 + JSON but may
+    // omit Content-Type: application/json. If the body is read only after a heuristic match, fetch
+    // passes the 403 through to the AI SDK, and a streaming request may end with an empty completion,
+    // which core then incorrectly reports as suspicious empty.
     if (!response.ok) {
       const nonOkBusinessError = await detectProviderBusinessError(response, options);
       if (nonOkBusinessError) {
@@ -477,10 +483,12 @@ async function consumeBusinessErrorResponseBodyBestEffort(response: Response): P
 
   let timeout: ReturnType<typeof setTimeout> | undefined;
   try {
-    // 业务错误检测消费的是 response.clone()；只 cancel 原始 tee 分支时，
-    // Undici 的 cancel Promise 完成也不保证连接已可复用，连续 429 仍会耗尽连接槽。
-    // 已识别的业务错误体受 64KB 上限保护，完整消费原始分支后连接才能稳定复用；
-    // 异常 stream 永不收敛时则由清理上限兜底，不能阻塞已经解析出的原始错误。
+    // Business error detection consumes response.clone(). Cancelling only the original tee branch
+    // does not guarantee that the connection is reusable when Undici's cancel Promise resolves;
+    // repeated 429s can still exhaust connection slots. Recognized business-error bodies are capped
+    // at 64 KB, and consuming the original branch fully makes connection reuse reliable. If an
+    // abnormal stream never settles, a cleanup limit is the fallback and must not block the original
+    // parsed error from being returned.
     await Promise.race([
       response.arrayBuffer().then(() => undefined),
       new Promise<void>((resolve) => {
@@ -488,7 +496,7 @@ async function consumeBusinessErrorResponseBodyBestEffort(response: Response): P
       }),
     ]);
   } catch {
-    // 清理失败不能覆盖已经解析出的 provider 原始错误。
+    // A cleanup failure must not override the already-parsed original provider error.
   } finally {
     if (timeout !== undefined) clearTimeout(timeout);
   }
@@ -503,15 +511,17 @@ interface ProviderProxyFetchOptions {
 }
 
 function createProviderProxyFetch(options: ProviderProxyFetchOptions): ProviderFetch {
-  // Node 的 global fetch 不会自动读取 HTTP_PROXY/http_proxy。
-  // 模型 provider 和 MCP HTTP transport 都复用同一层 proxy-aware fetch，避免多套出口规则漂移。
+  // Node's global fetch does not automatically read HTTP_PROXY/http_proxy.
+  // Model providers and MCP HTTP transport share this proxy-aware fetch layer to avoid divergence
+  // between multiple egress rule implementations.
   return createNetworkProxyFetch(options);
 }
 
 /**
- * 模型请求出口：官方 Coding Plan 端点经 ZCode 平台网关发送（做套餐权益校验等平台侧处理），
- * 其余 provider 直连；之后统一进入用户 HTTP 代理 fetch，httpProxy / noProxy 按实际发送地址判定。
- * 官方端点与网关端点的对应关系见 official-coding-plan-gateway.ts。
+ * Model request egress: official Coding Plan endpoints go through the ZCode platform gateway (for
+ * plan entitlement checks and other platform-side processing); other providers connect directly.
+ * All requests then use the user's HTTP proxy fetch, with httpProxy / noProxy evaluated against the
+ * actual destination. See official-coding-plan-gateway.ts for official-to-gateway endpoint mapping.
  */
 function createProviderTransportFetch(options: ProviderProxyFetchOptions): ProviderFetch {
   return createOfficialCodingPlanGatewayFetch({
@@ -551,15 +561,15 @@ async function detectProviderBusinessError(
     providerMessage: failure.providerMessage,
     providerRequestId: failure.providerRequestId,
     responseBodySummary: failure.responseBodySummary,
-    // fetch 层的 ProviderBusinessError 会绕过 APICallError；
-    // 不保留响应头会导致 retry-after/retry-after-ms 在重试计算前丢失。
+    // Fetch-layer ProviderBusinessError bypasses APICallError. Without preserving response headers,
+    // retry-after/retry-after-ms would be lost before retry timing is calculated.
     responseHeaders: responseHeadersToRecord(response.headers),
     responseStatus: response.status,
     statusCode: failure.statusCode,
   });
 }
 
-/** 从 HTTP JSON body 解析 zcode-plan 等业务错误（供 failure-classifier 在 APICallError 路径复用）。 */
+/** Parse business errors such as zcode-plan from an HTTP JSON body (reused by failure-classifier on the APICallError path). */
 export function readProviderBusinessFailureFromBody(body: unknown):
   | {
       providerCode?: ProviderCode;
@@ -580,8 +590,8 @@ export function readProviderBusinessFailureFromBody(body: unknown):
     toProviderCode(errorRecord?.providerCode) ??
     toProviderCode(record.error_code) ??
     toProviderCode(errorRecord?.error_code) ??
-    // 二次包装后的外层 code 是 ZCode 自己的 PROVIDER_BUSINESS_ERROR，
-    // 真实上游码在 providerCode；只有没有 providerCode 时才退回读取 code。
+    // After a second wrapping, the outer code is ZCode's PROVIDER_BUSINESS_ERROR. The actual upstream
+    // code is in providerCode; read code only when providerCode is absent.
     toProviderCode(record.code) ??
     toProviderCode(errorRecord?.code);
   const providerMessage = readProviderMessage(record);
@@ -602,7 +612,8 @@ export function readProviderBusinessFailureFromBody(body: unknown):
 }
 
 function responseMayContainBusinessJson(response: Response): boolean {
-  // 非 2xx 一律尝试读 body 解析业务码（403/3007、429/3002 等），不依赖 Content-Type 猜测。
+  // For all non-2xx responses, try to parse a business code from the body (403/3007, 429/3002, etc.);
+  // do not infer from Content-Type.
   if (!response.ok) {
     return true;
   }
@@ -814,8 +825,8 @@ function emitProviderBusinessSseFrame(
 ): boolean {
   const failure = detectProviderBusinessSseFrameFailure(frame);
   if (failure) {
-    // 部分 OpenAI-compatible provider 只在 HTTP 200 SSE error frame 中报告业务错误；
-    // 同时保留原始响应头，保证限流场景的 retry-after 能进入后续重试退避。
+    // Some OpenAI-compatible providers report business errors only in HTTP 200 SSE error frames.
+    // Preserve the original response headers too, so retry-after can be used for later backoff when rate limited.
     controller.error(
       new ProviderBusinessError({
         providerCode: failure.providerCode,
@@ -875,7 +886,7 @@ function detectProviderBusinessSseFrameFailure(frame: string):
     toProviderCode(errorRecord?.providerCode) ??
     toProviderCode(body.error_code) ??
     toProviderCode(errorRecord?.error_code) ??
-    // 包装码不能覆盖真实 providerCode。
+    // A wrapper code must not override the actual providerCode.
     toProviderCode(body.code) ??
     toProviderCode(errorRecord?.code);
 

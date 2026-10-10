@@ -1,7 +1,7 @@
 // ============================================================
 // Agent Tool - Subagent orchestration tool
 // ============================================================
-// 支持基于配置的子代理和异步启动。
+// Supports configured subagents and asynchronous startup.
 
 import { z } from "zod";
 import type { ToolCallId, TraceId } from "../interfaces/shared.js";
@@ -22,8 +22,9 @@ export const AgentInputSchema = z.object({
     .string()
     .optional()
     .describe("The type of specialized agent to use for this task"),
-  // subagent 模型由 Settings / Markdown profile 统一决定；若把调用级
-  // model 暴露给父模型，历史 tool call 会持续生成旧 override 并覆盖当前配置。
+  // The subagent model is determined by Settings / Markdown profile. Exposing a call-level
+  // model to the parent model would let historical tool calls keep generating old overrides
+  // and replace the current configuration.
   run_in_background: z
     .boolean()
     .optional()

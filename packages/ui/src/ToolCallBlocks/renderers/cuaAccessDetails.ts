@@ -84,9 +84,10 @@ export function buildCuaAccessDetails(
           ? "chat.toolCall.cua.details.denied"
           : "chat.toolCall.cua.details.unknown",
     );
-  // 旧展示把 runtime 的兼容字段也当成产品所需权限，额外显示了「自动化」和
-  // 「输入控制」。Computer Use 的权限契约只有辅助功能与屏幕录制，原始兼容字段仍保留在
-  // 折叠数据中供排障，但不能进入面向用户的权限列表。
+  // The old display treated runtime compatibility fields as product permissions and additionally
+  // showed "Automation" and "Input Control." The Computer Use permission contract includes only
+  // Accessibility and Screen Recording. Keep raw compatibility fields in collapsed data for
+  // troubleshooting, but do not show them in the user-facing permission list.
   const permissionRows = [
     {
       labelId: "chat.toolCall.cua.details.accessibility",

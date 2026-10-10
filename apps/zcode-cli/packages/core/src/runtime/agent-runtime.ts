@@ -152,7 +152,7 @@ export class AgentRuntime {
   private modelIoDir?: string;
   private providerRuntimeHeadersPort?: AgentRuntimeDeps["providerRuntimeHeadersPort"];
   private browserControlPort?: AgentRuntimeDeps["browserControlPort"];
-  /** 模型请求准入端口；随每次模型请求进调用上下文。 */
+  /** Model-request admission port; included in each model request's call context. */
   private modelRequestAdmission?: AgentRuntimeDeps["modelRequestAdmission"];
   private sessionModelSelection: ModelSelection | undefined;
   private messageHistory: MessageHistory;
@@ -204,18 +204,20 @@ export class AgentRuntime {
   private runtimeCommandQueue: RuntimeCommandQueue;
   private runtimeCommandDrainActive = false;
   private activeForegroundExecution?: ActiveForegroundExecutionState;
-  /** sendQueuedNow 的 Core 调度权；只活在当前进程，匹配 runtime command 出队即消费。 */
+  /** Core scheduling authority for sendQueuedNow; process-local and consumed when the matching runtime command is dequeued. */
   private foregroundPromotionLease?: ForegroundPromotionLeaseState;
   private activeTurn?: ActiveTurnSteeringState;
   private activeTurnStartReservation?: ActiveTurnStartReservation;
   private pendingInputSequence = 0;
-  /** sendQueuedNow reservation；只活在当前 CLI 进程，防 drain/多端重复提升。 */
+  /** sendQueuedNow reservation; local to the current CLI process to prevent duplicate promotion by drain/multiple clients. */
   private pendingInputReservations = new Map<string, string>();
-  // v4 setAutoDrain：false 时排队输入不自动消费
-  // （turn-stop 不续跑、roundtrip 间不 drain），保留成 held 供显式消费。
+  // v4 setAutoDrain: when false, queued input is not consumed automatically
+  // (turn-stop does not resume, and there is no drain between roundtrips); keep it held
+  // for explicit consumption.
   private queueAutoDrain = true;
-  // 暂停队列恢复后由 CLI 按投影 FIFO 逐项提升。这个窗口内禁止 core 只看当前
-  // activeTurn.pendingInputs 做行内 drain，否则新入队消息会越过仍留在投影中的旧暂停项。
+  // After resuming the paused queue, the CLI promotes entries one at a time in projected
+  // FIFO order. During this window, core must not drain only activeTurn.pendingInputs;
+  // new messages could otherwise overtake older paused entries still in the projection.
   private queueExternalDrainActive = false;
   private shuttingDown = false;
   private backgroundTaskNotificationsSealed = false;
@@ -229,7 +231,7 @@ export class AgentRuntime {
     const runtime = this as unknown as AgentRuntimeInternal;
     this.sessionId = sessionId;
     this.turnNumber = 0;
-    // 3.12.2：兼容旧 Host/内部调用传入 legacy，但本版本 Runtime、日志和子 Agent 只使用 preflight。
+    // 3.12.2: accept legacy from older Hosts/internal callers, but this Runtime version, logs, and subagents use only preflight.
     this.config = projectPersistentAgentMemoryTools({
       ...config,
       modelContextBudgetStrategy: DEFAULT_ZCODE_MODEL_CONTEXT_BUDGET_STRATEGY,
@@ -271,7 +273,7 @@ export class AgentRuntime {
     this.providerRuntimeHeadersPort = deps.providerRuntimeHeadersPort;
     this.browserControlPort = deps.browserControlPort;
     this.modelRequestAdmission = deps.modelRequestAdmission;
-    // 旧会话的选择缺失不能阻断历史恢复；不在这里制造默认模型。
+    // A missing selection in an old session must not block history restoration; do not create a default model here.
     this.sessionModelSelection =
       config.modelSelection && cloneModelSelection(config.modelSelection);
     this.messageHistory = new MessageHistoryImpl();
@@ -290,7 +292,7 @@ export class AgentRuntime {
     this.pdfDocumentPort = deps.pdfDocumentPort;
     this.subagentPort = deps.subagentPort ?? runtime.createDefaultSubagentPort(deps);
     this.dynamicWorkflowRunPort = deps.dynamicWorkflowRunPort;
-    // GUI「配置」解析子代理模型用的目录（与工具上下文拿的是同一个端口）。
+    // Catalog used by GUI configuration to resolve subagent models (the same port used by the tool context).
     this.modelCatalogPort = deps.modelCatalogPort;
     this.registry = deps.toolRegistry ?? createToolRegistry();
     this.workspaceRoot = this.workingDirectory;
@@ -316,7 +318,7 @@ export class AgentRuntime {
         traceContext: this.rootTraceContext,
       });
     } catch (error) {
-      // browser backend 清理失败不能阻断 execution/MCP/session store 的主关闭链路。
+      // Failure to clean up the browser backend must not block shutdown of execution/MCP/session store.
       this.logger?.warn("Browser session cleanup failed", {
         error: error instanceof Error ? error.message : String(error),
         event: "browser.session_cleanup.failed",
@@ -325,11 +327,11 @@ export class AgentRuntime {
   }
 
   beginShutdown(): void {
-    // ExecutionPort.close() 会把后台 Bash 收口为 cancelled；若允许
-    // teardown terminal event 再唤醒模型，并与随后关闭的 session store 竞态。
+    // ExecutionPort.close() settles background Bash tasks as cancelled. If teardown
+    // terminal events wake the model, they can race with the later session-store close.
     this.shuttingDown = true;
-    // 关闭单个 session 后进程仍存活，
-    // 因此必须先终止该 runtime 的 Extraction，不能只在超时后放弃等待。
+    // The process remains alive after one session closes, so stop this runtime's
+    // Extraction first rather than merely abandoning the wait after a timeout.
     this.memoryExtractionScheduler?.shutdown();
   }
 }
@@ -363,7 +365,7 @@ export interface AgentRuntime {
     input: string,
     options?: { goalSummaryTargetID?: string; traceContext?: TraceContext },
   ): void;
-  /** renameSession：用户显式重命名（titleSource=custom，发 SessionTitleUpdated）。 */
+  /** renameSession: explicit user rename (titleSource=custom; emits SessionTitleUpdated). */
   setCustomSessionTitle(input: { title: string; traceContext: TraceContext }): Promise<void>;
   maybeStartGoalSummaryTitleGeneration(
     input: string,
@@ -390,27 +392,32 @@ export interface AgentRuntime {
     attachments?: TurnState["attachments"],
     options?: PromptAdmissionOptions,
   ): Promise<PromptAdmissionReceipt>;
-  /** Session 常驻池使用的 runtime busy 权威事实，包含 queue/drain/reservation。 */
+  /** Authoritative runtime busy state for the session residency pool, including queue/drain/reservation. */
   hasActiveOrQueuedTurnWork(): boolean;
-  /** Session 常驻池使用的后台 Bash/Agent/Workflow running 权威事实。 */
+  /** Authoritative running state for background Bash/Agent/Workflow tasks, used by the session residency pool. */
   hasRunningBackgroundTasks(): boolean;
   /**
-   * Session 常驻池唯一消费的 runtime owned-work 聚合事实。
-   * 包含前台/队列、registry background task、detached sidecar 和 memory work。
+   * Aggregated runtime-owned-work state consumed only by the session residency pool.
+   * Includes foreground/queued work, registry background tasks, detached sidecars, and memory work.
    */
   hasResidencyBlockingWork(): boolean;
   /**
-   * 登记一段会越过当前同步调用栈的 runtime-owned work，计数在**本同步片**增加、在 promise 的
-   * finally 释放（实现见 runtime/methods/residency.ts）。
+   * Register runtime-owned work that outlives the current synchronous call stack. The
+   * count increments in **this synchronous segment** and is released in the promise's
+   * finally block (see runtime/methods/residency.ts).
    *
-   * 公开在这一面上，是因为 runtime 之外的 sidecar 也要经同一个口登记：dwf 引擎跑在会话 App 里、
-   * 不进 runtime task registry，因此出现「引擎在飞时会话被按 idle 关掉」。
-   * 新增 sidecar 一律登记到这里，而不是在 bootstrap 侧另加一条猜测。
+   * Expose this method because sidecars outside the runtime also need to register through
+   * the same entry point. The dwf engine runs in the session App and is not in the
+   * runtime task registry, which previously allowed the session to be closed as idle
+   * while the engine was active. Register all new sidecars here instead of adding a
+   * separate heuristic in bootstrap.
    */
   trackResidencyBlockingWork<T>(work: Promise<T>): Promise<T>;
   /**
-   * 会话是否已落进持久化 store。协议层 record 的 draft（deferred）判定以此为事实源：任何经 runtime
-   * 首次持久化的路径（首条输入、外部活动、中枢直接启动的启动轮）都会让会话离开 draft。
+   * Whether the session has been persisted to the store. The protocol layer uses this as
+   * the source of truth for whether a record is draft (deferred): any runtime path that
+   * persists it for the first time (first input, external activity, or hub-launch turn)
+   * moves the session out of draft.
    */
   isSessionPersisted(): boolean;
   getActiveForegroundExecutionId(): string | undefined;
@@ -422,7 +429,7 @@ export interface AgentRuntime {
   releaseForegroundPromotionLease(leaseId: string): boolean;
   enqueueDeferredInput(input: string | TurnSteerInput): Promise<TurnSteerResult>;
   steerTurn(input: string | TurnSteerInput): Promise<TurnSteerResult>;
-  /** v4 queue 单项删除：按 pendingInputId 移除当前 active turn 的一条排队输入。 */
+  /** v4 queue single-item delete: remove one queued input from the active turn by pendingInputId. */
   removePendingInputById(options: {
     pendingInputId: string;
     reason: "user_removed" | "promoted";
@@ -444,30 +451,30 @@ export interface AgentRuntime {
     reservationId: string;
     traceContext?: TraceContext;
   }): Promise<boolean>;
-  /** v4 queue 单项编辑：按 pendingInputId 替换排队输入文本（保位）。 */
+  /** v4 queue single-item edit: replace queued input text by pendingInputId (preserving position). */
   editPendingInputById(options: {
     pendingInputId: string;
     newText: string;
     traceContext?: TraceContext;
   }): Promise<boolean>;
-  /** v4 queue 重排：移动 pendingInputId 到 beforePendingInputId 之前（null=队尾）。 */
+  /** v4 queue reorder: move pendingInputId before beforePendingInputId (null means the end of the queue). */
   reorderPendingInput(options: {
     pendingInputId: string;
     beforePendingInputId: string | null;
     traceContext?: TraceContext;
   }): Promise<boolean>;
   /**
-   * v4 heldQueueDisposition=clearQueueAndSend 执行件：
-   * 清空全部排队输入（active turn 内存项 + held 投影残留），返回丢弃条数。
+   * Execute v4 heldQueueDisposition=clearQueueAndSend: clear all queued inputs
+   * (active-turn in-memory items + held projection residue) and return the number discarded.
    */
   clearAllPendingInputs(traceContext: TraceContext): Promise<number>;
-  /** v4 setAutoDrain：翻转 queue autoDrain 授权位（会话级）。 */
+  /** v4 setAutoDrain: toggle the session-level queue autoDrain authorization flag. */
   setQueueAutoDrain(options: { autoDrain: boolean; traceContext?: TraceContext }): Promise<void>;
-  /** 暂停队列外层 FIFO 已消费到空，恢复后续 running queue 的行内 drain。 */
+  /** Resume in-turn draining of the running queue after the outer FIFO has consumed the paused queue. */
   completeExternalQueueDrain(): void;
-  /** v4 setFollowupMode：翻转 followup 路由模式（queue/guide，会话级）。 */
+  /** v4 setFollowupMode: toggle the session-level follow-up routing mode (queue/guide). */
   setFollowupMode(options: { mode: "queue" | "guide"; traceContext?: TraceContext }): Promise<void>;
-  /** v4 switchModelConfig：模型选型变化后补发 ModelSelected（config/marker 投影）。 */
+  /** v4 switchModelConfig: emit ModelSelected after model selection changes (config/marker projection). */
   emitModelSelected(options: {
     modelSelection: ModelSelection;
     model?: Model;
@@ -477,7 +484,7 @@ export interface AgentRuntime {
     supportedThoughtLevels?: readonly string[];
     traceContext?: TraceContext;
   }): Promise<void>;
-  /** v4 switchCollaborationMode：协作模式切换后补发 SessionModeChanged（config.mode 投影）。 */
+  /** v4 switchCollaborationMode: emit SessionModeChanged after collaboration mode changes (config.mode projection). */
   emitModeChanged(options: {
     mode: CollaborationMode;
     previousMode: CollaborationMode;
@@ -485,9 +492,11 @@ export interface AgentRuntime {
   }): Promise<void>;
   getToolRegistry(): ToolRegistry;
   /**
-   * 注册表被外部改写后让 getTools 重算。公开它的唯一使用者是 dwf driver 的 submit profile 运行时
-   * 守卫：静态 profile 与实际 ask 不符时把
-   * typed 的 submit_result 换回通用声明——改的是同一个注册表，缓存不失效就会继续把旧声明发给模型。
+   * Recompute getTools after the registry is modified externally. The only consumer is
+   * the dwf driver's runtime guard for submit profiles: if the static profile disagrees
+   * with the actual ask, replace the typed submit_result with its generic declaration.
+   * Since it modifies the same registry, the cache must be invalidated or the old
+   * declaration will continue to be sent to the model.
    */
   invalidateToolCache(): void;
   getToolExecutor(): ToolExecutor;
@@ -495,15 +504,17 @@ export interface AgentRuntime {
   /** Bootstrap-owned lifecycle producers append only validated session events through this durable path. */
   appendEvent(event: SessionEvent, traceContext: TraceContext): Promise<void>;
   /**
-   * 外部子 runtime 的接缝（一）：交出本 runtime 的会话事件 store，供 class 外构造的子
-   * runtime 共享（照 `subagent.ts` 的 `eventStore: this.eventStore`）。理由见
-   * `methods/config.ts` 的实现注释。
+   * External subruntime seam (1): expose this runtime's session-event store for sharing
+   * with subruntimes constructed outside the class (following `eventStore:
+   * this.eventStore` in `subagent.ts`). See the implementation comment in
+   * `methods/config.ts` for the rationale.
    */
   getSessionEventStore(): SessionEventStorePort;
   /**
-   * 外部子 runtime 的接缝（二）：把子会话的原始事件扇出给本 runtime 的外部 sink 集
-   * （保留子 sessionId、只通知不 append）。**必须在子 runtime 构造期装成它的
-   * `deps.eventSink`**——理由见 `methods/config.ts` 的实现注释。
+   * External subruntime seam (2): fan out raw events from the child session to this
+   * runtime's external sink set (preserve the child sessionId; notify only, do not
+   * append). **Install this as the child's `deps.eventSink` during construction**; see
+   * the implementation comment in `methods/config.ts` for why.
    */
   notifyExternalChildSessionEvent(input: {
     childSessionId: SessionId;
@@ -511,24 +522,26 @@ export interface AgentRuntime {
     traceContext?: TraceContext;
   }): Promise<void>;
   /**
-   * 外部子 runtime 的接缝（三）：铸造子 runtime 的对外交互端口（permission broker +
-   * provider runtime headers），已绑定本 runtime 的客户端路由身份。class 外构造的子 runtime
-   * **必须**经这里取这两个端口，不能自行从 appOptions 取——理由见 `methods/config.ts` 的实现注释。
+   * External subruntime seam (3): create the child runtime's external interaction ports
+   * (permission broker + provider runtime headers), already bound to this runtime's
+   * client-routing identity. Subruntimes constructed outside the class **must** get both
+   * ports here instead of reading appOptions; see the implementation comment in
+   * `methods/config.ts` for why.
    */
   createChildClientPorts(context: ChildClientPortsContext): ClientFacingPorts;
   getContextBuilder(): ContextBuilder;
-  /** Composer 使用的 Session Skill 快照；同一 runtime 冻结，runtime 重建后重新发现。 */
+  /** Session Skill snapshot for Composer; frozen for this runtime and rediscovered when the runtime is rebuilt. */
   getSkillCatalog(traceContext: TraceContext): Promise<SkillLoadOutcome>;
   resumeFromStore(options?: ResumeSessionOptions): Promise<ResumeSessionResult>;
   recordTargetChanged(input: TargetChangedPayload & { traceContext: TraceContext }): Promise<void>;
   recordUserInputAutoResolutionUpdate(
     input: UserInputAutoResolutionUpdatedPayload & { traceContext?: TraceContext },
   ): Promise<void>;
-  /** workflow run 进度的出回合追加（事件源在 bootstrap 的 run service）。 */
+  /** Append workflow-run progress outside the turn (event source is bootstrap's run service). */
   recordDynamicWorkflowRunProgress(
     input: DynamicWorkflowRunProgressPayload & { traceContext?: TraceContext },
   ): Promise<void>;
-  /** 恢复的 workflow run 的追踪重臂（registry 登记 + started 事件 + waiter + 结算通知）。 */
+  /** Rearm tracking for a resumed workflow run (registry registration + started event + waiter + settlement notification). */
   trackResumedDynamicWorkflowRun(input: {
     runId: string;
     toolCallId?: string;
@@ -536,9 +549,10 @@ export interface AgentRuntime {
     traceContext?: TraceContext;
   }): Promise<void>;
   /**
-   * 中枢直接启动一个已保存的工作流：解析 + 校验 + 编译，
-   * 干净则 submit 启动 run、落 controlOnly 启动轮、登记后台追踪。`app.startSavedWorkflow` 能力的
-   * 落地实现（端口在场时注册）。
+   * Start a saved workflow directly from the hub: resolve, validate, and compile; if
+   * clean, submit the run, persist a controlOnly launch turn, and register background
+   * tracking. Implements the `app.startSavedWorkflow` capability (registered when its
+   * port is available).
    */
   startSavedWorkflowRun(input: {
     name: string;
@@ -547,8 +561,9 @@ export interface AgentRuntime {
     traceContext?: TraceContext;
   }): Promise<StartSavedWorkflowRunResult>;
   /**
-   * GUI「配置」改一个 run 的子代理模型与并发上界：以同一份脚本修订出新 run、登记后台追踪、把设置轮排进队列。
-   * `app.amendWorkflowRunSettings` 能力的落地实现。
+   * Change a run's subagent model and concurrency limit through GUI configuration: revise
+   * the same script into a new run, register background tracking, and queue a settings
+   * turn. Implements `app.amendWorkflowRunSettings`.
    */
   amendWorkflowRunSettings(
     input: AmendWorkflowRunSettingsInput,
@@ -620,10 +635,11 @@ export interface AgentRuntime {
     options: ConversationBeforeInputForkOptions,
   ): Promise<WorkspaceForkResult>;
   /**
-   * conversation edit/retry 的 same-session branch cut primitive。
+   * Same-session branch-cut primitive for conversation edit/retry.
    *
-   * 该入口故意不经过 executeTurn command queue：组合文件 rewind 会在文件事务的
-   * commit gate 内调用它；若再排队 `/rewind`，当前 edit command 会等待自己释放队列。
+   * Deliberately bypass the executeTurn command queue: combined file rewind calls this
+   * inside the file transaction's commit gate. Queueing `/rewind` would make the current
+   * edit command wait for itself to release the queue.
    */
   rewindConversationToMessage(options: {
     abortSignal?: AbortSignal;
@@ -657,7 +673,7 @@ export interface AgentRuntime {
     options?: { abortSignal?: AbortSignal; traceContext?: TraceContext },
   ): Promise<void>;
   isProjectMemoryEnabled(): boolean;
-  /** 缺省等待最多 60 秒；null 等待全部已调度提取结束，不设置 drain deadline。 */
+  /** Wait up to 60 seconds by default; null waits for all scheduled extractions without a drain deadline. */
   drainMemoryExtractions(timeoutMs?: number | null): Promise<void>;
 }
 

@@ -1,13 +1,14 @@
 import type { IpcRenderer } from "electron";
 
-/** 与 @arms/rum-electron 内置 preload 一致 */
+/** Match the built-in preload from @arms/rum-electron. */
 const ARMS_RUM_BRIDGE_CHANNEL = "arms:rum-bridge";
 
 type PatchedIpcRenderer = IpcRenderer & { __zcodeArmsIpcPatched?: boolean };
 
 /**
- * SDK browser-reporter 发送 JSON.stringify(events[])，主进程 IPC 拒绝 Array。
- * 在 preload 顶层拦截 ipcRenderer.send，不依赖 ArmsEventBridge 创建时机（autoInject 可能晚于 scheduleArmsBridgePatch）。
+ * The SDK browser-reporter sends JSON.stringify(events[]), but main-process IPC rejects arrays.
+ * Intercept ipcRenderer.send at the preload level so this does not depend on when ArmsEventBridge is
+ * created (autoInject may run after scheduleArmsBridgePatch).
  */
 function expandArmsRumBridgePayloads(payload: string): string[] {
   try {
@@ -22,7 +23,7 @@ function expandArmsRumBridgePayloads(payload: string): string[] {
       return expanded;
     }
   } catch {
-    // 非 JSON 走原样
+    // Pass non-JSON data through unchanged.
   }
   return [payload];
 }
@@ -33,8 +34,8 @@ type ArmsEventBridgeLike = {
 };
 
 /**
- * ARMS frame preload 先于本 preload 执行时，Bridge.send 闭包已绑定未 patch 的 ipc.send；
- * 必须包装 Bridge.send 本身，在调用内层 send 前把 events[] 拆条。
+ * If the ARMS frame preload runs before this preload, the Bridge.send closure is already bound to the
+ * unpatched ipc.send. Wrap Bridge.send itself and split events[] before calling the inner send.
  */
 function patchArmsEventBridgeSend(bridge: ArmsEventBridgeLike): void {
   if (bridge.__zcodeArmsBridgeForwardPatched) {

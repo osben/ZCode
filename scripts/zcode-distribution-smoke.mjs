@@ -1,4 +1,4 @@
-// 在仓库外验证发行包，避免开发机 node_modules 掩盖缺失的 TUI/native/worker 依赖。
+// Verify the distribution package outside the repository so the development machine's node_modules cannot hide missing TUI/native/worker dependencies.
 import assert from "node:assert/strict";
 import { execFile, spawn } from "node:child_process";
 import { once } from "node:events";
@@ -62,7 +62,7 @@ try {
   );
   assert.equal(terminalExit, undefined, screen);
   assert.doesNotMatch(screen, /Cannot find (?:module|package)|ERR_MODULE_NOT_FOUND/);
-  // 保留真实键盘退出链路；不发送 prompt，不调用模型。
+  // Keep the real keyboard exit path; do not send a prompt or call a model.
   terminal.write("\u0003");
   await setTimeout(200);
   if (!terminalExit) terminal.write("\u0003");

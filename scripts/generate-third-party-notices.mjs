@@ -28,8 +28,8 @@ export async function generateThirdPartyNotices(root = repositoryRoot) {
   await readInput("pnpm-workspace.yaml");
   await readInput("third-party/native-search/sources.json");
   const { packages, notInstalled, workspaceManifests } = await collectNpmNotices(root, overrides);
-  // 修复：递归扫描会把 bundled-agents/mock-cdn 的可删除缓存当作源码输入，重建立即失效。
-  // workspace 边界由 pnpm 解析，同一份项目集合用于依赖图和 manifest 新鲜度检查。
+  // Fix: recursive scanning treated deletable bundled-agents/mock-cdn caches as source inputs, making the result stale immediately after rebuilding.
+  // Let pnpm resolve workspace boundaries and use the same project set for the dependency graph and manifest freshness checks.
   for (const file of workspaceManifests) await readInput(file);
   const currentPackages = new Set(
     [...packages, ...notInstalled].map((item) => `${item.name}@${item.version}`),
@@ -76,7 +76,7 @@ export async function generateThirdPartyNotices(root = repositoryRoot) {
     const files = [];
     for (const file of record.roots) await copiedFiles(file, files);
     for (const file of record.modifiedFiles ?? []) {
-      // 修复：集中 NOTICE 不能替代 Apache 4(b) 的文件内修改声明，重新生成时也不能抹掉这一义务。
+      // Fix: a centralized NOTICE does not replace Apache 4(b)'s in-file modification notice, and regeneration must not erase that requirement.
       if (!files.some((entry) => entry.file === file))
         throw new Error(`Modified source outside copied roots: ${file}`);
       if (!(await readFile(join(root, file), "utf8")).includes("Modified by ZCode:"))
@@ -102,7 +102,7 @@ export async function generateThirdPartyNotices(root = repositoryRoot) {
       );
     }
   }
-  // 上游 AI Elements 的 LICENSE 是短版授权头，还需随包提供 Apache 2.0 全文。
+  // The upstream AI Elements LICENSE is a short license header; the full Apache 2.0 text must also ship with the package.
   addText(
     await readInput("scripts/license-texts/Apache-2.0.txt"),
     "Apache-2.0 licensed components",
@@ -177,7 +177,7 @@ export async function generateThirdPartyNotices(root = repositoryRoot) {
     embedded,
     runtimes,
     reviewRequired: [
-      // 修复：复制源码的缺口此前只写在 README，重生成清单后严格门禁也无法阻断。
+      // Fix: the source-copy requirement was previously documented only in the README, so strict gates could not catch omissions after regeneration.
       ...copied
         .filter((item) => item.reviewRequired)
         .map((item) => ({ id: item.id, reason: item.reviewRequired })),

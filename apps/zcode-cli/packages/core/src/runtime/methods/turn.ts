@@ -97,9 +97,9 @@ export async function executeTurnCommand(
   options?: ExecuteTurnOptions,
   startReservation?: ActiveTurnStartReservation,
 ): Promise<TurnResult> {
-  // 普通 Turn 过去在异步初始化完成后才读取 Session Selection/输出样式，
-  // 初始化期间发生的切模会越过 admission 边界，错误影响已经开始的 Turn。
-  // 这里在任何 await 之前冻结本轮事实；后续配置变化只作用于下一轮。
+  // Ordinary Turns previously read Session Selection/output style only after asynchronous initialization completed.
+  // A model switch during initialization could cross the admission boundary and incorrectly affect a Turn that had already started.
+  // Freeze the facts for this turn before any await; later configuration changes apply only to the next turn.
   const admittedModelSelection = options?.intent?.modelSelection ?? this.getSessionModelSelection();
   const admittedOutputStyle = this.config.outputStyle;
   const compactInstructions = parseCompactCommand(input);
@@ -133,8 +133,8 @@ export async function executeTurnCommand(
   let userMessageId: MessageId | undefined;
   let loopState: RegularTurnLoopState | undefined;
   let shouldRetryTitleGenerationAfterTurn = false;
-  // 线上“已工作 N 秒”但没有终态的根因候选是：内层 Turn try/catch 之前的 await
-  // 拒绝直接穿出。记录当前阶段并区分是否已被内层处理，便于生产日志还原卡点。
+  // A likely cause of "worked for N seconds" with no terminal state in production is an await rejecting
+  // before the inner Turn try/catch. Record the current phase and whether the inner handler processed it, so production logs can identify the stuck point.
   let turnPhase = "queued";
   let turnFailureHandled = false;
   let finishPreparation: () => void = () => {};
@@ -195,8 +195,8 @@ export async function executeTurnCommand(
               })
             : undefined;
       } catch (error) {
-        // 同步滞后/模型失效可在内层 Turn try 之前创建失败。只写日志会让已接纳输入
-        // 没有终态、桌面与手机都看不到错误；复用 outcome，不等待同步、不改原选择。
+        // Sync lag/model invalidation can fail before the inner Turn try begins. Logging alone would leave accepted input
+        // without a terminal state, hiding the error from desktop and mobile. Reuse outcome; do not wait for sync or change the original selection.
         turnFailureHandled = true;
         const coreError = createTurnFailureError(error, turnAbortSignal, "Model creation failed");
         await appendTurnOutcomeEvent(this, {
@@ -214,12 +214,12 @@ export async function executeTurnCommand(
       }
       let phaseStartedAt = startTurnPhase("context_initialization");
       if (this.contextInitialized) {
-        // 每个后续 model step 都按该步骤实际持有的 Model 重新投影 Context；
-        // Session Selection 只决定未来创建哪个 Model，不能充当执行事实。
+        // Re-project Context for each later model step using the Model actually held by that step.
+        // Session Selection determines which Model to create in the future; it is not evidence of what is executing now.
         rebuildContextPrefix(this, { model: admittedModel });
       } else {
-        // 首轮初始化已经用 admitted Model 构造并安装完整 Context，随后再 rebuild
-        // 会把同一 Prefix 连续构造两次。未初始化与已初始化分支互斥，每个 model step 只构造一次。
+        // First-turn initialization has already built and installed the full Context with the admitted Model; rebuilding afterward
+        // would construct the same Prefix twice. The initialized and uninitialized branches are mutually exclusive, so each model step builds it once.
         await this.ensureContextInitialized(turnTraceContext, admittedModel);
       }
       completeTurnPhase("context_initialization", phaseStartedAt);
@@ -279,8 +279,8 @@ export async function executeTurnCommand(
       turnMachine = new TurnMachineImpl(turnMachine.start());
       phaseStartedAt = startTurnPhase("session_persistence");
       await this.ensureSessionPersisted(displayInput, turnTraceContext);
-      // execution-scoped 临时 Provider（例如闲时任务）拥有本轮自己的模型，不改写
-      // Session Selection；普通 Submission 才在真正开跑时应用其原子选择。
+      // An execution-scoped temporary Provider (such as an off-peak task) owns its own model for this turn and does not change
+      // Session Selection. Ordinary submissions apply their atomic selection only when execution actually starts.
       const submissionModel = await applySubmissionExecutionState(
         this,
         options?.intent,
@@ -297,9 +297,9 @@ export async function executeTurnCommand(
         options?.skipInputRecord === true
           ? (options.recordedInputMessageId ?? createMessageId())
           : createMessageId();
-      // 附件展示元信息随 TurnStarted 下发（v4 投影 → userInput row.attachments）。
-      // workspace checkpoint 挂在 user messageId 上；先生成 id 再发 TurnStarted，
-      // v4 投影才能用 turn rowId 找回该轮文件 checkpoint，避免摘要有计数但展开查空。
+      // Send attachment display metadata with TurnStarted (v4 projection → userInput row.attachments).
+      // A workspace checkpoint is attached to the user messageId. Generate the id before TurnStarted so the v4 projection
+      // can find this turn's file checkpoint through the turn rowId, avoiding a summary with a count but no expanded contents.
       const attachmentMetas = summarizeTurnAttachmentsForEvent(attachments);
       const turnStartedEvent = this.createEvent(
         SessionEventType.TurnStarted,
@@ -482,9 +482,9 @@ export async function executeTurnCommand(
             runtimeInputMetadata(options.inputPresentation) ??
               runtimeMetadataForSyntheticUserMessageSource(inputSource),
           );
-          // /goal 自动续跑是 runtime 注入给模型的内部 user-role 输入，
-          // 不是用户在聊天里新发的一条消息。持久化时保留 raw 输入供恢复/排查使用，
-          // 但用 model-only 语义阻止 UI-facing snapshot 把它渲染成用户气泡。
+          // /goal automatic continuation is an internal user-role input injected by the runtime for the model,
+          // not a new message sent by the user in chat. Preserve the raw input when persisting for recovery/diagnostics,
+          // but mark it model-only so UI-facing snapshots do not render it as a user bubble.
           await this.persistSyntheticUserNoticeForSession({
             messageID: userMessageId,
             metadata: {
@@ -509,9 +509,9 @@ export async function executeTurnCommand(
               return entry.kind !== "attachment" && metadata ? { ...entry, metadata } : entry;
             }),
           );
-          // /init 和自定义 slash command 会把模型输入展开成较长的内部
-          // prompt。模型可见的历史必须使用展开后的 input，但 UI 展示、会话标题和
-          // 恢复快照只能展示用户真实提交的原始 query。
+          // /init and custom slash commands expand model input into a longer internal prompt.
+          // Model-visible history must use the expanded input, while the UI, session title, and recovery snapshot
+          // must show only the original query submitted by the user.
           await this.persistUserPrompt(
             userMessageId,
             displayInput,
@@ -527,8 +527,8 @@ export async function executeTurnCommand(
                 : { epilogueStart: options.epilogueStart }),
             },
           );
-          // 标题生成以前等主 turn 成功后才启动，用户 stop/cancel 首轮请求时
-          // generated title 永远没有机会发起。首条 query 持久化后即可异步生成，避免被主链路取消拖死。
+          // Title generation used to wait until the main turn succeeded; if the user stopped/cancelled the first request,
+          // generation never started. Start it asynchronously as soon as the first query is persisted so cancellation of the main flow cannot block it.
           const titleGenerationStarted = maybeStartSessionTitleGeneration.call(
             this,
             displayInput,
@@ -540,11 +540,11 @@ export async function executeTurnCommand(
           );
           shouldRetryTitleGenerationAfterTurn = !titleGenerationStarted;
         }
-        // Plugin reminder 必须在对应 user 消息写入历史和 session store 后再追加：
-        // provider 形态因此稳定为 user → system，cold hydration 也按同一因果顺序恢复。
-        // 根因：input 可能已经被自定义命令展开，解析它会让命令模板里的 plugin://
-        // 凭空获得“用户引用”语义；这里只解析真实持久化的 canonical displayInput。
-        // runtime 内部的 model-only continuation 不代表新的用户意图，不重复解析。
+        // Append the Plugin reminder only after its corresponding user message is written to history and the session store.
+        // This keeps provider order stable as user → system, and cold hydration restores the same causal order.
+        // The input may already have been expanded by a custom command; parsing it would incorrectly treat plugin://
+        // inside the command template as a user reference. Parse only the canonical displayInput actually persisted.
+        // A runtime-internal model-only continuation is not new user intent, so do not parse it again.
         if (options?.inputVisibility !== "model-only") {
           await this.injectPluginReferenceReminderFromTurn(
             displayInput,
@@ -561,7 +561,7 @@ export async function executeTurnCommand(
         loopState = {
           activeTurn,
           ...(options?.automationId ? { automationId: options.automationId } : {}),
-          // 闲时派发轮的身份进入 loop state，供工具执行边界 deny OffPeakCreate。
+          // Put the off-peak dispatch turn identity in loop state so tool execution boundaries can deny OffPeakCreate.
           ...(options?.offPeakTaskId ? { offPeakTaskId: options.offPeakTaskId } : {}),
           anomalyWarningsInjected: 0,
           backgroundSubagentResultConsumed: options?.backgroundSubagentResultConsumed === true,
@@ -593,8 +593,8 @@ export async function executeTurnCommand(
           tokenCount: 0,
           toolCallCount: 0,
           turnRequestState: {
-            // Turn 只借一次 canonical 成员集合，之后由显式 commit 推进；entry 本身
-            // 遵循 MessageHistory 的不可变约定。
+            // The Turn borrows the canonical member set once and advances it only through an explicit commit; the entry itself
+            // follows MessageHistory's immutability contract.
             entries: [...this.messageHistory.borrowReadOnlyRuntimeEntries()],
             outputTokenContinuationCount: 0,
           },
@@ -620,8 +620,8 @@ export async function executeTurnCommand(
         turnMachine = loopState.turnMachine;
 
         const turnUsage = createModelUsageSummaryFromEvents(events);
-        // goal usage/active-run 先结算，再固定 exact goal/verifier boundary；只有两者都
-        // 已持久化，TurnComplete 才能让 projection/UI 开放最终 assistant fork。
+        // Settle goal usage/active-run first, then persist the exact goal/verifier boundary. TurnComplete may expose the final
+        // assistant fork in the projection/UI only after both have been persisted.
         await this.accountTargetTurnCompletion({
           inputID: targetRunInputID,
           startedAtMs: turnStartedAtMs,
@@ -675,8 +675,8 @@ export async function executeTurnCommand(
           userMessageId,
         });
         if (shouldRetryTitleGenerationAfterTurn && userMessageId) {
-          // 需要请求前刷新 provider runtime headers 的模型
-          // 若在主 turn 前生成标题，会先占用鉴权刷新窗口，导致真正的用户消息失败。
+          // For models that refresh provider runtime headers before a request, generating the title before the main turn
+          // would consume the authentication-refresh window first and cause the actual user message to fail.
           maybeStartDeferredSessionTitleGeneration.call(
             this,
             displayInput,
@@ -695,7 +695,7 @@ export async function executeTurnCommand(
           status: "completed",
           toolCallCount: loopState.toolCallCount,
         });
-        // 单轮执行策略只抑制本次成功 Turn 的后台提取，不修改 Session Memory 配置。
+        // The per-turn execution strategy suppresses background extraction for this successful Turn only; it does not change Session Memory configuration.
         if (options?.modelExecution?.memoryExtraction !== "skip") {
           scheduleProjectMemoryExtraction(this, {
             model: loopState.model,
@@ -739,9 +739,9 @@ export async function executeTurnCommand(
             });
           }
         }
-        // 普通 TurnError 只结束当前 turn，不撤销已经 accepted 的 future input。
-        // V4 TurnError 投影将队列切成 error-paused，runtime 同步关闭行内 drain，
-        // 保留排队输入，等待用户显式继续。
+        // An ordinary TurnError ends only the current turn; it does not revoke already accepted future input.
+        // The V4 TurnError projection pauses the queue on error, so runtime also closes inline drain and
+        // preserves queued input until the user explicitly resumes.
         if (activeTurn && coreError.type !== CoreErrorType.TurnCancelled) {
           const pendingInputs = (await this.rebuildProjection()).pendingSteerInputs;
           if (pendingInputs.length > 0) {
@@ -754,14 +754,14 @@ export async function executeTurnCommand(
           !preserveQueueAutoDrainOnCancel &&
           activeTurn.pendingInputs.length > 0
         ) {
-          // runtime 授权位与投影同步：投影在 TurnComplete(cancelled)+queue>0 时把
-          // queue.autoDrain 置 false（held），runtime 的 drain 门也必须同步翻转，
-          // 否则 held 期间新起的 turn 会把后续入队项 drain 掉，与投影语义分叉。
+          // Keep the runtime authorization bit in sync with the projection: when TurnComplete(cancelled)+queue>0,
+          // the projection sets queue.autoDrain to false (held), so runtime's drain gate must flip too.
+          // Otherwise a new turn started while held would drain later queued items and diverge from projection semantics.
           this.queueAutoDrain = false;
           this.queueExternalDrainActive = false;
         }
 
-        // background wake 可能在 loopState 初始化前取消；此时仍要保留已 dequeue 的结果事实。
+        // A background wake may be cancelled before loopState initializes; preserve the fact that it was already dequeued.
         const backgroundSubagentResultConsumed =
           options?.backgroundSubagentResultConsumed === true ||
           loopState?.backgroundSubagentResultConsumed === true;
@@ -835,7 +835,7 @@ export async function executeTurnCommand(
         traceContext: turnTraceContext,
       });
     } catch (error) {
-      // 生命周期清理失败不能覆盖已经完成/失败的主 turn；backend 会在 session close 再兜底释放。
+      // Lifecycle cleanup failure must not override a main turn that already completed/failed; the backend retries cleanup when the session closes.
       this.logger?.warn("Browser turn cleanup failed", {
         error: error instanceof Error ? error.message : String(error),
         event: "browser.turn_cleanup.failed",

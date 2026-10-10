@@ -1,4 +1,4 @@
-/* eslint-disable max-lines -- settings-sync 需要集中维护外部 skills/commands/plugins/MCP 扫描、去重和导入状态机，后续按资源类别拆分 */
+/* eslint-disable max-lines -- settings-sync centralizes external skills/commands/plugins/MCP scanning, deduplication, and import state machines; split it by resource type later. */
 import type {
   McpServerConfig,
   SettingsSyncAgent,
@@ -422,7 +422,7 @@ const CLAUDE_PLUGIN_MANIFEST_PATH = [".claude-plugin", "plugin.json"] as const;
 const CODEX_PLUGIN_MANIFEST_PATH = [".codex-plugin", "plugin.json"] as const;
 const INLINE_PLUGIN_MARKETPLACE = "inline";
 
-// 与 CLI 共用同一个 home 解析，避免迁移写入与 Agent 读取的 AGENTS.md 不一致。
+// Share home-directory resolution with the CLI so migration writes and the Agent's AGENTS.md reads stay consistent.
 const resolveUserHomeDir = resolveAgentUserHomeDir;
 
 function getWorkspaceZcodeSkillRoot(workspacePath: string): string {
@@ -567,8 +567,8 @@ function getCommandFileSymlinkType(): "file" {
 }
 
 async function createDirectorySymlink(sourcePath: string, targetPath: string): Promise<void> {
-  // Windows 创建目录软链需要 junction；其它平台使用 dir。source 使用绝对路径，避免 junction
-  // 在不同 cwd 下解析目标不一致。
+  // Windows requires a junction for directory links; other platforms use dir. Use an absolute source path so the junction
+  // resolves to the same target from different working directories.
   await symlink(resolve(sourcePath), targetPath, getSkillDirectorySymlinkType());
 }
 
@@ -579,9 +579,9 @@ async function importCommandFile(
 ): Promise<void> {
   if (importMode === "symlink") {
     if (process.platform === "win32") {
-      // Windows 创建文件级 symlink 需要管理员权限，改用硬链接。
-      // 硬链接不需要提权，且文件修改能双向同步。
-      // 跨分区（EXDEV）等硬链接失败时回退到复制。
+      // Creating a file symlink on Windows requires administrator privileges, so use a hard link instead.
+      // Hard links require no elevation and file changes are visible in both directions.
+      // Fall back to copying if hard-link creation fails, for example across filesystems (EXDEV).
       try {
         await link(resolve(sourcePath), targetPath);
         log.info(undefined, "[importCommandFile] Windows 硬链接创建成功", {
@@ -590,7 +590,7 @@ async function importCommandFile(
         });
         return;
       } catch (linkError) {
-        // 记录硬链接失败原因（EXDEV 跨分区 / EACCES 权限等），便于排查
+        // Record why hard-link creation failed (for example, EXDEV across filesystems or EACCES permissions) for diagnosis.
         const linkErrorCode = (linkError as NodeJS.ErrnoException)?.code;
         log.warn(undefined, "[importCommandFile] Windows 硬链接失败，回退到复制模式", {
           sourcePath,
@@ -600,7 +600,7 @@ async function importCommandFile(
         });
       }
     } else {
-      // 非 Windows 平台使用 symlink，不需要提权。
+      // On non-Windows platforms, use a symlink; no elevation is required.
       await symlink(resolve(sourcePath), targetPath, getCommandFileSymlinkType());
       return;
     }
@@ -635,7 +635,7 @@ function getExternalSkillRoots(workspacePath?: string): SkillSourceRoot[] {
     scope: "user",
   }));
   if (!workspacePath) {
-    // 全局技能导入不应依赖当前窗口必须打开 workspace。
+    // Importing global skills must not depend on a workspace being open in the current window.
     return userRoots;
   }
   return [
@@ -733,8 +733,8 @@ async function pathExists(path: string): Promise<boolean> {
 }
 
 async function collectSkillMarkdownPaths(rootPath: string): Promise<string[]> {
-  // 复用共享的有界遍历（排除 node_modules 等内容目录、限制深度、软链去重），
-  // 与桌面端技能扫描保持一致，避免设置同步在巨型目录上卡死。
+  // Reuse the shared bounded traversal (exclude content directories such as node_modules, limit depth, and deduplicate symlinks),
+  // matching desktop skill scanning and preventing settings sync from hanging on huge directories.
   const discovered = new Set<string>();
   for await (const skillPath of walkSkillMarkdownPaths(rootPath)) {
     discovered.add(skillPath);
@@ -2242,19 +2242,19 @@ async function copyClaudeAgentsFileToZcodeAgentsFile(params: {
     };
   }
 
-  // 与设置页「指令」编辑器共用同一把文件锁，避免两条写入路径交错覆盖。
-  // 锁外的 targetExists 只是快速路径；覆盖判断必须在锁内重新检查，
-  // 否则编辑器可能在检查与复制之间创建文件，随后被复制覆盖。
-  // 写入用 atomicWriteFile + rename：目标若是 symlink，原地 copyFile 会
-  // 穿透链接写入，绕过编辑器对普通文件的检查。
+  // Share the same file lock as the settings-page Instructions editor to prevent the two write paths from overwriting each other.
+  // targetExists outside the lock is only a fast path; recheck overwrite conditions inside the lock,
+  // or the editor could create a file between the check and copy and then have it overwritten.
+  // Write with atomicWriteFile + rename: if the target is a symlink, in-place copyFile would
+  // follow the link and bypass the editor's checks for regular files.
   const copyOutcome = await withFileLock(targetPath, async () => {
     const targetExistsUnderLock = await pathExists(targetPath);
     if (targetExistsUnderLock && params.overwrite !== true) {
       return { skipped: true, overwritten: false };
     }
-    // 与 copyFile 一致，保留源文件权限（atomicWriteFile 默认走 umask）。
-    // 权限取 stat 而非 lstat：源是 symlink 时应使用目标文件的 mode，
-    // 链接本身的 mode 恒为 0777，会泄漏文件内容给本机其他用户。
+    // Match copyFile by preserving the source file's permissions (atomicWriteFile uses umask by default).
+    // Use stat rather than lstat: when the source is a symlink, use the target file's mode;
+    // the link itself always has mode 0777, which could expose file contents to other local users.
     const sourceBytes = await readFile(sourcePath);
     const sourceMode = (await stat(sourcePath)).mode & 0o7777;
     await atomicWriteFile(targetPath, sourceBytes, { mode: sourceMode });
@@ -2415,8 +2415,8 @@ export function createSettingsSyncService(
 
     async markFirstRunPromptHandled(): Promise<void> {
       await dependencies.settingService.update({
-        // 这里记录的是“首启导入提示是否已经被消费”，不是“导入是否成功”。
-        // 如果把“用户点击跳过”遗漏掉，下次启动还会重复弹窗，造成首启流程打扰感。
+        // This records whether the first-run import prompt has been consumed, not whether the import succeeded.
+        // If skipping the prompt is not recorded, it will appear again on the next launch and disrupt the first-run flow.
         settingsSyncFirstRunPromptHandled: true,
       });
     },

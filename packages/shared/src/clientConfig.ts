@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { parsePluginStoreOrder, type PluginStoreOrder } from "./pluginStoreOrder.js";
 
-/** 只允许显式接入的公开字段进入服务快照，不透传账户或 Provider 配置。 */
+/** Only explicitly supported public fields may enter the service snapshot; account or Provider configuration is not forwarded. */
 export interface ClientConfigSnapshot {
   pluginStoreOrder: PluginStoreOrder | null;
 }

@@ -9,19 +9,19 @@ const RECOVERABLE_BROWSER_GUEST_EXIT_REASONS = new Set([
 ]);
 
 /**
- * 只对已经运行过、但被 Chromium 异常终止的 guest 做原位恢复。
+ * Recover in place only guests that have run before but were unexpectedly terminated by Chromium.
  *
- * 过去只保持 `<webview>` DOM，没有覆盖其 renderer 被系统终止的情况；
- * 但 launch/integrity failure 不是“原页面被回收”，盲目重建只会形成无限循环。
+ * Previously, only the `<webview>` DOM was kept alive; termination of its renderer by the system was not handled.
+ * A launch/integrity failure does not mean the original page was reclaimed; rebuilding blindly would create an infinite loop.
  */
 export function isRecoverableBrowserGuestExitReason(reason: string): boolean {
   return RECOVERABLE_BROWSER_GUEST_EXIT_REASONS.has(reason);
 }
 
-// Electron <webview> 标签的同步方法（getURL/canGoBack/loadURL/executeJavaScript 等）在
-// guest 尚未 attach（dom-ready 之前）或 guest frame 已销毁/重附过程中会同步抛出这两类错误。
-// 这些是 webview 生命周期里的预期竞态，不是真正的业务异常。若任由它们经由
-// window.onerror 全局兜底上报，单一来源即会占用海量异常量，必须在调用边界收敛。
+// Synchronous methods on Electron <webview> (getURL/canGoBack/loadURL/executeJavaScript, etc.) can throw
+// these two errors before the guest attaches (before dom-ready) or while its frame is destroyed/reattached.
+// These are expected webview lifecycle races, not actual application errors. If they are allowed to reach
+// the window.onerror global reporter, one source can generate a huge volume of exceptions; handle them at the call boundary.
 const WEBVIEW_DETACHED_ERROR_FRAGMENTS = [
   "must be attached to the DOM",
   "Render frame was disposed",
@@ -36,11 +36,11 @@ function isWebviewDetachedError(error: unknown): boolean {
 }
 
 /**
- * 安全地执行一次 webview 同步调用：
- * - 正常返回调用结果；
- * - 命中“guest 未挂载 / frame 已销毁”这类生命周期竞态错误时，吞掉并返回 fallback，
- *   可选地通过 onDetached 记录（用于 debug 级日志，而非静默）；
- * - 其余错误继续向上抛，避免掩盖真正的 bug。
+ * Safely execute one synchronous webview call:
+ * - return the call result on success;
+ * - when a lifecycle race occurs (such as an unattached guest / destroyed frame), catch it and return the fallback,
+ *   optionally record it through onDetached (for debug-level logging, not silently);
+ * - rethrow other errors to avoid hiding real bugs.
  */
 export function safeWebviewCall<T>(
   call: () => T,
@@ -74,14 +74,14 @@ export interface BrowserState {
   currentUrl: string;
   errorMessage: string | null;
   /**
-   * 主 frame 加载失败的 Chromium net error 码。
+   * Chromium net error code for a main-frame load failure.
    *
-   * Electron 的 `<webview>` 没有 Chrome 的安全插页，被拒的导航只会落到一张空的
-   * chrome-error 页，用户看到纯黑。错误码必须随 errorMessage 一起进状态，才能画出可读错误态
-   * 并对证书类失败给出放行指引。
+   * Electron’s `<webview>` has no Chrome safety interstitial, so a blocked navigation ends on a blank
+   * chrome-error page that appears black to the user. Keep the error code in state with errorMessage so the UI can render a readable error
+   * and provide an override instruction for certificate failures.
    */
   loadErrorCode: number | null;
-  /** guest 从未成功出画面的进程级失败；与能画出可读错误态的 load error 分开。 */
+  /** Process-level failure before the guest has ever rendered successfully; distinct from a load error that can display a readable error state. */
   guestFailure: BrowserGuestFailure | null;
   isLoading: boolean;
   isReady: boolean;
@@ -105,14 +105,14 @@ export const INITIAL_BROWSER_STATE: BrowserState = {
   title: "",
 };
 
-/** Chromium 证书错误码区间（ERR_CERT_COMMON_NAME_INVALID … ERR_CERT_KNOWN_INTERCEPTION_BLOCKED）。 */
+/** Chromium certificate error range (ERR_CERT_COMMON_NAME_INVALID … ERR_CERT_KNOWN_INTERCEPTION_BLOCKED). */
 const CERTIFICATE_LOAD_ERROR_CODE_MIN = -217;
 const CERTIFICATE_LOAD_ERROR_CODE_MAX = -200;
 
 /**
- * 判断加载失败是否源于证书问题。
+ * Determine whether a load failure is caused by a certificate issue.
  *
- * 只有证书类失败才提示「可开启忽略证书校验」；DNS、连接被拒等失败给这条指引会误导用户。
+ * Suggest enabling certificate-check bypass only for certificate failures; the same guidance would mislead users for DNS or connection-refused failures.
  */
 export function isCertificateBrowserLoadErrorCode(code: number | null | undefined): boolean {
   if (typeof code !== "number") return false;
@@ -127,7 +127,7 @@ export function isAllowedBrowserUrl(url: string): boolean {
   }
 }
 
-/** 系统默认浏览器入口接受 Web URL 和 file URL，不能复用内置浏览器更宽的本地/内联协议白名单。 */
+/** The system-default-browser entry accepts Web URLs and file URLs; do not reuse the broader local/inline protocol allowlist of the built-in browser. */
 export function isDefaultBrowserOpenableUrl(url: string): boolean {
   try {
     const protocol = new URL(url).protocol;
@@ -261,15 +261,15 @@ function isLocalDevelopmentBrowserUrl(url: string): boolean {
 type MessageLinkOpenTarget = "app-browser" | "external-browser";
 
 /**
- * 交互语义：右键菜单的两项是显式互补的目标选择，只有左键单击才走本机/私网启发式。
- * 之前菜单「打开」复用了左键默认行为，公网链接（如飞书文档）两项都会跳系统浏览器。
+ * Interaction semantics: the two context-menu items explicitly choose complementary destinations; only a left click uses the local/private-network heuristic.
+ * The menu's "Open" action previously reused the left-click default, sending both choices for public links (such as Feishu documents) to the system browser.
  */
 export function resolveMessageLinkOpenTarget(input: {
   href: string;
   forceExternal?: boolean;
   forceInApp?: boolean;
 }): MessageLinkOpenTarget {
-  // 两个 flag 同传时以 forceExternal 为准，避免调用方组合出歧义状态。
+  // If both flags are passed, forceExternal takes precedence to avoid an ambiguous combination.
   if (input.forceExternal) {
     return "external-browser";
   }
@@ -311,9 +311,9 @@ export function normalizeBrowserUrl(input: string): string | null {
     return null;
   }
 
-  // 地址栏原来把所有无协议输入都补成 https://，导致 localhost、
-  // 127.0.0.1 和常见开发端口无法直接打开。这里按浏览器地址栏习惯先识别
-  // 本机/私网/带端口地址，默认走 HTTP；公网域名仍保持 HTTPS 优先。
+  // The address bar previously prefixed every input without a scheme with https://, which prevented localhost,
+  // 127.0.0.1, and common development ports from opening directly. Follow browser address-bar conventions and first recognize
+  // localhost/private-network/port-qualified addresses and use HTTP by default; public domains still prefer HTTPS.
   if (hasDisallowedExplicitProtocol(trimmed)) {
     return null;
   }

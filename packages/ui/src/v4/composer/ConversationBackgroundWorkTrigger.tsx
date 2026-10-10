@@ -24,8 +24,8 @@ function getComposerBackgroundWorkCounts(
     if (work.kind === "bash") {
       bashCount += 1;
     } else if (work.kind === "workflow") {
-      // workflow run 单独计数，不并入 bashCount。totalCount 汇总三类后台工作，
-      // 确保只有 workflow run 时也显示 badge，用户仍能打开面板使用停止按钮。
+      // Count workflow runs separately; do not add them to bashCount. totalCount summarizes all three kinds of background work,
+      // ensuring the badge appears when workflow runs are the only background work, so users can still open the pane and use the Stop button.
       workflowCount += 1;
     }
   }
@@ -43,9 +43,9 @@ interface ConversationBackgroundWorkTriggerProps {
   runningSubagentCount?: number;
   onOpen?: () => void;
   /**
-   * onOpen 的落点：
-   * `"workflow-run"` 时 tooltip 说的是「打开工作流详情」，否则沿用按类型的「打开运行中的…」。
-   * 判定归宿主（要 toolCallId 与宿主回调，徽标看不到），这里只如实自述。
+   * onOpen destination:
+   * for `"workflow-run"`, the tooltip says “Open workflow details”; otherwise keep the type-based “Open running …” wording.
+   * The host makes the decision (it needs toolCallId and a host callback, neither visible to the badge); this component only reports it.
    */
   openTarget?: "panel" | "workflow-run";
 }
@@ -64,8 +64,8 @@ function ConversationBackgroundWorkTriggerImpl({
 
   if (!onOpen || counts.totalCount === 0) return null;
 
-  // 恰好一类时用该类文案，否则混合：三类两两组合各写一句会堆出六条同义 tooltip，
-  // 而 badge 的作用只是「有实时活动，点开看」，不承担精确枚举。
+  // Use type-specific copy when exactly one category is present; otherwise use mixed wording. Writing separate tooltips for every pair among three categories would create six near-duplicates,
+  // while the badge only means “there is live activity; open to inspect” and does not provide a precise inventory.
   const activeKindCount = [counts.bashCount, counts.workflowCount, counts.subagentCount].filter(
     (count) => count > 0,
   ).length;
@@ -112,7 +112,8 @@ function ConversationBackgroundWorkTriggerImpl({
           className="inline-flex items-center gap-1 @max-[480px]/composer:hidden"
           aria-hidden
         >
-          {/* 终端在前，保持 workflow 拆出之前的视觉次序不变；workflow 插在终端与智能体之间。 */}
+          {/* Keep the terminal first, preserving the visual order from before workflow was split out;
+              place workflow between the terminal and agents. */}
           {counts.bashCount > 0 ? (
             <span className="inline-flex items-center gap-0.5">
               <SquareTerminalIcon className="size-3.5" />

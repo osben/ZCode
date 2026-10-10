@@ -18,7 +18,7 @@ export function enqueueBackgroundTaskNotification(
   },
 ): void {
   if (this.shuttingDown) {
-    // 防御直接调用路径：session teardown 期间只允许任务状态收口，不能再启动模型轮次。
+      // Defend the direct-call path: during session teardown, allow task-state settlement only; do not start another model turn.
     this.logger?.info?.("Dropped background task notification during runtime shutdown", {
       ...traceContextToLogContext(notification.traceContext),
       event: "runtime.background_task_notification.shutdown_dropped",
@@ -55,9 +55,9 @@ export function enqueueBackgroundTaskNotification(
     toolName: notification.toolName,
     traceContext: notification.traceContext,
   });
-  // wake 入账本（admitted）。runtime 命令队列是纯内存的，账本是唯一
-  // durable 痕迹——崩溃重启后后台子进程已死、通知不可恢复，resume 会把残留
-  // admitted 收口为 discarded(session_resumed)（留痕不静默，同一语义）。
+  // Record the wake in the ledger as admitted. The runtime command queue is in-memory, so the ledger is the only
+  // durable trace. After a crash/restart, the background subprocess is dead and notifications cannot be recovered; resume settles any remaining
+  // admitted entries as discarded(session_resumed), preserving an explicit record rather than silently dropping them.
   const admission = this.sessionStore?.saveSessionInput?.({
     id: String(commandId),
     sessionID: this.sessionId,
@@ -106,7 +106,7 @@ export async function persistBackgroundTaskNotificationCommand(
 }
 
 interface PersistedBackgroundTaskNotificationBatch {
-  /** 仅整批来源一致时存在；混合/缺失来源不能从代表任务推断。 */
+  /** Present only when the entire batch has the same source; do not infer mixed/missing sources from the representative task. */
   backgroundSource?: BackgroundResultOriginMeta["backgroundSource"];
   messageId: MessageId;
   originMeta?: BackgroundResultOriginMeta;
@@ -120,8 +120,8 @@ function resolveBackgroundTaskNotificationSource(
 ): BackgroundResultOriginMeta["backgroundSource"] | undefined {
   const source = commands[0].originMeta?.backgroundSource;
   if (!source || commands.some((command) => command.originMeta?.backgroundSource !== source)) {
-    // 展示 metadata 只保留代表任务，不能把首项来源当作整批因果来源；
-    // 混合或缺失来源留空，避免 notification 到达顺序改变 message_source。
+    // Display metadata retains only the representative task, so the first item's source cannot stand in for the whole batch's cause.
+    // Leave mixed or missing sources empty to avoid notification arrival order changing message_source.
     return undefined;
   }
   return source;
@@ -130,7 +130,7 @@ function resolveBackgroundTaskNotificationSource(
 function resolveBackgroundTaskNotificationOriginMeta(
   commands: readonly [TaskNotificationRuntimeCommand, ...TaskNotificationRuntimeCommand[]],
 ): BackgroundResultOriginMeta | undefined {
-  // 单条：originMeta 整体透传，workflowNotification 载荷免费搭车（manifest 渲染的唯一数据源）。
+  // Single item: pass through originMeta as a whole; workflowNotification payload travels with it (the sole data source for manifest rendering).
   if (commands.length === 1) return commands[0].originMeta;
 
   const originMetas: BackgroundResultOriginMeta[] = [];
@@ -150,12 +150,12 @@ function resolveBackgroundTaskNotificationOriginMeta(
     " · ",
   );
 
-  // 多 notification 共用一个 turn 后若直接丢弃 originMeta，后台结果会退化为
-  // 普通 assistant 渲染。这里复用首个任务的展示锚点并只合成 title，不引入 batch schema。
+  // If originMeta is discarded after multiple notifications share one turn, background results fall back to
+  // ordinary assistant rendering. Reuse the first task's display anchor and synthesize only the title; do not add a batch schema.
   //
-  // workflowNotification 载荷**刻意不合成**：manifest 是「一轮 ↔ 一张」的对应，批量下这条关系不成立——谎报第一条的
-  // 载荷比整轮退化成裸标题行更坏。只保留 {backgroundSource, title, workId} 三个基字段，
-  // 整轮据此退回现状标题行。
+  // Deliberately do **not synthesize** a workflowNotification payload: the manifest maps one turn to one card, which is not true for a batch.
+  // Falsely reporting the first item's payload would be worse than rendering the whole turn as a plain title row. Keep only the three base fields
+  // {backgroundSource, title, workId}; the whole turn then falls back to the current title-row rendering.
   return {
     backgroundSource: representative.backgroundSource,
     title,
@@ -189,8 +189,8 @@ export async function persistBackgroundTaskNotificationBatch(
     traceContext: firstCommand.traceContext,
     visibility: "model-only",
   });
-  // outer drain 过去逐条持久化并逐条启动模型轮，pending 数量会线性放大
-  // request 数。整批只写一条 synthetic message，同时仍逐项结算 ledger 身份。
+  // Outer drain previously persisted each item and started a model turn for each, making request count grow linearly
+  // with pending items. Persist one synthetic message for the batch while still settling each ledger identity individually.
   for (const command of commands) {
     await this.sessionStore
       ?.markSessionInputPromoted?.({

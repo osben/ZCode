@@ -142,8 +142,8 @@ export function collectFacadeMisuse(
     ...table.actors.map((site) => site.call),
     ...table.worldReads.map((site) => site.call),
     ...table.reports.map((site) => site.call),
-    // 产物站点与 report 同席：它们产生站点（registry），
-    // 所以已 site 的直接调用不得被误报，而收集漏掉的那一次必须被报出来。
+    // Artifact sites share this check with report because they create sites (registry): do not
+    // report a direct call that already has a site, but do report a call missed by collection.
     ...table.artifacts.map((site) => site.call),
     ...table.joins.map((site) => site.call),
   ]);

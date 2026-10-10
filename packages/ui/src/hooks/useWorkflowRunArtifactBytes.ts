@@ -4,37 +4,38 @@ import { logger } from "@/logger.js";
 import { useV4Conversation } from "@/v4/V4ConversationContext.js";
 
 /**
- * 内容产物（`file` / `markdown`）的字节读取。
+ * Read bytes for content artifacts (`file` / `markdown`).
  *
- * 逐字照 `attachmentRead` 的分块习语：一块 ≤ 512 KiB，`nextOffset` 为 null 即读完。
- * 全量拼进内存的上界是 `ARTIFACT_CAPS.maxFileBytes`（= 20 MiB，与附件同级），
- * 这个量级下一次性 Blob 比让每个查看器各自去做 range 读简单得多——查看器全是既有的叶子组件，
- * 它们要的是 Blob / ArrayBuffer，不是一个游标。
+ * Follow the chunking pattern of `attachmentRead`: each chunk is ≤ 512 KiB, and a null `nextOffset`
+ * means the read is complete. The full in-memory size is capped by `ARTIFACT_CAPS.maxFileBytes`
+ * (= 20 MiB, the same limit as attachments). At this size, assembling one Blob is much simpler than
+ * making each viewer perform range reads; the existing leaf viewers need a Blob / ArrayBuffer, not a cursor.
  *
  * ```
  * offset 0 ──read──▶ {dataBase64, mediaType, totalBytes, nextOffset}
- *        ◀──────────  解码成 Uint8Array 塞进 chunks[]
- *   nextOffset ──read──▶ …  直到 null
+ *        ◀──────────  decode into Uint8Array and add to chunks[]
+ *   nextOffset ──read──▶ …  until null
  *        ▼
- *   拼成一个 Uint8Array ─▶ Blob ─▶ objectUrl（卸载 / 换版本时 revoke）
+ *   assemble into one Uint8Array ─▶ Blob ─▶ objectUrl (revoke on unmount / version change)
  * ```
  */
 
-/** 一块的字节数。与附件用同一个常量，不另铸——网关那边的上界就是它。 */
+/** Bytes per chunk. Reuse the attachment constant; it is also the gateway's limit. */
 const CHUNK_BYTES = PROTOCOL_V4_LIMITS.attachmentChunkMaxBytes;
 
 /**
- * 一份产物最多读多少块。20 MiB / 512 KiB = 40 块，留一倍余量当死循环刹车：
- * 一个不肯把 `nextOffset` 收敛到 null 的实现不该把渲染线程锁死。
+ * Maximum chunks to read for one artifact. 20 MiB / 512 KiB = 40 chunks; allow twice that as a
+ * guard against infinite loops. An implementation that never resolves `nextOffset` to null must
+ * not lock up the renderer.
  */
 const MAX_CHUNKS = 96;
 
 interface WorkflowRunArtifactBytesState {
   bytes: Uint8Array<ArrayBuffer> | null;
   blob: Blob | null;
-  /** Blob 的 object URL；`<img src>` / PdfViewer 用。卸载与换版本时自动 revoke。 */
+  /** Blob object URL used by `<img src>` / PdfViewer. Automatically revoked on unmount and version change. */
   objectUrl: string | null;
-  /** journal 记录上的 contentType（不是 store 重新嗅探出来的那个）——渲染器分派的精确匹配契约。 */
+  /** contentType from the journal record (not re-detected by the store); the renderer dispatches on an exact match. */
   mediaType: string | null;
   totalBytes: number | null;
   loading: boolean;
@@ -53,7 +54,7 @@ function emptyState(): WorkflowRunArtifactBytesState {
   };
 }
 
-/** base64 → 字节。renderer 里 `atob` 恒在（Electron 与浏览器都是 Chromium）。 */
+/** base64 → bytes. `atob` is always available in the renderer (Electron and browsers both use Chromium). */
 function decodeBase64(value: string): Uint8Array<ArrayBuffer> {
   const binary = atob(value);
   const bytes = new Uint8Array(binary.length);
@@ -64,10 +65,10 @@ function decodeBase64(value: string): Uint8Array<ArrayBuffer> {
 }
 
 /**
- * 字节 → base64。office 查看器只吃 `FileBinaryPreview.dataBase64`，所以这条回程路是必要的。
+ * bytes → base64. The office viewer accepts only `FileBinaryPreview.dataBase64`, so this conversion is needed.
  *
- * 分段（8 KiB）而不是 `String.fromCharCode(...bytes)`：后者在 20 MiB 上会以
- * "Maximum call stack size exceeded" 炸掉——展开成 2000 万个实参。
+ * Process in chunks (8 KiB) instead of using `String.fromCharCode(...bytes)`: the latter fails with
+ * "Maximum call stack size exceeded" at 20 MiB because it expands to 20 million arguments.
  */
 export function encodeBytesToBase64(bytes: Uint8Array<ArrayBuffer>): string {
   const step = 0x2000;
@@ -83,12 +84,12 @@ export function useWorkflowRunArtifactBytes(options: {
   runId: string;
   artifactId: string;
   version: number;
-  /** 关掉即不读，也不留下任何 object URL（预置看板与折叠态都靠它省掉整条链路）。 */
+  /** When false, do not read or retain any object URL (used by preset dashboards and collapsed states to skip the whole flow). */
   enabled?: boolean;
 }): WorkflowRunArtifactBytesState {
   const { workflowRunArtifactRead } = useV4Conversation();
   const [state, setState] = useState<WorkflowRunArtifactBytesState>(emptyState);
-  // 已发出的 object URL：卸载与换版本时必须 revoke，否则每翻一版就漏一份 20 MiB。
+  // Created object URLs must be revoked on unmount and version change; otherwise each version leaks up to 20 MiB.
   const objectUrlRef = useRef<string | null>(null);
 
   const { artifactId, runId, sessionId, version } = options;
@@ -145,8 +146,8 @@ export function useWorkflowRunArtifactBytes(options: {
           cursor += chunk.length;
         }
         const blob = new Blob([bytes], { type: mediaType });
-        // jsdom 里没有 createObjectURL：拿不到 URL 不是错误，只是 `<img>` 那条路走不了，
-        // Blob / bytes 两条路仍然通（PdfViewer 与 office 查看器读的就是它们）。
+        // jsdom has no createObjectURL. Missing a URL is not an error; it only prevents the `<img>` path.
+        // The Blob / bytes paths still work (PdfViewer and the office viewer use them).
         const objectUrl =
           typeof URL !== "undefined" && typeof URL.createObjectURL === "function"
             ? URL.createObjectURL(blob)

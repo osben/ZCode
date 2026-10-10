@@ -1,5 +1,5 @@
 /**
- * MCP 用户目录模块 - 主入口
+ * MCP user-directory module - main entry point
  */
 
 import { readFile } from "node:fs/promises";
@@ -19,7 +19,7 @@ import type { McpConfigKeyName } from "./types.js";
 import { isRecord, readJsonObject, writeTextAtomic } from "./utils.js";
 import { migrateLegacyCommonMcp } from "./legacy.js";
 
-// 重新导出类型和函数
+// Re-export types and functions.
 export type { McpConfigKeyName, McpSourceDescriptor } from "./types.js";
 export { MCP_SOURCE_DESCRIPTORS, getSourceDescriptor } from "./types.js";
 export { migrateLegacyCommonMcp } from "./legacy.js";
@@ -44,9 +44,10 @@ const ZCODE_MCP_DESCRIPTOR: DirectoryMcpDescriptor = {
   configKeyName: "mcp.servers",
 };
 const ENABLED_KEY = "enabled";
-// 历史遗留：桌面端早期把停用状态写成 enable，而 CLI 契约字段（contracts McpServerConfigBase）
-// 一直是 enabled，导致同一条 server 出现两套口径、停用后仍被 agent 拉起。
-// 现在读写逻辑一律只认 enabled，这里只保留一次性迁移；存量配置清空后整块删除。
+// Legacy behavior: early desktop versions wrote the disabled state as enable, while the CLI contract
+// field (contracts McpServerConfigBase) has always been enabled. This gave one server two sources of
+// truth and allowed the Agent to start it after it was disabled. Reads/writes now use enabled only;
+// keep this one-time migration until existing configurations are cleared, then remove the whole block.
 const LEGACY_ENABLE_KEY = "enable";
 
 const AGENTS_MCP_DESCRIPTOR: DirectoryMcpDescriptor = {
@@ -165,8 +166,8 @@ function setServerEnabled(
   config: Record<string, unknown>,
   enabled: boolean,
 ): Record<string, unknown> {
-  // 启用是默认态，不落盘冗余字段；同时清掉可能残留的 legacy enable，
-  // 避免再产出 enable:false + enabled:true 这类自相矛盾的配置。
+  // Enabled is the default, so do not persist a redundant field. Also remove any legacy enable field
+  // to avoid writing contradictory values such as enable:false + enabled:true.
   const { [LEGACY_ENABLE_KEY]: _legacyEnable, [ENABLED_KEY]: _enabled, ...rest } = config;
   if (enabled) {
     return rest;
@@ -187,8 +188,8 @@ function migrateLegacyEnableFlag(serverMap: Record<string, Record<string, unknow
       continue;
     }
     changed = true;
-    // 两个字段冲突时以「停用」为准：桌面端写 enable:false 时不会清理外部导入残留的
-    // enabled:true，若按 enabled 取值会把用户关掉的 server 重新拉起。
+    // If the fields conflict, prefer disabled: desktop may write enable:false without removing an
+    // enabled:true left by an external import. Using enabled alone would restart a server the user turned off.
     const disabled = config[LEGACY_ENABLE_KEY] === false || config[ENABLED_KEY] === false;
     migrated[name] = setServerEnabled(config, !disabled);
   }
@@ -267,8 +268,8 @@ async function writeServerEnabledToFile(
     return;
   }
 
-  // MCP 自身已有 mcp.servers/mcpServers 结构；禁用状态写在 server 配置对象内，
-  // 避免把目录路径写到 mcp 顶层后和真实 MCP 配置混在一起。
+  // MCP already has an mcp.servers/mcpServers structure. Store disabled state in each server's
+  // configuration object so directory paths do not mix with actual MCP configuration at the mcp root.
   const nextServerMap = {
     ...serverMap,
     [name]: setServerEnabled(currentServer, enabled),
@@ -297,8 +298,10 @@ async function readDirectoryServersFromFile(
     const serverMap = migration.servers;
 
     if (migration.changed) {
-      // 就地把存量 enable 折叠成 enabled 并落盘，用户无感；没有残留时不写文件，保证幂等。
-      // 写盘失败（只读目录、权限不足等）不应阻断加载：内存结果已是正确口径，下次加载会重试。
+      // Fold any legacy enable fields into enabled in place and persist without user interaction.
+      // Do not write when no legacy state remains, keeping this idempotent. A write failure (read-only
+      // directory, insufficient permissions, etc.) must not block loading: the in-memory result is
+      // already correct, and the next load will retry.
       try {
         const next = writeServerMapToJson(parsed, descriptor.configKeyName, serverMap);
         await writeTextAtomic(filePath, `${JSON.stringify(next, null, 2)}\n`);
@@ -325,8 +328,9 @@ async function readDirectoryServersFromFile(
     if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") {
       return [];
     }
-    // 解析/权限失败不等于没有 MCP 配置；吞掉异常会让 renderer 把空列表
-    // 作为显式配置送入 replace 路径，进而断开已经运行的 server。
+    // Parse/permission failure does not mean that no MCP configuration exists. Swallowing the error
+    // would let the renderer send an empty list as explicit configuration through the replace path,
+    // disconnecting servers that are already running.
     throw error;
   }
 }
@@ -340,7 +344,7 @@ async function readDirectoryServersFromPreferredSources(
     scope,
     workspacePath,
   );
-  // `.zcode` 是强优先级来源；只要读到 MCP server，同 scope 的 `.agents` 就不再参与。
+  // `.zcode` has higher priority; once an MCP server is read, `.agents` in the same scope is ignored.
   if (zcodeServers.length > 0) {
     return zcodeServers;
   }
@@ -363,7 +367,7 @@ export async function loadCliMcpFromUserDirectory(
 ): Promise<LoadCliMcpFromUserDirectoryResult> {
   const servers: NativeMcpServerRecord[] = [];
 
-  // 去掉其他 provider 后，ZCode Agent 只按目录约定读取；先 workspace，再 user。
+  // After removing other providers, the ZCode Agent reads only by directory convention: workspace first, then user.
   if (request?.workspacePath) {
     servers.push(
       ...(await readDirectoryServersFromPreferredSources("workspace", request.workspacePath)),

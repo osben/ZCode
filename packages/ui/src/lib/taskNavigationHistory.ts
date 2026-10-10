@@ -1,8 +1,8 @@
 /**
- * Workspace 导航历史 —— 浏览器式前进/后退栈
+ * Workspace navigation history — a browser-style back/forward stack.
  *
- * 纯数据结构 + 不可变更新函数，不含 React 依赖。
- * 由 zcodeSessionStore 持有实例并驱动 UI 状态。
+ * Pure data structures + immutable update functions, with no React dependency.
+ * zcodeSessionStore owns the instance and drives UI state.
  */
 
 interface WorkspaceNavEntryBase {
@@ -15,8 +15,8 @@ export interface TaskNavEntry extends WorkspaceNavEntryBase {
   taskId: string;
 }
 
-// "workflow" 是自动化页的顶级「工作流」标签；
-// scheduled / idle 仍是「自动化」标签内部的胶囊。
+// "workflow" is the top-level “Workflows” tab on the Automations page;
+// scheduled / idle remain pills within the “Automations” tab.
 export type AutomationsNavigationTab = "scheduled" | "idle" | "workflow";
 
 export type OpenAutomationsMain = (
@@ -38,7 +38,7 @@ export type WorkspaceNavEntry = TaskNavEntry | AutomationsNavEntry | PluginStore
 
 export interface TaskNavigationHistory {
   entries: WorkspaceNavEntry[];
-  /** 当前指针，指向 entries 中的索引；-1 表示空 */
+  /** Current pointer to an index in entries; -1 means empty. */
   cursor: number;
 }
 
@@ -86,12 +86,12 @@ function pushEntry(
 ): TaskNavigationHistory {
   const current = history.cursor >= 0 ? history.entries[history.cursor] : null;
 
-  // 相邻去重：历史回放或连续打开同一目标时不重复入栈。
+  // Deduplicate adjacent entries: replaying history or repeatedly opening the same target should not add duplicates.
   if (current && isSameNavEntry(current, entry)) {
     return history;
   }
 
-  // 截断 cursor 之后的前进历史，保持浏览器式导航语义。
+  // Truncate forward history after the cursor to preserve browser-style navigation semantics.
   const next = [...history.entries.slice(0, history.cursor + 1), entry];
   if (next.length > MAX_HISTORY) {
     const overflow = next.length - MAX_HISTORY;
@@ -104,15 +104,15 @@ function pushEntry(
   return { entries: next, cursor: next.length - 1 };
 }
 
-/** 用户主动选择/创建 task 时调用。 */
+/** Called when the user selects or creates a task. */
 export function pushNavEntry(
   history: TaskNavigationHistory,
   workspacePath: string,
   taskId: string,
   workspaceIdentity?: string,
 ): TaskNavigationHistory {
-  // 远程 workspace 的导航不能只记路径。
-  // 同一路径在本地/远端或多台远端机器上可能同时存在，必须把身份隔离键一起入栈。
+  // Navigation for a remote workspace cannot be keyed by path alone.
+  // The same path may exist locally, remotely, or on multiple remote machines, so include the identity isolation key in the history entry.
   return pushEntry(history, {
     kind: "task",
     workspacePath,
@@ -121,7 +121,7 @@ export function pushNavEntry(
   });
 }
 
-/** 用户主动打开 Automations 主视图或指定详情时调用。 */
+/** Called when the user opens the Automations main view or a specific detail. */
 export function pushAutomationsNavEntry(
   history: TaskNavigationHistory,
   workspacePath: string,
@@ -158,7 +158,7 @@ export function canGoForward(history: TaskNavigationHistory): boolean {
   return history.cursor < history.entries.length - 1;
 }
 
-/** 后退一步，返回新的 history 和目标 entry。 */
+/** Move back one step and return the new history and target entry. */
 export function goBack(
   history: TaskNavigationHistory,
 ): { history: TaskNavigationHistory; entry: WorkspaceNavEntry } | null {
@@ -178,7 +178,7 @@ export function goBack(
   };
 }
 
-/** 前进一步，返回新的 history 和目标 entry。 */
+/** Move forward one step and return the new history and target entry. */
 export function goForward(
   history: TaskNavigationHistory,
 ): { history: TaskNavigationHistory; entry: WorkspaceNavEntry } | null {
@@ -199,8 +199,8 @@ export function goForward(
 }
 
 /**
- * 从历史中移除指定 taskId 的所有 task 条目（task 被删除时调用）。
- * Automations 条目不属于 task 生命周期，必须原样保留。
+ * Remove all task entries with the given taskId from history (called when a task is deleted).
+ * Automations entries are not part of the task lifecycle and must be preserved as-is.
  */
 export function removeTaskFromHistory(
   history: TaskNavigationHistory,
@@ -219,7 +219,7 @@ export function removeTaskFromHistory(
     return createTaskNavigationHistory();
   }
 
-  // 当前条目未被删除时保持指向它；被删时沿用旧位置选择最近目标。
+  // Keep pointing to the current entry if it was not removed; otherwise use its former position to select the nearest target.
   const currentEntryIndex = currentEntry ? filtered.indexOf(currentEntry) : -1;
   const cursor =
     currentEntryIndex >= 0 ? currentEntryIndex : Math.min(history.cursor, filtered.length - 1);

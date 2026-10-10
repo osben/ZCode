@@ -4,7 +4,8 @@ import { logger } from "@/logger.js";
 import { useZCodeTaskService } from "@/hooks/useZCodeTaskService.js";
 
 /**
- * useWorkspaceActiveTaskState 的导出返回类型间接引用此接口，声明生成要求它可导出。
+ * The exported return type of useWorkspaceActiveTaskState indirectly references this interface,
+ * so declaration generation requires it to be exported.
  * @lintignore
  */
 export interface TaskNativeSessionLogFileState {
@@ -39,14 +40,14 @@ const INITIAL_STATE: TaskNativeSessionLogFileState = {
 };
 
 function supportsTaskNativeSessionLogFile(_provider: ZCodeProvider | null | undefined): boolean {
-  // 仅剩 glm provider，始终支持读取原生会话日志。
+  // Only the glm provider remains, and it always supports reading native session logs.
   return true;
 }
 
 /**
- * 读取当前 task 对应的原生会话日志路径。
+ * Read the native session log path for the current task.
  *
- * 路径规则统一通过 zcodeTaskService 解析，避免 UI 层猜 provider 自己的目录结构。
+ * Resolve the path through zcodeTaskService so the UI does not guess the provider's directory structure.
  */
 export function useTaskNativeSessionLogFile(
   workspacePath: string,
@@ -65,7 +66,7 @@ export function useTaskNativeSessionLogFile(
 
     if (!enabled || !workspacePath || !taskId) {
       requestVersionRef.current += 1;
-      // 原生日志路径只在菜单动作里使用；拖拽时不应让每个 row 都发路径 RPC。
+      // The native log path is only used by a menu action; do not have every row issue a path RPC during dragging.
       setState(INITIAL_STATE);
       return () => {
         disposed = true;

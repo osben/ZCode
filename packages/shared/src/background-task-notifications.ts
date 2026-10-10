@@ -63,7 +63,7 @@ export function zcodeBackgroundTaskNotificationToolUpdateStatus(
   if (status === "failed" || status === "lost") {
     return "failed";
   }
-  // task-notification 的 killed/stopped 都表示被停止，不能折成 completed。
+  // Both killed and stopped in task-notification mean the task was stopped; do not map either to completed.
   if (status === "stopped" || status === "killed") {
     return "stopped";
   }

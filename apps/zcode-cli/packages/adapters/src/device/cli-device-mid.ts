@@ -27,9 +27,9 @@ interface EnsureCliDeviceMidOptions {
 const deviceMidCacheByStateFile = new Map<string, Promise<string>>();
 
 /**
- * 在 CLI 所在主机独立确保 deviceMid 存在；它是反馈与 provider 请求头使用的设备身份，
- * 与 Desktop 共享同一个 state 文件与字段。
- * 文件系统异常不阻断模型请求；同一进程会继续使用首次生成的 fallback UUID。
+ * Ensure deviceMid exists independently on the host running the CLI. It is the device identity used for feedback
+ * and provider request headers, and shares the same state file and field as Desktop.
+ * Filesystem errors do not block model requests; the process continues using the fallback UUID generated on first use.
  */
 export function ensureCliDeviceMid(options: EnsureCliDeviceMidOptions = {}): Promise<string> {
   const stateFile = resolveCliTelemetryStateFile(options);

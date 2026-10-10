@@ -75,9 +75,11 @@ function preservesExistingPermissionDecision(decision: PermissionDecisionResult)
   if (decision.decision === "deny") {
     return decision.ruleId !== "mode.plan.nonReadOnly";
   }
-  // alwaysAsk 是工具自报的"任何情况都要问"，这里不能把它放行掉。今天走不到这条分支
-  // （只有 Write/Edit 会命中 memory 目标，二者都没声明 alwaysAsk），但一旦有人给它们加上，
-  // 少了这个判断就会出现"memory 文件让模式无关的确认静默消失"——正是本旗标要防的事。
+  // alwaysAsk is the tool's declaration that every case must be confirmed; do not
+  // bypass it here. This branch is not currently reachable (only Write/Edit target
+  // memory files, and neither declares alwaysAsk), but if either does in the future,
+  // omitting this check would silently remove the mode-independent confirmation for
+  // memory files—the exact behavior this flag is meant to prevent.
   if (decision.alwaysAsk) return true;
   return (
     decision.decision === "ask" &&

@@ -67,10 +67,10 @@ export function syncTaskMetaToTaskCaches(params: {
         workspaceIdentity: params.workspaceIdentity ?? params.task.workspaceIdentity,
       })
     ];
-  // Bugfix: session/readSession 快照的 updatedAt 可能落后于首发 prompt 写入的前端乐观时间。
-  // 同步快照时必须先和本地已有 task meta 单调合并，否则新建任务会在 sqlite 首屏刷新后跳回下面。
-  // Bugfix: 重启恢复时 workspace store 可能还没有当前 task，但 query cache 已经有 sqlite indexed meta。
-  // raw session snapshot 不带 titleOverridden，必须一起合并，避免手动重命名标题在 renderer 被还原。
+  // Bugfix: updatedAt in a session/readSession snapshot may be older than the frontend optimistic time written by the initial prompt.
+  // Before syncing a snapshot, monotonically merge it with existing local task metadata; otherwise a new task jumps down after the initial SQLite refresh.
+  // Bugfix: during restart recovery, the workspace store may not yet contain the current task even though the query cache already has SQLite-indexed metadata.
+  // The raw session snapshot has no titleOverridden field, so merge it too to prevent a manually renamed title from being reverted in the renderer.
   const task = mergeTaskMetaCandidates(params.task, previousTask, queryTask) ?? params.task;
   const cachedTasks = workspaceState.taskListCache ?? [];
   const hasCachedTask = cachedTasks.some((cachedTask) => cachedTask.taskId === task.taskId);
@@ -85,8 +85,8 @@ export function syncTaskMetaToTaskCaches(params: {
         ])
       : cachedTasks.filter((cachedTask) => cachedTask.taskId !== task.taskId);
 
-  // Bugfix: 终态/回滚类操作之前统一 bump 整个 taskListVersion，只是为了把最新 snapshot.meta
-  // 重新捞回列表。这里改成按 task 增量回写 taskListCache，避免所有 task 列表整轮重查。
+  // Bugfix: terminal/rollback operations previously bumped the entire taskListVersion only to reload the newest snapshot.meta
+  // into the list. Write back to taskListCache incrementally by task instead, avoiding a full refetch of every task list.
   if (
     workspaceState.taskListCache !== null &&
     ((params.preserveListMembership && hasCachedTask) ||
@@ -97,20 +97,20 @@ export function syncTaskMetaToTaskCaches(params: {
     store.setTaskListCache(params.workspacePath, nextCachedTasks, params.workspaceIdentity);
   }
 
-  // Bugfix: Header / 当前会话信息会优先拿 optimistic meta 覆盖旧缓存。
-  // 如果这里只改 query cache，不补 optimistic 池，当前激活 task 仍可能继续显示旧标题/旧摘要。
+  // Bugfix: Header/current-session details prefer optimistic metadata over an older cache value.
+  // If only the query cache is updated here, the active task may continue showing its old title/summary because its optimistic entry was not updated.
   store.upsertOptimisticTaskListItem(params.workspacePath, task, params.workspaceIdentity);
   upsertTaskQueryCacheTaskMeta(task);
 
   if (params.preserveListMembership) {
     updateTaskQueryCacheTaskMetaPreservingMembership(task);
   } else if (params.membership && params.applyQueryCacheMutation !== false) {
-    // Bugfix: 手机 shared-host 创建 task 时，桌面 renderer 只收到 workspace 事件，
-    // 没有本地首发路径的 insertTaskIntoTaskCaches。previousTask 缺失时仍要按 active
-    // 成员关系插入 query cache，否则远控首页会继续同步旧列表顺序。
-    // Bugfix: 本地首发会先写 optimistic meta，再插入列表成员；此时 previousTask 虽然存在，
-    // 但它只代表“已有元数据”，不代表“已经计入列表 total”。新建任务必须显式按 absent -> active
-    // 处理，否则第 6 个 workspace task 的 total 仍停在 5，Show more 不会出现。
+    // Bugfix: when a task is created on a mobile shared host, the Desktop renderer receives only a workspace event,
+    // with no local first-send call to insertTaskIntoTaskCaches. If previousTask is missing, still insert into the query cache by active
+    // membership or the remote-control home screen keeps the old task order.
+    // Bugfix: local first-send writes optimistic metadata before inserting the list membership. At this point previousTask exists,
+    // but only represents “metadata already exists,” not “already counted in the list total.” Treat task creation explicitly as absent -> active
+    // or the total for a workspace with six tasks remains 5 and Show more never appears.
     applyTaskQueryCacheMutation({
       previousTask: previousTask ?? task,
       nextTask: task,
@@ -127,9 +127,9 @@ export function insertTaskIntoTaskCaches(params: {
   task: ZCodeTaskMeta;
   membership: TaskListMembershipState;
 }): void {
-  // Bugfix: 新建/fork/远控 shared-host 创建 task 都应走同一条“无 -> 有”成员变更。
-  // syncTaskMetaToTaskCaches 会在 previousTask 缺失时按 ABSENT_MEMBERSHIP 插入 query cache，
-  // 这里不能再二次 apply mutation，否则 total 会被重复加一。
+  // Bugfix: create/fork/shared-host remote task creation must all use the same “absent -> present” membership change.
+  // syncTaskMetaToTaskCaches inserts into the query cache as ABSENT_MEMBERSHIP when previousTask is missing;
+  // do not apply the mutation a second time here, or total is incremented twice.
   syncTaskMetaToTaskCaches({
     workspacePath: params.workspacePath,
     workspaceIdentity: params.workspaceIdentity,

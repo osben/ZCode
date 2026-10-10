@@ -1,10 +1,10 @@
-/* oxlint-disable eslint(max-lines) -- ZCode task 投影类型当前集中在单文件维护，新增 workspace 事件先保持就近声明。 */
-// ── 旧协议兼容面（过渡期）──────────────────────────────
-// 剩余 29 个导出：workspace 预热/workspace 事件、turn steer 结果、session binding/import、
-// trace/input/query id 工厂函数、ZCodeError、ZCodeTaskCreateResult 等。
-// 消费者：services 旧栈（zcodeAgentService/zcodeTaskServiceAdapter/zcodeTaskService）、
-// UI 旧 store/投影。明星承重类型（ZCodeTaskMeta/ZCodeStreamEvent/ZCodeTaskSnapshot 等）
-// 已迁 zcode-task-types-core.ts（幸存面）。本文件与旧 task service 组同生命周期。
+/* oxlint-disable eslint(max-lines) -- ZCode task projection types are maintained together in one file for now; keep new workspace events nearby. */
+// ── Legacy protocol compatibility surface (transitional) ──
+// 29 exports remain: workspace prewarming/workspace events, turn-steer results, session binding/import,
+// trace/input/query ID factories, ZCodeError, ZCodeTaskCreateResult, and others.
+// Consumers: legacy services stack (zcodeAgentService/zcodeTaskServiceAdapter/zcodeTaskService),
+// and legacy UI stores/projections. Core types (ZCodeTaskMeta/ZCodeStreamEvent/ZCodeTaskSnapshot, etc.)
+// have moved to zcode-task-types-core.ts. This file shares the lifecycle of the legacy task service group.
 import { createUuid } from "./uuid.js";
 import type {
   TaskRealtimeReason,
@@ -24,12 +24,12 @@ import type {
   ZCodePersistedToolCall,
 } from "./zcode-task-types-core.js";
 
-/** 生成 traceId；保留旧函数名兼容已有调用，格式对齐 agent 的 UUID trace。 */
+/** Generate a traceId; retain the legacy function name for existing callers and match the agent's UUID trace format. */
 export function generateTraceId(_taskId: string): TraceId {
   return createUuid();
 }
 
-/** 创建 ZCode session 级观测 traceId；后续 prompt 只继承，不重新生成。 */
+/** Create a ZCode session-level observability traceId; subsequent prompts inherit it instead of generating a new one. */
 export function createSessionTraceId(): TraceId {
   return createUuid();
 }
@@ -42,60 +42,60 @@ export function createQueryId(): QueryId {
   return createUuid();
 }
 
-/** cron 定时任务生成的 session 默认归入的系统分组固定 id。 */
+/** Fixed system group ID for sessions created by cron schedules. */
 export const CRON_DEFAULT_GROUP_ID = "zcode-default-group-cron";
 
-/** 闲时任务已派发会话默认归入的系统分组固定 id（与 cron 分组同构）。 */
+/** Fixed system group ID for sessions dispatched by off-peak tasks (matching the cron group structure). */
 export const OFF_PEAK_DEFAULT_GROUP_ID = "zcode-default-group-off-peak";
 
 type CronTaskIdentity = Pick<ZCodeTaskMeta, "cronAutomationId"> & {
   automationId?: string;
 };
 
-/** 判断一个 task/session 是否由定时任务触发产生。 */
+/** Determine whether a task/session was created by a scheduled task. */
 export function isCronTask(task: CronTaskIdentity): boolean {
-  // 持久化 task meta 使用 cronAutomationId；但运行态派发/旧链路里字段名是 automationId。
-  // UI 只看前者会让新创建或刚恢复的定时任务暂时没有 icon。
+  // Persisted task metadata uses cronAutomationId, but runtime dispatch/legacy paths use automationId.
+  // If the UI checks only the former, newly created or resumed scheduled tasks temporarily have no icon.
   return Boolean(task.cronAutomationId || task.automationId);
 }
 
-/** 判断一个 task/幻影行是否属于闲时任务（只看持久 meta 标记，UI 不反查 off-peak store）。 */
+/** Determine whether a task/placeholder row belongs to an off-peak task (check only the persisted metadata marker; the UI does not query the off-peak store). */
 export function isOffPeakTask(task: Pick<ZCodeTaskMeta, "offPeakTaskId">): boolean {
   return Boolean(task.offPeakTaskId);
 }
 
 // ---- ZCode Provider ----
 export type ZCodeTaskTarget = ZCodeTaskGoal;
-// ---- ZCode task 模式 ----
-// ---- ZCode 运行时状态 ----
+// ---- ZCode task modes ----
+// ---- ZCode runtime state ----
 
-/** workspace 级 ZCode 初始化状态 */
+/** Workspace-level ZCode initialization state. */
 export type ZCodeWorkspaceInitStatus = "idle" | "initializing" | "ready" | "failed";
 
-/** 预热 workspace 时返回的结果 */
+/** Result returned while prewarming a workspace. */
 export interface ZCodeWorkspacePrepareResult {
   workspacePath: string;
   preparedSessionId: string;
   version?: string;
   provider: ZCodeProvider;
-  /** session/new 返回的初始 configOptions，预热阶段就推到 UI 让用户提前选择模型 */
+  /** Initial configOptions returned by session/new, sent to the UI during prewarming so the user can choose a model early. */
   configOptions?: ZCodeConfigOption[];
-  /** 预热 session 已经广播出来的 slash commands，草稿态也可以直接拿来展示 */
+  /** Slash commands already broadcast by the prewarmed session, available to display even in draft state. */
   slashCommands?: ZCodeSlashCommand[];
 }
 
-// ---- Task 元数据 ----
+// ---- Task metadata ----
 
-/** createTask 的返回结果；在持久化元信息之外，补充首屏渲染需要的临时初始化数据。 */
+/** Result of createTask; adds transient initialization data needed for the first render beyond persisted metadata. */
 export interface ZCodeTaskCreateResult extends ZCodeTaskMeta {
-  /** createTask 时就能拿到的首批 slash commands，避免 UI 订阅建立前丢掉初始化命令。 */
+  /** Initial slash commands available during createTask, preventing initialization commands from being lost before the UI subscribes. */
   initialSlashCommands?: ZCodeSlashCommand[];
 }
 
-/** 外部原生 session 导入的来源 provider；与 agent runtime 的 ZCodeProvider 解耦，当前仅 Claude Code。 */
+/** Source provider for imported external native sessions; decoupled from the agent runtime's ZCodeProvider, currently only Claude Code. */
 export type ZCodeImportSessionSourceProvider = "claude";
 
-/** 外部原生 session 的导入候选。 */
+/** Import candidate for an external native session. */
 export interface ZCodeImportableSessionCandidate {
   provider: ZCodeImportSessionSourceProvider;
   sessionId: string;
@@ -126,9 +126,9 @@ export interface ZCodeImportSessionsResult {
   failed: ZCodeImportedSessionSkippedItem[];
 }
 
-// ---- ZCode 配置与命令类型 ----
-// ---- ZCode 流式事件（Host → Renderer） ----
-// ---- 新增流式事件类型 ----
+// ---- ZCode configuration and command types ----
+// ---- ZCode streaming events (Host → Renderer) ----
+// ---- Additional streaming event types ----
 
 export interface ZCodeEnqueueTaskCommandResult {
   accepted: true;
@@ -142,14 +142,14 @@ export interface ZCodeCancelTaskCommandResult {
   reason?: "not_found" | "already_running";
 }
 
-// ---- Workspace 级别事件（预热阶段、task 创建前的异步通知） ----
+// ---- Workspace-level events (asynchronous notifications during prewarming, before task creation) ----
 
 /**
- * Workspace 级别事件，用于在 task 创建前把 ZCode Agent 异步推送的
- * 通知（如 slash commands、configOptions）实时传递到 UI。
+ * Workspace-level events deliver asynchronous notifications pushed by the ZCode Agent (such as slash commands and configOptions)
+ * to the UI in real time before task creation.
  *
- * 与 ZCodeStreamEvent 的区别：ZCodeStreamEvent 绑定到具体 taskId，
- * ZCodeWorkspaceEvent 绑定到 workspacePath，覆盖 task 创建前的空档期。
+ * Unlike ZCodeStreamEvent, which is bound to a specific taskId, ZCodeWorkspaceEvent is bound to workspacePath
+ * and covers the gap before task creation.
  */
 export type ZCodeWorkspaceEvent =
   | ZCodeWorkspaceSlashCommandsUpdate
@@ -161,8 +161,8 @@ export interface ZCodeWorkspaceSlashCommandsUpdate {
   type: "workspace_slash_commands_update";
   workspacePath: string;
   /**
-   * 远程 workspace 的 / 命令属于身份隔离状态，不能只靠 workspacePath 分发。
-   * 同一路径可能来自不同 SSH/WSL/Docker session，带上 workspaceIdentity 后 service/UI 才能按 workspaceKey 收敛。
+   * Slash commands for remote workspaces are identity-isolated state and cannot be dispatched by workspacePath alone.
+   * The same path may come from different SSH/WSL/Docker sessions; workspaceIdentity lets service/UI converge on the workspaceKey.
    */
   workspaceIdentity?: string;
   commands: ZCodeSlashCommand[];
@@ -172,7 +172,7 @@ export interface ZCodeWorkspaceConfigOptionsUpdate {
   type: "workspace_config_options_update";
   workspacePath: string;
   /**
-   * 预热配置同样是 workspace 级身份状态，远程场景必须随事件传递 workspaceIdentity。
+   * Prewarmed configuration is also workspace identity state; remote scenarios must pass workspaceIdentity with the event.
    */
   workspaceIdentity?: string;
   configOptions: ZCodeConfigOption[];
@@ -185,7 +185,7 @@ export interface ZCodeWorkspaceTaskListChanged {
   taskId?: string;
   reason: "auto_archive" | "realtime_sync" | TaskRealtimeReason;
   taskMeta?: ZCodeTaskMeta;
-  /** Host 已确认该终态应制造后台未读；普通 status/resume/snapshot 收敛不得携带。 */
+  /** Host confirmed that this terminal state should create a background unread item; ordinary status/resume/snapshot reconciliation must omit it. */
   unreadSignal?: "background_terminal";
 }
 
@@ -203,7 +203,7 @@ export interface ZCodeWorkspaceSessionMessageSendRequested {
   };
 }
 
-// ---- 错误 ----
+// ---- Errors ----
 
 export interface ZCodeError {
   code: string;
@@ -212,7 +212,7 @@ export interface ZCodeError {
   taskId?: string;
 }
 
-// ---- 持久化格式 ----
+// ---- Persisted format ----
 
 export interface ZCodeTaskSnapshotBody {
   refId: string;

@@ -85,7 +85,7 @@ async function releaseManualClaimBestEffort(
   }
 }
 
-/** 派发失败清理永不覆盖调用方持有的原始 dispatch error。 */
+/** Cleanup after dispatch failure must never replace the original dispatch error held by the caller. */
 export async function settleManualDispatchFailureBestEffort(
   params: CronRunLifecycleIdentity & {
     repo: CronRunLifecycleRepo;
@@ -112,7 +112,7 @@ export async function settleManualDispatchFailureBestEffort(
   await releaseManualClaimBestEffort(params);
 }
 
-/** manual claim 覆盖 queue 等待和 turn 执行，只能在真实终态后释放。 */
+/** A manual claim covers queue waiting and turn execution; release it only after a real terminal state. */
 export async function settleCronRunTerminalOutcome(
   params: CronRunLifecycleIdentity & {
     repo: CronRunLifecycleRepo;

@@ -1,7 +1,7 @@
-// plugin_reference reminder 的 turn-start 注入。
-// 契约：解析 canonical text → 冻结 catalog →
-// 与 live Skill/MCP/Subagent inventory 取交集 → 生成本轮 model-only reminder。
-// 失败语义：对话 fail open（任何异常都不阻塞本轮），能力注入 fail closed（异常时不注入）。
+// Turn-start injection for the plugin_reference reminder.
+// Contract: parse canonical text → freeze catalog →
+// intersect with the live Skill/MCP/Subagent inventory → generate a model-only reminder for this turn.
+// Failure semantics: fail open for conversation (no exception blocks this turn); fail closed for capability injection (inject nothing on error).
 import { toMcpToolName } from "../../mcp/index.js";
 import {
   buildPluginReferenceReminderBody,
@@ -20,20 +20,20 @@ async function collectLiveMcpServers(
   toolDisallowlist: readonly string[] | undefined,
 ): Promise<LivePluginMcpServer[]> {
   if (!runtime.mcpPort) return [];
-  // initializeMcp 幂等；turn loop 的首个 provider 请求前本来就会等它，
-  // 这里提前 await 不增加额外等待。引用绝不触发 connect/reconnect/OAuth——只读取现状。
+  // initializeMcp is idempotent; the turn loop already waits for it before its first provider request,
+  // so awaiting it here adds no extra delay. A reference never triggers connect/reconnect/OAuth—it reads the current state only.
   await runtime.initializeMcp(traceContext);
   const statuses = await runtime.mcpPort.status();
   const snapshot = runtime.mcpStartupPromise ? await runtime.mcpStartupPromise : undefined;
   const registeredToolNames = new Set(runtime.getTools().map((tool) => tool.name));
-  // 与 turn-loop 的 provider 工具过滤保持完全相同的“完整工具名”语义；
-  // 带参数的执行规则不会把整个工具从 provider 工具表移除，不能在 reminder 侧扩大解释。
+  // Match the turn-loop's provider-tool filter semantics for "full tool names" exactly.
+  // Parameterized execution rules do not remove an entire tool from the provider tool list, so the reminder must not broaden their meaning.
   const turnDisallowedToolNames = new Set(toolDisallowlist ?? []);
   const providerVisibleToolCounts = new Map<string, number>();
   for (const descriptor of snapshot?.tools ?? []) {
-    // provider-visible = 启动快照里的 tool 先通过 Session 全局 allow/disallow 注册过滤，
-    // 再通过本轮 toolDisallowlist。根因：只看 registry 会把“本轮隐藏、全局仍注册”的
-    // MCP tool 误算成可见能力，reminder 会声称一个 provider 实际拿不到的 server。
+    // provider-visible = tools in the startup snapshot that pass Session-wide allow/disallow registry filtering,
+    // then this turn's toolDisallowlist. Looking only at the registry incorrectly counts an MCP tool that is hidden for this turn
+    // but still globally registered as visible, causing the reminder to claim a server the provider cannot actually access.
     const toolName = toMcpToolName(descriptor);
     if (!registeredToolNames.has(toolName)) continue;
     if (turnDisallowedToolNames.has(toolName)) continue;
@@ -69,8 +69,8 @@ function collectLivePluginSubagents(runtime: AgentRuntimeInternal): LivePluginSu
   for (const profile of runtime.config.subagents?.profiles ?? []) {
     const name = profile.name.trim();
     const path = profile.path?.trim();
-    // Plugin profile 由 bootstrap 从 Markdown 成功解析后才进入 config，且一定携带 path。
-    // 无 path 的内置/inline profile 无法做 provenance 回溯，按 fail closed 跳过。
+    // A Plugin profile enters config only after bootstrap successfully parses its Markdown, and it always includes a path.
+    // Built-in/inline profiles without a path cannot be traced to their source, so skip them using fail-closed behavior.
     if (!name || !path) continue;
     subagents.push({ name, path });
   }
@@ -83,7 +83,7 @@ export async function injectPluginReferenceReminderFromTurn(
   traceContext: TraceContext,
   toolDisallowlist?: readonly string[],
 ): Promise<void> {
-  // 无引用是绝对主路径：不 touch MCP/skills，零开销返回。
+  // No references is the overwhelmingly common path: do not touch MCP/skills and return at zero cost.
   const extraction = extractPluginReferences(userInput);
   if (extraction.references.length === 0) {
     if (extraction.invalidCount > 0) {
@@ -109,7 +109,7 @@ export async function injectPluginReferenceReminderFromTurn(
       liveMcpServers,
       liveSubagents,
     });
-    // 每轮与消息流同数量级 → 必须 debug（生产 no-op），只输出受控标识与计数。
+    // This runs once per turn, at roughly message-stream frequency; use debug (a production no-op) and emit only controlled identifiers and counts.
     this.logger?.debug("Plugin reference reminder resolved", {
       ...traceContextToLogContext(traceContext),
       durationMs: Date.now() - startedAt,
@@ -126,9 +126,9 @@ export async function injectPluginReferenceReminderFromTurn(
     });
     if (!result.body) return;
     this.messageHistory.addAttachment("plugin_reference", result.body);
-    // 根因：只写 runtime attachment 会让热会话保留 reminder、cold resume 却丢失，
-    // 历史消息序列因此错位并破坏 provider 前缀缓存。先注入再以 model-only notice
-    // 原文落库，通用 hydration 会按同一 source 重建 attachment，UI 不产生用户气泡。
+    // If only the runtime attachment is written, a warm session retains the reminder but cold resume loses it,
+    // misaligning history messages and breaking provider prefix caching. Inject it first, then persist the original text as a model-only notice;
+    // generic hydration rebuilds the attachment from the same source without creating a user bubble in the UI.
     await this.persistSyntheticUserNoticeForSession({
       messageID: createMessageId(),
       sessionId: this.sessionId,
@@ -137,7 +137,7 @@ export async function injectPluginReferenceReminderFromTurn(
       traceContext,
     });
   } catch (error) {
-    // 对话 fail open：reminder 生成失败不影响本轮发送；能力注入 fail closed：不写任何兜底内容。
+    // Fail open for conversation: reminder-generation failure does not block this turn. Fail closed for capability injection: write no fallback content.
     this.logger?.debug("Plugin reference reminder generation failed", {
       ...traceContextToLogContext(traceContext),
       durationMs: Date.now() - startedAt,

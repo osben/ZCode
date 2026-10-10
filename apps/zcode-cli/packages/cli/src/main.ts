@@ -15,10 +15,11 @@ void main();
 
 async function main(): Promise<void> {
   const argv = process.argv.slice(2);
-  // 存储模式也可运行在 Host Worker 中，不能修改整个 Host 的进程名称。
+  // Storage mode can also run in a Host Worker; do not change the process name for the entire Host.
   if (!argv.includes("--prepare-storage")) setCliProcessTitle();
-  // 真实 zcode CLI 进程里仍可能有少量路径直接读取 process.env。
-  // 入口先清洗用户 shell 注入的 NODE_ENV、代理和证书变量；网络变量只封存给后续 Bash/tool 子进程恢复。
+  // A few paths in the actual zcode CLI process may still read process.env directly.
+  // Sanitize NODE_ENV, proxy, and certificate variables injected by the user's shell at
+  // the entry point; preserve network variables only for later restoration in Bash/tool subprocesses.
   applyCliRuntimeEnvSanitization(process.env);
   const isProtocol = isProtocolServerInvocation(argv);
   const isTui = isTuiInvocation(argv);
@@ -27,10 +28,11 @@ async function main(): Promise<void> {
     isProtocol && !argv.includes("--prepare-storage")
       ? createProtocolProcessLifecycle()
       : undefined;
-  // app-server/agent-server 的 stdout 是严格的 ZCode Protocol 帧通道，三方 SDK 的
-  // console.debug 等普通输出不能直接写入 stdout。必须在加载 run/bootstrap 之前将
-  // 进程级 console 统一引导到 stderr，否则任意依赖的一行普通日志都会触发传输层 JSON 解析崩溃。
-  // TUI 同样独占 stdout；AI SDK 的首条提示使用 console.info，不能绕过 stderr 捕获。
+  // app-server/agent-server stdout is a strict ZCode Protocol frame channel, so plain
+  // output such as third-party SDK console.debug must not write there. Redirect the
+  // process-level console to stderr before loading run/bootstrap, or any dependency log
+  // line can crash transport JSON parsing. TUI also exclusively owns stdout; the AI SDK's
+  // initial notice uses console.info and must be captured on stderr too.
   const restoreConsole =
     isProtocol || isTui ? installStderrConsoleBoundary(process.stderr) : undefined;
   const runtimeWarnings = interceptKnownRuntimeWarnings(process.stderr);
@@ -57,8 +59,9 @@ async function main(): Promise<void> {
       stdin: process.stdin,
       stdout: process.stdout,
     };
-    // plugin-host 只承载插件；先导入 run 会求值 Agent、工具注册表和工作流模块，
-    // 即使最终没有创建 AgentRuntime，也会让每个 MCP 子进程持有整套业务依赖。
+    // plugin-host carries only plugins. Importing run first evaluates Agent, tool
+    // registry, and workflow modules, making every MCP subprocess load the full business
+    // dependency set even if no AgentRuntime is created.
     if (isPluginHostInvocation(argv)) {
       process.exitCode = await runPluginHostCommand(context, argv.slice(1));
       return;
@@ -88,7 +91,7 @@ async function main(): Promise<void> {
     process.exitCode = 1;
   } finally {
     await waitForPendingWarnings();
-    // 生命周期和 stderr guard 一直保留到实际退出，迟到的错误不能恢复递归写坏流。
+    // Keep lifecycle and stderr guards installed until actual exit so late errors cannot recursively write to a broken stream.
     if (lifecycle) {
       await lifecycle.complete(normalizeProcessExitCode(process.exitCode));
     } else {
@@ -97,8 +100,9 @@ async function main(): Promise<void> {
       }
       runtimeWarnings.restore();
       disposeProcessErrorBoundary?.();
-      // plugin-host 的 main() 在 MCP server.connect() 完成后会返回，但此时
-      // stdio handle 正是服务的存活条件。一次性 CLI watchdog 不能把它误判为泄漏并强退。
+      // plugin-host main() returns after MCP server.connect() completes, but stdio
+      // handles are what keep the service alive. The one-shot CLI watchdog must not
+      // mistake them for leaks and kill the process.
       const exitCode = normalizeProcessExitCode(process.exitCode);
       if (!isPluginHostInvocation(argv) || exitCode !== 0) {
         scheduleCliExitWatchdog({ exitCode });

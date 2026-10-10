@@ -1,4 +1,4 @@
-/* oxlint-disable eslint(max-lines) -- ZCode session 到当前聊天 projection 的迁移桥需要同时保持 snapshot 和 event 映射一致。 */
+/* oxlint-disable eslint(max-lines) -- The migration bridge from ZCode sessions to the current conversation projection must keep snapshot and event mappings consistent. */
 import {
   decodeCustomModelValue,
   deriveZCodeTaskStatusFromSessionSnapshot,
@@ -65,17 +65,17 @@ function resolveLatestMessageModelSelection(
 function resolveTaskMetaModelSelectionFromSnapshot(
   snapshot: ZCodeSessionStateSnapshot,
 ): ModelSelection | undefined {
-  // 历史 resume 被错误 runtimeModel 覆盖时，settings.current 会变成 app 当前默认模型，
-  // 但消息 info.model 仍记录真实使用的模型。task meta 会作为下次冷恢复 hint，
-  // 因此优先用最近消息模型让已污染的历史记录自愈。
+  // When an incorrect runtimeModel overwrote a historical resume, settings.current becomes the app's current default model,
+  // but message info.model still records the model actually used. Task metadata becomes the hint for the next cold restore,
+  // so prefer the latest message model to repair the corrupted history.
   return resolveLatestMessageModelSelection(snapshot.messages) ?? snapshot.settings.model.current;
 }
 
 export function parseModelPickerValue(value: string): ModelSelection {
   const customModel = decodeCustomModelValue(value);
   if (customModel?.providerId && customModel.modelName) {
-    // UI 自定义模型值是展示态 custom:provider:model，
-    // ZCode Protocol 必须收到严格的 providerId/modelId 结构。
+    // The UI's custom-model value is a display form, custom:provider:model;
+    // ZCode Protocol requires a strict providerId/modelId structure.
     return {
       providerId: customModel.providerId,
       modelId: customModel.modelName,
@@ -166,8 +166,8 @@ function resolveSettingsThoughtLevelCurrentValue(
     thoughtLevel.defaultLevel && thoughtLevelValues.has(thoughtLevel.defaultLevel)
       ? thoughtLevel.defaultLevel
       : undefined;
-  // ZCode Protocol 的 defaultLevel 是模型事实，current 为空时表示用户尚未显式修改。
-  // 实时模型状态事件也要投影默认值，否则工具栏会拿到空 currentValue，出现没有档位被选中的 UI。
+  // ZCode Protocol's defaultLevel is a model fact; an empty current means the user has not explicitly changed it.
+  // Project the default for live model-status events too, or the toolbar gets an empty currentValue and no level appears selected.
   return currentThoughtLevel ?? defaultThoughtLevel ?? thoughtLevel.available[0]?.value;
 }
 

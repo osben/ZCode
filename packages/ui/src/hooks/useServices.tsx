@@ -1,7 +1,7 @@
 /**
- * useServices —— 通过 React Context 提供 IServiceAccessor
+ * useServices — provides IServiceAccessor through React Context.
  *
- * 替代 props drilling，组件通过 useServices() 直接获取服务。
+ * Replaces prop drilling so components can access services directly through useServices().
  */
 import { createContext, useContext, type ReactNode } from "react";
 import type { IServiceAccessor } from "@zcode/services";

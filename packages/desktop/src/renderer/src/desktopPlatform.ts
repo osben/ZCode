@@ -102,9 +102,10 @@ export function createDesktopPlatform(options: {
     ...desktopBrowserPlatformBridge,
     onNewTask: (handler) => window.zcode.onNewTask(handler),
     onOpenWorkspace: (handler) => {
-      // 开发态或升级后的旧窗口可能仍运行未暴露 onOpenWorkspace 的 preload，
-      // renderer 直接调用会在启动时崩溃。这里和 activateOrSetWorkspace 一样做兼容兜底，
-      // 缺少该 bridge 时只禁用原生菜单回调，不影响应用继续打开。
+      // A development window or an old window after an upgrade may still use a preload that does not
+      // expose onOpenWorkspace. Calling it directly from the renderer would crash at startup. Use the
+      // same compatibility fallback as activateOrSetWorkspace; if the bridge is missing, disable only
+      // the native menu callback and let the app continue opening.
       return window.zcode.onOpenWorkspace?.(handler) ?? (() => {});
     },
     onOpenWorkspacePath: (handler) => window.zcode.onOpenWorkspacePath?.(handler) ?? (() => {}),

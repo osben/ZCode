@@ -1,4 +1,4 @@
-/* eslint-disable max-lines -- 技能管理面板需共享筛选、安装与开关交互状态，集中维护更便于一致性 */
+/* eslint-disable max-lines -- The skill management panel shares filtering, installation, and toggle interaction state; keeping it together makes behavior more consistent. */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertTriangle,
@@ -185,8 +185,8 @@ export function SkillsSection({
   const pluginWorkspaceIdentity = usePluginManagementStore((state) => state.workspaceIdentity);
   const pluginConfigScope = usePluginManagementStore((state) => state.configScope);
   const initializePlugins = usePluginManagementStore((state) => state.initialize);
-  // useConfirmDialog 是纯 Zustand selector（不含 useState），放在这里不会影响 SkillsSection
-  // 既有的「按 useState 调用次序」单测桩（见下方 selectedSkill 附近的注释）。
+  // useConfirmDialog is a plain Zustand selector (no useState), so placing it here does not affect SkillsSection's
+  // existing unit-test mock based on useState call order (see the comment near selectedSkill below).
   const confirmDialog = useConfirmDialog();
   const activeWorkspacePath = workspacePath ?? null;
   const activeWorkspaceIdentity = workspaceIdentity;
@@ -196,8 +196,8 @@ export function SkillsSection({
     activeWorkspaceIdentity,
     remoteTarget,
   );
-  // PluginsSection 已把 Scope target 传入，但 Skills 仍从当前 ServiceProvider
-  // 取服务，导致跨远程 host 误路由。技能读写和远端同步都改用同一 target 解析结果。
+  // PluginsSection already passes a Scope target, but Skills still obtained services from the current ServiceProvider,
+  // causing misrouting across remote hosts. Use the same resolved target for skill reads/writes and remote sync.
   const { pluginManagementService, skillSyncService, skillsService } =
     targetServiceResolution.services;
   const zcodeSessionService = useZCodeSessionService(
@@ -261,7 +261,7 @@ export function SkillsSection({
     (skill: SkillSummary): string => {
       switch (skill.scope) {
         case "workspace":
-          // workspace 作用域显示 workspace 名，没有 workspace 时退回到通用文案。
+          // Show the workspace name for workspace scope; use generic copy when there is no workspace.
           return (
             workspaceLabel ||
             intl.formatMessage({
@@ -345,8 +345,8 @@ export function SkillsSection({
       setRemoteSkillSyncOpen(false);
       return;
     }
-    // 首屏或切换 Scope target 时必须显示阻塞 loading；手动刷新仍走后台刷新，
-    // 避免有当前 target 数据时整块闪烁。
+    // Show blocking loading on first screen or when switching Scope target; manual refresh remains in the background
+    // to avoid flashing the whole view when current-target data is available.
     void loadSkills(true);
   }, [activeWorkspacePath, loadSkills, targetServiceResolution.rpcReady]);
 
@@ -367,7 +367,7 @@ export function SkillsSection({
       if (!activeWorkspacePath) {
         return;
       }
-      // 移除三方来源后，技能状态统一写入 ZCode Agent 上下文，避免旧 provider 前缀带来分桶漂移。
+      // After removing third-party sources, store skill state consistently in the ZCode Agent context to avoid bucket drift from old provider prefixes.
       const targetSkill = skills.find((skill) => skill.id === skillId);
       const effectiveProvider: ZCodeProvider = ZCODE_AGENT_PROVIDER;
       try {
@@ -403,8 +403,8 @@ export function SkillsSection({
     ],
   );
 
-  // 删除本地技能：plugin 作用域技能不可单独删除（由卸载插件管理），调用方已在 UI 层屏蔽其入口。
-  // 复用应用根部已挂载的确认弹窗 store（useConfirmDialog），与子智能体删除流程保持一致。
+  // Delete a local skill: plugin-scoped skills cannot be deleted individually (uninstall the plugin instead), and callers already hide this entry in the UI.
+  // Reuse the confirmation-dialog store mounted at the app root (useConfirmDialog), matching the subagent deletion flow.
   const handleDeleteSkill = useCallback(
     async (skill: SkillSummary) => {
       if (!activeWorkspacePath || skill.scope === "plugin") {
@@ -516,9 +516,9 @@ export function SkillsSection({
     );
     const markdown = buildSkillMentionMarkdown("skill-creator", skillCreator?.path);
 
-    // v4 迁移删除旧 pendingComposerPrefill 后，这个入口仍手工操作 session
-    // store，只剩返回聊天页的导航，skill-creator 文本没有进入新 Composer。统一委托
-    // Root 的新任务入口，让草稿持久化、workspaceIdentity 隔离和 Composer 插入保持单一路径。
+    // After the v4 migration removed the old pendingComposerPrefill, this entry still manipulated the session
+    // store manually and only navigated back to chat; skill-creator text never reached the new Composer. Delegate to
+    // Root's new-task entry so draft persistence, workspaceIdentity isolation, and Composer insertion share one path.
     onCreateTask({
       provider: effectiveProvider,
       initialPrompt: `${markdown} `,
@@ -555,8 +555,8 @@ export function SkillsSection({
     [intl, platform],
   );
 
-  // 诊断条数不等于加载失败的技能数；同一次扫描可以返回可用技能和多个目录级警告。
-  // 按严重级别展示真实统计，避免把 warning 误报成“所有技能加载失败”。
+  // The number of diagnostics is not the number of failed skill loads; one scan can return usable skills and multiple directory-level warnings.
+  // Show accurate counts by severity instead of reporting warnings as “all skills failed to load.”
   const diagnosticErrorCount = diagnostics.filter(
     (diagnostic) => diagnostic.severity === "error",
   ).length;
@@ -680,7 +680,8 @@ export function SkillsSection({
 
   return (
     <div className="space-y-4">
-      {/* 独立 Skills 分区的详情是弹窗，不属于页面级导航；只有插件容器需要上报详情层级。 */}
+      {/* Details in the standalone Skills section use a dialog, not page-level navigation; only
+              the plugin container needs to report the details level. */}
       {reportDetailBreadcrumb && detailSkill ? (
         <SettingsBreadcrumbReporter
           items={

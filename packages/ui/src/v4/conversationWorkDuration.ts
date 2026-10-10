@@ -9,11 +9,11 @@ function formatDurationUnit(
   locale: Locale,
 ): string {
   const unit = intl.formatMessage({ id: messageId });
-  // 与工作流完成卡共用同一条间距规则，避免同一段时长在两处写法不同。
+  // Share the same spacing rule as the workflow completion card so the same duration is not styled differently in two places.
   return `${value}${workDurationUnitSeparator(locale)}${unit}`;
 }
 
-/** Desktop 与 Share 共用的工作时长文案，避免同一轮在两个 surface 显示不同单位。 */
+/** Work-duration copy shared by Desktop and Share so the same turn does not use different units across surfaces. */
 export function formatConversationWorkDuration(
   durationMs: number | undefined,
   intl: IntlInstance,

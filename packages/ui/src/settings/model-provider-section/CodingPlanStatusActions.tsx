@@ -70,22 +70,22 @@ export function CodingPlanUpgradeAction({
 }) {
   const { intl } = useZCodeIntl();
 
-  // 开源版不享受额度活动权益，升级入口只展示操作，不附带优惠徽标或规则说明。
+  // The open-source edition is not eligible for quota promotions; the upgrade entry shows the action without a discount badge or promotion details.
   return (
     <CodingPlanEntryButton
       bypassGate={upgradePlansVisible}
       type="button"
       size="lg"
       onClick={() => {
-        // 购买/升级入口必须先打开面板，OAuth 失效恢复由面板在用户选择
-        // plan/周期后处理，避免点击 Upgrade 直接跳登录导致用户看不到购买流程。
+        // The purchase/upgrade entry must open the panel first. The panel handles expired OAuth after the user selects
+        // a plan/cycle, so clicking Upgrade does not jump straight to login and hide the purchase flow.
         onUpgradePlansVisibleChange(!upgradePlansVisible);
       }}
       disabled={loginLoading}
     >
       {loginLoading ? (
-        // Upgrade 可能先触发 OAuth 业务 token 刷新。
-        // 等待期间只有 disabled 没有 spinner，用户会误以为点击没有响应。
+        // Upgrade may first refresh the OAuth business token.
+        // Without a spinner while disabled, users may think the click did not register.
         <Loader2Icon className="size-3.5 animate-spin" />
       ) : upgradePlansVisible ? (
         <ArrowLeftIcon className="size-3.5" />

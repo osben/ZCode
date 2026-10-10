@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-/** 仅承载已提交内容引用与展示元信息；内容本体不进入 command/topic frame。 */
+/** Carries only committed content references and display metadata; the content itself is not included in command/topic frames. */
 export const attachmentRefSchema = z
   .object({
     ref: z.string(),

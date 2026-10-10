@@ -15,29 +15,29 @@ import {
 } from "@/ToolCallBlocks/renderers/workflow-diagnostics.js";
 
 /**
- * 编译反馈行在 ToolLayout 各槽位里说的话。
- * 从 `create-workflow.tsx` 拆出（oxlint max-lines 400 门，同 `createWorkflowInput.ts` 先例）。
+ * Text shown in each ToolLayout slot for the compile feedback row.
+ * Split from `create-workflow.tsx` to meet the oxlint 400-line max-lines rule, following the `createWorkflowInput.ts` precedent.
  *
- * 只用行已有的槽位——种类词、名字、细节、状态——不往对话里加新元素：上一轮通知重设计在真机里被判
- * 「花」，正是因为引入了新的视觉语法。
+ * Use only the row's existing slots — kind, name, detail, status — without adding new elements to the conversation: the previous notification redesign was judged
+ * “too ornate” on a real device precisely because it introduced new visual syntax.
  */
 interface WorkflowDraftRowSlots {
-  /** 细节槽：「第 n 稿」。 */
+  /** Detail slot: “Draft n.” */
   secondaryText: ReactNode | undefined;
-  /** 状态词「n 处待修正 · 未运行」，编不过时才有。 */
+  /** Status label “n issues to fix · not run,” present only when compilation fails. */
   statusLabel: ReactNode | undefined;
-  /** 状态词前的空环灯，编不过时才有。 */
+  /** Hollow ring before the status label, present only when compilation fails. */
   statusIndicator: ReactNode | undefined;
-  /** 悬停提示：那句话 + 逐条诊断；编不过时才有。 */
+  /** Hover hint: the status sentence + diagnostics; present only when compilation fails. */
   statusTooltip: string | undefined;
-  /** 在途行（校验中的卡片表头）从第 2 稿起写在细节位的稿号文字。 */
+  /** Draft number shown in the detail slot from draft 2 onward on an in-progress row (the card header while validating). */
   inFlightOrdinalText: string | undefined;
 }
 
 interface WorkflowDraftRowInput {
   draft: WorkflowDraftPosition | undefined;
   compileErrors: boolean;
-  /** 在途行（编写、待确认）：第 2 稿起才编号，第 1 稿不预告还会有第 2 稿。 */
+  /** In-progress row (writing or awaiting confirmation): number from draft 2 onward; draft 1 should not imply there will be a draft 2. */
   inFlight: boolean;
   errorCount: number;
   diagnostics: readonly { line: number; column: number; message: string }[];
@@ -68,7 +68,7 @@ export function useWorkflowDraftRowSlots({
     ? `${intl.formatMessage({ id: "chat.toolCall.workflow.toFix" }, { count: errorCount })} · ${intl.formatMessage({ id: "chat.toolCall.workflow.notRun" })}`
     : undefined;
 
-  // ToolLayout 是 memo 组件：交给它的节点必须按值记忆，否则每次父级渲染都会整行重渲染。
+  // ToolLayout is memoized: nodes passed to it must be memoized by value, or every parent render rerenders the entire row.
   const secondaryText = useMemo(
     () => (ordinal === undefined ? undefined : <WorkflowDraftOrdinal ordinal={ordinal} />),
     [ordinal],
@@ -90,8 +90,8 @@ export function useWorkflowDraftRowSlots({
 }
 
 /**
- * 反馈行展开后的内容：脚本（带行号，被诊断点名的行号着警示色）、编译反馈卡；没有 display 时退回
- * 纯文本输出。待确认行复用同一块（那时没有诊断，只有脚本）。
+ * Expanded content for the feedback row: script (with line numbers; lines cited by diagnostics use warning color) and compile feedback card; fall back to
+ * plain-text output when display is absent. The awaiting-confirmation row reuses this block (it has no diagnostics, only the script).
  */
 export function WorkflowFeedbackContent({
   display,
@@ -104,7 +104,7 @@ export function WorkflowFeedbackContent({
   saved: boolean;
   scriptText: string | undefined;
 }) {
-  // 按内容记忆：display 不变就是同一个数组，代码块的注入样式不会跟着重建。
+  // Memoize by content: unchanged display keeps the same array, so injected code-block styles are not recreated.
   const flaggedLines = useMemo(
     () => (display?.ok === false ? workflowDiagnosticLines(display.diagnostics) : undefined),
     [display],
@@ -143,8 +143,8 @@ export function WorkflowFeedbackContent({
 }
 
 /**
- * 细节槽里要不要写稿号：编不过的行总是写（宿主给了位置时）；在途行从第 2 稿起写。
- * 运行卡、启动摘要与确认窗不走这里，永远不带稿号。
+ * Whether to show a draft number in the detail slot: always show it for failed rows (when the host provides a position); for in-progress rows, show it from draft 2 onward.
+ * Run cards, launch summaries, and confirmation dialogs do not use this path and never show draft numbers.
  */
 function workflowDraftOrdinalShown(
   draft: WorkflowDraftPosition | undefined,
@@ -168,8 +168,8 @@ function WorkflowDraftOrdinal({ ordinal }: { ordinal: number }) {
 }
 
 /**
- * 空环灯：形状说「什么都没跑」，颜色说注意力是否还悬着（最新一稿警示色，有更新的一稿后褪成中性）。
- * `wf-lamp` 让颜色的变化走过渡，而不是一跳。
+ * Hollow ring: its shape means “nothing ran,” and its color shows whether attention is still needed (warning color for the latest draft, then neutral after a newer draft).
+ * `wf-lamp` transitions the color instead of switching abruptly.
  */
 function WorkflowDraftLamp({ superseded }: { superseded: boolean }) {
   return (

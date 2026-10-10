@@ -4,36 +4,36 @@ import type {
 } from "@/components/workflow-timeline/timeline-model.js";
 
 /**
- * 脊线的排布：把时间线模型翻译成**每一节**
- * 要画的竖轨与曲线。纯函数、只有下标与像素偏移，没有 React、没有 DOM——渲染件照着画就行。
+ * Spine layout: translate the timeline model into the vertical tracks and curves to draw for **each segment**.
+ * Pure function using only indexes and pixel offsets; no React or DOM — renderers can draw directly from its output.
  *
- * 轨道 t 的竖轨在 `x = 21 + 12t`；带里的分支轨道从带首节的顶上 13px 用分叉曲线离开主轨，一路
- * 竖下来，到汇合站的节顶（没有汇合站就到带末节的节底）再用镜像的曲线回到主轨。分支站的节里主轨
- * 照常穿过，墨是横跨它的那条主线段的墨——控制流确实从那里流过，只是这一节的灯不在主线上。
+ * Track t's vertical line is at `x = 21 + 12t`; a branch track in a band leaves the main track from 13px above the first segment via a fork curve, runs
+ * vertically down, then returns to the main track with a mirrored curve at the merge segment's top (or at the last segment's bottom if there is no merge). The main track
+ * still passes through branch segments, and its stroke is the main segment spanning that row — control flow really passes through there, even though that segment's node is off the main track.
  *
- * 轨道段一律**成对**查（`from → to`），不按 `from` 索引：带里一站可以同时是双线段的左端与主线段
- * 的左端，`from` 不再唯一。
+ * Look up track segments only as **pairs** (`from → to`), not by `from` index: a band segment can be the left endpoint of both a branch and a main-track segment,
+ * so `from` is no longer unique.
  */
 
-/** 分叉 / 合流曲线占的高度。 */
+/** Height occupied by a fork / merge curve. */
 const SPINE_CURVE_PX = 13;
 
-/** 一段竖轨。`from` / `to` 是对默认起止的覆盖（px，分别距节顶 / 节底），给曲线让位时才有。 */
+/** A vertical track segment. `from` / `to` override the default start/end (px from the segment top / bottom) only when making room for a curve. */
 export interface SpineRailPiece {
   track: number;
   ink: TimelineInk;
-  /** `above` = 节顶到灯，`below` = 灯到节底，`full` = 整节穿过。 */
+  /** `above` = segment top to node, `below` = node to segment bottom, `full` = through the entire segment. */
   position: "above" | "below" | "full";
   from?: number;
   to?: number;
 }
 
-/** 分支轨道离开 / 回到主轨的那 13px。 */
+/** The 13px where the branch track leaves / returns to the main track. */
 export interface SpineCurvePiece {
   kind: "fork" | "merge";
   track: number;
   ink: TimelineInk;
-  /** 贴节顶还是贴节底（没有汇合站时合流画在带末节的底上）。 */
+  /** Attach to the segment top or bottom (without a merge node, the merge is drawn at the bottom of the band's last segment). */
   at: "top" | "bottom";
 }
 
@@ -46,7 +46,7 @@ export function spineSections(model: WorkflowTimelineModel): SpineSection[] {
   const sections: SpineSection[] = model.stations.map(() => ({ curves: [], rails: [] }));
   const trackAt = (i: number): number => model.stations[i]?.track ?? 0;
   const plain = model.rails.filter((rail) => rail.kind === undefined);
-  /** 横跨第 i 节、两端都在轨道 t 上的那条平轨（主轨穿过分支站、分支轨穿过别人的站都读它）。 */
+  /** Horizontal track spanning segment i with both ends on track t (used by the main track through a branch node and by a branch track through another node). */
   const spanning = (i: number, track: number): TimelineInk | undefined =>
     plain.find(
       (rail) =>
@@ -61,7 +61,7 @@ export function spineSections(model: WorkflowTimelineModel): SpineSection[] {
       station.track === 0 ? undefined : model.bands.find((b) => b.from <= i && i <= b.to);
     const track = band?.tracks[station.track];
     if (track === undefined) {
-      // 主线上的站：与从前一样，上一站画下半截、下一站画上半截；相邻无边就留空。
+      // Main-track node: as before, draw the lower half from the previous node and the upper half toward the next; leave empty when there is no adjacent edge.
       const above = model.rails.find(
         (rail) => rail.to === i && rail.kind !== "twin" && rail.kind !== "merge",
       );
@@ -72,7 +72,7 @@ export function spineSections(model: WorkflowTimelineModel): SpineSection[] {
       if (below !== undefined) section.rails.push({ ink: below.ink, position: "below", track: 0 });
       return;
     }
-    // 分支站：上下两截读它自己那条轨道，首尾两端读轨道的进出墨（也就是分叉 / 合流段的墨）。
+    // Branch node: the upper/lower halves use its own track; the outer endpoints use the entering/exiting strokes (the fork / merge segments).
     const at = track.stations.indexOf(i);
     const previous = track.stations[at - 1];
     const next = track.stations[at + 1];
@@ -96,7 +96,7 @@ export function spineSections(model: WorkflowTimelineModel): SpineSection[] {
       const end = band.join ?? band.to;
       const first = track.stations[0]!;
       const last = track.stations[track.stations.length - 1]!;
-      // 没有汇合站时合流画在带末节的底上，那一节的竖轨要短 13px。
+      // Without a merge node, the merge is drawn at the bottom of the last band segment, so shorten that segment's vertical track by 13px.
       const tail = band.join === undefined ? SPINE_CURVE_PX : undefined;
       sections[band.from]?.curves.push({ at: "top", ink: track.entry, kind: "fork", track: t });
       sections[end]?.curves.push({
@@ -116,7 +116,7 @@ export function spineSections(model: WorkflowTimelineModel): SpineSection[] {
           }
           continue;
         }
-        // 有汇合站时，汇合那一节的顶上是曲线，没有竖着穿过去的一截。
+        // When there is a merge node, a curve occupies the top of that segment, so no vertical section passes through it.
         if (i === end && tail === undefined) continue;
         const ink =
           i < first ? track.entry : i > last ? track.exit : (spanning(i, t) ?? track.exit);

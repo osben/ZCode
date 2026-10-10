@@ -1,12 +1,14 @@
 // ============================================================
-// escalate Tool - actor 把阻塞问题升级给主代理
+// Escalate Tool - actor escalates a blocking question to the main agent
 // ============================================================
-// 与 `submit_result` 完全同构地注入 actor 会话
-// （端口在场即注册、`tools:"none"` 下仍由 core 补回），但两者结算的是不同的东西：
-// submit 结算**这次 ask 的结果**，escalate 结算**一次问答**。
+// Injected into the actor session in the same way as `submit_result` (registered when the port
+// is present and added back by core even under `tools:"none"`), but they settle different
+// things: submit settles **the result of this ask**, while escalate settles **one question and
+// answer**.
 //
-// 输出形状刻意是「带判别位的扁平对象」而不是 union：两支都是普通工具结果（不是错误），
-// 模型读到的只有一段文本，判别位 `status` 只服务日志与结果投影。
+// Output is deliberately a flat object with a discriminant rather than a union: both branches
+// are ordinary tool results, not errors. The model sees only one text block; `status` serves
+// logs and result projection.
 
 import { z } from "zod";
 import { toToolJsonSchema } from "./json-schema.js";
@@ -35,20 +37,22 @@ export type EscalateInput = z.infer<typeof EscalateInputSchema>;
 export const EscalateInputJsonSchema = toToolJsonSchema(EscalateInputSchema);
 
 /**
- * 一次升级的结局。
+ * Outcome of one escalation.
  *
- * - `answered`：`message` 是主代理给出的答案原文，`qid` 是这次问答的全局唯一 id。
- * - `refused`：`message` 是陈述现状与下一步的文案（预算已尽 / 无在飞 ask），`reason` 是
- *   判别键。**这不是错误**——把「预算已尽」渲染成 error tool_result 会让模型当成可重试的
- *   故障，反复撞同一堵墙，而那正是本特性要消灭的行为。
+ * - `answered`: `message` is the main agent's original answer, and `qid` is the globally
+ *   unique id for this question and answer.
+ * - `refused`: `message` describes the current state and next step (budget exhausted / no ask
+ *   in flight), and `reason` is the discriminant. **This is not an error**; rendering "budget
+ *   exhausted" as an error tool_result would look retryable to the model, which would hit the
+ *   same wall repeatedly—the behavior this feature is intended to eliminate.
  */
 export const EscalateOutputSchema = z
   .object({
     status: z.enum(["answered", "refused"]),
     message: z.string(),
-    /** `answered` 才在场。 */
+    /** Present only for `answered`. */
     qid: z.string().optional(),
-    /** `refused` 才在场。 */
+    /** Present only for `refused`. */
     reason: z.enum(["budget_exhausted", "no_active_ask"]).optional(),
   })
   .strict();

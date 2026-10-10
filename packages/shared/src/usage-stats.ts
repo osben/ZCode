@@ -1,7 +1,7 @@
-/* eslint-disable max-lines -- Usage、Entitlement 与 Reset 的跨进程协议需要共享同一组 Account Access 字段和运行时 schema，暂时集中维护。 */
+/* eslint-disable max-lines -- Cross-process Usage, Entitlement, and Reset protocols temporarily share one set of Account Access fields and runtime schemas here. */
 import { z } from "zod";
 
-// 额度类型拆在 usage-quota.ts，见该文件头部说明；这里 re-export 保持既有 import 路径不变。
+// Quota types live in usage-quota.ts; see its header for details. Re-export them here to preserve existing import paths.
 export * from "./usage-quota.js";
 import type { UsageMcpQuotaSnapshot, UsageQuotaSnapshot } from "./usage-quota.js";
 import type { ZCodeAccountAccess, ZCodeProviderAccountAccess } from "./zcode-protocol/index.js";
@@ -16,72 +16,72 @@ export type CodingPlanUsageDetailSubject = "model" | "tool";
 
 export interface UsageStatsRequest {
   range: UsageStatsRange;
-  /** 使用统计数据源。App Usage 显式使用本地 session 聚合,Coding Plan 显式使用 monitor 接口。 */
+  /** Usage-statistics source. App Usage explicitly uses local session aggregation; Coding Plan explicitly uses the monitor API. */
   dataSource?: "local" | "monitor";
-  /** 设置页可传入用户当前选中的 Z.AI / BigModel 来源，避免两边都配置时只隐式读取第一家。 */
+  /** The Settings page can pass the user's selected Z.AI / BigModel source, avoiding an implicit choice when both are configured. */
   preferredProviderId?: string;
-  /** Registry 静态访问类别，或调用边界已解析的动态账号访问上下文。 */
+  /** Static Registry access category or dynamic account-access context resolved at the call boundary. */
   accountAccess?: ZCodeProviderAccountAccess | ZCodeAccountAccess;
-  /** 指定来源的场景必须命中 preferredProviderId,否则不允许回退到其它 provider 或本地聚合。 */
+  /** When a source is specified, it must match preferredProviderId; do not fall back to another provider or local aggregation. */
   requirePreferredProvider?: boolean;
-  /** 是否允许 host 环境变量覆盖 provider key。默认允许,显式 provider 场景可关闭。 */
+  /** Whether host environment variables may override the provider key. Allowed by default; can be disabled for an explicit provider. */
   allowEnvApiKey?: boolean;
   /**
-   * 统计按调用端时区归桶。
-   * UI 默认传入浏览器当前时区；缺省时 host 侧回退到系统时区。
+   * Bucket statistics by the caller's time zone.
+   * The UI defaults to the browser's current time zone; the host falls back to the system time zone when omitted.
    */
   timeZone?: string;
 }
 
 export interface CodingPlanUsageRequest {
   range: CodingPlanUsageRange;
-  /** 自定义日期范围。仅 range=custom 时生效，按调用端自然日解释，最大 30 天。 */
+  /** Custom date range. Applies only when range=custom; interpreted as calendar days in the caller's time zone, up to 30 days. */
   customStartDate?: string | null;
   customEndDate?: string | null;
   preferredProviderId: string;
-  /** Registry 静态访问类别，或本次 Team 查询绑定的动态账号访问上下文。 */
+  /** Static Registry access category or the dynamic account-access context bound to this Team query. */
   accountAccess: ZCodeProviderAccountAccess | ZCodeAccountAccess;
   timeZone?: string;
 }
 
 export interface UsageEntitlementRequest {
-  /** 购买或领取完成后，使对应 Start Plan balance 短期缓存失效。 */
+  /** Invalidate the corresponding Start Plan balance cache briefly after a purchase or claim completes. */
   invalidateBalanceCache?: boolean;
-  /** 兼容旧调用方的提示；Coding Plan 权益必须查询订阅并返回摘要，不再允许仅用额度推断权益。 */
+  /** Compatibility hint for older callers; Coding Plan entitlements must be fetched from the subscription and summarized, never inferred from quota alone. */
   includeSubscription?: boolean;
-  /** 聊天输入区可传入当前选中的内置供应商,确保 BigModel/Z.AI 用量跟随模型选择。 */
+  /** The chat composer can pass the selected built-in provider so BigModel/Z.AI usage follows the model selection. */
   preferredProviderId?: string;
-  /** 指定 Account Provider 的静态访问类别，或调用边界已解析的动态账号访问上下文。 */
+  /** Static access category for the specified Account Provider or dynamic account-access context resolved at the call boundary. */
   accountAccess?: ZCodeProviderAccountAccess | ZCodeAccountAccess;
-  /** 当前模型已明确选中该内置供应商时，即使供应商列表里被隐藏也允许读取其 key。 */
+  /** Allow reading the key even if this built-in provider is hidden in the provider list when the current model explicitly selects it. */
   allowDisabledPreferredProvider?: boolean;
-  /** 指定来源的场景必须命中 preferredProviderId,否则不允许回退到其它 provider。 */
+  /** When a source is specified, it must match preferredProviderId; do not fall back to another provider. */
   requirePreferredProvider?: boolean;
-  /** 是否允许 host 环境变量覆盖 provider key。默认允许,显式 provider 场景可关闭。 */
+  /** Whether host environment variables may override the provider key. Allowed by default; can be disabled for an explicit provider. */
   allowEnvApiKey?: boolean;
 }
 
 export interface UsageEntitlementSnapshot {
   generatedAt: number;
-  /** 当前额度响应的服务端时间（毫秒）；与本地快照生成时间 generatedAt 分离。 */
+  /** Server time from the current quota response (milliseconds), separate from the local snapshot generation time in generatedAt. */
   serverTime?: number;
   authenticated: boolean;
   unavailableReason?: "not_authenticated" | "not_configured" | "no_plan" | "unavailable";
-  /** 无可用 Start Plan 时，保留明确过期原因用于展示。 */
+  /** Preserve an explicit expiration reason for display when no Start Plan is available. */
   startPlanExpired?: boolean;
-  /** 团队订阅明确失效的原因，仅与 no_plan 一起返回。 */
+  /** Explicit reason a team subscription is unavailable; returned only with no_plan. */
   teamPlanUnavailableReason?: "expired" | "unassigned";
-  /** 当前 entitlement 查询对应的个人 / 团队上下文，用于设置页连接方式主判定。 */
+  /** Personal/team context for the current entitlement query, used by Settings to determine the connection method. */
   context?: UsageEntitlementContext | null;
-  /** 当前用于查询 quota 的模型供应商信息。 */
+  /** Model provider currently used to query quota. */
   provider: UsageEntitlementProviderInfo | null;
   remaining: UsageEntitlementRemaining | null;
   subscription: UsageEntitlementSubscription | null;
   quota: UsageQuotaSnapshot | null;
   /**
-   * ZCode 官方 Server MCP 的调用额度（`/api/v1/mcp/usage`）。
-   * 与 quota 同一份快照下发，是为了继承 entitlement 已有的缓存 / in-flight 合并 / TTL 策略；
-   * 拉取失败、未开通 Coding Plan、或该额度不属于本次查询的连接时一律为 null（可选数据面）。
+   * Call quota for the official ZCode Server MCP (`/api/v1/mcp/usage`).
+   * It is delivered in the same snapshot as quota to reuse the entitlement cache, in-flight deduplication, and TTL policies.
+   * It is null (optional data) if fetching fails, Coding Plan is not enabled, or the quota does not belong to this query's connection.
    */
   mcpQuota?: UsageMcpQuotaSnapshot | null;
 }
@@ -128,10 +128,10 @@ export interface UsageEntitlementSubscriptionDetail {
   billingCycle?: string | null;
   renewTime?: string | null;
   expireTime: string | null;
-  /** Start Plan balance 套餐下的权益生效时间；其他订阅类型可不提供。 */
+  /** Entitlement effective time for a Start Plan balance; optional for other subscription types. */
   entitlements?: Array<{
     entitlementId: string;
-    /** 服务端 entitlement show_name，用于待生效提示。 */
+    /** Server-side entitlement show_name, used for pending-activation notices. */
     showName?: string | null;
     effectiveTime: string | null;
   }>;
@@ -143,22 +143,22 @@ export interface UsageStatsSnapshot {
   timeZone: string;
   estimatedTokenCharDivisor: number;
   summary: UsageStatsSummary;
-  /** 按日期连续补齐后的日序列，空白日期会补 0，供趋势图直接使用。 */
+  /** Daily series filled with consecutive dates; missing dates are set to 0 for direct use in trend charts. */
   daily: UsageStatsDaySummary[];
   heatmap: UsageStatsHeatmap;
   models: UsageStatsModelUsage[];
   /**
-   * 数据来源标识：用于 UI 识别供应商 monitor 接口或本地 session 聚合数据。
-   * App Usage 显式读取本地 session 聚合；Coding Plan 显式读取当前 provider monitor。
+   * Data-source identifier, used by the UI to distinguish provider monitor data from local session aggregation.
+   * App Usage explicitly reads local session aggregation; Coding Plan explicitly reads the current provider monitor.
    */
   source?: "bigmodel-monitor" | "local";
-  /** 远端用量来源供应商，用于 UI 展示 BigModel / Z.AI 等来源。 */
+  /** Provider for remote usage data, for displaying sources such as BigModel / Z.AI in the UI. */
   sourceProvider?: UsageEntitlementProviderInfo | null;
-  /** 工具调用维度（仅 BigModel tool-usage 接口可用，本地聚合不填）。 */
+  /** Tool-call breakdown (available only through the BigModel tool-usage API; omitted for local aggregation). */
   tools?: UsageStatsToolUsage[];
 }
 
-// ── App Usage（agent 数据库真实统计）────────────────────────────────
+// ── App Usage (actual statistics from the agent database) ─────────────
 export const APP_USAGE_RANGES = ["all", "7d", "30d"] as const;
 export type AppUsageRange = (typeof APP_USAGE_RANGES)[number];
 
@@ -372,12 +372,12 @@ export interface CodingPlanHealthSnapshot {
 }
 
 export interface UsageStatsToolUsage {
-  /** 工具内部代号：search-prime / web-reader / zread / search-mcp 等。 */
+  /** Internal tool identifier, such as search-prime / web-reader / zread / search-mcp. */
   toolCode: string;
-  /** 用于展示的人类可读名称。 */
+  /** Human-readable name for display. */
   displayName: string;
   totalCalls: number;
-  /** 与 daily 同长度的按天调用次数，便于绘制趋势。 */
+  /** Per-day call counts with the same length as daily, for plotting trends. */
   dailyCalls: number[];
 }
 

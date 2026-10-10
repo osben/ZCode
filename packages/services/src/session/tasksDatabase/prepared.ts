@@ -1,6 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
 import { areTasksDatabaseMigrationsApplied } from "#src/session/tasksDatabase/migrations.js";
-// 仅当前进程的启动交接凭据；不落盘、不代替 SQLite 账本，不影响不同路径的新库。
+// Startup handoff credential for the current process only; not persisted, does not replace the SQLite ledger, and does not affect new databases at other paths.
 const migrated = new Set<string>();
 const prepared = new Set<string>();
 export function markTasksStorageMigrated(path: string): void {

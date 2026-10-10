@@ -10,8 +10,8 @@ type SubscriptionErrorReporter = Pick<ConversationTelemetrySupervisor, "reportVi
 
 function resolveSessionSubscriptionErrorCode(message: string): string {
   const trimmedMessage = message.trim();
-  // Bug 原因：recovery fail-closed 会把纯 reasonCode 直接写入 lastError，旧逻辑只识别
-  // “正文 (reasonCode)” 形式，导致结构化错误被错误聚合为 fault.subscribe.unknown。
+  // Bug cause: recovery fail-closed writes a bare reasonCode directly to lastError, while the old logic recognized only
+  // the "message (reasonCode)" form, causing structured errors to be incorrectly grouped as fault.subscribe.unknown.
   return (
     STANDALONE_REASON_CODE_PATTERN.exec(trimmedMessage)?.[0] ??
     SUFFIX_REASON_CODE_PATTERN.exec(trimmedMessage)?.[1] ??
@@ -36,8 +36,8 @@ export function useSessionSubscriptionErrorTelemetry(params: {
     if (reportedKeysRef.current.has(errorKey)) return;
     reportedKeysRef.current.add(errorKey);
 
-    // Bug 原因：订阅失败被 store 收敛成可见 error state 后不会再抛到 ErrorBoundary，
-    // 也绕过 Composer 的错误横幅埋点；这里复用 chat_error_banner 补齐真实可见曝光。
+    // Bug cause: after the store converts a subscription failure into a visible error state, it is no longer thrown to ErrorBoundary
+    // and bypasses Composer's error-banner telemetry. Reuse chat_error_banner here to record the visible impression.
     params.supervisor.reportVisibleChatError({
       surface: SESSION_SUBSCRIPTION_ERROR_SURFACE,
       errorKey,

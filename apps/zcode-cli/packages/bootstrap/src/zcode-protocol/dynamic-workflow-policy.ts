@@ -2,12 +2,14 @@ import { zcodeWorkspaceUpdateDynamicWorkflowPolicyParamsSchema } from "@zcode/sh
 import { parseParams, type ZCodeProtocolAgentServerContext } from "./server-types.js";
 
 /**
- * 动态工作流灰度门。判定权在 Host：
- * 它读 `/client/configs` 的 `dynamicWorkflow.mode`，CLI 只缓存结论，从不读 feature key
- * 或本地覆盖环境变量。与 off-peak-tool-policy.ts 同构：CLI 进程按 workspace 隔离，
- * 缓存一份即可；createRecord 对 legacy create/resume、v4 createSession 与 v4 冷恢复
- * （subscribe → resumePersistedSession，没有 host 参数通道）统一读取。
- * 只影响之后创建/恢复的 record；已活跃 record 的工具面不回收（灰度中途翻转策略一致）。
+ * Dynamic workflow rollout gate. The Host owns the decision:
+ * it reads `dynamicWorkflow.mode` from `/client/configs`, while the CLI caches only the result and
+ * never reads the feature key or local override environment variables. Like off-peak-tool-policy.ts,
+ * the CLI process is isolated by workspace and needs only one cached value. createRecord reads the
+ * same value for legacy create/resume, v4 createSession, and v4 cold recovery (subscribe →
+ * resumePersistedSession, which has no host parameter channel).
+ * This affects only records created/recovered later; it does not remove tools from active records,
+ * keeping the behavior consistent if the rollout flag changes mid-session.
  */
 export async function updateDynamicWorkflowPolicy(
   context: ZCodeProtocolAgentServerContext,

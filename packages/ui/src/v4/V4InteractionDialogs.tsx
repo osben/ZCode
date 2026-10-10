@@ -48,7 +48,7 @@ function resolveV4ElicitationRequest(
   projected: ZCodeElicitationRequest | null,
   botProgress: ZCodeElicitationRequest | null,
 ): ZCodeElicitationRequest | null {
-  // Bugfix：V4 snapshot 只保留原始阻塞请求，Bot 代答后的逐题进度必须覆盖同一 request 的投影。
+  // Bug fix: the V4 snapshot retains only the original blocking request, so per-question progress after a Bot answer must override that request's projection.
   if (projected && botProgress?.requestId === projected.requestId) {
     return botProgress;
   }
@@ -86,8 +86,8 @@ function createInteractionAutoResolutionIntentTracker(): InteractionAutoResoluti
 }
 
 /**
- * 竖切：把 projection.pendingInteractions 接到 PermissionDialog / userInput 弹窗。
- * ChatView 删除后若无此组件，带 tool 权限的会话会永久阻塞。
+ * Vertical slice: connect projection.pendingInteractions to PermissionDialog/userInput dialogs.
+ * Without this component after ChatView removal, conversations with tool permissions would remain blocked forever.
  */
 export function V4InteractionDialogs({
   sessionId,
@@ -106,12 +106,12 @@ export function V4InteractionDialogs({
   const clearWorkspaceHookReview = useWorkspaceHookReviewStore((state) => state.clear);
   const platform = useOptionalPlatform();
   const { intl } = useZCodeIntl();
-  // task 切换时 sessionId 会先更新，旧 task snapshot 可能再保留一帧。
-  // 若直接使用旧 snapshot，会把当前 task 的 renderer-local 问答草稿误判为过期并清理。
+  // On task switch, sessionId updates first and the old task snapshot may remain for one frame.
+  // Using the old snapshot directly would mark the current task's renderer-local question draft as stale and clear it.
   const currentSnapshot = getCurrentSessionInteractionSnapshot(sessionId, snapshot);
-  // workspaceHookReview 是 Settings/Hooks 处理的特殊交互，不能由通用 Dialog 渲染；
-  // 但它可以和 permission/userInput 共存，固定读取 [0] 会遮挡后续真正需要弹窗的交互。
-  // 这里只选择本组件可渲染的首个交互，同时保留 permission/userInput 的队列顺序。
+  // workspaceHookReview is a special interaction handled by Settings/Hooks and cannot be rendered by the generic Dialog.
+  // It can coexist with permission/userInput, so always reading [0] could hide a later interaction that actually needs a dialog.
+  // Select the first interaction this component can render while preserving permission/userInput queue order.
   const pending =
     currentSnapshot?.pendingInteractions.find(
       (interaction) =>
@@ -168,8 +168,8 @@ export function V4InteractionDialogs({
       sendCommand,
       onCommandSettled,
     });
-    // 软门禁：不再强制跳转 Settings/Hooks。
-    // 用户通过 WorkspaceHookPendingBanner 的 [去审核] 按钮主动打开 Hooks 设置。
+    // Soft gate: do not force navigation to Settings/Hooks.
+    // Users open Hooks settings themselves through the WorkspaceHookPendingBanner “Review” button.
   }, [
     clearWorkspaceHookReview,
     onCommandSettled,
@@ -203,7 +203,7 @@ export function V4InteractionDialogs({
         sessionId,
         payload: { interactionId, answer },
       });
-      // 权限/freeText/content 不落盘；registry 只持摘要，用于 ACK 丢失后的 query 对账。
+      // Do not persist permission/freeText/content; the registry stores only a digest for reconciliation after a lost ACK.
       pendingCommandRegistry.record(envelope);
       try {
         const ack = await sendCommand(envelope);
@@ -272,8 +272,8 @@ export function V4InteractionDialogs({
     );
     for (const requestId of Object.keys(taskUiState.elicitationFormDraftsByRequestId)) {
       if (!activeRequestIds.has(requestId)) {
-        // 请求可能在 task 不可见期间被另一端回答或自动结束；回到该 task 后以
-        // snapshot 的 pendingInteractions 为权威清理过期 renderer 草稿。
+        // Another client may answer or auto-close the request while the task is not visible; when returning to the task,
+        // use snapshot.pendingInteractions as the authority and clear stale renderer drafts.
         removeElicitationDraft(requestId);
       }
     }
@@ -281,8 +281,8 @@ export function V4InteractionDialogs({
 
   const sendSnoozeOnce = useCallback(
     async (interactionId: string, autoResolutionReady: boolean) => {
-      // 首个 userInput 与 autoResolution durable event 可能相邻两帧到达。未就绪时保留
-      // tracker 意图，但向弹窗返回 false，让后续真实操作仍可重试；就绪后的 effect 会补发。
+      // The first userInput and autoResolution durable event may arrive in adjacent frames. If not ready, retain
+      // the tracker intent but return false to the dialog so a later real action can retry; the ready-state effect sends it again.
       if (!autoResolutionReady) return false;
       if (!autoResolutionIntentRef.current.consumeSnooze(interactionId, autoResolutionReady)) {
         return true;
@@ -300,8 +300,8 @@ export function V4InteractionDialogs({
   );
 
   useEffect(() => {
-    // PermissionRequested 可能先投出 userInput，紧接着 autoResolution durable event 才到。
-    // 用户若在这两帧之间完成首个分题操作，先记本地意图，registry 就绪后立即补发一次。
+    // PermissionRequested may emit userInput before the autoResolution durable event arrives.
+    // If the user completes the first subquestion between those frames, record local intent and send it once the registry is ready.
     if (pending) {
       void sendSnoozeOnce(pending.interactionId, Boolean(pending.autoResolution));
     }
@@ -311,7 +311,7 @@ export function V4InteractionDialogs({
     return null;
   }
 
-  // workspaceHookReview 只能由 Settings/Hooks 行内 Trust 处理；绝不降级成通用 Dialog。
+  // workspaceHookReview must be handled by the inline Trust action in Settings/Hooks; never downgrade it to a generic Dialog.
   if (pending.payload.kind === "workspaceHookReview") {
     return null;
   }
@@ -322,7 +322,7 @@ export function V4InteractionDialogs({
       payload: pending.payload,
     });
     return (
-      // 连续 permission 会复用输入框焦点状态，按 interaction 重建。
+      // Consecutive permission requests reuse input focus state; rebuild it per interaction.
       <PermissionDialog
         key={pending.interactionId}
         request={request}
@@ -401,8 +401,8 @@ export function V4InteractionDialogs({
             if (!accepted) return;
             removeElicitationDraft(pending.interactionId);
             if (isExitPlanMode) {
-              // Plan 回执 ACK 与 replayable pending 清场是两条异步路径。
-              // 这里只上报已接受的 Plan interaction，由手机 pane 在仍读到旧权威状态时触发恢复。
+              // Plan receipt ACK and replayable pending cleanup are separate async paths.
+              // Report only the accepted Plan interaction here; the mobile pane triggers recovery while it still sees the old authoritative state.
               onPlanInteractionAccepted?.(pending.interactionId);
             }
           });

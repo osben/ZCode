@@ -37,32 +37,32 @@ import type { WorkflowActorInstance } from "@/app-shell/workflowRunPanel.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 
 /**
- * 运行详情页的脊线：卡上的横向时间线在
- * 这里竖着读。一根轨道从上到下贴着左缘，阶段是轨道上的灯，轨道的墨迹随控制流经过而变深、在进入
- * 正在运行的阶段那一段行进；子代理是挂在灯右侧、拉满本列的药丸（与卡上同一枚），升级问题挂在
- * 提问者那一行下面，再退一步。**不画回边**：那是卡的事，节头上的 `⟳ n` 已经说了这站跑过几轮。
+ * The spine for the run detail page: the horizontal timeline on the card is read vertically here. A track runs down the left edge;
+ * phases are lights on the track, and its ink deepens as control passes through, advancing along the active phase. Subagents are full-width pills
+ * to the right of the light (the same pills as on the card); escalation questions are one level below the asker's row. **Do not draw back edges**:
+ * those belong on the card, where the `⟳ n` in the phase header already says how many rounds this station ran.
  *
- * 轨道段与灯的墨迹、状态都读 `buildWorkflowTimeline` 的同一个模型（不变式 1：一个模型，三处
- * 消费）。轨道段只在模型有 `rails` 的相邻两站之间画——与卡同一条规则，相邻无边留空。
+ * Rail segments, their ink, and light status all read the same `buildWorkflowTimeline` model (invariant 1: one model, three
+ * consumers). Draw a rail segment only between adjacent stations with `rails` in the model—the same rule as the card; leave adjacent stations without an edge disconnected.
  *
- * 并行的阶段（模型的**带**）在这里读作缩进：分支轨道从带首节的顶上用曲线离开主轨，整节整节地
- * 竖下来，到汇合站的节顶再回来；分支站的节头与药丸一起右移 12px，主轨照常从它身边穿过。每一节
- * 要画哪些竖轨与曲线由 `workflowRunSpine.ts` 算好，这里只照着摆。**不画回边**（同上）。
+ * Parallel phases (a model **band**) appear as indentation here: branch rails curve away from the main rail above the first station in the band,
+ * descend one station at a time, then return at the top of the merge station. Branch station headers and pills shift right by 12px while the main rail continues past them.
+ * `workflowRunSpine.ts` calculates which vertical rails and curves each station needs; this component only lays them out. **Do not draw back edges** (as above).
  *
- * 折起的阶段在节头带一串头像（至多 3 枚 + `+n`）：折叠不能让「谁在这一站」不可见。
- * 正在运行的阶段自己展开：**每一个**正在跑的站都开（带里两条轨道可以同时在跑），已展开的不动。
+ * A collapsed phase header shows an avatar strip (up to 3 + `+n`): collapsing must not hide who is at the station.
+ * Active phases expand automatically: open **every** running station (two rails in a band can run at the same time) and leave already-open stations as they are.
  *
- * 参与者过了阈值的站是名册（追记「阶段名册」、「一扇门与一卷名单」）：钉 5 枚药丸（asking → running →
- * failed → 补位），第六枚是门（关着带其余人的计数行），门后是其余人的名单——每人一次、按状态分组、
- * 两列 `row` 药丸；折叠节头上头像串换成迷你量条。界上列不出来的子代理（`station.unlisted`）进门的
- * 人数、计数行与量条，却没有行可落，所以名单末尾用一行淡字交代这个差额。
+ * Stations over the participant threshold become a roster (design notes: "Phase roster," "a gate and a list"): pin 5 pills (asking → running →
+ * failed → replacement), and use the sixth slot for a gate (collapsed with a count of the remaining participants). Behind the gate is a roster of everyone else—once each,
+ * grouped by status, as two-column `row` pills; replace the collapsed header's avatar strip with a mini meter. Subagents beyond the visible limit (`station.unlisted`) count
+ * toward the gate, count row, and meter but have no row of their own, so add a muted line at the end of the roster to explain the difference.
  *
- * 落点：卡上「还有 n 个」那一行或站头把站 id 交给宿主，tab 带着
- * `focusPhaseId` 到这里——展开这一站、把门打开、节头滚到顶、底色亮一下再退回。一次打开只落一次
- * （键含 openedAt，同一站再点一次会再落）；之后用户滚走不追。
+ * Landing: the "n more" row on the card or a phase header passes the station id to the host, and the tab arrives with
+ * `focusPhaseId`—expand the station, open its gate, scroll its header to the top, and briefly highlight its background. Land once per open
+ * (the key includes openedAt, so opening the same station again lands again); do not follow the user after they scroll away.
  */
 const QUESTION_TICK_MS = 30_000;
-/** 落点亮一下的时长：持 400 ms 再用 800 ms 退回（`.wf-landed`）。 */
+/** Landing highlight duration: hold for 400 ms, then fade over 800 ms (`.wf-landed`). */
 const LANDING_MS = 1200;
 
 function questionKey(question: WorkflowRunPendingQuestion): string | undefined {
@@ -86,17 +86,17 @@ export const WorkflowRunPhaseList = memo(function WorkflowRunPhaseList({
   model: WorkflowTimelineModel;
   run: WorkflowRunState | undefined;
   pendingQuestions: readonly WorkflowRunPendingQuestion[];
-  /** 开 actor transcript tab（没有会话的槽位开占位）。缺席即行不可点——回调的存在本身就是门控。 */
+  /** Open an actor transcript tab (show a placeholder for a slot without a session). If absent, the row is not clickable; the callback's presence is the gate. */
   onOpenActor?: (instance: WorkflowActorInstance) => void;
-  /** 开脚本 transcript tab、落到这一站；缺席即脚本行不可点。 */
+  /** Open a script transcript tab and land on this station; if absent, the script row is not clickable. */
   onOpenWorkspace?: (phaseId: string) => void;
-  /** 落点：`key` 每次打开都不同（`phaseId@openedAt`），同一站再点一次也再落。 */
+  /** Landing request: `key` is unique for every open (`phaseId@openedAt`), so opening the same station again lands again. */
   landing?: { phaseId: string; key: string };
 }) {
   const { intl } = useZCodeIntl();
   const format = intl.formatMessage.bind(intl);
-  // 正在运行的站自己展开——带里两条轨道可以同时在跑，**每一个**都要开，不只最右那个。
-  // 用一个稳定的键记住这一组 id：投影每动一次模型都换身份，但这一组通常不变。
+  // Running stations expand automatically—a band can have two rails running at once, so open **every** one, not only the rightmost.
+  // Use a stable key for this set of ids: the projection creates a new model identity after each update, but the set usually stays the same.
   const runningKey = model.stations
     .filter((station) => station.status === "running")
     .map((station) => station.id)
@@ -119,7 +119,7 @@ export const WorkflowRunPhaseList = memo(function WorkflowRunPhaseList({
       return next;
     });
   }, []);
-  // 名册站的门：开着即列出名单，清单的局部状态，按站记。
+  // Gate for a roster station: opening it lists participants. This is local list state, tracked per station.
   const [listed, setListed] = useState<ReadonlySet<string>>(() => new Set());
   const toggleListed = useCallback((id: string) => {
     setListed((previous) => {
@@ -130,8 +130,8 @@ export const WorkflowRunPhaseList = memo(function WorkflowRunPhaseList({
     });
   }, []);
 
-  // 落点：展开 + 开门 + 亮一下；滚动在下一次提交之后（那一节得先展开才有节头可滚）。
-  // `landed` 按落点的键记（不是按站）：同一站再落一次，键变了、滚动与亮一下就都再来一遍。
+  // Landing: expand + open the gate + highlight; scroll after the next commit (the section must expand before its header can be scrolled into view).
+  // Track `landed` by landing key, not station: landing on the same station again changes the key and repeats scroll/highlight.
   const rootRef = useRef<HTMLDivElement>(null);
   const landedOnceRef = useRef<string | undefined>(undefined);
   const [landed, setLanded] = useState<{ phaseId: string; key: string } | undefined>(undefined);
@@ -164,7 +164,7 @@ export const WorkflowRunPhaseList = memo(function WorkflowRunPhaseList({
     head.scrollIntoView({ behavior: reduced ? "auto" : "smooth", block: "start" });
   }, [landed]);
 
-  // 等待时长要自己走：一个在等答案的 run **恰恰不发事件**。定时器只在有问题时存在。
+  // Waiting duration must update on its own: a run waiting for an answer **emits no events**. Create the timer only while a question exists.
   const [now, setNow] = useState(() => Date.now());
   const hasQuestions = pendingQuestions.length > 0;
   useEffect(() => {
@@ -199,8 +199,8 @@ export const WorkflowRunPhaseList = memo(function WorkflowRunPhaseList({
     const key = questionKey(question);
     return key === undefined || !attachedKeys.has(key);
   });
-  // 每一节要画的竖轨与曲线（`workflowRunSpine.ts`）：轨道段按**成对**查，不按 from——带里
-  // 一站可以同时是双线段与主线段的左端。
+  // Vertical rails and curves for each station (`workflowRunSpine.ts`): look up rail segments by **pair**, not by from—one station in a band
+  // may be the left endpoint of both a branch rail and a main rail.
   const sections = spineSections(model);
   const nameOf = (pill: TimelinePill) => pill.runtimeName ?? laneDisplayName(pill.lane, format);
   const phaseNameOf = (phaseId: string) => {
@@ -208,7 +208,7 @@ export const WorkflowRunPhaseList = memo(function WorkflowRunPhaseList({
     return station === undefined ? phaseId : phaseDisplayName(station.naming, format);
   };
 
-  // 行交出槽位身份：会话 id 有则随行，没有就开占位 tab。
+  // The row supplies slot identity: use its session id when present, otherwise open a placeholder tab.
   const openActor = (pill: TimelinePill) => {
     const slot = pill.slot;
     if (onOpenActor === undefined || slot === undefined) return;
@@ -227,11 +227,11 @@ export const WorkflowRunPhaseList = memo(function WorkflowRunPhaseList({
     });
   };
 
-  /** 药丸的公共接线（名字、状态、可打开）；整行药丸与「列出全部」的密排药丸共用。 */
+  /** Shared pill wiring (name, status, open action), used by full-width rows and compact pills in "show all." */
   const pillProps = (pill: TimelinePill) => {
     const label = nameOf(pill);
     const openable = onOpenActor !== undefined && pill.slot !== undefined;
-    // 脚本行同一条打开语法：开整个 run 的脚本 transcript，落到这一站的第一张卡。
+    // Same open behavior as a script row: open the run's script transcript and land on the first card for this station.
     const workspacePhaseId = onOpenWorkspace === undefined ? undefined : pill.workspace?.phaseId;
     const open: WorkflowAgentPillOpen | undefined = openable
       ? {
@@ -280,8 +280,8 @@ export const WorkflowRunPhaseList = memo(function WorkflowRunPhaseList({
         format({ id: "chat.toolCall.workflow.graph.card.reads" }, { count: activity.reads }),
       );
     }
-    // 可打开的药丸是 <button>：块级父元素里它只包住内容，行宽会随名字长短参差。
-    // 纵向 flex 容器让每一行拉满本列宽度（与卡上站下的药丸列同一机制）。
+    // Clickable pills are <button>s; inside a block parent they wrap only their content, so row widths vary with name length.
+    // A vertical flex container makes each row fill the column width (the same mechanism as the pill column under a phase on the card).
     return (
       <div className="flex min-w-0 flex-col" key={pill.key}>
         <WorkflowAgentPill {...pillProps(pill)}>
@@ -291,7 +291,7 @@ export const WorkflowRunPhaseList = memo(function WorkflowRunPhaseList({
             </span>
           )}
         </WorkflowAgentPill>
-        {/* 问题挂在提问者下面，再退一步（26px）：它属于这一行，不属于这一站。 */}
+        {/* Place the question 26 px below its asker; it belongs to that row, not the phase. */}
         {questions.map((question) => (
           <WorkflowRunQuestionRow
             className="ml-[26px]"
@@ -316,7 +316,7 @@ export const WorkflowRunPhaseList = memo(function WorkflowRunPhaseList({
         const status = station.status ?? "pending";
         const pending = status === "pending";
         const spine = sections[index] ?? { curves: [], rails: [] };
-        // 分支站整节右移一格：节头、药丸与灯一起，轨道之间 12px。
+        // Shift the whole branch station one step right: header, pills, and light together, leaving 12px between rails.
         const indent = station.track === 0 ? undefined : { paddingLeft: 39 + 12 * station.track };
         const roster = stationRosterOf(station, ROSTER_PINS_PANE);
         return (
@@ -346,7 +346,7 @@ export const WorkflowRunPhaseList = memo(function WorkflowRunPhaseList({
                 landed?.phaseId === station.id && "wf-landed",
               )}
               data-testid="workflow-run-phase-toggle"
-              // 再落时换 key 重挂节头：同一个类名不会让 CSS 动画重来。
+              // Change the key and remount the header on a new landing; the same class name alone would not restart the CSS animation.
               key={landed?.phaseId === station.id ? landed.key : "head"}
               onClick={() => toggle(station.id)}
               style={indent}
@@ -410,7 +410,7 @@ export const WorkflowRunPhaseList = memo(function WorkflowRunPhaseList({
                             size="row"
                             {...pillProps(pill)}
                           >
-                            {/* 第六个及以后的提问者落在名单里：尾槽前一枚 ?，问题本身不在这里重复。 */}
+                            {/* Askers from the sixth onward appear in the list: show a ? before the trailing slot, without repeating the question itself here. */}
                             {pill.asking === true ? (
                               <CircleHelpIcon
                                 aria-hidden

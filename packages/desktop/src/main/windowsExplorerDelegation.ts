@@ -43,8 +43,8 @@ export async function isDelegatedWindowsExplorerExit(
   }
 
   try {
-    // Explorer 的 code=1 同时可能表示“已委托”或“目标不可访问”。只有 UNC 目标
-    // 在同一时刻确实可访问，才允许把已知委托退出形态视为成功。
+    // Explorer's code=1 can mean either "delegated" or "target inaccessible." Treat a known delegated exit shape as success only
+    // when the UNC target is actually accessible at that moment.
     await access(candidate);
     return true;
   } catch {

@@ -1,4 +1,4 @@
-/* eslint-disable max-lines -- 推荐语料按表格逐条维护，集中放置便于对照审核。 */
+/* eslint-disable max-lines -- Recommended prompts are maintained row by row in one table for easy review. */
 import finderIcon from "@/onboarding/assets/finder.png";
 import terminalIcon from "@/onboarding/assets/terminal.png";
 import feishuIcon from "@/onboarding/assets/feishu.png";
@@ -14,7 +14,7 @@ type FeatureRecommendedPrompt = DraftSuggestedPromptItem & {
   mode: "office" | "coding";
 };
 
-// 本期推荐按模式硬分池；展示文案和填入正文分别维护。
+// This release hard-separates recommendations by mode; display text and inserted body text are maintained separately.
 export const featureSuggestedPrompts: FeatureRecommendedPrompt[] = [
   {
     id: "feature-recvvsPdvcWQzF",

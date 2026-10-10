@@ -22,9 +22,9 @@ function resolvePlatformScopedBundledAgentRoots(moduleDir?: string): Array<strin
   return [
     resolvePath(process.cwd(), "bundled-agents", platformKey),
     resolvePath(process.cwd(), "packages", "desktop", "bundled-agents", platformKey),
-    // dev:web 会用 pnpm --filter @zcode/server dev 启动，cwd 落在 packages/server。
-    // ZCode Agent 资源可能位于桌面包或仓库根的 bundled-agents/<platform>。
-    // 这里统一补齐仓库内所有平台化目录候选，desktop/web/server 共享一套解析链路。
+    // dev:web starts the server with pnpm --filter @zcode/server dev, so cwd is packages/server.
+    // ZCode Agent resources may be in the desktop package or in bundled-agents/<platform> at the repository root.
+    // Add all platform-specific repository directory candidates here so desktop, web, and server share one resolution path.
     resolvePath(process.cwd(), "..", "desktop", "bundled-agents", platformKey),
     moduleDir ? resolvePath(moduleDir, "..", "..", "desktop", "bundled-agents", platformKey) : null,
     moduleDir ? resolvePath(moduleDir, "..", "..", "bundled-agents", platformKey) : null,
@@ -50,9 +50,9 @@ export function findZCodeAgentRuntimeBinary(): string | null {
     return envPath;
   }
 
-  // import.meta.dirname 在打包后的 CJS bundle（zcode-server.cjs）中是 undefined，
-  // 直接传给 resolvePath 会报 "paths[0]" argument must be of type string。
-  // 这里做空值保护，只有 import.meta.dirname 存在时才构建对应的候选路径。
+  // import.meta.dirname is undefined in the bundled CJS bundle (zcode-server.cjs),
+  // and passing it directly to resolvePath causes "paths[0]" argument must be of type string.
+  // Guard against a missing value and build the corresponding candidate path only when import.meta.dirname exists.
   const moduleDir: string | undefined = import.meta.dirname;
   const platformScopedRoots = resolvePlatformScopedBundledAgentRoots(moduleDir);
   const legacyRoots = resolveLegacyBundledResourceRoots(moduleDir);
@@ -69,18 +69,18 @@ export function findZCodeAgentRuntimeBinary(): string | null {
 }
 
 /**
- * 查找 agent 的 JS bundle（resources/glm/zcode.cjs）。
- * 桌面打包态用 app 内置的 Electron Node runtime 直接执行这个 bundle，不再随包内置独立 Node 二进制。
- * 候选目录与 findZCodeAgentRuntimeBinary 完全平行，只是入口换成平台无关的 nodeBundleEntryFile。
- * 不查 GLM_BINARY_PATH——那个 env 指向原生二进制，语义不同。
+ * Find the agent JavaScript bundle (resources/glm/zcode.cjs).
+ * In packaged desktop builds, run this bundle directly with the app's bundled Electron Node runtime; no standalone Node binary is shipped.
+ * Candidate directories mirror findZCodeAgentRuntimeBinary, but use the platform-independent nodeBundleEntryFile as the entry point.
+ * Do not check GLM_BINARY_PATH; that environment variable points to a native binary and has different semantics.
  */
 export function findZCodeAgentRuntimeNodeBundle(): string | null {
   const runtime = ZCODE_AGENT_RUNTIME;
   const entrySegments = runtime.resolveNodeBundleSegments();
   const resourceSegments = [runtime.bundledResourceDir, ...entrySegments];
 
-  // 与 findZCodeAgentRuntimeBinary 一致，打包后的 CJS bundle 里 import.meta.dirname 为 undefined，
-  // 这里做空值保护后再构建仓库内候选路径。
+  // As with findZCodeAgentRuntimeBinary, import.meta.dirname is undefined in the bundled CJS bundle;
+  // guard against a missing value before building repository candidate paths.
   const moduleDir: string | undefined = import.meta.dirname;
   const platformScopedRoots = resolvePlatformScopedBundledAgentRoots(moduleDir);
   const legacyRoots = resolveLegacyBundledResourceRoots(moduleDir);

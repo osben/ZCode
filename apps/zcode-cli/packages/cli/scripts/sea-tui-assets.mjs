@@ -118,8 +118,8 @@ const workspacePackageParentDirectories = (root) => {
 
   return [
     ...workspacePackageParentDirectoryNames.map((directoryName) => resolve(root, directoryName)),
-    // TUI runtime 闭包会经由 @zcode/contracts 依赖仓库根的 @zcode/shared；
-    // 只扫描 apps/zcode-cli 子 workspace 会把这个合法 workspace 误判为缺失。
+    // The TUI runtime closure depends on the repository-root @zcode/shared through @zcode/contracts;
+    // scanning only the apps/zcode-cli workspace would incorrectly report this valid workspace as missing.
     resolve(repositoryRoot, "packages"),
   ];
 };
@@ -169,8 +169,9 @@ const runtimePackageNames = async ({ root, target, workspacePackageDirectories }
     const packageJson = JSON.parse(
       await readFile(resolve(packageDirectory, "package.json"), "utf8"),
     );
-    // SEA 缓存目录无法解析 pnpm workspace 链接；旧的 @zcode 白名单漏掉 i18n
-    // 后，构建仍成功但 TUI 启动才报错，因此这里必须按 manifest 递归收集依赖。
+    // The SEA cache directory cannot resolve pnpm workspace links. When the old @zcode allowlist
+    // missed i18n, the build still succeeded and the TUI failed only on startup, so dependencies
+    // must be collected recursively from manifests here.
     for (const [dependencyName, dependencyRange] of Object.entries(
       packageJson.dependencies ?? {},
     )) {

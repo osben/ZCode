@@ -15,7 +15,7 @@ interface V4UserInputDialogProps {
   onSubmit: (answer: { optionId?: string; freeText?: string }) => void;
 }
 
-/** v4 userInput 交互最小弹窗（竖切）。 */
+/** Minimal dialog for v4 userInput interaction (vertical split). */
 export function V4UserInputDialog({ model, onSubmit }: V4UserInputDialogProps) {
   const [freeText, setFreeText] = useState("");
 

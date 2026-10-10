@@ -18,7 +18,7 @@ function filterDirectoryBrowserEntries(entries: FileEntry[]): FileEntry[] {
   return entries.filter((e) => e.type === "directory");
 }
 
-// 远程目录条目已经携带 isSymbolicLink，这里只替换展示图标，不改变进入和选择目录的路径语义。
+// Remote directory entries already include isSymbolicLink; only the display icon changes here, not the path semantics for entering or selecting a directory.
 function getDirectoryBrowserEntryIconKind(
   entry: Pick<FileEntry, "isSymbolicLink" | "type">,
 ): "folder" | "folder-symlink" {
@@ -41,9 +41,9 @@ function createDirectoryBrowserRequestGuard(): {
 }
 
 /**
- * 服务端目录浏览对话框。
- * 通过 fileService.readdir 浏览远程/本地服务器的目录结构，
- * 适用于 web 端无法调用系统原生文件选择器的场景。
+ * Server-side directory browser dialog.
+ * Browse remote or local server directory structures through fileService.readdir,
+ * for cases where the Web app cannot call the native system file picker.
  */
 export function DirectoryBrowser({
   services,
@@ -69,7 +69,7 @@ export function DirectoryBrowser({
   const requestGuardRef = useRef(createDirectoryBrowserRequestGuard());
   const { intl } = useZCodeIntl();
 
-  // 初始化：获取 homedir 作为起始路径
+  // Initialize: use homedir as the starting path
   useEffect(() => {
     services.systemService
       .info()
@@ -103,14 +103,14 @@ export function DirectoryBrowser({
       setCurrentPath(path);
       setInputPath(path);
       onPathChange?.(path);
-      // 滚动到顶部
+      // Scroll to the top
       listRef.current?.scrollTo(0, 0);
     } catch (err) {
       if (!requestGuardRef.current.isCurrent(requestId)) {
         return;
       }
-      // 用户快速切换目录或隐藏目录时，较早 readdir 可能后返回；
-      // 过期错误不能覆盖最新导航状态，否则 UI 会展示和当前按钮状态不一致的目录/错误。
+      // When users quickly switch directories or toggle hidden directories, an earlier readdir call may return later;
+      // a stale error must not overwrite the latest navigation state, or the UI could show a directory/error that does not match the current button state.
       logger.error("[DirectoryBrowser] readdir 失败:", err);
       setError(intl.formatMessage({ id: "directoryBrowser.errorReadDir" }, { error: String(err) }));
     } finally {
@@ -121,7 +121,7 @@ export function DirectoryBrowser({
   };
 
   const handleGoUp = () => {
-    // 提取父目录路径
+    // Get the parent directory path
     const parent = currentPath.replace(/\/[^/]+\/?$/, "") || "/";
     navigateTo(parent);
   };
@@ -162,7 +162,7 @@ export function DirectoryBrowser({
           {intl.formatMessage({ id: "directoryBrowser.title" })}
         </div>
 
-        {/* 路径输入 */}
+        {/* Path input */}
         <form onSubmit={handleInputSubmit} className="flex flex-col gap-2 sm:flex-row">
           <Input
             type="text"
@@ -201,20 +201,20 @@ export function DirectoryBrowser({
         </form>
       </div>
 
-      {/* 错误提示 */}
+      {/* Error message */}
       {error ? <div className="text-ui-base text-destructive">{error}</div> : null}
 
-      {/* 目录列表 */}
+      {/* Directory list */}
       <div
         ref={listRef}
         className="flex-1 flex flex-col overflow-y-auto rounded-lg border border-border bg-background"
       >
-        {/* 上级目录 */}
+        {/* Parent directory */}
         {currentPath && currentPath !== "/" ? (
           <button
             onClick={handleGoUp}
-            // 滚动容器是纵向 flex 布局，子项默认允许 shrink；
-            // 当目录很多触发滚动时，首行“返回上级”会被压缩导致高度变化。
+            // The scroll container uses a vertical flex layout, where children may shrink by default;
+            // when many directories cause scrolling, the first “Go to parent” row would shrink and change height.
             className="flex h-10 w-full shrink-0 cursor-pointer items-center gap-2 border-b border-border px-3 text-left text-ui-base transition hover:bg-hover/50"
           >
             <FolderIcon className="size-4 shrink-0 text-foreground-subtle" />
@@ -265,9 +265,9 @@ export function DirectoryBrowser({
     >
       <div className="flex h-[min(36rem,calc(100vh-4rem))] w-[min(44rem,calc(100vw-2rem))] flex-col rounded-xl border border-border bg-popover p-4 shadow-xl">
         {browserContent}
-        {/* 非嵌入模式之前只能继续进入子目录，没有确认当前目录的路径。
-            Web 目录浏览器作为独立选择器使用时因此永远拿不到 onSelect 结果。
-            这里把确认动作收口到弹窗 footer，选择当前浏览路径并交回上层。 */}
+        {/* In standalone mode, users could only open child directories and could not select the current directory.
+            As a result, the Web directory browser never returned an onSelect result when used as a standalone picker.
+            Move the confirmation action to the dialog footer so the current path can be selected and returned to the caller. */}
         <div className="mt-3 flex shrink-0 justify-end gap-2">
           <Button
             type="button"

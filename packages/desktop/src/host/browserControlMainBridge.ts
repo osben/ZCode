@@ -9,10 +9,10 @@ import type {
 } from "@zcode/shared";
 
 /**
- * host↔main browser 执行桥。host 侧把一条命令经 parentPort 发给 main（WebContentsView+CDP 执行），
- * 按 requestId 关联回传结果。仿 createFullFeedbackLogArchiveViaMain 的 pending map 模式。
+ * Host↔Main browser execution bridge. Host sends a command to Main through parentPort (executed by WebContentsView+CDP)
+ * and correlates the returned result by requestId, using the pending-map pattern from createFullFeedbackLogArchiveViaMain.
  *
- * 设计成可注入 postMessage + 无全局依赖，便于单测（假 parentPort）。
+ * Designed with an injectable postMessage and no global dependencies for unit testing (with a fake parentPort).
  */
 
 interface BrowserExecuteRequestMessage {
@@ -48,8 +48,8 @@ interface PendingEntry {
 }
 
 /**
- * host→main browser 子命令预算。外层 node_repl MCP 工具默认 60s；这里保留 30s，给 JS
- * 收尾、图片归一化和结构化错误返回留下余量，不能让两层 deadline 同时竞争。
+ * Host→Main browser subcommand budget. The outer node_repl MCP tool defaults to 60 s; keep 30 s here to leave time for JS
+ * cleanup, image normalization, and structured error responses, without allowing the two deadlines to race.
  */
 const DEFAULT_TIMEOUT_MS = 30_000;
 
@@ -108,7 +108,7 @@ interface BrowserControlMainBridge {
     sessionContext?: "live" | "cached";
     command: BrowserCommand;
   }): Promise<BrowserCommandResult>;
-  /** main 回传结果时由 host 消息分派调用。 */
+  /** Called by Host message dispatch when Main returns a result. */
   handleResult(message: BrowserExecuteResultMessage): Promise<void>;
   dispose(): void;
 }
@@ -140,9 +140,9 @@ export function createBrowserControlMainBridge(deps: {
     type: "iab",
     name: "ZCode In-app Browser",
     capabilities: {
-      // capability collection 只列 optional capability；tabs/cua/screenshot/dialog 是 core API，
-      // 不能伪装成 capability。viewport 是 Playwright-like Tab 核心 API；browser capability
-      // 当前只保留 visibility，pageAssets/cdp 未实现不暴露。
+      // Capability collection lists optional capabilities only; tabs/cua/screenshot/dialog are core APIs
+      // and must not be presented as capabilities. viewport is a core Playwright-like Tab API; the browser capability
+      // currently exposes only visibility, and unimplemented pageAssets/cdp are not exposed.
       browser: [
         {
           id: "visibility",
@@ -210,8 +210,8 @@ export function createBrowserControlMainBridge(deps: {
       }
       const requestId = inputRequestId ?? randomUUID();
       if (pending.has(requestId)) {
-        // requestId 是结果与 Promise 的 correlation key。覆盖同 key entry
-        // 会把旧结果交给新 Promise，并让旧 timer/finally 删除新请求。必须在 transport 前失败。
+        // requestId correlates the result with its Promise. Replacing an entry with the same key
+        // would deliver an old result to a new Promise and let the old timer/finally delete the new request. Fail before transport.
         return {
           ok: false,
           error: {
@@ -223,8 +223,8 @@ export function createBrowserControlMainBridge(deps: {
         };
       }
       const startedAt = Date.now();
-      // 固定等待的 transport budget 为请求时长加 2 秒，覆盖等待本身和传输开销。
-      // 否则 waitForTimeout(>=30s) 会在 timer 正常完成前被 host bridge 误判超时。
+      // Set the transport budget for fixed waits to request duration + 2 seconds to cover the wait and transport overhead.
+      // Otherwise, waitForTimeout(>=30s) may be misclassified as a Host bridge timeout before its timer completes normally.
       const requestTimeoutMs =
         command.method === "playwrightWaitForTimeout"
           ? command.timeoutMs + 2_000
@@ -236,12 +236,12 @@ export function createBrowserControlMainBridge(deps: {
       return await new Promise<BrowserCommandResult>((resolve) => {
         let entry: PendingEntry;
         const timer = setTimeout(() => {
-          // 只允许当前 entry 结算自己的生命周期；防止未来新增路径重新引入同 key 覆盖后，
-          // 旧 timer 删除或取消后来登记的请求。
+          // Allow only the current entry to settle its own lifecycle. This prevents a future same-key replacement path
+          // from letting an old timer delete or cancel a later request.
           if (!deletePendingIfCurrent(requestId, entry)) return;
-          // 过去 host 只结束本地等待，main/backend 中的动作仍会继续执行，调用方却已
-          // 收到 timeout。现在用同一 scope 发送反向 cancel；动作是否已经下发无法证明时，
-          // 必须按操作结果契约标记 uncertain，不能谎报成无副作用超时。
+          // Previously, Host ended only the local wait while the action continued in Main/backend, even though the caller
+          // had already received a timeout. Send a reverse cancel using the same scope. When dispatch cannot be confirmed,
+          // mark the result uncertain under the operation-result contract; do not report a timeout as having no side effects.
           const cancelRequestId = randomUUID();
           try {
             deps.postToMain({
@@ -260,7 +260,7 @@ export function createBrowserControlMainBridge(deps: {
               command: { method: "cancelRequest", requestId },
             });
           } catch {
-            // 原请求已经超时；cancel transport 失败不会覆盖更有用的 timeout 结果。
+            // The original request has already timed out; a failed cancel transport must not replace the more useful timeout result.
           }
           resolve({
             ok: false,
@@ -319,7 +319,7 @@ export function createBrowserControlMainBridge(deps: {
     async handleResult(message): Promise<void> {
       const entry = pending.get(message.requestId);
       if (!entry) {
-        // 迟到结果（已超时清理）——忽略。
+        // Late result (already cleaned up after timeout); ignore it.
         return;
       }
       clearTimeout(entry.timer);
@@ -384,8 +384,8 @@ export function createBrowserControlMainBridge(deps: {
       for (const [requestId, entry] of pending) {
         if (!deletePendingIfCurrent(requestId, entry)) continue;
         clearTimeout(entry.timer);
-        // 直接 clear map 会让所有正在 await 的调用永久悬空。bridge shutdown 必须
-        // 结束 promise，并明确 backend 是否已执行不可判定。
+        // Clearing the map directly would leave every awaited call hanging forever. Bridge shutdown must
+        // settle the promises and explicitly mark whether backend execution is indeterminate.
         entry.resolve({
           ok: false,
           error: {

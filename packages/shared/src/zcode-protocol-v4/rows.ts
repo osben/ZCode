@@ -1,23 +1,23 @@
-// ConversationRow：行类型自包含。
-// 三条结构性规则：row 自包含（渲染任一行不需看别的行）；
-// 结构变化换整行（row.upserted），文本增长用 append（row.delta）；turn 是 row 上的标签不是容器。
+// ConversationRow: self-contained row types.
+// Three structural rules: each row is self-contained (rendering a row requires no other row);
+// structural changes replace the whole row (row.upserted), text growth uses append (row.delta), and turn is a row label, not a container.
 import { z } from "zod";
 import { executionOutputPreviewSchema } from "../execution-output-preview.js";
 import { timestampSchema } from "./core.js";
 import { backgroundResultOriginMetaSchema, workflowLaunchMetaSchema } from "./workflow-row-meta.js";
 
-// RowBase。rowId：session 内单调、永不复用、事件日志的确定性纯函数。
+// RowBase. rowId is monotonic and never reused within a session; deterministic pure function of the event log.
 const rowBaseFields = {
   rowId: z.number(),
   turnId: z.string(),
-  // canonical identity：新 CLI 每行必传；optional 只用于兼容旧版帧。
-  // entityId 定位持久实体，productTurnId 是产品轮次，不得由 UI 重猜。
+  // Canonical identity: required on every row from new CLIs; optional only for older-frame compatibility.
+  // entityId identifies the persisted entity; productTurnId is the product turn and must not be re-inferred by the UI.
   entityId: z.string().min(1).optional(),
   productTurnId: z.string().min(1).optional(),
   visibility: z.literal("visible").optional(),
   createdAt: timestampSchema,
   createdAtSeq: z.number(),
-  // 缺省全 false；只下发为 true 的键。canRewind 不在载荷内（rewind = editUserQuery 的 UI 入口）。
+  // Defaults to all false; send only keys set to true. canRewind is not in the payload (rewind is the UI entry point for editUserQuery).
   actions: z
     .object({
       canFork: z.literal(true).optional(),
@@ -32,7 +32,7 @@ const rowBaseFields = {
 export const rowActionsSchema = rowBaseFields.actions;
 export type RowActions = NonNullable<z.infer<typeof rowActionsSchema>>;
 
-// workflow 轮的行级元数据拆到了 workflow-row-meta.ts（max-lines）；名字在此原样再导出。
+// Row-level metadata for workflow turns moved to workflow-row-meta.ts (max-lines); re-export names unchanged here.
 export {
   backgroundResultOriginMetaSchema,
   workflowLaunchMetaSchema,
@@ -53,14 +53,14 @@ export const turnWorkSegmentSchema = z.object({
 });
 export type TurnWorkSegment = z.infer<typeof turnWorkSegmentSchema>;
 
-// turnHeader：product turn 边界 + 权威工时 + 每轮文件摘要。
-// guide 产生的内部折叠边界由 workSegments 表达；行归属仍由 CLI 决定，客户端零归属逻辑。
+// turnHeader: product turn boundary + authoritative elapsed time + per-turn file summary.
+// Internal collapsed boundaries created by guide are expressed through workSegments; CLI still determines row ownership, with no ownership logic in clients.
 export const turnHeaderRowSchema = z.object({
   ...rowBaseFields,
   kind: z.literal("turnHeader"),
-  // workflowLaunch：中枢直接启动的 controlOnly 轮。
-  // 记录在案的偏斜：闭集枚举加值 → 旧桌面 + 新 CLI 时该行 parse 失败被丢（与下方
-  // backgroundSource: "workflow" 加值同一档），CLI 与桌面同批发布下接受。
+  // workflowLaunch: controlOnly turn started directly by the hub.
+  // Known skew behavior: adding a closed-enum value means an older Desktop with a newer CLI drops the row on parse failure (same tier as adding
+  // backgroundSource: "workflow" below); acceptable when CLI and Desktop ship together.
   origin: z.enum([
     "userInput",
     "backgroundResult",
@@ -68,22 +68,22 @@ export const turnHeaderRowSchema = z.object({
     "editRerun",
     "workflowLaunch",
   ]),
-  // 执行语义由 CLI 投影裁决；UI 不得根据输入文本或 duration 反推。
-  // optional 仅用于兼容旧 snapshot，新的 turnHeader 一律显式写入。
+  // CLI projection decides execution semantics; UI must not infer them from input text or duration.
+  // Optional only for old snapshot compatibility; new turnHeader rows always set it explicitly.
   executionKind: z.enum(["agent", "controlOnly"]).optional(),
-  // 当前 query 的命令归因与历史轮次数；optional 兼容旧 transcript/snapshot。
+  // Command attribution and historical turn count for the current query; optional for old transcript/snapshot compatibility.
   sourceCommandId: z.string().optional(),
   historyRoundCount: z.number().int().nonnegative().optional(),
   state: z.enum(["running", "completedSuccess", "completedInterrupted", "failed"]),
   startedAt: timestampSchema,
   endedAt: timestampSchema.optional(),
-  // 权威工时：排除权限等待/用户输入等待/verifier 等待。
+  // Authoritative elapsed time: excludes permission / user-input / verifier waits.
   activeMs: z.number().optional(),
-  // guide 不切 product turn，但每条 accepted guide 都开启独立视觉工作段。
-  // 普通 turn 缺省以保持旧 snapshot 兼容；一旦出现 guide，CLI 负责完整投影首段与后续段。
+  // guide does not split a product turn, but each accepted guide starts a separate visual work segment.
+  // Defaults to absent to preserve old snapshot compatibility; once guide is present, CLI projects the first and subsequent segments fully.
   workSegments: z.array(turnWorkSegmentSchema).optional(),
   originMeta: backgroundResultOriginMetaSchema.optional(),
-  // origin === "workflowLaunch" 的轮上在场（活投影来源）；与 originMeta 并列，不复用其形状。
+  // Present on turns where origin === "workflowLaunch" (live projection source); alongside originMeta, without reusing its shape.
   workflowLaunch: workflowLaunchMetaSchema.optional(),
   fileChanges: z
     .object({
@@ -96,17 +96,17 @@ export const turnHeaderRowSchema = z.object({
 });
 export type TurnHeaderRow = z.infer<typeof turnHeaderRowSchema>;
 
-// userInput。originMeta 消灭文本嗅探。
+// userInput. originMeta eliminates text sniffing.
 export const userInputRowSchema = z.object({
   ...rowBaseFields,
   kind: z.literal("userInput"),
   text: z.string(),
-  // text 从此下标起是引擎附加文本（dwf ask 尾注 /
-  // nudge），GUI 把它折进默认收起的披露；0 = 整条都是；缺席 = 无（老转录、非工作流会话）。
+  // Text from this index onward is appended by the engine (dwf ask suffix /
+  // nudge); GUI folds it into a disclosure collapsed by default. 0 = entire text; absent = none (old transcript or non-workflow session).
   epilogueStart: z.number().int().nonnegative().optional(),
-  // workflowLaunch：中枢直接启动轮的用户可见行。
-  // 消息文本仍进 text（旧客户端 / TUI 的降级呈现就是那句规范英文）；新客户端用下方
-  // workflowLaunch 元数据画轮尾 run 卡而非气泡。闭集加值的偏斜同 turnHeader.origin 注释。
+  // workflowLaunch: user-visible row for a turn started directly by the hub.
+  // Message text remains in text (older clients / TUI fall back to that canonical English sentence); newer clients use the
+  // workflowLaunch metadata below to render a run card at turn end instead of a bubble. Closed-enum skew matches the turnHeader.origin comment.
   origin: z.enum([
     "realUser",
     "backgroundResult",
@@ -117,23 +117,23 @@ export const userInputRowSchema = z.object({
   ]),
   originMeta: z
     .object({
-      // 与 backgroundResultOriginMetaSchema 同一组取值（含 workflow run 的 "workflow"）。
+      // Same value set as backgroundResultOriginMetaSchema (including "workflow" for workflow runs).
       backgroundSource: z.enum(["bash", "subagent", "workflow"]).optional(),
       workId: z.string().optional(),
       senderSessionId: z.string().optional(),
       senderLabel: z.string().optional(),
     })
     .optional(),
-  // origin === "workflowLaunch" 的行上在场；与 originMeta 并列，与 turnHeader 上同一份。
+  // Present on rows with origin === "workflowLaunch”; alongside originMeta, matching turnHeader.
   workflowLaunch: workflowLaunchMetaSchema.optional(),
-  // 经 turn-steer 注入（guideModeTurnSteer）。
+  // Injected through turn-steer (guideModeTurnSteer).
   guided: z.literal(true).optional(),
-  // realUser/guided 必带；系统来源缺省。overlay 收口锚点。
+  // Required for realUser/guided; absent for system sources. Overlay finalization anchor.
   sourceCommandId: z.string().optional(),
-  // edit/retry 会生成新的 sourceCommandId；该字段固定指向 canonical input 根，
-  // 用于一次性恢复预算等跨重跑 lineage 判定。旧 transcript 可缺省。
+  // edit/retry creates a new sourceCommandId; this field stays pointed at the canonical input root,
+  // for lineage checks across retries such as one-time recovery budgets. May be absent in old transcripts.
   rootSourceCommandId: z.string().optional(),
-  // 提交端身份由 CLI admission 写入；旧 transcript 可缺省。
+  // Submitting client identity is written by CLI admission; may be absent in old transcripts.
   clientId: z.string().optional(),
   attachments: z
     .array(
@@ -149,14 +149,14 @@ export const userInputRowSchema = z.object({
 });
 export type UserInputRow = z.infer<typeof userInputRowSchema>;
 
-// assistantText / reasoning。
-// 不变量：追加只能进 state="streaming" 的行；普通新 response 必然新 rowId。唯一例外是
-// ProductProjection 已由 length/zero-tool 事实确认的 output-token Continue，会重新打开同 turn
-// 且视觉紧邻的 assistantText row；客户端仍只观察标准 row.upserted + row.delta。
+// assistantText / reasoning.
+// Invariant: append only to rows in state="streaming"; a normal new response always gets a new rowId. The only exception is
+// output-token Continue, confirmed by ProductProjection using length/zero-tool facts, which reopens the visually adjacent assistantText row in the same turn;
+// clients still observe only standard row.upserted + row.delta.
 export const assistantTextRowSchema = z.object({
   ...rowBaseFields,
   kind: z.literal("assistantText"),
-  // 同一模型 response 的正文与工具共享此 ID；optional 兼容旧 snapshot。
+  // Body and tools from the same model response share this ID; optional for old snapshot compatibility.
   assistantResponseId: z.string().min(1).optional(),
   text: z.string(),
   state: z.enum(["streaming", "complete", "interrupted", "failed"]),
@@ -168,7 +168,7 @@ export type AssistantTextRow = z.infer<typeof assistantTextRowSchema>;
 export const reasoningRowSchema = z.object({
   ...rowBaseFields,
   kind: z.literal("reasoning"),
-  // 同一模型 response 的思考、正文与工具共享此 ID；optional 兼容旧 snapshot。
+  // Reasoning, body, and tools from the same model response share this ID; optional for old snapshot compatibility.
   assistantResponseId: z.string().min(1).optional(),
   text: z.string(),
   state: z.enum(["streaming", "complete", "interrupted"]),
@@ -176,7 +176,7 @@ export const reasoningRowSchema = z.object({
 });
 export type ReasoningRow = z.infer<typeof reasoningRowSchema>;
 
-// toolCall 展示层 schema 已拆至 ./toolDisplay.ts（rows.ts 受 max-lines 约束）。
+// Tool-call display schemas moved to ./toolDisplay.ts (rows.ts is subject to max-lines).
 import { toolCallDisplaySchema, toolOutputSchema, toolProgressSchema } from "./toolDisplay.js";
 
 export const cuaAppIdentitySchema = z
@@ -191,7 +191,7 @@ export type CuaAppIdentity = z.infer<typeof cuaAppIdentitySchema>;
 export const toolCallRowSchema = z.object({
   ...rowBaseFields,
   kind: z.literal("toolCall"),
-  // 同一模型 response 的正文与工具共享此 ID；optional 兼容旧 snapshot。
+  // Body and tools from the same model response share this ID; optional for old snapshot compatibility.
   assistantResponseId: z.string().min(1).optional(),
   toolCallId: z.string(),
   toolName: z.string(),
@@ -200,16 +200,16 @@ export const toolCallRowSchema = z.object({
   input: z.unknown().optional(),
   cuaApp: cuaAppIdentitySchema.optional(),
   output: toolOutputSchema.optional(),
-  // display 解析失败只丢这张卡的载荷，不拒整条 row（理由见 toolDisplay.ts 的 toolOutputSchema
-  // 注释：装饰载荷不得决定 row/帧/订阅的生死）。
+  // If display parsing fails, discard only this card's payload, not the whole row (see the toolOutputSchema
+  // comment in toolDisplay.ts: decorative payload must not determine the fate of a row/frame/subscription).
   display: toolCallDisplaySchema.optional().catch(undefined),
-  // status=error 时必带。
+  // Required when status=error.
   error: z.object({ code: z.string(), message: z.string() }).optional(),
-  // 仅 replayable 档运行中出现，终态清除。
+  // Present only while running in replayable mode; cleared on terminal state.
   progress: toolProgressSchema.optional(),
-  // continuous/replayable 共用的有界 Bash 内容，终态或后台移交时清除。
+  // Bounded Bash content shared by continuous/replayable; cleared on terminal state or background handoff.
   outputPreview: executionOutputPreviewSchema.optional(),
-  // status=pendingApproval 时指向 pendingInteractions 项。
+  // Points to a pendingInteractions entry when status=pendingApproval.
   approvalInteractionId: z.string().optional(),
   backgrounded: z.literal(true).optional(),
   workId: z.string().optional(),
@@ -218,8 +218,8 @@ export const toolCallRowSchema = z.object({
 });
 export type ToolCallRow = z.infer<typeof toolCallRowSchema>;
 
-// 分享结果物是会话正式投影的一部分；ref 在本地投影中是受 Host 授权的读取引用，
-// 公开分享投影必须将其替换为 zcode-artifact://share/:id，禁止透传本地路径。
+// Share artifacts are part of the official conversation projection; ref is a Host-authorized read reference in local projection.
+// Public share projections must replace it with zcode-artifact://share/:id and must not expose local paths.
 export const conversationArtifactTypeSchema = z.enum([
   "pdf",
   "pptx",
@@ -247,16 +247,16 @@ export const artifactRowSchema = z.object({
 });
 export type ArtifactRow = z.infer<typeof artifactRowSchema>;
 
-// subagent。前提：subagent 镜像事件必须进事件日志。
+// subagent. Prerequisite: subagent mirror events must be included in the event log.
 export const subagentRowSchema = z.object({
   ...rowBaseFields,
   kind: z.literal("subagent"),
-  // 触发该子智能体的 Agent/Task 工具调用；并发 spawn 顺序不可作为关联依据。
+  // Agent/Task tool call that triggered this subagent; concurrent spawn order cannot be used for correlation.
   parentToolCallId: z.string().optional(),
   subagentType: z.string(),
   status: z.enum(["running", "success", "failed", "cancelled"]),
   summaryText: z.string(),
-  // 存在 → UI 可下钻订阅 conversation/<childSessionId>（不内嵌 child rows）。
+  // Present → UI can drill down by subscribing to conversation/<childSessionId> (child rows are not embedded).
   childSessionId: z.string().optional(),
   backgrounded: z.literal(true).optional(),
   workId: z.string().optional(),
@@ -265,8 +265,8 @@ export const subagentRowSchema = z.object({
 });
 export type SubagentRow = z.infer<typeof subagentRowSchema>;
 
-// Hook runtime descriptor 只用于 CLI event/projection 输入兼容。对话 wire row 使用下方
-// client-safe summary，不携带命令、绝对路径、stdin/stdout/stderr/tool input 或环境变量。
+// Hook runtime descriptor is used only for CLI event/projection input compatibility. Conversation wire rows use the client-safe summary below;
+// it carries no commands, absolute paths, stdin/stdout/stderr, tool input, or environment variables.
 export const hookExecutionDescriptorSchema = z
   .object({
     clientVisible: z.literal(true),
@@ -287,7 +287,7 @@ export const hookExecutionProjectionSchema = z
   .object({
     hookRunId: z.string().min(1),
     hookIndex: z.number().int().nonnegative(),
-    // 同一 runId 已观察到 HookRunStarted 才为 true；admission-only blocked 为 false。
+    // True only after HookRunStarted has been observed for this runId; admission-only blocked is false.
     didExecute: z.boolean(),
     state: z.enum(["running", "completed", "failed"]),
     outcome: z.enum(["success", "blocked", "failed", "cancelled", "timed_out"]).optional(),
@@ -327,8 +327,8 @@ export const hookInvocationRowSchema = z.object({
 });
 export type HookInvocationRow = z.infer<typeof hookInvocationRowSchema>;
 
-// timelineMarker。
-// compact.status=cancelled 表示 auto compact 被 stop；失败终态为 failed。
+// timelineMarker.
+// compact.status=cancelled means auto compact was stopped; failed is a failure terminal state.
 export const timelineMarkerPayloadSchema = z.union([
   z.object({
     type: z.literal("compact"),
@@ -338,13 +338,13 @@ export const timelineMarkerPayloadSchema = z.union([
     tokensAfter: z.number().optional(),
     summaryRef: z.string().optional(),
   }),
-  // 出现在 child 会话首部（forkTimelineIsBoundary）。
+  // Appears at the beginning of a child session (forkTimelineIsBoundary).
   z.object({
     type: z.literal("forkNotice"),
     parentSessionId: z.string(),
     parentRowId: z.number(),
   }),
-  // 出现在 parent（可选展示）。
+  // Appears in the parent (optional display).
   z.object({
     type: z.literal("forkCreated"),
     childSessionId: z.string(),
@@ -360,8 +360,8 @@ export const timelineMarkerPayloadSchema = z.union([
   }),
   z.object({
     type: z.literal("modelChange"),
-    // 显式 ∅→X 模型边界没有来源；never 保证两个来源字段不能只出现一个，
-    // 避免 renderer 接收到半个 provider/model 元组。
+    // An explicit ∅→X model boundary has no source; never ensures the two source fields cannot appear alone,
+    // preventing the renderer from receiving a partial provider/model tuple.
     fromProvider: z.never().optional(),
     fromModel: z.never().optional(),
     toProvider: z.string(),
@@ -384,7 +384,7 @@ export const timelineMarkerPayloadSchema = z.union([
     attempt: z.number(),
     reasonCode: z.string(),
   }),
-  // workspace 域动作在时间线上的回执。
+  // Receipt in the timeline for a workspace-scoped action.
   z.object({
     type: z.literal("checkpointRestored"),
     checkpointId: z.string(),
@@ -393,12 +393,12 @@ export const timelineMarkerPayloadSchema = z.union([
 export type TimelineMarkerPayload = z.infer<typeof timelineMarkerPayloadSchema>;
 
 /**
- * marker 泳道：
- * 落位语义由 CLI 投影裁决，UI 只按 lane 装配、不得按 marker type 自行推断。
- * - assistantWork：assistant 工作活动（compact），进「已工作」折叠组；
- * - turnTailBoundary：轮尾边界（goalVerify/forkNotice），留轮结尾不折叠；
- * - lightBoundary：轮顶轻边界（modelChange），渲染在 user 输入之前。
- * optional = 老 snapshot 兼容（缺省时 UI 按 marker type 回落映射）。
+ * Marker lane:
+ * CLI projection decides placement semantics; UI assembles by lane and must not infer by marker type.
+ * - assistantWork: assistant work activity (compact), placed in the “worked” collapsed group;
+ * - turnTailBoundary: turn-tail boundary (goalVerify/forkNotice), remains at the end of the turn and is not collapsed;
+ * - lightBoundary: light boundary at the start of a turn (modelChange), rendered before user input.
+ * Optional for old snapshot compatibility (when absent, UI falls back to mapping by marker type).
  */
 export const timelineMarkerLaneSchema = z.enum([
   "assistantWork",
@@ -410,7 +410,7 @@ export type TimelineMarkerLane = z.infer<typeof timelineMarkerLaneSchema>;
 export const timelineMarkerRowSchema = z.object({
   ...rowBaseFields,
   kind: z.literal("timelineMarker"),
-  // 用户触发的 marker 必带。
+  // Required for user-triggered markers.
   sourceCommandId: z.string().optional(),
   lane: timelineMarkerLaneSchema.optional(),
   marker: timelineMarkerPayloadSchema,

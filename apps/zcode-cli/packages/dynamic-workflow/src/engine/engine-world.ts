@@ -1,9 +1,11 @@
 /**
- * engine.ts 顶到 oxlint max-lines 上限（400 行），把 world 节点（world-read / world-run）
- * 的准入-结算路径与 amend-resume 导入缓存的关门 / 恢复接缝拆到本文件；公开面仍从 engine.ts 导出。
+ * engine.ts reached oxlint's max-lines limit (400), so the admission/settlement paths for world
+ * nodes (world-read / world-run) and the close/recovery seam for the amend-resume import cache were
+ * moved to this file; the public surface is still exported from engine.ts.
  *
- * 自由函数经 {@link EngineState} 接缝读写引擎状态；WorkflowEngine.worldRead 只是薄委托，
- * 关门由调度器经 SchedulerHost 触发，恢复在引擎构造函数的 resume 分支里调用。
+ * Free functions read and write engine state through the {@link EngineState} seam;
+ * WorkflowEngine.worldRead is only a thin delegate. The scheduler triggers cache closure through
+ * SchedulerHost, and recovery is called from the resume branch of the engine constructor.
  */
 
 import { canonicalJson, inputHash } from "./hash.js";
@@ -30,14 +32,15 @@ export function readWorld(
   if (state.isRunSettled()) return Promise.reject(state.runError());
   const ordinal = state.nextOrdinal(siteId);
   const instance: InstanceRef = { siteId, ordinal };
-  // inputHash 覆盖 `{op, args}`（而非单实参的 `{op, arg}`）。这是**有意的载荷形变**：
-  // 旧 journal（多参 world-read 之前写下的）里，每个 world-read 命中都会 inputHash 不符而让 run 以
-  // InputHashMismatch 大声失败。可接受——v1 的 resume 本就要求脚本文本逐字节相同
-  // （script_hash），facade 表面早于多参 world-read 的脚本不会是要被 resume 的那个脚本。
-  // 写在这里是因为故障点在 resume，离这一行很远。
+  // inputHash covers `{op, args}` (rather than a single argument `{op, arg}`). This is an
+  // **intentional payload change**: in old journals written before multi-argument world-read, every
+  // world-read hit would have a different inputHash and fail the run loudly with InputHashMismatch.
+  // This is acceptable—v1 resume already requires byte-identical script text (script_hash), so a
+  // script using the facade before multi-argument world-read would not be the script being resumed.
+  // The comment is here because the failure appears during resume, far from this line.
   const hash = inputHash({ op, args });
-  // 有界的 `{op, args}`：与 hash 同一次准入写下，
-  // 并在结算的 upsert 里原样带过去——putNode 是整条替换，漏一处就把它抹回 NULL。
+  // Bounded `{op, args}` is written at the same admission as the hash and passed through unchanged
+  // in the settlement upsert. putNode replaces the entire row, so omitting it would reset it to NULL.
   const input = boundWorldReadInput(op, args);
 
   const recorded = state.journal.getNode(state.runId, siteId, ordinal);
@@ -47,9 +50,11 @@ export function readWorld(
       state.failRun(err);
       return Promise.reject(err);
     }
-    // 完结命中短路（journal 化世界读取使 resume 免疫于 run 与 resume 之间的磁盘变化）。
-    // 释放点过 replay 次序闸：一条扇出分支里的 world 读取同样是别人的续体在等的东西，
-    // 按准入顺序放会把 join 之后的序号错位。
+    // Short-circuit completed hits (journaling world reads makes resume immune to disk changes
+    // between the original run and resume).
+    // Release through the replay-order gate: a world read in one fan-out branch may be something
+    // another continuation is waiting for; releasing by admission order would misalign ordinals
+    // after the join.
     if (recorded.status === "completed") {
       return heldResolution(state.holdForReplay, instance, () => {
         state.record({ type: "node-settled", instance, outcome: "ok", cached: true });
@@ -68,18 +73,20 @@ export function readWorld(
         throw WorkflowError.fromJSON(recorded.error!);
       });
     }
-    // status === "running"：崩溃于执行中，落到下面重新 live 执行。
+    // status === "running": the process crashed during execution; fall through and run it live again.
   }
 
-  // op "run" 是效应而不是读，journal 单列一种（world-run）：机制同构，审计面诚实。其余 op 保持 world-read。
+  // op "run" is an effect rather than a read, so give it its own journal kind (world-run). The
+  // mechanics are the same, but this keeps the audit surface accurate. Other ops remain world-read.
   const kind: NodeKind = op === "run" ? "world-run" : "world-read";
 
-  // amend-resume：本 run 的 journal 里没有这一行，才轮到导入缓存（journal replay 永远优先——
-  // 修订 run 自己崩溃后 resume 时，已消费的命中早已是真行，重放它们不能再动游标）。
-  // 命中即写一行与 settleWorldRead 同形的 completed 记录 + 发 node-settled(cached)，
-  // **不调 driver**：world-run 的效应绝不静默重放。
-  // 缓存关闭后不再问表（也不推进游标）：命令文本没变，但它读到的世界可能已被某个 live 子代理
-  // 改写。
+  // For amend-resume, consult the imported cache only if this run has no journal row (journal replay
+  // always takes precedence—after a crash/resume of the amended run, consumed hits are already
+  // real rows, and replaying them must not advance the cursor again).
+  // On a hit, write a completed row shaped like settleWorldRead and emit node-settled(cached),
+  // **without calling the driver**: never silently replay a world-run effect.
+  // After cache closure, do not consult the table or advance its cursor: the command text is
+  // unchanged, but a live subagent may have modified the world it would read.
   const imported = state.importClosed() ? undefined : state.importedWorld.take(hash);
   if (imported !== undefined) {
     state.journal.putNode({
@@ -96,13 +103,14 @@ export function readWorld(
     return Promise.resolve(imported.result);
   }
 
-  // live world-read：不受 actor FIFO / 并发上限约束（harness IO）。
+  // Live world-read: not subject to actor FIFO / concurrency limits (harness I/O).
   if (state.isRunSettled()) return Promise.reject(state.runError());
-  // live 的 world.run 是一笔写入（效应，不是读）：它一旦执行，工作区就与前驱留下的不同，所以在
-  // 派发**之前**关导入缓存——与子代理的改写工具同一条规则、同一个时刻（动手前）。world-read 不关：
-  // 读不改变世界。
+  // A live world.run is a write (an effect, not a read): once executed, the workspace differs from
+  // what the predecessor left behind. Close the import cache **before dispatch**, using the same
+  // rule and timing as a subagent's mutating tool (before it acts). world-read does not close it;
+  // reads do not change the world.
   if (kind === "world-run") closeImportCache(state, instance, "world-run");
-  // 准入即落 running：崩溃于执行中的世界读取 resume 可据此重新执行。
+  // Record running at admission so a world read interrupted by a crash can be re-executed on resume.
   state.journal.putNode({
     runId: state.runId,
     siteId,
@@ -135,11 +143,11 @@ export function readWorld(
 function settleWorldRead(
   state: EngineState,
   instance: InstanceRef,
-  // putNode 是 upsert（整条替换），settle 若写死 world-read 会把准入时的 world-run
-  // 悄悄改回去——kind 必须与准入同源。
+  // putNode is an upsert (replaces the whole row); hardcoding world-read at settlement would
+  // silently change a world-run recorded at admission, so kind must come from admission.
   kind: NodeKind,
   hash: string,
-  // 同一条理由：准入写下的有界输入必须随结算的整条替换回来。
+  // Same reason: the bounded input written at admission must survive the full-row settlement update.
   input: WorldReadInput,
   outcome:
     | { status: "completed"; result: unknown }
@@ -165,10 +173,11 @@ function settleWorldRead(
 }
 
 /**
- * 关闭导入缓存（幂等）。两个触发点，都是**第一笔写入之前**：
- * driver 上报某个 live 子代理即将执行改写工具（`mutating-tool`），或一条 `world.run` 要 live 执行
- * （`world-run`）。只在本次真是修订 run 时发 `import-cache-closed` 事件——它是 resume 时恢复
- * 「门已关」的唯一事实来源；非修订 run 没有表可关，标志位无害但不发事件。
+ * Close the import cache (idempotent). There are two triggers, both **before the first write**:
+ * the driver reports that a live subagent is about to run a mutating tool (`mutating-tool`), or a
+ * `world.run` is about to execute live (`world-run`). Emit `import-cache-closed` only for an actual
+ * amended run; it is the sole source of truth for recovering “cache closed” on resume. A regular
+ * run has no cache to close, so the flag is harmless but no event is emitted.
  */
 export function closeImportCache(
   state: EngineState,
@@ -188,17 +197,20 @@ export function closeImportCache(
 }
 
 /**
- * resume 时恢复关门判定、「曾 live 的 ask 实例」集合，以及「关门之前就已准入的 ask 实例」集合。
+ * Restore the cache-closure decision, the set of ask instances that previously ran live, and the
+ * set of ask instances admitted before closure during resume.
  *
- * 事实来源是本 run 自己的事件：live 节点在准入时发 `node-queued`（ask 的带 actor ref），缓存
- * 命中只发 `node-settled cached:true`，所以「哪些 ask 曾 live」是精确集合。门是否已关则由
- * `import-cache-closed` 事件决定——ask 转 live 不再意味着关门（它可能一个文件都没碰），只有
- * 写入才关，而写入这件事只有这条事件记着。零 schema 变更。
+ * The source of truth is this run's own events: live nodes emit `node-queued` at admission (asks
+ * include an actor ref), while cache hits emit only `node-settled cached:true`, so the set of asks
+ * that ran live is exact. The `import-cache-closed` event determines whether the cache is closed—an
+ * ask going live no longer implies closure (it may not touch any files); only a write closes it,
+ * and only this event records that. No schema change is needed.
  *
- * `queuedBeforeClose` 同样零 schema 变更，靠的是**事件次序**：续跑在飞 ask 的判定与该 ask 的
- * `node-queued` 落在准入的同一个同步片里（见 scheduler 的 admitAsk → tryImportedSettle →
- * admitLive），所以「准入那一刻门开着」⇔「这条 node-queued 早于第一条 import-cache-closed」。
- * 没有关门事件时全体都算在内。
+ * `queuedBeforeClose` also needs no schema change; it relies on **event order**: the decision to
+ * resume a predecessor's in-flight ask and that ask's `node-queued` are in the same synchronous
+ * admission slice (see scheduler's admitAsk → tryImportedSettle → admitLive). Thus “the cache was
+ * open at admission” ⇔ “this node-queued precedes the first import-cache-closed.” If there is no
+ * closure event, all queued asks are included.
  */
 export function recoverImportClosure(
   journal: JournalStorePort,

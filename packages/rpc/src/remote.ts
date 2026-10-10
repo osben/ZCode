@@ -1,24 +1,24 @@
 /**
- * Layer 6: Remote 远程连接抽象
+ * Layer 6: Remote connection abstraction
  *
- * 这一层让 VS Code 能连接到 SSH、Docker、WSL 里的文件系统。
+ * This layer lets VS Code connect to file systems over SSH, Docker, and WSL.
  *
- * 核心思路：
- * 1. RemoteAuthority: "ssh+myserver" 这样的字符串标识远程环境
- * 2. RemoteAuthorityResolver: 由扩展注册，把 authority 解析为实际连接地址
- * 3. RemoteSocketFactory: 根据连接类型创建不同的 socket
- * 4. URITransformer: 在客户端和服务端之间转换文件路径
+ * Core concepts:
+ * 1. RemoteAuthority: a string such as "ssh+myserver" identifies a remote environment
+ * 2. RemoteAuthorityResolver: registered by an extension to resolve an authority to a connection address
+ * 3. RemoteSocketFactory: creates a socket based on the connection type
+ * 4. URITransformer: converts file paths between the client and server
  *
- * 连接建立流程：
+ * Connection setup:
  *   authority "ssh+myserver"
  *       ↓ (RemoteAuthorityResolver)
  *   { host: "1.2.3.4", port: 8080, token: "xxx" }
  *       ↓ (RemoteSocketFactory)
  *   ISocket (TCP/WebSocket)
  *       ↓ (PersistentProtocol)
- *   IMessagePassingProtocol (带 ACK + 重连)
+ *   IMessagePassingProtocol (with ACK + reconnection)
  *       ↓ (IPCClient)
- *   可以调用远端的 channel 了！
+ *   Remote channels are now available!
  */
 
 import { Emitter, IDisposable, toDisposable } from "./foundation.js";
@@ -31,7 +31,7 @@ import { IPCClient } from "./ipc.js";
 // ============================================================================
 
 /**
- * 远程连接类型
+ * Remote connection type
  */
 export enum RemoteConnectionType {
   WebSocket = 0,
@@ -39,7 +39,7 @@ export enum RemoteConnectionType {
 }
 
 /**
- * WebSocket 连接：直接连到 host:port
+ * WebSocket connection: connects directly to host:port
  */
 export class WebSocketRemoteConnection {
   readonly type = RemoteConnectionType.WebSocket;
@@ -54,7 +54,7 @@ export class WebSocketRemoteConnection {
 }
 
 /**
- * 托管连接：通过 ID 引用已建立的连接（如 tunnel）
+ * Managed connection: references an established connection (such as a tunnel) by ID
  */
 export class ManagedRemoteConnection {
   readonly type = RemoteConnectionType.Managed;
@@ -67,7 +67,7 @@ export class ManagedRemoteConnection {
 
 export type RemoteConnection = WebSocketRemoteConnection | ManagedRemoteConnection;
 
-/** 解析后的远程地址 */
+/** Resolved remote address. */
 export interface ResolvedAuthority {
   readonly authority: string;
   readonly connectTo: RemoteConnection;
@@ -79,37 +79,37 @@ export interface ResolvedAuthority {
 // ============================================================================
 
 /**
- * IRemoteAuthorityResolver 负责把 authority 字符串解析为实际连接地址。
+ * IRemoteAuthorityResolver resolves an authority string to an actual connection address.
  *
- * 在 VS Code 中，这个接口由远程扩展实现：
- * - Remote-SSH 扩展注册 "ssh" 类型的 resolver
- * - Remote-WSL 扩展注册 "wsl" 类型的 resolver
- * - Dev Containers 扩展注册 "dev-container" 类型的 resolver
+ * In VS Code, this interface is implemented by remote extensions:
+ * - The Remote-SSH extension registers a resolver for type "ssh"
+ * - The Remote-WSL extension registers a resolver for type "wsl"
+ * - Dev Containers registers a resolver for type "dev-container"
  *
- * 每种远程类型都知道如何解析自己的 authority 并返回可连接的地址。
+ * Each remote type knows how to resolve its authority and return a connectable address.
  */
 export interface IRemoteAuthorityResolver {
   resolve(authority: string): Promise<ResolvedAuthority>;
 }
 
 /**
- * RemoteAuthorityResolverService 管理多个 resolver
+ * RemoteAuthorityResolverService manages multiple resolvers.
  */
 export class RemoteAuthorityResolverService {
   private resolvers = new Map<string, IRemoteAuthorityResolver>();
 
-  /** 注册一个 authority 类型的 resolver */
+  /** Register a resolver for an authority type. */
   registerResolver(type: string, resolver: IRemoteAuthorityResolver): IDisposable {
     this.resolvers.set(type, resolver);
     return toDisposable(() => this.resolvers.delete(type));
   }
 
   /**
-   * 解析 authority
-   * @param authority 如 "ssh+myserver", "wsl+Ubuntu"
+   * Resolve an authority.
+   * @param authority For example, "ssh+myserver" or "wsl+Ubuntu".
    */
   async resolveAuthority(authority: string): Promise<ResolvedAuthority> {
-    // 从 authority 中提取类型：ssh+myserver → ssh
+    // Extract the type from the authority: ssh+myserver → ssh
     const plusIndex = authority.indexOf("+");
     const type = plusIndex >= 0 ? authority.substring(0, plusIndex) : authority;
 
@@ -127,7 +127,7 @@ export class RemoteAuthorityResolverService {
 // ============================================================================
 
 /**
- * ISocketFactory 创建特定类型的 socket 连接
+ * ISocketFactory creates a socket connection of a specific type.
  */
 export interface ISocketFactory<T extends RemoteConnectionType = RemoteConnectionType> {
   supports(connectTo: RemoteConnection & { type: T }): boolean;
@@ -135,12 +135,12 @@ export interface ISocketFactory<T extends RemoteConnectionType = RemoteConnectio
 }
 
 /**
- * RemoteSocketFactoryService 管理不同连接类型的 socket 工厂。
+ * RemoteSocketFactoryService manages socket factories for different connection types.
  *
- * 设计模式：策略模式
- * - Node.js 环境注册 NodeSocketFactory（TCP socket）
- * - 浏览器环境注册 BrowserSocketFactory（WebSocket）
- * - 每种 RemoteConnectionType 可以有多个工厂，按 supports() 选择
+ * Design pattern: Strategy
+ * - The Node.js environment registers NodeSocketFactory (TCP socket)
+ * - The browser environment registers BrowserSocketFactory (WebSocket)
+ * - Each RemoteConnectionType can have multiple factories; supports() selects one
  */
 export class RemoteSocketFactoryService {
   private readonly factories: Map<RemoteConnectionType, ISocketFactory[]> = new Map();
@@ -176,29 +176,29 @@ export class RemoteSocketFactoryService {
 // ============================================================================
 
 /**
- * URI 转换器——在客户端和服务端之间转换文件路径。
+ * URI transformer — converts file paths between the client and server.
  *
- * 问题：
- * - 客户端用 vscode-remote://ssh+myserver/home/user/file.txt 标识远程文件
- * - 服务端（远端机器上）用 file:///home/user/file.txt 操作真实文件
+ * Problem:
+ * - The client identifies a remote file as vscode-remote://ssh+myserver/home/user/file.txt
+ * - The server (on the remote machine) accesses the actual file as file:///home/user/file.txt
  *
- * 转换规则：
- *   客户端 → 服务端:
+ * Conversion rules:
+ *   Client → server:
  *     vscode-remote://authority/path → file:///path
  *     file:///local/path → vscode-local:///local/path
  *
- *   服务端 → 客户端:
+ *   Server → client:
  *     file:///path → vscode-remote://authority/path
  *     vscode-local:///local/path → file:///local/path
  */
 export interface IURITransformer {
-  /** 客户端 URI → 服务端 URI */
+  /** Client URI → server URI. */
   transformIncoming(uri: SimpleURI): SimpleURI;
-  /** 服务端 URI → 客户端 URI */
+  /** Server URI → client URI. */
   transformOutgoing(uri: SimpleURI): SimpleURI;
 }
 
-/** 简化的 URI 表示 */
+/** Simplified URI representation. */
 export interface SimpleURI {
   scheme: string;
   authority: string;
@@ -206,8 +206,8 @@ export interface SimpleURI {
 }
 
 /**
- * 创建一个 URI 转换器
- * @param remoteAuthority 远程 authority 字符串，如 "ssh+myserver"
+ * Create a URI transformer.
+ * @param remoteAuthority Remote authority string, for example "ssh+myserver".
  */
 export function createURITransformer(remoteAuthority: string): IURITransformer {
   return {
@@ -238,27 +238,27 @@ export function createURITransformer(remoteAuthority: string): IURITransformer {
 }
 
 // ============================================================================
-// Remote Agent Connection —— 把所有 Remote 抽象串起来
+// Remote Agent Connection — connects all Remote abstractions
 // ============================================================================
 
 /**
- * 重连策略
+ * Reconnection strategy
  */
-const RECONNECT_DELAYS = [0, 5, 5, 10, 10, 10, 10, 10, 30]; // 秒
+const RECONNECT_DELAYS = [0, 5, 5, 10, 10, 10, 10, 10, 30]; // seconds
 
 export interface RemoteConnectionState {
   type: "connected" | "reconnecting" | "disconnected";
 }
 
 /**
- * RemoteAgentConnection 是远程连接的完整生命周期管理器。
+ * RemoteAgentConnection manages the full lifecycle of a remote connection.
  *
- * 它串联了所有 Remote 层的抽象：
- * 1. 用 RemoteAuthorityResolver 解析地址
- * 2. 用 RemoteSocketFactory 建立 socket
- * 3. 用 PersistentProtocol 添加可靠性
- * 4. 包装为 IPCClient 供上层使用
- * 5. 断线后自动重连
+ * It connects the abstractions from the Remote layer:
+ * 1. Resolve the address with RemoteAuthorityResolver
+ * 2. Create a socket with RemoteSocketFactory
+ * 3. Add reliability with PersistentProtocol
+ * 4. Wrap it as IPCClient for upper layers
+ * 5. Reconnect automatically after disconnection
  */
 export class RemoteAgentConnection implements IDisposable {
   private protocol: PersistentProtocol | null = null;
@@ -274,23 +274,23 @@ export class RemoteAgentConnection implements IDisposable {
   ) {}
 
   /**
-   * 建立连接并返回 IPCClient
+   * Establish a connection and return IPCClient.
    */
   async connect(): Promise<IPCClient<string>> {
-    // Step 1: 解析 authority
+    // Step 1: Resolve the authority.
     const resolved = await this.resolverService.resolveAuthority(this.authority);
 
-    // Step 2: 建立 socket
+    // Step 2: Create the socket.
     const query = resolved.connectionToken ? `token=${resolved.connectionToken}` : "";
     const socket = await this.socketFactory.connect(resolved.connectTo, "/", query);
 
-    // Step 3: 用 PersistentProtocol 包装（加 ACK + 重连能力）
+    // Step 3: Wrap it with PersistentProtocol (adds ACK and reconnection support).
     this.protocol = new PersistentProtocol(socket);
 
-    // Step 4: 包装为 IPCClient
+    // Step 4: Wrap it as IPCClient.
     this.client = new IPCClient(this.protocol, this.authority);
 
-    // Step 5: 监听断线，触发重连
+    // Step 5: Listen for disconnection and reconnect.
     this.protocol.onSocketClose(() => {
       this._onDidStateChange.fire({ type: "reconnecting" });
       this.reconnect(resolved, 0);
@@ -313,7 +313,7 @@ export class RemoteAgentConnection implements IDisposable {
       const query = resolved.connectionToken ? `token=${resolved.connectionToken}` : "";
       const newSocket = await this.socketFactory.connect(resolved.connectTo, "/", query);
 
-      // 用新 socket 替换，PersistentProtocol 会自动重放未确认的消息
+      // Replace the socket; PersistentProtocol automatically replays unacknowledged messages.
       this.protocol!.replaceSocket(newSocket);
       this._onDidStateChange.fire({ type: "connected" });
     } catch {

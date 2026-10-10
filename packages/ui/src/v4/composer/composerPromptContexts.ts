@@ -40,9 +40,7 @@ export function countComposerPromptContexts(contexts: {
   );
 }
 
-/**
- * 四类 context parser 都只识别 prompt 尾块，因此序列化顺序和解析顺序必须严格相反。
- */
+/** All four context parsers recognize only trailing prompt blocks, so serialization order must be exactly the reverse of parsing order. */
 export function serializeComposerPromptContexts(
   text: string,
   contexts: ComposerPromptContexts,

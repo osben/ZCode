@@ -33,18 +33,18 @@ import type {
 interface V4ChatPaneProps {
   workspacePath: string;
   workspaceIdentity?: string;
-  /** Prompt 模板埋点当前仅覆盖 Desktop。 */
+  /** Prompt-template telemetry currently covers Desktop only. */
   isDesktop?: boolean;
   readOnly?: boolean;
-  /** CLI session id；null = draft 首发。 */
+  /** CLI session ID; null = first send from a draft. */
   sessionId: string | null;
-  /** 当前 workspace 主 pane 的打开入口，未提供时按 sidebar 统计。 */
+  /** Open entry point for the current workspace's primary pane; count as sidebar when not provided. */
   openTrigger?: SessionOpenTrigger;
   provider?: ZCodeProvider;
   onSessionCreated?: (sessionId: string) => void;
-  /** deleteSession：删除当前会话后回到 draft。 */
+  /** deleteSession: return to draft after deleting the current session. */
   onSessionDeleted?: () => void;
-  /** 草稿态 composer contextHeader（m5，壳层构造下发）。 */
+  /** Draft-mode composer contextHeader (m5, constructed and passed by the shell). */
   draftComposerHeader?: ReactNode;
   gitSummary?: GitRepositorySummary | null;
   gitDirtyFileCount?: number;
@@ -79,8 +79,8 @@ interface V4ChatPaneProps {
 }
 
 /**
- * 竖切聊天区：替换 ChatView 的最小入口。
- * 外层按 workspace 包 V4ConversationProvider；单 pane paneId 固定 workspace-main。
+ * Vertically split chat area: minimal replacement entry point for ChatView.
+ * The outer layer wraps V4ConversationProvider per workspace; single-pane paneId is fixed to workspace-main.
  */
 export function V4ChatPane({
   workspacePath,

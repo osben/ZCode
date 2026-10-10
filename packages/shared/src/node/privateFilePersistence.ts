@@ -53,8 +53,8 @@ export async function withFileLock<T>(
   operation: () => Promise<T>,
   options: SharedFileLockOptions = {},
 ): Promise<T> {
-  // 同一进程几十个 caller 同时轮询目录锁会形成惊群，后排请求可能在
-  // 很短的实际写入之后仍撞上 8 秒超时。先做进程内 FIFO，每个进程只让队首竞争 OS 锁。
+  // Dozens of callers in one process polling a directory lock can cause a thundering herd; queued requests may hit the
+  // 8-second timeout even after a very short write. Use an in-process FIFO first so only the head of each process competes for the OS lock.
   const previousTail = processFileLockTails.get(filePath) ?? Promise.resolve();
   let releaseProcessQueue!: () => void;
   const currentTail = new Promise<void>((resolve) => {
@@ -86,14 +86,14 @@ export async function withFileLock<T>(
 }
 
 export interface AtomicWriteFileOptions {
-  /** 目标文件权限位；省略时使用进程默认权限（受 umask 影响）。 */
+  /** Target file permission bits; when omitted, the process default permissions are used (subject to umask). */
   mode?: number;
   renameRetryDelaysMs?: readonly number[];
 }
 
 /**
- * 同目录临时文件 + rename 的原子写入。rename 会替换目标 inode，
- * 因此会断开硬链接；需要保留原权限时由调用方传入 mode。
+ * Atomic write using a temporary file in the same directory and rename. Rename replaces the target inode,
+ * which breaks hard links; callers must pass mode when the original permissions need to be preserved.
  */
 export async function atomicWriteFile(
   filePath: string,
@@ -113,7 +113,7 @@ export async function atomicWriteFile(
       options.mode === undefined ? undefined : { mode: options.mode },
     );
     if (options.mode !== undefined) {
-      // writeFile 的 mode 会被 umask 裁剪；显式 chmod 才能完整保留原文件权限。
+      // writeFile's mode is restricted by umask; only an explicit chmod fully preserves the original file permissions.
       await chmod(tempPath, options.mode);
     }
     await renameWithRetry(
@@ -140,8 +140,8 @@ export async function backupCorruptFile(filePath: string): Promise<string> {
   const contentId = createHash("sha256").update(content).digest("hex").slice(0, 24);
   const backupPath = `${filePath}.corrupt-${contentId}.bak`;
   try {
-    // 同一损坏凭据会被 Desktop、CLI 和重试循环反复读取。按内容确定备份名并
-    // 排他创建，让失败路径稳定收敛到一份证据，同时避免 copyFile 继承历史宽松权限。
+    // The same corrupt credential may be read repeatedly by Desktop, CLI, and retry loops. Derive the backup name from its contents and
+    // create it exclusively so failures converge on one stable piece of evidence, while avoiding copyFile inheriting permissive old permissions.
     await writeFile(backupPath, content, { flag: "wx", mode: 0o600 });
   } catch (error) {
     if (getErrorCode(error) !== "EEXIST") throw error;

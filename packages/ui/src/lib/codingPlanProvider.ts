@@ -4,8 +4,8 @@ import { type ProviderSettingsFormProvider } from "@/lib/providerSettingsFormTyp
 export function pickCodingPlanEntitlementProvider(
   codingPlanProvider: ProviderSettingsFormProvider | null | undefined,
 ): ProviderSettingsFormProvider | null {
-  // Coding Plan 与普通 API Key 是两个独立入口。
-  // 权益和模型入口只跟随 Coding Plan provider 自身的 key，避免普通供应商 key 误点亮订阅态。
+  // Coding Plan and regular API keys are separate entry points.
+  // Entitlements and model entry points follow only the Coding Plan provider’s own key, so a regular provider key cannot incorrectly activate a subscription state.
   return codingPlanProvider ?? null;
 }
 
@@ -18,7 +18,7 @@ export function hasActiveUsageEntitlementSnapshot(
 
 type UsageEntitlementOutcome = "active" | "inactive" | "unknown";
 
-/** 只把权威 no_plan 解释为失效；网络、鉴权和不完整快照都保持未知。 */
+/** Treat only an authoritative no_plan as invalid; network/authentication errors and incomplete snapshots remain unknown. */
 export function resolveUsageEntitlementOutcome(
   snapshot: UsageEntitlementSnapshot | null,
   providerId?: string,
@@ -28,6 +28,6 @@ export function resolveUsageEntitlementOutcome(
     return "unknown";
   }
   if (snapshot.unavailableReason === "no_plan") return "inactive";
-  // 额度或剩余额度不代表订阅；个人/团队都由服务返回的订阅摘要证明权益。
+  // A quota or remaining quota does not prove a subscription; for individuals and teams, entitlements are established by the subscription summary returned by the service.
   return snapshot.subscription?.details.length ? "active" : "unknown";
 }

@@ -7,8 +7,8 @@ import { cva, type VariantProps } from "class-variance-authority";
 import { cn } from "../lib/utils.js";
 import { ChevronDownIcon, CheckIcon, ChevronUpIcon } from "lucide-react";
 
-// resize 大会话时 Select trigger 跟随基础控件批量重排，
-// transition-all 会把布局/滚动条相关属性也动画化；这里限定为颜色过渡。
+// During large-session resizing, Select triggers reflow in batches with base controls,
+// and transition-all also animates layout/scrollbar-related properties; limit transitions here to colors.
 const selectTriggerVariants = cva(
   "flex w-fit items-center justify-between gap-1.5 border whitespace-nowrap transition-colors outline-none disabled:cursor-not-allowed disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-2 aria-invalid:ring-destructive/20 data-placeholder:text-foreground-subtlest *:data-[slot=select-value]:line-clamp-1 *:data-[slot=select-value]:flex *:data-[slot=select-value]:items-center *:data-[slot=select-value]:gap-1.5 dark:aria-invalid:border-destructive/50 dark:aria-invalid:ring-destructive/40 [&_svg]:pointer-events-none [&_svg]:shrink-0",
   {
@@ -88,7 +88,7 @@ function SelectTrigger({
   );
 }
 
-// 圆角规范迁移：旧菜单沿用 xl/lg，统一为独立外壳 lg、内部选项 md；子菜单重新起算。
+// Corner-radius migration: legacy menus used xl/lg; standardize on lg for the outer shell and md for inner items, recalculated for submenus.
 function SelectContent({
   className,
   children,
@@ -102,7 +102,7 @@ function SelectContent({
         data-slot="select-content"
         data-align-trigger={position === "item-aligned"}
         className={cn(
-          // 可操作的 Select 必须高于 z-50 tooltip，避免提示遮住选项。
+          // An interactive Select must appear above z-50 tooltips so the tooltip cannot cover an option.
           "relative z-[60] max-h-(--radix-select-content-available-height) min-w-32 origin-(--radix-select-content-transform-origin) overflow-x-hidden overflow-y-auto rounded-lg border border-popover-border bg-menu p-1 text-foreground shadow-md duration-100 data-[align-trigger=true]:animate-none data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2 data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95 [app-region:no-drag]",
           className,
         )}
@@ -114,10 +114,10 @@ function SelectContent({
         <SelectPrimitive.Viewport
           data-position={position}
           className={cn(
-            // popper 模式下如果把 viewport 高度锁成 trigger 高度，
-            // 会导致菜单可视区域被压成一行，无法完整展开选项。
-            // 这里仅保留宽度对齐，交给内容容器的 max-height 控制可视高度。
-            // Select 选项过去紧贴排列；在真正承载选项的 viewport 统一保留 2px。
+            // In popper mode, locking the viewport height to the trigger height
+            // would compress the visible menu area to one row and prevent options from expanding fully.
+            // Keep only width alignment here; let the content container's max-height control the visible height.
+            // Select options used to sit flush against each other; reserve 2px consistently in the viewport that actually contains the options.
             "flex flex-col gap-0.5 data-[position=popper]:w-full data-[position=popper]:min-w-(--radix-select-trigger-width)",
             position === "popper" && "",
           )}

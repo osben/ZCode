@@ -130,8 +130,9 @@ export async function resolveStartupWindowBootstrap({
         ? persistedActiveSession.workspacePath
         : undefined;
     if (unavailableWorkspacePath) {
-      // 上次激活 workspace 被移动或删除后，Agent 仍需保留原业务路径读取历史，
-      // 但子进程 cwd 必须落在真实存在的目录；conversation backing workspace 只承担 cwd 兜底。
+      // If the last active workspace has been moved or deleted, the Agent still needs its original
+      // business path to read history, but the child process cwd must be an existing directory.
+      // The conversation backing workspace is only a cwd fallback.
       await mkdir(conversationWorkspaceDir, { recursive: true });
       logger?.warn?.(
         "[startup-workspace] active local workspace unavailable; using read-only restore:",
@@ -145,9 +146,10 @@ export async function resolveStartupWindowBootstrap({
     const activeSession =
       localActiveSessionIndex == null ? undefined : sessions[localActiveSessionIndex];
     if (activeSession?.kind === "local") {
-      // 被动 sessions-index 全量恢复不能再启动全部 workspace，但只预热当前一个又让
-      // 用户在最近项目间切换重新承担完整冷启动。Main 在唯一启动边界固定选出最近 3 个，
-      // Host 仍走原 initializeWorkspace 路径；失败不继续扫描第 4 个补位。
+      // Passive full sessions-index recovery must not start every workspace, but warming only the
+      // current one would make users pay the full cold-start cost when switching among recent
+      // projects. Main selects the three most recent at the single startup boundary; Host still uses
+      // the existing initializeWorkspace path, and failure does not trigger a scan for a fourth.
       const agentWarmupTargets = resolveStartupAgentWarmupTargets(settings, {
         workspacePath: activeSession.workspacePath,
       });
@@ -159,8 +161,8 @@ export async function resolveStartupWindowBootstrap({
     return unavailableWorkspacePath ? { unavailableWorkspacePath } : {};
   }
 
-  // UI 可以没有项目，但 Agent 必须始终有真实 cwd。首次启动统一预热
-  // app-managed conversation backing workspace，不能再创建会被误认成项目的 ZCodeProject。
+  // The UI may have no project, but the Agent must always have a real cwd. On first launch, warm the
+  // app-managed conversation backing workspace; do not create a ZCodeProject that could be mistaken for a project.
   await mkdir(conversationWorkspaceDir, { recursive: true });
   logger?.info?.("[startup-workspace] using conversation workspace:", conversationWorkspaceDir);
   return {

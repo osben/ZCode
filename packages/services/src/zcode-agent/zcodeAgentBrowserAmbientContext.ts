@@ -58,7 +58,7 @@ function sanitizeAmbientUrl(rawUrl: string | undefined): string | undefined {
 }
 
 /**
- * 只读收集 provider ambient state。失败时返回 undefined，不能让浏览器 UI 状态阻断真实 prompt。
+ * Read-only collection of provider ambient state. Return undefined on failure so browser UI state cannot block the actual prompt.
  */
 export async function collectBrowserAmbientContext(
   executor: BrowserAmbientContextExecutor | undefined,
@@ -118,8 +118,8 @@ export async function collectBrowserAmbientContext(
     ]);
     if (tabIds.size === 0) return undefined;
 
-    // 显式 finalize 后页面属于 user tabs；漏 finalize 的 handoff 仍属于 controlled tabs。
-    // 两类都必须进入 ambient state，否则下一轮会把空 tabs.list() 误判为浏览器断线。
+    // After explicit finalize, pages belong to user tabs; a handoff that misses finalize still belongs to controlled tabs.
+    // Include both types in ambient state; otherwise, the next turn may mistake an empty tabs.list() for a browser disconnection.
     const currentControlled = controlledTabs.find((tab) => tab.active);
     const currentUrl = sanitizeAmbientUrl(
       currentControlled?.url ?? userTabs[0]?.url ?? controlledTabs.at(-1)?.url,

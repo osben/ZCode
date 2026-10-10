@@ -102,8 +102,8 @@ export function buildManualCompactBoundary(
 export function estimateMessageTokens(messages: readonly CompactModelMessage[]): number {
   return messages.reduce((total, message) => {
     let estimatedCharacterCount = modelMessageContentToTokenEstimateText(message.content).length;
-    // assistant toolCalls 独立保存在 content 之外，旧估算只读取 content，
-    // 大型工具入参会被完整发给 provider，却在 auto compact 和 preflight 中计为 0。
+    // Assistant toolCalls are stored separately from content. The old estimate read only content,
+    // so large tool inputs were sent to the provider in full but counted as zero by auto-compaction and preflight.
     for (const toolCall of message.toolCalls ?? []) {
       estimatedCharacterCount += (
         toolCall.name + stringifyToolCallInputForTokenEstimate(toolCall.input)
@@ -117,8 +117,8 @@ function stringifyToolCallInputForTokenEstimate(input: unknown): string {
   try {
     return JSON.stringify(input ?? {}) ?? EMPTY_TOOL_CALL_INPUT_JSON;
   } catch {
-    // tool_use 解析失败时降级为空对象的 JSON 表示，供 estimator 估算。
-    // ZCode 的模型输入仍可能包含未知内容；异常输入不能让本地预算估算中断 compact。
+    // If tool_use parsing fails, fall back to a JSON representation of an empty object for estimation.
+    // ZCode model input may still contain unknown content; malformed input must not stop local budget estimation from compacting.
     return EMPTY_TOOL_CALL_INPUT_JSON;
   }
 }
@@ -126,9 +126,9 @@ function stringifyToolCallInputForTokenEstimate(input: unknown): string {
 function modelMessageContentToTokenEstimateText(content: ModelMessageContent): string {
   if (typeof content === "string") return content;
 
-  // modelMessageContentToText 是“可见正文”投影，会有意隐藏 reasoning；
-  // compact fallback 却把它当作 provider 上下文体积，导致无 usage anchor 时 reasoning 全部计 0。
-  // token 估算使用独立投影，避免改变正文、memory、错误文案等既有消费者的语义。
+  // modelMessageContentToText projects the visible body and intentionally hides reasoning;
+  // using it as provider context size in the compact fallback caused reasoning to count as zero when no usage anchor existed.
+  // Use a separate projection for token estimation so the semantics for existing consumers of body text, memory, and error messages do not change.
   return content
     .map((block) =>
       block.type === "reasoning" ? block.text : modelMessageContentBlockToText(block),

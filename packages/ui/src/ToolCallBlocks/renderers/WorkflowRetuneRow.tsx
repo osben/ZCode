@@ -1,29 +1,29 @@
 // ============================================================
-// 就地生效的修订在转写里的那一行
+// The transcript row for an in-place revision.
 // ============================================================
-// 只改并发上限、run 又在飞时，`AmendWorkflow` 不编译、不铸新 run，只把那条 run 的上限改掉。于是
-// 这一行没有卡可画：那条 run 的卡在它启动的那一轮里，再画一张会读成第二次运行；而原来的静态卡
-// 会显示编译校验结果，使一次并发设置变更看起来像重新编译和启动了工作流。
+// When only the concurrency limit changes while a run is active, `AmendWorkflow` does not compile or create a new run; it only changes that run's limit. Therefore
+// this row has no card to render: the run's card is in the turn that started it, and drawing another would look like a second run; the original static card
+// shows compile validation, making a concurrency change look like the workflow was recompiled and started.
 //
-// 画的就是 GUI「配置」留下的那条设置行（`WorkflowSettingsChangeRow`），一字不差——同一件事由谁
-// 发起不该有两种读法。唯一的差别是它**可点**：工具行是模型这一步的落点，用户从这里回到那条 run。
+// Render the same settings row left by GUI “Configure” (`WorkflowSettingsChangeRow`) verbatim — the same action should read the same regardless of who
+// initiated it. The only difference is that this row is **clickable**: it is where the model's tool step lands, and users can return to that run from here.
 
 import type { WorkflowSettingsAmendMeta } from "@zcode/shared/zcode-protocol-v4";
 import { WorkflowSettingsChangeRow } from "@/components/workflow-timeline/WorkflowSettingsChangeRow.js";
 
 /**
- * 入参里那个数 → 设置轮那一块元数据。两者本来就是同一件事的两种记法（GUI 走轮元数据，工具走
- * 入参），映射到同一个形状之后措辞只剩一份实现。
+ * The value in the input → metadata in the settings turn. These are two representations of the same thing (GUI uses turn metadata; tools use
+ * input), so mapping both to one shape leaves a single implementation for the wording.
  *
- * `requested` 是**模型发出的、未经钳制**的数（readWorkflowRetuneCall），而 CLI 会把它钳进
- * `[1, 天花板]`。所以这里把天花板一起交给措辞规则：`workflowSettingsChangeSegments` 对
- * `to >= ceiling` 与 `to` 缺席一视同仁，都念「上限恢复为本机默认」——这正是钳制之后的真相
- * （钳到天花板 = 这条 run 没有自己的界）。于是行上永远不会出现一个大于本机上限的数。
- * 天花板未知（那条 run 已被淘汰出投影、或老 CLI 没发过它）时只能照念请求值，此时它也只可能
- * 偏大不偏小——而「最多 n」本就是个上界陈述，不会把用户往「跑得比实际多」的方向误导。
+ * `requested` is the **unclamped value sent by the model** (`readWorkflowRetuneCall`), while the CLI clamps it to
+ * `[1, ceiling]`. Pass the ceiling to the wording logic too: `workflowSettingsChangeSegments` treats `to >= ceiling` and missing `to` identically,
+ * both reading “limit restored to the local default” — the truth after clamping
+ * (clamping to the ceiling means this run has no custom limit). Thus the row never shows a number above the local maximum.
+ * If the ceiling is unknown (the run has left the projection or an older CLI did not send it), the requested value is all we can show; it can only be
+ * too high, not too low — and “up to n” is an upper bound, so it does not mislead users into thinking more ran than actually did.
  *
- * `from` 不填：入参不知道改之前是多少，而这一行的措辞只读 `to`。`predecessorRunId` 同样不填——
- * 就地生效没有前驱（workflow-row-meta.ts）。
+ * Leave `from` unset: the input does not know the previous value, and this row's wording reads only `to`. Leave `predecessorRunId` unset too —
+ * an in-place change has no predecessor (workflow-row-meta.ts).
  */
 function retuneAsAmendMeta(
   requested: number | null,
@@ -41,9 +41,9 @@ export function WorkflowRetuneRow({
   requested,
   runId,
 }: {
-  /** 本机并发天花板（那条 run 的投影读数）；未知时缺席。 */
+  /** Local concurrency ceiling (from that run's projection); omitted when unknown. */
   ceiling?: number;
-  /** 打开这条 run 的详情页；宿主没给（只读展示或功能已关闭）时这一行只是记录。 */
+  /** Open this run's detail page; if the host does not provide this (read-only display or feature disabled), this row is only a record. */
   onOpen?: () => void;
   requested: number | null;
   runId: string;

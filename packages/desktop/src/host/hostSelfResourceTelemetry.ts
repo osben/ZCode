@@ -1,10 +1,10 @@
 /**
- * Host 进程自身的资源遥测。
+ * Resource telemetry for the Host process itself.
  *
- * 复用内存诊断日志既有的 60 秒定时器：一次 `process.memoryUsage()` 读数两个出口——
- * 本地 `[memory] role=utility_host` 日志行按既有门控写出，同一次读数换算成
- * `HostResourceSample` 经 parentPort 发给 main，成为 host 角色事件的 heap 来源。
- * 进程内因此仍然只有一个遥测定时器；任何一步失败只丢当前样本，Host 服务不受影响。
+ * Reuse the existing 60-second timer from memory diagnostics: one `process.memoryUsage()` reading has two outputs—
+ * write the local `[memory] role=utility_host` log line under the existing gate, and convert the same reading into
+ * a `HostResourceSample` sent to Main through parentPort as the heap source for the Host-role event.
+ * The process therefore still has only one telemetry timer; any failure drops only the current sample and does not affect Host services.
  */
 
 import { HostResponseTypes } from "@zcode/shared";
@@ -22,14 +22,14 @@ interface StartHostSelfResourceTelemetryOptions
     Omit<StartHostMemoryDiagnosticsLogOptions, "onMemoryUsage">,
     NodeSelfResourceSamplerOptions {
   /**
-   * parentPort 的发送口。Host 在非 utilityProcess 环境（本地调试）下没有 parentPort，
-   * 此时只写本地日志、不发样本。
+   * parentPort send function. Host has no parentPort outside utilityProcess (for example, during local debugging),
+   * so it writes only the local log and does not send a sample.
    */
   postMessage?: ((message: unknown) => void) | undefined;
 }
 
 interface HostSelfResourceTelemetry {
-  /** 立即采样一次（供测试与手动触发），返回本地日志是否写盘。 */
+  /** Sample immediately (for tests and manual triggers); return whether the local log was written to disk. */
   sampleNow(): boolean;
   stop(): void;
 }
@@ -40,7 +40,7 @@ export function startHostSelfResourceTelemetry(
   const sampler = createNodeSelfResourceSampler(options);
   const postMessage = options.postMessage;
 
-  // 逐项传递而不是整份 spread：采样器专属选项（readCpuUsage 等）不该漏进诊断日志模块。
+  // Pass options individually rather than spreading the whole object; sampler-only options such as readCpuUsage must not leak into the diagnostics module.
   return startHostMemoryDiagnosticsLog({
     logger: options.logger,
     collectCounters: options.collectCounters,
@@ -59,7 +59,7 @@ export function startHostSelfResourceTelemetry(
       try {
         postMessage({ type: HostResponseTypes.HostResourceSample, sample });
       } catch {
-        // main 已退出或 IPC 不可用时只丢当前样本。
+        // If Main has exited or IPC is unavailable, drop only the current sample.
       }
     },
   });

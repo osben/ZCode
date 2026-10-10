@@ -57,8 +57,8 @@ function resolveSortableProviderModelRowClassName({
   isDragging: boolean;
   isLast: boolean;
 }): string {
-  // 拖动状态沿用了普通行的可见底部分隔线，浮起后看起来像带下划线。
-  // 透明边框保留既有的 1px 占位，避免切换拖动状态时行高抖动。
+  // The dragging state reused the regular row's visible bottom divider, making the lifted row look underlined.
+  // Keep the existing 1px space with a transparent border to prevent row-height shifts when dragging starts/ends.
   const dividerClassName = isDragging
     ? "border-b border-transparent"
     : isLast
@@ -94,13 +94,14 @@ function SortableProviderModelRow({
       {...attributes}
       {...listeners}
       onKeyDown={(event) => {
-        // Portal 弹窗的空格会冒泡到模型行，启动键盘排序并抢先写入版本。
-        // 复用指针的交互目标隔离；不阻止输入默认行为，行自身仍交给原键盘传感器。
+        // Space from a Portal dialog bubbles to the model row, starting keyboard sorting and writing a version too early.
+        // Reuse the pointer interaction-target isolation; do not prevent the input's default behavior, and leave the row to its existing keyboard sensor.
         if (!isInteractiveModelDragTarget(event.target)) listeners?.onKeyDown?.(event);
       }}
     >
-      {/* useSortable 会给本行添加 role=button。旧传感器把最近的
-          [role=button] 当成交互控件，导致从模型名称或空白处永远无法启动拖拽。 */}
+      {/* useSortable adds role=button to this row. The old sensor treated the nearest
+                        [role=button] as an interactive control, so dragging could never start from
+                        the model name or blank space. */}
       {children}
     </div>
   );

@@ -1,6 +1,6 @@
 import { WorkspaceContextPath } from "@/WorkspaceHeaderSections/WorkspaceContextPath.js";
 import { WorkspaceLastActivity } from "@/WorkspaceHeaderSections/WorkspaceLastActivity.js";
-/* eslint-disable max-lines -- Header 标题区当前同时承载 task 菜单、路径上下文和 workspace 级状态提示，先保持单文件收口，避免菜单链路迁移时再引入回归。 */
+/* eslint-disable max-lines -- The Header title area currently handles the task menu, path context, and workspace-level status hints; keep it in one file for now to avoid regressions while moving the menu flow. */
 import {
   TID_WORKSPACE_MORE_BUTTON,
   TID_WORKSPACE_PATH,
@@ -139,9 +139,9 @@ export function WorkspaceHeaderTitleSection({
   );
   const headerPinnedTaskList = useGlobalTaskList({
     kind: "pinned",
-    // Header 常驻渲染，以前为了菜单里的 pin/unpin 文案会在启动时额外拉一份
-    // pinned task 列表。只有打开更多菜单时才需要这个成员状态，延迟查询可以减少首屏
-    // listTaskList 数量，并通过 useGlobalTaskList 的共享订阅复用 workspace 事件源。
+    // Header renders persistently. Previously, it fetched the pinned task list at startup just for pin/unpin copy in the menu.
+    // Membership is needed only when the more menu opens, so delay the query to reduce first-screen listTaskList calls
+    // and reuse the workspace event source through useGlobalTaskList's shared subscription.
     workspaceTabs: taskMenuOpen && activeTaskId ? headerWorkspaceTabs : [],
     sortBy: "updated",
     searchQuery: "",
@@ -154,9 +154,9 @@ export function WorkspaceHeaderTitleSection({
     activeTaskId && pinnedTasks.some((task) => task.taskId === activeTaskId),
   );
   const resolvedTaskActionTaskId = activeTaskMeta?.taskId ?? activeTaskId;
-  // 新建任务在第一次写入数据库前没有稳定 taskId。
-  // 之前 Header 更多菜单虽然点击后会被回调里的空 id guard 拦住，但 UI 仍显示为可点，
-  // 用户会感知成“菜单无响应”；这里只禁用依赖已落库 task 的动作，保留 workspace 级入口。
+  // A new task has no stable taskId before its first database write.
+  // The Header more-menu callback previously blocked the click with an empty-ID guard while the UI still looked enabled,
+  // making the menu appear unresponsive. Disable only actions that require a persisted task and keep workspace-level entries.
   const disableTaskTargetActions = !resolvedTaskActionTaskId;
   const taskMenuMembershipLoading =
     taskMenuOpen && Boolean(resolvedTaskActionTaskId) && headerPinnedTaskList.loading;
@@ -176,7 +176,7 @@ export function WorkspaceHeaderTitleSection({
     remoteSessionId,
     workspaceIdentity,
     taskId: activeTaskId ?? "",
-    // 任务日志查询与 Header 当前展示态使用同一个 provider。
+    // Task log queries use the same provider as the current Header display state.
     provider: menuTaskProvider,
     intl,
   });
@@ -215,8 +215,8 @@ export function WorkspaceHeaderTitleSection({
   const workspaceActionLoadingTitle = intl.formatMessage({
     id: "appHeader.workspaceSessionActionLoading",
   });
-  // 新任务草稿还没有稳定 task 作用域，header 再展示 workspace/分支会和空态主文案重复抢焦点。
-  // 草稿态继续隐藏上下文入口；已有 task 将工作区与分支收进名称前的图标提示。
+  // A new-task draft has no stable task scope; showing workspace/branch in the Header would compete with the empty-state primary copy.
+  // Keep context entries hidden in draft state; for existing tasks, show workspace and branch as icons before the name.
   const isDraftNewTask = variant ? variant === "draft" : activeTaskId === null;
 
   const handleOpenTaskFeedback = async () => {
@@ -225,8 +225,8 @@ export function WorkspaceHeaderTitleSection({
       intl.formatMessage({
         id: activeTaskMeta?.forkedFromTaskId ? "taskList.forkedUntitled" : "taskList.untitled",
       });
-    // Header 更多菜单缺少当前任务的反馈入口，用户只能复制日志再手动新建反馈。
-    // 这里打开反馈表单时预填任务标题、路径和日志线索，截图和诊断日志由用户主动选择。
+    // The Header more menu lacked a feedback entry for the current task, leaving users to copy logs and create feedback manually.
+    // Prefill the feedback form with the task title, path, and log context; users choose screenshots and diagnostic logs themselves.
     openFeedbackSubmit({
       title: intl
         .formatMessage(
@@ -329,9 +329,9 @@ export function WorkspaceHeaderTitleSection({
       return;
     }
 
-    // Header 更多菜单之前点击“归档任务”会直接执行，
-    // 和 Sidebar 的二次确认心智不一致，用户容易在查看菜单时误触归档。
-    // 这里统一先走现成 ConfirmDialog，再复用原有归档链路。
+    // “Archive task” in the Header more menu previously executed immediately,
+    // unlike the confirmation in Sidebar, making it easy to archive accidentally while exploring the menu.
+    // Show the existing ConfirmDialog first, then reuse the current archive flow.
     const confirmed = await confirmDialog({
       title: intl.formatMessage({ id: "confirmDialog.taskArchiveTitle" }),
       description: intl.formatMessage(
@@ -357,8 +357,8 @@ export function WorkspaceHeaderTitleSection({
         ...(workspaceIdentity ? { workspaceIdentity } : {}),
       })
       .then((meta) => {
-        // Header 更多菜单不能只依赖 zcodeTaskMetaMerge：归档后只有旧列表状态被更新。
-        // 这里改成和 Sidebar 一样同步清理运行态与 sqlite cache，避免 Header 操作后列表不刷新。
+        // The Header more menu cannot rely only on zcodeTaskMetaMerge, which updates only old list state after archiving.
+        // Clear runtime state and SQLite cache as Sidebar does so the list refreshes after a Header action.
         removeTaskState(workspaceAbsPath, resolvedTaskActionTaskId, workspaceIdentity);
         if (workspaceIdentity) {
           useRemotePinnedTaskStore
@@ -380,8 +380,8 @@ export function WorkspaceHeaderTitleSection({
   return (
     <div
       className={cn(
-        // 标题区必须按内容占宽，不能 flex-1 铺满整条 header。
-        // 父级 header 是 drag 区域；如果 no-drag 的标题区铺满剩余空间，mac/Windows 标题栏空白处会无法拖动窗口。
+        // The title area must size to its content, not stretch across the full Header with flex-1.
+        // The parent Header is a drag region; if the no-drag title area fills the remaining space, blank macOS/Windows title-bar areas cannot drag the window.
         "flex min-w-0 items-center gap-2 overflow-hidden [app-region:no-drag]",
         simplifyForNarrowRemote && "max-md:gap-1",
       )}
@@ -538,8 +538,8 @@ export function WorkspaceHeaderTitleSection({
                   }
                   const optimisticTask = activeTaskMeta ?? null;
                   if (optimisticTask) {
-                    // Header 里切换 pin 以前只等 RPC 成功后更新列表缓存，
-                    // pinned 区会在请求期间被旧查询结果覆盖。先乐观切换，失败再回滚。
+                    // Header pin toggling previously updated list cache only after RPC success,
+                    // so an old query result could overwrite the Pinned section while the request was pending. Switch optimistically and roll back on failure.
                     if (workspaceIdentity && !isPinned) {
                       useRemotePinnedTaskStore.getState().upsertTask(optimisticTask);
                       useRemoteTimelineTaskStore

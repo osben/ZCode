@@ -8,16 +8,16 @@ import {
 } from "@/shortcuts/bindings.js";
 import { useEffectiveShortcutBindings } from "@/shortcuts/useShortcutBindings.js";
 
-/** window 通道快捷键的处理器表：命令 ID → 回调；null/缺失表示该命令当前不可用。 */
+/** Handler table for window-channel shortcuts: command ID → callback; null/missing means the command is currently unavailable. */
 type AppKeyboardHandlers = Partial<Record<ShortcutCommandId, (() => void) | null>>;
 
 /**
- * 全局键盘分发薄壳：window keydown capture → 内核通用匹配 → 命令 handler。
+ * Thin global keyboard-dispatch wrapper: window keydown capture → shared shortcut matching → command handler.
  *
- * - 键位知识全部在 shortcuts 内核（生效表 + 匹配器），本 hook 不认识任何具体按键；
- * - handler 为 null/缺失时不 preventDefault（功能不可用时放行浏览器默认行为，如历史导航）；
- * - 交互说明：capture 阶段拦截，保证焦点落在普通页面区域时不会被浏览器或桌面壳默认行为抢走；
- * - 监听只挂一次，handlers/生效表经 ref 透传 —— 设置页改键后下一次按键即按新键位分发。
+ * - Key knowledge stays in the shortcuts core (active bindings + matcher); this hook does not know individual keys.
+ * - Do not preventDefault when a handler is null/missing, allowing browser defaults (such as history navigation) when unavailable.
+ * - Capture phase intercepts events so browser or desktop-shell defaults do not take them when focus is in ordinary page content.
+ * - Register the listener once and pass handlers/active bindings through refs, so the next keypress uses settings-page changes immediately.
  */
 export function useAppKeyboard(handlers: AppKeyboardHandlers) {
   const effective = useEffectiveShortcutBindings();
@@ -29,21 +29,21 @@ export function useAppKeyboard(handlers: AppKeyboardHandlers) {
       if (event.repeat || event.isComposing) {
         return;
       }
-      // 录制态短路：录制监听注册晚于本监听（同阶段先注册先执行），不短路的话
-      // 录制按下的组合会先触发原命令，改键永远不成功（见 setShortcutRecordingActive 注释）。
+      // Short-circuit during recording: the recording listener is registered after this listener and same-phase listeners
+      // run in registration order. Without this guard, the recorded combination triggers its original command first, so rebinding never succeeds (see setShortcutRecordingActive).
       if (isShortcutRecordingActive()) {
         return;
       }
 
       const { handlers: currentHandlers, effective: currentEffective } = stateRef.current;
-      // 纯 Shift+可打印键绑定（如 Shift+f）与「输入大写字母」是同一物理事件，
-      // 焦点在可编辑元素（聊天输入框/搜索框/终端）时跳过这类绑定，否则用户打不出对应大写字母。
+      // A Shift+printable-key binding (such as Shift+f) is the same physical event as typing an uppercase letter.
+      // Skip these bindings when focus is in an editable element (chat input/search/terminal), or users cannot type that uppercase letter.
       const editableTarget = isEditableShortcutEventTarget(event.target);
       for (const entry of SHORTCUT_COMMANDS) {
         if (entry.channel !== "window") {
           continue;
         }
-        // composer 作用域命令由输入框的 Lexical 插件消费，全局分发零感知
+        // Composer-scoped commands are handled by the input's Lexical plugin; global dispatch does not see them.
         if (entry.scope === "composer") {
           continue;
         }

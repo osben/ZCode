@@ -1,4 +1,4 @@
-/* eslint-disable max-lines -- GitPane 当前集中承载来源切换、diff 懒加载、展开状态和文件变更查找联动；后续拆分需按 Git 面板功能边界单独推进。 */
+/* eslint-disable max-lines -- GitPane currently centralizes source switching, lazy diff loading, expanded state, and file-change search integration; any future split should follow Git panel boundaries. */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import type { GitChangeSourceId, GitDiffResult } from "@zcode/shared";
@@ -211,10 +211,10 @@ export function GitPane({
             return;
           }
 
-          // 大文件 diff 卡顿问题需要先确认“卡在拉取还是卡在渲染”。
-          // 这里记录每次展开拿到的 diff 规模，便于从日志快速定位是否命中 fallback 条件。
-          // 文件变更查找会批量预加载 diff；这类逐文件规模日志只适合开发排查。
-          // 走 debug 可避免生产桌面日志被搜索行为刷大，同时保留定位大 diff 卡顿的线索。
+          // For large-file diff stalls, first determine whether the delay is in fetching or rendering.
+          // Record the size of each diff fetched on expansion so logs can quickly show whether the fallback condition was reached.
+          // File-change search preloads diffs in batches; per-file size logs of this kind are useful only for development troubleshooting.
+          // Use debug logging to keep search activity from flooding production desktop logs while retaining clues for diagnosing large-diff stalls.
           logger.debug("[GitPane] diff 已加载", {
             workspacePath,
             sourceId,
@@ -316,9 +316,9 @@ export function GitPane({
   }, [fileChangeFindState.total, onFileChangeFindMatchCountChange]);
 
   useEffect(() => {
-    // Review 面板打开时会把数百个未跟踪文件同步挂载，CDP trace 里 click
-    // 事件因此出现 600ms+ long task。这里只挂载可视行；展开 diff 后高度变化时重测，
-    // 避免后续虚拟行继续沿用折叠态高度。
+    // Opening the Review pane synchronously mounted hundreds of untracked files, causing 600ms+ click long tasks in CDP traces.
+    // Mount only visible rows; remeasure when expanding a diff changes its height
+    // so later virtual rows do not keep using the collapsed height.
     changeRowVirtualizer.measure();
   }, [changeRowVirtualizer, currentDataset.id, expandedPath]);
 
@@ -327,8 +327,8 @@ export function GitPane({
       return;
     }
 
-    // 文件变更查找需要命中折叠文件里的内容。
-    // diff 默认是展开时懒加载的，所以查找时先把当前来源的 diff 补齐，再用同一套 patch 数据计算全局命中。
+    // File-change search must find content inside collapsed files.
+    // Diffs are lazy-loaded when expanded by default, so load the diffs for the current source before searching and compute global matches from the same patch data.
     for (const change of currentChanges) {
       loadDiffForChange(change, currentDataset.id);
     }
@@ -347,8 +347,8 @@ export function GitPane({
     }
 
     if (expandedPath !== activeFileChangeFindMatch.path) {
-      // 当前命中可能位于折叠文件内。
-      // 先展开目标文件，再由文本高亮 hook 在真实 DOM 渲染后滚动到命中行。
+      // The current match may be inside a collapsed file.
+      // Expand the target file first, then let the text-highlighting hook scroll to the matching line after the real DOM renders.
       setExpandedPath(activeFileChangeFindMatch.path);
     }
     loadDiffForChange(activeChange, currentDataset.id);
@@ -504,8 +504,8 @@ export function GitPane({
                     className="absolute left-0 w-full min-w-0"
                     data-git-pane-change-virtual-row
                     data-index={virtualRow.index}
-                    // transform 定位会让行内 sticky 文件名失效，展开大 diff 后标题不再置顶。
-                    // 改用 top 偏移保留虚拟滚动布局，同时让 sticky 继续以滚动容器为参照。
+                    // transform positioning breaks the inline sticky filename, so the heading no longer stays pinned after expanding a large diff.
+                    // Use a top offset to preserve virtual scrolling while keeping sticky positioning relative to the scroll container.
                     style={{ top: `${virtualRow.start}px` }}
                   >
                     <GitPaneChangeCard

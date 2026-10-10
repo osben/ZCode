@@ -13,7 +13,7 @@ interface RemoteProviderProvisioningExecutor {
 
 const executors = new WeakMap<ServiceCollection, RemoteProviderProvisioningExecutor>();
 
-/** Window Host 私有执行能力；不会随 ServiceCollection 暴露到 Renderer RPC。 */
+/** Private execution capability for Window Host; it is not exposed to Renderer RPC through ServiceCollection. */
 export function getRemoteProviderProvisioningExecutor(
   services: ServiceCollection,
 ): RemoteProviderProvisioningExecutor | undefined {

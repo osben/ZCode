@@ -1,4 +1,4 @@
-/* eslint-disable max-lines -- Settings 与输入框共用连接方式可见性规则，集中放置避免 Start/Coding/Team/API 条件漂移。 */
+/* eslint-disable max-lines -- Settings and the input box share connection-visibility rules; keep them together to prevent Start/Coding/Team/API conditions from drifting. */
 import type {
   ProviderFamilyDomain,
   ProviderFamilyConnectionSelection,
@@ -48,8 +48,8 @@ interface ResolvedCodingPlanEntitlementState {
   subscriptionDetails?: UsageEntitlementSubscriptionDetail[];
   quotaLimits: UsageQuotaLimit[];
   /**
-   * 官方 Server MCP 额度（服务端下发的总额度）。它不在 quota.limits[] 里，只在有套餐快照的分支填充；
-   * 其余分支保持缺省（等价于不展示），避免十余处早退分支都要跟着改。
+   * Official Server MCP quota (total quota returned by the server). It is not in quota.limits[] and is populated only in branches with a plan snapshot;
+   * other branches leave it unset (equivalent to not displaying it), avoiding changes to a dozen early-return branches.
    */
   mcpQuotaLimit?: UsageQuotaLimit | null;
 }
@@ -63,22 +63,22 @@ export function resolveCodingPlanEntitlementState({
   modelProvidersLoading,
 }: {
   providerId: string;
-  /** 当前账号是否明确拥有该 Provider 对应的产品权益。 */
+  /** Whether the current account explicitly has product entitlement for this Provider. */
   accountEntitled: boolean;
   accountAvailability?: import("@zcode/provider").AccountProviderState["availability"];
   accountUnavailableReason?: import("@zcode/provider").AccountProviderState["unavailableReason"];
   entitlement?: CodingPlanEntitlementState;
   modelProvidersLoading: boolean;
 }): ResolvedCodingPlanEntitlementState {
-  // Start 校验失败是未知，仍允许读取/重试，不能回退为未登录。
+  // A failed Start check is unknown; allow reading/retrying and do not fall back to signed-out.
   const canInspect =
     accountEntitled ||
     accountAvailability === "pending" ||
     (isStartPlanModelProviderId(providerId) && accountAvailability === "unknown");
   if (!canInspect && modelProvidersLoading) {
     return {
-      // 新 Host 启动时 Account Overlay 的首份 View 可能晚于旧
-      // Provider 快照。该窗口必须保持 checking，不能读旧 Key，也不能提前判定断开。
+      // When a new Host starts, the first Account Overlay View may arrive after the old
+      // Provider snapshot. Keep this window in checking; do not read the old Key or decide early that it is disconnected.
       status: "checking",
       planLevel: null,
       currentProductId: null,
@@ -89,19 +89,19 @@ export function resolveCodingPlanEntitlementState({
     };
   }
   if (!canInspect) {
-    // entitled=false 不等于"没连上"。provider-refactor 之后 Account Overlay 只发布
-    // entitled 布尔值，"已登录且服务端明确回答没有个人套餐"与"未连接"被合并渲染成
-    // "未连接 + 连接按钮"（不由权益快照的 no_plan 判定为"未开通"），且不可用 provider
-    // 不会再发起权益查询，UI 无法自行还原原因，只能依赖随 State 下发的原因分流。
-    // Start 常驻后同样按原因展示；Team Plan 继续由团队权益快照组装。
-    // 原因只在 availability === "unavailable" 时成立，unknown 表示本轮无法判定。
+    // entitled=false does not mean "not connected." After the provider refactor, Account Overlay publishes only an entitled boolean, so
+    // "signed in, with the server explicitly reporting no personal plan" and "not connected" were both rendered as
+    // "not connected + Connect button" (no_plan in the entitlement snapshot was not treated as "not subscribed"). Unavailable providers
+    // no longer start entitlement queries, so the UI cannot recover the reason by itself and must use the reason delivered in State.
+    // With Start always visible, display it by reason as well; Team Plan remains assembled from the team entitlement snapshot.
+    // A reason is valid only when availability === "unavailable"; unknown means the current check could not decide.
     if (
       accountAvailability === "unavailable" &&
       (isIndividualCodingPlanModelProviderId(providerId) || isStartPlanModelProviderId(providerId))
     ) {
       if (accountUnavailableReason === "not-entitled") {
         return {
-          // 服务端明确无个人套餐：这是"未开通"，不是连接故障。
+          // The server explicitly reports no personal plan: this means "not subscribed," not a connection failure.
           status: "notPurchased",
           ...(isStartPlanModelProviderId(providerId) && entitlement?.snapshot?.startPlanExpired
             ? { statusLabelId: "settings.modelProvider.startPlan.status.expired" }
@@ -116,7 +116,7 @@ export function resolveCodingPlanEntitlementState({
       }
       if (accountUnavailableReason === "credential-failed") {
         return {
-          // 凭据失效属于权益同步失败，不是未购买；保持可重试/重新登录入口。
+          // Invalid credentials are an entitlement-sync failure, not a missing purchase; keep the retry/re-login entry point.
           status: "unavailable",
           planLevel: null,
           currentProductId: null,
@@ -128,8 +128,8 @@ export function resolveCodingPlanEntitlementState({
       }
     }
     return {
-      // 套餐连接是 Account Overlay 事实，不是 Renderer 能读取的
-      // API Key 事实。新 Host 明确传入 false 后，旧 Key 不得再点亮连接态。
+      // Plan connection is an Account Overlay fact, not an API Key fact readable by the Renderer.
+      // Once the new Host explicitly passes false, the old Key must not light up the connected state again.
       status:
         isStartPlanModelProviderId(providerId) && accountAvailability === "unknown"
           ? "unavailable"
@@ -146,7 +146,7 @@ export function resolveCodingPlanEntitlementState({
   const snapshot = entitlement?.snapshot ?? null;
   if (entitlement?.loading && !snapshot?.subscription) {
     return {
-      // refresh 会保留上一轮 snapshot；只有没有有效 subscription 时才显示 checking。
+      // refresh retains the previous snapshot; show checking only when there is no valid subscription.
       status: "checking",
       planLevel: null,
       currentProductId: null,
@@ -159,7 +159,7 @@ export function resolveCodingPlanEntitlementState({
 
   if (!snapshot && entitlement?.error) {
     return {
-      // 权益请求失败时必须退出 loading 态。
+      // Leave the loading state when the entitlement request fails.
       status: "unavailable",
       planLevel: null,
       currentProductId: null,
@@ -181,7 +181,7 @@ export function resolveCodingPlanEntitlementState({
 
   if (currentSubscription) {
     return {
-      // Z.AI/BigModel 的真实套餐状态来自 subscription/list。
+      // The actual plan state for Z.AI/BigModel comes from subscription/list.
       status: "purchased",
       ...(entitlement?.error
         ? { statusLabelId: "settings.modelProvider.codingPlan.status.unavailable" }
@@ -215,8 +215,8 @@ export function resolveCodingPlanEntitlementState({
 
   if (entitlementOutcome === "unknown") {
     return {
-      // 过去把非 no_plan 的未知快照兜底成“未购买”，并让 entitlement
-      // 越权裁决 Account 是否断开。账号已连接时，未知证据只能展示暂不可用。
+      // Previously, an unknown snapshot other than no_plan fell back to "not purchased," and entitlement could improperly decide whether Account was disconnected.
+      // When the account is connected, unknown evidence can only be shown as temporarily unavailable.
       status: "unavailable",
       planLevel: null,
       currentProductId: null,
@@ -288,10 +288,10 @@ function filterStartPlanItemsByEntitlement({
   subscribedTeamProducts: EnterpriseCodingPlanProductDisplay[];
   connectionSelections?: ProviderFamilyConnectionSelectionSettings;
 }): Array<Extract<ModelProviderNavGroup["items"][number], { type: "codingPlan" }>> {
-  // 原变量名 hasBigModelTeamPlan 暗示只服务 bigmodel，但逻辑
-  // （entitlement 或 subscribedTeamProducts）本身是 family 无关的。
-  // 重命名为中性名称，并在下方 filter 去掉 familySpec.id === "bigmodel" 守卫，
-  // 让 zai family 也能因 team plan 过滤 Start Plan 入口。
+  // The old variable name hasBigModelTeamPlan implied it served only bigmodel, but the logic
+  // (entitlement or subscribedTeamProducts) is family-agnostic.
+  // Use a neutral name and remove the familySpec.id === "bigmodel" guard from the filter below,
+  // so the zai family can also hide the Start Plan entry when it has a team plan.
   const hasAnyTeamPlan =
     hasEntitlementTeamPlan(codingPlanEntitlements) || subscribedTeamProducts.length > 0;
   return items.filter((item) => {
@@ -317,21 +317,21 @@ function filterStartPlanItemsByEntitlement({
       hasAnyTeamPlan;
 
     if (!loggedIn) {
-      // 未登录时体验套餐只作为详情页引导入口，不作为连接方式。
+      // While signed out, the trial plan is only a detail-page entry point, not a connection method.
       return false;
     }
 
-    // Start Plan 是独立连接；个人/团队 Coding 权益不再参与可见性判断。
-    // 查询中或临时不可用时保留用户已选项，只有自身明确无权益才隐藏。
+    // Start Plan is a separate connection; personal/team Coding entitlements no longer determine its visibility.
+    // Preserve the user's selection while querying or temporarily unavailable; hide it only when it explicitly has no entitlement.
     return hasStartPlanEntitlement || shouldPreserveUnresolvedSelection;
   });
 }
 
 /**
- * 按 family 查找对应 family 的 Coding Plan nav item。
- * 原 appendSubscribedTeamPlanItems 硬编码找 bigmodelCodingPlan，
- * zai team plan items 无对应展示基线。zai/bigmodel 对称化后，team item 的
- * providerName、provider 等展示字段应继承自所属 family 的 codingPlanItem。
+ * Find the Coding Plan navigation item for the given family.
+ * The old appendSubscribedTeamPlanItems hardcoded bigmodelCodingPlan,
+ * leaving zai team-plan items without a display baseline. After making zai/bigmodel symmetric, the team item's
+ * providerName, provider, and other display fields should inherit from its family's codingPlanItem.
  */
 function resolveCodingPlanItemForFamily(
   items: Array<Extract<ModelProviderNavGroup["items"][number], { type: "codingPlan" }>>,
@@ -359,17 +359,16 @@ function appendSubscribedTeamPlanItems({
   showPurchasedTeamPlanFallback: boolean;
   subscribedTeamProducts: EnterpriseCodingPlanProductDisplay[];
 }): ModelProviderNavGroup["items"] {
-  // 原实现先 items.find(bigmodelCodingPlan)，不存在时直接 return items。
-  // 当设置页只展示 zai family（providerFamilyDomain === "zai"）时，codingPlanItems 里
-  // 没有 bigmodelCodingPlan，这个守卫会让 appendSubscribedTeamPlanItems 整体短路，
-  // zai teamPlan item 永远不生成 → pickFamilyModeNavigationItem 找不到 saved team item
-  // → selectedNavItem=null → 右侧 Plan Card 永远卡在 "加载中"。
-  // 对称化：去掉 bigmodel 硬编码前置守卫，entitlement/fallback/product 三个 builder
-  // 各自按 family 解析对应 codingPlanItem，不存在就跳过该 family。
+  // The old implementation first looked up items.find(bigmodelCodingPlan) and returned items if it was absent.
+  // When Settings displayed only the zai family (providerFamilyDomain === "zai"), codingPlanItems had no bigmodelCodingPlan,
+  // so this guard short-circuited appendSubscribedTeamPlanItems: no zai teamPlan item was generated → pickFamilyModeNavigationItem could not find the saved team item
+  // → selectedNavItem=null → the right-side Plan Card stayed stuck on "Loading."
+  // To make the families symmetric, remove the hardcoded bigmodel precondition; each of the entitlement/fallback/product builders
+  // resolves the matching codingPlanItem by family and skips that family if it does not exist.
 
-  // entitlement + fallback 两个 builder 原来只对 bigmodelCodingPlanItem 调用，
-  // zai 的 entitlement snapshot 和 fallback selectedKey 永远不生成 team item（断裂）。
-  // 遍历两个 family，各用对应 codingPlanItem 派生 entitlement team items + fallback。
+  // The entitlement + fallback builders used to run only for bigmodelCodingPlanItem,
+  // so zai never generated a team item from its entitlement snapshot or fallback selectedKey (a broken path).
+  // Iterate both families and derive entitlement team items + fallback using each matching codingPlanItem.
   const entitlementTeamItems: TeamPlanNavItem[] = MODEL_PROVIDER_FAMILY_SPECS.flatMap(
     ({ id: family }) => {
       const codingPlanItem = resolveCodingPlanItemForFamily(items, family);
@@ -403,8 +402,8 @@ function appendSubscribedTeamPlanItems({
 
   const seenTeamKeys = new Set<string>();
   const productTeamItems: TeamPlanNavItem[] = subscribedTeamProducts.flatMap((product) => {
-    // 按 product.family 找对应 family 的 codingPlanItem 作为 team item 的展示基线。
-    // 缺省 bigmodel，向后兼容未标记 family 的旧数据。
+    // Find the codingPlanItem for product.family as the display baseline for the team item.
+    // Default to bigmodel for backward compatibility with older data that has no family marker.
     const productFamily = resolveEnterpriseCodingPlanProductFamily(product);
     const codingPlanItemForProduct = resolveCodingPlanItemForFamily(items, productFamily);
     if (!codingPlanItemForProduct) {
@@ -431,7 +430,7 @@ function appendSubscribedTeamPlanItems({
       if (!organizationId || !projectKey) {
         return [];
       }
-      // 去重 key 必须包含 family 维度，否则 zai/bigmodel 相同 productId+org+project 会互相覆盖。
+      // The deduplication key must include family; otherwise zai/bigmodel entries with the same productId+org+project overwrite each other.
       const teamKey = `${productFamily}:${product.productId}:${organizationId}:${projectKey}`;
       if (seenTeamKeys.has(teamKey)) {
         return [];
@@ -443,7 +442,7 @@ function appendSubscribedTeamPlanItems({
         projectName: projectContext.projectName ?? product.projectName,
       });
       if (!teamPlanName) {
-        // Team Plan 可见文案只允许使用组织名；缺失时不能渲染空白连接项。
+        // Visible Team Plan copy may use only the organization name; if it is missing, do not render a blank connection item.
         return [];
       }
       const teamProjectApiKeyUnavailable = projectContext.apiKeyStatus === "unavailable";
@@ -462,7 +461,7 @@ function appendSubscribedTeamPlanItems({
       return [
         {
           ...codingPlanItemForProduct,
-          // 展示 key 按 family 和完整团队项目生成，不复用请求鉴权身份。
+          // Generate the display key from the family and full team project; do not reuse the request authorization identity.
           key: createTeamPlanNavigationKey(productFamily, {
             productId: product.productId,
             organizationId,
@@ -474,19 +473,19 @@ function appendSubscribedTeamPlanItems({
           teamPlanName,
           organizationId,
           projectId: projectKey,
-          // Team Plan 状态卡应和连接方式使用同一个团队显示名。
-          // 直接展示 productName/tier 会在中文环境退回“标准版/高级版”，丢失项目或组织名称。
+          // Team Plan status cards should use the same team display name as the connection method.
+          // Showing productName/tier directly falls back to “Standard/Advanced” in Chinese locales and loses the project or organization name.
           planLevel: teamPlanName,
           inactivePlanTitle: teamPlanName,
           currentProductId: product.productId,
-          // Team Plan 复用对应 family 的 Coding Plan provider，但管理入口必须进入团队套餐页；
-          // 继续继承个人 Coding Plan 的 personal/overview 会把用户带到错误的套餐上下文。
+          // Team Plan reuses the corresponding family's Coding Plan provider, but its management entry must open the team plan page;
+          // inheriting the personal Coding Plan personal/overview would take users to the wrong plan context.
           purchaseUrl: getModelProviderFamilySpec(productFamily).teamCodingPlanManageUrl,
-          // Team Plan 入口存在、项目 API Key 可复制，都不能证明团队套餐有效。
-          // 有效性必须由团队 quota snapshot 决定，避免继续显示个人套餐的已启用状态。
+          // The Team Plan entry existing and a project API Key being copyable do not prove the team plan is active.
+          // Determine validity from the team quota snapshot to avoid continuing to show the personal plan as enabled.
           status: teamPlanUnavailable ? ("unavailable" as const) : ("purchased" as const),
-          // Project Key 不可用和 Team quota 未分配是不同事实。
-          // 只有服务端明确没有团队额度时才展示“团队套餐未分配”。
+          // An unavailable Project Key and an unassigned Team quota are different facts.
+          // Show “Team plan not assigned” only when the server explicitly reports no team quota.
           statusLabelId:
             availabilityReason === "not-allocated"
               ? "settings.modelProvider.codingPlan.status.teamUnavailable"
@@ -498,8 +497,8 @@ function appendSubscribedTeamPlanItems({
           subscriptionBillingCycle: null,
           subscriptionRenewTime: null,
           subscriptionExpireTime: null,
-          // Team Plan 项目没有可用 zcode-team-api-key 时，不能继续当作已启用连接方式。
-          // 服务端会按组织/项目返回 apiKeyStatus；UI 需要在连接项和状态卡中明确标成不可用。
+          // A Team Plan project without an available zcode-team-api-key must not remain an enabled connection method.
+          // The server returns apiKeyStatus by organization/project; the UI must mark it unavailable in both the connection item and status card.
           statusActive: !teamPlanUnavailable,
         },
       ];
@@ -537,10 +536,10 @@ function appendSubscribedTeamPlanItems({
     return items;
   }
 
-  // 原写法硬编码 items.findIndex(bigmodelCodingPlanItem.key) 作为插入点，
-  // zai-only 视图下 bigmodelCodingPlanItem 不存在会 throw（.key 访问 undefined）。
-  // 改为按首个 team item 所属 family 找对应 codingPlanItem 作为插入锚点；
-  // 找不到就追加到末尾（与原 fallback 语义一致）。
+  // The old implementation hard-coded items.findIndex(bigmodelCodingPlanItem.key) as the insertion point,
+  // which throws in a zai-only view because bigmodelCodingPlanItem is missing (.key reads undefined).
+  // Find the matching codingPlanItem based on the family of the first team item;
+  // append to the end if none is found (same behavior as the old fallback).
   const firstTeamFamily = resolveModelProviderFamilySpecByProviderId(
     (teamItems[0] as TeamPlanNavItem | undefined)?.presetId ?? "",
   )?.id;
@@ -580,8 +579,8 @@ function buildEntitlementTeamPlanItems(
   codingPlanEntitlements: Partial<Record<string, CodingPlanEntitlementState>>,
   family: ProviderFamilyDomain,
 ): TeamPlanNavItem[] {
-  // 原硬编码读 bigmodelCodingPlan bucket + bigmodel team key。
-  // zai/bigmodel 对称化后，按 family 读对应 codingPlan bucket、生成对应前缀 team key。
+  // Previously this hard-coded the bigmodelCodingPlan bucket and bigmodel team key.
+  // After making zai/bigmodel symmetric, read the matching codingPlan bucket by family and generate the corresponding team-key prefix.
   const familySpec = getModelProviderFamilySpec(family);
   const codingPlanProviderId = familySpec.teamCodingPlanProviderId;
   const entitlement = codingPlanEntitlements[codingPlanProviderId];
@@ -623,8 +622,8 @@ function buildEntitlementTeamPlanItems(
       organizationId,
       projectId,
       status: "purchased" as const,
-      // Team Plan 连接项先以 entitlement snapshot 为主数据源。
-      // enterprise pricing/customerInfo 只负责后续校正名称和商品字段，不能让连接方式退回 Coding Plan。
+      // Use the entitlement snapshot as the primary data source for Team Plan connection items.
+      // enterprise pricing/customerInfo only corrects names and product fields later; it must not revert the connection method to Coding Plan.
       planLevel: teamPlanName,
       currentProductId: productId,
       purchaseUrl: familySpec.teamCodingPlanManageUrl,
@@ -668,9 +667,9 @@ function buildSelectedTeamPlanFallbackItems({
       organizationId: selection.organizationId,
       projectId: selection.projectId,
       status: "purchased" as const,
-      // enterprise pricing 可能尚未返回 subscribed 团队项目，
-      // 但 shared settings 已保存 Team Plan selectedKey。设置页需要先展示同一连接方式，
-      // 避免和输入框/registry 的 Team Plan 选择短暂断裂。
+      // enterprise pricing may not have returned subscribed team projects yet,
+      // while shared settings already stores the Team Plan selectedKey. Show the same connection method in settings first
+      // to avoid a temporary mismatch with the input/Registry Team Plan selection.
       planLevel: teamPlanName,
       currentProductId: selection.productId,
       purchaseUrl: familySpec.teamCodingPlanManageUrl,
@@ -695,8 +694,8 @@ function isTeamPlanQuotaUnavailable({
 }): boolean {
   const codingPlanProviderId = getModelProviderFamilySpec(family).teamCodingPlanProviderId;
   const entitlement = codingPlanEntitlements[codingPlanProviderId];
-  // loading/error 都表示额度事实尚未确定，不能把暂时没有 quota
-  // 当成服务端明确返回的“团队套餐未分配”。详情页仍会主动刷新这条连接。
+  // loading/error both mean quota facts are not yet known; a temporarily missing quota
+  // must not be treated as the server explicitly reporting “Team plan not assigned.” The detail page still refreshes this connection proactively.
   if (!entitlement || entitlement.loading || entitlement.error) {
     return false;
   }

@@ -1,24 +1,27 @@
 import type { BrowserViewCloseTabNotification } from "@zcode/shared";
 import type { BrowserGuestExecutionContext } from "./browserGuestManager.js";
 
-/** 构造 main→renderer 关闭通知所需的 owner scope 子集；完整 execution context 的其余字段与 renderer 无关。 */
+/** Build the owner-scope subset needed for a main→renderer close notification; the renderer does not need the rest of the execution context. */
 type BrowserCloseTabNotificationOwner = Pick<
   BrowserGuestExecutionContext,
   "workspaceKey" | "sessionId" | "remoteSessionId"
 >;
 
 /**
- * 把 main 侧 tab owner 折算成 renderer 能路由的关闭通知。
+ * Convert a main-side tab owner into a close notification that the renderer can route.
  *
- * 旧 payload 只有 tabId，renderer 只能在“当前活跃 workspace”的 side pane 状态里查找；
- * 用户已切到别的 workspace 时通知被静默丢弃，原 workspace 的持久化状态里留下关不掉的幽灵 tab。
- * 带上 owner scope 后 renderer 能直接定位到对应 workspace 的 side pane 内存删除该 tab。
+ * The old payload contained only tabId, so the renderer could search only the side-pane state for
+ * the currently active workspace. If the user had switched workspaces, the notification was silently
+ * dropped, leaving a ghost tab in the original workspace's persistent state. Including owner scope
+ * lets the renderer locate the right workspace side pane and remove the tab from memory.
  *
- * 抽成纯函数是为了让字段映射可被单测覆盖：内联在 `index.ts` 的 manager 构造回调里时，
- * Electron 入口不进单测、`closeTabFromRenderer` 又走 `notifyRenderer=false` 不经过这里，
- * 整条 Agent close 通知链路的字段拼装就没有任何测试防护。
+ * Keep this as a pure function so unit tests can cover field mapping. If it lived inline in the
+ * manager-construction callback in `index.ts`, the Electron entry point would not be unit-tested and
+ * `closeTabFromRenderer` would bypass it with `notifyRenderer=false`, leaving the Agent close-notification
+ * payload without test coverage.
  *
- * owner 允许缺省：recovery-orphan 等内部路径只有 tabId，renderer 此时退回“仅当前 workspace”语义。
+ * owner may be omitted: internal paths such as recovery-orphan have only tabId, so the renderer then
+ * falls back to the "current workspace only" behavior.
  */
 export function buildBrowserViewCloseTabNotification(
   tabId: string,
@@ -29,8 +32,9 @@ export function buildBrowserViewCloseTabNotification(
     tabId,
     workspaceKey: owner.workspaceKey,
     sessionId: owner.sessionId,
-    // remote workspace 才有 remoteSessionId；本地 workspace 必须让该字段缺席而不是显式 undefined，
-    // renderer 侧按 `payload.remoteSessionId` 是否存在区分作用域。
+    // Only remote workspaces have remoteSessionId. For local workspaces, omit the field instead of
+    // setting it to undefined, because the renderer distinguishes scope by whether
+    // `payload.remoteSessionId` exists.
     ...(owner.remoteSessionId ? { remoteSessionId: owner.remoteSessionId } : {}),
   };
 }

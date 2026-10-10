@@ -6,12 +6,12 @@ import { THEME_PALETTES } from "../src/lib/themePalettes.js";
 
 const styles = readFileSync(new URL("../src/styles.css", import.meta.url), "utf8");
 
-// Tailwind 默认 neutral-50 与 neutral-900 的 sRGB 近似值，对应 oklch(98.5% 0 0) 与 oklch(20.5% 0 0)。
+// Approximate sRGB values for Tailwind’s default neutral-50 and neutral-900, corresponding to oklch(98.5% 0 0) and oklch(20.5% 0 0).
 const LIGHT_BACKGROUND = "#fafafa";
 const DARK_BACKGROUND = "#171717";
 const MIN_CONTRAST = 3;
 
-// --color-foreground 在 light 为 neutral-700、dark 为 neutral-200，对应 sRGB 近似值。
+// --color-foreground is neutral-700 in light mode and neutral-200 in dark mode, using the corresponding approximate sRGB values.
 const LIGHT_FOREGROUND = "#404040";
 const DARK_FOREGROUND = "#e5e5e5";
 const SURFACE_TOKENS = [
@@ -119,7 +119,7 @@ describe("theme palette contrast", () => {
   });
 
   it("tints background-alt from the palette win-alt in every mode block", () => {
-    // background-alt 是 macOS 侧边栏与收起导轨的半透明层，由 color-mix 生成，无法直接解析为 hex，因此校验表达式形式。
+    // background-alt is the translucent layer used by the macOS sidebar and collapsed rail. color-mix generates it, so validate its expression form instead of parsing it as hex.
     const expected = "color-mix(in oklab, var(--color-background-win-alt) 60%, transparent)";
     for (const { id } of accentPalettes) {
       for (const selector of [`\\.palette-${id}`, `\\.palette-${id}\\.dark`]) {

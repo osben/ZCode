@@ -1,5 +1,5 @@
 import { mapZCodeEnvToArmsRumEnv, ZCODE_ARMS_RUM_ENDPOINT, ZCODE_VERSION } from "@zcode/shared";
-/** 主进程 init 的 browserCollectors，经 autoInject 注入到 renderer 的 RumSDK.init(collectors) */
+/** browserCollectors from main-process initialization, injected into renderer's RumSDK.init(collectors) through autoInject. */
 export const ARMS_BROWSER_COLLECTORS = {
   perf: true,
   webvitals: true,
@@ -7,11 +7,12 @@ export const ARMS_BROWSER_COLLECTORS = {
   whiteScreen: true,
   api: true,
   staticResource: true,
-  // 开启 click 采集用户行为；桌面端交互密集，上报量与噪音会上升，需关注 ARMS 用量
+  // Enable click collection for user behavior. Desktop interaction is dense, so report volume and noise
+  // will increase; monitor ARMS usage.
   click: true,
   longTask: true,
 };
-/** ARMS 页面名解析：file:// 与 dev-server 统一规则，主进程 parseViewName 与 renderer 共用 */
+/** Resolve ARMS page names with the same file:// and dev-server rules in main and renderer. */
 export function parseArmsViewName(url) {
   try {
     const parsed = new URL(url);
@@ -25,7 +26,7 @@ export function parseArmsViewName(url) {
     return url.length > 120 ? `${url.slice(0, 120)}…` : url;
   }
 }
-/** Renderer Browser SDK init 配置（与主进程 endpoint/env/version 对齐） */
+/** Renderer Browser SDK initialization config, aligned with the main-process endpoint/environment/version. */
 export function buildArmsBrowserInitConfig(runtimeEnv) {
   return {
     enable: true,

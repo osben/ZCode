@@ -19,7 +19,7 @@ export interface NodeZCodeBuiltinProviderConfigSourceOptions {
 
 export type ApplyZCodeBuiltinReleaseResult = "updated" | "unchanged" | "stale";
 
-/** Bundled、Active/LKG 与 Remote 共用同一 Release，并最终发布为现有 Config Snapshot。 */
+/** Bundled, Active/LKG, and Remote share the same Release, which is ultimately published as the existing Config Snapshot. */
 export class NodeZCodeBuiltinProviderConfigSource implements ProviderSource<ProviderConfigLayerSnapshot> {
   readonly #bundledFilePath: string;
   readonly #activeFilePath: string;
@@ -36,8 +36,8 @@ export class NodeZCodeBuiltinProviderConfigSource implements ProviderSource<Prov
     if (!bundledFilePath) throw new Error("ZCode Built-in bundledFilePath 不能为空");
     this.#bundledFilePath = bundledFilePath;
     this.#activeFilePath = options.activeFilePath?.trim() || bundledFilePath;
-    // 旧标识只有发布序号，不同 Endpoint 同序号会让 Registry 误复用上一来源。
-    // Active 路径已含规范化 Endpoint 隔离范围；Worker 收到同一路径，不另拼账号事实。
+    // The old identifier contained only a release sequence, so different endpoints with the same sequence made Registry reuse the previous source.
+    // Active paths already include a normalized endpoint scope; the Worker receives the same path, with no account facts appended.
     this.#sourceKey = createHash("sha256").update(resolve(this.#activeFilePath)).digest("hex");
     this.#watchEnabled = options.watch !== false;
   }
@@ -53,8 +53,8 @@ export class NodeZCodeBuiltinProviderConfigSource implements ProviderSource<Prov
       await this.#ensureWatcher();
       release = await withFileLock(this.#activeFilePath, () => this.#readAndMaterializeLocked());
     } catch {
-      // Active 只是可丢弃缓存，目录锁、监听或原子物化失败不能阻断
-      // Bundled 基线。缓存边界不可用时绕过 Active；Bundled 自身无效仍会在这里抛错。
+      // Active is only a disposable cache; failures in directory locking, watching, or atomic materialization must not block
+      // the Bundled baseline. Bypass Active if its cache boundary is unavailable; invalid Bundled data still throws here.
       release = selectReleaseCandidate(await readReleaseCandidate(this.#bundledFilePath), null);
     }
     this.#observedSignature ??= signatureOf(release);
@@ -187,8 +187,8 @@ function selectReleaseCandidate(
     bundled.release.revision === active.release.revision &&
     serializeZCodeBuiltinRelease(bundled.release) !== serializeZCodeBuiltinRelease(active.release)
   ) {
-    // 同 revision 冲突属于 Active 缓存失效，不能反向使可信 Bundled 无法启动。
-    // 返回 Bundled 后调用方会在能够写入时原子替换 Active。
+    // A conflict at the same revision means the Active cache is invalid; it must not prevent the trusted Bundled baseline from starting.
+    // After returning Bundled, the caller atomically replaces Active when writing becomes possible.
     return bundled.release;
   }
   const valid = [bundled?.release, active?.release].filter(

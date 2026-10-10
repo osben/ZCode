@@ -91,8 +91,9 @@ function decodeStoredMessage(value: unknown): Record<string, unknown> {
   if (!isRecord(value)) return {};
   if (value.role === "user") {
     const { model: _legacyModel, modelSelection: rawSelection, ...message } = value;
-    // 迁移无法确定身份时可能留下 null；回滚后也可能缺字段。不能让配置残缺阻断整条消息的协议读取。
-    // 这里只校验新结构，不查执行资格、不回读旧快照，磁盘内容保持不变。
+    // A migration may leave null when identity cannot be determined; a rollback may also leave fields absent. An
+    // incomplete config must not block protocol reading for the entire message. Validate only the new structure here;
+    // do not check execution eligibility or reread the old snapshot, and leave the on-disk content unchanged.
     const modelSelection = parseModelSelectionValue(rawSelection);
     return { ...message, ...(modelSelection ? { modelSelection } : {}) };
   }
@@ -149,7 +150,7 @@ function decodeStoredPart(value: unknown): Record<string, unknown> {
 
 function decodeTimelineSelection(value: unknown) {
   if (!isRecord(value)) return undefined;
-  // label 仅是 Timeline 展示信息，不属于严格的 Selection；不能误删合法的带标签历史。
+  // label is Timeline display metadata, not part of strict Selection; do not discard valid labeled history.
   const { label, ...rawSelection } = value;
   const selection = parseModelSelectionValue(rawSelection);
   return selection ? { ...selection, ...(typeof label === "string" ? { label } : {}) } : undefined;
@@ -173,8 +174,8 @@ export function decodeSessionEntryRow(row: SessionEntryRow): SessionEntryInfo {
 }
 
 function decodeStoredSessionModelSelection(value: unknown): unknown {
-  // 旧平铺字段只属于升级入口。新成员即使为空/非法也不能借旧快照补值。
-  // 解包在存储边界完成，core/bootstrap/fork 只消费 port 的当前逻辑 Selection。
+  // Legacy flattened fields are used only by the upgrade path. Do not fill new members from the old snapshot even
+  // when they are empty or invalid. Unwrap at the storage boundary; core/bootstrap/fork consume only the port's current logical Selection.
   if (!isRecord(value)) return undefined;
   return parseModelSelectionValue(value.modelSelection) ?? value.modelSelection;
 }

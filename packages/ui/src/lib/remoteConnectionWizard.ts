@@ -109,8 +109,8 @@ export function buildRemoteTarget(
         },
       };
     case "docker":
-      // Docker 运行中列表可能因为探测失败或刷新延迟不完整。
-      // 手动输入必须独立于下拉选择，提交时优先使用手动输入，空值再回落到下拉选择。
+      // The running Docker list may be incomplete due to probe failures or refresh delays.
+      // Keep manual input independent of the dropdown; on submit prefer manual input and fall back to the dropdown when empty.
       const dockerContainer =
         snapshot.manualDockerContainer?.trim() || snapshot.dockerContainer.trim();
 
@@ -152,8 +152,8 @@ export function withDefaultRemoteResourcePackages(target: RemoteTarget): RemoteT
   return {
     ...target,
     resourcePackages: {
-      // 当前分支只保留一个 ZCode Agent，SSH 向导再让用户手动挑资源包会产生无意义分叉。
-      // 这里统一走默认 active 资源集，历史重连传入的旧选择不再影响部署范围。
+      // This branch has only one ZCode Agent, so asking users to choose a resource pack in the SSH wizard would create a meaningless fork.
+      // Use the default active resource set; an old selection passed during reconnection no longer changes deployment scope.
       selectedPackageIds: normalizeRemoteResourcePackageSelection(),
     },
   };

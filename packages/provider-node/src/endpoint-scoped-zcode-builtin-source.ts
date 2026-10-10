@@ -22,8 +22,8 @@ export interface EndpointScopedZCodeBuiltinSourceOptions {
 }
 
 /**
- * 让 Environment 的 ZCode 控制面 Endpoint 同时决定 Active/LKG 与刷新控制路径。
- * Endpoint 切换只替换当前 Source，不读取上一 Endpoint 的缓存。
+ * Lets the Environment's ZCode control-plane endpoint determine Active/LKG and refresh-control paths.
+ * Switching endpoints replaces only the current Source and does not read the previous endpoint's cache.
  */
 export class EndpointScopedZCodeBuiltinSource implements ProviderSource<ProviderConfigLayerSnapshot> {
   readonly #options: EndpointScopedZCodeBuiltinSourceOptions;
@@ -50,7 +50,7 @@ export class EndpointScopedZCodeBuiltinSource implements ProviderSource<Provider
     return (await this.#ensureCurrent()).synchronizer.refresh(options);
   }
 
-  /** 返回当前 Environment Endpoint 对应、已完成物化的 Active Config 路径。 */
+  /** Return the materialized Active Config path for the current Environment endpoint. */
   async resolveActiveFilePath(): Promise<string> {
     return (await this.#ensureCurrent()).activeFilePath;
   }

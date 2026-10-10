@@ -88,8 +88,8 @@ interface PositionedCard {
 }
 
 function normalizeTrailingUrlText(url: string): string {
-  // 修复依据：嵌套量词 (?:[*_`]+|[…]+)+$ 属于指数回溯形态（code-scanning js/redos），
-  // 长符号串可挂起渲染。摊平为单层字符类后匹配语言不变，指数路径被消除。
+  // Fix rationale: The nested quantifier (?:[*_`]+|[…]+)+$ has exponential backtracking behavior (code-scanning js/redos);
+  // a long symbol sequence can hang rendering. Flattening it to one character class preserves the matched language while eliminating the exponential path.
   return url.trim().replace(/[*_`.,;:!?，。！？；：、]+$/g, "");
 }
 
@@ -289,7 +289,7 @@ export function buildAssistantPreviewCardsFromReferences(
   for (const match of content.matchAll(LOCALHOST_URL_RE)) {
     const url = normalizeTrailingUrlText(match[0] ?? "");
     if (!isValidAssistantPreviewWebsiteUrl(url)) continue;
-    // Web 远控没有本地端口转发或 HTML 运行环境；在候选上限前过滤，避免隐藏卡片占位。
+    // Web remote control has no local port forwarding or HTML runtime; filter before the candidate limit so hidden cards do not take up slots.
     if (options.suppressWebRemoteCards) continue;
     const filePath = resolveLocalhostHtmlChangedPath(url, workspacePath, changedFilePaths, {
       homePath: options.homePath,
@@ -330,8 +330,8 @@ export function buildAssistantPreviewCardsFromReferences(
     productTurnId: "",
     workspacePath,
     fileChanges: changedFilePaths.map((path) => ({ path, state: "active" as const })),
-    // Renderer 仍需展示已解析的 Home-relative/file URL 卡片；Share Service 会在自己的
-    // Host source 上再次执行 workspace 边界校验。
+    // The renderer still needs to show resolved Home-relative/file URL cards. Share Service performs workspace-boundary validation
+    // again against its own Host source.
     enforceWorkspaceBoundary: false,
   });
   const referencesByPath = new Map(

@@ -48,7 +48,7 @@ export function useSessionDebug({
             error: true,
           }));
       } finally {
-        // 调试查询按完成节拍刷新，不重叠请求；切任务后的旧结果不能覆盖新任务。
+        // Refresh debug queries after each request completes, without overlapping requests; results from a previous task must not overwrite the new one.
         if (!disposed) timer = setTimeout(() => void refresh(), REFRESH_INTERVAL_MS);
       }
     };

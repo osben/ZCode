@@ -25,8 +25,9 @@ export async function resolveZCodeCustomCommandPrompt(
   options: ResolveZCodeCustomCommandPromptOptions = {},
 ): Promise<string | undefined> {
   const invocation = parsePromptCustomCommandInvocation(input);
-  // 保留名（含内置 `workflow`）在这里直接返回 undefined，与「命令不存在」同形：内置命令由
-  // builtin-prompt-command.ts 先行展开，这里拒绝的是借同名自定义命令绕过内置语义（或功能开关）的路径。
+  // Reserved names (including built-in `workflow`) return undefined here, as for "command not found".
+  // builtin-prompt-command.ts expands built-ins first; this rejects attempts to use a same-named custom
+  // command to bypass built-in semantics or feature switches.
   if (!invocation || isReservedZCodeSlashCommandName(invocation.name)) {
     return undefined;
   }
@@ -37,13 +38,13 @@ export async function resolveZCodeCustomCommandPrompt(
       name: invocation.name,
     });
     if (options.executionPort) {
-      // 调用 slash command 时先执行并替换输出，避免 unsupported error
-      // 在 turn 创建前抛出后让 UI 长时间停在“正在思考”。
+      // Execute and replace the output before invoking the slash command, so an unsupported error is not
+      // thrown before turn creation and leaves the UI stuck on "thinking" for a long time.
       //
-      // 复用 contracts 的底层 template/format 函数，而非 expandCustomCommandPrompt：
-      // 后者内部 detectUnsupportedDynamicSyntax 会对 `!` 语法直接抛错，而本路径
-      // 恰恰要支持 shell 展开，只能在 expandCustomCommandTemplate 与
-      // formatCustomCommandPrompt 之间插入 expandCustomCommandShellSyntax。
+      // Reuse the lower-level template/format functions from contracts rather than
+      // expandCustomCommandPrompt: its internal detectUnsupportedDynamicSyntax throws on `!` syntax,
+      // while this path must support shell expansion. Insert expandCustomCommandShellSyntax between
+      // expandCustomCommandTemplate and formatCustomCommandPrompt.
       const expanded = expandCustomCommandTemplate({
         args: invocation.args,
         command,

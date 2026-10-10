@@ -68,8 +68,8 @@ export function formatCodingPlanAmount(
       : "CN¥";
   const formatted = `${currencyPrefix}${formattedAmount}`;
 
-  // 套餐页需要同时展示中英文和跨币种价格；依赖 Intl currency 会在不同 locale 下输出
-  // 不一致的 ISO code/符号组合，因此这里按产品文案规范固定符号和中文币种名。
+  // The plan page shows both Chinese/English and prices in multiple currencies. Intl currency can produce
+  // inconsistent ISO code/symbol combinations across locales, so keep symbols and Chinese currency names fixed to product-copy conventions.
   return isChineseLocale
     ? `${formatted} ${CODING_PLAN_CURRENCY_LABELS_ZH[resolvedCurrency]}`
     : formatted;

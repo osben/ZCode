@@ -1,4 +1,4 @@
-/* eslint-disable max-lines -- 工具展示 */
+/* eslint-disable max-lines -- Tool display */
 import {
   useCallback,
   useMemo,
@@ -52,9 +52,9 @@ export {
 type ConfigSelectTriggerSize = ComponentProps<typeof SelectTrigger>["size"];
 type ConfigSelectTriggerVariant = ComponentProps<typeof SelectTrigger>["variant"];
 
-/** Radix Select 在受控值与子项注册竞争时可能发出空值等未渲染值；直接上抛会把
- * 系统事件误当成用户选择（如 Automations 编辑页仅打开详情就被标记未保存修改）。
- * 用户只能点到已渲染的 option，值域外的选择回调一律丢弃。 */
+/** Radix Select may emit an unrendered value such as an empty value while controlled state and item registration race; propagating it directly would treat
+ * a system event as a user choice (for example, merely opening Automations details would mark the page as having unsaved changes).
+ * Users can only click rendered options, so discard any selection callback with a value outside the valid set. */
 function isConfigSelectValueInOptions(option: ZCodeConfigOption, value: string): boolean {
   return option.options?.some((entry) => String(entry.value) === value) ?? false;
 }
@@ -63,7 +63,7 @@ function getConfigSelectTriggerTestId(option: ZCodeConfigOption): string | undef
   if (option.category === "thought_level") {
     return TID_CHAT_THOUGHT_LEVEL_SELECT_TRIGGER;
   }
-  // 模式选择器 e2e 锚点（v4 switchCollaborationMode 链路断言用）。
+  // Mode selector E2E anchor (used to assert the v4 switchCollaborationMode path).
   if (option.category === "mode") {
     return TID_CHAT_MODE_SELECT_TRIGGER;
   }
@@ -99,9 +99,9 @@ export function ChatApiRetryStatus({
       return null;
     }
 
-    // 当前 ZCode Agent 只会推送某一刻的 retryDelayMs 快照，不会每秒递减。
-    // 继续把这个值渲染成“X 秒后继续”会给用户造成倒计时在卡住的错觉。
-    // 这里先收敛成稳定的重试状态文案，只展示第几次重试。
+    // The current ZCode Agent only sends a snapshot of retryDelayMs at one point in time; it does not decrement every second.
+    // Continuing to render this as “continue in X seconds” would make users think the countdown is stuck.
+    // Use stable retry-state copy here and show only the retry attempt number.
     const formatter = new Intl.NumberFormat(locale);
     return intl.formatMessage(
       { id: "chat.apiRetryStatus" },
@@ -124,8 +124,8 @@ export function ChatApiRetryStatus({
       className="inline-flex h-7 items-center whitespace-nowrap px-1 text-ui-base"
       title={retryTitle}
     >
-      {/* Retry 需要保留 ToolCall/Thinking 的字号、扫光节奏和低透明度移动低谷，
-      但作为次级运行状态不应使用同等的纯黑/纯白峰值；这里只将峰值降到 secondary 文本色。 */}
+      {/* Retry should keep the ToolCall/Thinking font size, shimmer timing, and low-opacity motion trough,
+      but as a secondary running state it should not use the same pure-black/white peak. Lower only the peak to the secondary text color. */}
       <span className="animated-gradient-text animated-gradient-text-subtle font-medium">
         {retryLabel}
       </span>
@@ -208,7 +208,7 @@ export function resolveModeOptionIcon(value: unknown): LucideIcon {
     return ShieldAlertIcon;
   }
 
-  // build 对应常规确认模式，使用确认图标。
+  // build is the regular confirmation mode and uses the confirmation icon.
   if (typeof value === "string" && value.toLocaleLowerCase() === "build") return HandIcon;
   if (typeof value === "string" && value.toLocaleLowerCase() === "plan") return NotepadText;
 
@@ -256,12 +256,12 @@ export function ConfigSelect({
 }) {
   const { intl } = useZCodeIntl();
 
-  // 注意：handleContentKeyDown 必须在 early return 之前调用。
-  // 之前 `if (option.type !== "select" ...) return null` 写在 useCallback 之前，
-  // 当 option 在 select/非 select 之间切换（或 options 数组从空变非空）时，
-  // 本组件这次渲染执行的 hook 数量和上次不一致，React 会抛
-  // "Rendered fewer hooks than expected" 导致工具栏区域崩溃。
-  // 修复方式：early return 下移到所有 hook 之后，保证 hook 调用顺序稳定。
+  // Note: handleContentKeyDown must be called before any early return.
+  // Previously, `if (option.type !== "select" ...) return null` appeared before useCallback.
+  // When option changed between select/non-select (or the options array changed from empty to non-empty),
+  // this render called a different number of hooks than the previous one, causing React to throw
+  // "Rendered fewer hooks than expected" and crash the toolbar area.
+  // Move the early return below all hooks to keep hook call order stable.
   const handleContentKeyDown = useCallback((event: ReactKeyboardEvent<HTMLDivElement>) => {
     if (event.key !== "Tab") {
       return;
@@ -284,7 +284,7 @@ export function ConfigSelect({
     highlightedItem.click();
   }, []);
 
-  // early return 必须在所有 hook 之后（见上方注释说明的崩溃原因）
+  // The early return must come after all hooks (see the crash explanation above).
   if (option.type !== "select" || !option.options?.length) {
     return null;
   }
@@ -298,8 +298,8 @@ export function ConfigSelect({
   const resolvedTriggerClassName = cn(
     triggerClassName,
     shouldShowHighPermissionModeIcon &&
-      // 高权限模式需要在工具栏中持续保持 warning 文字颜色，避免用户忽略当前风险级别。
-      // 图标只负责替换为 shield-alert，颜色状态仍由 trigger 统一承载，保证 hover/展开态不闪回默认色。
+      // Keep warning text color visible in high-permission mode so users do not overlook the current risk level.
+      // The icon changes to shield-alert; the trigger continues to own color state so hover/expanded styles do not flash back to the default.
       "text-warning hover:text-warning aria-expanded:text-warning",
   );
   const resolvedLeadingIconClassName = cn(
@@ -309,9 +309,9 @@ export function ConfigSelect({
 
   const selectContentProps = shouldUseToolbarFloatingSelect
     ? {
-        // 聊天工具栏底部的 mode / thought_level 选单如果继续使用默认 item-aligned，
-        // 会因为触发器靠近窗口底边而压缩可视高度，导致展开方向和可见区域不一致。
-        // 这里统一改成 popper 向上展开，并收敛成一致的 4px 间距，保证两个菜单表现一致。
+        // If the mode/thought_level menus at the bottom of the chat toolbar keep the default item-aligned behavior,
+        // proximity to the window bottom compresses visible height, making the expansion direction and visible region inconsistent.
+        // Use popper to expand upward with a consistent 4px gap so both menus behave the same.
         position: "popper" as const,
         side: "top" as const,
         align: "start" as const,
@@ -334,7 +334,7 @@ export function ConfigSelect({
       onOpenChange={onOpenChange}
       value={String(option.currentValue)}
       onValueChange={(value) => {
-        // 见 isConfigSelectValueInOptions：值域外的回调来自 Radix 内部竞争，不是用户选择。
+        // See isConfigSelectValueInOptions: callbacks with out-of-range values come from Radix internal races, not user selection.
         if (!isConfigSelectValueInOptions(option, value)) {
           logger.warn("[ConfigSelect] 忽略值域外的选择回调", {
             category: option.category,
@@ -366,8 +366,8 @@ export function ConfigSelect({
             <ResolvedLeadingIcon className={resolvedLeadingIconClassName} />
           ) : null}
           <span className={labelVisibilityClassName}>
-            {/* mode 菜单项现在是“图标 + 标题 + 描述”的复合内容。
-            如果继续让 Radix 从 ItemText 自动回填，trigger 会把描述也塞进按钮里。 */}
+            {/* Mode menu items now combine an icon, title, and description.
+            If Radix continues to populate from ItemText automatically, the trigger will also put the description in the button. */}
             {option.category === "mode" ? (
               <RollingToolbarLabel label={currentValueLabel} />
             ) : (
@@ -383,9 +383,9 @@ export function ConfigSelect({
         onKeyDown={handleContentKeyDown}
         onCloseAutoFocus={(event) => {
           if (!restoreFocusSelector) {
-            // Automations 权限选择器没有聊天输入框可恢复；之前无条件
-            // preventDefault 会把 Radix 默认的“回焦到 trigger”一并吃掉，键盘焦点
-            // 关闭菜单后掉到 body。null 时保留默认行为，让焦点回到触发器。
+            // The Automations permission selector has no chat input to restore focus to; unconditional
+            // preventDefault previously swallowed Radix's default “focus trigger” behavior too, leaving keyboard focus
+            // on body after closing the menu. Preserve the default behavior for null so focus returns to the trigger.
             return;
           }
           event.preventDefault();
@@ -396,7 +396,7 @@ export function ConfigSelect({
           ) {
             return;
           }
-          // ConfigSelect 被非聊天界面复用时，关闭菜单不能强制抢焦点到聊天输入框。
+          // When ConfigSelect is reused outside chat, closing its menu must not force focus to the chat input.
           const input = document.querySelector<HTMLElement>(restoreFocusSelector);
           logger.debug("[ConfigSelect] picker focus handoff", {
             category: option.category,

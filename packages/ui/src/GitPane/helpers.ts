@@ -68,8 +68,8 @@ export function getGitPaneDiffFindContent(diff: GitDiffResult | null): string | 
         ? previewPlan.lines
         : getPlainTextPatchContentLines(diff.patch);
 
-    // 全文内容降级后若直接搜索原始 patch，Git 文件头、index 和 hunk 头会
-    // 产生预览中不存在的伪命中。查找必须复用实际可见行，并剥掉不会显示的 diff marker。
+    // After falling back to full-file content, searching the raw patch would produce false matches from Git file headers, index lines, and hunk headers
+    // that are not present in the preview. Search the actual visible lines and strip diff markers that are not displayed.
     return visibleLines
       .filter((line) => parseTruncatedMarkerOmittedLineCount(line) === null)
       .map(getPatchPreviewLineContent)
@@ -118,8 +118,8 @@ function shouldRenderPatchOnlyGitDiffPreview(diff: GitDiffResult): boolean {
     return false;
   }
 
-  // Repo 全文读取失败时 patch 仍然有效，但缺失的一侧不能再补成空文件交给
-  // MultiFileDiff。把“不完整内容对”并入既有 patch 安全预检，避免整文件误判为增删。
+  // If full Repo reads fail, the patch is still valid, but do not fill the missing side with an empty file and pass it to
+  // MultiFileDiff. Include “incomplete content pair” in the existing patch safety preflight to avoid misclassifying the whole file as added/deleted.
   if (diff.beforeContent === null || diff.afterContent === null) {
     return true;
   }
@@ -162,9 +162,9 @@ export function getGitPaneDiffPreviewPlan(diff: GitDiffResult | null): GitPaneDi
     };
   }
 
-  // Review 面板展开大文件时，MultiFileDiff 会在 React render 阶段同步比较
-  // before/after 整文件，并在初始高亮前构建整文件 plain AST。大文件只需要先看变更 hunk，
-  // 因此超阈值时改走 PatchDiff，保留异步高亮 worker，同时避开整文件主线程开销。
+  // When a large file is expanded in the Review panel, MultiFileDiff synchronously compares the entire before/after file during React render
+  // and builds a full plain AST before initial highlighting. Users need only the changed hunks first,
+  // so above the threshold use PatchDiff, preserving the asynchronous highlighting worker while avoiding full-file main-thread work.
   return { kind: "patch" };
 }
 
@@ -187,9 +187,9 @@ function shouldRenderPlainTextDiffPreview(patch: string): string[] | null {
     return null;
   }
 
-  // review 面板只该把纯文本新增/删除文件降级成轻量 preview。
-  // 底层通用 fallback 为了避免文件变更展开空白，会覆盖 JSON 等结构化文件；
-  // 这里重新按文件类型收口，避免结构化文件绕过 PatchDiff 的语义化渲染路径。
+  // The Review panel should fall back to a lightweight preview only for plain-text added/deleted files.
+  // The lower-level generic fallback also covers structured files such as JSON to avoid blank expanded changes;
+  // narrow it by file type here so structured files do not bypass PatchDiff's semantic rendering path.
   return getFiletypeFromFileName(patchFileName) === "text" ? fallbackLines : null;
 }
 

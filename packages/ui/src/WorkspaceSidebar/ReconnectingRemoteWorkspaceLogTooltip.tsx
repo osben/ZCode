@@ -42,8 +42,8 @@ export function ReconnectingRemoteWorkspaceLogTooltip({
   const scrollLogsToLatest = useCallback((viewport: HTMLDivElement) => {
     cancelScheduledScrollRef.current();
 
-    // Tooltip 每次 hover 都会重新展示日志浮层，浏览器默认从 scrollTop=0 开始。
-    // 连接日志需要优先看到最新进度，因此在节点挂载时先滚一次，并在下一帧布局稳定后再补滚一次。
+    // The log overlay is shown again on each tooltip hover, and browsers start at scrollTop=0 by default.
+    // Connection logs should show the latest progress first, so scroll once when the node mounts and again after layout settles on the next frame.
     cancelScheduledScrollRef.current = scheduleRemoteConnectionLogsScrollToLatest(viewport);
   }, []);
 
@@ -74,9 +74,9 @@ export function ReconnectingRemoteWorkspaceLogTooltip({
           {children ? (
             children
           ) : (
-            // 远程 workspace 在后台重连时，用户之前只能看到“连接中”，
-            // 无法判断当前是否卡住、卡在哪一步。这里给连接中指示补充 hover 日志，
-            // 让用户在不打断流程的情况下看到实时进展。
+            // During background reconnection of a remote workspace, users previously saw only “Connecting”
+            // and could not tell whether it was stuck or what step it had reached. Add a hover log to the connecting indicator
+            // so users can see live progress without interrupting the process.
             <div
               className="flex shrink-0 items-center gap-1 text-ui-base text-foreground-subtle"
               aria-label={intl.formatMessage({

@@ -1,13 +1,18 @@
-// 常驻 cron scheduler 进程：由 desktop main 通过 electronUtilityProcess.fork 拉起。
-// 职责（tasks-index 属主方案）：
-//   - 轮询 tasks-index 的 automations，事务认领到期任务（AutomationRepo.claimDue：BEGIN IMMEDIATE + running 0→1）
-//   - 轮询 automation_runs 里的 manual run，手动触发累计 run_count，但不推进 next_run_at / max_runs / lifecycle
-//   - 维护派发状态机：misfire 跳过、single-flight 认领、成功结算、失败退避重试
-//   - 把到期任务的派发请求发回 main（main 再翻译成 CronRun 转给 workspace host 执行 createTask+sendPrompt）
-//   - 收到 main 回报后结算 automation + automation_runs
-//   - 闲时任务（off_peak_tasks）：启动回收中断任务，认领 schedulable=1 的 queued 任务派发；
-//     与 automation 表/消息/常量全部独立，⚠ 无 misfire-skip 语义（顺延不丢弃）
-// 本进程只读写 tasks-index，不碰 UI / agent runtime；createTask 由 host 域执行。
+// Persistent cron scheduler process, started by desktop main through electronUtilityProcess.fork.
+// Responsibilities (tasks-index ownership model):
+//   - Poll automations in tasks-index and transactionally claim due tasks
+//     (AutomationRepo.claimDue: BEGIN IMMEDIATE + running 0→1).
+//   - Poll manual runs in automation_runs. Manual triggers increment run_count but do not advance
+//     next_run_at / max_runs / lifecycle.
+//   - Maintain the dispatch state machine: skip misfires, claim single-flight runs, settle successes,
+//     and retry failures with backoff.
+//   - Send due-task dispatch requests to main, which maps them to CronRun and forwards them to the
+//     workspace host to run createTask+sendPrompt.
+//   - Settle automation and automation_runs after receiving the result from main.
+//   - Off-peak tasks (off_peak_tasks): recover interrupted tasks at startup and claim schedulable=1
+//     queued tasks for dispatch. These use separate tables, messages, and constants from automations.
+//     They do not skip misfires; overdue work is deferred rather than discarded.
+// This process reads and writes only tasks-index, not the UI or agent runtime. createTask runs in the host domain.
 import {
   AutomationRepo,
   computeAutomationNextRunAt,
@@ -29,11 +34,13 @@ import {
   type SchedulerResourceTelemetry,
 } from "./schedulerResourceTelemetry.js";
 
-/** 轮询间隔：cron 最小粒度是分钟，20s 轮询足以按时命中且开销低。 */
+/** Polling interval: cron's minimum granularity is one minute, so polling every 20 seconds is timely and inexpensive. */
 const POLL_INTERVAL_MS = 20_000;
 /**
- * misfire 宽限：next_run_at 早于 now 超过该值，视为「关机/休眠/退出期间错过的窗口」→ 记 skipped 不补跑。
- * 取值需明显大于一次正常轮询延迟（避免把正常到点误判成 misfire），又能覆盖短暂卡顿。
+ * Misfire grace period: if next_run_at is older than now by more than this value, treat it as a window
+ * missed during shutdown, sleep, or exit; mark it skipped instead of replaying it.
+ * Keep it well above normal polling latency to avoid classifying an on-time task as a misfire, while
+ * still covering brief stalls.
  */
 const MISFIRE_GRACE_MS = 5 * 60_000;
 
@@ -46,15 +53,15 @@ type InFlight = {
 };
 
 const repo = new AutomationRepo();
-/** runId → 在途派发上下文；等 main 回报后结算。scheduler 重启丢失时靠 claimDue 的僵尸回收兜底。 */
+/** runId → in-flight dispatch context, settled after main reports back. If a scheduler restart loses it, claimDue reclaims the orphan. */
 const inFlight = new Map<string, InFlight>();
 
-// ---- 闲时任务（off-peak）----
+// ---- Off-peak tasks ----
 const offPeakRepo = new OffPeakTaskRepo();
-/** 进程内退避表：offPeakTaskId → 下次允许派发时间/已失败次数。scheduler 重启即重置，无害。 */
+/** In-process backoff table: offPeakTaskId → next allowed dispatch time / failure count. Resetting it on scheduler restart is safe. */
 const offPeakRetryAt = new Map<string, number>();
 const offPeakRetryAttempts = new Map<string, number>();
-/** 在途派发集合：仅用于退出时释放认领；迟到结果凭 offPeakTaskId 即可结算，不依赖它。 */
+/** In-flight dispatch set, used only to release claims on shutdown. Late results can be settled by offPeakTaskId alone. */
 const offPeakInFlight = new Set<string>();
 
 let ticking = false;
@@ -62,20 +69,20 @@ let tickRequested = false;
 let schedulerReady = false;
 let disposed = false;
 let pollTimer: ReturnType<typeof setInterval> | null = null;
-/** 资源遥测：本进程唯一的自采定时器。 */
+/** Resource telemetry: the only self-sampling timer in this process. */
 let resourceTelemetry: SchedulerResourceTelemetry | null = null;
 
 function log(level: "info" | "warn" | "error", message: string): void {
   const msg: SchedulerToMainMessage = { type: "scheduler-log", level, message };
   parentPort?.postMessage(msg);
-  // 兜底：parentPort 不可用（非 utilityProcess 调试运行）时仍留痕。
+  // Fallback: preserve a diagnostic when parentPort is unavailable (for example, during non-utilityProcess debugging).
   if (!parentPort) {
-    // eslint-disable-next-line no-console -- scheduler 调试兜底
+    // eslint-disable-next-line no-console -- scheduler debugging fallback
     console[level === "error" ? "error" : "log"](`[scheduler] ${message}`);
   }
 }
 
-/** 派发时间戳：优先用 next_run_at（重试期间不变，保证 runId 稳定），退到 retry_at / now。 */
+/** Dispatch timestamp: prefer next_run_at (stable across retries, keeping runId stable), then retry_at, then now. */
 function resolveScheduledAt(automation: ZCodeAutomation, now: number): number {
   return automation.nextRunAt ?? automation.retryAt ?? now;
 }
@@ -104,13 +111,13 @@ async function tick(): Promise<void> {
         for (const task of offPeakClaimed) {
           await handleOffPeakClaimed(task, now);
         }
-        // keep-awake：上报执行中计数，main 据此 + 设置决定 powerSaveBlocker。
+        // Keep-awake: report the running count; main combines it with settings to decide whether to use powerSaveBlocker.
         await reportOffPeakActiveCount();
       } catch (error) {
         log("error", `tick failed: ${error instanceof Error ? error.message : String(error)}`);
       }
-      // manual run 的唤醒可能与当前 tick 重叠；因 ticking=true 直接丢弃会让
-      // 用户仍需等待下一轮 20 秒轮询。记录 pending，并在本轮完成后立即补跑。
+      // A manual-run wakeup can overlap the current tick. Dropping it because ticking=true would make
+      // the user wait for the next 20-second poll. Mark it pending and run it as soon as this tick finishes.
     } while (tickRequested && !disposed);
   } finally {
     ticking = false;
@@ -135,13 +142,15 @@ async function handleClaimed(automation: ZCodeAutomation, now: number): Promise<
   });
   const isRetry = automation.dispatchAttempts > 0;
 
-  // misfire：首轮（非重试）且计划触发时间已远早于 now → 认定错过窗口，跳过不补跑。
+  // Misfire: on the first attempt (not a retry), if the scheduled time is far behind now, skip the
+  // missed window instead of replaying it.
   const missed =
     !isRetry && automation.nextRunAt != null && automation.nextRunAt <= now - MISFIRE_GRACE_MS;
   if (missed) {
-    // 纯一次性任务（如 delayMinutes 落成的 minute scheduleRule）错过窗口后，
-    // 通用重算会给出 anchorAt + k*interval 的下一周期，让“只跑一次”的提醒在后续周期
-    // 继续执行。一次性语义是确定的目标时刻，错过即终态，不得再排程新的执行承诺。
+    // After a one-time task (such as a minute scheduleRule created from delayMinutes) misses its window,
+    // the general recalculation would produce the next anchorAt + k*interval occurrence and keep running
+    // a "run once" reminder in later periods. A one-time task has a specific target time; missing it is
+    // terminal and must not create another scheduled execution.
     const finalize = isOneShotAutomation(automation);
     const nextRunAt = finalize ? null : computeAutomationNextRunAt(automation, now);
     await repo.skipAndReschedule({
@@ -160,14 +169,15 @@ async function handleClaimed(automation: ZCodeAutomation, now: number): Promise<
     return;
   }
 
-  // 正常派发：先落/更新 run 台账（claimed），再把请求发回 main。
+  // Normal dispatch: record or update the run ledger as claimed, then send the request to main.
   await repo.upsertRunClaimed({
     runId,
     automationId: automation.automationId,
     workspaceKey,
     scheduledAt,
     trigger: "schedule",
-    // 原意图在 dispatch request 中传递，首次有效选择由目标 Host 固定；此处不提前冻结。
+    // Pass the original intent in the dispatch request; the target Host fixes the first effective choice.
+    // Do not freeze it earlier here.
   });
   inFlight.set(runId, {
     automationId: automation.automationId,
@@ -214,7 +224,7 @@ async function handleClaimedManual(
   postDispatchRequest(automation, run.runId, run.modelSelection);
 }
 
-/** 执行中计数上报（keep-awake）：仅在值变化时发消息，减噪。 */
+/** Report the running count for keep-awake only when it changes to reduce noise. */
 let lastOffPeakActiveCount = -1;
 async function reportOffPeakActiveCount(): Promise<void> {
   try {
@@ -231,11 +241,12 @@ async function reportOffPeakActiveCount(): Promise<void> {
   }
 }
 
-// ---- 闲时任务派发 ----
+// ---- Off-peak task dispatch ----
 
 /**
- * 认领后派发闲时任务。退避中的任务立即释放认领等下轮（进程内退避表；每轮 claim+release
- * 两次写，任务数小、WAL 下开销可忽略——若退避任务成规模再把退避下沉进 claimDue）。
+ * Dispatch a claimed off-peak task. Immediately release tasks in backoff and wait for the next poll.
+ * Backoff is stored in-process, so each poll writes once for claim and once for release. The task count is
+ * small and this cost is negligible with WAL; if backoff tasks become numerous, move backoff into claimDue.
  */
 async function handleOffPeakClaimed(task: ZCodeOffPeakTask, now: number): Promise<void> {
   const retryAt = offPeakRetryAt.get(task.offPeakTaskId) ?? 0;
@@ -266,7 +277,7 @@ async function settleDispatchResult(
   const context = inFlight.get(msg.runId);
   inFlight.delete(msg.runId);
   const now = Date.now();
-  // 从 runId 还原 automationId（context 丢失时兜底，如 scheduler 重启后收到迟到回报）。
+  // Recover automationId from runId when the context is lost, such as when a late result arrives after a scheduler restart.
   const automationId = context?.automationId ?? msg.runId.split(":")[0]!;
   const workspaceKey = context?.workspaceKey;
   const trigger: ZCodeAutomationTrigger =
@@ -317,7 +328,7 @@ async function settleDispatchResult(
     failedAt: now,
     error: msg.error ?? "dispatch failed",
     kind,
-    // transient 达上限后循环任务跳下一个正常 next_run_at。
+    // Once transient retries reach the limit, move a recurring task to its next regular next_run_at.
     nextRunAt: await repo
       .get(automationId)
       .then((automation) => (automation ? computeAutomationNextRunAt(automation, now) : null)),
@@ -331,7 +342,7 @@ async function dispose(): Promise<void> {
   pollTimer = null;
   resourceTelemetry?.stop();
   resourceTelemetry = null;
-  // 释放本进程仍在途的认领，避免下次启动等到 CLAIM_STALE 才回收。
+  // Release claims still in flight in this process so the next startup does not wait for CLAIM_STALE to reclaim them.
   for (const [, context] of inFlight) {
     try {
       if (context.trigger === "manual") {
@@ -340,7 +351,7 @@ async function dispose(): Promise<void> {
         await repo.releaseClaim(context.automationId);
       }
     } catch {
-      // 忽略：退出路径尽力而为。
+      // Ignore: shutdown cleanup is best-effort.
     }
   }
   inFlight.clear();
@@ -348,19 +359,19 @@ async function dispose(): Promise<void> {
     try {
       await offPeakRepo.releaseClaim(offPeakTaskId);
     } catch {
-      // 忽略：退出路径尽力而为。
+      // Ignore: shutdown cleanup is best-effort.
     }
   }
   offPeakInFlight.clear();
   try {
     repo.close();
   } catch {
-    // 忽略。
+    // Ignore.
   }
   try {
     offPeakRepo.close();
   } catch {
-    // 忽略。
+    // Ignore.
   }
   process.exit(0);
 }
@@ -375,8 +386,9 @@ parentPort?.on("message", (event: Electron.MessageEvent) => {
   if (msg.type === "cron-dispatch-result") {
     void settleDispatchResult(msg)
       .then(() => {
-        // manual run 可能因同一 automation 已有派发在途而暂时无法认领。
-        // 前一轮结算释放 single-flight 锁后主动 tick，避免再次等待 20 秒轮询。
+        // A manual run may be temporarily unclaimable while a dispatch for the same automation is in flight.
+        // Tick immediately after the previous result releases the single-flight lock instead of waiting
+        // for another 20-second poll.
         requestTick();
       })
       .catch((error) => {
@@ -414,8 +426,9 @@ parentPort?.on("message", (event: Electron.MessageEvent) => {
 
 async function main(): Promise<void> {
   await repo.ensureReady();
-  // 闲时任务中断恢复：scheduler 是 app 单例、先于任何派发启动——此刻 DB 里的
-  // running 必属上一个 app 实例残留，安全置回 queued（session 保留供 resume 续跑）。
+  // Recover interrupted off-peak tasks: the scheduler is an app singleton and starts before any dispatch,
+  // so any running rows in the database belong to the previous app instance. Safely return them to
+  // queued while preserving their sessions for resume.
   try {
     const recovered = await offPeakRepo.recoverInterrupted(Date.now());
     if (recovered > 0) {
@@ -431,7 +444,7 @@ async function main(): Promise<void> {
   log("info", "cron scheduler started");
   requestTick();
   pollTimer = setInterval(requestTick, POLL_INTERVAL_MS);
-  // 资源遥测：60 秒自采一次 CPU / 内存发给 main（heap 只有本进程读得到）。
+  // Resource telemetry: sample CPU/memory every 60 seconds and send it to main; only this process can read its heap.
   resourceTelemetry = startSchedulerResourceTelemetry({
     postMessage: (message) => parentPort?.postMessage(message),
   });

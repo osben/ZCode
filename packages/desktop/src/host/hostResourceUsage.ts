@@ -16,7 +16,7 @@ interface CreateHostResourceUsageResponderOptions {
   postMessage: (message: HostResourceUsageSnapshotResultResponse) => void;
   hostPid?: number;
   sampler?: ProcessResourceSampler;
-  /** Host 直管的内置插件进程（如 Windows CUA Helper）：pid → 插件名 */
+  /** Built-in plugin processes managed directly by Host (such as Windows CUA Helper): pid → plugin name. */
   getBuiltinPluginPids?: () => ReadonlyMap<number, string>;
   now?: () => number;
 }
@@ -27,9 +27,9 @@ interface HostResourceUsageResponder {
 }
 
 /**
- * 资源管理器 Host 侧响应器。
- * 只在 main 发来请求时采样一次：读整机进程表 → 向每个本地 Agent 要 MCP 子进程映射 → 按 Host 子树归属 → 回帖。
- * 最多执行一轮，不保存采样队列；关窗取消后不发布迟到结果。
+ * Host-side responder for the resource manager.
+ * Sample once when requested by Main: read the system process list → request MCP child-process mappings from each local Agent → assign ownership by Host subtree → reply.
+ * Execute at most one round and do not store a sample queue; after window-close cancellation, do not publish late results.
  */
 export function createHostResourceUsageResponder(
   options: CreateHostResourceUsageResponderOptions,
@@ -73,7 +73,7 @@ export function createHostResourceUsageResponder(
     async handleRequest(message) {
       let current: typeof active;
       try {
-        // Main 展示超时不代表底层结束，不能把每秒查询变成无界 FIFO。
+        // A display timeout in Main does not mean the underlying request ended; do not let per-second polling become an unbounded FIFO.
         if (active) {
           options.postMessage({
             type: HostResponseTypes.ResourceUsageSnapshotResult,
@@ -87,7 +87,7 @@ export function createHostResourceUsageResponder(
         active = current;
         await respond(message, current.controller.signal);
       } catch {
-        // 观测失败或退出时回帖失败只丢弃本轮，不能以未处理异常影响 Host 生命周期。
+        // If observation fails or replying after shutdown fails, drop only this round; do not affect the Host lifecycle with an unhandled exception.
       } finally {
         if (current && active === current) active = undefined;
       }

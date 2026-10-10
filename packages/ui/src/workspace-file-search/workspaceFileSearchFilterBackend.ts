@@ -8,24 +8,24 @@ import {
 } from "./workspaceFileSearch.js";
 
 /**
- * 工作区文件搜索过滤后端抽象：候选打分+top-K 排序的执行位置。
+ * Workspace-file search filter backend abstraction: execution location for candidate scoring and top-K sorting.
  *
- * 背景：放开 node_modules 等目录后候选基数
- * 可达数十万，主线程同步打分每键 50-300ms 会阻塞输入——打分已移入 Web Worker。
- * 数据搬运同样不能走结构化克隆：37 万 entries 的 postMessage 克隆实测 ~471ms
- * 主线程同步阻塞（打开 @ 面板整窗冻结数秒的主因之一），因此 worker 传输改用
- * 列式打包字符串（实测 ~31ms），worker 内解码构建候选。
+ * Background: After allowing directories such as node_modules, the candidate count
+ * can reach hundreds of thousands, and synchronous main-thread scoring blocks input for 50–300 ms per key; scoring has moved to a Web Worker.
+ * Data transfer cannot use structured cloning either: cloning 370,000 entries through postMessage took ~471 ms
+ * of synchronous main-thread blocking (one cause of the @ panel freezing the whole window for seconds), so worker transport now uses
+ * a columnar packed string (~31 ms measured), which the worker decodes to build candidates.
  *
- * 同步实现保留两个用途：(1) Worker 不可用/运行失败的降级路径，行为与历史版本一致；
- * (2) 单测环境（Node 下无 Web Worker）注入。
+ * The synchronous implementation remains for two purposes: (1) fallback when Worker is unavailable/fails, preserving previous behavior;
+ * (2) injection in unit-test environments (Node has no Web Worker).
  */
 export interface WorkspaceFileSearchFilterBackend {
-  /** 全量候选更新（列式 packed 字符串 + rootPath 用于拼回 name/path）；调用后既有 filter 结果作废。 */
+  /** Update all candidates (columnar packed string + rootPath used to reconstruct name/path); existing filter results become invalid afterward. */
   setPacked(packed: string, rootPath: string): void;
   /**
-   * 按 query 过滤并返回有序 entry 列表（已映射回原始对象，≤limit 条）。
-   * Promise 永不 reject：过期结果（setEntries 或更新的 filter 之后）解析为 null，
-   * 调用方据此丢弃。
+   * Filter by query and return an ordered entry list mapped back to original objects (≤limit).
+   * The Promise never rejects: stale results (after setEntries or a newer filter) resolve to null,
+   * which tells callers to discard them.
    */
   filter(
     query: string,
@@ -58,8 +58,8 @@ function createSyncWorkspaceFileSearchFilterBackend(): WorkspaceFileSearchFilter
 }
 
 export function createWorkerWorkspaceFileSearchFilterBackend(): WorkspaceFileSearchFilterBackend {
-  // Node 测试环境（vitest node project）没有 module worker 运行时，直接走同步路径；
-  // jsdom 等有 document 但 Worker 未实现的环境由下方 try/catch 兜底降级。
+  // The Node test environment (vitest node project) has no module-worker runtime, so it uses the synchronous path;
+  // environments such as jsdom, which have document but no Worker implementation, fall back in the try/catch below.
   if (typeof document === "undefined") {
     return createSyncWorkspaceFileSearchFilterBackend();
   }
@@ -70,7 +70,7 @@ export function createWorkerWorkspaceFileSearchFilterBackend(): WorkspaceFileSea
       name: "zcode-workspace-file-search",
     });
   } catch (error) {
-    // 降级路径：非常老的事件循环/测试环境不支持 module worker 时回退同步打分。
+    // Fallback path: use synchronous scoring if a very old event loop or test environment does not support module workers.
     logger.warn("[workspace-file-search] Worker 创建失败，回退主线程同步过滤", {
       error: error instanceof Error ? error.message : String(error),
     });
@@ -96,8 +96,8 @@ export function createWorkerWorkspaceFileSearchFilterBackend(): WorkspaceFileSea
   };
 
   worker.onerror = (event) => {
-    // 运行期失败：让所有在途请求过期（null），后续 filter 仍会重试；
-    // 持续失败由调用方通过空结果感知，不影响输入。
+    // Runtime failure: expire all in-flight requests (null); later filters still retry;
+    // callers can detect persistent failure through empty results without blocking input.
     logger.warn("[workspace-file-search] Worker 运行失败，本轮过滤结果丢弃", {
       message: event.message,
     });
@@ -114,8 +114,8 @@ export function createWorkerWorkspaceFileSearchFilterBackend(): WorkspaceFileSea
         waiter.resolve(null);
       }
       pending.clear();
-      // packed 由 Host 侧 listWorkspaceFiles 直接产出（RPC 返回字符串，memcpy 级传输），
-      // renderer 全程不构建 entries 对象——37 万条实测省去 11-14s 结构化克隆。
+      // packed data is produced directly by Host’s listWorkspaceFiles (RPC returns a string with memcpy-level transfer),
+      // so the renderer never builds entry objects; with 370,000 files, this avoided 11–14 seconds of structured cloning in measurements.
       worker.postMessage({ type: "entries", packed, rootPath });
     },
     filter(query, options) {

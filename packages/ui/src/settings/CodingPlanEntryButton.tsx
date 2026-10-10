@@ -16,7 +16,7 @@ export function useCodingPlanEntryGate() {
   return { status, label, retry: dialog?.inventory?.retry };
 }
 
-/** 各入口共享同一查询状态；失败时按钮只重试，不继续执行购买动作。 */
+/** Entry points share the same query state; on failure, the button retries without continuing the purchase action. */
 export function CodingPlanEntryButton({
   children,
   disabled,

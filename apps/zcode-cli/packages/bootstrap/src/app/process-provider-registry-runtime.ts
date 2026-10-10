@@ -31,7 +31,7 @@ import {
 } from "./standalone-account-provider-runtime.js";
 
 export interface ProcessProviderRegistryRuntimeOptions {
-  /** Standalone Prompt CLI / TUI 自己拥有账号凭据与旧配置的一次性导入。 */
+/** Standalone Prompt CLI / TUI owns its account credentials and one-time import of legacy config. */
   readonly standalone?: {
     readonly credentialStore?: SharedZCodeCredentialStore;
     readonly legacyCliUserConfigFilePath?: string;
@@ -91,7 +91,7 @@ export async function startProcessProviderRegistryRuntime(
             standaloneAccount = new AccountProviderService({
               configSource: configService,
               async resolve({ configRevision, configuredProviders }) {
-                // 使用本轮捕获的 Built-in，而不是异步读另一份文件后仅贴上新 revision。
+                // Use the Built-in value captured for this update rather than asynchronously reading another file and only attaching a new revision.
                 const snapshot = await readStandaloneAccountProviderConfigSnapshot(
                   credentialStore,
                   env,
@@ -104,7 +104,7 @@ export async function startProcessProviderRegistryRuntime(
               try {
                 options.standalone?.onAccountInitializationError?.(error);
               } catch {
-                /* 观测回调不能改变账号事实。 */
+                /* Observation callbacks must not change account facts. */
               }
             });
             return standaloneAccount;
@@ -132,7 +132,7 @@ export async function startProcessProviderRegistryRuntime(
           await standaloneAccount!.refresh("builtin-account-recovery");
       })
     : undefined;
-  // 复用 AccountService 的串行、过期结果丢弃机制，凭据变化与 Built-in 变化不能各自发布。
+  // Reuse AccountService's serialization and stale-result discard behavior; credential changes and Built-in changes must not publish independently.
   const disposeCredentialSubscription = credentialStore?.onDidChange?.(async () => {
     await standaloneAccount!.refresh("standalone-credentials-changed");
     await runtime.registryService.refresh("standalone-credentials-barrier");
@@ -151,8 +151,9 @@ export async function startProcessProviderRegistryRuntime(
           if (standaloneAccount)
             throw new Error("Standalone Account 由本进程管理，不接收 Host 覆盖");
           const changed = accountSource.replace(next, "host-account-config");
-          // Source 去重只证明收过，不证明上次刷新成功。重交时仍刷新；配套配置未到
-          // 则由 Registry 保留完整旧快照，不能把接收确认冒充应用确认。
+          // Source deduplication proves only that the update was received, not that the last refresh
+          // succeeded. Refresh again on redelivery. If companion config has not arrived, the Registry keeps
+          // the full old snapshot; do not present receipt as application confirmation.
           await runtime.registryService.refresh("host-account-config");
           return changed;
         },
@@ -190,7 +191,7 @@ export async function startProcessProviderRegistryRuntime(
   }
 }
 
-/** 把协议信封解析为进程 Registry 使用的第三层 Account Config Overlay。 */
+/** Parse the protocol envelope into the third-layer Account Config Overlay used by the process Registry. */
 export function parseProcessAccountProviderConfigSnapshot(input: {
   readonly revision: string;
   readonly basedOnZCodeBuiltinRevision: string;
@@ -205,7 +206,7 @@ export function parseProcessAccountProviderConfigSnapshot(input: {
   }
   const providers = parseAccountProviderConfigMap(input.providers);
   for (const [providerId, provider] of providers.entries()) {
-    // 仅约束托管 Worker 的普通账号信封；独立 CLI、API 和闲时不需要 current。
+    // Applies only to regular account envelopes for managed Workers; standalone CLI, API, and off-peak paths do not need current.
     if (
       isBuiltinModelProviderId(providerId) &&
       provider.access?.type === "zhipu-account" &&
@@ -219,7 +220,7 @@ export function parseProcessAccountProviderConfigSnapshot(input: {
     revision,
     basedOnZCodeBuiltinRevision,
     providers,
-    // 与 Overlay 属于同一快照；不能只更新 revision 却丢掉当前连接事实。
+    // This belongs to the same snapshot as the Overlay; do not update only the revision and lose the current connection state.
     ...(input.states ? { states: input.states } : {}),
   });
 }

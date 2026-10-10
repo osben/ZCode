@@ -1,6 +1,6 @@
-// zcode-protocol-v4 toolCall 的展示层 schema。
-// 从 rows.ts 拆出：两侧增量叠加后 rows.ts 触发 oxlint max-lines(400)。
-// 本文件只含不依赖 rowBaseFields 的纯展示 union，rows.ts 单向依赖它，无循环。
+// Display schemas for zcode-protocol-v4 toolCall.
+// Extracted from rows.ts after additive changes on both sides brought it to oxlint's max-lines(400) limit.
+// This file contains only pure display unions that do not depend on rowBaseFields; rows.ts depends on it one-way, with no cycle.
 import { z } from "zod";
 import { bashOutputDisplaySchema } from "../bash-output-display.js";
 import { timestampSchema } from "./core.js";
@@ -16,10 +16,11 @@ import {
   toolCallResumeWorkflowRunDisplaySchema,
 } from "./workflow-observation-display.js";
 
-// toolCall 终态 output 的结构化展示模型（port 自 feat；CUA 工具靠 kind:"cua" 分支把
-// errorCode/suggestedAction/media(screenshot) 等结构化内容带到 renderer）。consume-main 之前
-// 缺这个 union + toolOutputSchema.display 字段——协议层 zod 校验会把 agent 下发的 display 整个
-// strip 掉，导致 UI 永远拿不到 display?.kind==="cua"，CUA 工具调用退化成 fallback 渲染。
+// Structured display model for terminal toolCall output (ported from feat). The kind:"cua" branch
+// carries structured errorCode/suggestedAction/media (screenshot) content to the renderer. Before
+// consume-main, this union and toolOutputSchema.display were missing, so protocol-level Zod validation
+// stripped the Agent's entire display. The UI never received display?.kind === "cua", and CUA calls
+// fell back to generic rendering.
 const toolResultDisplaySchema = z.discriminatedUnion("kind", [
   bashOutputDisplaySchema,
   z.object({
@@ -68,7 +69,7 @@ const toolResultDisplaySchema = z.discriminatedUnion("kind", [
     schemaVersion: z.literal(1),
     toolName: z.string().min(1),
     status: z.enum(["success", "failed"]),
-    // 旧 v1 snapshot 曾重复携带 ToolCallRow.input；只为历史回放继续接受。
+    // Older v1 snapshots duplicated ToolCallRow.input; continue accepting it only for historical replay.
     input: z.string().optional(),
     structuredContent: z.string().optional(),
     text: z.string().optional(),
@@ -127,20 +128,21 @@ const toolResultDisplaySchema = z.discriminatedUnion("kind", [
       .min(1)
       .max(4 * 1024)
       .optional(),
-    // 与 toolCallMcpDisplaySchema 同源：不在这里声明，zod 会把 agent 下发的 unavailable
-    // 静默 strip 掉，官方 MCP 额度提示在 v4 链路上失效（同本文件顶部 display strip 的坑）。
+    // Shares its source with toolCallMcpDisplaySchema. If it is not declared here, Zod silently strips
+    // the Agent's unavailable value, disabling official MCP quota warnings on the V4 path (the same
+    // display-stripping issue described above).
     unavailable: z
       .object({ code: z.enum(OFFICIAL_MCP_TOOL_ERROR_CODES) })
       .strict()
       .optional(),
   }),
-  // buildToolOutput 把 CLI 侧 ToolResultDisplayPayload 原样塞进 toolOutput.display，
-  // 而这条 union 是 strict 的——create_workflow 不在成员里，CreateWorkflow 的 display 会被整段
-  // 拒掉/剥掉，工具卡退化成纯文本。两侧成员表必须同步（同 contracts 的
-  // toolResultDisplayPayloadSchema），所以直接复用 toolCall 侧同形的那份 schema。
+  // buildToolOutput copies the CLI's ToolResultDisplayPayload into toolOutput.display unchanged, but
+  // this union is strict. Without create_workflow as a member, CreateWorkflow's entire display is
+  // rejected/stripped and the tool card falls back to plain text. Keep both member lists in sync with
+  // contracts' toolResultDisplayPayloadSchema by reusing the equivalent schema from toolCall.
   toolCallCreateWorkflowDisplaySchema,
-  // 观察类工作流工具的五个 display kind + ResumeWorkflowRun 的恢复卡（同上：与 contracts
-  // 侧同步，缺成员 = 整块被剥）。
+  // This includes the five display kinds for observational workflow tools and the ResumeWorkflowRun
+  // recovery card; as above, a missing member strips the entire value.
   toolCallGetWorkflowRunDisplaySchema,
   toolCallListWorkflowRunsDisplaySchema,
   toolCallEvalWorkflowSnippetDisplaySchema,
@@ -150,8 +152,9 @@ const toolResultDisplaySchema = z.discriminatedUnion("kind", [
 ]);
 export type ToolResultDisplay = z.infer<typeof toolResultDisplaySchema>;
 
-// toolCall。终态 output 全档统一 head+tail 截断，超出走 truncated.ref 按需拉。
-// display 是展示载荷；版本不兼容时降级为无卡片，避免同一内容导致整条订阅反复恢复失败。
+// toolCall. Terminal output uses consistent head+tail truncation; oversized values can be fetched on
+// demand through truncated.ref. display is presentation payload; on version mismatch, omit the card so
+// the same content cannot repeatedly break recovery for the entire subscription.
 export const toolOutputSchema = z.object({
   text: z.string(),
   display: toolResultDisplaySchema.optional().catch(undefined),
@@ -172,8 +175,9 @@ export const toolProgressSchema = z.object({
 export type ToolProgress = z.infer<typeof toolProgressSchema>;
 
 /**
- * node_repl cell 的目标应用身份（Computer Use 的工具卡图标）。与 CLI contracts 的
- * `nodeReplCuaAppDisplaySchema` 必须同集——两侧都是 strict，少一个字段会让整块 display 被剥掉。
+ * Target application identity for a node_repl cell (the Computer Use tool-card icon). Keep this in sync
+ * with CLI contracts `nodeReplCuaAppDisplaySchema`; both sides are strict, and a missing field strips
+ * the entire display.
  */
 const toolCallNodeReplCuaAppDisplaySchema = z
   .object({
@@ -185,8 +189,9 @@ const toolCallNodeReplCuaAppDisplaySchema = z
 const toolCallNodeReplImageDisplaySchema = z
   .object({
     kind: z.literal("node_repl_images"),
-    // images 可选：CUA 的纯动作 cell 没有截图，但仍要携带 app 身份。kind 名保留不动，
-    // 改名会让已持久化的 row 在这条 strict union 里整段校验失败。
+    // images is optional because action-only CUA cells have no screenshot, but they still include app
+    // identity. Keep the kind name unchanged; renaming it would fail validation for persisted rows in
+    // this strict union.
     images: z
       .array(
         z
@@ -236,10 +241,11 @@ const toolCallMcpDisplaySchema = z
       .max(4 * 1024)
       .optional(),
     /**
-     * 官方 Server MCP 判定本次调用不可用（额度耗尽 / 无 Coding Plan）时下发的结构化标识。
-     * CLI 侧只在官方来源 + isError 时填充，UI 据此在输入框上方提示。
-     * 与 CLI contracts 的 mcpToolResultDisplayPayloadSchema 必须同步——两侧都是 strict，
-     * 少加一处会让整条 row 校验失败。
+     * Structured marker sent when the official Server MCP determines this call is unavailable (quota
+     * exhausted / no Coding Plan). The CLI sets it only for official sources when isError is true; the
+     * UI uses it to show a notice above the input. Keep it in sync with CLI contracts'
+     * mcpToolResultDisplayPayloadSchema; both sides are strict, and omitting it on either side fails the
+     * entire row validation.
      */
     unavailable: z
       .object({ code: z.enum(OFFICIAL_MCP_TOOL_ERROR_CODES) })

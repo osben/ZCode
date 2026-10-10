@@ -1,4 +1,4 @@
-/* oxlint-disable eslint(max-lines) -- Composer 附件的收集、恢复和序列化必须共享同一套 MIME/大小边界。 */
+/* oxlint-disable eslint(max-lines) -- Composer attachment collection, recovery, and serialization must share the same MIME/size limits. */
 import { nanoid } from "nanoid";
 import {
   VIDEO_INPUT_MAX_BYTES,
@@ -145,8 +145,8 @@ export async function serializeChatComposerAttachment(
   );
   if (mimeType.startsWith("image/")) {
     if (!attachment.localPath && attachment.sizeBytes > INLINE_IMAGE_ATTACHMENT_MAX_BYTES) {
-      // 这里是底层序列化边界，不能直接拼用户可见中文文案；
-      // 抛结构化错误交给 UI 层按当前 locale 格式化，避免英文环境混入中文。
+      // This is a low-level serialization boundary and must not construct user-visible Chinese copy directly;
+      // throw a structured error so the UI can format it using the current locale, avoiding Chinese text in an English environment.
       throw new OversizedInlineImageAttachmentError({
         filename: attachment.filename,
         maxSizeBytes: INLINE_IMAGE_ATTACHMENT_MAX_BYTES,
@@ -158,8 +158,8 @@ export async function serializeChatComposerAttachment(
       attachment.localPath &&
       (!attachment.file || attachment.sizeBytes > INLINE_IMAGE_ATTACHMENT_MAX_BYTES)
     ) {
-      // 大图片如果在 renderer 里转 base64，会同时放大内存和 RPC payload。
-      // 有真实本地路径时改交给 agent 的图片读取链路，它已有 20MiB 等阈值和降级策略。
+      // Converting large images to base64 in the renderer would increase both memory usage and RPC payload size.
+      // When an actual local path is available, use the agent's image-reading path instead; it already has limits such as 20MiB and fallback behavior.
       return {
         kind: "image",
         filename: attachment.filename,
@@ -180,7 +180,7 @@ export async function serializeChatComposerAttachment(
     };
   }
 
-  // video：桌面 localPath 零拷贝；Web inline 在 base64 编码前遵守 V4 现有 transport 上限。
+  // Video: desktop localPath is zero-copy; Web inline must respect the existing V4 transport limit before base64 encoding.
   if (mimeType.startsWith("video/")) {
     if (attachment.localPath) {
       return {
@@ -191,8 +191,8 @@ export async function serializeChatComposerAttachment(
         sizeBytes: attachment.sizeBytes,
       };
     }
-    // Web 无 localPath 时曾按全局 video 产品上限放行，完成整文件 base64 编码后
-    // 才被 V4 20MiB 上传边界拒绝，既浪费内存又只能展示裸协议错误。
+    // When Web had no localPath, it used to allow files up to the global video product limit and only reject them at the V4 20MiB upload limit after
+    // encoding the entire file as base64, wasting memory and exposing only a raw protocol error.
     if (attachment.sizeBytes > INLINE_VIDEO_ATTACHMENT_MAX_BYTES) {
       throw new OversizedInlineVideoAttachmentError({
         filename: attachment.filename,
@@ -238,8 +238,8 @@ export async function serializeChatComposerAttachment(
   }
 
   if (attachment.localPath) {
-    // 普通文件过去会被 renderer 读成 base64 再进入 session/send，
-    // 既占用内存也绕过 agent 侧文件读取阈值。桌面端已有真实路径时只传路径引用。
+    // Ordinary files used to be read as base64 in the renderer before entering session/send,
+    // consuming memory and bypassing the agent-side file-read limit. On desktop, pass only a path reference when the actual path is available.
     return {
       kind: "file",
       filename: attachment.filename,
@@ -287,7 +287,7 @@ export function isPdfChatComposerAttachment(attachment: ChatComposerAttachment):
   return attachment.mimeType.split(";", 1)[0]?.trim().toLowerCase() === PDF_MIME_TYPE;
 }
 
-/** 图片与视频同属媒体组：输入框与消息流统一按媒体卡片渲染。 */
+/** Images and videos share the media group: render both as media cards in the input and conversation stream. */
 export function isMediaChatComposerAttachment(attachment: ChatComposerAttachment): boolean {
   return isImageChatComposerAttachment(attachment) || isVideoChatComposerAttachment(attachment);
 }

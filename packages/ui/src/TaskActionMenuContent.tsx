@@ -63,9 +63,9 @@ export function TaskActionMenuContent({
   onStartRenameTask: () => void;
   onArchiveTask: () => void;
   onMarkTaskAsUnread: () => void;
-  /** 「在分屏打开」（仅桌面 shell 传入；手机远控不显示该入口）。 */
+  /** “Open in split pane” (provided only by the desktop shell; hidden on mobile remote control). */
   onOpenInSplitPane?: () => void;
-  /** 当前 session 或 pane 数达上限且目标无已有归属时禁用（保留布局与层级）。 */
+  /** Disabled when the session or pane count is at its limit and the target is not already assigned (preserving layout and hierarchy). */
   openInSplitPaneDisabled?: boolean;
   onOpenTaskFeedback?: () => void;
   onOpenTaskPathInFileManager: () => void;
@@ -169,8 +169,8 @@ export function TaskActionMenuContent({
         title={taskTargetActionsDisabled ? disabledReason : undefined}
         onSelect={onCopyTaskLogPath}
       >
-        {/* ZCode Agent 的日志路径可能先按运行时约定得出，当前日期文件尚未落盘。
-            复制动作只依赖路径字符串，不能把 exists=false 当成不可复制，否则菜单会表现成“不能点”。 */}
+        {/* The ZCode Agent log path may be determined from runtime conventions before the current date's file has been written.
+            Copying depends only on the path string; do not treat exists=false as non-copyable, or the menu will appear disabled. */}
         {intl.formatMessage({ id: "appHeader.copyLogPath" })}
       </Item>
       {onCopySessionId ? (
@@ -185,8 +185,8 @@ export function TaskActionMenuContent({
       {onViewModelTrajectory ? (
         <>
           <Separator />
-          {/* 调用轨迹查看：从 ~/.zcode/cli 的 model-io 还原该 task 的模型请求/响应/工具调用，
-              在右侧边栏可视化。只依赖 taskId（即 sessionId），不依赖快照文件是否落盘。 */}
+          {/* View the call trace: reconstruct this task's model requests/responses/tool calls from model-io in ~/.zcode/cli,
+              and visualize them in the right sidebar. This depends only on taskId (sessionId), not on whether a snapshot file has been written. */}
           <Item
             disabled={taskTargetActionsDisabled || !activeSessionId}
             title={taskTargetActionsDisabled ? disabledReason : undefined}
@@ -200,8 +200,8 @@ export function TaskActionMenuContent({
         <>
           <Separator />
           <Item disabled={taskTargetActionsDisabled} onSelect={onOpenTaskFeedback}>
-            {/* 任务菜单之前只有复制日志/路径，用户遇到任务问题时还要手动回到反馈中心。
-                “反馈问题”不是任务管理动作，单独放在菜单底部更符合兜底求助入口的层级。 */}
+            {/* The task menu previously offered only log/path copying, so users had to return to the feedback center manually when they encountered a task issue.
+                “Report an issue” is not a task-management action; placing it separately at the bottom of the menu better reflects its role as a fallback help entry. */}
             {intl.formatMessage({ id: "taskList.feedback" })}
           </Item>
         </>

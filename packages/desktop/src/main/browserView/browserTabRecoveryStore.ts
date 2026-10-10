@@ -11,7 +11,8 @@ export interface BrowserTabShellRecord {
   schemaVersion: 1;
   tabId: string;
   /**
-   * Electron windowId 跨重启无效；仅在当前进程认领后写入内存副本，落盘固定为 null。
+   * Electron windowId is invalid across restarts; populate the in-memory copy only after claiming
+   * it in the current process, and always persist null to disk.
    */
   windowBindingId: null;
   workspaceKey: string;
@@ -155,7 +156,7 @@ export class BrowserTabRecoveryStore {
     });
   }
 
-  /** 等待所有已提交 mutation 完成，供应用正常退出建立持久化屏障。 */
+  /** Wait for all committed mutations so normal application shutdown can establish a persistence barrier. */
   async whenIdle(): Promise<void> {
     await this.mutationQueue;
   }
@@ -245,14 +246,15 @@ function prunePageStates(
       serialized: JSON.stringify(record),
     }))
     .filter(({ serialized }) => {
-      // 先把超大新记录放到 LRU 头部、再从尾部逐条删除会让所有正常旧快照
-      // 先被淘汰，最后才删掉超大记录；同时每次 pop 都全量 stringify，放大主进程开销。
+      // Putting an oversized new record at the LRU head and then deleting from the tail would evict
+      // all normal old snapshots before removing the oversized one. It would also stringify the
+      // entire store on every pop, increasing main-process overhead.
       return Buffer.byteLength(`[${serialized}]`, "utf8") <= maxTotalBytes;
     })
-    // 单条超限记录不应占用数量预算，否则一个无效新快照仍会挤掉最旧的正常快照。
+    // A single oversized record must not consume the count budget, or an invalid new snapshot could still evict the oldest valid snapshot.
     .slice(0, Math.max(0, maxPageStates));
   const retained: BrowserTabPageStateRecord[] = [];
-  let totalBytes = 2; // JSON 数组的 []。
+  let totalBytes = 2; // The JSON array's [] brackets.
   for (const [index, candidate] of candidates.entries()) {
     const nextBytes = Buffer.byteLength(candidate.serialized, "utf8") + (index === 0 ? 0 : 1);
     if (totalBytes + nextBytes > maxTotalBytes) break;

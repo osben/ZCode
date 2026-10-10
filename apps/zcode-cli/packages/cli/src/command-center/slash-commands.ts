@@ -87,8 +87,9 @@ export function parseSlashCommand(input: string): SlashCommand | null {
     };
   }
 
-  // `/workflow` 与 `/init` 同为 bootstrap 展开的内置 prompt 命令：这里只识别名字，
-  // 正文由 builtin-prompt-command.ts 生成；headless 下按 known 且非 expert/goal 走普通 prompt 路径。
+  // `/workflow` and `/init` are built-in prompt commands expanded by bootstrap. Identify
+  // only the names here; builtin-prompt-command.ts generates the body. In headless mode,
+  // known commands other than expert/goal use the ordinary prompt path.
   if (rawName === "workflow") {
     return {
       args,

@@ -35,8 +35,8 @@ export function shouldBlockRootRender(state: RootStartupGateState): boolean {
 }
 
 export function shouldShowRootStartupLoading(state: RootStartupLoadingVisibilityState): boolean {
-  // 登录入口是启动门禁的结果，不是可继续被门禁遮挡的后台状态。
-  // 如果 WelcomeScreen 已经打开，继续返回启动 loading 会把未登录用户卡在黑屏 logo。
+  // The login entry is an outcome of the startup gate, not a background state that should remain covered by it.
+  // If WelcomeScreen is already open, returning startup loading keeps signed-out users stuck on a black screen with the logo.
   return Boolean(state.isDesktop) && !state.welcomeScreenOpen && shouldBlockRootRender(state);
 }
 

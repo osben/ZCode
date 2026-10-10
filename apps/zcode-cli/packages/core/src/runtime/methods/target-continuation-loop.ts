@@ -75,8 +75,8 @@ export async function runActiveTargetContinuationLoop(
     if (!result) return lastResult;
 
     lastResult = result;
-    // 第一次 continuation 应用并持久化本次 Submission；后续自动轮次读取新的
-    // Session Selection，从而沿用上一轮，也允许中间插入的用户 Turn 成为新权威。
+    // The first continuation applies and persists this Submission. Later automatic turns read the new
+    // Session Selection, inheriting the previous turn while allowing an intervening user Turn to become authoritative.
     continuationIntent = undefined;
     verifyBeforeContinue = true;
     yieldToPendingCommands = true;

@@ -1,10 +1,10 @@
-// pane ↔ session 绑定的本地持久化（pane 绑定属 Layout 层本地 UI 态）。
-// 动机：旧链路靠 useTaskRestore（已删）
-// 恢复选中 task；v4 下 renderer 刷新后 zustand 选择态归零，若不持久化，刷新会把用户
-// 踢回 draft pane，正在输出的会话"消失"。CLI/host 进程在 renderer 刷新时继续运行，
-// 恢复选择态后 pane 重订阅即可拿到 snapshot+续流。
-// 只有同一 renderer reload 的首个 workspace 会恢复；app 冷启动和 workspace-only
-// 入口保持草稿，不消费上一次运行留下的 session 绑定。
+// Local persistence for pane ↔ session binding (pane binding is local UI state in the Layout layer).
+// Motivation: the old path used useTaskRestore (removed)
+// to restore the selected task. Under v4, renderer refresh resets Zustand selection; without persistence, refresh sends the user
+// back to a draft pane and makes the session that is streaming appear to disappear. The CLI/host process keeps running during renderer refresh,
+// and after selection is restored the pane can resubscribe for snapshot + stream continuation.
+// Restore only for the first workspace in the same renderer reload; app cold start and workspace-only
+// entry points remain drafts and do not consume session bindings from the previous run.
 import { useEffect, useRef } from "react";
 import { isRendererReloadNavigation } from "@/lib/rendererNavigation.js";
 
@@ -30,18 +30,18 @@ function persistPaneSession(workspaceKey: string, sessionId: string | null): voi
       localStorage.removeItem(storageKey(workspaceKey));
     }
   } catch {
-    // 无 storage 环境（测试/隐身）静默降级：刷新恢复不可用，但不影响正常会话。
+    // Degrade silently when storage is unavailable (tests/private browsing): refresh recovery is unavailable, but normal sessions still work.
   }
 }
 
 interface UsePaneSessionPersistenceParams {
   workspaceKey: string;
   activeSessionId: string | null;
-  /** startDraft 的显式用户意图代次；大于 0 时 null 表示草稿，不是待恢复。 */
+  /** Explicit user-intent generation for startDraft; when > 0, null means draft, not pending recovery. */
   draftFocusVersion: number;
-  /** 手机 /remote 不消费 desktop pane 的本地恢复状态。 */
+  /** Mobile /remote does not consume local recovery state for desktop panes. */
   enabled?: boolean;
-  /** 恢复入口：与用户点击任务列表同一条选择路径，保证副作用（已读清理等）一致。 */
+  /** Recovery entry point: use the same selection path as a task-list click so side effects (such as unread cleanup) remain consistent. */
   selectSession: (sessionId: string) => void;
 }
 
@@ -60,9 +60,9 @@ function shouldRestorePersistedPaneSession(params: {
 }
 
 /**
- * 挂载时恢复上次绑定的 session；此后跟随选择态写入/清除。
- * 只在每个 workspaceKey 首次挂载时恢复一次——用户显式回到 draft（新任务）
- * 属于选择变化，会把持久化键清掉，不会被反复拉回旧会话。
+ * Restores the previously bound session on mount; afterward, writes/clears persistence as selection changes.
+ * Restore only once on the first mount for each workspaceKey—when the user explicitly returns to draft (new task),
+ * that selection change clears the persisted key and the old session is not repeatedly restored.
  */
 export function usePaneSessionPersistence({
   workspaceKey,
@@ -72,8 +72,8 @@ export function usePaneSessionPersistence({
   selectSession,
 }: UsePaneSessionPersistenceParams): void {
   const restoredKeysRef = useRef<Set<string>>(new Set());
-  // 只有 reload 后首个 workspace 可以消费刷新前的 pane 绑定；之后打开其它
-  // workspace 仍是 workspace-only 入口，必须进入草稿，不能逐个恢复旧 session。
+  // Only the first workspace after reload may consume a pane binding from before refresh; opening other
+  // workspaces remains a workspace-only entry and must open drafts instead of restoring old sessions one by one.
   const rendererReloadRestoreAvailableRef = useRef(isRendererReloadNavigation());
   const pendingRestoreRef = useRef<{
     workspaceKey: string;
@@ -96,8 +96,8 @@ export function usePaneSessionPersistence({
         rendererReload,
       })
     ) {
-      // 冷启动和 workspace-only 入口都必须是草稿。旧 last-session
-      // 即使来自上次 app 运行，也不能在本次挂载反写 activeTaskId。
+      // Cold start and workspace-only entry points must remain drafts. Even an old last-session
+      // from the previous app run must not write activeTaskId during this mount.
       if (activeSessionId === null) {
         persistPaneSession(workspaceKey, null);
       }
@@ -108,22 +108,22 @@ export function usePaneSessionPersistence({
       pendingRestoreRef.current = { workspaceKey, sessionId: stored };
       selectSessionRef.current(stored);
     }
-    // activeSessionId/draftFocusVersion 故意不进依赖：恢复只看 workspace 首次挂载瞬间，
-    // 之后的显式新建与选择变化走下面的持久化 effect。
+    // Deliberately omit activeSessionId/draftFocusVersion from dependencies: recovery uses only the first-mount moment for the workspace;
+    // explicit creation and selection changes afterward use the persistence effect below.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [enabled, workspaceKey]);
 
   useEffect(() => {
     if (!enabled) return;
-    // 恢复完成前不要把初始 null 写进去（会覆盖掉待恢复的值）。
+    // Do not write the initial null before recovery completes; that would overwrite the pending value.
     if (!restoredKeysRef.current.has(workspaceKey)) return;
     const pendingRestore = pendingRestoreRef.current;
     if (pendingRestore?.workspaceKey === workspaceKey) {
       if (activeSessionId === null) {
         return;
       }
-      // 恢复 effect 和持久化 effect 属于同一次 commit，后者闭包仍可能
-      // 读到恢复前的 null。等选择态真正回填后再允许写，避免先删掉 reload 恢复键。
+      // Recovery and persistence effects belong to the same commit, so the latter's closure may still
+      // read null from before recovery. Wait until selection is actually restored before writing, avoiding deletion of the reload recovery key.
       pendingRestoreRef.current = null;
     }
     persistPaneSession(workspaceKey, activeSessionId);

@@ -29,8 +29,8 @@ export function navigateTaskFindSelection(
   query: string,
   activeIndex: number,
 ): TaskFindNavigationState {
-  // 单命中环绕时 query/index 不变，导航身份必须在状态持有层独立递增。
-  // 将三项状态放在同一次转换里，避免 App 的多个 setter 被后续维护拆散。
+  // When wrapping around a single match, query/index do not change; navigation identity must increment independently in the state owner.
+  // Update all three pieces of state in one transition so later maintenance cannot split them across App setters.
   return {
     activeIndex,
     navigationRequestId: state.navigationRequestId + 1,

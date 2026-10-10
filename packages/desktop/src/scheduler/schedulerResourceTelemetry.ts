@@ -1,10 +1,11 @@
 /**
- * cron scheduler 进程自身的资源遥测。
+ * Resource telemetry for the cron scheduler process.
  *
- * scheduler 之前完全没有采样，本模块新增它唯一的一个 unref 定时器：每 60 秒读一次
- * `process.cpuUsage()` 与 `process.memoryUsage()`，经 parentPort 把样本发给 main，
- * 成为 scheduler 角色事件的 heap 来源。读数或发送失败只丢当前样本，不影响派发主循环。
- * 零外部进程；定时器 unref，不延长进程寿命。
+ * The scheduler previously collected no samples. This module adds its only unref'ed timer: every 60
+ * seconds it reads `process.cpuUsage()` and `process.memoryUsage()`, then sends the sample to main through
+ * parentPort. The heap value becomes the source for scheduler-role events. Read or send failures only
+ * drop the current sample and do not affect the dispatch loop.
+ * No external process is started, and the unref'ed timer does not extend the process lifetime.
  */
 
 import {
@@ -19,7 +20,7 @@ interface SchedulerResourceTelemetryTimerHandle {
 }
 
 interface StartSchedulerResourceTelemetryOptions extends NodeSelfResourceSamplerOptions {
-  /** parentPort 的发送口；parentPort 不可用时调用方传一个 no-op。 */
+  /** The parentPort sender; callers pass a no-op when parentPort is unavailable. */
   postMessage: (message: SchedulerToMainMessage) => void;
   readMemoryUsage?: () => NodeJS.MemoryUsage;
   intervalMs?: number;
@@ -52,7 +53,7 @@ export function startSchedulerResourceTelemetry(
       }
       options.postMessage({ type: "scheduler-resource-sample", sample });
     } catch {
-      // 读数异常、parentPort 不可用或 postMessage 抛错时只丢当前样本。
+      // Drop only the current sample if reading fails, parentPort is unavailable, or postMessage throws.
     }
   };
 
@@ -63,7 +64,7 @@ export function startSchedulerResourceTelemetry(
   try {
     handle.unref?.();
   } catch {
-    // unref 不可用时仍保留 handle 供 stop 回收。
+    // Keep the handle for stop() to dispose even when unref is unavailable.
   }
 
   return {
@@ -76,7 +77,7 @@ export function startSchedulerResourceTelemetry(
       try {
         timer.clearInterval(current);
       } catch {
-        // 清理失败不能阻塞 scheduler 既有退出流程。
+        // A cleanup failure must not block the scheduler's existing shutdown flow.
       }
     },
   };

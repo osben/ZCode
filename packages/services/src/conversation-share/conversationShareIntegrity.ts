@@ -95,17 +95,17 @@ export function buildConversationShareConfirmRequest(
 }
 
 /**
- * 服务端签发 signed URL 时才有的字段，不参与 artifact set 摘要。
+ * Fields added only when the server issues signed URLs; excluded from the artifact-set digest.
  *
- * 这是一份「服务端在读取时附加的字段」名单，不是「本端认识的字段」白名单——两者方向相反，
- * 选前者才对得上版本歪斜：
- * - 更新版发布端给 descriptor 加字段 → 它进了服务端存储、也进了服务端算的摘要，
- *   老导入端按原始值算同样包含它，哈希对得上（这正是要保住的方向）；
- * - 若改成按本端已知字段投影，那个新字段会被削掉，哈希立刻不一致。
+ * This list contains "fields added by the server when reading," not a whitelist of "fields known by this client"; those have opposite meanings.
+ * The former handles version skew correctly:
+ * - If a newer publisher adds a descriptor field, it is stored on the server and included in the server-computed digest;
+ *   an older importer also includes it when hashing the raw value, so the hashes match (the behavior we need to preserve).
+ * - If instead the value is projected onto fields known by this client, the new field is removed and the hashes immediately differ.
  *
- * 代价是：服务端将来在读取响应里新增字段（而不是回显上传内容）必须同步加进这份名单，
- * 否则摘要会不一致。这属于服务端违反 revision 契约（continuation integrity 定义在
- * descriptor 集合上），且症状明确、修法就是往这里加一个键。
+ * Tradeoff: if the server later adds a field to read responses (rather than echoing uploaded content), it must also be added to this list,
+ * or the digest will differ. That would violate the server's revision contract (continuation integrity is defined over the
+ * descriptor set); the symptom is clear and the fix is to add the key here.
  */
 const ARTIFACT_URL_KEYS = ["download_url", "download_url_expires_at", "url", "url_expires_at"];
 
@@ -122,14 +122,14 @@ function stripArtifactUrls(value: unknown): unknown {
 }
 
 /**
- * 用服务端**原样发来的** rows / artifacts 复核两个摘要。
+ * Recheck both digests using the rows/artifacts **exactly as returned by the server**.
  *
- * 关键点是「原始值」：以前这里拿的是 zod 解析产物，而 zod 默认剥掉未知字段，所以发布端
- * 只要给 row 加一个 optional 字段，老导入端重算的哈希就必然不一致，报出「分享文件校验
- * 失败」——一条看着像被篡改的告警，加一个永远不会成功的重试按钮。
+ * The key is to use the raw value: this previously used Zod's parsed output, which strips unknown fields by default. If a publisher
+ * added an optional field to a row, an older importer would necessarily recalculate a different hash and show a "share file validation
+ * failed" warning that looked like tampering, plus a retry button that could never succeed.
  *
- * 校验对原始字节之后，完整性与 schema 认知彻底解耦：schema 可以自由 additive 演进，而
- * 哈希不一致重新变成它本该表达的意思——内容真的被改过或损坏了。
+ * Validating the raw values decouples integrity from schema knowledge: the schema can evolve additively,
+ * and a hash mismatch once again means what it should—content was actually changed or corrupted.
  */
 export function verifyConversationShareIntegrity(input: {
   rawRows: unknown;
