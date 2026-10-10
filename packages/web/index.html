@@ -19,7 +19,15 @@
         // 此脚本先于 JS bundle 执行，无法 import useTheme.ts，因此复制了 migrateThemeSelection 与 applyTheme 的最小逻辑。
         const STORAGE_KEY = "zcode-theme";
         const PALETTE_STORAGE_KEY = "zcode-theme-palette";
-        const DEFAULT_THEME = "dark";
+        // 分享页无本地配置时默认浅色，与 main.tsx 的路由默认一致，避免 /share 首访者先看到深色启动帧。
+        const isConversationSharePath = (pathname) =>
+          pathname === "/cn/share" ||
+          pathname.startsWith("/cn/share/") ||
+          pathname === "/share" ||
+          pathname.startsWith("/share/");
+        const DEFAULT_THEME = isConversationSharePath(window.location.pathname)
+          ? "light"
+          : "dark";
         const DEFAULT_PALETTE = "zai";
         const ACCENT_PALETTES = [
           "ocean",
@@ -37,7 +45,7 @@
           light: "#f8f8f8",
         };
 
-        // 旧版把配色写进模式值（zai-dark 等），统一迁移为模式。无法识别的值回退为 dark。
+        // 旧版把配色写进模式值（zai-dark 等），统一迁移为模式。无法识别的值回退为路由默认模式。
         const normalizeMode = (saved) => {
           if (saved === "light" || saved === "zai-light") return "light";
           if (saved === "dark" || saved === "zai-dark") return "dark";
@@ -80,10 +88,12 @@
             root.classList.add(`palette-${palette}`);
           }
         } catch {
-          document.documentElement.setAttribute("data-zcode-bootstrap-theme", "dark");
-          syncBrowserThemeSurface("dark");
-          document.documentElement.classList.add("dark");
-          document.documentElement.classList.add("theme-zai-dark");
+          document.documentElement.setAttribute("data-zcode-bootstrap-theme", DEFAULT_THEME);
+          syncBrowserThemeSurface(DEFAULT_THEME);
+          document.documentElement.classList.toggle("dark", DEFAULT_THEME === "dark");
+          document.documentElement.classList.add(
+            DEFAULT_THEME === "dark" ? "theme-zai-dark" : "theme-zai-light",
+          );
         }
       })();
     </script>
