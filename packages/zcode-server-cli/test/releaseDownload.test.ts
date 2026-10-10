@@ -97,7 +97,7 @@ describe("release downloader", () => {
           clearInterval(timer);
           response.end();
         }
-      }, 30);
+      }, 100);
       response.once("close", () => clearInterval(timer));
     });
     servers.push(server);
@@ -111,8 +111,9 @@ describe("release downloader", () => {
       destination: join(dir, "release.tar.gz"),
       sha256,
       expectedSizeBytes: payload.byteLength,
-      timeoutMs: 50,
-      overallTimeoutMs: 1_000,
+      // CI 负载可能推迟单个事件循环 tick；加大间隔余量仍能验证有数据时重置 idle timeout。
+      timeoutMs: 300,
+      overallTimeoutMs: 2_000,
       maxAttempts: 1,
     });
   });

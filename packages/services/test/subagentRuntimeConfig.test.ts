@@ -237,6 +237,8 @@ describe("Host incremental subagent snapshots", () => {
     f.emit(path);
     await until(() => expect(vi.mocked(fs.readFile).mock.results.at(-1)?.value).toBe(gate.promise));
     const obsolete = initialWatcherFor(f.userRoot);
+    // CI 调度可能晚于 chokidar 就绪才启动父目录 fs.watch；先等订阅建立，避免替换目录时丢掉合成事件。
+    await until(() => expect(parentEvents.get(dirname(f.userRoot))?.size).toBeGreaterThan(0));
     await rm(f.userRoot, { recursive: true });
     await mkdir(f.userRoot);
     await writeFile(path, markdown("aaa", "replacement"));
