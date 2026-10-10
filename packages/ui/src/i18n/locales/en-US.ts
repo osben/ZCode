@@ -6832,6 +6832,75 @@ const enUS: Record<string, string> = {
   "scheduledPreview.toast.running": "Running “{title}”…",
   "scheduledPreview.toast.view": "View",
   "scheduledPreview.addSchedule": "Add schedule",
+  "settings.instructions.title": "Instructions",
+  "settings.instructions.description":
+    "Global instructions in ~/.zcode/AGENTS.md on the host of the active workspace. They are merged with the project AGENTS.md and apply to new and restarted sessions.",
+  "settings.instructions.desktopOnly": "Global instructions can only be edited in the desktop app.",
+  "settings.instructions.host.local": "This computer",
+  "settings.instructions.linkTarget": "Link → {target}",
+  "settings.instructions.dockerHint":
+    "The file lives inside the container and may be lost when the container is rebuilt.",
+  "settings.instructions.pinnedHostNotice":
+    "The active workspace is on another host. The editor still targets {host} until you save or discard the draft.",
+  "settings.instructions.effectHint":
+    "Applies to new and restarted sessions. Running sessions and open drafts keep their previous instructions.",
+  "settings.instructions.waitingRemote": "Waiting for the remote host connection...",
+  "settings.instructions.unsupportedHost":
+    "This host does not support editing global instructions yet. Update ZCode on the remote host and try again.",
+  "settings.instructions.loadFailed": "Could not read the global instructions file.",
+  "settings.instructions.retry": "Retry",
+  "settings.instructions.error.BROKEN_LINK":
+    "~/.zcode/AGENTS.md is a broken symbolic link. Fix or remove the link, then retry.",
+  "settings.instructions.error.NOT_REGULAR_FILE":
+    "~/.zcode/AGENTS.md is not a regular file. Remove it or replace it with a file, then retry.",
+  "settings.instructions.error.NOT_UTF8":
+    "The file is not valid UTF-8 text and cannot be edited here.",
+  "settings.instructions.error.TOO_LARGE_TO_EDIT":
+    "The file is too large to edit here ({size}). Edit it in an external editor.",
+  "settings.instructions.error.READ_FAILED":
+    "Could not read the file. Check its permissions and retry.",
+  "settings.instructions.reveal": "Show in file manager",
+  "settings.instructions.missingHint": "The file has not been created yet. Saving will create it.",
+  "settings.instructions.mixedLineEndings":
+    "The file has mixed line endings. They will be normalized to {eol} on save.",
+  "settings.instructions.linkDuplicateHint":
+    "If the link target is a project AGENTS.md, its content is injected twice when that project is open.",
+  "settings.instructions.tab.edit": "Edit",
+  "settings.instructions.tab.preview": "Preview",
+  "settings.instructions.placeholder": "Write instructions that apply to every project...",
+  "settings.instructions.editorLabel": "Global instructions",
+  "settings.instructions.previewEmpty": "Nothing to preview.",
+  "settings.instructions.size": "{size} of {limit} read by the agent",
+  "settings.instructions.overAgentLimit": "The agent only reads the first {limit}.",
+  "settings.instructions.save": "Save",
+  "settings.instructions.discardChanges": "Discard changes",
+  "settings.instructions.unsaved": "Unsaved changes",
+  "settings.instructions.saved":
+    "Global instructions saved. They apply to new and restarted sessions.",
+  "settings.instructions.saveFailed": "Could not save global instructions ({code}).",
+  "settings.instructions.saveFailedGeneric": "Could not save global instructions.",
+  "settings.instructions.import.action": "Import from CLAUDE.md",
+  "settings.instructions.import.missing": "~/.claude/CLAUDE.md was not found on this host.",
+  "settings.instructions.import.failed": "Could not import CLAUDE.md ({code}).",
+  "settings.instructions.import.failedGeneric": "Could not import CLAUDE.md.",
+  "settings.instructions.import.confirmTitle": "Replace the current draft?",
+  "settings.instructions.import.confirmDescription":
+    "Your unsaved changes will be replaced by the content of ~/.claude/CLAUDE.md.",
+  "settings.instructions.import.confirmAction": "Replace",
+  "settings.instructions.import.done": "Imported CLAUDE.md into the draft. Save to apply it.",
+  "settings.instructions.import.doneWithAtImports":
+    "Imported CLAUDE.md into the draft. @ imports are not expanded by ZCode. Save to apply it.",
+  "settings.instructions.discard.title": "Discard unsaved instructions?",
+  "settings.instructions.discard.leave":
+    "Your unsaved changes to the global instructions will be lost.",
+  "settings.instructions.discard.hostChanged":
+    "The active workspace switched to another host. Discard the draft and edit that host's instructions?",
+  "settings.instructions.discard.confirm": "Discard",
+  "settings.instructions.conflict.title": "The file changed on disk",
+  "settings.instructions.conflict.description":
+    "~/.zcode/AGENTS.md was modified after you opened it. Reload to discard your draft, or overwrite the file with your draft.",
+  "settings.instructions.conflict.reload": "Reload",
+  "settings.instructions.conflict.overwrite": "Overwrite",
 };
 
 export default enUS;

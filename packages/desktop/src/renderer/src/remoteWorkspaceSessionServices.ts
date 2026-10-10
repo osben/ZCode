@@ -48,5 +48,8 @@ export function buildRemoteWorkspaceSessionServices(
     // 无法读取远端待审 Hook。
     // hooks 读写（loadHooks/saveHooks）与 grantWorkspaceHookTrust 授权都必须打到远端 host。
     hooksService: remoteServices.hooksService,
+    // 全局指令编辑器读写的是目标 host 上的 ~/.zcode/AGENTS.md。
+    // 不覆盖时远端 workspace 会静默改写桌面机本地的同名文件。
+    userInstructionsService: remoteServices.userInstructionsService,
   };
 }

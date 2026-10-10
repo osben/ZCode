@@ -369,6 +369,30 @@ export const TID_RESOURCE_MANAGER_STORAGE_CONFIRM_CANCEL =
   "resource-manager-storage-confirm-cancel";
 /** Memory 设置模块中的总开关 */
 export const TID_SETTINGS_MEMORY_SWITCH = "settings-memory-switch";
+/** 全局指令（~/.zcode/AGENTS.md）编辑器 textarea */
+export const TID_SETTINGS_INSTRUCTIONS_EDITOR = "settings-instructions-editor";
+/** 全局指令保存按钮 */
+export const TID_SETTINGS_INSTRUCTIONS_SAVE = "settings-instructions-save";
+/** 全局指令「放弃修改」按钮 */
+export const TID_SETTINGS_INSTRUCTIONS_DISCARD = "settings-instructions-discard";
+/** 全局指令「从 CLAUDE.md 导入」按钮 */
+export const TID_SETTINGS_INSTRUCTIONS_IMPORT = "settings-instructions-import";
+/** 全局指令「在文件管理器中显示」按钮 */
+export const TID_SETTINGS_INSTRUCTIONS_REVEAL = "settings-instructions-reveal";
+/** 全局指令读取失败后的重试按钮 */
+export const TID_SETTINGS_INSTRUCTIONS_RETRY = "settings-instructions-retry";
+/** 全局指令目标主机标签 */
+export const TID_SETTINGS_INSTRUCTIONS_HOST = "settings-instructions-host";
+/** 全局指令编辑 / 预览标签 */
+export const TID_SETTINGS_INSTRUCTIONS_TAB_EDIT = "settings-instructions-tab-edit";
+export const TID_SETTINGS_INSTRUCTIONS_TAB_PREVIEW = "settings-instructions-tab-preview";
+/** 全局指令保存冲突弹窗及其操作 */
+export const TID_SETTINGS_INSTRUCTIONS_CONFLICT_DIALOG = "settings-instructions-conflict-dialog";
+export const TID_SETTINGS_INSTRUCTIONS_CONFLICT_RELOAD = "settings-instructions-conflict-reload";
+export const TID_SETTINGS_INSTRUCTIONS_CONFLICT_OVERWRITE =
+  "settings-instructions-conflict-overwrite";
+/** Web 端「仅桌面可用」占位 */
+export const TID_SETTINGS_INSTRUCTIONS_DESKTOP_ONLY = "settings-instructions-desktop-only";
 /** Memory 设置模块刷新按钮 */
 export const TID_SETTINGS_MEMORY_REFRESH = "settings-memory-refresh";
 /** Memory Workspace Scope 菜单触发器 */

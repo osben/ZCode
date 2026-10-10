@@ -10,11 +10,18 @@ export {
   migrateSubagentStateFile,
 } from "./node/subagentMarkdownMigration.js";
 export {
+  atomicWriteFile,
   atomicWritePrivateTextFile,
   backupCorruptFile,
   withFileLock,
+  type AtomicWriteFileOptions,
   type SharedFileLockOptions,
 } from "./node/privateFilePersistence.js";
+export {
+  getClaudeUserInstructionsFilePath,
+  getUserZcodeAgentsFilePath,
+  resolveAgentUserHomeDir,
+} from "./node/userInstructionsPaths.js";
 export {
   createNodeSelfResourceSampler,
   NODE_SELF_RESOURCE_SAMPLE_INTERVAL_MS,

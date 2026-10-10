@@ -33,6 +33,7 @@ import {
   ICommandsService,
   IHooksService,
   IMemoryService,
+  IUserInstructionsService,
   ISettingsSyncService,
   IPromptAttachmentTransferService,
   type IServiceAccessor,
@@ -374,6 +375,9 @@ export function createRemoteWorkspaceServiceCollection(params: {
     .register(ISubagentsService, createSubagentsService({ isDesktopRuntime: true }))
     .register(IHooksService, params.connectionServices.hooksService)
     .register(IMemoryService, createMemoryService())
+    // 全局指令属于目标主机：远端 CLI 读取的是远端 ~/.zcode/AGENTS.md，
+    // 不能像 Memory 一样回落到本机实例，否则会静默编辑本机文件。
+    .register(IUserInstructionsService, params.connectionServices.userInstructionsService)
     .register(
       ISettingsSyncService,
       createSettingsSyncService({ settingService: localSettingService }),
