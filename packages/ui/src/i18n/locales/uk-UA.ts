@@ -5887,6 +5887,7 @@ const ukUA: Record<string, string> = {
   "chat.error.processExited": "Процес агента неочікувано завершився",
   "chat.error.dismiss": "Закрити повідомлення про помилку",
   "chat.error.retry": "Повторити",
+  "chat.error.resume": "Продовжити",
   "chat.error.resumeBlocked": "Зараз не вдалося продовжити. Перевірте чат і спробуйте ще раз.",
   "chat.error.reloginProvider": "Увійти в {provider}",
   "chat.error.action.relogin": "Увійти знову",

@@ -1,0 +1,56 @@
+name: PR checks
+
+on:
+  pull_request:
+    branches: [integration]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pr-checks-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    name: Typecheck, lint, architecture
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install dependencies
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Tests
+        run: pnpm test
+
+      # Full check: `--changed` diffs against HEAD, which is the merge commit in PR CI, so it would miss the PR's changes.
+      - name: Architecture check
+        run: pnpm architecture:check
+
+      # Only files touched by this PR; the repo has pre-existing format drift elsewhere.
+      # oxfmt ignores lockfiles and similar files, so a PR with only those would otherwise fail on "no target files".
+      - name: Format check (changed files)
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          git diff --name-only --diff-filter=ACMR -z "$BASE_SHA...HEAD" \
+            | xargs -0 -r pnpm exec oxfmt --check --no-error-on-unmatched-pattern
