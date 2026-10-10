@@ -97,6 +97,30 @@ export interface GitRepositoryRequest {
   workspacePath: string;
 }
 
+export type GitBranchMergeState = "merged" | "not_merged" | "unknown";
+
+/**
+ * Local-git observation of the workspace branch (not a session event).
+ *
+ * headRef is the workspace's current branch: the data model has no per-session
+ * branches, so the observation granularity is workspace + its current branch.
+ * state=unknown is returned for detached HEAD, missing origin/HEAD, a branch
+ * missing locally, and git errors — the UI hides the badge in that case.
+ */
+export interface GitBranchMergeStatus {
+  state: GitBranchMergeState;
+  /** Default branch resolved from origin/HEAD, e.g. "origin/main"; null when unknown. */
+  baseRef: string | null;
+  /** Workspace current branch at probe time; null for detached/unknown. */
+  headRef: string | null;
+  /** ISO timestamp of the branch tip commit; null when unknown. */
+  lastCommitAt: string | null;
+}
+
+export interface GitBranchMergeStatusRequest extends GitRepositoryRequest {
+  workspaceIdentity?: string;
+}
+
 export type GitCommitGraphRefKind = "branch" | "remote" | "tag" | "head";
 
 export interface GitCommitGraphRef {
