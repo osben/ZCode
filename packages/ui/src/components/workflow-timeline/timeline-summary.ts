@@ -54,7 +54,14 @@ export function workflowPhasesDetail(
   graph: WorkflowCausalityGraphData | undefined,
 ): string {
   const counts = timelineCounts(model, graph);
-  return countLabel(intl, "chat.toolCall.workflow.card.phases", counts.phases);
+  // 还开着的留白不算阶段（docs/dynamic-workflow/presentation.md「Holes on the timeline」）：「2 个阶段 · 2 处留白」。
+  const holes = model.stations.filter(
+    (station) => station.hole !== undefined && station.hole.state !== "filled",
+  ).length;
+  const phases = countLabel(intl, "chat.toolCall.workflow.card.phases", counts.phases - holes);
+  return holes === 0
+    ? phases
+    : `${phases} · ${countLabel(intl, "chat.toolCall.workflow.card.holes", holes)}`;
 }
 
 /** 子代理那一段：跑着时数工作中的，结束后数总数（投影与静态图取大）。 */

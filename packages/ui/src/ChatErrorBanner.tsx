@@ -32,6 +32,7 @@ import { buildErrorFeedbackDescription } from "@/lib/errorFeedbackDraft.js";
 import {
   isSuspiciousEmptyModelResultMessage,
   resolveOffPeakTicketExpiredBusinessCode,
+  resolveRequestVerificationBusinessCode,
 } from "@/lib/providerBusinessError.js";
 import type { ZCodeUiError } from "@/lib/zcodeUiError.js";
 import { canResumeChatError, isModelConfigMissingError } from "@/lib/chatErrorResume.js";
@@ -55,6 +56,21 @@ const LOCALIZED_ERROR_CODES = new Set([
   "ZCODE_BIGMODEL_TEAM_PLAN_MEMBER_REQUIRED",
 ]);
 
+function parseClaudeUnknownCommandMessage(message: string): {
+  command: string;
+  args?: string;
+} | null {
+  const match = message.match(/Claude Code 未知命令\s+(\S+?)(?:（参数：([^）]+)）)?。/u);
+  if (!match?.[1]) {
+    return null;
+  }
+
+  return {
+    command: match[1],
+    ...(match[2]?.trim() ? { args: match[2].trim() } : {}),
+  };
+}
+
 export function resolveChatErrorBannerDisplayMessage(
   error: ZCodeUiError,
   intl: IntlInstance,
@@ -63,8 +79,29 @@ export function resolveChatErrorBannerDisplayMessage(
     return intl.formatMessage({ id: "chat.error.noAvailableModel" });
   }
 
+  if (error.code === "CLAUDE_UNKNOWN_COMMAND") {
+    const parsed = parseClaudeUnknownCommandMessage(error.message);
+    if (!parsed) {
+      return error.message;
+    }
+
+    // Bugfix: 服务层为了兼容历史快照仍持久化中文兜底文案，UI 需要按稳定 code
+    // 重新本地化，否则英文界面会混入中文错误提示。
+    return parsed.args
+      ? intl.formatMessage(
+          { id: "zcode.error.CLAUDE_UNKNOWN_COMMAND_WITH_ARGS" },
+          { command: parsed.command, args: parsed.args },
+        )
+      : intl.formatMessage(
+          { id: "zcode.error.CLAUDE_UNKNOWN_COMMAND" },
+          { command: parsed.command },
+        );
+  }
+
   const providerBusinessCode =
-    resolveOffPeakTicketExpiredBusinessCode(error.code, error.message) ?? error.code;
+    resolveRequestVerificationBusinessCode(error.code, error.message) ??
+    resolveOffPeakTicketExpiredBusinessCode(error.code, error.message) ??
+    error.code;
   const providerBusinessMessageId = getProviderBusinessErrorMessageId(providerBusinessCode);
   if (providerBusinessMessageId) {
     return intl.formatMessage({ id: providerBusinessMessageId });
@@ -127,7 +164,7 @@ export function ChatErrorBanner({
       type: "bug",
       module: "模型调用报错",
       severity: "P2-中",
-      includeLogs: false,
+      includeLogs: true,
       description: buildErrorFeedbackDescription({
         message: localizedErrorMessage,
         detail: error.detail,
@@ -275,7 +312,7 @@ export function ChatErrorBanner({
           </Button>
         ) : null}
 
-        {/* 错误横幅本身就是异常态，不能再经过 Radix Tooltip 的 Popper/Slot 状态链。
+        {/* Bugfix: 错误横幅本身就是异常态，不能再经过 Radix Tooltip 的 Popper/Slot 状态链。
             这里改成普通 Button，避免无可用模型等错误触发横幅时发生 Maximum update depth 循环。 */}
         {!modelConfigMissing ? (
           <Button
