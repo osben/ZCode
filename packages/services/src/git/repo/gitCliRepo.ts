@@ -1436,7 +1436,23 @@ export function createGitCliRepo(options?: { commandProvider?: GitCommandProvide
     },
 
     async getBranchMergeStatus(workspacePath: string): Promise<GitBranchMergeStatus> {
-      const status = await this.getStatus(workspacePath);
+      // Bugfix: контракт метода — «unknown без throw», но getStatus() внутри
+      // ensureGitCommandSucceeded бросает на таймауте/ошибке git status.
+      // Ошибка пробы наблюдения не должна рваться в UI — возвращаем полный unknown.
+      let status: GitStatusSnapshot;
+      try {
+        status = await this.getStatus(workspacePath);
+      } catch (error) {
+        warnBranchMergeStatusOnce(workspacePath, "status-failed", {
+          error: error instanceof Error ? error.message : String(error),
+        });
+        return {
+          state: "unknown" satisfies GitBranchMergeState,
+          baseRef: null,
+          headRef: null,
+          lastCommitAt: null,
+        };
+      }
       const toUnknown = (): GitBranchMergeStatus => ({
         state: "unknown" satisfies GitBranchMergeState,
         baseRef: null,
@@ -1518,6 +1534,26 @@ export function createGitCliRepo(options?: { commandProvider?: GitCommandProvide
       }
 
       return { state, baseRef, headRef: status.summary.branchName, lastCommitAt };
+    },
+
+    async readHeadBranch(workspacePath: string): Promise<string | null> {
+      // Один symbolic-ref без полного статуса: валидация попаданий кэша
+      // merge-статуса не должна стоить как сама проба. detached HEAD и любые
+      // неуспехи читаются как null — попадание при этом принимается.
+      const resolution = await this.resolveRepository(workspacePath);
+      if (!resolution.isGitAvailable || !resolution.isRepository) {
+        return null;
+      }
+      const result = await commandProvider.run({
+        cwd: resolution.repoRoot,
+        args: ["symbolic-ref", "--short", "HEAD"],
+        timeoutMs: DEFAULT_GIT_COMMAND_TIMEOUT_MS,
+        maxOutputBytes: DEFAULT_GIT_OUTPUT_BYTES,
+      });
+      if (result.exitCode !== 0 || result.timedOut) {
+        return null;
+      }
+      return result.stdout.trim() || null;
     },
 
     async stage(workspacePath: string, paths: string[]): Promise<void> {

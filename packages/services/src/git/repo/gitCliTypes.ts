@@ -90,6 +90,13 @@ export interface GitCliRepo {
   getDiff(params: GitDiffQuery): Promise<GitDiffResult>;
   getBranchComparison(workspacePath: string): Promise<GitBranchComparisonSnapshot>;
   getBranchMergeStatus(workspacePath: string): Promise<GitBranchMergeStatus>;
+  /**
+   * Текущая ветка HEAD одним symbolic-ref (без полного `git status`).
+   * Служит дешёвой валидацией попаданий кэша merge-статуса: внешний checkout
+   * меняет HEAD, и запись другой ветки не должна подаваться как свежая.
+   * null = не репозиторий / detached HEAD / не удалось прочитать.
+   */
+  readHeadBranch(workspacePath: string): Promise<string | null>;
   stage(workspacePath: string, paths: string[]): Promise<void>;
   unstage(workspacePath: string, paths: string[]): Promise<void>;
   discard(workspacePath: string, paths: string[], staged: boolean): Promise<void>;

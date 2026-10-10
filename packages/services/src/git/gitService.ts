@@ -194,6 +194,14 @@ export function createGitService(options?: {
   const branchMergeLog = options?.logger ?? createServiceLogger("branch-merge-status");
   const now = options?.now ?? Date.now;
   const branchMergeStatusCache = new Map<string, BranchMergeStatusCacheEntry>();
+  // Bugfix: проба, ожидающая repo.getBranchMergeStatus, могла дописать в кэш
+  // результат, вычисленный ДО инвалидации (смена ветки/коммит во время полёта),
+  // и снова отравить кэш до конца TTL. Generation per key инкрементируется при
+  // инвалидации; запись разрешена только неизменившемуся поколению. Ключ
+  // регистрируется на СТАРТЕ пробы — в полёте кэш-записи ещё нет, а инвалидация
+  // обязана добраться и до неё.
+  const branchMergeGeneration = new Map<string, number>();
+  const branchMergeKeyWorkspaces = new Map<string, string>();
 
   function workspaceMergeCacheKey(params: {
     workspacePath: string;
@@ -203,9 +211,10 @@ export function createGitService(options?: {
   }
 
   function invalidateBranchMergeStatus(workspacePath: string): void {
-    for (const [key, entry] of branchMergeStatusCache) {
-      if (entry.workspacePath === workspacePath) {
+    for (const [key, registeredPath] of branchMergeKeyWorkspaces) {
+      if (registeredPath === workspacePath) {
         branchMergeStatusCache.delete(key);
+        branchMergeGeneration.set(key, (branchMergeGeneration.get(key) ?? 0) + 1);
       }
     }
   }
@@ -284,16 +293,31 @@ export function createGitService(options?: {
       const key = workspaceMergeCacheKey(params);
       const cached = branchMergeStatusCache.get(key);
       if (cached && now() - cached.fetchedAt < BRANCH_MERGE_STATUS_TTL_MS) {
-        return cached.status;
+        // Bugfix: ключ кэша не содержал ветку, и внешний checkout (мимо
+        // инвалидаций приложения) до 60 с подавал статус предыдущей ветки.
+        // Попадание принимается только при совпадении HEAD: один дешёвый
+        // symbolic-ref вместо полной пробы; HEAD не читается — принимаем.
+        const headBranch = await repo.readHeadBranch(params.workspacePath);
+        const headMoved =
+          headBranch !== null &&
+          cached.status.headRef !== null &&
+          headBranch !== cached.status.headRef;
+        if (!headMoved) {
+          return cached.status;
+        }
       }
 
+      const generation = branchMergeGeneration.get(key) ?? 0;
+      branchMergeKeyWorkspaces.set(key, params.workspacePath);
       const status = await repo.getBranchMergeStatus(params.workspacePath);
-      branchMergeStatusCache.set(key, {
-        workspacePath: params.workspacePath,
-        headRef: status.headRef,
-        status,
-        fetchedAt: now(),
-      });
+      if ((branchMergeGeneration.get(key) ?? 0) === generation) {
+        branchMergeStatusCache.set(key, {
+          workspacePath: params.workspacePath,
+          headRef: status.headRef,
+          status,
+          fetchedAt: now(),
+        });
+      }
       if (cached && cached.status.state !== status.state) {
         branchMergeLog.info(undefined, "branch merge state changed", {
           workspacePath: params.workspacePath,

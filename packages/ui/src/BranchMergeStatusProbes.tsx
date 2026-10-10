@@ -9,9 +9,16 @@ import { useRemoteWorkspaceSessionStore } from "@/store/remoteWorkspaceSessionSt
 /**
  * Invisible mount that probes branch merge status for every open workspace.
  * Lives once in the sidebar so grouped, flat, and archived task views share
- * the same store entries.
+ * the same store entries. The sidebar panel is hidden with CSS and never
+ * unmounts, so reopening is reported through `active` — each open re-probes.
  */
-export function BranchMergeStatusProbes({ workspaceTabs }: { workspaceTabs: WorkspaceTabState[] }) {
+export function BranchMergeStatusProbes({
+  workspaceTabs,
+  active,
+}: {
+  workspaceTabs: WorkspaceTabState[];
+  active: boolean;
+}) {
   const baseServices = useBaseWorkspaceServices();
   const sessionsById = useRemoteWorkspaceSessionStore((state) => state.sessionsById);
   const sessionIdByWorkspaceIdentity = useRemoteWorkspaceSessionStore(
@@ -47,6 +54,6 @@ export function BranchMergeStatusProbes({ workspaceTabs }: { workspaceTabs: Work
       }),
     [workspaceServiceLookup, workspaceTabs],
   );
-  useBranchMergeStatuses(targets);
+  useBranchMergeStatuses(targets, { active });
   return null;
 }

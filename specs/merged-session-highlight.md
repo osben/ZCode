@@ -42,7 +42,7 @@ Per-session веток в модели данных нет: ни в `ZCodeTaskMe
 
 **Ключ:** `workspaceIdentity?.trim() || workspacePath` + branch. Для remote workspace передаются `workspaceIdentity` и `remoteSessionId`, не путь. `git` выполняется на хосте workspace, результат возвращается по протоколу.
 
-**Кэш:** in-memory с TTL 60 секунд; сброс при смене branch или checkout. Обновление при открытии сайдбара и фокусе окна. Rate limit не актуален: это локальные вызовы git.
+**Кэш:** in-memory с TTL 60 секунд; сброс при смене branch или checkout. Попадание в кэш валидируется текущим HEAD: один дешёвый `git symbolic-ref --short HEAD` на попадание (внешний checkout, не замеченный инвалидацией, обнаруживается на следующей пробе; HEAD не читается — попадание принимается). In-flight проба не может репопулировать кэш после инвалидации: запись результата охраняется generation-счётчиком per workspace, который инкрементируется при сбросе. Обновление при открытии сайдбара и фокусе окна. Rate limit не актуален: это локальные вызовы git; каденцией владеет сервис — клиентского TTL-гейта в UI нет.
 
 **Контракт (локальный git):**
 
@@ -57,7 +57,7 @@ type MergeStatus = {
 
 Фактическая интеграция (реализация): типы `GitBranchMergeStatus` в `packages/shared/src/git.ts` (конвенция файла — `| null` вместо optional); метод `IGitService.getBranchMergeStatus` в `packages/services/src/git/git.ts` — существующая сервисная поверхность UI↔host (та же, что `getBranchComparison`). Отдельная запись в `zcode-protocol/index.ts` не нужна: это наблюдение по запросу, а не событие сессии.
 
-**Версии:** старый host без метода отклоняет вызов — hook ловит ошибку, бейдж скрыт (деградация как со `unknown`).
+**Версии:** старый host без метода отклоняет вызов — hook ловит ошибку, запись workspace удаляется из стора (бейдж гарантированно скрыт, включая ранее показанный), повторная проба на следующем фокусе. Ошибка `git status` внутри пробы не бросается наружу: repo-слой возвращает `unknown` с `headRef: null` и одним `warn`.
 
 **Граница:** состояние merge не идёт в `desktop-continuous` stream и не записывается в `SessionEvent`/journal. Это наблюдение, а не событие сессии (тот же принцип, что у `session-token-throughput.md`).
 
@@ -68,7 +68,7 @@ type MergeStatus = {
 - Блок добавляется в существующий popup строки, второй popup не создаётся.
 - Интерактивные overlay выше пассивных tooltip (`DESIGN.md:427`).
 - Строки через intl: новые ключи в `en-US`, `zh-CN`, `uk-UA` (`packages/ui/src/i18n/locales/`, ключи `taskList.branchMerged*`).
-- Состояние в `packages/ui/src/store/branchMergeStatusStore.ts`, проба — hook `useBranchMergeStatuses` (`packages/ui/src/hooks/`); невидимый probe-компонент `BranchMergeStatusProbes` монтируется в `WorkspaceSidebar` один раз и покрывает grouped, flat и archived виды (для `.tsx` с JSX).
+- Состояние в `packages/ui/src/store/branchMergeStatusStore.ts`, проба — hook `useBranchMergeStatuses` (`packages/ui/src/hooks/`); невидимый probe-компонент `BranchMergeStatusProbes` монтируется в `WorkspaceSidebar` один раз и покрывает grouped, flat и archived виды (для `.tsx` с JSX). Сайдбар прячется через CSS и не размонтируется, поэтому видимостью управляет явный prop: проба срабатывает при открытии сайдбара и на фокус окна.
 - Внешние ссылки только через `IPlatformService` (`packages/shared/src/platform.ts`), не `window.zcode`.
 - Вторая строка `packages/ui/src/TaskListItem.tsx`: бейдж добавлен в обе её цепочки статусов с тем же правилом приоритета (после pendingInteraction и внимания).
 
