@@ -5,6 +5,7 @@ import { DEFAULT_LOCALE, FALLBACK_UI_LOCALE, isLocale, resolveSystemLocale } fro
 import { DesktopWindowFrame } from "@/DesktopWindowFrame.js";
 import zhCN from "@/i18n/locales/zh-CN.js";
 import enUS from "@/i18n/locales/en-US.js";
+import ukUA from "@/i18n/locales/uk-UA.js";
 import { logger } from "@/logger.js";
 import { reportReactErrorToArms } from "@/lib/reactErrorArmsTelemetry.js";
 import { cn } from "@/components/lib/utils.js";
@@ -65,6 +66,7 @@ function serializeErrorForLog(error: Error): {
 const BOUNDARY_MESSAGES = {
   "zh-CN": zhCN,
   "en-US": enUS,
+  "uk-UA": ukUA,
 } satisfies Record<Locale, Record<string, string>>;
 
 function resolveBoundaryLocale(): Locale {
@@ -90,8 +92,8 @@ function resolveBoundaryLocale(): Locale {
 
 function formatBoundaryMessage(id: string): string {
   const locale = resolveBoundaryLocale();
-  const messages = BOUNDARY_MESSAGES[locale] ?? enUS;
-  return messages[id] ?? id;
+  // 与 createIntl 一致：当前语言目录缺 key（如 uk 未完全翻译）时回退英文，而不是展示 id。
+  return BOUNDARY_MESSAGES[locale]?.[id] ?? enUS[id] ?? id;
 }
 
 function haveResetKeysChanged(

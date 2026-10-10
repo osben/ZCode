@@ -16,6 +16,7 @@ interface LocaleMeta {
 const LOCALE_META = {
   "zh-CN": { languagePrefix: "zh", serviceLocale: "zh-CN" },
   "en-US": { languagePrefix: "en", serviceLocale: "en-US" },
+  "uk-UA": { languagePrefix: "uk", serviceLocale: "en-US" },
 } satisfies Record<Locale, LocaleMeta>;
 
 export const SUPPORTED_LOCALES = Object.keys(LOCALE_META) as Locale[];

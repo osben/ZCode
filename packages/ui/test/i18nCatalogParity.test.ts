@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import enUS from "../src/i18n/locales/en-US.js";
+import ukUA from "../src/i18n/locales/uk-UA.js";
 import zhCN from "../src/i18n/locales/zh-CN.js";
 
 // en 有而 zh 没有的 key：精确名单，过期条目同样让测试失败。
@@ -18,6 +19,20 @@ function htmlTags(message: string): string[] {
 
 function boldMarkers(message: string): number {
   return message.split("**").length - 1;
+}
+
+const UK_PLURAL_CATEGORIES = ["one", "few", "many", "other"];
+
+function pluralBaseOf(key: string): string | undefined {
+  return key.match(/^(.*)\.(?:zero|one|two|few|many|other)$/)?.[1];
+}
+
+// uk 的 `.few` / `.many` 在 en 中不存在，按 en `.other` 对照。
+function enReference(key: string): string | undefined {
+  const direct = enUS[key];
+  if (direct !== undefined) return direct;
+  const base = pluralBaseOf(key);
+  return base === undefined ? undefined : enUS[`${base}.other`];
 }
 
 describe("i18n catalog parity", () => {
@@ -56,10 +71,56 @@ describe("i18n catalog parity", () => {
     }
   });
 
+  it("uk keys are en keys or uk plural forms of en plural families", () => {
+    for (const key of Object.keys(ukUA)) {
+      assert.ok(enReference(key) !== undefined, `uk-UA: ${key} not in en`);
+    }
+  });
+
+  it("uk placeholders, HTML tags and bold markers match en", () => {
+    for (const [key, uk] of Object.entries(ukUA)) {
+      const en = enReference(key);
+      if (en === undefined) continue;
+      const enNames = placeholders(en);
+      const base = pluralBaseOf(key);
+      const enOther = base === undefined ? undefined : enUS[`${base}.other`];
+      if (enOther !== undefined) {
+        for (const name of placeholders(enOther)) enNames.add(name);
+      }
+      for (const name of placeholders(uk)) {
+        assert.ok(enNames.has(name), `uk-UA ${key}: {${name}} not in en`);
+      }
+      assert.deepEqual(htmlTags(uk), htmlTags(en), `uk-UA ${key}: HTML tags differ`);
+      assert.equal(boldMarkers(uk), boldMarkers(en), `uk-UA ${key}: ** count differs`);
+    }
+  });
+
+  it("translated uk plural families have one/few/many/other with {count}", () => {
+    const families = new Set(
+      Object.keys(ukUA)
+        .map(pluralBaseOf)
+        .filter(
+          (base): base is string => base !== undefined && enUS[`${base}.other`] !== undefined,
+        ),
+    );
+    for (const base of families) {
+      // uk 的 `one` 同时覆盖 21、31…，所以 en `.other` 带 {count} 时每个形态都必须带 {count}。
+      const needsCount = placeholders(enUS[`${base}.other`]!).has("count");
+      for (const category of UK_PLURAL_CATEGORIES) {
+        const message = ukUA[`${base}.${category}`];
+        assert.ok(message !== undefined, `uk-UA: ${base} lacks .${category}`);
+        if (needsCount) {
+          assert.ok(message.includes("{count}"), `uk-UA: ${base}.${category} lacks {count}`);
+        }
+      }
+    }
+  });
+
   it("every plural family has an .other form", () => {
     for (const [name, catalog] of [
       ["en-US", enUS],
       ["zh-CN", zhCN],
+      ["uk-UA", ukUA],
     ] as const) {
       for (const key of Object.keys(catalog)) {
         const category = PLURAL_CATEGORIES.find(

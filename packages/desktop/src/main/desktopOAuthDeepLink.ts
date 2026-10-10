@@ -136,27 +136,36 @@ export function isNetworkWorkspacePath(path: string): boolean {
   return normalized.startsWith("\\\\") || /^\\\\\?\\UNC\\/iu.test(normalized);
 }
 
-export function resolveExternalWorkspaceOpenDialogCopy(
-  locale: Locale,
-): ExternalWorkspaceOpenDialogCopy {
-  // TODO(i18n): 新增 Locale 时把这里收敛成完整 Record<Locale, ...>，
-  // 避免未覆盖语言静默回退英文。
-  if (locale === "zh-CN") {
-    return {
-      buttons: ["打开文件夹", "取消"],
-      title: "打开外部 ZCode 链接？",
-      message: "是否在 ZCode 中打开此文件夹？",
-      detail: (path) => `${path}\n\n只打开你信任来源的文件夹。项目设置可能影响 agent runtime。`,
-    };
-  }
-
-  return {
+// 用完整 Record<Locale, ...> 让新增语言在编译期就必须补齐文案，避免静默回退英文。
+const EXTERNAL_WORKSPACE_OPEN_DIALOG_COPY: Record<Locale, ExternalWorkspaceOpenDialogCopy> = {
+  "zh-CN": {
+    buttons: ["打开文件夹", "取消"],
+    title: "打开外部 ZCode 链接？",
+    message: "是否在 ZCode 中打开此文件夹？",
+    detail: (path) => `${path}\n\n只打开你信任来源的文件夹。项目设置可能影响 agent runtime。`,
+  },
+  "en-US": {
     buttons: ["Open folder", "Cancel"],
     title: "Open external ZCode link?",
     message: "Open this folder in ZCode?",
     detail: (path) =>
       `${path}\n\nOnly open folders from sources you trust. Project settings may affect the agent runtime.`,
-  };
+  },
+  "uk-UA": {
+    buttons: ["Відкрити папку", "Скасувати"],
+    title: "Відкрити зовнішнє посилання ZCode?",
+    message: "Відкрити цю папку в ZCode?",
+    detail: (path) =>
+      `${path}\n\nВідкривайте лише папки з джерел, яким довіряєте. Налаштування проєкту можуть впливати на agent runtime.`,
+  },
+};
+
+export function resolveExternalWorkspaceOpenDialogCopy(
+  locale: Locale,
+): ExternalWorkspaceOpenDialogCopy {
+  return (
+    EXTERNAL_WORKSPACE_OPEN_DIALOG_COPY[locale] ?? EXTERNAL_WORKSPACE_OPEN_DIALOG_COPY["en-US"]
+  );
 }
 
 export function confirmExternalWorkspaceOpen(

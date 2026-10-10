@@ -23,6 +23,12 @@ describe("matchSupportedLocale", () => {
     assert.equal(matchSupportedLocale("en_US.UTF-8"), "en-US");
   });
 
+  it("maps Ukrainian tags to uk-UA", () => {
+    for (const tag of ["uk", "uk-UA", "uk_UA.UTF-8"]) {
+      assert.equal(matchSupportedLocale(tag), "uk-UA", tag);
+    }
+  });
+
   it("returns null for unsupported or empty tags", () => {
     for (const tag of ["ru-RU", "xx-XX", "C", "", null, undefined]) {
       assert.equal(matchSupportedLocale(tag), null, String(tag));
@@ -55,6 +61,7 @@ describe("toServiceLocale", () => {
   it("maps every supported locale to zh-CN or en-US", () => {
     assert.equal(toServiceLocale("zh-CN"), "zh-CN");
     assert.equal(toServiceLocale("en-US"), "en-US");
+    assert.equal(toServiceLocale("uk-UA"), "en-US");
     for (const locale of SUPPORTED_LOCALES) {
       assert.ok(["zh-CN", "en-US"].includes(toServiceLocale(locale)), locale);
     }

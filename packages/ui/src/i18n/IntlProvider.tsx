@@ -23,11 +23,13 @@ import {
 import { createIntl, type IntlInstance } from "./createIntl.js";
 import zhCN from "./locales/zh-CN.js";
 import enUS from "./locales/en-US.js";
+import ukUA from "./locales/uk-UA.js";
 
 /** 语言 → 翻译消息映射 */
 const MESSAGES: Record<Locale, Record<string, string>> = {
   "zh-CN": zhCN,
   "en-US": enUS,
+  "uk-UA": ukUA,
 };
 
 export type { IntlInstance };
