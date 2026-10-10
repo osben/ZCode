@@ -1,0 +1,8 @@
+reviews:
+  profile: assertive
+  auto_review:
+    enabled: true
+    drafts: false
+    # Reviews PRs targeting integration; main stays synced with upstream and is not reviewed here.
+    base_branches:
+      - "^integration$"
