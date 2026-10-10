@@ -6494,6 +6494,69 @@ const zhCN: Record<string, string> = {
   "scheduledPreview.toast.running": "正在运行“{title}”…",
   "scheduledPreview.toast.view": "查看",
   "scheduledPreview.addSchedule": "添加计划",
+  "settings.instructions.title": "指令",
+  "settings.instructions.description":
+    "活动 workspace 所在主机上的全局 ~/.zcode/AGENTS.md。该指令会与项目 AGENTS.md 合并，对新会话和重新启动的会话生效。",
+  "settings.instructions.desktopOnly": "全局指令仅可在桌面端编辑。",
+  "settings.instructions.host.local": "此电脑",
+  "settings.instructions.linkTarget": "链接 → {target}",
+  "settings.instructions.dockerHint": "文件位于容器内，容器重建后可能丢失。",
+  "settings.instructions.pinnedHostNotice":
+    "活动 workspace 已切换到其他主机。在保存或放弃草稿前，编辑器仍指向 {host}。",
+  "settings.instructions.effectHint":
+    "对新会话和重新启动的会话生效；进行中的会话和已打开的草稿保持原指令。",
+  "settings.instructions.waitingRemote": "正在等待远端主机连接…",
+  "settings.instructions.unsupportedHost":
+    "该主机暂不支持编辑全局指令，请更新远端主机上的 ZCode 后重试。",
+  "settings.instructions.loadFailed": "无法读取全局指令文件。",
+  "settings.instructions.retry": "重试",
+  "settings.instructions.error.BROKEN_LINK":
+    "~/.zcode/AGENTS.md 是悬空的符号链接。请修复或删除该链接后重试。",
+  "settings.instructions.error.NOT_REGULAR_FILE":
+    "~/.zcode/AGENTS.md 不是普通文件。请删除或替换为文件后重试。",
+  "settings.instructions.error.NOT_UTF8": "文件不是有效的 UTF-8 文本，无法在此编辑。",
+  "settings.instructions.error.TOO_LARGE_TO_EDIT":
+    "文件过大（{size}），无法在此编辑，请使用外部编辑器。",
+  "settings.instructions.error.READ_FAILED": "无法读取文件，请检查权限后重试。",
+  "settings.instructions.reveal": "在文件管理器中显示",
+  "settings.instructions.missingHint": "文件尚未创建，保存后将自动创建。",
+  "settings.instructions.mixedLineEndings": "文件包含混合行尾，保存时将统一为 {eol}。",
+  "settings.instructions.linkDuplicateHint":
+    "若链接目标是项目 AGENTS.md，打开该项目时内容会重复注入。",
+  "settings.instructions.tab.edit": "编辑",
+  "settings.instructions.tab.preview": "预览",
+  "settings.instructions.placeholder": "编写适用于所有项目的指令…",
+  "settings.instructions.editorLabel": "全局指令",
+  "settings.instructions.previewEmpty": "暂无可预览的内容。",
+  "settings.instructions.size": "{size} / Agent 读取上限 {limit}",
+  "settings.instructions.overAgentLimit": "Agent 只会读取前 {limit}。",
+  "settings.instructions.save": "保存",
+  "settings.instructions.discardChanges": "放弃修改",
+  "settings.instructions.unsaved": "有未保存的修改",
+  "settings.instructions.saved": "全局指令已保存，对新会话和重新启动的会话生效。",
+  "settings.instructions.saveFailed": "全局指令保存失败（{code}）。",
+  "settings.instructions.saveFailedGeneric": "全局指令保存失败。",
+  "settings.instructions.import.action": "从 CLAUDE.md 导入",
+  "settings.instructions.import.missing": "该主机上未找到 ~/.claude/CLAUDE.md。",
+  "settings.instructions.import.failed": "导入 CLAUDE.md 失败（{code}）。",
+  "settings.instructions.import.failedGeneric": "导入 CLAUDE.md 失败。",
+  "settings.instructions.import.confirmTitle": "替换当前草稿？",
+  "settings.instructions.import.confirmDescription":
+    "未保存的修改将被 ~/.claude/CLAUDE.md 的内容替换。",
+  "settings.instructions.import.confirmAction": "替换",
+  "settings.instructions.import.done": "已将 CLAUDE.md 导入草稿，保存后生效。",
+  "settings.instructions.import.doneWithAtImports":
+    "已将 CLAUDE.md 导入草稿。ZCode 不会展开 @ 导入，保存后生效。",
+  "settings.instructions.discard.title": "放弃未保存的指令？",
+  "settings.instructions.discard.leave": "对全局指令的未保存修改将会丢失。",
+  "settings.instructions.discard.hostChanged":
+    "活动 workspace 已切换到其他主机。放弃当前草稿并编辑该主机的指令？",
+  "settings.instructions.discard.confirm": "放弃",
+  "settings.instructions.conflict.title": "文件已在磁盘上被修改",
+  "settings.instructions.conflict.description":
+    "打开后 ~/.zcode/AGENTS.md 被修改过。重新加载将放弃草稿，或用草稿覆盖该文件。",
+  "settings.instructions.conflict.reload": "重新加载",
+  "settings.instructions.conflict.overwrite": "覆盖",
 };
 
 export default zhCN;

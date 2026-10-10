@@ -32,8 +32,13 @@ import {
   symlink,
   writeFile,
 } from "node:fs/promises";
-import { homedir } from "node:os";
 import { basename, dirname, join, relative, resolve } from "node:path";
+import {
+  getClaudeUserInstructionsFilePath,
+  getUserZcodeAgentsFilePath,
+  resolveAgentUserHomeDir,
+  withFileLock,
+} from "@zcode/shared/node";
 import { parse as parseYaml } from "yaml";
 import { parse as parseToml } from "smol-toml";
 import { CommandFileParser } from "../commands/commandFileParser.js";
@@ -416,10 +421,8 @@ const CLAUDE_PLUGIN_MANIFEST_PATH = [".claude-plugin", "plugin.json"] as const;
 const CODEX_PLUGIN_MANIFEST_PATH = [".codex-plugin", "plugin.json"] as const;
 const INLINE_PLUGIN_MARKETPLACE = "inline";
 
-function resolveUserHomeDir(): string {
-  const envHome = process.env.HOME?.trim() || process.env.USERPROFILE?.trim();
-  return envHome && envHome.length > 0 ? envHome : homedir();
-}
+// 与 CLI 共用同一个 home 解析，避免迁移写入与 Agent 读取的 AGENTS.md 不一致。
+const resolveUserHomeDir = resolveAgentUserHomeDir;
 
 function getWorkspaceZcodeSkillRoot(workspacePath: string): string {
   return join(workspacePath, ".zcode", "skills");
@@ -451,14 +454,6 @@ function getUserZcodeCliConfigPath(): string {
 
 function getWorkspaceZcodeConfigPath(workspacePath: string): string {
   return join(workspacePath, ".zcode", "config.json");
-}
-
-function getClaudeUserAgentsFileSourcePath(): string {
-  return join(resolveUserHomeDir(), ".claude", "CLAUDE.md");
-}
-
-function getUserZcodeAgentsFilePath(): string {
-  return join(resolveUserHomeDir(), ".zcode", "AGENTS.md");
 }
 
 function resolveTargetRootForScope(
@@ -2203,7 +2198,7 @@ function shouldScanMcpServers(request: {
 }
 
 async function getClaudeAgentsFileMigrationStatus(): Promise<SettingsSyncClaudeAgentsFileMigrationStatus> {
-  const sourcePath = getClaudeUserAgentsFileSourcePath();
+  const sourcePath = getClaudeUserInstructionsFilePath();
   const sourceExists = await pathExists(sourcePath);
   const targetPath = getUserZcodeAgentsFilePath();
   const targetExists = await pathExists(targetPath);
@@ -2221,7 +2216,7 @@ async function getClaudeAgentsFileMigrationStatus(): Promise<SettingsSyncClaudeA
 async function copyClaudeAgentsFileToZcodeAgentsFile(params: {
   overwrite?: boolean;
 }): Promise<SettingsSyncClaudeAgentsFileCopyResult> {
-  const sourcePath = getClaudeUserAgentsFileSourcePath();
+  const sourcePath = getClaudeUserInstructionsFilePath();
   const targetPath = getUserZcodeAgentsFilePath();
   const sourceExists = await pathExists(sourcePath);
   const targetExists = await pathExists(targetPath);
@@ -2246,8 +2241,11 @@ async function copyClaudeAgentsFileToZcodeAgentsFile(params: {
     };
   }
 
-  await mkdir(dirname(targetPath), { recursive: true });
-  await copyFile(sourcePath, targetPath);
+  // 与设置页「指令」编辑器共用同一把文件锁，避免两条写入路径交错覆盖。
+  await withFileLock(targetPath, async () => {
+    await mkdir(dirname(targetPath), { recursive: true });
+    await copyFile(sourcePath, targetPath);
+  });
 
   return {
     sourcePath,
