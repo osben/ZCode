@@ -32,7 +32,9 @@ function enReference(key: string): string | undefined {
   const direct = enUS[key];
   if (direct !== undefined) return direct;
   const base = pluralBaseOf(key);
-  return base === undefined ? undefined : enUS[`${base}.other`];
+  return base === undefined || enUS[`${base}.one`] === undefined
+    ? undefined
+    : enUS[`${base}.other`];
 }
 
 describe("i18n catalog parity", () => {
@@ -99,9 +101,8 @@ describe("i18n catalog parity", () => {
     const families = new Set(
       Object.keys(ukUA)
         .map(pluralBaseOf)
-        .filter(
-          (base): base is string => base !== undefined && enUS[`${base}.other`] !== undefined,
-        ),
+        // 只有 en 同时有 `.one` 的才是复数族；`feedback.module.other` 之类是普通「其他」文案。
+        .filter((base): base is string => base !== undefined && enUS[`${base}.one`] !== undefined),
     );
     for (const base of families) {
       // uk 的 `one` 同时覆盖 21、31…，所以 en `.other` 带 {count} 时每个形态都必须带 {count}。
@@ -114,6 +115,44 @@ describe("i18n catalog parity", () => {
         }
       }
     }
+  });
+
+  it("uk catalog is complete: every en key, with one/few/many/other for plural families", () => {
+    const missing: string[] = [];
+    for (const key of Object.keys(enUS)) {
+      if (EN_ONLY_KEYS.includes(key)) continue;
+      const base = pluralBaseOf(key);
+      const expected =
+        base !== undefined && enUS[`${base}.one`] !== undefined
+          ? UK_PLURAL_CATEGORIES.map((category) => `${base}.${category}`)
+          : [key];
+      for (const ukKey of expected) {
+        if (ukUA[ukKey] === undefined && !missing.includes(ukKey)) missing.push(ukKey);
+      }
+    }
+    assert.deepEqual(missing, []);
+  });
+
+  it("uk text has no Russian letters and uses the ASCII apostrophe", () => {
+    for (const [key, uk] of Object.entries(ukUA)) {
+      assert.doesNotMatch(uk, /[ыэъёЫЭЪЁ]/, `uk-UA ${key}: Russian letter`);
+      assert.doesNotMatch(uk, /[’ʼ]/, `uk-UA ${key}: use the ASCII apostrophe '`);
+    }
+  });
+
+  it("reports uk labels much longer than en (visual check list, not a failure)", (t) => {
+    const long = Object.entries(ukUA)
+      .filter(([key, uk]) => {
+        const en = enReference(key);
+        return (
+          en !== undefined &&
+          /button|tab|menu|action|title/i.test(key) &&
+          uk.length > en.length * 1.5 &&
+          uk.length - en.length > 4
+        );
+      })
+      .map(([key]) => key);
+    if (long.length > 0) t.diagnostic(`uk-UA long labels (${long.length}): ${long.join(", ")}`);
   });
 
   it("every plural family has an .other form", () => {

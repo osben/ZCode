@@ -15,7 +15,7 @@ export const INDICATOR_SHADOW_INSET = { top: 6, right: 8, bottom: 12, left: 8 } 
 const INDICATOR_COPY: Record<Locale, { text: string; width: number }> = {
   "zh-CN": { text: "ZCode 正在操作电脑", width: 234 },
   "en-US": { text: "ZCode is controlling your computer", width: 308 },
-  "uk-UA": { text: "ZCode керує вашим комп’ютером", width: 300 },
+  "uk-UA": { text: "ZCode керує вашим комп'ютером", width: 300 },
 };
 
 function indicatorCopy(locale: Locale): { text: string; width: number } {
