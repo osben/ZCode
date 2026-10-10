@@ -34,6 +34,7 @@ import {
   resolveOffPeakTicketExpiredBusinessCode,
 } from "@/lib/providerBusinessError.js";
 import type { ZCodeUiError } from "@/lib/zcodeUiError.js";
+import { canResumeChatError, isModelConfigMissingError } from "@/lib/chatErrorResume.js";
 
 const HISTORICAL_MODEL_UNAVAILABLE_MESSAGES = [
   "历史任务使用的模型已不可用",
@@ -53,20 +54,6 @@ const LOCALIZED_ERROR_CODES = new Set([
   "ZCODE_RUNTIME_MODEL_UNAVAILABLE",
   "ZCODE_BIGMODEL_TEAM_PLAN_MEMBER_REQUIRED",
 ]);
-
-const MODEL_CONFIG_MISSING_CODES = new Set([
-  "model_config_missing",
-  "MODEL_CONFIG_MISSING",
-  "ModelConfigMissing",
-]);
-
-function isModelConfigMissingError(error: Pick<ZCodeUiError, "code" | "message">): boolean {
-  // 桌面端发送前 registry 为空时，agent 会退回 CLI config 并抛 Model config is missing。
-  // 真实原因是“当前没有可用模型”，不能把 CLI 配置路径直接暴露给桌面用户。
-  // 这里只按结构化 code 识别，避免 UNKNOWN/SEND_FAILED 等包装错误的可读 message
-  // 碰巧包含同一段文本时被误判，并连带隐藏复制、反馈等诊断入口。
-  return Boolean(error.code && MODEL_CONFIG_MISSING_CODES.has(error.code));
-}
 
 export function resolveChatErrorBannerDisplayMessage(
   error: ZCodeUiError,
@@ -108,6 +95,7 @@ export function ChatErrorBanner({
   onRetry,
   retryLabel,
   retryDisabled,
+  onResume,
   onDismiss,
   onOpenModelSettings,
   onOpenUpgrade,
@@ -116,6 +104,7 @@ export function ChatErrorBanner({
   onRetry?: () => void;
   retryLabel?: string;
   retryDisabled?: boolean;
+  onResume?: () => void;
   onDismiss?: () => void;
   onOpenModelSettings?: () => void;
   onOpenUpgrade?: () => void;
@@ -309,6 +298,12 @@ export function ChatErrorBanner({
         {!modelConfigMissing && onRetry ? (
           <Button variant="outline" size="sm" onClick={onRetry} disabled={retryDisabled}>
             {retryLabel ?? intl.formatMessage({ id: "chat.error.retry" })}
+          </Button>
+        ) : null}
+
+        {onResume && canResumeChatError(error) ? (
+          <Button variant="outline" size="sm" onClick={onResume}>
+            {intl.formatMessage({ id: "chat.error.resume" })}
           </Button>
         ) : null}
 

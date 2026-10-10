@@ -57,6 +57,7 @@ import type {
 } from "@zcode/services";
 import { toast } from "@/components/ui/toast.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
+import { CHAT_ERROR_RESUME_MESSAGE } from "@/lib/chatErrorResume.js";
 import { DEFAULT_CODE_PREVIEW_SETTINGS } from "@/lib/codePreviewSettings.js";
 import type { CodeViewerSource } from "@/lib/codeViewer.js";
 import type { OpenAutomationsMain } from "@/lib/taskNavigationHistory.js";
@@ -3002,6 +3003,28 @@ export function SessionPane({
     [dispatchSendText, focusTimelineToLatest, intl, sessionId],
   );
 
+  // 连点 Resume 会在首个 ack 前重复发送“继续”，这里用 ref 合并同一次点击的在途请求。
+  const resumeInFlightRef = useRef(false);
+  const handleResumeError = useCallback(() => {
+    if (resumeInFlightRef.current) return;
+    resumeInFlightRef.current = true;
+    // Resume 不经过 Composer submit，草稿与附件保持原样；失败结果在此收口为 toast/日志。
+    void handleSendText(CHAT_ERROR_RESUME_MESSAGE)
+      .then((result) => {
+        if (result === "blocked" || result === "confirmationRequired") {
+          toast(intl.formatMessage({ id: "chat.error.resumeBlocked" }));
+        }
+      })
+      .catch((error: unknown) => {
+        logger.warn("[v4-pane] Resume 发送失败", {
+          error: error instanceof Error ? error.message : String(error),
+        });
+      })
+      .finally(() => {
+        resumeInFlightRef.current = false;
+      });
+  }, [handleSendText, intl]);
+
   const handleComposerDraftStateChange = useCallback(
     (state: { hasContent: boolean; busy: boolean }) => {
       composerDraftStateRef.current = state;
@@ -4426,6 +4449,7 @@ export function SessionPane({
       onSendCompressionCommand={handleSendCompressionCommand}
       error={composerError}
       onDismissError={handleDismissComposerError}
+      onResumeError={handleResumeError}
       onOpenModelSettings={handleOpenModelSettings}
       onOpenModelUpgrade={handleOpenModelUpgrade}
       onOpenCodeViewer={onOpenCodeViewer}

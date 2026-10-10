@@ -5738,6 +5738,8 @@ const enUS: Record<string, string> = {
   "chat.error.processExited": "Agent process exited unexpectedly",
   "chat.error.dismiss": "Dismiss error",
   "chat.error.retry": "Retry",
+  "chat.error.resume": "Resume",
+  "chat.error.resumeBlocked": "Couldn't continue right now. Check the chat and try again.",
   "chat.error.reloginProvider": "Sign in to {provider}",
   "chat.error.action.relogin": "Sign in again",
   "chat.error.action.refreshQuota": "Refresh quota",
