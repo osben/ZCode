@@ -10,7 +10,6 @@ import {
 import type { ReactNode } from "react";
 import type { Locale, LocalePreference } from "@zcode/shared";
 import {
-  DEFAULT_LOCALE,
   isLocale,
   isLocalePreference,
   resolveSystemLocale as resolveSystemLanguageTag,
@@ -21,6 +20,7 @@ import {
   readSafeLocalStorage,
   writeSafeLocalStorage,
 } from "@/lib/browserEnvironment.js";
+import { createIntl, type IntlInstance } from "./createIntl.js";
 import zhCN from "./locales/zh-CN.js";
 import enUS from "./locales/en-US.js";
 
@@ -30,10 +30,7 @@ const MESSAGES: Record<Locale, Record<string, string>> = {
   "en-US": enUS,
 };
 
-/** 简易 intl 工具：根据 id 查找翻译，支持 {key} 占位符替换 */
-export interface IntlInstance {
-  formatMessage(descriptor: { id: string }, values?: Record<string, string | number>): string;
-}
+export type { IntlInstance };
 
 const LOCALE_PREFERENCE_KEY = "zcode-locale-preference";
 const STATE_LOCALE_CHANNEL = "state:locale";
@@ -105,22 +102,6 @@ function shouldApplyLocaleBroadcastMessage(
     return false;
   }
   return true;
-}
-
-function createIntl(locale: Locale): IntlInstance {
-  // noUncheckedIndexedAccess：用 ?? 回退到默认语言的翻译
-  const messages = MESSAGES[locale] ?? MESSAGES[DEFAULT_LOCALE]!;
-  return {
-    formatMessage({ id }, values) {
-      let msg = messages[id] ?? id;
-      if (values) {
-        for (const [key, val] of Object.entries(values)) {
-          msg = msg.replaceAll(`{${key}}`, String(val));
-        }
-      }
-      return msg;
-    },
-  };
 }
 
 interface IntlContextValue {
@@ -347,7 +328,7 @@ export function ZCodeIntlProvider({
     [setLocalePreference],
   );
 
-  const intl = useMemo(() => createIntl(locale), [locale]);
+  const intl = useMemo(() => createIntl(locale, MESSAGES), [locale]);
 
   const value = useMemo<IntlContextValue>(
     () => ({ intl, locale, localePreference, setLocale, setLocalePreference }),

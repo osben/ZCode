@@ -289,7 +289,7 @@ export function CreateWorkflowToolCallBlock(context: ToolCallBlockRenderContext)
   // 细节串与它的 tooltip（含子代理模型名）与 v4 轮尾摘要同一份实现。这条渲染路径拿不到会话的
   // 模型清单（工具卡一层不碰 store），自定义 provider 的名字因此查不到——按同一条兜底规则退回
   // 裸 modelId，绝不显示 providerId。
-  const cardDetail = workflowCardDetail(intl.formatMessage.bind(intl), model, graph, run);
+  const cardDetail = workflowCardDetail(intl, model, graph, run);
   // 校验中（在途、还没有图）从第 2 稿起在细节位写稿号，免得「正在修改 · 第 2 稿」→ 校验 → 反馈之间一闪而空。
   const headerDetail = cardDetail?.detail ?? draftSlots.inFlightOrdinalText;
   const terminal = run !== undefined && (run.status === "errored" || run.status === "stopped");

@@ -58,15 +58,7 @@ export function WorkflowDiagnosticsSection({
   }
 
   const total = count ?? diagnostics.length;
-  const countLabel = intl.formatMessage(
-    {
-      id:
-        total === 1
-          ? "chat.toolCall.workflow.feedback.countOne"
-          : "chat.toolCall.workflow.feedback.count",
-    },
-    { count: total },
-  );
+  const countLabel = intl.formatPlural({ id: "chat.toolCall.workflow.feedback.count" }, total);
   // 码按字符串交给 ICU：数字参数会被本地化分组（「9,003」）。
   const codeLabel = (code: number) =>
     isWorkflowAnalyzerRuleCode(code)

@@ -41,15 +41,7 @@ export function ListWorkflowRunsToolCallBlock(context: ToolCallBlockRenderContex
   });
   const emptyLabel = intl.formatMessage({ id: "chat.toolCall.workflow.listRuns.empty" });
   const runCount = listDisplay?.runs.length ?? 0;
-  const countLabel = intl.formatMessage(
-    {
-      id:
-        runCount === 1
-          ? "chat.toolCall.workflow.listRuns.countOne"
-          : "chat.toolCall.workflow.listRuns.count",
-    },
-    { count: runCount },
-  );
+  const countLabel = intl.formatPlural({ id: "chat.toolCall.workflow.listRuns.count" }, runCount);
 
   const primaryText = useMemo(
     () => (

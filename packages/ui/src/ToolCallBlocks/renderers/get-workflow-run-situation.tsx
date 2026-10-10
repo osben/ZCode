@@ -61,12 +61,7 @@ export function WorkflowRunPhaseTrack({
         const cells: string[] = [];
         // rounds 为 0 只可能是 `ahead`：没进过的阶段说不出「进过几次」。
         if (phase.rounds > 0) {
-          cells.push(
-            intl.formatMessage(
-              { id: `${I18N_PREFIX}phase.${phase.rounds === 1 ? "roundsOne" : "rounds"}` },
-              { count: phase.rounds },
-            ),
-          );
+          cells.push(intl.formatPlural({ id: `${I18N_PREFIX}phase.rounds` }, phase.rounds));
         }
         if (phase.nodesSettled > 0) {
           cells.push(
@@ -183,23 +178,11 @@ export function WorkflowRunHealthLine({
 
   if (health.consecutiveFailures > 0) {
     cells.push(
-      intl.formatMessage(
-        {
-          id: `${I18N_PREFIX}health.${health.consecutiveFailures === 1 ? "failuresOne" : "failures"}`,
-        },
-        { count: health.consecutiveFailures },
-      ),
+      intl.formatPlural({ id: `${I18N_PREFIX}health.failures` }, health.consecutiveFailures),
     );
   }
   if (health.cachedSteps > 0) {
-    cells.push(
-      intl.formatMessage(
-        {
-          id: `${I18N_PREFIX}health.${health.cachedSteps === 1 ? "cachedStepsOne" : "cachedSteps"}`,
-        },
-        { count: health.cachedSteps },
-      ),
-    );
+    cells.push(intl.formatPlural({ id: `${I18N_PREFIX}health.cachedSteps` }, health.cachedSteps));
   }
 
   const leftover = terminal ? health.leftoverRunning : undefined;
@@ -215,10 +198,7 @@ export function WorkflowRunHealthLine({
       )}
       {leftover === undefined ? null : (
         <p className="break-words text-ui-sm text-warning" data-testid="workflow-run-leftover">
-          {intl.formatMessage(
-            { id: `${I18N_PREFIX}health.${leftover === 1 ? "leftoverOne" : "leftover"}` },
-            { count: leftover },
-          )}
+          {intl.formatPlural({ id: `${I18N_PREFIX}health.leftover` }, leftover)}
         </p>
       )}
     </div>

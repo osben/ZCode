@@ -81,12 +81,7 @@ export function AssistantCodeCommentCards({
             )}
           />
           <h3 className="min-w-0 truncate text-ui-base font-medium text-foreground">
-            {intl.formatMessage(
-              {
-                id: cards.length === 1 ? "chat.codeComments.one" : "chat.codeComments.many",
-              },
-              { count: cards.length },
-            )}
+            {intl.formatPlural({ id: "chat.codeComments" }, cards.length)}
           </h3>
         </button>
       </div>

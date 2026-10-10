@@ -18,15 +18,7 @@ function formatCompletedSummary(
   childStatuses: string[],
 ) {
   const parts = [
-    intl.formatMessage(
-      {
-        id:
-          childStatuses.length === 1
-            ? "chat.toolCall.executeGroup.command.one"
-            : "chat.toolCall.executeGroup.command.other",
-      },
-      { count: childStatuses.length },
-    ),
+    intl.formatPlural({ id: "chat.toolCall.executeGroup.command" }, childStatuses.length),
   ];
   const failedCount = childStatuses.filter((status) => status === "failed").length;
   const stoppedCount = childStatuses.filter((status) => status === "stopped").length;

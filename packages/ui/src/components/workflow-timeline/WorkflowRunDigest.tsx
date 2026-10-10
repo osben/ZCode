@@ -126,22 +126,14 @@ export function WorkflowRunDigest({
   // 卡上刻意**不**画 lineage：
   // 「调整自 / 已被替代」两句只在详情页与确认窗说；卡只换种类词——卡上太吵。
   // 细节串的最后一段是子代理模型名（没指定过模型就没有这一段），强度与规范串进 tooltip。
-  const cardDetail = workflowCardDetail(format, model, graph, run, subagentModelProviderName);
+  const cardDetail = workflowCardDetail(intl, model, graph, run, subagentModelProviderName);
   const live = summary?.status === "running";
   const kind = format({
     id: summary === undefined ? WORKFLOW_RUN_ENDED_KIND_ID : workflowRunKindMessageId(summary),
   });
   const questionsLabel =
     pendingQuestions > 0
-      ? format(
-          {
-            id:
-              pendingQuestions === 1
-                ? "chat.toolCall.workflow.digest.question"
-                : "chat.toolCall.workflow.digest.questions",
-          },
-          { count: pendingQuestions },
-        )
+      ? intl.formatPlural({ id: "chat.toolCall.workflow.digest.questions" }, pendingQuestions)
       : undefined;
   const questions =
     questionsLabel === undefined ? undefined : onOpenRun === undefined ? (

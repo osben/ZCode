@@ -167,7 +167,7 @@ const WorkflowRunContent = memo(function WorkflowRunContent({
       model === undefined || run === undefined
         ? undefined
         : workflowSummaryParts(
-            intl.formatMessage.bind(intl),
+            intl,
             model,
             run,
             subagentModel === undefined ? {} : { subagentModelName: subagentModel.name },

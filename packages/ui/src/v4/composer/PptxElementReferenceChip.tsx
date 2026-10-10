@@ -26,12 +26,7 @@ export function PptxElementReferenceChip({
   if (references.length === 0) {
     return null;
   }
-  const label = intl.formatMessage(
-    {
-      id: references.length === 1 ? "chat.pptxElements.one" : "chat.pptxElements.many",
-    },
-    { count: String(references.length) },
-  );
+  const label = intl.formatPlural({ id: "chat.pptxElements" }, references.length);
   const removeLabel = intl.formatMessage({ id: "chat.pptxElements.remove" });
   return (
     <ContextAttachmentPill

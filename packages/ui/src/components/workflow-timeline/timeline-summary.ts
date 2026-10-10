@@ -2,16 +2,14 @@ import { workflowRunStepCounts, type WorkflowRunState } from "@zcode/shared/zcod
 import type { WorkflowCausalityGraphData } from "@/components/workflow-graph/types.js";
 import { workflowSubagentModelCardLabel } from "./subagent-model-label.js";
 import type { WorkflowTimelineModel } from "./timeline-model.js";
+import type { IntlInstance } from "@/i18n/createIntl.js";
 
 /**
  * 卡片表头细节与页脚摘要行的文案素材。侧栏状态头的摘要行也读这里——同一个 run 在两个面上必须说同一句话。
  *
- * 纯函数 + 注入的 formatMessage：本仓的轻量 intl 没有 ICU 复数，单复数各自一个 key。
+ * 纯函数 + 注入的 intl：计数文案走 formatPlural，按各语言复数规则选形态。
  */
-type FormatMessage = (
-  descriptor: { id: string },
-  values?: Record<string, string | number>,
-) => string;
+type TimelineIntl = Pick<IntlInstance, "formatMessage" | "formatPlural">;
 
 export interface TimelineCounts {
   phases: number;
@@ -42,8 +40,8 @@ export function timelineRounds(model: WorkflowTimelineModel): number {
   return rounds;
 }
 
-function count(format: FormatMessage, one: string, many: string, value: number): string {
-  return format({ id: value === 1 ? one : many }, { count: value.toLocaleString() });
+function countLabel(intl: TimelineIntl, id: string, value: number): string {
+  return intl.formatPlural({ id }, value, { count: value.toLocaleString() });
 }
 
 /**
@@ -51,41 +49,26 @@ function count(format: FormatMessage, one: string, many: string, value: number):
  * 在下方时间线上一眼可见，表头再复述只是噪音。
  */
 export function workflowPhasesDetail(
-  format: FormatMessage,
+  intl: TimelineIntl,
   model: WorkflowTimelineModel,
   graph: WorkflowCausalityGraphData | undefined,
 ): string {
   const counts = timelineCounts(model, graph);
-  return count(
-    format,
-    "chat.toolCall.workflow.card.phase",
-    "chat.toolCall.workflow.card.phases",
-    counts.phases,
-  );
+  return countLabel(intl, "chat.toolCall.workflow.card.phases", counts.phases);
 }
 
 /** 子代理那一段：跑着时数工作中的，结束后数总数（投影与静态图取大）。 */
 function agentsPart(
-  format: FormatMessage,
+  intl: TimelineIntl,
   model: WorkflowTimelineModel,
   run: WorkflowRunState | undefined,
 ): string {
   if (run !== undefined && (run.status === "pending" || run.status === "running")) {
     const working = run.actors.filter((actor) => actor.status === "running").length;
-    return count(
-      format,
-      "chat.toolCall.workflow.card.agentWorking",
-      "chat.toolCall.workflow.card.agentsWorking",
-      working,
-    );
+    return countLabel(intl, "chat.toolCall.workflow.card.agentsWorking", working);
   }
   const agents = Math.max(run?.actors.length ?? 0, timelineCounts(model, undefined).agents);
-  return count(
-    format,
-    "chat.toolCall.workflow.card.agent",
-    "chat.toolCall.workflow.card.agents",
-    agents,
-  );
+  return countLabel(intl, "chat.toolCall.workflow.card.agents", agents);
 }
 
 /**
@@ -95,7 +78,7 @@ function agentsPart(
  * run 详情页的摘要行（`workflowSummaryParts`）。
  */
 export function workflowHeaderDetail(
-  format: FormatMessage,
+  intl: TimelineIntl,
   model: WorkflowTimelineModel,
   graph: WorkflowCausalityGraphData | undefined,
   run: WorkflowRunState | undefined,
@@ -106,7 +89,7 @@ export function workflowHeaderDetail(
    */
   subagentModelName?: string,
 ): string {
-  const parts = [workflowPhasesDetail(format, model, graph), agentsPart(format, model, run)];
+  const parts = [workflowPhasesDetail(intl, model, graph), agentsPart(intl, model, run)];
   if (subagentModelName !== undefined) {
     parts.push(subagentModelName);
   }
@@ -118,7 +101,7 @@ export function workflowHeaderDetail(
  * 所以「模型名加不加」「tooltip 里放什么」只有这一份实现。建不出时间线模型时整块缺席。
  */
 export function workflowCardDetail(
-  format: FormatMessage,
+  intl: TimelineIntl,
   model: WorkflowTimelineModel | undefined,
   graph: WorkflowCausalityGraphData | undefined,
   run: WorkflowRunState | undefined,
@@ -129,11 +112,11 @@ export function workflowCardDetail(
     return undefined;
   }
   const subagentModel = workflowSubagentModelCardLabel(run?.subagentModel, {
-    formatMessage: format,
+    formatMessage: intl.formatMessage,
     ...(providerName === undefined ? {} : { providerName }),
   });
   return {
-    detail: workflowHeaderDetail(format, model, graph, run, subagentModel?.name),
+    detail: workflowHeaderDetail(intl, model, graph, run, subagentModel?.name),
     ...(subagentModel === undefined ? {} : { title: subagentModel.title }),
   };
 }
@@ -147,7 +130,7 @@ export function workflowCardDetail(
  * （`workflowHeaderDetail`）；这一行只剩详情页在读。
  */
 export function workflowSummaryParts(
-  format: FormatMessage,
+  intl: TimelineIntl,
   model: WorkflowTimelineModel,
   run: WorkflowRunState,
   options: {
@@ -162,7 +145,7 @@ export function workflowSummaryParts(
   const parts: string[] = [];
   if (options.subagentModelName !== undefined) {
     parts.push(
-      format(
+      intl.formatMessage(
         { id: "chat.toolCall.workflow.run.subagentModel.label" },
         { model: options.subagentModelName },
       ),
@@ -171,31 +154,19 @@ export function workflowSummaryParts(
   const active = run.status === "pending" || run.status === "running";
   if (active) {
     const working = run.actors.filter((actor) => actor.status === "running").length;
-    parts.push(
-      count(
-        format,
-        "chat.toolCall.workflow.card.agentWorking",
-        "chat.toolCall.workflow.card.agentsWorking",
-        working,
-      ),
-    );
+    parts.push(countLabel(intl, "chat.toolCall.workflow.card.agentsWorking", working));
   } else {
     const agents = Math.max(run.actors.length, timelineCounts(model, undefined).agents);
-    parts.push(
-      count(
-        format,
-        "chat.toolCall.workflow.card.agent",
-        "chat.toolCall.workflow.card.agents",
-        agents,
-      ),
-    );
+    parts.push(countLabel(intl, "chat.toolCall.workflow.card.agents", agents));
   }
   // 步数走 @zcode/shared 的唯一实现：表内 + 表外（撞界后没进表的实例仍算步数）。
   const { settled, total } = workflowRunStepCounts(run);
-  parts.push(format({ id: "chat.toolCall.workflow.card.steps" }, { done: settled, total }));
+  parts.push(
+    intl.formatMessage({ id: "chat.toolCall.workflow.card.steps" }, { done: settled, total }),
+  );
   if (options.tokens !== false) {
     parts.push(
-      format(
+      intl.formatMessage(
         { id: "chat.toolCall.workflow.card.tokens" },
         { count: run.usage.spentTokens.toLocaleString() },
       ),
@@ -205,20 +176,13 @@ export function workflowSummaryParts(
   if (rounds >= 2) {
     parts.push(
       active
-        ? format({ id: "chat.toolCall.workflow.card.round" }, { count: rounds })
-        : format({ id: "chat.toolCall.workflow.card.rounds" }, { count: rounds }),
+        ? intl.formatMessage({ id: "chat.toolCall.workflow.card.round" }, { count: rounds })
+        : intl.formatMessage({ id: "chat.toolCall.workflow.card.rounds" }, { count: rounds }),
     );
   }
   const artifacts = run.artifacts?.length ?? 0;
   if (artifacts > 0) {
-    parts.push(
-      count(
-        format,
-        "chat.toolCall.workflow.card.artifact",
-        "chat.toolCall.workflow.card.artifacts",
-        artifacts,
-      ),
-    );
+    parts.push(countLabel(intl, "chat.toolCall.workflow.card.artifacts", artifacts));
   }
   return parts;
 }

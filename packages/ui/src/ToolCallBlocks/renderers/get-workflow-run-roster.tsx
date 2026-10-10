@@ -14,6 +14,7 @@
 
 import type { ToolCallGetWorkflowRunDisplay } from "@zcode/shared/zcode-protocol-v4";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
+import type { IntlInstance } from "@/i18n/createIntl.js";
 import {
   formatWorkflowAge,
   formatWorkflowDuration,
@@ -25,7 +26,7 @@ import {
 } from "@/ToolCallBlocks/renderers/get-workflow-run-situation.js";
 
 type WorkflowRunSubagentView = NonNullable<ToolCallGetWorkflowRunDisplay["subagents"]>[number];
-type FormatMessage = ReturnType<typeof useZCodeIntl>["intl"]["formatMessage"];
+type RosterIntl = Pick<IntlInstance, "formatMessage" | "formatPlural">;
 
 const I18N_PREFIX = "chat.toolCall.workflow.getRun.";
 
@@ -57,7 +58,7 @@ export function WorkflowRunSubagentRoster({
   return (
     <div className={SITUATION_BLOCK_CLASS} data-testid="workflow-run-subagents">
       {subagents.map((subagent) => {
-        const activity = subagentActivity(subagent, generatedAt, intl.formatMessage);
+        const activity = subagentActivity(subagent, generatedAt, intl);
         return (
           <div className="min-w-0 space-y-0.5" key={`${subagent.siteId}@${subagent.ordinal}`}>
             <div className={`${SITUATION_ROW_CLASS} text-ui-sm`}>
@@ -124,55 +125,50 @@ function hasCurrentAsk(subagent: WorkflowRunSubagentView): boolean {
 function subagentActivity(
   subagent: WorkflowRunSubagentView,
   generatedAt: number | undefined,
-  formatMessage: FormatMessage,
+  intl: RosterIntl,
 ): string[] {
   if (subagent.state === "parked" && subagent.parkedOn !== undefined) {
     // 只有 qid，没有提问时刻：卡面载荷不带 pendingQuestions，所以这一行说不出「等了多久」。
-    return [formatMessage({ id: `${I18N_PREFIX}subagent.parkedOn` }, { qid: subagent.parkedOn })];
+    return [
+      intl.formatMessage({ id: `${I18N_PREFIX}subagent.parkedOn` }, { qid: subagent.parkedOn }),
+    ];
   }
-  if (subagent.state === "waiting") return waitCells(subagent, generatedAt, formatMessage);
+  if (subagent.state === "waiting") return waitCells(subagent, generatedAt, intl);
   if (subagent.state === "unfinished" && hasCurrentAsk(subagent)) {
-    return [formatMessage({ id: `${I18N_PREFIX}subagent.inFlightAtStop` })];
+    return [intl.formatMessage({ id: `${I18N_PREFIX}subagent.inFlightAtStop` })];
   }
   if (hasCurrentAsk(subagent)) {
-    const cells = executingCells(subagent, generatedAt, formatMessage);
+    const cells = executingCells(subagent, generatedAt, intl);
     // 一次 ask 在飞但一个读数也没有（老 journal）：退回已结算步数，别留下一行只有相位词。
-    return cells.length > 0 ? cells : settledCells(subagent, formatMessage);
+    return cells.length > 0 ? cells : settledCells(subagent, intl);
   }
-  return settledCells(subagent, formatMessage);
+  return settledCells(subagent, intl);
 }
 
 function executingCells(
   subagent: WorkflowRunSubagentView,
   generatedAt: number | undefined,
-  formatMessage: FormatMessage,
+  intl: RosterIntl,
 ): string[] {
   const cells: string[] = [];
   const onStep = formatWorkflowAge(generatedAt, subagent.startedAt);
   if (onStep !== undefined) {
-    cells.push(formatMessage({ id: `${I18N_PREFIX}subagent.onStep` }, { age: onStep }));
+    cells.push(intl.formatMessage({ id: `${I18N_PREFIX}subagent.onStep` }, { age: onStep }));
   }
   if (subagent.turn !== undefined) {
-    cells.push(formatMessage({ id: `${I18N_PREFIX}subagent.turn` }, { count: subagent.turn }));
+    cells.push(intl.formatMessage({ id: `${I18N_PREFIX}subagent.turn` }, { count: subagent.turn }));
   }
   if (subagent.toolCalls !== undefined) {
-    cells.push(
-      formatMessage(
-        {
-          id: `${I18N_PREFIX}subagent.${subagent.toolCalls === 1 ? "toolCallsOne" : "toolCalls"}`,
-        },
-        { count: subagent.toolCalls },
-      ),
-    );
+    cells.push(intl.formatPlural({ id: `${I18N_PREFIX}subagent.toolCalls` }, subagent.toolCalls));
   }
   if (subagent.lastTool !== undefined) {
     const { name, target, at } = subagent.lastTool;
     const age = formatWorkflowAge(generatedAt, at);
     cells.push(
       [
-        formatMessage({ id: `${I18N_PREFIX}subagent.lastTool` }, { name }),
+        intl.formatMessage({ id: `${I18N_PREFIX}subagent.lastTool` }, { name }),
         target,
-        age === undefined ? undefined : formatMessage({ id: `${I18N_PREFIX}age` }, { age }),
+        age === undefined ? undefined : intl.formatMessage({ id: `${I18N_PREFIX}age` }, { age }),
       ]
         .filter((part): part is string => part !== undefined && part.length > 0)
         .join(" "),
@@ -184,22 +180,22 @@ function executingCells(
 function waitCells(
   subagent: WorkflowRunSubagentView,
   generatedAt: number | undefined,
-  formatMessage: FormatMessage,
+  intl: RosterIntl,
 ): string[] {
   if (subagent.waitCause === undefined) return [];
   const cells = [
-    formatMessage({
+    intl.formatMessage({
       id: `${I18N_PREFIX}subagent.${subagent.waitCause === "slot" ? "waitingSlot" : "waitingBackoff"}`,
     }),
   ];
   // 「等了多久」贴着原因，「还要等多久」收尾：两个时长挨在一起时读者分不清哪个是哪个。
   const waited = formatWorkflowAge(generatedAt, subagent.waitSince);
   if (waited !== undefined) {
-    cells.push(formatMessage({ id: `${I18N_PREFIX}subagent.waitedFor` }, { age: waited }));
+    cells.push(intl.formatMessage({ id: `${I18N_PREFIX}subagent.waitedFor` }, { age: waited }));
   }
   if (subagent.retryAfterMs !== undefined) {
     cells.push(
-      formatMessage(
+      intl.formatMessage(
         { id: `${I18N_PREFIX}subagent.retryIn` },
         { duration: formatWorkflowDuration(subagent.retryAfterMs) },
       ),
@@ -208,17 +204,15 @@ function waitCells(
   return cells;
 }
 
-function settledCells(subagent: WorkflowRunSubagentView, formatMessage: FormatMessage): string[] {
+function settledCells(subagent: WorkflowRunSubagentView, intl: RosterIntl): string[] {
   if (subagent.stepsSettled === 0 && subagent.stepsFailed === 0) return [];
-  const cells = [
-    formatMessage(
-      { id: `${I18N_PREFIX}subagent.${subagent.stepsSettled === 1 ? "stepsOne" : "steps"}` },
-      { count: subagent.stepsSettled },
-    ),
-  ];
+  const cells = [intl.formatPlural({ id: `${I18N_PREFIX}subagent.steps` }, subagent.stepsSettled)];
   if (subagent.stepsFailed > 0) {
     cells.push(
-      formatMessage({ id: `${I18N_PREFIX}subagent.stepsFailed` }, { count: subagent.stepsFailed }),
+      intl.formatMessage(
+        { id: `${I18N_PREFIX}subagent.stepsFailed` },
+        { count: subagent.stepsFailed },
+      ),
     );
   }
   return cells;

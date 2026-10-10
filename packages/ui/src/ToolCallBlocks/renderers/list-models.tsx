@@ -267,16 +267,7 @@ export function ListModelsToolCallBlock(context: ToolCallBlockRenderContext) {
   const truncatedLabel = intl.formatMessage({ id: "chat.toolCall.workflow.models.truncated" });
 
   const modelCount = result?.models.length ?? 0;
-  // 轻量 intl 没有 ICU 复数，单复数各用独立 message key（同 workflow.list.count 的先例）。
-  const countLabel = intl.formatMessage(
-    {
-      id:
-        modelCount === 1
-          ? "chat.toolCall.workflow.models.countOne"
-          : "chat.toolCall.workflow.models.count",
-    },
-    { count: modelCount },
-  );
+  const countLabel = intl.formatPlural({ id: "chat.toolCall.workflow.models.count" }, modelCount);
 
   const groups = useMemo(
     () => (result === null ? [] : groupModelsByProvider(result.models)),
