@@ -1,5 +1,5 @@
 import {
-  ZCODE_VERSION,
+  ZCODE_UPSTREAM_BASE_VERSION,
   buildRuntimeZCodeApiUrl,
   buildRuntimeZCodeEndpointUrls,
 } from "@zcode/shared";
@@ -35,6 +35,7 @@ export function buildDesktopOAuthRedirectUriFromEnv(env: NodeJS.ProcessEnv): str
   const url = new URL("/app/oauth/login", buildRuntimeZCodeEndpointUrls(env).origin);
   url.searchParams.set("redirect", DESKTOP_OAUTH_CALLBACK_URI);
   // Website 需要按 App 版本决定是否关闭自动 deep link；缺少版本时必须兼容旧客户端行为。
-  url.searchParams.set("app_version", ZCODE_VERSION);
+  // 对外只发上游基线，避免 fork 的 prerelease 后缀被网站按 semver 判为旧客户端。
+  url.searchParams.set("app_version", ZCODE_UPSTREAM_BASE_VERSION);
   return url.toString();
 }

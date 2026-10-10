@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { stripZcodeForkVersionSuffix } from "@zcode/shared";
 import { decodeZCodeBuiltinRelease, type ZCodeBuiltinRelease } from "./zcode-builtin-release.js";
 
 const clientConfigSchema = z
@@ -48,7 +49,9 @@ export async function downloadZCodeBuiltinRelease(
   let stage = "client-config";
   try {
     const url = new URL("/api/v1/client/configs", options.endpointOrigin);
-    url.searchParams.set("app_version", options.appVersion);
+    // 对外只发上游基线：appVersion 同时用于本地缓存目录命名（保留完整 fork 版本），
+    // 这里仅在出网 query 上剥离 prerelease 后缀。
+    url.searchParams.set("app_version", stripZcodeForkVersionSuffix(options.appVersion));
     url.searchParams.set("platform", options.platform);
     const payload = clientConfigSchema.parse(await readJson(url));
     const downloadUrl = payload.data.configs.builtin_provider_config_json;
