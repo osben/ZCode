@@ -1356,7 +1356,7 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebarComponent({
               {workspaceTaskToolbar()}
               {/* Merge observation lives at sidebar level so the grouped, flat,
                   and archived views share one store keyed by workspaceKey. */}
-              <BranchMergeStatusProbes workspaceTabs={workspaceTabs} />
+{_isSidebarVisible ? <BranchMergeStatusProbes workspaceTabs={workspaceTabs} /> : null}
               {shouldShowPinnedTasks ? (
                 // 归档切换主任务区时不应隐藏 pinned。
                 // pinned 是全局置顶区，归档态保持置顶区可见。
