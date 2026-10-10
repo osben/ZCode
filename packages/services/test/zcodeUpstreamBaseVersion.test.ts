@@ -1,9 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import {
-  buildZCodeSourceHeadersFromContext,
-  stripZcodeForkVersionSuffix,
-} from "@zcode/shared";
+import { buildZCodeSourceHeadersFromContext, stripZcodeForkVersionSuffix } from "@zcode/shared";
 
 test("stripZcodeForkVersionSuffix removes fork prerelease suffix", () => {
   assert.equal(stripZcodeForkVersionSuffix("3.15.1-fork.1"), "3.15.1");
