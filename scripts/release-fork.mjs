@@ -6,29 +6,24 @@
 
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { resolveForkBase } from "./fork-release-version.mjs";
 import { runCommand, runCommandAndReadStdout } from "./spawn-command.mjs";
 
 const workspaceRoot = resolve(import.meta.dirname, "..");
 const printOnly = process.argv.includes("--print");
 
-function resolveForkBase(version) {
-  const match = /^(\d+\.\d+\.\d+)-fork\.\d+$/.exec(version.trim());
-  return { base: match ? match[1] : version.trim(), isForkVersion: Boolean(match) };
-}
-
 function listExistingForkTags(base) {
-  const stdout = runCommandAndReadStdout(
-    "git",
-    ["tag", "-l", `v${base}-fork.*`],
-    { cwd: workspaceRoot },
-  );
+  const stdout = runCommandAndReadStdout("git", ["tag", "-l", `v${base}-fork.*`], {
+    cwd: workspaceRoot,
+  });
   const highest = { tag: null, number: 0 };
+  const prefix = `v${base}-fork.`;
   for (const rawLine of stdout.split("\n")) {
     const tag = rawLine.trim();
-    const match = new RegExp(`^v${base.replace(/\./g, "\\.")}-fork\\.(\\d+)$`).exec(tag);
-    if (match && Number.parseInt(match[1], 10) > highest.number) {
+    const suffix = tag.startsWith(prefix) ? tag.slice(prefix.length) : "";
+    if (/^\d+$/.test(suffix) && Number.parseInt(suffix, 10) > highest.number) {
       highest.tag = tag;
-      highest.number = Number.parseInt(match[1], 10);
+      highest.number = Number.parseInt(suffix, 10);
     }
   }
   return highest;
@@ -38,12 +33,14 @@ const rootVersion = JSON.parse(
   readFileSync(resolve(workspaceRoot, "package.json"), "utf8"),
 ).version;
 
-if (typeof rootVersion !== "string" || !/^\d+\.\d+\.\d+(-[0-9A-Za-z][0-9A-Za-z.-]*)?$/.test(rootVersion)) {
-  console.error(`[release:fork] 根版本不是合法 semver: ${String(rootVersion)}`);
+// 仅支持稳定上游基线或既有 fork 版本，避免把 prerelease 拼成未定义的 fork 版本格式。
+const forkBase = resolveForkBase(rootVersion);
+if (!forkBase) {
+  console.error(`[release:fork] 根版本必须是 X.Y.Z 或 X.Y.Z-fork.N: ${String(rootVersion)}`);
   process.exit(1);
 }
 
-const { base, isForkVersion } = resolveForkBase(rootVersion);
+const { base, isForkVersion } = forkBase;
 const rootForkNumber = isForkVersion
   ? Number.parseInt(/-fork\.(\d+)$/.exec(rootVersion)[1], 10)
   : 0;

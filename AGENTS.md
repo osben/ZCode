@@ -1,4 +1,4 @@
-## Core Principles
+# Core Principles
 
 - Before adding or changing behavior, first update the corresponding spec; create the directory as needed if it does not exist. First clarify product rules, state owners, interfaces, and acceptance scenarios, then implement the code.
 - Treat the currently checked-out source, `package.json`, and the architecture policy as the source of truth. Instructions should only retain features, commands, and files that the current repository provides; when removing a feature, clean up references in instructions and skills at the same time.
