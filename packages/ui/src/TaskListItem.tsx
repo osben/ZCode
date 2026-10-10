@@ -13,6 +13,7 @@ import {
 import { isCronTask, isOffPeakTask, type ZCodeTaskMeta } from "@zcode/shared";
 import { TID_TASK_ARCHIVE, TID_TASK_ITEM, testId } from "@zcode/shared";
 import { Badge } from "@/components/ui/badge.js";
+import { BranchMergedBadge } from "@/components/BranchMergedBadge.js";
 import { Button } from "@/components/ui/button.js";
 import { cn } from "@/components/lib/utils.js";
 import { ControlHintTooltip } from "@/ControlHintTooltip.js";
@@ -426,14 +427,7 @@ export const MemoTaskItem = memo(function TaskListItem({
     ),
   );
   const branchMergedBadge =
-    branchMergeStatus?.state === "merged" ? (
-      <Badge
-        data-branch-merged-badge="true"
-        className="h-5 shrink-0 border-transparent bg-primary/14 px-2 text-ui-xs font-medium text-primary dark:bg-primary/18"
-      >
-        {intl.formatMessage({ id: "taskList.branchMergedTag" })}
-      </Badge>
-    ) : null;
+    branchMergeStatus?.state === "merged" ? <BranchMergedBadge /> : null;
   // 工作流运行行：标题下的第二条通道，
   // 与前置 16px 槽（error > unread > spinner）互不占位。只在会话带 run 摘要时挂组件。
   const hasWorkflowRunLines = taskActivity?.workflowActivity !== undefined;

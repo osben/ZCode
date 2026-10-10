@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/components/lib/utils.js";
 import { Badge } from "@/components/ui/badge.js";
+import { BranchMergedBadge } from "@/components/BranchMergedBadge.js";
 import { toast } from "@/components/ui/toast.js";
 import {
   ContextMenu,
@@ -186,15 +187,9 @@ function GroupedTaskRowComponent({
   // status badge, and the merged details always stay available in the popup.
   const branchMergedBadge =
     branchMergeStatus?.state === "merged" ? (
-      <Badge
-        data-branch-merged-badge="true"
-        className={cn(
-          "h-5 border-transparent bg-primary/14 px-2 text-ui-xs font-medium text-primary dark:bg-primary/18",
-          canShowHoverActions && "group-hover/task-row:hidden",
-        )}
-      >
-        {intl.formatMessage({ id: "taskList.branchMergedTag" })}
-      </Badge>
+      <BranchMergedBadge
+        className={canShowHoverActions ? "group-hover/task-row:hidden" : undefined}
+      />
     ) : null;
   // 工作流运行行：分组行同样长在标题下；
   // drag overlay 只是纯展示，不挂确认副作用与点击入口。
