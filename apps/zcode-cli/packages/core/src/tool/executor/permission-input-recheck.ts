@@ -21,14 +21,14 @@ export function recheckPermissionHookModifiedInput(input: {
   modifiedInput: unknown;
   projectRules: PermissionRuleset | null;
   toolCall: ExecutableToolCall;
-  /** 与首次判权同一份上下文（mode、bashShellSelection、cwd 快照），由 executor 构造并透传。 */
+  /** Same context as the initial permission check (mode, bashShellSelection, cwd snapshot), constructed and passed through by the executor. */
   context: ToolRuntimePermissionCapabilityContext & {
     workingDirectory: string;
     workspaceRoot: string;
   };
 }): PermissionHookInputRecheckResult {
-  // 根因（2026-09-17 review）：此前在此重新构造只含 runtimeScope/cwd 的缩减上下文，丢掉 mode 与
-  // bashShellSelection；一旦 guarded 复用重判路径，matcher 会静默失效。上下文只能有一个构造点。
+  // Root cause (2026-09-17 review): this previously reconstructed a reduced context containing only runtimeScope/cwd, dropping mode and
+  // bashShellSelection; when Guarded reused the recheck path, the matcher silently stopped working. Context must have a single construction point.
   const { context: runtimePermissionContext } = input;
   const { workingDirectory, workspaceRoot } = runtimePermissionContext;
   const permissionContext: PermissionContext = {
@@ -38,7 +38,8 @@ export function recheckPermissionHookModifiedInput(input: {
     planEnabled: input.deps.sessionModePort?.isPlanEnabled?.(),
     riskLevel: input.entry.metadata.riskLevel,
     toolName: input.toolCall.name,
-    // 与首次判定同源：hook 改过 input 之后，草稿免确认仍要按同一个工作目录复核。
+    // Use the same source as the initial decision: after a hook changes the input,
+    // recheck draft auto-approval against the same working directory.
     workingDirectory,
   };
   const rulePolicy = input.entry.resolvePermissionRulePolicy?.(
@@ -79,6 +80,6 @@ export function recheckPermissionHookModifiedInput(input: {
     return {};
   }
 
-  // 仅返回旧模式需要保留的策略事实；请求登记/发布/终态全部由 executor 统一处理。
+  // Return only policy facts needed to preserve legacy behavior; the executor centrally handles request registration, publication, and terminal state.
   return { permissionDecision: decision };
 }

@@ -5,17 +5,18 @@ import type {
 import type { ZCodeProtocolAgentServerContext } from "./server-types.js";
 
 /**
- * 让 legacy 反向 RPC（interaction/requestPermission 等）与 v4 resolveInteraction 命令
- * 竞速：谁先送达应答谁生效。
+ * Race legacy reverse RPCs (interaction/requestPermission, etc.) against v4 resolveInteraction
+ * commands; whichever response arrives first takes effect.
  *
- * 实现方式是"以 RPC 为主 await，v4 命中时取消 RPC"：
- * - 在 v4Interactions 登记 interactionId（= 业务 requestId，与 v4 投影
- *   PendingInteraction.interactionId 同源）；v4 应答到达时记下 answer 并 abort 内部
- *   controller，使 requestClient 以 ProtocolRequestError(-32021) 拒绝。
- * - catch 里发现已有 v4 answer 就返回映射结果（吞掉取消错误）；否则原样抛出
- *   （包括调用方 outerSignal 触发的取消），保持旧路径错误语义不变。
- * - finally 统一注销登记 + 摘除 outerSignal 监听，晚到的 v4 应答按未命中处理
- *   （resolveInteraction handler 幂等收口）。
+ * Implementation: await the RPC as the primary path and cancel it when v4 wins:
+ * - Register interactionId in v4Interactions (the business requestId, shared with the v4 projection's
+ *   PendingInteraction.interactionId). When a v4 response arrives, store the answer and abort the
+ *   internal controller so requestClient rejects with ProtocolRequestError(-32021).
+ * - In catch, return the mapped result if a v4 answer exists (consuming the cancellation error);
+ *   otherwise rethrow unchanged, including cancellation from the caller's outerSignal, to preserve
+ *   legacy-path error semantics.
+ * - In finally, unregister and remove the outerSignal listener. Late v4 answers are treated as misses
+ *   (the resolveInteraction handler is idempotent).
  */
 export async function raceClientRequestWithV4Interaction<T>(
   context: ZCodeProtocolAgentServerContext,
@@ -27,8 +28,9 @@ export async function raceClientRequestWithV4Interaction<T>(
   onRegistered?: () => void,
 ): Promise<T> {
   const controller = new AbortController();
-  // 每次尝试独立等待失败通知；成功仍由 registry 的 V4 answer 解除等待。
-  // 仅复位布尔值唤不醒已经 await 的 legacy 应答；复用一次性通知又会让重试提前放行。
+  // Each attempt waits on its own failure notification; a successful V4 answer still releases the
+  // wait through the registry. Resetting a boolean cannot wake an already-awaited legacy response,
+  // while reusing a one-shot notification would let retries proceed too early.
   let fullAccessFailure: Promise<void> | undefined;
   let finishAnswer!: () => void;
   const answerReady = new Promise<void>((resolve) => {
@@ -44,7 +46,8 @@ export async function raceClientRequestWithV4Interaction<T>(
     outerSignal?.addEventListener("abort", forwardAbort, { once: true });
   }
 
-  // 用容器而非裸值区分"应答就是 undefined 字段"与"尚未应答"。
+  // Use a container rather than a bare value to distinguish "the answer has an undefined field"
+  // from "there is no answer yet."
   let v4Answer: { answer: V4InteractionAnswer } | undefined;
   const unregister = context.v4Interactions.register(
     interactionId,

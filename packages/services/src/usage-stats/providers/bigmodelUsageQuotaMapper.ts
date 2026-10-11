@@ -128,8 +128,8 @@ function pickCurrentSubscriptionRenewTime(
 function pickCurrentSubscriptionExpireTime(
   subscription: BigModelSubscriptionListItem,
 ): string | null {
-  // 自动续费套餐的 nextRenewTime 表示下一次扣费，不是最终到期；
-  // 非自动续费时它才是当前权益结束时间，避免 UI 同时显示续费和到期两个互斥含义。
+  // For auto-renew plans, nextRenewTime is the next charge date, not the final expiration;
+  // only for non-renewing plans is it the end of the current entitlement, preventing the UI from showing renewal and expiration as conflicting meanings.
   const nextRenewTime = parseBigModelLocalDateTime(subscription.nextRenewTime);
   if (nextRenewTime && subscription.autoRenew !== true && subscription.autoRenew !== 1) {
     return nextRenewTime;

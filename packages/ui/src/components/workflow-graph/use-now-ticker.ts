@@ -1,15 +1,15 @@
 import { useEffect, useState } from "react";
 
-/** 倒计时的自然粒度：秒级文案再快一格文字也不会变。 */
+/** Natural countdown interval: second-level copy does not change more frequently than this. */
 export const NOW_TICKER_INTERVAL_MS = 1_000;
 
 /**
- * 一个只在 `active` 时走的"现在"。
+ * A "now" value that advances only while `active`.
  *
- * 为什么不靠投影更新顺手重算：一个在退避等待 provider 的 ask **恰恰不发事件**，靠事件驱动的
- * 读数会一直停在收到那一刻的秒数。定时器只在有倒计时可显示时存在；`active` 一变真先重取一次
- * "现在"，不带着上一段的偏差起步。与 WorkflowRunPendingQuestionsSection 的等待时长同一取向，
- * 只是粒度从 30 秒收到 1 秒——这里显示的是秒。
+ * Why not recompute as a side effect of projection updates? An ask in provider backoff **emits no events**, so an event-driven
+ * value would stay at the second it was first received. Keep the timer only while a countdown is visible; when `active` becomes true,
+ * read "now" again before starting so the previous interval's drift is not carried forward. This follows the same approach as the wait duration
+ * in WorkflowRunPendingQuestionsSection, with a 1-second interval instead of 30 seconds because this UI displays seconds.
  */
 export function useNowTicker(active: boolean, intervalMs: number = NOW_TICKER_INTERVAL_MS): number {
   const [now, setNow] = useState(() => Date.now());

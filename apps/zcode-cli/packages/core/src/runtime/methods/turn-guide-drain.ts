@@ -6,9 +6,9 @@ import { appendTurnRequestEntries } from "./turn-output-token-continuation.js";
 import { applyRuntimeExecutionState } from "../execution-state.js";
 
 /**
- * 在合法的 model-step 边界最多消费一条 guide，并准备下一次 provider request。
- * SendMessage 可能在 child 的 model request 进行中到达；若该 step 正常
- * text-only 收口，等待未来 tool batch 会把 coordinator input 永久留在无人唤醒的 queue。
+ * Consume at most one guide at a valid model-step boundary and prepare the next provider request.
+ * SendMessage may arrive while a child model request is in progress; if that step ends normally with text only,
+ * waiting for a future tool batch would leave coordinator input permanently in a queue with no wake-up source.
  */
 export async function drainInlineGuideForNextRequest(
   runtime: AgentRuntimeInternal,
@@ -26,7 +26,7 @@ export async function drainInlineGuideForNextRequest(
 
   state.drainedSteerForNextRequest = drained;
   appendTurnRequestEntries(state.turnRequestState, drained.runtimeEntries ?? []);
-  // 固定执行模型只禁止切模，不应连带丢弃 Guide 的权限／Plan 意图。
+    // A fixed execution model prevents model switching, but should not discard the Guide's permission/Plan intent.
   if (state.modelSelectionScope === "execution" && drained.intent) {
     await applyRuntimeExecutionState(runtime, drained.intent, {
       source: "command",
@@ -38,7 +38,7 @@ export async function drainInlineGuideForNextRequest(
       ? undefined
       : await applySubmissionExecutionState(runtime, drained?.intent, state.turnTraceContext);
   if (guideModel) {
-    // 配置重新解析不等于切模；比较 Loop 的执行选择，而不是可能已被外部更新的 Session。
+      // Re-resolving configuration is not a model switch; compare the Loop's execution selection, not Session state that may have changed externally.
     const selectionChanged = !sameModelSelection(state.model, guideModel);
     state.model = guideModel;
     if (selectionChanged) {
@@ -51,11 +51,11 @@ export async function drainInlineGuideForNextRequest(
   state.currentUserMessageId = drained?.latestMessageId ?? state.currentUserMessageId;
   const nextQueryId = drained?.queryIds?.[0];
   if (nextQueryId) {
-    // guide 以 user role 续上当前 active turn；后续请求归因到该输入的 query。
+    // Continue the current active turn with the guide as a user role; attribute later requests to that input's query.
     state.turnTraceContext = { ...state.turnTraceContext, queryId: nextQueryId };
   }
   if ((drained.toolDisallowlist?.length ?? 0) > 0) {
-    // automation guide 不会重新 start turn，必须把限制合并到当前 loop state。
+    // An automation guide does not start a new turn, so merge its restrictions into the current loop state.
     state.toolDisallowlist = [
       ...new Set([...(state.toolDisallowlist ?? []), ...(drained.toolDisallowlist ?? [])]),
     ];

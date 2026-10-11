@@ -26,8 +26,8 @@ export function createZCodeSessionApiRetryRuntimeTracker(): {
       event.type === "session.event" &&
       (event.event.type === "session.updated" || event.event.type === "streamRecovery.updated")
     ) {
-      // desktop-continuous 的 snapshot runtime 需要跟住 core recovery 进度；
-      // 否则切回正在恢复的会话时只能看到空的重试状态。
+      // The desktop-continuous snapshot runtime must track core recovery progress;
+      // otherwise, returning to a session that is recovering shows an empty retry state.
       const apiRetry = apiRetryFromSessionPayload(asRecord(event.event.payload));
       const key = sessionKey({
         workspacePath: params.workspacePath,
@@ -40,8 +40,8 @@ export function createZCodeSessionApiRetryRuntimeTracker(): {
         apiRetryBySessionKey.get(key) != null &&
         isZCodeModelRetryRecoveryProgressPayload(asRecord(event.event.payload))
       ) {
-        // snapshot runtime 和 live UI 要使用同一个恢复成功边界；
-        // retry attempt 开始不清，等首个模型进展到达才清，避免重连时状态闪烁或切回 task 后残留。
+        // The snapshot runtime and live UI must use the same recovery-success boundary;
+        // do not clear on retry start; clear when the first model progress arrives to prevent flicker during reconnect or stale state after switching back to a task.
         apiRetryBySessionKey.set(key, null);
       }
       return event;
@@ -87,8 +87,8 @@ export function createZCodeSessionApiRetryRuntimeTracker(): {
       ...snapshot,
       runtime: {
         ...snapshot.runtime,
-        // desktop-continuous 主路径读取 protocol snapshot 时不经过 task adapter。
-        // 这里把订阅到的网络重试临时态补回 snapshot，切回运行中 task 时当前 turn 底部才能继续显示重试提示。
+        // The desktop-continuous main path reads protocol snapshots without going through the task adapter.
+        // Add the subscribed transient network retry state back to the snapshot so the retry hint remains visible at the bottom of the current turn when switching back to a running task.
         apiRetry: apiRetryBySessionKey.get(key) ?? null,
       },
     };

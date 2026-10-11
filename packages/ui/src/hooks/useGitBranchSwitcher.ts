@@ -26,8 +26,8 @@ import { logger } from "@/logger.js";
 
 interface UseGitBranchSwitcherOptions {
   workspacePath: string;
-  // gitSummary 是 HEAD 的真实来源(由文件 watcher 实时回灌)。传入它的当前分支/HEAD 类型，
-  // 用于在底层 HEAD 变化时丢弃可能过期的本地分支快照。
+  // gitSummary is the source of truth for HEAD (updated by the file watcher). Its current
+  // branch/HEAD values are used to discard potentially stale local branch snapshots when HEAD changes.
   currentBranchName: string | null;
   headRefType: GitRepositorySummary["headRefType"];
   onRefreshGit: () => void;
@@ -95,12 +95,15 @@ export function useGitBranchSwitcher({
   const openRef = useRef(open);
   openRef.current = open;
   useEffect(() => {
-    // 关键业务逻辑：gitSummary 的 HEAD 一旦变化(例如外部命令切分支、watcher 实时回灌)，
-    // 就丢弃上一次展开下拉框时缓存的本地分支快照，让底部分支标签回落到 gitSummary.branchName。
-    // 否则 branchesResult.currentBranchName 的旧值会长期遮挡真实分支名，出现“切了不变”。
-    // 注意：这里只重置本地 UI state，不触发任何刷新 / RPC，避免重新引入 refresh<->watcher 自激回路。
+    // Key behavior: when gitSummary's HEAD changes (for example, after an external branch switch
+    // or a watcher update), discard the local branch snapshot cached when the dropdown was last opened.
+    // The branch label then falls back to gitSummary.branchName. Otherwise, a stale
+    // branchesResult.currentBranchName can mask the real branch name indefinitely.
+    // Only reset local UI state here; do not trigger a refresh or RPC, which could reintroduce
+    // a refresh/watcher feedback loop.
     if (openRef.current) {
-      // 下拉框展开时正展示实时列表，不清空以免列表闪烁；关闭后下次展开会通过 loadBranches 重新拉取。
+      // Keep the live list while the dropdown is open to avoid flicker. Once closed,
+      // the next opening will fetch it again through loadBranches.
       return;
     }
     setBranchesResult(null);
@@ -111,7 +114,8 @@ export function useGitBranchSwitcher({
       return;
     }
 
-    // 关键业务逻辑：分支列表每次展开都重新读取一次，避免切换成功后还复用上一次打开时的旧快照。
+    // Fetch the branch list every time the dropdown opens so a successful switch does not reuse
+    // the snapshot from the previous opening.
     void loadBranches();
   }, [loadBranches, open]);
 
@@ -167,8 +171,9 @@ export function useGitBranchSwitcher({
         return false;
       }
 
-      // 关键业务逻辑：overwrite 型阻塞不再直接 toast，而是转成“失败卡片 -> 提交 -> 自动重试切换”流程。
-      // 这样用户能先看见真正受影响的文件，再决定是否提交当前更改继续。
+      // An overwrite-style blocker is no longer shown as a toast. Convert it into a
+      // "failure card -> commit -> retry switch automatically" flow so users can see the affected
+      // files before deciding whether to commit their current changes and continue.
       setOpen(false);
       setCreateDialogOpen(false);
       setCommitError(null);
@@ -227,8 +232,8 @@ export function useGitBranchSwitcher({
             }
           : current,
       );
-      // 关键业务逻辑：只有真正发生分支变更时才刷新全局 Git 状态。
-      // 切到当前分支这类 no-op 已经是成功结果，但没必要再触发一轮额外重拉。
+      // Refresh global Git state only when the branch actually changes.
+      // Switching to the current branch is already a successful no-op and needs no extra fetch.
       if (result.didChange || result.created) {
         onRefreshGit();
       }

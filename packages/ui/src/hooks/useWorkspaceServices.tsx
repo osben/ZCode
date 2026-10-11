@@ -32,9 +32,9 @@ function createDisconnectedRemoteServices(): IServiceAccessor {
     call: () => Promise.reject(createDisconnectedError()),
     listen: () => Event.None,
   };
-  // 断连代理曾自行维护普通事件白名单，新增 onAgentRuntimeRestarted 后被误判成
-  // RPC 方法并返回 Promise，释放订阅时触发 Promise.dispose 崩溃。这里复用真实 RPC 代理的
-  // 事件分类契约：命令明确拒绝，普通/动态事件统一返回空订阅，避免两套规则再次漂移。
+  // The disconnected proxy maintained its own ordinary-event allowlist. After onAgentRuntimeRestarted was added, it was misclassified as
+  // an RPC method and returned a Promise, causing Promise.dispose to crash during unsubscribe. Reuse the real RPC proxy’s
+  // event classification contract: explicitly reject commands and return empty subscriptions for ordinary/dynamic events, avoiding drift between two rule sets.
   const serviceProxy = ProxyChannel.toService<object>(disconnectedChannel);
 
   return new Proxy(Object.create(null), {
@@ -107,9 +107,9 @@ export function resolveWorkspaceServiceIsRemoteTarget(params: {
       return true;
     }
 
-    // 日志里远程 SSH workspace 已经恢复成 tab，但草稿预热入口一度只拿到
-    // workspacePath，导致 /mnt/... 被当成本地 workspace 走 base services 并在 Windows 上 spawn 本地 agent。
-    // 这里用当前 tab 的远程元数据兜住这类 path-only 调用，避免远程目标误回落到本机 host。
+    // Logs showed that a recovered remote SSH workspace was already a tab, but the draft-prewarm entry point sometimes received only
+    // workspacePath, causing /mnt/... to be treated as local, use base services, and spawn a local agent on Windows.
+    // Use the current tab’s remote metadata to guard path-only calls so remote targets do not accidentally fall back to the local host.
     if (
       params.activeTab?.workspacePath === params.workspacePath &&
       hasRemoteWorkspaceMetadata(params.activeTab)
@@ -128,10 +128,10 @@ export function useBaseWorkspaceServices(): IServiceAccessor {
   const contextServices = useServices();
   const registeredBaseServices = useRemoteWorkspaceSessionStore((state) => state.baseServices);
 
-  // App 会在当前激活 workspace 外层再套一层 ServiceProvider。
-  // 激活远端 tab 后，useServices() 读到的是远端 host；但 timeline/search/workspace
-  // 这类跨 workspace 查询里的本地 shard 必须继续查本机 host。
-  // 这里优先使用 renderer 启动时注册的根 services，避免远端连接污染本地任务列表。
+  // App wraps the currently active workspace in another ServiceProvider.
+  // After activating a remote tab, useServices() resolves to the remote host; but local shards for cross-workspace queries such as timeline/search/workspace
+  // must continue querying the local host.
+  // Prefer the root services registered at renderer startup so a remote connection cannot contaminate the local task list.
   return resolveBaseWorkspaceServices(contextServices, registeredBaseServices);
 }
 
@@ -139,9 +139,9 @@ export function useOptionalBaseWorkspaceServices(): IServiceAccessor | null {
   const contextServices = useOptionalServices();
   const registeredBaseServices = useRemoteWorkspaceSessionStore((state) => state.baseServices);
 
-  // usage entitlement 等 app-global 能力曾从当前 workspace ServiceProvider
-  // 取服务；远端 tab 在 attachment ready 前会得到断连代理并产生无效 RPC。base host 才是
-  // app-global 权威；Web/SSR 未注册 base services 时保留原有 context/null 降级语义。
+  // App-global capabilities such as usage entitlement previously read services from the active workspace ServiceProvider.
+  // A remote tab could receive a disconnected proxy before its attachment was ready and issue invalid RPCs. The base host is
+  // authoritative for app-global services; when Web/SSR has no registered base services, retain the existing context/null fallback behavior.
   return registeredBaseServices ?? contextServices;
 }
 
@@ -197,11 +197,11 @@ export function useWorkspaceServicesResolution(
       : "remote-waiting"
     : "local-ready";
 
-  // 远程 SSH host 断开后，若在 resolvedRemoteSessionId 为空时回退到 baseServices，
-  // /root 这类远程 task 会被本机 host 查询并报“task 不存在”。远程目标缺少 session 时必须保持断连态，
-  // 由上面的断连代理给出可恢复错误，而不是把请求误路由到本机 workspace。
-  // 启动重连期仅有 tab 元数据、真实 remote services 尚未注册时属于 remote-waiting；
-  // 调用方必须暂停 workspace RPC，断连代理只保留为最终越界保护，不能把预期等待态当失败重试。
+  // After a remote SSH host disconnects, falling back to baseServices while resolvedRemoteSessionId is empty
+  // makes remote tasks such as /root be queried on the local host and fail with “task not found.” Keep remote targets disconnected when the session is missing,
+  // letting the disconnected proxy return a recoverable error instead of routing the request to the local workspace.
+  // During reconnect startup, having only tab metadata before real remote services are registered is the remote-waiting state.
+  // Callers must pause workspace RPCs; keep the disconnected proxy only as a final boundary guard and do not treat the expected wait as a retryable failure.
   return useMemo(
     () => ({
       services: resolvedServices,

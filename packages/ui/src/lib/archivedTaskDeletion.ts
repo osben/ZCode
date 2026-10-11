@@ -26,7 +26,7 @@ export async function collectArchivedTaskDeletion(workspaces: ArchivedTaskDeleti
     [...unique.values()].map(async (workspace) => {
       if (!workspace.service) return { workspace, targets: null };
       try {
-        // 直接读取完整归档集合，不能使用 UI 已折叠或过滤的 items。
+        // Read the complete archived set directly; do not use items already collapsed or filtered by the UI.
         const tasks = await workspace.service.listArchivedTasks({
           workspacePath: workspace.workspacePath,
           workspaceIdentity: workspace.workspaceIdentity,
@@ -62,7 +62,7 @@ export async function deleteArchivedTaskSelection(
   let deleted = 0;
   let skipped = 0;
   let failed = 0;
-  // 同一 workspace 一次 RPC，让原 source 在逐项事务后统一发事件；独立 source 可以并行。
+  // Use one RPC per workspace so the original source can emit one event after its per-item transactions; independent sources can run in parallel.
   await Promise.all(
     selection.groups.map(async ({ workspace, targets }) => {
       if (!targets?.length) return;

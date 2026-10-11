@@ -1,9 +1,9 @@
 import { ServiceChannels } from "@zcode/shared";
 import { createServiceDescriptor } from "../descriptors.js";
 
-/** Agent（CLI adapter）对每个指令文件读取的上限，超出部分被截断。 */
+/** Maximum amount of each instruction file read by the Agent (CLI adapter); excess content is truncated. */
 export const USER_INSTRUCTIONS_AGENT_READ_LIMIT_BYTES = 100 * 1024;
-/** 设置页可加载进编辑器的上限，超过后只显示过大态。 */
+/** Maximum amount the settings page can load into the editor; larger files show an oversized-file state. */
 export const USER_INSTRUCTIONS_EDIT_LIMIT_BYTES = 5 * 1024 * 1024;
 
 export type UserInstructionsEol = "lf" | "crlf";
@@ -21,9 +21,9 @@ export type UserInstructionsReadResult =
       path: string;
       linkTarget?: string;
       state: "missing" | "file";
-      /** 已规范化为 LF 且去掉 BOM 的文本。 */
+      /** Text normalized to LF with the BOM removed. */
       content: string;
-      /** 磁盘原始字节的 sha256；文件不存在时为 null。 */
+      /** SHA-256 of the original bytes on disk; null when the file does not exist. */
       revision: string | null;
       sizeBytes: number;
       eol: UserInstructionsEol;
@@ -56,7 +56,7 @@ export type UserInstructionsImportSource =
   | { kind: "error"; path: string; code: UserInstructionsReadErrorCode; message?: string };
 
 export interface UserInstructionsWriteParams {
-  /** UI 草稿（LF）；服务按 eol/hasBom 还原磁盘格式。 */
+  /** UI draft (LF); the service restores the on-disk format using eol/hasBom. */
   content: string;
   expectedRevision: string | null;
   eol: UserInstructionsEol;
@@ -64,8 +64,8 @@ export interface UserInstructionsWriteParams {
 }
 
 /**
- * 全局用户指令 `~/.zcode/AGENTS.md` 的读写服务。
- * 磁盘文件是唯一事实源；服务不缓存内容，每次调用都重新读取。
+ * Read/write service for the global user instructions file at `~/.zcode/AGENTS.md`.
+ * The file on disk is the single source of truth; the service does not cache its contents and reads it again on each call.
  */
 export interface IUserInstructionsService {
   read(): Promise<UserInstructionsReadResult>;

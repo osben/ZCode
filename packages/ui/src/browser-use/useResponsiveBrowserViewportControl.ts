@@ -71,7 +71,7 @@ export function useResponsiveBrowserViewportControl({
   );
 
   const applyResponsiveMode = useCallback((nextMode: boolean) => {
-    // viewport 事件也会用于模式内尺寸同步；仅在 false → true 时重置，避免覆盖用户刚选的固定缩放。
+    // Viewport events also synchronize dimensions within the mode; reset only on false → true so the user’s newly selected fixed zoom is not overwritten.
     if (nextMode && !isResponsiveModeRef.current) {
       responsiveViewportZoomRef.current = DEFAULT_BROWSER_VIEWPORT_ZOOM;
       setResponsiveViewportZoom(DEFAULT_BROWSER_VIEWPORT_ZOOM);
@@ -86,8 +86,8 @@ export function useResponsiveBrowserViewportControl({
       if (!request) return;
       void request
         .then(() => {
-          // metrics 在 main 内串行完成后再把 guest zoom 固定回 1。若提前在
-          // React effect 中设置，Desktop page zoom 的异步传播会再将 guest 改回全局缩放。
+          // Set the guest zoom back to 1 only after metrics have completed serially in main. If set earlier in
+          // a React effect, asynchronous propagation of Desktop page zoom will set the guest back to the global zoom.
           if (viewport) onViewportSynchronized();
         })
         .catch((error) => {
@@ -105,9 +105,9 @@ export function useResponsiveBrowserViewportControl({
     wasResponsiveModeForZoomRef.current = isResponsiveMode;
     lastDesktopZoomFactorRef.current = desktopZoomFactor;
     if (!isResponsiveMode || !wasResponsiveMode || !zoomChanged) return;
-    // Electron 放大 Desktop page zoom 后，guest native raster 仍按缩放前的
-    // backing 尺寸输出。zoom 每次变化都重发同一 viewport，让 main 从可信
-    // BrowserWindow 读取当前 zoom factor 并重放 metrics；不把 zoom 写入 Agent viewport 状态。
+    // After Electron increases Desktop page zoom, the guest native raster still uses the pre-zoom
+    // backing dimensions. Resend the same viewport on every zoom change so main can read the trusted
+    // zoom factor from BrowserWindow and replay metrics; do not write zoom into Agent viewport state.
     updateControlledViewport(responsiveViewportSize);
   }, [desktopZoomFactor, isResponsiveMode, responsiveViewportSize, updateControlledViewport]);
 
@@ -126,8 +126,8 @@ export function useResponsiveBrowserViewportControl({
         responsiveViewportSizeRef.current = { ...payload.viewport };
         setResponsiveViewportSize({ ...payload.viewport });
         applyResponsiveMode(true);
-        // Agent 创建/设置 viewport 的 main 路径不经过 renderer IPC；只在当前窗口
-        // 处于放大档位时回送一次，让 main 补入可信 zoom factor。默认/缩小不需要回声。
+        // The main path for Agent viewport creation/settings does not pass through renderer IPC; echo it only when the current window
+        // is zoomed in, so main can add the trusted zoom factor. Default and reduced zoom do not need an echo.
         if (desktopZoomFactor > 1) updateControlledViewport(payload.viewport);
         return;
       }

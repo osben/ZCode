@@ -43,35 +43,36 @@ import {
 import { listRegisteredHostAgentProcessIds } from "./resourceManagerWindow.js";
 
 /**
- * main 侧进程资源遥测。
+ * Main-side process resource telemetry.
  *
- * 唯一的 ARMS 资源出口：10 秒 tick 让每个样本来源写入有界窗口，
- * 5 分钟（开发构建与 E2E 1 分钟）flush 出每角色一条 `perf_process_window`
- * 与每设备一条 `perf_system_window`，正常退出排空残窗。
- * 性能红线：main 进程零外部进程，全链路禁止 PowerShell / WMI / CIM。
+ * The sole ARMS resource-reporting path: every 10-second tick lets each sample source write to a
+ * bounded window; flush every five minutes (one minute in development builds and E2E) to emit one
+ * `perf_process_window` per role and one `perf_system_window` per device. Drain partial windows on
+ * normal shutdown.
+ * Performance constraint: the main process starts no external processes; PowerShell / WMI / CIM are forbidden throughout this path.
  */
 
-/** 采样间隔 */
+/** Sampling interval. */
 export const RESOURCE_SAMPLE_INTERVAL_MS = 10_000;
 
-/** 开发构建与 E2E 用 1 分钟窗口便于验证；生产 5 分钟。 */
+/** Use a one-minute window in development builds and E2E for easier verification; production uses five minutes. */
 function resolveDefaultReportIntervalMs(): number {
   if (desktopRuntimeEnv === "development") {
     return 60_000;
   }
-  // E2E 跑的是打包构建，没有这个短窗口就无法在一次用例里观察到趋势事件。
+  // E2E runs a packaged build; without this short window, a single test cannot observe trend events.
   if (process.env.ZCODE_ENV === "test" && process.env.ZCODE_E2E_RUN_ID?.trim()) {
     return 60_000;
   }
   return 300_000;
 }
 
-/** 上报间隔 */
+/** Reporting interval. */
 export const RESOURCE_REPORT_INTERVAL_MS = resolveDefaultReportIntervalMs();
 
 /**
- * 本地内存诊断日志：借用 10s 资源采样节拍，
- * 每 6 个 tick（≈60s）读一次 main 自身内存，同一次读数既写主日志又作为 main 角色的 heap 样本。
+ * Local memory diagnostics reuse the 10-second resource-sampling cadence: read main's own memory
+ * every six ticks (~60 seconds), using the same reading for both the main log and the main role's heap sample.
  */
 export const MEMORY_LOG_SAMPLE_EVERY_N_TICKS = 6;
 
@@ -97,12 +98,12 @@ let reportTimer: ReturnType<typeof setInterval> | null = null;
 let agentMetricProbeDisabledAuditLogged = false;
 let memoryLogTick = 0;
 let memorySampleWriteGate: MemorySampleWriteGate = createMemorySampleWriteGate();
-/** 自证开销时钟；只有单测会替换成可预期的假时钟。 */
+/** Self-measured overhead clock; only unit tests replace this with a predictable fake clock. */
 let readTelemetrySelfClockMs: () => number = () => performance.now();
 
 const processResourceWindows = new ProcessResourceWindowAggregator();
 const processResourceSystemWindow = new ProcessResourceSystemWindowAggregator();
-/** 完成事实只需覆盖多连接转发的近期重复，固定预算避免长会话无界增长。 */
+/** Completion facts need only deduplicate recent repeats across multiple connections; use a fixed budget to prevent unbounded growth in long sessions. */
 const MAX_RECENT_TOOL_EXEC_COMPLETIONS = 1_024;
 const recentToolExecCompletions = new Set<string>();
 
@@ -130,7 +131,7 @@ function stringifyProperties(
 
 function reportResourceCustom(
   name: string,
-  /** ARMS custom 的 value 字段：控制台默认展示的主指标数值 */
+  /** ARMS custom value field: primary metric value displayed by default in the console. */
   metricValue: number,
   properties: Record<string, string | number | boolean | undefined>,
 ): void {
@@ -146,7 +147,7 @@ function reportResourceCustom(
     properties: stringifyProperties(properties),
   };
 
-  // E2E 在 sendCustom 之前捕获，读到的就是真实上报内容。
+  // E2E captures this before sendCustom, so it reads the actual report contents.
   const e2eController = getSharedFinalArmsCustomEventE2EController();
   e2eController?.record(payload);
   if (e2eController?.shouldSuppress(name)) {
@@ -171,7 +172,7 @@ export function resolveResourceUsageScene(): ResourceUsageScene {
   return anyFocused && anyVisible ? "foreground" : "background";
 }
 
-/** 完成事实即时上报，复用唯一资源出口；不进入五分钟窗口或会话恢复链路。 */
+/** Report completion facts immediately through the sole resource-reporting path; do not add them to the five-minute window or session-recovery flow. */
 export function ingestToolExecResource(
   raw: unknown,
   runtimeSurface: ProcessResourceRuntimeSurface,
@@ -180,8 +181,9 @@ export function ingestToolExecResource(
   const parsed = zcodeToolExecResourceSchema.safeParse(raw);
   if (!parsed.success) return;
   const sample = parsed.data;
-  // 同一 Server 可经多个 workspace 和 window Host 转发完成事实；只在 main 唯一出口去重。
-  // 无标识的旧 CLI 保留原行为，不能按量化指标去重，否则会吞掉不同的真实命令。
+  // The same Server can forward a completion fact through multiple workspaces and window Hosts;
+  // deduplicate only at main's sole reporting exit. Preserve behavior for legacy CLI events without
+  // IDs; deduplicating by metrics could suppress distinct real commands.
   if (sample.completionToken) {
     if (recentToolExecCompletions.has(sample.completionToken)) return;
     recentToolExecCompletions.add(sample.completionToken);
@@ -226,9 +228,9 @@ function auditDisabledAgentMetricProbe(logger: ResourceLogger | undefined): void
   }
 
   agentMetricProbeDisabledAuditLogged = true;
-  // E2E 审计合同：该记录仅证明真实采样周期在 Agent PID 已注册时
-  // 明确跳过外部指标采集。若未来恢复采集，必须先记录 action=spawn，
-  // Windows E2E 会因此失败，防止再次把同步 PowerShell 带回 main process。
+  // E2E audit contract: this record proves that a real sampling cycle explicitly skipped external
+  // metric collection while Agent PIDs were registered. If collection is ever restored, record
+  // action=spawn first; Windows E2E will fail, preventing synchronous PowerShell from returning to main.
   logger?.info(
     `[resource] agent_metric_probe action=skipped reason=main_process_external_probe_disabled agent_count=${agentCount}`,
   );
@@ -265,7 +267,7 @@ function logMemorySample(
       logger.info(formatMemorySampleLine(sample, reason));
     }
   } catch {
-    // 诊断日志失败只丢当前样本，不影响资源采样与 ARMS 上报。
+    // A diagnostic-log failure drops only the current sample and does not affect resource sampling or ARMS reporting.
   }
 }
 
@@ -275,8 +277,9 @@ function takeSample(logger?: ResourceLogger): void {
   const now = Date.now();
   const samples: ProcessRoleSample[] = [];
   /**
-   * 只有进程自己读得到 heap：main 在下面就地读，host / scheduler / renderer 由各自的
-   * 自采样本来源投递。heap 不足以独立开窗，统一并入同一 tick 内该角色的完整样本。
+   * Only the process itself can read its heap: main reads it locally below, while Host/scheduler/
+   * renderer deliver through their self-sampled sources. Heap alone cannot open a window; merge it
+   * into the complete sample for that role in the same tick.
    */
   const heapUsedKbByRole = new Map<ProcessResourceRole, number>();
   let appProcessTotals: AppResourceTotals | null = null;
@@ -292,8 +295,8 @@ function takeSample(logger?: ResourceLogger): void {
     onError,
   });
 
-  // 每 6 个 tick（≈60s）读一次 main 自身内存：同一次读数既写本地 `[memory]` 日志，
-  // 又作为 main 角色事件的 heap 样本，两处数值天然一致且不新增定时器。
+  // Read main's own memory every six ticks (~60 seconds). Use the same reading for the local
+  // `[memory]` log and main role event's heap sample, keeping the values identical without adding a timer.
   memoryLogTick += 1;
   const mainMemoryUsage =
     memoryLogTick % MEMORY_LOG_SAMPLE_EVERY_N_TICKS === 0 ? readMainMemoryUsage() : null;
@@ -310,7 +313,7 @@ function takeSample(logger?: ResourceLogger): void {
     logMemorySample(logger, mainMemoryUsage, samples);
   }
 
-  // 第二阶段：设备级来源要用同一 tick 的精确合计，所以必须等第一阶段全部来源跑完。
+  // Phase two: device-level sources need the exact total for this tick, so wait for every phase-one source to finish.
   runProcessResourceDeviceSampleSources(PROCESS_RESOURCE_SAMPLE_SOURCES, {
     now,
     appProcessTotals,
@@ -322,8 +325,8 @@ function takeSample(logger?: ResourceLogger): void {
 }
 
 /**
- * main 侧遥测代码自身的墙钟耗时：以 `telemetry_self_ms` 上报。
- * flush 的耗时落在下一个窗口——它发生在窗口投影之后，无法计入已经发出的那条事件。
+ * Wall-clock time spent by main-side telemetry code itself, reported as `telemetry_self_ms`.
+ * Flush duration goes into the next window because it occurs after projection and cannot be counted in the event already sent.
  */
 function measureTelemetrySelfMs(run: () => void): void {
   const startedAt = readTelemetrySelfClockMs();
@@ -354,7 +357,7 @@ function reportProcessResourceWindows(): void {
   }
 }
 
-/** 应用运行时长：main 进程与 App 同生共死，直接取它的运行时长。 */
+/** Application runtime: main lives and exits with the app, so use its runtime directly. */
 function resolveAppUptimeMinutes(): number {
   const uptimeSeconds = process.uptime();
   return Number.isFinite(uptimeSeconds) ? Math.max(0, Math.round(uptimeSeconds / 60)) : 0;
@@ -385,14 +388,14 @@ function reportSystemResourceWindow(backgroundRatio: number): void {
 }
 
 /**
- * 把各来源「已经收到、还没交给窗口」的读数补进窗口（只在退出排空时调用）。
- * 不做任何新采样：退出路径不允许再读 getAppMetrics 或起探针。
+ * Add readings already received but not yet delivered to a window (called only when draining on
+ * shutdown). Do not sample again: shutdown must not read getAppMetrics or start probes.
  */
 function flushPendingSourceReadings(logger?: ResourceLogger): void {
   flushPendingProcessResourceSampleSources(PROCESS_RESOURCE_SAMPLE_SOURCES, {
     now: Date.now(),
     addRoleSample: (sample) => processResourceWindows.add(sample),
-    // heap 不足以独立开窗，退出时也不例外；只贡献 heap 的来源没有 flushPending。
+    // Heap cannot open a window on its own, including during shutdown; heap-only sources do not implement flushPending.
     addRoleHeapSample: () => {},
     addAppProcessTotals: () => {},
     onError: (sourceId, error) =>
@@ -400,10 +403,10 @@ function flushPendingSourceReadings(logger?: ResourceLogger): void {
   });
 }
 
-/** 排空全部资源窗口；窗口时钟只有这一处，退出排空复用同一个顺序。 */
+/** Drain all resource windows; this is the sole window clock, and shutdown draining reuses the same order. */
 function drainAllResourceWindows(logger?: ResourceLogger): void {
   flushPendingSourceReadings(logger);
-  // background_ratio 的唯一数据源是角色聚合器的 scene 计数，先取值再 drain（drain 会清零）。
+  // The role aggregator's scene count is the sole source of background_ratio; read it before drain, which resets the count.
   const backgroundRatio = processResourceWindows.backgroundRatio;
   reportProcessResourceWindows();
   reportSystemResourceWindow(backgroundRatio);
@@ -432,8 +435,8 @@ export function configureDesktopResourceTelemetry(context: ResourceGlobalContext
 export function registerDesktopResourceTelemetry(
   logger: ResourceLogger,
   /**
-   * `reportIntervalMs` 只供单测注入窗口时钟；生产走 RESOURCE_REPORT_INTERVAL_MS。
-   * `readSelfClockMs` 只供单测注入可预期的自证开销时钟；生产走 performance.now。
+   * `reportIntervalMs` injects a window clock for unit tests only; production uses RESOURCE_REPORT_INTERVAL_MS.
+   * `readSelfClockMs` injects a predictable self-overhead clock for unit tests only; production uses performance.now.
    */
   options?: { reportIntervalMs?: number; readSelfClockMs?: () => number },
 ): void {
@@ -467,7 +470,7 @@ export function registerDesktopResourceTelemetry(
     });
   }, reportIntervalMs);
 
-  // 遥测定时器不得延长进程寿命。
+  // Telemetry timers must not keep the process alive.
   sampleTimer.unref?.();
   reportTimer.unref?.();
 
@@ -477,7 +480,7 @@ export function registerDesktopResourceTelemetry(
 }
 
 export function stopDesktopResourceTelemetry(options?: {
-  /** 正常退出：排空残窗，sample_count 如实反映；不触发新采样。 */
+  /** Normal shutdown: drain partial windows so sample_count remains accurate; do not start new sampling. */
   flushPendingWindows?: boolean;
 }): void {
   recentToolExecCompletions.clear();
@@ -490,8 +493,9 @@ export function stopDesktopResourceTelemetry(options?: {
     reportTimer = null;
   }
   if (options?.flushPendingWindows) {
-    // Bug 根因：改成 5 分钟聚合后，正常退出仍沿用直接 clear 的旧 stop，
-    // 导致已收到但未满窗口的样本静默丢失。这里只排空内存窗口，不触发新采样或磁盘扫描。
+    // Bug cause: after changing to five-minute aggregation, normal shutdown still used the old stop
+    // that cleared state immediately, silently losing samples already received in an incomplete
+    // window. Drain only in-memory windows here; do not start new sampling or disk scans.
     drainAllResourceWindows();
   } else {
     processResourceWindows.clear();

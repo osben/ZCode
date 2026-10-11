@@ -1,8 +1,8 @@
-// ── 旧协议兼容面（过渡期）──────────────────────────────
-// 剩余 11 个导出：goal 迭代/可见消息投影函数。
-// 消费者：zcodeTaskServiceAdapter/zcodeSessionProjection/zcodeTaskIndexSyncer、
-// CLI bootstrap session-mapper。textFromZCodeMessageParts 已迁
-// zcode-protocol-legacy-types.ts（幸存面）。本文件与旧投影栈同生命周期。
+// ── Legacy protocol compatibility surface (transitional) ──────────────────────────────
+// Remaining 11 exports: goal-iteration/visible-message projection functions.
+// Consumers: zcodeTaskServiceAdapter/zcodeSessionProjection/zcodeTaskIndexSyncer,
+// and CLI bootstrap session-mapper. textFromZCodeMessageParts moved to
+// zcode-protocol-legacy-types.ts (the surviving module). This file has the same lifecycle as the legacy projection stack.
 import type { ZCodeSessionGoal } from "./zcode-protocol/index.js";
 import { getConversationMessageProjectionPolicy } from "./conversation-message-projection-policy.js";
 import {
@@ -72,8 +72,8 @@ export function isZCodeCompactSummaryMessage(message: ZCodeMessageWithParts): bo
         return false;
       }
       const timelineStatus = part.metadata?.["timelineStatus"];
-      // compact summary user message 是压缩后的模型上下文，不是用户可见输入。
-      // 真正要渲染成 timeline 的 lifecycle part 会带 timelineStatus，并且由 assistant message 承载。
+      // A compact summary user message is compressed model context, not user-visible input.
+      // Lifecycle parts that should render in the timeline carry timelineStatus and are held by assistant messages.
       return typeof timelineStatus !== "string";
     })
   );
@@ -86,9 +86,9 @@ export function getZCodeUserVisibleMessages(
   const visibleMessages: ZCodeMessageWithParts[] = [];
   for (const message of messages) {
     if (isZCodeModelOnlySyntheticUserMessage(message) || isZCodeCompactSummaryMessage(message)) {
-      // /goal 续跑、后台任务、子 agent、rewind 通知和 compact summary
-      // 都是 runtime 注入给模型继续推理的上下文，不是用户真实 query；可见投影必须过滤，
-      // 避免快照/远控恢复时渲染成右侧用户气泡或挤占 timeline 位置。
+      // /goal continuations, background tasks, subagents, rewind notifications, and compact summaries
+      // are context injected by the runtime for the model to continue reasoning, not the user's actual query; the visible projection must filter them,
+      // so snapshot/remote-control recovery does not render them as right-side user bubbles or take up timeline space.
       continue;
     }
     visibleMessages.push(message);
@@ -114,15 +114,15 @@ export function getZCodeGoalIterationByAssistantMessageId(
   for (const message of sortedMessages) {
     if (message.info.role === "user") {
       if (isZCodeGoalContinuationReminderMessage(message)) {
-        // goal 续跑边界只来自 Continue/source=goal-continuation；
-        // Current session goal state 是同一轮内反复注入的状态提示，不能在这里推进迭代号。
+        // Goal continuation boundaries come only from Continue/source=goal-continuation;
+        // Current session goal state is a status hint injected repeatedly within one turn and must not advance the iteration number here.
         currentIteration += 1;
         pendingVisibleGoalUserIteration = false;
         continue;
       }
       if (isVisibleRealGoalUserMessage(message, target)) {
-        // 新协议会同时持久化可见的 /goal 输入和 model-only continuation。
-        // 可见输入只用于旧快照缺少 continuation 时补第一段边界，不能和 continuation 叠加算两轮。
+        // The new protocol persists both visible /goal input and the model-only continuation.
+        // Visible input supplies the first boundary only when a legacy snapshot lacks continuation; do not count it together with the continuation as two turns.
         pendingVisibleGoalUserIteration = true;
       }
       continue;
@@ -132,8 +132,8 @@ export function getZCodeGoalIterationByAssistantMessageId(
       continue;
     }
     if (inactiveAt !== null && message.info.time.created > inactiveAt) {
-      // 目标停止/完成后的普通追问仍在同一个 session 内，不能继续继承旧 goal 轮次。
-      // 否则恢复快照时追问回复会被历史区当成“第 N 次迭代”处理，看起来像被旧完成横线折叠。
+      // Ordinary follow-up questions after a goal is stopped/completed remain in the same session and must not inherit the previous goal iteration.
+      // Otherwise, after snapshot recovery, follow-up replies would appear in history as "iteration N" and seem folded under the old completion divider.
       continue;
     }
     if (pendingVisibleGoalUserIteration) {
@@ -141,13 +141,13 @@ export function getZCodeGoalIterationByAssistantMessageId(
       pendingVisibleGoalUserIteration = false;
     }
     if (currentIteration === 0 && message.info.time.created >= target.createdAt) {
-      // 旧会话里 goal 创建输入可能没有 `/goal` 可见气泡或时间早于 target.createdAt。
-      // 第一条 goal 之后的 assistant 仍要归入第 1 次迭代，否则历史区会退回普通“已工作”。
+      // In legacy sessions, the goal-creation input may have no visible `/goal` bubble or may predate target.createdAt.
+      // The assistant after the first goal still belongs to iteration 1; otherwise, history falls back to ordinary "Worked."
       currentIteration = 1;
     }
     if (currentIteration > 0) {
-      // assistant 消息桶只用于历史状态展示，不能把 goal 轮次推进到
-      // verifier timeline 尚未确认的下一轮；新会话传入 maxGoalIteration 后按 verifier 上限收敛。
+      // The assistant message bucket is used only to display historical state and must not advance the goal iteration to
+      // the next iteration before the verifier timeline confirms it; new sessions pass maxGoalIteration to cap it at the verifier's limit.
       const boundedIteration =
         options.maxGoalIteration && options.maxGoalIteration > 0
           ? Math.min(currentIteration, options.maxGoalIteration)
@@ -191,8 +191,8 @@ export function getZCodeGoalActiveIterationCount(input: {
     return latestIteration;
   }
   if (input.targetStatus !== "active") {
-    // stop 会先把 target 改成 paused，再把正在跑的 verifier 收口成 cancelled。
-    // 非 active 目标不会自动续跑，不能把 cancelled/failed verifier 预投影成下一轮。
+    // stop first changes the target to paused, then finalizes the running verifier as cancelled.
+    // Inactive goals do not resume automatically; do not pre-project a cancelled/failed verifier as the next iteration.
     return latestIteration;
   }
   return latestIteration + 1;

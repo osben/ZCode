@@ -1,4 +1,4 @@
-/* eslint-disable max-lines -- plugin 同步需要集中维护候选扫描、归档安全、远端判重和配置写入，拆分会增加远端同步回归面。 */
+/* eslint-disable max-lines -- Plugin sync keeps candidate scanning, archive safety, remote deduplication, and config writes together to reduce remote-sync regression risk. */
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import {
@@ -497,13 +497,13 @@ async function importPluginsArchive(
         }
         await rename(stagingPath, targetPath);
         stagingPath = undefined;
-        // 远端 plugin 只有目录落盘还不会被 Agent runtime 发现；
-        // 必须在同一个远端服务里追加远端绝对路径，避免写回本机 plugins.dirs。
+        // Writing the remote plugin directory alone does not make it discoverable by the Agent runtime;
+        // add its absolute remote path through the same remote service to avoid writing to local plugins.dirs.
         try {
           await addPluginDirToUserConfig(targetPath, pluginId, plugin.enabled);
         } catch (error) {
-          // inline plugin 目录落盘但 config 写失败会形成半同步状态；
-          // 重试会把目录误判为远端已有，所以必须回滚本次刚创建的目标目录。
+          // If the inline plugin directory is written but the config update fails, sync is left in a partial state;
+          // a retry would mistake the directory for an existing remote plugin, so roll back the directory created in this attempt.
           await rm(targetPath, { recursive: true, force: true });
           throw error;
         }
@@ -837,8 +837,8 @@ async function resolveLocalMarketplacePluginSourcePath(
 async function assertLocalMarketplacePluginSourceRoot(pluginRoot: string): Promise<string> {
   const manifest = await readPluginManifestInfo(pluginRoot);
   if (!manifest) {
-    // marketplace source mirror 只能复制选中插件目录。先验证 plugin manifest，避免被篡改的 marketplace entry
-    // 指向普通目录后，把本机敏感文件作为“插件源码”打包发送到 SSH 远端。
+    // The marketplace source mirror may copy only the selected plugin directory. Validate the plugin manifest first so a tampered marketplace entry
+    // cannot point to an ordinary directory and cause local sensitive files to be packaged as plugin source and sent to the SSH remote.
     throw new Error(`local marketplace plugin source is missing plugin manifest: ${pluginRoot}`);
   }
   return pluginRoot;
@@ -872,8 +872,8 @@ function buildMirroredMarketplaceManifest(
     ...(manifest.description ? { description: manifest.description } : {}),
     ...(hasMirroredLocalSource
       ? {
-          // agent marketplace 解析只读取 metadata.pluginRoot。
-          // 远端镜像 manifest 如果写顶层 pluginRoot，会把 ./hello-world 误解析到市场根目录。
+          // Agent marketplace parsing reads only metadata.pluginRoot.
+          // If a remote mirror manifest uses a top-level pluginRoot, ./hello-world is incorrectly resolved from the marketplace root.
           metadata: {
             ...rawMetadata,
             pluginRoot: MIRRORED_MARKETPLACE_PLUGIN_ROOT,

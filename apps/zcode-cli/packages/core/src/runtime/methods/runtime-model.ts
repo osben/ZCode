@@ -21,14 +21,14 @@ export function createRuntimeModel(
     selection: RuntimeModelFactoryInput["selection"] | undefined;
     scope?: "session" | "workspace";
     /**
-     * 覆盖按 taskType 解析的重试预算，只绑定到本次创建的句柄，不进入 Factory 输入。
-     * 目前只有带 selectionFallback 声明的执行作用域 Selection 使用 single-attempt。
+     * Overrides the retry budget resolved from taskType; binds only to the handle created here and is not passed to Factory input.
+     * Currently, only execution-scoped Selections with a selectionFallback declaration use single-attempt.
      */
     retryBudget?: ModelRetryBudget;
   },
 ): Model {
   const { retryBudget, scope = "session", ...factoryInput } = input;
-  // 未绑定 Session 可恢复历史；仅在执行入口拒绝缺失选择，Factory 契约仍严格。
+  // A Session without a bound selection may restore history; reject a missing selection only at execution entry, while keeping the Factory contract strict.
   if (!factoryInput.selection) {
     throw createCoreError(CoreErrorType.ConfigurationError, "Select a model before continuing", {
       recoverable: true,
@@ -45,14 +45,14 @@ export function createRuntimeModel(
 }
 
 /**
- * runtime 层调用上下文。
+ * Runtime-layer invocation context.
  *
- * 准入端口与重试预算回答的是「谁在调」（这个 runtime 归哪个治理器管、允许多少次重试），不是
- * 「为什么调」（agent step / web_search / compact / title）。设计缺口：它们若只在 turn step
- * 的调用上下文里注入，WebSearch / WebFetch 处理 / 压缩 / 标题 sidecar 等九处只设「为什么调」的
- * 调用点全部绕过了闸门——实测场景下治理器看不见三分之二的 429。现在这两个字段在句柄
- * 工厂绑定一次；`withModelInvocationContext` 的合并顺序让本层压过调用层，没有逐调用退出口：
- * 想不受闸门约束的 runtime 本来就不带准入端口。
+ * The admission port and retry budget answer "who is calling" (which governor owns this runtime and how many retries are allowed), not
+ * "why it is calling" (agent step / web_search / compact / title). The design gap was that if they were injected only into turn-step
+ * invocation context, all nine call sites that set only "why" (WebSearch / WebFetch handling / compaction / title sidecar, etc.) bypassed the gate—
+ * in observed cases the governor missed two-thirds of 429s. These fields are now bound once in the handle
+ * factory; merge order in `withModelInvocationContext` gives this layer precedence over call sites, with no per-call opt-out:
+ * a runtime that should not use the gate simply has no admission port.
  */
 function withRuntimeInvocationLayer(
   runtime: AgentRuntimeInternal,
@@ -61,10 +61,10 @@ function withRuntimeInvocationLayer(
   retryBudget?: ModelRetryBudget,
 ): Model {
   const layer: ModelInvocationContext = {
-    // 原因：标题、Memory、工具调用曾按用途覆写 other，丢失宿主分类。
-    // 会话类型统一绑定在句柄上；工作区独立请求即使借用会话 runtime 也保持 other。
+    // Reason: title, Memory, and tool calls previously overwrote other based on purpose, losing the host's classification.
+    // Bind session type consistently on the handle; independent workspace requests remain other even when they borrow the session runtime.
     modelRequestSessionType: sessionType,
-    // 带退回声明的执行句柄显式传入 single-attempt，其余沿用 taskType 默认预算。
+    // Pass single-attempt explicitly for execution handles with fallback declarations; other handles keep the taskType default budget.
     modelRetryBudget: retryBudget ?? resolveModelRetryBudgetFromTaskType(runtime.config.taskType),
     ...(runtime.modelRequestAdmission === undefined
       ? {}

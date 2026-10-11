@@ -21,14 +21,14 @@ function matchesTab(
 }
 
 /**
- * 跨进程恢复的 browser tab（browser: 前缀）在 renderer registry 里的 browserId /
- * browserGeneration 是持久 shell 里旧进程的值；tab 被新一轮 scope 接管后 main 侧
- * owner 已更新，但 renderer 没有可靠的同步通道（residency transition 只在状态
- * 变化时携带新值）。prepare/release 若坚持七元组严格匹配，恢复 tab 的截图
- * surface 永远匹配失败：prepare 被静默忽略 → 截图必 3s 超时；release 永不命中
- * → pane 卡死在近透明 fixed 层（用户感知为透明遮罩假死）。因此降级为
- * workspaceKey + sessionId + tabId 匹配——tabId 是全局唯一 uuid，前两者防止
- * 跨工作区/会话串扰；stale 防护由 main 侧 coordinator 用请求内 generation 承担。
+ * A browser tab restored across processes (browser: prefix) has a browserId /
+ * browserGeneration value from the previous process in the persistent shell; after the tab is adopted by a new scope, the main-side
+ * owner is updated, but the renderer has no reliable sync channel (residency transition carries new values only when state
+ * changes). If prepare/release requires an exact seven-tuple match, screenshot
+ * surface matching for a restored tab always fails: prepare is silently ignored, so screenshots time out after 3s; release never matches
+ * and the pane gets stuck in a nearly transparent fixed layer (perceived as a frozen transparent overlay). So fall back to
+ * matching workspaceKey + sessionId + tabId; tabId is a globally unique UUID, and the first two prevent
+ * cross-workspace/session mixups; stale protection is handled by the main-side coordinator using the generation in the request.
  */
 function matchesTabLoose(
   tab: BrowserUseSidePaneTab,
@@ -64,8 +64,8 @@ export function findScreenshotSurfaceTab(
 }
 
 /**
- * prepare 已经被当前 renderer 接收后，browserGeneration 可能随 attach/restore 继续更新。
- * 此时仍需把同一个瞬时请求送到原 tab；main 会用请求中的 generation 做最终 stale 防护。
+ * After the current renderer has received prepare, browserGeneration may continue updating during attach/restore.
+ * Still send the same transient request to the original tab; main uses the generation in the request for final stale protection.
  */
 export function findScreenshotSurfaceTabForRender(
   tabs: readonly WorkspaceSidePaneTab[],
@@ -81,8 +81,8 @@ export function findScreenshotSurfaceTabForRender(
 }
 
 /**
- * prepare 接收匹配：严格 scope 命中优先；跨进程恢复的 tab 其 registry scope 元数据
- * 停留在旧进程值（见 matchesTabLoose 注释），必须降级匹配才能收到 prepare。
+ * Match prepare reception: prefer an exact scope match; for a tab restored across processes, registry scope metadata
+ * still has the old process values (see matchesTabLoose), so fall back to a looser match to receive prepare.
  */
 export function findScreenshotSurfaceTabForPrepare(
   tabs: readonly WorkspaceSidePaneTab[],
@@ -92,8 +92,8 @@ export function findScreenshotSurfaceTabForPrepare(
 }
 
 /**
- * 只保存已经匹配到当前 renderer tab registry 的瞬时准备请求。请求不进入 workspace store，
- * 从而不会把桌面合成同步扩散到 remote/replayable 的 task 状态。
+ * Store only transient prepare requests that match the current renderer tab registry. Requests do not enter the workspace store,
+ * so desktop compositing synchronization does not spread into remote/replayable task state.
  */
 export function useBrowserScreenshotSurfaceRequest(
   tabs: readonly WorkspaceSidePaneTab[],
@@ -105,9 +105,9 @@ export function useBrowserScreenshotSurfaceRequest(
 
   useEffect(() => {
     const disposePrepare = platform.onBrowserViewScreenshotSurfacePrepare?.((payload) => {
-      // browser-use operation 会更新 tab registry；旧 effect 以 tabs 为依赖，
-      // command 与 React effect cleanup 同时发生时会短暂移除 IPC listener，prepare 消息因此
-      // 永久丢失并让后台截图等满 30 秒。listener 只随 platform 生命周期注册，匹配时读取最新 tabs。
+      // A browser-use operation updates the tab registry; the old effect depended on tabs,
+      // so when a command and React effect cleanup happened together, the IPC listener was briefly removed and the prepare message
+      // was permanently lost, making a background screenshot wait the full 30 seconds. Register the listener for the platform lifecycle only and read the latest tabs when matching.
       if (!findScreenshotSurfaceTabForPrepare(tabsRef.current, payload)) {
         logger.debug("[browser-use] 忽略非当前 renderer tab 的截图 surface prepare", {
           requestId: payload.requestId,

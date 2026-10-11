@@ -8,24 +8,23 @@ import type {
 } from "@/app-shell/workflow-artifacts/presets/index.js";
 
 /**
- * 用户面产物在**几个表面**（run 侧板瓦片、完成卡瓦片、`workflow-artifact` tab、通知行药丸、中枢）
- * 共用的呈现规则。
+ * Shared presentation rules for user-facing artifacts across **several surfaces** (run side-panel tiles, completion-card tiles, `workflow-artifact` tab, notification-row pills, and hub).
  *
- * ⚠ 术语：这里的 artifact 是脚本经 `artifact.*` 发布给用户的产出，不是引擎内部
- * 「脚本顶层返回值」的同名词。
+ * ⚠ Terminology: artifact here means output the script publishes to users through `artifact.*`, not the engine's
+ * top-level script return value, which has a similar name.
  *
- * 抽出来的理由只有一条：**同一个产物在四处必须长得一样**。图标或 kind 词各写一遍，
- * 通知行的 chip 与它点开的 tab 迟早会用两枚不同的图标指同一件东西。
+ * There is one reason to extract this: **the same artifact must look the same across all four surfaces**. If icons or kind labels are defined separately,
+ * the chip in a notification row and the tab it opens will eventually use different icons for the same thing.
  */
 
-/** 四个预置看板成员。内容成员（file / markdown）有字节与版本，它们没有。 */
+/** Four preset board types. Content types (file / markdown) have bytes and versions; these do not. */
 const PRESET_KINDS = new Set<WorkflowRunArtifactKind>(["chart", "table", "metrics", "board"]);
 
 export function isArtifactPresetKind(kind: WorkflowRunArtifactKind): kind is ArtifactPresetKind {
   return PRESET_KINDS.has(kind);
 }
 
-/** kind 词的 message id。六个成员各一个词（文件 / 文档 / 图表 / 表格 / 指标 / 看板）。 */
+/** Message id for the kind label. One label for each of the six types (file / document / chart / table / metric / board). */
 export function artifactKindMessageId(kind: WorkflowRunArtifactKind): string {
   return `chat.toolCall.workflow.run.artifacts.kind.${kind}`;
 }
@@ -40,8 +39,8 @@ const KIND_ICON: Record<Exclude<WorkflowRunArtifactKind, "markdown">, typeof Fil
 };
 
 /**
- * kind 图标。`className` 由调用方给尺寸（卡片 size-4、chip size-3.5、tab 头部 size-4）——
- * 尺寸是各表面的密度决定的，图形本身不是。
+ * Icon for the kind. The caller supplies its size through `className` (card size-4, chip size-3.5, tab header size-4)—
+ * sizing depends on surface density, not on the icon itself.
  */
 export function ArtifactKindIcon({
   kind,
@@ -58,11 +57,11 @@ export function ArtifactKindIcon({
 }
 
 /**
- * 字节数的展示写法。
+ * Display formatting for byte counts.
  *
- * 刻意在本模块另写一份而不是 import `feedback/feedbackSubmissionJob.ts` 里那个同名函数：
- * 那是反馈上传作业模块，为了五行算术把整条上传链路拖进 app-shell 的依赖图不划算，
- * 而两者若漂移也不会有人受害（一个说文件多大，一个说传了多少）。
+ * Deliberately define this locally instead of importing the same-named function from `feedback/feedbackSubmissionJob.ts`:
+ * that module handles feedback-upload jobs, and pulling the entire upload dependency graph into app-shell for five lines of arithmetic is not worthwhile.
+ * Drift between the two has no impact (one reports file size, the other reports bytes sent).
  */
 export function formatArtifactBytes(bytes: number): string {
   if (!Number.isFinite(bytes) || bytes < 0) return "";
@@ -72,19 +71,18 @@ export function formatArtifactBytes(bytes: number): string {
 }
 
 /**
- * 这个 contentType 的正文是不是**人能读的文本**——「复制」动作的门。
+ * Whether the body for this contentType is **human-readable text**—the gate for the "Copy" action.
  *
- * `application/json` 单独列出来的理由：它按 IANA 归在 application/ 下，但脚本用
- * `artifact.file("summary", "out/report.json")` 交出来的东西，用户想要的就是把它复制走。
- * 与正文分派用的 `textLanguageFor` 是两件事：那个决定用哪个 code viewer，这个只决定
- * 「能不能整份复制」。
+ * `application/json` is listed separately because IANA classifies it under application/, but when a script delivers
+ * `artifact.file("summary", "out/report.json")`, users want to copy its contents. This differs from `textLanguageFor`, which dispatches the body
+ * to a code viewer; this function decides only whether the entire body can be copied.
  */
 export function isTextArtifactContentType(contentType: string | undefined): boolean {
   if (contentType === undefined) return false;
   return contentType.startsWith("text/") || contentType === "application/json";
 }
 
-/** 文件的类型徽字：工作区原路径的扩展名优先（`out/book.pdf` → `PDF`），没有路径时退回 MIME 子类型。 */
+/** File-type badge: prefer the extension from the original workspace path (`out/book.pdf` → `PDF`), falling back to the MIME subtype when there is no path. */
 export function artifactFileBadge(artifact: {
   sourcePath?: string;
   contentType?: string;
@@ -106,9 +104,9 @@ export function artifactFileBadge(artifact: {
 }
 
 /**
- * 药丸 / 瓦片说明行里的等宽细节：文件 `PDF · 4.0 KB`，文档只有大小，预置看板是喂进来的条数
- * （它的「大小」是数据量；条数不知道时缺席）。侧板瓦片与完成卡共用——两处各写一份，迟早一处
- * 说了徽字另一处没说。返回 null 即调用方不画细节槽。
+ * Monospaced detail for pill/tile captions: file `PDF · 4.0 KB`, document size only, preset board count of input rows
+ * (its "size" is data volume; omit the count when unknown). Shared by side-panel tiles and completion cards—if defined twice, one will eventually
+ * show a badge that the other omits. A null result means the caller should not render the detail slot.
  */
 export function ArtifactDetail({
   artifact,
@@ -144,8 +142,8 @@ export function ArtifactDetail({
 }
 
 /**
- * 说明行细节的**纯文本**写法（`PDF · 4.0 KB` / `4 items`）：迷你瓦片把细节挪进 tooltip，
- * 交付物行把它写进 `kind · size` 那一行。与 `ArtifactDetail` 同一套规则，只是没有 testid。
+ * **Plain-text** formatting for caption details (`PDF · 4.0 KB` / `4 items`): compact tiles move details into the tooltip,
+ * while deliverable rows put them in the `kind · size` line. Same rules as `ArtifactDetail`, but without a testid.
  */
 export function artifactDetailText(
   artifact: {
@@ -167,9 +165,9 @@ export function artifactDetailText(
 }
 
 /**
- * 交付物：打了 `primary` 旗子的那一件；没有旗子而清单
- * 只有一件时，那一件就是交付物——**单件规则只在 UI 上成立**，协议与引擎从不推断旗子。其余情形
- * 没有交付物：发布失败的 primary 不由别的产物顶替，两件以上无旗子就是今天的画法。
+ * Deliverable: the item marked `primary`; if there is no flag and the list
+ * has only one item, that item is the deliverable—**the single-item rule exists only in the UI**; protocol and engine never infer the flag. In all other cases
+ * there is no deliverable: a failed primary is not replaced by another artifact, and lists with multiple unflagged items use the current layout.
  */
 export function resolvePrimaryArtifact<T extends { primary?: true }>(
   artifacts: readonly T[],
@@ -180,8 +178,8 @@ export function resolvePrimaryArtifact<T extends { primary?: true }>(
 }
 
 /**
- * 交付物带头，其余保持原顺序。CLI 的三处投影（journal → 端口、通知清单、GetWorkflowRun）已经
- * 这样排过；这里是**活投影那条路**（`workflowRuns[].artifacts` 按发布顺序 upsert）唯一的排序点。
+ * Put the deliverable first and preserve the order of the rest. The CLI's three projections (journal → port, notification manifest, GetWorkflowRun) already
+ * use this order; this is the only sorting point for the **live projection path** (`workflowRuns[].artifacts` upserted in publish order).
  */
 export function orderArtifactsPrimaryFirst<T extends { primary?: true }>(
   artifacts: readonly T[],
@@ -191,15 +189,15 @@ export function orderArtifactsPrimaryFirst<T extends { primary?: true }>(
   return [artifacts[index]!, ...artifacts.slice(0, index), ...artifacts.slice(index + 1)];
 }
 
-/** 卡片标题：作者写的 title 优先，缺席退回 id（facade 的缺省 title 本来就是 id）。 */
+/** Card title: prefer the author's title; if absent, fall back to id (the facade's default title is already the id). */
 export function artifactDisplayTitle(artifact: { id: string; title?: string }): string {
   return artifact.title?.trim() || artifact.id;
 }
 
-/** chip 上的标题截断长度。 */
+/** Title truncation length for chips. */
 const ARTIFACT_CHIP_TITLE_MAX_LENGTH = 24;
 
-/** 通知行 / 中枢行一次最多摆几枚 chip，其余折进「+N」。 */
+/** Maximum chips shown inline in notification/hub rows; fold the rest into "+N". */
 export const ARTIFACT_CHIP_MAX_VISIBLE = 3;
 
 export function truncateArtifactChipTitle(title: string): string {
@@ -209,8 +207,8 @@ export function truncateArtifactChipTitle(title: string): string {
 }
 
 /**
- * 喂给四个预置渲染器的三句译文。渲染器自己不查 i18n（它要能被侧板 / tab / 中枢复用），
- * 所以每个表面在自己的 intl 语境里造一份。
+ * Three translated labels passed to the four preset renderers. Renderers do not look up i18n themselves (they are reused by side panels/tabs/hub),
+ * so each surface creates its own labels in its intl context.
  */
 export function buildPresetLabels(
   formatMessage: (descriptor: { id: string }, values?: Record<string, string>) => string,
@@ -229,11 +227,11 @@ export function buildPresetLabels(
 }
 
 /**
- * 该产物能不能在**本地文件系统**上被定位（「在工作区显示」与 html 的「在浏览器中打开」的门）。
+ * Whether this artifact can be located on the **local filesystem** (the gate for "Show in Workspace" and the HTML "Open in Browser" action).
  *
- * 判据与 `shouldOpenAssistantHtmlInBrowser` 同源：远程 workspace（SSH / WSL / Docker）
- * 的路径在本机不存在，手机远控也没有文件树可以跳。`sourcePath` 缺席则连路径都没有——
- * markdown 产物与预置看板天生就没有出处。
+ * Uses the same criterion as `shouldOpenAssistantHtmlInBrowser`: paths in remote workspaces (SSH / WSL / Docker)
+ * do not exist locally, and mobile remote control has no file tree to navigate. If `sourcePath` is absent, there is no path at all—
+ * Markdown artifacts and preset boards have no source path by design.
  */
 export function canRevealArtifactInWorkspace(params: {
   sourcePath?: string;
@@ -248,9 +246,9 @@ export function canRevealArtifactInWorkspace(params: {
 }
 
 /**
- * 「作为文件打开」副本的文件名。`markdown` 恒为 `<id>.md`（id 已限定在 `[A-Za-z0-9_.-]`）；
- * `file` 取**这一版**的 `sourcePath` 基名——扩展名决定系统用哪个 App 打开，而同一个 id 的
- * 不同版本可以来自不同路径。拿不到出处时退回 id。
+ * Filename for the “Open as file” copy. `markdown` is always `<id>.md` (`id` is restricted to `[A-Za-z0-9_.-]`);
+ * `file` uses the basename of this version’s `sourcePath`—the extension determines which app the system opens, and the same id can
+ * come from different paths in different versions. Fall back to the id when the source is unavailable.
  */
 export function artifactOpenAsFileName(
   artifact: {

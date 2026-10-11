@@ -1,18 +1,19 @@
 /**
- * 用户面**产物**的两条宿主读面。
+ * The two host read surfaces for user-facing **artifacts**.
  *
- * ⚠ 这里的 artifact 是脚本**发布给用户看**的交付物（文件 / markdown / 预置看板），不是
- * `RunSettlement.artifact`（脚本的顶层返回值）。两义并存。
+ * ⚠ Here, an artifact is a deliverable **published by a script for users** (file / markdown / preset board), not
+ * `RunSettlement.artifact` (the script's top-level return value). Both meanings coexist.
  *
- * 为什么住在 `JournalStorePort` **之外**：与 `listRuns` 逐字同一条论证——引擎只按
- * `listNodes` 走自己那条 ordinal 链，从不为「本 run 有哪些产物」「某个看板收到过哪些条目」
- * 负责。把它们加进领域端口，等于要求每个 journal 实现（含引擎自带的内存实现）实现一件
- * 引擎不做的事。消费方按能力探测（`typeof journal.listArtifactRows === "function"`）
- * 决定读面可用性，签名的单一事实源是 `DwfRunIntrospectionQueries`。
+ * Why this lives **outside** `JournalStorePort`: the reasoning is exactly the same as for `listRuns`—the engine
+ * follows its own ordinal chain through `listNodes` and is never responsible for “which artifacts this run has”
+ * or “which items a board received.” Adding these to the domain port would require every journal implementation
+ * (including the engine's in-memory implementation) to implement behavior the engine does not use. Consumers
+ * probe capability (`typeof journal.listArtifactRows === "function"`) to determine whether the read surface is
+ * available; `DwfRunIntrospectionQueries` is the single source of truth for signatures.
  *
- * 为什么住在 dwf-journal.ts **之外**：两条查询只要一个 db 句柄（与 run/actor/node/event
- * 的写入-读取无共享状态），而各自带着一大段「取数源为何是这张表、排序为何是这个」的论证。
- * 与 dwf-journal-codecs.ts 同一种分法。
+ * Why this lives **outside** dwf-journal.ts: both queries need only a db handle and share no state with run/actor/node/event
+ * reads or writes, while each carries a substantial explanation of its data source and ordering. This follows the
+ * same separation as dwf-journal-codecs.ts.
  */
 
 import type { DatabaseSync } from "node:sqlite";
@@ -22,39 +23,39 @@ import { listArtifactFieldItems } from "./dwf-journal-fields.js";
 import { pageEventRows } from "./dwf-journal-pages.js";
 
 /**
- * {@link listArtifactItems} 的分页袋（游标 = journal sequence）。两道界的规则见
- * dwf-journal-pages.ts：条数到 `limit`、或再加一条就超过 `maxBytes` 时收尾，第一条总是带上。
+ * Pagination options for {@link listArtifactItems} (cursor = journal sequence). See dwf-journal-pages.ts for the two limits:
+ * stop at `limit` items or when adding the next item would exceed `maxBytes`; always include the first item.
  *
- * 两者都**必填**，且存储层精确兑现、不加自己的天花板：页大小的缺省与钳制归网关，一条无界的
- * 取数查询是这里唯一不该有的形状。`hasMore` 由这里判定（收尾处后面还有没有行），调用方不必
- * 再靠「多取一条」去猜。
+ * Both are **required**, and the storage layer applies them exactly without adding its own ceiling: the gateway chooses and clamps page size; an unbounded
+ * read query is the one shape this layer must never issue. This layer determines `hasMore` (whether rows remain after the page), so callers do not need
+ * to guess by fetching an extra item.
  */
 export interface DwfArtifactItemsQuery {
   /**
-   * 只返回 sequence **严格大于**该值的条目。游标是「已读到的最后一个 sequence」而不是偏移量，
-   * 与 `listEvents` 逐字同一套语义——看板 hook 用的正是它已经在用的那个游标。
+   * Return only entries with a sequence **strictly greater** than this value. The cursor is the last sequence
+   * read, not an offset, with exactly the same semantics as `listEvents`; the board hook already uses this cursor.
    */
   afterSequence?: number;
   limit: number;
   maxBytes: number;
   /**
-   * 只取这些字段路径（dwf-journal-fields.ts），每个值至多 `maxValueBytes`；给了它，条目带
-   * `fields` 而不带 `item`，`maxBytes` 按取出的字段值计。缺省 = 整条 item。
+   * Select only these field paths (dwf-journal-fields.ts), with each value capped at `maxValueBytes`; when present, entries include
+   * `fields` instead of `item`, and `maxBytes` counts the selected field values. Absent means the entire item.
    */
   fields?: { paths: readonly string[]; maxValueBytes: number };
 }
 
 /**
- * 一条喂给某个预置产物的 `report` 条目，**按 journal sequence 定位**。
+ * A `report` entry for a preset artifact, **identified by journal sequence**.
  *
- * 为什么键是 sequence 而不是 (siteId, ordinal)：UI 的增量取数游标就是 journal 那一套
- * sequence（`afterSequence`，同运行事件查询的形状），而 dwf_node 上没有它。站点坐标仍然随行返回——
- * 揭示动画要一个跨重取稳定的 React key，而 sequence 与坐标都满足。
+ * Why the key is sequence rather than (siteId, ordinal): the UI's incremental-read cursor uses journal sequence
+ * (`afterSequence`), matching the run-event query, but dwf_node has no sequence. Return the site coordinates too;
+ * the reveal animation needs a React key stable across refetches, and both sequence and coordinates provide one.
  */
 export interface DwfArtifactItem {
-  /** 被报告的 item 原值（任意 JSON；`REPORT_CAPS` 在写入侧已保证有界）。只取字段时缺席。 */
+  /** Original reported item (arbitrary JSON; `REPORT_CAPS` bounds it on write). Absent when selecting fields only. */
   item?: unknown;
-  /** 只取字段时：路径 → 值，走不通的路径不在表里。 */
+  /** Fields-only selection: path → value; paths that cannot be resolved are omitted. */
   fields?: Record<string, unknown>;
   ordinal: number;
   sequence: number;
@@ -62,15 +63,15 @@ export interface DwfArtifactItem {
 }
 
 /**
- * 本 run 的**产物行**（`kind = 'artifact'`），按落库先后（`order by id`）。
+ * **Artifact rows** for this run (`kind = 'artifact'`), ordered by insertion (`order by id`).
  *
- * 一行 = 一个版本（同 id 再发布是新行、历史保留），所以调用方按 `artifactId` 分组、
- * 从每行的 `result`（`ArtifactVersionRecord`）取版本。排序是**插入序**而不是
- * `order by artifact_id, ordinal`：版本的先后就是落库的先后，而同一个 id 的行天然连续
- * 只是巧合——把展示顺序寄托在它上面，一个交错发布的脚本就会让版本看起来乱序。
+ * One row = one version (publishing the same id again creates a new row and preserves history), so callers group
+ * by `artifactId` and read the version from each row's `result` (`ArtifactVersionRecord`). Ordering is **insertion
+ * order**, not `order by artifact_id, ordinal`: version order is insertion order, and rows for the same id only
+ * happen to be contiguous. Relying on that coincidence would make versions appear out of order for an interleaving script.
  *
- * 失败的发布同样在结果里（`status: "failed"` + `error`）：读面要能说出「这次发布没成
- * 功」，把它筛掉等于让一个用户可见的失败在每张表面上都不存在。
+ * Failed publications are included too (`status: "failed"` + `error`): the read surface must be able to report
+ * “this publication failed.” Filtering them out would make a user-visible failure disappear from every surface.
  */
 export function listArtifactRows(db: DatabaseSync, runId: string): NodeRecord[] {
   const rows = db
@@ -80,10 +81,10 @@ export function listArtifactRows(db: DatabaseSync, runId: string): NodeRecord[] 
 }
 
 /**
- * 每个预置产物被打了多少条标签 report（看板的数据量，`itemCount`）。`group by` 下推 SQLite，
- * `dwf_node_artifact_idx (run_id, artifact_id)` 正是这个形状——行一条都不读出来。此前宿主把整张
- * 节点表（连同每条 report item）读进内存再在 JS 里数，一个报了 65,536 条的 run 每查一次清单就
- * 解码一遍全部 item（docs/execution-engine.md「Reading the journal」）。
+ * Count tagged reports for each declared artifact (`itemCount`, the dashboard's item count). Push `group by` down to SQLite;
+ * `dwf_node_artifact_idx (run_id, artifact_id)` is designed for this query, so not a single row needs to be read. Previously the host loaded the entire
+ * node table (including every report item) into memory and counted in JS; listing artifacts for a run with 65,536 reports decoded every item
+ * on every query (docs/execution-engine.md, “Reading the journal”).
  */
 export function countTaggedReports(db: DatabaseSync, runId: string): ReadonlyMap<string, number> {
   const rows = db
@@ -99,20 +100,20 @@ export function countTaggedReports(db: DatabaseSync, runId: string): ReadonlyMap
 }
 
 /**
- * 喂给某个预置产物的 `report` 条目，按 journal sequence 升序分页（看板的取数面）。
+ * Paginate `report` entries for a preset artifact in ascending journal sequence (the board's read surface).
  *
- * 取数源是 **dwf_event 而不是 dwf_node**，尽管两张表都记了同一批标签 report。理由是游标：
- * UI 以事件日志那一套 `sequence` 增量拉取，而 dwf_node 上没有 sequence，只有一条
- * (siteId, ordinal) 的复合坐标——在它上面伪造一个全序，等于给同一批数据造第二套游标语义。
- * 于是筛选下推成 `json_extract(payload_json, '$.artifactId') = ?`，`dwf_event_artifact_idx`
- * （0029 的表达式索引）正是这个形状。
+ * Read from **dwf_event rather than dwf_node**, even though both tables record the same tagged reports. The cursor
+ * determines the choice: the UI incrementally fetches using event-log `sequence`, which dwf_node lacks; it has
+ * only a composite (siteId, ordinal) coordinate. Inventing a total order from that would create a second cursor
+ * semantic for the same data. The filter can therefore be pushed down as
+ * `json_extract(payload_json, '$.artifactId') = ?`, which matches the expression index `dwf_event_artifact_idx` (0029).
  *
- * `type = 'report'` 也入条件：`type` 列是为下推而存的冗余（payload 里也有一份）。少了它，
- * 一条恰好带 `artifactId` 的别种事件（今天只有 `artifact-published`，它带的是嵌套的
- * `artifact.id` 而不是顶层 `artifactId`，但明天未必）会混进看板的数据流。
+ * Include `type = 'report'` in the condition too: the `type` column is duplicated for pushdown (it also appears
+ * in the payload). Without it, another event carrying `artifactId` could enter the board stream. Today only
+ * `artifact-published` exists and uses nested `artifact.id`, not top-level `artifactId`, but that may change.
  *
- * 未打标签的 report 天然被排除：它们的 payload 里根本没有 `artifactId` 键，`json_extract`
- * 给 NULL，而 SQL 的 `= ?` 不匹配 NULL。
+ * Untagged reports are naturally excluded: their payloads have no `artifactId` key, so `json_extract` returns
+ * NULL and SQL `= ?` does not match NULL.
  */
 export function listArtifactItems(
   db: DatabaseSync,
@@ -134,8 +135,8 @@ export function listArtifactItems(
     params: [artifactId],
   });
   const items = rows.map((row) => {
-    // payload 是被 appendEvent 原样 stringify 的 `RunEvent`，因此这里的窄形状与
-    // `{ type: "report"; instance: InstanceRef; item: unknown; artifactId?: string }` 同源。
+    // The payload is the `RunEvent` stringified as-is by appendEvent, so this narrow shape shares the same source as
+    // `{ type: "report"; instance: InstanceRef; item: unknown; artifactId?: string }`.
     const payload = JSON.parse(row.payload_json) as {
       instance: { ordinal: number; siteId: string };
       item: unknown;

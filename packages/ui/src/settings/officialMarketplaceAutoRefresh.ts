@@ -1,16 +1,16 @@
-// 商店页「目录自动刷新」（Catalog Auto-Refresh）的节流判据。
+// Throttling criteria for “Catalog Auto-Refresh” on the marketplace page.
 //
-// 需求：每次进入商店页都默认刷新 ZCode 官方市场，让 CDN 新上架插件无需手动点刷新即可见；
-// 但要节流（距上次成功刷新不足窗口则跳过）与防抖（刷新失败后、请求仍在飞时不重复触发）。
+// Requirement: refresh the official ZCode marketplace by default on every page entry so newly published CDN plugins appear without a manual refresh;
+// apply throttling (skip if the last successful refresh is within the window) and debounce (do not trigger again after failure while the request is still in flight).
 //
-// 判据 = now - max(lastUpdated, lastAttemptAt) >= 窗口。
-// - lastUpdated 来自 agent 持久化的 known_marketplaces.json，任何成功刷新（手动、会话推荐插件
-//   路径）都会重写它，因此天然跨窗口、跨重启共享，手动刷新后自动窗口随之重置。
-// - lastAttemptAt 是本模块内存中的「发起时间」。UI 侧 PluginMarketplaceSummary 拿不到失败时间戳，
-//   纯靠 lastUpdated 会让离线用户每次进入都重试一次长超时请求；发起时立刻记录尝试时间，
-//   同时挡住「刚失败过」与「上一次还在飞」两种重复。进程重启清零是可接受的（重启后允许再试一次）。
-// - 商店页每次进入都是重新挂载（key 带 pluginStoreOpenVersion），组件内 ref 无法承载节流状态，
-//   所以放在模块级。
+// Criteria = now - max(lastUpdated, lastAttemptAt) >= window.
+// - lastUpdated comes from the agent's persisted known_marketplaces.json; every successful refresh (manual or from the session-recommended plugin
+//   path) rewrites it, so it is naturally shared across windows and restarts, and manual refresh resets the automatic window too.
+// - lastAttemptAt is the in-memory “start time” in this module. The UI's PluginMarketplaceSummary has no failure timestamp;
+//   relying only on lastUpdated would make offline users retry a long-timeout request every time they enter. Record the attempt immediately when starting,
+//   preventing both “just failed” and “previous request still in flight” repeats. Resetting it on process restart is acceptable (a restart allows another attempt).
+// - The marketplace page remounts on every entry (key includes pluginStoreOpenVersion), so a component ref cannot hold throttle state;
+//   keep it at module scope.
 
 export const OFFICIAL_MARKETPLACE_AUTO_REFRESH_INTERVAL_MS = 10 * 60_000;
 
@@ -33,8 +33,8 @@ export function shouldAutoRefreshMarketplace(params: {
 }
 
 /**
- * 判定是否应自动刷新，通过则立刻占位（记录本次尝试时间）并返回 true。
- * 判定与占位一步完成，避免同一挂载期间 effect 重跑或快速进出商店页时重复发起。
+ * Determine whether to refresh automatically; if yes, claim the slot immediately (record this attempt time) and return true.
+ * Determine and claim in one step to avoid duplicate requests if the effect reruns during the same mount or the user enters/exits the marketplace quickly.
  */
 export function claimMarketplaceAutoRefresh(
   marketplaceId: string,

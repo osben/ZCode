@@ -9,7 +9,7 @@ import type { McpAppsAppToolCallResult, McpAppsAppToolDescriptor } from "@zcode/
 export interface ZCodeAgentWorkspaceTarget {
   workspacePath: string;
   workspaceIdentity?: string;
-  /** 远程 workspace 的运行时会话身份；只用于隔离/路由，不能替代 workspacePath。 */
+  /** Runtime session identity for a remote workspace; used only for isolation/routing and cannot replace workspacePath. */
   remoteSessionId?: string;
 }
 
@@ -96,20 +96,20 @@ export interface ZCodeAgentSetPluginEnabledParams extends ZCodeAgentWorkspaceTar
   scope?: "user" | "workspace";
 }
 
-// Plugin 对话引用 catalog：
-// 带 sessionId → session-owned 冻结 catalog（必须路由到持有该 session 的 workspace client）；
-// 不带 → workspace 当前 catalog（新建草稿 Picker）。
+// Plugin conversation reference catalog:
+// with sessionId → session-owned frozen catalog (must route to the workspace client that owns the session);
+// without it → current workspace catalog (new draft Picker).
 export interface ZCodeAgentPluginReferenceCatalogParams extends ZCodeAgentWorkspaceTarget {
   sessionId?: string;
 }
 
-// Composer Skill catalog：与 Plugin 引用相同，以 sessionId 区分 workspace 当前目录和
-// resident Session runtime 快照；不参与 Settings 管理目录。
+// Composer Skill catalog: like Plugin references, sessionId distinguishes the current workspace directory from
+// the resident Session runtime snapshot; it does not use the directory managed by Settings.
 export interface ZCodeAgentSkillReferenceCatalogParams extends ZCodeAgentWorkspaceTarget {
   sessionId?: string;
 }
 
-/** 插件 UI：UI 发起的 `ui://` 资源读取。 */
+/** Plugin UI: a `ui://` resource read initiated by the UI. */
 export interface ZCodeAgentReadMcpResourceParams extends ZCodeAgentWorkspaceTarget {
   instance: import("@zcode/shared/mcp-apps").McpAppInstance;
   sessionId: string;
@@ -118,10 +118,10 @@ export interface ZCodeAgentReadMcpResourceParams extends ZCodeAgentWorkspaceTarg
   uri: string;
 }
 
-/** 插件 UI 页面发起的 `resources/read`；参数与 readMcpResource 同形，结果受 8 MiB 与 mimeType 白名单约束。 */
+/** `resources/read` initiated from a plugin UI page; parameters mirror readMcpResource, and results are bounded by the 8 MiB limit and the mimeType allowlist. */
 export type ZCodeAgentReadMcpResourceForUiParams = ZCodeAgentReadMcpResourceParams;
 
-/** 插件 UI：UI 回调本插件工具；不进审批流，归属由 agent 侧 catalog fail closed。 */
+/** Plugin UI: the UI calls back into this plugin's tools; no approval flow, and ownership fails closed via the agent-side catalog. */
 export interface ZCodeAgentCallMcpToolForUiParams extends ZCodeAgentWorkspaceTarget {
   instance: import("@zcode/shared/mcp-apps").McpAppInstance;
   sessionId: string;
@@ -129,10 +129,10 @@ export interface ZCodeAgentCallMcpToolForUiParams extends ZCodeAgentWorkspaceTar
   serverName: string;
   toolName: string;
   arguments?: Record<string, unknown>;
-  /** 宿主生成的调用 id，配合 cancelMcpToolCallForUi。 */
+  /** Host-generated call id, paired with cancelMcpToolCallForUi. */
   callId: string;
 }
-/** 插件 UI 页面发起的 resources/list、resources/templates/list、subscribe、unsubscribe。 */
+/** resources/list, resources/templates/list, subscribe, and unsubscribe initiated from a plugin UI page. */
 export interface ZCodeAgentListMcpResourcesForUiParams extends ZCodeAgentWorkspaceTarget {
   instance: import("@zcode/shared/mcp-apps").McpAppInstance;
   sessionId: string;
@@ -140,7 +140,7 @@ export interface ZCodeAgentListMcpResourcesForUiParams extends ZCodeAgentWorkspa
   serverName: string;
   cursor?: string;
 }
-/** App-Provided Tools：实例身份 = 会话 + 沙箱作用域 + 代际。 */
+/** App-Provided Tools: instance identity = session + sandbox scope + generation. */
 export interface ZCodeAgentAppToolInstanceForUiParams extends ZCodeAgentWorkspaceTarget {
   instance: import("@zcode/shared/mcp-apps").McpAppInstance;
   sessionId: string;
@@ -182,7 +182,7 @@ export interface ZCodeAgentResolveSuggestedPluginReferenceParams extends ZCodeAg
   deliveryKind: "desktop-continuous" | "web-remote-replayable";
 }
 
-// ---- 定时任务(automation)管理参数 ----
+// ---- Scheduled task (automation) management parameters ----
 
 export interface ZCodeAgentCreateAutomationParams extends ZCodeAgentWorkspaceTarget {
   title: string;

@@ -4,7 +4,7 @@ import { RemoteServiceAccess } from "./remoteServiceAccess.js";
 import { isRendererProductionBuild } from "./rendererLoggingEnv.js";
 
 function logMessagePortDebug(message: string): void {
-  // 生产构建下 renderer 连接日志不输出，避免窗口启动和重连路径产生同步 console 成本。
+  // Renderer connection logs are disabled in production to avoid synchronous console overhead during startup and reconnection.
   if (isRendererProductionBuild()) {
     return;
   }
@@ -17,10 +17,10 @@ export interface MessagePortServiceConnection {
 }
 
 /**
- * 创建一个带明确生命周期的 MessagePort service connection。
+ * Create a MessagePort service connection with an explicit lifecycle.
  *
- * scoped remote session 换代时必须同时释放 ChannelClient 和底层 port，
- * 否则旧 attachment 上的挂起 RPC 无法 settle，并会继续占用上层去重状态。
+ * When a scoped remote session is replaced, release both ChannelClient and the underlying port.
+ * Otherwise, pending RPC calls on the old attachment cannot settle and continue to occupy the deduplication state above.
  */
 export function createMessagePortServiceConnection(
   port: MessagePort,
@@ -49,10 +49,10 @@ export function createMessagePortServiceConnection(
 }
 
 /**
- * 通过 MessagePort 连接服务。
+ * Connect to a service through MessagePort.
  *
- * Desktop 模式下，utilityProcess（或 main 进程的远程代理）通过 MessagePort
- * 暴露 ChannelServer，renderer 用此函数建立 ChannelClient 连接。
+ * In Desktop mode, utilityProcess (or a remote proxy in the main process) exposes ChannelServer
+ * through MessagePort, and the renderer uses this function to establish a ChannelClient connection.
  */
 export function connectViaMessagePort(port: MessagePort): IServiceAccessor {
   return createMessagePortServiceConnection(port).services;

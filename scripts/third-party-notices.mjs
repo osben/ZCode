@@ -7,7 +7,7 @@ export const noticesFileName = "THIRD-PARTY-NOTICES.md";
 const hash = (bytes) => createHash("sha256").update(bytes).digest("hex");
 
 export async function readThirdPartyNotices(root = repositoryRoot) {
-  // 开发和构建只消费已有声明；输入新鲜度由显式 license 检查负责，避免修改 skill 就阻断构建。
+  // Development and builds consume existing notices; the explicit license check validates input freshness so skill edits do not block builds.
   return readFile(resolve(root, noticesFileName));
 }
 
@@ -18,7 +18,7 @@ export async function readVerifiedNotices(root = repositoryRoot, { requireComple
   if (hash(bytes) !== manifest.noticesSha256)
     throw new Error("Third-party notices changed; regenerate the inventory");
   for (const [file, expected] of Object.entries(manifest.inputs)) {
-    // 工作区文本允许 Windows checkout 的 CRLF；原始许可和发行声明另用字节哈希校验。
+    // Workspace text may use CRLF in Windows checkouts; raw licenses and release notices are validated separately with byte hashes.
     if (hash((await readFile(resolve(root, file), "utf8")).replaceAll("\r\n", "\n")) !== expected) {
       throw new Error(`Third-party input changed: ${file}. Run node scripts/licenses.mjs notices`);
     }
@@ -53,7 +53,7 @@ export async function readNodeNotices(version, root = repositoryRoot) {
 export async function stageNodeNotices(directory, version, root = repositoryRoot) {
   const { source, bytes } = await readNodeNotices(version, root);
   await mkdir(directory, { recursive: true });
-  // 修复：复用二进制缓存时也必须刷新声明；只复制 bin/node 会丢掉内嵌库条款。
+  // Fix: refresh notices when reusing a binary cache; copying only bin/node would omit embedded library terms.
   await writeFile(resolve(directory, "LICENSE.node.txt"), bytes);
   await writeFile(resolve(directory, "NODE-SOURCES.json"), `${JSON.stringify(source, null, 2)}\n`);
   return resolve(directory, "LICENSE.node.txt");
@@ -74,7 +74,7 @@ export async function stageElectronNotices(extractedRoot, resources, version) {
     await writeFile(resolve(directory, name), bytes);
     records.push({ file: name, sha256: hash(bytes) });
   }
-  // 修复：取实际目标平台的解包材料，避免交叉编译误用宿主 Electron 的许可证集合。
+  // Fix: use unpacked materials for the actual target platform so cross-compilation does not use the host Electron license set.
   await writeFile(
     resolve(directory, "SOURCES.json"),
     `${JSON.stringify({ version, origin: "electron-builder target distribution", records }, null, 2)}\n`,
@@ -84,7 +84,7 @@ export async function stageElectronNotices(extractedRoot, resources, version) {
 export async function readNativeSearchNotices(root = repositoryRoot, { verify = false } = {}) {
   const inventoryPath = resolve(root, "third-party/native-search/sources.json");
   const inventory = JSON.parse(await readFile(inventoryPath, "utf8"));
-  // 原生材料生成时显式核验；准备缓存、构建和打包不把过期登记当作门禁。
+  // Verify explicitly when generating native materials; cache preparation, builds, and packaging do not gate on stale registrations.
   if (verify) {
     for (const [file, expected] of Object.entries(inventory.inputs)) {
       if (hash(await readFile(resolve(root, file))) !== expected)
@@ -123,12 +123,12 @@ export async function stageNativeSearchNotices(
   root = repositoryRoot,
   { builtFromSource = false, origin } = {},
 ) {
-  // 内网镜像与仓库归档是同一 SHA-256 的输入字节，来源标签由调用方如实记录；默认仍为仓库归档。
+  // The intranet mirror and repository archive provide input bytes with the same SHA-256. The caller records the source label accurately; the default remains the repository archive.
   const binaryOrigin = origin ?? (builtFromSource ? "source-build" : "repository-archive");
   const { inventory, bytes } = await readNativeSearchNotices(root);
   for (const artifact of plan.artifacts) {
     const directory = dirname(artifact.binaryPath);
-    // 缓存命中也重写通知，避免旧二进制缓存继续缺失版权材料。
+    // Rewrite notices even on a cache hit so an old binary cache does not keep missing copyright materials.
     await writeFile(resolve(directory, "THIRD-PARTY-NOTICES.txt"), bytes);
     await writeFile(
       resolve(directory, "SOURCES.json"),

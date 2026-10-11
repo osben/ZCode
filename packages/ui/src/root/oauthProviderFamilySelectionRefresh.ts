@@ -68,8 +68,8 @@ async function refreshAccountProviderAccesses(params: {
         const resolved = resolveAccountProviderInspectionAccess(view, providerId);
         if (!resolved) return [];
         const access = resolved.access;
-        // 登录/启动检查属于套餐只读查询。静态 mode 会经执行期 current 解析，
-        // 把未选中或 pending 的 Start 当作当前 Coding 查询；此处必须明确查询套餐自身。
+        // Login/startup checks are read-only plan queries. Static mode is resolved through runtime current,
+        // which can treat an unselected or pending Start plan as the current Coding plan; explicitly query the plan itself here.
         const query: ZCodeProviderAccountAccess | ZCodeAccountAccess =
           access.mode === "start-plan" || access.mode === "individual-coding-plan"
             ? { type: "zhipu-account", family: access.accountType, planKind: access.mode }
@@ -106,7 +106,7 @@ export async function refreshLatestModelProviderFamilySelectionAfterLogin(params
 
   const familySpec = resolveModelProviderFamilySpecFromOAuth(params.provider);
   if (!familySpec) return null;
-  // 登录查询也有网络等待，条件写入必须基于查询前的意图，而非回包后的选择。
+  // Login queries also wait on the network, so conditional writes must use intent from before the query rather than the selection after the response.
   const currentSettings = await params.services.settingService.get();
   const expectedAccountSettings = {
     providerFamilyDomain: currentSettings.providerFamilyDomain,
@@ -125,7 +125,7 @@ export async function refreshLatestModelProviderFamilySelectionAfterLogin(params
     reason: "oauth-login-entitlement",
   });
   if (!refreshed) return null;
-  // 登录后的刷新也可能仍在等待旧 Team 补组织；未知不是可按排序重选的首次连接。
+  // A post-login refresh may still be waiting for the old Team's organization details; unknown is not a first connection that may be reselected by sorting.
   if (
     !currentSettings.providerFamilyConnectionSelections?.[domain] &&
     codingPlanProviderIds.every((id) => states.get(id)?.availability === "unknown")
@@ -145,7 +145,7 @@ export async function refreshLatestModelProviderFamilySelectionAfterLogin(params
     }),
     getEnterprisePricingProductsOrEmpty(params.services, domain),
   ]);
-  // 旧 Start 连接只保留读取，不以权益失效为由删除或自动替换成付费连接。
+  // Keep old Start connections read-only; do not delete or automatically replace them with paid connections because entitlement has expired.
   const savedSelection = currentSettings.providerFamilyConnectionSelections?.[domain];
   if (savedSelection?.kind === "start-plan") return savedSelection;
   const selection = resolveAutomaticModelProviderFamilyConnectionSelection({
@@ -188,8 +188,8 @@ export async function refreshRestoredOAuthProviderFamilyAfterStartup(params: {
   if (settings.providerFamilyDomain && settings.providerFamilyDomain !== domain) return null;
   const saved = settings.providerFamilyConnectionSelections?.[domain];
   if (saved) {
-    // 原因：启动时的不可用不是本次运行中发生的失效，不能替用户更换已保存连接。
-    // 刷新账号事实仍照常执行；只有后续真实失效提示的点击动作允许选择替代套餐。
+    // Rationale: unavailability at startup is not an expiration that occurred during this run, so do not replace the saved connection for the user.
+    // Continue refreshing account facts as usual; only a later click on a genuine expiration notice may select a replacement plan.
     try {
       await params.services.providerSettingsService.refresh("oauth-restore-entitlement");
     } catch (error) {
@@ -198,7 +198,7 @@ export async function refreshRestoredOAuthProviderFamilyAfterStartup(params: {
     return saved;
   }
   try {
-    // 仅真正没有选择才沿用首次初始化；该入口保留旧连接待迁移的 unknown 保护及条件写入。
+    // Use first-time initialization only when there is truly no selection; this entry point preserves the unknown-state guard for old connections awaiting migration and conditional writes.
     const selection = await refreshLatestModelProviderFamilySelectionAfterLogin({
       provider: params.activeProvider,
       services: params.services,

@@ -1,7 +1,8 @@
-/* Agent 侧的官方 MCP 身份头端口。
-   Agent 进程不是身份权威：经 interaction/requestOfficialMcpAuthHeaders 反向请求 host，
-   由 host 解析当前 Coding Plan 凭证后回传本次请求的身份头。凭证不落 runtime config、
-   不持久化、不进日志。 */
+/* Official MCP identity-header port on the Agent side.
+   The Agent process is not authoritative for identity: it requests headers from the host through
+   interaction/requestOfficialMcpAuthHeaders. The host resolves the current Coding Plan credential
+   and returns the identity headers for this request. Credentials are not written to runtime config,
+   persisted, or logged. */
 import {
   zcodeOfficialMcpAuthHeadersResponseSchema,
   zcodeProtocolMethods,
@@ -12,30 +13,36 @@ import type { ZCodeProtocolAgentServerContext } from "./server-types.js";
 
 let requestSequence = 0;
 
-/** 端口只需要发反向请求的能力，不需要整个 server context。 */
+/** The port only needs the ability to send a reverse request, not the entire server context. */
 export type OfficialMcpAuthRequestContext = Pick<
   ZCodeProtocolAgentServerContext,
   "requestClient"
 >;
 
 /**
- * 构造经协议反向请求取身份头的端口。
+ * Build a port that retrieves identity headers through a reverse protocol request.
  *
- * `resolveContext` 是惰性的：MCP 连接池的构造早于 ZCodeProtocolAgentServer，
- * server 就绪前返回 undefined，此时按不可用处理（不降级为匿名请求）。
+ * `resolveContext` is lazy: the MCP connection pool is constructed before ZCodeProtocolAgentServer
+ * and returns undefined until the server is ready. Treat this as unavailable (do not fall back to
+ * an anonymous request).
  *
- * 失败一律走返回值（ok:false + 可枚举 reason），不抛异常：
- * 传输层异常统一归为 official_auth_unavailable，由 MCP adapter 置该 server 为 failed。
+ * All failures are returned (`ok:false` plus an enumerable reason), not thrown:
+ * transport exceptions are normalized to official_auth_unavailable, and the MCP adapter marks that
+ * server as failed.
  *
- * workspace 的用途与已知缺口：
- * - host 侧**不**用它路由响应——响应经 `client.respond(request.id, ...)` 回到发起请求的
- *   那条 stdio 连接，路由由连接本身决定。该字段仅作请求上下文/审计用；
- * - 但仍必须遵守仓库约定 `workspaceKey = workspaceIdentity?.trim() || workspacePath`，
- *   否则同路径不同 identity 的远端 workspace 在审计上下文里无法区分；
- * - **剩余缺口**：CLI agent 进程当前没有 workspaceIdentity 来源
- *   （`RunZCodeProtocolAgentOptions` 只有 cwd/env/…，也无对应环境变量），因此该字段实际
- *   退化为 workspacePath。这里保证的是"拿到 identity 就正确透传"，而不是"identity 一定存在"。
- *   若将来审计需要真实远端身份，需在 spawn 或协议层把 identity 传给 agent，不在本阶段范围。
+ * Workspace purpose and known gap:
+ * - The host does **not** use it to route responses. A response returns to the originating stdio
+ *   connection through `client.respond(request.id, ...)`, so the connection determines routing.
+ *   This field is only for request context/auditing.
+ * - Still follow the repository convention `workspaceKey = workspaceIdentity?.trim() || workspacePath`,
+ *   or remote workspaces with the same path but different identities cannot be distinguished in
+ *   audit context.
+ * - **Remaining gap**: the CLI agent process currently has no source for workspaceIdentity
+ *   (`RunZCodeProtocolAgentOptions` has only cwd/env/…, with no corresponding environment variable),
+ *   so this field falls back to workspacePath. This guarantees correct forwarding when an identity
+ *   is available; it does not guarantee that an identity exists. If future auditing requires the
+ *   actual remote identity, it must be passed to the Agent at spawn time or through the protocol,
+ *   which is outside this phase.
  */
 export function createOfficialMcpAuthHeadersPort(input: {
   resolveContext: () => OfficialMcpAuthRequestContext | undefined;
@@ -69,8 +76,9 @@ export function createOfficialMcpAuthHeadersPort(input: {
           request.signal ? { signal: request.signal } : {},
         );
       } catch {
-        // host 不可达/协议错误：按不可用处理。错误详情不带出（可能含请求上下文），
-        // host 侧已记录不含秘密的分类日志。
+        // Treat an unreachable host or protocol error as unavailable. Do not expose error details
+        // (they may contain request context); the host has already logged a categorized message
+        // without secrets.
         return { ok: false, reason: "official_auth_unavailable" };
       }
     },

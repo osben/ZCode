@@ -164,8 +164,8 @@ function collectPipelineCommands(source: string, node: Pipeline, context: Collec
       operatorBefore: index === 0 ? context.operatorBefore : node.operators[index - 1],
     });
   }
-  // unbash 将 time 关键字从 argv 提升为 Pipeline.time；恢复这个已定位的 wrapper，
-  // 否则 time -o file 的参数会被误当成 executable，漏掉后续真实命令。
+  // unbash promotes the time keyword from argv to Pipeline.time; restore this recognized wrapper,
+  // or the argument to time -o file will be mistaken for the executable and the following real command will be missed.
   const first = context.analysis.commands[firstCommandIndex];
   if (node.time && first) {
     const prefix = source.slice(node.pos, first.words[0]?.start);
@@ -203,7 +203,7 @@ function collectSimpleCommand(source: string, command: Command, context: Collect
   context.analysis.commands.push({
     words: words.map((word) => {
       const fact = literalPosixWord(word.text, word.pos, word.end);
-      // 只取顶层字面片段的 glob；变量/命令替换/brace 的载荷不是删除目标的词面证据。
+      // Use globs only from top-level literal fragments; variable / command substitutions / brace payloads are not lexical evidence of deletion targets.
       if (word.parts)
         fact.hasUnquotedGlob = word.parts.some(
           (part) =>
@@ -243,7 +243,7 @@ function redirectsHaveDynamicWords(redirects: Redirect[]): boolean {
 }
 
 function wordHasDynamicParts(word: Word): boolean {
-  // 命令替换和进程替换会在主命令前执行，权限判断不能把它们当成普通 argv。
+  // Command and process substitutions run before the main command, so permission checks must not treat them as ordinary argv.
   return word.parts?.some(partHasDynamicExecution) ?? false;
 }
 

@@ -1,28 +1,14 @@
-/* eslint-disable max-lines -- group header 的颜色菜单、右键菜单、rename 焦点保护和组内 task 渲染共享同一个 group 上下文，后续再按交互域继续拆。 */
-import {
-  useCallback,
-  useEffect,
-  useId,
-  useLayoutEffect,
-  useRef,
-  useState,
-} from "react";
+/* eslint-disable max-lines -- The group header color menu, context menu, rename focus protection, and task rendering share one group context; split further by interaction area later. */
+import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import type { KeyboardEvent } from "react";
 import { useDraggable, useDroppable } from "@dnd-kit/core";
-import type {
-  ZCodeGroupedTaskViewNode,
-  ZCodeTaskGroupColor,
-} from "@zcode/services";
+import type { ZCodeGroupedTaskViewNode, ZCodeTaskGroupColor } from "@zcode/services";
 import {
   CRON_DEFAULT_GROUP_ID,
   OFF_PEAK_DEFAULT_GROUP_ID,
   type ZCodeTaskMeta,
 } from "@zcode/shared";
-import {
-  ChevronDownIcon,
-  ChevronRightIcon,
-  MessageCirclePlus,
-} from "lucide-react";
+import { ChevronDownIcon, ChevronRightIcon, MessageCirclePlus } from "lucide-react";
 import { cn } from "@/components/lib/utils.js";
 import { Button } from "@/components/ui/button.js";
 import {
@@ -106,11 +92,7 @@ export function GroupItem({
   mobileActiveTaskKey?: string | null;
   getTaskRemoteSessionId: (task: ZCodeTaskMeta) => string | undefined;
   getTaskWorkspaceLabel: (task: ZCodeTaskMeta) => string;
-  onSelectTask: (
-    workspacePath: string,
-    taskId: string,
-    workspaceIdentity?: string,
-  ) => void;
+  onSelectTask: (workspacePath: string, taskId: string, workspaceIdentity?: string) => void;
   onCloseTask: (task: ZCodeTaskMeta) => void;
   onOpenFileTree?: (task: ZCodeTaskMeta) => void;
   onCreateTask: () => void;
@@ -149,17 +131,15 @@ export function GroupItem({
   const [colorMenuOpen, setColorMenuOpen] = useState(false);
   const [titleEditorWidth, setTitleEditorWidth] = useState<number | null>(null);
   const groupContentId = useId();
-  const [shouldRenderGroupContent, setShouldRenderGroupContent] = useState(
-    () => !collapsed,
-  );
+  const [shouldRenderGroupContent, setShouldRenderGroupContent] = useState(() => !collapsed);
   const shouldShowEmptyDropZone = !hasDraftTask && node.tasks.length === 0;
   const visualCollapsed = collapsed;
   const titleEditorText = renameDraft || node.group.title;
-  // 系统分组（cron / 闲时）：固定归类，禁止重命名与删除(解散)；颜色可改（与 cron 既有行为一致）。
+  // System groups (cron / off-peak): fixed categories that cannot be renamed or deleted (dissolved); color remains editable (matching existing cron behavior).
   const isCronGroup = node.group.id === CRON_DEFAULT_GROUP_ID;
   const isOffPeakGroup = node.group.id === OFF_PEAK_DEFAULT_GROUP_ID;
   const isSystemGroup = isCronGroup || isOffPeakGroup;
-  // 系统分组的标题按语言环境本地化展示，忽略 DB 里存的固定占位标题（'cron' / 'off-peak'）。
+  // Localize system-group titles by locale and ignore the fixed placeholder titles stored in the DB ('cron' / 'off-peak').
   const displayTitle = getTaskGroupDisplayTitle(node.group, {
     cron: intl.formatMessage({ id: "taskGroup.cronGroupName" }),
     offPeak: intl.formatMessage({ id: "offPeak.sidebar.groupTitle" }),
@@ -234,9 +214,7 @@ export function GroupItem({
       return undefined;
     }
     const updateWidth = () => {
-      setTitleEditorWidth(
-        Math.ceil(measureButton.getBoundingClientRect().width),
-      );
+      setTitleEditorWidth(Math.ceil(measureButton.getBoundingClientRect().width));
     };
     updateWidth();
     const resizeObserver = new ResizeObserver(updateWidth);
@@ -303,12 +281,9 @@ export function GroupItem({
       return false;
     }
     menuRenamePendingRef.current = false;
-    logger.debug(
-      "[WorkspaceGroupedTasksSection] context menu rename focus handoff",
-      {
-        groupId: node.group.id,
-      },
-    );
+    logger.debug("[WorkspaceGroupedTasksSection] context menu rename focus handoff", {
+      groupId: node.group.id,
+    });
     armMenuRenameFocusGuard();
     startRename();
     focusRenameInput({ select: true });
@@ -326,8 +301,8 @@ export function GroupItem({
 
   const handleContextMenuCloseAutoFocus = useCallback(
     (event: Event) => {
-      // Radix context menu 关闭时会把焦点还给 trigger。
-      // Rename 需要把焦点交给新出现的 input；这里先阻止默认 focus restore，再进入编辑态。
+      // Radix context menu returns focus to the trigger when it closes.
+      // Rename needs to focus the newly rendered input, so prevent the default focus restore before entering edit mode.
       if (consumePendingMenuRename()) {
         event.preventDefault();
       }
@@ -358,21 +333,18 @@ export function GroupItem({
             nativeEvent: event.nativeEvent,
           })
         ) {
-          // group 重命名里中文输入法用 Enter 确认候选词时也会冒出 keydown。
-          // 这不是用户要提交重命名，不能 blur，否则 blur 会继续触发 commitRename。
-          logger.debug(
-            "[WorkspaceGroupedTasksSection] ignore group rename enter during IME",
-            {
-              groupId: node.group.id,
-            },
-          );
+          // During group rename, Enter used to confirm a Chinese IME candidate also emits keydown.
+          // This is not a rename submission; do not blur, or blur will continue into commitRename.
+          logger.debug("[WorkspaceGroupedTasksSection] ignore group rename enter during IME", {
+            groupId: node.group.id,
+          });
           return;
         }
         event.currentTarget.blur();
         return;
       }
       if (event.key === "Escape") {
-        // group 标题编辑态按 Esc 只取消本次重命名，不能冒泡到外层弹层快捷键。
+        // Escape while editing a group title cancels only the current rename and must not bubble to the outer dialog shortcut.
         event.preventDefault();
         event.stopPropagation();
         cancelRename();
@@ -383,8 +355,8 @@ export function GroupItem({
 
   const handleRenameBlur = useCallback(() => {
     if (menuRenameFocusGuardRef.current) {
-      // ContextMenu 的关闭动画和 focus restore 可能在 input 首次 focus 后继续触发 blur。
-      // 这是菜单收尾阶段的焦点竞争，不代表用户结束重命名；保护窗口内保持编辑态并回焦。
+      // The ContextMenu closing animation and focus restore may trigger blur after the input first receives focus.
+      // This is a focus race during menu cleanup, not the user ending the rename; keep edit mode and restore focus during the protection window.
       logger.debug(
         "[WorkspaceGroupedTasksSection] keep group rename focus after context menu blur",
         {
@@ -395,14 +367,11 @@ export function GroupItem({
       return;
     }
     if (newGroupInitialFocusGuardRef.current) {
-      // 新建 group 会同时打开颜色菜单；Radix DropdownMenu 可能在打开瞬间抢焦，
-      // 这个 blur 不代表用户结束命名，只在初始展开窗口内把焦点还给 name input。
-      logger.debug(
-        "[WorkspaceGroupedTasksSection] keep new group initial name focus",
-        {
-          groupId: node.group.id,
-        },
-      );
+      // Creating a group also opens the color menu; Radix DropdownMenu may take focus as it opens.
+      // This blur does not mean the user is done naming; return focus to the name input only during the initial opening window.
+      logger.debug("[WorkspaceGroupedTasksSection] keep new group initial name focus", {
+        groupId: node.group.id,
+      });
       focusRenameInput({ select: true });
       return;
     }
@@ -423,15 +392,12 @@ export function GroupItem({
   const handleColorMenuOpenChange = useCallback(
     (open: boolean) => {
       if (!open && newGroupInitialFocusGuardRef.current) {
-        // 新建 group 同时要求 name input 保持焦点、color menu 自动展开。
-        // Radix 在 input 回焦时会把这次初始展开判成外部焦点移动并请求关闭；
-        // 只忽略初始窗口内的这一次关闭，窗口结束后点击空白仍按正常关闭处理。
-        logger.debug(
-          "[WorkspaceGroupedTasksSection] keep new group initial color menu open",
-          {
-            groupId: node.group.id,
-          },
-        );
+        // Creating a group requires the name input to keep focus while the color menu opens automatically.
+        // When focus returns to the input, Radix treats this initial opening as an external focus move and requests close;
+        // ignore only this close during the opening window. After that, clicking outside closes it normally.
+        logger.debug("[WorkspaceGroupedTasksSection] keep new group initial color menu open", {
+          groupId: node.group.id,
+        });
         setColorMenuOpen(true);
         return;
       }
@@ -583,9 +549,7 @@ export function GroupItem({
                   {TASK_GROUP_COLORS.map((color) => (
                     <DropdownMenuRadioItem key={color} value={color}>
                       <TaskGroupColorDot color={color} />
-                      <span>
-                        {intl.formatMessage({ id: `taskGroup.color.${color}` })}
-                      </span>
+                      <span>{intl.formatMessage({ id: `taskGroup.color.${color}` })}</span>
                     </DropdownMenuRadioItem>
                   ))}
                 </DropdownMenuRadioGroup>
@@ -596,23 +560,17 @@ export function GroupItem({
                 <label
                   className="relative min-w-6 max-w-full shrink overflow-hidden align-middle"
                   onClick={(event) => event.stopPropagation()}
-                  style={
-                    titleEditorWidth
-                      ? { width: `${titleEditorWidth}px` }
-                      : undefined
-                  }
+                  style={titleEditorWidth ? { width: `${titleEditorWidth}px` } : undefined}
                 >
-                  <span className="sr-only">
-                    {intl.formatMessage({ id: "taskGroup.rename" })}
-                  </span>
+                  <span className="sr-only">{intl.formatMessage({ id: "taskGroup.rename" })}</span>
                   <button
                     ref={titleMeasureButtonRef}
                     type="button"
                     tabIndex={-1}
                     aria-hidden="true"
                     className="pointer-events-none absolute left-0 top-0 invisible overflow-hidden rounded-sm px-1 text-left text-ui-base text-foreground"
-                    // 测量节点不能跟随 label 的 max-w-full，否则输入变长时会被当前宽度反向卡住。
-                    // 外层 label 继续用 max-w-full 负责视觉裁剪，这里只测真实内容宽度。
+                    // The measurement node must not inherit the label's max-w-full, or longer input is constrained by the current width.
+                    // Keep max-w-full on the outer label for visual clipping; measure only the actual content width here.
                     style={{ whiteSpace: "pre" }}
                   >
                     {titleEditorText}
@@ -666,10 +624,7 @@ export function GroupItem({
             {newTaskAction}
           </div>
         </ContextMenuTrigger>
-        <ContextMenuContent
-          className="w-44"
-          onCloseAutoFocus={handleContextMenuCloseAutoFocus}
-        >
+        <ContextMenuContent className="w-44" onCloseAutoFocus={handleContextMenuCloseAutoFocus}>
           <ContextMenuItem onSelect={onCreateTask}>
             {intl.formatMessage({ id: "taskGroup.newTask" })}
           </ContextMenuItem>
@@ -691,14 +646,9 @@ export function GroupItem({
               onPointerDown={(event) => event.stopPropagation()}
             >
               {TASK_GROUP_COLORS.map((color) => (
-                <ContextMenuItem
-                  key={color}
-                  onSelect={() => handleGroupColorChange(color)}
-                >
+                <ContextMenuItem key={color} onSelect={() => handleGroupColorChange(color)}>
                   <TaskGroupColorDot color={color} />
-                  <span>
-                    {intl.formatMessage({ id: `taskGroup.color.${color}` })}
-                  </span>
+                  <span>{intl.formatMessage({ id: `taskGroup.color.${color}` })}</span>
                 </ContextMenuItem>
               ))}
             </ContextMenuSubContent>
@@ -720,15 +670,13 @@ export function GroupItem({
         className={cn(
           "grid overflow-hidden",
           "transition-[grid-template-rows,opacity] duration-200 ease-out",
-          visualCollapsed
-            ? "grid-rows-[0fr] opacity-0"
-            : "grid-rows-[1fr] opacity-100",
+          visualCollapsed ? "grid-rows-[0fr] opacity-0" : "grid-rows-[1fr] opacity-100",
         )}
       >
         <div className="min-h-0 overflow-hidden">
-          {/* Bugfix: grouped task 的折叠内容不再走 Radix Collapsible。
-                Radix Presence 和高度变量会在频繁挂载时重放动画；这里用本地受控容器，
-                并在收起动画后卸载组内 task。 */}
+          {/* Bugfix: collapsed grouped-task content no longer uses Radix Collapsible.
+                Radix Presence and height variables replay animations during frequent mounts. Use a locally controlled container here,
+                and unmount the group’s tasks after the collapse animation. */}
           {shouldRenderGroupContent ? (
             <div
               className={cn(
@@ -769,10 +717,7 @@ export function GroupItem({
               ) : (
                 <>
                   {shouldShowEmptyDropZone ? (
-                    <EmptyGroupDropZone
-                      groupId={node.group.id}
-                      onCreateTask={onCreateTask}
-                    />
+                    <EmptyGroupDropZone groupId={node.group.id} onCreateTask={onCreateTask} />
                   ) : null}
                   {node.tasks.length > 0 ? (
                     <VirtualizedGroupedTaskList
@@ -808,9 +753,7 @@ export function GroupItem({
         aria-hidden="true"
         className={cn(
           "transition-[height,opacity] duration-150 ease-out motion-reduce:transition-none",
-          visualCollapsed
-            ? "h-0 pointer-events-none opacity-0"
-            : "h-2.5 opacity-100",
+          visualCollapsed ? "h-0 pointer-events-none opacity-0" : "h-2.5 opacity-100",
         )}
       />
     </div>

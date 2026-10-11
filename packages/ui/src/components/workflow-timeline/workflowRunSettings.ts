@@ -1,8 +1,8 @@
 // ============================================================
-// 「配置」弹层的纯规则
+// Pure rules for the “Settings” popover.
 // ============================================================
-// 弹层组件只管画与接线，这里是它的全部判断：哪些 run 能配、表单从哪儿起步、Apply 发什么、
-// 被拒的 ACK 说哪句话。纯函数、不碰 store，逐条可穷举。
+// The popover component only renders and wires callbacks; all its decisions live here: which runs can be configured, where the form starts, what Apply sends,
+// and what message a rejected ACK shows. Pure functions, no store access, each case can be enumerated.
 
 import {
   WORKFLOW_RUN_SETTINGS_REJECTED_FAULT_PREFIX,
@@ -13,10 +13,7 @@ import {
 } from "@zcode/shared/zcode-protocol-v4";
 import { formatModelPickerValue, parseModelPickerValue } from "@/lib/zcodeSessionProjection.js";
 
-/**
- * 会话当前模型（「会话模型」那一项的名字从它来）：优先会话持久的稀疏选择，退回 UI effective 的
- * provider / model 投影；两者都读不出即缺席。
- */
+/** The session’s current model (source for the “Session model” option): prefer the session’s persisted sparse selection, falling back to the UI effective provider/model projection; absent if neither can be read. */
 export function workflowSessionModelOf(
   config:
     | { modelSelection?: { providerId: string; modelId: string }; provider: string; model: string }
@@ -32,25 +29,25 @@ export function workflowSessionModelOf(
   return providerId && modelId ? { providerId, modelId } : undefined;
 }
 
-/** 表单里的子代理模型：会话模型，或一个具体模型（可带思考档）。 */
+/** Subagent model in the form: the session model or a specific model (optionally with a thinking level). */
 export type WorkflowRunSettingsModel =
   | { kind: "session" }
   | { kind: "model"; providerId: string; modelId: string; level?: string };
 
-/** 表单的两项设置。`bound` 为 null 即「本 run 没有自己的界」（跑在默认并发上）。 */
+/** The form's two settings. `bound: null` means this run has no custom ceiling and uses default concurrency. */
 export interface WorkflowRunSettingsDraft {
   model: WorkflowRunSettingsModel;
   bound: number | null;
 }
 
-/** Apply 发出去的那部分载荷（workId 由宿主补）。 */
+/** The portion of the Apply payload sent by the UI (the host supplies workId). */
 export type WorkflowRunSettingsChange = Omit<AmendWorkflowRunSettingsPayload, "workId">;
 
 /**
- * 哪些 run 能配置：
- * pending / running 能（节流或换模型的主场景）；stopped 能，除非是被一次修订替代掉的（活的是它的
- * 后继）；errored 能（换个模型重试是最常见的修复）；completed 不能（每个 ask 都会从缓存重放，没有
- * 东西会在新设置下跑）；不在投影里的 run 没有设置可显示。宿主回调与灰度门由调用方另叠。
+ * Which runs can be configured:
+ * pending / running can (the primary concurrency/model-change cases); stopped can, unless replaced by a revision (its successor is the active one);
+ * errored can (retrying with another model is the most common repair); completed cannot (each ask replays from cache, so nothing runs with new settings);
+ * runs absent from the projection have no settings to display. The caller adds host callbacks and rollout gates separately.
  */
 export function isWorkflowRunConfigurable(run: WorkflowRunState | undefined): boolean {
   if (run === undefined) return false;
@@ -67,19 +64,21 @@ export function isWorkflowRunConfigurable(run: WorkflowRunState | undefined): bo
 }
 
 /**
- * 默认并发 D（docs/dynamic-workflow/concurrency.md「Protocol state」）：只读 `run.concurrencyCeiling`
- * （`run-started` 随带、恒在；键名早于「默认并发」）。它是起点不是上限：步进器据它写「默认 N」、
- * 判「等于默认 = 不设自己的界」，没有上界。
+ * Default concurrency D (docs/dynamic-workflow/concurrency.md, “Protocol state”): read only
+ * `run.concurrencyCeiling` (always included with `run-started`; the key predates the default-
+ * concurrency concept). It is a starting point, not a ceiling: the stepper uses it to display
+ * “Default N” and determine that matching the default means no custom ceiling. There is no upper bound.
  *
- * Bug 根因（用户报「本机上限 2」）：此前老 CLI 没发它时退回读数芯片的水位 `concurrency.ceiling`，
- * 而那个水位是「见过的最大 cap」——共享桶在本 run 启动前就被限流压低时，它就是一个学到的 cap，
- * 被当成本机上限念了出来。宁可说不知道默认是几，也不拿一个学到的数冒充它。
+ * Root cause (user reported “local ceiling is 2”): when older CLIs did not send this value, the UI
+ * fell back to `concurrency.ceiling` from the usage chip. That value is the highest cap observed;
+ * if the shared bucket was throttled before this run started, it was a learned cap presented as
+ * the local ceiling. Prefer showing that the default is unknown over misrepresenting a learned value.
  */
 export function workflowRunDefaultConcurrency(run: WorkflowRunState): number | undefined {
   return run.concurrencyCeiling;
 }
 
-/** 规范串 → 表单模型；解析不动（坏串）按会话模型处理不成立，所以原样保留成一个查不到的具体模型。 */
+/** Canonical string → form model; leaving an invalid string unchanged does not make it a session model, so preserve it as an unresolved specific model. */
 export function workflowRunSettingsModelOf(
   canonical: string | undefined,
 ): WorkflowRunSettingsModel {
@@ -99,7 +98,7 @@ export function workflowRunSettingsModelOf(
   }
 }
 
-/** 表单模型 → 规范串 `providerId/modelId[$level]`；会话模型没有串（undefined）。 */
+/** Form model → canonical string `providerId/modelId[$level]`; the session model has no string (undefined). */
 export function workflowRunSettingsModelCanonical(
   model: WorkflowRunSettingsModel,
 ): string | undefined {
@@ -112,7 +111,7 @@ export function workflowRunSettingsModelCanonical(
   });
 }
 
-/** 打开弹层时的起点：两项都取 run 自己的当前设置。界缺席时停在默认上（默认也未知则为 null）。 */
+/** Initial values when opening the popover: both settings come from the run’s current values. If there is no run limit, use the ceiling (or null if it is also unknown). */
 export function initialWorkflowRunSettingsDraft(run: WorkflowRunState): WorkflowRunSettingsDraft {
   const limit = run.concurrency?.limit;
   return {
@@ -121,7 +120,7 @@ export function initialWorkflowRunSettingsDraft(run: WorkflowRunState): Workflow
   };
 }
 
-/** 界的归一：**等于**默认即「没有自己的界」；高于默认是一个真的数（默认不是上限）。 */
+/** Normalize the ceiling: **equal to** the default means no custom ceiling; higher is a real value (the default is not a limit). */
 function normalizedBound(
   bound: number | null,
   defaultConcurrency: number | undefined,
@@ -131,9 +130,9 @@ function normalizedBound(
 }
 
 /**
- * Apply 发什么：只发**改过的**那几项（工具的同一条三态：省略 = 沿用）。模型按规范串比较——
- * 只改思考档也算改了模型；回到会话模型发 `null`。界等于默认发 `null`（解除本 run 自己的界）。
- * 两项都没变 → undefined（Apply 禁用）。
+ * What Apply sends: include only the **changed** settings (same three-state convention as the tool: omitted = keep current value). Compare models by canonical string—
+ * changing only the thinking level still counts as a model change; selecting the session model sends `null`. A limit equal to the ceiling sends `null` (remove the run’s own limit).
+ * If neither changed, return undefined (Apply is disabled).
  */
 export function workflowRunSettingsChange(
   initial: WorkflowRunSettingsDraft,
@@ -150,14 +149,14 @@ export function workflowRunSettingsChange(
   return Object.keys(change).length === 0 ? undefined : change;
 }
 
-/** 步进器夹界：只有下限 1、向下取整，没有上限（默认并发是起点不是天花板）。 */
+/** Clamp the stepper: floor to a minimum of 1, with no upper bound (default concurrency is a starting point, not a ceiling). */
 export function clampWorkflowRunSettingsBound(value: number): number {
   return Math.max(1, Math.floor(value));
 }
 
 /**
- * 只动了并发上限（`null` = 解除本 run 自己的界，也算）。判据是载荷里**只有**这一个键——
- * 与 agent 侧的路由同一条：那里也只认这一种载荷，多一个字段就走原来的修订。
+ * Whether only the concurrency limit changed (`null` also counts as removing the run’s own limit). The payload must contain **only** this key—
+ * matching the agent-side routing rule, which also recognizes only this payload shape; any extra field follows the existing revision path.
  */
 function isConcurrencyOnlyChange(change: WorkflowRunSettingsChange | undefined): boolean {
   if (change === undefined) return false;
@@ -165,15 +164,18 @@ function isConcurrencyOnlyChange(change: WorkflowRunSettingsChange | undefined):
 }
 
 /**
- * 后果句的文案 key：随 run 状态换最后一句（completed 不会走到这里）。
+ * Copy key for the consequence sentence; the last sentence varies by run state (completed does not reach this code).
  *
- * 什么都还没改 → undefined（不念后果句）：Apply 禁用，没有后果可说。原先这里按 run 状态兜一句，
- * running 就念「将停止当前运行」——可只改并发恰恰不会停，改动之前替它下结论总有一项说错。
+ * If nothing changed, return undefined (do not announce a consequence): Apply is disabled, so there
+ * is no consequence to describe. Previously this used the run state to choose a fallback message;
+ * for a running run it said “This will stop the current run,” even though changing only concurrency
+ * does not stop it. Predicting consequences before a change risks getting one wrong.
  *
- * 例外一条：**正在跑**的 run 只改并发上限时，这次修订就地生效——不停这次 run、不另起一次
- * （docs/dynamic-workflow/concurrency.md）。这是原来那句「将停止当前运行」唯一会说错话的场景，
- * 所以只在这一格换词。`pending` 不算在内：它的引擎可能还没建起来，就地设不上就照旧退回一次
- * 真正的修订，那时原句仍然是对的。
+ * One exception: changing only the concurrency ceiling on a **running** run takes effect in place;
+ * it neither stops nor restarts the run (docs/dynamic-workflow/concurrency.md). This is the one
+ * case where “This will stop the current run” was wrong, so change the wording only here. `pending`
+ * does not qualify: its engine may not exist yet, and if the change cannot be applied in place it
+ * falls back to a real retune, where the original wording remains accurate.
  */
 export function workflowRunSettingsConsequenceId(
   status: WorkflowRunState["status"],
@@ -194,22 +196,22 @@ export function workflowRunSettingsConsequenceId(
   }
 }
 
-/** 与 Stop / Resume 同一个能力缺席 fault（网关对 V4CapabilityUnsupportedError 的 reasonCode）。 */
+/** Same missing-capability fault used by Stop / Resume (gateway reasonCode for V4CapabilityUnsupportedError). */
 const CAPABILITY_UNSUPPORTED_FAULT = "fault.command.capabilityUnsupported";
 const KNOWN_REASONS: ReadonlySet<string> = new Set(
   workflowRunSettingsRejectionReasonSchema.options,
 );
 
 export interface WorkflowRunSettingsRejection {
-  /** 词表内的 reason，或 `unsupported`（能力缺席）/ `generic`（词表外，文案带 code）。 */
+  /** A reason in the vocabulary, or `unsupported` (capability missing) / `generic` (outside the vocabulary; copy includes the code). */
   reason: string;
-  /** 原始 reasonCode（缺席时是 ack.status）。 */
+  /** Original reasonCode (or ack.status when absent). */
   code: string;
-  /** ACK 携带的人可读细节（compile_failed 的有界诊断、start_failed 的原因）。 */
+  /** Human-readable detail from the ACK (bounded diagnostics for compile_failed; reason for start_failed). */
   message?: string;
 }
 
-/** accepted / noop 不是拒绝 → undefined；其余按 fault 前缀反查词表。 */
+/** accepted / noop are not rejections → undefined; otherwise, resolve the vocabulary from the fault prefix. */
 export function describeWorkflowRunSettingsRejection(
   ack: Pick<CommandAck, "status" | "reasonCode" | "message">,
 ): WorkflowRunSettingsRejection | undefined {
@@ -224,7 +226,7 @@ export function describeWorkflowRunSettingsRejection(
   return { reason, code, ...(ack.message ? { message: ack.message } : {}) };
 }
 
-/** 文案 key：`chat.toolCall.workflow.run.settings.rejection.<reason>`。 */
+/** Copy key: `chat.toolCall.workflow.run.settings.rejection.<reason>`. */
 export function workflowRunSettingsRejectionMessageId(
   rejection: WorkflowRunSettingsRejection,
 ): string {
@@ -232,8 +234,8 @@ export function workflowRunSettingsRejectionMessageId(
 }
 
 /**
- * 细节块给不给：start_failed 的原因已经嵌进那句话（`{message}`），不再重复一遍；其余带 message 的
- * 拒绝（compile_failed 的诊断）放进有界等宽块。
+ * Whether to show a details block: start_failed already embeds its reason in the sentence (`{message}`), so do not repeat it;
+ * other rejections with a message (compile_failed diagnostics) go in a bounded monospaced block.
  */
 export function workflowRunSettingsRejectionDetail(
   rejection: WorkflowRunSettingsRejection,

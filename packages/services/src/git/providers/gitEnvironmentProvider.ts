@@ -44,8 +44,8 @@ export function createGitEnvironmentProvider(): GitEnvironmentProvider {
       }
 
       const env = getGitCommandEnv();
-      // Git binary 的探测在一次会话里不会频繁变化，
-      // 这里缓存第一次探测结果，避免每个 Git RPC 都重复打一遍 `git --version`。
+      // Git binary detection rarely changes within a session.
+      // Cache the first result to avoid running `git --version` for every Git RPC.
       cachedGitBinaryPromise = (async () => {
         for (const candidate of getGitBinaryCandidates()) {
           if (await canExecuteGitCandidate(candidate, env)) {

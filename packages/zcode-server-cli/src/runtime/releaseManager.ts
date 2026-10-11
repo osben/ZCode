@@ -10,10 +10,10 @@ interface UpdateTransaction {
 }
 
 async function renameWithWindowsRetry(temporary: string, path: string): Promise<void> {
-  // 并发写各自持有唯一临时文件，但 rename 替换同一目标时 Windows 的
-  // 目标文件会短暂处于替换中状态，后到的 rename 报 EPERM（POSIX 原子替换无此竞争）。
-  // 语义上并发写本来就允许"后写覆盖先写"，对 EPERM/EBUSY 做有界退避重试即可收敛；
-  // POSIX 宿主不触发重试，行为不变。
+  // Concurrent writes use unique temporary files, but when replacing the same target on Windows,
+  // the target file may be briefly locked and a later rename can fail with EPERM (POSIX atomic replacement has no such race).
+  // Concurrent writes already allow "later write wins" semantically, so bounded retries for EPERM/EBUSY converge;
+  // POSIX hosts do not retry and behavior is unchanged.
   const maxAttempts = process.platform === "win32" ? 5 : 1;
   for (let attempt = 1; ; attempt += 1) {
     try {
@@ -31,8 +31,8 @@ async function renameWithWindowsRetry(temporary: string, path: string): Promise<
 
 async function atomicWriteJson(path: string, value: unknown): Promise<void> {
   await mkdir(dirname(path), { recursive: true });
-  // 同进程内两个 lifecycle 操作可能在同一毫秒写同一个临时文件，先完成
-  // rename 的写入会让另一个写入以 ENOENT 失败。随机后缀保证每次原子写独占临时路径。
+  // Two lifecycle operations in the same process may write the same temporary file in the same millisecond; after one rename succeeds,
+  // the other write fails with ENOENT. A random suffix gives every atomic write a unique temporary path.
   const temporary = `${path}.${process.pid}.${randomUUID()}.tmp`;
   try {
     await writeFile(temporary, `${JSON.stringify(value, null, 2)}\n`, {
@@ -91,9 +91,9 @@ export class ReleaseManager {
         cause: error,
       });
     }
-    // applyPending 先切换 current，再删除 pending；若进程在 Core ready 前退出，
-    // current 可能指向未成功启动的 release。
-    // 启动时优先恢复事务中的旧指针，恢复失败则保留 marker，让后续启动继续 fail-closed。
+    // applyPending switches current before deleting pending; if the process exits before Core is ready,
+    // current may point to a release that did not start successfully.
+    // On startup, restore the old pointer from the transaction first. If restoration fails, keep the marker so later startup remains fail-closed.
     await this.restoreCurrent(transaction.previous);
     await this.completeUpdate();
   }
@@ -105,8 +105,8 @@ export class ReleaseManager {
   public async readCurrentForExecution(): Promise<ReleaseManifest | null> {
     const manifest = await this.readCurrent();
     if (!manifest) return null;
-    // current.json 的写入路径都会校验 releaseDir，但本地残留或外部篡改仍可能
-    // 让启动侧读到越界指针。执行 Core 前再次校验边界，避免把恢复/更新元数据读取误当成执行授权。
+    // All current.json write paths validate releaseDir, but local leftovers or external tampering may still
+    // give startup an out-of-bounds pointer. Validate the boundary again before running Core so reading recovery/update metadata is not mistaken for execution authorization.
     await this.assertReleaseDir(manifest);
     return manifest;
   }
@@ -160,8 +160,8 @@ export class ReleaseManager {
 
   private async assertReleaseDir(manifest: ReleaseManifest): Promise<void> {
     const releaseDir = resolve(manifest.releaseDir);
-    // canonical server root 会把 /var 等符号链接收敛到物理路径，但旧 manifest
-    // 仍可能保存别名路径。校验边界时也 canonicalize，避免合法的历史 release 被误判越界。
+    // The canonical server root resolves symlinks such as /var to physical paths, but legacy manifests may still store alias paths.
+    // Canonicalize during boundary checks too, so valid historical releases are not incorrectly treated as out of bounds.
     const canonicalReleaseDir = await realpath(releaseDir).catch(() => releaseDir);
     const canonicalReleasesDir = await realpath(this.layout.releasesDir).catch(() =>
       resolve(this.layout.releasesDir),

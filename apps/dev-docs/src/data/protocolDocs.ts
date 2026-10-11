@@ -1,4 +1,4 @@
-/* eslint-disable max-lines -- 开发文档的数据字典需要完整列出迁移结构、字段含义和概念关系，集中维护方便校对。 */
+/* eslint-disable max-lines -- The development docs data dictionary must list migration structures, field meanings, and concept relationships in full, and keeping it together makes review easier. */
 export type ConceptKind = "id" | "state" | "protocol" | "runtime" | "compat";
 
 export interface Concept {

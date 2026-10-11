@@ -5,7 +5,7 @@ import { pendingCommandRegistry } from "@/v4/pendingCommandRegistry.js";
 
 type SendCommand = (envelope: CommandEnvelope) => Promise<CommandAck>;
 
-/** AskUserQuestion 弹窗和侧栏胶囊共用同一条幂等暂停命令。 */
+/** The AskUserQuestion dialog and sidebar capsule share the same idempotent pause command. */
 export async function sendInteractionAutoResolutionSnooze(params: {
   sessionId: string;
   interactionId: string;

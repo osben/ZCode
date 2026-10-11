@@ -23,8 +23,8 @@ export interface LocalTarGzEntry {
   archivePath: string;
 }
 
-// Windows 客户端不一定能 spawn System32\tar.exe，远端资源本地缓存不能依赖系统 tar。
-// 这里仅支持 ZCode remote assets 使用的普通文件/目录子集，避免扩大归档格式的行为面。
+// A Windows client may not be able to spawn System32\tar.exe, so the local cache for remote assets cannot depend on system tar.
+// Support only the regular-file/directory subset used by ZCode remote assets to keep archive behavior narrowly scoped.
 export async function extractTarGzArchive(archivePath: string, targetDir: string): Promise<void> {
   const targetRoot = resolve(targetDir);
   await mkdir(targetRoot, { recursive: true });
@@ -128,8 +128,8 @@ async function appendTarEntry(
     archiveParts.push(
       createTarHeader({
         entryPath: directoryEntryPath,
-        // Windows lstat 的目录 mode 只有读写语义，常见为 0666；原样写进 tar 后，
-        // 远端 tar 叠加 umask 会落成不可遍历的 0644。远端资源目录统一使用 POSIX 0755。
+        // On Windows, lstat directory mode often contains only read/write bits (typically 0666); written unchanged to tar,
+        // the remote tar plus umask produces 0644, which cannot be traversed. Use POSIX 0755 for remote asset directories.
         mode: 0o755,
         mtimeSeconds: Math.floor(sourceStat.mtimeMs / 1000),
         size: 0,
@@ -369,8 +369,8 @@ function normalizeExtractSymlinkTarget({
 
 function normalizeSymlinkLinkName(rawLinkTarget: string): string {
   const normalized = posix.normalize(rawLinkTarget);
-  // tar symlink 如果允许绝对路径、Windows drive 或反斜杠，解包后可能把本地缓存指向目标目录外。
-  // 这里只保留 POSIX 相对 link target，并在创建/解包两侧继续校验它解析后的落点。
+  // If tar symlinks allow absolute paths, Windows drives, or backslashes, extraction could point the local cache outside the target directory.
+  // Accept only POSIX relative link targets and validate their resolved destinations during both creation and extraction.
   if (
     !rawLinkTarget ||
     !normalized ||
@@ -425,6 +425,6 @@ async function applyMode(filePath: string, mode: number): Promise<void> {
   try {
     await chmod(filePath, mode & 0o777);
   } catch {
-    // 权限位在 Windows 或受限文件系统上可能不可写，远端部署会按 executable 参数重新 chmod。
+    // Permission bits may not be writable on Windows or restricted filesystems; remote deployment applies chmod again based on the executable flag.
   }
 }

@@ -1,16 +1,16 @@
 import type { ModelSelection } from "@zcode/shared";
 import type { IModelSelectionService } from "@zcode/services";
 
-/** 在 Automation Select 转为一次 Submission 的边界固定模型身份。 */
+/** Fix the model identity at the boundary where an Automation Select becomes a Submission. */
 export async function resolveAutomationSubmissionModelSelection(params: {
   selection?: ModelSelection;
   fixedSelection?: ModelSelection;
   readSelection?: () => Promise<ModelSelection | undefined>;
   modelSelectionService: Pick<IModelSelectionService, "getView">;
 }): Promise<ModelSelection> {
-  // 已固定 run 是执行事实；重试不能重新对应账号，更不能被当前读取失败改变。
+  // A fixed run is an execution fact; retries must not remap it to another account or change it because of a current read failure.
   if (params.fixedSelection) return params.fixedSelection;
-  // Scheduler 的快照可能早于 Host 单向导入；首次执行用持久层校验后的新版意图。
+  // The Scheduler snapshot may predate the Host's one-way import; first execution uses the updated intent after persistence validation.
   const selection = params.readSelection ? await params.readSelection() : params.selection;
   if (selection) {
     const view = await params.modelSelectionService.getView({ selection });

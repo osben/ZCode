@@ -1,4 +1,4 @@
-/* eslint-disable max-lines -- 强制升级提示窗口包含内联 HTML/CSS 和状态脚本，启动前不能依赖 renderer 包 */
+/* eslint-disable max-lines -- The forced-update prompt includes inline HTML/CSS and state scripts, so it cannot depend on the renderer bundle at startup. */
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { type Locale } from "@zcode/shared";
@@ -55,7 +55,8 @@ function buildForceUpdatePromptMessages(locale: Locale) {
       devSkippedTitle: "调试环境无法自动升级",
       devSkippedMessage: "自动升级仅在打包后的应用中可用，请使用手动升级或打包应用验证。",
       confirmCloseTitle: "自动升级正在进行",
-      confirmCloseMessage: "关闭窗口会中断当前自动升级流程，旧版本仍然无法进入主界面。你可以继续等待，或确认关闭并退出。",
+      confirmCloseMessage:
+        "关闭窗口会中断当前自动升级流程，旧版本仍然无法进入主界面。你可以继续等待，或确认关闭并退出。",
       confirmCloseButton: "确认关闭",
       continueUpdateButton: "继续更新",
       retryButton: "重试自动升级",
@@ -106,9 +107,11 @@ function buildForceUpdatePromptMessages(locale: Locale) {
     errorTitle: "Auto update failed",
     errorMessage: "You can retry auto update or use manual update.",
     devSkippedTitle: "Auto update unavailable in development",
-    devSkippedMessage: "Auto update is only available in packaged apps. Use manual update or test a packaged build.",
+    devSkippedMessage:
+      "Auto update is only available in packaged apps. Use manual update or test a packaged build.",
     confirmCloseTitle: "Auto update in progress",
-    confirmCloseMessage: "Closing this window will stop the current auto update flow, and this old version still cannot open the main app. You can keep waiting or close and quit.",
+    confirmCloseMessage:
+      "Closing this window will stop the current auto update flow, and this old version still cannot open the main app. You can keep waiting or close and quit.",
     confirmCloseButton: "Close anyway",
     continueUpdateButton: "Continue update",
     retryButton: "Retry auto update",
@@ -159,7 +162,8 @@ function renderForceUpdatePromptHtml(text: ForceUpdateDialogText, locale: Locale
       background: #f8f8f8;
       display: flex;
     }
-    /* Bugfix: 强更截图范围就是完整 BrowserWindow；外层留白加内层圆角会把宿主底色显示成黑框。 */
+    /* Bugfix: the force-update screenshot captures the whole BrowserWindow; outer padding plus an
+       inner border-radius would show the host background as a black frame. */
     .panel {
       width: 100%;
       height: 100%;
@@ -219,7 +223,8 @@ function renderForceUpdatePromptHtml(text: ForceUpdateDialogText, locale: Locale
       cursor: pointer;
       -webkit-app-region: no-drag;
     }
-    /* Bugfix: 字体字符 × 的字形基线会让视觉中心偏移，改用两条线保证和主窗口关闭按钮一致居中。 */
+    /* Bugfix: the glyph baseline of the font's × character shifts the visual center; use two
+       lines to stay centered consistently with the main window's close button. */
     .close::before,
     .close::after {
       content: "";
@@ -409,7 +414,8 @@ function renderForceUpdatePromptHtml(text: ForceUpdateDialogText, locale: Locale
       return kind === 'checking' || kind === 'downloading' || kind === 'ready' || kind === 'installing';
     }
     function showCloseConfirmation() {
-      // Bugfix: 自动升级会禁用主按钮，但关闭窗口仍应给用户二次确认，避免误关中断下载。
+      // Bugfix: auto-update disables the primary button, but closing the window should still
+      // ask the user to confirm so an accidental close cannot interrupt the download.
       resizePromptHeight(${FORCE_UPDATE_PROMPT_HEIGHT});
       previousAutoState = isActiveAutoState(currentState.kind) ? currentState : previousAutoState;
       currentState = { kind: 'confirm-close' };
@@ -517,7 +523,8 @@ export async function showForceUpdatePrompt(
   options: ShowForceUpdatePromptOptions = {},
 ): Promise<ForceUpdatePromptAction> {
   const { BrowserWindow, nativeTheme } = await import("electron");
-  const parentWindow = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0] ?? undefined;
+  const parentWindow =
+    BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0] ?? undefined;
   return new Promise<ForceUpdatePromptAction>((resolvePrompt) => {
     let resolved = false;
     let shown = false;
@@ -567,7 +574,7 @@ export async function showForceUpdatePrompt(
       if (win.isDestroyed()) {
         return;
       }
-      // 下载态隐藏版本说明后需要收回窗口高度，避免出现大片空白；确认关闭/错误态再恢复默认高度。
+      // When the download state hides version details, reduce the window height to avoid a large blank area; restore the default height for confirmation-to-close/error states.
       win.setSize(FORCE_UPDATE_PROMPT_WIDTH, height);
       win.center();
     };
@@ -594,7 +601,8 @@ export async function showForceUpdatePrompt(
       }
       logger.info("[force-update] 用户选择自动升级");
       updatePromptState({ kind: "checking" });
-      autoUpdateDispose = options.startAutoUpdate?.((state) => updatePromptState(state)) ?? undefined;
+      autoUpdateDispose =
+        options.startAutoUpdate?.((state) => updatePromptState(state)) ?? undefined;
     };
 
     const showPromptWindow = (source: string) => {
@@ -607,7 +615,7 @@ export async function showForceUpdatePrompt(
       }
       win.show();
       win.focus();
-      // 启动前没有主窗口时，原生消息框在部分开发环境不可见；显式置顶保证用户能看到强制升级提示。
+      // Before startup there may be no main window, and native message boxes can be invisible in some development environments; explicitly bring the forced-update prompt to the front.
       if (!parentWindow) {
         win.setAlwaysOnTop(true, "modal-panel");
       }
@@ -616,7 +624,7 @@ export async function showForceUpdatePrompt(
     win.on("closed", () => {
       autoUpdateDispose?.();
       if (!resolved) {
-        // 自动升级是异步流程，用户关闭保留中的强更窗口时仍要把最终退出动作交还给 guard。
+        // Automatic updates are asynchronous. If the user closes a still-open forced-update window, hand the final quit action back to the guard.
         resolveOnce("quit", false);
       }
     });
@@ -657,6 +665,8 @@ export async function showForceUpdatePrompt(
       showPromptWindow("did-fail-load");
     });
     fallbackTimer = setTimeout(() => showPromptWindow("timeout"), 1000);
-    win.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(renderForceUpdatePromptHtml(text, locale))}`);
+    win.loadURL(
+      `data:text/html;charset=utf-8,${encodeURIComponent(renderForceUpdatePromptHtml(text, locale))}`,
+    );
   });
 }

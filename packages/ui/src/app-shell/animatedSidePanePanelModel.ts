@@ -95,14 +95,14 @@ export function shouldRenderPreviewPaneHeavyContent({
   }
 
   if (isMobileOverlay) {
-    // Bugfix: 手机远控右侧栏用 transform 抽屉滑入，首次测量时可能还在视口外。
-    // transform 动画结束不会触发 ResizeObserver，不能用桌面窄条优化延迟真实预览。
+    // Bugfix: The mobile remote-control side panel slides in as a transform drawer and may still be outside the viewport during its first measurement.
+    // A transform animation does not trigger ResizeObserver when it ends, so do not use the desktop narrow-rail optimization to defer the actual preview.
     return true;
   }
 
   if (isResizeSettling) {
-    // 原生 video/audio 进入 HTML fullscreen 时会触发 resize；如果此时卸载
-    // 媒体节点，浏览器会因 fullscreen 元素消失而立即退出全屏。
+    // Native video/audio entering HTML fullscreen triggers resize. If the media node is unmounted then,
+    // the browser exits fullscreen immediately because the fullscreen element disappeared.
     return isMediaPreview;
   }
 

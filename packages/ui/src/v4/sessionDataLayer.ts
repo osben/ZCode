@@ -1,8 +1,8 @@
-// SessionDataLayer（纯数据层）。
-// Map<topic, SessionStore>，不知道「显示」这回事；生命周期 = 引用计数：
-// 有 pane 引用 → 订阅；归零 → 延迟退订（keep-warm，防拖拽/切 pane 抖动）。
-// 一个实例对应一条 host 连接；跨 workspace 分屏在 shell 层做
-// Map<workspaceKey, SessionDataLayer>，本层不感知 workspace。
+// SessionDataLayer (pure data layer).
+// Map<topic, SessionStore>; it knows nothing about “display.” Lifetime is reference-counted:
+// pane references exist → subscribe; count reaches zero → unsubscribe after a delay (keep-warm, to avoid churn from dragging/switching panes).
+// One instance corresponds to one host connection; split views across workspaces use a shell-level
+// Map<workspaceKey, SessionDataLayer>; this layer is workspace-agnostic.
 import { ConversationProjectionStore } from "@/v4/conversationProjectionStore.js";
 import { ConversationRowPool } from "@/v4/conversationRowSharing.js";
 import { shouldExposeE2EStoreBridge } from "@/lib/e2eStoreBridge.js";
@@ -11,20 +11,20 @@ import { conversationTopic, type ConversationTransport } from "@/v4/transport.js
 import { logger } from "@/logger.js";
 import type { CommandsQueryParams, CommandsQueryResult } from "@zcode/shared/zcode-protocol-v4";
 
-/** pane 持有的租约；release 幂等。 */
+/** Lease held by a pane; release is idempotent. */
 export interface SessionLease {
   readonly sessionId: string;
   readonly store: ConversationProjectionStore;
-  /** 由数据层按 projection 生命周期判定，避免 pane 首次 render 时 snapshot 仍为空。 */
+  /** Determined by the data layer from the projection lifecycle, avoiding an empty snapshot during a pane’s first render. */
   readonly openKind: SessionOpenKind;
-  /** pane acquire 的 Renderer 单调时钟起点。 */
+  /** Renderer monotonic-clock start time when the pane acquires the lease. */
   readonly startedAt: number;
   release(): void;
 }
 
 export interface SessionDataLayerOptions {
   transport: ConversationTransport;
-  /** 引用归零后延迟退订窗口（ms），默认 30s。 */
+  /** Delayed-unsubscribe window after the reference count reaches zero (ms); 30s by default. */
   keepWarmMs?: number;
 }
 
@@ -53,7 +53,7 @@ export class SessionDataLayer {
   private readonly transport: ConversationTransport;
   private readonly keepWarmMs: number;
   private readonly entries = new Map<string, SessionEntry>();
-  // 行结构共享池跨 store 生命周期：keep-warm 过期冷打开的新 store 仍能复用被留住的旧行
+  // The shared row-structure pool outlives store instances: after keep-warm expires, a newly opened store can still reuse retained rows.
   // （docs/performance/conversation-row-structural-sharing.md）。
   private readonly rowPool = new ConversationRowPool();
   private readonly offFrame: () => void;
@@ -62,16 +62,16 @@ export class SessionDataLayer {
   constructor(options: SessionDataLayerOptions) {
     this.transport = options.transport;
     this.keepWarmMs = options.keepWarmMs ?? resolveSessionDataLayerKeepWarmMs();
-    // 连接级单监听：按 topic 扇入到各 store（pane 间共享的正是这一条连接）。
+    // One listener per connection; fan out by topic to each store (panes share this exact connection listener).
     this.offFrame = this.transport.onFrame((frame, context) => {
       this.entries.get(frame.topic)?.store.handleFrame(frame, context);
     });
   }
 
   /**
-   * 取得 session 的投影 store。首个引用触发 subscribe（新开 pane 就是一次
-   * subscribe，与刷新、新设备同一路径）；重复 acquire 共享同一 store（readonly，
-   * 同 session 多 pane = 多视图）。
+   * Get a session projection store. The first reference triggers subscribe (opening a pane is one
+   * subscribe, just like refresh or a new device); repeated acquire calls share the same store (readonly,
+   * multiple panes for one session = multiple views).
    */
   acquire(sessionId: string): SessionLease {
     if (this.disposed) {
@@ -93,7 +93,7 @@ export class SessionDataLayer {
       entry = { store, refCount: 1, keepWarmTimer: null };
       this.entries.set(topic, entry);
       openKind = "cold";
-      // 订阅失败落在 store.state（status=error + retry()），不在这里抛。
+      // Subscription failures are represented in store.state (status=error + retry()); do not throw here.
       void store.connect({ rendererPrepareStartedAt: startedAt });
     }
     logger.lifecycle.info("v4 session data lease acquired", {
@@ -121,12 +121,12 @@ export class SessionDataLayer {
     };
   }
 
-  /** 当前活跃（含 keep-warm 中）的 session 数，测试与调试观测点。 */
+  /** Number of currently active sessions (including keep-warm sessions); observation point for tests/debugging. */
   get size(): number {
     return this.entries.size;
   }
 
-  /** renderer pending-command registry 的只读对账入口；仍复用本 layer 的同一 host connection。 */
+  /** Read-only reconciliation entry point for the renderer pending-command registry; reuses this layer’s same host connection. */
   queryCommands(params: CommandsQueryParams): Promise<CommandsQueryResult> {
     return this.transport.queryCommands(params);
   }
@@ -145,7 +145,7 @@ export class SessionDataLayer {
       });
       return;
     }
-    // 关 pane ≠ 停 session：这里只是退订视图，session 在 CLI 里照跑。
+    // Closing a pane does not stop the session: this only unsubscribes the view; the session keeps running in the CLI.
     entry.keepWarmTimer = setTimeout(() => {
       this.entries.delete(topic);
       logger.lifecycle.info("v4 session data keep-warm expired", {
@@ -167,7 +167,7 @@ export class SessionDataLayer {
     });
   }
 
-  /** 连接销毁时清场（window/workspace 卸载）。 */
+  /** Clean up when the connection is destroyed (window/workspace unmount). */
   dispose(): void {
     if (this.disposed) return;
     logger.lifecycle.info("v4 session data layer dispose started", {

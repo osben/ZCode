@@ -57,8 +57,9 @@ export const TodoWriteInputSchema = z
       .describe("The complete updated todo list. At most one item may be in_progress at a time."),
   })
   .strict();
-// 多 subagent / 并行任务下需要允许多个 in_progress，旧的 schema 硬拒绝会让
-// TodoWrite 失败并触发后续调度组被跳过；先整段注释保留，便于回滚或对比。
+// Multiple in_progress items must be allowed for multiple subagents / parallel tasks. The old
+// schema's hard rejection caused TodoWrite to fail and later scheduling groups to be skipped.
+// Keep the old block commented out for rollback or comparison.
 // .superRefine((input, context) => {
 //   const inProgressCount = input.todos.filter((todo) => todo.status === "in_progress").length;
 //   if (inProgressCount <= 1) return;

@@ -1,7 +1,7 @@
 import { spawnSync } from "node:child_process";
 
-// Linux XDG 桌面集成共享基础设施：deep link 注册（desktopLinuxDeepLinkRegistration）
-// 与 AppImage 图标安装（desktopLinuxAppImageIcon）共用，独立成模块避免两者互相依赖形成环。
+// Shared infrastructure for Linux XDG desktop integration, used by deep-link registration (desktopLinuxDeepLinkRegistration)
+// and AppImage icon installation (desktopLinuxAppImageIcon). Keep it separate to avoid a dependency cycle between them.
 
 export const XDG_COMMAND_TIMEOUT_MS = 2_000;
 
@@ -28,7 +28,7 @@ export function runXdgCommand(command: string, args: string[]): LinuxDesktopComm
     stdio: ["ignore", "pipe", "pipe"],
     timeout: XDG_COMMAND_TIMEOUT_MS,
   });
-  // encoding: "utf8" 时 stderr 已是 string，无需再兼容 Buffer 分支。
+  // With encoding: "utf8", stderr is already a string; no Buffer compatibility branch is needed.
   return {
     status: result.status,
     signal: result.signal,

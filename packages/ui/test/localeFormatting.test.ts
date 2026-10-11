@@ -51,7 +51,7 @@ describe("work duration", () => {
 });
 
 describe("memory updated-at", () => {
-  // 2026-03-18 是周三；本周一为 03-16。
+  // 2026-03-18 is Wednesday; this week's Monday is 03-16.
   const now = new Date(2026, 2, 18, 15, 0).getTime();
   const format = (locale: Locale, updatedAt: number) =>
     formatMemoryUpdatedAt({ formatMessage: intlFor(locale).formatMessage, locale, now, updatedAt });

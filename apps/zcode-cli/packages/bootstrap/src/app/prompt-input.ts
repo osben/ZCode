@@ -27,9 +27,9 @@ export function projectInputHistoryAttachments(
 ): InputHistoryAttachment[] | undefined {
   const projected: InputHistoryAttachment[] = [];
   for (const attachment of attachments ?? []) {
-    // TurnAttachment 新增 video 后曾直接扩大 legacy InputHistory contract；
-    // 这里显式投影该端口真正支持的类型，避免类型契约与存储行为分裂。PDF 已加入该端口，
-    // 以便 input history 也保留 durable artifact ref。
+    // Adding video to TurnAttachment once expanded the legacy InputHistory contract directly. Project
+    // only the types this port actually supports to keep the type contract aligned with storage
+    // behavior. PDF is supported here so input history also retains durable artifact refs.
     if (attachment.type === "video") continue;
     projected.push({
       type: attachment.type,

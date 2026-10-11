@@ -47,7 +47,7 @@ export {
 import { readStringProperty } from "./bash-metadata.js";
 import { formatBashModelContent, formatPersistedBashModelContent } from "./bash-model-content.js";
 
-/** session shell selection 尚未初始化时 guarded matcher 采用的文法；与 readonly 判定的假设一致。 */
+/** Grammar used by the Guarded matcher before session shell selection is initialized; matches the assumptions of read-only detection. */
 const GUARDED_DEFAULT_DIALECT: ExecutionShellSelection["dialect"] = "posix";
 import { createBashProviderDescription } from "./bash-prompt.js";
 import {
@@ -117,8 +117,8 @@ export function resolveBashPermissionCapability(
 ): ToolRuntimePermissionCapability | undefined {
   const command = readStringProperty(input, "command");
   if (command && context?.mode === "guarded") {
-    // selection 缺失是基础设施状态而非语法边界；与下方 isRuntimeReadOnlyBashCommand 一致按 POSIX
-    // 文法匹配，避免 guarded 在 selection 尚未初始化时静默退回 YOLO。显式 legacy-shell 仍 unsupported。
+    // Missing selection is infrastructure state, not a grammar boundary; match POSIX syntax as in isRuntimeReadOnlyBashCommand below,
+    // so Guarded does not silently fall back to YOLO before selection is initialized. Explicit legacy-shell remains unsupported.
     const match = matchDangerousCommand(
       command,
       context.bashShellSelection?.dialect ?? GUARDED_DEFAULT_DIALECT,
@@ -179,9 +179,9 @@ async function executeBashHandler(
   const progressTiming: BashProgressTiming = {};
   const commandTelemetry = startBashCommandTelemetry(parsed, context);
   const runOptions = createExecutionRunOptions(context, progressTiming, commandTelemetry);
-  // 后台命令完成后 runTaskNotificationBatch 会另起一轮通知 turn，该 turn 不带
-  // turnExecutionModel，闲时 turn 结束/失败后就会落到用户自己的套餐上跑完整 agent loop。
-  // 与 subagent runner 的 BACKGROUND_UNAVAILABLE 对称：闲时 turn 拒绝显式后台，也关闭超时自动转后台。
+  // After a background command completes, runTaskNotificationBatch starts a separate notification turn without
+  // turnExecutionModel. Once the idle turn completes or fails, it would run a full agent loop on the user's own plan.
+  // Match the subagent runner's BACKGROUND_UNAVAILABLE behavior: reject explicit background execution in idle turns and disable automatic backgrounding on timeout.
   const backgroundDisabled = context.offPeakTurn === true;
   if (parsed.run_in_background && backgroundDisabled) {
     throw createCoreError(
@@ -257,8 +257,8 @@ async function executeBashHandler(
     runtimeScope: context.runtimeScope,
   });
   if (cwdDecision.nextWorkingDirectory) {
-    // 主线程 Bash 成功后会保留项目内 cwd；
-    // 离开项目边界时 reset 回原始工作区，并把 reset 文案放进 Bash stderr。
+    // After successful Bash execution on the main thread, preserve a CWD inside the project.
+    // If it leaves the project boundary, reset to the original workspace and put the reset message in Bash stderr.
     await context.setWorkingDirectory?.(cwdDecision.nextWorkingDirectory);
   }
   const output = await toBashOutput(result, parsed, context, {
@@ -365,8 +365,8 @@ function finishBashCommandTelemetry(
   } else if (result.status === "spawn_error") {
     telemetry.finishFailed("spawn", "configuration", result.error);
   } else if (result.status === "failed" && result.error) {
-    // 非零退出码是命令事实（例如 grep 未匹配），不等同于执行框架失败。
-    // 只有 Adapter 明确提供结构化 failure 时才污染 command failure rate。
+    // A nonzero exit code is a command fact (for example, grep found no matches), not an execution framework failure.
+    // Count it toward command failure rate only when the Adapter provides a structured failure explicitly.
     telemetry.finishFailed("execute", "internal", result.error);
   } else {
     telemetry.finishCompleted();
@@ -590,8 +590,8 @@ function createBashTimeoutBudgetResolver(
 ): NonNullable<ToolEntry["resolveTimeoutBudgetMs"]> {
   return (input) => {
     const parsed = BashInputSchema.safeParse(input);
-    // 旧 watchdog 直接读取 raw timeout，导致 0 被压成 1ms，且字符串数字绕过
-    // Bash policy。这里和 handler 共用 timeout || default / max 解析后再加 cleanup grace。
+    // The old watchdog read the raw timeout, turning 0 into 1 ms and allowing numeric strings to bypass
+    // Bash policy. Reuse the handler's timeout || default / max parsing here, then add cleanup grace.
     return resolveBashTimeoutMs(parsed.success ? parsed.data.timeout : undefined, timeoutPolicy);
   };
 }

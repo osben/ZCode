@@ -4,19 +4,21 @@ import type { JsonSchema, JsonValue } from "./types.js";
 import { MAX_UNION_MEMBERS } from "./types.js";
 
 /**
- * 类型 → JSON Schema 的发射器（emitter），由 checker 的结构化视图驱动（泛型/别名/
- * mapped/conditional 都已被 checker 展平）。
+ * Type → JSON Schema emitter, driven by the checker's structured view (generics / aliases /
+ * mapped / conditional types have already been flattened by the checker).
  *
- * 递归类型通过 `$defs`/`$ref` 表达：只有真正被自身（在合成栈上）再次引用到的类型才会
- * 被提升为 def，非递归的具名类型仍就地内联，保证快照可读。识别办法是给每个复合类型
- * 压一个栈帧，若发射其子树时再次进入同一 `ts.Type`，就把它标记为 requested 并返回
- * `$ref`；栈帧结束时若被 requested 过，则登记进 defs。
+ * Recursive types use `$defs`/`$ref`: only a type actually referenced again within the synthesis
+ * stack is promoted to a def; non-recursive named types remain inline so snapshots stay readable.
+ * To detect recursion, push a stack frame for each composite type. If emitting its subtree enters
+ * the same `ts.Type` again, mark it requested and return `$ref`; when the frame exits, add it to
+ * defs if it was requested.
  *
- * 不可 JSON 序列化的类型以 {@link SchemaRejection} 抛出，由合成侧转成定位到 ask 站点的
- * 诊断（复用分析管线的诊断形状/UX）。
+ * Throw {@link SchemaRejection} for types that cannot be serialized as JSON. The synthesis side
+ * converts it into a diagnostic located at the ask site (reusing the analysis pipeline's
+ * diagnostic shape/UX).
  */
 
-/** 发射失败：携带原因与出错的 JSON 路径，供合成侧组装成定位诊断。 */
+/** Emission failure: carries the reason and failing JSON path for synthesis to build a located diagnostic. */
 export class SchemaRejection extends Error {
   constructor(
     readonly reason: string,
@@ -28,8 +30,9 @@ export class SchemaRejection extends Error {
 }
 
 /**
- * 明确按名字拒绝的内建对象：它们是宿主对象/类实例，不是纯数据。Promise 也在此列，
- * 给出比“函数类型”更清晰的诊断。用户自定义 class 由 SymbolFlags.Class 兜底。
+ * Built-in objects rejected explicitly by name: they are host objects / class instances, not plain
+ * data. Promise is included to produce a clearer diagnostic than “function type.” SymbolFlags.Class
+ * catches user-defined classes.
  */
 const REJECTED_BUILTINS = new Set<string>([
   "Date",
@@ -68,7 +71,7 @@ interface Frame {
   requested: boolean;
 }
 
-/** 读取对象类型的 objectFlags（`ts.getObjectFlags` 未在公有 typings 暴露，这里直接取）。 */
+/** Read objectFlags from an object type (`ts.getObjectFlags` is not exposed in public typings, so read it directly). */
 function objectFlagsOf(type: ts.Type): ts.ObjectFlags {
   return (type.flags & ts.TypeFlags.Object) !== 0 ? (type as ts.ObjectType).objectFlags : 0;
 }
@@ -84,7 +87,7 @@ export class SchemaEmitter {
     private readonly location: ts.Node,
   ) {}
 
-  /** 发射顶层类型；若过程中产生了 def，则把 `$defs` 挂到根 schema 上。 */
+  /** Emit the top-level type; attach `$defs` to the root schema if any were produced. */
   emitTop(type: ts.Type): JsonSchema {
     const schema = this.emit(type, "$");
     if (this.defs.size === 0) return schema;
@@ -131,7 +134,7 @@ export class SchemaEmitter {
     throw new SchemaRejection("type is not JSON-serializable", path);
   }
 
-  /** 复合类型的栈帧包装：发射期间若被自身再次引用则提升为 def 并返回 `$ref`。 */
+  /** Stack-frame wrapper for composite types: promote to a def and return `$ref` if referenced again during emission. */
   private composite(type: ts.Type, build: () => JsonSchema): JsonSchema {
     this.inProgress.set(type, { requested: false });
     const schema = build();
@@ -143,7 +146,7 @@ export class SchemaEmitter {
     return { $ref: `#/$defs/${name}` };
   }
 
-  /** 为一个类型分配稳定且唯一的 def 名（源自别名/符号名），惰性且去重。 */
+  /** Lazily assign a stable, unique def name (from alias/symbol name), deduplicating as needed. */
   private nameFor(type: ts.Type): string {
     const cached = this.defName.get(type);
     if (cached !== undefined) return cached;
@@ -179,14 +182,14 @@ export class SchemaEmitter {
     return this.emitMembers(members, path);
   }
 
-  /** 一组成员类型 → enum（全为字面量时）或 anyOf。也被可选属性的去 undefined 路径复用。 */
+  /** Convert a set of member types to enum (if all are literals) or anyOf. Also reused when removing undefined from optional properties. */
   emitMembers(members: readonly ts.Type[], path: string): JsonSchema {
     const literals = this.asLiterals(members);
     if (literals !== undefined) return { enum: literals };
     return { anyOf: members.map((member, index) => this.emit(member, `${path}|${index}`)) };
   }
 
-  /** 若所有成员都是字面量（string/number/boolean 字面量或 null），返回其取值数组。 */
+  /** Return literal values if all members are literals (string/number/boolean literals or null). */
   private asLiterals(members: readonly ts.Type[]): JsonValue[] | undefined {
     const values: JsonValue[] = [];
     for (const member of members) {
@@ -200,8 +203,8 @@ export class SchemaEmitter {
     return values;
   }
 
-  /** 交叉类型：合并为一个 object（checker 已把成员属性合并到交叉类型上）。含原始类型成员
-   *  的品牌类型（如 `string & {__brand}`）按其原始类型发射。 */
+  /** Intersection types merge into one object (the checker has already merged member properties).
+   * Branded types containing a primitive member (such as `string & {__brand}`) emit as that primitive. */
   private emitIntersection(type: ts.IntersectionType, path: string): JsonSchema {
     for (const member of type.types) {
       if (member.flags & ts.TypeFlags.String) return { type: "string" };
@@ -249,17 +252,19 @@ export class SchemaEmitter {
     if (Object.keys(properties).length > 0) schema.properties = properties;
     if (required.length > 0) schema.required = required;
 
-    // 闭合对象（无字符串索引签名）发射 additionalProperties: false。
-    // 注意这不是「忠于 TS」：TS 的对象类型在结构上是开放的（多余属性检查只对对象字面量
-    // 触发），`{a: string}` 本身接受多余键。这里选 false 的真正理由是校验 UX 与结构化
-    // 输出惯例：模型给出多余键几乎总是误解的信号，false 能把它变成一条清晰的修复提示，
-    // 也符合严格结构化输出的通行做法。带字符串索引签名（Record<string,T>）则用其值 schema。
+    // Emit additionalProperties: false for a closed object (one without a string index signature).
+    // This is not “faithful to TypeScript”: TS object types are structurally open (excess-property
+    // checks only apply to object literals), and `{a: string}` itself accepts extra keys. The
+    // reason to choose false is validation UX and structured-output convention: extra keys from a
+    // model almost always signal a misunderstanding, and false turns that into a clear repair
+    // prompt while matching common strict structured-output practice. For a string index signature
+    // (Record<string,T>), use its value schema instead.
     const indexInfo = this.checker.getIndexInfoOfType(type, ts.IndexKind.String);
     schema.additionalProperties = indexInfo !== undefined ? this.emit(indexInfo.type, `${path}[*]`) : false;
     return schema;
   }
 
-  /** 可选属性：从属性类型里剥掉 undefined 后再发射（可选性由 required 表达，不进类型）。 */
+  /** Optional property: remove undefined from its type before emission (optional status is expressed by required, not by the type). */
   private emitOptional(propType: ts.Type, path: string): JsonSchema {
     if (!propType.isUnion()) return this.emit(propType, path);
     const rest = propType.types.filter(

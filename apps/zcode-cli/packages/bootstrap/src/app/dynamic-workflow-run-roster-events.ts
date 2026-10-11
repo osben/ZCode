@@ -1,26 +1,25 @@
 // ============================================================
-// 情势截面的**事件索引**：一趟扫过 journal 事件，得到一切「多久以前」
+// **Event index** for the situation snapshot: scan journal events once to derive every "how long ago" value.
 // ============================================================
-// 阶段表、子代理花名册、健康三组读面
-// 要的时间只有一个来源——`StoredEvent.timeCreated`，即事件落 journal 的时刻。节点行
-// （`NodeRecord`）没有任何时间列，所以「这次 ask 什么时候开始的」「它上次动是什么时候」
-// 只能从事件轨上取。
+// The phase map, subagent roster, and health read surfaces all use the same time source—`StoredEvent.timeCreated`, the time an event is written to the journal.
+// Node rows (`NodeRecord`) have no time columns, so questions like "when did this ask start?" or "when did it last move?"
+// must be answered from the event stream.
 //
-// 本模块是那趟扫描，且只是那趟扫描：纯函数、无 I/O、不认识端口类型。三个消费者
-// （-roster-phases / -roster-subagents / -roster）共用它的产物，于是一次 getRunDetail
-// 只读一遍事件——这条读面在 run 越长时越贵，读两遍就是白付一倍。
+// This module performs exactly that scan: pure function, no I/O, and no port types. Its three consumers
+// (-roster-phases / -roster-subagents / -roster) share the result, so one getRunDetail reads events only once—
+// this read gets more expensive as a run grows, and scanning twice would double the cost.
 
 import type { StoredEvent } from "@zcode/dynamic-workflow";
 
 /**
- * 算「还在动吗」时**算数**的事件类型：脚本自己往前走了，或者某个 ask 往前走了。
+ * Event types that **count** when determining whether something is still active: the script or an ask made progress.
  *
- * `phase-entered` 与 `log` 在其中，因为它们正是**脚本**在动的证据：两次 ask 之间跑一串
- * world read 的脚本一条 ask 事件都不发，把它们排除掉，那段时间会被误报成停滞。
+ * Include `phase-entered` and `log` because they are evidence that the **script** is active: a script may perform several
+ * world reads between asks without emitting any ask events; excluding them would falsely report that interval as stalled.
  *
- * `node-waiting` 刻意**不**在其中：等槽位、等退避正是停滞本身，把它算成进度，
- * `stalledSince` 就永远不会在场——而那恰恰是停滞最典型的形态。`concurrency-changed` 与
- * `run-stalled` 同理不算：它们是**关于不动的观察**，不是动。
+ * Deliberately exclude `node-waiting`: waiting for a slot or backoff is the stall itself. Counting it as progress would make
+ * `stalledSince` disappear forever—the most typical stall would become unobservable. Likewise exclude `concurrency-changed` and
+ * `run-stalled`: they are **observations about inactivity**, not activity.
  */
 const PROGRESS_EVENT_TYPES: ReadonlySet<string> = new Set([
   "node-queued",
@@ -36,8 +35,8 @@ const PROGRESS_EVENT_TYPES: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * 节点**生命周期**事件（相位迁移）。`node-progress` 不在其中——一个轮次解析完不是生命周期
- * 跃迁，与 reducer 侧那条纪律逐字相同；子代理的 `waiting` 判据因此不会被进度事件打断。
+ * Node **lifecycle** events (phase transitions). `node-progress` is excluded: completing one model turn is not a lifecycle
+ * transition, matching the reducer's rule exactly; progress events therefore do not interrupt a subagent's `waiting` status.
  */
 const NODE_LIFECYCLE_EVENT_TYPES: ReadonlySet<string> = new Set([
   "node-queued",
@@ -49,12 +48,12 @@ const NODE_LIFECYCLE_EVENT_TYPES: ReadonlySet<string> = new Set([
   "node-settled",
 ]);
 
-/** 实例键：`siteId@ordinal`，与引擎的 `refToString` 同形。 */
+/** Instance key: `siteId@ordinal`, matching the engine's `refToString` format. */
 export function instanceKey(siteId: string, ordinal: number): string {
   return `${siteId}@${ordinal}`;
 }
 
-/** 当前 ask 在等什么（最后一条 `node-waiting` 的观察 + 进入这次等待的时刻）。 */
+/** What the current ask is waiting for (latest `node-waiting` observation + when this wait began). */
 export interface RosterWaitTrace {
   cause: "slot" | "backoff";
   reason?: string;
@@ -62,53 +61,53 @@ export interface RosterWaitTrace {
   since?: number;
 }
 
-/** 一个节点实例在事件轨上留下的痕迹。 */
+/** Trace left by a node instance in the event stream. */
 export interface RosterNodeTrace {
-  /** 本世最后一次 `node-dispatched` 的时刻（`node-queued` 会清掉：重新排队是新的一世）。 */
+  /** Most recent `node-dispatched` time in this lifecycle (`node-queued` clears it; requeueing starts a new lifecycle). */
   dispatchedAt?: number;
-  /** 最后一条生命周期事件的 type；子代理的 `waiting` 判据只看它是不是 `node-waiting`。 */
+  /** Type of the last lifecycle event; the subagent's `waiting` criterion checks only whether this is `node-waiting`. */
   lastLifecycleType?: string;
-  /** 仅当此刻正处在 waiting 时在场（任何别的生命周期事件都会清掉它）。 */
+  /** Present only while currently waiting (any other lifecycle event clears it). */
   wait?: RosterWaitTrace;
-  /** 最后一条**带 lastTool** 的 `node-progress` 的时刻。 */
+  /** Time of the last `node-progress` event **with lastTool**. */
   lastToolAt?: number;
-  /** 该实例最后一条进度类事件的时刻。 */
+  /** Time of the last progress event for this instance. */
   lastActivityAt?: number;
 }
 
-/** 一个阶段**最近一次**进入与离开的时刻。 */
+/** **Most recent** entry and exit times for one phase. */
 export interface RosterPhaseTrace {
   enteredAt?: number;
   exitedAt?: number;
 }
 
-/** 一次节点结算（按事件顺序），健康面的连败与缓存命中都从这串算。 */
+/** One node settlement in event order; the health surface derives consecutive failures and cache hits from this sequence. */
 export interface RosterSettlement {
   key: string;
   outcome: string;
   cached: boolean;
 }
 
-/** 一趟扫描的全部产物。 */
+/** All outputs from one scan. */
 export interface RosterEventIndex {
   nodes: ReadonlyMap<string, RosterNodeTrace>;
   phases: ReadonlyMap<string, RosterPhaseTrace>;
   settlements: readonly RosterSettlement[];
-  /** 全 run 最后一条进度类事件的时刻。 */
+  /** Time of the last progress event across the entire run. */
   lastProgressAt?: number;
-  /** 最后一条 `run-stalled` 的时刻，且其后没有任何进度类事件；否则缺席。 */
+  /** Time of the last `run-stalled` event, if no progress event followed it; otherwise absent. */
   stalledSince?: number;
-  /** 最后一条 `concurrency-changed` 的原因与时刻（数值上界由 reducer 那一侧给）。 */
+  /** Reason and time of the last `concurrency-changed` event (the numeric limit comes from the reducer). */
   concurrencyReason?: string;
   concurrencySince?: number;
 }
 
 /**
- * 扫一遍事件，得到情势截面要的全部时刻。
+ * Scan events once and collect every timestamp needed for the situation snapshot.
  *
- * `now` 是本次读的时刻，只做**上钳**：journal 可以被带到另一台机器上读，而一个比「现在」还晚
- * 的时刻会被渲染成负的年龄——那读起来像工具坏了，而不像时钟偏了。缺时间戳的事件（老的内存
- * journal 替身）一律让对应字段缺席，绝不用 `now` 兜底：那会把一周前的整段历史标成「刚刚」。
+ * `now` is the time of this read and is used only to **clamp upper bounds**: a journal may be read on another machine, and a timestamp later than "now"
+ * would render as a negative age, making the tool look broken rather than revealing clock skew. If an event lacks a timestamp (as in older in-memory
+ * journal doubles), omit the corresponding field instead of falling back to `now`; that would label a week of history as "just now."
  */
 export function indexRosterEvents(events: readonly StoredEvent[], now: number): RosterEventIndex {
   const nodes = new Map<string, RosterNodeTrace>();
@@ -127,8 +126,8 @@ export function indexRosterEvents(events: readonly StoredEvent[], now: number): 
 
     if (PROGRESS_EVENT_TYPES.has(event.type)) {
       lastProgressAt = laterOf(lastProgressAt, at);
-      // 停滞观察之后只要有任何一条进度，停滞就已经结束了——哪怕这条进度没有时间戳：
-      // 「它又动过了」与「它动在什么时候」是两个问题，前者不依赖时钟。
+      // Any progress after a stall observation ends the stall—even if the progress has no timestamp:
+      // "it moved again" and "when it moved" are separate questions, and the first does not need a clock.
       stalledPending = false;
     }
 
@@ -157,8 +156,8 @@ export function indexRosterEvents(events: readonly StoredEvent[], now: number): 
       trackLifecycle(trace, event.type, at);
     }
     if (event.type === "node-waiting") {
-      // 已经在等就保留**进入那一刻**：退避阶梯会连发好几条 node-waiting，而读者问的是
-      // 「它卡了多久」，不是「最后一条观察是什么时候发的」。原因与重试间隔则取最新的一条。
+      // If already waiting, preserve **when the wait began**: a backoff ladder emits several node-waiting events, but readers ask
+      // "how long has it been stuck?", not "when was the latest observation emitted?" Use the latest reason and retry interval.
       const since = trace.wait?.since ?? at;
       trace.wait = {
         cause: event.cause,
@@ -188,8 +187,8 @@ export function indexRosterEvents(events: readonly StoredEvent[], now: number): 
 }
 
 /**
- * 记一次 `phase-entered`：它既开启自己这一段，也结束上一个**异名**阶段。
- * 同名再入（回边）只把进入时刻前移，不算离开自己。返回新的「最后进入的阶段名」。
+ * Record a `phase-entered` event: it starts this phase and ends the previous **different-named** phase.
+ * Reentering the same phase (a back edge) only advances its entry time; it does not count as leaving. Return the new "last entered phase" name.
  */
 function trackPhase(
   phases: Map<string, RosterPhaseTrace>,
@@ -201,13 +200,13 @@ function trackPhase(
     const previous = phases.get(lastPhaseName);
     if (previous !== undefined) previous.exitedAt = at;
   }
-  // 取最近一次进入而不是第一次：被回边绕了三圈的阶段，要问的是「这一圈进来多久了」。
-  // 重进即清掉上一圈的离开时刻——它此刻又是开着的。
+  // Use the most recent entry, not the first: after three back-edge loops, readers ask how long this visit has lasted.
+  // Reentry clears the previous exit time because the phase is active again.
   phases.set(name, at === undefined ? {} : { enteredAt: at });
   return name;
 }
 
-/** 记一条生命周期事件：重新排队清掉上一世的派发时刻，任何非 waiting 事件清掉等待。 */
+/** Record one lifecycle event: requeueing clears the previous dispatch time, and any non-waiting event clears the wait state. */
 function trackLifecycle(trace: RosterNodeTrace, type: string, at: number | undefined): void {
   trace.lastLifecycleType = type;
   if (type !== "node-waiting") trace.wait = undefined;
@@ -216,8 +215,8 @@ function trackLifecycle(trace: RosterNodeTrace, type: string, at: number | undef
 }
 
 /**
- * 事件的落库时刻。缺席、非有限值与非正值一律读作「没有时钟」——`0` 是 1970 年，
- * 它只可能是某处漏填，而不是一个真的时刻。
+ * Event persistence time. Treat missing, non-finite, and non-positive values as "no clock"—`0` is 1970,
+ * so it can only indicate a missing value, not a real timestamp.
  */
 function timeOf(stored: StoredEvent, now: number): number | undefined {
   const time = stored.timeCreated;
@@ -225,7 +224,7 @@ function timeOf(stored: StoredEvent, now: number): number | undefined {
   return Math.min(time, now);
 }
 
-/** 两个可缺席时刻里更晚的那个。 */
+/** Later of two optional timestamps. */
 export function laterOf(left: number | undefined, right: number | undefined): number | undefined {
   if (left === undefined) return right;
   if (right === undefined) return left;

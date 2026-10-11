@@ -64,7 +64,7 @@ export interface IProviderSettingsService {
     modelId: ModelId,
     enabled: boolean,
   ): Promise<ProviderSettingsView>;
-  /** 测试已经保存并进入目标 Environment Registry 的正式 Model。 */
+  /** Test a production Model that has been saved and added to the target Environment Registry. */
   testModelConnectivity(
     input: ProviderSettingsConnectivityRequest,
   ): Promise<ModelConnectivityResult>;
@@ -171,8 +171,8 @@ export function createProviderSettingsService(
         throw new Error("当前 Environment 未装配模型连通性测试能力");
       }
       await facade.waitForProviderOperations(input.providerId);
-      // 禁用对象仍存在于配置视图，但不进入执行 Registry；不能把未发布误报成配置丢失。
-      // 只消费操作完成后的公共资格，不另查 Key、权益，也不替代目标 Environment 最终校验。
+      // Disabled entries remain visible in configuration but are not added to the execution Registry; do not report them as missing configuration.
+      // Use only the public eligibility result after the operation completes; do not query keys/entitlements again or replace final validation in the target Environment.
       const provider = facade
         .getView()
         .providers.find((item) => item.providerId === input.providerId);
@@ -236,9 +236,8 @@ export function createModelSelectionService(
         for (const listener of listeners) listener(view);
       },
       (error: unknown) => {
-        // Registry 事件触发的异步 View 重建没有 owner；Host dispose 后它仍会继续
-        // 读取已释放的配置仓库，并形成未处理 rejection。dispose 是明确的取消边界；仅在服务
-        // 仍存活时记录真实读取失败。
+        // Asynchronous view rebuilds triggered by Registry events have no owner; after Host dispose they could continue
+        // reading a released configuration repository and cause an unhandled rejection. dispose is the explicit cancellation boundary; log real read failures only while the service is still alive.
         if (disposed) return;
         log.warn(undefined, `ModelSelection View 刷新失败: ${String(error)}`);
       },

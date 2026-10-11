@@ -1,4 +1,4 @@
-/* eslint-disable max-lines -- onboarding 弹窗集中编排欢迎页、会话迁移、外部导入和最终执行状态，拆开会增加跨步骤状态传递复杂度 */
+/* eslint-disable max-lines -- The onboarding dialog coordinates the welcome page, session migration, external imports, and final execution state; splitting it up would increase cross-step state passing. */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog.js";
 import { useClaudeSessionMigration } from "@/hooks/useClaudeSessionMigration.js";
@@ -39,7 +39,7 @@ const ONBOARDING_STEP_ORDER: OnboardingWizardStep[] = [
   "session",
   "skills-import",
   "mcp-import",
-  // 插件导入步骤未启用。
+  // The plugin import step is disabled.
   // "plugins-import",
   "commands-import",
   "agents-file",
@@ -70,7 +70,7 @@ export function OnboardingDialog(props: {
   const initializedWorkspaceSelectionRef = useRef(false);
   const autoScannedSessionStepRef = useRef(false);
 
-  // 引导阶段没有 Scope 选择，target 恒为当前上下文 workspace，直接注入其 service。
+  // There is no Scope selection during onboarding; target is always the current workspace, so inject its service directly.
   const { settingsSyncService } = useServices();
 
   const skillsImportState = useExternalAgentImportCategoryState({
@@ -88,7 +88,7 @@ export function OnboardingDialog(props: {
     workspaceIdentity: props.workspaceIdentity,
   });
   /*
-   * 插件导入步骤未启用。
+   * The plugin import step is disabled.
    * const pluginsImportState = useExternalAgentImportCategoryState({
    *   category: "plugins",
    *   enabled: view === "wizard" && wizardStep === "plugins-import",
@@ -150,7 +150,7 @@ export function OnboardingDialog(props: {
     sessionMigration,
     agentsFileMigration,
     settingsSync,
-    // 代理设置步骤未启用，不导入其默认选择。
+    // The proxy settings step is disabled; do not import its default selection.
     { includeSettingsSelections: false },
   );
 
@@ -237,9 +237,9 @@ export function OnboardingDialog(props: {
   }, [sessionMigration.candidates]);
 
   const selectedWorkspaceCount = selectedWorkspacePaths.length;
-  // 暂时隐藏数据迁移向导里的代理设置步骤，同时不把默认选中的代理设置暗中计入迁移任务。
+  // Temporarily hide the provider-settings step in the data-migration wizard, without silently including the default provider in the migration.
   const settingsTaskCount = 0;
-  /** 既无会话也无外部导入项时，禁止进入迁移步骤。 */
+  /** Disable the migration step when there are neither sessions nor external items to import. */
   const beginMigrationDisabled =
     selectedWorkspaceCount === 0 &&
     totalExternalImportSelectedCount === 0 &&
@@ -419,7 +419,7 @@ export function OnboardingDialog(props: {
           />
         );
       /*
-       * 插件导入步骤未启用。
+       * The plugin import step is disabled.
        * case "plugins-import":
        *   return (
        *     <OnboardingExternalAgentImportStep
@@ -463,8 +463,8 @@ export function OnboardingDialog(props: {
       open={settingsSync.state.open}
       onOpenChange={(nextOpen) => {
         if (!nextOpen) {
-          // onboarding 迁移执行中即使隐藏了右上角关闭按钮，Radix 仍会响应遮罩点击和 Esc。
-          // 之前这里直接 close 会把长时间迁移任务瞬间关掉，用户也拿不到二次确认；统一收口到确认逻辑后才不会误关。
+          // Even when the close button is hidden during an onboarding migration, Radix still responds to backdrop clicks and Esc.
+          // Closing directly here previously stopped a long-running migration without a second confirmation; route all close actions through the confirmation logic.
           void handleCloseRequest();
         }
       }}
@@ -504,7 +504,8 @@ export function OnboardingDialog(props: {
                 beginMigrationDisabled={beginMigrationDisabled}
               />
               {/*
-                暂时隐藏数据迁移向导里的代理设置步骤，批量选择按钮随步骤一起隐藏。
+                Temporarily hide the proxy settings step in the data migration wizard; the bulk
+                selection buttons hide along with the step.
                 onAgentSettingsBulkToggle={toggleAgentSettingsBulk}
                 agentSettingsBulkToggleDisabled={agentSettingsBulkToggleDisabled}
                 agentSettingsBulkIsClear={agentSettingsFullySelected}

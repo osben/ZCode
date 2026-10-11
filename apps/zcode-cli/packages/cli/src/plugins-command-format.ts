@@ -99,7 +99,7 @@ export const formatPluginSetJson = (result: SetZCodePluginEnabledResult): string
     plugin: formatPluginJson(result.plugin, []),
   });
 
-/** 已加载插件的 JSON 形态；诊断按 pluginId 归到各自条目上，顶层不再有 cwd/diagnostics 包装。 */
+/** JSON representation of loaded plugins; diagnostics belong to their pluginId entries, with no top-level cwd/diagnostics wrapper. */
 export function formatPluginJson(
   plugin: PluginListItem,
   diagnostics: readonly PluginDiagnostic[],
@@ -160,7 +160,7 @@ export function formatMarketplaceJson(marketplace: ZCodeMarketplaceSummaryData) 
     isOfficial: marketplace.isOfficial,
     name: marketplace.name,
     pluginCount: marketplace.pluginCount,
-    // marketplace source 在 bootstrap 契约里是 Record<string, unknown>，实际总是 JSON 可序列化对象。
+    // The bootstrap contract types marketplace source as Record<string, unknown>; at runtime it is always a JSON-serializable object.
     source: marketplace.source as JsonValue,
     ...(marketplace.description ? { description: marketplace.description } : {}),
     ...(marketplace.lastUpdated ? { lastUpdated: marketplace.lastUpdated } : {}),

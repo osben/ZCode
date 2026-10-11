@@ -47,7 +47,7 @@ export function resolveDesktopContextPromptConfig(
   }
   const config = envelope.data?.configs?.desktopContextPrompt;
   if (config === undefined || config === null) {
-    // 服务端成功响应但未下发该单功能配置，语义是未启用；不能继续沿用旧的开启快照。
+    // A successful server response without this feature's configuration means it is disabled; do not keep using an older enabled snapshot.
     return { enabled: false };
   }
   if (typeof config?.enabled !== "boolean") {

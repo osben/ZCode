@@ -133,9 +133,9 @@ export function createBashPermissionRulePolicy(
 function buildInvocationRuleSubjects(invocation: BashCommandInvocation): string[] {
   const rawSubject = normalizeInvocation(invocation);
   const stablePrefix = resolveStableCommandPrefix(invocation);
-  // 保存规则会移除 --dir/-C 等全局 flag，但旧 evaluator 只拿原始 invocation
-  // 比较，导致 UI 明明保存了 `pnpm run lint:*`，下一轮仍无法命中。保留 raw subject
-  // 兼容历史 wildcard，同时加入相同 resolver 得出的稳定 action subject。
+  // Saved rules remove global flags such as --dir/-C, but the old evaluator compared only the raw invocation,
+  // so a saved rule like `pnpm run lint:*` would not match on the next turn. Keep the raw subject for existing wildcards
+  // and also include the stable action subject produced by the same resolver.
   return stablePrefix && stablePrefix !== rawSubject ? [rawSubject, stablePrefix] : [rawSubject];
 }
 

@@ -1,22 +1,22 @@
 /**
- * MCP 用户目录模块 - 类型和常量定义
+ * MCP user-directory module - type and constant definitions
  */
 
 import type { CliMcpSource, McpFileFormat } from "@zcode/shared";
 
 /**
- * MCP 配置键名类型
- * - mcpServers: 通用 JSON 目录格式（.agents/mcp.json）
- * - mcp.servers: zcode CLI config.json 格式
+ * MCP configuration key types
+ * - mcpServers: generic JSON directory format (`.agents/mcp.json`)
+ * - mcp.servers: zcode CLI `config.json` format
  */
 export type McpConfigKeyName = "mcpServers" | "mcp" | "mcp_servers" | "mcp.servers";
 
 /**
- * OpenCode MCP 配置格式
- * OpenCode 使用特殊的配置格式：
- * - 键名是 "mcp" 而不是 "mcpServers"
- * - command 是数组格式 ["npx", "-y", "server"] 而不是分开的 command + args
- * - 必须有 type 字段 ("local" 或 "remote")
+ * OpenCode MCP configuration format.
+ * OpenCode uses a special configuration format:
+ * - the key is "mcp" instead of "mcpServers"
+ * - command is an array such as ["npx", "-y", "server"] instead of separate command + args
+ * - a type field ("local" or "remote") is required
  */
 export interface OpenCodeMcpServerConfig {
   type: "local" | "remote";

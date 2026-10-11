@@ -1,9 +1,8 @@
-// AmendWorkflow 的常驻描述（docs/dynamic-workflow/launch.md「What the model is told」）。
+// Persistent description for AmendWorkflow (docs/dynamic-workflow/launch.md, “What the model is told”).
 //
-// 2026-09-21 起收短：缓存如何命中、省略即沿用的三个字段、`path` 与 `script` 两条来路、确认窗
-// 何时出现，都在 `dynamic-workflows` 技能的「Tool reference」里，由技能门保证读过。这里只留
-// 路由——什么情况该来修订而不是重建、不要先停、不要等——因为它决定的是「要不要调这个工具」，
-// 必须在技能加载之前就被读到。
+// Shortened starting 2026-09-21: cache matching, the three fields inherited when omitted, the `path` and `script` inputs, and when to show
+// the confirmation dialog are documented in the `Tool reference` section of the `dynamic-workflows` skill, which the skill gate ensures the model has read. Keep only
+// routing here—when to amend instead of recreate, and not to stop or wait—because it determines whether to call this tool and must be read before the skill loads.
 
 import { DYNAMIC_WORKFLOW_SKILL_NAME } from "@zcode/contracts";
 

@@ -5,9 +5,9 @@ import type { TuiThemeTokens } from "./types.js";
 export const DEFAULT_TUI_THEME_PALETTE: UiThemePalette = "neutral";
 
 /**
- * 仅覆盖强调色相关 token；背景、文本与语法高亮保持内置主题不变。
- * 数值与 packages/ui/src/lib/themePalettes.ts 的 accent 保持一致。TUI 无法导入 @zcode/ui，
- * 因此在此复制，修改任一侧时需同步另一侧。neutral 与 zai 没有覆盖项。
+ * Override only accent-related tokens; keep the built-in background, text, and syntax highlighting unchanged.
+ * Values match the accent colors in packages/ui/src/lib/themePalettes.ts. The TUI cannot import @zcode/ui,
+ * so the values are duplicated here; update both sides together. neutral and zai have no overrides.
  */
 const ACCENT_OVERRIDES: Partial<Record<UiThemePalette, Record<UiThemeMode, string>>> = {
   ocean: { light: "#2563eb", dark: "#60a5fa" },
@@ -23,8 +23,8 @@ const ACCENT_OVERRIDES: Partial<Record<UiThemePalette, Record<UiThemeMode, strin
 const resolvedTokenCache = new Map<string, TuiThemeTokens>();
 
 /**
- * 返回指定模式与调色板下的 token。结果按 mode:palette 缓存，保证同一组合返回同一对象，
- * 避免组件每次渲染拿到新引用。
+ * Return tokens for the requested mode and palette. Cache by mode:palette so the same combination returns the same object,
+ * avoiding a new reference on every component render.
  */
 export function resolveTuiThemeTokens(mode: UiThemeMode, palette: UiThemePalette): TuiThemeTokens {
   const base = BUILTIN_TUI_THEMES[mode];

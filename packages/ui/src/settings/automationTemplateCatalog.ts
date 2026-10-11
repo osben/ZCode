@@ -42,7 +42,7 @@ export interface AutomationTemplateCatalog {
 
 const CUSTOMIZE_TEMPLATE: OffPeakAutomationTemplate = {
   id: "customize",
-  // Customize 是本地保底入口，稳定文案由 locale 真源在渲染时解析，避免 catalog 再保存一份双语副本。
+  // Customize is the local fallback entry point; resolve stable text from the locale source at render time instead of storing a second bilingual copy in the catalog.
   title: {},
   description: {},
   prompt: { cn: "", en: "" },
@@ -111,10 +111,10 @@ function resolveReferencedCronExpr(
       .filter((value): value is string => Boolean(value));
     const cronExpr = localizedValues[0];
     if (!cronExpr) continue;
-    // cron 不是自然语言；不同 locale 配置成不同表达式会让点击结果不可预测，按非法配置拒绝。
+    // cron is not natural language; configuring different expressions by locale would make click results unpredictable, so reject such configuration as invalid.
     if (localizedValues.some((value) => value !== cronExpr)) return null;
-    // Croner 支持六/七段等表达式，但 Automation builder 只能无损编辑其中的
-    // 五段子集。只做 Service 校验会让模板在打开表单后、用户尚未编辑时就被静默改写。
+    // Croner supports six-/seven-field expressions, but the Automation builder can losslessly edit only
+    // the five-field subset. Validating only in the Service would silently rewrite a template as soon as the form opens, before the user edits it.
     if (isValidCronExpr(cronExpr) && canVisualizeCronInAutomationEditor(cronExpr)) {
       return cronExpr;
     }
@@ -180,8 +180,8 @@ function mapOffPeakTemplates(scenes: readonly ClientSceneConfig[]): OffPeakAutom
 const HOMEPAGE_REMOTE_OFF_PEAK_TEMPLATE_LIMIT = 2;
 
 /**
- * New task 首页专用选择规则；Automations 模板区必须保持远程目录原样。
- * 首页始终使用本地 Customize，避免远程同名项占用两条远程模板名额或改变最后一项的位置。
+ * Selection rules for the New task home page only; the Automations template section must preserve the remote catalog as-is.
+ * Always use the local Customize entry on the home page, so a same-named remote item cannot take one of the two remote template slots or move the last item.
  */
 export function appendLocalCustomizeTemplate(
   templates: readonly OffPeakAutomationTemplate[],

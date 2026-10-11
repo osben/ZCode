@@ -21,13 +21,15 @@ export const CommandExecutionTelemetrySchema = z
     outputBytes: z.number().int().nonnegative().optional(),
     category: z.string().max(64).optional(),
     /**
-     * 只允许公开 Registry 中的可执行文件名或固定低基数桶；禁止放入原始命令或参数。
+     * Use only executable names from the public registry or fixed low-cardinality buckets; do
+     * not include raw commands or arguments.
      */
     name: z.string().max(128).optional(),
     count: z.number().int().nonnegative().optional(),
     status: ToolCommandStatusSchema,
     /**
-     * 本地诊断字段；远端 Trace Exporter 必须显式忽略，避免成为高基数远端维度。
+     * Local diagnostic field; remote Trace Exporters must explicitly ignore it to avoid a
+     * high-cardinality remote dimension.
      */
     hash: z
       .string()
@@ -90,8 +92,9 @@ export type ToolExecutionTelemetryDetail = z.infer<
 >;
 
 /**
- * 工具执行结果摘要，随 ToolCallResult 事件落本地存储；命令专属字段只能进入判别 detail，
- * 避免非命令工具伪造 exitCode 等不适用事实。
+ * Tool execution result summary, persisted locally with the ToolCallResult event. Command-only
+ * fields belong only in the discriminated detail, so non-command tools cannot fabricate facts
+ * such as exitCode.
  */
 export const ToolExecutionTelemetrySchema = z
   .object({

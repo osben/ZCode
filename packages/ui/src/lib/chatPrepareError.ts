@@ -13,8 +13,8 @@ export type ModelConfigMissingUiError = ZCodeError & {
 };
 
 export function buildModelConfigMissingUiError(): ModelConfigMissingUiError {
-  // provider_not_ready 是进程启动门禁的内部等待原因，直接展示会被当成
-  // Agent 故障。草稿首页统一投影成已有 modelConfigMissing banner 的稳定 code。
+  // provider_not_ready is an internal wait reason from the process-start gate; displaying it directly would be mistaken for
+  // an Agent failure. Project it to the existing modelConfigMissing banner’s stable code on the draft home.
   return {
     code: MODEL_CONFIG_MISSING_UI_ERROR_CODE,
     message: "No usable model provider is configured.",
@@ -22,9 +22,7 @@ export function buildModelConfigMissingUiError(): ModelConfigMissingUiError {
 }
 
 export function isProviderNotReadyError(error: unknown): boolean {
-  return (
-    normalizeUnknownError(error).code === ZCODE_AGENT_PROVIDER_NOT_READY_CODE
-  );
+  return normalizeUnknownError(error).code === ZCODE_AGENT_PROVIDER_NOT_READY_CODE;
 }
 
 interface WorkspacePrepareErrorContext {
@@ -43,9 +41,7 @@ interface WorkspacePrepareErrorContext {
   displayMessage?: string;
 }
 
-function buildWorkspacePrepareDetail(
-  context: WorkspacePrepareErrorContext,
-): string {
+function buildWorkspacePrepareDetail(context: WorkspacePrepareErrorContext): string {
   return (
     `workspace=${context.workspacePath} ` +
     `provider=${context.provider} ` +
@@ -64,11 +60,7 @@ function stringifyUnknownValue(value: unknown): string {
   if (value === undefined) {
     return "undefined";
   }
-  if (
-    typeof value === "number" ||
-    typeof value === "boolean" ||
-    typeof value === "bigint"
-  ) {
+  if (typeof value === "number" || typeof value === "boolean" || typeof value === "bigint") {
     return String(value);
   }
 
@@ -78,7 +70,7 @@ function stringifyUnknownValue(value: unknown): string {
       return serialized;
     }
   } catch {
-    // 部分错误对象会带循环引用，序列化失败时回退到 String，避免二次抛错覆盖原始错误。
+    // Some error objects contain circular references; if serialization fails, fall back to String so a second exception does not overwrite the original error.
   }
 
   return String(value);
@@ -100,16 +92,12 @@ export function getChatErrorMessage(err: unknown): string {
   return stringifyUnknownValue(err);
 }
 
-function buildDisplayErrorInput(
-  err: unknown,
-  displayMessage: string | undefined,
-): unknown {
+function buildDisplayErrorInput(err: unknown, displayMessage: string | undefined): unknown {
   if (!displayMessage) {
     return err;
   }
 
-  const displayError = new Error(displayMessage) as Error &
-    Record<string, unknown>;
+  const displayError = new Error(displayMessage) as Error & Record<string, unknown>;
   if (err instanceof Error) {
     displayError.name = err.name;
     displayError.stack = err.stack;
@@ -164,8 +152,8 @@ export function buildCachedWorkspacePrepareUiError(
   context: WorkspacePrepareErrorContext,
 ): ZCodeError & { detail?: string } {
   if (cachedError?.message === message) {
-    // Bugfix: workspaceInit 目前只缓存纯 message；页面返回命中 failed 短路时，
-    // 必须复用上一轮 prepare 的结构化 code，否则模型配置缺失会重新显示 CLI 原文。
+    // Bugfix: workspaceInit currently caches only the plain message. When returning to a page and taking the failed short circuit,
+    // reuse the structured code from the previous prepare, or a missing model configuration will show the raw CLI text again.
     return cachedError.detail
       ? cachedError
       : {

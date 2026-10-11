@@ -40,7 +40,7 @@ test("uk bot messages are Ukrainian, keep placeholders and English command names
     formatBotMessage("uk-UA", "taskFailed", { message: "boom" }),
     "Не вдалося виконати завдання: boom",
   );
-  // D10：命令名保持英文，不添加乌克兰语别名。
+  // D10: Keep command names in English; do not add Ukrainian aliases.
   assert.match(formatBotMessage("uk-UA", "helpWorkspace"), /^\*\*\/project\*\*/);
   for (const id of ALL_IDS) {
     const uk = formatBotMessage("uk-UA", id, { workspacePath: "/w", message: "m", mode: "x" });

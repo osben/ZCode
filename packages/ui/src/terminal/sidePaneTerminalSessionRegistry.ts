@@ -1,31 +1,31 @@
-// sidePaneTerminalSessionRegistry —— side pane terminal 跨 workspace 会话保活的模块级单例。
+// sidePaneTerminalSessionRegistry — module-level singleton that keeps side-pane terminal sessions alive across workspace changes.
 //
-// 如果 xterm、PTY 与订阅由 TerminalSession 组件持有，切换 workspace 触发的卸载
-// 就会关闭进程并丢失历史。由模块级 registry 持有这些资源，组件只负责挂载显示，
-// 可以让终端会话跨 workspace 切换继续存活。
+// If the TerminalSession component owned xterm, the PTY, and subscriptions, switching workspaces would unmount it
+// and close the process and lose history. Let the module-level registry own these resources; the component only mounts and displays them,
+// so terminal sessions survive workspace switches.
 //
-// 修复思路（对称下侧思想，但形态不同）：
-//   把 side pane terminal 的 xterm 实例 + PTY 关联**所有权上移到这个模块级单例**，
-//   脱离 TerminalSession 组件 effect 生命周期。组件任意卸载/重挂都不动 xterm/PTY，
-//   重挂时按 persistentKey(=tab.id) 取回 entry，把 hostEl 物理移回容器即可。
+// Fix approach (similar in intent to the bottom terminal, but different in form):
+//   Move **ownership of the side-pane terminal xterm instance and PTY association into this module-level singleton**,
+//   outside the TerminalSession component effect lifecycle. Component unmounts/remounts do not affect xterm/PTY,
+//   and on remount the entry is retrieved by persistentKey (= tab.id) and its hostEl is moved back into the container.
 //
-// 不与下侧 terminal 共享 session。
-// 仅 SidePaneTerminalPane 通过 TerminalSession 的 persistentKey prop 接入；下侧不传 persistentKey，
-// 走 TerminalSession 原 effect 路径，与 registry 完全无关。
+// Do not share sessions with the bottom terminal.
+// Only SidePaneTerminalPane connects through the TerminalSession persistentKey prop; the bottom terminal does not pass persistentKey,
+// and follows the original TerminalSession effect path, entirely separate from this registry.
 
 import type { FitAddon } from "@xterm/addon-fit";
 import type { ITheme, Terminal as XTerm } from "@xterm/xterm";
 import { uiMemoryDiagnosticsRegistry } from "@/lib/memoryDiagnostics.js";
 
 /**
- * 一个 side pane terminal 会话的常驻资源。
+ * Persistent resources for one side-pane terminal session.
  *
- * - term/fitAddon：xterm 实例（含 scrollback 历史）+ fit 插件，跨 workspace 复用同一实例。
- * - terminalId：terminalService 分配的 PTY id（根级共享 service，本地 workspace 共用 baseServices）。
- * - hostEl：term.open 的常驻容器。它在 stashDiv（隐藏暂存）和实际渲染容器之间物理移动，
- *           xterm DOM 子树随它一起移动，term 实例和 scrollback 不变。
- * - dispose：真回收（关 tab 时调）——杀 PTY + 销 xterm + 释放订阅。由 TerminalSession 创建方注入，
- *            registry 本身不依赖 terminalService（service 走依赖注入，不在这里硬编码）。
+ * - term/fitAddon：xterm instance (including scrollback history) and fit plugin; reuse the same instance across workspaces.
+ * - terminalId：PTY id assigned by terminalService (a root-level shared service; local workspaces share baseServices).
+ * - hostEl：Persistent container passed to term.open. It moves between stashDiv (hidden storage) and the actual render container;
+ *           the xterm DOM subtree moves with it while the term instance and scrollback remain unchanged.
+ * - dispose：Full disposal (called when closing the tab) — kill the PTY, dispose xterm, and release subscriptions. Injected by the TerminalSession creator;
+ *            the registry itself does not depend on terminalService (the service is injected, not hard-coded here).
  */
 export interface SidePaneTerminalSessionEntry {
   key: string;
@@ -34,33 +34,33 @@ export interface SidePaneTerminalSessionEntry {
   terminalId: string;
   cwd: string;
   /**
-   * 该 terminal 所属的 workspaceKey（= workspaceIdentity?.trim() || workspacePath）。
-   * 仅用于 workspace tab 真正关闭时按 workspaceKey 批量回收（对称下侧 openWorkspaceKeys 回收）。
-   * 切 workspace 不会触发回收，只有该 workspace 从 openWorkspaceKeys 移除才回收。
+   * workspaceKey for the terminal (workspaceIdentity?.trim() || workspacePath).
+   * Used only to dispose sessions by workspaceKey when a workspace tab is actually closed (matching the bottom terminal openWorkspaceKeys cleanup).
+   * Switching workspaces does not dispose sessions; disposal occurs only when that workspace is removed from openWorkspaceKeys.
    */
   workspaceKey: string;
   hostEl: HTMLDivElement;
   /**
-   * terminalService.create() 返回的终端 profile theme（用户终端配置的颜色）。
-   * Bug 背景：原实现只写组件局部 terminalProfileThemeRef，组件卸载后 ref 销毁；
-   * 重挂时新组件 ref 被重置为 undefined，复用 observer 用 undefined 合并出基础主题，丢掉 profile theme。
-   * 所有权上移到 entry，让 profile theme 与 term/PTY 同一常驻所有者，跨组件生命周期复用不丢。
+   * Terminal profile theme returned by terminalService.create() (the colors configured by the user).
+   * Bug background: the original implementation stored this only in the component-local terminalProfileThemeRef, which was destroyed when the component unmounted;
+   * on remount the new component ref reset to undefined, and the reused observer merged undefined into the base theme, losing the profile theme.
+   * Move ownership to the entry so the profile theme shares the persistent owner of term/PTY and survives reuse across component lifecycles.
    */
   profileTheme?: ITheme;
-  /** 真 dispose：杀 PTY + 销 xterm + 释放订阅 + 移除 hostEl。由创建方（TerminalSession persistentKey 路径）注入。 */
+  /** Full disposal: kill the PTY, dispose xterm, release subscriptions, and remove hostEl. Injected by the creator (TerminalSession persistentKey path). */
   dispose: () => void;
 }
 
-// 模块级状态：跨 workspace、跨 React 组件树常驻。
+// Module-level state persists across workspaces and React component trees.
 const sessions = new Map<string, SidePaneTerminalSessionEntry>();
-// 内存诊断计数器：常驻 xterm 实例数无上限，先落日志。
+// Memory diagnostic counter: persistent xterm instances are currently unbounded, so log their count first.
 uiMemoryDiagnosticsRegistry.register("xterm", () => ({ sessions: sessions.size }));
 
-// 隐藏暂存容器：存放 detached 的 hostEl，避免被 React 卸载渲染容器时连带销毁 xterm DOM。
+// Hidden storage container for detached hostEl elements, preventing React from destroying xterm DOM when it unmounts the render container.
 let stashDiv: HTMLDivElement | null = null;
 
 function getStashDiv(): HTMLDivElement | null {
-  // 兼容：SSR/web 测试环境可能没有 document。
+  // Compatibility: SSR/Web test environments may not have document.
   if (typeof document === "undefined") return null;
   if (!stashDiv) {
     stashDiv = document.createElement("div");
@@ -78,9 +78,9 @@ function releaseEntry(key: string): void {
   try {
     entry.dispose();
   } catch (error) {
-    // Bug 说明：dispose 内部杀 PTY/销 xterm，理论上不应抛；但即使抛也不能阻塞关 tab 流程，
-    // 否则单个 terminal release 异常会卡住整批关闭（关闭其他/全部）。吞掉打日志，对称下侧容错。
-    // 风险：PTY 可能残留，由 terminalService disposeAll 在 host 退出时兜底回收。
+    // Bug note: disposing kills the PTY and xterm and should not throw, but even if it does, it must not block tab closure,
+    // or one terminal release failure would stall closing the rest or all sessions. Catch and log it, matching the bottom terminal’s fault tolerance.
+    // Risk: the PTY may remain; terminalService.disposeAll cleans it up when the host exits.
     if (typeof console !== "undefined") {
       // eslint-disable-next-line no-console
       console.warn("[sidePaneTerminalSessionRegistry] release dispose failed", error);
@@ -90,10 +90,10 @@ function releaseEntry(key: string): void {
 }
 
 /**
- * side pane terminal session 模块级单例。
+ * Module-level singleton for side-pane terminal sessions.
  *
- * 不直接 new XTerm / 调 terminalService——资源创建由 TerminalSession 的 persistentKey 路径完成，
- * 再 register 进来。registry 只负责「存取 + DOM 移动 + 回收」，保持与服务层解耦。
+ * It does not instantiate XTerm or call terminalService; the TerminalSession persistentKey path creates resources,
+ * then registers them here. The registry only handles storage, DOM movement, and disposal, staying decoupled from the service layer.
  */
 export const sidePaneTerminalSessionRegistry = {
   has(key: string): boolean {
@@ -104,14 +104,14 @@ export const sidePaneTerminalSessionRegistry = {
     return sessions.get(key);
   },
 
-  /** TerminalSession persistentKey 路径首次创建资源后，把 entry 存入 registry 常驻。 */
+  /** After the TerminalSession persistentKey path creates resources for the first time, store the entry in the registry for reuse. */
   register(key: string, entry: SidePaneTerminalSessionEntry): void {
     sessions.set(key, entry);
   },
 
   /**
-   * 把 entry.hostEl 物理移动到 host 容器（attach）。
-   * xterm 的 .xterm DOM 子树随 hostEl 一起移动，term 实例不变；移动后调用方负责 fitAddon.fit() 恢复尺寸。
+   * Physically move entry.hostEl into the host container (attach).
+   * The xterm .xterm DOM subtree moves with hostEl without changing the term instance; the caller must run fitAddon.fit() afterward to restore sizing.
    */
   attachDom(key: string, host: HTMLElement): void {
     const entry = sessions.get(key);
@@ -121,8 +121,8 @@ export const sidePaneTerminalSessionRegistry = {
   },
 
   /**
-   * 把 entry.hostEl 移回 stashDiv（detach）。
-   * 组件卸载时调——不 dispose term/PTY/订阅，资源留在 registry 供下次重挂复用。
+   * Move entry.hostEl back to stashDiv (detach).
+   * Called when the component unmounts — do not dispose term/PTY/subscriptions; resources stay in the registry for the next remount.
    */
   detachDom(key: string): void {
     const entry = sessions.get(key);
@@ -133,14 +133,14 @@ export const sidePaneTerminalSessionRegistry = {
     stash.appendChild(entry.hostEl);
   },
 
-  /** 显式关闭 side pane terminal tab 时调：真 dispose（杀 PTY + 销 xterm + 释放订阅）。 */
+  /** Called when explicitly closing a side-pane terminal tab: fully dispose (kill PTY, dispose xterm, and release subscriptions). */
   release(key: string): void {
     releaseEntry(key);
   },
 
   /**
-   * 批量回收（workspace tab 关闭时按 workspaceKey 过滤）。
-   * 对称下侧 Terminal.tsx 的 openWorkspaceKeys 回收逻辑。
+   * Bulk disposal (filter by workspaceKey when closing a workspace tab).
+   * Matches the openWorkspaceKeys cleanup logic in the bottom Terminal.tsx.
    */
   releaseByPredicate(pred: (entry: SidePaneTerminalSessionEntry) => boolean): void {
     for (const [key, entry] of sessions) {
@@ -150,7 +150,7 @@ export const sidePaneTerminalSessionRegistry = {
     }
   },
 
-  /** 测试专用：清空所有 session 并移除 stashDiv。 */
+  /** For tests only: clear all sessions and remove stashDiv. */
   clearForTest(): void {
     for (const key of Array.from(sessions.keys())) {
       releaseEntry(key);

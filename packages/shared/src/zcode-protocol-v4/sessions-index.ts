@@ -1,4 +1,4 @@
-// sessions-index topic：列表活性数据源；conflated 最新态，永不溢出。
+// sessions-index topic: live data source for the list; conflated latest state that never overflows.
 import { z } from "zod";
 import { timestampSchema } from "./core.js";
 import { sessionWorkflowActivitySchema } from "./sessions-index-workflow-activity.js";
@@ -12,7 +12,7 @@ import {
 export const sessionPendingInteractionSummarySchema = z.object({
   interactionId: z.string(),
   kind: z.enum(["permission", "userInput"]),
-  // 只下发轻量工具身份，侧栏据此区分 AskUserQuestion 与其他阻塞确认；不携带问题或答案。
+  // Sends only lightweight tool identity so the sidebar can distinguish AskUserQuestion from other blocking confirmations; includes no question or answer.
   toolName: z.string().optional(),
   autoResolution: interactionAutoResolutionSchema.optional(),
 });
@@ -29,27 +29,27 @@ export type PendingInteractionSummary = z.infer<typeof pendingInteractionSummary
 export const sessionSummarySchema = z.object({
   sessionId: z.string(),
   workspaceId: z.string(),
-  // fork 树。
+  // Fork tree.
   parentSessionId: z.string().optional(),
   title: z.string(),
-  // custom = 用户显式重命名；default/generated 都不是产品语义上的手动标题。
-  // optional 是为了兼容旧 sessions-index frame / 旧持久化摘要。
+  // custom = explicitly renamed by the user; default/generated are not manual titles in product semantics.
+  // optional preserves compatibility with old sessions-index frames and persisted summaries.
   titleSource: sessionMetaStateSchema.shape.titleSource.optional(),
   phase: sessionPhaseSchema,
   sessionEnded: z.boolean(),
-  // 列表小圆点用（此处保留布尔，避免为侧栏订阅整个 backgroundWorks）。
+  // Used by the list indicator (keep it boolean here so the sidebar does not have to subscribe to all of backgroundWorks).
   hasBackgroundWork: z.boolean(),
-  // 侧栏工作流运行行：有界的 run 摘要，
-  // 只装画迷你轨道要的字段；会话没有任何 run 时缺席。optional 兼容旧 frame / 旧 CLI。
+  // Sidebar workflow run rows: bounded run summaries,
+  // with only the fields needed to draw the mini track; absent when the session has no runs. optional preserves compatibility with old frames/CLI.
   workflowActivity: sessionWorkflowActivitySchema.optional(),
   pendingInteraction: sessionPendingInteractionSummarySchema.optional(),
-  // 侧栏只需要 kind/count，不下发问题、命令或答案等敏感 payload。
-  // optional 兼容旧 sessions-index frame / stored summary。
+  // The sidebar needs only kind/count; do not send sensitive payloads such as questions, commands, or answers.
+  // optional preserves compatibility with old sessions-index frames and stored summaries.
   pendingInteractionSummary: pendingInteractionSummarySchema.optional(),
   goalStatus: goalStateSchema.shape.status.optional(),
-  // 未读推导：客户端本地记 lastSeenActivityAt 比较（不用 seq，epoch 会重置）。
+  // Unread state is derived by comparing the client's locally stored lastSeenActivityAt (not seq, since the epoch resets).
   lastActivityAt: timestampSchema,
-  // ≤120 字符。
+  // ≤120 characters.
   lastAssistantPreview: z.string().optional(),
   createdAt: timestampSchema,
 });
@@ -58,26 +58,26 @@ export type SessionSummary = z.infer<typeof sessionSummarySchema>;
 export const sessionsIndexSnapshotSchema = z.object({
   protocolVersion: z.literal(1),
   workspaceId: z.string(),
-  // host 级列表日志代际（与各 session 的 logEpoch 无关）。
+  // Host-level list log generation (independent of each session's logEpoch).
   logEpoch: z.string(),
-  // 无序；排序是客户端展示逻辑。
+  // Unordered; sorting is client display logic.
   sessions: z.array(sessionSummarySchema),
 });
 export type SessionsIndexSnapshot = z.infer<typeof sessionsIndexSnapshotSchema>;
 
 export const sessionsIndexDeltaSchema = z.discriminatedUnion("op", [
-  // conflation key = sessionId。
+  // conflation key = sessionId.
   z.object({ op: z.literal("session.upserted"), session: sessionSummarySchema }),
   z.object({ op: z.literal("session.removed"), sessionId: z.string() }),
 ]);
 export type SessionsIndexDelta = z.infer<typeof sessionsIndexDeltaSchema>;
 
-/** sessions-index topic key 构造（与 parseSessionsIndexTopic 对偶）。 */
+/** Constructs a sessions-index topic key (the counterpart to parseSessionsIndexTopic). */
 export function sessionsIndexTopic(workspaceId: string): string {
   return `sessions-index/${workspaceId}`;
 }
 
-/** sessions-index topic key 解析（"sessions-index/<workspaceId>"）。 */
+/** Parse a sessions-index topic key ("sessions-index/<workspaceId>"). */
 export function parseSessionsIndexTopic(topic: string): string | null {
   if (!topic.startsWith("sessions-index/")) return null;
   const workspaceId = topic.slice("sessions-index/".length);

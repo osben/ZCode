@@ -1,9 +1,9 @@
 import type { Modifier } from "@dnd-kit/core";
 
-/* 垂直列表拖拽约束：锁死横向位移，并把拖拽行钳制在其容器（activeNode.parentElement）
-   矩形内。独立 lib 而非内联在 SortableWorkspaceSidebar 中：Idle-time 侧栏分组的组内拖拽
-   （spec off-peak）需要复用同一约束，而 SortableWorkspaceSidebar 带着整条
-   WorkspaceSidebarItem 依赖链，不适合被展示组件直接 import，故上提为独立 lib。 */
+/* Vertical-list drag constraints: lock horizontal displacement and clamp the dragged row to its container (activeNode.parentElement)
+   rectangle. Keep this in a standalone lib instead of inlining it in SortableWorkspaceSidebar: group-internal dragging in the Idle-time sidebar
+   (spec off-peak) needs the same constraint, while SortableWorkspaceSidebar carries the entire
+   WorkspaceSidebarItem dependency chain and is not suitable for direct import by display components, so this was extracted into a standalone lib. */
 export const restrictVerticalDragWithinContainer: Modifier = ({
   transform,
   draggingNodeRect,

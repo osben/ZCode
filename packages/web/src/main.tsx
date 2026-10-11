@@ -1,5 +1,5 @@
 import { sessionCreateTelemetrySchema, type RendererTelemetryEventPayload } from "@zcode/shared";
-/* eslint-disable max-lines -- Web 远程控制启动、错误页和 web 平台桥接暂时集中在入口编排。 */
+/* eslint-disable max-lines -- Web remote-control startup, error pages, and platform bridging are currently coordinated in the entry point. */
 import { createRoot } from "react-dom/client";
 import {
   AppErrorBoundary,
@@ -44,7 +44,7 @@ import {
 } from "./share/conversationShareRoute.js";
 import { applyTheme, readStoredThemeSelection } from "@zcode/ui/useTheme";
 
-// 启动时同步应用明暗模式与配色，避免首屏闪烁。分享页没有本地配置时默认浅色，其他 Web 页面默认深色。
+// Apply the color mode and palette synchronously at startup to prevent a first-screen flash. Share pages default to light without local settings; other Web pages default to dark.
 import type {
   IPlatformService,
   WebRemoteControlBootstrapErrorResponse,
@@ -85,9 +85,7 @@ import {
   createWebRemoteControlRelayRequestRecovery,
 } from "./webRemoteControlTransport.js";
 import { createWebRemoteControlLifecycleRecovery } from "./webRemoteControlLifecycle.js";
-import {
-  seedWebRemoteControlThemePreference,
-} from "./webRemoteControlThemeSeed.js";
+import { seedWebRemoteControlThemePreference } from "./webRemoteControlThemeSeed.js";
 import {
   WebRemoteControlFailureScreen,
   resolveWebRemoteControlScreenLocale,
@@ -129,7 +127,7 @@ async function markCurrentWebRemoteControlBridgeTaskRead({
 }): Promise<void> {
   const taskWorkspaceKey = resolveWebRemoteControlWorkspaceKey(task);
   if (taskWorkspaceKey !== bridge.workspaceKey) {
-    // 修复原因：同路径 remote workspace 可能属于不同 identity，禁止误用当前 bridge 写另一条连接。
+    // Fix rationale: remote workspaces at the same path can have different identities; do not use the current bridge to write to another connection.
     console.warn("[web-remote-control] 跳过跨 workspace 的 task 已读写入", {
       taskId: task.taskId,
       taskWorkspaceKey,
@@ -180,8 +178,8 @@ async function markOpenedWebRemoteControlBridgeTaskRead({
   }
 }
 
-// 初始化主题：默认 Zai dark，后续由 useTheme hook 接管
-// system 模式下需要查询系统偏好；非 system 模式直接用存储值
+// Initialize the theme: default to Zai dark, then let the useTheme hook take over.
+// In system mode, query the system preference; otherwise, use the stored value directly.
 {
   const selection = readStoredThemeSelection(
     isConversationSharePath(window.location.pathname) ? "light" : "dark",
@@ -193,14 +191,14 @@ async function resolveFeedbackUrl(): Promise<string | undefined> {
   return (await resolveWebHelpConfig()).feedback_url;
 }
 
-// 浏览器标签页 / 手机切后台时禁用 CSS 动画，避免 DocumentTimeline 持有已卸载的 DOM 子树。
+// Disable CSS animations when the browser tab is hidden or the phone app goes to the background, so DocumentTimeline does not retain an unmounted DOM subtree.
 installDocumentHiddenMotionPause();
 const root = createRoot(document.getElementById("root")!);
 const webAuthService = createWebAuthService();
 let isPageUnloading = false;
 let isSwitchingWebRemoteControlWorkspace = false;
 
-// 初始化 Web 端流式 clientId，确保所有 hook 在首次渲染前就使用稳定 ID
+// Initialize the Web streaming clientId so every hook uses a stable ID before the first render.
 {
   setStreamClientId(generateMobileDeviceFingerprint());
 }
@@ -298,12 +296,12 @@ function renderWebAuthCallbackPage(): void {
 }
 
 async function renderConversationSharePage(): Promise<void> {
-  // 页面语言跟随路径前缀：/cn/share 中文，裸 /share 英文。
+  // Page language follows the path prefix: /cn/share is Chinese; bare /share is English.
   const routeLocale = resolveConversationShareRouteLocale(window.location.pathname);
-  // index.html 固定 lang="en"；不同步会让中文分享页对无障碍与浏览器翻译都报错语言。
+  // index.html fixes lang="en"; without synchronizing this, the Chinese share page has the wrong language for accessibility and browser translation.
   document.documentElement.lang = routeLocale;
-  // 分享页必须设置 title：否则浏览器标签只显示 index.html 的通用标题。
-  // 会话标题要等 preview 加载完，先给一个语言正确的兜底。
+  // The share page must set a title; otherwise the browser tab shows only the generic index.html title.
+  // The session title is available only after preview loads, so set a fallback in the correct language first.
   document.title = routeLocale === "zh-CN" ? "ZCode 会话分享" : "ZCode Conversation Share";
   const shareCode = resolveConversationShareCodeFromPath(window.location.pathname);
   if (!shareCode) {
@@ -320,8 +318,8 @@ async function renderConversationSharePage(): Promise<void> {
     import.meta.env.VITE_ZCODE_BASE_URL?.trim().replace(/\/+$/u, "") || window.location.origin;
   const mockMode =
     import.meta.env.DEV && import.meta.env.VITE_CONVERSATION_SHARE_PREVIEW_MOCK === "true";
-  // Share 加载失败不能只有通用 network 文案：需要区分 mock、endpoint 配置或跨域 fetch。
-  // 这里只记录运行时路由与 endpoint，不记录完整 pathname，避免把 share code 写入日志。
+  // A Share load failure needs more than a generic network message; distinguish mock, endpoint configuration, and cross-origin fetch failures.
+  // Record only the runtime route and endpoint, not the full pathname, to avoid logging the share code.
   console.info("[conversation-share-web]", "preview_runtime_initialized", {
     browserOrigin: window.location.origin,
     routeKind: "canonical",
@@ -591,9 +589,9 @@ function createWebPlatform(options?: {
 
   return {
     canSelectFilePath: false,
-    // Web 端无法打开系统目录选择框
+    // The Web platform cannot open the system directory picker.
     selectDirectory: () => Promise.resolve(null),
-    // Web 端无法打开系统文件选择框
+    // The Web platform cannot open the system file picker.
     selectFile: () => Promise.resolve(null),
     selectFiles: () => Promise.resolve([]),
     getPathForFile: () => null,
@@ -610,12 +608,12 @@ function createWebPlatform(options?: {
     onRemoteConnectionLog: () => () => {},
     onRemoteSessionClosed: () => () => {},
     onBotRemoteWorkspaceReconnected: () => () => {},
-    // Web 端无多窗口管理
+    // The Web platform does not manage multiple windows.
     activateOrSetWorkspace: () => Promise.resolve({ activated: false }),
-    // Bugfix: Web 远程控制模式虽然复用了 web UI，但它背后其实挂着 desktop。
-    // 之前这里仍然走普通 web 的 `/api/connect-remote`，既不能命中 desktop main，
-    // 也拿不到 remote session 的 MessagePort，结果看起来像“支持”，实际必然失败。
-    // 先显式拒绝，避免用户沿着错误链路继续排查；后续如果要支持，需要单独补 remote session 注入协议。
+    // Bug fix: Web remote-control mode reuses the Web UI, but is backed by Desktop.
+    // This previously used the regular Web `/api/connect-remote` route, which could not reach Desktop main
+    // or obtain the remote session MessagePort. It appeared supported, but always failed.
+    // Reject this path explicitly to avoid sending users down a broken troubleshooting path; supporting it later requires a separate remote-session injection protocol.
     async connectRemote(
       options: RemoteTarget,
       _requestId?: string,
@@ -632,16 +630,16 @@ function createWebPlatform(options?: {
         };
       }
 
-      // TODO(web-remote-workspace): 普通 Web 模式先只保证 server 本地工作区可用。
-      // 之前这里虽然能打开 ?remote=<id> 新标签页，但远程 WebSocket 只暴露部分 service，
-      // 与 Root/RemoteServiceAccess 需要的完整 accessor 不匹配，最终会在项目向导或首屏卡住。
+      // TODO(web-remote-workspace): initially guarantee only server-local workspaces in regular Web mode.
+      // This could open a new ?remote=<id> tab, but the remote WebSocket exposed only some services,
+      // which did not match the complete accessor required by Root/RemoteServiceAccess, causing the project wizard or first screen to stall.
       return {
         success: false,
         error: `Remote connect is not supported in Web mode yet: ${options.kind}`,
       };
     },
     cancelPendingRemoteConnection: (_requestId?: string) => Promise.resolve(),
-    // Web 端不作为 Web 远程控制的发起端，保留空实现以兼容统一接口。
+    // The Web platform does not initiate Web remote control; keep a no-op implementation for the shared interface.
     startWebRemoteControl: () =>
       Promise.reject(new Error("Web remote control can only be started from desktop")),
     refreshWebRemoteControlPairing: () =>
@@ -745,7 +743,7 @@ function createWebPlatform(options?: {
     onShareImport: () => () => {},
     notifyRendererReady: () => {},
     reportTelemetryEvent: async (event) => {
-      // 手机只开放 session_create；不能把原有 Desktop conversation 事件一并启用。
+      // Mobile exposes only session_create; do not also enable the existing Desktop conversation events.
       const parsed = sessionCreateTelemetrySchema.safeParse(event);
       if (parsed.success) platformProxy?.reportTelemetryEvent?.(parsed.data);
     },
@@ -769,12 +767,12 @@ function createWebPlatform(options?: {
         });
         void playTaskNotificationSound();
       } catch {
-        // 浏览器通知不可用时静默忽略，避免打断主流程
+        // Silently ignore unavailable browser notifications to avoid interrupting the main flow.
       }
     },
-    // Web 端不需要跨窗口 tab 管理
+    // The Web platform does not need cross-window tab management.
     syncWindowTabs: () => {},
-    // Web 端没有宿主层 Dock / 任务栏徽标，保持空实现以兼容统一平台接口
+    // The Web platform has no host-level Dock / taskbar badge; keep this as a no-op for the shared platform interface.
     syncWindowUnreadCount: () => {},
     syncActiveTaskSession: () => {},
     onFocusTab: () => () => {},
@@ -801,9 +799,9 @@ function createWebPlatform(options?: {
       }),
     clearEmbeddedBrowserData: () =>
       Promise.resolve({ success: false, error: "Not supported in web mode" }),
-    // IPlatformService 新增更新提示能力后，Web fallback 没有同步补齐空实现，
-    // 根级 typecheck 会直接失败，连与桌面端无关的改动都没法完成校验。
-    // Web 端当前没有桌面更新器，先显式 no-op，保持接口完整且不改变现有行为。
+    // When IPlatformService gained update-notification support, the Web fallback did not add a matching no-op,
+    // so root typecheck failed even for changes unrelated to Desktop.
+    // Web currently has no desktop updater; explicitly use a no-op to keep the interface complete without changing behavior.
     onUpdateReady: () => () => {},
     onUpdateCheckResult: () => () => {},
     onUpdateStateChanged: () => () => {},
@@ -1020,8 +1018,8 @@ function seedStableWebRemoteControlClientId(deviceSid: string): void {
     globalThis.localStorage?.setItem(storageKey, nextId);
     setStreamClientId(nextId);
   } catch {
-    // Bugfix: iOS private mode 等环境可能禁用 localStorage。
-    // 这里保留前面注入的物理指纹 fallback，避免远控首屏因 clientId 持久化失败而中断。
+    // Bug fix: environments such as iOS private mode may disable localStorage.
+    // Keep the physical-fingerprint fallback injected above so remote-control startup is not interrupted when clientId persistence fails.
     setStreamClientId(generateMobileDeviceFingerprint());
   }
 }
@@ -1080,9 +1078,9 @@ export function createHomeOnlyWebRemoteControlServices(): RootServices {
     isGitAvailable: false,
     isRepository: false,
   });
-  // Bugfix: 手机端只有断开的远程 workspace 时，不能为了进入任务首页强行创建 bridge。
-  // 这里提供只读/空结果服务，吸收 Root 首屏 OAuth、模型供应商、Git、技能等后台初始化，
-  // 避免断连这种预期状态被误报成未处理异常；真正聊天能力仍需重连成功后切到 bridge services。
+  // Bug fix: when mobile has only disconnected remote workspaces, do not force bridge creation just to open the task home page.
+  // Provide read-only/empty-result services here to absorb Root startup initialization for OAuth, model providers, Git, skills, and other background work,
+  // so the expected disconnected state is not reported as an unhandled exception; actual chat capabilities still require reconnecting and switching to bridge services.
   const homeOnlyZCodeTaskService = createEmptyHomeOnlyService<RootServices["zcodeTaskService"]>({
     initialize: async () => ({ available: false }),
     releaseWorkspacePreparation: async () => {},
@@ -1194,7 +1192,7 @@ export function createHomeOnlyWebRemoteControlServices(): RootServices {
         reason: "ZCode session service is not available before workspace bridge is connected.",
       }),
     }),
-    // 分享发布首期只属于 desktop local host；Web 首页和 /remote 不建立独立发布权威。
+    // The initial sharing release flow belongs only to the Desktop local host; Web home and /remote do not establish a separate publishing authority.
     conversationShareService: createUnsupportedHomeOnlyService<
       RootServices["conversationShareService"]
     >("conversationShareService"),
@@ -1240,11 +1238,11 @@ export function createHomeOnlyWebRemoteControlServices(): RootServices {
     clientConfigService: createEmptyHomeOnlyService<RootServices["clientConfigService"]>({
       getSnapshot: async () => ({ pluginStoreOrder: null, zsrcUrl: null }),
     }),
-    // 手机 Web 未连接 shared-host attachment 时禁止直连 scenes HTTP；返回空配置保持首页可用。
+    // When mobile Web is not connected to a shared-host attachment, do not call the scenes HTTP endpoint directly; return an empty configuration so the home page remains usable.
     clientScenesService: createEmptyHomeOnlyService<RootServices["clientScenesService"]>({
       list: async () => ({ code: 0, msg: "", data: [] }),
     }),
-    // 闲时任务仅桌面本地（D13）；web home-only 环境按不支持处理。
+    // Idle tasks are local Desktop only (D13); treat the Web home-only environment as unsupported.
     offPeakTaskService:
       createUnsupportedHomeOnlyService<RootServices["offPeakTaskService"]>("offPeakTaskService"),
     highspeedCardService:
@@ -1271,7 +1269,7 @@ export function createHomeOnlyWebRemoteControlServices(): RootServices {
     pluginsService: createEmptyHomeOnlyService<RootServices["pluginsService"]>({
       list: async () => [],
     }),
-    // M5 ③-3：设置页插件管理仅桌面/远控 bridge 可用，Web 首页 fallback 明确报不可用。
+    // M5 ③-3: plugin management in Settings is available only on Desktop or a remote-control bridge; the Web home fallback explicitly reports it as unavailable.
     pluginManagementService:
       createUnsupportedHomeOnlyService<RootServices["pluginManagementService"]>(
         "pluginManagementService",
@@ -1300,13 +1298,13 @@ export function createHomeOnlyWebRemoteControlServices(): RootServices {
       listStyles: async () => ({ styles: [] }),
       getUserStylesDirectory: async () => ({ path: "" }),
     }),
-    // 全局指令属于目标主机；Web 远控首页未连接 bridge 时明确报不可用，不提供本地替身。
+    // Global instructions belong to the target host; when the Web remote-control home has no bridge, report unavailable explicitly and do not provide a local substitute.
     userInstructionsService:
       createUnsupportedHomeOnlyService<RootServices["userInstructionsService"]>(
         "userInstructionsService",
       ),
-    // Bugfix: feedbackService 成为统一服务接口后，Web 远控首页 fallback 也必须补齐。
-    // 断开 bridge 时这里明确报不可用，避免类型通过但运行时误以为空反馈数据。
+    // Bug fix: after feedbackService became a shared service interface, the Web remote-control home fallback also needed an implementation.
+    // Report unavailable explicitly when the bridge is disconnected, rather than passing types and returning empty feedback data at runtime.
     feedbackService:
       createUnsupportedHomeOnlyService<RootServices["feedbackService"]>("feedbackService"),
     settingsSyncService:
@@ -1476,7 +1474,7 @@ async function bootstrapExternalRelayWebRemoteControl(params: URLSearchParams): 
       );
     },
   });
-  // 必须先于 Root 的全局捕获阶段快捷键注册；原生 modal 只能隔离背景元素，不能隔离 window listener。
+  // Register this shortcut before Root’s global capture phase; a native modal can isolate background elements but cannot isolate window listeners.
   const blockVersionMismatchShortcuts = (event: KeyboardEvent) => {
     if (versionGuard.isBlocked()) event.stopImmediatePropagation();
   };
@@ -1558,10 +1556,10 @@ async function bootstrapExternalRelayWebRemoteControl(params: URLSearchParams): 
       error instanceof Error &&
       error.message === "Web remote control relay did not recover before timeout."
     ) {
-      // Bugfix: 桌面端长时间休眠导致“假连接”时，手机端 recoverConnection 超时会先落入 unknown，
-      // 随后 waiting timer 又触发 invalid-mobile，用户会看到前后冲突的两张错误页。
-      // 这里把 recover 超时直接映射为 desktop-disconnected，并在失败后立即终止 transport，
-      // 保证错误语义单一且稳定。
+      // Bug fix: after a long Desktop sleep leaves a “phantom connection,” mobile recoverConnection may time out and first enter unknown,
+      // then the waiting timer triggers invalid-mobile, showing the user two conflicting error pages.
+      // Map recovery timeouts directly to desktop-disconnected and stop the transport immediately on failure,
+      // so the error state is singular and stable.
       return toWebRemoteControlFailure(
         "desktop-disconnected",
         "Desktop did not recover the Web remote control session in time.",
@@ -1630,14 +1628,14 @@ async function bootstrapExternalRelayWebRemoteControl(params: URLSearchParams): 
           try {
             await checkDesktopVersion();
           } catch (error) {
-            // 校验等待期间失效的 bridge 仍须走下方 bootstrap；它会重新校验版本并沿用原错误处理。
+            // A bridge that becomes invalid while validation is pending must still go through the bootstrap below, which revalidates the version and preserves the existing error handling.
             if (!activeRelayProtocol.isDegraded()) throw error;
           }
         }
-        // Bugfix: 手机短暂切后台只会暂停 JS/心跳，不代表 shared-host bridge 已经失效。
-        // 原逻辑每次回前台都重建 bridge 和 Root，导致用户看到“已配对，正在加载工作区…”闪回。
-        // bridge 是否需要重建以 desktop 发来的 bridge-degraded 或本地 frame gap 为准，避免只按后台时长误判。
-        // 版本校验是异步的，完成后必须重新读取 bridge 状态，避免丢失并发的降级事件。
+        // Bug fix: briefly backgrounding the mobile app pauses JavaScript/heartbeats but does not mean the shared-host bridge has failed.
+        // The old logic rebuilt the bridge and Root every time the app returned to the foreground, making “Paired, loading workspace…” flash again.
+        // Rebuild the bridge only when Desktop reports bridge-degraded or a local frame gap occurs, rather than inferring failure from background duration.
+        // Version validation is asynchronous; reread the bridge state afterward so a concurrent degradation event is not missed.
         if (!activeRelayProtocol.isDegraded()) {
           currentRecoveryId = undefined;
           return;
@@ -1655,9 +1653,9 @@ async function bootstrapExternalRelayWebRemoteControl(params: URLSearchParams): 
         );
       }
       if (!terminated && !isPageUnloading) {
-        // Bugfix: 手机长时间切到后台后，recoverConnection 可能超过单次等待窗口。
-        // 这不代表桌面端离线，也不应该卸载当前 React 页面；否则输入框草稿会被错误页打断。
-        // 这里保留原页面和输入状态，继续让 transport 的重连状态机自动恢复。
+        // Bug fix: after mobile stays in the background for a long time, recoverConnection may exceed a single wait window.
+        // This does not mean Desktop is offline and should not unmount the current React page; otherwise, an error page interrupts the input draft.
+        // Keep the current page and input state, and let the transport reconnect state machine recover automatically.
         transport.recoverInBackground();
       }
     } finally {
@@ -1703,8 +1701,8 @@ async function bootstrapExternalRelayWebRemoteControl(params: URLSearchParams): 
       }
       if (payload.zcode_type === "workspace-bridge-error") {
         if (payload.bridgeSessionId === activeRelayProtocol?.getBridgeSessionId()) {
-          // Bugfix: 远程 session 关闭会异步通知当前 bridge 失效，不对应任何 pending request。
-          // 这里按硬恢复重建视图，让断开的远程 workspace 回到 home-only/reconnect 状态。
+          // Bug fix: closing a remote session asynchronously invalidates the current bridge and does not correspond to any pending request.
+          // Rebuild the view through hard recovery so the disconnected remote workspace returns to the home-only/reconnect state.
           activeRelayProtocol?.markDegraded();
           void recoverVisibleSession(payload.reason);
         }
@@ -1727,13 +1725,13 @@ async function bootstrapExternalRelayWebRemoteControl(params: URLSearchParams): 
       if (state !== "paired") {
         return;
       }
-      // 已有校验操作自行跨重连消费一次重试；配对事件不能启动另一个恢复 owner。
+      // An existing validation operation consumes its own retry across reconnects; a pairing event must not start another recovery owner.
       if (bootstrapping && pendingVersionCheck) return;
-      // healthy bridge 与在途初始化都不能并发新建 bridge，但新配对仍必须检查桌面版本。
+      // A healthy bridge or in-flight initialization must not create another bridge concurrently, but a new pairing must still check the Desktop version.
       if ((activeRelayProtocol && !activeRelayProtocol.isDegraded()) || bootstrapping) {
         if (!checkVersionOnRecovery) return;
         void checkDesktopVersion().catch((error) => {
-          // 版本读取失败沿用恢复链路，不卸载已挂载页面和草稿。
+          // If reading the version fails, use the recovery path without unmounting the current page or draft.
           if (!terminated && !versionGuard.isBlocked()) {
             void recoverVisibleSession("visible");
             if (!import.meta.env.PROD)
@@ -1771,9 +1769,9 @@ async function bootstrapExternalRelayWebRemoteControl(params: URLSearchParams): 
     onSendReady: () => {
       if (versionGuard.isBlocked()) return;
       if (activeRelayProtocol?.isDegraded()) return;
-      // Bug 修复：same-socket matched 只说明 relay 当前重新可达，desktop peer 可能已经换代，
-      // 也可能只丢了上一批 data/ACK。重放同 bridge 未 ACK 批次，由 messageSeq 去重；
-      // adapter 继续保留原始 45 秒 age，避免心跳把不可恢复链路无限续命。
+      // Bug fix: same-socket matched means only that the relay is reachable again; the Desktop peer may have changed,
+      // or only lost the previous batch of data/ACKs. Replay the unacknowledged batch on the same bridge and deduplicate by messageSeq;
+      // the adapter retains the original 45-second age so heartbeats cannot keep an unrecoverable link alive indefinitely.
       activeRelayProtocol?.replayUnacknowledged();
     },
     reloadPage: () => {
@@ -1807,7 +1805,7 @@ async function bootstrapExternalRelayWebRemoteControl(params: URLSearchParams): 
     if (pendingVersionCheck) return pendingVersionCheck;
     const readCurrentVersion = async () => {
       let result = await versionGuard.check();
-      // 配对变化可能发生在旧 bootstrap 等待期间；旧响应失效后在当前连接重新读取。
+      // Pairing may change while the old bootstrap is waiting; after invalidating the old response, read again through the current connection.
       while (
         !result &&
         !terminated &&
@@ -1872,8 +1870,8 @@ async function bootstrapExternalRelayWebRemoteControl(params: URLSearchParams): 
       );
     };
     const response = await requestWithRelayRecovery(() => requestWorkspaceList(), {
-      // Bugfix: 外部 relay 偶发只保留手机到 desktop 的单向通路，或请求发生在重连/suspect 窗口导致未发送。
-      // 首页列表是幂等请求，失败后重建 terminal socket 并重试一次，比直接展示 0 个任务更稳。
+      // Bug fix: the external relay may occasionally retain only a mobile-to-Desktop one-way path, or a request may not be sent during a reconnect/suspect window.
+      // The home-page list request is idempotent; after failure, rebuilding the terminal socket and retrying once is safer than showing zero tasks.
       recoverTimeout: true,
     });
     return normalizeWorkspaceListResult(response.result);
@@ -1914,7 +1912,7 @@ async function bootstrapExternalRelayWebRemoteControl(params: URLSearchParams): 
           payload.requestId === requestId &&
           payload.workspaceKey === workspaceKey,
         {
-          // 远程重连会启动或部署 host，Docker/SSH 首连可能超过默认 10 秒；这里放宽等待，避免桌面端成功后手机端先误报超时。
+          // Remote reconnection starts or deploys the host, and the first Docker/SSH connection may exceed 10 seconds; allow more time here to avoid a false mobile timeout after Desktop succeeds.
           timeoutMs: WEB_REMOTE_CONTROL_WORKSPACE_RECONNECT_TIMEOUT_MS,
         },
       );
@@ -1992,7 +1990,7 @@ async function bootstrapExternalRelayWebRemoteControl(params: URLSearchParams): 
         bridge: response.bridge,
         services,
       });
-      // 已读写入是打开 task 的伴随动作，不等待它完成，避免慢磁盘/远程 IO 阻塞 bridge 切换。
+      // Marking a task as read is a side effect of opening it; do not wait for completion, so slow disk or remote I/O cannot block bridge switching.
       void markOpenedWebRemoteControlBridgeTaskRead({
         bridge: response.bridge,
         expectedUnreadAt: options?.markTaskReadExpectedUnreadAt,
@@ -2040,9 +2038,9 @@ async function bootstrapExternalRelayWebRemoteControl(params: URLSearchParams): 
                 },
               },
             })}
-            // Bug 原因：手机复用 Desktop Host 中已持久化的 Assistant row，但 Root 默认关闭
-            // code-comment 投影，导致 replay hydration 暴露原始 directive。该开关只修正展示能力，
-            // 不进入 relay、Host 或 replayable 状态。
+            // Bug cause: mobile reuses persisted Assistant rows from the Desktop Host, but Root disables
+            // code-comment projection by default, causing replay hydration to expose raw directives. This flag only changes presentation,
+            // and does not affect the relay, Host, or replayable state.
             assistantCodeCommentCardsEnabled
             initialWorkspaceAbsPath={bridge.workspacePath}
             initialWorkspaceIdentity={
@@ -2196,8 +2194,8 @@ async function bootstrapExternalRelayWebRemoteControl(params: URLSearchParams): 
     documentTarget: document,
     windowTarget: window,
     onSuspend: () => {
-      // Bugfix: 移动端 hidden/pagehide 后 JS 定时器和 WebSocket 都可能被系统暂停。
-      // 这里只保存当前 workspace/task 并暂停心跳，不做刷新；回到前台后再重连并重新 bootstrap。
+      // Bug fix: after mobile hidden/pagehide, the system may pause JavaScript timers and WebSockets.
+      // Only save the current workspace/task and pause heartbeats here; do not refresh. Reconnect and bootstrap again when the app returns to the foreground.
       transport.suspend();
     },
     onRecover: (reason) => {
@@ -2276,7 +2274,7 @@ async function bootstrapWebRemoteControlByToken(params: URLSearchParams): Promis
           <Root
             services={services}
             platform={createWebPlatform({ webRemoteControlProxy: proxy })}
-            // 与 external relay 保持相同的 Renderer 投影；普通 Web Server Root 继续使用默认关闭。
+            // Keep the same Renderer projection as the external relay; regular Web Server Root continues to use the disabled default.
             assistantCodeCommentCardsEnabled
             initialWorkspaceAbsPath={bridge.workspacePath}
             initialWorkspaceIdentity={initialWorkspaceIdentity}
@@ -2349,7 +2347,7 @@ async function bootstrapWebRemoteControlByToken(params: URLSearchParams): Promis
         bridge,
         services,
       });
-      // 已读写入失败由 helper 记录，导航继续使用已经建立的目标 bridge。
+      // The helper records a failure to mark as read; navigation continues with the target bridge that is already established.
       void markOpenedWebRemoteControlBridgeTaskRead({
         bridge,
         expectedUnreadAt: options?.markTaskReadExpectedUnreadAt,

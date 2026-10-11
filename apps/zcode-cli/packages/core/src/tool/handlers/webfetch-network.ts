@@ -49,8 +49,8 @@ export async function fetchAndExtractContent(options: {
   let response: HttpClientResponse | undefined;
 
   for (let redirectCount = 0; redirectCount <= MAX_REDIRECTS; redirectCount += 1) {
-    // ZCode WebFetch 从 agent runtime 所在机器出网；移除 DNS preflight 后，
-    // 每个真实 GET 前仍要阻断 URL 字面量本地/私网目标，避免 NO_PROXY 绕过安全边界。
+    // ZCode WebFetch uses egress from the agent runtime's machine. After removing DNS preflight, still block URL-literal local/private
+    // targets before each real GET so NO_PROXY cannot bypass the security boundary.
     await assertWebFetchLiteralEgress(currentUrl);
 
     const requestId = `net_${crypto.randomUUID()}`;
@@ -94,8 +94,8 @@ export async function fetchAndExtractContent(options: {
         url: response.url,
       });
     } catch (error) {
-      // Node/undici 的顶层网络错误常只有 "fetch failed"，需要把最底层 cause
-      // 和 code 暴露给用户，否则连接重置、DNS、代理等不同问题在工具结果里完全不可区分。
+      // Top-level Node/undici network errors often say only "fetch failed". Expose the underlying cause and code so connection reset,
+      // DNS, proxy, and other issues remain distinguishable in tool results.
       const errorMessage = formatWebFetchRequestError(error, currentUrl);
       await emitNetworkRequestStatus(options.context, {
         completedAt: new Date().toISOString(),
@@ -135,7 +135,7 @@ export async function fetchAndExtractContent(options: {
       );
     }
 
-    // 网络层按响应类别收口，避免重定向/HTTP 错误误进入正文抽取和模型处理。
+    // Handle responses by network-level category so redirects and HTTP errors do not reach body extraction or model processing.
     if (!isRedirectStatus(response.status)) break;
     const redirect = classifyRedirect(response, currentUrl, redirects, options.originalUrl);
     if (isFetchTerminalResult(redirect)) return redirect;
@@ -250,8 +250,8 @@ function throwIfProxyBlocked(response: HttpClientResponse, currentUrl: URL): voi
 }
 
 function formatEgressBlockedMessage(message: string, domain: string): string {
-  // 底层 public egress 会看到 DNS 解析结果，但 WebFetch 错误会进入模型上下文，
-  // 不能把被阻断域名解析出的内网/metadata IP 当作探测结果暴露给模型。
+  // The underlying public egress layer sees DNS results, but WebFetch errors enter model context. Do not expose an internal/metadata
+  // IP from a blocked domain's resolution as a discovery result.
   if (message.includes("resolved to")) {
     return `HTTP public egress blocked ${domain} because it resolved to a non-public address`;
   }

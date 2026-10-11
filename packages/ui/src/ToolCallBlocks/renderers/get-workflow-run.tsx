@@ -26,7 +26,7 @@ export function GetWorkflowRunToolCallBlock(context: ToolCallBlockRenderContext)
   const { toolCall } = context.toolCallNode;
   const display = readToolResultDisplay(toolCall.raw);
   const running = context.isRunning;
-  // 查询错误与 run 执行失败是两个状态层级；错误查询不能继续展示旧 display。
+  // Query errors and run execution failures are separate state layers; after a query error, do not keep showing the old display.
   const failed = !running && toolCall.status === "failed";
   const run = !running && !failed && display?.kind === "get_workflow_run" ? display : undefined;
   const fallback = typeof toolCall.output === "string" ? toolCall.output.trim() : undefined;
@@ -42,9 +42,10 @@ export function GetWorkflowRunToolCallBlock(context: ToolCallBlockRenderContext)
           </span>
           <span aria-hidden>·</span>
           {/*
-            有那句摘要就让它占住折叠行：一句「在第 2 / 4 个阶段、5 步已结算、2 个在跑」比
-            「5/7 步」回答了更多问题。截断交给 CSS（truncate），不在这里切字符——切出来的
-            半句话在窄屏和宽屏上都是错的长度。情势上线前的老载荷没有摘要，仍按步数画。
+            When a summary exists, let it occupy the collapsed row: “Stage 2 of 4, 5 steps settled, 2 running”
+            answers more than “5/7 steps.” Let CSS (truncate) handle clipping instead of cutting characters here;
+            a partial sentence has the wrong length on both narrow and wide screens. Older payloads from before
+            situation summaries were added still render the step count.
           */}
           {run.summary === undefined || run.summary.length === 0 ? (
             <span className="shrink-0 tabular-nums">
@@ -136,13 +137,14 @@ function GetWorkflowRunBody({
       const value: unknown = JSON.parse(display.result);
       if (value !== null && typeof value === "object") json = JSON.stringify(value, null, 2);
     } catch {
-      /* 普通文本结果沿用正文排版。 */
+      /* Use body typography for ordinary text results. */
     }
   }
   const logs = display.logTail
     .map((entry) => {
-      // 事件落 journal 的时刻有则前缀年龄，没有就只剩正文：情势上线前的 journal 没有这一列，
-      // 而一个编出来的「刚刚」比没有年龄更糟。年龄一律对快照时刻算。
+      // Prefix the event age when the journal has a recorded time; otherwise show only the body.
+      // Journals from before situation tracking launched do not have this column, and an invented
+      // "just now" is worse than no age. Always calculate age relative to the snapshot time.
       const age = formatWorkflowAge(display.generatedAt, entry.at);
       const prefix =
         age === undefined
@@ -155,8 +157,9 @@ function GetWorkflowRunBody({
   return (
     <div className="mb-2 min-w-0 space-y-2" data-testid="workflow-status-body">
       {/*
-        那一句由工具装配好的摘要放在最前：它是整张卡的导语，下面的阶段轨、花名册和健康行
-        都是它的展开。老载荷没有它，卡就从第一件事（结果 / 错误）开始。
+        Put the summary assembled by the tool first: it introduces the card, and the phase rail, roster, and
+        health rows below expand on it. Older payloads have no summary, so the card starts with the first item
+        (result/error).
       */}
       {display.summary === undefined || display.summary.length === 0 ? null : (
         <p className="break-words text-ui-base text-foreground" data-testid="workflow-run-summary">
@@ -164,8 +167,9 @@ function GetWorkflowRunBody({
         </p>
       )}
       {/*
-        两处「把不知道说出口」之一：这个会话不持有这个 run，停驻的问题只活在提问进程的内存里，
-        看不见不等于没有。沉默会被读成「没人在等回答」。
+        This is one of two places that make unknown state explicit: this session does not own the run, and a
+        parked question exists only in the asking process's memory. Not seeing it does not mean it does not
+        exist; silence would read as “nobody is waiting for an answer.”
       */}
       {display.health?.pendingQuestionsKnown === false ? (
         <p
@@ -263,8 +267,8 @@ function GetWorkflowRunBody({
       ) : null}
       {display.truncated ? (
         <p className="text-ui-xs text-foreground-subtle">
-          {/* 这张卡被裁掉的是花名册 / 阶段 / 日志的行，不是诊断——共用 create_workflow 的
-              「省略了部分诊断」会说错是什么被省略了。 */}
+          {/* This card truncates roster, phase, and log rows, not diagnostics; reusing create_workflow's
+              “some diagnostics were omitted” message would misstate what was omitted. */}
           {intl.formatMessage({ id: "chat.toolCall.workflow.getRun.truncated" })}
         </p>
       ) : null}

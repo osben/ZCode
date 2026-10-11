@@ -19,7 +19,8 @@ interface Observation {
   completedRequests: Set<string>;
   hasUnknownCacheUsage: boolean;
 }
-// 旁路记录跟随 CLI record 回收，不挂到聊天投影、轮次事实或已提交输入队列上。
+// Side-channel records are reclaimed with the CLI record; they are not attached to chat projections,
+// turn facts, or the committed input queue.
 const observations = new WeakMap<SessionRecord, Observation>();
 const MAX_HEADER_COUNT = 32;
 const MAX_HEADER_VALUE_LENGTH = 512;
@@ -37,7 +38,8 @@ function remember(keys: Set<string>, key: string): boolean {
   return true;
 }
 function boundedHeaders(headers: Record<string, string>): Record<string, string> {
-  // adapter 已脱敏；此处只限制调试响应体积，不保存正文，也不复制无限大小的 headers。
+  // The adapter already redacted this data. Limit only the debug response size here; do not store
+  // bodies or copy unbounded headers.
   return Object.fromEntries(
     Object.entries(headers)
       .slice(0, MAX_HEADER_COUNT)
@@ -75,17 +77,18 @@ export function observeSessionDebug(record: SessionRecord, event: SessionEvent):
 }
 
 /**
- * subagent child 的模型请求事件不会经过任何父 record（server-operations 按 sessionId
- * 提前分流进 v4 detached live session），session/debug 因此查不到子会话吞吐。
- * 子会话观测与父会话同构：同样只记 querySource=main_turn 的 completed round，
- * 供状态面板 Agents 行与子会话详情窗格轮询。
+ * Model-request events for subagent children do not pass through any parent record (server-operations
+ * routes by sessionId early into a v4 detached live session), so session/debug cannot find child
+ * throughput there. Child-session telemetry mirrors parent-session telemetry: record only completed
+ * rounds with querySource=main_turn for polling by the Agents row in the status panel and the
+ * child-session detail pane.
  */
 export function observeDetachedChildSessionDebug(sessionId: string, event: SessionEvent): void {
   if (event.type !== SessionEventType.ModelNetworkStatus) return;
   let observation = detachedChildObservations.get(sessionId);
   if (!observation) {
-    // child 是一次性 session，观测只服务打开中的窗格与运行行；FIFO 有界，
-    // 不随会话生命周期挂到进程退出。
+    // A child is a one-shot session, and telemetry serves only the open pane and running row. Keep a
+    // bounded FIFO and do not retain it until process exit for the whole session lifetime.
     if (detachedChildObservations.size >= MAX_DETACHED_CHILD_OBSERVATIONS) {
       const oldest = detachedChildObservations.keys().next().value;
       if (oldest !== undefined) detachedChildObservations.delete(oldest);
@@ -128,7 +131,7 @@ function applySessionDebugEvent(
     {
       ...entry,
       recordedAt,
-      // maxAttempts=0 表示无限重试，旧映射器会丢掉它，调试面必须保留。
+      // maxAttempts=0 means unbounded retries. The old mapper dropped it; preserve it for debugging.
       maxAttempts: payload.maxAttempts,
       requestHeaders: boundedHeaders(entry.requestHeaders),
       responseHeaders: boundedHeaders(entry.responseHeaders),
@@ -201,8 +204,8 @@ export function querySessionDebug(
   rawParams: unknown,
 ): SessionDebugSnapshot {
   const params = sessionDebugParamsSchema.parse(rawParams);
-  // 父会话优先走活跃 record；subagent child 没有 record，落在 detached 观测上。
-  // 两者都没有时交给 requireSession 抛出带诊断日志的 sessionUnavailable。
+  // Prefer the active record for a parent session; subagent children have no record and use detached
+  // telemetry. If neither exists, let requireSession throw sessionUnavailable with diagnostic logging.
   const record = context.sessions.get(params.sessionId);
   if (record) return readSessionDebug(record);
   const childSnapshot = readDetachedChildSessionDebug(params.sessionId);

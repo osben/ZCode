@@ -1,18 +1,18 @@
 // ============================================================
-// 脚本 transcript 的「日志簿」形态：将卡片组织为章节（阶段）、时间标尺和命令输出尾部。
-// 无 React、无 DOM、无取数。
+// Logbook presentation for the script transcript: organize cards into chapters (phases), with a time ruler and command-output tails.
+// No React, DOM, or data fetching.
 // ============================================================
-// 章节按**执行顺序**切：连续同一阶段的卡是一章，再次进入同一阶段是新的一章、轮次 +1——
-// 与侧板脊线的 ⟳n 同一口径（进入次数），而不是某个站点被调用的次数。
+// Chapters follow **execution order**: consecutive cards in the same phase form one chapter; re-entering a phase starts a new chapter with round +1 —
+// matching ⟳n in the side-pane spine (number of entries), not the number of times an individual node was called.
 
 import type { PhaseNaming } from "@/components/workflow-graph/phase-name.js";
 import type { WorkspaceCardModel } from "@/app-shell/workflowWorkspaceTranscript.js";
 
 export interface WorkspaceChapter {
   key: string;
-  /** 图不可得（或站点不在图上）的卡没有阶段：这一章不画章头。 */
+  /** Cards without a phase because the graph is unavailable (or the node is not in it) have no chapter header. */
   phase: PhaseNaming | undefined;
-  /** 这是该阶段第几次进入；> 1 时章头带 ⟳n。 */
+  /** Which entry this is for the phase; if > 1, the chapter header includes ⟳n. */
   round: number;
   cards: WorkspaceCardModel[];
   startedAt: number;
@@ -45,7 +45,7 @@ export function buildWorkspaceChapters(cards: readonly WorkspaceCardModel[]): Wo
   return chapters;
 }
 
-/** 时间标尺的零点：第一张卡的准入时刻（run 自己的开始时刻不在清单上）。 */
+/** Time-ruler origin: admission time of the first card (the run's own start time is not in the list). */
 export function transcriptOrigin(cards: readonly WorkspaceCardModel[]): number | undefined {
   let origin: number | undefined;
   for (const card of cards) {
@@ -54,7 +54,7 @@ export function transcriptOrigin(cards: readonly WorkspaceCardModel[]): number |
   return origin;
 }
 
-/** `+0:00` / `+1:12` / `+1:02:05`：一张卡相对零点的时刻。 */
+/** `+0:00` / `+1:12` / `+1:02:05`: a card's time relative to the origin. */
 export function formatOffset(ms: number): string {
   const total = Math.max(0, Math.floor(ms / 1000));
   const seconds = total % 60;
@@ -66,7 +66,7 @@ export function formatOffset(ms: number): string {
     : `+${mmss}`;
 }
 
-/** `6s` / `2m 05s`：running 的那张卡「开始于多久前」。 */
+/** `6s` / `2m 05s`: “started ago” duration for a running card. */
 export function formatAgo(ms: number): string {
   const seconds = Math.max(0, Math.round(ms / 1000));
   if (seconds < 60) return `${seconds}s`;
@@ -79,7 +79,7 @@ export function formatAgo(ms: number): string {
 interface TranscriptSummary {
   phases: number;
   steps: number;
-  /** 第一张卡准入到最后一张卡结算（还在跑则到 `now`）。 */
+  /** From the first card's admission to the last card's settlement (or `now` if it is still running). */
   durationMs: number;
 }
 
@@ -103,7 +103,7 @@ export function transcriptSummary(
 
 interface PeekLine {
   text: string;
-  /** 看起来是一行错误（× / ✗ / FAIL / Error…）：peek 里用 destructive 色。 */
+  /** Looks like a one-line error (× / ✗ / FAIL / Error…); use destructive color in the peek. */
   error: boolean;
 }
 
@@ -112,7 +112,7 @@ export function isErrorLine(line: string): boolean {
   return /^([×✗✖]|x\s|FAIL\b|ERR(OR)?\b|Error\b|error:)/i.test(trimmed) || /Error:/.test(trimmed);
 }
 
-/** 命令输出的尾巴：stdout 最后几行非空行；stdout 空则 stderr；字符串正文同理；其余没有 peek。 */
+/** Tail of command output: last non-empty stdout lines, or stderr if stdout is empty; same for string bodies; otherwise there is no peek. */
 export function peekLinesOf(result: unknown, max = 3): PeekLine[] {
   let text: string | undefined;
   if (typeof result === "string") text = result;
@@ -127,7 +127,7 @@ export function peekLinesOf(result: unknown, max = 3): PeekLine[] {
   return lines.slice(-max).map((line) => ({ text: line, error: isErrorLine(line) }));
 }
 
-// 展开态按卡记忆（与 ToolLayout 的模块级 map 同一做法）：收起再展开、切 tab 再回来都还在。
+// Remember expanded state per card (same module-level map approach as ToolLayout): collapse/re-expand and tab switching preserve it.
 const openState = new Map<string, boolean>();
 
 export function rememberedOpen(key: string): boolean {
@@ -138,7 +138,7 @@ export function setRememberedOpen(key: string, open: boolean): void {
   openState.set(key, open);
 }
 
-/** 测试用：清空展开态记忆。 */
+/** For tests: clear the expanded-state memory. */
 export function resetWorkspaceEntryOpenState(): void {
   openState.clear();
 }

@@ -41,8 +41,8 @@ function normalizePersistedSessionMode(
   }
 
   switch (trimmedModeId) {
-    // Bugfix: provider 原生 modeId 和本地持久化的 session mode 不是一套枚举。
-    // 下发前需要把本地语义映射回 provider options 中真实存在的值。
+    // Bugfix: the provider-native modeId and locally persisted session mode use different enums.
+    // Map the local meaning to a value that actually exists in provider options before sending it.
     case "read-only":
     case "read_only":
       return "plan";
@@ -56,7 +56,7 @@ function normalizePersistedSessionMode(
     case "full_auto":
       return "yolo";
     case "agent":
-      // 该 modeId 专属于已下线的第三方 provider；不再映射到任何本地 mode。
+      // This modeId belongs exclusively to a retired third-party provider; it no longer maps to any local mode.
       return undefined;
     case "agent-full-access":
     case "agent_full_access":

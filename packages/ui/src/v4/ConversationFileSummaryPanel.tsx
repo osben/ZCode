@@ -92,7 +92,7 @@ export function ConversationFileSummaryPanel({
   const cachePolicy: ConversationFileChangesRequestOptions["cachePolicy"] =
     header.state === "running" ? "in-flight" : "terminal";
   const fileChangesState = header.fileChanges?.state;
-  // header 只有聚合值。按当前投影读取明细后过滤，不能把源文件行数从普通文件中猜着扣除。
+  // The header contains only aggregate values. Read details from the current projection and filter them; do not guess and subtract source-file rows from ordinary files.
   const requestKey = JSON.stringify([
     context.workspaceIdentity?.trim() || context.workspacePath,
     context.workspaceRemoteSessionId,
@@ -137,9 +137,9 @@ export function ConversationFileSummaryPanel({
     if (!needsDetails || !context.fetchFileChanges || !target) return;
 
     let disposed = false;
-    // 运行中的 fileChanges 是某个 projection revision 的局部结果；turn
-    // 进入终态后必须废弃局部 details，并用可持久缓存的终态策略重新读取。
-    // requestKey 已同步隔离旧结果；同一摘要展开重读时保留已加载内容，避免卸载按钮丢失焦点。
+    // fileChanges while running is a local result for a projection revision. Once the turn reaches a terminal state,
+    // discard local details and read again using the persistently cacheable terminal-state strategy.
+    // requestKey already isolates stale results synchronously. Preserve loaded content when rereading the same expanded summary to avoid unmounting the button and losing focus.
     setLoadingDetails(true);
     void context
       .fetchFileChanges(target, {
@@ -226,7 +226,7 @@ export function ConversationFileSummaryPanel({
     });
   }, [details, header.rowId, header.turnId, header.fileChanges]);
 
-  // 在明细到达前不闪现源文件的聚合统计；读取失败后恢复原摘要，仍可展开重试。
+  // Do not flash aggregate source-file statistics before details arrive; restore the original summary after a read failure so it can still be expanded and retried.
   if (filtersSources && context.fetchFileChanges && target && !settled) return null;
   if (!summary || summary.files <= 0) return null;
 
@@ -335,8 +335,10 @@ export function ConversationFileSummaryPanel({
                             }}
                           />
                         </div>
-                        {/* 修复原因：writeCount 是撤销预检使用的操作轨迹，摘要行已经用 +/- 表达最终结果；
-                            在这里展示会把内部操作次数误当成变更指标，因此只在撤销弹窗保留。 */}
+                        {/* Fix reason: writeCount is an operation trace used by undo preflight, while the summary
+                            row already shows the final result with +/-. Showing it here would make
+                            internal operation counts look like change metrics, so keep it only in
+                            the undo dialog. */}
                         <span className="flex shrink-0 items-center gap-2 tabular-nums text-ui-base">
                           {item.additions > 0 ? (
                             <span className="text-diff-added">+{item.additions}</span>

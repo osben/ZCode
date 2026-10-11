@@ -1,7 +1,7 @@
-// 侧栏任务行标题下的工作流运行行：
-// Workflow 图标 + 迷你轨道灯 + 当前 phase 名。一眼看懂「这个会话在跑工作流、跑到哪一站」，
-// 别的都不画：没有光晕、没有行进虚线、没有问题 chip（升级问答由主代理作答，不是用户）、
-// 没有子代理数、没有箭头——那些进 hover tooltip。结束的 run 只剩一个中性词，颜色只留给灯。
+// Workflow run row beneath a sidebar task title:
+// Workflow icon + mini track light + current phase name. Quickly shows that this session is running a workflow and which station it reached.
+// Draw nothing else: no glow, moving dashes, question chip (the main agent answers escalated questions, not the user),
+// subagent count, or arrow; those details go in the hover tooltip. A finished run keeps only a neutral label, with color reserved for the light.
 import { useEffect, useMemo, type MouseEvent } from "react";
 import { Workflow } from "lucide-react";
 import type {
@@ -34,12 +34,12 @@ export interface TaskWorkflowRunLinesIntl {
 
 interface TaskWorkflowRunLinesProps {
   activity: SessionWorkflowActivity | undefined;
-  /** 会话是否正被打开：为真时确认它所有已结束的 run（结束的行随即折叠）。 */
+  /** Whether the session is open; when true, acknowledge all its finished runs (finished rows then collapse). */
   isActive: boolean;
   intl: TaskWorkflowRunLinesIntl;
-  /** 点击打开 run pane 所需的会话地址；缺席（手机首页）时运行行不是按钮。 */
+  /** Session address needed to open the run pane; absent on the mobile home screen, so the run row is not a button. */
   session?: { workspacePath: string; workspaceIdentity?: string; sessionId: string };
-  /** compact = 手机远控行（24px、更小字号）。 */
+  /** compact = mobile-remote row (24px, smaller text). */
   density?: "default" | "compact";
   className?: string;
 }
@@ -50,14 +50,14 @@ function runStatusWord(run: SessionWorkflowRunSummary, intl: TaskWorkflowRunLine
   return intl.formatMessage({ id: `chat.toolCall.workflow.run.status.${run.status}` });
 }
 
-/** 行上的词：在跑 → 当前 phase 名（无阶段词汇表 → 「Workflow」）；结束 → 中性词（+ phase / 原因）。 */
+/** Row label: running → current phase name (or "Workflow" when there is no phase label); finished → neutral label (+ phase/reason). */
 function runLineText(
   run: SessionWorkflowRunSummary,
   rail: WorkflowRunRail,
   intl: TaskWorkflowRunLinesIntl,
 ): string {
   if (isSessionWorkflowRunLive(run.status)) {
-    // 停在留白上：「决定分组 · 等待补全」（docs/dynamic-workflow/presentation.md「Holes on the timeline」）。
+    // Paused at a hole: “Group decision · Waiting for completion” (docs/dynamic-workflow/presentation.md, “Holes on the timeline”).
     if (run.waitingHole !== undefined) {
       return intl.formatMessage(
         { id: "taskList.workflowRun.holeWaiting" },
@@ -84,13 +84,13 @@ function runName(run: SessionWorkflowRunSummary, intl: TaskWorkflowRunLinesIntl)
   return run.name ?? intl.formatMessage({ id: "chat.toolCall.workflow.graph.phase.workflow" });
 }
 
-/** tooltip 第二行：`{phase} · {n agents working} · {elapsed}`，缺的段落省略。 */
+/** Tooltip's second line: `{phase} · {n agents working} · {elapsed}`, omitting missing segments. */
 function runTooltipDescription(
   run: SessionWorkflowRunSummary,
   intl: TaskWorkflowRunLinesIntl,
 ): string | undefined {
   const parts: string[] = [];
-  // 并行时「当前阶段」不再是一个站：同时在跑的几站并排列出，谁都不比谁更当前。
+  // With parallel work there is no single "current phase"; list all stations running at once because none is more current than another.
   const parallel = workflowRunParallelPhaseLabel(run.phases);
   if (parallel !== undefined) parts.push(parallel);
   else if (run.currentPhase !== undefined) parts.push(run.currentPhase);
@@ -114,7 +114,7 @@ export function TaskWorkflowRunLines({
   const isAcknowledged = useWorkflowRunAcknowledged();
   const openRun = useWorkflowRunOpen();
   const settledKey = settledWorkflowRunIds(activity).join(" ");
-  // 打开会话 = 确认它此刻所有已结束的 run；会话保持打开时 run 结束也立即确认（在读者眼前折叠）。
+  // Opening a session acknowledges all its currently finished runs; if it stays open, acknowledge runs as they finish so they collapse in view.
   useEffect(() => {
     if (!isActive || settledKey.length === 0) return;
     getWorkflowRunAckStore().acknowledge(settledKey.split(" "));
@@ -166,7 +166,7 @@ export function TaskWorkflowRunLines({
               {...lineProps}
               aria-label={ariaLabel}
               onClick={(event: MouseEvent<HTMLButtonElement>) => {
-                // 行本身也可点（选中会话）；运行行是更具体的落点，不让点击再冒泡成一次普通选中。
+                // The row itself is clickable to select the session; the run row is a more specific target, so stop its click bubbling into ordinary selection.
                 event.preventDefault();
                 event.stopPropagation();
                 openRun({

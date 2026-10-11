@@ -38,8 +38,8 @@ export function maybeStartGoalSummaryTitleGeneration(
     return false;
   }
 
-  // 与 Session Title 一致：后台任务在入队时冻结触发 Span，而不是依赖之后的
-  // AsyncLocalStorage 恰好仍保留原 Context。
+  // Match Session Title: freeze the triggering Span when the background task is enqueued instead of relying on
+  // AsyncLocalStorage to still contain the original Context later.
   const causation = this.agentTelemetry.captureCausation();
   const generation = generateAndPersistGoalSummaryTitle
     .call(this, input, targetID, traceContext, causation)
@@ -270,8 +270,8 @@ async function generateAndPersistGoalSummaryTitle(
     traceContext,
   });
   if (!generated) {
-    // 第一轮迭代标题只读 target.summaryTitle；标题模型空响应时也要写入目标语义兜底，
-    // 否则 UI 只能退回“第 1 次迭代”，看起来像 summaryTitle 丢失。
+    // For the first iteration, read only target.summaryTitle. If the title model returns empty, still write a semantic fallback for the target;
+    // otherwise the UI falls back to "Iteration 1," making it look as if summaryTitle were lost.
     await persistFallbackGoalSummaryTitle.call(this, {
       objective: input,
       reason: "empty_model_title",

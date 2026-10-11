@@ -1,12 +1,14 @@
 /**
- * amend-resume 导入缓存的**消费态**。
+ * **Consumption state** for the amend-resume import cache.
  *
- * 注入的 {@link ImportedRunCache} 是调用方构建的只读数据——run service 读前驱 journal 得到它，
- * 崩溃后 resume 用同一个纯函数重建同一张表。所以「消费到哪了」不能就地写回那张表，必须是引擎
- * 自己的状态：本模块就是这份状态，以及围绕它的全部判定（命中 / 分歧 / 种子）。
+ * The injected {@link ImportedRunCache} is read-only data built by the caller—the run service reads
+ * it from the predecessor journal, and resume after a crash rebuilds the same table with the same
+ * pure function. Therefore, “how far consumption has progressed” cannot be written back into that
+ * table; it must be engine-owned state. This module contains that state and all related decisions
+ * (hit / divergence / seed).
  *
- * 从 scheduler.ts 与 engine.ts 拆出来，理由同当初 scheduler 从 engine 拆出来：三个文件各自
- * 聚焦、可读，且满足单文件行数上限。
+ * Split from scheduler.ts and engine.ts for the same reason scheduler was originally split from
+ * engine: each file remains focused and readable while meeting the per-file line limit.
  */
 
 import { canonicalJson } from "./hash.js";
@@ -24,30 +26,36 @@ import type {
 } from "./types.js";
 
 /**
- * 一个已附着候选的 actor 的导入消费态：消费游标 + 分歧标志。
+ * Imported-consumption state for an actor attached to a candidate: consumption cursor + divergence flag.
  *
- * **分歧单调**：`diverged` 一旦为真永不回头查缓存，导入后缀弃置不可复活。
+ * **Divergence is monotonic**: once `diverged` becomes true, never consult the cache again; the
+ * discarded imported suffix cannot be revived.
  */
 export class ImportedActorState {
-  /** 已消费的导入条目数 = 下一个可命中的 actorSeq（也是转录截断边界的下标 + 1）。 */
+  /** Number of consumed import entries = next actorSeq eligible for a hit (also transcript truncation boundary index + 1). */
   private consumed = 0;
   private diverged = false;
   /**
-   * 「续跑前驱在飞 ask」的那个 seq（没有续跑即缺席）。至多一个：续跑本身就是分歧，
-   * 分歧单调，所以第二次不会再有。
+   * seq of the predecessor's in-flight ask being continued (absent when there is no continuation).
+   * At most one: continuation itself causes divergence, and divergence is monotonic, so there can
+   * be no second one.
    */
   private carriedSeq?: number;
 
   constructor(private readonly candidate: ImportedActorCandidate) {}
 
   /**
-   * fresh ask 在 seq 上问缓存：命中返回条目（并推进游标），否则置分歧并返回 undefined。
+   * Look up a fresh ask at seq in the cache: on a hit, return the entry and advance the cursor;
+   * otherwise mark divergence and return undefined.
    *
-   * 两种不命中同等处理：哈希不符（指令变了）与 `seq >= entries.length`（新脚本在此 actor 上
-   * 扩了新 ask）。分歧的**级联**是免费且动态的——上游 ask 转 live 拿到新结果，下游用它插值出的
-   * 指令哈希必变，于是下游自动分歧，不需要任何显式传播。
+   * Both miss types are handled the same: hash mismatch (instructions changed) and
+   * `seq >= entries.length` (the new script added an ask for this actor). Divergence **cascades**
+   * dynamically at no extra cost: an upstream ask runs live and gets a new result, which changes
+   * the interpolated instruction hash downstream, causing downstream divergence automatically
+   * without explicit propagation.
    *
-   * 本方法只在导入缓存**开着**时被调用（关门后走 {@link takeIfPure}），所以未命中时可以谈续跑。
+   * This method is called only while the import cache is **open** (after closure use
+   * {@link takeIfPure}), so a miss may be eligible for continuation.
    */
   take(seq: number, hash: string): ImportedAskEntry | undefined {
     if (this.diverged) return undefined;
@@ -61,12 +69,16 @@ export class ImportedActorState {
   }
 
   /**
-   * 缓存关闭后的问法：只有**纯**条目（前驱记下 `worldToolCalls === 0`）还能命中。纯 ask 只依赖指令与
-   * 转录前缀——两者都在哈希链里——与工作区无关，所以关门不影响它的答案。碰过外部世界的条目即便同哈希
-   * 也不给：它读过的工作区可能已被改写；这个 ask 转 live，actor 从此分歧（转录不再与前驱一致，
-   * 后缀条目不可复活）。没有 stats、或 stats 里没有这个键的老条目按「碰过」处理（保守）。
+   * Lookup after cache closure: only **pure** entries (predecessor recorded `worldToolCalls === 0`)
+   * can still hit. Pure asks depend only on instructions and transcript prefix—both are in the hash
+   * chain—and not on the workspace, so closure does not affect their answer. Do not reuse entries
+   * that touched the external world even when hashes match: the workspace they read may have been
+   * modified. This ask runs live and the actor diverges from here (transcript no longer matches the
+   * predecessor, so later entries cannot be revived). Conservatively treat old entries with no
+   * stats or without this key in stats as having touched the world.
    *
-   * 关门后同样不续跑在飞 ask：那半场转录里全是前驱对**旧工作区**的观察，与带工具的条目同理。
+   * After closure, also do not continue an in-flight ask: that partial transcript contains
+   * predecessor observations of the **old workspace**, like an entry that used a tool.
    */
   takeIfPure(seq: number, hash: string): ImportedAskEntry | undefined {
     if (this.diverged) return undefined;
@@ -80,12 +92,15 @@ export class ImportedActorState {
   }
 
   /**
-   * 该 seq 的 ask 的答案是否**读自前驱的转录**：是则返回持有它的会话，否则 undefined。
+   * Whether the answer to the ask at this seq was **read from a predecessor transcript**: returns the
+   * session that owns it, or `undefined` otherwise.
    *
-   * 成立当且仅当此刻仍未分歧、且游标已越过该 seq——分歧单调、准入按 seq 升序，所以这恰好是
-   * 「这一条被导入消费了」。两条路径各在判定之后立刻问：fresh ask 在 {@link take} 命中之后，
-   * 修订 run 的 resume 在 {@link reconcileRecorded} 之后（结算次序闸可能把事件推迟到同一个
-   * actor 更后的行已经置了分歧的时候，那时再问就会把一条导入行说成本 run 自己跑的）。
+   * This is true exactly when there is no divergence yet and the cursor has passed this seq. Divergence
+   * is monotonic and admission is in ascending seq order, so this means “this row was consumed from
+   * the import.” Both paths check immediately after deciding: a fresh ask after a hit in {@link take},
+   * and a resumed revised run after {@link reconcileRecorded}. The settle-order gate may defer an event
+   * until a later row from the same actor has already marked divergence; checking then would wrongly
+   * report an imported row as work performed by this run.
    */
   sourceSessionAt(seq: number): string | undefined {
     return !this.diverged && seq < this.consumed
@@ -93,25 +108,30 @@ export class ImportedActorState {
       : undefined;
   }
 
-  /** 该 seq 的 ask 是否续跑了前驱的在飞 ask（调度器据此决定 stats 记不记 worldToolCalls）。 */
+  /** Whether the ask at this seq continued the predecessor's in-flight ask (the scheduler uses this to decide whether stats include worldToolCalls). */
   carriedAt(seq: number): boolean {
     return this.carriedSeq === seq;
   }
 
   /**
-   * 据一行**已记录**的 ask 重推分歧状态（修订 run 崩溃后 resume 时用）。
+   * Recompute divergence state from a **recorded** ask row (used when resuming an amended run after a crash).
    *
-   * 分歧状态不落库，而修订 run 的 resume 会把导入缓存整表重建。若不据 journal 行重推分歧点，
-   * 一个在原次执行中已于 seq k 分歧的 actor，其 seq k+n 的 fresh ask 可能恰好撞上导入条目的
-   * 哈希而被**错误导入**——那等于把一段与本 run 实际转录无关的历史塞回来。逐 seq 拿记录行的
-   * inputHash 与导入条目比对，恰好重建了原次执行当时的判定（准入按 seq 升序，hold 规则保证
-   * 这一点），因此这个重推是精确的，不是保守近似。`wasLive` 补上哈希看不见的那一种 live
-   * （缓存关闭后带工具的 ask，见 scheduler 的 tryImportedSettle）。
+   * Divergence state is not persisted, and resume of an amended run rebuilds the entire import
+   * cache. Without recomputing the divergence point from journal rows, a fresh ask at seq k+n for an
+   * actor that diverged at seq k during the original execution might coincidentally match an
+   * imported-entry hash and be **incorrectly imported**, reviving history unrelated to this run's
+   * actual transcript. Comparing each recorded row's inputHash with the import entry exactly
+   * reconstructs the original decision (admission is in ascending seq order, enforced by the hold
+   * rule), so this is exact rather than a conservative approximation. `wasLive` covers the live
+   * case hashes cannot reveal (an ask with tools after cache closure; see tryImportedSettle in the
+   * scheduler).
    *
-   * `queuedBeforeClose` 是续跑判定的那一半事实：续跑与该 ask 的 `node-queued` 在准入的同一个
-   * 同步片里发生，所以「当时门开着」等价于「这条 node-queued 早于第一条 import-cache-closed」
-   * （见 engine-world.ts 的 recoverImportClosure）。必须精确——错判成续跑会让 seedActorTranscript
-   * 往一个**已经分歧**的会话里多抄一段前驱消息（driver 的幂等判据只看目标够不够长）。
+   * `queuedBeforeClose` is half of the continuation decision: continuation and this ask's
+   * `node-queued` occur in the same synchronous admission slice, so “cache was open then” is
+   * equivalent to “this node-queued precedes the first import-cache-closed” (see recoverImportClosure
+   * in engine-world.ts). This must be exact—a false continuation would make seedActorTranscript
+   * copy extra predecessor messages into an **already-diverged** session (the driver's idempotency
+   * check only tests whether the target is long enough).
    */
   reconcileRecorded(
     seq: number,
@@ -120,17 +140,18 @@ export class ImportedActorState {
     queuedBeforeClose: boolean,
   ): void {
     if (this.diverged) return;
-    // 缓存关闭之后，一个带工具 actor 的 ask 即便与导入
-    // 条目同哈希也是 live 跑的——按哈希算成「已消费」会让种子边界取自前驱条目，而本会话的
-    // 真实转录在那个位置根本不是那些消息。live 与否是事件里的事实（node-queued），不是哈希
-    // 能推出来的。
+    // After cache closure, an ask for an actor with tools runs live even if its hash matches an
+    // import entry. Counting it as consumed by hash would take the seed boundary from the
+    // predecessor entry, even though the current session's transcript does not contain those
+    // messages at that point. Whether it ran live is an event fact (node-queued), not something
+    // inferred from a hash.
     if (wasLive) {
       this.diverge(seq, recordedHash, queuedBeforeClose);
       return;
     }
     const entry = this.candidate.entries[seq];
     if (entry === undefined || entry.inputHash !== recordedHash) {
-      // 没 live 过的行不可能是续跑（续跑的 ask 一定被派发过，一定有 node-queued）。
+      // A row that never ran live cannot be a continuation (a continued ask must have been dispatched and have node-queued).
       this.diverged = true;
       return;
     }
@@ -138,15 +159,18 @@ export class ImportedActorState {
   }
 
   /**
-   * 分歧 actor 的会话种子：源会话 + 复制多少条消息 + 承袭的模型 pin。
+   * Session seed for a diverged actor: source session + number of messages to copy + inherited model pin.
    *
-   * 边界取**最后一条被消费**的导入条目的记账值：在 seq k 分歧意味着 0..k-1 的问答都已按缓存
-   * 结算，新会话要接着的正是那 k 次完整交换之后的位置（含它们的 repair / nudge 轮）。
-   * 一条也没消费就没有种子——全新会话、全新模型解析、不带 pin：pin 是为「转录接续下不静默
-   * 换模型」存在的，没有接续就没有它的用武之地。
+   * Take the boundary from the recorded value of the **last consumed** import entry: divergence at
+   * seq k means exchanges 0..k-1 settled from cache, so the new session continues after those k
+   * complete exchanges (including their repair / nudge rounds).
+   * If nothing was consumed, there is no seed—a new session and fresh model resolution, without a
+   * pin. The pin exists to prevent silently changing models while continuing a transcript; without
+   * continuation, it has no use.
    *
-   * **续跑是例外**：边界改取 `inFlight.messageBoundary`（前驱整个会话），因此一条都没消费也有
-   * 种子——那正是「扇出第一轮在飞时被修订」的形状。
+   * **Continuation is the exception**: use `inFlight.messageBoundary` (the entire predecessor
+   * session) as the boundary, so there is a seed even when nothing was consumed—the case where an
+   * amended run begins while the first fan-out round is in flight.
    */
   seed(): ActorSessionSeed | undefined {
     const inFlight = this.candidate.inFlight;
@@ -160,11 +184,13 @@ export class ImportedActorState {
   }
 
   /**
-   * 置分歧，并在此顺带判定这次未命中是不是**续跑前驱的在飞 ask**。
+   * Mark divergence and also determine whether this miss is a **continuation of the predecessor's in-flight ask**.
    *
-   * 续跑的四个条件缺一不可：此前未分歧（否则本 actor 的转录早已不是前驱那条）、`seq` 恰在
-   * 前缀之后（在飞 ask 的位置）、整个前缀都已消费、指令哈希与在飞 ask 相符。`cacheOpen`
-   * 是第五个：关门之后那半场转录只是对旧工作区的观察，不比缓存的 world 读取更可信。
+   * All four continuation conditions are required: no prior divergence (otherwise this actor's
+   * transcript already differs from the predecessor), `seq` is exactly after the prefix (the
+   * in-flight ask position), the entire prefix was consumed, and the instruction hash matches the
+   * in-flight ask. `cacheOpen` is a fifth condition: after closure, that partial transcript only
+   * contains observations of the old workspace and is no more trustworthy than a cached world read.
    */
   private diverge(seq: number, hash: string, cacheOpen: boolean): void {
     const inFlight = this.candidate.inFlight;
@@ -191,15 +217,16 @@ export class ImportedActorState {
 }
 
 /**
- * world 节点的导入队列消费态：每个内容哈希一个游标（第 n 次出现对第 n 条记录）。
- * 与 {@link ImportedActorState} 同理，游标是引擎的状态，注入的队列保持只读。
+ * Import-queue consumption state for world nodes: one cursor per content hash (the nth occurrence
+ * maps to the nth record). As with {@link ImportedActorState}, cursors belong to the engine and the
+ * injected queues remain read-only.
  */
 export class ImportedWorldQueue {
   private readonly cursors = new Map<string, number>();
 
   constructor(private readonly world: ReadonlyMap<string, ImportedWorldEntry[]>) {}
 
-  /** 取该内容哈希的下一条记录，耗尽或从未记录即 undefined（调用方转 live）。 */
+  /** Take the next record for this content hash; undefined if exhausted or never recorded (caller runs live). */
   take(hash: string): ImportedWorldEntry | undefined {
     const queue = this.world.get(hash);
     if (queue === undefined) return undefined;
@@ -212,16 +239,20 @@ export class ImportedWorldQueue {
 }
 
 /**
- * 为一个刚建出的 actor 找导入候选：按**有效名**查表，规范化 persona 一致才收。
+ * Find an import candidate for a newly created actor: look up by **effective name** and accept it
+ * only if the normalized persona matches.
  *
- * persona 比对用 `canonicalJson`——它跳过 undefined 成员、对象键排序，恰好就是要的规范化
- * （`{name:"a"}` 与 `{name:"a", system: undefined}` 同值）。不一致即**弃整个候选**，该 actor
- * 全新重跑：全保真转录下这是双重正确的——旧 system prompt 产的转录接新 persona 是身份错乱，
- * 而「我把 persona 修好了」这个意图本来就是要重跑。
+ * Compare personas with `canonicalJson`: it omits undefined members and sorts object keys, which is
+ * exactly the needed normalization (`{name:"a"}` equals `{name:"a", system: undefined}`). A
+ * mismatch **rejects the entire candidate**, so the actor runs from scratch. This is doubly correct
+ * with full-fidelity transcripts: using a transcript produced by an old system prompt with a new
+ * persona is an identity mismatch, and “I fixed the persona” implies the intent to rerun.
  *
- * 匿名 actor 永不附着：名字是缓存身份键，没有名字就没有可比对的坐标（代价已裁决）。
- * 比对之所以在**运行期**而不是提交时静态比对两份脚本：名字与 persona 都是运行期值
- * （`agent()` 的实参可以是动态表达式），静态比对是第二份真相，恰是本包处处要防的。
+ * Anonymous actors are never attached: name is the cache identity key, and without one there is no
+ * coordinate to compare (this tradeoff has been decided). Compare at **runtime** instead of
+ * statically comparing the two scripts at submission because names and personas are runtime values
+ * (`agent()` arguments can be dynamic expressions); static comparison would create a second source
+ * of truth, which this package consistently avoids.
  */
 export function matchImportedActor(
   cache: ImportedRunCache | undefined,
@@ -239,10 +270,10 @@ export function matchImportedActor(
 }
 
 /**
- * 一次 ask 缓存命中要落的**真** dwf_node 行（新 siteId、拷贝 result / stats / 边界）。
+ * The **real** dwf_node row written for one ask cache hit (new siteId, copied result / stats / boundary).
  *
- * 边界值必须一起拷过去，否则**这个** run 自己就不能再被修订——链式修订靠的正是 count offset
- * 跨前缀复制不变。
+ * Copy the boundary value too, or **this** run cannot itself be amended—the chained-amendment
+ * behavior depends on preserving the count offset across prefix copies.
  */
 export function importedAskRecord(
   runId: string,

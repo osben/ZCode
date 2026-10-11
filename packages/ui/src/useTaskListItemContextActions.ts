@@ -25,22 +25,17 @@ interface TaskListItemContextActionsResult {
   handleOpenProviderConfig: () => Promise<void>;
 }
 
-export function resolveProviderConfigOpenTargetPath(
-  path: string,
-  exists: boolean,
-): string {
+export function resolveProviderConfigOpenTargetPath(path: string, exists: boolean): string {
   if (exists) {
     return path;
   }
 
-  // Bugfix: provider 主配置文件首次还没落盘时，更多菜单之前会把“前往配置”完全禁用，
-  // 用户既看不到承载配置的目录，也没法就地补齐文件。这里改成回退打开父目录，
-  // 保留“前往配置”的导航语义，并避免把一个不存在的文件路径直接交给编辑器。
+  // Bugfix: when the provider's main config file has not been written yet, the More menu used to
+  // disable “Go to config” entirely. Users could not see the containing directory or create the
+  // file there. Fall back to opening the parent directory, preserving the navigation intent and
+  // avoiding passing a nonexistent file path to the editor.
   const trimmedPath = path.replace(/[\\/]+$/, "");
-  const lastSeparatorIndex = Math.max(
-    trimmedPath.lastIndexOf("/"),
-    trimmedPath.lastIndexOf("\\"),
-  );
+  const lastSeparatorIndex = Math.max(trimmedPath.lastIndexOf("/"), trimmedPath.lastIndexOf("\\"));
 
   if (lastSeparatorIndex < 0) {
     return path;
@@ -74,10 +69,7 @@ export function useTaskListItemContextActions({
   taskId: string;
   provider?: ZCodeProvider;
   intl: {
-    formatMessage: (
-      desc: { id: string },
-      values?: Record<string, string>,
-    ) => string;
+    formatMessage: (desc: { id: string }, values?: Record<string, string>) => string;
   };
   loadTaskPaths?: boolean;
   loadProviderConfig?: boolean;
@@ -90,7 +82,7 @@ export function useTaskListItemContextActions({
   });
   const taskProvider = provider ?? "glm";
   const taskSessionFile = useTaskSessionFilePath(workspacePath, taskId, workspaceIdentity, {
-    // task session/log 路径只用于右键菜单项；菜单未打开时不要在列表重排中批量触发 RPC。
+    // Task session/log paths are used only by context-menu items; do not issue bulk RPCs during list reordering while the menu is closed.
     enabled: loadTaskPaths,
   });
   const taskNativeSessionLogFile = useTaskNativeSessionLogFile(
@@ -106,47 +98,44 @@ export function useTaskListItemContextActions({
     remoteSessionId,
     workspaceIdentity,
     {
-      // Bugfix: 远程 workspace 里“前往配置”用于打开本机可编辑的 provider 配置入口。
-      // 之前这里跟随 remote zcodeTaskService 取路径，会返回远端机器上的绝对路径（例如 /root/...），
-      // 再交给本机平台层打开时就会定位到错误位置或直接失败。
-      // 这里远程场景强制改走 base service，保证 UI 拿到的是本机可打开的配置路径。
+      // Bugfix: in a remote workspace, “Go to config” opens a provider config that can be edited
+      // locally. Using the remote zcodeTaskService for its path returned an absolute path on the
+      // remote machine (for example, /root/...), which the local platform layer then opened at the
+      // wrong location or failed to open. Always use the base service in remote mode so the UI gets
+      // a config path available on this machine.
       serviceScope: remoteSessionId ? "base" : "workspace",
-      // Bugfix: 任务列表里每个 item 都会挂载右键菜单动作；如果挂载时就读取 provider 配置路径，
-      // 远程 workspace 会按任务数量放大 base RPC 和日志。这里改成菜单真正打开时才加载。
+      // Bugfix: every task-list item mounts context-menu actions. Reading the provider config path
+      // at mount time would multiply base RPCs and logs by the number of tasks in a remote
+      // workspace. Load it only when the menu is opened.
       enabled: loadProviderConfig,
     },
   );
 
-  const handleCopyText = useCallback(
-    async (label: string, value: string | null) => {
-      if (!value) {
-        return;
-      }
+  const handleCopyText = useCallback(async (label: string, value: string | null) => {
+    if (!value) {
+      return;
+    }
 
-      try {
-        await navigator.clipboard.writeText(value);
-        logger.info(`[TaskListItem] ${label} 已复制: ${value}`);
-      } catch (error) {
-        logger.warn("[TaskListItem] 复制文本失败", {
-          label,
-          value,
-          error: error instanceof Error ? error.message : String(error),
-        });
-      }
-    },
-    [],
-  );
+    try {
+      await navigator.clipboard.writeText(value);
+      logger.info(`[TaskListItem] ${label} 已复制: ${value}`);
+    } catch (error) {
+      logger.warn("[TaskListItem] 复制文本失败", {
+        label,
+        value,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }, []);
 
   const handleOpenTaskPathInFileManager = useCallback(async () => {
     const hasRemoteWorkspaceScope = Boolean(
-      remoteSessionId ||
-        workspaceIdentity?.trim() ||
-        workspaceOpenTarget.isRemoteWorkspace,
+      remoteSessionId || workspaceIdentity?.trim() || workspaceOpenTarget.isRemoteWorkspace,
     );
     if (hasRemoteWorkspaceScope) {
       if (workspaceOpenTarget.remoteTarget?.kind !== "wsl") {
-        // 远程项目路径不是宿主机路径。无法精确解析为 WSL 时必须失败关闭，
-        // 避免 SSH/Docker 的 Linux 路径误落到原生 Windows、macOS 或 Linux 文件管理器。
+        // A remote project path is not a host path. Fail closed unless it can be resolved precisely as WSL,
+        // so an SSH/Docker Linux path is not sent to a native Windows, macOS, or Linux file manager.
         logger.warn("[TaskListItem] 远程 workspace 不支持本机文件管理器", {
           taskId,
           path: workspacePath,
@@ -182,10 +171,10 @@ export function useTaskListItemContextActions({
 
     const result = await platform.openInFileManager(workspacePath);
     if (!result.success) {
-      // Header / task 菜单里的“Open in Finder”语义应该是打开项目目录。
-      // 之前这里误绑到了 task session 文件路径，菜单可用性也跟着 task 快照文件走，
-      // 一旦 session 文件还没解析出来，用户会看到 Finder 入口莫名不可用。
-      // 这里统一改成始终打开 workspacePath，让行为和“Copy path=项目路径”保持一致。
+      // "Open in Finder" in the header/task menu should open the project directory.
+      // It was previously tied to the task session file path, so menu availability depended on the task snapshot file;
+      // if the session file had not been resolved yet, the Finder action appeared unexpectedly unavailable.
+      // Always open workspacePath so this action matches "Copy path = project path".
       logger.warn("[TaskListItem] 打开 workspace 路径失败", {
         taskId,
         path: workspacePath,
@@ -217,18 +206,13 @@ export function useTaskListItemContextActions({
       const editors = await platform.getInstalledEditors();
       const sortedEditors = sortInstalledEditorsForOpenWith(editors);
       const preferredEditor =
-        sortedEditors.find((editor) => editor.id === preferredEditorId) ??
-        sortedEditors[0] ??
-        null;
+        sortedEditors.find((editor) => editor.id === preferredEditorId) ?? sortedEditors[0] ?? null;
 
-      // Bugfix: task 右键菜单位于侧边栏，拿不到 Header 里的 selectedEditor 本地状态。
-      // 如果这里直接硬编码某个编辑器，Header 和侧边栏会对“Go to config”走出两条不同路径。
-      // 这里改为读取持久化的 editor 偏好，和 Header editor 按钮共用同一份用户选择。
+      // Bugfix: the task context menu is in the sidebar and cannot access the Header's local
+      // selectedEditor state. Hardcoding an editor here would give “Go to config” different paths
+      // from the Header. Read the persisted editor preference so both use the same user selection.
       if (preferredEditor) {
-        const result = await platform.openInEditor(
-          preferredEditor.id,
-          openTargetPath,
-        );
+        const result = await platform.openInEditor(preferredEditor.id, openTargetPath);
         if (result.success) {
           return;
         }
@@ -253,13 +237,7 @@ export function useTaskListItemContextActions({
         error: error instanceof Error ? error.message : String(error),
       });
     }
-  }, [
-    platform,
-    providerConfigFile.exists,
-    providerConfigFile.path,
-    taskId,
-    taskProvider,
-  ]);
+  }, [platform, providerConfigFile.exists, providerConfigFile.path, taskId, taskProvider]);
 
   return {
     taskSessionFile,
@@ -289,10 +267,7 @@ function isWindowsLike(): boolean {
 }
 
 function getFileManagerLabel(intl: {
-  formatMessage: (
-    desc: { id: string },
-    values?: Record<string, string>,
-  ) => string;
+  formatMessage: (desc: { id: string }, values?: Record<string, string>) => string;
 }) {
   if (isMacLike()) {
     return intl.formatMessage({ id: "appHeader.openInFinder" });

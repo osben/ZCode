@@ -151,7 +151,7 @@ export function DeleteAllArchivedTasksButton({
 
   return (
     <>
-      {/* 只移动控件的渲染位置，查询/确认/删除仍随归档列表存活，菜单关闭不会卸载这些状态。 */}
+      {/* Only the control’s render position moves; querying, confirmation, and deletion remain alive with the archived-task list, so closing the menu does not unmount this state. */}
       {actionsContainer === undefined
         ? menu
         : actionsContainer

@@ -4,7 +4,7 @@ import enUS from "../src/i18n/locales/en-US.js";
 import ukUA from "../src/i18n/locales/uk-UA.js";
 import zhCN from "../src/i18n/locales/zh-CN.js";
 
-// en 有而 zh 没有的 key：精确名单，过期条目同样让测试失败。
+// Keys present in en but missing from zh: an exact allowlist; stale entries also fail the test.
 const EN_ONLY_KEYS = ["settings.memory.viewer.disabled"];
 
 const PLURAL_CATEGORIES = ["zero", "one", "two", "few", "many", "other"];
@@ -27,7 +27,7 @@ function pluralBaseOf(key: string): string | undefined {
   return key.match(/^(.*)\.(?:zero|one|two|few|many|other)$/)?.[1];
 }
 
-// uk 的 `.few` / `.many` 在 en 中不存在，按 en `.other` 对照。
+// The `.few` / `.many` forms in uk do not exist in en, so compare them with en `.other`.
 function enReference(key: string): string | undefined {
   const direct = enUS[key];
   if (direct !== undefined) return direct;
@@ -52,7 +52,7 @@ describe("i18n catalog parity", () => {
       const en = enUS[key];
       if (en === undefined) continue;
       const enNames = placeholders(en);
-      // 复数族的各形态都可以带 {count}：en 的 `.one` 常写成字面量「1 file」，所以同时对照 en `.other`。
+      // Every plural form may include {count}: en `.one` is often the literal "1 file", so compare against en `.other` too.
       const pluralBase = key.match(/^(.*)\.(?:zero|one|two|few|many|other)$/)?.[1];
       const enOther = pluralBase === undefined ? undefined : enUS[`${pluralBase}.other`];
       if (enOther !== undefined) {
@@ -101,11 +101,11 @@ describe("i18n catalog parity", () => {
     const families = new Set(
       Object.keys(ukUA)
         .map(pluralBaseOf)
-        // 只有 en 同时有 `.one` 的才是复数族；`feedback.module.other` 之类是普通「其他」文案。
+        // Only keys with an en `.one` are plural families; `feedback.module.other` and similar keys are ordinary "other" copy.
         .filter((base): base is string => base !== undefined && enUS[`${base}.one`] !== undefined),
     );
     for (const base of families) {
-      // uk 的 `one` 同时覆盖 21、31…，所以 en `.other` 带 {count} 时每个形态都必须带 {count}。
+      // Ukrainian `one` also covers 21, 31, etc., so every form must include {count} when en `.other` does.
       const needsCount = placeholders(enUS[`${base}.other`]!).has("count");
       for (const category of UK_PLURAL_CATEGORIES) {
         const message = ukUA[`${base}.${category}`];

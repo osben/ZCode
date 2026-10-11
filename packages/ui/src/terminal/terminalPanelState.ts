@@ -71,8 +71,8 @@ export function getNextTerminalSessionIndex(
       .filter((index): index is number => typeof index === "number") ?? [],
   );
 
-  // 把 nextIndex 作为只增不减的派生状态保存，会让关闭编号 2 后再新建错误地得到 3。
-  // 编号事实已经存在于 session descriptor 中，创建时从现存 session 推导最小空位，避免两份状态漂移。
+  // Persisting nextIndex as a monotonically increasing derived state would incorrectly create session 3 after session 2 was closed.
+  // Session descriptors already contain the numbering facts; derive the smallest available slot from existing sessions to avoid state drift.
   for (let index = 1; ; index += 1) {
     if (!usedIndices.has(index)) {
       return index;
@@ -157,8 +157,8 @@ export function exitTerminalSession(
     };
   }
 
-  // PTY 自身已经退出时，最后一个 tab 不能像手动关闭那样只收起面板并保活。
-  // 这里同时删除 session/workspace 记录；重新打开该 workspace 时再由 ensure 懒创建新 PTY。
+  // When the PTY has already exited, closing the last tab cannot behave like a manual close that only hides the pane and keeps it alive.
+  // Remove the session/workspace records too; reopening the workspace will lazily create a new PTY through ensure.
   const { [sessionId]: _exitedSession, ...nextSessions } = state.sessions;
   const { [session.workspaceKey]: _exitedWorkspace, ...nextWorkspaces } = state.workspaces;
   return {

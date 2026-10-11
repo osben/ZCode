@@ -25,7 +25,7 @@ export function getLocalizedUpdateReleaseNotes(
   if (locale === "zh-CN") {
     return defaultReleaseNotes;
   }
-  // 默认正文是中文：英文界面沿用原有的 zh 回退；其他语言优先英文，避免直接展示中文（D14）。
+  // The default body is Chinese: the English UI keeps the existing zh fallback; other languages prefer English to avoid displaying Chinese directly (D14).
   if (locale === "en-US") {
     return byLocale?.["zh-CN"] ?? defaultReleaseNotes;
   }
@@ -49,8 +49,8 @@ export function formatUpdateReleaseDate(
     year: "numeric",
     month: "long",
     day: "numeric",
-    // update feed 的 releaseDate 通常是 UTC 零点。按用户本地时区格式化会让
-    // 美洲等时区显示成前一天，hover 中只展示发布日期时应保持 feed 日期稳定。
+    // The update feed’s releaseDate is usually midnight UTC. Formatting in the user’s local time zone can make
+    // it appear as the previous day in the Americas and other time zones; keep the feed date stable when hover shows only the release date.
     timeZone: "UTC",
   }).format(date);
 }

@@ -19,14 +19,14 @@ export interface PluginMentionLabels {
   conflictReason: string;
 }
 
-// - 只展示 catalog 中 enabled 的 Plugin；disabled 条目不可被引用，不进入候选。
-// - 同名 manifest 冲突（conflictingPluginIds 非空）保持可见但禁选，展示冲突原因（V1 fail closed）。
-// - markdown 载体固定 `[@Label](plugin://stable-id)`；label 仅展示，身份在 destination。
-//   面板展示名 displayLabel 按当前 locale 走全 app 统一的 resolvePluginDisplayName；label 与
-//   载体 label 固定 entry.name，chip/canonical text/reminder 不随 locale 变化（chip 节点复用
-//   item.label，若本地化 label 会与按 markdown 重建的消息气泡文案分裂）。
-// - keywords 并入 listing 的全部语言显示名（无论当前 locale）：英文界面下打中文
-//   也能搜到官方插件（插件 @ 引用中文搜索）。
+// - Show only enabled Plugins in the catalog; disabled entries cannot be referenced and are excluded from candidates.
+// - Keep same-name manifest conflicts (conflictingPluginIds is non-empty) visible but disabled, with the conflict reason shown (V1 fails closed).
+// - The markdown payload is fixed as `[@Label](plugin://stable-id)`; the label is for display only, and identity is in the destination.
+//   The panel display name displayLabel uses the app-wide resolvePluginDisplayName for the current locale; label and
+//   the payload label remains entry.name, and chip/canonical text/reminder do not change with locale (the chip node reuses
+//   item.label; localizing the label would make message bubble copy reconstructed from markdown inconsistent).
+// - Include display names in every language from the listing as keywords, regardless of the current locale: users can type Chinese in the English UI
+//   to find official plugins (Chinese search for Plugin @ mentions).
 export function mapPluginCatalogToMentionItemsForTest(
   entries: ZCodePluginReferenceCatalogEntry[],
   labels: PluginMentionLabels,

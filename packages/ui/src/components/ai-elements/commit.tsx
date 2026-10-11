@@ -104,7 +104,7 @@ export type CommitTimestampProps = HTMLAttributes<HTMLTimeElement> & {
   date: Date;
 };
 
-// 上游写死 "en"，在中文/乌克兰文界面里也会显示「2 days ago」；改为跟随应用语言。
+// The upstream code hardcodes "en", so Chinese and Ukrainian interfaces also display “2 days ago”; follow the application language instead.
 const formatRelativeDate = (date: Date, locale: string) => {
   const days = Math.round((date.getTime() - Date.now()) / (1000 * 60 * 60 * 24));
   return new Intl.RelativeTimeFormat(locale, { numeric: "auto" }).format(days, "day");

@@ -51,8 +51,8 @@ export function zcodeApiRetryFromModelNetworkStatusPayload(
     if ((positiveIntegerValue(payload.attempt) ?? 1) <= 1) {
       return null;
     }
-    // 普通 adapter retry 的 request_started 只代表下一次请求开始，
-    // 不代表已经恢复成功；这里保持 undefined，让投影层等首个有效模型进展再清理重试态。
+    // For a regular adapter retry, request_started only means the next request has started,
+    // not that recovery has succeeded. Keep it undefined here so the projection waits for the first valid model progress before clearing retry state.
   }
   if (type === "model_request_completed") {
     return null;
@@ -91,8 +91,8 @@ export function zcodeApiRetryFromStreamRecoveryPayload(
   if (attempt === undefined) {
     return undefined;
   }
-  // core stream recovery 每次新请求都是 adapter attempt=1，
-  // 旧 UI 会误清空重试状态；这里改用 streamRecovery.retryNumber 展示 1/10、2/10。
+  // Each new request during core stream recovery is adapter attempt=1,
+  // The old UI would clear retry state incorrectly; use streamRecovery.retryNumber here to display 1/10, 2/10.
   return {
     kind: "api_retry",
     attempt,

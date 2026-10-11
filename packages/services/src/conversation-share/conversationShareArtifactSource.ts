@@ -38,9 +38,9 @@ function isSkippableArtifactReadError(error: unknown): boolean {
 }
 
 /**
- * 兜底读失败统一带上 artifact_read_failed 与底层 errno：
- * 调用方据此把「正文引用的文件已不存在」降级为非阻断跳过，而不是打死整次发布。
- * errno 走已白名单化的 diagnostics，路径不进错误载荷。
+ * Fallback read failures include artifact_read_failed and the underlying errno:
+ * callers can use these to downgrade "a file referenced in the body no longer exists" to a non-blocking skip instead of failing the entire publish.
+ * errno goes through allowlisted diagnostics; paths are not included in the error payload.
  */
 function unreadableArtifactError(message: string, cause: unknown): ConversationShareServiceError {
   const errno = (cause as NodeJS.ErrnoException | undefined)?.code;
@@ -64,7 +64,7 @@ function isRemoteInsideWorkspace(workspacePath: string, targetPath: string): boo
 }
 
 /**
- * SSH/WSL/Docker 使用远端 fileService 完成 realpath/stat/range read；JWT 和 HTTP 上传仍留在 Desktop Host。
+ * SSH/WSL/Docker use the remote fileService for realpath/stat/range reads; JWT and HTTP uploads remain in the Desktop Host.
  */
 export function createRemoteConversationShareArtifactSource(
   fileService: Pick<IFileService, "readFileRange" | "resolvePath" | "stat">,
@@ -190,8 +190,8 @@ export function createRemoteConversationShareArtifactSource(
         return { bytes, canonicalPath: artifactRealPath };
       } catch (error) {
         if (error instanceof ConversationShareServiceError) throw error;
-        // 只有明确的“文件不存在/路径不是文件”才允许发现流程降级为 warning。
-        // 远端连接断开、权限不足等错误必须继续抛出，避免发布成功却静默丢失结果物。
+        // Allow discovery to downgrade to a warning only for explicit "file does not exist/path is not a file" errors.
+        // Remote disconnection, insufficient permissions, and other errors must propagate so publishing cannot silently omit an artifact and report success.
         if (!isSkippableArtifactReadError(error)) throw error;
         throw unreadableArtifactError(
           "Conversation artifact cannot be read from the remote workspace",
@@ -270,8 +270,8 @@ export function createLocalConversationShareArtifactSource(): ConversationShareA
           ? input.ref
           : resolve(input.workspacePath, input.ref);
         const artifactRealPath = await realpath(requestedPath);
-        // artifact Row 的 ref 来自会话数据，不能因为当前仅支持本地发布就默认可信；
-        // 必须在跟随符号链接后再次验证 workspace 边界，避免分享读取任意本机文件。
+        // The artifact Row ref comes from session data; it is not trusted just because only local publishing is supported now.
+        // Revalidate the workspace boundary after following symlinks to prevent a share from reading arbitrary local files.
         if (!isInsideWorkspace(workspaceRealPath, artifactRealPath)) {
           throw new ConversationShareServiceError(
             "unsafe_structure",
@@ -293,8 +293,8 @@ export function createLocalConversationShareArtifactSource(): ConversationShareA
               "Conversation artifact exceeds the byte limit",
             );
           }
-          // 后端能力上限可能远大于当前文件，按 maxBytes 分配会让小文件也占用大块内存；
-          // 只按 stat 大小多读 1 字节，仍能识别 stat/read 间的文件增长。
+          // The backend capability limit may be far larger than the current file; allocating maxBytes would use a large block even for small files.
+          // Read only one byte more than the stat size, which still detects growth between stat and read.
           const buffer = Buffer.allocUnsafe(artifactStat.size + 1);
           let bytesRead = 0;
           while (bytesRead < buffer.byteLength) {
@@ -322,8 +322,8 @@ export function createLocalConversationShareArtifactSource(): ConversationShareA
         }
       } catch (error) {
         if (error instanceof ConversationShareServiceError) throw error;
-        // 只有明确的“文件不存在/路径不是文件”才允许发现流程降级为 warning。
-        // 权限不足或其它 IO 错误需要阻断发布，不能伪装成可跳过的缺失文件。
+        // Allow discovery to downgrade to a warning only for explicit "file does not exist/path is not a file" errors.
+        // Insufficient permissions and other I/O errors must block publishing and must not be disguised as a skippable missing file.
         if (!isSkippableArtifactReadError(error)) throw error;
         throw unreadableArtifactError("Conversation artifact cannot be read", error);
       }

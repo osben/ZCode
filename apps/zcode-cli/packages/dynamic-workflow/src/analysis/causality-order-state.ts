@@ -23,11 +23,12 @@ import {
 } from "./causality-order-functions.js";
 import { innermostOpenStrand, type Frame, type StrandRecord } from "./causality-order-strands.js";
 
-// causality-order.ts 顶到 oxlint max-lines 上限（400 行），把 traceOrder 原本以
-// 闭包共享的走查状态拆到本文件：一个显式的 {@link TraceState} 对象（输入索引 + 可变累加器）、
-// 它的构造，以及只读写这份状态的原语（开区域、发 issue / jump、阶段 id 铸造）。各类语法节点
-// 的访问器（walk / loops / calls / settle）都以 `state` 为首参落在同名兄弟模块里；公开面仍从
-// causality-order.ts 导出。
+// causality-order.ts reached oxlint's max-lines limit (400), so the traversal state originally
+// shared by traceOrder's closure was moved here: an explicit {@link TraceState} object (input index
+// + mutable accumulators), its construction, and primitives that read/write it (open regions, emit
+// issues/jumps, allocate phase IDs). Visitors for syntax-node groups (walk / loops / calls / settle)
+// live in sibling modules with the same names and take `state` as their first argument; the public
+// surface is still exported from causality-order.ts.
 
 /** The walk's whole shared state: what `traceOrder` used to hold in closure. */
 export interface TraceState {
@@ -170,7 +171,7 @@ export function createTraceState(
   const readByCall = new Map<ts.Node, string>(table.worldReads.map((site) => [site.call, site.id]));
   const actorByCall = new Map<ts.Node, string>(table.actors.map((site) => [site.call, site.id]));
   const holeByCall = new Map<ts.Node, HoleSite>(table.holes.map((site) => [site.call, site]));
-  // 只有开放的留白是一步（docs/analysis.md「Sites」）：已补全的留白由它的函数体在原地代表。
+  // Only open holes are steps (docs/analysis.md, “Sites”); a filled hole is represented in place by its body.
   const openHoles = table.holes.filter((site) => site.body === undefined);
   const candByCall = new Map<ts.Node, IterationCandidate>();
   const candByCallback = new Map<ts.Node, IterationCandidate>();
@@ -300,8 +301,8 @@ export function phaseIdOf(state: TraceState, marker: PhaseMarkerSite): string | 
   if (name === undefined || name === "") return undefined;
   const existing = state.phaseIdByName.get(name);
   if (existing !== undefined) return existing;
-  // 编号只数标记铸出的阶段：留白的阶段以站点 id 为 id、不进 phaseIdByName，所以夹在中间的留白
-  // 不会让 `phase#N` 跳号。
+  // Number only phases emitted by markers. A hole phase uses its site ID and is absent from
+  // phaseIdByName, so an intervening hole does not make `phase#N` skip a number.
   const id = `phase#${state.phaseIdByName.size + 1}`;
   state.phaseIdByName.set(name, id);
   const fill = state.fillStack[state.fillStack.length - 1];

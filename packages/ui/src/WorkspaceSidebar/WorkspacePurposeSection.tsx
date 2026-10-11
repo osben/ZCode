@@ -56,8 +56,8 @@ export function WorkspacePurposeSection({
       <Collapsible open={open} onOpenChange={onOpenChange}>
         <div className="flex h-7 min-w-0 items-center">
           <CollapsibleTrigger asChild>
-            {/* purpose 分组标题之前使用 13px，比同级“已置顶”更小。
-                这里统一为 section title 的 text-ui-base，避免可折叠能力改变标题层级。 */}
+            {/* Purpose group headings previously used 13px, smaller than the same-level “Pinned” heading.
+                Use text-ui-base for all section titles so collapsibility does not change the heading hierarchy. */}
             <button
               type="button"
               className="flex h-7 min-w-0 flex-1 items-center gap-1 px-2.5 text-left text-ui-base font-medium text-foreground-subtlest outline-none transition-colors hover:text-foreground focus-visible:text-foreground focus-visible:ring-2 focus-visible:ring-ring/30"

@@ -75,17 +75,17 @@ export interface WorkspaceFileSearchDecision {
 
 export interface WorkspaceFileSearchFilterContext {
   /**
-   * `.zcodeignore` 规则加载成功时为 true：目录排除的单一真相源是规则文件，
-   * 内置目录黑名单退役（用户从文件里删掉 node_modules/ 就应恢复搜索），
-   * 仅文件级规则（.env/二进制后缀）与隐藏目录语义继续叠加。
-   * fail-open（规则文件完全不可用）时为 false/缺省，黑名单照旧兜底。
+   * True when `.zcodeignore` rules loaded successfully: the rules file is the single source of truth for directory exclusions,
+   * and the built-in directory denylist is retired (if a user removes node_modules/ from the file, it should become searchable again).
+   * Only file-level rules (.env/binary extensions) and hidden-directory semantics continue to apply.
+   * When failing open (the rules file is completely unavailable), false/omitted keeps the denylist as a fallback.
    */
   ignoreRulesActive: boolean;
 }
 
 /**
- * Workspace 文件索引只依赖这个最终过滤器，不关心规则来自内置列表、配置文件还是设置页面。
- * 后续自定义规则应注入另一份完整实现来替换默认实现，而不是与默认黑名单强制求并集。
+ * The workspace file index depends only on this final filter; it does not care whether rules come from a built-in list, config file, or Settings page.
+ * Future custom rules should inject a complete replacement implementation rather than being forcibly unioned with the default denylist.
  */
 export interface WorkspaceFileSearchFilter {
   evaluate(
@@ -122,12 +122,12 @@ function isInsideHiddenDirectory(relativePath: string): boolean {
 export const defaultWorkspaceFileSearchFilter: WorkspaceFileSearchFilter = {
   evaluate(entry, context) {
     if (entry.type === "directory") {
-      // ignoreRulesActive 时目录黑名单退役：目录排除的唯一来源是 .zcodeignore 规则文件。
+      // When ignoreRulesActive is true, the directory denylist is retired: .zcodeignore is the only source of directory exclusions.
       if (!context?.ignoreRulesActive && shouldSkipDirectory(entry.name)) {
         return { include: false, traverse: false };
       }
-      // 遇到任意隐藏目录就整棵剪枝会让 .github 等目录里的有效文件无法通过名称搜索。
-      // 隐藏目录及其下级目录不占候选列表，但保留遍历，让其中的普通文件进入索引。
+      // Pruning an entire tree at any hidden directory would prevent valid files in directories such as .github from appearing in name searches.
+      // Hidden directories and their descendants do not enter the candidate list, but traversal continues so ordinary files inside them can be indexed.
       const hiddenDirectory =
         entry.name.startsWith(".") || isInsideHiddenDirectory(entry.relativePath);
       return { include: !hiddenDirectory, traverse: true };

@@ -1,16 +1,16 @@
 // ============================================================
-// CreateWorkflow display graph bounding - 工具输出边界的有界投影
+// CreateWorkflow display graph bounding - bounded projection for tool output
 // ============================================================
-// 从 create-workflow.ts 拆出：阶段词汇表让
-// handler 文件越过 max-lines 上限，而裁剪本身是一段自洽的纯逻辑——分析器全图进，契约
-// 形状出，无 I/O、无 memo、无端口。与 zcode-protocol-v4/create-workflow-display.ts 从
-// rows.ts 拆出同一先例。
+// Split from create-workflow.ts because the phase vocabulary pushed the handler over its max-lines limit. The bounding logic is a
+// self-contained pure function: the full analyzer graph goes in and the contract shape comes out, with no I/O, memoization, or ports.
+// This follows the same precedent as extracting zcode-protocol-v4/create-workflow-display.ts from rows.ts.
 //
-// 这里装的是一张**显示图**而不再是因果图的镜像。第二层是子代理导向：step 层只剩站点表
-// （运行状态与检视器的键，不再画、不再带边），参与者层（每阶段的子代理卡 + 交接边）由
-// 分析器的交接图投影供给、这里只做上限与转发，阶段层仍是控制流图的阶段商、仍由本层归约
-// （折叠与缩点归约在 create-workflow-graph-fold.ts）。边只有 `{from, to, back?}` 一种形状；
-// region / certainty / 边种类留在分析器里，GUI 从不读它们。函数名与载荷字段名沿用历史。
+// This module produces a **display graph**, no longer a mirror of the causal graph. The second layer is subagent-oriented: the step
+// layer now contains only stations (keys for runtime status and inspection; no drawing and no edges). The analyzer's handoff graph
+// supplies the participant layer (subagent cards and handoff edges per phase); this module only bounds and forwards it. The phase
+// layer remains the phase quotient of the control-flow graph and is still reduced here (folding and SCC reduction are in
+// create-workflow-graph-fold.ts). Edges have only the `{from, to, back?}` shape; region, certainty, and edge kinds stay in the
+// analyzer because the GUI never reads them. Function and payload field names retain their historical names.
 
 import {
   CREATE_WORKFLOW_GRAPH_MAX_HANDOFF_TYPES,
@@ -43,16 +43,16 @@ import {
   type FlowHole,
   type HandoffGraph,
   UNPHASED,
-  // 浏览器端回放视图直接复用本函数：走 /projections
-  // 子路径而非根桶，根桶会把 typescript 编译器一起拖进浏览器包。语义与根桶导出完全相同。
+  // Browser replay views reuse this function through the /projections subpath rather than the root barrel, which would bundle the
+  // TypeScript compiler in the browser. Its semantics are identical to the root export.
 } from "@zcode/dynamic-workflow/projections";
-// 阶段边的折叠与归约（含有环输入上的缩点规则）单独成模块，见该文件的文件头。
+// Phase-edge folding and reduction (including SCC handling for cyclic input) live in a separate module; see its header.
 import { foldPhaseEdges, type RawEdge } from "./create-workflow-graph-fold.js";
 
-// display 不经过 tool result budget：图必须在进入工具输出（进而进入实时事件和持久化
-// metadata）前独立限长。集合互相引用，所以裁剪顺序是固定的——先 step（源序，截尾保留
-// 脚本开头），再收敛到它们引用的 lane，最后按存活的 step 过滤边与 sink。引用完整性优先
-// 于保留数量：宁可少画，也不能让 UI 拿到指向不存在节点的 id。
+// Display graphs do not pass through the tool result budget, so bound them separately before they enter tool output (and then live
+// events and persisted metadata). The sets reference one another, so trim in a fixed order: first steps (source order, keeping the
+// beginning of the script), then retain lanes they reference, then filter edges and sinks by surviving steps. Referential integrity
+// takes priority over item count: draw less rather than give the UI IDs that point to missing nodes.
 export function boundCausalityGraph(
   graph: CausalityGraph,
   flow?: ControlFlowGraph,
@@ -154,7 +154,7 @@ export function boundCausalityGraph(
     ...(edge.back ? { back: true as const } : {}),
   }));
   const phaseStreams = boundPhaseStreams(graph, declaredPhases, phaseIds);
-  // 边的上界管的是发出去的东西，所以在归约**之后**判。
+  // The edge limit applies to emitted output, so enforce it **after** reduction.
   const phaseVocabularyDropped =
     declaredPhases !== undefined &&
     (declaredPhases.length > CREATE_WORKFLOW_GRAPH_MAX_PHASES ||
@@ -164,14 +164,14 @@ export function boundCausalityGraph(
   const emitPhases = declaredPhases !== undefined && !phaseVocabularyDropped;
 
   const boundPhases: CreateWorkflowPhase[] = (declaredPhases ?? []).map((phase) => {
-    // 合成阶段 `unphased` 无 name（UI 本地化）；空名同样按「无名」处理而不是让整个输出
-    // 解析失败，与车道 name 同一姿态。
+    // The synthetic `unphased` phase has no name (the UI localizes it); treat an empty name the same way instead of failing to parse
+    // the entire output, matching lane names.
     const name = phase.name ? boundGraphText(phase.name, CREATE_WORKFLOW_GRAPH_MAX_NAME_CHARS) : undefined;
-    // `alongside`：进入这个阶段时还在跑的其他阶段（strand 未 join）。与边同一条引用完整性
-    // 规则——指向未列出阶段的引用丢掉，自引用丢掉（自己不与自己并行），去重保序，上界同
-    // 阶段表。它**不**经过 foldEdges / reduceOrdering：这是节点事实不是边，控制没有从那里
-    // 转移过来，归约会把它当成一条 runs after 去砍掉真正的边。随词汇表同进同退是自动的
-    // ——boundPhases 整张表只在 emitPhases 为真时进载荷。
+    // `alongside` lists other phases still running when this phase starts (its strand has not joined). Apply the same referential
+    // integrity rule as for edges: drop references to unlisted phases and self-references, then deduplicate in order and apply the
+    // phase-table limit. Do **not** run it through foldEdges / reduceOrdering: this is a node fact, not an edge. Control did not
+    // transfer along it, and reduction would treat it as “runs after” and remove real edges. Vocabulary inclusion is automatic because
+    // boundPhases is emitted only when emitPhases is true.
     const alongside: string[] = [];
     const alongsideSeen = new Set<string>();
     for (const id of phase.alongside ?? []) {
@@ -185,7 +185,7 @@ export function boundCausalityGraph(
       ...(name === undefined ? {} : { name }),
       ...(phase.loc === undefined ? {} : { line: phase.loc.line, column: phase.loc.column }),
       ...(alongside.length === 0 ? {} : { alongside }),
-      // 补全写进来的阶段带补全它的留白 id；控制流图的阶段表没标时退回因果图同 id 阶段的标记。
+      // A phase inserted by completion carries the ID of the hole it fills; if the control-flow phase table lacks the marker, fall back to the marker on the same-ID phase in the causal graph.
       ...fillMark(
         phase,
         graph.phases?.find((candidate) => candidate.id === phase.id),
@@ -197,7 +197,7 @@ export function boundCausalityGraph(
     .map((phase) => boundGraphText(phase.id, CREATE_WORKFLOW_GRAPH_MAX_ID_CHARS));
 
   const boundLanes: CreateWorkflowLane[] = keptLanes.map((lane) => {
-    // 空 name（如 agent("")）会违反契约的 min(1)，按“无名”处理而不是让整个输出解析失败。
+    // An empty name (for example, agent("")) violates the contract's min(1); treat it as unnamed instead of failing to parse all output.
     const name = lane.name ? boundGraphText(lane.name, CREATE_WORKFLOW_GRAPH_MAX_NAME_CHARS) : undefined;
     const namePattern = boundNamePattern(lane.namePattern);
     return {
@@ -210,7 +210,7 @@ export function boundCausalityGraph(
 
   const boundSteps: CreateWorkflowStep[] = steps.map((step) => {
     const lanes = (step.lanes ?? []).filter((lane) => laneIds.has(lane));
-    // ask 的 label 来自脚本字面量，可能为空；契约要求 min(1)，退回 step id。
+    // An ask label comes from a script literal and may be empty; the contract requires min(1), so fall back to the step ID.
     const label = step.label ? boundGraphText(step.label, CREATE_WORKFLOW_GRAPH_MAX_NAME_CHARS) : step.id;
     const labelPattern = boundNamePattern(step.labelPattern);
     return {
@@ -222,29 +222,29 @@ export function boundCausalityGraph(
       column: step.loc.column,
       lane: boundGraphText(step.lane, CREATE_WORKFLOW_GRAPH_MAX_ID_CHARS),
       ...(lanes.length > 1 ? { lanes } : {}),
-      // may-set 拷贝的关联键：这里指向的站点已被拷贝替换，所以它**不**参与上面的引用完整性
-      // 收敛（那条规则管的是边与 sink 指向的节点）。字段可选，漏掉不会被 schema 抓住，只会
-      // 让实时叠加悄悄关联不上实例。
+      // Join key for the copied may-set: the station it referenced has been replaced by this copy, so it does **not** participate in
+      // the referential integrity closure above (that rule applies to edges and sinks pointing at nodes). The field is optional, so a
+      // missing key would pass schema validation and silently prevent live overlays from joining to the instance.
       ...(step.source === undefined
         ? {}
         : { source: boundGraphText(step.source, CREATE_WORKFLOW_GRAPH_MAX_ID_CHARS) }),
-      // 词汇表整体降级时 `phase` 必须一起消失，指向未列出阶段的 `phase` 同样消失：带着一个
-      // 不在 `phases` 里的阶段 id 的卡片是悬空引用，UI 会去查一个不存在的阶段。分析器保证
-      // 「每个 issue 的阶段都是某个 node 的阶段」，所以正常输入下这一收紧零行为变化；裁剪层
-      // 的姿态照旧是自卫而非信任生产者。
+      // If the vocabulary is dropped, `phase` must also disappear; so must any `phase` pointing to an unlisted stage. A card with a
+      // phase ID absent from `phases` is a dangling reference and makes the UI look up a nonexistent phase. The analyzer guarantees
+      // that each issue's phase belongs to a node, so this tightening changes no normal input. The bounding layer remains defensive
+      // rather than trusting producers.
       ...(emitPhases && step.phase !== undefined && phaseIds.has(step.phase)
         ? { phase: boundGraphText(step.phase, CREATE_WORKFLOW_GRAPH_MAX_ID_CHARS) }
         : {}),
       ...(step.repeat === undefined ? {} : { repeat: step.repeat }),
-      // 补全写进来的站点带补全它的留白 id（docs/dynamic-workflow/presentation.md「Holes on the timeline」）。
-      // 只搬、不校验它指向的留白：那个留白已经补过，不在 `holes` 里，也不是任何节点。
+      // Sites inserted by completion carry the ID of the hole they fill (docs/dynamic-workflow/presentation.md, “Holes on the timeline”).
+      // Copy it without validating the target hole: that hole is already filled, is absent from `holes`, and is not a node.
       ...fillMark(step),
     };
   });
 
-  // 卡的阶段与 step 的 `phase` 同一条规则：词汇表降级、或指向未列出的阶段 → 归入 `unphased`
-  // （契约：`participant.phase` ∈ `phases[].id`，或 `phases` 缺席时全部为 `unphased`）。卡 id
-  // 不改——它是不透明键，交接边与运行状态都按它关联；UI 的隐式模块只看 `phase` 字段。
+  // Cards follow the same rule as a step's `phase`: if the vocabulary is dropped or the phase is unlisted, move the card to
+  // `unphased` (contract: `participant.phase` ∈ `phases[].id`, or all are `unphased` when `phases` is absent). Keep card IDs
+  // unchanged: they are opaque keys used by handoff edges and runtime state. The UI's implicit modules read only the `phase` field.
   const boundParticipants: CreateWorkflowParticipant[] = participants.map((participant) =>
     emitPhases && phaseIds.has(participant.phase)
       ? participant
@@ -285,13 +285,13 @@ export function boundCausalityGraph(
 }
 
 /**
- * 6. 阶段流（docs/dynamic-workflow/presentation.md「Streams」）：channel 串起来的两个 future 阶段在
- *    控制流视图里只是互为 `alongside` 的两条 strand，没有箭头；因果图的阶段商却有 producer →
- *    consumer 的 `data` 边（send 是容器写、for await 把它读回来）。流 = 两端互为 alongside 的
- *    那些 `data` 边：两条都活着的 strand 之间只能经由共享容器传数据，那就是 channel。进入一个
- *    **不** alongside 的阶段的 `data` 边（join 之后的写作者）是控制箭头的事，不是流。
- *    因果商已由分析器归约过，这里只做引用完整性（未列出的阶段、自环）、alongside 过滤与去重，
- *    不再归约；它也**不**并进 phaseEdges——箭头仍然只说 runs after。上界由调用方与边一起判。
+ * 6. Phase streams (docs/dynamic-workflow/presentation.md, “Streams”): two future phases connected by a channel are
+ *    two `alongside` strands in the control-flow view, with no arrow; the causal phase quotient has a producer →
+ *    consumer `data` edge (send writes the container, and for-await reads it). A stream is a `data` edge whose endpoints are alongside:
+ *    two live strands can communicate only through a shared container, which is the channel. A `data` edge entering a phase that is
+ *    **not** alongside (a writer after join) is a control arrow, not a stream.
+ *    The analyzer has already reduced the causal quotient, so this only checks reference integrity (unknown phases, self-edges), filters alongside edges, and deduplicates;
+ *    it does not reduce again or merge these into phaseEdges—arrows still mean only “runs after.” The caller validates the bound together with the edges.
  */
 function boundPhaseStreams(
   graph: CausalityGraph,
@@ -322,9 +322,8 @@ function boundPhaseStreams(
 }
 
 /**
- * 补全标记（`fill: <留白 id>`，分析器标在因果图的 Step / Phase 与控制流图的 FlowPhase 上）：第一个
- * 候选带着就搬，第二个候选（因果图的同 id 阶段）在第一个没标时兜底。id 是分析生成的 ASCII，限长
- * 恒等通过。
+ * Completion marker (`fill: <hole id>`, added by the analyzer to causal-graph Steps / Phases and control-flow FlowPhases): copy the first
+ * candidate that has one; use the second candidate (the same-ID phase in the causal graph) only if the first has none. IDs are analyzer-generated ASCII, so length validation is an identity check.
  */
 function fillMark(...nodes: ({ fill?: string } | undefined)[]): { fill?: string } {
   for (const node of nodes) {
@@ -336,9 +335,9 @@ function fillMark(...nodes: ({ fill?: string } | undefined)[]): { fill?: string 
   return {};
 }
 
-// Bug 预防：actor 名 / ask label 来自脚本字符串字面量（外部输入），直接 slice 可能截断
-// UTF-16 surrogate pair；与 result-display 的 MCP 文本限长同一处理——边界落在高位
-// surrogate 后则丢弃半字符，保证载荷可安全序列化。id 是分析生成的 ASCII，slice 恒等通过。
+// Prevent bugs: actor names and ask labels come from script string literals (external input), and slicing could split a UTF-16
+// surrogate pair. Use the same handling as result-display's MCP text limit: if the boundary follows a high surrogate, drop the partial
+// character so the payload remains safely serializable. IDs are analyzer-generated ASCII, so slicing them is safe.
 function boundGraphText(value: string, maxChars: number): string {
   const bounded = value.slice(0, maxChars);
   const lastCodeUnit = bounded.charCodeAt(bounded.length - 1);
@@ -346,11 +345,10 @@ function boundGraphText(value: string, maxChars: number): string {
 }
 
 /**
- * name pattern 的限长：两个 affix 同样来自脚本字面量，走同一条 surrogate-safe 截断。
+ * Bound name-pattern length: both affixes also come from script literals, so use the same surrogate-safe truncation.
  *
- * 截断后可能一个 affix 都不剩（理论上分析器已保证非空，但契约的 min(1) 不该依赖上游的
- * 保证）——那时整个字段缺席，而不是发一个 `{}` 让 `.strict()` 通过却渲染出一个孤零零的
- * 省略号。
+ * Truncation may leave no affix (the analyzer should guarantee nonempty values, but the contract's min(1) should not depend on that).
+ * In that case omit the entire field instead of emitting `{}` that passes `.strict()` but renders a lone ellipsis.
  */
 function boundNamePattern(
   pattern: { head?: string; tail?: string } | undefined,

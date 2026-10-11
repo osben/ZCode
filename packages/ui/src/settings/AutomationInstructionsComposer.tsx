@@ -17,24 +17,24 @@ interface AutomationInstructionsComposerProps {
 }
 
 /**
- * Instructions 底部功能 trigger 的统一交互契约。
- * 定时与闲时表单曾分别用 hover、focus-within 和不同圆角维护展开态，
- * 导致同一功能在两类自动化中出现胶囊/方圆角和打开背景不一致。
- * 行高使用 rem 语义类，避免固定像素值在界面字号调整后压缩文字行盒。
+ * Shared interaction contract for feature triggers at the bottom of Instructions.
+ * Scheduled and Off-Peak forms previously used separate hover, focus-within, and corner-radius rules for their expanded states,
+ * making the same feature appear as a pill/square and use inconsistent open backgrounds across automation types.
+ * Use semantic rem-based line-height classes to avoid compressing text when the interface font size changes.
  */
 export const AUTOMATION_INSTRUCTIONS_TOOLBAR_TRIGGER_CLASSNAME =
   "h-7 rounded-full text-ui-base font-normal leading-5 text-foreground-subtle hover:bg-hover hover:text-foreground aria-expanded:bg-hover aria-expanded:text-foreground";
 
 /**
- * 定时与闲时设置页的输入内容统一使用 14px 正文字号。
- * 两页曾分别维护标题、调度和 Instructions 字号，部分小时调度分支会回退到 12px。
+ * Input content on Scheduled and Off-Peak settings pages consistently uses a 14px body font.
+ * The pages previously maintained separate title, schedule, and Instructions sizes, with some hourly schedule branches falling back to 12px.
  */
 export const AUTOMATION_FORM_INPUT_TYPOGRAPHY_CLASSNAME = "text-ui-base leading-5";
 
 /**
- * Automations 共用的 Instructions 复合输入。
- * textarea 自身承担标准 Input 描边，父级只提供工具栏的 surface 层级。
- * 几何、表面层级及全局 Input 描边状态统一收口在这里，调用方只提供字段状态和工具条内容。
+ * Shared composite Instructions input for Automations.
+ * The textarea provides the standard Input outline; the parent supplies only the toolbar surface layer.
+ * Geometry, surface layering, and global Input outline states are centralized here; callers provide only field state and toolbar content.
  */
 export function AutomationInstructionsComposer({
   invalid = false,
@@ -67,15 +67,15 @@ export function AutomationInstructionsTextarea({
       Math.abs(currentHeight - lastAutomaticHeight) > 1;
     const contentHeight = textarea.scrollHeight;
 
-    // 自动增高曾在每次输入时无条件重写 height，桌面用户拖拽后的高度会立刻丢失。
-    // 手动高度与上一次自动高度不一致时只维护内部滚动，不再覆盖用户选择的尺寸。
+    // Auto-grow used to overwrite height on every input, immediately discarding a height set by dragging on Desktop.
+    // When the manual height differs from the previous automatic height, maintain only internal scrolling and preserve the user's size choice.
     if (hasManualHeight) {
       textarea.style.overflowY = contentHeight > currentHeight ? "auto" : "hidden";
       return;
     }
 
-    // 未发生手动拖拽时保持自动增高：短内容回到 116px，约 7 行封顶于 156px，
-    // 更长内容只在正文区域内部滚动。
+    // Keep auto-grow when there has been no manual resize: short content returns to 116px, about 7 lines cap at 156px,
+    // and longer content scrolls only inside the body area.
     textarea.style.height = `${AUTOMATION_INSTRUCTIONS_MIN_HEIGHT_PX}px`;
     const automaticHeight = Math.min(
       Math.max(contentHeight, AUTOMATION_INSTRUCTIONS_MIN_HEIGHT_PX),

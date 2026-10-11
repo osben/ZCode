@@ -201,8 +201,8 @@ export function selectWorkbenchSession(
       layout.focusPane(existingPaneId);
     } else if (paneId !== V4_PRIMARY_PANE_ID && layout.panes[paneId]) {
       const previousSessionId = layout.panes[paneId]?.sessionId ?? null;
-      // shell activeTaskId 先切换会把新 session 灌进 primary draft；
-      // 必须先原子替换 focused secondary 的完整 binding。
+      // Switching shell activeTaskId first would put the new session into the primary draft;
+      // atomically replace the focused secondary pane's full binding first.
       layout.replacePaneBinding(paneId, {
         workspaceScope: binding.workspaceScope,
         sessionId: binding.sessionId,

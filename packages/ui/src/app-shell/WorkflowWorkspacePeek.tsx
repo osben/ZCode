@@ -1,9 +1,9 @@
 // ============================================================
-// 命令输出的尾巴
+// Tail of command output.
 // ============================================================
-// 收起的 Terminal 卡下面露出 stdout 最后三行，不用点开就知道命令说了什么。正文在卡**滚进视口**时
-// 才取（IntersectionObserver，提前 200 px），取回即进同一份缓存——之后展开不再读。没有
-// IntersectionObserver 的环境（jsdom）视作立刻可见。
+// Show the last three stdout lines below collapsed Terminal cards so users can see what a command said without opening it. Fetch output only when a card **enters the viewport**
+// (IntersectionObserver, with a 200 px lead) and store it in the shared cache so expanding the card does not read it again. Environments without
+// IntersectionObserver (jsdom) treat the card as immediately visible.
 
 import { memo, useEffect, useMemo, useRef, useState } from "react";
 import type { WorkflowRunWorkspaceNode } from "@zcode/shared/zcode-protocol-v4";
@@ -49,7 +49,7 @@ export const WorkspacePeek = memo(function WorkspacePeek({
     [result],
   );
 
-  // 空态是一个零高的哨兵：IntersectionObserver 要有东西可观察。
+  // The empty state is a zero-height sentinel; IntersectionObserver needs an element to observe.
   return (
     <div
       className={cn(

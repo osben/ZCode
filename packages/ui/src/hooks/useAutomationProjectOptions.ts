@@ -32,9 +32,9 @@ export function resolveAutomationProjectOptions(
       if (!config.includeConversationWorkspace || conversationWorkspaceIncluded) {
         continue;
       }
-      // 历史设置可能残留多个 conversation backing path，但它们都表示同一个
-      // “无项目会话”逻辑目标。保留 purpose 而不是依赖 default 文案识别，菜单才能复用
-      // 会话侧「不在项目中工作」的固定文案与图标，同时仍只绑定一个 canonical cwd。
+      // Historical settings may retain multiple conversation backing paths, but they all represent the same logical
+      // "no-project session" target. Keep purpose rather than identifying it by default label, so the menu can reuse the
+      // session-side "Work outside a project" label/icon while still binding to one canonical cwd.
       conversationWorkspaceIncluded = true;
       result.push({
         workspacePath: tab.workspacePath,
@@ -54,12 +54,11 @@ export function resolveAutomationProjectOptions(
 }
 
 /**
- * 自动化创建只读取当前窗口已经打开且仍可用的本地 workspace。
- * 定时任务可显式加入一个“无项目会话”逻辑目标；闲时任务保持仅真实项目。
+ * Automation creation reads only usable local workspaces already open in the current window.
+ * Scheduled tasks may explicitly include a logical "no-project session" target; off-peak tasks remain limited to real projects.
  *
- * 候选只保留可用的本地 workspace tab，排除最近项目和远端 tab，
- * 避免把远端 identity 交给本地 host，或让闲时任务继承远端 workspace。
- * 两类任务共用入口过滤规则，保持一致的项目隔离语义。
+ * Keep only usable local workspace tabs; exclude recent projects and remote tabs to avoid passing remote identity to a local
+ * host or letting an off-peak task inherit a remote workspace. Both task types share these entry filters to preserve consistent project-isolation semantics.
  */
 export function useAutomationProjectOptions(
   config: AutomationProjectOptionsConfig = {},

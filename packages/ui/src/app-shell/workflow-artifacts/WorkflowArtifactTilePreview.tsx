@@ -18,25 +18,25 @@ import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import type { Theme } from "@/useTheme.js";
 
 /**
- * 产物瓦片的预览区（侧板画廊同用）：产物**本身**的缩略。
+ * Preview area for artifact tiles (also used by the side-pane gallery): a thumbnail of the artifact **itself**.
  *
- * - markdown / 纯文本：文档开头按 2× 宽排版再 `scale(0.5)`——是内容的缩略，不是把界面字号调小；
- * - CSV：前几行的迷你表格；
- * - 图片：渲染本身；
- * - chart / table / metrics / board：`ArtifactPresetBody` compact，按自然尺寸在框里居中，随 report
- *   条目实时长；
- * - 其余（PDF / 二进制 / 超大文件）：纸页字形 + 扩展名徽字。
+ * - markdown / plain text: lay out the document opening at 2× width and apply `scale(0.5)` — this is a content thumbnail, not smaller UI text;
+ * - CSV: a mini table of the first few rows;
+ * - Images: render the image itself;
+ * - chart / table / metrics / board: compact `ArtifactPresetBody`, centered at natural size in the frame and grows with report
+ *   entries in real time;
+ * - Others (PDF / binary / oversized files): paper icon + extension badge.
  *
- * 两处框同一档、同一画法：交付物行的框（160 × 100）与侧板画廊的瓦片框（130–180px 一列）。没有更小
- * 的档——预览要么读得清，要么不画。
+ * Both frames use the same size and rendering: the delivery row frame (160 × 100) and the side-pane gallery tile frame (130–180px per column). There is no smaller
+ * size — either the preview is readable or it is not shown.
  *
- * 字节还没到时整块留空白（不闪骨架屏，也不先画一张字形再换掉）。字节走与产物 tab 同一条
- * 分块读取（journal-backed，冷恢复也在）；上限之外不读——卡是转录的一部分，不该为一份 20 MiB
- * 的产物拉整条链路。
+ * Keep the whole area blank until bytes arrive (no flashing skeleton, and do not render an icon only to replace it). Bytes use the same
+ * chunked reads as the artifact tab (journal-backed, including cold recovery); do not read past the limit — the card is part of the transcript and should not fetch the whole chain for a 20 MiB
+ * artifact.
  */
 const TEXT_PREVIEW_MAX_BYTES = 256 * 1024;
 const IMAGE_PREVIEW_MAX_BYTES = 4 * 1024 * 1024;
-/** 文档缩略只解码开头这么多字节：一屏缩略装不下更多，整份解码是白算。 */
+/** Decode only this many leading bytes for document thumbnails: a single screen cannot show more, so decoding the whole file is wasted work. */
 const TEXT_DECODE_BYTES = 8 * 1024;
 const TEXT_PREVIEW_CHARS = 1_600;
 const CSV_PREVIEW_ROWS = 6;
@@ -64,7 +64,7 @@ export function previewModeFor(artifact: {
   return undefined;
 }
 
-/** 最小的 CSV 读法：只认逗号与成对引号，够画一张缩略；不是解析器。 */
+/** Minimal CSV reader: recognizes commas and paired quotes, enough to draw a thumbnail; it is not a parser. */
 export function csvPreviewRows(text: string): string[][] {
   const rows: string[][] = [];
   for (const line of text.split(/\r?\n/u)) {
@@ -99,12 +99,12 @@ function decodeHead(bytes: Uint8Array): string {
     .slice(0, TEXT_PREVIEW_CHARS);
 }
 
-/** 空白占位：字节在路上。测试与调用方据它区分「还没到」与「画不了」。 */
+/** Blank placeholder while bytes are in transit. Tests and callers use this to distinguish “not arrived yet” from “cannot render.” */
 function Pending() {
   return <span className="absolute inset-0" data-testid="workflow-artifact-preview-pending" />;
 }
 
-/** 文档缩略底部渐隐到面板色：截断的文档看起来是「还有」，不是「断了」。看板与图片不要它。 */
+/** Fade the document thumbnail's bottom into the panel color so truncation suggests “more” rather than “cut off.” Not used for boards or images. */
 function Fade() {
   return (
     <span
@@ -136,7 +136,7 @@ export function WorkflowArtifactTilePreview({
     version: artifact.version ?? 1,
     enabled: mode !== undefined,
   });
-  // 看板只让 CLI 取 spec 点名的字段；spec 还没到或画不了时不取数——预览此时本来也画不出图。
+  // The board asks the CLI only for fields named in the spec. If the spec has not arrived or cannot be rendered, do not fetch data because the preview cannot be drawn anyway.
   const fields = useMemo(
     () =>
       isArtifactPresetKind(artifact.kind)
@@ -172,7 +172,7 @@ export function WorkflowArtifactTilePreview({
   const glyph = <ArtifactSheetGlyph {...(badge === undefined ? {} : { badge })} />;
 
   if (preset) {
-    // spec 只有 journal 带得回来；还没到时安静留白，不闪一句「无法渲染」。到了但坏了才说。
+    // Only the journal can restore the spec; keep it quietly blank until it arrives instead of flashing “Cannot render.” Show the message only if the arrived spec is invalid.
     if (artifact.spec === undefined) return <Pending />;
     return (
       <div
@@ -256,7 +256,7 @@ export function WorkflowArtifactTilePreview({
         data-testid="workflow-artifact-preview-body"
       >
         {mode === "markdown" ? (
-          // markdown 必须**传 theme**（渲染器按 theme 选代码块配色）。
+          // markdown must **receive the theme** (the renderer selects code-block colors from it).
           <MessageResponse className="w-full min-w-0 break-words text-foreground" theme={theme}>
             {text ?? ""}
           </MessageResponse>

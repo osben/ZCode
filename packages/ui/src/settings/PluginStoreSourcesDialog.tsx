@@ -11,7 +11,7 @@ import {
 } from "@/settings/pluginStoreListing.js";
 import { DEFAULT_MARKETPLACE_ID } from "@/settings/recommendedPlugins.js";
 
-// 官方市场不可移除：移除后启动时会被重新补种，只会造成「删了又回来」的困惑。
+// The official marketplace cannot be removed; it would be reseeded at startup, confusing users when it came back after deletion.
 function isRemovableMarketplace(marketplace: ZCodePluginMarketplaceSummary): boolean {
   if (isPublicStoreMarketplaceId(marketplace.id)) return false;
   if (marketplace.id === DEFAULT_MARKETPLACE_ID) return false;
@@ -41,7 +41,7 @@ export function PluginStoreSourceRefreshFailure({
   );
 }
 
-/** 顶栏齿轮 → 市场源管理：列出已登记市场，支持刷新与移除（新增走 New 按钮）。 */
+/** Header gear → marketplace source management: list registered marketplaces and allow refresh/removal (use the New button to add one). */
 export function PluginStoreSourcesDialog({
   open,
   onOpenChange,
@@ -110,7 +110,7 @@ export function PluginStoreSourcesDialog({
                         : ""}
                     </div>
                     {marketplace.refreshFailure &&
-                    // claude-plugins-official 的刷新失败不提示（同 pluginManagementStore.updateMarketplace）。
+                    // Do not show a notification when refreshing claude-plugins-official fails (same as pluginManagementStore.updateMarketplace).
                     marketplace.id !== CLAUDE_OFFICIAL_PLUGIN_MARKETPLACE_ID ? (
                       <PluginStoreSourceRefreshFailure failure={marketplace.refreshFailure} />
                     ) : null}

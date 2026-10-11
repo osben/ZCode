@@ -8,13 +8,16 @@ import type { ToolExecutionContext, ToolEntry, ToolExecutionModelContext } from 
 import { isRecord } from "./utils.js";
 
 /**
- * 可暂停的工具 deadline。
+ * A pausable tool deadline.
  *
- * 工具内部的模型请求在进程级准入闸门前排队时暂停计时，拿到票再续，剩余时长守恒。超时守的是
- * 「provider 挂了」，不是「我们自己的队列长」：否则闸门把 cap 压低时会把 WebSearch / WebFetch 逐个
- * 逼成 60 s 超时，模型再补搜，越限流越吵（deep-research 实例里 7 次这样的 cancel）。
- * 多个请求并存取并集（计数器）；退避 sleep 不暂停（那是 provider 慢）；`timeoutMs` 缺席时只累计
- * 排队时长、不计时。
+ * Pause timing while model requests inside a tool wait at the process-level admission
+ * gate, then resume with the remaining time preserved. The timeout should detect a
+ * stalled provider, not a long local queue. Otherwise, when the gate lowers its cap,
+ * WebSearch / WebFetch requests would each hit a 60-second timeout, prompting the model
+ * to retry searches and creating more load under throttling (seven such cancellations
+ * occurred in one deep-research run). Concurrent requests pause as a union, tracked by a
+ * counter. Backoff sleeps do not pause the deadline because they indicate a slow
+ * provider. If `timeoutMs` is absent, only queue time is accumulated; no timer runs.
  */
 export class ToolDeadline {
   private remainingMs: number | undefined;
@@ -58,7 +61,7 @@ export class ToolDeadline {
     this.onExpire = undefined;
   }
 
-  /** 累计的排队时长（含仍在暂停中的这一段）；超时错误的 context 带它，便于区分「慢」与「等」。 */
+  /** Accumulated queue time, including the current paused interval; timeout errors include it in context to distinguish waiting from slowness. */
   get queuedMs(): number {
     return this.queuedTotalMs + (this.pauseDepth > 0 ? Date.now() - this.pausedAt : 0);
   }
@@ -75,8 +78,9 @@ export class ToolDeadline {
 }
 
 /**
- * 从本次工具调用自己的模型状态事件里读准入等待的两端：`queued` 暂停、`admitted` 续。
- * 只认带本 toolCallId 的事件——同一 emitEvent 也会流过别的工具调用的状态。
+ * Read the admission-wait boundaries from this tool call's model status events:
+ * `queued` pauses the deadline and `admitted` resumes it. Match only this toolCallId;
+ * the same emitEvent also carries status for other tool calls.
  */
 export function observeToolAdmissionClock(
   event: SessionEvent,
@@ -128,7 +132,7 @@ export async function executeWithTimeout<TInput, TOutput>(
       resolve(result);
     };
 
-    // 无 timeout 工具仍保留父级 abort 监听，但不创建墙钟定时器（deadline.start 对缺席的 timeoutMs 是空操作）。
+    // Tools without a timeout still listen for parent aborts, but do not create a wall-clock timer (deadline.start is a no-op when timeoutMs is absent).
     const timeoutMs = deadline.timeoutMs;
     deadline.start(() => {
       timedOut = true;

@@ -23,10 +23,10 @@ export function createReleaseAgentWiring(
 }
 
 /**
- * 发行包内 Core 既不在 monorepo、也没有 Electron runtime，`zcodeAgentProcessManager`
- * 的默认解析链（monorepo dev → Electron → 远端已部署 binary）会全部落空。这里把随包
- * `zcode.cjs` 注入为 agent 启动命令；env 覆盖是该解析链的最高优先级，因此显式配置的
- * `ZCODE_AGENT_SERVER_COMMAND` 永远优先，开发态（入口同目录无 zcode.cjs）不受影响。
+ * Core in a release package is outside the monorepo and has no Electron runtime, so the default resolution chain in `zcodeAgentProcessManager`
+ * (monorepo dev → Electron → deployed remote binary) has no match. Inject the bundled
+ * `zcode.cjs` as the Agent startup command; environment overrides have the highest priority in that chain, so an explicit
+ * `ZCODE_AGENT_SERVER_COMMAND` always wins, and development is unaffected when no colocated zcode.cjs exists.
  */
 export async function resolveBundledAgentWiring(
   entryDir: string,

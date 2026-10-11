@@ -60,8 +60,8 @@ export class ClaudeNativeSessionImportRepo {
       homes.add(dataBaseDir);
     }
 
-    // 关键业务逻辑：扫描 Claude Code 原生历史目录 ~/.claude/projects，不是 zcode 自己的数据目录。
-    // 当 ZCODE_DATA_BASE_DIR 把 .zcode 放到别处时，原生 .claude 往往仍在真实用户 HOME 下。
+    // Important business logic: scan Claude Code's native history directory ~/.claude/projects, not ZCode's data directory.
+    // When ZCODE_DATA_BASE_DIR moves .zcode elsewhere, native .claude data is usually still under the real user's HOME.
     return [...homes].map((homePath) => join(homePath, ".claude", "projects"));
   }
 
@@ -166,8 +166,8 @@ export class ClaudeNativeSessionImportRepo {
         if (!headInfo.workspacePath) {
           continue;
         }
-        // Claude 会把临时执行面放到 ~/.claude/worktrees 下。
-        // 引导数据导入只应展示真实用户 workspace，避免把这些短生命周期 worktree 当成可迁移项目。
+        // Claude puts temporary execution environments under ~/.claude/worktrees.
+        // Onboarding import should show only real user workspaces, not treat these short-lived worktrees as migratable projects.
         if (isClaudeWorktreeWorkspacePath(headInfo.workspacePath)) {
           continue;
         }
@@ -230,7 +230,7 @@ export class ClaudeNativeSessionImportRepo {
         if (!headInfo.workspacePath) {
           continue;
         }
-        // 直接按 sessionId 导入也必须复用扫描边界，防止 UI 过滤后仍能导入临时 worktree。
+        // Direct imports by sessionId must reuse the scan boundary too, preventing imports of temporary worktrees after UI filtering.
         if (isClaudeWorktreeWorkspacePath(headInfo.workspacePath)) {
           return null;
         }
@@ -267,8 +267,8 @@ export class ClaudeNativeSessionImportRepo {
     workspaceIdentity?: string;
     sourcePath: string;
   }): Promise<{ outputPath: string; createdOutputPaths: string[] }> {
-    // 导入副本沿用历史目录布局 ~/.zcode/v2/agent-config/claude/{workspaceHash}/projects；
-    // 这是 Claude 历史导入的存储位置，与 agent runtime provider（glm）无关。
+    // Imported copies retain the legacy directory layout ~/.zcode/v2/agent-config/claude/{workspaceHash}/projects;
+    // this is storage for imported Claude history and is unrelated to the agent runtime provider (glm).
     const relativeProjectsPath = this.getRelativeProjectsPath(params.sourcePath);
     const outputPath = join(
       getAppConfigDir(),

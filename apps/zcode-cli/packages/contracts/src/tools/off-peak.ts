@@ -1,9 +1,11 @@
 // ============================================================
 // Off-Peak tools - session-level idle-time task creation
 // ============================================================
-// 闲时任务与 cron automation 是兄弟实体：schema 独立镜像，禁止互相复用。
-// workspace/凭证不是模型入参；permissionMode/model/thoughtLevel 缺省在 host 端解析
-// （yolo / allowed_models 末位 / 最高推理档），模型只在用户显式要求时覆盖。
+// Idle-time tasks and cron automation are sibling entities: keep separate schema mirrors and
+// do not reuse one for the other.
+// Workspace and credentials are not model inputs. The host resolves defaults for
+// permissionMode/model/thoughtLevel (yolo / last allowed_models entry / highest reasoning
+// level); the model overrides them only when the user explicitly asks.
 
 import { z } from "zod";
 import { toToolJsonSchema } from "./json-schema.js";
@@ -39,7 +41,7 @@ export const OffPeakCreateInputSchema = z
 export type OffPeakCreateInput = z.infer<typeof OffPeakCreateInputSchema>;
 export const OffPeakCreateInputJsonSchema = toToolJsonSchema(OffPeakCreateInputSchema);
 
-/** 客户端执行态（与 shared ZCodeOffPeakTaskStatus 同值镜像；zod v3/v4 边界不 import shared）。 */
+/** Client execution status (mirrors shared ZCodeOffPeakTaskStatus; do not import shared across the zod v3/v4 boundary). */
 export const OffPeakTaskStatusSchema = z.enum([
   "queued",
   "paused",
@@ -50,7 +52,7 @@ export const OffPeakTaskStatusSchema = z.enum([
 ]);
 export type OffPeakTaskStatus = z.infer<typeof OffPeakTaskStatusSchema>;
 
-/** 轮尾卡片与 OffPeakList 的最小任务快照：不暴露 serverTicketId / providerName。 */
+/** Minimal task snapshot for the end-of-turn card and OffPeakList; does not expose serverTicketId / providerName. */
 export const OffPeakTaskSummarySchema = z
   .object({
     offPeakTaskId: nonEmptyString,

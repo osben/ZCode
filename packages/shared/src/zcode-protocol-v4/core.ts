@@ -1,12 +1,12 @@
-// ZCode Protocol v4 —— 数据模型草稿（未冻结，schema 定型以黄金测试为准）。
-// 本包纪律：只放 schema 类型 + 纯函数，禁止任何运行时/IO/传输逻辑。
+// ZCode Protocol v4 — draft data model (not frozen; golden tests define the finalized schemas).
+// Package rule: contain only schema types and pure functions; no runtime, I/O, or transport logic.
 import { z } from "zod";
 import { VIDEO_INPUT_MAX_BYTES } from "../zcode-media-policy.js";
 
-/** V4 物理 wire 协议版本；projection snapshot 继续独立使用 protocolVersion=1。 */
+/** V4 physical wire protocol version; projection snapshots continue to use protocolVersion=1 independently. */
 export const V4_WIRE_PROTOCOL_VERSION = 3 as const;
 
-/** V3 row target：display row 与稳定实体必须成对提交并由同一权威投影校验。 */
+/** V3 row target: display rows and stable entities must be committed together and validated by the same authoritative projection. */
 export const conversationRowTargetSchema = z
   .object({
     rowId: z.number().int().nonnegative(),
@@ -15,11 +15,11 @@ export const conversationRowTargetSchema = z
   .strict();
 export type ConversationRowTarget = z.infer<typeof conversationRowTargetSchema>;
 
-// 时钟规则：Unix ms，一律 CLI 时钟；客户端禁止拿本地时钟与协议 Timestamp 相减。
+// Clock rule: Unix milliseconds, always using the CLI clock. Clients must not subtract protocol timestamps from their local clock.
 export const timestampSchema = z.number();
 export type Timestamp = z.infer<typeof timestampSchema>;
 
-// delivery profile：只存在于 CLI flush 管线的参数表，客户端代码禁止出现 profile 变量。
+// Delivery profile exists only in the CLI flush-pipeline parameter table; client code must not contain profile variables.
 export const streamablePathSchema = z.enum(["text", "inputText", "output.text", "summaryText"]);
 export type StreamablePath = z.infer<typeof streamablePathSchema>;
 
@@ -60,7 +60,7 @@ export const DELIVERY_PROFILES = {
 
 export type DeliveryProfileName = keyof typeof DELIVERY_PROFILES;
 
-// 常量与限额（初始值，实测调参）。
+// Constants and limits (initial values; tune based on measurements).
 export const PROTOCOL_V4_LIMITS = {
   maxFrameBytes: 1024 * 1024,
   logicalFrameAssemblyMaxBytes: 16 * 1024 * 1024,
@@ -84,10 +84,10 @@ export const PROTOCOL_V4_LIMITS = {
   attachmentMaxBytes: 20 * 1024 * 1024,
   attachmentChunkMaxBytes: 512 * 1024,
   attachmentPreviewMaxBytes: VIDEO_INPUT_MAX_BYTES,
-  // share 选择阶段的 metadata-only stat 曾复用 attachmentPreviewMaxBytes
-  // （30MiB）作为 totalBytes 上限，于是超过该值的附件在 schema 校验就抛错，
-  // 「容量超限」这个本应确定阻断的分类反而被降级成 deferred 并静默丢内容。
-  // stat 不搬运字节，只需要一个足够表达真实文件大小的上界。
+  // Metadata-only stat during share selection previously reused attachmentPreviewMaxBytes (30 MiB) as
+  // the totalBytes limit. Attachments larger than that failed schema validation, downgrading the
+  // normally blocking "size exceeded" classification to deferred and silently dropping content. stat
+  // does not transfer bytes; it only needs an upper bound large enough to represent the actual file size.
   attachmentStatMaxBytes: 2 * 1024 * 1024 * 1024,
   attachmentPreviewMaxChunks: VIDEO_INPUT_MAX_BYTES / (512 * 1024),
   attachmentReadCacheMaxBytes: VIDEO_INPUT_MAX_BYTES,

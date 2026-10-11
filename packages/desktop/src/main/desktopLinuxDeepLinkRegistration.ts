@@ -10,7 +10,7 @@ import {
 
 const LINUX_DEEP_LINK_DESKTOP_FILE = "zcode.desktop";
 const LINUX_DEEP_LINK_MIME_TYPE = "x-scheme-handler/zcode";
-// 归属标记：用于识别用户级 zcode.desktop 是否由本应用写入（历史所有版本都带这行 Comment）。
+// Ownership marker: identifies whether the user-level zcode.desktop was written by this app (all historical versions include this Comment line).
 const LINUX_DESKTOP_ENTRY_OWNERSHIP_MARKER = "Comment=ZCode Desktop App";
 
 type LinuxDesktopEnv = {
@@ -61,9 +61,10 @@ export function resolveLinuxDeepLinkCommand(params: {
 
   return {
     executablePath: appImagePath,
-    // AppImage 的 zcode:// 回调会由 xdg-open 按 .desktop Exec 二次启动。
-    // 用户手动启动时附加的 sandbox/GPU 参数不会自动继承，二次启动可能在 Electron 初始化前崩溃。
-    // 这里只持久化影响启动成败的 allowlist 参数，避免把 deep link URL、调试端口或工作区路径写死。
+    // xdg-open relaunches an AppImage through the .desktop Exec command for zcode:// callbacks.
+    // Sandbox/GPU arguments added to a manual launch are not inherited, so the relaunch may crash
+    // before Electron initializes. Persist only allowlisted arguments that affect startup success;
+    // do not hard-code deep-link URLs, debug ports, or workspace paths.
     args: resolveAppImageDeepLinkArgs(params.argv ?? []),
   };
 }
@@ -146,7 +147,7 @@ export function resolveLinuxSystemApplicationDirs(env?: { XDG_DATA_DIRS?: string
         .map((entry) => entry.trim())
         .filter(Boolean)
     : [];
-  // XDG 规范默认值为 /usr/local/share:/usr/share；全部为空的 XDG_DATA_DIRS 也回落默认值。
+  // The XDG default is /usr/local/share:/usr/share; an entirely empty XDG_DATA_DIRS also falls back to this default.
   const dataDirs = entries.length > 0 ? entries : ["/usr/local/share", "/usr/share"];
   return dataDirs.map((dir) => join(dir, "applications"));
 }
@@ -154,14 +155,14 @@ export function resolveLinuxSystemApplicationDirs(env?: { XDG_DATA_DIRS?: string
 function findSystemLevelDesktopEntryPath(systemApplicationDirs: string[]): string | undefined {
   for (const dir of systemApplicationDirs) {
     const candidate = join(dir, LINUX_DEEP_LINK_DESKTOP_FILE);
-    // 边界：目录或损坏的路径不应被当成有效系统级条目，否则纯 AppImage 用户
-    // 的用户级注册会被病态路径误抑制。只有普通文件才参与遮蔽判断。
+    // Boundary: a directory or malformed path must not count as a valid system-level entry, or a
+    // broken path could suppress user-level registration for AppImage-only users. Only regular files participate in shadowing checks.
     try {
       if (statSync(candidate).isFile()) {
         return candidate;
       }
     } catch {
-      // 路径不存在或不可 stat（权限），跳过该候选目录。
+      // The path is missing or cannot be stat'ed (permissions); skip this candidate directory.
     }
   }
   return undefined;
@@ -170,8 +171,8 @@ function findSystemLevelDesktopEntryPath(systemApplicationDirs: string[]): strin
 function isOwnedDesktopEntry(path: string): boolean {
   try {
     const content = readFileSync(path, "utf8");
-    // 去掉 \r 与行首尾空白，兼容 CRLF 行尾或手工编辑器引入的额外空白，
-    // 避免可清理的遗留条目被误判为用户自定义条目而永久残留。
+    // Remove \r and surrounding whitespace to support CRLF endings and extra spaces introduced by
+    // manual editors, avoiding legacy entries being mistaken for user-customized entries and left behind.
     return content
       .split("\n")
       .some((line) => line.replaceAll("\r", "").trim() === LINUX_DESKTOP_ENTRY_OWNERSHIP_MARKER);
@@ -233,14 +234,14 @@ export function registerLinuxDeepLinkProtocol(options: RegisterLinuxDeepLinkProt
   let protocolRegistered = false;
   const runCommand = options.runCommand ?? runXdgCommand;
 
-  // 用户级 zcode.desktop 在 XDG
-  // 解析中永远优先于系统级同名条目。rpm/deb 安装后，旧 AppImage 写入的用户级条目会把
-  // /usr/share/applications/zcode.desktop 持续遮蔽，快捷方式和 zcode:// deep link 一直
-  // 指向旧 AppImage（文件还在时）或直接失效（文件被删后），只有手动跑一次新版才会被覆盖。
-  // 现在只要检测到系统级同 ID 条目：
-  // - 系统安装形态（rpm/deb）运行时：清掉本应用写入的遗留用户级条目，且不再写用户级；
-  // - AppImage 运行时：不再写用户级条目和用户级图标，避免旧 AppImage 再度遮蔽系统安装。
-  // 用户手写的自定义 zcode.desktop（无归属标记）不受影响，保留不清理。
+  // XDG resolution always prefers a user-level zcode.desktop over a system-level entry with the
+  // same name. After rpm/deb installation, an old user-level entry written by AppImage would keep
+  // shadowing /usr/share/applications/zcode.desktop, so shortcuts and zcode:// links would continue
+  // pointing to the old AppImage (if present) or stop working (if deleted) until a newer version was
+  // manually launched. Now, when a system-level entry with the same ID exists:
+  // - For a system installation (rpm/deb), remove this app's legacy user-level entry and stop writing one.
+  // - For AppImage, stop writing user-level entries and icons so an old AppImage cannot shadow the system install again.
+  // Preserve user-written custom zcode.desktop files without an ownership marker.
   const systemDesktopEntryPath = findSystemLevelDesktopEntryPath(
     options.systemApplicationDirs ?? resolveLinuxSystemApplicationDirs(options.env),
   );
@@ -256,9 +257,10 @@ export function registerLinuxDeepLinkProtocol(options: RegisterLinuxDeepLinkProt
     } else {
       changed = writeFileIfChanged(desktopFilePath, desktopEntry);
     }
-    // AppImage 直跑不会像 deb 安装包一样稳定写入系统 desktop entry。
-    // deep link 是 OAuth/支付/工作区打开的核心链路，必须先完成用户级协议处理器刷新；
-    // 图标安装是可选增强，放到核心注册成功后独立降级，避免扩大登录回调失败域。
+    // A directly run AppImage cannot reliably write a system desktop entry like a deb package.
+    // Deep links are core to OAuth/payment/workspace opening, so refresh the user-level protocol
+    // handler first. Icon installation is optional; handle it separately after registration succeeds
+    // so a failure does not expand the login-callback failure surface.
     const updateResult = runCommand("update-desktop-database", [applicationsDir]);
     const defaultResult = runCommand("xdg-mime", [
       "default",

@@ -4,34 +4,35 @@ import { logger } from "@/logger.js";
 import { useV4Conversation } from "@/v4/V4ConversationContext.js";
 
 /**
- * 一个 workflow run 的脚本 transcript 清单。
+ * Script transcript list for a workflow run.
  *
  * ```
- * 活投影 run.lastEventSequence 抬升 ──┐（刷新信号：每个节点事件都会抬它）
+ * Live projection run.lastEventSequence increases ──┐ (refresh signal: every node event increments it)
  *                                    ├─▶ workflowRunWorkspace({sessionId, runId}) ─▶ nodes[]
- * tab 打开 / 切 run ─────────────────┘
+ * Open tab / switch run ────────────────────────────┘
  * ```
  *
- * 清单**不带正文**，重查便宜；正文在 `useWorkflowRunNodeResult` 里按需取。信号抬升后
- * 合并 250 ms 再查：一次 `world.run` 结算前后有 queued / dispatched / settled 三个事件，
- * 逐个重查只是把同一份清单读三遍。
+ * The list **does not include content**, so refetching is cheap; content is fetched on demand in
+ * `useWorkflowRunNodeResult`. After the signal increases, wait 250 ms before refetching: a single
+ * `world.run` produces queued, dispatched, and settled events, and refetching for each would read
+ * the same list three times.
  */
 
 const REFRESH_DEBOUNCE_MS = 250;
 
 interface WorkflowRunWorkspaceState {
   nodes: readonly WorkflowRunWorkspaceNode[];
-  /** 至少成功读过一次（占位与落点都等它）。 */
+  /** Successfully read at least once (both the placeholder and final state wait for this). */
   loaded: boolean;
   loading: boolean;
-  /** 清单被网关截尾（超过 maxNodes）。 */
+  /** The gateway truncated the list (more than maxNodes). */
   truncated: boolean;
-  /** 会话不支持工作区查询（老 CLI）。 */
+  /** The session does not support workspace queries (older CLI). */
   unavailable: boolean;
   error: string | null;
 }
 
-/** 能力缺席的判据同产物 hook：跨 JSON-RPC 之后只剩 message 可靠。 */
+/** Same capability absence check as the artifact hook: only the message remains reliable across JSON-RPC. */
 function isWorkflowRunWorkspaceCapabilityMissing(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
   return message.includes("capabilityUnsupported") || message.includes("WorkspaceNodes");
@@ -40,7 +41,7 @@ function isWorkflowRunWorkspaceCapabilityMissing(error: unknown): boolean {
 export function useWorkflowRunWorkspace(options: {
   sessionId: string;
   runId: string;
-  /** 刷新信号：活投影里该 run 的 `lastEventSequence`；run 不在投影里时缺席（只查一次）。 */
+  /** Refresh signal: this run's `lastEventSequence` in the live projection; absent when the run is not projected (query once). */
   refreshSignal?: number;
   enabled?: boolean;
 }): WorkflowRunWorkspaceState {
@@ -51,7 +52,7 @@ export function useWorkflowRunWorkspace(options: {
   const [truncated, setTruncated] = useState(false);
   const [unavailable, setUnavailable] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  // 请求版本号：切 run / 切会话后的迟到响应必须被丢弃。
+  // Request generation: discard responses that arrive late after switching runs or sessions.
   const requestVersionRef = useRef(0);
 
   const { runId, sessionId } = options;
@@ -83,7 +84,7 @@ export function useWorkflowRunWorkspace(options: {
     }
   }, [runId, sessionId, workflowRunWorkspace]);
 
-  // 切 run / 切会话：先丢掉旧清单再重查。
+  // On run/session switch, discard the old list before querying again.
   useEffect(() => {
     requestVersionRef.current += 1;
     setNodes([]);
@@ -98,7 +99,8 @@ export function useWorkflowRunWorkspace(options: {
     void fetchNodes();
   }, [enabled, fetchNodes]);
 
-  // 信号抬升：合并后重查。首次挂载那一拍由上面的 effect 负责，这里跳过 undefined。
+  // When the signal increases, refetch after coalescing. The effect above handles the initial mount;
+  // skip undefined here.
   const signal = options.refreshSignal;
   const lastSignalRef = useRef<number | undefined>(undefined);
   useEffect(() => {

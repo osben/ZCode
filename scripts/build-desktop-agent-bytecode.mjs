@@ -45,7 +45,7 @@ export async function buildDesktopAgentBytecode({
     const runtimeFile = `zcode.bytecode-runtime-${runtimeHash}.cjs`;
     metadata.bytecodeFile = bytecodeFile;
     metadata.sourceFile = basename(entryPath);
-    // 先写不可变依赖，最后原子替换入口；失败时上次可用的加载器仍能找到自己的字节码。
+    // Write immutable dependencies first and atomically replace the entry point last; on failure, the previous loader can still find its bytecode.
     await publishImmutable(bytecodePath, await readFile(temporary));
     await publishImmutable(join(directory, runtimeFile), runtimeSource);
     const loader = `#!/usr/bin/env node\n"use strict";\nconst metadata = ${JSON.stringify(metadata)};\nrequire(${JSON.stringify(`./${runtimeFile}`)}).loadBytecode(metadata, module, require).catch(error => {\n  process.stderr.write(String(error.stack ?? error) + "\\n");\n  process.exitCode = 1;\n});\n`;

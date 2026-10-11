@@ -24,8 +24,8 @@ export function AutomationScheduleBadge({
     if (!textElement) return;
 
     const updateOverflow = () => {
-      // 原实现无条件展示 Tooltip，完整可见的短文本也会出现重复提示。
-      // 以浏览器真实排版结果为准，只有省略号生效时才提供完整文案。
+      // The original implementation always showed a Tooltip, duplicating text that was already fully visible.
+      // Use the browser's actual layout result and provide the full text only when truncation is active.
       const nextIsOverflowing = textElement.scrollWidth > textElement.clientWidth;
       setIsOverflowing((current) => (current === nextIsOverflowing ? current : nextIsOverflowing));
     };

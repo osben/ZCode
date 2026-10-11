@@ -1,10 +1,10 @@
 import { DEFAULT_LOCALE } from "./protocol.js";
 import type { Locale, LocalePreference } from "./protocol.js";
 
-/** 外部服务（官网、反馈、社区链接、Bot 文案）只支持中英文两种语言。 */
+/** External services (website, feedback, community links, Bot copy) support only English and Chinese. */
 export type ServiceLocale = "zh-CN" | "en-US";
 
-/** 无法匹配系统语言或缺少某语言资源时使用的界面语言。 */
+/** UI language used when the system language cannot be matched or a language resource is missing. */
 export const FALLBACK_UI_LOCALE: Locale = "en-US";
 
 interface LocaleMeta {
@@ -12,7 +12,7 @@ interface LocaleMeta {
   serviceLocale: ServiceLocale;
 }
 
-// Record<Locale, …>：扩展 Locale 时编译器会要求补充对应条目。
+// Record<Locale, …>: the compiler requires a matching entry whenever Locale is extended.
 const LOCALE_META = {
   "zh-CN": { languagePrefix: "zh", serviceLocale: "zh-CN" },
   "en-US": { languagePrefix: "en", serviceLocale: "en-US" },
@@ -29,7 +29,7 @@ export function isLocalePreference(value: unknown): value is LocalePreference {
   return value === "system" || isLocale(value);
 }
 
-/** BCP-47 / POSIX 语言标签 → 支持的界面语言；无法匹配返回 null。 */
+/** BCP-47 / POSIX language tag → supported UI language; returns null when there is no match. */
 export function matchSupportedLocale(tag: string | null | undefined): Locale | null {
   const normalized = tag?.trim().split(".")[0]?.replaceAll("_", "-").toLowerCase();
   if (!normalized) {
@@ -42,7 +42,7 @@ export function matchSupportedLocale(tag: string | null | undefined): Locale | n
   );
 }
 
-/** 系统语言标签 → 界面语言；未知语言回退英文，空标签回退 emptyFallback。 */
+/** System language tag → UI language; unknown languages fall back to English, and empty tags fall back to emptyFallback. */
 export function resolveSystemLocale(
   tag: string | null | undefined,
   emptyFallback: Locale = DEFAULT_LOCALE,

@@ -9,7 +9,7 @@ const SWITCHABLE_COMMAND_CENTER_MODES = [
 ] as const satisfies readonly SwitchableCommandCenterMode[];
 
 export function formatAvailableCommandCenterModes(): string {
-  // 菜单不再推荐 Edit；显式旧命令仍由完整值域校验，不触发模式迁移。
+  // The menu no longer recommends Edit; explicit legacy commands still go through full value validation and do not trigger a mode migration.
   return SWITCHABLE_COMMAND_CENTER_MODES.filter((mode) => mode !== "edit").join(", ");
 }
 

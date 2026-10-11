@@ -1,6 +1,6 @@
 version: 1
 
-# 存量模块先标记为 legacy；新模块或完成迁移的模块设置 managed: true。
+# Existing modules are marked as legacy; new or fully migrated modules use managed: true.
 modules:
   - id: rpc
     roots: [packages/rpc/src]
@@ -97,7 +97,7 @@ modules:
     layerOrder: [domain, app, adapters, ui]
     owner: conversation
 
-  # 插件 UI（MCP Apps 沙箱）：模块边界见各模块 CONTRACT.md。
+  # Plugin UI (MCP Apps sandbox): see each module CONTRACT.md for its boundaries.
   - id: mcp-apps-protocol
     roots: [packages/shared/src/mcp-apps]
     managed: true
@@ -151,7 +151,7 @@ modules:
         packages/desktop/src/preload/pluginSandbox/hostBridge.ts,
         packages/desktop/src/main/pluginSandbox/index.ts,
         packages/desktop/src/main/pluginSandbox/contract.ts,
-        # 页面兼容接口由宿主及其契约测试维护。
+        # Page compatibility interfaces are maintained by the host and its contract tests.
         packages/desktop/src/renderer/src/plugin-sandbox/aliasRuntime.ts,
         packages/desktop/src/renderer/src/plugin-sandbox/aliasApi.ts,
       ]

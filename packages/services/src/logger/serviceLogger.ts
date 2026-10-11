@@ -20,7 +20,7 @@ export function createServiceLogger(
   options?: {
     pid?: number;
     sink?: ServiceLogSink;
-    // debug 日志默认只在本地开发运行时打印；测试/正式安装包都使用 production 构建，避免高频日志落盘。
+    // Print debug logs by default only in local development; tests and packaged builds use production mode to avoid persisting high-volume logs.
     isDebugEnabled?: boolean | (() => boolean);
   },
 ): ServiceLogger {
@@ -39,8 +39,8 @@ export function createServiceLogger(
     traceId: TraceId | undefined,
     ...args: unknown[]
   ): void {
-    // 服务层日志过去常被复用到 ZCode Agent 命名 logger，导致新 ZCode 路径继续依赖 ZCode Agent 目录。
-    // 这里把通用分级日志抽到独立模块，后续删除 ZCode Agent runtime 时不会牵连非 ZCode Agent 服务。
+    // Service logs were often reused with the ZCode Agent-named logger, causing new ZCode paths to keep depending on the ZCode Agent directory.
+    // Put generic leveled logging in a separate module so removing the ZCode Agent runtime later will not affect unrelated services.
     if (level === "debug" && !resolveDebugEnabled()) {
       return;
     }

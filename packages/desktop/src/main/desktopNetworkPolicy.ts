@@ -11,18 +11,19 @@ interface DesktopNetworkPolicySettings {
 }
 
 /**
- * 设置页代理留空时的兜底模式。
+ * Fallback mode when the proxy field in Settings is empty.
  *
- * `direct` 是 Electron 的「永不使用代理」，会连本机系统代理一起屏蔽；
- * `system` 读取的是 OS 网络设置（macOS 网络偏好 / Windows Internet 选项），
- * 与 shell 里的 `HTTP_PROXY` 等环境变量无关，因此不违反「不继承 shell 环境变量」的边界。
+ * `direct` means "never use a proxy" in Electron and also bypasses the local system proxy.
+ * `system` reads OS network settings (macOS Network preferences / Windows Internet Options) and
+ * does not use shell variables such as `HTTP_PROXY`, so it respects the boundary against inheriting
+ * shell environment variables.
  */
 type ProxyFallbackMode = "direct" | "system";
 
 interface DesktopSessionNetworkPolicyOptions {
-  /** 是否放行该 Session 的全部证书错误。仅内置浏览器出口可以打开。 */
+  /** Whether to allow all certificate errors for this Session. Only the embedded-browser egress may enable this. */
   allowInsecureCertificates?: boolean;
-  /** 设置页代理留空时使用的兜底模式，默认 `direct`。 */
+  /** Fallback mode when the Settings proxy field is empty; defaults to `direct`. */
   fallbackProxyMode?: ProxyFallbackMode;
 }
 
@@ -58,17 +59,19 @@ export async function applyDesktopChromiumNetworkPolicies(
       name: "default-session",
       session: sessionProvider.defaultSession,
       allowInsecure: false,
-      // ZCode 自身对后端与模型 API 的出口，收敛到设置页的显式配置，不被本机系统代理左右。
+      // Route ZCode's own backend/model API traffic through the explicit Settings configuration rather than the local system proxy.
       fallbackProxyMode: "direct" as const,
     },
     {
       name: "embedded-browser",
       session: sessionProvider.fromPartition(EMBEDDED_BROWSER_PARTITION),
-      // 自签名放行只开在内置浏览器出口：defaultSession 承载 renderer 对 ZCode 后端与模型 API
-      // 的流量，在那里放行等于整个应用失去 TLS 保护，与「访问内网测试站点」的诉求不成比例。
+      // Allowing self-signed certificates is limited to embedded-browser egress. defaultSession
+      // carries renderer traffic to ZCode's backend and model API; allowing certificates there would
+      // remove TLS protection from the whole app, far beyond the need to access an internal test site.
       allowInsecure: settings.embeddedBrowserAllowInsecureCertificates === true,
-      // 内置浏览器是用户自己的浏览出口，留空时跟随系统代理，与本机浏览器保持一致；
-      // 否则需要代理才能访问的站点只会拿到 ERR_CONNECTION_TIMED_OUT，用户无从下手。
+      // The embedded browser is the user's own browsing surface; when empty, follow the system proxy
+      // to match the local browser. Otherwise, sites that require a proxy would only return
+      // ERR_CONNECTION_TIMED_OUT, leaving the user unable to proceed.
       fallbackProxyMode: "system" as const,
     },
   ] as const;
@@ -81,8 +84,9 @@ export async function applyDesktopChromiumNetworkPolicies(
           fallbackProxyMode: target.fallbackProxyMode,
         });
       } catch (error) {
-        // 内置 Browser 使用独立 partition，过去只配置 defaultSession；同时
-        // 单一 Session 的启动失败不能阻断另一个出口，否则 renderer 与 Browser 会再次漂移。
+        // The embedded Browser uses a separate partition and previously only defaultSession was
+        // configured. A startup failure in one Session must not block the other egress, or renderer
+        // and Browser behavior would diverge again.
         logger.warn(`[desktop-network] ${target.name} network policy apply failed:`, error);
       }
     }),
@@ -103,7 +107,7 @@ export async function applyDesktopSessionNetworkPolicy(
   await targetSession.setProxy(proxyConfig);
   await targetSession.closeAllConnections();
 
-  // 全放行比自定义 CA 更宽松，两者同时配置时按前者生效，避免出现「开了开关仍被拒」的困惑。
+  // Allow-all is broader than a custom CA. If both are configured, the broader option takes effect to avoid confusing users with a switch that appears enabled but is still rejected.
   const verifyProc = options.allowInsecureCertificates
     ? createInsecureCertificateVerifyProc()
     : createCustomCaCertificateVerifyProcFromFile(settings.httpProxyCaCertPath, logger);
@@ -117,10 +121,11 @@ export async function applyDesktopSessionNetworkPolicy(
 }
 
 /**
- * 放行全部证书错误的校验过程。
+ * Validate the process for allowing all certificate errors.
  *
- * 仅供内置浏览器 partition 使用：自签名证书的内网测试站点在 Electron `<webview>` 里
- * 拿不到 Chrome 的安全插页，被拒后只剩一张空的 chrome-error 页，用户无从放行。
+ * For the embedded-browser partition only: in Electron `<webview>`, an internal test site with a
+ * self-signed certificate cannot show Chrome's safety interstitial. After rejection, the user sees
+ * only a blank chrome-error page and has no way to proceed.
  */
 export function createInsecureCertificateVerifyProc(): CertificateVerifyProc {
   return (_request, callback) => {
@@ -135,8 +140,8 @@ export function buildElectronProxyConfig(
 ): ProxyConfig {
   const proxyRules = normalizeProxyRules(httpProxy);
   if (!proxyRules) {
-    // 留空不带 proxyBypassRules：bypass 规则只对 fixed_servers 有意义，
-    // `system` 模式下的例外列表由 OS 自己维护（如 macOS 的「忽略这些主机」）。
+    // Leave proxyBypassRules unset: bypass rules apply only to fixed_servers. In `system` mode, the
+    // OS maintains its own exceptions list (such as macOS's "Ignore these hosts").
     return { mode: fallbackMode };
   }
   const proxyConfig: ProxyConfig = {
@@ -160,9 +165,7 @@ export function createCustomCaCertificateVerifyProcFromFile(
   }
 
   try {
-    const trustedFingerprints = readCustomCaFingerprintsFromPem(
-      readFileSync(trimmed, "utf8"),
-    );
+    const trustedFingerprints = readCustomCaFingerprintsFromPem(readFileSync(trimmed, "utf8"));
     if (trustedFingerprints.size === 0) {
       logger.warn(`[desktop-network] custom CA file contains no certificates: ${trimmed}`);
       return null;
@@ -191,8 +194,9 @@ export function createCustomCaCertificateVerifyProc(
       certificateChainMatchesCustomCa(request.certificate, trustedFingerprints) ||
       certificateChainMatchesCustomCa(request.validatedCertificate, trustedFingerprints)
     ) {
-      // renderer 的 Chromium 网络栈不会读取 NODE_EXTRA_CA_CERTS。
-      // 自定义 CA 只能从设置页显式路径进入这里，命中链路后才放行，避免把所有证书错误都绕过。
+      // The renderer's Chromium network stack does not read NODE_EXTRA_CA_CERTS.
+      // A custom CA may enter here only through an explicit path in Settings; allow it only for the
+      // matching chain, rather than bypassing all certificate errors.
       callback(ACCEPT_CERTIFICATE);
       return;
     }
@@ -203,7 +207,8 @@ export function createCustomCaCertificateVerifyProc(
 
 export function readCustomCaFingerprintsFromPem(pem: string): Set<string> {
   const fingerprints = new Set<string>();
-  const certBlocks = pem.match(/-----BEGIN CERTIFICATE-----[\s\S]*?-----END CERTIFICATE-----/g) ?? [];
+  const certBlocks =
+    pem.match(/-----BEGIN CERTIFICATE-----[\s\S]*?-----END CERTIFICATE-----/g) ?? [];
 
   for (const block of certBlocks) {
     fingerprints.add(normalizeFingerprint(new X509Certificate(block).fingerprint256));
@@ -243,9 +248,7 @@ function normalizeProxyRules(value: string | undefined): string | undefined {
   const candidate = /^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed) ? trimmed : `http://${trimmed}`;
   try {
     const url = new URL(candidate);
-    const auth = url.username
-      ? `${url.username}${url.password ? `:${url.password}` : ""}@`
-      : "";
+    const auth = url.username ? `${url.username}${url.password ? `:${url.password}` : ""}@` : "";
     return `${url.protocol}//${auth}${url.host}`;
   } catch {
     return undefined;
@@ -265,7 +268,7 @@ function readCertificateFingerprint(certificate: CertificateLike): string | unde
     try {
       return normalizeFingerprint(new X509Certificate(certificate.data).fingerprint256);
     } catch {
-      // Electron 也提供 fingerprint 字段；PEM 解析失败时退回该字段做兼容。
+      // Electron also provides a fingerprint field; use it as a fallback if PEM parsing fails.
     }
   }
   return certificate.fingerprint ? normalizeFingerprint(certificate.fingerprint) : undefined;

@@ -98,7 +98,7 @@ async function collectMemoryPaths(
       const target = await fileSystem.stat({ path: entry.path }, { signal });
       if (target.kind === "file") paths.push(entry.path);
     } catch {
-      // 单个失效的文件 symlink 与单个无法读取的事实文件一样，不影响其他 manifest 项。
+      // A single broken file symlink, like an unreadable fact file, does not affect other manifest entries.
     }
   }
 

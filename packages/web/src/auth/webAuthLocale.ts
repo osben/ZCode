@@ -5,7 +5,7 @@ import {
   type ServiceLocale,
 } from "@zcode/shared";
 
-// 登录页文案只提供中英文：系统语言先解析为界面语言，再映射到服务语言。
+// The login page provides Chinese and English copy only: resolve the system language to a UI language first, then map it to a service language.
 type WebAuthLocale = ServiceLocale;
 
 interface WebAuthPageCopy {

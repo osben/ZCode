@@ -5,9 +5,9 @@ import { logger } from "@/logger.js";
 interface WebglRendererHandle {
   addon: WebglAddon | null;
   contextLossSubscription: IDisposable | null;
-  /** 动态 import 进行中；期间再次开启不重复加载，开关关闭则放弃激活。 */
+  /** Dynamic import is in progress; another enable during this time does not reload, and disabling abandons activation. */
   activating: boolean;
-  /** WebGL 启动失败或上下文丢失后置位，避免每次 effect 重试；关闭开关时整体清除。 */
+  /** Set after WebGL startup failure or context loss to prevent retries on every effect; cleared entirely when the feature is disabled. */
   blocked: boolean;
 }
 
@@ -20,7 +20,7 @@ function releaseAddon(handle: WebglRendererHandle): void {
   handle.addon = null;
   if (!addon) return;
   try {
-    // WebglAddon.dispose 会把渲染器切回 DOM 渲染器；重复调用由 xterm 包装的 dispose 幂等处理。
+    // WebglAddon.dispose switches the renderer back to DOM; repeated calls are idempotent via xterm's wrapped dispose.
     addon.dispose();
   } catch (error) {
     logger.warn("[Terminal] dispose WebGL addon failed:", error);
@@ -28,11 +28,11 @@ function releaseAddon(handle: WebglRendererHandle): void {
 }
 
 /**
- * 按开关切换单个 xterm 实例的渲染器：开启时尝试 WebGL，失败或上下文丢失时保持/回退到 DOM 渲染器。
- * 调用必须在 term.open 之后；重复调用是幂等的。
+ * Switch the renderer for one xterm instance according to the feature flag: try WebGL when enabled, and keep/fall back to DOM if startup fails or context is lost.
+ * Call only after term.open; repeated calls are idempotent.
  *
- * @xterm/addon-webgl 按需动态加载：功能默认关闭，静态引入会让每个终端入口
- * （主窗口、side pane、remote）的 bundle 都携带并求值 WebGL 代码。
+ * Dynamically load @xterm/addon-webgl on demand: the feature is off by default, and a static import would make every terminal entry point
+ * (main window, side pane, remote) bundle include and evaluate WebGL code.
  */
 export function setTerminalWebglRenderer(term: XTerm, enabled: boolean): void {
   const existing = handles.get(term);
@@ -58,20 +58,20 @@ export function setTerminalWebglRenderer(term: XTerm, enabled: boolean): void {
 
   void import("@xterm/addon-webgl")
     .then(({ WebglAddon: WebglAddonCtor }) => {
-      // 等待加载期间开关被关闭：句柄已从 WeakMap 移除，放弃激活，避免复活已关闭的渲染器。
+      // The flag was disabled while loading: the handle has been removed from WeakMap, so abandon activation instead of reviving a closed renderer.
       if (handles.get(term) !== handle) return;
 
       const addon = new WebglAddonCtor();
       try {
         term.loadAddon(addon);
       } catch (error) {
-        // 不 dispose 的话，xterm loadAddon 已把 addon 登记到 _addons，
-        // 后续 term.dispose 会对未激活的 addon 重复处理。WebGL2 不可用时 activate 会先注册渲染器 disposable 再抛错，
-        // 所以这里必须主动 dispose，把登记和渲染器一起回收。
+        // Without dispose, xterm loadAddon has already registered the addon in _addons,
+        // and a later term.dispose would process the inactive addon again. When WebGL2 is unavailable, activate registers the renderer disposable before throwing,
+        // so dispose it here to clean up both the registration and renderer.
         try {
           addon.dispose();
         } catch {
-          // 清理失败只影响本次 addon 残留，DOM 渲染器仍可用，不再向上抛出。
+          // Cleanup failure affects only this addon's residue; the DOM renderer remains usable, so do not rethrow.
         }
         handle.blocked = true;
         logger.warn("[Terminal] WebGL renderer unavailable, falling back to DOM:", error);

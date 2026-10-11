@@ -35,8 +35,8 @@ export function ModelTrajectoryTimeline({
     estimateSize: () => 240,
     overscan: 3,
   });
-  // 搜索切换会同时收起旧命中并展开新命中；此时禁止 virtualizer 根据每次测高回调连续
-  // 修正滚动锚点，由下方文本级定位在布局稳定后一次完成滚动。
+  // Switching search results collapses the old match and expands the new one; during this transition, prevent the virtualizer from repeatedly
+  // correcting the scroll anchor on each measurement callback. The text-level positioning below performs one scroll after the layout stabilizes.
   virtualizer.shouldAdjustScrollPositionOnItemSizeChange = () => !searchQuery;
   const roleWidthLabels = ["system", "user", "assistant", "tool"].map((role) =>
     intl.formatMessage({ id: `modelTrajectory.role.${role}` }),
@@ -46,7 +46,7 @@ export function ModelTrajectoryTimeline({
   const lastVirtualItem = virtualItems.at(-1);
   const topSpacerHeight = firstVirtualItem?.start ?? 0;
   const bottomSpacerHeight = lastVirtualItem ? virtualizer.getTotalSize() - lastVirtualItem.end : 0;
-  // 只跟踪挂载集合。把 start 放进依赖会让每次动态测高都重新安排一次精确滚动。
+  // Track only the mounted set. Adding `start` to the dependencies would reschedule precise scrolling after every dynamic measurement.
   const mountedRowsKey = virtualItems.map((item) => item.key).join("|");
 
   useEffect(() => () => clearTrajectorySearchHighlights(), []);
@@ -60,7 +60,7 @@ export function ModelTrajectoryTimeline({
     ) {
       return;
     }
-    // 目标已经挂载时跳过 Call 级预滚动，否则随后文本级定位会造成连续两次跳动。
+    // Skip call-level pre-scrolling when the target is already mounted; otherwise the subsequent text-level positioning causes two jumps.
     virtualizer.scrollToIndex(activeSearchMatch.callIndex, { align: "center" });
   }, [activeSearchMatch, scrollContainerRef, virtualizer]);
 
@@ -179,8 +179,8 @@ export function resolveTrajectoryInputMessages({
     : messages;
 
   return {
-    // 首条展示完整起始上下文；后续主会话只展示非 assistant 的新增（assistant 由上一条 Output 呈现）。
-    // sidecar/compact 等辅助请求有独立 prompt，不能套用主会话的消息数 delta，否则会隐藏标题生成 prompt。
+    // Show the full initial context in the first item; later main-session items show only new non-assistant messages (assistant output appears in the preceding Output).
+    // Auxiliary requests such as sidecar/compact have their own prompt. Do not apply the main-session message-count delta, or the title-generation prompt may be hidden.
     inputMessages: usesConversationDelta
       ? index === 0
         ? deltaMessages

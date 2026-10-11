@@ -4,7 +4,7 @@ import { submissionModeSchema, type SubmissionMode } from "@zcode/shared/zcode-p
 import type { ModelSelectionView } from "@zcode/services";
 import { logger } from "@/logger.js";
 
-// 沿用旧 key，读取时兼容只保存 ModelSelection 的历史记录。
+// Keep the old key and support historical records that stored only ModelSelection when reading.
 const COMPOSER_RECENT_KEY_PREFIX = "zcode-model-selection-recent-v1";
 
 interface StorageLike {
@@ -36,14 +36,16 @@ export function readComposerRecent(
     if (!raw) return null;
     const record: unknown = JSON.parse(raw);
     if (!record || typeof record !== "object" || Array.isArray(record)) return null;
-    // 两个叶子独立校验：模型过期或坏数据不能连带丢掉合法权限，反之亦然。
+    // Validate the two leaves independently; an expired model or bad data must not discard a valid permission, and vice versa.
     const selection = modelSelectionSchema.safeParse(
       "modelSelection" in record ? record.modelSelection : record,
     );
     const mode = submissionModeSchema.safeParse("mode" in record ? record.mode : undefined);
-    // 自愈（spec §5.1）：存量 Recent 可能被加速轮覆盖写入隐藏加速 Provider，模型视图里它
-    // 解析为 provider-not-found，会让新任务草稿的模型选择器卡在空态。按叶子丢弃模型、保留
-    // mode，新草稿回落默认选择；与 readSessionModelSelection 丢弃加速常驻 entry 同口径。
+    // Self-healing (spec §5.1): an existing Recent entry may have been overwritten by an accelerated
+    // turn with a hidden acceleration Provider. The model view resolves it as provider-not-found,
+    // leaving the new-task model picker empty. Drop the model at the leaf but keep mode so the new
+    // draft falls back to the default selection, matching readSessionModelSelection's handling of
+    // persistent acceleration entries.
     const healedSelection =
       selection.success && !isHighspeedProviderId(selection.data.providerId)
         ? selection.data
@@ -58,7 +60,7 @@ export function readComposerRecent(
   }
 }
 
-/** 发起真实 Submission 时捕获；返回函数只在 accepted ACK 后调用。 */
+/** Capture when a real Submission starts; call the returned function only after an accepted ACK. */
 export function captureComposerRecentSubmission(
   workspacePath: string,
   submission: { readonly modelSelection: ModelSelection; readonly mode: SubmissionMode },
@@ -70,9 +72,11 @@ export function captureComposerRecentSubmission(
   const mode = submissionModeSchema.safeParse(submission.mode);
   const modelSelection = normalizeSparseModelSelection(submission.modelSelection);
   if (modelSelection && isHighspeedProviderId(modelSelection.providerId)) {
-    // 兜底（spec §5.1）：加速 Provider 是单轮执行身份，不在任何模型目录里，写进 Recent 会让
-    // 新任务草稿种子解析为空。正常链路由 SessionPane 在加速轮传入 Composer 原始选择，这里
-    // 只拦截直接拿覆盖后 payload 调用的路径；跳过不推进序号，保留上一次合法记录。
+    // Fallback (spec §5.1): the acceleration Provider is a one-turn execution identity and appears
+    // in no model catalog, so storing it in Recent would make the new-task draft seed resolve to
+    // empty. Normally SessionPane passes the Composer's original selection for an accelerated turn;
+    // this guards only paths that call with the overridden payload directly. Skip without advancing
+    // the index, preserving the last valid entry.
     logger.warn("[ComposerRecent] 提交指向加速卡 Provider，跳过偏好记录", {
       workspacePath,
       workspaceIdentity,
@@ -80,7 +84,7 @@ export function captureComposerRecentSubmission(
     return () => {};
   }
   if (!mode.success || !modelSelection) {
-    // Recent 是发送后的附带偏好；输入异常时只放弃记录，不能阻断权威 command。
+    // Recent is a preference saved after sending; on invalid input, skip recording but do not block the authoritative command.
     logger.warn("[ComposerRecent] 最近提交配置格式无效，跳过偏好记录", {
       workspacePath,
       workspaceIdentity,
@@ -98,15 +102,15 @@ export function captureComposerRecentSubmission(
     acceptedSequences.set(storage, accepted);
   }
   return () => {
-    // 只保存模型会让首发迁移 Root 后丢失权限；两个字段必须一起保存。
-    // 同一 Renderer 内按发起顺序取最近已接纳提交，防止跨 Pane 的迟到 ACK 回写旧偏好。
-    // 未接纳候选不推进水位，也不改变草稿或 CLI 的输入队列。
+    // Saving only the model would lose the permission after the initial migration to Root; save both fields together.
+    // Within one Renderer, use the latest accepted submission by start order so a late ACK from another Pane cannot overwrite newer preferences.
+    // Unaccepted candidates do not advance the watermark or change the draft/CLI input queue.
     if (sequence <= (accepted.get(key) ?? 0)) return;
     accepted.set(key, sequence);
     try {
       storage.setItem(key, JSON.stringify(recent));
     } catch (error) {
-      // 权威发送已经接纳，本地偏好写入失败不能把它报告成发送失败。
+      // The authoritative send was accepted; failure to write local preferences must not report the send as failed.
       logger.warn("[ComposerRecent] 保存最近提交配置失败", {
         workspacePath,
         workspaceIdentity,
@@ -120,8 +124,8 @@ export function resolveDraftInitialModelSelection(
   view: ModelSelectionView | null,
   recent: ModelSelection | null,
 ): { readonly selection: ModelSelection | null; readonly invalidated: boolean } {
-  // Registry 尚未到达时不能把已有草稿意图误判为失效；先原样保留，等同一 Hook
-  // 收到 View 后再做语义校验。
+  // Do not treat existing draft intent as invalid before the Registry arrives; preserve it unchanged until the same Hook
+  // receives the View and can validate its meaning.
   if (!view) return { selection: recent, invalidated: false };
   if (recent) {
     const model = findModel(view, recent);
@@ -131,8 +135,8 @@ export function resolveDraftInitialModelSelection(
       reasoning === undefined ||
       !model.config.optionSpecs.reasoningLevel.values.includes(reasoning)
     ) {
-      // 仍保留 Provider/Model 身份，但清空失效档位；Composer 不弹泛化通知，
-      // 让空的 Reasoning 控件直接要求用户作出新的明确选择。
+      // Keep Provider/Model identity but clear the invalid level; Composer shows no generic notice,
+      // and the empty Reasoning control asks the user to make a new explicit choice.
       return {
         selection: { providerId: recent.providerId, modelId: recent.modelId },
         invalidated: true,

@@ -11,8 +11,8 @@ export type ModelSelectionProviderKind = "ordinary" | "account-plan" | "account-
 export type ModelSelectionProviderClassifier = (providerId: string) => ModelSelectionProviderKind;
 
 /**
- * 只解析未来执行的意图，不改原选择、持久记录或已固定请求。
- * 原因：读取时清库会让临时失效永久丢失；账号对应也不能退化为同名模型跨任意供应商匹配。
+ * Resolve intent for future execution only; do not change the original selection, persisted records, or requests already pinned.
+ * Clearing storage during a read would make a temporary failure permanent; account mapping must not degrade into matching same-named models across arbitrary providers.
  */
 export function resolveEffectiveModelSelection(input: {
   readonly selection: ModelSelection | null;

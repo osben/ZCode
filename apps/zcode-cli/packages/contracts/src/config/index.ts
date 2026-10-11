@@ -57,7 +57,7 @@ export const ConfigKey = {
   SkillsMetadataBudget: "skills.metadataBudget",
   SkillsRoots: "skills.roots",
 
-  // Skill / Command 可用性覆盖（按 SKILL.md / 命令 .md 的绝对路径过滤）
+  // Skill / Command availability overrides (filter by the absolute path of the SKILL.md / command .md file)
   SkillOverrides: "skill",
   CommandOverrides: "command",
 
@@ -189,11 +189,11 @@ export interface ConfigSource {
 }
 
 // ============================================================
-// Skill / Command 可用性覆盖
+// Skill / Command availability overrides
 // ============================================================
 
-// 按绝对路径覆盖单个 skill / 命令是否可用。未列出的条目默认可用，
-// 只有显式 enable:false 才会在发现阶段被过滤掉。
+// Override whether an individual skill / command is available by absolute path. Entries not
+// listed are available by default; only an explicit enable:false filters one out during discovery.
 export interface SkillCommandOverride {
   enable?: boolean;
 }
@@ -243,9 +243,9 @@ export interface RuntimeConfig {
     roots: string[];
     [skillPath: string]: boolean | number | string[] | { enable?: boolean };
   };
-  // key 为 SKILL.md 绝对路径，value.enable=false 表示禁用该 skill
+  // Key is the absolute path to SKILL.md; value.enable=false disables that skill.
   skillOverrides: Record<string, SkillCommandOverride>;
-  // key 为命令 .md 绝对路径，value.enable=false 表示禁用该命令
+  // Key is the absolute path to the command .md file; value.enable=false disables that command.
   commandOverrides: Record<string, SkillCommandOverride>;
   logging: {
     level: "debug" | "info" | "warn" | "error";
@@ -284,7 +284,7 @@ export type SupportedLocale = "en-US" | "zh-CN" | "uk-UA";
 export type UiLocale = SupportedLocale | "auto";
 export type UiThemeMode = "dark" | "light";
 export type UiThemePreference = UiThemeMode | "auto";
-// 与桌面端 packages/ui/src/lib/themePalettes.ts 的 THEME_PALETTE_IDS 保持一致。
+// Keep this in sync with THEME_PALETTE_IDS in packages/ui/src/lib/themePalettes.ts.
 export const UI_THEME_PALETTES = [
   "neutral",
   "zai",

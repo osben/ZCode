@@ -17,13 +17,16 @@ export function createDesktopNativePackagePrunePatterns(targetPlatformKey) {
   assertSupportedTargetPlatformKey(targetPlatformKey);
 
   return [
-    // PDF 预览已经由 Vite 打进 renderer，pdfjs-dist 的 Canvas optional dependency
-    // 只服务 Node 渲染；pnpm 跨平台安装的 8 套 Canvas native 不应带进桌面安装包。
+    // PDF preview is already bundled into the renderer by Vite. pdfjs-dist's optional Canvas dependency
+    // is only used for Node rendering; the eight Canvas native packages installed by pnpm for other
+    // platforms should not be included in the desktop installer.
     "!node_modules/@napi-rs/canvas/**",
     "!node_modules/@napi-rs/canvas-*/**",
-    // Linux prebuild 会在 beforePack 复制进 node-pty；源平台包本身不属于桌面运行时。
+    // beforePack copies the Linux prebuild into node-pty; the source platform package itself is not part
+    // of the desktop runtime.
     "!node_modules/@lydell/node-pty-*/**",
-    // 桌面运行时统一使用目标 prebuild，禁止把安装机现场编译物或 ABI bin 缓存带进跨平台包。
+    // The desktop runtime always uses the target prebuild. Do not include binaries compiled on the build
+    // machine or ABI bin caches in cross-platform packages.
     "!node_modules/node-pty/build/**",
     "!node_modules/node-pty/bin/**",
     ...SUPPORTED_DESKTOP_PLATFORM_KEYS.filter((key) => key !== targetPlatformKey).map(

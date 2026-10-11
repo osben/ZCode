@@ -1,9 +1,9 @@
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import type { EnterpriseCodingPlanProductDisplay } from "@/settings/model-provider-section/enterpriseCodingPlanProducts.js";
 
-// 2026-09: 原生购买面板（CodingPlanPurchasePanel）整体下线，购买流程切换为内嵌官网
-// webview。本文件迁出该面板中仍被设置页（Detail.tsx）与登录恢复逻辑使用的
-// 企业套餐分组/档位展示 helper，避免活代码依赖 6200 行死面板文件。
+// 2026-09: the native purchase panel (CodingPlanPurchasePanel) was removed and purchasing moved to an embedded official-site
+// WebView. This file extracts the enterprise-plan grouping/tier display helpers still used by Settings (Detail.tsx) and login recovery,
+// avoiding a dependency from active code on the 6,200-line dead panel file.
 
 export type PurchaseAudience = "personal" | "team";
 
@@ -33,8 +33,8 @@ export function formatEnterpriseTier(
   const fallback = normalized.charAt(0).toUpperCase() + normalized.slice(1).toLowerCase();
   const messageId = resolveEnterpriseTierMessageId(upper);
   if (messageId && formatMessage) {
-    // Bugfix: 企业 pricing 只返回 PRO/MAX 这类技术档位，展示名必须走 i18n 文案。
-    // 不能在 helper 里写死中文，否则团队套餐状态卡和购买页无法随 locale/运营命名一起更新。
+    // Bugfix: Enterprise pricing returns only technical tiers such as PRO/MAX, so display names must come from i18n.
+    // Do not hardcode Chinese in this helper; otherwise team-plan status cards and the purchase page cannot update with the locale or product naming.
     return formatMessage(messageId, fallback);
   }
   return fallback;

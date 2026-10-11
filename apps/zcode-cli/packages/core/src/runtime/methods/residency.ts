@@ -1,11 +1,11 @@
 import type { AgentRuntimeInternal } from "../internal.js";
 
 /**
- * 登记会越过当前同步调用栈的 runtime-owned work。
+ * Register runtime-owned work that outlives the current synchronous call stack.
  *
- * session 常驻池过去只观察 active turn 与 task registry；title、MCP startup、
- * ledger write 等 detached Promise 不在两者中，可能在仍读写 runtime 时被当作 idle 关闭。
- * 计数必须在 Promise 启动的同一同步片增加，并只在 finally 释放。
+ * The session residency pool previously observed only active turns and the task registry; detached Promises such as title generation, MCP startup,
+ * and ledger writes were outside both, so a runtime could be closed as idle while they were still accessing it.
+ * Increment the count in the same synchronous segment that starts the Promise and release it only in finally.
  */
 export function trackResidencyBlockingWork<T>(
   this: AgentRuntimeInternal,
@@ -17,7 +17,7 @@ export function trackResidencyBlockingWork<T>(
   });
 }
 
-/** Session 常驻池只消费这一项，新增 sidecar 时不再修改 bootstrap 的猜测列表。 */
+/** The session residency pool consumes only this count, so adding a sidecar no longer requires changing a guessed list in bootstrap. */
 export function hasResidencyBlockingWork(this: AgentRuntimeInternal): boolean {
   return (
     this.hasActiveOrQueuedTurnWork() ||

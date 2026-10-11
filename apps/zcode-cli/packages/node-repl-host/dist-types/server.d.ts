@@ -20,8 +20,8 @@ export declare function setNodeReplMcpProcessTitle(target?: {
     title: string;
 }): void;
 /**
- * 测试与同进程嵌入入口使用同一条执行逻辑；生产 stdio 默认在一次性 Worker 中调用它，
- * 从而连 Node 的模块缓存也随调用一起销毁。
+ * Tests and same-process embedding use the same execution logic. Production stdio calls
+ * it in a disposable Worker by default, so Node's module cache is discarded after each call.
  */
 export declare function createInProcessNodeReplExecutor(): NodeReplExecutor;
 export declare function createNodeReplMcpRuntime(input?: {

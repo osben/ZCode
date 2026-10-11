@@ -33,8 +33,8 @@ function previewFor(accessMode: ConversationShareAccessMode): ConversationShareP
         text: "这是一个公开的 ZCode 会话分享。",
         state: "complete",
       },
-      // 让 dev mock 覆盖 artifact 卡片：它的视觉要与正文的 AssistantPreviewCards 对齐，
-      // 没有样例数据就只能靠猜。
+      // Make the dev mock cover artifact cards so their appearance can be aligned with AssistantPreviewCards in the conversation body;
+      // without sample data, the layout would have to be guessed.
       {
         rowId: 3,
         turnId: "share-turn-1",
@@ -104,7 +104,7 @@ export class MockConversationSharePreviewClient {
         code: 3211,
       });
     }
-    // 跨版本兼容的两个手工验收入口（真实链路里由 conversationSharePreviewClient 判定）。
+    // Two manual acceptance routes for cross-version compatibility (the real flow is decided by conversationSharePreviewClient).
     if (shareCode === "mock-outdated-client") {
       throw new ConversationSharePreviewClientError({
         kind: "unsupported_schema_version",
@@ -112,7 +112,7 @@ export class MockConversationSharePreviewClient {
         status: 200,
       });
     }
-    // 认得的行照常渲染，另有一行本 build 认不出被跳过：顶部应出现软提示。
+    // Render recognized rows as usual and skip one row unknown to this build; a soft notice should appear at the top.
     if (shareCode === "mock-partial-unsupported") {
       return { ...previewFor("public_importable"), unsupportedRowCount: 1 };
     }

@@ -26,7 +26,7 @@ interface OwnedModelSelectionState {
   state: ModelSelectionState;
 }
 
-// 首读的临时 IO 失败未必产生 Provider 变化事件；只重读两次，不轮询业务状态或重试写操作。
+// A temporary I/O failure on the first read may not produce a Provider-change event; retry the read twice only, without polling business state or retrying writes.
 const INITIAL_READ_RETRY_DELAYS = [500, 1500] as const;
 function isTransientReadError(cause: unknown): boolean {
   if (!cause || typeof cause !== "object") return false;
@@ -48,7 +48,7 @@ function initialState(
     : { status: "unavailable", reason: unavailableReason };
 }
 
-/** 订阅明确 Host Service；返回状态在同一次 render 即绑定新 owner，不暴露旧 Host View。 */
+/** Subscribe to an explicit Host Service; bind returned state to the new owner in the same render and never expose the old Host View. */
 export function useModelSelectionServiceView(
   service: IModelSelectionService | null | undefined,
   enabled = true,
@@ -56,7 +56,7 @@ export function useModelSelectionServiceView(
   input?: ModelSelectionViewInput,
 ): ModelSelectionRead {
   const normalizedService = service ?? null;
-  // 调用方可每次 render 创建参数对象；所有权按选择内容绑定，不按对象引用反复订阅。
+  // Callers may create a new parameter object on every render; bind ownership by selection contents, not object identity.
   const inputKey = input === undefined ? undefined : JSON.stringify(input);
   const stableInput = useMemo(() => input, [inputKey]);
   const [reloadVersion, reload] = useReducer((value: number) => value + 1, 0);
@@ -133,7 +133,8 @@ export function useModelSelectionServiceView(
           if (generation !== generationRef.current || request !== requestId) return;
           const error = cause instanceof Error ? cause : new Error(String(cause));
           logger.warn("[model-selection] 目标 Host View 读取失败", { error });
-          // 读取失败不是选择失效。成功后的刷新失败保留原 View；首次失败可见且有界重读。
+          // A read failure does not invalidate the selection. Preserve the previous View if a refresh fails after success;
+          // expose the initial failure and retry a bounded number of times.
           if (!hasReadyView) {
             setOwned({
               service: normalizedService,
@@ -155,7 +156,7 @@ export function useModelSelectionServiceView(
       if (generation !== generationRef.current) return;
       if (stableInput === undefined) commit(candidate);
       else {
-        // 公共事件没有某个调用者的原意图；只能用它触发当前输入重读，不能直接接管结果。
+        // A shared event does not carry any caller's original intent; use it only to reread the current input, not to adopt its result directly.
         latestRevision = Math.max(latestRevision, candidate.revision);
         read();
       }
@@ -171,7 +172,7 @@ export function useModelSelectionServiceView(
   return { state: visibleState, reload: useCallback(() => reload(), []) };
 }
 
-/** 模型候选只来自明确 Workspace Target；等待远端时不读取 Local/Base Host。 */
+/** Model candidates come only from an explicit Workspace Target; do not read Local/Base Host while waiting for remote. */
 export function useModelSelectionView(
   workspacePath: string | null | undefined,
   remoteSessionId?: string | null,

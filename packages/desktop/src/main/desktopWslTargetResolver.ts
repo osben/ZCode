@@ -31,8 +31,7 @@ function buildProvisionalResolutionKey(target: WslTarget): string {
 export function createCanonicalWslTargetResolver(
   options: CanonicalWslTargetResolverOptions = {},
 ): (target: WslTarget) => Promise<WslTarget> {
-  const createBackend =
-    options.createBackend ?? ((target: WslTarget) => new WSLBackend(target));
+  const createBackend = options.createBackend ?? ((target: WslTarget) => new WSLBackend(target));
   const ttlMs = Math.max(1, Math.floor(options.ttlMs ?? DEFAULT_RESOLUTION_TTL_MS));
   const now = options.now ?? Date.now;
   const cache = new Map<string, CachedResolution>();
@@ -62,7 +61,7 @@ export function createCanonicalWslTargetResolver(
     };
     cache.set(key, entry);
     void entry.promise.catch(() => {
-      // 临时 discovery 失败若留在 cache，会让用户在 TTL 内无法通过重试恢复连接。
+      // Caching a transient discovery failure would prevent users from restoring the connection by retrying within the TTL.
       if (cache.get(key) === entry) {
         cache.delete(key);
       }

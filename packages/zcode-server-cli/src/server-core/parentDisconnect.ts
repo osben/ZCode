@@ -4,10 +4,10 @@ export interface ParentDisconnectSource {
 }
 
 /**
- * 注册 Core 对 Supervisor IPC 断连的清理钩子。
+ * Register a cleanup hook for Core when Supervisor IPC disconnects.
  *
- * Supervisor 被强杀时不会再发送 shutdown command，Core 仍需主动收口自己的
- * HTTP/WebSocket 和 Agent 资源，否则它会绕过 data-root lock 成为孤儿进程。
+ * If Supervisor is force-killed, it will not send a shutdown command; Core must still close its own
+ * HTTP/WebSocket and Agent resources, or it may outlive the data-root lock as an orphan process.
  */
 export function installParentDisconnectHandler(
   onDisconnect: () => void | Promise<void>,

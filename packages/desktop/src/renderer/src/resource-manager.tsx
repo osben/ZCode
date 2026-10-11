@@ -36,15 +36,17 @@ const savedTheme = migrateThemeSelection(
 );
 applyTheme(savedTheme.mode, savedTheme.palette);
 
-// 资源管理器不创建主窗口的 Zustand store，text-ui-* 无法自动获得持久化基准。
-// 首屏前显式应用，运行中再由 storage 事件同步，且不改变 html font-size 或接入业务 Host。
+// The resource manager does not create the main window's Zustand store, so text-ui-* cannot automatically
+// get the persisted baseline. Apply it explicitly before the first screen and sync through storage events
+// afterward, without changing html font-size or connecting to the business Host.
 applyUiFontSizePx(loadUiFontSizePx());
 subscribeToUiFontSizeStorageChanges();
 
 const root = document.getElementById("root");
 if (root) {
   createRoot(root).render(
-    // 语言沿用主窗口写入 localStorage 的偏好；不接 settingService，避免独立窗口再起一份 RPC。
+    // Reuse the language preference written to localStorage by the main window. Do not connect to
+    // settingService and create another RPC for this independent window.
     <ZCodeIntlProvider>
       <ResourceManagerApp
         setSamplingActive={window.resourceManager?.setSamplingActive}

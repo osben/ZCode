@@ -17,8 +17,9 @@ export function backgroundTaskOutputMetadata(
   launchOutput?: Record<string, unknown>,
 ): BackgroundTaskOutputMetadata {
   const result = recordProperty(snapshot, "result");
-  // 后台 Agent 的 child session 身份若只留在 Agent output / runtime
-  // snapshot，BackgroundTask* 事件就不会带出，V4 Running 行因此无法打开右侧详情。
+  // If the background Agent's child session identity stays only in Agent output/runtime
+  // snapshots, BackgroundTask* events omit it and the V4 Running row cannot open its
+  // detail pane.
   const childSessionId =
     stringProperty(snapshot, "childSessionId") ?? stringProperty(launchOutput, "childSessionId");
   const stdout = recordProperty(result, "stdout");

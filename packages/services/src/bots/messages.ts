@@ -1,4 +1,4 @@
-/* eslint-disable max-lines -- Bot 文案按 zh-CN/en-US/uk-UA 三语言成套维护，行数随语言数增长属预期。 */
+/* eslint-disable max-lines -- Bot copy is maintained as a set across zh-CN/en-US/uk-UA; the line count grows with the number of languages by design. */
 import type { Locale } from "@zcode/shared";
 
 export type BotMessageLocale = Locale;
@@ -36,7 +36,7 @@ const messages = {
     helpThoughtLevel: "**/思考** — 切换思考级别",
     helpReply: "**/回复** — 切换回复详细程度",
     webhookSecretInvalid: "Webhook secret 校验失败。",
-    // Bugfix: 这条错误由通用 provider callback 处理路径触发，微信/飞书失败时不能误显示 Telegram。
+    // Bug fix: this error is triggered through the shared provider callback path; WeChat/Feishu failures must not be shown as Telegram failures.
     callbackFailed: "处理机器人回调失败：{message}",
     sessionExpiredNewTaskHint:
       "当前任务会话已失效，可能是任务已被清理或机器人消息已过期。请发送 **/new task** 创建新任务后再继续。",
@@ -271,12 +271,10 @@ const messages = {
   "uk-UA": {
     botDisabled: "Цього бота не ввімкнено.",
     groupOwnerOnly: "Цю дію може виконати лише користувач, який прив'язав бота.",
-    groupNotEnabled:
-      "Цю групу ще не ввімкнено. Прив'язаний користувач має надіслати @бот /enable.",
+    groupNotEnabled: "Цю групу ще не ввімкнено. Прив'язаний користувач має надіслати @бот /enable.",
     groupEnabled:
       "Груповий чат увімкнено. Історію тем типово відкрито; файли одного робочого простору спільні, можливі паралельні зміни.\n\nПеред використанням тем попросіть адміністратора підтвердити дозволи на платформі ({permissionsUrl}).\n1. Відкрийте [консоль платформи]({permissionsUrl}) і виберіть застосунок цього бота.\n2. У розділі дозволів відкрийте дозволи на читання повідомлень від імені застосунку, зокрема `im:message.group_msg` (читання групових повідомлень користувачів). Для отримання @ від інших ботів потрібен також `im:message.group_at_msg.include_bot:readonly`; для повідомлень бота в темах без @ — `im:message.group_msg.include_bot:read`.\n3. Необов'язково: `im:chat.members:read` (перегляд учасників) для показу імені відправника; без нього завдання все одно виконуватимуться.\n4. Після публікації надішліть @бота в темі з описом потреби.\n\nУвімкнення групи не означає, що дозволи застосунку вже видано; без дозволу на читання історії тем групові завдання не виконуватимуться.",
-    groupDisabled:
-      "Груповий чат вимкнено. Отримані завдання збережено в Desktop.",
+    groupDisabled: "Груповий чат вимкнено. Отримані завдання збережено в Desktop.",
     privateChatOnly: "Боти поки не підтримують групові чати. Скористайтеся приватним чатом.",
     bindPrivateOnly: "Прив'язати бота можна лише в приватному чаті.",
     userNotBound:
@@ -413,8 +411,8 @@ const messages = {
 export type BotMessageId = keyof (typeof messages)[BotMessageLocale];
 
 export function normalizeBotMessageLocale(locale: Locale | undefined): BotMessageLocale {
-  // 未指定语言时保持中文默认；Bot 文案覆盖全部界面语言（含 uk-UA），
-  // 不再经 toServiceLocale 折叠成 en-US，否则乌克兰语用户只能看到英文。
+  // Keep Chinese as the default when no language is specified. Bot copy covers all UI languages (including uk-UA),
+  // so do not collapse it to en-US through toServiceLocale; otherwise Ukrainian users would see only English.
   return locale ?? DEFAULT_BOT_MESSAGE_LOCALE;
 }
 

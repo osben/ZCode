@@ -1,5 +1,5 @@
 /**
- * app 层端口：storageService 只依赖这些接口，IO 由 adapters 实现并在 desktop host 注入。
+ * App-layer ports: storageService depends only on these interfaces; adapters implement the I/O and the desktop host injects them.
  */
 import type { StorageCleanCandidate } from "../domain/cleanPlan.js";
 import type { StorageCleanScope } from "../domain/storageCatalog.js";
@@ -22,12 +22,12 @@ export interface StorageScanProgress {
 export interface StorageScanRunRequest {
   roots: StorageRootSpec[];
   signal: AbortSignal;
-  /** 运行方按自己的节奏上报；节流由 app 层的 job 负责。 */
+  /** The caller reports at its own pace; throttling is handled by the app-layer job. */
   onProgress: (progress: StorageScanProgress) => void;
 }
 
 export interface ScanRunnerPort {
-  /** 取消时以 AbortError（name === "AbortError"）拒绝。 */
+  /** Reject with AbortError (name === "AbortError") when cancelled. */
   run(request: StorageScanRunRequest): Promise<StorageScanProgress>;
 }
 

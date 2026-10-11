@@ -4,7 +4,7 @@ import { BigModelProviderAdapter } from "./bigmodelProviderAdapter.js";
 import type { OAuthProviderAdapter } from "./providerAdapter.js";
 import { ZaiProviderAdapter } from "./zaiProviderAdapter.js";
 
-/** 根据运行时配置创建可用 provider adapter */
+/** Create available provider adapters from runtime configuration. */
 export function createOAuthProviderAdapters(
   config: OAuthRuntimeConfig,
   options: { apiClient?: ApiClient } = {},
@@ -26,7 +26,7 @@ export function createOAuthProviderAdapters(
         adapters.push(new ZaiProviderAdapter(providerConfig, apiClient));
         break;
       default:
-        // 未知 provider 直接忽略，避免单个配置错误拖垮全部登录能力。
+        // Ignore unknown providers so one configuration error does not break all sign-in capabilities.
         break;
     }
   }

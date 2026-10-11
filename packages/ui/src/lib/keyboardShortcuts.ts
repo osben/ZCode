@@ -144,8 +144,8 @@ function matchesPrimaryModifier(
   platformInfo?: KeyboardShortcutPlatformInfo,
 ): boolean {
   const isApple = isAppleKeyboardPlatform(platformInfo);
-  // 主快捷键要按平台隔离。macOS 的 Ctrl 保留给系统 Emacs 风格文本编辑，
-  // Windows/Linux 才使用 Ctrl；同时按下 Ctrl 和 Command 不视作主快捷键，避免误触发。
+  // Scope the primary modifier by platform. On macOS, Ctrl is reserved for system Emacs-style text editing;
+  // use Ctrl on Windows/Linux. Ctrl and Command pressed together do not count as the primary modifier, preventing accidental triggers.
   return isApple ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey;
 }
 
@@ -173,8 +173,8 @@ export function matchesCtrlShiftShortcut(
 }
 
 /**
- * 纯 Shift+Tab（不含 Ctrl/Cmd/Alt）匹配工具。
- * 历史上聊天工具栏 mode 曾使用该组合键；保留给仍需要区分反向 Tab 导航的调用方。
+ * Match the standalone Shift+Tab shortcut (without Ctrl/Cmd/Alt).
+ * Chat-toolbar mode used this combination in the past; retain it for callers that still need to distinguish reverse Tab navigation.
  */
 export function matchesShiftTab(event: PrimaryShortcutKeyboardEvent): boolean {
   return (
@@ -199,8 +199,8 @@ function matchesShortcutKey(
     return true;
   }
 
-  // 修复说明：macOS 上按下 Option 参与组合键时，event.key 可能会被当前键盘布局改写成其他字符，
-  // 直接按 key 比较会把 ⌥⌘B 这类快捷键误判成未命中。这里补一层 code 匹配，避免受输入法/布局影响。
+  // Fix: on macOS, pressing Option in a shortcut can cause the current keyboard layout to change event.key,
+  // so comparing key directly can miss shortcuts such as ⌥⌘B. Also match code to avoid input-method and layout effects.
   const expectedCode = getExpectedShortcutCode(normalizedKey);
   return expectedCode != null && event.code === expectedCode;
 }

@@ -7,35 +7,35 @@ import { ArtifactSheetGlyph, type WorkflowCompletionArtifact } from "./WorkflowA
 import { PILL_STAGGER_MS } from "./WorkflowTimeline.js";
 
 /**
- * 完成卡的产物区。
- * 从 `WorkflowCompletionCard` 拆出来：卡本身要守 400 行的门。
+ * Artifact area of the completion card.
+ * Split out of `WorkflowCompletionCard` to keep the card itself under the 400-line limit.
  *
- * - **有交付物**（打了 primary 旗子的那件，或清单只有一件）：交付物行，然后其余产物作**索引**——
- *   一件一行，卡宽时两列；至多六行，从第七件起五行 + 一行「还有 N 个」（点开 run 侧板看全部）。
- * - **没有交付物**：没有哪一件配得上一张预览，就一张也不画——索引独占产物区，同一个上限。
+ * - **With a deliverable** (the item marked primary, or the only item in the list): show the deliverable row, then **index** the rest—
+ *   one per row, two columns when the card is wide; at most six rows. From item seven onward, show five rows + "N more" (open the run side pane to see all).
+ * - **Without a deliverable**: if no item qualifies for a preview, show none; the index uses the entire artifact area with the same limit.
  *
- * 只有交付物的框读字节（预览要么读得清，要么不画）；索引行与「还有 N 个」从不读。
+ * Only the deliverable frame reads bytes (either show a readable preview or none); index rows and "N more" never read bytes.
  *
- * ⚠ 术语：artifact = 脚本经 `artifact.*` 发布给用户看的产出。
+ * ⚠ Terminology: artifact = output published for the user by a script through `artifact.*`.
  */
 
-/** 卡上索引的行数上限，也是不折叠时的上限。 */
+/** Maximum number of index rows on the card, including the uncollapsed state. */
 export const COMPLETION_INDEX_MAX = 6;
-/** 需要「还有 N 个」时，与它同在的行数。 */
+/** Number of rows shown alongside "N more" when that row is needed. */
 const COMPLETION_INDEX_WITH_MORE = COMPLETION_INDEX_MAX - 1;
 
 export interface CompletionArtifactLayout {
-  /** 交付物；缺席即索引独占。 */
+  /** Deliverable; absent means the index uses the whole area. */
   primary?: WorkflowCompletionArtifact;
-  /** 画成行的那些件（交付物之外）。 */
+  /** Items to render as rows (excluding the deliverable). */
   lines: readonly WorkflowCompletionArtifact[];
-  /** 没画出来的件数（「还有 N 个」的 N）。 */
+  /** Number of items not rendered (the N in "N more"). */
   folded: number;
-  /** 画「还有 N 个」：有折叠的件，或清单被发射侧砍过（此时 N 不可知，写 `…`）。 */
+  /** Render "N more" when items are folded or the emitting side truncated the list (N is unknown in that case; show `…`). */
   more: boolean;
 }
 
-/** 布局的**唯一**判定；卡（节奏）、取数门（哪些件读字节）与渲染都从这里读。 */
+/** **Sole** layout decision; card (animation timing), fetch gate (which items read bytes), and rendering all use this result. */
 export function completionArtifactLayout(
   artifacts: readonly WorkflowCompletionArtifact[],
   truncated: boolean,
@@ -43,7 +43,7 @@ export function completionArtifactLayout(
   if (artifacts.length === 0) return { lines: [], folded: 0, more: false };
   const primary = resolvePrimaryArtifact(artifacts);
   const rest = primary === undefined ? artifacts : artifacts.filter((a) => a !== primary);
-  // 砍过的清单（超 8）不知道真实件数：仍给一扇门，N 写 `…`——与产物条的省略号同一个诚实。
+  // A truncated list (over 8) has an unknown true count; still show the entry and use `…` for N, matching the artifact strip's honest ellipsis.
   const more = rest.length > COMPLETION_INDEX_MAX || truncated;
   const lines = rest.slice(0, more ? COMPLETION_INDEX_WITH_MORE : COMPLETION_INDEX_MAX);
   return {
@@ -54,12 +54,12 @@ export function completionArtifactLayout(
   };
 }
 
-/** 卡上画出来的格数（行算一格，每条索引行一格，「还有 N 个」一格）：四格数字的落地节拍接在它们之后。 */
+/** Number of card cells rendered (deliverable row, each index row, and "N more" each count as one); the four metric cells animate afterward. */
 export function completionArtifactCellCount(layout: CompletionArtifactLayout): number {
   return (layout.primary === undefined ? 0 : 1) + layout.lines.length + (layout.more ? 1 : 0);
 }
 
-/** 会读字节的那些件：只有交付物的框读；索引行与门从不读。 */
+/** Items that read bytes: only the deliverable frame reads; index rows and the entry do not. */
 export function completionPreviewIds(layout: CompletionArtifactLayout): ReadonlySet<string> {
   return new Set(layout.primary === undefined ? [] : [layout.primary.id]);
 }
@@ -95,7 +95,7 @@ export function WorkflowCompletionArtifacts({
         />
       ) : null}
       {lines.length > 0 || more ? (
-        // 索引跟在交付物行之后时隔一条细线；独占产物区时不要（上面没有东西可隔）。
+        // Separate the index from the deliverable row with a thin line; omit it when the index occupies the artifact area alone.
         <WorkflowArtifactIndex
           artifacts={lines}
           columns="auto"

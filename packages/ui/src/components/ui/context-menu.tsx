@@ -14,7 +14,7 @@ function ContextMenuTrigger({
   return <ContextMenuPrimitive.Trigger data-slot="context-menu-trigger" {...props} />;
 }
 
-// 圆角规范迁移：旧菜单沿用 xl/lg，统一为独立外壳 lg、内部选项 md；子菜单重新起算。
+// Corner-radius migration: legacy menus used xl/lg; standardize on lg for the outer shell and md for inner items, recalculated for submenus.
 function ContextMenuContent({
   className,
   ...props
@@ -24,7 +24,7 @@ function ContextMenuContent({
       <ContextMenuPrimitive.Content
         data-slot="context-menu-content"
         className={cn(
-          // 右键菜单与 Dropdown 共用菜单语言，也必须高于仅提供说明的 tooltip。
+          // Context menus share menu layering with Dropdown and must also appear above tooltips, which provide descriptions only.
           "z-[60] flex flex-col gap-0.5 min-w-44 origin-(--radix-context-menu-content-transform-origin) overflow-hidden rounded-lg border border-popover-border bg-menu p-1 text-foreground shadow-md duration-100 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2 data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",
           className,
         )}

@@ -42,7 +42,7 @@ test("host key: local without workspace or for local workspace, remote by identi
     getUserInstructionsHostKey({ workspacePath: "/repo", remoteSessionId: "s1" }),
     "remote:/repo",
   );
-  // 同一远端重连只换 remoteSessionId，key 不变。
+  // Reconnecting to the same remote changes only remoteSessionId; the key stays the same.
   assert.equal(
     getUserInstructionsHostKey({
       workspacePath: "/repo",
@@ -88,7 +88,7 @@ test("dirty and save availability", () => {
   );
   assert.equal(canSaveUserInstructions({ loaded: loaded(), draft: "x", saving: false }), true);
   assert.equal(canSaveUserInstructions({ loaded: loaded(), draft: "x", saving: true }), false);
-  // 文件不存在时未编辑也允许保存（创建空文件）。
+  // If the file does not exist, allow saving even without edits (creating an empty file).
   assert.equal(
     canSaveUserInstructions({
       loaded: loaded({ state: "missing", content: "", revision: null }),

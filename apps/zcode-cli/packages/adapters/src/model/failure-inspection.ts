@@ -122,8 +122,8 @@ function getResponseHeadersFromError(
     return responseHeaders;
   }
 
-  // AI SDK/stream chunk 可能把 ProviderBusinessError 包在 cause 里；
-  // 外层 APICallError 没有 responseHeaders 时，必须继续读取内层错误。
+  // AI SDK/stream chunks may wrap ProviderBusinessError in cause. If the outer APICallError has no
+  // responseHeaders, continue reading the inner error.
   const cause = record.cause;
   return cause && cause !== error ? getResponseHeadersFromError(cause, seen) : undefined;
 }
@@ -195,8 +195,8 @@ function hasContextExceededSignal(error: unknown, seen: WeakSet<object>): boolea
   const responseBody = getApiCallResponseBody(error);
   if (
     isContextExceededCode(stringProperty(record, "code")) ||
-    // 标准 response body 会先被归一为 ProviderBusinessError，
-    // 此时真实 provider code 位于 providerCode，外层 code 只是包装码。
+    // A standard response body is first normalized to ProviderBusinessError. The actual provider
+    // code is then in providerCode, while the outer code is only a wrapper code.
     isContextExceededCode(stringProperty(record, "providerCode")) ||
     isContextExceededCode(standardResponseBodyCode(responseBody)) ||
     isContextExceededMessage(stringProperty(record, "message")) ||
@@ -226,13 +226,14 @@ function isContextExceededMessage(value: string | undefined): boolean {
   return (
     message === "model_context_window_exceeded" ||
     (message.includes("context") && message.includes("exceed")) ||
-    // 部分 OpenAI-compatible provider 只在 invalid_request 文本中报告
-    // maximum context length 和 token 统计，不会在文案中包含 exceeded。
+    // Some OpenAI-compatible providers report maximum context length and token counts only in
+    // invalid_request text, without including the word "exceeded".
     (message.includes("maximum context length") &&
       message.includes("tokens") &&
       (message.includes("requested") || message.includes("resulted"))) ||
-    // 官方 provider 的这些文案都明确指向输入超过上下文窗口；
-    // 保持短语级匹配，避免把通用 400/422 或 max_tokens 参数错误归为超窗。
+    // These official provider messages clearly indicate that the input exceeds the context window.
+    // Keep matching at the phrase level so generic 400/422 or max_tokens parameter errors are not
+    // classified as context overflow.
     message.includes("prompt is too long") ||
     (message.includes("input token count") &&
       message.includes("exceed") &&
@@ -287,8 +288,8 @@ export function parseRetryAfterMs(headers?: Record<string, string>): number | un
   if (!headers) {
     return undefined;
   }
-  // 部分 provider 会同时返回 retry-after 和 x-should-retry=false；
-  // 此时 retry-after 只能作为诊断信息，不能驱动 adapter 等待。
+  // Some providers return both retry-after and x-should-retry=false. In this case, retry-after is
+  // diagnostic information only and must not make the adapter wait.
   if (isShouldRetryHeaderFalse(headers)) {
     return undefined;
   }

@@ -65,7 +65,9 @@ describe("settings frame content layout", () => {
 
   it("returns to chat before creating a task from plugin detail prompts", () => {
     const pluginStoreUsages = workspaceShellSource.match(
-      /<PluginStorePage[\s\S]{0,500}?onCreateTask=\{handleCreateTaskInChat\}/g,
+      // Bugfix 注释翻译后变长，500 字符窗口盖不住首个调用点（现需 611 字符），
+      // 放宽到 700 仍只命中两处 PluginStorePage 自身的 onCreateTask 属性。
+      /<PluginStorePage[\s\S]{0,700}?onCreateTask=\{handleCreateTaskInChat\}/g,
     );
 
     // Desktop 与窄屏 Shell 都必须使用包含 showChatMainView 的包装回调。

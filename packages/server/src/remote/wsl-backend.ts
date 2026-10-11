@@ -1,4 +1,4 @@
-/* oxlint-disable eslint(max-lines) -- WSL backend 同时承载探测、路径解析、兼容 UNC 与可取消流式上传。 */
+/* oxlint-disable eslint(max-lines) -- The WSL backend handles probing, path resolution, UNC compatibility, and cancellable streaming uploads. */
 import { spawn, execFile } from "node:child_process";
 import type { ChildProcess } from "node:child_process";
 import { access, copyFile, mkdir, readFile, stat } from "node:fs/promises";
@@ -96,7 +96,7 @@ async function accessAnyPath(paths: string[]): Promise<string | null> {
       await access(path);
       return path;
     } catch {
-      // 继续尝试下一个候选路径。
+      // Continue with the next candidate path.
     }
   }
 
@@ -110,7 +110,7 @@ async function copyFileToAnyPath(sourcePath: string, targetPaths: string[]): Pro
       await copyFile(sourcePath, targetPath);
       return true;
     } catch {
-      // WSL 1 / 某些 Windows 版本可能不支持当前 UNC 前缀，继续回退。
+      // WSL 1 and some Windows versions may not support this UNC prefix; try the next fallback.
     }
   }
 
@@ -167,14 +167,14 @@ export class WSLBackend implements IRemoteBackend {
     }
     const parsedProxyUrl = new URL(normalizedProxyUrl);
     if (!isLoopbackProxyHostname(parsedProxyUrl.hostname)) {
-      // 非 loopback 代理本来就是远端可解析地址；保留用户输入，避免无意义的 URL 规范化。
+      // A non-loopback proxy is already resolvable remotely; preserve the user's input instead of normalizing the URL unnecessarily.
       return proxyUrl;
     }
 
     await this.ensureAvailable();
     const localProbe = await this.probeProxyPort(normalizedProxyUrl);
     if (localProbe === true) {
-      // mirrored networking 或代理已监听 WSL loopback，不能替换成另一个地址。
+      // With mirrored networking or a proxy listening on WSL loopback, do not replace it with another address.
       return normalizedProxyUrl;
     }
 
@@ -189,7 +189,7 @@ export class WSLBackend implements IRemoteBackend {
       const gatewayProbe = await this.probeProxyPort(gatewayProxyUrl);
       return gatewayProbe === true ? gatewayProxyUrl : normalizedProxyUrl;
     } catch {
-      // 代理解析只是运行时增强；失败时保留用户原值，让 Agent 自己返回可诊断的网络错误。
+      // Proxy resolution is a runtime enhancement. On failure, preserve the user's value so the Agent can return a diagnosable network error.
       return normalizedProxyUrl;
     }
   }
@@ -218,9 +218,9 @@ export class WSLBackend implements IRemoteBackend {
       }
     }
 
-    // WSL 1 或默认 distro 名称解析失败时，UNC 路径可能不可用。
-    // 如果这里直接报错，remote deploy 会彻底失效；回退到 `cat > file` 的流式写入，
-    // 至少能保证 server/node/pty 仍可上传，只是速度慢一些。
+    // UNC paths may be unavailable on WSL 1 or when the default distro name cannot be resolved. Failing
+    // here would prevent remote deployment entirely; fall back to streaming through `cat > file` so
+    // server/node/pty can still be uploaded, though more slowly.
     const parentDir = posix.dirname(resolvedRemotePath);
     const command = `mkdir -p ${quotePosixShellArg(parentDir)} && cat > ${quotePosixShellArg(resolvedRemotePath)}`;
     const stream = await this.exec(command);
@@ -325,8 +325,9 @@ export class WSLBackend implements IRemoteBackend {
     this.assertNotDisposed();
     await this.ensureAvailable();
     const resolvedInfo = await this.resolveInfo();
-    // 入口门禁之后的 discovery/identity await 允许 dispose barrier 插入并完成；
-    // resolved info 命中缓存时，旧 continuation 会在 barrier 后继续 spawn。最终创建 child 前必须再校验。
+    // Awaiting discovery/identity after the entry gate allows the dispose barrier to run. If resolved
+    // info hits the cache, an old continuation could continue spawning after the barrier. Recheck before
+    // creating the child process.
     this.assertNotDisposed();
 
     return new Promise((resolve, reject) => {
@@ -431,8 +432,9 @@ export class WSLBackend implements IRemoteBackend {
     const graceTimeoutMs = Math.max(options?.graceTimeoutMs ?? 300, 0);
     const killWaitTimeoutMs = Math.max(options?.killWaitTimeoutMs ?? 250, 0);
     const children = Array.from(this.ownedChildren.entries());
-    // WSL 过去不记录自己 spawn 的 wsl.exe，Host 被强杀时只能寄希望于管道 EOF。
-    // 先同步关闭本 backend 子进程 stdin；宽限期后也只 kill 这些已证明归属的 child，绝不 terminate distro。
+    // WSL previously did not track its spawned wsl.exe processes, so a force-killed Host could only rely
+    // on pipe EOF. Close this backend child process's stdin synchronously first; after the grace period,
+    // kill only children known to belong to this backend and never terminate the distro.
     for (const [child] of children) {
       this.endOwnedChildInput(child);
     }
@@ -482,7 +484,7 @@ export class WSLBackend implements IRemoteBackend {
     try {
       child.stdin.end();
     } catch {
-      // stdin 已异常关闭时继续进入本 child 的 kill fallback。
+      // If stdin is already closed unexpectedly, continue to this child process's kill fallback.
     }
   }
 

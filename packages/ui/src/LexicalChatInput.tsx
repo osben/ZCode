@@ -1,18 +1,18 @@
 /* eslint-disable max-lines */
 /**
- * LexicalChatInput — 基于 Lexical 的聊天输入框
+ * LexicalChatInput — Lexical-based chat input
  *
- * 基于 Lexical 的聊天输入框，支持 slash command 和 mention tag。
- * - Enter 发送，Shift+Enter 换行
- * - 支持 IME 输入
- * - 自动高度（默认显示 3 行，超出后滚动）
- * - disabled 状态
- * - 通过 SlashCommandPlugin / MentionPlugin 支持 `/` / `@` 的触发面板
+ * Lexical-based chat input with slash commands and mention tags.
+ * - Enter sends; Shift+Enter inserts a new line
+ * - Supports IME input
+ * - Auto-height (shows 3 lines by default and scrolls when content exceeds them)
+ * - Disabled state
+ * - Supports `/` / `@` trigger panels through SlashCommandPlugin / MentionPlugin
  *
- * 独立输入展示壳，不承载会话编排逻辑，仅做三处适配：
- * 1. useChatViewActiveTaskProvider 来自 @/v4/activeTaskProvider.js（配置面读取）；
- * 2. ChatComposerPasteEvent 收口为本文件导出的结构类型；
- * 3. mention 面板用 enableMentionPanel 控制；slash command 始终读取 CLI workspace catalog。
+ * Standalone input presentation shell; it does not orchestrate sessions and makes only three adaptations:
+ * 1. useChatViewActiveTaskProvider comes from @/v4/activeTaskProvider.js (reads configuration);
+ * 2. ChatComposerPasteEvent is narrowed to the structural type exported by this file;
+ * 3. the mention panel is controlled by enableMentionPanel; slash commands always read the CLI workspace catalog.
  */
 import { $getPromptMarkdown } from "@/mentions/promptSerialization.js";
 import { PromptClipboardPlugin } from "@/mentions/PromptClipboardPlugin.js";
@@ -61,7 +61,7 @@ import { resolveMobileInputTextSizeClassName } from "@/lib/mobileTextInput.js";
 import type { MentionItemData } from "@/mentions/mentionTypes.js";
 import type { ComposerMentionPrefill } from "@/store/zcodeSessionStoreTypes.js";
 
-/** 旧 useChatComposer 已删；粘贴事件收口为最小结构类型（ClipboardEvent 结构兼容）。 */
+/** The old useChatComposer has been removed; the paste event uses a minimal structural type compatible with ClipboardEvent. */
 export interface ChatComposerPasteEvent {
   clipboardData: DataTransfer | null;
   preventDefault: () => void;
@@ -177,7 +177,7 @@ export function shouldNormalizeLeadingChineseSlashAliasInput({
   );
 }
 
-/** 提取编辑器内容；mention 节点会在这里输出 markdown */
+/** Extract editor content; mention nodes output markdown here */
 function getEditorMarkdown(editorState: EditorState): string {
   let text = "";
   editorState.read(() => {
@@ -192,7 +192,7 @@ function replaceEditorText(editor: LexicalEditor, text: string) {
       const root = $getRoot();
       root.clear();
 
-      // Lexical getTextContent() 用 \n\n 分隔段落，对称处理防止换行翻倍
+      // Lexical getTextContent() separates paragraphs with \n\n; handle both sides symmetrically to avoid doubling line breaks
       for (const line of text.split("\n\n")) {
         const paragraph = $createParagraphNode();
         if (line) {
@@ -257,7 +257,7 @@ export function replaceEditorWithMention(
       const root = $getRoot();
       root.clear();
       const paragraph = $createParagraphNode();
-      // 预填后保留空格供用户直接继续输入；选区正确性由 TextNode 文本/DOM 契约保证。
+      // Keep a trailing space after prefill so the user can continue typing; TextNode text/DOM contracts ensure the selection is correct.
       const trailing = $createTextNode(trailingText || " ");
       paragraph.append($createPromptMentionNode(mention), trailing);
       root.append(paragraph);
@@ -268,10 +268,10 @@ export function replaceEditorWithMention(
 }
 
 /**
- * 在草稿开头插入结构化 mention，同时保留已有 Lexical 节点和段落。
+ * Insert a structured mention at the start of the draft while preserving existing Lexical nodes and paragraphs.
  *
- * 不能通过 getMarkdown → setMention 重建：setMention 是替换型预填，会把旧 mention
- * 序列化后作为普通 TextNode 放回编辑器，导致已有 Plugin / 文件 / Skill chip 降级。
+ * Do not rebuild through getMarkdown → setMention: setMention is replacement-style prefill and would serialize
+ * old mentions back into the editor as plain TextNodes, downgrading existing Plugin/file/Skill chips.
  */
 export function prependEditorMentionIfMissing(
   editor: LexicalEditor,
@@ -339,9 +339,9 @@ function replaceEditorWithSkillMention(
         $createPromptMentionNode({
           id: `prefill-skill:${skillName}`,
           category: "skills",
-          // 预填入口之前虽然会插入 skill node，但节点里保存的 markdown 仍固定成 `$slug`，
-          // 导致像 New Skill 这种入口即使理论上有完整转译内容，进入输入框后也会被悄悄降级。
-          // 这里显式透传原始 markdown，并直接显示 frontmatter name，避免 UI 再加工 skill 标题。
+          // Although the prefill entry point inserted a skill node, its stored markdown was still fixed to `$slug`,
+          // silently downgrading entries such as New Skill even when they had complete translated content.
+          // Pass through the original markdown and display the frontmatter name directly so the UI does not transform the skill title.
           label: skillName,
           value: skillName,
           markdown,
@@ -502,10 +502,9 @@ function selectAfterPromptMentionById(mentionId: string): boolean {
 }
 
 /**
- * 键盘行为插件：Enter 发送，Shift+Enter 换行
+ * Keyboard behavior plugin: Enter sends; Shift+Enter inserts a newline.
  *
- * 用 COMMAND_PRIORITY_HIGH 截获 Enter 按键，
- * 阻止 Lexical 默认的段落插入行为。
+ * Intercept Enter with COMMAND_PRIORITY_HIGH to prevent Lexical's default paragraph insertion behavior.
  */
 function KeyboardPlugin({
   onSubmit,
@@ -523,7 +522,7 @@ function KeyboardPlugin({
   enterSubmits: boolean;
 }) {
   const [editor] = useLexicalComposerContext();
-  // 作用域改绑层：读生效表的 composer 命令切片；ref 透传避免按键监听重挂。
+  // Scoped rebinding layer: read the active composer-command slice; pass it through a ref to avoid re-registering the keyboard listener.
   const effectiveShortcutBindings = useEffectiveShortcutBindings();
   const composerEffectiveRef = useRef({
     composerSend: effectiveShortcutBindings.composerSend ?? [],
@@ -545,16 +544,16 @@ function KeyboardPlugin({
           return true;
         }
 
-        // IME 正在组合中（如中文输入法），不拦截
+        // Do not intercept while an IME is composing (for example, a Chinese IME).
         if (event.isComposing) {
           return false;
         }
 
         const text = getEditorMarkdown(editor.getEditorState());
 
-        // 作用域改绑层：用户键位表优先于内置默认。
-        // 命中换行 → 放行 Lexical 插段落；命中发送 → 走与主链等价的门禁分支；
-        // 未命中 → 落到下方主链（含反转投递 / 修饰组合换行 / 视口门禁）。
+        // Scoped rebinding layer: user key bindings take precedence over built-in defaults.
+        // A newline match lets Lexical insert a paragraph; a send match follows the same gates as the main path.
+        // With no match, fall through to the main path below (including reverse delivery, modified-key newlines, and viewport gating).
         const composerEffective = composerEffectiveRef.current;
         const scopedAction = resolveComposerKeyAction(event, composerEffective);
         if (scopedAction === "newline") {
@@ -562,10 +561,10 @@ function KeyboardPlugin({
         }
         if (scopedAction === "send") {
           const modifiedScopedEnter = event.shiftKey || event.ctrlKey || event.metaKey;
-          // 反转投递开启时带修饰组合让位主链（Ctrl+Enter = 反向 delivery，交付语义比键位更具体）
+          // When reverse delivery is enabled, let the main path handle modified shortcuts (Ctrl+Enter = reverse delivery, whose delivery meaning is more specific than a binding).
           if (!(modifiedScopedEnter && onModifiedSubmit)) {
-            // 与主链裸 Enter 等价的门禁：无修饰组合受 submitDisabled / 手机视口 enterSubmits；
-            // 带修饰组合不受视口门禁（与主链 onModifiedSubmit 路径一致）。
+            // Apply the same gates as bare Enter on the main path: unmodified Enter respects submitDisabled/mobile enterSubmits;
+            // modified combinations bypass viewport gating, matching the main path's onModifiedSubmit behavior.
             if (submitDisabled || (!modifiedScopedEnter && !enterSubmits)) {
               return false;
             }
@@ -586,8 +585,8 @@ function KeyboardPlugin({
           }
         }
 
-        // 主链前置检查：composerSend 已改绑走（生效绑定不含裸 Enter）时，
-        // 裸 Enter 不再代表发送，放行 Lexical 换行（"Ctrl+Enter 党"改绑后的预期行为）。
+        // Main-path precheck: when composerSend has been rebound (the active binding excludes bare Enter),
+        // bare Enter no longer means send. Allow Lexical to insert a newline (the expected behavior after rebinding for “Ctrl+Enter users”).
         if (
           !event.shiftKey &&
           !event.ctrlKey &&
@@ -617,14 +616,14 @@ function KeyboardPlugin({
           return true;
         }
 
-        // Shift+Enter，以及未启用反转投递时的 Ctrl/Meta+Enter 继续换行。
+        // Shift+Enter and Ctrl/Meta+Enter when reverse delivery is disabled continue to insert newlines.
         if (event.shiftKey || event.ctrlKey || event.metaKey) {
           return false;
         }
 
-        // 当前请求进行中时，输入框仍允许继续编辑草稿，但此时不能再次提交。
-        // 之前把状态直接映射成 disabled，导致输入和联想面板一起失效；如果只去掉 disabled，
-        // Enter 又会误触发 submit 并清空草稿。这里在 submitDisabled 时把 Enter 退回给 Lexical 处理换行。
+        // While a request is in progress, the user may keep editing the draft but cannot submit again.
+        // Mapping this state directly to disabled also disabled typing and suggestions; removing disabled alone
+        // would let Enter submit and clear the draft. When submitDisabled, return Enter to Lexical for newline handling.
         if (submitDisabled || !enterSubmits) {
           return false;
         }
@@ -639,8 +638,8 @@ function KeyboardPlugin({
           })
         ) {
           const submitResult = onSubmit(text);
-          // 业务层可能拒绝本次提交并要求草稿留在输入框。
-          // Enter 键盘层不能无条件 reset，否则即使业务层未发送，用户输入也会被吃掉。
+          // The business layer may reject this submission and keep the draft in the input.
+          // The Enter handler must not reset unconditionally, or it would discard user input even when nothing was sent.
           if (shouldResetLexicalEditorAfterSubmit(submitResult)) {
             resetEditor(editor);
           }
@@ -678,9 +677,9 @@ function KeyboardPlugin({
           return false;
         }
 
-        // mention 插入时会自动补一个空格用于继续输入，
-        // 之前 Backspace 会先删这个空格，再删 token，用户体感是“要按两次才删掉标签”。
-        // 这里在“光标正好位于补位空格后”时，直接一次性删除空格 + mention token。
+        // Inserting a mention automatically adds a space so the user can continue typing.
+        // Previously Backspace removed the space first and then the token, making it feel like the tag took two presses to delete.
+        // When the cursor is just after the added space, delete the space and mention token together.
         event?.preventDefault();
         previousSibling.remove();
         node.remove();
@@ -713,9 +712,9 @@ function KeyboardPlugin({
         return;
       }
 
-      // macOS Option+ArrowRight 会按 DOM 文本做词级跳转，之前会把光标落进
-      // mention token 内部的文件名文本；下一次输入时 Lexical 会把 token 当作被替换内容删除。
-      // 在 token 左边界显式把 selection 移到 token 后侧，保持 mention 的原子编辑语义。
+      // macOS Option+ArrowRight moves by words in DOM text and previously placed the cursor inside
+      // a mention token's filename. On the next keystroke, Lexical then deleted the token as replaced content.
+      // At the token's left boundary, move the selection explicitly to its right side to preserve atomic mention editing.
       event.preventDefault();
       event.stopImmediatePropagation();
       editor.update(
@@ -726,11 +725,11 @@ function KeyboardPlugin({
       );
     };
 
-    // 作用域改绑层·非 Enter 分发（统一开放策略）：KEY_ENTER_COMMAND 只对 Enter
-    // 派发，用户把发送/换行绑成非 Enter 键（如 F9）时由 root keydown capture 分发，
-    // 否则改绑是死绑定，且裸 Enter 回退换行会让键盘发送能力整体丢失。
-    // 非 Enter 物理键不存在手机软键盘误发问题，send 不受 enterSubmits 视口门禁；
-    // 与反转投递（仅响应 Ctrl/Meta+Enter）无交集，无需让位。
+    // Scoped rebinding for non-Enter keys (uniformly enabled): KEY_ENTER_COMMAND dispatches only Enter.
+    // When send/newline is bound to a non-Enter key (such as F9), dispatch it from root keydown capture;
+    // otherwise rebinding would be inert, and falling back to newline on bare Enter would remove keyboard sending.
+    // Physical non-Enter keys cannot be accidentally sent by a mobile soft keyboard, so send bypasses enterSubmits viewport gating.
+    // This does not overlap with reverse delivery (Ctrl/Meta+Enter only), so no yielding is needed.
     const handleNonEnterScopedKeydown = (event: KeyboardEvent) => {
       if (disabled || event.repeat || event.isComposing || event.key === "Enter") {
         return;
@@ -804,11 +803,12 @@ function KeyboardPlugin({
 }
 
 /**
- * 文本变化插件
+ * Text-change plugin.
  *
- * 直接用 Lexical 自带的 OnChangePlugin 时，第一次从空编辑器输入字符会被内部的
- * `prevEditorState.isEmpty()` 直接跳过，父组件的 input 状态拿不到首字符，发送按钮和输入内容会错位。
- * 这里改成自己监听 update，只在序列化后的 markdown 真正变化时同步，首字符输入也能稳定回传。
+ * With Lexical's built-in OnChangePlugin, the first character typed into an empty editor is skipped by its
+ * internal `prevEditorState.isEmpty()` check. The parent input state misses that character, desynchronizing
+ * the send button and editor contents. Listen for updates directly and sync only when serialized markdown
+ * actually changes so the first character is reported reliably.
  */
 function TextContentPlugin({
   onChange,
@@ -818,9 +818,9 @@ function TextContentPlugin({
   taskId?: string | null;
 }) {
   const [editor] = useLexicalComposerContext();
-  // IME 组合态标记:不直接依赖 editor.isComposing(),因为它在 update listener 同步执行时
-  // 是否已反映组合态存在时序不确定性,读不到 true 会把中文/日文长文本组合的高耗时误报成打字卡顿。
-  // 改由 compositionstart/compositionend 事件自行维护,稳健可控。
+  // IME composition flag: do not rely directly on editor.isComposing(), because whether it has been updated
+  // when the update listener runs synchronously is timing-dependent. Missing true would misreport the high
+  // latency of composing long Chinese/Japanese text as typing lag. Maintain the flag from compositionstart/compositionend instead.
   const composingRef = useRef(false);
 
   useEffect(() => {
@@ -828,15 +828,15 @@ function TextContentPlugin({
       composingRef.current = true;
     };
     const handleCompositionEnd = () => {
-      // compositionend 触发时组合刚结束,但「组合提交」这一拍的 update listener 通常在同一轮
-      // 任务里同步执行,若立即置 false,这次高耗时会被误判为打字卡顿。用 queueMicrotask 把置 false
-      // 延后到当前同步任务之后,确保组合提交那一拍仍按组合态短路,再恢复正常计入。
+      // compositionend fires just after composition, but the update listener for the committed text usually
+      // runs synchronously in the same task. Setting false immediately would misclassify its latency as typing lag.
+      // Defer clearing the flag with queueMicrotask so that commit is still skipped as composition, then resume normal measurement.
       queueMicrotask(() => {
         composingRef.current = false;
       });
     };
 
-    // root 会重挂,用 registerRootListener 在新旧 root 上正确解绑/绑定。
+    // The root may remount; use registerRootListener to detach from the old root and attach to the new one.
     return editor.registerRootListener((rootElement, previousRootElement) => {
       previousRootElement?.removeEventListener("compositionstart", handleCompositionStart);
       previousRootElement?.removeEventListener("compositionend", handleCompositionEnd);
@@ -856,7 +856,7 @@ function TextContentPlugin({
           return;
         }
 
-        // 输入卡顿计时:包住「全量序列化 + onChange 同步重渲染」这段处理热点。
+        // Typing-lag timing covers the hot path of full serialization plus synchronous onChange rerendering.
         const startedAt = performance.now();
 
         const nextText = getEditorMarkdown(editorState);
@@ -868,7 +868,7 @@ function TextContentPlugin({
         onChange(nextText);
 
         const lagMs = performance.now() - startedAt;
-        // 程序化改写与 IME 组合态不算打字卡顿(判定在 recordInputLag 内统一短路)。
+        // Programmatic edits and IME composition do not count as typing lag (recordInputLag filters them centrally).
         recordInputLag({
           lagMs,
           textLength: nextText.length,
@@ -883,7 +883,7 @@ function TextContentPlugin({
   return null;
 }
 
-/** 编辑器可编辑状态控制插件 */
+/** Plugin controlling whether the editor is editable. */
 function EditablePlugin({ editable }: { editable: boolean }) {
   const [editor] = useLexicalComposerContext();
 
@@ -907,7 +907,8 @@ function E2ELexicalInputBridgePlugin({ inputTestId }: { inputTestId?: string }) 
       getEditorState: () => editor.getEditorState(),
       getText: () => getEditorMarkdown(editor.getEditorState()),
       setText: (text: string) => replaceEditorText(editor, text),
-      setTextWithPluginMentions: (text: string) => replaceEditorTextWithPluginMentions(editor, text),
+      setTextWithPluginMentions: (text: string) =>
+        replaceEditorTextWithPluginMentions(editor, text),
       setEditorStateJson: (editorStateJson: string) =>
         replaceEditorStateJson(editor, editorStateJson),
     };
@@ -931,8 +932,8 @@ function E2ELexicalInputBridgePlugin({ inputTestId }: { inputTestId?: string }) 
         return;
       }
 
-      // E2E 需要驱动真实 Lexical state；只改 DOM contenteditable 会绕过 editor update，
-      // 容易把文本误打到主输入框，导致测试结论和产品行为脱节。
+      // E2E must drive real Lexical state; changing only DOM contenteditable bypasses editor updates
+      // and can send text to the main input, making test results diverge from product behavior.
       Object.defineProperty(input, "__zcodeLexicalInputE2E", {
         configurable: true,
         value: bridge,
@@ -960,14 +961,14 @@ function E2ELexicalInputBridgePlugin({ inputTestId }: { inputTestId?: string }) 
       if (previousRootElement !== rootElement) {
         detachBridge(previousRootElement);
       }
-      // E2E bridge 之前只在 effect 里查询一次 DOM。
-      // 编辑器 root 如果比插件晚挂载或被 Lexical 重挂载，bridge 会永久缺失。
+      // The E2E bridge previously queried the DOM only once in an effect.
+      // If the editor root mounted later than the plugin or Lexical remounted it, the bridge was lost permanently.
       attachBridge(resolveInput(rootElement));
     });
 
     tryAttachBridge();
-    // edit 场景里 ChatPromptEditor 的 initialValue 回填、Lexical root 注册、
-    // React DOM 提交顺序可能跨多个帧。短轮询只负责补挂测试 bridge，不参与产品行为。
+    // In edit mode, ChatPromptEditor initialValue restoration, Lexical root registration, and React DOM commits
+    // may span multiple frames. Brief polling only retries attaching the test bridge and does not affect product behavior.
     retryTimer = window.setInterval(tryAttachBridge, 100);
 
     return () => {
@@ -1030,9 +1031,9 @@ function PromptHistoryPlugin({
     (nextIndex: number | null, nextValue: string) => {
       historyIndexRef.current = nextIndex;
       applyingHistoryRef.current = true;
-      // 使用专用 HISTORY_NAVIGATION_UPDATE_TAG 而非通用 PROGRAMMATIC_UPDATE_TAG，
-      // 使 SlashCommandPlugin 能区分"历史回填"与"用户正在输入 slash 查询"，
-      // 防止回填含 / 的历史条目时面板重新打开并以 COMMAND_PRIORITY_CRITICAL 吞掉后续方向键。
+      // Use the dedicated HISTORY_NAVIGATION_UPDATE_TAG instead of the generic PROGRAMMATIC_UPDATE_TAG
+      // so SlashCommandPlugin can distinguish “history restoration” from “user typing a slash query.”
+      // This prevents restoring a history item containing / from reopening the panel and swallowing subsequent arrow keys at COMMAND_PRIORITY_CRITICAL.
       editor.update(
         () => {
           const root = $getRoot();
@@ -1070,8 +1071,8 @@ function PromptHistoryPlugin({
       const text = getEditorMarkdown(editor.getEditorState());
       const currentIndex = historyIndexRef.current;
 
-      // 历史导航只在“空输入”或“已经进入历史浏览态”时接管上下键，
-      // 避免抢走多行输入原本的光标移动行为。
+      // History navigation handles up/down only when the input is empty or history browsing is already active,
+      // so it does not take over normal cursor movement in multiline input.
       if (currentIndex === null && text.length > 0) {
         return false;
       }
@@ -1158,9 +1159,9 @@ function LeadingChineseSlashAliasPlugin({ disabled }: { disabled?: boolean }) {
         return;
       }
 
-      // 中文输入法下用户在输入框第一位想打 `/` 唤起命令时，
-      // 可能会实际输入顿号 `、`。这里只拦截真实手输且位于全文开头的顿号，
-      // 立即归一成标准 `/`，避免把顿号扩散成 slash command 的另一套匹配语法。
+      // With a Chinese IME, a user trying to type `/` at the start of the input to open commands
+      // may actually enter the ideographic comma `、`. Intercept only a real keystroke at the start of the full text,
+      // and normalize it to `/` immediately so the comma does not become a second slash-command matching syntax.
       event.preventDefault();
       editor.update(
         () => {
@@ -1210,8 +1211,8 @@ function PasteCapturePlugin({
       const wasDefaultPrevented = event.defaultPrevented;
       onPaste(event);
       if (event.defaultPrevented && !wasDefaultPrevented) {
-        // 长文本已经被转成附件后，必须阻断 Lexical 后续 paste command，
-        // 否则会出现“附件有了，正文也被插入”的双份内容。
+        // Once long text has been converted to an attachment, block Lexical's subsequent paste command;
+        // otherwise both the attachment and the text would be inserted.
         event.stopImmediatePropagation();
       }
     };
@@ -1227,7 +1228,7 @@ function PasteCapturePlugin({
   return null;
 }
 
-/** 暴露 focus / clear / getText 给外部 */
+/** Expose focus / clear / getText to callers. */
 export function insertEditorMention(
   editor: LexicalEditor,
   mention: ComposerMentionPrefill,
@@ -1236,8 +1237,8 @@ export function insertEditorMention(
   const selection = selectionState?.read(() => $getSelection()?.clone() ?? null);
   editor.update(
     () => {
-      // 浮层获取焦点后 Lexical 选区会丢失，恢复打开菜单前的光标，避免覆盖整份草稿。
-      // 草稿可能在菜单打开期间被替换；旧节点不存在时不能恢复选区，否则 Lexical 会抛错。
+      // Focusing an overlay loses the Lexical selection. Restore the cursor from before the menu opened to avoid replacing the whole draft.
+      // The draft may be replaced while the menu is open; do not restore a selection whose old node no longer exists, or Lexical will throw.
       if ($isRangeSelection(selection)) {
         if ($getNodeByKey(selection.anchor.key) && $getNodeByKey(selection.focus.key)) {
           $setSelection(selection);
@@ -1287,7 +1288,8 @@ function EditorApiPlugin({
       setMention: (mention, trailingText) =>
         replaceEditorWithMention(editor, mention, trailingText),
       setText: (text: string) => replaceEditorText(editor, text),
-      setTextWithPluginMentions: (text: string) => replaceEditorTextWithPluginMentions(editor, text),
+      setTextWithPluginMentions: (text: string) =>
+        replaceEditorTextWithPluginMentions(editor, text),
       setEditorStateJson: (editorStateJson: string) =>
         replaceEditorStateJson(editor, editorStateJson),
       setSkillMention: (skillName: string, markdown = `$${skillName}`, trailingText = " ") =>
@@ -1321,7 +1323,7 @@ interface LexicalChatInputProps {
   workspacePath: string;
   workspaceIdentity?: string;
   taskId: string | null;
-  /** 仅影响 Skill 引用目录；草稿可使用 prewarm Session runtime。 */
+  /** Affects only the Skill reference directory; drafts may use the prewarmed Session runtime. */
   skillCatalogSessionId?: string | null;
   inputTestId?: string;
   editorApiRef?: React.MutableRefObject<LexicalChatInputHandle | null>;
@@ -1331,9 +1333,9 @@ interface LexicalChatInputProps {
   onWhiteboardMentionSelected?: (boardId: string) => void | Promise<void>;
   onPaste?: (event: ChatComposerPasteEvent) => void;
   excludedSlashCommandNames?: readonly string[];
-  /** App 层本地斜杠命令（如 `/side`），选中即执行 UI 行为，不发送。 */
+  /** App-local slash commands (such as `/side`): selecting one performs a UI action and does not send it. */
   appSlashCommands?: readonly AppSlashCommand[];
-  /** mention（@/#）面板开关。v4 数据面未就绪时显式关闭，入口保留。 */
+  /** Toggle for the mention (@/#) panel. Explicitly disable it while the v4 data plane is unavailable, while keeping the entry point. */
   enableMentionPanel?: boolean;
 }
 
@@ -1401,8 +1403,8 @@ export function LexicalChatInput({
       });
     };
 
-    // Lexical 编辑器初始化、slash/mention plugin 和外部 portal 分属不同组件。
-    // 这里等浏览器下一帧再打点，才能和 composer shell 首帧、toolbar portal ready 对齐。
+    // Lexical editor initialization, slash/mention plugins, and the external portal belong to different components.
+    // Record this on the next browser frame to align with the composer shell's first frame and toolbar portal readiness.
     if (typeof requestAnimationFrame === "function") {
       frameId = requestAnimationFrame(logReady);
     } else {
@@ -1434,9 +1436,9 @@ export function LexicalChatInput({
     },
     [editorApiRef, onSubmit],
   );
-  // Lexical 的 ContentEditable props 是一个互斥联合类型，
-  // aria-placeholder 一旦出现就要求 placeholder 同时存在。
-  // 之前直接写三元 JSX，TypeScript 在合并两条分支时没有正确保留这组联动约束，导致误报缺少 placeholder。
+  // Lexical's ContentEditable props are a mutually exclusive union type;
+  // when aria-placeholder is present, placeholder must also be present.
+  // Writing a JSX ternary directly previously caused TypeScript to lose this relationship while merging branches and falsely report a missing placeholder.
   const contentEditableProps: React.ComponentProps<typeof ContentEditable> = placeholder
     ? {
         "aria-placeholder": placeholder,
@@ -1458,8 +1460,8 @@ export function LexicalChatInput({
 
   const contentEditable = (
     <ContentEditable
-      // Bugfix: mention node 使用固定行高的 inline-flex chip，普通正文如果继承浏览器 normal line-height，
-      // 在 token 后继续输入文字时会按不同 line box 计算基线；这里显式收口正文行高，并允许手机远控使用 16px 防止 iOS 聚焦放大。
+      // Bugfix: Mention nodes use inline-flex chips with a fixed line height. If regular text inherits the browser normal line-height,
+      // text typed after a token gets its baseline from a different line box. Set the body line height explicitly, and allow 16px in mobile remote control to prevent iOS zoom on focus.
       className={`min-h-10 max-h-40 overflow-y-auto ${resolveMobileInputTextSizeClassName({
         avoidIosInputFocusZoom,
       })} text-foreground outline-none`}
@@ -1474,8 +1476,8 @@ export function LexicalChatInput({
       namespace: "ChatInput",
       theme: EDITOR_THEME,
       nodes: [PromptMentionNode],
-      // LexicalComposer initialConfig 每次 render 新建会让输入区子树被记录为 props 变化；
-      // 配置内容本身是静态的，固定引用能避免无关状态更新触发 composer 子树冒泡。
+      // Creating LexicalComposer initialConfig on every render marks the input subtree as having changed props.
+      // The configuration is static, so a stable reference prevents unrelated state updates from propagating through the composer subtree.
       onError: (error: Error) => {
         logger.error("[LexicalChatInput] editor error:", error);
       },
@@ -1532,7 +1534,7 @@ export function LexicalChatInput({
   );
 }
 
-/** 简单的错误边界 */
+/** A simple error boundary. */
 function LexicalErrorBoundary({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }

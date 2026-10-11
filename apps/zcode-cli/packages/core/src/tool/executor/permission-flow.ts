@@ -78,7 +78,7 @@ export async function resolveToolPermission(
   let firstInput = true;
   let hooksAvailable = true;
   let permissionWaitMs = 0;
-  // 根因：递归重入会重跑 Hook，并把问答答案当新操作；显式转换仅重判新输入。
+  // Root cause: recursive re-entry reruns hooks and treats the answer as a new operation; explicit conversion rechecks only the new input.
   while (true) {
     if (signal?.aborted)
       return {
@@ -99,7 +99,7 @@ export async function resolveToolPermission(
         mode,
         planEnabled: deps.sessionModePort?.isPlanEnabled?.(),
         prePlanMode: deps.sessionModePort?.getPrePlanMode(),
-        // 草稿预批与实际工具输入共用已准备的 cwd，不能在合并 Guarded 时漏传。
+        // Draft pre-approval and actual tool input share the prepared cwd; do not omit it when combining Guarded checks.
         workingDirectory: context.workingDirectory,
       },
       resolveRuntimePermissionCapability(entry, executionInput, context),
@@ -118,7 +118,7 @@ export async function resolveToolPermission(
       workingDirectory: context.workingDirectory,
       workspaceRoot: context.workspaceRoot,
     });
-    // 修复原因：统一审批流程曾丢失原日志合同；恢复关联字段，输入仍只记录结构摘要。
+    // Reason for the fix: the unified approval flow had dropped the original logging contract; restore correlation fields while continuing to log only input-shape summaries.
     deps.logger?.debug("Tool permission evaluated", {
       ...traceContextToLogContext(traceContext),
       decision: decision.decision,
@@ -167,7 +167,7 @@ export async function resolveToolPermission(
       };
     }
 
-    // 工具预览只能控制普通审批，不能覆盖 Guarded 的单次确认。
+    // Tool previews can control ordinary approval only; they cannot override Guarded's one-time confirmation.
     const approval =
       decision.approvalMode === "user-once"
         ? { gate: "ask" as const }
@@ -207,7 +207,7 @@ export async function resolveToolPermission(
       });
       hooksAvailable = false;
       let rewrite: PermissionResponseTransition | undefined;
-      // 非 guarded 保留已发布的 Hook/project/Memory 重判范围与授权语义。
+      // For non-Guarded tools, preserve the established Hook/project/Memory recheck scope and authorization semantics.
       if (mode !== "guarded" && outcome.source === "hook" && outcome.result.decision === "modify") {
         const normalized = preparePermissionInput(
           outcome.result.modifiedInput ?? executionInput,
@@ -224,8 +224,8 @@ export async function resolveToolPermission(
           toolCall,
         });
         if (recheck.permissionDecision?.decision === "ask") {
-          // 旧分支用同一 requestId 再次调用 broker，迟到响应可能批准新输入。
-          // 保留原有 project/Memory 重判范围，生命周期改走相同的结束→新建转换。
+          // The old branch called the broker again with the same requestId, so a late response could approve new input.
+          // Preserve the existing project/Memory recheck scope and use the same finish-then-create transition for lifecycle handling.
           rewrite = { kind: "rewrite", input: normalized };
         } else {
           executionInput = normalized;
@@ -272,7 +272,7 @@ export async function resolveToolPermission(
       };
     }
     permissionWaitMs += Math.max(0, Date.now() - startedAt);
-    // 只有此处结束请求：校验错误、取消、改写和正常响应都发一次终态。
+    // End the request only here: validation errors, cancellation, changes, and normal responses all publish exactly one terminal event.
     await emitPermissionResolved(deps, toolCall, requestId, resolved, traceContext);
     deps.logger?.info("Tool permission resolved", {
       ...traceContextToLogContext(traceContext),

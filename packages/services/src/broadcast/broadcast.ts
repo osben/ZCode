@@ -3,20 +3,20 @@ import { ServiceChannels } from "@zcode/shared";
 import { createServiceDescriptor } from "../descriptors.js";
 
 /**
- * 广播消息
+ * Broadcast message
  *
- * 用于跨窗口状态同步。从 Renderer 发出后经 host → main → 其他 host → 对应 Renderer。
+ * Used for cross-window state synchronization. Sent from the Renderer through host → main → other hosts → the corresponding Renderer.
  */
 export interface BroadcastMessage {
-  /** 频道名，如 "state:theme"、"state:locale" */
+  /** Channel name, such as "state:theme" or "state:locale" */
   channel: string;
-  /** 消息负载 */
+  /** Message payload */
   payload: unknown;
-  /** 发送源窗口 ID（由 BroadcastHub 填充，接收端可用来跳过自己） */
+  /** ID of the sending window (filled by BroadcastHub; receivers can use it to skip their own messages) */
   sourceWindowId?: number;
 }
 
-/** 跨窗口 opaque claim 的临时 reservation；token 用于安全 commit/release。 */
+/** Temporary reservation for a cross-window opaque claim; the token is used for safe commit/release. */
 export interface BroadcastClaimLease {
   key: string;
   token: string;
@@ -29,23 +29,23 @@ export type BroadcastClaimAcquireResult =
   | { status: "unavailable" };
 
 /**
- * 广播服务接口
+ * Broadcast service interface
  *
- * 路径：Renderer → (RPC call) → Host → (parentPort) → Main(BroadcastHub)
- *       → (postMessage) → 其他 Host → (RPC event onMessage) → 对应 Renderer
+ * Flow: Renderer → (RPC call) → Host → (parentPort) → Main(BroadcastHub)
+ *       → (postMessage) → other Host → (RPC event onMessage) → corresponding Renderer
  */
 export interface IBroadcastService {
-  /** 发送广播消息 */
+  /** Send a broadcast message */
   send(message: BroadcastMessage): Promise<void>;
-  /** 申请带 token 的临时 reservation；busy 可在 retryAfterMs 后重试。 */
+  /** Request a temporary reservation with a token; if busy, retry after retryAfterMs. */
   acquireClaim(key: string): Promise<BroadcastClaimAcquireResult>;
-  /** 把 reservation 提交为应用进程生命周期内的永久 claim。 */
+  /** Commit the reservation as a permanent claim for the lifetime of the application process. */
   commitClaim(lease: BroadcastClaimLease): Promise<void>;
-  /** 按 token 释放尚未 commit 的 reservation；迟到 token 不影响后来 winner。 */
+  /** Release an uncommitted reservation by token; a late token does not affect a later winner. */
   releaseClaim(lease: BroadcastClaimLease): Promise<void>;
-  /** 在当前应用进程内原子占用 opaque key；同一 key 仅首次返回 true。 */
+  /** Atomically claim an opaque key within the current application process; only the first claim for a key returns true. */
   tryClaim(key: string): Promise<boolean>;
-  /** 接收来自其他窗口的广播 */
+  /** Receive a broadcast from another window */
   onMessage: Event<BroadcastMessage>;
 }
 

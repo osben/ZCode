@@ -46,7 +46,7 @@ export function readProjectPermissionMode(
   return isPromiseLike(mode) ? undefined : (mode ?? undefined);
 }
 
-/** 读取 Session 自己最近一次显式选择；恢复时它高于 Environment 默认值。 */
+/** Read the Session's most recent explicit selection; on recovery it takes precedence over the Environment default. */
 export async function readSessionModelSelection(
   store: Pick<SessionStorePort, "sessionEntries">,
   sessionID: SessionId,
@@ -59,8 +59,8 @@ export async function readSessionModelSelection(
   const data = entries.at(-1)?.data;
   const complete = parseModelSelectionValue(data);
   if (complete) return residentModelSelection(complete);
-  // reasoning 的错误类型不能抹掉可恢复的当前模型身份；这里只读取新字段，
-  // 不借旧 thoughtLevel/消息/default 补值。执行前仍由 Registry 严格校验。
+  // An invalid reasoning value must not erase the recoverable current model identity. Read only the
+  // new field here; do not fill it from old thoughtLevel/messages/defaults. Registry still validates before execution.
   if (data && typeof data === "object" && !Array.isArray(data)) {
     const current = data as Record<string, unknown>;
     return residentModelSelection(
@@ -71,12 +71,15 @@ export async function readSessionModelSelection(
 }
 
 /**
- * 加速卡 Provider 是 `selectionScope=execution` 的单轮执行身份，永远不能当作会话常驻选型
- * （highspeed-card-spec §5.1）。旧版本分叉会把分叉点消息上的加速选型写进 child 的
- * model_selection entry，这类会话恢复后常驻在一个无凭据、且不在模型列表里的隐藏 Provider 上，
- * 还会经 restoredModelSelection 投影成界面选中态与 contextWindow。读取时直接丢弃，
- * 会话回到「未绑定」而不是借默认模型补齐（恢复语义见 runtime-config 的 initialModelSelection），
- * 由用户重新选一次模型，避免隐藏身份继续在存储与投影里传播。
+ * Acceleration-card Providers are single-turn execution identities with
+ * `selectionScope=execution`; they must never become a session's resident selection
+ * (highspeed-card-spec §5.1). Older forks wrote the accelerated selection from the fork-point
+ * message into the child's model_selection entry. After restore, such sessions stayed resident on
+ * a hidden Provider with no credentials that never appears in the model list, and the
+ * restoredModelSelection projection even showed it as the selected UI state and contextWindow.
+ * Discard it on read: the session returns to "unbound" instead of being filled in with the default
+ * model (restore semantics are runtime-config's initialModelSelection), and the user picks a model
+ * again, preventing the hidden identity from spreading through storage and projections.
  */
 function residentModelSelection(selection: ModelSelection | undefined): ModelSelection | undefined {
   if (!selection) return undefined;
@@ -119,7 +122,7 @@ export async function openStartupSessionStore(
 
 export function getSessionDbPath(configResult: ConfigResult, workingDirectory?: string): string {
   const configured = configResult.config.storage.sessionDbPath;
-  // 存储 Worker 不能 chdir；显式传入业务实际 cwd，保持相对路径与普通 Agent 一致。
+  // The storage Worker cannot chdir; pass the actual business cwd explicitly so relative paths match the regular Agent.
   if (workingDirectory && !isAbsolute(configured) && !configured.startsWith("~/"))
     return resolve(workingDirectory, configured);
   return resolvePath(configured);

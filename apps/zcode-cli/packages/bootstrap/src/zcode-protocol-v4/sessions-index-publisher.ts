@@ -1,8 +1,9 @@
-// sessions-index topic publisher：在 SessionsIndexProjection 之上做
-// seq 区间记账 + snapshot/delta 帧构造 + 每连接单订阅（重订阅替换旧代际）。
-// 比 ConversationTopicPublisher 简单：index delta 不做 profile 过滤（列表摘要对所有客户端一致），
-// conflation 已在 projection 内完成（同 sessionId 覆盖）；重放缓冲有界，
-// 溢出/断档退化为 snapshot（conflated 语义下与续传等价）。
+// sessions-index topic publisher: builds on SessionsIndexProjection to account for seq ranges,
+// construct snapshot/delta frames, and maintain one subscription per connection (resubscription
+// replaces the previous generation). Simpler than ConversationTopicPublisher: index deltas are not
+// profile-filtered (list summaries are identical for all clients), conflation already happens in the
+// projection (same sessionId overwrites), and the replay buffer is bounded. Overflow or a gap falls
+// back to a snapshot, equivalent to resume under conflated semantics.
 import type {
   ConversationSnapshot,
   SessionsIndexDelta,
@@ -19,7 +20,7 @@ import type { TopicFrameReservation } from "./topic-frame-reservation.js";
 interface IndexSubscription {
   subscriptionId: string;
   connectionId: string;
-  /** 下一帧 fromSeq（(fromSeq, toSeq] 语义）。 */
+/** fromSeq for the next frame (with (fromSeq, toSeq] semantics). */
   sentSeq: number;
   inFlight: TopicFrameReservation<SessionsIndexTopicFrame> | null;
   nextLogicalFrameOrdinal: number;
@@ -41,7 +42,7 @@ interface SessionsIndexResyncRequest {
 export class SessionsIndexPublisher {
   private readonly projection: SessionsIndexProjection;
   private currentSeq = 0;
-  /** (seq, delta) 有界重放缓冲：仅保留最近若干帧供 resume；溢出退化为 snapshot。 */
+/** Bounded (seq, delta) replay buffer: retain only the most recent frames for resume; overflow falls back to a snapshot. */
   private readonly deltaLog: Array<{ seq: number; delta: SessionsIndexDelta }> = [];
   private readonly maxDeltaLog = 512;
   private readonly subscriptions = new Map<string, IndexSubscription>();
@@ -61,12 +62,12 @@ export class SessionsIndexPublisher {
     return sessionsIndexTopic(this.workspaceId);
   }
 
-  /** 冷启动种子：直接放入一条已知 summary（store 会话，无 live projection）。 */
+/** Cold-start seed: insert a known summary directly (a stored session without a live projection). */
   seed(summary: Parameters<SessionsIndexProjection["seed"]>[0]): void {
     this.projection.seed(summary);
   }
 
-  /** 迁移重读：补齐首次冷种子缺失的 store 摘要，并为在线订阅产生正常 delta。 */
+/** Migration reread: fill in store summaries missing from the initial cold seed and emit regular deltas for live subscriptions. */
   mergeMissingStoredSummaries(
     summaries: readonly Parameters<SessionsIndexProjection["seed"]>[0][],
   ): boolean {
@@ -75,7 +76,7 @@ export class SessionsIndexPublisher {
     );
   }
 
-  /** 某会话最新快照进入 → 更新 summary，产生的 delta 记账并推进 seq。返回是否有变化。 */
+/** Receive the latest snapshot for a session, update its summary, account for the resulting delta, and advance seq. Return whether it changed. */
   ingestConversation(
     snapshot: ConversationSnapshot,
     extra: Omit<SessionSummaryDeriveExtra, "workspaceId">,
@@ -83,7 +84,7 @@ export class SessionsIndexPublisher {
     return this.record(this.projection.upsertFromConversation(snapshot, extra));
   }
 
-  /** 会话移除 → remove delta 记账。返回是否有变化。 */
+/** Remove a session and account for its remove delta. Return whether it changed. */
   removeSession(sessionId: string): boolean {
     return this.record(this.projection.remove(sessionId));
   }
@@ -102,7 +103,7 @@ export class SessionsIndexPublisher {
     return this.currentSeq;
   }
 
-  /** 订阅：base 有效且可续传则 resume，否则 snapshot。每连接单订阅（替换旧代际）。 */
+/** Subscribe: resume if base is valid and resumable; otherwise send a snapshot. One subscription per connection (replace the previous generation). */
   subscribe(
     connectionId: string,
     base?: { logEpoch: string; seq: number },
@@ -147,7 +148,7 @@ export class SessionsIndexPublisher {
       return true;
     };
 
-    // resume：base 同代际 + seq 落在重放缓冲区间内。
+    // Resume when the base has the same epoch and its sequence is within the replay buffer range.
     const canResume =
       base !== undefined &&
       base.logEpoch === this.logEpoch &&
@@ -171,7 +172,7 @@ export class SessionsIndexPublisher {
     return this.subscribeResult(subscriptionId, "snapshot", reservation, rollback);
   }
 
-  /** same-sub recovery：从客户端 base 重建，不信 sentSeq。 */
+  /** Same-subscription recovery: rebuild from the client's base; do not trust sentSeq. */
   resyncReserved(
     subscriptionId: string,
     request: SessionsIndexResyncRequest,
@@ -275,7 +276,7 @@ export class SessionsIndexPublisher {
     };
   }
 
-  /** 排出某订阅未发的增量帧；无增量返回 null。 */
+  /** Drain unsent delta frames for a subscription; return null if there are none. */
   flush(subscriptionId: string): SessionsIndexTopicFrame | null {
     const reservation = this.reserveFlush(subscriptionId);
     if (!reservation || !reservation.commit()) return null;
@@ -295,7 +296,8 @@ export class SessionsIndexPublisher {
     deliveryKind: TopicFrameDeliveryKind = "online",
   ): TopicFrameReservation<SessionsIndexTopicFrame> {
     const pending = this.deltaLog.filter((entry) => entry.seq > subscription.sentSeq);
-    // 重放缓冲已丢弃部分区间（seq 断档）→ 退化为 snapshot（conflated 语义下等价）。
+    // The replay buffer dropped part of the range (a sequence gap); fall back to a snapshot, which
+    // is equivalent under conflated semantics.
     if (pending.length === 0 || pending[0]!.seq !== subscription.sentSeq + 1) {
       return this.reserveFrame(
         subscription,

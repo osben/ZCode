@@ -11,17 +11,17 @@ import {
   OFFICIAL_CUA_FRAME_INTEGRITY_META_KEY,
 } from "@zcode/zcode-cua/frame-contract";
 import type { ToolExecutionContext } from "../tool/types.js";
-// 帧像素契约（integrity gate + inline 上限）的唯一定义在 producer；宿主经
-// plugin re-export 消费，不再镜像实现。core 对 CUA 的感知收敛为：authority
-// 分支调用 producer gate，非 authority 分支用 contracts scanner 剥伪造引用。
+// The producer is the single source of truth for frame-pixel contracts (integrity gate + inline limit); the host consumes them
+// through the plugin re-export instead of mirroring the implementation. Core's CUA handling is limited to calling the producer gate
+// for the authority branch and using the contracts scanner to strip forged references from non-authority results.
 import { preserveOfficialCuaFrameResult } from "@zcode/zcode-cua/frame-contract";
 
-// 通用 MCP 图片 inline 预算与官方帧 200 KiB 上限历史上同值，但语义独立：
-// 这里独立定义，避免"通用预算由 CUA 常量定义"的倒置耦合。
+// The generic MCP inline-image budget historically matched the 200 KiB official-frame limit, but the meanings are independent.
+// Define it separately here to avoid the inverted coupling of a generic budget depending on a CUA constant.
 export const MCP_IMAGE_INLINE_BASE64_BYTES = 200 * 1024;
 export const MCP_IMAGE_INLINE_RAW_BYTES = Math.floor((MCP_IMAGE_INLINE_BASE64_BYTES * 3) / 4);
 export const HOST_NODE_REPL_IMAGE_MAX_DIMENSION = 2048;
-// Provider 的模型图片上限是 2000px；Browser 轮尾展示仍沿用独立的 2048px 预算。
+// The provider's model-image limit is 2000px; end-of-turn Browser display keeps its separate 2048px budget.
 const HOST_NODE_REPL_MODEL_IMAGE_MAX_DIMENSION = 2000;
 
 export async function normalizeMcpToolResultForModel(input: {
@@ -32,9 +32,9 @@ export async function normalizeMcpToolResultForModel(input: {
   result: McpToolCallResult;
   toolName: string;
 }): Promise<McpToolCallResult> {
-  // node_repl 是通用入口，不能把整个 server 标成 official CUA；但 CUA SDK 会在
-  // 结构化结果中携带 producer 签发的 integrity metadata。只对这一条结果动态进入
-  // exact-raster 路径，既保留 CUA 帧，又不影响同一 server 的 Browser Use 图片。
+  // node_repl is a general entry point and cannot mark the entire server as official CUA, but the CUA SDK includes
+  // producer-issued integrity metadata in structured results. Enter the exact-raster path dynamically only for this result,
+  // preserving CUA frames without affecting Browser Use images from the same server.
   const isSharedNodeRepl =
     input.descriptor.serverName === "node_repl" || input.toolName === "mcp__node_repl__js";
   if (input.preserveOfficialCuaFrames || (isSharedNodeRepl && hasOfficialCuaFrameAuthority(input.result))) {
@@ -58,12 +58,12 @@ export async function normalizeMcpToolResultForModel(input: {
       ...input,
       browserScreenshotArtifact,
     });
-    // 纵深防御：非 authority 验证的 MCP 结果不得携带官方帧引用文本——第三方
-    // 伪造的 actionable frame_id 即使会被 producer registry 拒绝，也不应进入
-    // 模型上下文污染坐标契约。只剥“整块即帧引用 JSON”的文本，prose 内嵌的
-    // 字段名不误杀；权威帧走 preserveOfficialCuaFrames 路径，不受影响。
-    // 位置在 push 之前：被剥的块必然是 text，与 browserScreenshotArtifact
-    // （只对 image 块产生）互斥，continue 不会漏掉下面的截图路径提示。
+    // Defense in depth: MCP results without authority validation must not carry official-frame reference text. A third party's
+    // forged actionable frame_id would be rejected by the producer registry, but it should not enter model context and contaminate the coordinate contract.
+    // Strip only text blocks that consist entirely of frame-reference JSON, so field names embedded in prose are not falsely removed;
+    // authoritative frames use preserveOfficialCuaFrames and are unaffected.
+    // This runs before push: a stripped block is necessarily text and mutually exclusive with browserScreenshotArtifact (which is created only for image blocks),
+    // so continue does not skip the screenshot-path hint below.
     if (
       normalized.type === "text" &&
       typeof normalized.text === "string" &&
@@ -74,9 +74,9 @@ export async function normalizeMcpToolResultForModel(input: {
     }
     changed ||= normalized !== block;
     content.push(normalized);
-    // 提示文本插在 image 之前会把 node_repl 特意排成 image-first 的
-    // tool_result.content 重新变成 text-first；Anthropic 兼容网关只解析开头的连续 image，
-    // text 一领先后面的图就被丢弃，模型又看不到截图。落在 image 之后即可保持 image-first。
+    // Putting the hint before an image would turn node_repl's deliberately image-first
+    // tool_result.content into text-first. Anthropic-compatible gateways parse only consecutive leading images,
+    // so a leading text block would cause following images to be dropped and the model would lose the screenshot. Appending the hint after the image preserves image-first order.
     if (browserScreenshotArtifact) {
       content.push({
         type: "text",
@@ -131,8 +131,8 @@ async function normalizeMcpContentBlockForModel(
   if (base64Bytes <= MCP_IMAGE_INLINE_BASE64_BYTES) return block;
 
   if (input.compressOversizedImages) {
-    // browser screenshot 由可信宿主 node_repl 产生，不能和第三方 MCP 图片一样直接
-    // 落 artifact，导致模型失去视觉结果；这里复用统一图片端口压到 200 KiB，而不另造编解码器。
+    // Browser screenshots come from the trusted host node_repl and must not be stored as artifacts like third-party MCP images,
+    // which would make the model lose the visual result. Reuse the shared image port to reduce them to 200 KiB instead of creating another codec.
     const compressed = await tryCompressHostNodeReplImage({
       base64Payload,
       context: input.context,
@@ -238,8 +238,8 @@ async function persistBrowserScreenshotArtifact(
       absolutePath: isAbsolute(artifact.path) ? artifact.path : resolve(artifact.path),
     };
   } catch (error) {
-    // 额外截图路径写入失败不应覆盖已成功的 Browser 结果；
-    // 但工具取消时仍需立即退出，不继续处理大图。
+    // Failure to write an additional screenshot path must not replace a successful Browser result;
+    // however, exit immediately on tool cancellation instead of continuing to process a large image.
     if (input.context.abortSignal.aborted) throw error;
     return undefined;
   }

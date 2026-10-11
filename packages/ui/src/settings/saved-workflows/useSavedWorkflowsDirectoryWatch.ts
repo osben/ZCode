@@ -4,7 +4,7 @@ import { logger } from "@/logger.js";
 
 const WATCH_DEBOUNCE_MS = 300;
 
-/** workspacePath 可能是 Windows 路径；沿用它自己的分隔符拼子目录，别把 `/` 混进 `\\` 路径。 */
+/** workspacePath may be a Windows path; use its own separator when joining the subdirectory, rather than mixing `/` into a `\\` path. */
 function savedWorkflowsDirectoryPath(workspacePath: string): string {
   const separator = workspacePath.includes("\\") && !workspacePath.includes("/") ? "\\" : "/";
   const trimmed = workspacePath.replace(/[\\/]+$/u, "");
@@ -12,13 +12,13 @@ function savedWorkflowsDirectoryPath(workspacePath: string): string {
 }
 
 /**
- * 目录监听：对话里 SaveWorkflow 落盘后中枢自动更新。
- * 目录不存在时 watch 会失败——那是常态（大多数项目没保存过工作流），静默跳过，靠切标签 / 手动
- * 刷新补上。非递归：只看这一层（Linux 上递归 fs.watch 有既知问题）。服务实例变化（远程重连）时
- * effect 依赖变化会拆掉旧 watcher 重建，旧 host 的 id 不会泄漏。
+ * Watch the directory so the central list updates after SaveWorkflow writes a workflow from a conversation.
+ * If the directory does not exist, watch fails; this is normal for most projects that have not saved a workflow. Skip quietly and catch up on tab change or manual
+ * refresh. The watcher is non-recursive and observes only this level (recursive fs.watch has known issues on Linux). When the service instance changes (for example, after a remote reconnect),
+ * effect dependencies dispose of the old watcher and create a new one without leaking the old host ID.
  *
- * 项目组传 `workspacePath`（拼出 `<ws>/.zcode/workflows`）；全局组传 `directory`（协议 list 回的
- * 绝对目录，即 `~/.zcode/workflows`），二者择一——`directory` 优先。
+ * Project groups pass `workspacePath` (to build `<ws>/.zcode/workflows`); global groups pass `directory` (the
+ * absolute directory returned by the protocol list, namely `~/.zcode/workflows`). Pass one or the other; `directory` takes precedence.
  */
 export function useSavedWorkflowsDirectoryWatch({
   fileWatcherService,
