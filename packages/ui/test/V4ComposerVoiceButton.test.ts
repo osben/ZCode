@@ -34,7 +34,11 @@ describe("V4ComposerVoiceButton live feedback", () => {
     expect(screen.getByRole("meter").getAttribute("aria-valuenow")).toBe("60");
     expect(screen.getByTestId("voice-dictation-preview").textContent).toContain("Hello ");
     expect(screen.getByTestId("voice-dictation-preview").textContent).toContain("world");
-    expect(screen.getByText("voiceDictation.composer.listening")).toBeTruthy();
+    // Вариант "listening" теперь встречается дважды: видимый лейбл панели и sr-only live region.
+    expect(screen.getByTestId("voice-dictation-feedback").textContent).toContain(
+      "voiceDictation.composer.listening",
+    );
+    expect(screen.getAllByRole("status").length).toBe(2);
     expect(screen.getByTestId("voice-dictation-feedback").className).toContain("absolute");
     expect(screen.getByTestId("voice-dictation-feedback").className).toContain("w-56");
     expect(screen.getByTestId("voice-dictation-control").className).toContain("relative");
@@ -57,5 +61,7 @@ describe("V4ComposerVoiceButton live feedback", () => {
 
     expect(screen.queryByRole("meter")).toBeNull();
     expect(screen.queryByTestId("voice-dictation-preview")).toBeNull();
+    // Постоянный live region объявляет и не-Recording фазы; без превью он единственный role="status".
+    expect(screen.getByRole("status").textContent).toBe("voiceDictation.composer.status.idle");
   });
 });

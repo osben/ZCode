@@ -52,6 +52,7 @@ vi.mock("@/lib/voiceDictationRecorder.js", () => ({
   },
 }));
 
+import { toast } from "@/components/ui/toast.js";
 import { useVoiceDictation } from "@/hooks/useVoiceDictation.js";
 
 afterEach(() => {
@@ -61,6 +62,8 @@ afterEach(() => {
 
 beforeEach(() => {
   mocks.recorder = null;
+  // module-mock 的 vi.fn 跨用例共享；restoreAllMocks 不清空调用历史，先清空再断言。
+  vi.mocked(toast).mockClear();
   mocks.service = {
     setIdleUnloadMinutes: vi.fn().mockResolvedValue(undefined),
     beginStream: vi.fn().mockResolvedValue("stream-1"),
@@ -150,6 +153,40 @@ describe("useVoiceDictation streaming", () => {
     expect(mocks.service?.beginStream).not.toHaveBeenCalled();
     expect(mocks.recorder?.isRecording).toBe(false);
     expect(hook.result.current.phase).toBe("idle");
+  });
+
+  it("merges backlogged chunks when feed RPC is slower than the mic instead of failing the stream", async () => {
+    let pendingFeed = 0;
+    const feedPayloads: number[] = [];
+    mocks.service!.feedStream!.mockImplementation(async (_streamId: string, pcm: Uint8Array) => {
+      feedPayloads.push(pcm.byteLength);
+      pendingFeed += 1;
+      // 模拟 RPC 慢于送块：在前几次 feed 完成前继续压入新块。
+      if (pendingFeed <= 2) {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+      return { committed: "Hello ", tentative: "there" };
+    });
+    const onTranscript = vi.fn();
+    const now = vi.spyOn(Date, "now").mockReturnValue(1000);
+    const hook = renderHook(() =>
+      useVoiceDictation({ enabled: true, onTranscript, scopeRef: { current: null } }),
+    );
+
+    await act(async () => hook.result.current.start());
+    for (let index = 0; index < 8; index += 1) {
+      await act(async () => {
+        mocks.recorder?.options?.onChunk?.(new Float32Array(100).fill(0.5));
+      });
+    }
+    now.mockReturnValue(1500);
+    await act(async () => hook.result.current.stop());
+
+    // 慢 RPC 只应造成积压合并，而不是终止听写：无失败提示，全部采样按序送达，最终转写成功。
+    expect(toast).not.toHaveBeenCalled();
+    expect(feedPayloads.reduce((sum, bytes) => sum + bytes, 0)).toBe(8 * 100 * 2);
+    expect(mocks.service?.finalizeStream).toHaveBeenCalledWith("stream-1");
+    expect(onTranscript).toHaveBeenCalledWith("Hello there");
   });
 
   it("cancels the stream on window blur without inserting its preview", async () => {

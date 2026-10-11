@@ -10,14 +10,13 @@ import { isShortcutRecordingActive, matchesShortcutBinding } from "@/shortcuts/b
 import { isVoiceShortcutReleased } from "@/lib/voiceDictationShortcut.js";
 import {
   VOICE_MIN_RECORDING_MS,
+  concatFloat32Chunks,
   float32ToPcm16Le,
   samplesToMilliseconds,
 } from "@/lib/voiceDictationAudio.js";
 import { VoiceDictationRecorder } from "@/lib/voiceDictationRecorder.js";
 
 export type VoiceDictationPhase = "idle" | "loading" | "recording" | "transcribing";
-
-const MAX_PENDING_STREAM_CHUNKS = 4;
 
 interface UseVoiceDictationOptions {
   /** 仅桌面端为 true：转写由本机 Desktop Host 执行，Web/远端不提供语音输入。 */
@@ -54,7 +53,9 @@ export function useVoiceDictation({ enabled, onTranscript, scopeRef }: UseVoiceD
   const startPromiseRef = useRef<Promise<void> | null>(null);
   const streamIdRef = useRef<string | null>(null);
   const streamQueueRef = useRef<Promise<void>>(Promise.resolve());
-  const pendingChunksRef = useRef(0);
+  /** 待发送的 PCM 块；由串行 flush 任务合并发送，RPC 短暂慢于麦克风时只积压、不失败。 */
+  const streamBacklogRef = useRef<Float32Array[]>([]);
+  const streamFlushScheduledRef = useRef(false);
   const streamErrorRef = useRef<unknown>(null);
   const startGenerationRef = useRef(0);
   const heldBindingRef = useRef<string | null>(null);
@@ -82,6 +83,7 @@ export function useVoiceDictation({ enabled, onTranscript, scopeRef }: UseVoiceD
       if (streamIdRef.current !== streamId) return;
       streamErrorRef.current = error;
       streamIdRef.current = null;
+      streamBacklogRef.current = [];
       recorder.cancel();
       setLevel(0);
       setPreview(null);
@@ -95,32 +97,43 @@ export function useVoiceDictation({ enabled, onTranscript, scopeRef }: UseVoiceD
     [cancelServiceStream, intl, recorder, updatePhase],
   );
 
+  const flushStreamBacklog = useCallback(
+    (streamId: string) => {
+      if (!voiceDictationService) return;
+      const next = streamQueueRef.current
+        .then(async () => {
+          // 任务开始即复位调度标记：此后送来的新块可以再次排队，队列深度因此不超过两条。
+          streamFlushScheduledRef.current = false;
+          if (streamIdRef.current !== streamId || streamErrorRef.current) return;
+          const backlog = streamBacklogRef.current;
+          streamBacklogRef.current = [];
+          if (backlog.length === 0) return;
+          const batched = concatFloat32Chunks(backlog);
+          const update = await voiceDictationService.feedStream(
+            streamId,
+            float32ToPcm16Le(batched),
+          );
+          if (streamIdRef.current === streamId) setPreview(update);
+        })
+        .catch((error: unknown) => failStream(streamId, error));
+      streamQueueRef.current = next;
+      streamFlushScheduledRef.current = true;
+    },
+    [failStream, voiceDictationService],
+  );
+
   const enqueueStreamChunk = useCallback(
     (samples: Float32Array) => {
       const streamId = streamIdRef.current;
       if (!streamId || streamErrorRef.current || !voiceDictationService) return;
-      if (pendingChunksRef.current >= MAX_PENDING_STREAM_CHUNKS) {
-        failStream(streamId, new Error("voice dictation stream exceeded its bounded PCM queue"));
-        return;
-      }
-
-      pendingChunksRef.current += 1;
-      const next = streamQueueRef.current
-        .then(async () => {
-          if (streamIdRef.current !== streamId || streamErrorRef.current) return;
-          const update = await voiceDictationService.feedStream(
-            streamId,
-            float32ToPcm16Le(samples),
-          );
-          if (streamIdRef.current === streamId) setPreview(update);
-        })
-        .catch((error: unknown) => failStream(streamId, error))
-        .finally(() => {
-          pendingChunksRef.current -= 1;
-        });
-      streamQueueRef.current = next;
+      // ScriptProcessor 固定周期送块，RPC 短暂变慢（慢机器、调度抖动）属正常现象；
+      // 之前达到上限直接 failStream 会丢掉整段已录语音，这里改为积压成批合并发送，
+      // 顺序由单一串行 flush 任务保证。
+      streamBacklogRef.current.push(samples);
+      if (streamFlushScheduledRef.current) return;
+      flushStreamBacklog(streamId);
     },
-    [failStream, voiceDictationService],
+    [flushStreamBacklog, voiceDictationService],
   );
 
   const start = useCallback(async (): Promise<void> => {
@@ -132,7 +145,8 @@ export function useVoiceDictation({ enabled, onTranscript, scopeRef }: UseVoiceD
     }
     const generation = ++startGenerationRef.current;
     streamErrorRef.current = null;
-    pendingChunksRef.current = 0;
+    streamBacklogRef.current = [];
+    streamFlushScheduledRef.current = false;
     streamQueueRef.current = Promise.resolve();
     setLevel(0);
     setPreview(null);
@@ -268,6 +282,7 @@ export function useVoiceDictation({ enabled, onTranscript, scopeRef }: UseVoiceD
       }
     } finally {
       streamIdRef.current = null;
+      streamBacklogRef.current = [];
       setPreview(null);
       updatePhase("idle");
     }
@@ -319,6 +334,7 @@ export function useVoiceDictation({ enabled, onTranscript, scopeRef }: UseVoiceD
         updatePhase("idle");
         const streamId = streamIdRef.current;
         streamIdRef.current = null;
+        streamBacklogRef.current = [];
         if (streamId) {
           void streamQueueRef.current
             .then(() => voiceDictationService?.cancelStream(streamId))
@@ -357,6 +373,7 @@ export function useVoiceDictation({ enabled, onTranscript, scopeRef }: UseVoiceD
       recorder.cancel();
       const streamId = streamIdRef.current;
       streamIdRef.current = null;
+      streamBacklogRef.current = [];
       if (streamId) {
         void streamQueueRef.current
           .then(() => voiceDictationService?.cancelStream(streamId))

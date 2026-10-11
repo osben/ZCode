@@ -39,6 +39,18 @@ function V4ComposerVoiceButtonImpl({
   const tooltip = shortcutLabel ? `${label} (${shortcutLabel})` : label;
   const Icon = recording ? Square : busy ? LoaderCircle : Mic;
   const levelPercent = Math.round(Math.max(0, Math.min(1, level)) * 100);
+  // 持久化 polite live region：焦点不在按钮上时（如正在录音）也能播报阶段变化；
+  // 预览面板只在 recording 且有文本时渲染，不能承担空闲/转写阶段的播报。
+  const statusAnnouncement = intl.formatMessage({
+    id:
+      phase === "loading"
+        ? "voiceDictation.composer.loading"
+        : recording
+          ? "voiceDictation.composer.listening"
+          : phase === "transcribing"
+            ? "voiceDictation.composer.status.transcribing"
+            : "voiceDictation.composer.status.idle",
+  });
 
   return (
     <div
@@ -113,6 +125,9 @@ function V4ComposerVoiceButtonImpl({
           />
         </Button>
       </ControlHintTooltip>
+      <span className="sr-only" role="status" aria-live="polite">
+        {statusAnnouncement}
+      </span>
     </div>
   );
 }

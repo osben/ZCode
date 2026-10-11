@@ -7440,6 +7440,8 @@ const enUS: Record<string, string> = {
   "voiceDictation.composer.stop": "Stop voice input",
   "voiceDictation.composer.level": "Microphone input level",
   "voiceDictation.composer.listening": "Listening",
+  "voiceDictation.composer.status.idle": "Voice input ready",
+  "voiceDictation.composer.status.transcribing": "Transcribing",
   "settings.computerUse.title": "Computer Use",
   "settings.computerUse.toggleLabel": "Enable Computer Use",
   "settings.computerUse.toggleDescription":

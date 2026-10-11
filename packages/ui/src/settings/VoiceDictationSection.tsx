@@ -77,6 +77,10 @@ function DesktopVoiceDictationSection() {
   const { settings, update } = useSettings();
   const shortcutLabel = useShortcutCommandLabel("voiceDictation");
   const voice: VoiceDictationSettings = settings?.voiceDictation ?? {};
+  // patchVoice 会被下载完成等延迟回调持有数分钟；合并必须基于最新设置，
+  // 否则下载期间用户改过的麦克风/语言/按键说话会被点击时的旧快照回滚。
+  const voiceRef = useRef(voice);
+  voiceRef.current = voice;
   const modelId = voice.modelId ?? null;
   const microphoneDeviceId = voice.microphoneDeviceId ?? null;
   const language = voice.language ?? DEFAULT_LANGUAGE;
@@ -134,7 +138,7 @@ function DesktopVoiceDictationSection() {
   const patchVoice = useCallback(
     async (patch: Partial<VoiceDictationSettings>) => {
       try {
-        await update({ voiceDictation: { ...voice, ...patch } });
+        await update({ voiceDictation: { ...voiceRef.current, ...patch } });
         if (patch.idleUnloadMinutes !== undefined) {
           await voiceDictationService?.setIdleUnloadMinutes(patch.idleUnloadMinutes);
         }
@@ -145,7 +149,7 @@ function DesktopVoiceDictationSection() {
         toast(intl.formatMessage({ id: "voiceDictation.saveFailed" }));
       }
     },
-    [intl, update, voice, voiceDictationService],
+    [intl, update, voiceDictationService],
   );
 
   const languageNames = useMemo(() => {

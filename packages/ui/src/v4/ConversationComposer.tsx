@@ -525,13 +525,15 @@ function VoiceDictationComposerControl({
   scopeRef: RefObject<HTMLElement | null>;
 }) {
   const voiceDictation = useVoiceDictation({ enabled: true, onTranscript, scopeRef });
+  // V4ComposerVoiceButton 是 memo 组件；内联箭头函数会让 memo 失效（见 reactStableReferences 测试）。
+  const handleToggle = useCallback(() => void voiceDictation.toggle(), [voiceDictation.toggle]);
   return (
     <V4ComposerVoiceButton
       phase={voiceDictation.phase}
       level={voiceDictation.level}
       preview={voiceDictation.preview}
       disabled={disabled}
-      onToggle={() => void voiceDictation.toggle()}
+      onToggle={handleToggle}
     />
   );
 }
@@ -693,8 +695,8 @@ function ConversationComposerImpl({
   const insertVoiceTranscript = useCallback((text: string) => {
     const api = inputApiRef.current;
     if (!api) return;
-    const current = api.getText().trimEnd();
-    api.setText(current ? `${current} ${text}` : text);
+    // 必须走 appendText：getText/setText 会把编辑器重建为纯文本节点，已有的结构化 mention 会被打平。
+    api.appendText(text);
     api.focus();
   }, []);
   const reportedErrorKeysRef = useRef(new Set<string>());

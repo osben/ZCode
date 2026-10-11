@@ -7072,6 +7072,8 @@ const zhCN: Record<string, string> = {
   "voiceDictation.composer.stop": "结束语音输入",
   "voiceDictation.composer.level": "麦克风输入音量",
   "voiceDictation.composer.listening": "正在聆听",
+  "voiceDictation.composer.status.idle": "语音输入已就绪",
+  "voiceDictation.composer.status.transcribing": "正在转写",
   "settings.computerUse.title": "电脑控制",
   "settings.computerUse.toggleLabel": "启用电脑控制",
   "settings.computerUse.toggleDescription": "开启后将启用电脑控制及其 MCP 与技能。",

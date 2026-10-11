@@ -7021,6 +7021,8 @@ const ukUA: Record<string, string> = {
   "voiceDictation.composer.stop": "Зупинити голосове введення",
   "voiceDictation.composer.level": "Рівень сигналу мікрофона",
   "voiceDictation.composer.listening": "Слухаю",
+  "voiceDictation.composer.status.idle": "Голосове введення готове",
+  "voiceDictation.composer.status.transcribing": "Розпізнавання мовлення",
   "settings.computerUse.title": "Computer Use",
   "settings.computerUse.toggleLabel": "Увімкнути Computer Use",
   "settings.computerUse.toggleDescription": "Вмикає Computer Use — його сервер MCP і навички.",
