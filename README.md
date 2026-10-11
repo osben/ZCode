@@ -22,6 +22,7 @@ This fork extends upstream [zai-org/ZCode](https://github.com/zai-org/ZCode) wit
 - Accent color palettes, tinted surfaces, and a terminal WebGL rendering toggle.
 - Ukrainian (uk-UA) interface localization.
 - Merged-branch badge and hover cards in the task sidebar.
+- Voice dictation with local transcription model selection.
 - Fixes for code-scanning findings (ReDoS-prone regexes and others).
 - English translation of AGENTS.md and in-code documentation.
 - CI: PR checks (unit and node:test suites, CodeQL, CodeRabbit, Dependabot) and a fork release workflow with `-fork.N` versions.
