@@ -205,6 +205,12 @@ function isAmbientHostEnvKey(key: string): boolean {
     AMBIENT_TOOL_PASSTHROUGH_ENV_KEYS.has(upperKey) ||
     upperKey.startsWith("OTEL_") ||
     upperKey.startsWith("ZCODE_TELEMETRY_") ||
+    // Bugfix: ZCode 宿主应用会向子进程导出 ZCODE_CUA_BUNDLED_HELPER_APP_PATH（本地
+    // CUA 免签 dev 流程），而 buildHostProcessEnv 里 {...localEnv, ...process.env}
+    // 让环境变量覆盖用例注入值，导致 CUA dev bundle 断言在装有宿主 app 的机器上
+    // 必然漂移。ZCODE_HOME 同样参与 dev bundle 路径推导，一并按宿主口径清理。
+    upperKey.startsWith("ZCODE_CUA_") ||
+    upperKey === "ZCODE_HOME" ||
     AMBIENT_PACKAGE_MANAGER_PROXY_ENV_PATTERN.test(key)
   );
 }
