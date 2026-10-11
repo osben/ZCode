@@ -13,16 +13,11 @@ import {
 
 const HERE = fileURLToPath(new URL(".", import.meta.url));
 const REPO_ROOT = resolve(HERE, "../..");
-const { version } = JSON.parse(
-  readFileSync(resolve(REPO_ROOT, "package.json"), "utf8"),
-);
+const { version } = JSON.parse(readFileSync(resolve(REPO_ROOT, "package.json"), "utf8"));
 
 export default defineConfig(({ mode }) => {
   const env = { ...loadEnv(mode, REPO_ROOT, ""), ...process.env };
-  const zcodeEnv =
-    env.ZCODE_ENV?.trim().toLowerCase() === "production"
-      ? "production"
-      : "test";
+  const zcodeEnv = env.ZCODE_ENV?.trim().toLowerCase() === "production" ? "production" : "test";
   const endpointEnv = { ...env, ZCODE_ENV: zcodeEnv };
   const endpointOrigin = resolveRuntimeZCodeEndpointOrigin(endpointEnv);
   const oauthOrigin = resolveZaiOAuthOrigin(endpointEnv);
@@ -60,10 +55,7 @@ export default defineConfig(({ mode }) => {
         // 该模块只依赖 shared/lucide/cn，不会把 services/rpc 闭包带进 share 镜像。
         {
           find: "@zcode/ui/oauth-provider-icon",
-          replacement: resolve(
-            REPO_ROOT,
-            "packages/ui/src/lib/oauthProviderIcon.tsx",
-          ),
+          replacement: resolve(REPO_ROOT, "packages/ui/src/lib/oauthProviderIcon.tsx"),
         },
       ],
     },
@@ -72,12 +64,10 @@ export default defineConfig(({ mode }) => {
       __ZCODE_COMMIT__: JSON.stringify(env.ZCODE_COMMIT || "unknown"),
       __ZCODE_ENV__: JSON.stringify(zcodeEnv),
       "import.meta.env.VITE_ZCODE_BASE_URL": JSON.stringify(endpointOrigin),
-      "import.meta.env.VITE_ZCODE_ENDPOINT_ORIGIN":
-        JSON.stringify(endpointOrigin),
+      "import.meta.env.VITE_ZCODE_ENDPOINT_ORIGIN": JSON.stringify(endpointOrigin),
       "import.meta.env.VITE_ZAI_OAUTH_CLIENT_ID": JSON.stringify(oauthClientId),
       "import.meta.env.VITE_ZAI_OAUTH_ORIGIN": JSON.stringify(oauthOrigin),
-      "import.meta.env.VITE_BIGMODEL_OAUTH_ORIGIN":
-        JSON.stringify(bigmodelOAuthOrigin),
+      "import.meta.env.VITE_BIGMODEL_OAUTH_ORIGIN": JSON.stringify(bigmodelOAuthOrigin),
     },
     build: {
       outDir: resolve(REPO_ROOT, "packages/web-share/dist"),
