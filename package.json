@@ -80,7 +80,7 @@
     "test:architecture": "node --test scripts/test/architecture-governance.test.mjs"
   },
   "dependencies": {
-    "border-beam": "^1.0.1",
+    "border-beam": "^1.4.1",
     "d3-path": "^3.1.0",
     "tailwind-scrollbar-hide": "^4.0.0"
   },

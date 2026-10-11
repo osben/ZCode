@@ -12,7 +12,7 @@
     "lint:fix": "oxlint --fix"
   },
   "dependencies": {
-    "lucide-react": "^1.17.0",
+    "lucide-react": "^1.55.0",
     "react": "^19.2.4",
     "react-dom": "^19.2.4"
   },

@@ -28,7 +28,7 @@
     "@zcode/shared": "workspace:*",
     "react": "19.2.5",
     "react-devtools-core": "7.0.1",
-    "shiki": "^4.1.0",
+    "shiki": "^4.5.0",
     "web-tree-sitter": "0.25.10",
     "ws": "8.18.0"
   },

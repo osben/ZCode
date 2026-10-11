@@ -119,8 +119,8 @@
     "playwright-core": "1.59.1",
     "proxy-agent": "^8.0.2",
     "ripgrep": "0.3.1",
-    "semver": "^7.7.4",
-    "yauzl": "^3.3.0",
+    "semver": "^7.8.5",
+    "yauzl": "^3.4.0",
     "zod": "4.6.6"
   },
   "devDependencies": {
