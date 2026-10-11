@@ -118,7 +118,12 @@ export class VoiceDictationService implements IVoiceDictationService {
       }
       return streamId;
     } catch (error) {
-      if (this.activeStreamId === streamId) this.activeStreamId = null;
+      if (this.activeStreamId === streamId) {
+        this.activeStreamId = null;
+        // beginStream 里 load 可能已成功而 stream 初始化抛错；此时 idle 计时器已在入口清掉，
+        // 不重启会让已加载的原生模型常驻内存，绕过 idle-unload 策略（与 !started 分支一致）。
+        this.scheduleIdleUnload();
+      }
       throw error;
     }
   }

@@ -140,12 +140,19 @@ function DesktopVoiceDictationSection() {
 
   const patchVoice = useCallback(
     async (patch: Partial<VoiceDictationSettings>) => {
+      // merge 必须同步落到 ref：voiceRef 只在 render 时刷新，两次快速修改会在第一次
+      // update() 完成前共享同一个旧快照，后写整份 voiceDictation 会静默回滚前一次修改。
+      const previous = voiceRef.current;
+      const merged = { ...previous, ...patch };
+      voiceRef.current = merged;
       try {
-        await update({ voiceDictation: { ...voiceRef.current, ...patch } });
+        await update({ voiceDictation: merged });
         if (patch.idleUnloadMinutes !== undefined) {
           await voiceDictationService?.setIdleUnloadMinutes(patch.idleUnloadMinutes);
         }
       } catch (error) {
+        // 保存失败时回滚 ref，避免后续修改基于未持久化的值继续累积。
+        voiceRef.current = previous;
         logger.warn("voice dictation settings update failed", {
           error: error instanceof Error ? error.message : String(error),
         });

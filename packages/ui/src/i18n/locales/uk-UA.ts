@@ -7016,6 +7016,16 @@ const ukUA: Record<string, string> = {
   "voiceDictation.transcribeFailed": "Не вдалося розпізнати мовлення.",
   "voiceDictation.downloadFailed": "Не вдалося завантажити модель.",
   "voiceDictation.cancelDownloadFailed": "Не вдалося скасувати завантаження моделі.",
+  "voiceDictation.models.description.whisper":
+    "Автовизначення мови й мітки сегментів для {languages} мов.",
+  "voiceDictation.models.description.parakeetLive":
+    "Швидке й точне живе розпізнавання англійської.",
+  "voiceDictation.models.description.parakeetMultilingual":
+    "Швидке й точне. Підтримує {languages} європейських мов.",
+  "voiceDictation.models.description.canary":
+    "Крихітна й миттєва, добре працює на будь-якому залізі.",
+  "voiceDictation.models.description.nemotron":
+    "Англійське розпізнавання мовлення з потоковим режимом і мітками токенів.",
   "voiceDictation.saveFailed": "Не вдалося зберегти налаштування голосового введення.",
   "voiceDictation.composer.start": "Голосове введення",
   "voiceDictation.composer.loading": "Завантаження моделі мовлення",

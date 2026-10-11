@@ -45,6 +45,13 @@ test("push-to-talk ends when the main key of the binding is released", () => {
   assert.equal(isVoiceShortcutReleased({ key: "D", code: "KeyD" }, "CmdOrCtrl+Shift+d"), true);
 });
 
+test("push-to-talk ends when a named main key is released while modifiers stay held", () => {
+  // 命名主键（F5、ArrowUp…）event.key.length > 1，不走字母 code 分支；规范名与 event.key 相等。
+  assert.equal(isVoiceShortcutReleased({ key: "F5", code: "F5" }, "CmdOrCtrl+F5"), true);
+  assert.equal(isVoiceShortcutReleased({ key: "ArrowUp", code: "ArrowUp" }, "Shift+ArrowUp"), true);
+  assert.equal(isVoiceShortcutReleased({ key: "F6", code: "F6" }, "CmdOrCtrl+F5"), false);
+});
+
 test("push-to-talk ends when any modifier of the binding is released", () => {
   assert.equal(
     isVoiceShortcutReleased({ key: "Meta", code: "MetaLeft" }, "CmdOrCtrl+Shift+d"),

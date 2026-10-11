@@ -233,4 +233,70 @@ describe("VoiceModelRow model actions", () => {
 
     expect(untranslated).toEqual([]);
   });
+
+  it("localizes catalog descriptions and only advertises streaming for parakeet-family models", () => {
+    const parakeetModel: VoiceModelListItem = {
+      descriptor: {
+        id: "parakeet-unified-en-0.6b",
+        name: "Parakeet Unified EN 0.6B",
+        description: "Fast, accurate live English transcription.",
+        family: "parakeet",
+        languageCount: 1,
+        streaming: true,
+        license: "cc-by-4.0",
+        huggingFaceRepo: "owner/parakeet",
+        revision: "rev1",
+        fileName: "parakeet.gguf",
+        sizeBytes: 10,
+        sha256: "test",
+      },
+      state: { status: "ready", path: "/models/parakeet.gguf", sizeBytes: 10, source: "zcode" },
+    };
+    // В каталоге Nemotron помечен streaming: true, но рантайм-гейт допускает только Parakeet —
+    // карточка не должна рекламировать стриминг, которого не будет.
+    const nemotronModel: VoiceModelListItem = {
+      ...parakeetModel,
+      descriptor: {
+        ...parakeetModel.descriptor,
+        id: "nemotron-speech-streaming-en-0.6b",
+        name: "Nemotron Speech Streaming EN",
+        description: "English speech-to-text with streaming and token-level timestamps.",
+        family: "nemotron",
+      },
+    };
+    render(
+      createElement(
+        ZCodeIntlProvider,
+        { initialLocale: "en-US" },
+        createElement(VoiceModelRow, {
+          item: parakeetModel,
+          selected: false,
+          runtimeState: { loadedModelId: null, activeModelId: null, activePhase: null },
+          onSelect: () => undefined,
+          onUseWhenReady: () => undefined,
+          onDownload: () => undefined,
+          onCancel: () => undefined,
+          onRemove: () => undefined,
+        }),
+        createElement(VoiceModelRow, {
+          item: nemotronModel,
+          selected: false,
+          runtimeState: { loadedModelId: null, activeModelId: null, activePhase: null },
+          onSelect: () => undefined,
+          onUseWhenReady: () => undefined,
+          onDownload: () => undefined,
+          onCancel: () => undefined,
+          onRemove: () => undefined,
+        }),
+      ),
+    );
+
+    // Описания идут из i18n, а не из английского каталога.
+    expect(screen.getByText("Fast, accurate live English transcription.")).toBeTruthy();
+    expect(
+      screen.getByText("English speech-to-text with streaming and token-level timestamps."),
+    ).toBeTruthy();
+    const streamingBadges = screen.getAllByText("Streaming");
+    expect(streamingBadges).toHaveLength(1);
+  });
 });

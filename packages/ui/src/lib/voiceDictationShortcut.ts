@@ -20,6 +20,9 @@ export function isVoiceShortcutReleased(
   if (!parsed) return false;
   if (event.key.length === 1 && event.key.toLowerCase() === parsed.key) return true;
   if (event.code === `Key${parsed.key.toUpperCase()}` && /^[a-z]$/.test(parsed.key)) return true;
+  // 命名主键（F5、Enter、ArrowUp…）不走字母 code 分支：它们 event.key.length > 1 且
+  // 规范名与 event.key 完全一致，直接比较，否则按住修饰键松开主键无法结束 push-to-talk。
+  if (event.key.length > 1 && event.key === parsed.key) return true;
   const modifierKeys = [
     parsed.cmdOrCtrl ? MODIFIER_RELEASE_KEYS.CmdOrCtrl : [],
     parsed.ctrl ? MODIFIER_RELEASE_KEYS.Ctrl : [],

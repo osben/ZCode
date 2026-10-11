@@ -629,6 +629,42 @@ test("service declines streaming when the loaded runtime does not support it", a
   });
 });
 
+test("beginStream failure reschedules idle unload so a loaded model is not left resident", async () => {
+  await withTempDir(async (dir) => {
+    const descriptor = makeDescriptor({ family: "parakeet", streaming: true });
+    await installFakeModel(dir, descriptor);
+    const store = makeStore(dir, { catalog: [descriptor] });
+    let disposeCount = 0;
+    const engine: VoiceEngineModel = {
+      ...makeFakeEngine([]),
+      supportsStreaming: () => true,
+      // Load 已成功（ensureLoaded 完成后）stream 初始化才失败：这正是 catch 分支要兜住的路径。
+      // Полная стрим-поверхность обязательна, иначе транскрайбер отклонит streaming до вызова beginStream.
+      beginStream: async () => {
+        throw new Error("stream slot init failed");
+      },
+      feedStream: async () => ({ committed: "", tentative: "" }),
+      finalizeStream: async () => ({ text: "", language: "" }),
+      cancelStream: () => undefined,
+      dispose: () => {
+        disposeCount += 1;
+      },
+    };
+    const service = new VoiceDictationService({
+      store,
+      transcriber: new VoiceTranscriber({ store, loadEngine: async () => engine }),
+      idleUnloadMs: 5,
+    });
+
+    await assert.rejects(
+      service.beginStream({ modelId: descriptor.id }),
+      /stream slot init failed/,
+    );
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    assert.equal(disposeCount, 1);
+  });
+});
+
 test("service rejects overlapping stream ownership and stale stream ids", async () => {
   await withTempDir(async (dir) => {
     const descriptor = makeDescriptor({ family: "parakeet", streaming: true });

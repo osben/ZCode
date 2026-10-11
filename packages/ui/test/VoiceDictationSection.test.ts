@@ -250,6 +250,28 @@ describe("VoiceDictationSection model downloads", () => {
     );
   });
 
+  it("merges rapid settings edits so the later write keeps the earlier one", async () => {
+    h.state.downloadStatus = "ready";
+    render(createElement(VoiceDictationSection, { isDesktop: true }));
+    await screen.findByText("voiceDictation.models.selected");
+
+    // Две правки подряд без ожидания перерисовки: вторая должна слиться с первой,
+    // а не записать voiceDictation целиком от старого снапшота.
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Model Two: voiceDictation.models.use" }),
+    );
+    fireEvent.click(
+      await screen.findByRole("combobox", { name: "voiceDictation.models.unloadDelay.title" }),
+    );
+    const option = (await screen.findAllByRole("option"))[2];
+    fireEvent.click(option!);
+
+    await waitFor(() => expect(h.updateSettings).toHaveBeenCalledTimes(2));
+    expect(h.updateSettings).toHaveBeenLastCalledWith({
+      voiceDictation: { modelId: "model-two", idleUnloadMinutes: 10 },
+    });
+  });
+
   it("reports a failed download cancellation and still refreshes models", async () => {
     render(createElement(VoiceDictationSection, { isDesktop: true }));
     fireEvent.click(

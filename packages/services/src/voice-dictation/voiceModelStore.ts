@@ -198,7 +198,19 @@ export class VoiceModelStore {
       const url = buildModelUrl(source, descriptor);
       try {
         await this.fetchToPartFile(url, partPath, descriptor, entry);
-        await rename(partPath, finalPath);
+        try {
+          await rename(partPath, finalPath);
+        } catch (error) {
+          // 另一窗口的 VoiceModelStore 进程可能刚完成同一模型的校验并落位；Windows 的
+          // rename 不覆盖已存在目标。目标已是同尺寸文件（下载时已做过 sha256 校验）时，
+          // 视为下载成功并清理本任务残留的 .part，而不是向用户报一次假失败。
+          const installed = await stat(finalPath).then(
+            (info) => info.isFile() && info.size === descriptor.sizeBytes,
+            () => false,
+          );
+          if (!installed) throw error;
+          await rm(partPath, { force: true });
+        }
         logger.info(undefined, "voice model downloaded", { id: descriptor.id, source });
         return;
       } catch (error) {

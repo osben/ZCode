@@ -19,6 +19,22 @@ interface VoiceModelRowProps {
   onRemove: () => void;
 }
 
+/**
+ * Каталожные description написаны по-английски; интерфейс локализуется (спека VD-11 требует
+ * локальные описания), поэтому известным моделям сопоставлен i18n-ключ. Неизвестные модели
+ * (новый каталог со старым UI) падают назад на английский текст каталога.
+ */
+const MODEL_DESCRIPTION_MESSAGE_IDS: Readonly<Record<string, string>> = {
+  "whisper-tiny": "voiceDictation.models.description.whisper",
+  "whisper-base": "voiceDictation.models.description.whisper",
+  "whisper-small": "voiceDictation.models.description.whisper",
+  "whisper-large-v3-turbo": "voiceDictation.models.description.whisper",
+  "parakeet-unified-en-0.6b": "voiceDictation.models.description.parakeetLive",
+  "parakeet-tdt-0.6b-v3": "voiceDictation.models.description.parakeetMultilingual",
+  "canary-180m-flash": "voiceDictation.models.description.canary",
+  "nemotron-speech-streaming-en-0.6b": "voiceDictation.models.description.nemotron",
+};
+
 /** 单个转写模型的卡片：展示规格，并按状态提供下载、取消、选择和删除操作。 */
 export function VoiceModelRow({
   item,
@@ -48,6 +64,7 @@ export function VoiceModelRow({
     : 0;
   const downloadSampleRef = useRef<{ bytes: number; sampledAt: number } | null>(null);
   const [downloadSpeed, setDownloadSpeed] = useState<number | null>(null);
+  const descriptionMessageId = MODEL_DESCRIPTION_MESSAGE_IDS[descriptor.id];
 
   useEffect(() => {
     if (!downloading || downloadedBytes === null) {
@@ -169,7 +186,9 @@ export function VoiceModelRow({
           ) : null}
         </div>
         <p className="mt-1 text-ui-base leading-6 text-foreground-subtle">
-          {descriptor.description}
+          {descriptionMessageId
+            ? intl.formatMessage({ id: descriptionMessageId }, { languages: descriptor.languageCount })
+            : descriptor.description}
         </p>
       </div>
 
@@ -182,7 +201,10 @@ export function VoiceModelRow({
               { count: descriptor.languageCount },
             )}
           </span>
-          {descriptor.streaming ? (
+          {/* Рантайм-гейт допускает streaming только у моделей с Parakeet stream slot
+              (supportsStreaming && accepts parakeet); каталог помечает streaming и у Nemotron,
+              но она всегда идёт one-shot — реклама Streaming на такой карточке противоречит спеке. */}
+          {descriptor.streaming && descriptor.family === "parakeet" ? (
             <span className="inline-flex items-center gap-1.5">
               <AudioLines className="size-4" aria-hidden />
               {intl.formatMessage({ id: "voiceDictation.models.streaming" })}

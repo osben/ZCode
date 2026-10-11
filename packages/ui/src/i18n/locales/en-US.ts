@@ -7435,6 +7435,14 @@ const enUS: Record<string, string> = {
   "voiceDictation.transcribeFailed": "Voice transcription failed.",
   "voiceDictation.downloadFailed": "Model download failed.",
   "voiceDictation.cancelDownloadFailed": "Failed to cancel the model download.",
+  "voiceDictation.models.description.whisper":
+    "Auto language detection and segment timestamps across {languages} languages.",
+  "voiceDictation.models.description.parakeetLive": "Fast, accurate live English transcription.",
+  "voiceDictation.models.description.parakeetMultilingual":
+    "Fast and accurate. Supports {languages} European languages.",
+  "voiceDictation.models.description.canary": "Tiny and instant, runs well on any hardware.",
+  "voiceDictation.models.description.nemotron":
+    "English speech-to-text with streaming and token-level timestamps.",
   "voiceDictation.saveFailed": "Could not save voice dictation settings.",
   "voiceDictation.composer.start": "Voice input",
   "voiceDictation.composer.loading": "Loading speech model",
