@@ -81,6 +81,7 @@ import {
   type BrowserUseSidePaneTab,
   type BrowserSidePaneMetadata,
   type OpenScopedSubagentSideTabRequest,
+  type OpenScopedPlanDetailSideTabRequest,
   type OpenScopedWorkflowActorSessionSideTabRequest,
   type OpenScopedWorkflowWorkspaceSideTabRequest,
   type OpenScopedWorkflowArtifactSideTabRequest,
@@ -323,6 +324,7 @@ export function AnimatedSidePanePanel({
   onOpenTerminalTab,
   onOpenReviewTab,
   onOpenSelectionSideConversation,
+  onOpenPlanDetail,
   onRevealGitFileInTree,
   onOpenBrowserUrl,
   onOpenCodeViewer,
@@ -392,6 +394,7 @@ export function AnimatedSidePanePanel({
   onOpenTerminalTab: () => void;
   onOpenReviewTab: () => void;
   onOpenSelectionSideConversation: () => void;
+  onOpenPlanDetail: (request: OpenScopedPlanDetailSideTabRequest) => void;
   onRevealGitFileInTree?: (path: string) => void;
   onOpenBrowserUrl: (url: string) => void;
   onOpenCodeViewer: (source: CodeViewerSource) => void;
@@ -1173,6 +1176,7 @@ export function AnimatedSidePanePanel({
                             onOpenBrowserUrl={onOpenBrowserUrl}
                             onOpenCodeViewer={onOpenCodeViewer}
                             onOpenFileLink={onOpenFileLink}
+                            onOpenPlanDetail={onOpenPlanDetail}
                             onUnavailable={onCloseTab}
                           />
                         ) : tab.type === "plugin-ui" ? (

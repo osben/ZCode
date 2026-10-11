@@ -1,7 +1,10 @@
 import { memo, useCallback, useMemo } from "react";
 import type { MessageFileLinkTarget } from "@/components/ai-elements/message.js";
 import type { CodeViewerSource } from "@/lib/codeViewer.js";
-import type { SelectionSideChatPaneTab } from "@/lib/workspaceSidePane.js";
+import type {
+  OpenScopedPlanDetailSideTabRequest,
+  SelectionSideChatPaneTab,
+} from "@/lib/workspaceSidePane.js";
 import type { PaneWorkspaceScope } from "@/v4/paneLayoutStore.js";
 import { SessionPane } from "@/v4/SessionPane.js";
 import { V4PaneConversationProvider } from "@/v4/V4ConversationContext.js";
@@ -12,6 +15,7 @@ export const SelectionSideChatPane = memo(function SelectionSideChatPane({
   onOpenBrowserUrl,
   onOpenCodeViewer,
   onOpenFileLink,
+  onOpenPlanDetail,
   onUnavailable,
 }: {
   tab: SelectionSideChatPaneTab;
@@ -19,6 +23,7 @@ export const SelectionSideChatPane = memo(function SelectionSideChatPane({
   onOpenBrowserUrl?: (url: string) => void;
   onOpenCodeViewer?: (source: CodeViewerSource) => void;
   onOpenFileLink?: (target: MessageFileLinkTarget) => void;
+  onOpenPlanDetail?: (request: OpenScopedPlanDetailSideTabRequest) => void;
   onUnavailable: (tabId: string) => void;
 }) {
   const scope = useMemo<PaneWorkspaceScope>(
@@ -32,6 +37,11 @@ export const SelectionSideChatPane = memo(function SelectionSideChatPane({
   // The parent tabs.map previously created an inline closure for each memoized pane, so any parent render
   // changed the onUnavailable reference. Let the leaf component close over the stable tab ID instead.
   const handleUnavailable = useCallback(() => onUnavailable(tab.id), [onUnavailable, tab.id]);
+  const handleOpenPlanDetail = useCallback(
+    (request: OpenScopedPlanDetailSideTabRequest) =>
+      onOpenPlanDetail?.({ ...request, rootSessionId: tab.parentSessionId }),
+    [onOpenPlanDetail, tab.parentSessionId],
+  );
   return (
     <V4PaneConversationProvider scope={scope}>
       <SessionPane
@@ -47,6 +57,7 @@ export const SelectionSideChatPane = memo(function SelectionSideChatPane({
         onOpenBrowserUrl={onOpenBrowserUrl}
         onOpenCodeViewer={onOpenCodeViewer}
         onOpenFileLink={onOpenFileLink}
+        onOpenPlanDetail={handleOpenPlanDetail}
         onSelectionSideChatUnavailable={handleUnavailable}
       />
     </V4PaneConversationProvider>

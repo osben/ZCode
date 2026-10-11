@@ -14,6 +14,7 @@
   “查看完整计划 →”，替代原 header 展开按钮。
 - 点击卡片非交互区域或底部“查看完整计划”按钮，行为一致：在 Side Pane 打开详情。
 - 每个 `(workspaceKey, parentSessionId, toolCallId)` 对应一个稳定 tab；同一计划复用，不同计划可并存。
+- 从 selection side chat 打开的计划仍以子会话作为来源 `parentSessionId`，但 tab 可见范围绑定到根任务：使用独立的 `rootSessionId`，切换主任务时随根任务隐藏和恢复。
 - tab 标题统一为本地化“计划”。
 - Side Pane 显示完整计划，主时间线只显示裁切预览；没有原地展开状态。
 - 计划卡片严格停留在 `ExitPlanMode` 对应的 tool row 位置，不提升到 assistant 轮尾。它位于最终正文之前时随同一段“已工作”历史折叠；展开后必须保持 CLI `rowId` 全序。
@@ -71,7 +72,7 @@ ExitPlanMode terminal / row.removed / snapshot
    ---> 以空行拼接后写入剪贴板
 
 切换父任务
-   ---> 按 parentSessionId 隐藏 / 恢复对应计划 tab
+   ---> 按 rootSessionId ?? parentSessionId 隐藏 / 恢复对应计划 tab
    ---> 不新建 runtime，不改 owner / queue / deliveryKind
 ```
 
@@ -84,6 +85,7 @@ ExitPlanMode terminal / row.removed / snapshot
 | plan detail tab 与激活项 | renderer workspace Side Pane memory | 当前窗口；不落盘 |
 | tab 稳定身份 | `workspaceIdentity?.trim() \|\| workspacePath` + parent session + tool call | 当前窗口 |
 | 最近一份非空计划正文 | plan detail 组件本地展示 fallback | tab 挂载期 |
+| tab 可见范围 | `rootSessionId ?? parentSessionId`；selection side chat 使用根任务 ID | 当前窗口 |
 
 ## 交互与可访问性
 
@@ -118,5 +120,6 @@ ExitPlanMode terminal / row.removed / snapshot
 | S13  | 当前有效分支存在多个已结束计划                   | 右上角“计划”按最新优先列出全部计划；标题取 Markdown H1/首个非空行；点击打开对应 Side Pane                                  | accepted |
 | S14  | 计划处于流式/审批中，随后终态；或 edit/retry 裁枝 | 非终态不进摘要；终态后出现；`row.removed` 后从目录移除；迟到 query 不恢复旧计划                                             | accepted |
 | S15  | 冷恢复、桌面 continuous、手机 remote replayable | 复用同一 CLI 全量投影 query 和 shared-host attachment；返回同一有效集合，不新增 runtime、owner、queue 或 replay 分支       | accepted |
+| S16  | `/btw` 或 `/side` 子会话启用 plan mode 并打开完整计划 | Side Pane 显示子会话的完整计划；tab 在根任务下可见，切换根任务后隐藏/恢复；不创建新 session 或 runtime | accepted |
 
 剪枝：不把 `model × permission mode × goal × fork × queue` 与计划详情做笛卡尔积，因为详情和目录都只读既有 projection，不发送 session command。`success/error/cancelled` 共用同一终态过滤实现，组件测试枚举即可；远程 snapshot/gap 的恢复正确性继续由既有 replayable case 负责，S15 只证明 query 路由与 workspace identity 不串联。

@@ -1341,6 +1341,7 @@ PLAN151-02/03/04 先由 Core、Bootstrap、共享 Schema 与 UI 单测覆盖，�
 | S15        | planned  | transport/service unit + existing remote cases                                                                                  | 新只读 query 复用 workspace attachment，验证同 path 不同 identity；既有 continuous/replayable snapshot/gap case 继续证明恢复语义，不新增手机 runtime E2E                                                                                                                                   |
 | S16        | covered  | PP、focused                                                                                                                     | `PP` 在真实 Electron 弹窗中不点击“批准”选项，只点击 footer 主提交，断言弹窗关闭、批准后的 plan 落盘，且 provider continuation 包含 `User has approved your plan` 而不含拒绝语义；focused 单测继续隔离普通 `AskUserQuestion`、自定义反馈与显式忽略路径                                      |
 | S17        | partial  | `v4PlanInteractionAcknowledgement.test.ts` + `v4SessionPaneModelSwitchRecovery.test.ts`；mobile shared-host runtime replay 待补 | focused 已锁定：仅 mobile Plan accepted/duplicate/noop 在 grace 后仍 pending 时触发既有 same-sub recovery，自然清场、重复点击、桌面 continuous、`AskUserQuestion` 与失败 ACK 均保持隔离；真实 relay/attachment 证据保留为 manual-review 待补，不用 desktop compact UI 冒充 replayable 覆盖 |
+| S18        | planned  | `workspaceSidePane.test.ts` + `manual-review/pending/conversation-session-plan-detail-from-side-chat.test.ts` | unit 锁定 root-scoped 可见性；pending E2E 复现 `/btw` → plan mode → ExitPlanMode → “查看完整计划”，断言 child projection 内容显示且 tab 归属 root task；人工 review 前不计为正式 E2E 覆盖 |
 
 ## Plan Mode × Goal composer guard 覆盖口径
 
