@@ -13,11 +13,16 @@ import {
 
 const HERE = fileURLToPath(new URL(".", import.meta.url));
 const REPO_ROOT = resolve(HERE, "../..");
-const { version } = JSON.parse(readFileSync(resolve(REPO_ROOT, "package.json"), "utf8"));
+const { version } = JSON.parse(
+  readFileSync(resolve(REPO_ROOT, "package.json"), "utf8"),
+);
 
 export default defineConfig(({ mode }) => {
   const env = { ...loadEnv(mode, REPO_ROOT, ""), ...process.env };
-  const zcodeEnv = env.ZCODE_ENV?.trim().toLowerCase() === "production" ? "production" : "test";
+  const zcodeEnv =
+    env.ZCODE_ENV?.trim().toLowerCase() === "production"
+      ? "production"
+      : "test";
   const endpointEnv = { ...env, ZCODE_ENV: zcodeEnv };
   const endpointOrigin = resolveRuntimeZCodeEndpointOrigin(endpointEnv);
   const oauthOrigin = resolveZaiOAuthOrigin(endpointEnv);
@@ -33,32 +38,46 @@ export default defineConfig(({ mode }) => {
     publicDir: resolve(REPO_ROOT, "packages/web/public"),
     plugins: [react(), tailwindcss()],
     resolve: {
-      alias: {
-        "@": resolve(REPO_ROOT, "packages/ui/src"),
-        "@zcode/shared": resolve(REPO_ROOT, "packages/shared/src/index.ts"),
+      alias: [
+        { find: "@", replacement: resolve(REPO_ROOT, "packages/ui/src") },
+        // 字符串别名按前缀匹配，会把 "@zcode/shared/mcp-apps" 等子路径导入重写成
+        // ".../shared/src/index.ts/mcp-apps"（文件路径后拼子目录，ENOTDIR），web-share 构建因此失败。
+        // 改用正则精确匹配根导入；子路径导入交由 @zcode/shared 的 exports 映射解析（同样指向 TS 源码）。
+        {
+          find: /^@zcode\/shared$/,
+          replacement: resolve(REPO_ROOT, "packages/shared/src/index.ts"),
+        },
         // Share 镜像不安装 @zcode/ui（它会带入 services/rpc 闭包），子路径导入必须显式指向源码。
-        "@zcode/ui/useTheme": resolve(REPO_ROOT, "packages/ui/src/useTheme.ts"),
-        "@zcode/ui/conversation-share-readonly": resolve(
-          REPO_ROOT,
-          "packages/share-ui/src/index.ts",
-        ),
+        {
+          find: "@zcode/ui/useTheme",
+          replacement: resolve(REPO_ROOT, "packages/ui/src/useTheme.ts"),
+        },
+        {
+          find: "@zcode/ui/conversation-share-readonly",
+          replacement: resolve(REPO_ROOT, "packages/share-ui/src/index.ts"),
+        },
         // 登录卡片要用 provider 图标（svg 走 @ -> packages/ui/src 别名解析）。
         // 该模块只依赖 shared/lucide/cn，不会把 services/rpc 闭包带进 share 镜像。
-        "@zcode/ui/oauth-provider-icon": resolve(
-          REPO_ROOT,
-          "packages/ui/src/lib/oauthProviderIcon.tsx",
-        ),
-      },
+        {
+          find: "@zcode/ui/oauth-provider-icon",
+          replacement: resolve(
+            REPO_ROOT,
+            "packages/ui/src/lib/oauthProviderIcon.tsx",
+          ),
+        },
+      ],
     },
     define: {
       __ZCODE_VERSION__: JSON.stringify(version),
       __ZCODE_COMMIT__: JSON.stringify(env.ZCODE_COMMIT || "unknown"),
       __ZCODE_ENV__: JSON.stringify(zcodeEnv),
       "import.meta.env.VITE_ZCODE_BASE_URL": JSON.stringify(endpointOrigin),
-      "import.meta.env.VITE_ZCODE_ENDPOINT_ORIGIN": JSON.stringify(endpointOrigin),
+      "import.meta.env.VITE_ZCODE_ENDPOINT_ORIGIN":
+        JSON.stringify(endpointOrigin),
       "import.meta.env.VITE_ZAI_OAUTH_CLIENT_ID": JSON.stringify(oauthClientId),
       "import.meta.env.VITE_ZAI_OAUTH_ORIGIN": JSON.stringify(oauthOrigin),
-      "import.meta.env.VITE_BIGMODEL_OAUTH_ORIGIN": JSON.stringify(bigmodelOAuthOrigin),
+      "import.meta.env.VITE_BIGMODEL_OAUTH_ORIGIN":
+        JSON.stringify(bigmodelOAuthOrigin),
     },
     build: {
       outDir: resolve(REPO_ROOT, "packages/web-share/dist"),
