@@ -1,0 +1,438 @@
+{
+  "meta": {
+    "startedAt": "2026-10-11T07:09:50.424Z",
+    "corpusFiles": 12000,
+    "reps": 7,
+    "seed": 20261010,
+    "host": {
+      "platform": "darwin",
+      "arch": "arm64",
+      "node": "v24.16.0"
+    },
+    "tools": {
+      "tgrep": {
+        "version": "tgrep 1.1.0",
+        "archive": "tgrep-v1.1.0-aarch64-apple-darwin.tar.gz",
+        "archiveSha256": "22a750a5d30a11d4e3a2503f2bc40e2ed694b01f011d6dc0cb4c674031503737"
+      },
+      "rg": {
+        "version": "ripgrep 14.1.1 (rev 4649aa9700)"
+      },
+      "ugrep": {
+        "version": "ugrep 7.8.4 aarch64-apple-darwin25.5.0 +neon/AArch64; -P:pcre2; -z:zlib,bzip2,zstd,brotli,7z,tar/pax/cpio/zip"
+      }
+    },
+    "corpus": {
+      "files": 12000,
+      "bytes": 70653240
+    }
+  },
+  "spawnOverhead": {
+    "tgrepVersionMs": {
+      "count": 20,
+      "min": 3,
+      "median": 4,
+      "p95": 5,
+      "max": 5
+    },
+    "rgVersionMs": {
+      "count": 20,
+      "min": 2,
+      "median": 2,
+      "p95": 2,
+      "max": 2
+    }
+  },
+  "attach": {
+    "attachToReadyMs": 3603,
+    "storageBytes": 66387968,
+    "daemonRssKb": 159648
+  },
+  "queries": [
+    {
+      "id": "rare_literal",
+      "pattern": "spike_rare_token_42",
+      "flags": ["-F"],
+      "engines": {
+        "tgrep": {
+          "ms": {
+            "count": 7,
+            "min": 17,
+            "median": 17,
+            "p95": 18,
+            "max": 18
+          },
+          "exit": 0,
+          "outputLines": 1
+        },
+        "rg": {
+          "ms": {
+            "count": 7,
+            "min": 79,
+            "median": 80,
+            "p95": 81,
+            "max": 81
+          },
+          "exit": 0,
+          "outputLines": 1
+        },
+        "ugrep": {
+          "ms": {
+            "count": 7,
+            "min": 86,
+            "median": 87,
+            "p95": 94,
+            "max": 94
+          },
+          "exit": 0,
+          "outputLines": 1
+        }
+      },
+      "parity": {
+        "tgrepVsRgOutputEqual": true,
+        "tgrepVsRgExitEqual": true,
+        "tgrepExit": 0,
+        "rgExit": 0
+      }
+    },
+    {
+      "id": "common_literal",
+      "pattern": "function",
+      "flags": [],
+      "engines": {
+        "tgrep": {
+          "ms": {
+            "count": 7,
+            "min": 980,
+            "median": 1010,
+            "p95": 1079,
+            "max": 1079
+          },
+          "exit": 0,
+          "outputLines": 140336
+        },
+        "rg": {
+          "ms": {
+            "count": 7,
+            "min": 170,
+            "median": 174,
+            "p95": 206,
+            "max": 206
+          },
+          "exit": 0,
+          "outputLines": 140336
+        },
+        "ugrep": {
+          "ms": {
+            "count": 7,
+            "min": 93,
+            "median": 99,
+            "p95": 181,
+            "max": 181
+          },
+          "exit": 0,
+          "outputLines": 140336
+        }
+      },
+      "parity": {
+        "tgrepVsRgOutputEqual": true,
+        "tgrepVsRgExitEqual": true,
+        "tgrepExit": 0,
+        "rgExit": 0
+      }
+    },
+    {
+      "id": "regex_alternation",
+      "pattern": "err(or)?_[a-z]+",
+      "flags": [],
+      "engines": {
+        "tgrep": {
+          "ms": {
+            "count": 7,
+            "min": 728,
+            "median": 767,
+            "p95": 793,
+            "max": 793
+          },
+          "exit": 0,
+          "outputLines": 1782
+        },
+        "rg": {
+          "ms": {
+            "count": 7,
+            "min": 88,
+            "median": 91,
+            "p95": 92,
+            "max": 92
+          },
+          "exit": 0,
+          "outputLines": 1782
+        },
+        "ugrep": {
+          "ms": {
+            "count": 7,
+            "min": 85,
+            "median": 85,
+            "p95": 94,
+            "max": 94
+          },
+          "exit": 1,
+          "outputLines": 0
+        }
+      },
+      "parity": {
+        "tgrepVsRgOutputEqual": true,
+        "tgrepVsRgExitEqual": true,
+        "tgrepExit": 0,
+        "rgExit": 0
+      }
+    },
+    {
+      "id": "case_insensitive",
+      "pattern": "LOGGER",
+      "flags": ["-i"],
+      "engines": {
+        "tgrep": {
+          "ms": {
+            "count": 7,
+            "min": 994,
+            "median": 1051,
+            "p95": 1117,
+            "max": 1117
+          },
+          "exit": 0,
+          "outputLines": 138741
+        },
+        "rg": {
+          "ms": {
+            "count": 7,
+            "min": 166,
+            "median": 171,
+            "p95": 174,
+            "max": 174
+          },
+          "exit": 0,
+          "outputLines": 138741
+        },
+        "ugrep": {
+          "ms": {
+            "count": 7,
+            "min": 94,
+            "median": 95,
+            "p95": 108,
+            "max": 108
+          },
+          "exit": 0,
+          "outputLines": 138741
+        }
+      },
+      "parity": {
+        "tgrepVsRgOutputEqual": true,
+        "tgrepVsRgExitEqual": true,
+        "tgrepExit": 0,
+        "rgExit": 0
+      }
+    },
+    {
+      "id": "filenames_only",
+      "pattern": "function",
+      "flags": ["-l"],
+      "engines": {
+        "tgrep": {
+          "ms": {
+            "count": 7,
+            "min": 731,
+            "median": 736,
+            "p95": 801,
+            "max": 801
+          },
+          "exit": 0,
+          "outputLines": 11984
+        },
+        "rg": {
+          "ms": {
+            "count": 7,
+            "min": 165,
+            "median": 166,
+            "p95": 168,
+            "max": 168
+          },
+          "exit": 0,
+          "outputLines": 11984
+        },
+        "ugrep": {
+          "ms": {
+            "count": 7,
+            "min": 87,
+            "median": 88,
+            "p95": 89,
+            "max": 89
+          },
+          "exit": 0,
+          "outputLines": 11984
+        }
+      },
+      "parity": {
+        "tgrepVsRgOutputEqual": true,
+        "tgrepVsRgExitEqual": true,
+        "tgrepExit": 0,
+        "rgExit": 0
+      }
+    },
+    {
+      "id": "count",
+      "pattern": "function",
+      "flags": ["-c"],
+      "engines": {
+        "tgrep": {
+          "ms": {
+            "count": 7,
+            "min": 961,
+            "median": 976,
+            "p95": 1028,
+            "max": 1028
+          },
+          "exit": 0,
+          "outputLines": 11984
+        },
+        "rg": {
+          "ms": {
+            "count": 7,
+            "min": 165,
+            "median": 167,
+            "p95": 170,
+            "max": 170
+          },
+          "exit": 0,
+          "outputLines": 11984
+        },
+        "ugrep": {
+          "ms": {
+            "count": 7,
+            "min": 101,
+            "median": 137,
+            "p95": 221,
+            "max": 221
+          },
+          "exit": 0,
+          "outputLines": 12005
+        }
+      },
+      "parity": {
+        "tgrepVsRgOutputEqual": true,
+        "tgrepVsRgExitEqual": true,
+        "tgrepExit": 0,
+        "rgExit": 0
+      }
+    },
+    {
+      "id": "glob_ts",
+      "pattern": "spike_mid_token_7",
+      "flags": ["-g", "*.ts"],
+      "engines": {
+        "tgrep": {
+          "ms": {
+            "count": 7,
+            "min": 38,
+            "median": 41,
+            "p95": 83,
+            "max": 83
+          },
+          "exit": 0,
+          "outputLines": 268
+        },
+        "rg": {
+          "ms": {
+            "count": 7,
+            "min": 38,
+            "median": 39,
+            "p95": 42,
+            "max": 42
+          },
+          "exit": 0,
+          "outputLines": 268
+        },
+        "ugrep": {
+          "ms": {
+            "count": 7,
+            "min": 40,
+            "median": 40,
+            "p95": 41,
+            "max": 41
+          },
+          "exit": 0,
+          "outputLines": 268
+        }
+      },
+      "parity": {
+        "tgrepVsRgOutputEqual": true,
+        "tgrepVsRgExitEqual": true,
+        "tgrepExit": 0,
+        "rgExit": 0
+      }
+    },
+    {
+      "id": "broad_count",
+      "pattern": "[a-q]{3}",
+      "flags": ["-c"],
+      "engines": {
+        "tgrep": {
+          "ms": {
+            "count": 7,
+            "min": 1194,
+            "median": 1242,
+            "p95": 1249,
+            "max": 1249
+          },
+          "exit": 0,
+          "outputLines": 12003
+        },
+        "rg": {
+          "ms": {
+            "count": 7,
+            "min": 167,
+            "median": 169,
+            "p95": 169,
+            "max": 169
+          },
+          "exit": 0,
+          "outputLines": 12003
+        },
+        "ugrep": {
+          "ms": {
+            "count": 7,
+            "min": 88,
+            "median": 89,
+            "p95": 89,
+            "max": 89
+          },
+          "exit": 1,
+          "outputLines": 12005
+        }
+      },
+      "parity": {
+        "tgrepVsRgOutputEqual": true,
+        "tgrepVsRgExitEqual": true,
+        "tgrepExit": 0,
+        "rgExit": 0
+      }
+    }
+  ],
+  "editCycle": {
+    "cycles": 15,
+    "tgrepRefreshPlusQueryMs": {
+      "count": 15,
+      "min": 515,
+      "median": 519,
+      "p95": 588,
+      "max": 588
+    },
+    "rgQueryMs": {
+      "count": 15,
+      "min": 81,
+      "median": 84,
+      "p95": 86,
+      "max": 86
+    }
+  }
+}

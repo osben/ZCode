@@ -1,0 +1,761 @@
+{
+  "meta": {
+    "startedAt": "2026-10-11T07:45:32.922Z",
+    "corpusFiles": 6000,
+    "iterations": 25,
+    "seed": 20261010,
+    "host": {
+      "platform": "darwin",
+      "arch": "arm64",
+      "node": "v24.16.0"
+    },
+    "tools": {
+      "tgrep": {
+        "version": "tgrep 1.1.0",
+        "archive": "tgrep-v1.1.0-aarch64-apple-darwin.tar.gz",
+        "archiveSha256": "22a750a5d30a11d4e3a2503f2bc40e2ed694b01f011d6dc0cb4c674031503737"
+      },
+      "rg": {
+        "version": "ripgrep 14.1.1 (rev 4649aa9700)"
+      },
+      "ugrep": {
+        "version": "ugrep 7.8.4 aarch64-apple-darwin25.5.0 +neon/AArch64; -P:pcre2; -z:zlib,bzip2,zstd,brotli,7z,tar/pax/cpio/zip"
+      }
+    },
+    "corpus": {
+      "files": 6000,
+      "bytes": 35340821
+    }
+  },
+  "tests": [
+    {
+      "id": "S0_shared_attach_build",
+      "attachToReadyMs": 1997,
+      "storageBytes": 33259520,
+      "daemonRssKb": 62288
+    },
+    {
+      "id": "S1_shared_no_watch_acknowledged_read_after_write",
+      "iterations": [
+        {
+          "i": 0,
+          "immediateHit": false,
+          "refreshOk": true,
+          "refreshMs": 285,
+          "processedEpoch": 3,
+          "ready": true,
+          "visibleAfterAck": true,
+          "ok": true
+        },
+        {
+          "i": 1,
+          "immediateHit": false,
+          "refreshOk": true,
+          "refreshMs": 279,
+          "processedEpoch": 5,
+          "ready": true,
+          "visibleAfterAck": true,
+          "ok": true
+        },
+        {
+          "i": 2,
+          "immediateHit": false,
+          "refreshOk": true,
+          "refreshMs": 276,
+          "processedEpoch": 7,
+          "ready": true,
+          "visibleAfterAck": true,
+          "ok": true
+        },
+        {
+          "i": 3,
+          "immediateHit": false,
+          "refreshOk": true,
+          "refreshMs": 288,
+          "processedEpoch": 9,
+          "ready": true,
+          "visibleAfterAck": true,
+          "ok": true
+        },
+        {
+          "i": 4,
+          "immediateHit": false,
+          "refreshOk": true,
+          "refreshMs": 305,
+          "processedEpoch": 11,
+          "ready": true,
+          "visibleAfterAck": true,
+          "ok": true
+        },
+        {
+          "i": 5,
+          "immediateHit": false,
+          "refreshOk": true,
+          "refreshMs": 286,
+          "processedEpoch": 13,
+          "ready": true,
+          "visibleAfterAck": true,
+          "ok": true
+        },
+        {
+          "i": 6,
+          "immediateHit": false,
+          "refreshOk": true,
+          "refreshMs": 313,
+          "processedEpoch": 15,
+          "ready": true,
+          "visibleAfterAck": true,
+          "ok": true
+        },
+        {
+          "i": 7,
+          "immediateHit": false,
+          "refreshOk": true,
+          "refreshMs": 268,
+          "processedEpoch": 17,
+          "ready": true,
+          "visibleAfterAck": true,
+          "ok": true
+        },
+        {
+          "i": 8,
+          "immediateHit": false,
+          "refreshOk": true,
+          "refreshMs": 313,
+          "processedEpoch": 19,
+          "ready": true,
+          "visibleAfterAck": true,
+          "ok": true
+        },
+        {
+          "i": 9,
+          "immediateHit": false,
+          "refreshOk": true,
+          "refreshMs": 264,
+          "processedEpoch": 21,
+          "ready": true,
+          "visibleAfterAck": true,
+          "ok": true
+        },
+        {
+          "i": 10,
+          "immediateHit": false,
+          "refreshOk": true,
+          "refreshMs": 280,
+          "processedEpoch": 23,
+          "ready": true,
+          "visibleAfterAck": true,
+          "ok": true
+        },
+        {
+          "i": 11,
+          "immediateHit": false,
+          "refreshOk": true,
+          "refreshMs": 279,
+          "processedEpoch": 25,
+          "ready": true,
+          "visibleAfterAck": true,
+          "ok": true
+        },
+        {
+          "i": 12,
+          "immediateHit": false,
+          "refreshOk": true,
+          "refreshMs": 266,
+          "processedEpoch": 27,
+          "ready": true,
+          "visibleAfterAck": true,
+          "ok": true
+        },
+        {
+          "i": 13,
+          "immediateHit": false,
+          "refreshOk": true,
+          "refreshMs": 274,
+          "processedEpoch": 29,
+          "ready": true,
+          "visibleAfterAck": true,
+          "ok": true
+        },
+        {
+          "i": 14,
+          "immediateHit": false,
+          "refreshOk": true,
+          "refreshMs": 299,
+          "processedEpoch": 31,
+          "ready": true,
+          "visibleAfterAck": true,
+          "ok": true
+        },
+        {
+          "i": 15,
+          "immediateHit": false,
+          "refreshOk": true,
+          "refreshMs": 313,
+          "processedEpoch": 33,
+          "ready": true,
+          "visibleAfterAck": true,
+          "ok": true
+        },
+        {
+          "i": 16,
+          "immediateHit": false,
+          "refreshOk": true,
+          "refreshMs": 283,
+          "processedEpoch": 35,
+          "ready": true,
+          "visibleAfterAck": true,
+          "ok": true
+        },
+        {
+          "i": 17,
+          "immediateHit": false,
+          "refreshOk": true,
+          "refreshMs": 277,
+          "processedEpoch": 37,
+          "ready": true,
+          "visibleAfterAck": true,
+          "ok": true
+        },
+        {
+          "i": 18,
+          "immediateHit": false,
+          "refreshOk": true,
+          "refreshMs": 268,
+          "processedEpoch": 39,
+          "ready": true,
+          "visibleAfterAck": true,
+          "ok": true
+        },
+        {
+          "i": 19,
+          "immediateHit": false,
+          "refreshOk": true,
+          "refreshMs": 271,
+          "processedEpoch": 41,
+          "ready": true,
+          "visibleAfterAck": true,
+          "ok": true
+        },
+        {
+          "i": 20,
+          "immediateHit": false,
+          "refreshOk": true,
+          "refreshMs": 276,
+          "processedEpoch": 43,
+          "ready": true,
+          "visibleAfterAck": true,
+          "ok": true
+        },
+        {
+          "i": 21,
+          "immediateHit": false,
+          "refreshOk": true,
+          "refreshMs": 277,
+          "processedEpoch": 45,
+          "ready": true,
+          "visibleAfterAck": true,
+          "ok": true
+        },
+        {
+          "i": 22,
+          "immediateHit": false,
+          "refreshOk": true,
+          "refreshMs": 271,
+          "processedEpoch": 47,
+          "ready": true,
+          "visibleAfterAck": true,
+          "ok": true
+        },
+        {
+          "i": 23,
+          "immediateHit": false,
+          "refreshOk": true,
+          "refreshMs": 295,
+          "processedEpoch": 49,
+          "ready": true,
+          "visibleAfterAck": true,
+          "ok": true
+        },
+        {
+          "i": 24,
+          "immediateHit": false,
+          "refreshOk": true,
+          "refreshMs": 278,
+          "processedEpoch": 51,
+          "ready": true,
+          "visibleAfterAck": true,
+          "ok": true
+        }
+      ],
+      "failures": 0,
+      "verdict": "pass",
+      "summary": {
+        "failures": 0,
+        "immediateMissesWithoutRefresh": 25,
+        "refreshMs": {
+          "count": 25,
+          "min": 264,
+          "median": 279,
+          "p95": 313,
+          "max": 313
+        }
+      }
+    },
+    {
+      "id": "S1b_shared_modify_semantics",
+      "steps": [
+        {
+          "i": 0,
+          "addAcked": true,
+          "foundAfterAck": true,
+          "staleFalsePositive": false,
+          "ok": true
+        },
+        {
+          "i": 1,
+          "addAcked": true,
+          "foundAfterAck": true,
+          "staleFalsePositive": false,
+          "ok": true
+        },
+        {
+          "i": 2,
+          "addAcked": true,
+          "foundAfterAck": true,
+          "staleFalsePositive": false,
+          "ok": true
+        },
+        {
+          "i": 3,
+          "addAcked": true,
+          "foundAfterAck": true,
+          "staleFalsePositive": false,
+          "ok": true
+        },
+        {
+          "i": 4,
+          "addAcked": true,
+          "foundAfterAck": true,
+          "staleFalsePositive": false,
+          "ok": true
+        },
+        {
+          "i": 5,
+          "addAcked": true,
+          "foundAfterAck": true,
+          "staleFalsePositive": false,
+          "ok": true
+        },
+        {
+          "i": 6,
+          "addAcked": true,
+          "foundAfterAck": true,
+          "staleFalsePositive": false,
+          "ok": true
+        },
+        {
+          "i": 7,
+          "addAcked": true,
+          "foundAfterAck": true,
+          "staleFalsePositive": false,
+          "ok": true
+        },
+        {
+          "i": 8,
+          "addAcked": true,
+          "foundAfterAck": true,
+          "staleFalsePositive": false,
+          "ok": true
+        },
+        {
+          "i": 9,
+          "addAcked": true,
+          "foundAfterAck": true,
+          "staleFalsePositive": false,
+          "ok": true
+        },
+        {
+          "i": 10,
+          "addAcked": true,
+          "foundAfterAck": true,
+          "staleFalsePositive": false,
+          "ok": true
+        },
+        {
+          "i": 11,
+          "addAcked": true,
+          "foundAfterAck": true,
+          "staleFalsePositive": false,
+          "ok": true
+        },
+        {
+          "i": 12,
+          "addAcked": true,
+          "foundAfterAck": true,
+          "staleFalsePositive": false,
+          "ok": true
+        },
+        {
+          "i": 13,
+          "addAcked": true,
+          "foundAfterAck": true,
+          "staleFalsePositive": false,
+          "ok": true
+        },
+        {
+          "i": 14,
+          "addAcked": true,
+          "foundAfterAck": true,
+          "staleFalsePositive": false,
+          "ok": true
+        },
+        {
+          "i": 15,
+          "addAcked": true,
+          "foundAfterAck": true,
+          "staleFalsePositive": false,
+          "ok": true
+        },
+        {
+          "i": 16,
+          "addAcked": true,
+          "foundAfterAck": true,
+          "staleFalsePositive": false,
+          "ok": true
+        },
+        {
+          "i": 17,
+          "addAcked": true,
+          "foundAfterAck": true,
+          "staleFalsePositive": false,
+          "ok": true
+        },
+        {
+          "i": 18,
+          "addAcked": true,
+          "foundAfterAck": true,
+          "staleFalsePositive": false,
+          "ok": true
+        },
+        {
+          "i": 19,
+          "addAcked": true,
+          "foundAfterAck": true,
+          "staleFalsePositive": false,
+          "ok": true
+        },
+        {
+          "i": 20,
+          "addAcked": true,
+          "foundAfterAck": true,
+          "staleFalsePositive": false,
+          "ok": true
+        },
+        {
+          "i": 21,
+          "addAcked": true,
+          "foundAfterAck": true,
+          "staleFalsePositive": false,
+          "ok": true
+        },
+        {
+          "i": 22,
+          "addAcked": true,
+          "foundAfterAck": true,
+          "staleFalsePositive": false,
+          "ok": true
+        },
+        {
+          "i": 23,
+          "addAcked": true,
+          "foundAfterAck": true,
+          "staleFalsePositive": false,
+          "ok": true
+        },
+        {
+          "i": 24,
+          "addAcked": true,
+          "foundAfterAck": true,
+          "staleFalsePositive": false,
+          "ok": true
+        }
+      ],
+      "failures": 0,
+      "verdict": "pass",
+      "summary": {
+        "failures": 0
+      }
+    },
+    {
+      "id": "S1c_shared_delete_acknowledged",
+      "failures": 0,
+      "steps": [
+        {
+          "i": 0,
+          "refreshOk": true,
+          "missAfterDelete": true,
+          "ok": true
+        },
+        {
+          "i": 1,
+          "refreshOk": true,
+          "missAfterDelete": true,
+          "ok": true
+        },
+        {
+          "i": 2,
+          "refreshOk": true,
+          "missAfterDelete": true,
+          "ok": true
+        },
+        {
+          "i": 3,
+          "refreshOk": true,
+          "missAfterDelete": true,
+          "ok": true
+        },
+        {
+          "i": 4,
+          "refreshOk": true,
+          "missAfterDelete": true,
+          "ok": true
+        }
+      ],
+      "verdict": "pass",
+      "summary": {
+        "failures": 0
+      }
+    },
+    {
+      "id": "S1M_shared_multi_changed_probe",
+      "supported": true,
+      "bothVisible": true,
+      "verdict": "pass"
+    },
+    {
+      "id": "S2_shared_sneaky_edit_requires_full_refresh",
+      "steps": [
+        {
+          "i": 0,
+          "readyStayedTrue": true,
+          "staleExit": 1,
+          "staleBeforeFull": true,
+          "fullMs": 612,
+          "visibleAfterFull": true,
+          "ok": true
+        },
+        {
+          "i": 1,
+          "readyStayedTrue": true,
+          "staleExit": 1,
+          "staleBeforeFull": true,
+          "fullMs": 598,
+          "visibleAfterFull": true,
+          "ok": true
+        },
+        {
+          "i": 2,
+          "readyStayedTrue": true,
+          "staleExit": 1,
+          "staleBeforeFull": true,
+          "fullMs": 585,
+          "visibleAfterFull": true,
+          "ok": true
+        }
+      ],
+      "failures": 0,
+      "verdict": "pass",
+      "summary": {
+        "failures": 0,
+        "fullRefreshMs": {
+          "count": 3,
+          "min": 585,
+          "median": 598,
+          "p95": 612,
+          "max": 612
+        }
+      }
+    },
+    {
+      "id": "S4_shared_worktree_isolation",
+      "visibleInA": true,
+      "leakedIntoB": false,
+      "verdict": "pass"
+    },
+    {
+      "id": "S3_shared_native_watch_external_write",
+      "readinessClosedMs": 18,
+      "queryWhileNotReadyExit": 0,
+      "foundWhileNotReady": true,
+      "readinessReopenedMs": 589,
+      "visibleAfterReopen": true,
+      "verdict": "pass"
+    },
+    {
+      "id": "O1_ordinary_auto_watch_read_after_write",
+      "iterations": [
+        {
+          "i": 0,
+          "immediateHit": true,
+          "visibleDelayMs": 0
+        },
+        {
+          "i": 1,
+          "immediateHit": false,
+          "visibleDelayMs": 45
+        },
+        {
+          "i": 2,
+          "immediateHit": false,
+          "visibleDelayMs": 45
+        },
+        {
+          "i": 3,
+          "immediateHit": false,
+          "visibleDelayMs": 62
+        },
+        {
+          "i": 4,
+          "immediateHit": false,
+          "visibleDelayMs": 64
+        },
+        {
+          "i": 5,
+          "immediateHit": false,
+          "visibleDelayMs": 46
+        },
+        {
+          "i": 6,
+          "immediateHit": false,
+          "visibleDelayMs": 65
+        },
+        {
+          "i": 7,
+          "immediateHit": false,
+          "visibleDelayMs": 63
+        },
+        {
+          "i": 8,
+          "immediateHit": false,
+          "visibleDelayMs": 65
+        },
+        {
+          "i": 9,
+          "immediateHit": false,
+          "visibleDelayMs": 64
+        },
+        {
+          "i": 10,
+          "immediateHit": false,
+          "visibleDelayMs": 65
+        },
+        {
+          "i": 11,
+          "immediateHit": false,
+          "visibleDelayMs": 65
+        },
+        {
+          "i": 12,
+          "immediateHit": false,
+          "visibleDelayMs": 47
+        },
+        {
+          "i": 13,
+          "immediateHit": false,
+          "visibleDelayMs": 47
+        },
+        {
+          "i": 14,
+          "immediateHit": false,
+          "visibleDelayMs": 45
+        },
+        {
+          "i": 15,
+          "immediateHit": false,
+          "visibleDelayMs": 48
+        },
+        {
+          "i": 16,
+          "immediateHit": false,
+          "visibleDelayMs": 46
+        },
+        {
+          "i": 17,
+          "immediateHit": false,
+          "visibleDelayMs": 65
+        },
+        {
+          "i": 18,
+          "immediateHit": false,
+          "visibleDelayMs": 65
+        },
+        {
+          "i": 19,
+          "immediateHit": false,
+          "visibleDelayMs": 64
+        },
+        {
+          "i": 20,
+          "immediateHit": false,
+          "visibleDelayMs": 64
+        },
+        {
+          "i": 21,
+          "immediateHit": false,
+          "visibleDelayMs": 46
+        },
+        {
+          "i": 22,
+          "immediateHit": false,
+          "visibleDelayMs": 48
+        },
+        {
+          "i": 23,
+          "immediateHit": false,
+          "visibleDelayMs": 47
+        },
+        {
+          "i": 24,
+          "immediateHit": false,
+          "visibleDelayMs": 64
+        }
+      ],
+      "summary": {
+        "iterations": 25,
+        "immediateMisses": 24,
+        "visibleDelayMs": {
+          "count": 25,
+          "min": 0,
+          "median": 62,
+          "p95": 65,
+          "max": 65
+        },
+        "neverVisible": 0
+      }
+    },
+    {
+      "id": "O2_ordinary_no_watch_stays_stale",
+      "probes": [
+        {
+          "i": 0,
+          "missAfter500ms": true
+        },
+        {
+          "i": 1,
+          "missAfter500ms": true
+        },
+        {
+          "i": 2,
+          "missAfter500ms": true
+        }
+      ],
+      "staysStale": true,
+      "verdict": "confirmed-stale"
+    }
+  ],
+  "gates": {
+    "D09_shared_acknowledged_freshness": "proven-on-pinned-build",
+    "D09_ordinary_server_deterministic_freshness": "unavailable: ordinary serve exposes no explicit refresh acknowledgement command"
+  }
+}
