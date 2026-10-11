@@ -24,6 +24,7 @@ import {
   useState,
   type DragEvent,
   type MouseEvent as ReactMouseEvent,
+  type RefObject,
   type ReactNode,
 } from "react";
 import { cn } from "@/components/lib/utils.js";
@@ -514,6 +515,27 @@ function formatAttachmentLineCount(attachment: ChatComposerAttachment, locale: s
   return formatter.format(typeof attachment.lineCount === "number" ? attachment.lineCount : 0);
 }
 
+function VoiceDictationComposerControl({
+  disabled,
+  onTranscript,
+  scopeRef,
+}: {
+  disabled: boolean;
+  onTranscript: (text: string) => void;
+  scopeRef: RefObject<HTMLElement | null>;
+}) {
+  const voiceDictation = useVoiceDictation({ enabled: true, onTranscript, scopeRef });
+  return (
+    <V4ComposerVoiceButton
+      phase={voiceDictation.phase}
+      level={voiceDictation.level}
+      preview={voiceDictation.preview}
+      disabled={disabled}
+      onToggle={() => void voiceDictation.toggle()}
+    />
+  );
+}
+
 function ConversationComposerImpl({
   snapshot,
   sessionId = null,
@@ -675,11 +697,6 @@ function ConversationComposerImpl({
     api.setText(current ? `${current} ${text}` : text);
     api.focus();
   }, []);
-  const voiceDictation = useVoiceDictation({
-    enabled: voiceDictationEnabled,
-    onTranscript: insertVoiceTranscript,
-    scopeRef: voiceScopeRef,
-  });
   const reportedErrorKeysRef = useRef(new Set<string>());
   const isMobileTextInputViewport = useIsMobileTextInputViewport();
   const primaryModifierPressed = usePrimaryFollowupModifier();
@@ -2326,12 +2343,10 @@ function ConversationComposerImpl({
           openTarget={backgroundWorkOpenTarget}
         />
         {voiceDictationEnabled ? (
-          <V4ComposerVoiceButton
-            phase={voiceDictation.phase}
-            level={voiceDictation.level}
-            preview={voiceDictation.preview}
+          <VoiceDictationComposerControl
             disabled={disabled}
-            onToggle={() => void voiceDictation.toggle()}
+            onTranscript={insertVoiceTranscript}
+            scopeRef={voiceScopeRef}
           />
         ) : null}
       </>
@@ -2350,11 +2365,8 @@ function ConversationComposerImpl({
       remoteSessionId,
       runningSubagentCount,
       snapshot?.backgroundWorks,
-      voiceDictation.phase,
-      voiceDictation.level,
-      voiceDictation.preview,
-      voiceDictation.toggle,
       voiceDictationEnabled,
+      insertVoiceTranscript,
       workspaceIdentity,
       workspacePath,
     ],

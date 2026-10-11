@@ -49,6 +49,7 @@ sequenceDiagram
 
 - `VoiceModelStore` remains the only owner of model discovery, download state, model path, and removal. It may return a verified Handy path as ready with source metadata; it never deletes that path.
 - `VoiceDictationSection` owns only display and settings edits. The service remains authoritative for model readiness.
+- Mount the voice hook only when Desktop local voice input is enabled. Web and test composers without a `ServiceProvider` must render without mounting the voice hook.
 - Keyboard bindings remain owned by `SHORTCUT_COMMANDS` and the existing shortcut settings flow.
 - Browser recording remains in the UI recorder; Desktop Host owns inference. Web has no voice transcription service.
 
