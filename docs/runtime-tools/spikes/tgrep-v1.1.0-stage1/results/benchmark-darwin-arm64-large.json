@@ -52,9 +52,7 @@
     {
       "id": "rare_literal",
       "pattern": "spike_rare_token_42",
-      "flags": [
-        "-F"
-      ],
+      "flags": ["-F"],
       "engines": {
         "tgrep": {
           "ms": {
@@ -192,9 +190,7 @@
     {
       "id": "case_insensitive",
       "pattern": "LOGGER",
-      "flags": [
-        "-i"
-      ],
+      "flags": ["-i"],
       "engines": {
         "tgrep": {
           "ms": {
@@ -240,9 +236,7 @@
     {
       "id": "filenames_only",
       "pattern": "function",
-      "flags": [
-        "-l"
-      ],
+      "flags": ["-l"],
       "engines": {
         "tgrep": {
           "ms": {
@@ -288,9 +282,7 @@
     {
       "id": "count",
       "pattern": "function",
-      "flags": [
-        "-c"
-      ],
+      "flags": ["-c"],
       "engines": {
         "tgrep": {
           "ms": {
@@ -336,10 +328,7 @@
     {
       "id": "glob_ts",
       "pattern": "spike_mid_token_7",
-      "flags": [
-        "-g",
-        "*.ts"
-      ],
+      "flags": ["-g", "*.ts"],
       "engines": {
         "tgrep": {
           "ms": {
@@ -385,9 +374,7 @@
     {
       "id": "broad_count",
       "pattern": "[a-q]{3}",
-      "flags": [
-        "-c"
-      ],
+      "flags": ["-c"],
       "engines": {
         "tgrep": {
           "ms": {
