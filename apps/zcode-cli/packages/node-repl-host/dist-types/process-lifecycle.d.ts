@@ -3,13 +3,12 @@
  * asynchronous errors (such as an unawaited tab.* call rejected when a turn is
  * interrupted) can terminate the entire server process under Node's default policy.
  * Once the child process dies, Browser Use is unavailable for the session. Downgrade
- * asynchronous errors to stderr logs here, preserving runtime state without affecting
- * protocol stdout.
+ * asynchronous errors to stderr logs to preserve runtime state without affecting protocol stdout.
  *
  * After the parent exits, stderr reports EPIPE. The old handler wrote the EPIPE stack
- * back to the same stderr, creating an infinite EPIPE -> uncaughtException ->
- * stderr.write -> EPIPE loop. A closed output pipe means the MCP client is unreachable;
- * shut down immediately instead of continuing to write diagnostics.
+ * back to the same stderr, creating an infinite EPIPE -> uncaughtException -> stderr.write -> EPIPE
+ * loop. A closed output pipe means the MCP client is unreachable, so shut down directly
+ * instead of continuing to write diagnostics.
  */
 export declare function installNodeReplProcessGuards(input: {
     onOutputClosed: (error: Error) => void;
