@@ -254,9 +254,10 @@ const runZCodeProtocolCommand = async (
   try {
     const env = prepareCliRuntimeEnv(deps.env ?? process.env);
     const workingDirectory = (deps.cwd ?? process.cwd)();
-    // 打包态 app-server 是 desktop host 的内部协议子进程。
-    // 如果这里继续从 workspace 向上读取用户 .env，读文件失败或环境污染会在协议建立前
-    // 直接退出，外层只能看到 ZCode agent transport closed。
+    // The packaged app-server is an internal protocol subprocess of the desktop host.
+    // If it continues searching upward from the workspace for a user .env file, a read failure or
+    // environment contamination can terminate it before protocol setup; the outer process then sees
+    // only "ZCode agent transport closed."
     const dotenvResult = shouldLoadCliDotenvForProtocolServer(env)
       ? (deps.loadDotenv ?? loadCliDotenv)({
           cwd: workingDirectory,
@@ -311,8 +312,9 @@ export const run = async (ctx: RunContext, deps: RunDependencies = {}): Promise<
     return await runPluginHostCommand(ctx, ctx.argv.slice(1));
   }
 
-  // 与 plugin host 同理，且必须同样在 parseArgs 之前：SEA 下 dwf 的沙箱子进程是本二进制的
-  // 自 re-exec，argv 末位是入口文件路径——交给严格 parseArgs 只会报未知参数。
+  // As with the plugin host, this must happen before parseArgs: under SEA, a DWF sandbox subprocess
+  // is a self-reexec of this binary, and its final argv entry is the entry-file path. Strict
+  // parseArgs would reject it as an unknown argument.
   if (isDwfChildInvocation(ctx.argv)) {
     return await runDwfChildCommand(ctx, ctx.argv.slice(1));
   }
@@ -463,8 +465,9 @@ export const run = async (ctx: RunContext, deps: RunDependencies = {}): Promise<
     return 1;
   }
 
-  // app-server 的 mode 归 Host 决定（launch.md「The standalone CLI: `--workflow-mode`」），
-  // 其余子命令不建会话；作用域与 --force-mcs 相同：只有 --prompt、--target 与 TUI。
+  // The Host determines app-server mode (see launch.md "The standalone CLI: `--workflow-mode`").
+  // Other subcommands do not create sessions; like --force-mcs, this applies only to --prompt,
+  // --target, and the TUI.
   if (
     workflowModeOption !== undefined &&
     !isForceMcsSupportedInvocation({

@@ -38,9 +38,9 @@ export async function createControlServer(
     });
   });
   await chmod(endpoint, 0o600).catch(() => undefined);
-  // server.close() 只会停止新连接，仍然会等待已有连接自然结束。
-  // 控制 socket 属于生命周期收口的一部分，必须主动收集并销毁，避免同 UID 的挂起客户端
-  // 永久占住 close 回调，进而让 Supervisor 的 lock 和 lifecycle operation 一直不释放。
+  // server.close() stops new connections but still waits for existing connections to end naturally.
+  // Control sockets are part of lifecycle shutdown and must be collected and destroyed so a hung client with the same UID cannot
+  // hold the close callback forever, keeping the Supervisor lock and lifecycle operation from releasing.
   let closePromise: Promise<void> | undefined;
   return {
     server,
@@ -51,9 +51,9 @@ export async function createControlServer(
           server.close(() => resolve());
         });
         for (const socket of sockets) socket.destroy();
-        // 只等待 server.close() 的自然回调会让半帧或失联客户端把
-        // stop/restart/uninstall 永久 pending。销毁活动连接后仍保留有界兜底，保证 endpoint
-        // 和上层 data-root lock 最终可以收口。
+        // Waiting only for server.close()'s natural callback lets partial-frame or disconnected clients leave
+        // stop/restart/uninstall pending forever. Destroy active connections and retain a bounded fallback so the endpoint
+        // and the outer data-root lock can eventually shut down.
         await Promise.race([
           serverClosed,
           new Promise<void>((resolve) => {
@@ -70,9 +70,9 @@ export async function createControlServer(
 
 function handleSocket(socket: Socket, handler: ControlHandler): void {
   const decoder = new JsonLineDecoder();
-  // 客户端超时会主动 destroy socket，迟到的 response write 可能异步发出
-  // EPIPE/ECONNRESET。socket 的 error 若无人消费会升级成未处理事件并退出 Supervisor；
-  // 控制客户端断开属于正常的 best-effort 回写失败，不能影响 Supervisor 生命周期。
+  // A client timeout destroys the socket; a late response write may asynchronously emit
+  // EPIPE/ECONNRESET. If no listener consumes the socket error, it becomes an unhandled event and exits the Supervisor;
+  // a disconnected control client is a normal best-effort write failure and must not affect Supervisor lifecycle.
   socket.on("error", () => {
     socket.destroy();
   });

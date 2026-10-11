@@ -39,8 +39,8 @@ export async function persistWorkspaceCheckpointEntry(
       sessionID: event.sessionId,
       type: SESSION_ENTRY_WORKSPACE_CHECKPOINT,
       time: { created: timestamp, updated: timestamp },
-      // checkpoint artifact 已落盘，但内存 eventStore 会随 child runtime 释放；
-      // 只保留 artifact 而不持久化关联 payload，冷恢复后的 preview/apply 无法定位该 artifact。
+      // The checkpoint artifact is on disk, but the in-memory eventStore is released with the child runtime.
+      // Keeping only the artifact without persisting its associated payload would make it impossible to locate after cold recovery for preview/apply.
       data: {
         eventId: String(event.id),
         payload: parseCheckpointCreatedPayload(event.payload),
@@ -77,8 +77,8 @@ export async function persistWorkspaceFileRewindEntry(
       sessionID: event.sessionId,
       type: SESSION_ENTRY_WORKSPACE_FILE_REWIND,
       time: { created: timestamp, updated: timestamp },
-      // 文件已撤销是 child turn 的持久状态。只广播内存事件会在关闭详情或
-      // 重启后重新显示“撤销”，并让已经恢复的文件再次进入预览。
+      // The file having been reverted is persistent state for the child turn. Broadcasting only an in-memory event would show "reverted" again
+      // after closing details or restarting, and put the already-restored file back into preview.
       data: {
         eventId: String(event.id),
         payload,

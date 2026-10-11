@@ -1,13 +1,14 @@
 // ============================================================
-// Dynamic Workflow Snippet Port - snippet 的同步编译执行边界
+// Dynamic Workflow Snippet Port - synchronous compile-and-execute boundary for snippets
 // ============================================================
-// 与 {@link import("./dynamic-workflow-run.port.js").DynamicWorkflowRunPort} 并列而非合并：
-// run 端口的构造前提是 durable journal（没有持久化就没有 run），而 snippet 完全瞬态、
-// 只依赖两个执行端口——把它挂在 run 端口上等于让实验通道被 durability 前提连坐。
+// Sits alongside {@link import("./dynamic-workflow-run.port.js").DynamicWorkflowRunPort}, rather
+// than being merged into it: the run port requires a durable journal (without persistence,
+// there is no run), while snippets are fully transient and depend only on two execution ports.
+// Putting snippets on the run port would make the experimental path inherit its durability requirement.
 
 import type { TraceContext } from "../tracing/tracer.js";
 
-/** 一条编译诊断的 JSON 形状（与 CreateWorkflow 的诊断同形；端口不 import zod schema）。 */
+/** JSON shape of one compile diagnostic (same as CreateWorkflow's diagnostic; the port does not import the zod schema). */
 export interface DynamicWorkflowSnippetDiagnostic {
   code: number;
   column: number;
@@ -16,11 +17,11 @@ export interface DynamicWorkflowSnippetDiagnostic {
 }
 
 export interface DynamicWorkflowSnippetEvalRequest {
-  /** snippet 源码（scratch facade 词汇：files.*、git.*、log、纯 TS）。 */
+  /** Snippet source (scratch facade vocabulary: files.*, git.*, log, plain TypeScript). */
   code: string;
-  /** 执行工作目录（沙箱子进程 cwd、world-read 的根）。 */
+  /** Execution working directory (sandbox subprocess cwd and world-read root). */
   cwd: string;
-  /** 整段 snippet 的墙钟（ms）。钳制归工具层；端口只按值执行。 */
+  /** Wall-clock limit for the entire snippet (ms). The tool layer clamps it; the port executes the supplied value. */
   timeoutMs: number;
   trace: TraceContext;
 }
@@ -30,11 +31,13 @@ export interface DynamicWorkflowSnippetEvalOptions {
 }
 
 /**
- * eval 的结构化结果。三种形态互斥：
- *   - 编译不过：`diagnostics` 非空，未执行任何东西；
- *   - 执行完成：`artifact` 是脚本顶层返回值（`undefined` 产物即字段缺席）；
- *   - 执行失败：`error` 携带稳定错误码（超时 / 脚本抛错 / cap 拒绝都在此形态）。
- * logs 在后两种形态都在场（失败前的叙事同样有价值）。
+ * Structured result of eval. The three shapes are mutually exclusive:
+ *   - Compilation failed: `diagnostics` is non-empty; nothing was executed.
+ *   - Execution completed: `artifact` is the script's top-level return value (omitted when
+ *     the result is `undefined`).
+ *   - Execution failed: `error` contains a stable error code (timeout / script exception / cap
+ *     rejection all use this shape).
+ * `logs` is present in the latter two shapes; output leading up to a failure is useful too.
  */
 export type DynamicWorkflowSnippetEvalResult =
   | { kind: "diagnostics"; diagnostics: DynamicWorkflowSnippetDiagnostic[] }
@@ -47,7 +50,7 @@ export type DynamicWorkflowSnippetEvalResult =
     };
 
 export interface DynamicWorkflowSnippetPort {
-  /** 编译一次并同步执行至结算（完全瞬态：无 dwf_* 行、无后台任务）。 */
+  /** Compile once and execute synchronously to settlement (fully transient: no dwf_* rows or background task). */
   evalSnippet(
     request: DynamicWorkflowSnippetEvalRequest,
     options?: DynamicWorkflowSnippetEvalOptions,

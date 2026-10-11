@@ -29,8 +29,8 @@ export const SelectionSideChatPane = memo(function SelectionSideChatPane({
     }),
     [tab.remoteSessionId, tab.workspaceIdentity, tab.workspacePath],
   );
-  // 父级 tabs.map 原来为每个 memo pane 创建内联闭包，任意父级渲染都会
-  // 破坏 onUnavailable 引用稳定性；由叶子按稳定 tab id 收口回调。
+  // The parent tabs.map previously created an inline closure for each memoized pane, so any parent render
+  // changed the onUnavailable reference. Let the leaf component close over the stable tab ID instead.
   const handleUnavailable = useCallback(() => onUnavailable(tab.id), [onUnavailable, tab.id]);
   return (
     <V4PaneConversationProvider scope={scope}>

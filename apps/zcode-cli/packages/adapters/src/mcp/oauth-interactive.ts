@@ -34,16 +34,16 @@ import { withTimeout } from "./timeout.js";
 
 type McpAuthorizationCodeOAuthConfig = Extract<McpOAuthConfig, { type: "authorization_code" }>;
 
-/** 授权事务的全局寿命。与 caller 等待预算（session 15s）无关，由 caller 侧独立收口。 */
+/** Global lifetime of an authorization transaction. Independent of the caller's wait budget (15s per session), which is enforced by the caller. */
 export const MCP_OAUTH_AUTHORIZATION_TRANSACTION_TTL_MS = 5 * 60 * 1000;
 const FOLLOWER_POLL_INTERVAL_MS = 500;
 
 export type McpInteractiveAuthorizationOutcome =
-  /** 本次调用完成了授权，凭据已发布。 */
+  /** This call completed authorization and published credentials. */
   | { status: "authorized" }
-  /** 另一个事务已完成授权（generation 已换代），直接回 Phase 1 重连即可。 */
+/** Another transaction completed authorization (generation advanced); reconnect directly in Phase 1. */
   | { status: "already-authorized" }
-  /** 事务仍在进行（本调用是 follower 或已达事务 TTL），授权 URL 可供展示。 */
+/** The transaction is still in progress (this call is a follower or the transaction TTL has not elapsed); the authorization URL can be shown. */
   | { status: "pending"; authorizationUrl?: string }
   | { status: "failed"; error: unknown };
 
@@ -52,13 +52,13 @@ export interface McpInteractiveAuthorizationInput {
   config: McpAuthorizationCodeOAuthConfig;
   credentialStore: SharedZCodeCredentialStore;
   fetchFn?: FetchLike;
-  /** 403 step-up：unionScope 是 requiredScope 的严格超集时，refresh 无法扩权，必须强制重新授权。 */
+  /** 403 step-up: when unionScope is a strict superset of requiredScope, refresh cannot add scopes, so reauthorization is required. */
   forceReauthorization?: boolean;
   keyPrefix: string;
   logger?: Logger;
   onAuthorizationRequired?: (context: McpOAuthAuthorizationContext) => Promise<void> | void;
   openAuthorizationUrl?: (context: McpOAuthAuthorizationContext) => Promise<void> | void;
-  /** 编排层算好的最终 scope（config scope ∪ token.scope ∪ challenge scope）。 */
+  /** Final scope computed by the orchestration layer (config scope ∪ token.scope ∪ challenge scope). */
   requestedScope?: string;
   resourceMetadataUrl?: URL;
   serverName: string;
@@ -68,11 +68,11 @@ export interface McpInteractiveAuthorizationInput {
 }
 
 /**
- * Phase 2：交互授权事务。
+ * Phase 2: interactive authorization transaction.
  *
- * 不创建任何 MCP transport。直接用 SDK 导出的 `auth()` 驱动 discovery → DCR → authorize →
- * code exchange，因此不存在「Phase 2 transport 必须销毁」的隐患：授权成功后调用方直接用
- * Phase 1 的纯 AuthProvider 重新建连即可。
+ * Does not create any MCP transport. Calls the SDK-exported `auth()` directly to run discovery → DCR → authorize →
+ * code exchange, avoiding the risk that a Phase 2 transport must be destroyed. After authorization succeeds, the
+ * caller can reconnect using the pure AuthProvider from Phase 1.
  */
 export async function runMcpInteractiveAuthorization(
   input: McpInteractiveAuthorizationInput,
@@ -90,7 +90,7 @@ export async function runMcpInteractiveAuthorization(
   }
 
   try {
-    // 锁内重读：等待 lease 期间别人可能已经完成授权。
+    // Re-read under the lock: another caller may have completed authorization while this one waited for the lease.
     const current = await loadCanonicalCredentials(input.credentialStore, input.keyPrefix);
     if (hasNewerCredentials(current, baselineGeneration)) {
       return { status: "already-authorized" };
@@ -120,13 +120,13 @@ async function leadAuthorization(
 ): Promise<McpInteractiveAuthorizationOutcome> {
   const state = randomBytes(24).toString("base64url");
   const callbackPath = normalizeCallbackPath(input.config.redirectPath, input.serverName);
-  // 每次授权都重新 listen(0)。彻底放弃端口复用：listener 在整个连接期长期存活，复用必撞；
-  // fresh DCR 会把当前存活 listener 的 URL 写进 redirect_uris，端口变化不再导致失配。
+  // Call listen(0) for every authorization. Do not reuse ports: the listener remains alive for the entire connection,
+  // so reuse would collide. A fresh DCR records the currently live listener URL in redirect_uris, preventing mismatches when ports change.
   let callbackServer: LocalhostOAuthCallbackServer;
   try {
     callbackServer = await createLocalhostOAuthCallbackServer({ callbackPath, state });
   } catch (error) {
-    // EACCES/EMFILE/ENFILE/EADDRNOTAVAIL 等一律按 leader 失败处理，不特殊处理 EADDRINUSE。
+    // Treat EACCES/EMFILE/ENFILE/EADDRNOTAVAIL and similar errors as leader failures; do not special-case EADDRINUSE.
     input.logger?.warn("MCP OAuth callback listener failed", {
       event: "mcp.oauth.callback_listener.failed",
       ...logContext(input, state),
@@ -161,12 +161,13 @@ async function leadAuthorization(
       ...(input.forceReauthorization ? { forceReauthorization: true } : {}),
     });
     if (redirected === "AUTHORIZED") {
-      // 静态配置 client 且服务器直接放行时可能不经过浏览器。
+      // A statically configured client may be accepted directly by the server without opening a browser.
       return { status: "authorized" };
     }
 
-    // 只有「等人点授权」这一段有超时。code exchange 一律等到 settle，不与超时竞速：
-    // 否则可能在 token response 已返回、saveTokens 仍在进行时放锁，fencing 就漏了。
+    // Only the “waiting for a person to authorize” phase has a timeout. Always wait for code exchange to settle rather
+    // than racing it against the timeout; otherwise, the token response could return while saveTokens is still running,
+    // releasing the lock too early and bypassing fencing.
     const callback = await withTimeout(
       callbackServer.waitForCallback(),
       context.transactionTtlMs,
@@ -191,8 +192,9 @@ async function leadAuthorization(
     });
     return { status: "authorized" };
   } catch (error) {
-    // 事务 TTL 到点时授权仍可能在浏览器里进行，但本 leader 已经放弃：把 listener 关掉，
-    // 让下一次连接重新成为 leader，而不是留下一个不会被消费的回调端口。
+    // Authorization may still be in progress in the browser when the transaction TTL expires,
+    // but this leader has given up. Close the listener so the next connection can become leader
+    // instead of leaving behind a callback port that will never be consumed.
     const published = await loadCanonicalCredentials(input.credentialStore, input.keyPrefix);
     if (hasNewerCredentials(published, context.baselineGeneration)) {
       return { status: "already-authorized" };
@@ -228,8 +230,9 @@ async function followAuthorization(
 
     const pending = await loadPendingAuthorization(input.credentialStore, input.keyPrefix);
     if (pending && pending.authorizationUrl !== projectedUrl) {
-      // 设置页与 session 是独立 lease，leader 的 onAuthorizationRequired 回调对 follower
-      // 不可见；follower 必须从共享 pending 键把同一个授权 URL 投影到自己的状态。
+      // The settings page and session use independent leases, and the leader's
+      // onAuthorizationRequired callback is not visible to followers. A follower must project the
+      // same authorization URL from the shared pending key into its own state.
       projectedUrl = pending.authorizationUrl;
       await input.onAuthorizationRequired?.({
         authorizationUrl: pending.authorizationUrl,
@@ -244,14 +247,17 @@ async function followAuthorization(
 }
 
 /**
- * Phase 2 专用 OAuthClientProvider。
+ * OAuthClientProvider used exclusively by Phase 2.
  *
- * 与 Phase 1 的纯 AuthProvider 相反，这里必须是完整 `OAuthClientProvider` 才能驱动 `auth()`；
- * 但它只在授权事务内存活，且：
- * - `clientInformation()` 只认静态配置 clientId，其余一律返回 undefined，强制 fresh DCR；
- * - `saveClientInformation()` 只写事务内存，绝不落盘；
- * - `tokens()` 恒为 undefined，绝不触发 refresh（refresh 是 Phase 1 的唯一职责）；
- * - PKCE verifier 只存内存：整个事务在同一进程、同一 lease 内完成，不存在 provider 重建。
+ * Unlike the pure AuthProvider in Phase 1, this must be a complete `OAuthClientProvider` to drive
+ * `auth()`. It lives only for the authorization transaction, and:
+ * - `clientInformation()` accepts only a statically configured clientId; otherwise it returns
+ *   undefined to force fresh DCR;
+ * - `saveClientInformation()` writes only to transaction memory and never to disk;
+ * - `tokens()` always returns undefined and never triggers refresh (refresh belongs exclusively
+ *   to Phase 1);
+ * - The PKCE verifier stays in memory because the whole transaction completes in one process and
+ *   lease, so the provider is never recreated.
  */
 class InteractiveAuthorizationProvider implements OAuthClientProvider {
   private readonly attemptId: string;
@@ -267,7 +273,7 @@ class InteractiveAuthorizationProvider implements OAuthClientProvider {
   private readonly openAuthorizationUrl?: (
     context: McpOAuthAuthorizationContext,
   ) => Promise<void> | void;
-  /** 编排层算好的最终 scope（step-up 时为并集）；DCR 与 authorize 请求必须用同一个值。 */
+  /** Final scope computed by the orchestration layer (a union during step-up); DCR and the authorize request must use the same value. */
   private readonly requestedScope?: string;
   private readonly serverName: string;
   private readonly stateValue: string;
@@ -320,9 +326,9 @@ class InteractiveAuthorizationProvider implements OAuthClientProvider {
       redirect_uris: [this.redirectUrl],
       response_types: ["code"],
       ...(this.config.clientSecret ? { token_endpoint_auth_method: "client_secret_basic" } : {}),
-      // DCR 注册的 scope 与 authorize 请求的 scope 必须是同一个并集结果。
-      // 若 DCR 只写 config scope，注册的 client 与后续按并集发起的授权请求不一致，
-      // 严格授权服务器会拒绝或静默按注册值收敛。
+      // The scope registered through DCR must be the same union used by the authorize request.
+      // If DCR uses only the configured scope, the registered client and the later authorization
+      // request differ, so strict authorization servers may reject it or silently narrow the scope.
       ...((this.requestedScope ?? this.config.scope)
         ? { scope: this.requestedScope ?? this.config.scope }
         : {}),
@@ -340,16 +346,18 @@ class InteractiveAuthorizationProvider implements OAuthClientProvider {
         ...(this.config.clientSecret ? { client_secret: this.config.clientSecret } : {}),
       };
     }
-    // 过去这里优先返回持久化的 DCR client，而它的 redirect_uris 锁死在
-    // 注册当时的随机端口。授权请求随后带「旧 client_id + 新 redirect_uri」，授权服务器按
-    // RFC 6749 §4.1.2.1 禁止回跳、就地渲染错误页，回调永不到达且重试永不自愈。
-    // 返回 undefined 让 SDK 用当前存活 listener 的 URL 重新注册，失配从根上消除。
+    // Previously this preferred the persisted DCR client, whose redirect_uris were locked to the
+    // random port used at registration. The authorization request then combined the old client_id
+    // with a new redirect_uri. Under RFC 6749 §4.1.2.1 the server rejected the redirect, rendered
+    // an error page, and never reached the callback; retries could not recover.
+    // Returning undefined makes the SDK register again with the current live listener URL.
     return this.transactionClientInformation;
   }
 
   saveClientInformation(clientInformation: OAuthClientInformationMixed): void {
-    // 只写事务内存。DCR client 只有与本次授权换到的 token 组成一对才有意义；单独落盘
-    // 也会污染其他事务的 canonical pair。
+    // Keep this only in transaction memory. A DCR client is meaningful only as a pair with the
+    // token obtained in this authorization; persisting it alone would corrupt another transaction's
+    // canonical pair.
     this.transactionClientInformation = clientInformation;
   }
 
@@ -386,8 +394,9 @@ class InteractiveAuthorizationProvider implements OAuthClientProvider {
       redirectUrl: this.redirectUrl,
       serverName: this.serverName,
     };
-    // pending 与 attempt 绑定：删除按 attempt CAS，旧 leader 的 finally 不会抹掉新 leader 的
-    // pending。TTL 只用于展示过期判断，不承担锁所有权语义。
+    // Bind pending to the attempt and delete it with attempt-based CAS, so an old leader's finally
+    // block cannot erase a new leader's pending record. TTL is only for displaying expiration and
+    // does not determine lock ownership.
     await publishPendingAuthorization(this.credentialStore, this.keyPrefix, {
       attemptId: this.attemptId,
       authorizationUrl: context.authorizationUrl,
@@ -402,7 +411,8 @@ class InteractiveAuthorizationProvider implements OAuthClientProvider {
       status: "waiting",
     });
     await this.onAuthorizationRequired?.(context);
-    // 默认只暴露 URL，等用户在设置页点击授权；自动拉起浏览器会打断当前操作。
+    // By default, expose the URL and wait for the user to click Authorize in settings; opening the
+    // browser automatically would interrupt the current operation.
     await this.openAuthorizationUrl?.(context);
   }
 
@@ -426,9 +436,10 @@ class InteractiveAuthorizationProvider implements OAuthClientProvider {
   }
 
   async saveDiscoveryState(state: OAuthDiscoveryState): Promise<void> {
-    // 事务内也留一份内存副本：code exchange 那一腿需要能读回 authorize 腿记录的
-    // issuer，否则 SDK 抛 AuthorizationServerMismatchError。共享记录可能被别的进程改写或过期，
-    // 内存副本保证同一事务内的 issuer 绑定稳定。
+    // Keep an in-memory copy for the transaction: the code exchange must read the issuer recorded
+    // during authorization, or the SDK throws AuthorizationServerMismatchError. Another process
+    // may overwrite or expire the shared record; the memory copy keeps issuer binding stable within
+    // this transaction.
     this.memoryDiscoveryState = state;
     await saveDiscoveryRecord(this.credentialStore, this.keyPrefix, state);
   }

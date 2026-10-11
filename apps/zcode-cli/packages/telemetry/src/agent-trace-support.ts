@@ -113,8 +113,9 @@ export abstract class BaseSpanWriter implements AgentTelemetryScope {
         this.warn("Telemetry context activation failed", error);
         value = invokeBusinessOnce();
       } else if (businessReturned) {
-        // Bug 根因：观测 Context Manager 理论上不应在业务返回后抛错；若第三方实现违反
-        // 契约，不能因此重跑或覆盖已经成功执行一次的业务回调。
+        // Root cause: the observability Context Manager should not throw after the business
+        // callback returns. If a third-party implementation violates this contract, do not rerun
+        // or overwrite a business callback that has already succeeded once.
         this.warn("Telemetry context teardown failed", error);
         value = businessValue as T;
       } else {
@@ -233,7 +234,8 @@ export abstract class BaseSpanWriter implements AgentTelemetryScope {
 
   private claimTerminal(): boolean {
     if (this.ended) return false;
-    // 先关闭内存闩锁，再触碰任何 SDK/Adapter；即使后续抛错也不会重复终结。
+    // Close the in-memory latch before touching any SDK/Adapter; even if a later operation throws,
+    // completion will not run twice.
     this.ended = true;
     return true;
   }
@@ -256,7 +258,7 @@ export abstract class BaseSpanWriter implements AgentTelemetryScope {
         spanName: this.state.spanName,
       });
     } catch {
-      // Telemetry 的健康回调也属于旁路，绝不能覆盖业务返回或异常。
+      // Telemetry health callbacks are also bypassed and must never override a business return or exception.
     }
   }
 }
@@ -284,8 +286,9 @@ export function causationFromState(
 }
 
 export function contextFromCausation(causation: AgentTelemetryCausation): Context {
-  // 显式 Causation 只传播保存下来的 SpanContext。不能以执行时碰巧活跃的 Context
-  // 为底，否则会把另一个异步任务的 Baggage 或 ZCode Writer 私有状态夹带进来。
+  // Explicit Causation propagates only the saved SpanContext. Do not use the Context that happens
+  // to be active at execution time as the base, or Baggage or private ZCode Writer state from
+  // another asynchronous task could leak in.
   return trace.setSpanContext(ROOT_CONTEXT, spanContextFromCausation(causation));
 }
 

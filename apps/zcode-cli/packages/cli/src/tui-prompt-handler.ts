@@ -9,8 +9,8 @@ import { createCommandCenter, parseSlashCommand } from "./command-center.js";
 import type { CommandCenterApp } from "./command-center.js";
 import { resolveDisplayLocale } from "./locale.js";
 import { createCliHeadlessBrowserRuntime } from "./headless-browser.js";
-// 复用防御式 runtime 读取：subscribeEvents 不在 app 的静态类型面上，
-// 两处各写一份「怎么把它读出来」就会在方法改名时只修好一处。
+// Reuse defensive runtime access: subscribeEvents is not part of the app's static type surface,
+// and duplicating how it is read in both places could leave one stale after a method rename.
 import { readRuntimeEventSubscriber } from "./runtime-event-subscriber.js";
 import { createTuiSessionEventRelay } from "./tui-session-event-relay.js";
 import { attachTuiAppQueries, readTuiSessionMetadata } from "./tui-prompt-handler-queries.js";
@@ -65,7 +65,7 @@ export function createTuiSubmitPrompt(
 ): TuiPromptHandler {
   let app: Awaited<ReturnType<NonNullable<RunDependencies["createZCodeApp"]>>> | undefined;
   let activeUiLocale = uiLocale;
-  // 进程级句柄（telemetry / Provider Registry / endpoint 路由）跨 App 替换复用，见 runtime 文件。
+  // Process-level handles (telemetry / Provider Registry / endpoint routing) are reused across App replacements; see the runtime file.
   const processRuntime = createTuiProcessRuntimeState();
   let closeHandlerPromise: Promise<void> | undefined;
   const closePromises = new WeakMap<object, Promise<void>>();
@@ -100,7 +100,7 @@ export function createTuiSubmitPrompt(
     if (!closePromise) {
       closePromise = (async () => {
         await runCliCleanupWithTimeout(async () => targetApp.close?.(), cleanupTimeoutMs);
-        // App/session 关闭悬空或失败时仍需释放 CLI 自己启动的 Chromium。
+        // Release Chromium started by the CLI even if closing the App/session hangs or fails.
         await runCliCleanupWithTimeout(
           async () => browserRuntimes.get(closeKey)?.close(),
           cleanupTimeoutMs,
@@ -111,8 +111,8 @@ export function createTuiSubmitPrompt(
     await closePromise;
   };
 
-  // ── 跨回合常驻的会话事件订阅──
-  // per-turn 的 onEvent 在回合结束即死，收不到出回合事件（dwf 进度、后台通知驱动的回合）。
+  // ── Session event subscription that persists across turns ──
+  // A per-turn onEvent subscription ends with the turn and misses out-of-turn events (DWF progress and turns triggered by background notifications).
   const sessionEventRelay = createTuiSessionEventRelay({
     currentRuntime: () => (app as { runtime?: unknown } | undefined)?.runtime,
     readSubscriber: readRuntimeEventSubscriber,
@@ -127,8 +127,9 @@ export function createTuiSubmitPrompt(
     if (previousApp && previousApp !== nextApp) {
       await closeApp(previousApp);
     }
-    // 常驻订阅要跟着换 app 重挂：这里是 /new、/resume、/fork 共同的唯一收口，
-    // 漏挂的后果是换 session 后 TUI 再也收不到出回合事件（dwf 进度、通知驱动回合）。
+    // Reattach the persistent subscription when the app changes. This is the shared handoff point
+    // for /new, /resume, and /fork; missing it means the TUI stops receiving out-of-turn events after
+    // a session change (DWF progress and notification-triggered turns).
     sessionEventRelay.reattach();
     modeState.current = readTuiMode(app, currentCliMode(modeState));
     return app as unknown as CommandCenterApp;
@@ -165,7 +166,7 @@ export function createTuiSubmitPrompt(
           ...(modeState.override ? { mode: modeState.override } : {}),
           ...(toolDisallowlist ? { toolDisallowlist } : {}),
           ...(forceMcs ? { midConversationSystem: { mode: "force" as const } } : {}),
-          // 首个 app 与 /new、/resume、fork 都经这里创建，mode 因此在进程内一致。
+          // The first app and apps created by /new, /resume, and fork all pass through here, keeping mode consistent within the process.
           ...resolveWorkflowModeRuntimeConfig(workflowMode),
           modelStreaming: "on",
           titleGeneration: TUI_TITLE_GENERATION_CONFIG,
@@ -184,7 +185,7 @@ export function createTuiSubmitPrompt(
       throw error;
     }
     if (browserRuntime) browserRuntimes.set(createdApp as object, browserRuntime);
-    // 初始化在等待旧身份导入时 TUI 可能已关闭；迟到 App 不能重新成为当前会话。
+    // The TUI may close while initialization waits for legacy identity import; a late App must not become the current session again.
     if (closeHandlerPromise) {
       await closeApp(createdApp);
       throw new Error("TUI prompt handler is closed");
@@ -362,7 +363,8 @@ export function createTuiSubmitPrompt(
 
   submitPrompt.subscribeSessionEvents = (sink: (event: SessionEvent) => void) => {
     const unsubscribe = sessionEventRelay.addSink(sink);
-    // app 还没建好时首次实挂会落空；建好后再挂一次（reattach 幂等，不会重复扇出）。
+    // The first attachment can happen before the app is ready; attach again afterward. Reattachment
+    // is idempotent and does not fan out duplicate subscriptions.
     void getApp().then(
       () => sessionEventRelay.reattach(),
       () => undefined,
@@ -370,8 +372,10 @@ export function createTuiSubmitPrompt(
     return unsubscribe;
   };
 
-  // 主会话 id：给 TUI 做会话闸门用（actor/子会话事件保留子 sessionId 投进同一个 sink 集）。
-  // 每次现读而不是缓存：replaceApp 换 app 就换会话，缓存下来的 id 会把整条转写判成外来。
+  // The main session ID gates TUI events. Actor/subsession events retain their child sessionId and
+  // are sent to the same sink set.
+  // Read it each time instead of caching: replaceApp changes the app and session, so a cached ID
+  // would make the entire transcript look external.
   submitPrompt.getMainSessionId = () => {
     const runtime = (app as { runtime?: { getSessionId?: () => string } } | undefined)?.runtime;
     const sessionId = runtime?.getSessionId?.();
@@ -381,8 +385,9 @@ export function createTuiSubmitPrompt(
   submitPrompt.close = async () => {
     closeHandlerPromise ??= (async () => {
       await closeApp();
-      // Bug 根因：TUI 的 Session 切换和进程退出共用了 App close，不能在 /new 等路径
-      // 提前关闭共享 Owner；只有整个 Prompt Handler 终态才做对称 shutdown。
+      // Root cause: TUI session changes and process exit both use App close, so shared owners must
+      // not be shut down early on paths such as /new. Perform symmetric shutdown only when the entire
+      // Prompt Handler reaches its terminal state.
       await runCliCleanupWithTimeout(
         async () => processRuntime.shutdownTelemetry?.(),
         cleanupTimeoutMs,

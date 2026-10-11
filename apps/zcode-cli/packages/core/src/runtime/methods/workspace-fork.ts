@@ -128,9 +128,9 @@ export async function forkWorkspaceAtMessage(
 
   const forkHistoryEndIndex = resolveForkHistoryEndIndex(forkSourceMessages, targetIndex, true);
   const sessionEvents = await this.eventStore.getEvents(this.sessionId);
-  // fork 点之后的 checkpoint 才需要撤销。目标回合自身的 checkpoint 属于已复制的历史，
-  // 必须保留其产物；一个 checkpoint 可能同时挂在 assistant / tool 消息上，凡是命中
-  // 历史前缀的都按"fork 点之前"处理，避免跨界 turn 被误回退。
+  // Only checkpoints after the fork point need to be undone. The target turn's own checkpoint belongs to copied history
+  // and its artifacts must be retained. A checkpoint may be attached to both assistant/tool messages; treat any checkpoint
+  // in the history prefix as "before the fork point" to avoid rolling back a turn that crosses the boundary.
   const historyMessageIds = forkSourceMessages
     .slice(0, forkHistoryEndIndex)
     .map((message) => message.info.id);
@@ -147,7 +147,7 @@ export async function forkWorkspaceAtMessage(
   );
 
   if (laterCheckpoints.length === 0) {
-    // fork 点之后没有文件变更，工作区已经处于 fork 点状态：等价纯对话 fork，不碰任何文件。
+    // There are no file changes after the fork point, so the workspace is already at the fork-point state; this is equivalent to a conversation-only fork and touches no files.
     return await forkConversationFromMessage.call(this, {
       forkedSessionId: options.forkedSessionId,
       targetMessageId: options.targetMessageId,
@@ -170,8 +170,8 @@ export async function forkWorkspaceAtMessage(
     );
   }
 
-  // 先读全所有快照、再产生任何副作用：任何一个 artifact 缺失都让 fork 整体失败，
-  // 避免文件写到一半停在既不是 fork 点也不是当前态的中间状态。
+  // Read all snapshots before producing side effects: any missing artifact fails the whole fork,
+  // preventing files from being partially written and leaving the workspace in neither the fork-point nor current state.
   const artifacts: WorkspaceCheckpointArtifact[] = [];
   for (const checkpoint of laterCheckpoints) {
     throwIfTurnAborted(options.abortSignal);
@@ -185,8 +185,8 @@ export async function forkWorkspaceAtMessage(
     artifacts.push(parseWorkspaceCheckpointArtifact(JSON.parse(read.content)));
   }
 
-  // 文件在 fork 点时刻的状态 = fork 点之后第一次变更记录的 before 状态；
-  // 同一文件多次变更时只应用最早那份，后面的都被它覆盖。
+  // A file's state at the fork point is the before-state from its first change after the fork point.
+  // If the same file changed multiple times, apply only the earliest one; it subsumes the later changes.
   const earliestFileByPath = new Map<string, WorkspaceCheckpointArtifact["files"][number]>();
   for (const artifact of artifacts) {
     for (const file of artifact.files) {
@@ -222,8 +222,8 @@ export async function forkWorkspaceAtMessage(
     options.traceContext,
     options.abortSignal,
   );
-  // 三路径归一：forkWorkspaceAtMessage 不能只写 synthetic notice、不写
-  // session_fork timeline part（与另外两条 fork 路径不一致，冷恢复 fork 边界形态漂移）。
+  // Normalize all three paths: forkWorkspaceAtMessage must not write only a synthetic notice without
+  // a session_fork timeline part (unlike the other two fork paths, which would make the fork boundary differ after cold recovery).
   const copiedTargetMessageId = messageIdMap.get(options.targetMessageId);
   const forkTimelineCreated = Date.now();
   await this.persistAssistantTimelinePartForSession({

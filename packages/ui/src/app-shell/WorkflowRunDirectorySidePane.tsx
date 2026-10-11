@@ -26,18 +26,18 @@ import {
 } from "@/v4/workflowRunDirectoryModel.js";
 
 /**
- * 一条对话的 workflow run 目录。三步形状与 subagent 目录逐字同构：任务列表页脚行 → 这一页 → `workflow-run`
- * 详情页。
+ * Workflow run directory for a conversation. Its three-step shape exactly mirrors the subagent directory: task-list footer row → this page → `workflow-run`
+ * detail page.
  *
- * **行只渲染 journal 摘要**：发现查询本来就返回 `pending`/
- * `running`，所以两段都齐；活 run 的步数与时长在任务列表上（就在你点的那行上方）和详情页里，
- * 这一页不重复那份实时状态。
+ * **Rows render only journal summaries**: the discovery query already returns `pending`/
+ * `running`, so both are available; live run steps and duration appear in the task list (above the row you clicked) and detail page,
+ * so this page does not repeat that live status.
  *
- * 但它**确实**订一份投影——只当新鲜度触发器。第一版按
- * 「不租会话、不订投影」实现，于是页面一个信号都没有：hook 首答即收口，跑完的 run 永远留在
- * 「运行中」。租约 + 投影这套接线与 `SubagentDirectorySidePane` 逐字相同，那边靠的是
- * `subagents.revision`；这里的键要更挑（见 `workflowRunDirectoryRefreshKey`），因为 dwf 的
- * `revision` 每来一个节点事件就抬一次。
+ * It **does** subscribe to a projection, but only as a freshness trigger. The first version was implemented as
+ * “no session lease, no projection subscription,” leaving the page with no signal: the hook settled after its first response, and completed runs stayed
+ * “running” forever. The lease + projection wiring exactly matches `SubagentDirectorySidePane`, which uses
+ * `subagents.revision`; this key must be more selective (see `workflowRunDirectoryRefreshKey`) because dwf's
+ * `revision` increments for every node event.
  */
 function buildWorkflowRunDirectoryOpenRequest(
   tab: WorkflowRunDirectorySidePaneTab,
@@ -50,7 +50,7 @@ function buildWorkflowRunDirectoryOpenRequest(
     parentSessionId: tab.parentSessionId,
     runId: row.runId,
     toolCallId: row.toolCallId,
-    // 展示名冻进 tab 只作投影缺席时的标题兜底（见 WorkflowRunSidePaneTab 的注释）。
+    // Freeze the display name into the tab only as a title fallback when the projection is unavailable (see WorkflowRunSidePaneTab's comment).
     ...(row.label ? { workflowName: row.label } : {}),
   };
 }
@@ -63,7 +63,7 @@ const DirectoryRow = memo(function DirectoryRow({
   row: WorkflowRunDirectoryRow;
 }) {
   const { intl } = useZCodeIntl();
-  // 未命名的 run 用与工具卡/任务列表同一个兜底名，绝不把 runId 端到台面上。
+  // Use the same fallback name as tool cards/task lists for unnamed runs; never expose the runId.
   const name = row.label ?? intl.formatMessage({ id: "chat.toolCall.workflow.fallbackName" });
   const statusLabel = intl.formatMessage({
     id: `chat.toolCall.workflow.run.status.${row.status}`,
@@ -79,7 +79,7 @@ const DirectoryRow = memo(function DirectoryRow({
       onClick={() => onOpen(row)}
       className="flex w-full min-w-0 items-start gap-3 rounded-lg px-3 py-2.5 text-left text-ui-base transition-colors hover:bg-surface-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-input-border-focused"
     >
-      {/* 状态永远有词（下一行），圆点只是冗余通道。 */}
+      {/* Always show a status label on the next line; the dot is only a redundant signal. */}
       <span
         aria-hidden="true"
         className={cn("mt-2 size-1.5 shrink-0 rounded-full", RUN_STATUS_DOT[row.status])}
@@ -89,8 +89,8 @@ const DirectoryRow = memo(function DirectoryRow({
         <span className="mt-0.5 flex min-w-0 flex-wrap items-center gap-x-2 text-ui-sm">
           <span className={cn("shrink-0", RUN_STATUS_TEXT[row.status])}>{statusLabel}</span>
           {/*
-            「为什么值得回去看」的那半句：stopped 行显示停止原因，errored 行显示 failureCode。
-            老服务端若未提供 stopped 的原因，则回退到 failureCode。
+            The part explaining why a run is worth revisiting: stopped rows show the stop reason, and errored rows show failureCode.
+            If an older server does not provide a stopped reason, fall back to failureCode.
           */}
           {stopReason ? (
             <span className="min-w-0 truncate text-foreground-subtle">
@@ -163,13 +163,13 @@ const WorkflowRunDirectoryContents = memo(function WorkflowRunDirectoryContents(
     setLease(nextLease);
     return () => nextLease.release();
   }, [layer, tab.parentSessionId]);
-  // pane 是从一条活着的对话里点开的，所以 `live: true` 是实话；`limit` 与任务列表计数共用
-  // 同一个常量，两处深度一旦不同就等于两套口径。
+  // The pane was opened from a live conversation, so `live: true` is accurate; `limit` shares
+  // the same constant as the task-list count, since differing limits would create inconsistent results.
   //
-  // `refreshKey` 是这一页会不会自己更新的**全部**依据（实测 bug：跑完的 run 不会挪到
-  // 「已结束」，因为这里当初一个信号都没接）。投影在这里只是触发器，不是信源：行仍然只渲染
-  // journal 摘要，活 run 的步数与时长仍然只在任务列表和详情页。键的形状（run 数 + 已结算数）
-  // 让「多一个 run / 跑完一个 run」重取一次，而节点级进度不重取——见模型里那段注释。
+  // `refreshKey` is the **only** basis for whether this page refreshes itself (observed bug: completed runs did not move to
+  // “Finished” because no signal was connected here). The projection is only a trigger, not a source: rows still render
+  // journal summaries, and live run steps and duration still appear only in the task list and detail page. The key shape (run count + settled count)
+  // refetches when a run is added or completed, but not for node-level progress — see the model comment.
   const summaries = useWorkflowRunJournalSummaries({
     sessionId: tab.parentSessionId,
     live: true,
@@ -180,7 +180,7 @@ const WorkflowRunDirectoryContents = memo(function WorkflowRunDirectoryContents(
   const handleOpen = (row: WorkflowRunDirectoryRow) => {
     onOpenWorkflowRun(buildWorkflowRunDirectoryOpenRequest(tab, row));
   };
-  // 三种「屏幕上没有行」必须可分辨：列不出来（摘要缺席）／一条都没有／只是某一段空。
+  // Distinguish three cases where there are no visible rows: unavailable list (summary missing) / no runs / one section is empty.
   const isUnavailable = summaries === null;
   const isEmpty = !isUnavailable && directory.running.length + directory.ended.length === 0;
 
@@ -193,7 +193,7 @@ const WorkflowRunDirectoryContents = memo(function WorkflowRunDirectoryContents(
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto px-2 py-3">
         {isUnavailable ? (
-          // 不是报错语气：拿不到名单最常见的原因是这条对话所在的运行时不提供枚举面。
+          // Avoid an error tone: the most common reason the list is unavailable is that this conversation's runtime does not support enumeration.
           <p
             data-testid="workflow-run-directory-unavailable"
             className="px-3 py-3 text-ui-base text-foreground-subtlest"
@@ -227,7 +227,7 @@ const WorkflowRunDirectoryContents = memo(function WorkflowRunDirectoryContents(
               emptyLabel={intl.formatMessage({ id: "workflowDirectory.endedEmpty" })}
               onOpen={handleOpen}
             />
-            {/* 截断必须明写：一页正好取满时「就这些」是假话，而查询没有游标可翻。 */}
+            {/* State truncation explicitly: when a page is exactly full, claiming "that's all" would be false, and the query has no cursor for another page. */}
             {directory.truncated ? (
               <p
                 data-testid="workflow-run-directory-truncated"

@@ -1,4 +1,4 @@
-/* eslint-disable max-lines -- 模型供应商卡片仍在迁移期集中维护多个紧耦合区块，后续拆分时再移除。 */
+/* eslint-disable max-lines -- Provider cards still maintain several tightly coupled sections during migration; remove this when they are split later. */
 import {
   useCallback,
   useRef,
@@ -150,7 +150,7 @@ export function ProviderCardHeader({
             <DropdownMenuContent
               align="end"
               onCloseAutoFocus={(event) => {
-                // 重命名后的焦点交给输入框，不能被菜单关闭时重新抢回触发按钮。
+                // After renaming, keep focus in the input; closing the menu must not move it back to the trigger button.
                 if (renameRequestedRef.current) {
                   event.preventDefault();
                   renameRequestedRef.current = false;
@@ -340,7 +340,7 @@ function createEmptyModel(): ProviderSettingsFormModel {
     modelId: "",
     builtin: false,
     personalConfig: {},
-    // 空 ID 尚未解析模型配置，硬编码档位会被误认为智能推荐。
+    // An empty ID means the model configuration has not been resolved; a hard-coded level would be mistaken for an intelligent recommendation.
     config: {
       properties: { supportsToolCall: true },
     },
@@ -430,7 +430,7 @@ export function ProviderModelsSection({
 
   const handleAddDialogOpenChange = useCallback(
     (open: boolean) => {
-      // 保存中的关闭/再打开会让旧请求结束掉新草稿，等待本次提交完成再结束编辑。
+      // Closing and reopening during a save could let the old request end the new draft; wait for this submission to finish before ending the edit.
       if (addSavingRef.current) return;
       if (!open) {
         cancelAddDialog();
@@ -452,7 +452,7 @@ export function ProviderModelsSection({
         setAddDraftErrorField(result.field);
         return false;
       }
-      // 过去只发起异步添加就关闭弹窗，失败后输入也丢了；以实际保存完成作为结束边界。
+      // Previously, the dialog closed as soon as async addition started, losing the input if it failed; use successful save completion as the boundary.
       await onAddModel(result.model);
       setAddDialogOpen(false);
       editor.reset(createEmptyModel());

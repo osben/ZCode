@@ -35,8 +35,8 @@ function attachWindowListeners(): () => void {
 }
 
 /**
- * 分屏和多窗口内容树可能同时挂载多个 Composer。修饰键是 window 事实，
- * 每个 Composer 各绑一套 keydown/keyup 会重复处理；这里用单一外部 store 广播瞬时状态。
+ * Split panes and multi-window content trees may mount multiple Composers at once. Modifier keys are window-level facts,
+ * so binding keydown/keyup in every Composer would process them repeatedly; use one external store to broadcast transient state.
  */
 export function subscribePrimaryFollowupModifier(listener: () => void): () => void {
   listeners.add(listener);

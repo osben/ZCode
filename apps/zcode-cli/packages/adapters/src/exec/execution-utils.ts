@@ -49,7 +49,7 @@ export function waitForPromise(promise: Promise<unknown>, timeoutMs: number): Pr
       resolve(completed);
     };
     timer = setTimeout(() => finish(false), timeoutMs);
-    // losing timeout 不应在目标 Promise 已完成后继续单独保活 CLI。
+    // A losing timeout must not keep the CLI alive after the target Promise has completed.
     timer.unref?.();
     void promise.then(
       () => finish(true),

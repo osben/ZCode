@@ -60,8 +60,8 @@ export class DockerBackend implements IRemoteBackend {
     const platform = resolveRemotePlatform(reportedPlatform, kernelOstype);
 
     if (platform !== reportedPlatform) {
-      // 测试容器里可能通过 wrapper 伪造了 uname 输出，
-      // 这里只在发生回退时打一条低频日志，便于排查“为何最终按 Linux 选包”。
+      // Test containers may spoof uname output through a wrapper;
+      // log at low frequency only when fallback occurs, to help diagnose why the Linux package was ultimately selected.
       console.warn(
         `[docker] detect: uname reported ${reportedPlatform}, but kernel ostype is ${kernelOstype}; fallback to ${platform}`,
       );
@@ -83,14 +83,14 @@ export class DockerBackend implements IRemoteBackend {
     const resolvedRemotePath = this.resolveLinuxPath(remotePath, resolvedInfo.homeDir);
     const parentDir = this.dirname(resolvedRemotePath);
 
-    // 上传流不会帮我们创建父目录。
-    // 如果直接写入 `~/.zcode/server/...` 这类首次连接路径，上传会因为目录不存在而失败。
-    // 先显式 `mkdir -p`，再由容器当前用户写入目标文件，和 SSH/WSL 保持一致。
+    // The upload stream does not create parent directories.
+    // On a first connection, uploading directly to a path such as `~/.zcode/server/...` would fail because the directory does not exist.
+    // Run `mkdir -p` explicitly first, then write the target file as the current container user, matching SSH/WSL behavior.
     await this.execSimple(`mkdir -p ${quotePosixShellArg(parentDir)}`);
 
-    // `docker cp` 复制到容器后的文件可能保留宿主 UID/GID，
-    // 非 root 容器用户随后无法 chmod。统一由容器当前用户通过 stdin 写入，
-    // 保证文件 owner 与后续部署命令的执行用户一致。
+    // A file copied into the container with `docker cp` may retain the host UID/GID,
+    // preventing a non-root container user from running chmod afterward. Always write through stdin as the current container user
+    // so file ownership matches the user that runs subsequent deployment commands.
     await this.uploadViaExec(localPath, resolvedRemotePath, options ?? {});
   }
 
@@ -237,7 +237,7 @@ export class DockerBackend implements IRemoteBackend {
   }
 
   dispose(): void {
-    // Docker backend 的命令都是一次性子进程，没有常驻连接需要显式清理。
+    // Docker backend commands are one-shot child processes; there are no persistent connections to clean up explicitly.
   }
 
   private async ensureAvailable(): Promise<void> {

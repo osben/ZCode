@@ -291,7 +291,7 @@ export function ModelTrajectoryPane({
       </header>
       <div data-trajectory-header-divider="" className="h-px shrink-0 bg-border" />
 
-      {/* Radix ScrollArea 会注入 display: table 的内容层，使长轨迹参与异常宽度计算；这里仅需原生纵向滚动。 */}
+      {/* Radix ScrollArea injects a display: table content layer, causing long trajectories to affect width calculations. Native vertical scrolling is all that is needed here. */}
       <div ref={scrollContainerRef} className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto">
         {error ? (
           <EmptyState

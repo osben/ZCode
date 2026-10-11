@@ -30,8 +30,9 @@ export const WORKFLOW_FUNCTION_NAME = "__workflowScript__";
 // statement (TS2355), but scripts may legitimately end without one.
 const SCRIPT_PRELUDE = `async function ${WORKFLOW_FUNCTION_NAME}() {\n`;
 /**
- * 包装前缀的长度：wrapped 源码里的位置减去它就是作者原文里的偏移。留白补全的拼接
- * （analysis/hole-splice.ts）要按站点表里的节点位置在原文上插入文本，走的正是这条换算。
+ * Length of the wrapper prefix: subtract it from a position in wrapped source to get the offset in
+ * the author's source. Hole completion splicing (analysis/hole-splice.ts) uses this conversion to
+ * insert text into the original source at the node positions recorded in the site table.
  */
 export const SCRIPT_PRELUDE_LENGTH = SCRIPT_PRELUDE.length;
 const SCRIPT_EPILOGUE = "\n}\nexport {};\n";
@@ -77,10 +78,11 @@ export interface WorkflowProgram {
 }
 
 /**
- * {@link createWorkflowProgram} 的选项。`facadeDts` 允许注入一份**替代的 facade 文本**
- * （snippet eval 的 scratch facade）；它永远以
- * {@link FACADE_FILE_NAME} 为文件名进虚拟 host——facade 身份在 registry / sites /
- * facade-misuse / lowering 五处按声明文件名判定，换名字会让站点收集静默变空。
+ * Options for {@link createWorkflowProgram}. `facadeDts` allows injecting **replacement facade
+ * text** (the scratch facade for snippet eval); it always uses {@link FACADE_FILE_NAME} as its
+ * filename in the virtual host. Facade identity is determined by the declaration filename in five
+ * places—registry / sites / facade-misuse / lowering—so changing the name would silently empty
+ * site collection.
  */
 export interface CreateWorkflowProgramOptions {
   facadeDts?: string;

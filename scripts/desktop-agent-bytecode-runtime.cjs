@@ -7,7 +7,7 @@ const { readFile } = require("node:fs/promises");
 const { basename, dirname, join } = require("node:path");
 
 function configureBytecodeRuntime() {
-  // 字节码不带可重新编译的源码，必须完整编译并保留字节码；编译器和加载器共用这一处配置。
+  // Bytecode has no source that can be recompiled; compile it fully and preserve the bytecode. The compiler and loader share this configuration.
   v8.setFlagsFromString("--no-lazy --no-flush-bytecode");
   return {
     electron: process.versions.electron ?? null,
@@ -38,13 +38,13 @@ async function loadBytecode(metadata, targetModule, targetRequire) {
   if (bytecodeDigest(cachedData) !== metadata.bytecodeSha256) {
     throw new Error("字节码摘要不匹配，请重新构建桌面 Agent");
   }
-  // 使用 ASCII 空格而非双字节零宽字符。这里只消除明文源码，仍保留等长占位内存。
+  // Use an ASCII space rather than a two-byte zero-width character. This removes plaintext source while retaining an equal-length memory placeholder.
   const source = " ".repeat(metadata.sourceLength);
   const filename = join(directory, metadata.sourceFile);
   const script = new vm.Script(source, {
     cachedData,
     filename,
-    // 动态 import 必须交回 Node，继续按原 bundle 的 URL 解析外置 ESM 与原生依赖。
+    // Dynamic imports must be handed back to Node so external ESM and native dependencies keep using the original bundle URL resolution.
     importModuleDynamically: vm.constants.USE_MAIN_CONTEXT_DEFAULT_LOADER,
   });
   if (script.cachedDataRejected) {

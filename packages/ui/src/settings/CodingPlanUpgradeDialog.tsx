@@ -25,13 +25,13 @@ interface CodingPlanUpgradeDialogProps {
   target?: CodingPlanUpgradeDialogTarget;
   onClose: () => void;
   onOpenResult?: (opened: boolean) => void;
-  // 兼容 CodingPlanUpgradeDialogProvider 现有契约。
-  // 改造原因：购买/登录流程迁到官网 webview 内部后，App 不再需要「关闭弹窗去登录 → 成功后重开」
-  // 的恢复链路；此 prop 当前不使用，保留签名避免改动 Provider。
+  // Compatibility with the existing CodingPlanUpgradeDialogProvider contract.
+  // The purchase/sign-in flow moved into the official-site WebView, so App no longer needs the "close dialog to sign in → reopen on success"
+  // recovery path. This prop is currently unused; keep the signature to avoid changing the Provider.
   onReopen?: (target: CodingPlanUpgradeDialogTarget) => void;
 }
 
-// 完成刷新：官网页通过 window.zcodeBridge.notifyPurchaseComplete 回传购买成功后调用。
+// Completion refresh: called after the official-site page reports a successful purchase through window.zcodeBridge.notifyPurchaseComplete.
 export async function refreshCodingPlanUpgradeCompletion(params: {
   productsProviderId: CodingPlanProviderId | null;
   providerId: CodingPlanProviderId | null;
@@ -42,8 +42,8 @@ export async function refreshCodingPlanUpgradeCompletion(params: {
   await Promise.all([
     params.refreshProviderState(),
     params.refreshCodingPlanEntitlements(),
-    // Team Plan 连接项依赖 authenticated pricing/customer 项目快照。
-    // 全局购买弹窗关闭前也必须刷新它，避免 Done 后仍看不到新团队项目。
+    // The Team Plan connection entry depends on authenticated pricing/customer project snapshots.
+    // Refresh it before closing the global purchase dialog so the new team project is visible after Done.
     params.refreshTeamPlanProducts?.(),
   ]);
 }
@@ -53,8 +53,8 @@ export async function closeAndRefreshCodingPlanUpgradeFromWebview(params: {
   refresh: () => Promise<unknown> | unknown;
   onRefreshError?: (error: unknown) => void;
 }) {
-  // 官网 webview 发回的完成信号语义是“关闭升级弹窗并刷新 provider”。
-  // 关闭必须先发生，避免用户付款成功后还被弱网下的 provider/权益刷新阻塞在 webview 上。
+  // The completion signal from the official-site WebView means "close the upgrade dialog and refresh the provider."
+  // Close first so a slow provider/entitlement refresh cannot keep the user in the WebView after a successful payment.
   params.onClose();
   try {
     await params.refresh();
@@ -63,7 +63,11 @@ export async function closeAndRefreshCodingPlanUpgradeFromWebview(params: {
   }
 }
 
-export function CodingPlanUpgradeDialog({ target, onClose, onOpenResult }: CodingPlanUpgradeDialogProps) {
+export function CodingPlanUpgradeDialog({
+  target,
+  onClose,
+  onOpenResult,
+}: CodingPlanUpgradeDialogProps) {
   const { providerSettingsService, credentialService, codingPlanSubscriptionService } =
     useServices();
   const providerSettingsRead = useProviderSettingsView();
@@ -84,7 +88,7 @@ export function CodingPlanUpgradeDialog({ target, onClose, onOpenResult }: Codin
     () => providerSettingsService.refresh("coding-plan-purchase-complete"),
     [providerSettingsService],
   );
-  // 官网页购买完成回传：webview 告诉 App 关闭升级弹窗，并在后台刷新当前 provider。
+  // Official-site purchase completion: the WebView tells App to close the upgrade dialog and refresh the current provider in the background.
   const handlePurchaseComplete = useCallback(async () => {
     await closeAndRefreshCodingPlanUpgradeFromWebview({
       onClose,
@@ -97,8 +101,8 @@ export function CodingPlanUpgradeDialog({ target, onClose, onOpenResult }: Codin
           refreshTeamPlanProducts:
             teamPlanFamily !== null
               ? () =>
-                  // 购买完成后会先关闭 webview 弹窗，弹窗内 hook 随即卸载。
-                  // 这里直接走 service 拉取当前 family 的团队项目，避免刷新请求被卸载时序吞掉。
+                  // After purchase completes, the WebView dialog closes first and its hook unmounts immediately.
+                  // Fetch the current family's team projects directly through the service so unmount timing cannot swallow the refresh request.
                   codingPlanSubscriptionService.getEnterprisePricing({
                     authenticated: true,
                     family: teamPlanFamily,
@@ -106,7 +110,7 @@ export function CodingPlanUpgradeDialog({ target, onClose, onOpenResult }: Codin
               : undefined,
         }),
       onRefreshError: (error) => {
-        // 刷新失败不阻塞关闭：用户已付款成功，套餐会在下次自然刷新时更新。
+        // Refresh failure must not block closing: the user has paid successfully, and the plan will update on the next normal refresh.
         logger.warn("[CodingPlanUpgradeDialog] 购买完成后刷新状态失败", {
           providerId,
           productsProviderId,

@@ -1,10 +1,11 @@
 /**
- * 设备级样本来源。
+ * Device-level sample source.
  *
- * 与 Chromium 体系共用 main 的 10 秒 tick，跑在采样的第二阶段：
- * 相邻两个 tick 的 `os.cpus()` 快照差分得到整机 CPU、`os.freemem()` 得到整机剩余内存，
- * 再把第一阶段的精确合计与外部来源（CLI、MCP）的最近样本相加得到应用总量。
- * 全部为进程内 API，main 进程零外部进程。
+ * Shares main's 10-second tick with the Chromium subsystem and runs in the second sampling phase:
+ * derive machine-wide CPU from differences between adjacent `os.cpus()` snapshots, read available
+ * machine memory from `os.freemem()`, then add the exact total from phase one to the latest samples
+ * from external sources (CLI, MCP) to calculate the application total.
+ * These are all in-process APIs; the main process uses no external processes.
  */
 
 import os from "node:os";
@@ -16,7 +17,7 @@ import {
 import type { ProcessResourceSampleSource } from "./processResourceSampleSources.js";
 import { roundMetric } from "./resourceMetricsStats.js";
 
-/** 整机 CPU 的累计时间快照；只有两次快照差分才是一段时间内的整机 CPU。 */
+/** Cumulative machine-wide CPU time snapshot; only the difference between two snapshots represents CPU over an interval. */
 interface SystemCpuTimesSnapshot {
   busyMs: number;
   totalMs: number;
@@ -34,8 +35,10 @@ function summarizeSystemCpuTimes(cpus: readonly os.CpuInfo[]): SystemCpuTimesSna
 }
 
 /**
- * 两次快照的差分百分比；拿不到可用差分时返回 null，调用方本 tick 不产生样本。
- * 返回 null 的情况：累计时间没有前进（容器里 `os.cpus()` 为空）、核数变化或时钟回拨导致差分为负。
+ * Percentage difference between two snapshots. Return null when no valid difference is available;
+ * the caller then produces no sample for this tick.
+ * Return null if cumulative time did not advance (`os.cpus()` is empty in a container), the core
+ * count changed, or a clock adjustment caused a negative difference.
  */
 function diffSystemCpuPercent(
   previous: SystemCpuTimesSnapshot,
@@ -58,8 +61,9 @@ export const systemProcessResourceSampleSource: ProcessResourceSampleSource = {
     const baseline = previousCpuTimes;
     previousCpuTimes = snapshot;
 
-    // 第一个 tick 只有一个快照，差分无从谈起，因此不产生样本；
-    // 第一阶段没有任何精确合计时同理——设备事件宁可少一个样本，也不上报半真的合计。
+    // The first tick has only one snapshot, so there is no difference to calculate and no sample is
+    // produced. The same applies when phase one has no exact total: a device event should omit a
+    // sample rather than report a partial or inaccurate total.
     if (!baseline || !context.appProcessTotals) {
       return;
     }
@@ -81,7 +85,7 @@ export const systemProcessResourceSampleSource: ProcessResourceSampleSource = {
     });
   },
   reset() {
-    // 丢弃 CPU 基线与外部来源的最近样本，避免用上一次采样会话的事实做差分与合计。
+    // Discard the CPU baseline and latest external-source samples so facts from the previous sampling session are not used in differences or totals.
     previousCpuTimes = null;
     resetExternalAppResourceSamples();
   },

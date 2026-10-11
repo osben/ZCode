@@ -8,7 +8,7 @@ import type { ZCodeTaskMeta } from "@zcode/shared";
 
 export type { SortableBindings };
 
-// 垂直拖拽容器约束已上提到 lib（Idle-time 侧栏组内拖拽需要复用且不能背上本模块的依赖链）。
+// Vertical drag-container constraints have moved into lib (Idle-time sidebar group dragging needs to reuse them without taking on this module's dependency chain).
 export { restrictVerticalDragWithinContainer } from "@/lib/restrictVerticalDragWithinContainer.js";
 
 export const SortableWorkspaceSidebarItem = memo(function SortableWorkspaceSidebarItem({
@@ -70,8 +70,8 @@ export const SortableWorkspaceSidebarItem = memo(function SortableWorkspaceSideb
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: tab.id,
   });
-  // 流式 task 事件会让父级 sidebar 高频刷新；dnd-kit 即使位移值不变，
-  // 也可能给出新的 transform 对象。这里按 primitive 值派生稳定 props，避免打穿行级 memo。
+  // Streaming task events cause frequent parent sidebar refreshes; dnd-kit may return a new transform object even when the displacement is unchanged.
+  // Derive stable props from primitive values here to preserve row-level memoization.
   const transformString = useMemo(() => {
     if (!transform) {
       return undefined;
@@ -79,11 +79,10 @@ export const SortableWorkspaceSidebarItem = memo(function SortableWorkspaceSideb
 
     return CSS.Transform.toString({
       ...transform,
-      // dnd-kit 在不使用 DragOverlay 时，会按当前 over 节点的 rect
-      // 给 active 节点附带 scaleX/scaleY。workspace 行是可变高度容器，
-      // 一旦拖到展开/收起高度不同的项目上方，活动项就会被临时压扁或拉长，
-      // 看起来像“拖拽内容高度变型”。这里把 sidebar 拖拽的缩放钳回 1，
-      // 只保留位移，不允许真实节点跟随目标高度缩放。
+      // Without DragOverlay, dnd-kit uses the current over node's rect to apply scaleX/scaleY to the active node.
+      // Workspace rows have variable heights, so dragging over an item with a different expanded/collapsed height temporarily squashes or stretches the active item,
+      // making the dragged content appear to change height. Clamp sidebar drag scaling back to 1;
+      // keep only the translation and do not scale the real node to match the target height.
       scaleX: 1,
       scaleY: 1,
     });
@@ -94,8 +93,8 @@ export const SortableWorkspaceSidebarItem = memo(function SortableWorkspaceSideb
       transform: transformString,
       transition,
       zIndex: isDragging ? 10 : undefined,
-      // 真实 workspace 节点在 drag start 后会临时收起，视觉内容由
-      // DragOverlay 接管；继续显示真实节点会产生两个项目头并干扰落点判断。
+      // After drag start, the real workspace node temporarily collapses and its visual content is handled by
+      // DragOverlay; continuing to show the real node would create duplicate project headers and interfere with drop-target detection.
       opacity: isDragging ? 0 : 1,
     }),
     [isDragging, transition, transformString],

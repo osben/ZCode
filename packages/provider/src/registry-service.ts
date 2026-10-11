@@ -84,7 +84,7 @@ export class ProviderRegistryService {
       await this.#requestRefresh("start");
       return;
     }
-    // 启动只负责就绪；业务读取必须使用 getSnapshot，不能长期保留首次启动快照。
+    // Startup establishes readiness only; business reads must use getSnapshot and must not retain the initial startup snapshot.
     if (!this.#snapshot) await this.#requestRefresh("start");
   }
 
@@ -143,7 +143,7 @@ export class ProviderRegistryService {
   #refreshFromSource(source: "config" | "account", reason: string): void {
     if (this.#disposed) return;
     void this.#requestRefresh(`${source}:${reason || "changed"}`).catch(() => {
-      // Source 驱动的后台刷新通过 onDidRefreshError 报告；调用栈没有 Promise 消费者。
+      // Source-driven background refresh reports errors through onDidRefreshError; there is no Promise consumer on the call stack.
     });
   }
 
@@ -203,8 +203,8 @@ export class ProviderRegistryService {
       this.#assertNotDisposed();
 
       if (account.basedOnZCodeBuiltinRevision !== config.zcodeBuiltinRevision) {
-        // Built-in 已变化但 Account 仍基于旧事实时，继续服务上一份完整 Registry。
-        // 当前 generation 结束；等待 Account Source 的后续 change 再一次性发布最终组合。
+        // If Built-in has changed while Account still reflects old facts, continue serving the previous complete Registry.
+        // End this generation and wait for a later Account Source change to publish the final combined snapshot at once.
         this.#completedGeneration = generation;
         if (this.#snapshot) this.#resolveRefreshWaiters(generation, this.#snapshot);
         reasons.clear();

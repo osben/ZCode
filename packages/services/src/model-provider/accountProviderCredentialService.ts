@@ -25,7 +25,7 @@ export interface AccountProviderCredentialService {
   ): Promise<ProjectAccessTokenMaterial | null>;
 }
 
-/** 旧方法名兼容私有调用契约；返回值现在是请求期 Token，绝不读写长期 Key 缓存。 */
+/** Legacy method name kept for private call contracts; the return value is now a request-time token, and long-term key caches are never read or written. */
 export function createAccountProviderCredentialService(
   options: AccountProviderCredentialServiceOptions,
 ): AccountProviderCredentialService {
@@ -37,7 +37,8 @@ export function createAccountProviderCredentialService(
     async loadCodingPlanMaterial(input) {
       const loginToken = (await options.loadOAuthAccessToken(input.family))?.trim();
       if (!loginToken) return null;
-      // Map 仅存进程内并发状态；登录态变化不能加入旧账号请求。
+      // The Map holds only in-process concurrency state; a login-state change must not join an
+      // old account's request.
       const key = JSON.stringify([
         input.family,
         input.accountIdentity,

@@ -6,7 +6,7 @@ import enUS from "../src/i18n/locales/en-US.js";
 import zhCN from "../src/i18n/locales/zh-CN.js";
 
 const COUNTS = [0, 1, 2, 5, 21];
-// zh 的 `.one` 永远选不到（Intl.PluralRules("zh-CN") 对 1 也返回 other），这一条在 count=1 时文案有意变化。
+// The `.one` form is never selected for zh (Intl.PluralRules("zh-CN") returns other even for 1), so this message intentionally changes when count=1.
 const ZH_KNOWN_ONE_CHANGES = new Set(["chat.toolCall.workflow.getRun.health.leftover"]);
 
 function pluralFamilies(catalog: Record<string, string>): string[] {

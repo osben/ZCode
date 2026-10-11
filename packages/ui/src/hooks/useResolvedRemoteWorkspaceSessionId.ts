@@ -40,9 +40,9 @@ export function resolveRemoteWorkspaceSessionIdForTarget<TServices>(params: {
         workspacePath: params.workspacePath,
         workspaceIdentity: workspaceIdentity ?? activeTabWorkspaceIdentity,
         remoteSessionId: explicitRemoteSessionId,
-        // 缺少 identity 也可能是 local workspace，不能一律伪造成旧 remote tab。
-        // 只有精确匹配的 active tab，或调用方已定位的目标 tab 真正携带 remoteTarget 时，
-        // 才开放旧数据的 path fallback。
+        // An identity may be absent for a local workspace, so do not treat every such workspace
+        // as a legacy remote tab. Allow the path fallback for legacy data only when the exact
+        // active tab matches or the caller's resolved target tab actually carries remoteTarget.
         remoteTarget: matchingActiveTab?.remoteTarget ?? params.remoteTarget,
       },
       params.state,

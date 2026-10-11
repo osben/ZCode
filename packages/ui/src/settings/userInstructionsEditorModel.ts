@@ -3,7 +3,7 @@ import type { UserInstructionsReadResult } from "@zcode/services";
 
 export type UserInstructionsLoadedFile = Extract<UserInstructionsReadResult, { kind: "ok" }>;
 
-/** 指令编辑器的目标主机描述；与 useWorkspaceServicesResolution 的入参一一对应。 */
+/** Target-host description for the instructions editor; corresponds one-to-one with useWorkspaceServicesResolution inputs. */
 export interface UserInstructionsHostTarget {
   workspacePath: string | null;
   workspaceIdentity?: string;
@@ -21,8 +21,8 @@ export function isRemoteUserInstructionsTarget(target: UserInstructionsHostTarge
 }
 
 /**
- * 目标主机 key：`local` 或 `remote:<identity || path>`。
- * remoteSessionId 只表示一次连接，同一远端重连不能被当成切换主机。
+ * Target-host key: `local` or `remote:<identity || path>`.
+ * remoteSessionId represents one connection only; reconnecting to the same remote must not count as switching hosts.
  */
 export function getUserInstructionsHostKey(target: UserInstructionsHostTarget): string {
   if (!target.workspacePath || !isRemoteUserInstructionsTarget(target)) {
@@ -32,9 +32,9 @@ export function getUserInstructionsHostKey(target: UserInstructionsHostTarget): 
 }
 
 /**
- * 计算编辑器实际绑定的目标主机。
- * 有未保存草稿时，活动 workspace 切到另一台主机不能把草稿"带"过去写错文件，
- * 因此保持绑定旧主机，直到用户保存或明确放弃；同一主机只更新连接元数据。
+ * Resolve the Host the editor is actually bound to.
+ * If there is an unsaved draft, switching the active workspace to another Host must not “carry” the draft over and write the wrong file,
+ * so keep it bound to the old Host until the user saves or explicitly discards it; on the same Host, update only connection metadata.
  */
 export function resolvePinnedUserInstructionsTarget(params: {
   pinned: UserInstructionsHostTarget;
@@ -55,8 +55,8 @@ export function isUserInstructionsDraftDirty(
   return loaded !== null && draft !== loaded.content;
 }
 
-// 远端连接断开时即使已加载过文件也要展示 waiting：草稿保留在 hook 状态里，
-// 重连后不重载即可恢复 ready，避免断线期间仍允许保存或导入到已失效的代理。
+// Show waiting when a remote connection disconnects even if the file was already loaded: the draft remains in hook state,
+// and reconnecting restores ready without reloading. This prevents saving/importing through an invalid proxy while disconnected.
 export function resolveUserInstructionsEditorStatus<TStatus extends string>(params: {
   status: TStatus;
   rpcReady: boolean;
@@ -79,8 +79,8 @@ export function countUtf8Bytes(text: string): number {
 }
 
 /**
- * 估算草稿保存后的磁盘字节数：Agent 按原始字节截断 100 KiB，
- * 因此需要计入服务端还原的 CRLF（每个换行 +1）与 BOM（+3）。
+ * Estimate bytes on disk after saving the draft: Agent truncates at 100 KiB of original bytes,
+ * so include server-restored CRLF (+1 per newline) and BOM (+3).
  */
 export function estimateUserInstructionsDiskBytes(params: {
   draft: string;
@@ -97,12 +97,12 @@ export function estimateUserInstructionsDiskBytes(params: {
   return hasBom ? bytes + 3 : bytes;
 }
 
-/** Claude 的 `@path` 导入行；ZCode 不展开它们。 */
+/** Claude `@path` import lines; ZCode does not expand them. */
 export function hasClaudeAtImports(content: string): boolean {
   return /^[ \t]*@[^\s@]/m.test(content);
 }
 
-/** 旧版远端主机未注册该服务时，RPC 以 `Unknown channel` 超时失败。 */
+/** When an older remote Host has not registered this service, the RPC times out with `Unknown channel`. */
 export function isUnknownChannelError(error: unknown): boolean {
   if (!error || typeof error !== "object") return false;
   const record = error as { name?: unknown; message?: unknown };
@@ -119,13 +119,13 @@ export function formatUserInstructionsBytes(bytes: number): string {
 }
 
 /**
- * 「在文件管理器中显示」传文件所在目录：非 macOS 上 openInFileManager 走 shell.openPath，
- * 传文件路径会直接用默认程序打开文件而不是定位它。链接时定位链接目标所在目录。
+ * “Show in file manager” for the directory containing the file: on non-macOS, openInFileManager uses shell.openPath,
+ * and passing a file path opens it with the default app instead of revealing it. For links, reveal the directory containing the link target.
  */
 export function getUserInstructionsRevealDirectory(filePath: string): string {
   const index = Math.max(filePath.lastIndexOf("/"), filePath.lastIndexOf("\\"));
   if (index <= 0) return filePath.slice(0, index + 1) || filePath;
-  // Windows 盘符根目录（C:\AGENTS.md）保留末尾分隔符。
+  // Preserve the trailing separator for Windows drive roots (C:\AGENTS.md).
   if (/^[A-Za-z]:$/.test(filePath.slice(0, index))) return filePath.slice(0, index + 1);
   return filePath.slice(0, index);
 }

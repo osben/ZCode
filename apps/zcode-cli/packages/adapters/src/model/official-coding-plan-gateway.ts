@@ -10,7 +10,7 @@ const GATEWAY_PATH_BY_ENDPOINT: ReadonlyMap<string, string> = new Map([
   ["https://api.z.ai:443/api/anthropic/v1/messages", "/api/v1/ultra-zai/anthropic/v1/messages"],
 ]);
 
-/** 静态实现只提供 URL 决策；Host 清理、请求与响应透传由公共 fetch wrapper 负责。 */
+/** The static implementation only selects the URL; the shared fetch wrapper handles Host cleanup, the request, and response passthrough. */
 export function createStaticProviderEndpointRoutingPort(
   endpointOrigin: string,
 ): ProviderEndpointRoutingPort {

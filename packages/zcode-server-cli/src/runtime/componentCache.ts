@@ -178,8 +178,8 @@ export async function extractArchiveSafely(
 ): Promise<void> {
   const isZip = archivePath.toLowerCase().endsWith(".zip");
   if (isZip) {
-    // macOS/Windows 自带 bsdtar 能读取 ZIP，GNU tar 不能；Linux 上用 tar 解 ZIP 会直接报错，
-    // 单测与 Linux 控制端安装 Windows 归档因此稳定失败。ZIP 改走同进程解析并保留路径/链接校验。
+    // Built-in bsdtar on macOS/Windows can read ZIP, but GNU tar cannot; on Linux, tar fails immediately on ZIP files,
+    // so tests and Linux control-node installs of Windows archives reliably fail. Parse ZIP in-process while preserving path/link checks.
     await extractZipSafely(archivePath, destination);
     return;
   }
@@ -221,9 +221,9 @@ export class ComponentCache {
           componentId?: string;
           sha256?: string;
         };
-        // 旧缓存只记录 component sha，无法判断归档内容是否被截断、覆盖或与该 sha
-        // 不匹配；直接复用会在 assemble 失败后永久命中坏缓存。缺少归档 hash 的旧条目
-        // 统一视为 miss，下一次下载会原子替换成可验证的新条目。
+        // The old cache recorded only the component sha, so it could not detect whether an archive was truncated, overwritten, or mismatched with that sha.
+        // Reusing it could permanently hit a bad cache after assemble failed. Treat old entries without an archive hash as misses;
+        // the next download atomically replaces them with a verifiable entry.
         if (
           marker.componentId !== options.componentId ||
           marker.sha256?.toLowerCase() !== options.sha256.toLowerCase() ||
@@ -238,7 +238,7 @@ export class ComponentCache {
         if (archiveSha256 !== marker.archiveSha256.toLowerCase()) continue;
         return candidate;
       } catch {
-        // 半成品 cache entry is ignored and will be replaced by the downloader.
+        // Ignore a partial cache entry; the downloader will replace it.
       }
     }
     return null;
@@ -311,8 +311,8 @@ export class ComponentCache {
         if (nextComponent && pathsUnchanged && !changedIds.has(previousComponent.id)) continue;
         for (const rawPath of previousComponent.paths) {
           const relativePath = safeRelativePath(rawPath);
-          // 组件路径若已转移给新组件，保留它并交给新组件归档覆盖；正常 staging 中
-          // 组件路径不重叠，但这个判断避免迁移期间误删另一组件的文件。
+          // If a component path has been transferred to a new component, preserve it and let the new component archive overwrite it.
+          // Component paths do not normally overlap during staging, but this check prevents deleting another component's files during migration.
           const ownedByAnotherComponent = nextComponents.some(
             (component) =>
               component.id !== previousComponent.id && component.paths.includes(relativePath),

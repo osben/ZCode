@@ -11,9 +11,9 @@ export interface BrowserWebmRecorderFactoryInput {
 }
 
 export interface BrowserWebmRecorderSession {
-  /** 停止 Chromium MediaRecorder，并等待最后一个 WebM chunk 安全写盘。 */
+  /** Stop Chromium MediaRecorder and wait for the final WebM chunk to be safely written to disk. */
   stop(): Promise<void>;
-  /** 中止录制并关闭 renderer/stream/文件句柄；必须可重复调用。 */
+  /** Abort recording and close the renderer/stream/file handle; this must be safe to call repeatedly. */
   cancel(): Promise<void>;
 }
 
@@ -30,8 +30,9 @@ function throwIfAborted(signal: AbortSignal): void {
 }
 
 /**
- * 编排一次 IAB WebM 录制。具体媒体能力由 Desktop main 注入，纯编排层不依赖 Electron，
- * 便于验证失败清理与 artifact 合同，也避免 Service/Host 反向引用 Runtime 实现。
+ * Orchestrate one IAB WebM recording. Desktop main injects the media capabilities, so this pure
+ * orchestration layer does not depend on Electron. This makes failure cleanup and artifact contracts
+ * testable and avoids Service/Host references back to Runtime implementations.
  */
 export async function recordBrowserVideo(input: {
   targetFrame: unknown;
@@ -68,7 +69,7 @@ export async function recordBrowserVideo(input: {
     throwIfAborted(input.signal);
     const durationMs = Math.max(0, Math.round(now() - captureStartedAt));
 
-    // 页面取景已经结束：先释放 background surface watchdog，再等待 recorder flush 尾块。
+    // Page capture is complete: release the background-surface watchdog before waiting for the recorder's final flush chunk.
     input.onCaptureComplete?.();
     input.onPhase?.("finalizing");
     await recorder.stop();
@@ -90,8 +91,8 @@ export async function recordBrowserVideo(input: {
     };
   } finally {
     if (!completed) {
-      // MediaRecorder 失败或场景动作抛错时，残留的 EBML 头看起来像视频但不可播放；
-      // 必须同时关闭 recorder 并删除半成品，避免 status 暴露伪 artifact。
+      // If MediaRecorder fails or a scene action throws, the remaining EBML header looks like a video
+      // but cannot be played. Close the recorder and delete the partial file so status does not expose a fake artifact.
       await recorder?.cancel().catch(() => undefined);
       await rm(outputPath, { force: true }).catch(() => undefined);
     }

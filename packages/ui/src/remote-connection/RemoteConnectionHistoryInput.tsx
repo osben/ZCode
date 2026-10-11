@@ -121,15 +121,15 @@ export function RemoteConnectionHistoryInput({
                   targetNode instanceof Node && containerRef.current?.contains(targetNode) === true,
               })
             ) {
-              // 首次鼠标点击输入框时会先触发 focus 打开建议列表，
-              // 随后的同一次 click 又会被 Popover 视为“内容外点击”而立刻关闭。
-              // 这里把来自当前输入框容器的交互排除掉，避免出现第一次 focus 连续闪两次。
+              // The first mouse click on the input triggers focus and opens the suggestions list,
+              // then the same click is treated by Popover as an outside click and immediately closes it.
+              // Exclude interactions from the current input container so the list does not flash twice on the first focus.
               event.preventDefault();
             }
           }}
           onOpenAutoFocus={(event) => {
-            // Popover 默认会把焦点抢到弹层内，输入框一旦失焦，用户就没法边看历史边继续输入过滤。
-            // 这里在“由输入框触发打开”时拦截自动聚焦，把焦点留在输入框里，保证 focus 展示和连续输入都成立。
+            // Popover moves focus into the panel by default; once the input loses focus, users cannot keep typing to filter while viewing history.
+            // When the input opens the panel, prevent automatic focus so the input keeps focus and both focus-based display and continued typing work.
             if (!keepInputFocusOnOpenRef.current) {
               return;
             }
@@ -157,8 +157,8 @@ export function RemoteConnectionHistoryInput({
                     onSelect={(selected) => {
                       onChange(selected);
                       setFilterWithCurrentValue(false);
-                      // 选中历史项后，input 的 click/focus 会立刻重放，弹层会出现“刚关就重开”。
-                      // 这里用一个很短的抑制窗口屏蔽这次连带事件，避免交互抖动。
+                      // After selecting a history item, the input click/focus fires again immediately and the panel reopens as soon as it closes.
+                      // Use a brief suppression window to ignore this follow-up event and prevent interaction jitter.
                       suppressOpenUntilRef.current = Date.now() + 120;
                       setOpen(false);
                     }}

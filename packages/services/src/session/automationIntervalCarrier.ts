@@ -4,10 +4,10 @@ import type {
   ZCodeAutomationUpdateParams,
 } from "@zcode/shared";
 
-/** 会话侧自定义重复 carrier 的受控上限；不要收紧管理页历史 scheduleRule 的领域上限。 */
+/** Controlled limit for session-side custom recurrence carriers; do not tighten the domain limit for historical management-page scheduleRules. */
 const MAX_SESSION_AUTOMATION_INTERVAL = 200;
 
-/** 会话侧自定义重复 carrier 配对、范围或互斥校验失败。 */
+/** Validation failed for the pairing, range, or mutual exclusion of a session-side custom recurrence carrier. */
 export class InvalidAutomationIntervalCarrierError extends Error {
   constructor(message: string) {
     super(`非法的自定义重复入参：${message}`);
@@ -16,11 +16,11 @@ export class InvalidAutomationIntervalCarrierError extends Error {
 }
 
 /**
- * 校验会话 Cron 工具与 UI 共用的 interval carrier。
+ * Validate the interval carrier shared by the session Cron tool and UI.
  *
- * intervalUnit + interval 是受控输入，服务层必须再次校验，避免旧客户端或内部调用绕过
- * contract/protocol 后写入超出 UI 语义的间隔。`scheduleRule: null` 是 update 的显式清除
- * 语义，也不能与 carrier 混用，否则无法确定是新建规则还是清除规则。
+ * intervalUnit + interval is controlled input, so the service layer must validate it again. This prevents older clients or internal calls from bypassing
+ * the contract/protocol and persisting an interval outside the UI semantics. `scheduleRule: null` explicitly clears a rule on update
+ * and cannot be combined with a carrier, or it would be unclear whether the intent is to create or clear a rule.
  */
 export function assertValidAutomationIntervalCarrier(input: {
   intervalUnit?: ZCodeAutomationIntervalUnit;
@@ -52,8 +52,8 @@ export function assertValidAutomationIntervalCarrier(input: {
       "intervalUnit carrier 不能与直传 scheduleRule 同时提交",
     );
   }
-  // carrier 的真实语义是无限循环；若放行 recurring=false 或 maxRuns，repository 会
-  // 在首次派发后按一次性 / 有限任务结束，留下 scheduleRule 与生命周期模式相互矛盾的数据。
+  // The carrier represents an infinite recurrence. Allowing recurring=false or maxRuns would make the repository
+  // end it as a one-time or finite task after the first dispatch, leaving scheduleRule inconsistent with the lifecycle mode.
   if (intervalUnit !== undefined && recurring === false) {
     throw new InvalidAutomationIntervalCarrierError("intervalUnit carrier 必须使用 recurring=true");
   }
@@ -64,7 +64,7 @@ export function assertValidAutomationIntervalCarrier(input: {
   }
 }
 
-/** carrier 更新必须原子切换无限循环，避免 scheduleRule 与生命周期模式脱节。 */
+/** A carrier update must atomically switch to infinite recurrence so scheduleRule and the lifecycle mode stay aligned. */
 export function forceIntervalCarrierRecurring(
   params: ZCodeAutomationUpdateParams,
 ): ZCodeAutomationUpdateParams {

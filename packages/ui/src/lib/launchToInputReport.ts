@@ -5,7 +5,7 @@ export function shouldReportLaunchToInput(state: {
   welcomeScreenOpen: boolean;
   alreadyReported: boolean;
 }): boolean {
-  // 门禁清除 = RootStartupLoading 退场、输入框挂载;welcome 时虽门禁清除但显示登录页、无输入框,不算"能输入"。
+  // Gate cleared = RootStartupLoading exited and the input mounted; during welcome the gate is clear but the sign-in page is shown with no input, so it is not “ready for input.”
   return !state.alreadyReported && !state.isStartupRenderBlocked && !state.welcomeScreenOpen;
 }
 

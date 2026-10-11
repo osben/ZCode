@@ -125,8 +125,9 @@ async function findFirstFittingCandidate(input: {
   const originalWithinDimensions =
     input.image.bitmap.width <= input.maxDimension &&
     input.image.bitmap.height <= input.maxDimension;
-  // PNG 原尺寸优化失败后，旧策略会在每个缩放档重新尝试 PNG，导致较大尺寸 JPEG
-  // 尚可满足预算时先命中低分辨率 PNG。PNG 只保留一次原尺寸无损优化机会；失败后单向转 JPEG。
+  // After original-size PNG optimization failed, the old policy retried PNG at every scaled size, causing a
+  // low-resolution PNG to be selected even when a larger JPEG still fit the budget. Try lossless PNG optimization
+  // once at original size; after failure, switch to JPEG only.
   const preserveSourceFormatAfterInitialAttempt =
     input.sourceMediaType !== JimpMime.png;
 

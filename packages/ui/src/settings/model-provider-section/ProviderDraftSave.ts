@@ -23,7 +23,7 @@ function normalizeConfiguredBaseUrl(value: string): string {
     if (duplicateIndex < 0) return normalized;
     const firstUrl = normalized.slice(0, duplicateIndex).replace(/\/+$/, "");
     const secondUrl = normalized.slice(duplicateIndex).replace(/\/+$/, "");
-    // 旧设置页曾把完整 Base URL 再作为 path 拼接；仅折叠两段完全相同的安全形态。
+    // The old settings page sometimes appended the full Base URL again as a path; collapse only the safe case where the two segments are identical.
     return firstUrl === secondUrl ? firstUrl : normalized;
   } catch {
     return normalized;
@@ -44,8 +44,8 @@ export function resolvePendingProviderDraftSave({
 }): ProviderSettingsFormProvider | null {
   const label = draft.nameValue.trim();
   const baseURL = normalizeConfiguredBaseUrl(draft.baseUrlValue);
-  // ID 和默认协议只用于空配置的表单展示，不是用户覆盖；脏检查与表单初始化必须同源。
-  // 名称只在 Enter/失焦确认；连接的闲时保存、测试和卸载不能夹带未确认的名称。
+  // The ID and default protocol are used only to display an empty configuration form, not as user overrides; dirty checks and form initialization must use the same source.
+  // Confirm the name only on Enter/blur; idle connection saves, tests, and unmounts must not include an unconfirmed name.
   const labelChanged = nameConfirmed && label !== getProviderFormLabel(provider);
   const typeChanged =
     !readOnlyEndpoints && draft.apiFormat !== (provider.config.api?.type ?? "anthropic-messages");
@@ -55,8 +55,8 @@ export function resolvePendingProviderDraftSave({
     draft.apiKeyValue !== (provider.config.access.apiKey ?? "");
   if (!labelChanged && !typeChanged && !urlChanged && !keyChanged) return null;
 
-  // 表单只拥有名称、连接类型、地址和 Key；重建整个 api 会删除隐藏 headers，
-  // 保存 Effective 对象又会把继承字段物化。分别在各自基线上只应用修改过的叶子。
+  // The form owns only the name, connection type, address, and Key. Rebuilding the whole api would delete hidden headers,
+  // while saving the Effective object would materialize inherited fields. Apply only changed leaves against their respective baselines.
   const apiChanges = {
     ...(typeChanged || (urlChanged && !provider.config.api?.type) ? { type: draft.apiFormat } : {}),
     ...(urlChanged ? { baseUrl: baseURL || undefined } : {}),

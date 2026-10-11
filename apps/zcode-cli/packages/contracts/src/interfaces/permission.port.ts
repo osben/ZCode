@@ -22,7 +22,7 @@ export interface PermissionRuleValue {
 }
 
 export interface PermissionRuleset {
-  /** 群协作任务的记忆授权仅在当前 session 内生效。 */
+  /** Memory grants for group collaboration tasks apply only within the current session. */
   scope?: "session";
   version?: 1;
   allow?: PermissionRuleValue[];
@@ -38,8 +38,8 @@ export type PermissionUpdate = {
   rules: PermissionRuleValue[];
 };
 
-// 修改原因：workflow Refine 与 plan 反馈同构——
-// deny + reason 只有携带专用 source 才允许被升级为真实 user message。
+// Reason for the change: workflow Refine and plan feedback have the same shape—
+// deny + reason may be promoted to a real user message only when accompanied by a dedicated source.
 export type PermissionBrokerReasonSource = "plan_approval_feedback" | "workflow_refine_feedback";
 
 /**
@@ -74,7 +74,7 @@ export interface PermissionBrokerRequest {
 export interface PermissionBrokerResult {
   decision: PermissionDecision;
   reason?: string;
-  /** V4 permission feedback 需要保留 provider-visible 原文；只由 broker 结果携带。 */
+  /** V4 permission feedback must preserve the provider-visible original text; carried only by the broker result. */
   preserveReasonFormatting?: boolean;
   reasonSource?: PermissionBrokerReasonSource;
   modifiedInput?: unknown;
@@ -97,7 +97,7 @@ export interface PermissionBrokerResult {
 }
 
 export interface PermissionBrokerRequestOptions {
-  /** 带提交副作用的应答先取得唯一胜者；失败保留用户审批，Hook 不再竞争。 */
+  /** A response with commit side effects first claims the single winner; on failure, keep the user's approval and do not let Hooks compete. */
   claimResponse?: () => boolean;
   signal?: AbortSignal;
   timeoutMs?: number;
@@ -108,7 +108,7 @@ export interface PermissionBrokerPort {
     request: PermissionBrokerRequest,
     options?: PermissionBrokerRequestOptions,
   ): Promise<PermissionBrokerResult> & {
-    /** 异步登记时必须提供；缺省表示调用内同步登记。仅表示可响应，不持有授权状态。 */
+    /** Required for asynchronous registration; omission means synchronous registration during the call. Indicates only that a response is possible; it does not hold grant state. */
     readonly registered?: Promise<void>;
   };
 }

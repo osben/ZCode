@@ -13,9 +13,9 @@ export function useLocalWorkspaceScopes({
   return useMemo(
     () =>
       workspaceTabs.filter((tab) => {
-        // pinned 查询只使用当前窗口已经打开的本地 workspace。
-        // 远端 workspace 即使持久化在 lastWorkspaceSession 中，也不能兜底混入本地查询，
-        // 否则没有 remoteSessionId 时会落到本地服务，导致同路径任务串读。
+        // Pinned queries use only local workspaces already open in the current window.
+        // Do not include a remote workspace from lastWorkspaceSession as a fallback; without remoteSessionId it would use
+        // the local service and could read tasks from another workspace at the same path.
         return isWorkspaceTab(tab) && isLocalWorkspaceTab(tab);
       }),
     [workspaceTabs],

@@ -104,9 +104,10 @@ function readReadMetadataFromRaw(raw: unknown): {
   }
 
   if (directPath) {
-    // 有些模型只在 rawInput 里给 filePath，但会在 rawOutput/content 里补充目录类型。
-    // 之前这里一旦先读到 rawInput.filePath 就会提前返回成 file，导致目录卡片图标错误。
-    // 现在改成“类型优先看显式输出，路径再回退 rawInput”，只在确实没有输出标签时才用 input 兜底。
+    // Some models provide filePath only in rawInput but add the directory type in rawOutput/content.
+    // Previously, reading rawInput.filePath first returned "file" early and gave directory cards the
+    // wrong icon. Check explicit output for type first, then fall back to the rawInput path; use input
+    // as a fallback only when there is no output label.
     return {
       path: directPath,
       entryType: normalizeReadEntryType(directType),
@@ -182,9 +183,9 @@ export function buildReadSummary(
           ? `${cwd}/${relativePath}`
           : (relativePath ?? fileName ?? "read");
 
-      // read 卡片之前只兼容 parsed_cmd 结构。
-      // 其他模型常把路径放在 rawInput/filePath 或 rawOutput 的 <path> 标签里，
-      // 导致 UI 只能退回 kind/title。这里保留结构化优先，再补原始输出兜底。
+      // Read cards previously supported only the parsed_cmd shape. Other models often put the path in
+      // rawInput/filePath or a <path> tag in rawOutput, leaving the UI to fall back to kind/title.
+      // Keep structured input as the primary source, then add raw-output fallbacks.
       return createReadSummary(absolutePath, {
         fileName,
         entryType: "file",
@@ -194,9 +195,10 @@ export function buildReadSummary(
 
   const directInputMetadata = readReadMetadataFromValue(input);
   if (directInputMetadata.path) {
-    // 一些 provider 的 read/update 事件直接把文件路径放在 input.file_path，
-    // 不会补 parsed_cmd，也不一定把相同字段镜像到 raw.rawInput.filePath。
-    // 之前 summary 构建会直接漏掉这类 read 卡片，导致 primary/secondary 都退回标题。
+    // Some providers put the file path directly in input.file_path for read/update events. They do
+    // not populate parsed_cmd and may not mirror the field into raw.rawInput.filePath. Summary
+    // construction previously missed these read cards, causing both primary and secondary text to
+    // fall back to the title.
     return createReadSummary(directInputMetadata.path, {
       entryType: directInputMetadata.entryType,
     });

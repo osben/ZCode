@@ -14,16 +14,16 @@ export interface SkillSummary {
   body: string;
   path: string;
   /**
-   * 发现阶段命中的原始 SKILL.md 路径（未经 realpath 解析）。
-   * 软链导入的技能里 `path` 是 realpath 后的目标文件，`sourcePath` 才指向 `~/.zcode/skills/<name>` 下的链接本体，
-   * 删除时必须用它才能只删链接、不动目标。普通技能与 `path` 相同。
+   * Original SKILL.md path found during discovery (without realpath resolution).
+   * For symlink-imported skills, `path` is the realpath target file, while `sourcePath` points to the symlink under `~/.zcode/skills/<name>`;
+   * use it during deletion to remove only the symlink and leave the target intact. For ordinary skills, it matches `path`.
    */
   sourcePath?: string;
   scope: SkillScope;
   enabled: boolean;
-  /** plugin scope 时为来源插件名；其它 scope 留空。 */
+  /** Source plugin name when the scope is plugin; empty for other scopes. */
   pluginName?: string;
-  /** plugin scope 时为来源插件完整 ID（name@marketplace）；旧 payload 可缺省。 */
+  /** Full source plugin ID (name@marketplace) for plugin scope; may be omitted in legacy payloads. */
   pluginId?: string;
   metadata?: SkillMetadata;
 }
@@ -35,7 +35,7 @@ export interface SkillsCapability {
 
 export type SkillDiagnosticSeverity = "warning" | "error";
 
-/** 与 zcode-cli `SkillDiagnosticCode` 同步。变动时一并改 apps/zcode-cli/packages/contracts/src/skills/index.ts。 */
+/** Kept in sync with zcode-cli `SkillDiagnosticCode`; update apps/zcode-cli/packages/contracts/src/skills/index.ts when it changes. */
 export type SkillDiagnosticCode =
   | "skill_root_not_found"
   | "skill_scan_failed"

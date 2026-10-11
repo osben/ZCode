@@ -56,8 +56,8 @@ export function parseSubagentMarkdown(
     };
   }
 
-  // runtime 使用 loose frontmatter 语义；Settings 也按同一语义读取，
-  // 避免 CLI 已加载的 profile 因为不是严格 YAML 而在 GUI 中消失。
+  // Runtime uses loose frontmatter semantics; Settings reads using the same semantics
+  // so profiles already loaded by the CLI do not disappear from the GUI for not being strict YAML.
   const frontmatter = parseRuntimeCompatibleFrontmatter(parsed.frontmatter);
 
   const name = scalarString(frontmatter.name);
@@ -101,9 +101,9 @@ export function parseSubagentMarkdown(
       scope: input.scope,
       source,
       enabled: true,
-      // workspace scope 曾一并标为只读，导致 .zcode/agents 下的 profile 在设置页
-      // 既不能编辑/删除，又因 groupAgentsByScope 的兜底分支被显示在“内置”分组里。
-      // 只有内置 agent 是真正不可编辑的；插件 agent 由 discoverPluginAgents 显式覆盖为只读。
+      // Workspace scope was also marked read-only, so profiles under .zcode/agents could neither be edited/deleted in Settings
+      // nor be shown in the right group, since groupAgentsByScope's fallback placed them under "Built-in".
+      // Only built-in agents are truly read-only; discoverPluginAgents explicitly marks plugin agents read-only.
       readOnly: input.scope === "built-in",
     },
   };
@@ -223,8 +223,8 @@ function parseScalarValue(rawValue: string): unknown {
     try {
       return JSON.parse(value) as unknown;
     } catch {
-      // Runtime-compatible loose frontmatter 对非法 inline mapping 保留原字符串；
-      // 下游严格 ModelSelection schema 会拒绝它，而不是让整个 agent 文件消失。
+      // Runtime-compatible loose frontmatter preserves an invalid inline mapping as a string;
+      // the downstream strict ModelSelection schema rejects it instead of making the entire agent file disappear.
       return value;
     }
   }
@@ -389,8 +389,8 @@ function appendUnknownList(
     appendList(lines, key, values);
     return;
   }
-  // GUI 当前还没有 mcpServers 的结构化表单，但保存会重写整个
-  // frontmatter；对象数组必须按 YAML 结构写回，避免编辑其他字段时清空 MCP 配置。
+  // The GUI does not yet have a structured mcpServers form, but saving rewrites the entire
+  // frontmatter; write object arrays back as YAML structures so editing other fields does not clear MCP configuration.
   const serialized = stringifyYaml({ [key]: values }, { lineWidth: 0 }).trimEnd();
   lines.push(...serialized.split("\n"));
 }
@@ -400,8 +400,8 @@ function isStringArray(values: readonly unknown[]): values is readonly string[] 
 }
 
 function formatYamlScalar(value: string): string {
-  // `*` 和包含 `: ` 的工具 pattern 在 YAML plain scalar 中会被当作
-  // alias/map，必须 quote 后再写入，保证保存出的 Markdown 可被 parser 重新读取。
+  // `*` and tool patterns containing `: ` are interpreted as aliases/maps in YAML plain scalars;
+  // quote them on write so the saved Markdown can be parsed again.
   if (isSafePlainYamlScalar(value)) {
     return value;
   }

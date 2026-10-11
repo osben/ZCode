@@ -31,12 +31,12 @@ export function useWorkspaceShellLifecycle({
 
     previousWorkspaceAbsPathRef.current = workspaceAbsPath;
 
-    // Root 之前依赖按 workspacePath 改 key 来"切工作区就整棵重建 App"，
-    // 这样虽然顺手清空了局部状态，但也会把侧边栏 / TaskList 一起卸载，导致切任务时出现整列闪烁。
-    // 现在改成保留同一个 App 实例后，只显式清理真正和旧 workspace 强绑定的状态，
-    // 避免把上一项目的代码预览或测试覆盖消息串到新项目里。
-    // side pane 现在按 workspaceIdentity/workspacePath 做内存恢复。
-    // 这里不能再按 workspacePath 变化清掉 Git/source 或 tabs，否则跨 workspace 切回时会覆盖缓存。
+    // Root previously changed its key by workspacePath to “rebuild the entire App when switching workspaces,”
+    // which also unmounted the sidebar / TaskList and caused the whole column to flash on task switches.
+    // Now that the same App instance is preserved, explicitly clear only state tightly bound to the old workspace,
+    // preventing code previews or test-override messages from the previous project from leaking into the new one.
+    // Side panes now restore in memory using workspaceIdentity/workspacePath.
+    // Do not clear Git/source or tabs here when workspacePath changes, or switching back across workspaces would overwrite their caches.
     setBrowserNavigationRequest(null);
     setTestMessages(null);
   }, [setBrowserNavigationRequest, setTestMessages, workspaceAbsPath]);
@@ -55,11 +55,11 @@ export function useWorkspaceShellLifecycle({
         return;
       }
 
-      // 预热 session 会让没有 task 的 workspace 也常驻一个 ZCode Agent 进程。
-      // 如果切走 tab 时不清理这类"只预热、未真正使用"的会话，来回切多个 workspace 后，
-      // 背景里会留下多条空转进程。这里在离开当前 workspace 时做一次 best-effort 回收。
-      // 另外必须把 workspace 初始化状态同步回退成 idle，否则下一次进入页面仍可能看到
-      // 上一次残留的 ready/failed。单 ZCode Agent 下这里不再按 provider 循环清理。
+      // A prewarmed session keeps a ZCode Agent process alive even for a workspace with no task.
+      // If these “prewarmed but never actually used” sessions are not cleaned up when switching tabs, switching among multiple workspaces leaves
+      // several idle processes in the background. Make a best-effort cleanup when leaving the current workspace.
+      // Also reset workspace initialization state to idle, or the next page entry may still show
+      // the previous ready/failed state. With one ZCode Agent, cleanup no longer loops over providers.
       const workspaceInitState = getWorkspaceInitState(currentWorkspaceState);
       if (workspaceInitState.status === "idle") {
         return;

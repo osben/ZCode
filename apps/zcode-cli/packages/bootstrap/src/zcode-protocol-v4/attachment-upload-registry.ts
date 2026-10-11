@@ -80,10 +80,11 @@ function sameBytes(left: Uint8Array, right: Uint8Array): boolean {
 }
 
 /**
- * CLI 进程内 attachment staging 权威表。
+ * Authoritative attachment staging registry within the CLI process.
  *
- * 旧 attachment/put 会把 20MiB bytes 扩成约 26.7MiB NDJSON 单行，mobile
- * 外层再膨胀一次。这里逐片解码后计账，只有 commit 校验完整事实才落 artifact。
+ * The old attachment/put flow expanded 20 MiB of bytes into an approximately 26.7 MiB NDJSON
+ * line, then mobile inflated it again. Decode and account for each chunk here; persist an artifact
+ * only after commit validates the complete payload.
  */
 export class AttachmentUploadRegistry {
   private readonly staged = new Map<string, StagedUpload>();

@@ -1,6 +1,6 @@
-// 由各 bundler 通过 define 注入，避免运行时 JSON import 的跨 bundler 兼容问题。
-// 非构建环境（如 e2e 测试的 mocha）下 define 不存在，
-// 用 typeof 检查 + fallback 避免 ReferenceError。
+// Injected by each bundler through define to avoid cross-bundler compatibility issues with runtime JSON imports.
+// In non-build environments (such as mocha in E2E tests), define is unavailable;
+// use typeof checks and a fallback to avoid ReferenceError.
 declare const __ZCODE_VERSION__: string;
 declare const __ZCODE_COMMIT__: string;
 declare const __ZCODE_BUILD_TIME__: string;
@@ -12,10 +12,11 @@ export const ZCODE_COMMIT: string =
 export const ZCODE_BUILD_TIME: string =
   typeof __ZCODE_BUILD_TIME__ !== "undefined" ? __ZCODE_BUILD_TIME__ : "unknown";
 
-// fork 版本形如 3.15.1-fork.2：本地展示与远端资产身份用完整版本，
-// 但 z.ai 后端按 semver 门控行为（如 OAuth 网站按 app_version 决定 deep link），
-// -fork.N 后缀会被判为低于同基线正式版。发往后端的版本字符串只保留上游基线；
-// 其他 prerelease（如 dev 兜底版本）不属于 fork 标记，保持原样。
+// A fork version looks like 3.15.1-fork.2: local display and remote asset identity use the full
+// version, but the z.ai backend gates behavior by semver (e.g. the OAuth site decides deep links
+// by app_version) and would rank a -fork.N suffix below the official release on the same baseline.
+// Version strings sent to the backend keep only the upstream baseline; other prereleases (such as
+// the dev fallback version) are not fork markers and stay unchanged.
 export function stripZcodeForkVersionSuffix(version: string): string {
   const match = /^(\d+\.\d+\.\d+)-fork\.\d+$/.exec(version.trim());
   return match ? match[1]! : version;

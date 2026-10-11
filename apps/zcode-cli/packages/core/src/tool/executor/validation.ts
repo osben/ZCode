@@ -76,8 +76,9 @@ export function validateInitialModelToolInput(
   const validation = validateJsonSchemaValue(input, entry.inputSchema);
   if (validation.valid) return undefined;
 
-  // 模型原始参数的首次 schema 失败需要把具体问题回传给模型；Hook 或权限
-  // 修改后的输入属于不同生命周期，不能复用这段 provider-visible 内容。
+  // On the first schema failure, return the specific issue for the model's original
+  // arguments. Input changed by a hook or permission flow belongs to a different
+  // lifecycle and must not reuse this provider-visible content.
   const modelContent = createInitialInputValidationModelContent(
     entry,
     validation.issues,

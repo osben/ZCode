@@ -26,16 +26,17 @@ export function readBoolean(env: NodeJS.ProcessEnv, key: string, fallback: boole
 }
 
 export function buildZCodeApiUrlFromEnv(env: NodeJS.ProcessEnv, path: string): string {
-  // OAuth provider 是运行时配置，必须跟随传入 env.ZCODE_ENV；
-  // 地址来自 .env 的通用变量，默认线上；登录与 token 交换必须使用同一配置来源。
+  // OAuth provider configuration is runtime configuration and must follow the supplied env.ZCODE_ENV;
+  // the URL comes from the shared .env variable and defaults to production; login and token exchange must use the same source.
   return buildRuntimeZCodeApiUrl(env, path);
 }
 
 export function buildDesktopOAuthRedirectUriFromEnv(env: NodeJS.ProcessEnv): string {
   const url = new URL("/app/oauth/login", buildRuntimeZCodeEndpointUrls(env).origin);
   url.searchParams.set("redirect", DESKTOP_OAUTH_CALLBACK_URI);
-  // Website 需要按 App 版本决定是否关闭自动 deep link；缺少版本时必须兼容旧客户端行为。
-  // 对外只发上游基线，避免 fork 的 prerelease 后缀被网站按 semver 判为旧客户端。
+  // The website uses the app version to decide whether to disable automatic deep links; when the version is missing, preserve legacy client behavior.
+  // Send only the upstream baseline externally so the fork's prerelease suffix is not judged by
+  // the website's semver comparison as an outdated client.
   url.searchParams.set("app_version", ZCODE_UPSTREAM_BASE_VERSION);
   return url.toString();
 }

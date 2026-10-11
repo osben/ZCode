@@ -1,4 +1,4 @@
-/* eslint-disable max-lines -- IAB owner registry、ready/abort lifecycle 与 guest CDP 状态必须在同一状态机内原子维护，拆散会重新引入跨 scope 竞态。 */
+/* eslint-disable max-lines -- Keep the IAB owner registry, ready/abort lifecycle, and guest CDP state atomic in one state machine; splitting them would reintroduce cross-scope races. */
 import { randomUUID } from "node:crypto";
 import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -139,53 +139,53 @@ interface ManagedTab {
   tabId: string;
   owner: InternalExecutionContext;
   guest?: GuestWebContents;
-  /** guest replacement generation；命令 dispatch 前用来拒绝 stale guest。 */
+  /** Guest replacement generation used to reject stale guests before command dispatch. */
   guestGeneration: number;
-  /** 曾经成功绑定过 guest；用于区分新建 tab 的首次等待与已有 tab 的自愈。 */
+  /** Whether a guest was ever bound successfully; distinguishes a new tab's initial wait from recovery of an existing tab. */
   hasAttachedGuest: boolean;
   attachFailure?: GuestRecoveryReason;
   rebindRequested: boolean;
   cdpAttached: boolean;
-  /** guest 的 native CDP 生命周期；DOM 销毁前必须先经过 detaching。 */
+  /** Guest's native CDP lifecycle; it must pass through detaching before the DOM is destroyed. */
   guestLifecycle: GuestBindingLifecycle;
-  /** 尚未 settle 的 debugger.sendCommand 数量，teardown 会等待其归零或超时。 */
+  /** Number of unsettled debugger.sendCommand calls; teardown waits for zero or a timeout. */
   pendingCdpCommands: number;
-  /** 命令流空闲释放的计时器；每次 CDP 命令完成后重置，detachGuest 时清除。 */
+  /** Timer for releasing an idle command stream; reset after each CDP command and cleared by detachGuest. */
   guestCdpIdleTimer?: ReturnType<typeof setTimeout>;
-  /** re-attach 会话态恢复 flight；业务命令必须 await 它完成才能派发（串行屏障）。 */
+  /** In-flight session-state restoration after re-attach; business commands must await it before dispatch (a serial barrier). */
   guestCdpRestoreFlight?: Promise<void>;
-  /** 当前已持有 viewport 临界区；CDP 重连直接重放，不能再次入队等待自己。 */
+  /** Whether this currently holds the viewport critical section; replay directly after CDP reconnect instead of queueing behind itself. */
   insideViewportMutation?: boolean;
-  /** 同一 guest 的 replacement teardown 只允许一个 flight，重复 ACK 共享结果。 */
+  /** Allow only one replacement teardown per guest; duplicate ACKs share its result. */
   guestTeardownFlight?: Promise<boolean>;
   lifecycle: TabLifecycle;
   origin: "agent" | "user";
-  /** human IAB tab 在同 window/workspace 首次操作前可被任一 session 发现。 */
+  /** A human IAB tab can be discovered by any session before its first operation in the same window/workspace. */
   claimable: boolean;
-  /** claimed user tab finalize/closeSession 时恢复为用户 tab，不能像 agent tab 一样关闭。 */
+  /** Restore a claimed user tab as a user tab on finalize/closeSession; do not close it like an agent tab. */
   userOwner?: InternalExecutionContext;
   active: boolean;
-  /** Agent/UI 设置的单 tab CSS viewport；undefined 表示跟随宿主自然尺寸。 */
+  /** Per-tab CSS viewport set by Agent/UI; undefined follows the host's natural size. */
   viewportOverride?: BrowserViewportSize;
-  /** Desktop page zoom 放大时专用于校正 guest native raster；不改变 CSS viewport。 */
+  /** Corrects the guest's native raster when Desktop page zoom is above 1; does not change the CSS viewport. */
   desktopZoomFactor?: number;
-  /** 已成功下发给 Chromium 的倍率；输入不得使用尚在 viewport 队列中的目标倍率。 */
+  /** Scale successfully applied to Chromium; input must not use a target scale still queued for the viewport. */
   appliedViewportScale?: number;
-  /** pane 隐藏为 0×0 时仅供后台执行使用；重新前台可见后必须清除。 */
+  /** Used only for background execution while the pane is hidden at 0×0; clear it when the pane becomes visible again. */
   backgroundViewportFallback?: BrowserViewportSize;
-  /** 串行化 transient clear 与显式 set/reset，保证最后一次用户/Agent 设置胜出。 */
+  /** Serializes transient clears with explicit set/reset operations so the latest user/Agent setting wins. */
   viewportMutation?: Promise<void>;
   downloadCleanup?: () => void;
   activityCleanup?: () => void;
   /**
-   * 注销 debugger 的 "message" 监听。guest 换代后旧监听不该继续挂着：它每次事件都要查表
-   * 再靠 current.guest !== guest 兜底丢弃，属于纯泄漏。注意这只是 JS 层清理，native 侧的
-   * CDP 通路要靠 debugger.detach() 才真正断开。
+   * Unregister the debugger's "message" listener. After guest replacement, the old listener should not remain attached:
+   * every event would require a lookup and a current.guest !== guest check to discard it, which is a pure leak.
+   * This only cleans up the JS layer; debugger.detach() is still required to disconnect the native CDP channel.
    */
   cdpMessageCleanup?: () => void;
   /**
-   * 注销 render-process-gone 监听。该监听负责在 guest renderer 被杀、WebContents 尚存的
-   * 窗口里主动断开 CDP —— 这是唯一能避免 api::Debugger 走隐式析构的时机。
+   * Unregister the render-process-gone listener. It proactively disconnects CDP when the guest renderer is killed
+   * while its WebContents still exists; this is the only opportunity to prevent api::Debugger from being implicitly destroyed.
    */
   crashGuardCleanup?: () => void;
   loading: boolean;
@@ -246,18 +246,18 @@ interface DownloadWaiter {
 }
 
 const DEFAULT_ATTACH_TIMEOUT_MS = 10_000;
-// 透明 presentation 已就位时整幅 capture 的硬上限；正常应在数百 ms 内完成。
+// Hard limit for a full capture once the transparent presentation is ready; normally it should finish within a few hundred ms.
 const HIDDEN_WINDOW_CAPTURE_DEADLINE_MS = 5_000;
-// 单个 tab 上"已放弃等待但底层 CDP capture 仍未结算"的硬上限。CDP 截图没有单请求
-// 取消 API，重试会在 Chromium 内遗留 pending command；compositor 持续不可用时
-// 不设上限会无限叠加（帧恢复时它们会同时排空，但 pendingCdpCommands 不归零、
-// detach 走超时路径）。达到上限后同 tab 截图快速失败并提示重开 tab，旧 capture
-// 真实落定后名额自动回收。
+// Hard limit for captures on one tab whose callers stopped waiting while the underlying CDP capture is still unsettled.
+// CDP screenshots have no per-request cancellation API, so retries leave pending commands in Chromium. If the compositor
+// remains unavailable, an unlimited number would accumulate (they drain together when frames resume, but
+// pendingCdpCommands would not reach zero and detach would time out). Once the limit is reached, screenshots on that tab
+// fail quickly with a prompt to reopen it; a slot is reclaimed when the old capture actually settles.
 const MAX_ABANDONED_SCREENSHOT_CAPTURES = 3;
-/** teardown 等待 CDP 在途命令收敛的上限；超时后仍会尝试 native detach。 */
+/** Maximum time teardown waits for in-flight CDP commands to settle; native detach is still attempted on timeout. */
 const DEFAULT_GUEST_CDP_TEARDOWN_TIMEOUT_MS = 1_000;
-// CDP 命令流空闲释放阈值：覆盖实测崩溃窗口（turn 内命令间隙 0.4~9s）的同时，
-// 不打断 agent 密集操作流（命令间隔通常远小于该值）。
+// Idle-release threshold for the CDP command stream: covers the observed crash window (0.4–9s gaps within a turn)
+// without interrupting dense agent operation streams (command gaps are usually much shorter).
 const DEFAULT_GUEST_CDP_IDLE_RELEASE_MS = 1_500;
 const RECORDING_RESULT_TTL_MS = 60 * 60 * 1_000;
 const DEFAULT_BACKGROUND_BROWSER_VIEWPORT: BrowserViewportSize = {
@@ -301,15 +301,15 @@ function buildViewportMetricsOverride(
   return {
     width: viewport.width,
     height: viewport.height,
-    // CDP 默认会让 DPR=1 的页面指标同时接管 visible size，Retina 上因此只分配
-    // 1x native surface，虽然 DOM bounds 正确，网页却只覆盖 frame 左上角。visible surface
-    // 应继续由 Electron <webview> 的实际 bounds 管理，CDP 只负责 CSS viewport 与截图 DPR。
+    // By default, CDP lets page metrics with DPR=1 also control visible size, allocating only a 1x native surface on
+    // Retina displays. The DOM bounds remain correct, but the page covers only the frame's upper-left corner. Keep the
+    // visible surface managed by the Electron <webview>'s actual bounds; CDP only controls the CSS viewport and screenshot DPR.
     deviceScaleFactor: 1,
     mobile: false,
     dontSetVisibleSize: true,
-    // Desktop page zoom > 1 时，Electron 的 guest target 截图本身已只有
-    // frame 的 1 / zoom 内容，外层 CSS transform 无法补齐 native raster。CDP scale
-    // 只在放大档位校正可见面；缩小保持默认 1，避免再次缩小内容。
+    // When Desktop page zoom is above 1, a screenshot of the Electron guest target already contains only 1 / zoom of the
+    // frame; an outer CSS transform cannot restore the native raster. Use CDP scale to correct the visible surface only
+    // when zoomed in. Keep the default 1 when zoomed out to avoid shrinking the content again.
     ...(metricsScale > 1 ? { scale: metricsScale } : {}),
   };
 }
@@ -327,7 +327,7 @@ function scopeKey(context: InternalExecutionContext): string {
   ].join("\u0000");
 }
 
-/** tab 归属的 session 身份：不含 browserId / generation，释放回 user-tab 集合的 tab 仍然匹配。 */
+/** Session identity a tab belongs to: excludes browserId / generation, so a tab released back to the user-tab set still matches. */
 function ownedBySession(
   owner: InternalExecutionContext,
   context: InternalExecutionContext,
@@ -428,15 +428,15 @@ function isSideEffecting(command: BrowserCommand): boolean {
 }
 
 /**
- * IAB guest registry。生产路径严格按 BrowserGuestExecutionContext 隔离；string 入参只保留给
- * 旧 renderer/单测兼容，不能由新调用方使用。
+ * IAB guest registry. Production paths are strictly isolated by BrowserGuestExecutionContext; string arguments remain
+ * only for compatibility with old renderers/tests and must not be used by new callers.
  */
 function safeNumber(read: () => number | undefined): number | undefined {
   try {
     const value = read();
     return typeof value === "number" ? value : undefined;
   } catch {
-    // guest 已销毁时访问 id 会抛错；资源管理器只需跳过该 tab。
+    // Accessing id throws after the guest is destroyed; the resource manager can simply skip this tab.
     return undefined;
   }
 }
@@ -444,7 +444,7 @@ function safeNumber(read: () => number | undefined): number | undefined {
 export class BrowserGuestManager {
   private readonly tabs = new Map<string, ManagedTab>();
 
-  /** 资源管理器：当前仍活着的浏览器 guest webContents id，用于把其 renderer 归到内置插件 browser-use */
+  /** Resource manager: IDs of currently live browser guest webContents, used to associate their renderers with the built-in browser-use plugin. */
   listGuestWebContentsIds(): number[] {
     const ids: number[] = [];
     for (const tab of this.tabs.values()) {
@@ -454,7 +454,7 @@ export class BrowserGuestManager {
     }
     return ids;
   }
-  /** close 后只保留 opaque id tombstone，拒绝迟到的 renderer attach，不保留 owner/guest。 */
+  /** After close, retain only an opaque ID tombstone to reject late renderer attaches; do not retain the owner/guest. */
   private readonly closedTabIds = new Set<string>();
   private readonly activeTabByScope = new Map<string, string>();
   private readonly defaultTabByScope = new Map<string, string>();
@@ -462,16 +462,16 @@ export class BrowserGuestManager {
   private readonly pendingDialogs = new Map<string, BrowserDialog>();
   private readonly runningRequests = new Map<string, RunningRequest>();
   /**
-   * CDP Page.captureScreenshot 没有单请求取消 API。外层 timeout/cancel 后 promise 可能仍在
-   * Chromium 内执行。请求 abort/deadline 即刻
-   * settle 并释放屏障，允许同 tab 立即重试——重叠是瞬态且自排空的：下一次截图的透明
-   * presentation 会恢复产帧，旧的挂起 capture 随之落定；结果按各自 promise 链归属，迟到
-   * 结果不会误挂到新请求（clearTrackedScreenshot 以 entry identity 幂等）。旧的“保留屏障
-   * 直到真实 settle”会把永不落定的挂起请求变成该 tab 的截图死锁（生产实测 pendingMs
-   * 120s+），已被废弃。堆积风险由 abandonedScreenshotCaptures 的硬上限兜底。
+   * CDP Page.captureScreenshot has no per-request cancellation API. After an outer timeout/cancel, the promise may still
+   * be running in Chromium. Settle the request immediately on abort/deadline and release the barrier so the same tab can
+   * retry at once. Any overlap is transient and self-draining: the next screenshot's transparent presentation resumes
+   * frame production, allowing the old capture to settle. Each result stays on its own promise chain, so late results
+   * cannot attach to a new request (clearTrackedScreenshot is idempotent by entry identity). The old approach of holding
+   * the barrier until actual settlement could deadlock screenshots on a tab when a capture never settled (production
+   * observations showed pendingMs above 120s); it has been removed. A hard limit on abandonedScreenshotCaptures bounds accumulation.
    */
   private readonly inFlightScreenshots = new Map<string, InFlightScreenshot>();
-  /** 见 MAX_ABANDONED_SCREENSHOT_CAPTURES；key 为 tabId。 */
+  /** See MAX_ABANDONED_SCREENSHOT_CAPTURES; keyed by tabId. */
   private readonly abandonedScreenshotCaptures = new Map<string, number>();
   private readonly recordings = new Map<string, BrowserRecordingEntry>();
   private readonly downloads = new Map<string, DownloadRecord>();
@@ -484,9 +484,9 @@ export class BrowserGuestManager {
   private readonly suspendAckWaiters = new Map<string, () => void>();
   private readonly suspendFlights = new Map<string, Promise<void>>();
   private readonly restoreFlights = new Map<string, Promise<GuestWebContents | null>>();
-  /** guest 被销毁后重绑时，替代 guest 必须先完成原页面恢复再接收新的 browser 命令。 */
+  /** When rebinding after a guest is destroyed, the replacement must restore the original page before receiving browser commands. */
   private readonly guestRecoveryFlights = new Map<string, Promise<GuestWebContents | null>>();
-  /** 同一 tab 的 attach/rebind 只允许一个 flight，避免并发命令各自重建 webview。 */
+  /** Allow only one attach/rebind flight per tab to prevent concurrent commands from rebuilding the webview independently. */
   private readonly guestAttachFlights = new Map<string, Promise<GuestWebContents | null>>();
   private readonly restoredTabClaims = new Map<string, number>();
 
@@ -511,18 +511,18 @@ export class BrowserGuestManager {
       owner: BrowserGuestExecutionContext,
       tabId: string,
     ) => void,
-    // 第七位已被 screenshot CSS 像素归一化使用；新门禁依赖只能追加，避免打破已有 main/test 调用。
+    // The seventh position is already used for screenshot CSS-pixel normalization; append new gate dependencies to preserve existing main/test calls.
     private readonly resizeScreenshotToCssPixels?: ControlledView["resizeScreenshotToCssPixels"],
     private readonly screenshotSurfaceCoordinator?: BrowserScreenshotSurfaceCoordinator,
     private readonly residencyOptions: BrowserGuestManagerResidencyOptions = {},
-    // 隐藏窗口截图的透明 presentation 依赖 owner BrowserWindow；测试注入替身，生产由
-    // index.ts 接 BrowserWindow.fromId。不注入时该能力整体禁用，行为与旧版一致。
+    // Transparent presentation for screenshots in a hidden window depends on the owner BrowserWindow. Tests inject a stub;
+    // production gets BrowserWindow.fromId from index.ts. If it is not injected, disable this capability entirely to match prior behavior.
     private readonly resolveOwnerWindow?: (
       windowId: number,
     ) => BrowserWindowForTransparentBootstrap | null,
-    // CDP 命令流空闲多久后主动释放（detach）。guest renderer 被
-    // Chromium 杀且 render-process-gone 未送达 main 时，destroyed 直达 + CDP attached 即
-    // 主进程 UAF；turn 内命令间隙（0.4~9s）是实测崩溃窗口，命令级 idle 释放将其收窄。
+    // How long the CDP command stream may remain idle before proactive release (detach). If Chromium kills the guest
+    // renderer without delivering render-process-gone to main, destroyed can arrive while CDP is attached and cause a
+    // main-process UAF. The observed crash window is the 0.4–9s gap between commands in a turn; command-level idle release narrows it.
     private readonly cdpIdleReleaseMs: number = DEFAULT_GUEST_CDP_IDLE_RELEASE_MS,
   ) {
     this.residencyCoordinator = new BrowserTabResidencyCoordinator({
@@ -561,8 +561,8 @@ export class BrowserGuestManager {
       };
     }
     if (guest.getType() !== "webview") {
-      // fromId 接受进程内任意 WebContents id；若 renderer 误传主窗口 id，后续
-      // CDP/Runtime 输入会直接操作 ZCode composer。IAB 只允许真实 <webview> guest fail closed。
+      // fromId accepts any WebContents ID in the process. If a renderer passes the main-window ID by mistake, later
+      // CDP/Runtime input would operate the ZCode composer directly. IAB accepts only real <webview> guests and fails closed.
       this.log?.(
         `[browser-use] attachGuest rejected tabId=${tabId} id=${webContentsId} reason=not-webview type=${guest.getType()}`,
       );
@@ -573,7 +573,7 @@ export class BrowserGuestManager {
       this.log?.(`[browser-use] attachGuest rejected tabId=${tabId} reason=closed`);
       return { ok: false, reason: "closed", recoveryRequested: false };
     }
-    // 兼容旧 renderer：未经历 create request 的 key 只进入 legacy scope。
+    // Compatibility for old renderers: keys without a create request enter only the legacy scope.
     if (!tab) {
       const owner = options?.workspaceKey
         ? {
@@ -582,9 +582,9 @@ export class BrowserGuestManager {
             browserGeneration: 0,
             windowId: options.windowId ?? 0,
             workspaceKey: options.workspaceKey,
-            // human tab 原来只按 workspace 登记为全局 unclaimed，任意新对话都能
-            // 从 user.openTabs() 枚举并接管。ownerTaskId 现在随 attach 冻结；旧 renderer
-            // 未传 sessionId 时保留不可认领哨兵，宁可隐藏也不能跨对话泄漏。
+            // Human tabs used to be globally unclaimed by workspace, so any new conversation could enumerate and claim
+            // them through user.openTabs(). ownerTaskId is now frozen at attach; if an old renderer omits sessionId,
+            // retain an unclaimable sentinel. Hiding the tab is preferable to leaking it across conversations.
             sessionId: options.sessionId?.trim() || "unscoped",
             ...(options.remoteSessionId ? { remoteSessionId: options.remoteSessionId } : {}),
             clientMode: "desktop-continuous" as const,
@@ -630,14 +630,14 @@ export class BrowserGuestManager {
       return this.rejectGuestAttach(tab, guest, "workspace-mismatch");
     }
     if (options?.sessionId && tab.owner.sessionId !== options.sessionId) {
-      // renderer 的迟到 dom-ready 不能用另一个对话的 ownership 复用既有 tabId。
-      // window/workspace 相同也必须拒绝，避免 guest 被跨对话替换后绕过 openTabs 隔离。
+      // A late renderer dom-ready must not reuse an existing tabId under another conversation's ownership.
+      // Reject it even when the window/workspace match, preventing a guest replacement across conversations from bypassing openTabs isolation.
       this.log?.(`[browser-use] attachGuest rejected tabId=${tabId} reason=session-mismatch`);
       return this.rejectGuestAttach(tab, guest, "session-mismatch");
     }
     if ((tab.owner.remoteSessionId ?? "") !== (options?.remoteSessionId ?? "")) {
-      // remote owner 过去只在 renderer 主动提供 remoteSessionId 时校验，缺失值会
-      // fail-open；远程重连后的旧 tab 因而可能被新 runtime attach。
+      // Remote ownership used to be checked only when the renderer supplied remoteSessionId, so a missing value failed open;
+      // an old tab could then be attached by a new runtime after remote reconnection.
       this.log?.(
         `[browser-use] attachGuest rejected tabId=${tabId} reason=remote-session-mismatch`,
       );
@@ -649,8 +649,8 @@ export class BrowserGuestManager {
       tab.guest !== guest &&
       (residency?.residency === "suspended" || residency?.residency === "suspend-pending");
     if (rejectsNewGuest) {
-      // 恢复 timeout 已回滚后，旧 generation 的迟到 guest 原来仍会绕过 restoring
-      // 校验并重新占用 tab。suspended/pending 只允许当前旧 guest 重复上报，不接受新 attach。
+      // After a restore timeout rolled back, a late guest from an old generation could still bypass the restoring check
+      // and reclaim the tab. suspended/pending accepts repeated reports only from the current old guest, never a new attach.
       this.log?.(
         `[browser-use] attachGuest rejected tabId=${tabId} reason=residency-${residency.residency}`,
       );
@@ -681,8 +681,8 @@ export class BrowserGuestManager {
     }
     const isSameGuest = tab.guest === guest;
     if (residency?.residency === "restoring") {
-      // 恢复态 src 使用不会提交 document 的延迟 protocol；scope/generation 校验通过后
-      // 终止 provisional request，确保 restoreGuestState 创建唯一首次有效导航。
+      // During restore, src uses a deferred protocol that does not commit a document. After scope/generation validation,
+      // terminate the provisional request so restoreGuestState creates the only initial valid navigation.
       try {
         guest.stop();
       } catch (error) {
@@ -692,8 +692,8 @@ export class BrowserGuestManager {
     if (tab.guest && !isSameGuest) this.detachGuest(tab);
     if (!isSameGuest) this.guestRecoveryFlights.delete(tab.tabId);
 
-    // detachGuest 会从仍存活的旧 guest 读取最后 URL；恢复判定必须放在它之后，避免 renderer
-    // 尚未来得及上报 residency 时，把刚刚发生过的导航误判成没有可恢复事实。
+    // detachGuest reads the last URL from the still-live old guest. Make the restore decision after it, so navigation
+    // that just occurred is not mistaken for having no recoverable state before the renderer reports residency.
     const rebindReason = tab.attachFailure;
     const shouldRestoreAfterRebind =
       tab.hasAttachedGuest &&
@@ -720,8 +720,8 @@ export class BrowserGuestManager {
     tab.attachFailure = undefined;
     tab.rebindRequested = false;
     if (cdpAttached) this.scheduleGuestCdpIdleRelease(tab);
-    // 恢复期新 guest 的初始 URL 是 about:blank。若在 pageState/restoreUrl 消费前
-    // 覆盖 logical cache，损坏快照会错误降级到空白页，三类事实全缺失的 orphan 也无法识别。
+    // A new guest starts at about:blank during restore. Overwriting the logical cache before consuming pageState/restoreUrl
+    // could make a corrupt snapshot fall back to a blank page and prevent detection of an orphan missing all three facts.
     if (residency?.residency !== "restoring" && !shouldRestoreAfterRebind) {
       tab.cachedUrl = safeStr(() => guest.getURL(), tab.cachedUrl);
       tab.cachedTitle = safeStr(() => guest.getTitle(), tab.cachedTitle);
@@ -751,29 +751,29 @@ export class BrowserGuestManager {
         this.requestGuestRebind(current, "guest-destroyed");
       }
     });
-    // 放在其余接线之前：后面几个 setup 在 guest 已销毁时可能同步抛错并跳过剩余接线，
-    // 而这是唯一能关闭 UAF 窗口的监听，不该被别的接线牵连。
+    // Install this before other listeners: later setup may synchronously throw for a destroyed guest and skip remaining
+    // listeners. This is the only listener that closes the UAF window, so unrelated setup must not prevent it.
     if (!isSameGuest) this.setupCdpCrashGuard(tab, guest);
     if (!isSameGuest) this.setupDialogTracking(tab, guest);
     if (!isSameGuest) this.setupDownloadTracking(tab, guest);
     if (!isSameGuest) this.setupActivityTracking(tab, guest);
     if (!isSameGuest) this.applyViewportOverride(tab);
     if (tab.viewportOverride) {
-      // Agent 可能在 renderer 完成自动打开前就发出 viewport 事件；guest attach 后重放一次，
-      // 保证刚挂载的自由尺寸 UI 不会漏掉 main → renderer 的一次性同步。
+      // The Agent may emit a viewport event before the renderer finishes opening automatically. Replay it after guest attach
+      // so a newly mounted free-size UI does not miss the one-time main → renderer synchronization.
       this.onViewportChanged?.({ ...tab.viewportOverride }, tab.owner, tab.tabId);
     }
     if (options?.active !== false && this.visibilityByScope.get(scopeKey(tab.owner)) === true) {
-      // visibilityByScope 表示整个 browser scope 可见，不表示本次 attach 的 tab
-      // 被选中。把 inactive guest 也回放为 visible=true 会让 renderer 在用户切换后
-      // 又激活旧 tab；关闭后迟到的同类事件还会复活 tab shell。只有非 inactive attach 才能
-      // 沿用 scope 可见性，显式选中仍由 selectTab/browserVisibilitySet 通知。
+      // visibilityByScope describes visibility of the entire browser scope, not whether this attached tab is selected.
+      // Replaying visible=true for an inactive guest would reactivate an old tab after the user switches away; a late event
+      // after close could also revive its tab shell. Only non-inactive attaches inherit scope visibility. Explicit selection
+      // is still reported by selectTab/browserVisibilitySet.
       this.onVisibilityChanged?.(true, tab.owner, tab.tabId);
     }
     if (shouldRestoreAfterRebind) {
-      // guest-destroyed 只重放 Ready 时，新 guest 的初始 URL 是 about:blank；若直接
-      // 将它标记为可用，renderer 又不会重新消费已应用过的 initialUrl，右侧面板就永久停在空白页。
-      // 这里沿用已有 pageState → restoreUrl 恢复逻辑，并以 tab 级 flight 串住后续命令。
+      // When replaying Ready after guest-destroyed, the new guest starts at about:blank. Marking it usable directly would
+      // leave the right pane blank because the renderer would not consume the already-applied initialUrl again. Reuse the
+      // existing pageState → restoreUrl recovery logic and serialize later commands behind a tab-level flight.
       const recoveryFlight = this.restoreReboundGuest(tab, guest);
       this.guestRecoveryFlights.set(tab.tabId, recoveryFlight);
       const clearRecoveryFlight = () => {
@@ -791,7 +791,7 @@ export class BrowserGuestManager {
     return { ok: true, guestGeneration: tab.guestGeneration };
   }
 
-  /** Renderer 自由尺寸交互回写；发送方窗口由 IPC 层绑定，不能跨窗口修改其它 tab。 */
+  /** Renderer free-size interaction update; IPC binds the sender window so it cannot modify tabs in another window. */
   async updateViewportFromRenderer(
     tabId: string,
     viewport: BrowserViewportSize | null,
@@ -816,7 +816,7 @@ export class BrowserGuestManager {
     return owner ? { ...owner } : null;
   }
 
-  /** 根据 guest WebContents 反查受控 tab，供 webview popup 事件保留原始 session scope。 */
+  /** Look up the controlled tab by guest WebContents to preserve its original session scope for webview popup events. */
   getTabOwnerByWebContentsId(
     webContentsId: number,
   ): (BrowserGuestExecutionContext & { tabId: string }) | null {
@@ -850,8 +850,8 @@ export class BrowserGuestManager {
     if (payload.selected) {
       tab.active = true;
       if (!tab.claimable) this.selectTab(tab, false);
-      // renderer 前台上报是用户真实在看的信号（面板展开/切 tab），与 claimable 无关，
-      // 必须独立于 selectTab 触发恢复。
+      // A renderer foreground report reflects what the user is actually viewing (pane expanded/tab selected). It is
+      // independent of claimable and must trigger recovery separately from selectTab.
       this.maybeRestoreBackgroundViewport(tab);
     } else {
       tab.active = false;
@@ -872,21 +872,21 @@ export class BrowserGuestManager {
   async closeTabFromRenderer(
     payload: BrowserViewCloseTabRequest & { windowId: number },
   ): Promise<void> {
-    // Agent close 已把 logical tab 从 main 删除，而 BrowserViewCloseTab 通知可能落在
-    // 非当前 workspace 被 renderer 丢弃，UI 侧仍留着壳。此时用户点 × 走到这里，直接抛
-    // "unavailable for renderer scope"，renderer 拿不到授权就永不移除 UI —— tab 永远关不掉。
-    // main 已经没有这个 logical tab，renderer 想收敛自己的壳是安全且必要的：幂等放行，
-    // 同时补上 tombstone，阻止迟到 attach 把它复活。scope 校验只对仍存活的 tab 生效，
-    // 跨 window/workspace 越权关闭他人 tab 仍然被拒绝。
+    // Agent close already removed the logical tab from main, but the BrowserViewCloseTab notification may have been
+    // discarded by a renderer outside the active workspace, leaving a shell in the UI. If the user clicks × here, throwing
+    // "unavailable for renderer scope" would leave the renderer without authorization to remove it, making the tab impossible
+    // to close. Since main no longer has this logical tab, it is safe and necessary to let the renderer converge its shell:
+    // allow the operation idempotently and add a tombstone to block late attaches. Scope checks still apply to live tabs;
+    // unauthorized closes across windows/workspaces remain rejected.
     const existing = this.tabs.get(payload.tabId);
     if (!existing || existing.lifecycle === "closed") {
       this.closedTabIds.add(payload.tabId);
       return;
     }
-    // close 是收敛意图：remoteSessionId 的防重连语义只属于 attach（见 attachGuest 的
-    // remote-session-mismatch）。attach 侧 renderer 对该字段有 workspaceRemoteSessionId 兜底、
-    // close 侧没有，严格比对会让远程 human tab 永远关不掉。renderer 关闭自己看得见的 tab 不构成
-    // 越权，window/workspace/session 三项仍严格校验，跨作用域越权关闭照旧拒绝。
+    // Close is a convergence operation: remoteSessionId's reconnect protection applies only to attach (see
+    // attachGuest's remote-session-mismatch). The attach renderer has workspaceRemoteSessionId as a fallback for this
+    // field; close does not. Strict comparison would make remote human tabs impossible to close. Closing a tab visible to
+    // the renderer is not an escalation; window/workspace/session are still checked strictly, and cross-scope closes remain rejected.
     const tab = this.requireRendererOwnedTab(payload, { skipRemoteSession: true });
     await this.closeTabDurably(tab, false);
   }
@@ -983,8 +983,8 @@ export class BrowserGuestManager {
     );
 
     if (this.runningRequests.has(context.requestId)) {
-      // requestId 是取消与 lifecycle cleanup 的 correlation key。同 key 覆盖会让
-      // 取消命中错误 scope，且旧 finally 会删除仍在执行的新 entry。重复请求必须在下发前失败。
+      // requestId is the correlation key for cancellation and lifecycle cleanup. Reusing a key could cancel the wrong
+      // scope, and the old finally block could delete a newer entry that is still running. Reject duplicates before dispatch.
       return this.withMeta(
         {
           ok: false,
@@ -1021,7 +1021,7 @@ export class BrowserGuestManager {
       return await this.executeInScope(context, command, running);
     } finally {
       unlink();
-      // 清理必须绑定 entry identity；即使未来其它入口误写同 key，旧请求也不能删除新状态。
+      // Cleanup must be tied to entry identity so an old request cannot delete newer state even if another entry point later reuses the key.
       if (this.runningRequests.get(context.requestId) === running) {
         this.runningRequests.delete(context.requestId);
       }
@@ -1169,9 +1169,9 @@ export class BrowserGuestManager {
           tab,
         );
       }
-      // 旧 tabs.get 只在 agent 内创建 Tab binding，renderer 仍可能展示另一个页面。
-      // 激活必须先原子更新 main selected 状态，再通知 origin renderer；renderer 仅在该 scope
-      // 正处前台时展开对应 view，后台对话只能记录激活态，不能抢用户当前会话。
+      // The old tabs.get created a Tab binding only inside the agent, while the renderer could still show another page.
+      // Activation must atomically update main's selected state before notifying the origin renderer. The renderer expands
+      // the view only when that scope is foreground; a background conversation may record activation but cannot steal the user's current session.
       this.selectTab(tab, true);
       return this.withMeta(
         {
@@ -1240,8 +1240,8 @@ export class BrowserGuestManager {
       const guest = await this.ensureGuest(tab, running.controller.signal);
       if (!guest) {
         const result = this.cancelledOrUnavailable(context, running, startedAt, tab);
-        // newTab 在 ready ack 前失败时不能留下无 guest 的 provisional tab；否则后续 list/attach
-        // 会把一次已取消的创建误当成仍存活的 tab。close 同时给 renderer 发卸载请求并留下 tombstone。
+        // If newTab fails before the ready ACK, do not leave a provisional tab without a guest; later list/attach calls
+        // would mistake the cancelled creation for a live tab. close also asks the renderer to unmount and leaves a tombstone.
         await this.closeTabDurably(tab);
         return this.withMeta(result, context, tab, "closed");
       }
@@ -1355,8 +1355,8 @@ export class BrowserGuestManager {
       return this.withMeta({ ok: true, elapsedMs: Date.now() - startedAt }, context, tab);
     }
     if (command.method === "playwrightWaitForTimeout") {
-      // 固定等待前先验证 tab；等待本身不触碰页面，也不要求 guest/CDP 已 attach。
-      // turn/session/request abort 必须提前结束 timer，避免已取消的 sleep 继续占住生命周期。
+      // Validate the tab before a fixed wait; waiting itself does not touch the page or require an attached guest/CDP.
+      // Turn/session/request abort must stop the timer early so a cancelled sleep does not retain lifecycle resources.
       const completed = await waitForDelay(command.timeoutMs, running.controller.signal);
       if (!completed) {
         return this.withMeta(this.cancelledResult(context, false, startedAt), context, tab);
@@ -1368,7 +1368,7 @@ export class BrowserGuestManager {
       (command.action.name === "fileChooserSetFiles" ||
         (command.action.name === "waitForEvent" && command.action.event === "filechooser"))
     ) {
-      // IAB backend 不支持 filechooser；不能伪造成功或把它误当普通 DOM fill。
+      // The IAB backend does not support filechooser; do not fake success or treat it as a regular DOM fill.
       return this.withMeta(
         {
           ok: false,
@@ -1399,8 +1399,8 @@ export class BrowserGuestManager {
         );
       }
       const status = await waitForCondition(
-        // Playwright 的 download.path() 等下载完成后再返回；will-download 阶段已有
-        // savePath 不代表文件已经可安全读取，不能提前 resolve。
+        // Playwright's download.path() returns only after the download completes. A savePath at the will-download stage
+        // does not mean the file is safe to read, so do not resolve early.
         () => record.state !== "pending",
         command.action.timeoutMs ?? 30_000,
         running.controller.signal,
@@ -1486,7 +1486,7 @@ export class BrowserGuestManager {
     ) {
       const downloadId = await this.waitForDownload(
         tab.tabId,
-        // 下载事件默认等待 3s，但允许调用方为真实下载显式扩到最多 120s。
+        // Download events wait 3s by default, but callers may explicitly extend this to at most 120s for real downloads.
         normalizePlaywrightTimeout(command.action.timeoutMs, 120_000),
         running.controller.signal,
       );
@@ -1590,8 +1590,8 @@ export class BrowserGuestManager {
       ? (this.abandonedScreenshotCaptures.get(tab.tabId) ?? 0)
       : 0;
     if (screenshotCommand && abandonedCaptures >= MAX_ABANDONED_SCREENSHOT_CAPTURES) {
-      // 未结算的底层 capture 已达硬上限：不再叠加新的 pending CDP command，快速失败
-      // 并提示重开 tab；旧 capture 落定后名额自动回收，无需人工干预即可恢复。
+      // The hard limit for unsettled underlying captures has been reached. Do not add another pending CDP command; fail
+      // quickly and prompt the user to reopen the tab. A slot is reclaimed when an old capture settles, restoring operation automatically.
       this.log?.(
         `[browser-use] screenshot rejected tabId=${tab.tabId} requestId=${context.requestId} abandonedCaptures=${abandonedCaptures}`,
       );
@@ -1612,10 +1612,11 @@ export class BrowserGuestManager {
       );
     }
     if (previousScreenshot) {
-      // 整幅 capture 在隐藏窗口等帧时，30s watchdog 判死但底层 execution 永不
-      // settle，tracker 无法清理，该 tab 后续截图全部被 0ms 秒拒直至关 tab（生产日志
-      // pendingMs 高达 120s）。命令已返回或已被 abort 的挂起截图视为死条目，
-      // 由新请求直接取代；清理以 entry identity 幂等，迟到的 settle 不会误删新请求。
+      // When a full capture waits for frames in a hidden window, the 30s watchdog may mark it dead while the underlying
+      // execution never settles. The tracker then cannot be cleared, and every later screenshot on that tab is rejected
+      // immediately until the tab closes (production logs showed pendingMs up to 120s). Treat a pending capture as dead
+      // once its command returned or was aborted, and let a new request replace it. Cleanup is idempotent by entry identity,
+      // so a late settlement cannot delete the newer request.
       this.log?.(
         `[browser-use] screenshot superseded stale pending tabId=${tab.tabId} requestId=${context.requestId} pendingRequestId=${previousScreenshot.requestId} pendingMs=${Date.now() - previousScreenshot.startedAt}`,
       );
@@ -1660,7 +1661,7 @@ export class BrowserGuestManager {
           `[browser-use] screenshot backend settled tabId=${tab.tabId} requestId=${context.requestId} elapsedMs=${Date.now() - tracked.startedAt}`,
         );
       };
-      // 同时提供 fulfilled/rejected handler，避免仅调用 finally 产生未处理的派生 rejection。
+      // Provide both fulfilled and rejected handlers to avoid an unhandled derived rejection from calling finally alone.
       void execution.then(clearTrackedScreenshot, clearTrackedScreenshot);
     }
     const result = await raceBackendExecution(
@@ -1673,10 +1674,10 @@ export class BrowserGuestManager {
   }
 
   /**
-   * renderer 的 logical viewport ready 只能证明 CSS 坐标系正确；Windows 负缩放
-   * 下 Fit 预览仍可能只有 800×450 raster，CDP 会把它平铺为 1280×720。main 直接读取
-   * 已合成的 guest surface，再归一化到逻辑 viewport；这不走曾触发 V8 FATAL 的 renderer
-   * `<webview>.capturePage()` 调用，也不改变页面布局、DPR 或交互态 metrics。
+   * Renderer logical viewport readiness proves only that the CSS coordinate system is correct. With negative Windows
+   * scaling, a Fit preview may still have only an 800×450 raster, which CDP tiles to 1280×720. Main reads the composited
+   * guest surface directly and normalizes it to the logical viewport. This avoids the renderer `<webview>.capturePage()`
+   * call that once triggered a V8 FATAL, and does not change page layout, DPR, or interactive metrics.
    */
   private async executeScreenshotWithPreparedSurface(
     context: InternalExecutionContext,
@@ -1697,9 +1698,9 @@ export class BrowserGuestManager {
       const viewport = await this.readTabViewport(tab);
       let result: BrowserCommandResult | undefined;
 
-      // 不能先 acquire activity、再排队 viewport mutation：前序 resize/CDP 卡住时，
-      // owner + guest 会在队列外背靠背 capture，最长烧满 35s。surface 准备必须在轮到本次
-      // viewport 临界区之后才开始，确保 activity 只覆盖真实 prepare + raster 生命周期。
+      // Do not acquire activity and then queue the viewport mutation: if an earlier resize/CDP call is stuck, owner and
+      // guest captures can run back-to-back outside the queue for up to 35s. Start surface preparation only after this
+      // request reaches the viewport critical section, so activity covers the actual prepare + raster lifecycle.
       await this.enqueueViewportMutation(tab, async () => {
         lease = await screenshotSurfaceCoordinator.prepare({
           requestId: context.requestId,
@@ -1711,7 +1712,7 @@ export class BrowserGuestManager {
           tabId: tab.tabId,
           webContentsId: guest.id,
           viewport,
-          // 自然 viewport 未安装 metrics；不能让 renderer 的临时 Fit 扩张 guest 布局并触发网页重排。
+          // A natural viewport has no metrics installed; do not let the renderer's temporary Fit expand the guest layout and trigger page reflow.
           viewportMode:
             tab.viewportOverride || tab.backgroundViewportFallback ? "emulated" : "natural",
           signal: running.controller.signal,
@@ -1726,8 +1727,8 @@ export class BrowserGuestManager {
         }
         const invalidationError = readScreenshotSurfaceInvalidation(lease.invalidated);
         if (invalidationError) throw invalidationError;
-        // 普通 fallback 也使用临时 responsive surface，必须补偿宿主放大后的 native raster。
-        // 普通模式不会回写 viewport；热态 zoom 改变时在同一 mutation 内同步，不能只等 idle 重连。
+        // The ordinary fallback also uses a temporary responsive surface, so it must compensate for the host's enlarged native raster.
+        // Normal mode does not write back the viewport; sync a live zoom change in the same mutation instead of waiting only for an idle reconnect.
         if (tab.backgroundViewportFallback) {
           const desktopZoom = guest.hostWebContents?.getZoomFactor();
           if (
@@ -1746,9 +1747,9 @@ export class BrowserGuestManager {
         const normalizedScreenshot = Boolean(
           tab.viewportOverride || tab.backgroundViewportFallback,
         );
-        // Windows 125% 显示缩放 + Desktop 110% 时，renderer 即使上报
-        // surfaceScale=1，CDP 仍会把较小的 native raster 周期平铺成目标尺寸。
-        // 放大补偿后的 viewport 截图也必须读取实际 surface，再统一归一为 CSS px。
+        // With 125% Windows display scaling and 110% Desktop zoom, CDP can still tile a smaller native raster to the target
+        // size even when the renderer reports surfaceScale=1. A screenshot of the zoom-compensated viewport must also read
+        // the actual surface, then normalize it consistently to CSS pixels.
         const captureViewportScreenshot =
           normalizedScreenshot &&
           (lease.surfaceScale < 0.999 ||
@@ -1764,18 +1765,17 @@ export class BrowserGuestManager {
               }
             : undefined;
         running.dispatched = true;
-        // owner 窗口隐藏（关闭到托盘）后 Windows 合成器不再为 guest 合成任何
-        // 帧；prepare 阶段的透明 bootstrap 又在 renderer ready 时提前释放，整幅 capture
-        // 只能等用户重新打开窗口才拿得到帧（日志里仅在 tray-show 后约 140ms
-        // 完成，其余全部 30s watchdog 判死）。capture 生命周期内临时持有透明 presentation
-        // （showInactive + opacity 0，用户不可见）主动要帧；同时 capture 结算必须竞速
-        // abort/有界 deadline——悬空的 execution 会把 viewport mutation 队列和 in-flight
-        // 槽位一起拖死，mutation 绝不能比请求本身活得更久。
+        // When the owner window is hidden (minimized to tray), the Windows compositor stops compositing guest frames.
+        // The transparent bootstrap from prepare is released as soon as the renderer is ready, so a full capture gets no
+        // frame until the user reopens the window (logs showed completion only about 140ms after tray-show; all others hit
+        // the 30s watchdog). Hold a transparent presentation for the capture lifetime (showInactive + opacity 0, invisible
+        // to the user) to request frames. Capture settlement must also race against abort/a bounded deadline: a hung
+        // execution would stall both the viewport mutation queue and the in-flight slot, so the mutation must not outlive its request.
         const capturePresentation = this.startHiddenWindowCapturePresentation(context, guest);
         try {
-          // 与 activity pump 同一约束：showInactive 后 Viz surface 建立前同 turn 读回会抛
-          // UnknownVizError。先等统一的有界 presentation grace 再发起 capture——归一化
-          // 路径（后台 tab）的 guest.capturePage() 对此同样敏感。
+          // Same constraint as the activity pump: reading in the same turn after showInactive but before the Viz surface
+          // exists throws UnknownVizError. Wait for the shared bounded presentation grace before capturing. The guest.capturePage()
+          // normalization path (background tab) is subject to the same behavior.
           if (
             capturePresentation &&
             !(await waitForDelay(
@@ -1785,7 +1785,7 @@ export class BrowserGuestManager {
           ) {
             throw new Error("browser screenshot capture cancelled during presentation grace");
           }
-          // native capture 不经过 sendCdpCommand，也必须等待 idle detach 后的 metrics 恢复。
+          // Native capture does not use sendCdpCommand, but must still wait for metrics restoration after an idle detach.
           if (!guest.debugger.isAttached() || tab.guestCdpRestoreFlight) {
             await this.ensureGuestCdpAttached(tab, guest);
           }
@@ -1836,7 +1836,7 @@ export class BrowserGuestManager {
     }
   }
 
-  /** 窗口隐藏时为整幅 capture 建立一次性透明 presentation；窗口可见或能力未注入时为 no-op。 */
+  /** Create a one-shot transparent presentation for a full capture when the window is hidden; no-op if visible or unsupported. */
   private startHiddenWindowCapturePresentation(
     context: InternalExecutionContext,
     guest: GuestWebContents,
@@ -1858,10 +1858,10 @@ export class BrowserGuestManager {
   }
 
   /**
-   * capture 结算的统一出口：execution、请求 abort、可选的有界 deadline 三者先到先结算。
-   * 隐藏窗口等帧、上游 30s cancelRequest 等场景下 execution 可能永不落定；不等它，
-   * 保证 viewport mutation 队列和 in-flight 槽位随请求一起释放。abort/deadline 先胜时
-   * 底层 CDP command 仍在 Chromium 内 pending，计入 abandonedScreenshotCaptures 硬上限。
+   * Shared settlement point for captures: whichever comes first among execution, request abort, and an optional bounded deadline wins.
+   * In cases such as waiting for frames in a hidden window or an upstream 30s cancelRequest, execution may never settle.
+   * Do not wait for it; release the viewport mutation queue and in-flight slot with the request. If abort/deadline wins,
+   * the underlying CDP command remains pending in Chromium and counts toward the abandonedScreenshotCaptures hard limit.
    */
   private async settleScreenshotCapture(
     execution: Promise<BrowserCommandResult>,
@@ -1935,7 +1935,7 @@ export class BrowserGuestManager {
     });
   }
 
-  /** 记一笔“已放弃等待但底层仍在执行”的 capture；真实落定后名额自动回收。 */
+  /** Track a capture whose caller stopped waiting while the underlying operation continues; reclaim its slot on actual settlement. */
   private abandonBackendCapture(tabId: string, execution: Promise<BrowserCommandResult>): void {
     this.abandonedScreenshotCaptures.set(
       tabId,
@@ -1959,8 +1959,8 @@ export class BrowserGuestManager {
   }
 
   /**
-   * 挂起截图是否仍存活：对应命令还在执行中（runningRequests 里有未 abort 的条目）。
-   * 条目已消失说明命令早已返回（典型为 30s watchdog 判死）而 execution 悬空——死槽位。
+   * Whether a pending screenshot is still live: its command is still running (runningRequests has a non-aborted entry).
+   * If the entry is gone, the command already returned (typically after the 30s watchdog) while execution remains hung—a dead slot.
    */
   private isInFlightScreenshotAlive(tracked: InFlightScreenshot): boolean {
     const running = this.runningRequests.get(tracked.requestId);
@@ -2058,14 +2058,14 @@ export class BrowserGuestManager {
 
     const guest = await this.ensureGuest(tab, signal);
     if (!guest || guest.isDestroyed()) throw new Error("browser guest unavailable for recording");
-    // 录制会临时改写 tab viewport override 去换取 100% surface；先记下录制前的值。
+    // Recording temporarily changes the tab viewport override to obtain a 100% surface; save the previous value first.
     const previousViewport = tab.viewportOverride ? { ...tab.viewportOverride } : undefined;
     let lease: BrowserScreenshotSurfaceLease | undefined;
     let timeout: ReturnType<typeof setTimeout> | undefined;
     try {
       await this.setTabViewport(tab, viewport);
-      // 只改 CDP metrics 不会同步 renderer 中承载 WebView 的自由尺寸 frame；自定义录制
-      // viewport 会继续使用旧 DOM bounds，最终要么 prepare 超时，要么从缩小表面放大而变模糊。
+      // Changing only CDP metrics does not update the free-size frame that hosts the WebView in the renderer. A custom
+      // recording viewport would keep the old DOM bounds, causing prepare to time out or enlarging a reduced surface and blurring it.
       this.onViewportChanged?.(viewport, tab.owner, tab.tabId);
       const coordinator = this.screenshotSurfaceCoordinator;
       if (!coordinator) throw new Error("browser recording surface coordinator is unavailable");
@@ -2133,7 +2133,7 @@ export class BrowserGuestManager {
         signal,
         onPhase: (phase) => this.setRecordingPhase(entry, phase),
         onCaptureComplete: () => {
-          // maxDurationMs 只约束页面取景；编码是收尾阶段，不能把一段已完整拍下的视频误杀掉。
+          // maxDurationMs limits page capture only; encoding is finalization and must not discard a video that was fully recorded.
           if (timeout) {
             clearTimeout(timeout);
             timeout = undefined;
@@ -2150,14 +2150,14 @@ export class BrowserGuestManager {
     } finally {
       if (timeout) clearTimeout(timeout);
       if (options.showCursor !== false) await this.removeRecordingCursorOverlay(guest);
-      // lease.release() 只收回瞬时 surface 比例，tab 自己的 viewport override 会
-      // 留在录制尺寸上，之后的预览与截图都按录制 viewport 走。录制是临时借用，必须还原。
+      // lease.release() restores only the transient surface scale; the tab's own viewport override would remain at the
+      // recording size, affecting later previews and screenshots. Recording borrows it temporarily, so restore it.
       await this.restoreRecordingViewport(tab, previousViewport).catch(() => undefined);
       lease?.release();
     }
   }
 
-  /** 把录制期间临时改写的 tab viewport 交还给录制前的状态。 */
+  /** Restore the tab viewport that was temporarily changed during recording. */
   private async restoreRecordingViewport(
     tab: ManagedTab,
     previous: BrowserViewportSize | undefined,
@@ -2532,9 +2532,9 @@ export class BrowserGuestManager {
     ) {
       return existingDefault;
     }
-    // 后台会话（renderer 只上报 active:false）且 tab 由显式 newTab 创建时，activeTabByScope 与
-    // defaultTabByScope 都是空的。这里必须复用该 scope 最近存活的 tab，否则不带 tabId 的命令会
-    // 凭空再开一个空 tab，也会让 tabs.list() 报的 active 与实际落点不一致。
+    // For a background session (renderer reports only active:false) with a tab created by explicit newTab, both
+    // activeTabByScope and defaultTabByScope are empty. Reuse the most recent live tab in that scope; otherwise a command
+    // without tabId would open an empty tab and tabs.list() would disagree with the actual command target.
     const recent = this.ownedTabs(context).at(-1);
     if (recent) return recent;
     return this.createTab(context, context.legacy ? context.sessionId : undefined, true);
@@ -2569,8 +2569,8 @@ export class BrowserGuestManager {
       cachedTitle: "",
       cachedFaviconUrl: null,
       openedAt: this.now(),
-      // 模型创建路径（显式 newTab 与无 tab 时的隐式创建）默认使用桌面自由尺寸。
-      // viewport 属于 tab 创建事实；claim、activate、navigate 只复用已有 tab，不能再次套默认值。
+      // Model-created tabs (explicit newTab and implicit creation when no tab exists) default to the desktop free-size viewport.
+      // The viewport is part of tab creation; claim, activate, and navigate reuse an existing tab and must not apply the default again.
       viewportOverride: { ...DEFAULT_AGENT_BROWSER_VIEWPORT },
     };
     this.tabs.set(tabId, tab);
@@ -2587,8 +2587,8 @@ export class BrowserGuestManager {
     if (signal.aborted) return null;
     const suspendFlight = this.suspendFlights.get(tab.tabId);
     if (suspendFlight) {
-      // 保护状态只能取消 coordinator generation，不能立刻证明 renderer 未卸载。
-      // Browser command 必须等待 snapshot/ack/必要恢复收敛，不能复用即将销毁的旧 guest。
+      // The guard can cancel the coordinator generation, but cannot immediately prove the renderer has not unmounted.
+      // Browser commands must wait for snapshot/ack and any required recovery to converge; do not reuse a guest about to be destroyed.
       const settled = await waitForPromiseWithSignal(suspendFlight, signal);
       if (!settled.completed) return null;
     }
@@ -2632,13 +2632,13 @@ export class BrowserGuestManager {
   }
 
   private async runGuestAttachFlight(tab: ManagedTab): Promise<GuestWebContents | null> {
-    // 新 tab 的首次 ready 仍只等待一次；已有 guest 或已明确收到拒绝时允许一次有界重放。
+    // Wait only once for a new tab's initial ready; allow one bounded replay for an existing guest or an explicit rejection.
     for (let attempt = 0; attempt < 2; attempt += 1) {
       if (tab.lifecycle === "closed") return null;
-      // create/ready 是可重放状态；事件丢失或 guest 崩溃后发起一次有界重放。
-      // 如果 destroyed/mismatch 已经发起过重绑，沿用该请求，避免同一 tab 重复创建 webview。
+      // create/ready is replayable state; after a lost event or guest crash, request one bounded replay.
+      // If destroyed/mismatch already started a rebind, reuse that request to avoid creating duplicate webviews for one tab.
       if (!tab.rebindRequested) this.onOpenTabRequested?.(tab.tabId, tab.owner);
-      // 某些测试/旧 renderer 会在 Ready 回调内同步 attach；不能在 attach 已成功后再注册 waiter。
+      // Some tests/old renderers attach synchronously inside the Ready callback; do not register a waiter after attach has already succeeded.
       if (tab.guest && !safeBool(() => tab.guest.isDestroyed(), true)) return tab.guest;
       const guest = await this.waitForGuest(tab.tabId);
       if (guest && !safeBool(() => guest.isDestroyed(), true)) return guest;
@@ -2674,8 +2674,8 @@ export class BrowserGuestManager {
     const url = tab.guest
       ? safeStr(() => tab.guest!.getURL(), tab.cachedUrl).trim()
       : tab.cachedUrl.trim();
-    // 已 mount 的 human webview 在首次导航前会以 about:blank/空 URL ready。
-    // 这只是 UI 占位态，不是可供 agent 认领的用户页面；受控 tabs.list() 不受此过滤影响。
+    // A mounted human webview becomes ready with about:blank/an empty URL before its first navigation.
+    // This is only a UI placeholder, not a user page an agent can claim; controlled tabs.list() is not affected by this filter.
     return url.length > 0 && url !== "about:blank";
   }
 
@@ -2683,10 +2683,10 @@ export class BrowserGuestManager {
     if (!this.canClaimUserTab(tab, context)) return tab;
     tab.owner = { ...context };
     tab.claimable = false;
-    // claim 只接管所有权，不改激活态；未激活的
-    // human tab webview 不产帧，被 claim 后截图的 prepare 握手 3s 超时（renderer ready
-    // 永不到来）。claim 即激活：与 activateTab 相同的 selectTab(tab, true) 语义——前台
-    // scope 展开对应 view，后台 scope 只记录激活态，不抢用户当前会话焦点。
+    // Claim used to take ownership without changing activation. An inactive human tab webview produces no frames, so the
+    // screenshot prepare handshake timed out after 3s when claimed (renderer ready never arrived). Claim also activates,
+    // using the same selectTab(tab, true) semantics as activateTab: expand the view for a foreground scope, or record
+    // activation for a background scope without stealing focus from the user's current session.
     this.selectTab(tab, true);
     this.log?.(
       `[browser-use] claim human tab tabId=${tab.tabId} windowId=${context.windowId} sessionId=${context.sessionId}`,
@@ -2696,8 +2696,8 @@ export class BrowserGuestManager {
 
   private selectTab(tab: ManagedTab, notifyRenderer: boolean): void {
     const key = scopeKey(tab.owner);
-    // 同一 browser scope 最多只能有一个 active tab；旧 attach 路径只把新 tab 设为 active，
-    // 没有清掉旧 tab.active，导致 tabs.list() 可能同时返回多个 active=true。
+    // A browser scope may have at most one active tab. The old attach path marked the new tab active without clearing
+    // the previous tab.active, so tabs.list() could return multiple active=true entries.
     for (const candidate of this.tabs.values()) {
       if (!sameScope(candidate.owner, tab.owner)) continue;
       candidate.active = candidate.tabId === tab.tabId;
@@ -2709,8 +2709,8 @@ export class BrowserGuestManager {
     if (!notifyRenderer) return;
     this.visibilityByScope.set(key, true);
     this.onVisibilityChanged?.(true, tab.owner, tab.tabId);
-    // activateTab / claim 都以 selectTab(tab, true) 收口；attach 路径走 notifyRenderer=false
-    // 且已自行调用恢复，不会重复。
+    // activateTab and claim both converge through selectTab(tab, true). The attach path uses notifyRenderer=false and
+    // already triggers recovery itself, so it will not run twice.
     this.maybeRestoreBackgroundViewport(tab);
   }
 
@@ -2720,8 +2720,8 @@ export class BrowserGuestManager {
       tab.userOwner = {
         ...tab.owner,
         requestId: `unclaimed:${randomUUID()}`,
-        // 释放后必须脱离原 controlled browser scope，否则同 session 的 tabs.list() 仍会把
-        // user tab 当作受控 tab；sessionId/workspaceKey 保留，供 owner session 显式重新 claim。
+        // After release, remove the tab from its controlled browser scope; otherwise tabs.list() in the same session
+        // would still treat the user tab as controlled. Keep sessionId/workspaceKey so the owner session can explicitly claim it again.
         browserId: "unclaimed-iab",
         browserGeneration: 0,
         turnId: undefined,
@@ -2744,8 +2744,8 @@ export class BrowserGuestManager {
     context: InternalExecutionContext,
     keep: Map<string, "handoff" | "deliverable">,
   ): void {
-    // 产品语义：IAB tab 在当前 ZCode 进程内默认持久。keep 是状态标记集合，不是清理白名单；
-    // 遗漏的 tab 不能当成临时页关闭：模型未显式 close 时用户页面会在 turn end 消失。
+    // Product semantics: IAB tabs persist by default within the current ZCode process. keep is a set of state markers,
+    // not a cleanup allowlist; do not close an unlisted tab as temporary, or user pages would disappear at turn end unless the model explicitly closed them.
     for (const tab of this.tabs.values()) {
       if (!sameScope(tab.owner, context)) continue;
       const status = keep.get(tab.tabId);
@@ -2758,22 +2758,22 @@ export class BrowserGuestManager {
   }
 
   /**
-   * tabs.list() 里 active 的唯一判定。语义是「不带 tabId 的命令会落到哪个 tab」，与 resolveTab
-   * 对齐，而不是「UI 当前是否可见」——可见性有独立的 browserVisibilitySet/Get 通道。
+   * The single source of truth for active in tabs.list(). It means "which tab a command without tabId targets," aligned
+   * with resolveTab, not "whether the UI is currently visible"; visibility has a separate browserVisibilitySet/Get channel.
    *
-   * 必须带回退：会话在后台跑时 renderer 的 isVisible 恒为 false，只会上报
-   * attachGuest({active:false})，scope 内没有任何 tab 自报 active，activeTabByScope 也是空的。
-   * CLI 的 turn-end 自动截图用 tabs.find(t => t.active === true) 寻址且没有回退，于是静默跳过，
-   * 用户侧表现为后台会话结束时没有截图。回退到该 scope 最近存活的 tab（与 browserVisibilitySet
-   * 和 CLI 侧 tabs.selected() 的 at(-1) 回退一致）后，list 报的 active 与命令落点重新一致。
+   * A fallback is required: while a session runs in the background, renderer isVisible is always false and it reports
+   * only attachGuest({active:false}). No tab in that scope reports active, and activeTabByScope is empty. The CLI's
+   * turn-end auto-screenshot searches with tabs.find(t => t.active === true) and has no fallback, so it silently skips
+   * screenshots; users see no screenshot when a background session ends. Falling back to the most recent live tab in the
+   * scope (matching browserVisibilitySet and the CLI tabs.selected() at(-1) fallback) aligns the reported active tab with the command target.
    */
   private effectiveActiveTabId(owner: InternalExecutionContext): string | undefined {
     const key = scopeKey(owner);
     const activeId = this.activeTabByScope.get(key);
     const activeTab = activeId ? this.tabs.get(activeId) : undefined;
     if (activeTab && activeTab.lifecycle !== "closed") return activeId;
-    // human tab 在 claim 前只置 tab.active、不进 activeTabByScope；这种自报 active 优先于回退，
-    // 且一旦命中就不再往下走，保证同 scope 只有一个 active=true。
+    // Before claim, a human tab sets tab.active but is not added to activeTabByScope. This explicit active state takes
+    // precedence over the fallback, and returning immediately ensures only one active=true per scope.
     for (const tab of this.tabs.values()) {
       if (tab.active && tab.lifecycle !== "closed" && sameScope(tab.owner, owner)) return tab.tabId;
     }
@@ -2781,8 +2781,8 @@ export class BrowserGuestManager {
   }
 
   private async summary(tab: ManagedTab): Promise<BrowserTabSummary> {
-    // guest 重绑恢复尚未完成时，替代 guest 仍可能报告 about:blank；各状态读取点
-    // 都必须保留 logical cache，不能让临时 guest URL 覆盖后续恢复事实。
+    // While recovery after guest rebind is unfinished, the replacement guest may still report about:blank. Every state
+    // read must preserve the logical cache so a temporary guest URL does not overwrite recoverable state.
     if (tab.guest && !this.guestRecoveryFlights.has(tab.tabId)) {
       tab.cachedUrl = safeStr(() => tab.guest!.getURL(), tab.cachedUrl);
       tab.cachedTitle = safeStr(() => tab.guest!.getTitle(), tab.cachedTitle);
@@ -2800,10 +2800,10 @@ export class BrowserGuestManager {
   private async readTabViewport(tab: ManagedTab): Promise<BrowserViewportSize> {
     if (tab.viewportOverride) return { ...tab.viewportOverride };
     if (tab.backgroundViewportFallback) {
-      // 前台 tab 不应停留在外台 fallback 尺寸：readTabViewport 的「fallback 存在即短路」
-      // 会让残留自我强化（页面钉死在后台尺寸，窗口 resize/全屏
-      // 都不跟随）。即使两个前台信号（selectTab / reportResidency）都丢失，前台 tab 的
-      // 下一次 viewport 读取也必须自愈；本次仍返回 fallback，恢复在 mutation 队列中随后完成。
+      // A foreground tab must not remain at the background fallback size. readTabViewport's "return if fallback exists"
+      // would reinforce the stale value, pinning the page to the background size and ignoring window resize/fullscreen.
+      // Even if both foreground signals (selectTab/reportResidency) are lost, the next viewport read for a foreground tab
+      // must self-heal. Return the fallback for this read; recovery completes afterward in the mutation queue.
       if (tab.active) {
         this.maybeRestoreBackgroundViewport(tab);
       }
@@ -2820,9 +2820,9 @@ export class BrowserGuestManager {
       return value;
     }
 
-    // 后台 session 的 Browser pane 会保留 guest 但通过 display:none 隐藏，首次
-    // tabs.new() 仍能 dom-ready/attach，却只得到 0×0 viewport。隐藏是展示状态，不能阻断
-    // 后台 Browser 执行；临时复用同窗口最近自然尺寸，重新前台后再清除 CDP override。
+    // A background session keeps the guest but hides the Browser pane with display:none. The first tabs.new() still gets
+    // dom-ready/attach but sees only a 0×0 viewport. Hidden is a presentation state and must not block background Browser
+    // execution; temporarily reuse the most recent natural size in the same window, then clear the CDP override when foregrounded again.
     const fallback = normalizeBackgroundViewport(
       this.naturalViewportByWindow.get(tab.owner.windowId) ?? DEFAULT_BACKGROUND_BROWSER_VIEWPORT,
     );
@@ -2941,7 +2941,7 @@ export class BrowserGuestManager {
 
   private abortRequest(requestId: string, context: InternalExecutionContext): boolean {
     const request = this.runningRequests.get(requestId);
-    // requestId 是 correlation id，不是授权凭证；取消也必须服从完整 IAB scope。
+    // requestId is a correlation ID, not an authorization credential; cancellation must also enforce the full IAB scope.
     if (!request || !sameScope(request.context, context)) return false;
     request.controller.abort(new DOMException("aborted", "AbortError"));
     return true;
@@ -2962,18 +2962,18 @@ export class BrowserGuestManager {
         request.controller.abort(new DOMException("turn ended", "AbortError"));
       }
     }
-    // turn end 只结束请求，不结束 tab。旧的“只保留最终活动页”兜底会在已有 handoff 时
-    // 自动关闭后续新 tab，使页面存活依赖模型记得写 finalize JS。active/handoff tab 现在原样保留；
-    // deliverable 和 claimed user tab 仍按显式生命周期约定释放控制权，但 view 不关闭。
+    // Turn end ends requests, not tabs. The old "keep only the final active page" fallback automatically closed later
+    // tabs after a handoff, making page survival depend on the model remembering to write finalize JS. Active/handoff tabs
+    // are now kept as-is. Deliverable and claimed user tabs still release control according to their explicit lifecycle contract, but the view stays open.
     for (const tab of this.tabs.values()) {
       if (!sameScope(tab.owner, context)) continue;
       if (tab.lifecycle === "handoff") continue;
       if (tab.lifecycle === "deliverable" || tab.origin === "user") this.releaseToUser(tab);
     }
-    // guest WebContents 在 CDP 仍 attached 时被销毁（destroyed 直达，
-    // 触发路径不可枚举：React 卸载 webview / 系统行为均可达）会让 DevToolsSession 隐式析构后在途
-    // 通知 UAF 掉主进程。turn 结束即 agent 不再操作，此刻主动 detach 把 CDP 暴露窗口从「tab 整个
-    // 生命周期」收窄到「turn 内命令在途」；下次命令经 sendGuestCdpCommand lazy re-attach。
+    // Destroying guest WebContents while CDP is still attached (destroyed can arrive directly through many paths,
+    // including React unmounting the webview or system behavior) can implicitly destroy DevToolsSession while an in-flight
+    // notification causes a main-process UAF. The agent stops operating at turn end, so proactively detach then; this
+    // narrows CDP exposure from the tab's entire lifetime to commands in flight during a turn. The next command lazily reattaches via sendGuestCdpCommand.
     for (const tab of this.tabs.values()) {
       if (!sameScope(tab.owner, context)) continue;
       this.releaseGuestCdpAfterIdle(tab, "turn ended");
@@ -2984,8 +2984,8 @@ export class BrowserGuestManager {
     const guest = tab.guest;
     if (!guest || tab.guestLifecycle !== "attached") return;
     void (async () => {
-      // 在途 CDP 命令（playwright cdp.send / viewport override / dialog 处理）结束后再断开，
-      // 避免中途拆掉正在使用的管线；超时兜底与 runGuestTeardown 共用同一预算。
+      // Detach after in-flight CDP commands (playwright cdp.send / viewport override / dialog handling) finish, avoiding
+      // tearing down a pipeline in use. The timeout fallback shares the budget with runGuestTeardown.
       const settled = await this.waitForGuestCdpIdle(tab, DEFAULT_GUEST_CDP_TEARDOWN_TIMEOUT_MS);
       if (!settled) {
         this.warn(
@@ -2993,7 +2993,7 @@ export class BrowserGuestManager {
             `pending=${tab.pendingCdpCommands} reason=${reason}`,
         );
       }
-      // 等待期间 tab 可能已换代/关闭/再次进入命令期，此时放弃本轮释放。
+      // The tab may be replaced, closed, or receive new commands while waiting; abandon this release attempt in that case.
       if (this.tabs.get(tab.tabId) !== tab || tab.guest !== guest) return;
       if (tab.guestLifecycle !== "attached") return;
       if (tab.pendingCdpCommands > 0) return;
@@ -3013,10 +3013,10 @@ export class BrowserGuestManager {
   }
 
   /**
-   * 命令级空闲释放：每次 CDP 命令完成后重置计时，超过 cdpIdleReleaseMs 无新命令即主动
-   * detach。guest renderer 被 Chromium 杀且 render-process-gone 丢失（Electron 已知缺口，
-   * 实测 destroyed 直达 + CDP attached → 主进程 UAF）的崩溃窗口集中在 turn 内命令间隙，
-   * turnEnded 级释放覆盖不到；密集命令流间隔远小于阈值，不会被误打断。
+   * Command-level idle release: reset the timer after every CDP command and proactively detach when no new command arrives
+   * for cdpIdleReleaseMs. The crash window where Chromium kills the guest renderer and render-process-gone is lost (a known
+   * Electron gap; observed direct destroyed + CDP attached → main-process UAF) is concentrated between commands in a turn,
+   * which turnEnded-level release cannot cover. Dense command streams have gaps far below the threshold and are not interrupted.
    */
   private scheduleGuestCdpIdleRelease(tab: ManagedTab): void {
     if (tab.guestCdpIdleTimer) clearTimeout(tab.guestCdpIdleTimer);
@@ -3042,10 +3042,10 @@ export class BrowserGuestManager {
     }
     for (const tab of this.tabs.values()) {
       if (!sameScope(tab.owner, context)) continue;
-      // session 是控制权边界，不是可见 tab 的生命边界。view 继续保留，但释放后仍绑定
-      // 原 session；不能再写成全局 unclaimed，否则其它对话会通过 user.openTabs() 看到并接管。
+      // A session is an ownership boundary, not a lifetime boundary for visible tabs. Keep the view, but keep it bound to
+      // the original session after release; do not make it globally unclaimed, or other conversations could discover and claim it through user.openTabs().
       this.releaseToUser(tab);
-      // 同 endTurn：会话结束释放 CDP，消除 guest 后续任意销毁路径上的主进程 UAF 窗口。
+      // As with endTurn, release CDP when the session ends to remove the main-process UAF window from any later guest destruction path.
       this.releaseGuestCdpAfterIdle(tab, "session closed");
     }
     this.activeTabByScope.delete(scopeKey(context));
@@ -3055,11 +3055,12 @@ export class BrowserGuestManager {
   }
 
   /**
-   * `closeSession({ closeTabs: true })`：真正关闭该 session 名下的全部 tab。按 session 归属而非完整
-   * browser scope 匹配——finalize / deliverable 已释放回该 session 的 tab 换到了 `unclaimed-iab` scope，
-   * 仍归它。只给永不回来认领的 session 用（dwf 子代理，
-   * docs/browser-use/2026-07-14-browser-tab-conversation-isolation-spec.md §2.3）：它的 sessionId 不是任何
-   * 对话，closeSession 保留的 view 无人可见、无人可认领，只会一直挂着 guest。
+   * `closeSession({ closeTabs: true })`: actually closes every tab owned by that session. Matching is by session
+   * ownership, not the full browser scope — tabs released back to that session by finalize / deliverable moved to the
+   * `unclaimed-iab` scope but still belong to it. Use this only for sessions that never return to claim them
+   * (dwf subagents, docs/browser-use/2026-07-14-browser-tab-conversation-isolation-spec.md §2.3): their sessionId
+   * is not any conversation, so views kept by closeSession are visible to no one and claimable by no one, and would
+   * just keep a guest hanging.
    */
   private async closeSessionTabs(context: InternalExecutionContext): Promise<void> {
     const owned = [...this.tabs.values()].filter(
@@ -3080,9 +3081,9 @@ export class BrowserGuestManager {
       this.detachAndCloseGuest(tab);
       this.residencyCoordinator.remove(tab.tabId);
       this.restoredTabClaims.delete(tab.tabId);
-      // closeWindow 走快速路径不经过 closeTab；per-tab 截图状态若不在此清理，
-      // 迟到 settle 的回调会按 tabId 污染恢复流程可能复用的新 tab 计数。decrement 对
-      // 已删除的 key 是 no-op，前提是条目先在这里删干净。
+      // closeWindow takes a fast path and does not call closeTab. If per-tab screenshot state is not cleared here, a late
+      // settlement callback can corrupt the count for a new tab reused by recovery under the same tabId. decrement is a
+      // no-op for a deleted key, provided the entry is removed here first.
       this.inFlightScreenshots.delete(tab.tabId);
       this.abandonedScreenshotCaptures.delete(tab.tabId);
       this.tabs.delete(tab.tabId);
@@ -3096,8 +3097,8 @@ export class BrowserGuestManager {
 
   private async closeTabDurably(tab: ManagedTab, notifyRenderer = true): Promise<void> {
     if (tab.lifecycle === "closed") return;
-    // 旧 close 先回命令/通知 renderer，再 fire-and-forget 删除恢复仓库；紧接着退出时
-    // 已关闭 tab 会从旧 shell 复活。先完成持久删除，失败时保留当前 logical tab 供调用方重试。
+    // The old close returned/notified the renderer first, then deleted the recovery store fire-and-forget. If the app quit
+    // immediately, a closed tab could reappear from the old shell. Persist the deletion first; on failure, keep the current logical tab so the caller can retry.
     await this.removeTabRecovery(tab);
     this.closeTab(tab, notifyRenderer);
   }
@@ -3107,7 +3108,7 @@ export class BrowserGuestManager {
     this.abortRecordings((entry) => entry.tabId === tab.tabId, "tab closed");
     tab.lifecycle = "closed";
     this.closedTabIds.add(tab.tabId);
-    // tab 已不可再执行命令；不必为一个可能永久不回包的旧 CDP capture 保留 manager 引用。
+    // The tab can no longer execute commands; do not retain the manager reference for an old CDP capture that may never respond.
     this.inFlightScreenshots.delete(tab.tabId);
     this.abandonedScreenshotCaptures.delete(tab.tabId);
     this.resolveWaiters(tab.tabId, null);
@@ -3131,26 +3132,25 @@ export class BrowserGuestManager {
   }
 
   /**
-   * guest renderer 崩溃/被杀时立即断开 CDP。
+   * Immediately disconnect CDP when the guest renderer crashes or is killed.
    *
-   * 崩溃链条（主进程 UAF，minidump 落在 DevToolsSession::DispatchProtocolNotification，
-   * client_ 的 vptr 为 0）：
-   *   Chromium 在内存压力下杀掉 guest renderer
-   *     → render-process-gone：WebContents 仍存活，CDP 仍 attached
-   *     → renderer 侧递增 webviewGeneration，React 卸载旧 <webview>
-   *     → 旧 WebContents 此刻才销毁，api::Debugger 走隐式析构
-   *     → DevToolsSession 仍持 client_ 派发在途通知 → UAF → 主进程崩溃 → 整个 app 退出
+   * Crash sequence (main-process UAF; minidump at DevToolsSession::DispatchProtocolNotification with client_ vptr = 0):
+   *   Chromium kills the guest renderer under memory pressure
+   *     → render-process-gone: WebContents still exists and CDP remains attached
+   *     → renderer increments webviewGeneration and React unmounts the old <webview>
+   *     → old WebContents is destroyed; api::Debugger is implicitly destroyed
+   *     → DevToolsSession still holds client_ and dispatches an in-flight notification → UAF → main-process crash → app exits
    *
-   * 实测（Electron 41.0.3 / forcefullyCrashRenderer，带毫秒时间戳的对照实验）：
-   *   - render-process-gone 时 isDestroyed()=false、isCrashed()=true、isAttached()=true，
-   *     detach() 成功且随后 isAttached()=false；
-   *   - destroyed 时 isCrashed()/isAttached() 全抛 "Object has been destroyed"，
-   *     那里已经不可能 detach —— 所以 destroyed 兜底修不了这个 UAF；
-   *   - 崩溃后若不卸载 <webview>，WebContents 无限期停在 crashed 态（10s destroyed 未到）；
-   *     一旦 renderer 卸载 <webview>，destroyed 在 ~5ms 内到达。即销毁时机由 renderer 决定，
-   *     native detach 的安全窗口只存在于 WebContents 销毁之前。
-   * main 的 render-process-gone 是第一道守卫；renderer 重建前的显式 detach ACK 是第二道屏障，
-   * 用来覆盖 main 事件未到达的现场。两者都不改变销毁时机，只保证销毁时 CDP 已经断开。
+   * Observed with Electron 41.0.3 / forcefullyCrashRenderer in a timestamped control experiment:
+   *   - At render-process-gone, isDestroyed()=false, isCrashed()=true, and isAttached()=true; detach() succeeds and
+   *     isAttached() becomes false afterward.
+   *   - At destroyed, isCrashed()/isAttached() both throw "Object has been destroyed"; detach is no longer possible,
+   *     so a destroyed fallback cannot fix this UAF.
+   *   - After a crash, if <webview> remains mounted, WebContents stays crashed indefinitely (no destroyed after 10s).
+   *     Once the renderer unmounts <webview>, destroyed arrives in about 5ms. The renderer controls destruction timing,
+   *     and the safe window for native detach exists only before WebContents is destroyed.
+   * Main's render-process-gone handler is the first guard; an explicit detach ACK before renderer recreation is the second
+   * barrier, covering cases where the main event did not arrive. Neither changes destruction timing; both ensure CDP is disconnected first.
    */
   private setupCdpCrashGuard(tab: ManagedTab, guest: GuestWebContents): void {
     tab.crashGuardCleanup?.();
@@ -3162,8 +3162,8 @@ export class BrowserGuestManager {
         "unknown",
       );
       const guestId = safeStr(() => String(guest.id), "?");
-      // 不校验 tab.guest === guest：断开一个已换代 guest 的 CDP 同样正确且必要，
-      // 而漏掉它就等于把 UAF 窗口留着。
+      // Do not require tab.guest === guest: disconnecting CDP for a replaced guest is still correct and necessary;
+      // skipping it would leave the UAF window open.
       try {
         if (this.tabs.get(tabId)?.guest === guest) tab.guestLifecycle = "detaching";
         if (!guest.debugger.isAttached()) return;
@@ -3173,7 +3173,7 @@ export class BrowserGuestManager {
             `guestId=${guestId} reason=${reason}`,
         );
       } catch (error) {
-        // 这里失败意味着 UAF 窗口没能关上，必须留痕以便与后续崩溃关联。
+        // Failure here means the UAF window was not closed; record it so it can be correlated with a later crash.
         this.warn(
           `browser guest cdp detach on render-process-gone failed tabId=${tabId} ` +
             `guestId=${guestId} reason=${reason}`,
@@ -3198,8 +3198,8 @@ export class BrowserGuestManager {
       const current = this.tabs.get(tabId);
       if (!current || current.guest !== guest || current.lifecycle === "closed") return;
       if (method === "Page.javascriptDialogOpening") {
-        // 打点：dialog 事件到达 main 的时刻，用于区分「事件黑洞」与「dialog 已被 detach
-        // 清理」两种 getDialog=null 成因。
+        // Timestamp when the dialog event reaches main, to distinguish an "event black hole" from getDialog=null because
+        // the dialog was cleared by detach.
         this.log?.(`[browser-use] dialog opening event received tabId=${tabId}`);
         const data = (params ?? {}) as {
           type?: string;
@@ -3297,11 +3297,10 @@ export class BrowserGuestManager {
   }
 
   /**
-   * 前台激活路径的统一收口：后台 fallback viewport 不能在 tab 回到前台后残留。
-   * 仅在 attachGuest({active:true}) 时清除是不够的：guest 存活期间的前台切换
-   * （activateTab / claim / renderer residency 上报）不会重新 attach，页面就永久钉死在
-   * 后台尺寸。restoreNaturalViewportAfterBackground 自带幂等守卫与串行 mutation 队列，
-   * 多个前台信号重复触发是安全的。
+   * Shared foreground activation path: a background fallback viewport must not remain after a tab returns to the foreground.
+   * Clearing it only during attachGuest({active:true}) is insufficient: foreground switches while the guest is alive
+   * (activateTab / claim / renderer residency report) do not reattach, leaving the page permanently stuck at background size.
+   * restoreNaturalViewportAfterBackground has an idempotency guard and serialized mutation queue, so repeated foreground signals are safe.
    */
   private maybeRestoreBackgroundViewport(tab: ManagedTab): void {
     if (tab.lifecycle === "closed" || !tab.backgroundViewportFallback) return;
@@ -3332,8 +3331,8 @@ export class BrowserGuestManager {
         tab.backgroundViewportFallback = undefined;
         return;
       }
-      // active=true 已到达但 Chromium 尚未完成可见布局时，继续保留 transient；下一次
-      // renderer 可见 attach 或 viewport 读取仍可恢复，不能短暂退回 0×0。
+      // If active=true arrives before Chromium completes visible layout, keep the transient value. The next visible renderer
+      // attach or viewport read can still recover; do not briefly fall back to 0×0.
       await this.sendGuestCdpCommand(
         tab,
         guest,
@@ -3352,7 +3351,7 @@ export class BrowserGuestManager {
     const current = previous
       .catch(() => undefined)
       .then(async () => {
-        // CDP 恢复据此在当前临界区直接重放，避免二次入队后等待自己。
+        // CDP recovery uses this to replay directly inside the current critical section instead of requeueing and waiting on itself.
         tab.insideViewportMutation = true;
         try {
           await mutation();
@@ -3444,16 +3443,16 @@ export class BrowserGuestManager {
   }
 
   /**
-   * CDP session 态恢复式 attach：idle/turn 结束释放后再次进入命令期时调用，
-   * 返回可等待的 flight——Page.enable 与 viewport override 重放完成后业务命令才允许派发。
+   * Attach and restore CDP session state when commands resume after idle/turn-end release.
+   * Return an awaitable flight; business commands may dispatch only after Page.enable and viewport overrides are replayed.
    *
-   * Page 域 enable 与 Emulation.setDeviceMetricsOverride 都是 per-session 的，
-   * detach 时已被 Chromium 清空；
-   * 裸 attach("1.3") 得到的是干净 session——dialog 事件黑洞（getDialog 恒 null、evaluate
-   * 遇 JS dialog 挂到超时实测 62s）、viewport 仿真与 manager 缓存分叉。且 fire-and-forget
-   * 重放没有等待屏障：业务命令（截图/evaluate）可能在恢复完成前执行，重放在首命令场景
-   * 失效。恢复命令经 raw 发送（不走 ensure，避免自等待）；viewport 重放走既有串行队列，
-   * 队列内触发恢复时直接重放，避免二次入队与当前 flight 互相等待死锁。
+   * Page-domain enable and Emulation.setDeviceMetricsOverride are per-session and Chromium clears them on detach.
+   * A bare attach("1.3") therefore gets a clean session: dialog events disappear (getDialog stays null; evaluate on a JS
+   * dialog was observed to hang until timeout at 62s), and viewport emulation diverges from the manager cache. Fire-and-forget
+   * replay also provides no barrier, so business commands (screenshot/evaluate) may run before restoration finishes and the
+   * replay fails for the first command. Send recovery commands raw (without ensure) to avoid self-waiting. Replay viewport
+   * state through the existing serial queue; if recovery is triggered inside that queue, replay directly to avoid a deadlock
+   * from requeueing and waiting on the current flight.
    */
   private async ensureGuestCdpAttached(tab: ManagedTab, guest: GuestWebContents): Promise<void> {
     if (!tab.guestCdpRestoreFlight) {
@@ -3473,11 +3472,11 @@ export class BrowserGuestManager {
         throw new Error(`browser guest cdp restore attach failed tabId=${tab.tabId}`);
       }
     }
-    // 恢复失败必须上抛：屏障契约是「Page.enable 与 viewport 状态就绪后才
-    // 允许业务命令派发」。吞掉异常会让后续命令见 attached 即跳过恢复——Page.enable
-    // 丢失把 dialog 事件黑洞延长到整个 attach 期，且 "replayed" 日志误导排障。异常上抛
-    // 前先 rollback 到 detached：半途 session 不可用，还原释放态后下一次命令才会重建
-    // 恢复 flight（否则 attached=true 会让 lazy attach 跳过恢复，失败被永久固化）。
+    // Recovery failures must propagate: the barrier contract allows business commands only after Page.enable and viewport
+    // state are ready. Swallowing an error would make later commands skip recovery whenever they see attached; a missing
+    // Page.enable would suppress dialog events for the entire attach period, and a "replayed" log would mislead debugging.
+    // Before propagating the error, roll back to detached. A partially restored session is unusable; restoring the released
+    // state lets the next command start a new recovery flight (otherwise attached=true would make lazy attach skip recovery permanently).
     try {
       await this.sendGuestCdpCommandRaw(tab, guest, "Page.enable");
     } catch (error) {
@@ -3500,9 +3499,9 @@ export class BrowserGuestManager {
             ),
           );
         };
-        // 截图也占用 viewport 队列，但并不重设 metrics。若把队列内 re-attach
-        // 一律当作等效恢复而跳过，首张图会读到宿主缩放后的自然尺寸。
-        // 已在临界区时直接重放；再次入队并等待自己会死锁。
+        // Screenshots also use the viewport queue but do not reset metrics. Treating every re-attach inside the queue as
+        // already restored would make the first screenshot read the host-scaled natural size. Replay directly when already
+        // in the critical section; requeueing and waiting on itself would deadlock.
         if (tab.insideViewportMutation) await replayViewport();
         else await this.enqueueViewportMutation(tab, replayViewport);
       } catch (error) {
@@ -3514,17 +3513,17 @@ export class BrowserGuestManager {
     this.log?.(`[browser-use] cdp session state replayed tabId=${tab.tabId} pageEnable=1`);
   }
 
-  /** 恢复失败时把半途 session 还原为释放态；rollback 自身的失败不得掩盖原始错误。 */
+  /** Restore a partially recovered session to the released state; a rollback failure must not mask the original error. */
   private rollbackGuestCdpRestore(tab: ManagedTab, guest: GuestWebContents): void {
     try {
       if (guest.debugger.isAttached()) guest.debugger.detach();
     } catch {
-      // session 可能已销毁；cdpAttached 复位仍需完成。
+      // The session may already be destroyed; cdpAttached still needs to be reset.
     }
     tab.cdpAttached = false;
   }
 
-  /** 恢复命令专用发送：只做 pending 计数与下发，不触发 ensure（避免自等待死锁）。 */
+  /** Send a recovery command by updating pending count and dispatching only; do not trigger ensure and self-wait deadlock. */
   private async sendGuestCdpCommandRaw(
     tab: ManagedTab,
     guest: GuestWebContents,
@@ -3540,8 +3539,8 @@ export class BrowserGuestManager {
           tab.appliedViewportScale = normalizeDesktopZoomMetricsScale(
             (params as { scale?: number }).scale,
           );
-          // renderer 的归一化回调可能被 Electron 后续 page zoom 传播覆盖。
-          // 固定 viewport 的设置和 CDP 重连都必须在同一执行边界恢复 guest zoom。
+          // Electron may overwrite the renderer's normalization callback during later page-zoom propagation.
+          // Both fixed viewport updates and CDP reconnects must restore guest zoom at the same execution boundary.
           if (guest.getZoomFactor() !== 1) guest.setZoomFactor(1);
         } else if (method === "Emulation.clearDeviceMetricsOverride") {
           tab.appliedViewportScale = undefined;
@@ -3566,14 +3565,14 @@ export class BrowserGuestManager {
     if (tab.guest !== guest || tab.guestLifecycle !== "attached") {
       throw new Error("browser guest is detaching");
     }
-    // turnEnded/closeSession/命令空闲后 CDP 已主动释放（防 guest
-    // 销毁时的主进程 UAF），命令路径在此恢复式 re-attach 并 await 会话态重放完成（显式
-    // 串行屏障：Page.enable / viewport override 先于本命令被 Chromium 处理）。
+    // CDP is proactively released after turnEnded/closeSession/command idle to prevent a main-process UAF if the guest
+    // is destroyed. This command path reattaches and awaits session-state replay (an explicit serial barrier ensures
+    // Page.enable / viewport overrides reach Chromium before this command).
     if (!safeBool(() => guest.debugger.isAttached(), false) || tab.guestCdpRestoreFlight) {
       await this.ensureGuestCdpAttached(tab, guest);
     }
-    // native raster 的 metrics scale 同时影响 CDP 鼠标输入。工具、locator
-    // 和截图仍以 CSS px 表达，在唯一 guest 发送边界补偿位置和滚轮距离，避免各 API 重复换算。
+    // The native-raster metrics scale also affects CDP mouse input. Tools, locators, and screenshots remain in CSS pixels;
+    // compensate for positions and wheel distance at the single guest dispatch boundary to avoid duplicate conversions in each API.
     const scale = tab.appliedViewportScale ?? 1;
     if (!sessionId && method === "Input.dispatchMouseEvent" && scale !== 1 && params) {
       const event = { ...(params as Record<string, unknown>) };
@@ -3638,8 +3637,8 @@ export class BrowserGuestManager {
             assertCurrent();
             return sendCdpCommand(method, params, sessionId);
           } catch (error) {
-            // CDP consumer 会在 abort/terminate 路径上直接调用 .catch；生命周期守卫必须
-            // 返回 rejected Promise，不能同步 throw 破坏该清理链路。
+            // CDP consumers call .catch directly on abort/terminate paths; the lifecycle guard must return a rejected
+            // Promise and must not throw synchronously, which would break cleanup.
             return Promise.reject(error);
           }
         },
@@ -3684,9 +3683,9 @@ export class BrowserGuestManager {
     const tab = this.tabs.get(record.tabId);
     if (!tab || tab.lifecycle === "closed") return true;
     try {
-      // 旧的数量门禁只销毁 WebContents 并保留 suspended logical tab，
-      // 因此标签栏会突破 32。必须复用 durable close，按“恢复数据 → guest → renderer tab 壳”
-      // 的顺序完整关闭，避免已关闭 tab 在当前 UI 或下次启动时复活。
+      // The old count limit destroyed WebContents but kept suspended logical tabs, so the tab bar could exceed 32.
+      // Reuse durable close and fully close in order: recovery data → guest → renderer tab shell. This prevents a closed tab
+      // from reappearing in the current UI or on the next launch.
       await this.closeTabDurably(tab);
       this.log?.(
         `[browser-use] closed tabId=${tab.tabId} reason=tab-limit windowId=${tab.owner.windowId}`,
@@ -3705,8 +3704,8 @@ export class BrowserGuestManager {
     if (signal.aborted) return null;
     let flight = this.restoreFlights.get(tab.tabId);
     if (!flight) {
-      // 旧 single-flight 直接采用首个 caller 的 AbortSignal；首个 command 取消会
-      // 毒化所有并发 caller，并把 coordinator 留在 restoring。flight 改由 tab 生命周期拥有。
+      // The old single-flight used the first caller's AbortSignal; cancelling that first command poisoned all concurrent
+      // callers and left the coordinator in restoring. The tab lifecycle now owns the flight.
       flight = this.runRestoreSuspendedGuest(tab, new AbortController().signal).finally(() => {
         if (this.restoreFlights.get(tab.tabId) === flight) this.restoreFlights.delete(tab.tabId);
       });
@@ -3745,7 +3744,7 @@ export class BrowserGuestManager {
     if (!guest) {
       const failed = this.residencyCoordinator.failRestore(tab.tabId, transition.generation);
       if (failed) {
-        // 通知 renderer 回到轻量 shell；新 generation 同时让本轮迟到 attach fail closed。
+        // Tell the renderer to return to the lightweight shell; the new generation also makes late attaches from this attempt fail closed.
         this.residencyOptions.onSuspendTabRequested?.({
           tabId: tab.tabId,
           workspaceKey: tab.owner.workspaceKey,
@@ -3761,8 +3760,8 @@ export class BrowserGuestManager {
     }
     const restored = await this.restoreGuestState(tab, guest);
     if (!restored && tab.restoredFromStore && !tab.cachedUrl) {
-      // 仅 forced restore mount 后三类恢复事实全部缺失才清理孤儿；普通 page-state 淘汰
-      // 仍会保留 restoreUrl，不得进入这个分支形成 restore/close 循环。
+      // Clean up an orphan only after a forced restore mount when all three recovery facts are missing. Ordinary page-state
+      // eviction retains restoreUrl and must not enter this branch, or it would create a restore/close loop.
       await this.removeTabRecovery(tab);
       this.residencyOptions.onRecoveryOrphanCloseRequested?.({
         tabId: tab.tabId,
@@ -3772,8 +3771,9 @@ export class BrowserGuestManager {
       return null;
     }
     if (!restored) {
-      // 不能只处理“恢复事实全缺失”：history 与 URL 都失败时仍提交 live 的话，
-      // bootstrap/about:blank 因而被永久当成成功页面。失败必须销毁本轮 guest 并回到可重试 shell。
+      // Do not handle only the case where all recovery facts are missing. If history and URL both fail but the guest is
+      // committed as live, bootstrap/about:blank would be treated as a successful page permanently. On failure, destroy
+      // this guest and return to a retryable shell.
       const failed = this.residencyCoordinator.failRestore(tab.tabId, transition.generation);
       this.detachAndCloseGuest(tab);
       if (failed) {
@@ -3793,7 +3793,7 @@ export class BrowserGuestManager {
     if (!this.residencyCoordinator.completeRestore(tab.tabId, transition.generation)) return null;
     const completed = this.residencyCoordinator.get(tab.tabId);
     if (completed) {
-      // renderer 原来只收到 restoring 起点，成功后没有终态，会永久保留 restoring shell。
+      // The renderer previously received only the restoring start and no terminal state on success, leaving the shell stuck restoring.
       this.residencyOptions.onResidencyChanged?.({
         tabId: tab.tabId,
         workspaceKey: tab.owner.workspaceKey,
@@ -3815,8 +3815,8 @@ export class BrowserGuestManager {
     if (pageState && pageState.entries.length > 0) {
       const activePageState = pageState.entries[pageState.activeIndex];
       if (tab.cachedUrl && activePageState?.url !== tab.cachedUrl) {
-        // pageState 只在预算挂起时刷新；恢复后导航会更新 shell，却留下旧快照。
-        // 冷启动必须以 logical shell 的当前 URL 为准，不能把 B 回滚成快照里的 A。
+        // pageState is refreshed only when the budget suspends a tab. After recovery, navigation updates the shell but leaves
+        // the old snapshot. Cold start must use the logical shell's current URL and must not roll B back to snapshot URL A.
         this.warn(
           `browser tab stale page-state ignored tabId=${tab.tabId} shellUrl=${tab.cachedUrl} pageStateUrl=${activePageState?.url ?? "missing"}`,
         );
@@ -3852,8 +3852,8 @@ export class BrowserGuestManager {
               );
             }, false);
           if (restoreAppliedDespiteAbort) {
-            // Electron 41 会在完整历史已写入后，仍以 ERR_ABORTED 报告默认 about:blank 被取消。
-            // 以实际 navigationHistory 为准，避免误删有效 pageState 并发起第二次 URL 导航。
+            // Electron 41 may report ERR_ABORTED for the default about:blank even after full history was written.
+            // Trust the actual navigationHistory to avoid deleting valid pageState and starting a second URL navigation.
             return acceptRestoredPageState();
           }
           this.warn(`browser tab page-state restore failed tabId=${tab.tabId}`, error);
@@ -3906,7 +3906,7 @@ export class BrowserGuestManager {
       };
       await this.residencyOptions.recoveryStore?.upsertPageState(pageState);
     } catch (error) {
-      // 快照失败不能让资源预算永久突破；shell 的 restoreUrl 已先保存。
+      // Snapshot failure must not let the resource budget remain exceeded indefinitely; the shell's restoreUrl was saved first.
       this.warn(`browser tab page-state snapshot failed tabId=${tab.tabId}`, error);
     }
   }
@@ -4048,9 +4048,9 @@ export class BrowserGuestManager {
 
   private detachAndCloseGuest(tab: ManagedTab): void {
     const guest = tab.guest;
-    // 先 close 会让 destroyed 事件与后续 listener cleanup 都落在已销毁对象上，
-    // Electron 会持续打印 "Object has been destroyed"。先拆 CDP/session/listener，再关闭保存的
-    // WebContents 引用，既释放真实 renderer，也不会改变 logical tab 的生命周期。
+    // Closing first would make the destroyed event and later listener cleanup operate on a destroyed object, causing
+    // Electron to repeatedly log "Object has been destroyed". Tear down CDP/session/listeners first, then close the saved
+    // WebContents reference. This releases the actual renderer without changing the logical tab lifecycle.
     this.detachGuest(tab);
     this.closeGuestWebContents(tab, guest);
   }
@@ -4060,8 +4060,8 @@ export class BrowserGuestManager {
     guest: GuestWebContents,
     reason: BrowserGuestAttachRejectReason,
   ): BrowserGuestAttachResult {
-    // scope/session 不匹配过去只 return，renderer 不知道拒绝原因，waitForGuest
-    // 只能等满 timeout；同时被拒绝的 incoming guest 没有统一清理，可能留下 orphan WebContents。
+    // Scope/session mismatches used to return silently, leaving the renderer unaware of the rejection and forcing
+    // waitForGuest to time out. Rejected incoming guests also lacked common cleanup and could leave orphan WebContents.
     const recoveryRequested = this.requestGuestRebind(tab, reason);
     if (tab.guest !== guest) this.closeGuestWebContents(tab, guest);
     return { ok: false, reason, recoveryRequested };
@@ -4102,13 +4102,13 @@ export class BrowserGuestManager {
   }
 
   /**
-   * renderer 即将用 React key 替换 `<webview>` 时，先关闭旧 guest 的 native CDP 通路。
+   * Disconnect the old guest's native CDP channel before the renderer replaces `<webview>` with a new React key.
    *
-   * Electron 的 `render-process-gone` 并非每次都会先到达 main 的 WebContents
-   * 监听；renderer 若直接卸载节点，`destroyed` 才到达时已无法调用 debugger.detach()，
-   * DevToolsSession 仍可能向已析构 client 派发在途通知并触发主进程 UAF。这里把 DOM 销毁
-   * 变成 main ACK 之后的第二阶段，并用 sender window + 当前 guest id 双重校验，避免迟到
-   * 的旧代事件断开刚接管 tab 的新 guest。
+   * Electron does not always deliver `render-process-gone` to the main WebContents listener first. If the renderer unmounts
+   * the node directly, debugger.detach() is no longer available when `destroyed` arrives; DevToolsSession may still dispatch
+   * an in-flight notification to a destroyed client and cause a main-process UAF. Make DOM destruction the second phase,
+   * after a main ACK, and validate both sender window and current guest ID so a late event from an old generation cannot
+   * disconnect the new guest that has taken over the tab.
    */
   async detachGuestBeforeReplacement(
     tabId: string,
@@ -4136,7 +4136,7 @@ export class BrowserGuestManager {
       return false;
     }
     if (safeBool(() => guest.isDestroyed(), true)) {
-      // destroyed 后 native detach 已经没有安全窗口；只有先前确认过 CDP 已断开才允许换代。
+      // There is no safe native detach window after destroyed; replacement is allowed only if CDP was already confirmed disconnected.
       if (tab.cdpAttached) {
         this.log?.(
           `[browser-use] detachGuestBeforeReplacement rejected tabId=${tabId} ` +
@@ -4175,8 +4175,8 @@ export class BrowserGuestManager {
     if (tab.guest !== guest) return !tab.cdpAttached;
     tab.guestLifecycle = "detaching";
 
-    // 先停止新的 request/recording 进入 CDP；已经下发的请求仍由 pendingCdpCommands
-    // 计数保护，直到真实 Promise settle。这样外层取消不会把 native command 误判成已结束。
+    // Stop new requests/recordings from entering CDP first. Already dispatched requests remain protected by
+    // pendingCdpCommands until their promises actually settle, so an outer cancellation cannot mistake a native command for finished.
     for (const request of this.runningRequests.values()) {
       if (request.tabId !== tab.tabId) continue;
       request.controller.abort(new DOMException(`browser guest ${reason}`, "AbortError"));
@@ -4192,8 +4192,8 @@ export class BrowserGuestManager {
       );
     }
 
-    // destroyed 事件可能在等待期间先到达；此时 detachGuest 已经完成了 JS 侧收口，但 native
-    // detach 只有在 cdpAttached=false 时才可认为安全。
+    // The destroyed event may arrive while waiting. detachGuest has then completed JS-side teardown, but native detach is
+    // considered safe only when cdpAttached=false.
     if (tab.guest !== guest) return !tab.cdpAttached;
     if (safeBool(() => guest.isDestroyed(), true)) {
       if (tab.cdpAttached) {
@@ -4217,7 +4217,7 @@ export class BrowserGuestManager {
         return false;
       }
     } catch (error) {
-      // fail closed：detach 失败时保留旧节点，不能用“继续重建”重新打开已知的 native UAF 窗口。
+      // Fail closed: if detach fails, retain the old node. Continuing recreation would reopen the known native UAF window.
       this.warn(
         `browser guest replacement cdp detach failed tabId=${tab.tabId} ` +
           `guestId=${safeStr(() => String(guest.id), "?")}`,
@@ -4249,7 +4249,7 @@ export class BrowserGuestManager {
     return tab.pendingCdpCommands === 0;
   }
 
-  /** 内存诊断计数器；只读 size。 */
+  /** Memory diagnostic counter; read-only size. */
   collectMemoryDiagnostics(): Record<string, number> {
     return { tabs: this.tabs.size, closedTabIds: this.closedTabIds.size };
   }
@@ -4263,12 +4263,12 @@ export class BrowserGuestManager {
     }
     this.pendingDialogs.delete(tab.tabId);
     try {
-      // Electron 会在 renderer 卸载 <webview> 时先销毁 guest；此时 listener 已随对象释放，
-      // 再调用 session.removeListener 只会产生无意义的 "Object has been destroyed" 日志。
+      // Electron may destroy the guest as the renderer unmounts <webview>; the listener is already released with the object,
+      // so calling session.removeListener again only produces a meaningless "Object has been destroyed" log.
       if (!guestDestroyed) tab.downloadCleanup?.();
     } catch (error) {
-      // guest renderer 被 Chromium 杀死后，旧 session 的 removeListener 也会抛
-      // "Object has been destroyed"；清理失败不能阻断替代 guest 的 CDP 重新绑定。
+      // After Chromium kills the guest renderer, removeListener on the old session may also throw "Object has been destroyed";
+      // cleanup failure must not prevent CDP from rebinding to the replacement guest.
       this.log?.(
         `[browser-use] detachGuest download cleanup failed tabId=${tab.tabId} error=${
           error instanceof Error ? error.message : String(error)
@@ -4280,23 +4280,23 @@ export class BrowserGuestManager {
     try {
       if (!guestDestroyed) tab.activityCleanup?.();
     } catch {
-      // guest 已销毁时 listener cleanup 可能失败；residency 状态仍需继续收口。
+      // Listener cleanup may fail after the guest is destroyed; residency state still needs to converge.
     } finally {
       tab.activityCleanup = undefined;
       tab.loading = false;
       tab.mediaActive = false;
     }
-    // 崩溃守卫的注销不能受 guestDestroyed 约束：removeListener 是纯 JS 侧操作，
-    // 而这里的 guest 引用在换代场景下往往还活着，漏掉就会让监听随代际累积。
+    // Removing the crash guard must not depend on guestDestroyed: removeListener is JS-only, and the guest reference is
+    // often still alive during replacement. Skipping it would accumulate listeners across generations.
     try {
       tab.crashGuardCleanup?.();
     } catch {
-      // guest 已销毁时 removeListener 可能抛 "Object has been destroyed"，不影响收口。
+      // removeListener may throw "Object has been destroyed" after guest destruction; convergence can continue.
     } finally {
       tab.crashGuardCleanup = undefined;
     }
-    // JS 层监听清理：guest 换代/销毁后旧 "message" 监听不该继续挂着。这一步与 native 侧的
-    // CDP 断开无关（DevToolsSession 派发不查 JS 监听），纯粹是防止监听随 guest 代际累积。
+    // Clean up JS listeners: old "message" listeners must not remain after guest replacement/destruction. This is
+    // independent of native CDP disconnect (DevToolsSession dispatch does not inspect JS listeners); it only prevents listeners from accumulating across guest generations.
     const cdpWasAttached = tab.cdpAttached;
     try {
       tab.cdpMessageCleanup?.();
@@ -4312,11 +4312,10 @@ export class BrowserGuestManager {
     if (guest) {
       const guestId = safeStr(() => String(guest.id), "?");
       if (guestDestroyed) {
-        // guest 先于 detach 被销毁（destroyed 回调 / renderer 卸载 webview）。此时 detach()
-        // 必抛且无意义：native DevToolsAgentHost 已随 WebContents 一起收口，主进程只能被动
-        // 接受这个结果。而崩溃现场（DevToolsSession::DispatchProtocolNotification 里 client_
-        // vptr=0）正落在「CDP 未经主动 detach 就走隐式析构」之后，所以这条路径必须留痕 ——
-        // 否则日志里完全看不到它发生过，无法把崩溃与具体 tab 生命周期对上。
+        // The guest was destroyed before detach (destroyed callback / renderer unmounted webview). detach() must throw and
+        // cannot help: native DevToolsAgentHost has already shut down with WebContents, so main can only accept the result.
+        // The crash site (client_ vptr=0 in DevToolsSession::DispatchProtocolNotification) occurred after CDP was implicitly
+        // destroyed without an explicit detach, so record this path; otherwise logs cannot correlate the crash with a tab lifecycle.
         if (cdpWasAttached) {
           this.log?.(
             `[browser-use] detachGuest cdp still attached on destroyed guest ` +
@@ -4327,8 +4326,8 @@ export class BrowserGuestManager {
         try {
           if (guest.debugger.isAttached()) guest.debugger.detach();
         } catch (error) {
-          // 这里不能静默吞掉：detach 失败与成功在日志上无法区分 —— 而「本该能主动 detach
-          // 却失败了」正是需要与崩溃关联的信号。
+          // Do not silently swallow this: logs must distinguish detach failure from success. Failure to detach when it
+          // should have been possible is precisely the signal to correlate with a crash.
           this.warn(`browser guest cdp detach failed tabId=${tab.tabId} guestId=${guestId}`, error);
         }
       }
@@ -4338,7 +4337,7 @@ export class BrowserGuestManager {
     tab.cdpAttached = false;
     tab.guestLifecycle = guestDestroyed ? "destroyed" : "detached";
     tab.backgroundViewportFallback = undefined;
-    // 倍率属于旧 guest 的 CDP session，换代后的自然 viewport 不会重放 metrics。
+    // Scale belongs to the old guest's CDP session; the replacement guest's natural viewport will not replay metrics.
     tab.appliedViewportScale = undefined;
     tab.viewportMutation = undefined;
     this.residencyCoordinator.markDetached(tab.tabId);
@@ -4646,7 +4645,7 @@ function normalizeDialogType(type: string | undefined): BrowserDialog["type"] {
   }
 }
 
-/** Browser response meta 会进入模型轨迹和调试日志；只保留 origin/path，绝不携带 credential/query/hash。 */
+/** Browser response metadata enters model traces and debug logs; retain only origin/path and never include credentials/query/hash. */
 export function sanitizeBrowserMetaUrl(value: string): string | undefined {
   if (!value) return undefined;
   try {
@@ -4658,7 +4657,7 @@ export function sanitizeBrowserMetaUrl(value: string): string | undefined {
     const sanitized = url.toString();
     return url.pathname === "/" ? sanitized.slice(0, -1) : sanitized;
   } catch {
-    // about:blank 等合法 opaque URL 也可由 URL 解析；无法解析的页面内部串不应进入 meta。
+    // Valid opaque URLs such as about:blank can also be parsed by URL; unparseable internal page strings must not enter metadata.
     return undefined;
   }
 }

@@ -5,8 +5,8 @@ set -euo pipefail
 APP_PATH="${1:-${ZCODE_MACOS_RELEASE_APP_PATH:-/Applications/ZCode.app}}"
 ZCODE_HOME_DIR="${ZCODE_HOME:-${HOME:+$HOME/.zcode}}"
 CUA_HELPER_INSTALL_VARIANT="${ZCODE_CUA_HELPER_INSTALL_VARIANT:-}"
-# 安装包身份与后端环境分轴：ZCODE_PREVIEW_IDENTITY=1 让生产后端的构建仍是 ZCode Preview。
-# 只认 "1"，与 CI workflow / release 门的精确比较同一套语义（其它拼写由 resolve_zcode_env 拒绝）。
+# Installer identity is independent of backend environment: ZCODE_PREVIEW_IDENTITY=1 keeps a production-backend build branded as ZCode Preview.
+# Accept only "1", matching the exact comparison used by CI workflows and release gates (resolve_zcode_env rejects other spellings).
 is_preview_identity_requested() {
   [[ "${ZCODE_PREVIEW_IDENTITY:-}" = "1" ]]
 }
@@ -129,10 +129,10 @@ validate_release_bundle() {
   run_quiet_validation "${label} codesign verify" codesign --verify --deep --strict "$bundle_path"
   run_quiet_validation "${label} Gatekeeper exec assessment" spctl -a -vv -t exec "$bundle_path"
   if [ "$require_notarization_staple" = "1" ]; then
-    # 修复原因：xcrun 只属于 macOS 的 staple 验收工具，必须等 Helper 已存在且基础签名校验通过后再检查，
-    # 否则 Linux 单测和真实故障都会先被“缺少 xcrun”掩盖，无法报告 Helper 缺失或签名错误。
+    # Fix rationale: xcrun is a macOS-only tool for staple verification, so check for it only after the Helper exists and basic signature validation passes,
+    # or Linux unit tests and real failures are masked by “xcrun is missing,” hiding a missing Helper or signature error.
     require_command xcrun
-    # 仅检查 spctl 会被联网取票或缓存掩盖，必须验证最终 Helper 的本地 staple。
+    # Checking only with spctl can be masked by online ticket lookup or cache; verify the final Helper’s local staple.
     run_quiet_validation "${label} notarization staple" xcrun stapler validate "$bundle_path"
   fi
 }
@@ -140,10 +140,10 @@ validate_release_bundle() {
 require_command codesign
 require_command spctl
 
-# Bugfix: 过去 release/notarization 成功只说明 DMG 通过了 gate，不能证明安装后的主 app
-# 和 Computer Use Helper.app 都能被 Gatekeeper 以 exec 类型放行。这里先 fail-closed 检查 bundle
-# 结构，再分别跑 codesign/spctl，避免 helper 缺失或未独立签名时误报发布成功。
-# CI 显式传入最终 ZCode.app 内的 Helper；安装后验收则默认检查用户级复制品。
+# Bugfix: a successful release/notarization previously proved only that the DMG passed the gate, not that the installed main app
+# and Computer Use Helper.app would pass Gatekeeper’s exec assessment. First fail closed on the bundle
+# structure, then run codesign/spctl for each app to avoid reporting success when the Helper is missing or lacks its own signature.
+# CI passes the Helper inside the final ZCode.app explicitly; post-install verification checks the user-level copy by default.
 assert_bundle_dir "$APP_BUNDLE_NAME" "$APP_PATH"
 assert_executable "$APP_BUNDLE_NAME" "$APP_PATH/Contents/MacOS/$APP_EXECUTABLE_NAME"
 validate_release_bundle "$APP_BUNDLE_NAME" "$APP_PATH"

@@ -40,7 +40,7 @@ export async function drainRuntimeCommandQueue(this: AgentRuntimeInternal): Prom
   this.runtimeCommandDrainActive = true;
   try {
     let commands: readonly RuntimeCommand[];
-    // 将同批后台通知合并到一个模型轮，避免每条通知都单独发起请求。
+    // Merge background notifications in the same batch into one model turn instead of starting one request per notification.
     while ((commands = dequeueNextRunnableBatch.call(this)).length > 0) {
       const firstCommand = commands[0];
       if (!firstCommand) continue;
@@ -80,8 +80,8 @@ function dequeueNextRunnableBatch(this: AgentRuntimeInternal): readonly RuntimeC
   const removedPromotedCommand = this.runtimeCommandQueue.removeById(promotedCommand.id);
   if (!removedPromotedCommand) return Object.freeze([]);
 
-  // sendQueuedNow 过去在 Stop A 与 promoted command 入队之间没有 Core
-  // 调度所有权，notification B 会抢先出队。匹配 command 出队与 lease 消费必须同一同步步。
+  // Previously, Core held no scheduling ownership between Stop A and enqueueing the promoted command,
+  // so notification B could dequeue first. Match command dequeue and lease consumption in the same synchronous step.
   this.foregroundPromotionLease = undefined;
   return Object.freeze([removedPromotedCommand]);
 }
@@ -145,7 +145,7 @@ export function releaseForegroundPromotionLease(
 ): boolean {
   if (this.foregroundPromotionLease?.leaseId !== leaseId) return false;
   this.foregroundPromotionLease = undefined;
-  // 启动前失败时 B 可能已在 lease 后等待；释放必须主动恢复 drain，不能等下一条 enqueue。
+  // If startup fails, B may already be waiting behind the lease; release must resume draining immediately instead of waiting for another enqueue.
   void this.drainRuntimeCommandQueue();
   return true;
 }
@@ -343,15 +343,15 @@ async function runTaskNotificationBatch(
       module: "core.runtime",
     });
     await this.executeTurnCommand(persisted.text, undefined, {
-      // wake 缺 inputId，telemetry 借用了持久化 msg_*，与普通 main turn 分叉。
-      // 每个独立 batch 使用同一 UUID v7 规则；持久化消息仍使用 recordedInputMessageId。
+      // A wake has no inputId, so telemetry previously borrowed the persisted msg_* id and diverged from ordinary main turns.
+      // Give each independent batch an id using the same UUID v7 rule; persisted messages still use recordedInputMessageId.
       inputId: uuidv7(),
       abortSignal: foregroundExecution.controller.signal,
-      // 批次展示 metadata 只保留代表任务，composition 必须检查整批，不能被首个 Bash 任务遮蔽。
+      // Batch display metadata keeps only a representative task; composition must inspect the whole batch so the first Bash task cannot hide other sources.
       backgroundSubagentResultConsumed: eligibleCommands.some(
         (command) => command.originMeta?.backgroundSource === "subagent",
       ),
-      // 同一规则的 workflow 维度：run 的完成 / 提问通知在批里。
+      // Apply the same rule to workflow batches containing run completion/question notifications.
       workflowResultConsumed: eligibleCommands.some(
         (command) => command.originMeta?.backgroundSource === "workflow",
       ),
@@ -415,9 +415,9 @@ function beginForegroundExecution(
     foregroundExecutionId: String(command.id),
     preserveQueueAutoDrainOnCancel: false,
   };
-  // 旧 Stop 只持有 bootstrap 外层 controller，而 goal verifier/continuation
-  // 已经越过普通 turn 生命周期。取消域必须覆盖整条 runtime command，才能在两个阶段
-  // 的交界处仍命中同一次前台执行。
+  // The old Stop held only the outer bootstrap controller, while goal verifier/continuation had already
+  // outlived the ordinary turn lifecycle. The cancellation scope must cover the whole runtime command so the same foreground execution
+  // is still reached at the boundary between those phases.
   this.activeForegroundExecution = state;
   return state;
 }
@@ -460,9 +460,9 @@ export function stopActiveForegroundExecution(
       activeForegroundExecutionId: active.foregroundExecutionId,
     };
   }
-  // sendQueuedNow 的内部抢占过去与用户手动 Stop 共用同一种 cancelled，
-  // turn catch 因而把 queueAutoDrain 关闭。把调用意图固定在当前 foreground
-  // execution 上，保证超时后迟到的 TurnComplete 仍能保留原队列授权。
+  // Internal preemption by sendQueuedNow previously used the same cancelled state as a user Stop,
+  // causing the turn catch to disable queueAutoDrain. Pin the call intent to the current foreground
+  // execution so a late TurnComplete after timeout still preserves the original queue authorization.
   active.preserveQueueAutoDrainOnCancel = options.preserveQueueAutoDrainOnCancel === true;
   active.controller.abort(new Error(options.reason ?? "foreground execution stopped"));
   return {

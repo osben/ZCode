@@ -23,10 +23,10 @@ export function LocalizedCodingPlanQuotaResetAction({
 }: {
   completedAt: number | null;
   processing: boolean;
-  /** 自动/运营完成时由 Composer 触发器在 hover 展开面板后要求补播撒花的 used_at；手动重置为 null。 */
+  /** used_at timestamp for a delayed confetti replay after the Composer trigger opens the panel on hover for an automatic/operational completion; null for manual reset. */
   autoCelebrateCompletedAt?: number | null;
   onAutoCelebrated?: (completedAt: number) => void;
-  /** 五小时与周额度共用同一按钮组件，仅无障碍/处理中文案按类型区分。 */
+  /** Five-hour and weekly quotas share this button component; only accessibility/processing copy varies by type. */
   resetType?: CodingPlanResetType;
 } & CodingPlanQuotaResetActionBehavior) {
   const { intl, locale } = useZCodeIntl();
@@ -103,7 +103,7 @@ export function CodingPlanQuotaResetAction({
   const previousCompletedAtRef = useRef(completedAt);
   const clickedOriginRef = useRef<HTMLElement | null>(null);
   const awaitingOwnCompletionRef = useRef(false);
-  // 自动/运营完成时的“已重置”文案元素，用于从与手动重置相同的位置补播撒花。
+  // "Reset" label element for automatic/operational completion, used to replay confetti from the same position as manual reset.
   const completedTextRef = useRef<HTMLSpanElement | null>(null);
   const autoCelebratedCompletedAtRef = useRef<number | null>(null);
   const effectiveProcessing = processing || localProcessing;
@@ -119,7 +119,7 @@ export function CodingPlanQuotaResetAction({
       return;
     }
 
-    // 成功动效只能由服务端 used_at 驱动，不能在点击时用 Date.now() 乐观伪造完成。
+    // Drive success animation only from server used_at; do not optimistically fake completion with Date.now() on click.
     awaitingOwnCompletionRef.current = false;
     setSuccessCompletedAt(completedAt);
     if (clickedOriginRef.current) {
@@ -127,8 +127,8 @@ export function CodingPlanQuotaResetAction({
     }
   }, [completedAt, onCelebrate]);
 
-  // 自动/运营重置：用户 hover 触发器展开面板后（Composer 传入 autoCelebrateCompletedAt），
-  // 从“已重置”文案位置补播一次撒花。手动重置由上方点击分支撒花，此处不会命中（未 arm）。
+  // Automatic/operational reset: after the user hovers over the trigger and opens the panel (Composer passes autoCelebrateCompletedAt),
+  // replay confetti once from the "Reset" label. Manual reset fires confetti in the click branch above and does not reach this code (not armed).
   useEffect(() => {
     if (
       autoCelebrateCompletedAt == null ||
@@ -139,8 +139,8 @@ export function CodingPlanQuotaResetAction({
       return;
     }
 
-    // 不能在浮层刚提交 DOM 时立即消费 arm：面板尚未完成挂载/定位就可能播放完动画。
-    // 延后一帧确认锚点仍连接在文档中，且只有真正调用撒花后才标记已播放；关闭浮层会取消该帧。
+    // Do not consume the arm immediately after the popover commits DOM; the animation could finish before it mounts/positions.
+    // Wait one frame, confirm the anchor remains connected to the document, and mark as played only after firing confetti; closing the popover cancels the frame.
     const frameId = window.requestAnimationFrame(() => {
       const origin = completedTextRef.current;
       if (!origin?.isConnected) {
@@ -195,8 +195,8 @@ export function CodingPlanQuotaResetAction({
     const completedText = (
       <span
         ref={completedTextRef}
-        // min-h 与「重置」按钮的 xs 尺寸(h-5)一致:三种状态等高,避免完成态把
-        // 所在额度条的标签行撑高,导致同排其他额度条的数值与进度条错位。
+        // Match min-h to the Reset button's xs size (h-5) so all three states have equal height.
+        // This prevents the completed state from growing the quota bar's label row and misaligning values/progress bars in the same row.
         className="inline-flex min-h-5 items-center text-ui-xs text-foreground-subtlest tabular-nums"
         tabIndex={completedTooltipLabel ? 0 : undefined}
       >
@@ -223,7 +223,7 @@ export function CodingPlanQuotaResetAction({
         if (effectiveProcessing || completedAt) {
           return;
         }
-        // 页面额度标题旁入口只负责打开统一弹窗；不预先进入 processing，也不直接核销机会。
+        // The entry beside the page quota title only opens the shared dialog; it does not enter processing or redeem an opportunity directly.
         if (onOpenDialog) {
           onOpenDialog();
           return;
@@ -233,7 +233,7 @@ export function CodingPlanQuotaResetAction({
         setLocalProcessing(true);
         void onReset()
           .catch(() => {
-            // 失败文案由联调 hook 统一 toast；Action 只负责恢复交互且不播放成功动效。
+            // The integration hook handles failure copy/toasts; Action only restores interaction and does not play the success animation.
             awaitingOwnCompletionRef.current = false;
           })
           .finally(() => {

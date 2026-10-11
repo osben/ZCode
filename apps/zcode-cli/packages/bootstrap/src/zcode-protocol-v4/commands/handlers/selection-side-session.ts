@@ -31,12 +31,12 @@ async function createSelectionSideSession(
     return { type: "createSelectionSideSession", sessionId: childSessionId };
   }
 
-  // child 已在 host 中注册后再启动首条输入；输入只落到 child，父会话的
-  // CommandInbox/queue 不参与这次 admission，因此不会改变父 turn 的运行态。
+  // Start the first input only after the child is registered with the host. Input goes only to the
+  // child; the parent session's CommandInbox/queue does not participate in admission, so the parent's turn state is unchanged.
   const childRecord = requireRecord(host, childSessionId);
   const admission = commandAdmissionOf(envelope);
-  // gateway 不会把 createSelectionSideSession 当成父会话的输入命令；handler 直接把
-  // 同一条 envelope 指向 child，复用 session_input 账本而不污染父 queue。
+  // The gateway does not treat createSelectionSideSession as parent-session input. The handler
+  // directs the same envelope to the child, reusing the session_input ledger without polluting the parent queue.
   const durableAdmission =
     (await host.admitInputCommand?.(envelope, childSessionId, admission)) ?? null;
   try {

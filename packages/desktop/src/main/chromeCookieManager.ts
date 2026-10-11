@@ -1,6 +1,7 @@
 /* eslint-disable max-lines */
-// 安全说明：Cookie 快照、跨平台解密选择与整批写入必须留在同一事务审计边界，
-// 避免拆分后让 Windows App-Bound 原子失败语义与 Linux helper 回退顺序发生漂移。
+// Security note: Cookie snapshotting, cross-platform decryption selection, and batch writes must
+// remain within the same transaction/audit boundary. Splitting them could drift Windows App-Bound
+// atomic-failure semantics or the Linux helper fallback order.
 import { createDecipheriv, pbkdf2Sync } from "node:crypto";
 import { copyFile, mkdtemp, rm, stat } from "node:fs/promises";
 import { createRequire } from "node:module";
@@ -27,8 +28,8 @@ import {
 } from "./windowsChromeAppBoundKey.js";
 
 const nodeRequire = createRequire(import.meta.url);
-// tsup/esbuild 会把动态 import("node:sqlite") 错误改写为 import("sqlite")，
-// Electron 运行时因此报 ERR_MODULE_NOT_FOUND。createRequire 能稳定保留 node: 协议。
+// tsup/esbuild incorrectly rewrites dynamic import("node:sqlite") to import("sqlite"), causing
+// ERR_MODULE_NOT_FOUND at Electron runtime. createRequire reliably preserves the node: scheme.
 const { DatabaseSync, backup } = nodeRequire("node:sqlite") as typeof import("node:sqlite");
 
 const COOKIE_IMPORT_CONCURRENCY = 32;
@@ -80,7 +81,7 @@ function toSafeBrowserDataError(error: unknown): { name: string; code?: string }
 }
 
 function stripChromeHostDigest(value: Buffer, schemaVersion: number): Buffer {
-  // Chrome Cookie schema 24+ 在加密明文前附加 SHA-256(host_key)；这里只移除固定长度摘要。
+  // Chrome Cookie schema 24+ prepends SHA-256(host_key) to the plaintext before encryption; remove only the fixed-length digest here.
   return schemaVersion >= 24 && value.length >= 32 ? value.subarray(32) : value;
 }
 
@@ -185,8 +186,9 @@ async function withDatabaseSnapshot<T>(
           if (await pathExists(sourceWalPath)) {
             await copyFile(sourceWalPath, `${stagedPath}-wal`);
           }
-          // Chrome 的 SHM 仅用于并发协调且在 Windows 上可能被独占锁定。
-          // 临时目录中的 SQLite 会自行重建 SHM，再通过 Online Backup 固化并校验主库与 WAL。
+          // Chrome's SHM is only used for concurrency coordination and may be exclusively locked on
+          // Windows. SQLite in the temporary directory rebuilds SHM, then Online Backup makes and
+          // validates a snapshot of the main database and WAL.
           stagedDatabase = new DatabaseSync(stagedPath, { readOnly: true });
           await databaseBackup(stagedDatabase, snapshotPath);
           stagedDatabase.close();
@@ -213,8 +215,9 @@ async function withDatabaseSnapshot<T>(
     }
     return await run(snapshotPath);
   } finally {
-    // TypeScript 会把前面显式置空后的 finally 路径收窄成 never，
-    // 但 SQLite backup 在异常边界仍可能留下句柄；保留运行时兜底并显式恢复实际联合类型。
+    // TypeScript narrows the finally path to never after the earlier explicit reset, but SQLite
+    // backup may still leave a handle at an exception boundary. Keep the runtime fallback and
+    // explicitly restore the actual union type.
     const danglingDatabase = sourceDatabase as import("node:sqlite").DatabaseSync | null;
     danglingDatabase?.close();
     await rm(tempDir, { recursive: true, force: true });
@@ -307,8 +310,8 @@ async function collectCookieDetails(options: {
     } else {
       options.issues.add("chrome_executable_not_found");
     }
-    // Linux v11 绑定系统密钥环；同品牌 Chrome helper 不可用时，只能继续尝试
-    // 当前进程可安全解密的旧格式，不能绕过系统密钥保护。
+    // Linux v11 is bound to the system keyring. If a matching Chrome helper is unavailable, continue
+    // only with legacy formats that the current process can safely decrypt; do not bypass system-key protection.
     options.issues.add("chrome_cookie_protection_unsupported");
   }
 
@@ -343,8 +346,8 @@ async function collectCookieDetails(options: {
     }
 
     if (!appBoundDecryptor) {
-      // 同一 Chrome 数据库可能同时包含明文、旧版和 v20 Cookie。
-      // App-Bound 授权失败时 Cookie 阶段必须保持原子性，不能悄悄写入同批的普通 Cookie。
+      // The same Chrome database may contain plaintext, legacy, and v20 Cookies at once.
+      // If App-Bound authorization fails, keep the Cookie phase atomic; do not quietly write ordinary Cookies from the same batch.
       return { details: [], skipped: options.rows.length };
     }
   }

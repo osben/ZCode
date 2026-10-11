@@ -10,7 +10,7 @@ import {
   type ToolCallStartedPayload,
 } from "@zcode/contracts";
 
-/** 进度只能更新已运行的 Bash，不创建行、不把终态或后台任务复活。 */
+/** Progress may update only a running Bash; do not create a row or revive a terminal/background task. */
 export function projectToolActivity(
   event: SessionEvent,
   row: ToolCallRow | undefined,
@@ -38,7 +38,7 @@ export function projectToolActivity(
   return [{ op: "row.upserted", row: { ...row, outputPreview: parsed.data } }];
 }
 
-/** 统一在投影事务中清掉预览，涵盖 result/error、Stop、转后台与轮次收口。 */
+/** Clear the preview within the projection transaction for result/error, Stop, backgrounding, and turn completion. */
 export function clearSettledOutputPreviews(deltas: ConversationDelta[]): ConversationDelta[] {
   return deltas.map((delta) => {
     if (

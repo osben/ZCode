@@ -81,7 +81,8 @@ export function useGlobalTaskList(params: {
   );
   const workspaceScopes = useMemo(
     () => buildWorkspaceScopes(params.workspaceTabs),
-    // workspaceSignature 是标准化后的 scope 值签名，避免父组件重建 tabs 数组时重复查询。
+    // workspaceSignature identifies normalized scope values and avoids duplicate queries
+    // when a parent recreates the tabs array.
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [workspaceSignature],
   );
@@ -141,7 +142,8 @@ export function useGlobalTaskList(params: {
         return;
       }
       if (!controllerRegistry) {
-        // 原子切换后 base attachment 必须提供 Controller；缺失代表 Host/Renderer 版本不一致。
+        // After an atomic switch, the base attachment must provide a Controller;
+        // absence means the Host and Renderer versions are out of sync.
         logger.error("[useGlobalTaskList] window Host Controller channel unavailable");
         setLoading(false);
         return;
@@ -152,10 +154,11 @@ export function useGlobalTaskList(params: {
         if (requestSerialRef.current !== requestSerial) {
           return;
         }
-        // Controller 的每个 activity 帧（运行中任务的 tool 调用等）都会让本 hook 重查，
-        // 而 attachTaskListRowActivity 与 tasks-index join 每次都产生全新对象。下游（grouped 视图）
-        // 只能按引用判等，于是整棵列表树换代重渲染并重测量虚拟器。这里与 sessions-index lane 同款
-        // 逐条引用稳定化：内容等价复用旧对象，整表等价复用旧数组。
+        // Every Controller activity frame (such as a running task's tool call) makes this hook query again,
+        // and joining attachTaskListRowActivity with the tasks index creates new objects each time.
+        // Downstream grouped views compare by reference, so the whole list rerenders and the virtualizer
+        // remeasures. Stabilize references item by item, as in the sessions-index lane: reuse equivalent
+        // objects and reuse the array when the entire list is equivalent.
         const nextItems = stabilizeTaskListItems(
           itemsRef.current,
           result.items.map((item) =>
@@ -168,7 +171,8 @@ export function useGlobalTaskList(params: {
         setHasMore(result.hasMore);
       } catch (error) {
         if (requestSerialRef.current === requestSerial) {
-          // Controller 查询失败时保留最后可信列表，避免单 source 异常清空其他 workspace。
+          // Keep the last trusted list when a Controller query fails so one source error
+          // does not clear the other workspaces.
           logger.error(`[useGlobalTaskList] Controller 加载 ${params.kind} 列表失败`, error);
         }
       } finally {
@@ -191,9 +195,10 @@ export function useGlobalTaskList(params: {
   }, [controllerRevision, load, taskListVersionSignature, workspaceSourceGenerationSignature]);
 
   useEffect(() => {
-    // 远程 workspace 从断开占位恢复为在线 session 时 identity/path 不变，
-    // taskListVersion 也可能尚未变化，旧缓存因此永久保留连接前的空结果。remoteSessionId
-    // 只作为 source 代际触发重查，不改变 workspaceIdentity 与 Controller 查询契约。
+    // When a remote workspace recovers from a disconnected placeholder to an online session,
+    // its identity and path stay the same, and taskListVersion may not have changed. The old cache
+    // would then preserve the pre-connection empty result indefinitely. Use remoteSessionId only
+    // as a source-generation signal to query again; do not change the workspaceIdentity or Controller contract.
     void load({
       controllerRevision,
       taskListVersionSignature,

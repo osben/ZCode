@@ -1,5 +1,5 @@
 import type { MarkdownSelectionTarget } from "@/lib/conversationSelectionReference.js";
-/* eslint-disable max-lines -- PreviewPane 当前同时承载文件读取、图片与 Office 预览、markdown/code 渲染和顶部路径面包屑；后续需按 header/body 边界继续拆分。 */
+/* eslint-disable max-lines -- PreviewPane currently handles file reads, image and Office previews, markdown/code rendering, and the top path breadcrumb; further splitting should follow the header/body boundary. */
 import {
   Fragment,
   type CSSProperties,
@@ -29,10 +29,7 @@ import { TID_PREVIEW_PANE } from "@zcode/shared";
 import { useWorkspaceServices } from "@/hooks/useWorkspaceServices.js";
 import { usePptxFileWatch } from "@/hooks/usePptxFileWatch.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
-import {
-  usePdfViewerLabels,
-  usePptxViewerLabels,
-} from "@/hooks/usePreviewViewerLabels.js";
+import { usePdfViewerLabels, usePptxViewerLabels } from "@/hooks/usePreviewViewerLabels.js";
 import {
   FILE_VIEWER_MAX_TEXT_BYTES,
   createDiffSourceFilePreviewSource,
@@ -240,9 +237,9 @@ function getFileImageMediaType(path?: string): string | null {
   return mediaType && mediaType !== "image/svg+xml" ? mediaType : null;
 }
 
-// 与 service 层 readFileRange 的默认分段大小对齐，一次 range 请求对应一次 RPC 调用。
+// Match the service layer’s default readFileRange chunk size so each range request corresponds to one RPC call.
 const PDF_RANGE_CHUNK_BYTES = 256 * 1024;
-// 小 PDF 直接循环拉全量（少量往返、渲染路径最简单）；超过阈值交给 pdf.js range 按需分段加载。
+// For small PDFs, fetch the entire file in a loop (few round trips and the simplest rendering path); above the threshold, let pdf.js range-load chunks on demand.
 const PDF_FULL_READ_MAX_BYTES = 2 * 1024 * 1024;
 export const PPTX_MAX_FILE_BYTES = 64 * 1024 * 1024;
 
@@ -258,8 +255,8 @@ function PreviewPaneDeferredHeavyContent({ style }: { style?: CSSProperties }) {
       data-preview-pane-heavy-content-deferred="true"
       style={style}
     >
-      {/* Bugfix: resize/sliver 阶段不能展示大文件 CodeViewer，但只放空白会明显闪烁。
-          这里用少量静态 code-line 纹理保留预览区的视觉重量，不让千行 Shadow DOM 参与可见布局。 */}
+      {/* Bugfix: Do not show the large-file CodeViewer during resize/sliver phases, but an empty area would visibly flicker.
+          Use a small amount of static code-line texture to preserve visual weight in the preview without laying out thousands of Shadow DOM lines. */}
       <div
         className="sticky top-0 flex h-full min-h-0 flex-col gap-1.5 overflow-hidden p-3"
         data-preview-pane-heavy-content-placeholder="true"
@@ -386,7 +383,7 @@ function isPlainCodeSource(source: CodeViewerSource | null): boolean {
       !isMarkdownFilePath(source.path) &&
       !isSvgFilePath(source.path) &&
       !getFileImageMediaType(source.path) &&
-      // PDF、Office 和 PPTX 走专用只读预览，没有源码视图，也不该出现自动换行开关。
+      // PDF, Office, and PPTX use dedicated read-only previews with no source view, so the word-wrap toggle should not appear.
       !isPdfPreviewPath(source.path) &&
       !getOfficeFilePreviewKind(source.path) &&
       !isPptxPreviewPath(source.path)
@@ -609,8 +606,8 @@ export function PreviewPane({
     [source, sourceWorkspacePath],
   );
   const codeComments = useCodeCommentPreviewStore((state) =>
-    // code-review 不读取 Composer 评论 store，但这里每次 selector 求值都不能返回新的 []，
-    // 否则会破坏 useSyncExternalStore 的稳定 snapshot 契约并触发无限更新。
+    // code-review does not read the Composer comment store, but this selector must not return a new [] on each evaluation,
+    // or it breaks useSyncExternalStore's stable snapshot contract and triggers infinite updates.
     codeCommentBucket ? state.getComments(codeCommentBucket) : EMPTY_CODE_COMMENT_PREVIEWS,
   );
   const addCodeCommentPreview = useCodeCommentPreviewStore((state) => state.addComment);
@@ -662,8 +659,8 @@ export function PreviewPane({
     }),
     [intl],
   );
-  // PDF / PPTX 的标签与 dwf 的 workflow-artifact tab 共用一份（见该 hook 的注释）：
-  // 两个 labels 接口都是必填全字段，各写一份漏的不会是类型错误，而是一句没翻译的文案。
+  // PDF/PPTX labels and the DWF workflow-artifact tab share one set (see the hook comment):
+  // both labels interfaces require all fields, so omitting one in either set is not a type error but an untranslated string.
   const pdfViewerLabels = usePdfViewerLabels();
   const pptxViewerLabels = usePptxViewerLabels();
 
@@ -795,8 +792,8 @@ export function PreviewPane({
       return;
     }
 
-    // 交互说明：长路径首次打开时，用户最关心的是末尾文件名。
-    // 这里在 breadcrumb 内容变更后只初始化滚到最右侧，后续用户手动滚动不再强行回弹。
+    // Interaction detail: for a long path opened for the first time, the filename at the end matters most.
+    // After breadcrumb content changes, initialize the scroll position at the right edge; do not force it back after later user scrolling.
     const frameId = requestAnimationFrame(() => {
       viewport.scrollLeft = Math.max(0, viewport.scrollWidth - viewport.clientWidth);
     });
@@ -894,9 +891,9 @@ export function PreviewPane({
       };
     }
 
-    // 把传输分块直接当成多个文档解码和渲染，会在 UTF-8 字符中间产生乱码，
-    // 同时让每块行号从 1 重置。文本预览现在只读取 service 允许的完整上限；
-    // 非二进制结果返回 truncated 时丢弃局部文本并提示文件过大，不再拼接分块。
+    // Decoding/rendering transport chunks as separate documents can split UTF-8 characters and produce mojibake,
+    // while also resetting line numbers to 1 for each chunk. Text preview now reads only the full limit allowed by the service;
+    // if a non-binary result is truncated, discard partial text and report that the file is too large instead of concatenating chunks.
     void fileService
       .readTextFile({
         path: fileSource.path,
@@ -1135,7 +1132,7 @@ export function PreviewPane({
     try {
       mediaElement.currentTime = restore.currentTime;
     } catch {
-      // 媒体元数据尚未完全就绪时由浏览器稍后继续处理，不阻断播放器加载。
+      // Let the browser continue processing when media metadata is not fully ready; do not block player loading.
     }
     if (!restore.paused) void mediaElement.play().catch(() => undefined);
     mediaPlaybackRestoreRef.current = null;
@@ -1170,7 +1167,7 @@ export function PreviewPane({
           return null;
         }
         if (chunk.length === 0) {
-          // 读取期间文件被截断时按已读部分返回，交给 pdf.js 判定完整性，避免死循环
+          // If the file is truncated during reading, return the bytes already read and let pdf.js determine completeness to avoid an infinite loop.
           break;
         }
         chunks.push(chunk);
@@ -1192,8 +1189,8 @@ export function PreviewPane({
       }
 
       if (typeof fileStat.size !== "number") {
-        // 版本偏差兜底：旧远端 stat 不返回 size，也一定没有 readFileRange，
-        // 回退整档 base64 的旧通道（保留其 8MB 上限，超限走 catch 报错文案）。
+        // Version-skew fallback: older remote stat does not return size and necessarily lacks readFileRange,
+        // so fall back to the legacy full-file base64 path (keeping its 8MB limit and using the catch error copy above that limit).
         const preview = await fileService.readMediaPreview({ path });
         if (disposed) {
           return;
@@ -1354,7 +1351,7 @@ export function PreviewPane({
       }
 
       if (typeof fileStat.size !== "number") {
-        // 兼容旧远端：旧 Host 没有 size/range 能力，只能使用现有 8MB base64 通道。
+        // Compatibility with older remote hosts: without size/range support, use the existing 8MB base64 path.
         const preview = await fileService.readMediaPreview({ path });
         if (!disposed) {
           setPptxPreviewData(decodeBase64ToArrayBuffer(preview.dataBase64));
@@ -1376,8 +1373,8 @@ export function PreviewPane({
         return;
       }
 
-      // 文件可能在分段读取期间被替换成另一个大小不同的版本；再次 stat 可以阻止把旧版本的
-      // 前缀当作完整 PPTX 解析。相同大小的内容替换仍需 Host 提供 fingerprint 才能检测，暂不扩展现有协议。
+      // The file may be replaced by a different-sized version during chunked reading; stat again to prevent parsing the old version's
+      // prefix as a complete PPTX. Detecting content replacement of the same size would require a Host fingerprint, which is outside the current protocol.
       const currentFileStat = await fileService.stat({ path });
       if (disposed) {
         return;
@@ -1405,8 +1402,8 @@ export function PreviewPane({
         } else {
           logger.error(`[PreviewPane] 读取 PPTX 预览失败 path=${path}:`, previewError);
         }
-        // 旧 Host 的 8MB base64 通道会把绝对路径拼进英文超限错误；原样展示既误导
-        // 用户又泄漏远端目录。这里保留真实的 8MB 兼容边界，并对其它错误只展示文件名。
+        // The older Host's 8MB base64 path includes an absolute path in the English size-limit error; displaying it as-is misleads
+        // users and leaks remote directories. Preserve the actual 8MB compatibility limit and show only the filename for other errors.
         setError(
           resolvePptxPreviewReadErrorMessage(previewError, {
             sourcePath: path,
@@ -1485,8 +1482,8 @@ export function PreviewPane({
     }
 
     try {
-      // 远程能力过滤产生的 fallback 只用于本次打开；不能把它写回面板偏好，
-      // 否则同一 PreviewPane 切回本地文件时仍会错误沿用远程 VS Code。
+      // A fallback caused by remote capability filtering applies only to this open; do not write it back to pane preferences,
+      // or the same PreviewPane will incorrectly keep using remote VS Code after switching to a local file.
       const result = await platform.openInEditor(selectedEditor.id, source.path, {
         pathKind: "file",
         remoteTarget: openInEditorRemoteTarget,
@@ -1592,7 +1589,7 @@ export function PreviewPane({
               </span>
             </Button>
           ) : null}
-          {/* Bugfix: 图片和 patch 这类预览没有任何显示选项，继续渲染触发器会打开空菜单，所以只在存在菜单项时显示更多按钮。 */}
+          {/* Bugfix: Image and patch previews have no display options. Rendering the trigger would open an empty menu, so show the more button only when menu items exist. */}
           {hasMoreMenu || source.path ? (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
@@ -1698,7 +1695,7 @@ export function PreviewPane({
               </DropdownMenuContent>
             </DropdownMenu>
           ) : null}
-          {/* 第一期 PPTX 明确为只读预览，不展示任何编辑入口。 */}
+          {/* The first PPTX release is explicitly a read-only preview; do not show editing entry points. */}
           <Button
             type="button"
             size="icon-md"
@@ -1795,8 +1792,8 @@ export function PreviewPane({
             codeCommentLabels={codeCommentLabels}
             onSubmitCodeComment={handleSubmitCodeComment}
             onDeleteCodeComment={handleDeleteCodeComment}
-            // PreviewPane 外层只是 flex 壳，真实滚动发生在具体内容组件的 overflow 容器。
-            // 折叠侧边面板卸载重内容前必须保存该容器的位置。
+            // PreviewPane's outer layer is only a flex shell; scrolling happens in the content component's overflow container.
+            // Save that container's position before collapsing the side pane unmounts the heavy content.
             onScroll={handlePreviewContentScroll}
             scrollContainerRef={scrollContainerRef}
           />

@@ -5468,7 +5468,7 @@ const enUS: Record<string, string> = {
     "{count} more subagents · list everyone in the run pane",
   "chat.toolCall.workflow.timeline.roster.door.list": "{count} more subagents · list them here",
   "chat.toolCall.workflow.timeline.roster.door.fold": "{count} more subagents · fold",
-  // 门后名单末尾的那一行：被淘汰的子代理没有行，差额在这里说明（本仓的轻量 intl 无 ICU 复数）。
+  // Final row after the list: evicted subagents have no row, so this reports the difference (the lightweight intl implementation here has no ICU plural support).
   "chat.toolCall.workflow.timeline.roster.unlisted.one": "1 more agent not listed",
   "chat.toolCall.workflow.timeline.roster.unlisted.other": "{count} more agents not listed",
   "chat.toolCall.workflow.timeline.ledge.earlier": "{count} earlier phase(s), scrolled out of view",
@@ -5556,9 +5556,10 @@ const enUS: Record<string, string> = {
   "chat.workflowLaunch.settings.sessionModel": "session model",
   "chat.workflowLaunch.settings.defaultLimit": "default",
   "chat.workflowLaunch.settings.defaultLimitValue": "default {n}",
-  // ── 可复用工作流（docs/dynamic-workflow/launch.md）：SaveWorkflow / ListSavedWorkflows
-  // 的聊天卡。overwrite 这个词由保存确认窗共用——同一次保存在两个面上必须同名，
-  // 照 run 卡复用 chat.toolCall.workflow.run.status.* 词汇表的同一条先例。
+  // ── Reusable workflows (docs/dynamic-workflow/launch.md): chat cards for
+  // SaveWorkflow / ListSavedWorkflows. The word "overwrite" is shared with the save
+  // confirmation window — one save must use the same name on both surfaces, following the
+  // same precedent as the run card reusing the chat.toolCall.workflow.run.status.* vocabulary.
   "chat.toolCall.workflow.save.saving": "Saving workflow",
   "chat.toolCall.workflow.save.saved": "Saved workflow",
   "chat.toolCall.workflow.save.overwrite": "overwrite",
@@ -5795,7 +5796,7 @@ const enUS: Record<string, string> = {
   "chat.backgroundResult.workflow.completed": "Workflow completed",
   "chat.backgroundResult.workflow.errored": "Workflow errored",
   "chat.backgroundResult.workflow.stopped": "Workflow stopped",
-  // run 级停滞通知：run 还在跑，只是没有进展。
+  // Run-level stalled notice: the run is still active but has made no progress.
   "chat.backgroundResult.workflow.stall": "Workflow waiting on the model",
   "chat.backgroundResult.workflow.stall.body":
     "No model request in this run has succeeded for {minutes} min. It is still running and retrying with backoff; stop it from the run card if you no longer need it.",
@@ -5806,7 +5807,7 @@ const enUS: Record<string, string> = {
   "chat.backgroundResult.workflow.asked": "Subagent asked a question",
   "chat.backgroundResult.workflow.artifacts.more": "+{count}",
   // ── Escalation tool cards ──
-  // escalate：子代理把阻塞问题升级给主代理，停驻等答案。asking 相可能持续很久，措辞要平静。
+  // Escalation: a subagent raises a blocking question to the main agent and waits for an answer. The asking phase may last a long time, so keep the wording calm.
   "chat.toolCall.workflow.escalate.asking": "Asking the main agent",
   "chat.toolCall.workflow.escalate.asked": "Asked the main agent",
   "chat.toolCall.workflow.escalate.question": "Question",
@@ -5825,7 +5826,7 @@ const enUS: Record<string, string> = {
   "chat.toolCall.workflow.run.status.completed": "Completed",
   "chat.toolCall.workflow.run.status.errored": "Errored",
   "chat.toolCall.workflow.run.status.stopped": "Stopped",
-  // stopped 的原因词，跟在状态词后。
+  // Reason label for stopped, following the status label.
   "chat.toolCall.workflow.run.stopReason.user": "by you",
   "chat.toolCall.workflow.run.stopReason.model": "by the agent",
   "chat.toolCall.workflow.run.stopReason.provider": "model error",
@@ -5840,8 +5841,8 @@ const enUS: Record<string, string> = {
   "chat.toolCall.workflow.run.usage.label": "Usage",
   "chat.toolCall.workflow.run.usage.tokens": "{tokens} tokens",
   "chat.toolCall.workflow.run.usage.value": "{tokens} tokens · {steps} steps",
-  // 实例表撞界后卡与详情页各有的那一句：停的是每一步的**详情**，不是 run，
-  // 它上面那些计数已经把表外的实例算进来了（docs/dynamic-workflow/presentation.md）。
+  // The sentence shown on both the card and detail page after the instance table hits its limit: only each step's **detail** is stopped, not the run;
+  // the counts above already include instances beyond the table (docs/dynamic-workflow/presentation.md).
   "chat.toolCall.workflow.run.truncated": "Details shown for {shown} of {total} steps",
   "chat.toolCall.workflow.run.cancel": "Stop run",
   "chat.toolCall.workflow.run.cancelling": "Stopping…",
@@ -5874,10 +5875,12 @@ const enUS: Record<string, string> = {
   "chat.toolCall.workflow.run.resume": "Resume run",
   "chat.toolCall.workflow.run.resumeHint":
     "Continue from where it stopped: finished steps are reused, interrupted steps run again.",
-  // 「配置」弹层（docs/dynamic-workflow/presentation.md「The settings popover」）：改子代理模型与最大并发数，
-  // 应用即一次 GUI 修订（新 run 接着跑，旧 run 停下，已完成的步骤作缓存带过去）。
-  // 完成卡与 run 侧板上的「保存 / 再次运行」（docs/dynamic-workflow/transcript-and-notifications.md
-  // 「Saving the run, and running it again」）。两条路：交给 ZCode 提炼，或按原样直接写下去。
+  // The "Configure" popover (docs/dynamic-workflow/presentation.md "The settings popover"):
+  // change the subagent model and max concurrency; applying is a GUI revision (the new run
+  // continues, the old run stops, completed steps carry over as cache).
+  // "Save / Run again" on the completion card and the run side panel
+  // (docs/dynamic-workflow/transcript-and-notifications.md "Saving the run, and running it
+  // again"). Two paths: let ZCode distill it, or write it down verbatim.
   "chat.toolCall.workflow.saveRun.action": "Save",
   "chat.toolCall.workflow.saveRun.runAgain": "Run again",
   "chat.toolCall.workflow.saveRun.starting": "Starting…",
@@ -5941,7 +5944,7 @@ const enUS: Record<string, string> = {
     "Continues as a new run with these settings; finished steps are kept.",
   "chat.toolCall.workflow.run.settings.consequence.errored":
     "Retries as a new run with these settings; finished steps are kept.",
-  // 只改并发上限、而且运行正在跑：就地生效（docs/dynamic-workflow/concurrency.md）。
+  // Only the concurrency limit changes while the run is active: apply in place (docs/dynamic-workflow/concurrency.md).
   "chat.toolCall.workflow.run.settings.consequence.concurrencyLive":
     "Applies to this run right away; no new run is started.",
   "chat.toolCall.workflow.run.settings.apply": "Apply",
@@ -5992,8 +5995,8 @@ const enUS: Record<string, string> = {
   "chat.toolCall.workflow.run.artifacts.previousVersion": "Previous version",
   "chat.toolCall.workflow.run.artifacts.nextVersion": "Next version",
   "chat.toolCall.workflow.run.artifacts.open": "Open artifact",
-  // 动作。「下载」（存到用户挑的位置）仍缺席；「作为文件打开」
-  // 落的是宿主 ~/.zcode/tmp 下的副本，不是用户挑的位置。
+  // Actions. "Download" (saving to a user-chosen location) is still absent; "Open as file"
+  // opens a copy under the host's ~/.zcode/tmp, not a user-chosen location.
   "chat.toolCall.workflow.run.artifacts.reveal": "Reveal in workspace",
   "chat.toolCall.workflow.run.artifacts.copy": "Copy",
   "chat.toolCall.workflow.run.artifacts.copied": "Copied",
@@ -6016,8 +6019,8 @@ const enUS: Record<string, string> = {
   "chat.toolCall.workflow.run.artifacts.preset.otherColumn": "Other",
   "chat.toolCall.workflow.run.artifacts.preset.empty": "No data yet",
   "chat.toolCall.workflow.run.artifacts.preset.items": "{count} items",
-  // 待答问题区（升级问答）：actor 停驻在自己那次 ask 里等
-  // 主代理回话。只读——应答者是主代理，不是用户，所以文案不能读起来像在请用户作答。
+  // Pending questions (escalations): an actor is parked on its ask, waiting for
+  // the main agent to reply. Read-only — the main agent answers, not the user, so the copy must not sound like a request for the user to respond.
   "chat.toolCall.workflow.run.questions.title": "Waiting on an answer",
   "chat.toolCall.workflow.run.graph.unavailable":
     "The workflow graph is not in this conversation's visible history.",
@@ -6084,13 +6087,14 @@ const enUS: Record<string, string> = {
     "Waiting for provider ({reason}) · retry in {seconds}s",
   "chat.toolCall.workflow.run.event.nodeExecuting": "Request sent",
   "chat.toolCall.workflow.run.event.concurrencyChanged": "Concurrency {previous} → {next}",
-  // 上一条是治理器在压共享桶；这一条是用户改了这次 run 自己的上限（就地生效，不另起一次运行）。
+  // The previous entry is the governor clamping the shared bucket; this one is the user changing this run's own limit (applied in place without starting another run).
   "chat.toolCall.workflow.run.event.runCapsChanged": "Concurrency limit {previous} → {next}",
   "chat.toolCall.workflow.run.throttle.reason.rateLimited": "rate limited",
   "chat.toolCall.workflow.run.throttle.reason.overloaded": "overloaded",
   "chat.toolCall.workflow.run.throttle.reason.offpeak": "off-peak queue",
   "chat.toolCall.workflow.run.throttle.reason.transient": "transient error",
-  // 芯片上的数是一条界（min(共享 cap, 本 run 的 limit)），不是此刻在跑的个数。
+  // The number on the chip is a bound (min(shared cap, this run's limit)), not the count
+  // running at this moment.
   "chat.toolCall.workflow.run.concurrency.label": "Max concurrency {cap}",
   "chat.toolCall.workflow.run.concurrency.cooldown": "cooling down until {time}",
   "chat.toolCall.workflow.run.subagentModel.label": "Subagents {model}",
@@ -6343,11 +6347,14 @@ const enUS: Record<string, string> = {
   "chat.permission.workflow.amends.scriptUnchanged": "script unchanged",
   "chat.permission.workflow.maxConcurrency": "At most {count} subagents at once",
   "chat.permission.workflow.subagentModel": "Subagents run on {model}",
-  // 脚本给某些子代理点名了模型时（docs/dynamic-workflow/launch.md「Models the script names」）：那些
-  // 名字不列（作者模型的选择），这一句只改口「默认」——它不再替每一个子代理说话。
+  // When the script names models for certain subagents (docs/dynamic-workflow/launch.md
+  // "Models the script names"): those names are not listed (the author's model choice);
+  // this sentence only switches to "by default" — it no longer speaks for every subagent.
   "chat.permission.workflow.subagentModelDefault": "By default, subagents run on {model}",
-  // 确认窗里可调的两句（docs/dynamic-workflow/presentation.md「The confirmation window」）：句中的值
-  // 就是控件，所以句子被拆成控件前后的两截；改过的那一行句尾多一截「· 原为 X ↺」。
+  // The two adjustable sentences in the confirmation window
+  // (docs/dynamic-workflow/presentation.md "The confirmation window"): the values in the
+  // sentences are the controls, so each sentence is split around the control; an adjusted
+  // row gains a trailing "· was X ↺" segment.
   "chat.permission.workflow.settings.model.lead": "Subagents run on",
   "chat.permission.workflow.settings.model.noCatalog": "Subagents stay on the session model",
   "chat.permission.workflow.settings.model.noCatalogReason": "this agent has no model catalog",
@@ -6359,14 +6366,16 @@ const enUS: Record<string, string> = {
   "chat.permission.workflow.settings.limit.none": "no limit of its own",
   "chat.permission.workflow.settings.was": "was {value}",
   "chat.permission.workflow.settings.reset": "Back to the proposed value",
-  // 改过设置后前两个选项换描述（docs/dynamic-workflow/launch.md「The options」）：会话免确认只管
-  // 「以后不再问」，调整只随这一次应答走。
+  // After settings are adjusted, the first two options swap descriptions
+  // (docs/dynamic-workflow/launch.md "The options"): session-without-confirmation covers
+  // only "don't ask again"; the adjustment applies to just this one response.
   "chat.permission.workflow.allowOnce.adjusted": "Run once with the adjusted settings",
   "chat.permission.workflow.allowForSession.adjusted":
     "This run with the adjusted settings; later runs are not asked and carry their own",
-  // ── 可复用工作流（docs/dynamic-workflow/launch.md）──
-  // saved 来源徽标（运行确认窗）：只说明脚本来自哪个文件、带了什么实参。
-  // 它不表达任何信任——保存不产生信任，已保存的工作流照样过完整的运行确认。
+  // ── Reusable workflows (docs/dynamic-workflow/launch.md) ──
+  // The "saved" origin badge (run confirmation window): states only which file the script
+  // came from and what arguments it carries. It conveys no trust — saving does not create
+  // trust, and a saved workflow still goes through the full run confirmation.
   "chat.permission.workflow.saved.badge": "Saved workflow",
   "chat.permission.workflow.saved.scope.project": "project",
   "chat.permission.workflow.saved.args": "Arguments",

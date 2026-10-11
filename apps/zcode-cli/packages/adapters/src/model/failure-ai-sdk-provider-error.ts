@@ -5,7 +5,8 @@ import { ProviderBusinessError } from "./model-execution.js";
 const MAX_SAFE_PROVIDER_FIELD_CHARS = 1_000;
 
 /**
- * 只读取 AI SDK 已解析并暴露的错误对象；未知业务码继续交给既有通用分类链路。
+ * Read only error objects already parsed and exposed by the AI SDK; unknown business codes continue
+ * through the existing general classification path.
  */
 export function readMappedAiSdkProviderBusinessError(
   error: unknown,
@@ -14,8 +15,8 @@ export function readMappedAiSdkProviderBusinessError(
   const errorData = asRecord(data?.error) ?? asRecord(error);
   if (!errorData) return undefined;
 
-  // OpenAI-compatible schema 的 code 比 type 更具体；例如 type 可能统一为
-  // insufficient_quota，而 code 才区分余额或组织/项目消费上限。
+  // In OpenAI-compatible schemas, code is more specific than type. For example, type may always be
+  // insufficient_quota, while code distinguishes balance from organization/project spending limits.
   const providerCode = [
     normalizeProviderCode(errorData.code),
     normalizeProviderCode(errorData.type),
@@ -64,7 +65,7 @@ function summarizeAiSdkErrorData(
   }
 
   const errorSummary: Record<string, unknown> = {};
-  // message 已由 ProviderBusinessError 统一清理和截断；摘要只保留分类字段。
+  // ProviderBusinessError already sanitizes and truncates message; keep only classification fields in the summary.
   copyScalar(errorData, errorSummary, "code");
   copyScalar(errorData, errorSummary, "type");
   copyScalar(errorData, errorSummary, "request_id");

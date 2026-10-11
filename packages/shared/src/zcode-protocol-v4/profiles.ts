@@ -1,11 +1,13 @@
-// Delivery profile 过滤纯函数。
-// 通道层 flush 管线的第一步：filter → coalesce → 打帧。恢复回放走同一函数
-// （「先过该订阅者的 profile 过滤器再 coalesce」），保证断线重连的确定性重投递。
+// Pure function for filtering by delivery profile.
+// First step in the channel flush pipeline: filter → coalesce → frame. Recovery replay uses the same
+// function (apply the subscriber's profile filter before coalescing) to ensure deterministic redelivery
+// after reconnect.
 //
-// 收口不变量（进黄金测试）：被 profile 过滤的事件必须最终被某个不可过滤的事件收口——
-// row.delta(inputText) 被滤掉后，工具输入定稿时的 row.upserted 必须携带完整 inputText，
-// 否则 replayable 订阅者终态缺数据。任何 reducer 改动破坏该不变量会撞
-// 「两 profile 终态逐字节一致」测试。
+// Terminal invariant (covered by golden tests): every event filtered by profile must eventually be
+// closed out by an unfilterable event. If row.delta(inputText) is filtered, row.upserted at tool-input
+// finalization must carry the complete inputText; otherwise replayable subscribers end without it. Any
+// reducer change that breaks this invariant fails the test requiring byte-identical terminal state for
+// both profiles.
 import type { DeliveryProfile } from "./core.js";
 import type { ConversationDelta } from "./delta.js";
 import type { ConversationRow } from "./rows.js";
@@ -14,15 +16,16 @@ export function filterConversationRowsForProfile(
   rows: readonly ConversationRow[],
   _profile: DeliveryProfile,
 ): ConversationRow[] {
-  // HookInvocationRow 已收敛为 desktop/mobile 共用的 client-safe summary；当前没有
-  // profile-specific 完整行，仍保留纯函数边界供未来受控 row 使用。
+  // HookInvocationRow is now a client-safe summary shared by desktop and mobile. There is currently no
+  // profile-specific full row; keep the pure-function boundary for future controlled row types.
   return [...rows];
 }
 
 /**
- * 按 profile 的 streamPaths 开关过滤 delta 序列。
- * row.delta 按流式能力过滤；结构性完整行在两个 profile 中保持同一产品事实。
- * 纯函数，不修改入参；输出保持权威日志序。
+ * Filter delta events according to the profile's streamPaths setting.
+ * Filter row.delta by streaming capability; structurally complete rows represent the same product facts
+ * in both profiles. This is a pure function that does not mutate its input and preserves authoritative
+ * log order.
  */
 export function filterConversationDeltasForProfile(
   deltas: readonly ConversationDelta[],

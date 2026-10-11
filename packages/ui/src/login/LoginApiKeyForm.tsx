@@ -68,7 +68,7 @@ export function LoginApiKeyForm({ onCancel, onSaved, onSkipped }: LoginApiKeyFor
     (template) => template.templateId === templateId,
   )?.config.access;
   const apiKeyUrl = isApiKeyAccess(templateAccess) ? templateAccess.apiKeyManagementUrl : undefined;
-  // 用户已经输入或回填 API Key 后，右侧获取入口会挤占密码输入区域。
+  // After the user enters or restores an API Key, the get-key link on the right crowds the password input area.
   const showApiKeyLink = shouldShowLoginApiKeyLink(apiKeyValue, apiKeyUrl ?? undefined);
 
   const saveApiKeyProvider = async () => {
@@ -126,8 +126,8 @@ export function LoginApiKeyForm({ onCancel, onSaved, onSkipped }: LoginApiKeyFor
     setSkipping(true);
     setError(null);
     try {
-      // 跳过只表示用户确认当前 provider family 运行域，不能写入空 API Key
-      // 或触发 API Key 登录成功事件，否则后续模型选择会误以为已有可用凭据。
+      // Skip only means the user confirmed the current provider family runtime domain. Do not write an empty API Key
+      // or emit an API Key login success event; otherwise model selection may assume usable credentials exist.
       await settingService.update(buildLoginApiKeySkipSettings(providerChoice, Date.now()));
       await onSkipped();
     } catch (skipError) {

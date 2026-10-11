@@ -60,8 +60,8 @@ function hashBytes(bytes: Uint8Array): string {
 }
 
 /**
- * 按 lstat → realpath → stat 检查路径。CLI 使用跟随链接的 stat，
- * 因此悬空链接与目录在 CLI 侧等同于不存在；这里显式区分以禁止误写。
+ * Check paths with lstat → realpath → stat. The CLI uses stat, which follows links,
+ * so dangling links and directories appear nonexistent to it; distinguish them explicitly here to prevent accidental writes.
  */
 async function inspectPath(filePath: string): Promise<InspectedPath> {
   let linkStats;
@@ -115,8 +115,8 @@ async function inspectPath(filePath: string): Promise<InspectedPath> {
 }
 
 /**
- * textarea 会把 CRLF 规范化为 LF，无法零处理地保留行尾；
- * 因此读取时记录主导行尾与 BOM，返回 LF 文本，保存时再还原。
+ * The textarea normalizes CRLF to LF, so line endings cannot be preserved without handling them;
+ * record the dominant line ending and BOM while reading, return LF text, and restore the original format on save.
  */
 function decodeText(bytes: Uint8Array): DecodedText {
   const hasBom = bytes.length >= 3 && bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf;
@@ -148,7 +148,7 @@ function decodeText(bytes: Uint8Array): DecodedText {
   return {
     kind: "ok",
     content: text.replace(/\r\n?/g, "\n"),
-    // 平局（含无换行）取 LF。
+    // Break ties (including files with no line breaks) in favor of LF.
     eol: crlf > lf ? "crlf" : "lf",
     hasBom,
     mixedLineEndings: cr > 0 || (crlf > 0 && lf > 0),
@@ -204,7 +204,7 @@ async function loadText(filePath: string): Promise<LoadedText> {
       message: getErrorMessage(error),
     };
   }
-  // stat 与 readFile 之间文件可能被外部追加，按实际读到的字节再判一次。
+  // The file may be appended to externally between stat and readFile; check again using the bytes actually read.
   if (bytes.length > USER_INSTRUCTIONS_EDIT_LIMIT_BYTES) {
     return {
       kind: "error",
@@ -299,9 +299,9 @@ async function writeUserInstructions(
   assertWriteParams(params);
   const path = getUserZcodeAgentsFilePath();
   try {
-    // 锁路径固定为 ~/.zcode/AGENTS.md 本身（而非链接目标），与引导页迁移共用。
+    // Keep the lock path fixed at ~/.zcode/AGENTS.md itself (not the link target), shared with onboarding migration.
     return await withFileLock(path, async (): Promise<UserInstructionsWriteResult> => {
-      // 读取与保存之间路径类型可能变化，锁内复查；类型错误不是冲突，直接拒绝写入。
+      // The path type may change between read and save; check again under the lock. A type error is not a conflict, so reject the write directly.
       const inspected = await inspectPath(path);
       if (inspected.kind === "error") {
         if (inspected.code === "READ_FAILED") {

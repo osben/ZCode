@@ -13,16 +13,16 @@ function closeTransferredPort(port: CloseableTransferredPort | undefined): void 
   try {
     port?.close();
   } catch {
-    // rejection cleanup 是 best effort；close 异常不能遮蔽原始 schema/初始化错误。
+    // Rejection cleanup is best effort; a close error must not hide the original schema/initialization error.
   }
 }
 
-/** schema invalid 时 transferred port 不会再被任何 ChannelServer 接管，必须就地关闭。 */
+/** If the schema is invalid, no ChannelServer will take over the transferred port, so close it here. */
 export function parseHostIncomingMessageEvent(
   event: HostIncomingMessageEventLike,
 ): ReturnType<typeof hostIncomingMessageSchema.safeParse> {
-  // clean pnpm install 下 zod 会位于 @zcode/shared 私有 node_modules；导出函数若
-  // 依赖推断返回型，.d.ts 会引用不可移植的私有 ZodSafeParseResult 路径。
+  // In a clean pnpm install, zod may live in @zcode/shared's private node_modules. If the exported function relies on an inferred return type,
+  // its .d.ts will reference a non-portable private ZodSafeParseResult path.
   const result = hostIncomingMessageSchema.safeParse(event.data);
   if (!result.success) {
     for (const port of event.ports) closeTransferredPort(port);
@@ -30,7 +30,7 @@ export function parseHostIncomingMessageEvent(
   return result;
 }
 
-/** AttachServicePort 早于 activeServices 就绪时拒绝并关闭，避免远端 RPC 永久 pending。 */
+/** Reject and close AttachServicePort if it arrives before activeServices is ready, preventing a remote RPC from remaining pending forever. */
 export function rejectUnavailableAttachedServicePort(
   port: CloseableTransferredPort,
   servicesReady: boolean,

@@ -16,7 +16,7 @@ function record(value: unknown): Record<string, unknown> {
     : {};
 }
 
-/** 仅存储迁移入口使用；正式 reader 不得再解释旧双 map 或旧 Provider。 */
+/** Used only by the storage migration entry point; canonical readers must no longer interpret legacy dual maps or Providers. */
 export function importSubagentStateSelections(input: Record<string, unknown>): Record<
   string,
   unknown
@@ -34,7 +34,7 @@ export function importSubagentStateSelections(input: Record<string, unknown>): R
           thoughtLevel: record(input.builtInThoughtLevelOverrides)[name],
         });
     if (!selection) continue;
-    // 新 map 已是正式选择；不能把里面的旧 ID 当作未发布中间态继续兼容。
+    // The new map is already the canonical selection; do not continue compatibility by treating its legacy IDs as unpublished intermediate state.
     const providerId =
       !current && selection.providerId.startsWith("builtin:")
         ? migrateLegacyModelProviderId(selection.providerId)
@@ -49,8 +49,8 @@ export function importSubagentStateSelections(input: Record<string, unknown>): R
         }
       : selection;
   }
-  // 插件双 map 与内置覆盖一样只在存储导入时解释；
-  // 正式 map 存在即为权威，空值/损坏值也不能复活旧 model 或档位。
+  // Interpret the plugin dual map only during storage import, just like built-in overrides;
+  // The canonical map is authoritative whenever present; empty/corrupted values must not revive a legacy model or tier.
   const pluginSelections = Object.hasOwn(input, "pluginAgentModelSelectionOverrides")
     ? parsePluginSubagentModelSelectionOverrides(input.pluginAgentModelSelectionOverrides)
     : Object.fromEntries(

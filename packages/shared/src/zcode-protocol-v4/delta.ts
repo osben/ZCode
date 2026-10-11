@@ -1,12 +1,12 @@
 import { mcpAppInstanceSchema } from "../mcp-apps/instance.js";
-// ConversationDelta：快照增量与插件 UI 的 live-only 通知，操作集合封闭（10-protocol-spec §4.5）。
-// 没有 row.inserted（中间插入）、没有 row.moved、没有字段级 JSON patch——
-// 凡此模型表达不了的结构变化，服务端一律发 snapshot resync，刻意压缩客户端错误面。
+// ConversationDelta: snapshot deltas plus live-only plugin-UI notifications; the operation set is closed (10-protocol-spec §4.5).
+// There is no row.inserted (mid-stream insertion), row.moved, or field-level JSON patch —
+// For any structural change this model cannot express, the server sends a snapshot resync, deliberately reducing the client's error surface.
 //
-// 唯一的例外是最后两条 `workflowRun.*`：`workflowRuns` 是一个高频状态键，键级整体替换让
-// 每条引擎事件都要重发整张表（O(N) 字节/事件、O(N²)/run）。它们**只**给这一个键开了一道
-// 按 (runId, siteId, ordinal) 的增量口子，语义仍是「键内整体替换，只是下探了两级」：
-// header 键整键替换、条目整条替换，没有任何字段级深合并。规则在 workflow-runs-delta.ts。
+// The only exception is the final two `workflowRun.*` operations: `workflowRuns` is a high-frequency state key, and replacing the whole key would make
+// every engine event resend the entire table (O(N) bytes per event, O(N²) per run). These operations open an incremental path **only** for this key,
+// keyed by (runId, siteId, ordinal); semantics remain "replace the whole value within the key, just two levels deeper":
+// Replace header keys in full and entries as whole rows, with no field-level deep merge. Rules live in workflow-runs-delta.ts.
 import { z } from "zod";
 import { streamablePathSchema } from "./core.js";
 import { conversationRowSchema } from "./rows.js";
@@ -36,7 +36,7 @@ import {
   workflowRunsStateSchema,
 } from "./workflow-runs.js";
 
-// StatePatch：键级整体替换（Object.assign），键集合封闭。键内绝不深合并。
+// StatePatch: replace whole values at the key level (Object.assign); the set of keys is closed. Never deep-merge within a key.
 export const statePatchSchema = z.object({
   revision: z.number().optional(),
   control: sessionControlSchema.optional(),
@@ -52,12 +52,12 @@ export const statePatchSchema = z.object({
   pendingCommands: z.array(commandStateSummarySchema).optional(),
   backgroundWorks: z.array(backgroundWorkSummarySchema).optional(),
   subagents: subagentProjectionStateSchema.optional(),
-  // workflow run 的实时运行态。容器本身不 strict，所以旧桌面收到这个新键只是**剥离一个键**、
-  // 保住 patch 其余全部键——这正是它不需要任何版本偏斜防御的原因。
+  // Live runtime state for workflow runs. The container itself is not strict, so an old desktop receiving this new key simply **strips one key**,
+  // preserving every other key in the patch — which is why no version-skew defenses are needed.
   workflowRuns: workflowRunsStateSchema.optional(),
   goal: goalStateSchema.nullable().optional(),
   plan: planStateSchema.nullable().optional(),
-  // 软门禁：null = pending 清零(提示条消失);对象 = 待审核状态更新。
+  // Soft gate: null clears pending state (the banner disappears); an object updates the pending review state.
   workspaceHookAdmission: workspaceHookAdmissionStateSchema.nullable().optional(),
 });
 export type StatePatch = z.infer<typeof statePatchSchema>;
@@ -71,29 +71,31 @@ export const pluginUiResourceSubscriberSchema = z
   .strict();
 
 /**
- * run 的 **header** = `workflowRunSchema` 减去 actors / nodes 两张按实例增量同步的表。
+ * A run's **header** is `workflowRunSchema` without the actors/nodes tables, which are synchronized incrementally by instance.
  *
- * `.omit` 派生而不是手抄一份字段表：2026-09-04 的那次订阅永久失效就是「两处各写一份 run 词汇表」
- * 的后果。小集合（reports / artifacts / phases / pendingQuestions…）留在 header 里整键替换——
- * 它们的上界都是几十条，为它们再开一套增量语法只会多一套能写错的东西。
+ * Derived with `.omit` instead of hand-copying a field list: the permanently broken
+ * subscription on 2026-09-04 was the consequence of "two copies of the run vocabulary".
+ * Small collections (reports / artifacts / phases / pendingQuestions…) remain in the header
+ * and are replaced as whole keys — their bounds are only a few dozen entries, so another
+ * incremental syntax would only add another place to make mistakes.
  */
 export const workflowRunHeaderSchema = workflowRunSchema.omit({ actors: true, nodes: true });
 export type WorkflowRunHeader = z.infer<typeof workflowRunHeaderSchema>;
 
-/** header 的部分更新：在场的键整键替换，缺席的键保持不动（绝不深合并）。 */
+/** Partial header update: replace each present key as a whole; leave absent keys unchanged (never deep-merge). */
 export const workflowRunHeaderPatchSchema = workflowRunHeaderSchema.partial();
 export type WorkflowRunHeaderPatch = z.infer<typeof workflowRunHeaderPatchSchema>;
 
-/** 变成**缺席**的 header 键。「零条 ⇒ 键缺席」是 reports / pendingQuestions 等键的协议约定，所以增量必须说得出它。 */
+/** Header keys that become **absent**. "Zero entries ⇒ key absent" is the protocol contract for keys such as reports/pendingQuestions, so deltas must be able to express it. */
 export const workflowRunHeaderKeySchema = workflowRunHeaderSchema.keyof();
 export type WorkflowRunHeaderKey = z.infer<typeof workflowRunHeaderKeySchema>;
 
 /**
- * 一条被淘汰条目的**身份**（两张表共用的去重键）。从 actor schema 上 `.pick` 而不是手写
- * 两个字段：这两个字段的界只该有一处定义，理由与 `workflowRunHeaderSchema` 的 `.omit` 逐字相同。
+ * **Identity** of one evicted entry (the deduplication key shared by both tables). Use `.pick` from the actor schema instead of manually writing
+ * the two fields: their bounds should have one definition, for the same reason as the `.omit` in `workflowRunHeaderSchema`.
  *
- * 刻意**只有身份**：淘汰要说的全部内容就是「这条走了」，带上条目本身只会让消费者以为这是一次
- * upsert。
+ * Intentionally contains **identity only**: eviction means only "this entry is gone"; including the entry itself would make consumers think this is an
+ * upsert.
  */
 export const workflowRunEntryRefSchema = workflowRunActorSchema.pick({
   siteId: true,
@@ -102,13 +104,13 @@ export const workflowRunEntryRefSchema = workflowRunActorSchema.pick({
 export type WorkflowRunEntryRef = z.infer<typeof workflowRunEntryRefSchema>;
 
 export const conversationDeltaSchema = z.discriminatedUnion("op", [
-  // 追加到尾部（99%）。
+  // Append to the end (99% of cases).
   z.object({ op: z.literal("row.appended"), row: conversationRowSchema }),
-  // 按 rowId 整行替换（状态机迁移）。
+  // Replace the entire row by rowId (state-machine transition).
   z.object({ op: z.literal("row.upserted"), row: conversationRowSchema }),
-  // 删除该行及之后所有（edit/retry 分支）。作用于客户端已加载集合中所有 rowId >= fromRowId 的行。
+  // Delete this row and all following rows (edit/retry branch). Applies to all loaded client rows with rowId >= fromRowId.
   z.object({ op: z.literal("row.removed"), fromRowId: z.number() }),
-  // 流式文本追加。仅允许作用于流式态行（服务端保证，客户端可断言）。
+  // Append streaming text. Allowed only on streaming rows (guaranteed by the server; the client may assert it).
   z.object({
     op: z.literal("row.delta"),
     rowId: z.number(),
@@ -116,8 +118,9 @@ export const conversationDeltaSchema = z.discriminatedUnion("op", [
     append: z.string(),
   }),
   z.object({ op: z.literal("state.updated"), patch: statePatchSchema }),
-  // 插件 UI 订阅的 MCP 资源通知。live-only：不改快照（apply 为 no-op）、不进冷恢复；
-  // renderer 按 subscribers 派发给对应沙箱实例。
+  // MCP resource notifications subscribed by plugin UIs. Live-only: they do not mutate the
+  // snapshot (apply is a no-op) and are excluded from cold recovery; the renderer dispatches
+  // them to sandbox instances by subscribers.
   z.object({
     op: z.literal("pluginUi.resourceUpdated"),
     pluginId: z.string(),
@@ -137,8 +140,10 @@ export const conversationDeltaSchema = z.discriminatedUnion("op", [
     serverName: z.string(),
     subscribers: z.array(pluginUiResourceSubscriberSchema),
   }),
-  // App-Provided Tools 的"实例信箱"：模型发起的页面工具调用，live-only 投递给唯一实例（subscribers 恰一项）；
-  // 渲染端认领后页面 tools/call，结果经 mcp/uiResolveAppToolCall 回传。不改快照、不进冷恢复。
+  // "Instance mailbox" for App-Provided Tools: page tool calls initiated by the model,
+  // delivered live-only to the single instance (subscribers holds exactly one item); after the
+  // renderer claims it, the page executes tools/call and the result returns via
+  // mcp/uiResolveAppToolCall. Does not mutate the snapshot; excluded from cold recovery.
   z.object({
     op: z.literal("pluginUi.appToolCall"),
     activity: z.boolean().optional(),
@@ -151,16 +156,16 @@ export const conversationDeltaSchema = z.discriminatedUnion("op", [
     arguments: z.record(z.string(), z.unknown()),
   }),
   /**
-   * 一条 dwf run 的键级增量。`revision` 是**这次变化之后**的 `workflowRuns.revision`（绝对值）；
-   * 一条引擎事件最多产生一条本 op（节点相位、派生的 actor 状态、用量、水位一起落地，原子）。
+   * Key-level delta for one DWF run. `revision` is the absolute `workflowRuns.revision` **after this change**;
+   * one engine event produces at most one of these operations (node phase, derived actor state, usage, and watermarks commit atomically).
    *
-   * 六个载荷各有各的语义：`run` 按键整体替换、`cleared` 说哪些键变成了缺席、
-   * `removedActors` / `removedNodes` 按 (siteId, ordinal) 删条目、`actors` / `nodes` 按同一个键
-   * 整条 upsert。四张表的界与状态键同值——增量不该能拼出一个非法的状态。
+   * The six payloads each have their own semantics: `run` replaces whole keys; `cleared` lists keys that became absent;
+   * `removedActors` / `removedNodes` remove entries by (siteId, ordinal); `actors` / `nodes` upsert whole rows by the same key.
+   * The bounds of all four tables match the state key, so a delta cannot assemble an invalid state.
    *
-   * **施加序是 header → 删除 → upsert**，写在这里也写在字段序上：同一个键在一条 op 里被删又被加
-   * （溢出过的 run 在 resume 时清表重开，或一个条目被淘汰后又回来）必须落在表尾，才与顺序施加
-   * 两条 op 的结果一致。
+   * **Application order is header → removals → upserts**, reflected both here and in field order: if the same key is removed and re-added in one operation
+   * (a previously overflowed run is reopened with cleared tables on resume, or an evicted entry returns), it must end up at the table's tail so the result matches
+   * applying the two operations in sequence.
    */
   z.object({
     op: z.literal("workflowRun.updated"),
@@ -179,7 +184,7 @@ export const conversationDeltaSchema = z.discriminatedUnion("op", [
     actors: z.array(workflowRunActorSchema).max(WORKFLOW_RUNS_LIMITS.maxActors).optional(),
     nodes: z.array(workflowRunNodeSchema).max(WORKFLOW_RUNS_LIMITS.maxNodes).optional(),
   }),
-  /** 这条 run 被生产者淘汰了（只有生产者淘汰，而且必须说出来——客户端永远不自行施加上界）。 */
+  /** The producer evicted this run (only the producer evicts, and it must say so; clients never enforce bounds themselves). */
   z.object({
     op: z.literal("workflowRun.removed"),
     runId: workflowRunSchema.shape.runId,
@@ -192,7 +197,7 @@ export type PluginUiResourceDelta = Extract<
   { op: "pluginUi.resourceUpdated" | "pluginUi.resourceListChanged" }
 >;
 export type PluginUiAppToolCallDelta = Extract<ConversationDelta, { op: "pluginUi.appToolCall" }>;
-/** 按沙箱实例投递的全部 live-only 增量。 */
+/** All live-only deltas delivered per sandbox instance. */
 export type PluginUiInstanceDelta =
   | Extract<ConversationDelta, { op: "pluginUi.instanceClosed" }>
   | PluginUiResourceDelta

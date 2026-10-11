@@ -65,19 +65,20 @@ export interface CoreFanoutSite {
   loc: ScriptLoc;
   within?: string;
   /**
-   * 字面量基数：被迭代的是无展开的数组字面量
-   * 或从未被写入的 `const` 字面量绑定时的元素个数；其余缺席。铸造期算好，投影只读。
+   * Literal cardinality: element count when the iterated value is an array literal with no spread,
+   * or a `const` binding to such a literal that is never written; absent otherwise. Computed during
+   * construction and read-only during projection.
    */
   cardinality?: number;
 }
 
 /**
- * An OPEN `hole<T>()` site, AST-free (docs/analysis.md「Sites」). A filled hole is not a
+ * An OPEN `hole<T>()` site, AST-free (docs/analysis.md "Sites"). A filled hole is not a
  * step and is not listed here — it survives only as a phase in the trace.
  */
 export interface CoreHoleSite {
   id: string;
-  /** The filled hole whose body holds this hole (docs/analysis.md「Sites」); absent at the top level. */
+  /** The filled hole whose body holds this hole (docs/analysis.md "Sites"); absent at the top level. */
   fill?: string;
   order: number;
   /** The hole's literal name (its phase name; unique by rule 9012). */
@@ -135,9 +136,10 @@ export interface AnalysisCore {
 /**
  * Site-id vocabulary: is this label an actor site? (Actor labels never make data edges.)
  *
- * 修复原因：留白函数体里的站点带留白 id 的前缀（`hole#21b40fca/actor#1`，docs/analysis.md「Sites」），
- * 原先的 `startsWith("actor#")` 认不出它们，于是补全体内的 ask 全部解析不到 receiver、落到
- * `unknown` 车道。按**最后一段**判种类。
+ * Fix rationale: sites inside a hole body are prefixed with the hole ID
+ * (`hole#21b40fca/actor#1`; docs/analysis.md, “Sites”). The previous `startsWith("actor#")` check
+ * did not recognize them, so asks in completed bodies could not resolve their receiver and fell into
+ * the `unknown` lane. Determine the kind from the **last segment**.
  */
 export function isActorSite(site: string): boolean {
   return /(^|\/)actor#/.test(site);
@@ -205,7 +207,7 @@ function at(loc: ScriptLoc): string {
  *
  * A `hole` line is an OPEN hole (a filled one is not a step; `tail` marks the tail form and
  * `type=` is the author's spelling of the type argument); `fill=` on a phase names the filled
- * hole whose body wrote it (docs/analysis.md「Sites」).
+ * hole whose body wrote it (docs/analysis.md "Sites").
  *
  * Sites come first in source (`order`) order, kinds interleaved; `type=` carries the
  * materialized artifact type and `ports=` a join's per-port types (`-` = unknown).

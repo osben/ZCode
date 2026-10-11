@@ -82,7 +82,7 @@ export const sessionDebugSnapshotSchema = z
 export type SessionDebugSnapshot = z.infer<typeof sessionDebugSnapshotSchema>;
 export type SessionDebugNetworkEntry = z.infer<typeof sessionDebugNetworkEntrySchema>;
 
-/** 输出 token 与首输出到请求结束的同源时间；未知值不能用请求总耗时替代。 */
+/** Same-source timing from output token/first output through request completion; do not substitute total request duration for unknown values. */
 export function calculateOutputTps(
   outputTokens: number | undefined,
   generationDurationMs: number | null,

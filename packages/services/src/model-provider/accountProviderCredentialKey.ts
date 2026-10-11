@@ -12,10 +12,10 @@ export type AccountProviderCredentialScope = {
 );
 
 /**
- * Credential Store 的私有物理 key。
+ * Private physical key for the Credential Store.
  *
- * 旧账号标识同时承担 Config 身份和凭据缓存键，导致账号身份扩散到
- * Provider、Protocol 与 UI。物理键现在只留在拥有账号身份的 Services 凭据边界。
+ * The old account identifier served as both Config identity and credential-cache key, spreading account identity
+ * into Provider, Protocol, and UI. The physical key now stays within the Services credential boundary that owns account identity.
  */
 export function accountProviderCredentialKey(input: AccountProviderCredentialScope): string {
   const providerId = required(input.providerId, "Provider ID");

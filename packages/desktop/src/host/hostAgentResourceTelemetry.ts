@@ -11,11 +11,11 @@ interface RegisterHostAgentResourceTelemetryOptions {
 }
 
 /**
- * CLI 资源样本的 Host 转发。
+ * Host forwarding for CLI resource samples.
  *
- * Host 只做透传：样本的 lane 已由 services 在解析协议通知时按所属进程管理器打好，
- * heap / uptime / 运行机内存 / instanceToken 等新字段一并原样送给 main，
- * 由 main 决定角色归属与聚合。Host 不做任何统计，也不持有窗口。
+ * Host only passes samples through: services assigns the lane based on the owning process manager when parsing protocol notifications.
+ * New fields such as heap / uptime / machine memory / instanceToken are passed to Main as-is,
+ * which determines role ownership and aggregation. Host performs no statistics and owns no windows.
  */
 export function registerHostAgentResourceTelemetry(
   options: RegisterHostAgentResourceTelemetryOptions,
@@ -29,7 +29,7 @@ export function registerHostAgentResourceTelemetry(
         sample,
       });
     } catch {
-      // main 已退出或 IPC 不可用时只丢当前样本，禁止影响 Agent service 通知分发。
+      // If Main has exited or IPC is unavailable, drop only the current sample; do not affect Agent service notification delivery.
     }
   });
 }

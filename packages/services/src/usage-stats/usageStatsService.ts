@@ -39,11 +39,11 @@ interface UsageStatsServiceDependencies {
   ) => Promise<UsageApiAuthorization | null>;
   credentialService?: Pick<ICredentialService, "load">;
   env?: NodeJS.ProcessEnv;
-  /** App Usage 经 ZCode Protocol 读取 agent 数据库真实统计。 */
+  /** Read actual usage statistics from the agent database through the ZCode Protocol. */
   zcodeAgentService: Pick<IZCodeAgentService, "getAppUsageStats">;
   /**
-   * 官方 Server MCP 额度的凭证来源（与 server MCP 调用同一套 5 个身份头）。
-   * 缺省时 entitlement 快照不含 MCP 额度。
+   * Credential source for official Server MCP quota (the same five identity headers used by Server MCP calls).
+   * When omitted, the entitlement snapshot does not include MCP quota.
    */
   officialMcpCredentialSource?: OfficialMcpCredentialSource;
 }
@@ -67,17 +67,14 @@ export function createUsageStatsService(
       ? { officialMcpCredentialSource: dependencies.officialMcpCredentialSource }
       : {}),
   });
-  const regularTpsCache = new Map<
-    string,
-    { expiresAt: number; value: number | undefined }
-  >();
+  const regularTpsCache = new Map<string, { expiresAt: number; value: number | undefined }>();
   const regularTpsInFlight = new Map<string, Promise<number | undefined>>();
 
   function regularTpsCacheKey(request: CodingPlanRegularTpsRequest): string {
     return JSON.stringify([
       request.preferredProviderId,
-      // Team scope（organizationId/projectId）已内含在 accountAccess 里，整体入 key，
-      // 避免同一 provider 下不同账号或不同团队项目共用同一条 TPS 缓存。
+      // Team scope (organizationId/projectId) is already inside accountAccess; include it wholesale in the key
+      // so different accounts or team projects under the same provider do not share one TPS cache entry.
       request.accountAccess,
       request.timeZone ?? null,
     ]);
@@ -85,8 +82,8 @@ export function createUsageStatsService(
 
   return {
     async getAppUsageSnapshot(request: AppUsageRequest): Promise<AppUsageSnapshot> {
-      // App Usage 现读取 agent 数据库真实统计（model_usage/turn_usage/tool_usage），
-      // 经 ZCode Protocol usage/stats 取回。不再读本地 session JSON 估算。
+      // App Usage now reads actual statistics from the agent database (model_usage/turn_usage/tool_usage)
+      // through ZCode Protocol usage/stats. It no longer estimates from local session JSON.
       return dependencies.zcodeAgentService.getAppUsageStats({
         range: request.range,
         timeZone: request.timeZone,
@@ -96,8 +93,8 @@ export function createUsageStatsService(
       request: CodingPlanUsageRequest,
     ): Promise<CodingPlanUsageSnapshot> {
       if (!isCodingPlanProviderId(request.preferredProviderId)) {
-        // Coding Plan 页面只允许预置的 Z.AI/BigModel Coding Plan 账号。
-        // 普通 provider id 不能进入 monitor 链路，避免误读 API Key 或环境变量。
+        // The Coding Plan page supports only preconfigured Z.AI/BigModel Coding Plan accounts.
+        // Ordinary provider IDs must not enter the monitor path, to avoid reading an API key or environment variable by mistake.
         throw new Error("no_bigmodel_api_key");
       }
       return quotaProvider.getCodingPlanUsageSnapshot(request);
@@ -160,8 +157,8 @@ export function createUsageStatsService(
       await quotaProvider.markCodingPlanResetHistoryRead(request);
     },
     async getSnapshot(request: UsageStatsRequest): Promise<UsageStatsSnapshot> {
-      // App Usage 已迁移到 getAppUsageSnapshot（agent 数据库）。getSnapshot 仅服务 Coding Plan monitor 链路。
-      // 任何 monitor 失败都不能回退本地数据，保持数据源隔离。
+      // App Usage has moved to getAppUsageSnapshot (agent database). getSnapshot serves only the Coding Plan monitor path.
+      // A monitor failure must not fall back to local data, preserving source isolation.
       return quotaProvider.getUsageStatsSnapshot(request);
     },
     async getEntitlementSnapshot(

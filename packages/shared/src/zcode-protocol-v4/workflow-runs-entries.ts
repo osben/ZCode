@@ -1,23 +1,27 @@
 // ============================================================
-// 出生事实的读法：脚本作者写的那些字符串怎么按线上界落成一个 actor 条目
+// How birth facts are read: turning script-authored strings into an actor entry within wire limits
 // ============================================================
-// 从 workflow-runs-reducer.ts 拆出（主文件的 max-lines 门），与 -caps.ts / -eviction.ts /
-// -started.ts 同一条先例，也同一条纪律：纯函数、无时钟、无 I/O。
+// Split from workflow-runs-reducer.ts (the main file's max-lines gate), following the same
+// precedent and discipline as -caps.ts / -eviction.ts / -started.ts: pure functions, no clock,
+// no I/O.
 //
-// 这几个界不是展示预算而是**安全界**。名字与阶段名都是脚本作者任意拼出来的
-// （`agent("reader-" + paths.join("+"))`、`phase("检查 " + file)`），而 CLI 不校验出站帧、
-// 渲染端对每一帧做严格校验——2026-09-04 一个 131 字的子代理名让父会话在那个 actor 出现之后的
-// 每一帧（online / recovery / initial 快照）全部被拒，订阅以 `fault.subscription.recoveryFailed`
-// 永久失效。所以生产者按 schema 界裁剪，线上永远合法；完整值仍在 journal 里。
+// These limits are **safety limits**, not display budgets. Names and phase names are arbitrary
+// strings assembled by script authors (`agent("reader-" + paths.join("+"))`,
+// `phase("检查 " + file)`), and while the CLI does not validate outbound frames, the renderer
+// strictly validates every frame — on 2026-09-04 a 131-character subagent name caused every frame
+// (online / recovery / initial snapshot) in the parent session after that actor appeared to be
+// rejected, and the subscription permanently failed with `fault.subscription.recoveryFailed`.
+// So producers trim to schema limits and stay wire-legal forever; full values remain in the journal.
 
 import { WORKFLOW_RUNS_LIMITS, type WorkflowRunActor } from "./workflow-runs.js";
 
 /**
- * 一个 actor 条目的铸造。两处调用必须**逐字同形**：`actor-created`，以及带出生事实的
- * `node-dispatched`（workflow-runs-eviction.ts 的 activation）——同一个子代理按到达路径长出
- * 两种条目，就是两条会在冷回放里对不上的记录。
+ * Create one actor entry. Both call sites must be **identical**: `actor-created` and the `node-dispatched`
+ * activation with birth facts in workflow-runs-eviction.ts. The same subagent can arrive through either
+ * path; different entries would not match during cold replay.
  *
- * `status` 落的是占位值：紧接着的 `withDerivedWorkflowActorStatuses` 会按节点与 run 终态重算。
+ * `status` is a placeholder; the following `withDerivedWorkflowActorStatuses` recalculates it from node
+ * and run terminal states.
  */
 export function workflowActorEntry(
   ref: { siteId: string; ordinal: number },
@@ -40,8 +44,9 @@ export function workflowActorEntry(
 }
 
 /**
- * 子代理模型的线上界：超界**整个丢掉**而不截断——截断的规范串是另一个（不存在的）模型，
- * 画出来就是一句假话；缺席只是退回「跑在 run 的子代理模型上」那一格。
+ * Wire limit for subagent models: oversized values are **dropped entirely** rather than
+ * truncated — a truncated canonical string would name a different (nonexistent) model, which is
+ * a lie when rendered; absence merely falls back to the "runs on the run's subagent model" slot.
  */
 function boundedActorModel(model: string | undefined): string | undefined {
   return model === undefined || model.length > WORKFLOW_RUNS_LIMITS.maxSubagentModelLength
@@ -49,23 +54,25 @@ function boundedActorModel(model: string | undefined): string | undefined {
     : model;
 }
 
-/** 子代理展示名的线上界（见文件头那次订阅失效）。 */
+/** Wire limit for subagent display names (see the subscription failure described at the file top). */
 export function boundedActorName(name: string | undefined): string | undefined {
   return name === undefined ? undefined : name.slice(0, WORKFLOW_RUNS_LIMITS.maxActorNameLength);
 }
 
 /**
- * 实例出生阶段名的线上界（docs/dynamic-workflow/presentation.md）。与 {@link boundedActorName}
- * 同族、同理由，但**直接截断、不加省略号**——这个字段不是给人读的文本而是一个关联键，
- * UI 的 `phaseNameMatches` 正是按前缀把截断的名字关联回 display 阶段。
+ * Wire limit for an instance's birth phase name (docs/dynamic-workflow/presentation.md). It
+ * follows {@link boundedActorName} for the same reason, but **truncates directly without an
+ * ellipsis**: this is a correlation key, not user-facing text, and the UI's `phaseNameMatches`
+ * matches the truncated name to a display phase by prefix.
  */
 export function boundedPhaseName(name: string | undefined): string | undefined {
   return name === undefined ? undefined : name.slice(0, WORKFLOW_RUNS_LIMITS.maxPhaseNameLength);
 }
 
 /**
- * 会话 id 的线上读法：界内的非空串原样收下，其余一律当缺席。**不截断**——与子代理模型串同理，
- * 一个被砍短的 id 指向的是另一条会话，宁可不认。
+ * Wire reading of session ids: non-empty strings within the limit are accepted as-is; everything
+ * else is treated as absent. **No truncation** — for the same reason as the subagent model
+ * string, a shortened id points to a different session; better to not recognize it at all.
  */
 export function boundedSessionId(value: unknown): string | undefined {
   const text = nonEmptyString(value);
@@ -74,12 +81,12 @@ export function boundedSessionId(value: unknown): string | undefined {
     : undefined;
 }
 
-/** 空串按缺席处理：协议线上只有「键在场」与「键缺席」两态。 */
+/** Treat an empty string as absent; on the wire, the protocol has only two states: key present or key absent. */
 export function nonEmptyString(value: unknown): string | undefined {
   return typeof value === "string" && value.length > 0 ? value : undefined;
 }
 
-/** 引擎的 `InstanceRef` / `ActorRef` 同构：站点 id × 序号。缺任一即无法定位，返回 null。 */
+/** Isomorphic to the engine's `InstanceRef` / `ActorRef`: site id × ordinal. Missing either makes it unaddressable; return null. */
 export function workflowInstanceRef(value: unknown): { siteId: string; ordinal: number } | null {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
   const record = value as Record<string, unknown>;

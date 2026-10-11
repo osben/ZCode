@@ -22,7 +22,7 @@ export function pickOrgAndProject(customerInfo: RemoteCustomerInfo): {
   const personalOrganizations = (customerInfo.organizations ?? [])
     .map((organization) => ({
       organization,
-      // Team Plan 项目会和个人项目一起返回；个人 Key 只能从非团队项目解析。
+      // Team Plan projects are returned together with personal projects; resolve personal keys only from non-team projects.
       projects: (organization.projects ?? []).filter(
         (project) => String(project.projectType ?? "").trim() !== "2",
       ),

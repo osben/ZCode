@@ -283,7 +283,7 @@ export function createQuickPickCommands({
       sectionId: "app",
       titleId: "quickPick.command.login",
       icon: "login",
-      // 命令面板的账号动作对用户表达为“连接/断开连接”，搜索词也要同步。
+      // Account actions in the command palette are presented as “Connect/Disconnect,” so search terms must match.
       keywords: ["connect", "login", "sign in", "连接", "登录"],
       run: handlers.login,
     });

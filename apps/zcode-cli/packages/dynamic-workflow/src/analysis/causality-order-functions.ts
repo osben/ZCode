@@ -2,9 +2,11 @@ import ts from "typescript";
 import { isFunctionLike } from "./sites.js";
 import type { ApplicationVia } from "./state.js";
 
-// causality-order.ts 顶到 oxlint max-lines 上限（400 行），把函数解析类的纯辅助
-// （脚本函数判定、外层函数链、函数命名、调用声明解析、递归 SCC 预计算、绑定名展开）拆到
-// 本文件；公开面仍从 causality-order.ts 导出。这里的函数都不读走查状态，只看 AST 与 checker。
+// causality-order.ts reached oxlint's max-lines limit (400), so pure function-resolution helpers
+// (script-function detection, enclosing-function chain, function naming, call declaration
+// resolution, recursive SCC precomputation, and binding-name expansion) were moved here; the
+// public surface is still exported from causality-order.ts. These functions do not read traversal
+// state; they inspect only the AST and checker.
 
 export type ScriptFunction = ts.SignatureDeclaration & { body: ts.Node };
 

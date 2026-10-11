@@ -38,8 +38,8 @@ export function directoryExists(path: string): boolean {
 }
 
 /**
- * 「路径缺失」只认 ENOENT/ENOTDIR（stat 的精确错误码）。EACCES 等权限错误
- * 不是缺失——调用方不得据此发「不存在」诊断，避免把权限问题误报成 manifest 配错。
+ * Treat a path as missing only for ENOENT/ENOTDIR (the exact stat error codes). Permission errors such as EACCES
+ * do not mean the path is missing; callers must not report “not found” and misdiagnose a permissions issue as a manifest error.
  */
 export function isMissingPath(path: string): boolean {
   try {
@@ -95,7 +95,7 @@ export function appendPluginSourceCleanupError(
   if (cleanupError === undefined || !(primaryError instanceof Error)) return primaryError;
   const cleanupMessage =
     cleanupError instanceof Error ? cleanupError.message : String(cleanupError);
-  // 临时目录删除失败只能作为附加诊断，不能覆盖下载、校验或解压的原始错误。
+  // Failure to remove the temporary directory is only an additional diagnostic; it must not replace the original download, verification, or extraction error.
   primaryError.message = `${primaryError.message}; plugin source cleanup also failed: ${cleanupMessage}`;
   return primaryError;
 }

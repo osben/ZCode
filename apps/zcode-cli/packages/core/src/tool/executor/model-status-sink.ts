@@ -9,14 +9,17 @@ import { withModelInvocationContext } from "../../runtime/methods/runtime-model.
 import type { ToolExecutionContext } from "../types.js";
 
 /**
- * 工具内部模型请求的默认状态出口。
+ * Default status sink for model requests made inside tools.
  *
- * `statusSink` 不能是每个调用点各自的职责——WebSearch 记得设，WebFetch 处理没有。
- * 没有 sink 的请求照样过准入闸门、照样排队，但 runner 发的 queued / admitted / 429 事件没有去处：
- * 执行器的 deadline 不知道该暂停（实测 18 次 WebFetch 在队里等了 20–45 s 后按
- * 60 s 超时被取消，错误里 `queuedMs: 0`），driver 也看不见这个子代理在等。
- * 与准入端口同一处置：默认值绑在**边界**上而不是靠调用点记得——执行器交给 handler 的
- * `context.model` 先套一层，调用点没设 sink 时补上会话事件出口；调用点自己设了则原样保留。
+ * Each call site cannot be responsible for setting `statusSink`: WebSearch did, but
+ * WebFetch did not. Requests without a sink still pass through and queue at the
+ * admission gate, but the runner's queued / admitted / 429 events have nowhere to go.
+ * The executor cannot pause its deadline (in one observed case, 18 WebFetch requests
+ * waited 20–45 seconds in the queue and were cancelled at 60 seconds with `queuedMs: 0`),
+ * and the driver cannot see that the subagent is waiting either.
+ * Like the admission port, attach the default at the **boundary** instead of relying on
+ * each call site to remember it: wrap `context.model` passed to the handler and provide
+ * the session-event sink only when the call site did not supply one.
  */
 export function createToolModelStatusSink(
   context: Pick<ToolExecutionContext, "emitEvent" | "sessionId" | "turnId" | "traceId">,
@@ -39,7 +42,7 @@ export function createToolModelStatusSink(
   };
 }
 
-/** 调用点未设 `statusSink` 时补默认出口；设了的保留（默认值不压调用层）。 */
+/** Add the default sink when the call site has none; preserve a call-site sink (the default never overrides it). */
 export function withDefaultToolModelStatusSink(
   model: Model | undefined,
   sink: ModelStatusSink | undefined,

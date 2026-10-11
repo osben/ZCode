@@ -59,9 +59,7 @@ function parseRemoteImageUrl(value: unknown): URL | null {
   }
 }
 
-async function resolvePublicRemoteUrl(
-  url: URL,
-): Promise<Awaited<ReturnType<typeof lookup>>> {
+async function resolvePublicRemoteUrl(url: URL): Promise<Awaited<ReturnType<typeof lookup>>> {
   const hostname = url.hostname.replace(/^\[|\]$/g, "").toLowerCase();
   if (hostname === "localhost" || hostname.endsWith(".localhost")) {
     throw new SaveFileError("remote_address_not_allowed");
@@ -102,8 +100,9 @@ async function fetchPublicRemoteUrl(
       }
       callback(null, address.address, address.family);
     };
-    // DNS 校验结果必须绑定到连接阶段；dispatcher 禁止底层再次解析域名，
-    // 从而关闭“预检查公网、实际连接私网”的 DNS rebinding 窗口。
+    // Bind DNS validation to the connection phase. The dispatcher prevents the transport from
+    // resolving the hostname again, closing the DNS-rebinding window between checking a public
+    // address and connecting to a private one.
     const dispatcher = new Agent({ connect: { lookup: pinnedLookup } });
     let response: Awaited<ReturnType<typeof undiciFetch>>;
     try {
@@ -133,10 +132,7 @@ async function fetchPublicRemoteUrl(
   throw new SaveFileError("download_failed");
 }
 
-async function downloadRemoteFile(
-  sourceUrl: URL,
-  destinationPath: string,
-): Promise<void> {
+async function downloadRemoteFile(sourceUrl: URL, destinationPath: string): Promise<void> {
   const controller = new AbortController();
   const temporaryDirectory = await mkdtemp(join(tmpdir(), "zcode-save-file-"));
   const temporaryPath = join(temporaryDirectory, "download");
@@ -145,7 +141,8 @@ async function downloadRemoteFile(
   let dispatcher: Agent | null = null;
   const timeout = setTimeout(() => controller.abort(), REMOTE_DOWNLOAD_TIMEOUT_MS);
   try {
-    // renderer 的 CORS 边界不能放大成 main 可访问内网；初始地址和每次重定向都先解析并拒绝非公网地址。
+    // The renderer's CORS boundary must not expand into main-process access to private networks;
+    // resolve the initial URL and every redirect first, and reject non-public addresses.
     const remoteResponse = await fetchPublicRemoteUrl(sourceUrl, controller.signal);
     dispatcher = remoteResponse.dispatcher;
     const { response } = remoteResponse;
@@ -165,7 +162,7 @@ async function downloadRemoteFile(
       if (done) break;
       receivedBytes += value.byteLength;
       if (receivedBytes > MAX_SAVE_FILE_BYTES) {
-        // 容量限制必须在读取过程中执行；完整缓冲后再校验无法保护 renderer/main 内存。
+        // Enforce the size limit while reading; validating only after buffering the whole response cannot protect renderer/main memory.
         controller.abort();
         throw new SaveFileError("file_too_large");
       }

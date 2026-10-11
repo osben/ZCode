@@ -93,8 +93,7 @@ export function usePptxFileWatch({
             changedPath: event.changedPath,
           });
           setSnapshot((current) =>
-            current.filePath === filePath &&
-            current.fileWatcherService === fileWatcherService
+            current.filePath === filePath && current.fileWatcherService === fileWatcherService
               ? {
                   ...current,
                   ready: true,
@@ -104,8 +103,7 @@ export function usePptxFileWatch({
           );
         });
         setSnapshot((current) =>
-          current.filePath === filePath &&
-          current.fileWatcherService === fileWatcherService
+          current.filePath === filePath && current.fileWatcherService === fileWatcherService
             ? { ...current, ready: true }
             : current,
         );
@@ -114,15 +112,14 @@ export function usePptxFileWatch({
         if (cancelled) {
           return;
         }
-        // 文件监听只负责自动刷新；注册失败时仍允许首次读取和手动重新打开文件。
+        // Watching only provides automatic refresh; if registration fails, the initial read and manual reopen still work.
         logger.warn("[PptxFileWatch] 监听 PPTX 所在目录失败", {
           path: filePath,
           directoryPath,
           error: error instanceof Error ? error.message : String(error),
         });
         setSnapshot((current) =>
-          current.filePath === filePath &&
-          current.fileWatcherService === fileWatcherService
+          current.filePath === filePath && current.fileWatcherService === fileWatcherService
             ? { ...current, ready: true }
             : current,
         );
@@ -132,22 +129,19 @@ export function usePptxFileWatch({
       cancelled = true;
       subscription?.dispose();
       if (watcherId) {
-        void fileWatcherService
-          .unwatch({ id: watcherId })
-          .catch((error: unknown) => {
-            logger.warn("[PptxFileWatch] 停止监听 PPTX 所在目录失败", {
-              path: filePath,
-              error: error instanceof Error ? error.message : String(error),
-            });
+        void fileWatcherService.unwatch({ id: watcherId }).catch((error: unknown) => {
+          logger.warn("[PptxFileWatch] 停止监听 PPTX 所在目录失败", {
+            path: filePath,
+            error: error instanceof Error ? error.message : String(error),
           });
+        });
       }
     };
   }, [filePath, fileWatcherService]);
 
-  // 远程重连或 Host 替换会在 source path 不变时切换 workspace service。
-  // ready 必须属于当前 watcher service，不能在 effect 清理前复用旧 service 的订阅状态。
-  return snapshot.filePath === filePath &&
-    snapshot.fileWatcherService === fileWatcherService
+  // A remote reconnect or Host replacement can switch the workspace service while the source path stays the same.
+  // ready must belong to the current watcher service; do not reuse subscription state from the old service before the effect cleans it up.
+  return snapshot.filePath === filePath && snapshot.fileWatcherService === fileWatcherService
     ? {
         ready: snapshot.ready,
         reloadGeneration: snapshot.reloadGeneration,

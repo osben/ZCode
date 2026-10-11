@@ -112,7 +112,7 @@ const ContextIcon = () => {
 };
 
 export type ContextTriggerProps = ComponentProps<typeof Button> & {
-  /** 触发器转圈：额度自动重置进行中时替换 ContextIcon（对应「正在重置」状态）。 */
+  /** Spinner in the trigger, replacing ContextIcon while quota auto-reset is in progress (the "Resetting" state). */
   loading?: boolean;
 };
 

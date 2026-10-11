@@ -15,7 +15,7 @@ export async function readPackageNotices(directory) {
   async function visit(path) {
     for (const entry of await readdir(path, { withFileTypes: true })) {
       if (["node_modules", ".git", "test", "tests", "fixtures"].includes(entry.name)) continue;
-      // Chromium 聚合许可由打包流程经 resources/licenses/electron 单独分发，不进 npm 通知。
+      // The packaging process distributes Chromium's aggregate license separately through resources/licenses/electron; it is not included in npm notices.
       if (entry.isFile() && entry.name === "LICENSES.chromium.html") continue;
       const full = join(path, entry.name);
       if (entry.isDirectory()) await visit(full);
@@ -40,7 +40,7 @@ export async function readPackageNotices(directory) {
   return files.sort((a, b) => a.member.localeCompare(b.member, "en"));
 }
 
-// 解析锁文件（v9）packages 段的平台约束：`  'name@version':` 下的 `    os/cpu/libc: [..]` 行。
+// Parse platform constraints in the lockfile v9 `packages` section: `os/cpu/libc: [...]` lines under a `name@version` entry.
 export function readLockfilePlatformConstraints(lockfileText) {
   const constraints = new Map();
   let inPackages = false;
@@ -69,7 +69,7 @@ export function readLockfilePlatformConstraints(lockfileText) {
   return constraints;
 }
 
-// 照搬 pnpm package-is-installable 的 checkList，保证与实际安装结果一致（含否定项语义）。
+// Mirror pnpm package-is-installable’s checkList so the result matches actual installation, including negated constraints.
 function pnpmCheckList(values, list) {
   if (list.length === 1 && list[0] === "any") return true;
   let match = false;
@@ -87,7 +87,7 @@ function pnpmCheckList(values, list) {
   return match || blc === list.length;
 }
 
-// targets.libc 为 null 表示宿主 libc 未知（非 Linux），pnpm 此时不检查 libc。
+// A null `targets.libc` means the host libc is unknown (non-Linux); pnpm does not check libc in that case.
 export function createInstallablePackageFilter(constraints, targets) {
   return (name, version) => {
     const wanted = constraints.get(`${name}@${version.split("(")[0]}`);
@@ -104,7 +104,7 @@ function hostLibc() {
   return process.report?.getReport?.()?.header?.glibcVersionRuntime ? "glibc" : "musl";
 }
 
-// 与 pnpm checkPlatform 相同：supportedArchitectures 未配置时只取宿主，`current` 替换为宿主值。
+// Match pnpm checkPlatform: when supportedArchitectures is unset, use only the host; replace `current` with the host value.
 export async function readInstallTargets(root) {
   const { parse } = await import("yaml");
   const workspace = parse(await readFile(join(root, "pnpm-workspace.yaml"), "utf8")) ?? {};
@@ -119,8 +119,8 @@ export async function readInstallTargets(root) {
   };
 }
 
-// 修复：pnpm 按 supportedArchitectures 跳过的平台包（如 sharp 的 s390x/wasm32 构建）从不安装、不分发，
-// 此前靠按包名的例外名单放行，新依赖一引入就会误报缺失；现在按锁文件平台约束整棵子树跳过。
+// Fix: platform packages skipped by pnpm according to supportedArchitectures (such as Sharp’s s390x/wasm32 builds) are never installed or distributed,
+// Previously, a package-name exception list allowed them, so adding a dependency caused false missing-package reports; now the entire subtree is skipped according to lockfile platform constraints.
 export function productionPackages(projects, isInstallable = () => true) {
   const own = new Set(projects.map((project) => project.name));
   const required = new Map();
@@ -157,7 +157,7 @@ export function assertProductionGraphs(lockedProjects, installedProjects, isInst
 
 export async function readWorkspaceProductionGraph(root) {
   root = await realpath(root);
-  // 修复：pnpm ls 默认读取安装快照，不能把旧图与当前锁文件哈希拼成有效声明。
+  // Fix: pnpm ls reads the installed snapshot by default; do not combine an old graph with the current lockfile hash to produce a seemingly valid declaration.
   const [locked, actual] = await Promise.all(
     [true, false].map(async (lockfileOnly) => {
       const { stdout } = await exec(
@@ -189,7 +189,7 @@ export async function readWorkspaceProductionGraph(root) {
 }
 
 export async function scanInstalledPackages(root, projects) {
-  // pnpm hoisted 布局的 ls.path 仍可能指向不存在的 .pnpm 路径；按真实安装目录和精确版本匹配。
+  // In pnpm's hoisted layout, ls.path may still point to a nonexistent .pnpm path; match by the real install directory and exact version.
   const installed = new Map();
   const visited = new Set();
   async function scanNodeModules(directory) {
@@ -239,7 +239,7 @@ export function missingProductionPackages(required, installed) {
 export async function collectNpmNotices(root, overrides) {
   root = await realpath(root);
   const { required, projects } = await readWorkspaceProductionGraph(root);
-  // 修复：标识门禁和声明生成必须扫描同一安装集合，避免嵌套版本只进声明、不进门禁。
+  // Fix: the license gate and notice generation must scan the same installed package set, so nested versions are not included only in the notices.
   const installed = await scanInstalledPackages(root, projects);
   const packages = [];
   const missing = [];
@@ -257,7 +257,7 @@ export async function collectNpmNotices(root, overrides) {
       if (hashBytes(bytes) !== override.sha256) throw new Error(`Changed upstream notice: ${key}`);
       notices.push({ member: override.source, bytes });
     }
-    // README 中仅有 MIT 等标签不能冒充完整许可文件；这种包仍需要版本固定的补充材料。
+    // MIT and similar labels in a README are not a substitute for the full license file; this package still needs version-pinned supplemental material.
     if (
       !notices.some(({ member }) => !member.endsWith(" (license section)")) &&
       !override?.acceptedMissingNotice

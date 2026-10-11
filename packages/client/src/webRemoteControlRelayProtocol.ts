@@ -16,11 +16,7 @@ export interface WebRemoteControlRelayProtocolOptions {
   maxBufferedFrames?: number;
   bufferedFrameTimeoutMs?: number | null;
   onBufferedFrameTimeout?(count: number): void;
-  onFrameGap?(gap: {
-    bridgeSessionId: string;
-    seq: number;
-    expectedSeq: number;
-  }): void;
+  onFrameGap?(gap: { bridgeSessionId: string; seq: number; expectedSeq: number }): void;
 }
 
 export interface WebRemoteControlRelayProtocolAdapter {
@@ -145,8 +141,8 @@ export function createWebRemoteControlRelayProtocol({
       return;
     }
     degraded = true;
-    // Bugfix: 手机硬恢复期间旧 bridge 的 RPC frame 已经无法判断幂等性。
-    // 这里进入 degraded 后立即丢弃旧 buffer，避免 paired/send-ready 恢复时把旧请求刷到新状态里。
+    // Bugfix: during hard recovery on mobile, RPC frames from the old bridge can no longer be checked for idempotency.
+    // Discard the old buffer as soon as the relay enters degraded state, so paired/send-ready recovery cannot flush stale requests into the new state.
     dropBufferedFrames();
   }
 
@@ -173,8 +169,8 @@ export function createWebRemoteControlRelayProtocol({
         flushPendingFrames();
         return;
       }
-      // Bugfix: relay suspect 窗口内 sendFrame 可能返回 false。
-      // RPC 帧不能静默丢弃，先短暂缓冲，等 transport 恢复 paired 后再按序 flush。
+      // Bugfix: sendFrame may return false while the relay is suspect.
+      // Do not silently drop RPC frames; buffer them briefly and flush in order when the transport returns to paired.
       if (!trySendFrame(frame)) {
         bufferFrame(frame);
       }

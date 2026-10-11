@@ -1,8 +1,10 @@
 /**
- * engine.ts 顶到 oxlint max-lines 上限（400 行），把 `report()` 的发布路径（序列化探针、
- * replay 去重、标签校验、两个上限、一次写）拆到本文件；公开面仍从 engine.ts 导出。
+ * engine.ts reached oxlint's max-lines limit (400), so the `report()` publication path
+ * (serialization probe, replay deduplication, label validation, two caps, one write) was moved to
+ * this file; the public surface is still exported from engine.ts.
  *
- * 自由函数经 {@link EngineState} 接缝读写引擎状态；WorkflowEngine.report 只是薄委托。
+ * The free function reads and writes engine state through the {@link EngineState} seam;
+ * WorkflowEngine.report is only a thin delegate.
  */
 
 import { inputHash } from "./hash.js";
@@ -14,22 +16,21 @@ import type { InstanceRef } from "./types.js";
 import { refToString, WorkflowError } from "./types.js";
 
 /**
- * 发布一条中间结果（Boundary A 的 `report`）。同步、无返回值、无 driver 往返：
- * 落一行 journal + 发一个事件就结束。
+ * Publish an intermediate result (`report` in Boundary A). Synchronous, no return value, and no
+ * driver round trip: write one journal row and emit one event.
  *
- * 四件事，顺序是有讲究的：
+ * The four steps below must stay in this order:
  *
- * 1. **序列化探针先行**。用 `JSON.stringify` 一次拿到两样东西：item 到底能不能被 JSON
- *    表示，以及它的字节数（上限的度量）。必须在 canonicalJson 之前——带环的 item 会让
- *    canonicalJson 递归爆栈，那是一次崩溃而不是一次可读的失败。
- * 2. **replay 命中即跳过**：不发事件、不重写记录。跳过之前先比对 inputHash，不一致按
- *    纯度违约让 run 大声失败。这条比对是**防御性的**（一条报告派生自 journal 已经钉住的
- *    值），但它是免费的，而这里的偏移意味着整个 replay 不可靠——Results 面板的读者绝不
- *    应该在不知情的情况下看到那种东西。
- * 3. **上限先于落库**：单条字节数、条数、run 级字节总数任一超出即 `ReportCapExceeded`
- *    失败整个 run。
- *    run 级而非 node 级，因为 `report` 返回 `void`，没有可拒绝进去的地方。
- * 4. **一次写**：`completed`、无 actor 字段。
+ * 1. **Probe serialization first**. One `JSON.stringify` yields both whether the item is JSON-representable
+ *    and its byte size (the limit metric). This must happen before canonicalJson: a cyclic item makes
+ *    canonicalJson recurse until a stack overflow, a crash rather than a readable failure.
+ * 2. **Skip replay hits immediately**: emit no event and rewrite no records. Before skipping, compare inputHash; on mismatch, fail the run loudly as a
+ *    purity violation. This comparison is **defensive** (the report derives from a value already fixed by the journal),
+ *    but it is free, and a mismatch here means the entire replay is unreliable—the Results panel must never show it without warning.
+ * 3. **Check limits before persistence**: exceeding the per-item byte limit, item count, or run-level byte total raises `ReportCapExceeded`
+ *    and fails the entire run.
+ *    This is run-level rather than node-level because `report` returns `void` and has no rejection channel.
+ * 4. **Write once**: `completed`, with no actor field.
  */
 export function publishReport(
   state: EngineState,
@@ -37,32 +38,35 @@ export function publishReport(
   item: unknown,
   artifactId?: string,
 ): void {
-  if (state.isRunSettled()) return; // 与 log 同：结算之后不再受理
+  if (state.isRunSettled()) return; // Same as log: do not accept after settlement.
   const ordinal = state.nextOrdinal(siteId);
   const instance: InstanceRef = { siteId, ordinal };
 
   const serialized = probeReportItem(state, instance, item);
-  if (serialized === undefined) return; // 探针已 failRun
-  // inputHash 刻意**只覆盖 item**，标签不进哈希：标签是站点上的编译期字面量，而 resume
-  // 要求脚本逐字节相同（script_hash），所以同一 (siteId, ordinal) 的标签不可能变。把它加进
-  // 哈希输入的唯一效果，是让**每一条**既有 journal 里的无标签 report 在 resume 时
-  // InputHashMismatch——一次没有任何收益的破坏性载荷形变。
+  if (serialized === undefined) return; // The probe already failed the run.
+  // inputHash intentionally covers **only the item**, not its label: the label is a compile-time
+  // literal at the site, and resume requires byte-identical script text (script_hash), so a label
+  // at the same (siteId, ordinal) cannot change. Including it in the hash would only make **every**
+  // existing untagged report in the journal fail resume with InputHashMismatch—a destructive
+  // payload change with no benefit.
   const hash = inputHash(item);
 
-  // 只比对哈希，不读 item（docs/execution-engine.md「Reading the journal」）：resume 重放一个
-  // 报了 65,536 条的脚本时，每一次命中都去解一条 ≤1 MiB 的 item 再扔掉，是按总字节数付的钱。
+  // Compare hashes only; do not read the item (docs/execution-engine.md, “Reading the journal”): replaying a script with 65,536 reports would otherwise
+  // decode and discard an item up to 1 MiB on every cache hit, paying the cost of all serialized bytes.
   const recorded = state.journal.getNode(state.runId, siteId, ordinal, { withResult: false });
   if (recorded !== undefined) {
     if (recorded.inputHash !== hash) {
       state.failRun(hashMismatch(instance, recorded.inputHash, hash));
       return;
     }
-    return; // replay 去重：静默跳过（无事件、不重复 append）
+    return; // Replay deduplication: silently skip (no event, no duplicate append).
   }
 
-  // 标签在场：它必须已经被声明为**预置**产物。查在上限之前——一个指向不存在看板的标签
-  // 是脚本写错了，不是容量事件，两者混在一起会让错误码骗人。
-  // failRun 而不是拒绝，理由与 report 的两个上限完全相同：void 返回没有拒绝通道。
+  // A present label must already be declared as a **preset** artifact. Check this before caps: a
+  // label pointing to a nonexistent dashboard is a script error, not a capacity event; mixing the
+  // two would make the error code misleading.
+  // Use failRun rather than rejection for the same reason as the two report caps: void has no
+  // rejection channel.
   if (artifactId !== undefined && !isDeclaredPreset(state, artifactId)) {
     state.failRun(
       new WorkflowError(
@@ -85,8 +89,8 @@ export function publishReport(
     inputHash: hash,
     status: "completed",
     result: item,
-    // 打了标签的 report 行是「看板 = journal 的投影」这条不变式的落点：一个看板的每个点
-    // 就是一行 kind = report ∧ artifact_id = 该 id。
+    // A tagged report row implements the invariant “dashboard = projection of the journal”: each
+    // point on a dashboard is one row with kind = report ∧ artifact_id = that ID.
     ...(artifactId === undefined ? {} : { artifactId }),
   });
   state.record({
@@ -98,18 +102,21 @@ export function publishReport(
 }
 
 /**
- * report 的**运行期 JSON 护栏**（编译期的可序列化诊断是 suspenders，这里是 belt）。
- * 返回 item 的序列化文本；不可表示时 failRun 并返回 undefined。
+ * **Runtime JSON guard** for report (the compile-time serializability diagnostic is the suspenders;
+ * this is the belt). Return the serialized item; if it cannot be represented, fail the run and
+ * return undefined.
  *
- * 为什么用 `JSON.stringify` 而不是 `canonicalJson`：canonicalJson 是**全函数**的（把
- * undefined/函数静默折成 `"null"`，遇到环则递归爆栈），这正是它作为哈希输入该有的样子，
- * 但作为护栏它会把一个残缺的 item 悄悄落进 journal。`JSON.stringify` 相反：环与 bigint
- * 抛错、undefined/函数/symbol 返回 undefined——两种情形都能被抓成一次大声的失败。
+ * Why `JSON.stringify` instead of `canonicalJson`: canonicalJson is **total** (silently folds
+ * undefined/functions into `"null"` and recurses to stack overflow on cycles), which is useful for
+ * hash input, but as a guard it would silently store an incomplete item in the journal.
+ * `JSON.stringify` behaves differently: cycles and bigint throw, while undefined/functions/symbols
+ * return undefined—both cases can be caught and turned into a loud failure.
  *
- * 错误码选 `DriverError` 而不是 `ReportCapExceeded`：这不是一个上限（上限是数量），而是
- * 「item 不是 JSON」这条契约被破坏，而那条契约的正门是编译期诊断。走到这里说明有东西
- * 绕过了正门（典型是经 `any` 造出的环），所以它是一次契约破裂而不是一次容量事件——
- * 让 `ReportCapExceeded` 只表示上限，读者才能据码行动。
+ * Choose `DriverError` rather than `ReportCapExceeded`: this is not a cap (the cap is about count),
+ * but a violation of the “item is JSON” contract whose front door is the compile-time diagnostic.
+ * Reaching this point means something bypassed that check (typically a cycle created through
+ * `any`), so this is a contract breach rather than a capacity event. Keep `ReportCapExceeded` for
+ * cap violations so readers can act on the code.
  */
 function probeReportItem(
   state: EngineState,
@@ -131,7 +138,7 @@ function probeReportItem(
     return undefined;
   }
   if (serialized === undefined) {
-    // JSON.stringify 对 undefined / 函数 / symbol 返回 undefined。
+    // JSON.stringify returns undefined for undefined / functions / symbols.
     state.failRun(
       new WorkflowError(
         "DriverError",
@@ -145,10 +152,10 @@ function probeReportItem(
 }
 
 /**
- * report 的三个上限（单条字节数、条数、run 级字节总数）。任一超出即 failRun 并返回 false。
+ * The three report limits (per-item bytes, item count, and run-level byte total). Exceeding any of them calls failRun and returns false.
  *
- * 顺序按「错在哪一条」：单条过大是这一条 item 的问题，与 run 攒了多少无关，所以先判；两个
- * run 级上限在后，且都在计数之前——被拒的那条不进计数，失败信息里的数字才是真的。
+ * Check in the order that identifies the failure: an oversized item is a problem with that item, regardless of how much the run has accumulated, so check it first;
+ * then check the two run-level limits, both before incrementing counters so a rejected item is excluded and failure messages report accurate counts.
  */
 function reserveReport(state: EngineState, instance: InstanceRef, serialized: string): boolean {
   const bytes = utf8ByteLength(serialized);
@@ -189,9 +196,10 @@ function reserveReport(state: EngineState, instance: InstanceRef, serialized: st
 }
 
 /**
- * 一个字符串的 UTF-8 字节数（report 单条上限的度量）。用 `TextEncoder`（ECMAScript/WHATWG
- * 标准全局）而不是 `Buffer.byteLength`：本包保持零 node 内建依赖。上限论的是**字节**而非
- * 字符——一份中文 findings 的字符数只有字节数的三分之一，按字符计会让上限形同虚设。
+ * UTF-8 byte length of a string (the unit for the per-item report cap). Use `TextEncoder` (a
+ * standard ECMAScript/WHATWG global) instead of `Buffer.byteLength` to keep this package free of
+ * Node built-in dependencies. The cap is about **bytes**, not characters: Chinese findings use
+ * about three bytes per character, so counting characters would make the limit ineffective.
  */
 function utf8ByteLength(value: string): number {
   return new TextEncoder().encode(value).length;

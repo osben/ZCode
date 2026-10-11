@@ -72,8 +72,9 @@ interface EmbeddedSearchCommandBackend {
   command: string;
   args?: string[];
   /**
-   * backend 调用需要的环境变量。桌面端 Electron Helper 执行
-   * zcode.cjs 时必须带 ELECTRON_RUN_AS_NODE=1，否则会按 Electron 子进程启动。
+   * Environment variables required by the backend call. When the Desktop Electron Helper
+   * executes zcode.cjs, it must set ELECTRON_RUN_AS_NODE=1; otherwise, it starts as an Electron
+   * child process.
    */
   env?: Record<string, string>;
 }
@@ -101,7 +102,7 @@ export type EmbeddedSearchBackend =
 export interface ExecutionEmbeddedSearchPrelude {
   kind: "embedded-search";
   backend: EmbeddedSearchBackend;
-  /** false 时不定义 find/grep，只保留与原契约一致的 rg fallback。 */
+  /** When false, do not define find/grep; retain only the rg fallback from the original contract. */
   findAndGrepEnabled?: boolean;
 }
 
@@ -117,17 +118,19 @@ export interface ExecutionOutputLimit {
   maxBufferBytes?: number;
   /**
    * Controls whether stdout/stderr should be persisted to execution output files.
-   * 通用执行的 on_truncate 在 inline 截断后开始写盘；Bash 从 spawn 起直接写盘，
-   * 此选项只控制结算后的文件保留。
+   * For generic execution, on_truncate starts writing to disk after inline truncation. Bash
+   * writes directly from spawn; this option controls only whether to retain the file after
+   * settlement.
    */
   persistOutput?: "none" | "on_truncate" | "always";
-  /** 通用执行为每路写盘硬上限；Bash 为合并文件的软阈值，每 5 秒检查，严格超出后终止。 */
+  /** Hard per-stream disk limit for generic execution; soft limit for Bash's merged file, checked every 5 seconds and terminated only when strictly exceeded. */
   maxPersistedBytes?: number;
-  /** 通用 pipe 执行的 artifact 上限；Bash 直写保留完整文件，不使用此上限。 */
+  /** Artifact limit for generic pipe execution; Bash direct writes retain the full file and do not use this limit. */
   maxArtifactBytes?: number;
   /**
    * Stop the process tree when a persisted stream reaches maxPersistedBytes.
-   * 仅控制通用 collector 执行。Bash 的文件软阈值在前后台都生效，不受此开关影响。
+   * Controls only generic collector execution. Bash's soft file limit applies in both
+   * foreground and background, regardless of this switch.
    */
   killProcessOnPersistedLimit?: boolean;
 }
@@ -196,7 +199,7 @@ export interface ExecutionResult {
   resolvedCwd?: string;
 }
 
-/** 单次有界尾读计算的 Bash 进度，不持有完整命令输出。 */
+/** Bash progress for one bounded tail read; does not retain the full command output. */
 export interface ExecutionOutputPreview {
   text: string;
   fullText: string;
@@ -205,7 +208,7 @@ export interface ExecutionOutputPreview {
   linesEstimated: boolean;
 }
 
-/** Bash 只发送 started/progress/completed/failed；逐 chunk 输出事件仅用于 pipe 执行。 */
+/** Bash sends only started/progress/completed/failed; per-chunk output events are only for pipe execution. */
 export type ExecutionEvent =
   | {
       type: "started";
@@ -282,7 +285,7 @@ export interface ExecutionPort {
     options?: ExecutionRunOptions,
   ): Promise<BackgroundExecutionStartResult>;
   getBackgroundTask?(taskId: string): Promise<BackgroundExecutionSnapshot | undefined>;
-  /** 只读已登记的后台 Bash，固定读取文件尾部 8 KiB。 */
+  /** Read only a registered background Bash; always read the last 8 KiB of its file. */
   readBackgroundBashOutput?(taskId: string, sessionId: string): Promise<BackgroundBashOutputResult>;
   cancelBackgroundTask?(taskId: string): Promise<BackgroundExecutionSnapshot | undefined>;
   close?(): Promise<void>;

@@ -1,20 +1,20 @@
 /**
- * scheduler.ts 顶到 oxlint max-lines 上限（400 行），把 Boundary B 的两条向上回报
- * （submit_result 到达、turn 结束）及其 repair / nudge 预算与 submit 归一化拆到本文件；
- * 公开面仍从 scheduler.ts 导出。
+ * scheduler.ts reached oxlint's max-lines limit (400), so Boundary B's two upward reports
+ * (submit_result arrival and turn end), their repair/nudge budgets, and submit normalization were
+ * moved to this file; the public surface is still exported from scheduler.ts.
  *
- * 自由函数经 {@link SubmitSeam} 拿到调度器的 live 节点表与两条结算入口；AskScheduler 上的
- * submitAttempted / turnEnded 只是薄委托。
+ * Free functions use {@link SubmitSeam} to access the scheduler's live-node table and two
+ * settlement entry points; submitAttempted / turnEnded on AskScheduler are thin delegates.
  */
 
 import type { AskNode, SchedulerHost } from "./scheduler-types.js";
 import type { InstanceRef, Violation } from "./types.js";
 import { REPAIR_ATTEMPTS, WorkflowError } from "./types.js";
 
-/** 调度器暴露给回报处理的最小接缝：查 live 节点、按结果结算。 */
+/** Minimal seam exposed by the scheduler to report handling: find live nodes and settle by result. */
 export interface SubmitSeam {
   readonly host: SchedulerHost;
-  /** 按实例查 live 节点（已离开 liveNodes 的返回 undefined）。 */
+  /** Find a live node by instance (returns undefined once it leaves liveNodes). */
   liveNode(instance: InstanceRef): AskNode | undefined;
   settleOk(node: AskNode, artifact: unknown): void;
   settleFailed(node: AskNode, error: WorkflowError): void;
@@ -27,7 +27,7 @@ export function handleSubmitAttempted(
 ): void {
   const node = seam.liveNode(instance);
   if (node === undefined || node.settled) return;
-  // untyped ask 不提供 submit_result；即便收到也不据其结算。
+  // Untyped asks do not provide submit_result; even if one arrives, do not settle from it.
   if (!node.spec.typed) return;
 
   const { value, violations } = normalizeSubmit(seam.host, node.spec.schema, payload);
@@ -55,17 +55,23 @@ export function handleSubmitAttempted(
 }
 
 /**
- * 宽松归一化 submit payload：先按原值校验；仅当原值不过、且原值是 string 时，做一次 JSON.parse
- * 再校验，成功则以解析后的值为准（既回裁决也落 journal）。
+ * Loosely normalize a submit payload: validate the original value first. Only if it fails and is a
+ * string, run JSON.parse once and validate again; on success, use the parsed value for both the
+ * decision and journal entry.
  *
- * 实盘发现（GLM-5.3 经 Anthropic 兼容端点）：真实模型常把 submit_result 的 `result` 参数序列化成
- * JSON 字符串（如 `"{\"title\":...}"`）而非 JSON 对象，导致校验器正确报「expected object, got string」、
- * repair 3 次后 run 失败。legacy script-workflow 的 parseStructuredResponse 早以宽松 JSON 解析容忍此
- * 情形；此处补上同等容忍，但 schema-aware：
- *   1. 原值直接过 → 用原值，绝不解析（保住合法的 string 结果，如 `string | null` schema，`"42"` 须留 `"42"`）。
- *   2. 原值不过且是 string → 单次 JSON.parse（不递归、不双解析，沿用 legacy 单次抽取先例）后再校验，过则取解析值。
- *   3. 否则 → 回原值 + 原始违规，交模型 repair。
- * 引擎是纯包，JSON.parse 纯确定、无 I/O，放这里安全。
+ * Production behavior observed (GLM-5.3 through an Anthropic-compatible endpoint): models often
+ * serialize submit_result's `result` argument as a JSON string (for example,
+ * `"{\"title\":...}"`) instead of a JSON object. The validator correctly reports “expected object,
+ * got string,” and the run fails after three repair attempts. The legacy script-workflow's
+ * parseStructuredResponse already tolerates this with loose JSON parsing; add equivalent,
+ * schema-aware tolerance here:
+ *   1. If the original value passes, use it without parsing (preserving valid string results, such
+ *      as `"42"` for a `string | null` schema).
+ *   2. If the original fails and is a string, run JSON.parse once (no recursion or double parsing,
+ *      following the legacy single-extraction precedent), then validate and use the parsed value if
+ *      it passes.
+ *   3. Otherwise return the original value and violations for model repair.
+ * The engine is a pure package, and JSON.parse is deterministic and performs no I/O, so it is safe here.
  */
 function normalizeSubmit(
   host: SchedulerHost,
@@ -79,13 +85,15 @@ function normalizeSubmit(
       const parsed = JSON.parse(payload);
       const after = host.validate(schema, parsed);
       if (after.length === 0) return { value: parsed, violations: [] };
-      // bug：解析成功但解析值仍不过时，曾上报解析前的
-      // `direct` 违规（"$: expected object, got string"），模型面对的其实是已解码对象，无从修起，
-      // 只能反复重引号/双重编码/退化成 "{}"，耗尽 repair 预算。修复违规必须描述模型可修改的值，
-      // 故此处返回 `after`（解析后对象上的路径级违规），单次解析契约不变。
+      // Bug: when parsing succeeded but the parsed value still failed validation, the pre-parse
+      // `direct` violation ("$: expected object, got string") was reported. The model actually saw
+      // a decoded object and could not fix that error, so it repeatedly added quotes, double-encoded,
+      // or degraded to "{}" until the repair budget ran out. Repair violations must describe a value
+      // the model can modify, so return `after` here (path-level violations on the parsed object)
+      // without changing the single-parse contract.
       return { value: parsed, violations: after };
     } catch {
-      // 非 JSON 字符串：JSON.parse 抛出，回落到原值违规，交模型 repair。
+      // Non-JSON string: JSON.parse throws, so fall back to the original-value violations for model repair.
     }
   }
   return { value: payload, violations: direct };

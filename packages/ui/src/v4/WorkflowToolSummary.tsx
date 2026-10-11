@@ -6,8 +6,8 @@ import { ToolLayout } from "@/ToolCallBlocks/ToolLayout.js";
 import type { WorkflowRunCardSummary } from "@/ToolCallBlocks/shared.js";
 
 /**
- * 已接进 run 的补全行（docs/dynamic-workflow/presentation.md「The fill row」）：「留白已补全 · {name} · {k} 个阶段
- * · {m} 个子代理 ↗」。计数是这次补全**写下**的，不是整条 run 的；留白的类型不上界面。
+ * Completion row already included in the run (docs/dynamic-workflow/presentation.md, “The fill row”): “Hole completed · {name} · {k} stages
+ * · {m} subagents ↗”. Counts are what this completion **added**, not totals for the whole run; the hole type is not shown.
  */
 export interface WorkflowFillSummary {
   name: string;
@@ -25,14 +25,14 @@ export function WorkflowToolSummary({
   toolCallId: string;
   summary: WorkflowRunCardSummary;
   onOpen?: () => void;
-  /** AmendWorkflow 发起行：种类词换成「工作流已调整」。 */
+  /** AmendWorkflow initiating row: replace the type label with "Workflow adjusted." */
   amend?: boolean;
-  /** FillWorkflowHole 行：留白词汇与补全的计数；在场时 `amend` 不看。 */
+  /** FillWorkflowHole row: hole wording and completion counts; `amend` is ignored when this is present. */
   fill?: WorkflowFillSummary;
 }) {
   const { intl } = useZCodeIntl();
-  // ToolLayout 是 memo 组件：primaryText 若是内联 JSX，每次渲染都会打破 memo（reactStableReferences 测试会拦下）。
-  // 计数只说子代理；宿主没给子代理数时那一段留空，只剩 ↗。
+  // ToolLayout is memoized: inline JSX for primaryText would break memoization on every render (caught by the reactStableReferences test).
+  // The count refers only to subagents; if the host provides no subagent count, leave that part empty and show only ↗.
   const agents = fill === undefined ? summary.agents : fill.agents;
   const primaryText = useMemo(
     () => (

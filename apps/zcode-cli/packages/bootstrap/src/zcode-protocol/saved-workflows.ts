@@ -1,12 +1,13 @@
-// 已保存工作流的 GUI 中枢：workspace 级、无会话的方法。
+// GUI hub for saved workflows: workspace-level methods that do not require a session.
 //
-// 与 skills/referenceCatalog 同一条先例：不带 sessionId，每次调用现扫目录——挂载时快照会漏掉
-// 用户手改 / 模型刚 SaveWorkflow 落盘的文件。
-// 解析器与序列化器只从 @zcode/core 取：这里不解析 frontmatter，也不拼 YAML。
+// Follows the skills/referenceCatalog pattern: no sessionId, and scan the directory on each call.
+// A mount-time snapshot would miss files edited by the user or just written by the model through SaveWorkflow.
+// Use only @zcode/core for parsing and serialization; do not parse frontmatter or assemble YAML here.
 //
-// 全局作用域：五个方法的 params 收可选 `scope`（缺省
-// `project`）。`global` 时改按本机全局根（`~/.zcode/workflows/`）操作，`workspace` 只是**载体**——
-// 处理器对全局档不读它的路径。`workflows/move` 把全局档搬回 `workspace` 项目（只此一向）。
+// Global scope: all five methods accept an optional `scope` in params (default `project`). In
+// `global` scope, operate on the local global root (`~/.zcode/workflows/`); `workspace` is only a
+// **carrier** and handlers do not read its path for global workflows. `workflows/move` moves a global
+// workflow back into the `workspace` project (one-way only).
 import { unlink, writeFile } from "node:fs/promises";
 import { SavedWorkflowMetaSchema, isValidSavedWorkflowName } from "@zcode/contracts";
 import {
@@ -43,7 +44,8 @@ import {
 } from "../app/dynamic-workflow-run-service.js";
 import { parseParams, type ZCodeProtocolAgentServerContext } from "./server-types.js";
 
-// 缺省即 `project`：不给 scope 的旧 GUI 与项目档调用逐字走本项目根，形状不变（版本偏斜）。
+// Default to `project`: legacy GUI calls and project workflows without a scope continue using the
+// project root unchanged (version-skew compatibility).
 function scopeOf(params: { scope?: ZCodeSavedWorkflowScope }): ZCodeSavedWorkflowScope {
   return params.scope ?? "project";
 }
@@ -55,10 +57,11 @@ export async function listSavedWorkflowsOp(
   const params = parseParams(zcodeWorkflowsListParamsSchema, rawParams);
   const cwd = params.workspace.workspacePath;
   const scope = scopeOf(params);
-  // 中枢的 PROJECT 组只列本项目那一份，全局组只列全局那一份——**永远**传定向 scope，绝不走
-  // 无向变体（两根 first-wins 会把 global 混进 project 组，把被遮蔽的 global 从全局组里藏掉）。
+  // The hub's PROJECT group lists only this project's workflows, and the global group only global
+  // workflows. **Always** pass an explicit scope; never use the unscoped variant (first-wins across
+  // both roots would mix global workflows into PROJECT and hide shadowed global entries from the global group).
   const listed = listSavedWorkflows({ cwd, scope });
-  // 扫过的目录（即使不存在也回）：GUI 的文件监听靠它 watch。
+  // Return directories that were scanned (even if they do not exist); the GUI file watcher uses them.
   return {
     workflows: listed.entries,
     invalid: listed.invalid,
@@ -71,7 +74,8 @@ export async function getSavedWorkflowOp(
   rawParams: unknown,
 ): Promise<ZCodeWorkflowsGetResult> {
   const params = parseParams(zcodeWorkflowsGetParamsSchema, rawParams);
-  // 定向 scope：`global` 只查全局根、不做遮蔽——中枢的全局组要看到被项目档遮蔽的那份。
+  // Explicit scope: `global` searches only the global root and does not apply shadowing; the hub's
+  // global group must include entries shadowed by project workflows.
   const resolved = resolveSavedWorkflow({
     cwd: params.workspace.workspacePath,
     name: params.name,
@@ -89,16 +93,17 @@ export async function getSavedWorkflowOp(
 }
 
 /**
- * 只改写文件顶部的元数据：读回当前脚本正文，再整文件覆写为 `serialize(newMeta, script)`。
- * 读-改-写在同一次调用内完成；不做三方合并（文件小、单机、用户自己在改）。
+ * Rewrite only the metadata at the top of the file: read the existing script body, then overwrite
+ * the whole file with `serialize(newMeta, script)`. Perform read-modify-write in one call; no
+ * three-way merge is needed (small local file, edited by the user).
  */
 export async function updateSavedWorkflowMetaOp(
   _context: ZCodeProtocolAgentServerContext,
   rawParams: unknown,
 ): Promise<ZCodeWorkflowsUpdateMetaResult> {
   const params = parseParams(zcodeWorkflowsUpdateMetaParamsSchema, rawParams);
-  // shared 与 contracts 的 meta schema 逐字对齐，但序列化器认的是 contracts 那份类型；再过一遍
-  // 让「两边漂移」在这里炸成 -32602 而不是写出一个自己读不回来的文件。
+  // The shared and contracts meta schemas are aligned, but the serializer uses the contracts type.
+  // Validate again so schema drift fails here with -32602 instead of writing a file that cannot be read back.
   const meta = SavedWorkflowMetaSchema.parse(params.meta);
   const resolved = resolveSavedWorkflow({
     cwd: params.workspace.workspacePath,
@@ -111,9 +116,10 @@ export async function updateSavedWorkflowMetaOp(
 }
 
 /**
- * 只按名字删：`isValidSavedWorkflowName` 先于拼路径——这条顺序是路径穿越的防线本身
- * （store.ts 的同一论证），所以协议不收路径、也不接受 `..`。按 scope 选根（不再写死 roots[0]）：
- * `global` 删本机全局根那一份。同名的 legacy `.workflow.js` 是另一套解析器的文件，不在视野里。
+ * Delete by name only: run `isValidSavedWorkflowName` before constructing a path; that ordering is
+ * the path-traversal defense itself (same rationale as store.ts). The protocol accepts no paths or
+ * `..`. Select the root by scope (do not hardcode roots[0]); `global` deletes from the local global
+ * root. A same-named legacy `.workflow.js` belongs to another parser and is out of scope.
  */
 export async function deleteSavedWorkflowOp(
   _context: ZCodeProtocolAgentServerContext,
@@ -136,12 +142,15 @@ export async function deleteSavedWorkflowOp(
 }
 
 /**
- * run 历史，按 `dwf_run.name` 归属到工作流。只读 journal：中枢在任何会话之外，看不到
- * 「submit 已回、行未落」的注册表间隙——那几个微任务靠下一次刷新补上，不值得为它把中枢绑到会话。
- * journal 缺席（注入的测试 store、无内省查询的实现）回空页而不是抛错：中枢据此显示「尚未运行」。
+ * Run history, grouped by workflow using `dwf_run.name`. Read only from the journal: the hub exists
+ * outside any session and cannot see the registry gap where "submit returned but the row is not yet
+ * written." The next refresh fills that microtask-sized gap; it is not worth binding the hub to a session.
+ * If the journal is unavailable (injected test store or an implementation without introspection),
+ * return an empty page instead of throwing; the hub then shows "not run yet."
  *
- * `project`（缺省）：只查 `dwf_run.cwd === workspacePath`。`global`：**不**按 cwd 过滤，跨所有项目
- * 取该名字的运行历史（全局工作流在任何项目里跑，历史因此跨 cwd）；每行回 `cwd` 供 GUI 标项目。
+ * `project` (default): query only `dwf_run.cwd === workspacePath`. `global`: **do not** filter by cwd;
+ * retrieve that workflow's run history across all projects (global workflows can run anywhere, so
+ * their history spans cwd values). Return `cwd` on each row so the GUI can label the project.
  */
 export async function listSavedWorkflowRunsOp(
   context: ZCodeProtocolAgentServerContext,
@@ -152,8 +161,9 @@ export async function listSavedWorkflowRunsOp(
   if (journal === undefined || !supportsRunIntrospection(journal)) return { runs: [] };
   const limit = Math.min(ZCODE_WORKFLOWS_RUNS_MAX_LIMIT, params.limit);
   const global = scopeOf(params) === "global";
-  // 多取一条**只为判定 truncated**（run service 的同一惯例）。
-  // 全局变体省掉 cwd 谓词（journal 的 cwd 可选 = 跨所有项目）；项目变体传 cwd，逐字不变。
+  // Fetch one extra row **only to determine truncation** (same convention as the run service).
+  // The global variant omits the cwd predicate (journal cwd is optional, meaning across all
+  // projects); the project variant passes cwd unchanged.
   const rows = journal.listRuns({
     ...(global ? {} : { cwd: params.workspace.workspacePath }),
     limit: limit + 1,
@@ -161,8 +171,9 @@ export async function listSavedWorkflowRunsOp(
   });
   const truncated = rows.length > limit;
   const page = truncated ? rows.slice(0, limit) : rows;
-  // 产物汇总：每行一次 `listArtifactRows`（journal 的持久家），只在能力在场时做——缺席即
-  // 整字段缺席，中枢的 chips 就不画。**只对这一页的行**取数，所以代价与页大小同阶（≤ 50）。
+  // Artifact summary: one `listArtifactRows` query per row (the journal is its persistence source),
+  // only when the capability exists; otherwise the whole field is absent and the hub draws no chips.
+  // Fetch only for rows on this page, so cost scales with page size (≤ 50).
   const artifactsByRun = savedWorkflowRunArtifacts(journal, page);
   const runs: ZCodeSavedWorkflowRun[] = page.map((row) => ({
     runId: row.runId,
@@ -175,7 +186,8 @@ export async function listSavedWorkflowRunsOp(
     ...(row.parentSessionId === undefined ? {} : { parentSessionId: row.parentSessionId }),
     ...(row.toolCallId === undefined ? {} : { toolCallId: row.toolCallId }),
     ...(row.args === undefined ? {} : { args: row.args }),
-    // 实际运行的项目目录：全局变体用它给每行标项目；项目变体里它恒等于 workspacePath，无害。
+    // Actual project directory for the run: the global variant uses it to label each row; in the
+    // project variant it is always workspacePath and has no effect.
     ...(row.cwd === undefined ? {} : { cwd: row.cwd }),
     ...(artifactsByRun.get(row.runId) === undefined
       ? {}
@@ -184,21 +196,24 @@ export async function listSavedWorkflowRunsOp(
   return { runs, ...(truncated ? { truncated: true } : {}) };
 }
 
-/** 中枢 chips 上界：一行画得下的 kind 图标数（协议 schema 的 `.max(8)` 同值）。 */
+/** Maximum number of kind icons that fit in one hub chip row (same as the protocol schema's `.max(8)`). */
 const SAVED_WORKFLOW_RUN_ARTIFACTS_LIMIT = 8;
 
 /**
- * 一页 run 行 → 每行的**用户面产物**摘要。
+ * One page of run rows → **user-facing artifact** summaries for each row.
  *
- * ⚠ 术语：这里的 artifact 是脚本经 `artifact.*` 发布给用户看的产出，不是脚本的顶层返回值
- * （引擎内部的 `RunSettlement.artifact`）。
+ * ⚠ Terminology: artifact here means outputs the script publishes for users through `artifact.*`,
+ * not the script's top-level return value (the engine-internal `RunSettlement.artifact`).
  *
- * 取数经 {@link artifactsOf}：与快照 / `GetWorkflowRun` **同一条归并规则**（只收 completed 行、
- * 同 id 按版本升序、顶层字段取最新版），中枢自己再写一遍就会让同一个 run 的产物在中枢和侧板
- * 上长得不一样。`listArtifactRows` 不在引擎端口上，所以能力探测在 `artifactsOf` 内部完成：
- * 缺席 ⇒ 每行都拿不到条目 ⇒ 字段整个缺席（老 CLI / 注入的测试 store 逐字不变）。
+ * Fetch through {@link artifactsOf}, using the **same merge rule** as snapshots / `GetWorkflowRun`
+ * (completed rows only, versions ascending per id, top-level fields from the latest version). A
+ * separate implementation here could make the same run's artifacts differ between the hub and sidebar.
+ * `listArtifactRows` is not on the engine port, so `artifactsOf` performs capability detection:
+ * absent capability ⇒ no rows for each run ⇒ the entire field is absent (unchanged for older CLIs /
+ * injected test stores).
  *
- * 零件的 run 不进表——调用方据此让整字段缺席，而不是发一个空数组。
+ * Runs with zero artifacts are omitted from the table; callers use that to omit the entire field
+ * instead of sending an empty array.
  */
 function savedWorkflowRunArtifacts(
   journal: JournalStorePort,
@@ -223,9 +238,11 @@ function savedWorkflowRunArtifacts(
 }
 
 /**
- * 把本机全局根的同名文件搬到 `workspace` 项目根（只此一向：项目→全局是模型的概括「提升为全局」，不是搬文件）。逐字节搬
- * （frontmatter 不存 scope），不覆盖（目标已存在即拒绝，不变式 7）。名字先验后拼路径。
- * `workspace` 既是载体也是目标项目：core 据它的 cwd 与本机 home 算出两个根。
+ * Move the same-named file from the local global root to the `workspace` project root (one way only:
+ * project → global is the model's conceptual "promote to global," not a file move). Copy byte-for-byte
+ * (frontmatter stores no scope) and do not overwrite (reject if the destination exists, invariant 7).
+ * Validate the name before constructing paths. `workspace` is both carrier and target project; core
+ * derives both roots from its cwd and local home directory.
  */
 export async function moveSavedWorkflowOp(
   _context: ZCodeProtocolAgentServerContext,
@@ -236,7 +253,8 @@ export async function moveSavedWorkflowOp(
   if (result.ok) {
     return { ok: true, from: result.from, to: result.to };
   }
-  // core 的失败分支与协议 result 逐字对齐；path / detail 在场时原样带出（缺席即省键）。
+  // Keep core failure branches aligned with the protocol result; pass path / detail through unchanged
+  // when present (omit the keys when absent).
   switch (result.reason) {
     case "invalid_name":
       return { ok: false, reason: "invalid_name", detail: result.detail };

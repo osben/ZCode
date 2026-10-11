@@ -66,8 +66,9 @@ async function hasBusinessUnauthorizedCode(
   response: Response,
   timeoutMs: number,
 ): Promise<boolean> {
-  // 业务接口把登录过期封装成 HTTP 200，不能只看 status；读副本避免抢走调用方正文。
-  // continuous SSE 没有完整 JSON 正文，观察器不能等待流结束或引入恢复语义。
+  // Business endpoints wrap expired logins in HTTP 200, so status alone is not enough; read a
+  // clone to avoid consuming the caller's body. A continuous SSE stream has no complete JSON
+  // body, and the observer must not wait for the stream to end or introduce resume semantics.
   if (response.headers.get("content-type")?.toLowerCase().startsWith("text/event-stream"))
     return false;
   let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
@@ -96,10 +97,12 @@ async function hasBusinessUnauthorizedCode(
       typeof payload === "object" && payload !== null && "code" in payload && payload.code === 401
     );
   } catch {
-    // 空正文/HTML/损坏 JSON 只能证明请求异常，不能据此清理登录态。
+    // An empty body, HTML, or corrupt JSON only proves the request is abnormal; do not clear the
+    // login state based on it.
     return false;
   } finally {
-    // 观察副本是 best-effort；超时、超限或解析失败时及时取消，不能占用连接。
+    // The observed copy is best-effort; on timeout, size overrun, or parse failure cancel
+    // promptly instead of holding the connection.
     if (reader) void reader.cancel().catch(() => undefined);
   }
 }
@@ -145,8 +148,8 @@ function resolveRequestHeaders(
     return headers;
   }
 
-  // ZCode 后端请求以前只有部分业务路径手动补来源头。
-  // 统一在 ApiClient 出口按 endpoint origin 注入，避免 OAuth/config/billing/snapshot 等链路遗漏。
+  // Previously, only some ZCode backend request paths added source headers manually.
+  // Inject them consistently at the ApiClient boundary based on endpoint origin to avoid omissions in OAuth/config/billing/snapshot paths.
   return withZCodeEndpointHeaders(headers, endpointOrigin);
 }
 
@@ -202,7 +205,7 @@ export class NodeApiClient implements ApiClient {
         resolveRequestHeaders(requestInput, init?.headers, activeEndpointOrigin),
       );
       if (isRequestForEndpoint(requestInput, activeEndpointOrigin)) {
-        // 调试说明：这里只记录 header key，避免 Authorization / token 等敏感值落盘。
+        // For debugging, record header keys only so sensitive values such as Authorization/token are not persisted.
         log.debug(undefined, "zcode endpoint request headers prepared", {
           headerKeys: readHeaderKeys(requestHeaders),
           method,

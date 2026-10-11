@@ -18,8 +18,8 @@ export async function readProjectMemoryFileFromStableHandle(params: {
   }
 
   const noFollowFlag = typeof constants.O_NOFOLLOW === "number" ? constants.O_NOFOLLOW : 0;
-  // 路径检查后再 readFile(path) 会重新解析路径，可能跟随并发替换的链接读取外部文件。
-  // 只读句柄不加锁、不获取所有权；Memory 原子更新可继续 rename，正文始终从已验证句柄读取。
+  // Calling readFile(path) after checking the path would resolve it again and could follow a concurrently replaced symlink to an external file.
+  // The read-only handle takes no lock and claims no ownership; Memory can continue atomic renames, while content is always read from the validated handle.
   const handle = await open(params.filePath, constants.O_RDONLY | noFollowFlag);
   try {
     const openedStat = await handle.stat({ bigint: true });
@@ -41,7 +41,7 @@ export async function readProjectMemoryFileFromStableHandle(params: {
 
     const content = await readBoundedFile(handle, PROJECT_MEMORY_PREVIEW_MAX_BYTES + 1);
     const finalStat = await handle.stat({ bigint: true });
-    // 原子 rename 失败时写入会退化为同 inode 的原地覆盖，仅读取文件身份无法识别内容变化。
+    // If atomic rename fails, the write falls back to overwriting the same inode in place, so checking only file identity cannot detect content changes.
     if (!isSameFileSnapshot(openedStat, finalStat)) {
       throwFileChangedError(params.fileName);
     }

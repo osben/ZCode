@@ -1,17 +1,17 @@
 import type { Locale } from "@zcode/shared";
 
 /**
- * Windows CUA 操作提示条的呈现层：文案、尺寸与 HTML。
+ * Presentation layer for the Windows CUA operation indicator: copy, dimensions, and HTML.
  *
- * 与窗口生命周期分开，是因为两者的变更理由不同——这里跟着文案与视觉走，
- * `windowsCuaOperationIndicator.ts` 跟着显示/隐藏时机与 Electron 窗口行为走。
+ * Keep this separate from the window lifecycle because they change for different reasons: this file follows copy and visual changes,
+ * while `windowsCuaOperationIndicator.ts` follows show/hide timing and Electron window behavior.
  */
 
 const INDICATOR_CARD_HEIGHT = 38;
 export const INDICATOR_CARD_TOP_OFFSET = 12;
 export const INDICATOR_SHADOW_INSET = { top: 6, right: 8, bottom: 12, left: 8 } as const;
 
-// width 按各语言文案在 13px Segoe UI 600 下的实际宽度加左右留白估算；新增语言时需同步补齐。
+// Width is estimated from each locale's copy at 13px Segoe UI 600 plus horizontal padding; update it when adding a locale.
 const INDICATOR_COPY: Record<Locale, { text: string; width: number }> = {
   "zh-CN": { text: "ZCode 正在操作电脑", width: 234 },
   "en-US": { text: "ZCode is controlling your computer", width: 308 },

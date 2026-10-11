@@ -1,7 +1,7 @@
 /**
- * Renderer 端日志工具
- * 通过 IPC 将日志传到 main 进程统一写入 ~/.zcode/v2/logs/YYYY-MM-DD.log
- * 同时保留 console 输出方便开发调试
+ * Renderer-side logging utility.
+ * Sends logs to the main process over IPC for centralized writing to ~/.zcode/v2/logs/YYYY-MM-DD.log.
+ * Also keeps console output for development debugging.
  */
 import { formatLogPrefix } from "@zcode/shared";
 import { isRendererProductionBuild } from "./rendererLoggingEnv.js";

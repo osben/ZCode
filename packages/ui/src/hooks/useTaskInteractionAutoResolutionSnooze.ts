@@ -14,8 +14,8 @@ export interface TaskInteractionAutoResolutionTarget {
 }
 
 /**
- * 侧栏 task 可能来自本地、远端、timeline 或 pinned 列表；暂停命令必须按 workspace identity
- * 找到原 host，不能因为当前激活 tab 不同而发到当前窗口的 service。
+ * Sidebar tasks may come from local/remote, timeline, or pinned lists. Resolve the original Host by workspace identity
+ * for pause commands; do not send them to the current window's service just because a different tab is active.
  */
 export function useTaskInteractionAutoResolutionSnooze(
   target: TaskInteractionAutoResolutionTarget,
@@ -36,8 +36,8 @@ export function useTaskInteractionAutoResolutionSnooze(
           workspacePath: target.workspacePath,
           workspaceIdentity,
           remoteSessionId,
-          // 该 hook 的 target 类型只携带 task 路由字段；remoteSessionId 已存在就足以
-          // 表明旧数据可使用 path 兼容恢复，不需要伪造具体 RemoteTarget。
+          // This hook's target type carries only task-routing fields. The presence of remoteSessionId is enough to show
+          // that legacy data may use path-compatible recovery; do not fabricate a specific RemoteTarget.
           remoteTarget: remoteSessionId ? true : undefined,
         },
         state,
@@ -45,8 +45,8 @@ export function useTaskInteractionAutoResolutionSnooze(
       if (resolvedRemoteSessionId) {
         return state.sessionsById[resolvedRemoteSessionId]?.services ?? null;
       }
-      // 远程 task 找不到原 host 时禁止回退本地 service，否则相同 taskId
-      // 可能被投递到错误 workspace；保留可重试失败，等待远端 attachment 恢复。
+      // If the original Host for a remote task cannot be found, do not fall back to the local service; the same taskId
+      // could be sent to the wrong workspace. Keep a retryable failure and wait for the remote attachment to recover.
       return null;
     },
     [contextServices, isRemoteTarget, remoteSessionId, target.workspacePath, workspaceIdentity],

@@ -62,8 +62,9 @@ function shouldModelCompleteUpdateContextUsed(payload: ModelCompletePayload): bo
     return payload.querySource === "main_turn";
   }
 
-  // 兼容旧版主会话事件没有 querySource 的历史数据；工具/子任务内部模型调用
-  // 过去也可能缺这个字段，但 stopReason 会标成 tool_internal，不能拿来覆盖主 session。
+  // Support historical data where older primary-session events lack querySource. Internal
+  // model calls for tools/subtasks could also lack this field, but their stopReason is
+  // tool_internal, so they must not overwrite the primary session.
   return payload.stopReason !== "tool_internal";
 }
 
@@ -112,8 +113,9 @@ export class EventReducer {
       return {
         ...p,
         currentTurnId: e.turnId,
-        // 上一轮 provider 失败会写入 projection.lastError；新一轮消息被接受后，
-        // 旧错误不再是当前任务事实。必须在源头清理，避免 readSession/getTaskSnapshot 反复恢复旧横幅。
+        // A provider failure in the previous turn writes projection.lastError. Once a new
+        // message is accepted, that error is no longer a fact about the current task. Clear
+        // it at the source so readSession/getTaskSnapshot do not keep restoring the old banner.
         lastError: undefined,
         turnCount: p.turnCount + 1,
         status: "running" as SessionStatus,
@@ -209,17 +211,19 @@ export class EventReducer {
           updatedAt: e.timestamp,
         };
       }
-      // 输入栏 context usage 只代表主会话发给 provider 的最新上下文。
-      // 标题生成、压缩摘要、子代理和工具内部模型调用都不是当前主 session 的可见上下文，
-      // 如果用它们的 usage 覆盖 projection，UI 会显示成 89/1m 这类 sidecar 小请求。
+      // Input-bar context usage represents only the latest context the primary session sent
+      // to the provider. Title generation, compaction summaries, subagents, and tool-internal
+      // model calls are not visible context for the primary session. Using their usage to
+      // overwrite the projection would make the UI show a small sidecar request such as 89/1m.
       if (!shouldModelCompleteUpdateContextUsed(payload)) {
         return {
           ...p,
           updatedAt: e.timestamp,
         };
       }
-      // AI SDK v6 的 provider input 已经是 total input（含 cache read/write）；
-      // 这里通过统一 helper 计算 context used，避免各处重复理解 cache breakdown。
+      // AI SDK v6 provider input is already the total input, including cache reads/writes.
+      // Use the shared helper to calculate context usage instead of reinterpreting the cache
+      // breakdown in multiple places.
       const contextUsed = getModelUsageContextTokens(payload.usage);
       return {
         ...p,
@@ -270,8 +274,10 @@ export class EventReducer {
       );
       const startedAt =
         existing?.startedAt ?? (payload.status === "started" ? e.timestamp : undefined);
-      // goal 校验的 UI 身份是 target + iteration；verificationId 只是单次尝试。
-      // started/completed 或恢复重放如果只按 verificationId 合并，会把同一轮目标校验追加成多条横线。
+      // The UI identifies a goal verification by target + iteration; verificationId is only
+      // for an individual attempt. If started/completed events or replay are merged only by
+      // verificationId, one verification for the same target and iteration appears as
+      // multiple timeline rows.
       const goalIteration =
         payload.goalIteration ??
         existing?.goalIteration ??
@@ -301,8 +307,9 @@ export class EventReducer {
         : [...p.targetCompletionVerificationTimeline, nextTimelineItem];
       return {
         ...p,
-        // failed_closed/cancelled 没有 model_complete 结果事件，必须把 lifecycle 结论补进摘要账本；
-        // 正常 completed 继续由既有 model_complete 投影，避免新旧事件把同一次校验计两遍。
+        // failed_closed/cancelled have no model_complete result event, so record their
+        // lifecycle outcome in the summary ledger. Normal completed outcomes continue to be
+        // projected from the existing model_complete event, avoiding double-counting a check.
         targetCompletionVerifications:
           payload.status === "failed_closed" || payload.status === "cancelled"
             ? [
@@ -323,14 +330,15 @@ export class EventReducer {
       return {
         ...p,
         status: "error" as SessionStatus,
-        // projection 是重启/恢复链路的数据来源，必须保留真实 provider/subagent 根因。
+        // The projection feeds restart/recovery, so preserve the actual provider/subagent root cause.
         lastError: {
           type: payload.error.type,
           ...(payload.error.code ? { code: payload.error.code } : {}),
           message: payload.error.message,
           ...(payload.error.detail ? { detail: payload.error.detail } : {}),
-          // TurnError 的 provider/network 归因是 live 与 cold projection 的共同事实；
-          // 旧 reducer 只保留文案和 code，导致后续 task meta/telemetry 无法区分 provider 拒绝。
+          // TurnError provider/network attribution is shared by live and cold projections.
+          // The old reducer retained only the message and code, preventing later task metadata
+          // and telemetry from distinguishing a provider rejection.
           ...(payload.error.attribution ? { attribution: payload.error.attribution } : {}),
         },
         updatedAt: e.timestamp,
@@ -353,8 +361,9 @@ export class EventReducer {
         inputPresentation: payload.inputPresentation ?? existing?.inputPresentation,
         intent: payload.intent ?? existing?.intent,
         toolDisallowlist: payload.toolDisallowlist ?? existing?.toolDisallowlist,
-        // editQueueItem 会以同 id 重发 queued 事件；编辑不是重新 admission，
-        // 必须保留原排队时间和数组位置，否则 runtime 冷重建会把它移到队尾。
+        // editQueueItem resends the queued event with the same id. Editing is not a new
+        // admission, so preserve the original queue time and array position; otherwise a cold
+        // runtime rebuild would move the item to the end.
         queuedAt: existing?.queuedAt ?? e.timestamp,
         targetTurnId: payload.targetTurnId,
         traceId: e.traceId,

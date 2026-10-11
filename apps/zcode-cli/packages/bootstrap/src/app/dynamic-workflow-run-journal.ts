@@ -1,26 +1,25 @@
 // ============================================================
-// Dynamic Workflow Run Service：journal 能力探测与 store 窄化
+// Dynamic Workflow Run Service: journal capability detection and store narrowing.
 // ============================================================
-// dynamic-workflow-run-service.ts 顶到 oxlint max-lines 上限（400 行），把 journal /
-// task link store 的结构性窄化与四组能力探测拆到本文件；公开面仍从 dynamic-workflow-run-service.ts
-// 导出。
+// dynamic-workflow-run-service.ts reached oxlint's 400-line max-lines limit, so structural narrowing for the journal /
+// task link store and four groups of capability checks were moved here. The public surface is still exported from dynamic-workflow-run-service.ts.
 //
-// 这里的每一条探测都遵守同一条纪律：store 是端口、实现可替换，所以按能力探测而不是 instanceof；
-// 缺席即**可见降级**（对应读面不实现 / 回空 / 不构造），绝不静默退回内存实现。
+// Every check follows the same rule: a store is a port with replaceable implementations, so detect capabilities instead of using instanceof.
+// An absent capability means a **visible degradation** (the read surface is unavailable / returns empty / is not constructed); never silently fall back to an in-memory implementation.
 
 import type { DwfRunIntrospectionQueries, DwfRunSessionListItem } from "@zcode/adapters/storage";
 import type { CreateSessionTaskLinkInput, Logger, SessionStorePort } from "@zcode/contracts";
 import type { JournalStorePort, RunRecord, StoredEvent } from "@zcode/dynamic-workflow";
 
-/** task link 落库面（生产是 SqliteSessionStore；测试传 spy）。 */
+/** Persistence surface for task links (SqliteSessionStore in production; tests provide a spy). */
 export interface DynamicWorkflowTaskLinkStore {
   createSessionTaskLink(input: CreateSessionTaskLinkInput): Promise<unknown>;
 }
 
 /**
- * task link 落库面的结构性窄化。与 {@link resolveDynamicWorkflowJournalStore} 同一处理：
- * store 是端口，实现可替换，所以按能力探测而不是 instanceof。缺失时跳过建 link——
- * actor 会话本身仍落库，只是会话树里少一条归属边（可降级，不影响 run 的正确性）。
+ * Structurally narrow the task-link persistence surface, following {@link resolveDynamicWorkflowJournalStore}:
+ * the store is a replaceable port, so detect capabilities rather than using instanceof. If absent, skip creating the link—
+ * the actor session is still persisted, but the session tree lacks one ownership edge (a degradation that does not affect run correctness).
  */
 export function isDynamicWorkflowTaskLinkStore(
   store: SessionStorePort | undefined,
@@ -32,8 +31,8 @@ export function isDynamicWorkflowTaskLinkStore(
 }
 
 /**
- * 从 session store 里窄化出 dwf journal。结构性判断而非 instanceof——store 是端口，
- * 实现可替换（precedent: isScriptWorkflowStore，script-workflow-utils.ts）。
+ * Narrow the dwf journal out of the session store. Use a structural check rather than instanceof: the store is a replaceable port
+ * (precedent: isScriptWorkflowStore in script-workflow-utils.ts).
  */
 export function resolveDynamicWorkflowJournalStore(
   sessionStore: SessionStorePort | undefined,
@@ -43,8 +42,8 @@ export function resolveDynamicWorkflowJournalStore(
     | (SessionStorePort & { workflowJournalStore?: () => JournalStorePort })
     | undefined;
   if (typeof candidate?.workflowJournalStore !== "function") {
-    // 可见降级：端口不构造 → CreateWorkflow 回占位诊断。绝不退回内存 journal——
-    // 那会让 run 看起来跑起来了，却在进程退出时把一切静默丢掉。
+    // Visible degradation: do not construct the port → CreateWorkflow returns a placeholder diagnostic. Never fall back to an in-memory journal—
+    // that would make the run appear to work, then silently lose everything when the process exits.
     logger?.info?.("Dynamic workflow run service disabled: session store has no dwf journal", {
       event: "dynamic_workflow.run_service.unavailable",
       module: "bootstrap.app",
@@ -56,26 +55,25 @@ export function resolveDynamicWorkflowJournalStore(
 }
 
 /**
- * 宿主侧的 journal 面：引擎端口 + 孤儿收敛与枚举用的窄查询。
+ * Host-side journal surface: engine port + narrow queries for orphan reconciliation and enumeration.
  *
- * 刻意**不加宽**引擎的 {@link JournalStorePort}：引擎只按 runId 读写自己那一行，从不按父会话
- * 找 run——这两条查询是宿主的需求，加进领域端口等于要求每个 journal 实现都为引擎不做的事
- * 负责（内存实现就不提供它们）。与 {@link isDynamicWorkflowTaskLinkStore} 同一处理：能力探测
- * 而不是 instanceof，store 是端口、实现可替换。
+ * Deliberately **do not widen** the engine's {@link JournalStorePort}: the engine reads/writes its row by runId and never finds runs by parent session.
+ * These two queries belong to the host; adding them to the domain port would require every journal implementation to support work the engine does not do
+ * (the in-memory implementation does not provide them). As with {@link isDynamicWorkflowTaskLinkStore}, detect capabilities rather than using instanceof because stores are replaceable ports.
  */
 interface DynamicWorkflowJournalStore extends JournalStorePort {
   listNonTerminalRuns(parentSessionId: string): RunRecord[];
   /**
-   * 某父会话名下的 run，最近更新在前，最多 limit 条（枚举面，服务 listRunsForSession）。
+   * Runs owned by a parent session, most recently updated first, up to limit entries (enumeration surface for service listRunsForSession).
    *
-   * 回 {@link DwfRunSessionListItem} 而不是 `RunRecord`：`RunRecord` 刻意不带时间（引擎不
-   * 关心），而枚举面要报 `updatedAt`。窄投影不读 `result_json`（无界产物，列表不展示），
-   * 但**保留 failure**——`resumable` 的谓词依赖 failure.code。
+   * Return {@link DwfRunSessionListItem}, not `RunRecord`: `RunRecord` deliberately omits timestamps (the engine does not
+   * need them), while enumeration must report `updatedAt`. The narrow projection does not read `result_json` (unbounded artifact, not shown in lists),
+   * but **preserves failure** because the `resumable` predicate depends on failure.code.
    */
   listRunsByParentSession(parentSessionId: string, limit: number): DwfRunSessionListItem[];
 }
 
-/** journal 是否带孤儿收敛所需的窄查询（生产的 SQLite 实现带，引擎的内存实现不带）。 */
+/** Whether the journal has the narrow queries required for orphan reconciliation (the production SQLite implementation does; the engine's in-memory one does not). */
 export function supportsNonTerminalRunQuery(
   journal: JournalStorePort,
 ): journal is JournalStorePort & Pick<DynamicWorkflowJournalStore, "listNonTerminalRuns"> {
@@ -84,7 +82,7 @@ export function supportsNonTerminalRunQuery(
   );
 }
 
-/** journal 是否带枚举窄查询。两条查询独立探测：缺一条只降级对应的读面，不连坐。 */
+/** Whether the journal has the narrow enumeration queries. Detect each independently: a missing query degrades only its read surface. */
 export function supportsRunEnumeration(
   journal: JournalStorePort,
 ): journal is JournalStorePort & Pick<DynamicWorkflowJournalStore, "listRunsByParentSession"> {
@@ -94,24 +92,23 @@ export function supportsRunEnumeration(
 }
 
 /**
- * 带 run 内省查询的 journal（`ListWorkflowRuns` / `GetWorkflowRun` 的取数底座）。
+ * Journal with run introspection queries (data source for `ListWorkflowRuns` / `GetWorkflowRun`).
  *
- * 签名的**唯一来源**是 adapters 的 {@link DwfRunIntrospectionQueries}（`import type`，运行时
- * 零依赖）。刻意不在这里手抄一遍：这四条查询不在引擎的 {@link JournalStorePort} 上（引擎从不
- * 枚举 run、也不做聚合计数），所以它们只能靠能力探测接上——一旦签名漂移，编译器什么都不会说，
- * 只会让两个工具静默降级成「本会话没有这个能力」。
+ * The **sole source** of the signatures is adapters' {@link DwfRunIntrospectionQueries} (`import type`, zero runtime
+ * dependency). Deliberately do not copy them here: these four queries are not on the engine's {@link JournalStorePort} (the engine never
+ * enumerates runs or aggregates counts), so they are connected only through capability detection. If signatures drift, the compiler cannot report it;
+ * the two tools would silently degrade to "this session does not support this capability."
  */
 export interface DynamicWorkflowIntrospectableJournal
   extends JournalStorePort, DwfRunIntrospectionQueries {}
 
 /**
- * journal 是否带「每一世的活动区间」读面（完成卡的时长口径，见
- * `docs/dynamic-workflow/transcript-and-notifications.md`「How long it took」）。
+ * Whether the journal has the "active interval per lifecycle" read surface (duration for completion cards; see
+ * "How long it took" in `docs/dynamic-workflow/transcript-and-notifications.md`).
  *
- * **独立探测，不并入 {@link supportsRunIntrospection} 的四条**：那四条一起探是因为它们共同
- * 支撑两个工具的可用性，而这一条只支撑一个数字。缺它的后果是时长退回「本世墙钟」——一个更
- * 保守的答案，不是一个坏掉的工具，所以它不该连坐 `GetWorkflowRun` 的可用性（引擎自带的内存
- * journal 就不提供它，而内存 journal 里的 run 本来也活不过进程）。
+ * **Detect independently; do not add this to the four checks in {@link supportsRunIntrospection}:** those four jointly
+ * enable two tools, while this one only supplies a single number. Without it, duration falls back to this lifecycle's wall clock—a more conservative
+ * answer, not a broken tool. It must not affect `GetWorkflowRun` availability (the engine's in-memory journal does not provide it, and its runs do not outlive the process anyway).
  */
 export function supportsRunLifeSpans(
   journal: JournalStorePort,
@@ -120,9 +117,9 @@ export function supportsRunLifeSpans(
 }
 
 /**
- * journal 是否带「按条数与字节两道界翻一页事件」的读面（事件日志，docs/execution-engine.md
- * 「Reading the journal」）。独立探测，理由同 {@link supportsRunLifeSpans}：缺它时事件日志退回
- * 只按条数翻页（内存 journal 的情形，它的 run 活不过进程，也不会攒出大页）。
+ * Whether the journal has the "page events by count and byte limits" read surface (event log; see "Reading the journal"
+ * in docs/execution-engine.md). Detect independently, for the same reason as {@link supportsRunLifeSpans}: without it the event log falls back
+ * to count-only paging (the in-memory journal case: its runs do not outlive the process and never accumulate large pages).
  */
 export function supportsEventPages(
   journal: JournalStorePort,
@@ -131,9 +128,9 @@ export function supportsEventPages(
 }
 
 /**
- * 没有 {@link supportsEventPages} 读面的 journal 上的事件页：只按条数，多取一条判定 `hasMore`。
- * 字节界在这里兑现不了——要知道一条事件多大就得先把它读出来——而这类 journal（内存实现）
- * 本来就攒不出大页。
+ * Event page on a journal without the {@link supportsEventPages} read surface: count only, fetching one extra to decide `hasMore`.
+ * The byte limit cannot be honored here—knowing an event's size requires reading it first—and such journals (the in-memory
+ * implementation) never accumulate large pages anyway.
  */
 export function pageByCountOnly(
   journal: JournalStorePort,
@@ -151,8 +148,8 @@ export function pageByCountOnly(
 }
 
 /**
- * journal 是否带 run 内省查询。**四条一起探**：能力是整体的（列表要 listRuns，详情要另外三条），
- * 部分在场的实现只会让某一个工具在运行时炸掉，而不是可见地降级。
+ * Whether the journal has run introspection queries. **Check all four together:** this is one capability (the list needs listRuns and detail needs the other three);
+ * a partial implementation would make one tool fail at runtime instead of degrading visibly.
  */
 export function supportsRunIntrospection(
   journal: JournalStorePort,

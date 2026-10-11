@@ -55,9 +55,9 @@ export function findLatestReadFileState(
 ): ReadFileStateEntry | undefined {
   if (!readFileState) return undefined;
 
-  // 优先返回 full Read 会让 Bash/formatter 改完文件后即使模型按提示重新
-  // range Read，Edit/Write 仍拿旧 full Read 做 mtime 校验并持续误报 stale。这里按
-  // 单文件最新 read-state 语义选择基准；真正的 partial view 由消费者单独拒绝。
+  // Preferring a full Read means that even after Bash/formatter edits the file and the model rereads a range as instructed,
+  // Edit/Write still checks mtime against the old full Read and keeps falsely reporting stale state. Choose a baseline using the latest read state for the file;
+  // consumers separately reject an actual partial view.
   return findLatestReadFileStateByPath(readFileState, filePath, platform, () => true);
 }
 

@@ -15,7 +15,7 @@ type Report = (
   details?: { databaseId: string; migration?: DatabaseMigrationFacts; finalDatabase?: boolean },
 ) => void;
 
-/** 每窗口一个启动所有者。失败只由显式 retry 推进，刷新和重复请求不重新执行 SQL。 */
+/** One startup owner per window. Only an explicit retry advances a failure; refreshes and duplicate requests do not rerun SQL. */
 export class DatabaseStartupCoordinator {
   private readonly baselines = new Map<string, string | null | undefined>();
   private readonly migrations = new Map<string, DatabaseMigrationFacts>();
@@ -48,7 +48,7 @@ export class DatabaseStartupCoordinator {
     try {
       this.options.publish(this.snapshot);
     } catch {
-      /* 通知故障不能改变数据库执行结果。 */
+      /* Notification failures must not change the database result. */
     }
   }
   updateDisk(disk: StartupDiskSummary[]): void {
@@ -88,7 +88,7 @@ export class DatabaseStartupCoordinator {
     this.running = true;
     const report: Report = (phase, databasePhase, details) => {
       if (details) {
-        // 仅首次可信锁内值可替换 unknown；后续无事实通知不能抹掉起点。
+        // Only the first value observed under a trusted lock may replace unknown; later notifications without facts must not erase the starting point.
         if (
           !this.baselines.has(details.databaseId) ||
           this.baselines.get(details.databaseId) === undefined
@@ -98,7 +98,7 @@ export class DatabaseStartupCoordinator {
       if (details?.migration) {
         const previous = this.migrations.get(details.databaseId);
         const next = details.migration;
-        // 预检可能发现待迁移、拿锁后却由别的执行者完成；需求不丢，执行/提交不虚增。
+        // Preflight may find a pending migration that another process completes after the lock is acquired; preserve the request without inflating execution/commit counts.
         const kind =
           previous?.kind === "upgrade" || next.kind === "upgrade"
             ? "upgrade"
@@ -127,7 +127,7 @@ export class DatabaseStartupCoordinator {
         phase,
         databasePhase,
         migration,
-        // tasks-index 是固定内部 ID，会话库 ID 由 CLI 对真实路径哈希生成。
+        // tasks-index is a fixed internal ID; the CLI generates the session database ID by hashing its real path.
         migrationBaselines: [...this.baselines].map(([databaseId, lastAppliedMigrationId]) => ({
           databaseId,
           databaseKind: databaseId === "tasks-index" ? "tasks-index" : "session",

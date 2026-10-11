@@ -37,10 +37,10 @@ interface RefreshWaiter {
 }
 
 /**
- * 维护当前账号状态投影出的第三层 Provider Config Overlay。
+ * Maintains the third-layer Provider Config Overlay projected from current account state.
  *
- * 该服务只编排 Config Source、刷新与 last-known-good 发布；登录、权益和团队连接
- * 的具体查询由外围 Resolver 注入，因此本包不依赖文件、网络或 OAuth 实现。
+ * This service only coordinates the Config Source, refresh, and last-known-good publication; concrete queries for login, entitlements, and team connections
+ * are injected by an outer Resolver, so this package does not depend on file, network, or OAuth implementations.
  */
 export class AccountProviderService implements ProviderSource<AccountProviderConfigSnapshot> {
   readonly #configSource: ProviderSource<ProviderConfigSnapshot>;
@@ -65,7 +65,7 @@ export class AccountProviderService implements ProviderSource<AccountProviderCon
     this.#assertNotDisposed();
     this.#ensureStarted();
     if (this.#snapshot) return this.#snapshot;
-    // 并发首次读取不是新的账号事实，不能排出第二轮并覆盖首次 fail-closed 启动结果。
+    // Concurrent initial reads are not new account facts; do not queue a second refresh that overwrites the initial fail-closed startup result.
     if (this.#refreshInFlight) return this.#refreshInFlight;
     return this.#requestRefresh("start");
   }
@@ -104,15 +104,15 @@ export class AccountProviderService implements ProviderSource<AccountProviderCon
     this.#started = true;
     this.#configDispose = this.#configSource.onDidChange((reason) => {
       void this.#requestRefresh(`config:${reason || "changed"}`).catch(() => {
-        // Source 驱动的后台失败通过 onDidRefreshError 报告；保留上一份成功快照。
+        // Source-driven background failures are reported through onDidRefreshError; retain the previous successful snapshot.
       });
     });
   }
 
   #requestRefresh(reason: string): Promise<AccountProviderConfigSnapshot> {
-    // 进行中的一轮开始于本次请求之前，它读取的设置与账号身份可能已被请求方
-    // 随后的写入改变（例如 Provisioning 先写 Setting 再换凭据）。直接复用该轮会把它的
-    // 过期失败当成本次请求的结果。refresh 的契约是返回覆盖本次请求之后状态的一轮。
+    // A running refresh started before this request and may have read settings/account identity that a later caller write changed
+    // (for example, Provisioning writes Setting before replacing credentials). Reusing that refresh could return its stale failure as this request's result.
+    // The refresh contract is to return a run that covers the state after this request.
     const generation = this.#requestedGeneration + 1;
     this.#requestedGeneration = generation;
     this.#pendingReasons.add(reason);
@@ -138,17 +138,17 @@ export class AccountProviderService implements ProviderSource<AccountProviderCon
     this.#refreshInFlight = null;
     if (this.#disposed || this.#pendingReasons.size === 0) return;
 
-    // 当前轮失败会提前退出 refresh loop；失败期间加入的事件仍在 pending 中，
-    // 必须在 in-flight 释放后启动下一轮，否则账号状态会停留在旧快照直到再次收到外部事件。
+    // The current run exits the refresh loop early on failure; events added during the failure remain pending.
+    // Start another run after releasing in-flight, or account state stays on the old snapshot until another external event arrives.
     void this.#startRefresh().catch(() => {
-      // 后续轮没有直接调用方；错误已经通过 onDidRefreshError 发布并保留 last-known-good。
+      // No caller awaits subsequent runs; errors have already been published through onDidRefreshError and the last-known-good snapshot is retained.
     });
   }
 
   async #runRefreshLoop(): Promise<AccountProviderConfigSnapshot> {
     let latest = this.#snapshot;
     while (this.#pendingReasons.size > 0) {
-      // 本轮开始前提出的所有请求都由本轮结果回应；本轮开始后到达的请求留给下一轮。
+      // Respond to all requests submitted before this run began with its result; requests arriving after it started are handled by the next run.
       const generation = this.#requestedGeneration;
       const reasons = [...this.#pendingReasons];
       this.#pendingReasons.clear();
@@ -163,11 +163,11 @@ export class AccountProviderService implements ProviderSource<AccountProviderCon
           previousStates: latest?.states,
           reasons: Object.freeze(reasons),
         });
-        // Account Snapshot 已经表达 Overlay 的来源，目标与字段边界由注入的
-        // Resolver 和 Account Schema 负责。再按 Built-in access.type 做门禁，会错误拒绝
-        // 账号层为闲时 Provider 发布的 entitled-only Overlay，导致整个 Registry 无法启动。
+        // Account Snapshot already expresses the Overlay source; the injected Resolver and Account Schema own its target and field boundaries.
+        // Gating again by Built-in access.type would incorrectly reject entitled-only overlays published for off-peak Providers at the account layer,
+        // preventing the entire Registry from starting.
         this.#assertNotDisposed();
-        // 查询可跨越 Built-in/凭据更新；过期轮只能丢弃，不能短暂发布后再修正。
+        // Queries may overlap Built-in/credential updates; discard stale runs instead of publishing them temporarily and correcting later.
         const currentConfig = await this.#configSource.read();
         this.#assertNotDisposed();
         if (
@@ -200,14 +200,14 @@ export class AccountProviderService implements ProviderSource<AccountProviderCon
         const event = Object.freeze({ error, reasons: Object.freeze(reasons) });
         for (const listener of this.#errorListeners) listener(event);
         if (!latest && config) {
-          // 首次账号网络/凭据解析失败被当成整个 Registry 的 ready barrier，
-          // 连不依赖账号的 API/Personal Provider 也无法启动。账号未知只应显式 fail-closed。
+          // Treating an initial account network/credential resolution failure as a ready barrier for the entire Registry
+          // also prevented API/Personal Providers that do not depend on accounts from starting. Unknown account state should only fail closed explicitly.
           latest = createFailClosedAccountProviderConfigSnapshot(config);
           this.#snapshot = latest;
           this.#resolveRefreshWaiters(generation, latest);
           continue;
         }
-        // 只回绝本轮开始前的请求；之后到达的请求仍在 pending 中，由 #finishRefresh 启动下一轮回应。
+        // Reject only requests submitted before this run started; later requests remain pending and #finishRefresh starts the next run to answer them.
         this.#rejectRefreshWaiters(generation, error);
         throw error;
       }

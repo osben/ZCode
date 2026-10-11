@@ -47,11 +47,11 @@ import type { SavedWorkflowLaunchError } from "@/settings/saved-workflows/useSav
 
 interface SavedWorkflowLaunchDialogProps {
   entry: ZCodeSavedWorkflowEntry | null;
-  /** 作用域徽标与「将立即在 X 的新会话中运行」文案都要它；也决定启动命令的 scope。 */
+  /** Used for the scope badge and “will run in a new session in X” copy; also determines the launch command's scope. */
   scope: "project" | "global";
   /**
-   * 「将立即在 {project} 的新会话中运行」里的项目名：项目档 = 所属项目名；全局档 = 未选到
-   * 「运行于」时的兜底名（选到后用选中项目 label）。
+   * Project name in “will run in a new session in {project}”: owning project name for project workflows; for global workflows, this is the fallback until a
+   * “Run in” project has been selected (then use the selected project's label).
    */
   projectLabel: string;
   onOpenChange: (open: boolean) => void;
@@ -61,28 +61,28 @@ interface SavedWorkflowLaunchDialogProps {
     target?: AutomationWorkspaceOption,
   ) => void;
   /**
-   * 「运行于」项目候选（仅全局工作流传入）。传入即渲染选择器；
-   * 空数组表示没有本地项目可跑——渲染提示并禁用提交。undefined 时窗口与项目档逐字一致。
+   * Project candidates for “Run in” (provided only for global workflows). When present, render a selector;
+   * an empty array means no local project is available — show a message and disable submission. When undefined, the dialog matches the project workflow version exactly.
    */
   targets?: readonly AutomationWorkspaceOption[];
-  /** 默认选中的项目 key（活动项目）；不在候选里时回落到首个候选。 */
+  /** Default selected project key (active project); fall back to the first candidate if it is not among the options. */
   defaultTargetKey?: string | null;
   /**
-   * 预填实参：完成卡的「再次运行」传这次 run 跑过的那一份（journal 给的）。声明里没有的键忽略；
-   * 缺席即按声明的默认值铺（中枢自己的「运行」就是这条）。
+   * Prefilled arguments: “Run again” on a completion card passes the values used by this run (from the journal). Ignore keys not in the declaration;
+   * absent keys use the declaration defaults (the hub’s own “Run” action follows this path).
    */
   initialArgs?: Record<string, unknown>;
-  /** 正在启动：主按钮 loading + 禁用，防重复点击（launcher.pending）。 */
+  /** Launching: show the primary button as loading + disabled to prevent duplicate clicks (launcher.pending). */
   pending?: boolean;
-  /** 启动失败：行内错误区展示（title 按 reason + 服务端 message）；成功由组关窗清空。 */
+  /** Launch failure: show in the inline error area (title from reason + server message); the group clears it by closing the dialog on success. */
   error?: SavedWorkflowLaunchError | null;
 }
 
 /**
- * 实参窗：头部 = Workflow 图标 + 名字（mono）
- * + 作用域徽标 + 说明；「运行于」（全局档）；实参表；一句「将立即在 X 的新会话中运行」；主按钮
- * 「运行」。点「运行」= GUI 直接启动（无模型回合、无确认窗）：loading 期禁用，失败在行内错误区
- * 显示、窗口留着，成功由组关窗并切到新会话。无实参的项目档不弹本窗（组直接启动）。
+ * Argument dialog: header = Workflow icon + name (mono)
+ * + scope badge + description; “Run in” (global workflows); argument table; one line saying “will run in a new session in X”; primary button
+ * “Run.” Clicking “Run” launches directly from the GUI (no model turn or confirmation dialog): disable while loading, show failures in the inline error area
+ * and keep the dialog open; on success, the group closes it and switches to the new session. Project workflows with no arguments do not show this dialog (the group launches directly).
  */
 export function SavedWorkflowLaunchDialog({
   entry,
@@ -106,7 +106,7 @@ export function SavedWorkflowLaunchDialog({
     setErrors({});
   }, [entry, initialArgs]);
 
-  // 候选变化时保留仍有效的选择，否则回落到默认项目、首个候选或 null（reconcile 同一套规则）。
+  // When candidates change, keep the selection if it is still valid; otherwise fall back to the default project, first candidate, or null (same rule as reconcile).
   useEffect(() => {
     if (!targets) {
       setTargetKey(null);
@@ -125,7 +125,7 @@ export function SavedWorkflowLaunchDialog({
   const selectedTarget = targets
     ? findAutomationWorkspaceOptionByKey(targets, targetKey)
     : undefined;
-  // 「将立即在 {project} 的新会话中运行」：全局档用选中的「运行于」项目名，项目档用所属项目名。
+  // “Will run in a new session in {project}”: use the selected “Run in” project for global workflows and the owning project for project workflows.
   const noteProject = selectedTarget?.label ?? projectLabel;
 
   const scopeBadge = intl.formatMessage({

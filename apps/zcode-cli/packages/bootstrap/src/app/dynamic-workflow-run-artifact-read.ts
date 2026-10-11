@@ -1,30 +1,26 @@
 // ============================================================
-// 用户面产物的字节读回（DynamicWorkflowRunPort.readArtifact 的实现体）
+// Read back the bytes of a user-facing artifact (implementation of DynamicWorkflowRunPort.readArtifact).
 // ============================================================
 //
-// ⚠ 术语：这里的 artifact 是脚本经 `artifact.*` 发布给**用户**看的产出（journal
-// `kind = "artifact"` 的行），**不是**引擎内部的 `RunSettlement.artifact`（脚本顶层返回值，
-// 端口上叫 `output` / `result`）。
+// ⚠ Terminology: artifact here means an output published for the **user** by a script through `artifact.*` (a journal
+// row with `kind = "artifact"`), **not** the engine-internal `RunSettlement.artifact` (the script's top-level return value,
+// called `output` / `result` at the port).
 //
-// 从 dynamic-workflow-run-service.ts 拆出（那个文件已在 max-lines 的既有欠账里，不再加码），
-// 与把 driver 的发布路径拆成 workflow-artifact-publish.ts 是同一条理由：读一次字节
-// 要走「授权 → 定位 → store」三步，每一步都有一条必须写下来的纪律。
+// Split from dynamic-workflow-run-service.ts (already over its max-lines limit) for the same reason the driver's publish path was split into workflow-artifact-publish.ts:
+// reading bytes requires three steps—authorize, locate, and read from the store—and each has an invariant that must be documented.
 //
-// **授权链**（与 attachmentRead 同一条纪律）：
+// **Authorization chain** (same invariant as attachmentRead):
 //
-//   调用方给的 (runId, artifactId, version)
+//   Caller-provided (runId, artifactId, version)
 //        │
-//        ├─① runId 的 dwf_run 行存在吗？                     否 ⇒ undefined
-//        ├─② 该行的 parent_session_id == 本服务的父会话吗？   否 ⇒ undefined
-//        ├─③ journal 里有 (artifactId, version) 的 completed  否 ⇒ undefined
-//        │    artifact 行吗？
-//        ├─④ 那行的记录上有 uri 吗？（预置看板没有）          否 ⇒ undefined
-//        └─⑤ 拿**行上的** uri 去 store 读
+//        ├─① Does a dwf_run row exist for runId?                     No ⇒ undefined
+//        ├─② Does its parent_session_id match this service's parent session? No ⇒ undefined
+//        ├─③ Is there a completed artifact row for (artifactId, version) in the journal? No ⇒ undefined
+//        ├─④ Does that row's record contain a uri? (prebuilt dashboards do not) No ⇒ undefined
+//        └─⑤ Read from the store using the uri **from the row**
 //
-// 第 ⑤ 步是全部要点：renderer 传来的 id 只用于**在 journal 里查行**，从不直接成为路径。
-// 中间任何一步失败都回 undefined 而不是抛错——「没有这个版本」「不是你的 run」「这是个看板」
-// 对调用方是同一个业务事实（网关归一成 not found），把它们区分开只会告诉一个越权的调用方
-// 它猜对了哪一半。
+// Step ⑤ is the key: IDs from the renderer are used only to **look up a journal row** and never become paths directly.
+// Any failed step returns undefined rather than throwing. "No such version," "not your run," and "this is a dashboard" are the same business fact to the caller (the gateway normalizes them to not found); distinguishing them would tell an unauthorized caller which half it guessed correctly.
 
 import type {
   DynamicWorkflowRunArtifactBytes,
@@ -39,19 +35,18 @@ import {
 
 interface WorkflowArtifactReadDeps {
   journal: JournalStorePort;
-  /** 本服务的父会话（= 本 app 的会话）。授权链第 ② 步的比对对象。 */
+  /** This service's parent session (= this app's session), used for the step ② authorization check. */
   parentSessionId: string;
   /**
-   * 字节的家。**可选**：纯 replay / 无 store 的装配拿不到字节，此时整条读回缺席
-   * （与 driver 侧 `ArtifactStoreUnavailable` 是同一个装配事实的两个表现）。
+   * Store containing the bytes. **Optional:** pure replay / no-store configurations cannot access bytes, so readback is unavailable
+   * (the same configuration fact represented on the driver side by `ArtifactStoreUnavailable`).
    */
   artifactStore?: ToolArtifactStorePort;
 }
 
 /**
- * 读某个产物版本的全部字节。分块归网关（≤ 512 KiB 一块），这里一次返回整份——上限
- * 20 MiB 与 attachment 同级，与「读一次算一次授权」比起来，把授权链切进分块循环里
- * 只会让每一块都要重走一遍 journal。
+ * Read all bytes for an artifact version. The gateway handles chunking (≤ 512 KiB per chunk); this returns the full file at once, with the same 20 MiB limit as attachments.
+ * Since authorization is checked once per read, splitting this chain into a chunk loop would require querying the journal again for every chunk.
  */
 export async function readWorkflowArtifactBytes(
   deps: WorkflowArtifactReadDeps,
@@ -60,41 +55,39 @@ export async function readWorkflowArtifactBytes(
   version: number,
 ): Promise<DynamicWorkflowRunArtifactBytes | undefined> {
   const store = deps.artifactStore;
-  // 二进制读回是**可选成员**：不带它的 store 不得退回文本读再解码——那正是
-  // 记录在 ToolBinaryArtifactReadResult 上的那条 bug（office 文件被当 utf8 解码即损坏）。
+  // Binary readback is an **optional member**: if the store lacks it, do not fall back to reading text and decoding it—the bug recorded in ToolBinaryArtifactReadResult
+  // was exactly this (office files were corrupted by decoding them as UTF-8).
   if (store?.readToolResultBinaryArtifact === undefined) return undefined;
 
-  // ①②：run 存在且属于本会话。getRun 在引擎端口上，不需要内省能力探测。
+  // ①②: the run exists and belongs to this session. getRun is on the engine port, so no capability introspection is needed.
   const run = deps.journal.getRun(runId);
   if (run === undefined) return undefined;
-  // parent_session_id 为 NULL 的老行**不放行**：设计上要求 sessionId 等于该 run 的
-  // parentSessionId，而 NULL 意味着没有这个东西可比——「无从判定」不是「判定通过」。
+  // **Do not allow** legacy rows with a NULL parent_session_id: the design requires sessionId to equal the run's
+  // parentSessionId, and NULL means there is nothing to compare against—"cannot determine" does not mean "authorized."
   if (run.parentSessionId === undefined || run.parentSessionId !== deps.parentSessionId) {
     return undefined;
   }
 
-  // ③④：在 journal 里定位那一行，拿行上的 uri。
+  // ③④: locate the row in the journal and use its uri.
   const located = locateArtifactVersion(deps.journal, runId, artifactId, version);
   if (located === undefined) return undefined;
 
-  // ⑤：只有走到这里才碰 store，而喂给它的是**行上的** uri。
+  // ⑤: only now access the store, using the uri **from the row**.
   const result = await store.readToolResultBinaryArtifact({ uri: located.uri });
   return {
     bytes: result.bytes,
-    // contentType 取 **journal 记录**上的值而不是 store 按文件名再推的那份：记录里的是
-    // driver 按扩展名表算出、`opts.contentType` 可覆盖的那一个，也正是 UI 分派渲染器的
-    // 精确匹配契约。store 的推断表只认 8 种扩展名，用它会让 `.csv` 变成 application/json。
+    // Use the value from the **journal record** for contentType, not the store's filename-based guess: the record contains the value the driver derived from its extension table
+    // (overridable by `opts.contentType`), which is the exact contract used by UI renderer dispatch. The store's inference table recognizes only 8 extensions and would classify `.csv` as application/json.
     contentType: located.contentType ?? result.contentType,
   };
 }
 
 /**
- * 在 journal 里找 `(artifactId, version)` 的那条 **completed** artifact 行，并取出它的
- * `uri` 与 `contentType`。
+ * Find the **completed** artifact row for `(artifactId, version)` in the journal and return its
+ * `uri` and `contentType`.
  *
- * 只认 completed：失败的发布不认领 id / 种类 / 版本，它的 `result` 是空的，
- * 放行只会拿一个 undefined 的 uri 去读。预置看板的记录没有 `uri`（它没有字节，它的数据是
- * journal 里的标签 report 行）——同样在这里被挡掉，调用方拿到 undefined。
+ * Only completed rows qualify: failed publishes do not claim an id / kind / version and have an empty `result`; allowing one through would attempt to read an undefined uri.
+ * Prebuilt dashboard records also lack a `uri` (they have no bytes; their data is a labeled report row in the journal), so they are rejected here too and the caller receives undefined.
  */
 function locateArtifactVersion(
   journal: JournalStorePort,

@@ -21,8 +21,8 @@ export async function setProviderFamilyDomain(
     providerFamilyDomain: domain,
     providerFamilyDomainUpdatedAt: Date.now(),
     providerFamilyDomainMigrated: true,
-    // WelcomeScreen OAuth 登录表示用户选择的是同 family 的 Coding Plan/OAuth 模式。
-    // 只写 providerFamilyDomain 会保留之前 API Key 入口写入的 apiKey mode，导致登录成功后仍停在 API Key。
+    // OAuth login from WelcomeScreen means the user chose the Coding Plan/OAuth mode for the same family.
+    // Writing only providerFamilyDomain would preserve the apiKey mode from the prior API Key flow, leaving the user in API Key mode after login.
     providerFamilyConnectionSelections: buildOAuthProviderFamilySelections(
       domain,
       currentSettings.providerFamilyConnectionSelections,
@@ -44,8 +44,8 @@ export async function clearProviderFamilyDomain(
   settingService: Pick<ISettingService, "update">,
 ): Promise<void> {
   await settingService.update({
-    // 清理原因：providerFamilyDomain 通过 RPC 传 undefined 容易被吞掉。
-    // settingService 会把空串归一成 undefined，确保退出/解绑后不会继续过滤到旧 domain。
+    // Cleanup reason: undefined can be dropped when providerFamilyDomain is sent over RPC.
+    // settingService normalizes an empty string to undefined, ensuring sign-out/unlink does not keep filtering by the old domain.
     providerFamilyDomain: "" as AppSettings["providerFamilyDomain"],
     providerFamilyDomainUpdatedAt: Date.now(),
     providerFamilyDomainMigrated: true,

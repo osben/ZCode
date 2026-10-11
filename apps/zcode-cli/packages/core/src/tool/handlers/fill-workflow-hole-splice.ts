@@ -1,18 +1,18 @@
 // ============================================================
-// FillWorkflowHole：确认窗预览用的有效脚本
+// Effective script used to preview the FillWorkflowHole confirmation dialog.
 // ============================================================
-// docs/dynamic-workflow/launch.md「Approval」：别的会话的 run 开窗时，窗里画的是**有效脚本**的图
-// （补上函数体之后的那份），而拼接与编译真正发生在端口实现侧、批准之后。所以这里在 resolveInput
-// 里预先拼一次，只为让 prepareApproval 有图可画；它不是执行路径，端口侧的 `fillHole` 才是。
+// docs/dynamic-workflow/launch.md, “Approval”: when a run from another session opens a dialog, show the graph of the **effective script**
+// (with the function body inserted). Actual splicing and compilation happen in the port implementation after approval. So resolveInput
+// splices it here in advance only to give prepareApproval a graph to render; this is not the execution path—the port's `fillHole` is.
 //
-// 拼接本体是分析器包的 `spliceHoleBody`（apps/zcode-cli/packages/dynamic-workflow/docs/analysis.md
-// 「Sites」）：函数体插在留白调用的闭括号前，站点 id 的编号规则由分析器保证。
+// The splice itself is `spliceHoleBody` in the analyzer package (apps/zcode-cli/packages/dynamic-workflow/docs/analysis.md,
+// “Sites”): the function body is inserted before the hole call's closing parenthesis, and the analyzer guarantees site ID numbering.
 
 import { collectSites, createWorkflowProgram, spliceHoleBody } from "@zcode/dynamic-workflow";
 
 /**
- * 把函数体拼进 run 的脚本，返回有效脚本文本；拼不了（留白未知、已补过、脚本连站点表都建不出）时回
- * `undefined`——调用方据此开一个没有预览的窗，绝不抛。
+ * Splice the function body into the run's script and return the effective script text. Return `undefined` if splicing fails
+ * (unknown or already-filled hole, or the script cannot produce a site table); the caller then opens the dialog without a preview. Never throw.
  */
 export function spliceHoleBodyPreview(
   scriptText: string,

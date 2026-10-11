@@ -45,8 +45,8 @@ export async function recordToolUsageFromResult(
       errorMessage: result.error?.message,
     });
   } catch (error) {
-    // 结果路径的 SQLite Usage 写入没有旁路保护，磁盘/锁异常会阻断后续
-    // Tool Result 持久化与模型续跑；观测失败绝不能改变 Agent 业务语义。
+    // SQLite Usage writes in the result path have no fallback protection; disk/lock errors would block later
+    // Tool Result persistence and model continuation. Observability failures must never change Agent behavior.
     runtime.logger?.warn("Usage tool fact write failed", {
       errorMessage: error instanceof Error ? error.message : String(error),
       event: "usage.tool.write.failed",

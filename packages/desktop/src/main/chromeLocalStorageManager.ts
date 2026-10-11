@@ -1,4 +1,4 @@
-/* eslint-disable max-lines -- Chrome helper、CDP 传输和 Electron 目标写入必须共享同一套敏感数据边界。 */
+/* eslint-disable max-lines -- The Chrome helper, CDP transport, and Electron target writes must share the same sensitive-data boundary. */
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { cp, copyFile, mkdir, mkdtemp, readFile, readdir, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -68,7 +68,7 @@ function toLocalStorageFailureReason(error: unknown): string {
   if (message === "local_storage_origin_mismatch" || message.endsWith("_timeout")) {
     return message;
   }
-  // CDP 原始错误可能包含 URL 或站点细节，日志中只保留稳定分类。
+  // Raw CDP errors may contain URLs or site details; log only a stable category.
   return "cdp_command_failed";
 }
 
@@ -102,8 +102,9 @@ export async function cleanupChromeHelperTempRoot(options: {
       retryDelay: CHROME_HELPER_TEMP_CLEANUP_RETRY_DELAY_MS,
     });
   } catch (error) {
-    // Linux Chrome 的 crashpad/子进程可能在主 helper 退出后短暂继续写临时 Profile，
-    // 使 rm 返回 ENOTEMPTY。清理失败不能覆盖已经通过 CDP 读取成功的 Cookie/LocalStorage 结果。
+    // Linux Chrome's crashpad/child process may keep writing to the temporary Profile briefly after
+    // the main helper exits, causing rm to return ENOTEMPTY. Cleanup failure must not replace
+    // Cookie/LocalStorage results already read successfully through CDP.
     options.logger.warn(
       "[browser-data] Chrome helper 临时目录清理失败",
       toSafeFileSystemError(error),
@@ -151,8 +152,9 @@ export async function discoverChromeLocalStorageOrigins(
 
   const origins = new Set<string>();
   const files = await readdir(levelDbPath, { withFileTypes: true });
-  // Chrome LocalStorage LevelDB 的 metadata key 使用 `META:<origin>`。这里只提取 origin，
-  // 不解析或输出任何 entry value；真实值由隔离 Chrome helper 通过同源 API 读取。
+  // Chrome LocalStorage LevelDB metadata keys use `META:<origin>`. Extract only the origin here;
+  // do not parse or output any entry value. The isolated Chrome helper reads actual values through
+  // the same-origin API.
   const originPattern = /META:(https?:\/\/(?:\[[0-9a-fA-F:]+\]|[A-Za-z0-9.-]+)(?::\d{1,5})?)/g;
   for (const file of files) {
     if (!file.isFile()) continue;
@@ -166,7 +168,7 @@ export async function discoverChromeLocalStorageOrigins(
           origins.add(candidate);
         }
       } catch {
-        // LevelDB 历史记录或二进制邻接字节可能形成无效候选，直接忽略。
+        // Historical LevelDB records or adjacent binary bytes may form invalid candidates; ignore them.
       }
     }
   }
@@ -517,9 +519,10 @@ async function copyChromeProfileMetadata(
 }
 
 /**
- * Windows App-Bound Cookie 与 Linux 系统密钥环 Cookie 只能由匹配的 Chrome/Chromium
- * 安全解密。这里把数据库复制到一次性 Profile，再由已安装浏览器通过 CDP 读取；
- * Cookie 值和密钥环材料不会进入 renderer 或日志。
+ * Windows App-Bound Cookies and Linux system-keyring Cookies can be safely decrypted only by the
+ * matching Chrome/Chromium installation. Copy the database to a disposable Profile, then read it
+ * through CDP using the installed browser. Cookie values and keyring material never enter the
+ * renderer or logs.
  */
 export async function readChromeCookiesWithHelper(options: {
   cookieDatabasePath: string;
@@ -595,8 +598,8 @@ async function writeElectronLocalStorage(
       backgroundThrottling: false,
     },
   });
-  // 未加载任何文档的 WebContents 尚未创建可用 renderer，直接发送 CDP
-  // 导航/存储命令会一直不返回。先初始化 about:blank，再附加 debugger。
+  // A WebContents that has not loaded a document has no usable renderer yet; sending CDP navigation
+  // or storage commands directly will never return. Initialize about:blank first, then attach the debugger.
   await window.loadURL("about:blank");
   const transport = createElectronCdpTransport(window.webContents);
   const unsubscribe = await initializeLocalStoragePage(transport);
@@ -651,8 +654,8 @@ export async function importChromeLocalStorage(options: {
   let originCount = 0;
   try {
     await mkdir(targetProfilePath, { recursive: true });
-    // Windows 上 Chrome 可能持续写入 LevelDB。必须先复制快照，再扫描 metadata；
-    // 直接扫描源目录会把锁冲突和写入竞态误报为“没有 LocalStorage”。
+    // Chrome may keep writing to LevelDB on Windows. Copy a snapshot before scanning metadata;
+    // scanning the source directory directly could mistake lock conflicts or write races for "no LocalStorage."
     await cp(sourceLocalStoragePath, join(targetProfilePath, "Local Storage"), {
       recursive: true,
       force: true,

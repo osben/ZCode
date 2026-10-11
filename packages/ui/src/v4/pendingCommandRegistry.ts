@@ -1,5 +1,5 @@
-// V4 已提交命令的 renderer 持久账本。
-// 它只保存客户端恢复线索，不参与 conversation projection，也绝不能据此自动重放。
+// Persistent renderer ledger of committed v4 commands.
+// It stores only client recovery hints, does not participate in the conversation projection, and must never be used to replay commands automatically.
 import type {
   CommandAck,
   CommandEnvelope,
@@ -8,10 +8,7 @@ import type {
   ConversationSnapshot,
 } from "@zcode/shared/zcode-protocol-v4";
 import type { PendingCommandClientContext } from "@/v4/pendingCommandWorkspace.js";
-import {
-  pendingCommandReplayFor,
-  type PendingCommandReplay,
-} from "@/v4/pendingCommandReplay.js";
+import { pendingCommandReplayFor, type PendingCommandReplay } from "@/v4/pendingCommandReplay.js";
 export type { PendingCommandReplay } from "@/v4/pendingCommandReplay.js";
 
 export const PENDING_COMMAND_TTL_MS = 24 * 60 * 60 * 1_000;
@@ -91,9 +88,9 @@ function isRuntimeLocalDiscard(ack: CommandAck): boolean {
 }
 
 /**
- * ACK、queue 与 transcript 曾分别维护临时状态；renderer 刷新或 ACK 丢失后，
- * UI 已清空但无法证明 CLI 是否 admission。这里把“待对账线索”先于上行持久化，并用
- * queue/guided/transcript sourceCommandId 或显式终态收口；registry 本身永远不产生权威事实。
+ * ACK, queue, and transcript previously maintained separate temporary state. After renderer refresh or lost ACK,
+ * the UI cleared but could not confirm whether CLI had admitted the command. Persist “pending reconciliation clues” before uplink, then close them using
+ * queue/guided/transcript sourceCommandId or an explicit terminal state; the registry itself never creates authoritative facts.
  */
 export class PendingCommandRegistry {
   private readonly storage: StorageLike | undefined;
@@ -128,7 +125,7 @@ export class PendingCommandRegistry {
       clientId: envelope.clientId,
       sessionId: envelope.sessionId,
       issuedAt: envelope.issuedAt,
-      // TTL 锚定首次登记时间；reload/reconcile 不得续期。
+      // Anchor TTL to the initial registration time; reload/reconcile must not renew it.
       expiresAt: this.now() + PENDING_COMMAND_TTL_MS,
       replay,
       ...(clientContext ? { clientContext } : {}),
@@ -147,7 +144,7 @@ export class PendingCommandRegistry {
 
   listRecoverable(sessionId: string | null): readonly PendingCommandEntry[] {
     return this.list(sessionId).filter(
-      // 兼容 V4 初版已经写入 localStorage 的 unknown：它不是可操作错误，不能再进入 UI。
+      // Compatibility with unknown values written to localStorage by the initial V4 version: this is not an actionable error and must not enter the UI again.
       (entry) => entry.recovery === "discarded" && !entry.recoveryDismissed,
     );
   }
@@ -169,7 +166,7 @@ export class PendingCommandRegistry {
     let entry = this.entries.get(keyOf(envelope.sessionId, envelope.commandId));
     if (!entry) return;
     if (entry.replay.kind === "sensitiveDigest") {
-      // 交互答案不可重放；拿到确定 ACK 后其对账职责已结束。
+      // Interaction answers cannot be replayed; a definite ACK ends their reconciliation responsibility.
       this.settle(entry.sessionId, entry.commandId);
       return;
     }
@@ -194,8 +191,8 @@ export class PendingCommandRegistry {
       let entry = this.entries.get(keyOf(item.key.sessionId, item.key.commandId));
       if (!entry) continue;
       if (item.result === "unknown") {
-        // V4 初版把“权威事实未命中”提升成需要用户处理的错误横幅，导致正常的
-        // App/CLI 生命周期切换也频繁打扰用户。unknown 没有可操作结论，renderer 静默清账。
+        // The initial V4 version turned “authoritative fact not found” into an error banner requiring user action, frequently interrupting users
+        // during normal App/CLI lifecycle transitions. unknown has no actionable conclusion, so the renderer clears it silently.
         this.settle(entry.sessionId, entry.commandId);
         continue;
       }
@@ -233,9 +230,9 @@ export class PendingCommandRegistry {
     const settled = new Set<string>();
     for (const item of snapshot.queue.items) {
       if (item.sourceCommandId) {
-        // 把“进入 queue”当成仍未投递的话，直到 transcript 才清理
-        // localStorage；App/CLI 重启后旧 runtime queue 被正常丢弃，却又触发重发提示。
-        // queue projection 已是 CLI 权威接收证据，renderer ingress 账本应在此结算。
+        // Treating “entered queue” as undelivered kept the localStorage entry until transcript cleanup;
+        // after App/CLI restart, the old runtime queue was correctly dropped but triggered a false resend notice.
+        // The queue projection is authoritative evidence that CLI received it, so settle the renderer ingress ledger here.
         settled.add(item.sourceCommandId);
       }
     }
@@ -244,7 +241,7 @@ export class PendingCommandRegistry {
         settled.add(row.sourceCommandId);
       }
       if (row.kind === "timelineMarker" && row.marker.type === "compact" && row.sourceCommandId) {
-        // compact 不产生 user row；timeline marker 是该维护命令已开始执行的权威证据。
+        // compact does not create a user row; the timeline marker is authoritative evidence that this maintenance command started executing.
         settled.add(row.sourceCommandId);
       }
     }
@@ -284,7 +281,7 @@ export class PendingCommandRegistry {
         : {}),
       ...(entry.clientContext ? { clientContext: entry.clientContext } : {}),
     };
-    // 用户已确认以新 commandId 重发，旧 discarded 线索在本地完成收口。
+    // The user confirmed a resend with a new commandId; close out the old discarded clue locally.
     this.settle(entry.sessionId, entry.commandId);
     return request;
   }
@@ -351,7 +348,7 @@ export class PendingCommandRegistry {
       }
       this.pruneExpired();
     } catch {
-      // storage 损坏不能阻断聊天；丢弃的是客户端恢复线索，不影响 CLI 权威事实。
+      // Corrupted storage must not block chat; this discards only client recovery clues and does not affect CLI authoritative facts.
       this.entries.clear();
     }
   }
@@ -377,7 +374,7 @@ export class PendingCommandRegistry {
           this.storage.setItem(STORAGE_KEY, JSON.stringify([...this.entries.values()]));
         }
       } catch {
-        // quota/incognito：退化为当前 renderer 内存账本。
+        // quota/incognito: fall back to an in-memory ledger for the current renderer.
       }
     }
     for (const listener of this.listeners) listener();

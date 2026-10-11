@@ -53,14 +53,16 @@ export interface ToolArtifactReadResult {
 }
 
 /**
- * 二进制读回：**原始字节**，不经任何文本 / base64 编码。
+ * Binary readback: **raw bytes**, with no text / base64 encoding.
  *
  * {@link ToolArtifactStorePort.readToolResultArtifact}
- * 把「按文件名再推一次 contentType → 文本走 utf8、其余走 base64」当作写入编码的逆运算，而
- * 推断表只认 txt/md/png/jpg/gif/webp/pdf/bin，`.xlsx` / `.docx` / `.pptx` 落到默认的
- * `application/json` 被当作 utf8 解码——办公文件读回即损坏且不可恢复。字节的消费者
- * （v4 分块查询、查看器）需要的是字节本身，编码是给模型面文本用的；两件事分开两个方法。
- * `contentType` 仍按文件名推断，仅供缺少更好来源的调用方兜底（dwf 用 journal 记录的那份）。
+ * Treating "infer contentType again from the filename → decode text as UTF-8 and everything else as
+ * base64" as the inverse of the write encoding is unsafe. The inference table recognizes only
+ * txt/md/png/jpg/gif/webp/pdf/bin, so `.xlsx` / `.docx` / `.pptx` falls back to `application/json` and
+ * is decoded as UTF-8—office files are corrupted on readback and cannot be recovered. Byte consumers
+ * (v4 chunked reads, viewers) need the bytes themselves; encoding is for model-facing text. These are
+ * separate methods. `contentType` is still inferred from the filename, only as a fallback for callers
+ * without a better source (dwf uses the value recorded in the journal).
  */
 export interface ToolBinaryArtifactReadResult {
   uri: string;
@@ -117,9 +119,10 @@ export interface ToolArtifactStorePort {
     options?: { signal?: AbortSignal },
   ): Promise<ToolArtifactReadResult>;
   /**
-   * 原始字节读回（见 {@link ToolBinaryArtifactReadResult}）。可选：与
-   * {@link writeToolResultBinaryArtifact} 同规，不带二进制能力的 store 实现不必陪跑；
-   * 消费方 `typeof` 探测，缺席即「本 store 不能提供字节」——不得退回文本读再解码。
+   * Read back raw bytes (see {@link ToolBinaryArtifactReadResult}). Optional: like
+   * {@link writeToolResultBinaryArtifact}, stores without binary support need not implement it.
+   * Consumers detect it with `typeof`; if absent, the store cannot provide bytes—do not fall back to
+   * reading text and decoding it.
    */
   readToolResultBinaryArtifact?(
     request: ToolArtifactReadRequest,

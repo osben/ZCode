@@ -15,7 +15,7 @@ import type {
 } from "./account-provider-state.js";
 
 export type AccountProviderConnectionResult = {
-  /** 账号/组织身份变化后禁止沿用旧快照；仅用于本轮解析，不进入配置。 */
+  /** Do not reuse an old snapshot after account/organization identity changes; used only for this resolution and not stored in config. */
   readonly resetPrevious?: boolean;
   readonly current?: boolean;
   readonly connectionKey?: string;
@@ -29,7 +29,7 @@ export type AccountProviderConnectionResult = {
   | {
       readonly providerId: ProviderId;
       readonly status: "unavailable" | "unknown";
-      /** 仅在 status === "unavailable" 时携带；unknown 表示本轮无法判定原因。 */
+      /** Present only when status === "unavailable"; unknown means the reason could not be determined for this run. */
       readonly unavailableReason?: AccountProviderUnavailableReason;
     }
 );
@@ -64,9 +64,9 @@ export function createAccountProviderConfigResolver(
         ? undefined
         : input.previousStates?.[connection.providerId];
       const access = providers.get(connection.providerId)?.access;
-      // unknown 仅保留上次展示事实；current 始终来自本轮选择，不能复活旧连接。
-      // 原因字段与 availability 同规则：unknown 沿用上一轮，避免一次网络抖动把
-      // "明确无权益"降级成原因未知。
+      // unknown retains only the previous display fact; current always comes from this run's selection and cannot revive an old connection.
+      // The reason field follows the same rule as availability: unknown reuses the previous run to avoid a network hiccup downgrading
+      // "explicitly no entitlement" to an unknown reason.
       const unavailableReason =
         connection.status === "unknown" && previous
           ? previous.unavailableReason
@@ -88,7 +88,7 @@ export function createAccountProviderConfigResolver(
   };
 }
 
-/** 把账号连接结果转换为 Registry 使用的第三层 Account Provider Config。 */
+/** Convert account connection results into the third-layer Account Provider Config used by Registry. */
 export function resolveAccountProviderConfigs(
   input: ResolveAccountProviderConfigsInput,
 ): ProviderConfigMap {
@@ -108,7 +108,7 @@ export function resolveAccountProviderConfigs(
         resolved.push([
           providerId,
           new ProviderConfig({
-            // 明确空模型是本轮权威结果，不能保留已经失效的旧白名单。
+            // An explicitly empty model list is authoritative for this run; do not retain an outdated allowlist.
             access: new ZhipuAccountAccessConfig({ entitled: connection.status === "available" }),
             builtinModelIds: models,
           }),

@@ -43,8 +43,8 @@ export function buildGhostSupplierIdentity(rawIdentity: string): string {
     return encodedIdentity;
   }
 
-  // ghost identity 可能包含长 URL，直接拼 key 会放大状态串并污染日志。
-  // 超长时退化成稳定摘要，避免 selectedSupplierKey 无限增长。
+  // A ghost identity may contain a long URL; concatenating it directly would inflate state strings and pollute logs.
+  // Use a stable digest when it is too long to keep selectedSupplierKey bounded.
   return `hash=${hash12(rawIdentity)}`;
 }
 

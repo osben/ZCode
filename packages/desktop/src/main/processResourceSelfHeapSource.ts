@@ -1,32 +1,35 @@
 /**
- * host 与 scheduler 自采 heap 的样本来源（注册表第三行）。
+ * Host and scheduler self-sampled heap source (third registry entry).
  *
- * 两个 utilityProcess 各自每 60 秒读一次 `process.memoryUsage()` 与 `process.cpuUsage()`，
- * 经 parentPort 把样本送到 main，由消息分发点调用这里的 `ingestXxx` 存下最近一次读数；
- * 下一个 10 秒 tick 把它并进同角色的完整样本，成为 `heap_used_kb_mean` / `heap_used_kb_peak`。
+ * Each utilityProcess reads `process.memoryUsage()` and `process.cpuUsage()` every 60 seconds and
+ * sends the sample to main through parentPort. The message dispatcher calls `ingestXxx` here to
+ * store the latest reading; the next 10-second tick adds it to the complete sample for that role as
+ * `heap_used_kb_mean` / `heap_used_kb_peak`.
  *
- * 只取 heap：CPU 与 RSS 的唯一来源是 main 的 `getAppMetrics()`（角色定义表），
- * 把 60 秒口径的自采读数混进 10 秒序列会污染 `sample_count` 与统计量。
- * 每次读数只贡献一个 heap 样本（交付即清空），不拿旧值充当当前事实。
+ * Collect heap only: main's `getAppMetrics()` (role definition table) is the only source for CPU and
+ * RSS. Mixing self-sampled 60-second readings into a 10-second series would distort `sample_count`
+ * and statistics. Each reading contributes one heap sample and is cleared on delivery; never reuse
+ * an old value as a current fact.
  */
 
 import { nodeSelfResourceSampleSchema, type ProcessResourceRole } from "@zcode/shared";
 import type { ProcessResourceSampleSource } from "./processResourceSampleSources.js";
 
-/** 角色 → 尚未交付的 heap 读数（KB）。 */
+/** Role → heap reading (KB) not yet delivered. */
 const pendingHeapUsedKb = new Map<ProcessResourceRole, number>();
 
 /**
- * 摄入口按 `unknown` 收：host 走 host 响应 schema、scheduler 走 main 里没有统一校验的私有协议，
- * 两条传输链路在这里合成同一个信任边界，校验只有这一处。
- * 非法消息（字段缺失、类型错误、夹带多余字段）直接丢弃，不抛错。
+ * The ingestion point accepts `unknown`: Host uses a response schema, while scheduler uses a private
+ * protocol that has no shared validation in main. The two transport paths meet at one trust boundary
+ * here, so validation lives only in this place.
+ * Drop invalid messages (missing fields, wrong types, or extra fields) without throwing.
  */
 function ingest(role: ProcessResourceRole, raw: unknown): void {
   const parsed = nodeSelfResourceSampleSchema.safeParse(raw);
   if (!parsed.success) {
     return;
   }
-  // 多窗口 Host 会在同一 tick 到达；后到的小堆不能覆盖先到的峰值。
+  // Hosts from multiple windows may arrive in the same tick; a later smaller heap must not replace an earlier peak.
   pendingHeapUsedKb.set(role, Math.max(pendingHeapUsedKb.get(role) ?? 0, parsed.data.heapUsedKb));
 }
 
@@ -41,7 +44,7 @@ export function ingestSchedulerSelfResourceSample(raw: unknown): void {
 export const selfHeapProcessResourceSampleSource: ProcessResourceSampleSource = {
   id: "self_heap",
   sample(context) {
-    // 先取走再投递：投递抛错也不会把旧读数留到下一个 tick。
+    // Remove the reading before delivery so a delivery error cannot leave an old value for the next tick.
     const delivering = [...pendingHeapUsedKb];
     pendingHeapUsedKb.clear();
     for (const [role, heapUsedKb] of delivering) {

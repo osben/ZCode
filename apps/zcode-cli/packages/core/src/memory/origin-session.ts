@@ -36,12 +36,12 @@ export function stampMemoryOriginSessionId(input: {
     const existingOrigin = metadata.get("originSessionId");
     if (typeof existingOrigin === "string" && existingOrigin.length > 0) return input.content;
 
-    // 基线只在缺少 origin 时序列化 frontmatter，并在同一次写入补齐 node_type。
+    // The baseline serializes frontmatter only when origin is missing and adds node_type in the same write.
     metadata.delete("node_type");
     metadata.items.unshift(document.createPair("node_type", "memory"));
     metadata.set("originSessionId", input.sessionId);
   } catch {
-    // 非 mapping 的 metadata 不做修复；Memory 文件格式仍由 prompt 约束。
+    // Do not repair metadata that is not a mapping; the prompt still defines the Memory file format.
     return input.content;
   }
 

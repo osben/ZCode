@@ -1,26 +1,27 @@
 // ============================================================
-// 情势截面的**阶段表**：声明的站点 + 走过的站点
+// **Phase table** for the run's situation snapshot: declared sites plus visited sites.
 // ============================================================
-// 名字与相位读的是 run 面板同一份归约
-// 状态（`run.phaseNames` / `run.phases` / `run.currentPhase` / `run.nodes`），时刻读的是
-// 事件索引——两侧的分工与 -roster-events.ts 文件头写的是同一条。
+// Names and phases come from the same reduced run state as the run panel
+// (`run.phaseNames` / `run.phases` / `run.currentPhase` / `run.nodes`); timestamps come from the
+// event index. This division is also described in the header of -roster-events.ts.
 //
-// 为什么节点计数取**归约状态**而不是 journal 的节点行：阶段坐标（`phaseName`）只活在归约状态
-// 上（引擎只在出生事件上打戳，行上没有这一列），拿行去 join 只会把归约状态装不下的节点一并
-// 丢掉；而归约状态还装着**还没落行**的 queued 节点，那正是「当前阶段有几个在跑」要数的东西。
+// Why count nodes from the **reduced state** rather than journal rows? Phase coordinates (`phaseName`)
+// exist only in reduced state (the engine stamps them only on creation events, and rows have no such
+// column). Joining against rows would drop nodes that reduced state can represent. Reduced state also
+// includes queued nodes that have not yet produced rows, which must count toward nodes running in the current phase.
 
 import type { DynamicWorkflowRunPhaseView } from "@zcode/contracts";
 import type { WorkflowRunNode, WorkflowRunState } from "@zcode/shared/zcode-protocol-v4";
 import type { RosterEventIndex } from "./dynamic-workflow-run-roster-events.js";
 
-/** world-read / world-run 之外的节点都按 ask 记：`kind` 只在出生事件上携带，缺席即未知。 */
+/** Treat nodes other than world-read / world-run as ask: `kind` appears only on creation events, so absence means unknown. */
 const WORLD_NODE_KIND = "world-read";
 
 /**
- * 阶段表：声明序的已声明阶段，后面接上「进过但没声明」的那些（按首次进入顺序）。
+ * Phase table: declared phases in declaration order, followed by visited-but-undeclared phases in order of first entry.
  *
- * **脚本没声明、也一个都没进过时整个返回 undefined**：那样的 run 没有阶段这回事，
- * 发一个空数组读起来像「阶段表是空的」，是另一句话。
+ * Return undefined when the script declared no phases and none were visited: such a run has no
+ * phase table at all. Returning an empty array would instead say that it has an empty phase table.
  */
 export function buildPhaseViews(input: {
   run: WorkflowRunState | undefined;
@@ -60,10 +61,10 @@ export function buildPhaseViews(input: {
 }
 
 /**
- * 一个阶段的处境（见 `DynamicWorkflowRunPhaseState` 的四个词）。
+ * Situation for one phase (see the four states in `DynamicWorkflowRunPhaseState`).
  *
- * `unfinished` **只对终态 run 成立**：run 还活着时，一个非当前阶段里有在飞的 ask 是并行分支
- * 的常态，不是烂尾——它有几个在飞，`nodesRunning` 已经如实说了。
+ * `unfinished` applies **only to terminal runs**: while a run is alive, in-flight asks in a non-current
+ * phase are normal parallel branches, not abandoned work. `nodesRunning` already reports their count.
  */
 function phaseStateOf(input: {
   rounds: number;

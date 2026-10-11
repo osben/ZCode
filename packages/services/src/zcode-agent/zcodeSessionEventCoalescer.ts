@@ -25,7 +25,7 @@ export interface BackgroundSessionEventCoalescer {
 
 function asRecord(value: unknown): Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
-    ? value as Record<string, unknown>
+    ? (value as Record<string, unknown>)
     : {};
 }
 
@@ -98,7 +98,7 @@ function mergeBackgroundSessionEvents(
     } as ZCodeSessionEvent;
   }
 
-  // 性能优化：后台工具 progress 只用于“还在跑”的可见摘要，保留最新状态即可。
+  // Performance: background tool progress is only used for a visible "still running" summary, so keep only the latest state.
   return next;
 }
 
@@ -149,8 +149,8 @@ export function createBackgroundSessionEventCoalescer(params: {
   function acceptSessionEvent(event: SessionServiceEvent): void {
     const key = getBackgroundSessionEventCoalesceKey(event.event);
     if (!key) {
-      // 后台降频只能影响可重组的增量。权限、终态、tool result 等结构化事件
-      // 必须先落完已有摘要再立即投递，否则会破坏 task 的交互边界。
+      // Background throttling may affect only deltas that can be recombined. Structured events such as permissions, terminal states, and tool results
+      // must be preceded by a flush of the existing summary and then delivered immediately, or task interaction boundaries would be broken.
       flushPending();
       params.emit(event);
       return;
@@ -191,9 +191,9 @@ export function createBackgroundSessionEventCoalescer(params: {
     },
 
     dispose(): void {
-      // desktop continuous 后台订阅被前台接管时会 dispose。
-      // 待 flush 的 text/reasoning delta 仍是用户可见正文，不能按普通清理丢弃；
-      // 否则切回 session 后运行中消息会从下一段 delta 才开始显示。
+      // The foreground takes over the desktop-continuous background subscription and disposes it.
+      // Pending text/reasoning deltas are still user-visible content and cannot be discarded as ordinary cleanup;
+      // otherwise, after returning to the session, the running message would appear only from the next delta onward.
       flushPending();
       disposed = true;
       clearFlushTimer();

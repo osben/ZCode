@@ -2,6 +2,9 @@
 *.mjs text eol=lf
 *.sh  text eol=lf
 
+# Gen UI vendor-файлы проверяются по SHA-256 manifest; checkout сохраняет исходные байты.
+apps/zcode-cli/packages/visualize-plugin/skills/visualize/assets/vendor/** -text
+
 # E2E PDF fixture 含规范 xref 尾空格，必须按二进制处理，避免 diff --check 误报。
 packages/desktop/test/e2e/fixtures/fs/**/*.pdf binary
 

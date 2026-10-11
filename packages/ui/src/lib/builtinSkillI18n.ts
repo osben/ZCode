@@ -135,7 +135,8 @@ const BUILTIN_SKILL_DESCRIPTIONS: Record<string, Partial<Record<Locale, string>>
   },
   "restore-legacy-sessions": {
     "zh-CN": "检查、规划或执行 ACP 时代 ZCode 旧 session 恢复到新的 ZCode 任务与会话库。",
-    "en-US": "Inspect, plan, or restore old ACP-era ZCode sessions into the new ZCode task and session stores.",
+    "en-US":
+      "Inspect, plan, or restore old ACP-era ZCode sessions into the new ZCode task and session stores.",
   },
   "plugin-creator": {
     "zh-CN": "创建、校验 ZCode 插件，并指导本地安装与更新。",
@@ -242,7 +243,7 @@ export function resolveSkillDisplayDescription(
   const descriptions = isOfficialBuiltinSkill(skill)
     ? BUILTIN_SKILL_DESCRIPTIONS[skill.name]
     : undefined;
-  // 未翻译的语言回退英文描述，避免露出 skill 自带的（可能是中文的）原始描述。
+  // For untranslated locales, fall back to the English description so the skill’s original description (which may be Chinese) is not exposed.
   const localized = descriptions?.[locale ?? "en-US"] ?? descriptions?.["en-US"];
   return localized ?? skill.description;
 }

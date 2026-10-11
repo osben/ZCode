@@ -80,7 +80,7 @@ const SYSTEM_REMINDER_TRAILING_NEWLINE_SOURCES = new Set<SystemReminderSource>([
 const NON_MID_CONVERSATION_SYSTEM_SOURCES = new Set<SystemReminderSource>([
   "context_prefix",
   "resume_referenced_session_context",
-  // Fork 和辅助对话边界必须位于新问题之前；走 MCS 会被移到问题之后，改变上下文顺序。
+  // Fork and auxiliary-conversation boundaries must appear before the new question; using MCS would move them after the question and change context order.
   "conversation_fork",
   "selection_side_chat",
   "plan_file_reference",
@@ -113,12 +113,12 @@ const SYSTEM_REMINDER_DESCRIPTORS: Record<SystemReminderSource, DescriptorShape>
     true,
     "sr.referenced_session_context",
   ),
-  // Plugin 对话引用：当轮生成后按
-  // model-only synthetic notice 固化，后续只追加、不改写；冷恢复按原文重建以保持缓存前缀。
+  // Plugin conversation references: after generation for this turn, persist them as a
+  // model-only synthetic notice; append to it later without rewriting. Cold recovery rebuilds the original text to preserve the cache prefix.
   plugin_reference: descriptor("current_turn", "per_current_turn", true, "sr.plugin_reference"),
   todo_reminder: descriptor("current_turn", "per_current_turn", true, "sr.todo_reminder"),
   task_status: descriptor("mid_turn_event", "mid_turn_event", true, "sr.task_status"),
-  // 只用于 Read 等 tool result 内容内联 warning，不作为 synthetic user notice 持久化。
+  // Used only for warnings embedded in Read and other tool-result content; do not persist it as a synthetic user notice.
   tool_result_warning: descriptor("tool_result", "tool_result", true, "sr.tool_result_warning"),
   resume_referenced_session_context: descriptor(
     "history_continuity",
@@ -174,7 +174,7 @@ const SYSTEM_REMINDER_DESCRIPTORS: Record<SystemReminderSource, DescriptorShape>
     "sr.shell_environment_change",
   ),
   diagnostics: descriptor("mid_turn_event", "mid_turn_event", true, "sr.diagnostics"),
-  // 第四批 4a-0（2026-09-12）：原 plugin_ui_state 源已删除，插件给模型的信息改走 ui/update-model-context。
+  // Batch 4a-0 (2026-09-12): the former plugin_ui_state source was removed; plugin context for the model now goes through ui/update-model-context.
 };
 
 export const SYSTEM_REMINDER_SOURCES = Object.freeze([
@@ -250,6 +250,6 @@ function descriptor(
 
 function escapeNestedSystemReminderTags(body: string | readonly string[]): string {
   const content = typeof body === "string" ? body : body.join("\n");
-  // 与 wrapper 的拒绝规则一致，含空格/大小写变体的关闭标签也只中和起始 <。
+  // Match the wrapper's rejection rule: for closing tags with whitespace or case variants, neutralize only the opening <.
   return content.replace(SYSTEM_REMINDER_NESTED_TAG_PATTERN, (tag) => `&lt;${tag.slice(1)}`);
 }

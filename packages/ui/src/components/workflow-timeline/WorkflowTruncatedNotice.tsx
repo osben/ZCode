@@ -3,15 +3,15 @@ import { cn } from "@/components/lib/utils.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 
 /**
- * 「仅展示 {shown}/{total} 步的详情」（docs/dynamic-workflow/presentation.md「The run card」
- * 与「The run pane」）：run 撞过 `WORKFLOW_RUNS_LIMITS.maxNodes` 之后，实例表停在界上，而它
- * 上面那些数（步数、结算数）已经把表外的算进来了。这一行说的正是这个差额——**没停的是 run，
- * 停的是每一步的详情**。
+ * “Showing details for {shown}/{total} steps” (docs/dynamic-workflow/presentation.md, “The run card”
+ * and “The run pane”): when a run exceeds `WORKFLOW_RUNS_LIMITS.maxNodes`, the instance table stops at the limit, while
+ * the counts above (steps, settled) already include items outside the table. This row states that difference: **the run is not truncated;
+ * details for individual steps are**.
  *
- * 卡与详情页共用一个实现：同一条 run 在两个面上必须说同一句话。
+ * The card and details page share this implementation; a run must use the same wording on both surfaces.
  *
- * 只在真有实例被拒之表外时出现。`truncated` 本身还会被 reports / artifacts / phases 等小表
- * 触界置位（workflow-runs.ts），那时步数一个不少，再念一句「仅展示 40/40 步」是句废话。
+ * Show only when actual instances are omitted. `truncated` is also set when smaller tables such as reports/artifacts/phases hit their limits
+ * (workflow-runs.ts); in those cases no steps are missing, and saying "Showing 40/40 steps" would be pointless.
  */
 export function WorkflowTruncatedNotice({
   className,
@@ -19,7 +19,7 @@ export function WorkflowTruncatedNotice({
   testId,
 }: {
   className?: string;
-  /** 活投影里的这条 run；缺席（run 已被淘汰出投影）即无从谈起。 */
+  /** This run from the live projection; absent means it was evicted from the projection and there is nothing to report. */
   run: WorkflowRunState | undefined;
   testId: string;
 }) {
@@ -33,8 +33,8 @@ export function WorkflowTruncatedNotice({
       className={cn("min-w-0 text-ui-xs text-foreground-subtlest", className)}
       data-testid={testId}
     >
-      {/* 两个数不加千分位：紧挨着的摘要行那一段（`{done}/{total} steps`）就是裸数字，
-          同一块里一个「2,001」一个「2001」比多一个分隔符更刺眼。 */}
+      {/* Do not add thousands separators to either number: the adjacent summary segment (`{done}/{total} steps`) also uses plain numbers,
+          and “2,001” beside “2001” is more distracting than the missing separator. */}
       {intl.formatMessage({ id: "chat.toolCall.workflow.run.truncated" }, { shown, total })}
     </p>
   );

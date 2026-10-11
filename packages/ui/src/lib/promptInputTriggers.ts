@@ -8,9 +8,7 @@ export interface ActivePromptInputTrigger {
 export function getPromptInputTriggerSignature(
   activeTrigger: ActivePromptInputTrigger | null,
 ): string | null {
-  return activeTrigger
-    ? `${activeTrigger.trigger}:${activeTrigger.query}`
-    : null;
+  return activeTrigger ? `${activeTrigger.trigger}:${activeTrigger.query}` : null;
 }
 
 export interface PromptInputSuggestionItem {
@@ -36,20 +34,20 @@ interface PromptInputReplacement {
 type PromptInputReplacementCandidates = string | readonly string[];
 
 const ACTIVE_TRIGGER_RE = /(^|\s)([/@$#¥￥])([^\s/@$#¥￥]*)$/;
-// 中文输入通常不在句中插入空格；仅放宽 @，避免改变 slash、skill、session 面板的触发边界。
+// Chinese text usually has no spaces between words; relax only @ so slash, skill, and session panel trigger boundaries do not change.
 const ACTIVE_MENTION_TRIGGER_RE =
   /(^|[\s\p{Script=Han}\u3000-\u303f\uff00-\uffef])(@)([^\s/@$#¥￥]*)$/u;
-// 放宽中文紧邻 @ 后，`联系邮箱@example.com` / `用户@例子.公司` 会被当成 mention。
-// 仅在汉字直接紧邻 @ 时拒绝域名形态（`x.y`）的 query；中文标点后（`看看，@foo.bar`）和
-// 空格后的 `@foo.bar` 不是邮箱形态，保持触发。
+// If Chinese text is allowed immediately before @, `联系邮箱@example.com` / `用户@例子.公司` would be treated as mentions.
+// Reject domain-shaped (`x.y`) queries only when a Han character directly precedes @; after Chinese punctuation (`看看，@foo.bar`) or
+// a space, `@foo.bar` is not email-shaped, so keep the trigger enabled.
 const DOMAIN_LIKE_QUERY_RE = /\S\.\S/;
 const HAN_PREFIX_RE = /\p{Script=Han}/u;
 const ACTIVE_TRIGGER_TAIL_RE = /^[^\s/@$#¥￥]*/;
 
 function normalizePromptInputTriggerAlias(trigger: string): PromptInputTrigger {
   if (trigger === "¥" || trigger === "￥") {
-    // 部分键盘/输入法输入 skill trigger 时会产生 `¥` 或全角 `￥`。
-    // 这里只把触发语义归一为 `$`，让它唤起 skill 面板；不在输入层改写用户实际输入字符。
+    // Some keyboards/IMEs produce `¥` or full-width `￥` when entering a skill trigger.
+    // Normalize only the trigger semantics to `$` to open the skill panel; do not rewrite the user's actual input characters in the input layer.
     return "$";
   }
 
@@ -121,8 +119,7 @@ export function extractActivePromptInputTrigger(
   textBeforeCursor: string,
 ): ActivePromptInputTrigger | null {
   const match =
-    ACTIVE_MENTION_TRIGGER_RE.exec(textBeforeCursor) ??
-    ACTIVE_TRIGGER_RE.exec(textBeforeCursor);
+    ACTIVE_MENTION_TRIGGER_RE.exec(textBeforeCursor) ?? ACTIVE_TRIGGER_RE.exec(textBeforeCursor);
   if (!match) {
     return null;
   }
@@ -142,8 +139,8 @@ export function getActivePromptInputTokenTailLength(
   replacementCandidates: PromptInputReplacementCandidates,
 ): number {
   if (activeTrigger.query.length === 0) {
-    // 用户在已有文字前插入裸触发符时，光标后的正文不是当前 token 的补全部分。
-    // 之前会把这些正文当 tail 一起替换，导致选中 @/#/$// 候选后清掉后面的文字。
+    // When a user inserts a bare trigger before existing text, the text after the cursor is not part of the current token's completion.
+    // It used to be treated as tail text and replaced too, clearing the following content after selecting an @/#/$// candidate.
     return 0;
   }
 
@@ -177,8 +174,8 @@ export function getActivePromptInputTokenTailLength(
 
     const comparableLength = Math.min(tailText.length, expectedTail.length);
     const typedTail = tailText.slice(0, comparableLength);
-    // 完整 `/goal` 后紧贴的正文若被当作同一个 token 的 tail 会整段删除。
-    // 这里只删除“候选值未输入后缀”能对上的那一小段，比如 `/go|al` 里的 `al`。
+    // If text immediately after a complete `/goal` is treated as the same token's tail, the whole string is deleted.
+    // Delete only the small suffix that matches the untyped part of the candidate, such as `al` in `/go|al`.
     if (expectedTail.toLowerCase().startsWith(typedTail.toLowerCase())) {
       matchedTailLength = Math.max(matchedTailLength, comparableLength);
     }

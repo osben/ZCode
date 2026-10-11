@@ -33,13 +33,14 @@ import type { ToolEntry, ToolExecutionContext, ToolHandler } from "../types.js";
 import { auxiliaryModelOptions } from "../../model/auxiliary-model-options.js";
 
 const MAX_READ_SESSION_CONTEXT_MODEL_BYTES = 80_000;
-// 关联对话读取会扫描持久化历史，并可能等待 lite 模型抽取大对话上下文；固定 5 分钟避免大历史误超时。
+// Reading related conversations scans persisted history and may wait for a lite model to extract context from a large conversation;
+// use a fixed five-minute limit to avoid timing out on large histories.
 const DEFAULT_TIMEOUT_MS = 300_000;
 const NO_RELEVANT_CONTEXT = "NO_RELEVANT_CONTEXT";
 
 export const readSessionContextHandler: ToolHandler = async (input, context) => {
   const raw = ReadSessionContextInputSchema.parse(input);
-  // 真实话题请求中模型并不知道 session id；当前任务身份必须来自工具上下文，不能要求模型查环境变量。
+  // In a real topic request, the model does not know the session ID; derive the current task identity from tool context instead of asking the model to inspect environment variables.
   const parsed: ReadSessionContextInput = {
     ...raw,
     sessionId: raw.sessionId === "current" ? context.sessionId : raw.sessionId,

@@ -1,37 +1,37 @@
 /**
- * Session 文件变更追踪器
+ * Session file change tracker.
  *
- * 记录 agent runtime 文件写入产生的 before/after 内容。
- * 同一文件在同一轮中被多次修改时，只保留首次 before 和最末 after（合并首尾）。
+ * Record before/after content for file writes made by the agent runtime.
+ * If a file is modified several times in one turn, keep only the first before and the last after (merge the endpoints).
  *
- * 用途：
- * - Rewind：回滚到某一轮时，逆序还原 beforeContent
- * - 汇聚：获取整个 session 所有文件操作的最终结果
+ * Uses:
+ * - Rewind: restore beforeContent in reverse order when rolling back to a turn.
+ * - Aggregation: get the final result of all file operations in a session.
  */
 
-// ---- 类型定义 ----
+// ---- Type definitions ----
 
-/** 单个文件在一轮中的变更快照（合并首尾） */
+/** A file's change snapshot for one turn (first before, last after). */
 interface FileSnapshot {
   path: string;
-  /** 该轮首次修改前的文件内容，null 表示新文件 */
+  /** File content before its first modification in the turn; null means a new file. */
   beforeContent: string | null;
-  /** 该轮最后一次写入的内容 */
+  /** Content from the last write in the turn. */
   afterContent: string;
-  /** 该轮内被写入的次数 */
+  /** Number of writes during the turn. */
   writeCount: number;
 }
 
-/** 一轮对话的文件变更 */
+/** File changes from one conversation turn. */
 interface TurnFileChanges {
   turnIndex: number;
-  /** 该轮涉及的文件快照，key = path */
+  /** File snapshots involved in the turn, keyed by path. */
   snapshots: Map<string, FileSnapshot>;
-  /** 该轮文件变更当前是否已应用在 workspace */
+  /** Whether this turn's file changes are currently applied to the workspace. */
   fileState: "applied" | "reverted";
 }
 
-/** 可序列化的文件快照（用于持久化） */
+/** Serializable file snapshot for persistence. */
 interface SerializedFileSnapshot {
   path: string;
   beforeContent: string | null;
@@ -39,20 +39,20 @@ interface SerializedFileSnapshot {
   writeCount: number;
 }
 
-/** 可序列化的轮次文件变更（用于持久化） */
+/** Serializable per-turn file changes for persistence. */
 interface SerializedTurnFileChanges {
   turnIndex: number;
   snapshots: SerializedFileSnapshot[];
   fileState?: "applied" | "reverted";
 }
 
-// ---- 追踪器 ----
+// ---- Tracker ----
 
 export class SessionFileChangeTracker {
   private turns: TurnFileChanges[] = [];
   private currentTurnIndex = -1;
 
-  /** 开始新一轮对话，推进 turnIndex */
+  /** Start a new conversation turn and advance turnIndex. */
   newTurn(): number {
     this.currentTurnIndex++;
     this.turns.push({
@@ -64,16 +64,16 @@ export class SessionFileChangeTracker {
   }
 
   /**
-   * 记录一次文件写入操作。
-   * 应在 writeTextFile 执行前读取原文件内容，写入后调用此方法。
+   * Record a file write operation.
+   * Read the original content before calling writeTextFile, then call this method after the write.
    *
-   * @param path 文件路径
-   * @param beforeContent 写入前的文件内容，null 表示新文件
-   * @param afterContent 写入后的文件内容
+   * @param path File path.
+   * @param beforeContent File content before the write; null means a new file.
+   * @param afterContent File content after the write.
    */
   record(path: string, beforeContent: string | null, afterContent: string): void {
     if (this.currentTurnIndex < 0) {
-      // 如果还没有 newTurn，自动创建第一轮
+      // Create the first turn automatically if newTurn has not been called yet.
       this.newTurn();
     }
 
@@ -81,7 +81,7 @@ export class SessionFileChangeTracker {
     const existing = currentTurn.snapshots.get(path);
 
     if (existing) {
-      // 同一文件同一轮：保留首次 before，更新 after
+      // For the same file in the same turn, keep the first before and update after.
       existing.afterContent = afterContent;
       existing.writeCount++;
     } else {
@@ -94,19 +94,19 @@ export class SessionFileChangeTracker {
     }
   }
 
-  /** 获取指定轮次的文件变更 */
+  /** Get file changes for the specified turn. */
   getChangesForTurn(turnIndex: number): FileSnapshot[] {
     const turn = this.turns.find((t) => t.turnIndex === turnIndex);
     if (!turn) return [];
     return Array.from(turn.snapshots.values());
   }
 
-  /** 获取指定轮次文件状态 */
+  /** Get file status for the specified turn. */
   getFileStateForTurn(turnIndex: number): "applied" | "reverted" {
     return this.turns.find((turn) => turn.turnIndex === turnIndex)?.fileState ?? "applied";
   }
 
-  /** 更新指定轮次文件状态 */
+  /** Update file status for the specified turn. */
   setFileStateForTurn(turnIndex: number, fileState: "applied" | "reverted"): void {
     const turn = this.turns.find((item) => item.turnIndex === turnIndex);
     if (!turn) {
@@ -115,7 +115,7 @@ export class SessionFileChangeTracker {
     turn.fileState = fileState;
   }
 
-  /** 获取指定轮次之后（不含该轮）的所有文件变更，按轮次正序 */
+  /** Get all file changes after (excluding) the specified turn, in turn order. */
   getChangesAfterTurn(turnIndex: number): FileSnapshot[] {
     const result: FileSnapshot[] = [];
     for (const turn of this.turns) {
@@ -127,16 +127,16 @@ export class SessionFileChangeTracker {
   }
 
   /**
-   * 计算回滚到指定轮次所需的文件还原操作。
-   * 返回每个文件应还原到的内容（null 表示应删除该文件）。
-   * 逻辑：收集 toTurnIndex 之后所有轮次中每个文件最早的 beforeContent。
-   * 如果该文件在 toTurnIndex 或之前也被修改过，则用那一轮的 afterContent。
+   * Calculate the file restoration operations required to roll back to the specified turn.
+   * Return the content each file should be restored to (null means the file should be deleted).
+   * Collect the earliest beforeContent for each file across turns after toTurnIndex.
+   * If a file was also changed in or before toTurnIndex, use its afterContent from that turn.
    */
   getRewindOperations(toTurnIndex: number): Map<string, string | null> {
     const rewindOps = new Map<string, string | null>();
 
-    // 从最新轮次往回遍历到 toTurnIndex（不含），每个文件持续覆写，
-    // 最终留下的是该文件在回滚范围内最早出现的 beforeContent
+    // Iterate backward from the latest turn to (excluding) toTurnIndex, overwriting each file;
+    // the remaining value is the earliest beforeContent for that file in the rollback range.
     for (let i = this.turns.length - 1; i >= 0; i--) {
       const turn = this.turns[i]!;
       if (turn.turnIndex <= toTurnIndex) break;
@@ -146,7 +146,7 @@ export class SessionFileChangeTracker {
       }
     }
 
-    // 如果文件在 toTurnIndex 或之前也被修改过，应该用那一轮的 afterContent
+    // If the file was also changed in or before toTurnIndex, use its afterContent from that turn.
     for (const turn of this.turns) {
       if (turn.turnIndex > toTurnIndex) break;
       for (const snapshot of turn.snapshots.values()) {
@@ -159,7 +159,7 @@ export class SessionFileChangeTracker {
     return rewindOps;
   }
 
-  /** 获取整个 session 中所有被修改过的文件及其最终内容 */
+  /** Get every modified file in the session and its final content. */
   getAllChangedFiles(): Map<string, { originalContent: string | null; finalContent: string }> {
     const result = new Map<string, { originalContent: string | null; finalContent: string }>();
 
@@ -167,7 +167,7 @@ export class SessionFileChangeTracker {
       for (const snapshot of turn.snapshots.values()) {
         const existing = result.get(snapshot.path);
         if (existing) {
-          // 更新 finalContent，保留 originalContent
+          // Update finalContent while preserving originalContent.
           existing.finalContent = snapshot.afterContent;
         } else {
           result.set(snapshot.path, {
@@ -181,31 +181,31 @@ export class SessionFileChangeTracker {
     return result;
   }
 
-  /** 获取当前轮次索引 */
+  /** Get the current turn index. */
   getCurrentTurnIndex(): number {
     return this.currentTurnIndex;
   }
 
-  /** 对仅有消息历史、没有 fileChanges 的旧任务，补齐当前轮次游标 */
+  /** Restore the current turn cursor for legacy tasks that have message history but no fileChanges. */
   restoreCurrentTurnIndex(turnIndex: number): void {
     if (!Number.isFinite(turnIndex)) {
       return;
     }
 
-    // Bugfix: external import 这类历史任务往往只有 messages.turnIndex，没有 fileChanges。
-    // 如果恢复时不把游标补到最后一轮，下一次 sendPrompt 会从 0 重新开始编号，
-    // 让续聊消息和导入历史落到同一 turn，进一步把 fork/retry 的边界判断带歪。
+    // Bugfix: imported history often has messages.turnIndex but no fileChanges.
+    // If restoration does not advance the cursor to the last turn, the next sendPrompt starts numbering from 0,
+    // placing follow-up messages in the same turn as the imported history and skewing fork/retry boundary checks.
     this.currentTurnIndex = Math.max(this.currentTurnIndex, Math.trunc(turnIndex));
   }
 
-  /** 获取总轮次数 */
+  /** Get the total number of turns. */
   getTurnCount(): number {
     return this.turns.length;
   }
 
-  // ---- 序列化/反序列化（持久化用） ----
+  // ---- Serialization/deserialization for persistence ----
 
-  /** 序列化为可 JSON 化的结构 */
+  /** Serialize to a JSON-compatible structure. */
   serialize(): SerializedTurnFileChanges[] {
     return this.turns.map((turn) => ({
       turnIndex: turn.turnIndex,
@@ -214,7 +214,7 @@ export class SessionFileChangeTracker {
     }));
   }
 
-  /** 从序列化数据恢复 */
+  /** Restore from serialized data. */
   static deserialize(data: SerializedTurnFileChanges[]): SessionFileChangeTracker {
     const tracker = new SessionFileChangeTracker();
     for (const turn of data) {
@@ -232,9 +232,10 @@ export class SessionFileChangeTracker {
     return tracker;
   }
 
-  /** 截断到指定轮次（含），删除之后的所有记录 */
+  /** Truncate at the specified turn (inclusive) and delete all later records. */
   truncateAfterTurn(turnIndex: number): void {
     this.turns = this.turns.filter((t) => t.turnIndex <= turnIndex);
-    this.currentTurnIndex = this.turns.length > 0 ? this.turns[this.turns.length - 1]!.turnIndex : -1;
+    this.currentTurnIndex =
+      this.turns.length > 0 ? this.turns[this.turns.length - 1]!.turnIndex : -1;
   }
 }

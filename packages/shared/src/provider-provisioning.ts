@@ -13,7 +13,7 @@ export const providerProvisioningTriggerSchema = z.enum([
 ]);
 export type ProviderProvisioningTrigger = z.infer<typeof providerProvisioningTriggerSchema>;
 
-/** Provisioning 中允许跨 Environment 传输的凭据类别。 */
+/** Credential categories allowed to move across Environments during Provisioning. */
 export const providerProvisioningCredentialScopeSchema = z.enum([
   "oauth-session",
   "account-provider",
@@ -23,13 +23,13 @@ export type ProviderProvisioningCredentialScope = z.infer<
   typeof providerProvisioningCredentialScopeSchema
 >;
 
-/** 仅供校验 schema v1 旧信封；新 Source 不导出、新 Target 不应用这些历史 Key。 */
+/** Only for validating legacy schema v1 envelopes; new Sources do not export and new Targets do not apply these historical Keys. */
 export function isProviderProvisioningAccountCredentialKey(key: string): boolean {
   const normalized = key.trim();
   return normalized === key && /^account-provider:.+:api-key$/.test(normalized);
 }
 
-/** Personal Config 的 Envelope；具体字段由 @zcode/provider 在目标 Environment 再校验。 */
+/** Envelope for Personal Config; @zcode/provider validates the specific fields again in the target Environment. */
 export const providerProvisioningPersonalConfigSchema = z
   .object({
     providerConfigRules: z.object({ providerRules: z.array(z.unknown()) }).strict(),
@@ -73,7 +73,7 @@ export type ProviderProvisioningCredentialEntry = z.infer<
 
 export const providerProvisioningEnvelopeSchema = z
   .object({
-    // v2 的缺失账号 Key 不再代表删除；旧 Target 必须在任何写入前拒绝该信封。
+    // In v2, a missing account Key no longer means deletion; old Targets must reject the envelope before any write.
     schemaVersion: z.union([z.literal(1), z.literal(2)]),
     syncId: nonEmptyString,
     personalConfig: providerProvisioningPersonalConfigSchema,
@@ -90,7 +90,7 @@ export const providerProvisioningEnvelopeSchema = z
 
 export type ProviderProvisioningEnvelope = z.infer<typeof providerProvisioningEnvelopeSchema>;
 
-/** 跨进程只透传固定阶段码，不能把远端自由文本作为可公开诊断信息。 */
+/** Only fixed phase codes cross processes; remote free text must not become publicly visible diagnostic information. */
 export const providerProvisioningErrorCodeSchema = z.enum([
   "source-read-failed",
   "target-call-failed",

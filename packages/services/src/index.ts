@@ -56,8 +56,8 @@ export type {
   ConversationShareTurnPreflightResult,
   PublishTextConversationInput,
 } from "./conversation-share/conversationShare.js";
-// Conversation share 的具体实现依赖 Node 文件系统，只能从 @zcode/services/node 引入；
-// 根入口必须保持 browser-safe，避免 renderer 解析到 node:* 模块。
+// The Conversation share implementation depends on the Node filesystem and must be imported from @zcode/services/node;
+// the root entry point must remain browser-safe so the renderer does not resolve node:* modules.
 export {
   createConversationTelemetryService,
   type ConversationTelemetryWorkspaceTarget,
@@ -90,23 +90,23 @@ export { ICredentialService } from "./credential/credential.js";
 // Broadcast service — IBroadcastService is both a type (interface) and value (descriptor)
 export { IBroadcastService } from "./broadcast/broadcast.js";
 
-// Onboarding 完成记录服务（本地持久化，后续上传服务器）
+// Onboarding completion record service (persisted locally and uploaded to the server later).
 export { IOnboardingRecordService } from "./onboarding/onboardingRecord.js";
 export type {
   CreateOnboardingRecordServiceOptions,
   OnboardingRecordServiceFactory,
 } from "./onboarding/onboardingRecord.js";
-// 这里只能导出 descriptor 和类型。根 index 会被 renderer 经 value import 拉进浏览器包，
-// 若 value 导出 createOnboardingRecordService，会连带 fs/atomicFileUtils → @zcode/shared/node →
-// node:timers/promises 整条 Node 链进浏览器，模块加载直接抛错导致整个应用黑屏。
-// 工厂函数由 host 侧（node.ts）与测试从实现文件路径直接导入，与 createSettingService 同惯例。
+// Export only the descriptor and types here. The renderer imports the root index as a value into the browser bundle;
+// exporting createOnboardingRecordService would pull fs/atomicFileUtils → @zcode/shared/node →
+// node:timers/promises and the entire Node dependency chain into the browser, causing a module-load error and a blank app.
+// The host (node.ts) and tests import the factory directly from its implementation file, following the createSettingService convention.
 export type {
   BroadcastClaimAcquireResult,
   BroadcastClaimLease,
   BroadcastMessage,
 } from "./broadcast/broadcast.js";
 
-// ZCode task wrapper service — task 列表/置顶/归档等 app 侧包装状态入口。
+// ZCode task wrapper service — app-side wrapper state entry point for task lists, pinning, archiving, and related operations.
 export { IZCodeTaskService } from "./session/zcodeTaskService.js";
 export type {
   ZCodeArchivedTaskDeletionResult,
@@ -258,7 +258,7 @@ export { IOAuthService } from "./oauth/oauth.js";
 // UsageStats service — IUsageStatsService is both a type (interface) and value (descriptor)
 export { IUsageStatsService } from "./usage-stats/usageStats.js";
 
-// Storage（资源管理器「存储」tab）：数据类型在 @zcode/shared；这里只导出服务接口与卷分组纯函数
+// Storage (file explorer's Storage tab): data types live in @zcode/shared; export only the service interface and pure volume-grouping functions here.
 export type { IStorageService } from "./storage/contract.js";
 
 // CodingPlanSubscription service — ICodingPlanSubscriptionService is both a type (interface) and value (descriptor)
@@ -275,7 +275,7 @@ export {
   type ClientScenesResponse,
 } from "./client-scenes/clientScenes.js";
 export { isValidCronExpr } from "./session/automationCronValidation.js";
-// 闲时任务管理服务（与 automation 服务面独立）；接口/描述符 browser-safe。
+// Off-peak task management service (separate from the automation service surface); interfaces/descriptors are browser-safe.
 export { IOffPeakTaskService } from "./session/offPeakTask.js";
 export type { OffPeakUpdateTaskParams } from "./session/offPeakTask.js";
 
@@ -301,7 +301,7 @@ export {
 
 // Plugins service — IPluginsService is both a type (interface) and value (descriptor)
 export { IPluginsService } from "./plugins/plugins.js";
-// 设置页插件管理薄服务（UI 平台能力面不再直触 zcodeAgentService）
+// Thin Plugin Management service for Settings (the UI platform surface no longer calls zcodeAgentService directly).
 export { IPluginManagementService } from "./plugins/pluginManagement.js";
 
 // Subagents service — ISubagentsService is both a type (interface) and value (descriptor)
@@ -339,7 +339,7 @@ export type {
   FeedbackTicketType,
 } from "@zcode/shared";
 
-// 插件 UI 桥：描述符、参数类型与工厂；App-Provided Tools 另有独立描述符。
+// Plugin UI bridge: descriptors, parameter types, and factories; App-Provided Tools has a separate descriptor.
 export {
   createPluginUiBridgeService,
   createPluginUiAppToolsService,

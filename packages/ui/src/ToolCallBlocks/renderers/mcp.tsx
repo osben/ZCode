@@ -112,9 +112,10 @@ function readLegacyMcpToolPresentation(toolName: string | undefined): McpToolPre
       ? toolTokens.slice(sharedTokenCount).join("_")
       : encodedToolName;
 
-  // display 持久化上线前的 MCP 历史记录只剩协议执行名，通用 renderer
-  // 会把内部 raw JSON 整块暴露出来。这里只按协议 envelope 和编码 token 做机械拆分；
-  // 新记录仍以 tools/list 的 discovery display 为权威，不让 legacy 规则覆盖它。
+  // MCP history recorded before display persistence was introduced contains only the protocol
+  // execution name, so the generic renderer would expose the full internal raw JSON. Mechanically
+  // split only the protocol envelope and encoded tokens here; tools/list discovery display remains
+  // authoritative for new records and is not overridden by legacy rules.
   return { kind: "mcp_tool", serverName, toolName: actionName };
 }
 
@@ -140,8 +141,9 @@ export function formatMcpServerLabel(value: string): string {
     .split(":")
     .map((segment) => segment.trim())
     .filter(Boolean);
-  // 插件 MCP 的 configured server key 带有 plugin:<plugin>:<server> 命名空间，
-  // 直接作为 UI 文案会暴露内部路由标识。末段才是用户配置的 server 名称。
+  // A plugin MCP configured server key uses the plugin:<plugin>:<server> namespace. Showing it
+  // directly in the UI exposes an internal routing identifier; the final segment is the
+  // user-configured server name.
   const displayIdentifier =
     namespaceSegments[0]?.toLocaleLowerCase() === "plugin" && namespaceSegments.length > 1
       ? namespaceSegments.at(-1)!
@@ -152,8 +154,8 @@ export function formatMcpServerLabel(value: string): string {
 export function formatMcpToolLabel(toolName: string, serverLabel: string): string {
   const formattedToolName = formatMcpIdentifier(toolName);
   const repeatedPrefix = `${serverLabel} `;
-  // 不少 MCP 工具会再次用 server 名作为 tool 前缀；summary 同时展示 server
-  // 来源文字时会出现 Firebase / Firebase get environment。只做大小写无关的机械去重。
+  // Many MCP tools also prefix the tool name with the server name. Showing server source text in the
+  // summary too would produce labels such as Firebase / Firebase get environment. Deduplicate mechanically, ignoring case.
   return formattedToolName.toLocaleLowerCase().startsWith(repeatedPrefix.toLocaleLowerCase())
     ? formatMcpIdentifier(formattedToolName.slice(repeatedPrefix.length))
     : formattedToolName;
@@ -177,10 +179,11 @@ export function McpToolCallBlock(context: ToolCallBlockRenderContext) {
   const parametersLabel = intl.formatMessage({ id: "chat.toolCall.mcp.parameters" });
   const hasCallDetails = Boolean(presentation?.description || toolCall.input !== undefined);
   const resultText = stringifyMcpResult(toolCall.output);
-  const visibleError = toolCall.status === "failed" ? (toolCall.error ?? context.errorText) : undefined;
+  const visibleError =
+    toolCall.status === "failed" ? (toolCall.error ?? context.errorText) : undefined;
   const hasPrimaryResult = Boolean(resultText || visibleError);
   const isSummaryOnlyLifecycle = toolCall.status === "pending" || toolCall.status === "stopped";
-  // R7：运行中且 agent 投影了 MCP 进度时，摘要行显示细进度条 + message；终态由投影清除。
+  // R7: While running, if the agent projects MCP progress, show a thin progress bar and message in the summary row; the projection clears terminal states.
   const progress = toolCall.status === "in_progress" ? readToolCallProgress(toolCall.raw) : null;
   const stoppedSummaryStatus =
     toolCall.status === "stopped" ? (
@@ -201,8 +204,9 @@ export function McpToolCallBlock(context: ToolCallBlockRenderContext) {
   const handleLoadFullToolCallFields = context.onLoadFullToolCallFields;
   const renderContent = useCallback(
     () => (
-      // MCP 详情之前先展示 description 和参数，用户展开后仍像 API 调试器。
-      // 参考 BUA，把结果作为一级内容；调用元数据收进透明的二级折叠区。
+      // Show the description and parameters before MCP details so the expanded view still feels like
+      // an API debugger. Following BUA, make the result primary content and put call metadata in a
+      // transparent secondary disclosure.
       <div className="mb-2 space-y-3 py-1" data-testid="mcp-expanded-content">
         {visibleError ? (
           <section className="space-y-1.5">
@@ -257,8 +261,9 @@ export function McpToolCallBlock(context: ToolCallBlockRenderContext) {
             {context.statusLabel}
           </p>
         ) : (
-          // 无 result 的 pending/running/stopped MCP 展开后 ToolCallBody 为空，
-          // 用户无法判断当前阶段。这里沿用 summary 的国际化状态，不另造生命周期文案。
+          // Pending/running/stopped MCP calls without a result have an empty ToolCallBody when
+          // expanded, leaving users unable to tell the current phase. Reuse the summary's localized
+          // status instead of introducing new lifecycle copy.
           <p className="text-ui-base text-foreground-subtle">{context.statusLabel}</p>
         )}
         {hasCallDetails ? (
@@ -339,20 +344,20 @@ export function McpToolCallBlock(context: ToolCallBlockRenderContext) {
       toolId={toolCall.toolId}
       icon={MCP_TOOL_ICON}
       showIcon={context.showIcon !== false}
-      // Pending / stopped 没有可消费结果，展开只会重复状态或暴露诊断参数。
-      // 即使父层请求 forceOpen，也必须遵守这两个生命周期的 summary-only 语义。
+      // Pending / stopped calls have no consumable result; expanding would only repeat the status or
+      // expose diagnostic parameters. Honor summary-only semantics for these lifecycle states even
+      // when the parent requests forceOpen.
       canToggle={!isSummaryOnlyLifecycle && (context.canToggle ?? true)}
       forceOpen={!isSummaryOnlyLifecycle && (context.forceOpen ?? false)}
       kindLabel="MCP"
       kindDetail={
-        serverLabel ? (
-          <span className="text-foreground-subtle">{serverLabel}</span>
-        ) : undefined
+        serverLabel ? <span className="text-foreground-subtle">{serverLabel}</span> : undefined
       }
       primaryText={toolLabel}
       summaryContentSeparator="·"
-      // Pending/Running/Completed 都是正常生命周期，不在摘要重复状态；Stopped 是异常终态，
-      // 用显式分隔节点避免非动画摘要的两个文本节点粘连。Failed 使用专用错误状态槽位。
+      // Pending/Running/Completed are normal lifecycle states and are not repeated in the summary.
+      // Stopped is an abnormal terminal state; use an explicit separator so text nodes do not run
+      // together in non-animated summaries. Failed uses the dedicated error-status slot.
       secondaryText={stoppedSummaryStatus}
       statusLabel={failedSummaryStatus}
       statusTooltip={toolCall.status === "failed" ? context.errorText : undefined}

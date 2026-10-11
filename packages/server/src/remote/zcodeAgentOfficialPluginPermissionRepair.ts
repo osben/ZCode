@@ -8,11 +8,11 @@ export async function repairLegacyRemoteOfficialPluginDirectoryPermissions(param
   loggers: DeployLoggers;
   remoteOfficialPluginDir: string;
 }): Promise<boolean> {
-  // 旧版从 Windows 重打 packages tar 时会把目录 mode 写成 0666，远端叠加 umask 后
-  // 落成不可遍历的 0644。3.3.3 升级到 3.3.4 时文件可能完整但版本变化仍要替换 packages，
-  // 所以权限修复必须绑定“即将替换 packages”的部署路径，而不是健康远端的增量跳过路径。
-  // IRemoteBackend.exists 只承诺检查远端文件，SSH / Docker 实现使用 test -f，
-  // 因此目录存在性和 chmod 必须收敛在同一条远端 shell 命令中判断。
+  // Older versions created packages tar files on Windows with directory mode 0666, which combined with the remote umask
+  // produced non-traversable 0644 directories. When upgrading from 3.3.3 to 3.3.4, complete files still need replacement because the version changed,
+  // so permission repair must be tied to the deployment path that replaces packages, not the incremental skip path for a healthy remote.
+  // IRemoteBackend.exists guarantees only remote file checks, and SSH/Docker implement it with test -f,
+  // so directory existence and chmod must be checked together in one remote shell command.
   params.loggers.logWarn(
     `[zcode-agent-deploy] ${ZCODE_AGENT_PROVIDER}: 检查并修复旧 builtin plugin 目录权限 ${params.remoteOfficialPluginDir}`,
   );
@@ -24,8 +24,8 @@ export async function repairLegacyRemoteOfficialPluginDirectoryPermissions(param
     await waitForClose(stream);
     return true;
   } catch (error) {
-    // chmod 只是旧 WSL 坏权限目录的预修复，真实部署成败应由后续 packages 替换决定。
-    // 某些 SSH / Docker 挂载卷或 ACL 环境可能拒绝 chmod，但 rm/tar 替换路径仍可成功。
+    // chmod is only a pre-repair for directories with bad permissions on older WSL installs; actual deployment success is determined by the later packages replacement.
+    // Some SSH/Docker mounted volumes or ACL environments may reject chmod even though the rm/tar replacement path can still succeed.
     params.loggers.logWarn(
       `[zcode-agent-deploy] ${ZCODE_AGENT_PROVIDER}: 修复旧 builtin plugin 目录权限失败，将继续尝试替换 packages: ${
         error instanceof Error ? error.message : String(error)

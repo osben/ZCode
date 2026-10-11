@@ -7,7 +7,7 @@ import {
   type WorkspaceFileSearchCandidate,
 } from "@zcode/shared/workspaceFileSearch";
 
-/** 分批解码已有 packed 索引，防止把 Renderer 的长任务简单搬到共享 Host。 */
+/** Decode the existing packed index in batches so a long Renderer task is not simply moved to the shared Host. */
 export async function buildHostFileSearchCandidates(packed: string, rootPath: string) {
   const candidates: WorkspaceFileSearchCandidate[] = [];
   for (let offset = 0; offset < packed.length; ) {
@@ -28,7 +28,7 @@ export async function searchHostFileCandidates(
   limit: number,
 ): Promise<WorkspaceFileEntry[]> {
   let best: WorkspaceFileSearchCandidate[] = [];
-  // top-K 的输入按原索引顺序分批；同分时原序稳定，分批合并与整表排序一致。
+  // Process top-K inputs in batches in their original index order; ties retain stable order, making batched merging match sorting the full table.
   for (let offset = 0; offset < candidates.length; offset += 2048) {
     best = filterWorkspaceFileSearchCandidates(
       [...best, ...candidates.slice(offset, offset + 2048)],

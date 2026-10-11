@@ -37,9 +37,7 @@ export function resolveEndedSubagentRefreshTargetCount(options: {
   requestedCount: number;
 }): number {
   if (options.loadedItemCount === 0) return options.requestedCount;
-  return (
-    options.requestedCount + Math.max(0, options.nextTotal - options.previousTotal)
-  );
+  return options.requestedCount + Math.max(0, options.nextTotal - options.previousTotal);
 }
 
 export function useSessionSubagents(options: {
@@ -102,8 +100,8 @@ export function useSessionSubagents(options: {
       const requestedCount = Math.max(PAGE_SIZE, loadedEndedCountRef.current);
       let response = await requestPage(Math.min(requestedCount, MAX_PAGE_SIZE));
       const previous = stateRef.current;
-      // 新完成项会插入 ended 顶部。多取同样数量的旧项，避免刷新时把用户已经
-      // 加载到目录底部的项目挤出当前内存页；浏览器滚动锚点可继续保持可见行。
+      // Newly completed items are inserted at the top of ended. Fetch the same number of extra old items so a refresh
+      // does not push entries the user loaded at the bottom of the directory out of the in-memory page; browser scroll anchoring can keep the visible row.
       const targetCount = resolveEndedSubagentRefreshTargetCount({
         loadedItemCount: previous.ended.items.length,
         nextTotal: response.ended.total,

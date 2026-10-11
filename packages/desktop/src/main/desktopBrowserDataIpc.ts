@@ -4,10 +4,7 @@ import {
   type ChromeBrowserDataImportOptions,
   type EmbeddedBrowserSitePermissionUpdateRequest,
 } from "@zcode/shared";
-import {
-  clearEmbeddedBrowserData,
-  importChromeBrowserData,
-} from "./browserDataManager.js";
+import { clearEmbeddedBrowserData, importChromeBrowserData } from "./browserDataManager.js";
 import {
   clearEmbeddedBrowserSitePermissions,
   getEmbeddedBrowserSitePermissionSnapshot,
@@ -22,7 +19,7 @@ export function registerBrowserDataIpcHandlers(logger: {
 }) {
   ipcMain.handle(PlatformChannels.ImportChromeBrowserData, (_event, value: unknown) => {
     const requested = value as ChromeBrowserDataImportOptions | undefined;
-    // renderer 只能为本次调用显式传 true；main 不接受或持久化其他授权形态。
+    // The renderer may explicitly pass true for this call only; main does not accept or persist any other authorization form.
     const allowElevatedChromeDecryption = requested?.allowElevatedChromeDecryption === true;
     return importChromeBrowserData({ allowElevatedChromeDecryption, logger });
   });

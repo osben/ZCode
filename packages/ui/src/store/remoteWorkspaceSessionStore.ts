@@ -15,8 +15,8 @@ interface RemoteWorkspaceSessionState {
   baseServices: IServiceAccessor | null;
   sessionsById: Record<string, RemoteWorkspaceSession>;
   sessionIdByWorkspacePath: Record<string, string>;
-  // 之前只按 workspacePath 建索引，同路径不同远端会互相覆盖。
-  // 这里补充 workspaceIdentity -> session 的映射，保证远程会话按“主机+路径”唯一绑定。
+  // Previously indexed only by workspacePath, so different remotes using the same path could overwrite each other.
+  // Add a workspaceIdentity → session mapping here so remote sessions are uniquely bound by "host + path."
   sessionIdByWorkspaceIdentity: Record<string, string>;
   registerBaseServices: (services: IServiceAccessor) => void;
   registerSession: (session: RemoteWorkspaceSession) => void;
@@ -115,18 +115,18 @@ export const useRemoteWorkspaceSessionStore = create<RemoteWorkspaceSessionState
 }));
 
 export function registerRemoteWorkspaceSession(session: RemoteWorkspaceSession): void {
-  // 同一 remoteSessionId 的 proxy 可连续换代，而不同 React consumer 的 effect
-  // 提交顺序不可靠。session 注册是权威换代顺序，先在共享 generation 模块预分配
-  // 单调代际，避免迟到的中间 proxy 把 transport 从最新代切回去。
-  // Web/测试降级 accessor 可能暂未提供 agent transport；真正可订阅时 registry 仍会
-  // 按首次观察分配 generation，不能为了预注册破坏这种兼容形态。
+  // A proxy for the same remoteSessionId can change generations repeatedly, and effects from different React consumers
+  // may commit out of order. Session registration is the authoritative generation order, so allocate the monotonically increasing
+  // generation in the shared generation module first, preventing a late intermediate proxy from switching transport back from the latest generation.
+  // A Web/test fallback accessor may not provide agent transport yet; when it becomes subscribable, the registry still
+  // assigns a generation on first observation, so do not break this compatibility shape for pre-registration.
   if (session.services.zcodeAgentService) {
     remoteAgentServiceGeneration(session.services.zcodeAgentService);
   }
   const previousSession = useRemoteWorkspaceSessionStore.getState().sessionsById[session.sessionId];
   if (previousSession && previousSession !== session) {
-    // 同一 remoteSessionId 的 attachment 换代时，旧 MessagePort 仍可能有挂起 RPC。
-    // 先终结旧 transport，确保 provider sync 的 in-flight Promise 不会跨代永久悬置。
+    // When an attachment for the same remoteSessionId changes generation, the old MessagePort may still have pending RPCs.
+    // Finalize the old transport first so provider-sync in-flight Promises do not remain pending across generations forever.
     previousSession.dispose?.(createRemoteWorkspaceDisconnectedError());
   }
   useRemoteWorkspaceSessionStore.getState().registerSession(session);
@@ -139,8 +139,8 @@ export function registerBaseWorkspaceServices(services: IServiceAccessor): void 
 export function unregisterRemoteWorkspaceSession(sessionId: string): void {
   const session = useRemoteWorkspaceSessionStore.getState().sessionsById[sessionId];
   useRemoteWorkspaceSessionStore.getState().unregisterSession(sessionId);
-  // 同步可能发生在 workspace bind 之前，无法仅靠索引清理 in-flight。
-  // 注入的 disposer 直接终结 attachment，使 ChannelClient 将挂起 RPC fail-closed。
+  // Synchronization may happen before workspace binding, so the index alone cannot clean up in-flight work.
+  // The injected disposer finalizes the attachment directly, making ChannelClient fail closed for pending RPCs.
   session?.dispose?.(createRemoteWorkspaceDisconnectedError());
 }
 
@@ -164,7 +164,7 @@ export function getRemoteWorkspaceSession(sessionId: string): RemoteWorkspaceSes
   return useRemoteWorkspaceSessionStore.getState().sessionsById[sessionId] ?? null;
 }
 
-/** 当前在册代理的远程 session 身份；旧代代理不匹配，仅用于 scope 诊断。 */
+/** Remote session identity of the currently registered proxy; proxies from old generations do not match. Used only for scope diagnostics. */
 export function findRemoteWorkspaceSessionIdForAgentService(agentService: object): string | null {
   for (const session of Object.values(useRemoteWorkspaceSessionStore.getState().sessionsById)) {
     if (session.services.zcodeAgentService === agentService) {

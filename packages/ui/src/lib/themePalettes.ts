@@ -17,7 +17,7 @@ export type ThemeAccentPaletteId = Exclude<ThemePalette, "neutral" | "zai">;
 
 export interface ThemePaletteDefinition {
   id: ThemePalette;
-  /** 仅 accent 调色板有值：light 与 dark 模式下的品牌色，用于 WCAG 对比度测试。 */
+  /** Only accent palettes have values: brand colors in light and dark modes, used for WCAG contrast tests. */
   accent?: { light: string; dark: string };
 }
 

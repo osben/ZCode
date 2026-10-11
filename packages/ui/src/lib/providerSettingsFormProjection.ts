@@ -2,7 +2,7 @@ import type { ProviderSettingsView } from "@zcode/services";
 import type { ProviderSettingsFormProvider } from "@/lib/providerSettingsFormTypes.js";
 import type { ProviderOrderView } from "@/lib/modelProviderOrdering.js";
 
-/** 把正式 Settings View 复制成当前编辑会话使用的可变表单状态。 */
+/** Copy the canonical Settings View into mutable form state for the current editing session. */
 export function projectProviderSettingsViewToFormProviders(
   view: ProviderSettingsView,
 ): ProviderSettingsFormProvider[] {

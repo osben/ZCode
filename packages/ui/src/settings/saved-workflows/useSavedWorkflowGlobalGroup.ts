@@ -1,5 +1,5 @@
-// 全局工作流组的状态与动作。抽成 hook 让组件文件守住
-// max-lines 400；载体是 `useServices().zcodeAgentService`，RPC 一律带 `{ scope: "global" }`。
+// State and actions for the global workflow group. Extracted to a hook to keep the component under
+// the 400-line max-lines rule; uses `useServices().zcodeAgentService`, and every RPC includes `{ scope: "global" }`.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ZCodeSavedWorkflowEntry, ZCodeSavedWorkflowRun } from "@zcode/shared";
 import { toast } from "@/components/ui/toast.js";
@@ -39,11 +39,11 @@ interface UseSavedWorkflowGlobalGroupParams {
   onStateChange: (key: "global", state: { loaded: boolean; empty: boolean; count: number }) => void;
   onOpenDetail: (name: string) => void;
   onBack: () => void;
-  /** 「运行」= GUI 直接启动：accepted 后切到新会话。 */
+  /** “Run” launches directly from the GUI: switch to the new session after acceptance. */
   onNavigateToLaunchedRun?: (target: SavedWorkflowLaunchTarget, sessionId: string) => void;
   onCreateViaChat?: (prompt: string, target: SavedWorkflowProjectTarget) => void;
   onOpenWorkflowRun?: (params: SavedWorkflowsOpenRunParams) => void;
-  /** 产物 chip → `workflow-artifact` tab。 */
+  /** Artifact chip → `workflow-artifact` tab. */
   onOpenWorkflowArtifact?: (params: SavedWorkflowsOpenArtifactParams) => void;
   localProjects: readonly AutomationWorkspaceOption[];
   activeProjectKey: string | null;
@@ -96,7 +96,7 @@ export function useSavedWorkflowGlobalGroup({
     void refresh({ bypassCache: true });
   }, [refresh, refreshSeq]);
 
-  // 目录监听：list 回的绝对目录（`~/.zcode/workflows`）本机可直接 watch。
+  // Watch the directory: list returns an absolute path (`~/.zcode/workflows`) that can be watched locally.
   useSavedWorkflowsDirectoryWatch({
     fileWatcherService,
     directory: state.dir,
@@ -120,13 +120,13 @@ export function useSavedWorkflowGlobalGroup({
     [activeProjectKey, localProjects],
   );
 
-  // GUI 直接启动器：全局档载体 = 本机 base agent service，目标 = 「运行于」选中的本地项目。
+  // Direct GUI launcher: carrier for a global workflow = local base agent service; target = local project selected by “Run in.”
   const launcher = useSavedWorkflowLauncher({
     agentService,
     onNavigate: onNavigateToLaunchedRun,
   });
 
-  // 全局档一律弹窗——即使无实参，也需要「运行于」选择器。
+  // Always show a dialog for global workflows — even without arguments, the “Run in” selector is required.
   const handleRun = useCallback(
     (entry: ZCodeSavedWorkflowEntry) => {
       launcher.clearError();
@@ -148,7 +148,7 @@ export function useSavedWorkflowGlobalGroup({
         },
         { name: entry.name, scope: "global", args },
       );
-      // 成功：launcher 已切到新会话，关掉实参窗；失败留窗 + 行内错误（launcher.error）。
+      // Success: launcher has switched to the new session, so close the arguments dialog; on failure, keep it open and show an inline error (launcher.error).
       if (result.ok) setLaunchEntry(null);
     },
     [launcher],
@@ -237,8 +237,8 @@ export function useSavedWorkflowGlobalGroup({
     (entry: ZCodeSavedWorkflowEntry) => onOpenDetail(entry.name),
     [onOpenDetail],
   );
-  // 全局档的目标项目按 `run.cwd` 反查已打开项目；没打开就两个入口都关掉
-  // （实例必须开在发起它的项目）。门与实参构造与项目档共用（产物不需要 toolCallId）。
+  // Resolve a global workflow's target project from `run.cwd` among open projects; if it is not open, disable both entry points
+  // (the instance must open in the project that started it). Gates and argument construction are shared with project workflows (artifacts do not need toolCallId).
   const resolveRunTarget = useCallback(
     (run: ZCodeSavedWorkflowRun) => findProjectByCwd(localProjects, run.cwd) ?? null,
     [localProjects],

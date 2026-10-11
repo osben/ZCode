@@ -1,28 +1,30 @@
 // ============================================================
-// workflowRuns 里几张**有界表**的 upsert 语义
+// Upsert semantics for the **bounded tables** in workflowRuns.
 // ============================================================
-// 从 workflow-runs-reducer.ts 拆出（max-lines 门），与 -started.ts / -phases.ts / -eviction.ts
-// 同一条先例，也同一条纪律：纯函数、无时钟、无 I/O。
+// Split out of workflow-runs-reducer.ts (max-lines limit), following the same precedent as
+// -started.ts / -phases.ts / -eviction.ts and the same discipline: pure functions, no clock, no I/O.
 //
-// 这两个函数说的是同一句话的两半：一张表怎么认「这是同一条记录」，以及装不下时怎么办。
-// 触界的语义是**拒新、仍更新已有**——把一个正在跑的实例的相位冻结在 "queued" 上，比少列一个
-// 实例更容易误导读者（图上那一格会永远显示没开始）。谁可以为新人让位则是另一件事，在
-// workflow-runs-eviction.ts。
+// These two functions cover both halves of the same rule: how a table identifies the same record, and
+// what to do when it is full. At capacity, **reject new entries but continue updating existing ones**;
+// freezing a running instance at "queued" would mislead readers more than omitting one instance (the
+// diagram would show that step as never started). Deciding what may make room for a new entry is a
+// workflow-runs-eviction.ts.
 
 import type { WorkflowRunPendingQuestion } from "./workflow-runs.js";
 
-/** 一次有界 upsert 的结果。`truncated` = 这条记录**没能进表**（而不是「表里已有、原地更新」）。 */
+/** Result of one bounded upsert. `truncated` means the record **was not added to the table**, not that an existing record was updated in place. */
 export interface BoundedUpsert<T> {
   list: T[];
   truncated: boolean;
 }
 
 /**
- * 按 (siteId, ordinal) upsert 进有界列表（actors / nodes / reports 三张表的去重键都是它）。
+ * Upsert into a bounded list by (siteId, ordinal), the deduplication key for actors, nodes, and reports.
  *
- * `admitNew: false` 把「不收新条目」这件事从界扩到别的理由（重放的事件、一条表外实例的中间
- * 相位；见归约里节点分支的 `born`），产出与触界被拒**逐字相同**——因为它说的是同一件事：
- * 这条实例不在表里。调用方据此照常计数。
+ * `admitNew: false` extends "do not admit new entries" beyond the capacity limit (for replayed events or
+ * an intermediate phase for an instance outside the table; see `born` in the reducer's node branch).
+ * Its result is **identical** to capacity rejection because both mean the instance is not in the table.
+ * Callers count it the same way.
  */
 export function upsertBoundedByInstance<T extends { siteId: string; ordinal: number }>(
   list: readonly T[],
@@ -45,11 +47,12 @@ export function upsertBoundedByInstance<T extends { siteId: string; ordinal: num
 }
 
 /**
- * 按 `qid` upsert 进有界的停驻问题表。
+ * Upsert into the bounded waiting-question table by `qid`.
  *
- * 与 {@link upsertBoundedByInstance} 是同一条触界语义（拒新、仍更新已有），只是键不同：升级没有
- * 站点实例身份，qid 才是它的键。没有把两者合并成一个泛型函数，是因为键的**取法**正是这里
- * 唯一要说的事——合并之后调用点要传一个取键函数，读者反而看不出"这张表按什么去重"。
+ * Uses the same capacity rule as {@link upsertBoundedByInstance} (reject new entries, update existing
+ * ones), but with a different key: questions do not have site-instance identity, so qid is the key.
+ * Keep this separate instead of using a generic function because key selection is the main distinction;
+ * a generic call site would hide how this table deduplicates entries behind a key-selector callback.
  */
 export function upsertBoundedByQid(
   list: readonly WorkflowRunPendingQuestion[],

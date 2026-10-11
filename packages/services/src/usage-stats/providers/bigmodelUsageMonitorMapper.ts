@@ -1,4 +1,4 @@
-/* eslint-disable max-lines -- legacy monitor 与新版 credit-usage mapper 共享对齐/格式化逻辑，后续单独拆文件。 */
+/* eslint-disable max-lines -- The legacy monitor and new credit-usage mapper share alignment/formatting logic; split them into separate files later. */
 import type {
   UsageStatsDaySummary,
   UsageStatsModelUsage,
@@ -21,10 +21,10 @@ import type {
 import { ESTIMATED_TOKEN_CHAR_DIVISOR } from "@zcode/shared";
 
 // ============================================================================
-// 把 BigModel monitor 接口数据(model-usage / tool-usage)转成 ZCode 内部统一
-// 的 UsageStatsSnapshot 结构。
+// Convert BigModel monitor endpoint data (model-usage / tool-usage) into ZCode's unified
+// UsageStatsSnapshot structure.
 //
-// monitor 接口直接返回估算 token 数,反推字符数以保持现有 UI 字段语义。
+// The monitor endpoint returns estimated token counts directly; derive character counts to preserve the existing UI field semantics.
 // ============================================================================
 
 export interface BigModelUsageModelSummaryPayload {
@@ -301,7 +301,7 @@ export function buildUsageStatsSnapshotFromMonitor(
       peakHour: null,
     },
     daily,
-    // 热力图已从设置页移除;保留空结构以满足类型,避免下游消费方报错。
+    // The heatmap has been removed from Settings; keep an empty structure to satisfy the type and avoid downstream errors.
     heatmap: {
       startDate: firstActiveDay?.date ?? null,
       endDate: lastActiveDay?.date ?? null,
@@ -617,17 +617,17 @@ function isCreditUsageBreakdownBucket(item: BigModelCreditUsageModelDataPayload)
     return true;
   }
   const name = item.modelName?.trim().toLowerCase();
-  // BigModel usage-detail 的 MODEL 数据有时返回“缓存/未缓存/输出”
-  // 这种 token 拆分桶。它们是计费组成，不是模型维度，不能作为使用详情的模型图例。
+  // BigModel usage-detail MODEL data sometimes returns token breakdown buckets such as "cached/uncached/output".
+  // These are billing components, not model dimensions, and must not appear as model legends in usage details.
   return name === "缓存" || name === "未缓存" || name === "输出";
 }
 
 function sumCreditModelTokens(
   payload: NonNullable<BigModelCreditUsageDetailPayload["modelUsage"]>,
 ): number {
-  // usage-detail 有时会同时返回真实模型行和“缓存/未缓存/输出”拆分桶，
-  // 桶是全部模型 token 的计费组成而非模型维度，直接全量求和会把总用量算成约 2 倍。
-  // 存在真实模型行时只统计模型行；仅返回拆分桶时才用桶求和兜底（保持原有语义）。
+  // usage-detail sometimes returns both real model rows and "cached/uncached/output" breakdown buckets;
+  // the buckets are billing components across all model tokens, not model dimensions, so summing everything would roughly double total usage.
+  // Count model rows when present; sum the buckets only as a fallback when they are the only data returned (preserving existing semantics).
   const items = payload.modelDataList ?? [];
   const hasRealModelRow = items.some((item) => !isCreditUsageBreakdownBucket(item));
   const effectiveItems = hasRealModelRow
@@ -885,13 +885,13 @@ function buildToolUsages(toolData: BigModelUsageToolUsagePayload): UsageStatsToo
     });
   }
 
-  // search-mcp 没有按天数据,只有合计;有数值时单独追加一条。
+  // search-mcp has no daily data, only a total; append one separate row when a value is available.
   const totalSearchMcp = toolData.totalUsage?.totalSearchMcpCount ?? 0;
   if (totalSearchMcp > 0) {
     tools.push({
       toolCode: "search-mcp",
-      // 该接口同时有 network-search 和 search-mcp 两个搜索类统计项。
-      // 网页截图只明确了前者叫“联网搜索 MCP”，这里保留 Search MCP 避免两个搜索项重名。
+      // This endpoint has two search statistics: network-search and search-mcp.
+      // The webpage screenshot identifies only the former as "web search MCP"; keep Search MCP here to avoid duplicate labels.
       displayName: "Search MCP",
       totalCalls: totalSearchMcp,
       dailyCalls: [],

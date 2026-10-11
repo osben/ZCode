@@ -62,11 +62,11 @@ test("formatTokensPerSecond 与开发者面板 TPS 同格式：一位小数", ()
 });
 
 test("estimateStreamingTokens 与 CLI estimateTokens 同公式：中文双权重 ÷ 3", () => {
-  // 6 个英文字符 → 2 token。
+  // 6 English characters → 2 tokens.
   assert.equal(estimateStreamingTokens("abcdef"), 2);
-  // 3 个中文字符 → 3×2/3 = 2 token。
+  // 3 Chinese characters → 3×2/3 = 2 tokens.
   assert.equal(estimateStreamingTokens("思考中"), 2);
-  // 空文本不产生负数或 NaN。
+  // Empty text must not produce a negative number or NaN.
   assert.equal(estimateStreamingTokens(""), 0);
 });
 
@@ -75,14 +75,14 @@ test("estimateIncrementalTokens 只累加新增后缀，前缀改写时全文重
   assert.equal(first.tokens, 2);
   const grown = estimateIncrementalTokens(first, "abcdef" + "ghijkl");
   assert.equal(grown.tokens, 4);
-  // 前缀被改写（投影重建）→ 退回全文重算，不沿用旧累计。
+  // When the prefix changes (projection rebuild), recalculate the full text instead of reusing the previous total.
   const rebuilt = estimateIncrementalTokens(grown, "xyz");
   assert.equal(rebuilt.tokens, 1);
 });
 
 test("累计平均：突发到达不会算出数万 tok/s", () => {
-  // 真实序列：流从 0 起表，20 秒累计 1000 token，此时一次性到达 5000 token。
-  // 短窗口斜率会得到 5000/0.05s = 100000 tok/s；累计平均只到 6000/20s ≈ 307。
+  // Real sequence: the stream starts at 0, accumulates 1,000 tokens over 20 seconds, then jumps to 5,000 tokens at once.
+  // The short-window slope yields 5000/0.05s = 100,000 tok/s; the cumulative average is only 6000/20s ≈ 307.
   let state = advanceStreamingThroughputState(createStreamingThroughputState(), {
     key: "row-1",
     tokens: 0,
@@ -105,13 +105,13 @@ test("起表后不足最短时长不发布，避免除以极小时间", () => {
     tokens: 0,
     nowMs: 1_000,
   });
-  // 首个 token 到达即起表（此刻的 50 token 作为基线，不参与分子）。
+  // Start timing when the first token arrives (the 50 tokens at this point are the baseline, not part of the numerator).
   state = advanceStreamingThroughputState(state, { key: "row-1", tokens: 50, nowMs: 1_100 });
   state = advanceStreamingThroughputState(state, { key: "row-1", tokens: 100, nowMs: 1_600 });
-  // 起表仅 0ms / 50ms 时不发布，否则 50 token / 0.05s 就是 1000 tok/s 假值。
+  // Do not publish at only 0 ms / 50 ms; otherwise 50 tokens / 0.05 s would produce a false 1000 tok/s.
   assert.equal(resolveStreamingTokensPerSecond(state, 1_100), null);
   assert.equal(resolveStreamingTokensPerSecond(state, 1_150), null);
-  // 达到 500ms 后按累计平均发布：50 token / 0.5s = 100。
+  // After 500 ms, publish the cumulative average: 50 tokens / 0.5 s = 100.
   assert.equal(resolveStreamingTokensPerSecond(state, 1_600), 100);
 });
 
@@ -123,14 +123,14 @@ test("静默超过窗口后回落（返回 null 交给精确值）", () => {
   });
   state = advanceStreamingThroughputState(state, { key: "row-1", tokens: 500, nowMs: 10_000 });
   state = advanceStreamingThroughputState(state, { key: "row-1", tokens: 1_000, nowMs: 10_500 });
-  // 500 token / 0.5s = 1000，此时流仍活跃。
+  // 500 tokens / 0.5 s = 1000; the stream is still active.
   assert.equal(resolveStreamingTokensPerSecond(state, 10_500), 1_000);
-  // 静默超过 2s：流已暂停，回落精确值。
+  // After more than 2 s of silence, the stream is paused, so fall back to the exact value.
   assert.equal(resolveStreamingTokensPerSecond(state, 13_000), null);
 });
 
 test("新流开始重启测量：前一段已完成内容不计入分子", () => {
-  // 第一段流：行先建出来（0 token），1 秒时 500 token 起表，10 秒时累计 5000。
+  // First stream: create the row (0 tokens), start timing at 500 tokens after 1 s, then reach 5000 total at 10 s.
   let state = advanceStreamingThroughputState(createStreamingThroughputState(), {
     key: "row-1",
     tokens: 0,
@@ -140,10 +140,10 @@ test("新流开始重启测量：前一段已完成内容不计入分子", () =>
   state = advanceStreamingThroughputState(state, { key: "row-1", tokens: 5_000, nowMs: 10_000 });
   // (5000-500) token / 9s = 500。
   assert.equal(resolveStreamingTokensPerSecond(state, 10_000), 500);
-  // 第二段流（思考结束、正文开始）：起点重置，分子从 0 起算。
+  // Second stream (thinking ends and the response begins): reset the start time and count the numerator from 0.
   state = advanceStreamingThroughputState(state, { key: "row-2", tokens: 5_000, nowMs: 20_000 });
   state = advanceStreamingThroughputState(state, { key: "row-2", tokens: 5_100, nowMs: 21_000 });
-  // 100 token / 1s = 100，而不是 5100/1s = 5100。
+  // 100 tokens / 1 s = 100, not 5100 / 1 s = 5100.
   assert.equal(resolveStreamingTokensPerSecond(state, 21_000), 100);
 });
 

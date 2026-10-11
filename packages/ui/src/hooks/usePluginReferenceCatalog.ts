@@ -32,9 +32,9 @@ const EMPTY_SCOPED_STATE: ScopedPluginReferenceCatalogState = {
 
 export interface PluginReferenceCatalogOptions {
   preferredRemoteSessionId?: string;
-  /** 显式重试代次；菜单重开时重新查询，关闭菜单不清空已加载的目录。 */
+  /** Explicit retry generation; reopening the menu refetches, while closing it does not clear a loaded catalog. */
   refreshRevision?: number;
-  /** 仅合并当前 runtime 内尚未完成的同一 Session 请求；settle 后立即释放。 */
+  /** Coalesce only unsettled requests for the same Session in the current runtime; release immediately after settlement. */
   dedupeSessionRequest?: boolean;
   suppressErrorLog?: boolean;
 }
@@ -54,9 +54,8 @@ function releaseSessionCatalogRequest(
   requestKey: string,
   request: Promise<ZCodePluginsReferenceCatalogResult>,
 ): void {
-  // 成功 Promise 曾永久驻留，并在 Agent runtime 换代后继续冒充新
-  // runtime 的 Session authority。缓存只能做挂载期的 in-flight 单飞；旧请求
-  // settle/unmount 时也不能误删同 key 下已经替换的新请求。
+  // A successful promise used to remain cached forever and impersonate Session authority in a newer Agent runtime.
+  // Cache only in-flight work during mount; when an old request settles or unmounts, it must not delete a replacement request with the same key.
   if (serviceCache.get(requestKey) !== request) return;
   serviceCache.delete(requestKey);
   if (serviceCache.size === 0) {
@@ -75,11 +74,11 @@ function releaseSessionCatalogRequestWhenSettled(
 }
 
 /**
- * Plugin 对话引用 catalog。
- * authority 由 sessionId 决定：null（新建草稿）→ workspace 当前 catalog；
- * 非 null（已有 Session）→ 该 Session 创建时冻结的 session-owned catalog。
- * 异步结果按 `workspaceKey + sessionId + runtime restart 代次 + 请求序号` 校验：key 变化或新请求发出后，
- * 旧 workspace/session/进程代次的返回一律丢弃，不得回填到新目标。
+ * Plugin conversation-reference catalog.
+ * Authority is determined by sessionId: null (new draft) → current workspace catalog;
+ * non-null (existing Session) → the session-owned catalog frozen when that Session was created.
+ * Validate async results by `workspaceKey + sessionId + runtime restart generation + request sequence`. Discard returns
+ * from an old workspace/session/process generation after the key changes or a newer request starts; never apply them to a new target.
  */
 export function usePluginReferenceCatalog(
   workspacePath: string,
@@ -97,12 +96,11 @@ export function usePluginReferenceCatalog(
     useState<ScopedPluginReferenceCatalogState>(EMPTY_SCOPED_STATE);
   const [runtimeRevision, setRuntimeRevision] = useState(0);
   const requestSeqRef = useRef(0);
-  // 身份/隔离语义统一 workspaceKey = workspaceIdentity?.trim() || workspacePath。
+  // Standardize identity/isolation semantics as workspaceKey = workspaceIdentity?.trim() || workspacePath.
   const workspaceKey = workspaceIdentity?.trim() || workspacePath;
   const remoteSessionId =
     resolution.remoteSessionId ?? options?.preferredRemoteSessionId ?? undefined;
-  // remote attachment 也是 authority 边界。同一 workspace/session 切换远端 runtime 时
-  // 不得复用旧进程冻结的 catalog Promise。
+  // Remote attachment is also an authority boundary. Do not reuse a catalog promise frozen by an old process when the same workspace/session switches remote runtime.
   const requestKey = `${workspaceKey}|${remoteSessionId ?? "local"}|${sessionId ?? "draft"}|runtime:${runtimeRevision}|refresh:${options?.refreshRevision ?? 0}`;
   const services = resolution.services;
   const rpcReady = resolution.rpcReady;
@@ -111,15 +109,15 @@ export function usePluginReferenceCatalog(
     if (!enabled || !workspacePath || !sessionId || !rpcReady) return;
     const subscription = services.zcodeAgentService.onAgentRuntimeRestarted((event) => {
       if (event.workspaceKey !== workspaceKey) return;
-      // Runtime restart 后 workspace/session/attachment 都可能保持不变；显式推进代次，
-      // 让旧 authority 首帧失效并保证新 runtime 必须重新执行 RPC。
+      // Workspace/session/attachment may all remain unchanged after runtime restart. Advance the generation explicitly
+      // so the old authority's first frame is invalidated and the new runtime must issue RPC again.
       setRuntimeRevision((current) => current + 1);
     });
     return () => subscription.dispose();
   }, [enabled, rpcReady, services, sessionId, workspaceKey, workspacePath]);
-  // 每次 Picker 重新打开、workspace/session/remote attachment 改变，或 services
-  // 实例重连时都创建新的请求身份。渲染只接受同一 scope 的结果，因此 effect 尚未
-  // 发出新请求的首帧也不会短暂泄露上一 authority 的 catalog。
+  // Create a new request identity whenever Picker reopens, workspace/session/remote attachment changes, or the services
+  // instance reconnects. Rendering accepts results only for the same scope, so the first frame before the effect issues a
+  // new request cannot briefly expose the previous authority's catalog.
   const requestScope = useMemo(
     () => ({}),
     [enabled, remoteSessionId, requestKey, rpcReady, services, workspacePath],
@@ -175,7 +173,7 @@ export function usePluginReferenceCatalog(
       .catch((error: unknown) => {
         if (cancelled || seq !== requestSeqRef.current) return;
         const message = error instanceof Error ? error.message : String(error);
-        // fail closed：查询失败时 Picker 显示错误态，不回退到其它 authority 的数据。
+        // Fail closed: on query failure, Picker shows an error state instead of falling back to another authority's data.
         if (!options?.suppressErrorLog) {
           logger.warn("[usePluginReferenceCatalog] 拉取 Plugin 引用 catalog 失败", {
             error: message,
@@ -198,7 +196,7 @@ export function usePluginReferenceCatalog(
         releaseSessionCatalogRequest(services, requestServiceCache, requestKey, request);
       }
     };
-    // requestKey 已涵盖 workspaceKey 与 sessionId 的组合变化。
+    // requestKey already covers changes to the workspaceKey/sessionId combination.
   }, [
     enabled,
     options?.dedupeSessionRequest,

@@ -20,8 +20,8 @@ export async function resolveBigModelStartPlanZcodeJwt(params: {
     }
   }
 
-  // zcode JWT 必须在 BigModel OAuth callback 阶段用授权码 body 落盘。
-  // Start Plan 查询余额/运行时只消费已保存的 JWT 或 provider 副本，不再用
-  // BigModel access_token 构造 provider+access_token body 临时兑换，避免 /oauth/token 400。
+  // The zcode JWT must be persisted from the authorization-code body during the BigModel OAuth callback.
+  // Start Plan balance queries and runtime only consume the saved JWT or a provider copy. They must not
+  // build a provider+access_token body from the BigModel access_token for an ad hoc exchange, which would cause /oauth/token to return 400.
   return params.provider?.apiKey?.trim() || "";
 }

@@ -152,8 +152,9 @@ export class ToolExecutorImpl implements ToolExecutor {
     traceContext: TraceContext,
     turnId?: TurnId,
   ): Promise<void> {
-    // 与 submit 路径同一个 tracker 实例、同一条 trackBackgroundTask：resume 重臂的行为
-    // 按构造等于工具启动路径的行为，两条路径不可能漂移（见 ToolExecutor 接口注释）。
+    // Use the same tracker instance and trackBackgroundTask path as submit. Resume
+    // rearming is thereby equivalent to starting the task through the tool, so the paths
+    // cannot drift (see the ToolExecutor interface comment).
     return this.backgroundTasks.trackBackgroundTask(toolCall, output, traceContext, turnId);
   }
 

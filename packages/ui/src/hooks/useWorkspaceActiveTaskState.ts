@@ -28,10 +28,7 @@ function areTaskMetaJsonFieldsEqual(left: unknown, right: unknown) {
   return JSON.stringify(left ?? null) === JSON.stringify(right ?? null);
 }
 
-function areResolvedTaskMetasEqual(
-  left: ZCodeTaskMeta | null,
-  right: ZCodeTaskMeta | null,
-) {
+function areResolvedTaskMetasEqual(left: ZCodeTaskMeta | null, right: ZCodeTaskMeta | null) {
   if (left === right) {
     return true;
   }
@@ -65,13 +62,13 @@ function areResolvedTaskMetasEqual(
   );
 }
 
-export function useStableResolvedActiveTaskMeta(
-  taskMeta: ZCodeTaskMeta | null,
-) {
+export function useStableResolvedActiveTaskMeta(taskMeta: ZCodeTaskMeta | null) {
   const stableTaskMetaRef = useRef<ZCodeTaskMeta | null>(null);
   const stableTaskMeta = stableTaskMetaRef.current;
-  // stream chunk 只更新消息流时，active task meta 经列表/乐观层重新合成后可能字段相同但引用变了。
-  // Header/Shell 依赖 memo props；这里复用等价 meta 的旧引用，避免连续流式更新拖动标题栏重渲。
+  // When a stream chunk updates only the message stream, active task metadata may be recomposed by
+  // the list/optimistic layer with equal fields but a new reference. Header/Shell rely on memoized
+  // props, so reuse the old reference for equivalent metadata to avoid rerendering the title bar
+  // on every streaming update.
   if (!areResolvedTaskMetasEqual(stableTaskMeta, taskMeta)) {
     stableTaskMetaRef.current = taskMeta;
   }
@@ -93,30 +90,34 @@ export function useWorkspaceActiveTaskState({
     if (!activeTaskId) {
       return null;
     }
-    return state.taskMetaByEntityKey[
-      buildTaskEntityKey({
-        taskId: activeTaskId,
-        workspacePath: workspaceAbsPath,
-        workspaceIdentity,
-      })
-    ] ?? null;
+    return (
+      state.taskMetaByEntityKey[
+        buildTaskEntityKey({
+          taskId: activeTaskId,
+          workspacePath: workspaceAbsPath,
+          workspaceIdentity,
+        })
+      ] ?? null
+    );
   });
   const activeTaskMeta = useMemo(() => {
     if (!activeTaskId) {
       return null;
     }
 
-    // App 以前依赖 zcodeTaskMetaMerge 同时拉普通列表和 pinned 列表，只是为了给当前激活 task
-    // 找一份 meta。这样任何列表刷新都会把整棵 App 一起带着重渲。
-    // 这里改成直接从 workspace store 读 taskListCache + optimistic meta 的合并结果；
-    // 普通任务可以同步命中，pinned / archived 再由 snapshot meta 兜底，不再要求 App 常驻订阅旧列表 hook。
-    // 重启恢复后 raw snapshot meta 可能先进入 workspace store，而 sqlite/list
-    // query cache 里保留着 titleOverridden 的手动标题。Header 必须按同一套 title authority
-    // 合并两边，否则当前 task 会看起来被还原成生成标题或首条 query。
-    return mergeTaskMetaCandidates(
-      getTaskMeta(workspaceState, activeTaskId),
-      activeTaskQueryMeta,
-    ) ?? null;
+    // The App previously relied on zcodeTaskMetaMerge to fetch both the regular and pinned lists
+    // just to find metadata for the active task. Any list refresh then rerendered the entire App.
+    // Read the merged taskListCache and optimistic metadata directly from the workspace store instead.
+    // Regular tasks are available synchronously; snapshot metadata remains the fallback for pinned
+    // and archived tasks, so the App no longer needs to subscribe to the old list hook continuously.
+    // After restart recovery, raw snapshot metadata may enter the workspace store before the SQLite/list
+    // query cache, which may still contain a manually overridden title. The Header must merge both
+    // using the same title authority; otherwise the current task can appear to revert to a generated
+    // title or its first query.
+    return (
+      mergeTaskMetaCandidates(getTaskMeta(workspaceState, activeTaskId), activeTaskQueryMeta) ??
+      null
+    );
   }, [activeTaskId, activeTaskQueryMeta, workspaceState]);
 
   const activeTaskSnapshotMeta = useActiveTaskSnapshotMeta(
@@ -129,8 +130,9 @@ export function useWorkspaceActiveTaskState({
   const resolvedActiveTaskMeta = useStableResolvedActiveTaskMeta(
     activeTaskMeta ?? activeTaskSnapshotMeta,
   );
-  // store 收尾：taskMessagesByTaskId 已无写入方（旧 ChatView/广播消息回放均退役），
-  // 由消息流派生的实时改动摘要恒为空；摘要展示回落到 task meta.changeSummary（持久化侧）。
+  // Store cleanup: taskMessagesByTaskId has no writers now that the old ChatView and broadcast
+  // message replay have been retired. The live change summary derived from the message stream is
+  // always empty; display falls back to task meta.changeSummary from persistence.
   const activeTaskChangeSummary = null;
   const activeTraceId = resolvedActiveTaskMeta?.traceId ?? null;
   const activeSessionId = resolvedActiveTaskMeta?.taskId ?? null;
@@ -153,11 +155,7 @@ export function useWorkspaceActiveTaskState({
     activeTaskProvider,
     workspaceIdentity,
   );
-  const taskSessionFile = useTaskSessionFilePath(
-    workspaceAbsPath,
-    activeTaskId,
-    workspaceIdentity,
-  );
+  const taskSessionFile = useTaskSessionFilePath(workspaceAbsPath, activeTaskId, workspaceIdentity);
 
   return {
     activeTaskMeta,

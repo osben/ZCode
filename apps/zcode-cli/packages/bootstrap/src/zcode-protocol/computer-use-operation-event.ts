@@ -12,18 +12,20 @@ function nonEmptyString(value: unknown): string | undefined {
 }
 
 /**
- * 这个 cell 是否在用 Computer Use。
+ * Whether this cell uses Computer Use.
  *
- * 只做布尔判定，不从源码里抽取动作名：源码形态会随 node_repl SDK 演进（如改成 `getApp()` +
- * 绑定对象 + `computer.*`），字符串匹配迟早一种都命中不了；测试夹具也容易喂入 SDK 从不
- * 产出的扁平形态，让 CI 假绿。
+ * Perform only a boolean check; do not extract action names from source code. Source patterns may
+ * change as the node_repl SDK evolves (for example, to `getApp()` + a bound object + `computer.*`),
+ * and string matching will eventually miss them. Test fixtures can also accidentally provide a
+ * flattened form that the SDK never produces, making CI falsely pass.
  *
- * 锚点选 `setupComputerUseRuntime`，因为它是模型**必须原样照抄**的引导语句，且这是架构强制
- * 而非文档软要求：ZCode 的 node_repl 每个 cell 都是全新 Worker、SDK 绑定不跨 cell，所以
- * 参考文档写明「The first executable statement of every CUA cell must be this bootstrap,
- * and the bootstrap and the actions must be in the same cell」。凡用 CUA 的 cell 必然含它。
+ * Use `setupComputerUseRuntime` as the anchor because it is a bootstrap statement the model **must
+ * copy verbatim**. This is an architectural constraint, not a soft documentation requirement: each
+ * ZCode node_repl cell runs in a fresh Worker, and SDK bindings do not cross cells. The reference
+ * documentation states: "The first executable statement of every CUA cell must be this bootstrap,
+ * and the bootstrap and the actions must be in the same cell." Every cell using CUA therefore contains it.
  *
- * Browser Use 的 `agent.browsers.*` 不含该引导，不会命中。
+ * Browser Use's `agent.browsers.*` does not contain this bootstrap and will not match.
  */
 function usesComputerUse(input: unknown): boolean {
   const code = nonEmptyString(asRecord(input).code);

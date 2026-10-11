@@ -100,7 +100,7 @@ function oauthCredentialKey(family: ProviderFamilyDomain): string {
     : SHARED_ZCODE_CREDENTIAL_KEYS.bigmodelAccessToken;
 }
 
-/** Standalone Credential Store 私有键；不得进入 Provider Config、Model 或 Protocol。 */
+/** Private Standalone Credential Store key; it must not enter Provider Config, Model, or Protocol. */
 export function standaloneAccountProviderCredentialKey(input: {
   readonly providerId: string;
   readonly accountIdentity: string;
@@ -112,11 +112,11 @@ export function standaloneAccountProviderCredentialKey(input: {
   return `account-provider:coding-plan:${providerId}:account:${encodeURIComponent(accountIdentity)}:api-key`;
 }
 
-/** 没有账号 Profile 的手工 Key 登录使用稳定、不可逆的连接身份。 */
+/** Manual Key sign-ins without an account Profile use a stable, irreversible connection identity. */
 export function createStandaloneAccountIdentityFromSecret(secret: string): string {
   const normalized = secret.trim();
   if (!normalized) throw new Error("Standalone Account Secret 不能为空");
-  // Fork 注：从高熵 API key 派生展示用连接身份（截断摘要），不是口令存储，无法离线爆破原文。
+  // Fork note: the display connection identity (truncated digest) is derived from the high-entropy API key; this is not password storage and the original cannot be brute-forced offline.
   // codeql[js/insufficient-password-hash]
   return `key-${createHash("sha256").update(normalized).digest("hex").slice(0, 24)}`;
 }
@@ -144,7 +144,7 @@ export async function readStandaloneAccountProviderConfigSnapshot(
   const sources = await credentialStore.loadMany(
     candidates.map(({ providerId }) => standaloneAccountAuthSourceCredentialKey(providerId)),
   );
-  // 先按来源选择读取范围；OAuth 不解密旧 Key，手工模式也不依赖无关 OAuth 密文。
+  // Choose the read scope by source first; OAuth does not decrypt the old key, and manual mode does not depend on unrelated OAuth ciphertext.
   const credentials = await credentialStore.loadMany(
     candidates.map(({ credentialKey, providerId, family }) =>
       sources[standaloneAccountAuthSourceCredentialKey(providerId)] === "manual"
@@ -163,8 +163,9 @@ export async function readStandaloneAccountProviderConfigSnapshot(
         source === "manual" ? candidate?.credentialKey : oauthCredentialKey(family);
       const authorized = Boolean(requestCredentialKey && credentials[requestCredentialKey]?.trim());
       if (!candidate || !authorized) {
-        // Bug 根因：账号 Overlay 缺少成员表示“不覆盖”，不能表达账号已断开；必须显式
-        // entitled=false，才能让 Built-in 账号 Provider 在凭据删除后从 Registry 退出。
+        // Bug root cause: A missing account Overlay member means "do not override" and cannot represent a disconnected
+        // account. Set entitled=false explicitly so the built-in account Provider leaves the Registry
+        // after its credentials are deleted.
         return [
           providerId,
           new ProviderConfig({
@@ -260,8 +261,8 @@ export function createStandaloneProviderRuntimeHeadersPort(
           resolver.clear();
           throw new Error("project_token_login_required");
         }
-        // Fork 注：这是账号 scope 指纹（与 expectedAccountScope 做相等比较、检测账号切换），
-        // 不是口令存储——需要快速确定性摘要而非 KDF，oauth 仅作为输入、不会泄漏。
+        // Fork note: this is the account scope fingerprint (compared for equality with expectedAccountScope to detect
+        // account switching), not password storage — it needs a fast deterministic digest rather than a KDF; oauth is only an input and is not leaked.
         accountScope = createHash("sha256").update(
           // codeql[js/insufficient-password-hash]
           JSON.stringify([providerId, family, currentIdentity, oauth]),
@@ -287,7 +288,7 @@ export function createStandaloneProviderRuntimeHeadersPort(
         );
         apiKey = material.token;
         apiKeyId = material.apiKeyId;
-        // 请求期只交付当前账号的 Token；迟到签发不能覆盖已退出/切换的登录态。
+        // Deliver only the current account's token during the request; a late issuance must not overwrite a logged-out or switched login state.
         if (
           (await credentialStore.load(oauthKey))?.trim() !== oauth ||
           (
@@ -311,7 +312,7 @@ export function createStandaloneProviderRuntimeHeadersPort(
         )?.trim();
       }
       if (!useOAuth && source !== "manual") {
-        // 旧格式无法区分手工和 OAuth 派生 Key；无登录态时要求重新选择登录方式，禁止猜测回退。
+        // The legacy format cannot distinguish manual from OAuth-derived keys; without a login state, require re-selecting the login method — no guessing fallback.
         resolver.clear();
         throw new Error("project_token_login_required");
       }

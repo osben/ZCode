@@ -7,8 +7,8 @@ export function flushHostE2ECoverage(onError?: (error: unknown) => void): boolea
   }
   try {
     mkdirSync(process.env.NODE_V8_COVERAGE, { recursive: true });
-    // host 的退出由 main 调度，异常或强制回收时不保证 Node 自动写盘；
-    // 在资源释放完成后主动 flush，确保本进程 isolate 的 V8 counter 落盘。
+    // Main schedules Host shutdown, and Node is not guaranteed to flush on exceptions or forced cleanup.
+    // Flush after resources are released so this process isolate's V8 counters are written to disk.
     takeCoverage();
     return true;
   } catch (error) {

@@ -1,4 +1,4 @@
-/* eslint-disable max-lines -- grouped task 的纯 view helper 暂时集中维护 task/group 重排、菜单移动和乐观合并，后续按拖拽域继续拆分。 */
+/* eslint-disable max-lines -- Pure view helpers for grouped tasks currently centralize task/group reordering, menu movement, and optimistic merging; split further by drag area later. */
 import type { ZCodeGroupedTaskView, ZCodeGroupedTaskViewNode } from "@zcode/services";
 import type { ZCodeTaskMeta } from "@zcode/shared";
 import type { GroupedDraftTaskPlacement } from "@/store/zcodeSessionStoreTypes.js";
@@ -332,8 +332,8 @@ function moveTaskOverTask(
     return view;
   }
 
-  // task over task 的目标父级由 over task 所在层级决定。
-  // 先移除 active 再按 over task 重新定位，避免同组向下移动时旧 index 把插入点推后一格。
+  // For task-over-task, the target parent is determined by the level of the over task.
+  // Remove the active item first, then place it relative to the over task so an old index does not shift the insertion point down by one when moving within a group.
   return insertTaskNearTask(nextView, task, params.overTaskKey, params.position);
 }
 
@@ -438,8 +438,8 @@ function moveGroupAroundTopLevelNode(
   if (params.over.type === "group" && params.activeGroupId === params.over.groupId) {
     return view;
   }
-  // group 拖到另一个 group 的 content 上时，collision 可能返回组内 task；
-  // 这里把组内 task 归一化为所属 group，避免 content 区域不触发 group over group。
+  // When a group is dragged over another group’s content, collision detection may return a task inside that group;
+  // normalize that task to its owning group here so dropping over the content still triggers group-over-group.
   const overGroupId =
     params.over.type === "task" ? findGroupIdByTaskKey(view, params.over.taskKey) : null;
   if (overGroupId === params.activeGroupId) {
@@ -520,7 +520,7 @@ function moveTaskByMenu(
     return insertTaskIntoGroup(nextView, task, targetGroupId, null);
   }
 
-  // 菜单移出分组时把 task 放到原 group 后面，避免用户刚操作完就丢失空间上下文。
+  // When a task is moved out of a group through the menu, place it after its original group so users do not lose spatial context immediately after the action.
   const beforeNode = currentGroupId ? getNodeIdAfterGroup(view, currentGroupId) : null;
   return insertTaskBeforeTopLevelNode(nextView, task, beforeNode);
 }

@@ -1,13 +1,12 @@
 // ============================================================
-// AgentRuntime-backed WorkflowDriver：typed 结果的提交桥接（submit_result）
+// AgentRuntime-backed WorkflowDriver: bridge for submitting typed results (submit_result).
 // ============================================================
-// 修复原因：workflow-driver.ts 又顶到 oxlint max-lines 上限（400 行），把会话级 submit 端口拆到
-// 本文件成自由函数，与隔壁的升级桥接（workflow-driver-escalation.ts 的 `makeSessionEscalatePort`）
-// 逐条对称——两者本就是同一副形状的两条时序（mid-turn 阻塞 → 上报 → 引擎回裁决 → 解开 deferred）。
-// 公开面不变，driver 类上只剩一处调用。
+// Split out because workflow-driver.ts again reached oxlint's 400-line max-lines limit. The session-level submit port is now a free function,
+// symmetric with the adjacent escalation bridge (`makeSessionEscalatePort` in workflow-driver-escalation.ts)—both follow the same sequence
+// (block mid-turn → report → engine returns a decision → resolve deferred). The public surface is unchanged; the driver class keeps only the call.
 //
-// 对 driver 状态的全部触碰都经 {@link SubmitBridgeHost} 显式递进来（会话表 + 向上回报面），
-// 本文件不持有任何自己的状态——原方法体逐字保留，只把 `this.` 换成 `host.`。
+// All access to driver state is passed explicitly through {@link SubmitBridgeHost} (session table + upward reporting surface).
+// This file owns no state; the original method body is preserved, with `this.` changed to `host.`.
 
 import type {
   SessionId,
@@ -20,9 +19,8 @@ import { defer, rejectWith } from "./workflow-driver-helpers.js";
 import type { SessionState } from "./workflow-driver-types.js";
 
 /**
- * driver 交给提交桥接的宿主面。两样都是 driver 私有状态的**引用**（不是副本）：`sessions` 就是
- * 类里那张会话表，`sink` 是 Boundary B 的向上回报面（`askSubmitAttempted` 在本调用栈内被引擎
- * 同步回裁决，所以这两者必须是同一世的那一对）。
+ * Host surface the driver supplies to the submit bridge. Both are **references** to private driver state, not copies: `sessions` is
+ * the class's session table, and `sink` is Boundary B's reporting surface (`askSubmitAttempted` receives the engine's decision synchronously in this call stack, so both must belong to the same lifecycle).
  */
 export interface SubmitBridgeHost {
   readonly sessions: ReadonlyMap<string, SessionState>;
@@ -30,9 +28,9 @@ export interface SubmitBridgeHost {
 }
 
 /**
- * 造一个会话级 submit 端口：`submit_result` handler mid-turn 调用它并阻塞等裁决。
+ * Create a session-level submit port: the `submit_result` handler calls it mid-turn and blocks until a decision arrives.
  *
- * closure 绑定本会话，模型无法覆盖路由身份（instance 取自 `currentInstance`）。
+ * The closure binds to this session, so the model cannot override routing identity (instance comes from `currentInstance`).
  */
 export function makeSessionSubmitPort(
   host: SubmitBridgeHost,
@@ -43,15 +41,18 @@ export function makeSessionSubmitPort(
       const state = host.sessions.get(sessionId);
       const instance = state?.currentInstance;
       if (state === undefined || instance === undefined) {
-        // 无在飞 ask 却收到 submit：不路由到引擎，直接拒绝（避免悬挂）。
+        // Submit arrived without an active ask: reject directly instead of routing to the engine (which would hang).
         return Promise.resolve(rejectWith("no active ask is awaiting a submitted result"));
       }
-      // Untyped ask 守卫（phase 1.5 偏离说明）：spec 要求「全 untyped 的 actor 不注册 submit_result」，
-      // 但 driver 在 createActorSession 时拿不到 actor 的聚合 typed 信息（需 site graph，未透传），故
-      // 一律注册。为不依赖引擎「submitAttempted 对 untyped 早退」的行为（那会让 deferred 永久悬挂），
-      // 这里在 driver 内部直接拦截：untyped ask 收到 submit 时立即回一条合成 rejection 让模型改用纯文本，
-      // 绝不上报 askSubmitAttempted。phase 2 应据 actor-graph 投影把 per-actor typed 信息透传进来，
-      // 真正在 untyped-only actor 上跳过注册（关系到 prompt-cache 的 frozen-tools 不变式）。
+      // Untyped-ask guard (phase 1.5 deviation note): the spec requires "an all-untyped actor does
+      // not register submit_result," but the driver cannot see the actor's aggregated typed info at
+      // createActorSession time (it needs the site graph, which is not passed through), so it always
+      // registers. To avoid depending on the engine's "submitAttempted early-returns for untyped"
+      // behavior (which would leave the deferred hanging forever), intercept inside the driver:
+      // when an untyped ask receives a submit, immediately reply with a synthetic rejection so the
+      // model uses plain text instead, and never report askSubmitAttempted. Phase 2 should pass
+      // per-actor typed info through from the actor-graph projection and actually skip registration
+      // on untyped-only actors (this matters for the prompt-cache frozen-tools invariant).
       if (!state.currentTyped) {
         return Promise.resolve(
           rejectWith(
@@ -59,13 +60,13 @@ export function makeSessionSubmitPort(
           ),
         );
       }
-      // 单前实例不变式：至多一个挂起 deferred。若已有（不应发生），先拒旧的避免泄漏。
+      // Single-current-instance invariant: at most one deferred may be pending. If one already exists (unexpected), reject the old one first to avoid a leak.
       state.pendingSubmit?.reject(
         new WorkflowError("DriverError", "This submit was superseded by a newer submit."),
       );
       const deferred = defer<ContractsSubmitVerdict>();
       state.pendingSubmit = deferred;
-      // 同步上报：引擎在本调用栈内校验并经 respondToSubmit 回裁决（同步解开 deferred）。
+      // Report synchronously: the engine validates in this call stack and returns its decision through respondToSubmit (resolving the deferred synchronously).
       host.sink.askSubmitAttempted(instance, request.result);
       return deferred.promise;
     },

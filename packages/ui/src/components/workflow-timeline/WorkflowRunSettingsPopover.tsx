@@ -1,13 +1,12 @@
 // ============================================================
-// 「配置」弹层
+// "Configure" popover.
 // ============================================================
-// run 卡的 Configure 钮、详情页的 Configure 钮与详情页摘要行的模型段打开同一个弹层：两个字段、
-// 一句后果、Apply。Apply 就是一次 GUI 修订——`amendWorkflowRunSettings` 命令，不经模型轮、不开
-// 确认窗；那一下点击就是
-// 同意，与中枢的「运行」同一条规则。
+// The Configure buttons on run cards and the details page, plus the model segment in the details summary, open the same popover:
+// two fields, one consequence, and Apply. Apply is a GUI revision through `amendWorkflowRunSettings`, without a model turn or confirmation dialog;
+// clicking it is consent, following the same rule as "Run" in the hub.
 //
-// 一个弹层、多个触发点：锚点是**打开它的那个元素**（虚拟锚），所以详情页上两个入口各自对齐。
-// 表单只在打开时挂载——模型清单的订阅也随之只活在打开期间。
+// One popover, multiple triggers: anchor to **the element that opened it** (virtual anchor), so both details-page entries align independently.
+// Mount the form only while open; the model-list subscription is active only for that period.
 
 import { useCallback, useRef, useState, type RefObject } from "react";
 import type { CommandAck, WorkflowRunState } from "@zcode/shared/zcode-protocol-v4";
@@ -37,19 +36,19 @@ import {
   type WorkflowRunSettingsRejection,
 } from "./workflowRunSettings.js";
 
-/** 宿主给弹层的一切：模型清单的作用域、会话模型、以及发命令的那一下。 */
+/** Everything the host supplies to the popover: model-list scope, session model, and command dispatch. */
 export interface WorkflowRunSettingsHost extends WorkflowSettingsModelScope {
-  /** 发 `amendWorkflowRunSettings`（宿主补 workId 与会话），回 ACK。 */
+  /** Send `amendWorkflowRunSettings` (the host adds workId and session) and return the ACK. */
   apply: (change: WorkflowRunSettingsChange) => Promise<CommandAck>;
 }
 
-/** 被接受后新 run 的两把钥匙（ACK.result）。 */
+/** Two IDs for the new run after acceptance (ACK.result). */
 export interface WorkflowRunSettingsAccepted {
   runId: string;
   toolCallId: string;
 }
 
-/** 触发点的开关与锚点：点同一个触发点再点一次是关，点另一个是移过去重开。 */
+/** Trigger state and anchor: clicking the same trigger again closes it; clicking another moves and reopens it. */
 export function useWorkflowRunSettingsPopoverState() {
   const anchorRef = useRef<HTMLElement | null>(null);
   const [open, setOpen] = useState(false);
@@ -89,13 +88,13 @@ export function WorkflowRunSettingsPopover({
         align="end"
         className="gap-2.5"
         data-testid="workflow-run-settings-popover"
-        // 弹层 portal 在外，但 React 事件仍沿组件树冒泡：不拦的话，点弹层空白处会让 run 卡以为
-        // 点了卡身而收起（卡身整张是折叠开关），数字框里的回车也会被卡当成 Enter 切换。
+        // The popover is portaled elsewhere, but React events still bubble through the component tree. Without stopping them, clicking blank popover space
+        // makes the run card think its body was clicked and collapse it (the entire card toggles); Enter in a number field also toggles the card.
         onClick={(event) => event.stopPropagation()}
         onKeyDown={(event) => {
           if (event.key === "Enter" || event.key === " ") event.stopPropagation();
         }}
-        // 点打开它的那个触发点本身不算「点在外面」：否则先被关掉、再被那一下点击重新打开。
+        // Clicking the trigger that opened it does not count as an outside click; otherwise it closes and immediately reopens on the same click.
         onInteractOutside={(event) => {
           const target = event.target;
           if (target instanceof Node && anchorRef.current?.contains(target)) event.preventDefault();
@@ -128,11 +127,11 @@ function WorkflowRunSettingsForm({
     (id: string, values?: Record<string, string | number>) => intl.formatMessage({ id }, values),
     [intl],
   );
-  // 清单、会话模型那一项、触发器文案、换模型的思考档规则：与确认窗共用一份
+  // Checklist, the session-model item, trigger copy, and thinking-level rules for model changes are shared with the confirmation dialog.
   // （useWorkflowSettingsModelChoices.ts）。
   const choices = useWorkflowSettingsModelChoices(host);
 
-  // 起点在打开那一刻定下：run 状态在弹层开着时变了，也不该把用户正在改的表单拽回去。
+  // Set the initial values when opening; a run-state change while the popover is open must not reset the form the user is editing.
   const [initial] = useState(() => initialWorkflowRunSettingsDraft(run));
   const [draft, setDraft] = useState<WorkflowRunSettingsDraft>(initial);
   const [pending, setPending] = useState(false);
@@ -220,7 +219,7 @@ function WorkflowRunSettingsForm({
         disabled={pending}
         onChange={(bound) => updateDraft({ ...draft, bound })}
       />
-      {/* 没改动时后果句为空，但留一行高（min-h-lh），第一次改动时页脚不往下跳。 */}
+      {/* When nothing has changed, the consequence sentence is empty but retains one line of height (min-h-lh), so the footer does not jump down after the first edit. */}
       <p
         className="min-h-lh text-ui-sm text-foreground-subtle"
         data-testid="workflow-run-settings-consequence"

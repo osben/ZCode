@@ -205,12 +205,13 @@ export function formatGoalCompletionVerificationPrompt(
     "This is a verification request only. Do not continue implementation work, do not write files, and do not call tools.",
     "Return only a JSON object with this exact shape:",
     '{"passed": boolean, "reason": string, "nextAction": string}',
-    // nextAction 会作为下一轮迭代标题展示；不限定语言时中文 goal 容易被 verifier 写成英文。
+    // nextAction is shown as the next iteration's title; without a language constraint, a Chinese goal can easily be rewritten in English by the verifier.
     "Write reason and nextAction in the primary natural language of the objective. Keep JSON property names exactly in English.",
     "If the objective mixes languages, use the language that carries the main task request. Preserve code, commands, file paths, API names, model names, and other technical identifiers verbatim.",
     "Always include a reason field, quoting specific text from the conversation context whenever possible.",
     "First classify the objective before applying the artifact checklist.",
-    // 问候、致谢等非任务目标没有文件/命令/测试交付物；先分类可避免 verifier 把“没有交付物”误判成未完成并触发无限续跑。
+    // Non-task goals such as greetings and thanks have no file/command/test deliverable.
+    // Classify them first so the verifier does not mistake "no deliverable" for incomplete work and trigger an endless continuation loop.
     "If the objective is only a conversational non-task, such as a greeting, thanks, acknowledgement, small talk, or an emoji, it has no artifact checklist. Do not fail it just because there are no files, commands, tests, gates, or deliverables.",
     "The objective text itself is authoritative for this classification. Do not reinterpret a standalone conversational non-task as a coding request merely because the assistant is a coding agent.",
     'For a conversational non-task, return {"passed": true, "reason": "<quote the greeting or reply evidence>", "nextAction": ""} once the assistant has acknowledged or reasonably answered it. Do not ask the user for a concrete task as nextAction.',
@@ -291,8 +292,7 @@ export function parseGoalCompletionVerificationText(
 ): GoalCompletionVerificationOutput {
   const parsed = parseJsonObject(text);
   if (!parsed) {
-    // verifier 是 goal 完成闸门，但 provider 偶发坏 JSON 属于裁判链路故障；
-    // 按产品语义 fail-open，避免已经交付的 goal 被格式错误卡在继续迭代。
+    // The verifier gates goal completion, but occasional invalid JSON from the provider is a failure in the judging path. Fail open according to product semantics so formatting errors do not keep an already-delivered goal in a continuation loop.
     return failOpenGoalCompletionVerification(
       "The completion verifier did not return valid JSON.",
     );
@@ -313,8 +313,8 @@ export function parseGoalCompletionVerificationText(
 export function failedGoalCompletionVerification(
   reason: string,
 ): GoalCompletionVerificationOutput {
-  // 这个兜底表示 verifier 自身失败，不是模型给出的下一步。
-  // 若写入 nextAction，UI 会把内部控制文案当成下一轮迭代标题展示。
+  // This fallback represents verifier failure, not a next step supplied by the model.
+  // If written to nextAction, the UI would show internal control text as the next iteration's title.
   return {
     passed: false,
     reason,
@@ -324,8 +324,7 @@ export function failedGoalCompletionVerification(
 export function failOpenGoalCompletionVerification(
   reason: string,
 ): GoalCompletionVerificationOutput {
-  // 这里表示 verifier 基础设施/格式失败，不是 verifier 明确判定目标未完成。
-  // 默认通过能避免 goal 因裁判链路偶发失败被无限卡住，同时保留 reason 供日志和 UI 排查。
+  // This represents verifier infrastructure/format failure, not an explicit decision that the goal is incomplete. Passing by default prevents occasional judge-path failures from blocking the goal forever while preserving reason for logs and UI diagnostics.
   return {
     passed: true,
     reason,
@@ -385,8 +384,7 @@ function parseJsonString(text: string): string | undefined {
 }
 
 function extractFencedJsonCandidate(text: string): string | undefined {
-  // goal verifier 偶尔会把结构化 JSON 包进 Markdown code fence，
-  // 甚至被外层编码成字符串；这里统一剥出 fenced 内容后再走同一个 JSON object 解析。
+  // The goal verifier occasionally wraps structured JSON in a Markdown code fence or encodes it as a string. Extract fenced content here, then use the same JSON-object parser.
   const match = text
     .trim()
     .match(/^```[ \t]*(?:json)?[ \t]*\r?\n([\s\S]*?)\r?\n?```$/i);

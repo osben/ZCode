@@ -45,7 +45,7 @@ interface RefreshControl {
   readonly failureCount: number;
 }
 
-/** Environment 共享控制文件合并多进程刷新；网络期间不持有文件锁。 */
+/** Environment-shared control file coordinates refreshes across processes; do not hold the file lock during network requests. */
 export class ZCodeBuiltinRemoteSynchronizer {
   readonly #options: ZCodeBuiltinRemoteSynchronizerOptions;
   readonly #now: () => number;
@@ -134,7 +134,7 @@ export class ZCodeBuiltinRemoteSynchronizer {
     try {
       this.#options.onRefreshResult?.(event);
     } catch {
-      /* 日志不能把成功应用改成下载失败。 */
+      /* A logging failure must not turn successful application into a download failure. */
     }
   }
 
@@ -180,7 +180,7 @@ async function readControl(filePath: string): Promise<RefreshControl> {
     const input = JSON.parse(raw) as unknown;
     return isRefreshControl(input) ? input : emptyControl();
   } catch {
-    // 控制文件不是业务事实；进程崩溃留下的损坏内容在锁内重建，不能永久阻断刷新。
+    // The control file is not business state; rebuild corrupted contents left by a crashed process while holding the lock, so refresh is not permanently blocked.
     return emptyControl();
   }
 }

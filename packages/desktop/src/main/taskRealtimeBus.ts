@@ -350,7 +350,7 @@ export class TaskRealtimeBus {
     return { leaseRequestId: request.leaseRequestId, acquired: true, ownerHostId: hostId };
   }
 
-  /** 内存诊断计数器；只读 size。 */
+  /** In-memory diagnostic counter; read-only size. */
   collectMemoryDiagnostics(): Record<string, number> {
     return {
       streamBatches: this.streamBatches.size,
@@ -504,9 +504,10 @@ export class TaskRealtimeBus {
       ),
     };
     if (JSON.stringify(event).length > STREAM_MIRROR_MAX_BATCH_BYTES) {
-      // 单次 mirror batch 过大时，RPC/base64/JSON 会在链路上多次复制，导致 host 堆内存打满。
-      // owner 仍依赖 mirror seq 流渲染主动发送端，所以这里对 owner 做小批次分片；observer
-      // 不消费正文流，只收到 snapshot invalidation/remoteGenerating 状态。
+      // An oversized mirror batch is copied multiple times as RPC/base64/JSON, which can exhaust the
+      // Host heap. The owner still relies on the mirror sequence stream from the renderer sender, so
+      // send smaller batches to the owner. Observers do not consume the body stream; they receive
+      // only snapshot invalidation/remoteGenerating state.
       this.deliverOversizedStreamBatchFallback(batch, event);
       return;
     }
@@ -522,9 +523,11 @@ export class TaskRealtimeBus {
     batch: PendingStreamBatch,
     event: TaskStreamMirrorBatchEvent,
   ): void {
-    // 不能丢弃 owner 的 mirror seq。ZCode Agent 有 realtime port 时 owner direct stream 会被关闭，
-    // 如果 oversized batch 只发 gap，service 会因为后续 seq 缺口禁用 mirror，桌面端就停到终态快照。
-    // 这里只给 owner 发送连续小批次；observer 和 late subscriber 统一走快照补齐，避免大 payload 扩散。
+    // Do not drop mirror sequences for the owner. When the ZCode Agent has a realtime port, the
+    // owner's direct stream is closed. If an oversized batch sends only a gap, the service disables
+    // the mirror because of the following sequence gap and Desktop remains at a terminal snapshot.
+    // Send consecutive small batches only to the owner; observers and late subscribers are filled
+    // from snapshots to avoid spreading large payloads.
     batch.replayUnavailable = true;
     batch.replay = [];
     for (const chunk of this.splitOversizedBatchForOwner(batch, event)) {
@@ -628,8 +631,9 @@ export class TaskRealtimeBus {
         continue;
       }
 
-      // 文本 chunk 可能被 coalesce 合成超大单 op；后续即使按 op 分 batch，
-      // 单个 op 仍会超过 RPC 安全预算。这里先把文本切成连续小 op，再统一分配 seq。
+      // Text chunks may be coalesced into one oversized operation; batching by operation afterward
+      // would still exceed the RPC safety budget. Split text into consecutive smaller operations
+      // first, then assign sequences to all of them.
       for (
         let offset = 0;
         offset < op.event.content.length;
@@ -697,9 +701,10 @@ export class TaskRealtimeBus {
         event: {
           ...event,
           originHostId: batch.ownerHostId,
-          // owner 和 observer 以前消费两条不同事件源：owner 走不可重放 direct event，
-          // observer 走 mirror batch。切换 task 或跨端 relay 时两边会因为事件丢失/乱序产生分叉。
-          // 这里统一把 mirror batch 回投给 owner，让所有 renderer 都按同一条 seq 流更新 task store。
+          // Previously, owner and observer consumed different event sources: owner used non-replayable
+          // direct events and observer used mirror batches. Switching tasks or relaying across devices
+          // could make them diverge due to lost/reordered events. Feed mirror batches back to the
+          // owner so all renderers update the task store from one sequence stream.
           deliveryPurpose: target.hostId === batch.ownerHostId ? "relay_owner" : "observer",
         } satisfies TaskRealtimeDeliveredEvent,
       });
@@ -727,8 +732,9 @@ export class TaskRealtimeBus {
   }
 
   private rememberReplayBatch(batch: PendingStreamBatch, event: TaskStreamMirrorBatchEvent): void {
-    // 无上限 replay 在长任务中会线性占用主进程内存。
-    // 这里恢复批次数+字节数双阈值，超限后由 replayVisibleRunsToHost 触发 stream_mirror_gap 并走快照补齐。
+    // Unbounded replay uses main-process memory linearly during long tasks.
+    // Restore both batch-count and byte-count limits; after the limit, replayVisibleRunsToHost emits
+    // stream_mirror_gap and uses snapshot recovery.
     batch.replay.push(event);
     while (batch.replay.length > STREAM_MIRROR_MAX_REPLAY_BATCHES) {
       batch.replay.shift();

@@ -1,4 +1,4 @@
-/* path 规则集中维护：旧 task 快照与 provider 配置路径仍在这里收口。 */
+/* Centralized path rules: legacy task snapshots and provider configuration paths are still maintained here. */
 import { lstatSync } from "node:fs";
 import { cp } from "node:fs/promises";
 import { createHash } from "node:crypto";
@@ -37,8 +37,8 @@ export function setDataBaseDir(dir: string | null): void {
 export function getDataBaseDir(): string {
   if (_dataBaseDir) return _dataBaseDir;
   if (envDataBaseDir) return envDataBaseDir;
-  // 服务实例会启动后台刷新任务；若每次调用都动态读取 HOME，
-  // 测试或宿主切换环境变量后，旧实例可能把数据写到新实例目录。
+  // Service instances start background refresh tasks; if HOME is read dynamically on each call,
+  // changing environment variables in tests or the host could make an old instance write into a new instance's directory.
   return defaultDataBaseDir;
 }
 
@@ -47,7 +47,7 @@ export function getZCodeDataRootDir(): string {
   return join(getDataBaseDir(), ".zcode");
 }
 
-/** 非项目对话共享的真实工作目录；默认 ~/.zcode/workspace/default。 */
+/** Actual working directory shared by non-project conversations; defaults to ~/.zcode/workspace/default. */
 export function getConversationWorkspaceDir(): string {
   return join(getZCodeDataRootDir(), "workspace", "default");
 }
@@ -190,12 +190,12 @@ export function getTasksIndexDatabasePath(): string {
   return join(getAppConfigDir(), "tasks-index.sqlite");
 }
 
-/** workspace 级身份键：远程优先使用 workspaceIdentity，本地回退 workspacePath。 */
+/** Workspace-level identity key: prefer workspaceIdentity for remote workspaces and fall back to workspacePath locally. */
 function getWorkspaceKey(workspacePath: string, workspaceIdentity?: string): string {
   return workspaceIdentity?.trim() || workspacePath;
 }
 
-/** 与 ZCode session 持久化一致：使用 workspaceKey 的 SHA-256 前 12 位 */
+/** Matches ZCode session persistence: use the first 12 characters of the workspaceKey SHA-256. */
 export function getWorkspaceHash(workspacePath: string, workspaceIdentity?: string): string {
   return createHash("sha256")
     .update(getWorkspaceKey(workspacePath, workspaceIdentity))
@@ -227,9 +227,9 @@ export function getLegacyDeletedTaskSessionSnapshotPath(
 }
 
 /**
- * GLM（唯一 agent provider）的配置目录：~/.zcode/cli。
- * Bugfix：GLM 配置改为直接读写新版 zcode-cli 的全局配置目录，不做 workspace 隔离，
- * 避免同机不同工作区配置漂移。
+ * Configuration directory for GLM (the only agent provider): ~/.zcode/cli.
+ * Bugfix: GLM configuration now reads/writes the new zcode-cli global configuration directory directly,
+ * without workspace isolation, avoiding configuration drift between workspaces on the same machine.
  */
 export function getProviderWorkspaceConfigDir(): string {
   return ZCODE_AGENT_RUNTIME.nativeConfigDir
@@ -251,17 +251,17 @@ export async function copyDataDirectory(oldBaseDir: string, newBaseDir: string):
     filter: (source) => {
       const sourceName = basename(source);
       if (sourceName === "setting.json" || sourceName.startsWith("setting.json.")) {
-        // setting.json.lock 和 setting.json.*.tmp 由原子写入短暂创建/删除，
-        // 复制过程中扫描到已消失的 lock 会触发 ENOENT，并让数据目录迁移失败。
-        // 这些文件都属于 bootstrap 写入中间态，不能迁移到新数据根。
+        // setting.json.lock and setting.json.*.tmp are created/deleted briefly during atomic writes;
+        // if a lock disappears during copying, ENOENT would fail the data-directory migration.
+        // These files are bootstrap write intermediates and must not be migrated to the new data root.
         return false;
       }
-      // Windows 非提权环境下 fs.cp 无法复制符号链接（EPERM）。
-      // 跳过符号链接可避免 Windows 非提权环境下 fs.cp 报 EPERM。
+      // fs.cp cannot copy symbolic links in an unprivileged Windows environment (EPERM).
+      // Skipping symlinks avoids this error for unprivileged Windows users.
       try {
         if (lstatSync(source).isSymbolicLink()) return false;
       } catch {
-        // lstat 失败时放行，让 cp 自行处理
+        // If lstat fails, allow cp to handle it.
       }
       return true;
     },

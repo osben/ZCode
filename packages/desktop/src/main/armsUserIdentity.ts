@@ -1,26 +1,24 @@
 export interface ArmsUserIdentitySyncDeps {
-  /** 设备维度 id，直接作为 ARMS user.name 上报 */
+  /** Device-level ID, reported directly as ARMS user.name. */
   deviceMid: string;
-  /** 写入 ARMS user 配置（默认包装 armsRum.setConfig("user", ...)） */
+  /** Write the ARMS user configuration (by default, wraps armsRum.setConfig("user", ...)). */
   setUser: (user: { name: string }) => void;
 }
 
 export interface ArmsUserIdentitySync {
-  /** 将 deviceMid 写入 ARMS user.name（带去重） */
+  /** Write deviceMid to ARMS user.name (deduplicated). */
   refresh: () => void;
 }
 
 /**
- * 主进程 ARMS RUM 用户身份同步：统一以 device_mid 作为 user.name 上报。
+ * Main-process ARMS RUM user identity synchronization: consistently report device_mid as user.name.
  *
- * 不写 user.id：SDK 会把 config.user.id 在事件合并时跳过、强制改写为内部随机值，
- * 无法注入；而 user.name 不受屏蔽。又因 setConfig("user", ...) 是整体替换 user 键
- * （非字段合并），这里只传 { name }，刻意不带 id，保持与 appARMSBootstrap.init 的
- * user.name 写法一致，避免反复覆盖。
+ * Do not write user.id: the SDK skips config.user.id while merging events and replaces it with an
+ * internal random value, so it cannot be injected; user.name is not filtered. Also, setConfig("user", ...)
+ * replaces the entire user key rather than merging fields, so pass only { name }, intentionally
+ * omitting id. This matches appARMSBootstrap.init and avoids repeated overwrites.
  */
-export function createArmsUserIdentitySync(
-  deps: ArmsUserIdentitySyncDeps,
-): ArmsUserIdentitySync {
+export function createArmsUserIdentitySync(deps: ArmsUserIdentitySyncDeps): ArmsUserIdentitySync {
   let lastWrittenName: string | null = null;
 
   function refresh(): void {

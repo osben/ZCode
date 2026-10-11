@@ -61,16 +61,16 @@ export interface WorkspaceShellZCodeState {
 }
 
 export interface CreateTaskOptions {
-  /** 异步预填只能提交到解析 Skill 时的同一新任务目标。 */
+  /** Async prefill may only be submitted to the same new-task target that was active when the Skill was resolved. */
   expectedWorkspaceKey?: string;
   provider?: ZCodeProvider;
   groupedDraftPlacement?: GroupedDraftTaskPlacement;
   createSource?: SessionCreateSource;
-  /** 新草稿输入框预填文本；只写草稿，不自动发送。 */
+  /** Prefill text for a new draft input; write to the draft only and do not send automatically. */
   initialPrompt?: string;
-  /** 与 initialPrompt canonical 前缀对应的结构化 mention；仅用于编辑器展示。 */
+  /** Structured mention corresponding to the canonical initialPrompt prefix; used only for editor display. */
   initialPromptMention?: ComposerMentionPrefill;
-  /** 新任务落在哪个 workspace；缺省取活动 workspace。 */
+  /** Workspace for the new task; defaults to the active workspace. */
   targetWorkspace?: { workspacePath: string; workspaceIdentity?: string };
 }
 
@@ -133,12 +133,13 @@ export interface WorkspaceShellLayoutProps extends Omit<AppProps, "baseFeedbackS
   pluginStoreOpenVersion: number;
   openAutomationId: string | null;
   openAutomationTab: AutomationsNavigationTab | null;
-  /** 中枢深链：落到某个已保存工作流的详情页；定位后由 `onOpenWorkflowConsumed` 清空。 */
+  /** Hub deep link to a saved workflow's details page; cleared after navigation by `onOpenWorkflowConsumed`. */
   openWorkflow: SavedWorkflowsOpenTarget | null;
   onOpenWorkflowConsumed: () => void;
   /**
-   * 完成卡「已保存」芯片 → 中枢那一页（docs/dynamic-workflow/transcript-and-notifications.md
-   * 「Saving the run, and running it again」）：切到自动化主视图的「工作流」标签并设深链。
+   * Completion-card “Saved” chip → hub page (docs/dynamic-workflow/transcript-and-notifications.md,
+   * “Saving the run, and running it again”): switch to the Workflows tab in the Automations main
+   * view and set the deep link.
    */
   onOpenSavedWorkflowInHub: (target: SavedWorkflowHubTarget) => void;
   onWorkspaceMainViewChange: (view: WorkspaceMainView) => void;
@@ -187,7 +188,7 @@ export interface WorkspaceShellLayoutProps extends Omit<AppProps, "baseFeedbackS
     availability?: import("@/store/tabStore.js").WorkspaceAvailability;
   }>;
   activeTaskId: string | null;
-  /** 右侧栏按对话隔离的归属 id：草稿态 = draftSessionId，正式态 = activeTaskId（两者同值衔接）。 */
+  /** Conversation-scoped owner ID for the right sidebar: draft state uses draftSessionId, active state uses activeTaskId (the values carry over). */
   sidePaneOwnerId: string | null;
   activeTraceId: string | null;
   activeSessionId: string | null;
@@ -278,9 +279,7 @@ export interface WorkspaceShellLayoutProps extends Omit<AppProps, "baseFeedbackS
   handleOpenWorkflowRunDirectory: (
     request: import("@/lib/workspaceSidePane.js").OpenScopedWorkflowRunDirectorySideTabRequest,
   ) => void;
-  handleOpenWorkflowActorSession: (
-    request: OpenScopedWorkflowActorSessionSideTabRequest,
-  ) => void;
+  handleOpenWorkflowActorSession: (request: OpenScopedWorkflowActorSessionSideTabRequest) => void;
   handleOpenWorkflowWorkspace: (request: OpenScopedWorkflowWorkspaceSideTabRequest) => void;
   handleOpenWorkflowArtifact: (request: OpenScopedWorkflowArtifactSideTabRequest) => void;
   handleCloseCodeViewer: () => void;

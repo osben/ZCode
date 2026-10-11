@@ -1,11 +1,4 @@
-import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type KeyboardEvent,
-} from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import type { GitRepositorySummary } from "@zcode/shared";
 import { Button } from "@/components/ui/button.js";
 import {
@@ -16,11 +9,7 @@ import {
   CommandItem,
   CommandList,
 } from "@/components/ui/command.js";
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover.js";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover.js";
 import { cn } from "@/components/lib/utils.js";
 import {
   GitBranchCreateDialog,
@@ -37,13 +26,7 @@ import {
   isCoarseTouchDevice,
   shouldRestoreChatInputFocusAfterPickerClose,
 } from "@/lib/pickerFocus.js";
-import {
-  ChevronDownIcon,
-  GitBranchIcon,
-  GitGraph,
-  LoaderIcon,
-  PlusIcon,
-} from "lucide-react";
+import { ChevronDownIcon, GitBranchIcon, GitGraph, LoaderIcon, PlusIcon } from "lucide-react";
 
 interface GitBranchSwitcherProps {
   workspacePath: string;
@@ -108,8 +91,7 @@ export function GitBranchSwitcher({
   });
 
   const isVisible = gitSummary.isGitAvailable && gitSummary.isRepository;
-  const displayedCurrentBranchName =
-    branchesResult?.currentBranchName ?? gitSummary.branchName;
+  const displayedCurrentBranchName = branchesResult?.currentBranchName ?? gitSummary.branchName;
   const triggerLabel = useMemo(
     () =>
       resolveGitBranchTriggerLabel({
@@ -143,8 +125,7 @@ export function GitBranchSwitcher({
     });
   }, [gitSummary.headRefType, intl, switchAssistState, triggerLabel]);
   const branchSearchFilter = useCallback(
-    (value: string, search: string) =>
-      matchesGitBranchSearch(value, search) ? 1 : 0,
+    (value: string, search: string) => (matchesGitBranchSearch(value, search) ? 1 : 0),
     [],
   );
 
@@ -155,9 +136,7 @@ export function GitBranchSwitcher({
 
     const frameId = window.requestAnimationFrame(() => {
       const selectedItem =
-        commandListRef.current?.querySelector<HTMLElement>(
-          '[data-branch-current="true"]',
-        ) ?? null;
+        commandListRef.current?.querySelector<HTMLElement>('[data-branch-current="true"]') ?? null;
       selectedItem?.scrollIntoView({ block: "nearest" });
     });
 
@@ -166,11 +145,10 @@ export function GitBranchSwitcher({
     };
   }, [branchesResult, open]);
 
-  const handleContentKeyDown = useCallback(
-    (event: KeyboardEvent<HTMLDivElement>) => {
-      if (event.key !== "Tab") {
-        return;
-      }
+  const handleContentKeyDown = useCallback((event: KeyboardEvent<HTMLDivElement>) => {
+    if (event.key !== "Tab") {
+      return;
+    }
 
     const highlightedItem =
       event.currentTarget.querySelector<HTMLElement>(
@@ -184,11 +162,9 @@ export function GitBranchSwitcher({
       return;
     }
 
-      event.preventDefault();
-      highlightedItem.click();
-    },
-    [],
-  );
+    event.preventDefault();
+    highlightedItem.click();
+  }, []);
 
   if (!isVisible) {
     return null;
@@ -212,10 +188,8 @@ export function GitBranchSwitcher({
               })}
               className={cn(
                 "min-w-0 rounded-full text-ui-base/relaxed",
-                // Bugfix: 手机远控聊天页底部空间很窄，分支名会挤压输入工具栏；远控模式只保留图标入口。
-                compactForRemoteControl
-                  ? "size-8 px-0"
-                  : "max-w-full pl-3 pr-2",
+                // Bugfix: The bottom area of the mobile remote-control chat page is narrow, and branch names crowd the input toolbar. Keep only the icon entry in remote-control mode.
+                compactForRemoteControl ? "size-8 px-0" : "max-w-full pl-3 pr-2",
                 triggerClassName,
               )}
             >
@@ -249,8 +223,8 @@ export function GitBranchSwitcher({
             onOpenAutoFocus={(event) => {
               event.preventDefault();
               if (isCoarseTouchDevice()) {
-                // 手机触控设备打开分支列表时，自动聚焦搜索框会拉起系统键盘遮挡列表。
-                // 移动端保留触发器焦点，用户需要搜索时再手动点输入框；桌面端继续自动进入搜索。
+                // On mobile touch devices, automatically focusing the search box when opening the branch list brings up the system keyboard and obscures the list.
+                // Keep focus on the trigger on mobile until users tap the input to search; continue focusing search automatically on desktop.
                 return;
               }
 
@@ -258,9 +232,7 @@ export function GitBranchSwitcher({
               if (!(target instanceof HTMLElement)) {
                 return;
               }
-              const searchInput = target.querySelector<HTMLElement>(
-                '[data-slot="command-input"]',
-              );
+              const searchInput = target.querySelector<HTMLElement>('[data-slot="command-input"]');
               searchInput?.focus();
             }}
             onCloseAutoFocus={(event) => {
@@ -272,9 +244,7 @@ export function GitBranchSwitcher({
               ) {
                 return;
               }
-              const input = document.querySelector<HTMLElement>(
-                '[data-testid="chat-input"]',
-              );
+              const input = document.querySelector<HTMLElement>('[data-testid="chat-input"]');
               input?.focus();
             }}
           >
@@ -302,8 +272,7 @@ export function GitBranchSwitcher({
                   className="space-y-0.5 p-1 **:[[cmdk-group-heading]]:px-3 **:[[cmdk-group-heading]]:py-2 **:[[cmdk-group-heading]]:text-ui-base **:[[cmdk-group-heading]]:font-medium **:[[cmdk-group-heading]]:text-foreground-subtle"
                 >
                   {(branchesResult?.branches ?? []).map((branch) => {
-                    const isCurrent =
-                      branch.name === displayedCurrentBranchName;
+                    const isCurrent = branch.name === displayedCurrentBranchName;
                     return (
                       <CommandItem
                         key={branch.name}
@@ -311,9 +280,7 @@ export function GitBranchSwitcher({
                         data-checked={isCurrent ? "true" : undefined}
                         data-branch-current={isCurrent ? "true" : undefined}
                         disabled={mutationPending}
-                        className={cn(
-                          "items-start gap-3 rounded-lg px-3 py-2 text-ui-base",
-                        )}
+                        className={cn("items-start gap-3 rounded-lg px-3 py-2 text-ui-base")}
                         onSelect={() => {
                           void switchBranch(branch.name);
                         }}

@@ -2,7 +2,7 @@ import type { DatabaseSync } from "node:sqlite";
 import type { SessionStorePort } from "@zcode/contracts";
 import { saveSessionEntry } from "./session-entries.js";
 
-/** SQLite adapter 的同步事务中不 await，取消检查和提交之间没有异步重入窗口。 */
+/** The SQLite adapter transaction is synchronous and does not await, so cancellation cannot reenter between the check and commit. */
 export async function commitPermissionFullAccess(
   db: DatabaseSync,
   input: Parameters<NonNullable<SessionStorePort["commitPermissionFullAccess"]>>[0],

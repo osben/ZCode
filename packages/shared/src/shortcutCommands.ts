@@ -1,16 +1,16 @@
 /**
- * 快捷键命令表与绑定序列化格式 —— 全仓库快捷键的唯一数据源。
+ * Shortcut command table and binding serialization format: the single source of truth for shortcuts across the repository.
  *
- * 设计约束：
- * - 本文件只含纯数据 + 纯函数，不依赖 DOM / Electron，供 renderer / main / services 共用；
- * - 绑定字符串同一形式同时用于 setting.json 持久化、renderer 匹配与 Electron 菜单 accelerator 透传；
- * - 键位知识只允许收敛在这里，消费方（useAppKeyboard、设置页、菜单）不得自行解析键位。
+ * Design constraints:
+ * - This file contains only pure data and functions, with no DOM / Electron dependencies, and is shared by renderer / main / services.
+ * - The same binding-string format is used in setting.json, renderer matching, and Electron menu accelerators.
+ * - Key-mapping knowledge belongs here; consumers (useAppKeyboard, Settings, menus) must not parse keys independently.
  */
 
-/** 快捷键命令的分发通道：window = renderer 键盘分发（三端一致）；menu = 桌面应用菜单 accelerator。 */
+/** Shortcut dispatch channel: window = renderer keyboard dispatch (consistent across all three platforms); menu = desktop menu accelerator. */
 export type ShortcutChannel = "window" | "menu";
 
-/** 可配置快捷键的命令 ID，与 SHORTCUT_COMMANDS 一一对应。 */
+/** Command IDs for configurable shortcuts, one-to-one with SHORTCUT_COMMANDS. */
 export type ShortcutCommandId =
   | "toggleInterfaceMode"
   | "openOnboarding"
@@ -39,25 +39,25 @@ export type ShortcutCommandId =
   | "voiceDictation";
 
 /**
- * 命令作用域：global = 全局分发（useAppKeyboard / 菜单 accelerator）；
- * composer = 聊天输入框聚焦时由 Lexical 键盘行为插件消费，其余分发方零感知。
- * Enter 族键因此可以安全入表——杀伤半径被限制在输入框内。
+ * Command scope: global = dispatched globally (useAppKeyboard / menu accelerator);
+ * composer = consumed by the Lexical keyboard behavior plugin while the chat composer is focused, invisible to other dispatchers.
+ * This lets Enter-family keys be registered safely because their effect is limited to the composer.
  */
 export type ShortcutScope = "global" | "composer";
 
 export interface ShortcutCommandEntry {
   readonly id: ShortcutCommandId;
   readonly channel: ShortcutChannel;
-  /** 作用域；缺省 global。 */
+  /** Scope; defaults to global. */
   readonly scope?: ShortcutScope;
-  /** 默认绑定，规范形式序列化串；多条表示双默认（覆盖时整组替换）。 */
+  /** Default bindings in canonical serialized form; multiple entries indicate multiple defaults and are replaced as a group when overridden. */
   readonly defaultBindings: readonly string[];
 }
 
 /**
- * 命令表：快捷键命令的唯一事实来源。
- * 注意：navigateBack/navigateForward 是历史前进/后退；previousConversation/nextConversation
- * 才是"上一个/下一个任务"（早期原型曾把两者标混，以本表为准）。
+ * Command table: the single source of truth for shortcut commands.
+ * Note: navigateBack/navigateForward move through history; previousConversation/nextConversation
+ * mean "previous/next task" (an early prototype mixed these up; this table is authoritative).
  */
 export const SHORTCUT_COMMANDS: readonly ShortcutCommandEntry[] = [
   {
@@ -65,7 +65,7 @@ export const SHORTCUT_COMMANDS: readonly ShortcutCommandEntry[] = [
     channel: "window",
     defaultBindings: ["CmdOrCtrl+k", "CmdOrCtrl+Shift+p"],
   },
-  // 打开设置页：mac ⌘, / win·linux Ctrl+,（系统惯例，如 macOS Settings…、VSCode）
+  // Open Settings: macOS ⌘, / Windows·Linux Ctrl+, (a system convention, as in macOS Settings… and VS Code).
   { id: "openSettings", channel: "window", defaultBindings: ["CmdOrCtrl+,"] },
   { id: "findInTask", channel: "window", defaultBindings: ["CmdOrCtrl+f"] },
   { id: "toggleSidebar", channel: "window", defaultBindings: ["CmdOrCtrl+b"] },
@@ -76,8 +76,8 @@ export const SHORTCUT_COMMANDS: readonly ShortcutCommandEntry[] = [
   { id: "nextConversation", channel: "window", defaultBindings: ["CmdOrCtrl+Shift+]"] },
   { id: "navigateBack", channel: "window", defaultBindings: ["CmdOrCtrl+["] },
   { id: "navigateForward", channel: "window", defaultBindings: ["CmdOrCtrl+]"] },
-  // composer 工具条动作（原固定热键转正）：显式 Ctrl 修饰（mac 上也是 Ctrl，
-  // 与旧 matchesCtrlShortcut 语义一致），由工具条的 window capture 监听按生效表消费。
+  // Composer toolbar actions promoted from fixed shortcuts: explicitly use Ctrl (including on macOS,
+  // matching the old matchesCtrlShortcut semantics); the toolbar's window capture listener consumes the active binding.
   { id: "openModelMenu", channel: "window", defaultBindings: ["Ctrl+m"] },
   { id: "cycleSessionMode", channel: "window", defaultBindings: ["Ctrl+Shift+m"] },
   { id: "cycleThoughtLevel", channel: "window", defaultBindings: ["Ctrl+t"] },
@@ -87,8 +87,8 @@ export const SHORTCUT_COMMANDS: readonly ShortcutCommandEntry[] = [
   { id: "zoomIn", channel: "menu", defaultBindings: ["CmdOrCtrl+="] },
   { id: "zoomOut", channel: "menu", defaultBindings: ["CmdOrCtrl+-"] },
   { id: "resetZoom", channel: "menu", defaultBindings: ["CmdOrCtrl+0"] },
-  // composer 作用域：由输入框 Lexical 插件消费，不进 useAppKeyboard / 菜单。
-  // channel 仅作类型占位（渲染进程行为），分发方按 scope 识别。
+  // Composer scope: consumed by the input's Lexical plugin, not useAppKeyboard / menus.
+  // channel is a type placeholder (renderer behavior); dispatchers identify it by scope.
   { id: "composerSend", channel: "window", scope: "composer", defaultBindings: ["Enter"] },
   {
     id: "composerInsertNewline",
@@ -103,27 +103,28 @@ export const SHORTCUT_COMMANDS: readonly ShortcutCommandEntry[] = [
   { id: "voiceDictation", channel: "window", defaultBindings: ["CmdOrCtrl+Shift+d"] },
 ];
 
-/** 按命令 ID 取默认绑定；未知命令返回空数组（生效表 resolve 对未知命令整体忽略）。 */
+/** Get default bindings by command ID; unknown commands return an empty array (resolve ignores unknown commands in the active table). */
 export function getDefaultShortcutBindings(id: string): readonly string[] {
   return SHORTCUT_COMMANDS.find((entry) => entry.id === id)?.defaultBindings ?? [];
 }
 
 // ============================================================================
-// 绑定序列化格式（Electron accelerator 兼容子集）
+// Binding serialization format (Electron accelerator-compatible subset)
 // ============================================================================
 
-/** 解析后的绑定：四个修饰键开关 + 规范化键名。 */
+/** Parsed binding: modifier-key flags plus a normalized key name. */
 export interface ParsedShortcutBinding {
   cmdOrCtrl: boolean;
   ctrl: boolean;
   alt: boolean;
   shift: boolean;
   altGr: boolean;
-  /** 规范化键名：小写字母 / 数字 / 符号字符（= - [ ] , . / ; ' ` \）/ 命名键（F1..F12、ArrowUp…）。 */
+  /** Normalized key name: lowercase letters, digits, symbols, or named keys (F1-F12, ArrowUp, etc.). */
+  /** Normalized key name: lowercase letter / digit / symbol (= - [ ] , . / ; ' ` \) / named key (F1..F12, ArrowUp, etc.). */
   key: string;
 }
 
-/** 序列化时修饰键的固定顺序。 */
+/** Fixed modifier order when serializing. */
 const MODIFIER_ORDER = [
   ["CmdOrCtrl", "cmdOrCtrl"],
   ["Ctrl", "ctrl"],
@@ -132,17 +133,17 @@ const MODIFIER_ORDER = [
   ["AltGr", "altGr"],
 ] as const satisfies ReadonlyArray<readonly [string, keyof ParsedShortcutBinding]>;
 
-/** 菜单兼容别名归一：Plus/Equal → "="，Minus → "-"。 */
+/** Normalize menu-compatible aliases: Plus/Equal → "=", Minus → "-". */
 const KEY_ALIASES: Readonly<Record<string, string>> = {
   Plus: "=",
   Equal: "=",
   Minus: "-",
 };
 
-/** 单字符键：小写字母、数字与符号。大写字母不合法（录制/序列化统一小写化）。 */
+/** Single-character keys: lowercase letters, digits, and symbols. Uppercase letters are invalid (recording/serialization lowercases them). */
 const SINGLE_CHAR_KEY = /^[a-z0-9[\]=\-,./;'\\`]$/;
 
-/** 命名键白名单（大小写敏感）。Enter 供 composer 作用域命令使用。 */
+/** Case-sensitive allowlist of named keys. Enter is used by composer-scoped commands. */
 const NAMED_KEYS: ReadonlySet<string> = new Set([
   ...Array.from({ length: 12 }, (_, index) => `F${index + 1}`),
   "ArrowUp",
@@ -158,7 +159,7 @@ const NAMED_KEYS: ReadonlySet<string> = new Set([
   "Enter",
 ]);
 
-/** 键名规范化：合法返回规范化键名，非法返回 null。 */
+/** Normalize a key name; return the normalized key if valid, otherwise null. */
 export function normalizeShortcutKey(rawKey: string): string | null {
   const aliased = KEY_ALIASES[rawKey] ?? rawKey;
   if (SINGLE_CHAR_KEY.test(aliased)) {
@@ -168,12 +169,12 @@ export function normalizeShortcutKey(rawKey: string): string | null {
 }
 
 /**
- * 解析绑定串。宽容点：修饰键顺序不敏感（"Shift+CmdOrCtrl+p" 可解析）；
- * 严格点：键名必须规范形式（大写字母、裸 "+"、未知命名键均非法），重复修饰键非法。
+ * Parse a binding string. Permissive: modifier order does not matter ("Shift+CmdOrCtrl+p" parses).
+ * Strict: key names must be canonical (uppercase letters, bare "+", and unknown named keys are invalid); duplicate modifiers are invalid.
  */
 export function parseShortcutBinding(binding: string): ParsedShortcutBinding | null {
   const tokens = binding.split("+");
-  // 末位必须是键；"+" 自身不是合法键（用 "=" 或别名 Plus），split 产生空 token 即非法。
+  // The final token must be a key; "+" is not a valid key by itself (use "=" or the Plus alias), so an empty token from split is invalid.
   const keyToken = tokens[tokens.length - 1];
   if (keyToken === undefined || keyToken === "") {
     return null;
@@ -191,7 +192,7 @@ export function parseShortcutBinding(binding: string): ParsedShortcutBinding | n
   for (const token of tokens.slice(0, -1)) {
     const modifier = MODIFIER_ORDER.find(([name]) => name === token);
     if (!modifier || parsed[modifier[1]]) {
-      // 未知修饰键（含 Meta/Command 等 Electron 修饰名）或重复修饰键均非法。
+      // Unknown modifiers (including Electron names such as Meta/Command) and duplicate modifiers are invalid.
       return null;
     }
     parsed[modifier[1]] = true;
@@ -205,7 +206,7 @@ export function parseShortcutBinding(binding: string): ParsedShortcutBinding | n
   return parsed;
 }
 
-/** 序列化为规范形式（修饰键按固定顺序 + 规范键名）；任一部分非法返回 null。 */
+/** Serialize in canonical form (fixed modifier order and canonical key name); return null if any part is invalid. */
 export function serializeShortcutBinding(parsed: ParsedShortcutBinding): string | null {
   const key = normalizeShortcutKey(parsed.key);
   if (key === null) {
@@ -222,7 +223,7 @@ export function serializeShortcutBinding(parsed: ParsedShortcutBinding): string 
   return parts.join("+");
 }
 
-/** 绑定串是否为合法规范形式（parse 后重新 serialize 与原串一致）。 */
+/** Whether a binding string is in valid canonical form (parsing and reserializing produces the original string). */
 export function isValidShortcutBinding(binding: string): boolean {
   const parsed = parseShortcutBinding(binding);
   return parsed !== null && serializeShortcutBinding(parsed) === binding;

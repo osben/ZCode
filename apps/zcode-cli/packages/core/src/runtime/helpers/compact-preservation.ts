@@ -28,8 +28,8 @@ export async function selectPersistedCompactTail(input: {
     rewindKeptMessageIds: revert?.keptMessageIDs,
     rewindTargetMessageId: revert?.targetMessageID,
   }).filter(isCompactPreservableSessionMessage);
-  // 原因：runtime 与数据库的 user/attachment 数量不是一一对应，尤其 synthetic
-  // 来源改变后会错位。复用 compact 的 assistant 分组，数量只统计选定结果。
+  // Runtime user/attachment counts do not correspond one-to-one with database rows, especially when synthetic
+  // sources change. Reuse Compact's assistant grouping and count only the selected result.
   const kept = groupByAssistantStartedRounds(active, (message) => message.info.role)
     .slice(-input.groupsPreserved)
     .flat();
@@ -44,7 +44,7 @@ export async function selectPersistedCompactTail(input: {
   };
 }
 
-/** 无 SessionStore 时仅用于统计，不能用此数量选择持久化区间。 */
+/** Used only for statistics without a SessionStore; do not use this count to select a persistence range. */
 export function countCompactPreservedRuntimeMessages(
   entries: readonly RuntimeMessageEntry[],
 ): number {

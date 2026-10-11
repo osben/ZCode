@@ -2,11 +2,11 @@ import type { ZCodeTaskMode } from "./zcode-task-types-core.js";
 import type { ZCodeAutomationBotDeliveryTarget } from "./bots.js";
 import type { ModelSelection } from "./model-selection.js";
 
-// ---- 定时任务(Automation)领域类型 ----
-// automation / automation_runs 存 tasks-index.sqlite。
-// 这里是跨 services / cli / desktop / ui 复用的 camelCase 领域类型；sqlite 列名为 snake_case。
+// ---- Automation domain types ----
+// automation / automation_runs are stored in tasks-index.sqlite.
+// These camelCase domain types are shared across services / CLI / desktop / UI; SQLite column names are snake_case.
 
-/** 单个本地任务索引允许保留的定时任务定义总数；所有生命周期状态都计入。 */
+/** Maximum number of automation definitions retained by one local task index; all lifecycle states count toward the limit. */
 export const AUTOMATION_CREATE_LIMIT = 20;
 export const AUTOMATION_CREATE_LIMIT_ERROR_CODE = "AUTOMATION_CREATE_LIMIT_REACHED";
 
@@ -15,23 +15,23 @@ export function isAutomationCreateLimitError(error: unknown): boolean {
   return message.includes(AUTOMATION_CREATE_LIMIT_ERROR_CODE);
 }
 
-/** 整条 automation 的生命周期。 */
+/** Lifecycle of an automation. */
 export type ZCodeAutomationLifecycleStatus = "active" | "completed" | "failed" | "paused";
 
-/** 单条 automation 当前一轮的派发信息态（供 UI/诊断）。 */
+/** Dispatch state for the current run of one automation (for UI/diagnostics). */
 export type ZCodeAutomationDispatchStatus =
   | "idle"
   | "claimed"
   | "dispatched"
   | "failed_to_dispatch";
 
-/** workspace 位置；本期恒为 local，远端预留。 */
+/** Workspace location; currently always local, with remote reserved for later. */
 export type ZCodeAutomationLocationKind = "local" | "remote";
 
-/** 触发来源：定时 or 立即运行。 */
+/** Trigger source: scheduled or run now. */
 export type ZCodeAutomationTrigger = "schedule" | "manual";
 
-/** 自定义重复规则；cronExpr 保留为兼容展示，调度以本字段为权威。 */
+/** Custom recurrence rule; cronExpr remains for compatible display, while this field is authoritative for scheduling. */
 export interface ZCodeAutomationScheduleRule {
   unit: "minute" | "hourly" | "daily" | "weekly" | "monthly" | "yearly";
   interval: number;
@@ -40,52 +40,53 @@ export interface ZCodeAutomationScheduleRule {
   anchorAt: number;
   weekdays?: number[];
   monthDays?: number[];
-  /** yearly 用：1-12 人类月份。缺省回退 anchorAt 的月份（兼容未写该字段的旧记录）。 */
+  /** For yearly rules: human month numbers 1–12. Defaults to the month of anchorAt for older records without this field. */
   months?: number[];
   monthlyMode?: "date" | "weekday";
 }
 
 /**
- * 会话侧长间隔周期 carrier 的 unit 枚举。与 scheduleRule.unit 同集，但 carrier 是受控入参
- * （模型不能直接写完整 scheduleRule），由 service 层归一化为权威 scheduleRule。
+ * Unit enum for the session-side long-interval recurrence carrier. It has the same values as
+ * scheduleRule.unit, but the carrier is a controlled input (the model cannot write the full
+ * scheduleRule); the service layer normalizes it into the authoritative scheduleRule.
  */
 export type ZCodeAutomationIntervalUnit = ZCodeAutomationScheduleRule["unit"];
 
-/** 单次 run 的派发结果（scheduler 权威，驱动重试）。skipped=错过触发窗口。 */
+/** Dispatch result for one run (scheduler-authoritative and used for retries). skipped means the trigger window was missed. */
 export type ZCodeAutomationRunDispatchStatus =
   | "claimed"
   | "dispatched"
   | "failed_to_dispatch"
   | "skipped";
 
-/** 单次 run 产出 session 后的运行结果（由 session runtime 回写，仅用于展示）。 */
+/** Outcome after one run produces a session (written back by the session runtime and used only for display). */
 export type ZCodeAutomationRunOutcome = "running" | "succeeded" | "failed" | "stopped";
 
-/** 一条定时任务定义 + 调度状态。 */
+/** An automation definition and its scheduling state. */
 export interface ZCodeAutomation {
   automationId: string;
   title: string;
-  /** 5 段 cron，本地时区。 */
+  /** Five-field cron expression in local time. */
   cronExpr: string;
   prompt: string;
-  /** 缺失表示 Select 阶段继续跟随 Workspace 首选；存在时固定结构化模型意图。 */
+  /** When absent, the Select phase continues following the Workspace preference; when present, it fixes the structured model intent. */
   modelSelection?: ModelSelection;
-  /** 权限模式；派发时透传给 createTask，缺省走 workspace 默认。 */
+  /** Permission mode passed through to createTask during dispatch; defaults to the workspace setting. */
   mode?: ZCodeTaskMode;
   /** workspaceIdentity?.trim() || workspacePath */
   workspaceKey: string;
   workspacePath: string;
   workspaceIdentity?: string;
-  /** 会话内创建的 cron 绑定到当前 task；后续触发都投递回该 task，不再新建 session。 */
+  /** A cron created in a session is bound to the current task; later triggers return to that task instead of creating sessions. */
   targetTaskId?: string;
   locationKind: ZCodeAutomationLocationKind;
-  /** true=无限循环；false=有限次（配合 maxRuns）。 */
+  /** true = repeat indefinitely; false = run a finite number of times (with maxRuns). */
   recurring: boolean;
   maxRuns?: number;
-  /** 自定义重复的截止时间（本地所选日期的日末，毫秒时间戳）。 */
+  /** End time for custom recurrence (end of the selected local date, in milliseconds). */
   endAt?: number;
   scheduleRule?: ZCodeAutomationScheduleRule;
-  /** 会话来源的只读调度是否已被用户在管理页显式删除并重设。 */
+  /** Whether the user explicitly removed and reset a read-only schedule from a session in the management page. */
   scheduleEditedByUser?: boolean;
   runCount: number;
   enabled: boolean;
@@ -100,17 +101,18 @@ export interface ZCodeAutomation {
   updatedAt: number;
 }
 
-/** parseAutomationRunId 的解析结果；scheduledAt 仅 schedule 触发存在。 */
+/** Parsed result of parseAutomationRunId; scheduledAt is present only for scheduled triggers. */
 export interface ZCodeAutomationRunIdParts {
   automationId: string;
   trigger: ZCodeAutomationTrigger;
-  /** runId 内嵌的本轮理论触发时间（Unix 毫秒）。 */
+  /** The theoretical trigger time embedded in runId for this run (Unix milliseconds). */
   scheduledAt?: number;
 }
 
 /**
- * runId 契约（见 ZCodeAutomationRun.runId）的唯一解析入口；desktop host/scheduler 与
- * CLI telemetry 不各自按字符串猜格式。不符合两种声明格式的输入一律返回 null。
+ * The only parser for the runId contract (see ZCodeAutomationRun.runId). Desktop host/scheduler and
+ * CLI telemetry must not independently infer the format from strings. Return null for input that does
+ * not match either declared format.
  */
 export function parseAutomationRunId(runId: string): ZCodeAutomationRunIdParts | null {
   const separatorIndex = runId.indexOf(":");
@@ -125,7 +127,7 @@ export function parseAutomationRunId(runId: string): ZCodeAutomationRunIdParts |
   return { automationId, trigger: "schedule", scheduledAt };
 }
 
-/** 一次触发的运行历史 / runId 幂等台账。 */
+/** Run history and runId idempotency ledger for one trigger. */
 export interface ZCodeAutomationRun {
   /** automationId:scheduledAt / automationId:manual:uuid */
   runId: string;
@@ -133,11 +135,11 @@ export interface ZCodeAutomationRun {
   workspaceKey: string;
   scheduledAt?: number;
   trigger: ZCodeAutomationTrigger;
-  /** Select 转 Submission 后固定；同一 run 的派发重试不得重新读取 Workspace 首选。 */
+  /** Fixed after Select is converted to Submission; dispatch retries for the same run must not reread the Workspace preference. */
   modelSelection?: ModelSelection;
   dispatchStatus: ZCodeAutomationRunDispatchStatus;
   outcome?: ZCodeAutomationRunOutcome;
-  /** dispatched 成功后回填，用于历史跳转。 */
+  /** Set after successful dispatch for history navigation. */
   sessionId?: string;
   error?: string;
   attempts: number;
@@ -145,58 +147,60 @@ export interface ZCodeAutomationRun {
   updatedAt: number;
 }
 
-/** 创建 automation 的入参（workspace 由调用方从 session 上下文注入）。 */
+/** Automation creation parameters (workspace is injected by the caller from session context). */
 export interface ZCodeAutomationCreateParams {
   title: string;
   cronExpr: string;
-  /** 仅创建期使用：由服务层基于真实当前时间换算为 cronExpr，不写入数据库。 */
+  /** Used only during creation: the service layer derives cronExpr from the actual current time; this is not stored in the database. */
   relativeDelayMinutes?: number;
   prompt: string;
   modelSelection?: ModelSelection;
   mode?: ZCodeTaskMode;
   workspacePath: string;
   workspaceIdentity?: string;
-  /** 当前会话内创建时由 runtime 注入，模型不可控。 */
+  /** Injected by the runtime when created in the current session; not controlled by the model. */
   targetTaskId?: string;
-  /** Bot 会话创建时由 Host 注入；仅供 scheduler 终态回推，不进入 UI 展示模型。 */
+  /** Injected by the Host when a Bot session is created; used only for scheduler terminal-state callbacks and omitted from the UI display model. */
   botDeliveryTarget?: ZCodeAutomationBotDeliveryTarget;
   recurring: boolean;
   maxRuns?: number;
   endAt?: number;
   scheduleRule?: ZCodeAutomationScheduleRule;
   /**
-   * 会话侧自定义重复 carrier。每 N 分钟/小时/天/周/月/年均配对提交 intervalUnit + interval，
-   * 真实间隔由 service 层归一化为权威 scheduleRule 承载；cronExpr 仅作合法兼容展示。
-   * 与 scheduleRule、relativeDelayMinutes 互斥。undefined=不使用 carrier。
+   * Session-side custom recurrence carrier. Each N minutes/hours/days/weeks/months/years submits
+   * intervalUnit + interval together. The service layer normalizes the actual interval into the
+   * authoritative scheduleRule; cronExpr is retained only for compatible display. Mutually exclusive
+   * with scheduleRule and relativeDelayMinutes. undefined means the carrier is unused.
    */
   intervalUnit?: ZCodeAutomationIntervalUnit;
-  /** 1–200 的整数间隔，必须与 intervalUnit 配对。 */
+  /** Integer interval from 1 to 200, required together with intervalUnit. */
   interval?: number;
 }
 
-/** 编辑 automation 的可变字段。 */
+/** Mutable fields for updating an automation. */
 export interface ZCodeAutomationUpdateParams {
   title?: string;
   cronExpr?: string;
   prompt?: string;
-  /** undefined=不修改；null=清空，回退到 Workspace 首选。 */
+  /** undefined = unchanged; null = clear and fall back to the Workspace preference. */
   modelSelection?: ModelSelection | null;
-  /** undefined=不修改；null=清空，回退到 workspace 默认权限模式。 */
+  /** undefined = unchanged; null = clear and fall back to the workspace's default permission mode. */
   mode?: ZCodeTaskMode | null;
   recurring?: boolean;
-  /** undefined=通常不修改；recurring=true 时领域层会自动清空旧上限；显式 null 必须同时传 recurring=true。 */
+  /** undefined = usually unchanged; when recurring=true, the domain layer clears the old limit automatically. Explicit null requires recurring=true too. */
   maxRuns?: number | null;
-  /** undefined=不修改；null=永不结束。 */
+  /** undefined = unchanged; null = never ends. */
   endAt?: number | null;
-  /** undefined=不修改；null=恢复为普通 cron。 */
+  /** undefined = unchanged; null = revert to a regular cron schedule. */
   scheduleRule?: ZCodeAutomationScheduleRule | null;
   /**
-   * 会话侧自定义重复 carrier（同 create 侧）。配对提交 intervalUnit + interval，service 层
-   * 归一化为权威 scheduleRule（anchorAt 重置为本次修改时刻）。undefined=不修改。
+   * Session-side custom recurrence carrier (same as creation). Submit intervalUnit + interval together;
+   * the service layer normalizes them into the authoritative scheduleRule (anchorAt resets to the time
+   * of this update). undefined means unchanged.
    */
   intervalUnit?: ZCodeAutomationIntervalUnit;
-  /** 1–200 的整数间隔，必须与 intervalUnit 配对。 */
+  /** Integer interval from 1 to 200, required together with intervalUnit. */
   interval?: number;
-  /** 仅由管理页在用户实际修改调度时写入；undefined=保留原来源状态。 */
+  /** Set only by the management page when the user actually changes the schedule; undefined preserves the original source state. */
   scheduleEditedByUser?: boolean;
 }

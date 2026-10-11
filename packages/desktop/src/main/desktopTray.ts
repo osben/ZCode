@@ -13,8 +13,9 @@ let desktopTray: Tray | null = null;
 let rebuildDesktopTrayContextMenu: (() => void) | null = null;
 
 export function resolveDesktopTrayIconPath(platform: NodeJS.Platform = process.platform) {
-  // Linux 托盘只接受 PNG（.ico 不会渲染）；打包态 icon.png 已由 extraResources 无条件放入
-  // resources 目录（electron-builder.config.js），Windows 继续用独立托盘 .ico 避免高 DPI 模糊。
+  // The Linux tray accepts PNG only (.ico does not render); in packaged builds icon.png is
+  // unconditionally placed in the resources directory by extraResources
+  // (electron-builder.config.js), while Windows keeps a dedicated tray .ico to avoid high-DPI blur.
   if (platform === "linux") {
     return app.isPackaged
       ? join(process.resourcesPath, "icon.png")
@@ -34,8 +35,9 @@ export function createDesktopTray(options: {
   logger: { warn: (...args: unknown[]) => void };
 }) {
   const platform = options.platform ?? process.platform;
-  // Linux 驻留能力由 createCloseToTrayCapabilityMonitor 探测决定（spec：
-  // docs/desktop/linux-close-to-tray.md）；这里只挡平台，能力不过关时调用方不应传入 linux。
+  // Linux close-to-tray capability is decided by the createCloseToTrayCapabilityMonitor probe
+  // (spec: docs/desktop/linux-close-to-tray.md); this gate only filters platforms, and callers must
+  // not pass linux when the capability check fails.
   if (platform !== "win32" && platform !== "linux") {
     return null;
   }
@@ -83,7 +85,7 @@ export function createDesktopTray(options: {
           click: () => executeTrayCommand(DesktopCommandIds.OpenWorkspace),
         },
         { type: "separator" },
-        // 更新入口跟随产品身份：Preview（含生产后端的 Preview）禁用更新器，托盘也不能露出入口。
+        // The update entry follows product identity: Preview (including Preview builds using the production backend) disables the updater, so the tray must not show the entry either.
         ...(ZCODE_PRODUCT_FLAVOR === "production"
           ? [
               {
@@ -97,7 +99,8 @@ export function createDesktopTray(options: {
           click: () => executeTrayCommand(DesktopCommandIds.ShowAbout),
         },
         {
-          // 托盘只提供日志诊断入口，避免右键菜单暴露清除全部数据操作；复用应用菜单导出命令。
+          // The tray only exposes the log diagnostics entry, keeping the clear-all-data action out
+          // of the context menu; reuse the app menu's export command.
           label: getLabel(desktopMenuMessageIds.helpExportLogs),
           click: () => executeTrayCommand(DesktopCommandIds.ExportLogs),
         },

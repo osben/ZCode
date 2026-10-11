@@ -1,7 +1,7 @@
-// sessions-index topic 的 CLI 侧归约：把一个 workspace 名下各会话的
-// ConversationSnapshot 派生为 SessionSummary，并维护 conflated 最新态 + 产出 upsert/remove delta。
-// 纯归约、无 IO；publisher（sessions-index-publisher）负责 seq 记账与帧构造，
-// 事件订阅与 flush 调度归 gateway（v4-gateway）。
+// CLI-side reducer for the sessions-index topic: derive SessionSummary values from each workspace session's
+// ConversationSnapshot, maintain the conflated latest state, and produce upsert/remove deltas.
+// This reducer is pure and performs no I/O; the publisher (sessions-index-publisher) tracks sequence numbers and builds frames,
+// while the gateway (v4-gateway) owns event subscriptions and flush scheduling.
 import {
   deriveSessionWorkflowActivity,
   type ConversationSnapshot,
@@ -10,7 +10,7 @@ import {
   type SessionsIndexSnapshot,
 } from "@zcode/shared/zcode-protocol-v4";
 
-/** 派生一条 summary 需要的、快照之外的会话级元信息（来自 session-store record / 事件时刻）。 */
+/** Session metadata outside the snapshot needed to derive a summary (from the session-store record / event time). */
 export interface SessionSummaryDeriveExtra {
   workspaceId: string;
   createdAt: number;
@@ -20,12 +20,12 @@ export interface SessionSummaryDeriveExtra {
 
 const MAX_PREVIEW_CHARS = 120;
 
-/** 从 ConversationSnapshot + 会话元信息派生 SessionSummary（纯函数，golden 可测）。 */
+/** Derive SessionSummary from ConversationSnapshot + session metadata (a pure function, covered by golden tests). */
 export function deriveSessionSummary(
   snapshot: ConversationSnapshot,
   extra: SessionSummaryDeriveExtra,
 ): SessionSummary {
-  // 最后一条 assistantText row 的文本作预览（≤120 字符）。
+  // Use the text of the final assistantText row as the preview (≤120 characters).
   let lastAssistantPreview: string | undefined;
   const rows = snapshot.rows.window;
   for (let i = rows.length - 1; i >= 0; i -= 1) {
@@ -41,13 +41,13 @@ export function deriveSessionSummary(
     if (lastAssistantPreview) break;
   }
   const hasBackgroundWork = snapshot.backgroundWorks.some((work) => work.status === "running");
-  // 侧栏工作流运行行的数据：
-  // 同一 snapshot 的 workflowRuns + backgroundWorks 派生，侧栏不必订阅 run 进度。
+  // Data for workflow-run rows in the sidebar:
+  // derive it from workflowRuns + backgroundWorks in the same snapshot so the sidebar need not subscribe to run progress.
   const workflowActivity = deriveSessionWorkflowActivity({
     workflowRuns: snapshot.workflowRuns,
     backgroundWorks: snapshot.backgroundWorks,
   });
-  // workspaceHookReview 由 Hooks Settings 呈现，不降级成 permission/userInput 侧栏徽标。
+  // workspaceHookReview is shown in Hooks Settings; do not map it to a permission/userInput sidebar badge.
   const pending = snapshot.pendingInteractions.find(
     (interaction) => interaction.kind === "permission" || interaction.kind === "userInput",
   );
@@ -57,8 +57,8 @@ export function deriveSessionSummary(
   const userInputCount = snapshot.pendingInteractions.filter(
     (interaction) => interaction.kind === "userInput",
   ).length;
-  // 兼容恢复迁移或归约测试构造的裁剪快照：不能因新增轻量 toolName 投影，
-  // 在旧 pending interaction 暂缺 payload 时阻断整个任务列表。
+  // Support reduced snapshots built by recovery migrations or reducer tests: adding the lightweight toolName projection
+  // must not block the entire task list when an older pending interaction lacks a payload.
   const pendingPayload = pending?.payload;
   const pendingToolName =
     pendingPayload && "toolName" in pendingPayload ? pendingPayload.toolName : undefined;
@@ -80,7 +80,7 @@ export function deriveSessionSummary(
     title: snapshot.meta.title,
     titleSource: snapshot.meta.titleSource,
     phase: snapshot.control.phase,
-    // 忠实透传 control.sessionEnded（语义：成功轮收口后即 true，不代表已删除）。
+    // Pass control.sessionEnded through unchanged (it becomes true after a successful turn settles and does not mean the session was deleted).
     sessionEnded: snapshot.control.sessionEnded,
     hasBackgroundWork,
     ...(workflowActivity === undefined ? {} : { workflowActivity }),
@@ -100,7 +100,7 @@ export function deriveSessionSummary(
   };
 }
 
-/** 两条 summary 是否等价（conflation：等价则不产 delta）。 */
+/** Whether two summaries are equivalent (conflation produces no delta when they are). */
 function summariesEqual(a: SessionSummary, b: SessionSummary): boolean {
   return (
     a.sessionId === b.sessionId &&
@@ -111,8 +111,8 @@ function summariesEqual(a: SessionSummary, b: SessionSummary): boolean {
     a.phase === b.phase &&
     a.sessionEnded === b.sessionEnded &&
     a.hasBackgroundWork === b.hasBackgroundWork &&
-    // phase 翻转 / 结算 / 在跑子代理数变化永不被 conflation 吃掉；反之只改 node 的事件在这里判等
-    // （真实系统里它仍会因 lastActivityAt 推进而产帧——那是活动事实，语义不变）。
+    // Conflation must never discard phase changes, settlement, or changes to running-subagent counts. Node-only changes compare equal here
+    // (in the real system, advancing lastActivityAt still produces a frame; that reflects activity without changing these semantics).
     JSON.stringify(a.workflowActivity ?? null) === JSON.stringify(b.workflowActivity ?? null) &&
     JSON.stringify(a.pendingInteraction ?? null) === JSON.stringify(b.pendingInteraction ?? null) &&
     a.pendingInteractionSummary?.permissionCount === b.pendingInteractionSummary?.permissionCount &&
@@ -125,8 +125,8 @@ function summariesEqual(a: SessionSummary, b: SessionSummary): boolean {
 }
 
 /**
- * 一个 workspace 的 sessions-index 归约态：Map<sessionId, SessionSummary> +
- * upsert/remove delta 生成（conflation key = sessionId）。
+ * Reducer state for one workspace's sessions-index: Map<sessionId, SessionSummary> +
+ * upsert/remove delta generation (conflation key = sessionId).
  */
 export class SessionsIndexProjection {
   private readonly summaries = new Map<string, SessionSummary>();
@@ -136,7 +136,7 @@ export class SessionsIndexProjection {
     readonly logEpoch: string,
   ) {}
 
-  /** 用某会话的最新 snapshot 更新其 summary；变化则返回 upsert delta，否则空。 */
+  /** Update a session summary from its latest snapshot; return an upsert delta if it changed, otherwise none. */
   upsertFromConversation(
     snapshot: ConversationSnapshot,
     extra: Omit<SessionSummaryDeriveExtra, "workspaceId">,
@@ -146,21 +146,18 @@ export class SessionsIndexProjection {
       ...extra,
     });
     const prev = this.summaries.get(summary.sessionId);
-    // 降级防御（stored→live 切换窗口）：冷恢复的 live 投影在 hydration 补齐
-    // meta 之前 title 为空、record 时间可能被 resume 重置——store 种子里的
-    // 稳定字段不得被降级值覆盖（否则侧栏表现为"原会话消失、冒出新任务"）。
+    // Guard against downgrade during the stored→live transition: before hydration fills in metadata, a cold-restored live projection may have an empty title and record times may have been reset by resume. Do not overwrite stable fields from the store seed with downgraded values (otherwise the sidebar appears to lose the original session and show a new task).
     if (prev) {
-      // sessions-index 读侧要区分“存储/协议物理标题”和“用户显式重命名”。
-      // 冷恢复 live 投影在 hydration 补齐前可能只有 default/generated 标题；旧 seed 若已是
-      // custom，不得被这类自动标题降级，否则侧边栏会把用户手动标题闪回生成标题。
+      // The sessions-index reader must distinguish the physical title in storage/protocol from an explicit user rename.
+      // Before hydration completes, a cold-restored live projection may have only a default/generated title; if the old seed is already
+      // custom, do not downgrade it to that automatic title or the sidebar will briefly revert the user's title to a generated one.
       if (prev.titleSource === "custom" && summary.titleSource !== "custom") {
         summary.title = prev.title;
         summary.titleSource = prev.titleSource;
       } else if (!summary.title && prev.title) {
         summary.title = prev.title;
-        // 旧 store seed 的 titleSource 可缺省；冷投影的
-        // default 只是暂态值。保住标题时也要保住“字段缺省”，否则
-        // summariesEqual 会产生一帧无产品变化的 upsert。
+        // The old store seed may omit titleSource; the cold projection's default is temporary. Preserve the field's absence when preserving the title,
+        // or summariesEqual will emit an upsert frame with no user-visible change.
         if (prev.titleSource === undefined) {
           delete summary.titleSource;
         } else {
@@ -173,11 +170,11 @@ export class SessionsIndexProjection {
       if (!summary.lastAssistantPreview && prev.lastAssistantPreview) {
         summary.lastAssistantPreview = prev.lastAssistantPreview;
       }
-      // 冷恢复的 live 投影在 hydration 完成前 phase 是初始 draft。
-      // 会话一旦有过真实内容就不可能退回 draft；若用它覆盖非 draft 基线，
-      // 打开一个历史任务就会广播一帧「completedSuccess→draft」纯降级 delta，
-      // UI 列表行状态被清空、对应 workspace 列表整体重查（表现为"点开任务列表重新加载"）。
-      // phase/sessionEnded/goalStatus 同窗口同源，一并保基线。
+      // Before hydration finishes, a cold-restored live projection has the initial draft phase.
+      // A session with real content cannot return to draft; overwriting a non-draft baseline would broadcast a downgraded
+      // `completedSuccess→draft` delta when opening a historical task, clear its UI row state, and refetch the whole workspace list
+      // (making the task list appear to reload when a task is opened).
+      // phase/sessionEnded/goalStatus share the same source and timing, so preserve them together.
       if (summary.phase === "draft" && prev.phase !== "draft") {
         summary.phase = prev.phase;
         summary.sessionEnded = prev.sessionEnded;
@@ -191,14 +188,14 @@ export class SessionsIndexProjection {
     return [{ op: "session.upserted", session: summary }];
   }
 
-  /** 直接放入一条 summary（冷启动/无 live projection 的 store 会话）。 */
+  /** Insert a summary directly (for cold-start/store sessions without a live projection). */
   seed(summary: SessionSummary): void {
     this.summaries.set(summary.sessionId, summary);
   }
 
   /**
-   * 兼容迁移后的 store 重读只补齐缺失摘要；已有 live/seed 状态不能被冷存储默认态覆盖。
-   * 返回 delta 供 publisher 推进 seq，并通知已经在线的列表订阅者。
+   * Rereading a migrated store only fills in missing summaries; existing live/seed state must not be overwritten by cold-storage defaults.
+   * Return a delta so the publisher can advance the sequence and notify list subscribers that are already online.
    */
   insertSeedIfMissing(summary: SessionSummary): SessionsIndexDelta[] {
     if (this.summaries.has(summary.sessionId)) return [];
@@ -206,7 +203,7 @@ export class SessionsIndexProjection {
     return [{ op: "session.upserted", session: summary }];
   }
 
-  /** 移除某会话；命中则返回 remove delta。 */
+  /** Remove a session; return a remove delta if it existed. */
   remove(sessionId: string): SessionsIndexDelta[] {
     if (!this.summaries.has(sessionId)) return [];
     this.summaries.delete(sessionId);
@@ -217,7 +214,7 @@ export class SessionsIndexProjection {
     return this.summaries.has(sessionId);
   }
 
-  /** 当前全量快照（sessions 无序，排序是客户端逻辑）。 */
+  /** Current full snapshot (sessions are unordered; sorting is client-side). */
   getSnapshot(): SessionsIndexSnapshot {
     return {
       protocolVersion: 1,

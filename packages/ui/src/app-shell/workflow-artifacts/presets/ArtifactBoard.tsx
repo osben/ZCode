@@ -1,12 +1,12 @@
 /**
- * `board` 预置渲染器：按 `status` 分列的卡片墙，卡片按 `key` upsert。
+ * `board` preset renderer: a card wall grouped into columns by `status`, with cards upserted by `key`.
  *
- * 两种形态：
- * - `compact`：run 侧板卡片里的**各列计数**（一眼看出「12 个里 3 个还没过」）；
- * - 全尺寸：`workflow-artifact` tab 里的列 + 卡片。
+ * Two layouts:
+ * - `compact`: **count per column** in the run side-pane card (for a quick view such as “3 of 12 have not passed”);
+ * - Full size: columns + cards in the `workflow-artifact` tab.
  *
- * **无拖拽**：这是 journal 的只读投影，卡片的位置由脚本 `report` 出来的 status 决定；
- * 让用户拖动会凭空造出一个「谁是权威」的问题（v1 明确不做交互式筛选 / 排序）。
+ * **No drag-and-drop**: this is a read-only journal projection, and card positions are determined by the status reported by the script;
+ * allowing users to drag would create a new question of “which source is authoritative” (v1 explicitly does not provide interactive filtering / sorting).
  */
 
 import { memo, useMemo } from "react";
@@ -31,7 +31,7 @@ function columnLabel(column: BoardColumnModel, labels: PresetLabels): string {
 
 function BoardCard({ card }: { card: BoardCardModel }) {
   return (
-    // key 是卡片 id（稳定），所以只有**新卡**播揭示动画；状态变化让卡换列，但不重播。
+    // key is the stable card ID, so only **new cards** play the reveal animation; status changes may move a card between columns but do not replay it.
     <div
       className={cn(
         "rounded-lg border border-card-border bg-card px-2 py-1.5",
@@ -122,7 +122,7 @@ export const ArtifactBoard = memo(function ArtifactBoard({
           </span>
         }
       />
-      {/* 列在自己的容器里横向滚动；窄面板下也不改变组件身份，只是要划一下。 */}
+      {/* Scroll columns horizontally within their own container; narrow panels do not change component identity, they only require scrolling. */}
       <div className="flex min-w-0 gap-2 overflow-x-auto pb-1">
         {model.columns.map((column) => (
           <section

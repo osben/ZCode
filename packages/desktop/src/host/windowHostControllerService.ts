@@ -1,4 +1,4 @@
-/* eslint-disable max-lines -- Controller source 聚合、路由、订阅与生命周期属于同一个 Host 边界。 */
+/* eslint-disable max-lines -- Controller source aggregation, routing, subscriptions, and lifecycle form one Host boundary. */
 import { Emitter } from "@zcode/rpc";
 import type { ZCodeTaskMeta } from "@zcode/shared";
 import type {
@@ -131,8 +131,8 @@ function liveStatusFromMeta(meta: ZCodeTaskMeta): WindowHostControllerTaskRow["l
 }
 
 /**
- * WindowHostControllerRuntime 是 Local Host 内的聚合权威。它不持久化数据；每次在线查询都从
- * 对应 source 的 tasks-index 重建投影，断连时只冻结最后一次成功的内存快照。
+ * WindowHostControllerRuntime is the aggregation authority inside the Local Host. It does not persist data; every online query rebuilds the projection from
+ * the corresponding source's tasks-index, and disconnects freeze only the last successful in-memory snapshot.
  */
 export function createWindowHostControllerRuntime(options: {
   createId: () => string;
@@ -257,7 +257,7 @@ export function createWindowHostControllerRuntime(options: {
       case "delete-archived":
         return service.deleteArchivedTask(base);
       case "delete-archived-batch":
-        // 确认期间远端 session 可能已替换；不能将旧地址的批次写入同 identity 的新 source。
+        // The remote session may have been replaced while confirming; do not write a batch from the old address to a new source with the same identity.
         if (sourceKey(current.scope) !== sourceKey(scope)) {
           throw new Error("归档删除批次的 source 已替换");
         }
@@ -280,7 +280,7 @@ export function createWindowHostControllerRuntime(options: {
         break;
       case "open":
       case "resume":
-        // open/resume 的 Controller 职责是验证唯一 source；conversation 随后仍走 scoped facade。
+        // The Controller validates the unique source for open/resume; conversation operations still use the scoped facade.
         break;
       default: {
         const exhaustive: never = mutation;
@@ -323,8 +323,8 @@ export function createWindowHostControllerRuntime(options: {
             ? { workspaceIdentity: resolved.scope.workspaceIdentity }
             : {}),
         })(() => {
-          // workspace event 可能在列表首轮 refresh 读取途中到达；直接复用
-          // single-flight 会把事件吞掉。先等在途读取结束，再把多个事件合并成下一轮 refresh。
+          // A workspace event may arrive while the first list refresh is reading; directly reusing
+          // the single-flight would swallow the event. Wait for the in-flight read to finish, then merge events into the next refresh.
           const inFlight = sourceRefreshFlights.get(key)?.promise;
           void (async () => {
             await inFlight?.catch(() => {});
@@ -413,7 +413,7 @@ export function createWindowHostControllerRuntime(options: {
         scope: resolved.scope,
         ...(previousScope ? { replacesScope: previousScope } : {}),
         taskIndex,
-        // live facts 仅驻 Host 内存；observer 使用 existing-only，列表读取不会启动 Agent。
+        // Live facts remain in Host memory only; the observer uses existing-only, so listing does not start an Agent.
         sessionsIndex: sourceLiveOverlays.get(key) ?? [],
       });
       if (previousScope) {
@@ -445,8 +445,8 @@ export function createWindowHostControllerRuntime(options: {
     const retainedPreviousScope =
       pendingReplacementByNextSourceKey.get(previousKey) ?? previousScope;
     if (sourceKey(retainedPreviousScope) !== previousKey) {
-      // 连续重连都在首个 snapshot 前失败时，可信 rows 仍属于更早的一代 source。
-      // 摘掉中间空 source，把 replacement 链压缩到最后可信 scope，避免成功后遗留孤儿投影。
+      // If repeated reconnects fail before the first snapshot, trusted rows still belong to an earlier source generation.
+      // Remove intermediate empty sources and collapse the replacement chain to the last trusted scope so success does not leave an orphan projection.
       pendingReplacementByNextSourceKey.delete(previousKey);
       forgetRegisteredSource(previousScope);
       projection.removeSource(previousScope);
@@ -478,7 +478,7 @@ export function createWindowHostControllerRuntime(options: {
         try {
           await refreshSource(source);
         } catch (error) {
-          // 一个 remote source 的瞬时读取失败不能清空 local 或其他 remote 的可信投影。
+          // A transient read failure in one remote source must not clear trusted projections from local or other remote sources.
           options.onSourceError?.(source.scope, "refresh", error);
         }
       }),
@@ -541,8 +541,8 @@ export function createWindowHostControllerRuntime(options: {
         selectedSources.add(key);
         const pendingPreviousScope = pendingReplacementByNextSourceKey.get(key);
         if (pendingPreviousScope) {
-          // 新 source 的首个 snapshot 失败时继续展示上一代离线可信投影；只有成功的
-          // replaceSourceSnapshot 才会在一个 delta frame 中移除旧 rows 并加入新 rows。
+          // If the new source's first snapshot fails, keep showing the previous generation's trusted offline projection. Only a successful
+          // replaceSourceSnapshot removes old rows and adds new rows in one delta frame.
           selectedSources.add(sourceKey(pendingPreviousScope));
         }
       }
@@ -601,7 +601,7 @@ export function createWindowHostControllerRuntime(options: {
           workspaceIdentity: address.workspaceIdentity,
         });
         if (resolved) {
-          // 只在整批结束后收敛投影，与 source 的一次事件共享 single-flight；刷新失败不改写已提交结果。
+          // Reconcile the projection only after the whole batch finishes, sharing a single-flight with one source event; refresh failure does not change committed results.
           await refreshSource(resolved, true).catch((error) =>
             options.onSourceError?.(resolved.scope, "refresh", error),
           );
@@ -615,7 +615,7 @@ export function createWindowHostControllerRuntime(options: {
           workspaceIdentity: address.workspaceIdentity,
         });
         if (resolved) {
-          // 删除已经持久成功，列表重查失败不能改报删除失败；后续事件仍会刷新投影。
+          // Deletion has already persisted successfully, so a failed list refresh must not report the deletion as failed; later events will refresh the projection.
           await refreshSource(resolved, true).catch((error) =>
             options.onSourceError?.(resolved.scope, "refresh", error),
           );
@@ -708,9 +708,9 @@ export function createWindowHostControllerRuntime(options: {
         throw new Error("列表 mutation 与 remote attachment source 不匹配");
       }
       if (resolved) {
-        // remote attachment 曾直接返回 address，跳过 source refresh；新绑定的
-        // workspace 尚未读取 Controller 列表时没有投影行，导致 unread/archive 等首次写入失败。
-        // 这里只物化已按完整 remoteSessionId + identity 验证的 source，继续保持 fail-closed。
+        // Remote attachment previously returned the address directly and skipped source refresh. A newly bound
+        // workspace had no projection row until the Controller list was read, causing the first unread/archive write to fail.
+        // Materialize only a source validated with the full remoteSessionId + identity, preserving fail-closed behavior.
         await refreshSource(resolved);
       }
       const matches = projection
@@ -725,7 +725,7 @@ export function createWindowHostControllerRuntime(options: {
         );
       if (matches.length !== 1) {
         if (matches.length === 0 && params.allowMissingTask && resolved) {
-          // 条件删除允许已被其它客户端删除的目标到 Repo 幂等跳过；source 身份仍须完整验证。
+          // Conditional deletion lets the Repo idempotently skip a target already deleted by another client; source identity must still be fully validated.
           return {
             taskId: params.taskId,
             workspacePath: resolved.scope.workspacePath,
@@ -771,8 +771,8 @@ export function createWindowHostControllerRuntime(options: {
       }
       projection.removeSource(scope);
       if (retainedPreviousScope && sourceKey(retainedPreviousScope) !== key) {
-        // 当前 logical session 在成功 resync 前仍借用上一代离线 rows；关闭当前 scope
-        // 等同关闭这份 history scope，必须连同保留投影一起清理。
+        // Until a successful resync, the current logical session still borrows the previous generation's offline rows. Closing the current scope
+        // also closes this history scope, so clear the retained projection as well.
         forgetRegisteredSource(retainedPreviousScope);
         projection.removeSource(retainedPreviousScope);
       }

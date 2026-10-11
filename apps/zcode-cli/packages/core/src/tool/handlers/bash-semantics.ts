@@ -225,8 +225,8 @@ export function isBashResultTruncated(output: { stderr?: string; stdout?: string
 
 export function stripClaudeCodeHintLines(stdout: string): string {
   if (!stdout.includes("<claude-code-hint")) return stdout;
-  // 修复原因：成功路径上先剥离内部 claude-code-hint 行，再继续 image/persisted mapping；
-  // 这些内部 hint 不应成为 provider-visible Bash stdout。
+  // Reason for the fix: strip internal claude-code-hint lines on the success path before image/persisted mapping;
+  // these internal hints must not appear in provider-visible Bash stdout.
   return stdout.replace(CLAUDE_CODE_HINT_LINE_RE, "").replace(/\n{3,}/g, "\n\n");
 }
 
@@ -278,7 +278,7 @@ function statusCommandNameForExitOne(command: string): string | undefined {
   const statusCommand = analysis.commands.at(-1);
   if (statusCommand === undefined) return undefined;
 
-  // 不能因为命令行前面出现过 rg/grep，就把后续 test/exit 的 1 误判成 No matches found。
+  // Do not mistake exit code 1 from a later test/exit command for "No matches found" just because rg/grep appeared earlier in the command line.
   if (statusCommand.name === "git") {
     const gitSubcommand = gitSemanticSubcommandName(statusCommand.argv);
     if (gitSubcommand === "grep") return "grep";
