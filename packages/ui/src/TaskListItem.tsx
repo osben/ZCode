@@ -860,6 +860,7 @@ export const MemoTaskItem = memo(function TaskListItem({
         attentionLabel={taskAttentionDisplay}
         activity={taskActivity}
         branchMergeStatus={branchMergeStatus}
+        intl={intl}
         isRemote={isRemoteTask}
       />
     </Tooltip>

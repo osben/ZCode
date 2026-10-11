@@ -547,6 +547,7 @@ function GroupedTaskRowComponent({
               attentionLabel={taskAttentionDisplay}
               activity={taskActivity}
               branchMergeStatus={branchMergeStatus}
+              intl={intl}
               isRemote={Boolean(task.workspaceIdentity?.trim())}
             />
           </Tooltip>

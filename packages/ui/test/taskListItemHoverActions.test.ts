@@ -43,14 +43,22 @@ const {
   },
 }));
 
-vi.mock("lucide-react", () => {
+vi.mock("lucide-react", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("lucide-react")>();
   const createIcon = (name: string) => (props: Record<string, unknown>) =>
     createElement("svg", { "data-icon": name, ...props });
 
   return {
+    ...actual,
     Archive: createIcon("archive"),
+    Cloud: createIcon("cloud"),
     CloudUpload: createIcon("cloud-upload"),
     Clock: createIcon("clock"),
+    Cpu: createIcon("cpu"),
+    FileDiff: createIcon("file-diff"),
+    Folder: createIcon("folder"),
+    GitBranch: createIcon("git-branch"),
+    GitMerge: createIcon("git-merge"),
     LoaderIcon: createIcon("loader"),
     Pin: createIcon("pin"),
     Smartphone: createIcon("smartphone"),
@@ -60,6 +68,13 @@ vi.mock("lucide-react", () => {
 vi.mock("@/components/ui/badge.js", () => ({
   Badge: ({ children }: { children?: ReactNode }) =>
     createElement("span", null, children),
+}));
+
+vi.mock("@/components/ui/tooltip.js", () => ({
+  TooltipProvider: ({ children }: { children?: ReactNode }) => children,
+  Tooltip: ({ children }: { children?: ReactNode }) => children,
+  TooltipTrigger: ({ children }: { children?: ReactNode }) => children,
+  TooltipContent: ({ children }: { children?: ReactNode }) => children,
 }));
 
 vi.mock("@/components/ui/button.js", () => ({
@@ -477,7 +492,7 @@ describe("TaskListItem hover action rendering", () => {
     act(() => {
       root.render(createElement(MemoTaskItem, props));
     });
-    expect(formatRelativeTimeCalls).toHaveLength(1);
+    expect(formatRelativeTimeCalls).toHaveLength(2);
 
     act(() => {
       root.render(
@@ -488,7 +503,7 @@ describe("TaskListItem hover action rendering", () => {
       );
     });
 
-    expect(formatRelativeTimeCalls).toHaveLength(1);
+    expect(formatRelativeTimeCalls).toHaveLength(2);
 
     act(() => {
       root.unmount();

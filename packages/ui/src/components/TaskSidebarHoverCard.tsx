@@ -5,7 +5,6 @@ import type { GitBranchMergeStatus, ZCodeTaskMeta } from "@zcode/shared";
 import { TooltipContent } from "@/components/ui/tooltip.js";
 import { thoughtLevelLabelId } from "@/chat-input-toolbar/thoughtLevelOptions.js";
 import type { IntlInstance } from "@/i18n/IntlProvider.js";
-import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { formatTaskRelativeTime } from "@/lib/taskListItemPresentation.js";
 import { getTaskChangeSummary } from "@/lib/taskChangeSummary.js";
 import { parseModelPickerValue } from "@/lib/zcodeSessionProjection.js";
@@ -18,6 +17,7 @@ export function TaskSidebarHoverCard({
   attentionLabel,
   activity,
   branchMergeStatus,
+  intl,
   isRemote = false,
 }: {
   task: ZCodeTaskMeta;
@@ -25,9 +25,9 @@ export function TaskSidebarHoverCard({
   attentionLabel: string | null;
   activity: TaskListRowActivity | null;
   branchMergeStatus?: GitBranchMergeStatus;
+  intl: Pick<IntlInstance, "formatMessage">;
   isRemote?: boolean;
 }) {
-  const { intl } = useZCodeIntl();
   const status = resolveStatus(task, activity, attentionLabel, intl);
   const modelAndEffort = resolveModelAndEffort(task, intl);
   const changeParts = formatGroupedTaskHoverChangeParts(getTaskChangeSummary(task));

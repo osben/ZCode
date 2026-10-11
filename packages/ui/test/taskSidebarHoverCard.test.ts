@@ -5,20 +5,6 @@ import { renderToStaticMarkup } from "react-dom/server";
 import type { ZCodeTaskMeta } from "@zcode/shared";
 import { TaskSidebarHoverCard } from "@/components/TaskSidebarHoverCard.js";
 
-vi.mock("@/i18n/IntlProvider.js", () => ({
-  useZCodeIntl: () => ({
-    intl: {
-      formatMessage: ({ id }: { id: string }) =>
-        ({
-          "taskList.status.completed": "Done",
-          "chat.toolbar.thoughtLevel.value.xhigh": "Extra High",
-          "taskList.branchMergedTag": "Merged",
-          "taskList.justNow": "now",
-        })[id] ?? id,
-    },
-  }),
-}));
-
 vi.mock("@/components/ui/tooltip.js", () => ({
   TooltipContent: ({ children }: { children: ReactNode }) => createElement("div", null, children),
 }));
@@ -47,6 +33,14 @@ test("renders available task hover details without repeating the title", () => {
       workspaceLabel: "ZCode",
       attentionLabel: null,
       activity: { phase: "completedSuccess", lastActivityAt: Date.now(), hasBackgroundWork: false },
+      intl: {
+        formatMessage: ({ id }: { id: string }) =>
+          ({
+            "taskList.status.completed": "Done",
+            "chat.toolbar.thoughtLevel.value.xhigh": "Extra High",
+            "taskList.branchMergedTag": "Merged",
+          })[id] ?? id,
+      },
       branchMergeStatus: {
         state: "merged",
         baseRef: "origin/main",

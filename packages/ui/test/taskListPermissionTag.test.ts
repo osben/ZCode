@@ -3,6 +3,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import type { ZCodeTaskMeta } from "@zcode/shared";
 import { MemoTaskItem as TaskItem } from "@/TaskListItem.js";
+import { TooltipProvider } from "@/components/ui/tooltip.js";
 import { attachTaskListRowActivity } from "@/v4/taskListRowActivity.js";
 
 vi.mock("@/useTaskListItemContextActions.js", () => ({
@@ -77,7 +78,7 @@ function renderTaskItem(
   });
 
   return renderToStaticMarkup(
-    createElement(TaskItem, {
+    createElement(TooltipProvider, null, createElement(TaskItem, {
       workspacePath: task.workspacePath,
       task,
       isPinned: false,
@@ -92,7 +93,7 @@ function renderTaskItem(
       onArchiveTask: () => {},
       onMarkTaskAsUnread: () => {},
       intl: createIntl(),
-    }),
+    })),
   );
 }
 
