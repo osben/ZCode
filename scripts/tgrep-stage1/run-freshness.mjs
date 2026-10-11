@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+/* eslint-disable max-lines -- One self-contained freshness suite per plan gate D09: the S1-S4/O1-O2 scenarios share a daemon lifecycle that splitting across files would hide. */
 // Stage-1 freshness spike for pinned tgrep 1.1.0 (plan gate D09 / G1 evidence).
 //
 // What it proves or refutes, per test id:
