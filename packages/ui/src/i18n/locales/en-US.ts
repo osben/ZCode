@@ -7434,6 +7434,7 @@ const enUS: Record<string, string> = {
     "Could not access the microphone. Check the input device and permissions.",
   "voiceDictation.transcribeFailed": "Voice transcription failed.",
   "voiceDictation.downloadFailed": "Model download failed.",
+  "voiceDictation.cancelDownloadFailed": "Failed to cancel the model download.",
   "voiceDictation.saveFailed": "Could not save voice dictation settings.",
   "voiceDictation.composer.start": "Voice input",
   "voiceDictation.composer.loading": "Loading speech model",

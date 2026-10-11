@@ -7066,6 +7066,7 @@ const zhCN: Record<string, string> = {
   "voiceDictation.microphoneFailed": "无法访问麦克风，请检查输入设备和系统权限。",
   "voiceDictation.transcribeFailed": "语音转写失败。",
   "voiceDictation.downloadFailed": "模型下载失败。",
+  "voiceDictation.cancelDownloadFailed": "无法取消模型下载。",
   "voiceDictation.saveFailed": "无法保存语音输入设置。",
   "voiceDictation.composer.start": "语音输入",
   "voiceDictation.composer.loading": "正在加载语音模型",

@@ -189,6 +189,38 @@ describe("useVoiceDictation streaming", () => {
     expect(onTranscript).toHaveBeenCalledWith("Hello there");
   });
 
+  it("fails the stream when the pending PCM backlog exceeds its bound", async () => {
+    // Первый feed зависает — имитируем надолго stalled Host, чтобы backlog копился.
+    let resolveFeed: (() => void) | null = null;
+    mocks.service!.feedStream!.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveFeed = () => resolve({ committed: "", tentative: "" });
+        }),
+    );
+    const onTranscript = vi.fn();
+    const now = vi.spyOn(Date, "now").mockReturnValue(1000);
+    const hook = renderHook(() =>
+      useVoiceDictation({ enabled: true, onTranscript, scopeRef: { current: null } }),
+    );
+
+    await act(async () => hook.result.current.start());
+    await act(async () => mocks.recorder?.options?.onChunk?.(new Float32Array(100)));
+    // Первый чанк уходит в зависший feed; следующий переваливает границу лимита —
+    // ожидаем явный отказ вместо бесконечного накопления.
+    await act(async () => mocks.recorder?.options?.onChunk?.(new Float32Array(16000 * 30 + 1)));
+
+    await waitFor(() => expect(hook.result.current.phase).toBe("idle"));
+    expect(toast).toHaveBeenCalledWith("voiceDictation.transcribeFailed");
+    expect(mocks.service?.cancelStream).toHaveBeenCalledWith("stream-1");
+
+    now.mockReturnValue(1500);
+    await act(async () => hook.result.current.stop());
+    expect(mocks.service?.finalizeStream).not.toHaveBeenCalled();
+    expect(onTranscript).not.toHaveBeenCalled();
+    resolveFeed?.();
+  });
+
   it("cancels the stream on window blur without inserting its preview", async () => {
     const onTranscript = vi.fn();
     const hook = renderHook(() =>

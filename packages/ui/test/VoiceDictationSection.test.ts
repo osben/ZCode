@@ -108,7 +108,49 @@ vi.mock("@/i18n/IntlProvider.js", () => ({
 }));
 vi.mock("@/components/ui/toast.js", () => ({ toast: vi.fn() }));
 vi.mock("@/logger.js", () => ({ logger: { warn: vi.fn() } }));
+const recorderMocks = vi.hoisted(() => ({
+  instances: [] as {
+    isRecording: boolean;
+    cancelCount: number;
+    stopCount: number;
+    resolveStart?: () => void;
+  }[],
+}));
+// Заменяем рекордер целиком: существующие тесты используют только список устройств,
+// а новые проверяют отмену mic-теста при уходе со страницы в ожидании разрешения.
+vi.mock("@/lib/voiceDictationRecorder.js", () => ({
+  listAudioInputDevices: vi.fn(async () => []),
+  VoiceDictationRecorder: class {
+    options: unknown = null;
+    isRecording = false;
+    cancelCount = 0;
+    stopCount = 0;
+    resolveStart?: () => void;
+    constructor() {
+      recorderMocks.instances.push(this);
+    }
+    async start(options: unknown) {
+      this.options = options;
+      this.isRecording = true;
+      // Имитируем висящий запрос разрешения микрофона.
+      await new Promise<void>((resolve) => {
+        this.resolveStart = resolve;
+      });
+    }
+    stop() {
+      this.stopCount += 1;
+      this.isRecording = false;
+      return new Float32Array(0);
+    }
+    cancel() {
+      this.cancelCount += 1;
+      this.isRecording = false;
+      this.resolveStart?.();
+    }
+  },
+}));
 
+import { toast } from "@/components/ui/toast.js";
 import { VoiceDictationSection } from "@/settings/VoiceDictationSection.js";
 
 beforeEach(() => {
@@ -116,6 +158,7 @@ beforeEach(() => {
   h.state.downloadPolls = 0;
   h.state.downloadStatus = "not_downloaded";
   h.state.resolveDownload = undefined;
+  recorderMocks.instances.length = 0;
   vi.clearAllMocks();
 });
 
@@ -205,5 +248,40 @@ describe("VoiceDictationSection model downloads", () => {
         voiceDictation: { modelId: "model-two" },
       }),
     );
+  });
+
+  it("reports a failed download cancellation and still refreshes models", async () => {
+    render(createElement(VoiceDictationSection, { isDesktop: true }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Model Two: voiceDictation.models.download" }),
+    );
+    await screen.findByText("voiceDictation.models.downloading", {}, { timeout: 3000 });
+
+    h.voiceDictationService.cancelDownload.mockRejectedValueOnce(new Error("host busy"));
+    fireEvent.click(await screen.findByRole("button", { name: "voiceDictation.models.cancel" }));
+
+    await waitFor(() => expect(toast).toHaveBeenCalledWith("voiceDictation.cancelDownloadFailed"));
+    // finally-ветка должна обновить список даже при неудачной отмене.
+    await waitFor(() =>
+      expect(h.voiceDictationService.listModels.mock.calls.length).toBeGreaterThan(1),
+    );
+  });
+});
+
+describe("VoiceDictationSection mic test", () => {
+  it("cancels capture when the section closes while microphone permission is pending", async () => {
+    const { unmount } = render(createElement(VoiceDictationSection, { isDesktop: true }));
+    fireEvent.click(await screen.findByRole("button", { name: "voiceDictation.micTest.button" }));
+    const recorder = recorderMocks.instances[0];
+    expect(recorder?.isRecording).toBe(true);
+
+    // Уход со страницы в момент висящего запроса разрешения: cleanup отменяет и
+    // обнуляет ссылку, а компонент после разрешения start() сразу гасит запись.
+    unmount();
+    await act(async () => {});
+
+    expect(recorder?.cancelCount).toBe(2);
+    expect(recorder?.stopCount).toBe(0);
+    expect(recorder?.isRecording).toBe(false);
   });
 });

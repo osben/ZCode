@@ -18,6 +18,12 @@ import { VoiceDictationRecorder } from "@/lib/voiceDictationRecorder.js";
 
 export type VoiceDictationPhase = "idle" | "loading" | "recording" | "transcribing";
 
+/**
+ * 积压上限：16 kHz 单声道约 30 秒。正常抖动下积压远小于此（256ms/块）；
+ * 持续超过说明 Host 卡死，按规格要求明确失败，而不是无限占住内存让用户干等。
+ */
+const MAX_STREAM_BACKLOG_SAMPLES = 16_000 * 30;
+
 interface UseVoiceDictationOptions {
   /** 仅桌面端为 true：转写由本机 Desktop Host 执行，Web/远端不提供语音输入。 */
   enabled: boolean;
@@ -130,6 +136,12 @@ export function useVoiceDictation({ enabled, onTranscript, scopeRef }: UseVoiceD
       // 之前达到上限直接 failStream 会丢掉整段已录语音，这里改为积压成批合并发送，
       // 顺序由单一串行 flush 任务保证。
       streamBacklogRef.current.push(samples);
+      // 规格要求"有界顺序队列 + 明确失败"：超过上限说明 Host 持续无法消费，终止本次听写。
+      const backlogSamples = streamBacklogRef.current.reduce((sum, chunk) => sum + chunk.length, 0);
+      if (backlogSamples > MAX_STREAM_BACKLOG_SAMPLES) {
+        failStream(streamId, new Error("voice dictation stream exceeded its bounded PCM backlog"));
+        return;
+      }
       if (streamFlushScheduledRef.current) return;
       flushStreamBacklog(streamId);
     },

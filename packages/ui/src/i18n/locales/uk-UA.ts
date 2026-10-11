@@ -7015,6 +7015,7 @@ const ukUA: Record<string, string> = {
     "Не вдалося отримати доступ до мікрофона. Перевірте пристрій введення та дозволи.",
   "voiceDictation.transcribeFailed": "Не вдалося розпізнати мовлення.",
   "voiceDictation.downloadFailed": "Не вдалося завантажити модель.",
+  "voiceDictation.cancelDownloadFailed": "Не вдалося скасувати завантаження моделі.",
   "voiceDictation.saveFailed": "Не вдалося зберегти налаштування голосового введення.",
   "voiceDictation.composer.start": "Голосове введення",
   "voiceDictation.composer.loading": "Завантаження моделі мовлення",

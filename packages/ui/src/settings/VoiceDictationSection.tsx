@@ -124,6 +124,9 @@ function DesktopVoiceDictationSection() {
     return () => {
       mediaDevices?.removeEventListener?.("devicechange", refreshDevices);
       micRecorderRef.current?.cancel();
+      // 清理后置空：若麦克风授权此时才由用户批准，handleMicTest 里的 start() 会照常开始采集，
+      // 必须让它在 start() 完成后看到"已不活跃"并立即取消，避免用户离开设置后仍录音。
+      micRecorderRef.current = null;
     };
   }, [refreshDevices, refreshModels]);
 
@@ -186,6 +189,12 @@ function DesktopVoiceDictationSection() {
           setMicLevel(level);
         },
       });
+      // 授权弹窗期间用户可能已离开设置（cleanup 置空了 ref）；此时立即取消，
+      // 否则测试会在用户离开后继续采集整整 3 秒。
+      if (micRecorderRef.current !== recorder) {
+        recorder.cancel();
+        return;
+      }
       await new Promise((resolve) => window.setTimeout(resolve, MIC_TEST_DURATION_MS));
       recorder.stop();
       setMicPeak(peak);
@@ -277,7 +286,17 @@ function DesktopVoiceDictationSection() {
       pendingUseModelIdRef.current = null;
       setPendingUseModelId(null);
     }
-    void voiceDictationService?.cancelDownload(id).finally(() => void refreshModels());
+    // 取消失败必须可见：下载可能仍在进行，静默吞掉会让用户误以为已停止。
+    void voiceDictationService
+      ?.cancelDownload(id)
+      .catch((error: unknown) => {
+        logger.warn("voice model download cancellation failed", {
+          id,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        toast(intl.formatMessage({ id: "voiceDictation.cancelDownloadFailed" }));
+      })
+      .finally(() => void refreshModels());
   };
 
   const deviceValue = microphoneDeviceId ?? "default";
