@@ -239,7 +239,7 @@ export function VoiceModelRow({
                 {formatVoiceModelDownloadSpeed(downloadSpeed)}
               </span>
             ) : null}
-            {downloading ? (
+            {showDownloadProgress ? (
               <Button
                 className="pointer-events-auto shrink-0"
                 variant="ghost"
