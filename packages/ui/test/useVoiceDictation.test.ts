@@ -115,6 +115,43 @@ describe("useVoiceDictation streaming", () => {
     expect(onTranscript).toHaveBeenCalledWith("One shot");
   });
 
+  it("continues dictation when an older host lacks the idle unload setting", async () => {
+    mocks.service!.setIdleUnloadMinutes!.mockRejectedValue(
+      new Error("Method not found: setIdleUnloadMinutes"),
+    );
+    const onTranscript = vi.fn();
+    const now = vi.spyOn(Date, "now").mockReturnValue(1000);
+    const hook = renderHook(() =>
+      useVoiceDictation({ enabled: true, onTranscript, scopeRef: { current: null } }),
+    );
+
+    await act(async () => hook.result.current.start());
+    expect(mocks.service?.beginStream).toHaveBeenCalledWith({
+      modelId: "model-one",
+      language: "en",
+    });
+    expect(mocks.recorder?.isRecording).toBe(true);
+
+    now.mockReturnValue(1500);
+    await act(async () => hook.result.current.stop());
+
+    expect(onTranscript).toHaveBeenCalledWith("Hello there");
+  });
+
+  it("does not ignore unrelated idle unload setting failures", async () => {
+    mocks.service!.setIdleUnloadMinutes!.mockRejectedValue(new Error("Host disconnected"));
+    const onTranscript = vi.fn();
+    const hook = renderHook(() =>
+      useVoiceDictation({ enabled: true, onTranscript, scopeRef: { current: null } }),
+    );
+
+    await act(async () => hook.result.current.start());
+
+    expect(mocks.service?.beginStream).not.toHaveBeenCalled();
+    expect(mocks.recorder?.isRecording).toBe(false);
+    expect(hook.result.current.phase).toBe("idle");
+  });
+
   it("cancels the stream on window blur without inserting its preview", async () => {
     const onTranscript = vi.fn();
     const hook = renderHook(() =>

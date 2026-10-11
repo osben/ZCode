@@ -140,7 +140,18 @@ export function useVoiceDictation({ enabled, onTranscript, scopeRef }: UseVoiceD
     const pending = (async () => {
       let streamId: string | null;
       try {
-        await voiceDictationService.setIdleUnloadMinutes(idleUnloadMinutes);
+        try {
+          await voiceDictationService.setIdleUnloadMinutes(idleUnloadMinutes);
+        } catch (error) {
+          if (!isMissingIdleUnloadMethod(error)) throw error;
+          // 旧 Desktop Host 尚未实现此偏好 RPC；保留 Host 默认卸载时间，不能因此阻止录音和转写。
+          logger.warn(
+            "voice dictation host does not support idle unload preference; using host default",
+            {
+              error: error instanceof Error ? error.message : String(error),
+            },
+          );
+        }
         streamId = await voiceDictationService.beginStream({ modelId, language });
       } catch (error) {
         logger.warn("voice dictation model stream initialization failed", {
@@ -360,4 +371,9 @@ export function useVoiceDictation({ enabled, onTranscript, scopeRef }: UseVoiceD
   );
 
   return { phase, level, preview, start, stop, toggle };
+}
+
+function isMissingIdleUnloadMethod(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.trim() === "Method not found: setIdleUnloadMinutes";
 }

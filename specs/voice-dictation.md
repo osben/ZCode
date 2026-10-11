@@ -28,6 +28,23 @@ Make the existing local desktop dictation flow easier to understand and avoid do
 12. Let the user choose how many minutes an idle model remains in memory after transcription. Apply the preference to the Desktop Host idle-unload timer, use five minutes as the default, and show only that the model is loaded rather than a countdown.
 13. During recording, show a compact floating feedback panel to the left of the microphone button with a clear listening state, microphone-level meter, and optional live transcript preview. Keep it anchored without shifting composer actions.
 
+### Compatibility with an older local Host
+
+- If an older local Host reports `Method not found: setIdleUnloadMinutes`, continue dictation using that Host's default unload delay. Do not treat this one missing preference method as a transcription failure.
+- Other errors while applying the preference remain fatal and keep the existing transcription error handling.
+
+```mermaid
+sequenceDiagram
+  participant UI as Renderer
+  participant Host as Desktop Host
+  UI->>Host: setIdleUnloadMinutes(preference)
+  Host--xUI: Method not found (older Host)
+  Note over UI: Keep Host default and continue
+  UI->>Host: beginStream(model, language)
+  Host-->>UI: stream id or one-shot fallback
+  UI->>UI: Start microphone capture
+```
+
 ## Ownership and interfaces
 
 - `VoiceModelStore` remains the only owner of model discovery, download state, model path, and removal. It may return a verified Handy path as ready with source metadata; it never deletes that path.
