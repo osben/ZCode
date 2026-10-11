@@ -59,19 +59,16 @@ describe("conversation session plan detail from side chat", () => {
     );
     await waitForPlanCard(child.paneTestId, PLAN_MARKER, 60_000);
 
-    const opened = await browser.execute(
-      (paneTestId) => {
-        const pane = document.querySelector<HTMLElement>(`[data-testid="${paneTestId}"]`);
-        const button = Array.from(pane?.querySelectorAll<HTMLButtonElement>("button") ?? []).find(
-          (candidate) =>
-            candidate.innerText.includes("View full plan") ||
-            candidate.innerText.includes("查看完整计划"),
-        );
-        button?.click();
-        return Boolean(button);
-      },
-      child.paneTestId,
-    );
+    const opened = await browser.execute((paneTestId) => {
+      const pane = document.querySelector<HTMLElement>(`[data-testid="${paneTestId}"]`);
+      const button = Array.from(pane?.querySelectorAll<HTMLButtonElement>("button") ?? []).find(
+        (candidate) =>
+          candidate.innerText.includes("View full plan") ||
+          candidate.innerText.includes("查看完整计划"),
+      );
+      button?.click();
+      return Boolean(button);
+    }, child.paneTestId);
     expect(opened).toBe(true);
 
     await browser.waitUntil(
@@ -158,7 +155,11 @@ async function waitForSelectionSidePane(): Promise<{ childSessionId: string; pan
   return result;
 }
 
-async function waitForPlanCard(paneTestId: string, marker: string, timeoutMs: number): Promise<void> {
+async function waitForPlanCard(
+  paneTestId: string,
+  marker: string,
+  timeoutMs: number,
+): Promise<void> {
   const planToolTestId = testId(TID_CHAT_TOOL_CALL_BLOCK, EXIT_TOOL_CALL_ID);
   await browser.waitUntil(
     () =>
