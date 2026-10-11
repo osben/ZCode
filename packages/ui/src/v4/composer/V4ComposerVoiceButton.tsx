@@ -41,39 +41,47 @@ function V4ComposerVoiceButtonImpl({
   const levelPercent = Math.round(Math.max(0, Math.min(1, level)) * 100);
 
   return (
-    <div className="inline-flex min-w-0 items-center gap-1">
-      {recording && preview && (preview.committed || preview.tentative) ? (
-        <div
-          className="max-w-64 truncate text-ui-sm text-muted-foreground"
-          data-testid="voice-dictation-preview"
-          role="status"
-          aria-live="polite"
-          title={`${preview.committed}${preview.tentative}`}
-        >
-          <span>{preview.committed}</span>
-          <span className="italic opacity-70">{preview.tentative}</span>
-        </div>
-      ) : null}
+    <div
+      className="relative inline-flex shrink-0 items-center"
+      data-testid="voice-dictation-control"
+    >
       {recording ? (
         <div
-          className="inline-flex h-6 items-center gap-0.5 px-1 text-destructive"
-          role="meter"
-          aria-label={intl.formatMessage({ id: "voiceDictation.composer.level" })}
-          aria-valuemin={0}
-          aria-valuemax={100}
-          aria-valuenow={levelPercent}
-          data-testid="voice-dictation-level"
+          className="pointer-events-none absolute right-full top-1/2 z-20 mr-2 flex h-8 w-44 -translate-y-1/2 items-center gap-1.5 overflow-hidden rounded-lg bg-popover px-2 text-popover-foreground shadow-md ring-1 ring-border/60 animate-in fade-in slide-in-from-right-2 duration-150 ease-out motion-reduce:animate-none"
+          data-testid="voice-dictation-feedback"
         >
-          {[0, 1, 2, 3, 4].map((index) => {
-            const barLevel = Math.max(0.12, level - Math.abs(index - 2) * 0.08);
-            return (
-              <span
-                key={index}
-                className="w-0.5 rounded-full bg-current transition-[height] duration-100"
-                style={{ height: `${Math.max(2, Math.round(barLevel * 16))}px` }}
-              />
-            );
-          })}
+          <div
+            className="inline-flex h-6 shrink-0 items-center gap-0.5 text-destructive"
+            role="meter"
+            aria-label={intl.formatMessage({ id: "voiceDictation.composer.level" })}
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={levelPercent}
+            data-testid="voice-dictation-level"
+          >
+            {[0, 1, 2, 3, 4].map((index) => {
+              const barLevel = Math.max(0.12, level - Math.abs(index - 2) * 0.08);
+              return (
+                <span
+                  key={index}
+                  className="w-0.5 rounded-full bg-current transition-[height] duration-100"
+                  style={{ height: `${Math.max(2, Math.round(barLevel * 16))}px` }}
+                />
+              );
+            })}
+          </div>
+          {preview && (preview.committed || preview.tentative) ? (
+            <div
+              className="min-w-0 truncate text-ui-sm text-muted-foreground"
+              data-testid="voice-dictation-preview"
+              role="status"
+              aria-live="polite"
+              title={`${preview.committed}${preview.tentative}`}
+            >
+              <span>{preview.committed}</span>
+              <span className="italic opacity-70">{preview.tentative}</span>
+            </div>
+          ) : null}
         </div>
       ) : null}
       <ControlHintTooltip title={tooltip}>

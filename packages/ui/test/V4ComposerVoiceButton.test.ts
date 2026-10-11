@@ -34,6 +34,8 @@ describe("V4ComposerVoiceButton live feedback", () => {
     expect(screen.getByRole("meter").getAttribute("aria-valuenow")).toBe("60");
     expect(screen.getByTestId("voice-dictation-preview").textContent).toContain("Hello ");
     expect(screen.getByTestId("voice-dictation-preview").textContent).toContain("world");
+    expect(screen.getByTestId("voice-dictation-feedback").className).toContain("absolute");
+    expect(screen.getByTestId("voice-dictation-control").className).toContain("relative");
     expect(screen.queryByRole("textbox")).toBeNull();
   });
 
