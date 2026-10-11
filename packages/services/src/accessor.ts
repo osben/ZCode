@@ -48,6 +48,7 @@ import type { IPromptAttachmentTransferService } from "./prompt-attachment-trans
 import type { IWindowControllerService } from "./window-controller/windowController.js";
 import type { IOnboardingRecordService } from "./onboarding/onboardingRecord.js";
 import type { IConversationShareService } from "./conversation-share/conversationShare.js";
+import type { IVoiceDictationService } from "./voice-dictation/voiceDictation.js";
 
 /** Unified service interface consumed by the UI layer */
 export interface IServiceAccessor {
@@ -71,6 +72,8 @@ export interface IServiceAccessor {
   readonly zcodeSessionService: IZCodeSessionService;
   // CUA is an opt-in beta feature provided by local macOS hosts but not other hosts. Keep it optional to avoid making it transitively required.
   readonly cuaPermissionService?: ICuaPermissionService;
+  /** 本机语音输入（模型下载与离线转写）；远端 host 不提供。 */
+  readonly voiceDictationService?: IVoiceDictationService;
   readonly conversationShareService: IConversationShareService;
   readonly botsService: IBotsService;
   readonly fileWatcherService: IFileWatcherService;

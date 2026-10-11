@@ -2,6 +2,7 @@ import { PROVIDER_MODEL_SELECTION_MIGRATION_SQL } from "./migrations/0020-provid
 
 export interface SqliteMigration {
   appVersion: string;
+  acceptedHistoricalChecksums?: readonly string[];
   id: string;
   sql: string;
 }
@@ -911,6 +912,10 @@ export const SQLITE_MIGRATIONS: readonly SqliteMigration[] = [
     appVersion: "0.16.5",
     id: "0020_provider_model_selection",
     sql: PROVIDER_MODEL_SELECTION_MIGRATION_SQL,
+    // SQL 注释也参与 checksum；兼容翻译前已写入账本的指纹，但不重跑迁移。
+    acceptedHistoricalChecksums: [
+      "681180b4fcb497e13289b6970021678f24c975efdf3538777541105c5b2b444e",
+    ],
   },
   {
     appVersion: "0.16.5",

@@ -34,7 +34,14 @@ describe("settingsPageConfig", () => {
     ).toEqual([
       {
         id: "basics",
-        sections: ["general", "appearance", "modelProvider", "browser", "shortcuts"],
+        sections: [
+          "general",
+          "appearance",
+          "modelProvider",
+          "browser",
+          "shortcuts",
+          "voiceDictation",
+        ],
       },
       {
         id: "agentCapabilities",
@@ -69,6 +76,7 @@ describe("settingsPageConfig", () => {
       "hooks",
       "browser",
       "shortcuts",
+      "voiceDictation",
       "usage",
     ]);
   });
@@ -91,6 +99,7 @@ describe("settingsPageConfig", () => {
       "hooks",
       "browser",
       "shortcuts",
+      "voiceDictation",
       "usage",
     ]);
   });
@@ -153,6 +162,7 @@ describe("settingsPageConfig", () => {
       "browser",
       "computerUse",
       "shortcuts",
+      "voiceDictation",
     ]);
     expect(
       settingsSectionGroups
@@ -169,5 +179,12 @@ describe("settingsPageConfig", () => {
     expect(resolveSettingsSectionForPlatform("computerUse", settingsSections, "general")).toBe(
       "general",
     );
+  });
+
+  it("Web 仍展示语音输入入口，内容可以说明仅支持 Desktop", async () => {
+    const { createSettingsPageConfig } = await loadSettingsPageConfig("test");
+    const { settingsSections } = createSettingsPageConfig({});
+
+    expect(settingsSections.some((section) => section.id === "voiceDictation")).toBe(true);
   });
 });

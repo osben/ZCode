@@ -206,6 +206,27 @@ describe("app settings", () => {
     ).toThrow();
   });
 
+  it("discards a damaged voiceDictation value without resetting other settings", () => {
+    // 非关键偏好：损坏或更新版本写入的值只应丢弃自身，不能让整份 setting.json 解析失败。
+    const settings = appSettingsSchema.parse({
+      locale: "en-US",
+      recentProjects: ["/workspace/demo"],
+      voiceDictation: { modelId: 42, idleUnloadMinutes: 60 },
+    });
+
+    expect(settings.locale).toBe("en-US");
+    expect(settings.recentProjects).toEqual(["/workspace/demo"]);
+    expect(settings.voiceDictation).toBeUndefined();
+
+    // 补丁面保持严格：写入非法值仍要在保存时被拒绝，而不是静默吞掉。
+    expect(
+      appSettingsPatchSchema.safeParse({ voiceDictation: { pushToTalk: "yes" } }).success,
+    ).toBe(false);
+    expect(
+      appSettingsPatchSchema.parse({ voiceDictation: { modelId: "parakeet" } }).voiceDictation,
+    ).toEqual({ modelId: "parakeet" });
+  });
+
   it("preserves localized pending post-update release notes", () => {
     const payload = {
       version: "3.1.4",
