@@ -20,7 +20,7 @@
     "lucide-react": "^1.17.0",
     "react": "^19.2.1",
     "react-dom": "^19.2.1",
-    "vis-timeline": "^8.5.0"
+    "vis-timeline": "^8.5.4"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
