@@ -53,6 +53,9 @@ describe("任务列表归档二次确认 E2E", () => {
     expect(taskId).toBeTruthy();
 
     await hoverConversationTaskRow(taskId as string);
+    const hoverCard = await waitForTaskHoverCard();
+    expect(hoverCard.status).toBeTruthy();
+    expect(hoverCard.text.length).toBeGreaterThan(0);
     await waitForArchiveButtonState(taskId as string, (state) => state.visible);
 
     await $(sel(testId(TID_TASK_ARCHIVE, taskId as string))).click();
@@ -160,6 +163,28 @@ async function hoverConversationTaskRow(taskId: string) {
     timeoutMsg: `项目视图的“任务”分区没有显示目标 conversation task: ${taskId}`,
   });
   await row.moveTo();
+}
+
+async function waitForTaskHoverCard() {
+  await browser.waitUntil(
+    async () =>
+      browser.execute(() =>
+        Boolean(document.querySelector('[data-task-hover-card="true"]')),
+      ),
+    {
+      timeout: 5000,
+      timeoutMsg: "Hover по task row не показал карточку метаданных",
+    },
+  );
+  return browser.execute(() => {
+    const card = document.querySelector<HTMLElement>(
+      '[data-task-hover-card="true"]',
+    );
+    return {
+      status: card?.dataset.taskHoverStatus ?? null,
+      text: card?.textContent?.trim() ?? "",
+    };
+  });
 }
 
 async function waitForConversationTaskRowAbsent(taskId: string) {

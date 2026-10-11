@@ -58,6 +58,11 @@ import {
   TaskWorkflowRunLines,
   type TaskWorkflowRunLinesIntl,
 } from "@/components/workflow-run-line/TaskWorkflowRunLines.js";
+import {
+  Tooltip,
+  TooltipTrigger,
+} from "@/components/ui/tooltip.js";
+import { TaskSidebarHoverCard } from "@/components/TaskSidebarHoverCard.js";
 
 type TaskListItemIntl = TaskWorkflowRunLinesIntl;
 
@@ -565,7 +570,9 @@ export const MemoTaskItem = memo(function TaskListItem({
     showPinAction &&
     (showPinnedState || shouldSuppressWorkspaceTaskMetadata);
   return (
-    <li
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <li
       ref={itemRef}
       data-testid={testId(TID_TASK_ITEM, task.taskId)}
       data-task-item-key={taskItemKey}
@@ -845,7 +852,17 @@ export const MemoTaskItem = memo(function TaskListItem({
           {workflowRunLinesNode}
         </div>
       )}
-    </li>
+        </li>
+      </TooltipTrigger>
+      <TaskSidebarHoverCard
+        task={task}
+        workspaceLabel={workspaceLabel}
+        attentionLabel={taskAttentionDisplay}
+        activity={taskActivity}
+        branchMergeStatus={branchMergeStatus}
+        isRemote={isRemoteTask}
+      />
+    </Tooltip>
   );
 }, areTaskListItemPropsEqual);
 
