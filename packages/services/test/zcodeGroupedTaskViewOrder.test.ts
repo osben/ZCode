@@ -26,8 +26,10 @@ afterEach(async () => {
   }
   allRepos.length = 0;
   setDataBaseDir(null);
-  // Windows 需要等待一下让文件句柄释放
-  await new Promise((resolve) => setTimeout(resolve, 50));
+  if (process.platform === "win32") {
+    // Windows 需要等待 SQLite 释放文件句柄，避免临时目录清理出现 EPERM。
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
   try {
     rmSync(tempDir, { recursive: true, force: true });
   } catch {
@@ -270,17 +272,18 @@ it.each([false, true])(
           }),
     ).rejects.toThrow("reject deleted task cleanup");
 
-  expect(
-    database
-      .prepare("SELECT deleted FROM tasks WHERE workspace_key = ? AND task_id = ?")
-      .get("/repo", task.taskId),
-  ).toEqual({ deleted: 0 });
-  expect(
-    database
-      .prepare("SELECT task_id FROM task_group_members WHERE workspace_key = ? AND task_id = ?")
-      .get("/repo", task.taskId),
-  ).toEqual({ task_id: task.taskId });
-});
+    expect(
+      database
+        .prepare("SELECT deleted FROM tasks WHERE workspace_key = ? AND task_id = ?")
+        .get("/repo", task.taskId),
+    ).toEqual({ deleted: 0 });
+    expect(
+      database
+        .prepare("SELECT task_id FROM task_group_members WHERE workspace_key = ? AND task_id = ?")
+        .get("/repo", task.taskId),
+    ).toEqual({ task_id: task.taskId });
+  },
+);
 
 it("cleans historical deleted task grouping references when the index reopens", async () => {
   const repo = createTrackedRepo();

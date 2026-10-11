@@ -818,6 +818,14 @@ describe("WebRemoteControlDeviceTransport", () => {
 
   it("keeps the desktop socket during a waiting window longer than one production heartbeat", async () => {
     let heartbeatCount = 0;
+    let paired = false;
+    const statesAfterPair: WebRemoteControlDeviceTransportState[] = [];
+    const waitingAckBarrierPayload = {
+      zcode_type: "app-error",
+      reason: "unexpected-error",
+      error: "waiting-ack-barrier",
+    } as const;
+    const onPayload = vi.fn();
     const relay = await createRelayServer(({ message, socket }) => {
       if (message.type === "auth_init") {
         socket.send(JSON.stringify({ type: "auth_challenge", nonce: "nonce-1" }));
@@ -837,6 +845,7 @@ describe("WebRemoteControlDeviceTransport", () => {
               pair_status: "waiting",
             }),
           );
+          socket.send(JSON.stringify({ type: "data", payload: waitingAckBarrierPayload }));
         }
       }
     });
@@ -851,44 +860,61 @@ describe("WebRemoteControlDeviceTransport", () => {
         createPassHash: () => "hash-1",
         calculateProof: () => "proof",
       },
-      heartbeatIntervalMs: 200,
+      heartbeatIntervalMs: 10_000,
+      heartbeatJitterMs: 0,
       logger: createLogger(),
       onRegisteredAuth: () => {},
-      onStateChange: () => {},
-      onPayload: () => {},
+      onStateChange: (state) => {
+        if (paired) statesAfterPair.push(state);
+        if (state === "paired") paired = true;
+      },
+      onPayload,
       onError: () => {},
       onInvalidPersistedAuth: async () => {},
     });
 
-    transport.start();
-    await waitUntil(() => heartbeatCount >= 1, 5_000);
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] });
+    try {
+      transport.start();
+      await vi.waitFor(() => expect(paired).toBe(true));
+      await vi.advanceTimersByTimeAsync(10_000);
+      await vi.waitFor(() => expect(heartbeatCount).toBe(1));
+      // Bugfix：计数发生在 ACK 发出前；relay 按序发送数据帧作为 ACK 已处理的真实 IO 屏障。
+      await vi.waitFor(() => expect(onPayload).toHaveBeenCalledWith(waitingAckBarrierPayload));
 
-    const sent = transport.sendPayload({
-      zcode_type: "workspace-list-response",
-      requestId: "req-waiting",
-      success: true,
-      result: {
-        workspaces: [],
-        activeWorkspaceKey: null,
-        activeTaskId: null,
-      },
-    });
-    await new Promise((resolve) => setTimeout(resolve, 10_500));
+      const sent = transport.sendPayload({
+        zcode_type: "workspace-list-response",
+        requestId: "req-waiting",
+        success: true,
+        result: {
+          workspaces: [],
+          activeWorkspaceKey: null,
+          activeTaskId: null,
+        },
+      });
+      await vi.advanceTimersByTimeAsync(10_500);
+      await vi.waitFor(() => expect(heartbeatCount).toBeGreaterThan(1));
+      // 再让真实 IO 处理 close/connect 事件，避免提前读取连接数而漏掉瞬时重连。
+      await new Promise<void>((resolve) => setImmediate(resolve));
 
-    expect(sent).toBe(false);
-    expect(relay.getConnectionCount()).toBe(1);
-    expect(
-      relay.messages.some(
-        (message) =>
-          message.type === "data" &&
-          typeof message.payload === "object" &&
-          message.payload &&
-          "requestId" in message.payload &&
-          message.payload.requestId === "req-waiting",
-      ),
-    ).toBe(false);
-    transport.dispose();
+      expect(sent).toBe(false);
+      expect(heartbeatCount).toBeGreaterThan(1);
+      expect(relay.getConnectionCount()).toBe(1);
+      expect(statesAfterPair).not.toContain("connecting");
+      expect(
+        relay.messages.some(
+          (message) =>
+            message.type === "data" &&
+            typeof message.payload === "object" &&
+            message.payload &&
+            "requestId" in message.payload &&
+            message.payload.requestId === "req-waiting",
+        ),
+      ).toBe(false);
+    } finally {
+      transport.dispose();
+      vi.useRealTimers();
+    }
   });
 
   it("reconnects when paired heartbeat stays waiting", async () => {

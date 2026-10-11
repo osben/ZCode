@@ -26,7 +26,10 @@ afterEach(async () => {
   }
   allRepos.length = 0;
   setDataBaseDir(null);
-  await new Promise((resolve) => setTimeout(resolve, 50));
+  if (process.platform === "win32") {
+    // Windows 需要等待 SQLite 释放文件句柄，避免临时目录清理出现 EPERM。
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
   try {
     rmSync(tempDir, { recursive: true, force: true });
   } catch {
