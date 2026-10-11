@@ -78,22 +78,26 @@ function renderTaskItem(
   });
 
   return renderToStaticMarkup(
-    createElement(TooltipProvider, null, createElement(TaskItem, {
-      workspacePath: task.workspacePath,
-      task,
-      isPinned: false,
-      isActive: false,
-      onSelectTask: () => {},
-      onArchiveTaskInline: () => {},
-      onCancelArchiveConfirm: () => {},
-      isArchiveConfirming: false,
-      variant: params.variant,
-      onTogglePinTask: () => {},
-      onStartRenameTask: () => {},
-      onArchiveTask: () => {},
-      onMarkTaskAsUnread: () => {},
-      intl: createIntl(),
-    })),
+    createElement(
+      TooltipProvider,
+      null,
+      createElement(TaskItem, {
+        workspacePath: task.workspacePath,
+        task,
+        isPinned: false,
+        isActive: false,
+        onSelectTask: () => {},
+        onArchiveTaskInline: () => {},
+        onCancelArchiveConfirm: () => {},
+        isArchiveConfirming: false,
+        variant: params.variant,
+        onTogglePinTask: () => {},
+        onStartRenameTask: () => {},
+        onArchiveTask: () => {},
+        onMarkTaskAsUnread: () => {},
+        intl: createIntl(),
+      }),
+    ),
   );
 }
 
