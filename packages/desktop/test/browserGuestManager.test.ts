@@ -869,9 +869,11 @@ describe("BrowserGuestManager", () => {
     const logs: string[] = [];
     const mgr = new BrowserGuestManager((message) => logs.push(message));
 
-    mgr.attachGuest("renderer-id", 206);
-    const result = await mgr.execute("renderer-id", { method: "getState" });
+    const attachResult = mgr.attachGuest("renderer-id", 206);
+    // Bugfix：省略 tabId 会回退到 legacy 默认 tab 并等待 renderer attach ACK，显式目标可验证拒绝路径立即收敛。
+    const result = await mgr.execute("renderer-id", { method: "getState", tabId: "renderer-id" });
 
+    expect(attachResult).toEqual({ ok: false, reason: "not-webview", recoveryRequested: false });
     expect(spy.attached).toBe(false);
     expect(result.ok).toBe(false);
     expect(logs).toContainEqual(expect.stringContaining("reason=not-webview type=window"));
@@ -6008,7 +6010,6 @@ describe("BrowserGuestManager", () => {
     ).resolves.toBeUndefined();
     expect(mgr.hasGuest("browser:remote-drift")).toBe(false);
   });
-
 });
 
 describe("BrowserGuestManager.collectMemoryDiagnostics", () => {
