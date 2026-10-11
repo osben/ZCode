@@ -13,6 +13,7 @@ import {
 import { isCronTask, isOffPeakTask, type ZCodeTaskMeta } from "@zcode/shared";
 import { TID_TASK_ARCHIVE, TID_TASK_ITEM, testId } from "@zcode/shared";
 import { Badge } from "@/components/ui/badge.js";
+import { BranchMergedBadge } from "@/components/BranchMergedBadge.js";
 import { Button } from "@/components/ui/button.js";
 import { cn } from "@/components/lib/utils.js";
 import { ControlHintTooltip } from "@/ControlHintTooltip.js";
@@ -54,6 +55,8 @@ import {
   TaskWorkflowRunLines,
   type TaskWorkflowRunLinesIntl,
 } from "@/components/workflow-run-line/TaskWorkflowRunLines.js";
+import { Tooltip, TooltipTrigger } from "@/components/ui/tooltip.js";
+import { TaskSidebarHoverCard } from "@/components/TaskSidebarHoverCard.js";
 
 type TaskListItemIntl = TaskWorkflowRunLinesIntl;
 
@@ -396,15 +399,7 @@ export const MemoTaskItem = memo(function TaskListItem({
       buildTaskWorkspaceKey(task.workspacePath, task.workspaceIdentity),
     ),
   );
-  const branchMergedBadge =
-    branchMergeStatus?.state === "merged" ? (
-      <Badge
-        data-branch-merged-badge="true"
-        className="h-5 shrink-0 border-transparent bg-primary/14 px-2 text-ui-xs font-medium text-primary dark:bg-primary/18"
-      >
-        {intl.formatMessage({ id: "taskList.branchMergedTag" })}
-      </Badge>
-    ) : null;
+  const branchMergedBadge = branchMergeStatus?.state === "merged" ? <BranchMergedBadge /> : null;
   // Workflow run row: a second channel under the title,
   // independent from the leading 16px slot (error > unread > spinner). Mount only when the session has a run summary.
   const hasWorkflowRunLines = taskActivity?.workflowActivity !== undefined;
@@ -531,278 +526,296 @@ export const MemoTaskItem = memo(function TaskListItem({
   const shouldRenderPinAction =
     showPinAction && (showPinnedState || shouldSuppressWorkspaceTaskMetadata);
   return (
-    <li
-      ref={itemRef}
-      data-testid={testId(TID_TASK_ITEM, task.taskId)}
-      data-task-item-key={taskItemKey}
-      data-mobile-active-task={isMobileActive ? "true" : undefined}
-      data-archive-confirming-task-id={isArchiveConfirming ? task.taskId : undefined}
-      onClick={handleSelect}
-      onContextMenu={handleContextMenu}
-      draggable={canDragToWorkbench}
-      onDragStart={handleDragStart}
-      onDragEnd={handleDragEnd}
-      onMouseEnter={handleMouseEnter}
-      onMouseLeave={handleMouseLeave}
-      onFocusCapture={() => setFocusActionsVisible(true)}
-      onBlurCapture={(event) => {
-        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
-          setFocusActionsVisible(false);
-        }
-      }}
-      tabIndex={0}
-      onKeyDown={(event) => {
-        if (event.target !== event.currentTarget) {
-          return;
-        }
-        if (event.key === "Enter" || event.key === " ") {
-          event.preventDefault();
-          handleSelect();
-        }
-      }}
-      className={cn(
-        "group/task-item flex cursor-pointer gap-2 rounded-lg pl-2.5 pr-1 py-1 transition-[background-color,border-color,box-shadow]",
-        // For the default 32px row, center the leading slot across the row. When a workflow run row makes the body a two-row column, align the slot with the first row.
-        variant === "timeline"
-          ? "items-start py-1.5"
-          : hasWorkflowRunLines
-            ? "items-start"
-            : "items-center",
-        isActive ? "bg-selected" : "hover:bg-surface-hover",
-      )}
-    >
-      {/* Bugfix: The task list used to rely on divide-y separators, leaving a visible dark line above and below every item in the dark sidebar,
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <li
+          ref={itemRef}
+          data-testid={testId(TID_TASK_ITEM, task.taskId)}
+          data-task-item-key={taskItemKey}
+          data-mobile-active-task={isMobileActive ? "true" : undefined}
+          data-archive-confirming-task-id={isArchiveConfirming ? task.taskId : undefined}
+          onClick={handleSelect}
+          onContextMenu={handleContextMenu}
+          draggable={canDragToWorkbench}
+          onDragStart={handleDragStart}
+          onDragEnd={handleDragEnd}
+          onMouseEnter={handleMouseEnter}
+          onMouseLeave={handleMouseLeave}
+          onFocusCapture={() => setFocusActionsVisible(true)}
+          onBlurCapture={(event) => {
+            if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+              setFocusActionsVisible(false);
+            }
+          }}
+          tabIndex={0}
+          onKeyDown={(event) => {
+            if (event.target !== event.currentTarget) {
+              return;
+            }
+            if (event.key === "Enter" || event.key === " ") {
+              event.preventDefault();
+              handleSelect();
+            }
+          }}
+          className={cn(
+            "group/task-item flex cursor-pointer gap-2 rounded-lg pl-2.5 pr-1 py-1 transition-[background-color,border-color,box-shadow]",
+            // For the default 32px row, center the leading slot across the row. When a workflow run row makes the body a two-row column, align the slot with the first row.
+            variant === "timeline"
+              ? "items-start py-1.5"
+              : hasWorkflowRunLines
+                ? "items-start"
+                : "items-center",
+            isActive ? "bg-selected" : "hover:bg-surface-hover",
+          )}
+        >
+          {/* Bugfix: The task list used to rely on divide-y separators, leaving a visible dark line above and below every item in the dark sidebar,
               making each item look trapped between two borders. Use list spacing and rounded item states instead,
               so the card background defines hover/active hierarchy without separators. */}
 
-      <div
-        className={cn(
-          "relative flex size-4 shrink-0 items-center justify-center",
-          // When the body is a vertical column (title + run rows), align the leading slot with the first row rather than the full row: centering in the default 24px first row leaves 4px above.
-          variant === "timeline" ? "mt-0.5" : hasWorkflowRunLines ? "mt-1" : undefined,
-        )}
-      >
-        <span
-          aria-hidden="true"
-          className={cn(
-            "flex size-4 items-center justify-center transition-opacity",
-            shouldRenderPinAction && "hidden",
-            isMobileActive && "invisible",
-          )}
-        >
-          {leadingIndicator === "error" ? (
-            <span data-error-indicator="true" className="h-1.5 w-1.5 rounded-full bg-destructive" />
-          ) : leadingIndicator === "unread" ? (
-            <span
-              data-unread-indicator="true"
-              className="h-1.5 w-1.5 rounded-full bg-sky-500 dark:bg-sky-400"
-            />
-          ) : leadingIndicator === "loading" ? (
-            <LoaderIcon className="size-4 animate-spin text-foreground-subtle" />
-          ) : showTimelineIdleIndicator ? (
-            <span data-idle-indicator="true" className="h-1.5 w-1.5 rounded-full bg-border" />
-          ) : null}
-        </span>
-        {shouldRenderPinAction ? (
-          <ControlHintTooltip
-            title={
-              workspaceActionsDisabledReason ??
-              intl.formatMessage({
-                id: isPinned ? "taskList.unpin" : "taskList.pin",
-              })
-            }
-            side="top"
-            align="center"
+          <div
+            className={cn(
+              "relative flex size-4 shrink-0 items-center justify-center",
+              // When the body is a vertical column (title + run rows), align the leading slot with the first row rather than the full row: centering in the default 24px first row leaves 4px above.
+              variant === "timeline" ? "mt-0.5" : hasWorkflowRunLines ? "mt-1" : undefined,
+            )}
           >
-            {pinActionButton}
-          </ControlHintTooltip>
-        ) : null}
-      </div>
-
-      {variant === "timeline" ? (
-        <div className="relative flex min-w-0 flex-1 flex-col gap-0.5">
-          <div className="flex min-w-0 items-center gap-1.5">
-            {isMobileActive && !shouldSuppressWorkspaceTaskMetadata ? (
-              <ControlHintTooltip
-                title={intl.formatMessage({ id: "taskList.mobileActive" })}
-                side="right"
-                align="center"
-                triggerClassName="absolute -left-6 top-2 z-10 -translate-y-1/2"
-              >
+            <span
+              aria-hidden="true"
+              className={cn(
+                "flex size-4 items-center justify-center transition-opacity",
+                shouldRenderPinAction && "hidden",
+                isMobileActive && "invisible",
+              )}
+            >
+              {leadingIndicator === "error" ? (
                 <span
-                  data-mobile-active-task="true"
-                  className="inline-flex size-4 items-center justify-center rounded-sm text-success"
-                  aria-label={intl.formatMessage({
-                    id: "taskList.mobileActive",
-                  })}
-                >
-                  <Smartphone className="size-3.5" />
-                </span>
+                  data-error-indicator="true"
+                  className="h-1.5 w-1.5 rounded-full bg-destructive"
+                />
+              ) : leadingIndicator === "unread" ? (
+                <span
+                  data-unread-indicator="true"
+                  className="h-1.5 w-1.5 rounded-full bg-sky-500 dark:bg-sky-400"
+                />
+              ) : leadingIndicator === "loading" ? (
+                <LoaderIcon className="size-4 animate-spin text-foreground-subtle" />
+              ) : showTimelineIdleIndicator ? (
+                <span data-idle-indicator="true" className="h-1.5 w-1.5 rounded-full bg-border" />
+              ) : null}
+            </span>
+            {shouldRenderPinAction ? (
+              <ControlHintTooltip
+                title={
+                  workspaceActionsDisabledReason ??
+                  intl.formatMessage({
+                    id: isPinned ? "taskList.unpin" : "taskList.pin",
+                  })
+                }
+                side="top"
+                align="center"
+              >
+                {pinActionButton}
               </ControlHintTooltip>
             ) : null}
-            <TaskTitleOverflowText
-              className="text-ui-base text-foreground"
-              title={taskTitleWithChanges}
-            >
-              {/* Bugfix: Workspace/timeline task titles previously used truncate, adding an ellipsis at the end of long titles;
-                      grouped tasks now fade on the right. Apply that same title-overflow behavior to the task list to avoid two truncation styles in one sidebar. */}
-              {taskTitle}
-            </TaskTitleOverflowText>
-            {task.pendingInteraction ? (
-              <TaskInteractionBadge
-                interaction={task.pendingInteraction}
-                formatMessage={(id) => intl.formatMessage({ id })}
-                onSnoozeCountdown={snoozeInteractionAutoResolution}
-              />
-            ) : taskAttentionDisplay ? (
-              <Badge className="h-5 shrink-0 border-transparent bg-success/14 px-2 text-ui-base font-medium text-success dark:bg-success/18">
-                {taskAttentionDisplay}
-              </Badge>
-            ) : (
-              branchMergedBadge
-            )}
           </div>
-          <div className="flex min-w-0 items-center justify-between gap-2 text-ui-base text-foreground-subtle h-6">
-            <div className="flex min-w-0 items-center gap-1.5">
-              <span className="truncate">{workspaceLabel}</span>
-            </div>
-            <div className="ml-auto flex shrink-0 items-center justify-end gap-1.5">
-              {!hasPendingInteraction ? (
-                <span
-                  data-task-row-metadata="true"
-                  className={cn(
-                    "flex items-center gap-1.5",
-                    isArchiveConfirming || shouldSuppressWorkspaceTaskMetadata
-                      ? "hidden"
-                      : undefined,
-                  )}
+
+          {variant === "timeline" ? (
+            <div className="relative flex min-w-0 flex-1 flex-col gap-0.5">
+              <div className="flex min-w-0 items-center gap-1.5">
+                {isMobileActive && !shouldSuppressWorkspaceTaskMetadata ? (
+                  <ControlHintTooltip
+                    title={intl.formatMessage({ id: "taskList.mobileActive" })}
+                    side="right"
+                    align="center"
+                    triggerClassName="absolute -left-6 top-2 z-10 -translate-y-1/2"
+                  >
+                    <span
+                      data-mobile-active-task="true"
+                      className="inline-flex size-4 items-center justify-center rounded-sm text-success"
+                      aria-label={intl.formatMessage({
+                        id: "taskList.mobileActive",
+                      })}
+                    >
+                      <Smartphone className="size-3.5" />
+                    </span>
+                  </ControlHintTooltip>
+                ) : null}
+                <TaskTitleOverflowText
+                  className="text-ui-base text-foreground"
+                  title={taskTitleWithChanges}
                 >
-                  {changeSummaryNode}
-                  {changeSummaryNode ? (
-                    <span aria-hidden="true" className="shrink-0 text-foreground-subtlest">
-                      ·
+                  {/* Bugfix: Workspace/timeline task titles previously used truncate, adding an ellipsis at the end of long titles;
+                      grouped tasks now fade on the right. Apply that same title-overflow behavior to the task list to avoid two truncation styles in one sidebar. */}
+                  {taskTitle}
+                </TaskTitleOverflowText>
+                {task.pendingInteraction ? (
+                  <TaskInteractionBadge
+                    interaction={task.pendingInteraction}
+                    formatMessage={(id) => intl.formatMessage({ id })}
+                    onSnoozeCountdown={snoozeInteractionAutoResolution}
+                  />
+                ) : taskAttentionDisplay ? (
+                  <Badge className="h-5 shrink-0 border-transparent bg-success/14 px-2 text-ui-base font-medium text-success dark:bg-success/18">
+                    {taskAttentionDisplay}
+                  </Badge>
+                ) : (
+                  branchMergedBadge
+                )}
+              </div>
+              <div className="flex min-w-0 items-center justify-between gap-2 text-ui-base text-foreground-subtle h-6">
+                <div className="flex min-w-0 items-center gap-1.5">
+                  <span className="truncate">{workspaceLabel}</span>
+                </div>
+                <div className="ml-auto flex shrink-0 items-center justify-end gap-1.5">
+                  {!hasPendingInteraction ? (
+                    <span
+                      data-task-row-metadata="true"
+                      className={cn(
+                        "flex items-center gap-1.5",
+                        isArchiveConfirming || shouldSuppressWorkspaceTaskMetadata
+                          ? "hidden"
+                          : undefined,
+                      )}
+                    >
+                      {changeSummaryNode}
+                      {changeSummaryNode ? (
+                        <span aria-hidden="true" className="shrink-0 text-foreground-subtlest">
+                          ·
+                        </span>
+                      ) : null}
+                      {isTaskCron ? (
+                        // A scheduled-task icon must not occupy the left status slot; unread, running, and pinned-hover states all use that area.
+                        // Place it before the time, matching metadata on grouped task rows so it remains visible when status changes.
+                        <Clock
+                          data-cron-task-icon="true"
+                          aria-label={intl.formatMessage({
+                            id: "taskList.cronTaskLabel",
+                          })}
+                          className="size-3.5 shrink-0"
+                        />
+                      ) : isTaskOffPeak ? (
+                        <Moon
+                          data-off-peak-task-icon="true"
+                          aria-label={intl.formatMessage({ id: "taskList.offPeakTaskLabel" })}
+                          className="size-3.5 shrink-0"
+                        />
+                      ) : null}
+                      <span className="mr-1">{taskTimeLabel}</span>
                     </span>
                   ) : null}
-                  {isTaskCron ? (
-                    // A scheduled-task icon must not occupy the left status slot; unread, running, and pinned-hover states all use that area.
-                    // Place it before the time, matching metadata on grouped task rows so it remains visible when status changes.
-                    <Clock
-                      data-cron-task-icon="true"
-                      aria-label={intl.formatMessage({
-                        id: "taskList.cronTaskLabel",
-                      })}
-                      className="size-3.5 shrink-0"
-                    />
-                  ) : isTaskOffPeak ? (
-                    <Moon
-                      data-off-peak-task-icon="true"
-                      aria-label={intl.formatMessage({ id: "taskList.offPeakTaskLabel" })}
-                      className="size-3.5 shrink-0"
-                    />
-                  ) : null}
-                  <span className="mr-1">{taskTimeLabel}</span>
-                </span>
-              ) : null}
-              {taskActionGroupNode}
+                  {taskActionGroupNode}
+                </div>
+              </div>
+              {workflowRunLinesNode}
             </div>
-          </div>
-          {workflowRunLinesNode}
-        </div>
-      ) : (
-        <div className="flex min-w-0 flex-1 flex-col">
-          <div className="flex min-w-0 items-center gap-2">
-            <div className="relative min-w-0 flex h-6 flex-1 flex-wrap items-center gap-1.5">
-              {isMobileActive && !shouldSuppressWorkspaceTaskMetadata ? (
-                <ControlHintTooltip
-                  title={intl.formatMessage({ id: "taskList.mobileActive" })}
-                  side="right"
-                  align="center"
-                  triggerClassName="absolute -left-6 top-1/2 z-10 -translate-y-1/2"
-                >
-                  <span
-                    data-mobile-active-task="true"
-                    className="inline-flex size-4 items-center justify-center rounded-sm text-success"
-                    aria-label={intl.formatMessage({
-                      id: "taskList.mobileActive",
-                    })}
-                  >
-                    {/* Bugfix: mobileViewState already tells the desktop which task the phone is viewing,
+          ) : (
+            <div className="flex min-w-0 flex-1 flex-col">
+              <div className="flex min-w-0 items-center gap-2">
+                <div className="relative min-w-0 flex h-6 flex-1 flex-wrap items-center gap-1.5">
+                  {isMobileActive && !shouldSuppressWorkspaceTaskMetadata ? (
+                    <ControlHintTooltip
+                      title={intl.formatMessage({ id: "taskList.mobileActive" })}
+                      side="right"
+                      align="center"
+                      triggerClassName="absolute -left-6 top-1/2 z-10 -translate-y-1/2"
+                    >
+                      <span
+                        data-mobile-active-task="true"
+                        className="inline-flex size-4 items-center justify-center rounded-sm text-success"
+                        aria-label={intl.formatMessage({
+                          id: "taskList.mobileActive",
+                        })}
+                      >
+                        {/* Bugfix: mobileViewState already tells the desktop which task the phone is viewing,
                         but the list did not use this state, making users think only the desktop was active. The previous version put the icon in the title’s flex flow,
                         pushing the current title right and misaligning task titles. Position it in the existing leading slot instead,
                         so title text stays in its original position; hide the phone indicator on hover to restore the pin button. */}
-                    <Smartphone className="size-3.5" />
-                  </span>
-                </ControlHintTooltip>
-              ) : null}
-              <TaskTitleOverflowText
-                className="text-ui-base text-foreground"
-                title={taskTitleWithChanges}
-              >
-                {/* Bugfix: Default workspace task items and timeline items share title-overflow behavior;
+                        <Smartphone className="size-3.5" />
+                      </span>
+                    </ControlHintTooltip>
+                  ) : null}
+                  <TaskTitleOverflowText
+                    className="text-ui-base text-foreground"
+                    title={taskTitleWithChanges}
+                  >
+                    {/* Bugfix: Default workspace task items and timeline items share title-overflow behavior;
                         use a mask fade instead of an ellipsis, matching grouped task rows. */}
-                {taskTitle}
-              </TaskTitleOverflowText>
-              {changeSummaryNode ? (
-                <span
-                  className={cn(
-                    isArchiveConfirming || shouldSuppressWorkspaceTaskMetadata
-                      ? "hidden"
-                      : undefined,
+                    {taskTitle}
+                  </TaskTitleOverflowText>
+                  {changeSummaryNode ? (
+                    <span
+                      className={cn(
+                        isArchiveConfirming || shouldSuppressWorkspaceTaskMetadata
+                          ? "hidden"
+                          : undefined,
+                      )}
+                    >
+                      {changeSummaryNode}
+                    </span>
+                  ) : null}
+                  {task.pendingInteraction ? (
+                    <TaskInteractionBadge
+                      interaction={task.pendingInteraction}
+                      formatMessage={(id) => intl.formatMessage({ id })}
+                      onSnoozeCountdown={snoozeInteractionAutoResolution}
+                    />
+                  ) : taskAttentionDisplay ? (
+                    <Badge className="h-5 shrink-0 border-transparent bg-success/14 px-2 text-ui-sm font-medium text-success dark:bg-success/18">
+                      {taskAttentionDisplay}
+                    </Badge>
+                  ) : (
+                    branchMergedBadge
                   )}
-                >
-                  {changeSummaryNode}
-                </span>
-              ) : null}
-              {task.pendingInteraction ? (
-                <TaskInteractionBadge
-                  interaction={task.pendingInteraction}
-                  formatMessage={(id) => intl.formatMessage({ id })}
-                  onSnoozeCountdown={snoozeInteractionAutoResolution}
-                />
-              ) : taskAttentionDisplay ? (
-                <Badge className="h-5 shrink-0 border-transparent bg-success/14 px-2 text-ui-sm font-medium text-success dark:bg-success/18">
-                  {taskAttentionDisplay}
-                </Badge>
-              ) : (
-                branchMergedBadge
-              )}
-            </div>
+                </div>
 
-            {!hasPendingInteraction ? (
-              // The interaction pill already uses the right-side status slot; showing relative time too would crowd the title alongside “Awaiting confirmation.”
-              <span
-                data-task-row-metadata="true"
-                className={cn(
-                  "mr-0.5 flex shrink-0 items-center gap-1 text-ui-sm text-foreground-subtle",
-                  isArchiveConfirming || shouldSuppressWorkspaceTaskMetadata ? "hidden" : undefined,
-                )}
-              >
-                {isTaskCron ? (
-                  // The scheduled-task icon belongs with time metadata, not the left status slot; otherwise unread/loading would displace it.
-                  <Clock
-                    data-cron-task-icon="true"
-                    aria-label={intl.formatMessage({
-                      id: "taskList.cronTaskLabel",
-                    })}
-                    className="size-3.5 shrink-0"
-                  />
-                ) : isTaskOffPeak ? (
-                  <Moon
-                    data-off-peak-task-icon="true"
-                    aria-label={intl.formatMessage({ id: "taskList.offPeakTaskLabel" })}
-                    className="size-3.5 shrink-0"
-                  />
+                {!hasPendingInteraction ? (
+                  // The interaction pill already uses the right-side status slot; showing relative time too would crowd the title alongside “Awaiting confirmation.”
+                  <span
+                    data-task-row-metadata="true"
+                    className={cn(
+                      "mr-0.5 flex shrink-0 items-center gap-1 text-ui-sm text-foreground-subtle",
+                      isArchiveConfirming || shouldSuppressWorkspaceTaskMetadata
+                        ? "hidden"
+                        : undefined,
+                    )}
+                  >
+                    {isTaskCron ? (
+                      // The scheduled-task icon belongs with time metadata, not the left status slot; otherwise unread/loading would displace it.
+                      <Clock
+                        data-cron-task-icon="true"
+                        aria-label={intl.formatMessage({
+                          id: "taskList.cronTaskLabel",
+                        })}
+                        className="size-3.5 shrink-0"
+                      />
+                    ) : isTaskOffPeak ? (
+                      <Moon
+                        data-off-peak-task-icon="true"
+                        aria-label={intl.formatMessage({ id: "taskList.offPeakTaskLabel" })}
+                        className="size-3.5 shrink-0"
+                      />
+                    ) : null}
+                    {taskTimeLabel}
+                  </span>
                 ) : null}
-                {taskTimeLabel}
-              </span>
-            ) : null}
 
-            {taskActionGroupNode}
-          </div>
-          {workflowRunLinesNode}
-        </div>
-      )}
-    </li>
+                {taskActionGroupNode}
+              </div>
+              {workflowRunLinesNode}
+            </div>
+          )}
+        </li>
+      </TooltipTrigger>
+      <TaskSidebarHoverCard
+        task={task}
+        workspaceLabel={workspaceLabel}
+        attentionLabel={taskAttentionDisplay}
+        activity={taskActivity}
+        branchMergeStatus={branchMergeStatus}
+        intl={intl}
+        isRemote={isRemoteTask}
+      />
+    </Tooltip>
   );
 }, areTaskListItemPropsEqual);
 
