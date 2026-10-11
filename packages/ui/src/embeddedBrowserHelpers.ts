@@ -27,7 +27,7 @@ const WEBVIEW_DETACHED_ERROR_FRAGMENTS = [
   "Render frame was disposed",
 ] as const;
 
-function isWebviewDetachedError(error: unknown): boolean {
+export function isWebviewDetachedError(error: unknown): boolean {
   const message = error instanceof Error ? error.message : typeof error === "string" ? error : "";
   if (!message) {
     return false;
@@ -217,7 +217,7 @@ function isLocalhostName(host: string): boolean {
   return host === "localhost" || host === "localhost.localdomain" || host.endsWith(".localhost");
 }
 
-function isLocalDevelopmentHost(host: string): boolean {
+export function isLocalDevelopmentHost(host: string): boolean {
   const normalizedHost = host.toLowerCase().replace(/^\[(.*)]$/, "$1");
   if (
     isLocalhostName(normalizedHost) ||
@@ -245,7 +245,7 @@ function isLocalDevelopmentHost(host: string): boolean {
   );
 }
 
-function isLocalDevelopmentBrowserUrl(url: string): boolean {
+export function isLocalDevelopmentBrowserUrl(url: string): boolean {
   try {
     const parsed = new URL(url);
     if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
@@ -258,7 +258,7 @@ function isLocalDevelopmentBrowserUrl(url: string): boolean {
   }
 }
 
-type MessageLinkOpenTarget = "app-browser" | "external-browser";
+export type MessageLinkOpenTarget = "app-browser" | "external-browser";
 
 /**
  * Interaction semantics: the two context-menu items explicitly choose complementary destinations; only a left click uses the local/private-network heuristic.

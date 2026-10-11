@@ -1,3 +1,4 @@
+import type { RequestVerificationReason } from "@zcode/shared";
 import { generateText as aiGenerateText, streamText as aiStreamText } from "ai";
 import type {
   ModelProperties,
@@ -29,8 +30,10 @@ export interface AiSdkModelTextRequest extends ModelTextRequest {
   // model request, so core/host must have a chance to refresh before every attempt is sent.
   refreshRuntimeHeadersBeforeAttempt?: (input: {
     accountAccess?: ZCodeProviderAccountAccess;
+    expectedAccountScope?: string;
+    rejectedProjectTokenFingerprint?: string;
     attempt: number;
-    reason?: "model-request";
+    reason?: RequestVerificationReason;
     abortSignal?: AbortSignal;
     providerId: string;
     modelId: string;

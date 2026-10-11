@@ -1,30 +1,31 @@
 import { databaseStartupControlSchema, databaseStartupStateSchema } from "./database-startup.js";
+import { mcpAppInstanceSchema } from "./mcp-apps/instance.js";
 import {
-  sessionCreateTelemetrySchema,
   automationSessionCreateTelemetrySchema,
+  sessionCreateTelemetrySchema,
 } from "./sessionCreateTelemetry.js";
 /* eslint-disable max-lines -- Runtime schemas are currently centralized at the shared-package entry point; keep one export surface for now as external relay-payload validation is added. */
 import { z } from "zod";
-import { zcodeProcessDiagnosticSchema } from "./process-diagnostic.js";
+import { networkCaptureControlSchema, networkCaptureBatchSchema } from "./networkCapture.js";
 import { browserCommandSchema } from "./browser-use/commands.js";
 import { browserCommandResultSchema } from "./browser-use/result.js";
-import { REMOTE_ASSET_INSTALL_MODES } from "./remoteAssetInstallMode.js";
-import { PROCESS_RESOURCE_CLI_LANES } from "./processResourceTelemetry.js";
-import { isKnownRemoteResourcePackageId } from "./remoteResourcePackages.js";
-import { zcodeProviderSchema } from "./providers.js";
-import { zcodeAgentProviderSchema } from "./zcode-agent-policy.js";
 import { modelSelectionSchema } from "./model-selection.js";
-import { providerProvisioningTriggerSchema } from "./provider-provisioning.js";
+import { zcodeProcessDiagnosticSchema } from "./process-diagnostic.js";
+import { PROCESS_RESOURCE_CLI_LANES } from "./processResourceTelemetry.js";
 import {
-  zcodeMcpTelemetryEventSchema,
-  zcodeMcpResourceSamplesSchema,
-  zcodeToolExecResourceSchema,
-  zcodeProcessResourceSampleSchema,
-} from "./zcode-protocol/index.js";
-import { zcodeTaskModeSchema } from "./zcode-task-mode-schema.js";
+  providerProvisioningErrorCodeSchema,
+  providerProvisioningTriggerSchema,
+} from "./provider-provisioning.js";
+import { zcodeProviderSchema } from "./providers.js";
+import { REMOTE_ASSET_INSTALL_MODES } from "./remoteAssetInstallMode.js";
+import { isKnownRemoteResourcePackageId } from "./remoteResourcePackages.js";
+import type { WebRemoteControlAppPayload } from "./web-remote-control.js";
 import { PROTOCOL_V4_LIMITS } from "./zcode-protocol-v4/core.js";
-import { errorAttributionSchema } from "./zcode-protocol-v4/snapshot.js";
 import { sessionWorkflowActivitySchema } from "./zcode-protocol-v4/sessions-index-workflow-activity.js";
+import {
+  webRemoteControlRpcTransportAckSchema,
+  webRemoteControlRpcTransportFrameSchema,
+} from "./web-remote-control-rpc-transport.js";
 import {
   taskOwnerCommandDeliverySchema,
   taskOwnerCommandRequestSchema,
@@ -38,10 +39,17 @@ import {
   taskStreamMirrorPublishOpSchema,
   taskStreamMirrorTargetSchema,
 } from "./task-realtime-core.js";
-
-export { WSL_USER_MAX_LENGTH, isValidWslUser, wslUserSchema } from "./wslUserValidation.js";
-export { zcodeTaskModeSchema } from "./zcode-task-mode-schema.js";
 import { wslUserSchema } from "./wslUserValidation.js";
+import { legacyZCodeProviderSchema } from "./zcode-agent-policy.js";
+import { errorAttributionSchema } from "./zcode-protocol-v4/snapshot.js";
+import {
+  zcodeMcpResourceSamplesSchema,
+  zcodeMcpTelemetryEventSchema,
+  zcodeProcessResourceSampleSchema,
+  zcodeToolExecResourceSchema,
+} from "./zcode-protocol/index.js";
+import { zcodeTaskModeSchema } from "./zcode-task-mode-schema.js";
+
 export {
   appSettingsOccupationEnum,
   appSettingsPatchSchema,
@@ -49,6 +57,8 @@ export {
   localeSchema,
   postUpdateReleaseNotesPayloadSchema,
 } from "./validationAppSettings.js";
+export { isValidWslUser, WSL_USER_MAX_LENGTH, wslUserSchema } from "./wslUserValidation.js";
+export { zcodeTaskModeSchema } from "./zcode-task-mode-schema.js";
 
 export function formatZodError(error: z.ZodError): string {
   return error.issues
@@ -61,6 +71,320 @@ export function formatZodError(error: z.ZodError): string {
 
 export const nonEmptyStringSchema = z.string().trim().min(1);
 export const stringArraySchema = z.array(z.string());
+// Task04B: the topic physical-frame meter uses the protocol maximum length for bridge/recovery IDs
+// as the mobile relay envelope. Do not apply this limit mechanically at the untrusted payload boundary, or the 1 MiB ceiling is only an estimate.
+const webRemoteControlTransportIdSchema = nonEmptyStringSchema
+  .max(PROTOCOL_V4_LIMITS.transportEnvelopeIdMaxChars)
+  .regex(/^[A-Za-z0-9._~-]+$/u);
+
+export const webRemoteControlWorkspaceTargetSchema = z.object({
+  workspacePath: nonEmptyStringSchema,
+  workspaceIdentity: nonEmptyStringSchema.optional(),
+  remoteSessionId: nonEmptyStringSchema.optional(),
+  label: nonEmptyStringSchema,
+  workspacePurpose: z.enum(["project", "conversation"]).optional(),
+  kind: z.enum(["local", "remote"]),
+  connectionState: z.enum(["connected", "disconnected", "reconnecting"]).optional(),
+  lastConnectionError: z.string().optional(),
+});
+
+export const webRemoteControlWorkspaceTargetsSchema = z.array(
+  webRemoteControlWorkspaceTargetSchema,
+);
+
+export const webRemoteControlReconnectWorkspaceRequestSchema = z.object({
+  requestId: nonEmptyStringSchema,
+  workspaceKey: nonEmptyStringSchema,
+});
+
+export const webRemoteControlReconnectWorkspaceResultSchema = z.union([
+  z.object({
+    requestId: nonEmptyStringSchema,
+    workspaceKey: nonEmptyStringSchema,
+    success: z.literal(true),
+  }),
+  z.object({
+    requestId: nonEmptyStringSchema,
+    workspaceKey: nonEmptyStringSchema,
+    success: z.literal(false),
+    error: z.string(),
+  }),
+]);
+
+export const webRemoteControlTaskTargetSchema = z.object({
+  taskId: nonEmptyStringSchema,
+  title: z.string(),
+  workspacePath: nonEmptyStringSchema,
+  workspaceIdentity: nonEmptyStringSchema.optional(),
+  remoteSessionId: nonEmptyStringSchema.optional(),
+  workspaceLabel: nonEmptyStringSchema,
+  workspaceKind: z.enum(["local", "remote"]),
+  createdAt: z.number().finite(),
+  updatedAt: z.number().finite(),
+  provider: zcodeProviderSchema.optional(),
+  unreadAt: z.number().finite().optional(),
+  displayStatus: z.enum(["idle", "running", "completed", "error"]).optional(),
+  hasBackgroundWork: z.boolean().optional(),
+  workflowActivity: sessionWorkflowActivitySchema.optional(),
+  pinned: z.boolean().optional(),
+  archived: z.boolean().optional(),
+});
+
+export const webRemoteControlTaskTargetsSchema = z.array(webRemoteControlTaskTargetSchema);
+
+export const webRemoteControlFailureReasonSchema = z.enum([
+  "session-not-found",
+  "session-expired",
+  "session-conflict",
+  "workspace-closed",
+  "desktop-disconnected",
+  "invalid-mobile-connection",
+  "desktop-bootstrap-timeout",
+  "connection-recovery-timeout",
+  "relay-unavailable",
+  "unsupported-action",
+  "unexpected-error",
+]);
+
+export const webRemoteControlExternalWorkspaceBridgeSchema = z.discriminatedUnion("kind", [
+  z.object({
+    bridgeSessionId: webRemoteControlTransportIdSchema,
+    bridgeGeneration: z.number().int().nonnegative().optional(),
+    recoveryId: webRemoteControlTransportIdSchema.optional(),
+    kind: z.literal("local"),
+    workspaceKey: nonEmptyStringSchema,
+    workspacePath: nonEmptyStringSchema,
+    initialTaskId: nonEmptyStringSchema.optional(),
+  }),
+  z.object({
+    bridgeSessionId: webRemoteControlTransportIdSchema,
+    bridgeGeneration: z.number().int().nonnegative().optional(),
+    recoveryId: webRemoteControlTransportIdSchema.optional(),
+    kind: z.literal("remote"),
+    workspaceKey: nonEmptyStringSchema,
+    workspacePath: nonEmptyStringSchema,
+    workspaceIdentity: nonEmptyStringSchema,
+    remoteSessionId: nonEmptyStringSchema,
+    initialTaskId: nonEmptyStringSchema.optional(),
+  }),
+]);
+
+export const webRemoteControlMobileViewStateSchema = z.object({
+  activeWorkspaceKey: nonEmptyStringSchema.optional(),
+  activeTaskId: nonEmptyStringSchema.optional(),
+  updatedAt: z.number().finite(),
+});
+
+export const webRemoteControlMobileDeviceInfoSchema = z.object({
+  platform: nonEmptyStringSchema,
+  version: nonEmptyStringSchema,
+  name: nonEmptyStringSchema,
+  userAgent: z.string().optional(),
+  language: z.string().optional(),
+  languages: z.array(z.string()).optional(),
+  browserPlatform: z.string().optional(),
+  viewport: z
+    .object({
+      width: z.number().finite(),
+      height: z.number().finite(),
+      devicePixelRatio: z.number().finite(),
+    })
+    .optional(),
+  screen: z
+    .object({
+      width: z.number().finite(),
+      height: z.number().finite(),
+    })
+    .optional(),
+  timezone: z.string().optional(),
+  online: z.boolean().optional(),
+  updatedAt: z.number().finite(),
+});
+
+export const webRemoteControlWindowBootstrapResultSchema = z.object({
+  windowControlSessionId: nonEmptyStringSchema,
+  desktopAppVersion: nonEmptyStringSchema.optional(),
+  workspaces: webRemoteControlWorkspaceTargetsSchema,
+  tasks: webRemoteControlTaskTargetsSchema,
+  initialViewState: webRemoteControlMobileViewStateSchema.optional(),
+  mobileViewState: webRemoteControlMobileViewStateSchema.optional(),
+});
+
+export const webRemoteControlWorkspaceListResultSchema = z.object({
+  workspaces: webRemoteControlWorkspaceTargetsSchema,
+  tasks: webRemoteControlTaskTargetsSchema.optional(),
+  activeWorkspaceKey: nonEmptyStringSchema.optional(),
+  activeTaskId: nonEmptyStringSchema.optional(),
+});
+
+export const webRemoteControlPlatformMethodSchema = z.enum([
+  "isDockerAvailable",
+  "listWSLDistros",
+  "listDockerContainers",
+  "listSSHConfigAliases",
+  "loadMcpFromUserDirectory",
+  "saveMcpToUserDirectory",
+  "migrateLegacyCommonMcp",
+]);
+
+const webRemoteControlAppPayloadSchemas = [
+  z
+    .object({ zcode_type: z.literal("telemetry-report"), event: sessionCreateTelemetrySchema })
+    .strict(),
+  z.object({
+    zcode_type: z.literal("bootstrap-request"),
+    requestId: nonEmptyStringSchema,
+  }),
+  z.object({
+    zcode_type: z.literal("bootstrap-response"),
+    requestId: nonEmptyStringSchema,
+    success: z.literal(true),
+    result: webRemoteControlWindowBootstrapResultSchema,
+  }),
+  z.object({
+    zcode_type: z.literal("workspace-list-request"),
+    requestId: nonEmptyStringSchema,
+  }),
+  z.object({
+    zcode_type: z.literal("workspace-list-response"),
+    requestId: nonEmptyStringSchema,
+    success: z.literal(true),
+    result: webRemoteControlWorkspaceListResultSchema,
+  }),
+  z.object({
+    zcode_type: z.literal("workspace-list-updated"),
+    result: webRemoteControlWorkspaceListResultSchema,
+  }),
+  z.object({
+    zcode_type: z.literal("workspace-bridge-open"),
+    requestId: nonEmptyStringSchema,
+    bridgeSessionId: webRemoteControlTransportIdSchema,
+    bridgeGeneration: z.number().int().nonnegative().optional(),
+    recoveryId: webRemoteControlTransportIdSchema.optional(),
+    workspaceKey: nonEmptyStringSchema,
+    taskId: nonEmptyStringSchema.optional(),
+  }),
+  z.object({
+    zcode_type: z.literal("workspace-bridge-ready"),
+    requestId: nonEmptyStringSchema,
+    bridgeSessionId: webRemoteControlTransportIdSchema,
+    bridgeGeneration: z.number().int().nonnegative().optional(),
+    recoveryId: webRemoteControlTransportIdSchema.optional(),
+    bridge: webRemoteControlExternalWorkspaceBridgeSchema,
+  }),
+  z.object({
+    zcode_type: z.literal("workspace-bridge-error"),
+    requestId: nonEmptyStringSchema,
+    bridgeSessionId: webRemoteControlTransportIdSchema.optional(),
+    bridgeGeneration: z.number().int().nonnegative().optional(),
+    recoveryId: webRemoteControlTransportIdSchema.optional(),
+    reason: webRemoteControlFailureReasonSchema,
+    error: z.string(),
+  }),
+  z.object({
+    zcode_type: z.literal("workspace-reconnect-request"),
+    requestId: nonEmptyStringSchema,
+    workspaceKey: nonEmptyStringSchema,
+  }),
+  z.object({
+    zcode_type: z.literal("workspace-reconnect-response"),
+    requestId: nonEmptyStringSchema,
+    workspaceKey: nonEmptyStringSchema,
+    success: z.literal(true),
+  }),
+  z.object({
+    zcode_type: z.literal("workspace-reconnect-response"),
+    requestId: nonEmptyStringSchema,
+    workspaceKey: nonEmptyStringSchema,
+    success: z.literal(false),
+    error: z.string(),
+  }),
+  z.object({
+    zcode_type: z.literal("mobile-view-state-update"),
+    viewState: webRemoteControlMobileViewStateSchema,
+    deviceInfo: webRemoteControlMobileDeviceInfoSchema.optional(),
+  }),
+  z.object({
+    zcode_type: z.literal("platform-request"),
+    requestId: nonEmptyStringSchema,
+    method: webRemoteControlPlatformMethodSchema,
+    args: z.unknown().optional(),
+  }),
+  z.object({
+    zcode_type: z.literal("platform-response"),
+    requestId: nonEmptyStringSchema,
+    method: webRemoteControlPlatformMethodSchema,
+    success: z.literal(true),
+    result: z.unknown(),
+  }),
+  z.object({
+    zcode_type: z.literal("platform-response"),
+    requestId: nonEmptyStringSchema,
+    method: webRemoteControlPlatformMethodSchema,
+    success: z.literal(false),
+    error: z.string(),
+  }),
+  // Bug fix: 04D-3 must switch fragments/ACKs and the acknowledged adapter atomically.
+  // Continuing to accept legacy single-part messages lets raw bytes bypass the ACK/replay owner and the 1 MiB envelope limit.
+  webRemoteControlRpcTransportFrameSchema,
+  webRemoteControlRpcTransportAckSchema,
+  z.object({
+    zcode_type: z.literal("bridge-degraded"),
+    bridgeSessionId: webRemoteControlTransportIdSchema,
+    bridgeGeneration: z.number().int().nonnegative().optional(),
+    recoveryId: webRemoteControlTransportIdSchema.optional(),
+    reason: z.enum(["rpc-transport-fault", "rpc-frame-gap", "buffer-overflow", "buffer-timeout"]),
+    seq: z.number().int().nonnegative().optional(),
+    expectedSeq: z.number().int().nonnegative().optional(),
+    droppedCount: z.number().int().nonnegative().optional(),
+  }),
+  z.object({
+    zcode_type: z.literal("app-error"),
+    requestId: nonEmptyStringSchema.optional(),
+    bridgeSessionId: webRemoteControlTransportIdSchema.optional(),
+    reason: webRemoteControlFailureReasonSchema,
+    error: z.string(),
+  }),
+  z.object({
+    zcode_type: z.literal("mobile-diagnostic"),
+    event: z.enum([
+      "state-transition",
+      "socket-close",
+      "socket-error",
+      "recover-start",
+      "recover-scheduled",
+      "pair-status",
+      "failure",
+    ]),
+    timestamp: z.number().int().nonnegative(),
+    state: z.string().optional(),
+    previousState: z.string().optional(),
+    pairStatus: z.enum(["waiting", "matched"]).optional(),
+    closeCode: z.number().int().optional(),
+    closeReason: z.string().optional(),
+    wasClean: z.boolean().optional(),
+    wasPaired: z.boolean().optional(),
+    failureReason: webRemoteControlFailureReasonSchema.optional(),
+    failureMessage: z.string().optional(),
+    visibilityState: z.string().optional(),
+    online: z.boolean().optional(),
+    hiddenDurationMs: z.number().int().nonnegative().optional(),
+  }),
+] as const;
+
+// Bugfix: Multiple messages in an app payload share zcode_type (for example, platform-response),
+// so z.discriminatedUnion("zcode_type") cannot be used directly; duplicate values would make schema initialization fail.
+// Keep the same runtime constraints but use a regular union, so untrusted payloads from the external relay
+// are still validated mechanically before entering Desktop/Web routing.
+export const webRemoteControlAppPayloadSchema = z.union(webRemoteControlAppPayloadSchemas);
+
+export function parseWebRemoteControlAppPayload(
+  payload: unknown,
+): WebRemoteControlAppPayload | null {
+  const result = webRemoteControlAppPayloadSchema.safeParse(payload);
+  return result.success ? (result.data as WebRemoteControlAppPayload) : null;
+}
+
 export const credentialRecordSchema = z.record(z.string(), z.string());
 export const credentialKeySchema = nonEmptyStringSchema;
 export const credentialValueSchema = z.string();
@@ -93,10 +417,20 @@ export const dockerConnectOptionsSchema = z.object({
   container: nonEmptyStringSchema,
 });
 
+export const serverConnectOptionsSchema = z.object({
+  kind: z.literal("server"),
+  url: z.string().url(),
+  name: nonEmptyStringSchema.optional(),
+  token: z.string().optional(),
+  workspacePath: z.string().optional(),
+  serverId: nonEmptyStringSchema.optional(),
+});
+
 export const remoteTargetSchema = z.discriminatedUnion("kind", [
   sshConnectOptionsSchema,
   wslConnectOptionsSchema,
   dockerConnectOptionsSchema,
+  serverConnectOptionsSchema,
 ]);
 
 export const helloMessageSchema = z.object({
@@ -186,7 +520,8 @@ export const hostInitLocalMessageSchema = z.object({
   feedbackApiBase: z.string().url().optional(),
   workspacePath: nonEmptyStringSchema.optional(),
   workspaceIdentity: nonEmptyStringSchema.optional(),
-  agentWarmupTargets: z.array(hostAgentWarmupTargetSchema).max(3).optional(),
+  // Startup prewarms only the active workspace (desktop STARTUP_AGENT_WARMUP_LIMIT = 1), so the protocol layer tightens the limit accordingly.
+  agentWarmupTargets: z.array(hostAgentWarmupTargetSchema).max(1).optional(),
   agentSpawnFallbackCwd: nonEmptyStringSchema.optional(),
   zcodeBuiltinProviderConfigFilePath: nonEmptyStringSchema,
   runtimeProcessEnvPatch: z
@@ -435,6 +770,37 @@ export const hostLocalMediaPreviewPathAuthorizeResultMessageSchema = z
   })
   .strict();
 
+/** main → host: plugin UI sandbox registration result (PluginSandboxRegisterResultPayload). */
+export const hostPluginSandboxRegisterResultMessageSchema = z
+  .object({
+    type: z.literal("plugin-sandbox-register-result"),
+    requestId: nonEmptyStringSchema,
+    ok: z.boolean(),
+    instance: mcpAppInstanceSchema.optional(),
+    sandboxId: nonEmptyStringSchema.optional(),
+    initId: z.number().int().nonnegative().optional(),
+    shellUrl: nonEmptyStringSchema.optional(),
+    partition: nonEmptyStringSchema.optional(),
+    // Presentation fields effective at registration (after resource-level overrides are merged), returned to the renderer to set the initial height/border.
+    // Bug fix: this schema is strict—a handle containing one undeclared field makes the host reject the entire response, leaving the bridge waiting forever for a handle,
+    // and the card stuck in preparing (reproduced in inline E2E on 2026-09-12). Changes to PluginSandboxHandle must be reflected here.
+    resourceMeta: z
+      .object({
+        prefersBorder: z.boolean().optional(),
+        heightHint: z.number().int().positive().optional(),
+        minFrameHeight: z.number().int().positive().optional(),
+        showInline: z.boolean().optional(),
+        // Browser permissions declared by the resource are returned to the renderer with the handle (in hostContext.permissions); they use the same enum as registration permissions.
+        permissions: z
+          .array(z.enum(["camera", "microphone", "geolocation", "clipboardWrite"]))
+          .optional(),
+      })
+      .strict()
+      .optional(),
+    error: z.string().optional(),
+  })
+  .strict();
+
 export const hostCuaPipFocusChangedMessageSchema = z
   .object({
     type: z.literal("cua-pip-focus-changed"),
@@ -470,6 +836,7 @@ export type HostResourceUsageSnapshotRequestMessage = z.infer<
 >;
 
 export const hostIncomingMessageSchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("network-capture"), control: networkCaptureControlSchema }).strict(),
   z
     .object({ type: z.literal("database-startup-control"), control: databaseStartupControlSchema })
     .strict(),
@@ -501,6 +868,7 @@ export const hostIncomingMessageSchema = z.discriminatedUnion("type", [
   hostOffPeakRunMessageSchema,
   hostBrowserExecuteResultMessageSchema,
   hostLocalMediaPreviewPathAuthorizeResultMessageSchema,
+  hostPluginSandboxRegisterResultMessageSchema,
   hostCuaPipFocusChangedMessageSchema,
   hostProviderProvisioningExecuteMessageSchema,
 ]);
@@ -928,6 +1296,57 @@ export const hostLocalMediaPreviewPathAuthorizeRequestResponseSchema = z
   })
   .strict();
 
+/** host → main: register validated plugin UI HTML. */
+export const hostPluginSandboxRegisterRequestResponseSchema = z
+  .object({
+    type: z.literal("plugin-sandbox-register-request"),
+    instance: mcpAppInstanceSchema,
+    requestId: nonEmptyStringSchema,
+    workspacePath: z.string().optional(),
+    workspaceIdentity: z.string().optional(),
+    ownerWebContentsId: z.number().int().nonnegative(),
+    sessionId: nonEmptyStringSchema,
+    contentKind: z.literal("gen-ui").optional(),
+    pluginId: nonEmptyStringSchema.optional(),
+    // Runtime name of the MCP server owning the resource; the sandbox partition is derived from it.
+    serverName: nonEmptyStringSchema.optional(),
+    // Sandbox scope ID (`tool:<toolCallId>` / `surface:<surfaceId>`); main treats it as an opaque string.
+    scopeId: nonEmptyStringSchema,
+    html: z.string(),
+    // The four domain types for MCP Apps resource-level CSP; keep in sync with mcpToolUiCspSchema in mcp-apps.
+    csp: z
+      .object({
+        connectDomains: z.array(z.string()).optional(),
+        resourceDomains: z.array(z.string()).optional(),
+        frameDomains: z.array(z.string()).optional(),
+        baseUriDomains: z.array(z.string()).optional(),
+      })
+      .strict()
+      .optional(),
+    // Resource-level `_meta["zcode/csp"]` relaxations; keep in sync with mcpAppCspRelaxationsSchema in mcp-apps.
+    cspRelaxations: z
+      .object({ unsafeEval: z.boolean().optional(), wasmUnsafeEval: z.boolean().optional() })
+      .strict()
+      .optional(),
+    // Resource-level `_meta.ui.permissions` (the four standard keys); keep in sync with MCP_APPS_RESOURCE_PERMISSIONS in mcp-apps.
+    permissions: z
+      .array(z.enum(["camera", "microphone", "geolocation", "clipboardWrite"]))
+      .optional(),
+    prefersBorder: z.boolean().optional(),
+    // Resource-level size hints, copied unchanged by main into the handle’s resourceMeta. This is a strict schema; changes to PluginSandboxRegisterRequestPayload must be reflected here.
+    heightHint: z.number().int().positive().optional(),
+    minFrameHeight: z.number().int().positive().optional(),
+    showInline: z.boolean().optional(),
+  })
+  .strict()
+  .refine(
+    (value) =>
+      value.contentKind === "gen-ui"
+        ? !value.pluginId && !value.serverName && !value.permissions?.length
+        : Boolean(value.pluginId && value.serverName),
+    "Invalid sandbox provenance",
+  );
+
 export const networkObservationSchema = z.object({
   transport: z.enum(["http", "websocket", "rpc"]),
   interface: z.string(),
@@ -962,6 +1381,7 @@ export const hostProviderProvisioningExecutionResultResponseSchema = z
     environmentKey: nonEmptyStringSchema,
     status: z.enum(["applied", "already-applied", "unsupported", "failed", "rollback_failed"]),
     error: z.string().optional(),
+    errorCode: providerProvisioningErrorCodeSchema.optional(),
   })
   .strict();
 
@@ -990,6 +1410,7 @@ export type HostResourceUsageSnapshotResultResponse = z.infer<
 >;
 
 export const hostResponseMessageSchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("network-capture-batch"), batch: networkCaptureBatchSchema }).strict(),
   z
     .object({ type: z.literal("database-startup-state"), state: databaseStartupStateSchema })
     .strict(),
@@ -1032,6 +1453,7 @@ export const hostResponseMessageSchema = z.discriminatedUnion("type", [
   hostFeedbackLogArchiveRequestResponseSchema,
   hostBrowserExecuteRequestResponseSchema,
   hostLocalMediaPreviewPathAuthorizeRequestResponseSchema,
+  hostPluginSandboxRegisterRequestResponseSchema,
   hostNetworkTelemetryBatchResponseSchema,
   hostProviderProvisioningSourceChangedResponseSchema,
   hostProviderProvisioningExecutionResultResponseSchema,
@@ -1226,7 +1648,8 @@ export const zcodeTaskMetaSchema = z.object({
   model: z.string().optional(),
   thoughtLevel: nonEmptyStringSchema.optional(),
   runtimeEpoch: z.number().int().nonnegative().optional(),
-  provider: zcodeAgentProviderSchema.optional(),
+  // meta is parsed directly from tasks-index/legacy session files; normalize historical provider values to glm here.
+  provider: legacyZCodeProviderSchema.optional(),
   migrationSource: zcodeTaskMigrationSourceSchema.optional(),
   forkedFromTaskId: nonEmptyStringSchema.optional(),
   // Cron automation identity is persisted with meta_json as the single source of truth and projected to
@@ -1248,6 +1671,12 @@ export const zcodeTaskMetaSchema = z.object({
       attribution: errorAttributionSchema.optional(),
     })
     .optional(),
+  repairState: z
+    .object({
+      claudeNativeSnapshotAssistantContentVersion: z.number().int().nonnegative().optional(),
+      codexNativeSnapshotSubagentToolsVersion: z.number().int().nonnegative().optional(),
+    })
+    .optional(),
   changeSummary: z
     .object({
       fileCount: z.number().int().nonnegative(),
@@ -1265,6 +1694,23 @@ export const zcodeTaskMetaSchema = z.object({
     })
     .optional(),
   target: zcodeTaskGoalSchema.nullable().optional(),
+});
+
+export const zcodeTaskSessionBindingStateSchema = z.enum([
+  "idle",
+  "syncing",
+  "ready",
+  "stale",
+  "failed",
+]);
+
+export const zcodeTaskSessionBindingSchema = z.object({
+  // Binding state is projected by services from persisted data; normalize historical provider values left by old bindings to glm here.
+  provider: legacyZCodeProviderSchema,
+  sessionId: nonEmptyStringSchema,
+  // The binding anchor must support -1 for an empty task, so do not apply nonnegative here.
+  lastSyncedTurnIndex: z.number().int(),
+  state: zcodeTaskSessionBindingStateSchema,
 });
 
 export const zcodeTaskIndexEntrySchema = z.object({

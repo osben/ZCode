@@ -2,9 +2,9 @@ import { useCallback, useEffect, useReducer, useRef } from "react";
 import { useZCodeSessionStore } from "@/store/zcodeSessionStore.js";
 
 /** Maximum rebuild window. Measured agent start→ready is about 550–650ms, and createSession takes a few hundred ms more, so 5s leaves ample margin. Timeout only opens the gate; it does not cancel rebuilding—a late binding still updates effectiveSessionId and wakes attachment re-upload. */
-const DRAFT_RUNTIME_REBUILD_TIMEOUT_MS = 5000;
+export const DRAFT_RUNTIME_REBUILD_TIMEOUT_MS = 5000;
 
-interface DraftRuntimeRebuildGateState {
+export interface DraftRuntimeRebuildGateState {
   rebuilding: boolean;
   /** Prewarm session ID at the generation change; a different non-empty ID means rebuilding is complete. */
   pendingFrom: string | null;
@@ -12,18 +12,18 @@ interface DraftRuntimeRebuildGateState {
   epoch: number;
 }
 
-type DraftRuntimeRebuildGateEvent =
+export type DraftRuntimeRebuildGateEvent =
   | { type: "runtimeRestart"; prewarmSessionId: string | null }
   | { type: "prewarmSessionChanged"; prewarmSessionId: string | null }
   | { type: "rebuildTimeout" };
 
-const DRAFT_RUNTIME_REBUILD_GATE_IDLE: DraftRuntimeRebuildGateState = {
+export const DRAFT_RUNTIME_REBUILD_GATE_IDLE: DraftRuntimeRebuildGateState = {
   epoch: 0,
   pendingFrom: null,
   rebuilding: false,
 };
 
-function reduceDraftRuntimeRebuildGate(
+export function reduceDraftRuntimeRebuildGate(
   state: DraftRuntimeRebuildGateState,
   event: DraftRuntimeRebuildGateEvent,
 ): DraftRuntimeRebuildGateState {
@@ -46,7 +46,7 @@ function reduceDraftRuntimeRebuildGate(
   }
 }
 
-interface DraftRuntimeRebuildGate {
+export interface DraftRuntimeRebuildGate {
   /** The prewarm session is rebuilding; while true, sending must be disabled or attachments will be left on a session that no longer exists. */
   rebuilding: boolean;
 }

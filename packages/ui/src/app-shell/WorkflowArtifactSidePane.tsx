@@ -8,11 +8,17 @@ import {
   ArtifactKindIcon,
   artifactDisplayTitle,
   artifactKindMessageId,
+  artifactOpenAsFileName,
   canRevealArtifactInWorkspace,
   isArtifactPresetKind,
   isTextArtifactContentType,
 } from "@/app-shell/workflow-artifacts/artifactPresentation.js";
+import {
+  ArtifactOpenAsFileButton,
+  useCanOpenArtifactAsFile,
+} from "@/app-shell/workflow-artifacts/ArtifactOpenAsFileButton.js";
 import { WorkflowArtifactBody } from "@/app-shell/workflow-artifacts/WorkflowArtifactBody.js";
+import { artifactPresetFieldPaths } from "@/app-shell/workflow-artifacts/presets/spec.js";
 import { useWorkflowRunArtifactBytes } from "@/hooks/useWorkflowRunArtifactBytes.js";
 import { useWorkflowRunArtifactData } from "@/hooks/useWorkflowRunArtifactData.js";
 import {
@@ -165,12 +171,21 @@ function WorkflowArtifactView({
     version,
     enabled: !preset,
   });
+  // Boards ask the CLI only for fields named in the spec; do not fetch data before the spec arrives or if it cannot be rendered, since no graph can be drawn then.
+  const fields = useMemo(
+    () =>
+      isArtifactPresetKind(artifact.kind)
+        ? artifactPresetFieldPaths(artifact.kind, artifact.spec)
+        : undefined,
+    [artifact.kind, artifact.spec],
+  );
   const dataState = useWorkflowRunArtifactData({
     sessionId: tab.parentSessionId,
     runId: tab.runId,
     artifactId: artifact.id,
     itemCount: artifact.itemCount,
-    enabled: preset,
+    enabled: fields !== undefined,
+    ...(fields === undefined ? {} : { fields }),
   });
 
   // “Show in workspace” and HTML’s “Open in browser” share this path: combine the workspace-relative `sourcePath`
@@ -184,6 +199,14 @@ function WorkflowArtifactView({
       ...(tab.remoteSessionId === undefined ? {} : { remoteSessionId: tab.remoteSessionId }),
     })
       ? joinFilePath(tab.workspacePath, sourcePath)
+      : undefined;
+
+  // Keep one file control in the header: when “Open as file” is available, put “Show in workspace” in its menu; otherwise show it as a separate button.
+  const canOpenAsFile = useCanOpenArtifactAsFile();
+  const openAsFile = !preset && canOpenAsFile;
+  const reveal =
+    localSourcePath !== undefined && onRevealFileInTree !== undefined
+      ? () => onRevealFileInTree(localSourcePath)
       : undefined;
 
   const [copied, setCopied] = useState(false);
@@ -230,10 +253,21 @@ function WorkflowArtifactView({
             versionIndex={versionIndex}
           />
           <div className="ml-auto flex items-center gap-1">
-            {localSourcePath !== undefined && onRevealFileInTree !== undefined ? (
+            {openAsFile ? (
+              <ArtifactOpenAsFileButton
+                artifactId={artifact.id}
+                // Pass only bytes **belonging to this version**: on the frame when the version changes, bytes still belong to the old version, and the copy is written only once.
+                bytes={bytesState.bytesVersion === version ? bytesState.bytes : null}
+                fileName={artifactOpenAsFileName(artifact, version)}
+                runId={tab.runId}
+                version={version}
+                {...(reveal === undefined ? {} : { onReveal: reveal })}
+              />
+            ) : null}
+            {!openAsFile && reveal !== undefined ? (
               <Button
                 data-testid="workflow-artifact-reveal"
-                onClick={() => onRevealFileInTree(localSourcePath)}
+                onClick={reveal}
                 size="sm"
                 type="button"
                 variant="ghost"
@@ -282,9 +316,7 @@ function WorkflowArtifactView({
           version={version}
           {...(localSourcePath === undefined ? {} : { localSourcePath })}
           {...(onOpenBrowserUrl === undefined ? {} : { onOpenBrowserUrl })}
-          {...(localSourcePath !== undefined && onRevealFileInTree !== undefined
-            ? { onReveal: () => onRevealFileInTree(localSourcePath) }
-            : {})}
+          {...(reveal === undefined ? {} : { onReveal: reveal })}
         />
       </div>
     </>

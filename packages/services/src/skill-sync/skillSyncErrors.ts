@@ -2,7 +2,7 @@ import { SKILL_SYNC_SIZE_LIMIT_ERROR_CODE, type SkillSyncSizeLimitErrorData } fr
 
 // Raw errors carry only concatenated byte-count text, so after RPC the UI cannot reliably distinguish export, archive, and extraction failures.
 // Pass through a stable code and structured data so the UI can show actionable errors in the current language.
-interface SkillSyncSizeLimitError extends Error {
+export interface SkillSyncSizeLimitError extends Error {
   code: typeof SKILL_SYNC_SIZE_LIMIT_ERROR_CODE;
   data: SkillSyncSizeLimitErrorData;
 }

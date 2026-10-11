@@ -4,7 +4,6 @@
 
 import http from "node:http";
 import https from "node:https";
-import { Readable } from "node:stream";
 import { ProxyAgent } from "proxy-agent";
 import {
   createHttpClientError,
@@ -26,7 +25,8 @@ import {
   defaultPublicDnsLookup,
   type DnsLookup,
 } from "./public-egress-policy.js";
-import { readResponseBody } from "./response-body.js";
+import { readIncomingResponse } from "../network/incoming-response.js";
+import { readResponseBody, type ResponseLike } from "./response-body.js";
 
 const TRACE_HEADER = "x-zcode-trace-id";
 const DEFAULT_TIMEOUT_MS = 180_000;
@@ -163,7 +163,7 @@ function fetchHttpResponse(
   proxyUrl: string | undefined,
   tlsCaCertificates: Buffer | undefined,
   publicDnsLookup: DnsLookup | undefined,
-): Promise<Response> {
+): Promise<ResponseLike & { statusText: string; url?: string }> {
   const useCustomTlsAgent = url.protocol === "https:" && tlsCaCertificates !== undefined;
   if (!proxyUrl && !useCustomTlsAgent && !publicDnsLookup) {
     return fetch(url.toString(), {
@@ -199,24 +199,14 @@ function fetchHttpResponse(
         lookup: proxyUrl ? undefined : lookup,
       },
       (message) => {
-        const responseHeaders = new Headers();
-        for (const [name, value] of Object.entries(message.headers)) {
-          if (Array.isArray(value)) {
-            for (const item of value) {
-              responseHeaders.append(name, item);
-            }
-          } else if (value !== undefined) {
-            responseHeaders.append(name, String(value));
-          }
+        // Do not wrap this as `Response`: it cannot represent status codes such as 999, and we only need to pass through status, headers, and body (as native fetch does).
+        // No caller can catch errors thrown by the callback, and they would crash the entire agent process, so always reject only this request.
+        try {
+          resolve(readIncomingResponse(message));
+        } catch (error) {
+          message.destroy();
+          reject(error);
         }
-
-        resolve(
-          new Response(Readable.toWeb(message) as ReadableStream<Uint8Array>, {
-            headers: responseHeaders,
-            status: message.statusCode ?? 502,
-            statusText: message.statusMessage,
-          }),
-        );
       },
     );
 

@@ -108,3 +108,47 @@ contextBridge.executeInMainWorld({
   },
   args: [BRIDGE_KEY],
 });
+
+/**
+ * Electron's Notification.permission getter does not query the session permission handler and
+ * always returns denied (an official feature request for a renderer override is still open),
+ * so pages show "not granted" after granting. Override it in the main world on the same channel
+ * as the JS dialog: present the initial state as undecided (default), then write back the real
+ * requestPermission result. Whether new Notification is displayed is still decided internally by
+ * Chromium and is unaffected by this override.
+ */
+contextBridge.executeInMainWorld({
+  func: () => {
+    try {
+      if (typeof Notification === "undefined") return;
+      let permissionState: NotificationPermission = "default";
+      const nativeRequestPermission = Notification.requestPermission;
+      const wrappedRequestPermission = function (
+        this: typeof Notification,
+        deprecatedCallback?: NotificationPermissionCallback | undefined,
+      ): Promise<NotificationPermission> {
+        const settled = Promise.resolve(nativeRequestPermission.call(Notification)).then(
+          (status: NotificationPermission) => {
+            permissionState = status;
+            return status;
+          },
+        );
+        if (typeof deprecatedCallback === "function") {
+          void settled.then(
+            (status) => deprecatedCallback(status),
+            () => undefined,
+          );
+        }
+        return settled;
+      };
+      Notification.requestPermission = wrappedRequestPermission;
+      Object.defineProperty(Notification, "permission", {
+        get: () => permissionState,
+        configurable: true,
+      });
+    } catch {
+      // Page scripts may have locked down Notification; keep native behavior.
+    }
+  },
+  args: [],
+});

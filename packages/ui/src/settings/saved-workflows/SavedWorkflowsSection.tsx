@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { Plus } from "lucide-react";
+import { Plus, Settings2 } from "lucide-react";
 import {
   TID_WORKFLOWS_CREATE_VIA_CHAT,
   TID_WORKFLOWS_EMPTY,
+  TID_WORKFLOWS_OPEN_SETTINGS,
   TID_WORKFLOWS_REFRESH,
+  isDynamicWorkflowOffered,
   resolveWorkspaceKey,
 } from "@zcode/shared";
 import { Button } from "@/components/ui/button.js";
@@ -12,6 +14,8 @@ import { cn } from "@/components/lib/utils.js";
 import { ControlHintTooltip } from "@/ControlHintTooltip.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { useTabStore } from "@/store/TabStoreProvider.js";
+import { useDynamicWorkflowAvailability } from "@/hooks/useDynamicWorkflowAvailability.js";
+import { setPendingSettingsSectionIntent } from "@/lib/settingsNavigation.js";
 import {
   buildAutomationWorkspaceOptions,
   type AutomationWorkspaceOption,
@@ -89,6 +93,21 @@ export function SavedWorkflowsSection({
 }: SavedWorkflowsSectionProps) {
   const { intl, locale } = useZCodeIntl();
   const tabs = useTabStore((store) => store.tabs);
+  const openSettingsTab = useTabStore((store) => store.openSettingsTab);
+  // launch.md, “The hub page” and “The user's choice”: the “Workflow settings” link in the title
+  // row goes directly to the mode row in Settings → General and shows the current effective mode.
+  // The hub appears only when the effective mode is not off, so there is no off state to handle here.
+  // Show/hide the link together with its destination setting row, which appears only when the
+  // feature is offered (`isDynamicWorkflowOffered`). Older Host snapshots have no offeredMode, so
+  // neither row nor link appears; otherwise the link would lead to a setting that is not present.
+  const dynamicWorkflowConfig = useDynamicWorkflowAvailability().config;
+  const dynamicWorkflowMode = dynamicWorkflowConfig?.mode;
+  const showWorkflowSettings =
+    dynamicWorkflowConfig !== null && isDynamicWorkflowOffered(dynamicWorkflowConfig);
+  const handleOpenWorkflowSettings = useCallback(() => {
+    setPendingSettingsSectionIntent("general");
+    openSettingsTab();
+  }, [openSettingsTab]);
   const projects = useMemo(() => buildAutomationWorkspaceOptions(tabs), [tabs]);
   // The global group may run or move workflows only to local projects; filter out remote workspaces.
   const localProjects = useMemo(
@@ -260,18 +279,40 @@ export function SavedWorkflowsSection({
             <span className="ml-1 font-normal text-foreground-subtlest">{totalCount}</span>
           ) : null}
         </h2>
-        <ControlHintTooltip title={intl.formatMessage({ id: "workflows.hub.refresh" })}>
-          <Button
-            type="button"
-            variant="outline"
-            size="icon"
-            aria-label={intl.formatMessage({ id: "workflows.hub.refresh" })}
-            data-testid={TID_WORKFLOWS_REFRESH}
-            onClick={() => setRefreshSeq((seq) => seq + 1)}
-          >
-            <AutomationRefreshIcon className="size-3.5" aria-hidden="true" />
-          </Button>
-        </ControlHintTooltip>
+        <div className="flex items-center gap-3">
+          {showWorkflowSettings ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="lg"
+              data-testid={TID_WORKFLOWS_OPEN_SETTINGS}
+              className="text-foreground-subtle hover:text-foreground"
+              onClick={handleOpenWorkflowSettings}
+            >
+              <Settings2 className="size-4" aria-hidden="true" />
+              <span>{intl.formatMessage({ id: "workflows.hub.openSettings" })}</span>
+              {dynamicWorkflowMode ? (
+                <span className="ml-0.5 text-ui-sm text-foreground-subtlest">
+                  {intl.formatMessage({
+                    id: `settings.dynamicWorkflow.option.${dynamicWorkflowMode}`,
+                  })}
+                </span>
+              ) : null}
+            </Button>
+          ) : null}
+          <ControlHintTooltip title={intl.formatMessage({ id: "workflows.hub.refresh" })}>
+            <Button
+              type="button"
+              variant="outline"
+              size="icon"
+              aria-label={intl.formatMessage({ id: "workflows.hub.refresh" })}
+              data-testid={TID_WORKFLOWS_REFRESH}
+              onClick={() => setRefreshSeq((seq) => seq + 1)}
+            >
+              <AutomationRefreshIcon className="size-3.5" aria-hidden="true" />
+            </Button>
+          </ControlHintTooltip>
+        </div>
       </div>
 
       {!anyLoaded ? (

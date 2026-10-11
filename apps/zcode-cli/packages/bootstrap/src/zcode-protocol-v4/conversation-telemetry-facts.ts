@@ -1,3 +1,4 @@
+/* eslint-disable max-lines -- The eight strict telemetry fact kinds are normalized in one place to avoid forking the privacy allowlist. */
 import type {
   CompactLifecyclePayload,
   DynamicWorkflowRunProgressPayload,
@@ -117,13 +118,16 @@ function skillTelemetryFactFields(
 export function streamingParentToolCallId(payload: Record<string, unknown>): string | undefined {
   const meta = recordValue(payload._meta);
   const zcode = recordValue(meta.zcode);
+  const claudeCode = recordValue(meta.claudeCode);
   return (
     optionalString(payload.parentToolCallId) ??
     optionalString(payload.parentToolUseId) ??
     optionalString(meta.parentToolCallId) ??
     optionalString(meta.parentToolUseId) ??
     optionalString(zcode.parentToolCallId) ??
-    optionalString(zcode.parentToolUseId)
+    optionalString(zcode.parentToolUseId) ??
+    optionalString(claudeCode.parentToolCallId) ??
+    optionalString(claudeCode.parentToolUseId)
   );
 }
 

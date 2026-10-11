@@ -40,6 +40,12 @@ interface WorkflowRunArtifactBytesState {
   totalBytes: number | null;
   loading: boolean;
   error: string | null;
+  /**
+   * which version owns `bytes`. After a version change, before the effect clears the old state, there is one frame where `version` is new but `bytes`
+   * still belongs to the old version. A one-frame viewer flash is acceptable, but an “Open as file” copy is written only once, so using the wrong bytes would permanently corrupt it—
+   * consumers like this must verify the version instead of trusting the currently rendered `version`.
+   */
+  bytesVersion: number | null;
 }
 
 function emptyState(): WorkflowRunArtifactBytesState {
@@ -51,6 +57,7 @@ function emptyState(): WorkflowRunArtifactBytesState {
     totalBytes: null,
     loading: false,
     error: null,
+    bytesVersion: null,
   };
 }
 
@@ -161,6 +168,7 @@ export function useWorkflowRunArtifactBytes(options: {
           totalBytes,
           loading: false,
           error: null,
+          bytesVersion: version,
         });
       } catch (caught) {
         if (!alive) return;

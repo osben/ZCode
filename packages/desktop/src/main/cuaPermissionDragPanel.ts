@@ -22,7 +22,7 @@ import type { CuaPermissionKind, Locale } from "@zcode/shared";
 import { resolvePanelBounds, type PanelSize, type Rect } from "./cuaPermissionPanelPositioner.js";
 
 /** Minimal window interface required by the panel, suitable for test doubles. */
-interface CuaPermissionPanelWindow {
+export interface CuaPermissionPanelWindow {
   onceReadyToShow(callback: () => void): void;
   setBounds(bounds: Rect): void;
   showInactive(): void;
@@ -32,7 +32,7 @@ interface CuaPermissionPanelWindow {
   send(channel: string, payload: unknown): void;
 }
 
-interface CreateCuaPermissionDragPanelOptions {
+export interface CreateCuaPermissionDragPanelOptions {
   createWindow: (initialBounds: Rect) => CuaPermissionPanelWindow;
   getDisplayWorkArea: () => Rect;
   /** System Settings window-bounds source; when missing or failing, fall back to the bottom of the screen. */

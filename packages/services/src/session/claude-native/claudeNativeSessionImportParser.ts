@@ -9,6 +9,7 @@ import type { ClaudeNativeImportedSessionSource } from "#src/session/claude-nati
 const IDE_OPENED_FILE_TAG_RE = /<ide_opened_file>[\s\S]*?<\/ide_opened_file>/gi;
 const COMMAND_TAG_BLOCK_RE =
   /<(?:local-command|command)-[^>]+>[\s\S]*?<\/(?:local-command|command)-[^>]+>/gi;
+const COMMAND_DIAGNOSTIC_TAG_RE = /<\/?(?:local-command|command)-[^>]+>/gi;
 
 function toTimestampMs(value: unknown): number | undefined {
   if (typeof value === "number" && Number.isFinite(value)) {
@@ -92,6 +93,20 @@ export function hasClaudeNativeSidechainMarker(entries: readonly JsonLineRecord[
   return entries.some(isClaudeNativeSidechainEntry);
 }
 
+function readAssistantStopReason(entry: JsonLineRecord): string | undefined {
+  const message = isObjectRecord(entry.message) ? entry.message : undefined;
+  return (
+    readTrimmedString(message?.stop_reason) ??
+    readTrimmedString(message?.stopReason) ??
+    readTrimmedString(entry.stop_reason) ??
+    readTrimmedString(entry.stopReason)
+  );
+}
+
+function isTerminalAssistantStopReason(stopReason: string | undefined): boolean {
+  return Boolean(stopReason && stopReason !== "tool_use");
+}
+
 function sanitizeClaudeVisibleText(text: string): string {
   return text
     .replace(IDE_OPENED_FILE_TAG_RE, " ")
@@ -100,7 +115,11 @@ function sanitizeClaudeVisibleText(text: string): string {
     .trim();
 }
 
-function stripClaudeNativeSyntheticNoResponsePlaceholderText(text: string): string {
+function sanitizeClaudeDiagnosticText(text: string): string {
+  return text.replace(COMMAND_DIAGNOSTIC_TAG_RE, " ").replace(/\r\n/g, "\n").trim();
+}
+
+export function stripClaudeNativeSyntheticNoResponsePlaceholderText(text: string): string {
   return text
     .trimEnd()
     .replace(/(?:\n+\s*)?No response requested\.$/u, "")
@@ -244,7 +263,7 @@ export function extractClaudeNativeSessionHeadInfo(entries: readonly JsonLineRec
   return { workspacePath };
 }
 
-function parseClaudeNativeSessionRecords(params: {
+export function parseClaudeNativeSessionRecords(params: {
   records: readonly JsonLineRecord[];
   workspacePath: string;
   sessionId: string;
@@ -343,6 +362,221 @@ function parseClaudeNativeSessionRecords(params: {
     ...(model ? { model } : {}),
     messages,
   };
+}
+
+export interface ClaudeNativeVisibleAssistantTurn {
+  turnIndex: number;
+  content: string;
+  terminal: boolean;
+  userTimestamp?: number;
+  timestamp?: number;
+}
+
+export interface ClaudeNativeUnknownCommandWarning {
+  command: string;
+  args?: string;
+  timestamp?: number;
+}
+
+const CLAUDE_NATIVE_PROMPT_MATCH_TOLERANCE_MS = 1_000;
+const CLAUDE_NATIVE_UNKNOWN_COMMAND_ARGS_MAX_GAP_MS = 5_000;
+const CLAUDE_NATIVE_UNKNOWN_COMMAND_RE = /^Unknown command:\s*(\S+)/iu;
+const CLAUDE_NATIVE_UNKNOWN_SKILL_ARGS_RE = /^Args from unknown skill:\s*(.+)$/iu;
+
+function readClaudeNativeTurnMatchTimestamp(
+  turn: ClaudeNativeVisibleAssistantTurn,
+): number | undefined {
+  return turn.userTimestamp ?? turn.timestamp;
+}
+
+export function selectClaudeNativeVisibleAssistantTurnAfter(
+  turns: readonly ClaudeNativeVisibleAssistantTurn[],
+  lowerBoundMs: number,
+): ClaudeNativeVisibleAssistantTurn | null {
+  const minTimestamp = lowerBoundMs - CLAUDE_NATIVE_PROMPT_MATCH_TOLERANCE_MS;
+  const candidates = turns.filter((turn) => {
+    const timestamp = readClaudeNativeTurnMatchTimestamp(turn);
+    return timestamp !== undefined && timestamp >= minTimestamp && turn.content.trim().length > 0;
+  });
+  const strictCandidates = candidates.filter((turn) => {
+    const timestamp = readClaudeNativeTurnMatchTimestamp(turn);
+    return timestamp !== undefined && timestamp >= lowerBoundMs;
+  });
+  if (strictCandidates.length > 0) {
+    return strictCandidates[0] ?? null;
+  }
+
+  const truncatedTimestampCandidates = candidates.filter(
+    (turn) => turn.timestamp === undefined || turn.timestamp >= lowerBoundMs,
+  );
+
+  // Bugfix: the Claude native log's turnIndex can drift from ZCode's turnIndex after
+  // session/load, legacy synthesized error messages, or cross-provider continuation. When
+  // recovering the final content, attribute the assistant to its user turn by
+  // userTimestamp first; otherwise a nearby assistant appended by session/load (such as
+  // No response requested) slips into this turn via its newer assistant timestamp and
+  // overwrites the old turn's API Error as the current successful reply.
+  // Bugfix: however, the Claude native log's user timestamp may be truncated to whole
+  // seconds. With rapid consecutive prompts, the previous turn's user also falls inside
+  // the 1s tolerance window; exclude turns whose assistants were written before this
+  // turn was sent, then take the last candidate in log order — the visible assistant
+  // closest to the current prompt. Do not look forward for a terminal record, or an
+  // unfinished current turn could jump to a later turn's content.
+  return truncatedTimestampCandidates.at(-1) ?? null;
+}
+
+export function parseClaudeNativeVisibleAssistantTurns(
+  records: readonly JsonLineRecord[],
+): ClaudeNativeVisibleAssistantTurn[] {
+  const turns: ClaudeNativeVisibleAssistantTurn[] = [];
+  let currentTurnIndex = -1;
+  let currentUserTimestamp: number | undefined;
+  let pendingAssistantContent = "";
+  let pendingAssistantTerminal = false;
+  let pendingAssistantTimestamp: number | undefined;
+
+  const flushPendingAssistant = () => {
+    if (!pendingAssistantContent || currentTurnIndex < 0) {
+      pendingAssistantContent = "";
+      pendingAssistantTerminal = false;
+      pendingAssistantTimestamp = undefined;
+      return;
+    }
+
+    // Key business logic: the prompt-end fallback must know not just that content
+    // exists, but also whether this turn's Claude native log has reached a terminal
+    // state such as end_turn/max_tokens. Otherwise the tool_use-stage opening text
+    // would be mistaken for the final reply.
+    turns.push({
+      turnIndex: currentTurnIndex,
+      content: pendingAssistantContent,
+      terminal: pendingAssistantTerminal,
+      ...(currentUserTimestamp !== undefined ? { userTimestamp: currentUserTimestamp } : {}),
+      ...(pendingAssistantTimestamp !== undefined ? { timestamp: pendingAssistantTimestamp } : {}),
+    });
+    pendingAssistantContent = "";
+    pendingAssistantTerminal = false;
+    pendingAssistantTimestamp = undefined;
+  };
+
+  for (const entry of records) {
+    const userText = extractClaudeUserText(entry);
+    if (userText) {
+      flushPendingAssistant();
+      currentTurnIndex += 1;
+      currentUserTimestamp = readEntryTimestamp(entry);
+      continue;
+    }
+
+    const assistantText = extractClaudeAssistantText(entry);
+    if (!assistantText || currentTurnIndex < 0) {
+      continue;
+    }
+
+    pendingAssistantContent += assistantText;
+    pendingAssistantTerminal =
+      pendingAssistantTerminal || isTerminalAssistantStopReason(readAssistantStopReason(entry));
+    pendingAssistantTimestamp = readEntryTimestamp(entry) ?? pendingAssistantTimestamp;
+  }
+
+  flushPendingAssistant();
+  return turns;
+}
+
+export async function readClaudeNativeVisibleAssistantTurnsFile(
+  filePath: string,
+): Promise<ClaudeNativeVisibleAssistantTurn[]> {
+  const records = await readJsonLinesFile(filePath);
+  return parseClaudeNativeVisibleAssistantTurns(records);
+}
+
+function extractClaudeSystemDiagnosticText(entry: JsonLineRecord): string | null {
+  if (entry.type !== "system") {
+    return null;
+  }
+
+  const level = readTrimmedString(entry.level);
+  const subtype = readTrimmedString(entry.subtype);
+  if (level !== "warning" && subtype !== "local_command") {
+    return null;
+  }
+
+  const content = readTrimmedString(entry.content);
+  if (content) {
+    // Bugfix: Claude Code 2.1.148 writes an unknown slash command as
+    // system/local_command/info and wraps the error inside a local-command-stdout tag.
+    // Strip only the tag and keep the diagnostic text instead of falling through to the
+    // generic "Agent produced no reply".
+    return sanitizeClaudeDiagnosticText(content);
+  }
+
+  const message = isObjectRecord(entry.message) ? entry.message : undefined;
+  const messageContent = readTrimmedString(message?.content);
+  return messageContent ? sanitizeClaudeDiagnosticText(messageContent) : null;
+}
+
+export function parseClaudeNativeUnknownCommandWarnings(
+  records: readonly JsonLineRecord[],
+): ClaudeNativeUnknownCommandWarning[] {
+  const warnings: ClaudeNativeUnknownCommandWarning[] = [];
+
+  for (const entry of records) {
+    const text = extractClaudeSystemDiagnosticText(entry);
+    if (!text) {
+      continue;
+    }
+
+    const timestamp = readEntryTimestamp(entry);
+    const unknownCommandMatch = text.match(CLAUDE_NATIVE_UNKNOWN_COMMAND_RE);
+    if (unknownCommandMatch?.[1]) {
+      warnings.push({
+        command: unknownCommandMatch[1],
+        ...(timestamp !== undefined ? { timestamp } : {}),
+      });
+      continue;
+    }
+
+    const argsMatch = text.match(CLAUDE_NATIVE_UNKNOWN_SKILL_ARGS_RE);
+    const latest = warnings.at(-1);
+    if (!argsMatch?.[1] || !latest || latest.args) {
+      continue;
+    }
+
+    const latestTimestamp = latest.timestamp;
+    const isSameWarningGroup =
+      timestamp === undefined ||
+      latestTimestamp === undefined ||
+      Math.abs(timestamp - latestTimestamp) <= CLAUDE_NATIVE_UNKNOWN_COMMAND_ARGS_MAX_GAP_MS;
+    if (isSameWarningGroup) {
+      // Bugfix: Claude Code splits an unknown slash command into two system warnings:
+      // one with the command name, one with the arguments. Merge them so ZCode users see
+      // an actionable failure reason.
+      latest.args = argsMatch[1].trim();
+    }
+  }
+
+  return warnings;
+}
+
+export function selectClaudeNativeUnknownCommandWarningAfter(
+  warnings: readonly ClaudeNativeUnknownCommandWarning[],
+  lowerBoundMs: number,
+): ClaudeNativeUnknownCommandWarning | null {
+  const minTimestamp = lowerBoundMs - CLAUDE_NATIVE_PROMPT_MATCH_TOLERANCE_MS;
+  const candidates = warnings.filter((warning) => {
+    return warning.timestamp === undefined || warning.timestamp >= minTimestamp;
+  });
+  const strictCandidates = candidates.filter((warning) => {
+    return warning.timestamp === undefined || warning.timestamp >= lowerBoundMs;
+  });
+  return strictCandidates[0] ?? candidates.at(-1) ?? null;
+}
+
+export async function readClaudeNativeUnknownCommandWarningsFile(
+  filePath: string,
+): Promise<ClaudeNativeUnknownCommandWarning[]> {
+  const records = await readJsonLinesFile(filePath);
+  return parseClaudeNativeUnknownCommandWarnings(records);
 }
 
 export async function parseClaudeNativeSessionFile(params: {

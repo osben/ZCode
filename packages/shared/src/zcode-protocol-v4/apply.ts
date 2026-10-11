@@ -2,10 +2,10 @@
 // This is part of the protocol semantics: this function defines whether coalesce preserves semantics —
 // applyAll(s, coalesce(ds)) must be byte-for-byte identical to applyAll(s, ds) (golden test).
 // The client store's apply logic is a host-specific adaptation of this function and must not introduce extra branches.
-import type { ConversationDelta } from "./delta.js";
-import type { ConversationSnapshot } from "./snapshot.js";
-import type { ConversationRow } from "./rows.js";
 import type { StreamablePath } from "./core.js";
+import type { ConversationDelta } from "./delta.js";
+import type { ConversationRow } from "./rows.js";
+import type { ConversationSnapshot } from "./snapshot.js";
 import { applyWorkflowRunRemoved, applyWorkflowRunUpdated } from "./workflow-runs-delta.js";
 
 /**
@@ -34,8 +34,8 @@ export function createMutableConversationSnapshotAccumulator(
   };
 }
 
-// row.delta may only apply to streaming rows (an invariant guaranteed by the server).
-// Protocol semantics for this function: no-op when the path or row does not exist (a patch targeting an unloaded row is a no-op).
+// row.delta may only apply to streaming rows (§4.4.4 invariant, guaranteed by the server).
+// Protocol semantics for this function: no-op when the path or row does not exist (§4.3: a patch targeting an unloaded row is a no-op).
 function appendToRow(row: ConversationRow, path: StreamablePath, append: string): ConversationRow {
   switch (path) {
     case "text":
@@ -82,7 +82,7 @@ export function applyConversationDelta(
       };
     case "row.upserted": {
       const index = snapshot.rows.window.findIndex((row) => row.rowId === delta.row.rowId);
-      // An unloaded rowId is a no-op (evicted rows can only be retrieved through rows/range).
+      // §4.3: an unloaded rowId is a no-op (evicted rows can only be retrieved through rows/range).
       if (index === -1) return snapshot;
       const window = [...snapshot.rows.window];
       window[index] = delta.row;
@@ -119,6 +119,12 @@ export function applyConversationDelta(
     case "state.updated":
       // Replace the entire value at each key: keys present in the patch overwrite existing values and are never deep-merged.
       return { ...snapshot, ...delta.patch };
+    case "pluginUi.resourceUpdated":
+    case "pluginUi.resourceListChanged":
+    case "pluginUi.instanceClosed":
+    case "pluginUi.appToolCall":
+      // live-only notifications / mailbox deliveries: they do not change the snapshot; the renderer dispatches them separately.
+      return snapshot;
     // workflowRuns is the only state key with an incremental update path (delta.ts explains why). The full rule lives in
     // workflow-runs-delta.ts; both twins delegate to it, so their semantics cannot drift apart.
     case "workflowRun.updated":
@@ -198,6 +204,9 @@ export function applyConversationDeltaMutable(
     case "state.updated":
       // As in the immutable implementation, replace each key present in the patch; do not deep-merge.
       Object.assign(snapshot, delta.patch);
+      return;
+    case "pluginUi.resourceUpdated":
+    case "pluginUi.resourceListChanged":
       return;
     // The immutable implementation calls the same pure function: workflowRuns is a state key, not a rows window, so there is no in-place append optimization,
     // and accumulator.snapshot already belongs to the candidate snapshot, so assigning a new container cannot affect a published snapshot.

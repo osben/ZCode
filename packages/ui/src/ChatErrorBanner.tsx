@@ -32,6 +32,7 @@ import { buildErrorFeedbackDescription } from "@/lib/errorFeedbackDraft.js";
 import {
   isSuspiciousEmptyModelResultMessage,
   resolveOffPeakTicketExpiredBusinessCode,
+  resolveRequestVerificationBusinessCode,
 } from "@/lib/providerBusinessError.js";
 import type { ZCodeUiError } from "@/lib/zcodeUiError.js";
 import { canResumeChatError, isModelConfigMissingError } from "@/lib/chatErrorResume.js";
@@ -55,6 +56,21 @@ const LOCALIZED_ERROR_CODES = new Set([
   "ZCODE_BIGMODEL_TEAM_PLAN_MEMBER_REQUIRED",
 ]);
 
+function parseClaudeUnknownCommandMessage(message: string): {
+  command: string;
+  args?: string;
+} | null {
+  const match = message.match(/Claude Code 未知命令\s+(\S+?)(?:（参数：([^）]+)）)?。/u);
+  if (!match?.[1]) {
+    return null;
+  }
+
+  return {
+    command: match[1],
+    ...(match[2]?.trim() ? { args: match[2].trim() } : {}),
+  };
+}
+
 export function resolveChatErrorBannerDisplayMessage(
   error: ZCodeUiError,
   intl: IntlInstance,
@@ -63,8 +79,29 @@ export function resolveChatErrorBannerDisplayMessage(
     return intl.formatMessage({ id: "chat.error.noAvailableModel" });
   }
 
+  if (error.code === "CLAUDE_UNKNOWN_COMMAND") {
+    const parsed = parseClaudeUnknownCommandMessage(error.message);
+    if (!parsed) {
+      return error.message;
+    }
+
+    // Bugfix: The service layer still persists a Chinese fallback for compatibility with historical snapshots. The UI must localize it from the stable code
+    // or Chinese error text will appear in the English interface.
+    return parsed.args
+      ? intl.formatMessage(
+          { id: "zcode.error.CLAUDE_UNKNOWN_COMMAND_WITH_ARGS" },
+          { command: parsed.command, args: parsed.args },
+        )
+      : intl.formatMessage(
+          { id: "zcode.error.CLAUDE_UNKNOWN_COMMAND" },
+          { command: parsed.command },
+        );
+  }
+
   const providerBusinessCode =
-    resolveOffPeakTicketExpiredBusinessCode(error.code, error.message) ?? error.code;
+    resolveRequestVerificationBusinessCode(error.code, error.message) ??
+    resolveOffPeakTicketExpiredBusinessCode(error.code, error.message) ??
+    error.code;
   const providerBusinessMessageId = getProviderBusinessErrorMessageId(providerBusinessCode);
   if (providerBusinessMessageId) {
     return intl.formatMessage({ id: providerBusinessMessageId });
@@ -127,7 +164,7 @@ export function ChatErrorBanner({
       type: "bug",
       module: "模型调用报错",
       severity: "P2-中",
-      includeLogs: false,
+      includeLogs: true,
       description: buildErrorFeedbackDescription({
         message: localizedErrorMessage,
         detail: error.detail,
@@ -275,8 +312,8 @@ export function ChatErrorBanner({
           </Button>
         ) : null}
 
-        {/* The error banner is already an error state and must not go through Radix Tooltip’s Popper/Slot state chain.
-            Use a regular Button here to prevent a Maximum update depth loop when errors such as no available models trigger the banner. */}
+        {/* Bugfix: The error banner is already an error state and must not pass through the Radix Tooltip Popper/Slot state chain.
+            Use a regular Button here to avoid a Maximum update depth loop when errors such as no available model trigger the banner. */}
         {!modelConfigMissing ? (
           <Button
             type="button"

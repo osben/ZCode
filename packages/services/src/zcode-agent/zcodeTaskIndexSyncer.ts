@@ -225,7 +225,7 @@ function buildBaselineMetaFromSummary(
     workspaceIdentity: target.workspaceIdentity,
     createdAt: summary.createdAt,
     updatedAt: summary.lastActivityAt,
-    mode: "build",
+    mode: "default",
     provider: ZCODE_AGENT_PROVIDER,
     ...(summary.parentSessionId ? { forkedFromTaskId: summary.parentSessionId } : {}),
     ...(status ? { status } : {}),
@@ -510,9 +510,16 @@ export function createZCodeTaskIndexSyncer(
       // would materialize/resume the same session after Core has accepted the user's next prompt,
       // creating a second lifecycle writer. readSession(existing-only) retains full-snapshot indexing
       // without starting or modifying the runtime.
+      // Performance root cause: every turn completion/title change/visibility change goes
+      // through here, and a single full-history line can reach ~15MB, saturating host stdio
+      // frame parsing and JSON.parse. The index reads only title/body/visibility/status, so
+      // request contentProfile "index" (strips tool/reasoning/data URL payloads, keeps the
+      // structure). messageLimit cannot be used: searchableText and the title fallback
+      // depend on the start of the history.
       const snapshot = await agentService.readSession({
         ...target,
         runtimePolicy: "existing-only",
+        contentProfile: "index",
       });
       // Snapshot convergence syncs state/body and does not change pin/archive/unread ownership (task_status_changed).
       await syncSnapshotAndBroadcast(snapshot, {

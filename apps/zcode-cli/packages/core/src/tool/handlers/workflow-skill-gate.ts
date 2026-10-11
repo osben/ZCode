@@ -1,11 +1,17 @@
-// Skill-loading check for workflow authoring tools.
-// Keep the descriptions for CreateWorkflow, AmendWorkflow, SaveWorkflow, and EvalWorkflowSnippet short; the `dynamic-workflows` skill
-// provides the facade and writing rules. Load the skill before submitting a script: when the session history has no successful
-// `Skill(dynamic-workflows)` call, resolveInput rejects immediately before hooks or a pointless confirmation dialog.
+// ============================================================
+// Skill gate for workflow authoring tools (docs/dynamic-workflow/authoring.md, “The authoring surface”).
+// ============================================================
+// On 2026-09-21, descriptions for the four authoring tools (CreateWorkflow / AmendWorkflow / SaveWorkflow / EvalWorkflowSnippet)
+// were shortened to a few hundred tokens, moving the facade and writing rules into the `dynamic-workflows` skill. This saves
+// about 19,000 tokens resent with every model request, but means the model might write a script without reading the skill. This gate
+// makes reading the skill a prerequisite for submitting a script: if the session history has no successful
+// `Skill(dynamic-workflows)` call, reject in resolveInput—before hooks and the confirmation dialog, so the model gets a business failure
+// and the user never sees a confirmation dialog that cannot succeed.
 //
-// Determine this from messageHistory currently visible to the model. If compaction removes the skill text and its call, reload it;
-// resume/rewind restore the condition with history, so no duplicate session state is needed.
-// If the probe is absent, the current assembly does not provide skill-loading checks; do not impose an unmet precondition.
+// “Read” means **the history still visible to the model now** (runtime messageHistory), not a session-level flag:
+// after compaction removes the skill text from context, its call is gone from history too, so the gate closes again and the model must reread it—
+// the same semantics as Edit requiring Read (readFileState is also cleared after compaction). If the probe is absent (a session without a Skill
+// tool, or a context constructed directly by a unit test), the gate does not apply; do not impose a prerequisite that cannot be satisfied.
 
 import { DYNAMIC_WORKFLOW_SKILL_NAME } from "@zcode/contracts";
 import type { ToolHandlerFailure, ToolInputResolutionContext } from "../types.js";
@@ -16,7 +22,7 @@ import type { ToolHandlerFailure, ToolInputResolutionContext } from "../types.js
  */
 export const WORKFLOW_SKILL_NOT_LOADED_CODE = 428;
 
-/** Predicate used when the gate is present; exported separately for reuse by the probe. */
+/** The gate's predicate; exported for reuse by the probe implementation and tests. */
 export function isDynamicWorkflowSkillLoaded(context: ToolInputResolutionContext): boolean {
   return context.hasLoadedSkill?.(DYNAMIC_WORKFLOW_SKILL_NAME) ?? true;
 }

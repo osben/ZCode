@@ -9,8 +9,10 @@ import type { MessageFileLinkTarget } from "@/components/ai-elements/message.js"
 import type { WorkflowCausalityGraphData } from "@/components/workflow-graph/types.js";
 import type { WorkflowRunSettingsChange } from "@/components/workflow-timeline/workflowRunSettings.js";
 import type { WorkflowDraftPosition, WorkflowRunCardSummary } from "@/ToolCallBlocks/shared.js";
+import type { WorkflowFillGraph } from "@/v4/workflowRunCardJoin.js";
 import type { Theme } from "@/useTheme.js";
 import type { ModelSelectionView } from "@zcode/services";
+import type { ZCodeWorkflowsForRunCandidate } from "@zcode/shared";
 import type { ConversationAttachmentReadParams, ConversationTransport } from "@/v4/transport.js";
 import type {
   OpenPlanDetailSideTabRequest,
@@ -52,6 +54,7 @@ export interface ConversationRowRenderContext {
   /** @deprecated Legacy inline drill-down marker; new child sessions open in the side-panel detail view. */
   inSubagentDrilldown?: boolean;
   /** Compact mobile /remote mode: hide the external-app dropdown and keep only in-app preview. */
+  compactForRemoteControl?: boolean;
   /** Current session is compacting or verifying a goal; dedicated status UI owns progress feedback. */
   chatLoadingBlockedByActiveWork?: boolean;
   /** Current session is waiting for permission confirmation or an AskUserQuestion response; hide ChatLoading at the bottom. */
@@ -83,6 +86,7 @@ export interface ConversationRowRenderContext {
   onOpenFileLink?: (target: MessageFileLinkTarget) => void;
   onOpenSubagentSession?: (request: OpenSubagentSideTabRequest) => void;
   onOpenPlanDetail?: (request: OpenPlanDetailSideTabRequest) => void;
+  /** Plugin UI: open inline-card requests in the side pane; RowView adds parentSessionId and workspace fields. */
   onOpenWorkflowRun?: (request: OpenWorkflowRunSideTabRequest) => void;
   /** Full-size artifact-view tab entry point. Terminology: artifact here is user-facing output published by scripts through `artifact.*`, not the engine-internal value returned by a script’s top level. Like `onOpenWorkflowRun`, the row reports only intent (which run and artifact); the host supplies session and workspace identity. No version is included—the chip means “show me this artifact,” and always opens the latest version. */
   onOpenWorkflowArtifact?: (request: OpenWorkflowArtifactSideTabRequest) => void;
@@ -95,6 +99,21 @@ export interface ConversationRowRenderContext {
     workId: string,
     change: WorkflowRunSettingsChange,
   ) => Promise<CommandAck>;
+  /**
+   * “Save”/“Run again” on the completion card (docs/dynamic-workflow/transcript-and-notifications.md,
+   * “Saving the run, and running it again”): send the user message written by the GUI into this
+   * session and let ZCode distill and save it. Uses the same two gates as Resume (read-only and
+   * rollout) and the **same entry point**—writing the file and starting the engine are both handled
+   * where Resume is handled. When absent, the card shows only the “Saved” chip as a fact.
+   */
+  onSendWorkflowSaveRequest?: (text: string) => Promise<void>;
+  /**
+   * runId → SaveWorkflow candidates in the transcript that claimed this run
+   * (`workflowRunCardJoin.buildWorkflowSaveCandidatesByRunId`), built by the host in one pass over
+   * the row window. This is the only link between the definition saved under a separate model-chosen
+   * name and this run (the model does not use the run name as the workflow name), so it must come from the transcript.
+   */
+  workflowSaveCandidatesByRunId?: ReadonlyMap<string, readonly ZCodeWorkflowsForRunCandidate[]>;
   /** Current session model (name shown as the first “Session model” option in the Configure dialog); omit if unavailable, in which case the option only says “Session model”. */
   workflowSessionModel?: { providerId: string; modelId: string };
   /** Subagent pill on a tool card opens that subagent’s transcript tab, using the same path as the detail-page subagent row; the host supplies workspace identity. */
@@ -109,6 +128,12 @@ export interface ConversationRowRenderContext {
   workflowRunPendingQuestionsByRunId?: ReadonlyMap<string, ReadonlySet<string>>;
   /** Static graph for each initiating toolCallId (`workflowRunCardJoin.buildWorkflowGraphByToolCallId`), built by the host from the row window. The graph belongs to the run: the turn-tail card reads it by the run’s initiating toolCallId whether attached to a CreateWorkflow row, ResumeWorkflowRun row, or direct-launch turn. */
   workflowGraphByToolCallId?: ReadonlyMap<string, WorkflowCausalityGraphData>;
+  /**
+   * runId → latest successful filled script graph (`workflowRunCardJoin.buildWorkflowFillGraphByRunId`):
+   * after a fill, the run card and side pane use this instead of the launch-row graph
+   * (docs/dynamic-workflow/presentation.md, “Holes on the timeline”).
+   */
+  workflowFillGraphByRunId?: ReadonlyMap<string, WorkflowFillGraph>;
   /** Draft position for CreateWorkflow/AmendWorkflow rows (draft number and whether it was superseded), built in one pass by the host from the row window (`workflowDraftJoin.buildWorkflowDraftByToolCallId`). Compiler feedback uses this to show “Draft n” and choose the empty-circle light color; omit it when the card should not be numbered. */
   workflowDraftByToolCallId?: ReadonlyMap<string, WorkflowDraftPosition>;
   fetchFileChanges?: (

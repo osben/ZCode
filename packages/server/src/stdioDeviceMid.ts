@@ -1,7 +1,7 @@
-import { ensureDeviceMid as ensureSharedDeviceMid } from "@zcode/services/node";
+import { ensureTelemetryDeviceMid } from "@zcode/services/node";
 
-interface EnsureRemoteServerDeviceMidOptions {
-  /** Test injection only; production always uses services' ensureDeviceMid. */
+export interface EnsureRemoteServerDeviceMidOptions {
+  /** Test injection only; production always uses services' ensureTelemetryDeviceMid. */
   ensureDeviceMid?: () => Promise<string>;
   log: (...args: unknown[]) => void;
 }
@@ -21,12 +21,12 @@ interface EnsureRemoteServerDeviceMidOptions {
 export async function ensureRemoteServerDeviceMid(
   options: EnsureRemoteServerDeviceMidOptions,
 ): Promise<string | undefined> {
-  const ensureDeviceMid = options.ensureDeviceMid ?? ensureSharedDeviceMid;
+  const ensureDeviceMid = options.ensureDeviceMid ?? ensureTelemetryDeviceMid;
   try {
     return await ensureDeviceMid();
   } catch (error) {
     options.log(
-      "deviceMid 初始化失败，ZCode endpoint 请求将不带 X-Device-Mid:",
+      "telemetry deviceMid 初始化失败，ZCode endpoint 请求将不带 X-Device-Mid:",
       error instanceof Error ? error.message : String(error),
     );
     return undefined;

@@ -228,8 +228,9 @@ export async function handlePlaywrightAction(
   signal?: AbortSignal,
 ): Promise<BrowserCommandResult> {
   if (action.name === "domSnapshot") {
-    // Cloning documentElement and returning outerHTML is noisy and lacks interaction semantics.
-    // Generate an AI/ARIA snapshot with Playwright in the isolated environment, then expand iframes and normalize the result.
+    // Bugfix: this previously cloned only documentElement and returned noisy outerHTML instead of a
+    // Playwright AI/ARIA snapshot. Now it consistently uses the isolated-world runtime plus iframe
+    // expansion and the same post-processing.
     const value = await captureBrowserDomSnapshot(view, signal);
     return done({ ok: true, value });
   }

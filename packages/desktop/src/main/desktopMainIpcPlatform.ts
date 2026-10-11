@@ -1,3 +1,4 @@
+import { decorateRequestSecurityLogArgs } from "./request-security-edition/index.js";
 /* eslint-disable max-lines -- Desktop platform IPC is assembled centrally because splitting it would make permission boundaries harder to audit; this file grows with platform capabilities. */
 import { BrowserWindow, dialog, ipcMain, nativeTheme } from "electron";
 import { readZCodeStdioTapDevState } from "@zcode/services/node";
@@ -10,6 +11,8 @@ import {
   PlatformChannels,
   rendererLogPayloadSchema,
   stringArraySchema,
+  webRemoteControlTaskTargetsSchema,
+  webRemoteControlWorkspaceTargetsSchema,
   type DesktopCommandId,
   type ApplicationIconRequest,
   type Locale,
@@ -18,7 +21,10 @@ import {
   type OpenInEditorOptions,
   type SaveCliMcpToUserDirectoryRequest,
   type CreateTempTextAttachmentRequest,
+  type MaterializeWorkflowArtifactFileRequest,
   type UpdateStatePayload,
+  type WebRemoteControlTaskTarget,
+  type WebRemoteControlWorkspaceTarget,
   type WindowControlsOverlayReadyPayload,
 } from "@zcode/shared";
 import { getInstalledEditors } from "./editors.js";
@@ -32,6 +38,7 @@ import {
   setResourceUsageSamplingActive,
 } from "./resourceManagerWindow.js";
 import { registerResourceManagerStorageIpc } from "./resourceManagerStorage.js";
+import { registerResourceManagerNetworkIpc } from "./resourceManagerNetwork.js";
 import { applyWindowsTitleBarTheme, getWindowOverlayTheme } from "./desktopWindowChrome.js";
 import { syncWindowControlsOverlayForZoomLevel } from "./desktopWindowButtonPosition.js";
 import { resolveDesktopZoomLevelFromFactor } from "./desktopZoom.js";
@@ -52,6 +59,7 @@ import {
   saveCliMcpToUserDirectory,
 } from "./mcpUserDirectory/index.js";
 import { createTempTextAttachment } from "./tempTextAttachment.js";
+import { materializeWorkflowArtifactFile } from "./workflowArtifactFile.js";
 import { registerDesktopSaveFileIpcHandler } from "./desktopSaveFile.js";
 import { registerDesktopPrintToPdfIpcHandler } from "./desktopPrintToPdf.js";
 import { registerCuaPipActiveSessionIpc } from "./desktopCuaPipIpc.js";
@@ -78,8 +86,17 @@ export function registerPlatformIpcHandlers(options: {
   acknowledgePostUpdateReleaseNotes: (version: string) => Promise<void>;
   syncActiveTaskSession: (windowId: number, sessionId: string | null) => void;
   syncTaskRealtimeWorkspaceKeys: (windowId: number, workspaceKeys: Iterable<string>) => void;
+  restorePreviouslyEnabledWebRemoteControl: (
+    windowId: number,
+    contexts: Array<{ workspacePath: string }>,
+  ) => void;
   getUpdateState: () => UpdateStatePayload;
   openUpdateStatusWindow: () => void;
+  syncWebRemoteControlWorkspaces: (
+    windowId: number,
+    workspaces: WebRemoteControlWorkspaceTarget[],
+  ) => void;
+  syncWebRemoteControlTasks: (windowId: number, tasks: WebRemoteControlTaskTarget[]) => void;
   getDesktopSessionActivity: () => {
     runningAgentSessionCount: number;
   };
@@ -88,7 +105,9 @@ export function registerPlatformIpcHandlers(options: {
   }>;
   setAutoDownloadAndInstallUpdates: (enabled: boolean) => Promise<void>;
   syncAppSettings: (patch: unknown) => void;
-  /** Shortcut-settings recording toggle: when true, main rebuilds the menu without configurable accelerators. */
+  /** Close-to-tray capability query (spec: docs/desktop/linux-close-to-tray.md); delegates to the monitor's refresh. */
+  refreshCloseToTrayCapability: () => Promise<import("@zcode/shared").DesktopCloseToTrayCapability>;
+  /** Shortcut-settings recording toggle: when true, main rebuilds the menu without configurable accelerators (see shortcut-settings-spec §7). */
   setShortcutRecordingActive?: (active: boolean, ownerWebContentsId?: number | null) => void;
   /** Desktop device identifier (SHA-256 based on the userData path). */
   deviceMid: string;
@@ -141,6 +160,13 @@ export function registerPlatformIpcHandlers(options: {
     },
   );
 
+  ipcMain.handle(
+    PlatformChannels.MaterializeWorkflowArtifactFile,
+    async (_event, payload: MaterializeWorkflowArtifactFileRequest) => {
+      return materializeWorkflowArtifactFile(payload);
+    },
+  );
+
   registerDesktopBrowserIpcHandlers(
     options.attachBrowserGuest,
     options.updateBrowserGuestViewport,
@@ -175,10 +201,16 @@ export function registerPlatformIpcHandlers(options: {
   ipcMain.handle(PlatformChannels.GetResourceUsageSnapshot, (event) =>
     getResourceUsageSnapshot(event.sender.id),
   );
+  // Entry point for the settings page's Linux grey-out check; the monitor caches stale results, so
+  // reopening the settings page after installing the extension clears the grey-out.
+  ipcMain.handle(PlatformChannels.GetCloseToTrayCapability, () =>
+    options.refreshCloseToTrayCapability(),
+  );
   ipcMain.on(PlatformChannels.SetResourceUsageSamplingActive, (event, active: unknown) => {
     if (typeof active === "boolean") setResourceUsageSamplingActive(event.sender.id, active);
   });
   registerResourceManagerStorageIpc();
+  registerResourceManagerNetworkIpc();
   ipcMain.handle(PlatformChannels.GetZCodeStdioTapDevState, () => readZCodeStdioTapDevState());
   ipcMain.on(PlatformChannels.OpenResourceManager, () => {
     openResourceManager();
@@ -249,7 +281,47 @@ export function registerPlatformIpcHandlers(options: {
     if (win) {
       options.windowWorkspaceMap.set(win.id, new Set(result.data));
       options.syncTaskRealtimeWorkspaceKeys(win.id, result.data);
+      options.restorePreviouslyEnabledWebRemoteControl(
+        win.id,
+        result.data.map((workspacePath) => ({ workspacePath })),
+      );
     }
+  });
+
+  ipcMain.on(PlatformChannels.SyncWebRemoteControlWorkspaces, (event, payload: unknown) => {
+    const result = webRemoteControlWorkspaceTargetsSchema.safeParse(payload);
+    if (!result.success) {
+      options.logger.warn(
+        "[sync-web-remote-control-workspaces] invalid payload:",
+        formatZodError(result.error),
+      );
+      return;
+    }
+
+    const win = BrowserWindow.fromWebContents(event.sender);
+    if (!win) {
+      return;
+    }
+
+    options.syncWebRemoteControlWorkspaces(win.id, result.data);
+  });
+
+  ipcMain.on(PlatformChannels.SyncWebRemoteControlTasks, (event, payload: unknown) => {
+    const result = webRemoteControlTaskTargetsSchema.safeParse(payload);
+    if (!result.success) {
+      options.logger.warn(
+        "[sync-web-remote-control-tasks] invalid payload:",
+        formatZodError(result.error),
+      );
+      return;
+    }
+
+    const win = BrowserWindow.fromWebContents(event.sender);
+    if (!win) {
+      return;
+    }
+
+    options.syncWebRemoteControlTasks(win.id, result.data);
   });
 
   ipcMain.on(PlatformChannels.SyncWindowUnreadCount, (event, payload: unknown) => {
@@ -303,7 +375,7 @@ export function registerPlatformIpcHandlers(options: {
     options.setShortcutRecordingActive?.(payload, event.sender.id);
   });
 
-  ipcMain.on(PlatformChannels.Log, (_event, payload: unknown) => {
+  ipcMain.on(PlatformChannels.Log, (event, payload: unknown) => {
     const result = rendererLogPayloadSchema.safeParse(payload);
     if (!result.success) {
       options.logger.warn("[renderer-log] invalid payload:", formatZodError(result.error));
@@ -311,7 +383,10 @@ export function registerPlatformIpcHandlers(options: {
     }
     (
       options.logger as unknown as { fromRenderer(level: string, args: unknown[]): void }
-    ).fromRenderer?.(result.data.level, result.data.args);
+    ).fromRenderer?.(
+      result.data.level,
+      decorateRequestSecurityLogArgs(result.data.args, event.sender.id),
+    );
   });
 
   ipcMain.handle(PlatformChannels.OpenInFileManager, async (_event, rawPath: string) =>

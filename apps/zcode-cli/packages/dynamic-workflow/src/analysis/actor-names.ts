@@ -44,7 +44,7 @@ import type { CompileDiagnostic, WorkflowProgram } from "../compiler/compile.js"
 import type { SiteTable } from "./sites.js";
 
 /** Same literal name at two sites (clause 1). 9001 = facade-siting, 9002 = schema, 9003 = world-run, 9004 = phase. */
-const DUPLICATE_ACTOR_NAME_CODE = 9005;
+export const DUPLICATE_ACTOR_NAME_CODE = 9005;
 
 /**
  * Static name inside a fan-out body (clause 2), with its own code instead of reusing 9005.
@@ -157,7 +157,9 @@ function staticEffectiveName(call: ts.CallExpression): string | undefined {
       if (property.name !== undefined && ts.isComputedPropertyName(property.name)) return undefined;
       if (property.name === undefined || !isNameKey(property.name)) continue;
       if (!ts.isPropertyAssignment(property)) return undefined; // Shorthand/method: dynamic.
-      return ts.isStringLiteralLike(property.initializer) ? property.initializer.text : undefined;
+      return ts.isStringLiteralLike(property.initializer)
+        ? property.initializer.text
+        : undefined;
     }
     // No name in the object literal; fall back to the name argument.
   }

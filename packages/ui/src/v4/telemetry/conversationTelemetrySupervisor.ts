@@ -78,10 +78,10 @@ export interface ConversationPromptTelemetrySeed {
   queueConfirmed?: boolean;
 }
 
-/** Failure reason when the send is finalized. */
-type ConversationSendFailureReason = SendFunnelReasonCode;
+/** Send the finalized failure reason; see docs/monitoring/composer-send-funnel-telemetry.md for its value definitions. */
+export type ConversationSendFailureReason = SendFunnelReasonCode;
 
-interface AcceptedConversationPromptTelemetrySeed extends ConversationPromptTelemetrySeed {
+export interface AcceptedConversationPromptTelemetrySeed extends ConversationPromptTelemetrySeed {
   /** Whether CLI session recording is enabled; when absent, keep it unknown and do not fill it from live settings. */
   memoryEnabled?: boolean;
   sessionId: string;
@@ -94,13 +94,13 @@ interface AcceptedConversationPromptTelemetrySeed extends ConversationPromptTele
 const HELD_QUEUE_CONFIRMATION_STALE_REASON = "guard.heldQueueConfirmationStale";
 
 /** If no user message has rendered by this duration after the send click, mark it as timed out. */
-const SEND_RENDER_WAIT_TIMEOUT_MS = 30_000;
+export const SEND_RENDER_WAIT_TIMEOUT_MS = 30_000;
 
 /**
  * ACK disposition: either wait for rendering (command accepted, but the user message is not yet displayed)
  * or finalize immediately as a failure. Return null when neither applies.
  */
-type ConversationSendAckOutcome =
+export type ConversationSendAckOutcome =
   | { kind: "awaitRender"; ackStatus: string }
   | {
       kind: "settle";
@@ -294,7 +294,7 @@ interface DeferredTerminal {
   foregroundAtReceipt: boolean;
 }
 
-interface ConversationTelemetryWorkspaceDetail {
+export interface ConversationTelemetryWorkspaceDetail {
   workspace_kind: "local" | "remote";
   remote_kind: RemoteWorkspaceIdentityKind | "";
 }

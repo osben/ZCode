@@ -1,4 +1,6 @@
-import type { RuntimeInputPresentation } from "@zcode/contracts";
+import type { RequestVerificationReason } from "@zcode/shared";
+import type { GetAgentDefinitions, LoadAgentDefinitions } from "../subagent/definitions.js";
+import type { RuntimeInputPresentation, TurnExecutionModelFallbackReason } from "@zcode/contracts";
 /* eslint-disable max-lines -- Runtime types centrally define the public core/runtime structures; splitting them requires a separate migration. */
 import { PermissionService, ToolScheduler } from "./deps.js";
 import type {
@@ -72,6 +74,7 @@ import type {
   ExecutionShellSelection,
   AutomationPort,
   OffPeakPort,
+  TopicResourcePort,
   FileSystemPort,
   HttpClientPort,
   ImageProcessorPort,
@@ -122,6 +125,8 @@ export interface AgentRuntimeConfig {
   remoteSessionId?: string;
   bashTimeoutPolicy?: BashTimeoutPolicy;
   presentationSurface?: PresentationSurface;
+  /** Execution Host's output root, independent of the working repository. */
+  genUiOutputRoot?: string;
   mode?: CollaborationMode;
   planEnabled?: boolean;
   modelStreaming?: "off" | "on";
@@ -206,13 +211,20 @@ export interface AgentRuntimeConfig {
   parentSessionId?: SessionId;
   taskType?: SessionTaskType;
   /**
-   * Dynamic-workflow switch: determined by the Host and delivered through
-   * ZCode Protocol; runtime only consumes it. **Absent means enabled**, preserving the TUI default.
-   * Headless passes true/false explicitly through --enable-workflow (default false), and
-   * workflow_child inherits the parent config. False disables the ten workflow tools without
-   * changing registration policy for other tools.
+   * Dynamic-workflow gradual rollout gate (docs/dynamic-workflow/launch.md, “Gray release”): Host decides and sends it through
+   * ZCode Protocol; runtime only consumes it. **Absent means enabled** (this polarity is used by in-process embedders);
+   * standalone CLI TUI and headless modes explicitly pass true/false through --workflow-mode (default disabled, DWG-04),
+   * and workflow_child inherits the parent configuration.
+   * false disables the ten workflow tools without changing registration policy for other tools.
    */
   dynamicWorkflowEnabled?: boolean;
+  /**
+   * Gradual rollout mode `onDemand` (docs/dynamic-workflow/launch.md, “On demand: activation”): defer registration of the ten workflow
+   * tools until the session's first `/workflow` (or a GUI Resume / Configure / direct start for this session, or cold restore when a workflow already exists).
+   * **Absent means register immediately**, matching the polarity of dynamicWorkflowEnabled; only the protocol server writes true when the Host sends mode onDemand.
+   * Activation state belongs to runtime (`dynamicWorkflowToolsActivated`).
+   */
+  dynamicWorkflowToolsOnDemand?: boolean;
 
   // Context Builder config
   systemPrompt?: string;
@@ -245,8 +257,8 @@ export interface AgentRuntimeConfig {
   workspaceIdentity?: WorkspaceId;
   envInfo?: EnvInfo; // Optional, will be auto-detected if not provided
   currentDate?: string; // YYYY-MM-DD, resolved by adapter when omitted
-  userInstructions?: UserInstructionsOptions; // AGENTS.md
-  projectContext?: ProjectContext; // auto-detected if not provided
+  userInstructions?: UserInstructionsOptions; // P1: AGENTS.md
+  projectContext?: ProjectContext; // P2: auto-detected if not provided
   skillMetadataBudget?: number;
 }
 
@@ -310,6 +322,10 @@ export interface MemoryRuntimeConfig {
 }
 
 export interface AgentRuntimeDeps {
+  /** Read-only catalog access; read synchronously from memory and do not perform I/O while collecting a request. */
+  getAgentDefinitions?: GetAgentDefinitions;
+  /** Read once for a new parent context; child executions must not inherit this loader. */
+  loadAgentDefinitions?: LoadAgentDefinitions;
   agentTelemetry?: AgentExecutionTelemetryPort;
   agentTelemetryCausation?: AgentTelemetryCausation;
   agentTelemetryCausationMode?: "child" | "linked_root";
@@ -372,6 +388,7 @@ export interface AgentRuntimeDeps {
   artifactStore?: ToolArtifactStorePort;
   automationPort?: AutomationPort;
   offPeakPort?: OffPeakPort;
+  topicResourcePort?: TopicResourcePort;
   contextSourcePort?: ContextSourcePort;
   eventSink?: SessionEventSink;
   logger?: Logger;
@@ -402,10 +419,12 @@ export interface ProviderRuntimeHeadersPort {
   shouldRefreshBeforeModelRequest?(input: { providerId: string; modelId: string }): boolean;
   refreshBeforeModelRequest(input: {
     accountAccess?: ZCodeProviderAccountAccess;
+    expectedAccountScope?: string;
+    rejectedProjectTokenFingerprint?: string;
     abortSignal?: AbortSignal;
     modelId: string;
     providerId: string;
-    reason: "model-request";
+    reason: RequestVerificationReason;
     sessionId: SessionId;
     traceContext: TraceContext;
     turnId?: TurnId;
@@ -436,6 +455,22 @@ export interface ModelExecutionContext {
   subagents?: {
     foregroundModel: "submission";
     background: "deny";
+  };
+  /**
+   * If this execution's Selection fails, fall back to the original model within the same Turn and continue (preserving committed history and replacing only the model for subsequent requests),
+   * rather than failing the whole turn. The caller must declare the trigger conditions: `providerId` restricts matching to the provider selected by this execution,
+   * `rules` are checked in declaration order and the first match determines the fallback reason, and an omitted `providerErrorCode` means any failure from that provider.
+   * Core does not hard-code provider IDs, model names, or error messages.
+   * Resolve the fallback target from `target` first (the committed selection at draw time, meaning the session's original model), then from the persistent Session Selection;
+   * if neither resolves, there is no fallback and the real error is returned.
+   */
+  selectionFallback?: {
+    providerId: string;
+    rules: Array<{
+      reason: TurnExecutionModelFallbackReason;
+      providerErrorCode?: string;
+    }>;
+    target?: ModelSelection;
   };
 }
 
@@ -491,6 +526,8 @@ export type PromptAdmissionOptions = ExecuteTurnOptions & {
   expectedTurnId?: TurnId;
   /** Product queue semantics when busy; Core falls back to queue for attachments or non-steerable input. */
   queueDelivery?: "guide" | "queue";
+  /** Force FIFO admission; used for temporary run models that can only be installed in a future independent turn. */
+  requireQueue?: boolean;
   /** Internal calls such as queue promotion require idle admission; otherwise reject immediately. */
   requireIdle?: boolean;
 };

@@ -8,12 +8,14 @@ import {
   ISystemService,
   ITerminalService,
   ISettingService,
+  IOnboardingRecordService,
   ICredentialService,
   IBroadcastService,
   IZCodeTaskService,
   IZCodeAgentService,
   IZCodeSessionService,
   IConversationShareService,
+  createUnsupportedConversationShareService,
   IBotsService,
   IFileWatcherService,
   IOAuthService,
@@ -34,6 +36,7 @@ import {
   IHooksService,
   IMemoryService,
   IUserInstructionsService,
+  IOutputStyleService,
   ISettingsSyncService,
   IPromptAttachmentTransferService,
   type IServiceAccessor,
@@ -51,10 +54,12 @@ import {
   createOAuthProviderLogoutHandler,
   createAccountProviderCredentialStore,
   createAccountProviderCredentialService,
+  createAccountProjectTokenClient,
+  getAccountRequestAuthService,
   createAccountProviderRequestAuthService,
   createAccountRequestAuthService,
   resolveCurrentAccountAccess,
-  resolveAccountTeamPlanRuntimeApiKey,
+  resolveAccountTeamPlanRuntimeMaterial,
   createSettingsSyncService,
   createBotsService,
   createUsageStatsService,
@@ -64,6 +69,7 @@ import {
   createServiceLogger,
   createSubagentsService,
   createMemoryService,
+  createOutputStyleService,
   createRemoteConversationShareArtifactSource,
   OAuthCredentialRepo,
 } from "@zcode/services/node";
@@ -72,6 +78,8 @@ import {
   buildRuntimeZCodeApiUrl,
   DEFAULT_ZCODE_MODEL_CONTEXT_BUDGET_STRATEGY,
   type ProviderFamilyDomain,
+  resolveBigModelApiOrigin,
+  resolveZaiBusinessBaseUrl,
   type ZCodeSessionRuntimePreferencesResult,
   ZAI_PROVIDER_ID,
 } from "@zcode/shared";
@@ -83,11 +91,26 @@ import {
 
 const runtimePreferencesLogger = createServiceLogger("remote-runtime-preferences");
 const ZCODE_JWT_TOKEN_KEY = "zcodejwttoken";
+const conversationShareLog = createServiceLogger("conversation-share");
+
+function createUnsupportedRemoteConversationShareService(): IConversationShareService {
+  return createUnsupportedConversationShareService({
+    message: "Conversation sharing is not available for this client or remote target",
+    onRejected: (action) => {
+      conversationShareLog.warn(undefined, "conversation share action rejected", {
+        action,
+        kind: "feature_disabled",
+        reason: "server_remote_unsupported",
+      });
+    },
+  });
+}
 
 export function createRemoteWorkspaceServiceCollection(params: {
   clientConfigService: IClientConfigService;
   connectionServices: IServiceAccessor;
   sourceServices?: ServiceCollection;
+  localOnboardingRecordService: IOnboardingRecordService;
   parentPort: Parameters<typeof createBroadcastService>[0];
   createReportingRemoteZCodeTaskService: <T extends object>(service: T) => T;
   createRemotePromptAttachmentTaskService: <T extends object>(service: T) => T;
@@ -99,7 +122,12 @@ export function createRemoteWorkspaceServiceCollection(params: {
 }): ServiceCollection {
   assertLegacyRemoteWorkspaceRpcContract(params.connectionServices);
   const localSettingService = createSettingService();
-  const localCredentialService = createCredentialService();
+  let fallbackTokenClient: ReturnType<typeof createAccountProjectTokenClient> | undefined;
+  const localCredentialService = createCredentialService({
+    onDidMutate: ({ key }) => {
+      if (key.startsWith("oauth:") || key === ZCODE_JWT_TOKEN_KEY) fallbackTokenClient?.clear();
+    },
+  });
   const localAccountProviderCredentialStore = createAccountProviderCredentialStore({
     credentialService: localCredentialService,
   });
@@ -125,15 +153,6 @@ export function createRemoteWorkspaceServiceCollection(params: {
       );
     },
   });
-  const localAccountProviderCredentialService = createAccountProviderCredentialService({
-    credentialStore: localAccountProviderCredentialStore,
-    async loadOAuthAccessToken(family) {
-      const providerId = family === "zai" ? ZAI_PROVIDER_ID : BIGMODEL_PROVIDER_ID;
-      return (await localOAuthCredentialRepo.loadTokenSet(providerId))?.accessToken ?? null;
-    },
-    // Desktop-attached remote reuses only keys resolved locally or found in legacy storage; remote refresh remains the responsibility of the local account flow.
-    resolveProviderApiKey: async () => null,
-  });
   const readLocalAccountProviderSettings = async () => {
     const settings = await localSettingService.get();
     return {
@@ -145,34 +164,74 @@ export function createRemoteWorkspaceServiceCollection(params: {
     const providerId = family === "zai" ? ZAI_PROVIDER_ID : BIGMODEL_PROVIDER_ID;
     return (await localOAuthCredentialRepo.loadUserProfile(providerId))?.id ?? null;
   };
-  const localAccountRequestAuthService = createAccountRequestAuthService(
-    createAccountProviderRequestAuthService({
-      resolveCurrentAccountAccess: (access) =>
-        resolveCurrentAccountAccess({
-          access,
-          readSettings: readLocalAccountProviderSettings,
-          loadAccountIdentity: loadLocalAccountIdentity,
-        }),
-      loadOAuthTokenSet: (providerId) => localOAuthCredentialRepo.loadTokenSet(providerId),
-      async loadIndividualPlanApiKey(providerId, family) {
-        const oauthProviderId = family === "zai" ? ZAI_PROVIDER_ID : BIGMODEL_PROVIDER_ID;
-        const accountIdentity = (await localOAuthCredentialRepo.loadUserProfile(oauthProviderId))
-          ?.id;
-        if (!accountIdentity) return null;
-        return localAccountProviderCredentialService.loadCodingPlanApiKey({
-          providerId,
+  const localAccountRequestAuthService =
+    (params.sourceServices ? getAccountRequestAuthService(params.sourceServices) : undefined) ??
+    (() => {
+      // The old implementation only read the disk key and resolve was always empty; after the migration, reuse the official owner or exchange credentials at this boundary.
+      const tokenClient = createAccountProjectTokenClient(localApiClient, localCredentialService);
+      fallbackTokenClient = tokenClient;
+      // 401 recovery must propagate the rejected PAT fingerprint through the personal/team callbacks, or the cache will return the rejected credential again.
+      const credentialResolver = createAccountProviderCredentialService({
+        async loadOAuthAccessToken(family) {
+          const providerId = family === "zai" ? ZAI_PROVIDER_ID : BIGMODEL_PROVIDER_ID;
+          return (await localOAuthCredentialRepo.loadTokenSet(providerId))?.accessToken ?? null;
+        },
+        async resolveProviderMaterial(
           family,
+          loginToken,
           accountIdentity,
-        });
-      },
-      resolveTeamPlanApiKey: (access) =>
-        resolveAccountTeamPlanRuntimeApiKey({
-          apiClient: localApiClient,
-          credentialService: localCredentialService,
-          access,
+          rejectedProjectTokenFingerprint,
+        ) {
+          const result = await tokenClient.resolve({
+            origin:
+              family === "zai"
+                ? resolveZaiBusinessBaseUrl(process.env)
+                : resolveBigModelApiOrigin(process.env),
+            family,
+            loginToken,
+            accountId: accountIdentity,
+            rejectedProjectTokenFingerprint,
+          });
+          return result;
+        },
+      });
+      return createAccountRequestAuthService(
+        createAccountProviderRequestAuthService({
+          resolveCurrentAccountAccess: (access) =>
+            resolveCurrentAccountAccess({
+              access,
+              readSettings: readLocalAccountProviderSettings,
+              loadAccountIdentity: loadLocalAccountIdentity,
+            }),
+          loadOAuthTokenSet: (providerId) => localOAuthCredentialRepo.loadTokenSet(providerId),
+          async loadIndividualPlanMaterial(providerId, family, rejectedProjectTokenFingerprint) {
+            const oauthProviderId = family === "zai" ? ZAI_PROVIDER_ID : BIGMODEL_PROVIDER_ID;
+            const accountIdentity = (
+              await localOAuthCredentialRepo.loadUserProfile(oauthProviderId)
+            )?.id;
+            if (!accountIdentity) return null;
+            return credentialResolver.loadCodingPlanMaterial({
+              providerId,
+              family,
+              accountIdentity,
+              rejectedProjectTokenFingerprint,
+            });
+          },
+          resolveTeamPlanMaterial: async (access, rejectedProjectTokenFingerprint) => {
+            const accountIdentity = await loadLocalAccountIdentity(access.family);
+            if (!accountIdentity) return null;
+            return resolveAccountTeamPlanRuntimeMaterial({
+              apiClient: localApiClient,
+              credentialService: localCredentialService,
+              accountIdentity,
+              tokenClient,
+              access,
+              rejectedProjectTokenFingerprint,
+            });
+          },
         }),
-    }),
-  );
+      );
+    })();
   const localCodingPlanSubscriptionService = createCodingPlanSubscriptionService({
     apiClient: localApiClient,
     credentialService: localCredentialService,
@@ -319,6 +378,8 @@ export function createRemoteWorkspaceServiceCollection(params: {
     .register(ISystemService, params.connectionServices.systemService)
     .register(ITerminalService, params.connectionServices.terminalService)
     .register(ISettingService, localSettingService)
+    // Rebuilding the remote Root on mobile once re-showed onboarding because this channel was missing; reuse the Local Host owner so records and login state share one source.
+    .register(IOnboardingRecordService, params.localOnboardingRecordService)
     .register(ICredentialService, localCredentialService)
     .register(IBroadcastService, localBroadcastService)
     .register(IZCodeTaskService, remoteZCodeTaskService)
@@ -378,12 +439,77 @@ export function createRemoteWorkspaceServiceCollection(params: {
     // Global instructions belong to the target host: the remote CLI reads the remote ~/.zcode/AGENTS.md.
     // Do not fall back to the local instance as Memory does, or it will silently edit a local file.
     .register(IUserInstructionsService, params.connectionServices.userInstructionsService)
+    .register(IOutputStyleService, createOutputStyleService())
     .register(
       ISettingsSyncService,
       createSettingsSyncService({ settingService: localSettingService }),
     )
     .register(IPromptAttachmentTransferService, params.promptAttachmentTransferService);
   registerHostApiNetworkTransportForDispose(services, hostApiNetworkTransport);
+  registerRemoteProviderProvisioningExecutor(services, remoteProviderProvisioningService);
+  return services;
+}
+
+export function createServerRemoteWorkspaceServiceCollection(params: {
+  clientConfigService: IClientConfigService;
+  connectionServices: IServiceAccessor;
+  sourceServices?: ServiceCollection;
+}): ServiceCollection {
+  assertLegacyRemoteWorkspaceRpcContract(params.connectionServices);
+  // A Server remote connects to an already-running, complete ZCode server.
+  // The Host only forwards RPC; it does not decide workspace/runtime/model-provider ownership for the server.
+  const remoteProviderProvisioningService =
+    createRemoteProviderProvisioningExecutorFromWorkspace(params);
+  const services = new ServiceCollection()
+    .register(IFileService, params.connectionServices.fileService)
+    .register(
+      IMediaPreviewService,
+      params.connectionServices.mediaPreviewService ??
+        createMediaPreviewService({ fileService: params.connectionServices.fileService }),
+    )
+    .register(IGitService, params.connectionServices.gitService)
+    .register(IGitCheckpointService, params.connectionServices.gitCheckpointService)
+    .register(ISystemService, params.connectionServices.systemService)
+    .register(ITerminalService, params.connectionServices.terminalService)
+    .register(ISettingService, params.connectionServices.settingService)
+    .register(ICredentialService, params.connectionServices.credentialService)
+    .register(IBroadcastService, params.connectionServices.broadcastService)
+    .register(IZCodeTaskService, params.connectionServices.zcodeTaskService)
+    .register(IZCodeAgentService, params.connectionServices.zcodeAgentService)
+    .register(IZCodeSessionService, params.connectionServices.zcodeSessionService)
+    .register(IConversationShareService, createUnsupportedRemoteConversationShareService())
+    .register(IBotsService, params.connectionServices.botsService)
+    .register(IFileWatcherService, params.connectionServices.fileWatcherService)
+    .register(IOAuthService, params.connectionServices.oauthService)
+    .register(IModelSelectionService, params.connectionServices.modelSelectionService)
+    .register(IProviderSettingsService, params.connectionServices.providerSettingsService)
+    .register(IUsageStatsService, params.connectionServices.usageStatsService)
+    .register(
+      ICodingPlanSubscriptionService,
+      params.connectionServices.codingPlanSubscriptionService,
+    )
+    .register(IClientConfigService, params.clientConfigService)
+    .register(IClientScenesService, params.connectionServices.clientScenesService)
+    .register(ISkillsService, params.connectionServices.skillsService)
+    .register(ISkillSyncService, params.connectionServices.skillSyncService)
+    .register(IMcpSyncService, params.connectionServices.mcpSyncService)
+    .register(IPluginsService, params.connectionServices.pluginsService)
+    .register(IPluginManagementService, params.connectionServices.pluginManagementService)
+    .register(ISubagentsService, params.connectionServices.subagentsService)
+    .register(ICommandsService, params.connectionServices.commandsService)
+    .register(IHooksService, params.connectionServices.hooksService)
+    .register(IMemoryService, params.connectionServices.memoryService)
+    .register(IOutputStyleService, params.connectionServices.outputStyleService)
+    .register(ISettingsSyncService, params.connectionServices.settingsSyncService)
+    .register(
+      IPromptAttachmentTransferService,
+      params.connectionServices.promptAttachmentTransferService,
+    );
+  // The Server owns its settings and OAuth; onboarding records must also pass through that same service rather than borrow Desktop records.
+  // Keep the accessor's optional-capability convention; the current RemoteServiceAccess provides this proxy.
+  if (params.connectionServices.onboardingRecordService) {
+    services.register(IOnboardingRecordService, params.connectionServices.onboardingRecordService);
+  }
   registerRemoteProviderProvisioningExecutor(services, remoteProviderProvisioningService);
   return services;
 }

@@ -9,13 +9,32 @@ import {
   SkillOutputJsonSchema,
   SkillOutputSchema,
   createCoreError,
+  DYNAMIC_WORKFLOW_SKILL_NAME,
   type SkillRuntimeInput,
 } from "@zcode/contracts";
 import type { ToolEntry, ToolHandler } from "../types.js";
 
-const MAX_SKILL_BYTES = 100_000;
+/** Default byte limit for skill content; the adapter truncates excess bytes from the end. */
+export const MAX_SKILL_BYTES = 100_000;
 
-const skillHandler: ToolHandler = async (input, context) => {
+/**
+ * Byte limit for the `dynamic-workflows` skill (docs/dynamic-workflow/authoring.md, “The skill”).
+ * Raised on 2026-09-30: this skill had been capped at 100,000 since 09-22, forcing existing guidance to be removed for each new feature.
+ * Match by the requested name, the same value checked by the skill gate (workflow-skill-gate.ts).
+ */
+export const WORKFLOW_SKILL_MAX_BYTES = 200_000;
+
+/** Headroom for the result wrapper (`<skill_content>` tag, title, Base directory line); the tool-level budget must accommodate it. */
+export const SKILL_RESULT_WRAPPER_BYTES = 4_096;
+
+/** The tool-level result budget is static, so use the largest body limit plus the wrapper. */
+const MAX_SKILL_RESULT_BYTES = WORKFLOW_SKILL_MAX_BYTES + SKILL_RESULT_WRAPPER_BYTES;
+
+function skillMaxBytes(skill: string): number {
+  return skill === DYNAMIC_WORKFLOW_SKILL_NAME ? WORKFLOW_SKILL_MAX_BYTES : MAX_SKILL_BYTES;
+}
+
+export const skillHandler: ToolHandler = async (input, context) => {
   const { skill } = SkillInputSchema.parse(input) as SkillRuntimeInput;
   const skillPort = context.skillPort;
 
@@ -37,7 +56,7 @@ const skillHandler: ToolHandler = async (input, context) => {
     {
       name: skill,
       workingDirectory: context.workingDirectory,
-      maxBytes: MAX_SKILL_BYTES,
+      maxBytes: skillMaxBytes(skill),
       trace: {
         traceId: context.traceId,
         spanId: context.spanId,
@@ -102,7 +121,7 @@ Important:
     destructive: false,
     concurrentSafe: true,
     timeoutMs: 30000,
-    maxOutputBytes: MAX_SKILL_BYTES,
+    maxOutputBytes: MAX_SKILL_RESULT_BYTES,
     sideEffectScope: "session",
     riskLevel: "low",
     needsApproval: false,
@@ -123,11 +142,11 @@ Important:
     denyPriority: "beforeAsk",
   },
   resultBudget: {
-    maxInlineBytes: MAX_SKILL_BYTES,
-    maxModelBytes: MAX_SKILL_BYTES,
+    maxInlineBytes: MAX_SKILL_RESULT_BYTES,
+    maxModelBytes: MAX_SKILL_RESULT_BYTES,
     strategy: "truncate",
     preview: {
-      maxBytes: MAX_SKILL_BYTES,
+      maxBytes: MAX_SKILL_RESULT_BYTES,
       direction: "head",
     },
   },

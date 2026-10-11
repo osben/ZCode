@@ -93,7 +93,7 @@ export async function applyDesktopChromiumNetworkPolicies(
   );
 }
 
-async function applyDesktopSessionNetworkPolicy(
+export async function applyDesktopSessionNetworkPolicy(
   targetSession: Session,
   settings: DesktopNetworkPolicySettings,
   logger: DesktopNetworkPolicyLogger,
@@ -127,13 +127,13 @@ async function applyDesktopSessionNetworkPolicy(
  * self-signed certificate cannot show Chrome's safety interstitial. After rejection, the user sees
  * only a blank chrome-error page and has no way to proceed.
  */
-function createInsecureCertificateVerifyProc(): CertificateVerifyProc {
+export function createInsecureCertificateVerifyProc(): CertificateVerifyProc {
   return (_request, callback) => {
     callback(ACCEPT_CERTIFICATE);
   };
 }
 
-function buildElectronProxyConfig(
+export function buildElectronProxyConfig(
   httpProxy: string | undefined,
   noProxy?: string | undefined,
   fallbackMode: ProxyFallbackMode = "direct",
@@ -155,7 +155,7 @@ function buildElectronProxyConfig(
   return proxyConfig;
 }
 
-function createCustomCaCertificateVerifyProcFromFile(
+export function createCustomCaCertificateVerifyProcFromFile(
   caCertPath: string | undefined,
   logger: Pick<DesktopNetworkPolicyLogger, "warn">,
 ): CertificateVerifyProc | null {
@@ -177,7 +177,7 @@ function createCustomCaCertificateVerifyProcFromFile(
   }
 }
 
-function createCustomCaCertificateVerifyProc(
+export function createCustomCaCertificateVerifyProc(
   trustedFingerprints: ReadonlySet<string>,
 ): CertificateVerifyProc | null {
   if (trustedFingerprints.size === 0) {
@@ -205,7 +205,7 @@ function createCustomCaCertificateVerifyProc(
   };
 }
 
-function readCustomCaFingerprintsFromPem(pem: string): Set<string> {
+export function readCustomCaFingerprintsFromPem(pem: string): Set<string> {
   const fingerprints = new Set<string>();
   const certBlocks =
     pem.match(/-----BEGIN CERTIFICATE-----[\s\S]*?-----END CERTIFICATE-----/g) ?? [];
@@ -216,7 +216,7 @@ function readCustomCaFingerprintsFromPem(pem: string): Set<string> {
   return fingerprints;
 }
 
-function certificateChainMatchesCustomCa(
+export function certificateChainMatchesCustomCa(
   certificate: CertificateLike,
   trustedFingerprints: ReadonlySet<string>,
 ): boolean {

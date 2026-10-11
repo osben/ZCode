@@ -18,7 +18,10 @@
  *     and vm for transport.
  *   - Evaluation happens in a **separate realm** created by `vm.createContext(...)`, containing
  *     only ES intrinsics and injected `__host`. A bare vm context has no
- *     `process`/`require`/`Buffer`/`fetch`; we add only `__host` and runtime restrictions.
+ *     `process`/`require`/`Buffer`/`fetch` and no timers; we add only `__host` and runtime
+ *     restrictions. channel / future and stall detection (docs/dynamic-workflow/authoring.md
+ *     "Streams") are both implemented inside the cell: the former is a pure promise mechanism,
+ *     and the latter holds precisely because "the cell has no other wake-up source".
  *
  * Cross-realm containment (prevent prototype leakage / prototype pollution): everything the
  * script touches (Promise, JSON-parsed host results, Error) is constructed **inside the
@@ -34,9 +37,12 @@
  * This file is a **hand-maintained mirror** of protocol.ts wire protocol: childMain runs as an
  * embedded string in the entry file and cannot import protocol.ts. Changes to either must be
  * mirrored in the other. Therefore {@link childMain} may import **types** only (erased at
- * compile time) and must never add runtime package dependencies.
+ * compile time) and must never add runtime package dependencies; the module's sole value import
+ * (the bootstrap string from child-cell-streams.ts) is read and embedded into the entry file by
+ * {@link renderChildEntry} only, and childMain itself receives it through deps.
  */
 
+import { CELL_STREAMS_BOOTSTRAP } from "./child-cell-streams.js";
 import type { ChildPayload } from "./protocol.js";
 
 /** Entire `node:vm` surface used by {@link childMain} (narrowed to two functions; this is the child-process VM contract). */
@@ -68,6 +74,16 @@ export interface ChildMainDeps {
    * as a JSON literal and passes it through unchanged; it no longer travels through argv or base64.
    */
   payload: ChildPayload;
+  /**
+   * The cell's second bootstrap script: channel / future and stall detection
+   * ({@link import("./child-cell-streams.js").CELL_STREAMS_BOOTSTRAP} in child-cell-streams.ts).
+   * It travels the same path as payload—the entry file embeds it as a string literal and `start`
+   * passes it through—because childMain's self-containment constraint forbids referencing
+   * module-scope bindings, and keeping it in this file would burst the single-file line limit.
+   * It runs in the same context after BOOTSTRAP and before the lowered body, reading and writing
+   * the context globals that BOOTSTRAP created with `var`.
+   */
+  streamsBootstrap: string;
 }
 
 /**
@@ -104,6 +120,9 @@ export function childMain(deps: ChildMainDeps): Promise<void> {
 var __nextLocal = 0;
 var __nextReq = 0;
 var __pending = new Map();
+// Holes already filled this run: site id → body text. When the same site is reached again (in a
+// loop), evaluate directly without crossing the wire.
+var __fills = new Map();
 
 function __emit(obj) {
   __send(JSON.stringify(obj));
@@ -132,6 +151,40 @@ function __worldRead(siteId, op, args) {
   return new Promise(function (resolve, reject) {
     __pending.set(id, { resolve: resolve, reject: reject });
     __emit({ kind: "request", id: id, type: "world-read", siteId: siteId, op: op, args: args });
+  });
+}
+
+function __evaluateFill(evaluate, code) {
+  // evaluate is the (__src) => eval(__src) that lowering emits at the site: a direct eval closing
+  // over every binding of the author's code at that point (__host included), which yields the
+  // (async () => { … }) function; calling it produces the hole's value. Each arrival creates a
+  // fresh evaluate, so a hole inside a loop sees that iteration's own bindings. Evaluation
+  // failures (syntax errors) and body rejections surface on this promise at the site, where the
+  // script can catch them.
+  return Promise.resolve().then(function () {
+    return evaluate(code)();
+  });
+}
+
+function __hole(siteId, name, prompt, evaluate, body) {
+  // Already filled (the body lives in the script): call the body directly without crossing the
+  // wire. Synchronous throws become rejections, same rule as future.
+  if (body !== undefined) {
+    try {
+      return Promise.resolve(body());
+    } catch (e) {
+      return Promise.reject(e);
+    }
+  }
+  var remembered = __fills.get(siteId);
+  if (remembered !== undefined) return __evaluateFill(evaluate, remembered);
+  var id = "r" + (++__nextReq);
+  return new Promise(function (resolve, reject) {
+    __pending.set(id, { resolve: resolve, reject: reject });
+    __emit({ kind: "request", id: id, type: "hole", siteId: siteId, name: name, prompt: prompt });
+  }).then(function (answer) {
+    __fills.set(siteId, answer.code);
+    return __evaluateFill(evaluate, answer.code);
   });
 }
 
@@ -193,6 +246,7 @@ globalThis.__host = {
   report: __report,
   log: __log,
   enterPhase: __enterPhase,
+  hole: __hole,
 };
 
 // ── Consume inbound responses (called by the outer realm with a line string) ──
@@ -217,7 +271,15 @@ globalThis.__deliver = function (line) {
   waiter.reject(err);
 };
 
+// Whether the run has already sent complete. Stall detection (__checkStalled in
+// deps.streamsBootstrap) also reads and writes it.
+var __settled = false;
+
 function __complete(ok, payload) {
+  // Idempotent: once stall detection has ended the run with error-complete, a (theoretical) later
+  // script completion must not send a second one.
+  if (__settled) return;
+  __settled = true;
   if (ok) {
     __emit({ kind: "complete", ok: true, value: payload });
     return;
@@ -295,12 +357,14 @@ Math.random = function () {
     __argsJson: string;
     __deliver: (line: string) => void;
     __execute: (runFn: unknown) => Promise<void>;
+    __checkStalled: () => boolean;
   };
   sandbox.__send = (line) => {
     deps.stdout.write(`${line}\n`);
   };
   deps.vm.createContext(sandbox, { name: "workflow-sandbox" });
   deps.vm.runInContext(BOOTSTRAP, sandbox, { filename: "workflow-bootstrap.js" });
+  deps.vm.runInContext(deps.streamsBootstrap, sandbox, { filename: "workflow-streams.js" });
 
   // Compile the lowered function body (a context-native async fn; its await creates a context
   // Promise, and import() throws because no callback is supplied).
@@ -332,17 +396,37 @@ Math.random = function () {
 
   // stdin keeps the event loop alive; pass each line to the context's __deliver.
   const reader = deps.createInterface({ input: deps.stdin });
+  // Stall detection (execution-engine.md "The vm cell"): after each response is delivered, and
+  // once after the script starts, ask the cell on **setImmediate** "is there anything left to
+  // do". setImmediate runs after all of this turn's microtasks—every continuation the response
+  // could trigger has finished—and the cell has no timers or I/O, so "no in-flight requests and
+  // not complete" holds forever once it holds at that moment. On a hit the cell has already sent
+  // error-complete; here we only close the reader (__execute will never resolve, so cleanup must
+  // happen on this path). setImmediate is a Node global, and both launch paths (self-starting
+  // entry file / SEA subcommand) run inside Node, satisfying this function's self-containment
+  // constraint.
+  // ⚠ Both call sites inline setImmediate instead of extracting `const scheduleStallCheck = …`:
+  // an inner function whose name can be inferred gets wrapped in the module-scope `__name` helper
+  // by minify + keepNames (see the comment above this function);
+  // tests/child-source-bundled.test.ts has caught exactly this.
   reader.on("line", (line: string) => {
     if (!line.trim()) return;
     sandbox.__deliver(line);
+    setImmediate(() => {
+      if (sandbox.__checkStalled()) reader.close();
+    });
   });
 
   // Run the script; close stdin during cleanup and let the process exit when the event loop is
   // idle (the parent also kills it after receiving complete).
-  return sandbox.__execute(runFn).then(
+  const execution = sandbox.__execute(runFn).then(
     () => reader.close(),
     () => reader.close(),
   );
+  setImmediate(() => {
+    if (sandbox.__checkStalled()) reader.close();
+  });
+  return execution;
 }
 
 /** Replace characters outside the safe runId set with `_` in entry filenames (filename and header comment use the same sanitization). */
@@ -383,9 +467,13 @@ import vm from "node:vm";
 
 export const payload = ${JSON.stringify(payload)};
 
+// The cell's second bootstrap script (channel / future / stall detection), embedded as a literal
+// like payload.
+export const streamsBootstrap = ${JSON.stringify(CELL_STREAMS_BOOTSTRAP)};
+
 const main = ${childMain.toString()};
 
-export const start = (deps) => main({ ...deps, payload });
+export const start = (deps) => main({ ...deps, payload, streamsBootstrap });
 
 if (
   typeof payload.maxOldSpaceSizeMb === "number" &&

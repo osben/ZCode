@@ -1,3 +1,5 @@
+import { getTurnTools } from "./turn-tool-visibility.js";
+
 import { beginLocalTurnPreparation } from "@zcode/contracts";
 import {
   CompactTrigger,
@@ -73,6 +75,10 @@ import {
   resolveModelStepMaxOutputTokens,
   resolveNormalRequestMaxOutputTokens,
 } from "./model-token-limits.js";
+import {
+  applyExecutionSelectionFallback,
+  matchExecutionSelectionFallback,
+} from "./turn-execution-fallback.js";
 import {
   appendOutputTokenContinuation,
   classifyOutputTokenContinuation,
@@ -273,13 +279,45 @@ async function runModelBackedTurnStepImpl(
       status: state.turnAbortSignal.aborted ? "cancelled" : "error",
     });
     const failedRequestId = latestFailedModelRequestId ?? latestModelRequestId;
+    // Declarative fallback for an execution Selection must run before same-model stream recovery: any request failure attributed to the accelerated provider/network
+    // boundary must fall back to the session model (spec §2.2). If recovery runs first, it retries the accelerated model after a stream interruption until the budget is exhausted,
+    // making fallback ineffective.
+    const selectionFallbackMatch = matchExecutionSelectionFallback({
+      error: finalError,
+      executionProviderId: String(executionModelSelection.providerId),
+      selectionFallback: state.selectionFallback,
+      turnAborted: state.turnAbortSignal.aborted,
+    });
+    const toolCallCountBeforeSelectionFallback = state.toolCallCount;
+    const selectionFallbackResult = selectionFallbackMatch
+      ? await applyExecutionSelectionFallback(this, state, {
+          assistantCreatedAt,
+          assistantMessageId,
+          error: finalError,
+          executionModel: model,
+          match: selectionFallbackMatch,
+          modelTraceContext,
+          streamingToolCoordinator,
+        })
+      : undefined;
+    if (selectionFallbackResult?.applied) {
+      // Root cause: fallback settlement had already committed tool results and created a new anchor, but inherited the count from the previous length chain,
+      // so the fallback model could exhaust its budget on its first truncation. Reset only for tool-count increments; pure text tail discard still respects the limit.
+      if (state.toolCallCount > toolCallCountBeforeSelectionFallback) {
+        completeOutputTokenRecovery(state.turnRequestState);
+      }
+      return "continue";
+    }
     const toolCallCountBeforeStreamRecovery = state.toolCallCount;
+    // Root cause: if fallback-target resolution fails and execution continues into generic recovery, it requests the same failed execution provider again.
+    // Once the declaration matched, this turn's recovery decision is consumed; if no fallback target resolves, preserve the original error and fail immediately.
     if (
-      await streamingToolCoordinator.recoverFromModelFailure(
+      !selectionFallbackMatch &&
+      (await streamingToolCoordinator.recoverFromModelFailure(
         error,
         assistantCreatedAt,
         failedRequestId ? { failedRequestId } : undefined,
-      )
+      ))
     ) {
       if (state.toolCallCount > toolCallCountBeforeStreamRecovery) {
         completeOutputTokenRecovery(state.turnRequestState);
@@ -292,7 +330,11 @@ async function runModelBackedTurnStepImpl(
       state,
       turnNumber: this.turnNumber,
     });
-    if (!state.turnAbortSignal.aborted && admissionRetryDelayMs !== undefined) {
+    if (
+      !selectionFallbackMatch &&
+      !state.turnAbortSignal.aborted &&
+      admissionRetryDelayMs !== undefined
+    ) {
       // On the second and later rounds, Start Plan may be rejected by the admission concurrency limit before the first token.
       // There is then no text or tool anchor, so the old stream recovery will not start; close the empty assistant and retry briefly.
       const recoveryAttempt = beginStartPlanBusyAdmissionRetryAttempt(state);
@@ -354,6 +396,7 @@ async function runModelBackedTurnStepImpl(
       return "continue";
     }
     if (
+      !selectionFallbackMatch &&
       state.streamRecoveryRetryCount > 0 &&
       !state.turnAbortSignal.aborted &&
       isStartPlanBusyStreamRecoveryFailure(finalError)
@@ -362,9 +405,12 @@ async function runModelBackedTurnStepImpl(
       // rethrowing the original provider message is indistinguishable from an initial busy failure, so the UI cannot show "automatic retries exhausted."
       finalError = createStartPlanBusyAutoRetryExhaustedError(finalError);
     }
-    await streamingToolCoordinator.abandon(
-      state.turnAbortSignal.aborted ? "cancelled" : "model_failed",
-    );
+    // Without a fallback target, the tool was already settled above; abandoning again would publish a ledger event that contradicts its terminal state.
+    if (!selectionFallbackResult?.settledAcceptedTools) {
+      await streamingToolCoordinator.abandon(
+        state.turnAbortSignal.aborted ? "cancelled" : "model_failed",
+      );
+    }
     if (
       state.turnAbortSignal.aborted &&
       isTurnCancellationError(finalError, state.turnAbortSignal)
@@ -779,6 +825,7 @@ async function recoverModelStepAfterContextExceeded(
     {
       activeEntries,
       modelStepIndex,
+      agentListingTools: getTurnTools(this, state),
       rapidRefillCount: rapidRefill.consecutiveRapidRefills,
       model: state.model,
       turnRequestState: state.turnRequestState,

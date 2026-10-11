@@ -6,10 +6,8 @@ import {
   useCallback,
   useEffect,
   useMemo,
-  useRef,
   useState,
   type ComponentPropsWithoutRef,
-  type CSSProperties,
   type MouseEvent,
   type ReactNode,
 } from "react";
@@ -56,10 +54,9 @@ import type {
 } from "@zcode/shared/zcode-protocol-v4";
 import { cn } from "@/components/lib/utils.js";
 import { Button } from "@/components/ui/button.js";
-import {
-  RUN_STATUS_DOT,
-  RUN_STATUS_TEXT,
-} from "@/components/workflow-graph/run-status-presentation.js";
+import { RUN_STATUS_DOT } from "@/components/workflow-graph/run-status-presentation.js";
+import { WorkflowRunRail } from "@/components/workflow-run-line/WorkflowRunRail.js";
+import { foldWorkflowRunRail } from "@/lib/workflowRunLine.js";
 import { useNowTicker } from "@/components/workflow-graph/use-now-ticker.js";
 import {
   Collapsible,
@@ -96,13 +93,17 @@ import {
   type ConversationStatusPanelWorkflowRun,
 } from "@/v4/conversationStatusPanelModel.js";
 import type { ConversationStatusPanelWorkflowRunTarget } from "@/v4/conversationStatusPanelModel.js";
-import { workflowRunOpenTarget } from "@/v4/conversationStatusPanelModel.js";
+import {
+  workflowRunOpenTarget,
+  workflowRunWords,
+  type ConversationStatusPanelWorkflowRunWords,
+} from "@/v4/conversationStatusPanelModel.js";
 import {
   buildConversationGoalIterationSummaries,
   getConversationGoalElapsedSeconds,
 } from "@/v4/conversationGoalSummaryModel.js";
 
-interface ConversationStatusPanelProps {
+export interface ConversationStatusPanelProps {
   workspacePath: string;
   workspaceIdentity?: string;
   gitSummary?: GitRepositorySummary | null;
@@ -127,6 +128,7 @@ interface ConversationStatusPanelProps {
   rootSessionId?: string;
   parentSessionId?: string;
   /** Whether the current pane is hosted by the mobile Web remote-control shell. */
+  isWebRemoteControl?: boolean;
   /** Whether the current viewport is a coarse-pointer mobile viewport. */
   isMobileViewport?: boolean;
   layoutMode?: "none" | "auto" | "inline";
@@ -242,8 +244,8 @@ const STATUS_SECTION_SCROLL_POLICY = {
   // Six two-line Todos (6 × 52px) need about 20rem; beyond that, scroll only the process section.
   plan: "max-h-80",
   terminal: "max-h-48",
-  // Workflow rows have the same height as terminal/agent rows (two lines + controls), so use the same max height.
-  workflow: "max-h-48",
+  // Workflow rows are fixed at 56px, and the list shows three and a half rows (196px); the partial row signals that more are below.
+  workflow: "max-h-[12.25rem]",
   agent: "max-h-48",
 } as const satisfies Record<StatusSectionKind, string | null>;
 
@@ -289,6 +291,7 @@ function StatusSectionHeader({
 function StatusSection({
   children,
   defaultOpen = true,
+  footer,
   onOpenChange,
   open,
   separated = false,
@@ -298,6 +301,8 @@ function StatusSection({
 }: {
   children: ReactNode;
   defaultOpen?: boolean;
+  /** Footer fixed outside the scroll viewport (such as the completed-runs entry), so it remains visible regardless of list length. */
+  footer?: ReactNode;
   onOpenChange?: (open: boolean) => void;
   open?: boolean;
   separated?: boolean;
@@ -350,6 +355,7 @@ function StatusSection({
           ) : (
             children
           )}
+          {footer}
         </CollapsibleContent>
       </section>
     </Collapsible>
@@ -406,8 +412,8 @@ function GitStatusSection({
       }
     >
       <div className="space-y-0">
-        {/* The V4 status-panel migration kept only the static Changes display and stopped forwarding
-            the old Git review callback, leaving the review entry in the spec unclickable. */}
+        {/* Bug cause: the V4 status-panel migration kept only the static Changes display and
+            stopped forwarding the old Git review callback, leaving the review entry in the spec unclickable. */}
         <button
           type="button"
           disabled={!canOpenReview}
@@ -611,14 +617,16 @@ function PlanStatusIcon({ status }: { status: PlanState["items"][number]["status
 const COMPACT_TODO_THRESHOLD = 6;
 const TODO_FOCUS_WINDOW_SIZE = 3;
 
-interface StatusPanelTodoFocusWindow {
+export interface StatusPanelTodoFocusWindow {
   compact: boolean;
   precedingItems: PlanState["items"];
   focusItems: PlanState["items"];
   followingItems: PlanState["items"];
 }
 
-function getStatusPanelTodoFocusWindow(items: PlanState["items"]): StatusPanelTodoFocusWindow {
+export function getStatusPanelTodoFocusWindow(
+  items: PlanState["items"],
+): StatusPanelTodoFocusWindow {
   if (items.length <= COMPACT_TODO_THRESHOLD) {
     return {
       compact: false,
@@ -858,7 +866,7 @@ function SessionPlansStatusSection({
   );
 }
 
-function buildSessionPlanOpenRequest(
+export function buildSessionPlanOpenRequest(
   parentSessionId: string,
   item: ConversationStatusPanelSessionPlanItem,
 ): OpenPlanDetailSideTabRequest {
@@ -947,7 +955,7 @@ function RunningWorkCancelButton({
   );
 }
 
-function buildRunningSubagentOpenRequest({
+export function buildRunningSubagentOpenRequest({
   parentSessionId,
   rootSessionId,
   subagent,
@@ -1139,14 +1147,235 @@ function BackgroundWorkStatusSection({
 }
 
 /**
+ * Duration in a run row: reuse the section-header units (formatDurationUnits), but omit the
+ * “running for” prefix and drop seconds after one hour—a value ticking every second on a run that
+ * has been going for an hour is just noise (`1h 2m`).
+ */
+function formatWorkflowRunElapsed(
+  elapsedMs: number,
+  formatMessage: ReturnType<typeof useZCodeIntl>["intl"]["formatMessage"],
+) {
+  const seconds = Math.max(0, Math.floor(elapsedMs / 1000));
+  return formatDurationUnits(seconds >= 3600 ? seconds - (seconds % 60) : seconds, formatMessage);
+}
+
+/** Words describing what a run is doing now, composed according to i18n (rules in `workflowRunWords` at the model layer). */
+function formatWorkflowRunWords(
+  words: ConversationStatusPanelWorkflowRunWords,
+  formatMessage: ReturnType<typeof useZCodeIntl>["intl"]["formatMessage"],
+) {
+  switch (words.kind) {
+    case "status":
+      return formatMessage({ id: `chat.toolCall.workflow.run.status.${words.status}` });
+    case "steps":
+      return formatMessage(
+        { id: "chat.toolCall.workflow.card.steps" },
+        { done: String(words.done), total: String(words.total) },
+      );
+    case "phases":
+      return words.text;
+  }
+}
+
+/** A run is unnamed when `title ≡ runId` (see `ConversationStatusPanelWorkflowRun.title`). */
+function workflowRunDisplayName(run: ConversationStatusPanelWorkflowRun): string | null {
+  return run.title && run.title !== run.runId ? run.title : null;
+}
+
+/** Single status lamp (hollow when pending, pulsing when running), using the same `STATUS_DOT` as cards and the sidebar. */
+function WorkflowRunLamp({ status }: { status: "pending" | "running" }) {
+  return (
+    <span
+      aria-hidden="true"
+      data-workflow-run-lamp={status}
+      className={cn("size-1.5 shrink-0 rounded-full", RUN_STATUS_DOT[status])}
+    />
+  );
+}
+
+/**
+ * Stop action in a run row (docs/dynamic-workflow/presentation.md, “Other places a run appears”):
+ * reuse the existing ghost button (square icon + “Stop”), but **overlay it on the duration**. It
+ * appears when the row is hovered or receives keyboard focus, fading out the duration; when
+ * inactive, it takes no space, leaving only the name and duration in the row. On touch devices
+ * without hover (`hover: none`), keep it visible as a 32px icon button in a third column. Disable
+ * pointer events while hidden so an invisible but clickable Stop cannot stop the run when the user
+ * clicks the duration. Use an opaque menu-hover background matching the hovered row to cover any
+ * truncated name underneath the duration.
+ */
+function WorkflowRunStopButton({
+  workId,
+  onCancel,
+}: {
+  workId: string;
+  onCancel: (workId: string) => void;
+}) {
+  const { intl } = useZCodeIntl();
+  return (
+    <Button
+      type="button"
+      variant="ghost"
+      size="sm"
+      data-testid={testId(TID_V4_BACKGROUND_WORK_CANCEL, workId)}
+      aria-label={intl.formatMessage({ id: "chat.toolCall.workflow.run.cancel" })}
+      onClick={(event) => {
+        event.stopPropagation();
+        onCancel(workId);
+      }}
+      className={cn(
+        "pointer-events-none absolute right-1.5 top-1.5 z-[2] h-6 gap-1 bg-menu-hover px-1.5 text-ui-sm text-foreground opacity-0 transition-opacity",
+        "hover:bg-[image:linear-gradient(var(--color-hover),var(--color-hover))]",
+        "group-hover/wf-run:pointer-events-auto group-hover/wf-run:opacity-100 group-focus-within/wf-run:pointer-events-auto group-focus-within/wf-run:opacity-100",
+        "[@media(hover:none)]:pointer-events-auto [@media(hover:none)]:static [@media(hover:none)]:size-8 [@media(hover:none)]:bg-transparent [@media(hover:none)]:p-0 [@media(hover:none)]:text-foreground-subtle [@media(hover:none)]:opacity-100",
+      )}
+    >
+      <SquareIcon aria-hidden className="size-2.5 fill-current [@media(hover:none)]:size-3" />
+      <span className="[@media(hover:none)]:sr-only">
+        {intl.formatMessage({ id: "chat.statusPanel.runningStop" })}
+      </span>
+    </Button>
+  );
+}
+
+/**
+ * Each run occupies two fixed-height rows (56px): the first has the name and duration; the second
+ * has the sidebar-style rail and words describing what it is doing.
+ * Three field groups are independently optional (see `ConversationStatusPanelWorkflowRun`):
+ * - Without `status`: degraded row for older CLIs; show only the first row, with no lamp or status words.
+ * - Without `startedAt`: no matching background task and no duration; pending runs also show no duration.
+ * - Without `workId` or when cancellation is unavailable: no Stop action, and the duration stays visible.
+ * The visible status words are omitted because the lamp and phase already convey them, so include
+ * them in the accessible name of the open button: name · status · words.
+ */
+function WorkflowRunRow({
+  now,
+  onCancelBackgroundWork,
+  onOpenWorkflowRun,
+  run,
+}: {
+  now: number;
+  onCancelBackgroundWork?: (workId: string) => void;
+  onOpenWorkflowRun?: (target: ConversationStatusPanelWorkflowRunTarget) => void;
+  run: ConversationStatusPanelWorkflowRun;
+}) {
+  const { intl } = useZCodeIntl();
+  // Convert a row into an open intent using the same model-layer workflowRunOpenTarget as direct navigation from the composer badge.
+  const openTarget = onOpenWorkflowRun ? workflowRunOpenTarget(run) : null;
+  const name = workflowRunDisplayName(run);
+  const displayName = name ?? intl.formatMessage({ id: "chat.toolCall.workflow.fallbackName" });
+  const words = workflowRunWords(run);
+  const wordsText = words ? formatWorkflowRunWords(words, intl.formatMessage) : null;
+  const elapsed =
+    run.startedAt === undefined || run.status === "pending"
+      ? null
+      : formatWorkflowRunElapsed(now - run.startedAt, intl.formatMessage);
+  const canStop = Boolean(run.workId && run.cancellable !== false && onCancelBackgroundWork);
+  const statusWord = run.status
+    ? intl.formatMessage({ id: `chat.toolCall.workflow.run.status.${run.status}` })
+    : null;
+  const openLabel = [
+    intl.formatMessage({ id: "chat.toolCall.workflow.openRunDetails" }),
+    displayName,
+    statusWord,
+    wordsText === statusWord ? null : wordsText,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+  const phases = run.phases ?? [];
+
+  return (
+    <li
+      data-testid={run.workId ? testId(TID_V4_BACKGROUND_WORK_ITEM, run.workId) : undefined}
+      data-background-task-kind="workflow"
+      data-workflow-run-id={run.runId}
+      data-work-id={run.workId}
+      data-work-status={run.status}
+      className={cn(
+        "group/wf-run relative grid min-w-0 grid-cols-[1rem_minmax(0,1fr)] items-center gap-x-2 rounded-lg p-2 hover:bg-[var(--color-hover)]",
+        canStop && "[@media(hover:none)]:grid-cols-[1rem_minmax(0,1fr)_2rem]",
+        openTarget && "cursor-pointer",
+      )}
+    >
+      {openTarget ? (
+        // The row also contains the nested Stop interaction, so making the whole row a button would
+        // create nested buttons. A transparent sibling handles “Open details”; Stop remains its own
+        // interaction layer and stops propagation (same pattern as Agent rows).
+        <button
+          type="button"
+          data-workflow-run-details-trigger="true"
+          data-workflow-run-id={run.runId}
+          aria-label={openLabel}
+          title={displayName}
+          onClick={() => onOpenWorkflowRun?.(openTarget)}
+          className="absolute inset-0 z-0 rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--color-input-border-focused)]"
+        />
+      ) : null}
+      <Workflow className="pointer-events-none relative z-[1] mt-0.5 size-4 shrink-0 self-start text-[var(--color-foreground-subtle)]" />
+      <div className="pointer-events-none relative z-[1] flex min-w-0 flex-col gap-0.5">
+        <div
+          data-workflow-island-line="name"
+          className="flex h-5 min-w-0 items-baseline gap-2 leading-5"
+        >
+          <span
+            className={cn(
+              "min-w-0 flex-1 truncate text-ui-base",
+              name ? "text-[var(--color-foreground)]" : "text-[var(--color-foreground-subtle)]",
+            )}
+          >
+            {displayName}
+          </span>
+          {elapsed ? (
+            <span
+              data-workflow-run-elapsed="true"
+              className={cn(
+                "shrink-0 text-ui-sm tabular-nums text-[var(--color-foreground-subtle)] transition-opacity",
+                canStop &&
+                  "group-hover/wf-run:opacity-0 [@media(hover:hover)]:group-focus-within/wf-run:opacity-0",
+                // Touch: Stop occupies the third column, so move the duration to the end of the second row (leave it here when there is no second row).
+                canStop && wordsText && "[@media(hover:none)]:hidden",
+              )}
+            >
+              {elapsed}
+            </span>
+          ) : null}
+        </div>
+        {words && wordsText ? (
+          <div
+            data-workflow-island-line="phase"
+            className="flex h-4.5 min-w-0 items-center gap-1.5 text-ui-sm text-[var(--color-foreground-subtle)]"
+          >
+            {words.kind === "phases" ? (
+              <WorkflowRunRail rail={foldWorkflowRunRail(phases)} intl={intl} />
+            ) : (
+              <WorkflowRunLamp status={run.status === "pending" ? "pending" : "running"} />
+            )}
+            <span className="min-w-0 flex-1 truncate">{wordsText}</span>
+            {elapsed && canStop ? (
+              <span
+                aria-hidden="true"
+                className="hidden shrink-0 tabular-nums [@media(hover:none)]:inline"
+              >
+                {elapsed}
+              </span>
+            ) : null}
+          </div>
+        ) : null}
+      </div>
+      {canStop && run.workId && onCancelBackgroundWork ? (
+        <WorkflowRunStopButton workId={run.workId} onCancel={onCancelBackgroundWork} />
+      ) : null}
+    </li>
+  );
+}
+
+/**
  * Workflows section: the third type of live activity alongside Terminals/Agents, **plus** a footer row linking
  * to the run directory. Ended runs are folded into that footer row and do not occupy activity-list slots.
  *
- * Row fields form three groups (see `ConversationStatusPanelWorkflowRun`), each omitted independently during rendering:
- * - No `status`: a degraded partial row (older CLIs have no workflowRuns projection key), with no status label or steps.
- * - No `startedAt`: the run has no paired background task, so there is no duration.
- * - No `workId`: it cannot be stopped, so omit Stop.
- * Combining these into one “has work?” boolean would miss partial shapes; these three groups cover all of them.
+ * The header's right side uses the same open/close affordance: a running lamp plus “{n} running”.
+ * When collapsed, do not replace it with the longest duration across all runs—that duration does
+ * not belong to any single run. Only the run list scrolls (three and a half rows, with the partial
+ * row indicating more below); the completed-runs entry sits outside the scroll area and stays visible.
  *
  * **Do not sort**: projection run order is launch order (guaranteed by the model). Terminals/Agents are sorted
  * by startedAt because their projections are unordered; sorting here would make rows jump on every projection update.
@@ -1189,165 +1418,59 @@ function WorkflowStatusSection({
   // after restart is one of its main purposes.
   if (runs.length === 0 && endedRunCount <= 0) return null;
 
-  const longestElapsedMs = runs.reduce(
-    (longest, run) =>
-      run.startedAt === undefined ? longest : Math.max(longest, Math.max(0, now - run.startedAt)),
-    0,
-  );
-  const openLabel = intl.formatMessage({ id: "chat.toolCall.workflow.openRunDetails" });
-
   return (
     <StatusSection
       section="workflow"
-      defaultOpen={false}
+      // Use the same rule when the host does not control expansion: open by default when a live run exists (the host applies the same rule in controlled mode).
+      defaultOpen={runs.length > 0}
       open={open}
       onOpenChange={onOpenChange}
       separated={separated}
       title={title}
-      trailing={(isOpen) =>
-        isOpen ? (
-          <span>
-            {intl.formatMessage(
-              {
-                // Reuse the Terminals count label, not the Agents label: a workflow run is a background task
-                // (it has its own BackgroundWorkSummary), while a subagent may be foreground, which is why the
-                // Agents label needs the broader meaning “running.”
-                id:
-                  runs.length === 1
-                    ? "chat.statusPanel.runningStatusValue"
-                    : "chat.statusPanel.runningStatusValuePlural",
-              },
-              { count: String(runs.length) },
-            )}
-          </span>
-        ) : (
+      trailing={() =>
+        runs.length > 0 ? (
           <>
-            {/* If no row has startedAt, the collapsed view has only the count. Omit the duration
-                rather than showing a false zero-second value. */}
-            {longestElapsedMs > 0 ? (
-              <>
-                <span className="min-w-0 truncate">
-                  {formatDurationUnits(
-                    Math.max(1, Math.floor(longestElapsedMs / 1000)),
-                    intl.formatMessage,
-                  )}
-                </span>
-                <span className="shrink-0">·</span>
-              </>
-            ) : null}
-            <span className="shrink-0">{formatRunningCount(intl.formatMessage, runs.length)}</span>
+            <WorkflowRunLamp status="running" />
+            <span>
+              {intl.formatMessage(
+                { id: "chat.statusPanel.workflowsLive" },
+                { count: String(runs.length) },
+              )}
+            </span>
           </>
-        )
+        ) : null
+      }
+      // Completed runs are grouped into this footer row (sharing the Agents section affordance):
+      // terminal runs do not take space in the active list, but keep this entry available because
+      // interrupted runs are exactly the ones users most need to inspect.
+      footer={
+        <EndedDirectoryRow
+          count={endedRunCount}
+          icon={
+            <CheckCircle2Icon className="size-4 shrink-0 text-[var(--color-foreground-subtle)]" />
+          }
+          label={intl.formatMessage({ id: "chat.statusPanel.endedWorkflows" })}
+          separated={runs.length > 0}
+          testId="workflow-run-directory-trigger"
+          onOpen={
+            parentSessionId && onOpenDirectory
+              ? () => onOpenDirectory({ parentSessionId })
+              : undefined
+          }
+        />
       }
     >
       <ul className="space-y-0">
-        {runs.map((run) => {
-          // Row-to-open-intent mapping is shared with direct navigation from composer badges (model-layer workflowRunOpenTarget).
-          const openTarget = onOpenWorkflowRun ? workflowRunOpenTarget(run) : null;
-          const canOpen = openTarget !== null;
-          // An unnamed row has `title ≡ workId` (≡ runId), which is how core's workflowTaskSubject falls back
-          // to taskId; the projection copies a non-empty description into title unchanged. A degraded row's
-          // runId also equals workId, so one comparison covers both groups.
-          const displayName =
-            run.title && run.title !== run.runId
-              ? run.title
-              : intl.formatMessage({ id: "chat.toolCall.workflow.fallbackName" });
-          return (
-            <li
-              key={run.runId}
-              data-testid={run.workId ? testId(TID_V4_BACKGROUND_WORK_ITEM, run.workId) : undefined}
-              data-background-task-kind="workflow"
-              data-workflow-run-id={run.runId}
-              data-work-id={run.workId}
-              data-work-status={run.status}
-              className={cn(
-                "group relative flex min-w-0 items-start gap-2 rounded-lg px-2 py-2 hover:bg-[var(--color-hover)]",
-                canOpen && "cursor-pointer",
-              )}
-            >
-              {openTarget ? (
-                // As with Agent rows, Stop is already a nested interaction, so wrapping the whole row in a
-                // button would create nested buttons. A transparent sibling button handles “open details,”
-                // while Stop remains an independent interaction and stops propagation.
-                <button
-                  type="button"
-                  data-workflow-run-details-trigger="true"
-                  data-workflow-run-id={run.runId}
-                  aria-label={openLabel}
-                  onClick={() => onOpenWorkflowRun?.(openTarget)}
-                  className="absolute inset-0 z-0 rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--color-input-border-focused)]"
-                />
-              ) : null}
-              <Workflow className="pointer-events-none relative z-[1] mt-0.5 size-4 shrink-0 text-[var(--color-foreground-subtle)]" />
-              <div className="pointer-events-none relative z-[1] flex min-w-0 flex-1 flex-col gap-1.5">
-                <span className="line-clamp-2 text-ui-base leading-5 text-[var(--color-foreground)]">
-                  {displayName}
-                </span>
-                <span className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-ui-base">
-                  {run.status ? (
-                    <>
-                      {/* Always express status in words; never rely on color or animation alone (a11y). */}
-                      <span
-                        aria-hidden="true"
-                        data-workflow-run-status-dot={run.status}
-                        className={cn("size-1.5 shrink-0 rounded-full", RUN_STATUS_DOT[run.status])}
-                      />
-                      <span className={cn("shrink-0", RUN_STATUS_TEXT[run.status])}>
-                        {intl.formatMessage({
-                          id: `chat.toolCall.workflow.run.status.${run.status}`,
-                        })}
-                      </span>
-                      <span className="shrink-0 tabular-nums text-[var(--color-foreground-subtle)]">
-                        {intl.formatMessage(
-                          { id: "chat.toolCall.workflow.card.steps" },
-                          {
-                            // Steps and status appear together in the model (present iff status is present),
-                            // but are separate optional fields in the type. `?? 0` only satisfies that type
-                            // shape; reaching it at runtime means the model violated its invariant.
-                            done: String(run.nodesSettled ?? 0),
-                            total: String(run.nodesTotal ?? 0),
-                          },
-                        )}
-                      </span>
-                    </>
-                  ) : null}
-                  {run.startedAt === undefined ? null : (
-                    <span className="shrink-0 tabular-nums text-[var(--color-foreground-subtle)]">
-                      {formatBackgroundTaskElapsedLabel(
-                        Math.max(0, now - run.startedAt),
-                        intl.formatMessage,
-                      )}
-                    </span>
-                  )}
-                  {run.workId && run.cancellable !== false ? (
-                    <RunningWorkCancelButton
-                      workId={run.workId}
-                      onCancel={onCancelBackgroundWork}
-                    />
-                  ) : null}
-                </span>
-              </div>
-            </li>
-          );
-        })}
+        {runs.map((run) => (
+          <WorkflowRunRow
+            key={run.runId}
+            run={run}
+            now={now}
+            onCancelBackgroundWork={onCancelBackgroundWork}
+            onOpenWorkflowRun={onOpenWorkflowRun}
+          />
+        ))}
       </ul>
-      {/* Put completed runs in this footer row, sharing the affordance with the Agents section.
-          Terminal runs do not occupy space in the active list, but keep the entry available because
-          interrupted runs are the ones users most need to open. */}
-      <EndedDirectoryRow
-        count={endedRunCount}
-        icon={
-          <CheckCircle2Icon className="size-4 shrink-0 text-[var(--color-foreground-subtle)]" />
-        }
-        label={intl.formatMessage({ id: "chat.statusPanel.endedWorkflows" })}
-        separated={runs.length > 0}
-        testId="workflow-run-directory-trigger"
-        onOpen={
-          parentSessionId && onOpenDirectory
-            ? () => onOpenDirectory({ parentSessionId })
-            : undefined
-        }
-      />
     </StatusSection>
   );
 }
@@ -1582,7 +1705,7 @@ function EndedSubagentDirectoryRow({
 
 function StatusSummaryMetric({ children, icon }: { children: ReactNode; icon: ReactNode }) {
   return (
-    <div className="flex h-8 w-max max-w-80 min-w-0 items-center gap-1.5 pl-2 pr-3 text-ui-base text-[var(--color-foreground)]">
+    <div className="flex h-8 w-max max-w-full min-w-0 items-center gap-1.5 pl-2 pr-3 text-ui-base text-[var(--color-foreground)]">
       <span className="relative size-4 shrink-0">
         <span className="absolute inset-0 transition-opacity group-hover:opacity-0 group-focus-visible:opacity-0">
           {icon}
@@ -1591,6 +1714,54 @@ function StatusSummaryMetric({ children, icon }: { children: ReactNode; icon: Re
       </span>
       {children}
     </div>
+  );
+}
+
+/**
+ * Workflow summary in the capsule: Workflow icon · name · lamp · phase words · `+n` (other runs
+ * still in progress). Keep the phase words intact (up to 45%); truncate the name first because its
+ * beginning is enough to recognize it, while a truncated phase conveys nothing. A degraded row
+ * from an older CLI with no status shows only the name and no lamp; do not guess the status.
+ */
+function WorkflowSummaryMetric({
+  others,
+  run,
+}: {
+  others: number;
+  run: ConversationStatusPanelWorkflowRun;
+}) {
+  const { intl } = useZCodeIntl();
+  const name = workflowRunDisplayName(run);
+  const words = workflowRunWords(run);
+  const wordsText = words ? formatWorkflowRunWords(words, intl.formatMessage) : null;
+  return (
+    <StatusSummaryMetric icon={<Workflow className="size-4 text-[var(--color-foreground)]" />}>
+      <span
+        data-workflow-pill={run.runId}
+        className={cn(
+          // When space is tight, only the name yields: phase does not shrink but is capped at 45%,
+          // leaving more than half the width for the name. Do not set a minimum width for the name;
+          // that would create empty space for short names and could make the capsule overflow with the phase.
+          "min-w-0 truncate",
+          !name && "text-[var(--color-foreground-subtle)]",
+        )}
+      >
+        {name ?? intl.formatMessage({ id: "chat.toolCall.workflow.fallbackName" })}
+      </span>
+      {run.status && wordsText ? (
+        <>
+          <WorkflowRunLamp status={run.status} />
+          <span className="max-w-[45%] shrink-0 truncate text-[var(--color-foreground-subtle)]">
+            {wordsText}
+          </span>
+        </>
+      ) : null}
+      {others > 0 ? (
+        <span className="shrink-0 tabular-nums text-[var(--color-foreground-subtlest)]">
+          +{others}
+        </span>
+      ) : null}
+    </StatusSummaryMetric>
   );
 }
 
@@ -1610,12 +1781,15 @@ function StatusSummaryRow({
   endedWorkflowRunCount,
   gitWorktreeChangeSummary,
   model,
+  onOpenWorkflowSection,
   onVariantChange,
 }: {
   /** Ended-run directory count; the host passes 0 when the directory entry cannot render (missing session or callback). */
   endedWorkflowRunCount: number;
   gitWorktreeChangeSummary?: { added: number; removed: number } | null;
   model: ConversationStatusPanelModel;
+  /** The Workflow section to open along with the capsule when it displays a workflow. */
+  onOpenWorkflowSection?: () => void;
   onVariantChange?: (variant: ChatViewSummaryPanelVariant | null) => void;
 }) {
   const { intl } = useZCodeIntl();
@@ -1644,23 +1818,22 @@ function StatusSummaryRow({
   // workflows were added and would miss combinations such as workflow + agent).
   const hasRunningBash = model.runningBashWorks.length > 0;
   const hasRunningSubagent = model.runningSubagentWorks.length > 0;
-  const hasRunningWorkflow = model.runningWorkflowRuns.length > 0;
-  const runningCount =
-    model.runningBashWorks.length +
-    model.runningSubagentWorks.length +
-    model.runningWorkflowRuns.length;
-  const runningKindCount = [hasRunningWorkflow, hasRunningBash, hasRunningSubagent].filter(
-    Boolean,
-  ).length;
+  const runningCount = model.runningBashWorks.length + model.runningSubagentWorks.length;
   const RunningSummaryIcon =
-    runningKindCount > 1
+    hasRunningBash && hasRunningSubagent
       ? ActivityIcon
-      : hasRunningWorkflow
-        ? Workflow
-        : hasRunningBash
-          ? SquareTerminalIcon
-          : BotIcon;
-  const summaryMetric = currentPlanItem ? (
+      : hasRunningBash
+        ? SquareTerminalIcon
+        : BotIcon;
+  const firstLiveRun = model.runningWorkflowRuns[0];
+  // Put running workflows first in the capsule (docs/dynamic-workflow/presentation.md, “Other
+  // places a run appears”): while a workflow is running, it is what the session is doing; the lead
+  // agent's turn has likely ended, and todos are only traces from that turn. They used to appear
+  // last on the grounds that they duplicated the input bar's background count, but name plus phase
+  // does not duplicate that count.
+  const summaryMetric = firstLiveRun ? (
+    <WorkflowSummaryMetric run={firstLiveRun} others={model.runningWorkflowRuns.length - 1} />
+  ) : currentPlanItem ? (
     <StatusSummaryMetric
       icon={<ArrowRightIcon className="size-4 text-[var(--color-foreground)]" />}
     >
@@ -1709,9 +1882,9 @@ function StatusSummaryRow({
     <StatusSummaryMetric
       icon={<RunningSummaryIcon className="size-4 text-[var(--color-foreground)]" />}
     >
-      {/* Product rule: show live activity only as a fallback when no primary status such as Goal,
-          Todo, or Git is present. This prevents the pill from duplicating the live count already
-          shown in the input. */}
+      {/* Product rule: live terminal/agent counts show only as a fallback when no primary status
+          such as Goal, Todo, or Git is present. This prevents the pill from duplicating the live
+          count already shown in the input. */}
       <span className="shrink-0">
         {hasRunningSubagent
           ? formatRunningSubagentCount(intl.formatMessage, runningCount)
@@ -1745,8 +1918,14 @@ function StatusSummaryRow({
       <button
         type="button"
         aria-label={expandLabel}
-        className="group inline-flex w-max max-w-80 cursor-pointer flex-col items-stretch text-left text-[var(--color-foreground)] transition-colors hover:bg-[var(--color-menu-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-input-border-focused)]"
-        onClick={() => onVariantChange?.("panel")}
+        className="group inline-flex w-max max-w-full cursor-pointer flex-col items-stretch text-left text-[var(--color-foreground)] transition-colors hover:bg-[var(--color-menu-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-input-border-focused)]"
+        onClick={() => {
+          // The expanded view must show at least what the capsule shows: when the capsule displays a
+          // workflow, open the Workflow section too, even if the user collapsed it manually before
+          // (clicking the capsule means “show me this”).
+          if (firstLiveRun) onOpenWorkflowSection?.();
+          onVariantChange?.("panel");
+        }}
       >
         {summaryMetric}
       </button>
@@ -1772,6 +1951,7 @@ function ConversationStatusPanelImpl({
   endedSubagentCount = 0,
   rootSessionId,
   parentSessionId,
+  isWebRemoteControl = false,
   isMobileViewport = false,
   layoutMode = "none",
   summaryPanelVariantOverride,
@@ -1796,8 +1976,6 @@ function ConversationStatusPanelImpl({
   className,
 }: ConversationStatusPanelProps) {
   const isOfficeMode = useIsOfficeMode();
-  const miniMeasureRef = useRef<HTMLDivElement | null>(null);
-  const [miniWidth, setMiniWidth] = useState(320);
   const model = useMemo(
     () =>
       buildConversationStatusPanelModel({
@@ -1831,19 +2009,16 @@ function ConversationStatusPanelImpl({
     variantOverride: summaryPanelVariantOverride ?? null,
   });
   const isVariantAutomatic = summaryPanelVariantOverride == null;
-  const useVerticalFloatingPanels = false;
+  // Root cause: in mobile remote control, the status panel still fixed the branch/Todo popover to
+  // the left, while the panel itself occupied most of the viewport and left too little room on
+  // either side. Use vertical positioning on mobile remote control so Radix can flip above/below;
+  // desktop and wide Web retain the existing left-side interaction.
+  const useVerticalFloatingPanels = isWebRemoteControl && isMobileViewport;
   const panelModeValue = isVariantAutomatic ? "auto" : variant;
   const { intl } = useZCodeIntl();
   const panelMenuLabel = intl.formatMessage({
     id: "chat.summaryPanel.displayMode",
   });
-  const shellStyle = useMemo(
-    () =>
-      ({
-        "--chat-summary-panel-mini-width": `${miniWidth}px`,
-      }) as CSSProperties,
-    [miniWidth],
-  );
   const canRenderGit = Boolean(model.git && gitSummary && onRefreshGit);
   const canRenderGoal = Boolean(model.goal);
   const canRenderSessionPlans = Boolean(model.sessionPlans);
@@ -1874,34 +2049,12 @@ function ConversationStatusPanelImpl({
     },
     [onVariantChange],
   );
+  const handleOpenWorkflowSection = useCallback(() => {
+    onWorkflowSectionOpenChange?.(true);
+  }, [onWorkflowSectionOpenChange]);
   const handleCollapseToMini = useCallback(() => {
     onVariantChange?.("mini");
   }, [onVariantChange]);
-
-  useEffect(() => {
-    const element = miniMeasureRef.current;
-    if (!element) {
-      return;
-    }
-    const updateMiniWidth = () => {
-      const nextWidth = Math.ceil(element.getBoundingClientRect().width);
-      if (nextWidth > 0) {
-        const nextMiniWidth = Math.min(nextWidth, 320);
-        setMiniWidth((currentMiniWidth) =>
-          currentMiniWidth === nextMiniWidth ? currentMiniWidth : nextMiniWidth,
-        );
-      }
-    };
-
-    updateMiniWidth();
-
-    if (typeof ResizeObserver === "undefined") {
-      return;
-    }
-    const observer = new ResizeObserver(updateMiniWidth);
-    observer.observe(element);
-    return () => observer.disconnect();
-  }, [model]);
 
   // `model.hasContent` recognizes only **live** content (all projections held by the model are live state),
   // so a conversation with only history would lose the entire capsule. That is exactly what an old
@@ -1927,9 +2080,9 @@ function ConversationStatusPanelImpl({
         className,
       )}
     >
-      {/* Restore the old ChatView's collapsible shell model for the status panel. V4 previously used
-          a permanently expanded card instead of a summary panel, which covered chat content on
-          narrow screens and lost the user's override. */}
+      {/* Bugfix: restore the old ChatView's collapsible shell model for the status panel. V4
+          previously used a permanently expanded card instead of a summary panel, which covered chat
+          content on narrow screens and lost the user's override. */}
       <aside
         aria-label={intl.formatMessage({ id: "chat.summaryPanel.title" })}
         data-testid={TID_CHAT_SUMMARY_PANEL}
@@ -1946,14 +2099,18 @@ function ConversationStatusPanelImpl({
         data-running-agent-count={model.runningSubagentWorks.length}
         data-running-workflow-count={model.runningWorkflowRuns.length}
         data-ended-workflow-count={endedWorkflowRunCount}
-        style={shellStyle}
         className={cn(
           "pointer-events-auto relative overflow-hidden rounded-2xl border border-[var(--color-popover-border)] bg-[var(--color-popover)] text-[var(--color-foreground)] shadow-md transition-[border-radius,padding,background-color,box-shadow] duration-300 ease-in-out",
+          // CSS alone determines capsule width: w-max follows the summary content, capped by the
+          // conversation container (100cqw). Root cause: a ResizeObserver previously measured the
+          // summary and wrote its width to a CSS variable for interpolation (although the shell no
+          // longer transitions width). The measurement lagged content by one render, and its cap
+          // used window width (100vw); either could let text extend outside the capsule.
           variant === "mini"
-            ? "inline-flex max-h-8.5 w-[var(--chat-summary-panel-mini-width)] max-w-[calc(100vw-1.5rem)] flex-col"
+            ? "inline-flex max-h-8.5 w-max max-w-[min(20rem,calc(100cqw-2rem))] flex-col"
             : variant === "panel"
-              ? "flex max-h-[min(64dvh,32rem)] w-80 max-w-[calc(100vw-1.5rem)] flex-col"
-              : "inline-flex max-h-8.5 w-[var(--chat-summary-panel-mini-width)] max-w-[calc(100vw-1.5rem)] flex-col @min-[1280px]/conversation:max-h-[min(64dvh,32rem)] @min-[1280px]/conversation:w-80",
+              ? "flex max-h-[min(64dvh,32rem)] w-80 max-w-[calc(100cqw-2rem)] flex-col"
+              : "inline-flex max-h-8.5 w-max max-w-[min(20rem,calc(100cqw-2rem))] flex-col @min-[1280px]/conversation:max-h-[min(64dvh,32rem)] @min-[1280px]/conversation:w-80",
         )}
       >
         {variant !== "mini" ? (
@@ -2115,10 +2272,9 @@ function ConversationStatusPanelImpl({
           </div>
         ) : null}
         <div
-          ref={miniMeasureRef}
           aria-hidden={variant === "panel"}
           className={cn(
-            "w-max max-w-80 transition-opacity duration-150",
+            "w-max max-w-full transition-opacity duration-150",
             variant === "mini"
               ? "pointer-events-auto relative visible opacity-100"
               : variant === "panel"
@@ -2132,6 +2288,7 @@ function ConversationStatusPanelImpl({
             // missing, the directory cannot open, so the capsule should not show a count that does nothing.
             endedWorkflowRunCount={canRenderEndedWorkflows ? endedWorkflowRunCount : 0}
             gitWorktreeChangeSummary={gitWorktreeChangeSummary}
+            onOpenWorkflowSection={handleOpenWorkflowSection}
             onVariantChange={onVariantChange}
           />
         </div>

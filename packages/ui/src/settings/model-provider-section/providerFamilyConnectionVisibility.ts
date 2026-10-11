@@ -6,6 +6,7 @@ import type {
   UsageEntitlementSubscriptionDetail,
   UsageQuotaLimit,
 } from "@zcode/shared";
+import type { ProviderSettingsFormProvider } from "@/lib/providerSettingsFormTypes.js";
 import {
   getModelProviderFamilySpec,
   isIndividualCodingPlanModelProviderId,
@@ -37,7 +38,7 @@ function createTeamPlanNavigationKey(
     .join(":");
 }
 
-interface ResolvedCodingPlanEntitlementState {
+export interface ResolvedCodingPlanEntitlementState {
   statusLabelId?: string;
   status: CodingPlanStatus;
   planLevel: string | null;
@@ -275,6 +276,30 @@ export function buildVisibleFamilyConnectionItems({
     showPurchasedTeamPlanFallback,
     subscribedTeamProducts,
   });
+}
+
+export function buildVisibleFamilyConnectionKeys({
+  items,
+  subscribedTeamProducts,
+  showPurchasedTeamPlanFallback,
+  modelProviders,
+}: {
+  items: Array<Extract<ModelProviderNavGroup["items"][number], { type: "codingPlan" }>>;
+  subscribedTeamProducts: EnterpriseCodingPlanProductDisplay[];
+  showPurchasedTeamPlanFallback: boolean;
+  modelProviders: readonly ProviderSettingsFormProvider[];
+}): Set<string> {
+  const visibleItems = buildVisibleFamilyConnectionItems({
+    items,
+    codingPlanEntitlements: {},
+    subscribedTeamProducts,
+    connectionSelections: {},
+    teamPlanSelections: {},
+    showPurchasedTeamPlanFallback,
+  });
+  const keys = new Set(visibleItems.map((item) => item.key));
+  void modelProviders;
+  return keys;
 }
 
 function filterStartPlanItemsByEntitlement({

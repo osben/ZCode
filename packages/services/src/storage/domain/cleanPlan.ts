@@ -15,13 +15,13 @@ export interface StorageCleanCandidate {
   mtimeMs: number;
 }
 
-interface StorageCleanPlan {
+export interface StorageCleanPlan {
   targets: StorageCleanCandidate[];
   skippedCount: number;
 }
 
 /** Subagent artifacts: skip the entire session directory if anything changed within 24 hours, to avoid deleting an in-progress subagent transcript. */
-const SUBAGENT_ACTIVE_WINDOW_MS = 24 * 60 * 60 * 1000;
+export const SUBAGENT_ACTIVE_WINDOW_MS = 24 * 60 * 60 * 1000;
 
 export function planStorageClean(params: {
   categoryId: StorageCategoryId;

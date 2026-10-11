@@ -1,6 +1,11 @@
 /* eslint-disable max-lines -- Subagent runtime wiring connects child runtimes, tool pools, permissions, MCP, and activity watchdogs; splitting it requires a separate migration. */
-import { RESPOND_TO_COORDINATOR_TOOL_NAME } from "@zcode/contracts";
+import {
+  RESPOND_TO_COORDINATOR_TOOL_NAME,
+  SESSION_ENTRY_MODEL_SELECTION,
+  parseModelSelectionValue,
+} from "@zcode/contracts";
 import type { SubagentRunOptions } from "@zcode/contracts";
+import { inheritPermissionMode } from "@zcode/contracts";
 import {
   defaultScheduler,
   PermissionService,
@@ -55,6 +60,7 @@ import {
   type OfficialCuaPolicy,
 } from "../../subagent/computer-use-policy.js";
 import { computeOfficialCuaServerNames } from "./mcp.js";
+import { persistRuntimeModelSelection, sameModelSelection } from "./turn-model.js";
 
 export function createDefaultSubagentPort(
   this: AgentRuntimeInternal,
@@ -69,7 +75,7 @@ export function createDefaultSubagentPort(
     inactivityTimeoutMs: this.config.subagents?.inactivityTimeoutMs,
     autoBackgroundMs: this.config.subagents?.autoBackgroundMs,
     outputRootDir: this.config.subagents?.outputRootDir,
-    profiles: this.config.subagents?.profiles,
+    getAgentDefinitions: this.getAgentDefinitions,
     builtInModelSelectionOverrides: this.config.subagents?.builtInModelSelectionOverrides,
     runtimeTaskRegistry: this.runtimeTaskRegistry,
     emitParentEvent: async (event, traceContext) => {
@@ -226,6 +232,15 @@ export function createDefaultSubagentPort(
             : { parentTurnId: request.traceContext.turnId }),
         },
       );
+      // Browser Use: the child agent shares tabs with the current conversation (tabOwner: "parent"), so the user can see tabs it opens in the panel,
+      // and it can see tabs already open in the conversation; workspace / clientMode are registered through forChildSession and resolved by the parent session.
+      // When the child ends, revoke only the registration; do not close tabs. If the port has no forChildSession (CLI headless), use the child's own scope.
+      const childBrowserControlPort =
+        this.browserControlPort?.forChildSession?.({
+          childSessionId: request.sessionId,
+          parentSessionId: this.sessionId,
+          tabOwner: "parent",
+        }) ?? this.browserControlPort;
       const mirroredToolNameByChildToolCallId = new Map<string, string>();
       let sessionReadyNotified = false;
       const notifySessionReady = async () => {
@@ -283,9 +298,14 @@ export function createDefaultSubagentPort(
           // `allowedTools: ["CreateWorkflow"]` skips that intersection**, leaving this as
           // the only guard.
           dynamicWorkflowEnabled: this.config.dynamicWorkflowEnabled,
-          // The default subagent changed from Explore to general-purpose. Do not base the
-          // toolset on DEFAULT_SUBAGENT_TYPE or the default general-purpose agent would
-          // be incorrectly downgraded to a read-only search surface.
+          // launch.md, “On demand: activation,” Children section: the child inherits the parent's tool surface **as it is now**—
+          // if the parent is not activated, the child is also on-demand (child sessions have no `/workflow` entry, effectively leaving no workflow tools);
+          // if the parent is activated, register them when the child starts.
+          dynamicWorkflowToolsOnDemand:
+            this.config.dynamicWorkflowToolsOnDemand === true &&
+            !this.dynamicWorkflowToolsActivated,
+          // Reason for the fix: the default subagent type changed from Explore to general-purpose.
+          // The toolset must not depend on DEFAULT_SUBAGENT_TYPE, or the default general-purpose agent would be incorrectly reduced to read-only search tools.
           toolset: builtInExplore ? "explore" : "main",
           toolAllowlist: childToolAllowlist,
           toolDisallowlist: this.config.toolDisallowlist,
@@ -318,6 +338,9 @@ export function createDefaultSubagentPort(
           // desktop UI knows only the parent task's sessionId. Keep derivation in
           // deriveChildClientPorts so dwf actors and legacy workflow children use the same path.
           ...childClientPorts,
+          ...(childBrowserControlPort === undefined
+            ? {}
+            : { browserControlPort: childBrowserControlPort }),
           coordinatorResponsePort: createCoordinatorResponsePort({
             agentId: request.agentId,
             agentType: request.agentType,
@@ -384,10 +407,33 @@ export function createDefaultSubagentPort(
       );
 
       const resumesExistingChild = request.resumeFromStore === true;
+      let previousSelection: ModelSelection | undefined;
       if (resumesExistingChild) {
+        const persistedMessages = await this.sessionStore?.messages({
+          sessionID: request.sessionId,
+        });
+        // Terminal resume restores existing history only; a failure before model initialization must not create an empty session.
+        if (!persistedMessages?.length) {
+          throw createCoreError(
+            CoreErrorType.SessionNotFound,
+            `No transcript found for agent ${request.agentId}`,
+            { recoverable: true },
+          );
+        }
+        const entries = await this.sessionStore?.sessionEntries?.({
+          sessionID: request.sessionId,
+          type: SESSION_ENTRY_MODEL_SELECTION,
+        });
+        previousSelection = parseModelSelectionValue(entries?.at(-1)?.data);
         await childRuntime.resumeFromStore({
+          persistedMessages,
           traceContext: request.traceContext,
         });
+        // Restoration imports history only; the model selected by this turn's profile remains authoritative for execution and updates the selection record used for cold recovery.
+        await persistRuntimeModelSelection(
+          childRuntime as unknown as AgentRuntimeInternal,
+          childSelection,
+        );
       } else {
         // Previously the parent published SubagentSpawned before the child's first
         // executeTurn persisted it. During concurrent spawning, catalog queries between
@@ -397,18 +443,25 @@ export function createDefaultSubagentPort(
         });
       }
       await notifySessionReady();
-      if (!resumesExistingChild) {
-        // A new child's final model may come from inheritance, lite, or a profile
-        // override. It is both a live projection fact for the first turn and a transcript
-        // boundary that cold recovery must preserve; do not write it again on resume.
+      if (
+        !resumesExistingChild ||
+        (previousSelection && !sameModelSelection(previousSelection, childSelection))
+      ) {
+        // Resuming with the same model does not insert another separator; configuration changes reuse the existing event and transcript records.
         childRuntime.recordPendingModelChange({
+          ...(previousSelection
+            ? {
+                fromModel: previousSelection,
+                fromModelLabel: `${previousSelection.providerId}/${previousSelection.modelId}`,
+              }
+            : {}),
           toModel: childSelection,
           toModelLabel: `${childSelection.providerId}/${childSelection.modelId}`,
         });
         await childRuntime.emitModelSelected({
           modelSelection: childSelection,
           effectiveReasoningLevel: childModel.options.reasoningLevel,
-          previousModelSelection: null,
+          previousModelSelection: previousSelection ?? null,
           traceContext: request.traceContext,
         });
       }
@@ -435,6 +488,14 @@ export function createDefaultSubagentPort(
             traceContext: request.traceContext,
           });
         }
+        await childBrowserControlPort
+          ?.closeSession?.({ sessionId: request.sessionId, traceContext: request.traceContext })
+          .catch((error: unknown) => {
+            this.logger?.warn("Subagent browser session cleanup failed", {
+              error: error instanceof Error ? error.message : String(error),
+              event: "browser.session_cleanup.failed",
+            });
+          });
       }
     },
   });
@@ -448,7 +509,7 @@ function resolveSubagentEmbeddedSearchEnabled(): boolean {
   return embeddedSearchDecision.useEmbeddedSearchBranch;
 }
 
-function createInheritedSubagentModelFactory(
+export function createInheritedSubagentModelFactory(
   inheritedSelection: ModelSelection,
   inheritedModel: Model,
   fallbackFactory: AgentRuntimeDeps["modelFactory"],
@@ -468,7 +529,7 @@ function createInheritedSubagentModelFactory(
   };
 }
 
-function modelSelectionFromActiveModel(model: Model): ModelSelection {
+export function modelSelectionFromActiveModel(model: Model): ModelSelection {
   const reasoningLevel = model.options.reasoningLevel;
   return {
     providerId: model.providerId,
@@ -496,12 +557,18 @@ function resolveSubagentPermissionMode(
   builtInExplore: boolean,
 ): AgentRuntimeInternal["config"]["mode"] {
   switch (permissionMode) {
+    case "bypassPermissions":
+    case "dontAsk":
+      return inheritPermissionMode(parentMode, "yolo");
+    case "acceptEdits":
+      return "edit";
     case "auto":
       return "auto";
     case "plan":
       return "plan";
+    case "default":
     case undefined:
-      return builtInExplore ? "yolo" : parentMode;
+      return inheritPermissionMode(parentMode, builtInExplore ? "yolo" : parentMode);
     default:
       return parentMode;
   }
@@ -898,7 +965,7 @@ async function validateSubagentComputerUseConfiguration(
   );
 }
 
-function isUniqueOfficialSkillRequest(
+export function isUniqueOfficialSkillRequest(
   skills: readonly SkillContent["metadata"][],
   requestName: string,
   cuaPolicy: Pick<OfficialCuaPolicy, "isOfficialSkill">,

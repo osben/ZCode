@@ -1,5 +1,13 @@
-import { createHash, randomUUID } from "node:crypto";
-import { access, mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import {
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import type { Logger, SkillRoot } from "@zcode/contracts";
 import { DYNAMIC_WORKFLOW_SKILL_NAME } from "@zcode/contracts";
@@ -10,8 +18,10 @@ import { candidateBaseDirs } from "./bundled-plugins.js";
  *
  * This is not a plugin: it is not listed in the official marketplace, has no enable/disable switch,
  * cannot be uninstalled, and does not appear in Settings or the `$` reference panel. Runtime registers
- * product-feature tools, and their companion skills ship with the CLI so uninstalling a plugin does
- * not remove tool usage guidance.
+ * product-feature tools, and the skills that teach the model to use those tools must be equally
+ * irremovable—the root cause of the 2026-09-19 "/workflow disappeared" incident was that the
+ * dynamic-workflows skill and command both lived in the user-uninstallable zcode-guide plugin
+ * (docs/dynamic-workflow/authoring.md, "The `/workflow` command and the skill").
  *
  * All three runtime forms resolve to the same skills directory:
  * - Development / Electron Desktop: find `packages/bundled-skills` next to the entry point using
@@ -49,7 +59,8 @@ const SEED_MARKER_FILE = ".zcode-bundled-skills-seed.json";
 /**
  * Place this after all plugin roots (adapter plugin roots start at FIRST_PLUGIN_PRIORITY): when names
  * collide, discovery order selects the first skill, so matching user/project/plugin skills take
- * precedence over the bundled package.
+ * precedence over the bundled package, matching tier 7 (bundled/system) in skill.md's "Priority"
+ * section.
  */
 const BUNDLED_SKILL_ROOT_PRIORITY = 1_000_000;
 
@@ -67,14 +78,13 @@ export interface ResolveBundledSkillRootsOptions {
   logger?: Logger;
 }
 
-export async function resolveBundledSkillRoots(
-  options: ResolveBundledSkillRootsOptions,
-): Promise<SkillRoot[]> {
+export function resolveBundledSkillRoots(options: ResolveBundledSkillRootsOptions): SkillRoot[] {
   const packRoot =
-    (await materializeSeaBundledSkillPack(options)) ??
-    (await resolveFilesystemBundledSkillPackRoot());
+    materializeSeaBundledSkillPack(options) ?? resolveFilesystemBundledSkillPackRoot();
   if (!packRoot) {
-    // Missing bundled skills cause the skill gate to reject script authoring; record a diagnostic to help locate incomplete distribution assets.
+    // A missing bundled skills package means the model cannot load the skill after /workflow
+    // expands. This is not fatal (tool descriptions still carry the full API), but it must leave a
+    // diagnostic; otherwise the only symptom would be "the model writes lower-quality scripts."
     options.logger?.warn("Bundled skill pack unavailable", {
       module: "bootstrap.bundled_skills",
       requiredPaths: [...BUNDLED_SKILL_PACK_REQUIRED_PATHS],
@@ -91,31 +101,19 @@ export async function resolveBundledSkillRoots(
   ];
 }
 
-export async function findMissingBundledSkillPackPaths(packRoot: string): Promise<string[]> {
-  const present = await Promise.all(
-    BUNDLED_SKILL_PACK_REQUIRED_PATHS.map((requiredPath) =>
-      pathExists(join(packRoot, ...requiredPath.split("/"))),
-    ),
+export function findMissingBundledSkillPackPaths(packRoot: string): string[] {
+  return BUNDLED_SKILL_PACK_REQUIRED_PATHS.filter(
+    (requiredPath) => !existsSync(join(packRoot, ...requiredPath.split("/"))),
   );
-  return BUNDLED_SKILL_PACK_REQUIRED_PATHS.filter((_, index) => !present[index]);
 }
 
-async function pathExists(path: string): Promise<boolean> {
-  try {
-    await access(path);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-async function resolveFilesystemBundledSkillPackRoot(): Promise<string | undefined> {
+function resolveFilesystemBundledSkillPackRoot(): string | undefined {
   for (const baseDir of candidateBaseDirs()) {
     for (const relativePath of BUNDLED_SKILL_PACK_ROOT_CANDIDATES) {
       const packRoot = resolve(baseDir, relativePath);
       if (
-        (await pathExists(join(packRoot, BUNDLED_SKILL_PACK_SKILLS_DIRECTORY))) &&
-        (await findMissingBundledSkillPackPaths(packRoot)).length === 0
+        existsSync(join(packRoot, BUNDLED_SKILL_PACK_SKILLS_DIRECTORY)) &&
+        findMissingBundledSkillPackPaths(packRoot).length === 0
       ) {
         return packRoot;
       }
@@ -124,9 +122,9 @@ async function resolveFilesystemBundledSkillPackRoot(): Promise<string | undefin
   return undefined;
 }
 
-async function materializeSeaBundledSkillPack(
+function materializeSeaBundledSkillPack(
   options: ResolveBundledSkillRootsOptions,
-): Promise<string | undefined> {
+): string | undefined {
   const sea = getSeaModule();
   if (!sea?.isSea()) return undefined;
   const manifest = readSeaManifest(sea);
@@ -134,34 +132,34 @@ async function materializeSeaBundledSkillPack(
 
   const packsRoot = join(options.cliStorageRoot, BUNDLED_SKILL_PACK_DIRECTORY_NAME);
   const targetRoot = join(packsRoot, manifest.hash);
-  if (await isSeedComplete(targetRoot, manifest.hash)) return targetRoot;
+  if (isSeedComplete(targetRoot, manifest.hash)) return targetRoot;
 
   // The directory name is the content hash. Write into a unique temporary directory and then rename;
   // if rename fails but the target is complete, another concurrent writer won and we can reuse it.
   // For other failures, fall back to any complete older package so skills remain available if an upgrade is interrupted.
-  const temporaryRoot = `${targetRoot}.tmp-${process.pid}-${randomUUID()}`;
+  const temporaryRoot = `${targetRoot}.tmp-${process.pid}-${Date.now()}`;
   try {
-    await mkdir(temporaryRoot, { recursive: true });
+    mkdirSync(temporaryRoot, { recursive: true });
     for (const file of manifest.files) {
       const bytes = Buffer.from(sea.getRawAsset(`${SEA_BUNDLED_SKILL_ASSET_PREFIX}${file.path}`));
       if (hashBytes(bytes) !== file.sha256) {
         throw new Error(`Bundled skill asset hash mismatch: ${file.path}`);
       }
       const outputPath = join(temporaryRoot, ...file.path.split("/"));
-      await mkdir(dirname(outputPath), { recursive: true });
-      await writeFile(outputPath, bytes, { mode: file.mode ?? 0o644 });
+      mkdirSync(dirname(outputPath), { recursive: true });
+      writeFileSync(outputPath, bytes, { mode: file.mode ?? 0o644 });
     }
-    await writeFile(
+    writeFileSync(
       join(temporaryRoot, SEED_MARKER_FILE),
       JSON.stringify({ hash: manifest.hash, version: 1 }, null, 2),
     );
-    await mkdir(packsRoot, { recursive: true });
-    await rename(temporaryRoot, targetRoot);
+    mkdirSync(packsRoot, { recursive: true });
+    renameSync(temporaryRoot, targetRoot);
     return targetRoot;
   } catch (error) {
-    await rm(temporaryRoot, { force: true, recursive: true });
-    if (await isSeedComplete(targetRoot, manifest.hash)) return targetRoot;
-    const fallbackRoot = await findUsableSeededPack(packsRoot);
+    rmSync(temporaryRoot, { force: true, recursive: true });
+    if (isSeedComplete(targetRoot, manifest.hash)) return targetRoot;
+    const fallbackRoot = findUsableSeededPack(packsRoot);
     options.logger?.warn("Bundled skill pack seed degraded", {
       error: error instanceof Error ? error.message : String(error),
       fallbackRoot,
@@ -172,40 +170,38 @@ async function materializeSeaBundledSkillPack(
   }
 }
 
-async function isSeedComplete(targetRoot: string, expectedHash: string): Promise<boolean> {
+function isSeedComplete(targetRoot: string, expectedHash: string): boolean {
   try {
-    const marker = JSON.parse(await readFile(join(targetRoot, SEED_MARKER_FILE), "utf8")) as {
+    const marker = JSON.parse(readFileSync(join(targetRoot, SEED_MARKER_FILE), "utf8")) as {
       hash?: unknown;
     };
     if (marker.hash !== expectedHash) return false;
   } catch {
     return false;
   }
-  return (await findMissingBundledSkillPackPaths(targetRoot)).length === 0;
+  return findMissingBundledSkillPackPaths(targetRoot).length === 0;
 }
 
-async function findUsableSeededPack(packsRoot: string): Promise<string | undefined> {
+function findUsableSeededPack(packsRoot: string): string | undefined {
   let entries;
   try {
-    entries = await readdir(packsRoot, { withFileTypes: true });
+    entries = readdirSync(packsRoot, { withFileTypes: true });
   } catch {
     return undefined;
   }
-  for (const entry of entries) {
-    if (!entry.isDirectory() || entry.name.includes(".tmp-")) continue;
-    const packRoot = join(packsRoot, entry.name);
-    try {
-      const marker = JSON.parse(await readFile(join(packRoot, SEED_MARKER_FILE), "utf8")) as {
-        hash?: unknown;
-      };
-      if (typeof marker.hash === "string" && (await isSeedComplete(packRoot, marker.hash))) {
-        return packRoot;
+  return entries
+    .filter((entry) => entry.isDirectory() && !entry.name.includes(".tmp-"))
+    .map((entry) => join(packsRoot, entry.name))
+    .find((packRoot) => {
+      try {
+        const marker = JSON.parse(readFileSync(join(packRoot, SEED_MARKER_FILE), "utf8")) as {
+          hash?: unknown;
+        };
+        return typeof marker.hash === "string" && isSeedComplete(packRoot, marker.hash);
+      } catch {
+        return false;
       }
-    } catch {
-      // Do not fall back to a corrupted old cache; continue looking for a complete skill package.
-    }
-  }
-  return undefined;
+    });
 }
 
 function readSeaManifest(sea: SeaModule): SeaBundledSkillManifest | undefined {

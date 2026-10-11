@@ -39,7 +39,9 @@ const INITIAL_STATE: TaskNativeSessionLogFileState = {
   error: null,
 };
 
-function supportsTaskNativeSessionLogFile(_provider: ZCodeProvider | null | undefined): boolean {
+export function supportsTaskNativeSessionLogFile(
+  _provider: ZCodeProvider | null | undefined,
+): boolean {
   // Only the glm provider remains, and it always supports reading native session logs.
   return true;
 }

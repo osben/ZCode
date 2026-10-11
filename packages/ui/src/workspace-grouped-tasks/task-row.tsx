@@ -1,5 +1,5 @@
 /* eslint-disable max-lines -- Grouped rows support both drag overlays and regular interactions, so state badges must share the same rendering semantics. */
-import { memo, useState } from "react";
+import { memo, useMemo, useState } from "react";
 import type { KeyboardEvent, MouseEvent } from "react";
 import { useDraggable, useDroppable } from "@dnd-kit/core";
 import type { UniqueIdentifier } from "@dnd-kit/core";
@@ -37,6 +37,10 @@ import {
 } from "@/workspace-grouped-tasks/types.js";
 import { TaskWorkflowRunLines } from "@/components/workflow-run-line/TaskWorkflowRunLines.js";
 import { useTaskInteractionAutoResolutionSnooze } from "@/hooks/useTaskInteractionAutoResolutionSnooze.js";
+import {
+  useBranchMergeStatusStore,
+  selectBranchMergeStatus,
+} from "@/store/branchMergeStatusStore.js";
 import { useOptionalTabStore } from "@/store/TabStoreProvider.js";
 import { isWorkspaceReadOnly } from "@/store/tabStore.js";
 import { TaskTitleOverflowText } from "@/components/TaskTitleOverflowText.js";
@@ -49,6 +53,7 @@ function GroupedTaskRowComponent({
   activeWorkspacePath,
   activeWorkspaceIdentity,
   activeTaskId,
+  mobileActiveTaskKey,
   workspaceLabel,
   onSelectTask,
   onCloseTask,
@@ -70,6 +75,7 @@ function GroupedTaskRowComponent({
   activeWorkspacePath: string;
   activeWorkspaceIdentity?: string;
   activeTaskId: string | null;
+  mobileActiveTaskKey?: string | null;
   workspaceLabel: string;
   onSelectTask: (workspacePath: string, taskId: string, workspaceIdentity?: string) => void;
   onCloseTask: (task: ZCodeTaskMeta) => void;
@@ -84,7 +90,7 @@ function GroupedTaskRowComponent({
   dragOverlay?: boolean;
   tooltipsDisabled?: boolean;
 }) {
-  const { intl } = useZCodeIntl();
+  const { intl, locale } = useZCodeIntl();
   const workspaceActionsDisabled = useOptionalTabStore((state) =>
     isWorkspaceReadOnly(state, task.workspacePath, task.workspaceIdentity),
   );
@@ -98,12 +104,15 @@ function GroupedTaskRowComponent({
     sessionId: task.taskId,
   });
   const workspaceKey = buildTaskWorkspaceKey(task.workspacePath, task.workspaceIdentity);
+  const branchMergeStatus = useBranchMergeStatusStore((state) =>
+    selectBranchMergeStatus(state, workspaceKey),
+  );
   const taskActivity = getTaskListRowActivity(task);
   const taskAttention = getTaskListAttention(task);
   // The interaction pill is currently the highest-priority right-side state; whether it comes from a sessions-index summary or
   // activity attention, do not display relative time beside it and squeeze the task title.
   const hasPendingInteraction = Boolean(task.pendingInteraction) || taskAttention !== null;
-  // When a remote session is not ready, the resolver will reject opening the file tree, so do not expose
+  // Bugfix: When the remote session is not ready, the resolver will reject opening the file tree, so do not expose
   // an invalid action; local tasks do not need remoteSessionId, so keep the entry available for them.
   const canOpenFileTree =
     Boolean(onOpenFileTree) && (!task.workspaceIdentity?.trim() || Boolean(remoteSessionId));
@@ -134,15 +143,37 @@ function GroupedTaskRowComponent({
   const isActive =
     buildTaskWorkspaceKey(activeWorkspacePath, activeWorkspaceIdentity) === workspaceKey &&
     activeTaskId === task.taskId;
-  const isMobileActive = false;
+  const isMobileActive = mobileActiveTaskKey === `${workspaceKey}:${task.taskId}`;
   const statusDotClassName =
     leadingIndicator === "error"
       ? "bg-destructive"
       : leadingIndicator === "unread"
-        ? // The unread dot for grouped tasks should share the sky color with the regular task list so its meaning does not shift with the theme’s brand color.
+        ? // Bugfix: the grouped task unread dot must share the sky color with the plain task
+          // list so the brand color's meaning does not drift across themes.
           "bg-sky-500 dark:bg-sky-400"
         : null;
   const canShowHoverActions = !dragOverlay;
+  const branchMergedCommitAtMs = branchMergeStatus?.lastCommitAt
+    ? Date.parse(branchMergeStatus.lastCommitAt)
+    : Number.NaN;
+  const mergedCommitAbsoluteFormatter = useMemo(
+    () => new Intl.DateTimeFormat(locale, { dateStyle: "medium", timeStyle: "short" }),
+    [locale],
+  );
+  // Merged ranks below attention/interaction: the row keeps a single right-side
+  // status badge, and the merged details always stay available in the popup.
+  const branchMergedBadge =
+    branchMergeStatus?.state === "merged" ? (
+      <Badge
+        data-branch-merged-badge="true"
+        className={cn(
+          "h-5 border-transparent bg-primary/14 px-2 text-ui-xs font-medium text-primary dark:bg-primary/18",
+          canShowHoverActions && "group-hover/task-row:hidden",
+        )}
+      >
+        {intl.formatMessage({ id: "taskList.branchMergedTag" })}
+      </Badge>
+    ) : null;
   // Workflow-run row: grouped rows also place it below the title;
   // the drag overlay is display-only and does not attach confirmation side effects or click actions.
   const workflowRunLinesNode =
@@ -180,7 +211,7 @@ function GroupedTaskRowComponent({
           className="text-foreground"
           title={dragOverlay ? undefined : taskTitle}
         >
-          {/* Do not add an ellipsis when a grouped task title overflows; a fade on the right preserves title continuity without crowding the right-side status metadata.*/}
+          {/* Bugfix: do not show an ellipsis when the grouped task title overflows; the right fade keeps the title continuous instead of crowding the status metadata on the right. */}
           {taskTitle}
         </TaskTitleOverflowText>
         <span className="ml-auto flex shrink-0 items-center gap-1.5 text-ui-sm text-foreground-subtle">
@@ -199,7 +230,9 @@ function GroupedTaskRowComponent({
             >
               {taskAttentionDisplay}
             </Badge>
-          ) : null}
+          ) : (
+            branchMergedBadge
+          )}
           <span
             className={cn(
               "flex shrink-0 items-center gap-1",
@@ -250,9 +283,11 @@ function GroupedTaskRowComponent({
   const {
     taskSessionFile,
     taskNativeSessionLogFile,
+    providerConfigFile,
     fileManagerLabel,
     handleCopyText,
     handleOpenTaskPathInFileManager,
+    handleOpenProviderConfig,
   } = useTaskListItemContextActions({
     workspacePath: task.workspacePath,
     remoteSessionId,
@@ -261,6 +296,7 @@ function GroupedTaskRowComponent({
     provider: task.provider,
     intl,
     loadTaskPaths: contextMenuOpen,
+    loadProviderConfig: contextMenuOpen,
   });
   const handleSelect = () => {
     onSelectTask(task.workspacePath, task.taskId, task.workspaceIdentity);
@@ -300,7 +336,7 @@ function GroupedTaskRowComponent({
       type: "bug",
       module: "Agent任务执行失败",
       severity: "P2-中",
-      includeLogs: false,
+      includeLogs: true,
       description: buildTaskFeedbackDescription({
         taskTitle,
         taskId: task.taskId,
@@ -341,7 +377,7 @@ function GroupedTaskRowComponent({
     droppable.setNodeRef(element);
   };
   const groupedTaskDomKey = typeof dragId === "string" ? encodeURIComponent(dragId) : undefined;
-  // CSS hidden → flex gives the action trigger layout size only when the pointer reaches it,
+  // Bug cause: Changing CSS from hidden to flex gives the action trigger its layout size only when the pointer arrives,
   // so the Tooltip Portal may first render at an unpositioned coordinate. Mount actions based on interaction state,
   // preserving keyboard, touch-device, and mobile-remote-control entry points for the active task.
   const shouldMountHoverActions =
@@ -380,7 +416,7 @@ function GroupedTaskRowComponent({
     >
       <span className={TASK_GROUP_ROW_LINE_CLASS}>
         <TaskTitleOverflowText as="span" className="text-foreground" title={taskTitle}>
-          {/* When a grouped-task title overflows, do not show an ellipsis; a fade on the right preserves title continuity and avoids crowding the status metadata.*/}
+          {/* Bugfix: do not show an ellipsis when the grouped task title overflows; the right fade keeps the title continuous instead of crowding the status metadata on the right. */}
           {taskTitle}
         </TaskTitleOverflowText>
         <span className="ml-auto flex shrink-0 items-center gap-1.5 text-ui-sm text-foreground-subtle">
@@ -394,6 +430,8 @@ function GroupedTaskRowComponent({
             <Badge className="h-5 border-transparent bg-success/14 px-2 text-ui-base font-medium text-success dark:bg-success/18">
               {taskAttentionDisplay}
             </Badge>
+          ) : !shouldSuppressTaskMetadata ? (
+            branchMergedBadge
           ) : null}
           {!shouldSuppressTaskMetadata ? (
             <span className="flex shrink-0 items-center gap-1">
@@ -480,6 +518,42 @@ function GroupedTaskRowComponent({
                 <Folder aria-hidden="true" className="size-3.5 shrink-0" />
               )}
               <span className="min-w-0 max-w-48 truncate">{workspaceLabel}</span>
+              {branchMergeStatus?.state === "merged" && branchMergeStatus.baseRef ? (
+                <>
+                  <span className="text-tooltip-foreground/60">·</span>
+                  <span
+                    className="inline-flex min-w-0 shrink-0 flex-col gap-0.5"
+                    data-branch-merged-popup="true"
+                  >
+                    <span className="truncate">
+                      {intl.formatMessage(
+                        { id: "taskList.branchMergedInto" },
+                        { baseRef: branchMergeStatus.baseRef },
+                      )}
+                      {Number.isFinite(branchMergedCommitAtMs) ? (
+                        <>
+                          {" "}
+                          <span
+                            className="text-foreground-subtle"
+                            title={mergedCommitAbsoluteFormatter.format(branchMergedCommitAtMs)}
+                          >
+                            {formatTaskRelativeTime(branchMergedCommitAtMs, intl)}
+                          </span>
+                        </>
+                      ) : null}
+                    </span>
+                    <span className="truncate text-foreground-subtle">
+                      {intl.formatMessage(
+                        { id: "taskList.branchMergedRefLine" },
+                        {
+                          baseRef: branchMergeStatus.baseRef,
+                          headRef: branchMergeStatus.headRef ?? "HEAD",
+                        },
+                      )}
+                    </span>
+                  </span>
+                </>
+              ) : null}
               {taskChangeParts.length > 0 ? (
                 <>
                   <span className="text-tooltip-foreground/60">·</span>
@@ -509,6 +583,7 @@ function GroupedTaskRowComponent({
           fileManagerLabel={fileManagerLabel}
           taskSessionFile={taskSessionFile}
           taskNativeSessionLogFile={taskNativeSessionLogFile}
+          providerConfigFile={providerConfigFile}
           onMoveTaskToGroup={onMoveTaskToGroup}
           onMoveTaskToTop={onMoveTaskToTop}
           onStartRenameTask={onStartRenameTask}
@@ -516,6 +591,7 @@ function GroupedTaskRowComponent({
           onMarkTaskAsUnread={onMarkTaskAsUnread}
           onOpenTaskPathInFileManager={() => void handleOpenTaskPathInFileManager()}
           onCopyText={(label, text) => void handleCopyText(label, text)}
+          onOpenProviderConfig={() => void handleOpenProviderConfig()}
           onOpenTaskFeedback={() => void handleOpenTaskFeedback()}
           disabledReason={workspaceActionsDisabledReason}
         />

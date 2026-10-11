@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import { readdir } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join, win32 } from "node:path";
+import { posix, win32 } from "node:path";
 import type {
   ApplicationIconInfo,
   ApplicationIconRequest,
@@ -51,9 +51,12 @@ async function buildApplicationPathIndex(
   dependencies: ApplicationPathDependencies,
 ): Promise<Map<string, string>> {
   const deadline = dependencies.now() + FALLBACK_SCAN_BUDGET_MS;
+  // darwin path joining is pinned to posix separators: node:path's join follows the
+  // running platform, producing backslash paths in Windows unit tests and breaking parity
+  // between the fallback index and Spotlight's POSIX convention.
   const roots = [
     "/Applications",
-    join(dependencies.homeDirectory, "Applications"),
+    posix.join(dependencies.homeDirectory, "Applications"),
     "/System/Applications",
     "/System/Applications/Utilities",
   ];
@@ -62,7 +65,9 @@ async function buildApplicationPathIndex(
     try {
       const entries = await dependencies.listDirectory(root);
       appPaths.push(
-        ...entries.filter((entry) => entry.endsWith(".app")).map((entry) => join(root, entry)),
+        ...entries
+          .filter((entry) => entry.endsWith(".app"))
+          .map((entry) => posix.join(root, entry)),
       );
     } catch {
       // A standard directory may be missing or unreadable; continue scanning the others.
@@ -80,7 +85,7 @@ async function buildApplicationPathIndex(
         const bundleId = (
           await dependencies.execute(
             "/usr/libexec/PlistBuddy",
-            ["-c", "Print :CFBundleIdentifier", join(appPath, "Contents", "Info.plist")],
+            ["-c", "Print :CFBundleIdentifier", posix.join(appPath, "Contents", "Info.plist")],
             Math.min(PLIST_READ_TIMEOUT_MS, remainingMs),
           )
         ).trim();
@@ -114,7 +119,7 @@ function readFallbackApplicationPath(
   return indexPromise.then((index) => index.get(bundleId.toLowerCase()) ?? null);
 }
 
-async function resolveDarwinApplicationPath(
+export async function resolveDarwinApplicationPath(
   bundleId: string,
   dependencies: ApplicationPathDependencies = defaultApplicationPathDependencies,
 ): Promise<string | null> {
@@ -203,7 +208,7 @@ async function readFileIcon(
   return iconDataUrl ? { iconDataUrl } : null;
 }
 
-function createApplicationIconLoader(dependencies: ApplicationIconLoaderDependencies) {
+export function createApplicationIconLoader(dependencies: ApplicationIconLoaderDependencies) {
   return async (request: string | ApplicationIconRequest): Promise<ApplicationIconInfo | null> => {
     const normalized = normalizedRequest(request, dependencies.platform);
     if (!normalized) return null;

@@ -14,7 +14,7 @@ import { legacyTelemetryProviderId } from "@/lib/providerTelemetryIdentity.js";
 const EVENT_REGION = "app.automations";
 type TelemetryPlatform = Pick<IPlatformService, "reportTelemetryEvent">;
 
-function resolveAutomationModelTelemetry(
+export function resolveAutomationModelTelemetry(
   modelValue: string | null | undefined,
   explicitProvider: string | null | undefined,
   providerSettingsView: ProviderSettingsView | null,
@@ -64,7 +64,7 @@ export function resolveAutomationSelectionTelemetry(
   );
 }
 
-function sanitizeAutomationTelemetryError(error: string | null | undefined): string {
+export function sanitizeAutomationTelemetryError(error: string | null | undefined): string {
   // Fix: the old regex masked only the Bearer after Authorization, leaving the secret value exposed; discard the original text entirely.
   return sanitizeTelemetryErrorMessage(error);
 }

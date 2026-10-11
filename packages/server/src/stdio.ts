@@ -1,5 +1,12 @@
 import { randomUUID } from "node:crypto";
-import { Emitter, VSBuffer, SocketProtocol, ChannelServer, type ISocket } from "@zcode/rpc";
+import {
+  Emitter,
+  VSBuffer,
+  SocketProtocol,
+  ChannelServer,
+  ChannelClient,
+  type ISocket,
+} from "@zcode/rpc";
 import {
   IZCodeAgentService,
   createZCodeAgentConnectionScope,
@@ -53,10 +60,15 @@ export function wrapStdio(): ISocket {
   };
 }
 
-export function createStdioServer(services: ServiceCollection) {
+export function createStdioServer(
+  services: ServiceCollection,
+  onReverseClientReady?: (client: ChannelClient) => void,
+) {
   const socket = wrapStdio();
   const protocol = new SocketProtocol(socket);
   const channelServer = new ChannelServer(protocol, "stdio");
+  const reverseClient = onReverseClientReady ? new ChannelClient(protocol) : undefined;
+  if (reverseClient) onReverseClientReady?.(reverseClient);
   const agentService = services.getOptional(IZCodeAgentService);
   const connectionScope = agentService
     ? createZCodeAgentConnectionScope(agentService, {
@@ -80,6 +92,7 @@ export function createStdioServer(services: ServiceCollection) {
     // Remove the protocol listener synchronously first so no new service RPCs are accepted from this point;
     // close the underlying stdio after connection-scope unsubscription completes asynchronously.
     channelServer.dispose();
+    reverseClient?.dispose();
     stopPromise = (async () => {
       try {
         await connectionScope?.dispose();

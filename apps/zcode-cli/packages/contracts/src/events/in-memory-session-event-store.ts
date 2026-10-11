@@ -5,6 +5,7 @@ import {
   createSessionEventRetentionPolicy,
   isTransientSessionEvent,
   SEALED_TURN_TRANSIENT_GRACE_MS,
+  slimRetainedModelRequest,
   type SessionEventRetentionMode,
   type SessionEventRetentionPolicy,
 } from "./session-event-retention.js";
@@ -105,7 +106,10 @@ export class InMemorySessionEventStore implements SessionEventStorePort {
         state.evictedEvents += 1;
         continue;
       }
-      retained.push(event);
+      // Same eviction cadence: for sealed and persisted turns, retain only model_request metadata.
+      retained.push(
+        event.turnId && turnIds.has(event.turnId) ? slimRetainedModelRequest(event) : event,
+      );
     }
     state.events = retained;
   }

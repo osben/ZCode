@@ -16,9 +16,17 @@ import {
 type RemoteKind = RemoteTarget["kind"];
 export type SSHAuthMethod = "password" | "privateKey";
 
-function buildAvailableKinds(options: { isWindowsDesktop: boolean }): RemoteKind[] {
+export function buildAvailableKinds(options: {
+  isWindowsDesktop: boolean;
+  isLocalDevelopmentRuntime: boolean;
+}): RemoteKind[] {
   const kinds: RemoteKind[] = ["ssh"];
-  // In the remote connection picker, WSL and SSH are both host connections.
+  // Bugfix: Server remote is currently available only in local development. It used to appear in
+  // the selectable list unconditionally, exposing an unavailable entry in production builds.
+  if (options.isLocalDevelopmentRuntime) {
+    kinds.push("server");
+  }
+  // Bugfix: WSL and SSH are both host connections in the remote-connection entry point.
   // On Windows, place WSL before Docker so Docker does not separate WSL from SSH in the picker.
   if (options.isWindowsDesktop) {
     kinds.push("wsl");
@@ -58,6 +66,10 @@ export function useRemoteConnectionForm({
   const [wslUser, setWslUser] = useState("");
   const [dockerContainer, setDockerContainer] = useState("");
   const [manualDockerContainer, setManualDockerContainer] = useState("");
+  const [serverUrl, setServerUrl] = useState("");
+  const [serverName, setServerName] = useState("");
+  const [serverToken, setServerToken] = useState("");
+  const [serverWorkspacePath, setServerWorkspacePath] = useState("");
   const [sshConfigAliases, setSshConfigAliases] = useState<SSHConfigAliasOption[]>([]);
   const [sshConfigAliasesLoading, setSshConfigAliasesLoading] = useState(false);
   const [sshConfigAliasesLoaded, setSshConfigAliasesLoaded] = useState(false);
@@ -75,9 +87,12 @@ export function useRemoteConnectionForm({
   const applyingSshAliasRef = useRef(false);
   const dockerOptionsActiveLoadIdRef = useRef(0);
   const dockerOptionsInFlightLoadIdRef = useRef<number | null>(null);
+  const isLocalDevelopmentRuntime =
+    platform.isLocalDevelopmentRuntime === true || import.meta.env.DEV === true;
+
   const availableKinds = useMemo(
-    () => buildAvailableKinds({ isWindowsDesktop }),
-    [isWindowsDesktop],
+    () => buildAvailableKinds({ isWindowsDesktop, isLocalDevelopmentRuntime }),
+    [isLocalDevelopmentRuntime, isWindowsDesktop],
   );
 
   useEffect(() => {
@@ -341,6 +356,10 @@ export function useRemoteConnectionForm({
     wslUser,
     dockerContainer,
     manualDockerContainer,
+    serverUrl,
+    serverName,
+    serverToken,
+    serverWorkspacePath,
     sshConfigAliases,
     sshConfigAliasesLoading,
     sshConfigAliasesError,
@@ -362,7 +381,11 @@ export function useRemoteConnectionForm({
     setWslUser,
     setDockerContainer,
     setManualDockerContainer,
-    // The Docker container list is runtime data and was previously fetched only on entering the page.
+    setServerUrl,
+    setServerName,
+    setServerToken,
+    setServerWorkspacePath,
+    // Bugfix: the Docker container list is runtime data and was previously fetched only when entering the Docker page.
     // Refresh it on demand each time the dropdown opens so users do not see stale containers.
     refreshDockerContainers: () => refreshDockerContainers({ clearContainersOnError: false }),
     applySshConfigAlias,

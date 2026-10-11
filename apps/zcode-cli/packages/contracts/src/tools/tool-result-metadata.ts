@@ -1,5 +1,13 @@
 import { z } from "zod";
 import { OFFICIAL_MCP_TOOL_ERROR_CODES } from "@zcode/shared";
+import {
+  MCP_APPS_RESOURCE_URI_MAX_CHARS,
+  MCP_APPS_CONTENT_MAX_BYTES,
+  MCP_APPS_STRUCTURED_CONTENT_MAX_BYTES,
+  MCP_APPS_SURFACE_ID_MAX_CHARS,
+  MCP_APPS_SURFACE_ID_PATTERN,
+  MCP_APPS_WIDGET_META_MAX_BYTES,
+} from "@zcode/shared/mcp-apps";
 
 import {
   CREATE_WORKFLOW_DISPLAY_MAX_DIAGNOSTICS,
@@ -190,6 +198,46 @@ export const nodeReplImageToolResultDisplayPayloadSchema = z
   })
   .strict();
 
+/**
+ * Plugin UI metadata.
+ * Contracts still uses zod v3 and cannot directly reuse the zod v4 schema object from
+ * `@zcode/shared/mcp-apps`, so this schema is reproduced here using the same constants. Its fields
+ * must match `mcpToolDisplayUiSchema`; core/tests/mcp-ui-display.test.ts parses the same fixture with
+ * both schemas to keep them aligned.
+ */
+export const mcpToolDisplayUiPayloadSchema = z
+  .object({
+    pluginId: z.string().min(1).max(MCP_TOOL_DISPLAY_MAX_NAME_CHARS),
+    resourceUri: z.string().min(1).max(MCP_APPS_RESOURCE_URI_MAX_CHARS),
+    preferredDisplayMode: z.enum(["inline", "fullscreen", "pip"]).optional(),
+    prefersBorder: z.boolean().optional(),
+    csp: z
+      .object({
+        connectDomains: z.array(z.string().min(1).max(512)).optional(),
+        resourceDomains: z.array(z.string().min(1).max(512)).optional(),
+      })
+      .strict()
+      .optional(),
+    structuredContent: z.string().max(MCP_APPS_STRUCTURED_CONTENT_MAX_BYTES).optional(),
+    widgetMeta: z.string().max(MCP_APPS_WIDGET_META_MAX_BYTES).optional(),
+    // Raw content-array JSON (≤ 32 KiB) and omitted byte count; keep in sync with shared mcpToolDisplayUiSchema.
+    content: z.string().max(MCP_APPS_CONTENT_MAX_BYTES).optional(),
+    truncated: z.boolean().optional(),
+    truncatedBytes: z.number().int().nonnegative().optional(),
+    // MCP isError result (the call completed but the tool reported an error); keep in sync with shared.
+    isError: z.literal(true).optional(),
+    // Tool-level pinning; keep in sync with shared.
+    showInline: z.literal(true).optional(),
+    // Keep in sync with shared mcpToolDisplayUiSchema; widgetStateVisibility was removed.
+    surface: z
+      .string()
+      .min(1)
+      .max(MCP_APPS_SURFACE_ID_MAX_CHARS)
+      .regex(MCP_APPS_SURFACE_ID_PATTERN)
+      .optional(),
+  })
+  .strict();
+
 export const mcpToolResultDisplayPayloadSchema = z
   .object({
     kind: z.literal("mcp_tool"),
@@ -207,6 +255,8 @@ export const mcpToolResultDisplayPayloadSchema = z
       .object({ code: z.enum(OFFICIAL_MCP_TOOL_ERROR_CODES) })
       .strict()
       .optional(),
+    // Keep in sync with mcp_tool.ui in `@zcode/shared` v4 toolDisplay; both sides are strict, so zod silently strips any missing field.
+    ui: mcpToolDisplayUiPayloadSchema.optional(),
   })
   .strict();
 

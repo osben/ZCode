@@ -33,13 +33,13 @@ interface StorageLike {
 }
 
 /** TCC permission is scoped to the app (Helper bundle), not the workspace, so use one global key rather than one per workspace. */
-const CUA_PERMISSION_STATUS_CACHE_KEY = "zcode-cua-permission-status";
+export const CUA_PERMISSION_STATUS_CACHE_KEY = "zcode-cua-permission-status";
 
 /**
  * Cache lifetime. Users may change permissions in System Settings while ZCode is not running, so older cache entries are less trustworthy;
  * after expiration, return to the cold-start state (null) rather than render the first screen from a grant that may have been revoked.
  */
-const CUA_PERMISSION_STATUS_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+export const CUA_PERMISSION_STATUS_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 const PERMISSION_STATES: readonly CuaPermissionState[] = ["granted", "stale", "denied", "unknown"];
 

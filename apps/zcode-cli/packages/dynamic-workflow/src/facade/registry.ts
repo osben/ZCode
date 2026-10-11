@@ -157,8 +157,13 @@ export function isArtifactPresetOp(op: string): op is ArtifactPresetOp {
  */
 const ASK_MEMBER = { container: "Agent", member: "ask" } as const;
 
-/** Top-level facade functions that produce sites (no container). `log` does not produce a site and is omitted. */
-const SITE_PRODUCING_FUNCTIONS = ["agent", "report"] as const;
+/**
+ * Top-level facade functions that produce sites (without a container). `log` is omitted because it
+ * does not produce a site. `hole` is included: a hole has a site ID (the name key `hole#<hash>`) and a
+ * host call (docs/dynamic-workflow/authoring.md, “Holes”). Its identity is also determined by the
+ * **declaration file**; a script's own `hole` function is an ordinary function.
+ */
+const SITE_PRODUCING_FUNCTIONS = ["agent", "report", "hole"] as const;
 
 /**
  * Names of top-level site-producing facade functions. The bare-callee branch in `sites.ts`
@@ -206,10 +211,36 @@ type MarkerFunction = (typeof MARKER_FUNCTIONS)[number];
  * container must be absent); return undefined for non-markers. Same shape as
  * {@link siteProducingFunctionOfSymbol}, but intentionally a separate table.
  */
-export function markerFunctionOfSymbol(symbol: ts.Symbol | undefined): MarkerFunction | undefined {
+export function markerFunctionOfSymbol(
+  symbol: ts.Symbol | undefined,
+): MarkerFunction | undefined {
   const member = facadeMemberOf(symbol);
   if (member === undefined || member.container !== undefined) return undefined;
   return MARKER_FUNCTIONS.find((name) => name === member.member);
+}
+
+/**
+ * Top-level facade functions that are **pure value constructors**: they have facade identity, but
+ * produce no site and do not cross into the host. Currently there is only
+ * `model`（docs/dynamic-workflow/authoring.md「Choosing a model per subagent」）。
+ *
+ * `ModelRef` exists only in the type system; at runtime it is the model-name string itself. Lowering
+ * therefore erases `model("x")` to its argument, `"x"`; there is no `__host.model` or journal row in
+ * the sandbox. It is listed separately from `phase` for the same reason as {@link MARKER_FUNCTIONS}:
+ * it does not produce a site, and including it in the site-producing list would make facade-misuse
+ * pass 2 reject every valid call. It remains a facade function declaration, so pass 1 still rejects
+ * alias escape (`const m = model`); lowering can safely erase it by node identity.
+ */
+const VALUE_FUNCTIONS = ["model"] as const;
+
+/** Names of top-level pure-value facade functions, derived from {@link VALUE_FUNCTIONS}. */
+type ValueFunction = (typeof VALUE_FUNCTIONS)[number];
+
+/** Resolve a facade symbol to a top-level pure-value function (based on declaration; it must have no container), or return undefined. */
+export function valueFunctionOfSymbol(symbol: ts.Symbol | undefined): ValueFunction | undefined {
+  const member = facadeMemberOf(symbol);
+  if (member === undefined || member.container !== undefined) return undefined;
+  return VALUE_FUNCTIONS.find((name) => name === member.member);
 }
 
 /**
@@ -234,7 +265,10 @@ export const SITE_MEMBER_NAMES: ReadonlySet<string> = new Set<string>([
  * Registry lookup: (container, member) → op. Never matches when container is undefined
  * (top-level function); world-read ops always belong to facade container objects.
  */
-function worldReadOp(container: string | undefined, member: string): WorldReadOp | undefined {
+export function worldReadOp(
+  container: string | undefined,
+  member: string,
+): WorldReadOp | undefined {
   if (container === undefined) return undefined;
   return WORLD_READ_REGISTRY.find((row) => row.container === container && row.member === member)
     ?.op;
@@ -283,7 +317,7 @@ export function facadeContainerOf(declaration: ts.Node | undefined): string | un
  * facade `.d.ts`; resolve the container by walking up from that declaration (top-level facade
  * functions have no container). Non-facade symbols return undefined.
  */
-function facadeMemberOf(
+export function facadeMemberOf(
   symbol: ts.Symbol | undefined,
 ): { container: string | undefined; member: string } | undefined {
   const declaration = symbol?.declarations?.find(

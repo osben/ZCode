@@ -3,13 +3,13 @@ import { useMemo } from "react";
 import { useOptionalTabStore } from "@/store/TabStoreProvider.js";
 import { isWorkspaceTab, type WindowTabState, type WorkspaceTabState } from "@/store/tabStore.js";
 
-interface WorkspaceOpenInEditorScope {
+export interface WorkspaceOpenInEditorScope {
   workspacePath?: string;
   workspaceIdentity?: string;
   workspaceRemoteSessionId?: string;
 }
 
-function resolveWorkspaceOpenInEditorTarget(
+export function resolveWorkspaceOpenInEditorTarget(
   tabs: readonly WindowTabState[],
   scope: WorkspaceOpenInEditorScope,
 ) {
@@ -32,9 +32,8 @@ function resolveWorkspaceOpenInEditorTarget(
       (!requestedRemoteSessionId || tabRemoteSessionId === requestedRemoteSessionId)
     );
   });
-  // Remote file actions previously carried only a Linux path, so the renderer could not tell which
-  // SSH/WSL target it belonged to. Match exactly when identity/session is available; for legacy calls,
-  // extract the existing redacted target only when the workspace match is unique.
+  // Reason for the fix: Remote file actions previously carried only a Linux path, so the renderer could not tell which SSH/WSL target owned it.
+  // Match exactly when identity/session is available; for legacy calls, use the existing redacted target only when the workspace match is unique.
   const matchedTab = matches.length === 1 ? matches[0] : undefined;
   const hasRemoteMatch = matches.some((tab) =>
     Boolean(tab.workspaceIdentity || tab.remoteSessionId || tab.remoteTarget),

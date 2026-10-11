@@ -1,4 +1,5 @@
 import { parse } from "unbash";
+import { literalPosixWord, type CommandWord } from "./guarded/word.js";
 import type {
   AndOr,
   Command,
@@ -25,6 +26,7 @@ export interface BashCommandRedirect {
 }
 
 export interface BashCommandInvocation {
+  readonly words: CommandWord[];
   readonly argv: string[];
   readonly commandText: string;
   readonly envAssignments: BashCommandEnvAssignment[];
@@ -155,11 +157,27 @@ function collectAndOrCommands(source: string, node: AndOr, context: CollectConte
 }
 
 function collectPipelineCommands(source: string, node: Pipeline, context: CollectContext): void {
+  const firstCommandIndex = context.analysis.commands.length;
   for (let index = 0; index < node.commands.length; index += 1) {
     collectNodeCommands(source, node.commands[index]!, {
       ...context,
       operatorBefore: index === 0 ? context.operatorBefore : node.operators[index - 1],
     });
+  }
+  // unbash promotes the time keyword from argv to Pipeline.time; restore this recognized wrapper,
+  // or the argument to time -o file will be mistaken for the executable and the following real command will be missed.
+  const first = context.analysis.commands[firstCommandIndex];
+  if (node.time && first) {
+    const prefix = source.slice(node.pos, first.words[0]?.start);
+    const time = /\btime\b/.exec(prefix);
+    if (time)
+      first.words.unshift({
+        value: "time",
+        dynamic: false,
+        hasUnquotedGlob: false,
+        start: node.pos + time.index,
+        end: node.pos + time.index + 4,
+      });
   }
 }
 
@@ -183,6 +201,17 @@ function collectSimpleCommand(source: string, command: Command, context: Collect
 
   const name = command.name ? wordValue(command.name) : "";
   context.analysis.commands.push({
+    words: words.map((word) => {
+      const fact = literalPosixWord(word.text, word.pos, word.end);
+      // Use globs only from top-level literal fragments; variable / command substitutions / brace payloads are not lexical evidence of deletion targets.
+      if (word.parts)
+        fact.hasUnquotedGlob = word.parts.some(
+          (part) =>
+            part.type === "Literal" &&
+            literalPosixWord(part.text, 0, part.text.length).hasUnquotedGlob,
+        );
+      return fact;
+    }),
     argv,
     commandText: source.slice(command.pos, command.end),
     envAssignments,

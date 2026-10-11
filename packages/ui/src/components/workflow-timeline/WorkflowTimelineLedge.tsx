@@ -9,6 +9,7 @@ import { cn } from "@/components/lib/utils.js";
 import { STATUS_DOT } from "@/components/workflow-graph/run-status-presentation.js";
 import type { StepRunStatus } from "@/components/workflow-graph/types.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
+import type { TimelineHole } from "./timeline-holes.js";
 import type { TimelineRail, TimelineStation } from "./timeline-model.js";
 import { LEDGE_PITCH, LEDGE_LAMP, ledgeLamps, railKey, scrollbarThumb } from "./timeline-ledge.js";
 import type { TimelineViewport } from "./use-timeline-viewport.js";
@@ -26,7 +27,23 @@ import type { TimelineViewport } from "./use-timeline-viewport.js";
  */
 
 /** Station light: `STATUS_DOT` vocabulary; running adds a 3px breathing glow, the only glowing element on screen. */
-export function stationLampClass(status: StepRunStatus | undefined): string {
+export function stationLampClass(
+  status: StepRunStatus | undefined,
+  /**
+   * Hole indicator (docs/dynamic-workflow/presentation.md, “Holes on the timeline”): an open or waiting hole is a
+   * 1.5px dashed, unfilled indicator; while waiting, its stroke uses the warning color with a steady 3px glow—**no pulsing**, since nothing is running there.
+   * After completion it becomes a regular indicator. All three drawing locations (track row, band indicator layer, and ledge) use this component, so holes look the same everywhere.
+   */
+  hole?: TimelineHole,
+): string {
+  if (hole !== undefined && hole.state !== "filled") {
+    return cn(
+      "wf-lamp wf-lamp-hole size-2.5 shrink-0 rounded-full border-[1.5px] border-dashed bg-transparent",
+      hole.state === "waiting"
+        ? "wf-lamp-hole-waiting border-warning"
+        : "border-foreground-subtlest",
+    );
+  }
   const resolved = status ?? "pending";
   return cn(
     "wf-lamp size-2.5 shrink-0 rounded-full",
@@ -144,7 +161,7 @@ export function WorkflowLedge({
         >
           <span
             aria-hidden
-            className={cn(stationLampClass(station.status), "wf-land")}
+            className={cn(stationLampClass(station.status, station.hole), "wf-land")}
             data-lamp={station.status ?? "pending"}
           />
         </button>

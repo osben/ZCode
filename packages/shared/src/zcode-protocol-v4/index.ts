@@ -12,6 +12,7 @@ export * from "./workflow-observation-display.js";
 export * from "./snapshot.js";
 export * from "./workflow-runs.js";
 export * from "./workflow-runs-reducer.js";
+export * from "./workflow-runs-holes.js";
 // Key-level workflowRuns deltas (diff/apply/canonical key order); the op itself is in delta.js.
 export * from "./workflow-runs-delta.js";
 // Includes the boundary remnants: rejected-instance counts, entry budgets, step interpretation, eviction when full, and truncation for legacy consumers.

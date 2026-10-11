@@ -237,7 +237,7 @@ function buildTaskResultRows(params: {
   return rows;
 }
 
-function CommandCenterScopeButton({
+export function CommandCenterScopeButton({
   active,
   label,
   onClick,
@@ -291,7 +291,7 @@ function scopeToPrefix(scope: CommandCenterSearchScope): string {
  * Kept as a separate component for reuse and unit tests; per DESIGN.md, relative time in a list item is
  * secondary copy and uses text-ui-sm (not text-ui-xs, which is too small).
  */
-function CommandCenterConversationTimestamp({
+export function CommandCenterConversationTimestamp({
   className,
   children,
 }: {
@@ -319,7 +319,7 @@ function CommandCenterConversationTimestamp({
  * - Search term in history chip: text-ui-base (readable content, matching the list body)
  * - Scope prefix in chip: text-ui-xs (badge marker, one level smaller than the content)
  */
-function CommandCenterSearchHistory({
+export function CommandCenterSearchHistory({
   entries,
   expanded,
   onToggleExpanded,

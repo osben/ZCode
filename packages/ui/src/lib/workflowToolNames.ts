@@ -96,3 +96,12 @@ export function isCreateWorkflowToolCall(source: WorkflowToolNameSource): boolea
 export function isAmendWorkflowToolCall(source: WorkflowToolNameSource): boolean {
   return matchesToolName(source, "amendworkflow");
 }
+
+/**
+ * Hole completion (docs/dynamic-workflow/launch.md, “The `FillWorkflowHole` tool”). It follows the same path as revisions: registered in the
+ * workflow family (the confirmation dialog selects its run-confirmation block by family), while the create-workflow renderer uses hole-specific wording in the tool row
+ *—“Completing hole / Hole completion draft / Hole completed” (docs/dynamic-workflow/presentation.md, “The fill row”).
+ */
+export function isFillWorkflowHoleToolCall(source: WorkflowToolNameSource): boolean {
+  return matchesToolName(source, "fillworkflowhole");
+}

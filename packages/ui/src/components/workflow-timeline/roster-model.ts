@@ -156,7 +156,7 @@ export function rosterRestCounts(roster: StationRoster): RosterCounts {
   return addUnlisted(rosterCounts(roster.rest), roster.unlisted);
 }
 
-/** Content for the card's "N more" row. */
+/** Content for the card’s “n more” row (see the “Five pills and a door” note). */
 export interface RosterMore {
   /** Number of unpinned participants, including omitted ones, which are also behind this row. */
   count: number;

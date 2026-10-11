@@ -47,6 +47,7 @@ export function WorkspaceTimelineTasksSection({
   groupByDate = true,
   taskRowVariant = "timeline",
   emptyMessage,
+  mobileActiveTaskKey,
   onSelectTask,
 }: {
   workspaceTabs: WorkspaceTabState[];
@@ -57,6 +58,7 @@ export function WorkspaceTimelineTasksSection({
   groupByDate?: boolean;
   taskRowVariant?: "default" | "timeline";
   emptyMessage?: string;
+  mobileActiveTaskKey?: string | null;
   onSelectTask: (
     targetWorkspacePath: string,
     taskId: string,
@@ -704,10 +706,11 @@ export function WorkspaceTimelineTasksSection({
                           isPinned={false}
                           variant={taskRowVariant}
                           isActive={
-                            // Timeline spans workspaces; determine active state by workspaceKey to avoid highlighting a remote workspace with the same path.
+                            // Bugfix: The timeline spans workspaces, so active-state checks must use workspaceKey to avoid highlighting a remote workspace that shares the same path.
                             buildTaskWorkspaceKey(item.workspacePath, item.workspaceIdentity) ===
                               activeWorkspaceKey && item.taskId === activeTaskId
                           }
+                          isMobileActive={mobileActiveTaskKey === itemKey}
                           onSelectTask={handlers.onSelectTask}
                           onArchiveTaskInline={handlers.onArchiveTaskInline}
                           onCancelArchiveConfirm={handleCancelArchiveConfirm}

@@ -6,6 +6,7 @@ import { bashOutputDisplaySchema } from "../bash-output-display.js";
 import { timestampSchema } from "./core.js";
 import { OFFICIAL_MCP_TOOL_ERROR_CODES } from "../official-mcp-tool-error.js";
 import { cuaRequestAccessStatusSchema } from "./cuaPermission.js";
+import { mcpToolDisplayUiSchema } from "../mcp-apps/schemas.js";
 import { toolCallCreateWorkflowDisplaySchema } from "./create-workflow-display.js";
 import {
   toolCallEvalWorkflowSnippetDisplaySchema,
@@ -135,6 +136,8 @@ const toolResultDisplaySchema = z.discriminatedUnion("kind", [
       .object({ code: z.enum(OFFICIAL_MCP_TOOL_ERROR_CODES) })
       .strict()
       .optional(),
+    // Plugin UI metadata; shared with the CLI contract mcpToolResultDisplayPayloadSchema; see mcp-apps/schemas.ts.
+    ui: mcpToolDisplayUiSchema.optional(),
   }),
   // buildToolOutput copies the CLI's ToolResultDisplayPayload into toolOutput.display unchanged, but
   // this union is strict. Without create_workflow as a member, CreateWorkflow's entire display is
@@ -152,9 +155,27 @@ const toolResultDisplaySchema = z.discriminatedUnion("kind", [
 ]);
 export type ToolResultDisplay = z.infer<typeof toolResultDisplaySchema>;
 
-// toolCall. Terminal output uses consistent head+tail truncation; oversized values can be fetched on
-// demand through truncated.ref. display is presentation payload; on version mismatch, omit the card so
-// the same content cannot repeatedly break recovery for the entire subscription.
+// §4.4.5 toolCall. Terminal output is uniformly truncated to head + tail across all profiles (R-10); excess content is fetched on demand via truncated.ref.
+//
+// ⚠ **Do not gate display at the envelope layer** (`.optional().catch(undefined)`): if parsing fails, degrade to “this card has no
+// payload” rather than failing the entire row, frame, or subscription. This rule is shared by four embedding points—this file’s
+// toolOutputSchema, toolCallRow in rows.ts, the confirmation preview in snapshot.ts, and the start row in workflow-row-meta.ts;
+// see docs/v4-refactor/10-protocol-spec.md §4.4.5 and
+// the closed-world rule 11 in docs/v4-refactor/04-sync-and-recovery.md.
+//
+// Cause (2026-09-21, sess_4142de31): display is decorative payload, but it lives in an envelope critical to liveness. The CLI added
+// two lineage keys to `list_workflow_runs` run rows, but this side’s mirror was not updated → the entire frame was rejected with
+// `proto.frameAssemblyInvalidPayload` → the recovery ladder retried the same content → the session stalled at
+// `fault.subscription.recoveryFailed`. Every snapshot replayed the same stale payload, so the session could never recover. The same incident
+// had already occurred on 2026-09-17 (`providerStop` in `get_workflow_run`), and only that one field was fixed.
+//
+// Strict parsing is preserved at the appropriate layer: the renderer’s readToolResultDisplay
+// (packages/ui/src/ToolCallBlocks/toolResultDisplay.ts) already strictly parses each kind and returns
+// undefined on failure, degrading the card to plain text—as the specs have always promised. The envelope-layer gate was a redundant second
+// gate whose only distinct effect was to kill the session.
+//
+// Member schemas remain `.strict()`: they define “shapes recognized by this side.” catch downgrades “unrecognized” from fatal to
+// no card. Skew is now silent; parity tests between construction and mirror sides compensate, rather than discovering it in live subscriptions.
 export const toolOutputSchema = z.object({
   text: z.string(),
   display: toolResultDisplaySchema.optional().catch(undefined),
@@ -167,9 +188,14 @@ export const toolOutputSchema = z.object({
 });
 export type ToolOutput = z.infer<typeof toolOutputSchema>;
 
+// Progress during tool execution: MCP `notifications/progress` is projected onto the row through the ToolCallProgress event.
+// Derive fraction from payload progress/total (omit it when total is missing); bytes / previewLine are reserved for shell-output progress.
 export const toolProgressSchema = z.object({
-  bytes: z.number(),
+  bytes: z.number().optional(),
   previewLine: z.string().optional(),
+  fraction: z.number().min(0).max(1).optional(),
+  total: z.number().optional(),
+  message: z.string().max(200).optional(),
   updatedAt: timestampSchema,
 });
 export type ToolProgress = z.infer<typeof toolProgressSchema>;
@@ -251,6 +277,7 @@ const toolCallMcpDisplaySchema = z
       .object({ code: z.enum(OFFICIAL_MCP_TOOL_ERROR_CODES) })
       .strict()
       .optional(),
+    ui: mcpToolDisplayUiSchema.optional(),
   })
   .strict();
 

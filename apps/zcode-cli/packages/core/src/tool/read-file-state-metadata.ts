@@ -3,14 +3,15 @@ import { createReadFileStateKey } from "./read-file-state.js";
 import type { ReadFileStateEntry, ReadFileStateMap } from "./types.js";
 
 export const READ_FILE_STATE_METADATA_SCHEMA_VERSION = 1;
-// For `CreateWorkflow` / `AmendWorkflow`, the inline draft bytes are the `script` input from that model call.
-// Like Write, record them as a complete view (handlers/workflow-draft-read-state.ts).
+// `CreateWorkflow` / `AmendWorkflow` / `FillWorkflowHole`: bytes from an inline draft (or fill file) are the `script` input from the model's call;
+// like Write, record them as a complete view (handlers/workflow-draft-read-state.ts).
 export type PersistedReadFileStateTool =
   | "Read"
   | "Write"
   | "Edit"
   | "CreateWorkflow"
-  | "AmendWorkflow";
+  | "AmendWorkflow"
+  | "FillWorkflowHole";
 
 export interface PersistedReadFileStateMetadata {
   schemaVersion: typeof READ_FILE_STATE_METADATA_SCHEMA_VERSION;

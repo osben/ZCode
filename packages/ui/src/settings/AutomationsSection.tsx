@@ -219,7 +219,7 @@ function OffPeakCreateButton({
 }
 
 /** Prefilled draft for the create form (from a "More ideas" template). */
-interface AutomationDraft {
+export interface AutomationDraft {
   templateId?: string;
   title: string;
   cronExpr: string;
@@ -234,13 +234,13 @@ type AutomationsView =
   | { mode: "offpeak-create"; draft?: OffPeakCreateDraft }
   | { mode: "offpeak-edit"; task: ZCodeOffPeakTask };
 
-/** Main-view tabs: Scheduled is always available; Idle-time is controlled by rollout; there is no combined All view. */
-type AutomationsTab = "scheduled" | "idle";
+/** Main-view tabs: Scheduled is always available, Idle-time is controlled by the rollout (D31); there is no mixed All view. */
+export type AutomationsTab = "scheduled" | "idle";
 
 const SCHEDULED_ONLY_AUTOMATION_TABS: readonly AutomationsTab[] = ["scheduled"];
 const SCHEDULED_AND_IDLE_AUTOMATION_TABS: readonly AutomationsTab[] = ["scheduled", "idle"];
 
-function resolveVisibleAutomationTabs({
+export function resolveVisibleAutomationTabs({
   hasAnyTasks,
   offPeakVisible,
 }: {
@@ -251,14 +251,14 @@ function resolveVisibleAutomationTabs({
   return offPeakVisible ? SCHEDULED_AND_IDLE_AUTOMATION_TABS : SCHEDULED_ONLY_AUTOMATION_TABS;
 }
 
-function resolveAutomationTabAfterOffPeakChange(
+export function resolveAutomationTabAfterOffPeakChange(
   tab: AutomationsTab,
   offPeakVisible: boolean,
 ): AutomationsTab {
   return tab === "idle" && !offPeakVisible ? "scheduled" : tab;
 }
 
-function resolveAutomationTabNavigation({
+export function resolveAutomationTabNavigation({
   requestedTab,
   tabsReady,
   visibleTabs,
@@ -274,7 +274,7 @@ function resolveAutomationTabNavigation({
   };
 }
 
-function resolveAutomationTemplateVisibility({
+export function resolveAutomationTemplateVisibility({
   hasAnyTasks,
   offPeakCreationEnabled,
   tab,
@@ -311,15 +311,17 @@ function automationPromptSummary(prompt: string): string {
   return normalized.length > 0 ? normalized : " ";
 }
 
-function canRestartAutomation(automation: Pick<ZCodeAutomation, "lifecycleStatus">): boolean {
+export function canRestartAutomation(
+  automation: Pick<ZCodeAutomation, "lifecycleStatus">,
+): boolean {
   return automation.lifecycleStatus === "failed";
 }
 
-function canToggleAutomation(automation: Pick<ZCodeAutomation, "lifecycleStatus">): boolean {
+export function canToggleAutomation(automation: Pick<ZCodeAutomation, "lifecycleStatus">): boolean {
   return automation.lifecycleStatus !== "completed" && automation.lifecycleStatus !== "failed";
 }
 
-function getAutomationRunNowToastId(
+export function getAutomationRunNowToastId(
   result: AutomationRunNowResult,
 ): "automations.runNowQueued" | "automations.runNowAlreadyRunning" | "automations.runNowFailed" {
   if (result === "queued") return "automations.runNowQueued";
@@ -327,20 +329,20 @@ function getAutomationRunNowToastId(
   return "automations.runNowFailed";
 }
 
-type AutomationActionError = "create" | "update" | "toggle" | "restart" | "delete";
+export type AutomationActionError = "create" | "update" | "toggle" | "restart" | "delete";
 
 /** Keep raw Agent/RPC errors in the logger; show the UI only a readable notice for the current action. */
-function getAutomationActionErrorToastId(action: AutomationActionError): string {
+export function getAutomationActionErrorToastId(action: AutomationActionError): string {
   return `automations.error.${action}`;
 }
 
-function getAutomationCreateErrorToastId(error: unknown): string {
+export function getAutomationCreateErrorToastId(error: unknown): string {
   return isAutomationCreateLimitError(error)
     ? "automations.error.createLimit"
     : getAutomationActionErrorToastId("create");
 }
 
-function resolveAutomationDetailTarget(
+export function resolveAutomationDetailTarget(
   automations: readonly ZCodeAutomation[],
   automationId?: string | null,
 ): ZCodeAutomation | null {
@@ -349,7 +351,7 @@ function resolveAutomationDetailTarget(
   return automations.find((automation) => automation.automationId === targetId) ?? null;
 }
 
-function resolveAutomationDetailNavigation(
+export function resolveAutomationDetailNavigation(
   automations: readonly ZCodeAutomation[],
   automationId: string | null | undefined,
   listReady: boolean,
@@ -359,13 +361,13 @@ function resolveAutomationDetailNavigation(
   return target ? { status: "found", target } : { status: "missing" };
 }
 
-/** Detect IDs in openAutomationId with the `offpeak-` prefix (generated only by offPeakTaskService as offpeak-${uuid}). */
-function isOffPeakDetailNavigationId(automationId: string | null | undefined): boolean {
+/** D49: Identify IDs with the `offpeak-` prefix in openAutomationId (the sole creation point is offPeakTaskService’s offpeak-${uuid}). */
+export function isOffPeakDetailNavigationId(automationId: string | null | undefined): boolean {
   return Boolean(automationId?.trim().startsWith("offpeak-"));
 }
 
-/** Parallel resolution path for Off-Peak turn-end card navigation; symmetric with cron's resolveAutomationDetailNavigation. */
-function resolveOffPeakDetailNavigation(
+/** D49: Parallel resolution path for navigation from an off-peak cycle-end card; symmetric with cron’s resolveAutomationDetailNavigation. */
+export function resolveOffPeakDetailNavigation(
   tasks: readonly ZCodeOffPeakTask[],
   offPeakTaskId: string | null | undefined,
   listReady: boolean,
@@ -1492,13 +1494,13 @@ export function AutomationsSection({
     <div data-automations-content className={cn(SETTINGS_FRAME_CONTENT_CLASSNAME, "flex flex-col")}>
       {pageHeader}
 
-      {/* Tabs: Scheduled is always present; Idle appears only when rollout is enabled or Off-Peak tasks exist. There is no combined All view.
+      {/* Tabs: Scheduled is always present; Idle appears only when rollout is enabled or Off-Peak tasks exist (D31). There is no combined All view.
           With tasks, align Create at the upper right (4866-1735); in the empty state, the large card contains the create entry (4889-2013), so do not duplicate the top-bar button. */}
       {visibleTabs.length > 0 ? (
         <div className="mt-8 flex items-center justify-between">
-          {/* Tabs previously shared 12px spacing with the right-side action group, missing the latest design's compact 8px rhythm. */}
+          {/* Fix reason: Tabs previously shared 12px spacing with the right-side action group, missing the latest design's compact 8px rhythm. */}
           <div className="flex items-center gap-2" data-testid={TID_OFFPEAK_TAB}>
-            {/* Do not force a surface background in the unselected state, so it remains visually distinct from hover and selected states. */}
+            {/* Fix reason: do not force a surface background in the unselected state, so it remains visually distinct from hover and selected states. */}
             {visibleTabs.map((key) => (
               <button
                 key={key}
@@ -1857,7 +1859,7 @@ export function AutomationsSection({
               )}
             </div>
 
-            {/* In the empty state, keep the keep-awake notice after the large empty card. */}
+            {/* Figma 4798:2443: In the empty state, keep the keep-awake notice after the large empty card. */}
             {!hasAnyTasks ? (
               <AutomationKeepAwakeNotice
                 checked={sharedSettings?.keepAwakeWhileRunning ?? false}
@@ -1870,10 +1872,10 @@ export function AutomationsSection({
             ) : null}
           </div>
 
-          {/* Separate real task cards from templates with a divider rather than whitespace alone.
-              The surface color is too faint in Light mode, so use card-border to match the Card.
-              The outer gap-8 and this container's py-2 keep 40px between the cards and divider, and
-              between the divider and template title. */}
+          {/* Fix reason: real task cards and templates previously relied on whitespace alone and missed the Figma 4835:5515 divider.
+             The surface color is too faint in Light mode, so use card-border to match the Card.
+             The outer gap-8 and this container's py-2 keep 40px between the cards and divider, and
+             between the divider and template title. */}
           {showTaskTemplateSeparator ? (
             <div
               data-automations-task-template-separator
@@ -1884,8 +1886,7 @@ export function AutomationsSection({
             </div>
           ) : null}
 
-          {/* Idle-time task template (shown to the rollout cohort; copy is shared with the New Task
-              page). */}
+          {/* Idle-time task template (shown to the rollout cohort; Figma 4889-2013; copy is shared with the New Task page, D30-4). */}
           {showOffPeakTemplates ? (
             <section
               data-automations-idle-templates
@@ -2028,7 +2029,7 @@ export function AutomationsSection({
                             {resolveAutomationTemplateText(template.title, locale)}
                           </span>
                         </div>
-                        {/* The first scheduled-template implementation put the interval in the title row, unlike the
+                        {/* Bug cause: The first scheduled-template implementation put the interval in the title row, unlike the
                             time hierarchy at the bottom of the Off-Peak template. */}
                         <p className="line-clamp-2 flex-1 text-ui-base font-normal leading-5 text-foreground-subtle">
                           {resolveAutomationTemplateText(template.description, locale)}

@@ -33,6 +33,7 @@ import type { ZCodeApp, ZCodeAppOptions } from "../app/types.js";
 import type { V4InteractionRegistry } from "../zcode-protocol-v4/interaction-registry.js";
 import type { ConversationV4Gateway } from "../zcode-protocol-v4/v4-gateway.js";
 import type { SessionResidentPool, SessionResidentPoolOptions } from "./session-resident-pool.js";
+import type { DynamicWorkflowMode } from "@zcode/shared";
 
 export interface ParamsSchema<T> {
   parse(input: unknown): T;
@@ -82,6 +83,7 @@ export interface ZCodeProtocolToolInputTransmissionState {
 
 export interface ZCodeProtocolSessionRecord {
   app: ZCodeApp;
+  subagentRuntimeConfigEnabled?: boolean;
   memoryEnabled: boolean;
   nativeSearchEnhancementsEnabled: boolean;
   modelContextBudgetStrategy: ZCodeModelContextBudgetStrategy;
@@ -142,6 +144,12 @@ export interface ZCodeProtocolAgentServerContext {
      * are all hidden.
      */
     dynamicWorkflowEnabled: boolean;
+    /**
+     * Rollout mode arriving alongside dynamicWorkflowEnabled (launch.md "On demand: activation").
+     * Absent (older Hosts publish only a boolean) means alwaysOn; `onDemand` makes createRecord write
+     * runtimeConfig.dynamicWorkflowToolsOnDemand.
+     */
+    dynamicWorkflowMode?: DynamicWorkflowMode;
   };
   // Vertical slice: v4 conversation channel (subscription/frames/commands), coexisting with legacy
   // session/* methods. Optional fields resolve construction order (the gateway closure holds context);
@@ -164,6 +172,16 @@ export interface ZCodeProtocolAgentServerContext {
     options?: ZCodeProtocolClientRequestOptions,
   ): Promise<T>;
 }
+
+/** Protocol error codes for failed server → client requests; thrown by server.ts and translated by the adapter layer, avoiding literals scattered through business logic. */
+export const PROTOCOL_CLIENT_REQUEST_ERROR_CODES = {
+  /** No ZCode Protocol client attached, so the request cannot be delivered. */
+  noClientAttached: -32020,
+  /** The request was cancelled before a response arrived. */
+  cancelled: -32021,
+  /** The request timed out waiting for a response. */
+  timedOut: -32022,
+} as const;
 
 export class ProtocolRequestError extends Error {
   constructor(
@@ -275,9 +293,9 @@ export function toProtocolError(error: unknown): {
   };
 }
 
-function createProtocolTraceId(_sessionId: SessionId): TraceContext["traceId"] {
-  // traceId identifies an observation trace above the session level and should not be derived from
-  // sessionId. Reuse the UUID algorithm from agent/contracts so app and agent use the same trace format.
+export function createProtocolTraceId(_sessionId: SessionId): TraceContext["traceId"] {
+  // Bugfix: traceId identifies an observation trace above the session level and should not be derived
+  // from sessionId. Reuse the UUID algorithm from agent/contracts so app and agent use the same trace format.
   return createTraceId();
 }
 

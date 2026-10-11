@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
-const MODEL_PROVIDER_TEXT_IDLE_TRIGGER_MS = 1_200;
+export const MODEL_PROVIDER_TEXT_IDLE_TRIGGER_MS = 1_200;
 
 /**
  * Shared "run after input stops" scheduler for Provider text saves and Model Config Resolution.

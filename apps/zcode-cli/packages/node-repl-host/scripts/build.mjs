@@ -60,6 +60,7 @@ export const buildNodeReplHostBundle = async ({
     outfile,
     platform: "node",
     target: "node24",
+    external: ["sharp"],
   });
   // Build-time guard: if the define name drifts (is renamed or removed by a refactor such
   // as createSharedDefines), the output silently falls back to an empty string. The

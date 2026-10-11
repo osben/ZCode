@@ -25,6 +25,7 @@ import {
   type AttachmentRef,
   type CommandEnvelope,
   type ConversationInputIntent,
+  type ConversationSnapshot,
   type V4ConversationFileChangesResult,
   type V4ConversationFileRewindPreviewResult,
   type SessionSummary,
@@ -41,7 +42,10 @@ import {
   mergeColdConversationEvents,
 } from "../zcode-protocol-v4/cold-event-merge.js";
 import { lookupGlobalCreateSessionCommand } from "../zcode-protocol-v4/create-session-command-fact.js";
-import type { V4CommandCoreHost } from "../zcode-protocol-v4/commands/types.js";
+import type {
+  V4CommandCoreHost,
+  V4QueuedTurnExecution,
+} from "../zcode-protocol-v4/commands/types.js";
 import type {
   ConversationRowTargetResolution,
   SessionUsageSeed,
@@ -51,6 +55,10 @@ import { queueItemIdForCommand } from "../zcode-protocol-v4/command-inbox.js";
 import { resolveStableForkTargetFromTranscript } from "../zcode-protocol-v4/stable-fork-target.js";
 import { shouldAutoDrainV4QueueHead } from "../zcode-protocol-v4/queue-auto-drain.js";
 import { persistAssistantFeedback } from "../zcode-protocol-v4/assistant-feedback-persistence.js";
+import {
+  persistHighspeedMetrics,
+  persistHighspeedTiming,
+} from "../zcode-protocol-v4/highspeed-metrics-persistence.js";
 import {
   TASK_LIST_SESSION_TYPES,
   isTaskListSessionType,
@@ -76,15 +84,17 @@ import type {
   ForkCommitBundle,
   GoalStatus,
   MessageId,
-  ModelSelection,
   SessionEvent,
+  SessionEventStorePort,
   SessionId,
+  SessionStorePort,
   StableForkGoalBoundaryMetadata,
   TraceId,
   TurnId,
   WorkspaceId,
 } from "@zcode/contracts";
 import { HYDRATION_TRACE_ID } from "../zcode-protocol-v4/projection-state.js";
+import { cloneModelSelection, derivedSessionModelSelection } from "./fork-model-selection.js";
 import { resolveWorkspaceRefFromId } from "./mapper.js";
 import { buildLiveWorkspaceConfigStateV4 } from "./v4-workspace-config.js";
 import {
@@ -132,43 +142,19 @@ function sessionUsageSeedFromRuntimeContextUsage(
   };
 }
 
-const STABLE_FORK_MODES = new Set<CollaborationMode>(["plan", "build", "edit", "yolo", "auto"]);
+const STABLE_FORK_MODES = new Set<CollaborationMode>([
+  "plan",
+  "build",
+  "edit",
+  "yolo",
+  "guarded",
+  "auto",
+]);
 
 function stableForkMode(value: string, fallback: CollaborationMode): CollaborationMode {
   return STABLE_FORK_MODES.has(value as CollaborationMode)
     ? (value as CollaborationMode)
     : fallback;
-}
-
-function modelSelectionWithOptionFallback(
-  selection: ModelSelection | undefined,
-  fallback: ModelSelection | undefined,
-): ModelSelection | undefined {
-  if (!selection) return fallback && cloneModelSelection(fallback);
-  // Older fork messages may omit reasoning; output budget belongs to a single request, not Selection.
-  const reasoningLevel = selection.options?.reasoningLevel ?? fallback?.options?.reasoningLevel;
-  return {
-    providerId: selection.providerId,
-    modelId: selection.modelId,
-    ...(reasoningLevel !== undefined
-      ? {
-          options: {
-            ...(reasoningLevel !== undefined ? { reasoningLevel } : {}),
-          },
-        }
-      : {}),
-  };
-}
-
-function cloneModelSelection(
-  selection: ReturnType<ZCodeProtocolSessionRecord["app"]["runtime"]["getSessionModelSelection"]>,
-): ModelSelection | undefined {
-  if (!selection) return undefined;
-  return {
-    providerId: selection.providerId,
-    modelId: selection.modelId,
-    ...(selection.options ? { options: { ...selection.options } } : {}),
-  };
 }
 
 async function readConversationFileChanges(
@@ -267,6 +253,9 @@ async function previewConversationFileRewind(
 }
 
 interface InputCommandForAdmission {
+  inputOrigin?: "desktop" | "mobile";
+  conversationQuotes?: import("@zcode/contracts").TurnInputIntentMetadata["conversationQuotes"];
+  botGroupSource?: ConversationInputIntent["botGroupSource"];
   kind: ConversationInputIntent["kind"];
   text: string;
   attachments: readonly AttachmentRef[];
@@ -274,6 +263,7 @@ interface InputCommandForAdmission {
   requestedDelivery?: ConversationInputIntent["delivery"]["requested"];
   admittedDelivery?: ConversationInputIntent["delivery"]["admitted"];
   fallbackReasonCode?: string;
+  highspeed?: ConversationInputIntent["highspeed"];
   provenance?: ConversationInputIntent["provenance"];
 }
 
@@ -293,11 +283,10 @@ function admissionAttachmentRefs(
       attachment.ref
         ? [
             {
+              // Retry/edit must keep the same attachment source as the original row;
+              // re-enumerating fields would drop the text-material marker.
+              ...attachment,
               ref: attachment.ref,
-              fileName: attachment.fileName,
-              mime: attachment.mime,
-              bytes: attachment.bytes,
-              ...(attachment.previewRef ? { previewRef: attachment.previewRef } : {}),
             },
           ]
         : [],
@@ -309,7 +298,7 @@ function admissionAttachmentRefs(
  * Admission persists only commands that actually produce input. edit/retry cannot infer intent from
  * payload; they must reuse the projection's canonical target and fold the previous source into provenance.
  */
-function resolveInputCommandForAdmission(
+export function resolveInputCommandForAdmission(
   envelope: CommandEnvelope,
   admissionSessionId: string,
   resolveRowTarget: ResolveAdmissionRowTarget,
@@ -347,12 +336,20 @@ function resolveInputCommandForAdmission(
       text: string;
       attachments?: AttachmentRef[];
       context_refs?: ConversationInputIntent["sharedContextRefs"];
+      highspeedMeta?: ConversationInputIntent["highspeed"];
+      inputOrigin?: "desktop" | "mobile";
+      conversationQuotes?: import("@zcode/contracts").TurnInputIntentMetadata["conversationQuotes"];
+      botGroupSource?: ConversationInputIntent["botGroupSource"];
     };
     return {
       kind: envelope.type,
       text: payload.text,
       attachments: payload.attachments ?? [],
       ...(payload.context_refs ? { sharedContextRefs: payload.context_refs } : {}),
+      ...(payload.highspeedMeta ? { highspeed: payload.highspeedMeta } : {}),
+      ...(payload.inputOrigin ? { inputOrigin: payload.inputOrigin } : {}),
+      ...(payload.conversationQuotes ? { conversationQuotes: payload.conversationQuotes } : {}),
+      ...(payload.botGroupSource ? { botGroupSource: payload.botGroupSource } : {}),
     };
   }
   if (envelope.type === "compact") {
@@ -363,6 +360,7 @@ function resolveInputCommandForAdmission(
   const payload = envelope.payload as {
     target: { rowId: number; entityId: string };
     newText?: string;
+    conversationQuotes?: ConversationInputIntent["conversationQuotes"];
     attachments?: AttachmentRef[];
   };
   const resolution = resolveRowTarget(envelope.sessionId, payload.target, envelope.type);
@@ -374,6 +372,11 @@ function resolveInputCommandForAdmission(
     canonical.intent.provenance?.sourceCommandId ?? canonical.intent.sourceCommandId;
   return {
     kind: canonical.intent.kind,
+    ...(canonical.intent.inputOrigin ? { inputOrigin: canonical.intent.inputOrigin } : {}),
+    ...((payload.conversationQuotes ?? canonical.intent.conversationQuotes)
+      ? { conversationQuotes: payload.conversationQuotes ?? canonical.intent.conversationQuotes }
+      : {}),
+    ...(canonical.intent.botGroupSource ? { botGroupSource: canonical.intent.botGroupSource } : {}),
     text:
       envelope.type === "editUserQuery"
         ? (payload.newText ?? canonical.intent.text)
@@ -403,7 +406,7 @@ function resolveInputCommandForAdmission(
   };
 }
 
-function isConversationInputAdmissionCommand(type: CommandEnvelope["type"]): boolean {
+export function isConversationInputAdmissionCommand(type: CommandEnvelope["type"]): boolean {
   return (
     type === "sendText" ||
     type === "sendGoalCommand" ||
@@ -429,6 +432,9 @@ function buildForkInitialInput(
     queueItemId: admission.queueItemId,
     clientId: envelope.clientId || "cli",
     kind: input.kind,
+    ...(input.inputOrigin ? { inputOrigin: input.inputOrigin } : {}),
+    ...(input.conversationQuotes ? { conversationQuotes: input.conversationQuotes } : {}),
+    ...(input.botGroupSource ? { botGroupSource: input.botGroupSource } : {}),
     text: input.text,
     attachments: input.attachments,
     delivery: {
@@ -442,6 +448,7 @@ function buildForkInitialInput(
       : { state: "notRequested" },
     dispatch: { state: "admitted" },
     admittedAt: admission.admittedAt,
+    ...(input.highspeed ? { highspeed: input.highspeed } : {}),
     ...(input.provenance ? { provenance: input.provenance } : {}),
   });
   return {
@@ -544,7 +551,7 @@ async function recordForkStartFailureBestEffort(
  * afterward only restore runtime reachability. Failures in this phase must leave retryable facts and
  * a warning, but must not reverse a durably accepted child to failed.
  */
-async function registerCommittedForkBestEffort(
+export async function registerCommittedForkBestEffort(
   context: ZCodeProtocolAgentServerContext,
   record: ZCodeProtocolSessionRecord,
   fork: Parameters<typeof registerForkedSession>[2],
@@ -576,6 +583,89 @@ async function registerCommittedForkBestEffort(
   }
 }
 
+/** Narrowed context needed to persist turn-terminal timing; structural typing keeps it
+ * compatible with the full server context. */
+export interface HighspeedTurnTerminalPersistenceContext {
+  sessions: Map<
+    string,
+    { eventStore: SessionEventStorePort; traceContext: { traceId: string | number } }
+  >;
+  deps: { sessionStore?: SessionStorePort };
+  v4Gateway?: { ingest(sessionId: string, event: SessionEvent): unknown };
+  logger?: { warn(message: string, data?: Record<string, unknown>): void };
+}
+
+/**
+ * Turn-terminal hook: splits the real timing accumulated by the projection onto the
+ * transcript's metadata.highspeed.
+ * Bug root cause (2026-08-31 audit #1): the gateway invokes this hook for every
+ * TurnComplete/TurnError, and the projection writes modelDurationMs/toolDurationMs for ordinary
+ * turns too, so the old "return only when both are undefined" guard never fired — every ordinary
+ * turn terminal first ran a full sessionStore.messages() scan and only then returned because
+ * metadata.highspeed was missing, burning O(N) I/O on the hot path of long sessions. The
+ * userInput row carries the persisted highspeed identity; short-circuit on it before scanning.
+ */
+export function persistHighspeedTimingOnTurnTerminal(
+  context: HighspeedTurnTerminalPersistenceContext,
+  sessionId: string,
+  event: SessionEvent,
+  snapshot: ConversationSnapshot,
+): void {
+  const record = context.sessions.get(sessionId);
+  const sessionStore = context.deps.sessionStore;
+  const payload = event.payload as { inputId?: unknown; duration?: unknown };
+  const inputId = typeof payload.inputId === "string" ? payload.inputId : undefined;
+  const header = snapshot.rows.window
+    .filter(
+      (row): row is Extract<(typeof snapshot.rows.window)[number], { kind: "turnHeader" }> =>
+        row.kind === "turnHeader" &&
+        (inputId === undefined
+          ? row.turnId === String(event.turnId)
+          : row.sourceCommandId === inputId),
+    )
+    .at(-1);
+  if (!record || !sessionStore || !header?.sourceCommandId) return;
+  const user = snapshot.rows.window.find(
+    (row) => row.kind === "userInput" && row.sourceCommandId === header.sourceCommandId,
+  );
+  if (!user || user.kind !== "userInput") return;
+  if (!user.highspeed) return;
+  if (header.modelDurationMs === undefined && header.toolDurationMs === undefined) {
+    return;
+  }
+  void persistHighspeedTiming({
+    sessionStore,
+    eventStore: record.eventStore,
+    sessionId,
+    sourceCommandId: header.sourceCommandId,
+    timing: {
+      modelDurationMs: header.modelDurationMs ?? 0,
+      toolDurationMs: header.toolDurationMs ?? 0,
+      otherDurationMs: header.otherDurationMs ?? 0,
+    },
+    ...(header.outputTokens !== undefined ? { outputTokens: header.outputTokens } : {}),
+    ...(header.activeMs !== undefined ? { durationMs: header.activeMs } : {}),
+    // fallbackAt exists only in the live projection: writing it to the transcript at turn
+    // terminal keeps HighspeedMetricsUpdated and cold hydration from losing it (spec §5).
+    ...(user.highspeed.fallbackAt !== undefined ? { fallbackAt: user.highspeed.fallbackAt } : {}),
+    ...(user.highspeed.fallbackReason !== undefined
+      ? { fallbackReason: user.highspeed.fallbackReason }
+      : {}),
+    traceId: String(record.traceContext.traceId),
+    onPersistedEvent: (persisted) => context.v4Gateway?.ingest(sessionId, persisted),
+    onLiveProjectionError: (error) =>
+      context.logger?.warn("v4 highspeed timing live projection failed", {
+        error: error instanceof Error ? error.message : String(error),
+        sessionId,
+      }),
+  }).catch((error) => {
+    context.logger?.warn("v4 highspeed timing persistence failed", {
+      error: error instanceof Error ? error.message : String(error),
+      sessionId,
+    });
+  });
+}
+
 export function createConversationV4Gateway(
   context: ZCodeProtocolAgentServerContext,
 ): ConversationV4Gateway {
@@ -604,6 +694,11 @@ export function createConversationV4Gateway(
   });
   let nativeExecutor: V4CommandExecutor;
   const autoDrainRetryTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  // Highspeed execution material contains temporary credentials: it lives only in memory keyed
+  // by session/sourceCommandId and never enters TurnSteerQueued, snapshots, or the transcript.
+  // If it is missing after a CLI restart, queue promotion automatically falls back to the
+  // original model.
+  const queuedTurnExecutions = new Map<string, Map<string, V4QueuedTurnExecution>>();
   const autoDrainV4QueueIfReady = async (record: ZCodeProtocolSessionRecord): Promise<void> => {
     const head = context.v4Gateway?.getQueueHead(record.app.sessionId);
     if (!head) {
@@ -718,6 +813,21 @@ export function createConversationV4Gateway(
     hasQueuedDelivery: (sessionId, delivery) =>
       context.v4Gateway?.hasQueuedDelivery(sessionId, delivery) ?? false,
     getQueueLength: (sessionId) => context.v4Gateway?.getQueueLength(sessionId) ?? 0,
+    retainQueuedTurnExecution: (sessionId, sourceCommandId, execution) => {
+      const sessionExecutions = queuedTurnExecutions.get(sessionId) ?? new Map();
+      sessionExecutions.set(sourceCommandId, execution);
+      queuedTurnExecutions.set(sessionId, sessionExecutions);
+    },
+    readQueuedTurnExecution: (sessionId, sourceCommandId) =>
+      queuedTurnExecutions.get(sessionId)?.get(sourceCommandId),
+    deleteQueuedTurnExecution: (sessionId, sourceCommandId) => {
+      const sessionExecutions = queuedTurnExecutions.get(sessionId);
+      sessionExecutions?.delete(sourceCommandId);
+      if (sessionExecutions?.size === 0) queuedTurnExecutions.delete(sessionId);
+    },
+    clearQueuedTurnExecutions: (sessionId) => {
+      queuedTurnExecutions.delete(sessionId);
+    },
     waitForProjectionEventCommit: (sessionId, eventId, options) => {
       const gateway = context.v4Gateway;
       if (!gateway) {
@@ -774,6 +884,9 @@ export function createConversationV4Gateway(
             ? "startNow"
             : requestedDelivery);
       const conversationInputIntent = conversationInputIntentSchema.parse({
+        ...(input.inputOrigin ? { inputOrigin: input.inputOrigin } : {}),
+        ...(input.conversationQuotes ? { conversationQuotes: input.conversationQuotes } : {}),
+        ...(input.botGroupSource ? { botGroupSource: input.botGroupSource } : {}),
         sourceCommandId: envelope.commandId,
         queueItemId: admission.queueItemId,
         clientId: envelope.clientId || "cli",
@@ -794,6 +907,7 @@ export function createConversationV4Gateway(
             : { state: "notRequested" },
         dispatch: { state: "admitted" },
         admittedAt: admission.admittedAt,
+        ...(input.highspeed ? { highspeed: input.highspeed } : {}),
         ...(input.provenance ? { provenance: input.provenance } : {}),
       });
       await context.deps.sessionStore.saveSessionInput({
@@ -1081,7 +1195,27 @@ export function createConversationV4Gateway(
           }),
       });
     },
-    // ── Transitional hooks ──────────────────────────────
+    setHighspeedMetrics: async (sessionId, input) => {
+      const record = context.sessions.get(sessionId);
+      const sessionStore = context.deps.sessionStore;
+      if (!record || !sessionStore) throw new Error("proto.sessionNotFound");
+      await persistHighspeedMetrics({
+        sessionStore,
+        eventStore: record.eventStore,
+        sessionId,
+        messageId: input.messageId,
+        entityId: input.entityId,
+        metrics: input.metrics,
+        traceId: String(record.traceContext.traceId),
+        onPersistedEvent: (persisted) => context.v4Gateway?.ingest(sessionId, persisted),
+        onLiveProjectionError: (error) =>
+          context.logger?.warn("v4 highspeed metrics live projection failed", {
+            error: error instanceof Error ? error.message : String(error),
+            sessionId,
+          }),
+      });
+    },
+    // ── Transitional hooks (removed in M5 wave 2) ──────────────────────────────
     ensureModelReady: (record) =>
       ensureSessionModelAvailableForNextTurn(context, record as ZCodeProtocolSessionRecord),
     // Before switching models, confirm that the target Provider exists in the current Environment
@@ -1117,6 +1251,7 @@ export function createConversationV4Gateway(
       // workspaceId is always null and the sidebar item never disappears after session deletion
       // (caught by e2e conversation-session-v4-sidebar).
       context.v4Gateway?.disposeSession(sessionId);
+      queuedTurnExecutions.delete(sessionId);
       context.sessions.delete(sessionId);
     },
     // createSession execution: record creation, event wiring, catalog sync, and failure cleanup all
@@ -1128,7 +1263,11 @@ export function createConversationV4Gateway(
       mcpServers,
       offPeakToolEnabled,
       dynamicWorkflowEnabled,
+      dynamicWorkflowMode,
+      permissionScope,
     }) => {
+      if (permissionScope && !context.deps.sessionStore)
+        throw new Error("Group task permission scope requires persistence");
       // workspaceId has two forms (Workspace Identity constraint):
       // - Local workspace = workspacePath (fallback when identity is omitted).
       // - Remote pane (split view across workspaces) = remote identity
@@ -1140,7 +1279,8 @@ export function createConversationV4Gateway(
       // treated as local workspacePath.
       const created = await createSessionRecordForV4(context, {
         workspace: resolveWorkspaceRefFromId(workspaceId),
-        // Always deferred (drafts are not stored in SQLite); the native prompt turn controls promotion timing.
+        // A group task was already triggered by the first real request: persist the isolation
+        // grant first, then open tasks and configuration. Ordinary Desktop drafts stay deferred.
         persistence: "deferred",
         // MCP is runtime-creation configuration. v4 createSession must pass it through just like
         // legacy session/create, or sessions created here will never start these tools.
@@ -1151,7 +1291,23 @@ export function createConversationV4Gateway(
         // must pass it through like legacy session/create, or headless sessions bypass the Host
         // rollout check and use only the process default.
         ...(dynamicWorkflowEnabled === true ? { dynamicWorkflowEnabled: true } : {}),
+        ...(dynamicWorkflowEnabled === true && dynamicWorkflowMode !== undefined
+          ? { dynamicWorkflowMode }
+          : {}),
       });
+      if (permissionScope) {
+        const record = context.sessions.get(created.sessionId);
+        if (!record) throw new Error("Group task runtime is unavailable");
+        await record.app.runtime.ensureSessionPersistedForExternalActivity("", {
+          traceContext: record.traceContext,
+        });
+        await context.deps.sessionStore!.updateSession({
+          id: created.sessionId as SessionId,
+          permission: { version: 1, scope: "session", mode: "build" },
+        });
+        await record.app.runtime.setExecutionState({ mode: "build" }, record.traceContext);
+        record.persistence = "immediate";
+      }
       return { sessionId: created.sessionId };
     },
     createSelectionSideSession: async (sessionId, options) => {
@@ -1195,7 +1351,10 @@ export function createConversationV4Gateway(
       if (boundary?.info.role !== "assistant") {
         throw new Error("guard.forkTargetAmbiguous");
       }
-      const modelSelection = modelSelectionWithOptionFallback(
+      // A fork inherits the session selection at the fork point; accelerated-turn messages record
+      // a single-turn execution Selection, so skip them and fall back to the parent session's
+      // resident selection.
+      const modelSelection = derivedSessionModelSelection(
         boundary.info.providerId && boundary.info.modelId
           ? {
               providerId: boundary.info.providerId,
@@ -1205,7 +1364,7 @@ export function createConversationV4Gateway(
                 : {}),
             }
           : undefined,
-        cloneModelSelection(record.app.runtime.getSessionModelSelection()),
+        record.app.runtime.getSessionModelSelection(),
       );
       const fork = await record.app.runtime.forkStableConversationAtMessage({
         modelSelection,
@@ -1243,9 +1402,9 @@ export function createConversationV4Gateway(
       if (targetMessage?.info.role !== "user") {
         throw new Error("guard.latestQueryEditOnly");
       }
-      const modelSelection = modelSelectionWithOptionFallback(
-        cloneModelSelection(targetMessage.info.modelSelection),
-        cloneModelSelection(record.app.runtime.getSessionModelSelection()),
+      const modelSelection = derivedSessionModelSelection(
+        targetMessage.info.modelSelection,
+        record.app.runtime.getSessionModelSelection(),
       );
       const events = await record.eventStore.getEvents(sessionId as SessionId);
       const targetStarted = events.find(
@@ -1471,7 +1630,11 @@ export function createConversationV4Gateway(
           });
         });
     },
-    // The gateway's single READY promise owns concurrency and sequencing; the binder only restores the runtime.
+    onHighspeedTurnTerminal: (sessionId, event, snapshot) => {
+      persistHighspeedTimingOnTurnTerminal(context, sessionId, event, snapshot);
+    },
+    // The gateway's single READY promise owns concurrency and sequencing; the binder only
+    // restores the runtime and returns M0/M1.
     resumePersistedSession: async (
       sessionId,
       resumeThoughtLevel,

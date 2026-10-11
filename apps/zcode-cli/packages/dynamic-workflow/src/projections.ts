@@ -21,6 +21,7 @@ export {
   type CoreAskSite,
   type CoreFacts,
   type CoreFanoutSite,
+  type CoreHoleSite,
   type CoreSimpleSite,
   type CoreSites,
   type CoreTypes,
@@ -54,6 +55,7 @@ export {
 export { projectSiteGraph } from "./analysis/graph.js";
 export { toActorGraph, type ActorEdge, type ActorGraph, type ActorNode } from "./analysis/actor-graph.js";
 export {
+  MAIN_LANE,
   projectCausalityGraph,
   SINK_ID,
   UNKNOWN_LANE,
@@ -78,6 +80,7 @@ export {
   type ControlFlowGraph,
   type FlowEdge,
   type FlowEdgeKind,
+  type FlowHole,
   type FlowNode,
   type FlowNodeKind,
   type FlowPhase,

@@ -1,9 +1,11 @@
+import type { Memory, MemoryConfig } from "@zcode/shared";
 import {
   type IMemoryService,
   type ProjectMemoryFileSummary,
   type ProjectMemoryWorkspaceSummary,
 } from "./memory.js";
-import { lstat, readdir, realpath } from "node:fs/promises";
+import { lstat, mkdir, readFile, readdir, realpath, writeFile } from "node:fs/promises";
+import { homedir } from "node:os";
 import { basename, isAbsolute, join, relative, sep } from "node:path";
 import { readProjectMemoryFileFromStableHandle } from "#src/memory/projectMemoryStableRead.js";
 import { getZCodeDataRootDir } from "#src/paths.js";
@@ -109,7 +111,107 @@ function compareProjectMemoryFiles(
   return left.name.localeCompare(right.name, "en");
 }
 
+function resolveUserHomeDir(): string {
+  const envHome = process.env.HOME?.trim() || process.env.USERPROFILE?.trim();
+  return envHome && envHome.length > 0 ? envHome : homedir();
+}
+
+function getUserMemoryDir(): string {
+  return join(resolveUserHomeDir(), ".claude", "memory");
+}
+
+/**
+ * Get the memory file name for the agent.
+ */
+function getMemoryFileName(_agentId: string): string {
+  // Only MEMORY.md is supported for now; extend later by agent type.
+  return "MEMORY.md";
+}
+
+/**
+ * Create a Memory service instance.
+ */
 export function createMemoryService(): IMemoryService {
+  async function loadMemory(params: {
+    workspacePath: string;
+    agentId: string;
+  }): Promise<{ memory: Memory | null }> {
+    const { agentId } = params;
+
+    try {
+      const fileName = getMemoryFileName(agentId);
+      const memoryDir = getUserMemoryDir();
+
+      // Read directly from the user-level ~/.claude/memory directory.
+      const filePath = join(memoryDir, fileName);
+      try {
+        const content = await readFile(filePath, "utf-8");
+        return {
+          memory: {
+            content: content || "",
+            enabled: true,
+          },
+        };
+      } catch {
+        // File does not exist; return null.
+        return { memory: null };
+      }
+    } catch (error) {
+      console.error("Failed to load memory:", error);
+      return { memory: null };
+    }
+  }
+
+  async function saveMemory(params: {
+    workspacePath: string;
+    agentId: string;
+    config: MemoryConfig;
+  }): Promise<void> {
+    const { agentId, config } = params;
+
+    try {
+      // Save directly to the user-level ~/.claude/memory directory.
+      const memoryDir = getUserMemoryDir();
+      await mkdir(memoryDir, { recursive: true });
+
+      const fileName = getMemoryFileName(agentId);
+      const filePath = join(memoryDir, fileName);
+      await writeFile(filePath, config.content, "utf-8");
+    } catch (error) {
+      console.error("Failed to save memory:", error);
+      throw error;
+    }
+  }
+
+  async function clearMemory(params: { workspacePath: string; agentId: string }): Promise<void> {
+    const { agentId } = params;
+
+    try {
+      const fileName = getMemoryFileName(agentId);
+      const memoryDir = getUserMemoryDir();
+      const filePath = join(memoryDir, fileName);
+
+      try {
+        await writeFile(filePath, "", "utf-8");
+      } catch {
+        // File does not exist; ignore the error.
+      }
+    } catch (error) {
+      console.error("Failed to clear memory:", error);
+      throw error;
+    }
+  }
+
+  async function getUserMemoryDirectory(): Promise<{ path: string }> {
+    const memoryDir = getUserMemoryDir();
+    try {
+      await mkdir(memoryDir, { recursive: true });
+    } catch {
+      // Directory already exists.
+    }
+    return { path: memoryDir };
+  }
+
   async function listProjectMemories(): Promise<ProjectMemoryWorkspaceSummary[]> {
     let projectsRoot: string;
     let projectEntries;
@@ -216,7 +318,7 @@ export function createMemoryService(): IMemoryService {
     await requirePlainDirectory(workspaceRoot);
     await requirePlainDirectory(memoryRoot);
 
-    // On a case-insensitive filesystem, a requested name could match a disk file with different casing and bypass the catalog allowlist.
+    // Bugfix: on a case-insensitive filesystem, a requested name could match a disk file with different casing and bypass the catalog allowlist.
     const filePath = await requireExactProjectMemoryFile(memoryRoot, params.fileName);
     return readProjectMemoryFileFromStableHandle({
       fileName: params.fileName,
@@ -232,6 +334,10 @@ export function createMemoryService(): IMemoryService {
   }
 
   return {
+    loadMemory,
+    saveMemory,
+    clearMemory,
+    getUserMemoryDirectory,
     listProjectMemories,
     readProjectMemoryFile,
   };

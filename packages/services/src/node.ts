@@ -1,3 +1,6 @@
+import { IGenUiService } from "./gen-ui/contract.js";
+import { createGenUiService } from "./gen-ui/node.js";
+import { channelReplyHostRequestSchema, channelReplyResultSchema } from "@zcode/shared";
 /* eslint-disable max-lines -- Host-process service registration and startup wiring must stay together so dependency injection order remains easy to trace. */
 // Node.js service implementations — NOT safe to import in browser code
 import { randomBytes } from "node:crypto";
@@ -12,7 +15,7 @@ import {
 import { getAppConfigDir as resolveAppConfigDir } from "./paths.js";
 import {
   buildLocalMediaPreviewUrl,
-  isProviderProvisioningAccountCredentialKey,
+  type DynamicWorkflowMode,
   type ProviderProvisioningTrigger,
 } from "@zcode/shared";
 
@@ -20,6 +23,23 @@ export {
   materializeZCodeBuiltinProviderConfig,
   ZCODE_BUILTIN_PROVIDER_CONFIG_FILE_ENV,
 } from "@zcode/provider-node";
+import { randomUUID } from "node:crypto";
+import { getAppConfigDir as getContentAppConfigDir } from "#src/paths.js";
+import { ICloudContentService } from "#src/cloud-content/cloudContent.js";
+import { createCloudContentService } from "#src/cloud-content/cloudContentService.js";
+import { IMarketingTouchService } from "#src/marketing-touch/marketingTouch.js";
+import { createMarketingTouchService } from "#src/marketing-touch/marketingTouchService.js";
+import { createMarketingAssetRegistry } from "#src/marketing-touch/marketingAssetRegistry.js";
+import type { IChannel } from "@zcode/rpc";
+import {
+  readTopicResourceFromRelay,
+  validateTopicResourceFromRelay,
+} from "./zcode-agent/topicResourceRelayClient.js";
+export {
+  createTopicResourcePeers,
+  type TopicResourcePeers,
+} from "./zcode-agent/topicResourcePeers.js";
+export { createTopicResourceRelayChannel } from "./zcode-agent/topicResourceRelayChannel.js";
 
 export { createFileService } from "./file/fileService.js";
 export {
@@ -31,6 +51,8 @@ export {
   type ProcessResourceSampler,
 } from "./process/processResourceSampler.js";
 export { createMediaPreviewService } from "./media-preview/mediaPreview.js";
+export { createContentBundleCache } from "#src/cloud-content/contentBundleCache.js";
+export type { ContentBundle } from "#src/cloud-content/contentBundleCache.js";
 export type { CreateFileServiceOptions } from "./file/fileService.js";
 export {
   defaultWorkspaceFileSearchFilter,
@@ -126,8 +148,6 @@ export { createFileWatcherService } from "./fileWatcher/fileWatcherService.js";
 export { createOAuthService } from "./oauth/oauthService.js";
 export { createOAuthProviderLogoutHandler } from "./oauth/oauthProviderLogout.js";
 export { OAuthCredentialRepo } from "./oauth/repo/oauthCredentialRepo.js";
-export { ensureDeviceMid } from "./device/deviceMid.js";
-export type { EnsureDeviceMidOptions } from "./device/deviceMid.js";
 export { createTelemetryCore, ensureTelemetryDeviceMid } from "./telemetry/telemetryCore.js";
 export type { EnsureTelemetryDeviceMidOptions } from "./telemetry/telemetryCore.js";
 export type { AccountRequestAuthResolver } from "./model-provider/accountProviderRequestAuthService.js";
@@ -187,7 +207,11 @@ export {
 export { createAccountRequestAuthService } from "./model-provider/accountRequestAuthService.js";
 export type { IAccountRequestAuthService } from "./model-provider/accountRequestAuthService.js";
 export { createAccountProviderRequestAuthService } from "./model-provider/accountProviderRequestAuthService.js";
-export { resolveAccountTeamPlanRuntimeApiKey } from "./model-provider/accountProviderTeamPlanRequestKey.js";
+export {
+  resolveAccountTeamPlanRuntimeApiKey,
+  resolveAccountTeamPlanRuntimeMaterial,
+} from "./model-provider/accountProviderTeamPlanRequestKey.js";
+export { createAccountProjectTokenClient } from "./model-provider/accountProjectTokenClient.js";
 export { createAccountProviderCredentialService } from "./model-provider/accountProviderCredentialService.js";
 export { createUsageStatsService } from "./usage-stats/usageStatsService.js";
 // Storage service and adapter factories; the desktop host assembles them (the Worker runner lives in the desktop package).
@@ -220,6 +244,7 @@ export { createCommandsService } from "./commands/commandsService.js";
 export { createHooksService } from "./hooks/hooksService.js";
 export { createMemoryService } from "./memory/memoryService.js";
 export { createUserInstructionsService } from "./user-instructions/userInstructionsService.js";
+export { createOutputStyleService } from "./output-style/outputStyleService.js";
 export { createSettingsSyncService } from "./settings-sync/settingsSyncService.js";
 export { createFeedbackDiagnosticArchive } from "./feedback/feedbackLogArchive.js";
 export { createFeedbackService } from "./feedback/feedbackService.js";
@@ -257,6 +282,7 @@ export { OffPeakTaskRepo, OFF_PEAK_CLAIM_STALE_MS } from "./session/offPeakTaskR
 export { buildTaskChangeSummary } from "./session/taskChangeSummary.js";
 export { OffPeakTaskService } from "./session/offPeakTaskService.js";
 export { IOffPeakTaskService } from "./session/offPeakTask.js";
+export { IHighspeedCardService } from "./highspeed/highspeedCard.js";
 export { createOffPeakServerClient, OffPeakServerError } from "./session/offPeakServerClient.js";
 export { isOffPeakMockEnabled, startOffPeakMockGateway } from "./session/offPeakMockGateway.js";
 export {
@@ -327,6 +353,7 @@ import { ICommandsService } from "./commands/commands.js";
 import { IHooksService } from "./hooks/hooks.js";
 import { IMemoryService } from "./memory/memory.js";
 import { IUserInstructionsService } from "./user-instructions/userInstructions.js";
+import { IOutputStyleService } from "./output-style/outputStyle.js";
 import { ISettingsSyncService } from "./settings-sync/settingsSync.js";
 import { IFeedbackService } from "./feedback/feedback.js";
 import { IPromptAttachmentTransferService } from "./prompt-attachment-transfer/promptAttachmentTransfer.js";
@@ -357,11 +384,14 @@ import { createBotRemoteWorkspaceService } from "./bots/botRemoteWorkspaceBridge
 import type { SessionMessageSendRequested } from "#src/session/sessionMailbox.js";
 import { createFileWatcherService } from "./fileWatcher/fileWatcherService.js";
 import { createOAuthService } from "./oauth/oauthService.js";
-import { isCurrentOAuthCredentialRequest } from "#src/oauth/oauthUnauthorizedRequest.js";
+import {
+  isOAuthBusinessRequest,
+  isCurrentOAuthCredentialRequest,
+} from "#src/oauth/oauthUnauthorizedRequest.js";
 import { createOAuthProviderLogoutHandler } from "./oauth/oauthProviderLogout.js";
 import { OAuthCredentialRepo } from "./oauth/repo/oauthCredentialRepo.js";
 import { readLegacyZCodeConfigProviders } from "./model-provider/legacyZCodeConfigProviderReader.js";
-import { resolveAccountTeamPlanRuntimeApiKey } from "./model-provider/accountProviderTeamPlanRequestKey.js";
+import { resolveAccountTeamPlanRuntimeMaterial } from "./model-provider/accountProviderTeamPlanRequestKey.js";
 import { createAccountProviderCredentialStore } from "./model-provider/accountProviderCredentialStore.js";
 import { createAccountProviderCredentialService } from "./model-provider/accountProviderCredentialService.js";
 import { createAccountProviderRequestAuthService } from "./model-provider/accountProviderRequestAuthService.js";
@@ -372,6 +402,7 @@ import {
 } from "./model-provider/accountProviderConnectionResolver.js";
 import { bindAccountProviderInvalidation } from "./model-provider/accountProviderInvalidation.js";
 import { AccountProviderApiClient } from "./model-provider/accountProviderApiClient.js";
+import { createAccountProjectTokenClient } from "./model-provider/accountProjectTokenClient.js";
 import { AccountProviderApiKeyResolver } from "./model-provider/accountProviderApiKeyResolver.js";
 import { createProviderConfigRuntime } from "./model-provider/providerConfigRuntime.js";
 import { fetchZCodeBuiltinRemoteRelease } from "./model-provider/zcodeBuiltinRemoteConfig.js";
@@ -407,6 +438,15 @@ import { createClientScenesService } from "./client-scenes/clientScenesService.j
 import { createSkillsService } from "./skills/skillsService.js";
 import { createSkillSyncService } from "./skill-sync/skillSyncService.js";
 import { createMcpSyncService } from "./mcp-sync/mcpSyncService.js";
+import {
+  IPluginUiAppToolsService,
+  IPluginUiSamplingService,
+  createPluginUiSamplingService,
+  IPluginUiBridgeService,
+  createPluginUiAppToolsService,
+  createPluginUiBridgeService,
+} from "./plugin-ui-bridge/index.js";
+import type { PluginSandboxHandle, PluginSandboxRegisterInput } from "@zcode/shared/mcp-apps";
 import { createPluginSyncService } from "./plugin-sync/pluginSyncService.js";
 import { createPluginsService } from "./plugins/pluginsService.js";
 import { createPluginManagementService } from "./plugins/pluginManagementService.js";
@@ -415,6 +455,7 @@ import { createCommandsService } from "./commands/commandsService.js";
 import { createHooksService } from "./hooks/hooksService.js";
 import { createMemoryService } from "./memory/memoryService.js";
 import { createUserInstructionsService } from "./user-instructions/userInstructionsService.js";
+import { createOutputStyleService } from "./output-style/outputStyleService.js";
 import { createSettingsSyncService } from "./settings-sync/settingsSyncService.js";
 import {
   createFeedbackService,
@@ -439,6 +480,14 @@ import { ensureAppCaCert } from "./runtime-tools/appCaCert.js";
 import { buildHelperOpenArgs, isCuaLocalDevelopmentRuntime } from "@zcode/zcode-cua/broker/server";
 import { createServiceLogger, type ServiceLogger } from "#src/logger/serviceLogger.js";
 import { IOffPeakTaskService } from "./session/offPeakTask.js";
+import type { HighspeedMockScenario } from "@zcode/shared";
+import { IHighspeedCardService } from "./highspeed/highspeedCard.js";
+import {
+  buildHighspeedCodingPlanAuthHeaders,
+  HighspeedCardService,
+  createHighspeedHttpTransport,
+} from "./highspeed/highspeedCardService.js";
+import { createHighspeedMockTransport } from "./highspeed/highspeedMockTransport.js";
 import { OffPeakTaskService } from "./session/offPeakTaskService.js";
 import { OffPeakTaskRepo } from "./session/offPeakTaskRepo.js";
 import { createOffPeakServerClient } from "./session/offPeakServerClient.js";
@@ -460,25 +509,19 @@ import {
 import {
   BROKER_SOCKET_ENV,
   BROKER_UNAVAILABLE_ENV,
-  clearCuaProductHelperAgentEnvUnavailable,
   createCuaPipSessionService,
   createCuaProductMcpServerResolver,
   createProductCuaHelperHost,
   CuaHelperLifecycleManager,
-  CuaProductHelperWorkspaceRegistry,
-  hasCuaProductHelperAgentEnvUnavailable,
   ICuaPermissionService,
   ICuaPipSessionService,
-  isCuaHelperError,
   isOfficialCuaPluginEnabledForWorkspace,
   isPotentialZCodeCuaAgentMcpServer,
   isScreenCaptureProbeSuccess,
-  markCuaProductHelperAgentEnvUnavailable,
   reapOrphanedHelpers,
+  resolveStandaloneStatusLaunchCandidates,
   shouldRunCuaScreenCaptureProbe,
-  waitForCuaHelperStartup,
   type CuaHelperHost,
-  type CuaHelperTransportHandle,
   type CuaHelperTransportRestartOptions,
   type CuaHelperTransportRestartResult,
   type ManagedCuaProductHelperHost,
@@ -497,11 +540,14 @@ import {
 } from "#src/cua-permission-broker/windowsCuaDevRuntime.js";
 import { createCanonicalCuaHelperInstaller } from "./cua-permission-broker/cuaHelperInstaller.js";
 import { WindowsCuaHelperHost } from "#src/cua-permission-broker/windowsCuaDevHelperHost.js";
-import { DEV_HELPER_APP_NAME, HELPER_APP_NAME } from "@zcode/zcode-cua/broker/helperConstants";
+import {
+  getStableCuaPipeName,
+  resolveStableCuaWinRecipe,
+} from "#src/cua-permission-broker/stableCuaTransport.js";
+import { HELPER_APP_NAME } from "@zcode/zcode-cua/broker/helperConstants";
 import { resolveBrokerSocketPath } from "@zcode/zcode-cua/broker/socketPath";
 import {
   DEFAULT_ZCODE_MODEL_CONTEXT_BUDGET_STRATEGY,
-  resolveSafeEndpointHostname,
   ZCODE_JWT_INVALID_BROADCAST_CHANNEL,
   formatLogPrefix,
   isCredentialDecryptError,
@@ -511,6 +557,7 @@ import {
   type ProviderFamilyDomain,
   type ServiceAuthorityMode,
   resolveRuntimeZCodeEndpointOrigin,
+  resolveSafeTelemetryHostname,
   type BrowserBackendDescriptor,
   type BrowserClientMode,
   type BrowserCommand,
@@ -538,6 +585,7 @@ export {
   conversationShareConnectionScopeFactory,
 };
 
+import { createPluginUiAccountBindings } from "./plugin-ui-bridge/instanceAccounts.js";
 interface ServiceWithDisposeAll {
   disposeAll: () => void;
 }
@@ -546,19 +594,10 @@ interface ServiceWithDisposeAllAndWait {
   disposeAllAndWait: () => Promise<void>;
 }
 
-const CUA_PRODUCT_HELPER_AGENT_ENV_RETRY_MS = 30_000;
-// Cold-start budget: the Helper's first cold launch (large Node SEA + first-time Gatekeeper/notarization
+// Bug A: the Helper's first cold launch (large Node SEA + first-time Gatekeeper/notarization
 // assessment) routinely exceeds the old 5s health budget; warm it is <1s. Give the cold path
-// plenty of headroom. Runs off the agent-spawn critical path (see buildCuaProductHelperAgentEnv).
+// plenty of headroom.
 const CUA_HELPER_HEALTH_TIMEOUT_MS = 30_000;
-// Bounded spawn grace: give a normally signed Helper a short but realistic startup window. On real
-// machines, Gatekeeper + SEA startup usually takes 300–500 ms; the old 250 ms threshold misclassified
-// healthy first starts as BROKER_UNAVAILABLE.
-// Fail closed only if it is still not ready after 1 second, while background startup continues to settle.
-// Do not wait for the full 30-second health budget. When the Helper becomes ready, reconcileRecoveredHelper
-// clears only the admission marker for future spawns and never touches existing Agents. Do not copy the
-// 10-second caller wait from the feature branch.
-const CUA_PRODUCT_HELPER_SPAWN_READY_DEADLINE_MS = 1_000;
 
 type DefaultCuaProductHelper = {
   host: ManagedCuaProductHelperHost;
@@ -570,55 +609,6 @@ type ManagedDefaultCuaProductHelper = {
   helper: DefaultCuaProductHelper;
   seedContext?: CuaProductMcpServerResolverContext;
 };
-
-const cuaProductHelperAgentEnvRetryAt = new WeakMap<Pick<CuaHelperHost, "start">, number>();
-const cuaProductHelperTrackedStart = new WeakMap<Pick<CuaHelperHost, "start">, Promise<unknown>>();
-/**
- * An agent consumed a reservation during this startup (it received a tuple reserved while the Helper was not ready).
- *
- * The revocation path is required: those spawns returned successfully and never entered catch, so no
- * existing mechanism would mark them for a later respawn if startup ultimately fails. Mark them here so
- * future spawns keep failing closed while the Helper is unavailable. Once it is ready, clear only the
- * marker and do not reclaim existing Agents.
- */
-const cuaProductHelperReservedSpawns = new WeakSet<Pick<CuaHelperHost, "start">>();
-/** An Agent consumed a Windows transport_ready tuple; keep the existing Agent if later full startup fails. */
-const cuaProductHelperTransportSpawns = new WeakSet<Pick<CuaHelperHost, "start">>();
-
-function trackCuaProductHelperStartup(
-  host: Pick<CuaHelperHost, "start">,
-  startup: Promise<unknown>,
-): void {
-  if (cuaProductHelperTrackedStart.get(host) === startup) return;
-  cuaProductHelperTrackedStart.set(host, startup);
-  void startup.then(
-    () => {
-      cuaProductHelperAgentEnvRetryAt.delete(host);
-      cuaProductHelperReservedSpawns.delete(host);
-      cuaProductHelperTransportSpawns.delete(host);
-      if (cuaProductHelperTrackedStart.get(host) === startup) {
-        cuaProductHelperTrackedStart.delete(host);
-      }
-    },
-    () => {
-      // The caller may already have timed out while the shared 30s startup continued. Its eventual
-      // failure must still establish backoff; otherwise every new task immediately repeats install/
-      // launch/health work during a persistent failure.
-      cuaProductHelperAgentEnvRetryAt.set(host, Date.now() + CUA_PRODUCT_HELPER_AGENT_ENV_RETRY_MS);
-      if (cuaProductHelperReservedSpawns.delete(host)) {
-        // An Agent holds a reserved tuple but the Helper never started. Mark future spawns fail-closed;
-        // do not destroy the existing Agent.
-        markCuaProductHelperAgentEnvUnavailable(host);
-      }
-      if (cuaProductHelperTransportSpawns.delete(host)) {
-        markCuaProductHelperAgentEnvUnavailable(host);
-      }
-      if (cuaProductHelperTrackedStart.get(host) === startup) {
-        cuaProductHelperTrackedStart.delete(host);
-      }
-    },
-  );
-}
 
 function hasDisposeAll(instance: unknown): instance is ServiceWithDisposeAll {
   return (
@@ -663,7 +653,7 @@ const sharedSqliteRepos = new WeakMap<ServiceCollection, ReadonlyArray<{ close()
 const accountRequestAuthServices = new WeakMap<ServiceCollection, IAccountRequestAuthService>();
 export type OffPeakRequestAuthBuilder = (
   ticketId: string,
-) => Promise<{ apiKey: string; headers: Record<string, string> }>;
+) => Promise<{ apiKey: string; headers: Record<string, string>; accountScope?: string }>;
 const offPeakRequestAuthBuilders = new WeakMap<ServiceCollection, OffPeakRequestAuthBuilder>();
 
 /** Local Host process capability; not exposed through ServiceCollection on the generic RPC channel. */
@@ -746,7 +736,8 @@ export function shouldUseCuaPermissionService(opts: {
   platform?: NodeJS.Platform;
   cuaEnabled: boolean;
 }): boolean {
-  return (opts.platform ?? process.platform) === "darwin" && opts.cuaEnabled;
+  const platform = opts.platform ?? process.platform;
+  return (platform === "darwin" || platform === "win32") && opts.cuaEnabled;
 }
 
 export function shouldRetainDefaultCuaProductHelper(): boolean {
@@ -1068,6 +1059,7 @@ export function createDefaultCuaProductHelper(
           new WindowsCuaHelperHost({
             runtime,
             logger,
+            mintSocketPath: () => getStableCuaPipeName(),
           })),
       logger,
     });
@@ -1138,184 +1130,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-export async function buildCuaProductHelperAgentEnv(
-  host:
-    | (Pick<CuaHelperHost, "start"> &
-        Partial<
-          Pick<CuaHelperHost, "running" | "checkHealth" | "reservedTransport"> & {
-            waitForTransport(timeoutMs?: number): Promise<CuaHelperTransportHandle>;
-          }
-        >)
-    | undefined,
-  logger = createServiceLogger("cua-product-helper"),
-): Promise<Record<string, string>> {
-  if (!host) return {};
-  if (hasCuaProductHelperAgentEnvUnavailable(host)) {
-    // The marker may be stale: after permission is granted or background startup completes, the Helper
-    // may recover before the built-in plugin loads, with no new resolver call to clear the marker. This
-    // previously left the app showing 0 tools on its next launch.
-    // Run one short, bounded probe. If healthy, clear the marker and provide the current live tuple;
-    // otherwise fail closed immediately. Both this path and reconcileRecoveredHelper affect admission
-    // for future spawns only and do not reclaim existing Agents.
-    if (host.running && host.checkHealth) {
-      try {
-        await host.checkHealth(CUA_PRODUCT_HELPER_SPAWN_READY_DEADLINE_MS);
-        clearCuaProductHelperAgentEnvUnavailable(host);
-      } catch {
-        // The Helper is still recovering (cold start or rotation in progress). Do not block; retry at the
-        // next demand boundary.
-      }
-    }
-    if (hasCuaProductHelperAgentEnvUnavailable(host)) {
-      return {
-        [BROKER_UNAVAILABLE_ENV]:
-          "broker_unavailable: recovered Helper credentials are waiting for a future spawn",
-      };
-    }
-  }
-  const retryAt = cuaProductHelperAgentEnvRetryAt.get(host);
-  // Non-blocking design (a hard user requirement): spawn must never stall on a cold start. A warm Helper
-  // (host.running) uses a quick checkHealth with a 1-second cap; healthy Helpers return in milliseconds,
-  // and only unhealthy ones use the full timeout. A cold Helper with a safe reservation returns at once;
-  // otherwise, race against a bounded 1-second deadline and fail closed with BROKER_UNAVAILABLE only if
-  // it times out without a reservation. Shared background startup continues to settle. The resolver
-  // updates admission for future spawns and provides a broker tuple at a later request boundary.
-  // Never interrupt the first session asynchronously when background startup completes, and never make
-  // spawn wait 10 seconds.
-  //
-  // Fail-closed rationale: when global CLI config contains zcode-cua, returning an empty environment
-  // starts the MCP child process without broker credentials. This bypasses the authorized Helper broker
-  // and makes the Python MCP process the actual TCC principal. If the broker is unavailable, return
-  // BROKER_UNAVAILABLE; never return an empty environment.
-  try {
-    if (host.running && host.checkHealth) {
-      // start() intentionally returns an existing handle without probing. Never spawn a new agent
-      // with a dead Helper's stale tuple; the session resolver owns on-demand Helper restart,
-      // while this lower-level spawn path fails closed until that recovery completes.
-      await host.checkHealth(1000);
-      // A successful resolver rotation may have recovered the same host while an earlier spawn
-      // failure left a retry marker. Healthy live credentials always supersede stale backoff.
-      cuaProductHelperAgentEnvRetryAt.delete(host);
-      if (hasCuaProductHelperAgentEnvUnavailable(host)) {
-        return {
-          [BROKER_UNAVAILABLE_ENV]:
-            "broker_unavailable: recovered Helper credentials are waiting for a future spawn",
-        };
-      }
-    } else if (retryAt && Date.now() < retryAt) {
-      return {
-        [BROKER_UNAVAILABLE_ENV]: "broker_unavailable: helper startup retry is deferred",
-      };
-    }
-    const startup = host.start();
-    trackCuaProductHelperStartup(host, startup);
-    if (host.waitForTransport) {
-      // Windows named pipes cannot reserve/rename a final socket. The Helper sends
-      // transport_ready once the pipe is bound; use that tuple while full health
-      // (native/UIA initialization) continues in the shared startup promise.
-      const transport = await waitForCuaHelperStartup(
-        host.waitForTransport(CUA_PRODUCT_HELPER_SPAWN_READY_DEADLINE_MS),
-        CUA_PRODUCT_HELPER_SPAWN_READY_DEADLINE_MS,
-      );
-      if (hasCuaProductHelperAgentEnvUnavailable(host)) {
-        return {
-          [BROKER_UNAVAILABLE_ENV]:
-            "broker_unavailable: recovered Helper credentials are waiting for a future spawn",
-        };
-      }
-      cuaProductHelperTransportSpawns.add(host);
-      cuaProductHelperAgentEnvRetryAt.delete(host);
-      return {
-        [BROKER_SOCKET_ENV]: transport.socketPath,
-        [ZCODE_CUA_PLUGIN_AUTHORITY_ENV_KEY]: transport.pluginAuthority,
-      };
-    }
-    // Previously, the reserved tuple was read only after a 1-second timeout, even when Host had safely
-    // reserved the socket. Reuse the original admission condition to return early; the tracker above
-    // still handles full startup failures.
-    const reserved = host.reservedTransport;
-    if (reserved && !hasCuaProductHelperAgentEnvUnavailable(host)) {
-      cuaProductHelperReservedSpawns.add(host);
-      cuaProductHelperAgentEnvRetryAt.delete(host);
-      // This reserved path no longer supplies BROKER_TOKEN_ENV: broker token authentication has been
-      // removed (connection admission uses code-signing identity). Credentials now consist only of the
-      // socket and authority.
-      return {
-        [BROKER_SOCKET_ENV]: reserved.socketPath,
-        [ZCODE_CUA_PLUGIN_AUTHORITY_ENV_KEY]: reserved.pluginAuthority,
-      };
-    }
-    // Bounded deadline race: fail closed only if a cold launch is not ready within 1 second and has no
-    // reservation. waitForCuaHelperStartup throws caller_timeout on timeout; the catch below treats this
-    // as "still running in the background" and does not set retryAt.
-    const handle = await waitForCuaHelperStartup(
-      startup,
-      CUA_PRODUCT_HELPER_SPAWN_READY_DEADLINE_MS,
-    );
-    // Another concurrent spawn may have timed out while this caller was waiting on the shared
-    // startup. Never expose the recovered tuple while the resolver still has a pending admission marker.
-    if (hasCuaProductHelperAgentEnvUnavailable(host)) {
-      return {
-        [BROKER_UNAVAILABLE_ENV]:
-          "broker_unavailable: recovered Helper credentials are waiting for a future spawn",
-      };
-    }
-    cuaProductHelperAgentEnvRetryAt.delete(host);
-    return {
-      [BROKER_SOCKET_ENV]: handle.socketPath,
-      [ZCODE_CUA_PLUGIN_AUTHORITY_ENV_KEY]: handle.pluginAuthority,
-    };
-  } catch (error) {
-    // caller_timeout only means the shared 30-second startup is still running in the background.
-    // trackCuaProductHelperStartup sets backoff if startup actually fails. Backing off here could wrongly
-    // disable a Helper that has already become ready for later Agents.
-    const isCallerTimeout = isCuaHelperError(error) && error.code === "caller_timeout";
-    if (isCallerTimeout) {
-      // Cold-start rendezvous: the Helper is starting, but the host has claimed the final socket and
-      // reserved a tuple. The credentials are usable: the host placeholder owns the final path, and the
-      // unverified Helper is bound to .pending and cannot reach it. A client that connects to the
-      // placeholder is immediately destroyed and retries with broker_unavailable backoff. Once the
-      // Helper is verified, the host atomically renames the socket, and the retry reaches the real Helper.
-      //
-      // This branch rejects only this Agent's CUA MCP admission while the Helper is not ready. Once it is
-      // ready, it affects only future Agent spawns; lifecycle operations must not tear down existing sessions.
-      const reserved = host.reservedTransport;
-      if (reserved && !hasCuaProductHelperAgentEnvUnavailable(host)) {
-        // Check the unavailable marker first; do not provide a tuple before admission recovery is complete.
-        cuaProductHelperReservedSpawns.add(host);
-        cuaProductHelperAgentEnvRetryAt.delete(host);
-        return {
-          [BROKER_SOCKET_ENV]: reserved.socketPath,
-          [ZCODE_CUA_PLUGIN_AUTHORITY_ENV_KEY]: reserved.pluginAuthority,
-        };
-      }
-    }
-    markCuaProductHelperAgentEnvUnavailable(host);
-    if (!isCallerTimeout) {
-      cuaProductHelperAgentEnvRetryAt.set(host, Date.now() + CUA_PRODUCT_HELPER_AGENT_ENV_RETRY_MS);
-    }
-    logger.warn(
-      undefined,
-      `Computer Use Helper broker_unavailable; disabling workspace zcode-cua MCP server for this agent spawn (${cuaHelperStartErrorDetail(error)})`,
-    );
-    return {
-      [BROKER_UNAVAILABLE_ENV]: isCallerTimeout
-        ? // Cold startup is still running in the background. Report "warming up"; once the Helper is
-          // ready, reconcileRecoveredHelper clears only the future-spawn marker.
-          "broker_unavailable: helper broker warming up"
-        : `broker_unavailable: ${cuaHelperStartErrorDetail(error)}`,
-    };
-  }
-}
-
-function cuaHelperStartErrorDetail(error: unknown): string {
-  return isCuaHelperError(error)
-    ? `${error.code}: ${error.message}`
-    : error instanceof Error
-      ? error.message
-      : String(error);
-}
-
 /**
  * Create a ServiceCollection containing all local services.
  *
@@ -1323,6 +1137,8 @@ function cuaHelperStartErrorDetail(error: unknown): string {
  *        events across windows. Pass null to make broadcasts a no-op.
  */
 export function createLocalServices(options: {
+  /** Private callback channel provided by an authenticated Desktop stdio connection; not exposed as a public service. */
+  topicResourceRelayChannel?: (request: unknown) => IChannel;
   parentPort?: Parameters<typeof createBroadcastService>[0];
   /** Settings authority injected by the Host assembly layer; it must share a Window Host lifecycle with the network transport. */
   settingService?: ISettingService;
@@ -1334,6 +1150,13 @@ export function createLocalServices(options: {
   hostApiNetworkTransport?: HostApiNetworkTransport;
   /** Let Desktop Host ask Main to register the exact local video path authorized for the Agent. */
   authorizeLocalMediaPreviewPath?: (path: string) => Promise<string>;
+  /**
+   * Forwarding hook for dynamic-workflow user-choice changes (docs/dynamic-workflow/launch.md “The user's choice”):
+   * the Desktop Host pushes the local setting to every online desktop-attached remote Host in this window.
+   */
+  forwardDynamicWorkflowUserMode?: (mode: DynamicWorkflowMode | undefined) => void;
+  /** Desktop Host asks Main to register validated plugin UI HTML in exchange for a sandbox handle. */
+  registerPluginSandbox?: (input: PluginSandboxRegisterInput) => Promise<PluginSandboxHandle>;
   feedback?: Partial<
     Omit<CreateFeedbackServiceOptions, "apiClient" | "credentialService" | "oauthService">
   >;
@@ -1373,7 +1196,7 @@ export function createLocalServices(options: {
   ) => void;
   serviceAuthorityMode?: ServiceAuthorityMode;
   cuaProductMcpServerResolver?: CuaProductMcpServerResolver;
-  agentRuntimeContext?: {
+  agentTelemetry?: {
     getDeviceMid?: () => string | undefined;
     runtimeSurface?: "desktop_local_host" | "remote_workspace_host";
   };
@@ -1443,10 +1266,15 @@ export function createLocalServices(options: {
     resolveRuntimeZCodeEndpointOrigin(process.env, {
       overrideOrigin: (await settingService.get()).zcodeEndpointOrigin,
     });
+  let invalidateProjectTokens = () => {};
+  let invalidatePluginUiAccounts: (() => void) | undefined;
   const provisioningOAuthKeys = new Set<string>(PROVIDER_PROVISIONING_OAUTH_CREDENTIAL_KEYS);
   const credentialService = createCredentialService({
     onDidMutate: ({ key }) => {
-      if (provisioningOAuthKeys.has(key) || isProviderProvisioningAccountCredentialKey(key)) {
+      if (key === "oauth:active_provider" || /^oauth:[^:]+:user_info$/.test(key))
+        invalidatePluginUiAccounts?.();
+      if (provisioningOAuthKeys.has(key)) invalidateProjectTokens();
+      if (provisioningOAuthKeys.has(key)) {
         options.onProviderProvisioningSourceChanged?.("credential");
       }
     },
@@ -1474,13 +1302,15 @@ export function createLocalServices(options: {
     onZcodeJwtInvalid: (input, headers) => zcodeJwtLogoutHandlerRef.current?.(input, headers),
     isZcodeJwtRequest: (input, headers) =>
       isCurrentOAuthCredentialRequest({ input, headers, credentialService }),
+    isBusinessUnauthorizedRequest: (input, _headers) =>
+      isOAuthBusinessRequest({ input, credentialService }),
     resolveZCodeEndpointOrigin: resolveCurrentZCodeEndpointOrigin,
   });
   const systemService = createSystemService();
   // Onboarding eligibility and the task list share the same global tasks-index. The repo loads the
   // database lazily, so constructing it early adds no startup I/O; the session syncer reuses this instance.
   const taskIndexRepo = new TaskIndexRepo();
-  // Onboarding completion record; fill userId from the login state (null for API-key or logged-out sessions).
+  // Onboarding completion record; fill userId from the login state (null for API-key or logged-out sessions). See docs/onboarding-record-spec.md.
   const onboardingRecordService = createOnboardingRecordService({
     loadUserId: async () => (await oauthCredentialRepo.loadActiveUserProfile())?.id ?? null,
     hasExistingLocalTask: async () => (await taskIndexRepo.listTaskMetas({})).length > 0,
@@ -1495,20 +1325,29 @@ export function createLocalServices(options: {
       );
     },
   });
+  const projectTokenClient = createAccountProjectTokenClient(apiClient, credentialService);
+  invalidateProjectTokens = () => projectTokenClient.clear();
   const accountProviderApiKeyRemoteClient = new AccountProviderApiClient(apiClient);
   const accountProviderApiKeyResolver = new AccountProviderApiKeyResolver(
     accountProviderApiKeyRemoteClient.fetchRemoteData.bind(accountProviderApiKeyRemoteClient),
+    projectTokenClient,
   );
   const accountProviderCredentialService = createAccountProviderCredentialService({
-    credentialStore: accountProviderCredentialStore,
     async loadOAuthAccessToken(family) {
       const oauthProviderId = family === "zai" ? ZAI_PROVIDER_ID : BIGMODEL_PROVIDER_ID;
       return (await oauthCredentialRepo.loadTokenSet(oauthProviderId))?.accessToken ?? null;
     },
-    resolveProviderApiKey: (family, accessToken) =>
-      accountProviderApiKeyResolver.resolveProviderApiKey(
+    resolveProviderMaterial: (
+      family,
+      accessToken,
+      accountIdentity,
+      rejectedProjectTokenFingerprint,
+    ) =>
+      accountProviderApiKeyResolver.resolveProviderMaterial(
         family === "zai" ? ZAI_PROVIDER_ID : BIGMODEL_PROVIDER_ID,
         accessToken,
+        accountIdentity,
+        rejectedProjectTokenFingerprint,
       ),
   });
   const resolveLegacyTeamOrganization = createLegacyTeamOrganizationResolver({
@@ -1544,18 +1383,29 @@ export function createLocalServices(options: {
           loadAccountIdentity,
         }),
       loadOAuthTokenSet: (providerId) => oauthCredentialRepo.loadTokenSet(providerId),
-      async loadIndividualPlanApiKey(providerId, family) {
+      async loadIndividualPlanMaterial(providerId, family, rejectedProjectTokenFingerprint) {
         const oauthProviderId = family === "zai" ? ZAI_PROVIDER_ID : BIGMODEL_PROVIDER_ID;
         const accountIdentity = (await oauthCredentialRepo.loadUserProfile(oauthProviderId))?.id;
         if (!accountIdentity) return null;
-        return accountProviderCredentialService.loadCodingPlanApiKey({
+        return accountProviderCredentialService.loadCodingPlanMaterial({
           providerId,
           family,
           accountIdentity,
+          rejectedProjectTokenFingerprint,
         });
       },
-      resolveTeamPlanApiKey: (access) =>
-        resolveAccountTeamPlanRuntimeApiKey({ apiClient, credentialService, access }),
+      resolveTeamPlanMaterial: async (access, rejectedProjectTokenFingerprint) => {
+        const accountIdentity = await loadAccountIdentity(access.family);
+        if (!accountIdentity) return null;
+        return resolveAccountTeamPlanRuntimeMaterial({
+          apiClient,
+          credentialService,
+          access,
+          accountIdentity,
+          tokenClient: projectTokenClient,
+          rejectedProjectTokenFingerprint,
+        });
+      },
     }),
   );
   const providerConfigLog = createServiceLogger("provider-config");
@@ -1710,6 +1560,45 @@ export function createLocalServices(options: {
     listMcpServerStatuses: (params) => zcodeAgentService.listMcpServerStatuses(params),
   });
   const pluginSyncService = createPluginSyncService();
+  const pluginUiAccounts = createPluginUiAccountBindings({
+    async readAccount() {
+      const provider = await oauthCredentialRepo.loadActiveProvider();
+      const profile = provider ? await oauthCredentialRepo.loadUserProfile(provider) : null;
+      return [provider, profile?.id ?? null];
+    },
+    open: (params) => zcodeAgentService.openMcpUiInstance(params),
+    close: (params) => zcodeAgentService.closeMcpUiInstance(params),
+  });
+  invalidatePluginUiAccounts = () => pluginUiAccounts.invalidate();
+  const pluginUiBridgeService = createPluginUiBridgeService({
+    openInstance: (params) => pluginUiAccounts.open(params),
+    closeInstance: (params) => pluginUiAccounts.close(params),
+    validateInstance: (params) => zcodeAgentService.validateMcpUiInstance(params),
+    recycleInstance: (params) => zcodeAgentService.recycleMcpUiInstance(params),
+    // Plugin UI: resource reads and UI tool calls all happen in the agent process that owns the session; the host only validates and registers.
+    readMcpResource: (params) => zcodeAgentService.readMcpResource(params),
+    callMcpToolForUi: (params) => zcodeAgentService.callMcpToolForUi(params),
+    cancelMcpToolCallForUi: (params) => zcodeAgentService.cancelMcpToolCallForUi(params),
+    readMcpResourceForUi: (params) => zcodeAgentService.readMcpResourceForUi(params),
+    listMcpResourcesForUi: (params) => zcodeAgentService.listMcpResourcesForUi(params),
+    listMcpResourceTemplatesForUi: (params) =>
+      zcodeAgentService.listMcpResourceTemplatesForUi(params),
+    subscribeMcpResourceForUi: (params) => zcodeAgentService.subscribeMcpResourceForUi(params),
+    unsubscribeMcpResourceForUi: (params) => zcodeAgentService.unsubscribeMcpResourceForUi(params),
+    listPluginUiSurfaces: (params) => zcodeAgentService.listPluginUiSurfaces(params),
+    registerSandbox: options?.registerPluginSandbox,
+  });
+  // App-Provided Tools: page-tool registration and model-call claiming/returning all happen in the agent process that owns the session.
+  const pluginUiSamplingService = createPluginUiSamplingService({
+    sample: (params) => zcodeAgentService.sampleMcpApp(params),
+    cancelSampling: (params) => zcodeAgentService.cancelMcpAppSampling(params),
+  });
+  const pluginUiAppToolsService = createPluginUiAppToolsService({
+    registerAppToolsForUi: (params) => zcodeAgentService.registerAppToolsForUi(params),
+    unregisterAppToolsForUi: (params) => zcodeAgentService.unregisterAppToolsForUi(params),
+    claimAppToolCallForUi: (params) => zcodeAgentService.claimAppToolCallForUi(params),
+    resolveAppToolCallForUi: (params) => zcodeAgentService.resolveAppToolCallForUi(params),
+  });
   const subagentsService = createSubagentsService({
     isDesktopRuntime: true,
   });
@@ -1723,17 +1612,10 @@ export function createLocalServices(options: {
   const modelSelectionReadinessSource = providerRuntime.modelSelection;
   const agentAccountProviderConfigSource = accountProviderConfigSource;
   // ===== Computer Use Helper lifecycle layer (port from the feature branch) =====
-  // Root-cause fix: agents pre-spawned during app startup can run before the broker is ready. If
-  // buildCuaProductHelperAgentEnv cannot get a ready Helper within the 1-second grace period, it returns
-  // BROKER_UNAVAILABLE and those Agents fail closed for the computer-use MCP server. Later conversations
-  // may reuse them, so Helper lifecycle changes must not rebuild Agents.
-  // Constraints: (1) bounded spawn grace, failing closed after 1 second without waiting for the full
-  // health budget; (2) lazily obtain the lifecycle coordinator and use a generation fence, with dispose
-  // only from an explicit workspace lifecycle; (3) do not add periodic health probes; call checkHealth
-  // only at on-demand boundaries such as CUA spawn/resolve; (4) restart the Helper while reusing the host
-  // transport whenever possible, leaving existing Agent sessions, processes, and MCP streams unchanged.
-  const cuaProductHelperWorkspaceRegistry = new CuaProductHelperWorkspaceRegistry();
-  // createDefaultCuaProductHelper() must assemble the resolver before zcodeAgentService exists, but the
+  // Constraints: lazily obtain the lifecycle coordinator and use a generation fence, with dispose only from
+  // an explicit workspace lifecycle; do not add periodic health probes; restart the Helper while reusing the
+  // host transport whenever possible, leaving existing Agent sessions, processes, and MCP streams unchanged.
+  // P1-a mitigation: createDefaultCuaProductHelper() must assemble the resolver before zcodeAgentService exists, but the
   // active-turn signal is available only after that service is created. Use a forward reference as a
   // placeholder: the resolver calls hasActiveTurn() later during an asynchronous resolveMcpServers,
   // after hasActiveTurnRef has been assigned.
@@ -1797,7 +1679,8 @@ export function createLocalServices(options: {
   // probe is only for status display and PiP credential discovery. Permission details and onboarding
   // still use the explicit host flow.
   const probeStableCuaHelperSocket = async (): Promise<string | null> => {
-    const socketPath = resolveBrokerSocketPath();
+    const socketPath =
+      process.platform === "win32" ? getStableCuaPipeName() : resolveBrokerSocketPath();
     try {
       const { createConnection } = await import("node:net");
       return await new Promise<string | null>((resolve) => {
@@ -1862,25 +1745,9 @@ export function createLocalServices(options: {
     const { execFile } = await import("node:child_process");
     const { promisify } = await import("node:util");
     const socketPath = resolveBrokerSocketPath();
-    // standaloneHelperCandidatePaths is not in the upstream exports allowlist, so enumerate install
-    // candidates here using the same rules (dev-desktop gets the dev/ prefix; app names always come
-    // from helperConstants rather than string literals).
-    const home = process.env.ZCODE_HOME?.trim() || join(homedir(), ".zcode");
-    const baseRoot = join(home, "computer-use");
-    // See upstream helperLauncher.resolveCuaHelperInstallRoot for the install layout: dev uses its own
-    // `dev/` subroot and DEV_HELPER_APP_NAME; preview uses its own `preview/` subroot but keeps the
-    // stable app name. Separate roots prevent builds with different IDs from overwriting each other;
-    // they do not indicate a rename.
-    // Enumerating only HELPER_APP_NAME means dev can never find a candidate, so launching from Settings
-    // silently fails and permissions appear unknown. Keep both dev names because a one-click dev bundle
-    // may also be installed under the stable name.
-    const candidates = [
-      join(baseRoot, "dev", DEV_HELPER_APP_NAME),
-      join(baseRoot, "dev", HELPER_APP_NAME),
-      join(baseRoot, HELPER_APP_NAME),
-      join(baseRoot, "preview", HELPER_APP_NAME),
-    ];
-    const appPath = candidates.find((candidate) => existsSync(candidate));
+    const appPath = resolveStandaloneStatusLaunchCandidates(process.env).find((candidate) =>
+      existsSync(candidate),
+    );
     if (!appPath) return null;
     // Build Helper launch arguments through buildHelperOpenArgs to avoid omissions and drift from
     // hand-building them at multiple call sites. Read-only permission checks from Settings do not host
@@ -1899,6 +1766,19 @@ export function createLocalServices(options: {
     } catch {
       // LaunchServices may time out even after accepting the request; keep waiting for ping.
     }
+    for (let attempt = 0; attempt < 50; attempt += 1) {
+      const ready = await probeStableCuaHelperSocket();
+      if (ready) return ready;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    return null;
+  };
+
+  const launchWindowsCuaHelperForStatus = async (): Promise<string | null> => {
+    try {
+      const managed = await getOrCreateDefaultCuaProductHelper(undefined);
+      if (managed) void managed.host.start().catch(() => {});
+    } catch {}
     for (let attempt = 0; attempt < 50; attempt += 1) {
       const ready = await probeStableCuaHelperSocket();
       if (ready) return ready;
@@ -1951,10 +1831,10 @@ export function createLocalServices(options: {
       workspaceIdentity?: string,
       queryOptions?: CuaPermissionStatusQueryOptions,
     ): Promise<CuaPermissionStatusResult> {
-      if (process.platform !== "darwin") {
+      if (process.platform !== "darwin" && process.platform !== "win32") {
         return {
           available: false,
-          reason: "CUA permissions are only available on macOS.",
+          reason: "CUA permissions are only available on macOS and Windows.",
         };
       }
       const context = workspacePath ? { workspacePath, workspaceIdentity } : undefined;
@@ -1982,7 +1862,10 @@ export function createLocalServices(options: {
         // by the host. Query the actual state through the stable socket after launch.
         let stable = await probeStableCuaHelperSocket();
         if (!stable) {
-          stable = await launchStandaloneCuaHelperForStatus();
+          stable =
+            process.platform === "darwin"
+              ? await launchStandaloneCuaHelperForStatus()
+              : await launchWindowsCuaHelperForStatus();
         }
         if (!stable) {
           return {
@@ -2137,9 +2020,16 @@ export function createLocalServices(options: {
       }
     },
   };
+  // Dynamic-workflow user choice (docs/dynamic-workflow/launch.md “The user's choice”): the local settings file is the
+  // only source, read on each use. A desktop-attached remote Host cannot read the desktop's settings; the choice is
+  // pushed by desktop (zcodeAgentService.syncDynamicWorkflowUserMode), so nothing is injected here. On read failure, fall back to “follow”.
+  const resolveDynamicWorkflowUserMode = isDesktopAttachedRemote
+    ? undefined
+    : async () => (await settingService.get()).dynamicWorkflowMode;
   const codingPlanSubscriptionService = createCodingPlanSubscriptionService({
     apiClient,
     credentialService,
+    ...(resolveDynamicWorkflowUserMode ? { resolveDynamicWorkflowUserMode } : {}),
     resolveOffPeakModelSelectionView: async () => {
       await providerRuntime.start();
       return buildOffPeakModelSelectionView(providerRuntime.registryService.getView());
@@ -2171,9 +2061,11 @@ export function createLocalServices(options: {
     // remote workspaces also provide workflows when rollout is enabled.
     resolveDynamicWorkflowClientConfig: () =>
       codingPlanSubscriptionService.getDynamicWorkflowClientConfig(),
+    ...(resolveDynamicWorkflowUserMode ? { resolveDynamicWorkflowUserMode } : {}),
+    forwardDynamicWorkflowUserMode: options?.forwardDynamicWorkflowUserMode,
     commandResolver: options?.zcodeAgentCommandResolver,
     presentationSurface: resolveZCodeAgentPresentationSurface({
-      runtimeSurface: options?.agentRuntimeContext?.runtimeSurface,
+      runtimeSurface: options?.agentTelemetry?.runtimeSurface,
       serviceAuthorityMode: options?.serviceAuthorityMode,
       desktopContextPromptEnabled,
     }),
@@ -2187,6 +2079,52 @@ export function createLocalServices(options: {
     // Route browser-use execution requests through the host-to-main bridge to the agent service's
     // onRequest browserExecute handler.
     browserControlExecutor: options?.browserControlExecutor,
+    // Robot credentials belong only to the authorized Host; a standalone remote service must not borrow local configuration to widen its read scope.
+    channelReplyExecutor: async (value) => {
+      const request = channelReplyHostRequestSchema.parse(value);
+      if (
+        options?.topicResourceRelayChannel &&
+        (isDesktopAttachedRemote || request.remoteSessionId)
+      )
+        return channelReplyResultSchema.parse(
+          await options.topicResourceRelayChannel(request).call("reply", request),
+        );
+      if (isDesktopAttachedRemote) throw new Error("Desktop channel reply peer unavailable");
+      const bots = services.getOptional(IBotsService);
+      if (!bots?.replyToChannel) throw new Error("Bot channel reply unavailable");
+      return bots.replyToChannel(request);
+    },
+    topicResourceExecutor: async (request, signal) => {
+      if (
+        options?.topicResourceRelayChannel &&
+        (isDesktopAttachedRemote || request.remoteSessionId)
+      )
+        return readTopicResourceFromRelay(
+          options.topicResourceRelayChannel(request),
+          request,
+          signal,
+        );
+      if (isDesktopAttachedRemote) throw new Error("Desktop topic resource peer unavailable");
+      const bots = services.getOptional(IBotsService);
+      if (!bots?.readTopicResource) throw new Error("Topic resource service is unavailable");
+      return bots.readTopicResource({ ...request, signal });
+    },
+    topicResourceValidator: async (request, signal) => {
+      if (
+        options?.topicResourceRelayChannel &&
+        (isDesktopAttachedRemote || request.remoteSessionId)
+      )
+        return validateTopicResourceFromRelay(
+          options.topicResourceRelayChannel(request),
+          request,
+          signal,
+        );
+      if (isDesktopAttachedRemote) throw new Error("Desktop topic resource peer unavailable");
+      const bots = services.getOptional(IBotsService);
+      if (!bots?.validateTopicResource)
+        throw new Error("Topic resource authorization is unavailable");
+      return bots.validateTopicResource({ ...request, signal });
+    },
     // Official Server MCP identity headers: the host is the sole identity authority, and Agents request
     // them through the reverse-request path. Check provider presence in the canonical Model Selection
     // View; do not restore the old Provider Snapshot.
@@ -2223,9 +2161,8 @@ export function createLocalServices(options: {
     // explicitly configured. Changes take effect when the Agent next starts.
     resolveSpawnEnv: async (context) => {
       const [settings] = await Promise.all([settingService.get(), providerRuntime.start()]);
-      // Import legacy overrides for built-in Subagents before the CLI reads them independently; do not
-      // wait for a Settings action.
-      await subagentsService.prepareRuntimeState();
+      // The local Host prepares the resolution snapshot; the remote CLI keeps reading and migrating configuration through its own file loader.
+      if (!isDesktopAttachedRemote) await subagentsService.prepareRuntimeState(context);
       const agentNetwork =
         isDesktopAttachedRemote && options?.remoteAgentNetwork
           ? options.remoteAgentNetwork
@@ -2233,64 +2170,29 @@ export function createLocalServices(options: {
               httpProxy: settings.httpProxy,
               noProxy: settings.httpProxyNoProxy,
             };
-      // Use the same gate as Helper creation (isCuaEnabledForContext: dev/internal feature OR official
-      // plugin enablement), so dev mode cannot create a Helper while resolveSpawnEnv omits its broker env.
       const cuaPluginEnabled = isCuaEnabledForContext(context);
-      // Lazy startup: on darwin, spawn never calls acquire to launch the Helper. Reuse the tuple from
-      // an existing host (peek, for example after an authorization flow); otherwise inject only the
-      // stable socket and let the SDK launch the Helper on its first CUA call. Host startup and spawn do
-      // not keep the Helper running. Keep acquire on win32 (token mode).
-      const peekedHelper = defaultCuaProductHelperLifecycle.peek()?.helper;
-      const helper = !cuaPluginEnabled
-        ? undefined
-        : peekedHelper && isDefaultCuaProductHelperCurrent(peekedHelper)
-          ? peekedHelper
-          : process.platform === "darwin"
-            ? undefined
-            : await getOrCreateDefaultCuaProductHelper(context);
-      // setting.get and lifecycle queues can outlive host disposal. Checking only the earlier enabled
-      // value could let a delayed resolveSpawnEnv resume after the terminal fence and restart the
-      // Helper. Recheck the generation immediately before building the environment.
-      const cuaProductHelperHost =
-        helper && isDefaultCuaProductHelperCurrent(helper) ? helper.host : undefined;
-      // Register before waiting for the Helper to start. The registry records only workspaces that
-      // attempted admission, for later configuration/lifecycle bookkeeping. Recovery clears only the
-      // marker; it does not reclaim existing Agents.
-      cuaProductHelperWorkspaceRegistry.setEnabled(context, Boolean(cuaProductHelperHost));
       let cuaProductHelperEnv: Record<string, string> = {};
-      if (!helper && cuaPluginEnabled && process.platform === "darwin") {
-        // Lazy startup: when no managed host exists, inject the stable socket without a token (identity
-        // mode) or pluginAuthority (only the host validates it, so it has no purpose without a host).
-        // The SDK's ensureBrokerAvailable launches the Helper. pluginAuthority is a random config-provenance
-        // value inside the Agent process: bootstrap captures it in the node_repl config environment, and
-        // core compares the values to prove the config came from this bootstrap rather than a user file.
-        // It does not require a host. The host mints it in managed mode; lazy mode mints it per spawn with
-        // the same meaning and validation.
+      if (cuaPluginEnabled && (process.platform === "darwin" || process.platform === "win32")) {
+        const brokerSocket =
+          process.platform === "win32" ? getStableCuaPipeName() : resolveBrokerSocketPath();
         cuaProductHelperEnv = {
-          [BROKER_SOCKET_ENV]: resolveBrokerSocketPath(),
+          [BROKER_SOCKET_ENV]: brokerSocket,
           [ZCODE_CUA_PLUGIN_AUTHORITY_ENV_KEY]: randomBytes(16).toString("hex"),
         };
-        cuaProductHelperWorkspaceRegistry.setEnabled(context, false);
-      } else if (cuaProductHelperHost && helper) {
-        const candidateEnv = await buildCuaProductHelperAgentEnv(
-          cuaProductHelperHost,
-          createServiceLogger("cua-product-helper"),
-        );
-        // host.start/checkHealth also await, and dispose can set the terminal fence during that wait.
-        // Recheck the generation before returning the spawn environment. If it is stale, mark the
-        // Helper unavailable; never give a reclaimed tuple to an Agent that arrives late.
-        if (isDefaultCuaProductHelperCurrent(helper)) {
-          cuaProductHelperEnv = candidateEnv;
-        } else {
-          cuaProductHelperWorkspaceRegistry.setEnabled(context, false);
-          cuaProductHelperEnv = {
-            [BROKER_UNAVAILABLE_ENV]: "broker_unavailable: helper lifecycle is disposed",
-          };
+        if (process.platform === "win32") {
+          const recipe = await resolveStableCuaWinRecipe();
+          if (recipe) {
+            cuaProductHelperEnv["ZCODE_CUA_WIN_HELPER_RECIPE"] = JSON.stringify({
+              ...recipe,
+              hostPid: process.pid,
+            });
+          } else {
+            cuaProductHelperEnv = {
+              [BROKER_UNAVAILABLE_ENV]:
+                "broker_unavailable: windows helper recipe could not be resolved",
+            };
+          }
         }
-      } else if (cuaPluginEnabled && defaultCuaProductHelperLifecycle.disposed) {
-        cuaProductHelperEnv = {
-          [BROKER_UNAVAILABLE_ENV]: "broker_unavailable: helper lifecycle is disposed",
-        };
       }
       const telemetryEnv = getCapturedZCodeAgentTelemetryEnv();
       const telemetryConfigured = Boolean(
@@ -2300,7 +2202,7 @@ export function createLocalServices(options: {
         ? await oauthCredentialRepo.loadActiveUserProfile().catch(() => null)
         : null;
       const telemetryDeviceMid = telemetryConfigured
-        ? options?.agentRuntimeContext?.getDeviceMid?.()?.trim()
+        ? options?.agentTelemetry?.getDeviceMid?.()?.trim()
         : undefined;
       // The Host is the sole writer for legacy config migration. Wait for initialization before Agent
       // spawn so a Worker cannot read a not-yet-created provider_config.json and briefly publish an
@@ -2317,14 +2219,11 @@ export function createLocalServices(options: {
         // endpoint makes the two sides validate different inputs, causing official MCP to fail closed.
         ...buildAgentEndpointOriginEnv(await resolveCurrentZCodeEndpointOrigin()),
         // Inject broker credentials (socket/token) into the Agent spawn environment so the built-in
-        // zcode-cua plugin's computer-use MCP server can reconnect to the broker after
-        // __zcode-plugin-host restores its token. cuaProductHelperEnv above already validates the
-        // generation and handles unavailable state, replacing the old staging-side call to
-        // buildCuaProductHelperAgentEnv.
+        // zcode-cua plugin's computer-use MCP server can reconnect to the broker after __zcode-plugin-host restores its token.
         ...cuaProductHelperEnv,
         ...buildAgentTelemetrySpawnEnv({
           deviceMid: telemetryDeviceMid,
-          runtimeSurface: options?.agentRuntimeContext?.runtimeSurface ?? "remote_workspace_host",
+          runtimeSurface: options?.agentTelemetry?.runtimeSurface ?? "remote_workspace_host",
           telemetryEnv,
           userId: telemetryProfile?.id,
         }),
@@ -2337,6 +2236,9 @@ export function createLocalServices(options: {
         }),
       };
     },
+    ...(!isDesktopAttachedRemote
+      ? { readSubagentRuntimeConfig: subagentsService.readRuntimeConfig }
+      : {}),
     ...(isDesktopAttachedRemote
       ? { sessionRuntimePreferencesAuthority: "external" as const }
       : {
@@ -2530,9 +2432,30 @@ export function createLocalServices(options: {
   // repositories. Collect them here and register them in the sharedSqliteRepos side table after the
   // services collection has been built and before it is returned.
   const sqliteReposToClose: Array<{ close(): void }> = [];
+  const marketingAssets = createMarketingAssetRegistry({
+    allowLoopback: ZCODE_ENV === "test" || process.env.NODE_ENV === "development",
+  });
   const services = new ServiceCollection()
+    .register(
+      IMarketingTouchService,
+      createMarketingTouchService({
+        apiClient,
+        getToken: () => credentialService.load("zcodejwttoken"),
+        getDeviceMid: () => options?.agentTelemetry?.getDeviceMid?.(),
+        baseUrl: buildRuntimeZCodeApiUrl(process.env, "/"),
+        appVersion: ZCODE_VERSION,
+        onSnapshot: (snapshot) => marketingAssets.accept(snapshot),
+      }),
+    )
     .register(IFileService, fileService)
     .register(IMediaPreviewService, mediaPreviewService)
+    .register(
+      ICloudContentService,
+      createCloudContentService({
+        publishedAssets: marketingAssets,
+        cacheRoot: join(getContentAppConfigDir(), "cache", "content-bundles", randomUUID()),
+      }),
+    )
     .register(IGitService, gitService)
     .register(IGitCheckpointService, gitCheckpointService)
     .register(ISystemService, systemService)
@@ -2614,7 +2537,7 @@ export function createLocalServices(options: {
           resolveCodingPlanSupport: () =>
             resolveOffPeakCodingPlanSupport(offPeakCredentialResolverDeps),
           resolveTelemetryProviderName: async () =>
-            resolveSafeEndpointHostname(await originResolver.resolveOrigin()),
+            resolveSafeTelemetryHostname(await originResolver.resolveOrigin()),
           resolveModelSelection: async (input) => {
             await providerRuntime.start();
             const support = await resolveOffPeakCodingPlanSupport(offPeakCredentialResolverDeps);
@@ -2672,9 +2595,104 @@ export function createLocalServices(options: {
         return offPeakTaskService;
       })(),
     )
+    .register(
+      IHighspeedCardService,
+      (() => {
+        const origin = resolveRuntimeZCodeEndpointOrigin(process.env);
+        const rawMockScenario = process.env.ZCODE_HIGHSPEED_MOCK_SCENARIO;
+        const mockScenarios = new Set<HighspeedMockScenario>([
+          "hit-fast",
+          "miss",
+          "hit-after-timeout",
+          "existing-foreign-task-card",
+          "expired-card",
+        ]);
+        const mockScenario = mockScenarios.has(rawMockScenario as HighspeedMockScenario)
+          ? (rawMockScenario as HighspeedMockScenario)
+          : null;
+        const resolveHighspeedLoginHeaders = async (): Promise<Record<string, string>> => {
+          const jwt = (await credentialService.load("zcodejwttoken"))?.trim() ?? "";
+          if (!jwt) throw new Error("highspeed request requires zcode jwt");
+          return { Authorization: /^Bearer\s/i.test(jwt) ? jwt : `Bearer ${jwt}` };
+        };
+        const transport = mockScenario
+          ? createHighspeedMockTransport({ scenario: mockScenario })
+          : createHighspeedHttpTransport({
+              drawUrl: `${origin}/api/v1/highspeed/draw`,
+              healthyBaseUrl: `${origin}/api/v1/highspeed/`,
+              logger: createServiceLogger("highspeed"),
+              drawHeaders: async () => {
+                const credentials = await resolveOffPeakCredentials(offPeakCredentialResolverDeps, {
+                  allowMockCredentials: false,
+                });
+                const codingPlanAuthorization =
+                  (
+                    await credentialService.load(`oauth:${credentials.providerFamily}:access_token`)
+                  )?.trim() ?? "";
+                return buildHighspeedCodingPlanAuthHeaders({
+                  zcodeJwt: credentials.jwt,
+                  codingPlanAuthorization,
+                  targetType:
+                    credentials.organizationId && credentials.projectId ? "TEAM" : "PERSONAL",
+                  ...(credentials.organizationId
+                    ? { organizationId: credentials.organizationId }
+                    : {}),
+                  ...(credentials.projectId ? { projectId: credentials.projectId } : {}),
+                });
+              },
+              healthyHeaders: resolveHighspeedLoginHeaders,
+            });
+        return new HighspeedCardService({
+          transport,
+          inferenceMode: mockScenario ? "session-default" : "highspeed",
+          // Rule 11: draw is open to Coding Plan users only; the mock scenario is allowed through for local verification.
+          resolveCodingPlanSupported: mockScenario
+            ? async () => true
+            : async () =>
+                (await resolveOffPeakCodingPlanSupport(offPeakCredentialResolverDeps)).supported,
+          // Rule 14: the session model must belong to the selected Coding Plan Provider's model catalog
+          // (Built-in Provider Config projection) to start a new draw; the mock scenario is allowed through for local verification.
+          resolveModelCovered: mockScenario
+            ? async () => true
+            : async (providerId, modelId) => {
+                const view = await providerRuntime.modelSelection.getView();
+                const provider = view.providers.find((item) => item.providerId === providerId);
+                return provider?.models.some((model) => model.modelId === modelId) ?? false;
+              },
+          // Accelerated inference and draw share the same highspeed gateway and the same Coding Plan dual-JWT contract: requests must carry
+          // the zcode JWT + Coding Plan business JWT + Team identity headers. Previously only the zcode JWT + card ID were sent, so the gateway
+          // could not verify Coding Plan entitlements and returned 401 auth_failed. Reuse the same selected-connection resolution as the draw
+          // headers to avoid sending a ZAI-identity card to the BigModel accelerated Provider.
+          resolveInferenceAuth: async () => {
+            const credentials = await resolveOffPeakCredentials(offPeakCredentialResolverDeps, {
+              allowMockCredentials: false,
+            });
+            const codingPlanAuthorization =
+              (
+                await credentialService.load(`oauth:${credentials.providerFamily}:access_token`)
+              )?.trim() ?? "";
+            return {
+              zcodeJwt: credentials.jwt,
+              family: credentials.providerFamily,
+              codingPlanAuthorization,
+              targetType: credentials.organizationId && credentials.projectId ? "TEAM" : "PERSONAL",
+              ...(credentials.organizationId ? { organizationId: credentials.organizationId } : {}),
+              ...(credentials.projectId ? { projectId: credentials.projectId } : {}),
+            };
+          },
+        });
+      })(),
+    )
     .register(ISkillsService, skillsService)
     .register(ISkillSyncService, createSkillSyncService())
     .register(IMcpSyncService, mcpSyncService)
+    .register(
+      IGenUiService,
+      createGenUiService({ registerSandbox: options?.registerPluginSandbox }),
+    )
+    .register(IPluginUiBridgeService, pluginUiBridgeService)
+    .register(IPluginUiSamplingService, pluginUiSamplingService)
+    .register(IPluginUiAppToolsService, pluginUiAppToolsService)
     // The MCP/Plugin Management service merge accidentally removed plugin-sync registration. Since
     // RemoteServiceAccess still requests this channel, local candidate enumeration timed out and remote
     // synchronization could not start.
@@ -2694,6 +2712,7 @@ export function createLocalServices(options: {
     .register(IMemoryService, createMemoryService())
     // Each host process (Desktop local Host or remote server) reads and writes its own ~/.zcode/AGENTS.md.
     .register(IUserInstructionsService, createUserInstructionsService())
+    .register(IOutputStyleService, createOutputStyleService())
     .register(ISettingsSyncService, createSettingsSyncService({ settingService }))
     .register(
       IFeedbackService,
@@ -2850,7 +2869,12 @@ function readTelemetryOAuthUserId(rawUserInfo: string | null): string {
 }
 
 export function disposeServiceResources(services: ServiceCollection): void {
-  // Before host-process exit, local services were not traversed through a shared resource cleanup path.
+  const content = services.getOptional(ICloudContentService);
+  if (content && hasDisposeAllAndWait(content)) void content.disposeAllAndWait().catch(() => {});
+  (
+    services.getOptional(IGenUiService) as (IGenUiService & { dispose?(): void }) | undefined
+  )?.dispose?.();
+  // Bugfix: Before host-process exit, local services were not traversed through a shared resource cleanup path.
   // Services such as terminal/task wrappers that spawn child processes had to wait for the host itself
   // to exit, which could leave short-lived processes behind. Call each service's local disposeAll hook
   // here so app exit reliably reclaims all managed resources.
@@ -2861,6 +2885,7 @@ export function disposeServiceResources(services: ServiceCollection): void {
     services.getOptional(IZCodeSessionService),
     services.getOptional(IBotsService),
     services.getOptional(IFileWatcherService),
+    services.getOptional(ISubagentsService),
     services.getOptional(IOffPeakTaskService),
   ].filter((service) => service !== undefined);
 
@@ -2888,16 +2913,21 @@ export function disposeServiceResources(services: ServiceCollection): void {
 }
 
 export async function disposeServiceResourcesAndWait(services: ServiceCollection): Promise<void> {
+  (
+    services.getOptional(IGenUiService) as (IGenUiService & { dispose?(): void }) | undefined
+  )?.dispose?.();
   // During app shutdown, the host must wait for graceful and forceful cleanup of the Agent process tree.
   // The old synchronous dispose dropped the force-kill timer when the host exited, leaving zcode-cli or
   // app-server as orphan processes.
   const disposableServices = [
+    services.getOptional(ICloudContentService),
     services.getOptional(ITerminalService),
     services.getOptional(IZCodeTaskService),
     services.getOptional(IZCodeAgentService),
     services.getOptional(IZCodeSessionService),
     services.getOptional(IBotsService),
     services.getOptional(IFileWatcherService),
+    services.getOptional(ISubagentsService),
     services.getOptional(IOffPeakTaskService),
   ].filter((service) => service !== undefined);
 
@@ -2929,3 +2959,4 @@ export async function disposeServiceResourcesAndWait(services: ServiceCollection
     ?.disposeAndWait()
     .catch(() => {});
 }
+export { localRuntimeNetworkCapture } from "./zcode-agent/localRuntimeNetworkCapture.js";

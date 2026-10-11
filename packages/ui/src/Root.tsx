@@ -1,3 +1,8 @@
+import {
+  RequestSecurityHost,
+  RequestSecurityWorkspaceBridge,
+  setRequestSecurityReporter,
+} from "@/request-security-edition/index.js";
 /* eslint-disable max-lines -- Root currently orchestrates startup and workspace shell wiring; keep this entry point cohesive to avoid scattering cross-layer state. */
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { LucideProvider, RefreshCw } from "lucide-react";
@@ -11,7 +16,10 @@ import { TooltipProvider } from "@/components/ui/tooltip.js";
 import { Button } from "@/components/ui/button.js";
 import { PlatformProvider } from "@/hooks/usePlatform.js";
 import { ServiceProvider } from "@/hooks/useServices.js";
-import { useDynamicWorkflowAvailabilityLoader } from "@/hooks/useDynamicWorkflowAvailability.js";
+import {
+  useDynamicWorkflowAvailabilityLoader,
+  useDynamicWorkflowUserModeSync,
+} from "@/hooks/useDynamicWorkflowAvailability.js";
 import { DirectoryBrowser } from "@/DirectoryBrowser.js";
 import { useTabPersistence } from "@/hooks/useTabPersistence.js";
 import { useTokenRefresh } from "@/hooks/useTokenRefresh.js";
@@ -20,6 +28,7 @@ import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { SSHDialog } from "@/SSHDialog.js";
 import { SettingsPage } from "@/SettingsPage.js";
 import { CodingPlanUpgradeDialogProvider } from "@/settings/CodingPlanUpgradeDialogProvider.js";
+import { RewardsProvider } from "@/rewards/RewardsProvider.js";
 import { WelcomeScreen, type LoginCompleteReason } from "@/WelcomeScreen.js";
 import { setDefaultFileDisplayBasePath } from "@/lib/fileDisplay.js";
 import { readRendererLaunchTimings, shouldReportLaunchToInput } from "@/lib/launchToInputReport.js";
@@ -59,8 +68,21 @@ import { registerBaseWorkspaceServices } from "@/store/remoteWorkspaceSessionSto
 import type { RootProps } from "@/root/types.js";
 import { DiffsWorkerPoolProvider } from "@/root/DiffsWorkerPoolProvider.js";
 import { useGlobalTaskList } from "@/hooks/useGlobalTaskList.js";
+import {
+  buildWebRemoteControlTaskRuntimeByWorkspaceKey,
+  buildWebRemoteControlTaskTargets,
+} from "@/lib/webRemoteControlTaskIndex.js";
+import {
+  logDeferredWebRemoteControlTaskSnapshot,
+  shouldSyncWebRemoteControlTaskSnapshot,
+} from "@/lib/webRemoteControlTaskSync.js";
 import { ScopedErrorBoundary } from "@/ErrorBoundary.js";
+import {
+  WebRemoteControlFeatureProvider,
+  useWebRemoteControlFeatureEnabled,
+} from "@/WebRemoteControlFeatureProvider.js";
 import { useRemoteConnectionLogs } from "@/hooks/useRemoteConnectionLogs.js";
+import { useWebRemoteControlStatus } from "@/hooks/useWebRemoteControlStatus.js";
 import {
   CODE_COMMENT_REMOVE_BROADCAST_CHANNEL,
   CODE_COMMENT_PREVIEW_RESTORE_BROADCAST_CHANNEL,
@@ -69,6 +91,7 @@ import {
   markCodeCommentRemoved,
 } from "@/lib/codeCommentContext.js";
 import { useCodeCommentPreviewStore } from "@/store/codeCommentPreviewStore.js";
+import { MarketingTouchProvider } from "@/components/marketing-touch/MarketingTouchProvider.js";
 import { setUiPerfArmsReporter } from "@/lib/uiPerfArmsTelemetry.js";
 import { setSessionOpenArmsReporter } from "@/lib/sessionOpenArmsTelemetry.js";
 import { setSendFunnelArmsReporter } from "@/lib/sendFunnelArmsTelemetry.js";
@@ -83,6 +106,7 @@ import {
   disposeConversationTelemetrySupervisors,
   reconcileConversationTelemetryWorkspaceScopes,
 } from "@/v4/telemetry/ConversationTelemetryAttachment.js";
+import { installConversationTelemetryParityE2EBridge } from "@/v4/telemetry/conversationTelemetryParityE2E.js";
 
 const DEFAULT_LUCIDE_STROKE_WIDTH = 1.5;
 interface RemoteConnectionOpenPreference {
@@ -96,6 +120,113 @@ type WelcomeScreenOpenReason =
   | "provider-request"
   | "logout-provider-required"
   | "session-expired";
+
+function WebRemoteControlTaskSync({
+  syncWebRemoteControlTasks,
+  workspaceTabs,
+}: {
+  syncWebRemoteControlTasks: NonNullable<RootProps["platform"]["syncWebRemoteControlTasks"]>;
+  workspaceTabs: WorkspaceTabState[];
+}) {
+  const workspaceStates = useZCodeSessionStore((state) => state.workspaces);
+  const timelineTaskList = useGlobalTaskList({
+    kind: "timeline",
+    workspaceTabs,
+    sortBy: "updated",
+    searchQuery: "",
+    expanded: true,
+    collapsedLimit: 100,
+  });
+  const pinnedTaskList = useGlobalTaskList({
+    kind: "pinned",
+    workspaceTabs,
+    sortBy: "updated",
+    searchQuery: "",
+    expanded: true,
+    collapsedLimit: 100,
+  });
+  const archivedTaskList = useGlobalTaskList({
+    kind: "archived",
+    workspaceTabs,
+    sortBy: "updated",
+    searchQuery: "",
+    expanded: true,
+    collapsedLimit: 100,
+  });
+  const taskTargets = useMemo(() => {
+    const runtimeByWorkspaceKey = buildWebRemoteControlTaskRuntimeByWorkspaceKey(workspaceStates);
+    // Bugfix: Root should not subscribe to the entire workspace table when Web remote control is
+    // disabled. Run the remote-control task index only after this component mounts, so desktop
+    // continuous streaming updates do not wake the Root/App/Shell main path.
+    // Bugfix: the mobile remote-control home previously synced only the timeline, whose query
+    // filters out pinned=1. Sync the SQLite pinned list separately to keep pinned tasks visible in
+    // the remote-control task list.
+    const pinnedTargets = buildWebRemoteControlTaskTargets({
+      workspaceTabs,
+      tasks: pinnedTaskList.items,
+      taskRuntimeByWorkspaceKey: runtimeByWorkspaceKey,
+      pinned: true,
+    });
+    const timelineTargets = buildWebRemoteControlTaskTargets({
+      workspaceTabs,
+      tasks: timelineTaskList.items,
+      taskRuntimeByWorkspaceKey: runtimeByWorkspaceKey,
+    });
+    // Bugfix: the wide Web remote-control archive view used to fall back to querying the current
+    // bridge workspace because the task index synced to remote did not include archived members.
+    // Archive targets are only remote-control list data and do not change the desktop task area.
+    const archivedTargets = buildWebRemoteControlTaskTargets({
+      workspaceTabs,
+      tasks: archivedTaskList.items,
+      taskRuntimeByWorkspaceKey: runtimeByWorkspaceKey,
+      archived: true,
+    });
+
+    return [...pinnedTargets, ...timelineTargets, ...archivedTargets].sort((left, right) => {
+      if (right.updatedAt !== left.updatedAt) {
+        return right.updatedAt - left.updatedAt;
+      }
+      if (right.createdAt !== left.createdAt) {
+        return right.createdAt - left.createdAt;
+      }
+      return right.taskId.localeCompare(left.taskId);
+    });
+  }, [
+    archivedTaskList.items,
+    pinnedTaskList.items,
+    timelineTaskList.items,
+    workspaceStates,
+    workspaceTabs,
+  ]);
+  const shouldSyncTasks = shouldSyncWebRemoteControlTaskSnapshot({
+    archivedLoading: archivedTaskList.loading,
+    enabled: true,
+    pinnedLoading: pinnedTaskList.loading,
+    timelineLoading: timelineTaskList.loading,
+  });
+
+  useEffect(() => {
+    if (!shouldSyncTasks) {
+      logDeferredWebRemoteControlTaskSnapshot(logger, {
+        pinnedLoading: pinnedTaskList.loading,
+        archivedLoading: archivedTaskList.loading,
+        timelineLoading: timelineTaskList.loading,
+      });
+      return;
+    }
+
+    syncWebRemoteControlTasks(taskTargets);
+  }, [
+    archivedTaskList.loading,
+    pinnedTaskList.loading,
+    shouldSyncTasks,
+    syncWebRemoteControlTasks,
+    taskTargets,
+    timelineTaskList.loading,
+  ]);
+
+  return null;
+}
 
 /**
  * Root — application root component
@@ -124,13 +255,20 @@ export function Root(props: RootProps) {
             >
               <TabStoreProvider>
                 <DiffsWorkerPoolProvider>
-                  <AssistantCodeCommentFeatureProvider
-                    enabled={props.assistantCodeCommentCardsEnabled}
-                  >
-                    <CodingPlanUpgradeDialogProvider>
-                      <RootInner {...props} />
-                    </CodingPlanUpgradeDialogProvider>
-                  </AssistantCodeCommentFeatureProvider>
+                  <WebRemoteControlFeatureProvider enabled={props.webRemoteControlFeatureEnabled}>
+                    <AssistantCodeCommentFeatureProvider
+                      enabled={props.assistantCodeCommentCardsEnabled}
+                    >
+                      <CodingPlanUpgradeDialogProvider>
+                        <RewardsProvider desktop={props.isDesktop === true}>
+                          <RequestSecurityHost />
+                          <MarketingTouchProvider desktop={props.isDesktop === true}>
+                            <RootInner {...props} />
+                          </MarketingTouchProvider>
+                        </RewardsProvider>
+                      </CodingPlanUpgradeDialogProvider>
+                    </AssistantCodeCommentFeatureProvider>
+                  </WebRemoteControlFeatureProvider>
                 </DiffsWorkerPoolProvider>
               </TabStoreProvider>
             </StoreProvider>
@@ -158,9 +296,14 @@ function RootInner({
   preferDirectoryBrowser,
   supportsEmbeddedBrowser: explicitSupportsEmbeddedBrowser,
   allowRemoteWorkspace = true,
+  webRemoteControlWorkspaceSwitcher,
+  initialWebRemoteControlMobileNavigationIntent,
+  initialWebRemoteControlWorkspaceList,
+  webRemoteControlTerminalTransportState,
   initialWorkspaceLoadingFallback,
 }: RootProps) {
   useEffect(() => {
+    setRequestSecurityReporter(platform);
     setMcpStorePlatform(platform);
     // Conversation UI performance reporting belongs only to desktop-continuous; Web/mobile do not install the reporter even if they can see authoritative state.
     setUiPerfArmsReporter(isDesktop ? platform : null);
@@ -168,12 +311,22 @@ function RootInner({
     // The send funnel follows the same rule: report only on the Electron desktop; reportArmsCustomEvent is a no-op on Web/mobile.
     setSendFunnelArmsReporter(isDesktop ? platform : null);
     return () => {
+      setRequestSecurityReporter(null);
       setMcpStorePlatform(null);
       setUiPerfArmsReporter(null);
       setSessionOpenArmsReporter(null);
       setSendFunnelArmsReporter(null);
     };
   }, [isDesktop, platform]);
+
+  useEffect(
+    () =>
+      installConversationTelemetryParityE2EBridge({
+        platform,
+        isDesktop: isDesktop === true,
+      }),
+    [isDesktop, platform],
+  );
 
   useEffect(
     () => () => {
@@ -202,6 +355,15 @@ function RootInner({
     refresh: refreshAppSettings,
     update: updateAppSettings,
   } = useSettings();
+  // docs/dynamic-workflow/launch.md, “The user's choice”: when the dynamic-workflow selection in
+  // Settings changes, notify this window's Host to resend the CLI policy (and forward it to the
+  // remote Host), then reread the rollout snapshot.
+  useDynamicWorkflowUserModeSync({
+    settingsLoaded: Boolean(appSettings),
+    userMode: appSettings?.dynamicWorkflowMode,
+    zcodeAgentService: services.zcodeAgentService,
+    codingPlanSubscriptionService: services.codingPlanSubscriptionService,
+  });
   const [welcomeScreenOpenReason, setWelcomeScreenOpenReason] =
     useState<WelcomeScreenOpenReason | null>(() =>
       consumeZcodeJwtInvalidRestartMarker() ? "session-expired" : null,
@@ -385,6 +547,23 @@ function RootInner({
   const addTab = useTabStore((state) => state.addTab);
   const activateTabByPath = useTabStore((state) => state.activateTabByPath);
   const tabStoreApi = useTabStoreApi();
+  const webRemoteControlFeatureEnabled = useWebRemoteControlFeatureEnabled();
+  // Bugfix: WebRemoteControlDialog is only a toggleable presentation entry point; its local state
+  // must not determine global remote-control state. Root polls the main-process state directly so
+  // task snapshot sync is tied only to actual remote sessions that are running/active.
+  const webRemoteControlStatus = useWebRemoteControlStatus({
+    enabled: Boolean(
+      webRemoteControlFeatureEnabled && isDesktop && platform.syncWebRemoteControlTasks,
+    ),
+  });
+  const webRemoteControlSessionActive =
+    webRemoteControlStatus.status === "running" || webRemoteControlStatus.status === "active";
+  const webRemoteControlTaskSyncEnabled = Boolean(
+    webRemoteControlFeatureEnabled &&
+    webRemoteControlSessionActive &&
+    isDesktop &&
+    platform.syncWebRemoteControlTasks,
+  );
   const refreshProviderState = useRootProviderStateRefresh(services);
   useRootProviderSettingsSnapshot(services);
   useEffect(() => {
@@ -428,8 +607,11 @@ function RootInner({
     modelSelectionViewHydrated:
       rootProviderAvailability.hydrated || rootModelSelectionRead.state.status === "error",
   });
+  const isWebRemoteControlRoot = Boolean(webRemoteControlWorkspaceSwitcher);
   const providerAvailabilityLoginEntryGuardEnabled =
-    shouldEnableProviderAvailabilityLoginEntryGuard();
+    shouldEnableProviderAvailabilityLoginEntryGuard({
+      isWebRemoteControlRoot,
+    });
   const { startupCheckCompleted: providerAvailabilityStartupCheckCompleted } =
     useProviderAvailabilityLoginEntryGuard({
       enabled: providerAvailabilityLoginEntryGuardEnabled,
@@ -456,6 +638,7 @@ function RootInner({
       },
     });
   const isResolvingProviderStartupState = shouldResolveProviderStartupState({
+    isWebRemoteControlRoot,
     providerStartupSyncPending,
     providerAvailabilityStartupCheckCompleted,
   });
@@ -522,6 +705,9 @@ function RootInner({
     },
     userId: user?.id,
     onOpenRemoteConnection: allowRemoteWorkspace ? handleOpenRemoteConnection : undefined,
+    workbenchGroupClientMode: isWebRemoteControlRoot
+      ? "web-remote-replayable"
+      : "desktop-continuous",
   });
   const handleRemoteWorkspaceActivated = useCallback(
     ({
@@ -566,7 +752,35 @@ function RootInner({
   });
 
   useEffect(() => {
-    // When fileDisplay receives no basePath, it must use the currently active workspace.
+    if (!platform.onWebRemoteControlReconnectWorkspace) {
+      return;
+    }
+
+    return platform.onWebRemoteControlReconnectWorkspace(async (request) => {
+      try {
+        await handleReconnectRemoteWorkspace(request.workspaceKey, {
+          activateWorkspaceAfterReconnect: false,
+          showErrorToast: false,
+          throwOnFailure: true,
+        });
+        return {
+          requestId: request.requestId,
+          workspaceKey: request.workspaceKey,
+          success: true,
+        };
+      } catch (error) {
+        return {
+          requestId: request.requestId,
+          workspaceKey: request.workspaceKey,
+          success: false,
+          error: error instanceof Error ? error.message : String(error),
+        };
+      }
+    });
+  }, [handleReconnectRemoteWorkspace, platform]);
+
+  useEffect(() => {
+    // Bugfix: when fileDisplay does not provide basePath, use the currently active workspace.
     // Previously, the utility layer could not access the window’s workspace context and had to fall back to absolute paths, making mentions and file display in the input unnecessarily verbose.
     // Root synchronizes the current context on workspace switches here, preserving utility reuse without coupling utility functions to Zustand.
     setDefaultFileDisplayBasePath(activeWorkspacePath);
@@ -602,6 +816,26 @@ function RootInner({
       })),
     );
   }, [hasCompletedFullRestore, isDesktop, windowWorkspaceTabs]);
+
+  const webRemoteControlTaskSyncNode =
+    hasCompletedFullRestore &&
+    webRemoteControlTaskSyncEnabled &&
+    platform.syncWebRemoteControlTasks ? (
+      <WebRemoteControlTaskSync
+        syncWebRemoteControlTasks={platform.syncWebRemoteControlTasks}
+        workspaceTabs={windowWorkspaceTabs}
+      />
+    ) : null;
+
+  // Root cause (Web remote control stuck, 2026-08-16): the Start Plan request validator used to
+  // mount only with the session pane currently shown on desktop. When Web remote control created a
+  // session, desktop had no corresponding pane and Web had no validator, leaving the headers request
+  // pending forever and the task stuck in “Working.” Keep the validator mounted for the desktop
+  // window and cover every open workspace tab, independent of presentation state. Web remains
+  // unsubscribed; desktop stays the sole authority.
+  const requestSecurityBridgeNode = isDesktop ? (
+    <RequestSecurityWorkspaceBridge workspaceTabs={windowWorkspaceTabs} />
+  ) : null;
 
   const { tryRefresh, clearCredentials } = useTokenRefresh();
   void tryRefresh;
@@ -671,6 +905,8 @@ function RootInner({
     reconnectingRemoteWorkspaceKeys,
     remoteWorkspaceErrorByWorkspaceKey,
     totalUnreadTaskCount,
+    webRemoteControlFeatureEnabled,
+    webRemoteControlSessionActive,
     hasCompletedFullTabRestore: hasCompletedFullRestore,
     intl,
     isRestoringOAuthSession: isResolvingStartupAuthState || providerStartupSyncPending,
@@ -953,6 +1189,7 @@ function RootInner({
     isDesktop,
     isMacDesktop,
     isWindowsDesktop,
+    isWebRemoteControl: Boolean(webRemoteControlWorkspaceSwitcher),
     captionWorkspacePath: activeWorkspacePath,
     onBack: activeWorkspacePath ? handleBackFromSettings : undefined,
     onCreateTask: handleCreateTask,
@@ -968,11 +1205,13 @@ function RootInner({
     return (
       <RootShell>
         {rootModelSelectionErrorNode}
+        {webRemoteControlTaskSyncNode}
+        {requestSecurityBridgeNode}
         {remoteConnectionDialog}
         {directoryBrowserDialog}
-        {/* The HTML startup shell already shows the ZCode SVG, but React replaces the entire shell when it takes over the root.
-            Previously, tab restoration / initial workspace injection blocked and rendered plain "Loading..." text, splitting startup into two loading states.
-            Reuse the same SVG startup screen here and keep the copy only in aria-label, preserving visual continuity and accessibility. */}
+        {/* Reason for the fix: The HTML startup shell already displays the ZCode SVG, but React replaces the entire shell when it takes over the root.
+            Previously, while restoring tabs or injecting the initial workspace, it rendered plain “Loading...” text again, splitting startup into two loading experiences.
+            Reuse the same SVG startup screen and keep the text only in aria-label, preserving visual continuity and accessibility. */}
         <RootStartupLoading label={loadingLabel} />
       </RootShell>
     );
@@ -982,6 +1221,8 @@ function RootInner({
     return (
       <RootShell>
         {rootModelSelectionErrorNode}
+        {webRemoteControlTaskSyncNode}
+        {requestSecurityBridgeNode}
         {remoteConnectionDialog}
         {directoryBrowserDialog}
         <WelcomeScreen onComplete={handleWelcomeScreenComplete} />
@@ -1000,6 +1241,8 @@ function RootInner({
     return (
       <RootShell>
         {rootModelSelectionErrorNode}
+        {webRemoteControlTaskSyncNode}
+        {requestSecurityBridgeNode}
         {initialWorkspaceLoadingFallback}
         {directoryBrowserDialog}
       </RootShell>
@@ -1009,6 +1252,8 @@ function RootInner({
   return (
     <RootShell>
       {rootModelSelectionErrorNode}
+      {webRemoteControlTaskSyncNode}
+      {requestSecurityBridgeNode}
       {remoteConnectionDialog}
       {directoryBrowserDialog}
       <OccupationOnboarding
@@ -1065,6 +1310,12 @@ function RootInner({
             }
             remoteConnectionLogs={remoteConnectionLogs}
             allowOpenWorkspace={allowOpenWorkspace}
+            webRemoteControlWorkspaceSwitcher={webRemoteControlWorkspaceSwitcher}
+            initialWebRemoteControlMobileNavigationIntent={
+              initialWebRemoteControlMobileNavigationIntent
+            }
+            initialWebRemoteControlWorkspaceList={initialWebRemoteControlWorkspaceList}
+            webRemoteControlTerminalTransportState={webRemoteControlTerminalTransportState}
             isDesktop={isDesktop}
             isMacDesktop={isMacDesktop}
             isWindowsDesktop={isWindowsDesktop}

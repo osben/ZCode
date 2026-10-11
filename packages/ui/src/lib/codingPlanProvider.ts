@@ -1,5 +1,5 @@
 import { type UsageEntitlementSnapshot } from "@zcode/shared";
-import { type ProviderSettingsFormProvider } from "@/lib/providerSettingsFormTypes.js";
+import type { ProviderSettingsFormProvider } from "@/lib/providerSettingsFormTypes.js";
 
 export function pickCodingPlanEntitlementProvider(
   codingPlanProvider: ProviderSettingsFormProvider | null | undefined,
@@ -16,7 +16,7 @@ export function hasActiveUsageEntitlementSnapshot(
   return resolveUsageEntitlementOutcome(snapshot, providerId) === "active";
 }
 
-type UsageEntitlementOutcome = "active" | "inactive" | "unknown";
+export type UsageEntitlementOutcome = "active" | "inactive" | "unknown";
 
 /** Treat only an authoritative no_plan as invalid; network/authentication errors and incomplete snapshots remain unknown. */
 export function resolveUsageEntitlementOutcome(

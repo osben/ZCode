@@ -31,6 +31,8 @@ export interface ModelProviderEndpoints {
   paths?: Partial<Record<ModelProviderKind, string>>;
 }
 
+export type RemoteProviderSchema = "anthropic" | "openai:chat" | "openai:messages" | "gemini";
+
 export type ModelProviderSupportedFormat = "anthropic" | "openai" | "responses" | "gemini";
 
 export type ModelProviderApiFormat =
@@ -77,6 +79,22 @@ export interface ModelProviderCatalogModel {
   maxOutputTokens?: number;
   reasoning?: ModelProviderReasoningSpec;
   priority?: number;
+}
+
+export interface ModelProviderCatalogProvider {
+  id: string;
+  name: string;
+  endpoints: {
+    baseURL: string;
+    paths: Partial<Record<ModelProviderKind, string>>;
+  };
+  defaultKind?: ModelProviderKind;
+  models: ModelProviderCatalogModel[];
+}
+
+export interface ModelProviderCatalogFile {
+  schemaVersion: "zcode.model-providers.v1";
+  providers: ModelProviderCatalogProvider[];
 }
 
 export interface ModelProviderModelConfig extends ModelProviderCatalogModel {
@@ -130,6 +148,11 @@ export interface ModelProviderConfig {
   updatedAt: number;
 }
 
+export interface ModelProviderStoreFile {
+  schemaVersion: "zcode.model-providers.v2";
+  providers: ModelProviderConfig[];
+}
+
 const claudeModelMappingSchema = z.object({
   haiku: z.string(),
   sonnet: z.string(),
@@ -155,13 +178,13 @@ export const modelProviderKindSchema = z.enum(["anthropic", "openai", "openai-co
 
 export const modelProviderCatalogSourceIdSchema = z.enum(["china-llm-zcode-dev"]);
 
-const modelProviderModalitySchema = z.enum(["text", "image", "video", "audio", "pdf"]);
+export const modelProviderModalitySchema = z.enum(["text", "image", "video", "audio", "pdf"]);
 
 const providerOptionsPatchOperationSchema = z.object({
   path: z.array(z.string().min(1)).min(1),
 });
 
-const providerOptionsPatchSchema = z.object({
+export const providerOptionsPatchSchema = z.object({
   set: z.array(providerOptionsPatchOperationSchema.extend({ value: z.unknown() })).optional(),
   unset: z.array(providerOptionsPatchOperationSchema).optional(),
 });
@@ -174,14 +197,17 @@ export const modelProviderReasoningSpecSchema = z.object({
   ),
 });
 
-const modelProviderEndpointPathsSchema = z.partialRecord(modelProviderKindSchema, z.string());
+export const modelProviderEndpointPathsSchema = z.partialRecord(
+  modelProviderKindSchema,
+  z.string(),
+);
 
 const modelProviderCatalogEndpointSchema = z.object({
   baseURL: z.string(),
   paths: modelProviderEndpointPathsSchema,
 });
 
-const modelProviderCatalogModelSchema = z.object({
+export const modelProviderCatalogModelSchema = z.object({
   id: z.string().min(1),
   name: z.string().optional(),
   kinds: z.array(modelProviderKindSchema),
@@ -197,7 +223,7 @@ const modelProviderCatalogModelSchema = z.object({
   priority: z.number().finite().optional(),
 });
 
-const modelProviderCatalogProviderSchema = z.object({
+export const modelProviderCatalogProviderSchema = z.object({
   id: z.string().min(1),
   name: z.string().min(1),
   endpoints: modelProviderCatalogEndpointSchema,
@@ -210,7 +236,7 @@ export const modelProviderCatalogFileSchema = z.object({
   providers: z.array(modelProviderCatalogProviderSchema),
 });
 
-const modelProviderModelConfigSchema = modelProviderCatalogModelSchema.extend({
+export const modelProviderModelConfigSchema = modelProviderCatalogModelSchema.extend({
   disabledReason: z.string().optional(),
   supportsTools: z.boolean().optional(),
   supportsStructuredOutput: z.boolean().optional(),
@@ -242,7 +268,7 @@ export const modelProviderEndpointsSchema = legacyModelProviderEndpointsSchema.e
   paths: modelProviderEndpointPathsSchema.optional(),
 });
 
-const legacyModelProviderConfigSchema = z.object({
+export const legacyModelProviderConfigSchema = z.object({
   id: z.string(),
   name: z.string(),
   enabled: z.boolean().optional(),
@@ -266,7 +292,7 @@ const legacyModelProviderConfigSchema = z.object({
 
 export const legacyModelProviderListSchema = z.array(legacyModelProviderConfigSchema);
 
-const modelProviderConfigSchema = z.object({
+export const modelProviderConfigSchema = z.object({
   id: z.string(),
   name: z.string(),
   enabled: z.boolean().optional(),
@@ -291,7 +317,7 @@ const modelProviderConfigSchema = z.object({
   updatedAt: z.number(),
 });
 
-const modelProviderListSchema = z.array(modelProviderConfigSchema);
+export const modelProviderListSchema = z.array(modelProviderConfigSchema);
 
 export const modelProviderStoreFileSchema = z.object({
   schemaVersion: z.literal("zcode.model-providers.v2"),
@@ -319,6 +345,7 @@ export const MODEL_PROVIDER_NEW_MODEL_CONTEXT_WINDOW = 200_000;
 // When legacy config or a model without metadata has no reliable catalog facts, use the same conservative default as models added in the settings UI
 // to avoid 128k/200k disagreements between the agent registry and the UI.
 const LEGACY_MODEL_CONTEXT_WINDOW = MODEL_PROVIDER_NEW_MODEL_CONTEXT_WINDOW;
+export const MODEL_ONE_MILLION_CONTEXT_WINDOW = 1_000_000;
 
 export function resolveModelProviderContextWindow(contextWindow: number | undefined): number {
   if (typeof contextWindow !== "number" || !Number.isFinite(contextWindow)) {
@@ -461,7 +488,9 @@ export function resolveModelProviderKindApiFormat(kind: ModelProviderKind): Mode
   }
 }
 
-function mapModelProviderApiFormatToKind(apiFormat: ModelProviderApiFormat): ModelProviderKind {
+export function mapModelProviderApiFormatToKind(
+  apiFormat: ModelProviderApiFormat,
+): ModelProviderKind {
   switch (apiFormat) {
     case "anthropic-messages":
       return "anthropic";
@@ -593,6 +622,26 @@ export function resolveModelProviderRuntimeBaseUrl(
   return normalizeModelProviderBaseUrlForKind(joinBaseUrlAndPath(baseURL, paths[kind] ?? ""), kind);
 }
 
+export function getModelProviderEndpointKinds(
+  endpoints: ModelProviderEndpoints,
+): ModelProviderKind[] {
+  const kinds: ModelProviderKind[] = [];
+  const paths = endpoints.paths;
+  if (endpoints.baseURL?.trim() || paths) {
+    if (paths?.anthropic !== undefined) {
+      kinds.push("anthropic");
+    }
+    if (paths?.openai !== undefined) {
+      kinds.push("openai");
+    }
+    if (paths?.["openai-compatible"] !== undefined) {
+      kinds.push("openai-compatible");
+    }
+    return kinds;
+  }
+  return [];
+}
+
 function pathFromModelProviderEndpointUrl(url: URL): string {
   const path = url.pathname === "/" ? "" : url.pathname.replace(/\/+$/, "");
   return `${path}${url.search}`;
@@ -672,7 +721,7 @@ export function migrateLegacyModelProviderConfig(
 ): ModelProviderConfig {
   const defaultKind = resolveLegacyModelProviderDefaultKind(provider);
   // A legacy provider may configure both Anthropic and OpenAI. Preserve historical paths during migration;
-  // the service storage boundary will later converge on one kind according to OpenCode runtime config.
+  // the service storage boundary will later converge on one kind according to the runtime config.
   const legacyEntries: Array<[ModelProviderKind, string]> = [];
   const anthropicEndpoint = provider.endpoints.anthropic?.trim();
   if (anthropicEndpoint) {
@@ -733,6 +782,14 @@ export function migrateLegacyModelProviderConfig(
   };
 }
 
+export function migrateLegacyModelProviderListToStoreFile(raw: unknown): ModelProviderStoreFile {
+  const providers = legacyModelProviderListSchema.parse(raw);
+  return {
+    schemaVersion: "zcode.model-providers.v2",
+    providers: providers.map(migrateLegacyModelProviderConfig),
+  };
+}
+
 export function getDefaultModelSupportedFormatsFromEndpoints(
   endpoints: Partial<
     Pick<ModelProviderEndpoints, "anthropic" | "openai" | "gemini" | "baseURL" | "paths">
@@ -785,7 +842,7 @@ export function resolveModelProviderApiFormat(
   }
 
   // Legacy migration data may declare multiple protocols. Without an explicit defaultKind/apiFormat,
-  // continue to prefer the Anthropic-compatible primary path so Claude-oriented providers are not switched to OpenAI by mistake.
+  // continue to prefer the Anthropic-compatible primary path so Anthropic-protocol providers are not switched to OpenAI by mistake.
   if (provider.endpoints.paths?.anthropic !== undefined) {
     return "anthropic-messages";
   }
@@ -799,6 +856,26 @@ export function resolveModelProviderApiFormat(
   }
 
   return "anthropic-messages";
+}
+
+export function resolveModelProviderBaseUrl(
+  provider: Pick<ModelProviderConfig, "apiFormat" | "endpoints"> &
+    Partial<Pick<ModelProviderConfig, "defaultKind">>,
+): string {
+  const kind = mapModelProviderApiFormatToKind(resolveModelProviderApiFormat(provider));
+  const runtimeBaseURL = resolveModelProviderRuntimeBaseUrl(provider, kind);
+  if (runtimeBaseURL) {
+    // Fix rationale: the settings page input shows the SDK/runtime baseURL.
+    // When the internal endpoints.baseURL is only a shared prefix, recombine it with the fixed operation path to restore the displayed value.
+    return runtimeBaseURL;
+  }
+  const baseURL = provider.endpoints.baseURL?.trim();
+  if (baseURL) {
+    // Bugfix: early settings pages saved the full Chat Completions request URL into baseURL.
+    // The Base URL input should show the SDK's API base URL so re-saving does not perpetuate the malformed value.
+    return normalizeModelProviderBaseUrlForKind(baseURL, kind);
+  }
+  return resolveModelProviderRuntimeBaseUrl(provider, kind);
 }
 
 /** Connectivity test error category. */

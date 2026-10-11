@@ -17,6 +17,74 @@ function tryResolveHttpUrl(resolve: () => string | URL): URL | null {
   }
 }
 
+const OAUTH_BUSINESS_PATHS = [
+  "/api/biz/customer/getCustomerInfo",
+  "/api/biz/subscription/enterprise/v2/pricing",
+  "/api/biz/team/subscribe/product/querySubscribeDetail",
+] as const;
+
+async function isCurrentBusinessOAuthCredentialRequest(options: {
+  input: string | URL;
+  headers: Headers;
+  credentialService: Pick<ICredentialService, "load">;
+  env?: NodeJS.ProcessEnv;
+}): Promise<boolean> {
+  const authorization = options.headers.get("authorization")?.trim() ?? "";
+  if (!authorization) return false;
+
+  const provider = await options.credentialService.load("oauth:active_provider");
+  if (!(await isOAuthBusinessRequest({ ...options, provider }))) return false;
+
+  const accessToken = (
+    await options.credentialService.load(`oauth:${provider}:access_token`)
+  )?.trim();
+  if (!accessToken || (authorization !== accessToken && authorization !== `Bearer ${accessToken}`))
+    return false;
+  // The platform may change while reading from disk; do not use a 401 from a token left by the previous platform to clear the current login.
+  return (await options.credentialService.load("oauth:active_provider")) === provider;
+}
+
+export async function isOAuthBusinessRequest(options: {
+  input: string | URL;
+  credentialService: Pick<ICredentialService, "load">;
+  env?: NodeJS.ProcessEnv;
+  provider?: string | null;
+}): Promise<boolean> {
+  const provider =
+    options.provider ?? (await options.credentialService.load("oauth:active_provider"));
+  if (provider !== BIGMODEL_PROVIDER_ID && provider !== ZAI_PROVIDER_ID) return false;
+  const env = options.env ?? process.env;
+  const requestUrl = tryResolveHttpUrl(() => options.input);
+  if (!requestUrl) return false;
+  const urls =
+    provider === BIGMODEL_PROVIDER_ID
+      ? [
+          ...OAUTH_BUSINESS_PATHS.map((path) => () => buildBigModelApiUrl(env, path)),
+          () => resolveBigModelUserinfoUrl(env),
+        ]
+      : [
+          ...OAUTH_BUSINESS_PATHS.map((path) => () => buildRuntimeZaiBusinessUrl(env, path)),
+          () => resolveZaiUserinfoUrl(env),
+        ];
+  return urls.some((resolve) => {
+    const expected = tryResolveHttpUrl(resolve);
+    return (
+      expected !== null &&
+      requestUrl.origin === expected.origin &&
+      requestUrl.pathname === expected.pathname
+    );
+  });
+}
+
+export async function isCurrentOAuthBusinessCredentialRequest(options: {
+  input: string | URL;
+  headers: Headers;
+  credentialService: Pick<ICredentialService, "load">;
+  env?: NodeJS.ProcessEnv;
+}): Promise<boolean> {
+  return isCurrentBusinessOAuthCredentialRequest(options);
+}
+
 // This only identifies candidate requests; OAuthService must recheck them inside the session-change queue before signing out, rather than relying on a stale async snapshot.
 export async function isCurrentOAuthCredentialRequest(options: {
   input: string | URL;
@@ -28,38 +96,5 @@ export async function isCurrentOAuthCredentialRequest(options: {
   if (!authorization) return false;
   const currentJwt = (await options.credentialService.load("zcodejwttoken"))?.trim() ?? "";
   if (currentJwt && authorization === `Bearer ${currentJwt}`) return true;
-
-  // The old observer recognized only ZCode JWTs, so a userinfo 401 from a business access token
-  // became an ordinary request error. Extend only user/team identity queries to avoid global sign-out for payment and API-key endpoints.
-  const provider = await options.credentialService.load("oauth:active_provider");
-  if (provider !== BIGMODEL_PROVIDER_ID && provider !== ZAI_PROVIDER_ID) return false;
-  const env = options.env ?? process.env;
-  const requestUrl = tryResolveHttpUrl(() => options.input);
-  if (!requestUrl) return false;
-  const customerInfoPath = "/api/biz/customer/getCustomerInfo";
-  // A failure constructing one candidate URL used to block 401 recognition for other valid endpoints.
-  // Construct and parse each URL independently, reading only the configuration needed for userinfo to avoid unrelated authorization/login configuration errors.
-  const urls =
-    provider === BIGMODEL_PROVIDER_ID
-      ? [() => buildBigModelApiUrl(env, customerInfoPath), () => resolveBigModelUserinfoUrl(env)]
-      : [() => buildRuntimeZaiBusinessUrl(env, customerInfoPath), () => resolveZaiUserinfoUrl(env)];
-  if (
-    !urls.some((resolve) => {
-      const expected = tryResolveHttpUrl(resolve);
-      return (
-        expected !== null &&
-        requestUrl.origin === expected.origin &&
-        requestUrl.pathname === expected.pathname
-      );
-    })
-  )
-    return false;
-
-  const accessToken = (
-    await options.credentialService.load(`oauth:${provider}:access_token`)
-  )?.trim();
-  if (!accessToken || (authorization !== accessToken && authorization !== `Bearer ${accessToken}`))
-    return false;
-  // The platform may change while reading from disk; do not use a 401 from a token left by the previous platform to clear the current login.
-  return (await options.credentialService.load("oauth:active_provider")) === provider;
+  return isCurrentBusinessOAuthCredentialRequest(options);
 }

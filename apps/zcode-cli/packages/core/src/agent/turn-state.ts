@@ -166,7 +166,8 @@ export interface TurnAttachment {
   path?: string;
   content?: string;
   /** clipboard-text is a temporary attachment created by persisting a long UI paste; model requests keep only its path reference. */
-  sourceKind?: "clipboard-text";
+  sourceKind?: "clipboard-text" | "topic-history";
+  messageCount?: number;
   // Display metadata passed through the protocol boundary unchanged for TurnStarted events/v4 projection;
   // if absent, fall back to inferring it from basename/extension. It is not used to parse content.
   filename?: string;

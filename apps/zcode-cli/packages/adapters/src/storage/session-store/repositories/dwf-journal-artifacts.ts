@@ -18,25 +18,31 @@
 
 import type { DatabaseSync } from "node:sqlite";
 import type { NodeRecord } from "@zcode/dynamic-workflow";
-import { decodeNode, type DwfEventRow, type DwfNodeRow } from "./dwf-journal-codecs.js";
+import { decodeNode, type DwfNodeRow } from "./dwf-journal-codecs.js";
+import { listArtifactFieldItems } from "./dwf-journal-fields.js";
+import { pageEventRows } from "./dwf-journal-pages.js";
 
-   /** Pagination options for {@link listArtifactItems} (cursor = journal sequence). */
+/**
+ * Pagination options for {@link listArtifactItems} (cursor = journal sequence). See dwf-journal-pages.ts for the two limits:
+ * stop at `limit` items or when adding the next item would exceed `maxBytes`; always include the first item.
+ *
+ * Both are **required**, and the storage layer applies them exactly without adding its own ceiling: the gateway chooses and clamps page size; an unbounded
+ * read query is the one shape this layer must never issue. This layer determines `hasMore` (whether rows remain after the page), so callers do not need
+ * to guess by fetching an extra item.
+ */
 export interface DwfArtifactItemsQuery {
   /**
    * Return only entries with a sequence **strictly greater** than this value. The cursor is the last sequence
    * read, not an offset, with exactly the same semantics as `listEvents`; the board hook already uses this cursor.
    */
   afterSequence?: number;
-  /**
-   * Maximum items per page, **required**. The storage layer does not guess a default for callers; an unbounded
-   * query is the one shape this API must never have.
-   *
-   * But **do not add another cap here** (such as `Math.min(500, limit)`). Callers may validly pass “clamped
-   * limit + 1” to determine `hasMore` (the extra row is not included in the page). A hard cap would silently drop
-   * that probe row, making `hasMore` absent whenever limit equals the cap. This is the same reasoning as the
-   * truncation-probe row for `DwfListRunsQuery.limit`.
-   */
   limit: number;
+  maxBytes: number;
+  /**
+   * Select only these field paths (dwf-journal-fields.ts), with each value capped at `maxValueBytes`; when present, entries include
+   * `fields` instead of `item`, and `maxBytes` counts the selected field values. Absent means the entire item.
+   */
+  fields?: { paths: readonly string[]; maxValueBytes: number };
 }
 
 /**
@@ -47,8 +53,10 @@ export interface DwfArtifactItemsQuery {
  * the reveal animation needs a React key stable across refetches, and both sequence and coordinates provide one.
  */
 export interface DwfArtifactItem {
-  /** Original reported item (arbitrary JSON; `REPORT_CAPS` bounds it on write). */
-  item: unknown;
+  /** Original reported item (arbitrary JSON; `REPORT_CAPS` bounds it on write). Absent when selecting fields only. */
+  item?: unknown;
+  /** Fields-only selection: path → value; paths that cannot be resolved are omitted. */
+  fields?: Record<string, unknown>;
   ordinal: number;
   sequence: number;
   siteId: string;
@@ -73,6 +81,25 @@ export function listArtifactRows(db: DatabaseSync, runId: string): NodeRecord[] 
 }
 
 /**
+ * Count tagged reports for each declared artifact (`itemCount`, the dashboard's item count). Push `group by` down to SQLite;
+ * `dwf_node_artifact_idx (run_id, artifact_id)` is designed for this query, so not a single row needs to be read. Previously the host loaded the entire
+ * node table (including every report item) into memory and counted in JS; listing artifacts for a run with 65,536 reports decoded every item
+ * on every query (docs/execution-engine.md, “Reading the journal”).
+ */
+export function countTaggedReports(db: DatabaseSync, runId: string): ReadonlyMap<string, number> {
+  const rows = db
+    .prepare(
+      `
+      select artifact_id, count(*) as total from dwf_node
+      where run_id = ? and kind = 'report' and artifact_id is not null
+      group by artifact_id
+      `,
+    )
+    .all(runId) as unknown as { artifact_id: string; total: number | bigint }[];
+  return new Map(rows.map((row) => [row.artifact_id, Number(row.total)]));
+}
+
+/**
  * Paginate `report` entries for a preset artifact in ascending journal sequence (the board's read surface).
  *
  * Read from **dwf_event rather than dwf_node**, even though both tables record the same tagged reports. The cursor
@@ -93,30 +120,21 @@ export function listArtifactItems(
   runId: string,
   artifactId: string,
   query: DwfArtifactItemsQuery,
-): DwfArtifactItem[] {
-  // limit ≤ 0 means an empty page (`listEvents`'s `limit -1` convention for “all” does not apply here; the
-  // board's read surface is always bounded). Enforce a floor here, but no ceiling; see {@link DwfArtifactItemsQuery}.limit.
-  if (query.limit <= 0) return [];
-  const after = query.afterSequence;
-  const cursor = after === undefined ? "" : " and sequence > ?";
-  const rows = db
-    .prepare(
-      `
-      select sequence, payload_json from dwf_event
-      where run_id = ?
-        and type = 'report'
-        and json_extract(payload_json, '$.artifactId') = ?${cursor}
-      order by sequence
-      limit ?
-      `,
-    )
-    .all(
-      runId,
-      artifactId,
-      ...(after === undefined ? [] : [after]),
-      query.limit,
-    ) as unknown as Pick<DwfEventRow, "payload_json" | "sequence">[];
-  return rows.map((row) => {
+): { items: DwfArtifactItem[]; hasMore: boolean } {
+  if (query.fields !== undefined) {
+    return listArtifactFieldItems(db, runId, artifactId, {
+      ...(query.afterSequence === undefined ? {} : { afterSequence: query.afterSequence }),
+      fields: query.fields.paths,
+      limit: query.limit,
+      maxBytes: query.maxBytes,
+      maxValueBytes: query.fields.maxValueBytes,
+    });
+  }
+  const { rows, hasMore } = pageEventRows(db, runId, query, {
+    sql: " and type = 'report' and json_extract(payload_json, '$.artifactId') = ?",
+    params: [artifactId],
+  });
+  const items = rows.map((row) => {
     // The payload is the `RunEvent` stringified as-is by appendEvent, so this narrow shape shares the same source as
     // `{ type: "report"; instance: InstanceRef; item: unknown; artifactId?: string }`.
     const payload = JSON.parse(row.payload_json) as {
@@ -130,4 +148,5 @@ export function listArtifactItems(
       item: payload.item,
     };
   });
+  return { items, hasMore };
 }

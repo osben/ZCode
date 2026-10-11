@@ -104,13 +104,13 @@ interface AgentGroups {
   user: AgentSummary[];
 }
 
-function projectSettingsSubagents(result: AgentsListResult): AgentSummary[] {
-  // result.agents is a runtime-call projection, and a Plugin agent may have both a canonical name and a bare-name alias;
+export function projectSettingsSubagents(result: AgentsListResult): AgentSummary[] {
+  // Bugfix: result.agents is a runtime-call projection, and a plugin agent may have both a canonical name and a bare-name alias;
   // Settings displays installed resources, so the Plugin section must use the one-entry-per-file pluginAgents projection instead.
   return [...result.agents.filter((agent) => agent.source !== "plugin"), ...result.pluginAgents];
 }
 
-interface SubagentFormInitialState {
+export interface SubagentFormInitialState {
   name: string;
   description: string;
   color: AgentColor;
@@ -212,9 +212,9 @@ function toSubagentModelSelection(
   };
 }
 
-type SubagentThoughtOptionState = SubagentReasoningFieldState;
+export type SubagentThoughtOptionState = SubagentReasoningFieldState;
 
-function resolveSubagentThoughtOptionState(params: {
+export function resolveSubagentThoughtOptionState(params: {
   model: string;
   modelAvailable: boolean;
   modelSelectionView?: ModelSelectionView | null;
@@ -250,7 +250,7 @@ function resolveSubagentThoughtOptionState(params: {
   return { kind: "unsupported" };
 }
 
-function isSubagentThoughtLevelAvailable(
+export function isSubagentThoughtLevelAvailable(
   state: SubagentThoughtOptionState,
   thoughtLevel: string | undefined,
 ): boolean {
@@ -276,7 +276,7 @@ function resolvedSubagentThoughtLevel(state: SubagentThoughtOptionState): string
     : undefined;
 }
 
-function isSubagentModelAvailable(
+export function isSubagentModelAvailable(
   modelGroups: readonly ModelSelectGroup[],
   model: string | undefined,
   modelSelectionLoading = false,
@@ -291,7 +291,7 @@ function isSubagentModelAvailable(
   return modelGroups.some((group) => group.items.some((item) => item.value === trimmedModel));
 }
 
-function createSubagentFormInitialState(
+export function createSubagentFormInitialState(
   initial?: Pick<
     AgentSummary,
     | "name"
@@ -386,7 +386,9 @@ function groupAgentsByScope(agents: readonly AgentSummary[]): AgentGroups {
 }
 
 /** Group by full Plugin ID so same-named subagents from different marketplaces are not merged. */
-function groupPluginAgentsById(agents: readonly AgentSummary[]): Array<[string, AgentSummary[]]> {
+export function groupPluginAgentsById(
+  agents: readonly AgentSummary[],
+): Array<[string, AgentSummary[]]> {
   const groups = new Map<string, AgentSummary[]>();
   for (const agent of agents) {
     const key =

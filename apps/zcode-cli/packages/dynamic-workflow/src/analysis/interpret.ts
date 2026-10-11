@@ -13,6 +13,7 @@ import type {
   CoreAskSite,
   CoreFacts,
   CoreFanoutSite,
+  CoreHoleSite,
   CoreSimpleSite,
   CoreSites,
   CoreTypes,
@@ -155,10 +156,25 @@ function mintCore(
       ...(cardinality === undefined ? {} : { cardinality }),
     };
   });
+  // Only open holes are sites (docs/analysis.md, “Sites”); a filled hole is a phase, not a step.
+  // Rule 9012 already rejects holes without a name or type. This fallback documents that invariant.
+  const holes: CoreHoleSite[] = table.holes
+    .filter((site) => site.body === undefined)
+    .map((site) => ({
+      ...(site.fill === undefined ? {} : { fill: site.fill }),
+      id: site.id,
+      loc: site.loc,
+      name: site.name ?? site.id,
+      order: site.order,
+      ...(site.tail ? { tail: true as const } : {}),
+      type: site.typeText ?? "unknown",
+      ...withinOf(site.call),
+    }));
   const sites: CoreSites = {
     actors,
     asks,
     fanouts,
+    holes,
     joins: table.joins.map(simple),
     worldReads: table.worldReads.map(simple),
   };
@@ -196,6 +212,7 @@ function mintFacts(
     askActor: renameMap(facts.askActor),
     askData: renameMap(facts.askData),
     fanoutIn,
+    holeData: renameMap(facts.holeData),
     joinIn: renameMap(facts.joinIn),
     returnData: renameOccs(facts.returnData),
     worldReadData: renameMap(facts.worldReadData),

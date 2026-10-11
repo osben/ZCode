@@ -55,9 +55,18 @@ type ConfigSelectTriggerVariant = ComponentProps<typeof SelectTrigger>["variant"
 /** Radix Select may emit an unrendered value such as an empty value while controlled state and item registration race; propagating it directly would treat
  * a system event as a user choice (for example, merely opening Automations details would mark the page as having unsaved changes).
  * Users can only click rendered options, so discard any selection callback with a value outside the valid set. */
-function isConfigSelectValueInOptions(option: ZCodeConfigOption, value: string): boolean {
+export function isConfigSelectValueInOptions(option: ZCodeConfigOption, value: string): boolean {
   return option.options?.some((entry) => String(entry.value) === value) ?? false;
 }
+
+const HIGH_PERMISSION_MODE_VALUES = new Set([
+  "bypassPermissions",
+  "full-access",
+  // Bugfix: Agent 0.0.44 changed the old full-access mode id to agent-full-access. High-privilege
+  // visual warnings must follow the protocol id, or selecting full access will no longer show the warning in the toolbar.
+  "agent-full-access",
+  "yolo",
+]);
 
 function getConfigSelectTriggerTestId(option: ZCodeConfigOption): string | undefined {
   if (option.category === "thought_level") {
@@ -83,6 +92,25 @@ function getConfigSelectItemTestId(
   }
 
   return undefined;
+}
+
+export function buildModelSearchText({ itemName }: { itemName: string }): string {
+  // Bugfix: model search must match only display names, not group names or model values. Return
+  // display names only so the search scope stays narrow and stable.
+  return itemName.trim();
+}
+
+export function matchesModelDisplayNameSearch(
+  modelDisplayName: string,
+  searchText: string,
+): boolean {
+  const normalizedSearchText = searchText.trim().toLocaleLowerCase();
+  if (normalizedSearchText.length === 0) {
+    return true;
+  }
+
+  // Bugfix: use case-insensitive matching so searches still work when the user's capitalization differs from the display name.
+  return modelDisplayName.trim().toLocaleLowerCase().includes(normalizedSearchText);
 }
 
 export function ChatApiRetryStatus({
@@ -124,7 +152,7 @@ export function ChatApiRetryStatus({
       className="inline-flex h-7 items-center whitespace-nowrap px-1 text-ui-base"
       title={retryTitle}
     >
-      {/* Retry should keep the ToolCall/Thinking font size, shimmer timing, and low-opacity motion trough,
+      {/* Style fix reason: Retry should keep the ToolCall/Thinking font size, shimmer timing, and low-opacity motion trough,
       but as a secondary running state it should not use the same pure-black/white peak. Lower only the peak to the secondary text color. */}
       <span className="animated-gradient-text animated-gradient-text-subtle font-medium">
         {retryLabel}
@@ -146,7 +174,7 @@ export function getModeOptionDisplayLabel(
   return intl.formatMessage({ id: labelMessageId });
 }
 
-function getModeOptionLabelMessageId(
+export function getModeOptionLabelMessageId(
   provider: ZCodeProvider | undefined,
   entry: Pick<ZCodeConfigSelectValue, "value">,
 ): string | null {
@@ -181,7 +209,7 @@ export function getConfigOptionEntryLabel(
   return entry.name;
 }
 
-function getConfigOptionEntryDescription(
+export function getConfigOptionEntryDescription(
   intl: ReturnType<typeof useZCodeIntl>["intl"],
   provider: ZCodeProvider | undefined,
   option: ZCodeConfigOption,
@@ -199,8 +227,8 @@ function getConfigOptionEntryDescription(
   return entry.description;
 }
 
-function isHighPermissionModeValue(value: unknown): boolean {
-  return value === "yolo";
+export function isHighPermissionModeValue(value: unknown): boolean {
+  return typeof value === "string" && HIGH_PERMISSION_MODE_VALUES.has(value);
 }
 
 export function resolveModeOptionIcon(value: unknown): LucideIcon {
@@ -208,11 +236,14 @@ export function resolveModeOptionIcon(value: unknown): LucideIcon {
     return ShieldAlertIcon;
   }
 
-  // build is the regular confirmation mode and uses the confirmation icon.
-  if (typeof value === "string" && value.toLocaleLowerCase() === "build") return HandIcon;
+  // Bugfix: build is localized as “Default mode” and, like default, should use the regular confirmation icon.
+  if (typeof value === "string" && /^(default|build)$/i.test(value)) return HandIcon;
   if (typeof value === "string" && value.toLocaleLowerCase() === "plan") return NotepadText;
 
-  if (typeof value === "string" && /^(auto|agent|autoEdit|edit)$/i.test(value)) {
+  if (
+    typeof value === "string" &&
+    /^(auto|acceptEdits|agent|autoEdit|dontAsk|edit|guarded)$/i.test(value)
+  ) {
     return ShieldCheckIcon;
   }
 
@@ -301,6 +332,10 @@ export function ConfigSelect({
       // Keep warning text color visible in high-permission mode so users do not overlook the current risk level.
       // The icon changes to shield-alert; the trigger continues to own color state so hover/expanded styles do not flash back to the default.
       "text-warning hover:text-warning aria-expanded:text-warning",
+    // Visually distinguish Guarded from YOLO; keep the icon's light-blue color on hover/expanded states instead of reverting to the default.
+    option.category === "mode" &&
+      option.currentValue === "guarded" &&
+      "text-icon-blue hover:text-icon-blue aria-expanded:text-icon-blue",
   );
   const resolvedLeadingIconClassName = cn(
     "pointer-events-none size-4 text-current",
@@ -324,7 +359,13 @@ export function ConfigSelect({
   const currentEntry = option.options.find((entry) => entry.value === option.currentValue);
   const currentValueLabel = currentEntry
     ? getConfigOptionEntryLabel(intl, provider, option, currentEntry)
-    : String(option.currentValue ?? "");
+    : option.category === "mode"
+      ? // Hiding an old mode candidate must not lose its displayed label; translate the current value without adding it back to the selectable list.
+        getModeOptionDisplayLabel(intl, provider, {
+          value: String(option.currentValue ?? ""),
+          name: String(option.currentValue ?? ""),
+        })
+      : String(option.currentValue ?? "");
   const thoughtLevelTextClassName =
     option.category === "thought_level" ? "first-letter:uppercase" : undefined;
 
@@ -366,7 +407,7 @@ export function ConfigSelect({
             <ResolvedLeadingIcon className={resolvedLeadingIconClassName} />
           ) : null}
           <span className={labelVisibilityClassName}>
-            {/* Mode menu items now combine an icon, title, and description.
+            {/* Bugfix: Mode menu items now combine an icon, title, and description.
             If Radix continues to populate from ItemText automatically, the trigger will also put the description in the button. */}
             {option.category === "mode" ? (
               <RollingToolbarLabel label={currentValueLabel} />
@@ -396,7 +437,7 @@ export function ConfigSelect({
           ) {
             return;
           }
-          // When ConfigSelect is reused outside chat, closing its menu must not force focus to the chat input.
+          // Bugfix: when a Bot dialog reuses ConfigSelect, closing its menu must not force focus to the chat input.
           const input = document.querySelector<HTMLElement>(restoreFocusSelector);
           logger.debug("[ConfigSelect] picker focus handoff", {
             category: option.category,

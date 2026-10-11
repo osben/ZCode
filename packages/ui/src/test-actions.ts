@@ -1,6 +1,6 @@
 import type { TaskChatMessage as ChatMessage } from "@/lib/taskChatMessageTypes.js";
 import { shouldExposeE2EStoreBridge } from "@/lib/e2eStoreBridge.js";
-import type { IZCodeAgentService } from "@zcode/services";
+import type { IBotsService, IZCodeAgentService, IZCodeTaskService } from "@zcode/services";
 import type { Locale } from "@zcode/shared";
 import type { TaskListE2EActions } from "@/lib/taskListE2EActions.js";
 import type { Theme } from "@/useTheme.js";
@@ -18,6 +18,10 @@ declare global {
  * Register only outside production to avoid exposing these actions in production.
  */
 export interface TestActions extends TaskListE2EActions {
+  /** Controlled E2E input goes through the real Host Bot service and CLI admission; it does not fake queue projections. */
+  sendBotMessage: IBotsService["handleInboundMessage"];
+  /** Controlled attachment fixtures use the real task service, upload flow, and CLI queue; they do not inject UI rows. */
+  submitBotGroupInput: NonNullable<IZCodeTaskService["submitBotGroupInput"]>;
   /** Get the current theme */
   getTheme: () => string;
   /** Set the theme */

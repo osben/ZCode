@@ -10,7 +10,7 @@ import { isSessionWorkflowRunLive } from "@zcode/shared/zcode-protocol-v4";
 import { bandOf, foldPhaseBands, trackOf } from "../components/workflow-timeline/timeline-bands.js";
 
 /** Maximum number of run rows to draw for one session; fold the rest into “+n”. */
-const WORKFLOW_RUN_LINE_MAX_LINES = 2;
+export const WORKFLOW_RUN_LINE_MAX_LINES = 2;
 /** Maximum number of stations on a mini track; when there are more, fold to run station ±2 and add a trailing “+n”. */
 const WORKFLOW_RUN_RAIL_MAX_STATIONS = 6;
 /** Number of stations on either side of the run station to keep when folded. */
@@ -27,6 +27,8 @@ export interface WorkflowRunRailStation {
    * The marker is attached to the **station**, not the segment, so it survives the window fold below.
    */
   twin?: true;
+  /** This site is an open hole: a dashed 6px indicator, using the warning color while waiting (docs/dynamic-workflow/presentation.md, “Holes on the timeline”). */
+  hole?: "open" | "waiting";
 }
 
 export interface WorkflowRunRail {
@@ -67,14 +69,19 @@ export function foldWorkflowRunRail(
     return {
       name: phase.name,
       status: phase.status,
-      reached: isWorkflowRunStationReached(phase.status),
+      // A hole waiting for completion is where control flow has arrived; the segment leading to it has already run.
+      reached: isWorkflowRunStationReached(phase.status) || phase.hole === "waiting",
       ...(twin ? { twin: true as const } : {}),
+      ...(phase.hole === undefined ? {} : { hole: phase.hole }),
     };
   });
   if (all.length <= WORKFLOW_RUN_RAIL_MAX_STATIONS) {
     return { stations: all, hidden: 0, implicit: false };
   }
-  let anchor = all.findIndex((station) => station.status === "running");
+  // The window is anchored to a run site. If the run is paused at a hole, that site is the anchor (its indicator is a warning-colored dashed line, not a running state).
+  let anchor = all.findIndex(
+    (station) => station.status === "running" || station.hole === "waiting",
+  );
   if (anchor < 0) {
     for (let index = all.length - 1; index >= 0; index -= 1) {
       if (all[index]!.reached) {
@@ -93,7 +100,7 @@ export function foldWorkflowRunRail(
 }
 
 /** Connector between parallel stages: several stations are active side by side, not queued. */
-const WORKFLOW_RUN_PARALLEL_SEPARATOR = " ∥ ";
+export const WORKFLOW_RUN_PARALLEL_SEPARATOR = " ∥ ";
 
 /**
  * Join names of simultaneously running stations into one tooltip segment. With parallel work, “current phase” is no longer one station—none is more current than another,

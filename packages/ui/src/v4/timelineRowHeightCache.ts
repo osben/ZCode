@@ -11,9 +11,9 @@
 export const DEFAULT_ROW_HEIGHT_ESTIMATE_PX = 72;
 
 /** Cache limit to prevent memory growth in long conversations; evict the least recently written row (write order ≈ row order, so old rows go first). */
-const MAX_ROW_HEIGHT_CACHE_ENTRIES = 4000;
+export const MAX_ROW_HEIGHT_CACHE_ENTRIES = 4000;
 
-type TimelineRowHeightCacheKey = string | number;
+export type TimelineRowHeightCacheKey = string | number;
 
 export class TimelineRowHeightCache {
   private readonly sizes = new Map<TimelineRowHeightCacheKey, number>();

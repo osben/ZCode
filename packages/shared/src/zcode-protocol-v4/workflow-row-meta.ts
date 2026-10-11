@@ -69,6 +69,25 @@ export const workflowNotificationMetaSchema = z.discriminatedUnion("kind", [
     context: z.string().max(4000).optional(),
     askedAt: z.number().optional(),
   }),
+  // Hole (the `hole` kind in docs/dynamic-workflow/transcript-and-notifications.md "The payload"): the
+  // run reached an open `hole<T>()`, that branch is parked, and the main agent owes a piece of code.
+  // `type` is the author's literal type text (`Plan`); `before` / `after` are the stage names on either
+  // side of the hole; `draftPath` / `line` point to the hole's line in the draft file. prompt shares
+  // the same 4000 bound as escalation questions, truncated by the emitter first. Same name as the
+  // contract (a manual mirror on the apps/zcode-cli contracts side).
+  z.object({
+    kind: z.literal("hole"),
+    siteId: z.string().min(1).max(64),
+    ordinal: z.number().int().nonnegative(),
+    name: z.string().min(1).max(128),
+    type: z.string().min(1).max(128),
+    prompt: z.string().max(4000).optional(),
+    draftPath: z.string().max(1024).optional(),
+    line: z.number().int().positive().optional(),
+    before: z.string().max(128).optional(),
+    after: z.string().max(128).optional(),
+    reachedAt: z.number().optional(),
+  }),
   // Run-level stall: one entry per stalled interval; this is not a terminal state.
   z.object({
     kind: z.literal("stall"),
@@ -112,14 +131,17 @@ const workflowSubagentModelTextSchema = z
 // The agent revises the run using the same script and records the change in a controlOnly turn with the
 // same shape as a direct launch.
 // This section describes what changed. Only modified settings are present; a missing from/to endpoint
-// means that endpoint uses the default (model = session model, limit = machine limit). `ceiling` is the
-// machine limit, used to express changes such as 13 → 4.
+// means that endpoint uses the default (model = session model, limit = default concurrency). `ceiling`
+// is the default concurrency D (the key name predates "default concurrency" and is kept for
+// compatibility with older clients), used to express changes such as "default 13 → 4".
 export const workflowSettingsAmendMetaSchema = z.object({
-  // Run this revision was based on. **Absent means applied in place**: when only the concurrency limit
-  // changes while a run is active, Configure neither stops nor starts a run, so there is no predecessor
-  // to reference; runId identifies the adjusted run. The renderer then shows only this row, not another
-  // card (two cards for one run would look like two runs).
-  // This field is optional; producers and consumers must use matching schemas to parse in-place settings changes.
+  // Run this revision was based on. **Absent means applied in place** (docs/dynamic-workflow/concurrency.md):
+  // when only the concurrency limit changes while a run is active, Configure neither stops nor starts a
+  // run, so there is no predecessor to reference; runId identifies the adjusted run. The renderer then
+  // shows only this row, not another card (two cards for one run would look like two runs).
+  // Known version skew (same class as scope / path below): older desktop clients require this field, so
+  // they fail to parse an in-place settings turn and drop the whole row—the lost row is just a record;
+  // the run card and the run itself are unaffected.
   predecessorRunId: z.string().min(1).max(128).optional(),
   subagentModel: z
     .object({

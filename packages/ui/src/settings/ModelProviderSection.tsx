@@ -1,5 +1,7 @@
 /* eslint-disable max-lines -- The Model Provider settings page coordinates navigation, forms, and OAuth interactions; consolidate it when splitting the page as a whole later. */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useStore } from "zustand";
+import { marketingNavigation, finishMarketingNavigation } from "@/lib/marketingNavigation.js";
 import {
   getProviderFormApiKey,
   type ProviderSettingsFormProvider,
@@ -78,7 +80,7 @@ type CodingPlanConnectionNavItem = Extract<
   { type: "codingPlan" | "teamPlan" }
 >;
 
-function resolveCodingPlanProviderSyncAttemptKey({
+export function resolveCodingPlanProviderSyncAttemptKey({
   activeOAuthProvider,
   oauthProviderId,
   providerId,
@@ -94,7 +96,7 @@ function resolveCodingPlanProviderSyncAttemptKey({
   return `${providerId}:${activeOAuthProvider}`;
 }
 
-function shouldRetryUnchangedCodingPlanProviderSync({
+export function shouldRetryUnchangedCodingPlanProviderSync({
   attemptKey,
   attemptStatus,
   modeUnchanged,
@@ -214,7 +216,7 @@ function resolveConnectionSelectionForNavItem(
   return isStartPlanModelProviderId(item.presetId) ? null : { kind: "individual-coding-plan" };
 }
 
-function resolveModelProviderSideSelectionKey(
+export function resolveModelProviderSideSelectionKey(
   item: ModelProviderNavGroup["items"][number],
 ): string {
   if (item.type !== "preset" && item.type !== "codingPlan" && item.type !== "teamPlan") {
@@ -1003,6 +1005,47 @@ export function ModelProviderSection({
     },
     [createPersonalProvider, locale],
   );
+
+  const marketingRequest = useStore(marketingNavigation, (state) => state.request);
+  useEffect(() => {
+    if (marketingRequest?.target.page !== "settings" || !marketingRequest.target.provider_id)
+      return;
+    if (
+      loading ||
+      modelProvidersRefreshing ||
+      sharedSettingsLoading ||
+      navigationItems.some((item) => item.type === "codingPlanLoading")
+    )
+      return;
+    const providerId = marketingRequest.target.provider_id;
+    const item = navigationItems.find((item) =>
+      item.type === "custom"
+        ? // The current form contract uses providerId; the legacy id would make every custom provider appear nonexistent.
+          item.provider.providerId === providerId
+        : "presetId" in item &&
+          item.presetId === providerId &&
+          (!isStartPlanModelProviderId(providerId) || item.type === "codingPlan"),
+    );
+    if (!item) {
+      finishMarketingNavigation(marketingRequest.id, new Error("marketing_provider_unavailable"));
+      return;
+    }
+    const key = resolveModelProviderSideSelectionKey(item);
+    if (selectedNodeKey !== key) {
+      // Locate only the sidebar node; do not reuse the mode-aware selection path, which could let promotional navigation change the plan connection.
+      setSelectedNodeKey(key);
+    } else if (selectedNavItem) {
+      finishMarketingNavigation(marketingRequest.id);
+    }
+  }, [
+    marketingRequest,
+    loading,
+    modelProvidersRefreshing,
+    sharedSettingsLoading,
+    navigationItems,
+    selectedNodeKey,
+    selectedNavItem,
+  ]);
 
   const handleReorderProviderIds = useCallback(
     async (orderedGroupProviderIds: string[]) => {

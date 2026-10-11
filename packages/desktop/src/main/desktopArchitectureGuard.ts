@@ -1,14 +1,14 @@
 import type { BrowserWindow, NativeImage } from "electron";
 import { DEFAULT_ZCODE_ENDPOINT_ORIGIN, buildZCodeEndpointUrls, type Locale } from "@zcode/shared";
 
-interface ArchitectureMismatch {
+export interface ArchitectureMismatch {
   /** Architecture of the currently running binary, such as x64. */
   binaryArch: string;
   /** Recommended native architecture; translated execution currently falls back only to arm64. */
   nativeArch: string;
 }
 
-interface DetectArchitectureMismatchOptions {
+export interface DetectArchitectureMismatchOptions {
   platform?: NodeJS.Platform;
   binaryArch?: string;
   /**
@@ -26,7 +26,7 @@ interface DetectArchitectureMismatchOptions {
  * when Node runs an x64 package on Apple Silicon, os.arch() also returns "x64" (translated by
  * Rosetta), so comparing the two cannot reveal the mismatch. The translation flag is the only reliable signal.
  */
-function detectArchitectureMismatch(
+export function detectArchitectureMismatch(
   options: DetectArchitectureMismatchOptions = {},
 ): ArchitectureMismatch | null {
   const platform = options.platform ?? process.platform;
@@ -44,7 +44,7 @@ function detectArchitectureMismatch(
   return { binaryArch, nativeArch: "arm64" };
 }
 
-function resolveArchitectureDownloadUrl(
+export function resolveArchitectureDownloadUrl(
   locale: Locale,
   endpointOrigin = DEFAULT_ZCODE_ENDPOINT_ORIGIN,
 ): string {
@@ -61,7 +61,7 @@ interface ArchitectureMismatchDialogText {
   dismissButton: string;
 }
 
-function formatArchitectureMismatchDialogText(
+export function formatArchitectureMismatchDialogText(
   mismatch: ArchitectureMismatch,
   locale: Locale,
 ): ArchitectureMismatchDialogText {
@@ -104,7 +104,7 @@ function formatArchitectureMismatchDialogText(
   };
 }
 
-interface ArchitectureGuardLogger {
+export interface ArchitectureGuardLogger {
   info: (...args: unknown[]) => void;
   warn: (...args: unknown[]) => void;
 }

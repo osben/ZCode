@@ -20,7 +20,7 @@ export interface OfficialPluginListingSeed {
   examplePrompts_i18n?: Record<string, string[]>;
 }
 
-const OFFICIAL_BROWSER_USE_PLUGIN_NAME = "browser-use";
+export const OFFICIAL_BROWSER_USE_PLUGIN_NAME = "browser-use";
 export const OFFICIAL_BROWSER_USE_PLUGIN_ID = `${OFFICIAL_BROWSER_USE_PLUGIN_NAME}@${ZCODE_OFFICIAL_PLUGIN_MARKETPLACE}`;
 /**
  * node_repl host. It is not a user-facing plugin: it has no skill or listing and is not
@@ -35,7 +35,7 @@ export const OFFICIAL_BROWSER_USE_PLUGIN_ID = `${OFFICIAL_BROWSER_USE_PLUGIN_NAM
  */
 export const OFFICIAL_NODE_REPL_HOST_PLUGIN_NAME = "node-repl-host";
 export const OFFICIAL_NODE_REPL_HOST_PLUGIN_ID = `${OFFICIAL_NODE_REPL_HOST_PLUGIN_NAME}@${ZCODE_OFFICIAL_PLUGIN_MARKETPLACE}`;
-const OFFICIAL_CUA_PLUGIN_NAME = "computer-use";
+export const OFFICIAL_CUA_PLUGIN_NAME = "computer-use";
 export const OFFICIAL_CUA_PLUGIN_ID = `${OFFICIAL_CUA_PLUGIN_NAME}@${ZCODE_OFFICIAL_PLUGIN_MARKETPLACE}`;
 
 export interface OfficialPluginDefinition {
@@ -62,7 +62,7 @@ export interface OfficialPluginDefinition {
 const ZAI_AUTHOR = { name: "Z.ai", url: "https://z.ai" } as const;
 const OFFICIAL_PLUGIN_ASSETS_BASE_URL = "https://cdn-zcode.z.ai/zcode/official-plugin/assets";
 
-const OFFICIAL_NODE_REPL_HOST_REQUIRED_SEED_PATHS = ["dist/mcp/server.js"] as const;
+export const OFFICIAL_NODE_REPL_HOST_REQUIRED_SEED_PATHS = ["dist/mcp/server.js"] as const;
 
 export const OFFICIAL_BROWSER_USE_REQUIRED_SEED_PATHS = [
   "docs/api.json",
@@ -76,23 +76,67 @@ export const OFFICIAL_BROWSER_USE_REQUIRED_SEED_PATHS = [
   "skills/web-gui-tester/SKILL.md",
 ] as const;
 
-const OFFICIAL_CUA_REQUIRED_SEED_PATHS = [
+export const OFFICIAL_CUA_REQUIRED_SEED_PATHS = [
   "docs/computer-use.md",
   "scripts/computer-use-client.mjs",
   "skills/computer-use/SKILL.md",
 ] as const;
 
-// zcode-guide previously had no requiredSeedPaths, so a missing seed file silently
-// installed a plugin without the /workflow command. The symptom was a missing command
-// with no diagnostic. Pin both commands/ and the skill content.
-const OFFICIAL_ZCODE_GUIDE_REQUIRED_SEED_PATHS = [
-  "commands/workflow.md",
-  "skills/dynamic-workflows/SKILL.md",
-  "skills/dynamic-workflows/examples.md",
-  "skills/dynamic-workflows/patterns.md",
+// Fix rationale (2026-08-24): zcode-guide previously had no requiredSeedPaths, so a
+// missing seed file silently installed an incomplete plugin with no diagnostic. Since
+// 0.3.0, `/workflow` and the dynamic-workflows skill are no longer shipped with this
+// plugin (the command is built into the CLI, the skill lives in packages/bundled-skills,
+// see docs/dynamic-workflow/authoring.md); what is pinned here is the configuration
+// guide skill content.
+export const OFFICIAL_ZCODE_GUIDE_REQUIRED_SEED_PATHS = [
+  "skills/zcode-configuration-guide/SKILL.md",
 ] as const;
 
 export const OFFICIAL_PLUGIN_DEFINITIONS: readonly OfficialPluginDefinition[] = [
+  {
+    defaultEnabled: true,
+    listing: {
+      author: ZAI_AUTHOR,
+      category: "productivity",
+      displayName: "Visualize",
+      displayName_i18n: { "zh-CN": "交互视图" },
+      description_i18n: { "zh-CN": "在对话中创建交互图表、解释和设计预览。" },
+    },
+    name: "visualize",
+    requiredSeedPaths: [
+      "skills/visualize/SKILL.md",
+      "skills/visualize/references/api.md",
+      "skills/visualize/references/styles.md",
+      "skills/visualize/tweak.md",
+      "skills/visualize/LICENSE.md",
+      "skills/visualize/scripts/render.py",
+      "skills/visualize/assets/visualize.css",
+      "skills/visualize/assets/visualize.html",
+      "skills/visualize/assets/calendar.js",
+      "skills/visualize/assets/runtime-manifest.json",
+      "skills/visualize/scripts/vendor.py",
+      "skills/visualize/assets/vendor/manifest.json",
+      "skills/visualize/assets/vendor/floating-ui-core-1.7.3.min.js",
+      "skills/visualize/assets/vendor/floating-ui-core-1.7.3.min.js.LICENSE",
+      "skills/visualize/assets/vendor/floating-ui-dom-1.7.4.min.js",
+      "skills/visualize/assets/vendor/floating-ui-dom-1.7.4.min.js.LICENSE",
+      "skills/visualize/assets/vendor/lucide-1.17.0.js",
+      "skills/visualize/assets/vendor/lucide-1.17.0.js.LICENSE",
+      "skills/visualize/assets/vendor/d3-7.9.0.min.js",
+      "skills/visualize/assets/vendor/d3-7.9.0.min.js.LICENSE",
+      "skills/visualize/widgets/calendar.md",
+      "skills/visualize/examples/calendar.html",
+      "skills/visualize/assets/standalone-host-bridge.js",
+      "skills/visualize/assets/standalone-shell.js",
+    ],
+    rootCandidates: [
+      "packages/visualize-plugin",
+      "../visualize-plugin",
+      "../../visualize-plugin",
+      "../../../visualize-plugin",
+    ],
+    version: "0.1.0",
+  },
   {
     // No listing: the host is not in the marketplace and is not shown to users. It must
     // always be available because node_repl registration is gated by either Browser Use
@@ -112,7 +156,7 @@ export const OFFICIAL_PLUGIN_DEFINITIONS: readonly OfficialPluginDefinition[] = 
       "../../node-repl-host",
       "../../../node-repl-host",
     ],
-    version: "0.6.0",
+    version: "0.6.1",
   },
   {
     listing: {
@@ -190,7 +234,7 @@ export const OFFICIAL_PLUGIN_DEFINITIONS: readonly OfficialPluginDefinition[] = 
         `../../${name}-plugin`,
         `../../../${name}-plugin`,
       ],
-      version: "0.1.7",
+      version: "0.1.8",
     }),
   ),
   {
@@ -334,7 +378,7 @@ export const OFFICIAL_PLUGIN_DEFINITIONS: readonly OfficialPluginDefinition[] = 
       "../../zcode-guide-plugin",
       "../../../zcode-guide-plugin",
     ],
-    version: "0.2.0",
+    version: "0.3.0",
   },
   {
     // Product decision: computer control returns to disabled by default and must be
@@ -372,11 +416,14 @@ export const OFFICIAL_PLUGIN_DEFINITIONS: readonly OfficialPluginDefinition[] = 
       "../../../zcode-cua-plugin",
     ],
     requiredSeedPaths: OFFICIAL_CUA_REQUIRED_SEED_PATHS,
-    // Current CUA is an unavailable placeholder package and needs no native runtime copy; avoid carrying stale local dependencies into the cache.
-    runtimeTopLevelPaths: [],
+    // Bug root cause: migrating node_repl also stripped the legacy MCP launcher and the
+    // Sharp runtime still required by the SDK. Dev/desktop stages the minimal Sharp
+    // closure here; the official cache must continue to carry node_modules, otherwise the
+    // first screenshot after an atomic seed replacement reports Cannot find module 'sharp'.
+    runtimeTopLevelPaths: ["node_modules"],
     // This version tracks the upstream zcode-cua runtime so the plugin UI, cache path,
     // and marketplace entry stay aligned. The atomic producer-bump workflow maintains the exact version.
-    version: "0.6.3",
+    version: "0.6.4",
   },
 ];
 

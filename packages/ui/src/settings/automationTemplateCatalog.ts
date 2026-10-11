@@ -177,6 +177,23 @@ function mapOffPeakTemplates(scenes: readonly ClientSceneConfig[]): OffPeakAutom
   });
 }
 
+const HOMEPAGE_REMOTE_OFF_PEAK_TEMPLATE_LIMIT = 2;
+
+/**
+ * Selection rules for the New task home page only; the Automations template section must preserve the remote catalog as-is.
+ * Always use the local Customize entry on the home page, so a same-named remote item cannot take one of the two remote template slots or move the last item.
+ */
+export function appendLocalCustomizeTemplate(
+  templates: readonly OffPeakAutomationTemplate[],
+): OffPeakAutomationTemplate[] {
+  return [
+    ...templates
+      .filter((template) => !template.customize)
+      .slice(0, HOMEPAGE_REMOTE_OFF_PEAK_TEMPLATE_LIMIT),
+    CUSTOMIZE_TEMPLATE,
+  ];
+}
+
 export function mapClientScenesToAutomationTemplates(
   scenes: readonly ClientSceneConfig[],
   isValidCronExpr: (cronExpr: string) => boolean,

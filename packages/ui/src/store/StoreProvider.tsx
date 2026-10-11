@@ -16,7 +16,7 @@ import type { IBroadcastService } from "@zcode/services";
 import { createZCodeStore, type ZCodeStore, type ZCodeState } from "./index.js";
 
 // Export Context so tests can inject a constructed store instance directly (for example, in cross-window broadcast suppression cases).
-const StoreContext = createContext<ZCodeStore | null>(null);
+export const StoreContext = createContext<ZCodeStore | null>(null);
 
 export function StoreProvider({
   broadcastService,

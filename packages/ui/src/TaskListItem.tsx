@@ -31,6 +31,10 @@ import { useModelTrajectoryStore } from "@/store/modelTrajectoryStore.js";
 import { buildTaskFeedbackDescription } from "@/lib/taskFeedbackDraft.js";
 import { toast } from "@/components/ui/toast.js";
 import { buildTaskWorkspaceKey } from "@/lib/taskQueryCache.js";
+import {
+  useBranchMergeStatusStore,
+  selectBranchMergeStatus,
+} from "@/store/branchMergeStatusStore.js";
 import { useV4SplitPaneEntry } from "@/v4/splitPaneEntryContext.js";
 import { buildWorkbenchSessionKey, useWorkbenchGroupStore } from "@/v4/workbenchGroupStore.js";
 import { useTaskInteractionAutoResolutionSnooze } from "@/hooks/useTaskInteractionAutoResolutionSnooze.js";
@@ -373,8 +377,8 @@ export const MemoTaskItem = memo(function TaskListItem({
   // If a pinned task keeps showing Pin, it overlaps the absolutely positioned phone icon. When mobile is active, show the phone icon by default and reveal the Pin action on hover.
   const showPinnedState = isPinned && leadingIndicator === "none" && !isMobileActive;
   const shouldMountWorkspaceTaskActions = hoverActionsVisible || focusActionsVisible || isHoverNone;
-  // hover:none means touch devices need persistent actions; it does not mean time, status, and change summaries should always be hidden.
-  // Give way to actions only during real hover / focus interaction, preserving the previous touch layout's “metadata + action” behavior.
+  // Bugfix: hover:none only means touch devices need persistent actions; it does not mean time, status, and change summaries should stay hidden.
+  // Metadata yields only during actual hover/focus interaction, preserving the previous touch layout semantics of “metadata + action.”
   const shouldSuppressWorkspaceTaskMetadata = hoverActionsVisible || focusActionsVisible;
   const taskTimeLabel = formatTaskRelativeTime(task.updatedAt, intl);
   const taskChangeSummary = getTaskChangeSummary(task);
@@ -385,6 +389,22 @@ export const MemoTaskItem = memo(function TaskListItem({
   const taskTitleWithChanges = formatTaskTitleWithChanges(taskTitle, taskChangeSummary, intl);
   const workspaceLabel = getPathLeaf(task.workspacePath);
   const taskItemKey = `${buildTaskWorkspaceKey(task.workspacePath, task.workspaceIdentity)}:${task.taskId}`;
+  // Merged ranks below attention/interaction, same as the grouped task row.
+  const branchMergeStatus = useBranchMergeStatusStore((state) =>
+    selectBranchMergeStatus(
+      state,
+      buildTaskWorkspaceKey(task.workspacePath, task.workspaceIdentity),
+    ),
+  );
+  const branchMergedBadge =
+    branchMergeStatus?.state === "merged" ? (
+      <Badge
+        data-branch-merged-badge="true"
+        className="h-5 shrink-0 border-transparent bg-primary/14 px-2 text-ui-xs font-medium text-primary dark:bg-primary/18"
+      >
+        {intl.formatMessage({ id: "taskList.branchMergedTag" })}
+      </Badge>
+    ) : null;
   // Workflow run row: a second channel under the title,
   // independent from the leading 16px slot (error > unread > spinner). Mount only when the session has a run summary.
   const hasWorkflowRunLines = taskActivity?.workflowActivity !== undefined;
@@ -432,7 +452,7 @@ export const MemoTaskItem = memo(function TaskListItem({
             }}
             onClick={handleArchive}
             data-testid={testId(TID_TASK_ARCHIVE, task.taskId)}
-            // Archive confirmation explicitly waits for a user decision, so keep showing the destructive button.
+            // Bugfix: The archive confirmation state explicitly waits for the user to decide, so the destructive button must remain visible.
             className={cn("shrink-0 border-destructive/20 px-2", archiveActionVisibilityClassName)}
             aria-label={archiveLabel}
           >
@@ -469,7 +489,7 @@ export const MemoTaskItem = memo(function TaskListItem({
     !hasPendingInteraction &&
     (shouldMountWorkspaceTaskActions || isMobileActive) ? (
       <span className="inline-flex shrink-0">
-        {/* The Pinned file-tree button used to implement its hover background and tooltip separately, making it look different from the same action in Grouped task
+        {/* Bugfix：The Pinned file-tree button had custom hover styling and a tooltip, making it visually inconsistent with the same action in Grouped tasks.
             Reuse the shared action to align bg-hover, sizing, and pointer behavior. */}
         <TaskRowActionButton
           label={intl.formatMessage({ id: "git.action.showTree" })}
@@ -551,8 +571,8 @@ export const MemoTaskItem = memo(function TaskListItem({
         isActive ? "bg-selected" : "hover:bg-surface-hover",
       )}
     >
-      {/* The task list used to rely on divide-y separators, creating prominent dark lines above and below each item in the dark sidebar.
-              This looked like each item was trapped between two borders. Use spacing between list items and rounded states on each item instead,
+      {/* Bugfix: The task list used to rely on divide-y separators, leaving a visible dark line above and below every item in the dark sidebar,
+              making each item look trapped between two borders. Use list spacing and rounded item states instead,
               so the card background defines hover/active hierarchy without separators. */}
 
       <div
@@ -624,8 +644,8 @@ export const MemoTaskItem = memo(function TaskListItem({
               className="text-ui-base text-foreground"
               title={taskTitleWithChanges}
             >
-              {/* Workspace/timeline task titles previously used truncate, adding an ellipsis to long titles.
-                      Grouped tasks now fade out on the right. Use the same title-overflow behavior throughout the task list to avoid two truncation styles in one sidebar. */}
+              {/* Bugfix: Workspace/timeline task titles previously used truncate, adding an ellipsis at the end of long titles;
+                      grouped tasks now fade on the right. Apply that same title-overflow behavior to the task list to avoid two truncation styles in one sidebar. */}
               {taskTitle}
             </TaskTitleOverflowText>
             {task.pendingInteraction ? (
@@ -638,7 +658,9 @@ export const MemoTaskItem = memo(function TaskListItem({
               <Badge className="h-5 shrink-0 border-transparent bg-success/14 px-2 text-ui-base font-medium text-success dark:bg-success/18">
                 {taskAttentionDisplay}
               </Badge>
-            ) : null}
+            ) : (
+              branchMergedBadge
+            )}
           </div>
           <div className="flex min-w-0 items-center justify-between gap-2 text-ui-base text-foreground-subtle h-6">
             <div className="flex min-w-0 items-center gap-1.5">
@@ -704,10 +726,10 @@ export const MemoTaskItem = memo(function TaskListItem({
                       id: "taskList.mobileActive",
                     })}
                   >
-                    {/* mobileViewState already tells Desktop which task a phone is viewing,
-                        but the list did not use this state, making it look as if only Desktop was active. The previous version put the icon in the title’s flex flow,
-                        pushing the current title to the right and misaligning task titles across rows. Position it absolutely in the existing leading slot instead,
-                        so title text starts in its original position. Also hide the phone marker on hover to make the pin button available again. */}
+                    {/* Bugfix: mobileViewState already tells the desktop which task the phone is viewing,
+                        but the list did not use this state, making users think only the desktop was active. The previous version put the icon in the title’s flex flow,
+                        pushing the current title right and misaligning task titles. Position it in the existing leading slot instead,
+                        so title text stays in its original position; hide the phone indicator on hover to restore the pin button. */}
                     <Smartphone className="size-3.5" />
                   </span>
                 </ControlHintTooltip>
@@ -716,7 +738,7 @@ export const MemoTaskItem = memo(function TaskListItem({
                 className="text-ui-base text-foreground"
                 title={taskTitleWithChanges}
               >
-                {/* The default workspace task item and timeline item share the same title-overflow rule;
+                {/* Bugfix: Default workspace task items and timeline items share title-overflow behavior;
                         use a mask fade instead of an ellipsis, matching grouped task rows. */}
                 {taskTitle}
               </TaskTitleOverflowText>
@@ -741,7 +763,9 @@ export const MemoTaskItem = memo(function TaskListItem({
                 <Badge className="h-5 shrink-0 border-transparent bg-success/14 px-2 text-ui-sm font-medium text-success dark:bg-success/18">
                   {taskAttentionDisplay}
                 </Badge>
-              ) : null}
+              ) : (
+                branchMergedBadge
+              )}
             </div>
 
             {!hasPendingInteraction ? (
@@ -835,9 +859,11 @@ export function TaskListItemContextMenuContent({
   const {
     taskSessionFile,
     taskNativeSessionLogFile,
+    providerConfigFile,
     fileManagerLabel,
     handleCopyText,
     handleOpenTaskPathInFileManager,
+    handleOpenProviderConfig,
   } = useTaskListItemContextActions({
     workspacePath,
     remoteSessionId,
@@ -848,6 +874,7 @@ export function TaskListItemContextMenuContent({
     // Row-level menus now use a single list-level instance, and this component mounts only when the menu is actually open.
     // Path and provider-configuration checks can therefore run only while open, avoiding subscriptions and calculations for each idle row.
     loadTaskPaths: true,
+    loadProviderConfig: true,
   });
   const taskTitle =
     task.title ||
@@ -868,7 +895,7 @@ export function TaskListItemContextMenuContent({
       type: "bug",
       module: "Agent任务执行失败",
       severity: "P2-中",
-      includeLogs: false,
+      includeLogs: true,
       description: buildTaskFeedbackDescription({
         taskTitle,
         taskId: task.taskId,
@@ -899,6 +926,7 @@ export function TaskListItemContextMenuContent({
       taskSessionFile={taskSessionFile}
       activeSessionId={task.taskId}
       taskNativeSessionLogFile={taskNativeSessionLogFile}
+      providerConfigFile={providerConfigFile}
       disableTaskActions={workspaceActionsDisabled}
       disabledReason={workspaceActionsDisabledReason}
       onTogglePinTask={() => {
@@ -954,6 +982,9 @@ export function TaskListItemContextMenuContent({
           workspaceKey: task.workspaceIdentity?.trim() || workspacePath,
           title: taskTitle,
         });
+      }}
+      onOpenProviderConfig={() => {
+        void handleOpenProviderConfig();
       }}
     />
   );

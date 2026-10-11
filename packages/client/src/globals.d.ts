@@ -23,10 +23,22 @@ import type {
   ChromeBrowserDataImportResult,
   DockerContainerInfo,
   EmbeddedBrowserOpenUrlRequest,
+  EmbeddedBrowserPermissionPromptEvent,
+  EmbeddedBrowserPermissionResolveRequest,
+  EmbeddedBrowserSitePermissionUpdateRequest,
+  EmbeddedBrowserSitePermissionResetRequest,
+  EmbeddedBrowserSitePermissionsSnapshot,
   EditorInfo,
   ApplicationIconInfo,
   ApplicationIconRequest,
   Locale,
+  WebRemoteControlContext,
+  WebRemoteControlReconnectWorkspaceRequest,
+  WebRemoteControlReconnectWorkspaceResult,
+  WebRemoteControlStartOperationResult,
+  WebRemoteControlStatus,
+  WebRemoteControlTaskTarget,
+  WebRemoteControlWorkspaceTarget,
   OAuthStateRegistration,
   PostUpdateReleaseNotesPayload,
   RemoteConnectionRuntimeLog,
@@ -55,6 +67,16 @@ import type {
  */
 declare global {
   interface Window {
+    /** Plugin UI sandbox preload namespace; undefined under the legacy preload. */
+    zcodePluginSandbox?: {
+      supportsRetainedMove?: boolean;
+      copyImage?(
+        input: import("@zcode/shared/mcp-apps").PluginSandboxCaptureRequest,
+      ): Promise<void>;
+      getOwnerWebContentsId(): Promise<number>;
+      disposeSandbox(sandboxId: string, initId?: number): Promise<void>;
+      consumeUserGesture(sandboxId: string): Promise<boolean>;
+    };
     zcode: {
       connectRemote(
         options: RemoteTarget,
@@ -73,6 +95,22 @@ declare global {
         workspacePath: string;
         workspaceIdentity?: string;
       }): Promise<BrowserGuestAttachResult>;
+      /** Enable Web remote control for the current workspace. */
+      startWebRemoteControl(
+        context: WebRemoteControlContext,
+      ): Promise<WebRemoteControlStartOperationResult>;
+      /** Clear old pairing material and regenerate the Web remote control QR code. */
+      refreshWebRemoteControlPairing(
+        context: WebRemoteControlContext,
+      ): Promise<WebRemoteControlStartOperationResult>;
+      /** Stop Web remote control for the current window. */
+      stopWebRemoteControl(): Promise<void>;
+      /** Get the Web remote control status of the current window. */
+      getWebRemoteControlStatus(): Promise<WebRemoteControlStatus>;
+      /** Subscribe to Web remote control status changes for the current window. */
+      onWebRemoteControlStatusChanged?(
+        handler: (status: WebRemoteControlStatus) => void,
+      ): () => void;
       /** Release a remote session in the current window. */
       disposeRemoteSession(sessionId: string): Promise<void>;
       /** Check whether the local Docker daemon is available. */
@@ -99,6 +137,10 @@ declare global {
       printPageToPdf?(): Promise<import("@zcode/shared").PrintPageToPdfResult>;
       /** Resolve the real local path for a Web File received through system drag-and-drop or file input. */
       getPathForFile?(file: File): string | null;
+      /** dwf artifact "open as file": materialize one version's bytes into a local copy and return its path. */
+      materializeWorkflowArtifactFile(
+        payload: import("@zcode/shared").MaterializeWorkflowArtifactFileRequest,
+      ): Promise<import("@zcode/shared").MaterializeWorkflowArtifactFileResult>;
       /** Subscribe to remote connection logs for the current window and return a disposer. */
       onRemoteConnectionLog(handler: (entry: RemoteConnectionRuntimeLog) => void): () => void;
       /** Subscribe to remote workspace session closure events and return a disposer. */
@@ -111,17 +153,49 @@ declare global {
       activateOrSetWorkspace?(path: string): Promise<{ activated: boolean }>;
       /** Sync the workspace paths of all tabs in the current window with the main process. */
       syncWindowTabs(paths: string[]): void;
+      /** Sync the workspaces Web remote control may switch between for the current window. */
+      syncWebRemoteControlWorkspaces?(workspaces: WebRemoteControlWorkspaceTarget[]): void;
+      /** Sync the task snapshots Web remote control can display for the current window. */
+      syncWebRemoteControlTasks?(tasks: WebRemoteControlTaskTarget[]): void;
+      /** Register a callback for a mobile Web remote control request to reconnect a workspace. */
+      onWebRemoteControlReconnectWorkspace?(
+        handler: (
+          request: WebRemoteControlReconnectWorkspaceRequest,
+        ) => Promise<WebRemoteControlReconnectWorkspaceResult>,
+      ): () => void;
       /** Sync the unread task count for the current window with the main process. */
       syncWindowUnreadCount(count: number): void;
       syncActiveTaskSession(sessionId: string | null): void;
       /** Sync application settings that the main process needs to observe immediately. */
       syncAppSettings?(patch: Partial<AppSettings>): void;
+      /** Query the close-to-tray capability (for graying out on Linux; spec: docs/desktop/linux-close-to-tray.md). */
+      getCloseToTrayCapability?(): Promise<import("@zcode/shared").DesktopCloseToTrayCapability>;
       /** Register a callback for focusing a workspace tab at the main process's request; return a disposer. */
       onFocusTab(handler: (path: string) => void): () => void;
       /** Register a callback for creating a tab at the main process's request; return a disposer. */
       onNewTab(handler: () => void): () => void;
       /** Register a callback for opening a page requested by the embedded browser webview; return a disposer. */
       onOpenBrowserUrl?(handler: (request: EmbeddedBrowserOpenUrlRequest) => void): () => void;
+      /** Register a callback for embedded browser permission / origin-selection / device-selection prompt requests; return a disposer. */
+      onEmbeddedBrowserPermissionPrompt?(
+        handler: (event: EmbeddedBrowserPermissionPromptEvent) => void,
+      ): () => void;
+      /** Return the user's decision for an embedded browser permission prompt. */
+      resolveEmbeddedBrowserPermissionPrompt?(
+        request: EmbeddedBrowserPermissionResolveRequest,
+      ): void;
+      /** Read embedded browser site permission records (the "Site Permissions" settings page). */
+      getEmbeddedBrowserSitePermissions?(): Promise<EmbeddedBrowserSitePermissionsSnapshot>;
+      /** Update or delete a single site permission entry. */
+      setEmbeddedBrowserSitePermission?(
+        request: EmbeddedBrowserSitePermissionUpdateRequest,
+      ): Promise<EmbeddedBrowserSitePermissionsSnapshot>;
+      /** Clear all site permission records. */
+      clearEmbeddedBrowserSitePermissions?(): Promise<EmbeddedBrowserSitePermissionsSnapshot>;
+      /** Reset all permission records for a single site. */
+      resetEmbeddedBrowserSitePermission?(
+        request: EmbeddedBrowserSitePermissionResetRequest,
+      ): Promise<EmbeddedBrowserSitePermissionsSnapshot>;
       onBrowserViewReady?(
         handler: (payload: {
           workspaceKey: string;

@@ -1,4 +1,10 @@
 export { FACADE_DTS, FACADE_FILE_NAME, SNIPPET_FACADE_DTS } from "./facade/dts.js";
+export {
+  HOLE_SITE_ID_PATTERN,
+  holePrefixOf,
+  holeSiteId,
+  isHoleSiteId,
+} from "./analysis/hole-id.js";
 export { WORLD_READ_CAPS } from "./facade/world-read-caps.js";
 export { REPORT_CAPS } from "./facade/report-caps.js";
 // User-facing artifacts: cap constants, registry vocabulary, compile-time manifest, and diagnostics.
@@ -32,6 +38,11 @@ export {
   type WorkflowProgram,
 } from "./compiler/compile.js";
 export { analyzeWorkflowScript, type AnalyzeResult } from "./analysis/analyze.js";
+export {
+  MODEL_REFERENCE_CODE,
+  MODEL_UNRESOLVED_CODE,
+  type ModelReference,
+} from "./analysis/actor-models.js";
 export { collectSites, type SiteTable } from "./analysis/sites.js";
 export {
   collectWorldRunCommands,
@@ -39,6 +50,20 @@ export {
   type WorldRunCommands,
 } from "./analysis/world-run.js";
 export { collectPhaseMarkerDiagnostics, PHASE_MARKER_CODE } from "./analysis/phases.js";
+export { collectPhaseNames, collectSitePhases } from "./analysis/site-phases.js";
+// Holes (docs/dynamic-workflow/authoring.md, “Holes”): rule 9012, site types, completion-service
+// splicing, and stability checks.
+export { collectHoleDiagnostics, HOLE_CODE, HOLE_NAME_MAX_CHARS } from "./analysis/hole-sites.js";
+export type { HoleSite } from "./analysis/sites.js";
+export {
+  checkSiteStability,
+  spliceHoleBody,
+  type SiteStability,
+  type SplicedHoleBody,
+} from "./analysis/hole-splice.js";
+export { MAIN_LANE } from "./analysis/causality-graph.js";
+export type { FlowHole } from "./analysis/flow-graph.js";
+export { interpret } from "./analysis/interpret.js";
 export {
   toActorGraph,
   type ActorEdge,
@@ -119,6 +144,7 @@ export {
   type CoreAskSite,
   type CoreFacts,
   type CoreFanoutSite,
+  type CoreHoleSite,
   type CoreSimpleSite,
   type CoreSites,
   type CoreTypes,
@@ -172,6 +198,13 @@ export {
 export {
   WorkflowEngine,
   InMemoryJournalStore,
+  ALL_EVENTS,
+  NODE_KINDS,
+  NON_REPORT_NODE_KINDS,
+  type GetNodeOptions,
+  type ListActorsOptions,
+  type ListNodesOptions,
+  type RunEventType,
   WorkflowError,
   INSTRUCTIONS_HEAD_MAX_CHARS,
   LAST_TOOL_NAME_MAX_CHARS,
@@ -243,4 +276,11 @@ export {
   CONCURRENCY_INCREASE_STEP,
   type ConcurrencyControllerSnapshot,
   type ConcurrencyThrottleReason,
+} from "./engine/index.js";
+export {
+  HOLE_PROMPT_MAX_CHARS,
+  type FilledHole,
+  type FillHoleResult,
+  type HoleFill,
+  type OpenHole,
 } from "./engine/index.js";

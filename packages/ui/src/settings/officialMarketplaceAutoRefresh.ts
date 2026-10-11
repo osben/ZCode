@@ -12,7 +12,7 @@
 // - The marketplace page remounts on every entry (key includes pluginStoreOpenVersion), so a component ref cannot hold throttle state;
 //   keep it at module scope.
 
-const OFFICIAL_MARKETPLACE_AUTO_REFRESH_INTERVAL_MS = 10 * 60_000;
+export const OFFICIAL_MARKETPLACE_AUTO_REFRESH_INTERVAL_MS = 10 * 60_000;
 
 const lastAttemptAtByMarketplace = new Map<string, number>();
 
@@ -22,7 +22,7 @@ function parseTimestamp(value: string | undefined): number | null {
   return Number.isNaN(parsed) ? null : parsed;
 }
 
-function shouldAutoRefreshMarketplace(params: {
+export function shouldAutoRefreshMarketplace(params: {
   lastUpdated?: string;
   lastAttemptAt?: number;
   now: number;
@@ -50,4 +50,8 @@ export function claimMarketplaceAutoRefresh(
     lastAttemptAtByMarketplace.set(marketplaceId, now);
   }
   return shouldRefresh;
+}
+
+export function resetMarketplaceAutoRefreshForTests(): void {
+  lastAttemptAtByMarketplace.clear();
 }

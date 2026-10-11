@@ -1,7 +1,7 @@
 import { useLayoutEffect, useRef } from "react";
 
 /** Owns only the DOM layout projection; permission, Plan, and CUA business state remain managed by their existing hooks. */
-function fitComposerToolbar(root: HTMLElement) {
+export function fitComposerToolbar(root: HTMLElement) {
   const available = root.querySelector<HTMLElement>("[data-composer-leading-actions]");
   const content = root.querySelector<HTMLElement>("[data-composer-leading-content]");
   if (!available || !content) return;

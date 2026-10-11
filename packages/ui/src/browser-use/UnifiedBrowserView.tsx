@@ -9,7 +9,9 @@ import { usePlatform } from "@/hooks/usePlatform.js";
 import { useWebElementPicker } from "@/hooks/useWebElementPicker.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { logger } from "@/logger.js";
+import { BrowserSiteSettingsEntry } from "@/browser-use/BrowserSiteSettingsEntry.js";
 import { BrowserToolbar } from "@/EmbeddedBrowserPaneParts.js";
+import { EmbeddedBrowserPermissionPrompts } from "@/browser-use/EmbeddedBrowserPermissionPrompts.js";
 import { BrowserViewportSurface } from "@/browser-use/BrowserViewportSurface.js";
 import { BrowserViewportToolbar } from "@/browser-use/BrowserViewportToolbar.js";
 import { useBrowserResizeOperationWarning } from "@/browser-use/useBrowserResizeOperationWarning.js";
@@ -37,6 +39,7 @@ type PendingGuestNavigationCompletion = {
 /** UnifiedBrowserView — unified browser view (`<webview>` + CDP-on-guest architecture). The renderer’s `<webview>` guest renders page pixels directly (composited in the DOM, so DOM overlays can cover it and menus are no longer hidden behind a native WebContentsView layer). Human navigation/back/forward/refresh/element-picking calls webview methods directly (low latency, no handshake required); webview events drive chrome state. On did-attach, also report the guest webContentsId to main via browserViewAttachGuest, allowing main to attach CDP (webContents.debugger) for the Agent to control the tab over the protocol. Chrome reuses EmbeddedBrowserPaneParts BrowserToolbar; URL normalization and the not-mounted fallback reuse embeddedBrowserHelpers. */
 export function UnifiedBrowserView({
   browserKey,
+  onOpenPermissionSettings,
   isResidencyRestore = false,
   isVisible,
   isSelected = isVisible,
@@ -62,6 +65,8 @@ export function UnifiedBrowserView({
 }: {
   /** Controlled view key (= tab.id / sessionId, used by the Agent to locate the tab). */
   browserKey: string;
+  /** Site-settings entry in the address bar; opens the site's permissions settings tab. */
+  onOpenPermissionSettings?: (origin: string) => void;
   /** During budget recovery, revoke the bootstrap src immediately after the guest is created; main owns the first real navigation. */
   isResidencyRestore?: boolean;
   /** Whether the pane is visible (active + expanded). When hidden, remove it only from layout without unmounting the webview, preserving the page and history. */
@@ -117,6 +122,16 @@ export function UnifiedBrowserView({
   const [hasNavigated, setHasNavigated] = useState(hasInitialNavigation);
   const [webviewGeneration, setWebviewGeneration] = useState(0);
   const [webview, setWebview] = useState<ElectronWebviewTag | null>(null);
+  // Filter permission bubbles by owning tab: read the guest webContents id after attach/dom-ready.
+  // Keep undefined if unavailable (the component falls back to rendering requests without an owner id).
+  const [permissionGuestWebContentsId, setPermissionGuestWebContentsId] = useState<
+    number | undefined
+  >(undefined);
+  useEffect(() => {
+    if (!webview || typeof webview.getWebContentsId !== "function") return;
+    const id = safeWebviewCall(() => webview.getWebContentsId(), 0);
+    setPermissionGuestWebContentsId(id > 0 ? id : undefined);
+  }, [webview, browserState.isReady]);
   const [guestAttachRetryNonce, setGuestAttachRetryNonce] = useState(0);
   useBrowserScreenshotSurfaceReady({
     request: screenshotSurfaceRequest ?? null,
@@ -999,6 +1014,14 @@ export function UnifiedBrowserView({
     }
   }, [logWebviewTeardown, shouldMountWebview]);
 
+  let permissionOrigin: string | null = null;
+  try {
+    const url = new URL(browserState.currentUrl);
+    if (["http:", "https:"].includes(url.protocol)) permissionOrigin = url.origin;
+  } catch {
+    /* A blank page has no site permissions. */
+  }
+
   // display:none on an inactive view makes Electron retain the old compositor surface, which gets tiled in background screenshots.
   // flex during preparation is for compositing only; outer inert, pointer-events-none, and aria-hidden isolate interaction and accessibility.
   return (
@@ -1009,12 +1032,20 @@ export function UnifiedBrowserView({
       }
       className={cn(
         isVisible || shouldComposeSurface ? "flex" : "hidden",
-        "h-full min-h-0 w-full min-w-0 flex-col overflow-hidden bg-background",
+        "relative h-full min-h-0 w-full min-w-0 flex-col overflow-hidden bg-background",
       )}
     >
       <BrowserToolbar
         addressValue={addressValue}
         browserState={browserState}
+        permissionControl={
+          permissionOrigin ? (
+            <BrowserSiteSettingsEntry
+              origin={permissionOrigin}
+              onOpenSettings={onOpenPermissionSettings}
+            />
+          ) : null
+        }
         formatMessage={intl.formatMessage}
         onAddressChange={setAddressValue}
         onGoBack={handleGoBack}
@@ -1028,6 +1059,10 @@ export function UnifiedBrowserView({
         isElementPickerActive={isWebElementPicking}
         isResponsiveMode={isResponsiveMode}
       />
+      {/* Permission dialog layer: mount only in the visible tab (tabs share a store, avoiding duplicate rendering and background requests appearing in the wrong tab); then filter permission requests by guest to the tab that initiated them. */}
+      {isVisible ? (
+        <EmbeddedBrowserPermissionPrompts guestWebContentsId={permissionGuestWebContentsId} />
+      ) : null}
       {isResponsiveMode ? (
         <BrowserViewportToolbar
           isVisible={isVisible}

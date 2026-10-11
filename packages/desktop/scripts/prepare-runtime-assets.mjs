@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { resolveNativeSearchReleasePlan } from "../../../scripts/native-search-tools-config.mjs";
 import { runCommand } from "../../../scripts/spawn-command.mjs";
 import { getTargetPlatform } from "./target-platform.mjs";
+import { isRealComputerUseProducerInstalled } from "./computer-use-producer.mjs";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const desktopRoot = resolve(scriptDir, "..");
@@ -20,6 +21,10 @@ const nativeSearchReleasePlan = resolveNativeSearchReleasePlan({
 // and supply-chain checks can be reused if the entry point is restored.
 const shouldPrepareWindowsBrowserImportHelper =
   target.os === "win32" && process.env.ZCODE_ENABLE_WINDOWS_BROWSER_IMPORT === "1";
+// The Windows Computer Use Helper comes from the real producer; the open-source placeholder package has
+// no Helper runtime, so skip preparation.
+const shouldPrepareWindowsCuaHelper =
+  target.os === "win32" && isRealComputerUseProducerInstalled({ desktopPackageRoot: desktopRoot });
 // Provides snap targets for the CUA permission panel. macOS only; if swiftc is unavailable, the script
 // skips this helper and the panel falls back to the bottom of the screen. The panel remains usable, so
 // always running this on darwin does not make the build fragile.
@@ -28,10 +33,12 @@ const shouldPrepareMacosWindowBounds = target.os === "darwin";
 // The desktop package bundles the local agent JavaScript bundle (prepare:agent-bundle), which runs on
 // the app's Electron Node runtime. Remote cross-platform native binaries still come from
 // prepare:remote-assets above.
-// The native-search archive ships with the repository, so preparation only extracts and validates it
-// locally; no download source configuration is needed.
+// native-search is prepared uniformly by prepare-native-search-tools.mjs: it downloads the pinned
+// digest archive when the internal dependency source is configured, or unpacks the identically named
+// archive shipped with the repository otherwise; neither path needs an extra switch.
 const localRuntimeScripts = [
   "prepare:agent-bundle",
+  ...(shouldPrepareWindowsCuaHelper ? ["prepare:windows-cua-helper"] : []),
   ...(nativeSearchReleasePlan.enabled ? ["prepare:native-search"] : []),
   ...(shouldPrepareWindowsBrowserImportHelper ? ["prepare:browser-import-helper"] : []),
   ...(shouldPrepareMacosWindowBounds ? ["prepare:macos-window-bounds"] : []),

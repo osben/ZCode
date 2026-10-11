@@ -117,8 +117,8 @@ internal static class Program
         }
         catch
         {
-            // Do not map broker initialization exceptions uniformly to helper_failed; distinguish
-            // failures that happen before the input or control pipe is established.
+            // Bugfix cause: broker initialization exceptions previously mapped uniformly to helper_failed, with no way to
+            // distinguish failures that happen before the input or control pipe is established.
             WriteError("broker_initialization_failed");
             return;
         }

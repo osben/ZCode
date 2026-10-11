@@ -13,6 +13,10 @@ import type {
   UserInfo,
 } from "@zcode/shared";
 import type { IFeedbackService, IServiceAccessor } from "@zcode/services";
+import type { SavedWorkflowsOpenTarget } from "@/settings/saved-workflows/SavedWorkflowsSection.js";
+import type { SavedWorkflowHubTarget } from "@/v4/savedWorkflowHubContext.js";
+import type { WebRemoteControlWorkspaceSwitcherApi } from "@/root/types.js";
+import type { WebRemoteControlTerminalTransportState } from "@/root/types.js";
 import type { BrowserNavigationRequest, RecentClosedSidePaneTab } from "@/hooks/useAppPanels.js";
 import type { CodeViewerSource } from "@/lib/codeViewer.js";
 import type { AssistantPreviewCardsAutoOpenRequest } from "@/lib/assistantPreviewCards.js";
@@ -100,6 +104,10 @@ export interface AppProps {
   remoteConnectionInProgress?: boolean;
   onReturnToWorkspace?: () => void;
   allowOpenWorkspace?: boolean;
+  webRemoteControlWorkspaceSwitcher?: WebRemoteControlWorkspaceSwitcherApi;
+  initialWebRemoteControlMobileNavigationIntent?: import("@zcode/shared").WebRemoteControlMobileNavigationIntent;
+  initialWebRemoteControlWorkspaceList?: import("@zcode/shared").WebRemoteControlWorkspaceListResult;
+  webRemoteControlTerminalTransportState?: WebRemoteControlTerminalTransportState;
   allowRemoteWorkspace?: boolean;
   remoteWorkspaceSessions?: RemoteWorkspaceSessionEntry[];
   workspaceAbsPath: string;
@@ -125,6 +133,15 @@ export interface WorkspaceShellLayoutProps extends Omit<AppProps, "baseFeedbackS
   pluginStoreOpenVersion: number;
   openAutomationId: string | null;
   openAutomationTab: AutomationsNavigationTab | null;
+  /** Hub deep link to a saved workflow's details page; cleared after navigation by `onOpenWorkflowConsumed`. */
+  openWorkflow: SavedWorkflowsOpenTarget | null;
+  onOpenWorkflowConsumed: () => void;
+  /**
+   * Completion-card “Saved” chip → hub page (docs/dynamic-workflow/transcript-and-notifications.md,
+   * “Saving the run, and running it again”): switch to the Workflows tab in the Automations main
+   * view and set the deep link.
+   */
+  onOpenSavedWorkflowInHub: (target: SavedWorkflowHubTarget) => void;
   onWorkspaceMainViewChange: (view: WorkspaceMainView) => void;
   onOpenAutomationConsumed: () => void;
   handleOpenAutomations: OpenAutomationsMain;
@@ -187,6 +204,9 @@ export interface WorkspaceShellLayoutProps extends Omit<AppProps, "baseFeedbackS
   gitState: ReturnType<typeof import("@/hooks/useGitRepository.js").useGitRepository>;
   browserNavigationRequest: BrowserNavigationRequest | null;
   browserRestoreUrls: Record<string, string>;
+  providerConfigFile: ReturnType<
+    typeof import("@/hooks/useWorkspaceProviderConfigFile.js").useWorkspaceProviderConfigFile
+  >;
   taskNativeSessionLogFile: ReturnType<
     typeof import("@/hooks/useTaskNativeSessionLogFile.js").useTaskNativeSessionLogFile
   >;
@@ -234,6 +254,7 @@ export interface WorkspaceShellLayoutProps extends Omit<AppProps, "baseFeedbackS
   handleToggleTerminal: () => void;
   handleToggleBrowser: () => void;
   handleOpenBrowserTab: () => void;
+  handleOpenBrowserPermissionSettings: (origin: string) => void;
   handleOpenTreemapping: (source?: TreemappingSidePaneTab["source"]) => void;
   handleOpenWhiteboard: () => void;
   handleOpenDeveloperTools: () => void;

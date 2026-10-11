@@ -59,19 +59,21 @@ interface OffPeakTaskListProps {
 
 // Grouping by status would move tasks when they switch between running and terminal states, breaking users’ expectations for existing card positions;
 // sort only by immutable creation time descending so status changes do not affect order.
-function sortOffPeakTasksByCreatedAt(tasks: readonly ZCodeOffPeakTask[]): ZCodeOffPeakTask[] {
+export function sortOffPeakTasksByCreatedAt(
+  tasks: readonly ZCodeOffPeakTask[],
+): ZCodeOffPeakTask[] {
   return [...tasks].sort((a, b) => b.createdAt - a.createdAt);
 }
 
-/** Same scroll threshold as the scheduled task list in AutomationsSection (design allows at most eight visible cards). */
-const OFFPEAK_LIST_SCROLL_THRESHOLD = 8;
+/** Same scroll threshold as the scheduled-task list in AutomationsSection (the Figma spec shows at most 8 cards). */
+export const OFFPEAK_LIST_SCROLL_THRESHOLD = 8;
 
 const OFFPEAK_MENU_HINT_MAX_WIDTH = 320;
 const OFFPEAK_MENU_HINT_RIGHT_OFFSET = 16;
 
 type OffPeakMenuHintSide = "right" | "top";
 
-function resolveOffPeakMenuHintSide(
+export function resolveOffPeakMenuHintSide(
   triggerRect: Pick<DOMRect, "right"> | null,
   viewportWidth: number,
 ): OffPeakMenuHintSide {
@@ -209,12 +211,14 @@ export function OffPeakTaskList({
               <span className="block truncate pr-14 text-ui-base font-medium leading-5 text-foreground">
                 {task.title || task.prompt}
               </span>
-              {/* Task-card body and status font sizes can scale; a fixed 18px line-height would squeeze or clip text at larger font sizes. */}
+              {/* Fix reason: task-card body and status font sizes can scale; a fixed 18px line-height would squeeze or clip text at larger font sizes. */}
               <p className="line-clamp-2 h-9 text-ui-base font-normal leading-snug text-foreground-subtle">
                 {task.prompt}
               </p>
               <div className="mt-auto flex h-6 min-w-0 items-center gap-[10px] text-ui-base leading-snug">
-                {/* The status badge and right-side “Running session: …” may both shrink, letting a long session title compress the status to one character. Status is the primary footer information, so keep it shrink-0 and truncate only the session-title segment. */}
+                {/* Bug cause: the status badge and right-side “Running session: …” may both shrink, letting
+                   a long session title compress the status to one character. Status is the primary footer
+                   information, so keep it shrink-0 and truncate only the session-title segment. */}
                 <div
                   className={cn(
                     "flex w-fit shrink-0 items-center gap-0.5 font-normal",
@@ -323,13 +327,17 @@ export function OffPeakTaskList({
                       <span className="flex-1">
                         {intl.formatMessage({ id: "offPeak.action.pause" })}
                       </span>
-                      {/* Pause now takes effect immediately without a second confirmation. Keep the info entry to explain queue wait time and requeue behavior, so users understand the outcome of the action. */}
+                      {/* Fix reason: pause now takes effect immediately without a second confirmation.
+                         Keep the info entry to explain queue wait time and requeue behavior so users
+                         understand the outcome of the action. */}
                       <OffPeakMenuHint
                         title={intl.formatMessage({
                           id: "offPeak.action.pauseHint",
                         })}
                       >
-                        {/* The hint trigger is nested inside a selectable menu item; click bubbling would execute Pause / Continue. Stop only click propagation so pointerdown does not disrupt Radix selection timing. */}
+                        {/* Fix reason: the hint trigger is nested inside a selectable menu item; click
+                           bubbling would execute Pause / Continue. Stop only click propagation so
+                           pointerdown does not disrupt Radix selection timing. */}
                         <span className="inline-flex" onClick={(event) => event.stopPropagation()}>
                           <AutomationInfoIcon
                             className="size-3.5 shrink-0 text-foreground-subtle"
@@ -369,7 +377,7 @@ export function OffPeakTaskList({
                   ) : null}
                   {task.status === "running" ? (
                     <DropdownMenuItem className="gap-1" onSelect={() => onCancel(task)}>
-                      {/* The thin-outline X is lighter than neighboring action icons and does not match the home Chat “stop generation” semantics. */}
+                      {/* Fix reason: the thin-outline X is lighter than neighboring action icons and does not match the home Chat “stop generation” semantics. */}
                       <span className="flex size-5 items-center justify-center">
                         <AutomationCancelActionIcon
                           className="size-4 fill-current"
@@ -379,7 +387,7 @@ export function OffPeakTaskList({
                       {intl.formatMessage({ id: "offPeak.action.cancel" })}
                     </DropdownMenuItem>
                   ) : null}
-                  {/* When the terminal-state menu has only Delete, a fixed divider looks like a top rule with no grouping meaning. */}
+                  {/* Fix reason: when the terminal-state menu has only Delete, a fixed divider looks like a top rule with no grouping meaning. */}
                   {hasPrimaryMenuAction ? <DropdownMenuSeparator /> : null}
                   <DropdownMenuItem
                     className="gap-1 !text-destructive data-[highlighted]:!bg-menu-hover data-[highlighted]:!text-destructive focus:!text-destructive [&_svg]:!text-destructive"

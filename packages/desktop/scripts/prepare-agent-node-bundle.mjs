@@ -16,12 +16,16 @@
 // prepare:remote-assets; this change does not affect that path.
 
 import { cpSync, existsSync, mkdirSync } from "node:fs";
-import { access, cp, mkdir } from "node:fs/promises";
 import { basename, dirname, resolve } from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { runCommand } from "../../../scripts/spawn-command.mjs";
 import { stageAgentBundle } from "./stage-agent-bundle.mjs";
+import {
+  isSharpRequiredByComputerUse,
+  stageSharpIntoBundledAgents,
+} from "./sharp-package-assets.mjs";
+import { stageKoffiIntoBundledAgents } from "./koffi-package-assets.mjs";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const desktopRoot = resolve(scriptDir, "..");
@@ -36,6 +40,8 @@ const pnpmRunEnv = {
   PNPM_CONFIG_VERIFY_DEPS_BEFORE_RUN: "false",
 };
 const BROWSER_USE_PLUGIN_PACKAGE_NAME = "@zcode/browser-use-plugin";
+const NODE_REPL_HOST_PACKAGE_NAME = "@zcode/node-repl-host";
+const CUA_PLUGIN_PACKAGE_NAME = "@zcode/zcode-cua-plugin";
 
 // Platform directory names combine darwin/win32/linux with x64/arm64.
 // ZCODE_TARGET_OS and ZCODE_TARGET_ARCH can override them (CI injects these for cross-packaging).
@@ -98,6 +104,82 @@ const browserUseRequiredRuntimePaths = [
 ];
 const officialPluginPackages = [
   {
+    packageName: "@zcode/android-emulator-plugin",
+    relativePath: "apps/zcode-cli/packages/android-emulator-plugin",
+    requiresRuntime: true,
+    requiredRuntimePaths: ["dist/mcp/server.js"],
+    runtimeBuildScript: "scripts/build-mcp.mjs",
+    stagedPath: "packages/android-emulator-plugin",
+  },
+  {
+    packageName: "@zcode/documents-plugin",
+    relativePath: "apps/zcode-cli/packages/documents-plugin",
+    requiresRuntime: false,
+    requiredSeedPaths: ["agents/visual-judge.md", "skills/docx/SKILL.md"],
+    stagedPath: "packages/documents-plugin",
+  },
+  {
+    packageName: "@zcode/image-search-plugin",
+    relativePath: "apps/zcode-cli/packages/image-search-plugin",
+    requiresRuntime: false,
+    requiredSeedPaths: [".mcp.json"],
+    stagedPath: "packages/image-search-plugin",
+  },
+  {
+    packageName: "@zcode/pdf-plugin",
+    relativePath: "apps/zcode-cli/packages/pdf-plugin",
+    requiresRuntime: false,
+    requiredSeedPaths: ["agents/visual-judge.md", "skills/pdf/SKILL.md"],
+    stagedPath: "packages/pdf-plugin",
+  },
+  {
+    packageName: "@zcode/presentations-plugin",
+    relativePath: "apps/zcode-cli/packages/presentations-plugin",
+    requiresRuntime: false,
+    requiredSeedPaths: ["agents/visual-judge.md", "skills/pptx/SKILL.md"],
+    stagedPath: "packages/presentations-plugin",
+  },
+  {
+    packageName: "@zcode/spreadsheets-plugin",
+    relativePath: "apps/zcode-cli/packages/spreadsheets-plugin",
+    requiresRuntime: false,
+    requiredSeedPaths: ["agents/visual-judge.md", "skills/xlsx/SKILL.md"],
+    stagedPath: "packages/spreadsheets-plugin",
+  },
+  {
+    packageName: "@zcode/visualize-plugin",
+    relativePath: "apps/zcode-cli/packages/visualize-plugin",
+    requiresRuntime: false,
+    requiredSeedPaths: [
+      "skills/visualize/SKILL.md",
+      "skills/visualize/references/api.md",
+      "skills/visualize/references/styles.md",
+      "skills/visualize/tweak.md",
+      "skills/visualize/LICENSE.md",
+      "skills/visualize/scripts/render.py",
+      "skills/visualize/assets/visualize.css",
+      "skills/visualize/assets/visualize.html",
+      "skills/visualize/assets/calendar.js",
+      "skills/visualize/assets/runtime-manifest.json",
+      "skills/visualize/scripts/vendor.py",
+      "skills/visualize/assets/vendor/manifest.json",
+      "skills/visualize/assets/vendor/floating-ui-core-1.7.3.min.js",
+      "skills/visualize/assets/vendor/floating-ui-core-1.7.3.min.js.LICENSE",
+      "skills/visualize/assets/vendor/floating-ui-dom-1.7.4.min.js",
+      "skills/visualize/assets/vendor/floating-ui-dom-1.7.4.min.js.LICENSE",
+      "skills/visualize/assets/vendor/lucide-1.17.0.js",
+      "skills/visualize/assets/vendor/lucide-1.17.0.js.LICENSE",
+      "skills/visualize/assets/vendor/d3-7.9.0.min.js",
+      "skills/visualize/assets/vendor/d3-7.9.0.min.js.LICENSE",
+      "skills/visualize/widgets/calendar.md",
+      "skills/visualize/examples/calendar.html",
+      "skills/visualize/assets/standalone-host-bridge.js",
+      "skills/visualize/assets/standalone-shell.js",
+    ],
+    requiredRuntimePaths: [],
+    stagedPath: "packages/visualize-plugin",
+  },
+  {
     // browser-use carries only its client script and skills/docs; the node_repl MCP runtime belongs to
     // @zcode/node-repl-host (see the constant comment above).
     packageName: "@zcode/browser-use-plugin",
@@ -107,7 +189,46 @@ const officialPluginPackages = [
     runtimeBuildScript: "scripts/build.mjs",
     stagedPath: "packages/browser-use-plugin",
   },
-
+  {
+    packageName: "@zcode/ios-simulator-plugin",
+    relativePath: "apps/zcode-cli/packages/ios-simulator-plugin",
+    requiresRuntime: true,
+    requiredRuntimePaths: ["dist/mcp/server.js"],
+    runtimeBuildScript: "scripts/build-mcp.mjs",
+    stagedPath: "packages/ios-simulator-plugin",
+  },
+  {
+    // Fix rationale: restore-legacy-sessions is registered as an official plugin, but the Electron
+    // production package copies only the resources listed here. Omitting it keeps the plugin out of
+    // plugins list after the production package's first launch.
+    packageName: "@zcode/restore-legacy-sessions-plugin",
+    relativePath: "apps/zcode-cli/packages/restore-legacy-sessions-plugin",
+    requiresRuntime: false,
+    stagedPath: "packages/restore-legacy-sessions-plugin",
+  },
+  {
+    packageName: "@zcode/skill-creator-plugin",
+    relativePath: "apps/zcode-cli/packages/skill-creator-plugin",
+    requiresRuntime: false,
+    stagedPath: "packages/skill-creator-plugin",
+  },
+  {
+    packageName: "@zcode/plugin-creator-plugin",
+    relativePath: "apps/zcode-cli/packages/plugin-creator-plugin",
+    requiresRuntime: false,
+    stagedPath: "packages/plugin-creator-plugin",
+  },
+  {
+    // Fix rationale: zcode-guide is registered as an official default-enabled content plugin (see
+    // official-plugin-definitions.ts). The Electron production package does not take the SEA path;
+    // official plugin seeding relies on the resources/glm/packages/*-plugin staged here. Omitting it
+    // means the production desktop package cannot seed the plugin on first launch, and users lose the
+    // default-enabled configuration guide skill.
+    packageName: "@zcode/zcode-guide-plugin",
+    relativePath: "apps/zcode-cli/packages/zcode-guide-plugin",
+    requiresRuntime: false,
+    stagedPath: "packages/zcode-guide-plugin",
+  },
   {
     // node_repl host: the MCP runtime shared by Browser Use and Computer Use, now in a separate package.
     // It has no listing and does not appear in the plugin marketplace, but first-run seeding in the
@@ -120,11 +241,22 @@ const officialPluginPackages = [
     runtimeBuildScript: "scripts/build.mjs",
     stagedPath: "packages/node-repl-host",
   },
+  {
+    // The CUA plugin carries only its SDK/skills/docs; the node_repl MCP runtime belongs to
+    // @zcode/node-repl-host.
+    packageName: "@zcode/zcode-cua-plugin",
+    relativePath: "apps/zcode-cli/packages/zcode-cua-plugin",
+    requiresRuntime: false,
+    stagedPath: "packages/zcode-cua-plugin",
+  },
+  // superpowers has been retired from bundled plugins and is now installed on demand from the UI
+  // recommendations section; its resources are no longer staged here.
 ];
 // Skills bundled with the CLI (not plugins): bootstrap's resolveBundledSkillRoots searches the same
 // candidate directories as official plugins for packages/bundled-skills next to zcode.cjs and reads it
 // in place. If this is not staged, /workflow in the desktop package asks users to load the
-// dynamic-workflows skill first, but the skill file is missing. Package it with the agent.
+// dynamic-workflows skill first while the skill is missing—exactly the failure mode that moving it out
+// of the uninstallable zcode-guide plugin was meant to fix.
 const bundledSkillPack = {
   relativePath: "apps/zcode-cli/packages/bundled-skills",
   requiredPaths: [
@@ -133,7 +265,7 @@ const bundledSkillPack = {
     "skills/dynamic-workflows/examples.md",
   ],
   stagedPath: "packages/bundled-skills",
-  topLevelPaths: ["skills"],
+  topLevelPaths: ["README.md", "skills"],
 };
 const includedOfficialPluginTopLevelPaths = new Set([
   ".mcp.json",
@@ -278,28 +410,85 @@ function stageOfficialPlugins() {
   }
 }
 
-async function stageBundledSkillPack() {
+function stageBundledSkillPack() {
   const sourceRoot = resolve(repoRoot, bundledSkillPack.relativePath);
   const targetRoot = resolve(glmDir, bundledSkillPack.stagedPath);
-  await mkdir(targetRoot, { recursive: true });
+  mkdirSync(targetRoot, { recursive: true });
   for (const entryName of bundledSkillPack.topLevelPaths) {
     const sourcePath = resolve(sourceRoot, entryName);
-    await cp(sourcePath, resolve(targetRoot, entryName), {
+    if (!existsSync(sourcePath)) continue;
+    cpSync(sourcePath, resolve(targetRoot, entryName), {
       recursive: true,
       filter: shouldCopyOfficialPluginAsset,
     });
   }
   for (const relativePath of bundledSkillPack.requiredPaths) {
     const stagedAssetPath = resolve(targetRoot, ...relativePath.split("/"));
-    await access(stagedAssetPath);
+    if (!existsSync(stagedAssetPath)) {
+      throw new Error(
+        `[prepare:agent-bundle] missing staged bundled skill asset: ${stagedAssetPath}`,
+      );
+    }
   }
   console.log(`[prepare:agent-bundle] staged bundled skill pack ${bundledSkillPack.stagedPath}`);
 }
 
-// When an Electron production package contains only resources/glm/zcode.cjs, there is no official
-// plugin directory near the app-server process's __dirname. Seeding cannot find its source at startup,
-// so users do not receive the bundled plugins automatically. Place official plugins in glm/packages/*-plugin
-// as expected by bootstrap's rootCandidates so Electron Node can reuse the same filesystem seeding logic.
+function stageSharpForNodeReplPlugin() {
+  if (!isSharpRequiredByComputerUse({ desktopPackageRoot: desktopRoot })) {
+    console.log(
+      "[prepare:agent-bundle] Computer Use package does not declare sharp, skip sharp staging",
+    );
+    return;
+  }
+  // `sharp` remains externalized—it contains native .node files that cannot be inlined, and at runtime
+  // it resolves from the node_modules of **the package that contains it**. Since 2026-09-11 the
+  // node_repl host bundle belongs to @zcode/node-repl-host, so sharp must be staged into the host
+  // directory; otherwise `import sharp` inside the host cannot resolve in the packaged app.
+  // The native dependencies of CUA screenshot / get_app_state still go into the CUA plugin's own
+  // node_modules; the Browser Use directory keeps a copy for compatibility. All three stagings live in
+  // plugin subdirectories so electron-builder does not filter node_modules at the extraResources root.
+  const pluginStagedDirs = [
+    [NODE_REPL_HOST_PACKAGE_NAME, resolve(glmDir, "packages", "node-repl-host")],
+    [BROWSER_USE_PLUGIN_PACKAGE_NAME, resolve(glmDir, "packages", "browser-use-plugin")],
+    [CUA_PLUGIN_PACKAGE_NAME, resolve(glmDir, "packages", "zcode-cua-plugin")],
+  ];
+  for (const [packageName, pluginStagedDir] of pluginStagedDirs) {
+    if (!existsSync(resolve(pluginStagedDir, ".zcode-plugin", "plugin.json"))) {
+      console.log(`[prepare:agent-bundle] ${packageName} not staged, skip sharp staging`);
+      continue;
+    }
+    stageSharpIntoBundledAgents({
+      desktopPackageRoot: desktopRoot,
+      glmDir: pluginStagedDir,
+      targetPlatform: { os: platform, arch },
+    });
+    console.log(
+      `[prepare:agent-bundle] staged sharp into ${resolve(pluginStagedDir, "node_modules")} (${platform}-${arch})`,
+    );
+  }
+}
+
+function stageKoffiForCuaPlugin() {
+  const cuaPluginStagedDir = resolve(glmDir, "packages", "zcode-cua-plugin");
+  if (!existsSync(resolve(cuaPluginStagedDir, ".zcode-plugin", "plugin.json"))) {
+    console.log("[prepare:agent-bundle] zcode-cua-plugin not staged, skip koffi staging");
+    return;
+  }
+  stageKoffiIntoBundledAgents({
+    koffiPackageRoot: adaptersRoot,
+    glmDir: cuaPluginStagedDir,
+    targetPlatform: { os: platform, arch },
+  });
+  console.log(
+    `[prepare:agent-bundle] staged koffi into ${resolve(cuaPluginStagedDir, "node_modules")} (${platform}-${arch})`,
+  );
+}
+
+// Fix rationale: when an Electron production package contains only resources/glm/zcode.cjs, there is
+// no official plugin directory near the app-server process's __dirname. Seeding cannot find its source
+// at startup, so users do not receive the bundled plugins automatically. Place official plugins in
+// glm/packages/*-plugin as expected by bootstrap's rootCandidates so Electron Node can reuse the same
+// filesystem seeding logic.
 // Generating the browser-use runtime declaration depends on @zcode/core/dist. A clean CI checkout does
 // not have that artifact, so build the CLI dependencies before the official plugins; a leftover dist on
 // developer machines previously hid this ordering issue.
@@ -307,4 +496,6 @@ buildCliBundle();
 buildOfficialPluginRuntimes();
 stageBundle();
 stageOfficialPlugins();
-await stageBundledSkillPack();
+stageBundledSkillPack();
+stageKoffiForCuaPlugin();
+stageSharpForNodeReplPlugin();

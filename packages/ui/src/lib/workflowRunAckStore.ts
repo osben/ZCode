@@ -9,11 +9,11 @@ interface StorageLike {
   setItem(key: string, value: string): void;
 }
 
-const WORKFLOW_RUN_ACK_STORAGE_KEY = "zcode-workflow-run-acknowledged";
+export const WORKFLOW_RUN_ACK_STORAGE_KEY = "zcode-workflow-run-acknowledged";
 /** Maximum set size; evict the earliest acknowledged item when full. 256 is far more than the number of completed runs visible in any conversation list. */
-const WORKFLOW_RUN_ACK_LIMIT = 256;
+export const WORKFLOW_RUN_ACK_LIMIT = 256;
 
-interface WorkflowRunAckStore {
+export interface WorkflowRunAckStore {
   isAcknowledged(runId: string): boolean;
   acknowledge(runIds: readonly string[]): void;
   subscribe(listener: () => void): () => void;
@@ -34,7 +34,7 @@ function readStored(storage: StorageLike | null): string[] {
   }
 }
 
-function createWorkflowRunAckStore(storage: StorageLike | null): WorkflowRunAckStore {
+export function createWorkflowRunAckStore(storage: StorageLike | null): WorkflowRunAckStore {
   // Insertion order = acknowledgement order; Set iteration order ensures the earliest item is evicted first.
   const acknowledged = new Set<string>(readStored(storage).slice(-WORKFLOW_RUN_ACK_LIMIT));
   const listeners = new Set<() => void>();
@@ -90,6 +90,11 @@ let defaultStore: WorkflowRunAckStore | null = null;
 export function getWorkflowRunAckStore(): WorkflowRunAckStore {
   defaultStore ??= createWorkflowRunAckStore(getBrowserStorage());
   return defaultStore;
+}
+
+/** For tests: replace the singleton (including resetting it to `null`). */
+export function setWorkflowRunAckStoreForTesting(store: WorkflowRunAckStore | null): void {
+  defaultStore = store;
 }
 
 /** Subscribe to the acknowledged-set version; the returned predicate gets a new reference when the version changes so callers recompute row selection. */

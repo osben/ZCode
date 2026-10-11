@@ -1,12 +1,12 @@
 # ZCode Plugin Store
 
-Domain vocabulary for the plugin settings page and its marketplace browsing and installation experience. This file defines the store's terminology for use by pages, services, and documentation.
+Domain vocabulary for the plugin settings page and its marketplace browsing and installation experience. The 2026-07 storefront redesign introduced terms that are easy to confuse; this file is the authoritative source for resolving terminology questions.
 
 ## Marketplace and Sources
 
 **Official Marketplace**:
 The only distribution channel operated by ZCode. Its ID is `zcode-plugins-official`, and its contents are built-in plugins plus CDN plugins. It is a "distribution channel," not an "author affiliation"; it can include plugins from community authors.
-_Avoid_: Using "official" to mean any trusted source.
+_Avoid_: Calling `claude-plugins-official` the Official Marketplace or using "official" to mean any trusted source.
 
 **Builtin Plugin**:
 A plugin distributed with the application and seeded into the Official Marketplace at startup. This is a subset of official plugins.
@@ -17,12 +17,8 @@ A plugin distributed in the Official Marketplace as a ZIP package from the offic
 _Avoid_: "Network plugin," "online plugin."
 
 **Personal Source**:
-Any plugin source added by the user: Git/GitHub/URL/local directory marketplaces, or inline plugins.
-_Avoid_: None.
-
-**Catalog Auto-Refresh**:
-A throttled background refresh of the Official Marketplace catalog when entering the store page. It is invisible to the user and applies only to the official marketplace.
-_Avoid_: Confusing it with Manual Refresh or calling it "check for updates" (the update badge is only a side effect of refreshing).
+Any plugin source added by the user: `claude-plugins-official`, Git/GitHub/URL/local directory marketplaces, or inline plugins.
+_Avoid_: "Third-party marketplace" for `claude-plugins-official`; "third-party" is inaccurate for this source.
 
 **Manual Refresh**:
 A full-marketplace refresh triggered by the refresh button in the store page's top bar. It is not subject to the auto-refresh throttle.
@@ -41,6 +37,10 @@ _Avoid_: "Third-party tab," "My tab."
 **Featured**:
 A curated section at the top of the public segment. Its contents are controlled remotely by the `featured` field in the official CDN catalog. It exists only in the public segment.
 _Avoid_: Confusing it with Recommended.
+
+**Recommended**:
+A curated section at the top of the Personal Segment. Its list is maintained in the repository in `recommendedPlugins.json` and currently features selected plugins from `claude-plugins-official`. It exists only in the Personal Segment.
+_Avoid_: Confusing it with Featured.
 
 **Installed Strip**:
 A row of icons for installed plugins at the top of the listing page. Clicking an icon opens its detail page.
@@ -61,8 +61,8 @@ The functional definition in a plugin package's `plugin.json` (commands/agents/s
 _Avoid_: `marketplace.json` (that is a catalog, not a manifest).
 
 **Example Prompt**:
-A clickable prompt supplied by a Store Listing. Clicking it starts a new session and pre-fills the prompt without sending it. It is the only "new session" entry point on the detail page.
-_Avoid_: "Shortcut," "prompt template," "try it now."
+A clickable prompt supplied by a Store Listing. Clicking it starts a new session and pre-fills the prompt without sending it. It is the only "new session" entry point on the detail page; the "Try Now" button was removed on 2026-07-14.
+_Avoid_: "Shortcut," "prompt template," "Try Now."
 
 ## Lifecycle States
 

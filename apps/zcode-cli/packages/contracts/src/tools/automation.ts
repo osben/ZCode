@@ -289,7 +289,7 @@ export const CronAutomationSchema = z
     recurring: z.boolean(),
     maxRuns: z.number().int().positive().optional(),
     modelSelection: cronModelSelectionSchema.optional(),
-    mode: z.enum(["build", "edit", "plan", "yolo"]).optional(),
+    mode: z.enum(["build", "edit", "plan", "yolo", "guarded"]).optional(),
     // Custom repeat rule; when absent, scheduling falls back to parsing cronExpr. Session cards
     // need this field to display real intervals cron cannot express (such as every 50 hours or
     // every 40 days, where the compatibility cronExpr is only 0 * * * *).

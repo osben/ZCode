@@ -162,7 +162,8 @@ function renderForceUpdatePromptHtml(text: ForceUpdateDialogText, locale: Locale
       background: #f8f8f8;
       display: flex;
     }
-    /* The forced-update screenshot covers the full BrowserWindow; outer padding plus inner rounded corners would expose the host background as a black border. */
+    /* Bugfix: the force-update screenshot captures the whole BrowserWindow; outer padding plus an
+       inner border-radius would show the host background as a black frame. */
     .panel {
       width: 100%;
       height: 100%;
@@ -222,7 +223,8 @@ function renderForceUpdatePromptHtml(text: ForceUpdateDialogText, locale: Locale
       cursor: pointer;
       -webkit-app-region: no-drag;
     }
-    /* The font glyph for × shifts the visual center; use two lines to center it like the main-window close button. */
+    /* Bugfix: the glyph baseline of the font's × character shifts the visual center; use two
+       lines to stay centered consistently with the main window's close button. */
     .close::before,
     .close::after {
       content: "";
@@ -412,7 +414,8 @@ function renderForceUpdatePromptHtml(text: ForceUpdateDialogText, locale: Locale
       return kind === 'checking' || kind === 'downloading' || kind === 'ready' || kind === 'installing';
     }
     function showCloseConfirmation() {
-      // Automatic updates disable the primary button, but closing the window still requires confirmation to avoid accidentally interrupting the download.
+      // Bugfix: auto-update disables the primary button, but closing the window should still
+      // ask the user to confirm so an accidental close cannot interrupt the download.
       resizePromptHeight(${FORCE_UPDATE_PROMPT_HEIGHT});
       previousAutoState = isActiveAutoState(currentState.kind) ? currentState : previousAutoState;
       currentState = { kind: 'confirm-close' };

@@ -42,6 +42,10 @@ interface RootWorkspaceContentProps {
   reconnectingRemoteWorkspaceLogsByWorkspaceKey: AppProps["reconnectingRemoteWorkspaceLogsByWorkspaceKey"];
   remoteConnectionLogs?: AppProps["remoteConnectionLogs"];
   allowOpenWorkspace: NonNullable<RootProps["allowOpenWorkspace"]>;
+  webRemoteControlWorkspaceSwitcher?: RootProps["webRemoteControlWorkspaceSwitcher"];
+  initialWebRemoteControlMobileNavigationIntent?: RootProps["initialWebRemoteControlMobileNavigationIntent"];
+  initialWebRemoteControlWorkspaceList?: RootProps["initialWebRemoteControlWorkspaceList"];
+  webRemoteControlTerminalTransportState?: RootProps["webRemoteControlTerminalTransportState"];
   isDesktop?: RootProps["isDesktop"];
   isMacDesktop?: RootProps["isMacDesktop"];
   isWindowsDesktop?: RootProps["isWindowsDesktop"];
@@ -80,6 +84,10 @@ export function RootWorkspaceContent({
   reconnectingRemoteWorkspaceLogsByWorkspaceKey,
   remoteConnectionLogs,
   allowOpenWorkspace,
+  webRemoteControlWorkspaceSwitcher,
+  initialWebRemoteControlMobileNavigationIntent,
+  initialWebRemoteControlWorkspaceList,
+  webRemoteControlTerminalTransportState,
   isDesktop,
   isMacDesktop,
   isWindowsDesktop,
@@ -104,7 +112,7 @@ export function RootWorkspaceContent({
         data-root-workspace-surface={isSettingsTabActive ? "inert" : "interactive"}
         inert={isSettingsTabActive ? true : undefined}
       >
-        {/* Previously, a conditional branch replaced the entire App with the settings page, unmounting and rebuilding the whole main tree when settings closed.
+        {/* Bugfix: Previously, a conditional branch replaced the entire App with the settings page, unmounting and rebuilding the whole main tree when settings closed.
             Local UI state in the chat area, terminal, and elsewhere was therefore treated as if the workspace had been entered again.
             Keep the workspace shell mounted and overlay only the settings page.
             Adding a workspacePath-based key also unmounted and rebuilt the sidebar and task list when switching tasks across workspaces,
@@ -117,9 +125,9 @@ export function RootWorkspaceContent({
             appears to the sidebar as an abrupt visibility change, causing a brief left-side flash when opening settings.
             Use opacity-0 + pointer-events-none instead: layout and the menu anchor remain in place, preserving the DropdownMenu reference,
             while the layer transition becomes a stable transparent overlay and reduces sidebar flicker.
-            Using hidden here would also make the quickpick overlay inherit display:none even though the workspace subtree remains mounted,
+            Fix reason: Using hidden here would also make the quickpick overlay inherit display:none even though the workspace subtree remains mounted,
             so Cmd/Ctrl+K in settings would open quickpick state without making it visible. Preserve layout while disabling interaction instead.
-            Opacity and pointer-events alone still let autofocus from underlying permission/AskUserQuestion cards
+            Fix reason: Opacity and pointer-events alone still let autofocus from underlying permission/AskUserQuestion cards
             steal focus from the settings form; mark the whole workspace inert while settings overlays it, then restore interaction when the user explicitly returns. */}
         <ConversationTelemetryWorkspaceAttachment
           enabled={isDesktop === true}
@@ -165,6 +173,12 @@ export function RootWorkspaceContent({
                 remoteConnectionInProgress={remoteConnectionInProgress}
                 onReturnToWorkspace={handleBackFromSettings}
                 allowOpenWorkspace={allowOpenWorkspace}
+                webRemoteControlWorkspaceSwitcher={webRemoteControlWorkspaceSwitcher}
+                initialWebRemoteControlMobileNavigationIntent={
+                  initialWebRemoteControlMobileNavigationIntent
+                }
+                initialWebRemoteControlWorkspaceList={initialWebRemoteControlWorkspaceList}
+                webRemoteControlTerminalTransportState={webRemoteControlTerminalTransportState}
                 allowRemoteWorkspace={allowRemoteWorkspace}
                 remoteWorkspaceSessions={remoteWorkspaceSessions}
                 isWorkspaceVisible={!isSettingsTabActive}

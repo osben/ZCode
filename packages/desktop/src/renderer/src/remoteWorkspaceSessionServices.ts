@@ -57,3 +57,13 @@ export function buildRemoteWorkspaceSessionServices(
     userInstructionsService: remoteServices.userInstructionsService,
   };
 }
+
+export function buildServerRemoteWorkspaceSessionServices(
+  _baseServices: IServiceAccessor,
+  remoteServices: IServiceAccessor,
+): IServiceAccessor {
+  // A server remote connects to a fully running ZCode server; state such as
+  // workspace/runtime/model-provider is owned by the server, and the local renderer keeps only
+  // window and UI shell state.
+  return remoteServices;
+}

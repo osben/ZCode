@@ -58,8 +58,21 @@ import {
   type WorkflowScriptLocation,
 } from "./workflow-script-notes.js";
 import { analyzeScript } from "./workflow-script-analysis.js";
+import {
+  allScriptModelsBound,
+  describeScriptModelBindings,
+  readScriptModelBindings,
+  scriptModelSelections,
+  unresolvedScriptModelDiagnostics,
+} from "./workflow-script-models.js";
 import { describeWorkflowScriptPath } from "./workflow-script-path.js";
 import { amendWorkflowNeedsSkill, requireDynamicWorkflowSkill } from "./workflow-skill-gate.js";
+import {
+  applyWorkflowSettingsAdjustments,
+  describeWorkflowRunSettings,
+  readAppliedWorkflowSettings,
+  withWorkflowAdjustableSettings,
+} from "./workflow-settings-adjustment.js";
 
 const AMEND_WORKFLOW_TIMEOUT_MS = 15_000;
 const AMEND_WORKFLOW_MODEL_BYTES = 24_000;
@@ -124,9 +137,9 @@ function compileFailureResponse(
 
 const amendWorkflowHandler: ToolHandler = async (input, context) => {
   const parsed = AmendWorkflowInputSchema.parse(input) as AmendWorkflowInput;
-  // In-place concurrency adjustment:
-  // The route selected by resolveInput leaves one trace here: no script, only a concurrency value. If the port returns `not_live`
-  // (the run settled between the two steps), fall back to a full revision; script resolution and compilation happen only then.
+  // In-place concurrency update (docs/dynamic-workflow/launch.md, “Changing only the parallelism of a live run”):
+  // the route detected by resolveInput leaves one trace here—no script, only a concurrency value. If the port returns `not_live`
+  // (the run settled between the two steps), fall back to a real amendment; load the script and compile it only then.
   if (isConcurrencyOnlyAmend(parsed)) {
     const retuned = await runConcurrencyRetune(parsed, context);
     if (retuned !== undefined) return retuned;
@@ -150,7 +163,20 @@ async function amendResolvedWorkflow(
   const cwd = context.workingDirectory;
 
   const analysis = analyzeScript(script);
-  const { diagnostics, ok } = analysis;
+  // Models named by the script use the same route as CreateWorkflow (an unbound name reports 9011). The message must distinguish
+  // “the inherited predecessor model is gone” from “this name cannot be resolved,” so reread the predecessor's binding table only when a name is actually unbound.
+  const modelBindings = readScriptModelBindings(parsed);
+  const modelDiagnostics =
+    analysis.ok && !allScriptModelsBound(analysis, modelBindings)
+      ? unresolvedScriptModelDiagnostics(
+          analysis,
+          modelBindings,
+          context.modelCatalogPort,
+          (await context.dynamicWorkflowRunPort?.getTask(parsed.run_id))?.modelBindings,
+        )
+      : [];
+  const diagnostics = [...analysis.diagnostics, ...modelDiagnostics];
+  const ok = analysis.ok && modelDiagnostics.length === 0;
   const causalityGraph = boundGraphOfAnalysis(analysis);
 
   // Inline revisions follow the same rule as CreateWorkflow: persist the working copy **regardless of compilation result**, so an
@@ -238,6 +264,11 @@ async function amendResolvedWorkflow(
         const subagentModel = parseWorkflowSubagentModel(parsed.subagent_model ?? undefined);
         return subagentModel === undefined ? {} : { subagentModel };
       })(),
+      // Models named by the new script: resolveInput normalized these into a table using “same name inherits from predecessor”; the port does not inherit any bindings.
+      ...(() => {
+        const selections = scriptModelSelections(modelBindings);
+        return selections === undefined ? {} : { modelBindings: selections };
+      })(),
       // Script file for this revision. If absent, draft persistence failed, so return the existing model-facing message.
       ...(scriptPath === undefined ? {} : { scriptPath }),
       trace: resolveTraceContext(context),
@@ -255,12 +286,22 @@ async function amendResolvedWorkflow(
     parsed.predecessor?.script_inherited === true
       ? `The script of run ${parsed.run_id} started unchanged in the background as run ${amended.runId}.`
       : `The revised script started in the background as run ${amended.runId}.`;
+  const defaultConcurrency = port.defaultConcurrency?.();
+  // Adjustment in the confirmation dialog: same sentence and same location as CreateWorkflow (workflow-settings-adjustment.ts).
+  const settingsSentences = describeWorkflowRunSettings({
+    applied: readAppliedWorkflowSettings(context.inputAdjustments),
+    defaultConcurrency,
+    describeLimit: () =>
+      describeWorkflowConcurrencyLimit(parsed.max_concurrency ?? undefined, defaultConcurrency),
+    describeModel: () => describeWorkflowSubagentModel(parsed.subagent_model ?? undefined),
+    describeScriptModels: () => describeScriptModelBindings(modelBindings),
+  });
   return {
     diagnostics,
     ok,
     // Follow CreateWorkflow's backgrounded guidance: provide the ID, say it is still running and results will arrive as a notification,
     // and explicitly discourage default polling.
-    response: `${superseded} ${started} It is still running — you will be notified with the final output when it completes. Do not wait for it or poll it with TaskOutput; continue with other work unless the user asked you to wait.${describeWorkflowConcurrencyLimit(parsed.max_concurrency ?? undefined, port.concurrencyCeiling?.())}${describeWorkflowSubagentModel(parsed.subagent_model ?? undefined)}${location === undefined ? "" : workflowAmendedScriptSentence(location)}`,
+    response: `${superseded} ${started} It is still running — you will be notified with the final output when it completes. Do not wait for it or poll it with TaskOutput; continue with other work unless the user asked you to wait.${settingsSentences}${location === undefined ? "" : workflowAmendedScriptSentence(location)}`,
     status: "backgrounded",
     backgroundTaskId: amended.runId,
     ...(causalityGraph === undefined ? {} : { causalityGraph }),
@@ -274,14 +315,17 @@ async function amendResolvedWorkflow(
  */
 function prepareAmendWorkflowApproval(input: unknown): ToolApprovalGate {
   const parsed = AmendWorkflowInputSchema.safeParse(input);
-  // Without a script, there is nothing to approve. Allow both cases through here:
-  //   - In-place concurrency adjustment: the dialog normally presents the script that will run, but this route runs no script and
-  //     only changes a number within `[1, ceiling]`. **Ownership does not matter**; showing a dialog for another person's run could
-  //     make an approval of nothing look like approval of a new run.
-  //   - A caller bypassed normalization: let the handler return a structured failure; there is still nothing for a dialog to approve.
+  // With no script, there is nothing to approve. Allow both cases here:
+  //   - In-place concurrency changes (docs/dynamic-workflow/launch.md, “No window, for any owner”): the dialog presents the script that will run,
+  //     but this route runs no script and only changes a number; ownership is irrelevant—a dialog for another user's run could make “approved nothing” look like approval of a new run.
+  //   - If normalization was bypassed, allow the handler to return a structured failure; opening a dialog would still provide nothing to approve.
   if (!parsed.success || parsed.data.script === undefined) return { gate: "proceed" };
   const analysis = analyzeScript(parsed.data.script);
   if (!analysis.ok) return { gate: "proceed" };
+  // An unbound model name follows CreateWorkflow: skip the dialog and let the handler report 9011.
+  if (!allScriptModelsBound(analysis, readScriptModelBindings(parsed.data))) {
+    return { gate: "proceed" };
+  }
   const display = displayOfAnalysis(analysis, AMEND_WORKFLOW_TOOL_NAME);
   return { gate: "ask", ...(display ? { display } : {}) };
 }
@@ -304,14 +348,24 @@ export const amendWorkflowToolEntry: ToolEntry = {
   handler: amendWorkflowHandler,
   // A revision may provide at most one script source. This applies only to model input (after normalization, both `script` and `path` may be present).
   validateInput: (input) => validateAmendWorkflowSource(input),
-  resolveInput: (input, context) => {
+  resolveInput: async (input, context) => {
     // The skill gate runs before predecessor resolution: a revision with `path` / `script` is editing a script; a settings-only call reuses the predecessor's script and passes through.
     if (amendWorkflowNeedsSkill(input)) {
       const refused = requireDynamicWorkflowSkill(context, AMEND_WORKFLOW_TOOL_NAME);
       if (refused) return refused;
     }
-    return resolveAmendWorkflowInput(input, context);
+    // Populate the block only for shapes that open the dialog: normalized in-place concurrency updates have no script and therefore no confirmation dialog.
+    return withWorkflowAdjustableSettings(
+      await resolveAmendWorkflowInput(input, context),
+      context,
+      (resolved) => resolved.script !== undefined,
+    );
   },
+  applyInputAdjustments: (input, adjustments, context) =>
+    applyWorkflowSettingsAdjustments(input, adjustments, context, {
+      errorCode: AMEND_WORKFLOW_ERROR_CODE.SUBAGENT_MODEL,
+      schema: AmendWorkflowInputSchema,
+    }),
   prepareApproval: prepareAmendWorkflowApproval,
   inputSchema: AmendWorkflowInputJsonSchema,
   outputSchema: CreateWorkflowOutputJsonSchema,

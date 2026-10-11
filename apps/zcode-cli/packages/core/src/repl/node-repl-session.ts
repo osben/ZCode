@@ -324,9 +324,8 @@ export class NodeReplSession {
     if (!this.currentSink) return;
     const currentSurface = this.currentSink.responseMeta["zcode/toolSurface"];
     const nextSurface = meta["zcode/toolSurface"];
-
-    // Attach openTabIds/sessionEnded from the last successful side effect at cell end; automatic previews and later
-    // title/url/domSnapshot reads must not overwrite metadata from the earlier action.
+    // Tool results must retain openTabIds/sessionEnded from the last successful side effect in the same cell. ZCode does not preview automatically,
+    // but later title/url/domSnapshot reads in that cell must not overwrite metadata from the earlier action.
     if (
       currentSurface &&
       typeof currentSurface === "object" &&

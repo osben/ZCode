@@ -33,7 +33,7 @@ const TARGET_KEYS: readonly { key: string; keep: "head" | "tail" }[] = [
 const ELLIPSIS = "…";
 
 /** Narrow view of one tool call: name + arguments. Either may be absent (legacy event or unnamed call). */
-interface ToolCallSummaryInput {
+export interface ToolCallSummaryInput {
   toolName?: string;
   input?: unknown;
 }
@@ -52,7 +52,7 @@ export function summarizeToolCall(call: ToolCallSummaryInput): AskLastTool | und
 }
 
 /** Extract a target hint from arguments; omit it if they are not an object, have no known key, or the key is not a non-empty string. */
-function deriveToolTarget(input: unknown): string | undefined {
+export function deriveToolTarget(input: unknown): string | undefined {
   if (typeof input !== "object" || input === null || Array.isArray(input)) return undefined;
   const record = input as Record<string, unknown>;
   for (const { key, keep } of TARGET_KEYS) {

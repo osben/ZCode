@@ -15,7 +15,7 @@ import type {
   StableForkGoalBoundaryMetadata,
   TraceContext,
 } from "@zcode/contracts";
-import type { ZCodeAutomationBotDeliveryTarget } from "@zcode/shared";
+import type { DynamicWorkflowMode, ZCodeAutomationBotDeliveryTarget } from "@zcode/shared";
 import type {
   CommandAck,
   CommandEnvelope,
@@ -41,6 +41,13 @@ export interface V4CommandLogger {
 }
 
 export type V4QueueItemCommand = QueueItem;
+
+/**
+ * Per-turn execution material for a queue item (protocol-native shape). The speed-up card's
+ * Selection already enters the projection via QueueItem.modelSelection; only the non-projectable
+ * dynamic credentials are staged here, frozen into a ModelExecutionContext on promotion.
+ */
+export type V4QueuedTurnExecution = NonNullable<CommandPayloadMap["sendText"]["modelExecution"]>;
 
 export type V4StableForkTargetResolution =
   | {
@@ -94,6 +101,18 @@ export interface V4CommandCoreHost {
   /** Guide eligibility: block only when an ordinary queue already exists; existing guides may continue through FIFO admission. */
   hasQueuedDelivery?(sessionId: string, delivery: "guide" | "queue"): boolean;
   getQueueLength?(sessionId: string): number;
+  /** Highspeed queue execution material contains credentials: keep it memory-resident only; it must never enter queue events/snapshots. */
+  retainQueuedTurnExecution?(
+    sessionId: string,
+    sourceCommandId: string,
+    execution: V4QueuedTurnExecution,
+  ): void;
+  readQueuedTurnExecution?(
+    sessionId: string,
+    sourceCommandId: string,
+  ): V4QueuedTurnExecution | undefined;
+  deleteQueuedTurnExecution?(sessionId: string, sourceCommandId: string): void;
+  clearQueuedTurnExecutions?(sessionId: string): void;
   /** Persist deduplication facts for successful side effects without user messages, such as timeline/child operations. */
   recordPersistentCommandFact?(
     sessionId: string,
@@ -194,6 +213,24 @@ export interface V4CommandCoreHost {
       feedback: "like" | "dislike" | null;
     },
   ): Promise<void>;
+  /** Highspeed completion metrics update user transcript metadata first, then publish the projection event for the same entity. */
+  setHighspeedMetrics?(
+    sessionId: string,
+    input: {
+      entityId: string;
+      messageId: string;
+      metrics: {
+        regularTps: number;
+        outputTokens: number;
+        durationMs: number;
+        highspeedTps: number;
+        savedDurationMs: number;
+        modelDurationMs?: number;
+        toolDurationMs?: number;
+        otherDurationMs?: number;
+      };
+    },
+  ): Promise<void>;
   /**
    * Interaction response registry (native v4 infrastructure, not a transition hook): register a
    * deferred when interaction-broker issues a reverse request (permission/AskUserQuestion), then
@@ -241,6 +278,7 @@ export interface V4CommandCoreHost {
    */
   createSessionRecord?(params: {
     workspaceId: string;
+    permissionScope?: "session";
     mcpServers?: CommandPayloadMap["createSession"]["mcpServers"];
     /** Host-determined Off-Peak tool-surface gate; tools are not registered by default. */
     offPeakToolEnabled?: boolean;
@@ -249,6 +287,8 @@ export interface V4CommandCoreHost {
      * defaults to the process-level workspace decision, which remains fail-closed.
      */
     dynamicWorkflowEnabled?: boolean;
+    /** Gradual-rollout mode accompanying the boolean (launch.md, "On demand: activation"); defaults to alwaysOn. */
+    dynamicWorkflowMode?: DynamicWorkflowMode;
   }): Promise<{ sessionId: string }>;
   /** Create a hidden selection_side_chat child from a stable persisted boundary in the parent session. */
   createSelectionSideSession?(

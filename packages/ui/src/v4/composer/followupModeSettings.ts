@@ -17,10 +17,17 @@ export function resolveOppositeFollowupDelivery(
 
 export function shouldEnableModifiedEnterSubmit({
   inputRoutingMode,
+  isMobileTextInputViewport,
+  isWebRemoteControl,
 }: {
   inputRoutingMode: InputRouting["mode"];
+  isMobileTextInputViewport: boolean;
+  isWebRemoteControl: boolean;
 }): boolean {
-  return inputRoutingMode !== "reject";
+  // Bug cause: The old gate treated drafts and the generic mobile media query as “mobile,” so desktop new tasks and
+  // narrow Windows windows/touch devices did not register Ctrl+Enter, and the event fell back to Lexical’s default newline behavior.
+  // This behavior is for mobile Web remote control; viewport size or pointer capability must not change desktop continuous-link semantics.
+  return inputRoutingMode !== "reject" && !(isWebRemoteControl && isMobileTextInputViewport);
 }
 
 export function shouldReverseFollowupDeliveryForPointer({
@@ -54,7 +61,7 @@ export function isPrimaryFollowupModifierPressed({
   return isApplePlatform ? metaKey : ctrlKey;
 }
 
-interface FollowupModifierTooltip {
+export interface FollowupModifierTooltip {
   delivery: "startNow" | "queue";
   shortcut: string;
   titleId: "chat.followup.sendNow" | "chat.followup.addToQueue";

@@ -1,3 +1,4 @@
+import type { RequestVerificationReason } from "@zcode/shared";
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { ZCodeProviderAccountAccess } from "@zcode/shared";
 import type { ModelApiCallObservation } from "../telemetry/index.js";
@@ -32,8 +33,10 @@ export interface ModelInvocationContext {
   preserveProviderStreamBoundaries?: boolean;
   refreshRuntimeHeadersBeforeAttempt?: (input: {
     accountAccess?: ZCodeProviderAccountAccess;
+    expectedAccountScope?: string;
+    rejectedProjectTokenFingerprint?: string;
     attempt: number;
-    reason?: "model-request";
+    reason?: RequestVerificationReason;
     abortSignal?: AbortSignal;
     providerId: string;
     modelId: string;
@@ -46,7 +49,9 @@ export interface ModelInvocationContext {
 
 /** Dynamic authentication material used by the Adapter for one physical request attempt. */
 export interface ModelRequestAuth {
+  accountScope?: string;
   apiKey?: string;
+  apiKeyId?: string;
   headers?: Record<string, string>;
 }
 

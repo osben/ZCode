@@ -21,7 +21,7 @@ export interface SessionSummaryDeriveExtra {
 const MAX_PREVIEW_CHARS = 120;
 
 /** Derive SessionSummary from ConversationSnapshot + session metadata (a pure function, covered by golden tests). */
-function deriveSessionSummary(
+export function deriveSessionSummary(
   snapshot: ConversationSnapshot,
   extra: SessionSummaryDeriveExtra,
 ): SessionSummary {

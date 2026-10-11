@@ -41,7 +41,7 @@ const MAX_SYNC_TIMEOUT_MS = 120_000;
 const UNTRUSTED_SESSION_KEY = "__unscoped__";
 const WORKER_KIND = "zcode-node-repl-call";
 export const NODE_REPL_MCP_PROCESS_TITLE = "zcode-node-repl-mcp";
-const pluginRoot = process.env.ZCODE_PLUGIN_ROOT ?? process.cwd();
+const pluginRoot = process.env.ZCODE_PLUGIN_ROOT ?? process.env.CLAUDE_PLUGIN_ROOT ?? process.cwd();
 // CUA and Browser Use share the node_repl host, but their docs and native dependencies
 // must remain domain-isolated. Otherwise the CUA skill gains an implicit dependency just
 // because the host root happens to come from Browser Use.

@@ -30,7 +30,11 @@ export {
   AutomationTrashIcon,
 } from "@/settings/AutomationIcons.js";
 
-// space-y margins on inline labels are affected by font line boxes, making the actual visual gap smaller than the design's 6px.
+/** The settings-page back entry highlights only its icon and text, retaining the click target without a hover/focus background. */
+export const AUTOMATION_BACK_TRIGGER_CLASSNAME =
+  "-m-1 inline-flex w-fit max-w-full min-w-0 items-center gap-1 bg-transparent p-1 text-ui-base leading-5 text-foreground-subtle transition-colors hover:text-foreground active:text-foreground focus-visible:text-foreground focus-visible:outline-none";
+
+// Reason for the fix: space-y margins on inline labels are affected by font line boxes, making the visual gap smaller than the 6px in the design.
 export const AUTOMATION_FORM_FIELD_CLASSNAME = "flex flex-col gap-1.5";
 
 export type AutomationSettingsHistoryTab = "settings" | "history";

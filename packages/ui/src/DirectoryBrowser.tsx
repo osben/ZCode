@@ -7,25 +7,25 @@ import { Input } from "./components/ui/input.js";
 import { useZCodeIntl } from "./i18n/IntlProvider.js";
 import { logger } from "./logger.js";
 
-function createDirectoryBrowserReadParams(
+export function createDirectoryBrowserReadParams(
   path: string,
   showHiddenDirectories: boolean,
 ): { path: string; includeHidden?: boolean } {
   return showHiddenDirectories ? { path, includeHidden: true } : { path };
 }
 
-function filterDirectoryBrowserEntries(entries: FileEntry[]): FileEntry[] {
+export function filterDirectoryBrowserEntries(entries: FileEntry[]): FileEntry[] {
   return entries.filter((e) => e.type === "directory");
 }
 
-// Remote directory entries already include isSymbolicLink; only the display icon changes here, not the path semantics for entering or selecting a directory.
-function getDirectoryBrowserEntryIconKind(
+// Reason for the fix: Remote directory entries already include isSymbolicLink. Only the displayed icon changes here; navigation and selection semantics stay the same.
+export function getDirectoryBrowserEntryIconKind(
   entry: Pick<FileEntry, "isSymbolicLink" | "type">,
 ): "folder" | "folder-symlink" {
   return entry.type === "directory" && entry.isSymbolicLink === true ? "folder-symlink" : "folder";
 }
 
-function createDirectoryBrowserRequestGuard(): {
+export function createDirectoryBrowserRequestGuard(): {
   begin: () => number;
   isCurrent: (requestId: number) => boolean;
 } {
@@ -265,9 +265,9 @@ export function DirectoryBrowser({
     >
       <div className="flex h-[min(36rem,calc(100vh-4rem))] w-[min(44rem,calc(100vw-2rem))] flex-col rounded-xl border border-border bg-popover p-4 shadow-xl">
         {browserContent}
-        {/* In standalone mode, users could only open child directories and could not select the current directory.
+        {/* Bugfix: In non-embedded mode, users could only enter a subdirectory and could not confirm the current directory path.
             As a result, the Web directory browser never returned an onSelect result when used as a standalone picker.
-            Move the confirmation action to the dialog footer so the current path can be selected and returned to the caller. */}
+            Move the confirmation action to the dialog footer, where it selects the currently browsed path and returns it to the caller. */}
         <div className="mt-3 flex shrink-0 justify-end gap-2">
           <Button
             type="button"

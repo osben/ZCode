@@ -6,14 +6,17 @@ import {
   type SessionId,
   type TraceContext,
 } from "@zcode/contracts";
-import { loadZCodeCustomCommand, type ListZCodeCustomCommandsOptions } from "./custom-commands.js";
+import {
+  loadZCodeCustomCommand,
+  type ListZCodeCustomCommandsOptions,
+} from "./custom-commands.js";
 import { expandCustomCommandShellSyntax } from "./custom-command-shell-expansion.js";
 import { isReservedZCodeSlashCommandName } from "./slash-command-surface.js";
 
 const CUSTOM_COMMAND_NOT_FOUND_PATTERN = /not found/i;
 const PROMPT_CUSTOM_COMMAND_PATTERN = /^\/([^\s]+)(?:\s+([\s\S]*))?$/;
 
-interface ResolveZCodeCustomCommandPromptOptions extends ListZCodeCustomCommandsOptions {
+export interface ResolveZCodeCustomCommandPromptOptions extends ListZCodeCustomCommandsOptions {
   executionPort?: ExecutionPort;
   sessionId?: SessionId;
   signal?: AbortSignal;
@@ -27,7 +30,7 @@ export async function resolveZCodeCustomCommandPrompt(
   const invocation = parsePromptCustomCommandInvocation(input);
   // Reserved names (including built-in `workflow`) return undefined here, as for "command not found".
   // builtin-prompt-command.ts expands built-ins first; this rejects attempts to use a same-named custom
-  // command to bypass built-in semantics or feature switches.
+  // command to bypass built-in semantics or the gradual-rollout gate.
   if (!invocation || isReservedZCodeSlashCommandName(invocation.name)) {
     return undefined;
   }

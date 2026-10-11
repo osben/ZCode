@@ -15,7 +15,7 @@ import type {
   DynamicWorkflowRunArtifactKind,
   DynamicWorkflowRunArtifactVersion,
 } from "@zcode/contracts";
-import type { JournalStorePort, NodeRecord } from "@zcode/dynamic-workflow";
+import type { JournalStorePort } from "@zcode/dynamic-workflow";
 
 /**
  * **User-facing artifacts** in terminal snapshots and `getRunDetail`'s `artifacts`.
@@ -38,14 +38,12 @@ import type { JournalStorePort, NodeRecord } from "@zcode/dynamic-workflow";
  *   - `itemCount` = number of `report` rows tagged with this ID (the data count for prebuilt dashboards and the UI refresh signal).
  *     Content artifacts always have 0.
  *
- * `nodes` is a node list already held by the caller (the snapshot path shares one `listNodes` result between reports and this function);
- * fetch it here only when absent. If introspection is unavailable, omit the whole field: an empty array implies the run completed but produced nothing,
- * while omission means artifacts are not supported for this run.
+ * If introspection is unavailable, omit the whole field: an empty array implies the run completed
+ * but produced nothing, while omission means artifacts are not supported for this run.
  */
 export function artifactsOf(
   runId: string,
   journal: JournalStorePort,
-  nodes?: readonly NodeRecord[],
 ): { artifacts?: readonly DynamicWorkflowRunArtifact[] } {
   const candidate = journal as Partial<DwfRunIntrospectionQueries>;
   if (typeof candidate.listArtifactRows !== "function") return {};
@@ -75,10 +73,11 @@ export function artifactsOf(
   }
   if (byId.size === 0) return {};
 
-  // Scan node rows for label counts only when a **prebuilt dashboard exists**: content artifact `itemCount` is always 0, and `listNodes`
-  // decodes the whole table. The hub can have 50 rows per page and calls this function once per row, so this short circuit is its only guard.
+  // Query label counts only when a **prebuilt dashboard actually exists**: content artifact
+  // `itemCount` is always 0. The hub can have 50 rows per page and calls this function once per
+  // row, so this short circuit keeps runs without dashboards from issuing that group by at all.
   const needsTally = [...byId.values()].some((bucket) => PRESET_ARTIFACT_KINDS.has(bucket.kind));
-  const itemCounts = needsTally ? tagItemCounts(nodes ?? journal.listNodes(runId)) : undefined;
+  const itemCounts = needsTally ? tagItemCounts(runId, journal) : undefined;
   const artifacts = [...byId].map(([id, bucket]) => {
     const versions = [...bucket.versions].sort((left, right) => left.version - right.version);
     // Latest version = row with the highest version number. A bucket cannot be empty; construction adds at least one row.
@@ -106,11 +105,22 @@ export function artifactsOf(
   return { artifacts };
 }
 
-/** Count labeled report rows by ID (`kind = "report" ∧ artifact_id = ?`—the dashboard's data count). */
-function tagItemCounts(nodes: readonly NodeRecord[]): Map<string, number> {
+/**
+ * Count labeled report rows by ID (`kind = "report" ∧ artifact_id = ?`—the dashboard's data count).
+ *
+ * The SQLite implementation ships `countTaggedReports` (a pushed-down `group by` that reads no
+ * rows); stores without it (the engine's in-memory implementation, test doubles) fall back to
+ * reading report-row **metadata** (without items) and counting in memory—both paths return the
+ * same number. Fix: this used to read the entire node table with every report item into memory
+ * before counting (docs/execution-engine.md "Reading the journal").
+ */
+function tagItemCounts(runId: string, journal: JournalStorePort): ReadonlyMap<string, number> {
+  const candidate = journal as Partial<DwfRunIntrospectionQueries>;
+  if (typeof candidate.countTaggedReports === "function")
+    return candidate.countTaggedReports(runId);
   const counts = new Map<string, number>();
-  for (const node of nodes) {
-    if (node.kind !== "report" || node.artifactId === undefined) continue;
+  for (const node of journal.listNodes(runId, { kinds: ["report"], withResult: false })) {
+    if (node.artifactId === undefined) continue;
     counts.set(node.artifactId, (counts.get(node.artifactId) ?? 0) + 1);
   }
   return counts;

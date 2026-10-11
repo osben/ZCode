@@ -14,7 +14,7 @@ import { parseModule, type ESTree } from "meriyah";
  */
 
 /** Result of parseReplCode: success carries the AST; failure carries parseError (does not throw, allowing callers to fall back). */
-type ParseReplCodeResult = { ast: ESTree.Program } | { parseError: Error };
+export type ParseReplCodeResult = { ast: ESTree.Program } | { parseError: Error };
 
 /**
  * Parse REPL code into an ESTree AST. Wrap meriyah.parseModule here so parser implementation changes stay localized (A-ready seam).
@@ -98,7 +98,26 @@ function collectStatementBindingNames(node: ESTree.Node): string[] {
  * vm.Script cannot execute import expressions directly by default, so the executor uses the host loader and replaces only
  * ImportExpression nodes in the AST; strings, comments, and import.meta are unaffected.
  */
-function rewriteDynamicImports(code: string, ast: ESTree.Program): string {
+export function collectTopLevelBindingNames(ast: ESTree.Program): string[] {
+  const names: string[] = [];
+  for (const stmt of ast.body) {
+    for (const name of collectStatementBindingNames(stmt)) {
+      names.push(name);
+    }
+  }
+  // Deduplicate (repeated declarations or same-name statements need only one assignment).
+  return [...new Set(names)];
+}
+
+/**
+ * Rewrite dynamic `import(...)` calls in a cell to the injected `importModule(...)`.
+ *
+ * Node's vm.Script can execute import expressions directly only when configured with a vm module loader, and desktop/SEA
+ * Agents cannot reliably carry `--experimental-vm-modules`. The old contract therefore required the model to write ZCode-specific
+ * `importModule(...)`, unlike the standard `await import(...)` used in skills. AST matching replaces only actual
+ * ImportExpression nodes; strings, comments, and `import.meta` are unaffected.
+ */
+export function rewriteDynamicImports(code: string, ast: ESTree.Program): string {
   const starts: number[] = [];
   const seen = new Set<object>();
   const visit = (value: unknown): void => {

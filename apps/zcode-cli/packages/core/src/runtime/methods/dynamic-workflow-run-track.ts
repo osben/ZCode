@@ -1,6 +1,7 @@
 import { CREATE_WORKFLOW_TOOL_NAME, type TraceContext } from "@zcode/contracts";
 import type { ExecutableToolCall } from "../../tool/types.js";
 import type { AgentRuntimeInternal } from "../internal.js";
+import { activateDynamicWorkflowTools } from "./dynamic-workflow-activation.js";
 
 /**
  * Re-enrolls a **resumed** dwf run in background tracking.
@@ -37,4 +38,7 @@ export async function trackResumedDynamicWorkflowRun(
     traceContext,
     undefined,
   );
+  // A successful GUI Resume activates the tool surface (launch.md, “On demand: activation”): the run's terminal notification tells the model
+  // to call GetWorkflowRun, and without that tool it would get stuck.
+  await activateDynamicWorkflowTools.call(this, { source: "run_control", traceContext });
 }

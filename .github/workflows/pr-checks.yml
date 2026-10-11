@@ -14,10 +14,10 @@ concurrency:
 jobs:
   checks:
     name: Typecheck, lint, architecture
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
@@ -29,8 +29,6 @@ jobs:
           cache: pnpm
 
       - name: Install dependencies
-        env:
-          ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
         run: pnpm install --frozen-lockfile
 
       - name: Typecheck
@@ -38,6 +36,12 @@ jobs:
 
       - name: Lint
         run: pnpm lint
+
+      - name: Build workspace packages needed by unit tests
+        # storage-preparation 协议用例经 bootstrap 源码引用 @zcode/adapters/storage 的 dist 导出，
+        # 其类型链依赖 contracts 与 dynamic-workflow，需按拓扑顺序先构建。
+        run: >
+          pnpm --filter @zcode/contracts --filter @zcode/dynamic-workflow --filter @zcode/adapters build
 
       - name: Tests
         run: pnpm test
@@ -48,7 +52,10 @@ jobs:
 
       # Only files touched by this PR; the repo has pre-existing format drift elsewhere.
       # oxfmt ignores lockfiles and similar files, so a PR with only those would otherwise fail on "no target files".
+      # Upstream sync merges bring thousands of upstream-formatted files; reformatting them would
+      # turn every future sync into a conflict avalanche, so those PRs (label: upstream-sync) skip this step.
       - name: Format check (changed files)
+        if: ${{ !contains(github.event.pull_request.labels.*.name, 'upstream-sync') }}
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |

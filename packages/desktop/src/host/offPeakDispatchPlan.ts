@@ -7,7 +7,7 @@ import { OffPeakPermanentDispatchError } from "@zcode/services/node";
  *   (matching dispatchCronRun's targetTaskId path).
  * - init: created from the form; create a dedicated session.
  */
-type OffPeakDispatchKind = "resume" | "bound-first-run" | "init";
+export type OffPeakDispatchKind = "resume" | "bound-first-run" | "init";
 
 export function resolveOffPeakDispatchKind(request: {
   conversationId?: string;
@@ -19,7 +19,7 @@ export function resolveOffPeakDispatchKind(request: {
 }
 
 /** The bound session was deleted by the user: retrying is pointless, so mark permanent (otherwise it will keep backing off until the lease expires and is reacquired). */
-class OffPeakBoundSessionDeletedError extends OffPeakPermanentDispatchError {
+export class OffPeakBoundSessionDeletedError extends OffPeakPermanentDispatchError {
   constructor(readonly sessionId: string) {
     super(`off-peak bound session was deleted: ${sessionId}`);
     this.name = "OffPeakBoundSessionDeletedError";
@@ -31,7 +31,7 @@ class OffPeakBoundSessionDeletedError extends OffPeakPermanentDispatchError {
  * Throw before writing the session mode: CLI session/send rejects with -32010,
  * but setMode does not check for an active turn, so writing the config first would silently switch the user's session to the task's permission mode before the busy rejection.
  */
-class OffPeakBoundSessionBusyError extends Error {
+export class OffPeakBoundSessionBusyError extends Error {
   constructor(readonly sessionId: string) {
     super(`off-peak bound session is busy: ${sessionId}`);
     this.name = "OffPeakBoundSessionBusyError";

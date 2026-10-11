@@ -20,7 +20,7 @@ export interface ZCodeDataSizeScanRequest {
   maxFiles: number;
 }
 
-interface ZCodeDataSizeScanOptions extends ZCodeDataSizeScanRequest {
+export interface ZCodeDataSizeScanOptions extends ZCodeDataSizeScanRequest {
   signal?: AbortSignal;
   /** Used only to set a time limit in focused tests; not included in Worker messages. */
   now?: () => number;

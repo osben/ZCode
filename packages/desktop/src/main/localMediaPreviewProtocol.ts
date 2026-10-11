@@ -7,7 +7,7 @@ interface LocalMediaPreviewSchemeRegistrar {
   registerSchemesAsPrivileged(
     schemes: Array<{
       scheme: string;
-      privileges: { standard: boolean; secure: boolean; stream: boolean };
+      privileges: Record<string, boolean>;
     }>,
   ): void;
 }
@@ -31,7 +31,7 @@ interface LocalMediaPreviewProtocol {
 const installedProtocols = new WeakSet<object>();
 const NET_ERR_INVALID_URL = -300;
 
-interface LocalMediaPreviewPathRegistry {
+export interface LocalMediaPreviewPathRegistry {
   authorize(path: string): Promise<string>;
   isAuthorized(path: string): boolean;
   clear(): void;
@@ -135,12 +135,19 @@ export function createLocalMediaPreviewPathRegistry(
  * after mdat is incorrectly considered undecodable. standard and stream together preserve local
  * video metadata reads and seeking.
  */
-export function registerLocalMediaPreviewScheme(protocol: LocalMediaPreviewSchemeRegistrar): void {
+export function registerLocalMediaPreviewScheme(
+  protocol: LocalMediaPreviewSchemeRegistrar,
+  // registerSchemesAsPrivileged can be called only once (a later call overwrites the earlier
+  // one), so other privileged schemes (such as the plugin UI sandbox's zcode-sandbox) must be
+  // registered together in this same call.
+  additionalSchemes: Array<{ scheme: string; privileges: Record<string, boolean> }> = [],
+): void {
   protocol.registerSchemesAsPrivileged([
     {
       scheme: LOCAL_MEDIA_PREVIEW_SCHEME,
       privileges: { standard: true, secure: true, stream: true },
     },
+    ...additionalSchemes,
   ]);
 }
 

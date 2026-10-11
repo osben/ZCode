@@ -25,6 +25,7 @@ export async function raceClientRequestWithV4Interaction<T>(
   startRequest: (signal: AbortSignal) => Promise<T>,
   mapAnswer: (answer: V4InteractionAnswer) => T,
   registrationOptions?: V4InteractionRegistrationOptions,
+  onRegistered?: () => void,
 ): Promise<T> {
   const controller = new AbortController();
   // Each attempt waits on its own failure notification; a successful V4 answer still releases the
@@ -83,6 +84,7 @@ export async function raceClientRequestWithV4Interaction<T>(
   };
 
   try {
+    onRegistered?.();
     const result = await startRequest(controller.signal);
     if (fullAccessFailure) {
       await waitForFullAccess();

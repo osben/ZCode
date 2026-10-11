@@ -78,23 +78,25 @@ const MCP_OAUTH_AUTHORIZATION_STATUS_REFRESH_MS = 1_000;
 const MCP_OAUTH_AUTHORIZATION_STATUS_REFRESH_DURATION_MS = 5 * 60_000;
 const MCP_OAUTH_AUTHORIZATION_FOLLOWUP_REFRESH_ATTEMPTS = 10;
 
-function createMcpOAuthAuthorizationStatusRefreshDeadline(now: () => number = Date.now): number {
+export function createMcpOAuthAuthorizationStatusRefreshDeadline(
+  now: () => number = Date.now,
+): number {
   return now() + MCP_OAUTH_AUTHORIZATION_STATUS_REFRESH_DURATION_MS;
 }
 
-function isMcpOAuthAuthorizationStatusRefreshExpired(
+export function isMcpOAuthAuthorizationStatusRefreshExpired(
   deadline: number,
   now: () => number = Date.now,
 ): boolean {
   return now() >= deadline;
 }
 
-type McpServerStatusListRefreshOutcome =
+export type McpServerStatusListRefreshOutcome =
   | "refreshed"
   | "stale-workspace"
   | "status-mode-unsupported";
 
-async function refreshMcpServerStatusList({
+export async function refreshMcpServerStatusList({
   beginServerStatusListRefresh,
   markServerStatusListRefreshFailed,
   mergeServerStatusSnapshots,
@@ -159,13 +161,13 @@ async function refreshMcpServerStatusList({
   }
 }
 
-interface McpOAuthAuthorizationPendingRefresh {
+export interface McpOAuthAuthorizationPendingRefresh {
   mcpServers: ZCodeAgentMcpServer[];
   pendingKey: string;
   workspaceKey: string;
 }
 
-function transitionMcpAutoStatusListRefreshKey(
+export function transitionMcpAutoStatusListRefreshKey(
   previousKey: string,
   nextKey: string,
 ): { lastRefreshKey: string; shouldRefresh: boolean } {
@@ -180,13 +182,13 @@ function transitionMcpAutoStatusListRefreshKey(
   };
 }
 
-interface McpOAuthAuthorizationFollowupRefresh {
+export interface McpOAuthAuthorizationFollowupRefresh {
   mcpServers: ZCodeAgentMcpServer[];
   refreshKey: string;
   workspaceKey: string;
 }
 
-function transitionMcpOAuthAuthorizationPendingRefresh({
+export function transitionMcpOAuthAuthorizationPendingRefresh({
   activeWorkspaceKey,
   existingFollowup = null,
   mcpServers,
@@ -240,9 +242,9 @@ interface McpStatusListRefreshQueue {
 }
 
 /** Refresh source: manual means the user clicked refresh; auto means it was triggered by list/configuration changes. */
-type McpStatusListRefreshTrigger = "auto" | "manual";
+export type McpStatusListRefreshTrigger = "auto" | "manual";
 
-interface McpStatusListRefreshInput {
+export interface McpStatusListRefreshInput {
   activeWorkspaceKey: string;
   activeWorkspacePath?: string;
   configReadyWorkspaceKey: string;
@@ -251,7 +253,7 @@ interface McpStatusListRefreshInput {
   storeWorkspaceKey: string;
 }
 
-function resolveMcpStatusListRefreshSkipReason({
+export function resolveMcpStatusListRefreshSkipReason({
   input,
   requestedWorkspaceKey,
   trigger,
@@ -280,7 +282,7 @@ function resolveMcpStatusListRefreshSkipReason({
   return undefined;
 }
 
-function createMcpStatusListRefreshQueue(): McpStatusListRefreshQueue {
+export function createMcpStatusListRefreshQueue(): McpStatusListRefreshQueue {
   let inFlight: Promise<void> | null = null;
   let latestRun: (() => Promise<void>) | null = null;
   let rerunAfterCurrent = false;
@@ -312,7 +314,7 @@ function createMcpStatusListRefreshQueue(): McpStatusListRefreshQueue {
   };
 }
 
-function buildMcpOAuthAuthorizationStatusRefreshServers(
+export function buildMcpOAuthAuthorizationStatusRefreshServers(
   servers: ZCodeMcpServer[],
   statusSnapshots: Record<string, ZCodeMcpServerStatusSnapshot> = {},
 ): ZCodeAgentMcpServer[] {
@@ -344,7 +346,7 @@ function buildMcpOAuthAuthorizationStatusRefreshServers(
   return result;
 }
 
-function buildMcpOAuthAuthorizationStatusRefreshOptions(mcpServers: ZCodeAgentMcpServer[]): {
+export function buildMcpOAuthAuthorizationStatusRefreshOptions(mcpServers: ZCodeAgentMcpServer[]): {
   mode: "status";
   mcpServers: ZCodeAgentMcpServer[];
 } {
@@ -355,7 +357,7 @@ function buildMcpOAuthAuthorizationStatusRefreshOptions(mcpServers: ZCodeAgentMc
   };
 }
 
-function buildMcpServerStatusListKey(servers: ZCodeMcpServer[]): string {
+export function buildMcpServerStatusListKey(servers: ZCodeMcpServer[]): string {
   return servers
     .filter((server) => server.source === "zcodeagentmcp")
     .map((server) => {
@@ -365,7 +367,7 @@ function buildMcpServerStatusListKey(servers: ZCodeMcpServer[]): string {
     .join("|");
 }
 
-function buildPluginMcpServerStatusListKey(plugins: ZCodePluginInfo[]): string {
+export function buildPluginMcpServerStatusListKey(plugins: ZCodePluginInfo[]): string {
   return plugins
     .map((plugin) => {
       const declaredNames = plugin.declaredMcpServerNames ?? [];
@@ -390,11 +392,11 @@ function buildPluginMcpServerStatusListKey(plugins: ZCodePluginInfo[]): string {
     .join("|");
 }
 
-function shouldShowPluginMcpServersInMcpSettings(isRemoteSyncContext: boolean): boolean {
+export function shouldShowPluginMcpServersInMcpSettings(isRemoteSyncContext: boolean): boolean {
   return !isRemoteSyncContext;
 }
 
-function buildPendingMcpOAuthAuthorizationRefreshKey(
+export function buildPendingMcpOAuthAuthorizationRefreshKey(
   servers: ZCodeMcpServer[],
   statusSnapshots: Record<string, ZCodeMcpServerStatusSnapshot> = {},
 ): string {
@@ -539,6 +541,7 @@ interface McpSettingsSectionProps {
   remoteSessionId?: string;
   remoteTarget?: RemoteTarget;
   localWorkspacePath?: string;
+  isWebRemoteControl?: boolean;
   scopeFilter: "user" | "workspace";
   parentScopeKey: string;
   workspaceTabs: WorkspaceTabState[];
@@ -556,6 +559,7 @@ export function McpSettingsSection({
   remoteSessionId,
   remoteTarget,
   localWorkspacePath,
+  isWebRemoteControl = false,
   scopeFilter,
   parentScopeKey,
   workspaceTabs,
@@ -594,7 +598,7 @@ export function McpSettingsSection({
   const activeWorkspaceIdentity = workspaceIdentity ?? storeActiveWorkspaceIdentity;
   const activeWorkspaceKey = activeWorkspaceIdentity?.trim() || activeWorkspacePath || "";
   const currentMcpStoreWorkspaceKey = currentWorkspaceIdentity?.trim() || currentProjectPath;
-  // The active tab switches before the async MCP catalog loads; a transition frame must not project A's configuration and
+  // Reason for the fix: The active tab can change before the asynchronous MCP catalog loads; during the transition, do not combine A’s settings with
   // snapshot onto B, and a later effect must not send this sensitive configuration to B's Agent.
   const mcpStoreMatchesActiveWorkspace =
     Boolean(activeWorkspaceKey) && currentMcpStoreWorkspaceKey === activeWorkspaceKey;
@@ -780,7 +784,7 @@ export function McpSettingsSection({
             workspacePath: requestedWorkspacePath,
           });
           if (trigger === "manual") {
-            // Manual refresh failures previously appeared only in logs, leaving users with stale state and no notice.
+            // Bugfix: Manual refresh failures used to appear only in logs, leaving users with stale state and no feedback.
             const message = error instanceof Error ? error.message : String(error);
             toast(intl.formatMessage({ id: "settings.mcp.refreshFailed" }, { error: message }), {
               durationMs: 8_000,
@@ -996,7 +1000,7 @@ export function McpSettingsSection({
           pendingKey: pendingMcpOAuthAuthorizationRefreshKey,
           workspacePath: activeWorkspacePath,
         });
-        // To return authorizationUrl quickly, mcp/list leaves the Agent waiting in the background for the OAuth
+        // Reason for the fix: mcp/list returns authorizationUrl quickly and leaves the agent waiting for OAuth in the background
         // callback and reconnection. If the current settings page stops fetching snapshots, the UI stays in connecting until the tab is remounted.
         // OAuth polling is high frequency and must use status-only, preventing a pending subset from triggering replace semantics that disconnect unrelated MCPs.
         void requestMcpServerStatusList(
@@ -1144,7 +1148,7 @@ export function McpSettingsSection({
     shouldShowRemoteSyncActions({
       remoteSessionId,
       remoteTarget,
-      clientMode: "desktop-continuous" as const,
+      clientMode: isWebRemoteControl ? "web-remote-replayable" : "desktop-continuous",
       hasLocalSourceService: Boolean(baseServices.mcpSyncService),
     }) && activeWorkspacePath
       ? remoteTarget

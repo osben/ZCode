@@ -41,6 +41,7 @@ import {
   type WorkspaceId,
 } from "@zcode/contracts";
 import {
+  subagentRuntimeConfigSchema,
   DEFAULT_ZCODE_MODEL_CONTEXT_BUDGET_STRATEGY,
   ZCODE_SESSION_RUNTIME_PREFERENCES_REQUEST_TIMEOUT_MS,
   zcodeProtocolErrorCodes,
@@ -55,6 +56,7 @@ import {
   zcodeSessionListParamsSchema,
   zcodeSessionMessagesParamsSchema,
   zcodeSessionReadParamsSchema,
+  elideSessionSnapshotForIndex,
   zcodeSessionRuntimePreferencesResultSchema,
   zcodeSessionResumeParamsSchema,
   zcodeSessionSendParamsSchema,
@@ -68,6 +70,7 @@ import {
   zcodeUsageStatsParamsSchema,
   zcodeWorkspaceGenerateTextParamsSchema,
   getConversationMessageProjectionPolicy,
+  isRemoteWorkspaceIdentity,
   parseRemoteWorkspaceIdentity,
   type ZCodeAutomationBotDeliveryTarget,
   type ZCodeSessionCreateParams,
@@ -81,6 +84,7 @@ import {
   type ZCodeSessionHistoryTarget,
   type ZCodeSessionResumeParams,
   type ZCodeSessionPersistence,
+  type ZCodeWorkspaceRef,
   type ZCodeStateUpdatedNotification,
 } from "@zcode/shared";
 import {
@@ -96,7 +100,9 @@ import { optionalModelSelectionFromString } from "./model-mapper.js";
 import {
   ProtocolRequestError,
   assertExpectedRevision,
+  createProtocolLogger,
   createProtocolRootTraceContext,
+  protocolTraceFromTraceContext,
   parseParams,
   requireSession,
   type ZCodeProtocolAgentServerContext,
@@ -108,6 +114,7 @@ import { buildAppUsageSnapshot, resolveTzOffsetMs } from "./usage-stats-builder.
 import { createProtocolInteractionBroker } from "./interaction-broker.js";
 import { createProtocolAutomationPort } from "./automation-port.js";
 import { createProtocolOffPeakPort } from "./offpeak-port.js";
+import { createProtocolTopicResourcePort } from "./topic-resource-port.js";
 import { createProtocolBrowserControlBroker } from "./browser-control-broker.js";
 import { mapComputerUseOperationEvent } from "./computer-use-operation-event.js";
 import { protocolMcpServersToRuntimeMcpConfig } from "./protocol-mcp-config.js";
@@ -119,9 +126,17 @@ import {
 } from "./subagent-session-query.js";
 import { runSessionModelConfigMutation } from "../zcode-protocol-v4/model-config-mutation.js";
 import { runWithSessionResidencyFinalization } from "./session-residency.js";
+import { resolveDynamicWorkflowRuntimeGate } from "./dynamic-workflow-policy.js";
+import { abortMcpUiToolCallsForSession, clearMcpUiAppToolsForSession } from "./mcp-ui/index.js";
 
 const PLAN_MODE_GOAL_CONTINUATION_SKIPPED_MESSAGE = "Plan mode 下已记录 goal，但不会自动继续。";
 const SLOW_SNAPSHOT_LOG_THRESHOLD_MS = 1000;
+const REMOTE_AUTOMATION_TOOL_NAMES = [
+  "CronCreate",
+  "CronList",
+  "CronUpdate",
+  "CronDelete",
+] as const;
 
 type ProtocolGoalTarget = NonNullable<
   Awaited<ReturnType<NonNullable<ZCodeProtocolSessionRecord["app"]["readTarget"]>>>
@@ -141,6 +156,7 @@ type ZCodeSessionRecordParams = (
 ) & { taskType?: SessionTaskType };
 
 interface SessionStartupPreferences {
+  subagentRuntimeConfigEnabled?: boolean;
   memoryEnabled: boolean;
   modelContextBudgetStrategy: ZCodeModelContextBudgetStrategy;
   nativeSearchEnhancementsEnabled: boolean;
@@ -320,11 +336,14 @@ function readProtocolStreamingParentToolUseId(
   }
   const meta = asRecord(payload._meta);
   const zcode = asRecord(meta.zcode);
+  const claudeCode = asRecord(meta.claudeCode);
   return (
     stringValue(meta.parentToolUseId) ??
     stringValue(meta.parentToolCallId) ??
     stringValue(zcode.parentToolUseId) ??
-    stringValue(zcode.parentToolCallId)
+    stringValue(zcode.parentToolCallId) ??
+    stringValue(claudeCode.parentToolUseId) ??
+    stringValue(claudeCode.parentToolCallId)
   );
 }
 
@@ -571,8 +590,10 @@ function mapProtocolPromptAttachment(attachment: unknown): TurnAttachment | unde
     if (localPath) {
       return {
         path: localPath,
-        ...(kind === "file" && stringValue(record.sourceKind) === "clipboard-text"
-          ? { sourceKind: "clipboard-text" as const }
+        ...(kind === "file" &&
+        (stringValue(record.sourceKind) === "clipboard-text" ||
+          stringValue(record.sourceKind) === "topic-history")
+          ? { sourceKind: stringValue(record.sourceKind) as "clipboard-text" | "topic-history" }
           : {}),
         type: "file",
         ...displayMeta,
@@ -1410,7 +1431,7 @@ async function createSessionWithProjection<T>(
   }
 }
 
-interface ActivatedSessionForResume {
+export interface ActivatedSessionForResume {
   record: ZCodeProtocolSessionRecord;
   knownSession?: SessionInfo;
   /** Only for starting this V4 hydration; do not write to the record or cache across requests. */
@@ -1858,10 +1879,14 @@ export async function readSession(context: ZCodeProtocolAgentServerContext, rawP
     operation: "session_read",
   });
   record.deliveryKind = params.deliveryKind ?? record.deliveryKind;
-  return await snapshot(context, record, undefined, {
+  const result = await snapshot(context, record, undefined, {
     messageLimit: params.messageLimit,
     modelAvailability: "current",
   });
+  // Task index resync needs only title/search text/visibility/status; a full history row can reach
+  // ~15MB and saturate the host stdio. Build from full first, then trim heavy payloads so
+  // index-derived fields stay consistent with full.
+  return params.contentProfile === "index" ? elideSessionSnapshotForIndex(result) : result;
 }
 
 /**
@@ -2776,6 +2801,12 @@ export async function closeSession(context: ZCodeProtocolAgentServerContext, raw
     return { closed: false };
   }
   record.unsubscribe?.();
+  // When the session closes, abort in-flight plugin UI tool calls so the registry keeps no orphans.
+  abortMcpUiToolCallsForSession(params.sessionId);
+  // App-Provided Tools: finish all pending page calls for this session and drop their registrations.
+  clearMcpUiAppToolsForSession(context, params.sessionId);
+  // Clear all of this session's resource subscriptions (a uri is truly unsubscribed from the server only when its refcount reaches zero).
+  await record.app.unsubscribeMcpResourcesForUi?.(`${params.sessionId}|`).catch(() => 0);
   await record.app.close?.();
   // V4: closing a session also clears the publisher/subscription scheduling; reopening uses a cold snapshot start.
   // Dispose before removing the registry entry: the gateway uses getSessionWorkspaceId
@@ -2787,7 +2818,7 @@ export async function closeSession(context: ZCodeProtocolAgentServerContext, raw
   return { closed: true };
 }
 
-function shouldCloseSessionForExpectedPersistence(
+export function shouldCloseSessionForExpectedPersistence(
   currentPersistence: ZCodeSessionPersistence,
   expectedPersistence?: ZCodeSessionPersistence,
 ): boolean {
@@ -3314,6 +3345,7 @@ async function resolveSessionStartupPreferences(
     const inheritedShellSelection = source.parent.app.runtime.getSessionShellSelection();
     return {
       memoryEnabled: source.parent.memoryEnabled,
+      subagentRuntimeConfigEnabled: source.parent.subagentRuntimeConfigEnabled,
       modelContextBudgetStrategy: DEFAULT_ZCODE_MODEL_CONTEXT_BUDGET_STRATEGY,
       nativeSearchEnhancementsEnabled: source.parent.nativeSearchEnhancementsEnabled,
       resolveInitialBashShellSelection: async () => inheritedShellSelection,
@@ -3332,6 +3364,7 @@ async function resolveSessionStartupPreferences(
     runtimePreferences.askUserQuestionAutoResolutionEnabled,
   );
   return {
+    subagentRuntimeConfigEnabled: runtimePreferences.subagentRuntimeConfigEnabled,
     memoryEnabled: runtimePreferences.memoryEnabled,
     modelContextBudgetStrategy: DEFAULT_ZCODE_MODEL_CONTEXT_BUDGET_STRATEGY,
     nativeSearchEnhancementsEnabled: runtimePreferences.nativeSearchEnhancementsEnabled,
@@ -3412,19 +3445,24 @@ async function createRecord(
       modelSelection: "model" in params ? toRuntimeModelSelection(initialModel) : undefined,
       parentSessionId,
       taskType,
-      // Dynamic-workflow rollout gate uses the same lookup as offPeakPort: prefer this create/resume
-      // parameter, otherwise use the workspace-level conclusion synced from Host to the process;
-      // if neither exists, use false (fail closed). **Write an explicit boolean**; do not omit it as
-      // undefined. Core defines "absent" as "not in rollout; keep all tools" (TUI/headless/
-      // workflow_child behavior), and sessions created by a trusted Host must not receive that exemption.
-      dynamicWorkflowEnabled:
-        ("dynamicWorkflowEnabled" in params && params.dynamicWorkflowEnabled === true) ||
-        context.appRuntimePreferences.dynamicWorkflowEnabled === true,
-      // Protocol-side tool allow/deny lists are a session-level security boundary and must be placed
-      // in runtimeConfig. Do not rely only on prompt-text constraints or built-in/dynamic MCP tools
+      // Dynamic-workflow rollout gate (docs/dynamic-workflow/launch.md “Gray release” “On demand: activation”):
+      // uses the same lookup as offPeakPort — prefer this create/resume parameter, otherwise use the
+      // workspace-level conclusion synced from Host to the process. The value rule and the reason an
+      // explicit boolean is required live in resolveDynamicWorkflowRuntimeGate.
+      ...resolveDynamicWorkflowRuntimeGate(
+        {
+          dynamicWorkflowEnabled:
+            "dynamicWorkflowEnabled" in params ? params.dynamicWorkflowEnabled : undefined,
+          dynamicWorkflowMode:
+            "dynamicWorkflowMode" in params ? params.dynamicWorkflowMode : undefined,
+        },
+        context.appRuntimePreferences,
+      ),
+      // Fix reason: protocol-side tool allow/deny lists are a session-level security boundary and must be placed
+      // in runtimeConfig. Do not rely only on prompt-text constraints, or built-in and dynamic MCP tools
       // may still escape the invocation surface.
       toolAllowlist: "toolAllowlist" in params ? params.toolAllowlist : undefined,
-      toolDisallowlist: "toolDenylist" in params ? params.toolDenylist : undefined,
+      toolDisallowlist: resolveSessionToolDenylist(params, workspace),
       nativeSearchEnhancementsEnabled: startupPreferences.nativeSearchEnhancementsEnabled,
       modelContextBudgetStrategy: startupPreferences.modelContextBudgetStrategy,
       // Memory Settings is a master switch in addition to existing CLI features.memory/use. Write an
@@ -3456,6 +3494,7 @@ async function createRecord(
     // through its response.
     permissionBroker: createProtocolInteractionBroker(context),
     automationPort: createProtocolAutomationPort(context, () => ownSessionRecord),
+    topicResourcePort: createProtocolTopicResourcePort(context),
     // Connect only tools already exposed by Host; inject none by default. Reuse the current async
     // factory; do not restore the old deferred ModelAdapter/Registry overlay or change Session Selection.
     ...(("offPeakToolEnabled" in params && params.offPeakToolEnabled === true) ||
@@ -3463,6 +3502,26 @@ async function createRecord(
       ? { offPeakPort: createProtocolOffPeakPort(context, () => ownSessionRecord) }
       : {}),
     resolveInitialBashShellSelection: startupPreferences.resolveInitialBashShellSelection,
+    ...(startupPreferences.subagentRuntimeConfigEnabled &&
+    !(workspace.workspaceIdentity && isRemoteWorkspaceIdentity(workspace.workspaceIdentity))
+      ? {
+          readSubagentRuntimeConfig: async ({ signal, traceContext }) => {
+            signal.throwIfAborted();
+            const result = await context.requestClient(
+              zcodeProtocolMethods.subagentsReadRuntimeConfig,
+              { sessionId },
+              subagentRuntimeConfigSchema,
+              {
+                signal,
+                timeoutMs: ZCODE_SESSION_RUNTIME_PREFERENCES_REQUEST_TIMEOUT_MS,
+                trace: { traceId: traceContext.traceId },
+              },
+            );
+            signal.throwIfAborted();
+            return result;
+          },
+        }
+      : {}),
     // browser-use: route agent.browsers.* commands through this adapter as interaction/browserExecute
     // reverse requests.
     browserControlPort: createProtocolBrowserControlBroker(context),
@@ -3492,6 +3551,7 @@ async function createRecord(
     createdAt: now,
     eventStore,
     memoryEnabled: startupPreferences.memoryEnabled,
+    subagentRuntimeConfigEnabled: startupPreferences.subagentRuntimeConfigEnabled,
     modelContextBudgetStrategy: startupPreferences.modelContextBudgetStrategy,
     nativeSearchEnhancementsEnabled: startupPreferences.nativeSearchEnhancementsEnabled,
     ...(parentSessionId ? { parentSessionId } : {}),
@@ -3513,6 +3573,22 @@ async function createRecord(
   // Bind the owning session so automation-port can read this session's live model/mode/thought.
   ownSessionRecord = record;
   return record;
+}
+
+function resolveSessionToolDenylist(
+  params: Pick<ZCodeSessionCreateParams, "toolDenylist">,
+  workspace: ZCodeWorkspaceRef,
+): readonly string[] | undefined {
+  const tools = new Set(params.toolDenylist ?? []);
+  if (workspace.workspaceIdentity && isRemoteWorkspaceIdentity(workspace.workspaceIdentity)) {
+    // Bug cause: remote sessions such as SSH/WSL/Docker still injected automationPort, so the Cron tool was
+    // registered on the remote side; remote workspaces have no reliable trigger boundary for the local
+    // scheduler, so it must be disabled uniformly at session initialization, not left to UI or prompt-text constraints.
+    for (const toolName of REMOTE_AUTOMATION_TOOL_NAMES) {
+      tools.add(toolName);
+    }
+  }
+  return tools.size > 0 ? [...tools] : undefined;
 }
 
 async function readPersistedSessionMessages(
@@ -3542,6 +3618,7 @@ function isZCodeSessionMode(
     value === "build" ||
     value === "edit" ||
     value === "yolo" ||
+    value === "guarded" ||
     value === "auto"
   );
 }

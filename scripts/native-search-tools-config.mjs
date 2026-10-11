@@ -1,8 +1,11 @@
+/* eslint-disable max-lines -- The release plan owns both intranet download URLs and repository archive paths, along with their pinned digests. Keep them together to prevent plan drift. */
 import { dirname, join, resolve } from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
+import { resolveIntranetDepsBaseUrl } from "./intranetDefaults.mjs";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+// The repository’s prebuilt archives match the intranet mirrors by name and SHA-256; use them as an offline source only when no intranet dependency source is configured.
 export const NATIVE_SEARCH_DEPENDENCIES_DIR = join(
   repoRoot,
   "apps/zcode-cli/dependencies/native-search",
@@ -11,7 +14,19 @@ export const NATIVE_SEARCH_DEPENDENCIES_DIR = join(
 export const MACOS_NATIVE_SEARCH_DEPLOYMENT_TARGET = "12.0";
 export const LINUX_NATIVE_SEARCH_GLIBC_BASELINE = "2.28";
 
+export const LEGACY_REMOTE_RIPGREP_VERSION = "v13.0.0-10";
 export const NATIVE_SEARCH_RIPGREP_REVISION = "4649aa9700";
+
+// Darwin remote still uses the legacy ripgrep release; the downloader and the new prebuilt toolchain share the same
+// “trusted digest required before download” contract; do not skip archive verification just because this release is older.
+export const LEGACY_REMOTE_RIPGREP_ARCHIVE_SHA256_BY_TARGET = Object.freeze({
+  "darwin-arm64": "de44338ca53677968bdd7403ddc1cf9c735e708f7b63e3b34367f9411010a7db",
+  "darwin-x64": "3b501c05ff9b1d24ae8897dd1c6b5bf842fd12a6f7114264407ac42bc222b25b",
+  "linux-arm64": "705fc9bcd14baa18bd4dda8fe0651bff440fc0fb934fcdb8e745a85efd7b2afa",
+  "linux-x64": "ef820a62c1d6fdc396646762ff0f0e47e127947073ed8b5aa4ceea8b61cb1659",
+  "win32-arm64": "6c12d2c95073a4b981e5706981f42327b6359fc4cd7449ebd11f6769768dea97",
+  "win32-x64": "7b35b95cf3d7f92d8fe087006899617b1b5a6dac4bbed5d4f6ace6f0934799dc",
+});
 
 export const NATIVE_SEARCH_BFS_CONFIGURE_ARGS = Object.freeze([
   "--enable-release",
@@ -352,14 +367,52 @@ export function resolveNativeSearchBuildPlan({
   };
 }
 
+export function resolveNativeSearchPrebuiltDownloadBaseUrl(env = process.env) {
+  return (
+    env.NATIVE_SEARCH_TOOLS_DOWNLOAD_BASE_URL?.trim().replace(/\/+$/, "") ||
+    `${resolveIntranetDepsBaseUrl(env)}/native-search-tools`
+  );
+}
+
+export function resolveNativeSearchRipgrepDownloadBaseUrl(env = process.env) {
+  return (
+    env.NATIVE_SEARCH_RIPGREP_DOWNLOAD_BASE_URL?.trim().replace(/\/+$/, "") ||
+    `${resolveNativeSearchPrebuiltDownloadBaseUrl(env)}/ripgrep-${NATIVE_SEARCH_PREBUILT_RELEASES.ripgrep}`
+  );
+}
+
+/**
+ * The single source-selection rule for native search prebuilt archives, shared by desktop / SEA / server-cli / remote preparation:
+ * - If `NATIVE_SEARCH_TOOLS_DOWNLOAD_BASE_URL` is explicitly set or the intranet dependency source resolves: `intranet`, using the existing download path;
+ * - If no intranet dependency source is configured (`resolveIntranetDepsBaseUrl` throws or returns empty): `repository`, unpack the built-in repository archives.
+ * Both sources use the same release plan and pinned SHA-256; only the source of the bytes differs.
+ */
+export function resolveNativeSearchArtifactSource(env = process.env) {
+  if (env.NATIVE_SEARCH_TOOLS_DOWNLOAD_BASE_URL?.trim()) return "intranet";
+  try {
+    return resolveIntranetDepsBaseUrl(env) ? "intranet" : "repository";
+  } catch {
+    return "repository";
+  }
+}
+
 export function resolveNativeSearchPrebuiltPlan({
   platform = process.platform,
   arch = process.arch,
   outputDir,
+  env = process.env,
   dependenciesDir = NATIVE_SEARCH_DEPENDENCIES_DIR,
 } = {}) {
   const buildPlan = resolveNativeSearchBuildPlan({ platform, arch, outputDir });
   const archiveTarget = resolveNativeSearchArchiveTarget(buildPlan.platform, buildPlan.arch);
+  // Without an intranet dependency source, no download URL can be resolved; the plan carries only the repository archive path and leaves the download URL empty.
+  const downloadBaseUrls =
+    resolveNativeSearchArtifactSource(env) === "intranet"
+      ? {
+          producer: resolveNativeSearchPrebuiltDownloadBaseUrl(env),
+          ripgrep: resolveNativeSearchRipgrepDownloadBaseUrl(env),
+        }
+      : null;
   const officialRipgrepAsset = NATIVE_SEARCH_OFFICIAL_RIPGREP_ASSETS[buildPlan.platformKey];
 
   return {
@@ -378,6 +431,9 @@ export function resolveNativeSearchPrebuiltPlan({
           archiveSha256: officialRipgrepAsset.sha256,
           binaryName: `${NATIVE_SEARCH_BINARY_NAMES[toolId]}${buildPlan.platform === "win32" ? ".exe" : ""}`,
           binaryPath: buildPlan.binaries[toolId],
+          ...(downloadBaseUrls
+            ? { downloadUrl: `${downloadBaseUrls.ripgrep}/${officialRipgrepAsset.releaseFileName}` }
+            : {}),
           archivePath: resolve(
             dependenciesDir,
             `ripgrep-${NATIVE_SEARCH_PREBUILT_RELEASES.ripgrep}`,
@@ -405,6 +461,9 @@ export function resolveNativeSearchPrebuiltPlan({
         archiveSha256,
         binaryName: `${NATIVE_SEARCH_BINARY_NAMES[toolId]}${buildPlan.platform === "win32" ? ".exe" : ""}`,
         binaryPath: buildPlan.binaries[toolId],
+        ...(downloadBaseUrls
+          ? { downloadUrl: `${downloadBaseUrls.producer}/${toolId}-${release}/${releaseFileName}` }
+          : {}),
         archivePath: resolve(dependenciesDir, `${toolId}-${release}`, releaseFileName),
         source: "producer",
       };

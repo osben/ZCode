@@ -35,6 +35,7 @@ import {
   openWorkflowArtifactSidePane,
   activateDeveloperToolsSidePane,
   openBrowserSidePane,
+  openBrowserPermissionsSidePane,
   openOrActivateBrowserSidePaneByUrl,
   findBrowserSidePaneTabByUrl,
   applyBrowserUseSidePaneEvent,
@@ -74,6 +75,8 @@ import {
   type WorkspaceSidePaneTab,
 } from "@/lib/workspaceSidePane.js";
 import { isSidePaneTabVisibleForParent } from "@/lib/workspaceSidePane.js";
+import { openPluginUiSidePane } from "@/plugin-ui/index.js";
+import type { OpenPluginUiSideTabRequest } from "@/plugin-ui/contract.js";
 import { logger } from "@/logger.js";
 import { getPathLeaf, joinFilePath, toFileUrl } from "@/lib/path.js";
 import { shouldOpenWorkflowArtifactInBrowser } from "@/lib/workflowArtifactOpen.js";
@@ -505,6 +508,21 @@ export function useAppPanels(options: {
     workspaceAbsPath,
   ]);
 
+  const handleOpenBrowserPermissionSettings = useCallback(
+    (origin: string) => {
+      if (!supportsEmbeddedBrowser) return;
+      revealSidePaneForCurrentOwner();
+      commitOpenedSidePaneState((current) =>
+        openBrowserPermissionsSidePane(current, {
+          origin,
+          ownerTaskId: sidePaneOwnerIdRef.current,
+          workspaceKey: activeWorkspaceKeyRef.current,
+        }),
+      );
+    },
+    [commitOpenedSidePaneState, revealSidePaneForCurrentOwner, supportsEmbeddedBrowser],
+  );
+
   // The Browser View events below are authoritatively forwarded by main.
   // Do not use isWorkspaceVisible (= !isSettingsTabActive) as a subscription gate. Settings is an overlay, so App stays mounted
   // while this flag becomes false. If effect cleanup unsubscribes, main events disappear: a lost ready event makes
@@ -930,6 +948,23 @@ export function useAppPanels(options: {
       logger.debug("[App] 打开计划详情右侧 tab", {
         parentSessionId: request.parentSessionId,
         toolCallId: request.toolCallId,
+        workspaceKey,
+      });
+    },
+    [commitOpenedSidePaneState, revealSidePaneForCurrentOwner],
+  );
+
+  const handleOpenPluginUi = useCallback(
+    (request: OpenPluginUiSideTabRequest) => {
+      const workspaceKey = request.workspaceIdentity?.trim() || request.workspacePath;
+      revealSidePaneForCurrentOwner();
+      commitOpenedSidePaneState((current) =>
+        openPluginUiSidePane(current, { ...request, workspaceKey }),
+      );
+      logger.debug("[App] 打开插件 UI 右侧 tab", {
+        parentSessionId: request.parentSessionId,
+        toolCallId: request.toolCallId,
+        pluginId: request.pluginId,
         workspaceKey,
       });
     },
@@ -1577,6 +1612,7 @@ export function useAppPanels(options: {
     handleOpenBrowserUrl,
     handleToggleBrowser,
     handleOpenBrowserTab,
+    handleOpenBrowserPermissionSettings,
     handleToggleGit,
     handleOpenGit,
     handleOpenTreemapping,
@@ -1590,6 +1626,7 @@ export function useAppPanels(options: {
     handleSyncSubagentSessionTabs,
     handleOpenSelectionSideChat,
     handleOpenPlanDetail,
+    handleOpenPluginUi,
     handleOpenWorkflowRun,
     handleOpenWorkflowRunDirectory,
     handleOpenWorkflowActorSession,

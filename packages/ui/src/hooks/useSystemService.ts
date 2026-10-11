@@ -81,7 +81,7 @@ function normalizeProbeTargetForStableKey(target: IntranetProbeTarget) {
 }
 
 /** Create a stable request key so inline objects from callers do not trigger duplicate automatic probes. */
-function createIntranetProbeRequestStableKey(request: IntranetProbeRequest | null): string {
+export function createIntranetProbeRequestStableKey(request: IntranetProbeRequest | null): string {
   if (!request) {
     return "null";
   }
@@ -98,7 +98,7 @@ function createIntranetProbeRequestStableKey(request: IntranetProbeRequest | nul
 }
 
 /** Allow only the latest probe to write back, preventing concurrent responses from overwriting newer state. */
-function shouldApplyIntranetProbeRunResult(runId: number, latestRunId: number): boolean {
+export function shouldApplyIntranetProbeRunResult(runId: number, latestRunId: number): boolean {
   return runId === latestRunId;
 }
 

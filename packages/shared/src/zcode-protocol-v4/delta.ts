@@ -1,4 +1,5 @@
-// ConversationDelta: a closed set of seven operations.
+import { mcpAppInstanceSchema } from "../mcp-apps/instance.js";
+// ConversationDelta: snapshot deltas plus live-only plugin-UI notifications; the operation set is closed (10-protocol-spec §4.5).
 // There is no row.inserted (mid-stream insertion), row.moved, or field-level JSON patch —
 // For any structural change this model cannot express, the server sends a snapshot resync, deliberately reducing the client's error surface.
 //
@@ -61,11 +62,22 @@ export const statePatchSchema = z.object({
 });
 export type StatePatch = z.infer<typeof statePatchSchema>;
 
+export const pluginUiResourceSubscriberSchema = z
+  .object({
+    scopeId: z.string(),
+    generation: z.number().int().nonnegative(),
+    instance: mcpAppInstanceSchema,
+  })
+  .strict();
+
 /**
  * A run's **header** is `workflowRunSchema` without the actors/nodes tables, which are synchronized incrementally by instance.
  *
- * Derive it from the same schema using `.omit` to avoid subscription parsing failures caused by independently maintained field lists drifting apart. Small collections (reports / artifacts / phases / pendingQuestions…) remain in the header and are replaced as whole keys —
- * their bounds are only a few dozen entries, so another incremental syntax would only add another place to make mistakes.
+ * Derived with `.omit` instead of hand-copying a field list: the permanently broken
+ * subscription on 2026-09-04 was the consequence of "two copies of the run vocabulary".
+ * Small collections (reports / artifacts / phases / pendingQuestions…) remain in the header
+ * and are replaced as whole keys — their bounds are only a few dozen entries, so another
+ * incremental syntax would only add another place to make mistakes.
  */
 export const workflowRunHeaderSchema = workflowRunSchema.omit({ actors: true, nodes: true });
 export type WorkflowRunHeader = z.infer<typeof workflowRunHeaderSchema>;
@@ -106,6 +118,43 @@ export const conversationDeltaSchema = z.discriminatedUnion("op", [
     append: z.string(),
   }),
   z.object({ op: z.literal("state.updated"), patch: statePatchSchema }),
+  // MCP resource notifications subscribed by plugin UIs. Live-only: they do not mutate the
+  // snapshot (apply is a no-op) and are excluded from cold recovery; the renderer dispatches
+  // them to sandbox instances by subscribers.
+  z.object({
+    op: z.literal("pluginUi.resourceUpdated"),
+    pluginId: z.string(),
+    serverName: z.string(),
+    uri: z.string(),
+    subscribers: z.array(pluginUiResourceSubscriberSchema),
+  }),
+  z.object({
+    op: z.literal("pluginUi.resourceListChanged"),
+    pluginId: z.string(),
+    serverName: z.string(),
+    subscribers: z.array(pluginUiResourceSubscriberSchema),
+  }),
+  z.object({
+    op: z.literal("pluginUi.instanceClosed"),
+    pluginId: z.string(),
+    serverName: z.string(),
+    subscribers: z.array(pluginUiResourceSubscriberSchema),
+  }),
+  // "Instance mailbox" for App-Provided Tools: page tool calls initiated by the model,
+  // delivered live-only to the single instance (subscribers holds exactly one item); after the
+  // renderer claims it, the page executes tools/call and the result returns via
+  // mcp/uiResolveAppToolCall. Does not mutate the snapshot; excluded from cold recovery.
+  z.object({
+    op: z.literal("pluginUi.appToolCall"),
+    activity: z.boolean().optional(),
+    cancelled: z.boolean().optional(),
+    pluginId: z.string(),
+    serverName: z.string(),
+    subscribers: z.array(pluginUiResourceSubscriberSchema),
+    callId: z.string(),
+    toolName: z.string(),
+    arguments: z.record(z.string(), z.unknown()),
+  }),
   /**
    * Key-level delta for one DWF run. `revision` is the absolute `workflowRuns.revision` **after this change**;
    * one engine event produces at most one of these operations (node phase, derived actor state, usage, and watermarks commit atomically).
@@ -143,5 +192,15 @@ export const conversationDeltaSchema = z.discriminatedUnion("op", [
   }),
 ]);
 export type ConversationDelta = z.infer<typeof conversationDeltaSchema>;
+export type PluginUiResourceDelta = Extract<
+  ConversationDelta,
+  { op: "pluginUi.resourceUpdated" | "pluginUi.resourceListChanged" }
+>;
+export type PluginUiAppToolCallDelta = Extract<ConversationDelta, { op: "pluginUi.appToolCall" }>;
+/** All live-only deltas delivered per sandbox instance. */
+export type PluginUiInstanceDelta =
+  | Extract<ConversationDelta, { op: "pluginUi.instanceClosed" }>
+  | PluginUiResourceDelta
+  | PluginUiAppToolCallDelta;
 export type WorkflowRunUpdatedDelta = Extract<ConversationDelta, { op: "workflowRun.updated" }>;
 export type WorkflowRunRemovedDelta = Extract<ConversationDelta, { op: "workflowRun.removed" }>;

@@ -132,6 +132,9 @@ export function toAiSdkMessages(
               type: "tool-result",
               toolCallId: message.toolCallId,
               toolName,
+              // When the SDK merges consecutive tool messages, it keeps only the first message's providerOptions;
+              // the cache marker must stay with its result block so it is not lost or moved to another result at the end of a batch.
+              ...providerOptionsForCacheControl(message.cacheControl),
               output: frameReferenceFailure
                 ? { type: "error-text", value: frameReferenceFailure }
                 : toAiSdkToolResultOutput(
@@ -142,7 +145,6 @@ export function toAiSdkMessages(
                   ),
             },
           ],
-          ...providerOptionsForCacheControl(message.cacheControl),
         });
         pendingToolMediaParts.push(...toolMediaParts);
         break;

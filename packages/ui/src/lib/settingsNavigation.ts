@@ -22,9 +22,9 @@ export type SettingsSectionId =
   | "automations"
   | "shortcuts";
 
-type SettingsUsageTabTarget = "app" | "codingPlan";
-type SettingsPluginTabTarget = "plugins" | "mcps" | "skills" | "commands";
-type SettingsPluginNavigationOrigin = "plugin-store";
+export type SettingsUsageTabTarget = "app" | "codingPlan";
+export type SettingsPluginTabTarget = "plugins" | "mcps" | "skills" | "commands";
+export type SettingsPluginNavigationOrigin = "plugin-store";
 
 const SETTINGS_SECTION_INTENT_KEY = "zcode-settings-section-intent",
   SETTINGS_USAGE_TAB_INTENT_KEY = "zcode-settings-usage-tab-intent",
@@ -43,10 +43,9 @@ const HIDDEN_SETTINGS_SECTIONS = new Set<SettingsSectionId>([
   // Hide the workspace search (.zcodeignore) entry for now. The rules file still applies and can be edited manually,
   // and the editor code remains; remove this entry from here when it is enabled again.
   "workspaceFileSearch",
-  "computerUse",
 ]);
 
-interface SettingsSectionIntentEventDetail {
+export interface SettingsSectionIntentEventDetail {
   section: SettingsSectionId;
   pluginTab?: SettingsPluginTabTarget;
   pluginOrigin?: SettingsPluginNavigationOrigin;
@@ -111,7 +110,7 @@ function getLocalStorage(): Storage | null {
   }
 }
 
-function readLastSettingsSectionPreference(
+export function readLastSettingsSectionPreference(
   fallbackSection: SettingsSectionId = "general",
 ): SettingsSectionId {
   const storage = getLocalStorage();
@@ -291,7 +290,7 @@ function clearPendingSettingsSectionIntent(): void {
   }
 }
 
-function consumePendingSettingsSection(
+export function consumePendingSettingsSection(
   fallbackSection: SettingsSectionId = "general",
 ): SettingsSectionId {
   if (typeof window === "undefined") {

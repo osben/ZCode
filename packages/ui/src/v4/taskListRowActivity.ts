@@ -7,7 +7,7 @@ import type {
 
 // UI-only sidecar: not part of shared task metadata/schema and never written back to tasks-index.
 // Field names use an explicit internal prefix to prevent callers from mistaking them for persisted task properties.
-const TASK_LIST_ROW_ACTIVITY_FIELD = "__zcodeSessionActivity" as const;
+export const TASK_LIST_ROW_ACTIVITY_FIELD = "__zcodeSessionActivity" as const;
 
 export interface TaskListRowActivity {
   phase: SessionSummary["phase"];
@@ -38,7 +38,7 @@ export function getTaskListRowActivity(task: ZCodeTaskMeta): TaskListRowActivity
 }
 
 /** Trust only the live phase from sessions-index; leftover status=running in tasks-index must not pin historical tasks to the top. */
-function isTaskListRowRunning(task: ZCodeTaskMeta): boolean {
+export function isTaskListRowRunning(task: ZCodeTaskMeta): boolean {
   const phase = getTaskListRowActivity(task)?.phase;
   return phase === "prewarming" || phase === "running";
 }

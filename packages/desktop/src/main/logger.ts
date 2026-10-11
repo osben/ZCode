@@ -91,6 +91,29 @@ function write(level: LogLevel, source: string, ...args: unknown[]) {
   }
 }
 
+function writeDedicated(filePrefix: string, level: LogLevel, source: string, ...args: unknown[]) {
+  const now = new Date();
+  const ts = formatTimestamp(now);
+  const pid = process.pid;
+  const message = args.map((a) => (typeof a === "string" ? a : JSON.stringify(a))).join(" ");
+  const line = `[${ts}] [${level}] [pid:${pid}] [${source}] ${message}\n`;
+  const logDir = getLogDir();
+  mkdirSync(logDir, { recursive: true });
+  // Bugfix: mixing remote-control relay traces into the main log made the directory fill up
+  // quickly and hard to inspect by hand. Route high-frequency traces into a logs subdirectory so
+  // they do not interfere with browsing or locating exported main logs.
+  const dedicatedDir = join(logDir, "web-remote-control");
+  mkdirSync(dedicatedDir, { recursive: true });
+  const filePath = join(dedicatedDir, `${filePrefix}-${formatDate(now)}.log`);
+
+  try {
+    maybeThrowInjectedFsFault({ operation: "appendFile", path: filePath });
+    appendFileSync(filePath, line);
+  } catch {
+    // A log-write failure must not affect application operation.
+  }
+}
+
 /**
  * Main-process logs are written to ~/.zcode/v2/logs/YYYY-MM-DD.log by default; E2E tests use a worker-specific directory.
  * Console output is also kept for development debugging.
@@ -108,4 +131,17 @@ export const logger = {
 
   /** Called to write renderer logs, received over IPC, to the same file. */
   fromRenderer: (level: LogLevel, args: unknown[]) => write(level, "renderer", ...args),
+};
+
+/**
+ * Dedicated log for Web remote-control relay message traces.
+ * Used only for high-frequency link debugging; written to separate files to avoid drowning the main log.
+ */
+export const webRemoteControlRelayLogger = {
+  info: (...args: unknown[]) =>
+    writeDedicated("web-remote-control-relay", "info", "web-remote-control-relay", ...args),
+  warn: (...args: unknown[]) =>
+    writeDedicated("web-remote-control-relay", "warn", "web-remote-control-relay", ...args),
+  error: (...args: unknown[]) =>
+    writeDedicated("web-remote-control-relay", "error", "web-remote-control-relay", ...args),
 };

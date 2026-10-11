@@ -1,5 +1,6 @@
 import type { ISettingService } from "@zcode/services";
 import {
+  type AppSettings,
   type ProviderFamilyConnectionSelectionSettings,
   type ProviderFamilyDomain,
 } from "@zcode/shared";
@@ -29,7 +30,7 @@ export async function setProviderFamilyDomain(
   });
 }
 
-function buildOAuthProviderFamilySelections(
+export function buildOAuthProviderFamilySelections(
   domain: ProviderFamilyDomain,
   currentSelections: ProviderFamilyConnectionSelectionSettings | null | undefined,
 ): ProviderFamilyConnectionSelectionSettings {
@@ -37,4 +38,16 @@ function buildOAuthProviderFamilySelections(
     ...currentSelections,
     [domain]: { kind: "individual-coding-plan" },
   };
+}
+
+export async function clearProviderFamilyDomain(
+  settingService: Pick<ISettingService, "update">,
+): Promise<void> {
+  await settingService.update({
+    // Cleanup reason: undefined can be dropped when providerFamilyDomain is sent over RPC.
+    // settingService normalizes an empty string to undefined, ensuring sign-out/unlink does not keep filtering by the old domain.
+    providerFamilyDomain: "" as AppSettings["providerFamilyDomain"],
+    providerFamilyDomainUpdatedAt: Date.now(),
+    providerFamilyDomainMigrated: true,
+  });
 }

@@ -12,6 +12,7 @@ import {
   isProviderProvisioningAccountCredentialKey,
   type ProviderProvisioningEnvelope,
   type ProviderProvisioningResult,
+  type ProviderProvisioningErrorCode,
 } from "@zcode/shared";
 import type { ICredentialService } from "../credential/credential.js";
 import type { ISettingService } from "../setting/setting.js";
@@ -68,6 +69,12 @@ export function createProviderProvisioningTarget(
         }
 
         validateCredentialEntries(envelope);
+        // schema v1 accepts the legacy Source's account key field, but the new Host no
+        // longer reads or applies it. Legacy/manual keys stay in the original store so an
+        // upgrade sync cannot accidentally delete credentials shared by other clients.
+        const oauthCredentials = envelope.credentials.filter(
+          (entry) => entry.scope === "oauth-session",
+        );
         await options.providerRuntime.start();
         const before = await captureBeforeState(envelope, options);
         const personalUpdate = parsePersonalConfig(envelope);
@@ -79,6 +86,7 @@ export function createProviderProvisioningTarget(
           personalConfigExpected: personalUpdate,
         };
 
+        let errorCode: ProviderProvisioningErrorCode = "target-write-failed";
         try {
           // Register before writing: even an atomic write that throws after replacement must be included in the rollback set.
           applied.settings = true;
@@ -89,7 +97,7 @@ export function createProviderProvisioningTarget(
           });
 
           const incomingCredentials = new Map(
-            envelope.credentials.map((credential) => [credential.key, credential.value]),
+            oauthCredentials.map((credential) => [credential.key, credential.value]),
           );
           for (const key of before.credentials.keys()) {
             const value = incomingCredentials.get(key);
@@ -107,26 +115,24 @@ export function createProviderProvisioningTarget(
             return personalUpdate;
           });
 
+          errorCode = "target-refresh-failed";
           await options.accountProviderSource.refresh("provider-provisioning");
           const snapshot =
             await options.providerRuntime.registryService.refresh("provider-provisioning");
-          if (
-            personalUpdate.defaultModelSelection &&
-            !options.providerRuntime.registryService.validateSelection(
-              personalUpdate.defaultModelSelection,
-            ).ok
-          ) {
-            throw new Error("同步后的远端 Registry 不支持本地默认模型");
-          }
+          // An invalid default is only a session preference; treating it as a hard sync
+          // condition would let normal SSH be blocked by an old model/tier. Keep the
+          // preference as-is for the Host's existing recommendation logic to resolve; real
+          // write/refresh failures still roll back via the transaction.
 
           const result = {
             syncId: envelope.syncId,
             status: "applied" as const,
             personalProviderCount: personalUpdate.providers.keys().length,
-            credentialCount: envelope.credentials.length,
+            credentialCount: oauthCredentials.length,
             configRevision: snapshot.sourceRevisions.config,
             rolledBack: false,
           } satisfies ProviderProvisioningResult;
+          errorCode = "target-commit-failed";
           await writeStateFile(options.stateFilePath, appendStateRecord(previousState, result));
           return result;
         } catch (error) {
@@ -138,8 +144,9 @@ export function createProviderProvisioningTarget(
               syncId: envelope.syncId,
               status: "rollback_failed",
               personalProviderCount: before.personal.providers.keys().length,
-              credentialCount: envelope.credentials.length,
+              credentialCount: oauthCredentials.length,
               errorMessage: `${formatError(error)}；回滚失败：${formatError(rollbackError)}`,
+              errorCode,
               rolledBack: false,
             } satisfies ProviderProvisioningResult;
           }
@@ -147,8 +154,9 @@ export function createProviderProvisioningTarget(
             syncId: envelope.syncId,
             status: "failed",
             personalProviderCount: before.personal.providers.keys().length,
-            credentialCount: envelope.credentials.length,
+            credentialCount: oauthCredentials.length,
             errorMessage: formatError(error),
+            errorCode,
             rolledBack: true,
           } satisfies ProviderProvisioningResult;
         }
@@ -191,7 +199,7 @@ async function captureBeforeState(
     ...envelope.credentials.map((entry) => entry.key),
   ]);
   for (const key of credentialKeys) {
-    if (!OAUTH_CREDENTIAL_KEYS.has(key) && !isProviderProvisioningAccountCredentialKey(key)) {
+    if (!OAUTH_CREDENTIAL_KEYS.has(key)) {
       continue;
     }
     credentials.set(key, await options.credentialService.load(key));

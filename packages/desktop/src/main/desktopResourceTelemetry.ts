@@ -53,7 +53,7 @@ import { listRegisteredHostAgentProcessIds } from "./resourceManagerWindow.js";
  */
 
 /** Sampling interval. */
-const RESOURCE_SAMPLE_INTERVAL_MS = 10_000;
+export const RESOURCE_SAMPLE_INTERVAL_MS = 10_000;
 
 /** Use a one-minute window in development builds and E2E for easier verification; production uses five minutes. */
 function resolveDefaultReportIntervalMs(): number {
@@ -68,15 +68,15 @@ function resolveDefaultReportIntervalMs(): number {
 }
 
 /** Reporting interval. */
-const RESOURCE_REPORT_INTERVAL_MS = resolveDefaultReportIntervalMs();
+export const RESOURCE_REPORT_INTERVAL_MS = resolveDefaultReportIntervalMs();
 
 /**
  * Local memory diagnostics reuse the 10-second resource-sampling cadence: read main's own memory
  * every six ticks (~60 seconds), using the same reading for both the main log and the main role's heap sample.
  */
-const MEMORY_LOG_SAMPLE_EVERY_N_TICKS = 6;
+export const MEMORY_LOG_SAMPLE_EVERY_N_TICKS = 6;
 
-type ResourceUsageScene = "foreground" | "background";
+export type ResourceUsageScene = "foreground" | "background";
 
 interface ResourceLogger {
   info: (...args: unknown[]) => void;

@@ -34,7 +34,7 @@ export interface StartHostMemoryDiagnosticsLogOptions {
   };
 }
 
-interface HostMemoryDiagnosticsLog {
+export interface HostMemoryDiagnosticsLog {
   /** Sample immediately (for tests and manual triggers); return whether it was written to disk. */
   sampleNow(): boolean;
   stop(): void;

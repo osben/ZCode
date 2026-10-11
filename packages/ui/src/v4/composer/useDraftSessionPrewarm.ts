@@ -21,7 +21,7 @@ type DispatchCommand = (
   targetSessionId: string | null,
 ) => Promise<CommandAck>;
 
-interface DraftPrewarmController {
+export interface DraftPrewarmController {
   /** First admission command has been sent but its ACK is unresolved; dispose must not delete a session with an unknown result. */
   markPromotionPending(): void;
   /** Set after the first send succeeds; dispose must not delete the promoted session. */
@@ -33,7 +33,7 @@ interface DraftPrewarmController {
 }
 
 /** Pure controller for prewarm lifecycle: create → surface through onReady → choose cleanup action on dispose. */
-function startDraftSessionPrewarm(params: {
+export function startDraftSessionPrewarm(params: {
   workspaceKey: string;
   dispatchCommand: DispatchCommand;
   onReady: (sessionId: string) => void;
@@ -142,12 +142,12 @@ function startDraftSessionPrewarm(params: {
   };
 }
 
-interface DraftSessionPrewarm {
+export interface DraftSessionPrewarm {
   /** Prewarm binding ready for the current workspace/transport generation. */
   binding: DraftPrewarmBinding | null;
 }
 
-interface DraftPrewarmBinding {
+export interface DraftPrewarmBinding {
   workspaceKey: string;
   sessionId: string;
   /** Synchronously claim the lifecycle before sending the first admission command; false means this binding is no longer the current owner. */

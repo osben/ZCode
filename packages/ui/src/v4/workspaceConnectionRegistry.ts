@@ -46,7 +46,7 @@ export type WorkspaceConnectionAgentService = Pick<
   | "onAgentRuntimeRestarted"
 >;
 
-interface WorkspaceConnectionScope {
+export interface WorkspaceConnectionScope {
   /** = primary workspace bound to the pane (connection routing key). */
   workspacePath: string;
   workspaceIdentity?: string;
@@ -80,13 +80,13 @@ interface RegistryEntry {
 const registry = new Map<string, RegistryEntry>();
 
 /** Reserved key for the local endpoint (same convention as sessionsIndexRegistry / task-list shardKey). */
-const LOCAL_WORKSPACE_CONNECTION_ENDPOINT = "__base__";
+export const LOCAL_WORKSPACE_CONNECTION_ENDPOINT = "__base__";
 
 /** Delay before release when the reference count reaches zero (ms); same scale as SessionDataLayer keep-warm. */
-const WORKSPACE_CONNECTION_KEEP_WARM_MS = 30_000;
+export const WORKSPACE_CONNECTION_KEEP_WARM_MS = 30_000;
 
 /** Registry entry key = endpoint + workspaceKey (different endpoints never share an entry, even for the same workspaceKey). */
-function buildWorkspaceConnectionKey(scope: WorkspaceConnectionScope): string {
+export function buildWorkspaceConnectionKey(scope: WorkspaceConnectionScope): string {
   const workspaceKey = scope.workspaceIdentity?.trim() || scope.workspacePath;
   return `${scope.remoteSessionId ?? LOCAL_WORKSPACE_CONNECTION_ENDPOINT} ${workspaceKey}`;
 }
@@ -258,4 +258,9 @@ export function acquireWorkspaceConnection(
       releaseEntry(entry);
     },
   };
+}
+
+/** For tests/diagnostics only: number of currently registered connection entries (excluding superseded entries awaiting release of existing leases). */
+export function workspaceConnectionRegistrySize(): number {
+  return registry.size;
 }

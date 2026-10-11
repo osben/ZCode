@@ -1,4 +1,5 @@
 import { KIND_RANK } from "./causality-reduce.js";
+import { holePrefixOf } from "./hole-id.js";
 import {
   UNKNOWN_LANE,
   WORKSPACE_LANE,
@@ -160,4 +161,14 @@ export function dedupeFacts(facts: readonly Fact[]): Fact[] {
 
 export function weakest(values: readonly Certainty[]): Certainty {
   return values.includes("maybe") ? "maybe" : "always";
+}
+
+/**
+ * The completion that introduced this site: the `hole#<hash>/` prefix on its site ID (one level only,
+ * hole-id.ts). Sites outside the body have no prefix. A hole's own ID is unprefixed; the site table's
+ * `fill` field records which hole it belongs to, for callers to look up.
+ * （docs/analysis.md「Sites」）。
+ */
+export function fillOf(siteId: string): string | undefined {
+  return holePrefixOf(siteId);
 }

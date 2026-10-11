@@ -1,14 +1,18 @@
 // ============================================================
 // Boundary accounting: rejected-instance counters, the whole-key entry budget, and the single step-counting rule for readers
 // ============================================================
-// Pure functions for capacity and counting rules; no clock reads or I/O.
+// Lives outside the main reduction file for the same reason as workflow-runs-concurrency.ts /
+// -phases.ts / -started.ts (the main file's max-lines limit), and follows the same discipline:
+// pure functions, no clock, no I/O.
 //
-// Instances rejected at the limit still need to be counted. Existing entries continue to update; eviction and reinsertion follow their respective rules.
-// The three rules serve distinct purposes:
+// These three things are facets of one concern. The limit's semantics are **reject-new** (existing
+// entries keep updating), so a run wide enough to hit the limit always has some instances that
+// never enter the table:
 //   - Counters make rejected instances **countable**; `truncated` only says that some data was omitted, not how much.
 //   - The entry budget keeps the entire state key **bounded**; the per-run limit multiplied by maxRuns comes too close to the snapshot limit.
-//   - workflowRunStepCounts is the only permitted way to count steps. It combines listed and unlisted entries, and the three readers (run card, timeline summary,
-//     TUI mirror) share the same calculation so a run shows the same step count everywhere.
+//   - workflowRunStepCounts is the only permitted way to count steps. It combines listed and
+//     unlisted entries; the three readers (run card, timeline summary, TUI mirror) used to count
+//     separately, so the same run showed three different step counts.
 
 import {
   WORKFLOW_RUNS_LIMITS,

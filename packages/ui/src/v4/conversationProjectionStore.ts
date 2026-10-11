@@ -10,6 +10,7 @@ import {
   isDeterministicContentFault,
   parseConversationTopic,
   PROTOCOL_V4_LIMITS,
+  type ConversationDelta,
   SUBSCRIPTION_CONTENT_REJECTED,
   type ConversationRow,
   type ConversationSnapshot,
@@ -22,13 +23,14 @@ import {
 import { logger } from "@/logger.js";
 import type { ConversationTurnNavigatorHydrationResult } from "@/v4/conversationTurnNavigatorHelpers.js";
 import type { ConversationTransport } from "@/v4/transport.js";
+import { ConversationRowPool } from "@/v4/conversationRowSharing.js";
 import { uiMemoryDiagnosticsRegistry } from "@/lib/memoryDiagnostics.js";
 
 /** Backoff schedule after a runtime replacement interrupts subscribe. When the CUA Helper becomes ready on cold start, recycleUntilStable → disposeWorkspace reclaims the agent runtime and rejectAll interrupts in-flight subscribe calls. If this transient failure is left at status="error", the lazily started agent may not be brought back after dispose, so onRuntimeRestart never arrives and the panel can only recover when the user clicks "Reconnect". subscribeConversationV4 uses start-if-needed, so resubscribing also starts the runtime. Use the bounded backoff pattern already established by sessionsIndexStore. */
 const RUNTIME_RECYCLE_RETRY_DELAYS_MS = [250, 1_000, 3_000] as const;
 
 /** Grace period for the authoritative input projection after an accepted ACK. The core admission ACK does not wait for the TurnStarted/QueueItem/userInput projection; normally these paths differ by only one renderer/network round trip. A 2-second window covers typical desktop/mobile latency while quickly recovering from a half-open channel where the CLI keeps working but the subscription is completely silent. A timeout restores only the subscription; it does not replay the command. */
-const ACCEPTED_INPUT_PROJECTION_GRACE_MS = 2_000;
+export const ACCEPTED_INPUT_PROJECTION_GRACE_MS = 2_000;
 const ACCEPTED_INPUT_COMMAND_TYPES = new Set(["sendText"]);
 
 /** lastError shown to the user when backoff is exhausted (for replacement paths with no underlying error object to reference). */
@@ -208,7 +210,7 @@ export function shouldAutoLoadIncompleteLeadingTurn(
 }
 
 /** Whether the tail window of a cold snapshot starts in the middle of a turn. turnHeader is the authoritative start of a complete turn; the first row may be a lightBoundary, so checking only the first row kind is insufficient. Check whether the first turn has a header in the current window. */
-function mergeOlderRows(
+export function mergeOlderRows(
   window: readonly ConversationRow[],
   fetched: readonly ConversationRow[],
 ): ConversationRow[] | null {
@@ -236,6 +238,8 @@ export class ConversationProjectionStore {
   private readonly modelTransitionListeners = new Set<
     (transition: SessionModelTransition) => void
   >();
+  /** Side-channel listener for live-only deltas (plugin resource notifications); fires only after applying a delta frame, not a snapshot frame. */
+  private readonly liveDeltaListeners = new Set<(deltas: readonly ConversationDelta[]) => void>();
   private observedModelTransitionEventId: string | null = null;
   // Subscription generation: concurrent connect calls accept only the newest generation; immediately unsubscribe stale results to prevent server-side leaks.
   private generation = 0;
@@ -284,6 +288,9 @@ export class ConversationProjectionStore {
   constructor(
     readonly topic: string,
     private readonly transport: ConversationTransport,
+    // Row-structure sharing pool (docs/performance/conversation-row-structural-sharing.md).
+    // SessionDataLayer injects a pool shared across stores; when constructed independently, sharing is scoped to this store.
+    private readonly rowPool: ConversationRowPool = new ConversationRowPool(),
   ) {
     liveProjectionStores.add(this);
     this.offAssemblyFault = transport.onAssemblyFault((fault) => {
@@ -327,6 +334,15 @@ export class ConversationProjectionStore {
   subscribe(listener: () => void): () => void {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
+  }
+
+  /**
+   * Subscribe to the list of deltas applied after each frame. Used for live-only `pluginUi.*` deltas
+   * (they do not change rows or appear in snapshots); regular row state still uses subscribe + getState.
+   */
+  onLiveDeltas(listener: (deltas: readonly ConversationDelta[]) => void): () => void {
+    this.liveDeltaListeners.add(listener);
+    return () => this.liveDeltaListeners.delete(listener);
   }
 
   onOnlineModelTransition(listener: (transition: SessionModelTransition) => void): () => void {
@@ -603,26 +619,22 @@ export class ConversationProjectionStore {
   ): void {
     if (frame.payload.kind === "snapshot") {
       const hadAppliedBase = this.subscriptionHasAppliedBase;
-      logSubagentProjectionTransition(
-        this.topic,
-        this.state.snapshot,
-        frame.payload.snapshot,
-        "snapshot",
-      );
-      // Rule 1: replace everything with the new snapshot.
+      const snapshot = this.shareSnapshotRows(frame.payload.snapshot);
+      logSubagentProjectionTransition(this.topic, this.state.snapshot, snapshot, "snapshot");
+      // Rule 1: replace everything with the new snapshot (row objects reuse old references when their values match, but semantics remain full replacement).
       this.setState({
-        snapshot: frame.payload.snapshot,
+        snapshot,
         planDirectoryRevision: this.state.planDirectoryRevision + 1,
         // Replacing the whole snapshot may change the real-user query set, so invalidate terminal-state caches.
         turnNavigatorDirectoryRevision: this.state.turnNavigatorDirectoryRevision + 1,
       });
       this.subscriptionHasAppliedBase = true;
-      this.reconcileOptimistic(frame.payload.snapshot);
-      this.reconcileAcceptedInputProjection(frame.payload.snapshot);
-      // If initial is lost, the publisher allows a complete online snapshot to establish the first
+      this.reconcileOptimistic(snapshot);
+      this.reconcileAcceptedInputProjection(snapshot);
+      // Root cause: when initial is lost, the publisher allows a complete online snapshot to establish the first
       // applied base. Persistent transitions in it may predate this subscription and must not be reported as new live events.
       // The first frame seeds the observation baseline; only later online transitions notify the pane.
-      this.observeModelTransition(frame.payload.snapshot, context.online && hadAppliedBase);
+      this.observeModelTransition(snapshot, context.online && hadAppliedBase);
       if (context.subscribeMode !== null && context.frameReceivedAt !== undefined) {
         const snapshotAppliedAt = monotonicNow();
         this.sessionOpenRendererTiming = {
@@ -667,8 +679,8 @@ export class ConversationProjectionStore {
       return;
     }
     const applied = applyConversationDeltas(current, frame.payload.deltas);
-    // seq is the snapshot alignment watermark; after applying a delta frame, advance to its right endpoint.
-    const next = { ...applied, seq: frame.toSeq };
+    // seq is the snapshot-alignment watermark (R-03); after applying a delta frame, advance it to the frame's right endpoint.
+    const next = this.shareDeltaRows({ ...applied, seq: frame.toSeq }, frame.payload.deltas);
     logSubagentProjectionTransition(this.topic, current, next, "deltas");
     const removedFromRowId = frame.payload.deltas.reduce<number | null>(
       (earliest, delta) =>
@@ -702,6 +714,55 @@ export class ConversationProjectionStore {
     this.reconcileAcceptedInputProjection(next);
     this.observeModelTransition(next, context.online);
     if (context.recovery) this.markRecoveryFrameSeen();
+    for (const listener of this.liveDeltaListeners) listener(frame.payload.deltas);
+  }
+
+  /**
+   * Root cause: all rows in a snapshot are newly deserialized objects, and when closure chains
+   * retain historical snapshots, each holds its own copy of large strings (for example, hundreds
+   * of copies of the same inputText). Replace rows/children with equal values by their older pooled references.
+   */
+  /** Share historical rows fetched through rows/range with older rows still alive in the pool (common when scrolling up after a cold open). */
+  private shareRows(rows: readonly ConversationRow[]): ConversationRow[] {
+    return rows.map((row) => this.rowPool.shareRow(this.topic, row));
+  }
+
+  private shareSnapshotRows(snapshot: ConversationSnapshot): ConversationSnapshot {
+    const window = this.rowPool.shareWindow(
+      this.topic,
+      snapshot.rows.window,
+      this.state.snapshot?.rows.window,
+    );
+    return window === snapshot.rows.window
+      ? snapshot
+      : { ...snapshot, rows: { ...snapshot.rows, window } };
+  }
+
+  /** Share new rows from row.upserted/row.appended; register row.delta only to avoid deep comparison on every streaming frame. */
+  private shareDeltaRows(
+    snapshot: ConversationSnapshot,
+    deltas: readonly ConversationDelta[],
+  ): ConversationSnapshot {
+    const shareIds = new Set<number>();
+    const rememberIds = new Set<number>();
+    for (const delta of deltas) {
+      if (delta.op === "row.upserted" || delta.op === "row.appended") shareIds.add(delta.row.rowId);
+      else if (delta.op === "row.delta") rememberIds.add(delta.rowId);
+    }
+    if (shareIds.size === 0 && rememberIds.size === 0) return snapshot;
+    let window: ConversationRow[] | null = null;
+    snapshot.rows.window.forEach((row, index) => {
+      if (shareIds.has(row.rowId)) {
+        const shared = this.rowPool.shareRow(this.topic, row);
+        if (shared !== row) {
+          window ??= [...snapshot.rows.window];
+          window[index] = shared;
+        }
+      } else if (rememberIds.has(row.rowId)) {
+        this.rowPool.remember(this.topic, row);
+      }
+    });
+    return window === null ? snapshot : { ...snapshot, rows: { ...snapshot.rows, window } };
   }
 
   private observeModelTransition(snapshot: ConversationSnapshot, online: boolean): void {
@@ -958,7 +1019,7 @@ export class ConversationProjectionStore {
       // If the cursor becomes invalid in flight (row.removed truncation / full snapshot resync), discard the result
       // so history removed by the authority is not revived. The next trigger fetches from the new window.
       if (current.rows.window[0]?.rowId !== beforeRowId) return;
-      const window = mergeOlderRows(current.rows.window, result.rows);
+      const window = mergeOlderRows(current.rows.window, this.shareRows(result.rows));
       if (window === null) return;
       this.setState({
         snapshot: { ...current, rows: { ...current.rows, window } },
@@ -1069,7 +1130,7 @@ export class ConversationProjectionStore {
       );
       if (realUserQueryCount < 2) {
         if (preserveIncompleteLeadingTurn) {
-          const window = mergeOlderRows(current.rows.window, olderRows);
+          const window = mergeOlderRows(current.rows.window, this.shareRows(olderRows));
           if (window === null) return stale(initialLogEpoch);
           committed = true;
           this.setState({
@@ -1100,7 +1161,7 @@ export class ConversationProjectionStore {
         this.turnNavigatorHydrationTerminal = result;
         return result;
       }
-      const window = mergeOlderRows(current.rows.window, olderRows);
+      const window = mergeOlderRows(current.rows.window, this.shareRows(olderRows));
       if (window === null) return stale(initialLogEpoch);
       committed = true;
       this.setState({

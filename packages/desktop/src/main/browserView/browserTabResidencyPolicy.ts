@@ -30,14 +30,15 @@ export interface BrowserTabResidencyCandidate {
   downloadActive: boolean;
 }
 
-interface BrowserTabResidencySelectionOptions {
+export interface BrowserTabResidencySelectionOptions {
   windowId: number;
   tabLimit?: number;
 }
 
-function isBrowserTabResidencyProtected(candidate: BrowserTabResidencyCandidate): boolean {
-  // Product boundary: preferred is only used to restore the default selection. At the logical-tab
-  // limit, only visible or running tabs are protected; a suspended shell may also be closed directly.
+export function isBrowserTabResidencyProtected(candidate: BrowserTabResidencyCandidate): boolean {
+  // Product boundary: preferred is only used to restore the default selection and provides no
+  // 30-minute exemption. At the logical-tab limit, only visible or running tabs are protected; a
+  // suspended shell may also be closed directly.
   return (
     candidate.residency === "live-visible" ||
     candidate.residency === "restoring" ||

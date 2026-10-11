@@ -21,12 +21,12 @@ import type {
 } from "@zcode/shared";
 import { createDesktopCuaHelperInstaller } from "./desktopCuaHelperInstaller.js";
 
-const MACOS_ACCESSIBILITY_SETTINGS_URL =
+export const MACOS_ACCESSIBILITY_SETTINGS_URL =
   "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility";
-const MACOS_SCREEN_RECORDING_SETTINGS_URL =
+export const MACOS_SCREEN_RECORDING_SETTINGS_URL =
   "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture";
 
-interface OpenCuaAccessibilitySettingsOptions {
+export interface OpenCuaAccessibilitySettingsOptions {
   initialPermission?: CuaPermissionKind;
   requiredPermissions?: CuaPermissionKind[];
   env?: NodeJS.ProcessEnv;
@@ -80,7 +80,7 @@ function messageOf(error: unknown): string {
 // user space); replacing Mach-O, signature manifests, or Info.plist changes the fingerprint. Capture it during prepare
 // and compare synchronously before dragstart. On mismatch, reject the drop, clear the cache, and prepare again. The only
 // remaining window is the microseconds between comparison and startDrag, comparable to verifyInstalled→launch.
-type CuaHelperBundleFingerprint = string;
+export type CuaHelperBundleFingerprint = string;
 
 function statSignature(path: string): string {
   try {
@@ -116,7 +116,7 @@ function bundleTreeFingerprint(root: string, maxEntries = 512): string {
   return parts.join(",");
 }
 
-function captureCuaHelperBundleFingerprint(appPath: string): CuaHelperBundleFingerprint {
+export function captureCuaHelperBundleFingerprint(appPath: string): CuaHelperBundleFingerprint {
   const parts = [
     `app=${statSignature(appPath)}`,
     `sig=${statSignature(join(appPath, "Contents", "_CodeSignature", "CodeResources"))}`,
@@ -571,7 +571,7 @@ export async function openCuaPermissionOnboarding(
 // Helper to the permission list, so restore this function. Do not restore openCuaAccessibilitySettings (the old confirmation
 // dialog channel); onboarding replaced it.
 
-interface PrepareCuaHelperPermissionDragOptions {
+export interface PrepareCuaHelperPermissionDragOptions {
   env?: NodeJS.ProcessEnv;
   platform?: NodeJS.Platform;
   logger?: OpenCuaAccessibilitySettingsOptions["logger"];

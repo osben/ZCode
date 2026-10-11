@@ -61,6 +61,7 @@ export function ChatPromptEditor({
   isDraggingOver = false,
   dragAttachmentHint,
   topContent,
+  inputLeadingContent,
   leadingActions,
   attachmentAction,
   betweenCancelAndSubmitAction,
@@ -74,6 +75,7 @@ export function ChatPromptEditor({
   promptHistory,
   className,
   shellClassName,
+  avoidIosInputFocusZoom = false,
   compactPlaceholder = false,
   onChange,
   onSubmit,
@@ -112,6 +114,8 @@ export function ChatPromptEditor({
   isDraggingOver?: boolean;
   dragAttachmentHint?: string;
   topContent?: ReactNode;
+  /** Prefix content on the same line as the prompt; Highspeed uses a compact Fast label. */
+  inputLeadingContent?: ReactNode;
   leadingActions?: ReactNode;
   attachmentAction?: {
     label: string;
@@ -131,6 +135,7 @@ export function ChatPromptEditor({
   promptHistory?: readonly string[];
   className?: string;
   shellClassName?: string;
+  avoidIosInputFocusZoom?: boolean;
   compactPlaceholder?: boolean;
   onChange?: (value: string) => void;
   // Adapter: returning false means the business layer rejected/deferred this submission, so Lexical must not reset itself (keep the draft).
@@ -331,6 +336,35 @@ export function ChatPromptEditor({
       ? dragAttachmentHint
       : undefined;
 
+  const editorNode = (
+    <LexicalChatInput
+      placeholder={placeholder}
+      disabled={disabled}
+      submitDisabled={submitDisabled}
+      allowSubmitWhenEmpty={allowSubmitWhenEmpty}
+      enterSubmits={enterSubmits}
+      onSubmit={handleEditorSubmit}
+      onModifiedSubmit={onModifiedSubmit}
+      onChange={handleTextChange}
+      onFocus={onFocus}
+      triggerPanelContainer={resolvedTriggerPanelContainer}
+      workspacePath={workspacePath}
+      workspaceIdentity={workspaceIdentity}
+      taskId={taskId}
+      skillCatalogSessionId={skillCatalogSessionId}
+      inputTestId={inputTestId}
+      editorApiRef={resolvedInputApiRef}
+      promptHistory={promptHistory}
+      avoidIosInputFocusZoom={avoidIosInputFocusZoom}
+      compactPlaceholder={compactPlaceholder}
+      onWhiteboardMentionSelected={onWhiteboardMentionSelected}
+      onPaste={onPaste}
+      excludedSlashCommandNames={excludedSlashCommandNames}
+      appSlashCommands={appSlashCommands}
+      enableMentionPanel={enableMentionPanel}
+    />
+  );
+
   return (
     <form onSubmit={handleSubmit} onKeyDown={handleKeyDown} className={cn("relative", className)}>
       {triggerPanelContainer ? null : (
@@ -360,31 +394,14 @@ export function ChatPromptEditor({
         ) : null}
 
         {topContent}
-        <LexicalChatInput
-          placeholder={placeholder}
-          disabled={disabled}
-          submitDisabled={submitDisabled}
-          allowSubmitWhenEmpty={allowSubmitWhenEmpty}
-          enterSubmits={enterSubmits}
-          onSubmit={handleEditorSubmit}
-          onModifiedSubmit={onModifiedSubmit}
-          onChange={handleTextChange}
-          onFocus={onFocus}
-          triggerPanelContainer={resolvedTriggerPanelContainer}
-          workspacePath={workspacePath}
-          workspaceIdentity={workspaceIdentity}
-          taskId={taskId}
-          skillCatalogSessionId={skillCatalogSessionId}
-          inputTestId={inputTestId}
-          editorApiRef={resolvedInputApiRef}
-          promptHistory={promptHistory}
-          compactPlaceholder={compactPlaceholder}
-          onWhiteboardMentionSelected={onWhiteboardMentionSelected}
-          onPaste={onPaste}
-          excludedSlashCommandNames={excludedSlashCommandNames}
-          appSlashCommands={appSlashCommands}
-          enableMentionPanel={enableMentionPanel}
-        />
+        {inputLeadingContent ? (
+          <div className="flex min-w-0 items-start gap-2">
+            <div className="shrink-0">{inputLeadingContent}</div>
+            <div className="min-w-0 flex-1">{editorNode}</div>
+          </div>
+        ) : (
+          editorNode
+        )}
         <div ref={toolbarRef} className="group/toolbar flex items-end gap-3">
           <div className="flex min-w-0 flex-1 items-center" data-composer-leading-actions>
             <div className="flex shrink-0 items-center gap-1" data-composer-leading-content>
@@ -403,7 +420,7 @@ export function ChatPromptEditor({
                   showPlugins={enableMentionPanel !== false}
                 />
               ) : null}
-              {/* Permission/mode selection previously rendered as leadingActions before the action menu, reversing the persistent order specified by the product.*/}
+              {/* Bugfix: Permission/mode selection used to render as leadingActions before the action menu, reversing the persistent order specified by the product. */}
               {leadingActions}
               {onModeSwitchContainerChange ? (
                 <span ref={onModeSwitchContainerChange} className="flex shrink-0 items-center" />

@@ -1,11 +1,38 @@
+import { conversationQuotesSchema } from "../conversationSelection.js";
+import { botGroupInputSourceSchema } from "../bots.js";
 // Self-contained input facts after CLI admission.
 // Queue / guide / runtime / transcript must carry this same intent; individual layers must not rebuild its fields.
 import { z } from "zod";
 import { timestampSchema } from "./core.js";
 import { attachmentRefSchema } from "./attachment-ref.js";
+import { highspeedMessageMetaSchema } from "../highspeed.js";
 import { modelSelectionSchema } from "../model-selection.js";
 import { submissionModeSchema } from "./submission.js";
 import { sharedContextRefSchema } from "./shared-context-ref.js";
+
+/**
+ * Structured origin of user input: attached when a plugin UI sends on the user's
+ * behalf via `ui/message`; the stored card then shows "from plugin X". Absent means the user
+ * entered the input directly.
+ */
+const pluginUiInputSourceSchema = z
+  .object({
+    kind: z.literal("pluginUi"),
+    pluginId: z.string().min(1),
+    toolCallId: z.string().min(1),
+  })
+  .strict();
+export const conversationInputSourceSchema = z.discriminatedUnion("kind", [
+  pluginUiInputSourceSchema,
+  z
+    .object({
+      kind: z.literal("genUi"),
+      path: z.string().min(1).max(4096),
+      title: z.string().max(250).optional(),
+    })
+    .strict(),
+]);
+export type ConversationInputSource = z.infer<typeof conversationInputSourceSchema>;
 
 export const conversationInputDeliverySchema = z
   .object({
@@ -38,6 +65,9 @@ export const conversationInputDispatchSchema = z
 
 export const conversationInputIntentSchema = z
   .object({
+    inputOrigin: z.enum(["desktop", "mobile"]).optional(),
+    botGroupSource: botGroupInputSourceSchema.optional(),
+    conversationQuotes: conversationQuotesSchema.optional(),
     sourceCommandId: z.string().min(1),
     queueItemId: z.string().min(1),
     clientId: z.string().min(1),
@@ -55,6 +85,7 @@ export const conversationInputIntentSchema = z
     steer: conversationInputSteerSchema,
     dispatch: conversationInputDispatchSchema,
     admittedAt: timestampSchema,
+    highspeed: highspeedMessageMetaSchema.optional(),
     provenance: z
       .object({
         sourceCommandId: z.string().min(1),
@@ -63,6 +94,7 @@ export const conversationInputIntentSchema = z
       })
       .strict()
       .optional(),
+    source: conversationInputSourceSchema.optional(),
   })
   .strict();
 

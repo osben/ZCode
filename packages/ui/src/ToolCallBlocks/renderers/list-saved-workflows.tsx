@@ -106,7 +106,7 @@ function readResultRecord(value: unknown): ListSavedWorkflowsResult | null {
  * fallback: an empty list must be distinguishable from an unreadable result, rather than rendering a parse failure
  * as “there are no workflows in this project.”
  */
-function readListSavedWorkflowsResult(
+export function readListSavedWorkflowsResult(
   toolCall: ToolCallBlockRenderContext["toolCallNode"]["toolCall"],
 ): ListSavedWorkflowsResult | null {
   const display = readToolResultDisplay(toolCall.raw);

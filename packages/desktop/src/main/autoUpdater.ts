@@ -1,29 +1,30 @@
 /* eslint-disable max-lines -- Keep Electron events, menu state, and IPC interactions for autoUpdater together; splitting them too far would make update-state flow harder to trace. */
+import { app, BrowserWindow, ipcMain, Menu } from "electron";
 import type { ISettingService } from "@zcode/services";
+import pkg, { CancellationToken } from "electron-updater";
+import semver from "semver";
+const { autoUpdater } = pkg;
 import {
   DEFAULT_LOCALE,
   DEFAULT_ZCODE_ENDPOINT_ORIGIN,
+  PlatformChannels,
+  ZCODE_VERSION,
   desktopMenuMessageIds,
   formatDesktopMenuMessage,
   getDesktopMenuMessage,
-  PlatformChannels,
   resolveRuntimeZCodeEndpointOrigin,
-  ZCODE_VERSION,
   type ElectronReleaseChannel,
   type Locale,
   type PostUpdateReleaseNotesPayload,
   type UpdateCheckResultPayload,
   type UpdateStatePayload,
 } from "@zcode/shared";
-import { app, BrowserWindow, ipcMain, Menu } from "electron";
-import pkg, { CancellationToken } from "electron-updater";
-import semver from "semver";
 import { logger } from "./logger.js";
-import { getElectronReleasePlatform, ManifestUpdateProvider } from "./manifestUpdateProvider.js";
-const { autoUpdater } = pkg;
+import { ManifestUpdateProvider, getElectronReleasePlatform } from "./manifestUpdateProvider.js";
 
 export const CHECK_FOR_UPDATE_MENU_ID = "check-for-update";
-const AUTO_UPDATE_POLL_INTERVAL_MS = 60 * 60 * 1000;
+const AUTO_UPDATE_POLL_INTERVAL_MS = 15 * 60 * 1000;
+const AUTO_UPDATE_VISIBLE_POLL_INTERVAL_MS = 2 * 60 * 1000;
 const UPDATE_FEED_URL_ENV = "ZCODE_UPDATE_FEED_URL";
 const UPDATE_FEED_URL_SWITCH = "--zcode-update-feed-url";
 const DEV_AUTO_UPDATE_ENV = "ZCODE_AUTO_UPDATE_DEV";
@@ -38,6 +39,7 @@ let manualCheckWebContentsId: number | null = null;
 let pendingPostUpdateReleaseNotes: PostUpdateReleaseNotesPayload | null = null;
 let deliveredPostUpdateReleaseNotesWebContentsId: number | null = null;
 let autoUpdatePollTimer: NodeJS.Timeout | null = null;
+let autoUpdatePollIntervalMs: number | null = null;
 let checkForUpdatesInFlight = false;
 let autoUpdateCheckGeneration = 0;
 let activeAutoUpdateCheckId: number | null = null;
@@ -120,6 +122,8 @@ interface InitAutoUpdaterOptions {
 
 let quitAndInstallInFlight = false;
 let devAutoUpdateVersionOverride: string | null = null;
+let recheckAfterDownload: ((reason: string) => void) | null = null;
+let pendingFailedDownloadRecheck = false;
 
 type MutableAutoUpdaterForDev = typeof autoUpdater & {
   currentVersion?: semver.SemVer;
@@ -221,7 +225,19 @@ function shouldDownloadAvailableUpdate(version: string): boolean {
 }
 
 function canPollForUpdatesFromState(state: AutoUpdaterMenuState): boolean {
-  return state.kind === "idle" || state.kind === "update-downloaded";
+  return (
+    state.kind === "idle" || state.kind === "update-available" || state.kind === "update-downloaded"
+  );
+}
+
+function hasVisibleUpdateTarget(state: AutoUpdaterMenuState): boolean {
+  return state.kind === "update-available" || state.kind === "update-downloaded";
+}
+
+function resolveAutoUpdatePollInterval(state: AutoUpdaterMenuState): number {
+  return hasVisibleUpdateTarget(state)
+    ? AUTO_UPDATE_VISIBLE_POLL_INTERVAL_MS
+    : AUTO_UPDATE_POLL_INTERVAL_MS;
 }
 
 function getAutoUpdaterReleaseChannelForCurrentState(): ElectronReleaseChannel {
@@ -265,6 +281,12 @@ function completeAutoUpdateCheck(reason: string, checkId: number | null): void {
   settlingAutoUpdateCheckId = null;
 
   const pendingChannel = pendingManifestReleaseChannelRefresh;
+  const shouldRecheckFailedDownload = pendingFailedDownloadRecheck;
+  pendingFailedDownloadRecheck = false;
+  if (shouldRecheckFailedDownload && !pendingChannel && !activeForceAutoUpdateListener) {
+    // The download failure happened before this check settled. Recheck once the flag clears so the recheck is not dropped by the in-flight check.
+    queueMicrotask(() => recheckAfterDownload?.("download-failed"));
+  }
   if (!pendingChannel) {
     return;
   }
@@ -314,6 +336,14 @@ function settleAutoUpdateCheckResult(
 function shouldIgnoreStaleAvailableUpdate(infoChannel: ElectronReleaseChannel | null): boolean {
   const expectedChannel = activeAutoUpdateCheckChannel ?? availableUpdateChannel;
   return Boolean(infoChannel && infoChannel !== expectedChannel);
+}
+
+function isReadyUpdateCurrentTarget(): boolean {
+  return Boolean(
+    readyUpdateVersion &&
+    menuState.kind === "update-downloaded" &&
+    menuState.version === readyUpdateVersion,
+  );
 }
 
 function buildUpdateDownloadedState(version: string): AutoUpdaterMenuState {
@@ -418,10 +448,13 @@ async function quitAndInstallUpdate(rejectUnavailable = false) {
     return;
   }
 
-  if (menuState.kind !== "update-downloaded" || !readyUpdateVersion) {
-    // The renderer may show "Restart to update" because of a stale UpdateReady cache, while main has already cleared ready
-    // after a staging error. Do not run exit preparation or call quitAndInstall then: that would kill the host process
-    // without handing control to the installer, making the button appear unresponsive.
+  if (
+    menuState.kind !== "update-downloaded" ||
+    !readyUpdateVersion ||
+    !isReadyUpdateCurrentTarget()
+  ) {
+    // Fix reason: The renderer may show "Restart to update" because of a stale UpdateReady cache, while main has already cleared ready
+    // after a staging error. When the target has moved to a higher version, installing the older package still below the target is not allowed either.
     logger.warn(`[auto-update] ignore quitAndInstall request: state=${menuState.kind}`);
     if (rejectUnavailable) {
       throw new Error(`Update is not ready to install: state=${menuState.kind}`);
@@ -573,6 +606,7 @@ function setAutoUpdaterMenuState(nextState: AutoUpdaterMenuState) {
   menuState = nextState;
   syncMenuItemState();
   broadcastAutoUpdaterState();
+  ensureAutoUpdatePollInterval();
   for (const listener of autoUpdaterStateListeners) {
     listener(menuState);
   }
@@ -704,17 +738,11 @@ export function resolveUpdateFeedSourceFromStartupConfig(
   const argv = options.argv ?? process.argv;
   const env = options.env ?? process.env;
   const feedUrl = readSwitchValue(argv, UPDATE_FEED_URL_SWITCH) ?? env[UPDATE_FEED_URL_ENV]?.trim();
-  if (!feedUrl) {
-    return undefined;
-  }
-  // Update-source overrides are for development-build integration only; packaged builds ignore them to prevent environment variables or launch arguments from redirecting update requests.
-  if (app.isPackaged) {
-    logger.warn(
-      `[auto-update] ignore update feed override in packaged app: ${redactUpdateFeedUrlForLog(feedUrl)}`,
-    );
-    return undefined;
-  }
-  return { url: feedUrl };
+  return feedUrl
+    ? {
+        url: feedUrl,
+      }
+    : undefined;
 }
 
 async function resolveUpdateReleaseChannel(
@@ -1022,6 +1050,15 @@ function handleAutoUpdateFailure(error: unknown, source: string) {
   }
 
   logger.error(`[auto-update] ${source}:`, error);
+  if (
+    source.endsWith("check failed") &&
+    hasVisibleUpdateTarget(menuState) &&
+    !activeForceAutoUpdateListener
+  ) {
+    notifyForceAutoUpdate({ kind: "error", message });
+    sendManualCheckResult({ kind: "error", message });
+    return;
+  }
   if (menuState.kind === "update-downloaded" && readyUpdateVersion) {
     const failedReadyVersion = readyUpdateVersion;
     // macOS Squirrel may discover that a package cannot be staged only after update-downloaded.
@@ -1036,9 +1073,9 @@ function handleAutoUpdateFailure(error: unknown, source: string) {
   clearAvailableUpdateState();
   clearDownloadingUpdateState();
   if (failedDownload?.version && !readyUpdateVersion && !activeForceAutoUpdateListener) {
-    // If download startup or staging fails soon after the user clicks "Download update", clearing available/downloading and
-    // broadcasting idle removes both the renderer entry and the dialog. Failure is not the same as skipping the version;
-    // return to the "update found" state so the user can see it and retry.
+    // Fix reason: If download startup or staging fails soon after the user clicks "Download update",
+    // the old logic cleared available/downloading and broadcast idle, removing both the renderer entry and the dialog.
+    // Failure is not the same as skipping the version; return to the "update found" state so the user can see it and retry.
     availableUpdateReleaseNotes = failedDownload.releaseNotes;
     availableUpdateChannel = failedDownload.channel;
     setAutoUpdaterMenuState(
@@ -1057,6 +1094,12 @@ function handleAutoUpdateFailure(error: unknown, source: string) {
   }
   notifyForceAutoUpdate({ kind: "error", message });
   sendManualCheckResult({ kind: "error", message });
+  // A download failure is also a download end, whether it comes from a Promise rejection or an error event.
+  // Recheck immediately when no force update is in progress, to avoid missing a higher version during flaky-network failures.
+  // The failure may occur inside startup-check result handling; record the reason and recheck after that check settles.
+  if (failedDownload && !activeForceAutoUpdateListener) {
+    recheckAfterDownload?.("download-failed");
+  }
 }
 
 async function isSkippedUpdateVersion(
@@ -1098,7 +1141,7 @@ async function shouldAutoDownloadAndInstallUpdates(
   }
 }
 
-async function skipAvailableUpdateVersion(
+export async function skipAvailableUpdateVersion(
   version: string,
   settingService: SettingServiceLike | undefined,
 ): Promise<void> {
@@ -1188,7 +1231,7 @@ async function clearSkippedUpdateVersionForManualCheck(
   }
 }
 
-function downloadAvailableUpdate(reason = "renderer") {
+export function downloadAvailableUpdate(reason = "renderer") {
   if (!canUseAutoUpdaterInCurrentRuntime()) {
     logger.info(`[auto-update] skip ${reason} download: not packaged`);
     return;
@@ -1247,7 +1290,7 @@ function downloadAvailableUpdate(reason = "renderer") {
     });
 }
 
-function cancelDownloadingUpdate(reason = "renderer") {
+export function cancelDownloadingUpdate(reason = "renderer") {
   if (activeForceAutoUpdateListener) {
     logger.info(`[auto-update] skip ${reason} cancel download: force update active`);
     return;
@@ -1274,6 +1317,7 @@ function cancelDownloadingUpdate(reason = "renderer") {
     availableUpdateReleaseNotes = releaseNotes;
     availableUpdateChannel = channel;
     setAutoUpdaterMenuState(buildUpdateAvailableState(version, releaseNotes, channel));
+    recheckAfterDownload?.("download-finished");
     return;
   }
 
@@ -1504,10 +1548,11 @@ export async function initAutoUpdater(options: InitAutoUpdaterOptions = {}): Pro
   // before deciding to download. If electron-updater downloads automatically based only on the current app version, it may
   // download 3.1.3 repeatedly on every poll when 3.1.3 is already ready for 3.1.2.
   autoUpdater.autoDownload = false;
-  // Windows/NSIS starts installation asynchronously after the window closes. If the user immediately shuts down, the
-  // installer may be interrupted, leaving a partial update that fails on next startup.
-  // Disable "install on quit" only on Windows and require an explicit update action; preserve existing behavior on other platforms.
-  autoUpdater.autoInstallOnAppQuit = process.platform !== "win32";
+  // Bugfix: Windows/NSIS starts installation asynchronously after the window closes. If the user immediately shuts down, the
+  // installer may be interrupted, leaving a partial update that fails on next startup. macOS/Linux also disable install-on-quit;
+  // before-quit installs proactively only while the ready package still equals the current target, so quitting cannot
+  // install an older package after the target moves up.
+  autoUpdater.autoInstallOnAppQuit = false;
   autoUpdater.logger = logger;
   applyManifestUpdateProvider(options);
 
@@ -1517,10 +1562,7 @@ export async function initAutoUpdater(options: InitAutoUpdaterOptions = {}): Pro
       return;
     }
 
-    // Even if release publication changes to "installer first, latest later," CDN propagation may lag behind client polling.
-    // Starting checkForUpdates concurrently during checking/downloading would restart the same update flow, causing
-    // unnecessary requests, noisy logs, and menu state to flicker. Poll automatically only in idle or update-downloaded
-    // state; keep polling in the latter to detect a newer version that replaces the downloaded one.
+    // An already-displayed target must not be overwritten to checking by a recheck. Do not start another check while downloading; recheck after this download ends.
     if (reason === "poll" && !canPollForUpdatesFromState(menuState)) {
       logger.info(`[auto-update] skip ${reason}: state=${menuState.kind}`);
       return;
@@ -1543,11 +1585,25 @@ export async function initAutoUpdater(options: InitAutoUpdaterOptions = {}): Pro
       })
       .finally(() => {
         finishAutoUpdateCheck(reason, checkId);
+        ensureAutoUpdatePollInterval();
       });
+  };
+  recheckAfterDownload = (recheckReason: string) => {
+    // A download-failure recheck must wait for the current check to settle. Completion and cancellation results are already covered by that check, so do not queue them again.
+    if (checkForUpdatesInFlight) {
+      if (recheckReason === "download-failed") {
+        pendingFailedDownloadRecheck = true;
+      }
+      return;
+    }
+    triggerCheckForUpdates(recheckReason);
   };
 
   autoUpdater.on("checking-for-update", () => {
     logger.info("[auto-update] checking for update...");
+    if (hasVisibleUpdateTarget(menuState) || menuState.kind === "download-progress") {
+      return;
+    }
     setAutoUpdaterMenuState({ kind: "checking", enabled: false });
   });
 
@@ -1630,9 +1686,20 @@ export async function initAutoUpdater(options: InitAutoUpdaterOptions = {}): Pro
       logger.info(
         `[auto-update] already up to date (local=${getCurrentAppVersionForUpdate()}, remote=${info.version})`,
       );
-      if (readyUpdateVersion) {
+      if (readyUpdateVersion && isReadyUpdateCurrentTarget()) {
         setAutoUpdaterMenuState(buildUpdateDownloadedState(readyUpdateVersion));
         sendManualCheckResult({ kind: "ready", version: readyUpdateVersion });
+        return;
+      }
+      if (hasVisibleUpdateTarget(menuState)) {
+        sendManualCheckResult({
+          kind: "available",
+          version:
+            menuState.kind === "update-available" ? menuState.version : (readyUpdateVersion ?? ""),
+          ...(menuState.kind !== "checking" && menuState.channel
+            ? { channel: menuState.channel }
+            : {}),
+        });
         return;
       }
 
@@ -1696,6 +1763,9 @@ export async function initAutoUpdater(options: InitAutoUpdaterOptions = {}): Pro
     );
     setAutoUpdaterMenuState(buildUpdateDownloadedState(info.version));
     notifyForceAutoUpdate({ kind: "ready", version: info.version });
+    if (!activeForceAutoUpdateListener) {
+      recheckAfterDownload?.("download-finished");
+    }
 
     if (activeForceAutoUpdateListener) {
       notifyForceAutoUpdate({ kind: "installing" });
@@ -1762,10 +1832,36 @@ export async function initAutoUpdater(options: InitAutoUpdaterOptions = {}): Pro
   });
 
   triggerCheckForUpdates("startup");
+  ensureAutoUpdatePollInterval();
+  app.on("before-quit", (event) => {
+    if (process.platform === "win32" || quitAndInstallInFlight || !isReadyUpdateCurrentTarget()) {
+      return;
+    }
+    event.preventDefault();
+    void quitAndInstallUpdate();
+  });
+}
 
+function ensureAutoUpdatePollInterval() {
+  if (menuState.kind === "download-progress") {
+    if (autoUpdatePollTimer) {
+      clearInterval(autoUpdatePollTimer);
+      autoUpdatePollTimer = null;
+      autoUpdatePollIntervalMs = null;
+    }
+    return;
+  }
+  const nextInterval = resolveAutoUpdatePollInterval(menuState);
+  if (autoUpdatePollTimer && autoUpdatePollIntervalMs === nextInterval) {
+    return;
+  }
+  if (autoUpdatePollTimer) {
+    clearInterval(autoUpdatePollTimer);
+  }
+  autoUpdatePollIntervalMs = nextInterval;
   autoUpdatePollTimer = setInterval(() => {
-    triggerCheckForUpdates("poll");
-  }, AUTO_UPDATE_POLL_INTERVAL_MS);
+    recheckAfterDownload?.("poll");
+  }, nextInterval);
   autoUpdatePollTimer.unref?.();
 }
 
@@ -1842,6 +1938,48 @@ export function requestForceAutoUpdate(
   };
 }
 
+export function requestAutoUpdateCheckWithoutWindow(reason = "force-update") {
+  logger.info(`[auto-update] ${reason}: user requested update check without renderer window`);
+
+  if (!canUseAutoUpdaterInCurrentRuntime()) {
+    logger.info(`[auto-update] skip ${reason}: not packaged`);
+    return;
+  }
+
+  if (menuState.kind === "update-downloaded") {
+    void quitAndInstallUpdate();
+    return;
+  }
+  if (menuState.kind === "update-available") {
+    downloadAvailableUpdate(reason);
+    return;
+  }
+  if (menuState.kind === "download-progress") {
+    logger.info(`[auto-update] skip ${reason}: update already ${menuState.kind}`);
+    return;
+  }
+  if (checkForUpdatesInFlight) {
+    logger.info(`[auto-update] skip ${reason}: check already in flight`);
+    return;
+  }
+
+  const checkId = beginAutoUpdateCheck();
+  setAutoUpdaterMenuState({ kind: "checking", enabled: false });
+  autoUpdater
+    .checkForUpdates()
+    .catch((err) => {
+      logger.error(`[auto-update] ${reason} check failed:`, err);
+      setAutoUpdaterMenuState(
+        readyUpdateVersion
+          ? buildUpdateDownloadedState(readyUpdateVersion)
+          : { kind: "idle", enabled: true },
+      );
+    })
+    .finally(() => {
+      finishAutoUpdateCheck(reason, checkId);
+    });
+}
+
 export function checkForUpdateMenuClick(originWindow?: BrowserWindow | null) {
   logger.info("[auto-update] user clicked Check for Updates");
 
@@ -1874,10 +2012,9 @@ export function checkForUpdateMenuClick(originWindow?: BrowserWindow | null) {
     return;
   }
 
-  if (menuState.kind === "update-downloaded") {
-    // The menu label already says "Restart to update". If this sends only a ready toast, the system-menu action will not
-    // install the update while the top button does, giving the two entry points different semantics.
-    // Reuse the button's install logic so clicking the menu actually restarts and installs.
+  if (menuState.kind === "update-downloaded" && isReadyUpdateCurrentTarget()) {
+    // The menu label already says “Restart to update”. Install only while the ready package still equals the current target;
+    // when the target is higher, fall through to the recheck below to avoid installing an older package.
     void quitAndInstallUpdate();
     return;
   }
@@ -1889,16 +2026,6 @@ export function checkForUpdateMenuClick(originWindow?: BrowserWindow | null) {
     } satisfies UpdateCheckResultPayload);
     return;
   }
-  if (menuState.kind === "update-available") {
-    targetWindow.webContents.send(PlatformChannels.UpdateCheckResult, {
-      kind: "available",
-      version: menuState.version,
-      ...(menuState.channel ? { channel: menuState.channel } : {}),
-      ...(menuState.releaseNotes ? { releaseNotes: menuState.releaseNotes } : {}),
-    } satisfies UpdateCheckResultPayload);
-    return;
-  }
-
   if (checkForUpdatesInFlight) {
     logger.info("[auto-update] skip manual check: check already in flight");
     targetWindow.webContents.send(PlatformChannels.UpdateCheckResult, {
@@ -1910,10 +2037,10 @@ export function checkForUpdateMenuClick(originWindow?: BrowserWindow | null) {
 
   manualCheckWebContentsId = targetWindow.webContents.id;
   const manualCheckChannel = getAutoUpdaterReleaseChannelForCurrentState();
-  // The custom Windows menu cannot wait only for electron-updater's checking event.
-  // In some environments, the user may reopen the menu before the event reaches the renderer, so it still says "Check for updates".
-  // Set a stable state before starting manual checking; later download-progress events replace it with a percentage.
-  setAutoUpdaterMenuState({ kind: "checking", enabled: false });
+  // Keep showing the already-found version and replace it when the check result arrives, so the menu does not first flash to “checking”.
+  if (!hasVisibleUpdateTarget(menuState)) {
+    setAutoUpdaterMenuState({ kind: "checking", enabled: false });
+  }
   const checkId = beginAutoUpdateCheck();
   void (async () => {
     await clearSkippedUpdateVersionForManualCheck(manualCheckChannel, autoUpdaterSettingService);

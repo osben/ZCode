@@ -148,11 +148,6 @@ export interface AgentRuntimeWorkflowDriverDeps {
    */
   parentSessionId?: SessionId;
   /**
-   * Approved command set for world.run (collected from compile-time literals).
-   * Structurally part of {@link WorldReadDeps}: missing means reject all world.run calls (fail-closed).
-   */
-  declaredRunCommands?: ReadonlySet<string>;
-  /**
    * Submit profile for each actor site, computed at compile time by
    * `deriveActorSubmitProfiles` (compileOnce in the run submission path). Optional: when absent,
    * every actor is generic (historical behavior), so assemblies without profiles (snippets, fake
@@ -170,15 +165,16 @@ export interface AgentRuntimeWorkflowDriverDeps {
    */
   concurrency?: WorkflowConcurrencyPort;
   /**
-   * Seat gate for this run: if this run's **own** concurrency cap is lowered mid-run, excess
-   * subagents stop before their next turn step. When present, the driver does two things: wraps
-   * each actor's admission port with the gate, and feeds ask start/end signals to it (startAsk and
-   * the engine's `node-settled`; see workflow-driver.ts).
+   * Seat gate for this run (docs/dynamic-workflow/concurrency.md "Retuning a live run"): if this
+   * run's **own** concurrency cap is lowered mid-run, excess subagents stop before their next turn
+   * step. When present, the driver does two things: wraps each actor's admission port with the
+   * gate, and feeds ask start/end signals to it (startAsk and the engine's `node-settled`; see
+   * workflow-driver.ts).
    *
-   * Optional: when absent, this run's cap never changes mid-run (for example, snippet assemblies
-   * without dynamic concurrency adjustment), and the admission port behaves exactly as before.
-   * **Presence also leaves runs whose cap is never lowered unchanged**: requests below the cap
-   * pass immediately, and the gate emits no events or holds any tickets.
+   * Optional: when absent, this run's cap never changes mid-run (snippet, fake driver, and existing
+   * test assemblies), and the admission port behaves exactly as before. **Presence also leaves runs
+   * whose cap is never lowered unchanged**: requests below the cap pass immediately, and the gate
+   * emits no events or holds any tickets.
    */
   seatGate?: WorkflowRunSeatGate;
   /**
@@ -202,9 +198,10 @@ export interface AgentRuntimeWorkflowDriverDeps {
    */
   runId?: string;
   /**
-   * Clock and timers used by the run-level stall clock, retry backoff for transient failures,
-   * and bounded waits for session quiescence. Supports an injected clock; `stallAfterMs` defaults
-   * to 20 minutes; `quiesceMs` defaults to {@link AMEND_TRANSCRIPT_QUIESCE_MS}; `random` supplies
+   * Clock and timers (apps/zcode-cli/packages/dynamic-workflow/docs/execution-engine.md), used by
+   * the run-level stall clock, retry backoff for transient failures, and bounded waits for session
+   * quiescence. Injection exists only for testing with fake time; `stallAfterMs` defaults to 20
+   * minutes; `quiesceMs` defaults to {@link AMEND_TRANSCRIPT_QUIESCE_MS}; `random` supplies
    * backoff jitter.
    */
   clock?: WorkflowClock & {
@@ -219,8 +216,8 @@ export interface AgentRuntimeWorkflowDriverDeps {
    *
    * Use a callback instead of making `createAgentRuntimeWorkflowDriver` return a tuple: the
    * **engine** creates the driver later through `makeDriver(sink)`, so the assembly site cannot
-   * access its return value. If absent, the caller does not need quiescence information (for
-   * example, direct harness use).
+   * access its return value. If absent, the caller does not need quiescence information (test
+   * assemblies, direct harness use).
    */
   onQuiescenceProbe?: (probe: ActorSessionQuiescence) => void;
 }

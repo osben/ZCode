@@ -64,6 +64,7 @@ import {
   buildConversationShareConfirmRequest,
   sha256ConversationShareJson,
 } from "./conversationShareIntegrity.js";
+import { materializeConversationShareInlineImages } from "./conversationShareInlineImages.js";
 import { buildConversationSharePublicProjection } from "./conversationSharePublicProjection.js";
 import type { ConversationShareArtifactSource } from "./conversationShareArtifactSource.js";
 import { formatSharedContextV1 } from "./sharedContextFormatter.js";
@@ -159,7 +160,7 @@ function uniqueImportedFileName(
   return candidate;
 }
 
-interface ConversationShareServiceOptions {
+export interface ConversationShareServiceOptions {
   zcodeAgentService: ConversationShareAgentService;
   client: ConversationShareHttpClient;
   artifactSource: ConversationShareArtifactSource;
@@ -326,14 +327,6 @@ function hasUnsupportedArtifactReference(value: unknown): boolean {
 function sanitizeUnsupportedShareStructures(rows: readonly ConversationRow[]): ConversationRow[] {
   const sanitized: ConversationRow[] = [];
   for (const row of rows) {
-    if (row.kind === "toolCall" && row.display?.kind === "node_repl_images") {
-      // Embedded images are base64 data in display.images; removing display removes all image bytes.
-      const { display: _display, ...rest } = row;
-      // These images cannot be represented in the closed public projection, but do not need user attention. Remove them silently to avoid misreporting internal
-      // renderer structures as "files skipped."
-      sanitized.push(rest);
-      continue;
-    }
     if (row.kind === "timelineMarker") {
       // Keep running markers so collectShareStructureIssues continues to block them; the content is not finalized.
       // A blocked publish never reaches projection, so retaining the marker has no side effects.
@@ -578,8 +571,9 @@ function buildTurnPreflightResults(
 }
 
 function removeIndependentArtifactRows(rows: readonly ConversationRow[]): ConversationRow[] {
-  // Share candidates are limited to user-input attachments and final visible Assistant preview cards. Historical artifact rows
-  // without a corresponding preview card are no longer a third independent discovery source for the public projection.
+  // Share candidates are limited to user-input attachments and final visible Assistant preview cards; embedded
+  // images are converted separately afterwards. Historical artifact rows without a corresponding preview card
+  // are no longer a third independent discovery source for the public projection.
   return rows.filter((row) => row.kind !== "artifact");
 }
 
@@ -816,14 +810,18 @@ export class ConversationShareService implements IConversationShareService {
       };
     }
 
-    const structureSanitized = sanitizeUnsupportedShareStructures(selected.rows);
+    const inlineImages = materializeConversationShareInlineImages(
+      removeIndependentArtifactRows(sanitizeUnsupportedShareStructures(selected.rows)),
+      capabilities,
+      turnOrdinalByProductTurn(conversation.rows),
+    );
     const artifactSanitized = sanitizeUnsupportedShareArtifacts(
-      removeIndependentArtifactRows(structureSanitized),
+      inlineImages.rows,
       capabilities,
       conversation.rows,
     );
     const selectedRows = artifactSanitized.rows;
-    skippableWarnings.push(...artifactSanitized.warnings);
+    skippableWarnings.push(...inlineImages.warnings, ...artifactSanitized.warnings);
     blockingIssues.push(...collectShareStructureIssues(selectedRows, conversation.rows));
     let hasShareableContent = selectedRows.some((row) => {
       if (row.kind === "turnHeader" || row.kind === "timelineMarker") return false;
@@ -1013,10 +1011,32 @@ export class ConversationShareService implements IConversationShareService {
       rows: selectedRows,
       selectedProductTurnIds: selected.productTurnIds,
     });
+    if (registeredProjection.rows.length > capabilities.max_rows) {
+      blockingIssues.push({
+        code: "rows_limit",
+        scope: "conversation",
+        actual: registeredProjection.rows.length,
+        limit: capabilities.max_rows,
+      });
+    }
     const manifestIssues = this.collectArtifactManifestIssues(
       capabilities,
       registeredProjection.artifacts,
-    );
+    ).map((issue) => {
+      // Embedded-image capacity issues must carry turn location; otherwise splitting turn caches would miss the file-level block.
+      const row = selectedRows.find(
+        (candidate) =>
+          candidate.kind === "artifact" && candidate.displayName === issue.artifactDisplayName,
+      );
+      return row
+        ? {
+            ...issue,
+            rowId: row.rowId,
+            productTurnId: row.productTurnId,
+            turnOrdinal: rowTurnOrdinal(row, turnOrdinalByProductTurnId),
+          }
+        : issue;
+    });
     blockingIssues.push(
       ...manifestIssues.filter((issue) => issue.code !== "artifact_type_not_allowed"),
     );
@@ -1204,7 +1224,19 @@ export class ConversationShareService implements IConversationShareService {
         sanitizedBlockingIssues.issues,
         sanitizedWarnings.issues,
         sanitizedDeferred.issues,
-      ),
+      ).map((result) => ({
+        ...result,
+        rowBudget: {
+          count: registeredProjection.rows.filter(
+            (row) =>
+              row.productTurnId ===
+              registeredProjection.selectedProductTurnIds[
+                selected.productTurnIds.indexOf(result.productTurnId)
+              ],
+          ).length,
+          limit: capabilities.max_rows,
+        },
+      })),
     };
   }
 
@@ -1891,6 +1923,9 @@ export class ConversationShareService implements IConversationShareService {
         ...(typeof record?.status === "number" ? { status: record.status } : {}),
         ...(typeof record?.code === "number" ? { code: record.code } : {}),
         ...(typeof record?.requestId === "string" ? { requestId: record.requestId } : {}),
+        ...(error instanceof ConversationShareClientError && error.details?.clientRequestId
+          ? { clientRequestId: error.details.clientRequestId }
+          : {}),
         errorName:
           typeof record?.name === "string"
             ? record.name
@@ -1959,17 +1994,24 @@ export class ConversationShareService implements IConversationShareService {
     // Downgrade finalized structures that cannot be represented publicly by removing fields or dropping
     // whole rows and emitting non-blocking warnings. All later projections and artifact discovery use
     // these sanitized rows.
-    const structureSanitized = sanitizeUnsupportedShareStructures(selected.rows);
+    const inlineImages = materializeConversationShareInlineImages(
+      removeIndependentArtifactRows(sanitizeUnsupportedShareStructures(selected.rows)),
+      capabilities,
+      turnOrdinalByProductTurn(conversation.rows),
+    );
     const artifactSanitized = sanitizeUnsupportedShareArtifacts(
-      removeIndependentArtifactRows(structureSanitized),
+      inlineImages.rows,
       capabilities,
       conversation.rows,
     );
     const selectedRows = artifactSanitized.rows;
-    const publishWarnings: ConversationShareFailureIssue[] = [...artifactSanitized.warnings];
-    // A public projection must not stop at the first unsupported structure; users need to know which
-    // other turns they may need to deselect. Preflight the entire selected group and return sanitized
-    // issues so the UI can offer an actionable suggestion for each one.
+    const publishWarnings: ConversationShareFailureIssue[] = [
+      ...inlineImages.warnings,
+      ...artifactSanitized.warnings,
+    ];
+    // Fix reason: the public projection previously stopped at the first unsupported structure, leaving users
+    // unable to know which other turns they may need to deselect. Now preflight the entire selected group and
+    // return sanitized issues so the UI can offer an actionable suggestion for each one.
     const structureIssues = collectShareStructureIssues(selectedRows, conversation.rows);
     if (structureIssues.length > 0) {
       const structureKind = structureIssues.some(
@@ -2006,6 +2048,7 @@ export class ConversationShareService implements IConversationShareService {
       input,
       selectedRows,
       registeredArtifacts: registeredProjection.artifacts,
+      inlineBytesBySourceRef: inlineImages.bytesBySourceRef,
       capabilities,
       revision: conversation.revision,
       logEpoch: conversation.logEpoch,
@@ -2026,7 +2069,7 @@ export class ConversationShareService implements IConversationShareService {
     if (publishWarnings.length > 0) {
       // Non-blocking: publishing continues when a referenced file or user-input attachment cannot be
       // materialized, but tell the sharer which real files were omitted from the link. Internal markers
-      // and inline images were already removed silently.
+      // have been removed and inline images converted to artifacts.
       report("collecting", 0, 0, sanitizeConversationShareIssues(publishWarnings));
     }
     const publicProjection = buildConversationSharePublicProjection({

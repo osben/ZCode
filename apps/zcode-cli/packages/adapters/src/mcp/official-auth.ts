@@ -45,7 +45,7 @@ export class OfficialMcpAuthError extends Error {
 const REQUEST_ID_HEADER = "x-request-id";
 const TRACE_ID_HEADER = "x-trace-id";
 
-interface CreateOfficialMcpAuthFetchInput {
+export interface CreateOfficialMcpAuthFetchInput {
   authHeadersPort?: OfficialMcpAuthHeadersPort;
   baseFetch: typeof globalThis.fetch;
   logger?: Logger;
@@ -431,7 +431,7 @@ async function readBoundedResponseText(
  * rejected during parsing; enforce the rule again at this merge point.
  * Do not touch mcp-session-id / mcp-protocol-version / accept / content-type.
  */
-function mergeOfficialAuthHeaders(
+export function mergeOfficialAuthHeaders(
   incoming: HeadersInit | undefined,
   authHeaders: Record<string, string>,
 ): Headers {

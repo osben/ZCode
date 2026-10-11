@@ -11,6 +11,7 @@ import {
   type ZCodeTaskRuntimeStatus,
   type ZCodeWorkspaceInitStatus,
 } from "@zcode/shared";
+import { persistLastSelectedAgentProvider } from "@/lib/zcodeProviderPreference.js";
 import { areConfigOptionsEquivalent } from "@/lib/configOptionsEquality.js";
 import type { ZCodeUiError } from "@/lib/zcodeUiError.js";
 import { pushNavEntry } from "@/lib/taskNavigationHistory.js";
@@ -322,7 +323,7 @@ export function createWorkspaceSlice(set: SetFn) {
               // Set updatedAt to the lowest sentinel value so any authoritative sessions-index metadata wins in
               // mergeTaskWithOptimisticMeta and the local clock cannot override fields such as mode/provider/status.
               updatedAt: 0,
-              mode: "build",
+              mode: "default",
               provider: current.selectedProvider,
             };
             // Task navigation and draft session creation are different state transitions. Bind the grouped placement captured when
@@ -519,6 +520,9 @@ export function createWorkspaceSlice(set: SetFn) {
       const normalizedProvider = provider
         ? normalizeAgentProviderToZCodeAgent(provider)
         : undefined;
+      if (normalizedProvider) {
+        persistLastSelectedAgentProvider(normalizedProvider);
+      }
 
       set((state) =>
         updateWorkspaceState(
@@ -543,7 +547,7 @@ export function createWorkspaceSlice(set: SetFn) {
             const inheritedConfigOptions = activeTaskIdForInheritance
               ? cachedActiveTaskConfigOptions && cachedActiveTaskConfigOptions.length > 0
                 ? cachedActiveTaskConfigOptions
-                : // The protocol-v4 current task configuration may have only reached the workspace projection;
+                : // Bug cause: the protocol-v4 current task's configuration may have completed only the workspace projection;
                   // the legacy task cache may not be written yet or may still be an empty first-frame array. The toolbar already shows
                   // current.configOptions, so the new draft must inherit the current projection rather than warm up without a seed.
                   current.configOptions

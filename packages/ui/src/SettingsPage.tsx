@@ -1,5 +1,11 @@
 /* oxlint-disable eslint(max-lines) */
 import { ArrowLeft, Rocket, type LucideIcon } from "lucide-react";
+import { useStore } from "zustand";
+import {
+  marketingNavigation,
+  finishMarketingNavigation,
+  marketingSettingsSections,
+} from "@/lib/marketingNavigation.js";
 import {
   useCallback,
   useEffect,
@@ -11,6 +17,7 @@ import {
 } from "react";
 import type {
   AppSettings,
+  DesktopCloseToTrayCapability,
   IntegratedTerminalShellOption,
   IntegratedTerminalShellSelection,
   UsageEntitlementSnapshot,
@@ -278,6 +285,7 @@ export function SettingsPage({
   isDesktop,
   isWindowsDesktop,
   isMacDesktop,
+  isWebRemoteControl = false,
   windowsWindowControlsRightPaddingPx: _windowsWindowControlsRightPaddingPx,
   captionWorkspacePath,
   onBack,
@@ -291,6 +299,7 @@ export function SettingsPage({
   isDesktop?: boolean;
   isWindowsDesktop?: boolean;
   isMacDesktop?: boolean;
+  isWebRemoteControl?: boolean;
   windowsWindowControlsRightPaddingPx?: number;
   captionWorkspacePath?: string | null;
   onBack?: () => void;
@@ -326,6 +335,49 @@ export function SettingsPage({
     return visibleInitialSection;
   });
   const [pluginTab, setPluginTab] = useState(() => consumePendingSettingsPluginTab());
+  // Query Linux close-to-tray capability (spec: docs/desktop/linux-close-to-tray.md) when Settings
+  // opens. Use platform IPC to probe in main (with stale caching), so installing the AppIndicator
+  // extension and reopening Settings clears the disabled state. Do not query on Web/remote control without a bridge.
+  const [linuxCloseToTrayCapability, setLinuxCloseToTrayCapability] =
+    useState<DesktopCloseToTrayCapability | null>(null);
+  useEffect(() => {
+    if (!isLinuxDesktop) {
+      return;
+    }
+    let cancelled = false;
+    platform
+      .getCloseToTrayCapability?.()
+      .then((capability) => {
+        if (!cancelled) {
+          setLinuxCloseToTrayCapability(capability);
+        }
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [isLinuxDesktop, platform]);
+  const linuxCloseToTray = isLinuxDesktop
+    ? {
+        // Lock as unavailable while probing so enabling it before the result arrives cannot make the window inaccessible after close.
+        disabled: linuxCloseToTrayCapability === null || !linuxCloseToTrayCapability.supported,
+        unavailable: linuxCloseToTrayCapability?.supported === false,
+        gnomeLikeHint:
+          linuxCloseToTrayCapability?.supported === false &&
+          linuxCloseToTrayCapability.gnomeLikeWithoutTray,
+      }
+    : undefined;
+  const marketingRequest = useStore(marketingNavigation, (state) => state.request);
+  useEffect(() => {
+    if (marketingRequest?.target.page !== "settings") return;
+    const target = marketingRequest.target;
+    const section = target.section ? marketingSettingsSections[target.section] : activeSection;
+    if (!settingsSections.some((item) => item.id === section)) {
+      finishMarketingNavigation(marketingRequest.id, new Error("marketing_navigation_unavailable"));
+    } else if (activeSection === section && !target.provider_id) {
+      finishMarketingNavigation(marketingRequest.id);
+    }
+  }, [activeSection, marketingRequest, settingsSections]);
   const [pluginNavigationOrigin, setPluginNavigationOrigin] = useState(() =>
     consumePendingSettingsPluginOrigin(),
   );
@@ -766,7 +818,7 @@ export function SettingsPage({
     useState(false);
   const [taskAutoArchiveEnabled, setTaskAutoArchiveEnabled] = useState(false);
   const [taskAutoArchiveOlderThanDays, setTaskAutoArchiveOlderThanDays] = useState(7);
-  const [closeToTrayOnWindows, setCloseToTrayOnWindows] = useState(true);
+  const [closeToTrayOnWindows, setCloseToTrayOnWindows] = useState(Boolean(isWindowsDesktop));
   const [
     desktopChromiumHardwareAccelerationEnabled,
     setDesktopChromiumHardwareAccelerationEnabled,
@@ -859,7 +911,7 @@ export function SettingsPage({
         );
         setTaskAutoArchiveEnabled(settings.taskAutoArchiveEnabled ?? false);
         setTaskAutoArchiveOlderThanDays(settings.taskAutoArchiveOlderThanDays ?? 7);
-        setCloseToTrayOnWindows(settings.closeToTrayOnWindows ?? true);
+        setCloseToTrayOnWindows(settings.closeToTrayOnWindows ?? Boolean(isWindowsDesktop));
         setDesktopChromiumHardwareAccelerationEnabled(
           settings.desktopChromiumHardwareAccelerationEnabled ?? true,
         );
@@ -892,7 +944,7 @@ export function SettingsPage({
           });
       })
       .catch(() => {});
-  }, [localHostServices.systemService, services.settingService]);
+  }, [localHostServices.systemService, services.settingService, isWindowsDesktop]);
 
   useEffect(() => {
     if (!sharedSettings) {
@@ -1461,9 +1513,9 @@ export function SettingsPage({
 
           {usesInlineWindowControls ? (
             <div className="absolute right-1 top-1 z-30 mt-px mr-px flex h-12 items-center gap-0.5 px-2 pointer-events-auto [app-region:no-drag]">
-              {/* The Windows/Linux settings page still used the old caption dropdown arrow, unlike the help entry in the main UI and macOS.
+              {/* Bug cause: The Windows/Linux settings page still had the old caption dropdown, unlike the help entry on the main page and macOS.
                   Reuse the question-mark help button and place it next to the custom window controls in the normal flex flow.
-                  The standalone Settings title layer also needs 4px of outer spacing and a 1px border to align with the Workspace control group. */}
+                  The separate Settings title layer must also account for 4px outer spacing and a 1px border to align with the Workspace control group. */}
               <WorkspaceHelpMenuButton isDesktop={Boolean(isDesktop)} />
               <DesktopWindowControls />
             </div>
@@ -1752,6 +1804,8 @@ export function SettingsPage({
                             setInterfaceMode={setInterfaceMode}
                             isDesktop={isDesktop}
                             isWindowsDesktop={isWindowsDesktop}
+                            isLinuxDesktop={isLinuxDesktop}
+                            linuxCloseToTray={linuxCloseToTray}
                             platform={platform}
                             notificationEnabled={notificationEnabled}
                             notificationSoundEnabled={notificationSoundEnabled}
@@ -1956,6 +2010,7 @@ export function SettingsPage({
                             isDesktop={Boolean(isDesktop)}
                             isMacDesktop={Boolean(isMacDesktop)}
                             isWindowsDesktop={Boolean(isWindowsDesktop)}
+                            isWebRemoteControl={isWebRemoteControl}
                             initialTab={pluginTab}
                             initialScopeKey={pluginScopeKey}
                             workspacePath={activeWorkspacePath}
@@ -1972,6 +2027,7 @@ export function SettingsPage({
                           <PluginsSection
                             key={`mcp:${settingsSectionNavigationVersion}`}
                             mode="mcp"
+                            isWebRemoteControl={isWebRemoteControl}
                             workspacePath={activeWorkspacePath}
                             workspaceIdentity={activeWorkspaceIdentity}
                             onCreateTask={onCreateTask}
@@ -1985,6 +2041,7 @@ export function SettingsPage({
                           <PluginsSection
                             key={`skill:${settingsSectionNavigationVersion}`}
                             mode="skill"
+                            isWebRemoteControl={isWebRemoteControl}
                             workspacePath={activeWorkspacePath}
                             workspaceIdentity={activeWorkspaceIdentity}
                             onCreateTask={onCreateTask}
@@ -2022,6 +2079,7 @@ export function SettingsPage({
                         ) : activeSection === "commands" ? (
                           <PluginsSection
                             mode="command"
+                            isWebRemoteControl={isWebRemoteControl}
                             workspacePath={activeWorkspacePath}
                             workspaceIdentity={activeWorkspaceIdentity}
                             onCreateTask={onCreateTask}

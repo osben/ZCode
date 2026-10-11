@@ -97,7 +97,7 @@ async function main() {
   // Write a file.
   await remoteFS.writeFile("/src/main.ts", 'console.log("hello")');
   await remoteFS.writeFile("/src/util.ts", "export function add(a, b) { return a + b; }");
-  await remoteFS.writeFile("/src/main.ts", 'console.log("hello world")'); // 修改
+  await remoteFS.writeFile("/src/main.ts", 'console.log("hello world")'); // modify
 
   // Read a file.
   const content = await remoteFS.readFile("/src/main.ts");

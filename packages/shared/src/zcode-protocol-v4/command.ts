@@ -1,4 +1,6 @@
+import { createSessionRequestedConfigSchema } from "./create-session-config.js";
 import { localTtftContextSchema, localTtftClockSchema } from "../localTtft.js";
+import { conversationQuotesSchema } from "../conversationSelection.js";
 // Command layer: envelope / ACK / complete command payload set.
 // Conversation rewind has no separate command (decision: it is the UI entry point for editUserQuery);
 // workspace-only file rollback uses applyFileRewind and does not truncate chat history.
@@ -9,7 +11,8 @@ import { v4ConversationFileRewindPreviewResultSchema } from "./transport.js";
 import { modelSelectionSchema } from "../model-selection.js";
 import { modelExecutionSchema } from "../model-execution.js";
 import { submissionModeSchema } from "./submission.js";
-import { zcodeAutomationBotDeliveryTargetSchema } from "../bots.js";
+import { botGroupInputSourceSchema, zcodeAutomationBotDeliveryTargetSchema } from "../bots.js";
+import { DYNAMIC_WORKFLOW_MODES } from "../dynamic-workflow-feature.js";
 import {
   amendWorkflowRunSettingsPayloadSchema,
   amendWorkflowRunSettingsResultSchema,
@@ -24,27 +27,33 @@ import {
   zcodeBrowserAmbientContextSchema,
   zcodeProtocolMcpServerSchema,
 } from "../zcode-protocol/index.js";
+import { highspeedMessageMetaSchema } from "../highspeed.js";
 import { sharedContextRefSchema } from "./shared-context-ref.js";
+import { conversationInputSourceSchema } from "./input-intent.js";
 export type { SharedContextRef } from "./shared-context-ref.js";
+export * from "./workflow-command-rejections.js";
 
-const createSessionRequestedConfigSchema = z.object({
-  modelSelection: modelSelectionSchema.optional(),
-  provider: z.string().optional(),
-  model: z.string().optional(),
-  thought: z.string().optional(),
-  followupMode: z.enum(["queue", "guide"]).optional(),
-  // createSession.config represents “fields requested for override” and cannot reuse snapshot's
-  // sessionConfigStateSchema.partial(); for old-snapshot compatibility, snapshot gives mode a default("build"),
-  // which would turn “mode not provided” into “request switch back to build,” overriding workspace default yolo.
-  mode: z.string().optional(),
-  planEnabled: z.boolean().optional(),
-});
+// Execution-material invariant shared by sendText / editUserQuery / sendQueuedNow: modelExecution may only accompany
+// this request’s modelSelection; never provide credentials without a Selection (do not reuse credentials after rewinding a historical message).
+function requireModelSelectionForExecution(
+  payload: { modelSelection?: unknown; modelExecution?: unknown },
+  context: z.RefinementCtx,
+): void {
+  if (payload.modelExecution && !payload.modelSelection) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "modelExecution requires modelSelection",
+      path: ["modelExecution"],
+    });
+  }
+}
 
-// ── Complete command payload set ──
+// ── §6.4 Complete command payload set ──
 export const commandPayloadSchemas = {
   // Without firstInput → empty session at phase=draft; with it → create turnHeader + userInput rows directly.
   createSession: z.object({
     workspaceId: z.string(),
+    permissionScope: z.literal("session").optional(),
     firstInput: z
       .object({
         text: z.string(),
@@ -63,6 +72,8 @@ export const commandPayloadSchemas = {
     offPeakToolEnabled: z.boolean().optional(),
     // Dynamic workflow rollout flag, following the same pattern as offPeakToolEnabled.
     dynamicWorkflowEnabled: z.boolean().optional(),
+    // Gray-release mode is sent alongside the boolean (launch.md “On demand: activation”); older CLIs silently discard it via z.object.
+    dynamicWorkflowMode: z.enum(DYNAMIC_WORKFLOW_MODES).optional(),
   }),
   // Parent session is specified by envelope.sessionId; the server derives the full runtime config from the parent record.
   // If firstInput exists, start the first normal input as soon as the child is created; otherwise leave an empty side panel.
@@ -89,6 +100,8 @@ export const commandPayloadSchemas = {
       // Share handover allows only one imported context for the current session; runtime resolves the full body from
       // persisted provenance, which must not be passed by the renderer in the command.
       context_refs: z.array(sharedContextRefSchema).max(1).optional(),
+      // Source marker for messages relayed by the plugin UI (ui/message); persisted with the intent and projected onto the userInput row.
+      source: conversationInputSourceSchema.optional(),
       heldQueueDisposition: z.enum(["clearQueueAndSend", "keepQueueAndSend"]).optional(),
       // Set of queueItemIds shown when the pause-queue confirmation dialog opened. CLI validates before applying clear/keep
       // to prevent concurrent additions/removals on Desktop/mobile from causing an unconfirmed queue item to be discarded.
@@ -101,11 +114,18 @@ export const commandPayloadSchemas = {
       // This execution still uses the standard Selection above; this carries only non-persistent semantics, dynamic auth, and child policy.
       // Accepted only for idle startNow, preventing Secret/Ticket from entering the ordinary CommandInbox.
       modelExecution: modelExecutionSchema.optional(),
+      // The Highspeed card snapshot is stored in message.data with the input facts; runtime credentials and headers are excluded.
+      // The model and credentials used to accelerate this turn go through modelSelection + modelExecution above; see
+      // docs/highspeed/highspeed-access-mode-migration.md。
+      highspeedMeta: highspeedMessageMetaSchema.optional(),
       automationId: z.string().min(1).optional(),
       offPeakTaskId: z.string().min(1).optional(),
       offPeakRunType: z.enum(["init", "resume"]).optional(),
       // Bot source is injected only by Host, so CronCreate can read and persist the reply address during this turn.
       botDeliveryTarget: zcodeAutomationBotDeliveryTargetSchema.optional(),
+      inputOrigin: z.enum(["desktop", "mobile"]).optional(),
+      botGroupSource: botGroupInputSourceSchema.optional(),
+      conversationQuotes: conversationQuotesSchema.optional(),
       // Later user inputs in a scheduled-task session must also retain turn-scoped tool-surface isolation; do not reuse
       // automationId, which would incorrectly mark ordinary user input as an automation dispatch.
       toolDisallowlist: z.array(z.string().min(1)).optional(),
@@ -124,13 +144,7 @@ export const commandPayloadSchemas = {
           path: ["offPeakRunType"],
         });
       }
-      if (payload.modelExecution && !payload.modelSelection) {
-        context.addIssue({
-          code: z.ZodIssueCode.custom,
-          message: "modelExecution requires modelSelection",
-          path: ["modelExecution"],
-        });
-      }
+      requireModelSelectionForExecution(payload, context);
     }),
   sendGoalCommand: z.object({
     text: z.string(),
@@ -151,19 +165,48 @@ export const commandPayloadSchemas = {
   // Available for the stable assistant row while running.
   forkAssistant: z.object({ target: conversationRowTargetSchema }),
   applyFileRewind: z.object({ target: conversationRowTargetSchema }),
-  editUserQuery: z.object({
-    target: conversationRowTargetSchema,
-    newText: z.string(),
-    attachments: z.array(attachmentRefSchema).optional(),
-    // Defaults to preserve: switch only the conversation branch; rewind safely restores this turn's files first.
-    workspaceMode: z.enum(["preserve", "rewind"]).optional(),
-  }),
+  editUserQuery: z
+    .object({
+      target: conversationRowTargetSchema,
+      newText: z.string(),
+      conversationQuotes: conversationQuotesSchema.optional(),
+      attachments: z.array(attachmentRefSchema).optional(),
+      // Treat an edited resend as a new active send: accept only the cards and execution materials prepared again for this request,
+      // and do not reuse credentials from the rewound historical message.
+      modelSelection: modelSelectionSchema.optional(),
+      modelExecution: modelExecutionSchema.optional(),
+      highspeedMeta: highspeedMessageMetaSchema.optional(),
+      // Default is preserve: switch only the conversation branch; rewind safely restores that turn’s files first.
+      workspaceMode: z.enum(["preserve", "rewind"]).optional(),
+    })
+    .superRefine(requireModelSelectionForExecution),
   retryTurn: z.object({ target: conversationRowTargetSchema }),
+  // (2026-09-12): the former setToolWidgetState / setSessionPluginUiState commands were removed—plugin UI widgetState
+  // is now kept in host renderer memory and no longer written to CLI session storage; model-visible information uses ui/update-model-context.
   setAssistantFeedback: z.object({
     target: conversationRowTargetSchema,
     feedback: z.enum(["like", "dislike"]).nullable(),
   }),
-  sendQueuedNow: z.object({ queueItemId: z.string() }),
+  setHighspeedMetrics: z.object({
+    target: conversationRowTargetSchema,
+    regularTps: z.number().positive(),
+    outputTokens: z.number().int().nonnegative(),
+    durationMs: z.number().nonnegative(),
+    highspeedTps: z.number().positive(),
+    savedDurationMs: z.number().nonnegative(),
+    modelDurationMs: z.number().nonnegative().optional(),
+    toolDurationMs: z.number().nonnegative().optional(),
+    otherDurationMs: z.number().nonnegative().optional(),
+  }),
+  sendQueuedNow: z
+    .object({
+      queueItemId: z.string(),
+      // Manual promotion lets the Renderer add execution materials for the same card to the original queued item; credentials are not persisted in the queue.
+      modelSelection: modelSelectionSchema.optional(),
+      modelExecution: modelExecutionSchema.optional(),
+      highspeedMeta: highspeedMessageMetaSchema.optional(),
+    })
+    .superRefine(requireModelSelectionForExecution),
   editQueueItem: z.object({ queueItemId: z.string(), newText: z.string() }),
   // beforeQueueItemId = null → move to the end of the queue.
   reorderQueueItem: z.object({
@@ -212,7 +255,7 @@ export const commandPayloadSchemas = {
   // Additive (evolution of the frozen surface is backed by golden tests): switch agent collaboration mode.
   // Values = the switchable subset of core CollaborationMode (auto is not user-switchable and is excluded from the UI command surface).
   switchCollaborationMode: z.object({
-    mode: z.enum(["build", "edit", "plan", "yolo"]),
+    mode: z.enum(["build", "edit", "plan", "yolo", "guarded"]),
   }),
   setFollowupMode: z.object({ mode: z.enum(["queue", "guide"]) }),
   pauseGoal: z.object({}),
@@ -224,11 +267,13 @@ export const commandPayloadSchemas = {
   // The CLI gates it (resumable set = cancelled ∪ failed+Interrupted); rejection returns ACK with
   // fault.command.workflowRunResumeRejected.<reason>.
   resumeWorkflowRun: z.object({ workId: z.string(), name: z.string().optional() }),
-  // startSavedWorkflow: the hub's “Run” action no longer synthesizes conversation text; it asks the agent to start the saved workflow in a new session directly.
-  // Like cancelBackgroundWork / resumeWorkflowRun, it omits baseRevision (workflowRuns is revision-free; false CAS failures would only hurt). The agent fills `name` from
-  // the resolution result (invariant 6); the command accepts no name override.
-  // Rejection returns ACK with fault.command.savedWorkflowStartRejected.<reason> (see savedWorkflowStartRejectionReasonSchema below); missing capability (no dwf port) → V4CapabilityUnsupportedError
-  // (same error as resumeWorkflowRun).
+  // startSavedWorkflow: the hub’s “Run” action no longer synthesizes
+  // dialogue text; it directly asks the agent to start the saved workflow in a new session. Like cancelBackgroundWork / resumeWorkflowRun,
+  // it does not carry baseRevision (workflowRuns are revision-free, and a false CAS failure would be harmful). The agent fills in name from the
+  // parsed result (invariant 6); the command does not accept a name override.
+  // Rejections return an ACK with fault.command.savedWorkflowStartRejected.<reason> (the allowed values are defined below in
+  // workflow-command-rejections.ts in savedWorkflowStartRejectionReasonSchema); missing capability (no DWF port) → V4CapabilityUnsupportedError
+  // (the same error used by resumeWorkflowRun).
   startSavedWorkflow: z.object({
     name: z.string().min(1),
     scope: z.enum(["project", "global"]).optional(),
@@ -253,32 +298,6 @@ export type CommandPayloadMap = {
 export const commandTypeSchema = z.enum(
   Object.keys(commandPayloadSchemas) as [CommandType, ...CommandType[]],
 );
-
-// startSavedWorkflow rejection vocabulary:
-// bootstrap handler creates fault codes, and the UI launcher maps them to i18n strings; both sides share this enum to prevent drift.
-// invalid_name / not_found: resolution phase; invalid_args: argument validation; compile_failed: analyzeScript diagnostics;
-// session_busy: session has an active turn; start_failed: other startup failure before port.submit.
-export const savedWorkflowStartRejectionReasonSchema = z.enum([
-  "invalid_name",
-  "not_found",
-  "invalid_args",
-  "compile_failed",
-  "session_busy",
-  "start_failed",
-]);
-export type SavedWorkflowStartRejectionReason = z.infer<
-  typeof savedWorkflowStartRejectionReasonSchema
->;
-
-// Full fault code = prefix + reason (for example, fault.command.savedWorkflowStartRejected.not_found).
-// Same namespace family as workflowRunResumeRejected; export the constant for bootstrap composition and UI prefix matching.
-export const SAVED_WORKFLOW_START_REJECTED_FAULT_PREFIX =
-  "fault.command.savedWorkflowStartRejected." as const;
-
-// resumeWorkflowRun rejection: prefix + port reason (not_found / not_resumable / superseded /
-// already_running / script_missing / script_mismatch / compile_failed); `ack.message` carries bounded diagnostics for compile_failed.
-export const WORKFLOW_RUN_RESUME_REJECTED_FAULT_PREFIX =
-  "fault.command.workflowRunResumeRejected." as const;
 
 // cancelBackgroundWork rejection: when core explicitly reports “nothing was cancelled” (task missing / already terminal / unsupported type),
 // return prefix + reason instead of a falsely successful accepted response — the details page can tell users the run is not running.
@@ -311,6 +330,7 @@ export const ROW_TARGETING_COMMANDS: ReadonlySet<CommandType> = new Set([
   "editUserQuery",
   "retryTurn",
   "setAssistantFeedback",
+  "setHighspeedMetrics",
 ]);
 
 // ── Envelope ──

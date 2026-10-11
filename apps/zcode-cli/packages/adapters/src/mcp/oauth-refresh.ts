@@ -34,7 +34,7 @@ import { loadDiscoveryRecord, saveDiscoveryRecord } from "./oauth-shared.js";
  */
 const REFRESH_LOCK_MAX_WAIT_MS = 45_000;
 
-interface RefreshMcpOAuthTokensInput {
+export interface RefreshMcpOAuthTokensInput {
   credentialStore: SharedZCodeCredentialStore;
   fetchFn?: FetchLike;
   keyPrefix: string;
@@ -54,7 +54,7 @@ interface RefreshMcpOAuthTokensInput {
   staticClientId?: string;
 }
 
-interface ResolvedAsMetadata {
+export interface ResolvedAsMetadata {
   authorizationServerUrl: string;
   metadata?: AuthorizationServerMetadata;
   resource?: URL;
@@ -76,13 +76,9 @@ export async function refreshMcpOAuthTokensUnderLock(
   const lockPath = resolveRefreshLockPath(input.credentialStore.filePath, input.keyPrefix);
 
   try {
-    return await withFileLock(
-      lockPath,
-      async () => await refreshLocked(input, observedGeneration),
-      {
-        lockMaxWaitMs: REFRESH_LOCK_MAX_WAIT_MS,
-      },
-    );
+    return await withFileLock(lockPath, async () => await refreshLocked(input, observedGeneration), {
+      lockMaxWaitMs: REFRESH_LOCK_MAX_WAIT_MS,
+    });
   } catch (error) {
     if (!isZCodeFileLockTimeoutError(error)) throw error;
     // A lock timeout does not mean refresh failed; the winner may have published a result. Re-read first and reuse it if the generation changed and a token exists.
@@ -251,7 +247,7 @@ function failSoft(
  * included in the refresh request (RFC 8707). The SDK includes it in its own refresh flow; after
  * bypassing `auth()`, we must add it ourselves or the audience binding is lost.
  */
-async function resolveAsMetadata(
+export async function resolveAsMetadata(
   input: Pick<
     RefreshMcpOAuthTokensInput,
     "credentialStore" | "fetchFn" | "keyPrefix" | "serverUrl"
@@ -294,6 +290,6 @@ async function resolveAsMetadata(
  * deadlock on reentry. The basename contains only a hash and hyphens (Windows filenames forbid
  * colons).
  */
-function resolveRefreshLockPath(credentialsFilePath: string, keyPrefix: string): string {
+export function resolveRefreshLockPath(credentialsFilePath: string, keyPrefix: string): string {
   return join(dirname(credentialsFilePath), `${sanitizeKeyPrefix(keyPrefix)}.refresh`);
 }

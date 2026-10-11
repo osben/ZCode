@@ -7,13 +7,17 @@ import {
   RAIL_ROW,
   STATION_PITCH,
   STATION_WIDTH,
+  TAIL_STUB,
   stationX,
   type TimelineLayout,
 } from "./timeline-geometry.js";
 import { railKey } from "./timeline-ledge.js";
 import type { TypewriterState } from "./use-typewriter.js";
+import { HoleFillMark, HoleWaitingMeta } from "./WorkflowHoleParts.js";
 import { StationMeta } from "./WorkflowStationMeta.js";
+import { StreamChevronsBox } from "./WorkflowStreamChevrons.js";
 import { stationLampClass } from "./WorkflowTimelineLedge.js";
+import { slideClass, slideStyle, type FillSlide } from "./use-fill-growth.js";
 
 /**
  * Station header: name + metadata, a pill with no background.
@@ -41,6 +45,10 @@ export function StationHead({
   onSelect?: () => void;
 }) {
   const pending = station.status === undefined || station.status === "pending";
+  // Hole station (docs/dynamic-workflow/presentation.md, “Holes on the timeline”): use subtle
+  // styling until its name arrives, then show “Waiting to be filled” in the metadata slot. A fill
+  // without phases gets a pen marker after its name. Do not show the type in the UI.
+  const hole = station.hole;
   const head = (
     <>
       <span
@@ -52,7 +60,12 @@ export function StationHead({
         {name}
         {caret}
       </span>
-      <StationMeta station={station} />
+      {hole?.state === "filled" ? <HoleFillMark holeId={hole.siteId} /> : null}
+      {hole?.state === "waiting" ? (
+        <HoleWaitingMeta hole={hole} />
+      ) : (
+        <StationMeta station={station} />
+      )}
     </>
   );
   return onSelect === undefined ? (
@@ -83,6 +96,8 @@ export function StationHead({
 
 interface RowProps {
   stations: readonly TimelineStation[];
+  /** Fill growth (`use-fill-growth.ts`): stations with an index greater than `after` receive `wf-slide` and move from −shift into place. */
+  slide?: FillSlide;
   /** Full station names by index; in a draft, the typewriter reveals only the first few characters. */
   fullNames: readonly string[];
   folded: ReadonlySet<number>;
@@ -98,11 +113,14 @@ interface RowProps {
 export function WorkflowStationRow({
   draft,
   folded,
+  fresh,
   fullNames,
   onSelectStation,
   pen,
   rails,
+  slide,
   stations,
+  tailStub,
   titleOf,
   top,
   width,
@@ -113,34 +131,57 @@ export function WorkflowStationRow({
   pen: TypewriterState;
   top: number;
   width: number;
+  /** The final station is a tail hole: `open` draws a 40px dashed segment fading after it; `filled` only reserves space. */
+  tailStub?: "open" | "filled";
+  /** Station written by a fill newly joined to the run: the lamp lands and rail segments grow (`wf-land` / `wf-rail-grow`). */
+  fresh?: ReadonlySet<string>;
 }) {
   const n = stations.length;
   return (
     <div className="absolute left-0 flex" style={{ height: RAIL_ROW, top, width }}>
       {stations.map((station, i) => {
         const rail = rails.get(railKey(i, i + 1));
+        const stream = rail?.kind === "stream";
         const full = fullNames[i]!;
         const name = draft ? full.slice(0, pen.shown[i] ?? 0) : full;
         const penHere = draft && i === n - 1;
         const foldClass = cn("wf-foldable", folded.has(i) && "wf-folded");
+        const landing = draft || (station.fill !== undefined && fresh?.has(station.fill) === true);
+        const last = i === n - 1;
         return (
           <div
-            className="flex h-6 min-w-0 items-center"
+            className={cn(
+              "flex h-6 min-w-0 items-center",
+              station.ghost && "wf-ghost",
+              slideClass(i, slide),
+            )}
+            data-fill={station.fill}
             data-station-folded={folded.has(i) ? "true" : undefined}
+            data-station-ghost={station.ghost ? "true" : undefined}
+            data-station-hole={station.hole?.state}
             data-station-status={station.status ?? "pending"}
             data-testid="workflow-timeline-station"
             key={station.id}
-            style={{ width: i < n - 1 ? STATION_PITCH : STATION_WIDTH }}
+            style={{
+              ...slideStyle(i, slide),
+              width: !last
+                ? STATION_PITCH
+                : STATION_WIDTH + (tailStub === undefined ? 0 : TAIL_STUB),
+            }}
           >
             <span
               aria-hidden
               className={cn(
-                stationLampClass(station.status),
+                stationLampClass(station.status, station.hole),
                 "mx-3",
                 foldClass,
-                draft && "wf-land",
+                landing && "wf-land",
               )}
-              data-lamp={station.status ?? "pending"}
+              data-lamp={
+                station.hole !== undefined && station.hole.state !== "filled"
+                  ? `hole-${station.hole.state}`
+                  : (station.status ?? "pending")
+              }
             />
             <StationHead
               caret={
@@ -165,21 +206,41 @@ export function WorkflowStationRow({
                 ? {}
                 : { onSelect: () => onSelectStation(station) })}
             />
-            {i < n - 1 ? (
+            {!last ? (
               <span
                 aria-hidden
                 className={cn(
-                  "wf-ink relative h-0 min-w-3 flex-1 rounded-full border-t border-foreground-subtlest",
-                  draft && "wf-rail-grow",
+                  "wf-ink relative h-0 flex-1 rounded-full border-t border-foreground-subtlest",
+                  // Stream rail (presentation.md, “Stream rails”): leave a centered gap for the
+                  // chevrons (`::before` draws the line and the border is transparent). It needs at
+                  // least 42px so the three chevrons have a line segment on each side; never overlay transit light.
+                  stream ? "wf-rail-stream min-w-[42px]" : "min-w-3",
+                  landing && "wf-rail-grow",
                   rail === undefined && "invisible",
+                  // A segment touching an open hole is dashed because there is no code there yet (docs/dynamic-workflow/presentation.md).
+                  rail?.dashed && "border-dashed",
                   // Draw the moving segment's base line as usual, then overlay a stationary light (`.wf-rail-march::after`) that brightens toward the light.
-                  rail?.ink === "march" && "wf-rail-march",
+                  !stream && rail?.ink === "march" && "wf-rail-march",
                 )}
+                data-rail-dashed={rail?.dashed ? "true" : undefined}
                 data-rail-from={i}
                 data-rail-ink={rail?.ink ?? "none"}
+                data-rail-kind={rail?.kind}
                 data-rail-to={i + 1}
                 data-testid="workflow-timeline-rail"
                 style={{ marginLeft: 10, marginRight: -6 }}
+              >
+                {stream ? (
+                  <StreamChevronsBox ink={rail.ink} style={{ left: "50%", top: -0.5 }} />
+                ) : null}
+              </span>
+            ) : tailStub === "open" ? (
+              // Tail hole: extend the rail 40px beyond it and fade out; the end of the script has not been written yet.
+              <span
+                aria-hidden
+                className="wf-tail-stub h-0 shrink-0 border-t border-dashed border-foreground-subtlest"
+                data-testid="workflow-timeline-tail-stub"
+                style={{ marginLeft: 10, width: TAIL_STUB }}
               />
             ) : null}
           </div>
@@ -199,6 +260,7 @@ export function WorkflowStationPlatform({
   fullNames,
   layout,
   onSelectStation,
+  slide,
   stations,
   titleOf,
 }: RowProps & { layout: TimelineLayout }) {
@@ -206,13 +268,20 @@ export function WorkflowStationPlatform({
     <>
       {stations.map((station, i) => (
         <div
-          className="absolute flex h-6 min-w-0 items-center"
+          className={cn(
+            "absolute flex h-6 min-w-0 items-center",
+            station.ghost && "wf-ghost",
+            slideClass(i, slide),
+          )}
+          data-fill={station.fill}
           data-station-folded={folded.has(i) ? "true" : undefined}
+          data-station-hole={station.hole?.state}
           data-station-status={station.status ?? "pending"}
           data-station-track={station.track}
           data-testid="workflow-timeline-station"
           key={station.id}
           style={{
+            ...slideStyle(i, slide),
             left: stationX(i, layout.inset) + CAPTION_X,
             top: layout.capY - PLATFORM_ROW / 2,
             width: STATION_WIDTH - CAPTION_X,

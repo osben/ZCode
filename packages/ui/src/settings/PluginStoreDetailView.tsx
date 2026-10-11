@@ -73,7 +73,7 @@ const EXAMPLE_PROMPT_DOCUMENT_ICON_URLS: Record<ExamplePromptDocumentIcon, strin
   spreadsheets: spreadsheetsIconUrl,
 };
 
-function resolveExamplePromptDocumentIcon(prompt: string): ExamplePromptDocumentIcon {
+export function resolveExamplePromptDocumentIcon(prompt: string): ExamplePromptDocumentIcon {
   if (/\bpdf\b/iu.test(prompt)) {
     return "pdf";
   }
@@ -233,7 +233,7 @@ export function PluginStoreDetailView({
         orderedGroups.map((group) => <ComponentSection key={group.kind} group={group} />)
       )}
 
-      {/* Information area: prefer listing, fall back to manifest (runtime/describe), and omit a row entirely when no value exists. */}
+      {/* Information area: prefer listing, fall back to manifest (runtime/describe), and omit a row entirely when no value exists (ADR-0001). */}
       <InfoSection item={item} describeMetadata={describeMetadata} />
 
       {advanced}

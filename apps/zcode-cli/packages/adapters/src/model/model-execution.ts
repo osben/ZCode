@@ -1,3 +1,4 @@
+import { withoutRequestVerificationHeaders } from "@zcode/shared";
 /* eslint-disable max-lines -- AI SDK model execution assembly centralizes provider factories, authentication, and network error adaptation; splitting it would make state synchronization more fragile. */
 // ============================================================
 // Vercel AI SDK model execution
@@ -17,16 +18,23 @@ import {
   type ModelId,
   type ModelProviderId,
   type ModelRequestAuth,
+  type ProviderEndpointRoutingPort,
 } from "@zcode/contracts";
 import type { RegistryProviderConfig } from "@zcode/provider";
 import { withOpenRouterAttributionHeaders } from "@zcode/shared";
 import { createAnthropicCompatFetch } from "./anthropic-stream-compat.js";
+import { createModelRequestSecurityState } from "./request-security-edition/index.js";
+import type { ModelRequestSecurityState, ModelRequestSecurityPort } from "./request-security.js";
 import { createOpenAIResponsesJsonCompatFetch } from "./openai-responses-json-compat.js";
 import { createModelOptionMapFetch, type RawRequestBodyCapture } from "./model-option-map-fetch.js";
 import { createNetworkProxyFetch } from "../network/proxy-fetch.js";
-import { createOfficialCodingPlanGatewayFetch } from "./official-coding-plan-gateway.js";
+import { createProviderEndpointRoutingFetch } from "./provider-endpoint-routing-fetch.js";
 import { normalizeModelTlsFailure } from "./failure-tls.js";
-import { mergeModelRequestHeaders } from "./model-request-headers.js";
+import {
+  mergeModelRequestHeaders,
+  withoutModelAuthHeaders,
+  withoutModelQuerySourceHeader,
+} from "./model-request-headers.js";
 
 export type AiSdkProviderKind = "openai" | "anthropic" | "openai-compatible";
 
@@ -45,11 +53,13 @@ interface AiSdkProviderConfig {
 export interface AiSdkModelExecutionConfig {
   /** Default source information provided by the execution environment; not part of persisted Provider configuration. */
   defaultHeaders?: Readonly<Record<string, string>>;
+  endpointRoutingPort?: ProviderEndpointRoutingPort;
   env?: EnvRecord;
   network?: AiSdkNetworkConfig;
 }
 
 export interface AiSdkModelExecutionOptions {
+  requestSecurityState?: ModelRequestSecurityState;
   logger?: Logger;
   transport?: ProviderFetch;
 }
@@ -69,6 +79,7 @@ export interface AiSdkResolvedModel {
   providerKind: AiSdkProviderKind;
   providerOptions?: Record<string, unknown>;
   rawRequestBodyCapture?: RawRequestBodyCapture;
+  requestObservations?: ModelRequestSecurityPort;
 }
 
 export interface AiSdkBoundModelResolution {
@@ -85,6 +96,7 @@ type ProviderCode = string | number;
 
 export interface ProviderBusinessErrorFetchOptions {
   caCertFile?: string;
+  endpointRoutingPort?: ProviderEndpointRoutingPort;
   env?: EnvRecord;
   providerId: string;
   providerKind: AiSdkProviderKind;
@@ -155,16 +167,22 @@ export class AiSdkModelExecution {
   private readonly env: EnvRecord;
   private readonly defaultHeaders: Record<string, string>;
   private readonly network: AiSdkNetworkConfig;
+  private readonly endpointRoutingPort?: ProviderEndpointRoutingPort;
   private readonly logger?: Logger;
   private readonly baseTransport?: ProviderFetch;
   private readonly providerTransports = new Map<string, ProviderFetch>();
+  private readonly requestSecurity: ModelRequestSecurityPort;
 
   constructor(config: AiSdkModelExecutionConfig = {}, options: AiSdkModelExecutionOptions = {}) {
     this.env = config.env ?? process.env;
     this.defaultHeaders = { ...config.defaultHeaders };
     this.network = { ...config.network };
+    this.endpointRoutingPort = config.endpointRoutingPort;
     this.logger = options.logger;
     this.baseTransport = options.transport;
+    this.requestSecurity = (
+      options.requestSecurityState ?? createModelRequestSecurityState()
+    ).createExecution({ logger: options.logger });
   }
 
   /**
@@ -242,6 +260,7 @@ export class AiSdkModelExecution {
       optionValues,
       rawRequestBodyCapture,
       snapshot.supportsJsonSchemaOutput,
+      snapshot.providerConfig.access?.type === "zhipu-account" ? requestAuth?.apiKeyId : undefined,
     );
     return {
       baseURL: providerConfig.baseURL,
@@ -252,6 +271,7 @@ export class AiSdkModelExecution {
       providerKind: providerConfig.kind,
       providerOptions: providerConfig.providerOptions,
       rawRequestBodyCapture,
+      requestObservations: this.requestSecurity,
     };
   }
 
@@ -262,12 +282,27 @@ export class AiSdkModelExecution {
     optionValues: ModelOptionValues | undefined,
     rawRequestBodyCapture: RawRequestBodyCapture,
     supportsJsonSchemaOutput: boolean,
+    apiKeyId?: string,
   ): LanguageModelFactory {
     const apiKey = this.resolveApiKey(providerConfig);
-    const headers = providerConfig.headers;
-    const providerTransport = this.resolveProviderTransport(providerId);
+    // The SDK merges factory default headers; remove the static source here so missing values are truly omitted.
+    const headers = withoutModelQuerySourceHeader(providerConfig.headers);
+    const networkTransport = this.resolveProviderTransport(providerId);
+    // The ID belongs to this attempt; do not put it in a transport cached by Provider, or it could leak across account switches.
+    const providerTransport = this.endpointRoutingPort
+      ? createProviderEndpointRoutingFetch({
+          fetch: networkTransport,
+          routingPort: this.endpointRoutingPort,
+          apiKeyId,
+        })
+      : networkTransport;
+    const requestTransport = this.requestSecurity.protectTransport({
+      providerId,
+      providerConfig,
+      transport: providerTransport,
+    });
     const fetch = createProviderBusinessErrorFetch({
-      fetch: providerTransport,
+      fetch: requestTransport,
       providerId,
       providerKind: providerConfig.kind,
     });
@@ -330,17 +365,15 @@ export class AiSdkModelExecution {
     if (current) {
       return current;
     }
-    // Replace official Coding Plan endpoints with platform gateway endpoints before entering the
-    // user's HTTP proxy fetch, so httpProxy / noProxy are evaluated using the actual destination.
-    const transport = createProviderTransportFetch({
+    const networkTransport = createProviderProxyFetch({
       caCertFile: this.network.caCertFile,
       env: this.env,
       fetch: this.baseTransport,
       httpProxy: this.network.httpProxy,
       noProxy: this.network.noProxy,
     });
-    this.providerTransports.set(providerId, transport);
-    return transport;
+    this.providerTransports.set(providerId, networkTransport);
+    return networkTransport;
   }
 }
 
@@ -380,12 +413,16 @@ function applyModelRequestAuth(
   requestAuth: ModelRequestAuth | undefined,
 ): AiSdkProviderConfig {
   if (!requestAuth) return providerConfig;
+  const staticHeaders = withoutRequestVerificationHeaders(providerConfig.headers);
+  // Clear static auth headers before adding dynamic account identity headers so the SDK cannot prefer stale credentials.
+  const headers =
+    providerConfig.access.type === "zhipu-account"
+      ? withoutModelAuthHeaders(staticHeaders)
+      : staticHeaders;
   return {
     ...providerConfig,
     ...(requestAuth.apiKey ? { apiKey: requestAuth.apiKey } : {}),
-    ...(requestAuth.headers
-      ? { headers: mergeModelRequestHeaders(providerConfig.headers, requestAuth.headers) }
-      : {}),
+    headers: mergeModelRequestHeaders(headers, requestAuth.headers),
   };
 }
 
@@ -442,7 +479,13 @@ function normalizeAnthropicBaseURL(baseURL: string | undefined): string | undefi
 export function createProviderBusinessErrorFetch(
   options: ProviderBusinessErrorFetchOptions,
 ): ProviderFetch {
-  const baseFetch = createProviderProxyFetch(options);
+  const networkFetch = createProviderProxyFetch(options);
+  const baseFetch = options.endpointRoutingPort
+    ? createProviderEndpointRoutingFetch({
+        fetch: networkFetch,
+        routingPort: options.endpointRoutingPort,
+      })
+    : networkFetch;
 
   return async (input, init) => {
     let response: Response;
@@ -515,19 +558,6 @@ function createProviderProxyFetch(options: ProviderProxyFetchOptions): ProviderF
   // Model providers and MCP HTTP transport share this proxy-aware fetch layer to avoid divergence
   // between multiple egress rule implementations.
   return createNetworkProxyFetch(options);
-}
-
-/**
- * Model request egress: official Coding Plan endpoints go through the ZCode platform gateway (for
- * plan entitlement checks and other platform-side processing); other providers connect directly.
- * All requests then use the user's HTTP proxy fetch, with httpProxy / noProxy evaluated against the
- * actual destination. See official-coding-plan-gateway.ts for official-to-gateway endpoint mapping.
- */
-function createProviderTransportFetch(options: ProviderProxyFetchOptions): ProviderFetch {
-  return createOfficialCodingPlanGatewayFetch({
-    env: options.env,
-    fetch: createProviderProxyFetch(options),
-  });
 }
 
 async function detectProviderBusinessError(

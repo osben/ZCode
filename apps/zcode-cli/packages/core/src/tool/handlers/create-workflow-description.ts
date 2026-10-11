@@ -1,8 +1,10 @@
-// Persistent description for CreateWorkflow.
-// Keep the purpose, invocation conditions, and skill-loading requirement in the tool description. The `dynamic-workflows` skill
-// provides the facade declaration, writing rules, phase and naming rules, and field semantics. The resolveInput skill gate ensures
-// the skill is loaded before a script is submitted. Invocation conditions must remain here so the model can decide whether to use the
-// tool before loading the skill.
+// Persistent description for CreateWorkflow (docs/dynamic-workflow/authoring.md, “The authoring surface”).
+//
+// Intentionally shortened starting 2026-09-21: the facade declaration, writing rules, phase and naming rules, and full field semantics
+// moved to the “Tool reference” section of the `dynamic-workflows` skill. The resolveInput skill gate
+// (handlers/workflow-skill-gate.ts) ensures the model has read it before writing a script. This description and the facade previously
+// used about 8k tokens, resent with every model request; it now keeps only three persistent essentials—what the tool is, when (not) to use it,
+// and to read the skill first. Routing rules stay here rather than in the skill because they determine whether to call this tool and must be read before the skill loads.
 
 import { DYNAMIC_WORKFLOW_SKILL_NAME } from "@zcode/contracts";
 
@@ -10,7 +12,8 @@ const INTRO =
   "Create and run a dynamic workflow: a TypeScript script that orchestrates multiple model-driven subagents with plain control flow (loops, conditionals, fan-out) and typed intermediate results. The script is typechecked, the user is asked to confirm it, and the run starts in the background; you are notified with its final result when it settles. Compilation errors come back as diagnostics.";
 
 /**
- * Route only on whether the user explicitly named it: a workflow can start only through `/workflow` or a direct request; the model must not start one on its own.
+ * Route only by whether the user explicitly requested it (user decision on 2026-09-16; docs/dynamic-workflow/launch.md, “When the
+ * model may call it”): workflows can start only through `/workflow` or an explicit request; the model must not start one on its own.
  */
 const WHEN_TO_USE = [
   "When to use:",

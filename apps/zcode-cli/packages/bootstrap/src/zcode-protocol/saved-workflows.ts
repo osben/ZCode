@@ -161,9 +161,9 @@ export async function listSavedWorkflowRunsOp(
   if (journal === undefined || !supportsRunIntrospection(journal)) return { runs: [] };
   const limit = Math.min(ZCODE_WORKFLOWS_RUNS_MAX_LIMIT, params.limit);
   const global = scopeOf(params) === "global";
-  // Fetch one extra row **only to determine truncation** (same convention as run service and v4 event pagination).
-  // The global variant omits the cwd predicate (journal cwd is optional, meaning across all projects);
-  // the project variant passes cwd unchanged.
+  // Fetch one extra row **only to determine truncation** (same convention as the run service).
+  // The global variant omits the cwd predicate (journal cwd is optional, meaning across all
+  // projects); the project variant passes cwd unchanged.
   const rows = journal.listRuns({
     ...(global ? {} : { cwd: params.workspace.workspacePath }),
     limit: limit + 1,

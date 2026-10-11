@@ -1,53 +1,47 @@
 /**
- * Structured engine errors: stable error codes, serializable shapes, and {@link WorkflowError},
- * which is thrown across Boundary A. This module depends on the schema's Violation and terminal
- * details; types.ts re-exports these types for callers.
+ * Structured engine errors (docs/execution-engine.md, “Errors are first-class”): stable error codes,
+ * their serializable representation, and {@link WorkflowError} itself, thrown across Boundary A.
+ *
+ * Split into its own file for the same reason as run-terminal.ts: types.ts had reached oxlint's 400-line limit, and this family
+ * is self-contained—it depends only on the schema's `Violation` and terminal details, not on anything else in the vocabulary.
+ * Consumers still import from types.ts by convention (it re-exports these types unchanged), so no import paths need to change.
  */
 
 import type { Violation } from "../schema/types.js";
 import type { ProviderStopDetails } from "./run-terminal.js";
 
 /**
- * Stable error codes. Distinguishes node-level errors (reject one ask's promise) from run-level
- * errors (fail the entire run):
- * - Node level: ValidationFailed / ResultNotSubmitted / DriverError / Cancelled / ContextLimit /
- *   WorldReadCapExceeded—a world read exceeded its op limit (`files.grep`: 2,000 matches or 256 KB
- *   serialized, whichever comes first; `git.diff`: 512 KB; see `facade/world-read-caps.ts`). It is
- *   node-level rather than run-level because of the **rejection channel**, not severity: world reads
- *   return a promise the script can `catch`, so “narrow the pattern or add a glob” is a recovery
- *   path the script can actually take. It is also intentionally **not** folded into DriverError:
- *   the limit is a contract the script can use to rewrite its behavior, while distinguishing the
- *   two by matching message text is exactly what this union type is meant to prevent.
- * - Run level: InputHashMismatch / UnknownActor / MissingAskSpec /
- *   DuplicateActorName—two createActor calls in one run resolve to the same **non-empty** effective
- *   name (effective name = `spec.name` after normalizePersona, where persona.name overrides the
- *   name argument). This rule applies to **all** runs, not only amended runs: named actors are
- *   identity keys for amend-resume cache imports, and any run may become a predecessor of a future
- *   amendment, where duplicate names would make import matching ambiguous. Anonymous actors
- *   (missing or empty name) are neither checked nor forbidden; they simply cannot be cached.
- *   Literal duplicate names also get a compile-time courtesy diagnostic (analysis/actor-names.ts),
- *   but dynamic names can only be checked at runtime, so this is the real gate.
- *   ReportCapExceeded—a run exceeded 256 reports or one item's serialization exceeded 32 KB (see
- *   `facade/report-caps.ts`). This is run-level rather than node-level, the same distinction as
- *   WorldReadCapExceeded above but with the opposite result: `report` returns `void`, so the script
- *   has **no** channel it can catch; only the run can contain the failure. For that reason these
- *   limits must be high enough that a reasonable script never hits them—the author has no recovery
- *   path. It is also intentionally not folded into DriverError: the limit is a contract the script
- *   can use to revise its behavior.
- * - Construction time (before the run starts; the engine constructor throws synchronously): ScriptHashMismatch
- * - Host level (**never produced by the engine**): Interrupted—the process that owned the run exited
- *   before settlement, and the host reconciles the record left in running state during the next
- *   construction (`bootstrap/src/app/dynamic-workflow-run-service.ts` orphan reconciliation). It
- *   must have a **separate code** instead of reusing DriverError: a script-thrown error is also
- *   encoded as DriverError (`dynamic-workflow-runtime/src/harness.ts:311`), and with the same code
- *   “process killed” versus “script failed” could only be distinguished by message text—the exact
- *   problem this union type is meant to prevent.
- *   ProviderStop—a model request from a subagent (or tool side) hit a **deterministic** model-side
- *   error (invalid authentication, model not included in the plan, quota exhausted, etc.). The
- *   driver stops the run as `stopped(provider)` instead of failing the node; structured details are
- *   in `providerStop`. This is another host-level error: the engine only stores it as-is in
- *   `stop("provider", error)`.
- * Use these codes for all flow decisions; never match error text.
+ * Stable error codes. Distinguish node-level errors (reject one ask promise) from run-level errors (fail the entire run):
+ * - Node-level: ValidationFailed / ResultNotSubmitted / DriverError / Cancelled / ContextLimit /
+ *   WorldReadCapExceeded—a world read exceeded its operation's limit (`files.grep`: 2,000 matches or
+ *   256 KB serialized, whichever comes first; `git.diff`: 512 KB; see `facade/world-read-caps.ts`). This is node-level
+ *   rather than run-level because of the **rejection channel**, not severity: a world read returns a promise the script can `catch`,
+ *   so “narrow the pattern or add a glob” is a real recovery path for scripts. It is intentionally **not** folded into
+ *   DriverError—the limit lets a script revise its own contract, while distinguishing them by matching message text
+ *   is exactly what this union type is meant to prevent.
+ * - Run-level: InputHashMismatch / UnknownActor / MissingAskSpec /
+ *   DuplicateActorName—two createActor calls in one run resolve to the same **non-empty** effective name
+ *   (effective name = `spec.name` after normalizePersona; persona.name takes precedence over the name argument). This applies to
+ *   **all** runs, not only amended runs: named actors are identity keys for amend-resume cache imports, and any
+ *   run may become a predecessor for a future amendment; duplicate names in a predecessor make import matching ambiguous (the
+ *   “engine naming uniqueness” row in docs/execution-engine.md). Anonymous names (missing or empty) are neither checked nor forbidden—the tradeoff is no cache eligibility.
+ *   Literal duplicate names also get a compile-time courtesy diagnostic (analysis/actor-names.ts), but only runtime can check dynamic names,
+ *   so this is the actual guard.
+ *   ReportCapExceeded—a run exceeds 65,536 reports, one serialized item exceeds 1 MiB, or all items exceed 1 GiB
+ *   (see `facade/report-caps.ts`). It is run-level rather than node-level, the same boundary as WorldReadCapExceeded but with the opposite result:
+ *   `report` returns `void`, so the script has **no** catchable channel and the error has nowhere to go except the run.
+ *   For that reason, both limits must be high enough that a reasonable script never reaches them—the author has no recovery path.
+ *   It is also intentionally not folded into DriverError: the limit lets the script revise its own contract.
+ * - Construction-time (run has not started; engine constructor throws synchronously): ScriptHashMismatch
+ * - Host-level (**never emitted by the engine**): Interrupted—the process owning the run ended before settlement, so the host reconciles the row
+ *   stuck in running during the next construction (`bootstrap/src/app/dynamic-workflow-run-service.ts` orphan reconciliation, desktop bug observed 2026-08-19).
+ *   This must have a **distinct code** rather than reuse DriverError: script-thrown exceptions also become DriverError (`dynamic-workflow-runtime/src/harness.ts:311`),
+ *   and sharing a code would force “process killed” and “script failed” to be distinguished by message text—the exact problem this union type prevents.
+ *   ProviderStop—a subagent (or tool-side) model request encounters a **deterministic** model error (invalid authentication,
+ *   model not included in the plan, quota exhausted, etc.; see the policy table in docs/execution-engine.md), and the driver stops
+ *   the run as `stopped(provider)` instead of failing a node; structured details are in `providerStop`. This is another host-level case:
+ *   the engine only persists it unchanged in `stop("provider", error)`.
+ * Always use these codes for control-flow decisions; never match error text.
  */
 export type WorkflowErrorCode =
   | "ValidationFailed"
@@ -64,9 +58,9 @@ export type WorkflowErrorCode =
   | "ScriptHashMismatch"
   | "Interrupted"
   | "ProviderStop"
-  // ——————————— User-facing artifacts ———————————
-  // ⚠ Terminology: these artifacts are all **user-facing outputs** published by scripts, unrelated
-  // to `RunSettlement.artifact` (the top-level return value).
+  // ——————————— User-facing artifacts (docs/dynamic-workflow/authoring.md, “Publishing content”) ———————————
+  // ⚠ Terminology: these artifacts are all **user-facing outputs** published by scripts, unrelated to
+  // `RunSettlement.artifact` (the top-level return value).
   //
   // The error channel splits by **member family**, using the same reasoning as the
   // WorldReadCapExceeded / ReportCapExceeded distinction: content members (`file`/`markdown`)
@@ -84,8 +78,8 @@ export type WorkflowErrorCode =
   | "ArtifactSpecInvalid"
   | "ArtifactRedeclared"
   | "ArtifactUndeclared"
-  // If a second ID wants to be primary, content members reject at node level while preset members
-  // fail the run, following the same distinction as above.
+  // A second ID tries to become primary (docs/dynamic-workflow/authoring.md, “Ids, tags and versions”): content members cause a node-level rejection,
+  // while declared members fail the run—the same boundary as above.
   | "ArtifactPrimaryConflict";
 
 /**

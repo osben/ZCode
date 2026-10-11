@@ -15,7 +15,7 @@ interface DraftModelReadinessState {
   dismissed: boolean;
 }
 
-interface DraftModelReadinessGate {
+export interface DraftModelReadinessGate {
   /** Allow workspace prepare/prewarm only after readiness is confirmed or the check itself is unavailable. */
   agentStartupAllowed: boolean;
   error: ModelConfigMissingUiError | null;
@@ -26,7 +26,7 @@ interface DraftModelReadinessGate {
   markProviderNotReady(): void;
 }
 
-function resolveModelSelectionReadinessStatus(
+export function resolveModelSelectionReadinessStatus(
   view: ModelSelectionView,
 ): Extract<DraftModelReadinessStatus, "ready" | "missing"> {
   return view.providers.some((provider) => provider.models.length > 0) ? "ready" : "missing";

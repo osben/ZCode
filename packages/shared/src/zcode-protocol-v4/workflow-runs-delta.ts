@@ -14,7 +14,7 @@
 //      diff first checks references, and deep comparison happens only for the run that actually changed.
 //   3. Correctness never depends on references: matching references are only a fast path; otherwise it always falls back to structural comparison.
 //
-// Contract: for any pair (prior, next) produced by the reducer,
+// Contract (pinned by property tests): for any pair (prior, next) produced by the reducer,
 // `JSON.stringify(applyAll(snapshot with prior, diff(prior, next)).workflowRuns) === JSON.stringify(next)`
 // — **byte-for-byte**, not merely deep-equal. Key order is therefore a first-class part of this module; see {@link canonicalWorkflowRun}.
 
@@ -42,7 +42,8 @@ import {
  * has no such history when rebuilding a run. Reorder both sides with this list so the order matches — which is why the reducer's
  * output also passes through this function (one shared point, not two).
  *
- * Derive the key order from the schema to avoid separately maintained field lists that give producers and consumers different run shapes.
+ * Derived from the schema rather than hand-copied: a hand-maintained run field list once caused
+ * an incident (see the header comment in delta.ts).
  */
 const WORKFLOW_RUN_KEYS = Object.keys(workflowRunSchema.shape) as (keyof WorkflowRunState)[];
 const WORKFLOW_RUN_KEY_SET: ReadonlySet<string> = new Set<string>(WORKFLOW_RUN_KEYS);
@@ -408,8 +409,11 @@ function upsertWorkflowRunEntries<T extends { siteId: string; ordinal: number }>
  * Deletion tables have no such guard — the merge cannot distinguish “key born and evicted within this window” from “key the client already held”; each eviction frees a slot, so distinct keys deleted in a wide flush window can exceed 1024.
  * This was impossible before eviction: tables only grew, so distinct keys touched in one incarnation could not exceed the table limit.
  *
- * An oversized payload fails parsing for the whole patch and drops the frame; the publisher's two limits (500 ops / 1 MiB) do not trigger at this
- * size. Check all four tables because this guard is cheap and should not depend on the argument above remaining valid.
+ * An oversized payload is not stripped of one key: it makes the whole patch fail to parse, the
+ * frame is dropped, and that subscription goes silent from then on (the shape of the incident
+ * recorded in workflow-runs.ts), while neither of the publisher's two backstops (500 ops / 1 MiB)
+ * triggers at this size. Check all four tables because this guard is cheap and should not depend
+ * on the argument above remaining valid.
  *
  * Merging is an **optimization**, so refusing to merge is always safe: each op is within limits, and delivering them separately preserves the final state byte-for-byte.
  */
@@ -426,8 +430,9 @@ export function workflowRunUpdateWithinWireBounds(
 }
 
 /**
- * Entry-table capacity limits, defaulting to {@link WORKFLOW_RUNS_LIMITS}.
- * Delta application and merging must use the same limits.
+ * Wire limits for the entry tables. An injection point kept only for tests (the default is
+ * {@link WORKFLOW_RUNS_LIMITS}): the real limit is 1024, and the "merge refused" path is
+ * reachable only with a small limit, which the property tests need to actually exercise.
  */
 export interface WorkflowRunWireBounds {
   readonly maxActors: number;

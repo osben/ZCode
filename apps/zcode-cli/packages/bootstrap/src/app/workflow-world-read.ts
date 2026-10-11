@@ -46,14 +46,6 @@ export interface WorldReadDeps {
   readonly executionPort: ExecutionPort;
   /** Base directory for path resolution and relativization (workspace root). */
   readonly cwd: string;
-  /**
-   * Approved command set for world.run (collected from literal cmd values at compile time and
-   * shown in the confirmation dialog). **Missing means all world.run calls are rejected**
-   * (fail-closed): an empty authorization set and forgotten wiring must be equally safe. This
-   * recheck is only defense in depth; authorization itself happens through compile-time literals
-   * and submission confirmation.
-   */
-  readonly declaredRunCommands?: ReadonlySet<string>;
 }
 
 /**
@@ -322,10 +314,16 @@ interface WorldRunResult {
  *      `status:"failed"` with `error` absent (statusFromExit/statusFailure in
  *      node-execution-adapter-results.ts), reliably distinguishing it from spawn failure or
  *      timeout. The normal gated-loop path should not use exception control flow.
- *   2. **Recheck cmd.** Authorization happens through compile-time literals and submission
- *      confirmation. Comparing against declaredRunCommands here only guards against wiring
- *      errors (lowering / wire protocol passed another string), and fails closed: missing set
- *      and a command absent from the set are both rejected.
+ *   2. **No runtime command allowlist.** Authorization happens only at compile time: cmd must be
+ *      a literal (9003), so every command the script can run is readable before submission and
+ *      the confirmation graph shows them one by one. A launch-time `declaredRunCommands` set
+ *      collected from the seed script was once rechecked here ("guarding only against wiring
+ *      errors")-but hole-filling (FillWorkflowHole) compiles the effective script while the
+ *      driver still held the seed's set, so a command appearing for the first time in a function
+ *      body was rejected as a "wiring error." Lowering runs the script's own text, and the
+ *      filled-in code is the effective script's own lowering, so that recheck guarded against
+ *      nothing real while adding a second data source that had to be synced manually; it was
+ *      removed.
  *   3. **No timeout ceiling.** Defaults to 300s; scripts can increase it as needed (for tests
  *      that really run for a long time). Cancellation remains the final control.
  *
@@ -335,15 +333,6 @@ interface WorldRunResult {
  */
 async function worldRun(deps: WorldReadDeps, args: unknown[]): Promise<WorldRunResult> {
   const { argv, cmd, timeoutMs } = worldRunArgs(args);
-
-  const declared = deps.declaredRunCommands;
-  if (declared === undefined || !declared.has(cmd)) {
-    // Fail-closed wiring defense: cmd should have passed compile-time literal collection and confirmation before reaching here.
-    throw new WorkflowError(
-      "DriverError",
-      `world.run: command '${cmd}' is not in the declared set of commands (a wiring error).`,
-    );
-  }
 
   const stdoutCap = WORLD_READ_CAPS.runStdoutMaxBytes;
   const stderrCap = WORLD_READ_CAPS.runStderrMaxBytes;

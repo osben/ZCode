@@ -1,4 +1,20 @@
+import { getUnavailableReplyFallback } from "#src/bots/groupReply.js";
+import {
+  createGroupMemberDirectory,
+  type GroupMemberPage,
+} from "#src/bots/providers/groupMemberDirectory.js";
+import { channelContentPartsSchema, channelContentText, botGroupCardSchema } from "@zcode/shared";
+import {
+  isFeishuBotSender,
+  isGroupControlCard,
+  readGroupConversationCardText,
+  readGroupCardText,
+  readGroupMessage,
+  readGroupMentionText,
+} from "#src/bots/providers/feishuGroupMessages.js";
 /* eslint-disable max-lines -- The Feishu provider centralizes authentication, message parsing, card delivery, and reaction-based typing; split it by capability later. */
+import { botTopicMessageSchema } from "@zcode/shared";
+import { readTopicHistory, TopicHistoryPermissionError } from "#src/bots/topicHistory.js";
 import type {
   BotInboundAttachment,
   BotConfig,
@@ -15,6 +31,7 @@ import type {
 } from "./types.js";
 import { formatBotMessage } from "../messages.js";
 import { fetchBotProviderJson } from "#src/bots/providers/providerRequest.js";
+import { createGroupInputReactionUpdater } from "#src/bots/providers/groupInputReaction.js";
 
 interface FeishuProviderDeps {
   loadCredential(key: string): Promise<string | null>;
@@ -23,8 +40,8 @@ interface FeishuProviderDeps {
 
 export interface FeishuWebSocketClient {
   close(): void;
-  /** Terminal state after the SDK exhausts automatic reconnect attempts. */
-  terminated: Promise<void>;
+  /** Terminal state after the SDK exhausts automatic reconnects; older test doubles may omit it. */
+  terminated?: Promise<void>;
 }
 
 const FEISHU_APP_ID_PATTERN = /^cli_[0-9a-fA-F]{16}$/;
@@ -39,6 +56,7 @@ interface FeishuAccessTokenResponse {
   code?: number;
   msg?: string;
   tenant_access_token?: string;
+  expire?: number;
 }
 
 interface FeishuSendMessageResponse {
@@ -109,7 +127,7 @@ function readPlanApprovalContent(message: BotOutboundMessage): string | null {
 }
 
 function formatSelectionCommand(selection: SelectionPrompt, optionId: string): string {
-  if (selection.action === "permission.respond") {
+  if (selection.action === "permission.respond" || selection.action === "queue.cancel") {
     return optionId;
   }
   if (selection.action === "elicitation.respond") {
@@ -318,11 +336,72 @@ function buildFeishuElicitationAnswerElements(
   return elements;
 }
 
+function addGroupCardContext(
+  card: Record<string, unknown>,
+  message: BotOutboundMessage,
+): Record<string, unknown> {
+  const bodyMentions = new Set(
+    message.contentParts?.flatMap((part) =>
+      part.type === "channelMention" ? [part.targetId] : [],
+    ) ?? [],
+  );
+  if (message.contentParts && isRecord(card.body)) {
+    card.body.elements = [
+      {
+        tag: "markdown",
+        content: message.contentParts
+          .map((part) =>
+            part.type === "channelMention"
+              ? `<at id=${part.targetId}></at>`
+              : part.text.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;"),
+          )
+          .join(""),
+      },
+    ];
+  }
+  // Accept only the person ID injected by the service; do not derive notifications from body/name parsing or let all expand the notification scope.
+  const ids = [...new Set(message.mentionedUserIds ?? [])].filter(
+    (id) => /^ou_[a-zA-Z0-9_-]+$/u.test(id) && !bodyMentions.has(id),
+  );
+  if (
+    message.providerUserId.startsWith("oc_") &&
+    ids.length &&
+    isRecord(card.body) &&
+    Array.isArray(card.body.elements)
+  ) {
+    card.body.elements.unshift({
+      tag: "markdown",
+      content: ids.map((id) => `<at id=${id}></at>`).join(" "),
+    });
+  }
+  if (!message.groupCard) return card;
+  const visit = (node: unknown): void => {
+    if (Array.isArray(node)) {
+      for (const child of node) visit(child);
+      return;
+    }
+    if (!isRecord(node)) return;
+    if (isRecord(node.value) && typeof node.value.command === "string")
+      node.value = { ...node.value, groupCard: message.groupCard };
+    for (const value of Object.values(node)) visit(value);
+  };
+  visit(card);
+  return card;
+}
 function buildFeishuElicitationCardPayload(message: BotOutboundMessage): Record<string, unknown> {
+  return addGroupCardContext(buildFeishuElicitationCardPayloadBody(message), message);
+}
+function buildFeishuInteractiveCardPayload(message: BotOutboundMessage): Record<string, unknown> {
+  return addGroupCardContext(buildFeishuInteractiveCardPayloadBody(message), message);
+}
+
+function buildFeishuElicitationCardPayloadBody(
+  message: BotOutboundMessage,
+): Record<string, unknown> {
   const elicitation = message.elicitation;
   const selection = message.selection;
   if (!elicitation) {
-    return buildFeishuInteractiveCardPayload(message);
+    return buildFeishuInteractiveCardPayloadBody(message);
   }
   const currentQuestion =
     elicitation.questions[elicitation.currentQuestionIndex] ?? elicitation.questions[0];
@@ -525,22 +604,34 @@ function readFeishuPostLocaleTitle(content: Record<string, unknown>): string {
   return readString(content, "title") || readString(zhCn, "title") || readString(enUs, "title");
 }
 
-function formatFeishuPostToken(token: unknown): string {
+function formatFeishuPostToken(token: unknown, botOpenId?: string, mentions?: unknown): string {
   if (typeof token === "string") {
     return token;
   }
   if (Array.isArray(token)) {
-    return token.map(formatFeishuPostToken).filter(Boolean).join("");
+    return token
+      .map((item) => formatFeishuPostToken(item, botOpenId, mentions))
+      .filter(Boolean)
+      .join("");
   }
   if (!isRecord(token)) {
     return "";
   }
   const tag = readString(token, "tag");
   if (tag === "at") {
-    return "";
+    if (!botOpenId) return "";
+    // The bot’s own @ mention in group rich text must also be included in the ordered mentions; do not discard it during text conversion.
+    const id = readString(token, "user_id");
+    const mention = (Array.isArray(mentions) ? mentions : []).find(
+      (item) => isRecord(item) && isRecord(item.id) && item.id.open_id === id,
+    );
+    if (isRecord(mention) && typeof mention.key === "string") return mention.key;
+    return id.startsWith("@_") ? id : `@${readString(token, "user_name") || id}`;
   }
   const nested = token.content ?? token.children ?? token.elements;
-  const nestedText = Array.isArray(nested) ? formatFeishuPostToken(nested) : "";
+  const nestedText = Array.isArray(nested)
+    ? formatFeishuPostToken(nested, botOpenId, mentions)
+    : "";
   const text =
     readString(token, "text") ||
     readString(token, "un_escape_text") ||
@@ -555,13 +646,19 @@ function formatFeishuPostToken(token: unknown): string {
   return text;
 }
 
-function readFeishuPostText(content: Record<string, unknown> | null): string {
+function readFeishuPostText(
+  content: Record<string, unknown> | null,
+  botOpenId?: string,
+  mentions?: unknown,
+): string {
   if (!content) {
     return "";
   }
   const postContent = readFeishuPostLocaleContent(content);
   const lines = Array.isArray(postContent)
-    ? postContent.map((line) => formatFeishuPostToken(line).trim()).filter(Boolean)
+    ? postContent
+        .map((line) => formatFeishuPostToken(line, botOpenId, mentions).trim())
+        .filter(Boolean)
     : [];
   const title = readFeishuPostLocaleTitle(content).trim();
   const body = lines.join("\n").trim();
@@ -631,17 +728,112 @@ function readFeishuTextMessage(
   const message = isRecord(event?.message) ? event.message : null;
   const sender = isRecord(event?.sender) ? event.sender : null;
   const senderId = isRecord(sender?.sender_id) ? sender.sender_id : null;
-  const content = parseJsonRecord(message?.content);
+  const content = isRecord(payload.zcodeNativeCardContent)
+    ? payload.zcodeNativeCardContent
+    : parseJsonRecord(message?.content);
   const msgType = readString(message, "message_type") || readString(message, "msg_type");
+  // Interactive cards and bot confirmation replies are part of the control flow; extracting card text previously triggered another bot by mistake.
+  if (
+    payload.zcodeIgnoreInteractionMessage === true ||
+    (isFeishuBotSender(readString(sender, "sender_type")) &&
+      msgType === "interactive" &&
+      isGroupControlCard(content))
+  )
+    return null;
   const attachment = readFeishuAttachment(msgType, content);
+  const attachments: BotInboundAttachment[] = attachment ? [attachment] : [];
+  if (isRecord(payload.zcodeReferencedAttachment)) {
+    const ref = payload.zcodeReferencedAttachment;
+    if (
+      (ref.kind === "image" || ref.kind === "file") &&
+      typeof ref.providerFileId === "string" &&
+      typeof ref.filename === "string" &&
+      typeof ref.mimeType === "string"
+    ) {
+      const metadata = isRecord(ref.providerMetadata) ? ref.providerMetadata : null;
+      const resourceMessageId = readString(metadata, "resourceMessageId");
+      if (resourceMessageId)
+        attachments.push({
+          id: ref.providerFileId,
+          kind: ref.kind,
+          providerFileId: ref.providerFileId,
+          filename: ref.filename,
+          mimeType: ref.mimeType,
+          providerMetadata: { resourceMessageId },
+        });
+    }
+  }
+  if (Array.isArray(payload.zcodeReferencedInlineImages)) {
+    for (const image of payload.zcodeReferencedInlineImages) {
+      if (
+        isRecord(image) &&
+        typeof image.imageKey === "string" &&
+        typeof image.messageId === "string"
+      ) {
+        const item = readFeishuAttachment("image", { image_key: image.imageKey });
+        if (item)
+          attachments.push({ ...item, providerMetadata: { resourceMessageId: image.messageId } });
+      }
+    }
+  }
+  let malformedInlineImage = false;
+  if (msgType === "post" && content) {
+    const visit = (node: unknown): void => {
+      if (Array.isArray(node)) {
+        for (const child of node) visit(child);
+        return;
+      }
+      if (!isRecord(node)) return;
+      if (node.tag === "img") {
+        const image = readFeishuAttachment("image", node);
+        if (image) attachments.push(image);
+        else malformedInlineImage = true;
+      }
+      visit(node.content ?? node.children ?? node.elements);
+    };
+    visit(readFeishuPostLocaleContent(content));
+  }
+  // A missing image reference must not silently degrade to executing only the body text.
+  if (malformedInlineImage) return null;
   // Fix: rich-text or linked messages that look like plain text in the Feishu client are delivered with message_type=post.
   // The previous code read only content.text, parsed post messages as empty text, and discarded them, so users saw that they sent a message but the app did not respond.
   const rawText =
+    (msgType === "interactive" ? readGroupConversationCardText(content, message?.mentions) : "") ||
     readString(content, "text") ||
-    readFeishuPostText(content) ||
+    readFeishuPostText(
+      content,
+      readString(payload, "zcodeBotOpenId") || undefined,
+      message?.mentions,
+    ) ||
     readString(event, "text_without_at_bot") ||
     readString(event, "text");
-  const text = stripFeishuMentions(rawText);
+  const incomingChatType = readString(message, "chat_type") || readString(event, "chat_type");
+  if (incomingChatType === "topic_group") return null;
+  const groupMessage =
+    incomingChatType === "group"
+      ? readGroupMessage(
+          rawText,
+          message?.mentions,
+          readString(payload, "zcodeBotOpenId"),
+          readString(sender, "sender_type"),
+          readString(senderId, "open_id"),
+        )
+      : undefined;
+  // The Provider verifies sender and mention identities; a bot’s group-owner chat requires a native @, while group/thread enablement is checked by the service.
+  if (
+    isFeishuBotSender(readString(sender, "sender_type")) &&
+    (incomingChatType !== "group" ||
+      (!readString(message, "thread_id") && !groupMessage?.mentionedBot))
+  )
+    return null;
+  if (
+    incomingChatType === "group" &&
+    (!groupMessage || (!groupMessage.mentionedBot && !readString(message, "thread_id")))
+  )
+    return null;
+  const text = groupMessage?.text ?? stripFeishuMentions(rawText);
+  // Group permissions use only the application’s open_id; do not mistake IDs from another namespace for binding identities.
+  if (incomingChatType === "group" && !readString(senderId, "open_id")) return null;
   const userId =
     readString(senderId, "open_id") ||
     readString(senderId, "user_id") ||
@@ -651,7 +843,8 @@ function readFeishuTextMessage(
     readString(event, "union_id");
   const chatId = readString(message, "chat_id") || readString(event, "open_chat_id");
   const messageId = readString(message, "message_id");
-  if ((!text && !attachment) || !userId) {
+  // An @-only group message is still a valid wake-up; the service handles the empty request using references/thread context.
+  if ((!text && attachments.length === 0 && incomingChatType !== "group") || !userId) {
     return null;
   }
   const chatType = readFeishuChatType(
@@ -660,13 +853,55 @@ function readFeishuTextMessage(
   return {
     botId,
     text,
-    ...(attachment ? { attachments: [attachment] } : {}),
+    ...(groupMessage
+      ? {
+          ...(isFeishuBotSender(readString(sender, "sender_type"))
+            ? { senderType: "app" as const }
+            : {}),
+          botOpenId: readString(payload, "zcodeBotOpenId") || undefined,
+          mentionedBot: groupMessage.mentionedBot,
+          commandText: groupMessage.commandText,
+          ...(groupMessage.contentParts
+            ? {
+                contentParts: groupMessage.contentParts.map((part) =>
+                  part.type === "text"
+                    ? part
+                    : {
+                        ...part,
+                        channel: provider === "lark" ? ("lark" as const) : ("feishu" as const),
+                        refId: `${messageId}:${part.refId}`,
+                      },
+                ),
+              }
+            : {}),
+          topicRootIsCurrentBot: payload.zcodeTopicRootIsCurrentBot === true,
+        }
+      : {}),
+    ...(isRecord(payload.zcodeReferencedMessage) &&
+    typeof payload.zcodeReferencedMessage.messageId === "string" &&
+    typeof payload.zcodeReferencedMessage.text === "string"
+      ? {
+          referencedMessage: {
+            ...payload.zcodeReferencedMessage,
+            messageId: payload.zcodeReferencedMessage.messageId,
+            text: payload.zcodeReferencedMessage.text,
+          },
+        }
+      : {}),
+    ...(attachments.length ? { attachments } : {}),
     actor: {
       provider,
       botId,
       providerUserId: userId,
+      displayName: readString(sender, "sender_name") || undefined,
       chatType,
       chatId: chatType === "group" && chatId ? chatId : undefined,
+      ...(chatType === "group" && readString(message, "thread_id")
+        ? {
+            threadId: readString(message, "thread_id"),
+            rootMessageId: readString(message, "root_id") || messageId,
+          }
+        : {}),
       providerMessageId: messageId || undefined,
     },
   };
@@ -724,9 +959,13 @@ function readFeishuCardAction(
   }
   // Bug fix: context.open_chat_id may also be present in Feishu card callbacks for direct-message buttons.
   // Previously, the presence of chatId was used to detect group chats, incorrectly rejecting direct-message card buttons as "direct messages only."
-  const chatType = readFeishuChatType(contextChatType);
+  const chatType = readFeishuChatType(readString(payload, "zcodeChatType") || contextChatType);
+  const groupCard = botGroupCardSchema.safeParse(value?.groupCard ?? behaviorValue?.groupCard);
   return {
     botId,
+    ...(chatType === "group"
+      ? { groupCardAction: true, ...(groupCard.success ? { groupCard: groupCard.data } : {}) }
+      : {}),
     text: command,
     actor: {
       provider,
@@ -734,6 +973,9 @@ function readFeishuCardAction(
       providerUserId: openId,
       chatType,
       chatId: chatType === "group" && chatId ? chatId : undefined,
+      ...(chatType === "group" && groupCard.success && groupCard.data.threadId
+        ? { threadId: groupCard.data.threadId }
+        : {}),
       ...(providerMessageId ? { providerMessageId } : {}),
     },
   };
@@ -852,8 +1094,50 @@ function buildFeishuButtonElement(params: {
   };
 }
 
-function buildFeishuInteractiveCardPayload(message: BotOutboundMessage): Record<string, unknown> {
+function buildFeishuInteractiveCardPayloadBody(
+  message: BotOutboundMessage,
+): Record<string, unknown> {
   const selection = message.selection;
+  if (selection?.action === "queue.cancel") {
+    return {
+      schema: "2.0",
+      config: { wide_screen_mode: true },
+      body: {
+        padding: "8px 12px 8px 12px",
+        elements: [
+          {
+            tag: "column_set",
+            flex_mode: "none",
+            horizontal_spacing: "8px",
+            columns: [
+              {
+                tag: "column",
+                width: "weighted",
+                weight: 1,
+                vertical_align: "center",
+                elements: [
+                  { tag: "markdown", content: formatFeishuCardMarkdownContent(message.text) },
+                ],
+              },
+              {
+                tag: "column",
+                width: "auto",
+                vertical_align: "center",
+                elements: selection.options.map((option) =>
+                  buildFeishuButtonElement({
+                    text: option.label,
+                    type: "default",
+                    command: formatSelectionCommand(selection, option.id),
+                    originalText: message.text,
+                  }),
+                ),
+              },
+            ],
+          },
+        ],
+      },
+    };
+  }
   const elements: Array<Record<string, unknown>> = [
     {
       tag: "markdown",
@@ -984,7 +1268,7 @@ function buildFeishuStreamingCardPayload(
   if (state.status !== "sealed") {
     elements.push({
       tag: "markdown",
-      content: formatFeishuCardMarkdownContent(`_${formatFeishuStreamingStatus(state)}_`),
+      content: formatFeishuCardMarkdownContent(formatFeishuStreamingStatus(state)),
     });
   }
   return {
@@ -1039,7 +1323,7 @@ export function splitFeishuStreamingCardStates(
   }));
 }
 
-function splitFeishuText(text: string): string[] {
+export function splitFeishuText(text: string): string[] {
   const limit = 1900;
   const chunks: string[] = [];
   for (let index = 0; index < text.length; index += limit) {
@@ -1065,6 +1349,7 @@ async function readTenantAccessToken(
   if (cached && cached.expiresAt > Date.now() + 60_000) {
     return cached.token;
   }
+  const requestedAt = Date.now();
   const response = await fetchBotProviderJson<FeishuAccessTokenResponse>(
     `${getFeishuBaseUrl(bot)}/open-apis/auth/v3/tenant_access_token/internal`,
     {
@@ -1084,10 +1369,16 @@ async function readTenantAccessToken(
   if (payload.code !== 0 || !payload.tenant_access_token) {
     throw new Error(payload.msg || "Feishu tenant_access_token failed.");
   }
-  accessTokenCache.set(cacheKey, {
-    token: payload.tenant_access_token,
-    expiresAt: Date.now() + 90 * 60_000,
-  });
+  // Feishu may return an old token that has not expired yet; a fixed 90-minute cache can exceed its actual remaining lifetime.
+  // Start the timer when the request begins so network latency is not incorrectly counted as token lifetime.
+  if (typeof payload.expire === "number" && Number.isFinite(payload.expire) && payload.expire > 0) {
+    accessTokenCache.set(cacheKey, {
+      token: payload.tenant_access_token,
+      expiresAt: requestedAt + payload.expire * 1_000,
+    });
+  } else {
+    accessTokenCache.delete(cacheKey);
+  }
   return payload.tenant_access_token;
 }
 
@@ -1112,9 +1403,33 @@ function createFeishuMessageError(
   ].filter((detail): detail is string => Boolean(detail));
   // Reason for fix: Feishu HTTP 400 responses include a business error code, reason, and diagnostic log_id in the body.
   // The old implementation threw based on HTTP status first, permanently discarding this parsed information and making permission, rate-limit, and card errors indistinguishable.
-  return new Error(
-    `Feishu ${operation} failed: HTTP ${status}${details.length > 0 ? `, ${details.join(", ")}` : ""}`,
+  return Object.assign(
+    new Error(
+      `Feishu ${operation} failed: HTTP ${status}${details.length > 0 ? `, ${details.join(", ")}` : ""}`,
+    ),
+    {
+      // A server error without a business receipt, or a “sending” response, does not prove that this send did not happen.
+      deliveryRejected:
+        payload?.code !== 230049 &&
+        ((typeof payload?.code === "number" && payload.code !== 0) ||
+          (status >= 400 && status < 500 && status !== 408)),
+      ...(payload?.code === 230011 ? { deliveryReplyUnavailable: true } : {}),
+      ...(status === 429 || payload?.code === 230020 || payload?.code === 99991400
+        ? { retryAfterMs: 1000 }
+        : {}),
+    },
   );
+}
+
+function resolveFeishuReplyTarget(message: BotOutboundMessage) {
+  const replyToMessageId =
+    message.replyToMessageId || (message.threadId ? message.rootMessageId : undefined);
+  // Cause: temporary approval/Q&A cards bypassed thread routing and went directly to the group-owner chat; resolve routing consistently and reject delivery without an anchor.
+  if (message.threadId && !replyToMessageId)
+    throw Object.assign(new Error("Topic reply target is unavailable"), {
+      deliveryRejected: true,
+    });
+  return { replyToMessageId, replyInThread: Boolean(message.threadId) };
 }
 
 async function sendFeishuInteractiveCard(
@@ -1123,9 +1438,12 @@ async function sendFeishuInteractiveCard(
   receiveId: string,
   card: Record<string, unknown>,
   signal?: AbortSignal,
+  delivery?: { replyToMessageId?: string; uuid?: string; replyInThread?: boolean },
 ): Promise<string | null> {
   const response = await fetchBotProviderJson<FeishuSendMessageResponse>(
-    `${getFeishuBaseUrl(bot)}/open-apis/im/v1/messages?receive_id_type=${resolveFeishuReceiveIdType(receiveId)}`,
+    delivery?.replyToMessageId
+      ? `${getFeishuBaseUrl(bot)}/open-apis/im/v1/messages/${encodeURIComponent(delivery.replyToMessageId)}/reply`
+      : `${getFeishuBaseUrl(bot)}/open-apis/im/v1/messages?receive_id_type=${resolveFeishuReceiveIdType(receiveId)}`,
     {
       method: "POST",
       headers: {
@@ -1133,7 +1451,9 @@ async function sendFeishuInteractiveCard(
         "content-type": "application/json",
       },
       body: JSON.stringify({
-        receive_id: receiveId,
+        ...(!delivery?.replyToMessageId ? { receive_id: receiveId } : {}),
+        ...(delivery?.uuid ? { uuid: delivery.uuid } : {}),
+        ...(delivery?.replyInThread ? { reply_in_thread: true } : {}),
         msg_type: "interactive",
         content: JSON.stringify(card),
       }),
@@ -1151,6 +1471,8 @@ async function sendFeishuInteractiveCard(
       resolveFeishuReceiveIdType(receiveId),
     );
   }
+  if ((delivery?.uuid || delivery?.replyToMessageId) && !payload.data?.message_id)
+    throw new Error("Feishu delivery outcome is unknown: no message_id");
   return payload.data?.message_id ?? null;
 }
 
@@ -1432,28 +1754,53 @@ export function createFeishuWebSocketEventHandlers(params: {
   return {
     "im.message.receive_v1": async (payload: unknown) => {
       await onPayload({
+        ...(isRecord(payload) ? payload : { payload }),
         botId: bot.id,
         zcodeProvider: bot.provider,
-        ...(isRecord(payload) ? payload : { payload }),
+      });
+    },
+    "im.chat.member.bot.deleted_v1": async (payload: unknown) => {
+      await onPayload({
+        ...(isRecord(payload) ? payload : {}),
+        botId: bot.id,
+        zcodeProvider: bot.provider,
+        zcodeBotRemoved: true,
       });
     },
     // Bug fix: we simulate typing with a Typing reaction, and Feishu sends reactions it created back over the long connection.
     // Business logic does not need to process this event, but without a handler the SDK keeps logging warnings that interfere with troubleshooting.
     "im.message.reaction.created_v1": async () => undefined,
     "card.action.trigger": async (payload: unknown) => {
+      const responseState = { deferred: false };
       const callbackPayload = {
+        ...(isRecord(payload) ? payload : { payload }),
+        zcodeFeishuCardResponseState: responseState,
         botId: bot.id,
         zcodeProvider: bot.provider,
         zcodeFeishuSynchronousCardAction: true,
-        ...(isRecord(payload) ? payload : { payload }),
       };
       // Reason for fix: the synchronous response after a Feishu click is the card state the client reliably applies. The transport layer must not
       // build a simplified card from zcodeCardText or return undefined and rely on a side-channel PATCH; it must consume the complete outbound
       // already advanced by the business layer and generate the next question card from the same elicitation state.
-      const message = await onPayload(callbackPayload);
+      // Feishu requires a response within three seconds. A timeout changes only the card delivery method; the business request still runs once.
+      let deadline: ReturnType<typeof setTimeout> | undefined;
+      const pending = onPayload(callbackPayload);
+      const message = await Promise.race([
+        pending,
+        new Promise<null>((resolve) => {
+          deadline = setTimeout(() => {
+            responseState.deferred = true;
+            resolve(null);
+          }, 2000);
+        }),
+      ]).finally(() => {
+        if (deadline) clearTimeout(deadline);
+      });
+      if (responseState.deferred) return {};
       if (!message) {
         return undefined;
       }
+      if (message.callbackToastOnly) return { toast: { type: "error", content: message.text } };
       return {
         card: {
           type: "raw",
@@ -1600,6 +1947,107 @@ export async function startFeishuBotWebSocket(params: {
 }
 
 export function createFeishuBotProvider(deps: FeishuProviderDeps): BotProviderAdapter {
+  const reactionBots = new Map<string, BotConfig>();
+  const updateReaction = createGroupInputReactionUpdater(async (key, state) => {
+    const [botKey, messageId] = JSON.parse(key) as [string, string];
+    const bot = reactionBots.get(botKey)!;
+    const token = await readTenantAccessToken(bot, deps);
+    if (!token) throw new Error("Feishu reaction credentials unavailable");
+    const url = `${getFeishuBaseUrl(bot)}/open-apis/im/v1/messages/${encodeURIComponent(messageId)}/reactions`;
+    const headers = { authorization: `Bearer ${token}`, "content-type": "application/json" };
+    const emoji = {
+      waiting: "OneSecond",
+      working: "OnIt",
+      done: "CheckMark",
+      failed: "CrossMark",
+      cancelled: null,
+    }[state];
+    const ownedTypes = new Set(["OK", "OneSecond", "OnIt", "CheckMark", "CrossMark"]);
+    const obsolete: string[] = [];
+    let found = false;
+    let cursor = "";
+    const cursors = new Set<string>();
+    do {
+      if (cursors.has(cursor)) throw new Error("Feishu reaction pagination repeated");
+      cursors.add(cursor);
+      const response = await fetchBotProviderJson<{
+        code?: number;
+        msg?: string;
+        data?: {
+          has_more?: boolean;
+          page_token?: string;
+          items?: Array<{
+            reaction_id: string;
+            operator?: { operator_type?: string; operator_id?: string };
+            reaction_type?: { emoji_type?: string };
+          }>;
+        };
+      }>(`${url}?page_size=50${cursor ? `&page_token=${encodeURIComponent(cursor)}` : ""}`, {
+        method: "GET",
+        headers,
+      });
+      if (!response.ok || response.payload?.code !== 0)
+        throw new Error(response.payload?.msg || "Feishu list reactions failed");
+      for (const item of response.payload.data?.items ?? []) {
+        // After restart, check this app’s state with the platform; never remove reactions from group members or other bots.
+        if (
+          item.operator?.operator_type !== "app" ||
+          item.operator.operator_id !== bot.feishuAppId ||
+          !ownedTypes.has(item.reaction_type?.emoji_type ?? "")
+        )
+          continue;
+        if (item.reaction_type?.emoji_type === emoji && !found) found = true;
+        else obsolete.push(item.reaction_id);
+      }
+      cursor = response.payload.data?.has_more ? (response.payload.data.page_token ?? "") : "";
+      if (response.payload.data?.has_more && !cursor)
+        throw new Error("Feishu reaction cursor missing");
+    } while (cursor);
+    for (const id of obsolete) {
+      const response = await fetchBotProviderJson<FeishuReactionResponse>(
+        `${url}/${encodeURIComponent(id)}`,
+        { method: "DELETE", headers },
+      );
+      if (!response.ok || response.payload?.code !== 0)
+        throw new Error(response.payload?.msg || "Feishu delete status reaction failed");
+    }
+    if (emoji && !found) {
+      const response = await fetchBotProviderJson<FeishuReactionResponse>(url, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ reaction_type: { emoji_type: emoji } }),
+      });
+      if (!response.ok || response.payload?.code !== 0)
+        throw new Error(response.payload?.msg || "Feishu add status reaction failed");
+    }
+  });
+  const readDirectory = createGroupMemberDirectory();
+  const getGroupMemberNames = (bot: BotConfig, chatId: string) => {
+    const key = JSON.stringify([
+      getFeishuDomainProvider(bot),
+      bot.id,
+      bot.feishuAppId,
+      bot.credentialRef,
+      chatId,
+    ]);
+    return readDirectory(key, async (cursor) => {
+      const token = await readTenantAccessToken(bot, deps);
+      if (!token) throw new Error("Feishu credentials are unavailable");
+      const query = new URLSearchParams({ member_id_type: "open_id", page_size: "100" });
+      if (cursor) query.set("page_token", cursor);
+      const response = await fetchBotProviderJson<{
+        code?: number;
+        msg?: string;
+        data?: GroupMemberPage;
+      }>(
+        `${getFeishuBaseUrl(bot)}/open-apis/im/v1/chats/${encodeURIComponent(chatId)}/members?${query}`,
+        { headers: { authorization: `Bearer ${token}` } },
+      );
+      if (!response.ok || response.payload?.code !== 0 || !response.payload.data)
+        throw new Error(response.payload?.msg || "Cannot read group members");
+      return response.payload.data;
+    });
+  };
   async function trackDelivery<T>(
     bot: BotConfig,
     signal: AbortSignal | undefined,
@@ -1620,7 +2068,548 @@ export function createFeishuBotProvider(deps: FeishuProviderDeps): BotProviderAd
     trackDelivery(args[0], args[4], () => sendFeishuInteractiveCard(...args));
   const updateCard = (...args: Parameters<typeof updateFeishuInteractiveMessage>) =>
     trackDelivery(args[0], args[4], () => updateFeishuInteractiveMessage(...args));
+  const sendReplyCard = async (
+    bot: BotConfig,
+    token: string,
+    message: BotOutboundMessage,
+    card: Record<string, unknown>,
+    uuid?: string,
+  ): Promise<string | null> => {
+    let target = message;
+    for (;;) {
+      try {
+        return await sendCard(bot, token, message.providerUserId, card, undefined, {
+          ...resolveFeishuReplyTarget(target),
+          ...(uuid ? { uuid } : {}),
+        });
+      } catch (error) {
+        const details = error as {
+          deliveryRejected?: boolean;
+          deliveryReplyUnavailable?: boolean;
+        } | null;
+        // The delivery owner records fallback targets in the persisted result; this handles commands and temporary cards only.
+        if (
+          message.deliveryId ||
+          !message.providerUserId.startsWith("oc_") ||
+          !details?.deliveryRejected ||
+          !details.deliveryReplyUnavailable
+        )
+          throw error;
+        const fallback = getUnavailableReplyFallback(target);
+        if (!fallback) throw error;
+        target = { ...target, ...fallback };
+      }
+    }
+  };
+  const botOpenIds = new Map<string, string>();
   return {
+    getGroupMemberNames,
+    async resolveTopic(bot, actor) {
+      const token = await readTenantAccessToken(bot, deps);
+      if (!token || !actor.chatId || !actor.providerMessageId)
+        throw new Error("Topic identity unavailable");
+      const get = async (id: string) => {
+        const response = await fetchBotProviderJson<{
+          code?: number;
+          data?: { items?: Array<Record<string, unknown>> };
+        }>(`${getFeishuBaseUrl(bot)}/open-apis/im/v1/messages/${encodeURIComponent(id)}`, {
+          headers: { authorization: `Bearer ${token}` },
+        });
+        const item = response.payload?.data?.items?.find((entry) => entry.message_id === id);
+        if (!response.ok || response.payload?.code !== 0 || !item || item.chat_id !== actor.chatId)
+          throw new Error("Topic message scope could not be verified");
+        return item;
+      };
+      const message = await get(actor.providerMessageId);
+      const threadId = readString(message, "thread_id");
+      if (!threadId || (actor.threadId && actor.threadId !== threadId))
+        throw new Error("Topic scope mismatch");
+      const rootMessageId = readString(message, "root_id") || actor.providerMessageId;
+      const root = rootMessageId === actor.providerMessageId ? message : await get(rootMessageId);
+      if (root.thread_id !== threadId) throw new Error("Topic root scope mismatch");
+      const body = isRecord(root.body) ? root.body : null;
+      const content = parseJsonRecord(readString(body, "content"));
+      const title = readString(content, "text") || readFeishuPostText(content) || threadId;
+      const position = root.thread_message_position;
+      const topicUrl =
+        (typeof position === "number" || typeof position === "string") &&
+        /^\d+$/.test(String(position))
+          ? `https://${bot.provider === "lark" ? "applink.larksuite.com" : "applink.feishu.cn"}/client/thread/open?${new URLSearchParams(
+              {
+                openthreadid: threadId,
+                openchatid: actor.chatId,
+                open_thread_id: threadId,
+                open_chat_id: actor.chatId,
+                thread_position: String(position),
+              },
+            )}`
+          : undefined;
+      return {
+        threadId,
+        rootMessageId,
+        topicTitle: title.replace(/\s+/gu, " ").slice(0, 80),
+        ...(topicUrl ? { topicUrl } : {}),
+      };
+    },
+    async readTopicResourceMessage(bot, target, signal) {
+      signal?.throwIfAborted();
+      const token = await readTenantAccessToken(bot, deps, signal);
+      if (!token) throw new Error("Feishu credentials unavailable");
+      const response = await fetchBotProviderJson<{
+        code?: number;
+        data?: { items?: Array<Record<string, unknown>> };
+      }>(
+        `${getFeishuBaseUrl(bot)}/open-apis/im/v1/messages/${encodeURIComponent(target.messageId)}`,
+        {
+          headers: { authorization: `Bearer ${token}` },
+          signal,
+        },
+      );
+      const native = response.payload?.data?.items?.find(
+        (item) => item.message_id === target.messageId,
+      );
+      if (
+        !response.ok ||
+        response.payload?.code !== 0 ||
+        !native ||
+        native.deleted === true ||
+        native.chat_id !== target.chatId ||
+        native.thread_id !== target.threadId
+      )
+        throw new Error("Archived resource must be readable in the same topic");
+      const body = isRecord(native.body) ? native.body : null;
+      const content = parseJsonRecord(readString(body, "content"));
+      const kind = readString(native, "msg_type");
+      const attachments: BotInboundAttachment[] = [];
+      const add = (attachment: BotInboundAttachment | null | undefined) => {
+        if (!attachment) throw new Error("Archived resource metadata unavailable");
+        attachments.push({
+          ...attachment,
+          providerMetadata: { resourceMessageId: target.messageId },
+        });
+      };
+      if (kind === "file" || kind === "image") add(readFeishuAttachment(kind, content));
+      else if (kind === "post") {
+        const visit = (value: unknown): void => {
+          if (Array.isArray(value)) {
+            value.forEach(visit);
+            return;
+          }
+          if (!isRecord(value)) return;
+          if (value.tag === "img") add(readFeishuAttachment("image", value));
+          else Object.values(value).forEach(visit);
+        };
+        visit(content);
+      }
+      if (!attachments.length) throw new Error("Archived message has no supported resources");
+      return { ...target, attachments };
+    },
+    async readTopicHistory(bot, request) {
+      const token = await readTenantAccessToken(bot, deps);
+      if (!token) throw new Error("Feishu credentials unavailable");
+      const read = async (suffix: string) => {
+        const response = await fetchBotProviderJson<{
+          code?: number;
+          msg?: string;
+          data?: { items?: unknown[]; has_more?: boolean; page_token?: string };
+        }>(`${getFeishuBaseUrl(bot)}/open-apis/im/v1/messages${suffix}`, {
+          headers: { authorization: `Bearer ${token}` },
+        });
+        if (!response.ok || response.payload?.code !== 0) {
+          const message = response.payload?.msg || "Topic history unavailable";
+          if (response.payload?.code === 99991672 || message.includes("im:message.group_msg"))
+            throw new TopicHistoryPermissionError(message);
+          throw new Error(message);
+        }
+        return response.payload.data;
+      };
+      const readHistoryAttachments = (kind: string, content: Record<string, unknown> | null) => {
+        const items: Array<{ name: string; kind: string }> = [];
+        const add = (type: "image" | "file", value: Record<string, unknown> | null) => {
+          const attachment = readFeishuAttachment(type, value);
+          if (attachment) items.push({ name: attachment.filename, kind: type });
+        };
+        if (kind === "image" || kind === "file") add(kind, content);
+        else if (kind === "post") {
+          const visit = (value: unknown): void => {
+            if (Array.isArray(value)) {
+              value.forEach(visit);
+              return;
+            }
+            if (!isRecord(value)) return;
+            if (value.tag === "img") add("image", value);
+            else Object.values(value).forEach(visit);
+          };
+          visit(content);
+        }
+        return items;
+      };
+      const rawMessages = new Map<string, unknown>();
+      const normalize = async (raw: unknown, expandCard = false) => {
+        if (!isRecord(raw)) throw new Error("Invalid topic history message");
+        const sender = isRecord(raw.sender) ? raw.sender : null;
+        const body = isRecord(raw.body) ? raw.body : null;
+        let content = parseJsonRecord(readString(body, "content"));
+        const kind = readString(raw, "msg_type");
+        if (
+          expandCard &&
+          kind === "interactive" &&
+          readString(sender, "sender_type") === "app" &&
+          !isRecord(content?.body)
+        ) {
+          // The history API can also return an “upgrade client” placeholder image; do not mistake an action card for an ordinary reply based on that.
+          const data = await read(
+            `/${encodeURIComponent(readString(raw, "message_id"))}?card_msg_content_type=user_card_content`,
+          );
+          const native = data?.items?.find(
+            (item) => isRecord(item) && item.message_id === readString(raw, "message_id"),
+          );
+          if (
+            !isRecord(native) ||
+            native.chat_id !== raw.chat_id ||
+            native.thread_id !== raw.thread_id
+          )
+            throw new Error("History card scope unavailable");
+          content = parseJsonRecord(isRecord(native.body) ? native.body.content : undefined);
+          if (!content) throw new Error("History card content unavailable");
+        }
+        rawMessages.set(readString(raw, "message_id"), raw);
+        return botTopicMessageSchema.parse({
+          id: readString(raw, "message_id"),
+          chatId: readString(raw, "chat_id"),
+          threadId: readString(raw, "thread_id"),
+          senderId: readString(sender, "id"),
+          senderType: readString(sender, "sender_type"),
+          senderName: readString(sender, "name") || undefined,
+          parentId: readString(raw, "parent_id") || undefined,
+          attachments: readHistoryAttachments(kind, content),
+          createdAt: Number(readString(raw, "create_time")),
+          kind,
+          ...(kind === "interactive" ? { controlCard: isGroupControlCard(content) } : {}),
+          text:
+            kind === "interactive"
+              ? readGroupCardText(content)
+              : kind === "text"
+                ? readString(content, "text")
+                : kind === "post"
+                  ? readFeishuPostText(content)
+                  : `[${kind}${readString(content, "file_name") ? `: ${readString(content, "file_name")}` : ""}]`,
+          deleted: raw.deleted === true,
+        });
+      };
+      const history = await readTopicHistory(request, {
+        list: async (page) => {
+          const query = new URLSearchParams({
+            container_id_type: "thread",
+            container_id: request.threadId,
+            sort_type: "ByCreateTimeDesc",
+            page_size: "50",
+            ...(page ? { page_token: page } : {}),
+          });
+          const data = await read(`?${query}`);
+          if (!Array.isArray(data?.items)) throw new Error("Topic history page unavailable");
+          if (data.has_more && !data.page_token)
+            throw new Error("Topic history cursor unavailable");
+          return {
+            messages: await Promise.all(data.items.map((raw) => normalize(raw))),
+            next: data.has_more ? data.page_token : undefined,
+          };
+        },
+        // The history reader determines the window first; body expansion no longer applies to the entire page of messages.
+        hydrate: (message) => normalize(rawMessages.get(message.id), true),
+        get: async (id) => {
+          const data = await read(`/${encodeURIComponent(id)}`);
+          const raw = data?.items?.find((item) => isRecord(item) && item.message_id === id);
+          return normalize(raw);
+        },
+      });
+      if (history.messages.length) {
+        const names = await getGroupMemberNames(bot, request.chatId).catch(
+          () => ({}) as Record<string, string>,
+        );
+        history.messages = history.messages.map((message) => ({
+          ...message,
+          senderName: names[message.senderId] || message.senderName,
+        }));
+      }
+      return history;
+    },
+    async getGroupInfo(bot, chatId) {
+      const token = await readTenantAccessToken(bot, deps);
+      if (!token) throw new Error("Feishu credentials are unavailable");
+      const response = await fetchBotProviderJson<{
+        code?: number;
+        msg?: string;
+        data?: { name?: string; chat_mode?: string };
+      }>(`${getFeishuBaseUrl(bot)}/open-apis/im/v1/chats/${encodeURIComponent(chatId)}`, {
+        headers: { authorization: `Bearer ${token}` },
+      });
+      if (!response.ok || response.payload?.code !== 0)
+        throw new Error(response.payload?.msg || "Cannot read group information");
+      return {
+        name: response.payload.data?.name || chatId,
+        chatMode: response.payload.data?.chat_mode === "topic" ? "topic" : "group",
+      };
+    },
+    async prepareCallbackPayload(bot, payload) {
+      if (!isRecord(payload)) return payload;
+      const event = isRecord(payload.event) ? payload.event : payload;
+      const action = isRecord(event.action) ? event.action : null;
+      const actionValue = isRecord(action?.value) ? action.value : null;
+      const behavior = Array.isArray(action?.behaviors) ? action.behaviors.find(isRecord) : null;
+      const behaviorValue = isRecord(behavior?.value) ? behavior.value : null;
+      const card = botGroupCardSchema.safeParse(actionValue?.groupCard ?? behaviorValue?.groupCard);
+      if (card.success) {
+        const context = isRecord(event.context) ? event.context : null;
+        const chatId = readString(context, "open_chat_id") || readString(context, "chat_id");
+        const cardId = readString(context, "open_message_id") || readString(context, "message_id");
+        // Card callbacks have a short response window; location validation and token requests share the same deadline.
+        const signal = AbortSignal.timeout(1500);
+        const token = await readTenantAccessToken(bot, deps, signal);
+        signal.throwIfAborted();
+        if (!token || !cardId || chatId !== card.data.chatId)
+          throw new Error("Card scope unavailable");
+        const response = await fetchBotProviderJson<{
+          code?: number;
+          data?: { items?: Array<Record<string, unknown>> };
+        }>(`${getFeishuBaseUrl(bot)}/open-apis/im/v1/messages/${encodeURIComponent(cardId)}`, {
+          headers: { authorization: `Bearer ${token}` },
+          signal,
+        });
+        const native = response.payload?.data?.items?.find((item) => item.message_id === cardId);
+        // Button parameters are not the source of truth for native location; verify the thread where the card actually resides.
+        if (
+          !response.ok ||
+          response.payload?.code !== 0 ||
+          native?.chat_id !== chatId ||
+          (readString(native ?? null, "thread_id") || undefined) !== card.data.threadId
+        )
+          throw new Error("Card topic scope mismatch");
+        return payload;
+      }
+      const message = isRecord(event.message) ? event.message : null;
+      if (readString(message, "chat_type") !== "group") return payload;
+      const messageSender = isRecord(event.sender) ? event.sender : null;
+      if (
+        isFeishuBotSender(readString(messageSender, "sender_type")) &&
+        (readString(message, "message_type") || readString(message, "msg_type")) ===
+          "interactive" &&
+        isGroupControlCard(parseJsonRecord(message?.content))
+      )
+        return payload;
+      const identityKey = `${bot.provider}:${bot.feishuAppId}`;
+      let openId = botOpenIds.get(identityKey);
+      if (!openId) {
+        const token = await readTenantAccessToken(bot, deps);
+        if (!token) throw new Error("Feishu credentials are unavailable");
+        const response = await fetchBotProviderJson<{
+          code?: number;
+          msg?: string;
+          bot?: { open_id?: string };
+        }>(`${getFeishuBaseUrl(bot)}/open-apis/bot/v3/info`, {
+          headers: { authorization: `Bearer ${token}` },
+        });
+        openId = response.payload?.bot?.open_id;
+        if (!response.ok || response.payload?.code !== 0 || !openId)
+          throw new Error(response.payload?.msg || "Cannot resolve Feishu bot identity");
+        botOpenIds.set(identityKey, openId);
+      }
+      let nativeCardContent: Record<string, unknown> | undefined;
+      if (
+        isFeishuBotSender(readString(messageSender, "sender_type")) &&
+        (readString(message, "message_type") || readString(message, "msg_type")) === "interactive"
+      ) {
+        const currentContent = parseJsonRecord(message?.content);
+        // Default events/history may contain only an “upgrade client” placeholder; read the actual body before classifying.
+        if (!isRecord(currentContent?.body)) {
+          const token = await readTenantAccessToken(bot, deps);
+          if (!token) throw new Error("Card credentials unavailable");
+          const response = await fetchBotProviderJson<{
+            code?: number;
+            data?: {
+              items?: Array<{
+                message_id?: string;
+                chat_id?: string;
+                thread_id?: string;
+                body?: { content?: string };
+              }>;
+            };
+          }>(
+            `${getFeishuBaseUrl(bot)}/open-apis/im/v1/messages/${encodeURIComponent(readString(message, "message_id"))}?card_msg_content_type=user_card_content`,
+            { headers: { authorization: `Bearer ${token}` } },
+          );
+          const native = response.payload?.data?.items?.[0];
+          if (
+            !response.ok ||
+            response.payload?.code !== 0 ||
+            native?.message_id !== readString(message, "message_id") ||
+            native.chat_id !== readString(message, "chat_id") ||
+            (native.thread_id || "") !== readString(message, "thread_id")
+          )
+            throw new Error("Card message scope unavailable");
+          nativeCardContent = parseJsonRecord(native.body?.content) ?? undefined;
+          if (!nativeCardContent) throw new Error("Card content unavailable");
+        }
+      }
+      const sender = isRecord(event.sender) ? event.sender : null;
+      const parentId = readString(message, "parent_id");
+      const rootId = readString(message, "root_id");
+      let topicRootIsCurrentBot = false;
+      let referencedAttachment: BotInboundAttachment | undefined;
+      let referencedMessage: BotInboundMessage["referencedMessage"];
+      const referencedInlineImages: Array<{ imageKey: string; messageId: string }> = [];
+      if (
+        parentId &&
+        (readString(sender, "sender_type") === "user" ||
+          (isFeishuBotSender(readString(sender, "sender_type")) &&
+            readString(isRecord(sender?.sender_id) ? sender.sender_id : null, "open_id") !==
+              openId)) &&
+        !(
+          payload.zcodeTopicHasAcceptedInput === true &&
+          parentId === rootId &&
+          !isFeishuBotSender(readString(sender, "sender_type"))
+        ) &&
+        (Boolean(readString(message, "thread_id")) ||
+          readGroupMentionText(
+            "",
+            message?.mentions,
+            openId,
+            readString(sender, "sender_type"),
+            readString(isRecord(sender?.sender_id) ? sender.sender_id : null, "open_id"),
+          ) !== null)
+      ) {
+        const token = await readTenantAccessToken(bot, deps);
+        const response = await fetchBotProviderJson<{
+          code?: number;
+          msg?: string;
+          data?: {
+            items?: Array<{
+              message_id?: string;
+              chat_id?: string;
+              thread_id?: string;
+              msg_type?: string;
+              deleted?: boolean;
+              create_time?: string;
+              sender?: { id?: string; id_type?: string; sender_type?: string };
+              body?: { content?: string };
+            }>;
+          };
+        }>(
+          // The default card response contains only an “upgrade client” placeholder; request the actual card body for reference parsing.
+          `${getFeishuBaseUrl(bot)}/open-apis/im/v1/messages/${encodeURIComponent(parentId)}?card_msg_content_type=user_card_content`,
+          { headers: { authorization: `Bearer ${token}` } },
+        );
+        const referenced = response.payload?.data?.items?.[0];
+        if (
+          !response.ok ||
+          response.payload?.code !== 0 ||
+          referenced?.message_id !== parentId ||
+          referenced.chat_id !== readString(message, "chat_id") ||
+          referenced.deleted
+        )
+          throw new Error("Referenced attachment must be readable in the same group");
+        // A referenced message may come from another thread in the same group; chat_id alone cannot prove attachment ownership.
+        if (
+          (referenced.thread_id || undefined) !== (readString(message, "thread_id") || undefined) &&
+          !(parentId === rootId && !referenced.thread_id)
+        )
+          throw new Error("Referenced attachment must be readable in the same topic");
+        topicRootIsCurrentBot =
+          parentId === rootId &&
+          referenced.sender?.sender_type === "app" &&
+          ((referenced.sender.id_type === "app_id" && referenced.sender.id === bot.feishuAppId) ||
+            (referenced.sender.id_type === "open_id" && referenced.sender.id === openId));
+        if (!["text", "post", "image", "file", "interactive"].includes(referenced.msg_type ?? "")) {
+          throw new Error("Referenced message type is unsupported");
+        }
+        if (referenced.msg_type === "interactive") {
+          // Confirmation text has no dedicated event type; identify it through the trusted parent message rather than translated copy.
+          if (
+            isFeishuBotSender(readString(sender, "sender_type")) &&
+            isFeishuBotSender(referenced.sender?.sender_type ?? "") &&
+            isGroupControlCard(parseJsonRecord(referenced.body?.content))
+          )
+            return { ...payload, zcodeIgnoreInteractionMessage: true };
+          const text = readGroupCardText(parseJsonRecord(referenced.body?.content));
+          if (!text) throw new Error("Referenced message has no readable text");
+          referencedMessage = { messageId: parentId, text };
+        }
+        // Text references were previously discarded after permission checks, causing @-only messages to be misclassified as empty.
+        if (referenced.msg_type === "text" || referenced.msg_type === "post") {
+          const body = parseJsonRecord(referenced.body?.content);
+          const quotedText =
+            referenced.msg_type === "text" ? readString(body, "text") : readFeishuPostText(body);
+          if (referenced.msg_type === "post") {
+            const visit = (value: unknown): void => {
+              if (Array.isArray(value)) {
+                value.forEach(visit);
+                return;
+              }
+              if (!isRecord(value)) return;
+              if (value.tag === "img") {
+                const image = readFeishuAttachment("image", value);
+                if (!image?.providerFileId) throw new Error("Referenced image is invalid");
+                referencedInlineImages.push({
+                  imageKey: image.providerFileId,
+                  messageId: parentId,
+                });
+              }
+              visit(value.content ?? value.children ?? value.elements);
+            };
+            if (body) visit(readFeishuPostLocaleContent(body));
+          }
+          if (!quotedText.trim() && !referencedInlineImages.length)
+            throw new Error("Referenced message is empty or unavailable");
+          referencedMessage = { messageId: parentId, text: quotedText };
+        }
+        if (referencedMessage) {
+          const senderId = referenced.sender?.id;
+          const names = senderId
+            ? await getGroupMemberNames(bot, referenced.chat_id!).catch(
+                () => ({}) as Record<string, string>,
+              )
+            : {};
+          const sentAt = Number(referenced.create_time);
+          referencedMessage = {
+            ...referencedMessage,
+            ...(senderId
+              ? {
+                  senderId,
+                  senderName:
+                    names[senderId] ||
+                    (senderId === openId ||
+                    (referenced.sender?.sender_type === "app" && senderId === bot.feishuAppId)
+                      ? bot.name
+                      : undefined),
+                }
+              : {}),
+            ...(Number.isFinite(sentAt) && sentAt > 0
+              ? { sentAt: new Date(sentAt).toISOString() }
+              : {}),
+          };
+        }
+        if (referenced.msg_type === "image" || referenced.msg_type === "file") {
+          const attachment = readFeishuAttachment(
+            referenced.msg_type,
+            parseJsonRecord(referenced.body?.content),
+          );
+          if (!attachment) throw new Error("Referenced attachment is invalid");
+          referencedAttachment = {
+            ...attachment,
+            providerMetadata: { resourceMessageId: parentId },
+          };
+        }
+      }
+      return {
+        ...payload,
+        zcodeBotOpenId: openId,
+        ...(nativeCardContent ? { zcodeNativeCardContent: nativeCardContent } : {}),
+        zcodeTopicRootIsCurrentBot: topicRootIsCurrentBot,
+        zcodeReferencedAttachment: referencedAttachment,
+        zcodeReferencedMessage: referencedMessage,
+        zcodeReferencedInlineImages: referencedInlineImages,
+      };
+    },
     splitStreamingReplyCardStates: splitFeishuStreamingCardStates,
     async test(bot) {
       if (!bot.enabled) {
@@ -1645,40 +2634,70 @@ export function createFeishuBotProvider(deps: FeishuProviderDeps): BotProviderAd
     },
 
     async resolveActorDisplayName(bot, actor) {
+      // Group events do not guarantee a name is included; use the group-member API to avoid depending on organization directory visibility.
+      if (actor.chatType === "group") {
+        if (!actor.chatId) return null;
+        return (await getGroupMemberNames(bot, actor.chatId))[actor.providerUserId] ?? null;
+      }
       return readFeishuUserDisplayName(bot, deps, actor.providerUserId);
     },
 
     async send(bot, message) {
+      resolveFeishuReplyTarget(message);
+      if (message.contentParts) {
+        const parts = channelContentPartsSchema.parse(message.contentParts);
+        if (
+          message.selection ||
+          !message.providerUserId.startsWith("oc_") ||
+          parts.some((part) => part.type === "channelMention" && part.channel !== bot.provider) ||
+          channelContentText(parts) !== message.text ||
+          message.text.length > 2000
+        )
+          throw Object.assign(new Error("Invalid native channel reply"), {
+            deliveryRejected: true,
+          });
+      }
       const token = await readTenantAccessToken(bot, deps);
       if (!token) {
+        if (message.deliveryId)
+          throw Object.assign(new Error("Feishu credentials unavailable"), {
+            deliveryRejected: true,
+          });
         return;
       }
-      const receiveId = message.providerUserId;
       if (message.selection) {
-        await sendCard(
+        const providerMessageId = await sendReplyCard(
           bot,
           token,
-          receiveId,
+          message,
           message.elicitation
             ? buildFeishuElicitationCardPayload(message)
             : buildFeishuInteractiveCardPayload(message),
         );
-        return;
+        return message.selection.action === "queue.cancel" && providerMessageId
+          ? { providerMessageId }
+          : undefined;
       }
+      let partIndex = 0;
+      let providerMessageId: string | null = null;
       for (const text of splitFeishuText(message.text)) {
         // Bug fix: Feishu displays Markdown literally in ordinary text messages, unlike Telegram's Markdown replies.
         // Use the interactive card's markdown element for ordinary replies; selection messages continue to reuse the same card structure.
-        await sendCard(
+        providerMessageId = await sendReplyCard(
           bot,
           token,
-          receiveId,
+          message,
           buildFeishuInteractiveCardPayload({
             ...message,
             text,
+            mentionedUserIds: partIndex === 0 ? message.mentionedUserIds : undefined,
             selection: undefined,
           }),
+          message.deliveryId ? `${message.deliveryId.slice(0, 40)}-${partIndex}` : undefined,
         );
+        partIndex += 1;
       }
+      return message.deliveryId && providerMessageId ? { providerMessageId } : undefined;
     },
 
     async createStreamingReplyCard(bot, state, signal) {
@@ -1705,14 +2724,28 @@ export function createFeishuBotProvider(deps: FeishuProviderDeps): BotProviderAd
     },
 
     async createTransientInteractionCard(bot, message) {
+      resolveFeishuReplyTarget(message);
+      if (message.contentParts) {
+        const parts = channelContentPartsSchema.parse(message.contentParts);
+        if (
+          message.selection ||
+          !message.providerUserId.startsWith("oc_") ||
+          parts.some((part) => part.type === "channelMention" && part.channel !== bot.provider) ||
+          channelContentText(parts) !== message.text ||
+          message.text.length > 2000
+        )
+          throw Object.assign(new Error("Invalid native channel reply"), {
+            deliveryRejected: true,
+          });
+      }
       const token = await readTenantAccessToken(bot, deps);
       if (!token) {
         return null;
       }
-      const providerMessageId = await sendCard(
+      const providerMessageId = await sendReplyCard(
         bot,
         token,
-        message.providerUserId,
+        message,
         message.elicitation
           ? buildFeishuElicitationCardPayload(message)
           : buildFeishuInteractiveCardPayload(message),
@@ -1741,6 +2774,12 @@ export function createFeishuBotProvider(deps: FeishuProviderDeps): BotProviderAd
         return;
       }
       await deleteFeishuInteractiveMessage(bot, token, handle);
+    },
+
+    async updateInputReaction(bot, messageId, state) {
+      const botKey = JSON.stringify([bot.provider, bot.id, bot.feishuAppId, bot.credentialRef]);
+      reactionBots.set(botKey, bot);
+      await updateReaction(JSON.stringify([botKey, messageId]), state);
     },
 
     async sendTyping(bot, target) {
@@ -1820,8 +2859,9 @@ export function createFeishuBotProvider(deps: FeishuProviderDeps): BotProviderAd
       return message?.elicitation ? { handled: true } : undefined;
     },
 
-    async downloadAttachment(bot, attachment, actor) {
-      const token = await readTenantAccessToken(bot, deps);
+    async downloadAttachment(bot, attachment, actor, signal) {
+      signal?.throwIfAborted();
+      const token = await readTenantAccessToken(bot, deps, signal);
       if (!token || !attachment.providerFileId || !actor?.providerMessageId) {
         return null;
       }
@@ -1829,12 +2869,12 @@ export function createFeishuBotProvider(deps: FeishuProviderDeps): BotProviderAd
       const timeout = setTimeout(() => controller.abort(), FEISHU_ATTACHMENT_DOWNLOAD_TIMEOUT_MS);
       try {
         const response = await fetch(
-          `${getFeishuBaseUrl(bot)}/open-apis/im/v1/messages/${encodeURIComponent(actor.providerMessageId)}/resources/${encodeURIComponent(attachment.providerFileId)}?type=${attachment.kind === "image" ? "image" : attachment.kind === "video" ? "media" : attachment.kind}`,
+          `${getFeishuBaseUrl(bot)}/open-apis/im/v1/messages/${encodeURIComponent(attachment.providerMetadata?.resourceMessageId ?? actor.providerMessageId)}/resources/${encodeURIComponent(attachment.providerFileId)}?type=${attachment.kind === "image" ? "image" : attachment.kind === "video" ? "media" : attachment.kind}`,
           {
             headers: {
               authorization: `Bearer ${token}`,
             },
-            signal: controller.signal,
+            signal: signal ? AbortSignal.any([signal, controller.signal]) : controller.signal,
           },
         );
         if (!response.ok) {
@@ -1845,6 +2885,7 @@ export function createFeishuBotProvider(deps: FeishuProviderDeps): BotProviderAd
           data: new Uint8Array(await response.arrayBuffer()),
         };
       } catch (error) {
+        signal?.throwIfAborted();
         if ((error as { name?: unknown })?.name === "AbortError") {
           // Bug fix: Feishu resource endpoints occasionally take a long time to respond; the Bot callback must show a failure to the user within a predictable time.
           throw new Error("Feishu attachment download timed out.");

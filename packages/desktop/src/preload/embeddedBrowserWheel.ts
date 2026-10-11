@@ -22,7 +22,7 @@ function normalizeAxisDelta(rawDelta: number, event: WheelEvent, pageSize: numbe
 }
 
 /** Normalize trackpad, wheel, and Shift+wheel input to a two-dimensional CSS-pixel delta for the host canvas. */
-function normalizeEmbeddedBrowserWheelDelta(
+export function normalizeEmbeddedBrowserWheelDelta(
   event: WheelEvent,
   targetWindow: Window,
 ): EmbeddedBrowserWheelBoundaryPayload {

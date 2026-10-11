@@ -31,8 +31,19 @@ export const MERGE_BACK = 10;
 export const TAIL = 4;
 export const STUB = 6;
 
-export function timelineWidth(count: number, inset = 0): number {
-  return count === 0 ? 0 : (count - 1) * STATION_PITCH + STATION_WIDTH + inset;
+/**
+ * Fill header row (docs/dynamic-workflow/presentation.md, “Holes on the timeline”): exists only on
+ * timelines with fills, is 24px high, and sits above the arc lanes. The 12px pen aligns with the x
+ * of the first new lamp; the name and `· T` follow, with no background or border.
+ */
+export const HEAD_ROW = 24;
+/** Extra width after the final station for a tail hole: a fading dashed segment while open, and landing space for the fill header after completion. */
+export const TAIL_STUB = 40;
+
+export function timelineWidth(count: number, inset = 0, tail = false): number {
+  return count === 0
+    ? 0
+    : (count - 1) * STATION_PITCH + STATION_WIDTH + inset + (tail ? TAIL_STUB : 0);
 }
 
 /** Left edge of station i. */
@@ -152,11 +163,13 @@ export interface TimelineLayout {
 export function timelineLayout(
   arcs: readonly TimelineArc[],
   bands: readonly TimelineBand[],
+  /** Timeline with fills: reserve a `HEAD_ROW` at the top, then shift the rest of the geometry down unchanged. */
+  heads = false,
 ): TimelineLayout {
   const banded = bands.length > 0;
   const tracks = banded ? Math.max(2, ...bands.map((band) => band.tracks.length)) : 1;
   const rowY: number[] = [];
-  let y = 0;
+  let y = heads ? HEAD_ROW : 0;
   for (let t = tracks - 1; t >= 0; t -= 1) {
     const lanes = arcLaneCount(arcs.filter((arc) => arc.air === t));
     // The top line of the highest lane is y = 8: rowY = air + RAIL_ROW/2 = 8 + ARC_BASE + ARC_LANE × (lanes − 1).

@@ -51,7 +51,7 @@ function isEditableHook(hook: Hook): boolean {
 // They are not imports from a compatible external format; putting them in Legacy would make the Import button fail
 // (importHook rejects source=zcode) and violate the "readonly but individually trustable" contract.
 // Keep these rows in Installed, gate the Switch by trust state, and use the inline Trust flow.
-function isReadOnlyZCodeHook(hook: Hook): boolean {
+export function isReadOnlyZCodeHook(hook: Hook): boolean {
   return hook.editable === false && (hook.location?.source ?? "zcode") === "zcode";
 }
 
@@ -68,7 +68,7 @@ function isInCompatibilitySection(hook: Hook): boolean {
  *   workspacePath (matching the fallback rule in matchesWorkspaceBinding).
  * - Return null when no matching tab exists (workspace closed/unknown); the caller must not switch to another tab.
  */
-function resolveLatestReviewScopeTarget(
+export function resolveLatestReviewScopeTarget(
   bindings: Record<
     string,
     {
@@ -106,7 +106,7 @@ function resolveLatestReviewScopeTarget(
   return tab ? { interactionId: latest.interactionId, scopeKey: scopeKeyOf(tab) } : null;
 }
 
-function buildPluginHookRows(
+export function buildPluginHookRows(
   plugins: readonly Pick<ZCodePluginInfo, "enabled" | "hookDetails" | "id" | "name">[],
   installedPlugins: readonly Pick<ZCodeInstalledPluginSummary, "id" | "scope">[],
   scopeMetadataKnown: boolean,
@@ -126,7 +126,7 @@ function buildPluginHookRows(
   );
 }
 
-function filterPluginHooksByScope(
+export function filterPluginHooksByScope(
   pluginHooks: readonly PluginHookRow[],
   scope: HookScope,
 ): PluginHookRow[] {

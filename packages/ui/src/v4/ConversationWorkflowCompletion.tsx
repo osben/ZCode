@@ -13,6 +13,11 @@ import {
   useWorkflowRunArtifacts,
   type WorkflowRunArtifactView,
 } from "@/hooks/useWorkflowRunArtifacts.js";
+import {
+  WorkflowRunSaveSlotsBoundary,
+  type WorkflowRunSaveSlots,
+  type WorkflowRunSaveSlotsHost,
+} from "@/components/workflow-timeline/WorkflowRunSaveControls.js";
 import type { ConversationRowRenderContext } from "@/v4/conversationRowContext.js";
 import { WorkflowArtifactTilePreview } from "@/app-shell/workflow-artifacts/WorkflowArtifactTilePreview.js";
 import { useHasV4Conversation } from "@/v4/V4ConversationContext.js";
@@ -41,6 +46,7 @@ export function ConversationWorkflowCompletion({
   const sessionId = context.sessionId ?? undefined;
   const { summary } = completion;
   const run = summary?.run;
+  const candidates = context.workflowSaveCandidatesByRunId?.get(completion.runId);
 
   const figures: WorkflowCompletionFigures = {
     ...(completion.durationMs === undefined ? {} : { durationMs: completion.durationMs }),
@@ -85,6 +91,27 @@ export function ConversationWorkflowCompletion({
       : undefined;
   const onOpenArtifact = openArtifactFrom?.(completion.artifacts);
 
+  // The pair of controls in the header (docs/dynamic-workflow/transcript-and-notifications.md,
+  // “Saving the run, and running it again”). Both gates are applied at the same supply point as
+  // Resume, `onSendWorkflowSaveRequest`. The chip is not gated; it reports whether the file exists
+  // on disk, not whether this card can act on it.
+  const saveHost: WorkflowRunSaveSlotsHost = {
+    workspacePath: context.workspacePath,
+    ...(context.workspaceIdentity === undefined
+      ? {}
+      : { workspaceIdentity: context.workspaceIdentity }),
+    ...(context.workspaceRemoteSessionId === undefined
+      ? {}
+      : { remoteSessionId: context.workspaceRemoteSessionId }),
+    runId: completion.runId,
+    runName: completion.name,
+    ...(candidates === undefined ? {} : { candidates }),
+    canSave: context.onSendWorkflowSaveRequest !== undefined,
+    ...(context.onSendWorkflowSaveRequest === undefined
+      ? {}
+      : { sendLead: context.onSendWorkflowSaveRequest }),
+  };
+
   const shared = {
     artifactsTruncated: completion.artifactsTruncated,
     figures,
@@ -94,19 +121,34 @@ export function ConversationWorkflowCompletion({
     ...(onOpenArtifact === undefined ? {} : { onOpenArtifact }),
   };
 
+  // Without session context (static rendering or replay), keep the original card with no controls (spec, “Gates”).
   if (!hasConversation || sessionId === undefined) {
     return <WorkflowCompletionCard {...shared} artifacts={completion.artifacts} />;
   }
   return (
-    <WorkflowCompletionWithData
-      completion={completion}
-      live={run?.artifacts}
-      sessionId={sessionId}
-      shared={shared}
-      theme={context.theme}
-      {...(openArtifactFrom === undefined ? {} : { openArtifactFrom })}
-    />
+    <WorkflowRunSaveSlotsBoundary host={saveHost}>
+      {(slots) => (
+        <WorkflowCompletionWithData
+          completion={completion}
+          live={run?.artifacts}
+          sessionId={sessionId}
+          shared={withSaveSlots(shared, slots)}
+          theme={context.theme}
+          {...(openArtifactFrom === undefined ? {} : { openArtifactFrom })}
+        />
+      )}
+    </WorkflowRunSaveSlotsBoundary>
   );
+}
+
+/** Combine both slots into shared card props; omit absent slots (exactOptionalPropertyTypes). */
+function withSaveSlots<T extends object>(shared: T, slots: WorkflowRunSaveSlots | null): T {
+  if (slots === null) return shared;
+  return {
+    ...shared,
+    ...(slots.leading === null ? {} : { headerLeading: slots.leading }),
+    ...(slots.trailing === null ? {} : { headerTrailing: slots.trailing }),
+  };
 }
 
 /**

@@ -19,7 +19,7 @@ import { resolveEffectiveShortcutBindings } from "./bindings.js";
  * Note: Enter is on the key-name allowlist (needed for composer scope), while among Escape/Enter/Tab/Space/Backspace,
  * it is explicitly reserved in the blacklist for global scope; Escape/Tab/Space/Backspace remain outside the key-name allowlist.
  */
-const RESERVED_BINDINGS: ReadonlySet<string> = new Set([
+export const RESERVED_BINDINGS: ReadonlySet<string> = new Set([
   // Native editing behavior (primary modifier combinations)
   ...["c", "v", "x", "z", "a", "y", "s", "p", "l"].map((key) => `CmdOrCtrl+${key}`),
   "CmdOrCtrl+Shift+z",
@@ -120,7 +120,7 @@ function getReservedCanonicalKeys(): {
   return reservedCanonicalKeysCache;
 }
 
-interface ShortcutBindingConflict {
+export interface ShortcutBindingConflict {
   kind: "reserved" | "occupied";
   /** Command occupying the binding, if occupied. */
   ownerCommandId?: ShortcutCommandId;
@@ -264,7 +264,29 @@ export function buildShortcutOverridesAfterAppend(
   return next;
 }
 
-/** Replace one row: replace bindingIndex in the effective list with newBinding, then write the whole group to overrides. */
+/**
+ * Row-level operations for the split-binding model all write the full effective list back to
+ * overrides, using three paired builders: AfterAppend (append one), WithoutBindingAt (delete item
+ * at index; deleting all writes explicit [] for unassigned), and WithBindingAt (replace item at
+ * index). The settings-page recording entry point rejects physically equivalent duplicates for the same command.
+ */
+
+/** Split-row delete: remove the effective-list item at bindingIndex and write the whole group back to overrides (spec §8). */
+export function buildShortcutOverridesWithoutBindingAt(
+  overrides: Record<string, readonly string[]> | undefined,
+  commandId: ShortcutCommandId,
+  bindingIndex: number,
+): Record<string, string[]> {
+  const effective = resolveEffectiveShortcutBindings(overrides);
+  const next: Record<string, string[]> = {};
+  for (const [key, value] of Object.entries(overrides ?? {})) {
+    next[key] = [...value];
+  }
+  next[commandId] = (effective[commandId] ?? []).filter((_, index) => index !== bindingIndex);
+  return next;
+}
+
+/** Split-row replacement: replace the effective-list item at bindingIndex with newBinding and write the whole group back to overrides (spec §8). */
 export function buildShortcutOverridesWithBindingAt(
   overrides: Record<string, readonly string[]> | undefined,
   commandId: ShortcutCommandId,

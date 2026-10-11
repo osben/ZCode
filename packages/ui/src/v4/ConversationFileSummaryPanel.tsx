@@ -20,6 +20,7 @@ import { toWorkspaceRelativePath } from "@/lib/taskChangeSummary.js";
 import { buildChangeSummaryFilePreviewSource } from "@/messageChangeSummaryPreview.js";
 import { OpenSplitButton } from "@/OpenSplitButton.js";
 import { logger } from "@/logger.js";
+import { collectGenUiSourcePaths, matchesGenUiSourcePath } from "@/gen-ui/contract.js";
 import { ConversationFileRewindDialog } from "@/v4/ConversationFileRewindDialog.js";
 import type {
   ConversationFileChangesRequestOptions,
@@ -31,6 +32,7 @@ type FileChangeItem = V4ConversationFileChangesResult["items"][number];
 interface ConversationFileSummaryPanelProps {
   header: TurnHeaderRow;
   context: ConversationRowRenderContext;
+  assistantText?: string;
 }
 
 function formatPatch(path: string, patches: FileChangeItem["patches"]): string {
@@ -70,17 +72,51 @@ function openDiff(
 export function ConversationFileSummaryPanel({
   header,
   context,
+  assistantText = "",
 }: ConversationFileSummaryPanelProps) {
   const { intl } = useZCodeIntl();
-  const summary = header.fileChanges;
+  const genUiSources = useMemo(() => collectGenUiSourcePaths(assistantText), [assistantText]);
+  const filtersSources = genUiSources.length > 0;
   const [open, setOpen] = useState(false);
-  const [details, setDetails] = useState<V4ConversationFileChangesResult | null>(null);
+  const [loadedDetails, setLoadedDetails] = useState<{
+    key: string;
+    result: V4ConversationFileChangesResult | null;
+  } | null>(null);
   const [loadingDetails, setLoadingDetails] = useState(false);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [preview, setPreview] = useState<V4ConversationFileRewindPreviewResult | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
   const [applying, setApplying] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const cachePolicy: ConversationFileChangesRequestOptions["cachePolicy"] =
+    header.state === "running" ? "in-flight" : "terminal";
+  const fileChangesState = header.fileChanges?.state;
+  // The header contains only aggregate values. Read details from the current projection and filter them; do not guess and subtract source-file rows from ordinary files.
+  const requestKey = JSON.stringify([
+    context.workspaceIdentity?.trim() || context.workspacePath,
+    context.workspaceRemoteSessionId,
+    context.sessionId,
+    header.rowId,
+    header.entityId,
+    cachePolicy,
+    header.fileChanges,
+  ]);
+  const settled = loadedDetails?.key === requestKey;
+  const details = settled ? loadedDetails.result : null;
+  const items = useMemo(
+    () => details?.items.filter((item) => !matchesGenUiSourcePath(item.path, genUiSources)) ?? [],
+    [details, genUiSources],
+  );
+  const summary =
+    details && items.length !== details.items.length && header.fileChanges
+      ? {
+          ...header.fileChanges,
+          files: items.length,
+          additions: items.reduce((sum, item) => sum + (item.additions ?? 0), 0),
+          deletions: items.reduce((sum, item) => sum + (item.deletions ?? 0), 0),
+        }
+      : header.fileChanges;
 
   const filesChangedLabel = intl.formatPlural(
     { id: "chat.changeSummary.filesChanged" },
@@ -91,22 +127,19 @@ export function ConversationFileSummaryPanel({
     Boolean(context.applyFileRewind && context.previewFileRewind) &&
     header.actions?.canRewindFiles === true &&
     !isReverted;
-  const items = details?.items ?? [];
   const target = useMemo<ConversationRowTarget | null>(
     () => (header.entityId ? { rowId: header.rowId, entityId: header.entityId } : null),
     [header.entityId, header.rowId],
   );
-  const cachePolicy: ConversationFileChangesRequestOptions["cachePolicy"] =
-    header.state === "running" ? "in-flight" : "terminal";
-  const fileChangesState = summary?.state;
+  const needsDetails = open || filtersSources;
 
   useEffect(() => {
-    if (!open || !context.fetchFileChanges || !target) return;
+    if (!needsDetails || !context.fetchFileChanges || !target) return;
 
     let disposed = false;
     // fileChanges while running is a local result for a projection revision. Once the turn reaches a terminal state,
     // discard local details and read again using the persistently cacheable terminal-state strategy.
-    setDetails(null);
+    // requestKey already isolates stale results synchronously. Preserve loaded content when rereading the same expanded summary to avoid unmounting the button and losing focus.
     setLoadingDetails(true);
     void context
       .fetchFileChanges(target, {
@@ -116,7 +149,7 @@ export function ConversationFileSummaryPanel({
       .then(
         (result) => {
           if (disposed) return;
-          setDetails(result);
+          setLoadedDetails({ key: requestKey, result });
           setLoadingDetails(false);
         },
         (loadError: unknown) => {
@@ -125,6 +158,7 @@ export function ConversationFileSummaryPanel({
             error: loadError instanceof Error ? loadError.message : String(loadError),
             rowId: target.rowId,
           });
+          setLoadedDetails({ key: requestKey, result: null });
           setLoadingDetails(false);
         },
       );
@@ -132,7 +166,15 @@ export function ConversationFileSummaryPanel({
     return () => {
       disposed = true;
     };
-  }, [cachePolicy, context.fetchFileChanges, fileChangesState, open, target]);
+  }, [
+    cachePolicy,
+    context.fetchFileChanges,
+    fileChangesState,
+    needsDetails,
+    open,
+    requestKey,
+    target,
+  ]);
 
   const handlePreviewRewind = useCallback(async () => {
     if (!context.previewFileRewind || !target) return;
@@ -169,16 +211,23 @@ export function ConversationFileSummaryPanel({
   }, [context, intl, preview?.canApply, target]);
 
   useEffect(() => {
-    if (!details || !summary || summary.files <= 0 || details.items.length > 0) {
+    if (
+      !details ||
+      !header.fileChanges ||
+      header.fileChanges.files <= 0 ||
+      details.items.length > 0
+    ) {
       return;
     }
     logger.warn("[ConversationFileSummaryPanel] 文件摘要详情为空", {
-      expectedFiles: summary.files,
+      expectedFiles: header.fileChanges.files,
       rowId: header.rowId,
       turnId: header.turnId,
     });
-  }, [details, header.rowId, header.turnId, summary]);
+  }, [details, header.rowId, header.turnId, header.fileChanges]);
 
+  // Do not flash aggregate source-file statistics before details arrive; restore the original summary after a read failure so it can still be expanded and retried.
+  if (filtersSources && context.fetchFileChanges && target && !settled) return null;
   if (!summary || summary.files <= 0) return null;
 
   return (
@@ -286,7 +335,7 @@ export function ConversationFileSummaryPanel({
                             }}
                           />
                         </div>
-                        {/* writeCount is an operation trace used by undo preflight, while the summary
+                        {/* Fix reason: writeCount is an operation trace used by undo preflight, while the summary
                             row already shows the final result with +/-. Showing it here would make
                             internal operation counts look like change metrics, so keep it only in
                             the undo dialog. */}
@@ -333,6 +382,7 @@ export function ConversationFileSummaryPanel({
                             previewSource: filePreviewSource,
                           }}
                           onOpenCodeViewer={context.onOpenCodeViewer}
+                          hideOpenWithMenu={context.compactForRemoteControl === true}
                           stopPropagation
                         />
                       </div>

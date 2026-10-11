@@ -27,6 +27,7 @@ export function WorkspaceArchivedTasksFlatSection({
   activeWorkspaceIdentity,
   activeTaskId,
   sortBy,
+  mobileActiveTaskKey,
   actionsContainer,
   onSelectTask,
 }: {
@@ -35,6 +36,7 @@ export function WorkspaceArchivedTasksFlatSection({
   activeWorkspaceIdentity?: string;
   activeTaskId: string | null;
   sortBy: "created" | "updated";
+  mobileActiveTaskKey?: string | null;
   actionsContainer?: HTMLElement | null;
   onSelectTask: (
     targetWorkspacePath: string,
@@ -141,7 +143,7 @@ export function WorkspaceArchivedTasksFlatSection({
           const deleteLabel = intl.formatMessage({ id: "taskList.delete" });
           // The flat archived-task list is also a cross-workspace view, so selection state must be isolated by workspaceKey.
           const isActive = workspaceKey === activeWorkspaceKey && task.taskId === activeTaskId;
-          const isMobileActive = false;
+          const isMobileActive = mobileActiveTaskKey === `${workspaceKey}:${task.taskId}`;
           const taskKey = `${workspaceKey}:${task.taskId}`;
           const isDeleting = deletingTaskKeys.has(taskKey);
 
@@ -172,9 +174,9 @@ export function WorkspaceArchivedTasksFlatSection({
                         id: "taskList.mobileActive",
                       })}
                     >
-                      {/* The archived view may also retain stale state for the task currently viewed on mobile; show the same marker to keep list state consistent.
-                        The previous version placed the marker in the title row’s flex flow, shifting titles for tasks with only a phone marker.
-                        Position it absolutely to the left of the title so title text remains aligned at its original position. */}
+                      {/* Bugfix: The archived view can also retain stale state for the task currently viewed on mobile; show the same indicator to keep list states consistent.
+                        The previous version put the indicator in the title’s flex flow, shifting titles for tasks with only the mobile indicator;
+                        position it absolutely to the left of the title so the text stays aligned in its original position. */}
                       <Smartphone className="size-3.5" />
                     </span>
                   </ControlHintTooltip>
@@ -194,8 +196,8 @@ export function WorkspaceArchivedTasksFlatSection({
                   className="flex min-w-0 flex-1 items-center gap-1.5"
                   title={task.workspacePath}
                 >
-                  {/* The archived list used to show Folder for both local and remote tasks,
-                    so users could not tell which side would be unarchived. Use Cloud to identify remote tasks. */}
+                  {/* Bugfix: The archived list used to show Folder for both local and remote tasks,
+                    so users could not tell which side would be affected by unarchiving. Use Cloud to identify remote items. */}
                   {isRemoteTask ? (
                     <Cloud className="size-3 shrink-0" />
                   ) : (
@@ -252,8 +254,8 @@ export function WorkspaceArchivedTasksFlatSection({
                         });
                     }}
                   >
-                    {/* The unarchive button used ArchiveX for both local and remote tasks,
-                      making the target unclear in a mixed archive list. Use CloudDownload for remote tasks to make the target explicit. */}
+                    {/* Bugfix: The unarchive button used ArchiveX for both local and remote tasks,
+                      hiding the target in a mixed archived list. Use CloudDownload for remote tasks to make the target clear. */}
                     {isRemoteTask ? (
                       <CloudDownload className="size-3.5" />
                     ) : (
@@ -262,8 +264,8 @@ export function WorkspaceArchivedTasksFlatSection({
                   </Button>
                 </ControlHintTooltip>
                 <ControlHintTooltip title={deleteLabel} side="top">
-                  {/* The button is disabled while a delete request is in progress, and disabled elements do not emit hover events.
-                    Use a real span as the tooltip trigger so the action remains explainable while processing. */}
+                  {/* Bugfix: The button is disabled while deletion is in progress, and disabled elements do not receive hover events;
+                    use a real span as the tooltip trigger so the action remains explained while it is processing. */}
                   <span className="inline-flex shrink-0">
                     <Button
                       type="button"
@@ -302,8 +304,8 @@ export function WorkspaceArchivedTasksFlatSection({
                                 ? { workspaceIdentity: task.workspaceIdentity }
                                 : {}),
                             });
-                            // Deletion happens only in the archived list; do not treat it as unarchiving and write it back to the regular list.
-                            // Remove the target directly from task caches to avoid invalidating the whole query cache and briefly emptying the list.
+                            // Bugfix: Deletion happens only in the archived list; do not write it back to the regular list as an “unarchive.”
+                            // Remove the target item directly from task caches to avoid invalidating the entire query cache and briefly emptying the list.
                             removeTaskFromTaskCaches({
                               workspacePath: task.workspacePath,
                               workspaceIdentity: task.workspaceIdentity,

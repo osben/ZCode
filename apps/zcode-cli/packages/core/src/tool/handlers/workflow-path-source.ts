@@ -17,7 +17,7 @@ import { SAVED_WORKFLOW_SENTINEL, parseSavedWorkflow } from "./saved-workflows/i
 import { describeWorkflowScriptPath } from "./workflow-script-path.js";
 
 /** A successfully read script file. */
-interface WorkflowScriptFile {
+export interface WorkflowScriptFile {
   /** Absolute path (the journal stores it; the model uses {@link described}). */
   path: string;
   /** Model-facing form: relative to the workspace when inside it, absolute otherwise. */
@@ -32,7 +32,7 @@ interface WorkflowScriptFile {
   bodyLineOffset: number;
 }
 
-type WorkflowScriptFileResult =
+export type WorkflowScriptFileResult =
   | { ok: true; file: WorkflowScriptFile }
   | { ok: false; message: string };
 
@@ -44,7 +44,7 @@ type WorkflowScriptFileResult =
  * intentionally contains only `workingDirectory`. For `operation: "read"`, both have the same behavior: the helper currently does not
  * block paths outside the workspace, and only resolves/normalizes them.
  */
-function resolveWorkflowScriptFilePath(cwd: string, inputPath: string): string {
+export function resolveWorkflowScriptFilePath(cwd: string, inputPath: string): string {
   return path.isAbsolute(inputPath) ? path.normalize(inputPath) : path.resolve(cwd, inputPath);
 }
 

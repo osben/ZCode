@@ -195,7 +195,7 @@ export function rejectWith(message: string): ContractsSubmitVerdict {
  * prevent. The driver now counts from the **session event stream**, where tool calls actually
  * appear, accumulating them per ask before passing the values in.
  */
-function statsFromTurn(result: TurnResult, toolCounts: ActorToolCounts): AskStats {
+export function statsFromTurn(result: TurnResult, toolCounts: ActorToolCounts): AskStats {
   const usage = result.usage;
   return {
     tokens: usage?.totalTokens ?? 0,

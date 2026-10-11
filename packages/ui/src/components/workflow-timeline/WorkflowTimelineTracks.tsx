@@ -16,7 +16,9 @@ import {
   type TimelineLayout,
 } from "./timeline-geometry.js";
 import { MarchLight } from "./WorkflowMarchLight.js";
+import { STREAM_GAP, StreamChevrons } from "./WorkflowStreamChevrons.js";
 import { stationLampClass } from "./WorkflowTimelineLedge.js";
+import { slideClass, slideStyle, type FillSlide } from "./use-fill-growth.js";
 
 /**
  * Track layer.
@@ -50,8 +52,13 @@ export interface TimelineRailPiece {
   start: TimelinePoint;
   end: TimelinePoint;
   ink: TimelineInk;
-  /** `fork` / `merge` are curves with lanes at both ends; `tail` / `stub` are short main-line segments when there is no predecessor/merge station. */
-  kind?: "fork" | "merge" | "tail" | "stub";
+  /**
+   * `fork`/`merge` are curves with both endpoints; `tail`/`stub` are short main-rail segments without
+   * a predecessor/merge station; `stream` is a stream rail on one track—the path splits at the
+   * center for `STREAM_GAP`, where the `chevrons` sit.
+   */
+  kind?: "fork" | "merge" | "tail" | "stub" | "stream";
+  chevrons?: TimelinePoint;
   from?: number;
   to?: number;
 }
@@ -182,7 +189,22 @@ export function timelineRailPieces(
       continue;
     }
     const yt = rowOf(trackOfStation(rail.from));
-    pieces.push({ ...ends, ...straight(lx(rail.from) + 8, lx(rail.to) - 8, yt) });
+    const x1 = lx(rail.from) + 8;
+    const x2 = lx(rail.to) - 8;
+    if (rail.kind === "stream") {
+      // Stream rail (presentation.md, “Stream rails”): draw one straight line in two segments with a gap for the chevron.
+      const mid = (x1 + x2) / 2;
+      pieces.push({
+        ...ends,
+        chevrons: { x: mid, y: yt },
+        d: `M${x1},${yt} H${mid - STREAM_GAP / 2} M${mid + STREAM_GAP / 2},${yt} H${x2}`,
+        end: { x: x2, y: yt },
+        kind: "stream",
+        start: { x: x1, y: yt },
+      });
+      continue;
+    }
+    pieces.push({ ...ends, ...straight(x1, x2, yt) });
   }
   return pieces;
 }
@@ -222,7 +244,11 @@ export function WorkflowTimelineTracks({
             stroke={INK_STROKE[piece.ink]}
             strokeWidth={1}
           />
-          {piece.ink === "march" ? (
+          {piece.chevrons === undefined ? null : (
+            <StreamChevrons ink={piece.ink} x={piece.chevrons.x} y={piece.chevrons.y} />
+          )}
+          {/* The stream never overlaps the traveling glow; its stroke belongs on the chevron. */}
+          {piece.ink === "march" && piece.kind !== "stream" ? (
             <MarchLight
               d={piece.d}
               from={piece.start}
@@ -260,12 +286,15 @@ export function WorkflowTimelineLamps({
   draft,
   folded,
   layout,
+  slide,
   stations,
 }: {
   stations: readonly TimelineStation[];
   layout: TimelineLayout;
   folded: ReadonlySet<number>;
   draft: boolean;
+  /** Fill growth (`use-fill-growth.ts`): stations to the right of the inserted column slide into place. */
+  slide?: FillSlide;
 }) {
   return (
     <>
@@ -273,16 +302,18 @@ export function WorkflowTimelineLamps({
         <span
           aria-hidden
           className={cn(
-            stationLampClass(station.status),
+            stationLampClass(station.status, station.hole),
             "absolute",
             "wf-foldable",
             folded.has(i) && "wf-folded",
             draft && "wf-land",
+            slideClass(i, slide),
           )}
           data-lamp={station.status ?? "pending"}
           data-lamp-track={station.track}
           key={station.id}
           style={{
+            ...slideStyle(i, slide),
             left: lampX(i, layout.inset) - 5,
             top: (layout.rowY[station.track] ?? layout.rowY[0]!) - 5,
           }}

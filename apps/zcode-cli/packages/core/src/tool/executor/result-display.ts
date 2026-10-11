@@ -30,6 +30,13 @@ export { createCreateWorkflowDisplay } from "./create-workflow-display.js";
 import { isRecord } from "./utils.js";
 import { parseOfficialMcpToolError, type OfficialMcpToolErrorCode } from "@zcode/shared";
 import {
+  MCP_APPS_CONTENT_MAX_BYTES,
+  MCP_APPS_STRUCTURED_CONTENT_MAX_BYTES,
+  MCP_APPS_WIDGET_META_MAX_BYTES,
+  type McpToolDisplayUi,
+  type McpToolUiDescriptor,
+} from "@zcode/shared/mcp-apps";
+import {
   CUA_REQUEST_ACCESS_STATUS_META_KEY,
   cuaRequestAccessStatusSchema,
 } from "@zcode/zcode-cua/request-access-contract";
@@ -41,15 +48,17 @@ const MAX_TASK_STOP_DISPLAY_FIELD_BYTES = 16 * 1024;
 export const MAX_NODE_REPL_DISPLAY_IMAGE_BASE64_BYTES = 200 * 1024;
 const MAX_NODE_REPL_DISPLAY_IMAGES = 2;
 
+export interface McpToolDisplayMetadata {
+  serverName: string;
+  toolName: string;
+  description?: string;
+  official?: boolean;
+  pluginId?: string;
+  ui?: McpToolUiDescriptor;
+}
+
 export function createMcpToolDisplay(
-  metadata:
-    | {
-        serverName: string;
-        toolName: string;
-        description?: string;
-        official?: boolean;
-      }
-    | undefined,
+  metadata: McpToolDisplayMetadata | undefined,
   output?: unknown,
 ): ToolResultDisplayPayload | undefined {
   if (!metadata) return undefined;
@@ -60,13 +69,85 @@ export function createMcpToolDisplay(
     ? boundMcpDisplayText(metadata.description, MCP_TOOL_DISPLAY_MAX_DESCRIPTION_CHARS)
     : undefined;
   const unavailable = metadata.official ? readOfficialMcpUnavailable(output) : undefined;
+  const ui = createMcpToolDisplayUi(metadata, output);
   return {
     kind: "mcp_tool",
     serverName,
     toolName,
     ...(description ? { description } : {}),
     ...(unavailable ? { unavailable } : {}),
+    ...(ui ? { ui } : {}),
   };
+}
+
+/**
+ * Project MCP App metadata. A tool from any MCP server with a declared UI resource is included (ownership comes from serverName);
+ * pluginId is only for display / keys, and non-plugin servers use serverName instead. structuredContent / _meta are persisted as JSON text;
+ * truncate them when over the limit and set truncated so the UI can indicate “structured result truncated.”
+ */
+function createMcpToolDisplayUi(
+  metadata: McpToolDisplayMetadata,
+  output: unknown,
+): McpToolDisplayUi | undefined {
+  if (!metadata.ui) return undefined;
+  const pluginId = boundMcpDisplayText(
+    metadata.pluginId ?? metadata.serverName,
+    MCP_TOOL_DISPLAY_MAX_NAME_CHARS,
+  );
+  if (!pluginId) return undefined;
+  const record = isRecord(output) ? output : undefined;
+  // Cap all three JSON fields by UTF-8 bytes; omit an entire field if it exceeds the limit (never produce partial JSON) and record truncatedBytes.
+  const structured = boundJsonText(
+    record?.structuredContent,
+    MCP_APPS_STRUCTURED_CONTENT_MAX_BYTES,
+  );
+  const meta = boundJsonText(record?._meta, MCP_APPS_WIDGET_META_MAX_BYTES);
+  const content = boundJsonText(
+    Array.isArray(record?.content) ? record.content : undefined,
+    MCP_APPS_CONTENT_MAX_BYTES,
+  );
+  const dropped = [structured, meta, content].filter(
+    (item): item is { truncated: true; bytes: number } => item?.truncated === true,
+  );
+  const truncatedBytes = dropped.reduce((sum, item) => sum + item.bytes, 0);
+  return {
+    pluginId,
+    resourceUri: metadata.ui.resourceUri,
+    ...(metadata.ui.preferredDisplayMode
+      ? { preferredDisplayMode: metadata.ui.preferredDisplayMode }
+      : {}),
+    ...(metadata.ui.prefersBorder !== undefined
+      ? { prefersBorder: metadata.ui.prefersBorder }
+      : {}),
+    ...(metadata.ui.csp ? { csp: metadata.ui.csp } : {}),
+    ...(structured && !structured.truncated ? { structuredContent: structured.text } : {}),
+    ...(meta && !meta.truncated ? { widgetMeta: meta.text } : {}),
+    ...(content && !content.truncated ? { content: content.text } : {}),
+    ...(dropped.length > 0 ? { truncated: true, truncatedBytes } : {}),
+    // H06: MCP calls with isError are still success in the v4 row (the model's call completed); pages and panels use this field to distinguish them.
+    ...(record?.isError === true ? { isError: true as const } : {}),
+    ...(metadata.ui.surface ? { surface: metadata.ui.surface } : {}),
+    // 4b-1: project only true; false / absent do not occupy a field.
+    ...(metadata.ui.showInline === true ? { showInline: true as const } : {}),
+  };
+}
+
+/** Cap JSON text by UTF-8 bytes: return text at or below the limit; above it, return only the byte count (do not truncate the string). */
+function boundJsonText(
+  value: unknown,
+  maxBytes: number,
+): { text: string; truncated: false } | { truncated: true; bytes: number } | undefined {
+  if (value === undefined || value === null) return undefined;
+  let text: string;
+  try {
+    text = JSON.stringify(value);
+  } catch {
+    return undefined;
+  }
+  if (typeof text !== "string") return undefined;
+  const bytes = Buffer.byteLength(text, "utf8");
+  if (bytes <= maxBytes) return { text, truncated: false };
+  return { truncated: true, bytes };
 }
 
 /**
@@ -99,12 +180,7 @@ export function createToolResultDisplay(
   output: unknown,
   options?: {
     officialCua?: boolean;
-    mcp?: {
-      serverName: string;
-      toolName: string;
-      description?: string;
-      official?: boolean;
-    };
+    mcp?: McpToolDisplayMetadata;
   },
 ): ToolResultDisplayPayload | undefined {
   if (toolName === "Bash") return createBashResultDisplay(output);

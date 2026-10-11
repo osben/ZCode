@@ -1,12 +1,36 @@
+import { replyToBotChannel } from "#src/bots/channelReply.js";
+import {
+  BotAdminRequiredError,
+  BotReplyError,
+  createGroupAdminAttention,
+} from "#src/bots/groupAdminAttention.js";
+import { createTopicPreparationState } from "#src/bots/topicPreparationState.js";
+import { createTopicContinuation } from "#src/bots/topicContinuation.js";
+import { TopicHistoryPermissionError } from "#src/bots/topicHistory.js";
+import {
+  createTopicHistoryAttachment,
+  botGroupCommandId,
+} from "#src/bots/topicHistoryAttachment.js";
+import { createGroupDeliveryThrottle } from "#src/bots/groupDeliveryThrottle.js";
+import { createGroupResultDelivery } from "#src/bots/groupResultDelivery.js";
+import { createGroupQueueCardSync } from "#src/bots/groupQueueCard.js";
+import { readAuthorizedTopicResource, authorizeTopicResource } from "#src/bots/topicResource.js";
+import {
+  getBotConversationKey,
+  getBotStateKey,
+  isGroupOwnerCommand,
+  canAnswerGroupQuestion,
+} from "./groupSessions.js";
 /* eslint-disable max-lines -- The Bots service retains its original RPC filename and keeps authorization, command routing, and the ZCode Agent bridge together. */
 import { Buffer } from "node:buffer";
-import { createHash, randomBytes } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type { IDisposable } from "@zcode/rpc";
 import { completeNewModelSelection } from "@zcode/provider";
 import {
   ALL_BOT_WORKSPACES,
+  CONVERSATION_SELECTION_MAX_TEXT_LENGTH,
   generateTraceId,
   normalizeAgentProviderToZCodeAgent,
   ZCODE_AGENT_PROVIDER,
@@ -42,6 +66,9 @@ import {
   type BotInboundAttachment,
   type BotInboundMessage,
   type BotOutboundMessage,
+  type BotGroupDelivery,
+  type BotGroupInputProgress,
+  type BotGroupInputStatus,
   type BotPendingElicitation,
   type BotStructuredElicitationResponse,
   isFeishuBotProvider,
@@ -107,7 +134,7 @@ import {
   beginWeixinRegistration as beginWeixinQrRegistration,
   pollWeixinRegistration as pollWeixinQrRegistration,
 } from "./providers/weixinRegistration.js";
-import { createFeishuBotProvider } from "./providers/feishuProvider.js";
+import { createFeishuBotProvider, splitFeishuText } from "./providers/feishuProvider.js";
 import { formatBotMessage, normalizeBotMessageLocale, type BotMessageId } from "./messages.js";
 import {
   extractBotAssistantResponseMessages,
@@ -125,7 +152,6 @@ import {
   findAuthorizedBot,
   findCallbackBot,
   findBot,
-  getContextKey,
   isUserCommandAllowed,
   normalizeBotConfig,
   normalizeConfigBots,
@@ -154,6 +180,7 @@ import {
   truncateLiveStatusProgressText,
 } from "./statusFormatting.js";
 import { createTelegramChannelRuntime } from "./telegramChannelRuntime.js";
+import { createBotTaskStreamHub } from "#src/bots/taskStreamHub.js";
 import { createWeixinChannelRuntime } from "./weixinChannelRuntime.js";
 import { createFeishuChannelRuntime } from "./feishuChannelRuntime.js";
 import { registerMemoryDiagnosticsProvider } from "#src/memoryDiagnostics.js";
@@ -298,6 +325,7 @@ interface BotsServiceDeps {
   settingService?: ISettingService;
   modelSelectionService: Pick<IModelSelectionService, "getView">;
   remoteWorkspaceService?: BotRemoteWorkspaceService;
+  repo?: BotsRepo;
   // Fix rationale: do not start bot polling, runtime locks, or model candidate caching during desktop-attached remote startup.
   // These background tasks belong to the local desktop host, not the initial SSH/Docker remote connection path.
   runStartupBackgroundTasks?: boolean;
@@ -321,6 +349,12 @@ interface BotRemoteWorkspaceService {
     target: BotRemoteWorkspaceTarget,
   ): Promise<Pick<IModelSelectionService, "getView"> | null>;
   syncAppRuntimePreferences?(preferences: ZCodeAgentAppRuntimePreferences): Promise<void>;
+}
+
+interface PreparedTopicMessage {
+  generation: number;
+  message: BotInboundMessage;
+  prepared: PreparedBotMessageContent;
 }
 
 interface PreparedBotMessageContent {
@@ -478,16 +512,45 @@ function createOutbound(
   actor: BotActor,
   text: string,
   selection?: SelectionPrompt,
-  extras: Pick<BotOutboundMessage, "elicitation" | "locale"> = {},
+  extras: Pick<
+    BotOutboundMessage,
+    "elicitation" | "locale" | "groupSourceCommandId" | "groupTaskId"
+  > = {},
 ): BotOutboundMessage {
   return {
     botId: actor.botId,
     provider: actor.provider,
     providerUserId: actor.chatId ?? actor.providerUserId,
+    ...(isFeishuBotProvider(actor.provider) && actor.chatType === "group" && actor.providerMessageId
+      ? {
+          replyToMessageId: actor.providerMessageId,
+          mentionedUserIds:
+            !actor.threadId || actor.mentionedBot === true ? [actor.providerUserId] : undefined,
+        }
+      : {}),
+    ...(actor.threadId ? { threadId: actor.threadId, rootMessageId: actor.rootMessageId } : {}),
+    ...(actor.conversationThreadId !== undefined
+      ? { conversationThreadId: actor.conversationThreadId }
+      : {}),
     text,
     ...(selection ? { selection } : {}),
     ...extras,
     ...(actor.providerContextToken ? { providerContextToken: actor.providerContextToken } : {}),
+  };
+}
+
+function groupCardFor(
+  actor: BotActor,
+  context: BotContextState,
+): import("@zcode/shared").BotGroupCard {
+  const group = context.group!;
+  const threadId = actor.threadId ?? group.threadId;
+  return {
+    chatId: group.chatId,
+    threadId,
+    taskId: context.activeTaskId,
+    authorizationId: group.authorizationId!,
+    ...(threadId !== group.threadId ? { conversationThreadId: group.threadId ?? null } : {}),
   };
 }
 
@@ -504,6 +567,7 @@ function resolveAutomationBotDeliveryTarget(
     botId: actor.botId,
     providerUserId,
     chatType: actor.chatType,
+    ...(actor.threadId ? { threadId: actor.threadId, rootMessageId: actor.rootMessageId } : {}),
   };
 }
 
@@ -740,10 +804,31 @@ export function createBotsService(
   deps: BotsServiceDeps,
 ): IBotsService & { disposeAll(): void; disposeAllAndWait(): Promise<void> } {
   const runStartupBackgroundTasks = deps.runStartupBackgroundTasks !== false;
-  const repo = new BotsRepo();
+  const repo = deps.repo ?? new BotsRepo();
   const bindCodes = new Map<string, BindCodeRecord>();
   const automationDeliveryWarningAtByKey = new Map<string, number>();
-  const streamSubscriptions = new Map<string, IDisposable>();
+  const streamSubscriptions = new Map<
+    string,
+    IDisposable & { automation(runId?: string): void; imInput(): void }
+  >();
+  const taskStreamHub = createBotTaskStreamHub<ZCodeStreamEvent | TaskStreamMirrorableEvent>();
+  const failedPrivateDeliveries = new Map<
+    string,
+    {
+      id: string;
+      message: BotOutboundMessage;
+      bindingId: string | undefined;
+      taskId: string;
+      sending: boolean;
+    }
+  >();
+  const privateReconciliations = new Map<string, Promise<void>>();
+  const privateImTraces = new Set<string>();
+  const watchStarts = new Map<string, Promise<void>>();
+  const privateWatches = new Map<string, { signature: string; key: string }>();
+  const forwardedTaskEvents = new WeakSet<object>();
+  let privateRecoveryTimer: ReturnType<typeof setInterval> | undefined;
+  let privateRecoveryPending = false;
   const streamingCardRequestControllers = new Set<AbortController>();
   const transientInteractionCards = new Map<
     string,
@@ -756,6 +841,20 @@ export function createBotsService(
   const typingIntervals = new Map<string, ReturnType<typeof setInterval>>();
   const typingTargets = new Map<string, { bot: BotConfig; target: BotTypingTarget }>();
   const runningTasks = new Set<string>();
+  const topicContinuations = new Map<
+    string,
+    ReturnType<typeof createTopicContinuation<PreparedTopicMessage>>
+  >();
+  const topicHistoryReady = new Map<string, string>();
+  const botHistoryEpoch = new Map<string, number>();
+  const groupHistoryEpoch = new Map<string, number>();
+  const topicStops = new Map<string, Promise<void>>();
+  const topicPreparation = createTopicPreparationState();
+  const publishTopicPreparation = () =>
+    deps.broadcastService?.send({ channel: "bots:group-state", payload: {} });
+  const topicGenerations = new Map<string, number>();
+  const topicReplies = new Map<string, Map<string, (replies: BotOutboundMessage[]) => void>>();
+
   const liveStatusProgressByTaskId = new Map<
     string,
     { kind: "message" | "thought" | "tool"; text: string }
@@ -819,7 +918,8 @@ export function createBotsService(
       botId: bot.id,
       provider: bot.provider,
       status: current?.status ?? (bot.enabled ? "idle" : "disabled"),
-      deliveryError,
+      deliveryError:
+        deliveryError ?? (failedPrivateDeliveries.has(bot.id) ? current?.deliveryError : undefined),
     });
   }
 
@@ -868,6 +968,8 @@ export function createBotsService(
     ensureBotStorageMigrated,
     readConfig: () => repo.readConfig(),
     summarizeCallbackPayload,
+    onConnectionInvalidated: (botId) =>
+      botHistoryEpoch.set(botId, (botHistoryEpoch.get(botId) ?? 0) + 1),
     processProviderCallback,
   });
 
@@ -876,31 +978,33 @@ export function createBotsService(
   }
 
   async function writeTelegramOffset(botId: string, offset: number): Promise<void> {
-    const state = await repo.readState();
-    const existing = state.bots[botId];
-    if (existing) {
-      state.bots[botId] = {
-        ...existing,
-        telegramOffset: offset,
-        updatedAt: Date.now(),
-      };
-    } else {
-      const bot = findBot(await repo.readConfig(), botId);
-      const workspace = bot ? firstAllowedWorkspace(await listWorkspaceRefs(), bot) : null;
-      if (bot && workspace) {
+    await serializeStateWrite(async () => {
+      const state = await repo.readState();
+      const existing = state.bots[botId];
+      if (existing) {
         state.bots[botId] = {
-          botId: botId,
-          workspacePath: workspace.workspacePath,
-          workspaceIdentity: workspace.workspaceIdentity,
-          workspaceId: workspace.id,
-          mode: "draft",
-          activeTaskId: null,
+          ...existing,
           telegramOffset: offset,
           updatedAt: Date.now(),
         };
+      } else {
+        const bot = findBot(await repo.readConfig(), botId);
+        const workspace = bot ? firstAllowedWorkspace(await listWorkspaceRefs(), bot) : null;
+        if (bot && workspace) {
+          state.bots[botId] = {
+            botId: botId,
+            workspacePath: workspace.workspacePath,
+            workspaceIdentity: workspace.workspaceIdentity,
+            workspaceId: workspace.id,
+            mode: "draft",
+            activeTaskId: null,
+            telegramOffset: offset,
+            updatedAt: Date.now(),
+          };
+        }
       }
-    }
-    await repo.writeState(state);
+      await repo.writeState(state);
+    });
   }
 
   async function readWeixinGetUpdatesBuf(botId: string): Promise<string | undefined> {
@@ -908,37 +1012,39 @@ export function createBotsService(
   }
 
   async function writeWeixinGetUpdatesBuf(botId: string, buf: string): Promise<void> {
-    const state = await repo.readState();
-    const existing = state.bots[botId];
-    if (existing) {
-      state.bots[botId] = {
-        ...existing,
-        weixinGetUpdatesBuf: buf,
-        updatedAt: Date.now(),
-      };
-    } else {
-      const bot = findBot(await repo.readConfig(), botId);
-      const workspace = bot ? firstAllowedWorkspace(await listWorkspaceRefs(), bot) : null;
-      if (bot && workspace) {
+    await serializeStateWrite(async () => {
+      const state = await repo.readState();
+      const existing = state.bots[botId];
+      if (existing) {
         state.bots[botId] = {
-          botId,
-          workspacePath: workspace.workspacePath,
-          workspaceIdentity: workspace.workspaceIdentity,
-          workspaceId: workspace.id,
-          mode: "draft",
-          activeTaskId: null,
+          ...existing,
           weixinGetUpdatesBuf: buf,
           updatedAt: Date.now(),
         };
+      } else {
+        const bot = findBot(await repo.readConfig(), botId);
+        const workspace = bot ? firstAllowedWorkspace(await listWorkspaceRefs(), bot) : null;
+        if (bot && workspace) {
+          state.bots[botId] = {
+            botId,
+            workspacePath: workspace.workspacePath,
+            workspaceIdentity: workspace.workspaceIdentity,
+            workspaceId: workspace.id,
+            mode: "draft",
+            activeTaskId: null,
+            weixinGetUpdatesBuf: buf,
+            updatedAt: Date.now(),
+          };
+        }
       }
-    }
-    await repo.writeState(state);
+      await repo.writeState(state);
+    });
   }
 
-  async function readContext(_actor: BotActor, bot: BotConfig): Promise<BotContextState | null> {
+  async function readContext(actor: BotActor, bot: BotConfig): Promise<BotContextState | null> {
     await ensureBotStorageMigrated();
     const state = await repo.readState();
-    const existing = state.bots[getContextKey(bot)];
+    const existing = state.bots[getBotConversationKey(actor)];
     if (existing) {
       const latestWorkspaces = await listWorkspaceRefs();
       const canonicalWorkspace = resolveCanonicalContextWorkspace(existing, latestWorkspaces);
@@ -972,6 +1078,66 @@ export function createBotsService(
       await writeContext(nextContext);
       return nextContext;
     }
+    if (actor.chatType === "group") {
+      if (!actor.threadId) return null;
+      const parent =
+        state.bots[
+          getBotConversationKey({ ...actor, threadId: undefined, conversationThreadId: undefined })
+        ];
+      if (!parent?.group?.enabled || parent.group.ownerId !== bot.providerUserId) return null;
+      let topicTitle = actor.topicTitle;
+      let topicUrl = actor.topicUrl;
+      let rootMessageId = actor.rootMessageId;
+      if (!topicTitle && actor.providerMessageId) {
+        try {
+          const resolved = await providers[bot.provider]?.resolveTopic?.(bot, actor);
+          topicTitle = resolved?.topicTitle;
+          topicUrl = resolved?.topicUrl;
+          rootMessageId = resolved?.rootMessageId ?? rootMessageId;
+        } catch {
+          // When a native event already includes thread identity, missing extra read permission affects only the title; do not expand history reads.
+          topicTitle = actor.threadId;
+        }
+      }
+      // A thread inherits only the configuration snapshot; do not copy the default task’s inputs, Q&A, or approval grants.
+      const topic: BotContextState = {
+        botId: bot.id,
+        workspacePath: parent.workspacePath,
+        workspaceIdentity: parent.workspaceIdentity,
+        workspaceId: parent.workspaceId,
+        mode: "draft",
+        activeTaskId: null,
+        updatedAt: Date.now(),
+        draftOptions: { ...(await buildActiveTaskDraftOptions(parent)), mode: "default" },
+        group: {
+          chatId: parent.group.chatId,
+          threadId: actor.threadId,
+          rootMessageId,
+          topicTitle,
+          topicUrl,
+          name: parent.group.name,
+          ownerId: parent.group.ownerId,
+          enabled: true,
+          authorizationId: parent.group.authorizationId,
+          taskIds: [],
+          currentOptions: { ...parent.group.currentOptions, mode: "default" },
+        },
+      };
+      await serializeStateWrite(async () => {
+        const latest = await repo.readState();
+        const currentParent = latest.bots[getBotStateKey(parent)];
+        const key = getBotStateKey(topic);
+        if (
+          latest.bots[key] ||
+          !currentParent?.group?.enabled ||
+          currentParent.group.authorizationId !== topic.group!.authorizationId
+        )
+          return;
+        latest.bots[key] = topic;
+        await repo.writeState(latest);
+      });
+      return (await repo.readState()).bots[getBotStateKey(topic)] ?? null;
+    }
     const workspace = firstAllowedWorkspace(await listWorkspaceRefs(), bot);
     if (!workspace) {
       return null;
@@ -988,10 +1154,664 @@ export function createBotsService(
     };
   }
 
-  async function writeContext(context: BotContextState): Promise<void> {
+  let stateWriteTail: Promise<void> = Promise.resolve();
+  async function readQueueCardScope(key: string) {
+    const [botId, chatId, taskId, authorizationId, inputId, threadId] = JSON.parse(key) as string[];
     const state = await repo.readState();
-    state.bots[context.botId] = { ...context, updatedAt: Date.now() };
-    await repo.writeState(state);
+    const context =
+      state.bots[getBotConversationKey({ botId: botId!, chatType: "group", chatId, threadId })];
+    const bot = findBot(await repo.readConfig(), botId!);
+    const input = context?.group?.inputs?.[inputId!];
+    if (
+      !bot?.enabled ||
+      !context?.group?.enabled ||
+      context.group.ownerId !== bot.providerUserId ||
+      context.group.authorizationId !== authorizationId ||
+      context.activeTaskId !== taskId ||
+      input?.taskId !== taskId
+    )
+      return undefined;
+    return { state, context, bot, input };
+  }
+  const queueCards = createGroupQueueCardSync({
+    read: async (key) => (await readQueueCardScope(key))?.input.progress ?? undefined,
+    mutate: async (key, update) => {
+      let result: BotGroupInputProgress | undefined;
+      await serializeStateWrite(async () => {
+        const scope = await readQueueCardScope(key);
+        if (!scope) return;
+        result = update(scope.input.progress ?? { status: "waiting" });
+        scope.input.progress = result;
+        await repo.writeState(scope.state);
+      });
+      return result;
+    },
+    render: async (key, providerMessageId, status) => {
+      const scope = await readQueueCardScope(key);
+      // Threads reuse the one-way status record, but do not render or update legacy queued cards.
+      if (!scope || scope.context.group?.threadId) return;
+      const english = (await readMessageLocale()) === "en-US";
+      const text: Record<BotGroupInputStatus, string> = english
+        ? {
+            waiting: "Waiting to run",
+            working: "Running",
+            done: "Completed",
+            failed: "Failed",
+            stopped: "Stopped",
+            cancelled: "Cancelled",
+            discarded: "Not executed",
+          }
+        : {
+            waiting: "等待执行",
+            working: "正在执行",
+            done: "已完成",
+            failed: "执行失败",
+            stopped: "已停止",
+            cancelled: "已取消",
+            discarded: "未执行",
+          };
+      const adapter = providers[scope.bot.provider];
+      if (!adapter?.updateTransientInteractionCard)
+        throw new Error("Queue card update unavailable");
+      await adapter.updateTransientInteractionCard(
+        scope.bot,
+        { providerMessageId },
+        {
+          botId: scope.bot.id,
+          provider: scope.bot.provider,
+          providerUserId: scope.context.group!.chatId,
+          text: text[status],
+        },
+      );
+    },
+  });
+  function serializeStateWrite(operation: () => Promise<void>): Promise<void> {
+    const next = stateWriteTail.catch(() => undefined).then(operation);
+    stateWriteTail = next;
+    return next;
+  }
+  async function writeBotConfig(next: BotsConfigFile): Promise<BotsConfigFile> {
+    const invalidatedTopics: BotActor[] = [];
+    const previous = await repo.readConfig();
+    const saved = await repo.writeConfig(next);
+    const changedBindings = new Set(
+      previous.bots
+        .filter((before) => {
+          const after = saved.bots.find((bot) => bot.id === before.id);
+          return (
+            !after ||
+            before.providerUserId !== after.providerUserId ||
+            before.provider !== after.provider ||
+            before.feishuAppId !== after.feishuAppId ||
+            before.credentialRef !== after.credentialRef
+          );
+        })
+        .map((bot) => bot.id),
+    );
+    const operation = stateWriteTail
+      .catch(() => undefined)
+      .then(async () => {
+        const state = await repo.readState();
+        let changed = false;
+        for (const [key, context] of Object.entries(state.bots)) {
+          const group = context.group;
+          if (!group) {
+            const before = previous.bots.find((item) => item.id === context.botId);
+            const after = saved.bots.find((item) => item.id === context.botId);
+            if (changedBindings.has(context.botId) || before?.enabled !== after?.enabled) {
+              if (
+                changedBindings.has(context.botId) &&
+                before?.provider === "weixin" &&
+                context.privateRecipientId
+              )
+                await deps.credentialService.delete(
+                  weixinContextKey(before, context.privateRecipientId),
+                );
+              state.bots[key] = {
+                ...context,
+                privateBindingId: randomUUID(),
+                ...(changedBindings.has(context.botId) ? { privateRecipientId: undefined } : {}),
+              };
+              changed = true;
+            }
+            continue;
+          }
+          const current = saved.bots.find((bot) => bot.id === context.botId);
+          if (!changedBindings.has(context.botId) && current?.providerUserId === group.ownerId)
+            continue;
+          const originalBot = previous.bots.find((bot) => bot.id === context.botId);
+          if (group.threadId && originalBot)
+            invalidatedTopics.push({
+              botId: context.botId,
+              provider: originalBot.provider,
+              chatType: "group",
+              chatId: group.chatId,
+              threadId: group.threadId,
+              providerUserId: group.ownerId,
+            });
+          state.bots[key] = {
+            ...context,
+            group: {
+              ...group,
+              enabled: false,
+              authorizationId: randomUUID(),
+              deliveries: Object.fromEntries(
+                Object.entries(group.deliveries ?? {}).map(([id, result]) => [
+                  id,
+                  result.status === "sent" ? result : { ...result, status: "invalidated" as const },
+                ]),
+              ),
+            },
+          };
+          changed = true;
+        }
+        if (changed) await repo.writeState(state);
+      });
+    stateWriteTail = operation;
+    await operation;
+    // Authorization changes must also invalidate unsubmitted materials; do not wait for old preparation to return before replying.
+    await Promise.all(invalidatedTopics.map(cancelTopicInputs));
+    if (changedBindings.size)
+      await deps.broadcastService
+        ?.send({ channel: "bots:group-state", payload: {} })
+        .catch(() => undefined);
+    for (const botId of new Set([...previous.bots, ...saved.bots].map((item) => item.id)))
+      await reconcilePrivateSynchronization(botId);
+    return saved;
+  }
+
+  async function writeContext(
+    context: BotContextState,
+    updateAuthorization = false,
+    expectedTaskId?: string | null,
+  ): Promise<void> {
+    const next = stateWriteTail
+      .catch(() => undefined)
+      .then(async () => {
+        const state = await repo.readState();
+        const key = getBotStateKey(context);
+        const latest = state.bots[key];
+        const latestGroup = latest?.group;
+        if (
+          !context.group &&
+          expectedTaskId !== undefined &&
+          (latest?.activeTaskId !== expectedTaskId ||
+            latest?.privateBindingId !== context.privateBindingId)
+        )
+          return;
+        // A group event may start processing before deactivation, rebinding, or task switching; an old event must not restore a revoked association.
+        if (
+          context.group &&
+          !updateAuthorization &&
+          latestGroup &&
+          (latestGroup.authorizationId !== context.group.authorizationId ||
+            (expectedTaskId !== undefined && latest?.activeTaskId !== expectedTaskId))
+        )
+          return;
+        const group =
+          context.group && latestGroup && !updateAuthorization
+            ? {
+                ...context.group,
+                enabled: latestGroup.enabled,
+                ownerId: latestGroup.ownerId,
+                authorizationId: latestGroup.authorizationId,
+                // Another thread may have updated the group-level history setting; an old input write-back must not overwrite the latest configuration.
+                historyEnabled: latestGroup.historyEnabled,
+                topicActive: latestGroup.topicActive ?? context.group.topicActive,
+                taskIds: [...new Set([...latestGroup.taskIds, ...context.group.taskIds])],
+                // A confirmed admission is terminal; late stream events must not write the state back to pending.
+                inputs: Object.fromEntries(
+                  Object.entries({ ...latestGroup.inputs, ...context.group.inputs }).map(
+                    ([id, input]) => {
+                      const latestInput = latestGroup.inputs?.[id];
+                      const selected =
+                        latestInput?.admission === "accepted" ||
+                        latestInput?.admission === "rejected"
+                          ? latestInput
+                          : input;
+                      // A stream event may arrive before admission returns; preserve the card state that has already advanced when writing the receipt result.
+                      return [
+                        id,
+                        { ...selected, progress: latestInput?.progress ?? selected.progress },
+                      ];
+                    },
+                  ),
+                ),
+                taskWorkspaces: { ...latestGroup.taskWorkspaces, ...context.group.taskWorkspaces },
+                topicAliases: latestGroup.topicAliases,
+                deliveries: latestGroup.deliveries,
+              }
+            : context.group;
+        // The automatic-reply count is persisted serially at ingress; late task/authorization write-backs must not restore the allowance from an old snapshot.
+        if (group && latestGroup?.autoReplyGuard) group.autoReplyGuard = latestGroup.autoReplyGuard;
+        // The background checkpoint is updated by ingress/receipt commits; an old task snapshot must not overwrite or revive it.
+        if (group && latestGroup) group.backgroundHistory = latestGroup.backgroundHistory;
+        if (group && (!group.enabled || state.bots[key]?.activeTaskId !== context.activeTaskId)) {
+          group.deliveries = Object.fromEntries(
+            Object.entries(group.deliveries ?? {}).map(([id, entry]) => [
+              id,
+              entry.status === "sent" ? entry : { ...entry, status: "invalidated" as const },
+            ]),
+          );
+        }
+        const taskIds =
+          group && context.activeTaskId
+            ? [...new Set([...group.taskIds, context.activeTaskId])]
+            : group?.taskIds;
+        state.bots[key] = {
+          ...context,
+          ...(!group
+            ? {
+                privateBindingId:
+                  latest?.activeTaskId === context.activeTaskId &&
+                  getWorkspaceKey(latest.workspacePath, latest.workspaceIdentity) ===
+                    getWorkspaceKey(context.workspacePath, context.workspaceIdentity)
+                    ? (latest.privateBindingId ?? randomUUID())
+                    : randomUUID(),
+              }
+            : {}),
+          ...(group
+            ? {
+                group: {
+                  ...group,
+                  taskIds: taskIds!,
+                  taskWorkspaces: {
+                    ...group.taskWorkspaces,
+                    ...(context.activeTaskId
+                      ? {
+                          [context.activeTaskId]: {
+                            workspacePath: context.workspacePath,
+                            workspaceIdentity: context.workspaceIdentity,
+                          },
+                        }
+                      : {}),
+                  },
+                },
+              }
+            : {}),
+          updatedAt: Date.now(),
+        };
+        if (updateAuthorization && group && !group.threadId) {
+          // Group authorization is the single source of truth; deactivation or rebinding must invalidate every thread card in the same write.
+          for (const [topicKey, topic] of Object.entries(state.bots)) {
+            if (
+              topic.botId !== context.botId ||
+              topic.group?.chatId !== group.chatId ||
+              !topic.group.threadId
+            )
+              continue;
+            stopGroupSynchronization(topic);
+            state.bots[topicKey] = {
+              ...topic,
+              group: {
+                ...topic.group,
+                enabled: group.enabled,
+                ownerId: group.ownerId,
+                authorizationId: group.authorizationId,
+                deliveries: Object.fromEntries(
+                  Object.entries(topic.group.deliveries ?? {}).map(([id, result]) => [
+                    id,
+                    result.status === "sent"
+                      ? result
+                      : { ...result, status: "invalidated" as const },
+                  ]),
+                ),
+              },
+            };
+          }
+        }
+        await repo.writeState(state);
+      });
+    stateWriteTail = next;
+    await next;
+    if (!context.group) {
+      context.privateBindingId = (await repo.readState()).bots[context.botId]?.privateBindingId;
+      await reconcilePrivateSynchronization(context.botId);
+    }
+    if (context.group)
+      await deps.broadcastService
+        ?.send({
+          channel: "bots:group-state",
+          payload: { botId: context.botId, chatId: context.group.chatId },
+        })
+        .catch(() => undefined);
+  }
+
+  function privateSyncSupported(bot: BotConfig): boolean {
+    return ["feishu", "lark", "telegram", "weixin"].includes(bot.provider);
+  }
+
+  function taskStreamKey(context: BotContextState, actor: BotActor): string {
+    return [
+      getWorkspaceKey(context.workspacePath, context.workspaceIdentity),
+      context.activeTaskId,
+      getBotConversationKey(actor),
+    ].join("::");
+  }
+
+  async function reconcilePrivateSynchronization(botId: string): Promise<void> {
+    const previous = privateReconciliations.get(botId) ?? Promise.resolve();
+    const pending = previous
+      .catch(() => undefined)
+      .then(() => restorePrivateSynchronization(botId))
+      .catch(async (error: unknown) => {
+        const bot = findBot(await repo.readConfig(), botId);
+        if (bot) onDeliveryResult(bot, error instanceof Error ? error.message : String(error));
+        botsLogger.warn(undefined, `Private Bot subscription failed bot=${botId}`);
+      });
+    privateReconciliations.set(botId, pending);
+    try {
+      await pending;
+    } finally {
+      if (privateReconciliations.get(botId) === pending) privateReconciliations.delete(botId);
+    }
+  }
+
+  async function restorePrivateSynchronization(botId: string): Promise<void> {
+    const bot = findBot(await repo.readConfig(), botId);
+    let context = (await repo.readState()).bots[botId];
+    const recipient =
+      bot?.provider === "weixin" ? context?.privateRecipientId : bot?.providerUserId;
+    const valid =
+      !shutdownPromise &&
+      bot?.enabled &&
+      recipient &&
+      privateSyncSupported(bot) &&
+      context &&
+      !context.group &&
+      context.mode === "task" &&
+      context.activeTaskId &&
+      isWorkspaceAllowed(
+        context.workspaceId ?? getWorkspaceKey(context.workspacePath, context.workspaceIdentity),
+        bot.allowedWorkspaces,
+      ) &&
+      (await isRemoteWorkspaceConnected(context));
+    if (valid && context && !context.privateBindingId) {
+      await serializeStateWrite(async () => {
+        const state = await repo.readState();
+        const latest = state.bots[botId];
+        if (latest && !latest.privateBindingId) {
+          state.bots[botId] = { ...latest, privateBindingId: randomUUID() };
+          await repo.writeState(state);
+        }
+      });
+      context = (await repo.readState()).bots[botId];
+    }
+    const signature = valid
+      ? JSON.stringify([
+          context?.privateBindingId,
+          bot?.provider,
+          recipient,
+          context?.activeTaskId,
+          context?.workspacePath,
+          context?.workspaceIdentity,
+        ])
+      : "";
+    const existing = privateWatches.get(botId);
+    if (existing && existing.signature !== signature) {
+      streamSubscriptions.get(existing.key)?.dispose();
+      streamSubscriptions.delete(existing.key);
+      privateWatches.delete(botId);
+      failedPrivateDeliveries.delete(botId);
+      const runtime = runtimeByBotId.get(botId);
+      if (runtime)
+        setRuntimeStatus({ ...runtime, deliveryRetryId: undefined, deliveryError: undefined });
+    }
+    if (!valid || !bot || !context || !signature || privateWatches.has(botId)) return;
+    if (!(await isRemoteWorkspaceConnected(context))) return;
+    const taskService = await resolveZCodeTaskServiceForContext(context);
+    const deleted = await taskService.listDeletedTaskIds?.({
+      workspacePath: context.workspacePath,
+      workspaceIdentity: context.workspaceIdentity,
+    });
+    if (deleted?.includes(context.activeTaskId!)) return;
+    // Read only the authoritative snapshot for cold recovery; do not submit input or replay historical body text from the snapshot.
+    await taskService.getTaskSnapshot({
+      taskId: context.activeTaskId!,
+      workspacePath: context.workspacePath,
+      workspaceIdentity: context.workspaceIdentity,
+      clientMode: "desktop-continuous",
+    });
+    if (shutdownPromise) return;
+    const actor: BotActor = {
+      botId,
+      provider: bot.provider,
+      providerUserId: recipient!,
+      chatType: "private",
+    };
+    const key = taskStreamKey(context, actor);
+    await watchTaskStream(bot, actor, context, bot);
+    privateWatches.set(botId, { signature, key });
+  }
+
+  function weixinContextKey(bot: BotConfig, userId: string): string {
+    // Credentials are isolated by account and recipient; they must not enter ordinary Bot state or logs.
+    return `bot-weixin-context-${createHash("sha256")
+      .update(JSON.stringify([bot.id, bot.providerUserId, bot.credentialRef, userId]))
+      .digest("hex")}`;
+  }
+
+  async function capturePrivateContextToken(message: BotInboundMessage): Promise<void> {
+    if (message.actor.provider !== "weixin" || message.actor.chatType !== "private") return;
+    const bot = findAuthorizedBot(await repo.readConfig(), message.actor);
+    if (!bot || bot.id !== message.botId) return;
+    const context = await readContext(message.actor, bot);
+    if (!context) return;
+    // For iLink, config.providerUserId identifies the bot and must not be treated as an outbound recipient.
+    await serializeStateWrite(async () => {
+      const state = await repo.readState();
+      const latest = state.bots[bot.id];
+      if (!latest) return;
+      if (latest.privateRecipientId !== message.actor.providerUserId) {
+        state.bots[bot.id] = {
+          ...latest,
+          privateRecipientId: message.actor.providerUserId,
+          privateBindingId: randomUUID(),
+        };
+        await repo.writeState(state);
+      }
+    });
+    if (message.actor.providerContextToken)
+      await deps.credentialService.save(
+        weixinContextKey(bot, message.actor.providerUserId),
+        message.actor.providerContextToken,
+      );
+    await reconcilePrivateSynchronization(bot.id);
+  }
+
+  function stopGroupSynchronization(context: BotContextState): void {
+    if (!context.group || !context.activeTaskId) return;
+    const key = [
+      getWorkspaceKey(context.workspacePath, context.workspaceIdentity),
+      context.activeTaskId,
+      getBotStateKey(context),
+    ].join("::");
+    streamSubscriptions.get(key)?.dispose();
+    streamSubscriptions.delete(key);
+  }
+
+  async function restoreGroupSynchronization(context: BotContextState): Promise<void> {
+    if (!context.group?.enabled || !context.activeTaskId || shutdownPromise) return;
+    const bot = findBot(await repo.readConfig(), context.botId);
+    if (
+      !bot?.enabled ||
+      !isFeishuBotProvider(bot.provider) ||
+      bot.providerUserId !== context.group.ownerId
+    )
+      return;
+    // Recovery subscribes only to subsequent events; when the remote side is disconnected, do not open a new connection or replay received input.
+    if (!(await isRemoteWorkspaceConnected(context))) return;
+    await watchTaskStream(
+      bot,
+      {
+        botId: bot.id,
+        provider: bot.provider,
+        chatType: "group",
+        chatId: context.group.chatId,
+        threadId: context.group.threadId,
+        rootMessageId: context.group.rootMessageId,
+        providerUserId: context.group.ownerId,
+      },
+      context,
+      { ...bot, currentOptions: context.group.currentOptions, replyMode: "summary_changes" },
+    );
+  }
+
+  async function handleGroupActivation(
+    message: BotInboundMessage,
+    enabled: boolean,
+  ): Promise<BotOutboundMessage[]> {
+    const locale = await readMessageLocale();
+    const config = await repo.readConfig();
+    const bot = findBot(config, message.botId);
+    if (
+      !bot?.enabled ||
+      !isFeishuBotProvider(bot.provider) ||
+      message.actor.chatType !== "group" ||
+      !message.actor.chatId
+    ) {
+      return [createOutbound(message.actor, msg(locale, "privateChatOnly"))];
+    }
+    if (bot.providerUserId !== message.actor.providerUserId) {
+      return [
+        {
+          ...administratorReply(
+            message.actor,
+            bot,
+            "owner-command",
+            createOutbound(message.actor, msg(locale, "groupOwnerOnly")),
+          ),
+          callbackToastOnly: true,
+        },
+      ];
+    }
+    // Enabling a group does not grant platform authorization; both initial and subsequent enablement should expose the same permission entry point.
+    const activationValues = {
+      permissionsUrl:
+        bot.provider === "lark" ? "https://open.larksuite.com/app" : "https://open.feishu.cn/app",
+    };
+    const key = getBotConversationKey({
+      ...message.actor,
+      threadId: undefined,
+      conversationThreadId: undefined,
+    });
+    const existing = (await repo.readState()).bots[key];
+    if (existing?.group?.ownerId === bot.providerUserId) {
+      if (existing.group.enabled !== enabled) {
+        stopGroupSynchronization(existing);
+        const updated = {
+          ...existing,
+          group: { ...existing.group, enabled, authorizationId: randomUUID() },
+        };
+        await writeContext(updated, true);
+        if (!enabled) await cancelGroupTopicInputs(message.actor);
+        if (enabled) {
+          for (const candidate of Object.values((await repo.readState()).bots)) {
+            if (candidate.botId === bot.id && candidate.group?.chatId === message.actor.chatId)
+              await restoreGroupSynchronization(candidate);
+          }
+        }
+      }
+      return [
+        createOutbound(
+          message.actor,
+          msg(locale, enabled ? "groupEnabled" : "groupDisabled", activationValues),
+        ),
+      ];
+    }
+    if (!enabled) return [createOutbound(message.actor, msg(locale, "groupDisabled"))];
+    const privateContext = await readContext(
+      { ...message.actor, chatType: "private", chatId: undefined },
+      bot,
+    );
+    if (!privateContext)
+      return [
+        administratorReply(
+          message.actor,
+          bot,
+          "workspace",
+          createOutbound(message.actor, msg(locale, "noWorkspaceAllowed")),
+        ),
+      ];
+    const inherited = await buildActiveTaskDraftOptions(privateContext);
+    const info = await providers[bot.provider]?.getGroupInfo?.(bot, message.actor.chatId);
+    const context: BotContextState = {
+      botId: bot.id,
+      workspacePath: privateContext.workspacePath,
+      workspaceIdentity: privateContext.workspaceIdentity,
+      workspaceId: privateContext.workspaceId,
+      mode: "draft",
+      activeTaskId: null,
+      updatedAt: Date.now(),
+      draftOptions: { ...inherited, mode: "default" },
+      group: {
+        chatId: message.actor.chatId,
+        chatMode: info?.chatMode,
+        name: info?.name ?? message.actor.chatId,
+        ownerId: bot.providerUserId!,
+        enabled: true,
+        authorizationId: randomUUID(),
+        taskIds: [],
+        currentOptions: {
+          // After model refactoring, inherit the complete selection; the old model/thoughtLevel fields are no longer persisted.
+          modelSelection: bot.currentOptions.modelSelection,
+          mode: "default",
+        },
+      },
+    };
+    await writeContext(context, true);
+    return [createOutbound(message.actor, msg(locale, "groupEnabled", activationValues))];
+  }
+
+  async function handleGroupHistory(
+    message: BotInboundMessage,
+    enabled?: boolean,
+  ): Promise<BotOutboundMessage[]> {
+    const auth = await withAuthorizedContext(message, "workspace");
+    if (!auth.ok) return auth.reply;
+    if (!auth.context.group)
+      return [
+        createOutbound(
+          message.actor,
+          auth.locale === "en-US"
+            ? "Topic history is configured in a group."
+            : "请在群里配置话题历史读取。",
+        ),
+      ];
+    const key = getBotConversationKey({
+      ...message.actor,
+      threadId: undefined,
+      conversationThreadId: undefined,
+    });
+    let active = false;
+    await serializeStateWrite(async () => {
+      const state = await repo.readState();
+      const parent = state.bots[key];
+      if (!parent?.group?.enabled || parent.group.ownerId !== message.actor.providerUserId)
+        throw new Error("Group authorization changed");
+      if (enabled !== undefined) {
+        parent.group.historyEnabled = enabled;
+        await repo.writeState(state);
+      }
+      if (enabled !== undefined) {
+        const key = JSON.stringify([message.botId, parent.group.chatId]);
+        groupHistoryEpoch.set(key, (groupHistoryEpoch.get(key) ?? 0) + 1);
+      }
+      active = parent.group.historyEnabled !== false;
+    });
+    if (enabled === false) await cancelGroupTopicInputs(message.actor);
+    return [
+      createOutbound(
+        message.actor,
+        auth.locale === "en-US"
+          ? active
+            ? "Topic history enabled. The next topic input reconciles discussion history."
+            : "Topic history is off. Topic input is paused."
+          : active
+            ? "已开启话题历史读取。下次话题输入会补齐讨论历史。"
+            : "话题历史读取已关闭，话题输入已暂停。",
+      ),
+    ];
   }
 
   async function writeDraftContext(
@@ -1009,8 +1829,18 @@ export function createBotsService(
       pendingPermissionOptions: undefined,
       pendingElicitation: undefined,
     };
-    clearPendingSelectionsForBot(context.botId);
+    if (context.group) {
+      const prefix = `${context.botId}::`;
+      for (const key of pendingSelectionsByContext.keys()) {
+        if (key.startsWith(prefix) && key.includes(`::${context.group.chatId}::`)) {
+          pendingSelectionsByContext.delete(key);
+          pendingTaskSelectionsByContext.delete(key);
+          pendingWorkspaceSelectionsByContext.delete(key);
+        }
+      }
+    } else clearPrivatePendingSelectionsForBot(context.botId);
     await writeContext(draftContext);
+    stopGroupSynchronization(context);
     return draftContext;
   }
 
@@ -1053,6 +1883,41 @@ export function createBotsService(
         ),
       ),
     ];
+  }
+
+  const adminAttention = createGroupAdminAttention();
+
+  function administratorReply(
+    actor: BotActor,
+    bot: Pick<BotConfig, "providerUserId">,
+    reason: string,
+    reply: BotOutboundMessage,
+  ): BotOutboundMessage {
+    if (actor.chatType !== "group") return reply;
+    const mentionedUserIds = adminAttention.mention(actor, bot.providerUserId, reason);
+    return { ...reply, mentionedUserIds, administratorAttention: !!mentionedUserIds?.length };
+  }
+
+  function administratorErrorReply(
+    actor: BotActor,
+    bot: BotConfig | null | undefined,
+    error: unknown,
+    reply: BotOutboundMessage,
+  ): BotOutboundMessage {
+    if (!bot || actor.chatType !== "group" || !(error instanceof BotAdminRequiredError))
+      return reply;
+    const hint =
+      error.reason === "model"
+        ? cachedLocale === "en-US"
+          ? "Please check this conversation's model configuration."
+          : "请机器人管理员检查当前会话的模型配置。"
+        : undefined;
+    return administratorReply(
+      actor,
+      bot,
+      error.reason,
+      hint ? { ...reply, text: `${reply.text}\n\n${hint}` } : reply,
+    );
   }
 
   async function readMessageLocale(): Promise<Locale | undefined> {
@@ -1219,12 +2084,21 @@ export function createBotsService(
     message: BotInboundMessage,
     locale: Locale | undefined,
   ): Promise<PreparedBotMessageContent> {
+    const isGroup = message.actor.chatType === "group";
+    if (isGroup && (message.attachments?.length ?? 0) > BOT_MAX_ATTACHMENTS_PER_MESSAGE) {
+      throw new Error(
+        locale === "en-US"
+          ? "Attach at most 4 files per message."
+          : "每条消息最多提交 4 个附件，请拆分后发送。",
+      );
+    }
     const rawAttachments = (message.attachments ?? []).slice(0, BOT_MAX_ATTACHMENTS_PER_MESSAGE);
     const zcodeAttachments: ZCodePromptAttachment[] = [];
     const fileLines: string[] = [];
     for (const rawAttachment of rawAttachments) {
       const resolved = await resolveAttachmentBytes(bot, rawAttachment, message.actor);
       if (!resolved) {
+        if (isGroup) throw new Error("attachment download failed");
         fileLines.push(
           `附件：${rawAttachment.filename} (${rawAttachment.mimeType}, ${formatAttachmentSize(rawAttachment.sizeBytes)})，未能下载。`,
         );
@@ -1240,6 +2114,18 @@ export function createBotsService(
         data: resolved.data,
       });
       const dataBase64 = Buffer.from(resolved.data).toString("base64");
+      if (isGroup) {
+        // The legacy compatibility path appended file paths to the body, losing V4 attachments and breaking the trailing reference block; group input must use standard registration only.
+        zcodeAttachments.push({
+          kind: cached.kind === "image" || cached.kind === "audio" ? cached.kind : "file",
+          filename: cached.filename,
+          mimeType: cached.mimeType,
+          sizeBytes: resolved.data.byteLength,
+          dataBase64,
+          localPath: cached.localPath,
+        });
+        continue;
+      }
       if (cached.kind === "image" || cached.kind === "audio") {
         zcodeAttachments.push({
           kind: cached.kind,
@@ -1333,7 +2219,8 @@ export function createBotsService(
     }
     // Bugfix: bot requests for a remote workspace must not silently fall back to the local zcodeTaskService when runtime is missing.
     // Otherwise a remote path such as /root creates a task on the local macOS/Windows host with the wrong model and filesystem.
-    throw new Error(
+    throw new BotAdminRequiredError(
+      "remote",
       `当前远端项目 ${context.workspacePath} runtime 不可用，请发送 **/重连** 后重试。`,
     );
   }
@@ -1347,7 +2234,8 @@ export function createBotsService(
       workspaceIdentity: context.workspaceIdentity,
     });
     if (service) return service;
-    throw new Error(
+    throw new BotAdminRequiredError(
+      "remote",
       `当前远端项目 ${context.workspacePath} runtime 不可用，请发送 **/重连** 后重试。`,
     );
   }
@@ -1360,19 +2248,27 @@ export function createBotsService(
   }): Promise<BotOutboundMessage[] | null> {
     if (
       !params.context.workspaceIdentity ||
-      !requiresRemoteWorkspaceRuntime(params.requestedCommand) ||
-      (await isRemoteWorkspaceConnected(params.context))
+      !requiresRemoteWorkspaceRuntime(params.requestedCommand)
     ) {
+      return null;
+    }
+    if (await isRemoteWorkspaceConnected(params.context)) {
+      adminAttention.clear(params.message.actor, params.context.group?.ownerId, "remote");
       return null;
     }
     // Bugfix: ordinary messages, configuration changes, and permission responses must not implicitly change remote connection state.
     // Only an explicit /reconnect can restore a remote connection, so the same message is not sometimes executed and sometimes just opens a background connection.
     return [
-      createOutbound(
+      administratorReply(
         params.message.actor,
-        msg(params.locale, "remoteDisconnected", {
-          workspacePath: params.context.workspacePath,
-        }),
+        { providerUserId: params.context.group?.ownerId },
+        "remote",
+        createOutbound(
+          params.message.actor,
+          msg(params.locale, "remoteDisconnected", {
+            workspacePath: params.context.workspacePath,
+          }),
+        ),
       ),
     ];
   }
@@ -1764,30 +2660,33 @@ export function createBotsService(
     const resolvedProvider = requestedProvider;
     return {
       provider: resolvedProvider,
-      mode: BOT_FORCED_MODE,
+      mode: "group" in context && context.group ? "default" : BOT_FORCED_MODE,
     };
   }
 
   async function buildActiveTaskDraftOptions(context: BotContextState): Promise<BotDraftOptions> {
     const activeTask = await readContextActiveTaskMeta(context);
     if (!context.activeTaskId || !activeTask?.provider) {
-      return buildInitializedDraftOptions(context);
+      return context.draftOptions
+        ? normalizeBotDraftOptions(context.draftOptions)
+        : buildInitializedDraftOptions(context);
     }
     const configOptions = await listActiveTaskConfigOptions(context, context.activeTaskId).catch(
       () => [],
     );
     const resolvedProvider = normalizeAgentProviderToZCodeAgent(activeTask.provider);
     // Bot mode is locked to yolo: force it even when inheriting the current task instead of carrying over its mode.
-    const forcedMode = resolveSupportedDraftMode(configOptions, BOT_FORCED_MODE, resolvedProvider);
-    const currentModel = readCurrentActiveTaskModel(activeTask, configOptions);
-    const parsedSelection = currentModel ? parseBotModelOptionValue(currentModel) : undefined;
-    const reasoningLevel = readConfigSelectCurrentValue(configOptions, "thoughtLevel");
-    const modelSelection = parsedSelection
-      ? {
-          ...parsedSelection,
-          ...(reasoningLevel ? { options: { reasoningLevel } } : {}),
-        }
-      : undefined;
+    const forcedMode = resolveSupportedDraftMode(
+      configOptions,
+      "group" in context && context.group ? "default" : BOT_FORCED_MODE,
+      resolvedProvider,
+    );
+    // Inherit the domain selection, not the menu display value; `$max` from the display value was previously stored incorrectly as modelId.
+    // Read the actual selection through the task service for the same workspace, preserving the Provider, model, and explicit reasoning level.
+    const taskService = await resolveZCodeTaskServiceForContext(context);
+    const modelSelection = await taskService.getTaskModelSelection({
+      taskId: context.activeTaskId,
+    });
     return {
       provider: resolvedProvider,
       ...(modelSelection ? { modelSelection } : {}),
@@ -1874,8 +2773,8 @@ export function createBotsService(
     if (!draftOptions) {
       return;
     }
-    // Bugfix: workspace configOptions describes the model for the previous workspace and cannot validate the new task's configuration.
-    // For example, GLM's enabled flag could be sent to a newly selected DeepSeek workspace and make the first WeChat callback fail.
+    // Bug fix: workspace configOptions describes the workspace model before switching and cannot validate the new task configuration.
+    // For example, GLM’s enabled option could be incorrectly sent to another provider model just selected, causing the first WeChat message callback to fail.
     const configOptions = await listActiveTaskConfigOptions(context, taskId);
     const modeOption = configOptions.find(
       (option) => option.category === "mode" && option.type === "select",
@@ -1884,14 +2783,14 @@ export function createBotsService(
     // This is the only point where mode enters the agent session, ensuring every bot task bypasses interactive permissions.
     const forcedDraftMode = resolveSupportedDraftMode(
       configOptions,
-      BOT_FORCED_MODE,
+      context.group ? (draftOptions.mode ?? "default") : BOT_FORCED_MODE,
       draftOptions.provider,
     );
-    if (modeOption?.id && forcedDraftMode) {
+    if ((modeOption?.id && forcedDraftMode) || context.group) {
       const zcodeTaskService = await resolveZCodeTaskServiceForContext(context);
       await zcodeTaskService.setMode({
         taskId,
-        mode: forcedDraftMode as ZCodeTaskMode,
+        mode: (forcedDraftMode ?? "default") as ZCodeTaskMode,
       });
     } else if (modeOption?.id) {
       // Providers other than ZCode Agent do not support yolo; keep their own default mode to avoid failing the first message callback.
@@ -1903,12 +2802,21 @@ export function createBotsService(
   }
 
   function getActorContextKey(actor: BotActor): string {
-    return [actor.botId, actor.provider, actor.chatId?.trim() || actor.providerUserId].join("::");
+    return [
+      actor.botId,
+      actor.provider,
+      actor.chatId?.trim() || actor.providerUserId,
+      ...(actor.threadId ? [actor.threadId] : []),
+      ...(actor.chatType === "group" ? [actor.providerUserId] : []),
+    ].join("::");
   }
 
-  function clearPendingSelectionsForBot(botId: string): void {
+  function clearPrivatePendingSelectionsForBot(botId: string): void {
+    // Creating a direct-message entry must not clear a group member’s menu; the group key also includes the sender segment.
     const matchesBot = (contextKey: string): boolean =>
-      contextKey === botId || contextKey.startsWith(`${botId}::`);
+      contextKey === botId ||
+      (contextKey.startsWith(`${botId}::`) &&
+        contextKey.slice(botId.length + 2).split("::").length === 2);
     for (const contextKey of pendingSelectionsByContext.keys()) {
       if (matchesBot(contextKey)) {
         pendingSelectionsByContext.delete(contextKey);
@@ -1976,6 +2884,8 @@ export function createBotsService(
     }
     pendingSelectionsByContext.delete(actorContextKey);
     switch (selection.action) {
+      case "queue.cancel":
+        return parseBotCommand(option.id);
       case "workspace.set":
         return { type: "workspace.set", value: option.id };
       case "model.provider.set":
@@ -2054,12 +2964,223 @@ export function createBotsService(
     return true;
   }
 
-  async function sendOutbound(bot: BotConfig, message: BotOutboundMessage): Promise<void> {
+  const waitForGroupDeliverySlot = createGroupDeliveryThrottle();
+  const groupDeliverySenders = new Map<string, ReturnType<typeof createGroupResultDelivery>>();
+  function getGroupDeliverySender(bot: BotConfig, chatId: string, threadId?: string) {
+    const key = getBotConversationKey({ botId: bot.id, chatType: "group", chatId, threadId });
+    const existing = groupDeliverySenders.get(key);
+    if (existing) return existing;
+    const authorized = async (result: BotGroupDelivery): Promise<boolean> => {
+      const state = (await repo.readState()).bots[key];
+      const currentBot = findBot(await repo.readConfig(), bot.id);
+      return Boolean(
+        currentBot?.enabled &&
+        (!result.appId || result.appId === currentBot.feishuAppId) &&
+        (!result.contentParts ||
+          !["cancelled", "discarded", "stopped"].includes(
+            state?.group?.inputs?.[result.sourceCommandId ?? ""]?.progress?.status ?? "",
+          )) &&
+        state?.group?.enabled &&
+        state.group.ownerId === currentBot.providerUserId &&
+        state.activeTaskId === result.taskId &&
+        state.group.deliveries?.[result.id]?.status !== "invalidated" &&
+        (!result.authorizationId || result.authorizationId === state.group.authorizationId),
+      );
+    };
+    const sender = createGroupResultDelivery({
+      onSettled: async () => {
+        await deps.broadcastService
+          ?.send({ channel: "bots:group-state", payload: { botId: bot.id, chatId } })
+          .catch(() => undefined);
+      },
+      read: async (id) => (await repo.readState()).bots[key]?.group?.deliveries?.[id],
+      authorized,
+      write: async (result) => {
+        const operation = stateWriteTail
+          .catch(() => undefined)
+          .then(async () => {
+            const state = await repo.readState();
+            const context = state.bots[key];
+            if (!context?.group) return;
+            const invalidated =
+              !context.group.enabled ||
+              context.activeTaskId !== result.taskId ||
+              (Boolean(result.authorizationId) &&
+                context.group.authorizationId !== result.authorizationId) ||
+              context.group.deliveries?.[result.id]?.status === "invalidated";
+            state.bots[key] = {
+              ...context,
+              group: {
+                ...context.group,
+                deliveries: {
+                  ...context.group.deliveries,
+                  [result.id]: invalidated ? { ...result, status: "invalidated" } : result,
+                },
+              },
+            };
+            await repo.writeState(state);
+          });
+        stateWriteTail = operation;
+        await operation;
+        await deps.broadcastService
+          ?.send({ channel: "bots:group-state", payload: { botId: bot.id, chatId } })
+          .catch(() => undefined);
+      },
+      send: async (result) => {
+        await waitForGroupDeliverySlot(`${bot.provider}:${chatId}`);
+        if (!(await authorized(result)))
+          throw Object.assign(new Error("Group delivery authorization changed"), {
+            deliveryRejected: true,
+          });
+        const currentBot = findBot(await repo.readConfig(), bot.id);
+        const adapter = currentBot && providers[currentBot.provider];
+        if (!adapter || !currentBot)
+          throw Object.assign(new Error("Bot provider unavailable"), { deliveryRejected: true });
+        if (
+          result.contentParts &&
+          (currentBot.provider !== bot.provider || currentBot.feishuAppId !== result.appId)
+        )
+          throw Object.assign(new Error("Channel reply application changed"), {
+            deliveryRejected: true,
+          });
+        return adapter.send(currentBot, {
+          botId: bot.id,
+          provider: bot.provider,
+          providerUserId: chatId,
+          text: result.text,
+          deliveryId: result.id,
+          replyToMessageId: result.replyToMessageId,
+          mentionedUserIds: result.mentionedUserIds,
+          contentParts: result.contentParts,
+          trace: result.trace,
+          threadId: result.threadId ?? threadId,
+          rootMessageId:
+            result.rootMessageId ?? (await repo.readState()).bots[key]?.group?.rootMessageId,
+        });
+      },
+    });
+    groupDeliverySenders.set(key, sender);
+    return sender;
+  }
+
+  async function sendOutbound(
+    bot: BotConfig,
+    message: BotOutboundMessage,
+    authorize?: () => Promise<boolean>,
+  ): Promise<void> {
+    const conversationThreadId =
+      message.conversationThreadId !== undefined
+        ? (message.conversationThreadId ?? undefined)
+        : message.threadId;
+    if (isFeishuBotProvider(bot.provider) && message.groupTaskId && message.deliveryId) {
+      const parts = splitFeishuText(message.text);
+      const group = (await repo.readState()).bots[
+        getBotConversationKey({
+          botId: bot.id,
+          chatType: "group",
+          chatId: message.providerUserId,
+          threadId: message.threadId,
+          conversationThreadId: message.conversationThreadId,
+        })
+      ]?.group;
+      const authorizationId = message.groupCard?.authorizationId ?? group?.authorizationId;
+      for (const [index, text] of parts.entries()) {
+        const id = createHash("sha256").update(`${message.deliveryId}:${index}`).digest("hex");
+        const result: BotGroupDelivery = {
+          authorizationId,
+          id,
+          taskId: message.groupTaskId,
+          sourceCommandId: message.groupSourceCommandId,
+          text,
+          replyToMessageId: message.replyToMessageId,
+          mentionedUserIds: index === 0 ? message.mentionedUserIds : undefined,
+          threadId: message.threadId,
+          rootMessageId: message.rootMessageId,
+          status: "pending",
+          updatedAt: Date.now(),
+        };
+        await getGroupDeliverySender(bot, message.providerUserId, conversationThreadId)(result);
+      }
+      return;
+    }
+    if (isFeishuBotProvider(bot.provider) && message.providerUserId.startsWith("oc_")) {
+      await waitForGroupDeliverySlot(`${bot.provider}:${message.providerUserId}`);
+    }
+    // Scheduled tasks also use a stable group target; recheck the enabled state after waiting for send capacity.
+    if (authorize && !(await authorize())) return;
+    if (isFeishuBotProvider(bot.provider) && message.groupTaskId) {
+      const groupState = (await repo.readState()).bots[
+        getBotConversationKey({
+          botId: bot.id,
+          chatType: "group",
+          chatId: message.providerUserId,
+          threadId: message.threadId,
+          conversationThreadId: message.conversationThreadId,
+        })
+      ];
+      const currentBot = findBot(await repo.readConfig(), bot.id);
+      if (
+        !currentBot?.enabled ||
+        !groupState?.group?.enabled ||
+        groupState.group.ownerId !== currentBot.providerUserId ||
+        groupState.activeTaskId !== message.groupTaskId
+      )
+        return;
+    }
     const adapter = providers[bot.provider];
     if (!adapter) {
       return;
     }
-    await adapter.send(bot, message);
+    if (bot.provider === "weixin") {
+      const token = await deps.credentialService.load(
+        weixinContextKey(bot, message.providerUserId),
+      );
+      if (token) message = { ...message, providerContextToken: token };
+    }
+    let handle: Awaited<ReturnType<BotProviderAdapter["send"]>>;
+    try {
+      handle = await adapter.send(bot, message);
+      onDeliveryResult(bot, undefined);
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      const locale = await readMessageLocale();
+      onDeliveryResult(
+        bot,
+        bot.provider === "weixin"
+          ? locale === "en-US"
+            ? `${detail}. Send a message to the bot in Weixin, then retry.`
+            : `${detail}。请在微信给机器人发一条消息后重试。`
+          : detail,
+      );
+      throw error;
+    }
+    if (
+      message.selection?.action === "queue.cancel" &&
+      message.groupSourceCommandId &&
+      message.groupCard?.taskId &&
+      handle?.providerMessageId
+    ) {
+      await queueCards
+        .attach(
+          JSON.stringify([
+            bot.id,
+            message.groupCard.chatId,
+            message.groupCard.taskId,
+            message.groupCard.authorizationId,
+            message.groupSourceCommandId,
+            message.groupCard.conversationThreadId !== undefined
+              ? message.groupCard.conversationThreadId
+              : message.groupCard.threadId,
+          ]),
+          handle.providerMessageId,
+        )
+        .catch((error) => {
+          botsLogger.warn(
+            undefined,
+            `queue card catch-up failed: ${error instanceof Error ? error.message : String(error)}`,
+          );
+        });
+    }
   }
 
   function buildInboundDeliveryKey(message: BotInboundMessage): string | null {
@@ -2082,8 +3203,13 @@ export function createBotsService(
     }
   }
 
-  async function enqueueInboundProcessing<T>(actor: BotActor, task: () => Promise<T>): Promise<T> {
-    const actorContextKey = getActorContextKey(actor);
+  async function enqueueInboundProcessing<T>(
+    actor: BotActor,
+    task: () => Promise<T>,
+    control = false,
+  ): Promise<T> {
+    // Control requests are serialized independently and must not be blocked by ordinary input waiting for attachments or admission.
+    const actorContextKey = `${getBotConversationKey(actor)}${control ? ":control" : ""}`;
     const previous = inboundProcessingQueuesByContext.get(actorContextKey) ?? Promise.resolve();
     let releaseQueue = (): void => undefined;
     const current = previous
@@ -2393,7 +3519,7 @@ export function createBotsService(
     };
     const shouldWrite = nextBot.allowedWorkspaces.join("\n") !== bot.allowedWorkspaces.join("\n");
     if (shouldWrite) {
-      await repo.writeConfig(nextConfig);
+      await writeBotConfig(nextConfig);
     }
     return { config: nextConfig, bot: nextBot, user: nextBot, workspaces };
   }
@@ -2416,9 +3542,21 @@ export function createBotsService(
   ): Promise<BotTaskSelectionEntry[]> {
     const currentWorkspace = createWorkspaceRef(context.workspacePath, context.workspaceIdentity);
     const currentWorkspaceKey = getWorkspaceKey(context.workspacePath, context.workspaceIdentity);
-    const workspaceRefs = await listWorkspaceRefs({ currentWorkspace });
+    const workspaceRefs = context.group
+      ? [
+          ...new Map(
+            [
+              currentWorkspace,
+              ...Object.values(context.group.taskWorkspaces ?? {}).map((ref) =>
+                createWorkspaceRef(ref.workspacePath, ref.workspaceIdentity),
+              ),
+            ].map((ref) => [getWorkspaceKey(ref.workspacePath, ref.workspaceIdentity), ref]),
+          ).values(),
+        ]
+      : await listWorkspaceRefs({ currentWorkspace });
     const allowedWorkspaces = filterAllowedWorkspaces(workspaceRefs, user.allowedWorkspaces);
     const candidateWorkspaces = allowedWorkspaces.filter((workspace) => {
+      if (context.group) return true;
       const workspaceKey = getWorkspaceKey(workspace.workspacePath, workspace.workspaceIdentity);
       return (
         workspaceKey === currentWorkspaceKey ||
@@ -2429,6 +3567,7 @@ export function createBotsService(
     const entries = (
       await Promise.all(
         workspaces.map(async (workspace) => {
+          if (context.group && !(await isRemoteWorkspaceConnected(workspace))) return [];
           const zcodeTaskService = await resolveZCodeTaskServiceForContext(workspace);
           const tasks = await zcodeTaskService
             .listTasks({
@@ -2451,7 +3590,9 @@ export function createBotsService(
         entry,
       );
     }
-    return [...entryByKey.values()];
+    return [...entryByKey.values()].filter(
+      (entry) => !context.group || context.group.taskIds.includes(entry.task.taskId),
+    );
   }
 
   function resolvePendingTaskSelectionEntry(
@@ -2614,10 +3755,49 @@ export function createBotsService(
     const locale = await readMessageLocale();
     const config = await repo.readConfig();
     const callbackBot = findCallbackBot(config, provider, payload);
+    // Validate the callback before reading referenced attachments or handling group-leave events, so unverified events cannot cause read/write side effects.
+    if (callbackBot && isFeishuBotProvider(provider) && callbackBot.webhookSecretRef) {
+      const expectedToken = await deps.credentialService.load(callbackBot.webhookSecretRef);
+      const header = isRecord(payload) && isRecord(payload.header) ? payload.header : null;
+      const inboundToken = isRecord(payload)
+        ? (readNestedString(payload, "token") ?? readNestedString(header, "token"))
+        : undefined;
+      if (!expectedToken || expectedToken !== inboundToken) {
+        return {
+          ok: false,
+          replies: [],
+          status: 401,
+          responseBody: { error: msg(locale, "webhookSecretInvalid") },
+        };
+      }
+    }
+    let materialPayload = payload;
+    if (callbackBot && isFeishuBotProvider(provider) && isRecord(payload)) {
+      const event = isRecord(payload.event) ? payload.event : payload;
+      const native = isRecord(event.message) ? event.message : {};
+      const chatId = readNestedString(native, "chat_id");
+      const threadId = readNestedString(native, "thread_id");
+      const topic =
+        chatId && threadId
+          ? (await repo.readState()).bots[
+              getBotConversationKey({ botId: callbackBot.id, chatType: "group", chatId, threadId })
+            ]
+          : undefined;
+      // The root reference belongs to the initial input, not the active state; reconnecting after leaving must not read it again.
+      // Trust only the service record; an external callback cannot claim receipt to skip initial material preparation.
+      materialPayload = {
+        ...payload,
+        zcodeTopicHasAcceptedInput: Object.values(topic?.group?.inputs ?? {}).some(
+          (input) => input.admission === "accepted",
+        ),
+      };
+    }
     const preparedPayload = callbackBot
-      ? ((await adapter.prepareCallbackPayload?.(callbackBot, payload).catch((error: unknown) => ({
-          zcodeCallbackPrepareError: error instanceof Error ? error.message : String(error),
-        }))) ?? payload)
+      ? ((await adapter
+          .prepareCallbackPayload?.(callbackBot, materialPayload)
+          .catch((error: unknown) => ({
+            zcodeCallbackPrepareError: error instanceof Error ? error.message : String(error),
+          }))) ?? payload)
       : payload;
     if (
       isRecord(preparedPayload) &&
@@ -2641,10 +3821,52 @@ export function createBotsService(
         status: callbackResponse.status,
       };
     }
-    const parsePayload =
+    if (
+      callbackBot &&
+      isFeishuBotProvider(provider) &&
+      isRecord(preparedPayload) &&
+      preparedPayload.zcodeBotRemoved === true
+    ) {
+      const event = isRecord(preparedPayload.event) ? preparedPayload.event : preparedPayload;
+      const chatId = readNestedString(event, "chat_id");
+      if (chatId) {
+        const state = (await repo.readState()).bots[
+          getBotConversationKey({ botId: callbackBot.id, chatType: "group", chatId })
+        ];
+        if (state?.group) {
+          await writeContext(
+            { ...state, group: { ...state.group, enabled: false, authorizationId: randomUUID() } },
+            true,
+          );
+          await cancelGroupTopicInputs({
+            botId: callbackBot.id,
+            provider: callbackBot.provider,
+            chatType: "group",
+            chatId,
+            providerUserId: state.group.ownerId,
+          });
+        }
+      }
+      return { ok: true, replies: [] };
+    }
+    let parsePayload =
       isFeishuBotProvider(provider) && isRecord(preparedPayload)
-        ? { zcodeProvider: provider, ...preparedPayload }
+        ? { ...preparedPayload, zcodeProvider: provider }
         : preparedPayload;
+    if (callbackBot && isFeishuBotProvider(provider) && isRecord(parsePayload)) {
+      const event = isRecord(parsePayload.event) ? parsePayload.event : parsePayload;
+      const cardContext = isRecord(event.context) ? event.context : null;
+      const cardChatId =
+        readNestedString(cardContext, "open_chat_id") ?? readNestedString(cardContext, "chat_id");
+      if (cardChatId) {
+        const states = await repo.readState();
+        const group =
+          states.bots[
+            getBotConversationKey({ botId: callbackBot.id, chatType: "group", chatId: cardChatId })
+          ];
+        if (group?.group) parsePayload = { ...parsePayload, zcodeChatType: "group" };
+      }
+    }
     const parsedInboundMessages = adapter.parseCallback(parsePayload);
     if (isFeishuBotProvider(provider)) {
       // Bugfix: Feishu WebSocket connected means only that the persistent connection is established, not that event subscriptions have reached this host.
@@ -2708,22 +3930,27 @@ export function createBotsService(
         }
       }
       if (!markInboundDelivery(inboundMessage)) {
-        botsLogger.info(
+        botsLogger.debug(
           undefined,
           `provider callback duplicated provider=${provider} bot=${inboundMessage.botId} user=${inboundMessage.actor.providerUserId} messageId=${inboundMessage.actor.providerMessageId ?? ""}`,
         );
         continue;
       }
-      botsLogger.info(
+      botsLogger.debug(
         undefined,
-        `provider callback provider=${provider} bot=${inboundMessage.botId} user=${inboundMessage.actor.providerUserId} displayName=${inboundMessage.actor.displayName ?? ""} text=${inboundMessage.text}`,
+        `provider callback provider=${provider} bot=${inboundMessage.botId} messageId=${inboundMessage.actor.providerMessageId ?? ""}`,
       );
+      // Callback failures and reconnects follow the same thread-notification rules, preserving mention facts verified by the Provider.
+      inboundMessage = {
+        ...inboundMessage,
+        actor: { ...inboundMessage.actor, mentionedBot: inboundMessage.mentionedBot === true },
+      };
       let outbound: BotOutboundMessage[];
       let reconnectStartingReply: BotOutboundMessage | null = null;
       let inboundBusinessFailure = false;
       try {
-        const command = parseBotCommand(inboundMessage.text);
-        if (bot && command.type === "reconnect") {
+        const command = parseBotCommand(inboundMessage.commandText ?? inboundMessage.text);
+        if (bot && inboundMessage.senderType !== "app" && command.type === "reconnect") {
           outbound = await handleReconnect(inboundMessage, {
             onReconnectStart: async (auth) => {
               reconnectStartingReply = createOutbound(
@@ -2749,11 +3976,16 @@ export function createBotsService(
           `provider callback failed provider=${provider} bot=${inboundMessage.botId} user=${inboundMessage.actor.providerUserId}: ${message}`,
         );
         outbound = [
-          createOutbound(
+          administratorErrorReply(
             inboundMessage.actor,
-            isSessionExpiredError(error)
-              ? userFacingMessage
-              : msg(locale, "callbackFailed", { message: userFacingMessage }),
+            bot,
+            error,
+            createOutbound(
+              inboundMessage.actor,
+              isSessionExpiredError(error)
+                ? userFacingMessage
+                : msg(locale, "callbackFailed", { message: userFacingMessage }),
+            ),
           ),
         ];
       }
@@ -2784,8 +4016,13 @@ export function createBotsService(
         const handledByFeishuSynchronousCardAction =
           isFeishuBotProvider(provider) &&
           isRecord(preparedPayload) &&
-          preparedPayload.zcodeFeishuSynchronousCardAction === true &&
-          Boolean(outbound[0]);
+          ((preparedPayload.zcodeFeishuSynchronousCardAction === true &&
+            !(
+              isRecord(preparedPayload.zcodeFeishuCardResponseState) &&
+              preparedPayload.zcodeFeishuCardResponseState.deferred === true
+            ) &&
+            Boolean(outbound[0])) ||
+            (inboundMessage.groupCardAction === true && outbound[0]?.callbackToastOnly === true));
         // Bugfix: an empty ACK makes Telegram's loading indicator disappear without visible feedback.
         // Put the result in the answerCallbackQuery toast after business handling so users still see the button outcome if sendMessage later fails.
         const callbackText = outbound[0]?.text ?? msg(locale, "received");
@@ -2831,6 +4068,16 @@ export function createBotsService(
         }
         const callbackHandledByCardUpdate =
           handledByFeishuSynchronousCardAction || acknowledgeResult?.handled === true;
+        const administratorNotice = outbound.find(
+          (reply) => reply.callbackToastOnly && reply.administratorAttention,
+        );
+        if (callbackHandledByCardUpdate && administratorNotice) {
+          await sendOutbound(bot, {
+            ...administratorNotice,
+            callbackToastOnly: undefined,
+            administratorAttention: undefined,
+          });
+        }
         if (
           !handledByFeishuSynchronousCardAction &&
           callbackHandledByCardUpdate &&
@@ -2854,6 +4101,7 @@ export function createBotsService(
         if (
           callbackHandledByCardUpdate &&
           transientCard &&
+          !outbound[0]?.callbackToastOnly &&
           outbound[0]?.elicitation?.status !== "pending"
         ) {
           // Fix rationale: card_update_token has updated the same message to a read-only terminal state. Release only the in-memory handle;
@@ -2864,7 +4112,7 @@ export function createBotsService(
         // handleReconnect returns only the final result, preventing a stale starting status from being sent after reconnection completes.
         try {
           for (const outboundMessage of callbackHandledByCardUpdate ? [] : outbound) {
-            if (transientCard) {
+            if (transientCard && !outboundMessage.callbackToastOnly) {
               if (outboundMessage.selection || outboundMessage.elicitation?.status === "pending") {
                 await upsertTransientInteractionCard(
                   bot,
@@ -3136,7 +4384,12 @@ export function createBotsService(
     pending: BotPendingElicitation,
     actor: BotActor,
   ): boolean {
-    return !pending.actorKey || pending.actorKey === getActorContextKey(actor);
+    return (
+      !pending.actorKey ||
+      pending.actorKey === getActorContextKey(actor) ||
+      (actor.chatType === "group" &&
+        pending.actorKey.startsWith(`${actor.botId}::${actor.provider}::${actor.chatId}::`))
+    );
   }
 
   function clearPendingElicitationSelection(pending: BotPendingElicitation): void {
@@ -3387,7 +4640,7 @@ export function createBotsService(
       return;
     }
     clearPendingElicitationSelection(context.pendingElicitation);
-    await writeContext({ ...context, pendingElicitation: undefined });
+    await writeContext({ ...context, pendingElicitation: undefined }, false, context.activeTaskId);
   }
 
   async function submitPendingElicitation(
@@ -3649,6 +4902,7 @@ export function createBotsService(
     actor: BotActor,
     context: BotContextState,
     event: Extract<ZCodeStreamEvent, { type: "elicitation_request" }>,
+    mentionedUserIds?: string[],
   ): Promise<void> {
     const locale = await readMessageLocale();
     stopTyping(event.taskId);
@@ -3677,13 +4931,29 @@ export function createBotsService(
       clearPendingElicitationSelection(context.pendingElicitation);
     }
     Object.assign(context, { pendingElicitation });
-    await writeContext({ ...context, pendingElicitation });
+    await writeContext({ ...context, pendingElicitation }, false, context.activeTaskId);
     await broadcastPendingElicitationProgress(context, pendingElicitation);
     for (const reply of await createElicitationReply(actor, pendingElicitation, locale)) {
+      // Cause: temporary interaction cards bypassed the ordinary outbound branch and lost the group task and authorization version; attach them consistently before choosing the transport.
+      const scopedReply = context.group
+        ? {
+            ...reply,
+            mentionedUserIds:
+              pendingElicitation.renderContext?.kind === "plan_approval"
+                ? adminAttention.mention(
+                    actor,
+                    bot.providerUserId,
+                    `plan:${event.taskId}:${event.requestId}`,
+                  )
+                : mentionedUserIds,
+            groupTaskId: context.activeTaskId!,
+            groupCard: groupCardFor(actor, context),
+          }
+        : reply;
       if (shouldUseTransientInteractionCard(bot, user)) {
-        await upsertTransientInteractionCard(bot, actor, event.taskId, reply);
+        await upsertTransientInteractionCard(bot, actor, event.taskId, scopedReply);
       } else {
-        await sendOutbound(bot, reply);
+        await sendOutbound(bot, scopedReply);
       }
     }
   }
@@ -3693,24 +4963,223 @@ export function createBotsService(
     actor: BotActor,
     context: BotContextState,
     user: BotConfig,
+    automation: boolean | string = false,
+  ): Promise<void> {
+    const key = taskStreamKey(context, actor);
+    const previous = watchStarts.get(key) ?? Promise.resolve();
+    const pending = previous
+      .catch(() => undefined)
+      .then(() => startTaskStream(bot, actor, context, user, automation));
+    watchStarts.set(key, pending);
+    try {
+      await pending;
+    } finally {
+      if (watchStarts.get(key) === pending) watchStarts.delete(key);
+    }
+  }
+
+  async function startTaskStream(
+    bot: BotConfig,
+    actor: BotActor,
+    context: BotContextState,
+    user: BotConfig,
+    automation: boolean | string = false,
   ): Promise<void> {
     if (!context.activeTaskId) {
       return;
     }
-    const streamSubscriptionKey = [
-      getWorkspaceKey(context.workspacePath, context.workspaceIdentity),
-      context.activeTaskId,
-    ].join("::");
-    if (streamSubscriptions.has(streamSubscriptionKey)) {
+    for (const [inputId, input] of Object.entries(context.group?.inputs ?? {})) {
+      if (
+        input.taskId !== context.activeTaskId ||
+        !input.progress?.cardMessageId ||
+        input.progress.cardStatus === input.progress.status
+      )
+        continue;
+      await queueCards
+        .update(
+          JSON.stringify([
+            bot.id,
+            context.group!.chatId,
+            context.activeTaskId,
+            context.group!.authorizationId,
+            inputId,
+            context.group!.threadId,
+          ]),
+          input.progress.status,
+        )
+        .catch((error) => {
+          botsLogger.warn(
+            undefined,
+            `restore queue card state failed: ${error instanceof Error ? error.message : String(error)}`,
+          );
+        });
+    }
+    const streamSubscriptionKey = taskStreamKey(context, actor);
+    const existingSubscription = streamSubscriptions.get(streamSubscriptionKey);
+    if (existingSubscription) {
+      if (automation)
+        existingSubscription.automation(typeof automation === "string" ? automation : undefined);
       return;
     }
+    const persistentPrivate = !context.group && !automation && privateSyncSupported(bot);
+    const bindingId = context.privateBindingId;
+    let automationPending = automation === true;
+    let automationRun = Boolean(automation);
+    const automationRuns = new Set<string>(typeof automation === "string" ? [automation] : []);
+    let imInteractionRun = !persistentPrivate;
+    let privateDeliveryFailed = false;
+    let privateCardDeliveryUnknown = false;
+    const isPrivateAuthorized = async (): Promise<boolean> => {
+      if (!persistentPrivate) {
+        if (context.group) return true;
+        const currentBot = findBot(await repo.readConfig(), bot.id);
+        return Boolean(
+          currentBot?.enabled &&
+          currentBot.provider === bot.provider &&
+          currentBot.providerUserId === bot.providerUserId &&
+          currentBot.credentialRef === bot.credentialRef,
+        );
+      }
+      const currentBot = findBot(await repo.readConfig(), bot.id);
+      const latest = (await repo.readState()).bots[bot.id];
+      const recipient =
+        currentBot?.provider === "weixin" ? latest?.privateRecipientId : currentBot?.providerUserId;
+      return Boolean(
+        currentBot?.enabled &&
+        currentBot.provider === bot.provider &&
+        recipient === actor.providerUserId &&
+        latest &&
+        latest.privateBindingId === bindingId &&
+        isWorkspaceAllowed(
+          latest.workspaceId ?? getWorkspaceKey(latest.workspacePath, latest.workspaceIdentity),
+          currentBot.allowedWorkspaces,
+        ) &&
+        latest?.activeTaskId === context.activeTaskId &&
+        getWorkspaceKey(latest.workspacePath, latest.workspaceIdentity) ===
+          getWorkspaceKey(context.workspacePath, context.workspaceIdentity),
+      );
+    };
+    const zcodeTaskService = await resolveZCodeTaskServiceForContext(context);
+    if (context.group) {
+      // Bug cause: creating a result subscription before a stale session has cold-recovered can exhaust retries; first read the authoritative state,
+      // then listen for future events so results are not left unconsumed when a new request finishes. This does not submit historical input.
+      await zcodeTaskService.getBotGroupTaskBlockReason?.({
+        taskId: context.activeTaskId,
+        workspacePath: context.workspacePath,
+        workspaceIdentity: context.workspaceIdentity,
+      });
+      // Startup recovery and the first input may run concurrently; reuse a subscription established by the other path while waiting.
+      if (streamSubscriptions.has(streamSubscriptionKey)) return;
+    }
+    const automationGroupKey =
+      actor.chatType === "group" && !context.group ? getBotConversationKey(actor) : null;
+    const automationAuthorizationId = automationGroupKey
+      ? (await repo.readState()).bots[automationGroupKey]?.group?.authorizationId
+      : undefined;
+    let disposed = false;
+    let resultRunId = "";
+    let resultSourceCommandId: string | undefined;
+    let resultInputOrigin: "desktop" | "mobile" = "desktop";
+    let resultPart = 0;
+    let resultMentionedUserIds: string[] | undefined;
+    const terminalRuns = new Set<string>();
+    const sendTaskOutbound = async (
+      targetBot: BotConfig,
+      message: BotOutboundMessage,
+    ): Promise<void> => {
+      if (disposed && (context.group || persistentPrivate)) return;
+      if (!(await isPrivateAuthorized())) return;
+      if (privateDeliveryFailed) return;
+      if (
+        persistentPrivate &&
+        bot.provider === "weixin" &&
+        !imInteractionRun &&
+        !(await deps.credentialService.load(weixinContextKey(bot, actor.providerUserId)))
+      ) {
+        privateDeliveryFailed = true;
+        const locale = await readMessageLocale();
+        onDeliveryResult(
+          bot,
+          locale === "en-US"
+            ? "Send a message to the bot in Weixin, then retry."
+            : "请在微信给机器人发一条消息后重试。",
+        );
+        return;
+      }
+      if (automationGroupKey) {
+        const current = (await repo.readState()).bots[automationGroupKey]?.group;
+        const currentBot = findBot(await repo.readConfig(), bot.id);
+        if (
+          !current?.enabled ||
+          !currentBot?.enabled ||
+          current.ownerId !== currentBot.providerUserId ||
+          current.authorizationId !== automationAuthorizationId
+        )
+          return;
+      }
+      try {
+        await sendOutbound(
+          targetBot,
+          context.group
+            ? {
+                ...message,
+                groupTaskId: context.activeTaskId!,
+                threadId: actor.threadId ?? context.group.threadId,
+                rootMessageId: actor.rootMessageId ?? context.group.rootMessageId,
+                conversationThreadId: actor.conversationThreadId,
+                groupSourceCommandId: resultSourceCommandId,
+                groupCard: groupCardFor(actor, context),
+                replyToMessageId: actor.providerMessageId,
+                mentionedUserIds:
+                  message.mentionedUserIds ??
+                  (message.selection || resultPart === 0 ? resultMentionedUserIds : undefined),
+                ...(!message.selection && resultRunId
+                  ? {
+                      deliveryId: createHash("sha256")
+                        .update(
+                          JSON.stringify([
+                            bot.id,
+                            context.group.chatId,
+                            context.activeTaskId,
+                            resultRunId,
+                            resultPart++,
+                          ]),
+                        )
+                        .digest("hex"),
+                    }
+                  : {}),
+                // Keep the source in association metadata; adding it to the body creates redundant Desktop/Mobile Web labels.
+                text: message.text,
+              }
+            : message,
+          automationGroupKey
+            ? async () => {
+                const current = (await repo.readState()).bots[automationGroupKey]?.group;
+                const currentBot = findBot(await repo.readConfig(), bot.id);
+                return Boolean(
+                  current?.enabled &&
+                  currentBot?.enabled &&
+                  current.ownerId === currentBot.providerUserId &&
+                  current.authorizationId === automationAuthorizationId,
+                );
+              }
+            : undefined,
+        );
+      } catch (error) {
+        if (!persistentPrivate) throw error;
+        privateDeliveryFailed = true;
+      }
+    };
     let assistantParts: ZCodeAssistantMessagePart[] = [];
     let assistantReplyBuffer = "";
     let sentAnyAssistantReply = false;
     const assistantPartToolIds = new Set<string>();
     const toolCalls = new Map<string, BotReplyToolCallState>();
     const sentToolCallReplyIds = new Set<string>();
-    const getMode = () => normalizeBotReplyGranularity(bot.provider, user.replyMode);
+    const getMode = () =>
+      context.group || automationRun
+        ? "summary_changes"
+        : normalizeBotReplyGranularity(bot.provider, user.replyMode);
     let streamingCardHandle: BotStreamingReplyCardHandle | null = null;
     let streamingCardSegmentIndex = 0;
     const streamingCardBlocks: StreamingCardTimelineBlock[] = [];
@@ -3811,7 +5280,7 @@ export function createBotsService(
       return blocks;
     };
     const syncStreamingCardReply = async (trigger: string, force = false): Promise<void> => {
-      if (!supportsStreamingCardReply()) {
+      if (!supportsStreamingCardReply() || (persistentPrivate && privateCardDeliveryUnknown)) {
         return;
       }
       const now = Date.now();
@@ -3839,6 +5308,7 @@ export function createBotsService(
       streamingCardQueue = streamingCardQueue
         .catch(() => undefined)
         .then(async () => {
+          if (disposed || !(await isPrivateAuthorized())) return;
           let operation = streamingCardHandle ? "update" : "create";
           const requestController = new AbortController();
           streamingCardRequestControllers.add(requestController);
@@ -3851,6 +5321,7 @@ export function createBotsService(
               index < states.length;
               index += 1
             ) {
+              if (disposed || !(await isPrivateAuthorized())) return;
               const segmentState = states[index]!;
               operation = streamingCardHandle ? "update" : "create";
               const request = !streamingCardHandle
@@ -3886,14 +5357,20 @@ export function createBotsService(
                 streamingCardHandle = null;
               }
             }
+            if (persistentPrivate) privateDeliveryFailed = false;
             streamingCardLastUpdateAt = Date.now();
             streamingCardConsecutiveFailures = 0;
             streamingCardNextAttemptAt = 0;
           } catch (error) {
             // Bugfix: third-party cards are best-effort displays; timeout/failure must not block lifecycle events such as task_complete,
             // task_error, or typing cleanup.
+            if (persistentPrivate) {
+              privateDeliveryFailed = true;
+              privateCardDeliveryUnknown = !isRecord(error) || error.deliveryRejected !== true;
+            }
             streamingCardConsecutiveFailures += 1;
             const errorMessage = error instanceof Error ? error.message : String(error);
+            onDeliveryResult(bot, errorMessage);
             if (
               streamingCardConsecutiveFailures >= FEISHU_STREAMING_CARD_FAILURE_CIRCUIT_THRESHOLD
             ) {
@@ -3945,14 +5422,14 @@ export function createBotsService(
       assistantReplyBuffer = extracted.rest;
       for (const text of extracted.messages) {
         sentAnyAssistantReply = true;
-        await sendOutbound(bot, createOutbound(actor, text));
+        await sendTaskOutbound(bot, createOutbound(actor, text));
       }
     };
-    const zcodeTaskService = await resolveZCodeTaskServiceForContext(context);
-    const handleStreamEvent = async (
+    const handleStreamEventImpl = async (
       event: ZCodeStreamEvent | TaskStreamMirrorableEvent,
       shouldBroadcast = true,
     ): Promise<void> => {
+      if (disposed) return;
       if (event.type === "task_stream_mirror_batch") {
         if (shouldBroadcast) {
           await broadcastTaskStreamEvent(context, event);
@@ -3965,6 +5442,178 @@ export function createBotsService(
           }
         }
         return;
+      }
+      if (
+        typeof automation === "string" &&
+        !persistentPrivate &&
+        event.traceId !== automation &&
+        event.inputId !== automation
+      )
+        return;
+      if (persistentPrivate) {
+        if (!(await isPrivateAuthorized())) return;
+        const runId = event.inputId ?? event.traceId;
+        if (event.type === "task_run_started") {
+          if (runId && (terminalRuns.has(runId) || resultRunId === runId)) return;
+          resultRunId = runId ?? "";
+          privateDeliveryFailed = false;
+          privateCardDeliveryUnknown = false;
+          user = findBot(await repo.readConfig(), bot.id) ?? user;
+          resultSourceCommandId = event.inputId;
+          automationRun =
+            automationRuns.delete(runId ?? "") ||
+            automationRuns.delete(event.traceId) ||
+            automationPending;
+          automationPending = false;
+          // Desktop/mobile turns can synchronize output only; a persistent subscription must not add an IM approval entry point.
+          imInteractionRun = privateImTraces.has(
+            JSON.stringify([streamSubscriptionKey, event.traceId]),
+          );
+          assistantParts = [];
+          assistantReplyBuffer = "";
+          sentAnyAssistantReply = false;
+          assistantPartToolIds.clear();
+          toolCalls.clear();
+          sentToolCallReplyIds.clear();
+          streamingCardHandle = null;
+          streamingCardBlocks.length = 0;
+          streamingCardSegmentIndex = 0;
+          streamingCardStatus = "running";
+          streamingCardLastUpdateAt = 0;
+          streamingCardConsecutiveFailures = 0;
+          streamingCardNextAttemptAt = 0;
+          streamingCardCircuitOpen = false;
+        } else {
+          if (runId && terminalRuns.has(runId)) return;
+          if (!resultRunId && runId) resultRunId = runId;
+          if (resultSourceCommandId && event.inputId && resultSourceCommandId !== event.inputId)
+            return;
+        }
+        if (event.type === "task_complete" || event.type === "task_error") {
+          if (runId) terminalRuns.add(runId);
+          // continuous does not replay old turns; retain duplicate-terminal protection for a bounded period.
+          if (terminalRuns.size > 128) terminalRuns.delete(terminalRuns.values().next().value!);
+        }
+        if (
+          !imInteractionRun &&
+          (event.type === "permission_request" || event.type === "elicitation_request")
+        )
+          return;
+      }
+      if (context.group) {
+        const latest = (await repo.readState()).bots[getBotStateKey(context)];
+        const currentBot = findBot(await repo.readConfig(), bot.id);
+        if (
+          !latest?.group?.enabled ||
+          latest.activeTaskId !== context.activeTaskId ||
+          latest.group.ownerId !== currentBot?.providerUserId ||
+          !currentBot.enabled
+        )
+          return;
+        // After continuation is stopped, old input may arrive late; it must not overwrite the new turn’s cache, reaction, or delivery target.
+        if (
+          latest.group.threadId &&
+          resultSourceCommandId &&
+          event.inputId &&
+          event.type !== "task_run_started" &&
+          event.inputId !== resultSourceCommandId
+        )
+          return;
+        if (event.type === "task_complete" || event.type === "task_error") {
+          const terminalKey = event.inputId ?? event.traceId ?? resultRunId;
+          if (terminalKey && terminalRuns.has(terminalKey)) return;
+          if (terminalKey) terminalRuns.add(terminalKey);
+        }
+        if (event.type === "turn_steer_status" && event.status !== "drained") {
+          for (const id of event.pendingInputIds ?? []) {
+            const input = latest.group.inputs?.[id];
+            if (!input || input.taskId !== context.activeTaskId) continue;
+            await updateGroupInputReaction(
+              bot,
+              context,
+              input.source.messageId,
+              event.reason === "session_resumed" ? "discarded" : "cancelled",
+            );
+            // Threads no longer offer queue/Steer interactions; an old run’s discard event updates only the original input state and reaction.
+            if (latest.group.threadId) continue;
+            const locale = await readMessageLocale();
+            const text =
+              event.reason === "session_resumed"
+                ? locale === "en-US"
+                  ? "Queued input was discarded after runtime restart; it was not executed."
+                  : "排队输入已在运行时重启后丢弃，未执行。"
+                : locale === "en-US"
+                  ? "Queued input was removed or rejected; it will not execute."
+                  : "排队输入已删除或被拒绝，不会执行。";
+            const inputActor: BotActor = {
+              ...actor,
+              providerUserId: input.source.senderId,
+              providerMessageId: input.source.messageId,
+              mentionedBot: input.source.mentionedBot,
+              threadId: input.source.threadId ?? context.group.threadId,
+              rootMessageId: input.source.rootMessageId ?? context.group.rootMessageId,
+              conversationThreadId: context.group.threadId ?? null,
+            };
+            await sendOutbound(bot, {
+              ...createOutbound(inputActor, text),
+              groupTaskId: context.activeTaskId!,
+              groupCard: groupCardFor(inputActor, context),
+              replyToMessageId: input.source.messageId,
+              deliveryId: createHash("sha256")
+                .update(`${id}:${event.status}:${event.reason}`)
+                .digest("hex"),
+            });
+          }
+          return;
+        }
+        if (event.type === "task_run_started") resultInputOrigin = event.inputOrigin ?? "desktop";
+        if (event.type === "task_run_started" || event.inputId) {
+          const source = event.inputId ? latest.group.inputs?.[event.inputId]?.source : undefined;
+          // Parse using this turn’s trusted input; do not attribute a source-less desktop result or retry to the group owner or most recent speaker.
+          const isTopicReply = !!(source?.threadId ?? latest.group.threadId);
+          resultMentionedUserIds = source
+            ? [
+                ...new Set(
+                  (source.messages ?? [source])
+                    .filter((item) => !isTopicReply || item.mentionedBot === true)
+                    .map((item) => item.senderId),
+                ),
+              ]
+            : undefined;
+          if (!resultMentionedUserIds?.length) resultMentionedUserIds = undefined;
+          actor = {
+            ...actor,
+            providerUserId: source?.senderId ?? latest.group.ownerId,
+            displayName:
+              source?.senderName ?? (resultInputOrigin === "mobile" ? "Mobile Web" : "Desktop"),
+            providerMessageId: source?.messageId,
+            mentionedBot: source?.mentionedBot,
+            threadId: source?.threadId ?? latest.group.threadId,
+            rootMessageId: source?.rootMessageId ?? latest.group.rootMessageId,
+            conversationThreadId:
+              source?.threadId && source.threadId !== latest.group.threadId
+                ? (latest.group.threadId ?? null)
+                : undefined,
+          };
+          context.group = { ...latest.group, initiatorId: source?.senderId };
+        }
+        if (event.type === "task_run_started") {
+          await updateGroupInputReaction(bot, context, actor.providerMessageId, "working");
+          resultRunId = event.inputId ?? event.traceId;
+          resultSourceCommandId = event.inputId;
+          resultPart = 0;
+          assistantParts = [];
+          assistantReplyBuffer = "";
+          sentAnyAssistantReply = false;
+          assistantPartToolIds.clear();
+          toolCalls.clear();
+          sentToolCallReplyIds.clear();
+          await writeContext(context, false, context.activeTaskId);
+        }
+      }
+      if (context.group && !resultRunId) {
+        resultRunId = event.inputId ?? event.traceId;
+        resultSourceCommandId = event.inputId;
       }
       if (shouldBroadcast) {
         await broadcastTaskStreamEvent(context, event);
@@ -4029,7 +5678,7 @@ export function createBotsService(
         if (toolCall) {
           sentToolCallReplyIds.add(event.toolId);
           sentAnyAssistantReply = true;
-          await sendOutbound(
+          await sendTaskOutbound(
             bot,
             createOutbound(
               actor,
@@ -4083,7 +5732,7 @@ export function createBotsService(
           };
         });
         Object.assign(context, { pendingPermissionOptions });
-        await writeContext({ ...context, pendingPermissionOptions });
+        await writeContext({ ...context, pendingPermissionOptions }, false, context.activeTaskId);
         const [permissionReply] = await createSelectionReply(
           actor,
           permissionSelection,
@@ -4091,16 +5740,43 @@ export function createBotsService(
         );
         if (permissionReply) {
           if (shouldUseTransientInteractionCard(bot, user)) {
-            await upsertTransientInteractionCard(bot, actor, event.taskId, permissionReply);
+            // Cause: normalized Feishu group configuration also takes the temporary-card branch; that must not skip the group-card authorization fields.
+            await upsertTransientInteractionCard(
+              bot,
+              actor,
+              event.taskId,
+              context.group
+                ? {
+                    ...permissionReply,
+                    mentionedUserIds: adminAttention.mention(
+                      actor,
+                      bot.providerUserId,
+                      `permission:${event.taskId}:${event.requestId}`,
+                    ),
+                    groupTaskId: context.activeTaskId!,
+                    groupCard: groupCardFor(actor, context),
+                  }
+                : permissionReply,
+            );
           } else {
-            await sendOutbound(bot, permissionReply);
+            await sendTaskOutbound(
+              bot,
+              context.group
+                ? administratorReply(
+                    actor,
+                    bot,
+                    `permission:${event.taskId}:${event.requestId}`,
+                    permissionReply,
+                  )
+                : permissionReply,
+            );
           }
         }
         return;
       }
       if (event.type === "elicitation_request") {
         await sealStreamingCardReply();
-        await handleElicitationRequest(bot, user, actor, context, event);
+        await handleElicitationRequest(bot, user, actor, context, event, resultMentionedUserIds);
         return;
       }
       if (event.type === "elicitation_response") {
@@ -4111,12 +5787,29 @@ export function createBotsService(
         return;
       }
       if (event.type === "task_complete" || event.type === "task_error") {
+        if (context.group) {
+          await updateGroupInputReaction(
+            bot,
+            context,
+            actor.providerMessageId,
+            event.type === "task_error"
+              ? "failed"
+              : /stop|cancel|interrupt|abort/iu.test(event.stopReason)
+                ? "stopped"
+                : "done",
+          );
+        }
+        privateImTraces.delete(JSON.stringify([streamSubscriptionKey, event.traceId]));
         runningTasks.delete(event.taskId);
         liveStatusProgressByTaskId.delete(event.taskId);
         stopTyping(event.taskId);
         if (context.pendingElicitation?.taskId === event.taskId) {
           clearPendingElicitationSelection(context.pendingElicitation);
-          await writeContext({ ...context, pendingElicitation: undefined });
+          await writeContext(
+            { ...context, pendingElicitation: undefined },
+            false,
+            context.activeTaskId,
+          );
         }
         const transientCard = transientInteractionCards.get(getActorContextKey(actor));
         if (transientCard?.taskId === event.taskId) {
@@ -4155,8 +5848,10 @@ export function createBotsService(
             ...(event.type === "task_error" ? { error: event.error } : {}),
           },
         );
-        streamSubscriptions.get(streamSubscriptionKey)?.dispose();
-        streamSubscriptions.delete(streamSubscriptionKey);
+        if (!context.group && !persistentPrivate) {
+          streamSubscriptions.get(streamSubscriptionKey)?.dispose();
+          streamSubscriptions.delete(streamSubscriptionKey);
+        }
         if (event.type === "task_error") {
           if (supportsStreamingCardReply()) {
             streamingCardStatus = "error";
@@ -4170,7 +5865,7 @@ export function createBotsService(
             await syncStreamingCardReply(event.type, true);
             return;
           }
-          await sendOutbound(
+          await sendTaskOutbound(
             bot,
             createOutbound(
               actor,
@@ -4182,6 +5877,10 @@ export function createBotsService(
           return;
         }
 
+        if (context.group && /stop|cancel|interrupt|abort/iu.test(event.stopReason)) {
+          // Stop notifications can trigger other bots in the group to reply; silence both the main chat and threads while retaining the earlier state cleanup.
+          return;
+        }
         const mode = getMode();
         const locale = await readMessageLocale();
         const completedSnapshot = await zcodeTaskService
@@ -4234,7 +5933,18 @@ export function createBotsService(
           });
         }
         if (replyMessages.length === 0 && !sentAnyAssistantReply) {
-          await sendOutbound(
+          const source = resultSourceCommandId
+            ? context.group?.inputs?.[resultSourceCommandId]?.source
+            : undefined;
+          // An @-free continuation may not involve the model; the empty-output fallback must not turn it into a “task completed” reply that races others.
+          if (
+            context.group?.threadId &&
+            source?.botIdentity &&
+            source.mentionedBot === false &&
+            !source.messages?.some((message) => message.mentionedBot === true)
+          )
+            return;
+          await sendTaskOutbound(
             bot,
             createOutbound(actor, TASK_COMPLETED_MESSAGE[normalizeBotMessageLocale(locale)]),
           );
@@ -4242,7 +5952,47 @@ export function createBotsService(
         }
         for (const text of replyMessages) {
           sentAnyAssistantReply = true;
-          await sendOutbound(bot, createOutbound(actor, text));
+          await sendTaskOutbound(bot, createOutbound(actor, text));
+        }
+      }
+    };
+    const handleStreamEvent = async (
+      event: ZCodeStreamEvent | TaskStreamMirrorableEvent,
+      shouldBroadcast = true,
+    ): Promise<void> => {
+      try {
+        await handleStreamEventImpl(event, shouldBroadcast);
+      } finally {
+        if (
+          persistentPrivate &&
+          privateDeliveryFailed &&
+          (event.type === "task_complete" || event.type === "task_error") &&
+          (await isPrivateAuthorized())
+        ) {
+          const locale = await readMessageLocale();
+          const texts = formatBotAssistantReplyBlocks(
+            createAssistantReplyBlocks(assistantParts, toolCalls, "assistant_changes", undefined),
+            { workspacePath: context.workspacePath, locale },
+          );
+          const text =
+            texts.join("\n\n") ||
+            (event.type === "task_error" ? event.error : msg(locale, "received"));
+          const id = randomUUID();
+          privateDeliveryFailed = false;
+          failedPrivateDeliveries.set(bot.id, {
+            id,
+            bindingId,
+            taskId: context.activeTaskId!,
+            message: createOutbound(actor, text),
+            sending: false,
+          });
+          const runtime = runtimeByBotId.get(bot.id);
+          setRuntimeStatus({
+            botId: bot.id,
+            provider: bot.provider,
+            status: runtime?.status ?? "idle",
+            deliveryRetryId: id,
+          });
         }
       }
     };
@@ -4250,7 +6000,11 @@ export function createBotsService(
     const enqueueStreamEvent = (
       event: ZCodeStreamEvent | TaskStreamMirrorableEvent,
     ): Promise<void> => {
-      const nextStreamEvent = streamEventQueue.then(() => handleStreamEvent(event));
+      const shouldBroadcast = !forwardedTaskEvents.has(event);
+      forwardedTaskEvents.add(event);
+      const nextStreamEvent = streamEventQueue.then(() =>
+        handleStreamEvent(event, shouldBroadcast),
+      );
       // Bugfix: ZCode Agent event dispatch does not wait for async listeners. If discrete messages such as WeChat replies are sent concurrently,
       // the task_complete Change summary may reach the client before the preceding body is flushed, so consume events serially per task.
       streamEventQueue = nextStreamEvent.catch((error: unknown) => {
@@ -4268,23 +6022,43 @@ export function createBotsService(
     ).onDynamicTaskEvent;
     // Bugfix: remote-control/shared-host scenarios dispatch stream events through workspace+task mirrors.
     // Subscribe to workspace-level events first so channel replies are not missed by listening only to the local taskId relay.
-    const streamDisposable = dynamicTaskEvent
-      ? dynamicTaskEvent({
-          workspacePath: context.workspacePath,
-          workspaceIdentity: context.workspaceIdentity,
-          taskId: context.activeTaskId,
-          // Bugfix: Bot channels use direct stream semantics.
-          // Mobile remote-control replayable mirror replay/snapshot gap recovery changes Bot reply boundaries;
-          // use a Bot-specific continuous subscription so remote recovery does not affect Feishu/WeChat and other channels.
-          deliveryKind: "bot-channel-continuous",
-        })(enqueueStreamEvent)
-      : zcodeTaskService.onDynamicStreamEvent(context.activeTaskId)(enqueueStreamEvent);
+    const streamDisposable = taskStreamHub.add(
+      JSON.stringify([
+        getWorkspaceKey(context.workspacePath, context.workspaceIdentity),
+        context.activeTaskId,
+      ]),
+      streamSubscriptionKey,
+      (receive) =>
+        dynamicTaskEvent
+          ? dynamicTaskEvent({
+              workspacePath: context.workspacePath,
+              workspaceIdentity: context.workspaceIdentity,
+              taskId: context.activeTaskId!,
+              // Bug fix: the Bot channel uses direct-stream semantics.
+              // Replayable mobile remote control uses mirror replay/snapshot-gap recovery, which changes bot reply boundaries,
+              // so use a bot-specific continuous subscription here to keep remote-control recovery from affecting Feishu/WeChat and other channels.
+              deliveryKind: "bot-channel-continuous",
+            })(receive)
+          : zcodeTaskService.onDynamicStreamEvent(context.activeTaskId!)(receive),
+      enqueueStreamEvent,
+    );
     streamSubscriptions.set(streamSubscriptionKey, {
+      imInput() {
+        if (!resultRunId) imInteractionRun = true;
+      },
+      automation(runId) {
+        if (runId) automationRuns.add(runId);
+        else {
+          automationPending = true;
+          if (!resultRunId) automationRun = true;
+        }
+      },
       dispose() {
+        disposed = true;
         streamDisposable.dispose();
       },
     });
-    startTyping(bot, actor, context.activeTaskId);
+    if (!context.group && !persistentPrivate) startTyping(bot, actor, context.activeTaskId);
   }
 
   async function createSelectionReply(
@@ -4321,6 +6095,12 @@ export function createBotsService(
     const locale = await readMessageLocale();
     const actorContextKey = getActorContextKey(message.actor);
     const pendingSelection = pendingSelectionsByContext.get(actorContextKey);
+    if (message.actor.chatType === "group") {
+      const auth = await withAuthorizedContext(message, "message");
+      if (!auth.ok) return auth.reply;
+      clearPendingSelection(message.actor);
+      return createStatusReply(message.actor, auth.context, locale);
+    }
     if (pendingSelection?.action === "elicitation.respond") {
       const auth = await withAuthorizedContext(message, "message");
       if (!auth.ok) return auth.reply;
@@ -4398,19 +6178,26 @@ export function createBotsService(
     }
     if (!result.ok) {
       return [
-        createOutbound(
+        administratorReply(
           message.actor,
-          msg(auth.locale, "remoteReconnectFailed", {
-            workspacePath: auth.context.workspacePath,
-            message: result.message ?? "unknown",
-          }),
+          auth.bot,
+          "remote",
+          createOutbound(
+            message.actor,
+            msg(auth.locale, "remoteReconnectFailed", {
+              workspacePath: auth.context.workspacePath,
+              message: result.message ?? "unknown",
+            }),
+          ),
         ),
       ];
     }
+    adminAttention.clear(message.actor, auth.bot.providerUserId, "remote");
     if (auth.context.mode === "draft" || !auth.context.activeTaskId) {
       const draftOptions = await buildInitializedDraftOptions(auth.context);
       await writeContext({ ...auth.context, draftOptions });
     }
+    await reconcilePrivateSynchronization(auth.context.botId);
     // Return the full status after successful reconnection so command completion text and /status do not diverge.
     return createStatusReply(message.actor, auth.context, auth.locale);
   }
@@ -4518,13 +6305,93 @@ export function createBotsService(
         reply: [createOutbound(message.actor, msg(locale, "botDisabled"))],
       };
     }
-    if (message.actor.chatType !== "private") {
+    if (message.actor.chatType !== "private" && !isFeishuBotProvider(bot.provider)) {
       return {
         ok: false,
         reply: [createOutbound(message.actor, msg(locale, "privateChatOnly"))],
       };
     }
-    const user = findBoundUser(bot, message.actor);
+    const groupContext =
+      message.actor.chatType === "group" ? await readContext(message.actor, bot) : null;
+    if (message.actor.chatType === "group") {
+      if (!groupContext?.group?.enabled || groupContext.group.ownerId !== bot.providerUserId) {
+        return {
+          ok: false,
+          reply: [
+            {
+              ...administratorReply(
+                message.actor,
+                bot,
+                "group-disabled",
+                createOutbound(message.actor, msg(locale, "groupNotEnabled")),
+              ),
+              callbackToastOnly: true,
+            },
+          ],
+        };
+      }
+      if (message.groupCard || message.groupCardAction) {
+        const card = message.groupCard;
+        if (
+          !card ||
+          card.chatId !== groupContext.group.chatId ||
+          card.threadId !== message.actor.threadId ||
+          getBotConversationKey({ botId: bot.id, chatType: "group", ...card }) !==
+            getBotStateKey(groupContext) ||
+          card.taskId !== groupContext.activeTaskId ||
+          card.authorizationId !== groupContext.group.authorizationId
+        ) {
+          return {
+            ok: false,
+            reply: [
+              {
+                ...createOutbound(message.actor, msg(locale, "elicitationExpired")),
+                callbackToastOnly: true,
+              },
+            ],
+          };
+        }
+      }
+      adminAttention.clear(message.actor, bot.providerUserId, "group-disabled");
+      if (
+        requestedCommand === "reply" ||
+        (isGroupOwnerCommand(requestedCommand) &&
+          message.actor.providerUserId !== bot.providerUserId)
+      ) {
+        return {
+          ok: false,
+          reply: [
+            {
+              ...(requestedCommand === "reply"
+                ? createOutbound(message.actor, msg(locale, "groupOwnerOnly"))
+                : administratorReply(
+                    message.actor,
+                    bot,
+                    requestedCommand === "approve" && groupContext.pendingPermissionOptions?.[0]
+                      ? `permission:${groupContext.activeTaskId}:${groupContext.pendingPermissionOptions[0].requestId}`
+                      : "owner-command",
+                    createOutbound(message.actor, msg(locale, "groupOwnerOnly")),
+                  )),
+              callbackToastOnly: true,
+            },
+          ],
+        };
+      }
+    }
+    if (
+      groupContext &&
+      message.actor.providerUserId === bot.providerUserId &&
+      isGroupOwnerCommand(requestedCommand)
+    ) {
+      adminAttention.clear(message.actor, bot.providerUserId, "owner-command");
+    }
+    const user = groupContext
+      ? {
+          ...bot,
+          currentOptions: groupContext.group!.currentOptions,
+          replyMode: "summary_changes" as const,
+        }
+      : findBoundUser(bot, message.actor);
     if (!user) {
       return {
         ok: false,
@@ -4537,26 +6404,78 @@ export function createBotsService(
         reply: [createOutbound(message.actor, msg(locale, "commandNotAllowed"))],
       };
     }
-    const context = await readContext(message.actor, bot);
+    if (groupContext?.group) {
+      const parsed = parseBotCommand(message.commandText ?? message.text);
+      const isAnswer =
+        message.senderType !== "app" &&
+        (Boolean(message.elicitationResponse) ||
+          parsed.type === "elicitation.respond" ||
+          parsed.type === "elicitation.submit");
+      if (
+        isAnswer &&
+        !canAnswerGroupQuestion(
+          message.actor.providerUserId,
+          groupContext.group.ownerId,
+          groupContext.group.initiatorId,
+          groupContext.pendingElicitation?.renderContext?.kind === "plan_approval",
+        )
+      ) {
+        return {
+          ok: false,
+          reply: [
+            {
+              ...(groupContext.pendingElicitation?.renderContext?.kind === "plan_approval"
+                ? administratorReply(
+                    message.actor,
+                    bot,
+                    `plan:${groupContext.activeTaskId}:${groupContext.pendingElicitation.requestId}`,
+                    createOutbound(message.actor, msg(locale, "groupOwnerOnly")),
+                  )
+                : createOutbound(message.actor, msg(locale, "groupOwnerOnly"))),
+              callbackToastOnly: true,
+            },
+          ],
+        };
+      }
+    }
+    const context = groupContext ?? (await readContext(message.actor, bot));
     if (!context) {
       return {
         ok: false,
-        reply: [createOutbound(message.actor, msg(locale, "noWorkspaceAllowed"))],
+        reply: [
+          administratorReply(
+            message.actor,
+            bot,
+            "workspace",
+            createOutbound(message.actor, msg(locale, "noWorkspaceAllowed")),
+          ),
+        ],
       };
     }
-    const synced = await normalizeBotWorkspaceConfig(config, bot, {
-      id: context.workspaceId ?? getWorkspaceKey(context.workspacePath, context.workspaceIdentity),
-      label: getWorkspaceLabel(context.workspacePath),
-      workspacePath: context.workspacePath,
-      workspaceIdentity: context.workspaceIdentity,
-    });
+    const synced = context.group
+      ? { config, bot, user }
+      : await normalizeBotWorkspaceConfig(config, bot, {
+          id:
+            context.workspaceId ??
+            getWorkspaceKey(context.workspacePath, context.workspaceIdentity),
+          label: getWorkspaceLabel(context.workspacePath),
+          workspacePath: context.workspacePath,
+          workspaceIdentity: context.workspaceIdentity,
+        });
     if (
       context.workspaceId &&
       !isWorkspaceAllowed(context.workspaceId, synced.user.allowedWorkspaces)
     ) {
       return {
         ok: false,
-        reply: [createOutbound(message.actor, msg(locale, "workspaceOutOfScope"))],
+        reply: [
+          administratorReply(
+            message.actor,
+            bot,
+            "workspace",
+            createOutbound(message.actor, msg(locale, "workspaceOutOfScope")),
+          ),
+        ],
       };
     }
     const remoteDisconnectedReply = await blockDisconnectedRemoteWorkspace({
@@ -4568,18 +6487,18 @@ export function createBotsService(
     if (remoteDisconnectedReply) {
       return { ok: false, reply: remoteDisconnectedReply };
     }
-    if (isFeishuBotProvider(bot.provider)) {
+    if (isFeishuBotProvider(bot.provider) && !context.group) {
       // Bugfix: remove the Feishu short-command typing reaction explicitly after the synchronous reply completes.
       // Wait for reaction creation first; otherwise stopInboundTyping may run early and leave an unremovable Typing reaction.
       await sendTyping(bot, message.actor);
-    } else {
+    } else if (!context.group) {
       void sendTyping(bot, message.actor);
     }
     return {
       ok: true,
       config: synced.config,
       bot: synced.bot,
-      user: synced.user,
+      user: groupContext ? user : synced.user,
       context,
       locale,
     };
@@ -4613,7 +6532,7 @@ export function createBotsService(
       replyMode: normalizeBotReplyGranularity(bot.provider, bot.replyMode),
     };
     validateBotConfig(config, nextBot);
-    await repo.writeConfig({
+    await writeBotConfig({
       ...config,
       bots: config.bots.map((item) => (item.id === nextBot.id ? nextBot : item)),
     });
@@ -4631,11 +6550,8 @@ export function createBotsService(
     if (!auth.ok) {
       return auth.reply;
     }
-    return [
-      createOutbound(message.actor, await buildStatusText(auth.context, auth.locale), undefined, {
-        locale: auth.locale,
-      }),
-    ];
+    // In-group /status and post-configuration status replies share the same redaction entry point, avoiding absolute-path leaks in a separate branch.
+    return createStatusReply(message.actor, auth.context, auth.locale);
   }
 
   async function createStatusReply(
@@ -4644,9 +6560,18 @@ export function createBotsService(
     locale: Locale | undefined,
   ): Promise<BotOutboundMessage[]> {
     return [
-      createOutbound(actor, await buildStatusText(context, locale), undefined, {
-        locale,
-      }),
+      createOutbound(
+        actor,
+        context.group
+          ? (await buildStatusText(context, locale))
+              .split(context.workspacePath)
+              .join(getWorkspaceLabel(context.workspacePath))
+          : await buildStatusText(context, locale),
+        undefined,
+        {
+          locale,
+        },
+      ),
     ];
   }
 
@@ -4788,15 +6713,47 @@ export function createBotsService(
     if (!auth.ok) {
       return auth.reply;
     }
-    return [createOutbound(message.actor, buildHelpText(auth.locale, auth.bot))];
+    return [
+      createOutbound(
+        message.actor,
+        buildHelpText(
+          auth.locale,
+          auth.bot,
+          auth.context.group
+            ? message.actor.providerUserId === auth.context.group.ownerId
+              ? "owner"
+              : "member"
+            : undefined,
+        ),
+      ),
+    ];
   }
 
   function buildHelpText(
     locale: Locale | undefined,
     bot: Pick<BotConfig, "allowedCommands">,
+    groupRole?: "owner" | "member",
   ): string {
     const lines = [msg(locale, "helpTitle")];
+    if (groupRole) {
+      lines.push(
+        locale === "en-US"
+          ? "Mention this bot to submit a request. /answer answers your active question."
+          : "@当前机器人提交需求；/answer 回答自己发起请求中的问题。",
+      );
+      if (groupRole === "owner") {
+        lines.push("/enable · /disable · /task · /stop · /approve · /deny · /reconnect");
+        if (bot.allowedCommands.workspace !== false) lines.push("/history on|off");
+      }
+    }
     for (const command of BOT_MENU_COMMAND_ORDER) {
+      if (
+        groupRole &&
+        (command === "bind" ||
+          command === "reply" ||
+          (groupRole === "member" && command !== "help" && command !== "status"))
+      )
+        continue;
       if (command === "help" || command === "bind") {
         lines.push(msg(locale, helpMessageByCommand[command]));
         continue;
@@ -4807,6 +6764,427 @@ export function createBotsService(
       lines.push(msg(locale, helpMessageByCommand[command]));
     }
     return lines.join("\n");
+  }
+
+  function historyGeneration(context: BotContextState): string {
+    const groupKey = JSON.stringify([context.botId, context.group?.chatId]);
+    return `${botHistoryEpoch.get(context.botId) ?? 0}:${groupHistoryEpoch.get(groupKey) ?? 0}:${context.group?.backgroundHistory?.revision ?? ""}`;
+  }
+
+  async function prepareGroupTopicHistory(
+    bot: BotConfig,
+    message: BotInboundMessage,
+    context: BotContextState,
+  ) {
+    const messageId = message.actor.providerMessageId!;
+    if (!context.group) return {};
+    let topicContext: import("@zcode/shared").BotTopicHistoryBatch | undefined;
+    let historyError: unknown;
+
+    const generation = historyGeneration(context);
+    // Fix the revision before asynchronously reading history; new context arriving during the wait must not be mistaken as read in this turn.
+    const backgroundRevision = context.group.backgroundHistory?.revision;
+    let historyDisabled = false;
+    const inputThreadId = message.actor.threadId ?? context.group.threadId;
+    const inputRootMessageId = message.actor.rootMessageId ?? context.group.rootMessageId;
+    if (inputThreadId) {
+      const parent = (await repo.readState()).bots[
+        getBotConversationKey({
+          botId: bot.id,
+          chatType: "group",
+          chatId: context.group.chatId,
+        })
+      ];
+      historyDisabled = parent?.group?.historyEnabled === false;
+      if (!historyDisabled && topicHistoryReady.get(getBotStateKey(context)) !== generation) {
+        const accepted = Object.values(context.group.inputs ?? {}).filter(
+          (input) => input.admission === "accepted" && input.source.threadId === inputThreadId,
+        );
+        const checkpoint = context.group.backgroundHistory
+          ? context.group.backgroundHistory.checkpoint
+          : accepted.at(-1)?.source.messageId;
+        try {
+          const reader = providers[bot.provider]?.readTopicHistory;
+          if (!reader || !inputRootMessageId) throw new Error("Topic history reader unavailable");
+          topicContext = await reader(bot, {
+            chatId: context.group.chatId,
+            threadId: inputThreadId,
+            rootMessageId: inputRootMessageId,
+            messageId,
+            checkpoint,
+          });
+          const ingested = new Set(
+            accepted.flatMap(
+              (input) =>
+                input.source.messages?.map((original) => original.messageId) ?? [
+                  input.source.messageId,
+                ],
+            ),
+          );
+          topicContext.messages = topicContext.messages.filter(
+            (item) => !ingested.has(item.id) && item.id !== message.referencedMessage?.messageId,
+          );
+        } catch (error) {
+          botsLogger.warn(
+            undefined,
+            `topic history preparation failed bot=${bot.id}: ${error instanceof Error ? error.message : String(error)}`,
+          );
+          // A read failure must block submission; do not start the task by substituting incomplete attachments for required history.
+          topicContext = undefined;
+          historyError = error || new Error("Topic history unavailable");
+        }
+      }
+    }
+    return {
+      topicContext,
+      historyError,
+      historyDisabled,
+      generation,
+      backgroundRevision,
+    };
+  }
+
+  async function submitGroupMessage(
+    bot: BotConfig,
+    message: BotInboundMessage,
+    context: BotContextState,
+    prepared: PreparedBotMessageContent,
+    locale: Locale | undefined,
+    history: Awaited<ReturnType<typeof prepareGroupTopicHistory>>,
+    topicBatch?: PreparedTopicMessage[],
+    isCurrent = () => true,
+  ): Promise<BotOutboundMessage[]> {
+    if (!context.group || !context.activeTaskId || !isFeishuBotProvider(bot.provider))
+      throw new Error("Group context is missing");
+    const service = await resolveZCodeTaskServiceForContext(context);
+    if (!service.submitBotGroupInput)
+      throw new Error("Runtime does not support group input admission");
+    const messageId = message.actor.providerMessageId;
+    if (!messageId) throw new Error("Group message ID is required");
+    const commandId = botGroupCommandId(bot.id, context.group.chatId, messageId);
+    const { topicContext } = history;
+    const inputThreadId = message.actor.threadId ?? context.group.threadId;
+    const inputRootMessageId = message.actor.rootMessageId ?? context.group.rootMessageId;
+    // The control channel can deactivate a group while history/attachments are being prepared; do not submit using authorization from before preparation.
+    const admissionContext = (await repo.readState()).bots[getBotStateKey(context)];
+    const admissionBot = findBot(await repo.readConfig(), bot.id);
+    if (
+      !admissionContext?.group?.enabled ||
+      !admissionBot?.enabled ||
+      admissionContext.group.ownerId !== admissionBot.providerUserId ||
+      admissionContext.group.authorizationId !== context.group.authorizationId ||
+      admissionContext.activeTaskId !== context.activeTaskId
+    )
+      throw new Error("Group authorization changed before input admission");
+    let attachmentOffset = 0;
+    const admittedAttachments: ZCodePromptAttachment[] = [];
+    // Multiple callbacks may each prepare the root reference before the first receipt; deduplicate again at submission using the authoritative record.
+    let rootIncluded = Object.values(admissionContext.group.inputs ?? {}).some(
+      (input) => input.admission === "accepted",
+    );
+    const messages = topicBatch?.map(({ message: original, prepared: material }) => {
+      const quote = original.referencedMessage;
+      const isRoot = !!inputRootMessageId && quote?.messageId === inputRootMessageId;
+      const includeQuote = quote && !(isRoot && rootIncluded);
+      const attachmentIndexes: number[] = [];
+      let hasRootAttachment = false;
+      material.zcodeAttachments.forEach((attachment, index) => {
+        const resourceMessageId =
+          original.attachments?.[index]?.providerMetadata?.resourceMessageId;
+        const rootAttachment = !!inputRootMessageId && resourceMessageId === inputRootMessageId;
+        hasRootAttachment ||= rootAttachment;
+        // The root reference may have been downloaded before the previous receipt; deduplicate resources at submission too, rather than merely hiding the reference text.
+        if (rootAttachment && rootIncluded) return;
+        attachmentIndexes.push(admittedAttachments.length);
+        admittedAttachments.push(attachment);
+      });
+      attachmentOffset += material.zcodeAttachments.length;
+      if ((isRoot && includeQuote) || hasRootAttachment) rootIncluded = true;
+      return {
+        messageId: original.actor.providerMessageId!,
+        senderId: original.actor.providerUserId,
+        mentionedBot: original.mentionedBot === true,
+        contentParts: original.contentParts,
+        senderName: original.actor.displayName ?? original.actor.providerUserId,
+        text: original.text,
+        ...(includeQuote ? { conversationQuotes: [quote] } : {}),
+        attachmentIndexes,
+      };
+    });
+    // Append the historical text attachment after each original attachment, preserving it without attributing it to a later message.
+    if (topicBatch) admittedAttachments.push(...prepared.zcodeAttachments.slice(attachmentOffset));
+    const source = {
+      authorizationId: context.group.authorizationId,
+      botIdentity: { name: bot.name, ...(message.botOpenId ? { openId: message.botOpenId } : {}) },
+      provider: bot.provider,
+      botId: bot.id,
+      chatId: context.group.chatId,
+      threadId: inputThreadId,
+      rootMessageId: inputRootMessageId,
+      appId: bot.feishuAppId,
+      contentParts: message.contentParts,
+      senderId: message.actor.providerUserId,
+      mentionedBot: message.mentionedBot === true,
+      senderName: message.actor.displayName ?? message.actor.providerUserId,
+      messageId,
+      ...(messages ? { messages } : {}),
+      ...(topicContext ? { topicContext } : {}),
+    };
+    const isFirstTaskInput = !Object.values(context.group.inputs ?? {}).some(
+      (input) => input.taskId === context.activeTaskId,
+    );
+    context.group = {
+      ...context.group,
+      inputs: {
+        ...context.group.inputs,
+        [commandId]: { taskId: context.activeTaskId, source, admission: "pending" },
+      },
+    };
+    await writeContext(context);
+    await watchTaskStream(bot, message.actor, context, { ...bot, replyMode: "summary_changes" });
+    // The original text is already registered as a text attachment; do not put the full history into the command frame through source metadata.
+    const { topicContext: archive, ...runtimeSource } = source;
+    if (!isCurrent()) return [];
+    const ack = await service.submitBotGroupInput({
+      taskId: context.activeTaskId,
+      commandId,
+      content: prepared.content,
+      ...(topicBatch
+        ? {
+            conversationQuotes: messages?.flatMap((entry) => entry.conversationQuotes ?? []) ?? [],
+          }
+        : message.referencedMessage
+          ? { conversationQuotes: [message.referencedMessage] }
+          : {}),
+      attachments: topicBatch ? admittedAttachments : prepared.zcodeAttachments,
+      source: {
+        ...runtimeSource,
+        ...(archive
+          ? {
+              topicHistory: {
+                checkpoint: archive.checkpoint,
+                hasGap: archive.hasGap,
+                messageCount: archive.messages.length,
+                resourceMessages: archive.messages
+                  .filter((record) => record.attachments?.length)
+                  .map((record) => ({ messageId: record.id, count: record.attachments!.length })),
+              },
+            }
+          : {}),
+      },
+    });
+    if (ack.status !== "accepted" && ack.status !== "duplicate") {
+      context.group.inputs![commandId]!.admission = "rejected";
+      await writeContext(context, false, context.activeTaskId);
+      throw new Error(ack.message ?? ack.reasonCode ?? "Input rejected");
+    }
+    if (ack.result?.type !== "inputAccepted") throw new Error("Input admission outcome is unknown");
+    adminAttention.clear(message.actor, bot.providerUserId);
+    context.group.inputs![commandId]!.admission = "accepted";
+    if (context.group.threadId) context.group.topicActive = true;
+    await writeContext(context, false, context.activeTaskId);
+    if (context.group.threadId && isCurrent() && history.generation) {
+      topicHistoryReady.set(getBotStateKey(context), history.generation);
+    }
+    if (context.group.threadId && isCurrent()) {
+      await serializeStateWrite(async () => {
+        const state = await repo.readState();
+        const current = state.bots[getBotStateKey(context)];
+        if (current?.group && isCurrent()) {
+          current.group.topicActive = true;
+          // Clear only checkpoints backfilled in this turn and not replaced by new context; context received during preparation stays for the next turn.
+          if (
+            history.topicContext &&
+            history.backgroundRevision &&
+            current.group.backgroundHistory?.revision === history.backgroundRevision
+          ) {
+            delete current.group.backgroundHistory;
+            topicHistoryReady.set(getBotStateKey(current), historyGeneration(current));
+          }
+        }
+        for (const candidate of Object.values(state.bots)) {
+          if (candidate.botId === bot.id && candidate.group?.chatId === context.group!.chatId) {
+            delete candidate.group.topicAliases?.[context.group!.threadId!];
+          }
+        }
+        await repo.writeState(state);
+      });
+    }
+    if (isFirstTaskInput && service.renameTask) {
+      await service
+        .renameTask({
+          taskId: context.activeTaskId,
+          workspacePath: context.workspacePath,
+          workspaceIdentity: context.workspaceIdentity,
+          title: `${bot.provider === "lark" ? "Lark" : "飞书"} · ${context.group.name}${context.group.threadId ? ` · ${context.group.topicTitle || context.group.threadId}` : ""}`,
+        })
+        .catch((error: unknown) => {
+          // The CLI has accepted the input; a title-write failure must not release deduplication and cause the input to run again.
+          botsLogger.warn(
+            undefined,
+            `persist group task title failed: ${error instanceof Error ? error.message : String(error)}`,
+          );
+        });
+    }
+    await updateGroupInputReaction(
+      bot,
+      context,
+      messageId,
+      ack.result.delivery === "queue" ? "waiting" : "working",
+    );
+    const replies =
+      ack.result.delivery === "queue" && !context.group?.threadId
+        ? [
+            createOutbound(
+              message.actor,
+              locale === "en-US" ? "Waiting to run" : "等待执行",
+              {
+                id: `queue-${commandId}`,
+                title: locale === "en-US" ? "Queued" : "已排队",
+                action: "queue.cancel",
+                showCancel: false,
+                options: [
+                  {
+                    id: `/queue-cancel ${commandId}`,
+                    label: locale === "en-US" ? "Cancel" : "取消",
+                  },
+                ],
+              },
+              { locale, groupSourceCommandId: commandId, groupTaskId: context.activeTaskId },
+            ),
+          ]
+        : [];
+    return replies;
+  }
+
+  async function updateGroupInputReaction(
+    bot: BotConfig,
+    context: BotContextState,
+    messageId: string | undefined,
+    state: BotGroupInputStatus,
+  ): Promise<void> {
+    if (!messageId) return;
+    try {
+      const entry = Object.entries(context.group?.inputs ?? {}).find(
+        ([, input]) => input.source.messageId === messageId,
+      );
+      const inputId = entry?.[0];
+      if (inputId && context.group) {
+        await queueCards
+          .update(
+            JSON.stringify([
+              bot.id,
+              context.group.chatId,
+              context.activeTaskId,
+              context.group.authorizationId,
+              inputId,
+              context.group.threadId,
+            ]),
+            state,
+          )
+          .catch((error) => {
+            botsLogger.warn(
+              undefined,
+              `queue card update failed: ${error instanceof Error ? error.message : String(error)}`,
+            );
+          });
+      }
+      // The CLI terminal state may arrive before the admission ACK; reactions must use the persisted one-way state.
+      if (inputId) {
+        const latest = (await repo.readState()).bots[getBotStateKey(context)];
+        state = latest?.group?.inputs?.[inputId]?.progress?.status ?? state;
+      }
+      // Batching combines execution only; each original message retains its own reaction, so do not update only the last one.
+      const messageIds = entry?.[1].source.messages?.map((message) => message.messageId) ?? [
+        messageId,
+      ];
+      await Promise.all(
+        messageIds.map((originalId) =>
+          providers[bot.provider]?.updateInputReaction?.(
+            bot,
+            originalId,
+            state === "stopped" || state === "discarded" ? "cancelled" : state,
+          ),
+        ),
+      );
+    } catch (error) {
+      // Reactions are only a projection of state; platform failure must not turn accepted input into a failure or trigger a rerun.
+      botsLogger.warn(
+        undefined,
+        `group input reaction update failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+
+  async function cancelGroupInput(
+    message: BotInboundMessage,
+    sourceCommandId: string,
+  ): Promise<BotOutboundMessage[]> {
+    const auth = await withAuthorizedContext(message, "message");
+    if (!auth.ok) return auth.reply;
+    const group = auth.context.group;
+    const input = group?.inputs?.[sourceCommandId];
+    // An old thread queue card may remain in Feishu; it must not operate on the new thread’s stop/continue input.
+    if (group?.threadId) {
+      return [
+        {
+          ...createOutbound(
+            message.actor,
+            auth.locale === "en-US"
+              ? "This topic queue card has expired. Use /stop to stop the topic."
+              : "该话题排队卡已失效，请使用 /stop 停止话题。",
+          ),
+          callbackToastOnly: true,
+        },
+      ];
+    }
+    if (
+      !group ||
+      !input ||
+      input.taskId !== auth.context.activeTaskId ||
+      (message.actor.providerUserId !== group.ownerId &&
+        input.source.senderId !== message.actor.providerUserId)
+    ) {
+      return [
+        {
+          ...(group && input && input.taskId === auth.context.activeTaskId
+            ? administratorReply(
+                message.actor,
+                auth.bot,
+                `queue-cancel:${sourceCommandId}`,
+                createOutbound(message.actor, msg(auth.locale, "groupOwnerOnly")),
+              )
+            : createOutbound(message.actor, msg(auth.locale, "groupOwnerOnly"))),
+          callbackToastOnly: true,
+        },
+      ];
+    }
+    const taskService = await resolveZCodeTaskServiceForContext(auth.context);
+    if (!taskService.cancelBotGroupInput) throw new Error("Runtime cannot cancel queued input");
+    const ack = await taskService.cancelBotGroupInput({
+      taskId: input.taskId,
+      commandId: `cancel-${sourceCommandId}-${message.actor.providerMessageId}`,
+      sourceCommandId,
+      actorId: message.actor.providerUserId,
+      ownerId: group.ownerId,
+      botId: auth.bot.id,
+      chatId: group.chatId,
+    });
+    const accepted = ack.status === "accepted" || ack.status === "duplicate";
+    if (accepted)
+      await updateGroupInputReaction(auth.bot, auth.context, input.source.messageId, "cancelled");
+    return [
+      createOutbound(
+        message.actor,
+        accepted
+          ? auth.locale === "en-US"
+            ? "Queued input cancelled."
+            : "已取消该排队输入。"
+          : auth.locale === "en-US"
+            ? "Input changed or started; cancellation was not applied."
+            : "输入已变化或开始执行，未取消。",
+      ),
+    ];
   }
 
   function sendPromptInBackground(
@@ -4820,6 +7198,11 @@ export function createBotsService(
     botDeliveryTarget?: ZCodeAutomationBotDeliveryTarget,
     modelSelection?: ModelSelection,
   ): void {
+    privateImTraces.add(JSON.stringify([taskStreamKey(context, actor), traceId]));
+    streamSubscriptions.get(taskStreamKey(context, actor))?.imInput();
+    // Direct-message persistent subscriptions are no longer created per turn; take over Typing before dispatching this input,
+    // otherwise callback cleanup will treat it as a short-lived command reaction and delete it immediately. Terminal and interaction waits keep the existing cleanup path.
+    if (!context.group) startTyping(bot, actor, taskId);
     // Bugfix: Telegram polling handles updates sequentially in one loop. If this awaits session/prompt,
     // permission button callbacks stay queued until the entire task finishes and inline keyboard clicks appear unresponsive.
     // Run the prompt in the background so the polling loop can continue receiving /permission callbacks.
@@ -4855,10 +7238,462 @@ export function createBotsService(
       });
   }
 
-  async function handleMessage(message: BotInboundMessage): Promise<BotOutboundMessage[]> {
+  async function stopTopicRun(
+    context: BotContextState,
+    executionId: string,
+    sourceCommandId?: string,
+  ): Promise<void> {
+    const taskId = context.activeTaskId;
+    if (!taskId) return;
+    const key = JSON.stringify([
+      getWorkspaceKey(context.workspacePath, context.workspaceIdentity),
+      taskId,
+      executionId,
+    ]);
+    const existing = topicStops.get(key);
+    if (existing) return existing;
+    const stopping = resolveZCodeTaskServiceForContext(context).then(async (service) => {
+      if (!service.stopBotTopicExecution) throw new Error("Topic stop is unavailable");
+      await service.stopBotTopicExecution({
+        taskId,
+        workspacePath: context.workspacePath,
+        workspaceIdentity: context.workspaceIdentity,
+        executionId,
+      });
+      if (sourceCommandId)
+        await serializeStateWrite(async () => {
+          const state = await repo.readState();
+          const latest = state.bots[getBotStateKey(context)];
+          const input = latest?.group?.inputs?.[sourceCommandId];
+          if (
+            !input ||
+            input.taskId !== taskId ||
+            input.progress?.status === "done" ||
+            input.progress?.status === "failed"
+          )
+            return;
+          input.progress = {
+            ...input.progress,
+            status: "stopped",
+            interruptionReason: "newMessage",
+          };
+          await repo.writeState(state);
+        });
+      if (sourceCommandId)
+        await deps.broadcastService?.send({ channel: "bots:group-state", payload: {} });
+    });
+    topicStops.set(key, stopping);
+    const release = () => {
+      if (topicStops.get(key) === stopping) topicStops.delete(key);
+    };
+    void stopping.then(release, release);
+    return stopping;
+  }
+
+  async function cancelGroupTopicInputs(actor: BotActor): Promise<void> {
+    // Group-level revocation must cover every thread, including input that has not created a task and is still preparing history.
+    const states = (await repo.readState()).bots;
+    const keys = new Set([...Object.keys(states), ...topicContinuations.keys()]);
+    await Promise.all(
+      [...keys].flatMap((key) => {
+        if (!key.startsWith("[")) return [];
+        const [botId, chatId, threadId] = JSON.parse(key) as string[];
+        return botId === actor.botId && chatId === actor.chatId && threadId
+          ? [cancelTopicInputs({ ...actor, threadId, conversationThreadId: undefined })]
+          : [];
+      }),
+    );
+  }
+
+  async function cancelTopicInputs(actor: BotActor): Promise<void> {
+    const key = getBotConversationKey(actor);
+    topicPreparation.clear(key);
+    topicGenerations.set(key, (topicGenerations.get(key) ?? 0) + 1);
+    topicHistoryReady.delete(key);
+    topicContinuations.get(key)?.cancel();
+    const cancelledIds = [...(topicReplies.get(key)?.keys() ?? [])];
+    for (const resolve of topicReplies.get(key)?.values() ?? []) resolve([]);
+    topicReplies.get(key)?.clear();
+    const context = (await repo.readState()).bots[key];
+    const bot = findBot(await repo.readConfig(), actor.botId);
+    if (context && bot) {
+      await Promise.all(
+        cancelledIds.map((id) => updateGroupInputReaction(bot, context, id, "cancelled")),
+      );
+    }
+    if (context?.activeTaskId) {
+      const service = await resolveZCodeTaskServiceForContext(context);
+      if (!service.invalidateBotTopicInputs)
+        throw new Error("Topic preparation cancellation is unavailable");
+      await service.invalidateBotTopicInputs({
+        taskId: context.activeTaskId,
+        workspacePath: context.workspacePath,
+        workspaceIdentity: context.workspaceIdentity,
+      });
+    }
+    await publishTopicPreparation();
+  }
+
+  async function admitAutoReplyTurn(message: BotInboundMessage): Promise<boolean> {
+    if (
+      message.actor.chatType !== "group" ||
+      message.groupCardAction ||
+      message.elicitationResponse
+    )
+      return true;
+    const id = message.actor.providerMessageId;
+    if (!id) return message.senderType !== "app";
+    let admitted = false;
+    // Deduplicating new message IDs is not enough to stop two bots from replying to each other. Atomically consume a count before stop/preparation,
+    // and persist it with deduplication; preparation failure still consumes one count to prevent retries, concurrency, or restarts from bypassing the limit.
+    await serializeStateWrite(async () => {
+      const state = await repo.readState();
+      const context = state.bots[getBotConversationKey(message.actor)];
+      const group = context?.group;
+      if (!group?.enabled) {
+        admitted = message.senderType !== "app";
+        return;
+      }
+      const bot = findBot(await repo.readConfig(), message.botId);
+      if (!bot?.enabled || bot.providerUserId !== group.ownerId) return;
+      if (
+        !group.autoReplyGuard &&
+        message.senderType !== "app" &&
+        parseBotCommand(message.commandText ?? message.text).type !== "message"
+      ) {
+        admitted = true;
+        return;
+      }
+      const guard = group.autoReplyGuard ?? { consecutive: 0, messageIds: [] };
+      if (
+        guard.messageIds.includes(id) ||
+        Object.values(group.inputs ?? {}).some(
+          (input) =>
+            input.source.messageId === id ||
+            input.source.messages?.some((original) => original.messageId === id),
+        )
+      ) {
+        // Human retries still use the existing preparation/command idempotency flow, but must not restore the bot allowance again.
+        admitted = message.senderType !== "app";
+        return;
+      }
+      if (
+        message.senderType === "app" &&
+        (guard.consecutive >= 5 ||
+          (message.actor.threadId ? group.topicActive !== true : message.mentionedBot !== true))
+      )
+        return;
+      group.autoReplyGuard = {
+        consecutive: message.senderType === "app" ? guard.consecutive + 1 : 0,
+        messageIds: [...guard.messageIds, id],
+      };
+      await repo.writeState(state);
+      admitted = true;
+    });
+    return admitted;
+  }
+
+  async function receiveTopicMessage(message: BotInboundMessage): Promise<BotOutboundMessage[]> {
+    const key = getBotConversationKey(message.actor);
+    const id = message.actor.providerMessageId;
+    if (!id) throw new Error("Topic message identity is missing");
+    // Deduplication must happen before stop side effects; a redelivered, already-received event must not interrupt a new running turn.
+    const stored = (await repo.readState()).bots[key];
+    if (
+      Object.values(stored?.group?.inputs ?? {}).some(
+        (input) =>
+          input.source.messageId === id ||
+          input.source.messages?.some((original) => original.messageId === id),
+      )
+    )
+      return [];
+
+    let replies = topicReplies.get(key);
+    if (!replies) {
+      replies = new Map();
+      topicReplies.set(key, replies);
+    }
+    // Persistent receipt deduplication happens in handleMessage; this only coalesces the same event arriving concurrently.
+    if (replies.has(id)) return [];
+    const pendingReplies = replies;
+    const result = new Promise<BotOutboundMessage[]>((resolve) => pendingReplies.set(id, resolve));
+    let continuation = topicContinuations.get(key);
+    if (!continuation) {
+      const continuationGeneration = topicGenerations.get(key) ?? 0;
+      const current = async () => (await repo.readState()).bots[key];
+      let observedSourceCommandId: string | undefined;
+      continuation = createTopicContinuation<PreparedTopicMessage>({
+        readRunningRun: async () => {
+          const context = await current();
+          if (!context?.activeTaskId) return undefined;
+          const service = await resolveZCodeTaskServiceForContext(context);
+          if (!service.readBotTopicExecution)
+            throw new Error("Topic runtime control is unavailable");
+          const execution = await service.readBotTopicExecution({
+            taskId: context.activeTaskId,
+            workspacePath: context.workspacePath,
+            workspaceIdentity: context.workspaceIdentity,
+          });
+          observedSourceCommandId = execution?.sourceCommandId;
+          return execution?.executionId;
+        },
+        stopAndWait: async (executionId) => {
+          const context = await current();
+          if (!context?.activeTaskId) throw new Error("Topic task disappeared during stop");
+          topicPreparation.setWaitingStop(key, true);
+          await publishTopicPreparation();
+          try {
+            await stopTopicRun(context, executionId, observedSourceCommandId);
+          } finally {
+            if (continuationGeneration === (topicGenerations.get(key) ?? 0)) {
+              topicPreparation.setWaitingStop(key, false);
+              await publishTopicPreparation();
+            }
+          }
+        },
+        submit: async (batch) => {
+          topicPreparation.update(
+            key,
+            batch.map((entry) => entry.message.actor.providerMessageId!),
+            "preparing",
+          );
+          await publishTopicPreparation();
+          const last = batch.at(-1)!;
+          const combined = {
+            ...last.message,
+            text:
+              batch.length === 1
+                ? last.message.text
+                : batch
+                    .map(
+                      ({ message: original }) =>
+                        `${original.actor.displayName || original.actor.providerUserId}: ${original.text}`,
+                    )
+                    .join("\n\n"),
+          };
+          const isCurrent = () =>
+            batch.every((entry) => entry.generation === (topicGenerations.get(key) ?? 0));
+          const outgoing = await handleMessage(combined, batch, isCurrent);
+          const context = await current();
+          const accepted = Object.values(context?.group?.inputs ?? {}).some(
+            (input) =>
+              input.admission === "accepted" &&
+              input.source.messageId === last.message.actor.providerMessageId,
+          );
+          if (isCurrent() && !accepted && context) {
+            const bot = findBot(await repo.readConfig(), message.botId);
+            if (bot)
+              await Promise.all(
+                batch.map((entry) =>
+                  updateGroupInputReaction(
+                    bot,
+                    context,
+                    entry.message.actor.providerMessageId,
+                    "failed",
+                  ),
+                ),
+              );
+          }
+          const ids = batch.map((entry) => entry.message.actor.providerMessageId!);
+          if (isCurrent()) {
+            if (accepted) topicPreparation.remove(key, ids);
+            else
+              topicPreparation.update(
+                key,
+                ids,
+                "failed",
+                outgoing.map((reply) => reply.text).join("\n"),
+              );
+            await publishTopicPreparation();
+          }
+          for (const entry of batch) {
+            const messageId = entry.message.actor.providerMessageId!;
+            pendingReplies.get(messageId)?.(entry === last ? outgoing : []);
+            pendingReplies.delete(messageId);
+          }
+        },
+        failed: async (ids, error) => {
+          // An old download/cancellation error must not modify the state or reaction of a newer message.
+          if (continuationGeneration !== (topicGenerations.get(key) ?? 0)) return;
+          topicPreparation.update(
+            key,
+            ids,
+            "failed",
+            error instanceof Error ? error.message : String(error),
+          );
+          await publishTopicPreparation();
+          const context = await current();
+          const bot = findBot(await repo.readConfig(), message.botId);
+          if (context && bot)
+            await Promise.all(
+              ids.map((id) => updateGroupInputReaction(bot, context, id, "failed")),
+            );
+          for (const messageId of ids) {
+            pendingReplies.get(messageId)?.(
+              error instanceof BotReplyError
+                ? error.replies
+                : [
+                    administratorErrorReply(
+                      message.actor,
+                      bot,
+                      error,
+                      createOutbound(
+                        message.actor,
+                        error instanceof Error ? error.message : String(error),
+                      ),
+                    ),
+                  ],
+            );
+            pendingReplies.delete(messageId);
+          }
+        },
+      });
+      topicContinuations.set(key, continuation);
+    }
+    const generation = topicGenerations.get(key) ?? 0;
+    const received = continuation.receive(id, async () => {
+      const auth = await withAuthorizedContext(message, "message");
+      if (!auth.ok) throw new BotReplyError(auth.reply);
+      if (generation !== (topicGenerations.get(key) ?? 0)) throw new Error("Topic input cancelled");
+      topicPreparation.add(key, message);
+      await publishTopicPreparation();
+      await updateGroupInputReaction(auth.bot, auth.context, id, "waiting");
+      return {
+        message,
+        generation,
+        prepared: await prepareBotMessageContent(auth.bot, message, auth.locale),
+      };
+    });
+    if (!received) {
+      pendingReplies.get(id)?.([]);
+      pendingReplies.delete(id);
+    }
+    const active = continuation;
+    void active.settled().finally(() => {
+      if (pendingReplies.size === 0 && topicContinuations.get(key) === active) {
+        topicContinuations.delete(key);
+        topicReplies.delete(key);
+      }
+    });
+    return result;
+  }
+
+  async function handleMessage(
+    message: BotInboundMessage,
+    topicBatch?: PreparedTopicMessage[],
+    isCurrent = () => true,
+  ): Promise<BotOutboundMessage[]> {
     const auth = await withAuthorizedContext(message, "message");
     if (!auth.ok) {
       return auth.reply;
+    }
+    const priorInput =
+      auth.context.group && message.actor.providerMessageId
+        ? Object.values(auth.context.group.inputs ?? {}).find(
+            (input) =>
+              input.source.messageId === message.actor.providerMessageId ||
+              input.source.messages?.some(
+                (item) => item.messageId === message.actor.providerMessageId,
+              ),
+          )
+        : undefined;
+    if (priorInput && priorInput.taskId !== auth.context.activeTaskId) {
+      return [
+        createOutbound(
+          message.actor,
+          auth.locale === "en-US"
+            ? "This message belongs to an earlier task and will not be executed again."
+            : "这条消息已关联到此前任务，不会在新任务中重复执行。",
+        ),
+      ];
+    }
+    // The idempotency window may change after a CLI restart; persisted receipt records cannot rely only on in-memory event deduplication.
+    if (priorInput) {
+      if (priorInput.admission === "accepted") return [];
+      return [
+        createOutbound(
+          message.actor,
+          auth.locale === "en-US"
+            ? "This message already has an admission record. Check the task before submitting another request."
+            : "这条消息已有接收记录，请先在任务中核对执行状态，不会自动重复提交。",
+        ),
+      ];
+    }
+    const history = auth.context.group
+      ? await prepareGroupTopicHistory(auth.bot, message, auth.context)
+      : {};
+    if (history.topicContext && topicBatch) {
+      const ids = new Set(topicBatch.map((entry) => entry.message.actor.providerMessageId));
+      history.topicContext.messages = history.topicContext.messages.filter(
+        (entry) => !ids.has(entry.id),
+      );
+    }
+    if (history.historyDisabled || history.historyError) {
+      const en = auth.locale === "en-US";
+      const permissionDenied = history.historyError instanceof TopicHistoryPermissionError;
+      const platformUrl =
+        auth.bot.provider === "lark"
+          ? "https://open.larksuite.com/app"
+          : "https://open.feishu.cn/app";
+      const text = history.historyDisabled
+        ? en
+          ? "Topic history is disabled. Ask the bound user to enable /history on before using topics."
+          : "话题历史已关闭，暂时无法处理话题消息。请绑定用户发送 /history on 后重新 @。"
+        : permissionDenied
+          ? en
+            ? `Topic history permission is missing. No task was submitted. Ask the app administrator to open ${platformUrl}, select this bot app, enable the required application-identity message permissions (including im:message.group_msg), and publish the change. Then mention the bot again.`
+            : `机器人缺少话题历史读取权限，未提交任务。请应用管理员打开 ${platformUrl}，选择当前机器人应用，在权限管理中开通应用身份的消息读取权限（包括 im:message.group_msg，获取群组中所有消息），并发布生效后重新 @。无需安装或授权 lark-cli。`
+          : en
+            ? "Topic history could not be read. No task was submitted. Please retry by mentioning the bot again later."
+            : "暂时无法读取话题历史，未提交任务。请稍后重新 @ 重试。";
+      return [
+        history.historyDisabled
+          ? administratorReply(
+              message.actor,
+              auth.bot,
+              "history",
+              createOutbound(message.actor, text),
+            )
+          : createOutbound(message.actor, text),
+      ];
+    }
+    adminAttention.clear(message.actor, auth.bot.providerUserId, "history");
+    // commandText belongs to one message; a trailing @-only input must not erase valid requests from other members in a batch during stop handling.
+    const hasRequest = (topicBatch?.map((entry) => entry.message) ?? [message]).some((original) =>
+      Boolean(
+        (original.commandText ?? original.text).trim() ||
+        original.attachments?.length ||
+        original.referencedMessage,
+      ),
+    );
+    if (auth.context.group && !hasRequest) {
+      const hasBackground = (history.topicContext?.messages.length ?? 0) > 0;
+      if (!message.referencedMessage && !hasBackground) {
+        return [
+          createOutbound(
+            message.actor,
+            auth.locale === "en-US"
+              ? "Please add a request, or reply to the message you want me to handle and mention me."
+              : "请补充需求，或回复要处理的消息并 @我。",
+          ),
+        ];
+      }
+      // An @-only input already has references or history attachments; adding an instruction would disguise system text as user content.
+      // Keep the @ in the original text; carry materials in standard references/attachments and do not reparse commands inside them.
+    }
+    if (message.referencedMessage) {
+      // Appending message IDs previously prompted the model to query Feishu again; standard references carry only the real source text and reuse the UI presentation.
+      const quote = message.referencedMessage.text;
+      if (quote.length > CONVERSATION_SELECTION_MAX_TEXT_LENGTH) {
+        return [
+          createOutbound(
+            message.actor,
+            auth.locale === "en-US"
+              ? "The quoted text is too long. Please quote a shorter passage or attach it as a file."
+              : "引用文字过长，请缩小引用范围或作为文件提交。",
+          ),
+        ];
+      }
     }
     let deletedTaskId: string | undefined;
     if (auth.context.mode === "task" && auth.context.activeTaskId) {
@@ -4875,20 +7710,41 @@ export function createBotsService(
         auth.context = await writeDraftContext(auth.context);
       }
     }
-    const elicitationReply = await handlePendingElicitationText(auth, message.actor, message.text);
+    const elicitationReply = auth.context.group
+      ? null
+      : await handlePendingElicitationText(auth, message.actor, message.text);
     if (elicitationReply) {
       return elicitationReply;
     }
     if (
+      !auth.context.group &&
       auth.context.mode === "task" &&
       auth.context.activeTaskId &&
-      (await isContextActiveTaskRunning(auth.context))
+      (await getContextTaskBlockReason(auth.context))
     ) {
       return [createOutbound(message.actor, msg(auth.locale, "taskRunning"))];
     }
     let preparedMessage: PreparedBotMessageContent;
     try {
-      preparedMessage = await prepareBotMessageContent(auth.bot, message, auth.locale);
+      preparedMessage = topicBatch
+        ? {
+            content: message.text,
+            zcodeAttachments: topicBatch.flatMap((entry) => entry.prepared.zcodeAttachments),
+          }
+        : await prepareBotMessageContent(auth.bot, message, auth.locale);
+      const historyMaterial = history.topicContext;
+      if (auth.context.group && historyMaterial) {
+        const attachment = createTopicHistoryAttachment(
+          historyMaterial,
+          botGroupCommandId(
+            auth.bot.id,
+            auth.context.group.chatId,
+            message.actor.providerMessageId!,
+          ),
+          auth.context.group.topicTitle || auth.context.group.name,
+        );
+        if (attachment) preparedMessage.zcodeAttachments.push(attachment);
+      }
     } catch (error) {
       return [
         createOutbound(
@@ -4899,6 +7755,7 @@ export function createBotsService(
         ),
       ];
     }
+    if (!isCurrent()) return [];
     if (auth.context.mode === "draft" || !auth.context.activeTaskId) {
       const draftOptions =
         auth.context.draftOptions ?? (await buildInitializedDraftOptions(auth.context));
@@ -4912,7 +7769,7 @@ export function createBotsService(
         !submissionModelSelection ||
         (draftOptions.modelSelection && selectionView?.selectionIssue)
       ) {
-        throw new Error("Bot 无法从目标 Host 解析 Submission 模型");
+        throw new BotAdminRequiredError("model", "Bot 无法从目标 Host 解析 Submission 模型");
       }
       const submissionDraftOptions: BotDraftOptions = {
         ...draftOptions,
@@ -4934,8 +7791,17 @@ export function createBotsService(
         // so in-memory flags disagreed with the persisted v4 draft boundary and session_input violated the foreign key. Create
         // a v4 draft first, validate app configuration through the existing capability, then send the first input through v4 sendText.
         v4Create: true,
+        ...(auth.context.group ? { permissionScope: "session" as const } : {}),
       });
-      const taskTitle = deriveTaskTitle(preparedMessage.content, preparedMessage.zcodeAttachments);
+      const taskTitle = auth.context.group
+        ? [
+            auth.bot.provider === "lark" ? "Lark" : "飞书",
+            auth.context.group.name,
+            ...(auth.context.group.threadId
+              ? [auth.context.group.topicTitle || auth.context.group.threadId]
+              : []),
+          ].join(" · ")
+        : deriveTaskTitle(preparedMessage.content, preparedMessage.zcodeAttachments);
       const broadcastTask = taskTitle ? { ...task, title: taskTitle } : task;
       const traceId = generateTraceId(task.taskId);
       try {
@@ -4984,6 +7850,17 @@ export function createBotsService(
           );
         });
       }
+      if (context.group)
+        return submitGroupMessage(
+          auth.bot,
+          message,
+          context,
+          preparedMessage,
+          auth.locale,
+          history,
+          topicBatch,
+          isCurrent,
+        );
       runningTasks.add(task.taskId);
       await watchTaskStream(auth.bot, message.actor, context, auth.user);
       await broadcastTaskListChange(context, task.taskId, "prompt_sent", {
@@ -5011,6 +7888,17 @@ export function createBotsService(
       );
       return [];
     }
+    if (auth.context.group)
+      return submitGroupMessage(
+        auth.bot,
+        message,
+        auth.context,
+        preparedMessage,
+        auth.locale,
+        history,
+        topicBatch,
+        isCurrent,
+      );
     const zcodeTaskService = await resolveZCodeTaskServiceForContext(auth.context);
     await zcodeTaskService.resumeTask({
       taskId: auth.context.activeTaskId,
@@ -5063,10 +7951,12 @@ export function createBotsService(
     if (!auth.ok) {
       return auth.reply;
     }
-    if (await isContextActiveTaskRunning(auth.context)) {
+    if (message.actor.threadId) return createStatusReply(message.actor, auth.context, auth.locale);
+    const blockReason = await getContextTaskBlockReason(auth.context);
+    if (blockReason) {
       // Bugfix: showing the /task list while a task is running lets users select another task,
       // leaving a misleading pending selection even if the subsequent switch is rejected.
-      return [createOutbound(message.actor, msg(auth.locale, "taskRunning"))];
+      return [createOutbound(message.actor, msg(auth.locale, blockReason))];
     }
     const taskEntries = (await listContextTaskSelectionEntries(auth.context, auth.user)).slice(
       0,
@@ -5111,6 +8001,8 @@ export function createBotsService(
     value: string,
   ): Promise<BotTaskSelectionEntry | null> {
     const pendingEntry = resolvePendingTaskSelectionEntry(message.actor, value);
+    if (context.group && pendingEntry && !context.group.taskIds.includes(pendingEntry.task.taskId))
+      return null;
     if (pendingEntry) {
       return pendingEntry;
     }
@@ -5126,6 +8018,8 @@ export function createBotsService(
     if (selected) {
       return selected.entry;
     }
+    // Group history must remain closed; arbitrary taskIds must not bypass the candidate list to read other sessions.
+    if (context.group) return null;
     const zcodeTaskService = await resolveZCodeTaskServiceForContext(context);
     const snapshot = await zcodeTaskService
       .getTaskSnapshot({
@@ -5143,17 +8037,56 @@ export function createBotsService(
       : null;
   }
 
-  async function isContextActiveTaskRunning(context: BotContextState): Promise<boolean> {
+  async function getContextTaskBlockReason(
+    context: BotContextState,
+  ): Promise<
+    "taskRunning" | "groupTaskQueued" | "groupTaskInteraction" | "groupTaskDisconnected" | null
+  > {
     if (!context.activeTaskId) {
-      return false;
+      return null;
+    }
+    if (context.group) {
+      if (context.workspaceIdentity && !(await isRemoteWorkspaceConnected(context)))
+        return "groupTaskDisconnected";
+      const taskService = await resolveZCodeTaskServiceForContext(context);
+      if (!taskService.getBotGroupTaskBlockReason)
+        throw new Error("Runtime cannot verify group queue state");
+      const reason = await taskService.getBotGroupTaskBlockReason({
+        taskId: context.activeTaskId,
+        workspacePath: context.workspacePath,
+        workspaceIdentity: context.workspaceIdentity,
+      });
+      botsLogger.debug(
+        undefined,
+        `group task switch check task=${context.activeTaskId} reason=${reason ?? "idle"}`,
+      );
+      if (reason)
+        return reason === "queued"
+          ? "groupTaskQueued"
+          : reason === "interaction"
+            ? "groupTaskInteraction"
+            : "taskRunning";
+      // After stopping or handling approval on Desktop, a Bot card cache may remain; it must not override the CLI idle state.
+      if (context.pendingElicitation || context.pendingPermissionOptions?.length) {
+        if (context.pendingElicitation)
+          clearPendingElicitationSelection(context.pendingElicitation);
+        context.pendingElicitation = undefined;
+        context.pendingPermissionOptions = undefined;
+        await writeContext(context, false, context.activeTaskId);
+        botsLogger.info(
+          undefined,
+          `cleared stale group interaction cache task=${context.activeTaskId}`,
+        );
+      }
+      return null;
     }
     if (!runningTasks.has(context.activeTaskId)) {
-      return false;
+      return null;
     }
     if (context.workspaceIdentity && !(await isRemoteWorkspaceConnected(context))) {
       // Bugfix: local commands such as /workspace only switch context and must not create a remote runtime to confirm old task state.
       // Treat in-memory running state as unconfirmed while disconnected, and resume lookup after an explicit /reconnect.
-      return false;
+      return null;
     }
     const zcodeTaskService = await resolveZCodeTaskServiceForContext(context);
     const activeTaskSnapshot = await zcodeTaskService
@@ -5172,9 +8105,9 @@ export function createBotsService(
       // for tasks started by this process that have not yet reached a terminal state.
       runningTasks.delete(context.activeTaskId);
       stopTyping(context.activeTaskId);
-      return false;
+      return null;
     }
-    return true;
+    return "taskRunning";
   }
 
   function warnAutomationDeliveryOnce(params: {
@@ -5207,11 +8140,35 @@ export function createBotsService(
       warnAutomationDeliveryOnce({ target: params.target, reason: "provider_mismatch" });
       return;
     }
+    if (params.target.chatType === "private") await reconcilePrivateSynchronization(bot.id);
+    let conversationThreadId: string | null | undefined;
+    if (params.target.chatType === "group") {
+      const states = (await repo.readState()).bots;
+      const state =
+        states[
+          getBotConversationKey({
+            botId: bot.id,
+            chatType: "group",
+            chatId: params.target.providerUserId,
+            threadId: params.target.threadId,
+          })
+        ];
+      if (!state?.group?.enabled || state.group.ownerId !== bot.providerUserId) {
+        warnAutomationDeliveryOnce({ target: params.target, reason: "group_not_authorized" });
+        return;
+      }
+      // An old alias must no longer fall back to the default task; thread delivery requires a separately authorized session.
+      conversationThreadId = state.group.threadId ?? null;
+    }
     const actor: BotActor = {
       provider: params.target.provider,
       botId: params.target.botId,
       providerUserId: params.target.providerUserId,
       chatType: params.target.chatType,
+      threadId: params.target.threadId,
+      conversationThreadId,
+      rootMessageId: params.target.rootMessageId,
+      ...(params.target.chatType === "group" ? { chatId: params.target.providerUserId } : {}),
     };
     const context: BotContextState = {
       botId: bot.id,
@@ -5223,10 +8180,16 @@ export function createBotsService(
     };
     // Automation callbacks always send a terminal summary. Do not reuse the user's current replyMode, or streaming/card
     // modes will keep sending intermediate background-task progress to the original conversation.
-    await watchTaskStream(bot, actor, context, {
-      ...bot,
-      replyMode: "summary_changes",
-    });
+    await watchTaskStream(
+      bot,
+      actor,
+      context,
+      {
+        ...bot,
+        replyMode: "summary_changes",
+      },
+      params.runId ?? true,
+    );
   }
 
   service = {
@@ -5270,7 +8233,7 @@ export function createBotsService(
       return pollWeixinQrRegistration(params);
     },
     async saveConfig(config) {
-      const savedConfig = await repo.writeConfig(normalizeConfigBots(config));
+      const savedConfig = await writeBotConfig(normalizeConfigBots(config));
       clearCandidateCaches();
       telegramRuntime.scheduleRefresh(savedConfig);
       weixinRuntime.scheduleRefresh(savedConfig);
@@ -5333,7 +8296,7 @@ export function createBotsService(
       validateBotConfig(config, bot);
       const bots = config.bots.filter((item) => item.id !== bot.id);
       bots.push(bot);
-      const savedConfig = await repo.writeConfig({ ...config, bots });
+      const savedConfig = await writeBotConfig({ ...config, bots });
       clearCandidateCaches();
       telegramRuntime.scheduleRefresh(savedConfig);
       weixinRuntime.scheduleRefresh(savedConfig);
@@ -5365,13 +8328,15 @@ export function createBotsService(
         displayName: undefined,
         feishuAppId: isFeishuBotProvider(bot.provider) ? undefined : bot.feishuAppId,
       });
-      const savedConfig = await repo.writeConfig({
+      const savedConfig = await writeBotConfig({
         ...config,
         bots: config.bots.map((item) => (item.id === bot.id ? nextBot : item)),
       });
-      const state = await repo.readState();
-      delete state.bots[bot.id];
-      await repo.writeState(state);
+      await serializeStateWrite(async () => {
+        const state = await repo.readState();
+        delete state.bots[bot.id];
+        await repo.writeState(state);
+      });
       clearCandidateCaches();
       telegramRuntime.scheduleRefresh(savedConfig);
       weixinRuntime.scheduleRefresh(savedConfig);
@@ -5396,16 +8361,18 @@ export function createBotsService(
       if (bot?.provider === "weixin") {
         weixinRuntime.stopPolling(bot.id);
       }
-      await repo.writeConfig({
+      await writeBotConfig({
         ...config,
         bots: config.bots.filter((item) => item.id !== botId),
       });
       clearCandidateCaches();
       telegramRuntime.scheduleRefresh();
       weixinRuntime.scheduleRefresh();
-      const state = await repo.readState();
-      delete state.bots[botId];
-      await repo.writeState(state);
+      await serializeStateWrite(async () => {
+        const state = await repo.readState();
+        delete state.bots[botId];
+        await repo.writeState(state);
+      });
       if (bot?.credentialRef) {
         await deps.credentialService.delete(bot.credentialRef);
       }
@@ -5452,35 +8419,484 @@ export function createBotsService(
       });
       return { code, expiresAt };
     },
+    async getGroupMemberNames(params: { botId: string; chatId: string }) {
+      const key = getBotConversationKey({ ...params, chatType: "group" });
+      const authorize = async () => {
+        const bot = findBot(await repo.readConfig(), params.botId);
+        const group = (await repo.readState()).bots[key]?.group;
+        if (
+          !bot?.enabled ||
+          !bot.providerUserId ||
+          !group?.enabled ||
+          group.ownerId !== bot.providerUserId
+        )
+          throw new Error("Group member names are unavailable for this group");
+        return { bot, group };
+      };
+      const before = await authorize();
+      const names =
+        (await providers[before.bot.provider]?.getGroupMemberNames?.(before.bot, params.chatId)) ??
+        {};
+      const after = await authorize();
+      // If the group is deactivated, reauthorized, or credentials are switched during lookup, the old request must not carry a name into the new session.
+      if (
+        before.group.authorizationId !== after.group.authorizationId ||
+        before.bot.providerUserId !== after.bot.providerUserId ||
+        before.bot.credentialRef !== after.bot.credentialRef ||
+        before.bot.feishuAppId !== after.bot.feishuAppId ||
+        before.bot.provider !== after.bot.provider
+      )
+        throw new Error("Group authorization changed while resolving names");
+      return names;
+    },
+    async validateTopicResource(params) {
+      await authorizeTopicResource(params, {
+        readState: () => repo.readState(),
+        readConfig: () => repo.readConfig(),
+      });
+    },
+    async readTopicResource(params) {
+      botsLogger.debug(
+        `topic resource read task=${params.taskId} message=${params.messageId} trace=${params.trace?.traceId ?? "none"}`,
+      );
+      const result = await readAuthorizedTopicResource(params, {
+        readState: () => repo.readState(),
+        readConfig: () => repo.readConfig(),
+        readMessage: async (bot, target, signal) => {
+          const reader = providers[bot.provider]?.readTopicResourceMessage;
+          if (!reader) throw new Error("Topic resource provider unavailable");
+          return reader(bot, target, signal);
+        },
+        download: async (bot, attachment, target, signal) => {
+          const result = await providers[bot.provider]?.downloadAttachment?.(
+            bot,
+            attachment,
+            {
+              botId: bot.id,
+              provider: bot.provider,
+              chatType: "group",
+              chatId: target.chatId,
+              threadId: target.threadId,
+              providerUserId: bot.providerUserId!,
+              providerMessageId: target.messageId,
+            },
+            signal,
+          );
+          if (!result) throw new Error("Topic resource download unavailable");
+          return result;
+        },
+      });
+      if (result.attachment.kind !== "file" && result.attachment.kind !== "image")
+        throw new Error("Topic resource format unsupported");
+      return {
+        kind: result.attachment.kind,
+        filename: result.attachment.filename,
+        mimeType: result.attachment.mimeType || "application/octet-stream",
+        sizeBytes: result.data.byteLength,
+        dataBase64: Buffer.from(result.data).toString("base64"),
+      };
+    },
+    async getTopicDetails(params) {
+      const state = await repo.readState();
+      const context =
+        state.bots[
+          getBotConversationKey({
+            botId: params.botId,
+            chatId: params.chatId,
+            chatType: "group",
+            threadId: params.threadId,
+          })
+        ];
+      const workspace = context?.group?.taskWorkspaces?.[params.taskId] ?? context;
+      if (
+        !context?.group?.taskIds.includes(params.taskId) ||
+        !workspace ||
+        (workspace.workspaceIdentity?.trim() || workspace.workspacePath) !==
+          (params.workspaceIdentity?.trim() || params.workspacePath)
+      )
+        throw new Error("Topic task scope mismatch");
+      const bot = findBot(await repo.readConfig(), params.botId);
+      if (!bot || context.group.ownerId !== bot.providerUserId)
+        throw new Error("Topic owner scope mismatch");
+      const batches = Object.values(context.group.inputs ?? {})
+        .filter((input) => input.taskId === params.taskId && input.admission === "accepted")
+        .flatMap((input) => (input.source.topicContext ? [input.source.topicContext] : []));
+      const parent =
+        state.bots[
+          getBotConversationKey({ botId: params.botId, chatId: params.chatId, chatType: "group" })
+        ];
+      const service = await resolveZCodeTaskServiceForContext({ ...context, ...workspace });
+      const summaries =
+        (await service.readBotTopicSummaries?.({
+          taskId: params.taskId,
+          workspacePath: params.workspacePath,
+          workspaceIdentity: params.workspaceIdentity,
+        })) ?? [];
+      return {
+        messageCount: new Set(batches.flatMap((batch) => batch.messages.map((record) => record.id)))
+          .size,
+        hasGap: batches.some((batch) => batch.hasGap),
+        historyEnabled: parent?.group?.historyEnabled !== false,
+        summaries,
+      };
+    },
+    async retryTopicPreparation(params) {
+      const key = getBotConversationKey({ ...params, chatType: "group" });
+      const context = (await repo.readState()).bots[key];
+      const bot = findBot(await repo.readConfig(), params.botId);
+      if (!bot?.enabled || !context?.group?.enabled || context.group.ownerId !== bot.providerUserId)
+        throw new Error("Topic preparation target is no longer authorized");
+      if (context.activeTaskId !== params.taskId) throw new Error("Topic preparation task changed");
+      if (
+        getWorkspaceKey(context.workspacePath, context.workspaceIdentity) !==
+        getWorkspaceKey(params.workspacePath, params.workspaceIdentity)
+      )
+        throw new Error("Topic preparation workspace changed");
+      await topicContinuations.get(key)?.settled();
+      // A submitted command may only query its original receipt result; material retries must not bypass deduplication and leave a permanent preparing state.
+      const latest = (await repo.readState()).bots[key];
+      if (
+        Object.values(latest?.group?.inputs ?? {}).some(
+          (input) =>
+            input.source.messageId === params.messageId ||
+            input.source.messages?.some((original) => original.messageId === params.messageId),
+        )
+      )
+        throw new Error("Topic input was already submitted; preparation cannot be retried");
+      const message = topicPreparation.retry(key, params.messageId);
+      if (!message) throw new Error("Topic preparation is no longer retryable");
+      topicPreparation.update(key, [params.messageId], "preparing");
+      await publishTopicPreparation();
+      const replies = await service.handleInboundMessage(message);
+      for (const reply of replies) await sendOutbound(bot, reply);
+    },
+    async replyToChannel(request) {
+      return replyToBotChannel(request, {
+        readState: () => repo.readState(),
+        readConfig: () => repo.readConfig(),
+        listMembers: async (bot, chatId) => {
+          const read = providers[bot.provider]?.getGroupMemberNames;
+          if (!read) throw new Error("Channel member lookup unavailable");
+          return read(bot, chatId);
+        },
+        deliver: (bot, chatId, threadId, result) =>
+          getGroupDeliverySender(bot, chatId, threadId)(result),
+      });
+    },
     async getBotStates() {
-      return Object.values((await repo.readState()).bots);
+      return Object.entries((await repo.readState()).bots).map(([key, context]) => {
+        if (context.group)
+          context = {
+            ...context,
+            group: { ...context.group, preparation: topicPreparation.snapshot(key) },
+          };
+        const sender = groupDeliverySenders.get(key);
+        if (!context.group || !sender) return context;
+        return {
+          ...context,
+          group: {
+            ...context.group,
+            deliveries: Object.fromEntries(
+              Object.entries(context.group.deliveries ?? {}).map(([id, result]) => [
+                id,
+                sender.project(result),
+              ]),
+            ),
+          },
+        };
+      });
+    },
+    async reconcileGroupResult(params: {
+      botId: string;
+      chatId: string;
+      deliveryId: string;
+      threadId?: string;
+      received: boolean;
+    }) {
+      const key = getBotConversationKey({
+        botId: params.botId,
+        chatType: "group",
+        chatId: params.chatId,
+        threadId: params.threadId,
+      });
+      let reconciled: BotGroupDelivery | undefined;
+      await serializeStateWrite(async () => {
+        const bot = findBot(await repo.readConfig(), params.botId);
+        const state = await repo.readState();
+        const context = state.bots[key];
+        const result = context?.group?.deliveries?.[params.deliveryId];
+        if (
+          !bot?.enabled ||
+          !context?.group?.enabled ||
+          context.group.ownerId !== bot.providerUserId ||
+          !result ||
+          result.taskId !== context.activeTaskId ||
+          result.status !== "unknown" ||
+          groupDeliverySenders.get(key)?.isInFlight(params.deliveryId)
+        ) {
+          throw new Error("Saved group result cannot be reconciled in the current state");
+        }
+        reconciled = {
+          ...result,
+          status: params.received ? "sent" : "failed",
+          lastError: undefined,
+          updatedAt: Date.now(),
+        };
+        context.group.deliveries = { ...context.group.deliveries, [result.id]: reconciled };
+        await repo.writeState(state);
+      });
+      await deps.broadcastService
+        ?.send({
+          channel: "bots:group-state",
+          payload: { botId: params.botId, chatId: params.chatId },
+        })
+        .catch(() => undefined);
+      return reconciled!;
+    },
+    async resendGroupResult(params: {
+      botId: string;
+      chatId: string;
+      threadId?: string;
+      deliveryId: string;
+    }) {
+      const bot = findBot(await repo.readConfig(), params.botId);
+      if (!bot || !isFeishuBotProvider(bot.provider)) throw new Error("Group bot unavailable");
+      const key = getBotConversationKey({
+        botId: params.botId,
+        chatType: "group",
+        chatId: params.chatId,
+        threadId: params.threadId,
+      });
+      const result = (await repo.readState()).bots[key]?.group?.deliveries?.[params.deliveryId];
+      if (!result) throw new Error("Saved group result unavailable");
+      await getGroupDeliverySender(bot, params.chatId, params.threadId)(result, true);
+      return (await repo.readState()).bots[key]?.group?.deliveries?.[params.deliveryId] ?? result;
+    },
+    async setGroupEnabled(params: { botId: string; chatId: string; enabled: boolean }) {
+      const bot = findBot(await repo.readConfig(), params.botId);
+      if (!bot?.providerUserId) throw new Error("Bot owner unavailable");
+      await handleGroupActivation(
+        {
+          botId: bot.id,
+          actor: {
+            provider: bot.provider,
+            botId: bot.id,
+            chatType: "group",
+            chatId: params.chatId,
+            providerUserId: bot.providerUserId,
+          },
+          text: params.enabled ? "/enable" : "/disable",
+        },
+        params.enabled,
+      );
+    },
+    async retryPrivateDelivery({ botId, deliveryId }) {
+      const failed = failedPrivateDeliveries.get(botId);
+      const bot = findBot(await repo.readConfig(), botId);
+      const context = (await repo.readState()).bots[botId];
+      const recipient =
+        bot?.provider === "weixin" ? context?.privateRecipientId : bot?.providerUserId;
+      if (
+        !failed ||
+        failed.id !== deliveryId ||
+        failed.sending ||
+        !bot?.enabled ||
+        context?.privateBindingId !== failed.bindingId ||
+        context?.activeTaskId !== failed.taskId ||
+        recipient !== failed.message.providerUserId
+      )
+        throw new Error("Private delivery is no longer available");
+      failed.sending = true;
+      try {
+        await sendOutbound(bot, failed.message);
+        if (failedPrivateDeliveries.get(botId) === failed) {
+          failedPrivateDeliveries.delete(botId);
+          const runtime = runtimeByBotId.get(botId);
+          if (runtime)
+            setRuntimeStatus({ ...runtime, deliveryRetryId: undefined, deliveryError: undefined });
+        }
+      } finally {
+        failed.sending = false;
+      }
     },
     async resetBotState(contextKey: string) {
-      const state = await repo.readState();
-      delete state.bots[contextKey];
-      await repo.writeState(state);
+      await serializeStateWrite(async () => {
+        const state = await repo.readState();
+        delete state.bots[contextKey];
+        await repo.writeState(state);
+      });
+      await reconcilePrivateSynchronization(contextKey);
     },
     watchAutomationRun,
     async handleInboundMessage(message: BotInboundMessage) {
-      return enqueueInboundProcessing(message.actor, async () => {
+      if (shutdownPromise) return [];
+      if (message.senderType === "app") {
+        // The bot may use only groups/threads enabled by a human; a native @ may trigger ordinary group input but cannot grant control permissions.
+        if (
+          message.actor.chatType !== "group" ||
+          message.groupCardAction ||
+          message.elicitationResponse
+        )
+          return [];
+        const topic = (await repo.readState()).bots[
+          getBotConversationKey({ ...message.actor, conversationThreadId: undefined })
+        ];
+        if (!topic?.group?.enabled) return [];
+        if (message.actor.threadId) {
+          if (topic.group.topicActive !== true) return [];
+        } else if (message.mentionedBot !== true || topic.group.chatMode === "topic") {
+          return [];
+        }
+      }
+      message = {
+        ...message,
+        actor: { ...message.actor, mentionedBot: message.mentionedBot === true },
+      };
+      if (
+        message.actor.chatType === "group" &&
+        message.mentionedBot === false &&
+        !message.groupCardAction
+      ) {
+        const topic = (await repo.readState()).bots[
+          getBotConversationKey({ ...message.actor, conversationThreadId: undefined })
+        ];
+        if (
+          !message.actor.threadId ||
+          topic?.group?.topicActive === false ||
+          (!topic?.group?.topicActive &&
+            message.topicRootIsCurrentBot !== true &&
+            !topicContinuations.has(getBotConversationKey(message.actor)))
+        )
+          return [];
+      }
+
+      if (message.actor.chatType === "group" && message.actor.threadId) {
+        const actor: BotActor = { ...message.actor, conversationThreadId: undefined };
+        const state = await repo.readState();
+        if (!state.bots[getBotConversationKey(actor)]) {
+          // The alias is used only for a one-time safe migration check and must no longer route a thread to the default task.
+          for (const candidate of Object.values(state.bots)) {
+            const group = candidate.group;
+            if (!group || candidate.botId !== actor.botId || group.chatId !== actor.chatId)
+              continue;
+            const alias = group.topicAliases?.[actor.threadId!];
+            if (!alias) continue;
+            // The default session may have switched workspaces; migration checks must use the old task’s complete workspace identity.
+            const workspace = group.taskWorkspaces?.[alias.taskId] ?? candidate;
+            const service = await resolveZCodeTaskServiceForContext({ ...candidate, ...workspace });
+            if (
+              !service.getBotGroupTaskBlockReason ||
+              (await service.getBotGroupTaskBlockReason({
+                taskId: alias.taskId,
+                workspacePath: workspace.workspacePath,
+                workspaceIdentity: workspace.workspaceIdentity,
+              }))
+            ) {
+              return [createOutbound(actor, "原话题任务仍在执行，请结束后重新接入话题。")];
+            }
+          }
+        }
+        message = { ...message, actor };
+      }
+      if (message.actor.chatType === "group" && !message.groupCardAction) {
+        const parent = (await repo.readState()).bots[
+          getBotConversationKey({
+            ...message.actor,
+            threadId: undefined,
+            conversationThreadId: undefined,
+          })
+        ];
+        // A dedicated thread group’s root event may lack thread_id; resolve it from the native message and do not send it to the default task.
+        if (
+          parent?.group?.enabled &&
+          parent.group.chatMode === "topic" &&
+          !message.actor.threadId
+        ) {
+          const bot = findBot(await repo.readConfig(), message.botId);
+          const resolve = bot && providers[bot.provider]?.resolveTopic;
+          if (!bot || !resolve) throw new Error("Topic routing is unavailable");
+          message = {
+            ...message,
+            actor: { ...message.actor, ...(await resolve(bot, message.actor)) },
+          };
+        }
+      }
+      if (
+        message.actor.chatType === "group" &&
+        !message.groupCardAction &&
+        !message.elicitationResponse &&
+        message.mentionedBot === false &&
+        message.contentParts?.some((part) => part.type === "channelMention")
+      ) {
+        // A joined thread previously treated tasks sent to others as new instructions; record only the history backfill boundary without triggering stop or CLI admission.
+        if (message.actor.threadId)
+          await serializeStateWrite(async () => {
+            const state = await repo.readState();
+            const current = state.bots[getBotConversationKey(message.actor)];
+            if (!current?.group?.enabled || current.group.topicActive !== true) return;
+            const accepted = Object.values(current.group.inputs ?? {}).filter(
+              (input) => input.admission === "accepted",
+            );
+            current.group.backgroundHistory = {
+              revision: randomUUID(),
+              checkpoint: current.group.backgroundHistory
+                ? current.group.backgroundHistory.checkpoint
+                : accepted.at(-1)?.source.messageId,
+            };
+            await repo.writeState(state);
+          });
+        return [];
+      }
+      // Bot-generated slash/approval text may be used only as input material and must not enter the control branch.
+      const commandType =
+        message.senderType === "app"
+          ? "message"
+          : parseBotCommand(message.commandText ?? message.text).type;
+      const isGroupControl =
+        message.actor.chatType === "group" &&
+        (Boolean(message.elicitationResponse) ||
+          [
+            "queue.cancel",
+            "stop",
+            "topic.leave",
+            "permission.respond",
+            "approve",
+            "deny",
+            "elicitation.respond",
+            "elicitation.submit",
+          ].includes(commandType));
+      const processInbound = async () => {
+        await capturePrivateContextToken(message);
         if (message.elicitationResponse) {
           return handleStructuredElicitationResponse(message, message.elicitationResponse);
         }
-        const parsedCommand = parseBotCommand(message.text);
+        const parsedCommand = parseBotCommand(message.commandText ?? message.text);
+        // The group owner’s chat also reaches this dispatcher; changing only the outer commandType cannot stop the bot from triggering control/numeric selection.
         const command =
-          parsedCommand.type === "message"
-            ? (resolvePendingSelectionCommand(message.actor, parsedCommand.text) ?? parsedCommand)
-            : parsedCommand.type === "selection.cancel" &&
-                message.actor.provider !== "weixin" &&
-                message.text.trim() === "0"
-              ? (clearPendingSelection(message.actor),
-                { type: "message", text: message.text } as const)
-              : parsedCommand;
+          message.senderType === "app"
+            ? ({ type: "message", text: message.text } as const)
+            : parsedCommand.type === "message"
+              ? (resolvePendingSelectionCommand(message.actor, parsedCommand.text) ?? parsedCommand)
+              : parsedCommand.type === "selection.cancel" &&
+                  message.actor.provider !== "weixin" &&
+                  (message.commandText ?? message.text).trim() === "0"
+                ? (clearPendingSelection(message.actor),
+                  { type: "message", text: message.text } as const)
+                : parsedCommand;
         const weixinActivationReply = await handleWeixinFirstActivation(message, command);
         if (weixinActivationReply) {
+          await capturePrivateContextToken(message);
           return weixinActivationReply;
         }
         switch (command.type) {
+          case "queue.cancel":
+            return cancelGroupInput(message, command.commandId);
+          case "group.enable":
+            return handleGroupActivation(message, true);
+          case "group.disable":
+            return handleGroupActivation(message, false);
+          case "group.history":
+            return handleGroupHistory(message, command.enabled);
           case "selection.cancel":
             return handleSelectionCancel(message);
           case "bind":
@@ -5494,8 +8910,18 @@ export function createBotsService(
           case "new": {
             const auth = await withAuthorizedContext(message, "new");
             if (!auth.ok) return auth.reply;
-            if (await isContextActiveTaskRunning(auth.context)) {
-              return [createOutbound(message.actor, msg(auth.locale, "taskRunning"))];
+            if (message.actor.threadId)
+              return [
+                createOutbound(
+                  message.actor,
+                  auth.locale === "en-US"
+                    ? "Open another topic to start a new task."
+                    : "请另开一个话题开始新任务。",
+                ),
+              ];
+            const blockReason = await getContextTaskBlockReason(auth.context);
+            if (blockReason) {
+              return [createOutbound(message.actor, msg(auth.locale, blockReason))];
             }
             const context = await writeDraftContext(
               auth.context,
@@ -5506,9 +8932,10 @@ export function createBotsService(
           case "workspace.list": {
             const auth = await withAuthorizedContext(message, "workspace");
             if (!auth.ok) return auth.reply;
-            if (await isContextActiveTaskRunning(auth.context)) {
+            const blockReason = await getContextTaskBlockReason(auth.context);
+            if (blockReason) {
               // Bugfix: hide workspace selection while a task is running so users do not think they can switch context.
-              return [createOutbound(message.actor, msg(auth.locale, "taskRunning"))];
+              return [createOutbound(message.actor, msg(auth.locale, blockReason))];
             }
             const synced = await normalizeBotWorkspaceConfig(
               auth.config,
@@ -5555,8 +8982,9 @@ export function createBotsService(
           case "workspace.set": {
             const auth = await withAuthorizedContext(message, "workspace");
             if (!auth.ok) return auth.reply;
-            if (await isContextActiveTaskRunning(auth.context)) {
-              return [createOutbound(message.actor, msg(auth.locale, "taskRunning"))];
+            const blockReason = await getContextTaskBlockReason(auth.context);
+            if (blockReason) {
+              return [createOutbound(message.actor, msg(auth.locale, blockReason))];
             }
             const synced = await normalizeBotWorkspaceConfig(
               auth.config,
@@ -5588,9 +9016,10 @@ export function createBotsService(
           case "model.list": {
             const auth = await withAuthorizedContext(message, "model");
             if (!auth.ok) return auth.reply;
-            if (await isContextActiveTaskRunning(auth.context)) {
+            const blockReason = await getContextTaskBlockReason(auth.context);
+            if (blockReason) {
               // Bugfix: hide model selection while a task is running to avoid creating an unusable pending selection.
-              return [createOutbound(message.actor, msg(auth.locale, "taskRunning"))];
+              return [createOutbound(message.actor, msg(auth.locale, blockReason))];
             }
             if (auth.context.mode === "draft" || !auth.context.activeTaskId) {
               const draftOptions = await resolveDraftOptionsForDisplay(auth.context);
@@ -5667,8 +9096,9 @@ export function createBotsService(
           case "model.provider.set": {
             const auth = await withAuthorizedContext(message, "model");
             if (!auth.ok) return auth.reply;
-            if (await isContextActiveTaskRunning(auth.context)) {
-              return [createOutbound(message.actor, msg(auth.locale, "taskRunning"))];
+            const blockReason = await getContextTaskBlockReason(auth.context);
+            if (blockReason) {
+              return [createOutbound(message.actor, msg(auth.locale, blockReason))];
             }
             if (auth.context.mode === "draft" || !auth.context.activeTaskId) {
               const draftOptions = await resolveDraftOptionsForDisplay(auth.context);
@@ -5768,8 +9198,9 @@ export function createBotsService(
           case "model.set": {
             const auth = await withAuthorizedContext(message, "model");
             if (!auth.ok) return auth.reply;
-            if (await isContextActiveTaskRunning(auth.context)) {
-              return [createOutbound(message.actor, msg(auth.locale, "taskRunning"))];
+            const blockReason = await getContextTaskBlockReason(auth.context);
+            if (blockReason) {
+              return [createOutbound(message.actor, msg(auth.locale, blockReason))];
             }
             if (auth.context.mode === "draft" || !auth.context.activeTaskId) {
               const draftOptions = await ensureDraftOptions(auth.context);
@@ -5859,13 +9290,14 @@ export function createBotsService(
             const commandName = command.type === "mode.list" ? "mode" : "thoughtLevel";
             const auth = await withAuthorizedContext(message, commandName);
             if (!auth.ok) return auth.reply;
-            if (command.type === "mode.list") {
+            if (command.type === "mode.list" && !auth.context.group) {
               // Bot mode is locked to yolo; do not offer mode selection.
               return [createOutbound(message.actor, msg(auth.locale, "modeLocked"))];
             }
-            if (await isContextActiveTaskRunning(auth.context)) {
+            const blockReason = await getContextTaskBlockReason(auth.context);
+            if (blockReason) {
               // Bugfix: hide mode/thinking-level selection while a task is running to avoid confusing it with the active context configuration.
-              return [createOutbound(message.actor, msg(auth.locale, "taskRunning"))];
+              return [createOutbound(message.actor, msg(auth.locale, blockReason))];
             }
             if (auth.context.mode === "draft" || !auth.context.activeTaskId) {
               const draftOptions = await ensureDraftOptions(auth.context);
@@ -5974,12 +9406,13 @@ export function createBotsService(
             const commandName = command.type === "mode.set" ? "mode" : "thoughtLevel";
             const auth = await withAuthorizedContext(message, commandName);
             if (!auth.ok) return auth.reply;
-            if (command.type === "mode.set") {
+            if (command.type === "mode.set" && !auth.context.group) {
               // Bot mode is locked to yolo; reject all mode-switch requests.
               return [createOutbound(message.actor, msg(auth.locale, "modeLocked"))];
             }
-            if (await isContextActiveTaskRunning(auth.context)) {
-              return [createOutbound(message.actor, msg(auth.locale, "taskRunning"))];
+            const blockReason = await getContextTaskBlockReason(auth.context);
+            if (blockReason) {
+              return [createOutbound(message.actor, msg(auth.locale, blockReason))];
             }
             if (auth.context.mode === "draft" || !auth.context.activeTaskId) {
               const originalOptions = await ensureDraftOptions(auth.context);
@@ -6099,6 +9532,8 @@ export function createBotsService(
           case "task.set": {
             const auth = await withAuthorizedContext(message, "task");
             if (!auth.ok) return auth.reply;
+            if (message.actor.threadId)
+              return createStatusReply(message.actor, auth.context, auth.locale);
             const taskEntry = await resolveTaskSelectionEntry(
               message,
               auth.context,
@@ -6107,14 +9542,15 @@ export function createBotsService(
             );
             if (!taskEntry) return [createOutbound(message.actor, msg(auth.locale, "taskMissing"))];
             const { task } = taskEntry;
-            if (
-              auth.context.activeTaskId !== task.taskId &&
-              (await isContextActiveTaskRunning(auth.context))
-            ) {
+            const blockReason =
+              auth.context.activeTaskId !== task.taskId
+                ? await getContextTaskBlockReason(auth.context)
+                : null;
+            if (blockReason) {
               // Bugfix: a running old task already has a third-party stream subscription.
               // If /task changes activeTaskId now, later input goes to the new task while output from the old task continues to reach the same Bot conversation,
               // making messages appear mixed together.
-              return [createOutbound(message.actor, msg(auth.locale, "taskRunning"))];
+              return [createOutbound(message.actor, msg(auth.locale, blockReason))];
             }
             const nextContext = {
               ...auth.context,
@@ -6125,6 +9561,9 @@ export function createBotsService(
               activeTaskId: task.taskId,
             } satisfies BotContextState;
             await writeContext(nextContext);
+            if (auth.context.activeTaskId !== nextContext.activeTaskId)
+              stopGroupSynchronization(auth.context);
+            await restoreGroupSynchronization(nextContext);
             pendingTaskSelectionsByContext.delete(getActorContextKey(message.actor));
             return createStatusReply(message.actor, nextContext, auth.locale);
           }
@@ -6167,17 +9606,65 @@ export function createBotsService(
             });
             return createStatusReply(message.actor, auth.context, auth.locale);
           }
+          case "topic.leave": {
+            const auth = await withAuthorizedContext(message, "workspace");
+            if (!auth.ok) return auth.reply;
+            if (!auth.context.group?.threadId)
+              return [
+                createOutbound(
+                  message.actor,
+                  auth.locale === "en-US"
+                    ? "Use /leave inside a topic."
+                    : "请在话题中使用 /leave。",
+                ),
+              ];
+            await cancelTopicInputs(message.actor);
+            await serializeStateWrite(async () => {
+              const state = await repo.readState();
+              const current = state.bots[getBotStateKey(auth.context)];
+              if (current?.group) current.group.topicActive = false;
+              await repo.writeState(state);
+            });
+            if (auth.context.activeTaskId) {
+              const service = await resolveZCodeTaskServiceForContext(auth.context);
+              const target = {
+                taskId: auth.context.activeTaskId,
+                workspacePath: auth.context.workspacePath,
+                workspaceIdentity: auth.context.workspaceIdentity,
+              };
+              if (!service.readBotTopicExecution || !service.stopBotTopicExecution)
+                throw new Error("Topic runtime control is unavailable");
+              const executionId = await service.readBotTopicExecution(target);
+              if (executionId) await stopTopicRun(auth.context, executionId.executionId);
+            }
+            return [
+              createOutbound(
+                message.actor,
+                auth.locale === "en-US"
+                  ? "Left this topic. Mention me to resume the same task."
+                  : "已退出话题。再次 @我可继续原任务。",
+              ),
+            ];
+          }
           case "stop": {
             const auth = await withAuthorizedContext(message, "stop");
             if (!auth.ok) return auth.reply;
+            if (auth.context.group?.threadId) await cancelTopicInputs(message.actor);
             if (!auth.context.activeTaskId) {
               return [createOutbound(message.actor, msg(auth.locale, "noActiveTask"))];
             }
             try {
               const zcodeTaskService = await resolveZCodeTaskServiceForContext(auth.context);
-              await zcodeTaskService.stopGeneration({
-                taskId: auth.context.activeTaskId,
-              });
+              if (auth.context.group?.threadId) {
+                if (!zcodeTaskService.readBotTopicExecution)
+                  throw new Error("Topic runtime control is unavailable");
+                const executionId = await zcodeTaskService.readBotTopicExecution({
+                  taskId: auth.context.activeTaskId,
+                  workspacePath: auth.context.workspacePath,
+                  workspaceIdentity: auth.context.workspaceIdentity,
+                });
+                if (executionId) await stopTopicRun(auth.context, executionId.executionId);
+              } else await zcodeTaskService.stopGeneration({ taskId: auth.context.activeTaskId });
             } catch (error) {
               const messageText = error instanceof Error ? error.message : String(error);
               return [
@@ -6190,7 +9677,10 @@ export function createBotsService(
             runningTasks.delete(auth.context.activeTaskId);
             stopTyping(auth.context.activeTaskId);
             await broadcastTaskListChange(auth.context, auth.context.activeTaskId, "updated");
-            return createStatusReply(message.actor, auth.context, auth.locale);
+            // A successful group-chat stop updates state only, preventing the status card from triggering another bot reply.
+            return auth.context.group
+              ? []
+              : createStatusReply(message.actor, auth.context, auth.locale);
           }
           case "permission.respond": {
             const auth = await withAuthorizedContext(message, "approve");
@@ -6352,7 +9842,24 @@ export function createBotsService(
           case "message":
             return handleMessage(message);
         }
-      });
+      };
+      if (!(await admitAutoReplyTurn(message))) return [];
+      const replies =
+        message.actor.chatType === "group" && message.actor.threadId && commandType === "message"
+          ? await receiveTopicMessage(message)
+          : await enqueueInboundProcessing(message.actor, processInbound, isGroupControl);
+      if (message.actor.chatType !== "group") return replies;
+      const current = (await repo.readState()).bots[getBotConversationKey(message.actor)];
+      return replies.map((reply) =>
+        reply.selection && current?.group?.authorizationId
+          ? {
+              ...reply,
+              threadId: message.actor.threadId ?? current.group.threadId,
+              rootMessageId: message.actor.rootMessageId ?? current.group.rootMessageId,
+              groupCard: groupCardFor(message.actor, current),
+            }
+          : reply,
+      );
     },
     async handleProviderCallback(provider: BotProvider, payload: unknown) {
       return (await processProviderCallback(provider, payload)).replies;
@@ -6373,6 +9880,30 @@ export function createBotsService(
         return shutdownPromise;
       }
       memoryDiagnostics.dispose();
+      // Material downloads may return after the Host closes; invalidate synchronously first, then reclaim the upload-side cancellation generation.
+      topicPreparation.clear();
+      const pendingTopicKeys = [...topicContinuations.keys()];
+      for (const key of pendingTopicKeys) {
+        topicGenerations.set(key, (topicGenerations.get(key) ?? 0) + 1);
+        topicContinuations.get(key)?.cancel();
+        for (const resolve of topicReplies.get(key)?.values() ?? []) resolve([]);
+        topicReplies.get(key)?.clear();
+      }
+      const cancelUploads = (async () => {
+        const states = (await repo.readState()).bots;
+        await Promise.all(
+          pendingTopicKeys.map(async (key) => {
+            const context = states[key];
+            if (!context?.activeTaskId) return;
+            const taskService = await resolveZCodeTaskServiceForContext(context);
+            await taskService.invalidateBotTopicInputs?.({
+              taskId: context.activeTaskId,
+              workspacePath: context.workspacePath,
+              workspaceIdentity: context.workspaceIdentity,
+            });
+          }),
+        );
+      })();
       for (const controller of streamingCardRequestControllers) {
         controller.abort(new Error("Bot service disposed."));
       }
@@ -6381,7 +9912,13 @@ export function createBotsService(
         subscription.dispose();
       }
       streamSubscriptions.clear();
+      taskStreamHub.dispose();
+      if (privateRecoveryTimer) clearInterval(privateRecoveryTimer);
+      privateImTraces.clear();
+      privateWatches.clear();
+      failedPrivateDeliveries.clear();
       transientInteractionCards.clear();
+      adminAttention.clear();
       for (const intervalId of typingIntervals.values()) {
         clearInterval(intervalId);
       }
@@ -6400,6 +9937,7 @@ export function createBotsService(
       // Bugfix: host asynchronous resource cleanup calls disposeAllAndWait first. Keep one shared Promise so concurrent shutdown runs cleanup only once
       // and waits for requests, WebSockets, and inter-process locks from all three Provider runtimes to settle before returning.
       shutdownPromise = Promise.allSettled([
+        cancelUploads,
         telegramRuntime.dispose(),
         weixinRuntime.dispose(),
         feishuRuntime.dispose(),
@@ -6408,16 +9946,39 @@ export function createBotsService(
     },
   };
   if (runStartupBackgroundTasks) {
+    // Remote connections have no Bot-specific event source; inspect only existing connections without opening another connection or replaying history.
+    privateRecoveryTimer = setInterval(() => {
+      if (shutdownPromise || privateRecoveryPending) return;
+      privateRecoveryPending = true;
+      void repo
+        .readState()
+        .then(async (state) => {
+          for (const context of Object.values(state.bots))
+            if (!context.group) await reconcilePrivateSynchronization(context.botId);
+        })
+        .catch(() => botsLogger.warn(undefined, "Private Bot recovery state unavailable"))
+        .finally(() => {
+          privateRecoveryPending = false;
+        });
+    }, 10_000);
+    privateRecoveryTimer.unref();
     void telegramRuntime.refresh();
     void weixinRuntime.refresh();
     void feishuRuntime.refresh();
-    void ensureBotStorageMigrated().catch((error: unknown) => {
-      // A failure on the initial read must be visible without creating an unhandled rejection; the interaction entry point still receives the error directly.
-      botsLogger.error(
-        undefined,
-        `Bot storage initialization failed: ${error instanceof Error ? error.message : String(error)}`,
-      );
-    });
+    void ensureBotStorageMigrated()
+      .then(async () => {
+        for (const context of Object.values((await repo.readState()).bots)) {
+          await restoreGroupSynchronization(context);
+          if (!context.group) await reconcilePrivateSynchronization(context.botId);
+        }
+      })
+      .catch((error: unknown) => {
+        // A first-read failure must remain visible without creating an unhandled rejection; the interaction entry point still receives the error directly.
+        botsLogger.error(
+          undefined,
+          `Bot storage initialization failed: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      });
   }
   return service;
 }

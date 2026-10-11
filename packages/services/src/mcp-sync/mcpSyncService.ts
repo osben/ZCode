@@ -69,7 +69,7 @@ const DIRECTORY_MCP_DESCRIPTORS: readonly DirectoryMcpDescriptor[] = [
   AGENTS_MCP_DESCRIPTOR,
 ];
 
-interface McpSyncServiceDependencies {
+export interface McpSyncServiceDependencies {
   /**
    * Execution surface for checking MCP server runtime status. Actual connect/listTools checks must run in the
    * agent process (with the workspace PATH/cwd); the Host has no equivalent implementation. Calling listWorkspaceMcpServerStatuses on an instance

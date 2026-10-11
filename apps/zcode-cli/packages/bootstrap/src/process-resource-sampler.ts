@@ -6,7 +6,7 @@ import {
 } from "@zcode/shared";
 
 /** Sampling interval shared with app-side aggregation, preventing the two cadences from drifting. */
-const ZCODE_PROCESS_RESOURCE_SAMPLE_INTERVAL_MS = ZCODE_CLI_RESOURCE_SAMPLE_INTERVAL_MS;
+export const ZCODE_PROCESS_RESOURCE_SAMPLE_INTERVAL_MS = ZCODE_CLI_RESOURCE_SAMPLE_INTERVAL_MS;
 
 let processInstanceToken: string | undefined;
 
@@ -29,7 +29,7 @@ interface CpuUsageSnapshot {
 }
 
 /** Same shape as Node `process.memoryUsage()`; local memory diagnostics need heap details, while protocol samples include only rss. */
-interface ProcessMemoryUsageSnapshot {
+export interface ProcessMemoryUsageSnapshot {
   rss: number;
   heapTotal: number;
   heapUsed: number;

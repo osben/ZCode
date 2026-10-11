@@ -1,8 +1,14 @@
 // ── Legacy protocol compatibility surface (transitional) ──────────────────────────────
 // Remaining 5 exports: legacy configOptions projection functions (formatModelPickerValue/normalizeAvailableZCodeMode/
 // getZCodeAgentModeSelectOptions/getZCodeAgentAvailableModes/
-// zcodeSessionSettingsToZCodeConfigOptions).
-// Consumers: legacy paths such as services zcodeConfigOptions and UI zcodeSessionProjection.
+// zcodeSessionSettingsToZCodeConfigOptions; category B, removal due in wave 3).
+// Consumers: legacy paths such as services zcodeConfigOptions/botsService and UI zcodeSessionProjection.
+// After the 2026-09 Guarded wrap-up, ZCODE_AGENT_MODE_OPTIONS is the single mode catalog shared by
+// the Desktop/mobile Composer and Automation/OffPeak forms (UI zcodeSessionProjection /
+// automationAgentConfigOptions directly consume
+// getZCodeAgentAvailableModes / getZCodeAgentModeSelectOptions / normalizeAvailableZCodeMode).
+// Before wave 3 removes these exports, the mode catalog must move to a non-legacy location; do not
+// delete the catalog itself along with them.
 import { formatModelPickerValue } from "./model-selection.js";
 import type { ZCodeSessionMode, ZCodeSessionSettingsState } from "./zcode-protocol/index.js";
 import type { ZCodeConfigOption, ZCodeTaskModeInfo } from "./zcode-task-types-core.js";
@@ -19,9 +25,9 @@ const ZCODE_AGENT_MODE_OPTIONS = [
     description: "Ask before each file changes.",
   },
   {
-    id: "edit",
-    name: "Edit automatically",
-    description: "Edit selected files or relevant workspace files automatically.",
+    id: "guarded",
+    name: "Autonomous mode",
+    description: "Ask when there’s risk",
   },
   {
     id: "plan",
@@ -34,7 +40,12 @@ const ZCODE_AGENT_MODE_OPTIONS = [
     description: "Edit and run commands with fewer confirmations.",
   },
 ] as const satisfies readonly ZCodeTaskModeInfo[];
-const ZCODE_AGENT_MODE_ID_SET = new Set<string>(ZCODE_AGENT_MODE_OPTIONS.map((mode) => mode.id));
+// Hiding Edit from the menu does not delete the historical value; restore/projection must not
+// downgrade an old `edit` to `build` just because the candidate list changed.
+const ZCODE_AGENT_MODE_ID_SET = new Set<string>([
+  ...ZCODE_AGENT_MODE_OPTIONS.map((mode) => mode.id),
+  "edit",
+]);
 
 // OpenRouter treats `:free` as part of the model ID. The UI/configOptions display value
 // must not split on a colon for thought level, or draft selections will silently truncate the real modelId.

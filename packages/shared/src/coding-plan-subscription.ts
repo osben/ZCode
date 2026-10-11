@@ -1,4 +1,6 @@
+import type { RequestVerificationProof } from "./request-security-edition/verification-policy.js";
 /* eslint-disable max-lines -- Keep Coding Plan subscription protocol types together for shared exports to UI, services, and RPC; splitting them would complicate cross-package type entry points. */
+import type { Locale } from "./protocol.js";
 import type { ProviderFamilyDomain } from "./model-provider-family.js";
 import type { BUILTIN_MODEL_PROVIDER_IDS } from "./model-provider-types.js";
 
@@ -100,6 +102,19 @@ export type CodingPlanStaticTeamProductsConfig = Partial<
   Record<CodingPlanSubscriptionProviderId, CodingPlanStaticTeamProduct[]>
 >;
 
+export interface CodingPlanBillingDiscountLocaleCopy {
+  cardTitle?: string;
+  cardBody?: string;
+  badgeBody?: string;
+  infoTitle?: string;
+  infoBody?: string;
+}
+
+export type CodingPlanBillingDiscountConfig = Partial<
+  Record<Locale, CodingPlanBillingDiscountLocaleCopy>
+> &
+  Record<string, unknown>;
+
 export interface StartPlanPreviewEntitlement {
   grantUnits: number;
   meter: string;
@@ -112,6 +127,61 @@ export interface StartPlanPreviewConfig {
   planId: string;
   name: string;
   entitlements: StartPlanPreviewEntitlement[];
+}
+
+export interface ManualClaimPlanEntitlement {
+  entitlementId: string;
+  showName: string;
+  meter: string;
+  unitType: string;
+  capabilities: string[];
+  grantUnits: number;
+  period: string;
+  priority: number;
+  effectiveAt?: number;
+}
+
+export interface ManualClaimPlanPreview {
+  planId: string;
+  name: string;
+  description: string;
+  priority: number;
+  entitlements: ManualClaimPlanEntitlement[];
+}
+
+export interface ManualClaimPlanPreviewSnapshot {
+  /** Server time of this response in milliseconds; effectiveAt remains Unix seconds. */
+  serverTime?: number;
+  plans: ManualClaimPlanPreview[];
+}
+
+export interface ManualClaimPlanClaimRequest extends RequestVerificationProof {
+  planId: string;
+}
+
+export interface ManualClaimPlanClaimEntitlement {
+  entitlementId: string;
+  showName: string;
+  /** Effective time of the entitlement returned by claim, Unix seconds; 0 means immediate. */
+  effectiveAt?: number;
+}
+
+export interface ManualClaimPlanClaimResult {
+  success: boolean;
+  code: number;
+  message: string;
+  /** Campaign end time from a failure response, used for quota-exhausted messaging; must not be treated as the claimed entitlement's expiry. */
+  failureEndsAt?: number;
+  /** Server time returned by the claim endpoint in milliseconds; do not mix with other responses' timestamps. */
+  serverTime?: number;
+  plan?: {
+    userPlanId: string;
+    planId: string;
+    status: string;
+    startsAt?: number;
+    endsAt?: number;
+    entitlements?: ManualClaimPlanClaimEntitlement[];
+  };
 }
 
 export interface ForceUpdateConfig {

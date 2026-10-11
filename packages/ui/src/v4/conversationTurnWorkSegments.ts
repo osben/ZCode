@@ -8,6 +8,7 @@ import {
   ENABLE_CUA_TOOL_CALL_GROUPING,
   prepareCuaGroupFlowItems,
 } from "@/v4/conversationCuaGroups.js";
+import { isPluginUiPinnedToolRow, type PluginUiRowPinResolver } from "@/plugin-ui/index.js";
 import { buildConversationFlowItems } from "@/v4/conversationTurnFlowItems.js";
 import type { AssistantWorkRow, ConversationTurnFlowItem } from "@/v4/conversationTurnFlowItems.js";
 
@@ -143,6 +144,8 @@ export function buildConversationTurnWorkSegments(options: {
   forceOpenHistory: boolean;
   timelineOnly: boolean;
   nowMs?: number;
+  /** Decides whether plugin cards belong in the collapsed area; defaults to “keep all visible.” */
+  pluginUiPinResolver?: PluginUiRowPinResolver;
 }): ConversationTurnWorkSegment[] {
   const visualDrafts = splitVisualWorkSegments(options.orderedRows);
   const tailRowIds = new Set(options.assistantTailRows.map((row) => row.rowId));
@@ -164,11 +167,14 @@ export function buildConversationTurnWorkSegments(options: {
     const visibleAssistantIndex = visibleAssistantTextRow
       ? segmentFlowRows.findIndex((row) => row.rowId === visibleAssistantTextRow.rowId)
       : -1;
-    const segmentHistoryRows = options.timelineOnly
-      ? []
-      : visibleAssistantIndex < 0
-        ? segmentFlowRows
-        : segmentFlowRows.slice(0, visibleAssistantIndex);
+    // Plugin UI tool rows stay outside the collapsed area (at the same level as assistantText); progress rows still collapse normally. See isPluginUiPinnedToolRow.
+    const segmentHistoryRows = (
+      options.timelineOnly
+        ? []
+        : visibleAssistantIndex < 0
+          ? segmentFlowRows
+          : segmentFlowRows.slice(0, visibleAssistantIndex)
+    ).filter((row) => !isPluginUiPinnedToolRow(row, options.pluginUiPinResolver));
     const segmentFollowingRows =
       visibleAssistantIndex < 0 ? [] : segmentFlowRows.slice(visibleAssistantIndex + 1);
     const segmentRunning = segmentIndex === visualDrafts.length - 1 && options.isRunning;

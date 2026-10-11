@@ -38,6 +38,7 @@ interface GitBranchSwitcherProps {
   popoverClassName?: string;
   branchListClassName?: string;
   markAsWorkspaceHeaderBranch?: boolean;
+  compactForRemoteControl?: boolean;
   popoverSide?: "top" | "bottom" | "left" | "right";
   avoidPopoverCollisions?: boolean;
   showFooterActions?: boolean;
@@ -53,6 +54,7 @@ export function GitBranchSwitcher({
   popoverClassName,
   branchListClassName,
   markAsWorkspaceHeaderBranch = false,
+  compactForRemoteControl = false,
   popoverSide = "top",
   avoidPopoverCollisions = true,
   showFooterActions = true,
@@ -186,7 +188,8 @@ export function GitBranchSwitcher({
               })}
               className={cn(
                 "min-w-0 rounded-full text-ui-base/relaxed",
-                "max-w-full pl-3 pr-2",
+                // Bugfix: The bottom area of the mobile remote-control chat page is narrow, and branch names crowd the input toolbar. Keep only the icon entry in remote-control mode.
+                compactForRemoteControl ? "size-8 px-0" : "max-w-full pl-3 pr-2",
                 triggerClassName,
               )}
             >
@@ -194,20 +197,22 @@ export function GitBranchSwitcher({
                 data-branch-switcher-primary-icon="true"
                 className="size-4 text-foreground-subtle"
               />
-              <>
-                <span className="min-w-0 max-w-25 truncate text-left">{triggerLabel}</span>
-                {loadingBranches || mutationPending ? (
-                  <LoaderIcon
-                    data-branch-switcher-trailing-icon="true"
-                    className="size-3.5 animate-spin text-foreground-subtle"
-                  />
-                ) : (
-                  <ChevronDownIcon
-                    data-branch-switcher-trailing-icon="true"
-                    className="size-3.5 text-foreground-subtle"
-                  />
-                )}
-              </>
+              {!compactForRemoteControl ? (
+                <>
+                  <span className="min-w-0 max-w-25 truncate text-left">{triggerLabel}</span>
+                  {loadingBranches || mutationPending ? (
+                    <LoaderIcon
+                      data-branch-switcher-trailing-icon="true"
+                      className="size-3.5 animate-spin text-foreground-subtle"
+                    />
+                  ) : (
+                    <ChevronDownIcon
+                      data-branch-switcher-trailing-icon="true"
+                      className="size-3.5 text-foreground-subtle"
+                    />
+                  )}
+                </>
+              ) : null}
             </Button>
           </PopoverTrigger>
           <PopoverContent

@@ -14,7 +14,7 @@ import {
   desktopMenuMessageIds,
   getDesktopMenuMessage,
   isTrustedCodingPlanWebviewOrigin,
-  resolveZaiBusinessBaseUrl,
+  isTrustedRewardsUrl,
   PlatformChannels,
 } from "@zcode/shared";
 import { loadWindow, type WindowBootstrapOptions } from "./desktopHostProcess.js";
@@ -37,6 +37,9 @@ import {
   resolveDesktopWindowSize,
   type DesktopWindowSize,
 } from "./desktopWindowSize.js";
+import { getPluginSandboxHost, isPluginSandboxSrc } from "./pluginSandbox/index.js";
+import { installEmbeddedBrowserBluetoothDeviceGuard } from "./embeddedBrowserBluetoothGuard.js";
+import { getEmbeddedBrowserDevicePicker } from "./embeddedBrowserPermissionUiBridge.js";
 // CDP-on-guest pivot: the built-in browser renders with `<webview>` again, so the host BrowserWindow must enable webviewTag
 // and harden the guest, apply the URL allowlist, and route popups to internal tabs in will/did-attach-webview.
 const ALLOWED_EMBEDDED_BROWSER_PROTOCOLS = new Set([
@@ -48,7 +51,7 @@ const ALLOWED_EMBEDDED_BROWSER_PROTOCOLS = new Set([
 ]);
 const ALLOWED_EMBEDDED_BROWSER_NEW_WINDOW_PROTOCOLS = new Set(["http:", "https:"]);
 const EXTERNAL_BROWSER_DISPOSITIONS = new Set(["background-tab"]);
-
+const CODING_PLAN_ZAI_PAYPAL_RELAY_HOSTS = new Set(["api.z.ai", "api.z.ai"]);
 const embeddedBrowserJavaScriptDialogPreloadPath = join(
   import.meta.dirname,
   "../preload/embeddedBrowserJavaScriptDialog.cjs",
@@ -291,7 +294,7 @@ function isCodingPlanPaypalNavigationUrl(url: string): boolean {
     // The PayPal approveUrl from the backend may first point to a Z.AI payment API relay that redirects to PayPal.
     // Keep the relay URL in the current webview too, or the system browser will take over.
     return (
-      ["https://api.z.ai", resolveZaiBusinessBaseUrl()].includes(parsed.origin) &&
+      CODING_PLAN_ZAI_PAYPAL_RELAY_HOSTS.has(parsed.hostname) &&
       parsed.pathname.startsWith("/api/pay/paypal/")
     );
   } catch {
@@ -346,6 +349,7 @@ function attachEmbeddedBrowserWindowOpenHandler(options: {
   hostWebContents: WebContents;
   guestWebContents: WebContents;
   isCodingPlanGuest: boolean;
+  isRewardsGuest: boolean;
   resolveBrowserViewOwner?: (webContentsId: number) =>
     | {
         workspaceKey: string;
@@ -448,6 +452,23 @@ function attachEmbeddedBrowserWindowOpenHandler(options: {
   });
 
   options.guestWebContents.on("will-navigate", (event, url) => {
+    if (options.isRewardsGuest) {
+      if (
+        isTrustedRewardsUrl(url, {
+          dev: !app.isPackaged,
+          e2e: process.env.VITE_ZCODE_E2E_STORE_BRIDGE === "1",
+        })
+      )
+        return;
+      // When the invitation page leaves the trusted path it must open externally; never let
+      // third-party pages use a container with injected credentials.
+      event.preventDefault();
+      if (isAllowedEmbeddedBrowserNewWindowUrl(url))
+        void shell
+          .openExternal(url)
+          .catch(() => options.logger.warn("[rewards] external navigation failed"));
+      return;
+    }
     const guestUrl =
       typeof options.guestWebContents.getURL === "function"
         ? options.guestWebContents.getURL()
@@ -613,7 +634,12 @@ export function createBrowserWindow(options: {
   win.on("maximize", () => syncDesktopWindowChromeState(win));
   win.on("unmaximize", () => syncDesktopWindowChromeState(win));
   attachWindowsWindowRepaint(win);
-  const pendingWebviewCodingPlanGuestFlags: boolean[] = [];
+  // will-attach and did-attach pair in order; queue entries record the guest kind, and
+  // did-attach dispatches policy accordingly.
+  const pendingWebviewGuestKinds: Array<
+    | { kind: "browser" | "codingPlan"; isRewards: boolean }
+    | { kind: "pluginSandbox"; sandboxId: string }
+  > = [];
 
   win.webContents.once("did-finish-load", () => {
     // For packaged navigation through loadFile(file://...), Chromium may replay origin-level zoom after page load and
@@ -646,10 +672,41 @@ export function createBrowserWindow(options: {
     // Coding Plan website exception: it needs window.zcodeBridge to report purchase completion, so use its dedicated
     // preload (codingPlanWebview.ts); other webviews keep the native Dialog bridge.
     const targetUrl = params.src ?? "about:blank";
+    // Plugin UI sandbox guest: a separate branch that skips the built-in browser's preload /
+    // allowpopups / protocol allowlist.
+    if (isPluginSandboxSrc(targetUrl)) {
+      const host = getPluginSandboxHost();
+      const decision = host?.configureGuest({
+        webPreferences,
+        params,
+        ownerWebContentsId: win.webContents.id,
+      });
+      if (!decision?.ok) {
+        options.logger.warn(
+          `[plugin-sandbox] blocked webview attach: ${decision ? decision.reason : "host-not-installed"}`,
+        );
+        event.preventDefault();
+        return;
+      }
+      pendingWebviewGuestKinds.push({ kind: "pluginSandbox", sandboxId: decision.sandboxId });
+      return;
+    }
     const isCodingPlanWebview = isCodingPlanEmbeddedWebviewSrc(targetUrl);
     webPreferences.preload = isCodingPlanWebview
       ? codingPlanWebviewPreloadPath
       : embeddedBrowserJavaScriptDialogPreloadPath;
+    const isRewardsWebview = isTrustedRewardsUrl(targetUrl, {
+      dev: !app.isPackaged,
+      e2e: process.env.VITE_ZCODE_E2E_STORE_BRIDGE === "1",
+    });
+    if (isRewardsWebview) {
+      webPreferences.preload = join(import.meta.dirname, "../preload/rewardsWebview.cjs");
+      if (!app.isPackaged)
+        webPreferences.additionalArguments = [
+          ...(webPreferences.additionalArguments ?? []),
+          "--zcode-rewards-dev",
+        ];
+    }
     webPreferences.contextIsolation = true;
     webPreferences.nodeIntegration = false;
     webPreferences.nodeIntegrationInSubFrames = true;
@@ -675,19 +732,44 @@ export function createBrowserWindow(options: {
       return;
     }
 
-    pendingWebviewCodingPlanGuestFlags.push(isCodingPlanWebview);
+    pendingWebviewGuestKinds.push({
+      kind: isCodingPlanWebview ? "codingPlan" : "browser",
+      isRewards: isRewardsWebview,
+    });
   });
 
   win.webContents.on("did-attach-webview", (_event, guestWebContents) => {
+    const guestKind = pendingWebviewGuestKinds.shift() ?? {
+      kind: "browser" as const,
+      isRewards: false,
+    };
+    if (guestKind.kind === "pluginSandbox") {
+      getPluginSandboxHost()?.attachGuest({
+        guest: guestWebContents,
+        hostWebContents: win.webContents,
+        sandboxId: guestKind.sandboxId,
+      });
+      return;
+    }
     attachEmbeddedBrowserWindowOpenHandler({
       guestWebContents,
       hostWebContents: win.webContents,
       resolveBrowserViewOwner: options.resolveBrowserViewOwner,
       // PayPal/relay 30x redirects are not guaranteed to trigger will-navigate at each hop.
       // Pin Coding Plan guest identity to the initial src; do not remove protection based on the current URL.
-      isCodingPlanGuest: pendingWebviewCodingPlanGuestFlags.shift() ?? false,
+      isCodingPlanGuest: guestKind.kind === "codingPlan",
+      isRewardsGuest: guestKind.isRewards,
       logger: options.logger,
     });
+    // Bluetooth device-selection events hang off the guest WebContents (Session covers only
+    // hid/usb/serial); install the guard for built-in browser guests only, blocking Electron's
+    // default of silently granting the first device when no listener is attached.
+    if (guestKind.kind === "browser") {
+      installEmbeddedBrowserBluetoothDeviceGuard(guestWebContents, options.logger.warn, {
+        devicePicker: getEmbeddedBrowserDevicePicker(),
+        hostWebContentsId: win.webContents.id,
+      });
+    }
   });
 
   win.webContents.on("context-menu", (_event, params) => {

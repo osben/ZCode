@@ -18,7 +18,10 @@ import { useWorkflowRunWorkspace } from "@/hooks/useWorkflowRunWorkspace.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import type { CodeViewerSource } from "@/lib/codeViewer.js";
 import type { WorkflowWorkspaceSidePaneTab } from "@/lib/workspaceSidePane.js";
-import { buildWorkflowGraphByToolCallId } from "@/v4/workflowRunCardJoin.js";
+import {
+  buildWorkflowFillGraphByRunId,
+  buildWorkflowGraphByToolCallId,
+} from "@/v4/workflowRunCardJoin.js";
 import { WorkflowWorkspaceCard } from "@/app-shell/WorkflowWorkspaceCard.js";
 import {
   buildWorkspaceChapters,
@@ -135,9 +138,13 @@ const WorkflowWorkspaceContent = memo(function WorkflowWorkspaceContent({
     () => snapshot?.workflowRuns?.runs.find((candidate) => candidate.runId === tab.runId),
     [snapshot?.workflowRuns, tab.runId],
   );
+  // For a completed run, use the effective workflow graph from its latest completion row (docs/dynamic-workflow/presentation.md, “Holes on the timeline”):
+  // The workflow transcript is anchored by site, and that site must come from the post-completion graph.
   const graph = useMemo(
-    () => buildWorkflowGraphByToolCallId(snapshot?.rows.window).get(tab.toolCallId),
-    [snapshot?.rows.window, tab.toolCallId],
+    () =>
+      buildWorkflowFillGraphByRunId(snapshot?.rows.window).get(tab.runId)?.graph ??
+      buildWorkflowGraphByToolCallId(snapshot?.rows.window).get(tab.toolCallId),
+    [snapshot?.rows.window, tab.runId, tab.toolCallId],
   );
 
   const workspace = useWorkflowRunWorkspace({

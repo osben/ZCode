@@ -35,7 +35,7 @@ export function hadPersistedPaneLayoutAtModuleLoad(): boolean {
 export * from "@/v4/paneLayoutTree.js";
 export * from "@/v4/paneLayoutPersistence.js";
 
-interface PaneLayoutStore extends PaneLayoutSnapshot {
+export interface PaneLayoutStore extends PaneLayoutSnapshot {
   /** Split a draft pane from the anchor pane (bind scope, then bind in place after the first createSession). */
   splitPane: (anchorPaneId: string, direction: SplitDirection, scope: PaneWorkspaceScope) => void;
   /** Split a pane with a bound session around the anchor pane (draft drop / non-group drag entry point). */

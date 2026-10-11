@@ -3,7 +3,7 @@ import { Check, Globe, Info, Lock, UserRoundPen } from "lucide-react";
 import { cn } from "@/components/lib/utils.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 
-type ConversationSharePermission = "private" | "link-viewer" | "link-editor";
+export type ConversationSharePermission = "private" | "link-viewer" | "link-editor";
 
 const PERMISSION_OPTIONS = [
   {
@@ -43,7 +43,7 @@ export function ConversationSharePermissionPicker({
       data-variant={variant}
       className={cn("flex flex-col", compact ? "min-w-0 gap-1" : "gap-1.5")}
     >
-      {/* The compact variant previously reduced field labels to text-ui-xs, making their hierarchy inconsistent with the share title in the same confirmation form.*/}
+      {/* Reason for the fix: The compact variant used to reduce the field label to text-ui-xs, making its hierarchy inconsistent with the sharing title in the same confirmation form. */}
       <span
         data-testid="conversation-share-permission-label"
         className={cn(compact ? "text-ui-sm" : "text-ui-base", "text-foreground-subtle")}

@@ -101,10 +101,10 @@ function denied(reasonCode: string): ActionAvailability {
   return { allowed: false, reasonCode };
 }
 
-// Guard-derived input surface (from the same source as the projection). compacting/goalVerifying
-// are not independent phases (phase is a closed enum); derive them from activeWorks / goal.status and pass them in.
-// queueLength/autoDrain are used to derive held state.
-interface AvailabilityContext {
+// Guard-derived input surface (from the same source as the projection, P5-3). compacting/goalVerifying
+// are not independent phases (10 §4.2.1 phase is a closed enum); derive them from activeWorks / goal.status and pass them in.
+// queueLength/autoDrain are used to derive held state (heldQueueInputRequiresChoice, ruled 2026-07-05).
+export interface AvailabilityContext {
   phase: SessionControl["phase"];
   goalStatus: GoalState["status"] | null;
   compacting: boolean;
@@ -213,6 +213,11 @@ export function deltaBumpsRevision(delta: ConversationDelta): boolean {
       return false;
     case "state.updated":
       return REVISION_BEARING_PATCH_KEYS.some((key) => delta.patch[key] !== undefined);
+    case "pluginUi.resourceUpdated":
+    case "pluginUi.resourceListChanged":
+    case "pluginUi.instanceClosed":
+    case "pluginUi.appToolCall":
+    // live-only notifications do not change the snapshot and are not accounted for.
     // Key-level deltas have the same exemption as a whole-key `workflowRuns` patch (see above): they
     // express changes to that key, and a different encoding should not change the accounting rule.
     // Including them would bump the conversation revision on every node transition of an in-flight run.

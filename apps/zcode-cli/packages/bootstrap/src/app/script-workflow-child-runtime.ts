@@ -14,6 +14,7 @@ import {
 } from "@zcode/core";
 import {
   type AgentExecutionTelemetryPort,
+  type BrowserControlPort,
   type ContextSourcePort,
   type FileSystemPort,
   type HttpClientPort,
@@ -25,6 +26,8 @@ import {
   type ModelRequestAdmission,
   type SessionId,
   type SessionStorePort,
+  type SkillPort,
+  type SkillRoot,
   type ToolArtifactStorePort,
   type TraceContext,
   type WorkflowAgentCallInput,
@@ -51,6 +54,12 @@ export interface ScriptWorkflowAgentRuntimeDeps {
 /** Parent-session model factory: create Models for the child and main turn from the same Registry view instead of freezing separate copies. */
   modelFactory: NonNullable<AgentRuntimeDeps["modelFactory"]>;
   permissionService: PermissionService;
+  /**
+   * Plugin skill roots (the same `pluginOutcome.skillRoots` the main session's skill port uses).
+   * Bundled skill roots are excluded: they contain only dynamic-workflows, and subagents must not
+   * start workflows.
+   */
+  pluginSkillRoots: readonly SkillRoot[];
   runtime: AgentRuntime;
   runtimeConfig: AgentRuntimeConfig;
   sessionId: SessionId;
@@ -91,6 +100,23 @@ export function createScriptWorkflowAgentRuntime(input: {
    * are not governed by or reported to the gate. It is passed through runtime deps alongside the two tool ports.
    */
   modelRequestAdmission?: ModelRequestAdmission;
+  /**
+   * `description` on interaction-request origins (the text of the permission window's source
+   * badge). For DWF actors the factory supplies `<persona name> (<siteId>@<ordinal>)`
+   * (workflow-actor-permission.ts); when absent, fall back to `request.opts.label` / agentType
+   * (the existing behavior for legacy workflow children).
+   */
+  interactionDescription?: string;
+  /**
+   * The **parent session's** browser port (the one the main runtime uses). When present, the
+   * subagent gets Browser Use: a child port is derived here via `forChildSession`—tabs belong to
+   * the child session's own id, workspace / clientMode come from the parent session, and closing
+   * the runtime closes the tabs and revokes registration. Passed only for DWF actors: their
+   * runtime deterministically calls `closeBrowserSession` on run dispose; legacy workflow children
+   * have no close chain, so it is omitted
+   * (apps/zcode-cli/packages/dynamic-workflow/docs/execution-engine.md, "Subagent sessions").
+   */
+  browserControlPort?: BrowserControlPort;
 }): AgentRuntime {
   // DWF actors use the builder's overlay path via configOverrides.workflowActor, where systemPrompt
   // must be absent (the builder throws if both are set). The parent session's custom system prompt
@@ -115,11 +141,18 @@ export function createScriptWorkflowAgentRuntime(input: {
       ...(systemPrompt === undefined ? {} : { systemPrompt }),
       agentName: input.request.opts?.agentType ?? "zcode-workflow",
       maxTurns: input.request.opts?.maxTurns ?? input.deps.runtimeConfig.maxTurns,
+      // Baseline YOLO; the parent task keeps its own Guarded. Legacy script workflow children stop
+      // here; DWF actors override via configOverrides with the mode recorded on the run
+      // (docs/dynamic-workflow/launch.md, "Permissions inside a run").
       mode: "yolo",
       modelSelection,
       parentSessionId: input.deps.sessionId,
       subagents: { enabled: false },
       taskType: "workflow_child",
+      // An actor exists only under a run, so it is naturally "already activated" (launch.md, "On
+      // demand: activation", Children section): do not inherit the parent session's on-demand flag,
+      // otherwise the spread would carry onDemand in while the child session has no activation entry point.
+      dynamicWorkflowToolsOnDemand: false,
       toolAllowlist: input.request.opts?.tools,
       workingDirectory: input.deps.workingDirectory,
       ...input.configOverrides,
@@ -134,11 +167,24 @@ export function createScriptWorkflowAgentRuntime(input: {
         agentId: input.childSessionId,
         agentType: input.request.opts?.agentType ?? "zcode-workflow",
         childSessionId: input.childSessionId,
-        description: input.request.opts?.label ?? input.request.opts?.agentType ?? "workflow agent",
+        description:
+          input.interactionDescription ??
+          input.request.opts?.label ??
+          input.request.opts?.agentType ??
+          "workflow agent",
         ...(input.traceContext.turnId === undefined
           ? {}
           : { parentTurnId: input.traceContext.turnId }),
       }),
+      ...(input.browserControlPort === undefined
+        ? {}
+        : {
+            browserControlPort:
+              input.browserControlPort.forChildSession?.({
+                childSessionId: input.childSessionId,
+                parentSessionId: input.deps.sessionId,
+              }) ?? input.browserControlPort,
+          }),
       ...(input.workflowSubmitPort ? { workflowSubmitPort: input.workflowSubmitPort } : {}),
       ...(input.workflowSubmitPort && input.workflowSubmitSchema
         ? { workflowSubmitSchema: input.workflowSubmitSchema }
@@ -185,6 +231,10 @@ function createRuntimeDeps(
           childSessionId,
           event,
           traceContext,
+          // Interaction events are also mirrored to the parent session: confirmation windows are
+          // projected only from the parent session (the same ownership as createChildClientPorts;
+          // docs/dynamic-workflow/launch.md, "Permissions inside a run").
+          interactionOrigin: clientPortsContext,
         });
       },
     },
@@ -226,15 +276,32 @@ function createRuntimeDeps(
     ...deps.runtime.createChildClientPorts(clientPortsContext),
     permissionService: deps.permissionService,
     sessionStore: deps.sessionStore,
-    skillPort:
-      deps.configResult.config.features.skill && deps.configResult.config.skills.enabled
-        ? (deps.appOptions.skillPort ??
-          createNodeSkillAdapter({
-            extraRoots: deps.configResult.config.skills.roots,
-            // The script workflow child runtime must not bypass a user-disabled SKILL.md path.
-            disabledPaths: collectDisabledPaths(deps.configResult.config.skillOverrides),
-          }))
-        : undefined,
+    skillPort: createWorkflowChildSkillPort(deps),
     traceContext,
   };
+}
+
+/**
+ * Skill port for workflow children: user-configured roots + plugin skill roots, with disabled
+ * paths matching the main session.
+ *
+ * Bug root cause (2026-09-30): this originally carried only the user-configured roots. Plugin
+ * skill roots were later added to the main session's copy and this side drifted—DWF subagents
+ * could not see browser-use's control-browser and had to dig through the plugin directory themselves.
+ */
+export function createWorkflowChildSkillPort(
+  deps: Pick<ScriptWorkflowAgentRuntimeDeps, "appOptions" | "configResult" | "pluginSkillRoots">,
+): SkillPort | undefined {
+  if (!deps.configResult.config.features.skill || !deps.configResult.config.skills.enabled) {
+    return undefined;
+  }
+  return (
+    deps.appOptions.skillPort ??
+    createNodeSkillAdapter({
+      extraRoots: deps.configResult.config.skills.roots,
+      extraResolvedRoots: [...deps.pluginSkillRoots],
+      // The script workflow child runtime must not bypass a user-disabled SKILL.md path.
+      disabledPaths: collectDisabledPaths(deps.configResult.config.skillOverrides),
+    })
+  );
 }

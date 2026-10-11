@@ -1,5 +1,11 @@
 import { createHash } from "node:crypto";
-import type { SharedZCodeCredentialStore } from "@zcode/adapters/auth";
+import {
+  createCodingPlanApiKeyResolver,
+  SHARED_ZCODE_CREDENTIAL_KEYS,
+  type SharedZCodeCredentialStore,
+} from "@zcode/adapters/auth";
+import { createNodeHttpClientAdapter } from "@zcode/adapters/http";
+import { createConfig } from "@zcode/adapters/config";
 import type { ProviderRuntimeHeadersPort } from "@zcode/core";
 import {
   createAccountProviderConfigSnapshot,
@@ -15,7 +21,7 @@ import {
 } from "@zcode/provider-node";
 import type { ProviderFamilyDomain } from "@zcode/shared";
 
-interface StandaloneCodingPlanProvider {
+export interface StandaloneCodingPlanProvider {
   readonly family: ProviderFamilyDomain;
   readonly modelId: string;
   readonly providerId: string;
@@ -85,6 +91,15 @@ export function standaloneAccountIdentityCredentialKey(providerId: string): stri
   return `account-provider:${normalized}:identity`;
 }
 
+export function standaloneAccountAuthSourceCredentialKey(providerId: string): string {
+  return `account-provider:${providerId}:auth-source`;
+}
+function oauthCredentialKey(family: ProviderFamilyDomain): string {
+  return family === "zai"
+    ? SHARED_ZCODE_CREDENTIAL_KEYS.zaiAccessToken
+    : SHARED_ZCODE_CREDENTIAL_KEYS.bigmodelAccessToken;
+}
+
 /** Private Standalone Credential Store key; it must not enter Provider Config, Model, or Protocol. */
 export function standaloneAccountProviderCredentialKey(input: {
   readonly providerId: string;
@@ -101,6 +116,8 @@ export function standaloneAccountProviderCredentialKey(input: {
 export function createStandaloneAccountIdentityFromSecret(secret: string): string {
   const normalized = secret.trim();
   if (!normalized) throw new Error("Standalone Account Secret 不能为空");
+  // Fork note: the display connection identity (truncated digest) is derived from the high-entropy API key; this is not password storage and the original cannot be brute-forced offline.
+  // codeql[js/insufficient-password-hash]
   return `key-${createHash("sha256").update(normalized).digest("hex").slice(0, 24)}`;
 }
 
@@ -124,8 +141,16 @@ export async function readStandaloneAccountProviderConfigSnapshot(
     });
     return [{ accountIdentity, credentialKey, family, providerId }] as const;
   });
-  const apiKeyByCredentialKey = await credentialStore.loadMany(
-    candidates.map(({ credentialKey }) => credentialKey),
+  const sources = await credentialStore.loadMany(
+    candidates.map(({ providerId }) => standaloneAccountAuthSourceCredentialKey(providerId)),
+  );
+  // Choose the read scope by source first; OAuth does not decrypt the old key, and manual mode does not depend on unrelated OAuth ciphertext.
+  const credentials = await credentialStore.loadMany(
+    candidates.map(({ credentialKey, providerId, family }) =>
+      sources[standaloneAccountAuthSourceCredentialKey(providerId)] === "manual"
+        ? credentialKey
+        : oauthCredentialKey(family),
+    ),
   );
   const candidateByProviderId = new Map(
     candidates.map((candidate) => [candidate.providerId, candidate]),
@@ -133,9 +158,12 @@ export async function readStandaloneAccountProviderConfigSnapshot(
   const providers = new ProviderConfigMap(
     configuredProviders.map(({ family, providerId }) => {
       const candidate = candidateByProviderId.get(providerId);
-      const apiKey = candidate ? apiKeyByCredentialKey[candidate.credentialKey]?.trim() : undefined;
-      if (!candidate || !apiKey) {
-        // A missing account Overlay member means "do not override" and cannot represent a disconnected
+      const source = sources[standaloneAccountAuthSourceCredentialKey(providerId)];
+      const requestCredentialKey =
+        source === "manual" ? candidate?.credentialKey : oauthCredentialKey(family);
+      const authorized = Boolean(requestCredentialKey && credentials[requestCredentialKey]?.trim());
+      if (!candidate || !authorized) {
+        // Bug root cause: A missing account Overlay member means "do not override" and cannot represent a disconnected
         // account. Set entitled=false explicitly so the built-in account Provider leaves the Registry
         // after its credentials are deleted.
         return [
@@ -168,10 +196,40 @@ export async function hasStandaloneCodingPlanAccess(
 }
 
 export function createStandaloneProviderRuntimeHeadersPort(
-  credentialStore: Pick<SharedZCodeCredentialStore, "load" | "loadMany">,
+  credentialStore: Pick<SharedZCodeCredentialStore, "load" | "loadMany" | "save" | "delete">,
   env: Readonly<Record<string, string | undefined>>,
-): ProviderRuntimeHeadersPort {
+  injectedResolver?: ReturnType<typeof createCodingPlanApiKeyResolver>,
+): ProviderRuntimeHeadersPort & {
+  clearProjectTokens(): void;
+  invalidateChangedCredentials(): Promise<void>;
+} {
+  const config = createConfig({ env }).config;
+  const resolver =
+    injectedResolver ??
+    createCodingPlanApiKeyResolver({
+      httpClient: createNodeHttpClientAdapter({
+        env,
+        proxyUrl: config.network.httpProxy,
+        noProxy: config.network.noProxy,
+        caCertFile: config.network.caCertFile,
+        timeoutMs: config.network.timeout,
+      }),
+      locationStore: credentialStore,
+      observe: (event) => console.warn("[project-access-token]", event),
+    });
+  const authSnapshots = new Map<string, string>();
   return {
+    clearProjectTokens() {
+      authSnapshots.clear();
+      resolver.clear();
+    },
+    async invalidateChangedCredentials() {
+      const values = await credentialStore.loadMany([...authSnapshots.keys()]);
+      if ([...authSnapshots].some(([key, value]) => values[key]?.trim() !== value)) {
+        authSnapshots.clear();
+        resolver.clear();
+      }
+    },
     shouldRefreshBeforeModelRequest() {
       return true;
     },
@@ -187,20 +245,88 @@ export function createStandaloneProviderRuntimeHeadersPort(
       )?.trim();
       if (!currentIdentity)
         throw new Error(`Standalone Account Provider 凭据已经失效: ${providerId}`);
-      const apiKey = (
-        await credentialStore.load(
-          standaloneAccountProviderCredentialKey({
-            providerId,
-            accountIdentity: currentIdentity,
-          }),
+      const family = access.accountType;
+      if (!family) throw new Error("project_token_account_required");
+      const sourceKey = standaloneAccountAuthSourceCredentialKey(providerId);
+      const source = await credentialStore.load(sourceKey);
+      const oauthKey = oauthCredentialKey(family);
+      const oauth =
+        source === "manual" ? undefined : (await credentialStore.load(oauthKey))?.trim();
+      const useOAuth = source === "oauth" || (source !== "manual" && Boolean(oauth));
+      let apiKey: string | undefined;
+      let apiKeyId: string | undefined;
+      let accountScope: string | undefined;
+      if (useOAuth) {
+        if (!oauth) {
+          resolver.clear();
+          throw new Error("project_token_login_required");
+        }
+        // Fork note: this is the account scope fingerprint (compared for equality with expectedAccountScope to detect
+        // account switching), not password storage — it needs a fast deterministic digest rather than a KDF; oauth is only an input and is not leaked.
+        accountScope = createHash("sha256").update(
+          // codeql[js/insufficient-password-hash]
+          JSON.stringify([providerId, family, currentIdentity, oauth]),
+        ).digest("hex");
+        if (
+          (input.expectedAccountScope && input.expectedAccountScope !== accountScope) ||
+          (input.rejectedProjectTokenFingerprint && !input.expectedAccountScope)
         )
-      )?.trim();
+          throw new Error("project_token_scope_invalidated");
+        if (source !== "oauth") await credentialStore.save(sourceKey, "oauth");
+        authSnapshots.set(oauthKey, oauth);
+        authSnapshots.set(standaloneAccountIdentityCredentialKey(providerId), currentIdentity);
+        authSnapshots.set(sourceKey, "oauth");
+        const material = await resolver.resolveMaterial(
+          {
+            family,
+            accessToken: oauth,
+            accountIdentity: currentIdentity,
+            rejectedProjectTokenFingerprint: input.rejectedProjectTokenFingerprint,
+            trace: input.traceContext,
+          },
+          { signal: input.abortSignal },
+        );
+        apiKey = material.token;
+        apiKeyId = material.apiKeyId;
+        // Deliver only the current account's token during the request; a late issuance must not overwrite a logged-out or switched login state.
+        if (
+          (await credentialStore.load(oauthKey))?.trim() !== oauth ||
+          (
+            await credentialStore.load(standaloneAccountIdentityCredentialKey(providerId))
+          )?.trim() !== currentIdentity ||
+          (await credentialStore.load(sourceKey)) !== "oauth"
+        ) {
+          resolver.clear();
+          throw new Error("project_token_scope_invalidated");
+        }
+      } else if (source === "manual") {
+        if (input.expectedAccountScope || input.rejectedProjectTokenFingerprint)
+          throw new Error("project_token_scope_invalidated");
+        apiKey = (
+          await credentialStore.load(
+            standaloneAccountProviderCredentialKey({
+              providerId,
+              accountIdentity: currentIdentity,
+            }),
+          )
+        )?.trim();
+      }
+      if (!useOAuth && source !== "manual") {
+        // The legacy format cannot distinguish manual from OAuth-derived keys; without a login state, require re-selecting the login method — no guessing fallback.
+        resolver.clear();
+        throw new Error("project_token_login_required");
+      }
+      input.abortSignal?.throwIfAborted();
       if (!apiKey) {
         throw new Error(`Standalone Account Provider 缺少请求凭据: ${providerId}`);
       }
       return {
         headersApplied: true,
-        requestAuth: { apiKey },
+        requestAuth: {
+          apiKey,
+          ...(apiKeyId ? { apiKeyId } : {}),
+          ...(accountScope ? { accountScope } : {}),
+        },
       };
     },
   };

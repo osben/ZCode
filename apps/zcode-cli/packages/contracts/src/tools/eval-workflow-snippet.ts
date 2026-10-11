@@ -22,7 +22,11 @@ export const EVAL_WORKFLOW_SNIPPET_SOURCE_ERROR =
 
 export const EvalWorkflowSnippetInputSchema = z
   .object({
-    code: z.string().min(1).optional().describe("The snippet, inline. This OR `path`, never both."),
+    code: z
+      .string()
+      .min(1)
+      .optional()
+      .describe("The snippet, inline. This OR `path`, never both."),
     /**
      * Second source for a snippet. **The entire file is code**:
      * snippets do not use saved-definition semantics, so a file that happens to start with

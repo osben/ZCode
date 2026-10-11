@@ -46,6 +46,13 @@ export interface WorkflowCompletionCardProps {
   renderPreview?: (artifact: WorkflowCompletionArtifact) => ReactNode;
   onOpenRun?: () => void;
   onOpenArtifact?: (artifactId: string) => void;
+  /**
+   * Slot before the header status: “Saved” chip (docs/dynamic-workflow/transcript-and-notifications.md,
+   * “Saving the run, and running it again”). Created by the host; the card only positions it.
+   */
+  headerLeading?: ReactNode;
+  /** Slot before ⤢ in the header: “Save”/“Run again.” Absent when this card has no session context or either gate is closed. */
+  headerTrailing?: ReactNode;
   testIdKey: string;
 }
 
@@ -155,6 +162,8 @@ export function WorkflowCompletionCard({
   artifacts,
   artifactsTruncated = false,
   figures,
+  headerLeading,
+  headerTrailing,
   name,
   onOpenArtifact,
   onOpenRun,
@@ -195,7 +204,10 @@ export function WorkflowCompletionCard({
   return (
     <section
       aria-label={format({ id: WORKFLOW_RUN_KIND_ID.completed })}
-      className="wf-motion wf-arrive flex w-full min-w-0 flex-col gap-2.5 rounded-xl border border-border/70 bg-card/70 px-3.5 pb-3 pt-1.5"
+      // `@container/wf-card`: on narrow cards (<480px), verbs become icons. The condition must use
+      // **the card's own width** because viewport breakpoints do not match the different narrow
+      // layouts in columns, side panes, and mobile (docs/dynamic-workflow/transcript-and-notifications.md).
+      className="wf-motion wf-arrive @container/wf-card flex w-full min-w-0 flex-col gap-2.5 rounded-xl border border-border/70 bg-card/70 px-3.5 pb-3 pt-1.5"
       data-testid={`workflow-completion-card-${testIdKey}`}
       data-workflow-completion-card="true"
     >
@@ -204,6 +216,8 @@ export function WorkflowCompletionCard({
         kind={format({ id: WORKFLOW_RUN_KIND_ID.completed })}
         name={name}
         status={<WorkflowRunStatus status="completed" testId="workflow-completion-status" />}
+        {...(headerLeading === undefined ? {} : { leading: headerLeading })}
+        {...(headerTrailing === undefined ? {} : { trailing: headerTrailing })}
         {...(onOpenRun === undefined ? {} : { onOpenDetails: onOpenRun })}
       />
       <WorkflowCompletionArtifacts

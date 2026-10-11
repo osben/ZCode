@@ -16,6 +16,9 @@ export const zhipuAccountModeDataSchema = z.enum([
   "individual-coding-plan",
   "team-coding-plan",
   "off-peak",
+  // Highspeed-card access category; mirrors zcodeProviderAccountAccessSchema.mode — change
+  // both together.
+  "highspeed",
 ]);
 export const providerVisibilityDataSchema = z.enum(["visible", "hidden"]);
 export const providerLogoDataSchema = z
@@ -56,7 +59,7 @@ export const providerAccessDataSchema = z.discriminatedUnion("type", [
   apiKeyAccessDataSchema,
   zhipuAccountAccessDataSchema,
 ]);
-const completeProviderAccessDataSchema = z.discriminatedUnion("type", [
+export const completeProviderAccessDataSchema = z.discriminatedUnion("type", [
   completeApiKeyAccessDataSchema,
   completeZhipuAccountAccessDataSchema,
 ]);

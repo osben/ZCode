@@ -64,7 +64,7 @@ const mcpUsageEnvelopeSchema = z.object({
 });
 
 /** Connection ownership for this entitlement query, used to compare with credential ownership. */
-interface McpQuotaRequestScope {
+export interface McpQuotaRequestScope {
   providerFamily: "zai" | "bigmodel";
   organizationId?: string | null;
   projectId?: string | null;
@@ -76,7 +76,10 @@ interface McpQuotaRequestScope {
  * Credentials come from the connection currently selected in Settings, while entitlements are queried separately for each provider tab.
  * A user with both Z.AI and BigModel Coding Plan (or personal and Team) would see an MCP quota that does not belong to them under the other tab without this comparison.
  */
-function matchesMcpQuotaScope(scope: UsageMcpQuotaScope, request: McpQuotaRequestScope): boolean {
+export function matchesMcpQuotaScope(
+  scope: UsageMcpQuotaScope,
+  request: McpQuotaRequestScope,
+): boolean {
   if (scope.providerFamily !== request.providerFamily) {
     return false;
   }
@@ -98,7 +101,7 @@ function matchesMcpQuotaScope(scope: UsageMcpQuotaScope, request: McpQuotaReques
  *
  * percentage follows the quota endpoint semantics (percentage **used**); the presentation layer consistently flips it to show remaining quota.
  */
-function buildMcpQuotaAggregateLimit(params: {
+export function buildMcpQuotaAggregateLimit(params: {
   totalUsage: { used: number; limit: number; remaining: number };
   nextResetTime?: number;
 }): UsageQuotaLimit | null {

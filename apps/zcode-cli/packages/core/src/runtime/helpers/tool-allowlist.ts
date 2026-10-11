@@ -1,6 +1,7 @@
 import {
   AMEND_WORKFLOW_TOOL_NAME,
   CREATE_WORKFLOW_TOOL_NAME,
+  FILL_WORKFLOW_HOLE_TOOL_NAME,
   RESOLVE_WORKFLOW_QUESTION_TOOL_NAME,
   RESPOND_TO_COORDINATOR_TOOL_NAME,
   RESUME_WORKFLOW_RUN_TOOL_NAME,
@@ -44,6 +45,9 @@ const WORKFLOW_CHILD_DISALLOWED_TOOLS = [
   // list removes tools from the driver-side persona toolset; this one applies to all workflow children by taskType, without relying on
   // the driver to remember to include it.
   RESOLVE_WORKFLOW_QUESTION_TOOL_NAME,
+  // FillWorkflowHole shares the same root cause as AmendWorkflow (alwaysAsk has no dialog to show in a child) and the same invariant
+  // (a hole asks the **main agent** for code; a subagent must not fill it on its behalf), so include it in the list too.
+  FILL_WORKFLOW_HOLE_TOOL_NAME,
 ] as const;
 
 /**
@@ -62,17 +66,22 @@ export function resolveRuntimeDisallowedTools(
 }
 
 /**
- * Value of the dynamic-workflow switch passed to registerBuiltInTools.
- * **Absent means enabled**: TUI keeps the default toolset; headless explicitly sets true/false from --enable-workflow; protocol
- * sessions are controlled by the trusted Host; workflow_child inherits the parent configuration. Fail-closed defaults belong in the
- * headless entry point and protocol server's appRuntimePreferences, not here.
+ * Value of the dynamic-workflow gradual rollout gate in registerBuiltInTools (docs/dynamic-workflow/launch.md, “Gray release”).
+ * **Absent means enabled**: standalone CLI TUI and headless modes explicitly write true/false from --workflow-mode;
+ * protocol sessions are controlled by the trusted Host, and workflow_child inherits its parent's configuration. The fail-closed default belongs in
+ * appRuntimePreferences at the standalone CLI entry point and protocol server, not at this layer.
  *
  * Keep this alongside resolveRuntimeDisallowedTools rather than at call sites because there are **two** tool-registration entry
  * points (initial setup in helpers/runtime-tools.ts and branch refresh in methods/embedded-search-branch.ts). Both must use the same
  * rule, or a tool-list refresh could re-register disabled workflow tools.
  */
-export function resolveRuntimeDynamicWorkflowToolsIncluded(config: AgentRuntimeConfig): boolean {
-  return config.dynamicWorkflowEnabled !== false;
+export function resolveRuntimeDynamicWorkflowToolsIncluded(runtime: {
+  config: AgentRuntimeConfig;
+  dynamicWorkflowToolsActivated: boolean;
+}): boolean {
+  // enabled ∧ (¬onDemand ∨ activated): activation state belongs to the runtime (launch.md, “On demand: activation”);
+  // sessions that are not on-demand start activated, so alwaysOn / TUI / headless still depend only on enabled here.
+  return runtime.config.dynamicWorkflowEnabled !== false && runtime.dynamicWorkflowToolsActivated;
 }
 
 export function resolveBuiltInToolAllowlist(

@@ -49,6 +49,8 @@ export interface ConversationShareAllowedArtifact {
 }
 
 export interface ConversationShareTurnPreflightResult {
+  /** Converted public row count; reaggregate per turn when the selection changes, without caching capacity errors for the whole selected set. */
+  rowBudget?: { count: number; limit: number };
   productTurnId: string;
   turnFingerprint?: string;
   blockingIssues: readonly ConversationShareFailureIssue[];
@@ -142,8 +144,8 @@ export interface ConversationShareFailureIssue {
     | "unknown";
 }
 
-type ConversationShareFailureDiagnosticValue = string | number | boolean;
-type ConversationShareFailureDiagnostics = Readonly<
+export type ConversationShareFailureDiagnosticValue = string | number | boolean;
+export type ConversationShareFailureDiagnostics = Readonly<
   Record<string, ConversationShareFailureDiagnosticValue>
 >;
 
@@ -182,7 +184,7 @@ function inferFailureReasonCode(message: string): ConversationShareFailureReason
   return "invalid_conversation";
 }
 
-interface ConversationShareFailureDetails {
+export interface ConversationShareFailureDetails {
   requestId?: string;
   status?: number;
   code?: number;

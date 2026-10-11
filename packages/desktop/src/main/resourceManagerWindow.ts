@@ -15,6 +15,7 @@ import {
   type ZCodeProvider,
 } from "@zcode/shared";
 import { logger } from "./logger.js";
+import { configureNetworkCaptureHost, observeNetworkWindow } from "./resourceManagerNetwork.js";
 import { normalizeElectronCpuToMachinePercent } from "./electronCpuNormalization.js";
 import type { ChromiumProcessRolePids } from "./processResourceRoleClassifier.js";
 import { buildAuxiliaryRendererName } from "./resourceManagerProcessNames.js";
@@ -37,11 +38,11 @@ const RESOURCE_MANAGER_WINDOW_TITLE = "Resource Manager";
 const BROWSER_USE_PLUGIN_NAME = "browser-use";
 
 /** Whole-machine CPU: busy / total difference between two os.cpus() snapshots. */
-interface SystemCpuMeter {
+export interface SystemCpuMeter {
   read(): number;
 }
 
-function createSystemCpuMeter(
+export function createSystemCpuMeter(
   readCpus: () => Array<{ times: Record<string, number> }> = () => os.cpus(),
 ): SystemCpuMeter {
   let previous: { busy: number; total: number } | null = null;
@@ -208,6 +209,7 @@ export function collectChromiumProcessRolePids(): ChromiumProcessRolePids {
 
 export function registerHostProcess(label: string, child: ElectronUtilityProcess): void {
   hostProcesses.set(label, child);
+  configureNetworkCaptureHost(child);
 }
 
 export function unregisterHostProcess(label: string): void {
@@ -274,6 +276,7 @@ export function openResourceManager(): void {
     },
   });
 
+  observeNetworkWindow(instance, () => hostProcesses.values());
   // Match the main window: production packages always load renderer assets from the signed bundle.
   if (!app.isPackaged && process.env["ELECTRON_RENDERER_URL"]) {
     const base = process.env["ELECTRON_RENDERER_URL"];
@@ -461,7 +464,7 @@ function collectUnsampledAgentProcesses(sampledPids: Set<number>): ResourceUsage
 const systemCpuMeter = createSystemCpuMeter();
 
 /** One complete snapshot: Electron processes + external processes sampled by Host + system totals. */
-async function buildResourceUsageSnapshot(
+export async function buildResourceUsageSnapshot(
   options: { includeHosts?: boolean; signal?: AbortSignal } = {},
 ): Promise<ResourceUsageSnapshot> {
   const electronProcesses = collectElectronProcesses();

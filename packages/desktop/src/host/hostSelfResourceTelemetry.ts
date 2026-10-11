@@ -17,7 +17,7 @@ import {
   type StartHostMemoryDiagnosticsLogOptions,
 } from "./hostMemoryDiagnosticsLog.js";
 
-interface StartHostSelfResourceTelemetryOptions
+export interface StartHostSelfResourceTelemetryOptions
   extends
     Omit<StartHostMemoryDiagnosticsLogOptions, "onMemoryUsage">,
     NodeSelfResourceSamplerOptions {
@@ -28,7 +28,7 @@ interface StartHostSelfResourceTelemetryOptions
   postMessage?: ((message: unknown) => void) | undefined;
 }
 
-interface HostSelfResourceTelemetry {
+export interface HostSelfResourceTelemetry {
   /** Sample immediately (for tests and manual triggers); return whether the local log was written to disk. */
   sampleNow(): boolean;
   stop(): void;

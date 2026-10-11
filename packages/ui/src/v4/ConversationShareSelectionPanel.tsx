@@ -12,7 +12,7 @@ import {
 import { resolveConversationShareScrollbarIndicatorMetrics } from "@/v4/conversationShareScrollbarMetrics.js";
 import type { ConversationTurnNavigatorItem } from "@/v4/conversationTurnNavigatorHelpers.js";
 
-interface ConversationShareSelectionPanelProps {
+export interface ConversationShareSelectionPanelProps {
   visible: boolean;
   items: readonly ConversationTurnNavigatorItem[];
   selectedRowIds: ReadonlySet<number>;
@@ -126,10 +126,8 @@ function ConversationShareSelectionPanelImpl({
           exit={motionConfig.exit}
           transition={motionConfig.transition}
         >
-          {/* Radix's default table wrapper expands to fit long text. Constrain it to the viewport width
-          to preserve right-side spacing, truncation, and hover behavior. */}
-          {/* auto mounts and unmounts the scrollbar on scroll events, so panel hover cannot control its
-              visibility reliably. Keep it mounted and toggle opacity instead. */}
+          {/* Bugfix: Radix's default table wrapper expands to fit long text. Constrain it to the viewport width, or right-side spacing, truncation, and hover behavior all degrade. */}
+          {/* Bug root cause: auto mounts and unmounts the scrollbar on scroll events, so panel hover cannot control its visibility reliably. Keep it mounted and toggle opacity instead. */}
           <div ref={scrollShellRef} className="relative min-h-0 flex-1">
             <ScrollArea
               type="always"
@@ -158,9 +156,7 @@ function ConversationShareSelectionPanelImpl({
                         )}
                       >
                         <div className="relative flex size-6 shrink-0 items-center justify-center">
-                          {/* Do not make only the 14px Checkbox clickable while the 24px slot serves as a layout
-                              container. Use a 32px label that does not affect layout to enlarge the hit area without
-                              changing list spacing or visual size. */}
+                          {/* Bugfix: previously only the 14px Checkbox itself was clickable while the 24px slot was just a layout container. Use a 32px label that does not affect layout to enlarge the hit area without changing list spacing or visual size. */}
                           <label
                             data-conversation-share-checkbox-hit-area="true"
                             className="absolute flex size-8 cursor-pointer items-center justify-center"

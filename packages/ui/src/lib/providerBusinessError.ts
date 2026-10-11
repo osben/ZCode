@@ -1,3 +1,18 @@
+/** Keeps diagnostic wording aligned with the anomaly guard in core `model-errors.ts`. */
+export const SUSPICIOUS_EMPTY_MODEL_RESULT_MESSAGE =
+  "Model returned no text, no tool calls, and no usage before completing the turn.";
+
+import {
+  requestVerificationActionMessages,
+  requestVerificationRecoveryAction,
+  type RequestVerificationRecoveryAction,
+} from "@/request-security-edition/errors.js";
+export {
+  resolveRequestVerificationBusinessCode,
+  isRequestVerificationTerminalError,
+  isRequestVerificationRejectedMessage,
+  REQUEST_VERIFICATION_REJECTED_MESSAGE,
+} from "@/request-security-edition/errors.js";
 /**
  * zcode-plan / Coding Plan business error codes and frontend handling contract.
  *
@@ -15,7 +30,7 @@
  */
 import { isOffPeakTicketExpiredError } from "@zcode/shared";
 
-const PROVIDER_BUSINESS_ERROR_CODES = [
+export const PROVIDER_BUSINESS_ERROR_CODES = [
   "1006",
   "1005",
   "3006",
@@ -30,16 +45,17 @@ const PROVIDER_BUSINESS_ERROR_CODES = [
   "429",
 ] as const;
 
-type ProviderBusinessErrorCode = (typeof PROVIDER_BUSINESS_ERROR_CODES)[number];
+export type ProviderBusinessErrorCode = (typeof PROVIDER_BUSINESS_ERROR_CODES)[number];
 
 export type ProviderBusinessErrorUiAction =
   | "login"
   | "refresh-quota"
   | "switch-model"
+  | RequestVerificationRecoveryAction
   | "retry-later"
   | "upgrade";
 
-const PROVIDER_BUSINESS_ERROR_MESSAGE_IDS: Record<ProviderBusinessErrorCode, string> = {
+export const PROVIDER_BUSINESS_ERROR_MESSAGE_IDS: Record<ProviderBusinessErrorCode, string> = {
   "1006": "zcode.error.providerBusiness.1006",
   "1005": "zcode.error.providerBusiness.1005",
   "3006": "zcode.error.providerBusiness.3006",
@@ -54,6 +70,18 @@ const PROVIDER_BUSINESS_ERROR_MESSAGE_IDS: Record<ProviderBusinessErrorCode, str
   "429": "zcode.error.providerBusiness.429",
 };
 
+export const PROVIDER_BUSINESS_ERROR_ACTION_MESSAGE_IDS: Record<
+  ProviderBusinessErrorUiAction,
+  string
+> = {
+  login: "chat.error.action.relogin",
+  "refresh-quota": "chat.error.action.refreshQuota",
+  "switch-model": "chat.error.action.switchModel",
+  ...requestVerificationActionMessages,
+  "retry-later": "chat.error.action.retryLater",
+  upgrade: "chat.quota.action.upgrade",
+};
+
 const PROVIDER_BUSINESS_ERROR_UI_ACTIONS: Record<
   ProviderBusinessErrorCode,
   ProviderBusinessErrorUiAction | null
@@ -62,8 +90,7 @@ const PROVIDER_BUSINESS_ERROR_UI_ACTIONS: Record<
   "1005": "refresh-quota",
   "3006": "switch-model",
   "3001": null,
-  // 3007 Security validation rejected: the client cannot complete validation, so there is no recovery action to perform.
-  "3007": null,
+  "3007": requestVerificationRecoveryAction,
   // 3008/3009/3010 concurrency limit: show the upgrade banner under Start Plan; use the upgrade action outside Start Plan.
   "3008": "upgrade",
   "3009": "upgrade",
@@ -134,6 +161,8 @@ export function resolveStartPlanQuotaExhaustedBusinessCode(
 
   return undefined;
 }
+
+const CONCURRENT_LIMIT_BUSINESS_CODES = new Set(["3008", "3009", "3010"]);
 
 const CONCURRENT_LIMIT_WRAPPER_CODES = new Set([
   "PROVIDER_BUSINESS_ERROR",
@@ -212,6 +241,11 @@ export function resolveStartPlanConcurrentLimitBusinessCode(
   return undefined;
 }
 
+/** Check whether a business code represents a concurrency limit. */
+export function isConcurrentLimitBusinessCode(code: string | undefined): boolean {
+  return Boolean(code && CONCURRENT_LIMIT_BUSINESS_CODES.has(code));
+}
+
 export function resolveGlmQuotaBannerBusinessCode(
   code: string | undefined,
 ): GlmQuotaBannerBusinessCode | undefined {
@@ -232,9 +266,10 @@ export function resolveStartPlanConcurrentLimitBannerReason(
     : "initial-busy";
 }
 
-/** Keeps diagnostic wording aligned with the anomaly guard in core `model-errors.ts`. */
-export const SUSPICIOUS_EMPTY_MODEL_RESULT_MESSAGE =
-  "Model returned no text, no tool calls, and no usage before completing the turn.";
+/** For upstream 500-class errors, refresh the quota snapshot before retrying to avoid an incorrect local quota deduction in the UI. */
+export function shouldRefreshQuotaOnProviderBusinessRetry(code: string | undefined): boolean {
+  return code === "2007" || code === "1005";
+}
 
 /**
  * Off-peak ticket unavailable (upstream 3102: ticket invalid or expired).

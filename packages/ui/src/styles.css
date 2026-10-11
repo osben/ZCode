@@ -4,14 +4,33 @@
 @import "shadcn/tailwind.css";
 @import "@xterm/xterm/css/xterm.css";
 @import "katex/dist/katex.min.css";
-@source "../../../node_modules/streamdown/dist/*.js"; /* Explicitly scan Streamdown runtime class names */
+@import "./highspeed/highspeed-activation.css";
+@import "./highspeed/highspeed-share.css";
+@source "../../../node_modules/streamdown/dist/*.js"; /* 感觉这行也是不好使呢*/
 
 @plugin "@tailwindcss/typography";
+@plugin "../lucide-colors.mjs";
 
-/*  KaTeX outputs both a MathML accessibility layer and an HTML visual layer. Without KaTeX CSS, both are visible,
- * making inline and block formulas look like they are rendered once as math and again as plain text. */
+/* Hero can contain any image/video/iframe; do not infer the close icon's contrast from the App theme. */
+.cloud-content-dialog {
+  --media-close-surface: rgb(0 0 0 / 50%);
+  --media-close-surface-hover: rgb(0 0 0 / 65%);
+  --media-close-foreground: #fff;
+}
+.cloud-content-dialog [data-slot="dialog-close"] {
+  background-color: var(--media-close-surface);
+  color: var(--media-close-foreground);
+  border: 0;
+}
+.cloud-content-dialog [data-slot="dialog-close"]:hover {
+  background-color: var(--media-close-surface-hover);
+}
 
-/*  The Linux desktop title bar is drawn by the renderer; some overlays need to avoid its click area on this platform only. */
+/* Bugfix: KaTeX outputs both a MathML accessibility layer and an HTML visual layer. Without the
+ * katex CSS, both are visible, making inline and block formulas look like they are rendered once
+ * and then repeated as plain text. */
+
+/* Bugfix: Linux desktop draws the window title bar in the renderer; some overlays must avoid its click area only on this platform. */
 @custom-variant platform-linux-desktop (&:where(.platform-linux-desktop, .platform-linux-desktop *));
 @custom-variant platform-linux-window-maximized (&:where(.platform-linux-desktop.window-maximized, .platform-linux-desktop.window-maximized *));
 
@@ -28,15 +47,17 @@
  * Upstream does not hand-write data-[state=active] per component; it uses shadcn/tailwind.css
  * @custom-variant to map Radix data-state and data-orientation consistently.
  * Previously, the repository included only tailwindcss, so local compilation matched only bare data-active attributes,
- * leaving components such as Tabs, Separator, ScrollArea, and ButtonGroup with classes but no styling.
+   * This caused styles for components such as Tabs, Separator, ScrollArea, and ButtonGroup to have
+   * class names present but no effect.
  * Add shadcn/tailwind.css and tw-animate-css as the official registry does,
  * restoring matching compilation semantics and animation utilities for these components.
  */
 
 /*
- * styles.css is imported indirectly from @zcode/ui by web/desktop. In this workspace setup, Tailwind v4
- * cannot reliably scan all TSX components in the UI package using only source("."), so utilities used by new components such as Select
- * (bg-popover, shadow-md, overflow-x-hidden) may be missing, leaving only some generic classes that happen to match.
+ * Root cause: styles.css is imported indirectly by web/desktop from the @zcode/ui package. In this
+ * workspace setup, Tailwind v4 cannot reliably include all TSX components from the UI package by
+ * using source(".") alone. Utilities used by new components such as Select (bg-popover, shadow-md,
+ * overflow-x-hidden) may be omitted, leaving only some generic classes that happen to match.
  * Add an explicit @source so Tailwind always scans UI package source and components such as dropdowns and menus do not render partially.
  */
 @source "./**/*.{ts,tsx}";
@@ -63,7 +84,20 @@ body {
   overflow: hidden;
 }
 
-/* Breaking template descriptions at every Chinese character splits phrases such as “简报” and pushes punctuation to the next line.
+/* Root cause: CSS animations cannot settle while the window is hidden, and DocumentTimeline retains
+ * elements removed during that period along with their entire subtrees. Memory can grow without
+ * bound during background streaming and is released only when the window becomes visible again.
+ * Disable animations while hidden so no new animation objects are created. The marker is managed
+ * by installDocumentHiddenMotionPause; see docs/performance/hidden-document-motion-pause.md. */
+html[data-document-hidden] *,
+html[data-document-hidden] *::before,
+html[data-document-hidden] *::after {
+  transition: none !important;
+  animation: none !important;
+}
+
+/* Bugfix: Chinese template descriptions wrapping after each character can split phrases such as
+ * “briefing” and push punctuation to the next line.
  * Use phrase-level wrapping when Chromium supports it; other environments keep normal wrapping to avoid keep-all overflow on narrow screens. */
 .text-wrap-phrase {
   overflow-wrap: break-word;
@@ -113,8 +147,8 @@ body {
 }
 
 /*
- *  Some browsers/Electron runtimes add a system highlight outline on focus-visible,
- * appearing as a yellow border unrelated to the product theme and looking like a “random accessibility style.”
+ * Bugfix: some browser/Electron environments add a system highlight border for focus-visible,
+ * showing a yellow outline unrelated to the product theme that looks like a random accessibility style.
  * Clear both outline and the focus ring box-shadow globally to avoid mixing system highlights with component-level rings.
  */
 *:focus,
@@ -147,7 +181,7 @@ body {
   --text-ui-sm: calc(var(--ui-font-size) - 2px);
   --text-ui-xs: calc(var(--ui-font-size) - 4px);
   /* Exception scale: only for workflow graph axes (tick labels, channel codes, unit suffixes), never for content text.
-   * See DESIGN.md “UI font tokens.” */
+   * See DESIGN.md, “UI font tokens,” and docs/dynamic-workflow/presentation.md. */
   --text-ui-2xs: calc(var(--ui-font-size) - 5px);
   /* Uppercase monospace micro-labels (CAUSALITY GRAPH / TIMEBASE / KEY) need wider letter spacing at 9–10px. */
   --tracking-wf-label: 0.09em;
@@ -160,6 +194,7 @@ body {
   --color-background-win-alt: var(--color-neutral-200);
   --color-brand: var(--color-sky-400);
   --color-icon-blue: var(--color-terminal-bright-blue);
+  --color-icon-purple: var(--color-terminal-bright-magenta);
   --color-trajectory-user: #2563eb;
   --color-trajectory-assistant: #0f766e;
   --color-trajectory-reasoning: #7c3aed;
@@ -255,6 +290,7 @@ body {
   --color-foreground: var(--color-neutral-700);
   --color-foreground-subtle: color-mix(in oklab, var(--color-neutral-700) 60%, transparent);
   --color-foreground-subtlest: color-mix(in oklab, var(--color-neutral-700) 40%, transparent);
+  --lucide-subtlest-opacity: 0.4;
   --color-foreground-inverse: var(--color-white);
   --color-success: var(--color-green-600);
   --color-success-foreground: var(--color-foreground-inverse);
@@ -408,6 +444,7 @@ body {
   --color-foreground: var(--color-neutral-200);
   --color-foreground-subtle: color-mix(in oklab, var(--color-neutral-200) 60%, transparent);
   --color-foreground-subtlest: color-mix(in oklab, var(--color-neutral-200) 30%, transparent);
+  --lucide-subtlest-opacity: 0.3;
   --color-foreground-inverse: var(--color-white);
   --color-success: var(--color-green-500);
   --color-success-foreground: var(--color-foreground-inverse);
@@ -553,6 +590,7 @@ body {
   --color-foreground: var(--color-neutral-800);
   --color-foreground-subtle: color-mix(in oklab, var(--color-neutral-800) 60%, transparent);
   --color-foreground-subtlest: color-mix(in oklab, var(--color-neutral-800) 40%, transparent);
+  --lucide-subtlest-opacity: 0.4;
   --color-foreground-inverse: #ffffff;
   --color-success: #1e8a3e;
   --color-success-foreground: #ffffff;
@@ -698,6 +736,7 @@ body {
   --color-foreground: var(--color-neutral-300);
   --color-foreground-subtle: color-mix(in oklab, var(--color-neutral-300) 60%, transparent);
   --color-foreground-subtlest: color-mix(in oklab, var(--color-neutral-300) 30%, transparent);
+  --lucide-subtlest-opacity: 0.3;
   --color-foreground-inverse: #000000;
   --color-success: #46bf72;
   --color-success-foreground: #000000;
@@ -1118,6 +1157,12 @@ body {
     --animated-gradient-text-strong: var(--color-foreground-subtle);
   }
 
+  .highspeed-animated-gradient-text .animated-gradient-text {
+    /* Root cause: accelerated turns changed only the time-saved label, while internal thoughts and tools still inherited the regular shimmer color. */
+    --animated-gradient-text-strong: var(--color-icon-purple);
+    --animated-gradient-text-soft: color-mix(in srgb, var(--color-icon-purple) 22%, transparent);
+  }
+
   .cua-group-gradient-text {
     display: inline-block;
     background: linear-gradient(
@@ -1167,6 +1212,29 @@ body {
     100% {
       background-position: 0% 0;
     }
+  }
+}
+
+/* Indeterminate shimmer for the thin progress bar in tool summary rows (ToolCallProgressIndicator, batch 3 R7). */
+.tool-call-progress-indeterminate {
+  animation: tool-call-progress-indeterminate 1.2s ease-in-out infinite;
+}
+
+@keyframes tool-call-progress-indeterminate {
+  0% {
+    left: -33%;
+  }
+
+  100% {
+    left: 100%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tool-call-progress-indeterminate {
+    animation: none;
+    left: 0;
+    width: 100%;
   }
 }
 
@@ -1577,10 +1645,10 @@ body {
   }
 }
 
-/* Workflow graph · traversal edge: the edge taken by control flow into the running step
+/* Workflow graph · transit edge (docs/dynamic-workflow/presentation.md, “Rails and arcs”): the path control flow takes into a running station
  * stays **lit and still** — it describes the past (control flow traversed this edge); motion belongs to the lamp for the running step (wf-beat below).
  * The light uses the lamp color, brightest at the lamp and fading toward the incoming control flow, as if the lamp illuminates the path it came from. Previously, a warning-colored dashed line scrolled along the edge,
- * which looked like “still traveling from the previous step to this one.”
+ * is an alert-colored dashed line, suggesting that it is still traveling from the previous station to this one.
  * The flat track is a border with light overlaid on ::after: 1.5px, rounded ends, fading from transparent at the far end to full color at 80%; the right end extends past the track
  * end by 4px to meet the glow. Edges in SVG (arcs, fork/merge curves, and spine curves) are drawn as a
  * .wf-lit path by WorkflowMarchLight.tsx, with a stroke gradient along its length. All strokes are static, so reduced-motion needs no changes.
@@ -1601,7 +1669,46 @@ body {
   stroke-linecap: round;
 }
 
-/* Sidebar spine: the traversal segment is two 1.5px vertical bars, with gradients chosen by
+/* Stream rails (docs/dynamic-workflow/presentation.md, “Stream rails”): make the border transparent
+ * on the station header row and draw the line with ::before, leaving a 22px gap in the center for
+ * three chevrons (WorkflowStreamChevrons.tsx). The line itself stays still and unlit; active
+ * chevrons light up in sequence along the flow (wf-stream-flow, 0.15s apart). This is the only
+ * motion allowed on the edge because it indicates something moving from one station to the next.
+ * Under reduced-motion, the chevrons stay fully lit. */
+.wf-rail-stream {
+  border-top-color: transparent;
+}
+.wf-rail-stream::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: -1px;
+  height: 1px;
+  border-radius: 9999px;
+  background: linear-gradient(
+    90deg,
+    var(--color-foreground-subtlest) calc(50% - 11px),
+    transparent calc(50% - 11px) calc(50% + 11px),
+    var(--color-foreground-subtlest) calc(50% + 11px)
+  );
+}
+@keyframes wf-stream-flow {
+  0%,
+  100% {
+    opacity: 0.3;
+  }
+  40% {
+    opacity: 1;
+  }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .wf-stream-flow {
+    animation: wf-stream-flow 1.2s var(--wf-ease, ease-in-out) infinite;
+  }
+}
+
+/* Sidebar spine (docs/dynamic-workflow/presentation.md, “The spine”): the transit segment is two 1.5px vertical bars, arranged
  * data-rail-position data-rail-position — the lower half of the previous step fades from transparent to 70%; the upper half of the running step grows from 70% to full and stays lit into
  * the lamp; a full segment remains at a flat 70%. The spine lamp and card lamp share wf-lamp-running and pulse together.
  */
@@ -1623,7 +1730,7 @@ body {
   background: color-mix(in oklab, var(--color-warning) 70%, transparent);
 }
 
-/* Workflow timeline motion vocabulary: four durations
+/* Workflow timeline · motion vocabulary (docs/dynamic-workflow/presentation.md, “The pill”): four durations
  * and one easing curve shared by cards, confirmation dialogs, and the sidebar list. Arrival / pop-in / expand / text swap animate only opacity and transform;
  * lamps and strokes change only color, never layout properties. Under reduced-motion, all animations are disabled and loops stop on a static frame.
  */
@@ -1688,8 +1795,9 @@ body {
   transform: none;
   color: var(--color-foreground-subtle);
 }
-/* Square tile for an artifact pill: charcoal, raised to the hover color with foreground-colored text on hover; unlike an avatar, it does not
- * enlarge — shape says “what,” without letting color compete to say “who.” */
+/* Square tile for an artifact pill (addendum, “Artifact pills”): charcoal gray; on hover, lift to the
+ * hover color and turn the text to the foreground color. Do not enlarge it like an avatar: shape
+ * says what it is, while color should not compete to say who it belongs to. */
 .wf-pill-tile {
   transition:
     background-color var(--wf-t-base) var(--wf-ease),
@@ -1731,12 +1839,12 @@ body {
 .wf-meter-seg {
   transition: flex-grow var(--wf-t-ink) var(--wf-ease);
 }
-/* Completed-card artifact tile: on hover, the preview frame border
+/* Artifact tile on the completion card (docs/dynamic-workflow/transcript-and-notifications.md, “Artifact tiles”): on hover, the preview frame's border
  * lifts to the hover color, the kind tile and name in the description row switch to foreground, and ↗ replaces the version in the trailing slot — the same visual language as pills,
- * except the “lift” applies to the preview frame rather than the whole tile background.
- * Structure (see the WorkflowArtifactTile file header): the preview frame is a **sibling** of the button, and the button’s ::after covers the entire tile
- * to receive clicks; the frame reads the button state from the tile container via :has() for hover, and the focus ring is also drawn on the container.
- */
+ * alone is lifted; the background of the entire tile is not.
+ * Structure (see the bug explanation at the top of WorkflowArtifactTile): the preview frame is a
+ * **sibling** of the button, which uses ::after to cover the tile and receive clicks. The frame
+ * therefore reads the button state from the tile container with :has(), and the focus ring is also drawn on the container. */
 .wf-tile-hit::after {
   content: "";
   position: absolute;
@@ -1776,11 +1884,10 @@ body {
 .wf-tile:has(.wf-tile-open:active) .wf-tile-frame {
   transform: scale(0.99);
 }
-/* Artifact index rows: artifacts after the deliverables row are lines of
+/* Artifact index rows (docs/dynamic-workflow/transcript-and-notifications.md, “The index”): remaining artifacts after the deliverable row are listed one per line
  * text, not cards. On hover/focus, fill the row with surface-hover (like a sidebar row), switch the kind icon to foreground, and replace the version with ↗ in the trailing slot —
- * the same visual language as pills, but without a background or border: a text row needs only a fill to lift. The “N more” row is
- * a doorway, so ↗ is visible at rest (wf-pill-go-rest).
- */
+ * using the same visual language as the pill, but without a background or border: a single fill is
+ * enough to lift one line of text. The “N more” row is a doorway, and ↗ is visible even before hover (wf-pill-go-rest).
 .wf-line {
   transition: background-color var(--wf-t-base) var(--wf-ease);
 }
@@ -1829,8 +1936,7 @@ body {
     border-color var(--wf-t-ink) var(--wf-ease),
     box-shadow var(--wf-t-base) var(--wf-ease);
 }
-/*
- * Running lamp: a constant 3px glow plus one heartbeat every 1.6s (wf-beat) — the lamp grows to 1.12×
+/* Running lamp (presentation.md, “Lamps”): a constant 3px halo plus a heartbeat every 1.6s (wf-beat)—the lamp grows to 1.12x
  * then settles back, while a ring expands from the glow edge and fades out at 8px beyond the lamp. The ring is a second box-shadow, transparent at rest; the lamp is the page’s
  * only animated clock. Under reduced-motion, only the constant glow remains.
  */
@@ -1838,6 +1944,66 @@ body {
   box-shadow:
     0 0 0 3px color-mix(in oklab, var(--color-warning) 20%, transparent),
     0 0 0 3px transparent;
+}
+/* Holes (docs/dynamic-workflow/presentation.md, “Holes on the timeline”): the waiting dashed rail
+ * has a **constant** 3px alert-colored halo—it does not pulse because nothing is running there; the
+ * run is waiting for the lead agent to write code. The trailing gap fades to the right because the
+ * script's ending has not been written yet. Neighboring stations on the completion row's draft
+ * line use 40% ink; they are context only. */
+.wf-lamp-hole-waiting {
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--color-warning) 20%, transparent);
+}
+.wf-tail-stub {
+  -webkit-mask-image: linear-gradient(90deg, #000, transparent);
+  mask-image: linear-gradient(90deg, #000, transparent);
+}
+.wf-ghost {
+  opacity: 0.4;
+}
+/* Completion frame (docs/dynamic-workflow/presentation.md, “Filled with phases” and “The stroke”):
+ * a 1px line in the same ink as the rail, with pathLength = 1. At rest it is transparent with a
+ * dash offset of 1. When the pointer or keyboard focus reaches the header (data-fill-on), the
+ * offset moves to 0 over 420ms, drawing one stroke from the end of the name to the pen. On exit,
+ * the whole line fades over 160ms; only after fading does its offset, color, and width reset (it is
+ * not erased in reverse). The two-second fresh state is an animation rather than a transition: the
+ * frame is already lit on the first mounted frame, so there is no “before” state to transition from. */
+.wf-fill-frame {
+  fill: none;
+  stroke: var(--color-workflow-trace);
+  stroke-width: 1;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-dasharray: 1;
+  stroke-dashoffset: 1;
+  opacity: 0;
+  transition:
+    opacity 160ms var(--wf-ease),
+    stroke-dashoffset 0s linear 160ms,
+    stroke 0s linear 160ms,
+    stroke-width 0s linear 160ms;
+}
+.wf-fill-frame[data-fill-on="true"] {
+  opacity: 1;
+  stroke-dashoffset: 0;
+  transition:
+    stroke-dashoffset 420ms var(--wf-ease),
+    opacity 0s;
+}
+.wf-fill-frame-fresh {
+  stroke: var(--color-warning);
+  stroke-width: 1.5;
+  animation: wf-fill-stroke 420ms var(--wf-ease);
+}
+@keyframes wf-fill-stroke {
+  from {
+    stroke-dashoffset: 1;
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+.wf-fill-head {
+  transition: color var(--wf-t-base) var(--wf-ease);
 }
 .wf-station-open:hover .wf-lamp[data-lamp="pending"] {
   box-shadow: 0 0 0 3px color-mix(in oklab, var(--color-foreground) 10%, transparent);
@@ -1880,7 +2046,7 @@ body {
 .wf-caret {
   animation: wf-caret 1s step-end infinite;
 }
-/* Draft pen: the track segment extends from the left, the lamp lands, then the name appears one character at a time. */
+/* Draft pen (addendum, “Writing effect”): the rail segment extends from the left, the lamp lands, and then the name is written character by character. */
 .wf-rail-grow {
   transform-origin: left center;
   animation: wf-rail-grow var(--wf-t-base) var(--wf-ease);
@@ -1888,12 +2054,18 @@ body {
 .wf-land {
   animation: wf-land var(--wf-t-enter) var(--wf-ease);
 }
-/* Loop-tail summary: transition the outer height between two values on expand/collapse; on expand, mount the pills and have them
+/* Completion growth (docs/dynamic-workflow/presentation.md, “Growth” under “Holes on the timeline”):
+ * stations to the right of the inserted column slide from −insert width (`--wf-slide`) to their
+ * layout positions over 320ms; the final frame is already the layout position, so no follow-up commit is needed. */
+.wf-slide {
+  animation: wf-slide 320ms var(--wf-ease);
+}
+/* Turn-tail summary (addendum, “Turn-tail summary”): when expanding/collapsing, the outer frame height transitions between two values; on expand, pills mount and then
  * arrive in sequence (wf-arrive with 30 ms offsets); on collapse, animate only the height. */
 .wf-digest-plot {
   transition: height var(--wf-t-ink) var(--wf-ease);
 }
-/* Timeline edge: the timeline scrolls freely with the native scrollbar hidden;
+/* Ledge (docs/dynamic-workflow/presentation.md, “Overflow: the ledge”): the timeline scrolls freely with the native scrollbar hidden;
  * steps folded under the edge fade out within the content (visibility changes after 160 ms; they cannot be clicked or focused while fading); on hover, the edge lamp
  * scales to 1.25×; the bottom 2px scrollbar is hidden at rest and appears when the pointer is on the timeline or scrolling/dragging, with the track thickening to 4px on hover.
  */
@@ -1942,7 +2114,7 @@ body {
     animation: wf-beat var(--wf-beat, 1.6s) var(--wf-ease, ease-in-out) infinite;
   }
 }
-/* Workspace transcript:
+/* Workspace transcript (visual revision for “The pill” in docs/dynamic-workflow/presentation.md):
  * Items arrive in sequence (wf-arrive with 24 ms stagger per item, capped at 360 ms); the chapter header line grows from the left; command output tails
  * and expanded panels drop in from above; the target item briefly lights after arriving, then fades back (once, not as a persistent focus band);
  * the active verb gets a sweep of light; when status text changes, the old word exits and the new word enters (wf-swap). Animate only opacity / transform /
@@ -1954,7 +2126,7 @@ body {
 .wf-ws-landed {
   animation: wf-ws-land 1.4s var(--wf-ease) 1;
 }
-/* Detail-page target: after the section header arrives, hold the background color for 400 ms and fade it back over 800 ms, once. */
+/* Detail-page destination (addendum, “Five pills and a door”): after the section header lands, hold the background for 400ms and fade it back over 800ms, once. */
 .wf-landed {
   animation: wf-land 1.2s var(--wf-ease) 1;
 }
@@ -2241,6 +2413,11 @@ body {
     transform: scale(0.6);
   }
 }
+@keyframes wf-slide {
+  from {
+    transform: translateX(var(--wf-slide, 0px));
+  }
+}
 @keyframes wf-beat {
   0% {
     transform: scale(1);
@@ -2269,7 +2446,9 @@ body {
   .wf-draw,
   .wf-caret,
   .wf-rail-grow,
-  .wf-land {
+  .wf-land,
+  .wf-slide,
+  .wf-fill-frame-fresh {
     animation: none;
   }
   .wf-draw {
@@ -2292,7 +2471,14 @@ body {
   .wf-foldable,
   .wf-folded,
   .wf-ledge-lamp,
+  .wf-fill-frame,
+  .wf-fill-head,
   .wf-sb {
+    transition: none;
+  }
+  /* The frame's lit-state selector is more specific, so disable it separately: with reduced motion,
+   * the whole frame appears and disappears without a drawing animation. */
+  .wf-fill-frame[data-fill-on="true"] {
     transition: none;
   }
   .wf-preview-doc {

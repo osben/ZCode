@@ -244,6 +244,8 @@ export async function autoCompactIfNeeded(
     return "rapid_refill_blocked";
   }
 
+  // When compaction is skipped, there is no need to build listing tool contracts; read failures still propagate and do not count as compaction failures.
+  const agentListingTools = context.getAgentListingTools?.();
   this.logger?.info("Auto compact started", {
     ...traceContextToLogContext(turnTraceContext),
     event: "compact.auto.started",
@@ -271,6 +273,7 @@ export async function autoCompactIfNeeded(
         compactReason: context.compactReason,
         phase: context.phase,
         trigger: CompactTrigger.Auto,
+        agentListingTools,
         activeEntries,
         ...(context.model ? { model: context.model } : {}),
       },
@@ -426,6 +429,7 @@ export async function reactiveCompactAfterContextExceeded(
         initialPromptTooLongCause: originalError,
         phase: CompactPhase.Reactive,
         trigger: CompactTrigger.Reactive,
+        agentListingTools: context.agentListingTools,
         activeEntries,
         model: context.model,
       },

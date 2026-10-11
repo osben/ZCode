@@ -1,3 +1,4 @@
+/* eslint-disable max-lines -- Bot copy is maintained as a set across zh-CN/en-US/uk-UA; the line count grows with the number of languages by design. */
 import type { Locale } from "@zcode/shared";
 
 export type BotMessageLocale = Locale;
@@ -9,6 +10,11 @@ const DEFAULT_BOT_MESSAGE_LOCALE: BotMessageLocale = "zh-CN";
 const messages = {
   "zh-CN": {
     botDisabled: "当前 bot 未启用。",
+    groupOwnerOnly: "仅绑定机器人的用户可以执行此操作。",
+    groupNotEnabled: "此群尚未启用，请绑定用户 @机器人 /enable。",
+    groupEnabled:
+      "群聊已启用。话题历史默认开启，同一工作区的文件共享，可能发生并发修改。\n\n使用话题前，请应用管理员确认已开通相关权限：\n1. 打开[开放平台后台]({permissionsUrl})，选择当前机器人应用。\n2. 在权限管理中开通应用身份的消息读取权限，包括 `im:message.group_msg`（获取用户群消息）。接收其他机器人的 @ 还需 `im:message.group_at_msg.include_bot:readonly`；若需接收话题内未 @ 的机器人消息，开通 `im:message.group_msg.include_bot:read`。\n3. 可选：开通 `im:chat.members:read`（查看群成员），用于显示发送者用户名；缺少此权限不影响任务执行。\n4. 发布生效后，在话题内 @机器人提交需求。\n\n群启用不代表应用权限已开通；缺少话题历史读取权限时不会执行话题任务。",
+    groupDisabled: "群聊已停用。已接收的任务保留在 Desktop。",
     privateChatOnly: "Bots 暂不支持群聊，请在私聊中使用。",
     bindPrivateOnly: "Bots 只允许在私聊中绑定。",
     userNotBound: "当前 bot 未绑定。请先在 zcode UI 生成绑定码，然后发送 **/bind <code>**。",
@@ -104,6 +110,10 @@ const messages = {
     stopSubmitted: "已停止当前任务生成。",
     unknownCommand: "未知命令：**/{command}**",
     taskFailed: "任务失败：{message}",
+    groupTaskQueued:
+      "当前任务还有排队输入（可能已暂停）。请在 Desktop 处理或移除队列后再切换任务；/停止 不会清空队列。",
+    groupTaskInteraction: "当前任务正在等待回答或审批。请先处理该交互，或使用 /停止 结束当前任务。",
+    groupTaskDisconnected: "远程工作区已断开，无法确认当前任务状态。请先使用 /reconnect 重连。",
     taskRunning: "当前任务正在运行，稍后再试，或使用 **/停止** 停止当前任务。",
     taskSelectTitle: "当前任务 {task}\n选择任务",
     noHistoryTasks: "当前 workspace 没有历史任务。",
@@ -124,6 +134,12 @@ const messages = {
   },
   "en-US": {
     botDisabled: "This bot is not enabled.",
+    groupOwnerOnly: "Only the bound bot owner can perform this action.",
+    groupNotEnabled:
+      "This group is not enabled. Ask the bound owner to mention the bot with /enable.",
+    groupEnabled:
+      "Group enabled. Topic history defaults on. Workspace files are shared and may be edited concurrently.\n\nBefore using topics, ask the app administrator to confirm the required permissions:\n1. Open the [developer console]({permissionsUrl}) and select this bot app.\n2. In permission management, enable application-identity message read permissions, including `im:message.group_msg` (read user group messages). To receive mentions from other bots, also enable `im:message.group_at_msg.include_bot:readonly`; for bot messages without mentions in topics, enable `im:message.group_msg.include_bot:read`.\n3. Optional: enable `im:chat.members:read` (view group members) to display sender names. Missing this permission does not block task execution.\n4. Publish the changes, then mention the bot in a topic.\n\nEnabling the group does not grant app permissions; topic tasks will not execute without topic history read permissions.",
+    groupDisabled: "Group disabled. Accepted work remains in Desktop.",
     privateChatOnly: "Bots do not support group chats yet. Please use a private chat.",
     bindPrivateOnly: "Bots can only bind in a private chat.",
     userNotBound:
@@ -223,6 +239,12 @@ const messages = {
     stopSubmitted: "Current task generation stopped.",
     unknownCommand: "Unknown command: **/{command}**",
     taskFailed: "Task failed: {message}",
+    groupTaskQueued:
+      "The current task still has queued inputs, possibly paused. Process or remove them in Desktop before switching tasks; /stop does not clear the queue.",
+    groupTaskInteraction:
+      "The current task is waiting for an answer or approval. Resolve it first, or use /stop to stop the task.",
+    groupTaskDisconnected:
+      "The remote workspace is disconnected. Use /reconnect before checking the current task state.",
     taskRunning:
       "The current task is still running. Try again later, or use **/stop** to stop the current task.",
     taskSelectTitle: "Current task {task}\nSelect task",
@@ -248,6 +270,11 @@ const messages = {
   },
   "uk-UA": {
     botDisabled: "Цього бота не ввімкнено.",
+    groupOwnerOnly: "Цю дію може виконати лише користувач, який прив'язав бота.",
+    groupNotEnabled: "Цю групу ще не ввімкнено. Прив'язаний користувач має надіслати @бот /enable.",
+    groupEnabled:
+      "Груповий чат увімкнено. Історію тем типово відкрито; файли одного робочого простору спільні, можливі паралельні зміни.\n\nПеред використанням тем попросіть адміністратора підтвердити дозволи на платформі ({permissionsUrl}).\n1. Відкрийте [консоль платформи]({permissionsUrl}) і виберіть застосунок цього бота.\n2. У розділі дозволів відкрийте дозволи на читання повідомлень від імені застосунку, зокрема `im:message.group_msg` (читання групових повідомлень користувачів). Для отримання @ від інших ботів потрібен також `im:message.group_at_msg.include_bot:readonly`; для повідомлень бота в темах без @ — `im:message.group_msg.include_bot:read`.\n3. Необов'язково: `im:chat.members:read` (перегляд учасників) для показу імені відправника; без нього завдання все одно виконуватимуться.\n4. Після публікації надішліть @бота в темі з описом потреби.\n\nУвімкнення групи не означає, що дозволи застосунку вже видано; без дозволу на читання історії тем групові завдання не виконуватимуться.",
+    groupDisabled: "Груповий чат вимкнено. Отримані завдання збережено в Desktop.",
     privateChatOnly: "Боти поки не підтримують групові чати. Скористайтеся приватним чатом.",
     bindPrivateOnly: "Прив'язати бота можна лише в приватному чаті.",
     userNotBound:
@@ -349,6 +376,12 @@ const messages = {
     stopSubmitted: "Генерацію поточного завдання зупинено.",
     unknownCommand: "Невідома команда: **/{command}**",
     taskFailed: "Не вдалося виконати завдання: {message}",
+    groupTaskQueued:
+      "У поточного завдання ще є запити в черзі (воно може бути призупинене). Обробіть або приберіть їх у Desktop, перш ніж перемикати завдання; /stop не очищає чергу.",
+    groupTaskInteraction:
+      "Поточне завдання очікує на відповідь або підтвердження. Спершу завершіть цю взаємодію або зупиніть завдання командою /stop.",
+    groupTaskDisconnected:
+      "Віддалений робочий простір від'єднано, стан завдання перевірити неможливо. Спершу виконайте /reconnect.",
     taskRunning:
       "Поточне завдання ще виконується. Спробуйте пізніше або зупиніть його командою **/stop**.",
     taskSelectTitle: "Поточне завдання: {task}\nВиберіть завдання",

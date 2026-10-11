@@ -11,7 +11,7 @@
  * - On request, timeout, or parse failure, keep the previous snapshot (on first-call failure, use the initial snapshot determined by defaultValue).
  * - If the server succeeds but omits the key, treat it as "not enabled" and replace the old cache; do not keep an older enabled snapshot.
  */
-interface SingleFeatureRolloutConfig {
+export interface SingleFeatureRolloutConfig {
   enabled: boolean;
   configVersion?: string;
 }
@@ -38,10 +38,10 @@ export interface SingleFeatureRolloutLogger {
   warn: (...args: unknown[]) => void;
 }
 
-const SINGLE_FEATURE_REQUEST_TIMEOUT_MS = 3_000;
-const SINGLE_FEATURE_CACHE_TTL_MS = 60 * 60 * 1_000;
+export const SINGLE_FEATURE_REQUEST_TIMEOUT_MS = 3_000;
+export const SINGLE_FEATURE_CACHE_TTL_MS = 60 * 60 * 1_000;
 
-interface CreateSingleFeatureRolloutOptions<T extends SingleFeatureRolloutConfig> {
+export interface CreateSingleFeatureRolloutOptions<T extends SingleFeatureRolloutConfig> {
   /** Parse the /api/v1/client/configs response body; null means invalid and is handled as a failure (keep the previous snapshot). */
   resolveConfig: (payload: unknown) => T | null;
   /** Initial snapshot (fail-open features pass {enabled:true}; fail-closed features pass {enabled:false}). */

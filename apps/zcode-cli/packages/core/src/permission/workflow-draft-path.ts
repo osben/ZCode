@@ -15,13 +15,13 @@ import { WORKFLOW_DRAFTS_DIR } from "@zcode/contracts";
  * The subset of `node:path` needed for the check. It is a parameter so tests can inject `path.win32` / `path.posix`:
  * Windows semantics such as drive letters, backslashes, and case are verified only when run with the win32 implementation.
  */
-interface WorkflowDraftPathModule {
+export interface WorkflowDraftPathModule {
   isAbsolute: (path: string) => boolean;
   relative: (from: string, to: string) => string;
   resolve: (...paths: string[]) => string;
 }
 
-interface WorkflowDraftPathInput {
+export interface WorkflowDraftPathInput {
   /** Write target from tool input; resolve relative paths against workingDirectory and keep absolute paths unchanged. */
   filePath: string;
   /** Session working directory; if absent (empty string), the check does not match, as described below. */
@@ -37,7 +37,7 @@ interface WorkflowDraftPathInput {
  */
 const WORKFLOW_DRAFT_PREAPPROVED_TOOL_NAMES = new Set(["Edit", "Write"]);
 
-interface WorkflowDraftWriteInput {
+export interface WorkflowDraftWriteInput {
   toolName: string;
   /** Tool input before validation against a specific tool schema; only `file_path` is read. */
   input: unknown;
@@ -71,7 +71,7 @@ export function isPreapprovedWorkflowDraftWrite(input: WorkflowDraftWriteInput):
 }
 
 /** Check whether `filePath` is inside `<workingDirectory>/.zcode/workflow-drafts/`. */
-function isWorkflowDraftPath(input: WorkflowDraftPathInput): boolean {
+export function isWorkflowDraftPath(input: WorkflowDraftPathInput): boolean {
   const path = input.pathModule ?? nodePath;
   // Without a working directory there is no way to identify the project's draft directory; deny the bypass because the target must be locatable.
   if (input.workingDirectory.length === 0 || input.filePath.length === 0) return false;

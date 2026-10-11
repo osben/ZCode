@@ -54,7 +54,7 @@ function matchesRequest(
   );
 }
 
-function findScreenshotSurfaceTab(
+export function findScreenshotSurfaceTab(
   tabs: readonly WorkspaceSidePaneTab[],
   payload: BrowserViewScreenshotSurfacePreparePayload,
 ): BrowserUseSidePaneTab | undefined {
@@ -84,7 +84,7 @@ export function findScreenshotSurfaceTabForRender(
  * Match prepare reception: prefer an exact scope match; for a tab restored across processes, registry scope metadata
  * still has the old process values (see matchesTabLoose), so fall back to a looser match to receive prepare.
  */
-function findScreenshotSurfaceTabForPrepare(
+export function findScreenshotSurfaceTabForPrepare(
   tabs: readonly WorkspaceSidePaneTab[],
   payload: BrowserViewScreenshotSurfacePreparePayload,
 ): BrowserUseSidePaneTab | undefined {

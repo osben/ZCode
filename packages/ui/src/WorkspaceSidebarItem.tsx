@@ -141,6 +141,8 @@ export const WorkspaceSidebarItem = memo(function WorkspaceSidebarItem({
   taskListHasMore,
   taskListHasUnread = false,
   taskListLiveWorkflowCount = 0,
+  mobileActiveTaskKey,
+  isWebRemoteControl = false,
   onShowMoreTasks,
   reconnectingRemoteWorkspaceKeys,
   remoteWorkspaceErrorByWorkspaceKey,
@@ -170,6 +172,8 @@ export const WorkspaceSidebarItem = memo(function WorkspaceSidebarItem({
   taskListHasUnread?: boolean;
   /** Number of workflow runs currently active in the group; when collapsed, show a pulsing light by the unread dot (with a count when >1). */
   taskListLiveWorkflowCount?: number;
+  mobileActiveTaskKey?: string | null;
+  isWebRemoteControl?: boolean;
   onShowMoreTasks: () => void;
   reconnectingRemoteWorkspaceKeys: string[];
   remoteWorkspaceErrorByWorkspaceKey: Record<string, string>;
@@ -247,7 +251,7 @@ export const WorkspaceSidebarItem = memo(function WorkspaceSidebarItem({
   const showRemoteSkillSyncAction = shouldShowRemoteSyncActions({
     remoteSessionId: tab.remoteSessionId,
     remoteTarget: tab.remoteTarget,
-    clientMode: "desktop-continuous" as const,
+    clientMode: isWebRemoteControl ? "web-remote-replayable" : "desktop-continuous",
     hasLocalSourceService: Boolean(baseServices.skillSyncService),
   });
   // While a remote workspace was reconnecting, it previously had only a subtle background pulse,
@@ -951,7 +955,7 @@ export const WorkspaceSidebarItem = memo(function WorkspaceSidebarItem({
                     ) : null}
                     {shouldMountWorkspaceRowActions && showFileTreeAction ? (
                       <span className="shrink-0">
-                        {/* The Project file-tree entry used to override hover:bg-surface-hover independently,
+                        {/* Bugfix: The Project file-tree entry used to override hover:bg-surface-hover independently,
                             unlike bg-hover for Pinned/Grouped. Reuse the same action across all three entry points. */}
                         <TaskRowActionButton
                           // This button inherited the ghost variant's primary foreground by default, making the three icons in the group inconsistent in brightness.
@@ -1047,7 +1051,7 @@ export const WorkspaceSidebarItem = memo(function WorkspaceSidebarItem({
                     {showReconnectAction ? (
                       isReconnectPending ? (
                         <ReconnectingRemoteWorkspaceLogTooltip logs={reconnectRuntimeLogs}>
-                          {/* While an SSH workspace was reconnecting, the right side showed only a spinning icon,
+                          {/* Bugfix: While an SSH workspace was reconnecting, the right side showed only a spinning icon,
                               so users could not tell from the chat task list where the connection was stuck. Reuse the SSH dialog’s connection-log tooltip,
                               keeping the inline layout stable while putting diagnostic details in a hover popover. */}
                           <div
@@ -1127,6 +1131,7 @@ export const WorkspaceSidebarItem = memo(function WorkspaceSidebarItem({
             showFooter={false}
             loading={taskListLoading}
             hasMore={taskListHasMore}
+            mobileActiveTaskKey={mobileActiveTaskKey}
             onShowMore={onShowMoreTasks}
             onRenameTask={handleRenameTask}
             onSetTaskPinned={handleSetTaskPinned}

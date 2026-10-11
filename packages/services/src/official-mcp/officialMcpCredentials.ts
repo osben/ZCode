@@ -74,7 +74,7 @@ const CREDENTIAL_RESOLVED_LOG_BUCKET_SECONDS = 3600;
  * The resolver only coalesces in-flight requests and has no time-based cache, so deduplicate by hour to avoid an info log for every
  * MCP call. Log again when the credential crosses a bucket, becomes expired, or the plan type changes.
  */
-function createCredentialResolvedLogKey(input: {
+export function createCredentialResolvedLogKey(input: {
   providerFamily: "zai" | "bigmodel";
   planTargetType: string | null;
   maasJwtExpiresInSeconds: number | undefined;
@@ -91,7 +91,7 @@ function createCredentialResolvedLogKey(input: {
 
 let lastCredentialResolvedLogKey: string | undefined;
 
-interface OfficialMcpCredentialResolverDeps {
+export interface OfficialMcpCredentialResolverDeps {
   accountRequestAuthService: {
     resolveAccessCurrent(access: ZCodeProviderAccountAccess): Promise<ZCodeAccountAccess | null>;
   };
@@ -417,14 +417,14 @@ export function buildOfficialMcpAuthHeaders(
 }
 
 /** Request context passed through by the host handler; not used to select credentials. */
-interface OfficialMcpAuthHeadersRequestContext {
+export interface OfficialMcpAuthHeadersRequestContext {
   mcpKey: string;
   pluginId: string;
   targetOrigin: string;
   workspace: { workspaceIdentity?: string; workspaceKey: string; workspacePath: string };
 }
 
-type OfficialMcpAuthHeadersOutcome =
+export type OfficialMcpAuthHeadersOutcome =
   | { ok: true; headers: Record<string, string> }
   | { ok: false; reason: OfficialMcpAuthFailureReason };
 

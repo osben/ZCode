@@ -6,6 +6,7 @@ import type { WorkflowCausalityGraphData } from "@/components/workflow-graph/typ
 import type { WorkflowRunCardSummary } from "@/ToolCallBlocks/fileSummaryTypes.js";
 import { readWorkflowName } from "@/ToolCallBlocks/renderers/createWorkflowInput.js";
 import type { AssistantWorkRow } from "@/v4/conversationTurnFlowItems.js";
+import type { WorkflowFillGraph } from "@/v4/workflowRunCardJoin.js";
 
 /**
  * Resolves end-of-turn run cards: which **sources** in this turn named
@@ -34,6 +35,8 @@ export interface WorkflowTurnDigest {
   /** Script `name`; the renderer supplies a localized fallback when absent. */
   name: string | undefined;
   graph: WorkflowCausalityGraphData | undefined;
+  /** Name and type of filled holes (from fill-row input); present only for runs with fills. */
+  holeLabels?: WorkflowFillGraph["holeLabels"];
   /** Joined summary from the live projection; absent means the run is not projected and the card falls back to a neutral one-line "ended" state. */
   summary: WorkflowRunCardSummary | undefined;
   /**
@@ -58,6 +61,8 @@ interface WorkflowTurnDigestJoin {
   byToolCallId?: ReadonlyMap<string, WorkflowRunCardSummary>;
   byRunId?: ReadonlyMap<string, WorkflowRunCardSummary>;
   graphByToolCallId?: ReadonlyMap<string, WorkflowCausalityGraphData>;
+  /** runId → latest effective filled script graph (`buildWorkflowFillGraphByRunId`); after a fill, the card uses this instead of the launch-row graph. */
+  fillGraphByRunId?: ReadonlyMap<string, WorkflowFillGraph>;
 }
 
 export function resolveWorkflowTurnDigests(
@@ -66,8 +71,11 @@ export function resolveWorkflowTurnDigests(
 ): WorkflowTurnDigest[] {
   const digests: WorkflowTurnDigest[] = [];
   const seen = new Set<string>();
-  const graphOf = (originToolCallId: string | undefined) =>
-    originToolCallId === undefined ? undefined : join.graphByToolCallId?.get(originToolCallId);
+  // The graph belongs to the run (docs/dynamic-workflow/presentation.md, “The model” under “Holes
+  // on the timeline”): use the latest fill-row graph for a run with fills; otherwise use the launch toolCallId.
+  const graphOf = (originToolCallId: string | undefined, runId: string) =>
+    join.fillGraphByRunId?.get(runId)?.graph ??
+    (originToolCallId === undefined ? undefined : join.graphByToolCallId?.get(originToolCallId));
 
   const launch = unit.workflowLaunch;
   if (launch !== undefined) {
@@ -77,7 +85,10 @@ export function resolveWorkflowTurnDigests(
     const rowOnly = launch.amend !== undefined && launch.amend.predecessorRunId === undefined;
     if (!rowOnly) seen.add(launch.runId);
     digests.push({
-      graph: graphOf(launch.toolCallId),
+      graph: graphOf(launch.toolCallId, launch.runId),
+      ...(join.fillGraphByRunId?.get(launch.runId) === undefined
+        ? {}
+        : { holeLabels: join.fillGraphByRunId.get(launch.runId)!.holeLabels }),
       key: `launch:${launch.toolCallId}`,
       name: launch.name,
       runId: launch.runId,
@@ -102,7 +113,10 @@ export function resolveWorkflowTurnDigests(
       if (seen.has(created.runId)) continue;
       seen.add(created.runId);
       digests.push({
-        graph: graphOf(row.toolCallId),
+        graph: graphOf(row.toolCallId, created.runId),
+        ...(join.fillGraphByRunId?.get(created.runId) === undefined
+          ? {}
+          : { holeLabels: join.fillGraphByRunId.get(created.runId)!.holeLabels }),
         key: `${row.rowId}:${row.toolCallId}`,
         name: readWorkflowName(row.input),
         runId: created.runId,
@@ -118,7 +132,10 @@ export function resolveWorkflowTurnDigests(
     const resumed = join.byRunId?.get(runId);
     digests.push({
       // The launching-row id is known only after joining the projection; a resume card without a projected run has no chart to look up.
-      graph: graphOf(resumed?.toolCallId),
+      graph: graphOf(resumed?.toolCallId, runId),
+      ...(join.fillGraphByRunId?.get(runId) === undefined
+        ? {}
+        : { holeLabels: join.fillGraphByRunId.get(runId)!.holeLabels }),
       key: `${row.rowId}:${row.toolCallId}`,
       name: undefined,
       runId,

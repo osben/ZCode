@@ -9,7 +9,22 @@ import type { CliMcpSource, McpFileFormat } from "@zcode/shared";
  * - mcpServers: generic JSON directory format (`.agents/mcp.json`)
  * - mcp.servers: zcode CLI `config.json` format
  */
-export type McpConfigKeyName = "mcpServers" | "mcp.servers";
+export type McpConfigKeyName = "mcpServers" | "mcp" | "mcp_servers" | "mcp.servers";
+
+/**
+ * OpenCode MCP configuration format.
+ * OpenCode uses a special configuration format:
+ * - the key is "mcp" instead of "mcpServers"
+ * - command is an array such as ["npx", "-y", "server"] instead of separate command + args
+ * - a type field ("local" or "remote") is required
+ */
+export interface OpenCodeMcpServerConfig {
+  type: "local" | "remote";
+  command?: string[];
+  url?: string;
+  env?: Record<string, string>;
+  headers?: Record<string, string>;
+}
 
 export interface McpSourceDescriptor {
   source: CliMcpSource;

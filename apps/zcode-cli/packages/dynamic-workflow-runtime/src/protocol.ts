@@ -8,7 +8,7 @@
  * together. The parent imports these types directly to keep bridge code strictly typed.
  *
  * Direction convention:
- *   child → parent: create-actor (fire-and-forget) / request (ask/world-read/publish-artifact, response required) /
+ *   child → parent: create-actor (fire-and-forget) / request (ask/world-read/publish-artifact/hole, response required) /
  *                   event（log、report、declare-artifact）/ complete
  *   parent → child: response (answers a request and carries the latest budget snapshot)
  *
@@ -64,12 +64,22 @@ export interface CreateActorMessage {
 export interface RequestMessage {
   kind: "request";
   id: string;
-  type: "ask" | "world-read" | "publish-artifact";
+  /**
+   * `hole`: the script reached an unfilled hole (docs/execution-engine.md, "Holes"). The parent
+   * stops it through the engine until the main agent fills the hole, then answers with `{code}`;
+   * the parked branch counts as one in-flight request, so sibling branches keep running and stall
+   * detection does not fire.
+   */
+  type: "ask" | "world-read" | "publish-artifact" | "hole";
   siteId: string;
   /** ask only: child-local actor handle. */
   actor?: string;
   /** ask only: instruction body. */
   instructions?: string;
+  /** hole only: the hole's literal name. */
+  name?: string;
+  /** hole only: hint for the main agent (truncated to 4000 characters before the engine records it). Absent means the author wrote none. */
+  prompt?: string;
   /** world-read only: op (the vocabulary is derived from the world-read registry; adding a primitive does not change this file). */
   op?: WorldReadOp;
   /**

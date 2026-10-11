@@ -18,7 +18,7 @@ const CARD_LOG_INDENT = "    ";
 export const MAX_ACTOR_ROWS = 6;
 const MAX_RESULT_PREVIEW_WIDTH = 200;
 
-/** Group the six row slots by status, with running actors first. */
+/** Bucket the six rows by status (docs/dynamic-workflow/launch.md, “The inline card”): running rows come first. */
 const ACTOR_ROW_RANK: Record<WorkflowRunActor["status"], number> = {
   running: 0,
   waiting: 1,

@@ -15,7 +15,7 @@ export {
   shouldWalkSkillDirectoryEntry,
 } from "@zcode/shared";
 
-interface WalkSkillMarkdownOptions {
+export interface WalkSkillMarkdownOptions {
   /** Called when readdir/stat fails; if omitted, skip the directory silently and let the caller collect diagnostics as needed. */
   onError?: (path: string, error: unknown) => void;
 }

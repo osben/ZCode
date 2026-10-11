@@ -31,9 +31,7 @@ export async function listPdfJsCMapAssets(): Promise<PdfJsCMapAsset[]> {
 export function pdfJsCMapsPlugin(): Plugin {
   return {
     name: "zcode:pdfjs-cmaps",
-    // buildStart also runs during Vite serve, but emitFile is unsupported in development.
-    // Emit CMap artifacts only in generateBundle; development continues to serve them through the middleware below.
-    async generateBundle() {
+    async buildStart() {
       for (const asset of await listPdfJsCMapAssets()) {
         this.emitFile({
           type: "asset",

@@ -1,4 +1,9 @@
-import type { MessageId, MessagePart, MessageWithParts, ToolPart } from "@zcode/contracts";
+import type {
+  MessageId,
+  MessagePart,
+  MessageWithParts,
+  ToolPart,
+} from "@zcode/contracts";
 import {
   parseReadFileStateMetadata,
   type PersistedReadFileStateTool,
@@ -71,7 +76,11 @@ export async function hydrateReadFileStateFromSession(input: {
 
       // Inline draft: bytes written by the model itself, using the same recovery path as Write. Parts without metadata (saved copies,
       // `path` submissions, inherited scripts) naturally fall through in restoreMetadataToolState.
-      if (part.tool === "CreateWorkflow" || part.tool === "AmendWorkflow") {
+      if (
+        part.tool === "CreateWorkflow" ||
+        part.tool === "AmendWorkflow" ||
+        part.tool === "FillWorkflowHole"
+      ) {
         const restored = restoreMetadataToolState(input.readFileState, part, part.tool);
         if (restored) result.restoredCount++;
       }

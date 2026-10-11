@@ -596,13 +596,25 @@ export type V4ConversationFileChangesResult = z.infer<typeof v4ConversationFileC
 // (monotonically assigned by `appendEvent`), refetched when workflowRuns[].lastEventSequence increases.
 // Intentionally **not** a v4 command: command ACK results use the closed “change result” discriminated union in commandResultSchema;
 // putting a page of read-only events there would put reads in the write vocabulary and force an unnecessary baseRevision/idempotency mechanism.
+
+/**
+ * The two limits for one page of the event log; the gateway fetches by them
+ * (apps/zcode-cli/packages/dynamic-workflow/docs/execution-engine.md, "Reading the journal").
+ * Bytes are counted as serialized bytes in storage and set to one quarter of the protocol single-frame limit:
+ * a count alone cannot bound bytes; 500 events carrying large report items can hit the single-frame limit.
+ */
+export const WORKFLOW_RUN_EVENTS_PAGE_LIMITS = {
+  maxEvents: 500,
+  maxBytes: PROTOCOL_V4_LIMITS.logicalFrameAssemblyMaxBytes / 4,
+} as const;
+
 export const v4ConversationWorkflowRunEventsParamsSchema = z
   .object({
     sessionId: z.string().min(1),
     runId: z.string().min(1),
     /** Fetch only events with sequence greater than this value; absent means start from the beginning. */
     afterSequence: z.number().int().nonnegative().optional(),
-    limit: z.number().int().positive().max(500).optional(),
+    limit: z.number().int().positive().max(WORKFLOW_RUN_EVENTS_PAGE_LIMITS.maxEvents).optional(),
   })
   .strict();
 export type V4ConversationWorkflowRunEventsParams = z.infer<
@@ -623,7 +635,7 @@ export const v4ConversationWorkflowRunEventsResultSchema = z
         })
         .strict(),
     ),
-    /** This page reached limit and more events remain. */
+    /** More events remain after this page (the page may end early at the count or byte limit). */
     hasMore: z.boolean(),
   })
   .strict();
@@ -1015,8 +1027,9 @@ export const v4AttachmentReadResultSchema = z
         (value) =>
           value.startsWith("image/") ||
           value.startsWith("video/") ||
-          value.split(";", 1)[0]?.trim().toLowerCase() === "application/pdf",
-        "attachment preview only supports image/video/pdf media types",
+          value.split(";", 1)[0]?.trim().toLowerCase() === "application/pdf" ||
+          value.split(";", 1)[0]?.trim().toLowerCase() === "text/plain",
+        "attachment preview only supports image/video/pdf/plain text types",
       ),
     totalBytes: z.number().int().nonnegative().max(PROTOCOL_V4_LIMITS.attachmentPreviewMaxBytes),
     nextOffset: z.number().int().positive().nullable(),
@@ -1024,7 +1037,9 @@ export const v4AttachmentReadResultSchema = z
   .strict()
   .superRefine((value, context) => {
     if (
-      value.mediaType.startsWith("image/") &&
+      // Root cause: the runtime already supported material text, but the response schema still accepted only media, breaking cross-process preview.
+      (value.mediaType.startsWith("image/") ||
+        value.mediaType.split(";", 1)[0]?.trim().toLowerCase() === "text/plain") &&
       value.totalBytes > PROTOCOL_V4_LIMITS.attachmentMaxBytes
     ) {
       context.addIssue({
@@ -1032,7 +1047,7 @@ export const v4AttachmentReadResultSchema = z
         maximum: PROTOCOL_V4_LIMITS.attachmentMaxBytes,
         origin: "number",
         inclusive: true,
-        message: "image preview exceeds total byte limit",
+        message: "image/text preview exceeds total byte limit",
         path: ["totalBytes"],
       });
     }

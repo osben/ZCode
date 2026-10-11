@@ -6,7 +6,12 @@ import type {
   ZCodeProtocolRequestId,
   ZCodeProtocolResponse,
 } from "@zcode/shared";
-import { zcodeProtocolMessageSchema, zcodeProtocolMethods } from "@zcode/shared";
+import {
+  networkCaptureControlSchema,
+  zcodeProtocolMessageSchema,
+  zcodeProtocolMethods,
+  zcodeProtocolNotifications,
+} from "@zcode/shared";
 import type { Logger } from "@zcode/contracts";
 
 type ZCodeProtocolOutgoingMessage =
@@ -20,6 +25,27 @@ type ZCodeProtocolMessageHandler = (
 ) => Promise<ZCodeProtocolOutgoingMessage | undefined>;
 
 const PROTOCOL_EOF_DRAIN_MS = 100;
+// MCP App requests are isolated by instance credentials and callId; if they waited for completion
+// alongside ordinary commands, uiCallTool would block its own cancel/close and deadlock the real stdio link.
+const MCP_APP_CONCURRENT_METHODS = new Set<string>([
+  zcodeProtocolMethods.mcpReadResource,
+  zcodeProtocolMethods.mcpUiOpenInstance,
+  zcodeProtocolMethods.mcpUiCloseInstance,
+  zcodeProtocolMethods.mcpUiValidateInstance,
+  zcodeProtocolMethods.mcpUiCallTool,
+  zcodeProtocolMethods.mcpUiSampling,
+  zcodeProtocolMethods.mcpUiCancelSampling,
+  zcodeProtocolMethods.mcpUiCancelCall,
+  zcodeProtocolMethods.mcpUiReadResource,
+  zcodeProtocolMethods.mcpUiListResources,
+  zcodeProtocolMethods.mcpUiListResourceTemplates,
+  zcodeProtocolMethods.mcpUiSubscribeResource,
+  zcodeProtocolMethods.mcpUiUnsubscribeResource,
+  zcodeProtocolMethods.mcpUiRegisterAppTools,
+  zcodeProtocolMethods.mcpUiUnregisterAppTools,
+  zcodeProtocolMethods.mcpUiClaimAppToolCall,
+  zcodeProtocolMethods.mcpUiResolveAppToolCall,
+]);
 
 interface ZCodeProtocolNdjsonConnectionOptions {
   signal?: AbortSignal;
@@ -73,6 +99,15 @@ export class ZCodeProtocolNdjsonConnection {
 
   send(message: ZCodeProtocolOutgoingMessage): void {
     if (this.terminal) return;
+    // Observations are droppable; they must not accumulate unboundedly under stdout backpressure or crowd out business protocol output.
+    if (
+      "method" in message &&
+      message.method === zcodeProtocolNotifications.processNetworkRequests &&
+      ((this.options.output as NodeJS.WritableStream & { writableLength?: number })
+        .writableLength ?? 0) >=
+        256 * 1024
+    )
+      return;
     try {
       this.options.output.write(`${JSON.stringify(message)}\n`);
     } catch (error) {
@@ -160,6 +195,19 @@ export class ZCodeProtocolNdjsonConnection {
     if (!message) {
       return;
     }
+    if (
+      !("id" in message) &&
+      "method" in message &&
+      message.method === zcodeProtocolMethods.processNetworkCapture
+    ) {
+      // Start/stop is process-observation control: it neither waits for capture tasks already running nor enters CommandInbox.
+      if (networkCaptureControlSchema.safeParse(message.params).success) {
+        void this.handleMessage(message).catch(() => {
+          /* Observation failures do not close the business connection */
+        });
+      }
+      return;
+    }
     if ("id" in message && ("result" in message || "error" in message)) {
       // The Agent synchronously registers a pending response before sending a reverse request.
       // If the response waits for "the last queued request to start," later ordinary requests move
@@ -232,7 +280,8 @@ export class ZCodeProtocolNdjsonConnection {
       "id" in message &&
       "method" in message &&
       (message.method === zcodeProtocolMethods.sessionStop ||
-        message.method === zcodeProtocolMethods.workspaceCancelGenerateText)
+        message.method === zcodeProtocolMethods.workspaceCancelGenerateText ||
+        MCP_APP_CONCURRENT_METHODS.has(message.method))
     );
   }
 

@@ -1,3 +1,4 @@
+import { localRuntimeNetworkCapture } from "#src/zcode-agent/localRuntimeNetworkCapture.js";
 import { resolveZCodeAgentSpawnCwd } from "#src/zcode-agent/zcodeAgentSpawnCwd.js";
 import type { ZCodeAgentStorageStartupSnapshot } from "#src/zcode-agent/zcodeAgent.js";
 /* eslint-disable max-lines -- zcodeAgentProcessManager centralizes agent child-process startup, reuse, timeout cleanup, and runtime identity; splitting it would expand lifecycle synchronization. */
@@ -7,6 +8,8 @@ import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { Emitter } from "@zcode/rpc";
+import { GEN_UI_OUTPUT_DIRECTORY, GEN_UI_OUTPUT_ROOT_ENV } from "@zcode/shared/node";
+import { getAppConfigDir } from "../paths.js";
 import {
   parseZCodeProcessDiagnostic,
   ZCODE_AGENT_LIFECYCLE_LOG_MARKER,
@@ -84,9 +87,8 @@ export interface ZCodeAgentProcessManagerOptions {
    * Additional environment variables resolved before each agent child process is spawned (merged after process.env and before workspace variables).
    * Used to inject settings such as the configured proxy into the child process; read at spawn time, so changes naturally take effect on the next start.
    *
-   * The context carries this spawn's workspace identity tuple (workspacePath/workspaceIdentity/workspaceKey),
-   * allowing CUA broker credential injection to record Helper admission per workspace (see
-   * cuaProductHelperWorkspaceRegistry in services/node.ts). Helper lifecycle no longer cleans up or restarts existing Agents.
+   * context carries this spawn's workspace identity triple (workspacePath/workspaceIdentity/workspaceKey).
+   * Helper lifecycle no longer reclaims or restarts existing Agents.
    */
   resolveSpawnEnv?: (context: {
     workspacePath: string;
@@ -181,7 +183,9 @@ if (coverageDirectory) {
 }
 `;
 
-function buildE2EAgentCoverageEnv(env: NodeJS.ProcessEnv = process.env): Record<string, string> {
+export function buildE2EAgentCoverageEnv(
+  env: NodeJS.ProcessEnv = process.env,
+): Record<string, string> {
   const artifactDir = env.ZCODE_E2E_ARTIFACT_DIR?.trim();
   if (env.ZCODE_E2E_COVERAGE !== "1" || !artifactDir) {
     return {};
@@ -204,7 +208,7 @@ function buildE2EAgentCoverageEnv(env: NodeJS.ProcessEnv = process.env): Record<
  * the first getClient starts it again). v4 subscriptions (sessions-index/workspace-config/conversation)
  * live in CLI process memory and become invalid when the process changes; subscribers must send subscribe again after this event.
  */
-interface ZCodeAgentRuntimeRestartedEvent {
+export interface ZCodeAgentRuntimeRestartedEvent {
   workspaceKey: string;
   runtimeIdentity: ZCodeAgentRuntimeIdentity;
 }
@@ -217,7 +221,7 @@ export interface ZCodeAgentRuntimeLifecycleEvent {
   state: "available" | "unavailable";
 }
 
-interface ZCodeAgentRuntimeIdentity {
+export interface ZCodeAgentRuntimeIdentity {
   generation: number;
   identity: string;
   processId?: number;
@@ -497,7 +501,7 @@ function applyPresentationSurfaceToCommand(
   };
 }
 
-function wrapZCodeAgentCommandWithStdioTapDevProxy(
+export function wrapZCodeAgentCommandWithStdioTapDevProxy(
   command: ZCodeAgentCommand,
   workspaceKey: string,
 ): ZCodeAgentCommand {
@@ -766,17 +770,24 @@ export class ZCodeAgentProcessManager {
         }
       });
     managed.cleanupPromise = cleanupPromise;
-    if (options.reportError !== false) {
-      void cleanupPromise.catch((error) => {
-        errorLog("ZCode agent process cleanup failed", {
-          workspaceKey: managed.runtimeIdentity.workspaceKey,
-          pid: managed.child.pid,
-          runtimeIdentity: managed.runtimeIdentity.identity,
-          reason,
-          error,
-        });
+    // Bug cause: when dispose races retry orchestration, the rejection can be judged
+    // unhandledRejection before the caller's await attaches (vitest counts it as a
+    // runner-level failure; in production it is an unhandled rejection). The catch must be
+    // attached unconditionally at creation: with reportError:false (retry path) it swallows
+    // silently, unified reporting is done by cleanupManagedProcessWithRetry's await/catch,
+    // and alerting semantics stay unchanged.
+    void cleanupPromise.catch((error) => {
+      if (options.reportError === false) {
+        return;
+      }
+      errorLog("ZCode agent process cleanup failed", {
+        workspaceKey: managed.runtimeIdentity.workspaceKey,
+        pid: managed.child.pid,
+        runtimeIdentity: managed.runtimeIdentity.identity,
+        reason,
+        error,
       });
-    }
+    });
     return cleanupPromise;
   }
 
@@ -1026,6 +1037,9 @@ export class ZCodeAgentProcessManager {
         [ZCODE_RUNTIME_ENV_KEY]: runtimeEnv,
         ...spawnEnv,
         ...effectiveCommand.env,
+        // The generated-file root is decided solely by the executing Host so Agent writes
+        // and Host read authorization stay consistent.
+        [GEN_UI_OUTPUT_ROOT_ENV]: join(getAppConfigDir(), GEN_UI_OUTPUT_DIRECTORY),
         // Use workspaceIdentity for identity/isolation semantics; continue using workspacePath for cwd.
         ...buildAgentWorkspaceIdentityEnv(params.workspaceIdentity),
         ...buildE2EAgentCoverageEnv(),
@@ -1084,6 +1098,10 @@ export class ZCodeAgentProcessManager {
       requireStorageStartup: effectiveCommand.supportsStorageStartup,
       requestTimeoutMs: this.requestTimeoutMs,
     });
+    if (child.pid) {
+      const unregisterNetworkCapture = localRuntimeNetworkCapture.register(client, child.pid);
+      child.once("close", unregisterNetworkCapture);
+    }
     // After the Agent process restarts, the Host still needs runtime identity to distinguish old and new subscriptions and commands.
     // The new Worker rebuilds Provider Registry from its Environment's Config; the UI no longer sends it again.
     const runtimeGeneration = (this.runtimeGenerationByWorkspaceKey.get(workspaceKey) ?? 0) + 1;

@@ -10,8 +10,12 @@ import { dismissToast, toast, updateToast } from "@/components/ui/toast.js";
 import { matchesPrimaryShortcut } from "@/lib/keyboardShortcuts.js";
 import { isShortcutRecordingActive } from "@/shortcuts/bindings.js";
 import { isRendererReloadNavigation } from "@/lib/rendererNavigation.js";
+import {
+  buildConnectedRemoteWorkspaceSessionTargets,
+  buildWebRemoteControlWorkspaceTargets,
+  shouldPublishCompleteWorkspaceSnapshot,
+} from "@/root/rootPlatformWorkspaceSync.js";
 import { useOptionalBaseWorkspaceServices } from "@/hooks/useWorkspaceServices.js";
-import { shouldPublishCompleteWorkspaceSnapshot } from "@/root/rootPlatformWorkspaceSync.js";
 import {
   createShareImportIntent,
   isShareImportIntentSame,
@@ -43,6 +47,8 @@ export function useRootPlatformEffects({
   reconnectingRemoteWorkspaceKeys = [],
   remoteWorkspaceErrorByWorkspaceKey = {},
   totalUnreadTaskCount,
+  webRemoteControlFeatureEnabled = false,
+  webRemoteControlSessionActive = false,
   hasCompletedFullTabRestore = true,
   intl,
   isRestoringOAuthSession,
@@ -76,6 +82,8 @@ export function useRootPlatformEffects({
   reconnectingRemoteWorkspaceKeys?: string[];
   remoteWorkspaceErrorByWorkspaceKey?: Record<string, string>;
   totalUnreadTaskCount: number;
+  webRemoteControlFeatureEnabled?: boolean;
+  webRemoteControlSessionActive?: boolean;
   hasCompletedFullTabRestore?: boolean;
   intl: ReturnType<typeof import("@/i18n/IntlProvider.js").useZCodeIntl>["intl"];
   isRestoringOAuthSession: boolean;
@@ -504,6 +512,44 @@ export function useRootPlatformEffects({
       .map((tab) => tab.workspacePath);
     platform.syncWindowTabs(paths);
   }, [hasCompletedFullTabRestore, isDesktop, platform, tabs]);
+
+  useEffect(() => {
+    if (
+      !isDesktop ||
+      !shouldPublishCompleteWorkspaceSnapshot(hasCompletedFullTabRestore) ||
+      !platform.syncWebRemoteControlWorkspaces
+    ) {
+      return;
+    }
+
+    const connectedRemoteWorkspaces = buildConnectedRemoteWorkspaceSessionTargets({ tabs });
+    if (connectedRemoteWorkspaces.length > 0) {
+      // Bugfix: Bot remote-connection status checks depend on the remoteSessionId -> workspaceIdentity binding in the main process.
+      // This binding previously reused Web remote-control workspace sync, which does not run when Web remote control is off. The UI then showed connected while Bot incorrectly reported disconnected.
+      platform.syncWebRemoteControlWorkspaces(connectedRemoteWorkspaces);
+    }
+
+    if (!webRemoteControlFeatureEnabled || !webRemoteControlSessionActive) {
+      return;
+    }
+
+    const workspaces = buildWebRemoteControlWorkspaceTargets({
+      tabs,
+      reconnectingRemoteWorkspaceKeys,
+      remoteWorkspaceErrorByWorkspaceKey,
+    });
+
+    platform.syncWebRemoteControlWorkspaces(workspaces);
+  }, [
+    hasCompletedFullTabRestore,
+    isDesktop,
+    platform,
+    reconnectingRemoteWorkspaceKeys,
+    remoteWorkspaceErrorByWorkspaceKey,
+    tabs,
+    webRemoteControlFeatureEnabled,
+    webRemoteControlSessionActive,
+  ]);
 
   useEffect(() => {
     if (isDesktop) {

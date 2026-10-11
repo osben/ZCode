@@ -1,11 +1,22 @@
-// Active duration of a dwf run, used for the completion card's time field.
-// Sum the active intervals for each launch of this run and each predecessor reached through `resumedFrom`;
-// do not count gaps after stopping or process exit and before the next resume.
+// ============================================================
+// Active duration of a dwf run (the completion card's time field)
+// ============================================================
+// Definition and rationale: see docs/dynamic-workflow/transcript-and-notifications.md, "How long it took":
+// the completion card's duration is **the active duration of the full lineage**—every lifecycle of
+// this run, plus every lifecycle of each predecessor reached through `resumedFrom`; gaps between
+// lifecycles do not count.
 //
-// Do not use only the current registry entry's `completedAt - startedAt`: resume or amendment resets that clock
-// and would omit earlier runtime. Duration and token usage should cover the full lineage.
+// Defect history (2026-09-21): the duration used to be "the clock of whichever process settled the
+// run" (the registry entry's `completedAt − startedAt`). Resume swaps in a new entry and amendment
+// mints a new runId; both reset that clock to zero, and the amendment/resumed lifecycle is mostly
+// cache replay—seconds. So a run that worked four hours and was amended once reported "12 seconds,"
+// while the neighboring tokens field showed the full-lineage total (that field has counted by
+// lineage since run creation; see execution-engine.md, "Usage across the lineage"). Both fields
+// answer the same question and must use the same span.
 //
-// The event log already records each interval's start and last activity time, so read and sum them without extra persistence.
+// Duration needs no per-row accumulation like tokens: the event log already dates every lifecycle
+// (`run-started` → the last event of that lifecycle), so this is a **read-only sum** with zero
+// writes and zero migrations, and it holds equally for runs that predate the upgrade.
 
 import type { JournalStorePort } from "@zcode/dynamic-workflow";
 import { supportsRunLifeSpans } from "./dynamic-workflow-run-journal.js";

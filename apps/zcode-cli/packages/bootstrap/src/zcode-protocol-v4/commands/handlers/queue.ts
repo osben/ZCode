@@ -8,31 +8,34 @@ import type {
   CommandPayloadMap,
   CommandResult,
 } from "@zcode/shared/zcode-protocol-v4";
+import { isHighspeedProviderId } from "@zcode/shared";
+import { createModelExecutionContext } from "../../../zcode-protocol/model-execution.js";
 import { mapAttachmentRefsToTurnAttachments } from "../attachment-refs.js";
 import { inputIntentMetadataFromQueueItem } from "../input-intent.js";
 import { startPromptTurn } from "../prompt-turn.js";
 import { requireRecord } from "../record-access.js";
-import type { V4CommandCoreHost, V4SessionRecordView } from "../types.js";
+import type { V4CommandCoreHost } from "../types.js";
 import {
   applyGoalCommand,
   parseGoalObjectiveFromCommandText,
   startManualCompact,
   V4GoalCompactRejectedError,
 } from "./goal-compact.js";
+import { resolveSessionFallbackModelSelection } from "../input-admission.js";
 import { preemptActiveTurnAndWait } from "./session-flow.js";
 import { V4CommandNoopError } from "../../v4-gateway.js";
 import { commandExecutionContextOf } from "../executor.js";
 export { V4SessionIdleTimeoutError } from "./session-flow.js";
 
 /** sendQueuedNow cannot find the item's source text in the projection (drained/deleted or invalid ID) -> reject. */
-class V4QueueItemTextUnavailableError extends Error {
+export class V4QueueItemTextUnavailableError extends Error {
   constructor(queueItemId: string) {
     super(`v4 sendQueuedNow queue item text unavailable: ${queueItemId}`);
     this.name = "V4QueueItemTextUnavailableError";
   }
 }
 
-class V4QueueItemReservedError extends Error {
+export class V4QueueItemReservedError extends Error {
   readonly reasonCode = "guard.queueItemReserved";
   constructor(queueItemId: string) {
     super(`v4 sendQueuedNow queue item already reserved: ${queueItemId}`);
@@ -40,7 +43,7 @@ class V4QueueItemReservedError extends Error {
   }
 }
 
-class V4QueuePromotionCommitError extends Error {
+export class V4QueuePromotionCommitError extends Error {
   readonly reasonCode = "fault.command.queuePromotionCommitFailed";
   constructor(queueItemId: string) {
     super(`v4 sendQueuedNow started but failed to remove queue item: ${queueItemId}`);
@@ -48,7 +51,7 @@ class V4QueuePromotionCommitError extends Error {
   }
 }
 
-class V4QueueItemNotEditableError extends Error {
+export class V4QueueItemNotEditableError extends Error {
   readonly reasonCode = "guard.queueItemNotEditable";
   constructor(queueItemId: string) {
     super(`v4 queue item is not editable: ${queueItemId}`);
@@ -74,6 +77,7 @@ async function deleteQueueItem(
 ): Promise<CommandResult | undefined> {
   const payload = envelope.payload as CommandPayloadMap["deleteQueueItem"];
   const record = requireRecord(host, envelope.sessionId);
+  const queueItem = host.getQueueItem?.(record.app.sessionId, payload.queueItemId) ?? null;
   // A miss caused by concurrent drain or duplicate deletion is a no-op, not a failure; keep a
   // warning for observability.
   const removed = await record.app.removeQueueItem(payload.queueItemId);
@@ -86,6 +90,9 @@ async function deleteQueueItem(
     // concurrent drain or duplicate delete. Queue undo could then restore an already-consumed old
     // projection to the composer.
     throw new V4CommandNoopError("queue.itemMissing");
+  }
+  if (queueItem) {
+    host.deleteQueuedTurnExecution?.(record.app.sessionId, queueItem.sourceCommandId);
   }
   return undefined;
 }
@@ -253,6 +260,51 @@ async function sendQueuedNow(
       leaseReleaseOwnedByBackground = goalContinuationWillStart;
     } else {
       const intent = inputIntentMetadataFromQueueItem(queueItem, queueItem.text);
+      // Manual promotion lets the Renderer supply a fresh execution-material set for the same card;
+      // a different card is always ignored to avoid swapping credentials across cards.
+      const refreshedHighspeedMatchesQueue =
+        payload.highspeedMeta !== undefined &&
+        queueItem.highspeed !== undefined &&
+        payload.highspeedMeta.cardId === queueItem.highspeed.cardId &&
+        payload.highspeedMeta.taskId === queueItem.highspeed.taskId;
+      if (refreshedHighspeedMatchesQueue && payload.highspeedMeta) {
+        intent.highspeed = payload.highspeedMeta;
+        // Selection and execution materials must be replaced as one batch (the protocol's
+        // superRefine already guarantees they arrive as a pair).
+        if (payload.modelSelection) intent.modelSelection = payload.modelSelection;
+      }
+      // Credentials never enter the queue's persisted surface: prefer the materials supplied with
+      // this call, then the CLI's in-memory staging keyed by sourceCommandId.
+      const stagedExecution =
+        (refreshedHighspeedMatchesQueue ? payload.modelExecution : undefined) ??
+        host.readQueuedTurnExecution?.(record.app.sessionId, queueItem.sourceCommandId);
+      const highspeedSelected = isHighspeedProviderId(intent.modelSelection?.providerId);
+      // Rule 9: a card may expire while its item sits queued. Re-validate before promotion; an
+      // expired card or missing credentials both fall back to the session model.
+      const highspeedStillValid =
+        highspeedSelected &&
+        intent.highspeed !== undefined &&
+        intent.highspeed.expiresAt > Date.now() &&
+        stagedExecution !== undefined;
+      if (highspeedSelected && !highspeedStillValid) {
+        if (intent.highspeed && intent.highspeed.expiresAt > Date.now()) {
+          // Bug cause: in the field, queued items holding a valid card silently fell back to the
+          // normal model on manual promotion; the original log covered only provider-installation
+          // failures and could not distinguish "missing staged credentials" from "card expired".
+          host.logger?.warn?.("v4 queued Highspeed execution unavailable; using session model", {
+            cardId: intent.highspeed.cardId,
+            queueItemId: queueItem.queueItemId,
+            reason: "execution_missing",
+            sessionId: record.app.sessionId,
+          });
+        }
+        // The fallback must rewrite Selection too: deleting only the card marker would leave this
+        // turn on the accelerated provider with no credentials.
+        // Reuse the same fallback resolver as retry/edit resends (spec §3 rule 13).
+        delete intent.highspeed;
+        intent.modelSelection = resolveSessionFallbackModelSelection(record);
+        host.deleteQueuedTurnExecution?.(record.app.sessionId, queueItem.sourceCommandId);
+      }
       const started = await startPromptTurn(host, record, {
         content: queueItem.text,
         inputId: queueItem.sourceCommandId,
@@ -262,6 +314,9 @@ async function sendQueuedNow(
         intent,
         requireIdle: true,
         toolDisallowlist: queueItem.toolDisallowlist,
+        ...(highspeedStillValid && stagedExecution
+          ? { modelExecution: createModelExecutionContext(stagedExecution) }
+          : {}),
         ...(attachments ? { attachments } : {}),
       });
       // Older fake apps or compatibility commands may not return an admission receipt; the real
@@ -270,6 +325,9 @@ async function sendQueuedNow(
       if (started.admission.kind === "queued" || started.admission.kind === "rejected") {
         throw new V4QueuePromotionLeaseUnavailableError();
       }
+      // Credentials are frozen into Core with this turn; destroy the staged copy immediately after
+      // a successful start, and keep it on failure paths so retries can still accelerate.
+      host.deleteQueuedTurnExecution?.(record.app.sessionId, queueItem.sourceCommandId);
     }
     startAdmitted = true;
     const removed = await record.app.removeQueueItem(payload.queueItemId, {

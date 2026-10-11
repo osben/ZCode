@@ -10,6 +10,7 @@ import type {
   ResolvedAiSdkModel,
 } from "./runner-runtime.js";
 import { createModelRequestAttributionHeaders, type ModelStatusContext } from "./runner-status.js";
+import { withoutModelQuerySourceHeader } from "./model-request-headers.js";
 
 type ExperimentalIncludeWithResponseBody = {
   requestBody?: boolean;
@@ -17,7 +18,7 @@ type ExperimentalIncludeWithResponseBody = {
 };
 
 /** zcode-plan business codes often appear only in the finish chunk's response.body, so the streaming path must enable it explicitly. */
-function shouldIncludeStreamResponseBody(resolved: ResolvedAiSdkModel): boolean {
+export function shouldIncludeStreamResponseBody(resolved: ResolvedAiSdkModel): boolean {
   return (
     resolved.providerKind === "openai-compatible" && resolved.accountAccess?.mode === "start-plan"
   );
@@ -27,8 +28,9 @@ function mergeRequestHeaders(
   providerHeaders: Record<string, string> | undefined,
   attributionHeaders: Record<string, string>,
 ): Record<string, string> {
+  // Generic case-insensitive deduplication would change how the SDK merges legacy attribution headers; remove only the static query-source value here.
   return {
-    ...providerHeaders,
+    ...withoutModelQuerySourceHeader(providerHeaders),
     ...attributionHeaders,
   };
 }

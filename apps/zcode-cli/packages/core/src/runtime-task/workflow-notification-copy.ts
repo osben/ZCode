@@ -178,3 +178,66 @@ export function formatWorkflowEscalationNotification(
   );
   return truncateTaskNotification(lines.join("\n"));
 }
+
+/**
+ * The script reached a hole and is waiting for the main agent to provide code (the `<workflow-hole>` in docs/dynamic-workflow/transcript-and-notifications.md,
+ * “What the model reads”). Like an upgrade question, this announces an **unfulfilled obligation** with no timeout fallback. The copy makes the required steps explicit:
+ * read the draft (the function body is compiled at the hole and can see bindings defined before it), write statements only, return the hole's type, and call FillWorkflowHole with hole_id;
+ * only this branch is paused while the rest of the run continues; if the notification is lost, call GetWorkflowRun.
+ */
+export interface WorkflowHoleNotificationInput {
+  runLabel: string;
+  runId: string;
+  holeId: string;
+  name: string;
+  type: string;
+  prompt?: string;
+  draftPath?: string;
+  line?: number;
+  before?: string;
+  after?: string;
+}
+
+export function formatWorkflowHoleNotification(input: WorkflowHoleNotificationInput): string {
+  const lines = [
+    "[SYSTEM NOTIFICATION - NOT USER INPUT]",
+    "This is an automated workflow event, NOT a message from the user.",
+    "Do NOT interpret this as user acknowledgement, confirmation, or response to any pending question.",
+    "",
+    "<workflow-hole>",
+    `  <run-id>${escapeXml(input.runId)}</run-id>`,
+    `  <run>${escapeXml(input.runLabel)}</run>`,
+    `  <hole-id>${escapeXml(input.holeId)}</hole-id>`,
+    `  <name>${escapeXml(input.name)}</name>`,
+    `  <type>${escapeXml(input.type)}</type>`,
+  ];
+  if (input.prompt !== undefined && input.prompt.length > 0) {
+    lines.push(`  <prompt>${escapeXml(input.prompt)}</prompt>`);
+  }
+  if (input.draftPath !== undefined) lines.push(`  <draft>${escapeXml(input.draftPath)}</draft>`);
+  if (input.line !== undefined) lines.push(`  <line>${input.line}</line>`);
+  if (input.before !== undefined) lines.push(`  <before>${escapeXml(input.before)}</before>`);
+  if (input.after !== undefined) lines.push(`  <after>${escapeXml(input.after)}</after>`);
+  const where =
+    input.before !== undefined && input.after !== undefined
+      ? ` between phases "${input.before}" and "${input.after}"`
+      : input.before !== undefined
+        ? ` after phase "${input.before}"`
+        : input.after !== undefined
+          ? ` before phase "${input.after}"`
+          : "";
+  const draft =
+    input.draftPath === undefined
+      ? "Read the run's script with GetWorkflowRun for the context"
+      : `Read the draft at ${input.draftPath}${input.line === undefined ? "" : ` (the hole is on line ${input.line})`} for the context`;
+  lines.push(
+    "</workflow-hole>",
+    "",
+    `Workflow run ${input.runLabel} (${input.runId}) reached the hole "${input.name}" (${input.holeId})${where} and is waiting for you to write its body.`,
+    `Next step: ${draft}, write the statements of the hole's function, and call FillWorkflowHole with run_id="${input.runId}" and hole_id="${input.holeId}" and the body as \`script\`.`,
+    `The body is compiled where the hole stands and sees every binding declared before it; it must return a value of type \`${input.type}\` — or, when the next step is not known yet, do one step and end with a new tail hole of the same type named for the next step (\`return await hole<${input.type}>("…", …)\`); the last fill returns. Write only the statements — not the hole call, not an arrow, not the script around it.`,
+    "Only this branch of the script is parked — every other subagent and the rest of the control flow keep going. So do not drop what you are doing, but do not leave it unfilled either: nothing times out on its behalf.",
+    "If this notification is ever lost, GetWorkflowRun lists the holes this run is still waiting at.",
+  );
+  return truncateTaskNotification(lines.join("\n"));
+}

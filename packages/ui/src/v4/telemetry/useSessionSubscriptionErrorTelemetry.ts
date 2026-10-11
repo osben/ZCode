@@ -8,7 +8,7 @@ const SUFFIX_REASON_CODE_PATTERN = /\((fault\.[A-Za-z0-9._-]+)\)\s*$/;
 
 type SubscriptionErrorReporter = Pick<ConversationTelemetrySupervisor, "reportVisibleChatError">;
 
-function resolveSessionSubscriptionErrorCode(message: string): string {
+export function resolveSessionSubscriptionErrorCode(message: string): string {
   const trimmedMessage = message.trim();
   // Bug cause: recovery fail-closed writes a bare reasonCode directly to lastError, while the old logic recognized only
   // the "message (reasonCode)" form, causing structured errors to be incorrectly grouped as fault.subscribe.unknown.

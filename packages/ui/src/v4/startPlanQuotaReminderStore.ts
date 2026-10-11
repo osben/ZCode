@@ -7,7 +7,7 @@ interface RecordEntry {
 }
 
 /** Sole owner of the 10% reminder record; persist whether it was shown and keep the current display instance in memory only. */
-function createStartPlanQuotaReminderStore(
+export function createStartPlanQuotaReminderStore(
   options: {
     storage?: () => Storage | null;
   } = {},

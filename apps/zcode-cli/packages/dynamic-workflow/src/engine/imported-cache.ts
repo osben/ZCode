@@ -12,6 +12,7 @@
  */
 
 import { canonicalJson } from "./hash.js";
+import { personaIdentity } from "./persona.js";
 import type {
   ActorRef,
   ActorSessionSeed,
@@ -88,6 +89,23 @@ export class ImportedActorState {
     }
     this.consumed = seq + 1;
     return entry;
+  }
+
+  /**
+   * Whether the answer to the ask at this seq was **read from a predecessor transcript**: returns the
+   * session that owns it, or `undefined` otherwise.
+   *
+   * This is true exactly when there is no divergence yet and the cursor has passed this seq. Divergence
+   * is monotonic and admission is in ascending seq order, so this means “this row was consumed from
+   * the import.” Both paths check immediately after deciding: a fresh ask after a hit in {@link take},
+   * and a resumed revised run after {@link reconcileRecorded}. The settle-order gate may defer an event
+   * until a later row from the same actor has already marked divergence; checking then would wrongly
+   * report an imported row as work performed by this run.
+   */
+  sourceSessionAt(seq: number): string | undefined {
+    return !this.diverged && seq < this.consumed
+      ? this.candidate.transcriptSourceSessionId
+      : undefined;
   }
 
   /** Whether the ask at this seq continued the predecessor's in-flight ask (the scheduler uses this to decide whether stats include worldToolCalls). */
@@ -193,8 +211,7 @@ export class ImportedActorState {
       sourceSessionId: this.candidate.transcriptSourceSessionId,
       messageCount,
     };
-    if (this.candidate.resolvedModel !== undefined)
-      seed.resolvedModel = this.candidate.resolvedModel;
+    if (this.candidate.resolvedModel !== undefined) seed.resolvedModel = this.candidate.resolvedModel;
     return seed;
   }
 }
@@ -246,7 +263,9 @@ export function matchImportedActor(
   if (name === undefined || name === "") return undefined;
   const candidate = cache.actors.get(name);
   if (candidate === undefined) return undefined;
-  if (canonicalJson(spec) !== canonicalJson(candidate.persona)) return undefined;
+  if (canonicalJson(personaIdentity(spec)) !== canonicalJson(personaIdentity(candidate.persona))) {
+    return undefined;
+  }
   return new ImportedActorState(candidate);
 }
 

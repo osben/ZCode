@@ -9,6 +9,7 @@
 
 import type {
   DynamicWorkflowRunDetail,
+  DynamicWorkflowRunHole,
   DynamicWorkflowRunLifecycleStatus,
   DynamicWorkflowRunListItem,
   DynamicWorkflowRunListQuery,
@@ -16,16 +17,21 @@ import type {
   DynamicWorkflowRunPendingQuestion,
   DynamicWorkflowRunPort,
 } from "@zcode/contracts";
-import type { JournalStorePort } from "@zcode/dynamic-workflow";
+import { NON_REPORT_NODE_KINDS, type JournalStorePort } from "@zcode/dynamic-workflow";
 import { reduceWorkflowRunsState, type WorkflowRunsState } from "@zcode/shared/zcode-protocol-v4";
 import type { DynamicWorkflowIntrospectableJournal } from "./dynamic-workflow-run-journal.js";
-import { readRunScriptPath, readRunSubagentModel } from "./dynamic-workflow-run-launch-anchor.js";
+import {
+  readRunModelBindings,
+  readRunScriptPath,
+  readRunSubagentModel,
+} from "./dynamic-workflow-run-launch-anchor.js";
 import {
   artifactsOf,
   journalRunSummary,
   registryRunSummary,
   runConcurrencyField,
   runScriptPathField,
+  runModelBindingsField,
   runSubagentModelField,
   terminalErrorField,
   terminalResultField,
@@ -33,7 +39,11 @@ import {
   TERMINAL_RUN_STATUSES,
   type RunRegistryEntry,
 } from "./dynamic-workflow-run-observation.js";
-import { replayRunProgressFromEvents } from "./dynamic-workflow-run-replay.js";
+import {
+  COLD_REPLAY_EVENT_READ,
+  replayRunProgressFromEvents,
+} from "./dynamic-workflow-run-replay.js";
+import { runHolesOf } from "./dynamic-workflow-run-holes.js";
 import { buildWorkflowRunRoster } from "./dynamic-workflow-run-roster.js";
 import type { WorkflowEscalationRegistry } from "./workflow-escalation-registry.js";
 
@@ -55,19 +65,19 @@ interface DynamicWorkflowRunIntrospectionContext {
   /** Parked table for upgrade questions, the sole projection source for the pendingQuestions slice. */
   escalations: WorkflowEscalationRegistry;
   /**
-   * This process's concurrency ceiling (the service's implementation). The detail view uses it to
+   * This process's default concurrency (the service's implementation). The detail view uses it to
    * decide whether a run's limit is worth reporting ({@link runConcurrencyField}). This is a
    * function rather than a number because the introspection members are created once when the
-   * service is constructed, while the ceiling is a fact read on each query.
+   * service is constructed, while the default is a fact read on each query.
    */
-  concurrencyCeiling: () => number;
+  defaultConcurrency: () => number;
 }
 
 /** Build the `listRuns` and `getRunDetail` members for the service to spread into its returned port object. */
 export function createRunIntrospectionMethods(
   ctx: DynamicWorkflowRunIntrospectionContext,
 ): Required<Pick<DynamicWorkflowRunPort, "listRuns" | "getRunDetail">> {
-  const { introspection, journal, parentSessionId, runs, escalations, concurrencyCeiling } = ctx;
+  const { introspection, journal, parentSessionId, runs, escalations, defaultConcurrency } = ctx;
   return {
     /**
      * List runs by project: journal rows ∪ this session's registry. **Read-only**:
@@ -150,9 +160,11 @@ export function createRunIntrospectionMethods(
           // Gap copy of the concurrency limit (see RunRegistryEntry.maxConcurrency): the row is
           // not persisted, but the value was fixed at submit, so the detail view need not pretend
           // it does not know during these few microtasks.
-          ...runConcurrencyField(entry.maxConcurrency, concurrencyCeiling()),
+          ...runConcurrencyField(entry.maxConcurrency, defaultConcurrency()),
           // Gap copy of the subagent model, for the same reason (see RunRegistryEntry.subagentModel).
           ...runSubagentModelField(entry.subagentModel),
+          // Gap copy of the script-named models, for the same reason.
+          ...runModelBindingsField(entry.modelBindings),
           // Gap copy of the script file, for the same reason (see RunRegistryEntry.scriptPath).
           ...runScriptPathField(entry.scriptPath),
           // Counts have no authoritative source yet, so honestly report 0. The starting usage is
@@ -174,6 +186,9 @@ export function createRunIntrospectionMethods(
           // persisted, also when a question is **most likely** parked. Without this branch, the
           // blocked actor in a newly started run would be invisible to the model.
           ...pendingQuestionsField(escalations, runId),
+          // Holes follow the same rationale as pending questions: the entry is in hand during the
+          // gap, so the engine's parked table can be read; omit the entire field when empty.
+          ...holesField(runHolesOf(runId, entry, journal)),
           // Artifacts: the dwf_run row is not persisted in this gap branch, but **node rows may
           // already exist**—the engine can put an artifact row immediately after createRun. Read
           // them here rather than assuming the list is empty: a run queried just after declaring a
@@ -188,18 +203,21 @@ export function createRunIntrospectionMethods(
       // state used by the run panel, then pass it with node/actor rows to the situation snapshot.
       // Reading twice would pay twice for the same data, and this query is the most expensive part
       // for long runs.
-      const stored = journal.listEvents(runId, {});
+      // Read report items only up to the projection's bound (same read as cold replay; see dynamic-workflow-run-replay.ts).
+      const stored = journal.listEvents(runId, COLD_REPLAY_EVENT_READ);
+      // Read actor rows once, without persona (the full system prompt is an inherently unbounded field with no reader here).
+      const actorRows = journal.listActors(runId, { withPersona: false });
       const pendingQuestions = pendingQuestionsOf(escalations, runId, summary.status, entry);
       return {
         ...summary,
-        // Persisted limit (`dwf_run.caps_max_concurrency`), present only when below the ceiling.
-        // Deliberately omit it from journalRunSummary, the shared list-row projection: a rarely set
-        // field should not widen every row.
-        ...runConcurrencyField(row.caps.maxConcurrency, concurrencyCeiling()),
-        // Subagent model for this run, present only when set. It has no dwf_run column (deliberately
-        // no migration); the `run-launched` event is authoritative. As with the snapshot, use the
-        // registry entry when present (all three creation paths set it), and scan event headers
-        // only for cold rows. Like the concurrency limit, deliberately omit it from
+        // Persisted limit (`dwf_run.caps_max_concurrency`), present only when it differs from the
+        // default concurrency. Deliberately omit it from journalRunSummary, the shared list-row
+        // projection: a rarely set field should not widen every row.
+        ...runConcurrencyField(row.caps.maxConcurrency, defaultConcurrency()),
+        // Subagent model for this run, present only when set. It has no dwf_run column (the user
+        // ruled out a migration); the `run-launched` event is authoritative. As with the snapshot,
+        // use the registry entry when present (all three creation paths set it), and scan event
+        // headers only for cold rows. Like the concurrency limit, deliberately omit it from
         // journalRunSummary so a rarely set field does not widen every list row.
         ...runSubagentModelField(
           entry === undefined ? readRunSubagentModel(journal, runId) : entry.subagentModel,
@@ -208,6 +226,9 @@ export function createRunIntrospectionMethods(
         // the `run-launched` event is authoritative (dwf_run has no such column); use the registry
         // entry when present and scan event headers only for cold rows. Deliberately omit it from
         // journalRunSummary too; a field used only by AmendWorkflow should not widen list rows.
+        ...runModelBindingsField(
+          entry === undefined ? readRunModelBindings(journal, runId) : entry.modelBindings,
+        ),
         ...runScriptPathField(
           entry === undefined ? readRunScriptPath(journal, runId) : entry.scriptPath,
         ),
@@ -221,7 +242,7 @@ export function createRunIntrospectionMethods(
           nodesCompleted: counts.completed,
           nodesFailed: counts.failed,
         },
-        actors: journal.listActors(runId).map((actor) => ({
+        actors: actorRows.map((actor) => ({
           siteId: actor.siteId,
           ordinal: actor.ordinal,
           // Deliberately omit persona: the full system prompt is inherently unbounded at the port.
@@ -231,10 +252,11 @@ export function createRunIntrospectionMethods(
           .listRecentLogEvents(runId, DEFAULT_LOG_TAIL_LIMIT)
           .map(toLogTailEntry),
         ...buildWorkflowRunRoster({
-          run: reduceRunState(row, stored, concurrencyCeiling()),
+          run: reduceRunState(row, stored, defaultConcurrency()),
           events: stored,
-          nodes: journal.listNodes(runId),
-          actors: journal.listActors(runId),
+          // The roster reads only kind / status / stats / coordinates: no results, no report rows.
+          nodes: journal.listNodes(runId, { kinds: NON_REPORT_NODE_KINDS, withResult: false }),
+          actors: actorRows,
           status: summary.status,
           ...(pendingQuestions === undefined ? {} : { pendingQuestions }),
           now: Date.now(),
@@ -244,6 +266,10 @@ export function createRunIntrospectionMethods(
         ...(pendingQuestions === undefined || pendingQuestions.length === 0
           ? {}
           : { pendingQuestions }),
+        // Holes (see "The run snapshot" in docs/execution-engine.md): same source and projection as
+        // the snapshot—this is the model's only discovery surface after a hole notification is lost.
+        // A cold row's fact table is rebuilt from the script stored in the row (only when a hole has actually arrived).
+        ...holesField(runHolesOf(runId, entry, journal, row.scriptText)),
         // Artifact snapshot is attached for every state, including failed/cancelled: a run that
         // stopped at step 12 may still have delivered a board produced earlier. Share the **same**
         // artifactsOf implementation with `listArtifacts` and terminal snapshots so all three
@@ -274,9 +300,16 @@ function pendingQuestionsField(
   return pendingQuestions.length === 0 ? {} : { pendingQuestions };
 }
 
+/** Omit the entire field when empty (same rule as pendingQuestions). */
+function holesField(
+  holes: readonly DynamicWorkflowRunHole[],
+): Pick<DynamicWorkflowRunDetail, "holes"> {
+  return holes.length === 0 ? {} : { holes };
+}
+
 /**
- * Whether this read **can** answer "is any question awaiting a response," and the answer itself.
- * （`health.pendingQuestionsKnown`）。
+ * Whether this read **can** answer "is any question awaiting a response," and the answer itself
+ * (`health.pendingQuestionsKnown`).
  *
  * `undefined` means unknown, not "none." The parked table is **in this process's memory** (see the
  * rationale in {@link pendingQuestionsField}), so this read can answer truthfully only in two
@@ -307,10 +340,10 @@ function pendingQuestionsOf(
 function reduceRunState(
   row: Parameters<typeof replayRunProgressFromEvents>[0],
   stored: Parameters<typeof replayRunProgressFromEvents>[1],
-  concurrencyCeiling: number,
+  defaultConcurrency: number,
 ): WorkflowRunsState["runs"][number] | undefined {
   let state: WorkflowRunsState | undefined;
-  for (const payload of replayRunProgressFromEvents(row, stored, concurrencyCeiling)) {
+  for (const payload of replayRunProgressFromEvents(row, stored, defaultConcurrency)) {
     state = reduceWorkflowRunsState(state, payload) ?? state;
   }
   return state?.runs.find((run) => run.runId === row.runId);

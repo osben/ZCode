@@ -12,7 +12,7 @@ import {
 import { desktopRuntimeEnv } from "./desktopRuntimeEnv.js";
 
 /** Align with resource metrics: aggregate and report every 1 minute in development and every 5 minutes in production. */
-const NETWORK_REPORT_INTERVAL_MS = desktopRuntimeEnv === "development" ? 60_000 : 300_000;
+export const NETWORK_REPORT_INTERVAL_MS = desktopRuntimeEnv === "development" ? 60_000 : 300_000;
 
 interface NetworkLogger {
   info: (...args: unknown[]) => void;
@@ -137,6 +137,47 @@ export function ingestHostNetworkObservations(observations: NetworkObservation[]
   for (const observation of observations) {
     recordNetworkObservation(observation);
   }
+}
+
+/** Remote-control relay WebSocket: the interface dimension is fixed as web_remote_control.relay */
+export const WEB_REMOTE_RELAY_INTERFACE = "web_remote_control.relay";
+
+export function noteWebRemoteRelayConnectAttempt(
+  durationMs: number,
+  ok: boolean,
+  options?: { error?: unknown; attempt?: number },
+): void {
+  recordNetworkObservation({
+    transport: "websocket",
+    interface: WEB_REMOTE_RELAY_INTERFACE,
+    durationMs: Math.max(0, Math.round(durationMs)),
+    ok,
+    errorKind: ok ? undefined : classifyWsError(options?.error),
+    attempt: options?.attempt ?? 1,
+  });
+}
+
+export function noteWebRemoteRelayReconnect(): void {
+  recordNetworkObservation({
+    transport: "websocket",
+    interface: WEB_REMOTE_RELAY_INTERFACE,
+    durationMs: 0,
+    ok: false,
+    errorKind: "connection_reset",
+    attempt: 2,
+  });
+}
+
+function classifyWsError(error: unknown): string {
+  const message =
+    error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase();
+  if (message.includes("timeout") || message.includes("timed out")) {
+    return "timeout";
+  }
+  if (message.includes("dns") || message.includes("getaddrinfo")) {
+    return "dns_failure";
+  }
+  return "connection_reset";
 }
 
 export function configureDesktopNetworkTelemetry(context: NetworkGlobalContext): void {

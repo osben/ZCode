@@ -37,7 +37,7 @@ const consoleFns: Record<LogLevel, (...args: unknown[]) => void> = {
   error: console.error,
 };
 
-function isLoggerLevelEnabled(_level: LogLevel): boolean {
+export function isLoggerLevelEnabled(_level: LogLevel): boolean {
   // In production builds, all renderer log levels are disabled; expose a guard so callers can exit before constructing large payloads.
   return !isRendererProductionBuild() && !isRendererLoggingDisabled();
 }

@@ -8,6 +8,7 @@
 import type { DwfArtifactItem, DwfRunIntrospectionQueries } from "@zcode/adapters/storage";
 import type { DynamicWorkflowRunArtifactItem } from "@zcode/contracts";
 import type { JournalStorePort, NodeRecord } from "@zcode/dynamic-workflow";
+import { WORKFLOW_ARTIFACT_LIMITS } from "@zcode/shared/zcode-protocol-v4";
 
 /**
  * Journal with the artifact read surface. The **single source** for its signature is adapters'
@@ -39,38 +40,50 @@ export function supportsArtifactReads(journal: JournalStorePort): journal is Art
 }
 
 /**
- * `report` entries for a built-in artifact, in ascending journal sequence order.
+ * `report` entries for a built-in artifact, one page in ascending journal sequence order.
  *
- * The storage layer honors limit **exactly** and never clamps it, so the caller (gateway) requests
- * limit+1 to determine hasMore; pass the value through unchanged here. An out-of-range cursor returns
- * an empty page instead of an error: reaching the end is a normal pagination result, not an exception.
+ * The caller (gateway) supplies both bounds—count and bytes; the storage layer honors them exactly
+ * without clamping and decides `hasMore` (docs/execution-engine.md, "Reading the journal"). An
+ * out-of-range cursor returns an empty page instead of an error: reaching the end is a normal
+ * pagination result, not an exception.
  */
 export function listArtifactItemsFrom(
   journal: JournalStorePort,
   runId: string,
   artifactId: string,
-  page: { afterSequence?: number; limit: number },
-): DynamicWorkflowRunArtifactItem[] {
-  if (!supportsArtifactReads(journal)) return [];
-  const rows = journal.listArtifactItems(runId, artifactId, {
+  page: { afterSequence?: number; limit: number; maxBytes: number; fields?: readonly string[] },
+): { items: DynamicWorkflowRunArtifactItem[]; hasMore: boolean } {
+  if (!supportsArtifactReads(journal)) return { items: [], hasMore: false };
+  const { items, hasMore } = journal.listArtifactItems(runId, artifactId, {
     ...(page.afterSequence === undefined ? {} : { afterSequence: page.afterSequence }),
     limit: page.limit,
+    maxBytes: page.maxBytes,
+    // Field projection only: value bounds are protocol constants the storage layer does not set itself.
+    ...(page.fields === undefined
+      ? {}
+      : {
+          fields: {
+            paths: page.fields,
+            maxValueBytes: WORKFLOW_ARTIFACT_LIMITS.maxFieldValueBytes,
+          },
+        }),
   });
-  return rows.map(toArtifactItem);
+  return { items: items.map(toArtifactItem), hasMore };
 }
 
 /**
  * Map one storage row to one port entry. Fields correspond one-to-one; intentionally **do not
  * serialize a preview**. The dashboard's pure functions read values by field path (for example,
- * `ChartSpec.x.field` = "timing.after"), which would not work on pretty-printed JSON text. Entries
- * are already bounded on the wire by `REPORT_CAPS.maxItemSerializedBytes` (32 KB), so another bound is unnecessary.
+ * `ChartSpec.x.field` = "timing.after"), which would not work on pretty-printed JSON text. Single
+ * entries are bounded on the write side by `REPORT_CAPS.maxItemSerializedBytes`; a page is bounded
+ * by `maxBytes`.
  */
 function toArtifactItem(row: DwfArtifactItem): DynamicWorkflowRunArtifactItem {
   return {
     sequence: row.sequence,
     siteId: row.siteId,
     ordinal: row.ordinal,
-    item: row.item,
+    ...(row.fields === undefined ? { item: row.item } : { fields: row.fields }),
   };
 }
 

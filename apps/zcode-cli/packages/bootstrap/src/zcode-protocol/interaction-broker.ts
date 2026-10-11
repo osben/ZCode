@@ -1,17 +1,31 @@
+import { randomUUID } from "node:crypto";
 import { raceClientRequestWithV4Interaction } from "./interaction-response-race.js";
 import {
   ASK_USER_QUESTION_TOOL_NAME,
+  CoreErrorType,
+  createCoreError,
   AskUserQuestionInputSchema,
   AMEND_WORKFLOW_TOOL_NAME,
   CREATE_WORKFLOW_TOOL_NAME,
   EXIT_PLAN_MODE_TOOL_NAME,
   SESSION_ENTRY_USER_INPUT_AUTO_RESOLUTION,
+  SessionEventType,
+  createEventId,
   type AskUserQuestion,
+  type McpElicitationRequest,
+  type McpElicitationResult,
   type PermissionBrokerPort,
   type PermissionBrokerRequest,
   type PermissionBrokerRequestOptions,
   type PermissionBrokerResult,
+  type SessionEvent,
 } from "@zcode/contracts";
+import {
+  MCP_ELICITATION_INTERACTION,
+  MCP_ELICITATION_TOOL_NAME,
+  mcpElicitationContentFromAnswers,
+  mcpElicitationQuestions,
+} from "../zcode-protocol-v4/mcp-elicitation.js";
 import {
   WORKFLOW_REFINE_PERMISSION_OPTION_ID,
   zcodePermissionResponseSchema,
@@ -26,7 +40,11 @@ import type {
   V4InteractionAnswer,
   V4InteractionRegistrationOptions,
 } from "../zcode-protocol-v4/interaction-registry.js";
-import type { ZCodeProtocolAgentServerContext } from "./server-types.js";
+import {
+  PROTOCOL_CLIENT_REQUEST_ERROR_CODES,
+  ProtocolRequestError,
+  type ZCodeProtocolAgentServerContext,
+} from "./server-types.js";
 import {
   buildProtocolPermissionOptions,
   buildSessionPermissionUpdates,
@@ -35,23 +53,53 @@ import {
   buildPermissionDeniedContent,
   PERMISSION_DENIED_BY_USER_CONTENT,
 } from "./permission-options.js";
+import { withWorkflowSettingsAdjustment } from "./workflow-settings-answer.js";
 
 const EXIT_PLAN_MODE_APPROVAL_QUESTION = "Review this implementation plan.";
 const EXIT_PLAN_MODE_APPROVAL_APPROVE = "approve";
 const INTERACTION_REQUEST_REANNOUNCE_INTERVAL_MS = 1_000;
+
+interface RegisteredRequestOptions extends PermissionBrokerRequestOptions {
+  onRegistered?: () => void;
+}
 
 export function createProtocolInteractionBroker(
   context: ZCodeProtocolAgentServerContext,
 ): PermissionBrokerPort {
   return {
     requestPermission(request, options) {
-      if (request.toolName === ASK_USER_QUESTION_TOOL_NAME) {
-        return requestUserInput(context, request, options);
-      }
-      if (request.toolName === EXIT_PLAN_MODE_TOOL_NAME) {
-        return requestExitPlanModeApproval(context, request, options);
-      }
-      return requestPermission(context, request, options);
+      const ready = Promise.withResolvers<void>();
+      const registeredOptions = { ...options, onRegistered: () => ready.resolve() };
+      const requestResult =
+        request.toolName === ASK_USER_QUESTION_TOOL_NAME
+          ? requestUserInput(context, request, registeredOptions)
+          : request.toolName === EXIT_PLAN_MODE_TOOL_NAME
+            ? requestExitPlanModeApproval(context, request, registeredOptions)
+            : requestPermission(context, request, registeredOptions);
+      const result = requestResult.catch((error: unknown) => {
+        // Protocol errors are translated only in the adapter layer; core does not understand
+        // transport error codes and must not treat infrastructure failures as user denials.
+        if (request.mode === "guarded" && error instanceof ProtocolRequestError) {
+          const type =
+            error.code === PROTOCOL_CLIENT_REQUEST_ERROR_CODES.cancelled
+              ? CoreErrorType.ToolCancelled
+              : error.code === PROTOCOL_CLIENT_REQUEST_ERROR_CODES.timedOut
+                ? CoreErrorType.PermissionTimeout
+                : error.code === PROTOCOL_CLIENT_REQUEST_ERROR_CODES.noClientAttached
+                  ? CoreErrorType.ConfigurationError
+                  : CoreErrorType.ToolExecutionFailed;
+          throw createCoreError(type, error.message, { cause: error, recoverable: true });
+        }
+        throw error;
+      });
+      void result.then(
+        () => ready.resolve(),
+        (error: unknown) => ready.reject(error),
+      );
+      // Legacy callers consume only result; they must not produce unhandled rejections when they
+      // ignore the registration signal.
+      void ready.promise.catch(() => {});
+      return Object.assign(result, { registered: ready.promise });
     },
   };
 }
@@ -59,7 +107,7 @@ export function createProtocolInteractionBroker(
 async function requestPermission(
   context: ZCodeProtocolAgentServerContext,
   request: PermissionBrokerRequest,
-  options?: PermissionBrokerRequestOptions,
+  options?: RegisteredRequestOptions,
 ): Promise<PermissionBrokerResult> {
   const permissionOptions = buildProtocolPermissionOptions(request);
   // Options for v3 reverse RPCs: session-level approval is offered only in v4 (older desktop clients
@@ -93,14 +141,17 @@ async function requestPermission(
     // v4 answer → ZCodePermissionResponse: optionId semantics come from the v4 reducer's synthesized
     // allowOnce/allowAlways/deny values (see product-projection onPermissionRequested).
     (answer) => {
-      const response = v4AnswerToPermissionResponse(answer, permissionOptions, request.toolName);
+      // Settings adjusted in the workflow confirmation window travel with the approval answer
+      // (docs/dynamic-workflow/launch.md "Adjusting the settings in the window").
+      const base = v4AnswerToPermissionResponse(answer, permissionOptions, request.toolName);
+      const response = withWorkflowSettingsAdjustment(base, answer, request.toolName);
       return response.decision === "deny" && answer.freeText?.trim()
         ? { ...response, preserveReasonFormatting: true }
         : response;
     },
     {
       ...createInteractionRegistrationOptions(request, "other"),
-      ...(!request.origin &&
+      ...(request.approvalMode !== "user-once" && !request.origin &&
       !request.optionsPolicy &&
       options?.claimResponse &&
       context.deps?.sessionStore?.commitPermissionFullAccess
@@ -122,6 +173,7 @@ async function requestPermission(
           }
         : {}),
     },
+    options?.onRegistered,
   );
   return {
     ...response,
@@ -194,10 +246,110 @@ function v4AnswerToPermissionResponse(
   return { decision: "deny", reason: buildPermissionDeniedContent(answer.freeText) };
 }
 
+/**
+ * MCP elicitation: the server asks the user a question during tool execution.
+ * Reuses AskUserQuestion's two channels — the legacy RPC interaction/requestUserInput and the v4
+ * pending interaction — the latter advancing the projection through synthesized (non-persisted)
+ * PermissionRequested / PermissionResolved events.
+ */
+export async function requestMcpElicitation(
+  context: ZCodeProtocolAgentServerContext,
+  request: McpElicitationRequest,
+  options?: { signal?: AbortSignal },
+): Promise<McpElicitationResult> {
+  const sessionId = request.trace?.sessionId;
+  const record = sessionId ? context.sessions?.get(sessionId) : undefined;
+  if (!sessionId || !record) {
+    // No running tool call to attribute the question to (e.g. the server asks while idle): decline
+    // instead of guessing a session.
+    return { action: "decline" };
+  }
+  const interactionId = `mcp-elicit-${randomUUID()}`;
+  const toolCallId = request.trace?.toolCallId ?? interactionId;
+  const questions = mcpElicitationQuestions(request.message, request.requestedSchema);
+  const input = {
+    serverName: request.serverName,
+    message: request.message,
+    requestedSchema: request.requestedSchema,
+  };
+  const traceId = request.trace?.traceId ?? String(record.traceContext.traceId);
+  const ingestSynthetic = async (
+    type: typeof SessionEventType.PermissionRequested | typeof SessionEventType.PermissionResolved,
+    payload: Record<string, unknown>,
+  ) => {
+    const gateway = context.v4Gateway;
+    if (!gateway) return;
+    const event: SessionEvent = {
+      id: createEventId(),
+      sessionId: sessionId as never,
+      ...(request.trace?.turnId ? { turnId: request.trace.turnId as never } : {}),
+      type,
+      timestamp: new Date(),
+      traceId: traceId as never,
+      // Live projection only, not persisted: raw seq is 0 so the v4 gateway assigns the transport
+      // sequence number. Reusing persisted high-water +1 would make the second synthesized event
+      // be dropped as a replay (seq not above the cursor), and the pending entry would never clear.
+      sequenceNumber: 0,
+      payload: payload as never,
+    };
+    gateway.ingest(sessionId, event);
+  };
+  await ingestSynthetic(SessionEventType.PermissionRequested, {
+    requestId: interactionId,
+    toolCallId,
+    toolName: MCP_ELICITATION_TOOL_NAME,
+    riskLevel: "low",
+    reason: request.message,
+    input,
+  });
+  let response: ZCodeUserInputResponse;
+  try {
+    response = await raceClientRequestWithV4Interaction(
+      context,
+      interactionId,
+      options?.signal,
+      (signal) =>
+        context.requestClient(
+          zcodeProtocolMethods.interactionRequestUserInput,
+          {
+            input,
+            prompt: request.message,
+            questions,
+            requestId: interactionId,
+            schema: {
+              interaction: MCP_ELICITATION_INTERACTION,
+              serverName: request.serverName,
+              requestedSchema: request.requestedSchema,
+            },
+            sessionId,
+            toolCallId,
+            toolName: MCP_ELICITATION_TOOL_NAME,
+            ...(request.trace?.turnId ? { turnId: request.trace.turnId } : {}),
+          },
+          zcodeUserInputResponseSchema,
+          withInteractionRequestRecovery(options, signal),
+        ),
+      (answer) => v4AnswerToUserInputResponse(answer),
+      { sessionId, kind: "other" },
+    );
+  } finally {
+    await ingestSynthetic(SessionEventType.PermissionResolved, {
+      requestId: interactionId,
+      toolCallId,
+      decision: "allow",
+    }).catch(() => undefined);
+  }
+  if (response.action !== "accept") return { action: response.action };
+  return {
+    action: "accept",
+    content: mcpElicitationContentFromAnswers(request.requestedSchema, questions, response.content),
+  };
+}
+
 async function requestUserInput(
   context: ZCodeProtocolAgentServerContext,
   request: PermissionBrokerRequest,
-  options?: PermissionBrokerRequestOptions,
+  options?: RegisteredRequestOptions,
 ): Promise<PermissionBrokerResult> {
   const parsed = AskUserQuestionInputSchema.safeParse(request.input);
   if (!parsed.success) {
@@ -244,6 +396,7 @@ async function requestUserInput(
       context,
       initialAutoResolution,
     ),
+    options?.onRegistered,
   );
 
   return userInputResponseToBrokerResult(request, response);
@@ -271,7 +424,7 @@ function v4AnswerToUserInputResponse(answer: V4InteractionAnswer): ZCodeUserInpu
 async function requestExitPlanModeApproval(
   context: ZCodeProtocolAgentServerContext,
   request: PermissionBrokerRequest,
-  options?: PermissionBrokerRequestOptions,
+  options?: RegisteredRequestOptions,
 ): Promise<PermissionBrokerResult> {
   const response = await raceClientRequestWithV4Interaction(
     context,
@@ -299,6 +452,7 @@ async function requestExitPlanModeApproval(
     // (planApprovalResponseToBrokerResult returns plan_approval_feedback deny); otherwise decline.
     (answer) => v4AnswerToPlanApprovalResponse(answer),
     createInteractionRegistrationOptions(request, "other"),
+    options?.onRegistered,
   );
 
   return planApprovalResponseToBrokerResult(response);

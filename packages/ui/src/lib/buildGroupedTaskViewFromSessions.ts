@@ -91,7 +91,7 @@ function sortGroupTasks(
   });
 }
 
-interface BuildGroupedTaskViewParams {
+export interface BuildGroupedTaskViewParams {
   structure: ZCodeGroupedTaskViewStructure;
   /** Union of task rows from the three persistent tasks-index partitions: active/pinned/archived. */
   taskIndexItems: ZCodeTaskMeta[];

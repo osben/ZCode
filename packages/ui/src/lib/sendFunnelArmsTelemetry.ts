@@ -5,11 +5,11 @@ import { logger } from "@/logger.js";
 // This event group uses ARMS only, not /event/report; Root.tsx installs the reporter according to isDesktop,
 // and Web / mobile remote control has no reporter, so this group is silent there.
 
-const SEND_FUNNEL_ARMS_GROUP = "send_funnel";
+export const SEND_FUNNEL_ARMS_GROUP = "send_funnel";
 
-const SEND_FUNNEL_EVENT_INPUT_FOCUS = "send_input_focus";
-const SEND_FUNNEL_EVENT_SEND_CLICK = "send_click";
-const SEND_FUNNEL_EVENT_SEND_RESULT = "send_result";
+export const SEND_FUNNEL_EVENT_INPUT_FOCUS = "send_input_focus";
+export const SEND_FUNNEL_EVENT_SEND_CLICK = "send_click";
+export const SEND_FUNNEL_EVENT_SEND_RESULT = "send_result";
 
 type ArmsReporter = Pick<IPlatformService, "reportArmsCustomEvent">;
 
@@ -31,6 +31,10 @@ export function setSendFunnelArmsReporter(reporter: ArmsReporter | null): void {
   armsReporter = reporter;
 }
 
+export function clearSendFunnelArmsReporterForTest(): void {
+  armsReporter = null;
+}
+
 // ARMS is an observability path; telemetry failure must not interrupt the send path.
 function emit(payload: ArmsCustomEventPayload): void {
   if (!armsReporter) {
@@ -46,7 +50,7 @@ function emit(payload: ArmsCustomEventPayload): void {
 }
 
 /** Session / draft state, distinguishing “send in an existing session” from “first send in a new task” funnels. */
-function composerScopeOf(sessionId: string | null | undefined): "session" | "draft" {
+export function composerScopeOf(sessionId: string | null | undefined): "session" | "draft" {
   return sessionId ? "session" : "draft";
 }
 

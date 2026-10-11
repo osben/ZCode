@@ -6,10 +6,10 @@ import { buildTaskEntityKey } from "@/lib/taskQueryCache.js";
 import { compareZCodeTaskListItems } from "@/lib/taskListOrdering.js";
 import { attachTaskListRowActivity, getTaskListRowActivity } from "@/v4/taskListRowActivity.js";
 
-type TaskListKind = "pinned" | "archived" | "timeline" | "active";
-type TaskListSortBy = "created" | "updated";
+export type TaskListKind = "pinned" | "archived" | "timeline" | "active";
+export type TaskListSortBy = "created" | "updated";
 
-interface BuildTaskListParams {
+export interface BuildTaskListParams {
   /** Union of task rows from the three persistent tasks-index partitions: active/pinned/archived. */
   taskIndexItems: ZCodeTaskMeta[];
   /** Session activity/details derived from sessions-index; overrides only matching persistent rows. */
@@ -37,7 +37,7 @@ interface BuildTaskListParams {
   cronAutomationIdByTaskId?: ReadonlyMap<string, string>;
 }
 
-interface BuildTaskListResult {
+export interface BuildTaskListResult {
   items: ZCodeTaskMeta[];
   total: number;
 }
@@ -95,7 +95,7 @@ export function joinTaskListUnreadAt(
   return joinTaskListMembershipMeta(tasks, { unreadAtByTaskId });
 }
 
-function joinTaskListMembershipMeta(
+export function joinTaskListMembershipMeta(
   tasks: ZCodeTaskMeta[],
   params: {
     unreadAtByTaskId?: ReadonlyMap<string, number>;

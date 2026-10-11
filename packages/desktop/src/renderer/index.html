@@ -60,7 +60,8 @@
         inset: 0;
         pointer-events: none;
         content: "";
-        /* The startup logo shell has a fixed dark background. Keep its border independent of light-theme tokens. */
+        /* Fix rationale: the startup logo shell has a fixed dark background; its border must not
+           follow light-theme tokens or it will look too heavy on the first screen. */
         border: 1px solid rgba(255, 255, 255, 0.1);
         border-radius: inherit;
       }
@@ -146,9 +147,10 @@
       let animationDone = false;
       let reactReady = false;
 
-      // The main entry must not depend on a dynamic import after the animation. If the import path fails
-      // under Electron/Vite, the page stays on the HTML loading screen. Load the entry statically and
-      // delay removing the startup shell only as an animation overlay.
+      // Fix rationale: the main entry must not depend on a dynamic import after the animation;
+      // once the import path fails under Electron/Vite, the page would stay on the HTML loading
+      // screen forever. The main entry is loaded statically; the startup shell is only an
+      // animation overlay whose removal is delayed.
       const tryFinishStartupAnimation = () => {
         if (finished || !animationDone || !reactReady) return;
         finished = true;
@@ -167,9 +169,10 @@
       };
 
       if (isUpdateStatusWindow) {
-        // The update status window is already a lightweight dialog and should not show the startup shell
-        // when it reuses the main entry HTML. Otherwise, the startup logo in the transparent window can
-        // briefly or continuously cover the update button and make the dialog look broken.
+        // Bugfix: the update status window is itself a lightweight dialog and must not show the
+        // startup shell when reusing the main entry HTML. Otherwise the startup logo in the
+        // transparent standalone window can briefly or continuously cover the update button,
+        // looking like a dialog UI glitch.
         finished = true;
         document.body.classList.add("zcode-startup-ready");
         startupLoading?.remove();

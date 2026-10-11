@@ -34,7 +34,7 @@ import { buildSubagentViews, NODE_ROW_RUNNING } from "./dynamic-workflow-run-ros
 const ASK_NODE_KIND = "ask";
 
 /** Inputs used to derive a situation snapshot. */
-interface WorkflowRunRosterInput {
+export interface WorkflowRunRosterInput {
   /**
    * Reduced state for this run (the same reducer used by the run panel after replaying journal events).
    * Pass `undefined` for a run with no events (a registry gap); the phase map is then absent and the roster is empty.
@@ -42,9 +42,12 @@ interface WorkflowRunRosterInput {
   run: WorkflowRunState | undefined;
   /** All journal events for this run, sorted by sequence ascending. The **only** source of time. */
   events: readonly StoredEvent[];
-  /** `journal.listNodes(runId)`. Supplies only status and `stats`; rows have no time columns. */
+  /**
+   * Non-report node rows without results (`listNodes(runId, {kinds: NON_REPORT_NODE_KINDS, withResult:
+   * false})`). Supplies only status and `stats`; rows have no time columns.
+   */
   nodes: readonly NodeRecord[];
-  /** `journal.listActors(runId)`. The roster's source rows. */
+  /** `journal.listActors(runId, {withPersona: false})`. The roster's source rows. */
   actors: readonly ActorRecord[];
   /** Run lifecycle state, equal to the value shown in the detail view (whether it is terminal determines half of the status wording). */
   status: DynamicWorkflowRunLifecycleStatus;
@@ -59,7 +62,7 @@ interface WorkflowRunRosterInput {
 }
 
 /** Situation snapshot; the detail view expands these three keys directly. */
-interface WorkflowRunRoster {
+export interface WorkflowRunRoster {
   phases?: DynamicWorkflowRunPhaseView[];
   subagents: DynamicWorkflowRunSubagentView[];
   health: DynamicWorkflowRunHealth;
@@ -112,11 +115,12 @@ function buildHealth(input: {
 /**
  * and find the current state.
  *
- * `cap` is **this run's own** limit: the user-specified value, or the machine ceiling if none was set.
+ * `cap` is **this run's own** limit: the user-specified value, or the default concurrency
+ * (`concurrency.ceiling`; the key name predates the "default concurrency" concept).
  * `effective` is the number the governor currently admits, further bounded by the shared gate.
  *
  * **Present only when `effective < cap`**, following the same absence rule as detail's `maxConcurrency`: a run at its own limit has nothing extra to report.
- * Reporting the machine ceiling as `cap` would be wrong—a run started with `max_concurrency: 3` on a six-core machine would always show "3/6",
+ * Reporting the default value as `cap` would be wrong—a run started with `max_concurrency: 3` on a six-core machine would always show "3/6",
  * suggesting throttling even though it is running at the limit the user chose.
  */
 function concurrencyField(

@@ -105,6 +105,7 @@ export interface ContextBuilderConfig {
   /** Execution object for the current step; excluded from Context Source and persisted environment snapshots. */
   model?: Model;
   presentationSurface?: PresentationSurface;
+  genUiOutputDirectory?: string;
   currentDate?: string;
   userInstructions?: ResolvedUserInstructions;
   projectContext?: ProjectContext;

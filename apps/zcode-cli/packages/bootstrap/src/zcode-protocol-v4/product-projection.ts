@@ -9,23 +9,24 @@ import { PERMISSION_FULL_ACCESS_OPTION_ID } from "@zcode/shared/zcode-protocol-v
 // permission interactions, the turn-steer queue, usage, error states, rejection of late terminal
 // events, compact markers, the goal state machine, and fork markers. The transport wrapper
 // (TopicFrame/subscribe) is handled in a later slice.
-import {
-  projectToolActivity,
-  clearSettledOutputPreviews,
-} from "./product-projection-bash-progress.js";
 import type {
-  CompactLifecyclePayload,
   AssistantFeedbackUpdatedPayload,
+  HighspeedMetricsUpdatedPayload,
+  CompactLifecyclePayload,
   DynamicWorkflowRunProgressPayload,
   HookRunLifecyclePayload,
   ModelCompletePayload,
   ModelNetworkStatusPayload,
   ModelSelectedPayload,
+  TurnExecutionModelFallbackPayload,
   ModelStreamingPayload,
   ModelUsage,
   PermissionDeniedPayload,
   PermissionRequestedPayload,
   PermissionResolvedPayload,
+  PluginUiAppToolCallRequestedPayload,
+  PluginUiResourceListChangedPayload,
+  PluginUiResourceUpdatedPayload,
   SessionEvent,
   SessionForkedPayload,
   SessionInputPromotedPayload,
@@ -34,6 +35,7 @@ import type {
   TargetChangedPayload,
   TargetCompletionVerificationPayload,
   ToolCallErrorPayload,
+  ToolCallProgressPayload,
   ToolCallResultPayload,
   ToolCallScheduledPayload,
   ToolCallStartedPayload,
@@ -41,77 +43,77 @@ import type {
   TurnCompletePayload,
   TurnErrorPayload,
   TurnInputIntentMetadata,
-  TurnSteerDispatchChangedPayload,
-  TurnSteerDiscardedPayload,
   TurnSteerDeliveryChangedPayload,
+  TurnSteerDiscardedPayload,
+  TurnSteerDispatchChangedPayload,
   TurnSteerDrainedPayload,
   TurnSteerQueuedPayload,
   UserInputAutoResolutionUpdatedPayload,
+  WorkspaceHookAdmissionUpdatedPayload,
   WorkspaceHookReviewRequestedPayload,
   WorkspaceHookReviewSettledPayload,
   WorkspaceHookReviewSupersededPayload,
-  WorkspaceHookAdmissionUpdatedPayload,
 } from "@zcode/contracts";
 import {
-  CoreErrorType,
   AMEND_WORKFLOW_TOOL_NAME,
   CREATE_WORKFLOW_TOOL_NAME,
+  CoreErrorType,
   SessionEventType,
   getModelUsageContextTokens,
 } from "@zcode/contracts";
+import {
+  clearSettledOutputPreviews,
+  projectToolActivity,
+} from "./product-projection-bash-progress.js";
 // The review monotonicity decision has one source of truth; the projection only applies the
 // policy (accept advance/no_current, ignore other verdicts, and clear onSessionResumed across flows).
 // Import directly from the monotonicity subpath: this re-export from the discovery barrel fails in
 // the packages/ui Desktop build chain, preventing the app from opening after restart.
-import { verdictWorkspaceHookReviewRequest } from "@zcode/shared/workspace-hook-review-monotonicity";
 import {
-  extractPlanStepsFromToolInput,
-  extractPlanStepsFromToolOutput,
-  isZCodeModelRetryRecoveryProgressPayload,
-  isZCodeFileStreamingToolInputPreviewTool,
-  parseZCodeBackgroundTaskNotificationText,
-  resolveZCodeBackgroundTaskControlKind,
   WORKFLOW_REFINE_PERMISSION_OPTION_ID,
   ZCODE_FILE_STREAMING_TOOL_INPUT_PREVIEW_MIN_INTERVAL_MS,
+  extractPlanStepsFromToolInput,
+  extractPlanStepsFromToolOutput,
+  isHighspeedProviderId,
+  isZCodeFileStreamingToolInputPreviewTool,
+  isZCodeModelRetryRecoveryProgressPayload,
+  parseZCodeBackgroundTaskNotificationText,
+  resolveZCodeBackgroundTaskControlKind,
   zcodeBackgroundTaskNotificationToolUpdateStatus,
 } from "@zcode/shared";
+import { verdictWorkspaceHookReviewRequest } from "@zcode/shared/workspace-hook-review-monotonicity";
 import type {
-  AssistantTextRow,
   ApiRetryState,
+  AssistantTextRow,
   BackgroundWorkSummary,
-  CuaAppIdentity,
   ConversationDelta,
   ConversationRow,
   ConversationRowTarget,
   ConversationSnapshot,
+  CuaAppIdentity,
   GoalState,
   HookExecutionProjection,
   HookInvocationRow,
+  MutableConversationSnapshotAccumulator,
   PendingInteraction,
+  QueueItem,
   ReasoningRow,
+  RunningSubagentSummary,
   SessionControl,
+  SessionUsageState,
   StatePatch,
+  SubagentProjectionState,
   SubagentRow,
   TimelineMarkerPayload,
   TimelineMarkerRow,
   ToolCallDisplay,
   ToolCallRow,
-  SessionUsageState,
-  RunningSubagentSummary,
-  SubagentProjectionState,
   TurnHeaderRow,
   TurnWorkSegment,
-  UserInputRow,
   UserInputQuestionPayload,
-  QueueItem,
-  MutableConversationSnapshotAccumulator,
+  UserInputRow,
   WorkflowRunProgressEnvelope,
 } from "@zcode/shared/zcode-protocol-v4";
-import {
-  parseListAppsSnapshot,
-  readOfficialCuaAction,
-  resolveCuaAppIdentity,
-} from "./cua-app-snapshot.js";
 import {
   PROTOCOL_V4_LIMITS,
   applyConversationDeltas,
@@ -121,6 +123,30 @@ import {
   reduceWorkflowRunsState,
   workspaceHookReviewRequestPayloadSchema,
 } from "@zcode/shared/zcode-protocol-v4";
+import {
+  SESSION_ALLOW_PERMISSION_OPTION_KIND,
+  buildProtocolPermissionOptions,
+} from "../permission-options.js";
+import { shouldHideInvalidToolCallFromProduct } from "../tool-call-product-visibility.js";
+import {
+  parseListAppsSnapshot,
+  readOfficialCuaAction,
+  resolveCuaAppIdentity,
+} from "./cua-app-snapshot.js";
+import {
+  normalizeConversationEvent,
+  type CanonicalAssistantSegmentFact,
+  type CanonicalConversationFact,
+  type CanonicalModelStream,
+  type CanonicalOpenSegmentIdentity,
+  type CanonicalUserIntentFact,
+  type ConversationNormalizationDiagnostic,
+} from "./event-normalizer.js";
+import {
+  MCP_ELICITATION_INTERACTION,
+  MCP_ELICITATION_TOOL_NAME,
+  mcpElicitationQuestions,
+} from "./mcp-elicitation.js";
 import {
   buildToolOutput,
   buildTurnHeaderRow,
@@ -136,20 +162,6 @@ import {
   createInitialConversationSnapshot,
   deltaBumpsRevision,
 } from "./projection-state.js";
-import {
-  normalizeConversationEvent,
-  type CanonicalAssistantSegmentFact,
-  type CanonicalModelStream,
-  type CanonicalConversationFact,
-  type CanonicalOpenSegmentIdentity,
-  type CanonicalUserIntentFact,
-  type ConversationNormalizationDiagnostic,
-} from "./event-normalizer.js";
-import {
-  buildProtocolPermissionOptions,
-  SESSION_ALLOW_PERMISSION_OPTION_KIND,
-} from "../permission-options.js";
-import { shouldHideInvalidToolCallFromProduct } from "../tool-call-product-visibility.js";
 
 type HookInvocationRowContent = Omit<
   HookInvocationRow,
@@ -306,6 +318,9 @@ export interface ConversationEditTarget {
   transcriptMessageId: string;
   coveredByStableCompact: boolean;
   intent: {
+    inputOrigin?: "desktop" | "mobile";
+    conversationQuotes?: import("@zcode/contracts").TurnInputIntentMetadata["conversationQuotes"];
+    botGroupSource?: CanonicalUserIntentFact["botGroupSource"];
     kind: "sendText" | "sendGoalCommand";
     text: string;
     sourceCommandId?: string;
@@ -331,7 +346,8 @@ export type ConversationRowTargetAction =
   | "applyFileRewind"
   | "fileChanges"
   | "fileRewindPreview"
-  | "setAssistantFeedback";
+  | "setAssistantFeedback"
+  | "setHighspeedMetrics";
 
 export type ConversationRowTargetResolution =
   | {
@@ -408,6 +424,11 @@ interface FileToolInputPreviewState {
   pendingAppend: string;
 }
 
+interface HighspeedToolInterval {
+  startedAt: number;
+  endedAt?: number;
+}
+
 type TurnModelBaseline =
   | { kind: "silentInitial" }
   | { kind: "sourceLess" }
@@ -475,6 +496,9 @@ export class ProductProjection {
   private runtimeTurnIdByProductTurnId = new Map<string, string>();
   private productTurnSplitOrdinalByRuntimeTurnId = new Map<string, number>();
   private currentProductTurnStartedAtMs: number | null = null;
+  // The CLI aggregates real durations needed by Highspeed sharing so split data is not lost after the renderer exits.
+  private highspeedModelDurationByTurnId = new Map<string, number>();
+  private highspeedToolIntervalsByTurnId = new Map<string, Map<string, HighspeedToolInterval>>();
   // Side table for delivery semantics: record the event payload (or followupMode fallback) when
   // TurnSteerQueued arrives, then choose between splitting a turn and inlining at drain time. Once
   // the ledger is persisted, it becomes authoritative.
@@ -849,6 +873,17 @@ export class ProductProjection {
       }
       return { ok: true, action, row, messageId };
     }
+    if (action === "setHighspeedMetrics") {
+      const messageId = this.messageIdByRowId.get(row.rowId);
+      if (row.kind !== "userInput" || !row.highspeed || !messageId) {
+        return {
+          ok: false,
+          status: "rejected",
+          reasonCode: "guard.actionUnavailable",
+        };
+      }
+      return { ok: true, action, row, messageId };
+    }
     if (row.kind !== "turnHeader") {
       return {
         ok: false,
@@ -1046,14 +1081,18 @@ export class ProductProjection {
     const reduced =
       event.type === SessionEventType.AssistantFeedbackUpdated
         ? this.onAssistantFeedbackUpdated(event)
-        : (() => {
-            const fact = normalizeConversationEvent(event, {
-              productTurnId,
-              openAssistantSegments: this.openAssistantSegments(),
-            });
-            this.normalizationDiagnostics.push(...fact.diagnostics);
-            return this.reduce(fact);
-          })();
+        : event.type === SessionEventType.HighspeedMetricsUpdated
+          ? this.onHighspeedMetricsUpdated(event)
+          : event.type === SessionEventType.TurnExecutionModelFallback
+            ? this.onTurnExecutionModelFallback(event)
+            : (() => {
+                const fact = normalizeConversationEvent(event, {
+                  productTurnId,
+                  openAssistantSegments: this.openAssistantSegments(),
+                });
+                this.normalizationDiagnostics.push(...fact.diagnostics);
+                return this.reduce(fact);
+              })();
     const subagentDeltas = this.shouldMaterializeSubagentProjection(reduced)
       ? this.materializeSubagentProjection(reduced)
       : [];
@@ -1157,6 +1196,13 @@ export class ProductProjection {
       this.productTurnSplitOrdinalByRuntimeTurnId,
     );
     clone.currentProductTurnStartedAtMs = this.currentProductTurnStartedAtMs;
+    clone.highspeedModelDurationByTurnId = new Map(this.highspeedModelDurationByTurnId);
+    clone.highspeedToolIntervalsByTurnId = new Map(
+      [...this.highspeedToolIntervalsByTurnId].map(([turnId, intervals]) => [
+        turnId,
+        new Map([...intervals].map(([toolCallId, interval]) => [toolCallId, { ...interval }])),
+      ]),
+    );
     clone.deliveryByPendingInputId = new Map(this.deliveryByPendingInputId);
     clone.currentTurnId = this.currentTurnId;
     clone.currentTurnStartedModelOnly = this.currentTurnStartedModelOnly;
@@ -1200,6 +1246,8 @@ export class ProductProjection {
     this.runtimeTurnIdByProductTurnId = candidate.runtimeTurnIdByProductTurnId;
     this.productTurnSplitOrdinalByRuntimeTurnId = candidate.productTurnSplitOrdinalByRuntimeTurnId;
     this.currentProductTurnStartedAtMs = candidate.currentProductTurnStartedAtMs;
+    this.highspeedModelDurationByTurnId = candidate.highspeedModelDurationByTurnId;
+    this.highspeedToolIntervalsByTurnId = candidate.highspeedToolIntervalsByTurnId;
     this.deliveryByPendingInputId = candidate.deliveryByPendingInputId;
     this.currentTurnId = candidate.currentTurnId;
     this.currentTurnStartedModelOnly = candidate.currentTurnStartedModelOnly;
@@ -1404,8 +1452,9 @@ export class ProductProjection {
       case SessionEventType.ToolCallScheduled:
         return this.onToolCallScheduled(event);
       case SessionEventType.ToolCallStarted:
-      case SessionEventType.ToolCallProgress:
         return this.onToolCallActivity(event);
+      case SessionEventType.ToolCallProgress:
+        return this.onToolCallProgress(event);
       case SessionEventType.ToolCallResult:
         return this.onToolCallResult(event);
       case SessionEventType.ToolCallError:
@@ -1416,6 +1465,51 @@ export class ProductProjection {
         return this.onPermissionResolved(event);
       case SessionEventType.PermissionDenied:
         return this.onPermissionDenied(event);
+      case SessionEventType.PluginUiResourceUpdated: {
+        // Live-only; does not change the snapshot. The renderer dispatches to sandbox instances by subscribers.
+        const payload = event.payload as PluginUiResourceUpdatedPayload;
+        return [
+          {
+            op: "pluginUi.resourceUpdated",
+            pluginId: payload.pluginId,
+            serverName: payload.serverName,
+            uri: payload.uri,
+            subscribers: payload.subscribers,
+          },
+        ];
+      }
+      case SessionEventType.PluginUiResourceListChanged: {
+        const payload = event.payload as PluginUiResourceListChangedPayload;
+        return [
+          {
+            op: "pluginUi.resourceListChanged",
+            pluginId: payload.pluginId,
+            serverName: payload.serverName,
+            subscribers: payload.subscribers,
+          },
+        ];
+      }
+      case SessionEventType.PluginUiInstanceClosed: {
+        const payload = event.payload as PluginUiResourceListChangedPayload;
+        return [{ op: "pluginUi.instanceClosed", ...payload }];
+      }
+      case SessionEventType.PluginUiAppToolCallRequested: {
+        // App-provided tools mailbox: live-only, delivered to the single instance among subscribers.
+        const payload = event.payload as PluginUiAppToolCallRequestedPayload;
+        return [
+          {
+            op: "pluginUi.appToolCall",
+            activity: payload.activity,
+            ...(payload.cancelled ? { cancelled: true } : {}),
+            pluginId: payload.pluginId,
+            serverName: payload.serverName,
+            subscribers: payload.subscribers,
+            callId: payload.callId,
+            toolName: payload.toolName,
+            arguments: payload.arguments,
+          },
+        ];
+      }
       case SessionEventType.UserInputAutoResolutionUpdated:
         return this.onUserInputAutoResolutionUpdated(event);
       case SessionEventType.WorkspaceHookReviewRequested:
@@ -2085,14 +2179,22 @@ export class ProductProjection {
       const row: UserInputRow = {
         ...rowBase,
         kind: "userInput",
-        text: fact.input,
+        text:
+          fact.conversationQuotes || fact.botGroupSource
+            ? (fact.intentText ?? fact.input)
+            : fact.input,
         origin: fact.origin,
         ...(fact.sourceCommandId ? { sourceCommandId: fact.sourceCommandId } : {}),
         ...(rootSourceCommandId ? { rootSourceCommandId } : {}),
+        ...(fact.inputOrigin ? { inputOrigin: fact.inputOrigin } : {}),
+        ...(fact.conversationQuotes ? { conversationQuotes: fact.conversationQuotes } : {}),
+        ...(fact.botGroupSource ? { botGroupSource: fact.botGroupSource } : {}),
         ...(fact.clientId ? { clientId: fact.clientId } : {}),
+        ...(fact.highspeed ? { highspeed: fact.highspeed } : {}),
         ...(fact.workflowLaunch ? { workflowLaunch: fact.workflowLaunch } : {}),
         ...(fact.epilogueStart === undefined ? {} : { epilogueStart: fact.epilogueStart }),
         ...(attachments && attachments.length > 0 ? { attachments } : {}),
+        ...(fact.source ? { source: fact.source } : {}),
       };
       // A workspace checkpoint uses the user messageId as targetMessageId.
       // Ordinary TurnStarted must also register the userInput row's internal anchor; otherwise the
@@ -2110,6 +2212,9 @@ export class ProductProjection {
                 kind: fact.intentKind,
                 text: fact.intentText,
                 ...(fact.sourceCommandId ? { sourceCommandId: fact.sourceCommandId } : {}),
+                ...(fact.inputOrigin ? { inputOrigin: fact.inputOrigin } : {}),
+                ...(fact.conversationQuotes ? { conversationQuotes: fact.conversationQuotes } : {}),
+                ...(fact.botGroupSource ? { botGroupSource: fact.botGroupSource } : {}),
                 ...(fact.clientId ? { clientId: fact.clientId } : {}),
                 ...(fact.attachments ? { attachments: fact.attachments } : {}),
                 ...(fact.queueItemId ? { queueItemId: fact.queueItemId } : {}),
@@ -2147,6 +2252,9 @@ export class ProductProjection {
               ...(fact.foregroundExecutionId
                 ? { foregroundExecutionId: fact.foregroundExecutionId }
                 : {}),
+              // An automatic interruption must be tied to the actual execution input; clients cannot
+              // guess it from the last message.
+              ...(fact.sourceCommandId ? { sourceCommandId: fact.sourceCommandId } : {}),
               startedAt: this.ms(event),
             },
           ],
@@ -2229,6 +2337,7 @@ export class ProductProjection {
           ? "completedInterrupted"
           : "error";
     const streamClose = payload.resultType === "success" ? "complete" : "interrupted";
+    const activeMs = this.activeMsForCompletion(event, payload.duration);
 
     // stopPausesActiveGoalTarget: when stop applies to any foreground work, force an active/verifying
     // goal into paused and wait for an explicit resumeGoal.
@@ -2263,8 +2372,9 @@ export class ProductProjection {
       ...this.upsertTurnHeader(
         event,
         headerState,
-        this.activeMsForCompletion(event, payload.duration),
+        activeMs,
         payload.historyRoundCount,
+        this.highspeedTimingForTurn(this.turnIdOf(event), activeMs),
       ),
       ...(payload.resultType === "success" ? this.markStableForkAssistant(event) : []),
       {
@@ -2353,7 +2463,13 @@ export class ProductProjection {
     return [
       ...this.closeStreamingRows("interrupted"),
       ...this.closeOpenToolRows(event, "error"),
-      ...this.upsertTurnHeader(event, "failed"),
+      ...this.upsertTurnHeader(
+        event,
+        "failed",
+        undefined,
+        undefined,
+        this.highspeedTimingForTurn(this.turnIdOf(event)),
+      ),
       {
         op: "state.updated",
         patch: this.controlPatch(
@@ -2399,6 +2515,24 @@ export class ProductProjection {
   private onModelNetworkStatus(event: SessionEvent): ConversationDelta[] {
     if (!this.acceptsActiveModelEvent(event)) return [];
     const payload = event.payload as ModelNetworkStatusPayload;
+    if (
+      (payload.querySource === undefined || payload.querySource === "main_turn") &&
+      (payload.type === "model_request_completed" || payload.type === "model_request_failed") &&
+      // Highspeed cards are split into several hidden providers by family (zai/bigmodel), so this can
+      // no longer compare against a single constant; otherwise a BigModel account's accelerated turns
+      // are treated as ordinary and the saved time is always 0.
+      isHighspeedProviderId(payload.providerId) &&
+      payload.durationMs !== undefined
+    ) {
+      // Cause: after a hybrid turn card expires, the session switches to the ordinary provider. The
+      // old logic also accumulated ordinary-model retries/timeouts into Highspeed modelDurationMs,
+      // inflating the saved time by the highspeed multiplier for hours.
+      const turnId = this.turnIdOf(event);
+      this.highspeedModelDurationByTurnId.set(
+        turnId,
+        (this.highspeedModelDurationByTurnId.get(turnId) ?? 0) + Math.max(0, payload.durationMs),
+      );
+    }
     switch (payload.type) {
       case "model_retry_scheduled": {
         const attempt = positiveInteger(payload.attempt, 1);
@@ -2440,6 +2574,7 @@ export class ProductProjection {
       // retry/waiting labels.
       case "model_request_queued":
       case "model_request_admitted":
+      case "model_request_observation":
         return [];
     }
   }
@@ -2695,6 +2830,70 @@ export class ProductProjection {
     }
     if (row.feedback === payload.feedback) return [];
     return [{ op: "row.upserted", row: { ...row, feedback: payload.feedback } }];
+  }
+
+  private onHighspeedMetricsUpdated(event: SessionEvent): ConversationDelta[] {
+    const payload = event.payload as HighspeedMetricsUpdatedPayload;
+    const row = this.snapshot.rows.window.find(
+      (candidate): candidate is UserInputRow =>
+        candidate.kind === "userInput" && candidate.entityId === payload.entityId,
+    );
+    if (!row) return [];
+    // Cause: the terminal metrics update used to replace row.highspeed wholesale. The payload comes
+    // from raw transcript metadata plus duration fields and lacks fallbackAt, which the live
+    // projection had just written via TurnExecutionModelFallback; clearing it broke the downgrade
+    // toast and made live and cold/replay disagree. Metrics updates are incremental supplements:
+    // merge at field level, add-only (spec §5).
+    return [
+      {
+        op: "row.upserted",
+        row: { ...row, highspeed: { ...row.highspeed, ...payload.highspeed } },
+      },
+    ];
+  }
+
+  private onTurnExecutionModelFallback(event: SessionEvent): ConversationDelta[] {
+    const payload = event.payload as TurnExecutionModelFallbackPayload;
+    // Cause: a fallback discards the current assistant attempt, but the old projection updated only
+    // the input row's metadata and left the old model's text/reasoning rows streaming. When the
+    // original model resumed, that content was mislabeled complete, or even appended to the same row
+    // when text_start was missing. Unfinalized tool input likewise never receives tool_call and must
+    // be settled together with the discarded attempt. Committed tool executions are not handled
+    // here; core's tool_abandoned event settles them.
+    const discardedStreamDeltas = this.acceptsActiveModelEvent(event)
+      ? [
+          ...this.closeStreamingRows("interrupted"),
+          ...this.closeOpenToolRows(event, "cancelled", (row) => row.status === "inputStreaming"),
+        ]
+      : [];
+    // Both card expiry and other accelerated-request failures project onto the same accelerated
+    // input row: fallbackAt triggers the one-time notice, and fallbackReason lets the renderer
+    // distinguish "card expired" from "acceleration service unavailable" copy.
+    const turnId = this.turnIdOf(event);
+    const row = this.snapshot.rows.window.find(
+      (candidate): candidate is UserInputRow =>
+        candidate.kind === "userInput" &&
+        // Cause: cold hydration rebuilds product turnIds, so the runtime turnId can no longer
+        // associate persisted input; inputId/sourceCommandId are the recovery-stable identities.
+        (candidate.turnId === turnId ||
+          (payload.inputId !== undefined && candidate.sourceCommandId === payload.inputId)) &&
+        candidate.highspeed !== undefined,
+    );
+    if (!row?.highspeed) return discardedStreamDeltas;
+    return [
+      ...discardedStreamDeltas,
+      {
+        op: "row.upserted",
+        row: {
+          ...row,
+          highspeed: {
+            ...row.highspeed,
+            fallbackAt: event.timestamp.getTime(),
+            fallbackReason: payload.reason,
+          },
+        },
+      },
+    ];
   }
 
   private openReasoningRow(
@@ -3018,15 +3217,70 @@ export class ProductProjection {
   private onToolCallActivity(event: SessionEvent): ConversationDelta[] {
     if (this.isMirroredSubagentToolEvent(event) || !this.isRunning()) return [];
     const payload = event.payload as ToolCallStartedPayload;
+    this.recordHighspeedToolStarted(
+      this.turnIdOf(event),
+      String(payload.toolCallId),
+      this.ms(event),
+    );
     const row = this.findToolRow(String(payload.toolCallId));
     if (!row) return [];
     return projectToolActivity(event, row);
+  }
+
+  /**
+   * MCP `notifications/progress` (A8) → progress on the row. Write only while running: a progress
+   * notification arriving late after a terminal state must not relight a success/error row, and
+   * bash stdout byte progress is not consumed here.
+   */
+  private onToolCallProgress(event: SessionEvent): ConversationDelta[] {
+    if (this.isMirroredSubagentToolEvent(event) || !this.isRunning()) return [];
+    const payload = event.payload as ToolCallProgressPayload;
+    const row = this.findToolRow(String(payload.toolCallId));
+    if (!row || row.status !== "running") return [];
+    // Both branches share ToolCallProgress: the Bash tail window and MCP percentages must be
+    // projected separately so merged results do not overwrite each other.
+    if (row.toolName === "Bash") return projectToolActivity(event, row);
+    const total =
+      typeof payload.total === "number" && Number.isFinite(payload.total) && payload.total > 0
+        ? payload.total
+        : undefined;
+    const fraction =
+      total !== undefined &&
+      typeof payload.progress === "number" &&
+      Number.isFinite(payload.progress)
+        ? Math.min(1, Math.max(0, payload.progress / total))
+        : undefined;
+    const message =
+      typeof payload.message === "string" && payload.message.trim().length > 0
+        ? payload.message.trim().slice(0, 200)
+        : undefined;
+    if (fraction === undefined && message === undefined && total === undefined) return [];
+    return [
+      {
+        op: "row.upserted",
+        row: {
+          ...row,
+          progress: {
+            ...(fraction !== undefined ? { fraction } : {}),
+            ...(total !== undefined ? { total } : {}),
+            ...(message !== undefined ? { message } : {}),
+            updatedAt: this.ms(event),
+          },
+        },
+      },
+    ];
   }
 
   private onToolCallResult(event: SessionEvent): ConversationDelta[] {
     if (this.isMirroredSubagentToolEvent(event) || !this.isRunning()) return [];
     const payload = event.payload as ToolCallResultPayload;
     const toolCallId = String(payload.toolCallId);
+    this.recordHighspeedToolEnded(
+      this.turnIdOf(event),
+      toolCallId,
+      this.ms(event),
+      payload.duration,
+    );
     const row = this.findToolRow(toolCallId);
     if (!row) return [];
     const success = payload.result.success;
@@ -3040,6 +3294,8 @@ export class ProductProjection {
     const next: ToolCallRow = {
       ...row,
       status: success ? "success" : "error",
+      // Terminal state clears in-progress updates (R7).
+      progress: undefined,
       output: buildToolOutput(payload.result, toolCallId),
       ...(display ? { display } : {}),
       endedAt: this.ms(event),
@@ -3112,6 +3368,7 @@ export class ProductProjection {
   private onToolCallError(event: SessionEvent): ConversationDelta[] {
     if (this.isMirroredSubagentToolEvent(event) || !this.isRunning()) return [];
     const payload = event.payload as ToolCallErrorPayload;
+    this.recordHighspeedToolEnded(this.turnIdOf(event), String(payload.toolCallId), this.ms(event));
     const row = this.findToolRow(String(payload.toolCallId));
     if (!row) return [];
     const cancelled =
@@ -3125,6 +3382,7 @@ export class ProductProjection {
           // written as error, the later turn reducer, which settles only running rows, cannot
           // correct it to stopped.
           status: cancelled ? "cancelled" : "error",
+          progress: undefined,
           ...(cancelled
             ? { error: undefined }
             : { error: { code: payload.error.type, message: payload.error.message } }),
@@ -3195,6 +3453,33 @@ export class ProductProjection {
         },
       };
     }
+    if (payload.toolName === MCP_ELICITATION_TOOL_NAME) {
+      // MCP elicitation: requestedSchema → structured questions,
+      // using the same mapping as the broker; the v4 UI reuses ElicitationDialog.
+      const elicitation = isPlainRecord(payload.input) ? payload.input : {};
+      return {
+        interactionId,
+        kind: "userInput",
+        anchorRowId: this.toolRowIdByCallId.get(toolCallId) ?? null,
+        createdAt: this.ms(event),
+        payload: {
+          kind: "userInput",
+          prompt: payload.reason,
+          freeText: true,
+          toolCallId,
+          toolName: payload.toolName,
+          traceId: event.traceId,
+          input: payload.input,
+          schema: {
+            interaction: MCP_ELICITATION_INTERACTION,
+            serverName: elicitation.serverName,
+            requestedSchema: elicitation.requestedSchema,
+          },
+          questions: mcpElicitationQuestions(payload.reason, elicitation.requestedSchema),
+          ...(payload.origin ? { origin: payload.origin } : {}),
+        },
+      };
+    }
     if (isExitPlanModeToolName(payload.toolName)) {
       // ExitPlanMode reuses the userInput/elicitation channel for plan-approval feedback; a regular
       // permission payload cannot express the business semantics of approve/custom feedback.
@@ -3230,7 +3515,10 @@ export class ProductProjection {
         summary: payload.reason,
         detail: payload.input,
         freeText: true,
-        ...(payload.fullAccessSupported === true && !payload.origin && !payload.optionsPolicy
+        ...(payload.approvalMode !== "user-once" &&
+        payload.fullAccessSupported === true &&
+        !payload.origin &&
+        !payload.optionsPolicy
           ? {
               fullAccessOption: {
                 optionId: PERMISSION_FULL_ACCESS_OPTION_ID,
@@ -3244,6 +3532,7 @@ export class ProductProjection {
         ...(askDisplay ? { display: askDisplay } : {}),
         options: [
           ...buildProtocolPermissionOptions({
+            approvalMode: payload.approvalMode,
             input: payload.input,
             suggestedPermissionUpdates: payload.suggestedPermissionUpdates,
             ...(payload.optionsPolicy ? { optionsPolicy: payload.optionsPolicy } : {}),
@@ -3440,6 +3729,9 @@ export class ProductProjection {
       payload.intent?.requestedDelivery ?? existing?.delivery.requested ?? admittedDelivery;
     const fallbackReasonCode =
       payload.intent?.fallbackReasonCode ?? existing?.delivery.fallbackReasonCode;
+    // Cause: the queue projection used to drop intent.highspeed, so both automatic and manual
+    // promotion misjudged a valid card as absent.
+    const highspeed = payload.intent?.highspeed ?? existing?.highspeed;
     const nextItem: QueueItem = {
       queueItemId,
       kind:
@@ -3456,6 +3748,9 @@ export class ProductProjection {
         payload.pendingInputId,
       clientId: payload.intent?.clientId ?? existing?.clientId ?? "cli",
       attachments: payload.intent?.attachmentRefs ?? existing?.attachments ?? [],
+      ...((payload.intent?.source ?? existing?.source)
+        ? { source: payload.intent?.source ?? existing?.source }
+        : {}),
       // QueueItem is also input to promoted execution, not just UI display; omitting fields makes a
       // new Turn inherit the old permissions/model. Older body-edit events may not have intent, so
       // preserve the existing item's facts instead of filling them from the current Session.
@@ -3464,6 +3759,17 @@ export class ProductProjection {
       planEnabled: payload.intent?.planEnabled ?? existing?.planEnabled,
       sharedContextRefs: payload.intent?.sharedContextRefs ?? existing?.sharedContextRefs,
       provenance: payload.intent?.provenance ?? existing?.provenance,
+      // Both queued events and in-place edits must retain the trusted ingress origin; the UI
+      // projection must not drop the sender.
+      ...((payload.intent?.inputOrigin ?? existing?.inputOrigin)
+        ? { inputOrigin: payload.intent?.inputOrigin ?? existing?.inputOrigin }
+        : {}),
+      ...((payload.intent?.conversationQuotes ?? existing?.conversationQuotes)
+        ? { conversationQuotes: payload.intent?.conversationQuotes ?? existing?.conversationQuotes }
+        : {}),
+      ...((payload.intent?.botGroupSource ?? existing?.botGroupSource)
+        ? { botGroupSource: payload.intent?.botGroupSource ?? existing?.botGroupSource }
+        : {}),
       delivery: {
         requested: requestedDelivery,
         admitted: admittedDelivery,
@@ -3486,6 +3792,7 @@ export class ProductProjection {
               ? { state: "steering" }
               : { state: "notRequested" },
       dispatch: { state: "queued" },
+      ...(highspeed ? { highspeed } : {}),
       ...(payload.toolDisallowlist ? { toolDisallowlist: [...payload.toolDisallowlist] } : {}),
       admittedAt: payload.intent?.admittedAt ?? existing?.admittedAt ?? this.ms(event),
     };
@@ -3643,13 +3950,23 @@ export class ProductProjection {
       const row = {
         ...this.rowBase(event, productTurnId, entityId),
         kind: "userInput" as const,
-        text: item.text,
+        text:
+          item.intent?.conversationQuotes || item.intent?.botGroupSource
+            ? (item.intent.text ?? item.text)
+            : item.text,
         origin: "realUser" as const,
         ...(delivery === "guide" ? { guided: true as const } : {}),
         ...(item.intent?.sourceCommandId ? { sourceCommandId: item.intent.sourceCommandId } : {}),
         ...(rootSourceCommandId ? { rootSourceCommandId } : {}),
+        ...(item.intent?.inputOrigin ? { inputOrigin: item.intent.inputOrigin } : {}),
+        ...(item.intent?.conversationQuotes
+          ? { conversationQuotes: item.intent.conversationQuotes }
+          : {}),
+        ...(item.intent?.botGroupSource ? { botGroupSource: item.intent.botGroupSource } : {}),
         ...(item.intent?.clientId ? { clientId: item.intent.clientId } : {}),
+        ...(item.intent?.highspeed ? { highspeed: item.intent.highspeed } : {}),
         ...(item.intent?.attachmentRefs?.length ? { attachments: item.intent.attachmentRefs } : {}),
+        ...(item.intent?.source ? { source: item.intent.source } : {}),
       };
       // A real-user row consumed from queue/guide uses the same complete canonical target as an
       // ordinary TurnStarted. Legacy events without messageId remain display-only and do not expose
@@ -3668,6 +3985,13 @@ export class ProductProjection {
                 text: item.intent?.text ?? item.text,
                 ...(item.intent?.sourceCommandId
                   ? { sourceCommandId: item.intent.sourceCommandId }
+                  : {}),
+                ...(item.intent?.inputOrigin ? { inputOrigin: item.intent.inputOrigin } : {}),
+                ...(item.intent?.conversationQuotes
+                  ? { conversationQuotes: item.intent.conversationQuotes }
+                  : {}),
+                ...(item.intent?.botGroupSource
+                  ? { botGroupSource: item.intent.botGroupSource }
                   : {}),
                 ...(item.intent?.clientId ? { clientId: item.intent.clientId } : {}),
                 ...(item.intent?.attachmentRefs ? { attachments: item.intent.attachmentRefs } : {}),
@@ -3966,6 +4290,10 @@ export class ProductProjection {
             return true;
           }
           break;
+        case "pluginUi.resourceUpdated":
+        case "pluginUi.resourceListChanged":
+        case "pluginUi.instanceClosed":
+        case "pluginUi.appToolCall":
         // Non-row op: it changes only workflowRuns state keys, which do not intersect the input to
         // subagent row projection.
         case "workflowRun.updated":
@@ -4116,6 +4444,10 @@ export class ProductProjection {
       switch (delta.op) {
         case "row.appended":
         case "state.updated":
+        case "pluginUi.resourceUpdated":
+        case "pluginUi.resourceListChanged":
+        case "pluginUi.instanceClosed":
+        case "pluginUi.appToolCall":
         // Non-row op: it cannot change this row's prospective shape.
         case "workflowRun.updated":
         case "workflowRun.removed":
@@ -4428,7 +4760,8 @@ export class ProductProjection {
   // with cold recovery included (precedent: the subagents key).
   //
   // The reducer lives in @zcode/shared's workflow-runs-reducer beside the state schema. The TUI
-  // mirror must use the same reducer; separate implementations would create two clocks.
+  // mirror must use the same reducer; separate implementations would create two clocks
+  // (docs/dynamic-workflow/launch.md "The inline card").
   // Only impure projection work remains here: extract the payload from the event envelope and emit
   // the difference between old/new state as a key-level delta.
   private onDynamicWorkflowRunProgress(event: SessionEvent): ConversationDelta[] {
@@ -4445,8 +4778,8 @@ export class ProductProjection {
     // Emit the **difference**, not the whole key: one engine event changes one node, while resending
     // the whole key costs O(N) bytes per event and O(N²) over a run (the workflow-runs-delta.ts
     // header explains how that becomes a per-node limit and a frozen UI).
-    // The incremental protocol contract requires `applyAll(prior, diff(prior, next))` to equal next
-    // **byte for byte**, so after applyEventInternal applies these deltas,
+    // The contract that `applyAll(prior, diff(prior, next))` equals next **byte for byte** is pinned
+    // by property tests, so after applyEventInternal applies these deltas,
     // this.snapshot.workflowRuns remains next.
     return diffWorkflowRunsState(prior, workflowRuns);
   }
@@ -4619,28 +4952,44 @@ export class ProductProjection {
     // fileChanges belong to the child session's workspace and must be projected independently into
     // the child turn header.
     const supportsFileChangeSummary = isMainTurn || payload.querySource === "subagent";
+    const usage = payload.usage as ModelUsage;
     const deltas: ConversationDelta[] = [];
-    if (supportsFileChangeSummary && payload.fileChanges && payload.fileChanges.files > 0) {
-      const turnId = this.turnIdOf(event);
-      const headerRowId = this.turnHeaderRowIdByTurnId.get(turnId);
-      const headerRow = headerRowId !== undefined ? this.findRow(headerRowId) : undefined;
-      if (headerRow?.kind === "turnHeader") {
+    const turnId = this.turnIdOf(event);
+    const headerRowId = this.turnHeaderRowIdByTurnId.get(turnId);
+    const headerRow = headerRowId !== undefined ? this.findRow(headerRowId) : undefined;
+    if (headerRow?.kind === "turnHeader") {
+      const fileChanges =
+        supportsFileChangeSummary && payload.fileChanges && payload.fileChanges.files > 0
+          ? {
+              fileChanges: {
+                additions: payload.fileChanges.additions,
+                deletions: payload.fileChanges.deletions,
+                files: payload.fileChanges.files,
+                // Cause: this conditional object is later spread-merged with headerRow, and TS widens
+                // the literal to string, breaking the TurnFileChangeSummary contract in the
+                // pre-CLI-start build.
+                state: "active" as const,
+              },
+            }
+          : {};
+      if (isMainTurn || "fileChanges" in fileChanges) {
         deltas.push({
           op: "row.upserted",
           row: {
             ...headerRow,
-            fileChanges: {
-              additions: payload.fileChanges.additions,
-              deletions: payload.fileChanges.deletions,
-              files: payload.fileChanges.files,
-              state: "active",
-            },
+            ...fileChanges,
+            // Cause: when the renderer observes the running snapshot is unreliable; continuous
+            // clients may receive merged updates, and replayable clients may first recover with a
+            // terminal state already present. Per-turn tokens must accumulate in the authoritative
+            // event projection.
+            ...(isMainTurn
+              ? { outputTokens: (headerRow.outputTokens ?? 0) + (usage.outputTokens ?? 0) }
+              : {}),
           },
         });
       }
     }
     if (!isMainTurn) return [...deltas, ...retryClearDeltas];
-    const usage = payload.usage as ModelUsage;
     const usedTokens = getModelUsageContextTokens(usage) ?? 0;
     this.contextWindowState.usedTokens = usedTokens;
     const maxTokens = payload.contextWindow ?? this.contextWindowState.maxTokens;
@@ -5241,6 +5590,11 @@ export class ProductProjection {
     state: "completedSuccess" | "completedInterrupted" | "failed",
     activeMs?: number,
     historyRoundCount?: number,
+    highspeedTiming?: {
+      modelDurationMs: number;
+      toolDurationMs: number;
+      otherDurationMs: number;
+    },
   ): ConversationDelta[] {
     const row = this.turnHeaderForEvent(event);
     if (!row) return [];
@@ -5253,6 +5607,7 @@ export class ProductProjection {
           state,
           endedAt,
           ...(activeMs !== undefined ? { activeMs } : {}),
+          ...highspeedTiming,
           ...(historyRoundCount !== undefined ? { historyRoundCount } : {}),
           ...(row.workSegments
             ? {
@@ -5262,6 +5617,60 @@ export class ProductProjection {
         },
       },
     ];
+  }
+
+  private recordHighspeedToolStarted(turnId: string, toolCallId: string, startedAt: number): void {
+    const intervals = this.highspeedToolIntervalsByTurnId.get(turnId) ?? new Map();
+    intervals.set(toolCallId, { startedAt });
+    this.highspeedToolIntervalsByTurnId.set(turnId, intervals);
+  }
+
+  private recordHighspeedToolEnded(
+    turnId: string,
+    toolCallId: string,
+    endedAt: number,
+    durationMs?: number,
+  ): void {
+    const intervals = this.highspeedToolIntervalsByTurnId.get(turnId) ?? new Map();
+    const existing = intervals.get(toolCallId);
+    const startedAt = existing?.startedAt ?? Math.max(0, endedAt - Math.max(0, durationMs ?? 0));
+    intervals.set(toolCallId, {
+      startedAt,
+      endedAt: Math.max(
+        startedAt,
+        existing && durationMs !== undefined ? startedAt + durationMs : endedAt,
+      ),
+    });
+    this.highspeedToolIntervalsByTurnId.set(turnId, intervals);
+  }
+
+  private highspeedTimingForTurn(
+    turnId: string,
+    activeMs?: number,
+  ): { modelDurationMs: number; toolDurationMs: number; otherDurationMs: number } | undefined {
+    const modelDurationMs = this.highspeedModelDurationByTurnId.get(turnId);
+    const intervals = this.highspeedToolIntervalsByTurnId.get(turnId);
+    if (modelDurationMs === undefined && intervals === undefined) return undefined;
+    const sorted = [...(intervals?.values() ?? [])]
+      .filter((interval) => interval.endedAt !== undefined)
+      .sort((left, right) => left.startedAt - right.startedAt);
+    let toolDurationMs = 0;
+    let unionEnd = -1;
+    for (const interval of sorted) {
+      const start = Math.max(0, interval.startedAt);
+      const end = Math.max(start, interval.endedAt ?? start);
+      if (start > unionEnd) toolDurationMs += end - start;
+      else if (end > unionEnd) toolDurationMs += end - unionEnd;
+      unionEnd = Math.max(unionEnd, end);
+    }
+    const model = Math.max(0, modelDurationMs ?? 0);
+    const otherDurationMs = Math.max(
+      0,
+      (activeMs ?? model + toolDurationMs) - model - toolDurationMs,
+    );
+    this.highspeedModelDurationByTurnId.delete(turnId);
+    this.highspeedToolIntervalsByTurnId.delete(turnId);
+    return { modelDurationMs: model, toolDurationMs, otherDurationMs };
   }
 
   private openGuidedWorkSegment(event: SessionEvent, triggerEntityId: string): ConversationDelta[] {

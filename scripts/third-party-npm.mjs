@@ -7,11 +7,6 @@ import { resolveSpawnRuntimeOptions } from "./spawn-command.mjs";
 
 const exec = promisify(execFile);
 export const hashBytes = (bytes) => createHash("sha256").update(bytes).digest("hex");
-const unsupportedCanvas = new Set([
-  "@napi-rs/canvas-android-arm64",
-  "@napi-rs/canvas-linux-arm-gnueabihf",
-  "@napi-rs/canvas-linux-riscv64-gnu",
-]);
 const noticeName =
   /(?:^|[._-])(?:licen[sc]es?|copying|notice|copyright|unlicense|third.party|ofl)(?:[._-]|$)/iu;
 
@@ -45,12 +40,94 @@ export async function readPackageNotices(directory) {
   return files.sort((a, b) => a.member.localeCompare(b.member, "en"));
 }
 
-function productionPackages(projects) {
+// Parse platform constraints in the lockfile v9 `packages` section: `os/cpu/libc: [...]` lines under a `name@version` entry.
+export function readLockfilePlatformConstraints(lockfileText) {
+  const constraints = new Map();
+  let inPackages = false;
+  let key = null;
+  for (const line of lockfileText.split(/\r?\n/u)) {
+    if (/^\S/u.test(line)) {
+      inPackages = line === "packages:";
+      key = null;
+      continue;
+    }
+    if (!inPackages) continue;
+    const header = /^ {2}(?:'([^']+)'|([^\s'][^:]*)):$/u.exec(line);
+    if (header) {
+      key = header[1] ?? header[2];
+      continue;
+    }
+    const field = key && /^ {4}(os|cpu|libc): \[(.*)\]$/u.exec(line);
+    if (field) {
+      const values = field[2]
+        .split(",")
+        .map((value) => value.trim().replace(/^'(.*)'$/u, "$1"))
+        .filter(Boolean);
+      constraints.set(key, { ...constraints.get(key), [field[1]]: values });
+    }
+  }
+  return constraints;
+}
+
+// Mirror pnpm package-is-installable’s checkList so the result matches actual installation, including negated constraints.
+function pnpmCheckList(values, list) {
+  if (list.length === 1 && list[0] === "any") return true;
+  let match = false;
+  let blc = 0;
+  for (const value of values) {
+    for (const item of list) {
+      if (item[0] === "!") {
+        if (item.slice(1) === value) return false;
+        ++blc;
+      } else {
+        match = match || item === value;
+      }
+    }
+  }
+  return match || blc === list.length;
+}
+
+// A null `targets.libc` means the host libc is unknown (non-Linux); pnpm does not check libc in that case.
+export function createInstallablePackageFilter(constraints, targets) {
+  return (name, version) => {
+    const wanted = constraints.get(`${name}@${version.split("(")[0]}`);
+    if (!wanted) return true;
+    if (wanted.os && !pnpmCheckList(targets.os, wanted.os)) return false;
+    if (wanted.cpu && !pnpmCheckList(targets.cpu, wanted.cpu)) return false;
+    if (wanted.libc && targets.libc && !pnpmCheckList(targets.libc, wanted.libc)) return false;
+    return true;
+  };
+}
+
+function hostLibc() {
+  if (process.platform !== "linux") return null;
+  return process.report?.getReport?.()?.header?.glibcVersionRuntime ? "glibc" : "musl";
+}
+
+// Match pnpm checkPlatform: when supportedArchitectures is unset, use only the host; replace `current` with the host value.
+export async function readInstallTargets(root) {
+  const { parse } = await import("yaml");
+  const workspace = parse(await readFile(join(root, "pnpm-workspace.yaml"), "utf8")) ?? {};
+  const supported = workspace.supportedArchitectures ?? {};
+  const resolveCurrent = (list, current) =>
+    (list ?? ["current"]).map((value) => (value === "current" ? current : value));
+  const libc = hostLibc();
+  return {
+    os: resolveCurrent(supported.os, process.platform),
+    cpu: resolveCurrent(supported.cpu, process.arch),
+    libc: libc ? resolveCurrent(supported.libc, libc) : null,
+  };
+}
+
+// Fix: platform packages skipped by pnpm according to supportedArchitectures (such as Sharp’s s390x/wasm32 builds) are never installed or distributed,
+// Previously, a package-name exception list allowed them, so adding a dependency caused false missing-package reports; now the entire subtree is skipped according to lockfile platform constraints.
+export function productionPackages(projects, isInstallable = () => true) {
   const own = new Set(projects.map((project) => project.name));
   const required = new Map();
   function dependencies(deps) {
     for (const [alias, info] of Object.entries(deps ?? {})) {
       const name = info.name ?? alias;
+      if (!isInstallable(name, info.version)) continue;
       if (!own.has(name) && !name.startsWith("@zcode/") && !info.version.startsWith("link:")) {
         required.set(`${name}@${info.version}`, { name, version: info.version });
       }
@@ -65,12 +142,10 @@ function productionPackages(projects) {
   return required;
 }
 
-export function assertProductionGraphs(lockedProjects, installedProjects) {
-  const locked = productionPackages(lockedProjects);
-  const installed = productionPackages(installedProjects);
-  const missing = [...locked].filter(
-    ([key, item]) => !installed.has(key) && !unsupportedCanvas.has(item.name),
-  );
+export function assertProductionGraphs(lockedProjects, installedProjects, isInstallable) {
+  const locked = productionPackages(lockedProjects, isInstallable);
+  const installed = productionPackages(installedProjects, isInstallable);
+  const missing = [...locked].filter(([key]) => !installed.has(key));
   const stale = [...installed.keys()].filter((key) => !locked.has(key));
   if (missing.length || stale.length) {
     throw new Error(
@@ -105,7 +180,11 @@ export async function readWorkspaceProductionGraph(root) {
       return JSON.parse(stdout);
     }),
   );
-  const required = assertProductionGraphs(locked, actual);
+  const isInstallable = createInstallablePackageFilter(
+    readLockfilePlatformConstraints(await readFile(join(root, "pnpm-lock.yaml"), "utf8")),
+    await readInstallTargets(root),
+  );
+  const required = assertProductionGraphs(locked, actual, isInstallable);
   return { required, projects: actual };
 }
 
@@ -152,8 +231,7 @@ export async function scanInstalledPackages(root, projects) {
 export function missingProductionPackages(required, installed) {
   const missing = [...required].filter(([key]) => !installed.has(key)).map(([, item]) => item);
   for (const item of missing) {
-    if (!unsupportedCanvas.has(item.name))
-      throw new Error(`Missing installed dependency: ${item.name}@${item.version}`);
+    throw new Error(`Missing installed dependency: ${item.name}@${item.version}`);
   }
   return missing;
 }

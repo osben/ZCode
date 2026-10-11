@@ -4,39 +4,42 @@ import {
   isCoreError,
   traceContextToLogContext,
   type CollaborationMode,
-  type PermissionBrokerRequest,
   type PermissionBrokerResult,
   type PermissionRuleset,
   type TraceContext,
   type ToolExecutionSpanWriter,
 } from "@zcode/contracts";
 import type { HookRunResult } from "../../hooks/index.js";
-import type { PermissionContext } from "../../permission/service.js";
-import type { ExecutableToolCall, ToolEntry, ToolExecutionResult } from "../types.js";
-import { normalizeToolExecutionInput } from "../input-normalization.js";
+import type {
+  ExecutableToolCall,
+  ToolEntry,
+  ToolRuntimePermissionCapabilityContext,
+} from "../types.js";
 import { resolveToolApproval } from "./approval-gate.js";
 import { createErrorResult, createPermissionErrorResult } from "./errors.js";
-import { emitPermissionDenied, emitPermissionRequested, emitPermissionResolved } from "./events.js";
-import { applyPreToolPermissionDecision, runPermissionRequestHooks } from "./hook-flow.js";
-import { racePermissionResponders } from "./permission-responder-race.js";
-import {
-  loadProjectPermissionRuleset,
-  persistProjectPermissionUpdates,
-} from "./permission-rules-persistence.js";
+import { emitPermissionDenied, emitPermissionResolved } from "./events.js";
+import { applyPreToolPermissionDecision } from "./hook-flow.js";
+import { applyMemoryFilePermission } from "./memory-file-permission.js";
 import {
   resolveRuntimePermissionCapability,
   resolveRuntimePermissionContext,
 } from "./permission-capability.js";
-import { buildDefaultPermissionUpdates } from "./permission-suggestions.js";
+import { preparePermissionInput } from "./permission-input.js";
+import { applyPermissionInputAdjustments } from "./permission-input-adjustments.js";
 import { recheckPermissionHookModifiedInput } from "./permission-input-recheck.js";
+import { requestPermissionResponse } from "./permission-request.js";
+import {
+  interpretPermissionResponse,
+  type PermissionFlowResult,
+  type PermissionResponseTransition,
+} from "./permission-response.js";
+import {
+  loadProjectPermissionRuleset,
+  applyGrantedPermissionUpdates,
+} from "./permission-rules-persistence.js";
+import { buildDefaultPermissionUpdates } from "./permission-suggestions.js";
 import type { ToolExecutorDeps } from "./types.js";
 import { summarizeInput } from "./utils.js";
-import { validateInput } from "./validation.js";
-import { applyMemoryFilePermission } from "./memory-file-permission.js";
-
-type ToolPermissionFlowResult =
-  | { allowed: true; executionInput: unknown; permissionWaitMs?: number }
-  | { allowed: false; result: ToolExecutionResult };
 
 export async function resolveToolPermission(
   deps: ToolExecutorDeps,
@@ -48,24 +51,15 @@ export async function resolveToolPermission(
   traceContext: TraceContext,
   signal?: AbortSignal,
   telemetry?: ToolExecutionSpanWriter,
-): Promise<ToolPermissionFlowResult> {
-  const permissionContext: PermissionContext = {
-    toolName: toolCall.name,
-    input: executionInput,
-    riskLevel: entry.metadata.riskLevel,
+  preparedContext?: ToolRuntimePermissionCapabilityContext,
+): Promise<PermissionFlowResult> {
+  const context = {
+    ...resolveRuntimePermissionContext(deps),
+    ...preparedContext,
     mode,
-    prePlanMode: deps.sessionModePort?.getPrePlanMode(),
-    planEnabled: deps.sessionModePort?.isPlanEnabled?.(),
-    // Resolve relative paths against the working directory for workflow-draft
-    // auto-approval; see PermissionService.isPreapprovedWorkflowDraftWrite.
-    workingDirectory: deps.getWorkingDirectory(),
+    workingDirectory: preparedContext?.workingDirectory ?? deps.getWorkingDirectory(),
+    workspaceRoot: preparedContext?.workspaceRoot ?? deps.getWorkspaceRoot(),
   };
-  const runtimePermissionContext = resolveRuntimePermissionContext(deps);
-  const rulePolicy = entry.resolvePermissionRulePolicy?.(executionInput, runtimePermissionContext);
-  const suggestedPermissionUpdates =
-    rulePolicy?.suggestedPermissionUpdates ??
-    buildDefaultPermissionUpdates(toolCall.name, executionInput, entry.permissionCapabilityGroup);
-
   let projectRules: PermissionRuleset | null;
   try {
     projectRules = await loadProjectPermissionRuleset(deps);
@@ -76,359 +70,264 @@ export async function resolveToolPermission(
         toolCall,
         createCoreError(CoreErrorType.StorageError, "Failed to load project permission rules", {
           cause: error instanceof Error ? error : undefined,
-          context: { sessionId: deps.sessionId, toolCallId: toolCall.id, toolName: toolCall.name },
           recoverable: true,
         }),
       ),
     };
   }
-
-  let permissionDecision = deps.permissionService.checkPermission(
-    permissionContext,
-    resolveRuntimePermissionCapability(entry, executionInput, runtimePermissionContext),
-    projectRules,
-    rulePolicy,
-  );
-  permissionDecision = applyPreToolPermissionDecision(permissionDecision, preToolHookResult, mode);
-  permissionDecision = applyMemoryFilePermission({
-    decision: permissionDecision,
-    executionInput,
-    memoryRoot: deps.getMemoryRoot?.(),
-    toolName: toolCall.name,
-    workingDirectory: deps.getWorkingDirectory(),
-    workspaceRoot: deps.getWorkspaceRoot(),
-  });
-
-  deps.logger?.debug("Tool permission evaluated", {
-    ...traceContextToLogContext(traceContext),
-    decision: permissionDecision.decision,
-    event: "tool.permission.evaluated",
-    inputSummary: summarizeInput(toolCall.input),
-    mode,
-    module: "core.tool.executor",
-    reason: permissionDecision.reason,
-    riskLevel: permissionDecision.riskLevel,
-    ruleId: permissionDecision.ruleId,
-    sideEffectScope: permissionDecision.sideEffectScope,
-    status:
-      permissionDecision.decision === "allow"
-        ? "completed"
-        : permissionDecision.decision === "ask"
-          ? "waiting"
-          : "failed",
-    toolCallId: toolCall.id,
-    toolName: toolCall.name,
-  });
-
-  if (permissionDecision.allowed) {
-    telemetry?.setPermissionDecision("not_required");
-    return { allowed: true, executionInput };
-  }
-
-  if (permissionDecision.decision === "deny") {
-    telemetry?.setPermissionDecision("denied");
-    await emitPermissionDenied(deps, toolCall, permissionDecision.reason, traceContext);
-
-    deps.logger?.warn("Tool permission denied", {
-      ...traceContextToLogContext(traceContext),
-      decision: permissionDecision.decision,
-      event: "tool.permission.denied",
-      mode,
-      module: "core.tool.executor",
-      reason: permissionDecision.reason,
-      ruleId: permissionDecision.ruleId,
-      status: "failed",
-      toolCallId: toolCall.id,
-      toolName: toolCall.name,
-    });
-    return {
-      allowed: false,
-      result: createPermissionErrorResult(toolCall, permissionDecision.reason, {
-        decision: permissionDecision.decision,
-        mode,
-        ruleId: permissionDecision.ruleId,
-      }),
-    };
-  }
-
-  const approval = resolveToolApproval(deps, toolCall, entry, executionInput, traceContext);
-  if (approval.gate === "proceed") {
-    telemetry?.setPermissionDecision("not_required");
-    return { allowed: true, executionInput };
-  }
-
-  const requestId = `perm_${crypto.randomUUID()}`;
-  telemetry?.markPermissionRequested();
-  await emitPermissionRequested(
-    deps,
-    toolCall,
-    executionInput,
-    requestId,
-    permissionDecision.riskLevel,
-    permissionDecision.reason,
-    suggestedPermissionUpdates,
-    traceContext,
-    approval,
-  );
-
-  let brokerResult: PermissionBrokerResult;
-  let normalizedHookModifiedInput: unknown;
-  let useNormalizedHookModifiedInput = false;
-  const permissionWaitStartedAt = Date.now();
-  try {
-    // This used to serially `await runPermissionRequestHooks(...)`, starting the broker
-    // only after the hook chain returned. While a synchronous PermissionRequest hook
-    // (an external-approval bridge) was blocked, the dialog had already rendered (above,
-    // through emitPermissionRequested), but the response deferred was not registered.
-    // resolveInteraction silently discarded every click as an idempotent success, so the
-    // dialog remained stuck forever. Race the hook chain and broker concurrently; apply
-    // the first decision and abort the loser without waiting.
-    const raceOutcome = await racePermissionResponders({
-      onHookFailure: (error) => {
-        // A hook-chain failure only withdraws that responder: infrastructure failure in
-        // an auxiliary responder must not deny on the user's behalf. Keep waiting for the
-        // broker's response.
-        deps.logger?.warn("PermissionRequest hook chain failed; waiting for client decision", {
-          ...traceContextToLogContext(traceContext),
-          errorMessage: error instanceof Error ? error.message : String(error),
-          event: "tool.permission.hook_race_forfeited",
-          module: "core.tool.executor",
-          requestId,
-          status: "waiting",
-          toolCallId: toolCall.id,
-          toolName: toolCall.name,
-        });
-      },
-      requestBroker: (brokerSignal, claimResponse) =>
-        deps.permissionBroker.requestPermission(
-          {
-            input: executionInput,
-            mode,
-            reason: permissionDecision.reason ?? `Tool ${toolCall.name} requires approval`,
-            requestId,
-            requestedAt: new Date(),
-            riskLevel: permissionDecision.riskLevel,
-            ruleId: permissionDecision.ruleId,
-            sessionId: deps.sessionId,
-            sideEffectScope: permissionDecision.sideEffectScope,
-            suggestedPermissionUpdates,
-            ...(approval.optionsPolicy ? { optionsPolicy: approval.optionsPolicy } : {}),
-            toolCallId: toolCall.id as PermissionBrokerRequest["toolCallId"],
-            toolName: toolCall.name,
-            traceId: traceContext.traceId,
-            turnId: traceContext.turnId ?? deps.turnId,
-          },
-          {
-            signal: brokerSignal,
-            claimResponse,
-            timeoutMs: deps.permissionTimeoutMs,
-          },
-        ),
-      runHooks: (hookSignal) =>
-        runPermissionRequestHooks(
-          deps,
-          toolCall,
-          executionInput,
-          requestId,
-          permissionDecision,
-          mode,
-          traceContext,
-          hookSignal,
-        ),
-      ...(signal === undefined ? {} : { signal }),
-    });
-    brokerResult = raceOutcome.result;
-    const permissionHookResult = raceOutcome.source === "hook" ? raceOutcome.result : undefined;
-
-    if (permissionHookResult?.decision === "modify") {
-      normalizedHookModifiedInput = normalizeToolExecutionInput({
-        entry,
-        input: permissionHookResult.modifiedInput ?? executionInput,
-        logger: deps.logger,
-        source: "permission",
-      });
-      useNormalizedHookModifiedInput = true;
-      if (!validateInput(normalizedHookModifiedInput, entry)) {
-        // A PermissionRequest hook can change the target path; the modified input cannot reuse the permission result for the original input.
-        const recheck = await recheckPermissionHookModifiedInput({
-          deps,
-          entry,
-          mode,
-          modifiedInput: normalizedHookModifiedInput,
-          projectRules,
-          requestId,
-          signal,
-          toolCall,
-          traceContext,
-        });
-        if (recheck.permissionDecision) permissionDecision = recheck.permissionDecision;
-        if (recheck.brokerResult) {
-          brokerResult = recheck.brokerResult;
-          useNormalizedHookModifiedInput = brokerResult.decision === "allow";
-        }
-      }
-    }
-  } catch (error) {
-    telemetry?.setPermissionDecision("denied");
-    const coreError = isCoreError(error)
-      ? error
-      : createCoreError(CoreErrorType.PermissionDenied, "Permission request failed", {
-          cause: error instanceof Error ? error : undefined,
-          context: { requestId, toolCallId: toolCall.id, toolName: toolCall.name },
-          recoverable: true,
-        });
-    await emitPermissionResolved(
-      deps,
-      toolCall,
-      requestId,
-      {
-        decision: "deny",
-        reason: coreError.message,
-        resolvedAt: new Date(),
-      },
-      traceContext,
-    );
-    return { allowed: false, result: createErrorResult(toolCall, coreError) };
-  }
-
-  const resolvedPermission = {
-    ...brokerResult,
-    resolvedAt: brokerResult.resolvedAt ?? new Date(),
-  };
-  const permissionWaitMs = Math.max(0, Math.round(Date.now() - permissionWaitStartedAt));
-  await emitPermissionResolved(deps, toolCall, requestId, resolvedPermission, traceContext);
-
-  deps.logger?.info("Tool permission resolved", {
-    ...traceContextToLogContext(traceContext),
-    decision: resolvedPermission.decision,
-    event: "tool.permission.resolved",
-    mode,
-    module: "core.tool.executor",
-    reason: resolvedPermission.reason,
-    requestId,
-    status:
-      resolvedPermission.decision === "allow" || resolvedPermission.decision === "modify"
-        ? "completed"
-        : "failed",
-    toolCallId: toolCall.id,
-    toolName: toolCall.name,
-  });
-
-  if (resolvedPermission.decision === "deny") {
-    telemetry?.setPermissionDecision("denied");
-    return {
-      allowed: false,
-      result: createPermissionErrorResult(
-        toolCall,
-        resolvedPermission.reason,
-        {
-          decision: resolvedPermission.decision,
-          mode,
-          reasonSource: resolvedPermission.reasonSource,
-          requestId,
-          ruleId: permissionDecision.ruleId,
-        },
-        resolvedPermission.preserveReasonFormatting
-          ? { preserveReasonFormatting: true }
-          : undefined,
-      ),
-    };
-  }
-
-  if (resolvedPermission.decision === "escalate") {
-    telemetry?.setPermissionDecision("denied");
-    return {
-      allowed: false,
-      result: createErrorResult(
-        toolCall,
-        createCoreError(
-          CoreErrorType.PermissionEscalation,
-          resolvedPermission.reason ?? `Permission escalation requested for ${toolCall.name}`,
-          {
-            context: {
-              decision: resolvedPermission.decision,
-              mode,
-              requestId,
-              ruleId: permissionDecision.ruleId,
-              toolName: toolCall.name,
-            },
-            recoverable: true,
-          },
-        ),
-      ),
-    };
-  }
-
-  if (resolvedPermission.permissionUpdates?.length) {
-    try {
-      await persistProjectPermissionUpdates(
-        deps,
-        resolvedPermission.permissionUpdates,
-        traceContext,
-      );
-    } catch (error) {
+  let firstInput = true;
+  let hooksAvailable = true;
+  let permissionWaitMs = 0;
+  // Root cause: recursive re-entry reruns hooks and treats the answer as a new operation; explicit conversion rechecks only the new input.
+  while (true) {
+    if (signal?.aborted)
       return {
         allowed: false,
         result: createErrorResult(
           toolCall,
-          createCoreError(
-            CoreErrorType.StorageError,
-            "Failed to persist project permission update",
-            {
-              cause: error instanceof Error ? error : undefined,
-              context: {
-                requestId,
-                sessionId: deps.sessionId,
-                toolCallId: toolCall.id,
-                toolName: toolCall.name,
-              },
-              recoverable: true,
-            },
-          ),
+          createCoreError(CoreErrorType.ToolCancelled, "Tool execution cancelled", {
+            recoverable: true,
+          }),
         ),
       };
+    const rulePolicy = entry.resolvePermissionRulePolicy?.(executionInput, context);
+    let decision = deps.permissionService.checkPermission(
+      {
+        toolName: toolCall.name,
+        input: executionInput,
+        riskLevel: entry.metadata.riskLevel,
+        mode,
+        planEnabled: deps.sessionModePort?.isPlanEnabled?.(),
+        prePlanMode: deps.sessionModePort?.getPrePlanMode(),
+        // Draft pre-approval and actual tool input share the prepared cwd; do not omit it when combining Guarded checks.
+        workingDirectory: context.workingDirectory,
+      },
+      resolveRuntimePermissionCapability(entry, executionInput, context),
+      projectRules,
+      rulePolicy,
+    );
+    if (firstInput && decision.approvalMode !== "user-once") {
+      decision = applyPreToolPermissionDecision(decision, preToolHookResult, mode);
     }
-  }
-
-  if (resolvedPermission.sessionPermissionUpdates?.length) {
-    // Session-level auto-approval is stored only in the in-memory session ruleset and is
-    // not visible to the project-level persistence above.
-    deps.permissionService.grantSessionPermission(resolvedPermission.sessionPermissionUpdates);
-    deps.logger?.info("Session permission granted", {
+    firstInput = false;
+    decision = applyMemoryFilePermission({
+      decision,
+      executionInput,
+      memoryRoot: deps.getMemoryRoot?.(),
+      toolName: toolCall.name,
+      workingDirectory: context.workingDirectory,
+      workspaceRoot: context.workspaceRoot,
+    });
+    // Reason for the fix: the unified approval flow had dropped the original logging contract; restore correlation fields while continuing to log only input-shape summaries.
+    deps.logger?.debug("Tool permission evaluated", {
       ...traceContextToLogContext(traceContext),
-      event: "tool.permission.session_grant.applied",
+      decision: decision.decision,
+      event: "tool.permission.evaluated",
+      inputSummary: summarizeInput(toolCall.input),
+      mode,
       module: "core.tool.executor",
-      requestId,
-      status: "completed",
+      reason: decision.reason,
+      riskLevel: decision.riskLevel,
+      ruleId: decision.ruleId,
+      sideEffectScope: decision.sideEffectScope,
+      status:
+        decision.decision === "allow"
+          ? "completed"
+          : decision.decision === "ask"
+            ? "waiting"
+            : "failed",
       toolCallId: toolCall.id,
       toolName: toolCall.name,
-      updateCount: resolvedPermission.sessionPermissionUpdates.length,
     });
-  }
-
-  telemetry?.setPermissionDecision("granted");
-  if (resolvedPermission.decision !== "modify") {
-    return {
-      allowed: true,
-      executionInput: useNormalizedHookModifiedInput ? normalizedHookModifiedInput : executionInput,
-      permissionWaitMs,
-    };
-  }
-
-  const modifiedInput = useNormalizedHookModifiedInput
-    ? normalizedHookModifiedInput
-    : normalizeToolExecutionInput({
-        entry,
-        input: resolvedPermission.modifiedInput ?? executionInput,
-        logger: deps.logger,
-        source: "permission",
+    if (decision.allowed) {
+      telemetry?.setPermissionDecision(permissionWaitMs ? "granted" : "not_required");
+      return { allowed: true, executionInput, permissionWaitMs };
+    }
+    if (decision.decision === "deny") {
+      telemetry?.setPermissionDecision("denied");
+      await emitPermissionDenied(deps, toolCall, decision.reason, traceContext);
+      deps.logger?.warn("Tool permission denied", {
+        ...traceContextToLogContext(traceContext),
+        decision: decision.decision,
+        event: "tool.permission.denied",
+        mode,
+        module: "core.tool.executor",
+        reason: decision.reason,
+        ruleId: decision.ruleId,
+        status: "failed",
+        toolCallId: toolCall.id,
+        toolName: toolCall.name,
       });
-  const modifiedInputValidation = validateInput(modifiedInput, entry);
-  if (modifiedInputValidation) {
+      return {
+        allowed: false,
+        result: createPermissionErrorResult(toolCall, decision.reason, {
+          mode,
+          ruleId: decision.ruleId,
+        }),
+      };
+    }
+
+    // Tool previews can control ordinary approval only; they cannot override Guarded's one-time confirmation.
+    const approval =
+      decision.approvalMode === "user-once"
+        ? { gate: "ask" as const }
+        : resolveToolApproval(deps, toolCall, entry, executionInput, traceContext);
+    if (approval.gate === "proceed") {
+      telemetry?.setPermissionDecision("not_required");
+      return { allowed: true, executionInput, permissionWaitMs };
+    }
+
+    const requestId = "perm_" + crypto.randomUUID();
+    const startedAt = Date.now();
+    const suggestedPermissionUpdates =
+      decision.approvalMode === "user-once"
+        ? []
+        : (rulePolicy?.suggestedPermissionUpdates ??
+          buildDefaultPermissionUpdates(
+            toolCall.name,
+            executionInput,
+            entry.permissionCapabilityGroup,
+          ));
+    telemetry?.markPermissionRequested();
+    let transition: PermissionResponseTransition;
+    let resolved: PermissionBrokerResult;
+    try {
+      let outcome = await requestPermissionResponse({
+        deps,
+        toolCall,
+        input: executionInput,
+        decision,
+        mode,
+        requestId,
+        traceContext,
+        suggestedPermissionUpdates,
+        approval,
+        runHooks: hooksAvailable && decision.approvalMode !== "user-once",
+        signal,
+      });
+      hooksAvailable = false;
+      let rewrite: PermissionResponseTransition | undefined;
+      // For non-Guarded tools, preserve the established Hook/project/Memory recheck scope and authorization semantics.
+      if (mode !== "guarded" && outcome.source === "hook" && outcome.result.decision === "modify") {
+        const normalized = preparePermissionInput(
+          outcome.result.modifiedInput ?? executionInput,
+          entry,
+          deps,
+        );
+        const recheck = recheckPermissionHookModifiedInput({
+          context,
+          deps,
+          entry,
+          mode,
+          modifiedInput: normalized,
+          projectRules,
+          toolCall,
+        });
+        if (recheck.permissionDecision?.decision === "ask") {
+          // The old branch called the broker again with the same requestId, so a late response could approve new input.
+          // Preserve the existing project/Memory recheck scope and use the same finish-then-create transition for lifecycle handling.
+          rewrite = { kind: "rewrite", input: normalized };
+        } else {
+          executionInput = normalized;
+          outcome = {
+            source: "hook",
+            result: {
+              ...outcome.result,
+              modifiedInput: undefined,
+              decision: recheck.permissionDecision?.decision === "deny" ? "deny" : "allow",
+              reason: recheck.permissionDecision?.reason ?? outcome.result.reason,
+            },
+          };
+        }
+      }
+      transition =
+        rewrite ??
+        interpretPermissionResponse({
+          deps,
+          toolCall,
+          entry,
+          input: executionInput,
+          mode,
+          decision,
+          outcome,
+          requestId,
+        });
+      resolved = { ...outcome.result, resolvedAt: outcome.result.resolvedAt ?? new Date() };
+    } catch (error) {
+      const coreError = isCoreError(error)
+        ? error
+        : createCoreError(
+            mode === "guarded" ? CoreErrorType.ToolExecutionFailed : CoreErrorType.PermissionDenied,
+            "Permission request failed",
+            {
+              cause: error instanceof Error ? error : undefined,
+              context: { requestId, toolCallId: toolCall.id, toolName: toolCall.name },
+              recoverable: true,
+            },
+          );
+      resolved = { decision: "deny", reason: coreError.message, resolvedAt: new Date() };
+      transition = {
+        kind: "complete",
+        result: { allowed: false, result: createErrorResult(toolCall, coreError) },
+      };
+    }
+    permissionWaitMs += Math.max(0, Date.now() - startedAt);
+    // End the request only here: validation errors, cancellation, changes, and normal responses all publish exactly one terminal event.
+    await emitPermissionResolved(deps, toolCall, requestId, resolved, traceContext);
+    deps.logger?.info("Tool permission resolved", {
+      ...traceContextToLogContext(traceContext),
+      event: "tool.permission.resolved",
+      module: "core.tool.executor",
+      requestId,
+      mode,
+      ruleId: decision.ruleId,
+      decision: resolved.decision,
+      reason: resolved.reason,
+      status:
+        resolved.decision === "allow" || resolved.decision === "modify" ? "completed" : "failed",
+      toolCallId: toolCall.id,
+      toolName: toolCall.name,
+    });
+    if (transition.kind === "rewrite") {
+      executionInput = transition.input;
+      continue;
+    }
+    const result = transition.result;
+    telemetry?.setPermissionDecision(result.allowed ? "granted" : "denied");
+    if (!result.allowed) return result;
+    if (signal?.aborted)
+      return {
+        allowed: false,
+        result: createErrorResult(
+          toolCall,
+          createCoreError(CoreErrorType.ToolCancelled, "Tool execution cancelled", {
+            recoverable: true,
+          }),
+        ),
+      };
+    const updateFailure = await applyGrantedPermissionUpdates({
+      deps,
+      permissionUpdates: resolved.permissionUpdates,
+      requestId,
+      sessionPermissionUpdates: resolved.sessionPermissionUpdates,
+      toolCall,
+      traceContext,
+    });
+    if (updateFailure) return { allowed: false, result: updateFailure };
+    const adjusted = applyPermissionInputAdjustments({
+      deps,
+      entry,
+      toolCall,
+      executionInput: result.executionInput,
+      adjustments: resolved.inputAdjustments,
+      traceContext,
+    });
+    if (!adjusted.ok) return { allowed: false, result: adjusted.result };
     return {
-      allowed: false,
-      result: createErrorResult(toolCall, modifiedInputValidation),
+      ...result,
+      executionInput: adjusted.executionInput,
+      permissionWaitMs,
+      ...(adjusted.applied === undefined ? {} : { inputAdjustments: adjusted.applied }),
     };
   }
-  return { allowed: true, executionInput: modifiedInput, permissionWaitMs };
 }

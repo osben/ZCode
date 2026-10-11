@@ -8,6 +8,7 @@ import type {
 } from "@zcode/tui";
 import type { SupportedLocale, UiLocale } from "@zcode/i18n";
 import type { ModelSelection, ZCodeModelOption } from "@zcode/shared";
+import type { DynamicWorkflowMode } from "@zcode/shared";
 import type {
   BackgroundTaskCancelResult,
   DynamicWorkflowRunResumeResult,
@@ -28,7 +29,7 @@ export type TuiSendInputOptions = Parameters<TuiSendInput>[1];
 export type CommandCenterMode = NonNullable<TuiSubmitPromptResult["mode"]>;
 export type SwitchableCommandCenterMode = Extract<
   CommandCenterMode,
-  "plan" | "build" | "edit" | "yolo"
+  "plan" | "build" | "edit" | "yolo" | "guarded"
 >;
 
 export type CommandCenterModelOption = ZCodeModelOption;
@@ -157,6 +158,8 @@ export type CommandCenterLoginOptions = {
   abortSignal?: AbortSignal;
   onAuthorizeUrl?: (data: CommandCenterLoginAuthorizeData) => Promise<void> | void;
 };
+
+export type CommandCenterBigmodelLoginAuthorizeData = CommandCenterLoginAuthorizeData;
 export type CommandCenterBigmodelLoginOptions = CommandCenterLoginOptions;
 
 export type CommandCenterBigmodelLoginResult = {
@@ -326,4 +329,10 @@ export type CommandCenterDeps = {
   logout?: () => Promise<CommandCenterLogoutResult>;
   setLocale?: (locale: UiLocale) => Promise<CommandCenterLocaleResult> | CommandCenterLocaleResult;
   setMode?: (mode: SwitchableCommandCenterMode) => Promise<CommandCenterMode> | CommandCenterMode;
+  /**
+   * This process's `--workflow-mode` (see launch.md "The standalone CLI: `--workflow-mode`"). When
+   * disabled, `/workflow` and `/dwf resume` show a local hint; absence does not gate commands (tests
+   * and embedders), and the CLI entry point always passes the mode.
+   */
+  workflowMode?: DynamicWorkflowMode;
 };

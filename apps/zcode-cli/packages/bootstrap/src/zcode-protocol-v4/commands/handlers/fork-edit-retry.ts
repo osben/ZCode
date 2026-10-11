@@ -10,6 +10,7 @@ import type {
   CommandPayloadMap,
   CommandResult,
 } from "@zcode/shared/zcode-protocol-v4";
+import { isHighspeedProviderId } from "@zcode/shared";
 import {
   RewindStrategy,
   traceContextToLogContext,
@@ -17,18 +18,13 @@ import {
   type TurnId,
 } from "@zcode/contracts";
 import { mapAttachmentRefsToTurnAttachments } from "../attachment-refs.js";
-import { inputIntentMetadataFromCanonical } from "../input-intent.js";
-import { startPromptTurn } from "../prompt-turn.js";
+import { V4PromptRejectedError } from "../prompt-turn.js";
 import { commandAdmissionOf } from "../executor.js";
+import { hasPromptInput, V4InputAdmissionRejectedError } from "../input-admission.js";
 import { requireRecord } from "../record-access.js";
 import type { V4CommandCoreHost, V4SessionRecordView } from "../types.js";
-import {
-  hasPromptInput,
-  preemptActiveTurnAndWait,
-  V4InputAdmissionRejectedError,
-} from "./session-flow.js";
-import { applyGoalCommand } from "./goal-compact.js";
-import type { ConversationEditTarget } from "../../product-projection.js";
+import { startCanonicalIntent, stableAttachmentRefs } from "./canonical-intent-replay.js";
+import { preemptActiveTurnAndWait } from "./session-flow.js";
 
 const CONVERSATION_COMMAND_LOG_MODULE = "bootstrap.zcode_protocol_v4.commands";
 const EDIT_USER_QUERY_COMPLETED_EVENT = "conversation.command.edit_user_query.completed";
@@ -56,7 +52,7 @@ export class V4ForkTargetNotLatestSegmentError extends Error {
   }
 }
 
-class V4ForkTargetGuardError extends Error {
+export class V4ForkTargetGuardError extends Error {
   constructor(
     readonly reasonCode: string,
     targetRowId: number,
@@ -67,7 +63,7 @@ class V4ForkTargetGuardError extends Error {
 }
 
 /** latestQueryEditOnly: reject stale rows, non-realUser rows, or missing projections without stopping the current turn. */
-class V4EditTargetNotLatestError extends Error {
+export class V4EditTargetNotLatestError extends Error {
   readonly reasonCode = "guard.latestQueryEditOnly";
 
   constructor(targetRowId: number) {
@@ -77,7 +73,7 @@ class V4EditTargetNotLatestError extends Error {
 }
 
 /** latestAssistantRetryOnly: retrying an older assistant reply would rewind the active branch, so reject it. */
-class V4RetryTargetNotLatestError extends Error {
+export class V4RetryTargetNotLatestError extends Error {
   readonly reasonCode = "guard.latestAssistantRetryOnly";
 
   constructor(targetRowId: number) {
@@ -137,12 +133,21 @@ async function editUserQuery(
   const attachmentRefs = payload.attachments ?? stableAttachmentRefs(editTarget);
   // Omitted attachments and [] have different meanings. Validate the effective refs so
   // attachment-only edits remain allowed, while an empty body and attachment list are rejected before rewind.
-  if (!hasPromptInput(payload.newText, attachmentRefs)) {
+  if (
+    !hasPromptInput(payload.newText, attachmentRefs) &&
+    !(payload.conversationQuotes ?? editTarget.intent.conversationQuotes)?.length
+  ) {
     throw new V4InputAdmissionRejectedError("proto.invalidPayload", "input must not be empty");
   }
   // Map attachments before rewind so invalid references are reported before truncating history.
   const attachments = await mapAttachmentRefsToTurnAttachments(record.app, attachmentRefs);
-  if (record.activeAbortController) {
+  const runtimeHasActiveTurn =
+    record.app.runtime?.getActiveTurnInfo?.() !== undefined ||
+    record.app.runtime?.getActiveForegroundExecutionId?.() !== undefined;
+  if (record.activeAbortController || runtimeHasActiveTurn) {
+    // Bug root cause: when a Highspeed/notification turn is held by the Core runtime there is no Bootstrap
+    // activeAbortController; checking only the latter lets rewind race with the old model request, after which
+    // the new prompt is rejected with turn_not_steerable. Runtime-owned active turns must also join the preempt barrier.
     await preemptActiveTurnAndWait(host, record, {
       abortMessage: "v4 editUserQuery preempts active turn",
       goalPausedMutationReason: "edit_user_query_goal_paused",
@@ -209,16 +214,65 @@ async function editUserQuery(
   if (!conversationRewindCommitted) {
     await submitConversationRewind(host, record, editTarget.transcriptMessageId);
   }
-  await startCanonicalIntent(
-    host,
-    record,
-    envelope,
-    editTarget,
-    payload.newText,
-    attachmentRefs,
-    attachments,
-  );
-  // The production Renderer does not write logs, so edits could previously only be inferred
+  // Edit-and-resend is treated as a new proactive send: only the card re-prepared this time counts
+  // (this session's taskId, unexpired), and the Selection must genuinely point at the accelerated
+  // Provider — never accelerate with stale credentials or a cross-session card.
+  const highspeedEdit =
+    editTarget.intent.kind === "sendText" &&
+    payload.highspeedMeta !== undefined &&
+    payload.highspeedMeta.taskId === record.app.sessionId &&
+    payload.highspeedMeta.expiresAt > Date.now() &&
+    payload.modelSelection !== undefined &&
+    payload.modelExecution !== undefined &&
+    isHighspeedProviderId(payload.modelSelection.providerId)
+      ? {
+          card: payload.highspeedMeta,
+          modelSelection: payload.modelSelection,
+          execution: payload.modelExecution,
+        }
+      : undefined;
+  try {
+    await startCanonicalIntent(
+      host,
+      record,
+      envelope,
+      editTarget,
+      payload.newText,
+      attachmentRefs,
+      attachments,
+      highspeedEdit,
+    );
+  } catch (error) {
+    if (
+      editTarget.intent.kind === "sendText" &&
+      error instanceof V4PromptRejectedError &&
+      error.reasonCode === "activePrompt"
+    ) {
+      // Bug root cause: after rewind has been committed, Core may still be settling the old turn; an admission
+      // carrying accelerated-execution material cannot be steered and only returns turn_not_steerable. The new
+      // text must be enqueued atomically then, otherwise the old message is already truncated and the new one
+      // is lost along with the exception.
+      host.logger?.warn?.("v4 editUserQuery admission recovered by queue", {
+        reason: error.message,
+        sessionId: record.app.sessionId,
+        targetRowId: payload.target.rowId,
+      });
+      await startCanonicalIntent(
+        host,
+        record,
+        envelope,
+        editTarget,
+        payload.newText,
+        attachmentRefs,
+        attachments,
+        highspeedEdit,
+        { requireQueue: true },
+      );
+    } else {
+      throw error;
+    }
+  }
+  // Bugfix: The production Renderer does not write logs, so edits could previously only be inferred
   // from generic rewind + send events and could not be reliably distinguished from retries.
   // After the command side effects complete, the Agent server writes a low-frequency info audit entry.
   host.logger?.info?.("v4 editUserQuery completed", {
@@ -331,56 +385,6 @@ async function forkAssistant(
   });
   const result = { type: "forkAssistant" as const, sessionId: forkedSessionId };
   return result;
-}
-
-function stableAttachmentRefs(editTarget: ConversationEditTarget) {
-  return editTarget.intent.attachments?.flatMap((attachment) =>
-    attachment.ref ? [{ ...attachment, ref: attachment.ref }] : [],
-  );
-}
-
-async function startCanonicalIntent(
-  host: V4CommandCoreHost,
-  record: V4SessionRecordView,
-  envelope: CommandEnvelope,
-  editTarget: ConversationEditTarget,
-  text: string,
-  attachmentRefs: ReturnType<typeof stableAttachmentRefs>,
-  attachments: Awaited<ReturnType<typeof mapAttachmentRefsToTurnAttachments>>,
-): Promise<void> {
-  const intent = inputIntentMetadataFromCanonical(
-    envelope,
-    {
-      kind: editTarget.intent.kind,
-      text: editTarget.intent.text,
-      sourceCommandId: editTarget.intent.sourceCommandId,
-      clientId: editTarget.intent.clientId,
-      queueItemId: editTarget.intent.queueItemId,
-      requestedDelivery: editTarget.intent.requestedDelivery,
-      admittedDelivery: editTarget.intent.admittedDelivery,
-      fallbackReasonCode: editTarget.intent.fallbackReasonCode,
-      modelSelection: editTarget.intent.modelSelection,
-      mode: editTarget.intent.mode,
-      planEnabled: editTarget.intent.planEnabled,
-      attachmentRefs,
-      provenance: editTarget.intent.provenance,
-    },
-    text,
-  );
-  if (editTarget.intent.kind === "sendGoalCommand") {
-    await applyGoalCommand(host, record, {
-      inputId: envelope.commandId,
-      objective: text,
-      intent,
-    });
-    return;
-  }
-  await startPromptTurn(host, record, {
-    content: text,
-    inputId: envelope.commandId,
-    intent,
-    ...(attachments ? { attachments } : {}),
-  });
 }
 
 export const forkEditRetryHandlers = {

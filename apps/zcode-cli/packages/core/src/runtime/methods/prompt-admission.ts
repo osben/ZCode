@@ -23,6 +23,21 @@ export async function admitPrompt(
   attachments?: Parameters<AgentRuntimeInternal["executeTurn"]>[1],
   options?: PromptAdmissionOptions,
 ): Promise<PromptAdmissionReceipt> {
+  if (options?.requireQueue === true) {
+    // Root cause: the temporary Highspeed provider can be installed only at the promotion boundary of an independent turn. If queueing is based only on
+    // Bootstrap's busy snapshot, the state may become idle during a cross-layer await and the prompt can start with the ordinary model by mistake.
+    return await this.enqueueDeferredInput({
+      attachments,
+      commandKind: options.commandKind,
+      delivery: "queue",
+      input,
+      inputId: options.inputId,
+      intent: admissionIntent(options.intent, "queue"),
+      queryId: options.queryId,
+      toolDisallowlist: options.toolDisallowlist,
+      traceContext: options.traceContext,
+    });
+  }
   const promotionLeaseOnly =
     options?.requireIdle === true &&
     this.foregroundPromotionLease !== undefined &&

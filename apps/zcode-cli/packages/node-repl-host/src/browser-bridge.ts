@@ -9,10 +9,7 @@ import {
   NODE_REPL_BROWSER_BROKER_TOKEN_ENV,
   nodeReplBrowserBrokerResponseSchema,
 } from "@zcode/shared/node-repl-browser-broker";
-import {
-  BROWSER_UNAVAILABLE_IN_SUBAGENT_MESSAGE,
-  NODE_REPL_BROWSER_BRIDGE_SYMBOL,
-} from "./runtime-bridge.js";
+import { NODE_REPL_BROWSER_BRIDGE_SYMBOL } from "./runtime-bridge.js";
 
 const MAX_RESPONSE_BYTES = 32 * 1024 * 1024;
 type BrokerResponse = ReturnType<typeof nodeReplBrowserBrokerResponseSchema.parse>;
@@ -44,19 +41,9 @@ export function createBrowserBridgeGlobals(input: {
     }
     return active;
   };
-  const assertAvailable = (): ActiveNodeReplCall => {
-    const active = assertActive();
-    // The shared node_repl child process serves both main and subagents. Even though
-    // each call gets a new kernel, deny Browser permissions using trusted metadata for
-    // the current call; do not infer them from the session id or code content.
-    if (active.requestMeta.runtime_scope === "subagent") {
-      throw new Error(BROWSER_UNAVAILABLE_IN_SUBAGENT_MESSAGE);
-    }
-    return active;
-  };
   const transport: BrowserClientTransport = {
     list: async () => {
-      const active = assertAvailable();
+      const active = assertActive();
       const response = await sendBrokerRequest(
         { op: "list", ...requestContext(active.requestMeta) },
         active.signal,
@@ -65,7 +52,7 @@ export function createBrowserBridgeGlobals(input: {
       return response.browsers ?? [];
     },
     execute: async (browserId, browserGeneration, command) => {
-      const active = assertAvailable();
+      const active = assertActive();
       const response = await sendBrokerRequest(
         {
           op: "execute",
@@ -86,7 +73,7 @@ export function createBrowserBridgeGlobals(input: {
     [NODE_REPL_BROWSER_BRIDGE_SYMBOL]: {
       ...transport,
       documentationRoot: input.documentationRoot,
-      assertAvailable,
+      assertAvailable: assertActive,
     },
   };
 }

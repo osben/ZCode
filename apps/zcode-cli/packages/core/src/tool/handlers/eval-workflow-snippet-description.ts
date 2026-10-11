@@ -1,7 +1,7 @@
-// Persistent description for EvalWorkflowSnippet.
+// Persistent description for EvalWorkflowSnippet (docs/dynamic-workflow/authoring.md, “EvalWorkflowSnippet”).
 //
-// The `dynamic-workflows` skill's “Tool reference” documents the snippet facade and authoring rules, and the skill gate ensures it has
-// been read. Keep only what the tool is, what it does, and the requirement to read the skill here.
+// Shortened starting 2026-09-21: the snippet facade's scope and writing rules are in the “Tool
+// reference” section of the `dynamic-workflows` skill, which the skill gate ensures the model reads; this only says what the tool is, what it does, and to read the skill first.
 
 import { DYNAMIC_WORKFLOW_SKILL_NAME } from "@zcode/contracts";
 

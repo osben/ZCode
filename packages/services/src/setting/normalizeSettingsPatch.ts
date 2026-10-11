@@ -89,5 +89,15 @@ export function normalizeSettingsPatch(patch: Partial<AppSettings>): Partial<App
       trimmedProviderFamilyDomain.length > 0 ? normalizedPatch.providerFamilyDomain : undefined;
   }
 
+  if (
+    "dynamicWorkflowMode" in normalizedPatch &&
+    (normalizedPatch.dynamicWorkflowMode as string | undefined) === ""
+  ) {
+    // docs/dynamic-workflow/launch.md, "The user's choice": selecting the server-provided mode
+    // again is equivalent to deleting the choice, so installation keeps following server flips.
+    // RPC drops undefined, so normalize the empty-string sentinel to deletion.
+    normalizedPatch.dynamicWorkflowMode = undefined;
+  }
+
   return normalizedPatch;
 }

@@ -36,20 +36,29 @@ export const SERVER_HTTP_EXTERNAL_DEPENDENCIES = [
   "combined-stream",
   "proxy-from-env",
   "follow-redirects",
-  // node-forge uses dynamic require("crypto"); after inlining into the server ESM bundle, Node reports
-  // "Dynamic require of crypto is not supported." Keep it external, matching desktop main/host builds.
+  "yazl",
+  // Bugfix: node-forge uses dynamic require("crypto"); after inlining into the server ESM bundle,
+  // Node reports "Dynamic require of crypto is not supported." Keep it external, matching desktop
+  // main/host builds.
   "node-forge",
   "yaml",
   // The services feedback-log compression path uses the CJS package yazl. Inlining it into the ESM
   // bundle leaves a runtime require("fs") call and crashes entry-http at startup. Keep it external for
   // Node's native loader.
   "yazl",
-  // Cloud-content ZIP extraction uses yauzl, whose CommonJS require("fs") crashes when loaded in the ESM
-  // bundle. As in desktop, keep it external for Node's native loader.
+  // Bugfix: node-forge (the appCaCert self-signed CA path) uses a dynamic require("crypto")
+  // internally; as in desktop tsup.config, it must stay external for Node's native loader.
+  "node-forge",
+  // Fix: cloud-content ZIP extraction (services/cloud-content) pulls in the CJS package yauzl;
+  // inlining it into the ESM bundle makes entry-http.js fail at load time with
+  // "Dynamic require of 'fs' is not supported." As in desktop, keep it external for Node's
+  // native loader.
   "yauzl",
 ];
 
 export default defineConfig({
+  // The HTTP server build externalizes and inlines third-party code, so a complete notice set
+  // must sit next to dist (the Web/unified distribution copies dist directly).
   onSuccess: async () => {
     await stageThirdPartyNotices(resolve(import.meta.dirname, "dist"));
   },

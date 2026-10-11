@@ -45,7 +45,7 @@ interface CrashArchiveCleanupResult {
   failedFiles: string[];
 }
 
-interface ArchivedCrashDumpRecord {
+export interface ArchivedCrashDumpRecord {
   dumpPath: string;
   archivedDumpPath: string;
   /** Null when the dump has no V8 OOM annotation (for example, a GPU/native crash). */
@@ -61,7 +61,7 @@ function resolveCrashCapturePaths(): CrashCapturePaths {
   };
 }
 
-function resolveCrashReporterSourceDirs(
+export function resolveCrashReporterSourceDirs(
   stagingDir: string,
   platform: NodeJS.Platform = process.platform,
 ): string[] {
@@ -224,7 +224,7 @@ function pruneCrashDumpArchive(
   return { deletedFiles, failedFiles };
 }
 
-function archiveCrashDumps(
+export function archiveCrashDumps(
   paths: CrashCapturePaths,
   options?: {
     platform?: NodeJS.Platform;
@@ -391,7 +391,7 @@ export function initializeCrashCapture(
   return paths;
 }
 
-interface CrashEventMonitorHooks {
+export interface CrashEventMonitorHooks {
   onRenderProcessGone?: (
     webContents: WebContents,
     details: { reason: string; exitCode: number },
@@ -406,10 +406,11 @@ interface CrashEventMonitorHooks {
   onBrowserWindowCreated?: (win: BrowserWindow) => void;
 }
 
-function resolveProcessGoneLogLevel(reason: string): "info" | "warn" {
-  // Electron also emits a gone event for controlled termination such as clean-exit/killed.
+export function resolveProcessGoneLogLevel(reason: string): "info" | "warn" {
+  // Bug cause: Electron also emits a gone event for controlled termination such as clean-exit/killed.
   // The raw gone callback records only the lifecycle fact; stability classification determines
-  // whether it was a crash. Do not always log it as an error, or log collection may count it as an exception.
+  // whether it was a crash. The old implementation always logged an error, which the ARMS console
+  // collector then counted as an exception, polluting error statistics.
   return reason === "clean-exit" || reason === "killed" ? "info" : "warn";
 }
 

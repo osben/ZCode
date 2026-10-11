@@ -148,9 +148,9 @@ export function StartPlanStatusMeta({
       <CodingPlanMetaSeparator visible={Boolean(pendingEffectiveTimeLabel && expireTimeLabel)} />
       {statusState === "refreshable" && onRefresh ? (
         <>
-          {/* The server creates a quota bucket only when the scheduled entitlement takes effect, so
-              the UI may still show the old model. Show Refresh here only until the bucket arrives;
-              hide it for immediately effective plans and plans that have synced successfully. */}
+          {/* Bug cause: the server creates a quota bucket only when the scheduled entitlement takes
+              effect, so the UI may still show the old model. Show Refresh here only until the bucket
+              arrives; hide it for immediately effective plans and plans that have synced successfully. */}
           <Button
             type="button"
             variant="outline"
@@ -173,8 +173,8 @@ export function StartPlanStatusMeta({
       ) : null}
       {expireTimeLabel ? (
         <>
-          {/* Start Plan does not show a renewal time. Keep only the expiration date in the status card
-              so free-quota refreshes are not mistaken for plan renewals. */}
+          {/* Bugfix: Start Plan does not show a renewal time. Keep only the expiration date in the
+              status card so free-quota refreshes are not mistaken for plan renewals. */}
           <span className="whitespace-nowrap">{expireTimeLabel}</span>
         </>
       ) : null}
@@ -182,7 +182,7 @@ export function StartPlanStatusMeta({
   );
 }
 
-function resolveStartPlanStatusMetaState({
+export function resolveStartPlanStatusMetaState({
   entitlements,
   hasQuota,
   now = Date.now(),
@@ -210,7 +210,7 @@ function resolveStartPlanStatusMetaState({
   return "settled";
 }
 
-function resolvePendingStartPlanEffectiveTime(
+export function resolvePendingStartPlanEffectiveTime(
   entitlements: UsageEntitlementSubscriptionDetail["entitlements"],
   now = Date.now(),
 ): string | null {
@@ -226,7 +226,11 @@ function resolvePendingStartPlanEffectiveTime(
   return futureTimes[0]?.effectiveTime ?? null;
 }
 
-function formatStartPlanEffectiveDate(value: string, locale: string, now = Date.now()): string {
+export function formatStartPlanEffectiveDate(
+  value: string,
+  locale: string,
+  now = Date.now(),
+): string {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
   const currentDate = new Date(now);

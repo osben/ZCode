@@ -2,7 +2,6 @@ import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
-  isProviderProvisioningAccountCredentialKey,
   providerProvisioningEnvelopeSchema,
   type ProviderProvisioningCredentialEntry,
   type ProviderProvisioningEnvelope,
@@ -60,7 +59,7 @@ export function createProviderProvisioningSource(
         providerFamilyConnectionSelections: settings.providerFamilyConnectionSelections ?? {},
       };
       return providerProvisioningEnvelopeSchema.parse({
-        schemaVersion: 1,
+        schemaVersion: 2,
         syncId,
         personalConfig,
         accountSettings,
@@ -130,18 +129,15 @@ async function readProvisioningCredentials(
   // these records are not part of this sync, and corruption in them must not block syncing valid account credentials.
   // Entries in the allowlist still require string and decryption validation so unknown content is not transferred as a Secret.
   for (const [key, encrypted] of Object.entries(parsed)) {
-    const scope = allowedKeys.has(key)
-      ? ("oauth-session" as const)
-      : isProviderProvisioningAccountCredentialKey(key)
-        ? ("account-provider" as const)
-        : undefined;
-    if (!scope) continue;
+    // OAuth token exchange no longer depends on the legacy account key; its bad ciphertext
+    // must not block syncing the remote login state either.
+    if (!allowedKeys.has(key)) continue;
     if (typeof encrypted !== "string") {
       throw new Error(`Credential allowlist value must be a string: ${key}`);
     }
     const value = cipher.decrypt(encrypted);
     if (!value.trim()) continue;
-    entries.push({ scope, key, value });
+    entries.push({ scope: "oauth-session", key, value });
   }
   return entries;
 }
@@ -177,7 +173,5 @@ export async function listProviderProvisioningCredentialKeys(
   const parsed = JSON.parse(raw) as unknown;
   if (!isRecord(parsed)) throw new Error("Credential Store 必须是 JSON 对象");
   const oauthKeys = new Set<string>(PROVIDER_PROVISIONING_OAUTH_CREDENTIAL_KEYS);
-  return Object.keys(parsed).filter(
-    (key) => oauthKeys.has(key) || isProviderProvisioningAccountCredentialKey(key),
-  );
+  return Object.keys(parsed).filter((key) => oauthKeys.has(key));
 }

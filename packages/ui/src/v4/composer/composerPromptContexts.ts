@@ -3,6 +3,7 @@ import {
   parsePromptCodeComments,
   type CodeCommentComposerAttachment,
 } from "@/lib/codeCommentContext.js";
+import { stripGenUiModelContext } from "@zcode/shared/gen-ui";
 import {
   buildPromptWithConversationSelections,
   parsePromptConversationSelections,
@@ -18,12 +19,19 @@ import {
   parsePromptPptxElementReferences,
   type PptxElementReference,
 } from "@/lib/pptxElementReference.js";
+import {
+  buildPromptWithPluginUiContexts,
+  parsePromptPluginUiContexts,
+  type PluginUiModelContext,
+} from "@/plugin-ui/index.js";
 
-interface ComposerPromptContexts {
+export interface ComposerPromptContexts {
   codeComments: readonly CodeCommentComposerAttachment[];
   conversationSelections: readonly ConversationSelectionDisplayReference[];
   webElements: readonly WebElementContextComposerAttachment[];
   pptxElements: readonly PptxElementReference[];
+  /** Added by plugin UI through ui/update-model-context; treated as empty when absent. */
+  pluginUiContexts?: readonly PluginUiModelContext[];
 }
 
 export function countComposerPromptContexts(contexts: {
@@ -31,12 +39,14 @@ export function countComposerPromptContexts(contexts: {
   conversationSelections: readonly unknown[];
   webElements: readonly unknown[];
   pptxElements: readonly unknown[];
+  pluginUiContexts?: readonly unknown[];
 }) {
   return (
     contexts.codeComments.length +
     contexts.conversationSelections.length +
     contexts.webElements.length +
-    contexts.pptxElements.length
+    contexts.pptxElements.length +
+    (contexts.pluginUiContexts?.length ?? 0)
   );
 }
 
@@ -51,7 +61,8 @@ export function serializeComposerPromptContexts(
   );
   const withCodeComments = buildPromptWithCodeComments(withSelections, contexts.codeComments);
   const withWebElements = buildPromptWithWebElementContexts(withCodeComments, contexts.webElements);
-  return buildPromptWithPptxElementReferences(withWebElements, contexts.pptxElements);
+  const withPptx = buildPromptWithPptxElementReferences(withWebElements, contexts.pptxElements);
+  return buildPromptWithPluginUiContexts(withPptx, contexts.pluginUiContexts ?? []);
 }
 
 export function parseComposerPromptContexts(
@@ -63,8 +74,10 @@ export function parseComposerPromptContexts(
   conversationSelections: readonly ConversationSelectionDisplayReference[];
   webElements: WebElementContextComposerAttachment[];
   pptxElements: PptxElementReference[];
+  pluginUiContexts: PluginUiModelContext[];
 } {
-  const pptx = parsePromptPptxElementReferences(content);
+  const plugin = parsePromptPluginUiContexts(stripGenUiModelContext(content));
+  const pptx = parsePromptPptxElementReferences(plugin.visibleContent);
   const web = parsePromptWebElementContexts(pptx.visibleContent, workspace);
   const code = parsePromptCodeComments(web.visibleContent, workspace);
   const selections = parsePromptConversationSelections(code.visibleContent);
@@ -74,5 +87,6 @@ export function parseComposerPromptContexts(
     conversationSelections: selections.references,
     webElements: web.webElementContexts,
     pptxElements: pptx.pptxElementReferences,
+    pluginUiContexts: plugin.pluginUiContexts,
   };
 }

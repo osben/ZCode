@@ -49,7 +49,48 @@ export const WORKFLOW_ARTIFACT_LIMITS = {
   maxItemsPerPage: 500,
   /** Default page size used by the gateway when callers omit limit. */
   defaultItemsPerPage: 200,
+  /**
+   * `workflowRunArtifactData` per-page byte limit (measured from serialized bytes in storage), passed by the gateway to the storage layer.
+   * Set to one quarter of the protocol’s single-frame limit (16 MiB): a count limit alone cannot bound bytes—500 items × 32 KiB reaches the
+   * single-frame limit, so a page might not be sendable at all. A page contains at least one item, so the per-item limit (`REPORT_CAPS`)
+   * must be far below the single-frame limit.
+   */
+  maxPageBytes: PROTOCOL_V4_LIMITS.logicalFrameAssemblyMaxBytes / 4,
+  /** `workflowRunArtifactData` maximum number of field paths that `workflowRunArtifactData` can request at once (a single dashboard spec needs far fewer). */
+  maxFieldsPerRequest: 32,
+  /** Maximum length of one field path. */
+  maxFieldPathLength: 256,
+  /**
+   * Serialized byte limit for one field value. Larger values are returned as a truncated string (the first 1,000 characters plus “…”):
+   * Charts use only numbers, while table and dashboard cells display short text anyway.
+   */
+  maxFieldValueBytes: 4096,
 } as const;
+
+/**
+ * Read a value from one report item using a dotted path:"timing.after"、"rounds.0.ms"（docs/execution-engine.md
+ * 「Reading the journal」）。
+ *
+ * This is a **protocol contract**, not merely a renderer helper: when a dashboard reads data, the CLI extracts values from SQLite with the same rules
+ * (in adapters/dwf-journal-fields.ts); the value received by the renderer must exactly match what it would extract from the full item
+ * character for character. Rules: split on `.`; when the current value is an array, convert the segment with `Number(segment)` as the index (it must be a non-negative integer
+ * within bounds); when it is an object, use the segment as a key; an invalid path (null, scalar, out of bounds, missing key) yields `undefined`.
+ */
+export function readWorkflowArtifactField(item: unknown, path: string): unknown {
+  let cursor: unknown = item;
+  for (const segment of path.split(".")) {
+    if (cursor === null || cursor === undefined) return undefined;
+    if (Array.isArray(cursor)) {
+      const index = Number(segment);
+      if (!Number.isInteger(index) || index < 0 || index >= cursor.length) return undefined;
+      cursor = cursor[index];
+      continue;
+    }
+    if (typeof cursor !== "object") return undefined;
+    cursor = (cursor as Record<string, unknown>)[segment];
+  }
+  return cursor;
+}
 
 /**
  * **Metadata** for one artifact version (zod mirror of `ArtifactVersionRecord` in journal `dwf_node.result_json`).
@@ -119,8 +160,8 @@ export type WorkflowRunArtifact = z.infer<typeof workflowRunArtifactSchema>;
  * (`workflowRunArtifacts` for full metadata, `workflowRunArtifactData` for board entries,
  * `workflowRunArtifactRead` for bytes) — the journal remains authoritative.
  *
- * `itemCount` acts as a **refresh signal**: when the board hook sees it change, it fetches deltas using `afterSequence`.
- * Putting raw tagged reports in the snapshot could make the state frame reach 2 MB in the worst case (256 entries × 32 KB).
+ * `itemCount` `itemCount` serves as a **refresh signal** here: when the dashboard hook sees it change, it fetches incrementally with `afterSequence`.
+ * Putting the raw tagged report value in this high-frequency state key would move as many bytes in every frame as the run contains in its items.
  */
 export const workflowRunArtifactSummarySchema = z
   .object({
@@ -174,6 +215,18 @@ export const v4ConversationWorkflowRunArtifactDataParamsSchema = z
     afterSequence: z.number().int().nonnegative().optional(),
     /** Defaults to 200 and is clamped to [1, 500] — both handled by the gateway (storage must not invent or re-clamp page sizes). */
     limit: z.number().int().positive().max(WORKFLOW_ARTIFACT_LIMITS.maxItemsPerPage).optional(),
+    /**
+     * Request only these field paths (using {@link readWorkflowArtifactField}), rather than the whole item: the dashboard reads only
+     * fields named in its spec; a 1 MiB item should not be sent in full to the renderer just to read one number. When provided, each result contains
+     * `fields` and no `item`. Default = the full item (the legacy renderer shape).
+     *
+     * Skew handling: an older CLI strict schema rejects the entire request if it does not recognize this key; the renderer then retries without it.
+     */
+    fields: z
+      .array(z.string().min(1).max(WORKFLOW_ARTIFACT_LIMITS.maxFieldPathLength))
+      .min(1)
+      .max(WORKFLOW_ARTIFACT_LIMITS.maxFieldsPerRequest)
+      .optional(),
   })
   .strict();
 export type V4ConversationWorkflowRunArtifactDataParams = z.infer<
@@ -191,16 +244,21 @@ export const v4ConversationWorkflowRunArtifactDataResultSchema = z
           siteId: z.string().min(1).max(64),
           ordinal: z.number().int().nonnegative(),
           /**
-           * Original entry value, **not serialized for preview**: the board's pure functions need field-path access
-           * (`ChartSpec.x.field` can be timing.after), which is impossible with pretty-printed JSON text.
-           * Each entry is already bounded on the wire by `REPORT_CAPS.maxItemSerializedBytes` (32 KB) and event-payload limits,
-           * so do not add another limit here.
+           * The raw item value, **without preview serialization**: dashboard pure functions need to read fields by path
+           * (for example, `ChartSpec.x.field` may be "timing.after"), which is impossible if given pretty-printed JSON text.
+           * Each item is bounded on write by `REPORT_CAPS.maxItemSerializedBytes`; each page is bounded by
+           * `WORKFLOW_ARTIFACT_LIMITS.maxPageBytes`  `WORKFLOW_ARTIFACT_LIMITS.maxPageBytes`. Omitted when the request includes `fields`.
            */
           item: z.unknown(),
+          /**
+           * When the request includes `fields`: path → value. Invalid paths are omitted (= `undefined`); values exceeding
+           * `maxFieldValueBytes` `maxFieldValueBytes` are returned as truncated strings.
+           */
+          fields: z.record(z.string(), z.unknown()).optional(),
         })
         .strict(),
     ),
-    /** This page reached limit and more entries remain (gateway determines this by fetching one extra). */
+    /** More items follow this page (the storage layer determines whether it ended early due to the item-count or byte limit). */
     hasMore: z.boolean(),
   })
   .strict();

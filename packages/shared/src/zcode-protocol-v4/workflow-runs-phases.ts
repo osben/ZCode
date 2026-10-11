@@ -3,6 +3,7 @@ import {
   type WorkflowRunPhase,
   type WorkflowRunState,
 } from "./workflow-runs.js";
+import { readPhaseHoles } from "./workflow-runs-holes.js";
 
 /**
  * Reduction for `phase-entered`: control flow passed a `phase("…")` marker. It lives outside the main
@@ -41,7 +42,16 @@ export function reduceRunLaunched(
   }
   if (phaseNames.length === 0) return run;
   const phaseAlongside = readPhaseAlongside(payload.phaseAlongside, phaseNames.length);
-  return { ...run, phaseNames, ...(phaseAlongside === undefined ? {} : { phaseAlongside }) };
+  // The hole index table (docs/dynamic-workflow/presentation.md "Holes on the timeline") follows the
+  // same pattern as the concurrent-phase table: ride along with the declared names table, bounding
+  // indices against the accepted table.
+  const phaseHoles = readPhaseHoles(payload.holes, phaseNames.length);
+  return {
+    ...run,
+    phaseNames,
+    ...(phaseAlongside === undefined ? {} : { phaseAlongside }),
+    ...(phaseHoles === undefined ? {} : { phaseHoles }),
+  };
 }
 
 /**

@@ -105,7 +105,7 @@ export async function persistBackgroundTaskNotificationCommand(
   return persisted.messageId;
 }
 
-interface PersistedBackgroundTaskNotificationBatch {
+export interface PersistedBackgroundTaskNotificationBatch {
   /** Present only when the entire batch has the same source; do not infer mixed/missing sources from the representative task. */
   backgroundSource?: BackgroundResultOriginMeta["backgroundSource"];
   messageId: MessageId;
@@ -127,7 +127,7 @@ function resolveBackgroundTaskNotificationSource(
   return source;
 }
 
-function resolveBackgroundTaskNotificationOriginMeta(
+export function resolveBackgroundTaskNotificationOriginMeta(
   commands: readonly [TaskNotificationRuntimeCommand, ...TaskNotificationRuntimeCommand[]],
 ): BackgroundResultOriginMeta | undefined {
   // Single item: pass through originMeta as a whole; workflowNotification payload travels with it (the sole data source for manifest rendering).

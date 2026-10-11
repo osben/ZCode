@@ -19,7 +19,7 @@ export interface PaneWorkspaceBadge {
   remote: boolean;
 }
 
-interface ConversationHeaderProps {
+export interface ConversationHeaderProps {
   /** meta.title; used only for tests/observable projection, with no placeholder header rendered. */
   title: string;
   /** Split a new draft pane to the right (the host omits this at the leaf limit). */
@@ -61,7 +61,7 @@ function ConversationHeaderImpl({ title, onClosePane, workspaceBadge }: Conversa
               ) : null}
             </span>
           ) : null}
-          {/* The product temporarily hides pane chrome split actions; keep the callback interface and underlying capability for future restoration. */}
+          {/* 2026-07-13: the product temporarily hides pane chrome split actions; keep the callback interface and underlying capability for future restoration. */}
           {/* {onSplitRight ? (
             <Button
               type="button"

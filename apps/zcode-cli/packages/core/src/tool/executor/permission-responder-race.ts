@@ -10,7 +10,7 @@
 import type { PermissionBrokerResult } from "@zcode/contracts";
 import { linkAbortSignal } from "./timeout.js";
 
-interface PermissionResponderRaceInput {
+export interface PermissionResponderRaceInput {
   /**
    * Hook-chain responder. Resolving to `undefined` means no decision (it withdraws,
    * leaving the broker to wait alone). Rejection also counts as withdrawal and invokes
@@ -35,7 +35,7 @@ interface PermissionResponderRaceInput {
   onHookFailure?: (error: unknown) => void;
 }
 
-interface PermissionResponderRaceOutcome {
+export interface PermissionResponderRaceOutcome {
   result: PermissionBrokerResult;
   source: "hook" | "broker";
 }

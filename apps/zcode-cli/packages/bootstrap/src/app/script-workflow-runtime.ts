@@ -14,7 +14,7 @@ import {
 import type { PrepareUserExecutionBoundary } from "./types.js";
 import { readWorkflowScriptDocument, stableHash } from "./script-workflow-meta.js";
 import { prepareScriptWorkflowRun } from "./script-workflow-prepare.js";
-import { resolveWorkflowConcurrencyCeiling } from "./workflow-concurrency-ceiling.js";
+import { resolveWorkflowDefaultConcurrency } from "./workflow-default-concurrency.js";
 import {
   runScriptWorkflowChild,
   type ScriptWorkflowChildRequest,
@@ -54,8 +54,8 @@ type ScriptWorkflowRunOptions = {
 } & Parameters<PrepareUserExecutionBoundary>[0];
 
 export class ScriptWorkflowRuntime {
-  // Use the same ceiling implementation as the workflow run service/process-level governor; legacy tools still use only a local limiter and do not connect to the governor.
-  private readonly concurrency = resolveWorkflowConcurrencyCeiling();
+  // Use the same default-concurrency implementation as the dwf run service / process-level governor (decision 30); legacy tools still use only a local limiter and do not connect to the governor.
+  private readonly concurrency = resolveWorkflowDefaultConcurrency();
   private readonly limiter = new WorkflowLimiter(this.concurrency);
   private callIndex = 0;
 

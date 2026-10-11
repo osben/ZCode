@@ -8,7 +8,7 @@ import {
   withImplicitPhase,
 } from "@/components/workflow-graph/participant-model.js";
 import { phaseBinder } from "@/components/workflow-graph/instance-phases.js";
-import { phaseNameMatches, type PhaseNaming } from "@/components/workflow-graph/phase-name.js";
+import type { PhaseNaming } from "@/components/workflow-graph/phase-name.js";
 import { phaseMembers } from "@/components/workflow-graph/phase-model.js";
 import { workflowRunOverlay } from "@/components/workflow-graph/run-status.js";
 import {
@@ -18,6 +18,23 @@ import {
   type WorkflowCausalityGraphData,
 } from "@/components/workflow-graph/types.js";
 import { sharedTimelineModel } from "./timeline-cache.js";
+import {
+  isCurrentPhase,
+  phaseStreamIndexes,
+  stageStatuses,
+  stationStatus,
+  streamInk,
+} from "./stage-lamps.js";
+import {
+  holeTable,
+  railTouchesHole,
+  stationFillOf,
+  tailStubOf,
+  timelineHoleGraph,
+  type HoleLabels,
+  type TimelineFill,
+  type TimelineHole,
+} from "./timeline-holes.js";
 import {
   observePhase,
   phaseEntryFor,
@@ -85,6 +102,12 @@ export interface TimelineStation {
   unlisted?: StationUnlisted;
   /** Last station not yet closed in the streaming draft. */
   typing?: true;
+  /** This station is a hole (`timeline-holes.ts`): dashed lamp and type badge; it is the current station while waiting. */
+  hole?: TimelineHole;
+  /** This station was added by a fill (the `fill` on a display phase); hovering highlights its filled region. */
+  fill?: string;
+  /** Neighboring station on a fill row's draft phase line: context only, rendered at 40% ink. */
+  ghost?: true;
 }
 
 /** Track segment between adjacent stations on one track; indices point into `stations`. */
@@ -94,6 +117,8 @@ export interface TimelineRail {
   ink: TimelineInk;
   /** Absent means a normal segment on one track; track endpoints are `fork`/`merge`, while adjacent stations on different tracks within a band are `twin`. */
   kind?: TimelineRailKind;
+  /** Touches an open/waiting hole: draw it as a dashed line because there is no code there yet. */
+  dashed?: true;
 }
 
 /** A non-adjacent edge: `to < from` means a back edge. `lane` starts at 0, nearest the track; assign lanes only to arcs that intersect along x (see {@link assignArcLanes}), and keep unrelated arcs at the same height. */
@@ -104,6 +129,8 @@ export interface TimelineArc {
   ink: TimelineInk;
   /** Track above which to draw the arc; lanes are assigned independently per air, so filter by `air` before computing `arcLaneCount`. */
   air: number;
+  /** Non-adjacent phase stream: use stream ink, but do not animate it or add a ring to the station. */
+  stream?: true;
 }
 
 /** One track within a band; `stations` are its members in declaration order. */
@@ -138,47 +165,39 @@ export interface WorkflowTimelineModel {
   live: boolean;
   /** Streaming draft: stations are written as text arrives; subagents are counted but not drawn (`draft-scan.ts`). The analyzer model does not include this. */
   draft?: { agents: number };
-}
-
-/** How `currentPhase` maps to a station, using the same name rule as `phaseEntryFor`. */
-function isCurrentPhase(run: WorkflowRunState | undefined, name: string | undefined): boolean {
-  return phaseNameMatches(name, run?.currentPhase);
-}
-
-/** Station light. Member nodes take precedence: running/failed are hard facts. Control flow is considered next: the current phase is running while the run is active (control stays on this station before the first ask is dispatched and after the last ask settles until the next marker). A station with no observed nodes (zero members or entirely skipped) can be lit only by an entry record. `nodeStatus` is the folded result; undefined means “no node,” and folding does not invent a pending state for a station the control flow never reached. */
-function stationStatus(
-  run: WorkflowRunState | undefined,
-  nodeStatus: StepRunStatus | undefined,
-  current: boolean,
-  entered: boolean,
-): StepRunStatus | undefined {
-  if (run === undefined) return undefined;
-  if (nodeStatus === "running" || nodeStatus === "failed") return nodeStatus;
-  const live = run.status === "running" || run.status === "pending";
-  if (current && live) return "running";
-  // When a run ends, the current phase is finalized at this station (whether it has nodes or not);
-  // cancelled is drawn like a node cancellation and therefore also appears as failed.
-  if (current) return run.status === "completed" ? "done" : "failed";
-  if (nodeStatus !== undefined) return nodeStatus;
-  return entered ? "done" : "pending";
+  /** Hole headers left by fills with phases (`timeline-holes.ts`), sorted by `from`; empty when there are no fills. */
+  fills?: TimelineFill[];
+  /** Hole id → containing hole id (`holeParentsOf` in `timeline-holes.ts`); used to highlight outer regions on hover. */
+  holeParents?: Readonly<Record<string, string>>;
+  /** The final station is a tail hole: `open` draws a 40px dashed segment that fades out; `filled` reserves only 40px of space. */
+  tailStub?: "open" | "filled";
 }
 
 /** One model, three consumers (invariant 1): the card, detail page, and sidebar list receive the same model object in the same frame. Memoize by (graph, run) object identity—see `timeline-cache.ts` for why identity is the right key. The model is read-only and no consumer mutates it, so sharing also provides stable references. */
 export function buildWorkflowTimeline(
   input: WorkflowCausalityGraphData,
   run: WorkflowRunState | undefined,
+  /**
+   * Names and types of filled holes (docs/dynamic-workflow/presentation.md, “Holes on the timeline”):
+   * static graphs without a run (confirmation dialog, fill row) receive them from tool input. When
+   * provided, skip the shared cache, which is keyed by (graph, run).
+   */
+  holeLabels?: HoleLabels,
 ): WorkflowTimelineModel {
-  return sharedTimelineModel(input, run, () => computeWorkflowTimeline(input, run));
+  if (holeLabels !== undefined) return computeWorkflowTimeline(input, run, holeLabels);
+  return sharedTimelineModel(input, run, () => computeWorkflowTimeline(input, run, undefined));
 }
 
 function computeWorkflowTimeline(
   input: WorkflowCausalityGraphData,
   run: WorkflowRunState | undefined,
+  holeLabels: HoleLabels | undefined,
 ): WorkflowTimelineModel {
-  const graph = withImplicitPhase(input);
-  const phases = graph.phases ?? [];
+  // A phase representing a hole header is not a station; the parent map comes from the uncollapsed graph so nesting remains intact (`timeline-holes.ts`).
+  const { graph, parents, phases } = timelineHoleGraph(withImplicitPhase(input));
   const index = new Map(phases.map((phase, i) => [phase.id, i]));
   const members = phaseMembers(graph);
+  const holes = holeTable(graph, phases, run, holeLabels, parents);
   const overlay = workflowRunOverlay(run, graph);
   const live = liveParticipantView(graph, run);
   const binder = phaseBinder(graph, run);
@@ -207,23 +226,23 @@ function computeWorkflowTimeline(
     seen.add(key);
     edges.push({ from, to });
   }
-  const folded = foldPhaseBands(
-    phases.length,
-    phases.map((phase) =>
-      (phase.alongside ?? []).flatMap((id) => {
-        const at = index.get(id);
-        return at === undefined ? [] : [at];
-      }),
-    ),
+  // Phase streams (spec, “Streams”): also deduplicated by index; they take a stage on a line out of its band.
+  const streams = phaseStreamIndexes(graph.phaseStreams, index);
+  const alongsideIndexes = phases.map((phase) =>
+    (phase.alongside ?? []).flatMap((id) => {
+      const at = index.get(id);
+      return at === undefined ? [] : [at];
+    }),
   );
-  const fold = foldPhaseEdges(phases.length, folded, edges);
+  const folded = foldPhaseBands(phases.length, alongsideIndexes, streams);
+  const fold = foldPhaseEdges(phases.length, folded, edges, streams);
   const arcPairs = [...fold.arcs].sort(
     (left, right) => Math.abs(left.from - left.to) - Math.abs(right.from - right.to),
   );
   // Loop both endpoints of a back-edge; when an endpoint is in a lane, loop the whole lane because a lane is one node and is re-entered as a whole.
   const onLoop = new Set<number>();
   for (const arc of arcPairs) {
-    if (arc.to >= arc.from) continue;
+    if (arc.to >= arc.from || arc.stream) continue;
     for (const end of [arc.from, arc.to]) {
       const band = bandOf(folded, end);
       if (band === undefined) onLoop.add(end);
@@ -233,6 +252,9 @@ function computeWorkflowTimeline(
 
   // Name hashes can collide; assign sequential numbers by instance identity so the same agent keeps its avatar across phases.
   const avatarIndexes = new Map<string, number>();
+  const nodeStatuses: (StepRunStatus | undefined)[] = [];
+  const entered: boolean[] = [];
+  const hasMembers: boolean[] = [];
   const stations: TimelineStation[] = phases.map((phase, i) => {
     const memberSteps = members.get(phase.id) ?? [];
     const unlisted = stationUnlisted(run, binder, phase.id);
@@ -297,21 +319,27 @@ function computeWorkflowTimeline(
           : {}),
       };
     });
+    const nodeStatus = collapseStatuses(
+      memberSteps.map((step) => step.id),
+      overlay.statuses,
+    );
+    nodeStatuses.push(nodeStatus);
+    entered.push(observed.entered);
+    hasMembers.push(memberSteps.length > 0);
+    // A run paused on a hole makes that station current (its incoming segment is in transit and the view focuses on it); `hole` determines the lamp style.
+    const hole = holes.byPhase.get(phase.id);
+    const waiting = hole?.state === "waiting";
     return {
       id: phase.id,
       naming: { id: phase.id, ...(phase.name === undefined ? {} : { name: phase.name }) },
       pills,
-      status: stationStatus(
-        run,
-        collapseStatuses(
-          memberSteps.map((step) => step.id),
-          overlay.statuses,
-        ),
-        isCurrentPhase(run, phase.name),
-        observed.entered,
-      ),
-      visited: observed.visited,
+      status: waiting
+        ? "running"
+        : stationStatus(run, nodeStatus, isCurrentPhase(run, phase.name), observed.entered),
+      visited: observed.visited || waiting,
       rounds: observed.rounds,
+      ...(hole === undefined ? {} : { hole }),
+      ...stationFillOf(phase, hole),
       onLoop: onLoop.has(i),
       track: trackOf(folded, i),
       ...(observed.observed === 0
@@ -319,6 +347,23 @@ function computeWorkflowTimeline(
         : { fraction: { observed: observed.observed, settled: observed.settled } }),
       ...(unlisted === undefined ? {} : { unlisted }),
     };
+  });
+
+  // Stage lamp (spec, “Station status”): for a parallel or streaming station with member steps, use only its own nodes and the stations feeding it.
+  const staged = stageStatuses({
+    alongside: alongsideIndexes,
+    entered,
+    hasMembers,
+    nodeStatuses,
+    run,
+    sequential: stations.map((station) => station.status),
+    streams,
+  });
+  // A hole waiting to be filled remains running because the run is paused on it. Even in `future`,
+  // it is a parallel station; do not let the stage rule turn it into pending because it has no
+  // nodes. These rules were aligned when dwf-recursive and dwf-pipeline-display were merged.
+  stations.forEach((station, i) => {
+    if (station.hole?.state !== "waiting") station.status = staged[i];
   });
 
   const visited = (i: number): boolean => stations[i]?.visited === true;
@@ -332,9 +377,15 @@ function computeWorkflowTimeline(
 
   const rails: TimelineRail[] = fold.rails.map((rail: RailSpec) => ({
     from: rail.from,
-    ink: visited(rail.from) && visited(rail.to) ? ("strong" as TimelineInk) : "faint",
+    ink:
+      rail.kind === "stream"
+        ? streamInk(stations[rail.from]!, stations[rail.to]!)
+        : visited(rail.from) && visited(rail.to)
+          ? ("strong" as TimelineInk)
+          : "faint",
     ...(rail.kind === undefined ? {} : { kind: rail.kind }),
     to: rail.to,
+    ...(railTouchesHole(stations, rail) ? { dashed: true as const } : {}),
   }));
   const lanes = assignAirLanes(arcPairs);
   const arcs: TimelineArc[] = arcPairs.map((arc, at) => {
@@ -345,8 +396,13 @@ function computeWorkflowTimeline(
     return {
       air: arc.air,
       from: arc.from,
-      ink: strong ? "strong" : "faint",
+      ink: arc.stream
+        ? streamInk(stations[arc.from]!, stations[arc.to]!)
+        : strong
+          ? "strong"
+          : "faint",
       lane: lanes[at] ?? 0,
+      ...(arc.stream ? { stream: true as const } : {}),
       to: arc.to,
     };
   });
@@ -357,9 +413,14 @@ function computeWorkflowTimeline(
   for (let r = 0; r < stations.length; r += 1) {
     if (stations[r]?.status !== "running") continue;
     const entry = bandOf(folded, r)?.from ?? r;
+    // Stream rails and stream arcs do not participate (spec, “March” final segment): their ink already indicates whether anything is moving through.
     const reentry = arcs.find(
       (arc) =>
-        arc.to === entry && arc.from > arc.to && visited(arc.from) && stations[r]!.rounds >= 2,
+        !arc.stream &&
+        arc.to === entry &&
+        arc.from > arc.to &&
+        visited(arc.from) &&
+        stations[r]!.rounds >= 2,
     );
     if (reentry !== undefined) {
       reentry.ink = "march";
@@ -367,13 +428,14 @@ function computeWorkflowTimeline(
     }
     // A parallel segment is not a control-flow path; it only says the two stations run concurrently and never animates.
     const inbound = rails.filter(
-      (rail) => rail.to === r && rail.kind !== "twin" && visited(rail.from),
+      (rail) =>
+        rail.to === r && rail.kind !== "twin" && rail.kind !== "stream" && visited(rail.from),
     );
     if (inbound.length > 0) {
       for (const rail of inbound) rail.ink = "march";
       continue;
     }
-    const landing = arcs.find((arc) => arc.to === r && visited(arc.from));
+    const landing = arcs.find((arc) => !arc.stream && arc.to === r && visited(arc.from));
     if (landing !== undefined) landing.ink = "march";
   }
 
@@ -402,31 +464,16 @@ function computeWorkflowTimeline(
     }),
   }));
 
-  return { arcs, bands, live: run !== undefined, rails, runningIndex, stations };
-}
-
-/** What a pill is "doing": prefer the running step's label, then the last settled one, then the first. */
-export function pillActivity(
-  graph: WorkflowCausalityGraphData,
-  run: WorkflowRunState | undefined,
-  pill: TimelinePill,
-): { label: string; asks: number; reads: number } {
-  const stepsById = new Map(graph.steps.map((step) => [step.id, step]));
-  const statuses = run === undefined ? {} : workflowRunOverlay(run, graph).statuses;
-  let asks = 0;
-  let reads = 0;
-  let running: string | undefined;
-  let done: string | undefined;
-  let first: string | undefined;
-  for (const id of pill.stepIds) {
-    const step = stepsById.get(id);
-    if (step === undefined) continue;
-    if (step.kind === "world-read") reads += 1;
-    else asks += 1;
-    first ??= step.label;
-    const status = statuses[id];
-    if (status === "running") running ??= step.label;
-    else if (status === "done" || status === "failed") done = step.label;
-  }
-  return { asks, label: running ?? done ?? first ?? "", reads };
+  const tailStub = tailStubOf(stations);
+  return {
+    arcs,
+    bands,
+    fills: holes.fills,
+    ...(Object.keys(holes.parents).length === 0 ? {} : { holeParents: holes.parents }),
+    live: run !== undefined,
+    rails,
+    runningIndex,
+    stations,
+    ...(tailStub === undefined ? {} : { tailStub }),
+  };
 }

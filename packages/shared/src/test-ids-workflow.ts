@@ -55,3 +55,9 @@ export const TID_WORKFLOW_ARTIFACT_CHIP = "workflow-run-artifact-chip";
 /** Chip in the collapsed header of a terminal notification row in a session — **intentionally a different id** from the hub chip because their payload sources differ;
  *  E2E tests need to target "chips appeared on the notification row" and "chips appeared on the hub history row" separately. */
 export const TID_CHAT_WORKFLOW_ARTIFACT_CHIP = "workflow-notification-artifact-chip";
+
+// Dynamic workflow mode settings row and hub jump (docs/dynamic-workflow/launch.md, "The user's choice").
+export const TID_SETTINGS_DYNAMIC_WORKFLOW_MODE_TRIGGER = "settings-dynamic-workflow-mode-trigger";
+/** The dynamic suffix is the mode (disabled / onDemand / alwaysOn). */
+export const TID_SETTINGS_DYNAMIC_WORKFLOW_MODE_ITEM = "settings-dynamic-workflow-mode-item";
+export const TID_WORKFLOWS_OPEN_SETTINGS = "workflows-open-settings";

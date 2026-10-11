@@ -121,8 +121,10 @@ export async function readNativeSearchNotices(root = repositoryRoot, { verify = 
 export async function stageNativeSearchNotices(
   plan,
   root = repositoryRoot,
-  { builtFromSource = false } = {},
+  { builtFromSource = false, origin } = {},
 ) {
+  // The intranet mirror and repository archive provide input bytes with the same SHA-256. The caller records the source label accurately; the default remains the repository archive.
+  const binaryOrigin = origin ?? (builtFromSource ? "source-build" : "repository-archive");
   const { inventory, bytes } = await readNativeSearchNotices(root);
   for (const artifact of plan.artifacts) {
     const directory = dirname(artifact.binaryPath);
@@ -139,7 +141,7 @@ export async function stageNativeSearchNotices(
             toolId: artifact.toolId,
             version: artifact.version,
             sha256: hash(await readFile(artifact.binaryPath)),
-            origin: builtFromSource ? "source-build" : "repository-archive",
+            origin: binaryOrigin,
             ...(!builtFromSource ? { sourceArchiveSha256: artifact.archiveSha256 } : {}),
           },
         },

@@ -5,6 +5,7 @@ import type { SkillRoot } from "../skills/index.js";
 import type { ExecutionContext, TraceContext } from "../tracing/tracer.js";
 
 export const ZCODE_OFFICIAL_PLUGIN_MARKETPLACE = "zcode-plugins-official";
+export const CLAUDE_OFFICIAL_PLUGIN_MARKETPLACE = "claude-plugins-official";
 export const ZCODE_INLINE_PLUGIN_MARKETPLACE = "inline";
 export const ZCODE_PLUGIN_HOST_COMMAND = "__zcode-plugin-host";
 /**
@@ -23,7 +24,7 @@ export const ZCODE_PLUGIN_HOST_COMMAND = "__zcode-plugin-host";
 export const ZCODE_DWF_CHILD_COMMAND = "__zcode-dwf-child";
 
 export function isOfficialMarketplaceId(id: string): boolean {
-  return id === ZCODE_OFFICIAL_PLUGIN_MARKETPLACE;
+  return id === ZCODE_OFFICIAL_PLUGIN_MARKETPLACE || id === CLAUDE_OFFICIAL_PLUGIN_MARKETPLACE;
 }
 
 export type PluginSource = "official" | "inline" | "cache";
@@ -163,8 +164,27 @@ export interface PluginManifest {
   repository?: string;
   settings?: unknown;
   skills?: unknown;
+  /** Plugin UI: panel entry declarations in `ui.surfaces[]`, parsed by adapters. */
+  ui?: unknown;
   userConfig?: Record<string, PluginUserConfigOption>;
   version?: string;
+}
+
+/** Panel lifecycle: only session scope is accepted in the first version; enable `draft` scope if needed later. */
+export type PluginUiSurfaceAvailability = "session";
+/** Title: a single string or a map keyed by locale (for example `{ "zh-CN": "...", "en-US": "..." }`). */
+export type PluginUiSurfaceTitle = string | Record<string, string>;
+export interface PluginUiSurfaceDefinition {
+  id: string;
+  title: PluginUiSurfaceTitle;
+  icon?: string;
+  /** Runtime namespaced MCP server name (`plugin:${name}:${server}`), used directly by the UI for mcp/uiReadResource. */
+  server: string;
+  /** Original server key declared in the manifest, for diagnostics and display only. */
+  declaredServer: string;
+  /** Must begin with `ui://`. */
+  resourceUri: string;
+  availability: PluginUiSurfaceAvailability;
 }
 
 export interface PluginConfig {
@@ -204,6 +224,8 @@ export interface PluginMetadata {
   skillCount: number;
   skillRootCount: number;
   source: PluginSource;
+  /** Parsed and validated `ui.surfaces[]` manifest entries; absent when undeclared or all entries are invalid. */
+  uiSurfaces?: PluginUiSurfaceDefinition[];
   userConfig?: Record<string, PluginUserConfigOption>;
   version?: string;
 }
@@ -249,6 +271,8 @@ export interface PluginReferenceCatalogEntry {
    * projections; paths are outside this identifiers-only contract.
    */
   rootPath: string;
+  /** Panel entry declaration (A5); lets the host look up panel definitions in the session's frozen catalog. */
+  uiSurfaces?: PluginUiSurfaceDefinition[];
 }
 
 export interface PluginReferenceCatalog {

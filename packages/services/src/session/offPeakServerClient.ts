@@ -1,9 +1,9 @@
 /* Client for the five off-peak server endpoints.
    Handles only the JSON endpoints for quota snapshots, ticket acquisition, batch status checks,
    and settlement. Model messages do not go through this client; the idle plan per-turn provider
-   connects directly from the agent process.
+   connects directly from the agent process (D33).
    There are no built-in retries; queueing and backoff are handled by callers
-   (offPeakTaskService polling and the adapter layer). */
+   (offPeakTaskService polling and the adapter layer, D24). */
 import { z } from "zod";
 import type { OffPeakTakeNumberAvailability } from "@zcode/shared";
 import type { ServiceLogger } from "../logger/serviceLogger.js";
@@ -127,7 +127,7 @@ export class OffPeakServerError extends Error {
   }
 }
 
-interface OffPeakServerClientDeps {
+export interface OffPeakServerClientDeps {
   /** API origin (real server or mock gateway; ZCODE_OFFPEAK_MOCK is selected during assembly); async is allowed because the mock gateway starts lazily. */
   resolveOrigin: () => string | Promise<string>;
   /** Credential snapshot: all four ticket endpoints use the same selected credential snapshot. */

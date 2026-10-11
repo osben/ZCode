@@ -19,7 +19,7 @@ interface SchedulerResourceTelemetryTimerHandle {
   unref?(): void;
 }
 
-interface StartSchedulerResourceTelemetryOptions extends NodeSelfResourceSamplerOptions {
+export interface StartSchedulerResourceTelemetryOptions extends NodeSelfResourceSamplerOptions {
   /** The parentPort sender; callers pass a no-op when parentPort is unavailable. */
   postMessage: (message: SchedulerToMainMessage) => void;
   readMemoryUsage?: () => NodeJS.MemoryUsage;

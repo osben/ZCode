@@ -23,7 +23,7 @@ import {
 } from "#src/session/automationCron.js";
 
 /** Workspace ownership for write/single-read operations; used to enforce cross-workspace isolation. */
-interface AutomationWorkspaceScope {
+export interface AutomationWorkspaceScope {
   workspacePath: string;
   workspaceIdentity?: string;
 }
@@ -46,7 +46,7 @@ export class InvalidCronExprError extends Error {
 }
 
 /** Invalid finite-run update error; prevents writing contradictory state and incorrectly ending a task that is still running. */
-class InvalidAutomationMaxRunsUpdateError extends Error {
+export class InvalidAutomationMaxRunsUpdateError extends Error {
   constructor(message = "清空 maxRuns 时必须在同一次更新中设置 recurring=true") {
     super(message);
     this.name = "InvalidAutomationMaxRunsUpdateError";
@@ -54,7 +54,7 @@ class InvalidAutomationMaxRunsUpdateError extends Error {
 }
 
 /** Invalid custom schedule rule; a rule must pass domain validation before it can be written to the internal task store. */
-class InvalidAutomationScheduleRuleError extends Error {
+export class InvalidAutomationScheduleRuleError extends Error {
   constructor(message: string) {
     super(`非法的定时任务调度规则：${message}`);
     this.name = "InvalidAutomationScheduleRuleError";
@@ -62,7 +62,7 @@ class InvalidAutomationScheduleRuleError extends Error {
 }
 
 /** Relative delays are for one-time tasks only; the service generates the schedule rule from its actual clock. */
-class InvalidAutomationRelativeDelayError extends Error {
+export class InvalidAutomationRelativeDelayError extends Error {
   constructor(message: string) {
     super(`非法的相对时间定时任务：${message}`);
     this.name = "InvalidAutomationRelativeDelayError";

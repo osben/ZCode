@@ -12,20 +12,33 @@ import {
 let desktopTray: Tray | null = null;
 let rebuildDesktopTrayContextMenu: (() => void) | null = null;
 
-function resolveDesktopTrayIconPath() {
+export function resolveDesktopTrayIconPath(platform: NodeJS.Platform = process.platform) {
+  // The Linux tray accepts PNG only (.ico does not render); in packaged builds icon.png is
+  // unconditionally placed in the resources directory by extraResources
+  // (electron-builder.config.js), while Windows keeps a dedicated tray .ico to avoid high-DPI blur.
+  if (platform === "linux") {
+    return app.isPackaged
+      ? join(process.resourcesPath, "icon.png")
+      : join(import.meta.dirname, "../../build/icon.png");
+  }
   return app.isPackaged
     ? join(process.resourcesPath, "tray_icon.ico")
     : join(import.meta.dirname, "../../build/icon.ico");
 }
 
-export function createWindowsDesktopTray(options: {
+export function createDesktopTray(options: {
+  platform?: NodeJS.Platform;
   getLocale: () => Locale;
   showCurrentWindow: () => Promise<void> | void;
   executeDesktopCommand: (command: DesktopCommandId) => Promise<unknown>;
   quitApp: () => void;
   logger: { warn: (...args: unknown[]) => void };
 }) {
-  if (process.platform !== "win32") {
+  const platform = options.platform ?? process.platform;
+  // Linux close-to-tray capability is decided by the createCloseToTrayCapabilityMonitor probe
+  // (spec: docs/desktop/linux-close-to-tray.md); this gate only filters platforms, and callers must
+  // not pass linux when the capability check fails.
+  if (platform !== "win32" && platform !== "linux") {
     return null;
   }
 
@@ -34,7 +47,7 @@ export function createWindowsDesktopTray(options: {
   }
 
   try {
-    desktopTray = new Tray(resolveDesktopTrayIconPath());
+    desktopTray = new Tray(resolveDesktopTrayIconPath(platform));
   } catch (error) {
     options.logger.warn("[desktop-tray] failed to create tray icon", error);
     return null;
@@ -86,8 +99,10 @@ export function createWindowsDesktopTray(options: {
           click: () => executeTrayCommand(DesktopCommandIds.ShowAbout),
         },
         {
-          label: getLabel(desktopMenuMessageIds.helpClearAllData),
-          click: () => executeTrayCommand(DesktopCommandIds.ClearAllData),
+          // The tray only exposes the log diagnostics entry, keeping the clear-all-data action out
+          // of the context menu; reuse the app menu's export command.
+          label: getLabel(desktopMenuMessageIds.helpExportLogs),
+          click: () => executeTrayCommand(DesktopCommandIds.ExportLogs),
         },
         { type: "separator" },
         {

@@ -1,65 +1,66 @@
+import type { McpToolUiDescriptor } from "@zcode/shared/mcp-apps";
 // ============================================================
 // Tool Types - Core tool types for registry and executor
 // ============================================================
 
 import type {
-  ExecutionShellSelection,
+  CollaborationMode,
   AutomationPort,
-  OffPeakPort,
-  EmbeddedSearchBackend,
-  ExecutionPort,
   BrowserControlPort,
-  FileSystemPort,
-  HttpClientPort,
-  ImageProcessorPort,
-  PdfDocumentPort,
-  ModelMessageContent,
-  ModelContentProtection,
-  Model,
   CoordinatorResponsePort,
   DynamicWorkflowRunPort,
   DynamicWorkflowSnippetPort,
-  ModelCatalogPort,
-  RiskLevel,
-  SessionId,
-  SessionEvent,
-  SessionModePort,
-  SessionStorePort,
-  SkillPort,
-  SkillTelemetryMetadata,
-  SubagentRunOptions,
-  SubagentPort,
-  ToolArtifactStorePort,
-  TraceContext,
-  TraceId,
-  TurnId,
-  WorkflowPort,
-  WorkflowEscalatePort,
-  WorkflowSubmitPort,
-} from "@zcode/contracts";
-import type {
+  EmbeddedSearchBackend,
+  ExecutionPort,
+  ExecutionShellSelection,
+  FileSystemPort,
+  HttpClientPort,
+  ImageProcessorPort,
   JsonSchema,
+  Model,
+  ModelCatalogPort,
+  ModelContentProtection,
+  ModelMessageContent,
   ModelToolSideEffectScope,
+  OffPeakPort,
+  TopicResourcePort,
+  PdfDocumentPort,
   PermissionBrokerReasonSource,
   PermissionCapabilityGroup,
   PermissionRuleBehavior,
   PermissionRuleValue,
   PermissionUpdate,
   ProviderNativeToolSpec,
-  ToolExecutionMode,
+  RiskLevel,
+  SessionEvent,
+  SessionId,
+  SessionModePort,
+  SessionStorePort,
+  SkillPort,
+  SkillTelemetryMetadata,
+  SubagentPort,
+  SubagentRunOptions,
+  ToolArtifactStorePort,
   ToolCancellationPolicy,
   ToolContractDeclaration,
+  ToolExecutionMode,
+  ToolExecutionSpanWriter,
+  ToolExecutionTelemetry,
   ToolResultBudgetStrategy,
   ToolResultDisplayPayload,
   ToolTimeoutPolicy,
-  ToolExecutionSpanWriter,
-  ToolExecutionTelemetry,
+  TraceContext,
+  TraceId,
+  TurnId,
+  WorkflowEscalatePort,
+  WorkflowPort,
+  WorkflowSubmitPort,
 } from "@zcode/contracts";
+import type { RuntimeTaskRegistry } from "../runtime-task/registry.js";
 import type {
   PersistedReadFileStateMetadata,
   PersistedReadFileStateTool,
 } from "./read-file-state-metadata.js";
-import type { RuntimeTaskRegistry } from "../runtime-task/registry.js";
 
 // -----------------------------------------------
 // Tool Metadata
@@ -93,6 +94,10 @@ export interface ToolMetadata {
     description?: string;
     /** MCP server authenticated through the declared zcode_official mechanism; used only to trust structured identifiers in its results. */
     official?: boolean;
+    /** Stable ID of the plugin that owns this server (`${name}@${marketplace}`); empty for non-plugin MCP servers. */
+    pluginId?: string;
+    /** Normalized MCP App description from the tool's `_meta`; when present, project it to display.ui (use serverName if pluginId is absent). */
+    ui?: McpToolUiDescriptor;
   };
 }
 
@@ -167,6 +172,7 @@ export interface ToolExecutionContext {
   artifactStore?: ToolArtifactStorePort;
   automationPort?: AutomationPort;
   offPeakPort?: OffPeakPort;
+  topicResourcePort?: TopicResourcePort;
   sessionStore?: SessionStorePort;
   sessionModePort?: SessionModePort;
   workflowPort?: WorkflowPort;
@@ -195,6 +201,11 @@ export interface ToolExecutionContext {
   providerVisibleToolNames?: readonly string[];
   sessionId: SessionId;
   turnId?: TurnId;
+  /**
+   * Fields adjusted by the user in the confirmation dialog and applied to this input ({@link ToolEntry.applyInputAdjustments}'s
+   * `applied`). The handler uses them to tell the model that execution used different values from those it supplied; absent means no adjustment.
+   */
+  inputAdjustments?: Readonly<Record<string, unknown>>;
 }
 
 export interface ToolEmbeddedSearchContext {
@@ -256,14 +267,21 @@ export interface ToolInputResolutionContext {
   modelCatalogPort?: ModelCatalogPort;
   sessionId?: string;
   /**
-   * Probe for "is a Skill currently loaded in this session" (handlers/workflow-skill-gate.ts). Runtime answers from
-   * provider-visible history (agent/loaded-skills.ts), so after compaction the answer returns to false along with the history.
-   * If absent, this session has no Skill tool or the caller does not participate, and the gate is inactive.
+   * Probe for “is a skill loaded in this session now?” (handlers/workflow-skill-gate.ts). Runtime answers from provider-visible history
+   * (agent/loaded-skills.ts), so after compaction the answer becomes false along with the history. Absent means this session has no Skill tool or the caller does not participate (for example, a test-created context), so the gate does not apply.
    */
   hasLoadedSkill?: (skillName: string) => boolean;
 }
 
 export type ToolInputResolutionResult = { result: true; input: unknown } | ToolHandlerFailure;
+
+/**
+ * Result of {@link ToolEntry.applyInputAdjustments}: adjusted input and the subset of changes that **actually took effect**
+ * (keys match input field names; changes identical to original values do not count). Missing `applied` means nothing changed.
+ */
+export type ToolInputAdjustmentResult =
+  | { result: true; input: unknown; applied?: Readonly<Record<string, unknown>> }
+  | ToolHandlerFailure;
 
 export type ToolHandler<TInput = unknown, TOutput = unknown> = (
   input: TInput,
@@ -275,6 +293,8 @@ export type ToolHandler<TInput = unknown, TOutput = unknown> = (
 // -----------------------------------------------
 
 export interface ToolEntry extends ToolContractDeclaration {
+  /** Bind host resources before approval; release them on every return path and route revocation through the existing cancellation chain. */
+  retainExecution?: (callId: string) => { signal: AbortSignal; release(): void };
   aliases?: readonly string[];
   /**
    * Host-issued atomicity policy for model content. Only an authority-verified
@@ -327,6 +347,18 @@ export interface ToolEntry extends ToolContractDeclaration {
     input: unknown,
     context: ToolInputResolutionContext,
   ) => Promise<ToolInputResolutionResult> | ToolInputResolutionResult;
+  /**
+   * Apply user changes to input from the confirmation dialog (docs/dynamic-workflow/launch.md, “Adjusting the settings in
+   * the window”). The executor calls this after authorization and before the handler; `adjustments` is the broker result's
+   * `inputAdjustments`. Returned input must retain the shape produced by `resolveInput`—handlers have no separate adjustment path;
+   * on failure, fail the tool and do not run the handler. Synchronous: read only ports already in context; perform no I/O.
+   * Tools without this method ignore all adjustments.
+   */
+  applyInputAdjustments?: (
+    input: unknown,
+    adjustments: Readonly<Record<string, unknown>>,
+    context: ToolInputResolutionContext,
+  ) => ToolInputAdjustmentResult;
   formatModelContent?: (output: unknown) => ModelMessageContent;
   formatPersistedModelContent?: (
     input: ToolPersistedModelContentInput,
@@ -381,6 +413,7 @@ export interface ToolPersistedModelContentInput {
 }
 
 export interface ToolRuntimePermissionCapability {
+  userApprovalRule?: string;
   allowedInPlanMode?: boolean;
   destructive?: boolean;
   needsApproval?: boolean;
@@ -392,6 +425,8 @@ export interface ToolRuntimePermissionCapability {
 }
 
 export interface ToolRuntimePermissionCapabilityContext {
+  mode?: CollaborationMode;
+  bashShellSelection?: ExecutionShellSelection;
   runtimeScope?: ToolRuntimeScope;
   workingDirectory?: string;
   workspaceRoot?: string;

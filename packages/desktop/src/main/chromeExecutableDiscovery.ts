@@ -14,7 +14,7 @@ import {
 const DISCOVERY_COMMAND_TIMEOUT_MS = 3_000;
 const SUPPORTED_PLATFORMS = new Set<NodeJS.Platform>(["darwin", "linux", "win32"]);
 
-interface ChromeExecutableDiscoveryOptions extends ChromeInstallationPathOptions {
+export interface ChromeExecutableDiscoveryOptions extends ChromeInstallationPathOptions {
   installations?: ChromeInstallationCandidate[];
   processCommandLines?: string[];
   /** Tests can inject executables resolved from the OS registry/index, avoiding host-environment dependencies. */

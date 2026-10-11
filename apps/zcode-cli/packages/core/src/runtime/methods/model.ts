@@ -22,7 +22,6 @@ import { modelRequestTokenLimitLogContext } from "./model-token-limits.js";
 import { createModelStreamingEventQueue } from "./model-streaming-event-queue.js";
 import { getOrCreateReasoningBlock } from "./reasoning-stream.js";
 import { createRefreshRuntimeHeadersBeforeModelAttempt } from "./model-runtime-headers.js";
-import { resolveModelRequestSessionTypeFromTaskType } from "./model-request-session-type.js";
 import { isOutputTokenLimitFinishReason } from "./turn-output-token-continuation.js";
 
 const TOOL_INPUT_STREAM_DELTA_FALLBACK_FLUSH_CHARS = 4096;
@@ -79,9 +78,8 @@ export async function runModelTextRequest(
   // The adapter performs only provider-compatibility mapping and no longer applies a separate global cap.
   const modelInvocationContext = {
     metadata: traceContextToLogContext(projectedOptions.traceContext),
-    modelRequestSessionType: resolveModelRequestSessionTypeFromTaskType(this.config.taskType),
-    // Retry budget and admission port are not set here: they are runtime fields attached to the handle by createRuntimeModel,
-    // giving turn steps and model calls inside tools the same source.
+    // Session type, retry budget, and admission port are bound to the handle by createRuntimeModel;
+    // turn steps and model calls inside tools use the same source.
     modelCall: {
       // Ordinary Agent Steps previously relied on Adapter inferring operation/actor from metadata.querySource.
       // If the metadata was renamed or missing, they were incorrectly recorded as tool_internal_model_call.

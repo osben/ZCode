@@ -271,7 +271,7 @@ type BrowserTabRecoveryStorePort = Pick<
 > &
   Partial<Pick<BrowserTabRecoveryStore, "whenIdle">>;
 
-interface BrowserGuestManagerResidencyOptions {
+export interface BrowserGuestManagerResidencyOptions {
   tabLimit?: number;
   suspendAckTimeoutMs?: number;
   now?: () => number;
@@ -325,6 +325,19 @@ function scopeKey(context: InternalExecutionContext): string {
     context.sessionId,
     context.clientMode,
   ].join("\u0000");
+}
+
+/** Session identity a tab belongs to: excludes browserId / generation, so a tab released back to the user-tab set still matches. */
+function ownedBySession(
+  owner: InternalExecutionContext,
+  context: InternalExecutionContext,
+): boolean {
+  return (
+    owner.windowId === context.windowId &&
+    owner.workspaceKey === context.workspaceKey &&
+    (owner.remoteSessionId ?? "") === (context.remoteSessionId ?? "") &&
+    owner.sessionId === context.sessionId
+  );
 }
 
 function sameScope(left: InternalExecutionContext, right: InternalExecutionContext): boolean {
@@ -996,6 +1009,7 @@ export class BrowserGuestManager {
     }
     if (command.method === "closeSession") {
       this.closeSession(context);
+      if (command.closeTabs === true) await this.closeSessionTabs(context);
       return this.withMeta({ ok: true, elapsedMs: 0 }, context);
     }
 
@@ -2646,10 +2660,7 @@ export class BrowserGuestManager {
       tab.origin === "user" &&
       tab.claimable &&
       tab.lifecycle !== "closed" &&
-      tab.owner.windowId === context.windowId &&
-      tab.owner.workspaceKey === context.workspaceKey &&
-      (tab.owner.remoteSessionId ?? "") === (context.remoteSessionId ?? "") &&
-      tab.owner.sessionId === context.sessionId
+      ownedBySession(tab.owner, context)
     );
   }
 
@@ -3041,6 +3052,21 @@ export class BrowserGuestManager {
     this.defaultTabByScope.delete(scopeKey(context));
     this.sessionNames.delete(scopeKey(context));
     this.visibilityByScope.delete(scopeKey(context));
+  }
+
+  /**
+   * `closeSession({ closeTabs: true })`: actually closes every tab owned by that session. Matching is by session
+   * ownership, not the full browser scope — tabs released back to that session by finalize / deliverable moved to the
+   * `unclaimed-iab` scope but still belong to it. Use this only for sessions that never return to claim them
+   * (dwf subagents, docs/browser-use/2026-07-14-browser-tab-conversation-isolation-spec.md §2.3): their sessionId
+   * is not any conversation, so views kept by closeSession are visible to no one and claimable by no one, and would
+   * just keep a guest hanging.
+   */
+  private async closeSessionTabs(context: InternalExecutionContext): Promise<void> {
+    const owned = [...this.tabs.values()].filter(
+      (tab) => tab.lifecycle !== "closed" && ownedBySession(tab.owner, context),
+    );
+    for (const tab of owned) await this.closeTabDurably(tab);
   }
 
   closeWindow(windowId: number): void {
@@ -4620,7 +4646,7 @@ function normalizeDialogType(type: string | undefined): BrowserDialog["type"] {
 }
 
 /** Browser response metadata enters model traces and debug logs; retain only origin/path and never include credentials/query/hash. */
-function sanitizeBrowserMetaUrl(value: string): string | undefined {
+export function sanitizeBrowserMetaUrl(value: string): string | undefined {
   if (!value) return undefined;
   try {
     const url = new URL(value);

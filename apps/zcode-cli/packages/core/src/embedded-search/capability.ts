@@ -2,22 +2,22 @@
 // do not change the tool/prompt surface seen by the model just because the current shell does not support function injection.
 const ENABLE_EMBEDDED_SEARCH_BRANCH = true;
 
-interface EmbeddedSearchBranchCapabilityContext {
+export interface EmbeddedSearchBranchCapabilityContext {
   bashAvailable: boolean;
   embeddedSearchBranchEnabled?: boolean;
 }
 
-type EmbeddedSearchBranchCapabilityReason =
+export type EmbeddedSearchBranchCapabilityReason =
   | "supported"
   | "disabled_by_global_flag"
   | "bash_unavailable";
 
-interface EmbeddedSearchBranchCapabilityDecision {
+export interface EmbeddedSearchBranchCapabilityDecision {
   reason: EmbeddedSearchBranchCapabilityReason;
   useEmbeddedSearchBranch: boolean;
 }
 
-function evaluateEmbeddedSearchBranchCapability(
+export function evaluateEmbeddedSearchBranchCapability(
   context: EmbeddedSearchBranchCapabilityContext,
 ): EmbeddedSearchBranchCapabilityDecision {
   const branchEnabled = context.embeddedSearchBranchEnabled ?? ENABLE_EMBEDDED_SEARCH_BRANCH;

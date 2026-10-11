@@ -17,8 +17,12 @@ import type { DatabaseSync } from "node:sqlite";
 import type {
   ActorRecord,
   Caps,
+  GetNodeOptions,
   JournalStorePort,
+  ListActorsOptions,
   ListEventsOptions,
+  ListNodesOptions,
+  NodeKind,
   NodeRecord,
   RunEvent,
   RunRecord,
@@ -31,21 +35,28 @@ import { encodeJson } from "../json.js";
 // state with run/actor/node/event reads or writes. Their two queries also have extensive
 // reasoning about the source, ordering, and cursor semantics.
 import {
+  countTaggedReports,
   listArtifactItems,
   listArtifactRows,
   type DwfArtifactItem,
   type DwfArtifactItemsQuery,
 } from "./dwf-journal-artifacts.js";
+import { listEventPage, type DwfEventPageQuery } from "./dwf-journal-pages.js";
+import {
+  countNodeRows,
+  getNodeRow,
+  listActorRows,
+  listEventRows,
+  listNodeRows,
+  sumResultBytes,
+} from "./dwf-journal-reads.js";
 import {
   decodeActor,
-  decodeEvent,
-  decodeNode,
   decodeRun,
   encodeResultJson,
   encodeRunSettlement,
   type DwfActorRow,
   type DwfEventRow,
-  type DwfNodeRow,
   type DwfWorldNodeRow,
   type DwfRunDetailRow,
   type DwfRunListItem,
@@ -114,9 +125,8 @@ class SqliteDwfJournalStore implements JournalStorePort, DwfRunIntrospectionQuer
           // the predecessor row, so the source of this run's revision is recorded only
           // when the run is created.
           record.resumedFrom ?? null,
-          // Unlike the columns above, caps are not write-once metadata. `updateRunCaps`
-          // is the second writer: a revision changing only `max_concurrency` applies to
-          // a live run in place, and resume uses the value stored on the row.
+          // Unlike the columns above, caps are **not** write-once metadata. `updateRunCaps` is a second writer for this column: an amendment that changes only
+          // `max_concurrency` takes effect on the live run, while resume reuses the value in this row (docs/dynamic-workflow/concurrency.md, “Two bounds on a run”).
           record.caps.maxConcurrency,
           record.spentTokens,
           settlement.status,
@@ -204,16 +214,29 @@ class SqliteDwfJournalStore implements JournalStorePort, DwfRunIntrospectionQuer
   }
 
   /**
-   * Update this run's concurrency cap in place.
-   * A narrow write like `updateRunUsage`: it includes **only caps_max_concurrency**.
-   * Status, usage, and settlement envelopes have their own write paths; including them
-   * here could roll back a settlement when changing the cap. No migration is needed;
-   * this method is simply a second writer for an existing column.
+   * In-place update of this run's concurrency limit (docs/dynamic-workflow/concurrency.md, “Two bounds on a run”).
+   * A narrow write like `updateRunUsage`: **only update caps_max_concurrency**; status, usage, and settlement envelope
+   * are excluded because each has its own write path, and including them could make a limit change accidentally roll back a settlement.
+   * No migration: the column already exists; this method is simply its second writer.
    */
   updateRunCaps(runId: string, caps: Caps): void {
     const { changes } = this.db
       .prepare("update dwf_run set caps_max_concurrency = ?, time_updated = ? where id = ?")
       .run(caps.maxConcurrency, Date.now(), runId);
+    this.assertRunTouched(changes, runId);
+  }
+
+  /**
+   * Write the **effective script** back to the run row (docs/execution-engine.md, “Holes” → “The engine's part”). This is the second writer to
+   * `script_text` / `script_hash` after `createRun`: completion inserts a hole's function body into the script, and resume later checks the row's hash against its text, so both columns
+   * **must be updated in one statement**—two writes would create a crash window with new text and an old hash, causing ScriptHashMismatch on resume.
+   * A narrow write like `updateRunUsage`: status, usage, caps, and settlement envelope are excluded. No migration: both columns
+   * already exist; this method is their second writer.
+   */
+  updateRunScript(runId: string, scriptText: string, scriptHash: string): void {
+    const { changes } = this.db
+      .prepare("update dwf_run set script_text = ?, script_hash = ?, time_updated = ? where id = ?")
+      .run(scriptText, scriptHash, Date.now(), runId);
     this.assertRunTouched(changes, runId);
   }
 
@@ -309,11 +332,8 @@ class SqliteDwfJournalStore implements JournalStorePort, DwfRunIntrospectionQuer
     return row ? decodeActor(row) : undefined;
   }
 
-  listActors(runId: string): ActorRecord[] {
-    const rows = this.db
-      .prepare("select * from dwf_actor where run_id = ? order by id")
-      .all(runId) as unknown as DwfActorRow[];
-    return rows.map(decodeActor);
+  listActors(runId: string, opts: ListActorsOptions): ActorRecord[] {
+    return listActorRows(this.db, runId, opts);
   }
 
   putNode(record: NodeRecord): void {
@@ -375,22 +395,35 @@ class SqliteDwfJournalStore implements JournalStorePort, DwfRunIntrospectionQuer
       );
   }
 
-  getNode(runId: string, siteId: string, ordinal: number): NodeRecord | undefined {
-    const row = this.db
-      .prepare("select * from dwf_node where run_id = ? and site_id = ? and ordinal = ?")
-      .get(runId, siteId, ordinal) as DwfNodeRow | undefined;
-    return row ? decodeNode(row) : undefined;
+  // ---- Node / event / actor list reads: SQL and its rationale live in dwf-journal-reads.ts (all read options are pushed down).
+
+  getNode(
+    runId: string,
+    siteId: string,
+    ordinal: number,
+    opts?: GetNodeOptions,
+  ): NodeRecord | undefined {
+    return getNodeRow(this.db, runId, siteId, ordinal, opts);
   }
 
-  listNodes(runId: string): NodeRecord[] {
-    const rows = this.db
-      .prepare("select * from dwf_node where run_id = ? order by id")
-      .all(runId) as unknown as DwfNodeRow[];
-    return rows.map(decodeNode);
+  listNodes(runId: string, opts: ListNodesOptions): NodeRecord[] {
+    return listNodeRows(this.db, runId, opts);
+  }
+
+  countNodes(runId: string, kind: NodeKind): number {
+    return countNodeRows(this.db, runId, kind);
+  }
+
+  sumResultBytes(runId: string, kind: NodeKind): number {
+    return sumResultBytes(this.db, runId, kind);
   }
 
   listArtifactRows(runId: string): NodeRecord[] {
     return listArtifactRows(this.db, runId);
+  }
+
+  countTaggedReports(runId: string): ReadonlyMap<string, number> {
+    return countTaggedReports(this.db, runId);
   }
 
   listWorldNodes(runId: string): DwfWorldNodeRow[] {
@@ -401,8 +434,15 @@ class SqliteDwfJournalStore implements JournalStorePort, DwfRunIntrospectionQuer
     runId: string,
     artifactId: string,
     query: DwfArtifactItemsQuery,
-  ): DwfArtifactItem[] {
+  ): { items: DwfArtifactItem[]; hasMore: boolean } {
     return listArtifactItems(this.db, runId, artifactId, query);
+  }
+
+  listEventPage(
+    runId: string,
+    query: DwfEventPageQuery,
+  ): { events: StoredEvent[]; hasMore: boolean } {
+    return listEventPage(this.db, runId, query);
   }
 
   appendEvent(runId: string, event: RunEvent): StoredEvent {
@@ -434,19 +474,8 @@ class SqliteDwfJournalStore implements JournalStorePort, DwfRunIntrospectionQuer
     return { sequence: row.sequence, event, timeCreated };
   }
 
-  listEvents(runId: string, opts?: ListEventsOptions): StoredEvent[] {
-    // Push both cursor and limit into SQL. Reading the full journal and slicing here
-    // would load the whole journal into memory on every page, defeating pagination. The
-    // cursor means “strictly greater than” (matching the in-memory implementation).
-    const after = opts?.afterSequence;
-    const limit = opts?.limit;
-    const where = after === undefined ? "run_id = ?" : "run_id = ? and sequence > ?";
-    const params: Array<string | number> = after === undefined ? [runId] : [runId, after];
-    // SQLite uses `limit -1` for “unlimited”, so omitted and explicit limits share one statement shape.
-    const rows = this.db
-      .prepare(`select * from dwf_event where ${where} order by sequence limit ?`)
-      .all(...params, limit === undefined ? -1 : Math.max(0, limit)) as unknown as DwfEventRow[];
-    return rows.map(decodeEvent);
+  listEvents(runId: string, opts: ListEventsOptions): StoredEvent[] {
+    return listEventRows(this.db, runId, opts);
   }
 
   /** An UPDATE affecting zero rows means “unknown run”; SQLite does not report this as an error, so detect it explicitly and fail loudly. */

@@ -4,7 +4,9 @@
 
 import {
   AMEND_WORKFLOW_TOOL_NAME,
+  FILL_WORKFLOW_HOLE_TOOL_NAME,
   isAmendWorkflowOwnedPredecessor,
+  isFillWorkflowHoleOwnedRun,
   PermissionCapabilityGroup,
   type PermissionCapabilityGroup as PermissionCapabilityGroupType,
   type PermissionRuleValue,
@@ -45,6 +47,7 @@ export interface PermissionContext {
 }
 
 export interface PermissionToolCapability {
+  userApprovalRule?: string;
   allowedInPlanMode?: boolean;
   alwaysAsk?: boolean;
   readOnly?: boolean;
@@ -60,6 +63,7 @@ export interface PermissionToolCapability {
 export type PermissionBehavior = "allow" | "ask" | "deny";
 
 export interface PermissionDecisionResult {
+  approvalMode?: "user-once";
   decision: PermissionBehavior;
   allowed: boolean;
   reason?: string;
@@ -127,13 +131,26 @@ export class PermissionService {
       );
     }
 
-    // Tools declaring alwaysAsk require user confirmation and cannot bypass it through a permission-mode allow branch.
+    // A standalone Plan takes precedence over Guarded's YOLO base policy; approval cannot lift Plan execution restrictions.
+    const planEnabled = context.planEnabled ?? context.mode === "plan";
+    if (!planEnabled && context.mode === "guarded" && toolCapability?.userApprovalRule) {
+      return {
+        ...this.ask(
+          context,
+          capability,
+          toolCapability.userApprovalRule,
+          "Dangerous command requires your approval for this execution",
+        ),
+        approvalMode: "user-once",
+      };
+    }
+
+    // Preserve tool-level confirmation during staging; do not skip it under Guarded's YOLO base policy for ordinary calls.
     if (capability.alwaysAsk) {
       return this.checkAlwaysAsk(context, capability, projectRules, rulePolicy);
     }
 
-    const planEnabled = context.planEnabled ?? context.mode === "plan";
-    if (context.mode === "yolo" && !planEnabled) {
+    if ((context.mode === "yolo" || context.mode === "guarded") && !planEnabled) {
       return this.allow(context, capability, "mode.yolo", "Yolo mode bypasses permission prompts");
     }
 
@@ -170,6 +187,24 @@ export class PermissionService {
         capability,
         "rule.project.ask",
         `Tool ${context.toolName} requires approval by project permission rules`,
+      );
+    }
+
+    // Host revalidates which original session replies may be received; network side effects must not reopen a dialog for this approval-free contract.
+    // Keep this after explicit deny/ask rules and require both the built-in tool name and capability, so other network tools gain no permissions.
+    if (
+      context.toolName === "ReplyToChannel" &&
+      capability.permissionName === "channel.reply" &&
+      capability.sideEffectScope === "network" &&
+      capability.riskLevel === "medium" &&
+      !capability.destructive &&
+      !capability.needsApproval
+    ) {
+      return this.allow(
+        context,
+        capability,
+        "tool.channelReply.preapproved",
+        "The originating bot conversation is already authorized",
       );
     }
 
@@ -391,12 +426,21 @@ export class PermissionService {
     );
   }
 
-  /** AmendWorkflow whose populated `predecessor` identifies a run from this session that was not stopped by the user. */
+  /**
+   * AmendWorkflow when its populated `predecessor` identifies a run from this session that was not stopped by the user; or FillWorkflowHole when its populated
+   * `hole` says the same (docs/dynamic-workflow/launch.md, “Approval”: filling a hole amends the script of an active run and follows the same amendment rule).
+   */
   private isOwnedWorkflowAmend(context: PermissionContext): boolean {
-    if (context.toolName !== AMEND_WORKFLOW_TOOL_NAME) return false;
     if (!context.input || typeof context.input !== "object") return false;
+    const input = context.input as Record<string, unknown>;
     // The predicate lives in the contract so in-place concurrency retunes and amendment fallback use the same rule instead of duplicating it.
-    return isAmendWorkflowOwnedPredecessor((context.input as Record<string, unknown>).predecessor);
+    if (context.toolName === AMEND_WORKFLOW_TOOL_NAME) {
+      return isAmendWorkflowOwnedPredecessor(input.predecessor);
+    }
+    if (context.toolName === FILL_WORKFLOW_HOLE_TOOL_NAME) {
+      return isFillWorkflowHoleOwnedRun(input.hole);
+    }
+    return false;
   }
 
   private checkPlanMode(

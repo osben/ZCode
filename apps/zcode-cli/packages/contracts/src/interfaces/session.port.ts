@@ -29,7 +29,15 @@ import type { ModelSelection } from "../model/model.js";
 // Collaboration Mode and Risk Level
 // -----------------------------------------------
 
-export type CollaborationMode = "plan" | "build" | "edit" | "yolo" | "auto";
+export type CollaborationMode = "plan" | "build" | "edit" | "yolo" | "guarded" | "auto";
+
+/** A guarded parent only tightens internal YOLO derivations; other explicitly selected submodes keep their own policies. */
+export function inheritPermissionMode<T extends CollaborationMode | undefined>(
+  parent: CollaborationMode | undefined,
+  resolved: T,
+): T | "guarded" {
+  return parent === "guarded" && resolved === "yolo" ? "guarded" : resolved;
+}
 export type SessionStatus = "idle" | "running" | "waiting" | "paused" | "completed" | "error";
 export type RiskLevel = "low" | "medium" | "high" | "critical";
 export type InputDelivery = "auto" | "start_turn" | "steer_active_turn";
@@ -121,6 +129,7 @@ export interface TargetCompletionVerificationProjectionInfo {
 }
 
 export interface PendingPermission {
+  approvalMode?: "user-once";
   requestId?: string;
   toolCallId: string;
   toolName: string;
@@ -279,9 +288,82 @@ export type TurnSteerSource = "plan_approval_feedback" | "workflow_refine_feedba
  */
 export type TurnSteerDeliveryMode = "guide" | "queue";
 
+/** Persistence contract for message.data metadata.highspeed; excludes runtime credentials. */
+export interface HighspeedMessageMetadata {
+  schemaVersion: 1;
+  cardId: string;
+  taskId: string;
+  provider: string;
+  model: string;
+  issuedAt: number;
+  expiresAt: number;
+  regularTps?: number;
+  outputTokens?: number;
+  durationMs?: number;
+  savedDurationMs?: number;
+  modelDurationMs?: number;
+  toolDurationMs?: number;
+  otherDurationMs?: number;
+  fallbackAt?: number;
+  fallbackReason?: "highspeed_card_expired" | "highspeed_request_failed";
+}
+
 /** Protocol-independent input intent metadata; bootstrap v4 assembles ConversationInputIntent at the event boundary. */
+export type TurnInputSourceMetadata =
+  | { kind: "pluginUi"; pluginId: string; toolCallId: string }
+  | { kind: "genUi"; path: string; title?: string };
+
 export interface TurnInputIntentMetadata {
   planEnabled?: boolean;
+  conversationQuotes?: Array<{
+    text: string;
+    path?: string;
+    senderName?: string;
+    senderId?: string;
+    messageId?: string;
+    sentAt?: string;
+  }>;
+  inputOrigin?: "desktop" | "mobile";
+  botGroupSource?: {
+    botIdentity?: { name: string; openId?: string };
+    mentionedBot?: boolean;
+    appId?: string;
+    contentParts?: import("@zcode/shared").ChannelContentPart[];
+    messages?: Array<{
+      mentionedBot?: boolean;
+      messageId: string;
+      senderId: string;
+      senderName: string;
+      text: string;
+      attachmentIndexes: number[];
+      contentParts?: import("@zcode/shared").ChannelContentPart[];
+    }>;
+    /** Injected by Host when queued; historical resource requests cannot borrow a later reauthorization version. */
+    authorizationId?: string;
+    botId: string;
+    provider: "feishu" | "lark";
+    chatId: string;
+    threadId?: string;
+    rootMessageId?: string;
+    topicContext?: {
+      checkpoint: string;
+      hasGap: boolean;
+      messages: Array<{
+        id: string;
+        chatId: string;
+        threadId: string;
+        senderId: string;
+        senderType: "user" | "app";
+        text: string;
+        createdAt: number;
+        kind: string;
+        deleted?: boolean;
+      }>;
+    };
+    senderId: string;
+    senderName: string;
+    messageId: string;
+  };
   sourceCommandId: string;
   queueItemId: string;
   clientId: string;
@@ -291,7 +373,7 @@ export interface TurnInputIntentMetadata {
   /** Fixed at admission; Queue/Guide must not later reread the Composer or the Session's latest selection. */
   modelSelection?: ModelSelection;
   /** Collaboration mode fixed with this user Submission. */
-  mode?: "build" | "edit" | "plan" | "yolo";
+  mode?: "build" | "edit" | "plan" | "yolo" | "guarded";
   admissionSeq: number;
   admittedAt: number;
   requestedDelivery: "auto" | "startNow" | "queue" | "guide";
@@ -304,7 +386,10 @@ export interface TurnInputIntentMetadata {
     mime: string;
     bytes: number;
     previewRef?: string;
+    sourceKind?: "clipboard-text" | "topic-history";
+    messageCount?: number;
   }>;
+  highspeed?: HighspeedMessageMetadata;
   sharedContextRefs?: Array<{
     kind: "shared_context_import";
     context_id: string;
@@ -315,6 +400,8 @@ export interface TurnInputIntentMetadata {
     queueItemId?: string;
     clientId?: string;
   };
+  /** Source of a plugin UI-sent message (MCP Apps ui/message); omitted for direct user input. */
+  source?: TurnInputSourceMetadata;
 }
 
 /** Unresolved attachment descriptors retained in the queue; the same resolver as a normal turn is used when consumed. */
@@ -322,7 +409,8 @@ export interface PendingTurnAttachment {
   type: "file" | "image" | "video" | "pdf" | "url";
   path?: string;
   content?: string;
-  sourceKind?: "clipboard-text";
+  sourceKind?: "clipboard-text" | "topic-history";
+  messageCount?: number;
   filename?: string;
   mimeType?: string;
   sizeBytes?: number;

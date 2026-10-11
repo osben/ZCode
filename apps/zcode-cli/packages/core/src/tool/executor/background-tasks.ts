@@ -193,18 +193,18 @@ export class BackgroundTaskTracker {
           taskId,
           toolName: toolCall.name,
         });
-        void Promise.resolve(this.deps.executionPort?.cancelBackgroundTask?.(taskId)).catch(
-          (error) => {
-            this.deps.logger?.warn("Subagent background Bash cancellation failed", {
-              ...traceContextToLogContext(traceContext),
-              errorMessage: error instanceof Error ? error.message : String(error),
-              event: "background_task.subagent_bash.cancel_failed",
-              module: "core.tool.executor",
-              taskId,
-              toolName: toolCall.name,
-            });
-          },
-        );
+        void Promise.resolve(
+          this.deps.executionPort?.cancelBackgroundTask?.(taskId),
+        ).catch((error) => {
+          this.deps.logger?.warn("Subagent background Bash cancellation failed", {
+            ...traceContextToLogContext(traceContext),
+            errorMessage: error instanceof Error ? error.message : String(error),
+            event: "background_task.subagent_bash.cancel_failed",
+            module: "core.tool.executor",
+            taskId,
+            toolName: toolCall.name,
+          });
+        });
       }, this.deps.subagentBackgroundBashMaxMs);
     }
 
@@ -267,16 +267,13 @@ export class BackgroundTaskTracker {
         }
 
         if (this.isNotifiedLocalAgentSnapshot(toolCall, snapshot)) {
-          this.deps.logger?.debug?.(
-            "Background task terminal notification already handled by subagent",
-            {
-              ...traceContextToLogContext(traceContext),
-              event: "background_task.tracking.notification_already_handled",
-              module: "core.tool.executor",
-              taskId,
-              toolName: toolCall.name,
-            },
-          );
+          this.deps.logger?.debug?.("Background task terminal notification already handled by subagent", {
+            ...traceContextToLogContext(traceContext),
+            event: "background_task.tracking.notification_already_handled",
+            module: "core.tool.executor",
+            taskId,
+            toolName: toolCall.name,
+          });
           stopped = true;
           stopTracking();
           return;
@@ -576,13 +573,7 @@ export class BackgroundTaskTracker {
         // with originMeta.
         ...(isDynamicWorkflowRunDispatchToolName(toolCall.name)
           ? {
-              originMeta: buildWorkflowNotificationOriginMeta(
-                toolCall,
-                taskId,
-                status,
-                snapshot,
-                output,
-              ),
+              originMeta: buildWorkflowNotificationOriginMeta(toolCall, taskId, status, snapshot, output),
             }
           : {}),
         taskId,
@@ -701,7 +692,10 @@ export class BackgroundTaskTracker {
     // journal rows (attached to the snapshot by the run service), not a memory-only projection.
     const isDynamicWorkflow = isDynamicWorkflowRunDispatchToolName(toolCall.name);
     const reports = isDynamicWorkflow
-      ? buildWorkflowReportsNotificationSection(workflowSnapshotReports(snapshot))
+      ? buildWorkflowReportsNotificationSection(
+          workflowSnapshotReports(snapshot),
+          workflowSnapshotReportCount(snapshot),
+        )
       : undefined;
     // User-facing artifacts also belong only to dwf (legacy `Workflow` has no such concept, and
     // its notification remains unchanged byte for byte). Include them for all three terminal
@@ -773,11 +767,9 @@ export class BackgroundTaskTracker {
     if (isSubagentDispatchToolName(toolCall.name)) {
       const getTask = deps.subagentPort?.getTask;
       return {
-        ...(getTask
-          ? { getSnapshot: (taskId: string) => getTask.call(deps.subagentPort, taskId) }
-          : {}),
-        // The stop entry point for a background Agent is subagentPort.stopTask; the started
-        // payload must not reuse Bash's executionPort capability check.
+        ...(getTask ? { getSnapshot: (taskId: string) => getTask.call(deps.subagentPort, taskId) } : {}),
+        // Reason for the fix: background Agents are stopped through subagentPort.stopTask;
+        // the started payload cannot reuse Bash's executionPort capability check.
         cancellable: Boolean(deps.subagentPort?.stopTask),
       };
     }
@@ -807,9 +799,7 @@ export class BackgroundTaskTracker {
       const getTask = deps.workflowPort?.getTask;
       const waiter = getWorkflowTaskWaiter(deps.workflowPort);
       return {
-        ...(getTask
-          ? { getSnapshot: (taskId: string) => getTask.call(deps.workflowPort, taskId) }
-          : {}),
+        ...(getTask ? { getSnapshot: (taskId: string) => getTask.call(deps.workflowPort, taskId) } : {}),
         ...(waiter ? { waitForTerminal: (taskId: string) => waiter.waitForTask(taskId) } : {}),
         cancellable: false,
       };
@@ -868,7 +858,10 @@ function normalizeBackgroundTaskNotificationStatus(status: string): BashTaskNoti
   }
 }
 
-function resolveBashBackgroundResultTitle(toolCall: ExecutableToolCall, taskId: string): string {
+function resolveBashBackgroundResultTitle(
+  toolCall: ExecutableToolCall,
+  taskId: string,
+): string {
   const input = isRecord(toolCall.input) ? toolCall.input : {};
   const description = stringField(input, "description")?.trim();
   const command = stringField(input, "command")?.trim();
@@ -1081,16 +1074,17 @@ function buildWorkflowTerminalNotification(
 
   // Include progressive artifacts for all three terminal states: a run that dies on ask 12
   // still completed 11 asks' worth of work.
-  const reports = buildWorkflowReportsManifestSection(workflowSnapshotReports(snapshot));
+  const reports = buildWorkflowReportsManifestSection(
+    workflowSnapshotReports(snapshot),
+    workflowSnapshotReportCount(snapshot),
+  );
   if (reports !== undefined) meta.reports = reports;
 
   // Chips payload for user-facing artifacts. This is the **only** data source for notification
   // row chips: cold hydration reads it back unchanged through the shared Zod schema, and a
   // missing key would make the chips disappear permanently. Include it for all three terminal
   // states, as with reports.
-  const artifactsSection = buildWorkflowArtifactsManifestSection(
-    workflowSnapshotArtifacts(snapshot),
-  );
+  const artifactsSection = buildWorkflowArtifactsManifestSection(workflowSnapshotArtifacts(snapshot));
   if (artifactsSection !== undefined) {
     meta.artifacts = artifactsSection.artifacts;
     if (artifactsSection.artifactsTruncated) meta.artifactsTruncated = true;
@@ -1124,7 +1118,8 @@ function workflowTerminalNotificationStatus(
 }
 
 /**
- * Wall-clock duration in a notification (the "time" field on the completion card).
+ * Wall-clock duration in the notification (the “Time” field on the completion card; see
+ * docs/dynamic-workflow/transcript-and-notifications.md「How long it took」）。
  *
  * Two sources; take the **larger** value:
  *   - This run: `completedAt - startedAt`, the interval observed by the process that settled it.
@@ -1132,12 +1127,10 @@ function workflowTerminalNotificationStatus(
  *     journal (each resumed run and every predecessor reached through `resumedFrom`); absent
  *     means unavailable.
  *
- * Reporting only this run's wall-clock duration would omit earlier execution time: each amend
- * and resume restarts the process clock, and most of that run may be cache replay. Take the
- * larger value instead of always using lineage to preserve "never report less than this process
- * observed": if older run events predate this accounting or the journal read surface is absent,
- * `activeDurationMs` is missing and we fall back to this run. Normally lineage duration is at
- * least as large because it includes this run.
+ * Defect (2026-09-21): reporting only the current generation can show a run that “ran for four hours and was amended once” as 12 seconds—each amendment
+ * and resume restarts the in-process clock, and most of that generation may be cache replay. Use the greater value instead of always using lineage to preserve
+ * “never underreport what this process observed”: if older events predate this process's accounting and the journal read port is absent, `activeDurationMs`
+ * is missing and we fall back to the current generation; normally lineage is greater because it includes it.
  *
  * If neither source is available, omit the field (the card shows `—`) instead of writing 0.
  */
@@ -1191,6 +1184,14 @@ function workflowSnapshotReports(
 ): readonly unknown[] | undefined {
   if (snapshot === undefined || !("reports" in snapshot)) return undefined;
   return Array.isArray(snapshot.reports) ? snapshot.reports : undefined;
+}
+
+/** Actual report count from the snapshot (`reports` contains only the first 256); absent means an older snapshot, so readers fall back to the item count. */
+function workflowSnapshotReportCount(
+  snapshot: BackgroundTaskSnapshot | undefined,
+): number | undefined {
+  if (snapshot === undefined || !("reportCount" in snapshot)) return undefined;
+  return typeof snapshot.reportCount === "number" ? snapshot.reportCount : undefined;
 }
 
 /**

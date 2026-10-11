@@ -45,7 +45,7 @@ interface RemoteSkillSyncDialogProps {
   onSynced: () => Promise<void> | void;
 }
 
-function buildRemoteSkillSyncRows(
+export function buildRemoteSkillSyncRows(
   candidates: readonly SkillSyncCandidate[],
   statuses: readonly SkillSyncRemoteStatus[],
 ): RemoteSkillSyncRow[] {
@@ -56,11 +56,13 @@ function buildRemoteSkillSyncRows(
   }));
 }
 
-function resolveDefaultRemoteSkillSyncSelection(rows: readonly RemoteSkillSyncRow[]): Set<string> {
+export function resolveDefaultRemoteSkillSyncSelection(
+  rows: readonly RemoteSkillSyncRow[],
+): Set<string> {
   return new Set(rows.filter((row) => !row.exists).map((row) => row.candidate.id));
 }
 
-function filterRemoteSkillSyncRows(
+export function filterRemoteSkillSyncRows(
   rows: readonly RemoteSkillSyncRow[],
   showExistingRemoteSkills: boolean,
 ): RemoteSkillSyncRow[] {
@@ -80,7 +82,7 @@ export function formatRemoteSkillSyncTarget(
   return workspacePath ? `${target} · ${workspacePath}` : target;
 }
 
-function formatRemoteSkillSyncError(
+export function formatRemoteSkillSyncError(
   error: unknown,
   intl: Pick<IntlInstance, "formatMessage">,
 ): string {
@@ -136,7 +138,7 @@ function formatSkillSyncBytes(bytes: number): string {
   return `${Number.isInteger(mebibytes) ? mebibytes : mebibytes.toFixed(1)} MiB`;
 }
 
-function getRemoteSkillSyncBulkSelectionState({
+export function getRemoteSkillSyncBulkSelectionState({
   selectedCount,
   totalSelectable,
 }: {
@@ -149,7 +151,7 @@ function getRemoteSkillSyncBulkSelectionState({
   return { checked, disabled, indeterminate };
 }
 
-function RemoteSkillSyncExistingFilterCheckbox({
+export function RemoteSkillSyncExistingFilterCheckbox({
   checked,
   onCheckedChange,
 }: {
@@ -171,7 +173,7 @@ function RemoteSkillSyncExistingFilterCheckbox({
   );
 }
 
-function RemoteSkillSyncTargetRow({
+export function RemoteSkillSyncTargetRow({
   targetLabel,
   showExistingRemoteSkills,
   showExistingFilter,
@@ -201,7 +203,7 @@ function RemoteSkillSyncTargetRow({
   );
 }
 
-function RemoteSkillSyncBulkSelectionCheckbox({
+export function RemoteSkillSyncBulkSelectionCheckbox({
   selectedCount,
   totalSelectable,
   onSelectAll,
@@ -421,9 +423,9 @@ export function RemoteSkillSyncDialog(props: RemoteSkillSyncDialogProps) {
           />
         </DialogHeader>
 
-        {/* Filtering changes the number of visible rows. Keep DialogContent at a fixed height and
-              scroll within the list; otherwise, the dialog jumps when the empty state shrinks to
-              fit, and long lists push the footer controls out of the window. */}
+        {/* Fix reason: filtering changes the number of visible rows. Keep DialogContent at a fixed
+            height and scroll within the list; otherwise, the dialog jumps when the empty state
+            shrinks to fit, and long lists push the footer controls out of the window. */}
         <div className="min-h-0 flex-1 overflow-y-auto">
           {error ? (
             <div className="mb-3 rounded-lg border border-destructive/40 bg-surface px-3 py-2 text-ui-base text-destructive">

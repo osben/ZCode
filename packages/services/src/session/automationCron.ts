@@ -27,7 +27,7 @@ export function scheduleRuleDefinition(rule: ZCodeAutomationScheduleRule): strin
 }
 
 /** A one-time fixed-calendar task specified a target time that just passed but can no longer be safely executed immediately. */
-class StaleOneShotAutomationScheduleError extends Error {
+export class StaleOneShotAutomationScheduleError extends Error {
   constructor(targetAt: number) {
     super(
       `一次性定时任务的目标时间（${new Date(targetAt).toLocaleString()}）已过去；相对时间请使用 delayMinutes，绝对时间请确认未来时刻后重试`,

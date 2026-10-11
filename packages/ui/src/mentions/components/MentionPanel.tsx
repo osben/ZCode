@@ -73,14 +73,14 @@ type VirtualRow =
 
 const OPTION_ROW_HEIGHT = 34;
 const STATUS_ROW_HEIGHT = 40;
-const SECTION_HEADER_ROW_HEIGHT = 34;
+export const SECTION_HEADER_ROW_HEIGHT = 34;
 
 // After group headings switched to the base font size, the old 28px virtual row could not fit the default line height and 12px vertical padding.
 // Use the same 32px visible height and 34px virtual row height as command items to prevent clipping or overlapping the next row.
-const SECTION_HEADER_CLASS_NAME =
+export const SECTION_HEADER_CLASS_NAME =
   "flex h-8 items-center px-3 text-ui-base font-semibold uppercase tracking-wide text-foreground-subtle";
 
-function buildVirtualRows(sections: MentionPanelSection[]): VirtualRow[] {
+export function buildVirtualRows(sections: MentionPanelSection[]): VirtualRow[] {
   const rows: VirtualRow[] = [];
   let flatOptionIndex = 0;
   const shouldRenderSectionHeader = sections.length > 1;

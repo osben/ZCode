@@ -1,5 +1,6 @@
 // ============================================================
-// Record an inline draft as a file the model has read
+// Record inline drafts as “files written by the model” (docs/dynamic-workflow/launch.md, “Script files” →
+// 「An inline draft counts as written by the model」）
 // ============================================================
 // Edit / Write reject files the session has not read (FILE_NOT_READ): the model cannot change bytes it has not seen. An inline draft
 // already meets this condition because its bytes are the `script` input from the call that created it. Without recording this fact,
@@ -16,7 +17,7 @@ import { createReadFileStateMetadataFromEntry } from "../read-file-state-metadat
 import { createReadFileStateKey, normalizeReadFileStateMtimeMs } from "../read-file-state.js";
 import type { ReadFileStateEntry, ToolExecutionContext } from "../types.js";
 
-export type WorkflowDraftAuthoringTool = "CreateWorkflow" | "AmendWorkflow";
+export type WorkflowDraftAuthoringTool = "CreateWorkflow" | "AmendWorkflow" | "FillWorkflowHole";
 
 const CRLF_PATTERN = /\r\n/gu;
 const LF = "\n";

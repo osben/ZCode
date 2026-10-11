@@ -1,9 +1,12 @@
 import type { ModelUsage } from "@zcode/contracts";
 import { formatTaskNotification } from "../runtime-task/notification.js";
 
-type LocalAgentTaskNotificationStatus = "completed" | "failed" | "stopped";
+export type LocalAgentTaskNotificationStatus =
+  | "completed"
+  | "failed"
+  | "stopped";
 
-interface LocalAgentTaskNotificationInput {
+export interface LocalAgentTaskNotificationInput {
   agentId: string;
   agentType: string;
   description: string;
@@ -18,7 +21,9 @@ interface LocalAgentTaskNotificationInput {
   usage?: ModelUsage;
 }
 
-export function formatLocalAgentTaskNotification(input: LocalAgentTaskNotificationInput): string {
+export function formatLocalAgentTaskNotification(
+  input: LocalAgentTaskNotificationInput,
+): string {
   return formatTaskNotification({
     agentId: input.agentId,
     description: input.description,
@@ -41,11 +46,15 @@ export function formatLocalAgentTaskNotification(input: LocalAgentTaskNotificati
 }
 
 function formatLocalAgentNotificationSummary(
-  input: Pick<LocalAgentTaskNotificationInput, "agentType" | "description" | "error" | "status">,
+  input: Pick<
+    LocalAgentTaskNotificationInput,
+    "agentType" | "description" | "error" | "status"
+  >,
 ): string {
   const summary = `Agent ${input.agentType} task "${input.description}" ${input.status}.`;
-  const error = input.status === "failed" && input.error?.trim() ? input.error : undefined;
-  // The failure summary feeds the Agent card's "Subagent output"; preserve the original prefix and
-  // append the same failure reason used by <error>. Keep completed/stopped wording unchanged.
+  const error =
+    input.status === "failed" && input.error?.trim() ? input.error : undefined;
+  // Reason for the fix: the failure summary is the source for “Subagent output” on the Agent card. Preserve the original prefix and
+  // append the same failure reason as <error>; keep completed/stopped copy unchanged.
   return error ? `${summary} ${error}` : summary;
 }

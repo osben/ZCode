@@ -27,16 +27,23 @@
 import { ImportedWorldQueue, matchImportedActor } from "./imported-cache.js";
 import type { ArtifactContentOp, ArtifactPresetOp } from "../facade/registry.js";
 import { AskScheduler, type SchedulerHost } from "./scheduler.js";
-import type { ArtifactIdState, EngineState, RunSettlement } from "./engine-state.js";
-import {
-  declarePresetArtifact,
-  publishContentArtifact,
-  rememberArtifactRow,
-} from "./engine-artifacts.js";
+import type { ArtifactIdState, EngineState, ReportTally, RunSettlement } from "./engine-state.js";
+import { declarePresetArtifact, publishContentArtifact } from "./engine-artifacts.js";
 import { publishReport } from "./engine-report.js";
 import { closeImportCache, readWorld, recoverImportClosure } from "./engine-world.js";
-import { recoverSettleOrder, ReplaySettleOrder } from "./replay-order.js";
+import { ReplaySettleOrder } from "./replay-order.js";
+import { restoreFromJournal } from "./engine-resume.js";
 import { settleCompleted, settleFailed, settleStopped } from "./engine-settlement.js";
+import type { EngineConfig } from "./engine-config.js";
+import {
+  HoleRegistry,
+  fillHole as fillHoleBody,
+  reachHole,
+  type FilledHole,
+  type FillHoleResult,
+  type HoleFill,
+  type OpenHole,
+} from "./engine-holes.js";
 import type {
   ActorId,
   ArtifactRef,
@@ -61,88 +68,12 @@ import type {
   WorldReadOp,
 } from "./types.js";
 import { refToString, WorkflowError } from "./types.js";
-import { runLaunchedEvent, type RunLaunchConfig } from "./engine-launch.js";
+import { runLaunchedEvent } from "./engine-launch.js";
+import { normalizePersona } from "./persona.js";
 import { enrichProviderStopPhase, stampBirthPhase } from "./engine-phase-stamp.js";
 
-/** Engine construction configuration. */
-export interface EngineConfig {
-  runId: string;
-  driver: WorkflowDriver;
-  caps: Caps;
-  /**
-   * Static spec for each ask site (typed + schema). **Must cover every ask site in the script**:
-   * the site table and synthesized schemas come from the same compilation, so omission indicates a
-   * wiring error and the engine fails hard (MissingAskSpec). Untyped sites must be explicitly
-   * recorded as `{ typed: false }`.
-   */
-  askSpecs: ReadonlyMap<string, AskSpec>;
-  /** Injected schema validator (the core does not import a schema implementation). */
-  validate: ValidateFn;
-  /** Run metadata (persisted to dwf_run only during this createRun; not overwritten on resume). */
-  scriptText?: string;
-  /**
-   * Run display name (optional `input.name` from `CreateWorkflow`). The engine does not read it;
-   * it persists alongside `scriptText` at run creation so the host enumeration surface can label
-   * the run. See {@link RunRecord.name}.
-   */
-  name?: string;
-  /**
-   * Hash of the script source. Compared with the journal value on resume: if both exist and differ,
-   * refuse the resume (v1 resume requires a byte-identical script).
-   */
-  scriptHash?: string;
-  /**
-   * Args for this run (validated and filled in). The engine does not read them; it persists them
-   * with `scriptText` at creation. The harness injects them into the sandbox through the spawn
-   * payload, outside the engine. See {@link RunRecord.args}.
-   */
-  args?: Record<string, unknown>;
-  parentSessionId?: string;
-  cwd?: string;
-  /**
-   * CreateWorkflow tool-call ID that launched the run (see {@link RunRecord.toolCallId}). The
-   * engine does not read it; it persists with the other metadata during createRun.
-   */
-  toolCallId?: string;
-  /**
-   * Predecessor run from which this run was amended (see {@link RunRecord.resumedFrom}). The engine
-   * does not read it; it persists with the other metadata during createRun. Import-cache building
-   * belongs to the run service, not the core.
-   */
-  resumedFrom?: string;
-  /**
-   * Anchor for the turn that launched the run. The engine does not read it; at run creation it
-   * records `run-launched` immediately after the first `run-started`. Resume finds the existing row
-   * and does not record it again (the anchor is unique across lifetimes).
-   * `phaseNames` travels with the anchor: the script-declared phase table, also unread by the engine
-   * and persisted only to the journal. `phaseAlongside` is positionally aligned with that table and
-   * travels under the same rule.
-   * `subagentModel` also travels with it: this run's subagent selection in canonical picker format.
-   * The engine does not read it; model selection lives on the host (bootstrap's
-   * workflow-actor-model.ts), which reads it from this event without SQL.
-   * `scriptPath` follows the same rule: the absolute path of this run's script file. The engine
-   * does not read it; the host reads it from this event for the model surface.
-   */
-  launch?: RunLaunchConfig;
-  /**
-   * Usage baseline at run creation: predecessor run's `spentTokens`. Amend supplies it; fresh
-   * submit omits it (= start from zero). Resume does not need it because usage is restored from the existing row.
-   *
-   * Semantics: "this run reports total spend for the entire lineage." Each predecessor value is
-   * already cumulative, so chained amendments need no summation or traversal of `resumed_from`.
-   * Cache hits add no cost (that usage is already included in the inherited value); only live turns
-   * executed now add to it.
-   */
-  inheritedTokens?: number;
-  /**
-   * Import cache for amend-resume ({@link ImportedRunCache}). **Pure data injection**, so the core
-   * remains a deterministic state machine with no I/O: reading predecessor journals, following the
-   * `resumed_from` chain, and resolving transcript sources all happen in the run service. The engine
-   * receives a built table and matches by runtime identity (actor name + persona, `{op,args}` content
-   * + occurrence order). Omission means this is not an amended resume.
-   */
-  importedCache?: ImportedRunCache;
-}
+/** Engine construction config (definition moved to engine-config.ts and re-exported here). */
+export type { EngineConfig } from "./engine-config.js";
 
 /** Final run settlement (definition moved with the settlement module seam to engine-state.ts; re-exported here). */
 export type { RunSettlement } from "./engine-state.js";
@@ -163,7 +94,11 @@ export class WorkflowEngine implements WorkflowHostApi, WorkflowReportSink {
    * values (the caller's object is not mutated either).
    */
   private caps: Caps;
-  private readonly askSpecs: ReadonlyMap<string, AskSpec>;
+  /**
+   * Static specification per ask site. **Mutable** (see {@link fillHole}): a completion replaces it with the effective script's table
+   * (a superset of the original). Replace the whole table rather than mutating it in place, following the same rule as caps.
+   */
+  private askSpecs: ReadonlyMap<string, AskSpec>;
   private readonly validate: ValidateFn;
   private readonly scheduler: AskScheduler;
 
@@ -180,6 +115,10 @@ export class WorkflowEngine implements WorkflowHostApi, WorkflowReportSink {
    * marker). Read only at the minting point; see {@link nextOrdinal}.
    */
   private currentPhase: string | undefined;
+  /** Site → lexical birth phase (see {@link EngineConfig.sitePhases}). Mutable; replaced along with `askSpecs`. */
+  private sitePhases: ReadonlyMap<string, string>;
+  /** Pending-hole table and this generation's completion memory (engine-holes.ts). */
+  private readonly holes: HoleRegistry;
   /**
    * Instance (`siteId@ordinal`) → phase name at its **birth**. Written at minting and read by the
    * stamping funnel in {@link record}. The static causal graph copies sites by phase, so runtime
@@ -207,9 +146,9 @@ export class WorkflowEngine implements WorkflowHostApi, WorkflowReportSink {
    */
   private importClosed = false;
   /**
-   * Replay settlement-order gate: cached settlements are released in the **original settlement
-   * order** recorded in the journal, not admission order. After join, that order determines every
-   * site ordinal. Fresh runs always have an empty gate (all proceed).
+   * Replay settlement-order gate (docs/execution-engine.md, “Replaying the settle order”): release cached
+   * settlements in the **first-observed settlement order** recorded by the journal, rather than admission order—every site ordinal after a join
+   * depends on that order. It is always an open gate outside resume (release everything immediately).
    */
   private replaySettleOrder = ReplaySettleOrder.empty();
   /** Ask instances (`siteId@ordinal`) restored from events that were live before a crash; empty for fresh runs. */
@@ -218,16 +157,14 @@ export class WorkflowEngine implements WorkflowHostApi, WorkflowReportSink {
   private queuedBeforeImportClose: ReadonlySet<string> = new Set();
 
   /**
-   * Number of reports already published by this run (counter for REPORT_CAPS.maxItemsPerRun).
-   * Resume restores it from the number of `kind:"report"` journal rows. The limit is run-scoped
-   * and must carry across resumes, or a repeatedly resumed run could report without limit.
+   * Number of reports published by this run and their item bytes (counters for the two run-level REPORT_CAPS). On resume, restore them from
+   * journal rows with kind:"report"—the limits apply to the run, so counts must continue across resumes or a repeatedly resumed run could report without limit.
    */
-  private reportCount = 0;
+  private reportTally: ReportTally = { count: 0, bytes: 0 };
   /**
-   * State for each **user-facing artifact** ID in this run. Restored like `reportCount`: rebuild
-   * from journal rows of `kind: "artifact"` on resume, then maintain in memory. The limits (32 IDs /
-   * 16 versions each) and version numbers are run-scoped and must carry across resumes, or a
-   * repeatedly resumed run could publish without limit.
+   * State for each **user-facing artifact** ID in this run. Restore it like `reportTally`:
+   * rebuild from journal rows of kind `"artifact"` during resume, then maintain it in memory—the limits (32 IDs / 16 versions per ID) and version numbers are run-level facts,
+   * so they must continue across resumes or a repeatedly resumed run could publish without limit.
    *
    * ⚠ Terminology: artifact means a user-facing artifact, not `RunSettlement.artifact` (the top-level return value).
    */
@@ -249,6 +186,8 @@ export class WorkflowEngine implements WorkflowHostApi, WorkflowReportSink {
     this.caps = { maxConcurrency: config.caps.maxConcurrency };
     this.askSpecs = config.askSpecs;
     this.validate = config.validate;
+    this.sitePhases = config.sitePhases ?? new Map();
+    this.holes = new HoleRegistry(config.now ?? Date.now);
     this.importedCache = config.importedCache;
     this.importedWorld = new ImportedWorldQueue(config.importedCache?.world ?? new Map());
 
@@ -273,9 +212,12 @@ export class WorkflowEngine implements WorkflowHostApi, WorkflowReportSink {
       holdForReplay: (instance, release) => {
         this.replaySettleOrder.hold(instance, release);
       },
-      reportCount: () => this.reportCount,
-      countReport: () => {
-        this.reportCount++;
+      reportTally: () => this.reportTally,
+      countReport: (bytes) => {
+        this.reportTally = {
+          count: this.reportTally.count + 1,
+          bytes: this.reportTally.bytes + bytes,
+        };
       },
       importClosed: () => this.importClosed,
       closeImport: () => {
@@ -289,7 +231,11 @@ export class WorkflowEngine implements WorkflowHostApi, WorkflowReportSink {
         // assemblies would hang forever).
         this.replaySettleOrder.open();
       },
-      abortInFlight: (error, emitCancelled) => this.scheduler.abortInFlight(error, emitCancelled),
+      abortInFlight: (error, emitCancelled) => {
+        this.scheduler.abortInFlight(error, emitCancelled);
+        // A branch paused at a hole is rejected like an in-flight ask: after settlement, there is nothing left to complete.
+        this.holes.rejectAll(error);
+      },
       resolveSettled: (settlement) => this.settledDeferred.resolve(settlement),
     };
 
@@ -369,21 +315,10 @@ export class WorkflowEngine implements WorkflowHostApi, WorkflowReportSink {
           { mismatch: { expected: existing.scriptHash, got: config.scriptHash } },
         );
       }
-      // Resume restores settlement order from this run's own events (this gate is part of replay
-      // correctness, not an observation surface: site ordinals follow call arrival order, which can
-      // be reproduced only from original settlement order). Read node rows once; report-count and
-      // artifact recovery below share them.
-      const nodes = this.journal.listNodes(this.runId);
-      this.replaySettleOrder = recoverSettleOrder(this.journal, this.runId, nodes);
-      // Restore report count from `kind:"report"` journal rows; restore usage from the run record (continuous across lifetimes).
-      this.reportCount = nodes.filter((n) => n.kind === "report").length;
-      // Restore artifact state alongside reportCount: ID ownership (kind, preset spec) and the
-      // number of successful versions are derived from journal rows. After crash recovery, version
-      // 3 remains version 3 rather than restarting at 1.
-      for (const node of nodes) {
-        if (node.kind !== "artifact" || node.status !== "completed") continue;
-        rememberArtifactRow(this.state, node.artifactId, node.result);
-      }
+      // On resume, restore the settlement-order gate, each actor's recorded ask count, report counters, and artifact state from the journal (engine-resume.ts).
+      ({ replaySettleOrder: this.replaySettleOrder, reportTally: this.reportTally } =
+        restoreFromJournal(this.state, this.scheduler));
+      // Restore usage from the journal so it remains continuous across lifecycles.
       this.spentTokens = existing.spentTokens;
       // Crash recovery for an amended run: rebuild the entire import table, and restore whether the
       // gate was closed exactly from events (the closure state is not persisted as a row).
@@ -544,6 +479,33 @@ export class WorkflowEngine implements WorkflowHostApi, WorkflowReportSink {
     this.record({ type: "phase-entered", name: trimmed, ordinal });
   }
 
+  /** The script reached an unfilled hole (Boundary A `hole`); method body is reachHole in engine-holes.ts. */
+  hole(siteId: string, name: string, prompt?: string): Promise<{ code: string }> {
+    return reachHole(this.state, this.holes, siteId, name, prompt);
+  }
+
+  /**
+   * The main agent fills a hole (docs/execution-engine.md, “The engine's part”): one synchronous step replaces the spec and phase tables,
+   * writes back the effective script, records `hole-filled`, remembers the code, and releases every paused branch. The method body is
+   * fillHole in engine-holes.ts; the two no-op results (`not_waiting` / `settled`) do not write or emit anything.
+   */
+  fillHole(fill: HoleFill): FillHoleResult {
+    return fillHoleBody(this.state, this.holes, fill, (askSpecs, sitePhases) => {
+      this.askSpecs = askSpecs;
+      this.sitePhases = sitePhases;
+    });
+  }
+
+  /** Holes still pending (snapshot projection: unlike events, this asks the engine because no promise survives a process death). */
+  openHoles(): OpenHole[] {
+    return this.holes.open();
+  }
+
+  /** Holes completed in this generation. */
+  filledHoles(): FilledHole[] {
+    return this.holes.filledList();
+  }
+
   /** Publish an intermediate result (`report` in Boundary A); implementation in publishReport in engine-report.ts. */
   report(siteId: string, item: unknown, artifactId?: string): void {
     publishReport(this.state, siteId, item, artifactId);
@@ -598,10 +560,9 @@ export class WorkflowEngine implements WorkflowHostApi, WorkflowReportSink {
   }
 
   /**
-   * Change **this run's own** concurrency ceiling in place.
-   * An amendment containing only `max_concurrency` applies to the active run: same runId, no
-   * successor minted, no superseding, and no in-flight asks lost. This is the only distinction from
-   * AmendWorkflow and the sole reason for this method.
+   * Change this run's **own** concurrency limit in place (docs/dynamic-workflow/concurrency.md, “Two bounds on a run”).
+   * An amendment containing only `max_concurrency` takes effect on the live run: same runId, no successor, no supersede,
+   * and no lost in-flight asks—this is the full difference from AmendWorkflow and the sole reason this method exists.
    *
    * Returns **whether this call changed anything**. Both no-op cases return false without writing
    * the database or emitting an event: the run settled between the host liveness check and this call
@@ -733,8 +694,10 @@ export class WorkflowEngine implements WorkflowHostApi, WorkflowReportSink {
   private nextOrdinal(siteId: string): number {
     const next = (this.ordinals.get(siteId) ?? 0) + 1;
     this.ordinals.set(siteId, next);
-    if (this.currentPhase !== undefined)
-      this.instancePhases.set(refToString({ siteId, ordinal: next }), this.currentPhase);
+    // Prefer lexical phases with dynamic fallback: when two concurrent futures carry their own markers, which marker was “most recent” depends on
+    // timing; the compile-time phase table is the one shown to users in the confirmation graph (docs/execution-engine.md).
+    const phase = this.sitePhases.get(siteId) ?? this.currentPhase;
+    if (phase !== undefined) this.instancePhases.set(refToString({ siteId, ordinal: next }), phase);
     return next;
   }
 
@@ -762,14 +725,4 @@ export class WorkflowEngine implements WorkflowHostApi, WorkflowReportSink {
     this.journal.appendEvent(this.runId, stamped);
     this.driver.emit(stamped);
   }
-}
-
-/** Normalize persona: a string is treated as the system prompt; display name is assigned to persona.name. */ function normalizePersona(
-  name: string | undefined,
-  persona: string | PersonaSpec | undefined,
-): PersonaSpec {
-  const base: PersonaSpec =
-    typeof persona === "string" ? { system: persona } : persona ? { ...persona } : {};
-  if (base.name === undefined && name !== undefined) base.name = name;
-  return base;
 }

@@ -15,9 +15,9 @@ import type { V4CommandCoreHost } from "../types.js";
 import { applyRequestedSessionConfig } from "./model-config.js";
 import {
   hasPromptInput,
-  V4InputAdmissionRejectedError,
   resolveSubmittedExecutionState,
-} from "./session-flow.js";
+  V4InputAdmissionRejectedError,
+} from "../input-admission.js";
 
 /**
  * createSession: native implementation of the final fallback path.
@@ -50,19 +50,30 @@ async function createSession(
   }
   const { sessionId } = await host.createSessionRecord({
     workspaceId: payload.workspaceId,
+    ...(payload.permissionScope ? { permissionScope: payload.permissionScope } : {}),
     mcpServers: payload.mcpServers,
     offPeakToolEnabled: payload.offPeakToolEnabled,
     dynamicWorkflowEnabled: payload.dynamicWorkflowEnabled,
+    dynamicWorkflowMode: payload.dynamicWorkflowMode,
   });
   // Consume createSession.config: apply and emit events for draft UI selections (model/reasoning
   // depth/mode) before the first send so the first turn uses the chosen config. This must precede
-  // firstInput. If applying config fails, do not fail session creation (the record already exists and
-  // a failed ACK would leak the session): warn and keep the runtime defaults.
+  // firstInput. Ordinary configs keep the existing warn downgrade; Guarded is an explicit
+  // authorization choice and must not silently fall back to default-mode execution on failure.
   if (payload.config) {
     const record = requireRecord(host, sessionId);
     try {
       await applyRequestedSessionConfig(host, record, payload.config);
     } catch (error) {
+      if (payload.config.mode === "guarded" || payload.firstInput?.mode === "guarded") {
+        // Cause: the old catch swallowed the mode-application failure and still submitted the first turn, so Guarded silently degraded.
+        try {
+          await host.closeSession?.(sessionId);
+        } catch (closeError) {
+          host.logger?.warn?.("v4 guarded draft cleanup failed", { sessionId, closeError });
+        }
+        throw error;
+      }
       host.logger?.warn?.("v4 createSession config apply failed; session keeps runtime defaults", {
         error: error instanceof Error ? error.message : String(error),
         sessionId,

@@ -1,6 +1,9 @@
-// Session record for GUI configuration changes.
-// Queue a settings turn in the runtime, record from/to for both settings, and distinguish a revision that creates a new run from an in-place concurrency adjustment.
-// dynamic-workflow-run-settings.ts owns the change decision and side-effect order.
+// ============================================================
+// GUI “Configure” settings turn: what to record and how to report it.
+// ============================================================
+// docs/dynamic-workflow/launch.md, “The settings turn.” Split from dynamic-workflow-run-settings.ts
+// (400-line limit): that file owns decision and side-effect order; this one owns how to describe the change to the model and session—queueing,
+// the from/to values for both settings, and the two canonical sentences (amendment created a new run / in-place update kept the same run).
 
 import type { TraceContext, WorkflowSettingsAmendMeta } from "@zcode/contracts";
 import type { DynamicWorkflowRunSnapshot } from "@zcode/contracts";
@@ -9,15 +12,16 @@ import { createRuntimeCommandId } from "../command-queue.js";
 import type { AgentRuntimeInternal } from "../internal.js";
 import type { boundWorkflowLaunchMeta } from "@zcode/contracts";
 
-/** Normalized form of this run's two settings: absence means default (session model / local concurrency limit). */
+/** Normalized form of this run's two settings: absent means default (session model / default concurrency). */
 export interface RunSettings {
   subagentModel?: string;
   maxConcurrency?: number;
 }
 
 /**
- * Do not persist a settings turn directly in the command handler: the main agent may be in a turn and cannot accept a user message.
- * Queue it in the runtime; run immediately when idle or wait for the current turn to finish. It has notification priority, so it runs before any notification for the new run.
+ * Do not execute a settings turn directly in command handling: the main agent may be mid-turn, and a user message cannot be inserted.
+ * Queue it in runtime; run immediately when idle or wait for the current turn to finish when busy. It has the same priority as notifications,
+ * so it runs before any notification for a new run (docs/dynamic-workflow/launch.md, “The settings turn”).
  */
 export function enqueueSettingsTurn(
   this: AgentRuntimeInternal,
@@ -98,7 +102,7 @@ function settingsChangeClauses(amend: WorkflowSettingsAmendMeta, inPlace: boolea
   if (bound !== undefined) {
     changes.push(
       bound.to === undefined
-        ? "the limit on subagents at once is removed"
+        ? "the limit on subagents at once is back to the default"
         : inPlace
           ? `at most ${bound.to} of its subagents run at once`
           : `at most ${bound.to} of them run at once`,
@@ -108,8 +112,8 @@ function settingsChangeClauses(amend: WorkflowSettingsAmendMeta, inPlace: boolea
 }
 
 /**
- * The two settings in the snapshot. Both use "absent means default": no model ever specified = session model; a limit at or above the ceiling = no per-run limit.
- * Therefore absence means default, matching {@link RunSettings}.
+ * The two settings from the snapshot. Both are absent when default: no selected model means the session model; a limit equal to default concurrency means no per-run limit,
+ * so absence means default, matching {@link RunSettings}.
  */
 export function runSettingsOfSnapshot(snapshot: DynamicWorkflowRunSnapshot): RunSettings {
   return {

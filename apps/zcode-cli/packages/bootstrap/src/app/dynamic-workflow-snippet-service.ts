@@ -43,7 +43,7 @@ import {
 } from "@zcode/dynamic-workflow";
 import { runWorkflowScript } from "@zcode/dynamic-workflow-runtime";
 import { dynamicWorkflowChildSpawn } from "./dynamic-workflow-run-launch.js";
-import { resolveWorkflowConcurrencyCeiling } from "./workflow-concurrency-ceiling.js";
+import { resolveWorkflowDefaultConcurrency } from "./workflow-default-concurrency.js";
 import { executeWorldRead, type WorldReadDeps } from "./workflow-world-read.js";
 
 /** Log limit (the contract constant is in @zcode/contracts eval-workflow-snippet.ts; avoid a reverse dependency on the tool layer here). */
@@ -70,8 +70,9 @@ export function createDynamicWorkflowSnippetService(
 ): DynamicWorkflowSnippetPort {
   const caps = (): Caps => {
     return {
-      // Use the same concurrency limit implementation as run service / governor. Snippets have no asks and do not use the governor.
-      maxConcurrency: resolveWorkflowConcurrencyCeiling(deps.availableParallelism),
+      // Use the same concurrency limit implementation as run service / governor (decision 30).
+      // Snippets have no asks and do not use the governor.
+      maxConcurrency: resolveWorkflowDefaultConcurrency(deps.availableParallelism),
     };
   };
 
@@ -90,7 +91,7 @@ export function createDynamicWorkflowSnippetService(
 
       const table = collectSites(workflow);
       // world.run: snippets are a workbench for these calls (run real commands through the gate before committing).
-      // Non-literal cmd values receive the same diagnostics as production (authorization closes at compile time); the driver revalidates the command set.
+      // Non-literal cmd values receive the same diagnostics as production (authorization closes at compile time; the driver keeps no separate list).
       const worldRun = collectWorldRunCommands(workflow, table);
       if (worldRun.diagnostics.length > 0) {
         return { kind: "diagnostics", diagnostics: worldRun.diagnostics };
@@ -121,7 +122,6 @@ export function createDynamicWorkflowSnippetService(
         fileSystemPort: deps.fileSystemPort,
         executionPort: deps.executionPort,
         cwd: request.cwd,
-        declaredRunCommands: new Set(worldRun.commands),
       };
       const runId = `dwfeval-${randomUUID()}`;
       const childSpawn = dynamicWorkflowChildSpawn();

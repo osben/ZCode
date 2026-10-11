@@ -1,7 +1,7 @@
 import type { IpcRenderer } from "electron";
 
 /** Match the built-in preload from @arms/rum-electron. */
-const ARMS_RUM_BRIDGE_CHANNEL = "arms:rum-bridge";
+export const ARMS_RUM_BRIDGE_CHANNEL = "arms:rum-bridge";
 
 type PatchedIpcRenderer = IpcRenderer & { __zcodeArmsIpcPatched?: boolean };
 
@@ -10,7 +10,7 @@ type PatchedIpcRenderer = IpcRenderer & { __zcodeArmsIpcPatched?: boolean };
  * Intercept ipcRenderer.send at the preload level so this does not depend on when ArmsEventBridge is
  * created (autoInject may run after scheduleArmsBridgePatch).
  */
-function expandArmsRumBridgePayloads(payload: string): string[] {
+export function expandArmsRumBridgePayloads(payload: string): string[] {
   try {
     const parsed: unknown = JSON.parse(payload);
     if (Array.isArray(parsed)) {
@@ -37,7 +37,7 @@ type ArmsEventBridgeLike = {
  * If the ARMS frame preload runs before this preload, the Bridge.send closure is already bound to the
  * unpatched ipc.send. Wrap Bridge.send itself and split events[] before calling the inner send.
  */
-function patchArmsEventBridgeSend(bridge: ArmsEventBridgeLike): void {
+export function patchArmsEventBridgeSend(bridge: ArmsEventBridgeLike): void {
   if (bridge.__zcodeArmsBridgeForwardPatched) {
     return;
   }
@@ -51,7 +51,7 @@ function patchArmsEventBridgeSend(bridge: ArmsEventBridgeLike): void {
   bridge.__zcodeArmsBridgeForwardPatched = true;
 }
 
-function patchArmsEventBridgeIfPresent(): boolean {
+export function patchArmsEventBridgeIfPresent(): boolean {
   const bridge =
     (globalThis as { ArmsEventBridge?: ArmsEventBridgeLike }).ArmsEventBridge ??
     (typeof window !== "undefined"

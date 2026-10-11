@@ -12,15 +12,15 @@ import type { V4Method } from "@zcode/shared/zcode-protocol-v4";
 import type { z } from "zod";
 import type { ZCodeProtocolTransport } from "./zcodeProtocolTransport.js";
 
-/** Method names the client can send: legacy zcodeProtocolMethods + v4/* (coexist while converging on v4). */
-type ZCodeProtocolClientMethod = ZCodeProtocolMethod | V4Method;
+/** Method names the client can send: legacy zcodeProtocolMethods + v4/* (coexist since M3, converging on v4 in M5 wave 2). */
+export type ZCodeProtocolClientMethod = ZCodeProtocolMethod | V4Method;
 
 interface ZCodeProtocolClientOptions {
   requireStorageStartup?: boolean;
   requestTimeoutMs?: number;
 }
 
-interface ZCodeProtocolRequestTimeoutEvent {
+export interface ZCodeProtocolRequestTimeoutEvent {
   method: ZCodeProtocolClientMethod;
   requestId: ZCodeProtocolRequestId;
   timeoutMs: number;
@@ -33,6 +33,8 @@ interface PendingRequest<T> {
   resumeTimeout: () => void;
   resolve: (value: T) => void;
   reject: (error: Error) => void;
+  /** Where a no-op catch is attached on dispose batch rejection, preventing "cancelled counts as unhandled" (see rejectAll). */
+  promise?: Promise<T>;
   resultSchema?: z.ZodType<T>;
   cleanupAbort?: () => void;
 }
@@ -45,7 +47,7 @@ interface ZCodeProtocolClientRequestOptions {
   timeoutMs?: number;
 }
 
-const DEFAULT_ZCODE_PROTOCOL_REQUEST_TIMEOUT_MS = 3 * 60_000;
+export const DEFAULT_ZCODE_PROTOCOL_REQUEST_TIMEOUT_MS = 3 * 60_000;
 
 class ZCodeProtocolClientError extends Error {
   constructor(
@@ -131,7 +133,26 @@ export class ZCodeProtocolClient implements IDisposable {
     return this.transport.kind;
   }
 
-  async request<T = unknown>(
+  /**
+   * Non-async wrapper (per code review): callers hold the Promise returned by this method, and when the inner
+   * resultPromise of an async implementation propagates a rejection via return, the outer Promise independently participates in unhandledRejection detection.
+   * The no-op catch must be attached at the point the final returned object is created, so it covers the timing window between the batch
+   * rejection on dispose/transport close and the caller attaching .catch(). The handler only affects the unhandled verdict, not the
+   * propagation of the rejection to the real awaiter; the cost is that a fire-and-forget caller forgetting to attach catch
+   * no longer surfaces unhandled noise, an acceptable trade-off (all void call sites in this repo attach their own catch).
+   */
+  request<T = unknown>(
+    method: ZCodeProtocolClientMethod,
+    params?: unknown,
+    resultSchema?: z.ZodType<T>,
+    options?: ZCodeProtocolClientRequestOptions,
+  ): Promise<T> {
+    const requestPromise = this.requestImpl(method, params, resultSchema, options);
+    void requestPromise.catch(() => undefined);
+    return requestPromise;
+  }
+
+  private async requestImpl<T = unknown>(
     method: ZCodeProtocolClientMethod,
     params?: unknown,
     resultSchema?: z.ZodType<T>,
@@ -184,6 +205,9 @@ export class ZCodeProtocolClient implements IDisposable {
         },
         resolve: resolve as (value: unknown) => void,
         reject,
+        // Bug post-mortem: this used to reference the outer resultPromise directly inside the executor, triggering a TDZ
+        // ReferenceError (the executor runs synchronously before the const assignment completes), throwing on every request.
+        // The promise binding is deferred until after new Promise returns.
         resultSchema,
         cleanupAbort: () => options?.signal?.removeEventListener("abort", abortHandler),
       };
@@ -194,6 +218,14 @@ export class ZCodeProtocolClient implements IDisposable {
         options?.signal?.addEventListener("abort", abortHandler, { once: true });
       }
     });
+
+    // pending.set inside the executor has completed synchronously; resultPromise is ready here, so bind it for
+    // rejectAll to attach its no-op catch on dispose batch rejection. In the synchronous-abort case the pending entry is
+    // already deleted, get returns undefined, and we skip safely.
+    const registeredPending = this.pending.get(requestKey);
+    if (registeredPending) {
+      registeredPending.promise = resultPromise;
+    }
 
     // A request cancelled before sending must not be written to the transport; otherwise, the server would run a model task that the client
     // has already abandoned and cannot receive a response for.
@@ -357,6 +389,11 @@ export class ZCodeProtocolClient implements IDisposable {
     for (const pending of this.pending.values()) {
       clearTimeout(pending.timeout);
       pending.cleanupAbort?.();
+      // Bug cause: dispose batch rejection happens outside the caller's await (for example, dispose racing an in-flight
+      // observation long poll), and the rejection is flagged unhandledRejection before the caller handles it (a vitest run-level
+      // failure, equivalent to an unhandled-rejection crash in production). A rejection caused by dispose means "cancelled", so attach a no-op catch here;
+      // the real awaiter still receives the rejection as usual, and the timeout/abort paths are unaffected and still reported.
+      void pending.promise?.catch(() => undefined);
       pending.reject(error);
     }
     this.pending.clear();

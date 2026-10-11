@@ -4,20 +4,23 @@ import { cp } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { basename, join, win32 } from "node:path";
 import { homedir } from "node:os";
-import { DATA_BASE_DIR_FORBIDDEN_WINDOWS_INSTALL_DIR_ERROR_CODE } from "@zcode/shared";
+import {
+  DATA_BASE_DIR_FORBIDDEN_WINDOWS_INSTALL_DIR_ERROR_CODE,
+  ZCODE_AGENT_RUNTIME,
+} from "@zcode/shared";
 
 let _dataBaseDir: string | null = null;
 export const ZCODE_WINDOWS_APP_INSTALL_DIR_ENV = "ZCODE_WINDOWS_APP_INSTALL_DIR";
 const envDataBaseDir = process.env.ZCODE_DATA_BASE_DIR?.trim() || null;
 const defaultDataBaseDir = process.env.HOME?.trim() || homedir();
 
-interface DataBaseDirTargetValidationOptions {
+export interface DataBaseDirTargetValidationOptions {
   platform?: NodeJS.Platform | string;
   env?: Record<string, string | undefined>;
   appInstallDir?: string | null;
 }
 
-type DataBaseDirTargetValidationResult =
+export type DataBaseDirTargetValidationResult =
   | { ok: true }
   | {
       ok: false;
@@ -221,6 +224,17 @@ export function getLegacyDeletedTaskSessionSnapshotPath(
   workspaceIdentity?: string,
 ): string {
   return join(getTaskSessionDir(workspacePath, workspaceIdentity), `${taskId}.deleted.json`);
+}
+
+/**
+ * Configuration directory for GLM (the only agent provider): ~/.zcode/cli.
+ * Bugfix: GLM configuration now reads/writes the new zcode-cli global configuration directory directly,
+ * without workspace isolation, avoiding configuration drift between workspaces on the same machine.
+ */
+export function getProviderWorkspaceConfigDir(): string {
+  return ZCODE_AGENT_RUNTIME.nativeConfigDir
+    ? join(getDataBaseDir(), ZCODE_AGENT_RUNTIME.nativeConfigDir)
+    : join(getDataBaseDir(), ".zcode", "cli");
 }
 
 /**

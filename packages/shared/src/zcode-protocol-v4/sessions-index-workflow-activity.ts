@@ -40,6 +40,13 @@ export const sessionWorkflowPhaseSummarySchema = z.object({
    * the fallback list (entered phases) is built in entry order and has no parallelism, so the key is omitted there.
    */
   alongside: z.array(z.number().int().nonnegative()).max(WORKFLOW_RUNS_LIMITS.maxPhases).optional(),
+  /**
+   * This phase is an **open hole** (docs/dynamic-workflow/presentation.md “Holes on the timeline”):
+   * `open` = not yet reached, `waiting` = the run is parked here waiting for the main agent to fill it in.
+   * The sidebar draws the light with a dashed outline (warning color while waiting). Once filled in it is
+   * an ordinary phase and the key is omitted. Only the declared-list path carries this fact (`run.phaseHoles`).
+   */
+  hole: z.enum(["open", "waiting"]).optional(),
 });
 export type SessionWorkflowPhaseSummary = z.infer<typeof sessionWorkflowPhaseSummarySchema>;
 
@@ -61,6 +68,12 @@ export const sessionWorkflowRunSummarySchema = z.object({
   currentPhase: z.string().min(1).max(WORKFLOW_RUNS_LIMITS.maxPhaseNameLength).optional(),
   /** Number of subagents with status === "running" (shown in the tooltip as “{n} agents working”). */
   agentsWorking: z.number().int().nonnegative(),
+  /**
+   * Name of the hole currently waiting for the main agent (the `name` of the first waiting entry in
+   * `run.holes`): the sidebar run row renders “{name} · waiting to be filled” (see “The sidebar” under
+   * “Holes on the timeline” in docs/dynamic-workflow/presentation.md). Omitted when no hole is parked.
+   */
+  waitingHole: z.string().min(1).max(WORKFLOW_RUNS_LIMITS.maxPhaseNameLength).optional(),
 });
 export type SessionWorkflowRunSummary = z.infer<typeof sessionWorkflowRunSummarySchema>;
 
@@ -96,16 +109,27 @@ function phaseNameMatches(stationName: string, stamp: string): boolean {
   );
 }
 
-function derivePhases(run: WorkflowRunState): SessionWorkflowPhaseSummary[] {
+/**
+ * The only derivation of the phase list. Both the sidebar run row (via `summarizeRun`) and the run rows
+ * in the task island read it, so both sets of lights always tell the same story about the same thing;
+ * the task island does not keep a second implementation.
+ */
+export function deriveSessionWorkflowPhases(run: WorkflowRunState): SessionWorkflowPhaseSummary[] {
   const entered = new Set((run.phases ?? []).map((phase) => phase.name));
   const current = run.currentPhase;
   let names: string[];
   // “Running alongside” indexes refer to positions in the **declared phase list**, so they are meaningful only on that path; the fallback list
   // (entered phases plus current phase) uses a different index space, so omit the whole field there.
   let alongside: readonly (readonly number[])[] | undefined;
+  // Still-open holes (indexes into the declared list); waiting ones are recognized by name from `run.holes`—hole names are unique per rule 9012.
+  let holeIndexes: ReadonlySet<number> = new Set();
+  const waitingNames = new Set(
+    (run.holes ?? []).filter((hole) => hole.state === "waiting").map((hole) => hole.name),
+  );
   if (run.phaseNames !== undefined && run.phaseNames.length > 0) {
     names = run.phaseNames;
     alongside = run.phaseAlongside;
+    holeIndexes = new Set(run.phaseHoles ?? []);
   } else {
     names = (run.phases ?? []).map((phase) => phase.name);
     if (current !== undefined && !entered.has(current)) names = [...names, current];
@@ -137,7 +161,14 @@ function derivePhases(run: WorkflowRunState): SessionWorkflowPhaseSummary[] {
     const beside = (alongside?.[index] ?? []).filter(
       (other) => Number.isInteger(other) && other >= 0 && other < emitted && other !== index,
     );
-    return { name, status, ...(beside.length === 0 ? {} : { alongside: beside }) };
+    // Hole phases: waiting ones are recognized from `run.holes` (names are unique); the remaining indexes in the hole table name holes not yet reached.
+    const hole = waitingNames.has(name) ? "waiting" : holeIndexes.has(index) ? "open" : undefined;
+    return {
+      name,
+      status,
+      ...(beside.length === 0 ? {} : { alongside: beside }),
+      ...(hole === undefined ? {} : { hole }),
+    };
   });
 }
 
@@ -146,6 +177,10 @@ function summarizeRun(
   work: BackgroundWorkSummary | undefined,
 ): SessionWorkflowRunSummary {
   const name = work?.title.trim();
+  // Only active runs can be “waiting to be filled”: the reducer already strips waiting records from terminal runs; this guards once more.
+  const waitingHole = isSessionWorkflowRunLive(run.status)
+    ? (run.holes ?? []).find((hole) => hole.state === "waiting")?.name
+    : undefined;
   return {
     runId: run.runId,
     ...(run.toolCallId === undefined ? {} : { toolCallId: run.toolCallId }),
@@ -153,9 +188,10 @@ function summarizeRun(
     status: run.status,
     ...(run.stopReason === undefined ? {} : { stopReason: run.stopReason }),
     ...(work === undefined ? {} : { startedAt: work.startedAt }),
-    phases: derivePhases(run),
+    phases: deriveSessionWorkflowPhases(run),
     ...(run.currentPhase === undefined ? {} : { currentPhase: run.currentPhase }),
     agentsWorking: run.actors.filter((actor) => actor.status === "running").length,
+    ...(waitingHole === undefined ? {} : { waitingHole }),
   };
 }
 

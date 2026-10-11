@@ -1,10 +1,13 @@
 /**
- * Primary marking for artifacts: at most one ID per run can carry this marker.
- * Content members and preset members share the same admission criteria.
+ * Fix rationale: engine-artifacts.ts reached oxlint's 400-line limit. The extracted code represents
+ * one complete concept—the **primary artifact flag** (`primary`). At most one ID per run may carry it
+ * (docs/dynamic-workflow/authoring.md, “Ids, tags and versions”). Both content and preset members use
+ * the same admission criteria, so this concept belongs in its own module rather than being scattered
+ * across the publication path.
  *
- * These functions only read `state.artifacts`; they do not persist data or emit events. State is
- * derived from the journal and remains consistent after resume.
- * Callers use the criteria to decide whether to reject publication or fail the entire run.
+ * All three functions are **pure**: they only read `state.artifacts` (derived from journal rows and
+ * therefore consistent after resume). They do not persist data or emit events; callers decide whether
+ * to reject or fail the run based on the result.
  */
 
 import type { EngineState } from "./engine-state.js";

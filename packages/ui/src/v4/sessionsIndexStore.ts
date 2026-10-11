@@ -15,7 +15,7 @@ import { ZCODE_AGENT_RUNTIME_UNAVAILABLE_CODE } from "@zcode/services";
 import { logger } from "@/logger.js";
 import type { SessionsIndexTransport } from "@/v4/agentSessionsIndexTransport.js";
 
-interface SessionsIndexState {
+export interface SessionsIndexState {
   /** Known workspaceId; null = no snapshot yet. */
   workspaceId: string | null;
   logEpoch: string | null;
@@ -25,7 +25,7 @@ interface SessionsIndexState {
   sessions: Map<string, SessionSummary>;
 }
 
-const EMPTY_SESSIONS_INDEX_STATE: SessionsIndexState = {
+export const EMPTY_SESSIONS_INDEX_STATE: SessionsIndexState = {
   workspaceId: null,
   logEpoch: null,
   seq: 0,
@@ -84,7 +84,7 @@ async function unsubscribeIgnoringFailure(
   }
 }
 
-interface ApplySessionsIndexResult {
+export interface ApplySessionsIndexResult {
   state: SessionsIndexState;
   /** true = frame-range gap (fromSeq is not contiguous with the watermark); the caller should resubscribe. */
   gap: boolean;

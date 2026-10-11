@@ -7,6 +7,7 @@
  * Entries are **append-only**.
  */
 
+import { readWorkflowArtifactField } from "@zcode/shared/zcode-protocol-v4";
 import {
   artifactFieldLabel,
   chartSeriesFields,
@@ -26,7 +27,14 @@ export type ArtifactItem = {
   sequence: number;
   siteId: string;
   ordinal: number;
-  item: unknown;
+  /** Entire item (older CLI or a fetch that did not specify fields). */
+  item?: unknown;
+  /**
+   * When fetching selected fields: map of spec-named paths → values (the CLI reads them from SQLite
+   * and truncates oversized values). Paths that cannot be resolved are omitted. When present, the
+   * collapsed view reads only this map, not `item`.
+   */
+  fields?: Record<string, unknown>;
 };
 
 export type ChartSeriesModel = {
@@ -106,30 +114,24 @@ type ArtifactPresetModel = ChartModel | TableModel | MetricsModel | BoardModel;
 const BOARD_OTHER_COLUMN_ID = "__other__";
 
 /**
- * Read a dot path such as “timing.after” or “rounds.0.ms.”
- * Array indices are numeric path segments; return `undefined` when the path cannot be resolved (= the entry has no such field).
+ * Read a value by path, for example "timing.after" or "rounds.0.ms". This follows the protocol
+ * contract (`readWorkflowArtifactField`): when fetching selected fields, the CLI reads them from
+ * SQLite by the same rules, so both sides must match exactly.
  */
-function readArtifactField(item: unknown, path: string): unknown {
-  const segments = path.split(".");
-  let cursor: unknown = item;
-  for (const segment of segments) {
-    if (cursor === null || cursor === undefined) {
-      return undefined;
-    }
-    if (Array.isArray(cursor)) {
-      const index = Number(segment);
-      if (!Number.isInteger(index) || index < 0 || index >= cursor.length) {
-        return undefined;
-      }
-      cursor = cursor[index];
-      continue;
-    }
-    if (typeof cursor !== "object") {
-      return undefined;
-    }
-    cursor = (cursor as Record<string, unknown>)[segment];
+export function readArtifactField(item: unknown, path: string): unknown {
+  return readWorkflowArtifactField(item, path);
+}
+
+/**
+ * Read a field from a fetched item: look it up in the map for selected-field items (the CLI already
+ * applied the same rule and omitted unresolved paths); read by path from the full item for older
+ * CLIs. All four collapsed views use this one entry point.
+ */
+function readEntryField(entry: ArtifactItem, path: string): unknown {
+  if (entry.fields !== undefined) {
+    return Object.hasOwn(entry.fields, path) ? entry.fields[path] : undefined;
   }
-  return cursor;
+  return readArtifactField(entry.item, path);
 }
 
 /**
@@ -153,7 +155,7 @@ function toFiniteNumber(value: unknown): number | undefined {
 }
 
 /** Display text for cell/card details. Use compact JSON for objects—it is more useful than “[object Object]”. */
-function formatArtifactValue(value: unknown): string {
+export function formatArtifactValue(value: unknown): string {
   if (value === undefined || value === null) {
     return "";
   }
@@ -190,13 +192,13 @@ function applyChart(spec: ChartSpec, items: readonly ArtifactItem[]): ChartModel
   let baseline: ChartModel["baseline"];
 
   for (const entry of items) {
-    const rawX = readArtifactField(entry.item, spec.x.field);
+    const rawX = readEntryField(entry, spec.x.field);
     if (!hasValue(rawX)) {
       // Entries without x have no place on the chart; skip them silently (they remain visible in the Results section).
       continue;
     }
     const values = fields.map((field) => {
-      const value = toFiniteNumber(readArtifactField(entry.item, field.field));
+      const value = toFiniteNumber(readEntryField(entry, field.field));
       if (value === undefined) {
         return undefined;
       }
@@ -206,7 +208,7 @@ function applyChart(spec: ChartSpec, items: readonly ArtifactItem[]): ChartModel
     raws.push({ sequence: entry.sequence, x: rawX, values });
 
     if (spec.baseline && !baseline) {
-      const raw = readArtifactField(entry.item, spec.baseline.field);
+      const raw = readEntryField(entry, spec.baseline.field);
       const value = toFiniteNumber(raw);
       if (value !== undefined && !(spec.scale === "log" && value <= 0)) {
         baseline = {
@@ -281,7 +283,7 @@ function applyTable(spec: TableSpec, items: readonly ArtifactItem[]): TableModel
   // a table that keeps changing sort order during a run is difficult to read.
   const byId = new Map<string, TableRowModel>();
   for (const entry of items) {
-    const keyValue = spec.key ? readArtifactField(entry.item, spec.key) : undefined;
+    const keyValue = spec.key ? readEntryField(entry, spec.key) : undefined;
     // If key is absent (or declared but omitted from this entry), fall back to the journal identity: `siteId@ordinal` is unique per entry,
     // so upsert naturally becomes append without separate paths for the two modes.
     const id = hasValue(keyValue)
@@ -290,9 +292,7 @@ function applyTable(spec: TableSpec, items: readonly ArtifactItem[]): TableModel
     byId.set(id, {
       id,
       sequence: entry.sequence,
-      cells: columns.map((column) =>
-        formatArtifactValue(readArtifactField(entry.item, column.field)),
-      ),
+      cells: columns.map((column) => formatArtifactValue(readEntryField(entry, column.field))),
     });
   }
 
@@ -310,7 +310,7 @@ function applyMetrics(spec: MetricsSpec, items: readonly ArtifactItem[]): Metric
   // A heartbeat entry that reports only the stage should not clear the previous p99 value.
   for (const entry of items) {
     metrics.forEach((tile, index) => {
-      const raw = readArtifactField(entry.item, tile.field);
+      const raw = readEntryField(entry, tile.field);
       if (!hasValue(raw)) {
         return;
       }
@@ -332,14 +332,14 @@ function applyBoard(spec: BoardSpec, items: readonly ArtifactItem[]): BoardModel
   const byId = new Map<string, BoardCardModel>();
 
   for (const entry of items) {
-    const keyValue = readArtifactField(entry.item, spec.key);
+    const keyValue = readEntryField(entry, spec.key);
     if (!hasValue(keyValue)) {
       // Entries without identity have no place on the board (the board's entire semantics are “upsert by key”).
       continue;
     }
     const id = formatArtifactValue(keyValue);
-    const status = formatArtifactValue(readArtifactField(entry.item, spec.status));
-    const titleRaw = spec.cardTitle ? readArtifactField(entry.item, spec.cardTitle) : undefined;
+    const status = formatArtifactValue(readEntryField(entry, spec.status));
+    const titleRaw = spec.cardTitle ? readEntryField(entry, spec.cardTitle) : undefined;
     byId.set(id, {
       id,
       sequence: entry.sequence,
@@ -347,7 +347,7 @@ function applyBoard(spec: BoardSpec, items: readonly ArtifactItem[]): BoardModel
       status,
       details: detail.map((field) => ({
         label: artifactFieldLabel(field),
-        value: formatArtifactValue(readArtifactField(entry.item, field.field)),
+        value: formatArtifactValue(readEntryField(entry, field.field)),
         ...(field.unit ? { unit: field.unit } : {}),
       })),
     });

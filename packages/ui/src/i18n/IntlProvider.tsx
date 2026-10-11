@@ -65,7 +65,7 @@ function resolveLocaleBroadcastPayload(payload: unknown): LocaleBroadcastPayload
   return null;
 }
 
-function resolveLocalePreferenceFromSettings({
+export function resolveLocalePreferenceFromSettings({
   storedPreference,
   settingsLocale,
   settingsLocalePreference,
@@ -86,7 +86,7 @@ function resolveLocalePreferenceFromSettings({
   return storedPreference ?? settingsLocalePreference ?? settingsLocale ?? null;
 }
 
-function shouldApplyLocaleBroadcastMessage(
+export function shouldApplyLocaleBroadcastMessage(
   message: Pick<BroadcastMessage, "channel" | "payload" | "sourceWindowId">,
   options: {
     ignoredLocalPayload?: LocaleBroadcastPayload | null;
@@ -178,7 +178,7 @@ export function ZCodeIntlProvider({
           localePreference: preference,
         })
         .catch(() => {
-          // A persistence failure must not block UI state or cross-window broadcasts; the next language change will retry the write.
+          // Persistence failures do not block UI state or cross-window broadcasts; the next language change will try writing again.
         });
     },
     [settingService],

@@ -19,6 +19,7 @@ export function TaskActionMenuContent({
   taskSessionFile,
   activeSessionId,
   taskNativeSessionLogFile,
+  providerConfigFile,
   disableTaskActions = false,
   disableTaskTargetActions = false,
   disablePinTaskAction = false,
@@ -39,6 +40,7 @@ export function TaskActionMenuContent({
   onCopyTaskLogPath,
   onCopySessionId,
   onViewModelTrajectory,
+  onOpenProviderConfig,
 }: {
   intl: {
     formatMessage: (desc: { id: string }, values?: Record<string, string>) => string;
@@ -52,6 +54,7 @@ export function TaskActionMenuContent({
     path: string | null;
     exists: boolean;
   };
+  providerConfigFile: { loading: boolean; path: string | null; exists: boolean };
   disableTaskActions?: boolean;
   disableTaskTargetActions?: boolean;
   disablePinTaskAction?: boolean;
@@ -74,6 +77,7 @@ export function TaskActionMenuContent({
   onCopyTaskLogPath: () => void;
   onCopySessionId?: () => void;
   onViewModelTrajectory?: () => void;
+  onOpenProviderConfig: () => void;
 }) {
   const taskTargetActionsDisabled = disableTaskActions || disableTaskTargetActions;
 
@@ -169,8 +173,8 @@ export function TaskActionMenuContent({
         title={taskTargetActionsDisabled ? disabledReason : undefined}
         onSelect={onCopyTaskLogPath}
       >
-        {/* The ZCode Agent log path may be determined from runtime conventions before the current date's file has been written.
-            Copying depends only on the path string; do not treat exists=false as non-copyable, or the menu will appear disabled. */}
+        {/* Bugfix: The ZCode Agent log path may be determined from runtime conventions before the current date’s file has been written to disk.
+            Copying depends only on the path string; do not treat exists=false as non-copyable, or the menu will look disabled. */}
         {intl.formatMessage({ id: "appHeader.copyLogPath" })}
       </Item>
       {onCopySessionId ? (
@@ -180,6 +184,24 @@ export function TaskActionMenuContent({
           onSelect={onCopySessionId}
         >
           {intl.formatMessage({ id: "appHeader.copySessionId" })}
+        </Item>
+      ) : null}
+      {!hideMobileUnsupportedActions ? (
+        /* Bugfix: mobile remote control runs in a browser and cannot reliably open desktop provider
+           configuration files. Hide the entry on mobile remote control only; desktop keeps the
+           existing "go to configuration as long as the path is known" behavior. */
+        <Item
+          disabled={disableTaskActions || providerConfigFile.loading || !providerConfigFile.path}
+          title={disableTaskActions ? disabledReason : undefined}
+          onSelect={() => {
+            if (!disableTaskActions) {
+              onOpenProviderConfig();
+            }
+          }}
+        >
+          <span className="truncate">
+            {intl.formatMessage({ id: "appHeader.goToProviderConfig" })}
+          </span>
         </Item>
       ) : null}
       {onViewModelTrajectory ? (
@@ -200,8 +222,8 @@ export function TaskActionMenuContent({
         <>
           <Separator />
           <Item disabled={taskTargetActionsDisabled} onSelect={onOpenTaskFeedback}>
-            {/* The task menu previously offered only log/path copying, so users had to return to the feedback center manually when they encountered a task issue.
-                “Report an issue” is not a task-management action; placing it separately at the bottom of the menu better reflects its role as a fallback help entry. */}
+            {/* Bugfix: The task menu previously offered only copy-log/path actions, so users had to return to the feedback center to report a task issue.
+                “Report an issue” is not a task-management action; placing it separately at the bottom of the menu gives it the right level as a fallback help entry. */}
             {intl.formatMessage({ id: "taskList.feedback" })}
           </Item>
         </>

@@ -15,16 +15,16 @@ import type {
 import { logger } from "@/logger.js";
 
 /** 384 KiB is divisible by 3, so base64 has no padding except on the final chunk; it also leaves enough room for both envelope layers. */
-const ATTACHMENT_UPLOAD_CHUNK_BYTES = 384 * 1024;
+export const ATTACHMENT_UPLOAD_CHUNK_BYTES = 384 * 1024;
 
-interface AttachmentUploadAgent {
+export interface AttachmentUploadAgent {
   attachmentBeginV4(params: ZCodeAgentAttachmentBeginParams): Promise<V4AttachmentBeginResult>;
   attachmentChunkV4(params: ZCodeAgentAttachmentChunkParams): Promise<V4AttachmentChunkResult>;
   attachmentCommitV4(params: ZCodeAgentAttachmentTerminalParams): Promise<V4AttachmentPutResult>;
   attachmentAbortV4(params: ZCodeAgentAttachmentTerminalParams): Promise<void>;
 }
 
-interface AttachmentUploadWorkspace {
+export interface AttachmentUploadWorkspace {
   workspacePath: string;
   workspaceIdentity?: string;
 }
@@ -105,7 +105,7 @@ function createUploadId(): string {
 }
 
 /** Measure the full physical method+args request using the same serializer as the production ChannelClient. */
-function measureAttachmentChannelRequestBytes(method: string, params: unknown): number {
+export function measureAttachmentChannelRequestBytes(method: string, params: unknown): number {
   const writer = new BufferWriter();
   // RequestType.Promise=100; the maximum integer ID is more conservative than normal short-lived request IDs.
   serialize(writer, [100, 2_147_483_647, ServiceChannels.ZCodeAgent, method]);

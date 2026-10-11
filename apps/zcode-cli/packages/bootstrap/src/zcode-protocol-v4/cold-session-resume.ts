@@ -18,7 +18,7 @@ export type ColdSessionResumeOutcome =
   | { status: "notFound" };
 
 /** Narrow host capability surface required by the coordinator (same shape as V4GatewayHost, avoiding a circular import). */
-interface ColdSessionResumeHost {
+export interface ColdSessionResumeHost {
   resumePersistedSession?(
     sessionId: string,
     resumeThoughtLevel?: string,
@@ -29,7 +29,7 @@ interface ColdSessionResumeHost {
 }
 
 /** Structured error for subscribing to an unavailable session (see the file header for reasonCode values). */
-class V4SubscribeSessionUnavailableError extends Error {
+export class V4SubscribeSessionUnavailableError extends Error {
   constructor(
     readonly sessionId: string,
     readonly reasonCode: "fault.subscribe.sessionNotFound" | "fault.subscribe.resumeFailed",

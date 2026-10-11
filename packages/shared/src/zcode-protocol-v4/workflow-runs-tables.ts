@@ -1,7 +1,8 @@
 // ============================================================
 // Upsert semantics for the **bounded tables** in workflowRuns.
 // ============================================================
-// Pure functions for updating table entries and checking capacity; they do not read the clock or perform I/O.
+// Split out of workflow-runs-reducer.ts (max-lines limit), following the same precedent as
+// -started.ts / -phases.ts / -eviction.ts and the same discipline: pure functions, no clock, no I/O.
 //
 // These two functions cover both halves of the same rule: how a table identifies the same record, and
 // what to do when it is full. At capacity, **reject new entries but continue updating existing ones**;

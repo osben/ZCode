@@ -45,11 +45,40 @@ export function literalText(expr: ts.Expression | undefined): string | undefined
   return expr !== undefined && ts.isStringLiteralLike(expr) ? expr.text : undefined;
 }
 
-export class Counter {
-  private value = 0;
-  next(): number {
-    this.value += 1;
-    return this.value;
+/**
+ * A set of per-kind site counters (`ask#N` / `actor#N` / …), plus an ID prefix.
+ *
+ * Prefixes are used for holes (docs/analysis.md, “Sites”, “Hole sites”): when the walk enters a hole
+ * body, it **starts a fresh set of counters**. Every ID minted inside carries `<holeId>/`
+ * (`hole#a91f3c07/ask#1`), and outer counters never see sites inside the body. Filling a hole (inserting
+ * code into the middle of a script) therefore leaves every existing `ask#N` / `actor#N` / … unchanged.
+ * This extends site-ID stability from adding markers to adding function bodies; live-run journal keys,
+ * ask specs, and the site phase table all survive hole filling. The prefix is only **one level**: a
+ * hole's own ID is a name key (hole-id.ts) without an outer prefix, so nested holes do not make IDs grow
+ * with depth. `holeId` records which hole owns these counters, allowing sites inside its body to store
+ * the containing hole in `fill`.
+ * The global `order` is not managed here: it is the merge key for text output and counts continuously
+ * across function bodies.
+ */
+export class SiteCounters {
+  private readonly counts = new Map<string, number>();
+
+  constructor(
+    private readonly prefix = "",
+    /** The hole body that owns this counter set; absent at the top level. */
+    readonly holeId?: string,
+  ) {}
+
+  /** Mint the next `<prefix><kind>#<n>`. */
+  next(kind: string): string {
+    const n = (this.counts.get(kind) ?? 0) + 1;
+    this.counts.set(kind, n);
+    return `${this.prefix}${kind}#${n}`;
+  }
+
+  /** Enter the body of hole `holeId`: start fresh counters prefixed by this hole's ID, without the outer prefix. */
+  child(holeId: string): SiteCounters {
+    return new SiteCounters(`${holeId}/`, holeId);
   }
 }
 

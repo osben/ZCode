@@ -27,6 +27,7 @@ import type { AgentRuntimeInternal } from "../internal.js";
 import { cloneModelSelection } from "../model-selection.js";
 import { applyRuntimeExecutionState } from "../execution-state.js";
 
+import { mirrorSubagentInteractionEvent } from "../../subagent/tool-event-mirror.js";
 import { orderProviderVisibleToolContracts } from "../../tool/provider-visible-order.js";
 import { projectToolModelContract } from "../../tool/model-contract.js";
 import { rebuildContextPrefix } from "./context-refresh.js";
@@ -189,14 +190,27 @@ export function getSessionEventStore(this: AgentRuntimeInternal): SessionEventSt
  */
 export async function notifyExternalChildSessionEvent(
   this: AgentRuntimeInternal,
-  input: { childSessionId: SessionId; event: SessionEvent; traceContext?: TraceContext },
+  input: {
+    childSessionId: SessionId;
+    event: SessionEvent;
+    traceContext?: TraceContext;
+    interactionOrigin?: ChildClientPortsContext;
+  },
 ): Promise<void> {
+  const traceContext = input.traceContext ?? this.rootTraceContext;
   // Notify only; never append. The child runtime has already stored this event under its own sessionId, and appending through the
   // parent runtime would duplicate it in the shared store.
-  await this.notifyEventSinks(input.event, {
-    ...(input.traceContext ?? this.rootTraceContext),
-    sessionId: input.childSessionId,
+  await this.notifyEventSinks(input.event, { ...traceContext, sessionId: input.childSessionId });
+  if (input.interactionOrigin === undefined) return;
+  // Root cause (observed on 2026-09-23): a guarded dwf actor's permission request reached desktop through the parent broker, but the V4
+  // confirmation dialog is generated only from PermissionRequested projected in the **parent session**. The event existed only in the child session, so no dialog appeared and the actor waited forever.
+  // Mirror interactions as for core subagents (the parent timeline does not receive tool activity); emit only, do not append.
+  const mirrored = mirrorSubagentInteractionEvent(input.event, {
+    ...input.interactionOrigin,
+    parentSessionId: this.sessionId,
   });
+  if (mirrored === undefined) return;
+  await this.notifyEventSinks(mirrored, { ...traceContext, sessionId: this.sessionId });
 }
 
 /**

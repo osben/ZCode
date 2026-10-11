@@ -45,14 +45,14 @@ function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-function parseWindowsBuildNumber(releaseText: string): number | undefined {
+export function parseWindowsBuildNumber(releaseText: string): number | undefined {
   const buildText = releaseText.split(".")[2];
   if (!buildText) return undefined;
   const buildNumber = Number.parseInt(buildText, 10);
   return Number.isFinite(buildNumber) ? buildNumber : undefined;
 }
 
-function resolveTerminalWindowsPtyInfo(
+export function resolveTerminalWindowsPtyInfo(
   platform: NodeJS.Platform = process.platform,
   releaseText: string = release(),
 ): TerminalWindowsPtyInfo | undefined {
@@ -195,7 +195,7 @@ function resolveFallbackUtf8Locale(env: NodeJS.ProcessEnv): string {
   return process.platform === "darwin" ? "en_US.UTF-8" : "C.UTF-8";
 }
 
-function resolveTerminalEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+export function resolveTerminalEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
   const nextEnv = { ...env };
   const fallbackLocale = resolveFallbackUtf8Locale(env);
 
@@ -282,7 +282,7 @@ function spawnTerminalProcess(params: {
   }
 }
 
-function resolveTerminalShell(): string {
+export function resolveTerminalShell(): string {
   if (process.platform === "win32") {
     // PSReadLine in Windows PowerShell 5.1 is more likely to redraw input-line whitespace with an ANSI black background under ConPTY.
     // PowerShell 7+ is closer to desktop terminal behavior; prefer installed pwsh and fall back to the system shell if unavailable.
@@ -307,10 +307,11 @@ function resolveTerminalShell(): string {
   throw new Error("No usable shell found for terminal startup");
 }
 
-function resolveTerminalCwd(cwd?: string): string {
-  // The workspace directory may have been deleted or moved, or startup may have received an invalid path.
-  // Passing this cwd directly to node-pty would also fail during spawn.
-  // Prefer the supplied directory and fall back to HOME / system home / root when unavailable so the terminal can still start.
+export function resolveTerminalCwd(cwd?: string): string {
+  // Fix reason: the workspace directory may have been deleted or moved, or startup may have
+  // received an invalid path. Passing this cwd directly to node-pty would also fail during spawn.
+  // Prefer the supplied directory and fall back to HOME / system home / root when unavailable so
+  // the terminal can still start.
   const candidates = [cwd, process.env.HOME, homedir(), "/"];
 
   for (const candidate of candidates) {

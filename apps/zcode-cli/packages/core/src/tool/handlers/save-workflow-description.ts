@@ -1,9 +1,8 @@
-// Persistent description for SaveWorkflow.
+// Persistent description for SaveWorkflow (docs/dynamic-workflow/launch.md, “`SaveWorkflow`”).
 //
-// The `dynamic-workflows` skill's “Tool reference” documents file format, argument declarations, and authoring rules; the skill gate
-// ensures it has been read. Keep the one rule that must be visible **before deciding whether to call the tool** here: never save
-// proactively. Saving writes a file into the user's repository, and the model is far more permissive than the user about what “looks
-// reusable”; this requirement must be available before the skill loads.
+// Shortened starting 2026-09-21: file format, argument declarations, and writing rules are in the “Tool
+// reference” section of the `dynamic-workflows` skill, which the skill gate ensures the model reads. Keep the one rule that must be visible
+// **before deciding whether to call the tool**: never save proactively. Saving leaves a file in the user's repository, and the model is much more permissive than the user about what “looks reusable”; this guard must stay here rather than waiting for the skill to load.
 
 import { DYNAMIC_WORKFLOW_SKILL_NAME } from "@zcode/contracts";
 

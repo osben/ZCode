@@ -11,7 +11,7 @@
 import { canonicalJson, inputHash } from "./hash.js";
 import { heldResolution } from "./replay-order.js";
 import { boundWorldReadInput } from "./world-read-input.js";
-import { hashMismatch } from "./scheduler.js";
+import { hashMismatch } from "./hash-mismatch.js";
 import type { EngineState } from "./engine-state.js";
 import type {
   InstanceRef,
@@ -50,11 +50,9 @@ export function readWorld(
       state.failRun(err);
       return Promise.reject(err);
     }
-    // Short-circuit completed hits (journaling world reads makes resume immune to disk changes
-    // between the original run and resume).
-    // Release through the replay-order gate: a world read in one fan-out branch may be something
-    // another continuation is waiting for; releasing by admission order would misalign ordinals
-    // after the join.
+    // A completed hit short-circuits (journaled world reads make resume immune to disk changes between run and resume).
+    // Pass the release point through the replay-order gate: a world read in one fan-out branch may be awaited by another continuation,
+    // so releasing in admission order would shift ordinals after the join (docs/execution-engine.md, “Replaying the settle order”).
     if (recorded.status === "completed") {
       return heldResolution(state.holdForReplay, instance, () => {
         state.record({ type: "node-settled", instance, outcome: "ok", cached: true });
@@ -219,7 +217,12 @@ export function recoverImportClosure(
   const live = new Set<string>();
   const queuedBeforeClose = new Set<string>();
   let closed = false;
-  for (const { event } of journal.listEvents(runId)) {
+  // The two event kinds needed for read-only detection (docs/execution-engine.md, “Reading the journal”); type filtering preserves order,
+  // so “node-queued precedes the first import-cache-closed” still holds in the filtered sequence.
+  for (const { event } of journal.listEvents(runId, {
+    types: ["node-queued", "import-cache-closed"],
+    reportItems: { limit: 0 },
+  })) {
     if (event.type === "import-cache-closed") closed = true;
     if (event.type !== "node-queued" || event.kind !== "ask") continue;
     const key = refToString(event.instance);

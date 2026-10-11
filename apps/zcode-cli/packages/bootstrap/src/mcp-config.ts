@@ -15,7 +15,11 @@ import {
   ZCODE_PLUGIN_ID_ENV_KEY,
 } from "@zcode/shared";
 
-export { ZCODE_CUA_BROKER_SOCKET_ENV_KEY as ZCODE_CUA_BROKER_SOCKET_ENV } from "@zcode/shared";
+export {
+  ZCODE_CUA_BROKER_SOCKET_ENV_KEY as ZCODE_CUA_BROKER_SOCKET_ENV,
+} from "@zcode/shared";
+// Keep the environment variable name for legacy diagnostic scripts; the migrated config path does not start a standalone CUA MCP from it.
+export const ZCODE_CUA_BROKER_UNAVAILABLE_ENV = "ZCODE_CUA_PERMISSION_BROKER_UNAVAILABLE";
 // The CLI entry point clears broker credentials first; the shared node_repl restores trusted config from the in-process captured snapshot afterward.
 function resolveZCodeCuaBrokerSocket(): string | undefined {
   // Prefer captured values; a stale socket left by the runtime must not override the trusted snapshot.
@@ -26,7 +30,9 @@ function resolveZCodeCuaBrokerSocket(): string | undefined {
 }
 
 function resolveZCodeCuaBrokerToken(): string | undefined {
-  return undefined;
+  return (
+    undefined
+  );
 }
 
 const NODE_REPL_SERVER_NAME = "node_repl";
@@ -93,7 +99,9 @@ export function omitMcpServers(
 ): Record<string, McpServerConfig> {
   const kept = Object.fromEntries(
     Object.entries(servers).filter(
-      ([name, config]) => !omittedNames.has(name) && !isRetiredCuaMcpServer(name, config),
+      ([name, config]) =>
+        !omittedNames.has(name) &&
+        !isRetiredCuaMcpServer(name, config),
     ),
   );
 
@@ -105,7 +113,7 @@ export function omitMcpServers(
   );
 }
 
-function injectZCodeCuaBrokerMcpServers(
+export function injectZCodeCuaBrokerMcpServers(
   servers: Record<string, McpServerConfig>,
   socketPath: string | undefined,
   token: string | undefined = undefined,
@@ -188,9 +196,7 @@ function isZCodeCuaStdioServer(
 function isRetiredCuaMcpServer(name: string, config: McpServerConfig | undefined): boolean {
   // node_repl is the single supported CUA host and may share the CUA plugin's
   // authority marker; all other CUA-shaped MCP entries are retired.
-  return (
-    name !== NODE_REPL_SERVER_NAME && config !== undefined && isZCodeCuaStdioServer(name, config)
-  );
+  return name !== NODE_REPL_SERVER_NAME && config !== undefined && isZCodeCuaStdioServer(name, config);
 }
 
 function getConfiguredServerStatus(

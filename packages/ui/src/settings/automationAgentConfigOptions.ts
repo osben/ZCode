@@ -1,4 +1,9 @@
-import type { ZCodeConfigOption, ZCodeProvider } from "@zcode/shared";
+import {
+  getZCodeAgentModeSelectOptions,
+  type ModelSelection,
+  type ZCodeConfigOption,
+  type ZCodeProvider,
+} from "@zcode/shared";
 import type { ModelSelectionView } from "@zcode/services";
 import type { ModelSelectGroup, ModelSelectGroupItem } from "@/ModelConfigSelect.js";
 import {
@@ -22,8 +27,6 @@ export function resolveAutomationPreferredModelValue(
   return preferred ? encodeCustomModelValue(preferred.providerId, preferred.modelId) : null;
 }
 
-const AUTOMATION_MODE_VALUES = ["build", "edit", "plan", "yolo"] as const;
-
 export function buildAutomationModelSelectGroups(params: {
   selectedProvider: ZCodeProvider;
   labels: ModelProviderGroupLabelOptions;
@@ -43,7 +46,7 @@ export function buildAutomationModeOption(currentValue: string): ZCodeConfigOpti
     category: "mode",
     type: "select",
     currentValue,
-    options: AUTOMATION_MODE_VALUES.map((value) => ({ value, name: value })),
+    options: getZCodeAgentModeSelectOptions(),
   };
 }
 
@@ -141,5 +144,42 @@ export function buildAutomationThoughtLevelOption(
     type: "select",
     currentValue: resolvedValue,
     options: options.map((option) => ({ ...option })),
+  };
+}
+
+/**
+ * When updating an existing automation, use null to explicitly clear a stale value for a target model that does not support Think;
+ * in the update protocol, undefined means “leave unchanged,” which would carry the source model’s level into the next dispatch.
+ */
+export function resolveAutomationThoughtLevelUpdate(params: {
+  editing: boolean;
+  explicitlyChanged: boolean;
+  modelChanged: boolean;
+  persistedReasoningLevel?: string;
+  resolvedThoughtLevel: string;
+  thoughtLevel: string;
+}): string | null | undefined {
+  if (params.resolvedThoughtLevel) {
+    if (params.explicitlyChanged) return params.thoughtLevel;
+    if (params.editing && !params.modelChanged) {
+      return params.persistedReasoningLevel?.trim() || params.resolvedThoughtLevel;
+    }
+    return params.resolvedThoughtLevel;
+  }
+  return params.editing ? null : undefined;
+}
+
+/** Automation persists only the model choice; the execution chain determines the output budget for each request. */
+export function buildAutomationModelSelection(params: {
+  selected: ModelSelection;
+  reasoningLevel?: string | null;
+  previous?: ModelSelection;
+}): ModelSelection {
+  const reasoningLevel = params.reasoningLevel?.trim();
+  const options = reasoningLevel ? { reasoningLevel } : {};
+  return {
+    providerId: params.selected.providerId,
+    modelId: params.selected.modelId,
+    ...(Object.keys(options).length > 0 ? { options } : {}),
   };
 }

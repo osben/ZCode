@@ -3,7 +3,7 @@
  * so E2E and live debugging need a probeable endpoint. Store each command's ACK summary in a bounded ring buffer on window
  * (the same kind of debug surface as __zcodeSessionStoreE2E), without heavy payloads such as message bodies.
  */
-interface V4CommandAckSummary {
+export interface V4CommandAckSummary {
   type: string;
   status: string;
   reasonCode?: string;

@@ -4,7 +4,8 @@ import { phaseNameMatches } from "@/components/workflow-graph/phase-name.js";
 import type { WorkflowCausalityGraphData } from "@/components/workflow-graph/types.js";
 
 /**
- * What a station observed: instances assigned to that station plus **unlisted** items whose work was attributed to it.
+ * What a station observes (docs/dynamic-workflow/presentation.md, “The timeline model,” “Past six
+ * participants”): instances assigned to this station plus **unlisted** items charged to it.
  *
  * Like timeline-bands.ts, this computes only the display model and does not depend on React, DOM, or a clock.
  */
@@ -19,7 +20,7 @@ export interface ObservedPhase {
 }
 
 /**
- * Items omitted from the reduction listing (`run.unlistedByPhase`). `actors` are subagents born in this station and not listed now:
+ * The items omitted by reduction (`run.unlistedByPhase`, presentation.md, “Reduction”). `actors` are this station's
  * this includes ones rejected at birth or evicted while queued/after finishing. They have no pill, face, or transcript.
  * `settled` counts those known to have finished; `failed ⊆ settled`; `nodesSettled` is the count of settled **nodes** omitted from this station.
  * Absent means this station has no omitted items.
@@ -84,8 +85,10 @@ export function siteIdsOf(
 }
 
 /**
- * Nodes observed by a station: matching the station alone is insufficient. If k phases re-enter the same station, k cards share its station ID;
- * nodes must also belong to the station by their instance's birth stamp (`belongs`), or visited/rounds/fraction would all be overstated k-fold.
+ * Nodes observed at a station: matching the station alone is not enough. When k phases reenter the
+ * same station, k cards share its station id, so nodes must also be assigned by the instance's
+ * creation timestamp (`belongs`, addendum “Station observation,” 2026-09-09); otherwise visited,
+ * rounds, and fraction are all inflated by a factor of k.
  */
 export function observePhase(
   run: WorkflowRunState | undefined,

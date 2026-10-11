@@ -66,7 +66,7 @@ function readActualThought(
 }
 
 /** switchCollaborationMode command values (same source as command.ts z.enum; excludes auto, which users cannot select). */
-const SWITCHABLE_MODES: ReadonlySet<string> = new Set(["build", "edit", "plan", "yolo"]);
+const SWITCHABLE_MODES: ReadonlySet<string> = new Set(["build", "edit", "plan", "yolo", "guarded"]);
 
 /**
  * switchModelConfig: change the session's model selection. For a different model, app.setModel

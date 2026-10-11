@@ -27,7 +27,7 @@ const pendingHeapUsedKb = new Map<number, number>();
  * Main-side trust boundary: payloads come from the renderer and are validated against a `strict`
  * schema. Drop invalid messages (missing fields, wrong types, or extra fields such as paths) without throwing.
  */
-function ingestRendererHeapSample(webContentsId: number, raw: unknown): void {
+export function ingestRendererHeapSample(webContentsId: number, raw: unknown): void {
   if (!isMainApplicationWindowWebContents(webContentsId)) {
     return;
   }

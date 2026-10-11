@@ -34,7 +34,7 @@ export type WorkflowRunSettingsModel =
   | { kind: "session" }
   | { kind: "model"; providerId: string; modelId: string; level?: string };
 
-/** The two settings in the form. A null `bound` means “this run has no limit of its own” (it uses the local machine ceiling). */
+/** The form's two settings. `bound: null` means this run has no custom ceiling and uses default concurrency. */
 export interface WorkflowRunSettingsDraft {
   model: WorkflowRunSettingsModel;
   bound: number | null;
@@ -64,11 +64,18 @@ export function isWorkflowRunConfigurable(run: WorkflowRunState | undefined): bo
 }
 
 /**
- * Local concurrency ceiling: prefer `run.concurrencyCeiling` (included in `run-started`, always present); for older CLIs that omit it, fall back to
- * the ceiling shown by the concurrency chip, `concurrency.ceiling`. If neither exists, the ceiling is unknown—the stepper has no upper bound and shows no hint.
+ * Default concurrency D (docs/dynamic-workflow/concurrency.md, “Protocol state”): read only
+ * `run.concurrencyCeiling` (always included with `run-started`; the key predates the default-
+ * concurrency concept). It is a starting point, not a ceiling: the stepper uses it to display
+ * “Default N” and determine that matching the default means no custom ceiling. There is no upper bound.
+ *
+ * Root cause (user reported “local ceiling is 2”): when older CLIs did not send this value, the UI
+ * fell back to `concurrency.ceiling` from the usage chip. That value is the highest cap observed;
+ * if the shared bucket was throttled before this run started, it was a learned cap presented as
+ * the local ceiling. Prefer showing that the default is unknown over misrepresenting a learned value.
  */
-export function workflowRunSettingsCeiling(run: WorkflowRunState): number | undefined {
-  return run.concurrencyCeiling ?? run.concurrency?.ceiling;
+export function workflowRunDefaultConcurrency(run: WorkflowRunState): number | undefined {
+  return run.concurrencyCeiling;
 }
 
 /** Canonical string → form model; leaving an invalid string unchanged does not make it a session model, so preserve it as an unresolved specific model. */
@@ -109,14 +116,17 @@ export function initialWorkflowRunSettingsDraft(run: WorkflowRunState): Workflow
   const limit = run.concurrency?.limit;
   return {
     model: workflowRunSettingsModelOf(run.subagentModel),
-    bound: limit ?? workflowRunSettingsCeiling(run) ?? null,
+    bound: limit ?? workflowRunDefaultConcurrency(run) ?? null,
   };
 }
 
-/** Normalize the limit: a value at or above the ceiling means “no limit of its own.” */
-function normalizedBound(bound: number | null, ceiling: number | undefined): number | null {
+/** Normalize the ceiling: **equal to** the default means no custom ceiling; higher is a real value (the default is not a limit). */
+function normalizedBound(
+  bound: number | null,
+  defaultConcurrency: number | undefined,
+): number | null {
   if (bound === null) return null;
-  return ceiling !== undefined && bound >= ceiling ? null : bound;
+  return bound === defaultConcurrency ? null : bound;
 }
 
 /**
@@ -127,22 +137,21 @@ function normalizedBound(bound: number | null, ceiling: number | undefined): num
 export function workflowRunSettingsChange(
   initial: WorkflowRunSettingsDraft,
   draft: WorkflowRunSettingsDraft,
-  ceiling: number | undefined,
+  defaultConcurrency: number | undefined,
 ): WorkflowRunSettingsChange | undefined {
   const change: WorkflowRunSettingsChange = {};
   const fromModel = workflowRunSettingsModelCanonical(initial.model);
   const toModel = workflowRunSettingsModelCanonical(draft.model);
   if (fromModel !== toModel) change.subagentModel = toModel ?? null;
-  const fromBound = normalizedBound(initial.bound, ceiling);
-  const toBound = normalizedBound(draft.bound, ceiling);
+  const fromBound = normalizedBound(initial.bound, defaultConcurrency);
+  const toBound = normalizedBound(draft.bound, defaultConcurrency);
   if (fromBound !== toBound) change.maxConcurrency = toBound;
   return Object.keys(change).length === 0 ? undefined : change;
 }
 
-/** Clamp the stepper limit: minimum 1, maximum the ceiling (no maximum when unknown). */
-export function clampWorkflowRunSettingsBound(value: number, ceiling: number | undefined): number {
-  const floor = Math.max(1, Math.floor(value));
-  return ceiling === undefined ? floor : Math.min(floor, ceiling);
+/** Clamp the stepper: floor to a minimum of 1, with no upper bound (default concurrency is a starting point, not a ceiling). */
+export function clampWorkflowRunSettingsBound(value: number): number {
+  return Math.max(1, Math.floor(value));
 }
 
 /**
@@ -157,13 +166,22 @@ function isConcurrencyOnlyChange(change: WorkflowRunSettingsChange | undefined):
 /**
  * Copy key for the consequence sentence; the last sentence varies by run state (completed does not reach this code).
  *
- * For a **running** run, changing only the concurrency limit takes effect in place without stopping or starting another run,
- * so show the consequence of adjusting concurrency here. `pending` is excluded: its engine may not exist yet, and if the in-place change cannot be applied it falls back to a real revision, for which the original sentence is still accurate.
+ * If nothing changed, return undefined (do not announce a consequence): Apply is disabled, so there
+ * is no consequence to describe. Previously this used the run state to choose a fallback message;
+ * for a running run it said “This will stop the current run,” even though changing only concurrency
+ * does not stop it. Predicting consequences before a change risks getting one wrong.
+ *
+ * One exception: changing only the concurrency ceiling on a **running** run takes effect in place;
+ * it neither stops nor restarts the run (docs/dynamic-workflow/concurrency.md). This is the one
+ * case where “This will stop the current run” was wrong, so change the wording only here. `pending`
+ * does not qualify: its engine may not exist yet, and if the change cannot be applied in place it
+ * falls back to a real retune, where the original wording remains accurate.
  */
 export function workflowRunSettingsConsequenceId(
   status: WorkflowRunState["status"],
-  change?: WorkflowRunSettingsChange,
-): string {
+  change: WorkflowRunSettingsChange | undefined,
+): string | undefined {
+  if (change === undefined) return undefined;
   if (status === "running" && isConcurrencyOnlyChange(change))
     return "chat.toolCall.workflow.run.settings.consequence.concurrencyLive";
   switch (status) {

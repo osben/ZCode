@@ -20,10 +20,12 @@ import {
   formatQuotaRemainingPercentage,
   formatQuotaResetTime,
   getQuotaRemainingPercentage,
-  isCodingPlanQuotaLimitFull,
   resolveMcpQuotaLimit,
 } from "@/lib/codingPlanQuotaPresentation.js";
-import { resolveCodingPlanQuotaResetLimit } from "@/lib/codingPlanQuotaResetUi.js";
+import {
+  resolveCodingPlanQuotaResetActionCompletedAt,
+  resolveCodingPlanQuotaResetLimit,
+} from "@/lib/codingPlanQuotaResetUi.js";
 import { getContextQuotaMeterGridClass } from "@/chat-input-toolbar/contextQuotaMeterGrid.js";
 import { resolveChatCodingPlanResetOpportunityBadge } from "@/chat-input-toolbar/codingPlanResetOpportunityBadge.js";
 import { ChatCodingPlanMcpUsageMeter } from "@/chat-input-toolbar/ChatCodingPlanMcpUsageMeter.js";
@@ -56,7 +58,7 @@ export function hasChatCodingPlanUsageRemaining(
   );
 }
 
-function shouldShowContextQuotaResetTime({
+export function shouldShowContextQuotaResetTime({
   availableWidth,
   contentWidth,
 }: {
@@ -221,9 +223,6 @@ export function ChatCodingPlanUsageRemainingPanel({
   );
   const monthlyToolLimit = findCodingPlanQuotaLimit(limits, "TIME_LIMIT", 5, 1);
   const mcpQuotaLimit = resolveMcpQuotaLimit(state.visibleSnapshot);
-  // Resetting at 100% remaining has no benefit: hide the reset button and opportunity badge (display only; grants and polling are unchanged).
-  const fiveHourQuotaFull = isCodingPlanQuotaLimitFull(fiveHourTokenLimit);
-  const weeklyQuotaFull = isCodingPlanQuotaLimitFull(weeklyTokenLimit);
   // Combine the 5-hour and weekly opportunities into one badge, add their counts, and use the countdown for the earliest expiration.
   const opportunityBadge = resolveChatCodingPlanResetOpportunityBadge(state, resetUi);
   const fiveHourResetTime = fiveHourTokenLimit?.nextResetTime
@@ -307,7 +306,6 @@ export function ChatCodingPlanUsageRemainingPanel({
   const quotaGridCount = Math.min(primaryQuotaMeters.length + (mcpQuotaMeter ? 1 : 0), 3);
   const quotaResetDialog = buildCodingPlanQuotaResetDialogConfig({
     fiveHourEnabled: Boolean(fiveHourTokenLimit),
-    fiveHourQuotaFull,
     resetUi,
     usageItems: quotaMeters.map((meter) => ({
       color: meter.color,
@@ -318,7 +316,6 @@ export function ChatCodingPlanUsageRemainingPanel({
       value: formatQuotaRemainingPercentage(locale, meter.limit),
     })),
     weekEnabled: Boolean(weeklyTokenLimit),
-    weekQuotaFull: weeklyQuotaFull,
   });
 
   return (
@@ -392,24 +389,24 @@ export function ChatCodingPlanUsageRemainingPanel({
                 // The entry beside the quota title only opens the shared dialog; redemption is triggered by the matching type button inside the dialog.
                 meter.key === "fiveHour" &&
                 resetUi.entry &&
-                ((resetUi.opportunityVisible && !fiveHourQuotaFull) ||
+                (resetUi.opportunityVisible ||
                   resetUi.processing ||
                   resetUi.entry.status === "completed") ? (
                   <LocalizedCodingPlanQuotaResetAction
                     autoCelebrateCompletedAt={autoCelebrateArm?.FIVE_HOUR ?? null}
-                    completedAt={resetUi.entry.completedAt}
+                    completedAt={resolveCodingPlanQuotaResetActionCompletedAt(resetUi)}
                     processing={resetUi.processing}
                     onAutoCelebrated={onAutoCelebrated}
                     onOpenDialog={() => setQuotaResetDialogOpen(true)}
                   />
                 ) : meter.key === "weekly" &&
                   resetUi.week.entry &&
-                  ((resetUi.week.opportunityVisible && !weeklyQuotaFull) ||
+                  (resetUi.week.opportunityVisible ||
                     resetUi.week.processing ||
                     resetUi.week.entry.status === "completed") ? (
                   <LocalizedCodingPlanQuotaResetAction
                     autoCelebrateCompletedAt={autoCelebrateArm?.WEEK ?? null}
-                    completedAt={resetUi.week.entry.completedAt}
+                    completedAt={resolveCodingPlanQuotaResetActionCompletedAt(resetUi.week)}
                     processing={resetUi.week.processing}
                     resetType="WEEK"
                     onAutoCelebrated={onAutoCelebrated}

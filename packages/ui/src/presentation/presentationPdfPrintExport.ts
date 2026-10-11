@@ -14,8 +14,8 @@ const STYLE_ATTRIBUTE = "data-zcode-pptx-print-style";
 /** A single image decode failure does not block export (preview would fail too); cap the total decode wait */
 const IMAGE_DECODE_TIMEOUT_MS = 10_000;
 
-type PrintableFontScript = "latin" | "cjk" | "symbol";
-type PrintableFontAvailability = (family: string, script: PrintableFontScript) => boolean;
+export type PrintableFontScript = "latin" | "cjk" | "symbol";
+export type PrintableFontAvailability = (family: string, script: PrintableFontScript) => boolean;
 
 const GENERIC_FONT_FAMILIES = new Set([
   "serif",
@@ -199,7 +199,7 @@ function appendGenericFallback(
 /**
  * Return the deterministic font stack to write into the print DOM; null means the original preferred font is already available and needs no change.
  */
-function resolvePrintableFontFamily(
+export function resolvePrintableFontFamily(
   fontFamily: string,
   text: string,
   isFontAvailable: PrintableFontAvailability,
@@ -282,7 +282,7 @@ function createCanvasFontAvailability(hostDocument: Document): PrintableFontAvai
  * Screen preview allows an implicit fallback when a font is not installed, but Chromium/Skia printing does not reliably preserve this fallback,
  * causing the corresponding text to be omitted from the PDF. Change only the one-off print DOM by placing a genuinely available font first in the stack.
  */
-function materializePrintableFontFamilies(
+export function materializePrintableFontFamilies(
   hostDocument: Document,
   host: HTMLElement,
   isFontAvailable: PrintableFontAvailability = createCanvasFontAvailability(hostDocument),

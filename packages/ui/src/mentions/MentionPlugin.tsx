@@ -67,7 +67,11 @@ interface MentionPluginProps {
   onWhiteboardMentionSelected?: (boardId: string) => void | Promise<void>;
 }
 
-function getWrappedMentionIndex(currentIndex: number, delta: number, itemCount: number): number {
+export function getWrappedMentionIndex(
+  currentIndex: number,
+  delta: number,
+  itemCount: number,
+): number {
   if (itemCount <= 0) {
     return 0;
   }
@@ -81,7 +85,7 @@ function getWrappedMentionIndex(currentIndex: number, delta: number, itemCount: 
  * Skip disabled items (V1 same-name Plugin conflicts) during wraparound navigation.
  * If all items are disabled, stay in place; the Enter/Tab selection guard rejects insertion.
  */
-function getNextEnabledMentionIndex(
+export function getNextEnabledMentionIndex(
   currentIndex: number,
   delta: number,
   items: ReadonlyArray<Pick<MentionItem, "disabled">>,
@@ -104,7 +108,7 @@ function getNextEnabledMentionIndex(
  * Root cause: a visible conflicting Plugin may occupy flatItems[0]; if index 0 stays selected by default,
  * the first Enter/Tab hits the disabled item and falls back to the editor default instead of continuing keyboard navigation.
  */
-function coerceEnabledMentionIndex(
+export function coerceEnabledMentionIndex(
   currentIndex: number,
   items: ReadonlyArray<Pick<MentionItem, "disabled">>,
 ): number {
@@ -125,7 +129,10 @@ function coerceEnabledMentionIndex(
  * Android is an exception: Chrome + Gboard also use composition for Latin words (compositionend fires only after the whole word and a space),
  * so freezing would prevent per-character filtering in the mobile Web @ panel; Android keeps recomputing live.
  */
-function shouldFreezeMentionRecalcWhileComposing(isComposing: boolean, userAgent: string): boolean {
+export function shouldFreezeMentionRecalcWhileComposing(
+  isComposing: boolean,
+  userAgent: string,
+): boolean {
   return isComposing && !/Android/i.test(userAgent);
 }
 
@@ -318,8 +325,9 @@ export function MentionPlugin({
               <ContextMentionOptionContent item={item} workspacePath={workspacePath} />
             ) : item.category === "skills" ? (
               <span className="min-w-0 flex flex-1 items-center gap-2">
-                {/* Skill candidates should have the same primary/secondary information density as command items:
-                    keep the icon and name as primary text, then show the description as secondary information on the right instead of taking a second line. */}
+                {/* Bugfix: skill candidates should have the same primary/secondary information
+                    density as command items: keep the icon and name as primary text, then show the
+                    description as secondary information on the right instead of taking a second line. */}
                 <WandSparkles className="size-3.5 shrink-0 text-foreground" />
                 <span className="shrink-0 whitespace-nowrap text-ui-base font-medium text-foreground">
                   {item.label}

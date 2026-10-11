@@ -7,22 +7,36 @@ import {
 const BUILTIN_PROMPT_COMMAND_PATTERN = /^\/([^\s]+)(?:\s+([\s\S]*))?$/;
 const INIT_COMMAND_NAME = "init";
 
-interface ResolveZCodeBuiltinPromptCommandOptions {
+export interface ResolveZCodeBuiltinPromptCommandOptions {
   /**
-   * Dynamic-workflow switch: expand `/workflow` unless the value is explicitly false.
-   * TUI defaults to enabled; headless passes true/false explicitly for this invocation through
-   * `--enable-workflow`, defaulting to false. When disabled, return undefined; `workflow` is reserved,
-   * so custom-command parsing will not expand it either, and the original text is sent to the model
-   * as a normal prompt. This matches the rule that hides the entry from the command catalog.
+   * Dynamic-workflow rollout gate (docs/dynamic-workflow/launch.md "Gray release"). **Block
+   * `/workflow` only when explicitly false**: TUI / headless never set this field, so the feature is
+   * always enabled there. When blocked, return undefined — the same shape as "command does not
+   * exist": `workflow` is a reserved name, so the later custom-command parsing also refuses to
+   * expand it, and the original text reaches the model as a normal prompt, matching the catalog
+   * side's decision to remove it (DWG-03).
    */
   dynamicWorkflowEnabled?: boolean;
   workingDirectory?: string;
+}
+
+export interface ResolvedZCodeBuiltinPromptCommand {
+  /** Matched built-in command name (`init` / `workflow`); callers attach command-specific side effects (such as onDemand activation). */
+  name: string;
+  prompt: string;
 }
 
 export function resolveZCodeBuiltinPromptCommand(
   input: string,
   options: ResolveZCodeBuiltinPromptCommandOptions = {},
 ): string | undefined {
+  return resolveZCodeBuiltinPromptCommandInvocation(input, options)?.prompt;
+}
+
+export function resolveZCodeBuiltinPromptCommandInvocation(
+  input: string,
+  options: ResolveZCodeBuiltinPromptCommandOptions = {},
+): ResolvedZCodeBuiltinPromptCommand | undefined {
   const invocation = parseBuiltinPromptCommandInvocation(input);
   if (!invocation) {
     return undefined;
@@ -30,18 +44,24 @@ export function resolveZCodeBuiltinPromptCommand(
 
   if (invocation.name === INIT_COMMAND_NAME) {
     const workingDirectory = options.workingDirectory ?? process.cwd();
-    return buildInitAgentsPrompt({
-      args: invocation.args,
-      targetPath: join(workingDirectory, "AGENTS.md"),
-      workingDirectory,
-    });
+    return {
+      name: INIT_COMMAND_NAME,
+      prompt: buildInitAgentsPrompt({
+        args: invocation.args,
+        targetPath: join(workingDirectory, "AGENTS.md"),
+        workingDirectory,
+      }),
+    };
   }
 
   if (invocation.name === BUILTIN_WORKFLOW_COMMAND_NAME) {
     if (options.dynamicWorkflowEnabled === false) {
       return undefined;
     }
-    return expandBuiltinWorkflowCommandPrompt(invocation.args);
+    return {
+      name: BUILTIN_WORKFLOW_COMMAND_NAME,
+      prompt: expandBuiltinWorkflowCommandPrompt(invocation.args),
+    };
   }
 
   return undefined;
@@ -64,9 +84,13 @@ function buildInitAgentsPrompt(params: {
   workingDirectory: string;
 }): string {
   const additionalInstructions = params.args
-    ? ["", "Additional user instructions supplied with /init:", "```text", params.args, "```"].join(
-        "\n",
-      )
+    ? [
+        "",
+        "Additional user instructions supplied with /init:",
+        "```text",
+        params.args,
+        "```",
+      ].join("\n")
     : "";
 
   return [

@@ -1,4 +1,5 @@
 import { createConfig } from "@zcode/adapters/config";
+import type { McpElicitationPort, McpNotificationPort } from "@zcode/contracts";
 import { createNodeModelSelectionFacade } from "@zcode/provider-node";
 import { createNodeLoggerFactory } from "@zcode/adapters/logging";
 import {
@@ -29,6 +30,7 @@ import {
 import { closeSessionStore, getSessionDbPath } from "./app/session-store.js";
 import { startProcessProviderRegistryRuntime } from "./app/process-provider-registry-runtime.js";
 import { scheduleStartupLogRetentionCleanup } from "./log-retention.js";
+import { resolveProcessProviderEndpointRoutingPort } from "./provider-endpoint-routing.js";
 import { StartupTimer, startupNow } from "./startup-logging.js";
 import { installZCodeProtocolAiSdkWarningLogger } from "./zcode-protocol/ai-sdk-warning-logger.js";
 import {
@@ -46,10 +48,10 @@ import { ZCodeProtocolNdjsonConnection } from "./zcode-protocol/transport.js";
 import { cleanupProtocolRuntime } from "./zcode-protocol/runtime-cleanup.js";
 import { startProtocolResourceSampler } from "./zcode-protocol/resource-sampler.js";
 import { acquireProtocolStartupResource } from "./zcode-protocol/startup-resource.js";
-import type { ZCodeProcessResourceSampler } from "./process-resource-sampler.js";
 import { prepareZCodeTelemetryEnv, shutdownZCodeTelemetry } from "./telemetry-bootstrap.js";
+import type { ZCodeProcessResourceSampler } from "./process-resource-sampler.js";
 
-function applyProtocolPresentationSurface(
+export function applyProtocolPresentationSurface(
   options: Omit<ZCodeAppOptions, "providerRegistry">,
   presentationSurface: PresentationSurface,
 ): Omit<ZCodeAppOptions, "providerRegistry"> {
@@ -67,7 +69,7 @@ function applyProtocolPresentationSurface(
  *
  * The old workspace snapshot no longer participates in Provider or Model execution.
  */
-function applyProtocolProviderRegistry(
+export function applyProtocolProviderRegistry(
   options: Omit<ZCodeAppOptions, "providerRegistry">,
   providerRegistry: ZCodeAppOptions["providerRegistry"],
   configuredDefaultModelSelection?: ModelSelection,
@@ -184,11 +186,20 @@ export async function runZCodeProtocolAgent(
       configResult.config.features.mcp === false
         ? undefined
         : createMcpTelemetryTracker({
-            idSalt: traceContext.traceId,
+            idSalt: telemetryDeviceMid ?? traceContext.traceId,
             onEvent: (event) => mcpTelemetrySink?.(event),
             onResourceSamples: (samples) => mcpResourceSink?.(samples),
           });
-    // Official MCP identity-header port: the connection pool is constructed before the server, so
+    const providerEndpointRoutingPort =
+      options.providerEndpointRoutingPort ??
+      resolveProcessProviderEndpointRoutingPort({
+        appVersion: options.version,
+        env: options.env,
+        logger,
+        network: configResult.config.network,
+        sourceTitle: "electron",
+      });
+    // Official MCP identity-header port (spec §7.1/§7.2): the connection pool is constructed before the server, so
     // populate a lazy holder later. Before the server is ready, the port returns
     // official_auth_unavailable. HTTP tools/call reaches the server anonymously and receives a
     // structured permission error; stdio passes the reason to the plugin. Connection and tool discovery are unaffected.
@@ -225,10 +236,26 @@ export async function runZCodeProtocolAgent(
         resolveZCodeApiOrigin,
       }),
     };
+    // MCP elicitation belongs to the protocol server's session; the pool is created before the server, so the port binds lazily.
+    let elicitationServer: {
+      requestMcpElicitation: McpElicitationPort["requestElicitation"];
+      handleMcpNotification: McpNotificationPort["onNotification"];
+    } | null = null;
     mcpConnectionPool =
       configResult.config.features.mcp === false
         ? undefined
         : createMcpAdapterConnectionPool({
+            elicitation: {
+              requestElicitation: (request, elicitationOptions) =>
+                elicitationServer
+                  ? elicitationServer.requestMcpElicitation(request, elicitationOptions)
+                  : Promise.resolve({ action: "decline" as const }),
+            },
+            // Server notifications also bind lazily to the protocol server.
+            notifications: {
+              onNotification: (notification) =>
+                elicitationServer?.handleMcpNotification(notification),
+            },
             clientVersion: options.version ?? "0.0.0",
             env: options.env,
             logger,
@@ -278,6 +305,7 @@ export async function runZCodeProtocolAgent(
                   }),
               }
             : {}),
+          providerEndpointRoutingPort,
           sourceTitle: "electron",
           onToolExecResource: (params) =>
             connection.send({ method: zcodeProtocolNotifications.toolExecResource, params }),
@@ -295,6 +323,7 @@ export async function runZCodeProtocolAgent(
       version: options.version,
     }));
     officialMcpAuthContext = server.officialMcpAuthRequestContext;
+    elicitationServer = server;
     if (configResult.config.features.mcp !== false) {
       nodeReplBrowserBroker = createNodeReplBrowserBroker({
         browserControlPort: server.browserControlPort,

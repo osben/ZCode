@@ -17,6 +17,7 @@ export function WorkspaceHeaderActionSection({
   workspaceAbsPath,
   workspaceIdentity,
   remoteTarget,
+  isWebRemoteControl = false,
   isDesktop,
   isTerminalOpen,
   isSidePaneOpen,
@@ -48,7 +49,11 @@ export function WorkspaceHeaderActionSection({
         />
       ) : null}
       {/* Share publishing requires authentication; hide the entry point when signed out so users do not open it only to get an authorization error. */}
-      {activeTaskId && user && isDesktop !== false ? (
+      {activeTaskId &&
+      user &&
+      isDesktop !== false &&
+      !isWebRemoteControl &&
+      remoteTarget?.kind !== "server" ? (
         <ConversationShareMenu
           taskId={activeTaskId}
           useWindowsCaptionSpacing={useWindowsCaptionSpacing}
@@ -57,7 +62,7 @@ export function WorkspaceHeaderActionSection({
       {!simplifyForNarrowRemote ? (
         <>
           {!hideHelpMenu ? <WorkspaceHelpMenuButton isDesktop={Boolean(isDesktop)} /> : null}
-          {/* The remote-control mobile header is too narrow for a terminal entry point here without competing with core actions.*/}
+          {/* Bugfix: The mobile remote-control header is too narrow, so the terminal entry competes for space with core actions. */}
           <WorkspaceTerminalToggleButton
             isTerminalOpen={isTerminalOpen}
             onToggleTerminal={onToggleTerminal}

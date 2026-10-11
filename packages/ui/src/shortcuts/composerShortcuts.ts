@@ -7,13 +7,13 @@ import type { ShortcutBindingEvent } from "./bindings.js";
 import { matchesShortcutBinding } from "./bindings.js";
 
 /** Slice of composer-scoped commands in the active table (only these two are needed, avoiding a type dependency on the full table). */
-interface ComposerEffectiveBindings {
+export interface ComposerEffectiveBindings {
   readonly composerSend: readonly string[];
   readonly composerInsertNewline: readonly string[];
 }
 
 /** Final action for an Enter-family event inside the composer. */
-type ComposerKeyAction = "send" | "newline";
+export type ComposerKeyAction = "send" | "newline";
 
 /**
  * Resolve the composer action from the active table (rebinding layer, with a consistent permissive policy).

@@ -9,7 +9,7 @@
  *   and fulfill it once when disabled→false makes editing possible.
  * - `focus-now`: enabled and editable; focus immediately.
  */
-type ComposerAutoFocusDecision = "focus-now" | "defer" | "skip";
+export type ComposerAutoFocusDecision = "focus-now" | "defer" | "skip";
 
 export interface ComposerAutoFocusOptions {
   /** Host gate (SessionPane.focused): only the focused pane auto-focuses. */

@@ -3,6 +3,7 @@ import { useStartPlanRecommendation } from "@/hooks/useStartPlanRecommendation.j
 import type { SessionCreateSource } from "@zcode/shared";
 import { reportSessionCreate } from "@/lib/sessionCreateTelemetry.js";
 import { getLocalTtftObserver } from "@/v4/telemetry/localTtftObserver.js";
+import { BotGroupDeliveryProvider } from "@/v4/BotGroupDeliveryAction.js";
 /* oxlint-disable eslint(max-lines) -- SessionPane is the single-pane vertical command orchestration boundary (subscribe/send/stop/fork/edit/retry/queue/slash), at the same granularity as the old ChatView. HEAD already exceeds the limit (693 counted lines); splitting command groups would break the closure discipline around dispatchCommand/snapshotRef. */
 import { useIsOfficeMode } from "@/hooks/useInterfaceMode.js";
 import {
@@ -27,7 +28,10 @@ import {
 import type {
   ConversationShareAccessMode,
   GitChangeSourceId,
+  HighspeedCardSnapshot,
+  HighspeedPrepareTurnResult,
   GitRepositorySummary,
+  ModelSelection,
   ZCodeProvider,
   ZCodeTaskChangeSummary,
 } from "@zcode/shared";
@@ -40,9 +44,11 @@ import type {
   ConversationRowTarget,
   SessionErrorInfo,
   SessionModelTransition,
+  UserInputRow,
   V4ConversationFileChangesResult,
 } from "@zcode/shared/zcode-protocol-v4";
 import { logger } from "@/logger.js";
+import { PluginUiSessionProvider } from "@/plugin-ui/index.js";
 import {
   getConversationShareErrorDetails,
   resolveConversationShareFallbackIssueCode,
@@ -55,7 +61,9 @@ import type {
   ConversationShareTurnPreflightResult,
   ImportedConversationShare,
 } from "@zcode/services";
+import { useCodingPlanBillingDiscountFromService } from "@/CodingPlanBillingDiscount.js";
 import { toast } from "@/components/ui/toast.js";
+import { cn } from "@/components/lib/utils.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { CHAT_ERROR_RESUME_MESSAGE } from "@/lib/chatErrorResume.js";
 import { DEFAULT_CODE_PREVIEW_SETTINGS } from "@/lib/codePreviewSettings.js";
@@ -66,6 +74,44 @@ import { buildChatSessionScrollMemoryKey } from "@/lib/chatSessionScrollMemory.j
 import type { MessageFileLinkTarget } from "@/components/ai-elements/message.js";
 import { useServices } from "@/hooks/useServices.js";
 import { useOptionalPlatform } from "@/hooks/usePlatform.js";
+import { browserGlobalNoticeStore } from "@/global-notice/globalNoticeStore.js";
+import {
+  HIGHSPEED_SEND_WAIT_BUDGET_MS,
+  prepareHighspeedSendContext,
+  readRegularTpsWithinSendBudget,
+  resolveHighspeedPrepareSelection,
+  type HighspeedSendContext,
+  type HighspeedTurnPreparer,
+} from "@/highspeed/highspeedSend.js";
+import {
+  calculateHighspeedSavedDurationFromMetrics,
+  readHighspeedRegularTpsFromHealth,
+} from "@/highspeed/highspeedSavedTime.js";
+import { buildHighspeedShareNotice } from "@/highspeed/highspeedShare.js";
+import {
+  claimHighspeedCardAutoShare,
+  claimHighspeedHealthyAttempt,
+  completeHighspeedTurn,
+  discardHighspeedTurn,
+  getHighspeedCardTps,
+  getHighspeedTurnVersion,
+  hydrateHighspeedTurnsFromTranscript,
+  listExpiredHighspeedCardsAwaitingTps,
+  listHighspeedCardAutoShareCandidates,
+  listHighspeedTurnsAwaitingMetricsPersistence,
+  listPendingHighspeedTurns,
+  markHighspeedCardAutoShared,
+  markHighspeedTurnMetricsPersisted,
+  recordHighspeedTurn,
+  resolveNextHighspeedAutoShareAt,
+  setHighspeedCardTps,
+  subscribeHighspeedTurns,
+} from "@/highspeed/highspeedTurnStore.js";
+import { claimHighspeedFallbackToast } from "@/highspeed/highspeedToastClaims.js";
+import {
+  collectHighspeedCardShareBlockers,
+  listHighspeedCardsAwaitingAutoShare,
+} from "@/highspeed/highspeedShareDiagnostics.js";
 import type { SessionOpenTrigger } from "@/lib/sessionOpenArmsTelemetry.js";
 import { useDynamicWorkflowAvailability } from "@/hooks/useDynamicWorkflowAvailability.js";
 import { resolveWorkflowResumeHandler } from "@/v4/workflowResumeGate.js";
@@ -76,6 +122,7 @@ import {
 import { useWorkflowRunJournalSummaries } from "@/hooks/useWorkflowRunJournalSummaries.js";
 import { usePlanIdentitySnapshot } from "@/hooks/usePlanIdentitySnapshot.js";
 import { useBaseWorkspaceServices } from "@/hooks/useWorkspaceServices.js";
+import { buildGenUiModelContext } from "@zcode/shared/gen-ui";
 import { useWorkspaceHomePath } from "@/hooks/useWorkspaceHomePath.js";
 import { prepareWorkspaceWithZCodeSessionService } from "@/hooks/useWorkspacePrepare.js";
 import {
@@ -86,6 +133,8 @@ import { decodeCustomModelValue, encodeCustomModelValue } from "@/lib/zcodeCusto
 import { parseModelPickerValue } from "@/lib/zcodeSessionProjection.js";
 import { captureComposerRecentSubmission } from "@/lib/composerRecent.js";
 import { resolveProviderLabel } from "@/lib/registryProviderView.js";
+import { resolveEntitledAccountProviderAccess } from "@/lib/accountProviderAccess.js";
+import { getProviderSettingsSnapshot } from "@/lib/providerSettingsSnapshot.js";
 import {
   buildDraftCreateConfigPayload,
   useDraftConfigControl,
@@ -148,6 +197,7 @@ import {
   conversationSharePreflightCacheKey,
   conversationShareTurnFingerprint,
   dedupeConversationShareIssues,
+  aggregateConversationShareBlockingIssues,
   getMissingConversationSharePreflightTurnIds,
 } from "@/v4/conversationSharePreflightCache.js";
 import { ConversationBottomDockTransition } from "@/v4/ConversationBottomDockTransition.js";
@@ -172,8 +222,10 @@ import {
 import type { ConversationStatusPanelWorkflowRunTarget } from "@/v4/conversationStatusPanelModel.js";
 import {
   buildWorkflowRunByRunId,
+  buildWorkflowSaveCandidatesByRunId,
   buildWorkflowRunByToolCallId,
   buildWorkflowRunPendingQuestionsByRunId,
+  buildWorkflowFillGraphByRunId,
   buildWorkflowGraphByToolCallId,
 } from "@/v4/workflowRunCardJoin.js";
 import { buildWorkflowDraftByToolCallId } from "@/v4/workflowDraftJoin.js";
@@ -243,6 +295,7 @@ import { isProviderNotReadyError } from "@/lib/chatPrepareError.js";
 import { useOptionalCodingPlanUpgradeDialog } from "@/settings/CodingPlanUpgradeDialogProvider.js";
 import { setPendingSettingsSectionIntent } from "@/lib/settingsNavigation.js";
 import { useOptionalTabStore } from "@/store/TabStoreProvider.js";
+import { useIsMobileTextInputViewport } from "@/lib/mobileTextInput.js";
 import type {
   OpenPlanDetailSideTabRequest,
   OpenScopedPlanDetailSideTabRequest,
@@ -302,6 +355,7 @@ export interface SessionPaneProps {
   remoteSessionId?: string | null;
   /** Prompt-template telemetry currently covers only Desktop; Web/mobile remote control keeps the UI behavior without emitting this event. */
   isDesktop?: boolean;
+  compactForRemoteControl?: boolean;
   provider?: ZCodeProvider;
   onSessionCreated?: (sessionId: string) => void;
   /** deleteSession: after deleting the current session, return to a draft (the shell starts a new draft). */
@@ -369,6 +423,8 @@ export interface SessionPaneProps {
   searchResultHighlightRequest?: ChatSearchResultHighlightRequest | null;
   onSearchResultHighlightDone?: (requestId: number) => void;
 }
+
+const MOBILE_PLAN_INTERACTION_RECONCILE_DELAY_MS = 500;
 function createSessionErrorKey(
   sessionId: string | null | undefined,
   error: SessionErrorInfo,
@@ -441,7 +497,7 @@ function isConversationFileDrag(dataTransfer: DataTransfer): boolean {
   );
 }
 
-interface QueuedComposerRestoreTarget {
+export interface QueuedComposerRestoreTarget {
   baseRevision: number;
   queueItemId: string;
   sourceCommandId: string;
@@ -451,7 +507,7 @@ interface QueuedComposerRestoreTarget {
   config?: ComposerRestoreRequest["config"];
 }
 
-function resolveQueuedComposerRestore(
+export function resolveQueuedComposerRestore(
   snapshot: ConversationSnapshot,
   queueItemId: string,
 ): QueuedComposerRestoreTarget | null {
@@ -473,12 +529,24 @@ function resolveQueuedComposerRestore(
   };
 }
 
-function shouldRestoreQueuedComposerFromAck(status: CommandAck["status"]): boolean {
+export function shouldRestoreQueuedComposerFromAck(status: CommandAck["status"]): boolean {
   return status === "accepted" || status === "duplicate";
 }
 
 /**
- * Single-pane vertical slice: subscribe → render rows → send from the composer / stop.
+ * Pane binding at the Highspeed send origin (spec §9.2): freeze it synchronously when sending is
+ * triggered, then use it after prepare returns to decide whether the pane still shows this send's
+ * Task/draft and whether to display the card here and register its activation.
+ */
+interface HighspeedPaneOrigin {
+  sessionId: string | null;
+  /** Pane binding generation at send start; for a draft's first send, detects whether the pane left the draft. */
+  paneBinding: number;
+  draftId: string | null;
+}
+
+/**
+ * Single-pane vertical slice: subscribe → render rows → composer send/stop (06-ui §SessionPane).
  *
  * React performance (vercel-react-best-practices):
  * - Leaf components (Header/Timeline/QueuePanel/InputControls/Composer/GoalBanner) are all memoized;
@@ -499,6 +567,7 @@ export function SessionPane({
   workspaceIdentity,
   remoteSessionId,
   isDesktop = false,
+  compactForRemoteControl = false,
   provider,
   onSessionCreated,
   onSelectionSideChatUnavailable,
@@ -554,8 +623,14 @@ export function SessionPane({
     fileRewindPreview,
   } = useV4Conversation();
   const platform = useOptionalPlatform();
-  const { conversationShareService, modelSelectionService, zcodeSessionService, zcodeTaskService } =
-    useServices();
+  const {
+    conversationShareService,
+    highspeedCardService,
+    modelSelectionService,
+    usageStatsService,
+    zcodeSessionService,
+    zcodeTaskService,
+  } = useServices();
   const { intl, locale } = useZCodeIntl();
   const slashCommands = useSlashCommands(workspacePath, workspaceIdentity);
   const baseWorkspaceServices = useBaseWorkspaceServices();
@@ -781,7 +856,7 @@ export function SessionPane({
   }, [selectedShareProductTurnIds, sharePreflightCacheKey]);
   const shareHydratedSessionRef = useRef<string | null>(null);
   const sharePreflight = useMemo<ConversationShareSelectionPreflightState>(() => {
-    if (!shareInSelectionStage || !sessionId) {
+    if (!shareInSelectionStage || !sessionId || compactForRemoteControl) {
       return { status: "idle" };
     }
     if (selectedShareProductTurnIds.length === 0) {
@@ -802,9 +877,7 @@ export function SessionPane({
     return {
       status: "ready",
       ...sharePreflightMetaRef.current,
-      blockingIssues: dedupeConversationShareIssues(
-        resolvedEntries.flatMap((entry) => entry.blockingIssues),
-      ),
+      blockingIssues: aggregateConversationShareBlockingIssues(resolvedEntries),
       skippableWarnings: dedupeConversationShareIssues(
         resolvedEntries.flatMap((entry) => entry.skippableWarnings),
       ),
@@ -814,6 +887,7 @@ export function SessionPane({
       turnResults: resolvedEntries,
     };
   }, [
+    compactForRemoteControl,
     sessionId,
     selectedShareProductTurnIds,
     selectedShareTurnFingerprints,
@@ -851,7 +925,12 @@ export function SessionPane({
     // Preflight results are cached per turn: selecting/deselecting only re-aggregates the current selection.
     // An RPC runs only on first selection or when the turn fingerprint changes; publish still performs its own authoritative stat/read/SHA checks, so this cache is not final evidence.
     const requestScopeKey = sharePreflightScopeKey;
-    if (!shareInSelectionStage || !sessionId || selectedShareProductTurnIds.length === 0) {
+    if (
+      !shareInSelectionStage ||
+      !sessionId ||
+      compactForRemoteControl ||
+      selectedShareProductTurnIds.length === 0
+    ) {
       return undefined;
     }
     const missingProductTurnIds = getMissingConversationSharePreflightTurnIds(
@@ -959,6 +1038,7 @@ export function SessionPane({
     }, 150);
     return () => clearTimeout(timer);
   }, [
+    compactForRemoteControl,
     conversationShareService,
     remoteSessionId,
     selectedShareProductTurnIds,
@@ -1006,6 +1086,33 @@ export function SessionPane({
       timers.clear();
     };
   }, [lease, sessionId]);
+  const handleMobilePlanInteractionAccepted = useCallback(
+    (interactionId: string) => {
+      if (!compactForRemoteControl || !lease) return;
+      const timers = mobilePlanInteractionReconcileTimersRef.current;
+      if (timers.has(interactionId)) return;
+      const timer = setTimeout(() => {
+        timers.delete(interactionId);
+        const authoritativeSnapshot = lease.store.getState().snapshot;
+        const stillPending = authoritativeSnapshot?.pendingInteractions.some(
+          (interaction) => interaction.interactionId === interactionId,
+        );
+        if (!stillPending) return;
+        // Root cause: the mobile Plan receipt ACK and replayable cleanup use separate async paths;
+        // if the cleanup frame is lost, the old interaction remains forever. Reuse the existing
+        // same-sub recovery only when authoritative pending state remains after the grace period;
+        // do not hide the dialog locally or affect desktop continuous behavior.
+        logger.warn("[v4-pane] 手机 Plan ACK 后 pending 未收口，触发权威恢复", {
+          interactionId,
+          sessionId,
+          workspaceKey: workspaceIdentity?.trim() || workspacePath,
+        });
+        lease.store.recoverFromStaleAuthority();
+      }, MOBILE_PLAN_INTERACTION_RECONCILE_DELAY_MS);
+      timers.set(interactionId, timer);
+    },
+    [compactForRemoteControl, lease, sessionId, workspaceIdentity, workspacePath],
+  );
   const pluginReferenceIconsEnabled =
     isSessionPluginCatalogReady(state.status, sessionId, snapshot?.sessionId) &&
     hasPluginReferenceUserRows(snapshot?.rows.window ?? []);
@@ -1065,15 +1172,42 @@ export function SessionPane({
   const effectiveDropTargetController = readOnly
     ? readOnlyDropTargetController
     : dropTargetController;
+  const isMobileTextInputViewport = useIsMobileTextInputViewport();
 
   // Pass the latest values through refs so stable callbacks do not depend on frequently changing snapshots/text.
   const snapshotRef = useRef<ConversationSnapshot | null>(snapshot);
+  const sessionIdRef = useRef(sessionId);
+  const [activeHighspeedCard, setActiveHighspeedCard] = useState<HighspeedCardSnapshot | null>(
+    null,
+  );
+  // One-shot activation request: only the send path registers a new draw hit; the composer consumes it after locking the entry mode.
+  const [highspeedActivationCardId, setHighspeedActivationCardId] = useState<string | null>(null);
+  // Identity of the most recently displayed card in this pane; used to tell restores and reused-card sends from new hits.
+  const presentedHighspeedCardIdRef = useRef<string | null>(null);
+  const highspeedMetricsInFlightRef = useRef(new Set<string>());
+  const highspeedTurnVersion = useSyncExternalStore(
+    subscribeHighspeedTurns,
+    getHighspeedTurnVersion,
+    getHighspeedTurnVersion,
+  );
+  const [highspeedAutoShareClock, refreshHighspeedAutoShareClock] = useState(0);
+  const dispatchCommandRef = useRef<
+    | ((
+        type: CommandType,
+        payload: Record<string, unknown>,
+        targetSessionId: string | null,
+        baseRevision?: number,
+        baseLogEpoch?: string,
+      ) => Promise<CommandAck>)
+    | null
+  >(null);
   const autoOpenedAssistantPptxKeysRef = useRef<Set<string>>(new Set());
   const assistantPreviewPptxGateRef = useRef(createAssistantPreviewPptxAutoOpenGateState());
   const [assistantPreviewPptxAutoOpenTarget, setAssistantPreviewPptxAutoOpenTarget] =
     useState<AssistantPreviewPptxAutoOpenTarget | null>(null);
   const autoLoadIncompleteTurnCursorRef = useRef<string | null>(null);
   snapshotRef.current = snapshot;
+  sessionIdRef.current = sessionId;
   const handleAutoOpenAssistantPptx = useCallback(
     (request: AssistantPreviewCardsAutoOpenRequest) => {
       if (!onAutoOpenAssistantPptx || request.sources.length === 0) return;
@@ -1115,6 +1249,321 @@ export function SessionPane({
   );
 
   const workspaceKey = workspaceIdentity?.trim() || workspacePath;
+  // Increment the generation whenever the pane rebinds to a Task/workspace: after A → B → A, the
+  // sessionId may match while the generation differs. Like sessionIdRef, sync during render so
+  // send callbacks can read the latest binding across awaits.
+  const paneBindingKey = `${workspaceKey}\u0000${sessionId ?? ""}`;
+  const paneBindingRef = useRef({ key: paneBindingKey, generation: 0 });
+  if (paneBindingRef.current.key !== paneBindingKey) {
+    paneBindingRef.current = {
+      key: paneBindingKey,
+      generation: paneBindingRef.current.generation + 1,
+    };
+  }
+  useEffect(() => {
+    let disposed = false;
+    if (!sessionId) {
+      setActiveHighspeedCard(null);
+      return () => undefined;
+    }
+    void highspeedCardService
+      .getSnapshot()
+      .then((serviceSnapshot) => {
+        if (disposed) return;
+        const card = serviceSnapshot.card;
+        const now = Date.now();
+        if (!card || card.taskId !== sessionId || card.expiresAt <= now) {
+          setActiveHighspeedCard(null);
+          return;
+        }
+        presentedHighspeedCardIdRef.current = card.cardId;
+        setActiveHighspeedCard(card);
+      })
+      .catch((error) => {
+        if (disposed) return;
+        setActiveHighspeedCard(null);
+        logger.warn("[highspeed] 读取卡片状态失败，输入框按普通状态展示", {
+          error: error instanceof Error ? error.message : String(error),
+          sessionId,
+        });
+      });
+    return () => {
+      disposed = true;
+    };
+  }, [highspeedCardService, sessionId]);
+  useEffect(() => {
+    if (!activeHighspeedCard) return;
+    const cardId = activeHighspeedCard.cardId;
+    const expiresAt = activeHighspeedCard.expiresAt;
+    // Root cause: card cleanup relied on a one-shot setTimeout. When the window was hidden or the
+    // screen slept, Chromium froze the page and timers stopped. After wake, overdue timeouts could
+    // remain pending, while the composer countdown recovered immediately because its interval
+    // rereads Date.now() each second. This left a zombie card with a 00:00:00 countdown and an
+    // accelerated input; only the next message's prepareTurn could clear it. Recompute from the
+    // wall clock on return: clear expired cards immediately and reschedule the remaining duration
+    // for active cards (same clock compensation as the share timer below; spec §9.2/§9.3).
+    const clearIfExpired = () => {
+      if (Date.now() < expiresAt) return false;
+      setActiveHighspeedCard((current) => (current?.cardId === cardId ? null : current));
+      return true;
+    };
+    if (clearIfExpired()) return;
+    let timer: number | undefined;
+    const arm = () => {
+      window.clearTimeout(timer);
+      // Root cause: setTimeout uses a monotonic clock, but expiration checks use wall-clock
+      // Date.now(); millisecond drift or an NTP adjustment can fire the timer before wall-clock
+      // expiry. If we only check and do not reschedule, acceleration never ends while the window stays open.
+      timer = window.setTimeout(() => {
+        if (!clearIfExpired()) arm();
+      }, expiresAt - Date.now());
+    };
+    arm();
+    const refreshFromWindowWake = () => {
+      if (document.visibilityState === "hidden") return;
+      if (!clearIfExpired()) arm();
+    };
+    document.addEventListener("visibilitychange", refreshFromWindowWake);
+    window.addEventListener("focus", refreshFromWindowWake);
+    return () => {
+      window.clearTimeout(timer);
+      document.removeEventListener("visibilitychange", refreshFromWindowWake);
+      window.removeEventListener("focus", refreshFromWindowWake);
+    };
+  }, [activeHighspeedCard]);
+  useEffect(() => {
+    if (!sessionId) return;
+    const nextAutoShareAt = resolveNextHighspeedAutoShareAt(sessionId);
+    if (nextAutoShareAt === null) return;
+    const delayMs = Math.max(0, nextAutoShareAt - Date.now()) + 20;
+    // Root cause: the old share timer was tied to Turn completion and published the card as soon
+    // as the first Turn ended. The full card's expiresAt now wakes aggregation; if a Turn is still
+    // running at expiry, wait for its completion event to trigger aggregation again.
+    const timer = window.setTimeout(
+      () => refreshHighspeedAutoShareClock((revision) => revision + 1),
+      delayMs,
+    );
+    return () => window.clearTimeout(timer);
+  }, [highspeedTurnVersion, sessionId]);
+  useEffect(() => {
+    if (!sessionId) return;
+    // Root cause (2026-08-31): expiration wakeups depended on renderer setTimeout. When the window
+    // was hidden or occluded, Chromium froze the page and timers stopped. Per-card TPS sampling and
+    // completion persistence stalled, leaving the footer view button disabled until another user
+    // message changed the store version (violating spec 9.3: expiration boundaries trigger rerenders
+    // from the session clock without requiring another message). Reconcile the clock on window
+    // return; every aggregation entry point has claim/idempotency guards, so duplicate triggers are safe.
+    const refreshFromWindowWake = () => {
+      if (document.visibilityState === "hidden") return;
+      refreshHighspeedAutoShareClock((revision) => revision + 1);
+    };
+    document.addEventListener("visibilitychange", refreshFromWindowWake);
+    window.addEventListener("focus", refreshFromWindowWake);
+    return () => {
+      document.removeEventListener("visibilitychange", refreshFromWindowWake);
+      window.removeEventListener("focus", refreshFromWindowWake);
+    };
+  }, [refreshHighspeedAutoShareClock, sessionId]);
+  useEffect(() => {
+    if (!sessionId || snapshot?.sessionId !== sessionId) return;
+    const terminalStates = new Set(["completedSuccess", "completedInterrupted", "failed"]);
+    hydrateHighspeedTurnsFromTranscript(
+      sessionId,
+      snapshot.rows.window
+        .filter((row): row is UserInputRow => row.kind === "userInput")
+        .map((row) => ({
+          sourceCommandId: row.sourceCommandId,
+          createdAt: row.createdAt,
+          highspeed: row.highspeed,
+        })),
+    );
+    const pendingTurns = listPendingHighspeedTurns(sessionId);
+    for (const record of pendingTurns) {
+      const userRow = snapshot.rows.window.find(
+        (row) => row.kind === "userInput" && row.sourceCommandId === record.sourceCommandId,
+      );
+      if (userRow?.kind === "userInput" && !userRow.highspeed) {
+        // Root cause: the Highspeed queue records metrics at admission ACK. If the card expires
+        // before actual promotion, the CLI removes the Highspeed intent and uses the original
+        // model. Revoke the pre-registration using the authoritative user row so regular output is
+        // not incorrectly included in Highspeed sharing.
+        discardHighspeedTurn(record.sourceCommandId);
+        continue;
+      }
+      const header = snapshot.rows.window.find(
+        (row) => row.kind === "turnHeader" && row.sourceCommandId === record.sourceCommandId,
+      );
+      // Diagnostic (debug; triggered frequently by snapshots): names the blocker when completed-turn metrics do not settle.
+      if (!header || header.kind !== "turnHeader") {
+        logger.debug("[highspeed] turn 统计未完成：rows.window 中缺少 turnHeader", {
+          sourceCommandId: record.sourceCommandId,
+        });
+        continue;
+      }
+      if (!terminalStates.has(header.state) || header.outputTokens === undefined) {
+        logger.debug("[highspeed] turn 统计未完成：turnHeader 非终态或无 outputTokens", {
+          sourceCommandId: record.sourceCommandId,
+          state: header.state,
+          hasOutputTokens: header.outputTokens !== undefined,
+        });
+        continue;
+      }
+      const durationMs = Math.max(
+        0,
+        header.activeMs ?? (header.endedAt !== undefined ? header.endedAt - header.startedAt : 0),
+      );
+      completeHighspeedTurn({
+        sourceCommandId: record.sourceCommandId,
+        outputTokens: header.outputTokens,
+        durationMs,
+        ...(header.modelDurationMs !== undefined
+          ? { modelDurationMs: header.modelDurationMs }
+          : {}),
+        ...(header.toolDurationMs !== undefined ? { toolDurationMs: header.toolDurationMs } : {}),
+        ...(header.otherDurationMs !== undefined
+          ? { otherDurationMs: header.otherDurationMs }
+          : {}),
+      });
+    }
+
+    const autoShareNow = Date.now();
+    for (const card of listExpiredHighspeedCardsAwaitingTps(sessionId, autoShareNow)) {
+      if (!claimHighspeedHealthyAttempt(card.cardId, card.allTurnsCompleted)) {
+        // Diagnostic (debug): check once at card expiry and once after completion; if no TPS is available after both attempts, sharing will stall.
+        logger.debug("[highspeed] 卡级 healthy 查询机会已用尽，仍无有效 TPS", {
+          cardId: card.cardId,
+          allTurnsCompleted: card.allTurnsCompleted,
+        });
+        continue;
+      }
+      void highspeedCardService
+        .healthy(card.cardId)
+        .then((usage) => {
+          if (usage.completionTokens <= 0 || usage.durationSeconds <= 0) {
+            logger.warn("[highspeed] 卡级 healthy 未返回有效 TPS，本轮完成后再补查", {
+              cardId: card.cardId,
+              completionTokens: usage.completionTokens,
+              durationSeconds: usage.durationSeconds,
+            });
+            return;
+          }
+          setHighspeedCardTps(card.cardId, usage.completionTokens / usage.durationSeconds);
+        })
+        .catch((error) => {
+          logger.warn("[highspeed] 卡级 healthy 查询失败，本轮完成后再补查", {
+            cardId: card.cardId,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        });
+    }
+
+    const dispatch = dispatchCommandRef.current;
+    if (dispatch) {
+      for (const record of listHighspeedTurnsAwaitingMetricsPersistence(sessionId)) {
+        if (!record.metrics || highspeedMetricsInFlightRef.current.has(record.sourceCommandId)) {
+          continue;
+        }
+        const userRow = snapshot.rows.window.find(
+          (row): row is UserInputRow =>
+            row.kind === "userInput" && row.sourceCommandId === record.sourceCommandId,
+        );
+        const regularTps = record.card.regularTps ?? userRow?.highspeed?.regularTps;
+        const highspeedTps = getHighspeedCardTps(record.card.cardId);
+        // Diagnostic (debug): missing persistence prerequisites can leave this turn waiting forever; a silent skip would make it hard to locate.
+        if (!userRow || !userRow.entityId || !regularTps || !highspeedTps) {
+          logger.debug("[highspeed] 完成态持久化前置缺失，本轮暂不派发", {
+            sourceCommandId: record.sourceCommandId,
+            userRowInWindow: userRow !== undefined && userRow !== null,
+            hasEntityId: Boolean(userRow?.entityId),
+            hasRegularTps: Boolean(regularTps),
+            hasCardTps: Boolean(highspeedTps),
+          });
+          continue;
+        }
+        const savedDurationMs = calculateHighspeedSavedDurationFromMetrics(
+          record.metrics,
+          regularTps,
+          highspeedTps,
+        );
+        highspeedMetricsInFlightRef.current.add(record.sourceCommandId);
+        let metricsPersisted = false;
+        void dispatch(
+          "setHighspeedMetrics",
+          {
+            target: { rowId: userRow.rowId, entityId: userRow.entityId },
+            regularTps,
+            outputTokens: record.metrics.outputTokens,
+            durationMs: record.metrics.durationMs,
+            highspeedTps,
+            savedDurationMs,
+            ...(record.metrics.modelDurationMs !== undefined
+              ? { modelDurationMs: record.metrics.modelDurationMs }
+              : {}),
+            ...(record.metrics.toolDurationMs !== undefined
+              ? { toolDurationMs: record.metrics.toolDurationMs }
+              : {}),
+            ...(record.metrics.otherDurationMs !== undefined
+              ? { otherDurationMs: record.metrics.otherDurationMs }
+              : {}),
+          },
+          sessionId,
+          snapshot.revision,
+          snapshot.logEpoch,
+        )
+          .then((ack) => {
+            if (ack.status !== "accepted" && ack.status !== "duplicate") {
+              logger.warn("[highspeed] 完成态统计持久化被拒绝", {
+                reasonCode: ack.reasonCode,
+                sourceCommandId: record.sourceCommandId,
+                status: ack.status,
+              });
+              return;
+            }
+            markHighspeedTurnMetricsPersisted(record.sourceCommandId, savedDurationMs);
+            metricsPersisted = true;
+          })
+          .catch((error) => {
+            logger.warn("[highspeed] 完成态统计持久化失败", {
+              error: error instanceof Error ? error.message : String(error),
+              sourceCommandId: record.sourceCommandId,
+            });
+          })
+          .finally(() => {
+            highspeedMetricsInFlightRef.current.delete(record.sourceCommandId);
+            // Root cause: React may consume the store update from the persistence ACK before in-flight
+            // cleanup, causing this pass to be skipped. Wake it explicitly after a successful ACK so
+            // another prompt is not required.
+            if (metricsPersisted) {
+              refreshHighspeedAutoShareClock((revision) => revision + 1);
+            }
+          });
+      }
+    }
+
+    for (const candidate of listHighspeedCardAutoShareCandidates(sessionId)) {
+      if (candidate.expiresAt > autoShareNow) continue;
+      // Root cause: clearing only in-flight state after failure lets later snapshots retry automatic sharing until they hit 429.
+      if (!claimHighspeedCardAutoShare(candidate.cardId, autoShareNow)) continue;
+      // Share cards are now generated on the client; no backend share request is made. Publish local metrics in the lower-left corner after expiry.
+      browserGlobalNoticeStore?.publish(
+        buildHighspeedShareNotice({ cardId: candidate.cardId, metrics: candidate.metrics }),
+      );
+      markHighspeedCardAutoShared(candidate.cardId);
+    }
+
+    // Diagnostic (debug; triggered frequently by snapshots): log the blocker when a card has
+    // expired, has never been considered for sharing, and is not a candidate. On 2026-08-31 the
+    // lower-left share card stayed stale for 36 minutes without logs because all these gates silently skipped it.
+    for (const cardId of listHighspeedCardsAwaitingAutoShare(sessionId, autoShareNow)) {
+      const blockers = collectHighspeedCardShareBlockers(cardId);
+      if (blockers.length > 0) {
+        logger.debug("[highspeed] 卡已到期但未进入自动分享，阻塞原因", {
+          cardId,
+          blockers,
+        });
+      }
+    }
+  }, [highspeedAutoShareClock, highspeedCardService, highspeedTurnVersion, sessionId, snapshot]);
   const workspaceConfigOptions = useZCodeSessionStore(
     (store) => store.getWorkspaceState(workspacePath, workspaceIdentity).configOptions,
   );
@@ -1260,6 +1709,35 @@ export function SessionPane({
     agentStartupAllowed: draftAgentStartupAllowed,
     modelSelectionService,
   });
+  useEffect(() => {
+    if (!sessionId || snapshot?.sessionId !== sessionId) return;
+    const now = Date.now();
+    for (const row of snapshot.rows.window) {
+      if (
+        row.kind !== "userInput" ||
+        !row.sourceCommandId ||
+        row.highspeed?.fallbackAt === undefined
+      ) {
+        continue;
+      }
+      if (
+        focused &&
+        now - row.highspeed.fallbackAt >= -5_000 &&
+        now - row.highspeed.fallbackAt <= 15_000 &&
+        claimHighspeedFallbackToast(row.sourceCommandId)
+      ) {
+        // Show separate messages for an expired card and an unavailable acceleration service; older data has no fallbackReason, so treat it as an expired card.
+        toast(
+          intl.formatMessage({
+            id:
+              row.highspeed.fallbackReason === "highspeed_request_failed"
+                ? "chat.highspeed.requestFailedFallback"
+                : "chat.highspeed.cardExpiredFallback",
+          }),
+        );
+      }
+    }
+  }, [focused, intl, sessionId, snapshot]);
   const modelSelectionView =
     modelSelectionRead.state.status === "ready" ? modelSelectionRead.state.view : null;
   const draftModelSelectionRevisionRef = useRef<number | null>(null);
@@ -1296,6 +1774,9 @@ export function SessionPane({
   );
   const codingPlanUpgradeDialog = useOptionalCodingPlanUpgradeDialog();
   const openSettingsTab = useOptionalTabStore((state) => state.openSettingsTab);
+  const billingDiscount = useCodingPlanBillingDiscountFromService(
+    baseWorkspaceServices.codingPlanSubscriptionService,
+  );
   const promoteGroupedDraftTask = useZCodeSessionStore((state) => state.promoteGroupedDraftTask);
   // The first-send commandId already exists at accepted and is also the completion message_id; no need to wait for the reply to finish.
   const reportDraftCreated = useCallback(
@@ -1307,10 +1788,17 @@ export function SessionPane({
         workspaceIdentity,
         remoteSessionId,
         source,
-        clientKind: isDesktop ? "desktop" : "web",
+        clientKind: isDesktop ? "desktop" : compactForRemoteControl ? "mobile" : "web",
       });
     },
-    [platform, workspacePath, workspaceIdentity, remoteSessionId, isDesktop],
+    [
+      platform,
+      workspacePath,
+      workspaceIdentity,
+      remoteSessionId,
+      isDesktop,
+      compactForRemoteControl,
+    ],
   );
   const handleDraftSessionCreated = useCallback(
     (
@@ -1402,12 +1890,20 @@ export function SessionPane({
       baseRevision?: number,
       baseLogEpoch?: string,
       telemetrySeed?: ConversationPromptTelemetrySeed,
+      highspeedCard?: HighspeedCardSnapshot,
       onEnvelopeCreated?: (envelope: CommandEnvelope) => void,
       sessionCreateSource?: SessionCreateSource,
+      recentSubmissionOverride?: ComposerSubmissionConfig | null,
     ): Promise<CommandAck> => {
       const submission = submissionConfigFromCommand(type, payload);
-      const acceptRecent = submission
-        ? captureComposerRecentSubmission(workspacePath, submission, workspaceIdentity)
+      // The accelerated-turn payload's modelSelection is replaced by the hidden acceleration
+      // Provider in execution materials. Recent records the user's original Composer selection
+      // (the model seed for a new-task draft), so accelerated turns must receive the submission
+      // frozen before sending from the caller (spec §5.1). captureComposerRecentSubmission also
+      // has a fallback guard for acceleration identity.
+      const recentSubmission = recentSubmissionOverride ?? submission;
+      const acceptRecent = recentSubmission
+        ? captureComposerRecentSubmission(workspacePath, recentSubmission, workspaceIdentity)
         : undefined;
       const acceptSelection =
         submission && (sessionId === null || targetSessionId === sessionId)
@@ -1525,6 +2021,14 @@ export function SessionPane({
           });
         }
       }
+      if (ack.status === "accepted" && highspeedCard && targetSessionId) {
+        recordHighspeedTurn({
+          sessionId: targetSessionId,
+          sourceCommandId: envelope.commandId,
+          card: highspeedCard,
+          createdAt: Date.now(),
+        });
+      }
       if (telemetrySeed) {
         // A queue re-confirmation ACK returns null (not a terminal result); finalizing it would let first-wins consume the real result.
         const outcome = resolveSendAckSettlement(ack);
@@ -1590,6 +2094,7 @@ export function SessionPane({
       workspacePath,
     ],
   );
+  dispatchCommandRef.current = dispatchCommand;
 
   const handleFetchFileChanges = useCallback(
     (target: ConversationRowTarget, options: ConversationFileChangesRequestOptions) => {
@@ -1720,6 +2225,7 @@ export function SessionPane({
   );
   const handleOpenSubagentDirectory = useCallback(
     (request: import("@/lib/workspaceSidePane.js").OpenSubagentDirectorySideTabRequest) => {
+      if (compactForRemoteControl) return;
       onOpenSubagentDirectory?.({
         ...request,
         rootSessionId: request.rootSessionId ?? rootSessionId ?? request.parentSessionId,
@@ -1728,7 +2234,14 @@ export function SessionPane({
         ...(remoteSessionId ? { remoteSessionId } : {}),
       });
     },
-    [onOpenSubagentDirectory, remoteSessionId, rootSessionId, workspaceIdentity, workspacePath],
+    [
+      compactForRemoteControl,
+      onOpenSubagentDirectory,
+      remoteSessionId,
+      rootSessionId,
+      workspaceIdentity,
+      workspacePath,
+    ],
   );
   const handleOpenPlanDetail = useCallback(
     (request: OpenPlanDetailSideTabRequest) => {
@@ -1835,10 +2348,22 @@ export function SessionPane({
     () => buildWorkflowGraphByToolCallId(snapshot?.rows.window),
     [snapshot?.rows.window],
   );
+  // runId → latest completed valid script graph (docs/dynamic-workflow/presentation.md, “Holes on the timeline”):
+  // run cards and the side pane use it after completion. Built once per row window and rebuilt with the window.
+  const workflowFillGraphByRunId = useMemo(
+    () => buildWorkflowFillGraphByRunId(snapshot?.rows.window),
+    [snapshot?.rows.window],
+  );
   // Workflow tool row to draft position: both the draft number and whether a newer draft follows
   // can be determined only from row order. Build this once per row window and rebuild it when the window changes.
   const workflowDraftByToolCallId = useMemo(
     () => buildWorkflowDraftByToolCallId(snapshot?.rows.window),
+    [snapshot?.rows.window],
+  );
+  // runId → SaveWorkflow candidate claimed by the transcript (docs/dynamic-workflow/transcript-and-notifications.md,
+  // “Which workflow a run is saved as”, rule 1). Built once per row window and rebuilt with the window.
+  const workflowSaveCandidatesByRunId = useMemo(
+    () => buildWorkflowSaveCandidatesByRunId(snapshot?.rows.window),
     [snapshot?.rows.window],
   );
   // Join table for Workflow notification manifest upgrade entries from Waiting to Answered (runId to parked question IDs).
@@ -2029,6 +2554,7 @@ export function SessionPane({
       !sessionId ||
       readOnly ||
       selectionSideChat ||
+      isMobileTextInputViewport ||
       !onOpenSelectionSideChat
     ) {
       return;
@@ -2048,6 +2574,7 @@ export function SessionPane({
     selectionSideActionBlocked,
     focused,
     handleOpenSelectionSideConversation,
+    isMobileTextInputViewport,
     onOpenSelectionSideChat,
     readOnly,
     selectionSideChat,
@@ -2080,7 +2607,7 @@ export function SessionPane({
         isDraft: sessionId === null,
         selectionSideChat,
         readOnly,
-        isMobileViewport: false,
+        isMobileViewport: isMobileTextInputViewport,
       })
     ) {
       return undefined;
@@ -2100,6 +2627,7 @@ export function SessionPane({
     cliSlashCommandNames,
     handleOpenSelectionSideConversation,
     intl,
+    isMobileTextInputViewport,
     onOpenSelectionSideChat,
     readOnly,
     selectionSideChat,
@@ -2164,6 +2692,23 @@ export function SessionPane({
     [sessionId, snapshot?.config, snapshot?.sessionId],
   );
 
+  /**
+   * Send entry point for the user message “Ask ZCode to distill and save this” (docs/dynamic-workflow/transcript-and-notifications.md,
+   * “The message the lead sends”): follows the same precedent as central “Promote to global”—the GUI writes and sends it automatically without another confirmation.
+   *
+   * Route through a ref instead of referencing `handleSendText` directly: it is defined later in
+   * this file, while the rowContext memo factory runs during the **same render**, so a direct
+   * reference would hit the TDZ. The ref is assigned during render and clicks happen after mount.
+   */
+  const sendTextRef = useRef<typeof handleSendText | null>(null);
+  const handleSendWorkflowSaveRequest = useCallback(async (text: string) => {
+    const send = sendTextRef.current;
+    if (send === null) throw new Error("send path not mounted");
+    const result = await send(text);
+    // If blocked (the session is confirming something else or the queue is paused for confirmation), it was not handed to ZCode; throw back to the dialog so it stays open.
+    if (result !== "sent") throw new Error(`workflow save request not sent: ${result}`);
+  }, []);
+
   const rowContext = useMemo<ConversationRowRenderContext>(
     () => ({
       workspacePath,
@@ -2176,6 +2721,7 @@ export function SessionPane({
       codePreviewSettings,
       sessionId,
       rootSessionId: rootSessionId ?? sessionId,
+      compactForRemoteControl,
       chatLoadingBlockedByActiveWork,
       chatLoadingBlockedByInteraction,
       messageStreamShowReasoning,
@@ -2211,11 +2757,23 @@ export function SessionPane({
             handler: handleAmendWorkflowRunSettings,
           })
         : undefined,
+      // Save and Resume share the same gate and source: writing the file and starting the engine
+      // both belong where Resume is handled (docs/dynamic-workflow/launch.md, “Gray release”). The
+      // chip does not pass through this gate; it only reports a fact.
+      onSendWorkflowSaveRequest: sessionId
+        ? resolveWorkflowResumeHandler({
+            readOnly,
+            dynamicWorkflowEnabled,
+            handler: handleSendWorkflowSaveRequest,
+          })
+        : undefined,
+      workflowSaveCandidatesByRunId,
       ...(workflowSessionModel === undefined ? {} : { workflowSessionModel }),
       workflowRunByToolCallId,
       workflowRunByRunId,
       workflowRunPendingQuestionsByRunId,
       workflowGraphByToolCallId,
+      workflowFillGraphByRunId,
       workflowDraftByToolCallId,
       fetchFileChanges: handleFetchFileChanges,
       previewFileRewind: workspaceFileRewindEnabled ? handlePreviewFileRewind : undefined,
@@ -2234,6 +2792,7 @@ export function SessionPane({
       codePreviewSettings,
       sessionId,
       rootSessionId,
+      compactForRemoteControl,
       chatLoadingBlockedByActiveWork,
       chatLoadingBlockedByInteraction,
       messageStreamShowReasoning,
@@ -2265,11 +2824,14 @@ export function SessionPane({
       dynamicWorkflowEnabled,
       handleResumeWorkflowRun,
       handleAmendWorkflowRunSettings,
+      handleSendWorkflowSaveRequest,
+      workflowSaveCandidatesByRunId,
       workflowSessionModel,
       workflowRunByToolCallId,
       workflowRunByRunId,
       workflowRunPendingQuestionsByRunId,
       workflowGraphByToolCallId,
+      workflowFillGraphByRunId,
       workflowDraftByToolCallId,
       workspaceFileRewindEnabled,
       handleFetchFileChanges,
@@ -2525,14 +3087,191 @@ export function SessionPane({
     [dispatchCommand, intl, settleCurrentQueueInputs],
   );
 
+  const readGroupedDraftId = useCallback(
+    () =>
+      useZCodeSessionStore.getState().getWorkspaceState(workspacePath, workspaceIdentity)
+        .groupedDraftTask?.draftId ?? null,
+    [workspacePath, workspaceIdentity],
+  );
+  /**
+   * Freeze this send's origin (spec §9.2). Call synchronously when sending is triggered, before
+   * any pre-send await such as the config barrier, draft model readiness, Start plan recommendation,
+   * or empty-session creation; otherwise the origin may read the Task switched to by the user.
+   */
+  const captureHighspeedPaneOrigin = useCallback(
+    (): HighspeedPaneOrigin => ({
+      sessionId: sessionIdRef.current,
+      paneBinding: paneBindingRef.current.generation,
+      draftId: sessionIdRef.current === null ? readGroupedDraftId() : null,
+    }),
+    [readGroupedDraftId],
+  );
+
+  const prepareHighspeedTurnFrom = useCallback(
+    (origin: HighspeedPaneOrigin): HighspeedTurnPreparer =>
+      async (
+        taskId: string,
+        submissionSelection?: ModelSelection,
+      ): Promise<HighspeedPrepareTurnResult | null> => {
+        // Rule 15: prepare selection and this submission must use the same source—the model the
+        // user just selected must drive admission on the first send. Previously, cards were drawn
+        // from the old session-projected selection, then replaced a submission using a non-Coding
+        // Plan model, making it appear that acceleration ignored the selected model.
+        const selection = resolveHighspeedPrepareSelection({
+          submissionSelection,
+          projectedConfig:
+            snapshotRef.current?.sessionId === taskId ? snapshotRef.current.config : null,
+          draftConfig: draftConfigRef.current,
+          initialDraftConfig: resolveInitialDraftConfig(),
+        });
+        if (!selection) return null;
+        // An acceleration card reuses the session model and must include the session's effective
+        // reasoning level. Without it, the CLI reports "Reasoning level is required" for an
+        // incomplete execution selection and the send fails. Prefer options from the submitted
+        // selection, then fall back to thought (the effective level from the CLI projection); an
+        // empty string means the model has no level and lets the service omit options.
+        const { provider, model, reasoningLevel } = selection;
+        try {
+          const sendStartedAt = Date.now();
+          const result = await highspeedCardService.prepareTurn({
+            taskId,
+            providerId: provider,
+            model,
+            ...(reasoningLevel ? { reasoningLevel } : {}),
+            waitBudgetMs: HIGHSPEED_SEND_WAIT_BUDGET_MS,
+          });
+          if (result.kind === "accelerated") {
+            // Root cause: this query only controls the time-saved display, but used to be awaited
+            // synchronously after a card hit. The monitor's 15s timeout stretched the 1s send
+            // budget to as much as 16s (especially visible on a new session: the empty session was
+            // created while the message body remained unsent). Now wait best-effort only within
+            // the remaining send budget; on timeout/failure, omit regularTps for this turn. The
+            // Service continues and caches the request for the next turn (spec §3 rule 12, §9.4).
+            const regularTps = await readRegularTpsWithinSendBudget({
+              read: async () => {
+                // Baseline TPS for time-saved comes from the Coding Plan usage health endpoint;
+                // request-time auth is resolved only through account access context. Read a
+                // snapshot for the currently selected Coding Plan Provider instead of subscribing
+                // to the config surface (SessionPane does not need to rerender for this); do not
+                // show time-saved when disconnected or ineligible.
+                const providerSettingsState = getProviderSettingsSnapshot();
+                const accountAccess =
+                  providerSettingsState.status === "ready"
+                    ? resolveEntitledAccountProviderAccess(providerSettingsState.view, provider)
+                    : null;
+                if (!accountAccess) return undefined;
+                return readHighspeedRegularTpsFromHealth({
+                  usageStatsService,
+                  preferredProviderId: provider,
+                  accountAccess: accountAccess.access,
+                  timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+                });
+              },
+              elapsedMs: Date.now() - sendStartedAt,
+              onError: (error) =>
+                logger.warn("[highspeed] 读取普通 Decode TPS 失败，本轮不展示节省时间", {
+                  error: error instanceof Error ? error.message : String(error),
+                  provider,
+                  taskId,
+                }),
+              onTimeout: (budgetMs) =>
+                logger.info(
+                  "[highspeed] 普通 Decode TPS 未在发送预算内返回，本轮不附加 regularTps",
+                  {
+                    budgetMs,
+                    provider,
+                    taskId,
+                  },
+                ),
+            });
+            const acceleratedResult: HighspeedPrepareTurnResult = regularTps
+              ? { ...result, card: { ...result.card, regularTps } }
+              : result;
+            const cardId = acceleratedResult.card.cardId;
+            // Root cause: SessionPane is reused across Tasks, and the user may switch Tasks while
+            // awaiting the pre-send config barrier, plan recommendation, session creation, prepare,
+            // or TPS read. Writing card state then would show an old Task's card in the new Task's
+            // composer and play its activation. The origin used to be read only at prepare entry,
+            // so a switch before prepare made the check ineffective; the caller now freezes it
+            // synchronously when sending starts. Display the card only when the pane still shows
+            // its Task, or for a draft's first send if the pane has never left that draft (the new
+            // session is not yet bound to the pane). The current send still uses the card; only its
+            // display in this pane is skipped. Returning to its Task restores it from the snapshot.
+            const paneSessionId = sessionIdRef.current;
+            const paneShowsSendTarget =
+              paneSessionId === taskId ||
+              (origin.sessionId === null &&
+                paneSessionId === null &&
+                paneBindingRef.current.generation === origin.paneBinding &&
+                readGroupedDraftId() === origin.draftId);
+            if (!paneShowsSendTarget) {
+              return acceleratedResult;
+            }
+            // Root cause: restore and draw hits shared the same card-rendering path, so triggering
+            // activation on card appearance replayed the animation when returning to a Task.
+            // prepare also returns accelerated when reusing an existing card. Register activation
+            // only when this pane displays a card for the first time.
+            if (presentedHighspeedCardIdRef.current !== cardId) {
+              presentedHighspeedCardIdRef.current = cardId;
+              setHighspeedActivationCardId(cardId);
+            }
+            setActiveHighspeedCard(acceleratedResult.card);
+            return acceleratedResult;
+          } else if (
+            !result.card ||
+            result.card.taskId !== taskId ||
+            result.card.expiresAt <= Date.now()
+          ) {
+            setActiveHighspeedCard((current) => (current?.taskId === taskId ? null : current));
+          }
+          return result;
+        } catch (error) {
+          logger.warn("[highspeed] 抽卡失败，本轮按普通模型发送", {
+            error: error instanceof Error ? error.message : String(error),
+            taskId,
+          });
+          return null;
+        }
+      },
+    [
+      draftConfigRef,
+      highspeedCardService,
+      readGroupedDraftId,
+      resolveInitialDraftConfig,
+      usageStatsService,
+    ],
+  );
+
   const dispatchSendTextAfterConfig = useCallback(
     async (
       text: string,
       options: ConversationComposerSendOptions | undefined,
       createSourceAtSend: SessionCreateSource,
+      highspeedOriginAtSend: HighspeedPaneOrigin,
     ) => {
       let onAcceptedSelection: (() => void) | undefined;
+      const prepareHighspeedTurn = prepareHighspeedTurnFrom(highspeedOriginAtSend);
       const dispatchSubmissionCommand = async (...args: Parameters<typeof dispatchCommand>) => {
+        if (
+          args[0] === "sendText" &&
+          args[2] &&
+          baseWorkspaceServices.genUiService &&
+          typeof args[1]?.text === "string"
+        ) {
+          try {
+            const context = buildGenUiModelContext(
+              await baseWorkspaceServices.genUiService.listState({
+                workspacePath,
+                workspaceIdentity,
+                sessionId: args[2],
+              }),
+            );
+            if (context) args[1] = { ...args[1], text: `${args[1].text}\n\n${context}` };
+          } catch {
+            // This state is supplementary context; a read failure must not block the existing CommandInbox input path.
+            logger.warn("[gen-ui] Widget context unavailable");
+          }
+        }
         const ack = await dispatchCommand(...args);
         // Persist the recommended choice at the original accepted boundary, before transferring the draft to the new Session; failures do not change user intent.
         if (ack.status === "accepted" && submissionConfigFromCommand(args[0], args[1]))
@@ -2747,18 +3486,35 @@ export function SessionPane({
         const prewarm = prewarmBindingRef.current;
         if (prewarm?.beginPromotion()) {
           try {
+            const highspeed = await prepareHighspeedSendContext(
+              prewarm.sessionId,
+              prepareHighspeedTurn,
+              submission.modelSelection,
+            );
             const ack = await dispatchSubmissionCommand(
               "sendText",
               {
                 text: effectiveText,
                 ...submission,
+                ...(options?.requestedDelivery
+                  ? { requestedDelivery: options.requestedDelivery }
+                  : {}),
+                conversationQuotes: options?.conversationQuotes,
                 ...(readyAttachments.length > 0 ? { attachments: readyAttachments } : {}),
                 ...(sharedContextRefs?.length ? { context_refs: sharedContextRefs } : {}),
+                ...(options?.source ? { source: options.source } : {}),
+                // Expand acceleration materials last: when this turn draws a card, its Selection takes precedence over the draft selection.
+                ...highspeed.override,
               },
               prewarm.sessionId,
               undefined,
               undefined,
               options?.telemetrySeed,
+              highspeed.acceleratedCard,
+              undefined,
+              undefined,
+              // Recent records the Composer's original selection before acceleration, not the payload Selection that was overridden.
+              submission,
             );
             if (ack.status === "accepted") {
               prewarm.promote();
@@ -2797,36 +3553,11 @@ export function SessionPane({
           { ...draftConfigRef.current, modelSelection: submission.modelSelection },
           appFollowupMode,
         );
-        if (readyAttachments.length === 0 && !sharedContextRefs?.length) {
-          const ack = await dispatchSubmissionCommand(
-            "createSession",
-            {
-              workspaceId: workspaceKey,
-              firstInput: { text: effectiveText, ...submission },
-              ...draftConfigPayload,
-            },
-            null,
-            undefined,
-            undefined,
-            options?.telemetrySeed,
-            undefined,
-            createSourceAtSend,
-          );
-          if (ack.status !== "accepted") {
-            throw new Error(ack.reasonCode ?? "createSession 被拒绝");
-          }
-          const result = ack.result;
-          if (!result || result.type !== "createSession") {
-            throw new Error("createSession 缺少 sessionId");
-          }
-          handleDraftSessionCreated(
-            result.sessionId,
-            groupedDraftTaskAtSend,
-            createSourceAtSend,
-            ack.commandId,
-          );
-          return;
-        }
+        // Highspeed cards are bound to task_id by the server, so the first send must create an
+        // empty session to get the real sessionId before drawing a card and sending. Calling
+        // createSession(firstInput) would bypass the shared admission path where clicking Send
+        // draws first, making acceleration impossible on an attachment-free first turn; therefore
+        // there is no longer a firstInput special case here.
         // A local desktop localPath is zero-copy and ready without an attachment transaction; the prewarm session may not
         // have returned yet during a short window. Create an empty session first, then submit the existing ref. The send click
         // performs no upload and cannot let a non-ready attachment bypass Composer's gate.
@@ -2843,18 +3574,32 @@ export function SessionPane({
           throw new Error("createSession 缺少 sessionId");
         }
         const newSessionId = createResult.sessionId;
+        const highspeed = await prepareHighspeedSendContext(
+          newSessionId,
+          prepareHighspeedTurn,
+          submission.modelSelection,
+        );
         const sendAck = await dispatchSubmissionCommand(
           "sendText",
           {
             text: effectiveText,
-            attachments: readyAttachments,
             ...submission,
+            ...(options?.requestedDelivery ? { requestedDelivery: options.requestedDelivery } : {}),
+            ...(readyAttachments.length > 0 ? { attachments: readyAttachments } : {}),
             ...(sharedContextRefs?.length ? { context_refs: sharedContextRefs } : {}),
+            ...(options?.source ? { source: options.source } : {}),
+            ...highspeed.override,
+            conversationQuotes: options?.conversationQuotes,
           },
           newSessionId,
           undefined,
           undefined,
           options?.telemetrySeed,
+          highspeed.acceleratedCard,
+          undefined,
+          undefined,
+          // Recent records the Composer's original selection before acceleration, not the payload Selection that was overridden.
+          submission,
         );
         if (sendAck.status !== "accepted") {
           throw new Error(sendAck.reasonCode ?? "sendText 被拒绝");
@@ -2868,28 +3613,34 @@ export function SessionPane({
         return;
       }
       // Attachment refs have already completed Composer's pre-upload state machine.
+      const highspeed = await prepareHighspeedSendContext(
+        sessionId,
+        prepareHighspeedTurn,
+        submission.modelSelection,
+      );
       const ack = await dispatchSubmissionCommand(
         "sendText",
         {
           text: effectiveText,
           ...submission,
+          ...(options?.requestedDelivery ? { requestedDelivery: options.requestedDelivery } : {}),
+          conversationQuotes: options?.conversationQuotes,
           ...(readyAttachments.length > 0 ? { attachments: readyAttachments } : {}),
-          ...(options?.requestedDelivery
-            ? {
-                // Immediate send used to project a QueueItem before waiting for the second sendQueuedNow,
-                // exposing an intermediate queue state and delaying input clearing. The CLI now performs an atomic stop + start;
-                // accepted ACK is the Composer input-clearing boundary.
-                requestedDelivery: options.requestedDelivery,
-              }
-            : {}),
           ...(heldQueueDisposition ? { heldQueueDisposition } : {}),
           ...(expectedHeldQueueItemIds ? { expectedHeldQueueItemIds } : {}),
           ...(sharedContextRefs?.length ? { context_refs: sharedContextRefs } : {}),
+          ...(options?.source ? { source: options.source } : {}),
+          ...highspeed.override,
         },
         sessionId,
         undefined,
         undefined,
         options?.telemetrySeed,
+        highspeed.acceleratedCard,
+        undefined,
+        undefined,
+        // Recent records the Composer's original selection before acceleration, not the payload Selection that was overridden.
+        submission,
       );
       if (ack.reasonCode === "guard.heldQueueConfirmationStale") {
         return "confirmationRequired" as const;
@@ -2904,6 +3655,7 @@ export function SessionPane({
     [
       dispatchCommand,
       recommendStartPlan,
+      baseWorkspaceServices,
       captureAcceptedModelSelection,
       dispatchSlashCommand,
       ensureDraftModelReadyForSend,
@@ -2915,7 +3667,7 @@ export function SessionPane({
       handleDraftSwitchMode,
       handleOpenSelectionSideConversationWithPrompt,
       intl,
-      lease,
+      prepareHighspeedTurnFrom,
       resolveInitialDraftConfig,
       createSubmissionFromComposer,
       sessionId,
@@ -2936,11 +3688,18 @@ export function SessionPane({
         submission:
           options?.submission === undefined ? createSubmissionFromComposer() : options.submission,
       };
+      // Freeze the Highspeed send origin before entering the config barrier; the user may switch Tasks during the barrier or later awaits.
+      const highspeedOrigin = captureHighspeedPaneOrigin();
       // followupMode is still synchronized through Session CAS. Model and mode are carried in Submission,
       // so behavior no longer depends on cross-command ordering between configuration and sendText.
       return configCommandBarrier.enqueue(async () => {
         try {
-          return await dispatchSendTextAfterConfig(text, submissionOptions, createSource);
+          return await dispatchSendTextAfterConfig(
+            text,
+            submissionOptions,
+            createSource,
+            highspeedOrigin,
+          );
         } catch (error) {
           if (sessionId === null && isProviderNotReadyError(error)) {
             // The registry can still become invalid between the UI precheck and Host getClient. If the race occurs,
@@ -2953,6 +3712,7 @@ export function SessionPane({
       });
     },
     [
+      captureHighspeedPaneOrigin,
       configCommandBarrier,
       createSubmissionFromComposer,
       dispatchSendTextAfterConfig,
@@ -3009,6 +3769,8 @@ export function SessionPane({
     },
     [dispatchSendText, focusTimelineToLatest, intl, sessionId],
   );
+  // The only assignment point for the ref above (see handleSendWorkflowSaveRequest for context).
+  sendTextRef.current = handleSendText;
 
   const handleComposerDraftStateChange = useCallback(
     (state: { hasContent: boolean; busy: boolean }) => {
@@ -3027,6 +3789,10 @@ export function SessionPane({
     },
     [clearQueueEditOperation],
   );
+  const handleHighspeedActivationApplied = useCallback((cardId: string) => {
+    // Consume by cardId so a late callback from an old card cannot clear a new card's activation request.
+    setHighspeedActivationCardId((current) => (current === cardId ? null : current));
+  }, []);
 
   const handleFork = useCallback(
     (target: ConversationRowTarget) => {
@@ -3059,11 +3825,25 @@ export function SessionPane({
       newText: string,
       attachments?: readonly AttachmentRef[],
       workspaceMode: "preserve" | "rewind" = "preserve",
+      conversationQuotes?: import("@zcode/shared").ConversationSelectionText[],
     ) => {
       const current = snapshotRef.current;
       if (!sessionId || current === null) return false;
-      if (!newText.trim() && (!attachments || attachments.length === 0)) {
+      if (
+        !newText.trim() &&
+        (!attachments || attachments.length === 0) &&
+        !conversationQuotes?.length
+      ) {
         logger.warn("[v4-pane] edit 跳过：行内编辑内容为空且无附件");
+        return false;
+      }
+      const highspeed = await prepareHighspeedSendContext(
+        sessionId,
+        prepareHighspeedTurnFrom(captureHighspeedPaneOrigin()),
+      );
+      const latest = snapshotRef.current;
+      if (!latest || latest.sessionId !== sessionId) {
+        logger.warn("[v4-pane] edit 跳过：Highspeed prepare 后 session 已切换");
         return false;
       }
       const ack = await dispatchCommand(
@@ -3072,13 +3852,17 @@ export function SessionPane({
           target,
           newText,
           workspaceMode,
+          conversationQuotes,
           // If attachments is omitted from editUserQuery, keep the canonical original attachments.
           // Only an explicit [] lets the CLI distinguish "user removed all" from "caller did not change attachments".
           ...(attachments ? { attachments: [...attachments] } : {}),
+          ...highspeed.override,
         },
         sessionId,
-        current.revision,
-        current.logEpoch,
+        latest.revision,
+        latest.logEpoch,
+        undefined,
+        highspeed.acceleratedCard,
       );
       if (ack.status !== "accepted" && ack.status !== "duplicate") {
         logger.warn(`[v4-pane] edit 被拒绝: ${ack.status} ${ack.reasonCode ?? ""}`);
@@ -3087,7 +3871,7 @@ export function SessionPane({
       // fork ACK is decoded only for compatibility with the old protocol; new edits never navigate to a child. Inline conflict dialogs handle blocked results.
       return ack;
     },
-    [dispatchCommand, sessionId],
+    [captureHighspeedPaneOrigin, dispatchCommand, prepareHighspeedTurnFrom, sessionId],
   );
 
   const dispatchRetryTurn = useCallback(
@@ -3238,15 +4022,52 @@ export function SessionPane({
       // When the user explicitly clicks "Send now", the visual intent is equivalent to clicking "Scroll to bottom".
       // The CLI still owns the command's reserve/stop/promote lifecycle; do not put scroll state into the protocol.
       focusTimelineToLatest();
-      void dispatchCommand("sendQueuedNow", { queueItemId }, sessionId, current.revision).then(
-        (ack) => {
-          if (ack.status !== "accepted" && ack.status !== "noop") {
-            logger.warn(`[v4-pane] sendQueuedNow 被拒绝: ${ack.status} ${ack.reasonCode ?? ""}`);
+      const highspeedOrigin = captureHighspeedPaneOrigin();
+      void (async () => {
+        const queueItem = current.queue.items.find((item) => item.queueItemId === queueItemId);
+        let highspeedOverride: HighspeedSendContext["override"] = {};
+        if (queueItem?.highspeed && queueItem.highspeed.expiresAt > Date.now()) {
+          const refreshed = await prepareHighspeedSendContext(
+            sessionId,
+            prepareHighspeedTurnFrom(highspeedOrigin),
+          );
+          // Root cause: the CLI's staged runtime can be missing across an async boundary; manual
+          // promotion supplies a new runtime for the same card. If the service returns a different
+          // card, do not silently rebind the original queue intent to it.
+          if (refreshed.acceleratedCard?.cardId === queueItem.highspeed.cardId) {
+            highspeedOverride = refreshed.override;
           }
-        },
-      );
+        }
+        const latest = snapshotRef.current;
+        const latestQueueItem = latest?.queue.items.find(
+          (item) => item.queueItemId === queueItemId,
+        );
+        if (!latest || latest.sessionId !== sessionId || !latestQueueItem) {
+          logger.warn("[v4-pane] sendQueuedNow 跳过：Highspeed prepare 后队列状态已变化", {
+            queueItemId,
+          });
+          return null;
+        }
+        return dispatchCommand(
+          "sendQueuedNow",
+          { queueItemId, ...highspeedOverride },
+          sessionId,
+          latest.revision,
+        );
+      })().then((ack) => {
+        if (!ack) return;
+        if (ack.status !== "accepted" && ack.status !== "noop") {
+          logger.warn(`[v4-pane] sendQueuedNow 被拒绝: ${ack.status} ${ack.reasonCode ?? ""}`);
+        }
+      });
     },
-    [dispatchCommand, focusTimelineToLatest, sessionId],
+    [
+      captureHighspeedPaneOrigin,
+      dispatchCommand,
+      focusTimelineToLatest,
+      prepareHighspeedTurnFrom,
+      sessionId,
+    ],
   );
 
   const handleReorderQueueItem = useCallback(
@@ -3347,7 +4168,6 @@ export function SessionPane({
     },
     [dispatchCommand, sessionId],
   );
-  const telemetryDraftConfig = draftConfig;
   const ensureDraftPrewarmConfigBeforeSend = useCallback(
     async (targetSessionId: string) => {
       // followupMode remains a Session behavior setting. Model and mode belong to this Submission and are submitted
@@ -3421,6 +4241,13 @@ export function SessionPane({
   // Session Selection when the Submission actually starts (for Guide, at the next model step).
   const handleSelectModel = useCallback(
     (modelProvider: string, model: string, sourceModel: ModelSelectionSource | null) => {
+      // The acceleration card has locked Selection to its model for this turn, so the model menu
+      // is unavailable. If a shortcut or race still invokes this, show a clear message instead of
+      // silently changing the draft to another model.
+      if (activeHighspeedCard) {
+        toast(intl.formatMessage({ id: "chat.highspeed.modelLocked" }));
+        return;
+      }
       const resolvedProvider =
         modelProvider || draftConfigRef.current.provider || sourceModel?.provider || "";
       logger.debug("[v4-pane] onSelectModel", {
@@ -3430,7 +4257,7 @@ export function SessionPane({
       });
       handleDraftSelectModel(resolvedProvider, model);
     },
-    [draftConfigRef, handleDraftSelectModel],
+    [activeHighspeedCard, draftConfigRef, handleDraftSelectModel, intl],
   );
 
   const handleSelectThought = useCallback(
@@ -3720,7 +4547,7 @@ export function SessionPane({
       ? shareHandoverContext.contextId
       : null;
   useEffect(() => {
-    if (!importedShareContextId) {
+    if (!importedShareContextId || compactForRemoteControl) {
       setImportedShare(null);
       return;
     }
@@ -3743,7 +4570,7 @@ export function SessionPane({
     return () => {
       disposed = true;
     };
-  }, [conversationShareService, importedShareContextId, workspacePath]);
+  }, [compactForRemoteControl, conversationShareService, importedShareContextId, workspacePath]);
   // When normalizeConversationShareMarkdown cannot find a matching name in artifactNames, it replaces the file
   // reference in the body with an empty string (removing it). Without this mapping, file references silently disappear from the read-only block.
   const importedShareArtifactNames = useMemo(
@@ -3767,6 +4594,7 @@ export function SessionPane({
   }, [importedShare]);
   useLayoutEffect(() => {
     if (
+      compactForRemoteControl ||
       !timelineBottomRequest ||
       timelineBottomRequest.taskId !== sessionId ||
       !importedShare ||
@@ -3800,6 +4628,7 @@ export function SessionPane({
       if (secondFrame !== null) window.cancelAnimationFrame(secondFrame);
     };
   }, [
+    compactForRemoteControl,
     importedShare,
     importedShareContextId,
     sessionId,
@@ -3813,6 +4642,7 @@ export function SessionPane({
     onOpenBrowserUrl(localizeConversationShareUrl(shareHandoverContext.shareUrl, locale));
   }, [locale, onOpenBrowserUrl, shareHandoverContext]);
   const initialDraftConfigForDiagnostics = isDraft ? resolveInitialDraftConfig() : undefined;
+  const telemetryDraftConfig = draftConfig;
   // CLI V4 projection is the sole authority for running/count/manifest. The renderer no longer queries again after spawn
   // to build a second state, avoiding lost updates when concurrent children have in-flight refreshes.
   const subagents = snapshot?.subagents ?? EMPTY_SUBAGENT_PROJECTION;
@@ -3876,18 +4706,23 @@ export function SessionPane({
   useEffect(() => {
     setTerminalSectionOpen(false);
     setAgentSectionOpen(false);
-    setWorkflowSectionOpen(false);
   }, [sessionId]);
   useEffect(() => {
     if (runningTerminalCount === 0) {
       setTerminalSectionOpen(false);
     }
   }, [runningTerminalCount]);
+  // The Workflow section follows whether a live run exists (docs/dynamic-workflow/presentation.md,
+  // “Other places a run appears”): expand when the running count goes from 0 to ≥1, collapse at 0,
+  // and reevaluate for the session when entering it. Persist only when this boolean changes (or the
+  // session changes), so a manual collapse remains collapsed while runs continue.
+  // Root cause: it used to be collapsed by default like Terminal/Agents. After the capsule began
+  // showing workflows by name, opening it collapsed the run just shown, so the expanded section
+  // displayed less than the capsule.
+  const hasLiveWorkflowRun = runningWorkflowCount > 0;
   useEffect(() => {
-    if (runningWorkflowCount === 0) {
-      setWorkflowSectionOpen(false);
-    }
-  }, [runningWorkflowCount]);
+    setWorkflowSectionOpen(hasLiveWorkflowRun);
+  }, [hasLiveWorkflowRun, sessionId]);
   useEffect(() => {
     if (runningAgentCount === 0) {
       setAgentSectionOpen(false);
@@ -4164,6 +4999,10 @@ export function SessionPane({
                 issueCount: details.issueCount ?? details.issues.length,
                 omittedIssueCount: details.omittedIssueCount,
                 requestId: details.requestId,
+                clientRequestId: details.clientRequestId,
+                operationId,
+                status: details.status,
+                code: details.code,
               }
             : {
                 issues: [
@@ -4175,6 +5014,10 @@ export function SessionPane({
                 ],
                 issueCount: 1,
                 requestId: details.requestId,
+                clientRequestId: details.clientRequestId,
+                operationId,
+                status: details.status,
+                code: details.code,
                 messageId,
               },
       });
@@ -4420,6 +5263,7 @@ export function SessionPane({
       submissionReady={composerSubmissionReady}
       updateComposerContent={updateComposerContent}
       createSubmissionFromComposer={createSubmissionFromComposer}
+      telemetryDraftConfig={telemetryDraftConfig}
       contextHeader={isDraft ? draftComposerHeader : undefined}
       centered={isDraft}
       blockingRequestId={blockingInteractionId}
@@ -4433,6 +5277,7 @@ export function SessionPane({
         queueEditActiveForCurrentComposer ||
         quotaBanner.state.blocksSubmit
       }
+      isWebRemoteControl={compactForRemoteControl}
       workspacePath={workspacePath}
       workspaceIdentity={workspaceIdentity}
       remoteSessionId={remoteSessionId ?? undefined}
@@ -4444,10 +5289,12 @@ export function SessionPane({
       onRuntimeRestart={onRuntimeRestart}
       onRuntimeLifecycle={onRuntimeLifecycle}
       provider={provider}
-      telemetryDraftConfig={telemetryDraftConfig}
       telemetryVisible={telemetryVisible && conversationTelemetryForegroundEnabled}
       readPlanIdentitySnapshot={readPlanIdentitySnapshot}
       onSendText={handleSendText}
+      highspeedCard={activeHighspeedCard}
+      highspeedActivationCardId={highspeedActivationCardId}
+      onHighspeedActivationApplied={handleHighspeedActivationApplied}
       onDraftStateChange={handleComposerDraftStateChange}
       composerRestoreRequest={composerRestoreRequest}
       onComposerRestoreApplied={handleComposerRestoreApplied}
@@ -4540,6 +5387,8 @@ export function SessionPane({
         <ConversationQuotaBanner
           state={quotaBanner.state}
           onShown={quotaBanner.markShown}
+          billingDiscountActive={billingDiscount.active}
+          billingDiscountConfig={billingDiscount.config}
           upgradeActionLabelId={quotaBanner.upgradeActionLabelId}
           onUpgrade={
             quotaBanner.upgradeProviderId && codingPlanUpgradeDialog
@@ -4580,7 +5429,7 @@ export function SessionPane({
           onResume={handleResumeQueue}
         />
       ) : null}
-      {/* V4 permission and question waiting states are blocking runtime interactions and must share
+      {/* Bugfix: V4 permission and question waiting states are blocking runtime interactions and must share
           the timeline bottom dock with the composer. Rendering them outside SessionPane would
           detach them from the main column width and take up the lower half of the screen. */}
       {sessionId && snapshot ? (
@@ -4590,8 +5439,12 @@ export function SessionPane({
           workspacePath={workspacePath}
           workspaceIdentity={workspaceIdentity}
           remoteSessionId={remoteSessionId ?? undefined}
+          isWebRemoteControl={compactForRemoteControl}
           provider={provider}
           snapshot={snapshot}
+          onPlanInteractionAccepted={
+            compactForRemoteControl ? handleMobilePlanInteractionAccepted : undefined
+          }
         />
       ) : null}
       {composerNode}
@@ -4602,17 +5455,33 @@ export function SessionPane({
           className={isOfficeMode ? "mt-4" : "mt-6"}
           proactive={isOfficeMode}
           onOpenAutomations={
-            onOpenAutomationsMain
+            onOpenAutomationsMain && !compactForRemoteControl
               ? (automationTab) => onOpenAutomationsMain(undefined, automationTab)
               : undefined
           }
           workspacePath={workspacePath}
           workspaceIdentity={workspaceIdentity}
           remoteSessionId={remoteSessionId ?? undefined}
+          isWebRemoteControl={compactForRemoteControl}
           isDesktop={isDesktop}
         />
       ) : null}
     </>
+  );
+  // Images from plugin ui/message use the same v4 attachmentPut path as pasted screenshots; drafts without a sessionId have no plugin UI.
+  const pluginUiUploadAttachment = useCallback(
+    async (input: { fileName: string; mime: string; dataBase64: string }) => {
+      if (!sessionId) throw new Error("Plugin UI attachments need an open session");
+      const { ref } = await attachmentPut({ sessionId, ...input });
+      const padding = input.dataBase64.endsWith("==") ? 2 : input.dataBase64.endsWith("=") ? 1 : 0;
+      return {
+        ref,
+        fileName: input.fileName,
+        mime: input.mime,
+        bytes: Math.floor((input.dataBase64.length * 3) / 4) - padding,
+      };
+    },
+    [attachmentPut, sessionId],
   );
   // The chat Dock and share Dock have different heights. Share one grid cell and transition vertically with a fade
   // when entering/exiting sharing, avoiding a hard jump from parent-height changes. The transition component handles prefers-reduced-motion by switching immediately.
@@ -4623,256 +5492,310 @@ export function SessionPane({
   ) : null;
 
   return (
-    <div
-      data-testid={testId(TID_V4_SESSION_PANE, paneId)}
-      data-session-id={sessionId ?? "draft"}
-      data-initial-draft-provider={initialDraftConfigForDiagnostics?.provider ?? ""}
-      data-initial-draft-model={initialDraftConfigForDiagnostics?.model ?? ""}
-      data-projection-seq={snapshot?.seq ?? ""}
-      data-running-subagent-ids={subagents.running.map((item) => item.childSessionId).join(",")}
-      data-running-subagent-work-ids={(snapshot?.backgroundWorks ?? [])
-        .filter((work) => work.kind === "subagent" && work.status === "running")
-        .map((work) => work.childSessionId ?? work.workId)
-        .join(",")}
-      data-v4-conversation-drop-target="true"
-      onDragOver={effectiveDropTargetController?.onDragOver}
-      onDragLeave={effectiveDropTargetController?.onDragLeave}
-      onDrop={effectiveDropTargetController?.onDrop}
-      className="relative flex h-full min-h-0 flex-col"
+    <PluginUiSessionProvider
+      workspacePath={workspacePath}
+      workspaceIdentity={workspaceIdentity}
+      remoteSessionId={remoteSessionId}
+      sessionId={sessionId}
+      readOnly={readOnly}
+      sendText={dispatchSendText}
+      uploadAttachment={pluginUiUploadAttachment}
+      projectionStore={sessionLeaseReady ? lease?.store : null}
     >
-      {effectiveDropTargetController?.active ? (
-        <div className="pointer-events-none absolute inset-0 z-50 flex items-center justify-center bg-accent/55 backdrop-blur-sm">
-          <div className="flex items-center gap-2 rounded-full border border-border bg-accent px-4 py-2 text-ui-base text-foreground shadow-sm">
-            <Hand className="size-4 text-foreground" />
-            <span>
-              {intl.formatMessage({
-                id:
-                  effectiveDropTargetController.kind === "workspace"
-                    ? "chat.composer.workspaceFileDragHint"
-                    : "chat.attachments.dragHint",
-              })}
-            </span>
-          </div>
-        </div>
-      ) : null}
-      <ConversationHeader
-        title={snapshot?.meta.title ?? ""}
-        onSplitRight={onSplitRight}
-        onSplitDown={onSplitDown}
-        onClosePane={onClosePane}
-        workspaceBadge={workspaceBadge}
-      />
-
       <div
-        ref={conversationLayoutContainerRef}
-        className="@container/conversation relative flex min-h-0 flex-1 flex-col"
+        data-testid={testId(TID_V4_SESSION_PANE, paneId)}
+        data-session-id={sessionId ?? "draft"}
+        data-initial-draft-provider={initialDraftConfigForDiagnostics?.provider ?? ""}
+        data-initial-draft-model={initialDraftConfigForDiagnostics?.model ?? ""}
+        data-projection-seq={snapshot?.seq ?? ""}
+        data-running-subagent-ids={subagents.running.map((item) => item.childSessionId).join(",")}
+        data-running-subagent-work-ids={(snapshot?.backgroundWorks ?? [])
+          .filter((work) => work.kind === "subagent" && work.status === "running")
+          .map((work) => work.childSessionId ?? work.workId)
+          .join(",")}
+        data-v4-conversation-drop-target="true"
+        onDragOver={effectiveDropTargetController?.onDragOver}
+        onDragLeave={effectiveDropTargetController?.onDragLeave}
+        onDrop={effectiveDropTargetController?.onDrop}
+        className={cn(
+          "relative flex h-full min-h-0 flex-col",
+          compactForRemoteControl && "min-w-0",
+        )}
       >
-        <ConversationShareSelectionScrim
-          visible={shareSelectionPanelVisible}
-          interactive
-          onBackdropClick={dismissShareSelectionPanel}
-        />
-        <ConversationShareSelectionPanel
-          visible={shareSelectionPanelVisible}
-          items={shareItems}
-          selectedRowIds={selectedShareRowIds}
-          onToggle={handleShareSelectionToggle}
-          onInspect={handleShareSelectionInspect}
-        />
-        {shareActive && shareInSelectionStage && shareDraft?.view === "timeline" && sessionId ? (
-          <ConversationShareSelectionReopenTab onOpen={() => showShareSelectionPanel(sessionId)} />
-        ) : null}
-        {!isDraft ? (
-          <ConversationStatusPanel
-            workspacePath={workspacePath}
-            workspaceIdentity={workspaceIdentity}
-            gitSummary={gitSummary}
-            gitDirtyFileCount={gitDirtyFileCount}
-            gitWorktreeReviewSourceId={gitWorktreeReviewSourceId}
-            gitWorktreeChangeSummary={gitWorktreeChangeSummary}
-            activeTaskChangeSummary={activeTaskChangeSummary}
-            goal={selectionSideChat ? null : (snapshot?.goal ?? null)}
-            sessionPlans={state.sessionPlans}
-            plan={snapshot?.plan ?? null}
-            backgroundWorks={snapshot?.backgroundWorks ?? []}
-            runningSubagents={subagents.running}
-            workflowRuns={snapshot?.workflowRuns?.runs ?? []}
-            endedSubagentCount={subagents.endedTotal}
-            rootSessionId={rootSessionId ?? sessionId ?? undefined}
-            parentSessionId={sessionId ?? undefined}
-            layoutMode={statusPanelLayout}
-            summaryPanelVariantOverride={effectiveSummaryPanelVariantOverride}
-            onVariantChange={handleSummaryPanelVariantChange}
-            terminalSectionOpen={terminalSectionOpen}
-            onTerminalSectionOpenChange={setTerminalSectionOpen}
-            agentSectionOpen={agentSectionOpen}
-            onAgentSectionOpenChange={setAgentSectionOpen}
-            workflowSectionOpen={workflowSectionOpen}
-            onWorkflowSectionOpenChange={setWorkflowSectionOpen}
-            onRefreshGit={onRefreshGit}
-            onOpenGitReview={onOpenGitReview}
-            onPauseGoal={
-              !readOnly && !selectionSideChat && snapshot?.availability.pauseGoal.allowed
-                ? handlePauseGoal
-                : undefined
-            }
-            onResumeGoal={
-              !readOnly && !selectionSideChat && snapshot?.availability.resumeGoal.allowed
-                ? handleResumeGoal
-                : undefined
-            }
-            onOpenPlanDetail={onOpenPlanDetail ? handleOpenPlanDetail : undefined}
-            onOpenBackgroundBash={
-              onOpenBackgroundBash && sessionId
-                ? (work) =>
-                    onOpenBackgroundBash({
-                      workspacePath,
-                      workspaceIdentity: workspaceIdentity ?? undefined,
-                      remoteSessionId: remoteSessionId ?? undefined,
-                      rootSessionId: rootSessionId ?? sessionId,
-                      sessionId,
-                      workId: work.workId,
-                      title: work.title,
-                    })
-                : undefined
-            }
-            onCancelBackgroundWork={readOnly ? undefined : handleCancelBackgroundWork}
-            onOpenSubagentSession={onOpenSubagentSession ? handleOpenSubagentSession : undefined}
-            onOpenSubagentDirectory={
-              onOpenSubagentDirectory ? handleOpenSubagentDirectory : undefined
-            }
-            onOpenWorkflowRun={
-              onOpenWorkflowRun && sessionId ? handleOpenWorkflowRunFromPanel : undefined
-            }
-            endedWorkflowRunCount={endedWorkflowRunCount}
-            onOpenWorkflowRunDirectory={
-              onOpenWorkflowRunDirectory ? handleOpenWorkflowRunDirectoryFromPanel : undefined
-            }
-          />
-        ) : null}
-
-        {readOnly && controlLastError ? (
-          <div
-            role="alert"
-            data-testid="v4-subagent-readonly-error"
-            className="mx-4 mt-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-hover)] px-3 py-2 text-ui-base text-[var(--color-danger)]"
-          >
-            {controlLastError.message}
+        {effectiveDropTargetController?.active ? (
+          <div className="pointer-events-none absolute inset-0 z-50 flex items-center justify-center bg-accent/55 backdrop-blur-sm">
+            <div className="flex items-center gap-2 rounded-full border border-border bg-accent px-4 py-2 text-ui-base text-foreground shadow-sm">
+              <Hand className="size-4 text-foreground" />
+              <span>
+                {intl.formatMessage({
+                  id:
+                    effectiveDropTargetController.kind === "workspace"
+                      ? "chat.composer.workspaceFileDragHint"
+                      : "chat.attachments.dragHint",
+                })}
+              </span>
+            </div>
           </div>
         ) : null}
+        <ConversationHeader
+          title={snapshot?.meta.title ?? ""}
+          onSplitRight={onSplitRight}
+          onSplitDown={onSplitDown}
+          onClosePane={onClosePane}
+          workspaceBadge={workspaceBadge}
+        />
 
-        {errored ? (
-          <SessionSubscriptionErrorPanel
-            error={state.lastError ?? intl.formatMessage({ id: "chat.error.connectionLost" })}
-            sessionId={sessionId}
-            workspacePath={workspacePath}
-            onReconnect={handleRetrySubscribe}
+        <div
+          ref={conversationLayoutContainerRef}
+          className={cn(
+            "@container/conversation relative flex min-h-0 flex-1 flex-col",
+            compactForRemoteControl && "min-w-0",
+          )}
+        >
+          <ConversationShareSelectionScrim
+            visible={shareSelectionPanelVisible}
+            interactive
+            onBackdropClick={dismissShareSelectionPanel}
           />
-        ) : (
-          <SessionPluginReferenceIconBoundary
-            enabled={pluginReferenceIconsEnabled}
-            remoteSessionId={remoteSessionId}
-            sessionId={sessionId}
-            workspaceIdentity={workspaceIdentity}
-            workspacePath={workspacePath}
-          >
-            <ConversationTimeline
-              scrollToBottomActionRef={timelineScrollToBottomRef}
-              scrollToQueryActionRef={timelineScrollToQueryRef}
-              selectionPanelLayoutContainerRef={conversationLayoutContainerRef}
-              rows={timelineSnapshot?.rows.window ?? []}
-              pendingGuides={timelineSnapshot ? pendingGuideProjection?.pendingGuides : []}
-              apiRetry={timelineSnapshot?.control.apiRetry ?? null}
-              totalCount={timelineSnapshot?.rows.totalCount ?? 0}
-              sessionKey={sessionId ?? "draft"}
-              scrollMemoryKey={timelineScrollMemoryKey}
-              rowContext={rowContext}
-              onFork={forkActionsEnabled ? handleFork : undefined}
-              onRetry={retryActionsEnabled ? handleRetry : undefined}
-              onFeedbackChange={
-                !readOnly && !selectionSideChat && sessionId ? handleAssistantFeedback : undefined
-              }
-              onEdit={editActionsEnabled ? handleEdit : undefined}
-              canLoadOlder={timelineSnapshot ? hasOlderRows(timelineSnapshot) : false}
-              loadingOlder={timelineSnapshot ? state.loadingOlder : false}
-              onLoadOlder={handleLoadOlder}
-              onLoadAllOlder={handleLoadAllOlder}
-              turnNavigatorDirectoryRevision={state.turnNavigatorDirectoryRevision}
-              bottomDock={conversationBottomDock}
-              hideTurnNavigator={shareActive && shareInSelectionStage}
-              backgroundScrollLocked={resolveConversationShareBackgroundScrollLocked({
-                partialShareActive: shareActive,
-                stage: shareDraft?.stage ?? "selection",
-                view: shareDraft?.view,
-              })}
-              headerSlot={
-                // unsupportedRowCount must also enable this gate: if this build skipped every row in the copy,
-                // rows is empty but the read-only block must remain to show "Update ZCode", not disappear entirely.
-                importedShare &&
-                (importedShare.rows.length > 0 || importedShare.unsupportedRowCount > 0) ? (
-                  <ConversationShareImportNotice
-                    rows={importedShare.rows}
-                    unsupportedRowCount={importedShare.unsupportedRowCount}
-                    artifactNames={importedShareArtifactNames}
-                    artifactWorkspaceRelativePaths={importedShareArtifactWorkspaceRelativePaths}
-                    workspacePath={workspacePath}
-                    {...(workspaceIdentity ? { workspaceIdentity } : {})}
-                    {...(remoteSessionId ? { workspaceRemoteSessionId: remoteSessionId } : {})}
-                    locale={locale}
-                    theme={theme}
-                    codePreviewSettings={codePreviewSettings}
-                    onOpenShareUrl={onOpenBrowserUrl ? handleOpenImportedShareUrl : undefined}
-                    onOpenFileLink={onOpenFileLink}
-                    onOpenCodeViewer={onOpenCodeViewer}
-                  />
-                ) : null
-              }
-              emptyState={
-                isDraft ? (
-                  <div data-testid={TID_CHAT_EMPTY} className="w-full">
-                    <ConversationDraftEmptyState />
-                  </div>
-                ) : null
-              }
-              centerEmptyStateWithDock={isDraft}
-              summaryPanelLayout={statusPanelLayout}
-              conversationFindQuery={!isDraft && focused ? conversationFindQuery : ""}
-              conversationFindActiveIndex={!isDraft && focused ? conversationFindActiveIndex : -1}
-              conversationFindNavigationRequestId={
-                !isDraft && focused ? conversationFindNavigationRequestId : 0
-              }
-              onConversationFindMatchStateChange={
-                !isDraft && focused ? onConversationFindMatchStateChange : undefined
-              }
-              searchResultHighlightRequest={isDraft ? null : searchResultHighlightRequest}
-              onSearchResultHighlightDone={onSearchResultHighlightDone}
-              sessionPhase={isDraft ? undefined : snapshot?.control.phase}
-              shareSelection={
-                shareActive && shareInSelectionStage && shareDraft?.view === "timeline" && sessionId
-                  ? {
-                      eligibleRowIds: eligibleShareRowIds,
-                      selectedRowIds: selectedShareRowIds,
-                      onToggle: handleShareSelectionToggle,
-                    }
+          <ConversationShareSelectionPanel
+            visible={shareSelectionPanelVisible}
+            items={shareItems}
+            selectedRowIds={selectedShareRowIds}
+            onToggle={handleShareSelectionToggle}
+            onInspect={handleShareSelectionInspect}
+          />
+          {shareActive &&
+          shareInSelectionStage &&
+          shareDraft?.view === "timeline" &&
+          sessionId &&
+          !compactForRemoteControl ? (
+            <ConversationShareSelectionReopenTab
+              onOpen={() => showShareSelectionPanel(sessionId)}
+            />
+          ) : null}
+          {!isDraft ? (
+            <ConversationStatusPanel
+              workspacePath={workspacePath}
+              workspaceIdentity={workspaceIdentity}
+              gitSummary={gitSummary}
+              gitDirtyFileCount={gitDirtyFileCount}
+              gitWorktreeReviewSourceId={gitWorktreeReviewSourceId}
+              gitWorktreeChangeSummary={gitWorktreeChangeSummary}
+              activeTaskChangeSummary={activeTaskChangeSummary}
+              goal={selectionSideChat ? null : (snapshot?.goal ?? null)}
+              sessionPlans={state.sessionPlans}
+              plan={snapshot?.plan ?? null}
+              backgroundWorks={snapshot?.backgroundWorks ?? []}
+              runningSubagents={subagents.running}
+              workflowRuns={snapshot?.workflowRuns?.runs ?? []}
+              endedSubagentCount={subagents.endedTotal}
+              rootSessionId={rootSessionId ?? sessionId ?? undefined}
+              parentSessionId={sessionId ?? undefined}
+              isWebRemoteControl={compactForRemoteControl}
+              isMobileViewport={isMobileTextInputViewport}
+              layoutMode={statusPanelLayout}
+              summaryPanelVariantOverride={effectiveSummaryPanelVariantOverride}
+              onVariantChange={handleSummaryPanelVariantChange}
+              terminalSectionOpen={terminalSectionOpen}
+              onTerminalSectionOpenChange={setTerminalSectionOpen}
+              agentSectionOpen={agentSectionOpen}
+              onAgentSectionOpenChange={setAgentSectionOpen}
+              workflowSectionOpen={workflowSectionOpen}
+              onWorkflowSectionOpenChange={setWorkflowSectionOpen}
+              onRefreshGit={onRefreshGit}
+              onOpenGitReview={onOpenGitReview}
+              onPauseGoal={
+                !readOnly && !selectionSideChat && snapshot?.availability.pauseGoal.allowed
+                  ? handlePauseGoal
                   : undefined
               }
-              selectionActions={
-                !isDraft && sessionId && !readOnly && !selectionSideChat
-                  ? {
-                      enabled: resolveConversationSelectionTooltipEnabled({
-                        selectionActionsEnabled: focused && !blockingInteractionId,
-                        partialShareActive: shareActive,
-                      }),
-                      sideActionDisabled: selectionSideActionBlocked,
-                      onAddToCurrentTask: handleAddSelectionToCurrentTask,
-                      onAskInSideChat: handleOpenSelectionSideConversation,
-                    }
+              onResumeGoal={
+                !readOnly && !selectionSideChat && snapshot?.availability.resumeGoal.allowed
+                  ? handleResumeGoal
+                  : undefined
+              }
+              onOpenPlanDetail={onOpenPlanDetail ? handleOpenPlanDetail : undefined}
+              onOpenBackgroundBash={
+                onOpenBackgroundBash && sessionId
+                  ? (work) =>
+                      onOpenBackgroundBash({
+                        workspacePath,
+                        workspaceIdentity: workspaceIdentity ?? undefined,
+                        remoteSessionId: remoteSessionId ?? undefined,
+                        rootSessionId: rootSessionId ?? sessionId,
+                        sessionId,
+                        workId: work.workId,
+                        title: work.title,
+                      })
+                  : undefined
+              }
+              onCancelBackgroundWork={readOnly ? undefined : handleCancelBackgroundWork}
+              onOpenSubagentSession={onOpenSubagentSession ? handleOpenSubagentSession : undefined}
+              onOpenSubagentDirectory={
+                onOpenSubagentDirectory && !compactForRemoteControl
+                  ? handleOpenSubagentDirectory
+                  : undefined
+              }
+              onOpenWorkflowRun={
+                onOpenWorkflowRun && sessionId ? handleOpenWorkflowRunFromPanel : undefined
+              }
+              endedWorkflowRunCount={endedWorkflowRunCount}
+              onOpenWorkflowRunDirectory={
+                onOpenWorkflowRunDirectory && !compactForRemoteControl
+                  ? handleOpenWorkflowRunDirectoryFromPanel
                   : undefined
               }
             />
-          </SessionPluginReferenceIconBoundary>
-        )}
+          ) : null}
+
+          {readOnly && controlLastError ? (
+            <div
+              role="alert"
+              data-testid="v4-subagent-readonly-error"
+              className="mx-4 mt-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-hover)] px-3 py-2 text-ui-base text-[var(--color-danger)]"
+            >
+              {controlLastError.message}
+            </div>
+          ) : null}
+
+          {errored ? (
+            <SessionSubscriptionErrorPanel
+              error={state.lastError ?? intl.formatMessage({ id: "chat.error.connectionLost" })}
+              sessionId={sessionId}
+              workspacePath={workspacePath}
+              onReconnect={handleRetrySubscribe}
+            />
+          ) : (
+            <SessionPluginReferenceIconBoundary
+              enabled={pluginReferenceIconsEnabled}
+              remoteSessionId={remoteSessionId}
+              sessionId={sessionId}
+              workspaceIdentity={workspaceIdentity}
+              workspacePath={workspacePath}
+            >
+              <BotGroupDeliveryProvider
+                taskId={sessionId}
+                workspacePath={workspacePath}
+                workspaceIdentity={workspaceIdentity}
+              >
+                <ConversationTimeline
+                  compactForRemoteControl={compactForRemoteControl}
+                  scrollToBottomActionRef={timelineScrollToBottomRef}
+                  scrollToQueryActionRef={timelineScrollToQueryRef}
+                  selectionPanelLayoutContainerRef={conversationLayoutContainerRef}
+                  rows={timelineSnapshot?.rows.window ?? []}
+                  pendingGuides={timelineSnapshot ? pendingGuideProjection?.pendingGuides : []}
+                  apiRetry={timelineSnapshot?.control.apiRetry ?? null}
+                  totalCount={timelineSnapshot?.rows.totalCount ?? 0}
+                  sessionKey={sessionId ?? "draft"}
+                  scrollMemoryKey={timelineScrollMemoryKey}
+                  rowContext={rowContext}
+                  onFork={forkActionsEnabled ? handleFork : undefined}
+                  onRetry={retryActionsEnabled ? handleRetry : undefined}
+                  onFeedbackChange={
+                    !readOnly && !selectionSideChat && sessionId
+                      ? handleAssistantFeedback
+                      : undefined
+                  }
+                  onEdit={editActionsEnabled ? handleEdit : undefined}
+                  canLoadOlder={timelineSnapshot ? hasOlderRows(timelineSnapshot) : false}
+                  loadingOlder={timelineSnapshot ? state.loadingOlder : false}
+                  onLoadOlder={handleLoadOlder}
+                  onLoadAllOlder={handleLoadAllOlder}
+                  turnNavigatorDirectoryRevision={state.turnNavigatorDirectoryRevision}
+                  bottomDock={conversationBottomDock}
+                  hideTurnNavigator={
+                    shareActive && shareInSelectionStage && !compactForRemoteControl
+                  }
+                  backgroundScrollLocked={resolveConversationShareBackgroundScrollLocked({
+                    partialShareActive: shareActive,
+                    stage: shareDraft?.stage ?? "selection",
+                    view: shareDraft?.view,
+                  })}
+                  headerSlot={
+                    // unsupportedRowCount must also open this gate: when this build skips every row
+                    // in the copy, rows is empty, but the read-only block must remain to show
+                    // “Update ZCode required” instead of disappearing entirely.
+                    importedShare &&
+                    (importedShare.rows.length > 0 || importedShare.unsupportedRowCount > 0) ? (
+                      <ConversationShareImportNotice
+                        rows={importedShare.rows}
+                        unsupportedRowCount={importedShare.unsupportedRowCount}
+                        artifactNames={importedShareArtifactNames}
+                        artifactWorkspaceRelativePaths={importedShareArtifactWorkspaceRelativePaths}
+                        workspacePath={workspacePath}
+                        {...(workspaceIdentity ? { workspaceIdentity } : {})}
+                        {...(remoteSessionId ? { workspaceRemoteSessionId: remoteSessionId } : {})}
+                        locale={locale}
+                        theme={theme}
+                        codePreviewSettings={codePreviewSettings}
+                        onOpenShareUrl={onOpenBrowserUrl ? handleOpenImportedShareUrl : undefined}
+                        onOpenFileLink={onOpenFileLink}
+                        onOpenCodeViewer={onOpenCodeViewer}
+                      />
+                    ) : null
+                  }
+                  emptyState={
+                    isDraft ? (
+                      <div data-testid={TID_CHAT_EMPTY} className="w-full">
+                        <ConversationDraftEmptyState
+                          compactForRemoteControl={compactForRemoteControl}
+                        />
+                      </div>
+                    ) : null
+                  }
+                  centerEmptyStateWithDock={isDraft}
+                  compactEmptyStateWithDock={compactForRemoteControl}
+                  summaryPanelLayout={statusPanelLayout}
+                  conversationFindQuery={!isDraft && focused ? conversationFindQuery : ""}
+                  conversationFindActiveIndex={
+                    !isDraft && focused ? conversationFindActiveIndex : -1
+                  }
+                  conversationFindNavigationRequestId={
+                    !isDraft && focused ? conversationFindNavigationRequestId : 0
+                  }
+                  onConversationFindMatchStateChange={
+                    !isDraft && focused ? onConversationFindMatchStateChange : undefined
+                  }
+                  searchResultHighlightRequest={isDraft ? null : searchResultHighlightRequest}
+                  onSearchResultHighlightDone={onSearchResultHighlightDone}
+                  sessionPhase={isDraft ? undefined : snapshot?.control.phase}
+                  shareSelection={
+                    shareActive &&
+                    shareInSelectionStage &&
+                    shareDraft?.view === "timeline" &&
+                    !compactForRemoteControl &&
+                    sessionId
+                      ? {
+                          eligibleRowIds: eligibleShareRowIds,
+                          selectedRowIds: selectedShareRowIds,
+                          onToggle: handleShareSelectionToggle,
+                        }
+                      : undefined
+                  }
+                  selectionActions={
+                    !isDraft &&
+                    sessionId &&
+                    !readOnly &&
+                    !selectionSideChat &&
+                    !isMobileTextInputViewport
+                      ? {
+                          enabled: resolveConversationSelectionTooltipEnabled({
+                            selectionActionsEnabled: focused && !blockingInteractionId,
+                            partialShareActive: shareActive,
+                          }),
+                          sideActionDisabled: selectionSideActionBlocked,
+                          onAddToCurrentTask: handleAddSelectionToCurrentTask,
+                          onAskInSideChat: handleOpenSelectionSideConversation,
+                        }
+                      : undefined
+                  }
+                />
+              </BotGroupDeliveryProvider>
+            </SessionPluginReferenceIconBoundary>
+          )}
+        </div>
       </div>
-    </div>
+    </PluginUiSessionProvider>
   );
 }

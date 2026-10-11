@@ -23,10 +23,12 @@ import {
   writeWorkflowDraft,
 } from "../../tool/handlers/workflow-drafts.js";
 import { analyzeScript } from "../../tool/handlers/workflow-script-analysis.js";
+import { bindScriptModels } from "../../tool/handlers/workflow-script-models.js";
 import type { ExecutableToolCall } from "../../tool/types.js";
 import { traceContextToLogContext } from "../deps.js";
 import type { AgentRuntimeInternal } from "../internal.js";
 import { boundedCompileDiagnostics } from "./dynamic-workflow-run-start.js";
+import { activateDynamicWorkflowTools } from "./dynamic-workflow-activation.js";
 import {
   buildSettingsMessageText,
   enqueueSettingsTurn,
@@ -38,8 +40,8 @@ import {
 export { buildSettingsMessageText } from "./dynamic-workflow-run-settings-turn.js";
 
 /**
- * Request from the GUI's "Configure" action. Both settings follow the tool's three-state semantics:
- * omitted = inherit, `null` = use the default (session model / machine ceiling), value = set explicitly.
+ * GUI “Configure” requests (docs/dynamic-workflow/launch.md, “The command”). Both settings follow the tool's three-state contract:
+ * omitted = keep current, `null` = return to default (session model / default concurrency), value = set explicitly.
  */
 export interface AmendWorkflowRunSettingsInput {
   runId: string;
@@ -112,12 +114,12 @@ export async function amendWorkflowRunSettings(
       ...(this.modelCatalogPort === undefined ? {} : { message: model.message }),
     };
   }
-  const ceiling = port.concurrencyCeiling?.();
-  const bound = resolveAmendMaxConcurrency(input.maxConcurrency, current.maxConcurrency, ceiling);
-  // A bound at the ceiling means "no per-run limit": snapshots include maxConcurrency only below the ceiling, using the same interpretation on both sides.
-  // This makes the "unchanged" comparison work (the dialog sends null at the maximum; this also handles callers that pass the number directly).
+  const defaultConcurrency = port.defaultConcurrency?.();
+  const bound = resolveAmendMaxConcurrency(input.maxConcurrency, current.maxConcurrency);
+  // A limit equal to the default means “no per-run limit”: snapshots include maxConcurrency only when it differs from the default,
+  // so both sides use the same interpretation for the “unchanged” comparison (the dialog sends null when its stepper stays at the default; this also handles callers that send the number directly). A limit above the default is still this run's own limit, just like one below it.
   const nextBound =
-    bound.max_concurrency === undefined || bound.max_concurrency === ceiling
+    bound.max_concurrency === undefined || bound.max_concurrency === defaultConcurrency
       ? undefined
       : bound.max_concurrency;
   const next: RunSettings = {
@@ -129,16 +131,20 @@ export async function amendWorkflowRunSettings(
   const boundChanged = next.maxConcurrency !== current.maxConcurrency;
   if (!modelChanged && !boundChanged) return { ok: false, reason: "unchanged" };
 
-  // (6) Branch: if only concurrency changed and the run is still in flight, apply it in place—same runId, no stop, no successor, no cache import.
-  // If the port answers not_live (settled, or pending before the engine exists), continue through the steps below and perform the current revision flow.
+  // (6) Branch (docs/dynamic-workflow/launch.md, “On the agent”): if only concurrency changed and the run is active, apply it in place—
+  // same runId, no stop, no successor, and no cache import. If the port returns not_live (already settled, or pending before the engine exists),
+  // continue through the table below and perform the usual amendment.
   if (boundChanged && !modelChanged && typeof port.retuneConcurrency === "function") {
-    // Pass the dialog's `null` unchanged to the port; only the port knows the ceiling, so do not guess it again here. Missing can occur only when
-    // an inherited bound exceeds this machine's ceiling (the run started on a larger machine), in which case returning to the ceiling is the intended behavior.
+    // Pass the dialog's `null` to the port unchanged: only the port knows the default concurrency, so do not infer it here. Missing input can only
+    // mean the supplied number equaled the default (normalized to missing above), in which case returning to the default is exactly what's intended.
     const answer = await port.retuneConcurrency({
       runId: input.runId,
       maxConcurrency: input.maxConcurrency ?? null,
     });
     if (answer.ok) {
+      // An in-place concurrency change still counts as “this session is using workflows” (launch.md, “On demand: activation”): the run's
+      // notification after this settings turn tells the model to call GetWorkflowRun. retunedSettings is synchronous cleanup, so activate first.
+      await activateDynamicWorkflowTools.call(this, { source: "run_control", traceContext });
       return retunedSettings.call(this, {
         answer,
         name: displayNameOfSnapshot(snapshot),
@@ -169,6 +175,21 @@ export async function amendWorkflowRunSettings(
       ),
     };
   }
+  // (8b) Models named by the script: this run's own script is being rerun, and every name was bound at launch. Reuse that table
+  // and resolve it against the catalog again (docs/dynamic-workflow/launch.md, “On the agent”). If a reused model is gone, stop here with
+  // the same reason code as “the model selected in the dialog cannot be resolved”; leave the old run untouched.
+  const models = bindScriptModels(analysis, this.modelCatalogPort, snapshot.modelBindings);
+  if (models.unbound.length > 0) {
+    return {
+      ok: false,
+      reason: "model_unavailable",
+      message: boundedCompileDiagnostics(
+        `The models named in the script of run ${input.runId} cannot be used now:`,
+        models.unbound,
+      ),
+    };
+  }
+  const modelSelections = models.selections;
 
   // —— No side effects up to this point. ——
 
@@ -209,6 +230,7 @@ export async function amendWorkflowRunSettings(
       ...(phaseAlongside === undefined ? {} : { phaseAlongside }),
       ...(next.maxConcurrency === undefined ? {} : { maxConcurrency: next.maxConcurrency }),
       ...(subagentModel === undefined ? {} : { subagentModel }),
+      ...(modelSelections === undefined ? {} : { modelBindings: modelSelections }),
       ...(scriptPath === undefined ? {} : { scriptPath }),
       // The rerun uses the predecessor's own script and the arguments it had when it started.
       inheritArgs: true,
@@ -238,7 +260,8 @@ export async function amendWorkflowRunSettings(
     ...(boundChanged
       ? { maxConcurrency: fromTo(current.maxConcurrency, next.maxConcurrency) }
       : {}),
-    ...(ceiling === undefined ? {} : { ceiling }),
+    // The persisted key `ceiling` predates the “default concurrency” concept and remains for compatibility with older clients; it stores the default concurrency D.
+    ...(defaultConcurrency === undefined ? {} : { ceiling: defaultConcurrency }),
   };
 
   // (9)(10) Failures after this point are logged but not rolled back: the new run is already in flight and can be stopped in the sidebar; undoing it would create an orphan.
@@ -256,6 +279,8 @@ export async function amendWorkflowRunSettings(
       traceContext,
       undefined,
     );
+    // Successful configuration activates the tool surface (launch.md, “On demand: activation”): the new run's notification tells the model to call GetWorkflowRun.
+    await activateDynamicWorkflowTools.call(this, { source: "run_control", traceContext });
     enqueueSettingsTurn.call(this, {
       text: buildSettingsMessageText({
         ...(name === undefined ? {} : { name }),
@@ -301,8 +326,9 @@ export async function amendWorkflowRunSettings(
 }
 
 /**
- * Finish an in-place change: same runId, no `supersededRunId`, and **do not register a second background task**—the run is already in the tracker,
- * and registering it again would clear the completion state of a run that never stopped under AmendWorkflow's rearm rule.
+ * Finish an in-place update (the branch in docs/dynamic-workflow/launch.md, “On the agent”): same runId, no
+ * `supersededRunId`, and **no second background task registration**—the run is already tracked, and registering it again would clear
+ * the settlement state of a run that never stopped under AmendWorkflow's rearm rule.
  *
  * Record the settings turn, but omit `predecessorRunId` from the `amend` block; its absence means "applied in place," so the renderer draws one row,
  * and no second run card (two cards for one run look like two runs). There is no `display` either; this path does not compile.
@@ -318,14 +344,14 @@ function retunedSettings(
 ): AmendWorkflowRunSettingsResult {
   const { answer, name, runId, traceContext } = options;
   const toolCallId = `settings-${randomUUID()}`;
-  // A side equal to the ceiling means "default," so omit that side entirely, matching the revision path's representation.
-  // (The dialog sends `null` when the stepper is at the maximum, but the port always returns an absolute value, so conversion happens here.)
+  // A side equal to the default means “default,” so omit that side entirely—this matches amendment semantics (the dialog sends `null`
+  // when its stepper stays at the default, while the port always returns absolute values, so conversion belongs here). The persisted key `ceiling` stores D.
   const amend: WorkflowSettingsAmendMeta = {
     maxConcurrency: fromTo(
-      answer.previous === answer.ceiling ? undefined : answer.previous,
-      answer.maxConcurrency === answer.ceiling ? undefined : answer.maxConcurrency,
+      answer.previous === answer.defaultConcurrency ? undefined : answer.previous,
+      answer.maxConcurrency === answer.defaultConcurrency ? undefined : answer.maxConcurrency,
     ),
-    ceiling: answer.ceiling,
+    ceiling: answer.defaultConcurrency,
   };
   try {
     enqueueSettingsTurn.call(this, {

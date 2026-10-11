@@ -4,7 +4,7 @@ import { dirname, join } from "node:path";
 import { createUuid } from "@zcode/shared";
 import { getAppConfigDir } from "@zcode/services/node";
 
-interface EnsureDesktopDeviceMidSyncOptions {
+export interface EnsureDesktopDeviceMidSyncOptions {
   /** Directory containing the state file; defaults to getAppConfigDir() (that is, ~/.zcode/v2). Test injection only. */
   configDir?: string;
   /** UUID generator; defaults to createUuid. Test injection only. */
@@ -34,14 +34,14 @@ export function ensureDesktopDeviceMidSync(options?: EnsureDesktopDeviceMidSyncO
     const configDir = options?.configDir ?? getAppConfigDir();
     const stateFile = join(configDir, "telemetry-state.json");
 
-    const state = readDeviceStateSync(stateFile);
+    const state = readTelemetryStateSync(stateFile);
     if (typeof state.deviceMid === "string" && state.deviceMid) {
       return state.deviceMid;
     }
 
     const deviceMid = createId();
     state.deviceMid = deviceMid;
-    writeDeviceStateSync(stateFile, state);
+    writeTelemetryStateSync(stateFile, state);
     return deviceMid;
   } catch {
     // Fallback for fs/JSON errors: always return a value without blocking window creation.
@@ -49,7 +49,7 @@ export function ensureDesktopDeviceMidSync(options?: EnsureDesktopDeviceMidSyncO
   }
 }
 
-function readDeviceStateSync(stateFile: string): Record<string, unknown> {
+function readTelemetryStateSync(stateFile: string): Record<string, unknown> {
   try {
     const raw = readFileSync(stateFile, "utf-8");
     const parsed = JSON.parse(raw) as unknown;
@@ -59,7 +59,7 @@ function readDeviceStateSync(stateFile: string): Record<string, unknown> {
   }
 }
 
-function writeDeviceStateSync(stateFile: string, state: Record<string, unknown>): void {
+function writeTelemetryStateSync(stateFile: string, state: Record<string, unknown>): void {
   const dir = dirname(stateFile);
   mkdirSync(dir, { recursive: true });
   const tempFile = `${stateFile}.${process.pid}.tmp`;

@@ -5,16 +5,20 @@
 import { z } from "zod";
 import { toToolJsonSchema } from "./json-schema.js";
 import { SAVED_WORKFLOW_MAX_NAME_CHARS, SavedWorkflowScopeSchema } from "./saved-workflow.js";
+import {
+  WorkflowAdjustableSettingsSchema,
+  WorkflowModelBindingsSchema,
+} from "./workflow-settings.js";
 
 export const CREATE_WORKFLOW_TOOL_NAME = "CreateWorkflow";
 
 /**
- * Name of the bundled skill that teaches the model to write workflows
- * (apps/zcode-cli/packages/bundled-skills/skills/<name>/SKILL.md).
- * The resolveInput step of all four authoring tools (Create/Amend/Save/EvalWorkflowSnippet) uses it as
- * a gate: reject script submission if the session has not loaded this skill.
- * It lives in contracts because both core's gate and bootstrap's skill bundle read it, and neither can
- * import the other.
+ * Name of the built-in skill that teaches the model to write workflows
+ * (apps/zcode-cli/packages/bundled-skills/skills/<name>/SKILL.md). The resolveInput functions of the
+ * four authoring tools (Create/Amend/Save/EvalWorkflowSnippet) use it as a gate: reject script
+ * submission if the session has not loaded this skill (docs/dynamic-workflow/authoring.md, “The
+ * authoring surface”). It lives in contracts because both the core gate and bootstrap skill package
+ * read it, and those modules cannot import each other.
  */
 export const DYNAMIC_WORKFLOW_SKILL_NAME = "dynamic-workflows";
 
@@ -100,7 +104,9 @@ const CreateWorkflowModelInputSchema = z
     script: z
       .string()
       .optional()
-      .describe("The whole workflow script, inline. Exactly one of `script`, `saved` and `path`."),
+      .describe(
+        "The whole workflow script, inline. Exactly one of `script`, `saved` and `path`.",
+      ),
     saved: CreateWorkflowSavedSourceSchema.optional().describe(
       "A saved workflow to run, by name. Exactly one of `script`, `saved` and `path`.",
     ),
@@ -127,10 +133,11 @@ const CreateWorkflowModelInputSchema = z
       .optional()
       .describe("Values for the arguments a `path` file declares. Only with `path`."),
     /**
-     * This run's concurrency ceiling. It can only be lowered, not raised:
-     * `resolveInput` clamps it to `[1, ceiling]`, so the confirmation window and handler see the value
-     * that will take effect. Omission means the ceiling. Set it only when requested by the user—the
-     * runtime adapts to provider rate limits, and the model should not use this as a safety margin.
+     * This run's own concurrency cap (docs/dynamic-workflow/concurrency.md, “Two bounds on a run”).
+     * Values may be above or below the default, with no upper bound: `resolveInput` only rounds down
+     * to at least 1, and the confirmation dialog and handler see the effective value. Omission means
+     * default concurrency. Set it only when requested by the user; runtime adapts to provider limits,
+     * so the model should not use this as a safety margin.
      */
     max_concurrency: z
       .number()
@@ -138,7 +145,7 @@ const CreateWorkflowModelInputSchema = z
       .positive()
       .optional()
       .describe(
-        "Upper bound on subagents working at once. Only when the user asks to limit parallelism; never as a reaction to provider errors.",
+        "Subagents working at once, above or below the default. Only when the user asks for more or less parallelism; never as a reaction to provider errors.",
       ),
     /**
      * Model used by this run's subagents. Like `max_concurrency`, the model-facing surface accepts a
@@ -177,11 +184,22 @@ export const CreateWorkflowInputSchema = CreateWorkflowModelInputSchema.extend({
    * into an `Edit` on that file.
    */
   script_line_offset: z.number().int().nonnegative().optional(),
+  /**
+   * The two settings adjustable in the confirmation dialog (docs/dynamic-workflow/launch.md,
+   * “Adjusting the settings in the window”), filled by `resolveInput` when the port is available.
+   * Like the fields above, this is a resolved value and is not listed in the model's JSON schema.
+   */
+  adjustable_settings: WorkflowAdjustableSettingsSchema.optional(),
+  /**
+   * Binding table for models named by the script, resolved by `resolveInput` (docs/dynamic-workflow/launch.md,
+   * “Models the script names”). Like the fields above, this is a resolved value and is not listed in the model's JSON schema.
+   */
+  model_bindings: WorkflowModelBindingsSchema.optional(),
 }).strict();
 
 export type CreateWorkflowInput = z.infer<typeof CreateWorkflowInputSchema>;
 
-/** JSON schema shown to the model: excludes `script_line_offset` and `draft` from `saved`. */
+/** JSON schema sent to the model: excludes `script_line_offset`, `adjustable_settings`, and `model_bindings`; `saved` also excludes `draft`. */
 export const CreateWorkflowInputJsonSchema = toToolJsonSchema(CreateWorkflowModelInputSchema);
 
 export const CreateWorkflowDiagnosticSchema = z
@@ -230,7 +248,9 @@ export const CREATE_WORKFLOW_GRAPH_MAX_PHASE_EDGES = 128;
 export const CREATE_WORKFLOW_GRAPH_MAX_ID_CHARS = 64;
 export const CREATE_WORKFLOW_GRAPH_MAX_NAME_CHARS = 128;
 
-export const CREATE_WORKFLOW_STEP_KINDS = ["ask", "world-read"] as const;
+// `hole`: an open hole is a site (docs/dynamic-workflow/presentation.md, “Holes on the timeline”),
+// on the main agent's `main` lane; a filled hole is no longer a site.
+export const CREATE_WORKFLOW_STEP_KINDS = ["ask", "world-read", "hole"] as const;
 
 // The statically known parts of a name that takes shape only at runtime (`` agent(`Researcher${i + 1}`) ``):
 // the literal before the first interpolation (head) and after the last interpolation (tail). At least
@@ -280,6 +300,13 @@ export const CreateWorkflowStepSchema = z
      */
     phase: z.string().min(1).max(CREATE_WORKFLOW_GRAPH_MAX_ID_CHARS).optional(),
     repeat: z.enum(["stack", "serial"]).optional(),
+    /**
+     * This site was written by filling a hole. The value is the ID of the hole site that was filled
+     * (name key `hole#<8 hex digits>`); a hole's **own** phase instead points to its containing hole.
+     * The timeline uses this to draw the completion stroke and region (docs/dynamic-workflow/presentation.md,
+     * “Holes on the timeline”). Absent for scripts with no filled holes.
+     */
+    fill: z.string().min(1).max(CREATE_WORKFLOW_GRAPH_MAX_ID_CHARS).optional(),
   })
   .strict();
 
@@ -314,6 +341,21 @@ export const CreateWorkflowEdgeSchema = z
   .strict();
 
 export type CreateWorkflowEdge = z.infer<typeof CreateWorkflowEdgeSchema>;
+
+/**
+ * Phase stream (docs/dynamic-workflow/presentation.md, “Streams”): while both phases are running,
+ * `from` passes data to `to`—two future phases connected by a channel. This is **not** runs after, so
+ * it is excluded from `phaseEdges`, has no `back` field (the UI determines direction from station
+ * positions), and has no analyzer edge kind.
+ */
+export const CreateWorkflowStreamSchema = z
+  .object({
+    from: z.string().min(1).max(CREATE_WORKFLOW_GRAPH_MAX_ID_CHARS),
+    to: z.string().min(1).max(CREATE_WORKFLOW_GRAPH_MAX_ID_CHARS),
+  })
+  .strict();
+
+export type CreateWorkflowStream = z.infer<typeof CreateWorkflowStreamSchema>;
 
 // A participant is one card in the board's second layer: a subagent (or workspace / unresolved
 // receiver) with a step in a phase and lane. A fan-out family with literal cardinality expands to one
@@ -384,10 +426,35 @@ export const CreateWorkflowPhaseSchema = z
       .min(1)
       .max(CREATE_WORKFLOW_GRAPH_MAX_PHASES)
       .optional(),
+    /** This phase was introduced by filling a hole; value is the hole site ID, matching `Step.fill`. */
+    fill: z.string().min(1).max(CREATE_WORKFLOW_GRAPH_MAX_ID_CHARS).optional(),
   })
   .strict();
 
 export type CreateWorkflowPhase = z.infer<typeof CreateWorkflowPhaseSchema>;
+
+/** Upper bound for `holes`, equal to the phase-table limit: each hole is one phase. */
+export const CREATE_WORKFLOW_GRAPH_MAX_HOLES = CREATE_WORKFLOW_GRAPH_MAX_PHASES;
+
+// One **open** hole (docs/dynamic-workflow/authoring.md, “Holes”; presentation.md, “Holes on the
+// timeline”): shown as a dashed station on the timeline and as a chip in the confirmation dialog.
+// Filled holes are excluded; their bodies are ordinary sites and phases with a `fill` marker.
+export const CreateWorkflowHoleSchema = z
+  .object({
+    /** Hole site ID (name key `hole#<8 hex digits>`), also used as its phase ID. */
+    siteId: z.string().min(1).max(CREATE_WORKFLOW_GRAPH_MAX_ID_CHARS),
+    /** Hole's literal name. */
+    name: z.string().min(1).max(CREATE_WORKFLOW_GRAPH_MAX_NAME_CHARS),
+    /** Original type-argument text (`Verdict`). */
+    type: z.string().min(1).max(CREATE_WORKFLOW_GRAPH_MAX_NAME_CHARS),
+    /** ID of the phase where it was reached (`phases[].id`); present exactly when the phase vocabulary is present. */
+    phase: z.string().min(1).max(CREATE_WORKFLOW_GRAPH_MAX_ID_CHARS).optional(),
+    /** A trailing hole: `return await hole(...)`; the script's ending has not been written yet. */
+    tail: z.literal(true).optional(),
+  })
+  .strict();
+
+export type CreateWorkflowHole = z.infer<typeof CreateWorkflowHoleSchema>;
 
 // Retains its historical name (it once held only the causality graph). Three layers: the step layer
 // contains sites (keys for runtime state, no longer rendered); the participant layer contains cards
@@ -415,6 +482,16 @@ export const CreateWorkflowCausalityGraphSchema = z
       .max(CREATE_WORKFLOW_GRAPH_MAX_PHASE_EDGES)
       .optional(),
     /**
+     * Phase streams: `data` edges in the causal graph's phase quotient whose endpoints are mutually
+     * `alongside` (computed by the bounds layer). Present together with the phase vocabulary, and
+     * omitted when none exist in the group. The timeline uses these to pull pipeline phases out of
+     * their bands, order them in a line, and draw a stream rail.
+     */
+    phaseStreams: z
+      .array(CreateWorkflowStreamSchema)
+      .max(CREATE_WORKFLOW_GRAPH_MAX_PHASE_EDGES)
+      .optional(),
+    /**
      * Phases after which control flow can complete normally (sources of edges to the sink terminal in
      * the control-flow graph's phase quotient), in phase-list order. The phase view uses this for
      * "phase → return value" arrows, so every arrow in that view represents control flow. May be empty
@@ -429,6 +506,12 @@ export const CreateWorkflowCausalityGraphSchema = z
       .array(z.string().min(1).max(CREATE_WORKFLOW_GRAPH_MAX_ID_CHARS))
       .max(CREATE_WORKFLOW_GRAPH_MAX_STEPS)
       .optional(),
+    /**
+     * Open holes in source order (docs/dynamic-workflow/presentation.md, “The display contract”). Each
+     * hole is one phase, so its cap matches the phase-table cap. Filled holes are omitted; their
+     * introduced phases and sites carry `fill`. Omit the entire field when there are none.
+     */
+    holes: z.array(CreateWorkflowHoleSchema).max(CREATE_WORKFLOW_GRAPH_MAX_HOLES).optional(),
     truncated: z.boolean().optional(),
   })
   .strict();
@@ -522,22 +605,41 @@ export const CreateWorkflowOutputSchema = z
     /** Background task id ≡ taskId ≡ runId (used as the key for cancellation and status queries). */
     backgroundTaskId: z.string().min(1).optional(),
     /**
-     * Present only when AmendWorkflow changes concurrency in place: there is **no** new run, so there
-     * is no `status: "backgrounded"` or `backgroundTaskId`; it is still the same run as the call.
+     * Present only when `AmendWorkflow` changes concurrency and applies it in place (docs/dynamic-workflow/launch.md,
+     * “Changing only the parallelism of a live run”): there is **no** new run, so there is neither
+     * `status: "backgrounded"` nor `backgroundTaskId`; the run remains the one named in the call.
      *
-     * This is an explicit block rather than something consumers infer from shape: "ok with no status"
-     * has another meaning in this tool ("typecheck only" when the run port is absent). Values are
-     * absolute; `maxConcurrency === ceiling` means "this run has no custom limit."
+     * This is an explicit block so consumers do not infer it from shape: “ok with no status” has
+     * another meaning for this tool (“typecheck only” when there is no run port). Values are absolute;
+     * `maxConcurrency === defaultConcurrency` means “this run has no custom cap.”
      *
-     * ⚠ This fact **does not cross v4**: the protocol's `toolOutputSchema` carries only `text` /
-     * `display` / `truncated`, so this serves CLI/TUI and in-process consumers; the desktop UI cannot read it.
+     * ⚠ This fact does **not cross v4**: protocol `toolOutputSchema` carries only `text` / `display` /
+     * `truncated`. It is therefore available to CLI/TUI, in-process consumers, and contract tests, but
+     * not to the desktop UI.
      */
     retuned: z
       .object({
         runId: z.string().min(1),
         maxConcurrency: z.number().int().positive(),
         previous: z.number().int().positive(),
-        ceiling: z.number().int().positive(),
+        defaultConcurrency: z.number().int().positive(),
+      })
+      .strict()
+      .optional(),
+    /**
+     * Identifies the hole filled by `FillWorkflowHole` (docs/dynamic-workflow/launch.md, “The
+     * `FillWorkflowHole` tool”): site ID and **name**, plus draft path and line. Present for success and
+     * rejection, and **crosses v4**; the display projection carries it unchanged so the tool row can
+     * name itself. It cannot be read from the row's input: the transcript stores the model's original
+     * arguments, while the `hole` block added by resolveInput is visible only to permission rules and
+     * the handler (first tested in a completion run on 2026-09-28, when the row title was the hole site ID).
+     */
+    fill: z
+      .object({
+        siteId: z.string().min(1).max(64),
+        name: z.string().min(1).max(128),
+        draftPath: z.string().min(1).optional(),
+        line: z.number().int().positive().optional(),
       })
       .strict()
       .optional(),

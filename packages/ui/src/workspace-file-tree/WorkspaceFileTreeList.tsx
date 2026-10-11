@@ -21,7 +21,7 @@ import type {
 
 export const WORKSPACE_FILE_TREE_MASK_OFFSET_PROPERTY = "--workspace-file-tree-mask-offset";
 
-function getWorkspaceFileTreeListMaskStyle({
+export function getWorkspaceFileTreeListMaskStyle({
   stickyFolderCount,
 }: {
   stickyFolderCount: number;
@@ -30,7 +30,7 @@ function getWorkspaceFileTreeListMaskStyle({
     return undefined;
   }
   const hiddenHeight = stickyFolderCount * WORKSPACE_FILE_TREE_VIRTUAL_ROW_HEIGHT_PX;
-  // Sticky rows and the virtual list are siblings in the scroll container, so the original list rows still pass beneath the sticky rows.
+  // Reason for the fix: The sticky element and virtual list are siblings inside the scroll container, so the list’s original rows still pass beneath the sticky element.
   // The mask syncs a CSS variable through the native scroll event, hiding only the sticky height at the top of the viewport without changing list layout or scroll range.
   const maskImage = `linear-gradient(to bottom, transparent 0 ${hiddenHeight}px, black ${hiddenHeight}px)`;
   const maskPosition = `0 var(${WORKSPACE_FILE_TREE_MASK_OFFSET_PROPERTY})`;

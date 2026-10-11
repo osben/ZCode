@@ -33,9 +33,16 @@ export interface CodingPlanQuotaResetDialogConfig {
   usageItems: CodingPlanQuotaResetDialogUsageItem[];
 }
 
-function getRemainingSeconds(expiresAt: number | null, now: number): number {
-  if (expiresAt == null) return 0;
+function getRemainingSeconds(expiresAt: number, now: number): number {
   return Math.max(0, Math.ceil((expiresAt - now) / 1_000));
+}
+
+/**
+ * Whether a row still has a consumable opportunity; uses the same rule as
+ * hasUsableCodingPlanQuotaResetOpportunity but includes processing rows so their loading state remains visible.
+ */
+function isResetItemUsable(item: CodingPlanQuotaResetDialogResetItem, now: number): boolean {
+  return item.count > 0 && item.expiresAt !== null && item.expiresAt > now;
 }
 
 export function formatCodingPlanQuotaResetCountdown(
@@ -84,28 +91,6 @@ function resetTypeAriaId(resetType: CodingPlanResetType) {
     : "codingPlan.quotaReset.resetAria";
 }
 
-interface ResetRowCount {
-  /** Available count from the server's latest stable reading. */
-  authoritative: number;
-  /** Count successfully redeemed in this dialog but not yet reflected in the server reading. */
-  consumedLocally: number;
-}
-
-/** Displayed count = authoritative count − locally redeemed, clamped at 0; fall back to config.count when there is no local record. */
-function remainingResetCount(state: ResetRowCount | undefined, fallback: number): number {
-  return state ? Math.max(0, state.authoritative - state.consumedLocally) : fallback;
-}
-
-function seedResetRowCounts(
-  items: CodingPlanQuotaResetDialogResetItem[],
-): Map<CodingPlanResetType, ResetRowCount> {
-  const seeded = new Map<CodingPlanResetType, ResetRowCount>();
-  for (const item of items) {
-    seeded.set(item.resetType, { authoritative: item.count, consumedLocally: 0 });
-  }
-  return seeded;
-}
-
 export function CodingPlanQuotaResetDialog({
   config,
   open,
@@ -120,15 +105,16 @@ export function CodingPlanQuotaResetDialog({
   const [resettingType, setResettingType] = useState<CodingPlanResetType | null>(null);
   const [successfulType, setSuccessfulType] = useState<CodingPlanResetType | null>(null);
   const [exitingType, setExitingType] = useState<CodingPlanResetType | null>(null);
-  // The same type may have multiple opportunities. Track { authoritative count, locally redeemed count } by type, decrementing only one after success.
-  // Hide the row only at zero, so redeeming one does not hide the remaining opportunities and force the user to close/reopen the dialog.
-  const [rowCounts, setRowCounts] = useState<Map<CodingPlanResetType, ResetRowCount>>(
-    () => new Map(),
-  );
   const [scrollMasks, setScrollMasks] = useState({ bottom: false, top: false });
   const resetListRef = useRef<HTMLDivElement>(null);
   const timersRef = useRef<number[]>([]);
   const wasOpenRef = useRef(false);
+  // Decide whether the row remains using the latest config when success feedback ends; the item in the delayed task is the old snapshot from click time.
+  const resetItemsRef = useRef(config.resetItems);
+
+  useEffect(() => {
+    resetItemsRef.current = config.resetItems;
+  }, [config.resetItems]);
 
   useEffect(() => {
     if (open !== wasOpenRef.current) {
@@ -137,13 +123,12 @@ export function CodingPlanQuotaResetDialog({
       timersRef.current = [];
     }
     if (open && !wasOpenRef.current) {
-      setRowCounts(seedResetRowCounts(config.resetItems));
       setResettingType(null);
       setSuccessfulType(null);
       setExitingType(null);
     }
     wasOpenRef.current = open;
-  }, [config.resetItems, open]);
+  }, [open]);
 
   useEffect(() => {
     if (!open) return;
@@ -152,60 +137,6 @@ export function CodingPlanQuotaResetDialog({
     return () => window.clearInterval(timer);
   }, [open]);
 
-  useEffect(() => {
-    const viewport = resetListRef.current;
-    if (viewport) setScrollMasks(readScrollMasks(viewport));
-  }, [config.resetItems.length, rowCounts]);
-
-  // Reconcile local counts with authoritative server readings: an increase means new opportunities were granted; a decrease means redemption was reflected
-  // and reduces the same amount from locally pending counts. Do not backfill while count===0 (processing/completed transition) or during animation,
-  // so a pre-redemption snapshot or completion placeholder cannot "revive" a redeemed row. Clear local state for types removed from the list
-  // (the server confirmed they are exhausted) to hide the row.
-  useEffect(() => {
-    if (!open) return;
-    setRowCounts((current) => {
-      let next: Map<CodingPlanResetType, ResetRowCount> | null = null;
-      const ensureNext = () => (next ??= new Map(current));
-      const presentTypes = new Set<CodingPlanResetType>();
-      for (const item of config.resetItems) {
-        presentTypes.add(item.resetType);
-        const animating =
-          resettingType === item.resetType ||
-          successfulType === item.resetType ||
-          exitingType === item.resetType;
-        const state = current.get(item.resetType);
-        if (item.count === 0 || item.processing || animating) {
-          if (!state) {
-            ensureNext().set(item.resetType, {
-              authoritative: item.count,
-              consumedLocally: 0,
-            });
-          }
-          continue;
-        }
-        if (!state) {
-          ensureNext().set(item.resetType, { authoritative: item.count, consumedLocally: 0 });
-        } else if (item.count > state.authoritative) {
-          ensureNext().set(item.resetType, { ...state, authoritative: item.count });
-        } else if (item.count < state.authoritative) {
-          const drop = state.authoritative - item.count;
-          ensureNext().set(item.resetType, {
-            authoritative: item.count,
-            consumedLocally: Math.max(0, state.consumedLocally - drop),
-          });
-        }
-        // item.count === state.authoritative means the server is still reporting the pre-redemption count;
-        // keep the local optimistic value to prevent an old reading from reviving a redeemed row.
-      }
-      for (const type of current.keys()) {
-        if (!presentTypes.has(type)) {
-          ensureNext().delete(type);
-        }
-      }
-      return next ?? current;
-    });
-  }, [config.resetItems, exitingType, open, resettingType, successfulType]);
-
   useEffect(
     () => () => {
       for (const timer of timersRef.current) window.clearTimeout(timer);
@@ -213,15 +144,24 @@ export function CodingPlanQuotaResetDialog({
     [],
   );
 
-  const visibleResetItems = config.resetItems.filter((item) => {
-    const remaining = remainingResetCount(rowCounts.get(item.resetType), item.count);
-    return (
-      remaining > 0 ||
+  // Bugfix: the dialog used to keep a local “number redeemed” count, creating a second source of
+  // truth alongside the opportunity balance in entry. The completed state also cleared the balance,
+  // so after redeeming one opportunity, remaining rows had no expiry and displayed “expires in 0m
+  // 0s” until reopening the dialog corrected them from the new status. Completed now carries the
+  // remaining opportunities; count, expiry, and visibility read only from config. Keep a row
+  // temporarily during its click → success → collapse animation.
+  const visibleResetItems = config.resetItems.filter(
+    (item) =>
+      isResetItemUsable(item, now) ||
       resettingType === item.resetType ||
       successfulType === item.resetType ||
-      exitingType === item.resetType
-    );
-  });
+      exitingType === item.resetType,
+  );
+
+  useEffect(() => {
+    const viewport = resetListRef.current;
+    if (viewport) setScrollMasks(readScrollMasks(viewport));
+  }, [visibleResetItems.length]);
 
   const updateScrollMasks = (event: UIEvent<HTMLDivElement>) => {
     const next = readScrollMasks(event.currentTarget);
@@ -241,27 +181,28 @@ export function CodingPlanQuotaResetDialog({
       await item.onReset();
       setSuccessfulType(item.resetType);
       burstCodingPlanQuotaResetConfetti(origin);
-      const exitTimer = window.setTimeout(() => setExitingType(item.resetType), SUCCESS_DISPLAY_MS);
-      const removeTimer = window.setTimeout(() => {
-        // Increment the locally redeemed count for this type only (clamped to the authoritative count), hiding the row only at zero.
-        // When multiple remain, keep showing the row with the remaining count; no need to close/reopen. The reconciliation effect removes this local count after the server catches up.
-        setRowCounts((current) => {
-          const next = new Map(current);
-          const state = next.get(item.resetType) ?? {
-            authoritative: item.count,
-            consumedLocally: 0,
-          };
-          next.set(item.resetType, {
-            ...state,
-            consumedLocally: Math.min(state.authoritative, state.consumedLocally + 1),
-          });
-          return next;
-        });
-        setResettingType(null);
-        setSuccessfulType(null);
-        setExitingType(null);
-      }, ROW_EXIT_MS);
-      timersRef.current.push(exitTimer, removeTimer);
+      // When success feedback ends, decide using the latest config: keep the row in place and make
+      // it clickable again if opportunities of the same type remain (the completed state carries
+      // their count and earliest expiry); otherwise collapse it. onReset resolves only after status
+      // reconciliation is written, so config already reflects the redeemed opportunity.
+      const settleTimer = window.setTimeout(() => {
+        const latest = resetItemsRef.current.find(
+          (candidate) => candidate.resetType === item.resetType,
+        );
+        if (latest && isResetItemUsable(latest, Date.now())) {
+          setResettingType(null);
+          setSuccessfulType(null);
+          return;
+        }
+        setExitingType(item.resetType);
+        const removeTimer = window.setTimeout(() => {
+          setResettingType(null);
+          setSuccessfulType(null);
+          setExitingType(null);
+        }, ROW_EXIT_MS - SUCCESS_DISPLAY_MS);
+        timersRef.current.push(removeTimer);
+      }, SUCCESS_DISPLAY_MS);
+      timersRef.current.push(settleTimer);
     } catch {
       // useCodingPlanQuotaResetUi handles failure reasons and toasts; the dialog only restores the clickable state.
       setResettingType(null);
@@ -323,12 +264,12 @@ export function CodingPlanQuotaResetDialog({
                   const success = successfulType === item.resetType;
                   const isExiting = exitingType === item.resetType;
                   const effectiveProcessing = item.processing || resettingType === item.resetType;
-                  const remainingSeconds = getRemainingSeconds(item.expiresAt, now);
-                  // The same type may have multiple opportunities, but server /use cannot specify which one to redeem; entry keeps only
-                  // the count and earliest expiry. Display the remaining count after local reconciliation: after one redemption, the row stays
-                  // visible with the remainder. When there are multiple, label the count and "soonest" explicitly so users do not mistake the earliest expiry for a deadline shared by all opportunities.
-                  const remaining = remainingResetCount(rowCounts.get(item.resetType), item.count);
-                  const hasMultipleOpportunities = remaining > 1;
+                  // Multiple opportunities of the same type may be held, but server /use cannot
+                  // choose which one to redeem. entry stores only the count and earliest expiry (the
+                  // completed state carries the remaining count/expiry after redemption). When there
+                  // are multiple, show the count and “earliest” explicitly so users do not mistake
+                  // the earliest expiry for a deadline shared by every opportunity.
+                  const hasMultipleOpportunities = item.count > 1;
                   return (
                     <div
                       key={item.resetType}
@@ -349,25 +290,31 @@ export function CodingPlanQuotaResetDialog({
                                 <span className="inline-flex h-5 shrink-0 items-center rounded-full bg-interaction-confirmation-surface px-1.5 text-ui-sm text-interaction-confirmation-foreground">
                                   {intl.formatMessage(
                                     { id: "codingPlan.quotaReset.dialog.itemCount" },
-                                    { count: remaining },
+                                    { count: item.count },
                                   )}
                                 </span>
                               ) : null}
                             </div>
                             <div className="mt-0.5 truncate text-ui-sm text-foreground-subtle tabular-nums">
-                              {intl.formatMessage(
-                                {
-                                  id: hasMultipleOpportunities
-                                    ? "codingPlan.quotaReset.dialog.expiresInSoonest"
-                                    : "codingPlan.quotaReset.dialog.expiresIn",
-                                },
-                                {
-                                  time: formatCodingPlanQuotaResetCountdown(
-                                    remainingSeconds,
-                                    intl.formatMessage,
-                                  ),
-                                },
-                              )}
+                              {/* Bugfix: after the last opportunity is redeemed, the row is still
+                                  playing its success/collapse animation and has no expiry time; it
+                                  was previously rendered as 0 seconds and read as "expires in 0m 0s."
+                                  Use a non-breaking space placeholder to preserve the row height. */}
+                              {item.expiresAt === null
+                                ? "\u00a0"
+                                : intl.formatMessage(
+                                    {
+                                      id: hasMultipleOpportunities
+                                        ? "codingPlan.quotaReset.dialog.expiresInSoonest"
+                                        : "codingPlan.quotaReset.dialog.expiresIn",
+                                    },
+                                    {
+                                      time: formatCodingPlanQuotaResetCountdown(
+                                        getRemainingSeconds(item.expiresAt, now),
+                                        intl.formatMessage,
+                                      ),
+                                    },
+                                  )}
                             </div>
                           </div>
                           <Button

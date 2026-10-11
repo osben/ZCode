@@ -26,7 +26,7 @@ import { useAssistantCodeCommentFeatureEnabled } from "@/AssistantCodeCommentFea
 const FIND_AUTO_LOAD_ROW_LIMIT = 1200;
 const SEARCH_RESULT_HIGHLIGHT_DURATION_MS = 3000;
 
-interface UseConversationTimelineFindOptions {
+export interface UseConversationTimelineFindOptions {
   rootRef: React.RefObject<HTMLElement | null>;
   renderUnits: readonly ConversationTurnRenderUnit[];
   rows: readonly ConversationRow[];
@@ -92,8 +92,8 @@ export function useConversationTimelineFind({
     }
     const matches: ConversationFindMatch[] = [];
     let loadedRowCount = 0;
-    // Streaming deltas change only the current running turn; reuse the full-text index for stable turns
-    // instead of scanning all history on every token and keeping the renderer's main thread busy in long sessions.
+    // Reason for the fix: Streaming deltas change only the current running turn; the full-text index for stable turns can be reused,
+    // avoiding a full-history scan for every token that would keep the renderer’s main thread busy in long conversations.
     renderUnits.forEach((unit, unitIndex) => {
       const cacheKey = `${normalizedQuery}:${codeCommentCardsEnabled}:${unit.key}`;
       const cached = !unit.isRunning ? unitFindCacheRef.current.get(cacheKey) : undefined;

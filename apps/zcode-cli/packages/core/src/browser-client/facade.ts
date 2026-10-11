@@ -60,7 +60,7 @@ export interface BrowserTabInfo {
   viewport: BrowserViewportSize;
 }
 
-class BrowserCapability {
+export class BrowserCapability {
   readonly #readDocumentation: (name?: string) => string;
 
   constructor(
@@ -76,7 +76,7 @@ class BrowserCapability {
   }
 }
 
-class VisibilityBrowserCapability extends BrowserCapability {
+export class VisibilityBrowserCapability extends BrowserCapability {
   constructor(
     info: BrowserCapabilityInfo,
     readDocumentation: (name?: string) => string,
@@ -142,7 +142,7 @@ export interface BrowserClientTransport {
   execute: BrowserTransportExecuteFn;
 }
 
-interface CuaTab {
+export interface CuaTab {
   click(options: Point & { button?: number; keypress?: string[] }): Promise<void>;
   double_click(options: Point & { keypress?: string[] }): Promise<void>;
   downloadMedia(options: Point & { timeoutMs?: number }): Promise<void>;
@@ -153,7 +153,7 @@ interface CuaTab {
   type(options: { text: string }): Promise<void>;
 }
 
-interface DomCuaTab {
+export interface DomCuaTab {
   get_visible_dom(): Promise<BrowserSnapshot>;
   click(options: { node_id: string }): Promise<void>;
   double_click(options: { node_id: string }): Promise<void>;
@@ -347,7 +347,7 @@ export class RawTab {
   }
 }
 
-type JsDialog = AlertDialog | ConfirmDialog | PromptDialog | BeforeUnloadDialog;
+export type JsDialog = AlertDialog | ConfirmDialog | PromptDialog | BeforeUnloadDialog;
 
 class DialogBase {
   constructor(
@@ -1003,8 +1003,8 @@ export class BrowsersFacade {
   ) {
     const assertAvailable = options.assertAvailable ?? (() => undefined);
     this.assertAvailable = assertAvailable;
-    // The main agent and subagents share the node_repl kernel, so a Browser object created by the main agent
-    // may be held by a child. Guard every transport/doc call on the persistent object, not only initialization.
+    // The Browser object is a persistent reference, so old bindings must become invalid after a kernel reset. The guard must wrap every
+    // transport/doc call on the persistent object; checking only during initialization is not enough.
     this.transport = {
       list: async () => {
         assertAvailable();

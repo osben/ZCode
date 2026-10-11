@@ -16,6 +16,8 @@
  * Do not gate all three controls on config!==null—the draft state would render none of them.
  */
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { AlarmClockIcon } from "lucide-react";
+import { cn } from "@/components/lib/utils.js";
 import {
   BUILTIN_MODEL_PROVIDER_IDS,
   getModelProviderFamilySpec,
@@ -39,6 +41,8 @@ import type {
 } from "@zcode/shared/zcode-protocol-v4";
 import { ModelConfigSelect, type ModelSelectGroup } from "@/ModelConfigSelect.js";
 import { Button } from "@/components/ui/button.js";
+import { HighspeedModelIndicator } from "@/highspeed/HighspeedModelIndicator.js";
+import { formatHighspeedRemainingTime } from "@/highspeed/highspeedTime.js";
 import { ChatContextUsage } from "@/chat-input-toolbar/display.js";
 import {
   hasChatCodingPlanUsageRemaining,
@@ -108,6 +112,50 @@ const MODEL_SELECTION_LOADING_STATE: ModelSelectionState = { status: "loading" }
 
 /** Stable no-op callback (the single hotkey-hook instance handles only options owned by this component; other actions are placeholders). */
 function noop(): void {}
+
+function HighspeedCountdown({ expiresAt }: { expiresAt: number }) {
+  const { intl, locale } = useZCodeIntl();
+  const [now, setNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 1_000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  const remainingTime = formatHighspeedRemainingTime(expiresAt, now);
+  const absoluteExpiryLabel = intl.formatMessage(
+    { id: "chat.highspeed.expiresAt" },
+    {
+      time: new Date(expiresAt).toLocaleTimeString(locale, {
+        hour: "2-digit",
+        minute: "2-digit",
+      }),
+    },
+  );
+  const remainingTimeLabel = intl.formatMessage(
+    { id: "chat.highspeed.remainingTime" },
+    { time: remainingTime },
+  );
+
+  // Root cause: the countdown previously collapsed after Think, continuing to occupy a fixed 82px
+  // in medium-width windows. In narrow windows, hide only the value and keep the hoverable clock entry.
+  return (
+    <span
+      aria-label={absoluteExpiryLabel}
+      title={remainingTimeLabel}
+      data-highspeed-countdown="true"
+      className="highspeed-inline-countdown inline-flex h-7 w-[82px] shrink-0 items-center justify-center gap-1 rounded-md p-1 text-ui-caption @max-xl/composer:w-7 @max-xl/composer:gap-0 @max-xl/composer:p-0"
+    >
+      <AlarmClockIcon className="size-4 shrink-0" aria-hidden="true" />
+      <span
+        data-highspeed-countdown-value="true"
+        className="relative h-[18px] w-[54px] shrink-0 leading-4 tabular-nums @max-xl/composer:hidden"
+      >
+        <span className="absolute left-0 top-0.5">{remainingTime}</span>
+      </span>
+    </span>
+  );
+}
 
 export interface ModelSelectionSource {
   provider: string;
@@ -330,6 +378,7 @@ export interface V4ComposerToolbarProps {
   phase: SessionPhase | null;
   provider?: ZCodeProvider;
   /** Whether the toolbar currently runs inside the Web remote-control shell. */
+  isWebRemoteControl?: boolean;
   /** Whether the current viewport uses the mobile input layout. */
   isMobileViewport?: boolean;
   /** Draft state (sessionId=null); distinguishes new-task presentation only and does not change the selection source. */
@@ -338,6 +387,18 @@ export interface V4ComposerToolbarProps {
   draftConfig?: Partial<SessionConfigState>;
   usage: SessionUsageState | null;
   disabled: boolean;
+  /** Lock the model for this turn while a Highspeed card is active; do not allow switching through the picker or shortcuts. */
+  modelLocked?: boolean;
+  /** Show the Highspeed model and countdown after the diffusion tail starts (immediately on restored entry). */
+  highspeedPresented?: boolean;
+  /** Whether this entry is an activation effect for a newly drawn hit; restored model markers do not flip. */
+  highspeedEntranceAnimated?: boolean;
+  /** Play the shimmer once after the model flip finishes and settles. */
+  highspeedSweepActive?: boolean;
+  /** Highspeed card expiry time; when present, show a countdown between the model and Think. */
+  highspeedExpiresAt?: number;
+  /** Model bound to the draw response; overrides trigger text only while the model is locked. */
+  highspeedModel?: string;
   /** Exclusive owner for configuration pickers within one composer; renderer-local presentation only. */
   activeConfigPicker: V4ComposerConfigPicker | null;
   onConfigPickerOpenChange: (picker: V4ComposerConfigPicker, open: boolean) => void;
@@ -369,11 +430,18 @@ function V4ComposerModelControlsImpl({
   modelSelectionState = MODEL_SELECTION_LOADING_STATE,
   modelSelectionReload,
   provider,
+  isWebRemoteControl = false,
   isMobileViewport = false,
   draftMode = false,
   draftConfig,
   usage,
   disabled,
+  modelLocked = false,
+  highspeedPresented = false,
+  highspeedEntranceAnimated = false,
+  highspeedSweepActive = false,
+  highspeedExpiresAt,
+  highspeedModel,
   activeConfigPicker,
   onConfigPickerOpenChange,
   onSelectModel,
@@ -779,8 +847,9 @@ function V4ComposerModelControlsImpl({
     return effectiveConfig.model;
   }, [effectiveConfig, modelSelectionView]);
 
-  // Trigger display fallback: `<synthetic>` (a synthesized model restored by the Claude SDK) or a current model
-  // absent from selectable groups (invalid/offline/signed out) falls back to the placeholder/default “Select model.”
+  // Trigger display fallback: if `<synthetic>` (a placeholder model synthesized during SDK
+  // restore) or the current model is absent from the selectable group (invalid/offline/signed out),
+  // fall back to the placeholder/default “Select model” instead of showing an internal protocol placeholder or invalid model.
   // Do not show protocol-internal placeholders or invalid model IDs. Reuse resolveModelSelectTriggerDisplay.
   const triggerDisplay = useMemo(
     () =>
@@ -819,6 +888,7 @@ function V4ComposerModelControlsImpl({
   ]);
   const handleModelValueChange = useCallback(
     (value: string) => {
+      if (modelLocked) return;
       const decoded = decodeCustomModelValue(value);
       // The model visible when clicked in a draft may exist only in the catalog or may already be superseded by
       // the latest draft intent; do not let SessionPane infer it again from a late prewarm projection.
@@ -881,6 +951,7 @@ function V4ComposerModelControlsImpl({
       effectiveConfig?.provider,
       onRecoverCustomModelSelection,
       onSelectModel,
+      modelLocked,
       modelSelectionView,
       workspaceIdentity,
       workspacePath,
@@ -969,11 +1040,17 @@ function V4ComposerModelControlsImpl({
   // An empty model is a valid awaiting-selection state, including for existing conversations; do not hide the reselection entry.
   // Show it when selectable groups exist, and also when no groups exist but “Manage models” is available, so users always have a model entry point.
   const modelMenuVisible = modelSelectGroups.length > 0 || showManageModelsAction;
-  const providerSubmenuClassName = undefined;
+  // Root cause: the fixed-width mobile submenu ignored the available width Radix measured for the
+  // current side, and the shared min-w-32 prevented further shrinking in very narrow spaces. Keep
+  // the submenu interaction while treating the viewport edge as a hard limit.
+  const providerSubmenuClassName =
+    isWebRemoteControl && isMobileViewport
+      ? "w-40 min-w-0 max-w-(--radix-dropdown-menu-content-available-width)"
+      : undefined;
   useToolbarShortcutBindings({
     hasAnyOption: Boolean(modelOption) || Boolean(thoughtOption),
     toolbarDisabled: disabled || recoveryPending,
-    modelMenuDisabled: disabled || recoveryPending || !modelMenuVisible,
+    modelMenuDisabled: disabled || recoveryPending || modelLocked || !modelMenuVisible,
     modelOption,
     thoughtOption: thoughtOption ?? undefined,
     onOpenModelMenu: handleOpenModelMenuShortcut,
@@ -985,7 +1062,7 @@ function V4ComposerModelControlsImpl({
     <>
       {/*
         E2E contract (TID_V4_MODEL_CONFIG): data-* attribute anchors for Composer/usage state.
-        Switching models deliberately clears the source model's explicit thought setting. The
+        Bug cause: Switching models deliberately clears the source model's explicit thought setting. The
         visible control then shows the target model's default level from its Option Spec, while the
         old anchor still exposes the empty raw projection. data-thought must match the controlled
         value the user actually sees; do not introduce a second draft state.
@@ -1011,17 +1088,28 @@ function V4ComposerModelControlsImpl({
         data-usage-max={usage?.contextWindow?.maxTokens ?? ""}
         className="hidden"
       />
-      <ChatContextUsage
-        codingPlanUsageRemaining={codingPlanUsageRemaining}
-        taskUsage={taskUsage}
-        startPlanBalance={contextStartPlanBalance}
-        selectedProvider={displayProvider}
-        intl={intl}
-        locale={locale}
-        onSendCompressionCommand={onSendCompressionCommand}
-        compressionDisabled={disabled || recoveryPending}
-      />
-      {modelSelectionState.status === "error" && modelSelectionReload ? (
+      {/* A Highspeed card locks the model the moment it activates; do not wait for the motion handoff to finish before hiding, or the usage ring briefly flashes. */}
+      {!modelLocked ? (
+        <ChatContextUsage
+          codingPlanUsageRemaining={codingPlanUsageRemaining}
+          taskUsage={taskUsage}
+          startPlanBalance={contextStartPlanBalance}
+          selectedProvider={displayProvider}
+          intl={intl}
+          locale={locale}
+          onSendCompressionCommand={onSendCompressionCommand}
+          compressionDisabled={disabled || recoveryPending}
+        />
+      ) : null}
+      {/* The speed-wheel model is decided by the current card and the model picker is unavailable then, so the indicator takes precedence over the picker loading state. */}
+      {highspeedPresented && highspeedModel ? (
+        <HighspeedModelIndicator
+          model={highspeedModel}
+          originalModel={modelTriggerDisplay.fullLabel}
+          sweepActive={highspeedSweepActive}
+          animateEntrance={highspeedEntranceAnimated}
+        />
+      ) : modelSelectionState.status === "error" && modelSelectionReload ? (
         <Button
           type="button"
           variant="ghost"
@@ -1052,15 +1140,19 @@ function V4ComposerModelControlsImpl({
           manageModelsLabel={manageModelsLabel}
           onManageModels={handleOpenModelProviderSettings}
           lockReasonMessage={intl.formatMessage({
-            id: "chat.toolbar.modelSwitch.lockedByRunningTask",
+            id: modelLocked
+              ? "chat.highspeed.modelLocked"
+              : "chat.toolbar.modelSwitch.lockedByRunningTask",
           })}
           isItemLocked={isModelOptionLocked}
           onValueChange={handleModelValueChange}
-          disabled={disabled || recoveryPending || modelSelectionState.status !== "ready"}
+          disabled={
+            disabled || recoveryPending || modelLocked || modelSelectionState.status !== "ready"
+          }
           tooltipTitle={modelTriggerDisplay.fullLabel}
           shortcutLabel={modelShortcutLabel}
           triggerRef={modelTriggerRef}
-          open={activeConfigPicker === "model"}
+          open={!modelLocked && activeConfigPicker === "model"}
           onOpenChange={handleModelPickerOpenChange}
           openRequestKey={modelMenuOpenRequestKey}
           labelVisibilityClassName="hidden @sm/composer:inline-flex"
@@ -1072,11 +1164,15 @@ function V4ComposerModelControlsImpl({
           providerSubmenuClassName={providerSubmenuClassName}
         />
       ) : null}
+      {highspeedPresented && highspeedExpiresAt !== undefined ? (
+        <HighspeedCountdown expiresAt={highspeedExpiresAt} />
+      ) : null}
       {thoughtOption ? (
         <ThoughtLevelCycleControl
           composerCollapsePriority={3}
           labelVisibilityClassName="inline-flex"
           indicatorClassName="block"
+          triggerClassName={cn(highspeedPresented && "text-ui-caption")}
           option={thoughtOption}
           onValueChange={handleThoughtValueChange}
           disabled={disabled || recoveryPending}

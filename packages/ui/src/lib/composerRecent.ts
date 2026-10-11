@@ -1,3 +1,4 @@
+import { isHighspeedProviderId } from "@zcode/shared";
 import { modelSelectionSchema, type ModelSelection } from "@zcode/shared/model-selection";
 import { submissionModeSchema, type SubmissionMode } from "@zcode/shared/zcode-protocol-v4";
 import type { ModelSelectionView } from "@zcode/services";
@@ -40,9 +41,18 @@ export function readComposerRecent(
       "modelSelection" in record ? record.modelSelection : record,
     );
     const mode = submissionModeSchema.safeParse("mode" in record ? record.mode : undefined);
-    if (!selection.success && !mode.success) return null;
+    // Self-healing (spec §5.1): an existing Recent entry may have been overwritten by an accelerated
+    // turn with a hidden acceleration Provider. The model view resolves it as provider-not-found,
+    // leaving the new-task model picker empty. Drop the model at the leaf but keep mode so the new
+    // draft falls back to the default selection, matching readSessionModelSelection's handling of
+    // persistent acceleration entries.
+    const healedSelection =
+      selection.success && !isHighspeedProviderId(selection.data.providerId)
+        ? selection.data
+        : undefined;
+    if (!healedSelection && !mode.success) return null;
     return {
-      ...(selection.success ? { modelSelection: selection.data } : {}),
+      ...(healedSelection ? { modelSelection: healedSelection } : {}),
       ...(mode.success ? { mode: mode.data } : {}),
     };
   } catch {
@@ -61,6 +71,18 @@ export function captureComposerRecentSubmission(
   const key = resolveComposerRecentKey(workspacePath, workspaceIdentity);
   const mode = submissionModeSchema.safeParse(submission.mode);
   const modelSelection = normalizeSparseModelSelection(submission.modelSelection);
+  if (modelSelection && isHighspeedProviderId(modelSelection.providerId)) {
+    // Fallback (spec §5.1): the acceleration Provider is a one-turn execution identity and appears
+    // in no model catalog, so storing it in Recent would make the new-task draft seed resolve to
+    // empty. Normally SessionPane passes the Composer's original selection for an accelerated turn;
+    // this guards only paths that call with the overridden payload directly. Skip without advancing
+    // the index, preserving the last valid entry.
+    logger.warn("[ComposerRecent] 提交指向加速卡 Provider，跳过偏好记录", {
+      workspacePath,
+      workspaceIdentity,
+    });
+    return () => {};
+  }
   if (!mode.success || !modelSelection) {
     // Recent is a preference saved after sending; on invalid input, skip recording but do not block the authoritative command.
     logger.warn("[ComposerRecent] 最近提交配置格式无效，跳过偏好记录", {
@@ -131,7 +153,7 @@ export function resolveDraftInitialModelSelection(
   };
 }
 
-function isSelectionInView(view: ModelSelectionView, selection: ModelSelection): boolean {
+export function isSelectionInView(view: ModelSelectionView, selection: ModelSelection): boolean {
   const model = findModel(view, selection);
   if (!model) return false;
   const reasoning = selection.options?.reasoningLevel;

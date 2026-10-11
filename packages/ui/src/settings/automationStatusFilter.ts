@@ -7,7 +7,7 @@ import {
 } from "@/settings/automationFormat.js";
 
 export type AutomationStatusFilter = "all" | "inProgress" | "completed" | "failed";
-type AutomationStatusFilterKind = Exclude<AutomationStatusFilter, "all">;
+export type AutomationStatusFilterKind = Exclude<AutomationStatusFilter, "all">;
 
 /** Default filter: no filtering. AutomationsSection references this constant to avoid a bare "all" in source triggering the All-tab regression assertion. */
 export const DEFAULT_AUTOMATION_STATUS_FILTER: AutomationStatusFilter = "all";
@@ -20,7 +20,7 @@ export const AUTOMATION_STATUS_FILTERS: readonly AutomationStatusFilter[] = [
 ];
 
 /** Six Off-Peak states → three groups: queued/paused/running can still progress, so count as active; canceled and failed are both abnormal endings, so group as failed. */
-function resolveOffPeakStatusFilterKind(
+export function resolveOffPeakStatusFilterKind(
   task: Pick<ZCodeOffPeakTask, "status">,
 ): AutomationStatusFilterKind {
   switch (task.status) {
@@ -38,7 +38,7 @@ type AutomationFilterLike = Parameters<typeof resolveAutomationStatusKind>[0] &
   Parameters<typeof hasAutomationFailureState>[0];
 
 /** Scheduled tasks: check the failure badge first (including the latest run failure for recurring tasks), then lifecycle terminal states; all others are active. */
-function resolveAutomationStatusFilterKind(
+export function resolveAutomationStatusFilterKind(
   automation: AutomationFilterLike,
 ): AutomationStatusFilterKind {
   if (hasAutomationFailureState(automation)) return "failed";

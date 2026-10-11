@@ -46,6 +46,7 @@ export function VirtualizedGroupedTaskList({
   activeWorkspacePath,
   activeWorkspaceIdentity,
   activeTaskId,
+  mobileActiveTaskKey,
   getTaskRemoteSessionId,
   getTaskWorkspaceLabel,
   onSelectTask,
@@ -65,6 +66,7 @@ export function VirtualizedGroupedTaskList({
   activeWorkspacePath: string;
   activeWorkspaceIdentity?: string;
   activeTaskId: string | null;
+  mobileActiveTaskKey?: string | null;
   getTaskRemoteSessionId: (task: ZCodeTaskMeta) => string | undefined;
   getTaskWorkspaceLabel: (task: ZCodeTaskMeta) => string;
   onSelectTask: (workspacePath: string, taskId: string, workspaceIdentity?: string) => void;
@@ -160,6 +162,7 @@ export function VirtualizedGroupedTaskList({
         activeWorkspacePath={activeWorkspacePath}
         activeWorkspaceIdentity={activeWorkspaceIdentity}
         activeTaskId={activeTaskId}
+        mobileActiveTaskKey={mobileActiveTaskKey}
         onSelectTask={onSelectTask}
         onCloseTask={onCloseTask}
         onOpenFileTree={onOpenFileTree}
@@ -181,6 +184,7 @@ export function VirtualizedGroupedTaskList({
       getTaskWorkspaceLabel,
       groupId,
       groups,
+      mobileActiveTaskKey,
       onArchiveTask,
       onCloseTask,
       onMarkTaskAsUnread,
@@ -233,9 +237,9 @@ export function VirtualizedGroupedTaskList({
         overflowAnchor: "none",
       }}
     >
-      {/* Large groups previously rendered every task row at once; 2,000 tasks created tens of thousands of DOM nodes and increased
+      {/* Bugfix: large groups previously rendered every task row at once; 2,000 tasks created tens of thousands of DOM nodes and increased
           JavaScript/layout CPU usage. Mount only rows in the scroll window while keeping clicks and menus available. */}
-      {/* Virtual rows inside a group mount and unmount during scrolling. Browser scroll anchoring can mistake
+      {/* Bugfix: virtual rows inside a group mount and unmount during scrolling. Browser scroll anchoring can mistake
           these absolutely positioned rows for stable anchors and reset scrollTop to the top when measurements are written back.
           Disable anchor selection for the virtual-list subtree so it does not conflict with react-virtual positioning. */}
       {renderedVirtualTasks}

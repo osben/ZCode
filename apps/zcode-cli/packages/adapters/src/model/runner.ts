@@ -1,3 +1,4 @@
+import type { ModelRequestSecurityState } from "./request-security.js";
 // ============================================================
 // Vercel AI SDK model runner
 // ============================================================
@@ -31,6 +32,7 @@ import {
   type AiSdkModelRetryOptions,
   type ResolvedAiSdkModelRetryOptions,
 } from "./retry-policy.js";
+import { resolveRetryOptionsForBudget } from "./retry-budget.js";
 import { DEFAULT_MODEL_STREAM_IDLE_TIMEOUT_MS } from "./stream-idle-timeout.js";
 import { runGenerateText } from "./runner-generate.js";
 import { runStreamText } from "./runner-stream.js";
@@ -42,6 +44,7 @@ import {
   type ResolvedAiSdkModel,
 } from "./runner-runtime.js";
 import { createModel, type ModelExecutionRequest } from "./model.js";
+import { refreshOffPeakRequestAuth } from "./off-peak-request-auth.js";
 
 export type { AiSdkModelRetryOptions } from "./retry-policy.js";
 export type {
@@ -56,6 +59,8 @@ export { normalizeUsage, toModelStreamEvent } from "./runner-normalization.js";
 
 export interface AiSdkModelAdapterOptions {
   defaultHeaders?: AiSdkModelExecutionConfig["defaultHeaders"];
+  requestSecurityState?: ModelRequestSecurityState;
+  endpointRoutingPort?: import("@zcode/contracts").ProviderEndpointRoutingPort;
   network?: AiSdkNetworkConfig;
   runtime?: AiSdkModelRuntime;
   env?: EnvRecord;
@@ -92,10 +97,16 @@ export class AiSdkModelAdapter {
     this.execution = new AiSdkModelExecution(
       {
         defaultHeaders: options.defaultHeaders,
+        ...(options.endpointRoutingPort
+          ? { endpointRoutingPort: options.endpointRoutingPort }
+          : {}),
         ...(options.network ? { network: options.network } : {}),
         ...(options.env ? { env: options.env } : {}),
       },
       {
+        ...(options.requestSecurityState
+          ? { requestSecurityState: options.requestSecurityState }
+          : {}),
         ...(options.logger ? { logger: options.logger } : {}),
       },
     );
@@ -160,13 +171,18 @@ export class AiSdkModelAdapter {
       const shouldAttachReasoningTelemetry = request.options.reasoningLevel !== undefined;
       const selectedReasoningLevel = request.options.reasoningLevel;
       const requestAuthDependency = options.requestDependencies?.requestAuth;
+      // Root cause: accelerated-card (highspeed) and Off-Peak are both Coding Plan-derived modes; this turn's dynamic auth
+      // (zcode JWT + Coding Plan dual JWT + X-Highspeed-Card-ID, see docs/highspeed/highspeed-card-spec.md
+      // §2.2) is passed to the execution-scoped Source through modelExecution.requestAuth. If the gate recognizes only off-peak, highspeed
+      // falls into the account runtime-header refresh path below, which discards the entire requestAuth (including card ID); the accelerated request then fails with 401 at /api/v1/highspeed because of the missing card ID/
+      // wrong auth. Both derived no-sign-in modes must consume the execution-scoped Source.
       const requestAuthRequired =
         options.providerConfig.access.type === "zhipu-account" &&
-        options.providerConfig.access.mode === "off-peak";
-      // The call-level runtime header Port serves only account-based Models bound to complete Account Access.
-      // If a regular API-key Model used this Port, static credentials would be sent to the Host for refresh
-      // and fail before the request. Off-Peak Models always use the execution-scope Source injected at
-      // creation and do not depend on the account service.
+        (options.providerConfig.access.mode === "off-peak" ||
+          options.providerConfig.access.mode === "highspeed");
+      // The call-level runtime-header Port serves only account-based Models with complete Account Access bindings;
+      // if ordinary API-key Models use this port too, static auth is incorrectly sent to the Host for refresh and fails before the request.
+      // Derived modes retain execution-scoped tickets/card identity; Off-Peak PATs still refresh per request through the original account owner.
       const refreshRuntimeHeadersBeforeAttempt = requestAuthRequired
         ? async (input: ModelRequestAuthSourceInput) => {
             const requestAuth = await requestAuthDependency?.source?.resolve(input);
@@ -176,7 +192,17 @@ export class AiSdkModelAdapter {
                 `Model request auth is unavailable: ${resolved.providerId}/${resolved.modelId}`,
               );
             }
-            return { headersApplied: true, requestAuth };
+            const refreshedAuth =
+              options.providerConfig.access.type === "zhipu-account" &&
+              options.providerConfig.access.mode === "off-peak"
+                ? await refreshOffPeakRequestAuth({
+                    auth: requestAuth,
+                    input,
+                    accountAccess: options.providerConfig.access,
+                    refresh: contextRefreshRuntimeHeadersBeforeAttempt,
+                  })
+                : requestAuth;
+            return { headersApplied: true, requestAuth: refreshedAuth };
           }
         : options.providerConfig.access.type === "zhipu-account"
           ? (contextRefreshRuntimeHeadersBeforeAttempt ??
@@ -300,7 +326,7 @@ export class AiSdkModelAdapter {
       request: projectedRequest,
       resolveModel,
       resolved,
-      retry: this.retry,
+      retry: resolveRetryOptionsForBudget(this.retry, projectedRequest.modelRetryBudget),
       runtime: this.runtime,
       statusSink: this.statusSink,
       modelIoFullRetentionEnabled: this.modelIoFullRetentionEnabled,
@@ -320,7 +346,8 @@ export class AiSdkModelAdapter {
       request: projectedRequest,
       resolveModel,
       resolved,
-      retry: this.retry,
+      // The single-attempt budget reduces maxAttempts to 1 for execution-scoped handles with selectionFallback.
+      retry: resolveRetryOptionsForBudget(this.retry, projectedRequest.modelRetryBudget),
       runtime: this.runtime,
       statusSink: this.statusSink,
       streamIdleTimeoutMs: this.streamIdleTimeoutMs,

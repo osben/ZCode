@@ -11,15 +11,18 @@ import {
   type WorkflowRunState,
 } from "./workflow-runs.js";
 
-/** Event `reason` for resetting an idle bucket to its ceiling. This is not a cooldown; clear any old cooldown when received. */
+/** `reason` value in the event: the bucket reset to default concurrency after becoming idle; this is not a cooldown, so clear any old cooldown on receipt. */
 const CONCURRENCY_IDLE_RESET_REASON = "idle_reset";
 
 /**
  * Reduce `concurrency-changed` into `run.concurrency`.
  *
- * Derive the ceiling from the greatest `previous` / `next` seen by this run (the event omits it; the bucket starts at the ceiling, so the first
- * event's `previous` is the ceiling and remains the maximum in a sequence that only decreases). `cooldownMs` is present only for rate limits with Retry-After;
- * `idle_reset` clears it. If `next` is invalid or absent, return unchanged: without a cap there is nothing to display.
+ * `ceiling` is default concurrency D (docs/dynamic-workflow/concurrency.md, "Protocol state"): always use the value
+ * recorded by `run-started` in `run.concurrencyCeiling`. The shared bucket can auto-grow to 2D, and a raised run can go higher,
+ * so the greatest observed previous / next value is no longer D. It is only a fallback for **older CLIs** that omit
+ * `concurrencyCeiling`: their bucket starts at the ceiling and only decreases, so its maximum is the ceiling. `cooldownMs` is
+ * present only for rate limits with Retry-After; `idle_reset` clears it. If `next` is unreadable (missing / not a positive integer),
+ * only advance the watermark: without a cap there is nothing to display.
  *
  * Preserve `limit`: it is this run's own bound from `run-started`, independent of shared bucket changes. The governor lowering
  * or raising a provider key does not change the limit the user set for this run.
@@ -31,7 +34,7 @@ export function reduceConcurrencyChanged(
   const next = positiveInteger(payload.next);
   if (next === undefined) return run;
   const previous = positiveInteger(payload.previous) ?? next;
-  const ceiling = Math.max(run.concurrency?.ceiling ?? 0, previous, next);
+  const ceiling = run.concurrencyCeiling ?? Math.max(run.concurrency?.ceiling ?? 0, previous, next);
   const key = nonEmptyString(payload.key);
   const limit = run.concurrency?.limit;
   const cooldownMs =
@@ -51,15 +54,18 @@ export function reduceConcurrencyChanged(
 }
 
 /**
- * Reduce `run-started` into `run.concurrency.limit`, the bound **for this run**. The payload includes the engine's
- * `caps.maxConcurrency` and the `concurrencyCeiling` computed by the CLI when it creates the payload (the ceiling is a process fact,
- * not an engine fact, so the CLI adds it, following the precedent of `resumedFrom`).
+ * `run-started` → `run.concurrency.limit`: this run's **own** limit
+ * (docs/dynamic-workflow/concurrency.md, "Two bounds on a run"). The payload carries the engine's
+ * `caps.maxConcurrency` and `concurrencyCeiling`, default concurrency D computed by the CLI when building the payload (the wire key
+ * predates the term "default concurrency" and remains for compatibility with older clients). D is a process fact, not an engine fact,
+ * so the CLI adds it to the payload, following the `resumedFrom` precedent.
  *
- * Record it only when `maxConcurrency < ceiling`: a run at the ceiling stays byte-for-byte identical, with no extra keys.
- * Older CLIs do not send `concurrencyCeiling`; without a readable ceiling, we cannot tell whether the run was lowered, so leave it unchanged.
+ * Record only when `maxConcurrency ≠ D`—both **above and below**: D is a starting point, not a limit, and users can give a run
+ * more concurrency than the default. A run at the default remains byte-for-byte unchanged with no extra key. Older CLIs omit
+ * `concurrencyCeiling`, so when D cannot be read there is no way to tell whether this run has its own limit; leave it unchanged.
  *
- * Preserve shared bucket fields (`cap` / `key` / `cooldownMs`): resume emits another `run-started` for the same runId, and by then the process may
- * have learned a rate-limited lower cap. Replacing it with the ceiling would report a false value. Likewise, `ceiling` only increases, following the watermark rule in `reduceConcurrencyChanged`.
+ * Preserve shared-bucket fields (`cap` / `key` / `cooldownMs`) as-is: resume emits another `run-started` for the same runId,
+ * and by then the process may have learned a rate-limited lower cap. Replacing it with D would report a false higher value.
  */
 export function reduceRunStartedConcurrency(
   run: WorkflowRunState,
@@ -71,36 +77,39 @@ export function reduceRunStartedConcurrency(
     readCeiling !== undefined && readCeiling <= WORKFLOW_RUNS_LIMITS.maxConcurrencyCeiling
       ? readCeiling
       : undefined;
-  // Store the ceiling separately in `run.concurrencyCeiling`: the settings stepper needs to know its upper bound,
-  // and a run at the ceiling has no `concurrency` object. If it cannot be read, retain the known value, following the subagentModel fallback rule.
+  // Store D separately (`run.concurrencyCeiling`): the settings dialog displays "Default N" and treats matching the default as
+  // no run-specific limit, while a run at the default has no `concurrency` field. If unreadable, keep the known value, following
+  // the same degradation rule as subagentModel.
   const withCeiling =
     ceiling === undefined || run.concurrencyCeiling === ceiling
       ? run
       : { ...run, concurrencyCeiling: ceiling };
-  if (limit === undefined || ceiling === undefined || limit >= ceiling) return withCeiling;
+  if (limit === undefined || ceiling === undefined || limit === ceiling) return withCeiling;
   const existing = withCeiling.concurrency;
   const concurrency: WorkflowRunConcurrency = {
-    // Without shared bucket data, start cap at the ceiling: that is where the bucket starts, as also assumed when reduceConcurrencyChanged derives the ceiling.
+    // Without shared-bucket data, start cap at D; that is where the bucket starts.
     ...(existing ?? { cap: ceiling }),
-    ceiling: Math.max(existing?.ceiling ?? 0, ceiling),
+    ceiling,
     limit,
   };
   return { ...withCeiling, concurrency };
 }
 
 /**
- * Reduce `run-caps-changed` into `run.concurrency.limit`: this run's own bound changed **while it was active**. A revision that changes only
- * `max_concurrency` takes effect in place; the run is not stopped or restarted. The engine emits this event after updating caps, with the same payload shape as `run-started`
- * (engine `caps.maxConcurrency` plus CLI-provided `concurrencyCeiling`). Read the same two fields and apply the same “record only below the ceiling” rule as
- * `reduceRunStartedConcurrency`, so the same value produces the same result through either path.
+ * `run-caps-changed` → `run.concurrency.limit`: this run's own limit changed **while it was running**
+ * (a revision that changes only `max_concurrency` takes effect in place without stopping or restarting the run;
+ * docs/dynamic-workflow/concurrency.md). The engine emits this event after changing caps, with the same payload shape as `run-started`
+ * (engine `caps.maxConcurrency` plus CLI-supplied `concurrencyCeiling`, default concurrency D). Like `reduceRunStartedConcurrency`,
+ * read the same two fields and record only when `maxConcurrency ≠ D`, so the same value cannot produce different readings through the two paths.
  *
- * Resolve the ceiling from the payload, then the value already known for this run. It is a process fact that remains constant for the run, and `run-started` stores it
- * in `run.concurrencyCeiling`, giving this event an extra fallback. If neither is available, whether the value was lowered cannot be determined, so leave it unchanged.
- * The same applies when `caps` cannot be read.
+ * Resolve D from the payload, then this run's known value. It is a process fact, constant for the whole run, and `run-started`
+ * already stored it in `run.concurrencyCeiling`, so this event has one more fallback than `run-started`. If neither value exists,
+ * there is no way to tell whether this number is the default; leave it unchanged. The same applies when `caps` is unreadable.
  *
- * When the limit rises to the ceiling, **remove** `limit` instead of setting it to the ceiling: by protocol, a run at the ceiling has no per-run bound. After removal,
- * if shared bucket state has nothing to report (cap is at its ceiling and not cooling down), omit the entire `concurrency` key, making the run byte-for-byte identical to one that was never lowered.
- * If `limit` was already absent, leave everything unchanged to preserve idempotency.
+ * Returning to D must **remove** `limit`, not set it to D: by protocol, a run at the default has no run-specific limit.
+ * If the shared bucket also has nothing to report after removal (cap is at least D and there is no cooldown—cap above D is still
+ * uninformative for a default run, whose reading is `min(cap, D)`), omit the whole `concurrency` key, byte-for-byte matching a run
+ * whose limit was never changed. If `limit` was already absent, leave everything untouched (the idempotency anchor).
  */
 export function reduceRunCapsChanged(
   run: WorkflowRunState,
@@ -119,23 +128,24 @@ export function reduceRunCapsChanged(
   const ceiling = payloadCeiling ?? withCeiling.concurrencyCeiling;
   if (maxConcurrency === undefined || ceiling === undefined) return withCeiling;
   const existing = withCeiling.concurrency;
-  if (maxConcurrency < ceiling) {
+  if (maxConcurrency !== ceiling) {
     const concurrency: WorkflowRunConcurrency = {
-      // Without shared bucket data, start cap at the ceiling, following the same assumption as reduceRunStartedConcurrency.
+      // Without shared-bucket data, start cap at D, following the same rule as reduceRunStartedConcurrency.
       ...(existing ?? { cap: ceiling }),
-      ceiling: Math.max(existing?.ceiling ?? 0, ceiling),
+      ceiling,
       limit: maxConcurrency,
     };
     return { ...withCeiling, concurrency };
   }
   if (existing?.limit === undefined) return withCeiling;
-  const { limit: _lifted, ...shared } = existing;
+  const { limit: _lifted, ...rest } = existing;
+  const shared: WorkflowRunConcurrency = { ...rest, ceiling };
   return shared.cooldownMs === undefined && shared.cap >= shared.ceiling
     ? withoutConcurrency(withCeiling)
     : { ...withCeiling, concurrency: shared };
 }
 
-/** Remove the entire `concurrency` key instead of leaving an empty object: by protocol, a run at the ceiling has no such key. */
+/** Remove the entire `concurrency` key (do not leave an empty object): by protocol, a run at the default with nothing to report omits this key. */
 function withoutConcurrency(run: WorkflowRunState): WorkflowRunState {
   const { concurrency: _cleared, ...rest } = run;
   return rest;

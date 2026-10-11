@@ -1,6 +1,6 @@
 import { logger } from "@/logger.js";
 
-interface SessionQuotaBannerDismissalStore {
+export interface SessionQuotaBannerDismissalStore {
   dismiss(sessionId: string, dismissKey: string): void;
   getSnapshot(): number;
   isDismissed(sessionId: string, dismissKey: string): boolean;
@@ -12,7 +12,7 @@ function storageKey(sessionId: string, dismissKey: string): string {
 }
 
 /** Session-scoped dismissal for the Renderer lifetime; not persisted or synchronized across clients. */
-function createSessionQuotaBannerDismissalStore(
+export function createSessionQuotaBannerDismissalStore(
   maxEntries = 256,
 ): SessionQuotaBannerDismissalStore {
   const capacity = Math.max(1, Math.trunc(maxEntries));

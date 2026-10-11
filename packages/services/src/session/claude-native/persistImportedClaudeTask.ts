@@ -56,7 +56,7 @@ export async function persistImportedClaudeTask(params: {
   const indexMeta: ZCodeTaskMeta = {
     ...meta,
     // The SQLite task index mode column is still NOT NULL; keep the imported snapshot at its filtered default.
-    mode: meta.mode ?? "build",
+    mode: meta.mode ?? "default",
   };
 
   await writeImportedClaudeTaskSnapshot({ sessionFile: { ...parsed, meta } });

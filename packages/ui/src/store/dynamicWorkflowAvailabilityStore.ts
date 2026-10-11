@@ -23,7 +23,11 @@ export interface DynamicWorkflowAvailabilitySnapshot {
   readonly status: DynamicWorkflowAvailabilityStatus;
   /** Always false while loading: when availability is unknown, do not expose it; let the entry point appear slightly later rather than flash and disappear. */
   readonly enabled: boolean;
-  /** Null when not ready or the fetch failed; `source` is for observability only, distinguishing “disabled by server” from “local override.” */
+  /**
+   * Null until ready or if fetching fails; `source` is only for observability, distinguishing
+   * “disabled by server” from “locally overridden.” `offeredMode` is the mode offered by the server
+   * (whether the settings row appears and which option is labeled “Default”); `mode` is the effective mode.
+   */
   readonly config: DynamicWorkflowClientConfig | null;
 }
 
@@ -32,6 +36,12 @@ interface DynamicWorkflowAvailabilityState extends DynamicWorkflowAvailabilitySn
   ensureLoaded(service: ICodingPlanSubscriptionService): Promise<void>;
   /** Bypass the gate and Host’s 1h snapshot cache to fetch again (forceRefresh). */
   refresh(service: ICodingPlanSubscriptionService): Promise<void>;
+  /**
+   * Bypass the latch without forceRefresh: after the user changes the dynamic-workflow selection and
+   * Host resends its policy, reread the effective value (launch.md, “The user's choice”). The server's
+   * offered modes have not changed, so there is no need to refetch client/configs.
+   */
+  reload(service: ICodingPlanSubscriptionService): Promise<void>;
 }
 
 const INITIAL_SNAPSHOT: DynamicWorkflowAvailabilitySnapshot = {
@@ -86,5 +96,16 @@ export const useDynamicWorkflowAvailabilityStore = create<DynamicWorkflowAvailab
     refresh(service): Promise<void> {
       return loadDynamicWorkflowConfig(service, { forceRefresh: true }, set);
     },
+
+    reload(service): Promise<void> {
+      return loadDynamicWorkflowConfig(service, {}, set);
+    },
   }),
 );
+
+/** For tests: clear the snapshot and the “result received” latch. */
+export function resetDynamicWorkflowAvailabilityStoreForTests(): void {
+  inFlight = null;
+  settledService = null;
+  useDynamicWorkflowAvailabilityStore.setState({ ...INITIAL_SNAPSHOT });
+}

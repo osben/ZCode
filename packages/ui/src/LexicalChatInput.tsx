@@ -57,6 +57,7 @@ import {
 import { logger } from "./logger.js";
 import { recordInputLag } from "./lib/uiPerfArmsTelemetry.js";
 import { navigatePromptHistory } from "./lib/promptHistory.js";
+import { resolveMobileInputTextSizeClassName } from "@/lib/mobileTextInput.js";
 import type { MentionItemData } from "@/mentions/mentionTypes.js";
 import type { ComposerMentionPrefill } from "@/store/zcodeSessionStoreTypes.js";
 
@@ -111,7 +112,7 @@ interface LexicalModifiedEnterSubmitOptions {
   text: string;
 }
 
-type LexicalSubmitResult = boolean | void;
+export type LexicalSubmitResult = boolean | void;
 
 interface LeadingChineseSlashAliasInputOptions {
   data: string | null;
@@ -125,7 +126,7 @@ const STANDARD_SLASH_TRIGGER = "/";
 
 import { HISTORY_NAVIGATION_UPDATE_TAG, PROGRAMMATIC_UPDATE_TAG } from "./lib/editorUpdateTags.js";
 
-function shouldSubmitLexicalEnter({
+export function shouldSubmitLexicalEnter({
   allowSubmitWhenEmpty = false,
   ctrlKey = false,
   enterSubmits,
@@ -143,7 +144,7 @@ function shouldSubmitLexicalEnter({
   return Boolean(text.trim() || allowSubmitWhenEmpty);
 }
 
-function shouldSubmitLexicalModifiedEnter({
+export function shouldSubmitLexicalModifiedEnter({
   allowSubmitWhenEmpty = false,
   ctrlKey = false,
   isComposing = false,
@@ -161,11 +162,11 @@ function shouldSubmitLexicalModifiedEnter({
   );
 }
 
-function shouldResetLexicalEditorAfterSubmit(result: LexicalSubmitResult): boolean {
+export function shouldResetLexicalEditorAfterSubmit(result: LexicalSubmitResult): boolean {
   return result !== false;
 }
 
-function shouldNormalizeLeadingChineseSlashAliasInput({
+export function shouldNormalizeLeadingChineseSlashAliasInput({
   data,
   inputType,
   isAtEditorStart,
@@ -246,7 +247,7 @@ function replaceEditorTextWithPluginMentions(editor: LexicalEditor, text: string
   );
 }
 
-function replaceEditorWithMention(
+export function replaceEditorWithMention(
   editor: LexicalEditor,
   mention: ComposerMentionPrefill,
   trailingText = " ",
@@ -272,7 +273,7 @@ function replaceEditorWithMention(
  * Do not rebuild through getMarkdown → setMention: setMention is replacement-style prefill and would serialize
  * old mentions back into the editor as plain TextNodes, downgrading existing Plugin/file/Skill chips.
  */
-function prependEditorMentionIfMissing(
+export function prependEditorMentionIfMissing(
   editor: LexicalEditor,
   mention: ComposerMentionPrefill,
 ): boolean {
@@ -1228,7 +1229,7 @@ function PasteCapturePlugin({
 }
 
 /** Expose focus / clear / getText to callers. */
-function insertEditorMention(
+export function insertEditorMention(
   editor: LexicalEditor,
   mention: ComposerMentionPrefill,
   selectionState?: EditorState,
@@ -1327,6 +1328,7 @@ interface LexicalChatInputProps {
   inputTestId?: string;
   editorApiRef?: React.MutableRefObject<LexicalChatInputHandle | null>;
   promptHistory?: readonly string[];
+  avoidIosInputFocusZoom?: boolean;
   compactPlaceholder?: boolean;
   onWhiteboardMentionSelected?: (boardId: string) => void | Promise<void>;
   onPaste?: (event: ChatComposerPasteEvent) => void;
@@ -1359,6 +1361,7 @@ export function LexicalChatInput({
   inputTestId,
   editorApiRef,
   promptHistory = [],
+  avoidIosInputFocusZoom = false,
   compactPlaceholder = false,
   onWhiteboardMentionSelected,
   onPaste,
@@ -1441,7 +1444,11 @@ export function LexicalChatInput({
         "aria-placeholder": placeholder,
         placeholder: (
           <div
-            className={`pointer-events-none absolute left-0 top-0 ${compactPlaceholder ? "line-clamp-2" : ""} text-ui-base leading-5 text-foreground-subtlest`}
+            className={`pointer-events-none absolute left-0 top-0 ${compactPlaceholder ? "line-clamp-2" : ""} ${resolveMobileInputTextSizeClassName(
+              {
+                avoidIosInputFocusZoom,
+              },
+            )} text-foreground-subtlest`}
           >
             {placeholder}
           </div>
@@ -1453,9 +1460,11 @@ export function LexicalChatInput({
 
   const contentEditable = (
     <ContentEditable
-      // Mention nodes are inline-flex chips with a fixed line height. If regular text inherits the browser's normal line-height,
-      // continuing to type after a token computes baselines from different line boxes; set the body line-height explicitly here.
-      className="min-h-10 max-h-40 overflow-y-auto text-ui-base leading-5 text-foreground outline-none"
+      // Bugfix: Mention nodes use inline-flex chips with a fixed line height. If regular text inherits the browser normal line-height,
+      // text typed after a token gets its baseline from a different line box. Set the body line height explicitly, and allow 16px in mobile remote control to prevent iOS zoom on focus.
+      className={`min-h-10 max-h-40 overflow-y-auto ${resolveMobileInputTextSizeClassName({
+        avoidIosInputFocusZoom,
+      })} text-foreground outline-none`}
       data-testid={inputTestId}
       onFocus={onFocus}
       {...contentEditableProps}

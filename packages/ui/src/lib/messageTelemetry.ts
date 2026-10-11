@@ -920,6 +920,37 @@ export function activateDetachedAgentStepTelemetry(input: {
   agentStepTelemetryByTask.set(input.taskId, createAgentStepTelemetryState());
 }
 
+export function rekeyQueuedPromptTelemetry(
+  taskId: string,
+  fromMessageId: string,
+  toMessageId: string,
+): void {
+  if (fromMessageId === toMessageId) {
+    return;
+  }
+
+  const queue = queuedPromptTelemetryByTask.get(taskId);
+  if (!queue || queue.length === 0) {
+    return;
+  }
+
+  const targetIndex = queue.findIndex((item) => item.messageId === fromMessageId);
+  if (targetIndex === -1) {
+    return;
+  }
+
+  const target = queue[targetIndex];
+  if (!target) {
+    return;
+  }
+
+  queue[targetIndex] = {
+    ...target,
+    messageId: toMessageId,
+  };
+  queuedPromptTelemetryByTask.set(taskId, queue);
+}
+
 export function recordPromptModelRequestStarted(
   taskId: string,
   event: Extract<ZCodeStreamEvent, { type: "task_network_debug_status" }>,
@@ -1320,6 +1351,15 @@ export function recordAgentStepTelemetryEvent(input: {
   }
 }
 
+export function recordPromptFirstToken(taskId: string, now = Date.now()): void {
+  const active = activePromptTelemetryByTask.get(taskId);
+  if (!active || active.firstTokenAt !== null) {
+    return;
+  }
+
+  active.firstTokenAt = now;
+}
+
 // Model name for the currently active prompt, used to fill the model dimension for ARMS mirror events (such as stream_stall).
 // Returns undefined when there is no active prompt or model_name is absent; the caller leaves the field empty.
 export function getActivePromptModelName(taskId: string): string | undefined {
@@ -1479,6 +1519,13 @@ export function finalizePromptTelemetry(
       error_msg: errorMsg,
     },
   };
+}
+
+export function resetMessageTelemetryForTest(): void {
+  composerInputTimingByWorkspace.clear();
+  queuedPromptTelemetryByTask.clear();
+  activePromptTelemetryByTask.clear();
+  agentStepTelemetryByTask.clear();
 }
 
 /** When releasing a workspace telemetry attachment, clear only its internal task key and do not affect other workspaces. */

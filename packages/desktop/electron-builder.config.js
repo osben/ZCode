@@ -4,6 +4,7 @@ import { readdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { createRequire } from "node:module";
+import { HELPER_APP_NAME } from "@zcode/zcode-cua/broker/helperConstants";
 import { runCommand, runCommandAndReadStdout } from "../../scripts/spawn-command.mjs";
 import { loadBuiltinProviderConfig } from "../../scripts/builtin-provider-config.mjs";
 import { noticesFileName, stageElectronNotices } from "../../scripts/third-party-notices.mjs";
@@ -20,43 +21,17 @@ import {
   resolveDesktopArtifactSuffix,
   resolveDesktopProductIdentity,
 } from "./scripts/desktop-product-identity.mjs";
+import { createWindowsPowerShellSecurityArgs } from "./scripts/powershell-command.mjs";
+import {
+  isSharpRequiredByComputerUse,
+  verifyStagedSharp,
+} from "./scripts/sharp-package-assets.mjs";
+import { isRealComputerUseProducerInstalled } from "./scripts/computer-use-producer.mjs";
 import { verifyStagedKoffi } from "./scripts/koffi-package-assets.mjs";
-const ELECTRON_BUILDER_ARCH = {
-  1: "x64",
-  3: "arm64",
-};
-function resolveElectronBuilderWindowsTarget({
-  electronPlatformName,
-  arch,
-  configuredTargetPlatform,
-}) {
-  if (electronPlatformName !== "win32") {
-    throw new Error(
-      `[electron-builder.config] context platform is not win32: ${String(electronPlatformName)}`,
-    );
-  }
-  const actualArch = ELECTRON_BUILDER_ARCH[arch];
-  if (!actualArch) {
-    throw new Error(
-      `[electron-builder.config] unsupported electron-builder Windows architecture: ${String(arch)}`,
-    );
-  }
-  const actualTarget = {
-    os: "win32",
-    arch: actualArch,
-    key: `win32-${actualArch}`,
-  };
-  if (
-    configuredTargetPlatform?.os !== actualTarget.os ||
-    configuredTargetPlatform?.arch !== actualTarget.arch ||
-    configuredTargetPlatform?.key !== actualTarget.key
-  ) {
-    throw new Error(
-      `[electron-builder.config] configured target ${String(configuredTargetPlatform?.key)} does not match electron-builder target ${actualTarget.key}`,
-    );
-  }
-  return actualTarget;
-}
+import {
+  finalizePackagedWindowsCuaHelper,
+  resolveElectronBuilderWindowsTarget,
+} from "./scripts/windows-cua-helper-assets.mjs";
 import {
   findDesktopNativePackageViolations,
   createDesktopNativePackagePrunePatterns,
@@ -70,6 +45,10 @@ import {
 
 const buildMetadata = getBuildMetadata();
 const targetPlatform = getTargetPlatform();
+// Fix rationale: the Windows Chrome import entry point is temporarily hidden, so the default installer should not carry, sign, or validate the native helper.
+// Keep the code and complete supply chain behind an explicit opt-in so they can be restored later without affecting the current release process.
+const shouldPackageWindowsBrowserImportHelper =
+  targetPlatform.os === "win32" && process.env.ZCODE_ENABLE_WINDOWS_BROWSER_IMPORT === "1";
 const builtinProviderConfig = await loadBuiltinProviderConfig();
 const desktopProductIdentity = resolveDesktopProductIdentity({
   ...process.env,
@@ -86,6 +65,9 @@ const shouldEnableMacSigning =
   process.env.ZCODE_ENABLE_MAC_SIGN === "1" && Boolean(macSigningIdentity);
 const workspaceRoot = resolve(import.meta.dirname, "../..");
 const desktopPackageRoot = import.meta.dirname;
+// Package the Computer Use Helper (macOS .app, Windows runtime) only with a real producer; skip bundled resources and validation for the open-source placeholder package.
+const shouldPackageComputerUseHelper = isRealComputerUseProducerInstalled({ desktopPackageRoot });
+const HELPER_FILENAME = "zcode-browser-import-helper.exe";
 const runtimeModuleLookupRoots = [
   desktopPackageRoot,
   workspaceRoot,
@@ -93,6 +75,12 @@ const runtimeModuleLookupRoots = [
   resolve(workspaceRoot, "node_modules", ".pnpm", "node_modules"),
 ];
 const desktopDistDir = process.env.ZCODE_DESKTOP_DIST_DIR || "dist";
+const bundledCuaHelperSource = resolve(
+  desktopPackageRoot,
+  "bundled-cua-helper",
+  targetPlatform.arch,
+  HELPER_APP_NAME,
+);
 const DEFAULT_ELECTRON_MIRROR = "https://npmmirror.com/mirrors/electron/";
 // `pnpm exec asar` relies on `.bin/asar`, but when @electron/asar is only an electron-builder transitive dependency,
 // Linux CI with pnpm hoisting often cannot resolve the binary, so `asar list` exits 1 without running.
@@ -114,15 +102,22 @@ const REQUIRED_ASAR_RUNTIME_MODULES = [
   // the workspace root, but electron-builder does not reliably copy this hoisted dependency, causing packaged startup to crash.
   // Inject sdk-metrics as a dependency-closure root and recursively include its OpenTelemetry runtime dependencies.
   "@opentelemetry/sdk-metrics",
-  // Dependency-closure root for the OTLP proto export chain: recursively include otlp-transformer/protobufjs and their dependencies,
-  // or a hoisted layout missing protobufjs makes the installed app fail at startup with Cannot find module 'protobufjs/minimal'.
+  // Bugfix: the main-process local TTFT / renderer action-tracing exporters use the OTLP proto export chain. With pnpm hoisting,
+  // electron-builder can bundle otlp-transformer into app.asar but omit its transitive protobufjs dependency, making the installed app fail at startup with
+  // Cannot find module protobufjs/minimal (reproduced on the open-source 3.14.0 arm64 DMG). Inject both proto exporters as dependency-closure roots
+  // and recursively include the full otlp-transformer, protobufjs, and @protobufjs/* chain.
   "@opentelemetry/exporter-trace-otlp-proto",
   "@opentelemetry/exporter-metrics-otlp-proto",
   "pngjs",
-  // The proxy connectivity check in @zcode/services dynamically requires "undici" to get ProxyAgent.
-  // Although tsup bundles services into the main/host artifacts, it does not inline this runtime require,
-  // and electron-builder may omit the hoisted undici package, causing the installed macOS app to fail at startup with Cannot find module "undici".
-  // Force undici into app.asar like the other fallback dependencies to prevent the installed app's main process from crashing.
+  // Bugfix: @arms/rum-core declares @babel/runtime as a peerDependency, which pnpm can resolve during installation,
+  // but electron-builder does not reliably include this peer runtime when it repacks app.asar with @arms/rum-electron.
+  // A production installer has failed at startup with Cannot find module '@babel/runtime/helpers/interopRequireDefault'.
+  // Inject @babel/runtime explicitly as a dependency-closure root so the ARMS main-process instrumentation chain resolves in production.
+  "@babel/runtime",
+  // Bugfix: proxy connectivity checks in @zcode/services dynamically require("undici") for ProxyAgent.
+  // tsup bundles services code into the main/host artifacts but does not inline this runtime require,
+  // and electron-builder may omit the hoisted undici package, causing the macOS installer to fail at startup with Cannot find module "undici".
+  // Force undici into app.asar like the other fallback dependencies so the installed app's main process does not crash.
   "undici",
   // node-forge was only listed in bundle.mjs validation and left to electron-builder to include in app.asar.
   // This has the same risk as yauzl missing pend: required modules must be explicitly included. node-forge has no dependencies,
@@ -205,6 +200,22 @@ function resolveElectronDownloadMirror(env = process.env) {
   return DEFAULT_ELECTRON_MIRROR;
 }
 
+function assertPackagedCuaHelper(context) {
+  if (targetPlatform.os !== "darwin" || !shouldPackageComputerUseHelper) return;
+  const appPath = join(
+    context.appOutDir,
+    `${desktopProductIdentity.productName}.app`,
+    "Contents",
+    "Resources",
+    "cua-helper",
+    HELPER_APP_NAME,
+  );
+  if (!existsSync(appPath)) {
+    throw new Error(`Packaged ZCode is missing bundled Computer Use Helper: ${appPath}`);
+  }
+}
+const shouldEnableWindowsVsign =
+  process.platform === "win32" && process.env.ZCODE_ENABLE_WINDOWS_SIGN === "1";
 const commandStdoutMaxBuffer = 64 * 1024 * 1024;
 // The artifact suffix marks only the backend environment (_TEST); productName distinguishes identity, so Preview packages using the production backend have no suffix.
 const desktopArtifactEnvSuffix = resolveDesktopArtifactSuffix(process.env);
@@ -451,6 +462,102 @@ function assertPackagedNodePtyPrebuild(context) {
     throw new Error(`node-pty 预编译产物缺失: ${targetBinaryPath}`);
 }
 
+function assertPackagedCuaSharp(context) {
+  if (!isSharpRequiredByComputerUse({ desktopPackageRoot })) return;
+  const problems = [
+    [
+      "packages/browser-use-plugin",
+      verifyStagedSharp({
+        resourcesDir: resolvePackagedResourcesDir(context),
+        targetPlatform,
+        pluginRelativePath: "packages/browser-use-plugin",
+      }),
+    ],
+    [
+      "packages/zcode-cua-plugin",
+      verifyStagedSharp({
+        resourcesDir: resolvePackagedResourcesDir(context),
+        targetPlatform,
+        pluginRelativePath: "packages/zcode-cua-plugin",
+      }),
+    ],
+  ].flatMap(([pluginPath, pluginProblems]) =>
+    pluginProblems.map((problem) => `${pluginPath}: ${problem}`),
+  );
+  if (problems.length > 0) {
+    throw new Error(
+      `node_repl sharp runtime is incomplete in the packaged app:\n- ${problems.join("\n- ")}`,
+    );
+  }
+}
+
+function assertPackagedCuaKoffi(context) {
+  const problems = verifyStagedKoffi({
+    resourcesDir: resolvePackagedResourcesDir(context),
+    targetPlatform,
+  });
+  if (problems.length > 0) {
+    throw new Error(
+      `CUA plugin koffi runtime is incomplete in the packaged app:\n- ${problems.join("\n- ")}`,
+    );
+  }
+}
+
+function assertSignedWindowsBrowserImportHelper(context) {
+  if (
+    !shouldPackageWindowsBrowserImportHelper ||
+    context.electronPlatformName !== "win32" ||
+    !shouldEnableWindowsVsign
+  )
+    return;
+  const helperPath = resolve(context.appOutDir, "resources", "browser-import", HELPER_FILENAME);
+  const appExecutablePath = resolve(
+    context.appOutDir,
+    `${context.packager.appInfo.productFilename}.exe`,
+  );
+  const script = [
+    "$helper=Microsoft.PowerShell.Security\\Get-AuthenticodeSignature -LiteralPath $zcodeArg0;",
+    "$app=Microsoft.PowerShell.Security\\Get-AuthenticodeSignature -LiteralPath $zcodeArg1;",
+    "if($helper.Status -ne 'Valid' -or $app.Status -ne 'Valid'){",
+    "[Console]::Error.WriteLine(('Authenticode status invalid: helper={0} ({1}); app={2} ({3})' -f $helper.Status,$helper.StatusMessage,$app.Status,$app.StatusMessage));",
+    "exit 23};",
+    "if($null -eq $helper.SignerCertificate -or $null -eq $app.SignerCertificate){",
+    "[Console]::Error.WriteLine('Authenticode signer certificate missing');exit 24};",
+    "if($helper.SignerCertificate.Thumbprint -ne $app.SignerCertificate.Thumbprint){",
+    "[Console]::Error.WriteLine(('Authenticode signer mismatch: helper={0}; app={1}' -f $helper.SignerCertificate.Thumbprint,$app.SignerCertificate.Thumbprint));",
+    "exit 25};",
+  ].join("");
+  // Bugfix rationale: whether electron-builder includes EXEs under extraResources in its default signing traversal varies by version.
+  // Also, Windows PowerShell's `-Command` does not place trailing paths in `$args`, so the old validation always falsely reported exit 23.
+  // Release builds now use EncodedCommand and explicitly load the system Security module from PSHOME, preventing inherited pwsh
+  // PSModulePath from making Windows PowerShell 5.1 load an incompatible module.
+  runCommand(
+    "powershell.exe",
+    createWindowsPowerShellSecurityArgs(script, [helperPath, appExecutablePath]),
+  );
+}
+
+function signWindowsBrowserImportHelper(context) {
+  if (
+    !shouldPackageWindowsBrowserImportHelper ||
+    context.electronPlatformName !== "win32" ||
+    !shouldEnableWindowsVsign
+  )
+    return;
+  const helperPath = resolve(context.appOutDir, "resources", "browser-import", HELPER_FILENAME);
+  runCommand("powershell.exe", [
+    "-NoLogo",
+    "-NoProfile",
+    "-NonInteractive",
+    "-ExecutionPolicy",
+    "Bypass",
+    "-File",
+    resolve(workspaceRoot, "scripts/sign-windows.ps1"),
+    "-FilePath",
+    helperPath,
+  ]);
+}
+
 /** @type {import("electron-builder").Configuration} */
 export default {
   appId: desktopProductIdentity.appId,
@@ -473,6 +580,11 @@ export default {
   // sometimes cannot reliably infer the Electron version from the dependency tree and stops bundling.
   // Specify the current Desktop Electron version explicitly to avoid unreliable guesses during packaging.
   electronVersion: "41.0.3",
+  // A legacy Windows protocol registration may inject --inspect-brk before the app's JavaScript rewrites the registry.
+  // Disable the native Inspector argument before signing to cover the first launch after an upgrade; keep RunAsNode for the Agent.
+  ...(targetPlatform.os === "win32"
+    ? { electronFuses: { enableNodeCliInspectArguments: false } }
+    : {}),
   electronDownload: {
     // ELECTRON_MIRROR is a global @electron/get environment variable and overrides mirrorOptions passed by dmg-builder and other
     // generic artifacts, causing builder helper packages to be resolved from the Electron runtime mirror directory.
@@ -562,16 +674,48 @@ export default {
     runTimedSync("afterPack:assertPackagedNodePtyPrebuild", () =>
       assertPackagedNodePtyPrebuild(context),
     );
-    if (actualWindowsTarget) {
+    runTimedSync("afterPack:assertPackagedCuaSharp", () => assertPackagedCuaSharp(context));
+    runTimedSync("afterPack:assertPackagedCuaKoffi", () => assertPackagedCuaKoffi(context));
+    runTimedSync("afterPack:assertPackagedCuaHelper", () => assertPackagedCuaHelper(context));
+    if (actualWindowsTarget && shouldPackageComputerUseHelper) {
+      await runTimedAsync("afterPack:finalizePackagedWindowsCuaHelper", () =>
+        finalizePackagedWindowsCuaHelper({
+          resourcesDir: resolvePackagedResourcesDir(context),
+          targetPlatform: actualWindowsTarget,
+          electronVersion: desktopElectronVersion,
+        }),
+      );
       await runTimedAsync("afterPack:writeWindowsInstallManifest", () =>
         writeWindowsInstallManifest(context),
       );
     }
+    if (shouldPackageWindowsBrowserImportHelper) {
+      runTimedSync("afterPack:signWindowsBrowserImportHelper", () =>
+        signWindowsBrowserImportHelper(context),
+      );
+    }
   },
+  ...(shouldPackageWindowsBrowserImportHelper
+    ? {
+        afterSign: async (context) => {
+          runTimedSync("afterSign:assertSignedWindowsBrowserImportHelper", () =>
+            assertSignedWindowsBrowserImportHelper(context),
+          );
+        },
+      }
+    : {}),
   extraResources: [
     { from: resolve(workspaceRoot, noticesFileName), to: noticesFileName },
     ...(targetPlatform.os === "darwin"
       ? [
+          ...(shouldPackageComputerUseHelper
+            ? [
+                {
+                  from: bundledCuaHelperSource,
+                  to: `cua-helper/${HELPER_APP_NAME}`,
+                },
+              ]
+            : []),
           {
             // The snap-position source for the CUA permission popover (CGWindowListCopyWindowInfo; no TCC permissions required).
             // The main process resolves it through process.resourcesPath; if missing, the watcher fails open and the popover still works,
@@ -622,6 +766,22 @@ export default {
           },
         ]
       : []),
+    ...(targetPlatform.os === "win32" && shouldPackageComputerUseHelper
+      ? [
+          {
+            // Root cause: electron-builder skips node_modules under the from root. Map the package tree and dependency tree separately,
+            // or the installer will contain the manifest/entry but the Helper will lack express/Sharp at startup.
+            from: `bundled-tools/${targetPlatform.key}/cua-helper`,
+            to: "tools/cua-helper",
+            filter: ["**/*", "!node_modules{,/**/*}"],
+          },
+          {
+            from: `bundled-tools/${targetPlatform.key}/cua-helper/node_modules`,
+            to: "tools/cua-helper/node_modules",
+            filter: ["**/*", "!**/*.map"],
+          },
+        ]
+      : []),
     {
       // Agent runtime assets are packaged under resources/glm.
       // Desktop bundles the Agent JS bundle (glm/zcode.cjs, generated by prepare:agent-bundle).
@@ -663,6 +823,9 @@ export default {
     artifactName: buildDesktopArtifactName("mac"),
     extendInfo: {
       NSAppleEventsUsageDescription: `${desktopProductIdentity.productName} needs Apple Events access to coordinate local automation workflows with user-approved desktop apps.`,
+      // Without this key, macOS silently denies CoreBluetooth enumeration and the embedded browser's Web Bluetooth
+      // device picker is always empty (tested: Chrome works when it has Bluetooth privacy permission).
+      NSBluetoothAlwaysUsageDescription: `${desktopProductIdentity.productName} needs Bluetooth access to list nearby devices when a website you open in the embedded browser requests one.`,
     },
     // The pre-signing script uses native codesign and requires the full "Developer ID Application: ..." identity string,
     // but electron-builder 26.x rejects names with that prefix in mac.identity.
@@ -686,6 +849,7 @@ export default {
     // The CUA Helper is already Developer ID signed and notarized in a separate job.
     // If electron-builder signs the nested Helper again, its CDHash changes and invalidates the staple in the final user package.
     signIgnore: [
+      "[/\\\\]Contents[/\\\\]Resources[/\\\\]cua-helper([/\\\\]|$)",
       "[/\\\\]Contents[/\\\\]Resources[/\\\\]glm([/\\\\]|$)",
       "[/\\\\]Contents[/\\\\]Resources[/\\\\]tools([/\\\\]|$)",
     ],
@@ -693,6 +857,18 @@ export default {
   win: {
     target: ["nsis"],
     artifactName: buildDesktopArtifactName("win"),
+    signExts: [".node", ".dll"],
+    // Bugfix: Windows CI previously relied entirely on electron-builder's bundled signtool.exe.
+    // When the runner's certificate chain requires vsigntool, packaging would stall in the built-in signing step.
+    // This custom sign hook routes all Windows executables through the repository's vsigntool wrapper,
+    // retaining electron-builder's signing timing while matching the CI machine's signing infrastructure.
+    ...(shouldEnableWindowsVsign
+      ? {
+          signtoolOptions: {
+            sign: "./scripts/sign-windows-hook.cjs",
+          },
+        }
+      : {}),
   },
   linux: {
     target: ["AppImage", "deb", "rpm", "pacman"],

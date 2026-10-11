@@ -4,6 +4,8 @@ import type { AppSettings } from "./protocol.js";
 import { REMOTE_ASSET_INSTALL_MODES } from "./remoteAssetInstallMode.js";
 import { isKnownRemoteResourcePackageId } from "./remoteResourcePackages.js";
 import { wslUserSchema } from "./wslUserValidation.js";
+import { ZCODE_ENABLED_AGENT_PROVIDERS } from "./zcode-agent-policy.js";
+import { DYNAMIC_WORKFLOW_MODES } from "./dynamic-workflow-feature.js";
 import { normalizeZCodeEndpointOrigin } from "./zcodeEndpoint.js";
 import {
   DEFAULT_EMBEDDED_BROWSER_VIEWPORT_PREFERENCE,
@@ -35,6 +37,9 @@ const nonEmptyStringSchema = z.string().trim().min(1);
 export const localeSchema = z.enum(["zh-CN", "en-US", "uk-UA"]);
 const localePreferenceSchema = z.enum(["system", "zh-CN", "en-US", "uk-UA"]);
 const zcodeInteractionBehaviorSchema = z.enum(["queue", "guide"]);
+// launch.md "The user's choice": when reading files, an unknown value (written by a newer version and read after a downgrade) is treated as "follow,"
+// so one preference field cannot corrupt the entire settings read.
+const dynamicWorkflowModeSettingSchema = z.enum(DYNAMIC_WORKFLOW_MODES).optional().catch(undefined);
 const electronReleaseChannelSchema = z.enum(["stable", "preview"]);
 const desktopZoomLevelSchema = z.number().int().min(-3).max(5);
 const desktopWindowSizeSchema = z.object({
@@ -54,6 +59,10 @@ export const integratedTerminalShellSelectionSchema = z.discriminatedUnion("mode
     path: nonEmptyStringSchema,
   }),
 ]);
+const enabledBuiltinAgentCliProvidersSchema = z
+  // Legacy-settings compatibility: historical lists may retain third-party CLI providers; normalize to ZCode Agent after parsing.
+  .array(z.enum(["claude", "opencode", "gemini", "codex", "glm"]))
+  .transform(() => [...ZCODE_ENABLED_AGENT_PROVIDERS]);
 const providerFamilyDomainSchema = z.enum(["zai", "bigmodel"]);
 
 export const postUpdateReleaseNotesPayloadSchema = z.object({
@@ -100,6 +109,14 @@ const remoteWorkspaceTargetSchema = z.discriminatedUnion("kind", [
     kind: z.literal("docker"),
     container: nonEmptyStringSchema,
   }),
+  z.object({
+    kind: z.literal("server"),
+    url: z.string().url(),
+    name: nonEmptyStringSchema.optional(),
+    workspacePath: z.string().optional(),
+    serverId: nonEmptyStringSchema.optional(),
+    tokenCredentialKey: nonEmptyStringSchema.optional(),
+  }),
 ]);
 
 const appWorkspaceSessionEntrySchema = z.discriminatedUnion("kind", [
@@ -120,6 +137,14 @@ const appWorkspaceSessionEntrySchema = z.discriminatedUnion("kind", [
   }),
 ]);
 
+const webRemoteControlExternalRelayDeviceSchema = z.object({
+  deviceSid: nonEmptyStringSchema,
+});
+const webRemoteControlLastEnabledContextSchema = z.object({
+  workspacePath: nonEmptyStringSchema,
+  workspaceIdentity: nonEmptyStringSchema.optional(),
+  initialTaskId: nonEmptyStringSchema.optional(),
+});
 const zcodeEndpointOriginSchema = z.preprocess((value) => {
   if (typeof value !== "string") {
     return undefined;
@@ -257,6 +282,24 @@ const legacyRemoteWorkspaceHistoryEntrySchema = z.object({
   lastConnectionStatus: z.enum(["connected", "failed"]),
   lastConnectionError: z.string().optional(),
 });
+
+function migrateLegacyBuiltinAgentCliProviders(value: unknown): unknown {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return value;
+  }
+
+  const raw = value as {
+    enabledBuiltinAgentCliProviders?: unknown;
+  };
+
+  // Bugfix: after the single-ZCode-Agent migration, legacy setting.json may still store enabled state for
+  // removed third-party CLI providers. If those values kept reaching UI / bot provider options, they would clash with the single glm state on the server side.
+  // Normalize to ZCode Agent at the schema entry point so core provider state has a single source of truth.
+  return {
+    ...raw,
+    enabledBuiltinAgentCliProviders: [...ZCODE_ENABLED_AGENT_PROVIDERS],
+  };
+}
 
 function stripHistoricalRemoteResourcePackages(target: unknown): unknown {
   if (!target || typeof target !== "object" || Array.isArray(target)) {
@@ -442,6 +485,8 @@ const appSettingsObjectSchema = z.object({
   taskAutoArchiveOlderThanDays: z.number().int().positive().max(365).default(7),
   closeToTrayOnWindows: z.boolean().default(true),
   closeToTrayOnWindowsMigrationInitialized: z.boolean().default(true),
+  // default(false): fresh installs and existing users alike are treated as not yet migrated on first launch; the main process decides per platform whether to migrate.
+  closeToTrayLinuxMigrationInitialized: z.boolean().default(false),
   keepAwakeWhileRunning: z.boolean().default(false),
   desktopZoomLevel: desktopZoomLevelSchema.optional(),
   desktopWindowSize: desktopWindowSizeSchema.optional(),
@@ -455,6 +500,10 @@ const appSettingsObjectSchema = z.object({
   zcodeInteractionBehavior: zcodeInteractionBehaviorSchema.default("queue"),
   askUserQuestionAutoResolutionEnabled: z.boolean().default(true),
   modelIoFullRetentionEnabled: z.boolean().default(false),
+  dynamicWorkflowMode: dynamicWorkflowModeSettingSchema,
+  enabledBuiltinAgentCliProviders: enabledBuiltinAgentCliProvidersSchema.default([
+    ...ZCODE_ENABLED_AGENT_PROVIDERS,
+  ]),
   startPlanRecommendationDismissed: z.boolean().default(false),
   providerFamilyConnectionSelections: providerFamilyConnectionSelectionSettingsSchema.default({}),
   providerFamilyDomain: providerFamilyDomainSchema.optional(),
@@ -474,6 +523,8 @@ const appSettingsObjectSchema = z.object({
   autoDownloadAndInstallUpdates: z.boolean().default(false),
   skippedElectronUpdateVersions: skippedElectronUpdateVersionsSchema,
   settingsSyncFirstRunPromptHandled: z.boolean().optional(),
+  webRemoteControlExternalRelayDevice: webRemoteControlExternalRelayDeviceSchema.optional(),
+  webRemoteControlLastEnabledContext: webRemoteControlLastEnabledContextSchema.optional(),
   zcodeEndpointOrigin: zcodeEndpointOriginSchema.optional(),
 });
 
@@ -484,7 +535,9 @@ export const appSettingsSchema = z.preprocess(
         migrateMessageStreamShowReasoningDefault(
           migrateCloseToTrayOnWindowsDefault(
             migrateLegacyLocalePreference(
-              sanitizeZCodeEndpointOrigin(migrateLegacyWorkspaceSession(value)),
+              sanitizeZCodeEndpointOrigin(
+                migrateLegacyWorkspaceSession(migrateLegacyBuiltinAgentCliProviders(value)),
+              ),
             ),
           ),
         ),
@@ -512,6 +565,7 @@ export const appSettingsPatchSchema = z.object({
   closeToTrayOnWindows: z.boolean().optional(),
   keepAwakeWhileRunning: z.boolean().optional(),
   closeToTrayOnWindowsMigrationInitialized: z.boolean().optional(),
+  closeToTrayLinuxMigrationInitialized: z.boolean().optional(),
   desktopZoomLevel: desktopZoomLevelSchema.optional(),
   desktopWindowSize: desktopWindowSizeSchema.optional(),
   desktopChromiumHardwareAccelerationEnabled: z.boolean().optional(),
@@ -524,6 +578,9 @@ export const appSettingsPatchSchema = z.object({
   zcodeInteractionBehavior: zcodeInteractionBehaviorSchema.optional(),
   askUserQuestionAutoResolutionEnabled: z.boolean().optional(),
   modelIoFullRetentionEnabled: z.boolean().optional(),
+  // The empty string is the "clear the selection and return to follow" sentinel: RPC swallows undefined, and normalizeSettingsPatch normalizes it to a deletion.
+  dynamicWorkflowMode: z.union([z.enum(DYNAMIC_WORKFLOW_MODES), z.literal("")]).optional(),
+  enabledBuiltinAgentCliProviders: enabledBuiltinAgentCliProvidersSchema.optional(),
   startPlanRecommendationDismissed: z.boolean().optional(),
   providerFamilyConnectionSelections: providerFamilyConnectionSelectionSettingsSchema.optional(),
   providerFamilyDomain: z.union([providerFamilyDomainSchema, z.literal("")]).optional(),
@@ -561,5 +618,7 @@ export const appSettingsPatchSchema = z.object({
     .partialRecord(electronReleaseChannelSchema, nonEmptyStringSchema)
     .optional(),
   settingsSyncFirstRunPromptHandled: z.boolean().optional(),
+  webRemoteControlExternalRelayDevice: webRemoteControlExternalRelayDeviceSchema.optional(),
+  webRemoteControlLastEnabledContext: webRemoteControlLastEnabledContextSchema.optional(),
   zcodeEndpointOrigin: zcodeEndpointOriginSchema.optional(),
 });

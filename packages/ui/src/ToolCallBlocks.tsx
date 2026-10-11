@@ -13,6 +13,7 @@ import {
 import type { CodeViewerSource } from "@/lib/codeViewer.js";
 import { CuaGroupToolCallBlock } from "@/ToolCallBlocks/renderers/cua-group.js";
 import { resolveToolCallRenderer } from "@/ToolCallBlocks/resolveRenderer.js";
+import * as PluginUi from "@/plugin-ui/index.js";
 import { resolveToolCallIdentity } from "@/lib/toolIdentity.js";
 import {
   readRawToolCallFileSummaries,
@@ -66,7 +67,7 @@ function canPlayToolEntranceAnimation(key: string, active: boolean) {
   return active && !hasPlayedToolEntranceAnimation(key);
 }
 
-function isAgentToolCall(toolCall: TaskChatToolCallTreeNode["toolCall"]): boolean {
+export function isAgentToolCall(toolCall: TaskChatToolCallTreeNode["toolCall"]): boolean {
   return resolveToolCallIdentity(toolCall).family === "agent";
 }
 
@@ -83,6 +84,7 @@ function ToolCallBlockComponent({
   onOpenBrowserUrl,
   onOpenAutomationsMain,
   onOpenPlanDetail,
+  pluginUi: providedPluginUi,
   onOpenWorkflowRun,
   onResumeWorkflowRun,
   onOpenWorkflowActor,
@@ -117,6 +119,7 @@ function ToolCallBlockComponent({
   onOpenBrowserUrl?: (url: string) => void;
   onOpenAutomationsMain?: (automationId?: string) => void;
   onOpenPlanDetail?: ToolCallBlockRenderContext["onOpenPlanDetail"];
+  pluginUi?: ToolCallBlockRenderContext["pluginUi"];
   onOpenWorkflowRun?: ToolCallBlockRenderContext["onOpenWorkflowRun"];
   /** Resume action in the tool-card footer; like workflowRun, it is not passed through to child tool cards. */
   onResumeWorkflowRun?: ToolCallBlockRenderContext["onResumeWorkflowRun"];
@@ -151,6 +154,8 @@ function ToolCallBlockComponent({
     event: Extract<ConversationCuaGroupEvent, { kind: "reasoning" }>,
   ) => ReactNode;
 }) {
+  const inheritedPluginUi = PluginUi.usePluginUiToolBinding(toolCallNode.toolCall.toolId);
+  const pluginUi = providedPluginUi ?? inheritedPluginUi;
   const { toolCall, childToolCalls } = toolCallNode;
   const { intl } = useZCodeIntl();
   const isOfficeMode = useIsOfficeMode();
@@ -312,6 +317,7 @@ function ToolCallBlockComponent({
       onOpenBrowserUrl,
       onOpenAutomationsMain,
       onOpenPlanDetail,
+      pluginUi,
       // onOpenWorkflowRun was previously passed only to child tool cards and never added to renderContext,
       // so the CreateWorkflow renderer never received it—the “Open details” entry was not buried; it was never rendered.
       // The compact run-state card uses this callback, so it must be provided here.
@@ -340,6 +346,7 @@ function ToolCallBlockComponent({
       onOpenAutomationsMain,
       onOpenBrowserUrl,
       onOpenPlanDetail,
+      pluginUi,
       onOpenWorkflowRun,
       onResumeWorkflowRun,
       onOpenWorkflowActor,

@@ -29,13 +29,22 @@ import {
   createWorkflowPhaseAlongside,
   createWorkflowPhaseNames,
 } from "@zcode/contracts";
-import type { ToolApprovalGate, ToolEntry, ToolExecutionContext, ToolHandler } from "../types.js";
+import type {
+  ToolApprovalGate,
+  ToolEntry,
+  ToolExecutionContext,
+  ToolHandler,
+} from "../types.js";
 import { CREATE_WORKFLOW_TOOL_DESCRIPTION } from "./create-workflow-description.js";
 import {
+  CREATE_WORKFLOW_FAILURE_CODE,
   resolveCreateWorkflowInput,
   validateCreateWorkflowSource,
 } from "./create-workflow-source.js";
-import { describeWorkflowSubagentModel, parseWorkflowSubagentModel } from "./model-reference.js";
+import {
+  describeWorkflowSubagentModel,
+  parseWorkflowSubagentModel,
+} from "./model-reference.js";
 import { boundGraphOfAnalysis, displayOfAnalysis } from "./workflow-analysis-display.js";
 import { recordAuthoredWorkflowDraft } from "./workflow-draft-read-state.js";
 import { resolveWorkflowDraftName, writeWorkflowDraft } from "./workflow-drafts.js";
@@ -49,6 +58,20 @@ import {
 import { analyzeScript } from "./workflow-script-analysis.js";
 import { describeWorkflowScriptPath } from "./workflow-script-path.js";
 import { createWorkflowNeedsSkill, requireDynamicWorkflowSkill } from "./workflow-skill-gate.js";
+import {
+  allScriptModelsBound,
+  describeScriptModelBindings,
+  readScriptModelBindings,
+  scriptModelSelections,
+  unresolvedScriptModelDiagnostics,
+  withScriptModelBindingsResolved,
+} from "./workflow-script-models.js";
+import {
+  applyWorkflowSettingsAdjustments,
+  describeWorkflowRunSettings,
+  readAppliedWorkflowSettings,
+  withWorkflowAdjustableSettings,
+} from "./workflow-settings-adjustment.js";
 
 const CREATE_WORKFLOW_TOOL_NAME = "CreateWorkflow";
 const CREATE_WORKFLOW_TIMEOUT_MS = 15_000;
@@ -83,7 +106,14 @@ const createWorkflowHandler: ToolHandler = async (input, context) => {
   const cwd = context.workingDirectory;
 
   const analysis = analyzeScript(script);
-  const { diagnostics, ok } = analysis;
+  // Models named by the script (docs/dynamic-workflow/launch.md, “Models the script names”): `resolveInput` has written resolvable names
+  // to `model_bindings`; report unbound names as 9011 here, using the same path as compilation errors because the script must be changed.
+  const modelBindings = readScriptModelBindings(parsed);
+  const modelDiagnostics = analysis.ok
+    ? unresolvedScriptModelDiagnostics(analysis, modelBindings, context.modelCatalogPort)
+    : [];
+  const diagnostics = [...analysis.diagnostics, ...modelDiagnostics];
+  const ok = analysis.ok && modelDiagnostics.length === 0;
   // The confirmation dialog and persisted output use the same static analysis; no model call
   // changes the name in between.
   const causalityGraph = boundGraphOfAnalysis(analysis);
@@ -185,9 +215,8 @@ const createWorkflowHandler: ToolHandler = async (input, context) => {
         const phaseAlongside = createWorkflowPhaseAlongside(causalityGraph);
         return { phaseNames, ...(phaseAlongside === undefined ? {} : { phaseAlongside }) };
       })(),
-      // The concurrency cap was clamped to `[1, ceiling]` in resolveInput (the confirmation
-      // dialog shows the value that will take effect). Absence means the ceiling, so do not
-      // create an empty key.
+      // resolveInput already rounds the concurrency limit down to at least 1 (the confirmation dialog shows the effective value), with no upper bound;
+      // if absent, use default concurrency and do not create an empty key.
       ...(parsed.max_concurrency === undefined ? {} : { maxConcurrency: parsed.max_concurrency }),
       // The subagent model was also resolved to canonical form in resolveInput (unresolvable
       // calls cannot reach here), so just split the string back into a structured selection.
@@ -196,6 +225,12 @@ const createWorkflowHandler: ToolHandler = async (input, context) => {
       ...(() => {
         const subagentModel = parseWorkflowSubagentModel(parsed.subagent_model);
         return subagentModel === undefined ? {} : { subagentModel };
+      })(),
+      // Models named by the script follow the same path as the subagent model: they have been resolved to canonical form, so only unpack them into structured selections here. If no
+      // models were named, omit the entire key.
+      ...(() => {
+        const selections = scriptModelSelections(modelBindings);
+        return selections === undefined ? {} : { modelBindings: selections };
       })(),
       // Pass the script's home through run-launched; terminal notifications and GetWorkflowRun
       // read it back from there. If saving the draft failed, omit the field entirely: the port
@@ -207,6 +242,17 @@ const createWorkflowHandler: ToolHandler = async (input, context) => {
   );
 
   const { runId } = submitted;
+  const defaultConcurrency = port.defaultConcurrency?.();
+  // Adjustments made in the confirmation dialog (docs/dynamic-workflow/launch.md, “Adjusting the settings in the window”): the input
+  // already contains adjusted values, but the model's tool_use block still has its original values, so report the adjustments first.
+  const settingsSentences = describeWorkflowRunSettings({
+    applied: readAppliedWorkflowSettings(context.inputAdjustments),
+    defaultConcurrency,
+    describeLimit: () =>
+      describeWorkflowConcurrencyLimit(parsed.max_concurrency, defaultConcurrency),
+    describeModel: () => describeWorkflowSubagentModel(parsed.subagent_model),
+    describeScriptModels: () => describeScriptModelBindings(modelBindings),
+  });
 
   return {
     diagnostics,
@@ -218,7 +264,7 @@ const createWorkflowHandler: ToolHandler = async (input, context) => {
     // turning an asynchronous run into a synchronous wait. Explicitly discourage default polling
     // in the wording (TaskOutput remains available when the user explicitly asks to wait; this
     // changes only default guidance, not tool semantics).
-    response: `The workflow script compiled cleanly and the run started in the background with ID: ${runId}. It is still running — you will be notified with the final output when it completes. Do not wait for it or poll it with TaskOutput; continue with other work unless the user asked you to wait.${describeWorkflowConcurrencyLimit(parsed.max_concurrency, port.concurrencyCeiling?.())}${describeWorkflowSubagentModel(parsed.subagent_model)}${location === undefined ? "" : workflowLaunchedScriptSentence(location)}`,
+    response: `The workflow script compiled cleanly and the run started in the background with ID: ${runId}. It is still running — you will be notified with the final output when it completes. Do not wait for it or poll it with TaskOutput; continue with other work unless the user asked you to wait.${settingsSentences}${location === undefined ? "" : workflowLaunchedScriptSentence(location)}`,
     status: "backgrounded",
     backgroundTaskId: runId,
     ...(causalityGraph === undefined ? {} : { causalityGraph }),
@@ -279,7 +325,9 @@ function diagnosticsNote(
       // definition, it will use `SaveWorkflow`. An absolute path among workspace-relative paths
       // would look like it belongs to another machine.
       savedPath:
-        saved.path === undefined ? location.described : describeWorkflowScriptPath(saved.path, cwd),
+        saved.path === undefined
+          ? location.described
+          : describeWorkflowScriptPath(saved.path, cwd),
       draft: location.described,
     });
   }
@@ -287,21 +335,19 @@ function diagnosticsNote(
 }
 
 /**
- * One sentence in the result wording for the effective concurrency cap (shared with
- * `AmendWorkflow`). **Include only when a cap was set**: a run at the ceiling has nothing to
- * explain, and adding "up to N" could make the model think it explicitly set something.
+ * One sentence in the result copy describing the effective concurrency limit (shared with `AmendWorkflow`). **Include it only when a limit is set**:
+ * a run using default concurrency has nothing to report, and “up to N” would make the model think it had set a limit.
  *
- * If the cap equals the ceiling, say it is the local maximum. That means the model's requested
- * value was lowered; without saying so, it may treat "up to 32" as effective and repeat a false
- * value if the user asks.
+ * Mark a limit equal to default concurrency as “(default)”: making that explicit tells the model the run is equivalent to having no limit,
+ * so it will not later repeat or “correct” it as a limit it chose.
  */
 export function describeWorkflowConcurrencyLimit(
   limit: number | undefined,
-  ceiling: number | undefined,
+  defaultConcurrency: number | undefined,
 ): string {
   if (limit === undefined) return "";
   const subject = limit === 1 ? "1 subagent runs" : `${limit} subagents run`;
-  return ` At most ${subject} at once${limit === ceiling ? " (this machine's maximum)" : ""}.`;
+  return ` At most ${subject} at once${limit === defaultConcurrency ? " (the default)" : ""}.`;
 }
 
 /**
@@ -342,6 +388,10 @@ function prepareCreateWorkflowApproval(input: unknown): ToolApprovalGate {
 
   const analysis = analyzeScript(parsed.data.script);
   if (!analysis.ok) return { gate: "proceed" };
+  // A model named by the script is unbound (missing from the catalog): treat it like a compile failure, skip the dialog, and let the handler report 9011.
+  if (!allScriptModelsBound(analysis, readScriptModelBindings(parsed.data))) {
+    return { gate: "proceed" };
+  }
 
   // The dialog supplies its own title and centers the graph; display uses the same constructor
   // as the launch-turn metadata for direct start.
@@ -370,26 +420,33 @@ export const createWorkflowToolEntry: ToolEntry = {
   // Exactly-one-of source applies only to model input (both are valid together after
   // normalization), so enforce it here rather than in the schema; see the CreateWorkflowInputSchema comment.
   validateInput: (input) => validateCreateWorkflowSource(input),
-  // The only disk read in the entire flow. Hooks, permission rules, confirmation dialog, and
-  // handler all see the same bytes afterward.
-  // Read the ceiling here too: clamp before the confirmation dialog, or the user could approve a
-  // value that will not take effect.
-  // Read the model catalog here too: resolve `subagent_model` to canonical form before the
-  // dialog, or the user could approve an unrecognized name and only see the failure afterward.
-  resolveInput: (input, context) => {
+  // The only disk read in the entire flow. Hooks, permission rules, the confirmation dialog, and the handler all see the same bytes afterward.
+  // Normalize the concurrency limit here too, before the dialog, so the user does not approve a value that will not take effect.
+  // Read the model catalog here as well: resolve `subagent_model` to canonical form before the dialog, so the user does not approve
+  // a name that has not been recognized and discover only after approval that it cannot be resolved.
+  resolveInput: async (input, context) => {
     // Check the skill gate before any parsing: reject script submission if dynamic-workflows has
     // not been read (saved sources are exempt; see the gate module).
     if (createWorkflowNeedsSkill(input)) {
       const refused = requireDynamicWorkflowSkill(context, CREATE_WORKFLOW_TOOL_NAME);
       if (refused) return refused;
     }
-    return resolveCreateWorkflowInput(
+    const resolved = await resolveCreateWorkflowInput(
       input,
       context.workingDirectory ?? ".",
-      context.dynamicWorkflowRunPort?.concurrencyCeiling?.(),
       context.modelCatalogPort,
     );
+    // Resolve script-named models after normalizing the script (all three sources now have `script`), so the dialog shows the bindings that will take effect.
+    const resolution = withScriptModelBindingsResolved(resolved, context.modelCatalogPort);
+    // Refill the two settings adjustable in the dialog along with normalization (docs/dynamic-workflow/launch.md, “Adjusting the settings
+    // in the window”): use the input rather than display because display's field set is frozen.
+    return withWorkflowAdjustableSettings(resolution, context);
   },
+  applyInputAdjustments: (input, adjustments, context) =>
+    applyWorkflowSettingsAdjustments(input, adjustments, context, {
+      errorCode: CREATE_WORKFLOW_FAILURE_CODE,
+      schema: CreateWorkflowInputSchema,
+    }),
   prepareApproval: prepareCreateWorkflowApproval,
   inputSchema: CreateWorkflowInputJsonSchema,
   outputSchema: CreateWorkflowOutputJsonSchema,

@@ -1,3 +1,4 @@
+import type { Memory, MemoryConfig } from "@zcode/shared";
 import { ServiceChannels } from "@zcode/shared";
 import { createServiceDescriptor } from "../descriptors.js";
 
@@ -22,6 +23,35 @@ export interface ProjectMemoryWorkspaceSummary {
 }
 
 export interface IMemoryService {
+  /**
+   * Load the memory file of the specified agent
+   * @param workspacePath workspace path
+   * @param agentId agent ID (e.g. 'claude', 'gemini')
+   */
+  loadMemory(params: {
+    workspacePath: string;
+    agentId: string;
+  }): Promise<{ memory: Memory | null }>;
+
+  /**
+   * Save the memory configuration
+   */
+  saveMemory(params: {
+    workspacePath: string;
+    agentId: string;
+    config: MemoryConfig;
+  }): Promise<void>;
+
+  /**
+   * Clear the memory content
+   */
+  clearMemory(params: { workspacePath: string; agentId: string }): Promise<void>;
+
+  /**
+   * Get the user-level memory directory path and ensure the directory exists
+   */
+  getUserMemoryDirectory(): Promise<{ path: string }>;
+
   /** List Project Memory files viewable in the current local profile. */
   listProjectMemories(): Promise<ProjectMemoryWorkspaceSummary[]>;
 

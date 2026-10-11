@@ -9,7 +9,8 @@
  * “when this state was first observed.” Registration is keyed by object identity (WeakMap): reduction preserves the same `concurrency` object
  * while unchanged; replacement by a new event creates a new object and registers it again. This stays out of the protocol because it is a local observation, not an engine fact.
  */
-import type { WorkflowRunConcurrency } from "@zcode/shared/zcode-protocol-v4";
+import type { WorkflowRunConcurrency, WorkflowRunState } from "@zcode/shared/zcode-protocol-v4";
+import { isWorkflowRunConfigurable } from "@/components/workflow-timeline/workflowRunSettings.js";
 import type { WorkflowRunEventItem, WorkflowRunEventLine } from "./workflowRunPanel.js";
 
 const MS_PER_SECOND = 1_000;
@@ -54,8 +55,10 @@ function stamp<T extends object>(registry: WeakMap<T, number>, subject: T, now: 
 
 interface WorkflowRunConcurrencyView {
   /**
-   * Number on the chip: **actual** concurrency, `min(cap, limit)`—the smaller of the shared bucket cap and this run's own limit. Users see how many subagents
-   * can actually run for this run right now; the number does not need to say which limit is active.
+   * The value on the chip: the effective **ceiling**, `min(cap, limit ?? D)` (docs/dynamic-workflow/concurrency.md,
+   * “Two bounds on a run”)—the smaller of the shared-bucket cap and this run's own ceiling. It is a
+   * limit, not the current number in flight (hence the chip says “Maximum concurrency”); the readout
+   * does not indicate which of the two ceilings is active.
    */
   cap: number;
   ceiling: number;
@@ -64,7 +67,12 @@ interface WorkflowRunConcurrencyView {
 }
 
 /**
- * Concurrency reading for the run header. Present only when **actual concurrency < ceiling**; there is nothing to report for a run already at its limit.
+ * Concurrency readout in the run header (docs/dynamic-workflow/concurrency.md, “What the user
+ * sees”). `ceiling` is default concurrency D, a reference value rather than a limit: this run's
+ * bound is `limit ?? D`, and the readout is `min(cap, bound)`. Show it when either the shared bucket
+ * limits the run below its own bound (`effective < bound`) or the run has a custom bound (`bound ≠
+ * D`, whether higher or lower—users should see a bound above the default too). A run at the default
+ * with a shared cap at least D has nothing to show; even if the shared cap grows above D, the minimum remains D.
  * Compute cooldown deadline from receive time + `cooldownMs`; omit it once expired so the UI does not show a time in the past.
  */
 export function workflowRunConcurrencyView(
@@ -72,14 +80,34 @@ export function workflowRunConcurrencyView(
   now: number,
 ): WorkflowRunConcurrencyView | undefined {
   if (concurrency === undefined) return undefined;
-  const effective = Math.min(concurrency.cap, concurrency.limit ?? concurrency.cap);
-  if (effective >= concurrency.ceiling) return undefined;
+  const bound = concurrency.limit ?? concurrency.ceiling;
+  const effective = Math.min(concurrency.cap, bound);
+  if (effective >= bound && bound === concurrency.ceiling) return undefined;
   const view: WorkflowRunConcurrencyView = { cap: effective, ceiling: concurrency.ceiling };
   if (concurrency.cooldownMs !== undefined) {
     const until = stamp(concurrencyReceivedAt, concurrency, now) + concurrency.cooldownMs;
     if (until > now) view.cooldownUntil = until;
   }
   return view;
+}
+
+/**
+ * Concurrency chip in the run header: show it when the readout exists **and** the run can be
+ * configured (docs/dynamic-workflow/concurrency.md, “What the user sees”). The chip reports a
+ * ceiling and Configure changes that ceiling, so they appear and disappear together.
+ *
+ * Root cause: the old chip checked only for a readout. On completed runs, `cap`/`limit` remained
+ * unchanged during reduction (only cooldown was removed), leaving “Concurrency 4” on a run with
+ * nothing running and making it look live. A completed run has nothing left under that ceiling;
+ * a superseded run's ceiling belongs to its successor. Keep stopped/errored runs because resume or
+ * retry still runs under that ceiling.
+ */
+export function workflowRunConcurrencyChip(
+  run: WorkflowRunState | undefined,
+  now: number,
+): WorkflowRunConcurrencyView | undefined {
+  if (!isWorkflowRunConfigurable(run)) return undefined;
+  return workflowRunConcurrencyView(run?.concurrency, now);
 }
 
 // ── Event log ──

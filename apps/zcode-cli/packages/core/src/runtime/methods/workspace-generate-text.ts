@@ -54,7 +54,7 @@ export async function testModelConnectivity(
   input: ModelConnectivityTestInput,
   options?: { abortSignal?: AbortSignal; traceContext?: TraceContext },
 ): Promise<void> {
-  const baseModel = createRuntimeModel(this, { selection: input.selection });
+  const baseModel = createRuntimeModel(this, { selection: input.selection, scope: "workspace" });
   // Connection probes do not need body text; reusing the 5,000-token auxiliary-generation budget waits for unnecessary reasoning and output.
   // Set a separate limit of 1 token while keeping the lowest public tier; do not change budgets for other auxiliary calls.
   const model = baseModel.bind({
@@ -81,7 +81,6 @@ export async function testModelConnectivity(
   await runWithModelInvocationContext(
     {
       metadata: traceContextToLogContext(traceContext),
-      modelRequestSessionType: "other",
       modelCall: { operation: "workspace_generate_text" },
       statusSink: this.createModelStatusSink(traceContext, []),
       traceContext,
@@ -144,7 +143,7 @@ async function generateWorkspaceTextImpl(
   assertWorkspaceModelInput(input);
   const requestedSelection = input.selection;
   const querySource = input.querySource.trim() || "workspace_generate_text";
-  const baseModel = createRuntimeModel(this, { selection: requestedSelection });
+  const baseModel = createRuntimeModel(this, { selection: requestedSelection, scope: "workspace" });
   // Auxiliary requests need the lowest public tier, not forced disabling based on names such as off/nothink.
   const model =
     querySource === GIT_COMMIT_MESSAGE_QUERY_SOURCE
@@ -198,7 +197,6 @@ async function generateWorkspaceTextImpl(
   const result = await runWithModelInvocationContext(
     {
       metadata: traceContextToLogContext(modelTraceContext),
-      modelRequestSessionType: "other" as const,
       modelCall: {
         operation:
           querySource === GIT_COMMIT_MESSAGE_QUERY_SOURCE

@@ -1,6 +1,13 @@
 /* eslint-disable max-lines -- Enterprise plan display models keep the static catalog, live pricing, and payment parameter conversion together; splitting them would blur their boundaries. */
 import type {
+  CodingPlanCampaignDiscountDetail,
   CodingPlanStaticTeamProduct,
+  EnterpriseCodingPlanCreateOrderRequest,
+  EnterpriseCodingPlanCreateOrderResponse,
+  EnterpriseCodingPlanDiscountDetail,
+  EnterpriseCodingPlanOrderCalculateResponse,
+  EnterpriseCodingPlanPendingOrder,
+  EnterpriseCodingPlanPaymentStatus,
   EnterpriseCodingPlanPricingProduct,
   EnterpriseCodingPlanSubscribePeriod,
   ProviderFamilyDomain,
@@ -45,7 +52,9 @@ export function resolveEnterpriseCodingPlanProductFamily(
   return product.family ?? "bigmodel";
 }
 
-function buildEnterpriseCodingPlanProductList(
+const ENTERPRISE_CODING_PLAN_FAILURE_STATUSES = ["FAIL", "CLOSED", "CANCELLED"] as const;
+
+export function buildEnterpriseCodingPlanProductList(
   products: EnterpriseCodingPlanPricingProduct[],
 ): EnterpriseCodingPlanProductDisplay[] {
   return products.map((product): EnterpriseCodingPlanProductDisplay => {
@@ -83,7 +92,7 @@ function buildEnterpriseCodingPlanProductList(
   });
 }
 
-function mergeEnterpriseCodingPlanProductList(
+export function mergeEnterpriseCodingPlanProductList(
   staticProducts: CodingPlanStaticTeamProduct[],
   pricingProducts: EnterpriseCodingPlanPricingProduct[],
 ): EnterpriseCodingPlanProductDisplay[] {
@@ -165,6 +174,277 @@ function resolveEnterpriseCodingPlanDisplayPayAmount(
   return undefined;
 }
 
+export function buildEnterpriseCodingPlanCalculateRequest({
+  product,
+  maxSeats,
+  duration,
+  giveAmount = 0,
+  balanceDeductAmount = 0,
+}: {
+  product: EnterpriseCodingPlanProductDisplay;
+  maxSeats: number;
+  duration: number;
+  giveAmount?: number;
+  balanceDeductAmount?: number;
+}) {
+  return {
+    productId: product.productId,
+    maxSeats,
+    subscribePeriod: product.subscribePeriod,
+    subscribeMode: product.subscribeMode,
+    duration: product.subscribeMode === "ONE_TIME" ? duration : undefined,
+    giveAmount,
+    balanceDeductAmount,
+  };
+}
+
+export function buildEnterpriseCodingPlanCreateOrderRequest({
+  product,
+  maxSeats,
+  duration,
+  estimate,
+  giveAmount = 0,
+  balanceDeductAmount = 0,
+}: {
+  product: EnterpriseCodingPlanProductDisplay;
+  maxSeats: number;
+  duration: number;
+  giveAmount?: number;
+  balanceDeductAmount?: number;
+  estimate: Pick<
+    EnterpriseCodingPlanOrderCalculateResponse,
+    "totalOriginalAmount" | "totalPayAmount" | "thirdPayAmount"
+  >;
+}): EnterpriseCodingPlanCreateOrderRequest {
+  return {
+    productId: product.productId,
+    maxSeats,
+    subscribePeriod: product.subscribePeriod,
+    subscribeMode: product.subscribeMode,
+    purchaseType: "PAY",
+    duration: product.subscribeMode === "ONE_TIME" ? duration : undefined,
+    giveAmount,
+    balanceDeductAmount,
+    totalOriginalAmount: estimate.totalOriginalAmount,
+    totalPayAmount: estimate.totalPayAmount,
+    thirdPayAmount: estimate.thirdPayAmount,
+  };
+}
+
+export function buildEnterpriseCodingPlanPaymentContent(
+  order: Pick<EnterpriseCodingPlanCreateOrderResponse, "alipayJumpSchema" | "payUrl">,
+): string {
+  // Bugfix: for enterprise plans, the desktop QR code must use payUrl as specified by the API. alipayJumpSchema is a mobile deep-link schema for launching Alipay and can be too long for QR generation.
+  return order.payUrl?.trim() || order.alipayJumpSchema?.trim() || "";
+}
+
+export function isEnterpriseCodingPlanThirdPartyPaymentRequired(
+  order: Pick<
+    EnterpriseCodingPlanCreateOrderResponse,
+    "alipayJumpSchema" | "payUrl" | "thirdPayAmount"
+  >,
+): boolean {
+  // Bugfix: when a gift balance/account balance fully covers an enterprise plan, the backend
+  // creates an order with no third-party payment content. Do not open the Alipay QR page for such
+  // orders, or the user will be stuck on “Complete payment on this page.”
+  return order.thirdPayAmount > 0 || buildEnterpriseCodingPlanPaymentContent(order) !== "";
+}
+
+export function buildEnterpriseCodingPlanEstimateFromPendingOrder(
+  order: EnterpriseCodingPlanPendingOrder,
+): EnterpriseCodingPlanOrderCalculateResponse {
+  const discountAmount = hasPositiveAmount(order.deductionAmount)
+    ? order.deductionAmount
+    : Math.max(0, order.totalAmount - order.amount);
+  return {
+    totalOriginalAmount: order.totalAmount,
+    campaignDiscountAmount: discountAmount,
+    totalPayAmount: order.amount,
+    // Bugfix: the pending-orders API does not return thirdPayAmount, so the confirmation page must
+    // use the amount due as a placeholder. When payment starts, refresh the QR-dialog amount from
+    // the thirdPayAmount returned by the continue-payment API.
+    thirdPayAmount: order.amount,
+  };
+}
+
+export function buildEnterpriseCodingPlanEstimateFromOrderResponse(
+  order: EnterpriseCodingPlanCreateOrderResponse,
+): EnterpriseCodingPlanOrderCalculateResponse {
+  return {
+    totalOriginalAmount: order.totalOriginalAmount,
+    campaignDiscountAmount: order.campaignDiscountAmount,
+    discountDetails: order.discountDetails,
+    totalPayAmount: order.totalPayAmount,
+    thirdPayAmount: order.thirdPayAmount,
+  };
+}
+
+export function buildEnterpriseCodingPlanCampaignDiscountDetails({
+  campaignDiscountAmount,
+  discountDetails,
+  pricingCampaignDiscountDetails,
+}: {
+  campaignDiscountAmount?: number;
+  discountDetails?: EnterpriseCodingPlanDiscountDetail[];
+  pricingCampaignDiscountDetails?: CodingPlanCampaignDiscountDetail[];
+}): CodingPlanCampaignDiscountDetail[] {
+  const pricingDetails = normalizePricingCampaignDiscountDetails(
+    pricingCampaignDiscountDetails,
+    campaignDiscountAmount,
+  );
+  if (pricingDetails.length > 0) {
+    return pricingDetails;
+  }
+
+  const mappedDetails = (discountDetails ?? []).flatMap((detail) => {
+    if (typeof detail.discountAmount !== "number" || detail.discountAmount <= 0) {
+      return [];
+    }
+    const discountName = detail.discountName?.trim();
+    return [
+      {
+        campaignName: discountName || undefined,
+        campaignDiscountAmount: detail.discountAmount,
+        rewardDetail: discountName || undefined,
+        applyScene: detail.discountType,
+      },
+    ];
+  });
+  if (mappedDetails.length > 0) {
+    return mappedDetails;
+  }
+  if (typeof campaignDiscountAmount === "number" && campaignDiscountAmount > 0) {
+    return [{ campaignDiscountAmount }];
+  }
+  return [];
+}
+
+export function calculateEnterpriseCodingPlanPricingDiscountAmount({
+  product,
+  maxSeats,
+  duration,
+}: {
+  product: EnterpriseCodingPlanProductDisplay;
+  maxSeats: number;
+  duration: number;
+}): number | undefined {
+  const discountAmount = product.enterpriseProduct.discountAmount;
+  const displayDiscountAmount = hasPositiveAmount(discountAmount)
+    ? discountAmount
+    : calculateEnterpriseCodingPlanDisplayDiscountAmount(product);
+  if (!hasPositiveAmount(displayDiscountAmount)) {
+    return undefined;
+  }
+  const periodCount = product.subscribeMode === "ONE_TIME" ? Math.max(1, duration) : 1;
+  return roundCurrencyAmount(
+    // Root cause: enterprise pricing may report discountAmount as 0 even when the annual discount
+    // is represented by the difference between originalAmount and renewAmount. Reconstruct the
+    // per-seat discount from the price shown on the card for confirmation/payment details.
+    displayDiscountAmount * Math.max(1, maxSeats) * periodCount,
+  );
+}
+
+function calculateEnterpriseCodingPlanDisplayDiscountAmount(
+  product: EnterpriseCodingPlanProductDisplay,
+): number | undefined {
+  const displayPayAmount = resolveEnterpriseCodingPlanDisplayPayAmount(product.enterpriseProduct);
+  if (
+    !hasPositiveAmount(product.enterpriseProduct.originalAmount) ||
+    !hasPositiveOrZeroAmount(displayPayAmount)
+  ) {
+    return undefined;
+  }
+  const discountAmount = product.enterpriseProduct.originalAmount - displayPayAmount;
+  return discountAmount > 0 ? roundCurrencyAmount(discountAmount) : undefined;
+}
+
+function normalizePricingCampaignDiscountDetails(
+  details: CodingPlanCampaignDiscountDetail[] | undefined,
+  campaignDiscountAmount: number | undefined,
+): CodingPlanCampaignDiscountDetail[] {
+  const sourceDetails = (details ?? []).filter(
+    (detail) =>
+      hasPositiveAmount(detail.campaignDiscountAmount) ||
+      Boolean(detail.campaignName?.trim()) ||
+      Boolean(detail.rewardDetail?.trim()),
+  );
+  if (sourceDetails.length === 0) {
+    return [];
+  }
+
+  const totalDiscountAmount = hasPositiveAmount(campaignDiscountAmount)
+    ? campaignDiscountAmount
+    : undefined;
+  const sourceAmountSum = sourceDetails.reduce(
+    (sum, detail) =>
+      sum + (hasPositiveAmount(detail.campaignDiscountAmount) ? detail.campaignDiscountAmount : 0),
+    0,
+  );
+  let allocatedAmount = 0;
+
+  return sourceDetails.flatMap((detail, index) => {
+    const amount = resolvePricingCampaignDiscountAmount({
+      detail,
+      index,
+      count: sourceDetails.length,
+      totalDiscountAmount,
+      sourceAmountSum,
+      allocatedAmount,
+    });
+    allocatedAmount += amount;
+    if (!hasPositiveAmount(amount)) {
+      return [];
+    }
+    return [
+      {
+        ...detail,
+        // Root cause: enterprise pricing returns promotion details per seat and billing period,
+        // while quotes/orders return the total discount for the current seat count and duration.
+        // Keep the promotion name and description from pricing, but use the current order's total
+        // discount amount to avoid understating discounts on multi-seat purchases.
+        campaignDiscountAmount: amount,
+      },
+    ];
+  });
+}
+
+function resolvePricingCampaignDiscountAmount({
+  detail,
+  index,
+  count,
+  totalDiscountAmount,
+  sourceAmountSum,
+  allocatedAmount,
+}: {
+  detail: CodingPlanCampaignDiscountDetail;
+  index: number;
+  count: number;
+  totalDiscountAmount: number | undefined;
+  sourceAmountSum: number;
+  allocatedAmount: number;
+}): number {
+  if (!hasPositiveAmount(totalDiscountAmount)) {
+    return hasPositiveAmount(detail.campaignDiscountAmount) ? detail.campaignDiscountAmount : 0;
+  }
+
+  if (count === 1) {
+    return totalDiscountAmount;
+  }
+
+  if (sourceAmountSum <= 0) {
+    return index === 0 ? totalDiscountAmount : 0;
+  }
+
+  if (index === count - 1) {
+    return roundCurrencyAmount(totalDiscountAmount - allocatedAmount);
+  }
+
+  const sourceAmount = hasPositiveAmount(detail.campaignDiscountAmount)
+    ? detail.campaignDiscountAmount
+    : 0;
+  return roundCurrencyAmount((totalDiscountAmount * sourceAmount) / sourceAmountSum);
+}
+
 function hasPositiveAmount(value: number | undefined): value is number {
   return typeof value === "number" && Number.isFinite(value) && value > 0;
 }
@@ -175,6 +455,24 @@ function hasPositiveOrZeroAmount(value: number | undefined): value is number {
 
 function roundCurrencyAmount(value: number): number {
   return Math.round((value + Number.EPSILON) * 100) / 100;
+}
+
+export function isEnterpriseCodingPlanPaymentSuccessStatus(
+  status: EnterpriseCodingPlanPaymentStatus,
+): boolean {
+  return status === "SUCCESS";
+}
+
+export function isEnterpriseCodingPlanPaymentFailureStatus(
+  status: EnterpriseCodingPlanPaymentStatus,
+): boolean {
+  return ENTERPRISE_CODING_PLAN_FAILURE_STATUSES.includes(
+    status as (typeof ENTERPRISE_CODING_PLAN_FAILURE_STATUSES)[number],
+  );
+}
+
+export function getEnterpriseCodingPlanFailureStatuses(): string[] {
+  return [...ENTERPRISE_CODING_PLAN_FAILURE_STATUSES];
 }
 
 function formatEnterpriseCodingPlanTier(tier: EnterpriseCodingPlanPricingProduct["tier"]): string {

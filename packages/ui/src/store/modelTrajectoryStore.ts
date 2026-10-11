@@ -8,7 +8,7 @@ import { create } from "zustand";
  * use a lightweight singleton store as a bridge: the menu writes a pending request, and the target workspace's
  * useAppPanels subscribes and consumes it (matched by workspaceKey to avoid cross-wiring multiple workspace instances).
  */
-interface ModelTrajectoryOpenRequest {
+export interface ModelTrajectoryOpenRequest {
   /** Unique request id so repeated clicks on the same task still trigger consumption. */
   requestId: string;
   taskId: string;

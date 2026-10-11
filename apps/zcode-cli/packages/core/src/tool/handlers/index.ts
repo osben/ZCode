@@ -1,3 +1,4 @@
+import { replyToChannelToolEntry } from "./reply-to-channel.js";
 // ============================================================
 // Built-in Tool Handlers
 // ============================================================
@@ -6,6 +7,7 @@ import {
   AMEND_WORKFLOW_TOOL_NAME,
   CREATE_WORKFLOW_TOOL_NAME,
   EVAL_WORKFLOW_SNIPPET_TOOL_NAME,
+  FILL_WORKFLOW_HOLE_TOOL_NAME,
   GET_WORKFLOW_RUN_TOOL_NAME,
   LIST_MODELS_TOOL_NAME,
   LIST_SAVED_WORKFLOWS_TOOL_NAME,
@@ -17,7 +19,6 @@ import {
   type JsonSchema,
 } from "@zcode/contracts";
 import type { ToolEntry } from "../types.js";
-import type { AgentProfile } from "../../subagent/profile.js";
 import { readToolEntry } from "./read.js";
 import { writeToolEntry } from "./write.js";
 import { editToolEntry } from "./edit.js";
@@ -55,6 +56,7 @@ import { respondToCoordinatorToolEntry } from "./respond-to-coordinator.js";
 import { createSubmitResultToolEntry, submitResultToolEntry } from "./submit-result.js";
 import { escalateToolEntry } from "./escalate.js";
 import { resolveWorkflowQuestionToolEntry } from "./resolve-workflow-question.js";
+import { fillWorkflowHoleToolEntry } from "./fill-workflow-hole.js";
 import { taskOutputToolEntry } from "./task-output.js";
 import { taskStopToolEntry } from "./task-stop.js";
 import { readSessionContextToolEntry } from "./read-session-context.js";
@@ -104,6 +106,7 @@ export const builtInTools: ToolEntry[] = [
   taskOutputToolEntry,
   taskStopToolEntry,
   readSessionContextToolEntry,
+  replyToChannelToolEntry,
   agentToolEntry,
   taskToolEntry,
   skillToolEntry,
@@ -126,6 +129,9 @@ export const builtInTools: ToolEntry[] = [
   // failures. The downstream difference is that it is denied in actor sessions (bootstrap's workflowActorToolPolicy); subagents may
   // not answer on behalf of the primary agent.
   resolveWorkflowQuestionToolEntry,
+  // Main-agent side of hole completion (docs/dynamic-workflow/launch.md, “The `FillWorkflowHole` tool”): same family as
+  // ResolveWorkflowQuestion (run port, same typeof detection for missing methods), but it writes a script—use the same alwaysAsk gate and owner approval exemption as AmendWorkflow, and include it in the workflow-child denylist too.
+  fillWorkflowHoleToolEntry,
   // Definition catalog (different from the two run tools above: those are history, this is what can be run). Also read-only, no gate.
   listSavedWorkflowsToolEntry,
   // Model catalog: another read-only, ungated discovery surface for `subagent_model` in CreateWorkflow / AmendWorkflow. It is not in
@@ -136,11 +142,12 @@ export const builtInTools: ToolEntry[] = [
 ];
 
 /**
- * Ten tools omitted when the dynamic-workflow rollout gate is disabled.
- * Disabled means there is no way to start a workflow, so remove create, revise, save, snippet evaluation, and four run-facing tools.
- * Read-only run introspection is included because in this state it points only to history the user can no longer act on.
- * `ListModels` is included because its only purpose is selecting `subagent_model` for a run; without CreateWorkflow, it would point the
- * model to a nonexistent tool. The older `Workflow` tool (`/expert` script channel) is a separate feature and **not** in this list.
+ * Eleven tools not registered when the dynamic-workflow gradual rollout gate is closed
+ * (including FillWorkflowHole since 2026-09-28: no run can reach a hole when the gate is closed).
+ * A closed gate means “there is no way to start a workflow,” so remove creation, amendment, saving, snippet evaluation, and all four
+ * run-facing tools together. Read-only run introspection is also included because in the closed state it would point only to history the user can no longer act on.
+ * `ListModels` is included too: its only purpose is selecting `subagent_model` for a run, and without CreateWorkflow it would direct the model to a nonexistent tool.
+ * The legacy `Workflow` tool (`/expert` script path) is a separate feature and is **not** on this list.
  */
 const DYNAMIC_WORKFLOW_TOOL_NAMES: ReadonlySet<string> = new Set([
   CREATE_WORKFLOW_TOOL_NAME,
@@ -153,7 +160,13 @@ const DYNAMIC_WORKFLOW_TOOL_NAMES: ReadonlySet<string> = new Set([
   GET_WORKFLOW_RUN_TOOL_NAME,
   RESUME_WORKFLOW_RUN_TOOL_NAME,
   RESOLVE_WORKFLOW_QUESTION_TOOL_NAME,
+  FILL_WORKFLOW_HOLE_TOOL_NAME,
 ]);
+
+/** Is this one of the ten workflow tools controlled by the gradual rollout gate? Used by cold restore to infer activation from history (launch.md, “On demand: activation”). */
+export function isDynamicWorkflowToolName(toolName: string): boolean {
+  return DYNAMIC_WORKFLOW_TOOL_NAMES.has(toolName);
+}
 
 interface RegisterBuiltInToolsOptions {
   bashTimeoutPolicy?: BashTimeoutPolicy;
@@ -184,7 +197,6 @@ interface RegisterBuiltInToolsOptions {
   /** browser-use guidance and agent.browsers injection are enabled jointly by the official browser-use plugin and host browser bridge. */
   includeBrowserUse?: boolean;
   embeddedSearchEnabled?: boolean;
-  agentProfiles?: readonly AgentProfile[];
   allowedTools?: readonly string[];
   disallowedTools?: readonly string[];
   silentDuplicateWarnings?: boolean;
@@ -284,15 +296,11 @@ function resolveBuiltInToolEntryForBranch(
   // the same options.includeDynamicWorkflow as registration filtering so initial setup and branch refresh produce matching descriptions.
   if (entry.metadata.name === "Agent") {
     return createAgentToolEntry({
-      embeddedSearchEnabled: options.embeddedSearchEnabled,
-      profiles: options.agentProfiles,
       dynamicWorkflowEnabled: options.includeDynamicWorkflow !== false,
     });
   }
   if (entry.metadata.name === "Task") {
     return createTaskToolEntry({
-      embeddedSearchEnabled: options.embeddedSearchEnabled,
-      profiles: options.agentProfiles,
       dynamicWorkflowEnabled: options.includeDynamicWorkflow !== false,
     });
   }

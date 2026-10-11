@@ -1,6 +1,10 @@
-// Dynamic Workflow Run Port: adjust the concurrency limit of a running workflow.
-// Defines the request, result, and capability boundary; re-exported from
-// dynamic-workflow-run.port.ts for consumers through `@zcode/contracts`.
+// ============================================================
+// Dynamic Workflow Run Port: retune the concurrency cap of a live run in place.
+// ============================================================
+// docs/dynamic-workflow/concurrency.md, “Retuning a live run”. Split for the same reason as the roster
+// view (dynamic-workflow-run-roster.port.ts): dynamic-workflow-run.port.ts reached oxlint's 400-line
+// limit, and these three types form a cohesive group. The public surface is unchanged: that module
+// re-exports them, so `@zcode/contracts` import paths remain the same.
 
 /**
  * Request for {@link import("./dynamic-workflow-run.port.js").DynamicWorkflowRunPort.retuneConcurrency}.
@@ -33,14 +37,14 @@ export type DynamicWorkflowRunRetuneRefusalReason = "not_live" | "unchanged";
  * reason as {@link import("./dynamic-workflow-run.port.js").DynamicWorkflowRunAmendResult}:
  * both outcomes are expected business branches for the caller.
  *
- * `ceiling` and `previous` are required: the model response must say "up to n subagents run
- * concurrently," or "the limit is removed" when n equals the ceiling (the same rule used by
- * `CreateWorkflow`). The event log must also report "8 → 2"; the previous value cannot be
- * inferred from the new value alone. Only this side of the port knows both values; having the
- * caller recompute them would create a second ceiling implementation.
+ * `defaultConcurrency` and `previous` are required context: the model-facing reply must say “up to n
+ * subagents at once,” and label n as “(default)” when it equals the default concurrency (same rule as
+ * the `CreateWorkflow` reply). The event log must show “8 → 2,” which cannot be derived from the new
+ * value alone. Only the port knows both values; making callers recompute them would create a second
+ * default-concurrency implementation.
  */
 export type DynamicWorkflowRunRetuneResult =
-  | { ok: true; maxConcurrency: number; previous: number; ceiling: number }
+  | { ok: true; maxConcurrency: number; previous: number; defaultConcurrency: number }
   | {
       ok: false;
       reason: DynamicWorkflowRunRetuneRefusalReason;

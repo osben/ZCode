@@ -4,11 +4,13 @@ import {
   type WorkspaceSidePaneState,
 } from "@/lib/workspaceSidePane.js";
 
-interface TaskSidePaneMemoryState {
+export interface TaskSidePaneMemoryState {
   sidePaneState: WorkspaceSidePaneState | null;
   isSidePaneCollapsed: boolean;
   /** Conversation-level expand/collapse preference; tabs themselves are still reused per workspace. */
   sidePaneCollapsedByOwner: Record<string, boolean>;
+  /** Records consumed automatic tool-call opens; retained when message rows unmount. */
+  pluginUiAutoOpenKeys: ReadonlySet<string>;
   activeGitSourceId: GitChangeSourceId;
   browserUrls: Record<string, string>;
   /** @deprecated URL for the legacy single browser tab, retained to read historical in-memory state. */
@@ -19,12 +21,13 @@ const DEFAULT_TASK_SIDE_PANE_MEMORY_STATE: TaskSidePaneMemoryState = {
   sidePaneState: null,
   isSidePaneCollapsed: true,
   sidePaneCollapsedByOwner: {},
+  pluginUiAutoOpenKeys: new Set(),
   activeGitSourceId: "unstaged",
   browserUrls: {},
   browserUrl: null,
 };
 
-const TASK_SIDE_PANE_MEMORY_MAX_ENTRIES = 50;
+export const TASK_SIDE_PANE_MEMORY_MAX_ENTRIES = 50;
 
 const DRAFT_SIDE_PANE_OWNER_KEY = "__draft__";
 
@@ -139,4 +142,23 @@ export function saveTaskSidePaneCollapsedPreference(
       [ownerKey]: isSidePaneCollapsed,
     },
   });
+}
+
+export function clearTaskSidePaneMemoryStateForTest(): void {
+  taskSidePaneMemory.clear();
+}
+
+export function claimPluginUiSidePaneAutoOpen(
+  workspaceKey: string | null,
+  requestKey: string,
+): boolean {
+  if (!workspaceKey) return false;
+  const state = readTaskSidePaneMemoryState(workspaceKey);
+  if (state.pluginUiAutoOpenKeys.has(requestKey)) return false;
+  // Root cause: An inline useRef is lost after a session switch or virtual unmount, allowing a stale fullscreen result to overwrite the saved collapsed state.
+  // Share the side-pane preference’s in-memory owner; synchronous consumption also ensures multiple anchors for one call trigger only once.
+  saveTaskSidePaneMemoryState(workspaceKey, {
+    pluginUiAutoOpenKeys: new Set([...state.pluginUiAutoOpenKeys, requestKey]),
+  });
+  return true;
 }

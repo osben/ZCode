@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer } from "electron";
 import { PlatformChannels, formatZCodeRendererProcessName } from "@zcode/shared";
 import type {
   ResourceUsageSnapshot,
+  NetworkCaptureBridge,
   StorageCleanRequest,
   StorageCleanResult,
   StorageManagementBridge,
@@ -28,6 +29,11 @@ const storage: StorageManagementBridge = {
   },
 };
 
+const network: NetworkCaptureBridge = {
+  getSnapshot: () => ipcRenderer.invoke(PlatformChannels.GetNetworkCaptureSnapshot),
+  clear: () => ipcRenderer.invoke(PlatformChannels.ClearNetworkCapture),
+};
+
 /**
  * Dedicated preload for the resource manager window, exposing resource snapshot reads and storage
  * management commands.
@@ -40,4 +46,5 @@ contextBridge.exposeInMainWorld("resourceManager", {
   getSnapshot: (): Promise<ResourceUsageSnapshot> =>
     ipcRenderer.invoke(PlatformChannels.GetResourceUsageSnapshot),
   storage,
+  network,
 });

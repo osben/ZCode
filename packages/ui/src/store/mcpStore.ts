@@ -99,6 +99,18 @@ interface McpStoreState {
   addZCodeAgentMcpServer: (name: string, config: McpServerConfig, projectPath?: string) => void;
   updateZCodeAgentMcpServer: (name: string, config: McpServerConfig, projectPath?: string) => void;
   deleteZCodeAgentMcpServer: (name: string, projectPath?: string) => void;
+  addClaudeCliMcpServer: (name: string, config: McpServerConfig, projectPath?: string) => void;
+  updateClaudeCliMcpServer: (name: string, config: McpServerConfig, projectPath?: string) => void;
+  deleteClaudeCliMcpServer: (name: string, projectPath?: string) => void;
+  addGeminiCliMcpServer: (name: string, config: McpServerConfig, projectPath?: string) => void;
+  updateGeminiCliMcpServer: (name: string, config: McpServerConfig, projectPath?: string) => void;
+  deleteGeminiCliMcpServer: (name: string, projectPath?: string) => void;
+  addCodexCliMcpServer: (name: string, config: McpServerConfig, projectPath?: string) => void;
+  updateCodexCliMcpServer: (name: string, config: McpServerConfig, projectPath?: string) => void;
+  deleteCodexCliMcpServer: (name: string, projectPath?: string) => void;
+  addOpenCodeMcpServer: (name: string, config: McpServerConfig, projectPath?: string) => void;
+  updateOpenCodeMcpServer: (name: string, config: McpServerConfig, projectPath?: string) => void;
+  deleteOpenCodeMcpServer: (name: string, projectPath?: string) => void;
   toggleServer: (id: string, enabled: boolean) => Promise<void>;
   updateServerStatus: (
     id: string,
@@ -392,7 +404,7 @@ export const useMcpStore = create<McpStoreState>((set, get) => {
     updateScopedMcpServer: async (source, name, config, projectPath) => {
       invalidateStatusListRequests();
       const targetSource: CliMcpSource = source === "mcp" ? "zcodeagentmcp" : source;
-      // Local state changes trigger a health refresh and must happen after the disk configuration is updated.
+      // Same reason as for creation: local state changes trigger a health refresh and must happen after the on-disk configuration is updated.
       await persistScopedChange(targetSource, {
         action: "upsert",
         source: targetSource,
@@ -424,6 +436,30 @@ export const useMcpStore = create<McpStoreState>((set, get) => {
         }),
       );
     },
+    addClaudeCliMcpServer: (name, config, projectPath) =>
+      get().addScopedMcpServer("claudeclimcp", name, config, projectPath),
+    updateClaudeCliMcpServer: (name, config, projectPath) =>
+      get().updateScopedMcpServer("claudeclimcp", name, config, projectPath),
+    deleteClaudeCliMcpServer: (name, projectPath) =>
+      get().deleteScopedMcpServer("claudeclimcp", name, projectPath),
+    addGeminiCliMcpServer: (name, config, projectPath) =>
+      get().addScopedMcpServer("geminiclimcp", name, config, projectPath),
+    updateGeminiCliMcpServer: (name, config, projectPath) =>
+      get().updateScopedMcpServer("geminiclimcp", name, config, projectPath),
+    deleteGeminiCliMcpServer: (name, projectPath) =>
+      get().deleteScopedMcpServer("geminiclimcp", name, projectPath),
+    addCodexCliMcpServer: (name, config, projectPath) =>
+      get().addScopedMcpServer("codexclimcp", name, config, projectPath),
+    updateCodexCliMcpServer: (name, config, projectPath) =>
+      get().updateScopedMcpServer("codexclimcp", name, config, projectPath),
+    deleteCodexCliMcpServer: (name, projectPath) =>
+      get().deleteScopedMcpServer("codexclimcp", name, projectPath),
+    addOpenCodeMcpServer: (name, config, projectPath) =>
+      get().addScopedMcpServer("opencodemcp", name, config, projectPath),
+    updateOpenCodeMcpServer: (name, config, projectPath) =>
+      get().updateScopedMcpServer("opencodemcp", name, config, projectPath),
+    deleteOpenCodeMcpServer: (name, projectPath) =>
+      get().deleteScopedMcpServer("opencodemcp", name, projectPath),
     addZCodeAgentMcpServer: (name, config, projectPath) =>
       get().addScopedMcpServer("zcodeagentmcp", name, config, projectPath),
     updateZCodeAgentMcpServer: (name, config, projectPath) =>
@@ -555,8 +591,8 @@ export const useMcpStore = create<McpStoreState>((set, get) => {
         return {
           statusSnapshots: nextStatusSnapshots,
           servers: mergeMcpServerStatusSnapshots(state.servers, nextStatusSnapshots, {
-            // The OAuth polling status-only response may contain only a pending subset.
-            // Do not treat missing entries as a full mcp/list response, or other MCP servers will be incorrectly marked as not returned by the agent.
+            // Bugfix: A status-only OAuth polling response may contain only a subset of pending entries.
+            // Do not treat missing entries as a full mcp/list response, or other MCPs will be incorrectly marked as omitted by the agent.
             markMissingConnectingAsError: mode !== "status",
           }),
         };

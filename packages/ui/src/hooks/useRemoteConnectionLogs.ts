@@ -86,7 +86,7 @@ export function appendRemoteConnectionRuntimeLog(
   ];
 }
 
-function shouldAcceptRemoteConnectionRuntimeLog(
+export function shouldAcceptRemoteConnectionRuntimeLog(
   entry: Pick<RemoteConnectionRuntimeLog, "requestId">,
   activeRequestId?: string | null,
 ): boolean {

@@ -9,6 +9,15 @@ import type {
 } from "./index.js";
 import type { OAuthStateRegistration } from "./oauth.js";
 import type { ServiceLocale } from "./locale.js";
+import type {
+  WebRemoteControlContext,
+  WebRemoteControlReconnectWorkspaceRequest,
+  WebRemoteControlReconnectWorkspaceResult,
+  WebRemoteControlStartOperationResult,
+  WebRemoteControlStatus,
+  WebRemoteControlTaskTarget,
+  WebRemoteControlWorkspaceTarget,
+} from "./web-remote-control.js";
 import type { AppSettings, Locale } from "./protocol.js";
 import type { StorageCleanRequest, StorageCleanResult, StorageUsageSnapshot } from "./storage.js";
 import type {
@@ -42,9 +51,16 @@ import type {
   DesktopTitleBarTheme,
   DockerContainerInfo,
   EmbeddedBrowserOpenUrlRequest,
+  EmbeddedBrowserPermissionPromptEvent,
+  EmbeddedBrowserPermissionResolveRequest,
+  EmbeddedBrowserSitePermissionUpdateRequest,
+  EmbeddedBrowserSitePermissionResetRequest,
+  EmbeddedBrowserSitePermissionsSnapshot,
   EditorInfo,
   CreateTempTextAttachmentRequest,
   CreateTempTextAttachmentResult,
+  MaterializeWorkflowArtifactFileRequest,
+  MaterializeWorkflowArtifactFileResult,
   SaveFileRequest,
   SaveFileResult,
   PrintPageToPdfResult,
@@ -118,6 +134,8 @@ export const ServiceChannels = {
   ClientConfig: "client-config",
   /** ZCode client-scene configuration service */
   ClientScenes: "client-scenes",
+  CloudContent: "cloud-content",
+  MarketingTouch: "marketing-touch",
   /** Skills management service */
   Skills: "skills",
   /** SSH remote skills synchronization service */
@@ -130,6 +148,10 @@ export const ServiceChannels = {
   Plugins: "plugins",
   /** Settings-page plugin management service (consolidates UI platform capabilities and no longer calls zcodeAgentService directly) */
   PluginManagement: "plugin-management",
+  /** Plugin UI sandbox bridge: host reads ui:// resources, registers them with main, and proxies tool calls initiated by the UI */
+  PluginUiBridge: "plugin-ui-bridge",
+  PluginUiSampling: "plugin-ui-sampling",
+  PluginUiAppTools: "plugin-ui-app-tools",
   /** Subagents management service */
   Subagents: "subagents",
   /** Commands management service */
@@ -140,6 +162,8 @@ export const ServiceChannels = {
   Memory: "memory",
   /** Read/write service for global user instructions (~/.zcode/AGENTS.md) */
   UserInstructions: "user-instructions",
+  /** OutputStyle management service */
+  OutputStyle: "output-style",
   /** First-launch settings synchronization service */
   SettingsSync: "settings-sync",
   /** Remote chat-control service for Bots */
@@ -150,6 +174,8 @@ export const ServiceChannels = {
   PromptAttachmentTransfer: "prompt-attachment-transfer",
   /** Off-peak task management service (separate from the automation service surface) */
   OffPeakTask: "off-peak-task",
+  /** Highspeed acceleration-card extraction and sharing service */
+  HighspeedCard: "highspeed-card",
   /** Onboarding completion record service (persisted locally and uploaded to the server later) */
   OnboardingRecord: "onboarding-record",
 } as const;
@@ -162,6 +188,13 @@ export type ServiceChannelName = (typeof ServiceChannels)[keyof typeof ServiceCh
 
 /** Electron IPC channel names. Used only between preload and main. */
 export const PlatformChannels = {
+  /** renderer → main: release the plugin UI sandbox (close ports, remove the protocol handler, clear the partition) */
+  PluginSandboxDispose: "zcode:plugin-sandbox-dispose",
+  PluginSandboxCopyImage: "zcode:plugin-sandbox-copy-image",
+  /** renderer → main: consume a one-time user-gesture token from the plugin UI sandbox guest */
+  PluginSandboxConsumeUserGesture: "zcode:plugin-sandbox-consume-user-gesture",
+  /** renderer → main: query its own webContents id to use as the sandbox registration owner */
+  PluginSandboxOwnerWebContentsId: "zcode:plugin-sandbox-owner-web-contents-id",
   /** Open the system directory picker */
   SelectDirectory: "zcode:select-directory",
   /** Open the system file picker */
@@ -170,6 +203,8 @@ export const PlatformChannels = {
   SelectFiles: "zcode:select-files",
   /** Renderer → Main: write a temporary text attachment to the host's ~/.zcode */
   CreateTempTextAttachment: "zcode:create-temp-text-attachment",
+  /** Renderer → Main: save a version of a DWF artifact as a local copy (“open as file”) */
+  MaterializeWorkflowArtifactFile: "zcode:materialize-workflow-artifact-file",
   /** Renderer → Main: save a file through the native Save As dialog */
   SaveFile: "zcode:save-file",
   /** Renderer → Main: export the current page's print media layout to PDF using Chromium's print engine */
@@ -188,6 +223,15 @@ export const PlatformChannels = {
   CancelPendingRemoteConnection: "zcode:cancel-pending-remote-connection",
   /** Renderer → Main: bind the canonical workspace context to a remote logical session */
   BindRemoteWorkspaceSessionContext: "zcode:bind-remote-workspace-session-context",
+  /** Enable Web remote control for the current workspace */
+  StartWebRemoteControl: "zcode:start-web-remote-control",
+  ResetWebRemoteControlPairing: "zcode:reset-web-remote-control-pairing",
+  /** Disable Web remote control for the current window */
+  StopWebRemoteControl: "zcode:stop-web-remote-control",
+  /** Query the current window’s Web remote-control status */
+  GetWebRemoteControlStatus: "zcode:get-web-remote-control-status",
+  /** Main → Renderer: Web remote-control status changed for the current window */
+  WebRemoteControlStatusChanged: "zcode:web-remote-control-status-changed",
   /** Release the remote session in the current window */
   DisposeRemoteSession: "zcode:dispose-remote-session",
   /** Renderer → Main: check whether the local Docker daemon is available */
@@ -202,10 +246,18 @@ export const PlatformChannels = {
   LoadMcpFromUserDirectory: "zcode:load-mcp-from-user-directory",
   /** Renderer → Main: save CLI MCP configuration to the user directory */
   SaveMcpToUserDirectory: "zcode:save-mcp-to-user-directory",
+  /** Renderer → Main: query whether “close to tray” is supported (used to disable the option on Linux; spec: docs/desktop/linux-close-to-tray.md) */
+  GetCloseToTrayCapability: "zcode:get-close-to-tray-capability",
   /** Forward Renderer logs to centralized storage in the main process */
   Log: "zcode:log",
   /** Renderer → Main: sync workspace paths for all tabs in the current window */
   SyncWindowTabs: "zcode:sync-window-tabs",
+  /** Renderer → Main: sync the workspaces available for Web remote-control switching in the current window */
+  SyncWebRemoteControlWorkspaces: "zcode:sync-web-remote-control-workspaces",
+  /** Renderer → Main: sync the task snapshots available for Web remote-control display in the current window */
+  SyncWebRemoteControlTasks: "zcode:sync-web-remote-control-tasks",
+  /** Main → Renderer: mobile client requests reconnecting the remote workspace in the current window */
+  WebRemoteControlReconnectWorkspace: "zcode:web-remote-control-reconnect-workspace",
   /** Renderer → Main: sync the unread task count for the current window */
   SyncWindowUnreadCount: "zcode:sync-window-unread-count",
   /** Renderer → Main: report the active task for the current window; update only Main's temporary focus mapping. */
@@ -222,6 +274,10 @@ export const PlatformChannels = {
   CloseActiveContextRequest: "zcode:close-active-context-request",
   /** Main → Renderer: the embedded webview requests opening a new browser tab */
   OpenBrowserUrl: "zcode:open-browser-url",
+  /** Main → Renderer: request a built-in browser site-permission, screen-sharing source, or device-selection dialog */
+  EmbeddedBrowserPermissionPrompt: "zcode:embedded-browser-permission-prompt",
+  /** Renderer → Main: return the user’s decision for a built-in browser permission dialog */
+  EmbeddedBrowserPermissionResolve: "zcode:embedded-browser-permission-resolve",
   /** Main → Renderer: after the agent's first browser command creates a controlled view, notify the renderer to open a browser-use tab automatically */
   BrowserViewReady: "zcode:browser-view-ready",
   /** Main → Renderer: the agent is operating a browser-use tab; the renderer temporarily displays a status icon */
@@ -265,6 +321,8 @@ export const PlatformChannels = {
   /** Get a resource-manager snapshot (CPU/memory grouped by core services, built-in plugins, and community plugins) */
   GetResourceUsageSnapshot: "zcode:get-resource-usage-snapshot",
   SetResourceUsageSamplingActive: "zcode:set-resource-usage-sampling-active",
+  GetNetworkCaptureSnapshot: "zcode:get-network-capture-snapshot",
+  ClearNetworkCapture: "zcode:clear-network-capture",
   /** Open the resource-manager window (triggered from another window) */
   OpenResourceManager: "zcode:open-resource-manager",
   /** Resource Manager Storage tab: start scanning local .zcode usage (main owns StorageService; a Worker thread traverses files) */
@@ -373,6 +431,14 @@ export const PlatformChannels = {
   ImportChromeBrowserData: "zcode:import-chrome-browser-data",
   /** Renderer → Main: clear the embedded-browser cache or all site data. */
   ClearEmbeddedBrowserData: "zcode:clear-embedded-browser-data",
+  /** Renderer → Main: read built-in browser site-permission records (Settings > “Site Permissions”) */
+  GetEmbeddedBrowserSitePermissions: "zcode:get-embedded-browser-site-permissions",
+  /** Renderer → Main: update/delete one site permission (state="ask" means delete) */
+  SetEmbeddedBrowserSitePermission: "zcode:set-embedded-browser-site-permission",
+  /** Renderer → Main: clear all site-permission records */
+  ClearEmbeddedBrowserSitePermissions: "zcode:clear-embedded-browser-site-permissions",
+  /** Renderer → Main: reset all permission records for one site (the “Reset” action in the Site Permissions settings tab) */
+  ResetEmbeddedBrowserSitePermission: "zcode:reset-embedded-browser-site-permission",
   /** Main → Renderer: notify that a new version has downloaded and can be installed by restarting */
   UpdateReady: "zcode:update-ready",
   /** Main → Renderer: result of the user's manual "Check for updates" request (for a toast) */
@@ -461,6 +527,15 @@ export const CodingPlanWebviewChannels = {
   PurchaseComplete: "zcode:coding-plan-purchase-complete",
 } as const;
 
+/**
+ * Main → guest preload channels for the plugin UI sandbox guest (partition=plugin-sandbox:<id>).
+ * The preload forwards the MessagePort group to the trusted shell via window.postMessage and exposes no contextBridge API.
+ */
+export const PluginSandboxChannels = {
+  /** main → guest: { sandboxId, initId, names } + port1[]; the shell uses this to establish host ports */
+  Init: "zcode:plugin-sandbox-init",
+} as const;
+
 /** Purchase completion payload. provider matches the website's CodingPlanProvider / auth-ready event detail.provider. */
 export interface CodingPlanPurchaseCompletePayload {
   provider: "zai" | "bigmodel";
@@ -498,6 +573,8 @@ export const InternalChannels = {
   ScopedServicePortReady: "zcode:scoped-service-port-ready",
   /** preload → renderer: the main process confirmed the system notification was shown; the renderer can play its sound */
   TaskNotificationSound: "zcode:task-notification-sound",
+  /** main → host renderer: the plugin UI sandbox MessagePort group (port2[]), payload { sandboxId, initId, names } */
+  PluginSandboxPorts: "zcode:plugin-sandbox-ports",
 } as const;
 
 /** @deprecated `/ws` ignores this header; the constant remains only for compatibility with older clients. */
@@ -560,6 +637,8 @@ export const HostMessageTypes = {
   BrowserExecuteResult: "browser-execute-result",
   /** main → host: authorization result for a local video's canonical path */
   LocalMediaPreviewPathAuthorizeResult: "local-media-preview-path-authorize-result",
+  /** main → host: plugin UI sandbox registration result (PluginSandboxRegisterResultPayload) */
+  PluginSandboxRegisterResult: "plugin-sandbox-register-result",
   /** Main → Host: producer focus fact derived from the globally foreground ZCode window. */
   CuaPipFocusChanged: "cua-pip-focus-changed",
   /** main → host: ask the Host to read the local Source now and sync the specified Remote Environment. */
@@ -567,6 +646,7 @@ export const HostMessageTypes = {
   /** main → host: the Resource Manager requests CPU and memory sampling for the Host's descendant processes (Agent/MCP/terminal) */
   ResourceUsageSnapshotRequest: "resource-usage-snapshot-request",
   ResourceUsageSnapshotCancel: "resource-usage-snapshot-cancel",
+  NetworkCapture: "network-capture",
 } as const;
 
 /** Response message types from the host process to the main process */
@@ -603,6 +683,7 @@ export const HostResponseTypes = {
   SessionCreateTelemetry: "session-create-telemetry",
   /** host → main: Resource Manager sampling result, correlated by requestId */
   ResourceUsageSnapshotResult: "resource-usage-snapshot-result",
+  NetworkCaptureBatch: "network-capture-batch",
   /** Number of Agent sessions currently executing prompts inside the host changed */
   AgentRunningTaskCountChanged: "agent-running-task-count-changed",
   /** Number of tasks in the specified workspace that have not yet reached a terminal state changed */
@@ -657,6 +738,8 @@ export const HostResponseTypes = {
   BrowserExecuteRequest: "browser-execute-request",
   /** host → main: request authorization for a local video path precisely validated by the Agent */
   LocalMediaPreviewPathAuthorizeRequest: "local-media-preview-path-authorize-request",
+  /** host → main: register validated plugin UI HTML and CSP in exchange for a sandbox handle (PluginSandboxRegisterRequestPayload) */
+  PluginSandboxRegisterRequest: "plugin-sandbox-register-request",
   /** host → main: RPC network telemetry batch (channel.command success rate/latency) */
   NetworkTelemetryBatch: "network-telemetry-batch",
   /** host → main: local Provisioning Source was persisted successfully. */
@@ -686,6 +769,10 @@ export interface PlatformChannelMap {
   [PlatformChannels.CreateTempTextAttachment]: {
     request: CreateTempTextAttachmentRequest;
     response: CreateTempTextAttachmentResult;
+  };
+  [PlatformChannels.MaterializeWorkflowArtifactFile]: {
+    request: MaterializeWorkflowArtifactFileRequest;
+    response: MaterializeWorkflowArtifactFileResult;
   };
   [PlatformChannels.SaveFile]: {
     request: SaveFileRequest;
@@ -735,6 +822,26 @@ export interface PlatformChannelMap {
     request: BindRemoteWorkspaceSessionContextRequest;
     response: void;
   };
+  [PlatformChannels.StartWebRemoteControl]: {
+    request: WebRemoteControlContext;
+    response: WebRemoteControlStartOperationResult;
+  };
+  [PlatformChannels.ResetWebRemoteControlPairing]: {
+    request: WebRemoteControlContext;
+    response: WebRemoteControlStartOperationResult;
+  };
+  [PlatformChannels.StopWebRemoteControl]: {
+    request: void;
+    response: void;
+  };
+  [PlatformChannels.GetWebRemoteControlStatus]: {
+    request: void;
+    response: WebRemoteControlStatus;
+  };
+  [PlatformChannels.WebRemoteControlStatusChanged]: {
+    request: WebRemoteControlStatus;
+    response: void;
+  };
   [PlatformChannels.DisposeRemoteSession]: {
     request: string;
     response: void;
@@ -770,6 +877,18 @@ export interface PlatformChannelMap {
   [PlatformChannels.Log]: {
     request: { level: "info" | "warn" | "error"; args: unknown[] };
     response: void;
+  };
+  [PlatformChannels.SyncWebRemoteControlWorkspaces]: {
+    request: WebRemoteControlWorkspaceTarget[];
+    response: void;
+  };
+  [PlatformChannels.SyncWebRemoteControlTasks]: {
+    request: WebRemoteControlTaskTarget[];
+    response: void;
+  };
+  [PlatformChannels.WebRemoteControlReconnectWorkspace]: {
+    request: WebRemoteControlReconnectWorkspaceRequest;
+    response: WebRemoteControlReconnectWorkspaceResult;
   };
   [PlatformChannels.SyncWindowUnreadCount]: {
     request: number;
@@ -814,6 +933,30 @@ export interface PlatformChannelMap {
   [PlatformChannels.OpenBrowserUrl]: {
     request: EmbeddedBrowserOpenUrlRequest;
     response: void;
+  };
+  [PlatformChannels.EmbeddedBrowserPermissionPrompt]: {
+    request: EmbeddedBrowserPermissionPromptEvent;
+    response: void;
+  };
+  [PlatformChannels.EmbeddedBrowserPermissionResolve]: {
+    request: EmbeddedBrowserPermissionResolveRequest;
+    response: void;
+  };
+  [PlatformChannels.GetEmbeddedBrowserSitePermissions]: {
+    request: void;
+    response: EmbeddedBrowserSitePermissionsSnapshot;
+  };
+  [PlatformChannels.SetEmbeddedBrowserSitePermission]: {
+    request: EmbeddedBrowserSitePermissionUpdateRequest;
+    response: EmbeddedBrowserSitePermissionsSnapshot;
+  };
+  [PlatformChannels.ClearEmbeddedBrowserSitePermissions]: {
+    request: void;
+    response: EmbeddedBrowserSitePermissionsSnapshot;
+  };
+  [PlatformChannels.ResetEmbeddedBrowserSitePermission]: {
+    request: EmbeddedBrowserSitePermissionResetRequest;
+    response: EmbeddedBrowserSitePermissionsSnapshot;
   };
   [PlatformChannels.BrowserViewReady]: {
     request: {

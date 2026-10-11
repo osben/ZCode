@@ -1,16 +1,19 @@
 // ============================================================
 // Make room when the table is full: who can leave, when entries can take a slot, and how evicted entries remain countable
 // ============================================================
-// Eviction rules are pure functions with no clock or I/O. Phase-based counting of unlisted entries is maintained by workflow-runs-unlisted.ts.
+// Kept outside the reducer’s main file, like workflow-runs-caps.ts / -concurrency.ts / -phases.ts / -started.ts
+// for the same reason (the main file’s max-lines limit), and follows the same rule: pure functions, no clock, no I/O. Grid-table arithmetic
+// lives in the sibling workflow-runs-unlisted.ts.
 //
 // Why make room. The old behavior at the limit was **reject new entries**, while the read view shows “which subagents are running now” — so after a wide
 // fan-out run exceeded 1024, no newly created subagent could enter, and the run card and phase roster stayed stuck on the earliest
 // **already completed** entries, removing the reason this feature exists. Eviction reverses that: terminal entries make room.
 //
-// Evicting only terminal entries is not enough: a phase may emit **all** actor-created and **all** node-queued events in its first few seconds,
-// filling both tables with the first 1024 still-queued entries before any one terminates; the remaining 976 actors and nodes are rejected.
-// The scheduler then dispatches FIFO, leaving every **running** subagent from the 1025th onward outside the table. A subagent becomes important when it is **dispatched**,
-// not when it is queued — so `node-dispatched` is also an opportunity to take a slot (activation below).
+// Freeing a slot is not enough. The 2026-09-20 incident (5 × 2,000 subagents, concurrency 13) exposed the other half: one phase
+// emitted **all** actor-created and **all** node-queued events in the first few seconds. The first 1,024 entries were still queued, yet both tables were
+// full with no terminal entries. The remaining 976 actors and their work were rejected; the scheduler then dispatched work FIFO, so from entry 1,025 onward, every
+// **running** subagent was missing from the table. A subagent becomes important when it is **dispatched**, not when
+// it is queued—so `node-dispatched` is also an opportunity to claim a slot (the activation below).
 //
 // Table priority, highest to lowest, follows what a subagent is doing **right now**: **running** (a node is dispatched /
 // executing / waiting / repairing / nudged) > **idle** (none are running but some are queued: waiting for a slot) > **completed** (all settled).
@@ -31,8 +34,8 @@ import {
 import { addToUnlistedBucket, withUnlistedBuckets } from "./workflow-runs-unlisted.js";
 
 /**
- * Three entry-capacity limits used by reduction, defaulting to {@link WORKFLOW_RUNS_LIMITS}.
- * Eviction and counting rules apply to the limits supplied by the caller.
+ * The three entry limits used by the reducer. This package defaults to {@link WORKFLOW_RUNS_LIMITS}; they are defined as an interface separately so
+ * tests can inject smaller limits—reaching 1,024 takes over 3,000 events, while these rules do not depend on the **size** of the limits.
  */
 export interface WorkflowRunEntryLimits {
   readonly maxActors: number;
@@ -59,7 +62,7 @@ interface Group extends Candidate {
   finished: boolean;
   /** None are running but some are queued: this subagent is waiting for a slot and has not started work. */
   idle: boolean;
-  /** No listed nodes owned by this actor: it has not been asked yet, or its settlement was a cache hit without an actor. */
+  /** No listed nodes belong to this actor: it has not been asked yet, or its result was a cached hit in an old journal without an actor. */
   zeroNode: boolean;
 }
 
@@ -151,16 +154,20 @@ export function seatWorkflowNode(
   if (seat.eventType === "node-dispatched" && seat.actor !== null && run.truncated === true) {
     return activateInstance(run, seat.ref, seat.actor, limits);
   }
-  if (seat.eventType !== "node-queued") return { run, admitNew: byBirth, activated: false };
-  // B2: in an overflowed run, a queued node with no recognizable owner should not take a slot — it cannot render a badge (pills are filtered by
-  // run.actors), and later dispatched work needs that slot. Unowned nodes (world-read) are not subject to this rule.
+  // B2: in an overflowing run, an **initialization** event with no identifiable owner should not occupy a slot—it cannot render a badge (pills are filtered by
+  // run.actors), while later dispatched work needs that slot. Both initialization events count: `node-queued` and
+  // a cached result that repeats initialization. Keeping the latter can also **deadlock**: a node naming an actor is not unowned, and groups are formed by
+  // listed actors, so it belongs to neither victim class and can never be evicted. Unowned nodes (world-read) are excluded.
   if (
+    seat.born &&
     run.truncated === true &&
     seat.actorRef !== null &&
     !run.actors.some((actor) => sameInstance(actor, seat.actorRef!))
   ) {
     return { run, admitNew: false, activated: false };
   }
+  // A cached result that is terminal at initialization never frees a slot (it never ran and has no in-progress state to display); slots are freed only for active newcomers.
+  if (seat.eventType !== "node-queued") return { run, admitNew: byBirth, activated: false };
   return {
     run: withRoomForNode(run, seat.ref, seat.actorRef, limits),
     admitNew: byBirth,
@@ -331,10 +338,11 @@ function pickGroupVictim(
     pickVictim(groups.filter((group) => group.finished)) ??
     // Choose the **last** idle group in table order: with FIFO dispatch, the most recently created one is dispatched last, so its slot is least urgent.
     groups.filter((group) => group.idle).at(-1) ??
-    // Similarly choose the last zero-node actor, and only as a last resort: it has no nodes, score, or table history,
-    // so readers see no loss when it is evicted, and it returns with its facts when next dispatched. Without this tier, a wide fan-out after
-    // resume can deadlock — empty tables restart, the prefix recreates 2,000 actors, cache-hit settlements omit actors,
-    // leaving a table full of zero-node actors that nobody can evict; every later dispatch is rejected.
+    // Actors with zero nodes are handled similarly: evict the most recent one, as the last resort. It has no nodes, score, or history in the table,
+    // so readers see no loss when it is evicted, and it will return with its facts the next time it is dispatched. Without this class, a
+    // wide fan-out after resume can deadlock: the empty table reopens, the prefix recreates 2,000 actors, and their
+    // first requests have not returned yet (cached results in old journals also lack actors), leaving a table full of zero-node actors
+    // that cannot be evicted, after which every dispatch is rejected.
     (allowZeroNode ? groups.filter((group) => group.zeroNode).at(-1) : undefined)
   );
 }
@@ -415,7 +423,7 @@ function listedGroups(run: WorkflowRunState): Group[] {
   return groups;
 }
 
-/** Unowned node: a listed node with no actor (world-read). Only settled nodes are candidates. */
+/** Unowned node: a listed node without an actor (world-read or a cached hit from an old journal). Only terminal nodes are candidates. */
 function looseSettledNodes(run: WorkflowRunState): Candidate[] {
   const candidates: Candidate[] = [];
   run.nodes.forEach((node, index) => {

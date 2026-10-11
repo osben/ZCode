@@ -13,7 +13,7 @@ import type { DynamicWorkflowRunSummary } from "@zcode/contracts";
 /**
  * Character limit for a script-derived label. 80 fits in one readable list row; a derived heuristic stops looking like a label when it gets longer.
  */
-const DYNAMIC_WORKFLOW_RUN_LABEL_MAX_CHARS = 80;
+export const DYNAMIC_WORKFLOW_RUN_LABEL_MAX_CHARS = 80;
 
 /**
  * Derive the run's display label: `name` → first non-empty script line (trimmed and truncated to 80) → runId.

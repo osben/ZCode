@@ -1,3 +1,5 @@
+import type { MentionItem } from "./mentionTypes.js";
+
 const LINK_MENTION_MARKDOWN_PATTERN =
   /\[((?:\\.|[^\\\]])*)\]\((?:<((?:\\.|[^>])*?)>|((?:\\.|[^)])*))\)/g;
 const INLINE_MENTION_TOKEN_PATTERN =
@@ -89,6 +91,42 @@ export function buildSessionMentionMarkdown(sessionId: string, label?: string): 
 // `[@Label](plugin://stable-id)`. Identity is only in the destination; the label is for display.
 export function buildPluginMentionMarkdown(label: string, pluginId: string): string {
   return `[${escapeMarkdownLabel(`@${label}`)}](plugin://${escapeMarkdownDestination(pluginId)})`;
+}
+
+export function buildMentionMarkdown(
+  item: Pick<MentionItem, "category" | "data" | "label" | "value">,
+): string {
+  if (item.category === "files") {
+    return buildFileMentionMarkdown(
+      item.data?.relativePath ?? item.value,
+      item.label,
+      item.data?.kind === "directory" ? "directory" : "file",
+    );
+  }
+  if (item.category === "skills") {
+    // Bugfix: Skill mentions used to serialize as `$slug`, leaving the message without the actual skill path,
+    // so later display and parsing could only fall back to a plain-text token. Standardize on `[$Label](path)` here,
+    // giving skills the same stable link carrier as files. If historical data has no path, keep the old format as a fallback to avoid losing content.
+    return buildSkillMentionMarkdown(item.value, item.data?.path);
+  }
+  if (item.category === "subagents") {
+    return buildSubagentMentionMarkdown(item.value);
+  }
+  if (item.category === "sessions") {
+    return buildSessionMentionMarkdown(item.value, item.label);
+  }
+  if (item.category === "plugins") {
+    return buildPluginMentionMarkdown(item.label, item.data?.pluginId ?? item.value);
+  }
+
+  return `@${item.value}`;
+}
+
+export function renderMentionMarkdownAsPlainText(content: string): string {
+  return content.replaceAll(LINK_MENTION_MARKDOWN_PATTERN, (_, label: string) => {
+    const normalizedLabel = unescapeMarkdownText(label);
+    return normalizedLabel.startsWith("@") ? normalizedLabel.slice(1) : normalizedLabel;
+  });
 }
 
 type MentionTextPart =

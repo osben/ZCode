@@ -1,15 +1,10 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ChevronRightIcon, CircleHelpIcon } from "lucide-react";
 import type { WorkflowRunPendingQuestion, WorkflowRunState } from "@zcode/shared/zcode-protocol-v4";
 import { cn } from "@/components/lib/utils.js";
-import { laneDisplayName } from "@/components/workflow-graph/lane-name.js";
 import { phaseDisplayName } from "@/components/workflow-graph/phase-name.js";
 import type { WorkflowCausalityGraphData } from "@/components/workflow-graph/types.js";
-import {
-  pillActivity,
-  type TimelinePill,
-  type WorkflowTimelineModel,
-} from "@/components/workflow-timeline/timeline-model.js";
+import type { WorkflowTimelineModel } from "@/components/workflow-timeline/timeline-model.js";
 import {
   ROSTER_PINS_PANE,
   pillInstanceKey,
@@ -18,10 +13,7 @@ import {
   rosterRoll,
   stationRosterOf,
 } from "@/components/workflow-timeline/roster-model.js";
-import {
-  WorkflowAgentPill,
-  type WorkflowAgentPillOpen,
-} from "@/components/workflow-timeline/WorkflowAgentPill.js";
+import { WorkflowAgentPill } from "@/components/workflow-timeline/WorkflowAgentPill.js";
 import { WorkflowMoreRow } from "@/components/workflow-timeline/WorkflowMoreRow.js";
 import { WorkflowRoll } from "@/components/workflow-timeline/WorkflowRoll.js";
 import { RosterMeter } from "@/components/workflow-timeline/WorkflowRosterParts.js";
@@ -29,10 +21,20 @@ import { WorkflowRunQuestionRow } from "@/app-shell/WorkflowRunQuestionRow.js";
 import {
   AvatarCluster,
   Rounds,
+  SpineJointRow,
   SpineLamp,
   SpinePieces,
+  useWorkflowActorModelLabels,
 } from "@/app-shell/WorkflowRunSpineParts.js";
-import { spineSections } from "@/app-shell/workflowRunSpine.js";
+import { phasePillRenderers } from "@/app-shell/WorkflowRunPhasePills.js";
+import { spineLayout } from "@/app-shell/workflowRunSpine.js";
+import {
+  FillHeadingRow,
+  HoleWaitingBody,
+  SpineHoleLamp,
+} from "@/app-shell/WorkflowRunHoleParts.js";
+import { useSpineFillFrames } from "@/app-shell/WorkflowRunFillFrames.js";
+import { HoleFillMark } from "@/components/workflow-timeline/WorkflowHoleParts.js";
 import type { WorkflowActorInstance } from "@/app-shell/workflowRunPanel.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 
@@ -81,6 +83,7 @@ export const WorkflowRunPhaseList = memo(function WorkflowRunPhaseList({
   onOpenWorkspace,
   pendingQuestions,
   run,
+  subagentModelProviderName,
 }: {
   graph: WorkflowCausalityGraphData;
   model: WorkflowTimelineModel;
@@ -92,9 +95,13 @@ export const WorkflowRunPhaseList = memo(function WorkflowRunPhaseList({
   onOpenWorkspace?: (phaseId: string) => void;
   /** Landing request: `key` is unique for every open (`phaseId@openedAt`), so opening the same station again lands again. */
   landing?: { phaseId: string; key: string };
+  /** providerId → provider name from the model catalog (used to label subagent models, from the same source as the summary row). */
+  subagentModelProviderName?: (providerId: string) => string | undefined;
 }) {
   const { intl } = useZCodeIntl();
   const format = intl.formatMessage.bind(intl);
+  // For subagents whose persona specifies a model, show its name at the row end and the canonical value in the tooltip (presentation.md, “The spine”).
+  const actorModels = useWorkflowActorModelLabels(run?.actors, subagentModelProviderName);
   // Running stations expand automatically—a band can have two rails running at once, so open **every** one, not only the rightmost.
   // Use a stable key for this set of ids: the projection creates a new model identity after each update, but the set usually stays the same.
   const runningKey = model.stations
@@ -166,13 +173,27 @@ export const WorkflowRunPhaseList = memo(function WorkflowRunPhaseList({
 
   // Waiting duration must update on its own: a run waiting for an answer **emits no events**. Create the timer only while a question exists.
   const [now, setNow] = useState(() => Date.now());
-  const hasQuestions = pendingQuestions.length > 0;
+  const hasQuestions =
+    pendingQuestions.length > 0 ||
+    model.stations.some((station) => station.hole?.state === "waiting");
   useEffect(() => {
     if (!hasQuestions) return undefined;
     setNow(Date.now());
     const timer = setInterval(() => setNow(Date.now()), QUESTION_TICK_MS);
     return () => clearInterval(timer);
   }, [hasQuestions]);
+  // Expand a hole waiting to be filled by the same rule as a running station: it is the current station.
+  const waitingHoleKey = model.stations
+    .filter((station) => station.hole?.state === "waiting")
+    .map((station) => station.id)
+    .join("\u0000");
+  useEffect(() => {
+    if (waitingHoleKey === "") return;
+    const ids = waitingHoleKey.split("\u0000");
+    setOpen((previous) =>
+      ids.every((id) => previous.has(id)) ? previous : new Set([...previous, ...ids]),
+    );
+  }, [waitingHoleKey]);
 
   const questionsByInstance = useMemo(() => {
     const byKey = new Map<string, WorkflowRunPendingQuestion[]>();
@@ -199,240 +220,183 @@ export const WorkflowRunPhaseList = memo(function WorkflowRunPhaseList({
     const key = questionKey(question);
     return key === undefined || !attachedKeys.has(key);
   });
-  // Vertical rails and curves for each station (`workflowRunSpine.ts`): look up rail segments by **pair**, not by from—one station in a band
-  // may be the left endpoint of both a branch rail and a main rail.
-  const sections = spineSections(model);
-  const nameOf = (pill: TimelinePill) => pill.runtimeName ?? laneDisplayName(pill.lane, format);
-  const phaseNameOf = (phaseId: string) => {
-    const station = model.stations.find((candidate) => candidate.id === phaseId);
-    return station === undefined ? phaseId : phaseDisplayName(station.naming, format);
-  };
-
-  // The row supplies slot identity: use its session id when present, otherwise open a placeholder tab.
-  const openActor = (pill: TimelinePill) => {
-    const slot = pill.slot;
-    if (onOpenActor === undefined || slot === undefined) return;
-    const sessionId = pill.instance?.sessionId;
-    onOpenActor({
-      ordinal: slot.ordinal,
-      ...(sessionId === undefined ? {} : { sessionId }),
-      siteId: slot.siteId,
-      status:
-        pill.status === "running"
-          ? "running"
-          : pill.status === "done" || pill.status === "failed"
-            ? "completed"
-            : "waiting",
-      ...(pill.runtimeName === undefined ? {} : { name: pill.runtimeName }),
-    });
-  };
-
-  /** Shared pill wiring (name, status, open action), used by full-width rows and compact pills in "show all." */
-  const pillProps = (pill: TimelinePill) => {
-    const label = nameOf(pill);
-    const openable = onOpenActor !== undefined && pill.slot !== undefined;
-    // Same open behavior as a script row: open the run's script transcript and land on the first card for this station.
-    const workspacePhaseId = onOpenWorkspace === undefined ? undefined : pill.workspace?.phaseId;
-    const open: WorkflowAgentPillOpen | undefined = openable
-      ? {
-          data: {
-            "data-agent-key": pillKey(pill) ?? "",
-            "data-agent-session-id": pill.instance?.sessionId ?? "",
-            "data-agent-status": pill.status ?? "pending",
-          },
-          label: format({ id: "chat.toolCall.workflow.timeline.openAgent" }, { name: label }),
-          onOpen: () => openActor(pill),
-          testId: "workflow-run-agent-open",
-        }
-      : workspacePhaseId !== undefined
-        ? {
-            data: { "data-phase-id": workspacePhaseId },
-            label: format(
-              { id: "chat.toolCall.workflow.timeline.openScript" },
-              { phase: phaseNameOf(workspacePhaseId) },
-            ),
-            onOpen: () => onOpenWorkspace?.(workspacePhaseId),
-            testId: "workflow-run-workspace-open",
-          }
-        : undefined;
-    return {
-      avatarIndex: pill.avatarIndex,
-      laneClass: pill.laneClass,
-      name: label,
-      status: pill.status,
-      title: label,
-      ...(open === undefined ? {} : { open }),
-    };
-  };
-
-  const renderPill = (pill: TimelinePill) => {
-    const activity = pillActivity(graph, run, pill);
-    const key = pillKey(pill);
-    const questions = key === undefined ? [] : (questionsByInstance.get(key) ?? []);
-    const counts: string[] = [];
-    if (activity.asks > 0) {
-      counts.push(
-        format({ id: "chat.toolCall.workflow.graph.card.tasks" }, { count: activity.asks }),
-      );
-    }
-    if (activity.reads > 0) {
-      counts.push(
-        format({ id: "chat.toolCall.workflow.graph.card.reads" }, { count: activity.reads }),
-      );
-    }
-    // Clickable pills are <button>s; inside a block parent they wrap only their content, so row widths vary with name length.
-    // A vertical flex container makes each row fill the column width (the same mechanism as the pill column under a phase on the card).
-    return (
-      <div className="flex min-w-0 flex-col" key={pill.key}>
-        <WorkflowAgentPill {...pillProps(pill)}>
-          {counts.length === 0 ? null : (
-            <span className="shrink-0 font-mono text-ui-xs tabular-nums text-foreground-subtlest">
-              {counts.join(" · ")}
-            </span>
-          )}
-        </WorkflowAgentPill>
-        {/* Place the question 26 px below its asker; it belongs to that row, not the phase. */}
-        {questions.map((question) => (
-          <WorkflowRunQuestionRow
-            className="ml-[26px]"
-            key={question.qid}
-            now={now}
-            question={question}
-          />
-        ))}
-      </div>
-    );
-  };
+  // Vertical rails for each phase and joint rows between phases (`workflowRunSpine.ts`); the text column shares one left edge across the spine.
+  const spine = spineLayout(model);
+  // Fill frames (WorkflowRunFillFrames.tsx): draw one when the header (title row/pen marker) is hovered or focused by keyboard.
+  const fillFrames = useSpineFillFrames(rootRef, model);
+  const textColumn = spine.gutter === 0 ? undefined : { paddingLeft: 39 + spine.gutter };
+  // Pill labels, open actions, and tail slot (WorkflowRunPhasePills.tsx).
+  const { nameOf, pillProps, renderPill } = phasePillRenderers({
+    actorModels,
+    format,
+    graph,
+    model,
+    now,
+    questionsByInstance,
+    run,
+    ...(onOpenActor === undefined ? {} : { onOpenActor }),
+    ...(onOpenWorkspace === undefined ? {} : { onOpenWorkspace }),
+  });
 
   return (
     <div
-      className="wf-motion flex min-h-0 flex-1 flex-col overflow-auto pb-3 pt-2.5"
+      className="wf-motion relative flex min-h-0 flex-1 flex-col overflow-auto pb-3 pt-2.5"
       data-testid="workflow-run-phases"
       ref={rootRef}
+      {...fillFrames.handlers}
     >
+      {fillFrames.frames}
       {model.stations.map((station, index) => {
         const expanded = open.has(station.id);
         const name = phaseDisplayName(station.naming, format);
         const status = station.status ?? "pending";
         const pending = status === "pending";
-        const spine = sections[index] ?? { curves: [], rails: [] };
-        // Shift the whole branch station one step right: header, pills, and light together, leaving 12px between rails.
-        const indent = station.track === 0 ? undefined : { paddingLeft: 39 + 12 * station.track };
+        const section = spine.sections[index] ?? { rails: [] };
         const roster = stationRosterOf(station, ROSTER_PINS_PANE);
+        // Holes (docs/dynamic-workflow/presentation.md, “The pane” under “Holes on the timeline”):
+        // use a dashed lamp in the phase header; while waiting, the body shows how long it has waited.
+        // A fill with phases adds a title row before its first phase; those phases are not indented because the frame shows nesting.
+        const hole = station.hole;
+        // Fills starting at the same phase each get a title row, outermost first (model order); an inner frame starts from its own title row.
+        const headings = (model.fills ?? []).filter((fill) => fill.from === index);
+        const column = textColumn;
         return (
-          <section
-            className="relative"
-            data-phase-id={station.id}
-            data-phase-landed={landed?.phaseId === station.id ? "true" : undefined}
-            data-phase-open={expanded ? "true" : "false"}
-            data-phase-status={status}
-            data-phase-track={station.track}
-            data-testid="workflow-run-phase"
-            key={station.id}
-          >
-            <SpinePieces section={spine} />
-            <button
-              aria-expanded={expanded}
-              aria-label={intl.formatMessage(
-                {
-                  id: expanded
-                    ? "chat.toolCall.workflow.run.phase.collapse"
-                    : "chat.toolCall.workflow.run.phase.expand",
-                },
-                { name },
-              )}
-              className={cn(
-                "wf-station-open relative flex h-9 w-full items-center gap-2 pl-[39px] pr-3 text-left outline-none transition-colors hover:bg-surface focus-visible:ring-2 focus-visible:ring-ring/40",
-                landed?.phaseId === station.id && "wf-landed",
-              )}
-              data-testid="workflow-run-phase-toggle"
-              // Change the key and remount the header on a new landing; the same class name alone would not restart the CSS animation.
-              key={landed?.phaseId === station.id ? landed.key : "head"}
-              onClick={() => toggle(station.id)}
-              style={indent}
-              type="button"
+          <Fragment key={station.id}>
+            <SpineJointRow joint={section.fork} kind="fork" pitch={spine.pitch} />
+            {headings.map((heading) => (
+              <FillHeadingRow
+                fill={heading}
+                fresh={fillFrames.fresh.has(heading.holeId)}
+                key={heading.holeId}
+                on={fillFrames.active === heading.holeId}
+                onSelect={() => toggle(station.id)}
+                textColumn={textColumn}
+              />
+            ))}
+            <section
+              className="relative"
+              data-phase-fill={station.fill}
+              data-phase-hole={hole?.state}
+              data-phase-id={station.id}
+              data-phase-landed={landed?.phaseId === station.id ? "true" : undefined}
+              data-phase-open={expanded ? "true" : "false"}
+              data-phase-status={status}
+              data-phase-track={station.track}
+              data-testid="workflow-run-phase"
             >
-              <SpineLamp status={status} track={station.track} />
-              <span
+              <SpinePieces pitch={spine.pitch} section={section} />
+              <button
+                aria-expanded={expanded}
+                aria-label={intl.formatMessage(
+                  {
+                    id: expanded
+                      ? "chat.toolCall.workflow.run.phase.collapse"
+                      : "chat.toolCall.workflow.run.phase.expand",
+                  },
+                  { name },
+                )}
                 className={cn(
-                  "min-w-0 flex-1 truncate text-ui-base",
-                  pending ? "text-foreground-subtle" : "font-medium text-foreground",
+                  "wf-station-open relative flex h-9 w-full items-center gap-2 pl-[39px] pr-3 text-left outline-none transition-colors hover:bg-surface focus-visible:ring-2 focus-visible:ring-ring/40",
+                  landed?.phaseId === station.id && "wf-landed",
                 )}
+                data-testid="workflow-run-phase-toggle"
+                // Change the key and remount the header on a new landing; the same class name alone would not restart the CSS animation.
+                key={landed?.phaseId === station.id ? landed.key : "head"}
+                onClick={() => toggle(station.id)}
+                style={column}
+                type="button"
               >
-                {name}
-              </span>
-              <span className="flex shrink-0 items-center gap-2.5 font-mono text-ui-xs tabular-nums text-foreground-subtlest">
-                {expanded ? null : roster !== undefined ? (
-                  <RosterMeter counts={roster.counts} mini />
+                {hole !== undefined && hole.state !== "filled" ? (
+                  <SpineHoleLamp hole={hole} pitch={spine.pitch} track={station.track} />
                 ) : (
-                  <AvatarCluster nameOf={nameOf} pills={station.pills} />
+                  <SpineLamp pitch={spine.pitch} status={status} track={station.track} />
                 )}
-                {station.fraction === undefined ? null : (
-                  <span data-testid="workflow-run-phase-fraction">
-                    {station.fraction.settled}/{station.fraction.observed}
-                  </span>
-                )}
-                <Rounds station={station} />
-                <ChevronRightIcon
-                  aria-hidden
-                  className={cn("size-3.5 transition-transform", expanded && "rotate-90")}
-                />
-              </span>
-            </button>
-            {expanded ? (
-              <div
-                className="wf-unfold flex flex-col gap-1.5 pb-3 pl-[39px] pr-3 pt-0.5"
-                style={indent}
-              >
-                {roster === undefined ? (
-                  station.pills.map(renderPill)
-                ) : (
-                  <>
-                    <div className="flex flex-col gap-1.5" data-testid="workflow-roster-pins">
-                      {roster.pinned.map(renderPill)}
-                    </div>
-                    <WorkflowMoreRow
-                      door={{
-                        open: listed.has(station.id),
-                        tally: rosterRestCounts(roster),
-                      }}
-                      more={rosterMore(roster)}
-                      onOpen={() => toggleListed(station.id)}
-                    />
-                    {listed.has(station.id) ? (
-                      <WorkflowRoll
-                        groups={rosterRoll(roster)}
-                        unlisted={roster.unlisted.actors}
-                        renderRow={(pill, enterDelayMs) => (
-                          <WorkflowAgentPill
-                            enterDelayMs={enterDelayMs}
-                            key={pill.key}
-                            size="row"
-                            {...pillProps(pill)}
-                          >
-                            {/* Askers from the sixth onward appear in the list: show a ? before the trailing slot, without repeating the question itself here. */}
-                            {pill.asking === true ? (
-                              <CircleHelpIcon
-                                aria-hidden
-                                className="size-3 shrink-0 text-warning"
-                                data-testid="workflow-roll-asking"
-                              />
-                            ) : null}
-                          </WorkflowAgentPill>
-                        )}
+                <span
+                  className={cn(
+                    "min-w-0 flex-1 truncate text-ui-base",
+                    pending ? "text-foreground-subtle" : "font-medium text-foreground",
+                  )}
+                >
+                  {name}
+                </span>
+                {hole?.state === "filled" ? <HoleFillMark holeId={hole.siteId} /> : null}
+                <span className="flex shrink-0 items-center gap-2.5 font-mono text-ui-xs tabular-nums text-foreground-subtlest">
+                  {expanded ? null : roster !== undefined ? (
+                    <RosterMeter counts={roster.counts} mini />
+                  ) : (
+                    <AvatarCluster nameOf={nameOf} pills={station.pills} />
+                  )}
+                  {station.fraction === undefined ? null : (
+                    <span data-testid="workflow-run-phase-fraction">
+                      {station.fraction.settled}/{station.fraction.observed}
+                    </span>
+                  )}
+                  <Rounds station={station} />
+                  <ChevronRightIcon
+                    aria-hidden
+                    className={cn("size-3.5 transition-transform", expanded && "rotate-90")}
+                  />
+                </span>
+              </button>
+              {expanded ? (
+                <div
+                  className="wf-unfold flex flex-col gap-1.5 pb-3 pl-[39px] pr-3 pt-0.5"
+                  data-testid="workflow-run-phase-body"
+                  style={column}
+                >
+                  {hole?.state === "waiting" ? <HoleWaitingBody hole={hole} now={now} /> : null}
+                  {roster === undefined ? (
+                    station.pills.map(renderPill)
+                  ) : (
+                    <>
+                      <div className="flex flex-col gap-1.5" data-testid="workflow-roster-pins">
+                        {roster.pinned.map(renderPill)}
+                      </div>
+                      <WorkflowMoreRow
+                        door={{
+                          open: listed.has(station.id),
+                          tally: rosterRestCounts(roster),
+                        }}
+                        more={rosterMore(roster)}
+                        onOpen={() => toggleListed(station.id)}
                       />
-                    ) : null}
-                  </>
-                )}
-              </div>
-            ) : null}
-          </section>
+                      {listed.has(station.id) ? (
+                        <WorkflowRoll
+                          groups={rosterRoll(roster)}
+                          unlisted={roster.unlisted.actors}
+                          renderRow={(pill, enterDelayMs) => (
+                            <WorkflowAgentPill
+                              enterDelayMs={enterDelayMs}
+                              key={pill.key}
+                              size="row"
+                              {...pillProps(pill)}
+                            >
+                              {/* The sixth and later askers appear in the list, with one ? before the trailing slot; the question itself is not repeated here. */}
+                              {pill.asking === true ? (
+                                <CircleHelpIcon
+                                  aria-hidden
+                                  className="size-3 shrink-0 text-warning"
+                                  data-testid="workflow-roll-asking"
+                                />
+                              ) : null}
+                            </WorkflowAgentPill>
+                          )}
+                        />
+                      ) : null}
+                    </>
+                  )}
+                </div>
+              ) : null}
+            </section>
+            <SpineJointRow joint={section.merge} kind="merge" pitch={spine.pitch} />
+          </Fragment>
         );
       })}
       {orphanQuestions.length === 0 ? null : (
         <div
           className="flex flex-col gap-1 pl-[39px] pr-3 pt-2"
           data-testid="workflow-run-orphan-questions"
+          style={textColumn}
         >
           <span className="text-ui-xs font-medium text-foreground-subtle">
             {intl.formatMessage({ id: "chat.toolCall.workflow.run.questions.title" })}

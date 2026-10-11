@@ -1,7 +1,44 @@
-import type { IPlatformService, UserInfo } from "@zcode/shared";
+import type {
+  IPlatformService,
+  UserInfo,
+  WebRemoteControlMobileNavigationIntent,
+  WebRemoteControlTaskTarget,
+  WebRemoteControlWorkspaceListResult,
+  WebRemoteControlWorkspaceSwitchOptions,
+} from "@zcode/shared";
 import type { IServiceAccessor } from "@zcode/services";
 import type { ReactNode } from "react";
 import type { CreateTaskRequest } from "@/app-shell/types.js";
+
+export type WebRemoteControlTerminalTransportState =
+  | "idle"
+  | "connecting"
+  | "authenticating"
+  | "waiting"
+  | "paired"
+  | "reconnecting"
+  | "suspended"
+  | "kicked"
+  | "error";
+
+export interface WebRemoteControlWorkspaceSwitcherApi {
+  listWorkspaces(): Promise<WebRemoteControlWorkspaceListResult>;
+  onWorkspaceListUpdated?(
+    listener: (result: WebRemoteControlWorkspaceListResult) => void,
+  ): () => void;
+  switchWorkspace(
+    workspaceKey: string,
+    options?: WebRemoteControlWorkspaceSwitchOptions,
+  ): Promise<void>;
+  /** Mobile task home confirms the user viewed an unread task in the current bridge; unused by the desktop task-selection flow. */
+  markTaskRead?(task: WebRemoteControlTaskTarget): Promise<void>;
+  updateMobileViewState?(workspaceKey: string, taskId?: string): Promise<void>;
+  reconnectWorkspace?(workspaceKey: string): Promise<void>;
+  startDraft?(
+    workspaceKey: string,
+    options?: { mobileNavigationIntent?: WebRemoteControlMobileNavigationIntent },
+  ): Promise<void>;
+}
 
 export interface RootProps {
   services: IServiceAccessor;
@@ -34,8 +71,18 @@ export interface RootProps {
   supportsEmbeddedBrowser?: boolean;
   /** Whether remote-workspace features are enabled; regular Web mode initially supports only local server workspaces. */
   allowRemoteWorkspace?: boolean;
-  /** Loading content shown before injecting the initial workspace for non-Desktop entry points; unused on Desktop. */
+  /** Open workspace-switch entry point in Web remote-control mode. */
+  webRemoteControlWorkspaceSwitcher?: WebRemoteControlWorkspaceSwitcherApi;
+  /** One-shot mobile destination after selecting a task across workspaces in Web remote-control mode. */
+  initialWebRemoteControlMobileNavigationIntent?: WebRemoteControlMobileNavigationIntent;
+  /** Workspace/task list preloaded by mobile home when Web remote control has no workspace to bridge. */
+  initialWebRemoteControlWorkspaceList?: WebRemoteControlWorkspaceListResult;
+  /** Relay terminal transport state on mobile Web remote control, used for lightweight recovery notices after entering the page. */
+  webRemoteControlTerminalTransportState?: WebRemoteControlTerminalTransportState;
+  /** Keep showing entry-point loading on mobile Web remote control until the initial workspace is injected; unused on desktop. */
   initialWorkspaceLoadingFallback?: ReactNode;
+  /** Feature flag for the Web remote-control entry point; enabled only in development by default. */
+  webRemoteControlFeatureEnabled?: boolean;
   /** Assistant code-comment card rollout; disabled by default, retaining the original directive when off. */
   assistantCodeCommentCardsEnabled?: boolean;
 }
@@ -45,6 +92,7 @@ export interface WorkspaceSettingsLayerProps {
   isDesktop?: boolean;
   isMacDesktop?: boolean;
   isWindowsDesktop?: boolean;
+  isWebRemoteControl?: boolean;
   windowsWindowControlsRightPaddingPx?: number;
   captionWorkspacePath?: string | null;
   onBack?: () => void;

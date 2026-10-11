@@ -11,6 +11,7 @@ import {
   registerBaseWorkspaceServices,
   registerRemoteWorkspaceSession,
   createRemoteWorkspaceDisconnectedError,
+  installDocumentHiddenMotionPause,
   playTaskNotificationSound,
   setStreamClientId,
   setReactErrorArmsReporter,
@@ -40,7 +41,10 @@ import { syncAppTelemetryContext } from "../appTelemetryBridge.js";
 import { createDesktopPlatform } from "./desktopPlatform.js";
 import { startPerformanceTimelineCleanup } from "./performanceTimelineCleanup.js";
 import { initializeDesktopUserActionTrace } from "./userActionTraceBootstrap.js";
-import { buildRemoteWorkspaceSessionServices } from "./remoteWorkspaceSessionServices.js";
+import {
+  buildRemoteWorkspaceSessionServices,
+  buildServerRemoteWorkspaceSessionServices,
+} from "./remoteWorkspaceSessionServices.js";
 import {
   notifyRemoteWorkspaceServicePortReady,
   parseRemoteWorkspaceServicePortMessage,
@@ -148,6 +152,8 @@ initializeDesktopUserActionTrace({
  */
 // Previously, an anonymous function registered addEventListener("message") again on reload/HMR,
 // causing createRoot to mount multiple times on the same DOM node. Use a flag to prevent reinitialization.
+// Disable CSS animations while the window is hidden so DocumentTimeline does not retain unloaded DOM subtrees.
+installDocumentHiddenMotionPause();
 let appInitialized = false;
 const databaseStartupAdmission = new DatabaseStartupAdmission();
 const appRoot =
@@ -210,10 +216,10 @@ function registerRemoteWorkspaceServicePort(params: RemoteWorkspaceServicePortRe
 
   const remoteConnection = createMessagePortServiceConnection(params.port);
   const remoteServices = remoteConnection.services;
-  const services = buildRemoteWorkspaceSessionServices(
-    baseServicesForRemoteSessions,
-    remoteServices,
-  );
+  const services =
+    params.target.kind === "server"
+      ? buildServerRemoteWorkspaceSessionServices(baseServicesForRemoteSessions, remoteServices)
+      : buildRemoteWorkspaceSessionServices(baseServicesForRemoteSessions, remoteServices);
   registerRemoteWorkspaceSession({
     sessionId: params.sessionId,
     target: params.target,

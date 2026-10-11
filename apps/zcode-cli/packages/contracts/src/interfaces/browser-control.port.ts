@@ -373,7 +373,8 @@ export type BrowserCommand =
   | { method: "nameSession"; name: string }
   | { method: "finalize"; tabId?: string; deliverable?: boolean }
   | { method: "turnEnded"; turnId?: string }
-  | { method: "closeSession" }
+  // closeTabs: close its tabs too, including tabs released back to this session. Only for sessions that will never reclaim them (DWF subagents).
+  | { method: "closeSession"; closeTabs?: boolean }
   | { method: "cancelRequest"; requestId: string }
   // close: close the specified controlled tab; handled by the manager layer.
   | { method: "close"; tabId?: string }
@@ -539,6 +540,9 @@ export interface BrowserControlListInput {
   signal?: AbortSignal;
 }
 
+/** Tab ownership for a sub-session Browser request: the sub-session itself (DWF subagent) or its parent (core Agent subagent). */
+export type BrowserChildSessionTabOwner = "child" | "parent";
+
 export interface BrowserControlPort {
   /** Return only backends with a completed handshake and a reachable current context; do not fabricate stubs. */
   list(input: BrowserControlListInput): Promise<BrowserBackendDescriptor[]>;
@@ -547,4 +551,25 @@ export interface BrowserControlPort {
   turnEnded?(input: BrowserControlListInput): Promise<void>;
   /** Release the browser guest, pending requests, and lease when the session closes. */
   closeSession?(input: BrowserControlListInput): Promise<void>;
+  /**
+   * Derive a port for a sub-session unknown to the client: resolve workspace / clientMode from the session identified by parentSessionId.
+   *
+   * - `tabOwner: "child"` (default, DWF subagent): tabs belong to the sub-session's own sessionId;
+   *   the derived port's closeSession closes its tabs and ends this registration.
+   * - `tabOwner: "parent"` (core Agent subagent): rewrite the dispatched sessionId to the parent
+   *   session, so the subagent and current conversation share tabs (the desktop uses this to expand
+   *   the panel, and tabs.list shows all conversation tabs). The derived port's turnEnded / closeSession
+   *   do not change desktop lifecycle; the parent session manages the tabs, and closeSession only ends registration.
+   *
+   * After registration ends, requests from this sub-session are rejected as if it had never been registered.
+   *
+   * If absent, the implementation does not validate sessionId against client sessions (for example,
+   * CLI headless CDP), and sub-sessions use this port directly. See
+   * apps/zcode-cli/packages/dynamic-workflow/docs/execution-engine.md, “Subagent sessions”.
+   */
+  forChildSession?(input: {
+    childSessionId: string;
+    parentSessionId: string;
+    tabOwner?: BrowserChildSessionTabOwner;
+  }): BrowserControlPort;
 }

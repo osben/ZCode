@@ -1,3 +1,4 @@
+import { installPluginSandboxHostBridge } from "./pluginSandbox/hostBridge.js";
 import {
   databaseStartupControlSchema,
   databaseStartupStateSchema,
@@ -48,6 +49,11 @@ import type {
   DesktopCommandId,
   DesktopTitleBarTheme,
   EmbeddedBrowserOpenUrlRequest,
+  EmbeddedBrowserPermissionPromptEvent,
+  EmbeddedBrowserPermissionResolveRequest,
+  EmbeddedBrowserSitePermissionUpdateRequest,
+  EmbeddedBrowserSitePermissionResetRequest,
+  EmbeddedBrowserSitePermissionsSnapshot,
   Locale,
   OAuthStateRegistration,
   OpenInEditorOptions,
@@ -70,10 +76,17 @@ import type {
   SaveFileResult,
   PrintPageToPdfResult,
   SSHConfigAliasOption,
+  WebRemoteControlContext,
+  WebRemoteControlReconnectWorkspaceRequest,
+  WebRemoteControlReconnectWorkspaceResult,
+  WebRemoteControlStatus,
+  WebRemoteControlTaskTarget,
+  WebRemoteControlWorkspaceTarget,
   RemoteConnectionRuntimeLog,
   WindowControlsOverlayMetrics,
   WindowControlsOverlayReadyPayload,
   CreateTempTextAttachmentRequest,
+  MaterializeWorkflowArtifactFileRequest,
   OpenCuaPermissionOnboardingOptions,
   ConfigureFinalArmsCustomEventE2ERequest,
   FinalArmsCustomEventE2EEntry,
@@ -269,6 +282,21 @@ contextBridge.exposeInMainWorld("zcode", {
     workspaceIdentity?: string;
   }): Promise<void> =>
     ipcRenderer.invoke(PlatformChannels.BindRemoteWorkspaceSessionContext, context),
+  startWebRemoteControl: (context: WebRemoteControlContext) =>
+    ipcRenderer.invoke(PlatformChannels.StartWebRemoteControl, context),
+  refreshWebRemoteControlPairing: (context: WebRemoteControlContext) =>
+    ipcRenderer.invoke(PlatformChannels.ResetWebRemoteControlPairing, context),
+  stopWebRemoteControl: (): Promise<void> =>
+    ipcRenderer.invoke(PlatformChannels.StopWebRemoteControl),
+  getWebRemoteControlStatus: () => ipcRenderer.invoke(PlatformChannels.GetWebRemoteControlStatus),
+  onWebRemoteControlStatusChanged: (
+    callback: (status: WebRemoteControlStatus) => void,
+  ): (() => void) => {
+    const handler = (_event: unknown, payload: WebRemoteControlStatus) => callback(payload);
+    ipcRenderer.on(PlatformChannels.WebRemoteControlStatusChanged, handler);
+    return () =>
+      ipcRenderer.removeListener(PlatformChannels.WebRemoteControlStatusChanged, handler);
+  },
   disposeRemoteSession: (sessionId: string): Promise<void> =>
     ipcRenderer.invoke(PlatformChannels.DisposeRemoteSession, sessionId),
   isDockerAvailable: (): Promise<boolean> => ipcRenderer.invoke(PlatformChannels.IsDockerAvailable),
@@ -309,6 +337,9 @@ contextBridge.exposeInMainWorld("zcode", {
   /** Persist a long-text paste as a local attachment so the message body and prompt payload stay small. */
   createTempTextAttachment: (payload: CreateTempTextAttachmentRequest) =>
     ipcRenderer.invoke(PlatformChannels.CreateTempTextAttachment, payload),
+  /** "Open as file" for dwf artifacts: materialize one version's bytes as a local copy. */
+  materializeWorkflowArtifactFile: (payload: MaterializeWorkflowArtifactFileRequest) =>
+    ipcRenderer.invoke(PlatformChannels.MaterializeWorkflowArtifactFile, payload),
   /** Subscribe to remote connection progress logs in the current window; return a disposer. */
   onRemoteConnectionLog: (callback: (entry: RemoteConnectionRuntimeLog) => void) => {
     const handler = (_event: unknown, payload: unknown) =>
@@ -339,7 +370,34 @@ contextBridge.exposeInMainWorld("zcode", {
   /** Sync the workspace paths for all tabs in this window to main. */
   syncWindowTabs: (paths: string[]) => ipcRenderer.send(PlatformChannels.SyncWindowTabs, paths),
   /** Sync the workspaces that Web remote control may switch to in this window. */
+  syncWebRemoteControlWorkspaces: (workspaces: WebRemoteControlWorkspaceTarget[]) =>
+    ipcRenderer.send(PlatformChannels.SyncWebRemoteControlWorkspaces, workspaces),
   /** Sync task snapshots that Web remote control may display in this window. */
+  syncWebRemoteControlTasks: (tasks: WebRemoteControlTaskTarget[]) =>
+    ipcRenderer.send(PlatformChannels.SyncWebRemoteControlTasks, tasks),
+  onWebRemoteControlReconnectWorkspace: (
+    callback: (
+      request: WebRemoteControlReconnectWorkspaceRequest,
+    ) => Promise<WebRemoteControlReconnectWorkspaceResult>,
+  ) => {
+    const handler = async (event: Electron.IpcRendererEvent, payload: unknown) => {
+      const request = payload as WebRemoteControlReconnectWorkspaceRequest;
+      try {
+        const result = await callback(request);
+        event.sender.send(PlatformChannels.WebRemoteControlReconnectWorkspace, result);
+      } catch (error) {
+        event.sender.send(PlatformChannels.WebRemoteControlReconnectWorkspace, {
+          requestId: request.requestId,
+          workspaceKey: request.workspaceKey,
+          success: false,
+          error: error instanceof Error ? error.message : String(error),
+        } satisfies WebRemoteControlReconnectWorkspaceResult);
+      }
+    };
+    ipcRenderer.on(PlatformChannels.WebRemoteControlReconnectWorkspace, handler);
+    return () =>
+      ipcRenderer.removeListener(PlatformChannels.WebRemoteControlReconnectWorkspace, handler);
+  },
   /** Sync the unread task count for this window to main. */
   syncWindowUnreadCount: (count: number) =>
     ipcRenderer.send(PlatformChannels.SyncWindowUnreadCount, count),
@@ -348,6 +406,8 @@ contextBridge.exposeInMainWorld("zcode", {
   /** Sync application settings that main needs to observe immediately. */
   syncAppSettings: (patch: Partial<AppSettings>) =>
     ipcRenderer.send(PlatformChannels.SyncAppSettings, patch),
+  /** Query the close-to-tray capability (used to gray out the action on Linux; spec: docs/desktop/linux-close-to-tray.md). */
+  getCloseToTrayCapability: () => ipcRenderer.invoke(PlatformChannels.GetCloseToTrayCapability),
   /** Shortcut settings recording toggle: temporarily remove configurable menu accelerators in main so recorded keys do not trigger their commands. */
   setShortcutRecordingActive: (active: boolean) =>
     ipcRenderer.send(PlatformChannels.SetShortcutRecordingActive, active),
@@ -375,6 +435,38 @@ contextBridge.exposeInMainWorld("zcode", {
     ipcRenderer.on(PlatformChannels.OpenBrowserUrl, handler);
     return () => ipcRenderer.removeListener(PlatformChannels.OpenBrowserUrl, handler);
   },
+  /** Register built-in browser permission/origin-selection/device-selection prompt requests; return a disposer. */
+  onEmbeddedBrowserPermissionPrompt: (
+    callback: (event: EmbeddedBrowserPermissionPromptEvent) => void,
+  ): (() => void) => {
+    const handler = (_event: unknown, payload: EmbeddedBrowserPermissionPromptEvent) =>
+      callback(payload);
+    ipcRenderer.on(PlatformChannels.EmbeddedBrowserPermissionPrompt, handler);
+    return () =>
+      ipcRenderer.removeListener(PlatformChannels.EmbeddedBrowserPermissionPrompt, handler);
+  },
+  /** Return the user's decision for a built-in browser permission prompt. */
+  resolveEmbeddedBrowserPermissionPrompt: (
+    request: EmbeddedBrowserPermissionResolveRequest,
+  ): void => {
+    ipcRenderer.send(PlatformChannels.EmbeddedBrowserPermissionResolve, request);
+  },
+  /** Read built-in browser site permission records (settings page "Site permissions"). */
+  getEmbeddedBrowserSitePermissions: (): Promise<EmbeddedBrowserSitePermissionsSnapshot> =>
+    ipcRenderer.invoke(PlatformChannels.GetEmbeddedBrowserSitePermissions),
+  /** Update or delete a single site permission record. */
+  setEmbeddedBrowserSitePermission: (
+    request: EmbeddedBrowserSitePermissionUpdateRequest,
+  ): Promise<EmbeddedBrowserSitePermissionsSnapshot> =>
+    ipcRenderer.invoke(PlatformChannels.SetEmbeddedBrowserSitePermission, request),
+  /** Clear all site permission records. */
+  clearEmbeddedBrowserSitePermissions: (): Promise<EmbeddedBrowserSitePermissionsSnapshot> =>
+    ipcRenderer.invoke(PlatformChannels.ClearEmbeddedBrowserSitePermissions),
+  /** Reset all permission records for a single site. */
+  resetEmbeddedBrowserSitePermission: (
+    request: EmbeddedBrowserSitePermissionResetRequest,
+  ): Promise<EmbeddedBrowserSitePermissionsSnapshot> =>
+    ipcRenderer.invoke(PlatformChannels.ResetEmbeddedBrowserSitePermission, request),
   /** Register a callback when the agent's first browser command creates a controlled view (automatically open a browser-use tab); return a disposer. */
   onBrowserViewReady: (
     callback: (payload: {
@@ -823,6 +915,8 @@ contextBridge.exposeInMainWorld("zcode", {
   /** Get the desktop device identifier (deviceMid). */
   getDeviceId: () => ipcRenderer.invoke(PlatformChannels.GetDeviceId),
 });
+
+installPluginSandboxHostBridge();
 
 /**
  * A MessagePort cannot pass through contextBridge because contextBridge wraps it in a Proxy and removes

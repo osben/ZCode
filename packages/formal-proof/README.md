@@ -13,3 +13,5 @@ Open:
 ```text
 http://127.0.0.1:4176/
 ```
+
+See the core spec at `docs/conversation-product-state-space.md`.

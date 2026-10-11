@@ -56,12 +56,13 @@ function areResolvedTaskMetasEqual(left: ZCodeTaskMeta | null, right: ZCodeTaskM
     left.unreadAt === right.unreadAt &&
     left.status === right.status &&
     areTaskMetaJsonFieldsEqual(left.lastError, right.lastError) &&
+    areTaskMetaJsonFieldsEqual(left.repairState, right.repairState) &&
     areTaskMetaJsonFieldsEqual(left.changeSummary, right.changeSummary) &&
     areTaskMetaJsonFieldsEqual(left.target, right.target)
   );
 }
 
-function useStableResolvedActiveTaskMeta(taskMeta: ZCodeTaskMeta | null) {
+export function useStableResolvedActiveTaskMeta(taskMeta: ZCodeTaskMeta | null) {
   const stableTaskMetaRef = useRef<ZCodeTaskMeta | null>(null);
   const stableTaskMeta = stableTaskMetaRef.current;
   // When a stream chunk updates only the message stream, active task metadata may be recomposed by

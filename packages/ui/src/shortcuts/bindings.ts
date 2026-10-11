@@ -47,7 +47,7 @@ function isImeEvent(event: ShortcutBindingEvent): boolean {
 }
 
 /** Check whether an event is noise that should not trigger a shortcut: key repeat, IME composition, or a dead key. */
-function isShortcutEventNoise(event: ShortcutBindingEvent): boolean {
+export function isShortcutEventNoise(event: ShortcutBindingEvent): boolean {
   return event.repeat === true || isImeEvent(event);
 }
 
@@ -220,7 +220,7 @@ function eventMatchesKey(event: Pick<ShortcutBindingEvent, "key" | "code">, key:
 // Recorder
 // ============================================================================
 
-type ShortcutRecordResult =
+export type ShortcutRecordResult =
   | { kind: "pending" }
   | { kind: "binding"; binding: string }
   | { kind: "invalid"; reason: "no-modifier" | "unsupported-key" };

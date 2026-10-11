@@ -222,3 +222,49 @@ export function chartSeriesFields(spec: ChartSpec): ArtifactField[] {
 export function artifactFieldLabel(field: ArtifactField): string {
   return field.label ?? field.field;
 }
+
+/**
+ * All field paths read by a board (deduplicated and ordered as they appear in the spec): board
+ * queries ask the CLI for only these fields rather than the whole item (docs/execution-engine.md,
+ * “Reading the journal”). Every path read by `applyArtifactItems` must be listed here; omit one and
+ * that column/series will always be empty. Return `undefined` when the spec cannot be rendered (the
+ * caller falls back to the full item and the rendering layer displays “Unable to render”).
+ */
+export function artifactPresetFieldPaths(
+  kind: ArtifactPresetKind,
+  rawSpec: unknown,
+): string[] | undefined {
+  const spec = parseArtifactPresetSpec(kind, rawSpec);
+  if (spec === undefined) return undefined;
+  const paths: string[] = [];
+  const add = (path: string | undefined): void => {
+    if (path !== undefined && !paths.includes(path)) paths.push(path);
+  };
+  switch (kind) {
+    case "chart": {
+      const chart = spec as ChartSpec;
+      add(chart.x.field);
+      for (const field of chartSeriesFields(chart)) add(field.field);
+      add(chart.baseline?.field);
+      break;
+    }
+    case "table": {
+      const table = spec as TableSpec;
+      add(table.key);
+      for (const column of table.columns) add(column.field);
+      break;
+    }
+    case "metrics":
+      for (const metric of (spec as MetricsSpec).metrics) add(metric.field);
+      break;
+    case "board": {
+      const board = spec as BoardSpec;
+      add(board.key);
+      add(board.status);
+      add(board.cardTitle);
+      for (const field of board.detail ?? []) add(field.field);
+      break;
+    }
+  }
+  return paths;
+}

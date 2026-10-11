@@ -28,6 +28,28 @@ export function isTransientSessionEvent(event: Pick<SessionEvent, "type">): bool
   return TRANSIENT_SESSION_EVENT_TYPES.has(event.type);
 }
 
+/**
+ * Reduce metadata in the resident copy of `model_request` when evicting a sealed turn (see the spec's
+ * “model_request metadata reduction” section). Root cause: `messages` contains the full context for
+ * every model request, one entry per tool iteration, and remains resident indefinitely. Compaction
+ * truncates only later requests; it does not reclaim stored events. Long sessions showed event-store
+ * memory growing linearly with turns, by about 150 MB. In-memory store readers use only
+ * `messages.length`, while the live sink (debug JSONL) receives the complete object returned by append.
+ * Therefore, replace only the resident copy with `messageCount`; keep the event ID, seq, and all other
+ * payload fields unchanged.
+ */
+export function slimRetainedModelRequest(event: SessionEvent): SessionEvent {
+  if (event.type !== SessionEventType.ModelRequest) {
+    return event;
+  }
+  const payload = event.payload as { messages?: unknown } | null | undefined;
+  if (!payload || !Array.isArray(payload.messages)) {
+    return event;
+  }
+  const { messages, ...metadata } = payload;
+  return { ...event, payload: { ...metadata, messageCount: messages.length } } as SessionEvent;
+}
+
 export type SessionEventRetentionMode = "unbounded" | "turn-window";
 
 export interface SessionEventRetentionPolicy {

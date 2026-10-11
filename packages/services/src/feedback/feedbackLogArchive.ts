@@ -4,15 +4,21 @@ import { arch, platform, release } from "node:os";
 import { join, posix } from "node:path";
 import { pipeline } from "node:stream/promises";
 import { ZipFile } from "yazl";
-import { redactFeedbackText, ZCODE_VERSION, ZCODE_COMMIT } from "@zcode/shared";
+import { redactFeedbackText, ZCODE_UPSTREAM_BASE_VERSION, ZCODE_COMMIT } from "@zcode/shared";
 
 const MAX_FILE_BYTES = 8 * 1024 * 1024;
 const MAX_TOTAL_BYTES = 32 * 1024 * 1024;
 
-interface FeedbackLogSource {
+export interface FeedbackLogSource {
   directory: string;
   archivePrefix: string;
   exitLogsOnly?: boolean;
+  /** Collect only the listed file names at the root; configuration entry for allowing single files into the archive. */
+  includeFileNames?: readonly string[];
+  /** By default collect only files modified locally today; config files can disable this limit. */
+  onlyCurrentDay?: boolean;
+  /** Config files use a structured safe projection to avoid uploading sensitive plugin-custom entries. */
+  contentPolicy?: "diagnostic" | "cli-config";
 }
 
 function decodeDiagnosticLog(buffer: Buffer): string | null {
@@ -32,6 +38,120 @@ function decodeDiagnosticLog(buffer: Buffer): string | null {
   } catch {
     return null;
   }
+}
+
+type SafeScalarType = "boolean" | "number" | "string";
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function pickSafeSection(
+  value: unknown,
+  scalarFields: Readonly<Record<string, SafeScalarType>> = {},
+  stringArrayFields: readonly string[] = [],
+  booleanMapFields: readonly string[] = [],
+): Record<string, unknown> | undefined {
+  if (!isRecord(value)) return undefined;
+  const result: Record<string, unknown> = {};
+  for (const [key, type] of Object.entries(scalarFields)) {
+    if (typeof value[key] === type) result[key] = value[key];
+  }
+  for (const key of stringArrayFields) {
+    const candidate = value[key];
+    if (Array.isArray(candidate) && candidate.every((item) => typeof item === "string")) {
+      result[key] = candidate;
+    }
+  }
+  for (const key of booleanMapFields) {
+    const candidate = value[key];
+    if (
+      isRecord(candidate) &&
+      Object.values(candidate).every((item) => typeof item === "boolean")
+    ) {
+      result[key] = candidate;
+    }
+  }
+  return Object.keys(result).length > 0 ? result : undefined;
+}
+
+/** Project only nonsensitive CLI config; unknown fields such as plugin options, MCP, network, and hooks are all dropped. */
+function sanitizeCliConfig(text: string): string | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return null;
+  }
+  if (!isRecord(parsed)) return null;
+
+  const projection: Record<string, unknown> = {};
+  const root = pickSafeSection(parsed, { model: "string" });
+  if (root) Object.assign(projection, root);
+  const sections: ReadonlyArray<{
+    key: string;
+    scalarFields: Readonly<Record<string, SafeScalarType>>;
+    stringArrayFields?: readonly string[];
+    booleanMapFields?: readonly string[];
+  }> = [
+    { key: "modelStream", scalarFields: { idleTimeoutMs: "number" } },
+    {
+      key: "permission",
+      scalarFields: {
+        mode: "string",
+        autoApproveHighRisk: "boolean",
+        allowMediumRiskInAuto: "boolean",
+      },
+      stringArrayFields: ["allowedTools", "disallowedTools"],
+    },
+    {
+      key: "features",
+      scalarFields: {
+        compact: "boolean",
+        rewind: "boolean",
+        subagent: "boolean",
+        memory: "boolean",
+        skill: "boolean",
+        mcp: "boolean",
+      },
+    },
+    { key: "memory", scalarFields: { use: "boolean" } },
+    {
+      key: "plugins",
+      scalarFields: { enabled: "boolean" },
+      stringArrayFields: ["suppressedBuiltins"],
+      booleanMapFields: ["enabledPlugins"],
+    },
+    {
+      key: "skills",
+      scalarFields: {
+        enabled: "boolean",
+        includeInstructions: "boolean",
+        metadataBudget: "number",
+      },
+    },
+    { key: "logging", scalarFields: { level: "string", format: "string" } },
+    { key: "ui", scalarFields: { locale: "string", theme: "string" } },
+    { key: "toolConcurrency", scalarFields: { maxConcurrency: "number" } },
+    {
+      key: "modelAnomalyGuard",
+      scalarFields: {
+        toolCallWarningThreshold: "number",
+        repeatedToolCallWarningThreshold: "number",
+        maxBudgetWarningsPerTurn: "number",
+      },
+    },
+  ];
+  for (const sectionDefinition of sections) {
+    const section = pickSafeSection(
+      parsed[sectionDefinition.key],
+      sectionDefinition.scalarFields,
+      sectionDefinition.stringArrayFields,
+      sectionDefinition.booleanMapFields,
+    );
+    if (section) projection[sectionDefinition.key] = section;
+  }
+  return redactFeedbackText(JSON.stringify(projection, null, 2), { diagnostic: true });
 }
 
 /** Sole archive entry point for feedback uploads: allowlisted sources, bounded reads, and no raw-content fallback when safe decoding fails. */
@@ -72,15 +192,18 @@ export async function createFeedbackDiagnosticArchive(options: {
           if (entry.isSymbolicLink()) continue;
           const absolutePath = join(directory, entry.name);
           const name = posix.join(prefix, entry.name);
-          if (entry.isDirectory() && !source.exitLogsOnly) {
+          const isExplicitFileSource = source.includeFileNames !== undefined;
+          if (entry.isDirectory() && !source.exitLogsOnly && !isExplicitFileSource) {
             await walk(absolutePath, name, depth + 1);
             continue;
           }
           if (
             !entry.isFile() ||
-            !(source.exitLogsOnly
-              ? entry.name.endsWith(".exit.log")
-              : /(?:\.log(?:\.\d+)?|\.jsonl|\.ndjson)$/i.test(entry.name))
+            (isExplicitFileSource
+              ? !source.includeFileNames!.includes(entry.name)
+              : !(source.exitLogsOnly
+                  ? entry.name.endsWith(".exit.log")
+                  : /(?:\.log(?:\.\d+)?|\.jsonl|\.ndjson)$/i.test(entry.name)))
           )
             continue;
           if ((await realpath(absolutePath).catch(() => null)) !== absolutePath) {
@@ -93,7 +216,7 @@ export async function createFeedbackDiagnosticArchive(options: {
             info.nlink !== 1 ||
             info.size > MAX_FILE_BYTES ||
             totalBytes + info.size > budget ||
-            !isToday(info.mtimeMs)
+            (source.onlyCurrentDay !== false && !isToday(info.mtimeMs))
           ) {
             skipLogFile("metadata-policy");
             continue;
@@ -114,7 +237,7 @@ export async function createFeedbackDiagnosticArchive(options: {
               opened.nlink !== 1 ||
               opened.ino !== info.ino ||
               opened.dev !== info.dev ||
-              !isToday(opened.mtimeMs) ||
+              (source.onlyCurrentDay !== false && !isToday(opened.mtimeMs)) ||
               opened.size > MAX_FILE_BYTES ||
               totalBytes + opened.size > budget
             ) {
@@ -139,7 +262,15 @@ export async function createFeedbackDiagnosticArchive(options: {
               skipLogFile("unsupported-text");
               continue;
             }
-            const data = Buffer.from(redactFeedbackText(text, { diagnostic: true }));
+            const sanitizedText =
+              source.contentPolicy === "cli-config"
+                ? sanitizeCliConfig(text)
+                : redactFeedbackText(text, { diagnostic: true });
+            if (sanitizedText === null) {
+              skipLogFile("invalid-config");
+              continue;
+            }
+            const data = Buffer.from(sanitizedText);
             if (data.length > MAX_FILE_BYTES || totalBytes + data.length > budget) {
               skipLogFile("redacted-size-limit");
               continue;
@@ -163,14 +294,14 @@ export async function createFeedbackDiagnosticArchive(options: {
         [
           "ZCode diagnostic logs",
           `timestamp: ${now.toISOString()}`,
-          `appVersion: ${ZCODE_VERSION}`,
+          `appVersion: ${ZCODE_UPSTREAM_BASE_VERSION}`,
           `commit: ${ZCODE_COMMIT}`,
           `node: ${process.version}`,
           `os: ${platform()} ${release()} (${arch()})`,
           `includedLogFiles: ${entries.length}`,
           `skippedLogFiles: ${Object.values(skippedLogFilesByReason).reduce((sum, count) => sum + count, 0)}`,
           `skippedLogFilesByReason: ${JSON.stringify(skippedLogFilesByReason)}`,
-          "Scope: diagnostic text log files modified today (local time); credentials and structured payloads redacted.",
+          "Scope: diagnostic text log files modified today (local time), plus an explicit non-sensitive CLI config projection; credentials and structured payloads redacted.",
         ].join("\n"),
       ),
       "about.txt",

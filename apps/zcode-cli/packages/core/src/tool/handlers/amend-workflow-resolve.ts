@@ -28,6 +28,7 @@ import {
   resolveAmendScript,
 } from "./amend-workflow-source.js";
 import { resolveModelReference } from "./model-reference.js";
+import { withScriptModelBindings } from "./workflow-script-models.js";
 import { workflowRunNotFoundFailure } from "./workflow-run-introspection.js";
 
 export {
@@ -82,8 +83,8 @@ export async function resolveAmendWorkflowInput(
     void _forged;
     void _model;
     void _offset;
-    // Without a port there is neither a predecessor nor a ceiling: `null` (clear) and omission (reuse) both become absent, while a number passes through unchanged.
-    // From here on, normalized input always has one shape: one number or none.
+    // Without a port there is neither a predecessor nor a default concurrency: `null` (remove) and “inherit” both collapse to absence; pass numbers through unchanged.
+    // Normalized input has only one of two shapes from here on: a number or none.
     const subagentModel = resolveAmendSubagentModel(
       parsed.data.subagent_model,
       undefined,
@@ -99,12 +100,16 @@ export async function resolveAmendWorkflowInput(
     if (!script.result) return script;
     return {
       result: true,
-      input: {
-        ...rest,
-        ...script.fields,
-        ...(typeof requested === "number" ? { max_concurrency: requested } : {}),
-        ...subagentModel.field,
-      },
+      // Without a port there is no predecessor to inherit from, so resolve all script-named models against the catalog again.
+      input: withScriptModelBindings(
+        {
+          ...rest,
+          ...script.fields,
+          ...(typeof requested === "number" ? { max_concurrency: requested } : {}),
+          ...subagentModel.field,
+        },
+        context.modelCatalogPort,
+      ),
     };
   }
   const snapshot = await port.getTask(parsed.data.run_id);
@@ -154,18 +159,19 @@ export async function resolveAmendWorkflowInput(
   const resolved: AmendWorkflowInput = {
     ...rest,
     ...script.fields,
-    ...resolveAmendMaxConcurrency(
-      parsed.data.max_concurrency,
-      snapshot.maxConcurrency,
-      port.concurrencyCeiling?.(),
-    ),
+    ...resolveAmendMaxConcurrency(parsed.data.max_concurrency, snapshot.maxConcurrency),
     ...subagentModel.field,
     predecessor: {
       ...predecessor,
       ...(script.inherited ? { script_inherited: true as const } : {}),
     },
   };
-  return { result: true, input: resolved };
+  // Models named by the script: inherit bindings for names present in the predecessor's run-launched event (preserving models changed by the user in its confirmation dialog),
+  // and resolve new names against the catalog (docs/dynamic-workflow/launch.md, “The `AmendWorkflow` tool”).
+  return {
+    result: true,
+    input: withScriptModelBindings(resolved, context.modelCatalogPort, snapshot.modelBindings),
+  };
 }
 
 /**

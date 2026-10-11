@@ -210,6 +210,15 @@ export function resolveCodingPlanUsageRemainingState(params: {
   };
 }
 
+export function hasCodingPlanUsageRemainingPanel(params: {
+  availableProviders: CodingPlanUsageAvailableProvider[];
+  entitlements: CodingPlanUsageRemainingEntitlement[];
+  modelProvidersLoading: boolean;
+  selectedProviderId?: SidebarUsageCodingPlanSourceId;
+}): boolean {
+  return Boolean(resolveCodingPlanUsageRemainingState(params));
+}
+
 export function CodingPlanUsageRemainingPanel({
   availableProviders,
   audience,
@@ -318,8 +327,8 @@ export function CodingPlanUsageRemainingPanel({
             </div>
           </div>
           <div className="flex shrink-0 items-center gap-1.5">
-            {/* The same Usage Remaining view appears in the sidebar and the input context menu.
-                The caller must provide the details entry point so this shared display component does not depend directly on tab/store navigation. */}
+            {/* Reason for the fix: The same Usage Remaining view appears in both the sidebar and the input context menu.
+                The caller must provide the details entry so the shared display component does not depend directly on tab/store navigation. */}
             {onUsageClick ? (
               <UsageDetailsButton
                 label={intl.formatMessage({ id: "sidebar.usage.plan.open" })}

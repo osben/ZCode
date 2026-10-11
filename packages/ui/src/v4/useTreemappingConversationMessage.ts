@@ -23,7 +23,9 @@ const ASSISTANT_TURN_ROW_KINDS = new Set<ConversationRow["kind"]>([
 ]);
 
 /** Select the last assistant turn from the rows window and adapt it to the old TaskChatMessage shape. */
-function buildTreemappingMessageFromRows(rows: readonly ConversationRow[]): TaskChatMessage | null {
+export function buildTreemappingMessageFromRows(
+  rows: readonly ConversationRow[],
+): TaskChatMessage | null {
   let lastAssistantTurnId: string | null = null;
   for (let index = rows.length - 1; index >= 0; index -= 1) {
     const row = rows[index]!;

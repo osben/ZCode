@@ -6,7 +6,7 @@ import {
   OFFICIAL_NODE_REPL_HOST_PLUGIN_ID,
 } from "./official-plugin-definitions.js";
 
-const BUILT_IN_NODE_REPL_SERVER_NAME = "node_repl";
+export const BUILT_IN_NODE_REPL_SERVER_NAME = "node_repl";
 
 /**
  * node_repl is a host tool shared by official capabilities, not a plugin MCP declared in any plugin

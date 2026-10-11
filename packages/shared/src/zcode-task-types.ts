@@ -84,12 +84,38 @@ export interface ZCodeWorkspacePrepareResult {
   slashCommands?: ZCodeSlashCommand[];
 }
 
+/** Result of the network connectivity check run before Codex prewarming. */
+export interface ZCodeCodexConnectivityCheckResult {
+  /** Target domain of the current check. */
+  target: string;
+  /** Whether the host successfully reached the target site. */
+  reachable: boolean;
+  /** Original error kept on failure for UI logs and toast diagnostics. */
+  error?: string;
+}
+
 // ---- Task metadata ----
 
 /** Result of createTask; adds transient initialization data needed for the first render beyond persisted metadata. */
 export interface ZCodeTaskCreateResult extends ZCodeTaskMeta {
   /** Initial slash commands available during createTask, preventing initialization commands from being lost before the UI subscribes. */
   initialSlashCommands?: ZCodeSlashCommand[];
+}
+
+/** Result of the "backfill existing session" capability; does not switch the current active provider. */
+export interface ZCodeSyncTaskSessionBindingResult {
+  provider: ZCodeProvider;
+  sessionId: string;
+  lastSyncedTurnIndex: number;
+  updated: boolean;
+}
+
+/** Unified result after a successful `switchAgent` switch. */
+export interface ZCodeSwitchAgentResult {
+  meta: ZCodeTaskMeta;
+  provider: ZCodeProvider;
+  sessionId: string;
+  reusedBinding: boolean;
 }
 
 /** Source provider for imported external native sessions; decoupled from the agent runtime's ZCodeProvider, currently only Claude Code. */

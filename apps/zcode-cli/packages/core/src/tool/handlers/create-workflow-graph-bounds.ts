@@ -15,6 +15,7 @@
 import {
   CREATE_WORKFLOW_GRAPH_MAX_HANDOFF_TYPES,
   CREATE_WORKFLOW_GRAPH_MAX_HANDOFFS,
+  CREATE_WORKFLOW_GRAPH_MAX_HOLES,
   CREATE_WORKFLOW_GRAPH_MAX_ID_CHARS,
   CREATE_WORKFLOW_GRAPH_MAX_LANES,
   CREATE_WORKFLOW_GRAPH_MAX_NAME_CHARS,
@@ -25,11 +26,13 @@ import {
   type CreateWorkflowCausalityGraph,
   type CreateWorkflowEdge,
   type CreateWorkflowHandoff,
+  type CreateWorkflowHole,
   type CreateWorkflowLane,
   type CreateWorkflowNamePattern,
   type CreateWorkflowParticipant,
   type CreateWorkflowPhase,
   type CreateWorkflowStep,
+  type CreateWorkflowStream,
 } from "@zcode/contracts";
 import {
   FLOW_ABORT,
@@ -37,6 +40,7 @@ import {
   FLOW_SINK,
   type CausalityGraph,
   type ControlFlowGraph,
+  type FlowHole,
   type HandoffGraph,
   UNPHASED,
   // Browser replay views reuse this function through the /projections subpath rather than the root barrel, which would bundle the
@@ -149,11 +153,13 @@ export function boundCausalityGraph(
     to: boundGraphText(edge.to, CREATE_WORKFLOW_GRAPH_MAX_ID_CHARS),
     ...(edge.back ? { back: true as const } : {}),
   }));
+  const phaseStreams = boundPhaseStreams(graph, declaredPhases, phaseIds);
   // The edge limit applies to emitted output, so enforce it **after** reduction.
   const phaseVocabularyDropped =
     declaredPhases !== undefined &&
     (declaredPhases.length > CREATE_WORKFLOW_GRAPH_MAX_PHASES ||
-      phaseEdges.length > CREATE_WORKFLOW_GRAPH_MAX_PHASE_EDGES);
+      phaseEdges.length > CREATE_WORKFLOW_GRAPH_MAX_PHASE_EDGES ||
+      phaseStreams.length > CREATE_WORKFLOW_GRAPH_MAX_PHASE_EDGES);
   truncated = truncated || phaseVocabularyDropped;
   const emitPhases = declaredPhases !== undefined && !phaseVocabularyDropped;
 
@@ -179,6 +185,11 @@ export function boundCausalityGraph(
       ...(name === undefined ? {} : { name }),
       ...(phase.loc === undefined ? {} : { line: phase.loc.line, column: phase.loc.column }),
       ...(alongside.length === 0 ? {} : { alongside }),
+      // A phase inserted by completion carries the ID of the hole it fills; if the control-flow phase table lacks the marker, fall back to the marker on the same-ID phase in the causal graph.
+      ...fillMark(
+        phase,
+        graph.phases?.find((candidate) => candidate.id === phase.id),
+      ),
     };
   });
   const exits = (declaredPhases ?? [])
@@ -225,6 +236,9 @@ export function boundCausalityGraph(
         ? { phase: boundGraphText(step.phase, CREATE_WORKFLOW_GRAPH_MAX_ID_CHARS) }
         : {}),
       ...(step.repeat === undefined ? {} : { repeat: step.repeat }),
+      // Sites inserted by completion carry the ID of the hole they fill (docs/dynamic-workflow/presentation.md, “Holes on the timeline”).
+      // Copy it without validating the target hole: that hole is already filled, is absent from `holes`, and is not a node.
+      ...fillMark(step),
     };
   });
 
@@ -232,8 +246,30 @@ export function boundCausalityGraph(
   // `unphased` (contract: `participant.phase` ∈ `phases[].id`, or all are `unphased` when `phases` is absent). Keep card IDs
   // unchanged: they are opaque keys used by handoff edges and runtime state. The UI's implicit modules read only the `phase` field.
   const boundParticipants: CreateWorkflowParticipant[] = participants.map((participant) =>
-    emitPhases && phaseIds.has(participant.phase) ? participant : { ...participant, phase: UNPHASED },
+    emitPhases && phaseIds.has(participant.phase)
+      ? participant
+      : { ...participant, phase: UNPHASED },
   );
+
+  // 5. Open holes (docs/dynamic-workflow/presentation.md「The display contract」): source order,
+  //    capped like the phase table. A hole's `phase` follows the step rule — dropped when the
+  //    vocabulary went or the phase is unlisted — so the payload never references a phase it
+  //    does not carry.
+  const openHoles: readonly FlowHole[] = flow?.holes ?? [];
+  truncated = truncated || openHoles.length > CREATE_WORKFLOW_GRAPH_MAX_HOLES;
+  const holes: CreateWorkflowHole[] = openHoles
+    .slice(0, CREATE_WORKFLOW_GRAPH_MAX_HOLES)
+    .map((hole) => ({
+      siteId: boundGraphText(hole.siteId, CREATE_WORKFLOW_GRAPH_MAX_ID_CHARS),
+      name: hole.name
+        ? boundGraphText(hole.name, CREATE_WORKFLOW_GRAPH_MAX_NAME_CHARS)
+        : hole.siteId,
+      type: hole.type ? boundGraphText(hole.type, CREATE_WORKFLOW_GRAPH_MAX_NAME_CHARS) : "unknown",
+      ...(emitPhases && hole.phase !== undefined && phaseIds.has(hole.phase)
+        ? { phase: boundGraphText(hole.phase, CREATE_WORKFLOW_GRAPH_MAX_ID_CHARS) }
+        : {}),
+      ...(hole.tail === true ? { tail: true as const } : {}),
+    }));
 
   return {
     steps: boundSteps,
@@ -241,9 +277,62 @@ export function boundCausalityGraph(
     participants: boundParticipants,
     handoffs,
     ...(emitPhases ? { phases: boundPhases, phaseEdges, exits } : {}),
+    ...(emitPhases && phaseStreams.length > 0 ? { phaseStreams } : {}),
     ...(sink.length > 0 ? { sink } : {}),
+    ...(holes.length > 0 ? { holes } : {}),
     ...(truncated ? { truncated: true } : {}),
   };
+}
+
+/**
+ * 6. Phase streams (docs/dynamic-workflow/presentation.md, “Streams”): two future phases connected by a channel are
+ *    two `alongside` strands in the control-flow view, with no arrow; the causal phase quotient has a producer →
+ *    consumer `data` edge (send writes the container, and for-await reads it). A stream is a `data` edge whose endpoints are alongside:
+ *    two live strands can communicate only through a shared container, which is the channel. A `data` edge entering a phase that is
+ *    **not** alongside (a writer after join) is a control arrow, not a stream.
+ *    The analyzer has already reduced the causal quotient, so this only checks reference integrity (unknown phases, self-edges), filters alongside edges, and deduplicates;
+ *    it does not reduce again or merge these into phaseEdges—arrows still mean only “runs after.” The caller validates the bound together with the edges.
+ */
+function boundPhaseStreams(
+  graph: CausalityGraph,
+  declaredPhases: ControlFlowGraph["phases"] | undefined,
+  phaseIds: ReadonlySet<string>,
+): CreateWorkflowStream[] {
+  const alongside = new Set<string>();
+  for (const phase of declaredPhases ?? []) {
+    for (const id of phase.alongside ?? []) {
+      alongside.add(`${phase.id}>${id}`);
+      alongside.add(`${id}>${phase.id}`);
+    }
+  }
+  const streams: CreateWorkflowStream[] = [];
+  const seen = new Set<string>();
+  for (const edge of graph.phaseEdges ?? []) {
+    if (edge.kind !== "data" || edge.from === edge.to) continue;
+    if (!phaseIds.has(edge.from) || !phaseIds.has(edge.to)) continue;
+    const key = `${edge.from}>${edge.to}`;
+    if (!alongside.has(key) || seen.has(key)) continue;
+    seen.add(key);
+    streams.push({
+      from: boundGraphText(edge.from, CREATE_WORKFLOW_GRAPH_MAX_ID_CHARS),
+      to: boundGraphText(edge.to, CREATE_WORKFLOW_GRAPH_MAX_ID_CHARS),
+    });
+  }
+  return streams;
+}
+
+/**
+ * Completion marker (`fill: <hole id>`, added by the analyzer to causal-graph Steps / Phases and control-flow FlowPhases): copy the first
+ * candidate that has one; use the second candidate (the same-ID phase in the causal graph) only if the first has none. IDs are analyzer-generated ASCII, so length validation is an identity check.
+ */
+function fillMark(...nodes: ({ fill?: string } | undefined)[]): { fill?: string } {
+  for (const node of nodes) {
+    const fill = node?.fill;
+    if (fill !== undefined && fill.length > 0) {
+      return { fill: boundGraphText(fill, CREATE_WORKFLOW_GRAPH_MAX_ID_CHARS) };
+    }
+  }
+  return {};
 }
 
 // Prevent bugs: actor names and ask labels come from script string literals (external input), and slicing could split a UTF-16

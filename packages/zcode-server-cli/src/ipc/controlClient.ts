@@ -7,7 +7,7 @@ import { ControlRequestError } from "./controlError.js";
 // Omit does not distribute over unions: directly applying Omit<ControlRequest, "id"> drops variant fields such as confirmation/force,
 // preventing callers from constructing valid requests as literals. Use distributive Omit to preserve each command's full shape.
 type DistributedOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never;
-type ControlRequestInput = DistributedOmit<ControlRequest, "id">;
+export type ControlRequestInput = DistributedOmit<ControlRequest, "id">;
 
 export async function requestControl(
   endpoint: string,

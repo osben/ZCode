@@ -9,7 +9,7 @@ export { BROWSER_VIEWPORT_ZOOM_OPTIONS, DEFAULT_BROWSER_VIEWPORT_ZOOM };
 export type { BrowserViewportZoom };
 
 /** Keep the Fit canvas padding consistent with ResponsiveBrowserViewport's `p-4`. */
-const RESPONSIVE_BROWSER_CANVAS_PADDING_PX = 16;
+export const RESPONSIVE_BROWSER_CANVAS_PADDING_PX = 16;
 
 export function resolveBrowserViewportScale({
   canvasSize,

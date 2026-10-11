@@ -2,7 +2,7 @@ import { readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { ZCODE_OFFICIAL_PLUGIN_MARKETPLACE_ID } from "../plugin-marketplaces.js";
 
-interface OfficialPluginCacheRoot {
+export interface OfficialPluginCacheRoot {
   /** Cache directory name, which is the official plugin name. */
   name: string;
   /** Available version directories sorted in descending, numeric-aware order; the first entry is the latest version. */

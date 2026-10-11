@@ -17,8 +17,10 @@ function modelName(canonical: string, deps: WorkflowSubagentModelDeps): string {
 }
 
 /**
- * Transcript-row segments (excluding the "Settings changed" prefix and trailing timestamp): include only changed settings, model first and limit second.
- * If the limit `to` is absent or not below the ceiling, interpret it as "limit restored to local default".
+ * Segments for the transcript row (excluding the “Settings updated” prefix and trailing time): show
+ * only changed settings, model first and ceiling second. If the ceiling's `to` is absent or equals
+ * default concurrency (`ceiling`, a key predating the default-concurrency concept), read it as
+ * “ceiling restored to default”; report all other values as-is, including values above default.
  */
 export function workflowSettingsChangeSegments(
   amend: WorkflowSettingsAmendMeta,
@@ -39,10 +41,10 @@ export function workflowSettingsChangeSegments(
   }
   if (amend.maxConcurrency !== undefined) {
     const to = amend.maxConcurrency.to;
-    const atCeiling = to === undefined || (amend.ceiling !== undefined && to >= amend.ceiling);
+    const atDefault = to === undefined || to === amend.ceiling;
     segments.push(
-      atCeiling
-        ? formatMessage({ id: "chat.toolCall.workflow.settingsChange.limitCeiling" })
+      atDefault
+        ? formatMessage({ id: "chat.toolCall.workflow.settingsChange.limitDefault" })
         : formatMessage({ id: "chat.toolCall.workflow.settingsChange.limit" }, { n: to }),
     );
   }
@@ -57,8 +59,9 @@ export interface WorkflowSettingsProvenanceRow {
 }
 
 /**
- * from → to rows in the details-page history. Show the default at a missing endpoint: "Session model" for the model and local limit for concurrency
- * (include the ceiling when known, e.g. "13 (local limit) → 4").
+ * from → to row in the detail-page history block. For a missing endpoint, use the default: “Session
+ * model” for model and “Default” for the ceiling (include the value when default concurrency is
+ * known, e.g. “Default 13 → 4”). An endpoint equal to default also reads as default; one above default is shown numerically.
  */
 export function workflowSettingsProvenanceRows(
   amend: WorkflowSettingsAmendMeta,
@@ -78,13 +81,16 @@ export function workflowSettingsProvenanceRows(
     });
   }
   if (amend.maxConcurrency !== undefined) {
-    const ceiling = amend.ceiling;
+    const defaultConcurrency = amend.ceiling;
     const end = (bound: number | undefined) =>
-      bound !== undefined && (ceiling === undefined || bound < ceiling)
+      bound !== undefined && bound !== defaultConcurrency
         ? String(bound)
-        : ceiling === undefined
-          ? formatMessage({ id: "chat.workflowLaunch.settings.machineLimit" })
-          : formatMessage({ id: "chat.workflowLaunch.settings.machineLimitValue" }, { n: ceiling });
+        : defaultConcurrency === undefined
+          ? formatMessage({ id: "chat.workflowLaunch.settings.defaultLimit" })
+          : formatMessage(
+              { id: "chat.workflowLaunch.settings.defaultLimitValue" },
+              { n: defaultConcurrency },
+            );
     rows.push({
       key: "limit",
       label: formatMessage({ id: "chat.workflowLaunch.settings.limit" }),

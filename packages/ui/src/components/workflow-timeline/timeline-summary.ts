@@ -54,7 +54,14 @@ export function workflowPhasesDetail(
   graph: WorkflowCausalityGraphData | undefined,
 ): string {
   const counts = timelineCounts(model, graph);
-  return countLabel(intl, "chat.toolCall.workflow.card.phases", counts.phases);
+  // Open holes do not count as stages (docs/dynamic-workflow/presentation.md, “Holes on the timeline”): “2 stages · 2 holes.”
+  const holes = model.stations.filter(
+    (station) => station.hole !== undefined && station.hole.state !== "filled",
+  ).length;
+  const phases = countLabel(intl, "chat.toolCall.workflow.card.phases", counts.phases - holes);
+  return holes === 0
+    ? phases
+    : `${phases} · ${countLabel(intl, "chat.toolCall.workflow.card.holes", holes)}`;
 }
 
 /** Subagent segment: count active subagents while running; show the total after completion (take the larger projected/static count). */

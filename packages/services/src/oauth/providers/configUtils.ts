@@ -1,5 +1,5 @@
 import {
-  ZCODE_VERSION,
+  ZCODE_UPSTREAM_BASE_VERSION,
   buildRuntimeZCodeApiUrl,
   buildRuntimeZCodeEndpointUrls,
 } from "@zcode/shared";
@@ -35,6 +35,8 @@ export function buildDesktopOAuthRedirectUriFromEnv(env: NodeJS.ProcessEnv): str
   const url = new URL("/app/oauth/login", buildRuntimeZCodeEndpointUrls(env).origin);
   url.searchParams.set("redirect", DESKTOP_OAUTH_CALLBACK_URI);
   // The website uses the app version to decide whether to disable automatic deep links; when the version is missing, preserve legacy client behavior.
-  url.searchParams.set("app_version", ZCODE_VERSION);
+  // Send only the upstream baseline externally so the fork's prerelease suffix is not judged by
+  // the website's semver comparison as an outdated client.
+  url.searchParams.set("app_version", ZCODE_UPSTREAM_BASE_VERSION);
   return url.toString();
 }

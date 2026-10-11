@@ -12,7 +12,7 @@ export type CuaComposerEntryUiState =
   | "ready"
   | "error";
 
-interface CuaComposerEntryInputs {
+export interface CuaComposerEntryInputs {
   /** Local macOS desktop with CUA onboarding capability (UA and preload capability must both match). */
   macLocalDesktop: boolean;
   /** Local Windows desktop. */

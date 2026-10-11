@@ -7,6 +7,7 @@ import { runCommand } from "./spawn-command.mjs";
 
 // Adapters tsc can OOM (exit 134) on memory-constrained machines; raise the heap limit for the entire build chain.
 process.env.NODE_OPTIONS = `${process.env.NODE_OPTIONS ? process.env.NODE_OPTIONS + " " : ""}--max-old-space-size=8192`;
+import { stageDevCuaPluginRuntime } from "./stage-dev-cua-plugin-runtime.mjs";
 import {
   stageBuiltinProviderConfig,
   resolveBuiltinProviderBuildEnvironment,
@@ -23,10 +24,18 @@ const pnpmRunEnv = {
   // causing dev:desktop:test and E2E onPrepare to fail.
   PNPM_CONFIG_VERIFY_DEPS_BEFORE_RUN: "false",
 };
-// Desktop Agent builds have two paths: normal pnpm and direct tsc from bootstrap:with-remote.
-// The dependency order used to be maintained separately, and adding a workspace dependency sometimes updated only bootstrap.
-// In a clean CI checkout, that dependency's dist does not exist yet, so bootstrap fails to resolve its type entry point.
-// Derive both paths from this ordered list to prevent future drift when workspace dependencies are added.
+// Root cause: if the filesystem plugin seed is missing the Sharp closure, the failure appears only when screenshot/zoom is used.
+// This script serves local development, prebuild, the server CLI, and the packaged desktop agent; all three build paths
+// must include the same copyable runtime. ZCODE_CUA_DEV_MODE is passed only to the staging helper and does not enter the final
+// product/runtime environment, so this describes staging input rather than product runtime mode.
+const cuaPluginRuntimeStagingEnv = {
+  ...process.env,
+  ZCODE_CUA_DEV_MODE: "1",
+};
+// Fix rationale: the desktop Agent has two build paths: regular pnpm and direct tsc through bootstrap:with-remote.
+// Previously, each path maintained its own dependency order. After @zcode/telemetry was added, only the bootstrap dependencies were updated,
+// so in a clean CI environment telemetry/dist did not exist and bootstrap failed to resolve the type entry point.
+// Both paths now derive from this ordered list to prevent future workspace dependencies from drifting again.
 const cliWorkspaceBuilds = [
   { packageName: "@zcode/shared-types", packageDir: "shared-types" },
   { packageName: "@zcode/contracts", packageDir: "contracts" },
@@ -138,6 +147,7 @@ async function runBootstrapWithRemoteBuild() {
 if (useBootstrapWithRemoteBuild) {
   await runBootstrapWithRemoteBuild();
   stageDevAgentBundle();
+  stageDevCuaPluginRuntime({ env: cuaPluginRuntimeStagingEnv });
   process.exit(0);
 }
 
@@ -159,6 +169,7 @@ if (!useTurboBuild) {
     stdio: "inherit",
   });
   stageDevAgentBundle();
+  stageDevCuaPluginRuntime({ env: cuaPluginRuntimeStagingEnv });
   process.exit(0);
 }
 
@@ -180,3 +191,4 @@ runCommand(
   },
 );
 stageDevAgentBundle();
+stageDevCuaPluginRuntime({ env: cuaPluginRuntimeStagingEnv });

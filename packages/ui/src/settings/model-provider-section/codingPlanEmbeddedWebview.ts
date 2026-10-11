@@ -5,13 +5,15 @@ import {
   isTrustedCodingPlanWebviewOrigin,
   isZaiCodingPlanProviderId,
   normalizeZCodeEndpointOrigin,
+  type ZCodeEnv,
+  ZCODE_ENV,
   ZAI_PROVIDER_ID,
 } from "@zcode/shared";
 import type { CodingPlanWebviewLocale } from "@zcode/shared";
 import type { CodingPlanFunnelContext } from "@/lib/codingPlanFunnelTelemetry.js";
 import type { CodingPlanProviderId } from "@/settings/model-provider-section/constants.js";
 
-type CodingPlanWebsiteProvider = "zai" | "bigmodel";
+export type CodingPlanWebsiteProvider = "zai" | "bigmodel";
 export type CodingPlanPurchaseAudience = "personal" | "team";
 
 export interface CodingPlanEmbeddedCredentials {
@@ -20,7 +22,7 @@ export interface CodingPlanEmbeddedCredentials {
   bigmodelAccessToken?: string | null;
 }
 
-interface CodingPlanEmbeddedReportContext {
+export interface CodingPlanEmbeddedReportContext {
   purchase_funnel_id?: string;
   purchase_entry_reporter?: "app";
   upgrade_source?: string;
@@ -43,16 +45,18 @@ export type CodingPlanEmbeddedTheme = "zai-light" | "zai-dark";
  * App locale (zh-CN / en-US) → website URL lang segment (cn / en).
  * Used as a `?lang=` hint in the webview URL so the site starts in the correct language and does not flash English before injection.
  */
-function codingPlanLocaleToWebsiteLang(
+export function codingPlanLocaleToWebsiteLang(
   locale: CodingPlanWebviewLocale | null | undefined,
 ): "cn" | "en" {
   return locale === "zh-CN" ? "cn" : "en";
 }
 
-interface ResolveCodingPlanEmbeddedOriginOptions {
+export interface ResolveCodingPlanEmbeddedOriginOptions {
+  dev: boolean;
   endpointOrigin: string;
   e2eStoreBridgeEnabled?: boolean;
   overrideOrigin?: string | null;
+  zcodeEnv?: ZCodeEnv;
 }
 
 export const CODING_PLAN_WEBVIEW_OVERRIDE_ENV_KEY = "VITE_CODING_PLAN_WEBVIEW_ORIGIN";
@@ -73,9 +77,11 @@ export function resolveCodingPlanWebsiteProvider(
 }
 
 export function resolveCodingPlanEmbeddedOrigin({
+  dev,
   endpointOrigin,
   e2eStoreBridgeEnabled,
   overrideOrigin,
+  zcodeEnv = ZCODE_ENV,
 }: ResolveCodingPlanEmbeddedOriginOptions): string {
   const normalizedOverride = overrideOrigin?.trim();
   if (
@@ -83,6 +89,10 @@ export function resolveCodingPlanEmbeddedOrigin({
     isTrustedCodingPlanWebviewOrigin(normalizedOverride, { e2eStoreBridgeEnabled })
   ) {
     return normalizeZCodeEndpointOrigin(normalizedOverride);
+  }
+  // Bug cause: Local development injects ZCODE_ENV=production by default, so Vite DEV alone must not open a local website page whose server is not running.
+  if (dev && zcodeEnv === "test") {
+    return "http://localhost:3000";
   }
   const normalizedEndpointOrigin = normalizeZCodeEndpointOrigin(endpointOrigin);
   return isTrustedCodingPlanWebviewOrigin(normalizedEndpointOrigin, { e2eStoreBridgeEnabled })

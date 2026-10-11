@@ -1,11 +1,16 @@
 // V4 physical assembly fault categories: **deterministic content failures** vs transient failures.
+// spec: docs/v4-refactor/04-sync-and-recovery.md closed-rule 11 and
+// docs/v4-refactor/05-transport-and-backpressure.md "Client rules".
 //
 // The recovery ladder treats faults as transient by default: try same-sub resync first (the server may return resume), then escalate after a gap
 // to forceSnapshot, then fail closed if that still does not work. This escalation is right for missing chunks, timeouts, and checksum mismatches — retransmission may
 // fix them. But it is wrong for **schema rejection**: the bytes already passed length/checksum/UTF-8/JSON checks, so rejection means
 // this side cannot understand the **content** sent by the peer, and resume only resends the same deltas, which will be rejected again.
 //
-// When a tool-card payload contains an incompatible field, retransmitting the same content cannot recover; try a snapshot and then report the content incompatibility explicitly.
+// The 2026-09-21 incident (sess_4142de31) was exactly this: a tool-card payload carried two extra
+// keys, the recovery ladder burned three frames on the same content and failed closed, and after
+// the user manually clicked "Reconnect" twice—three more burned frames each time—the session
+// could never be opened again.
 //
 // This module answers only whether a reason code represents a deterministic content failure; it does not decide how to handle it — handling lives in the two stores.
 // (conversationProjectionStore / sessionsIndexStore).

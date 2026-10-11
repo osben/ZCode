@@ -116,6 +116,8 @@ export function collectArtifactDeclarations(
     workflow.toScriptLoc(node.getStart(workflow.scriptFile));
 
   const body = findWorkflowBody(workflow.scriptFile);
+  /** Body of a filled hole; it is not a callback, so hoisting diagnostics look through it (see {@link hoistingContextOf}). */
+  const holeBodies = new Set<ts.Node>(table.holes.flatMap((hole) => hole.body ?? []));
 /** id → first site that used it (used to identify the earlier site on a kind conflict). */
   const claimed = new Map<string, ArtifactSite>();
 /** First site with literal `primary: true`; a second occurrence with a different ID is diagnostic 9009. */
@@ -171,7 +173,7 @@ export function collectArtifactDeclarations(
       );
     }
 
-    // 交付物唯一（9009）：诊断落在**后一处**的 `primary` 属性上——先标的那个是既有事实。
+    // Artifact uniqueness (9009): report on the **later** `primary` property; the earlier one is established fact.
     const primaryNode = primaryLiteralOf(site);
     if (primaryNode !== undefined) {
       if (primaryClaim === undefined) primaryClaim = { id, site };
@@ -187,25 +189,27 @@ export function collectArtifactDeclarations(
       }
     }
 
-    // 提升诊断（预置族专属）：内容成员反而**常常**该出现在循环 / 条件里（每轮发布一版、
-    // 失败时补一版），所以这条子句绝不能扩到那一族。
+    // Hoisting diagnostic (preset family only): content members **often should** appear inside loops
+    // or conditions (publish one version per iteration, or publish a replacement after failure), so
+    // this clause must never apply to that family.
     if (isArtifactPresetOp(site.op)) {
-      const context = hoistingContextOf(site.call, body);
+      const context = hoistingContextOf(site.call, body, holeBodies);
       if (context !== undefined) {
         push(ARTIFACT_HOISTING_CODE, site.loc, HOISTING_MESSAGE[context]);
       }
     }
   }
 
-  // 已声明的**预置** id（标签的合法目标集）与内容 id，两张表分开：标签指向内容 id 有专门
-  // 的一条文案（它不是「没这个东西」，而是「这个东西没有数据面」）。
+  // Keep declared **preset** IDs (the valid target set for tags) separate from content IDs: a tag
+  // pointing to a content ID has its own diagnostic (“this exists but has no data surface,” rather
+  // than “this does not exist”).
   const presetIds = declared.filter((entry) => isArtifactPresetOp(entry.kind)).map((e) => e.id);
   const contentIds = new Set(
     declared.filter((entry) => !isArtifactPresetOp(entry.kind)).map((e) => e.id),
   );
 
   for (const site of table.reports) {
-    if (site.artifactIdExpr === undefined) continue; // 无标签的 report 照旧
+    if (site.artifactIdExpr === undefined) continue; // unlabeled reports keep the previous behavior
     const tagLoc = locOf(site.artifactIdExpr);
     if (site.artifactId === undefined) {
       push(
@@ -280,19 +284,36 @@ function sortDeclared(declared: readonly DeclaredArtifact[]): DeclaredArtifact[]
 }
 
 /**
- * 该调用**词法上**待在哪种不该待的位置里，从调用向外走到脚本体为止；都不是则 undefined。
- * 报最内层的那一个：它离作者要改的那一行最近，文案也最具体。
+ * Find which disallowed position lexically contains this call by walking outward to the script body;
+ * return `undefined` if none applies. Report the innermost one because it is closest to the line the
+ * author needs to change and has the most specific message.
  *
- * 刻意**不**把普通函数声明算作回调：`function setup() { artifact.chart(...) }` 后跟一次
- * `setup()` 是一份合法的顶层声明，只是换了个写法。箭头函数与函数表达式则几乎总是回调
- * （`.map(...)`、`.then(...)`），所以它们算。代价是「在具名 helper 里声明、而 helper 被
- * 循环调用」这一形状漏报——那是漏报方向，与本模块的保守取向一致（引擎的
- * `ArtifactRedeclared` 仍然兜底）。
+ * Deliberately **do not** classify ordinary function declarations as callbacks: a top-level
+ * `function setup() { artifact.chart(...) }` followed by `setup()` is a valid declaration written in
+ * another form. Arrow functions and function expressions are almost always callbacks (`.map(...)`,
+ * `.then(...)`), so they count. The trade-off is a missed diagnostic for a declaration inside a named
+ * helper that is called in a loop. This errs toward false negatives, consistent with this module's
+ * conservative approach; the engine's `ArtifactRedeclared` check remains a backstop.
+ *
+ * A filled hole body (`holeBodies`) **is not** a callback: it is spliced at the hole's position and
+ * runs once whenever that position is reached, at the same level as surrounding statements. Look
+ * through it and continue outward; still report when the hole itself is inside a loop or branch.
+ * Fix rationale (observed in testfield on 2026-09-29): previously every arrow function counted as a
+ * callback, and a filled body is an arrow function. As a result, no completion could declare an
+ * artifact for its board, leaving the main agent unable to proceed.
  */
-function hoistingContextOf(call: ts.CallExpression, body: ts.Block): HoistingContext | undefined {
+function hoistingContextOf(
+  call: ts.CallExpression,
+  body: ts.Block,
+  holeBodies: ReadonlySet<ts.Node>,
+): HoistingContext | undefined {
   let child: ts.Node = call;
   for (let node: ts.Node | undefined = call.parent; node !== undefined; node = node.parent) {
     if (node === body) return undefined;
+    if (holeBodies.has(node)) {
+      child = node;
+      continue;
+    }
     if (ts.isArrowFunction(node) || ts.isFunctionExpression(node) || ts.isMethodDeclaration(node)) {
       return "callback";
     }
@@ -305,8 +326,9 @@ function hoistingContextOf(call: ts.CallExpression, body: ts.Block): HoistingCon
     ) {
       return "loop";
     }
-    // if / ternary：只有**分支**算条件位置，条件表达式本身不算——`if (artifact.chart(...))`
-    // 无条件求值，它的问题是别的（一个 void 当条件用），不该借这条文案说。
+    // For if / ternary expressions, only the **branches** count as conditional positions, not the
+    // condition itself. `if (artifact.chart(...))` is evaluated unconditionally; its issue is using a
+    // void value as a condition, which this diagnostic should not describe.
     if (ts.isIfStatement(node) && (node.thenStatement === child || node.elseStatement === child)) {
       return "conditional";
     }

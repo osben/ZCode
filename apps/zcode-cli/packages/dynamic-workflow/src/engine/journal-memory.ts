@@ -10,8 +10,12 @@
 import type {
   ActorRecord,
   Caps,
+  GetNodeOptions,
   JournalStorePort,
+  ListActorsOptions,
   ListEventsOptions,
+  ListNodesOptions,
+  NodeKind,
   NodeRecord,
   RunEvent,
   RunRecord,
@@ -23,6 +27,13 @@ import type {
 /** Structured deep copy to isolate references on either side of the storage boundary. Values are JSON-compatible or plain data such as PersonaSpec. */
 function clone<T>(value: T): T {
   return structuredClone(value);
+}
+
+/** Exported copy of a node row; `withResult: false` matches SQLite omitting `result_json` from the select (key absent). */
+function nodeCopy(node: NodeRecord, withResult: boolean): NodeRecord {
+  const copy = clone(node);
+  if (!withResult) delete copy.result;
+  return copy;
 }
 
 /** Composite key for an actor / node. */
@@ -98,6 +109,14 @@ export class InMemoryJournalStore implements JournalStorePort {
     r.caps = clone(caps);
   }
 
+  updateRunScript(runId: string, scriptText: string, scriptHash: string): void {
+    const r = this.runs.get(runId);
+    if (r === undefined) throw new Error(`journal: unknown run ${runId}`);
+    // Write both columns together (resume compares the hash with the text); leave every other row field untouched, like updateRunUsage.
+    r.scriptText = scriptText;
+    r.scriptHash = scriptHash;
+  }
+
   putActor(record: ActorRecord): void {
     const bucket = this.requireActorBucket(record.runId);
     bucket.set(key(record.siteId, record.ordinal), clone(record));
@@ -108,9 +127,17 @@ export class InMemoryJournalStore implements JournalStorePort {
     return a === undefined ? undefined : clone(a);
   }
 
-  listActors(runId: string): ActorRecord[] {
+  listActors(runId: string, opts: ListActorsOptions): ActorRecord[] {
     const bucket = this.actors.get(runId);
-    return bucket === undefined ? [] : [...bucket.values()].map(clone);
+    if (bucket === undefined) return [];
+    const matched = [...bucket.values()].filter(
+      (actor) => opts.name === undefined || actor.name === opts.name,
+    );
+    return matched.map((actor) => {
+      const copy = clone(actor);
+      if (!opts.withPersona) delete copy.persona;
+      return copy;
+    });
   }
 
   putNode(record: NodeRecord): void {
@@ -118,14 +145,45 @@ export class InMemoryJournalStore implements JournalStorePort {
     bucket.set(key(record.siteId, record.ordinal), clone(record));
   }
 
-  getNode(runId: string, siteId: string, ordinal: number): NodeRecord | undefined {
+  getNode(
+    runId: string,
+    siteId: string,
+    ordinal: number,
+    opts?: GetNodeOptions,
+  ): NodeRecord | undefined {
     const n = this.nodes.get(runId)?.get(key(siteId, ordinal));
-    return n === undefined ? undefined : clone(n);
+    return n === undefined ? undefined : nodeCopy(n, opts?.withResult ?? true);
   }
 
-  listNodes(runId: string): NodeRecord[] {
+  listNodes(runId: string, opts: ListNodesOptions): NodeRecord[] {
     const bucket = this.nodes.get(runId);
-    return bucket === undefined ? [] : [...bucket.values()].map(clone);
+    if (bucket === undefined) return [];
+    // Map iteration order is insertion order, matching SQLite's `order by id` (upsert changes neither
+    // the ID nor its position in the Map).
+    const kinds = opts.kinds;
+    const matched = [...bucket.values()].filter(
+      (node) => kinds === "all" || kinds.includes(node.kind),
+    );
+    const limited = opts.limit === undefined ? matched : matched.slice(0, Math.max(0, opts.limit));
+    const budgeted =
+      opts.maxResultBytes === undefined ? limited : withinBytes(limited, opts.maxResultBytes);
+    return budgeted.map((node) => nodeCopy(node, opts.withResult));
+  }
+
+  countNodes(runId: string, kind: NodeKind): number {
+    const bucket = this.nodes.get(runId);
+    if (bucket === undefined) return 0;
+    let count = 0;
+    for (const node of bucket.values()) if (node.kind === kind) count += 1;
+    return count;
+  }
+
+  sumResultBytes(runId: string, kind: NodeKind): number {
+    const bucket = this.nodes.get(runId);
+    if (bucket === undefined) return 0;
+    let bytes = 0;
+    for (const node of bucket.values()) if (node.kind === kind) bytes += resultBytes(node);
+    return bytes;
   }
 
   appendEvent(runId: string, event: RunEvent): StoredEvent {
@@ -147,18 +205,40 @@ export class InMemoryJournalStore implements JournalStorePort {
     return clone(stored);
   }
 
-  listEvents(runId: string, opts?: ListEventsOptions): StoredEvent[] {
+  listEvents(runId: string, opts: ListEventsOptions): StoredEvent[] {
     const list = this.events.get(runId);
     if (list === undefined) return [];
+    // Report rank is counted across the **entire run**, independent of types / cursor / limit. Assign
+    // each report event a rank in the unfiltered sequence before filtering, matching SQLite's
+    // row_number() being computed before the filter.
+    const reportLimit = opts.reportItems === "all" ? undefined : opts.reportItems.limit;
+    const stripped = new Set<number>();
+    if (reportLimit !== undefined) {
+      let rank = 0;
+      for (const stored of list) {
+        if (stored.event.type !== "report") continue;
+        rank += 1;
+        if (rank > reportLimit) stripped.add(stored.sequence);
+      }
+    }
     // sequence and array index are identical in the in-memory implementation (appendEvent assigns
     // list.length), but compare by sequence rather than index offset: the cursor means “strictly
     // greater than this sequence,” matching SQLite's `where sequence > ?`. Both implementations
     // share the same contract test, so the semantics must be identical.
-    const after = opts?.afterSequence;
-    const filtered = after === undefined ? list : list.filter((e) => e.sequence > after);
+    const types = opts.types;
+    const after = opts.afterSequence;
+    const filtered = list.filter(
+      (e) =>
+        (types === "all" || types.includes(e.event.type)) &&
+        (after === undefined || e.sequence > after),
+    );
     const limited =
-      opts?.limit === undefined ? filtered : filtered.slice(0, Math.max(0, opts.limit));
-    return limited.map(clone);
+      opts.limit === undefined ? filtered : filtered.slice(0, Math.max(0, opts.limit));
+    return limited.map((stored) => {
+      const copy = clone(stored);
+      if (stripped.has(stored.sequence)) delete (copy.event as { item?: unknown }).item;
+      return copy;
+    });
   }
 
   private requireActorBucket(runId: string): Map<string, ActorRecord> {
@@ -172,4 +252,27 @@ export class InMemoryJournalStore implements JournalStorePort {
     if (bucket === undefined) throw new Error(`journal: unknown run ${runId}`);
     return bucket;
   }
+}
+
+/**
+ * UTF-8 serialized byte length of a row's `result`, measured the same way as SQLite's
+ * `octet_length(result_json)` (`result_json` is `JSON.stringify(result)`). Rows without a result count as 0.
+ */
+function resultBytes(node: NodeRecord): number {
+  if (node.result === undefined) return 0;
+  const text = JSON.stringify(node.result);
+  return text === undefined ? 0 : new TextEncoder().encode(text).length;
+}
+
+/** Prefix rule for `maxResultBytes`: stop before adding a row that would exceed the cap; always include the first row, matching SQLite. */
+function withinBytes(nodes: readonly NodeRecord[], maxResultBytes: number): NodeRecord[] {
+  const kept: NodeRecord[] = [];
+  let total = 0;
+  for (const node of nodes) {
+    const bytes = resultBytes(node);
+    if (kept.length > 0 && total + bytes > maxResultBytes) break;
+    kept.push(node);
+    total += bytes;
+  }
+  return kept;
 }

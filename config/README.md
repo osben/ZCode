@@ -19,6 +19,6 @@ current endpoint client/configs -> valid help fields -> platform entry point
           built-in default.json -> platform entry point
 ```
 
-`default.json` is a built-in default configuration distributed with the client. It was previously distributed through a CDN and is retained only for compatibility with older clients. The current version has no request or URL-construction path and relies only on the built-in file in this directory; all other fields remain unchanged for existing consumers.
+`default.json` on the legacy CDN is retained only for compatibility with older clients. The current version has no request or URL-construction path. Do not delete the old online file or the built-in file in this directory for that reason. All other built-in fields and existing consumers must remain unchanged.
 
 See [Community Entry Point Configuration](../docs/ui/settings-community-link-config.md) for details.

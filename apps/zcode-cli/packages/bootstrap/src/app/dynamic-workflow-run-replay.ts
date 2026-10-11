@@ -10,7 +10,14 @@
 
 import type { DwfRunSessionListItem } from "@zcode/adapters/storage";
 import type { DynamicWorkflowRunProgressPayload } from "@zcode/contracts";
-import type { JournalStorePort, RunEvent, StoredEvent } from "@zcode/dynamic-workflow";
+import type {
+  JournalStorePort,
+  ListEventsOptions,
+  RunEvent,
+  StoredEvent,
+} from "@zcode/dynamic-workflow";
+import { WORKFLOW_RUNS_LIMITS } from "@zcode/shared/zcode-protocol-v4";
+import { coldCompiledHoles } from "./dynamic-workflow-run-holes.js";
 import { toProgressPayload } from "./dynamic-workflow-run-launch.js";
 import { TERMINAL_RUN_STATUSES } from "./dynamic-workflow-run-observation.js";
 
@@ -29,17 +36,42 @@ import { TERMINAL_RUN_STATUSES } from "./dynamic-workflow-run-observation.js";
  * The row is the sole authority for state (the codec already translates old rows), so always derive settlement from the row. Cold replay can no longer lie based on old event wording,
  * and both paths produce byte-for-byte identical payloads for the new state vocabulary (the engine's `run-settled` contains exactly the four row fields); the live/cold consistency contract is unchanged.
  *
- * `concurrencyCeiling` is **required**, not optional: it is a host-derived field on the `run-started` payload and is always present in live execution
- * (computed at launch). Omitting it here would make the first cold-replay payload differ by one key, violating this module's only contract: byte-for-byte equality.
- * The caller provides the same `resolveWorkflowConcurrencyCeiling`.
+ * `defaultConcurrency` is **required**, not optional: it is a host-derived field on the `run-started`
+ * payload (the wire key is still `concurrencyCeiling`) and is always present in live execution
+ * (computed at launch). Omitting it here would make the first cold-replay payload differ by one key
+ * from live, violating this module's only contract: byte-for-byte equality. The caller provides the
+ * same `resolveWorkflowDefaultConcurrency`.
  */
 export function replayRunProgress(
   row: DwfRunSessionListItem,
   journal: Pick<JournalStorePort, "listEvents">,
-  concurrencyCeiling: number,
+  defaultConcurrency: number,
 ): DynamicWorkflowRunProgressPayload[] {
-  return replayRunProgressFromEvents(row, journal.listEvents(row.runId, {}), concurrencyCeiling);
+  return replayRunProgressFromEvents(
+    row,
+    journal.listEvents(row.runId, COLD_REPLAY_EVENT_READ),
+    defaultConcurrency,
+  );
 }
+
+/**
+ * The event-read shape for cold replay (same as GetWorkflowRun): all events, but report events
+ * after the 64th for this run omit `item` (docs/dynamic-workflow/presentation.md "Cold replay" and
+ * docs/execution-engine.md "Reading the journal").
+ *
+ * Why the reduced result is byte-for-byte identical to reading everything: the reducer upserts
+ * report entries by instance, rejects new instances once 64 are present, and `run-started` does not
+ * clear the table, while each report instance emits exactly one event (replay hits are silently
+ * skipped) — so the first 64 report events are precisely those the reducer generates previews for;
+ * every later one contributes only its instance (setting `truncated`) and its label (counting
+ * board entries). Fix rationale: this used to read everything, so a run reporting 65,536 items
+ * decoded roughly 2 GiB of items into memory when the session opened, none of which were ever
+ * displayed.
+ */
+export const COLD_REPLAY_EVENT_READ: ListEventsOptions = {
+  types: "all",
+  reportItems: { limit: WORKFLOW_RUNS_LIMITS.maxReports },
+};
 
 /**
  * Use the same payload-minting chain, with events **already read by the caller**.
@@ -47,15 +79,22 @@ export function replayRunProgress(
  * There is one reason for this helper: `getRunDetail` must derive both run state and a situation snapshot based on event times in one call.
  * Having both sides call `listEvents` would pay twice for the same data, and this is the most expensive read path for long runs.
  *
- * The caller must provide **all events for the run, sorted by ascending sequence** (the result of `listEvents(runId, {})`);
- * trailing settlement replacement relies on the final row actually being last.
+ * The caller must provide **all events for the run, sorted by ascending sequence** (the result of
+ * `listEvents(runId, COLD_REPLAY_EVENT_READ)`); trailing settlement replacement relies on the final
+ * row actually being last.
  */
 export function replayRunProgressFromEvents(
   row: DwfRunSessionListItem,
   stored: readonly StoredEvent[],
-  concurrencyCeiling: number,
+  defaultConcurrency: number,
 ): DynamicWorkflowRunProgressPayload[] {
   const toolCallId = row.toolCallId === undefined ? {} : { toolCallId: row.toolCallId };
+  // Hole types (a derived field of `hole-reached`): live execution reads the compiled artifact from
+  // the registry entry, but there is no entry here, so the site table must be rebuilt once from the
+  // row's (valid) script — pay that compilation **only when a hole actually arrives in this event
+  // batch**. Most runs have no holes, so cold replay remains verbatim-identical to before. A missing
+  // row script (legacy rows) is simply not backfilled.
+  const holeTypeOf = coldHoleTypeOf(row.scriptText, stored);
   // Launch anchor: use the same minting chain as live so derived fields match.
   // Byte-for-byte equality between cold and live payloads is this module's contract (locked by tests). The anchor is in this event batch (the first
   // run-launched event), so no extra journal query is needed; runs launched before the upgrade lack it, so the field is omitted.
@@ -69,6 +108,12 @@ export function replayRunProgressFromEvents(
   const subagentModel =
     launched?.type === "run-launched" && launched.subagentModel !== undefined
       ? { subagentModel: launched.subagentModel }
+      : {};
+  // Script-declared model binding table: same event, same reasoning (actor-created's derived `model`
+  // maps through it), so both sides' payloads remain byte-for-byte equal.
+  const modelBindings =
+    launched?.type === "run-launched" && launched.modelBindings !== undefined
+      ? { modelBindings: launched.modelBindings }
       : {};
   const terminal = TERMINAL_RUN_STATUSES.has(row.status);
   const last = stored.at(-1);
@@ -85,7 +130,12 @@ export function replayRunProgressFromEvents(
       ...launchInputId,
       ...resumedFrom,
       ...subagentModel,
-      concurrencyCeiling,
+      ...modelBindings,
+      concurrencyCeiling: defaultConcurrency,
+      ...(holeTypeOf === undefined ? {} : { holeTypeOf }),
+      ...(entry.event.type === "hole-reached" && entry.timeCreated !== undefined
+        ? { reachedAt: entry.timeCreated }
+        : {}),
     }),
   );
   if (!terminal) return payloads;
@@ -109,8 +159,24 @@ export function replayRunProgressFromEvents(
       ...launchInputId,
       ...resumedFrom,
       ...subagentModel,
-      concurrencyCeiling,
+      ...modelBindings,
+      concurrencyCeiling: defaultConcurrency,
     }),
   );
   return payloads;
+}
+
+/**
+ * Hole-type lookup for cold replay (a derived field of `hole-reached`): {@link coldCompiledHoles}
+ * rebuilds the fact table only when needed. When absent, do not backfill `type`; the UI falls back
+ * to the display payload.
+ */
+function coldHoleTypeOf(
+  scriptText: string | undefined,
+  stored: readonly StoredEvent[],
+): ((siteId: string) => string | undefined) | undefined {
+  const holes = coldCompiledHoles(scriptText, stored);
+  return holes === undefined
+    ? undefined
+    : (siteId) => holes.find((hole) => hole.siteId === siteId)?.type;
 }

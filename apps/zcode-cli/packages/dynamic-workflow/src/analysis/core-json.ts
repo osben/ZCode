@@ -32,6 +32,8 @@ export interface AnalysisCoreJson {
     worldReadData: MapEntries<TaintOcc[]>;
     joinIn: MapEntries<TaintOcc[]>;
     fanoutIn: MapEntries<TaintOcc[]>;
+    /** Sink for hole prompts (added 2026-09-28); older frozen sample packages omit this key, so decoding defaults to an empty table. */
+    holeData?: MapEntries<TaintOcc[]>;
     returnData: TaintOcc[];
   };
   trace: OrderTrace;
@@ -51,6 +53,7 @@ export function encodeAnalysisCore(core: AnalysisCore): AnalysisCoreJson {
       askActor: [...core.facts.askActor],
       askData: [...core.facts.askData],
       fanoutIn: [...core.facts.fanoutIn],
+      holeData: [...core.facts.holeData],
       joinIn: [...core.facts.joinIn],
       returnData: core.facts.returnData,
       worldReadData: [...core.facts.worldReadData],
@@ -78,11 +81,13 @@ export function decodeAnalysisCore(json: AnalysisCoreJson): AnalysisCore {
       askActor: new Map(json.facts.askActor),
       askData: new Map(json.facts.askData),
       fanoutIn: new Map(json.facts.fanoutIn),
+      holeData: new Map(json.facts.holeData ?? []),
       joinIn: new Map(json.facts.joinIn),
       returnData: json.facts.returnData,
       worldReadData: new Map(json.facts.worldReadData),
     },
-    sites: json.sites,
+    // The hole-site table was also added later; decode older sample packages as having no holes.
+    sites: { ...json.sites, holes: json.sites.holes ?? [] },
     trace: json.trace,
     types: {
       joinPortTypes: new Map(

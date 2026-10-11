@@ -18,7 +18,7 @@ import {
 } from "./workflow-run-introspection.js";
 
 /** Facts used by the summary = the full output minus the summary itself (the handler builds the output first, then this sentence). */
-type WorkflowRunSummaryFacts = Omit<GetWorkflowRunOutput, "summary">;
+export type WorkflowRunSummaryFacts = Omit<GetWorkflowRunOutput, "summary">;
 
 /** Three terminal states: the run has no next action (same set as the port's terminal-state predicate). */
 const TERMINAL_STATUSES: ReadonlySet<string> = new Set(["completed", "errored", "stopped"]);
@@ -38,6 +38,7 @@ export function buildWorkflowRunSummary(run: WorkflowRunSummaryFacts): string {
   const optional = [
     failureClause(run),
     questionsClause(run),
+    holesClause(run),
     progressClause(run, now, terminal),
     deliverableClause(run),
     ownershipClause(run),
@@ -137,6 +138,13 @@ function questionsClause(run: WorkflowRunSummaryFacts): string | undefined {
   const count = run.pendingQuestions?.length ?? 0;
   if (count === 0) return undefined;
   return `${count} question${count === 1 ? "" : "s"} awaiting your answer.`;
+}
+
+/** A pending hole (docs/dynamic-workflow/launch.md, “The `FillWorkflowHole` tool”): the same kind of “waiting for you” as an unanswered question. */
+function holesClause(run: WorkflowRunSummaryFacts): string | undefined {
+  const count = (run.holes ?? []).filter((hole) => hole.state === "waiting").length;
+  if (count === 0) return undefined;
+  return `${count} hole${count === 1 ? "" : "s"} awaiting your code.`;
 }
 
 /** When the run was last observed active; explicitly say when it is stalled. */

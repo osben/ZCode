@@ -103,6 +103,9 @@ export function PluginStoreListView({
 
   // Personal section: group by marketplace and put the most recently refreshed marketplace first (see sortPersonalMarketplaceGroups).
   const personalGroups = useMemo(() => {
+    const claudeCodePlugins = intl.formatMessage({
+      id: "settings.plugins.marketplace.claudeCodePlugins",
+    });
     const groups = new Map<string, StorePluginItem[]>();
     for (const item of personalItems) {
       const group = groups.get(item.marketplace) ?? [];
@@ -112,7 +115,7 @@ export function PluginStoreListView({
     const titled: PersonalMarketplaceGroup[] = [...groups.entries()].map(
       ([marketplace, groupItems]) => ({
         marketplace,
-        title: resolveMarketplaceDisplayName(marketplace, marketplaces),
+        title: resolveMarketplaceDisplayName(marketplace, marketplaces, claudeCodePlugins),
         items: groupItems.toSorted((left, right) =>
           resolveItemDisplayName(left, locale).localeCompare(
             resolveItemDisplayName(right, locale),

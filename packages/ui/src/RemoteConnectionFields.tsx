@@ -20,6 +20,10 @@ import {
   TID_SSH_PORT_INPUT,
   TID_SSH_PRIVATE_KEY_INPUT,
   TID_SSH_USERNAME_INPUT,
+  TID_SERVER_NAME_INPUT,
+  TID_SERVER_TOKEN_INPUT,
+  TID_SERVER_URL_INPUT,
+  TID_SERVER_WORKSPACE_PATH_INPUT,
   TID_WSL_DISTRO_SELECT,
   TID_WSL_USER_INPUT,
   isValidWslUser,
@@ -74,6 +78,10 @@ export function RemoteConnectionFields({
   wslDistros,
   dockerContainer,
   manualDockerContainer,
+  serverUrl,
+  serverName,
+  serverToken,
+  serverWorkspacePath,
   dockerContainers,
   dockerAvailable,
   sshConfigAliases,
@@ -97,6 +105,10 @@ export function RemoteConnectionFields({
   setWslUser,
   setDockerContainer,
   setManualDockerContainer,
+  setServerUrl,
+  setServerName,
+  setServerToken,
+  setServerWorkspacePath,
 }: {
   kind: RemoteTarget["kind"];
   host: string;
@@ -112,6 +124,10 @@ export function RemoteConnectionFields({
   wslDistros: WSLDistro[];
   dockerContainer: string;
   manualDockerContainer: string;
+  serverUrl: string;
+  serverName: string;
+  serverToken: string;
+  serverWorkspacePath: string;
   dockerContainers: DockerContainerInfo[];
   dockerAvailable: boolean | null;
   sshConfigAliases: SSHConfigAliasOption[];
@@ -135,6 +151,10 @@ export function RemoteConnectionFields({
   setWslUser?: (value: string) => void;
   setDockerContainer: (value: string) => void;
   setManualDockerContainer: (value: string) => void;
+  setServerUrl: (value: string) => void;
+  setServerName: (value: string) => void;
+  setServerToken: (value: string) => void;
+  setServerWorkspacePath: (value: string) => void;
 }) {
   const { intl } = useZCodeIntl();
   const platform = usePlatform();
@@ -320,13 +340,13 @@ export function RemoteConnectionFields({
             </p>
           </div>
 
-          {/* Native Electron/Chromium autocomplete is unreliable in the SSH wizard,
-              and default values (such as localhost / 22) filter out history suggestions prematurely.
-              Use the app’s persisted remote connection history as explicit suggestions, showing the full history on focus; passwords are still excluded from history. */}
-          {/* The suggestion list used to expand to the full width of the input, making it too long in large dialogs.
-              Constrain it to the field’s semantic width; narrow only the suggestion list without changing the input layout. */}
-          {/* Using an example value as the placeholder made it look like a default value was already set.
-              Use an input hint plus an example so users know required fields still need to be filled in manually. */}
+          {/* Bugfix: Native autocomplete in Electron/Chromium is unreliable in the SSH wizard,
+              and defaults (such as localhost / 22) filter out history suggestions prematurely.
+              Use the app’s persisted remote-connection history as explicit suggestions, showing the full history on focus; passwords are still excluded from history autofill. */}
+          {/* Bugfix: The suggestion list used to expand to the full width of the input, making it a long bar in large dialogs.
+              Constrain its width to the field’s semantic scope, narrowing only the suggestion list without changing the input layout. */}
+          {/* Bugfix: Using an example value as the placeholder made it look like a default value had already been set.
+              Use “input hint + example” so users know that required fields still need to be filled in manually. */}
           <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_6.5rem]">
             <RemoteConnectionHistoryInput
               className="h-9 text-ui-base"
@@ -355,8 +375,8 @@ export function RemoteConnectionFields({
             />
           </div>
 
-          {/* Authentication previously reused the port’s narrow 6.5rem column; after padding, the two options wrapped or overflowed in both Chinese and English.
-              Reserve 12rem for authentication and prevent the option labels from wrapping. */}
+          {/* Bugfix: The authentication method reused the port’s narrow 6.5rem column, causing its two options to wrap or overflow after padding.
+              Reserve 12rem for the authentication method and prevent its option text from wrapping. */}
           <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_12rem] sm:items-end">
             <RemoteConnectionHistoryInput
               className="h-9 text-ui-base"
@@ -510,6 +530,77 @@ export function RemoteConnectionFields({
             </div>
             <p className="mt-1 text-ui-base text-foreground-subtle">
               {intl.formatMessage({ id: "ssh.assetInstallModeDescription" })}
+            </p>
+          </div>
+        </div>
+      );
+    case "server":
+      return (
+        <div className="space-y-3">
+          <p className="text-ui-base text-foreground-subtle">
+            {intl.formatMessage({ id: "server.description" })}
+          </p>
+          <div>
+            <label className="mb-1 block text-ui-base text-foreground-subtle">
+              {intl.formatMessage({ id: "server.url" })}
+            </label>
+            <Input
+              size="lg"
+              className="h-9 text-ui-base"
+              value={serverUrl}
+              onChange={(event) => setServerUrl(event.target.value)}
+              placeholder={intl.formatMessage({ id: "server.urlPlaceholder" })}
+              autoCapitalize="none"
+              spellCheck={false}
+              data-testid={TID_SERVER_URL_INPUT}
+            />
+          </div>
+          <div className="grid gap-3 md:grid-cols-2">
+            <div>
+              <label className="mb-1 block text-ui-base text-foreground-subtle">
+                {intl.formatMessage({ id: "server.name" })}
+              </label>
+              <Input
+                size="lg"
+                className="h-9 text-ui-base"
+                value={serverName}
+                onChange={(event) => setServerName(event.target.value)}
+                placeholder={intl.formatMessage({ id: "server.namePlaceholder" })}
+                data-testid={TID_SERVER_NAME_INPUT}
+              />
+            </div>
+            <div>
+              <label className="mb-1 block text-ui-base text-foreground-subtle">
+                {intl.formatMessage({ id: "server.token" })}
+              </label>
+              <Input
+                size="lg"
+                className="h-9 text-ui-base"
+                type="password"
+                value={serverToken}
+                onChange={(event) => setServerToken(event.target.value)}
+                placeholder={intl.formatMessage({ id: "server.tokenPlaceholder" })}
+                autoComplete="off"
+                data-testid={TID_SERVER_TOKEN_INPUT}
+              />
+            </div>
+          </div>
+          <div>
+            <label className="mb-1 block text-ui-base text-foreground-subtle">
+              {intl.formatMessage({ id: "server.workspacePath" })}
+            </label>
+            <Input
+              size="lg"
+              className="h-9 text-ui-base"
+              value={serverWorkspacePath}
+              onChange={(event) => setServerWorkspacePath(event.target.value)}
+              placeholder={intl.formatMessage({ id: "server.workspacePathPlaceholder" })}
+              autoCapitalize="none"
+              spellCheck={false}
+              data-testid={TID_SERVER_WORKSPACE_PATH_INPUT}
+            />
+            <p className="mt-1 text-ui-base text-foreground-subtle">
+              {intl.formatMessage({ id: "server.workspacePathDescription" })}
             </p>
           </div>
         </div>

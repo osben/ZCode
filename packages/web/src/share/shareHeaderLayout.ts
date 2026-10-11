@@ -1,4 +1,4 @@
-interface ShareHeaderMeasurements {
+export interface ShareHeaderMeasurements {
   /** Width of the share header shell. */
   shellWidth: number;
   /** Distance from each content-rail edge to the shell edge. */

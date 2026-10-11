@@ -11,7 +11,7 @@ const modelStreamSchema = z.object({
 });
 
 const permissionSchema = z.object({
-  mode: z.enum(["plan", "build", "edit", "yolo", "auto"]).optional(),
+  mode: z.enum(["plan", "build", "edit", "yolo", "guarded", "auto"]).optional(),
   allowedTools: z.array(z.string()).optional(),
   disallowedTools: z.array(z.string()).optional(),
   autoApproveHighRisk: z.boolean().optional(),
@@ -165,7 +165,10 @@ const pluginsSchema = z.object({
   dirs: z.array(z.string().min(1)).optional(),
   enabledPlugins: z.record(z.string(), z.boolean()).optional(),
   extraKnownMarketplaces: z
-    .record(z.string().min(1), z.object({ source: pluginMarketplaceSourceSchema }).strict())
+    .record(
+      z.string().min(1),
+      z.object({ source: pluginMarketplaceSourceSchema }).strict(),
+    )
     .optional(),
   options: z.record(z.string(), z.record(z.string(), pluginOptionValueSchema)).optional(),
   suppressedBuiltins: z.array(z.string().min(1)).optional(),
@@ -234,7 +237,7 @@ const modelAnomalyGuardSchema = z.object({
 // Keep this copy using this package's zod constructors and maintain equivalent validation semantics with shared.
 // Shared remains the source of truth for runtime validation (discovery/trust assembly uses its schema; this schema
 // handles only config-file loading diagnostics). If zod instances are unified later, remove this copy and re-export.
-const hookProcessSchema = z
+export const hookProcessSchema = z
   .object({
     type: z.literal("process"),
     command: z.string().min(1),
@@ -246,7 +249,7 @@ const hookProcessSchema = z
 
   .passthrough();
 
-const hookCommandSchema = z
+export const hookCommandSchema = z
   .object({
     type: z.literal("command"),
     command: z.string().min(1),
@@ -259,14 +262,14 @@ const hookCommandSchema = z
   })
   .passthrough();
 
-const hookMatcherSchema = z
+export const hookMatcherSchema = z
   .object({
     matcher: z.string().min(1).optional(),
     hooks: z.array(z.discriminatedUnion("type", [hookProcessSchema, hookCommandSchema])).min(1),
   })
   .strict();
 
-const hooksSchema = z
+export const hooksSchema = z
   .object({
     enabled: z.boolean().optional(),
     timeoutMs: positiveNumberSchema.optional(),
@@ -326,7 +329,7 @@ export interface ConfigDiagnostic {
   severity: ConfigDiagnosticSeverity;
 }
 
-interface ParseConfigFileResult {
+export interface ParseConfigFileResult {
   config: RuntimeConfigPatch;
   diagnostics: ConfigDiagnostic[];
 }
@@ -439,8 +442,12 @@ function normalizePluginConfig(
   }
   const suppressedBuiltins = plugins.suppressedBuiltins
     ? plugins.suppressedBuiltins.reduce<string[]>((ids, id) => {
-        const canonicalId = id === LEGACY_CUA_PLUGIN_ID ? CANONICAL_CUA_PLUGIN_ID : id;
-        if (canonicalId === CANONICAL_CUA_PLUGIN_ID && ids.includes(CANONICAL_CUA_PLUGIN_ID)) {
+        const canonicalId =
+          id === LEGACY_CUA_PLUGIN_ID ? CANONICAL_CUA_PLUGIN_ID : id;
+        if (
+          canonicalId === CANONICAL_CUA_PLUGIN_ID &&
+          ids.includes(CANONICAL_CUA_PLUGIN_ID)
+        ) {
           return ids;
         }
         ids.push(canonicalId);
@@ -521,6 +528,10 @@ function formatMcpServerError(error: z.ZodError): string {
 
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function readPositiveNumber(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : undefined;
 }
 
 function parseSkillsRuntimeConfig(

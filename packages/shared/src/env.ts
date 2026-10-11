@@ -8,6 +8,9 @@ export type ArmsRumEnv = "local" | "prod";
 // In non-build environments (such as mocha in E2E tests), define is unavailable; use typeof checks and fallbacks to avoid ReferenceError.
 declare const __ZCODE_ENV__: string;
 declare const __ZCODE_PRODUCT_FLAVOR__: string;
+declare const __ZCODE_ARMS_RUM_ENDPOINT__: string;
+declare const __ZCODE_TELEMETRY_REPORT_ENDPOINT__: string;
+declare const __ZCODE_AUTO_UPDATE_ENABLED__: boolean;
 
 export function normalizeZCodeEnv(value: string | undefined): ZCodeEnv {
   return value?.trim().toLowerCase() === "production" ? "production" : "test";
@@ -45,17 +48,18 @@ export const ZCODE_BUILD_COMMIT_ID_ENV = "ZCODE_BUILD_COMMIT_ID" as const;
 export const RUNTIME_ZCODE_DEBUG =
   typeof process !== "undefined" ? process.env.ZCODE_DEBUG : undefined;
 
-// Restored because hard-coding false would leave runtime-configured analytics/ARMS permanently idle.
-// Keep the feature available; runtime endpoint checks at each egress decide whether network reporting occurs, and nothing is reported when unconfigured.
-export const ZCODE_TELEMETRY_ENABLED: boolean = true;
-
-/** Analytics event reporting endpoint: supplied by a runtime environment variable, disabled if unset, and not embedded in build artifacts. */
-export const ZCODE_TELEMETRY_REPORT_ENDPOINT =
-  typeof process !== "undefined" ? (process.env.ZCODE_TELEMETRY_REPORT_ENDPOINT ?? "") : "";
-
-/** ARMS RUM endpoint: supplied by a runtime environment variable, disabled if unset, and not embedded in build artifacts. */
-export const ZCODE_ARMS_RUM_ENDPOINT =
-  typeof process !== "undefined" ? (process.env.ZCODE_ARMS_RUM_ENDPOINT ?? "") : "";
+// ── Build-time optional capabilities (see docs/desktop/build-time-optional-capabilities.md); off by default when not injected ──
+/** ARMS RUM reporting endpoint; when empty, the SDK initializes with enable=false and reports nothing. */
+export const ZCODE_ARMS_RUM_ENDPOINT: string =
+  typeof __ZCODE_ARMS_RUM_ENDPOINT__ !== "undefined" ? __ZCODE_ARMS_RUM_ENDPOINT__ : "";
+/** Event reporting (analytics warehouse) endpoint; nothing is reported when empty. */
+export const ZCODE_TELEMETRY_REPORT_ENDPOINT: string =
+  typeof __ZCODE_TELEMETRY_REPORT_ENDPOINT__ !== "undefined"
+    ? __ZCODE_TELEMETRY_REPORT_ENDPOINT__
+    : "";
+/** Whether desktop auto-update is enabled. */
+export const ZCODE_AUTO_UPDATE_ENABLED: boolean =
+  typeof __ZCODE_AUTO_UPDATE_ENABLED__ !== "undefined" ? __ZCODE_AUTO_UPDATE_ENABLED__ : false;
 
 /** Maps local runtime state and compile-time ZCODE_ENV to an environment label recognized by the ARMS console. */
 export function mapZCodeEnvToArmsRumEnv(runtimeEnv: ZCodeRuntimeEnv): ArmsRumEnv {

@@ -1,3 +1,15 @@
+import {
+  requiresRequestVerification,
+  allowRequestVerificationHeaders,
+  requestVerificationInteractionAvailable,
+} from "@zcode/shared";
+import { zcodeMcpUiSamplingResultSchema } from "@zcode/shared";
+import { MCP_APPS_SAMPLING_TRANSPORT_TIMEOUT_MS } from "@zcode/shared/mcp-apps";
+import {
+  channelReplyRequestSchema,
+  type ChannelReplyHostRequest,
+  type ChannelReplyResult,
+} from "@zcode/shared";
 import { requestPluginReferenceCatalog } from "#src/zcode-agent/pluginReferenceCatalogRequest.js";
 import {
   localTtftFactsSchema,
@@ -5,8 +17,16 @@ import {
   type LocalTtftFacts,
 } from "@zcode/shared";
 /* oxlint-disable eslint(max-lines) -- ZCode Protocol transport, notification wiring, and app-facing session methods must share the same client/emitter context. */
-import { randomUUID } from "node:crypto";
 import { ensureIndependentPlanSupport } from "./independentPlanSupport.js";
+import { createHash, randomUUID } from "node:crypto";
+import { createTopicResourceBridge } from "./topicResourceBridge.js";
+import { uploadTopicResourceToClient } from "./topicResourceUpload.js";
+import {
+  zcodeTopicResourceCancelParamsSchema,
+  type ZCodeTopicResourceReadParams,
+  type ZCodeProtocolTrace,
+  type ZCodePromptAttachment,
+} from "@zcode/shared";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { Emitter } from "@zcode/rpc";
@@ -19,6 +39,9 @@ import type {
 import { completeNewModelSelection } from "@zcode/provider";
 import type { OffPeakClientConfig } from "#src/coding-plan-subscription/codingPlanSubscription.js";
 import {
+  subagentRuntimeConfigSchema,
+  zcodeSubagentsReadRuntimeConfigParamsSchema,
+  type SubagentRuntimeConfig,
   ZCODE_SESSION_RUNTIME_PREFERENCES_REQUEST_TIMEOUT_MS,
   formatLogPrefix,
   resolveWorkspaceKey,
@@ -42,11 +65,24 @@ import {
   zcodeProcessChildProcessesResultSchema,
   type ZCodeProcessChildProcess,
   zcodeSkillsReferenceCatalogResultSchema,
+  zcodeMcpReadResourceResultSchema,
+  zcodeMcpUiCallToolResultSchema,
+  zcodeMcpUiCancelCallResultSchema,
+  zcodeMcpUiReadResourceResultSchema,
+  zcodeMcpUiListResourcesResultSchema,
+  zcodeMcpUiAppToolAcceptedResultSchema,
+  zcodeMcpUiRegisterAppToolsResultSchema,
+  zcodeMcpUiUnregisterAppToolsResultSchema,
+  zcodeMcpUiListResourceTemplatesResultSchema,
+  zcodeMcpUiResourceSubscriptionResultSchema,
+  zcodePluginsListUiSurfacesResultSchema,
   zcodeWorkflowsDeleteResultSchema,
+  zcodeWorkflowsForRunResultSchema,
   zcodeWorkflowsGetResultSchema,
   zcodeWorkflowsListResultSchema,
   zcodeWorkflowsMoveResultSchema,
   zcodeWorkflowsRunsResultSchema,
+  zcodeWorkflowsSaveResultSchema,
   zcodeWorkflowsUpdateMetaResultSchema,
   zcodePluginsResolveSuggestedReferenceResultSchema,
   zcodePluginOperationProgressNotificationSchema,
@@ -105,6 +141,10 @@ import {
   zcodeWorkspaceUpdateOffPeakToolPolicyResultSchema,
   zcodeWorkspaceUpdateDynamicWorkflowPolicyResultSchema,
   type DynamicWorkflowClientConfig,
+  type DynamicWorkflowMode,
+  applyDynamicWorkflowUserMode,
+  isDynamicWorkflowModeEnabled,
+  normalizeDynamicWorkflowMode,
   type AgentLaneResourceSample,
   type ProcessResourceCliLane,
   type ZCodeMcpTelemetryEvent,
@@ -128,6 +168,7 @@ import type {
   ZCodeProtocolRequestId,
   ModelSelection,
   ZCodeProviderRuntimeHeadersRequestParams,
+  ZCodeProviderRuntimeHeadersCancelled,
   ZCodeSessionEvent,
   ZCodeSessionRuntimePreferencesScope,
   ZCodeSavedWorkflowScope,
@@ -161,6 +202,7 @@ import type {
   ZCodeAgentReadSessionMessagesParams,
   ZCodeAgentReadSessionParams,
   ZCodeAgentRemovePluginMarketplaceParams,
+  ZCodeAgentRespondProviderRuntimeHeadersParams,
   ZCodeAgentRespondSessionRuntimePreferencesParams,
   ZCodeAgentResumeSessionParams,
   ZCodeAgentSendPromptParams,
@@ -175,11 +217,23 @@ import type {
   ZCodeAgentSetThoughtLevelParams,
   ZCodeAgentPluginReferenceCatalogParams,
   ZCodeAgentSkillReferenceCatalogParams,
+  ZCodeAgentReadMcpResourceParams,
+  ZCodeAgentCallMcpToolForUiParams,
+  ZCodeAgentCancelMcpToolCallForUiParams,
+  ZCodeAgentReadMcpResourceForUiParams,
+  ZCodeAgentListMcpResourcesForUiParams,
+  ZCodeAgentAppToolCallForUiParams,
+  ZCodeAgentAppToolInstanceForUiParams,
+  ZCodeAgentRegisterAppToolsForUiParams,
+  ZCodeAgentResolveAppToolCallForUiParams,
+  ZCodeAgentMcpResourceSubscriptionForUiParams,
   ZCodeAgentDeleteSavedWorkflowParams,
+  ZCodeAgentFindSavedWorkflowForRunParams,
   ZCodeAgentGetSavedWorkflowParams,
   ZCodeAgentListSavedWorkflowRunsParams,
   ZCodeAgentListSavedWorkflowsParams,
   ZCodeAgentMoveSavedWorkflowParams,
+  ZCodeAgentSaveSavedWorkflowFromRunParams,
   ZCodeAgentSavedWorkflowTarget,
   ZCodeAgentUpdateSavedWorkflowMetaParams,
   ZCodeAgentResolveSuggestedPluginReferenceParams,
@@ -316,6 +370,11 @@ import {
 import type { PipSessionEvent } from "@zcode/zcode-cua/pip-session";
 import { registerMemoryDiagnosticsProvider } from "#src/memoryDiagnostics.js";
 
+import {
+  zcodeMcpUiResourceSubscriptionResultSchema as mcpUiEmptyResultSchema,
+  zcodeMcpUiCloseInstanceResultSchema,
+  zcodeMcpUiOpenInstanceResultSchema,
+} from "@zcode/shared";
 const logger = createServiceLogger("zcode-agent-service");
 const cuaOperationLogger = createServiceLogger("cua-operation-turn");
 const PLUGIN_MANAGEMENT_WORKSPACE_DIR_NAME = "plugin-workspace";
@@ -352,14 +411,16 @@ type SessionCreateCompatField =
   | "toolAllowlist"
   | "toolDenylist"
   | "offPeakToolEnabled"
-  | "dynamicWorkflowEnabled";
+  | "dynamicWorkflowEnabled"
+  | "dynamicWorkflowMode";
 type SessionResumeCompatField =
   | "thoughtLevel"
   | "mcpServers"
   | "toolAllowlist"
   | "toolDenylist"
   | "offPeakToolEnabled"
-  | "dynamicWorkflowEnabled";
+  | "dynamicWorkflowEnabled"
+  | "dynamicWorkflowMode";
 type SessionSendCompatField =
   | "browserAmbientContext"
   | "automationId"
@@ -381,6 +442,8 @@ const SESSION_CREATE_OPTIONAL_COMPAT_FIELDS = new Set<SessionCreateCompatField>(
   // The dynamic-workflow rollout flag follows the same rule: if an older CLI rejects it,
   // retry without it; the workflow tool group then remains unregistered, without failing the entire create.
   "dynamicWorkflowEnabled",
+  // Gray-release mode (launch.md “On demand: activation”): only the boolean is recognized; if the CLI omits this field, it behaves as alwaysOn.
+  "dynamicWorkflowMode",
 ]);
 const SESSION_RESUME_OPTIONAL_COMPAT_FIELDS = new Set<SessionResumeCompatField>([
   "thoughtLevel",
@@ -390,6 +453,7 @@ const SESSION_RESUME_OPTIONAL_COMPAT_FIELDS = new Set<SessionResumeCompatField>(
   "toolDenylist",
   "offPeakToolEnabled",
   "dynamicWorkflowEnabled",
+  "dynamicWorkflowMode",
 ]);
 const SESSION_SEND_OPTIONAL_COMPAT_FIELDS = new Set<SessionSendCompatField>([
   "browserAmbientContext",
@@ -411,7 +475,7 @@ const MAX_TRACKED_SESSION_EVENT_IDS = 10_000;
 const SSH_REMOTE_WORKSPACE_IDENTITY_PREFIX = "remote:ssh:";
 const WSL_REMOTE_WORKSPACE_IDENTITY_PREFIX = "remote:wsl:";
 
-function supportsLegacyRemoteTaskAllowlist(workspaceIdentity: string | undefined): boolean {
+export function supportsLegacyRemoteTaskAllowlist(workspaceIdentity: string | undefined): boolean {
   return Boolean(
     workspaceIdentity?.startsWith(SSH_REMOTE_WORKSPACE_IDENTITY_PREFIX) ||
     workspaceIdentity?.startsWith(WSL_REMOTE_WORKSPACE_IDENTITY_PREFIX),
@@ -613,6 +677,7 @@ function buildSessionCreateParams(
   params: ZCodeAgentCreateSessionParams & {
     offPeakToolEnabled?: boolean;
     dynamicWorkflowEnabled?: boolean;
+    dynamicWorkflowMode?: DynamicWorkflowMode;
   },
   omittedFields: ReadonlySet<SessionCreateCompatField> = new Set(),
 ) {
@@ -657,13 +722,31 @@ function buildSessionCreateParams(
     ...(params.dynamicWorkflowEnabled === true && !omittedFields.has("dynamicWorkflowEnabled")
       ? { dynamicWorkflowEnabled: true }
       : {}),
+    ...buildDynamicWorkflowModeField(params, omittedFields),
   };
+}
+
+/**
+ * Gray-release mode is sent alongside the boolean (launch.md “On demand: activation”): write it only when enabled and only when the boolean is also being written
+ * —mode alone has no meaning to the CLI. Compatibility omits it for older CLIs with strict schemas, which then behave as alwaysOn.
+ */
+function buildDynamicWorkflowModeField(
+  params: { dynamicWorkflowEnabled?: boolean; dynamicWorkflowMode?: DynamicWorkflowMode },
+  omittedFields: ReadonlySet<SessionCreateCompatField | SessionResumeCompatField>,
+): { dynamicWorkflowMode?: DynamicWorkflowMode } {
+  return params.dynamicWorkflowEnabled === true &&
+    params.dynamicWorkflowMode !== undefined &&
+    !omittedFields.has("dynamicWorkflowEnabled") &&
+    !omittedFields.has("dynamicWorkflowMode")
+    ? { dynamicWorkflowMode: params.dynamicWorkflowMode }
+    : {};
 }
 
 function buildSessionResumeParams(
   params: ZCodeAgentResumeSessionParams & {
     offPeakToolEnabled?: boolean;
     dynamicWorkflowEnabled?: boolean;
+    dynamicWorkflowMode?: DynamicWorkflowMode;
   },
   omittedFields: ReadonlySet<SessionResumeCompatField> = new Set(),
 ) {
@@ -693,6 +776,7 @@ function buildSessionResumeParams(
     ...(params.dynamicWorkflowEnabled === true && !omittedFields.has("dynamicWorkflowEnabled")
       ? { dynamicWorkflowEnabled: true }
       : {}),
+    ...buildDynamicWorkflowModeField(params, omittedFields),
   };
 }
 
@@ -831,6 +915,7 @@ function createProviderReadinessSnapshotFromSelectionView(
 interface WaitingWorkspaceStartup {
   cancelled: boolean;
   lastLoggedRevision?: string;
+  starting?: Promise<ZCodeProtocolClient>;
   workspace: ZCodeAgentWorkspaceTarget;
 }
 
@@ -843,6 +928,11 @@ interface ActiveWorkspaceClient {
    */
   modelExecutionEnabled: boolean;
   workspace: ZCodeAgentWorkspaceTarget;
+  /**
+   * Dynamic-workflow policy currently held by this CLI process (launch.md “The user’s choice”). It defaults to disabled when the CLI starts,
+   * and is updated only after workspace/updateDynamicWorkflowPolicy succeeds; resync uses it to skip unchanged requests.
+   */
+  dynamicWorkflowPolicyMode: DynamicWorkflowMode;
 }
 
 function createRuntimeUnavailableError(params: ZCodeAgentWorkspaceTarget): Error & {
@@ -869,6 +959,10 @@ interface CreateZCodeAgentServiceOptions extends Omit<
   /** Desktop Host asks Main to register the exact local video path authorized for the Agent. */
   authorizeLocalMediaPreviewPath?: (path: string) => Promise<string>;
   modelSelectionReadinessSource?: ModelSelectionReadinessSource;
+  readSubagentRuntimeConfig?: (workspace: {
+    workspacePath: string;
+    workspaceIdentity?: string;
+  }) => Promise<SubagentRuntimeConfig>;
   sessionRuntimePreferencesAuthority?: "local" | "external";
   resolveSessionRuntimePreferences?: (
     scope: ZCodeSessionRuntimePreferencesScope,
@@ -891,6 +985,13 @@ interface CreateZCodeAgentServiceOptions extends Omit<
    * dynamicWorkflowEnabled. Omitted by default (pure CLI setup) means always disabled, matching the CLI default.
    */
   resolveDynamicWorkflowClientConfig?: () => Promise<DynamicWorkflowClientConfig | undefined>;
+  /**
+   * User-choice read point (launch.md “The user’s choice”): the Host that owns settings authority injects this and reads the
+   * settings file on every use. A desktop-attached remote Host does not inject it and instead uses the value pushed by Desktop (syncDynamicWorkflowUserMode).
+   */
+  resolveDynamicWorkflowUserMode?: () => Promise<DynamicWorkflowMode | undefined>;
+  /** After syncing the user choice, pass it to the composition layer for forwarding (from the Desktop Host to this window’s remote Host); the value comes from local settings. */
+  forwardDynamicWorkflowUserMode?: (mode: DynamicWorkflowMode | undefined) => void;
   resolveOffPeakTaskService?: () =>
     | Pick<IOffPeakTaskService, "createTask" | "list" | "getCodingPlanSupport">
     | undefined;
@@ -900,6 +1001,17 @@ interface CreateZCodeAgentServiceOptions extends Omit<
    * browser commands return backend_unavailable without affecting other features.
    */
   browserControlExecutor?: BrowserAmbientContextExecutor;
+  channelReplyExecutor?: (request: ChannelReplyHostRequest) => Promise<ChannelReplyResult>;
+  topicResourceExecutor?: (
+    request: ZCodeTopicResourceReadParams &
+      ZCodeAgentWorkspaceTarget & { trace?: ZCodeProtocolTrace },
+    signal: AbortSignal,
+  ) => Promise<ZCodePromptAttachment>;
+  topicResourceValidator?: (
+    request: ZCodeTopicResourceReadParams &
+      ZCodeAgentWorkspaceTarget & { trace?: ZCodeProtocolTrace },
+    signal: AbortSignal,
+  ) => Promise<void>;
   /**
    * Official Server MCP identity-header resolver. The Agent process is not authoritative for user identity;
    * it requests headers for this request from the host via interaction/requestOfficialMcpAuthHeaders.
@@ -965,7 +1077,7 @@ function toProtocolAutomation(automation: ZCodeAutomation) {
   };
 }
 
-function toProtocolOffPeakTaskSnapshot(task: {
+export function toProtocolOffPeakTaskSnapshot(task: {
   offPeakTaskId: string;
   title: string;
   status: "queued" | "paused" | "running" | "completed" | "failed" | "cancelled";
@@ -986,8 +1098,8 @@ function toProtocolOffPeakTaskSnapshot(task: {
   };
 }
 
-const OFF_PEAK_INTERNAL_ERROR_CODE = "offpeak_internal_error";
-const OFF_PEAK_INTERNAL_ERROR_MESSAGE = "Internal off-peak service error";
+export const OFF_PEAK_INTERNAL_ERROR_CODE = "offpeak_internal_error";
+export const OFF_PEAK_INTERNAL_ERROR_MESSAGE = "Internal off-peak service error";
 
 /**
  * Fallback catches for offPeak/create and offPeak/list must not pass cross-layer exception text (SQLite/file paths/
@@ -1013,8 +1125,8 @@ async function respondOffPeakInternalError(
   });
 }
 
-/** Only treat the feature as "creatable" when rollout is enabled and the allowlist is non-empty; otherwise treat it as disabled (empty array). */
-function resolveOffPeakAllowedModels(
+/** D49-8/SG-02: creation is allowed only when gray release is effectively enabled and the allowlist is non-empty; otherwise treat it as disabled (empty array). */
+export function resolveOffPeakAllowedModels(
   grayConfig: OffPeakClientConfig | undefined,
   providerId?: string,
 ): readonly string[] {
@@ -1028,7 +1140,7 @@ function resolveOffPeakAllowedModels(
  * Model resolution: omitted → last item in the allowlist (the server's final item is approximately the newest/strongest); explicit → trim and match case-insensitively,
  * returning the allowlist's original spelling on a match or null otherwise (the caller returns model_not_allowed).
  */
-function resolveOffPeakCreateModel(
+export function resolveOffPeakCreateModel(
   allowedModels: readonly string[],
   requested: string | undefined,
 ): string | null {
@@ -1042,7 +1154,7 @@ function resolveOffPeakCreateModel(
  * New tool tasks reuse the shared highest-level completion; old metadata/model-specific exceptions would diverge from the semantic order of values.
  * Leave explicit levels to createTask's existing validation; do not change them at the entry point.
  */
-function resolveOffPeakToolSelection(
+export function resolveOffPeakToolSelection(
   view: ModelSelectionView,
   providerId: string,
   modelId: string,
@@ -1108,13 +1220,25 @@ export function createZCodeAgentService(
    * then continue at debug. This preserves the audit detail "which plugin, which workspace, and when it first obtained them."
    */
   const officialMcpIssuanceAudit = createOfficialMcpIssuanceAudit();
+  const providerRuntimeHeadersWorkspaceEmitters = new Map<
+    string,
+    Emitter<ZCodeProviderRuntimeHeadersRequestParams>
+  >();
+  const providerRuntimeHeadersCancelledEmitters = new Map<
+    string,
+    Emitter<ZCodeProviderRuntimeHeadersCancelled>
+  >();
   function cancelProviderRuntimeHeaders(
     key: string,
     pending: PendingProviderRuntimeHeadersRequest,
   ): void {
     pendingProviderRuntimeHeaders.delete(key);
     const { requestId, sessionId, workspace } = pending.request;
-    logger.info(undefined, "Provider runtime headers 请求已取消", {
+    // Remove it before delivery so a late subscriber cannot restart a canceled request check.
+    providerRuntimeHeadersCancelledEmitters
+      .get(resolveWorkspaceKey(workspace))
+      ?.fire({ requestId, sessionId, workspace });
+    logger.info(undefined, "请求校验已取消", {
       requestId,
       sessionId,
       workspaceKey: resolveWorkspaceKey(workspace),
@@ -1177,8 +1301,12 @@ export function createZCodeAgentService(
   const activeClientsByWorkspaceKey = new Map<string, ActiveWorkspaceClient>();
   const interactionPreferenceSyncByWorkspaceKey = new Map<string, Promise<void>>();
   let latestAppRuntimePreferences: ZCodeAgentAppRuntimePreferences | undefined;
-  /** One-time in-process decision for the dynamic-workflow rollout gate; see the resolveDynamicWorkflowGate comment. */
-  let dynamicWorkflowGate: Promise<boolean> | undefined;
+  /** One-time, in-process read of the server-provided value; see the comment on resolveDynamicWorkflowGate. */
+  let dynamicWorkflowOffer: Promise<DynamicWorkflowClientConfig | undefined> | undefined;
+  /** User choice pushed by Desktop; use only when there is no local settings authority (resolveDynamicWorkflowUserMode was not injected). */
+  let pushedDynamicWorkflowUserMode: DynamicWorkflowMode | undefined;
+  /** Per-workspace policy sync chain: each queued step reads the effective mode and sends it only after the previous step completes. */
+  const dynamicWorkflowPolicySyncByWorkspaceKey = new Map<string, Promise<void>>();
   const waitingWorkspaceStartups = new Map<string, WaitingWorkspaceStartup>();
   function cancelWaitingWorkspaceStartup(workspaceKey: string): void {
     const waiting = waitingWorkspaceStartups.get(workspaceKey);
@@ -1265,6 +1393,8 @@ export function createZCodeAgentService(
       providerId: request.providerId,
       modelId: request.modelSelection.modelId,
       accountAccess: request.accountAccess,
+      expectedAccountScope: request.expectedAccountScope,
+      rejectedProjectTokenFingerprint: request.rejectedProjectTokenFingerprint,
       reason: request.reason,
     });
   }
@@ -1514,9 +1644,16 @@ export function createZCodeAgentService(
     if (event.snapshot.readiness.ready) {
       await Promise.allSettled(
         Array.from(waitingWorkspaceStartups.entries()).map(async ([workspaceKey, waiting]) => {
-          // The provider-ready event snapshots the waiting list before starting asynchronously; if a workspace is removed
-          // while awaiting, the stale snapshot would restart an already-released Agent. Continue only for the generation
-          // matching the current waiting identity; callbacks from a removed or replaced generation must be invalidated.
+          // A ready event may arrive before the old readiness read returns. First settle the old attempt, then read the new state,
+          // so the event does not reuse a Promise that is about to fail with provider-not-ready and lose the only ready notification.
+          try {
+            await waiting.starting;
+          } catch (error) {
+            if (!isProviderNotReadyError(error)) throw error;
+          }
+          // Bug cause: the provider-ready event snapshots the waiting list before starting asynchronously; if the workspace is
+          // removed during await, the stale snapshot can restart an Agent that was already released. Allow only the current
+          // generation for the waiting identity to continue; callbacks after removal or generation change must be invalidated.
           if (waiting.cancelled || waitingWorkspaceStartups.get(workspaceKey) !== waiting) {
             return;
           }
@@ -1573,6 +1710,17 @@ export function createZCodeAgentService(
     }
     const created = new Emitter<ConversationTopicWireCandidate>();
     conversationFrameEmitters.set(key, created);
+    return created;
+  }
+
+  function getProviderRuntimeHeadersWorkspaceEmitter(workspace: ZCodeAgentWorkspaceTarget) {
+    const key = resolveWorkspaceKey(workspace);
+    const existing = providerRuntimeHeadersWorkspaceEmitters.get(key);
+    if (existing) {
+      return existing;
+    }
+    const created = new Emitter<ZCodeProviderRuntimeHeadersRequestParams>();
+    providerRuntimeHeadersWorkspaceEmitters.set(key, created);
     return created;
   }
 
@@ -1871,7 +2019,39 @@ export function createZCodeAgentService(
       return;
     }
     wiredClients.add(client);
+    const topicResources = createTopicResourceBridge(() => {
+      // Prewarming may not have a remoteSessionId; do not permanently capture wireClient’s initial arguments.
+      // Get routing from the current trusted entry point for the same actual CLI and keep it stable throughout one resource operation.
+      const active = activeClientsByWorkspaceKey.get(resolveWorkspaceKey(workspace));
+      const resourceWorkspace =
+        active?.client === client ? { ...active.workspace } : { ...workspace };
+      return {
+        validate: (request, signal, trace) => {
+          if (!options?.topicResourceValidator)
+            throw new Error("Topic resource authorization is unavailable");
+          return options.topicResourceValidator(
+            { ...request, ...resourceWorkspace, trace },
+            signal,
+          );
+        },
+        read: (request, signal, trace) => {
+          if (!options?.topicResourceExecutor)
+            throw new Error("Topic attachment retrieval is unavailable on this host");
+          return options.topicResourceExecutor({ ...request, ...resourceWorkspace, trace }, signal);
+        },
+        upload: (request, attachment, signal, trace) =>
+          uploadTopicResourceToClient(
+            client,
+            v4ConnectionId,
+            { ...resourceWorkspace, sessionId: request.taskId },
+            attachment,
+            signal,
+            trace,
+          ),
+      };
+    });
     const disposables = [
+      topicResources,
       client.onNotification((message) => {
         if (message.method === zcodeProtocolNotifications.providerRuntimeHeadersCancelled) {
           const parsed = zcodeProviderRuntimeHeadersCancelledSchema.safeParse(message.params);
@@ -2110,6 +2290,80 @@ export function createZCodeAgentService(
         }
       }),
       client.onRequest((request) => {
+        if (request.method === zcodeProtocolMethods.subagentsReadRuntimeConfig) {
+          void (async () => {
+            const parsed = zcodeSubagentsReadRuntimeConfigParamsSchema.safeParse(request.params);
+            if (!parsed.success) {
+              await client.respondError(request.id, {
+                code: -32602,
+                message: "Invalid subagent runtime config request",
+              });
+              return;
+            }
+            let configuration: SubagentRuntimeConfig;
+            try {
+              if (!options?.readSubagentRuntimeConfig)
+                throw new Error("Subagent runtime config is unavailable on this Host");
+              configuration = subagentRuntimeConfigSchema.parse(
+                await options.readSubagentRuntimeConfig(workspace),
+              );
+            } catch (error) {
+              await client.respondError(request.id, {
+                code: -32603,
+                message: error instanceof Error ? error.message : String(error),
+              });
+              return;
+            }
+            await client.respond(request.id, configuration);
+          })().catch((error) =>
+            logger.debug(undefined, "Subagent 配置响应发送失败", { error: String(error) }),
+          );
+          return;
+        }
+        if (request.method === zcodeProtocolMethods.channelReply) {
+          void (async () => {
+            const params = channelReplyRequestSchema.parse(request.params);
+            if (!options?.channelReplyExecutor) throw new Error("Channel reply unavailable");
+            const active = activeClientsByWorkspaceKey.get(resolveWorkspaceKey(workspace));
+            if (active?.client !== client)
+              throw new Error("Channel reply client is no longer active");
+            const currentWorkspace = active.workspace;
+            const result = await options.channelReplyExecutor({
+              ...params,
+              // An active connection also carries internal fields such as the V4 envelope; the cross-reply contract may project only workspace identity, not spread the entire object.
+              workspacePath: currentWorkspace.workspacePath,
+              workspaceIdentity: currentWorkspace.workspaceIdentity,
+              remoteSessionId: currentWorkspace.remoteSessionId,
+              trace: request.trace,
+            });
+            await client.respond(request.id, result);
+          })().catch((error: unknown) =>
+            client.respondError(request.id, {
+              code: -32603,
+              message: error instanceof Error ? error.message : "Channel reply failed",
+            }),
+          );
+          return;
+        }
+        if (request.method === zcodeProtocolMethods.topicResourceRead) {
+          void topicResources
+            .read(request.params, request.trace)
+            .then((result) => client.respond(request.id, result))
+            .catch((error: unknown) =>
+              client.respondError(request.id, {
+                code: -32603,
+                message: error instanceof Error ? error.message : "Topic resource read failed",
+              }),
+            );
+          return;
+        }
+        if (request.method === zcodeProtocolMethods.topicResourceCancel) {
+          const parsed = zcodeTopicResourceCancelParamsSchema.safeParse(request.params);
+          void client.respond(request.id, {
+            cancelled: parsed.success && topicResources.cancel(parsed.data),
+          });
+          return;
+        }
         if (request.method === zcodeProtocolMethods.sessionRequestRuntimePreferences) {
           const reportResponseFailure = (error: unknown): void => {
             logger.debug(undefined, "运行时偏好响应发送失败", {
@@ -2143,6 +2397,12 @@ export function createZCodeAgentService(
                     memoryEnabled: false,
                   },
                 );
+                preferences.subagentRuntimeConfigEnabled =
+                  Boolean(options?.readSubagentRuntimeConfig) &&
+                  !(
+                    workspace.workspaceIdentity &&
+                    isRemoteWorkspaceIdentity(workspace.workspaceIdentity)
+                  );
               } catch (error) {
                 await client.respondError(request.id, {
                   code: -32603,
@@ -2273,21 +2533,36 @@ export function createZCodeAgentService(
             workspacePath: workspace.workspacePath,
           });
           const accountAccess = parsed.data.accountAccess;
-          if (accountRequestAuthService && accountAccess) {
-            // Account API Key / Team Runtime Key / Start Plan JWT do not require renderer interaction.
-            // The host responds automatically using the Model's fixed Account Access, so background tasks and sessions without a pane do not depend on UI subscribers.
+          if (
+            accountRequestAuthService &&
+            accountAccess &&
+            !requiresRequestVerification(accountAccess)
+          ) {
+            // Account API Keys and Team Runtime Keys require no Renderer interaction. The Host automatically responds using the Account Access fixed by the Model
+            // to avoid making background tasks and sessions without a pane depend on UI subscribers.
             void respondAccountRequestAuthWithoutInteraction({
               key: pendingKey,
               pending,
             });
             return;
           }
-          // Without an account-credential resolver, an unanswered request would wait for the CLI's 180-second timeout; fail it immediately instead.
-          pendingProviderRuntimeHeaders.delete(pendingKey);
-          void pending.client.respond(pending.protocolRequestId, {
-            headersApplied: false,
-            errorMessage: "Provider request auth is unavailable",
+          if (!requestVerificationInteractionAvailable) {
+            pendingProviderRuntimeHeaders.delete(pendingKey);
+            void pending.client.respond(pending.protocolRequestId, {
+              headersApplied: false,
+              errorMessage: "Provider request auth is unavailable",
+            });
+            return;
+          }
+          emitSessionEvent(workspace, parsed.data.sessionId, {
+            type: "providerRuntimeHeaders.request",
+            request: parsed.data,
           });
+          // Workspace-level mirrored delivery: the persistent responder in the Desktop window (one per open workspace tab)
+          // does not know the sessionId, so it must receive the same request here by workspaceKey.
+          providerRuntimeHeadersWorkspaceEmitters
+            .get(resolveWorkspaceKey(workspace))
+            ?.fire(parsed.data);
           return;
         }
 
@@ -2951,6 +3226,7 @@ export function createZCodeAgentService(
       client,
       modelExecutionEnabled: false,
       workspace: params,
+      dynamicWorkflowPolicyMode: "disabled",
     };
     activeClientsByWorkspaceKey.set(workspaceKey, entry);
     const interactionPreferencesReady = (async () => {
@@ -2988,27 +3264,11 @@ export function createZCodeAgentService(
         }
       }
     })();
-    // Dynamic-workflow rollout gate: like Off-Peak, this workspace-level fact is synchronized to the CLI before any session work,
-    // so v4 cold recovery also gets the tool surface. Send no request while disabled (CLI defaults to false; older CLIs/test doubles are unaffected).
-    const dynamicWorkflowPolicyReady = (async () => {
-      if (!(await resolveDynamicWorkflowGate())) return;
-      try {
-        await client.request(
-          zcodeProtocolMethods.workspaceUpdateDynamicWorkflowPolicy,
-          { workspace: buildWorkspaceRef(params), enabled: true },
-          zcodeWorkspaceUpdateDynamicWorkflowPolicyResultSchema,
-        );
-      } catch (error) {
-        // Same rule as Off-Peak: -32601 is the normal fallback for older CLIs (their z.object also strips the session flag,
-        // so the feature remains disabled); warn on other errors without blocking client readiness.
-        if (!isProtocolMethodNotFoundError(error)) {
-          logger.warn(undefined, "动态工作流策略同步失败，CLI 维持缺省关闭", {
-            workspaceKey,
-            errorMessage: error instanceof Error ? error.message : String(error),
-          });
-        }
-      }
-    })();
+    // Dynamic-workflow gray-release gate: like Off-Peak, this is a
+    // workspace-level fact synced to the CLI before any session work is allowed, so V4 cold recovery can also access the tool surface.
+    // Send no request when the effective mode is disabled (the CLI defaults to disabled, so older CLIs and test fakes are unaffected); when the user later changes the choice,
+    // resend through the same per-workspace serial chain (launch.md “The user’s choice”).
+    const dynamicWorkflowPolicyReady = enqueueDynamicWorkflowPolicySync(entry);
     entry.interactionPreferencesReady = Promise.all([
       interactionPreferencesReady,
       offPeakToolPolicyReady,
@@ -3041,12 +3301,29 @@ export function createZCodeAgentService(
       return active.client;
     }
 
-    const waiting = waitingWorkspaceStartups.get(workspaceKey) ?? {
+    const waiting: WaitingWorkspaceStartup = waitingWorkspaceStartups.get(workspaceKey) ?? {
       cancelled: false,
       workspace: params,
     };
     waiting.workspace = params;
     waitingWorkspaceStartups.set(workspaceKey, waiting);
+
+    // Bug cause: concurrent calls each await readiness; the first successful one removes the waiting record, so a late call
+    // mistakes success for a released workspace. Share the entire startup Promise; cancellation remains controlled by the waiting identity.
+    const starting = (waiting.starting ??= startModelExecutionClient(params, waiting));
+    try {
+      return await starting;
+    } finally {
+      if (waiting.starting === starting) delete waiting.starting;
+    }
+  }
+
+  async function startModelExecutionClient(
+    params: ZCodeAgentWorkspaceTarget,
+    waiting: WaitingWorkspaceStartup,
+  ): Promise<ZCodeProtocolClient> {
+    const workspaceKey = resolveWorkspaceKey(params);
+    const active = activeClientsByWorkspaceKey.get(workspaceKey);
 
     const readinessSnapshot = await resolveStartupReadiness();
     // Readiness reads may interleave with workspace release; after release removes the waiting identity,
@@ -3117,6 +3394,8 @@ export function createZCodeAgentService(
         client: existingClient,
         modelExecutionEnabled: false,
         workspace: params,
+        // Only promote the existing client; do not replay policy sync from the readiness phase. Treat the CLI default as disabled and send an update when the user changes the choice.
+        dynamicWorkflowPolicyMode: "disabled",
       });
       return existingClient;
     }
@@ -3196,6 +3475,12 @@ export function createZCodeAgentService(
       emitter.dispose();
     }
     sessionEmitters.clear();
+    for (const emitter of providerRuntimeHeadersWorkspaceEmitters.values()) {
+      emitter.dispose();
+    }
+    providerRuntimeHeadersWorkspaceEmitters.clear();
+    for (const emitter of providerRuntimeHeadersCancelledEmitters.values()) emitter.dispose();
+    providerRuntimeHeadersCancelledEmitters.clear();
     sessionRuntimePreferencesRequestEmitter.dispose();
     processResourceSampleEmitter.dispose();
     mcpTelemetryEmitter.dispose();
@@ -3252,29 +3537,100 @@ export function createZCodeAgentService(
   }
 
   /**
-   * Dynamic-workflow rollout gate: Host evaluates it once and keeps the result fixed
-   * for this process. Three reasons:
-   *   1. The same decision feeds workspace/updateDynamicWorkflowPolicy and the session flag, preventing a mismatch where
-   *      "policy says enabled, create says disabled";
-   *   2. Evaluation happens on the client-readiness path and must not wait on the remote for every session creation—a 3.12.2 regression did exactly that;
-   *   3. On read failure, fail closed without retrying, so every create does not incur a request timeout while offline;
-   *      server-side rollout changes take effect in the next Host process by design (the provider also has a 1-hour snapshot and forceRefresh).
-   * Unlike Off-Peak, remote workspaces are supported, so workspaceIdentity / remoteSessionId are not checked here.
+   * Server-provided value (docs/dynamic-workflow/launch.md “Gray release”): the Host reads it once and keeps it fixed within this process.
+   * Three reasons:
+   *   1. 1. The decision is made on the client readiness path, so session creation cannot wait on the remote service each time—this caused a regression in 3.12.2;
+   *   2. 2. A read failure fails closed and is not retried, avoiding a request timeout on every create while offline;
+   *   3. 3. Server-side gray-release changes take effect in the next Host process by design (the provider also has a 1-hour snapshot and forceRefresh).
+   * Unlike Off-Peak, this also works for remote workspaces, so it does not inspect workspaceIdentity / remoteSessionId.
    */
-  function resolveDynamicWorkflowGate(): Promise<boolean> {
+  function resolveDynamicWorkflowOffer(): Promise<DynamicWorkflowClientConfig | undefined> {
     const resolve = options?.resolveDynamicWorkflowClientConfig;
-    if (!resolve) return Promise.resolve(false);
-    dynamicWorkflowGate ??= (async () => {
+    if (!resolve) return Promise.resolve(undefined);
+    dynamicWorkflowOffer ??= (async () => {
       try {
-        return (await resolve())?.enabled === true;
+        return await resolve();
       } catch (error) {
         logger.warn(undefined, "动态工作流灰度读取失败，按关闭处理", {
           errorMessage: error instanceof Error ? error.message : String(error),
         });
-        return false;
+        return undefined;
       }
     })();
-    return dynamicWorkflowGate;
+    return dynamicWorkflowOffer;
+  }
+
+  /** User choice (launch.md “The user’s choice”): reread local settings each time when they are authoritative; otherwise use the value pushed by Desktop. */
+  async function resolveDynamicWorkflowUserMode(): Promise<DynamicWorkflowMode | undefined> {
+    const read = options?.resolveDynamicWorkflowUserMode;
+    if (!read) return pushedDynamicWorkflowUserMode;
+    try {
+      return normalizeDynamicWorkflowMode(await read());
+    } catch (error) {
+      // A settings read failure must not disable the feature or block session creation; treat it as “follow the server.”
+      logger.warn(undefined, "动态工作流用户选择读取失败，按跟随服务端处理", {
+        errorMessage: error instanceof Error ? error.message : String(error),
+      });
+      return undefined;
+    }
+  }
+
+  /**
+   * Effective mode = the latched server-provided value + the user’s current choice. Policy sync and all three creation paths use the same source, so there is no
+   * gap where policy says enabled while create says disabled. The choice is not latched; a settings change is reflected in the next session creation.
+   * Pass `onDemand` to the CLI unchanged: it determines whether the ten tools register on the first request or wait for the first `/workflow`.
+   */
+  async function resolveDynamicWorkflowGate(): Promise<DynamicWorkflowMode> {
+    const offer = await resolveDynamicWorkflowOffer();
+    if (!offer) return "disabled";
+    return applyDynamicWorkflowUserMode(offer, await resolveDynamicWorkflowUserMode()).mode;
+  }
+
+  /**
+   * Sync the effective mode to a workspace’s CLI (launch.md “The user’s choice”). Operations for the same workspace are serialized:
+   * each step reads the effective mode only when it runs, so a later queued step sees the updated choice and a slow request cannot apply after a newer decision.
+   * Do not send when the CLI already holds the same policy; when disabled, send enabled:false so the online CLI removes workflow from its slash-command directory.
+   */
+  function enqueueDynamicWorkflowPolicySync(entry: ActiveWorkspaceClient): Promise<void> {
+    const workspaceKey = resolveWorkspaceKey(entry.workspace);
+    const previous = dynamicWorkflowPolicySyncByWorkspaceKey.get(workspaceKey) ?? Promise.resolve();
+    const current = previous.then(async () => {
+      const mode = await resolveDynamicWorkflowGate();
+      if (mode === entry.dynamicWorkflowPolicyMode) return;
+      const enabled = isDynamicWorkflowModeEnabled(mode);
+      try {
+        await entry.client.request(
+          zcodeProtocolMethods.workspaceUpdateDynamicWorkflowPolicy,
+          // Send mode alongside the boolean (launch.md “On demand: activation”); older CLIs that recognize only the boolean have a strict
+          // schema that rejects mode. The warning branch below preserves the disabled default, treating it like other non- -32601 errors.
+          { workspace: buildWorkspaceRef(entry.workspace), enabled, ...(enabled ? { mode } : {}) },
+          zcodeWorkspaceUpdateDynamicWorkflowPolicyResultSchema,
+        );
+        entry.dynamicWorkflowPolicyMode = mode;
+      } catch (error) {
+        // Same rule as Off-Peak: -32601 is the normal fallback for older CLIs (their z.object also strips the session flag,
+        // so the feature remains disabled); warn on other errors without blocking client readiness.
+        if (!isProtocolMethodNotFoundError(error)) {
+          logger.warn(undefined, "动态工作流策略同步失败，CLI 维持原策略", {
+            workspaceKey,
+            errorMessage: error instanceof Error ? error.message : String(error),
+          });
+        }
+      }
+    });
+    dynamicWorkflowPolicySyncByWorkspaceKey.set(workspaceKey, current);
+    return current;
+  }
+
+  /** Shared by all three creation paths: send the boolean and mode as a pair (omit both when disabled). */
+  async function resolveDynamicWorkflowSessionFlags(): Promise<{
+    dynamicWorkflowEnabled: boolean;
+    dynamicWorkflowMode?: DynamicWorkflowMode;
+  }> {
+    const mode = await resolveDynamicWorkflowGate();
+    return isDynamicWorkflowModeEnabled(mode)
+      ? { dynamicWorkflowEnabled: true, dynamicWorkflowMode: mode }
+      : { dynamicWorkflowEnabled: false };
   }
 
   async function buildConversationCommandEnvelope(
@@ -3284,7 +3640,8 @@ export function createZCodeAgentService(
     if (envelope.type === "createSession") {
       // V4 createSession bypasses legacy session/create param construction, so inject the tool-surface flag from the same source
       // at the envelope; omit the field when the gate is false (the default is fail-closed, matching legacy behavior).
-      const dynamicWorkflowEnabled = await resolveDynamicWorkflowGate();
+      const { dynamicWorkflowEnabled, dynamicWorkflowMode } =
+        await resolveDynamicWorkflowSessionFlags();
       const offPeakToolEnabled = isOffPeakToolSupported(params);
       if (!offPeakToolEnabled && !dynamicWorkflowEnabled) return envelope;
       const payload = commandPayloadSchemas.createSession.parse(envelope.payload);
@@ -3295,6 +3652,9 @@ export function createZCodeAgentService(
           ...(offPeakToolEnabled ? { offPeakToolEnabled: true } : {}),
           // Dynamic-workflow rollout: V4 createSession is the actual desktop new-session path; without forwarding this, the nine tools are never registered.
           ...(dynamicWorkflowEnabled ? { dynamicWorkflowEnabled: true } : {}),
+          ...(dynamicWorkflowEnabled && dynamicWorkflowMode !== undefined
+            ? { dynamicWorkflowMode }
+            : {}),
         },
       };
     }
@@ -3394,6 +3754,18 @@ export function createZCodeAgentService(
       }
     },
 
+    async syncDynamicWorkflowUserMode(params: { mode?: DynamicWorkflowMode }): Promise<void> {
+      // launch.md “The user’s choice”: when local settings are authoritative, the incoming value is only a change signal; use the settings file as the source of truth.
+      // A desktop-attached remote Host has no local settings, so the pushed value is the choice.
+      pushedDynamicWorkflowUserMode = normalizeDynamicWorkflowMode(params.mode);
+      options?.forwardDynamicWorkflowUserMode?.(await resolveDynamicWorkflowUserMode());
+      await Promise.all(
+        [...activeClientsByWorkspaceKey.values()].map((entry) =>
+          enqueueDynamicWorkflowPolicySync(entry),
+        ),
+      );
+    },
+
     async syncAppRuntimePreferences(preferences: ZCodeAgentAppRuntimePreferences): Promise<void> {
       const normalizedPreferences: ZCodeAgentAppRuntimePreferences = {
         ...preferences,
@@ -3439,11 +3811,11 @@ export function createZCodeAgentService(
       });
       const offPeakToolEnabled = isOffPeakToolSupported(params);
       // The rollout was evaluated when the client became ready; this awaits the already-resolved in-process promise (no remote request).
-      const dynamicWorkflowEnabled = await resolveDynamicWorkflowGate();
+      const dynamicWorkflowFlags = await resolveDynamicWorkflowSessionFlags();
       try {
         const snapshot = await client.request(
           zcodeProtocolMethods.sessionCreate,
-          buildSessionCreateParams({ ...params, offPeakToolEnabled, dynamicWorkflowEnabled }),
+          buildSessionCreateParams({ ...params, offPeakToolEnabled, ...dynamicWorkflowFlags }),
           zcodeSessionStateSnapshotSchema,
           sessionTraceId ? { trace: { traceId: sessionTraceId } } : undefined,
         );
@@ -3484,7 +3856,7 @@ export function createZCodeAgentService(
         const snapshot = await client.request(
           zcodeProtocolMethods.sessionCreate,
           buildSessionCreateParams(
-            { ...params, offPeakToolEnabled, dynamicWorkflowEnabled },
+            { ...params, offPeakToolEnabled, ...dynamicWorkflowFlags },
             new Set(compatFields),
           ),
           zcodeSessionStateSnapshotSchema,
@@ -3543,7 +3915,7 @@ export function createZCodeAgentService(
       const cachedTraceId = getSessionTraceId(params);
       const offPeakToolEnabled = isOffPeakToolSupported(params);
       // Cold recovery must also use the Host's rollout decision, or the restored session loses the workflow tool group.
-      const dynamicWorkflowEnabled = await resolveDynamicWorkflowGate();
+      const dynamicWorkflowFlags = await resolveDynamicWorkflowSessionFlags();
       logger.info(cachedTraceId, "开始请求 ZCode Protocol session/resume", {
         mcpServerCount: getMcpServerCount(params),
         mcpServerNames: getMcpServerNames(params),
@@ -3555,7 +3927,7 @@ export function createZCodeAgentService(
       try {
         const snapshot = await client.request(
           zcodeProtocolMethods.sessionResume,
-          buildSessionResumeParams({ ...params, offPeakToolEnabled, dynamicWorkflowEnabled }),
+          buildSessionResumeParams({ ...params, offPeakToolEnabled, ...dynamicWorkflowFlags }),
           zcodeSessionStateSnapshotSchema,
         );
         const sessionTraceId = rememberSessionTrace(params, snapshot) ?? cachedTraceId;
@@ -3592,7 +3964,7 @@ export function createZCodeAgentService(
         const snapshot = await client.request(
           zcodeProtocolMethods.sessionResume,
           buildSessionResumeParams(
-            { ...params, offPeakToolEnabled, dynamicWorkflowEnabled },
+            { ...params, offPeakToolEnabled, ...dynamicWorkflowFlags },
             new Set(compatFields),
           ),
           zcodeSessionStateSnapshotSchema,
@@ -3690,6 +4062,7 @@ export function createZCodeAgentService(
           deliveryKind: params.deliveryKind,
           messageLimit: params.messageLimit,
           afterSeq: params.afterSeq,
+          contentProfile: params.contentProfile,
         },
         zcodeSessionStateSnapshotSchema,
       );
@@ -3929,6 +4302,321 @@ export function createZCodeAgentService(
       );
     },
 
+    async openMcpUiInstance(params) {
+      const client = await getReadOnlyClient(params);
+      return client.request(
+        zcodeProtocolMethods.mcpUiOpenInstance,
+        {
+          workspace: buildWorkspaceRef(params),
+          sessionId: params.sessionId,
+          pluginId: params.pluginId,
+          serverName: params.serverName,
+          scopeId: params.scopeId,
+          accountContext: params.accountContext,
+          resourceUri: params.resourceUri,
+          ownerWebContentsId: params.ownerWebContentsId,
+        },
+        zcodeMcpUiOpenInstanceResultSchema,
+      );
+    },
+    async validateMcpUiInstance(params) {
+      const client = await getReadOnlyClient(params);
+      await client.request(
+        zcodeProtocolMethods.mcpUiValidateInstance,
+        {
+          workspace: buildWorkspaceRef(params),
+          sessionId: params.sessionId,
+          pluginId: params.pluginId,
+          serverName: params.serverName,
+          instance: params.instance,
+        },
+        mcpUiEmptyResultSchema,
+      );
+    },
+    async recycleMcpUiInstance(params) {
+      const client = await getReadOnlyClient(params);
+      const result = await client.request(
+        zcodeProtocolMethods.mcpUiCloseInstance,
+        {
+          workspace: buildWorkspaceRef(params),
+          sessionId: params.sessionId,
+          pluginId: params.pluginId,
+          serverName: params.serverName,
+          instance: params.instance,
+          onlyIfIdle: true,
+        },
+        zcodeMcpUiCloseInstanceResultSchema,
+      );
+      return result.closed;
+    },
+    async closeMcpUiInstance(params) {
+      const client = await getReadOnlyClient(params);
+      await client.request(
+        zcodeProtocolMethods.mcpUiCloseInstance,
+        {
+          workspace: buildWorkspaceRef(params),
+          sessionId: params.sessionId,
+          pluginId: params.pluginId,
+          serverName: params.serverName,
+          instance: params.instance,
+        },
+        zcodeMcpUiCloseInstanceResultSchema,
+      );
+    },
+    async readMcpResource(params: ZCodeAgentReadMcpResourceParams) {
+      // As with Skill/Plugin references, the session-frozen catalog exists only in the workspace agent process.
+      const client = await getReadOnlyClient(params);
+      return client.request(
+        zcodeProtocolMethods.mcpReadResource,
+        {
+          workspace: buildWorkspaceRef(params),
+          sessionId: params.sessionId,
+          instance: params.instance,
+          pluginId: params.pluginId,
+          serverName: params.serverName,
+          uri: params.uri,
+        },
+        zcodeMcpReadResourceResultSchema,
+      );
+    },
+
+    async sampleMcpApp(params) {
+      const client = await getReadOnlyClient(params, "existing-only");
+      const { workspacePath: _path, workspaceIdentity: _identity, ...bound } = params;
+      const wire = { ...bound, workspace: buildWorkspaceRef(params) };
+      try {
+        return await client.request(
+          zcodeProtocolMethods.mcpUiSampling,
+          wire,
+          zcodeMcpUiSamplingResultSchema,
+          { timeoutMs: MCP_APPS_SAMPLING_TRANSPORT_TIMEOUT_MS },
+        );
+      } catch (error) {
+        // A timeout/channel failure cancels only the original call; it must not restart the Agent and initiate sampling again.
+        const { request: _request, ...cancelParams } = wire;
+        void client
+          .request(
+            zcodeProtocolMethods.mcpUiCancelSampling,
+            cancelParams,
+            zcodeMcpUiCancelCallResultSchema,
+          )
+          .catch(() => undefined);
+        throw error;
+      }
+    },
+    async cancelMcpAppSampling(params) {
+      const client = await getReadOnlyClient(params, "existing-only");
+      const { workspacePath: _path, workspaceIdentity: _identity, ...bound } = params;
+      return client.request(
+        zcodeProtocolMethods.mcpUiCancelSampling,
+        { ...bound, workspace: buildWorkspaceRef(params) },
+        zcodeMcpUiCancelCallResultSchema,
+      );
+    },
+    async callMcpToolForUi(params: ZCodeAgentCallMcpToolForUiParams) {
+      const client = await getReadOnlyClient(params);
+      return client.request(
+        zcodeProtocolMethods.mcpUiCallTool,
+        {
+          workspace: buildWorkspaceRef(params),
+          sessionId: params.sessionId,
+          instance: params.instance,
+          pluginId: params.pluginId,
+          serverName: params.serverName,
+          toolName: params.toolName,
+          ...(params.arguments ? { arguments: params.arguments } : {}),
+          callId: params.callId,
+        },
+        zcodeMcpUiCallToolResultSchema,
+      );
+    },
+
+    async cancelMcpToolCallForUi(params: ZCodeAgentCancelMcpToolCallForUiParams) {
+      const client = await getReadOnlyClient(params);
+      return client.request(
+        zcodeProtocolMethods.mcpUiCancelCall,
+        {
+          workspace: buildWorkspaceRef(params),
+          sessionId: params.sessionId,
+          instance: params.instance,
+          pluginId: params.pluginId,
+          serverName: params.serverName,
+          callId: params.callId,
+        },
+        zcodeMcpUiCancelCallResultSchema,
+      );
+    },
+
+    async readMcpResourceForUi(params: ZCodeAgentReadMcpResourceForUiParams) {
+      // In the same process as callMcpToolForUi: ownership (pluginId ↔ serverName), the mimeType allowlist, and the 8 MiB limit all fail closed on the agent side.
+      const client = await getReadOnlyClient(params);
+      return client.request(
+        zcodeProtocolMethods.mcpUiReadResource,
+        {
+          workspace: buildWorkspaceRef(params),
+          sessionId: params.sessionId,
+          instance: params.instance,
+          pluginId: params.pluginId,
+          serverName: params.serverName,
+          uri: params.uri,
+        },
+        zcodeMcpUiReadResourceResultSchema,
+      );
+    },
+
+    async listMcpResourcesForUi(params: ZCodeAgentListMcpResourcesForUiParams) {
+      const client = await getReadOnlyClient(params);
+      return client.request(
+        zcodeProtocolMethods.mcpUiListResources,
+        {
+          workspace: buildWorkspaceRef(params),
+          sessionId: params.sessionId,
+          instance: params.instance,
+          pluginId: params.pluginId,
+          serverName: params.serverName,
+          ...(params.cursor ? { cursor: params.cursor } : {}),
+        },
+        zcodeMcpUiListResourcesResultSchema,
+      );
+    },
+
+    async listMcpResourceTemplatesForUi(params: ZCodeAgentListMcpResourcesForUiParams) {
+      const client = await getReadOnlyClient(params);
+      return client.request(
+        zcodeProtocolMethods.mcpUiListResourceTemplates,
+        {
+          workspace: buildWorkspaceRef(params),
+          sessionId: params.sessionId,
+          instance: params.instance,
+          pluginId: params.pluginId,
+          serverName: params.serverName,
+          ...(params.cursor ? { cursor: params.cursor } : {}),
+        },
+        zcodeMcpUiListResourceTemplatesResultSchema,
+      );
+    },
+
+    async subscribeMcpResourceForUi(params: ZCodeAgentMcpResourceSubscriptionForUiParams) {
+      // Subscriptions are registered on the agent side (reference-counted by server / uri and replayed after reconnect); the host only forwards the identity tuple.
+      const client = await getReadOnlyClient(params);
+      await client.request(
+        zcodeProtocolMethods.mcpUiSubscribeResource,
+        {
+          workspace: buildWorkspaceRef(params),
+          sessionId: params.sessionId,
+          instance: params.instance,
+          pluginId: params.pluginId,
+          serverName: params.serverName,
+          scopeId: params.scopeId,
+          generation: params.generation,
+          uri: params.uri,
+        },
+        zcodeMcpUiResourceSubscriptionResultSchema,
+      );
+    },
+
+    async unsubscribeMcpResourceForUi(params: ZCodeAgentMcpResourceSubscriptionForUiParams) {
+      const client = await getReadOnlyClient(params);
+      await client.request(
+        zcodeProtocolMethods.mcpUiUnsubscribeResource,
+        {
+          workspace: buildWorkspaceRef(params),
+          sessionId: params.sessionId,
+          instance: params.instance,
+          pluginId: params.pluginId,
+          serverName: params.serverName,
+          scopeId: params.scopeId,
+          generation: params.generation,
+          uri: params.uri,
+        },
+        zcodeMcpUiResourceSubscriptionResultSchema,
+      );
+    },
+
+    async registerAppToolsForUi(params: ZCodeAgentRegisterAppToolsForUiParams) {
+      const client = await getReadOnlyClient(params);
+      return client.request(
+        zcodeProtocolMethods.mcpUiRegisterAppTools,
+        {
+          workspace: buildWorkspaceRef(params),
+          sessionId: params.sessionId,
+          instance: params.instance,
+          pluginId: params.pluginId,
+          serverName: params.serverName,
+          scopeId: params.scopeId,
+          generation: params.generation,
+          tools: params.tools,
+        },
+        zcodeMcpUiRegisterAppToolsResultSchema,
+      );
+    },
+
+    async unregisterAppToolsForUi(params: ZCodeAgentAppToolInstanceForUiParams) {
+      const client = await getReadOnlyClient(params);
+      return client.request(
+        zcodeProtocolMethods.mcpUiUnregisterAppTools,
+        {
+          workspace: buildWorkspaceRef(params),
+          sessionId: params.sessionId,
+          instance: params.instance,
+          pluginId: params.pluginId,
+          serverName: params.serverName,
+          scopeId: params.scopeId,
+          generation: params.generation,
+        },
+        zcodeMcpUiUnregisterAppToolsResultSchema,
+      );
+    },
+
+    async claimAppToolCallForUi(params: ZCodeAgentAppToolCallForUiParams) {
+      const client = await getReadOnlyClient(params);
+      return client.request(
+        zcodeProtocolMethods.mcpUiClaimAppToolCall,
+        {
+          workspace: buildWorkspaceRef(params),
+          sessionId: params.sessionId,
+          instance: params.instance,
+          pluginId: params.pluginId,
+          serverName: params.serverName,
+          scopeId: params.scopeId,
+          generation: params.generation,
+          callId: params.callId,
+        },
+        zcodeMcpUiAppToolAcceptedResultSchema,
+      );
+    },
+
+    async resolveAppToolCallForUi(params: ZCodeAgentResolveAppToolCallForUiParams) {
+      const client = await getReadOnlyClient(params);
+      return client.request(
+        zcodeProtocolMethods.mcpUiResolveAppToolCall,
+        {
+          workspace: buildWorkspaceRef(params),
+          sessionId: params.sessionId,
+          instance: params.instance,
+          pluginId: params.pluginId,
+          serverName: params.serverName,
+          scopeId: params.scopeId,
+          generation: params.generation,
+          callId: params.callId,
+          ...(params.result ? { result: params.result } : {}),
+          ...(params.error ? { error: params.error } : {}),
+        },
+        zcodeMcpUiAppToolAcceptedResultSchema,
+      );
+    },
+
+    async listPluginUiSurfaces(params: ZCodeAgentWorkspaceTarget) {
+      // The panel is available only when a session exists, so the workspace agent is guaranteed to exist; use the read-only client to read its parsed list,
+      // rather than a separate plugin-management process (which lacks this workspace’s enabled/disabled state context, as with mcp/readResource).
+      const client = await getReadOnlyClient(params);
+      return client.request(
+        zcodeProtocolMethods.pluginsListUiSurfaces,
+        { workspace: buildWorkspaceRef(params) },
+        zcodePluginsListUiSurfacesResultSchema,
+      );
+    },
+
     // GUI entry point for saved workflows: use the same workspace agent client path
     // as the Skill catalog; files are in the workspace, so remote workspaces are scanned by the remote process.
     // For global scope, resolveSavedWorkflowCarrier selects the carrier;
@@ -3992,6 +4680,38 @@ export function createZCodeAgentService(
         zcodeProtocolMethods.workflowsMove,
         { workspace: buildWorkspaceRef(params), name: params.name },
         zcodeWorkflowsMoveResultSchema,
+      );
+    },
+
+    // “Save directly” on the completion card (docs/dynamic-workflow/transcript-and-notifications.md) must target
+    // the agent client for the **workspace that owns this run**—the script reads from that process’s journal, and the same applies to global scope
+    // (the agent computes the destination from scope, independent of the delivery mechanism). So call getReadOnlyClient directly without global delivery selection.
+    async saveSavedWorkflowFromRun(params: ZCodeAgentSaveSavedWorkflowFromRunParams) {
+      const client = await getReadOnlyClient(params);
+      return client.request(
+        zcodeProtocolMethods.workflowsSave,
+        {
+          workspace: buildWorkspaceRef(params),
+          runId: params.runId,
+          name: params.name,
+          meta: params.meta,
+          ...(params.scope === undefined ? {} : { scope: params.scope }),
+          ...(params.overwrite === undefined ? {} : { overwrite: params.overwrite }),
+        },
+        zcodeWorkflowsSaveResultSchema,
+      );
+    },
+
+    async findSavedWorkflowForRun(params: ZCodeAgentFindSavedWorkflowForRunParams) {
+      const client = await getReadOnlyClient(params);
+      return client.request(
+        zcodeProtocolMethods.workflowsForRun,
+        {
+          workspace: buildWorkspaceRef(params),
+          runId: params.runId,
+          ...(params.candidates === undefined ? {} : { candidates: [...params.candidates] }),
+        },
+        zcodeWorkflowsForRunResultSchema,
       );
     },
 
@@ -4734,11 +5454,150 @@ export function createZCodeAgentService(
       logger.info(undefined, "运行时偏好响应已回传 Agent", responseContext);
     },
 
+    onDynamicWorkspaceProviderRuntimeHeadersCancelled(params: ZCodeAgentWorkspaceTarget) {
+      const key = resolveWorkspaceKey(params);
+      let emitter = providerRuntimeHeadersCancelledEmitters.get(key);
+      if (!emitter) {
+        emitter = new Emitter<ZCodeProviderRuntimeHeadersCancelled>();
+        providerRuntimeHeadersCancelledEmitters.set(key, emitter);
+      }
+      return emitter.event;
+    },
+
     onDynamicSessionRuntimePreferencesRequest() {
       return (listener) => {
         const disposable = sessionRuntimePreferencesRequestEmitter.event(listener);
         for (const pending of pendingSessionRuntimePreferences.values()) {
           listener(pending.request);
+        }
+        return disposable;
+      };
+    },
+
+    async respondProviderRuntimeHeaders(
+      params: ZCodeAgentRespondProviderRuntimeHeadersParams,
+    ): Promise<void> {
+      const key = providerRuntimeHeadersRequestKey(params);
+      const pending = pendingProviderRuntimeHeaders.get(key);
+      if (!pending) {
+        throw new Error(`ZCode provider runtime headers request not found: ${params.requestId}`);
+      }
+      if (pending.responding) {
+        throw new Error(
+          `ZCode provider runtime headers response already pending: ${params.requestId}`,
+        );
+      }
+      // Do not delete pending before waiting for account I/O, or a newly merged cancellation notification will not find the request;
+      // retain the identity until resolution completes, while preventing both workspace and session consumers from responding.
+      pending.responding = true;
+      if (!params.response.headersApplied) {
+        pendingProviderRuntimeHeaders.delete(key);
+        await pending.client.respond(pending.protocolRequestId, {
+          headersApplied: false,
+          ...(params.response.errorMessage ? { errorMessage: params.response.errorMessage } : {}),
+        });
+        return;
+      }
+      let accountRequestAuth: AccountRequestAuthMaterial | undefined;
+      try {
+        accountRequestAuth = await resolveAccountRequestAuth(pending.request);
+      } catch (error) {
+        if (pendingProviderRuntimeHeaders.get(key) !== pending) return;
+        pendingProviderRuntimeHeaders.delete(key);
+        logger.warn(undefined, "ZCode provider runtime headers 应用失败", {
+          modelId: pending.request.modelSelection.modelId,
+          providerId: pending.request.providerId,
+          requestId: pending.request.requestId,
+          sessionId: pending.request.sessionId,
+          error: error instanceof Error ? error.message : String(error),
+          workspaceKey: resolveWorkspaceKey(pending.request.workspace),
+        });
+        await pending.client.respond(pending.protocolRequestId, {
+          headersApplied: false,
+          errorMessage: error instanceof Error ? error.message : String(error),
+        });
+        return;
+      }
+      if (pendingProviderRuntimeHeaders.get(key) !== pending) return;
+      pendingProviderRuntimeHeaders.delete(key);
+      const requestHeaders = {
+        ...accountRequestAuth?.headers,
+      };
+      Object.assign(
+        requestHeaders,
+        allowRequestVerificationHeaders(params.response.runtimeProviderHeaders ?? {}),
+      );
+      const requestAuth =
+        accountRequestAuth?.apiKey || Object.keys(requestHeaders).length > 0
+          ? {
+              ...(accountRequestAuth?.apiKey ? { apiKey: accountRequestAuth.apiKey } : {}),
+              ...(accountRequestAuth?.apiKeyId ? { apiKeyId: accountRequestAuth.apiKeyId } : {}),
+              ...(accountRequestAuth?.accountScope
+                ? { accountScope: accountRequestAuth.accountScope }
+                : {}),
+              ...(Object.keys(requestHeaders).length > 0 ? { headers: requestHeaders } : {}),
+            }
+          : undefined;
+      await pending.client.respond(
+        pending.protocolRequestId,
+        requestAuth
+          ? { headersApplied: true, requestAuth }
+          : { headersApplied: false, errorMessage: "Provider request auth is missing" },
+      );
+      const logContext = {
+        modelId: pending.request.modelSelection.modelId,
+        providerId: pending.request.providerId,
+        requestId: pending.request.requestId,
+        sessionId: pending.request.sessionId,
+        ...(params.response.errorMessage ? { error: params.response.errorMessage } : {}),
+        workspaceKey: resolveWorkspaceKey(pending.request.workspace),
+      };
+      if (requestAuth) {
+        logger.info(undefined, "ZCode provider runtime headers 已应用", logContext);
+      } else {
+        logger.warn(undefined, "ZCode provider runtime headers 应用失败", logContext);
+      }
+    },
+
+    onDynamicProviderRuntimeHeadersRequest(params: ZCodeAgentSessionTarget) {
+      const emitter = getSessionEmitter(params);
+      return (listener) => {
+        const disposable = emitter.event((event) => {
+          if (event.type !== "providerRuntimeHeaders.request") {
+            return;
+          }
+          listener(event.request);
+        });
+        // Bug cause: the first draft starts a turn before binding the new sessionId to the React pane;
+        // the provider runtime headers request can arrive before the pane’s live subscription. The old implementation only fired an event,
+        // leaving the request in the pending map while the request-validation consumer never received it, so the real model request could not be sent.
+        // Register the live listener first, then deliver pending requests for the current session to close both race windows.
+        const pendingSessionPrefix = `${sessionEventKey(params)}\u0000`;
+        for (const [key, pending] of pendingProviderRuntimeHeaders) {
+          if (key.startsWith(pendingSessionPrefix)) {
+            listener(pending.request);
+          }
+        }
+        return disposable;
+      };
+    },
+
+    onDynamicWorkspaceProviderRuntimeHeadersRequest(params: ZCodeAgentWorkspaceTarget) {
+      const emitter = getProviderRuntimeHeadersWorkspaceEmitter(params);
+      return (listener) => {
+        const disposable = emitter.event((request) => {
+          listener(request);
+        });
+        // Bug cause (2026-08-16 web remote-control hang): the session-level entry point requires subscribers to know the sessionId,
+        // but sessions created by Web remote control have no pane on Desktop, so nothing subscribes there and the headers request
+        // remains pending forever. Workspace-level subscriptions have the same semantics as session-level subscriptions: register a live listener first,
+        // then deliver pending requests with the workspaceKey prefix, closing the race where a request arrives before subscription;
+        // isolate by workspaceKey (identity takes precedence) and never cross-deliver requests between remote workspaces that share a path.
+        const pendingWorkspacePrefix = `${resolveWorkspaceKey(params)}\u0000`;
+        for (const [key, pending] of pendingProviderRuntimeHeaders) {
+          if (key.startsWith(pendingWorkspacePrefix)) {
+            listener(pending.request);
+          }
         }
         return disposable;
       };
@@ -5079,11 +5938,19 @@ export function createZCodeAgentService(
         envelope = withoutTtft;
       }
       if (envelope.type === "sendText" && envelope.sessionId) {
-        const payload = commandPayloadSchemas.sendText.parse(envelope.payload);
+        const sessionId = envelope.sessionId;
+        const payload = {
+          ...commandPayloadSchemas.sendText.parse(envelope.payload),
+          inputOrigin:
+            commandClientMode === "web-remote-replayable"
+              ? ("mobile" as const)
+              : ("desktop" as const),
+        };
+        envelope = { ...envelope, payload };
         const browserAmbientContext = await collectBrowserAmbientContext(
           options?.browserControlExecutor,
           {
-            sessionId: envelope.sessionId,
+            sessionId,
             workspacePath: params.workspacePath,
             ...(params.workspaceIdentity ? { workspaceIdentity: params.workspaceIdentity } : {}),
             ...(params.remoteSessionId ? { remoteSessionId: params.remoteSessionId } : {}),

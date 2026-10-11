@@ -31,13 +31,13 @@ import type { WorkbenchNewTaskTarget } from "@/v4/workbenchNewTaskTarget.js";
 import { useWorkbenchGroupStore } from "@/v4/workbenchGroupStore.js";
 import { persistV4ComposerDraft, V4_DRAFT_SCOPE_ROOT } from "@/v4/composer/composerDraftStore.js";
 
-interface OpenRemoteConnectionPreference {
+export interface OpenRemoteConnectionPreference {
   preferredKind?: RemoteTarget["kind"];
   preferredWslDistro?: string;
 }
 
 /** New-task destination: normalize an omitted identity to null for shared read-only checks and focus/addTab handling. */
-interface NewTaskTargetResolution {
+export interface NewTaskTargetResolution {
   workspacePath: string;
   workspaceIdentity: string | null;
 }
@@ -46,7 +46,7 @@ interface NewTaskTargetResolution {
  * Resolve the new-task destination: when a request explicitly includes targetWorkspace (starting a saved workflow across projects), use it directly without checking workbench focus;
  * otherwise, lazily fall back to resolveWorkbenchNewTaskTarget. Normalize an omitted identity to null.
  */
-function resolveNewTaskTargetFromRequest(
+export function resolveNewTaskTargetFromRequest(
   request: CreateTaskRequest | undefined,
   resolveFallback: () => WorkbenchNewTaskTarget | null,
 ): NewTaskTargetResolution | null {

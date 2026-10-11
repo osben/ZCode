@@ -1,7 +1,14 @@
+import {
+  readRequestVerificationConfig,
+  requestVerificationClaimHeaders,
+  isRequestVerificationMessage,
+  type RequestVerificationClientConfig,
+} from "@zcode/shared";
 /* eslint-disable max-lines -- The Coding Plan provider keeps BigModel Alipay and Z.ai Stripe/PayPal API mappings together; splitting them would make shared authentication and response unwrapping harder to trace. */
 import type {
   ApiClient,
   ApiRequestInit,
+  RequestVerificationConfig,
   ForceUpdateConfig,
   CodingPlanAgreementResponse,
   CodingPlanBatchPreviewRequest,
@@ -18,6 +25,7 @@ import type {
   CodingPlanPaypalSupportResponse,
   CodingPlanProductInfo,
   CodingPlanProductInfoRequest,
+  CodingPlanBillingDiscountConfig,
   CodingPlanStaticTeamProduct,
   CodingPlanStaticProductsConfig,
   CodingPlanStaticTeamProductsConfig,
@@ -48,6 +56,9 @@ import type {
   EnterpriseCodingPlanProjectApiKeyUnavailableReason,
   EnterpriseCodingPlanProjectContext,
   StartPlanPreviewConfig,
+  ManualClaimPlanClaimRequest,
+  ManualClaimPlanClaimResult,
+  ManualClaimPlanPreviewSnapshot,
   ZCodeModelContextBudgetStrategy,
   DynamicWorkflowClientConfig,
 } from "@zcode/shared";
@@ -56,13 +67,14 @@ import type { OffPeakClientConfig } from "./codingPlanSubscription.js";
 import {
   BIGMODEL_PROVIDER_ID,
   BUILTIN_MODEL_PROVIDER_IDS,
+  REQUEST_VERIFICATION_REQUIRED,
   CODING_PLAN_SYSTEM_BUSY,
   buildRuntimeZCodeApiUrl,
   isZaiCodingPlanProviderId,
   resolveBigModelApiOrigin,
   resolveZaiBusinessBaseUrl,
   ZAI_PROVIDER_ID,
-  ZCODE_VERSION,
+  ZCODE_UPSTREAM_BASE_VERSION,
   DEFAULT_ZCODE_MODEL_CONTEXT_BUDGET_STRATEGY,
   createDynamicWorkflowClientConfig,
   normalizeDynamicWorkflowMode,
@@ -88,6 +100,13 @@ const CODING_PLAN_ZAI_OVERSEAS_PAYMENT_REQUIRED = "coding_plan_zai_overseas_paym
 const ZCODE_JWT_TOKEN_KEY = "zcodejwttoken";
 const log = createServiceLogger("codingPlanSubscription");
 
+// A merge once dropped the seconds-to-milliseconds boundary conversion, causing the client to misjudge pending entitlements using local time.
+function readServerTimeMilliseconds(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0
+    ? value * 1_000
+    : undefined;
+}
+
 interface RemoteEnvelope<T> {
   code?: number;
   msg?: string;
@@ -95,29 +114,70 @@ interface RemoteEnvelope<T> {
   data?: T | null;
 }
 
+interface ManualClaimPlanPreviewPayload {
+  server_time?: number;
+  plans?: Array<{
+    plan_id?: string;
+    name?: string;
+    description?: string;
+    priority?: number;
+    entitlements?: Array<{
+      entitlement_id?: string;
+      show_name?: string;
+      meter?: string;
+      unit_type?: string;
+      capabilities?: string[];
+      grant_units?: number;
+      period?: string;
+      priority?: number;
+      effective_at?: number;
+    }>;
+  }>;
+}
+
+interface ManualClaimPlanClaimPayload {
+  server_time?: number;
+  message?: unknown;
+  plan?: {
+    user_plan_id?: string;
+    plan_id?: string;
+    status?: string;
+    starts_at?: number;
+    ends_at?: number;
+    entitlements?: Array<{
+      entitlement_id?: string;
+      show_name?: string;
+      effective_at?: number;
+    }>;
+  };
+}
+
 interface ZCodeClientConfigEnvelope {
   code?: number;
   msg?: string;
   success?: boolean;
   data?: {
-    configs?: {
-      forceUpdate?: ForceUpdateConfig | null;
-      codingPlanStaticProducts?: CodingPlanStaticProductsConfig;
-      codingPlanStaticTeamProducts?: CodingPlanStaticTeamProductsConfig;
-      startPlanPreview?: StartPlanPreviewConfig | null;
-      // Off-peak task rollout (server-side): inner fields use server-side snake_case alongside outer camelCase fields.
-      offPeak?: {
-        enable_offpeak_task?: boolean;
-      } | null;
-      modelContextBudget?: {
-        strategy?: unknown;
-      } | null;
-      // Dynamic workflow rollout: the valid values for mode are determined by
-      // shared's normalizeDynamicWorkflowMode. Keep this as unknown rather than assuming the server returns a valid value.
-      dynamicWorkflow?: {
-        mode?: unknown;
-      } | null;
-    } | null;
+    configs?:
+      | (RequestVerificationClientConfig & {
+          forceUpdate?: ForceUpdateConfig | null;
+          codingPlanBillingDiscount?: CodingPlanBillingDiscountConfig;
+          codingPlanStaticProducts?: CodingPlanStaticProductsConfig;
+          codingPlanStaticTeamProducts?: CodingPlanStaticTeamProductsConfig;
+          startPlanPreview?: StartPlanPreviewConfig | null;
+          // Off-peak task rollout (server-side): inner fields use server-side snake_case alongside outer camelCase fields.
+          offPeak?: {
+            enable_offpeak_task?: boolean;
+          } | null;
+          modelContextBudget?: {
+            strategy?: unknown;
+          } | null;
+          // Dynamic workflow rollout: the valid values for mode are determined by
+          // shared's normalizeDynamicWorkflowMode. Keep this as unknown rather than assuming the server returns a valid value.
+          dynamicWorkflow?: {
+            mode?: unknown;
+          } | null;
+        })
+      | null;
   } | null;
 }
 
@@ -214,6 +274,139 @@ export class BigModelCodingPlanSubscriptionProvider {
     return unwrapClientConfigStartPlanPreview(payload);
   }
 
+  async getManualClaimPlanPreviews(): Promise<ManualClaimPlanPreviewSnapshot> {
+    const token = (await this.credentialService.load(ZCODE_JWT_TOKEN_KEY))?.trim();
+    const url = new URL(buildRuntimeZCodeApiUrl(process.env, "/api/v1/zcode-plan/billing/preview"));
+    url.searchParams.set("app_version", ZCODE_UPSTREAM_BASE_VERSION);
+    url.searchParams.set("platform", resolveClientPlatformKey());
+    const payload = await readCodingPlanApiJson<RemoteEnvelope<ManualClaimPlanPreviewPayload>>(
+      this.apiClient,
+      url,
+      {
+        method: "GET",
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+        timeoutMs: REQUEST_TIMEOUT_MS,
+      },
+    );
+    // The new ZCode billing API keeps the platform envelope (code=0 means success); do not reuse
+    // the BigModel payment API's code=200 unwrapper, or valid previews would be misjudged as failures.
+    if (payload.code !== undefined && payload.code !== 0) {
+      throw new Error(payload.msg?.trim() || "manual_claim_preview_failed");
+    }
+    if (!payload.data) {
+      throw new Error(payload.msg?.trim() || "manual_claim_preview_missing_data");
+    }
+    const data = payload.data;
+    const serverTime = readServerTimeMilliseconds(data.server_time);
+    const plans = (data.plans ?? []).flatMap((plan) => {
+      const planId = plan.plan_id?.trim() ?? "";
+      if (!planId) return [];
+      return [
+        {
+          planId,
+          name: plan.name?.trim() || planId,
+          description: plan.description?.trim() ?? "",
+          priority: Number.isFinite(plan.priority) ? (plan.priority ?? 0) : 0,
+          entitlements: (plan.entitlements ?? []).flatMap((entitlement) => {
+            const entitlementId = entitlement.entitlement_id?.trim() ?? "";
+            if (!entitlementId) return [];
+            return [
+              {
+                entitlementId,
+                showName: entitlement.show_name?.trim() ?? "",
+                meter: entitlement.meter?.trim() ?? "",
+                unitType: entitlement.unit_type?.trim() ?? "",
+                capabilities: entitlement.capabilities ?? [],
+                grantUnits: Number.isFinite(entitlement.grant_units)
+                  ? (entitlement.grant_units ?? 0)
+                  : 0,
+                period: entitlement.period?.trim() ?? "",
+                priority: Number.isFinite(entitlement.priority) ? (entitlement.priority ?? 0) : 0,
+                ...(Number.isFinite(entitlement.effective_at)
+                  ? { effectiveAt: entitlement.effective_at }
+                  : {}),
+              },
+            ];
+          }),
+        },
+      ];
+    });
+    return { ...(serverTime === undefined ? {} : { serverTime }), plans };
+  }
+
+  async claimManualPlan(request: ManualClaimPlanClaimRequest): Promise<ManualClaimPlanClaimResult> {
+    const token = (await this.credentialService.load(ZCODE_JWT_TOKEN_KEY))?.trim();
+    if (!token) {
+      return { success: false, code: 401, message: "" };
+    }
+    const payload = await readCodingPlanApiJson<
+      Omit<RemoteEnvelope<ManualClaimPlanClaimPayload>, "code"> & { code?: number | string }
+    >(
+      this.apiClient,
+      new URL(buildRuntimeZCodeApiUrl(process.env, "/api/v1/zcode-plan/billing/claim")),
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+          ...requestVerificationClaimHeaders(request),
+          "X-ZCode-App-Version": ZCODE_UPSTREAM_BASE_VERSION,
+          "X-Platform": resolveClientPlatformKey(),
+        },
+        body: JSON.stringify({ plan_id: request.planId }),
+        timeoutMs: REQUEST_TIMEOUT_MS,
+      },
+    );
+    // The claim API's error code may be a numeric string; a missing code still does not imply success.
+    const rawCode = payload.code;
+    const code =
+      typeof rawCode === "number"
+        ? rawCode
+        : typeof rawCode === "string" && /^\d+$/.test(rawCode)
+          ? Number(rawCode)
+          : -1;
+    const serverTime = readServerTimeMilliseconds(payload.data?.server_time);
+    if (code !== 0 || !payload.data?.plan) {
+      const failureEndsAt = payload.data?.plan?.ends_at;
+      return {
+        success: false,
+        code,
+        // The server has already translated; the top-level msg is not user-facing copy; the UI localizes the empty value as a fallback.
+        message: typeof payload.data?.message === "string" ? payload.data.message : "",
+        ...(serverTime === undefined ? {} : { serverTime }),
+        // Keep the existing result fields for other callers; marketing hints no longer derive copy from them.
+        ...(Number.isFinite(failureEndsAt) ? { failureEndsAt } : {}),
+      };
+    }
+    const plan = payload.data.plan;
+    return {
+      success: true,
+      code,
+      message: payload.msg?.trim() ?? "",
+      ...(serverTime === undefined ? {} : { serverTime }),
+      plan: {
+        userPlanId: plan.user_plan_id?.trim() ?? "",
+        planId: plan.plan_id?.trim() || request.planId,
+        status: plan.status?.trim() ?? "",
+        ...(Number.isFinite(plan.starts_at) ? { startsAt: plan.starts_at } : {}),
+        ...(Number.isFinite(plan.ends_at) ? { endsAt: plan.ends_at } : {}),
+        entitlements: (plan.entitlements ?? []).flatMap((entitlement) => {
+          const entitlementId = entitlement.entitlement_id?.trim() ?? "";
+          if (!entitlementId) return [];
+          return [
+            {
+              entitlementId,
+              showName: entitlement.show_name?.trim() ?? "",
+              ...(Number.isFinite(entitlement.effective_at)
+                ? { effectiveAt: entitlement.effective_at }
+                : {}),
+            },
+          ];
+        }),
+      },
+    };
+  }
+
   /**
    * Off-peak task rollout config: reuse the client/configs channel without an additional request.
    * forceRefresh supports "refetch when opening the Automations entry" (otherwise a rollout change may remain invisible for up to one hour due to the snapshot).
@@ -270,6 +463,15 @@ export class BigModelCodingPlanSubscriptionProvider {
   async getModelContextBudgetStrategy(): Promise<ZCodeModelContextBudgetStrategy> {
     // 3.12.2: budgets are unified as preflight-v1. Keep the compatibility method, but do not wait for remote config on every session creation.
     return DEFAULT_ZCODE_MODEL_CONTEXT_BUDGET_STRATEGY;
+  }
+
+  async getBillingDiscount(): Promise<CodingPlanBillingDiscountConfig | undefined> {
+    const payload = await this.getClientConfigs();
+    return unwrapClientConfigBillingDiscount(payload);
+  }
+
+  async getRequestVerificationConfig(): Promise<RequestVerificationConfig | null> {
+    return readRequestVerificationConfig((await this.getClientConfigs()).data?.configs);
   }
 
   async getForceUpdateConfig(): Promise<ForceUpdateConfig | null> {
@@ -606,7 +808,7 @@ export class BigModelCodingPlanSubscriptionProvider {
     // client/configs and other ZCode platform APIs must share the runtime endpoint;
     // E2E/test environments point ZCODE_BASE_URL at a local mock, so hard-coding the production domain would make plan state uncontrollable.
     const url = resolveCodingPlanClientConfigUrl(process.env);
-    url.searchParams.set("app_version", ZCODE_VERSION);
+    url.searchParams.set("app_version", ZCODE_UPSTREAM_BASE_VERSION);
     url.searchParams.set("platform", resolveClientPlatformKey());
     // StartPlanCard and the plan list both come from the same client/configs response.
     // When preview/products are read on the same screen, combine the requests to avoid duplicate remote config reads on the signed-out settings page.
@@ -812,7 +1014,7 @@ export class BigModelCodingPlanSubscriptionProvider {
   }
 }
 
-function resolveCodingPlanClientConfigUrl(env: NodeJS.ProcessEnv): URL {
+export function resolveCodingPlanClientConfigUrl(env: NodeJS.ProcessEnv): URL {
   return new URL(buildRuntimeZCodeApiUrl(env, ZCODE_CLIENT_CONFIG_API_PREFIX));
 }
 
@@ -1191,6 +1393,19 @@ function isValidCardCopyConfigItem(value: unknown): boolean {
   );
 }
 
+function unwrapClientConfigBillingDiscount(
+  payload: ZCodeClientConfigEnvelope,
+): CodingPlanBillingDiscountConfig | undefined {
+  if (payload.code !== undefined && payload.code !== 0) {
+    throw new Error(payload.msg?.trim() || "ZCode client config request failed");
+  }
+  const configs = payload.data?.configs;
+  if (!configs || !("codingPlanBillingDiscount" in configs)) {
+    return undefined;
+  }
+  return configs.codingPlanBillingDiscount;
+}
+
 function unwrapClientConfigStartPlanPreview(
   payload: ZCodeClientConfigEnvelope,
 ): StartPlanPreviewConfig | null {
@@ -1259,6 +1474,9 @@ function normalizeRemoteErrorMessage(
   const message = msg?.trim();
   if (message && isUnrenderableRemoteErrorMessage(message)) {
     return CODING_PLAN_SYSTEM_BUSY;
+  }
+  if (message && isRequestVerificationMessage(message)) {
+    return REQUEST_VERIFICATION_REQUIRED;
   }
   const providerName = resolveCodingPlanProviderName(providerId);
   return message || `${providerName} request failed${code ? `: ${code}` : ""}`;

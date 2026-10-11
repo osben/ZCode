@@ -44,6 +44,22 @@ export interface CodingPlanUsageRequest {
   timeZone?: string;
 }
 
+/** Highspeed reads only the regular Pro/Max decode TPS; it does not trigger the full Coding Plan usage aggregation. */
+export interface CodingPlanRegularTpsRequest {
+  preferredProviderId: string;
+  /**
+   * Static Registry access category or dynamic account-access context resolved at the call boundary.
+   *
+   * Bug cause: this request previously carried only organizationId/projectId, and request-time
+   * authorization relied on the host guessing the account per provider. After the provider
+   * refactor, Coding Plan authorization is resolved uniformly through accountAccess (Team scope is
+   * included there); when it is missing, resolveAuthorization necessarily returns null, and the
+   * time-saver silently shows nothing.
+   */
+  accountAccess: ZCodeProviderAccountAccess | ZCodeAccountAccess;
+  timeZone?: string;
+}
+
 export interface UsageEntitlementRequest {
   /** Invalidate the corresponding Start Plan balance cache briefly after a purchase or claim completes. */
   invalidateBalanceCache?: boolean;

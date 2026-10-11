@@ -101,7 +101,7 @@ export interface V4ConversationContextValue {
 // and inject the assembled value directly through the Provider, without going through V4ConversationProvider’s workspace resolution.
 export const V4ConversationContext = createContext<V4ConversationContextValue | null>(null);
 
-interface V4ConversationProviderProps {
+export interface V4ConversationProviderProps {
   workspacePath: string;
   workspaceIdentity?: string;
   children: ReactNode;
@@ -221,8 +221,8 @@ export function useHasV4Conversation(): boolean {
   return useContext(V4ConversationContext) !== null;
 }
 
-interface V4PaneConversationProviderProps {
-  /** Primary workspace for this pane (connection routing key). */
+export interface V4PaneConversationProviderProps {
+  /** Primary workspace bound to the pane (connection-routing key, docs/v4-split-pane-workbench.md). */
   scope: PaneWorkspaceScope;
   children: ReactNode;
 }

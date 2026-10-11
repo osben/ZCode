@@ -50,6 +50,9 @@ import type {
   ImportedInFlightAsk,
   ImportedRunCache,
   ImportedWorldEntry,
+  ListActorsOptions,
+  ListNodesOptions,
+  NodeKind,
   NodeRecord,
   RunRecord,
 } from "@zcode/dynamic-workflow";
@@ -67,9 +70,16 @@ import type { ActorTranscriptStore } from "./workflow-actor-transcript.js";
  */
 interface ImportedCacheJournalReader {
   getRun(runId: string): RunRecord | undefined;
-  listActors(runId: string): ActorRecord[];
-  listNodes(runId: string): NodeRecord[];
+  listActors(runId: string, opts: ListActorsOptions): ActorRecord[];
+  listNodes(runId: string, opts: ListNodesOptions): NodeRecord[];
 }
+
+/**
+ * Node kinds the import cache reads: `ask` (continuation prefix) and world rows (world-read
+ * queues). `report` and `artifact` rows never enter the import cache—not one is read; a
+ * predecessor may have reported 65,536 of them (docs/execution-engine.md, "Reading the journal").
+ */
+const IMPORTED_NODE_KINDS: readonly NodeKind[] = ["ask", "world-read", "world-run"];
 
 /**
  * Three reasons import construction can be refused. **Discriminants, not messages**: the model
@@ -118,7 +128,9 @@ export function preflightAmendImport(
 ): AmendPreflightResult {
   const run = journal.getRun(predecessorRunId);
   if (run === undefined) return { ok: false, reason: "run_not_found" };
-  if (!completedAsksHaveBoundaries(journal.listNodes(predecessorRunId))) {
+  // The boundary check looks only at ask rows' status and message_boundary, never at their answers.
+  const asks = journal.listNodes(predecessorRunId, { kinds: ["ask"], withResult: false });
+  if (!completedAsksHaveBoundaries(asks)) {
     return { ok: false, reason: "missing_boundaries" };
   }
   return { ok: true, run };
@@ -182,8 +194,8 @@ export interface AmendImportOptions {
 }
 
 /**
- * Read predecessor journal and transcript state to build {@link ImportedRunCache}.
- * The journal determines the completed prefix; continuing an unfinished ask also depends on source-session message count and quiescence.
+ * Read the predecessor journal to build {@link ImportedRunCache}. **Purely deterministic**: the same
+ * journal state always yields the same table.
  *
  * Three gates, in order (gates before construction: if a gate fails, no rows need to be read):
  *   1. Predecessor missing → `run_not_found`.
@@ -215,17 +227,24 @@ export async function buildImportedCache(
   // (warm-start an extended analysis). The two sets serve different purposes.
   if (!TERMINAL_RUN_STATUSES.has(run.status)) return { ok: false, reason: "not_amendable" };
 
-  const nodes = journal.listNodes(predecessorRunId);
+  const nodes = journal.listNodes(predecessorRunId, {
+    kinds: IMPORTED_NODE_KINDS,
+    withResult: true,
+  });
   if (!completedAsksHaveBoundaries(nodes)) return { ok: false, reason: "missing_boundaries" };
 
+  // Group ask rows by actor **once**: previously every candidate actor scanned the entire node
+  // table (O(actor × rows)).
+  const asksByActor = groupAsksByActor(nodes);
   const actors = new Map<string, ImportedActorCandidate>();
-  for (const record of namedUniqueActors(journal.listActors(predecessorRunId), logger)) {
+  const records = journal.listActors(predecessorRunId, { withPersona: true });
+  for (const record of namedUniqueActors(records, logger)) {
     const name = record.name!;
     const candidate = await buildActorCandidate({
       actor: record,
       journal,
       ...(logger === undefined ? {} : { logger }),
-      nodes,
+      asks: asksByActor.get(actorKey(record.siteId, record.ordinal)) ?? [],
       predecessorRunId,
       ...(options?.quietSessions === undefined ? {} : { quietSessions: options.quietSessions }),
       ...(transcripts === undefined ? {} : { transcripts }),
@@ -288,12 +307,13 @@ async function buildActorCandidate(input: {
   actor: ActorRecord;
   journal: ImportedCacheJournalReader;
   logger?: Logger;
-  nodes: NodeRecord[];
+  /** Ask rows for this actor (already grouped by actor; see {@link groupAsksByActor}). */
+  asks: readonly NodeRecord[];
   predecessorRunId: string;
   quietSessions?: ReadonlySet<string>;
   transcripts?: ActorTranscriptStore;
 }): Promise<ImportedActorCandidate | undefined> {
-  const { actor, journal, logger, nodes, predecessorRunId, quietSessions, transcripts } = input;
+  const { actor, asks, journal, logger, predecessorRunId, quietSessions, transcripts } = input;
   const name = actor.name!;
 
   // The engine synchronously persists persona as frozen identity during createActor, so it should
@@ -301,7 +321,7 @@ async function buildActorCandidate(input: {
   // cannot verify persona consistency; discard the candidate instead of substituting `{}`.
   if (actor.persona === undefined) return undefined;
 
-  const { entries, next } = completedAskPrefix(nodes, actor);
+  const { entries, next } = completedAskPrefix(asks);
   // There is neither a completed prefix nor an in-flight ask after it, so this actor has nothing to
   // import. Return early to avoid walking the lineage and reading the transcript.
   if (entries.length === 0 && next?.status !== "running") return undefined;
@@ -369,7 +389,8 @@ async function buildActorCandidate(input: {
 }
 
 /**
- * Ask that was **still in flight** when the predecessor stopped. All five conditions are required:
+ * Ask that was **still in flight** when the predecessor stopped (`docs/execution-engine.md`,
+ * "What is imported"). All five conditions are required:
  *
  *   1. A row exists immediately after the prefix, and it is `running`. A cancelled ask retains a
  *      running row, so a stopped run can qualify; `failed` and ordinal gaps are not in-flight, but
@@ -433,20 +454,19 @@ function resolveInFlightAsk(input: {
  * and ordinal gap alike. A failed ask is **not binding** for the new run (models are stochastic, and
  * amendments often aim to get past a failure), so do not import it. But skipping it and importing
  * later rows would smuggle context: the skipped turn remains in the source transcript while the
- * cache claims it never happened. Stopping at the first non-completed row is the only consistent reading.
+ * cache claims it never happened. Stopping at the first non-completed row is the only consistent
+ * reading (see "What is imported" in the spec).
  *
  * `next` is the row **that stopped the prefix** (omitted for an ordinal gap). It travels with the
  * prefix because by definition "the in-flight ask" is exactly this row. A separate traversal to
  * find `actorSeq === entries.length` would compute the "immediately after the prefix" coordinate twice.
  */
-function completedAskPrefix(
-  nodes: NodeRecord[],
-  actor: ActorRecord,
-): { entries: ImportedAskEntry[]; next?: NodeRecord } {
+function completedAskPrefix(asks: readonly NodeRecord[]): {
+  entries: ImportedAskEntry[];
+  next?: NodeRecord;
+} {
   const bySeq = new Map<number, NodeRecord>();
-  for (const node of nodes) {
-    if (node.kind !== "ask") continue;
-    if (node.actorSiteId !== actor.siteId || node.actorOrdinal !== actor.ordinal) continue;
+  for (const node of asks) {
     if (node.actorSeq === undefined) continue;
     bySeq.set(node.actorSeq, node);
   }
@@ -494,7 +514,10 @@ function resolveTranscriptSource(input: {
 
   while (runId !== undefined && !seen.has(runId)) {
     seen.add(runId);
-    const matches = journal.listActors(runId).filter((actor) => actor.name === actorName);
+    // Fetching rows by name pushes the filter down to SQL and skips persona: previously every
+    // candidate actor read the entire actor table (including every system prompt) at every
+    // generation of the chain, then filtered by name.
+    const matches = journal.listActors(runId, { name: actorName, withPersona: false });
     // 0 = this generation has no such actor (the chain is broken for this name); >1 = duplicate
     // name, so selecting a session by name is arbitrary. Stop here in either case rather than
     // walking further back: an older generation's session is not the source of **this** transcript.
@@ -515,12 +538,20 @@ function resolveTranscriptSource(input: {
  * Current message count for the source session; return `undefined` if reading fails.
  *
  * Both consumers share this read (see {@link buildActorCandidate}):
- * - Check whether the source session reaches the completed-prefix boundary. If the count is too
- *   small or unreadable, the builder discards the candidate so the successor reruns it; the driver
- *   also rejects a source shorter than the boundary when copying, preventing incomplete context.
- * - Compute the continuation position for an unfinished ask (see {@link resolveInFlightAsk}).
  *
- * Count semantics must match driver accounting and core history recovery; all use the same message-store interface.
+ *   - **Source-integrity check** (count ≥ prefix boundary). It joins the driver's **fail-loudly**
+ *     semantics with the spec's **degrade** semantics: the driver's `seedActorTranscript` throws a
+ *     `DriverError` on a short session (corruption level; see property 3 there), while the spec says
+ *     a missing transcript should silently degrade to a fresh rerun. Both are correct but scoped
+ *     differently—**foreseeable** shortfalls (session cleaned up or truncated) should discard the
+ *     candidate at build time, so the driver-side failure degrades to a fallback for what should
+ *     never happen.
+ *   - **Continuation position for the in-flight ask** (see {@link resolveInFlightAsk}).
+ *
+ * A failed read counts as "unfulfillable": the builder does not own the session store's error
+ * taxonomy, and any source that cannot be read is not a usable source.
+ * Count semantics must match the driver's accounting and core's rehydration—three readers, one
+ * access surface; see the header of workflow-actor-transcript.ts.
  */
 async function countSource(
   transcripts: ActorTranscriptStore,
@@ -545,7 +576,27 @@ async function countSource(
  * **safety feature**, not an optimization: amended resume must never silently replay a journaled
  * effect (for example, running a deployment script twice).
  */
-function buildWorldQueues(nodes: NodeRecord[]): ReadonlyMap<string, ImportedWorldEntry[]> {
+/** Actor coordinate key (same shape as the engine's `refToString`). */
+function actorKey(siteId: string, ordinal: number): string {
+  return `${siteId}@${ordinal}`;
+}
+
+/** Group the predecessor's ask rows by actor, preserving journal order within each group. */
+function groupAsksByActor(nodes: readonly NodeRecord[]): Map<string, NodeRecord[]> {
+  const groups = new Map<string, NodeRecord[]>();
+  for (const node of nodes) {
+    if (node.kind !== "ask" || node.actorSiteId === undefined || node.actorOrdinal === undefined) {
+      continue;
+    }
+    const key = actorKey(node.actorSiteId, node.actorOrdinal);
+    const group = groups.get(key);
+    if (group === undefined) groups.set(key, [node]);
+    else group.push(node);
+  }
+  return groups;
+}
+
+function buildWorldQueues(nodes: readonly NodeRecord[]): ReadonlyMap<string, ImportedWorldEntry[]> {
   const world = new Map<string, ImportedWorldEntry[]>();
   for (const node of nodes) {
     if (node.kind !== "world-read" && node.kind !== "world-run") continue;

@@ -183,9 +183,10 @@ function recorderHtml(): string {
                   if (!chunkEvent.data || chunkEvent.data.size === 0) return;
                   chunkQueue = chunkQueue.then(async () => {
                     const bytes = await chunkEvent.data.arrayBuffer();
-                    // Transferring an ArrayBuffer from DOM MessagePort to Electron MessagePortMain
-                    // silently drops the entire message on some Electron platforms. Let structured
-                    // clone copy the chunk so dataavailable and the later stopped message reach main in order.
+                    // Bug cause: transferring an ArrayBuffer from DOM MessagePort to Electron
+                    // MessagePortMain silently drops the entire message on some Electron platforms.
+                    // Let structured clone copy the chunk so dataavailable and the later stopped
+                    // message reach main in order.
                     port.postMessage({ type: "chunk", data: bytes });
                   });
                 });

@@ -3,23 +3,25 @@
    Starts a local HTTP service at 127.0.0.1 that fully simulates quota snapshots, ticket acquisition,
    batch status checks, settlement, and messages. Point the real HTTP client and idle plan provider's
    baseURL at this gateway's origin to exercise the same code paths as production; remove the
-   ZCODE_OFFPEAK_MOCK switch when integrating with a real server.
+   ZCODE_OFFPEAK_MOCK switch when integrating with a real server (tech-design §10 step 3).
 
    ⚠ After admission, the messages endpoint forwards requests unchanged to the real model endpoint
    returned by resolveUpstream() (usually the user's Anthropic-compatible coding-plan endpoint).
-   Mock mode uses the real model and bills the user's own key; use it only for development or demos.
+   Mock mode uses the real model and bills the user's own key; use it only for development or
+   demos, as documented.
 
-   State machine (aligned with the server axis of the two-axis model):
+   State machine (aligned with the server axis of the D26 two-axis model):
    take → queued (FIFO position); status polling triggers promotion (polling is the promotion event):
    after readyDelayMs, the ticket becomes ready (readyDeadline = +readyTtlMs); if no first
    message arrives before ready expires, it becomes expired; admission of the first message
    moves it to active (activeDeadline = +activeMs);
    when active expires, it becomes expired and messages return 400/3102; settle moves it to settled (idempotently).
-   Before messages are admitted, inject N 429/3105 responses with Retry-After to simulate throttling when resources are full. */
+   Before messages are admitted, inject N 429/3105 responses with Retry-After to simulate
+   throttling when resources are full (D24). */
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { ServiceLogger } from "../logger/serviceLogger.js";
 
-interface OffPeakMockGatewayOptions {
+export interface OffPeakMockGatewayOptions {
   /** Delay before promotion from queued to ready; defaults to 15s (to demonstrate off-peak waiting). */
   readyDelayMs?: number;
   /** Window to send the first message after ready; defaults to 5min. */
@@ -40,7 +42,7 @@ interface OffPeakMockGatewayOptions {
   scenario?: "foreground-subagents" | "capture" | "invalid-ticket";
 }
 
-interface OffPeakMockGatewayDeps {
+export interface OffPeakMockGatewayDeps {
   logger: ServiceLogger;
   /**
    * Forwarding target for messages after admission: full messages URL + outbound headers (including upstream auth).
@@ -129,7 +131,7 @@ interface OffPeakMockCapturedRequest {
   project?: string;
 }
 
-interface OffPeakMockGatewayHandle {
+export interface OffPeakMockGatewayHandle {
   origin: string;
   port: number;
   /** true = another host's gateway already owns the port, and this handle only points to it (close is a no-op). */

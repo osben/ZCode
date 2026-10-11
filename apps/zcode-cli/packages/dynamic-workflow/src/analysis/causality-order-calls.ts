@@ -1,5 +1,6 @@
 import ts from "typescript";
 import { callbackSemanticsOf, DEFAULT_CALLBACK_SEMANTICS } from "./callbacks.js";
+import type { HoleSite } from "./sites.js";
 import {
   functionName,
   resolveCallDeclaration,
@@ -78,6 +79,11 @@ export function walkCall(
     issue(state, ask, chain);
     return;
   }
+  const hole = state.holeByCall.get(node);
+  if (hole !== undefined) {
+    walkHole(state, node, hole, chain);
+    return;
+  }
   const read = state.readByCall.get(node);
   if (read !== undefined) {
     issue(state, read, chain);
@@ -85,7 +91,7 @@ export function walkCall(
   }
   const actor = state.actorByCall.get(node);
   if (actor !== undefined) {
-    state.events.push({ actor, at: "actor", regions: chain });
+    state.events.push({ actor, at: "actor", phase: state.currentPhase, regions: chain });
     return;
   }
   applyAt(state, node, chain, handled, receiverIssues);
@@ -178,6 +184,68 @@ export function applyAt(
     const arm = openRegion(state, "branch", choice, { entered: false, loc: locOf(state, fn) });
     inlineBody(state, fn, [...chain, choice, arm], node, options);
   }
+}
+
+/**
+ * How holes appear in the causal-order walk (docs/analysis.md, “Sites”, “Hole sites”).
+ *
+ * **An open hole is both a step and a phase.** As a step, it issues once in the phase where it
+ * stands (the current phase), so await barriers, settling, and control dependencies treat it like an ask.
+ * As a phase, its ID is the site ID and its name is the literal, but it has **no members**: it is only
+ * a station whose track must be laid before the run. To include it in the control-flow projection's
+ * phase table and connect the surrounding edges, the walk emits `mark` after `issue`. The quotient
+ * graph is therefore “standing phase → hole → next phase,” rather than a round trip to the same phase.
+ *
+ * **A filled hole is a phase, not a step.** Its phase owns the sites in its body before the first
+ * marker. Markers in the body denote phases after it and each carries `fill` pointing to this hole;
+ * the hole's own phase carries `fill` for the hole that contains it (none at top level). Nesting is
+ * recorded only here, not in the ID (hole-id.ts).
+ *
+ * Its phase also has a mark node, just like an open hole. Fix rationale: before 2026-09-28, filled
+ * holes had no mark. If a body began with `phase()`, the hole's own phase had no members and the
+ * control-flow projection dropped it. Its name then disappeared from the phase table, sidebar, and
+ * run's `phaseNames`; only the timeline header still showed it.
+ *
+ * Like a `future` body, this callback is entered, runs once, and is not deferred. The taint interpreter
+ * records it as an `argument` application at the call site, so it is inlined here as directed by the
+ * oracle. Because it is async, it forms a strand that the outer `await` joins at the barrier.
+ */
+function walkHole(
+  state: TraceState,
+  node: ts.CallExpression,
+  site: HoleSite,
+  chain: readonly string[],
+): void {
+  const name = site.name ?? site.id;
+  const enclosing = state.fillStack[state.fillStack.length - 1];
+  if (site.body === undefined) {
+    issue(state, site.id, chain);
+    mintHolePhase(state, site, name, enclosing);
+    state.events.push({ at: "mark", phase: site.id, regions: chain });
+    return;
+  }
+  mintHolePhase(state, site, name, enclosing);
+  state.events.push({ at: "mark", phase: site.id, regions: chain });
+  const outer = state.currentPhase;
+  state.currentPhase = site.id;
+  state.fillStack.push(site.id);
+  for (const fn of applicationsAt(state, node, "argument")) {
+    inlineBody(state, fn, chain, node, { label: name });
+  }
+  state.fillStack.pop();
+  state.currentPhase = outer;
+}
+
+/** Emit a hole's phase on first arrival (a hole in a helper is reached on every call, but has one phase). */
+function mintHolePhase(
+  state: TraceState,
+  site: HoleSite,
+  name: string,
+  fill: string | undefined,
+): void {
+  if (state.holePhases.has(site.id)) return;
+  state.holePhases.add(site.id);
+  state.phases.push({ id: site.id, loc: site.loc, name, ...(fill === undefined ? {} : { fill }) });
 }
 
 /** What a call site can say about the body it inlines, beyond where it sits. */

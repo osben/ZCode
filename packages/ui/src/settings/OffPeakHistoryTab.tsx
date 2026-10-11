@@ -27,7 +27,7 @@ const STATUS_INDICATOR_CLASS = {
   running: { dot: "bg-brand", text: "text-brand" },
 } as const satisfies Record<string, { dot: string; text: string }>;
 
-function resolveOffPeakHistoryStatus(
+export function resolveOffPeakHistoryStatus(
   task: Pick<ZCodeOffPeakTask, "status">,
 ): keyof typeof STATUS_INDICATOR_CLASS {
   if (task.status === "completed") return "succeeded";
@@ -59,7 +59,7 @@ export function OffPeakHistoryTab({
   const durationMin = Math.max(1, Math.round((endAt - task.startedAt) / 60_000));
   return (
     <div className="overflow-x-auto rounded-[8px]">
-      {/* History table text can scale; use relative line height so large text is not clipped by a fixed 18px line box. */}
+      {/* Fix rationale: History table text can scale; use relative line height so large text is not clipped by a fixed 18px line box. */}
       <table className="w-full text-left text-ui-base font-normal leading-snug tracking-[-0.08px]">
         <thead className="bg-surface text-foreground-subtle">
           <tr className="h-[30px] border-b border-border">

@@ -8,14 +8,14 @@
 // return true only if state remains stale until timeout (or stays unavailable/throws), triggering the UI's “restart ZCode” fallback.
 import { isCuaPermissionStatusAvailable, type CuaPermissionStatusResult } from "@zcode/services";
 
-interface WaitForAccessibilityNotStaleOptions {
+export interface WaitForAccessibilityNotStaleOptions {
   /** Total timeout (6s by default): covers tccd propagation lag; the first poll is usually granted immediately. */
   timeoutMs?: number;
   /** Poll interval (500ms by default). */
   intervalMs?: number;
 }
 
-type GetCuaPermissionStatusFn = () => Promise<CuaPermissionStatusResult>;
+export type GetCuaPermissionStatusFn = () => Promise<CuaPermissionStatusResult>;
 
 const DEFAULT_TIMEOUT_MS = 6000;
 const DEFAULT_INTERVAL_MS = 500;

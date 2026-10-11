@@ -12,6 +12,7 @@ import {
   type ProjectId,
 } from "@zcode/contracts";
 import type { ModelSelection } from "@zcode/provider";
+import { isHighspeedProviderId } from "@zcode/shared";
 import { StartupTimer } from "../startup-logging.js";
 
 export function isClosableSessionStore(
@@ -57,14 +58,32 @@ export async function readSessionModelSelection(
   });
   const data = entries.at(-1)?.data;
   const complete = parseModelSelectionValue(data);
-  if (complete) return complete;
+  if (complete) return residentModelSelection(complete);
   // An invalid reasoning value must not erase the recoverable current model identity. Read only the
   // new field here; do not fill it from old thoughtLevel/messages/defaults. Registry still validates before execution.
   if (data && typeof data === "object" && !Array.isArray(data)) {
     const current = data as Record<string, unknown>;
-    return parseModelSelectionValue({ providerId: current.providerId, modelId: current.modelId });
+    return residentModelSelection(
+      parseModelSelectionValue({ providerId: current.providerId, modelId: current.modelId }),
+    );
   }
   return undefined;
+}
+
+/**
+ * Acceleration-card Providers are single-turn execution identities with
+ * `selectionScope=execution`; they must never become a session's resident selection
+ * (highspeed-card-spec §5.1). Older forks wrote the accelerated selection from the fork-point
+ * message into the child's model_selection entry. After restore, such sessions stayed resident on
+ * a hidden Provider with no credentials that never appears in the model list, and the
+ * restoredModelSelection projection even showed it as the selected UI state and contextWindow.
+ * Discard it on read: the session returns to "unbound" instead of being filled in with the default
+ * model (restore semantics are runtime-config's initialModelSelection), and the user picks a model
+ * again, preventing the hidden identity from spreading through storage and projections.
+ */
+function residentModelSelection(selection: ModelSelection | undefined): ModelSelection | undefined {
+  if (!selection) return undefined;
+  return isHighspeedProviderId(selection.providerId) ? undefined : selection;
 }
 
 export function closeSessionStore(store: SqliteSessionStore): void {

@@ -17,6 +17,12 @@ import type {
 } from "../facade/registry.js";
 import type { AskProgress, AskStats } from "./ask-observation-types.js";
 import type { ActorSessionSeed } from "./imported-cache-types.js";
+import type {
+  GetNodeOptions,
+  ListActorsOptions,
+  ListEventsOptions,
+  ListNodesOptions,
+} from "./journal-read-types.js";
 
 // ————————————————————————————————————————————————————————————————
 // Identity
@@ -63,10 +69,18 @@ export function refToString(ref: InstanceRef | ActorRef): string {
  * exceed permissions. The driver decides whether to register submit_result based on the site graph
  * (actors whose asks are all untyped do not register it); that is not represented here, keeping the
  * persona limited to identity.
+ *
+ * Added 2026-09-26: a persona can name a **specific** model (`model`, docs/dynamic-workflow/authoring.md,
+ * “Choosing a model per subagent”). This does not restore the retired tiers: a tier needs a host mapping that does not exist,
+ * while here the script names the model literally and launch resolves it against the host catalog into a binding table (`modelBindings` in run-launched).
+ * The engine stores this name but never interprets it; lookup and session creation belong to the host (bootstrap's
+ * workflow-actor-model.ts). It is **not** part of cache identity (matchImportedActor in imported-cache.ts).
  */
 export interface PersonaSpec {
   name?: string;
   system?: string;
+  /** Model name written literally in the script (`ModelRef` is lowered to its name); absent means use the run's subagent model. */
+  model?: string;
 }
 
 /**
@@ -113,13 +127,13 @@ export interface AskSpec {
 export type ImportCloseCause = "mutating-tool" | "world-run";
 
 /**
- * Run-level capacity limits, set at submit time and stored in dwf_run. Stores the concurrency ceiling;
- * stopping a run is controlled through the cancellation interface.
+ * Run-level capacity limits, set at submit time and stored in dwf_run. Only the concurrency limit remains: token budgets and node limits were removed
+ * (docs/dynamic-workflow/authoring.md)—they were never set in production or served only as gates, while cancellation is the control plane.
  *
- * Values **may change more than once while a run is alive**: an amendment that changes only
- * `max_concurrency` applies to the live run ({@link WorkflowEngine.setMaxConcurrency}). The engine
- * therefore replaces its entire caps object rather than mutating a field in place—the copies recorded
- * in `run-started` / `run-caps-changed` events must retain their original values.
+ * Values **can change more than once while the run is alive**: amendments changing only `max_concurrency` take effect on a live run
+ * （{@link WorkflowEngine.setMaxConcurrency}，docs/dynamic-workflow/concurrency.md
+ * (“Two bounds on a run”). The engine therefore replaces its entire caps object instead of mutating fields in place—the copies already recorded
+ * in `run-started` / `run-caps-changed` events must remain as they were when recorded.
  */
 export interface Caps {
   maxConcurrency: number;
@@ -261,6 +275,17 @@ export interface WorkflowHostApi {
    */
   enterPhase(name: string): void;
   /**
+   * The script reaches an **unfilled hole** (docs/execution-engine.md, “Holes”). This Boundary A call resembles ask but without a driver:
+   * the engine assigns an ordinal, stamps the birth phase, records `hole-reached`, and suspends the promise at the site
+   * until the main agent supplies the hole body (`{code}`, `holeBodies[siteId]` from lowering) through {@link import("./engine.js").WorkflowEngine.fillHole}.
+   * **No journal row is written**: a hole is not a node that settles by itself, and completion is already present in the run row as part of the effective script.
+   *
+   * A completed site (matched in the cell's fill table, or code remembered by the engine in this generation) should not reach this method again; defensively, the engine
+   * answers immediately from remembered code without suspending or recording an event. Truncate `prompt` before recording it
+   * {@link import("./engine-holes.js").HOLE_PROMPT_MAX_CHARS}。
+   */
+  hole(siteId: string, name: string, prompt?: string): Promise<{ code: string }>;
+  /**
    * Publish a **content artifact** (`artifact.file` / `artifact.markdown`). Effect: the driver copies
    * bytes to the store and records one journal row; on success it resolves to {@link ArtifactRef}, and
    * on failure it rejects in a way that can be **caught**.
@@ -368,13 +393,20 @@ export interface AskWaitInfo {
   retryAfterMs?: number;
 }
 
-/** Reason for a process-level concurrency-cap change. */
+/**
+ * Reason for a process-level concurrency-cap change (decision 8/22). `limit_lowered`: the governor lowered this key's growth ceiling
+ * (a run with a higher limit settled or was lowered), and the cap moved to the new ceiling (docs/dynamic-workflow/concurrency.md,
+ * “The governor”). `seeded`: the user raised a run's limit and the cap jumped to it (same document, “Seeding”).
+ * The persisted value is an open string; older readers display it as a generic change.
+ */
 export type ConcurrencyChangeReason =
   | "rate_limited"
   | "provider_overloaded"
   | "offpeak_queued"
   | "recovered"
-  | "idle_reset";
+  | "idle_reset"
+  | "limit_lowered"
+  | "seeded";
 
 /**
  * Governor adjustment to a provider key's cap, fanned out to every run with an in-flight or waiting
@@ -526,6 +558,10 @@ export type RunEvent =
    * back from the event header on both read surfaces. Omitted when this run has no editable script
    * file (draft write failed, or the run predates this feature), so the model falls back to the legacy
    * inline-resubmission guidance.
+   * `subagentPermissionMode` is the permission mode for this run's subagents (docs/dynamic-workflow/launch.md,
+   * “Permissions inside a run”): the initiating session's permission-mode name (plan is not carried over). It follows the same rules as `subagentModel`:
+   * the engine never reads it, records it once when creating the run, and performs no SQL; the host reads and validates it from the event header on resume,
+   * then runs subagents in that mode. If absent or unrecognized by the host, subagents run in YOLO.
    */
   | {
       type: "run-launched";
@@ -534,8 +570,21 @@ export type RunEvent =
       parentSessionId?: string;
       phaseNames?: string[];
       subagentModel?: string;
+      subagentPermissionMode?: string;
+      /**
+       * Each model name written in the script (literally) → canonical ID `providerId/modelId[$level]`
+       * (docs/dynamic-workflow/launch.md, “Models the script names”). Same path as `subagentModel`:
+       * supplied by the caller, recorded once when creating the run, and never read by the engine. Absent when the script names no models.
+       */
+      modelBindings?: Record<string, string>;
       scriptPath?: string;
       phaseAlongside?: number[][];
+      /**
+       * Which indices in `phaseNames` are **unfilled holes** (docs/execution-engine.md, “Holes”): holes occupy a phase-table position by name,
+       * and the sidebar uses this to draw that stop as a dashed line. Aligned with and governed like `phaseAlongside`
+       * (provided by the caller, never read by the engine); absent when the script has no holes.
+       */
+      holes?: number[];
     }
   /**
    * `phaseName` records the latest phase name specified by `enterPhase` when the instance was created.
@@ -578,12 +627,10 @@ export type RunEvent =
    * while `actorName` / `actorPhaseName` are the `name` / `phaseName` carried by its subagent's
    * `actor-created` event.
    *
-   * Why repeat facts already emitted: the read-side table is **bounded**, and the important moment is
-   * dispatch, not queueing. A run with 2,000 agents may emit every `actor-created` / `node-queued`
-   * event in the first few seconds; the table can fill with the first 1,024 queued items before any
-   * settle, leaving every instance that is **actually running** out of the table. Including creation
-   * facts makes this a self-contained creation event: readers can add the instance and its subagent
-   * without looking up a queued event that may already have been evicted.
+   * Why repeat a fact that was already emitted: the read-side table is **bounded**, and importance is determined at dispatch, not queue time
+   * (docs/dynamic-workflow/presentation.md). A run with 2,000 agents emits all `actor-created` / `node-queued` events in its first few seconds;
+   * the table fills with the first 1,024 queued agents before any settle, so later **actually running** instances cannot enter it. Including birth facts makes
+   * this event self-contained: the read side can add the instance and its subagent without looking back for a queued event that may already have been rejected.
    *
    * Both phase names are **creation stamps**, not the current phase when this event is emitted: an ask
    * may wait behind the concurrency limit while the script has already entered a later phase (see
@@ -597,6 +644,11 @@ export type RunEvent =
       actor?: ActorRef;
       actorName?: string;
       actorPhaseName?: string;
+      /**
+       * The subagent persona's `model` (name written literally in the script): repeats the birth fact just like `actorName`,
+       * so subagents restored to the read-side table at dispatch also retain their model (the host derives the canonical ID from the binding table).
+       */
+      actorPersonaModel?: string;
       phaseName?: string;
       instructionsHead?: string;
     }
@@ -613,9 +665,9 @@ export type RunEvent =
   | { type: "node-executing"; instance: InstanceRef }
   | ({ type: "concurrency-changed" } & ConcurrencyChange)
   /**
-   * This run's **own** concurrency limit changed in place: an amendment that changes only
-   * `max_concurrency` applies to the live run, keeping the same runId, minting no successor, and
-   * retaining every in-flight ask.
+   * This run's **own** concurrency limit changed in place (docs/dynamic-workflow/concurrency.md,
+   * “Two bounds on a run”): an amendment containing only `max_concurrency` takes effect on the live run, with the same
+   * runId, no successor, and no lost in-flight asks.
    *
    * It belongs to **a different limit** than the adjacent `concurrency-changed`: that one is the
    * process-level shared-cap observation from the governor (measured in model requests; the engine
@@ -633,6 +685,23 @@ export type RunEvent =
       error?: WorkflowErrorJson;
       /** Present only when `cached: true`: a cache-hit node has no queued event, so this is its creation event. */
       phaseName?: string;
+      /**
+       * The following four fields appear only on a **cached ask** (replay hits and amendment imports use the same shape): this settlement
+       * is also the birth event, so it **repeats birth facts**—`kind` / `actor` / `actorSeq` / `instructionsHead` that `node-queued` carried,
+       * for the same reason `node-dispatched` repeats them: a read-side table that never saw this instance queued (amended runs start with an empty table)
+       * still needs to know whose answer this is. Without them, a subagent whose asks all hit cache appears “not started” in the read side. Cached world-node settlements omit them because there is no subagent.
+       */
+      kind?: NodeKind;
+      actor?: ActorRef;
+      actorSeq?: number;
+      instructionsHead?: string;
+      /**
+       * Present when the answer came from the **predecessor's transcript** (an import hit, or replay of an imported row when an amended run resumes); the value is
+       * the session that owns that exchange (`transcriptSourceSessionId` from the import candidate). This run created no session for the hit,
+       * so the transcript read surface must look in that session (docs/dynamic-workflow/presentation.md, “Subagent transcripts”).
+       * Absent means the answer was produced in this run's own session.
+       */
+      sourceSessionId?: string;
     }
   /**
    * Progress of one ask during a parsed turn.
@@ -652,12 +721,7 @@ export type RunEvent =
    * event to restore "gate closed"—the **only** source of truth for closure, no longer inferred from
    * "an ask was live." Non-amended runs have no cache to close, so they emit no event.
    */
-  | {
-      type: "import-cache-closed";
-      instance: InstanceRef;
-      cause: ImportCloseCause;
-      actorName?: string;
-    }
+  | { type: "import-cache-closed"; instance: InstanceRef; cause: ImportCloseCause; actorName?: string }
   /**
    * Control flow passed a `phase("…")` marker. **No site, journal row, or driver round-trip**—a
    * marker is not a unit of work; it is a tick indicating "how far the script has progressed."
@@ -668,6 +732,39 @@ export type RunEvent =
    * deduplication); consumers are protected by monotonic reduction.
    */
   | { type: "phase-entered"; name: string; ordinal: number }
+  /**
+   * The script reached an unfilled hole (docs/execution-engine.md, “Holes”). `instance` is
+   * `<hole id>@ordinal`—the ordinal is generated like a node's, but **there is no journal row**; `phaseName` is the birth phase,
+   * stamped in the same table as `node-queued`. `prompt` is truncated to 4,000 characters. After resume, a still-pending hole is reached again by the
+   * script and recorded again (no row or ordinal can collide).
+   */
+  | {
+      type: "hole-reached";
+      instance: InstanceRef;
+      name: string;
+      prompt?: string;
+      phaseName?: string;
+    }
+  /**
+   * `fillHole`: the effective script has been written to the run row and the paused branch has resumed. `phaseNames` is the effective script's phase table
+   * (holes occupy positions by name); `holes` contains the indices still unfilled (aligned with `run-launched.holes`),
+   * allowing the sidebar to redraw the timeline without waiting for display payloads; `filledBy` is the session that completed the hole.
+   */
+  | {
+      type: "hole-filled";
+      siteId: string;
+      filledAt: number;
+      filledBy?: string;
+      phaseNames: string[];
+      holes?: number[];
+      /**
+       * Draft created by this completion for a run that had no draft (docs/dynamic-workflow/launch.md, “The draft
+       * after a fill”). `run-launched.scriptPath` is written only once when the run is created; if a cold read surface looks only there, after restart
+       * it cannot find the draft created by completion. So persist the later path in this event, and cold reads use the last one present.
+       * Completion for a run that already had a draft (edited in place, same path) omits it.
+       */
+      scriptPath?: string;
+    }
   /**
    * One published intermediate result, exactly once for each **non-skipped** report call (a replay hit
    * silently skips it and does not emit again). Uses the same route as other run events (progress sink
@@ -915,16 +1012,14 @@ export interface StoredEvent {
   timeCreated?: number;
 }
 
-/**
- * Event pagination input (cursor = journal sequence). The app's run-details page incrementally fetches
- * the event log this way: returning everything would load the entire journal into memory for each page.
- */
-export interface ListEventsOptions {
-  /** Return only events with a sequence **strictly greater** than this value. Cursor is the last sequence read, not an offset. */
-  afterSequence?: number;
-  /** Maximum number of items per page; unlimited when omitted. */
-  limit?: number;
-}
+// Read-side options (kinds / types / withResult / reportItems …) live in journal-read-types.ts (split for the max-lines limit).
+export type {
+  GetNodeOptions,
+  ListActorsOptions,
+  ListEventsOptions,
+  ListNodesOptions,
+  RunEventType,
+} from "./journal-read-types.js";
 
 /**
  * Persisted data attached to run settlement. Exists for **single-write atomicity**: separate UPDATEs
@@ -962,30 +1057,50 @@ export interface JournalStorePort {
    * unknown runId; **touch only this column**—status, usage, and settlement payload are outside this
    * write, as with {@link updateRunUsage}.
    *
-   * This is the **second writer** of that column (the first is {@link createRun}): an amendment that
-   * changes only `max_concurrency` applies to the live run, while resume reuses the caps on the row—
-   * without persisting the update, resume would restore the old limit.
+   * This is the column's **second writer** (the first is {@link createRun}): an amendment changing only `max_concurrency`
+   * takes effect on the live run, while resume uses the caps stored in the row—if not persisted, it would restore the old limit
+   * （docs/dynamic-workflow/concurrency.md「Two bounds on a run」）。
    */
   updateRunCaps(runId: string, caps: Caps): void;
+  /**
+   * Write the **effective script** back to the run row (`dwf_run.script_text` / `script_hash`, docs/execution-engine.md,
+   * “Holes”). This is the second writer to these columns after {@link createRun}: completion inserts the hole body into the
+   * script, and resume later checks the row's hash against its text, so both columns **must be written in one operation**. Unknown runId must throw;
+   * everything else in the row (status, usage, caps, settlement envelope, metadata) is outside this write, as with
+   * {@link updateRunUsage}.
+   */
+  updateRunScript(runId: string, scriptText: string, scriptHash: string): void;
 
   putActor(record: ActorRecord): void;
   getActor(runId: string, siteId: string, ordinal: number): ActorRecord | undefined;
-  listActors(runId: string): ActorRecord[];
+  listActors(runId: string, opts: ListActorsOptions): ActorRecord[];
 
   putNode(record: NodeRecord): void;
-  getNode(runId: string, siteId: string, ordinal: number): NodeRecord | undefined;
-  listNodes(runId: string): NodeRecord[];
+  getNode(
+    runId: string,
+    siteId: string,
+    ordinal: number,
+    opts?: GetNodeOptions,
+  ): NodeRecord | undefined;
+  /** The read surface must specify what it needs (docs/execution-engine.md, “Reading the journal”); use `"all"` to read everything. */
+  listNodes(runId: string, opts: ListNodesOptions): NodeRecord[];
+  /** `count(*)`: callers that need only the row count do not need to read the rows. */
+  countNodes(runId: string, kind: NodeKind): number;
+  /**
+   * Sum of UTF-8 serialized byte lengths of `result` for rows of this kind (bytes of `JSON.stringify(result)`; rows without a result
+   * count as 0). Readers that need only the byte total (resume restores the run-level report byte count) need not fetch the results: SQLite uses
+   * `sum(octet_length(result_json))`, reading the length from the row header without touching the result itself.
+   */
+  sumResultBytes(runId: string, kind: NodeKind): number;
 
   appendEvent(runId: string, event: RunEvent): StoredEvent;
   /**
-   * List events in ascending sequence order. Omitted `opts` means all events (legacy behavior); when a
-   * cursor / limit is supplied, filtering must happen in the storage layer, not by fetching all rows
-   * and slicing—the purpose of pagination is to avoid loading the entire journal into memory.
-   * Unknown runId and out-of-range cursor both return an empty array (no error): during race windows
-   * between the projection and journal, a client may normally return a cursor that does not exist
-   * yet.
+   * List events by ascending sequence. Type filters, cursor, limit, and report-item removal must be handled in the storage layer;
+   * never fetch all rows and slice afterward—the purpose of paging and filtering is to keep the full journal out of memory.
+   * Return an empty array for unknown runId and out-of-range cursors rather than throwing: during a race between the projection and journal,
+   * it is normal for a client to return with a cursor that does not exist yet.
    */
-  listEvents(runId: string, opts?: ListEventsOptions): StoredEvent[];
+  listEvents(runId: string, opts: ListEventsOptions): StoredEvent[];
 }
 
 // The driver's ask observation vocabulary (usage + progress) lives in ask-observation-types.ts

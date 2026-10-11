@@ -12,7 +12,7 @@ import {
   readCachedCuaPermissionStatus,
 } from "./cuaPermissionStatusCache.js";
 
-interface CuaPermissionStatusSnapshot {
+export interface CuaPermissionStatusSnapshot {
   /** Last successful query result; null means this workspace has never received a status. */
   status: CuaPermissionStatusResult | null;
   /** Whether status can be used for decisions. False during a query or after the latest query failed; the UI may keep displaying lastKnown, but actions such as “Open System Settings” must wait for a fresh result. */
@@ -65,6 +65,14 @@ export function subscribeCuaPermissionStatus(listener: () => void): () => void {
 export function getCuaPermissionStatusSnapshot(key: string | null): CuaPermissionStatusSnapshot {
   if (!key) return initialSnapshot();
   return slots.get(key)?.snapshot ?? initialSnapshot();
+}
+
+/** Test reset: the module-level cache survives between cases. */
+export function resetCuaPermissionStatusStoreForTest(): void {
+  for (const slot of slots.values()) clearTransientRetry(slot);
+  slots.clear();
+  listeners.clear();
+  initialSnapshotCache = null;
 }
 
 function ensureSlot(key: string): Slot {
@@ -170,7 +178,7 @@ function scheduleTransientRetry(slot: Slot, params: FetchCuaPermissionStatusPara
   return true;
 }
 
-interface FetchCuaPermissionStatusParams {
+export interface FetchCuaPermissionStatusParams {
   service: ICuaPermissionService;
   workspacePath: string;
   workspaceIdentity?: string;

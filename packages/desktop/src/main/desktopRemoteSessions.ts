@@ -15,6 +15,7 @@ import {
   type RemoteTarget,
   type ProviderProvisioningTrigger,
   type WindowHostRemoteWorkspaceDescriptor,
+  type WebRemoteControlFailure,
 } from "@zcode/shared";
 import type {
   RemoteConnectionStats,
@@ -158,6 +159,11 @@ export function createRemoteWorkspaceSessionManager(options: {
     durationMs: number;
   }) => void;
   monotonicNowMs?: () => number;
+  webRemoteControlManagerRef: {
+    current: {
+      failRemoteSession(sessionId: string, reason: string, failure: WebRemoteControlFailure): void;
+    } | null;
+  };
   providerProvisioningCoordinator?: ProviderProvisioningEnvironmentCoordinator;
 }) {
   const pendingByRequestKey = new Map<string, PendingConnect>();
@@ -436,6 +442,12 @@ export function createRemoteWorkspaceSessionManager(options: {
           requestId: randomUUID(),
           remoteSessionId: descriptor.remoteSessionId,
         });
+        emitConnectionLog(pending.win, {
+          requestId,
+          sessionId: descriptor.remoteSessionId,
+          level: "error",
+          message: error instanceof Error ? error.message : String(error),
+        });
         pending.reject(error instanceof Error ? error : new Error(String(error)));
       });
   }
@@ -561,6 +573,14 @@ export function createRemoteWorkspaceSessionManager(options: {
     const win = BrowserWindow.getAllWindows().find(
       (candidate) => candidate.webContents.id === webContentsId,
     );
+    options.webRemoteControlManagerRef.current?.failRemoteSession(
+      event.remoteSessionId,
+      "window-host:connection-closed",
+      {
+        reason: "workspace-closed",
+        message: "远程工作区连接已结束，请在桌面端重新连接。",
+      },
+    );
     if (win && !win.isDestroyed() && !win.webContents.isDestroyed()) {
       win.webContents.send(PlatformChannels.RemoteSessionClosed, {
         sessionId: event.remoteSessionId,
@@ -610,14 +630,25 @@ export function createRemoteWorkspaceSessionManager(options: {
           durationMs: Math.max(0, monotonicNowMs() - pending.startedAtMonotonicMs),
         };
         if (parsed.data.status !== "applied" && parsed.data.status !== "already-applied") {
+          const errorCode =
+            parsed.data.errorCode ??
+            (parsed.data.status === "unsupported"
+              ? "capability-unavailable"
+              : "target-apply-failed");
+          // The first failure used to return before the warning, leaving the connection
+          // panel with only the start log and no way to tell local from remote faults.
+          // Log only the schema-validated stage code; free-text remote errors still never
+          // enter logs or feedback.
+          options.logger.warn("[provider-provisioning] Environment sync did not apply", {
+            ...logContext,
+            errorCode,
+          });
           if (pending.trigger === "environment-online") {
-            pending.reject(new Error(`Provider Provisioning 首次同步失败 (${parsed.data.status})`));
+            pending.reject(
+              new Error(`Provider Provisioning 首次同步失败 (${parsed.data.status}; ${errorCode})`),
+            );
             return;
           }
-          // A Target error may come from any remote implementation and contain request material.
-          // During migration, record only locatable state facts; do not copy free text that is not
-          // proven redacted, or Provisioning logs could expose credentials.
-          options.logger.warn("[provider-provisioning] Environment sync did not apply", logContext);
         } else {
           options.logger.info("[provider-provisioning] Environment sync completed", logContext);
         }

@@ -1,30 +1,25 @@
 # Agent Instructions
 
-This is a TypeScript Node.js coding-agent CLI that supports mainstream models and operating systems. Follow the general work rules in the [root AGENTS.md](../../AGENTS.md); this file adds CLI-specific rules. Use the Node.js and package-manager versions specified by the repository root's [mise.toml](../../mise.toml) and [package.json](../../package.json).
+This is a TypeScript Node.js coding-agent CLI that supports mainstream models and operating systems. Follow the general task boundaries, spec, verification, and commit requirements in the [root AGENTS.md](../../AGENTS.md); this file adds CLI-specific rules. Use the Node.js version specified by the repository [mise.toml](../../mise.toml).
 
 ## Working Rules (Highest Priority)
 
-- Before adding or changing behavior, write or update the corresponding spec. Clarify product rules, state owners, interfaces, and acceptance scenarios, then implement the code. Prefer existing documentation; create documentation and directories as needed when they are missing. Do not assume a fixed-version design directory exists.
-- Tests are also essential: they should demonstrate whether the result meets expectations.
-- Keep a record of changes: add documentation for new features and explain bug causes in comments after bug fixes.
+- CLI specs are in `apps/zcode-cli/docs/design/v2/`. Update them before new features and behavior changes; for bug fixes and pure refactors, follow the root rules. Code and documentation paths below are relative to this directory unless prefixed with `apps/zcode-cli/`.
+- Before changing any tool (adding, removing, or changing its schema, permissions, execution, prompt, adapter, event, or UI/V4 projection), read and update `docs/design/v2/tool/00-tool-change-chain.md` and check the end-to-end flow.
+- Tests are essential and should demonstrate whether the result meets expectations.
+- Update feature documentation to describe final behavior, reusing existing specs. For bug fixes, retain regression evidence and add Chinese comments at the fix site for non-obvious root causes and prevention constraints.
 - Make the project agent-friendly by providing logs or interfaces that let an agent take over the work.
 - Prioritize long-running tasks: the core agent loop is designed by default for complex tasks that can run continuously and does not impose a hard stop based on tool-call count. Token/context limits with automatic compaction, user cancellation, permission denial, tool timeouts, output truncation, and provider retry limits provide explicit resource and safety boundaries.
 - A source file should generally stay under 400 lines. If it exceeds that limit, first split it into cohesive, loosely coupled modules instead of continuing to accumulate responsibilities in a large file.
 - Extract string and numeric constants into named variables or constants rather than scattering literals through business logic, so they can be changed in one place and maintained consistently.
-- Before changing the database schema, confirm the plan with the module maintainer and define the migration, compatibility, and rollback strategy.
+- When changing the database schema, coordinate with the CLI owner and carefully design the migration.
 - Prefer keyboard operation; core functionality should be accessible through the keyboard. Mouse operation is an enhancement.
 
 ## Tooling Rules
 
 - Consider Windows, macOS, and Linux before interacting with the operating system.
 - Keep the standard Node.js CLI packaging method as the default release path.
-- Prefix project-owned environment variables with `ZCODE_`, but do not add variables casually. Before adding one, define its purpose, precedence, error behavior, and test coverage in the relevant feature spec. Prefer configuration files, CLI arguments, or session configuration when they can express the capability.
-
-## Open-Source Content and Sensitive Information
-
-- Project license and attribution notices are in the repository root's [LICENSE](../../LICENSE), [NOTICE.md](../../NOTICE.md), and [THIRD-PARTY-NOTICES.md](../../THIRD-PARTY-NOTICES.md). Before introducing third-party code, documentation, prompts, or assets, verify their source, license, and usage rights. Retain required copyright, attribution, and modification notices under the applicable license; do not remove notices that still apply as part of open-source cleanup.
-- Documentation, examples, test data, logs, and commit messages must not contain real credentials, user privacy data, internal service addresses, personal working directories, or material not authorized for public disclosure. Use fictional data and placeholders in examples.
-- Before release, verify the actual delivery scope. If Git history is included, inspect its contents too. Removing or replacing content in the current files does not clean the historical record.
+- Prefix project-owned environment variables with `ZCODE_`, but do not add variables casually. Before adding one, define its purpose, precedence, error behavior, and test coverage in a spec under `docs/design/v2`. Prefer configuration files, CLI arguments, or session configuration when they can express the capability.
 
 ## Cross-Platform Compatibility
 

@@ -41,13 +41,13 @@ interface SubagentEventRelation {
   summary?: string;
 }
 
-interface SessionSubagentProjection {
+export interface SessionSubagentProjection {
   revision: number;
   running: ZCodeSessionRunningSubagent[];
   ended: ZCodeSessionEndedSubagent[];
 }
 
-interface ProjectSessionSubagentsInput {
+export interface ProjectSessionSubagentsInput {
   revision: number;
   parentSession: SessionInfo;
   messages: readonly MessageWithParts[];
@@ -269,10 +269,10 @@ function lastChildOutcome(messages: readonly MessageWithParts[] | undefined): {
     ...(text || errorSummary ? { summary: text || errorSummary } : {}),
     ...(errorName
       ? { status: CANCELLATION_PATTERN.test(errorName) ? "cancelled" : "failed" }
-      : // After the assistant emits a tool call, the model step also writes completed/finish,
-        // but the child session is still executing tools such as Bash. Do not treat "this turn ended"
-        // as "the child session is terminal." Only a final assistant message without a tool part can
-        // provide a successful outcome.
+      : // Bug root cause: after the assistant emits a tool call, the model step also writes
+        // completed/finish, but the child session is still executing tools such as Bash. Do not
+        // treat "this turn ended" as "the child session is terminal." Only a final assistant
+        // message without a tool part can provide a successful outcome.
         !hasToolRound && (last.info.time.completed || last.info.finish)
         ? { status: "success" }
         : {}),

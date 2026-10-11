@@ -4,6 +4,7 @@ import type { ProviderFamilyDomain } from "./model-provider-family.js";
 import type { ProviderFamilyConnectionSelectionSettings } from "./provider-family-connection-selection.js";
 import type { ZCodeProvider } from "./zcode-task-types-core.js";
 import type { WorkspacePurpose } from "./workspacePurpose.js";
+import type { DynamicWorkflowMode } from "./dynamic-workflow-feature.js";
 import type { EmbeddedBrowserViewportPreference } from "./browser-use/command-metadata.js";
 
 // ── Domain types ──
@@ -156,10 +157,24 @@ export interface DockerRemoteTargetSnapshot {
   container: string;
 }
 
+export interface ServerRemoteTargetSnapshot {
+  kind: "server";
+  url: string;
+  name?: string;
+  workspacePath?: string;
+  serverId?: string;
+  /**
+   * Server tokens are not written to setting.json.
+   * Store only the credentialService key here, then read the actual token from secure storage during restoration.
+   */
+  tokenCredentialKey?: string;
+}
+
 export type RemoteTargetSnapshot =
   | SSHRemoteTargetSnapshot
   | WSLRemoteTargetSnapshot
-  | DockerRemoteTargetSnapshot;
+  | DockerRemoteTargetSnapshot
+  | ServerRemoteTargetSnapshot;
 
 export interface RemoteWorkspaceSessionSnapshot {
   /** Actual absolute path of the remote workspace. */
@@ -276,12 +291,19 @@ export interface AppSettings {
   taskAutoArchiveEnabled?: boolean;
   /** Auto-archive threshold; a task may be archived when its last update is older than this many days. */
   taskAutoArchiveOlderThanDays?: number;
-  /** On Windows desktop, hide the window to the tray when closed; ignored on other platforms. */
+  /** Hide the window to the tray on close on desktop (Windows/Linux; spec: docs/desktop/linux-close-to-tray.md). */
   closeToTrayOnWindows?: boolean;
   /** Prevent system idle sleep while an off-peak task is running (manual toggle; does not prevent sleep when the lid is closed). */
   keepAwakeWhileRunning?: boolean;
   /** Whether the one-time migration for the Windows close-to-tray default has run; used only for Settings migration, not business logic. */
   closeToTrayOnWindowsMigrationInitialized?: boolean;
+  /**
+   * Whether the one-time migration restoring the Linux close-to-tray default (off) has run.
+   * The shared migration has no concept of platforms and previously classified existing Linux
+   * users as true, while Linux had no Settings entry before; main-process bootstrap uses this
+   * marker to restore first-launch Linux users to the default off in one pass.
+   */
+  closeToTrayLinuxMigrationInitialized?: boolean;
   /** Global desktop page zoom level; restores UI zoom after restart, ignored on Web/mobile. */
   desktopZoomLevel?: number;
   /** Desktop main window's last non-maximized width/height and maximized state; ignored on Web/mobile. */
@@ -311,6 +333,15 @@ export interface AppSettings {
   askUserQuestionAutoResolutionEnabled?: boolean;
   /** Whether to preserve Model I/O in full; when enabled, do not rotate, reset limits, compress, or truncate, while still redacting authentication data. */
   modelIoFullRetentionEnabled?: boolean;
+  /**
+   * The user's chosen dynamic-workflow mode (docs/dynamic-workflow/launch.md "The user's choice").
+   * Absent = follow the mode provided by the server; it takes effect only while the feature is
+   * offered. Choosing the provided mode again deletes the field; untouched installs keep
+   * following server-side flips.
+   */
+  dynamicWorkflowMode?: DynamicWorkflowMode;
+  /** Enabled built-in Agent CLIs; the UI still shows "Install" externally, while the underlying semantics remain enabling a built-in capability. */
+  enabledBuiltinAgentCliProviders?: ZCodeProvider[];
   /** Current unique structured connection selection for each Provider Family in Settings. */
   providerFamilyConnectionSelections?: ProviderFamilyConnectionSelectionSettings;
   /** ZAI / BigModel provider-family runtime domain confirmed after the user connects successfully through WelcomeScreen. */
@@ -364,6 +395,16 @@ export interface AppSettings {
   skippedElectronUpdateVersions?: Partial<Record<ElectronReleaseChannel, string>>;
   /** Whether the first-launch settings-sync prompt has been dismissed; means only that the prompt will not reappear, not that import succeeded. */
   settingsSyncFirstRunPromptHandled?: boolean;
+  /** Non-sensitive device identity for the external Web remote-control relay; passHash must be stored in credentialService. */
+  webRemoteControlExternalRelayDevice?: {
+    deviceSid: string;
+  };
+  /** Target from the last successful Web remote-control enable; absence means the user explicitly disabled it, so it is not restored automatically. */
+  webRemoteControlLastEnabledContext?: {
+    workspacePath: string;
+    workspaceIdentity?: string;
+    initialTaskId?: string;
+  };
   /** Temporary endpoint override from Settings; production/test default base URL is managed by the ZCODE_BASE_URL env variable. */
   zcodeEndpointOrigin?: string;
 }

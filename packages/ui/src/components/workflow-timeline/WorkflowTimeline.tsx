@@ -28,6 +28,13 @@ import {
   timelineWidth,
 } from "./timeline-geometry.js";
 import { WorkflowTimelineArcs } from "./WorkflowTimelineArcs.js";
+import {
+  WorkflowTimelineFills,
+  useFillHeadTarget,
+  useFreshFills,
+} from "./WorkflowTimelineFills.js";
+import type { TimelineFill } from "./timeline-holes.js";
+import { timelineFrames } from "./timeline-frames.js";
 import { WorkflowStationPlatform, WorkflowStationRow } from "./WorkflowTimelineStation.js";
 import { WorkflowTimelineLamps, WorkflowTimelineTracks } from "./WorkflowTimelineTracks.js";
 import {
@@ -41,6 +48,7 @@ import {
   type CameraFlight,
 } from "./timeline-ledge.js";
 import { useTimelineViewport } from "./use-timeline-viewport.js";
+import { slideClass, slideStyle, useFillGrowth } from "./use-fill-growth.js";
 import {
   WorkflowLedge,
   WorkflowTimelineScrollbar,
@@ -79,8 +87,13 @@ function stationHeight(station: TimelineStation): number {
  * 4px on hover); it overlays that padding at the bottom edge without changing the height.
  */
 export function timelineHeight(model: WorkflowTimelineModel): number {
-  const rows = timelineLayout(model.arcs, model.bands);
+  const rows = timelineLayout(model.arcs, model.bands, hasFillHeads(model));
   return rows.pillsTop + Math.max(0, ...model.stations.map(stationHeight)) + 8;
+}
+
+/** Only a timeline with fills has a header row (docs/dynamic-workflow/presentation.md, “Holes on the timeline”). */
+function hasFillHeads(model: Pick<WorkflowTimelineModel, "fills">): boolean {
+  return (model.fills?.length ?? 0) > 0;
 }
 
 /** Delay between pills landing in sequence (same value as the design canvas). */
@@ -108,11 +121,17 @@ export interface WorkflowTimelineProps {
    * at this station; without a handler, the script pill is not clickable. Its lane is gated independently from `onOpenPill`.
    */
   onOpenWorkspace?: (pill: TimelinePill) => void;
+  /**
+   * Click a fill header once (docs/dynamic-workflow/presentation.md, “Holes on the timeline”) to
+   * open the side pane and focus the fill's title (the first station it wrote). If absent, the header is not interactive.
+   */
+  onOpenFill?: (fill: TimelineFill) => void;
 }
 
 export const WorkflowTimeline = memo(function WorkflowTimeline({
   className,
   model,
+  onOpenFill,
   onOpenMore,
   onOpenPill,
   onOpenWorkspace,
@@ -142,11 +161,31 @@ export const WorkflowTimeline = memo(function WorkflowTimeline({
   // Row layout: when a band is present, the main line sits on the bottom
   // row, branches stack above it, and station headers move to the station row. Without a band, the whole layout returns pixel-for-pixel to the previous “arc lane + track row”,
   // and uses the original DOM branch.
-  const layout = timelineLayout(model.arcs, model.bands);
+  // Fills (docs/dynamic-workflow/presentation.md, “Holes on the timeline”): add a 24px row at the
+  // top when a header exists; add 40px after the final station for a tail hole. The root delegates
+  // pointer/keyboard focus on each **header** (`data-fill-head`, including the pen marker for a fill
+  // without phases) so the matching frame can be drawn. Stations and pills do not activate frames;
+  // see timeline-frames.ts for the reason.
+  const fills = (model.fills ?? []).filter((fill) => fill.to < n);
+  const layout = timelineLayout(model.arcs, model.bands, fills.length > 0);
   const { banded, inset, pillsTop } = layout;
   const top = layout.rowY[0]! - RAIL_ROW / 2;
-  const width = timelineWidth(n, inset);
+  const width = timelineWidth(n, inset, model.tailStub !== undefined);
   const height = timelineHeight(draft ? { ...model, stations } : model);
+  const frames = timelineFrames({
+    columnHeight: (i) => stationHeight(stations[i]!),
+    fills,
+    height,
+    inset,
+    layout,
+    parents: model.holeParents ?? {},
+    stations,
+    width,
+  });
+  const fillTarget = useFillHeadTarget(frames.length > 0);
+  const fresh = useFreshFills(frames);
+  // Growth: when a fill joins the run, stations to the right of the inserted column slide into place (`use-fill-growth.ts`).
+  const slide = useFillGrowth(model);
   // Pills land from left to right by station, and top to bottom within a station: pill k is delayed by k × 30 ms (the “n more” row is queued too).
   let pillOrdinal = 0;
   const nextDelay = () => {
@@ -286,6 +325,7 @@ export const WorkflowTimeline = memo(function WorkflowTimeline({
       className={cn("wf-motion wf-timeline min-w-0", className)}
       data-testid="workflow-timeline"
       onKeyDown={onKeyDown}
+      {...fillTarget.handlers}
     >
       {/* The eave and scrollbar overlay the scrolling layer; position them relative to it rather than the padded outer frame. */}
       <div className="relative">
@@ -305,6 +345,17 @@ export const WorkflowTimeline = memo(function WorkflowTimeline({
           style={mask}
         >
           <div className="relative" style={{ height, width }}>
+            {/* Completion frame (behind everything) and header (in the header row): docs/dynamic-workflow/presentation.md, “Holes on the timeline.” */}
+            <WorkflowTimelineFills
+              active={fillTarget.active}
+              fills={fills}
+              frames={frames}
+              fresh={fresh}
+              height={height}
+              inset={inset}
+              width={width}
+              {...(onOpenFill === undefined ? {} : { onOpenFill })}
+            />
             <WorkflowTimelineArcs
               arcs={arcs}
               bands={model.bands}
@@ -330,6 +381,7 @@ export const WorkflowTimeline = memo(function WorkflowTimeline({
                 folded={folded}
                 layout={layout}
                 stations={stations}
+                {...(slide === undefined ? {} : { slide })}
               />
             ) : null}
 
@@ -340,12 +392,14 @@ export const WorkflowTimeline = memo(function WorkflowTimeline({
                 layout={layout}
                 stations={stations}
                 titleOf={stationTitle}
+                {...(slide === undefined ? {} : { slide })}
                 {...(onSelectStation === undefined ? {} : { onSelectStation })}
               />
             ) : (
               <WorkflowStationRow
                 draft={draft}
                 folded={folded}
+                fresh={fresh}
                 fullNames={fullNames}
                 pen={pen}
                 rails={railByPair}
@@ -353,6 +407,8 @@ export const WorkflowTimeline = memo(function WorkflowTimeline({
                 titleOf={stationTitle}
                 top={top}
                 width={width}
+                {...(slide === undefined ? {} : { slide })}
+                {...(model.tailStub === undefined ? {} : { tailStub: model.tailStub })}
                 {...(onSelectStation === undefined ? {} : { onSelectStation })}
               />
             )}
@@ -363,11 +419,17 @@ export const WorkflowTimeline = memo(function WorkflowTimeline({
               if (station.pills.length === 0 && roster === undefined) return null;
               return (
                 <div
-                  className="absolute flex flex-col"
+                  className={cn(
+                    "absolute flex flex-col",
+                    station.ghost && "wf-ghost",
+                    slideClass(i, slide),
+                  )}
+                  data-fill={station.fill}
                   data-station-roster={roster === undefined ? undefined : "true"}
                   data-testid="workflow-timeline-pills"
                   key={station.id}
                   style={{
+                    ...slideStyle(i, slide),
                     gap: PILL_GAP,
                     left: stationX(i, inset),
                     top: pillsTop,
@@ -393,7 +455,7 @@ export const WorkflowTimeline = memo(function WorkflowTimeline({
             })}
           </div>
         </div>
-        {/* Edge eaves: stations folded to either side of the viewport, with a row of lights on the track row; the content beneath the eave has been masked out. */}
+        {/* Side ledge (see the “Side ledge” note): sites folded to either viewport edge appear as a row of indicators on the track row; content beneath the ledge is masked out. */}
         <WorkflowLedge
           indexes={fold.left}
           side="left"

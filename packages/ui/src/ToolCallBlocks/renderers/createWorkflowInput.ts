@@ -29,13 +29,19 @@ function readTrimmedString(value: unknown): string | undefined {
 export function readWorkflowKindMessageId(
   raw: unknown,
   isRunning: boolean,
-  amend = false,
+  amend: WorkflowKindVocabulary = false,
   /**
-   * This call only adjusts the concurrency limit (`isWorkflowRetuneInput`): it does not write or compile a script, so do not mention “validation” at all while it is in flight. The revision vocabulary’s `writing` label (“Adjusting workflow”) is always true for it—whether it applies in place or (if the run has settled) falls back to a true revision—so use it throughout the in-flight period instead of adding a label for a phase that lasts only a few hundred milliseconds. Awaiting confirmation is different: its own wording is more informative while that phase is present.
+   * This call only adjusts the concurrency ceiling (`isWorkflowRetuneInput`): it does not write or
+   * compile a script, so it cannot claim “validation” while in progress (docs/dynamic-workflow/concurrency.md).
+   * The retune vocabulary's `writing` label (“Adjusting workflow”) is always accurate—whether the
+   * change takes effect in place or, after the run settles, falls back to a real retune. Use it for
+   * the whole in-progress period instead of inventing a label for a phase that lasts only a few
+   * hundred milliseconds. Confirmation is different: its own wording is more informative while
+   * that phase is active.
    */
   retuning = false,
 ): string {
-  const ids = amend ? AMEND_KIND_IDS : CREATE_KIND_IDS;
+  const ids = workflowKindIds(amend);
   if (!isRunning) {
     return ids.ran;
   }
@@ -61,9 +67,9 @@ export function readWorkflowKindMessageId(
  */
 export function readWorkflowPrelaunchKindMessageId(
   phase: { compileErrors: boolean; failed: boolean; writing: boolean; revising: boolean },
-  amend: boolean,
+  amend: WorkflowKindVocabulary,
 ): string {
-  const ids = amend ? AMEND_KIND_IDS : CREATE_KIND_IDS;
+  const ids = workflowKindIds(amend);
   if (phase.compileErrors) return ids.draft;
   if (phase.failed) return ids.ran;
   if (phase.writing) return phase.revising ? ids.revising : ids.writing;
@@ -97,6 +103,24 @@ const AMEND_KIND_IDS: WorkflowKindIds = {
   ran: "chat.toolCall.workflow.amend.ran",
   draft: "chat.toolCall.workflow.amend.draft",
 };
+
+/** Vocabulary for filling a hole (docs/dynamic-workflow/presentation.md, “The fill row”); during validation, reuse the creation wording. */
+const HOLE_KIND_IDS: WorkflowKindIds = {
+  writing: "chat.toolCall.workflow.hole.writing",
+  revising: "chat.toolCall.workflow.hole.revising",
+  awaitingConfirmation: "chat.toolCall.workflow.hole.awaitingConfirmation",
+  running: "chat.toolCall.workflow.running",
+  ran: "chat.toolCall.workflow.hole.ran",
+  draft: "chat.toolCall.workflow.hole.draft",
+};
+
+/** Choose among three vocabularies: `true` means retune (the historical boolean parameter), `"hole"` means fill a hole, and all other values mean create. */
+export type WorkflowKindVocabulary = boolean | "hole";
+
+function workflowKindIds(vocabulary: WorkflowKindVocabulary): WorkflowKindIds {
+  if (vocabulary === "hole") return HOLE_KIND_IDS;
+  return vocabulary ? AMEND_KIND_IDS : CREATE_KIND_IDS;
+}
 
 /** Optional display name in CreateWorkflow tool input; the chat card and launch confirmation dialog share this read rule. */
 export function readWorkflowName(input: unknown): string | undefined {
@@ -173,7 +197,9 @@ export interface WorkflowRetuneCall {
   /**
    * Requested limit; `null` removes this run’s own limit (returns to the local machine ceiling).
    *
-   * ⚠ **Unclamped**: CLI `resolveInput` clamps it to `[1, ceiling]`, while this reads the value emitted by the model. Display code must compare it with the local ceiling and must never present this number as the effective concurrency.
+   * ⚠ **Not rounded**: the CLI's `resolveInput` only floors it to at least 1 (with no upper bound),
+   * while this value is the number emitted by the model. A value equal to the default concurrency
+   * means “return to default,” just like `null`, so the display must compare against the default.
    */
   requested: number | null;
 }
@@ -201,6 +227,58 @@ export function readWorkflowRetuneCall(input: unknown): WorkflowRetuneCall | und
  */
 export function readWorkflowSubagentModel(input: unknown): string | undefined {
   return isPlainRecord(input) ? readTrimmedString(input.subagent_model) : undefined;
+}
+
+/**
+ * The script names a model for some subagents (`model_bindings` populated by CLI `resolveInput`,
+ * docs/dynamic-workflow/launch.md, “Models the script names”). The confirmation dialog does not list
+ * each name—the author chose those models. It only changes the wording to “Subagents run on by
+ * default,” so it does not speak for every subagent.
+ */
+export function workflowScriptNamesModels(input: unknown): boolean {
+  return (
+    isPlainRecord(input) &&
+    isPlainRecord(input.model_bindings) &&
+    Object.keys(input.model_bindings).length > 0
+  );
+}
+
+/** “Adjustable in confirmation dialog” facts (`adjustable_settings`) populated by CLI `resolveInput`. */
+export interface WorkflowAdjustableSettings {
+  /** Whether the host can resolve the model selected in the dialog; when false, the model row is informational only. */
+  subagentModel: boolean;
+  /**
+   * Default concurrency D (the wire key `concurrency_ceiling` predates the “default concurrency” concept);
+   * absent means unknown. It is not a ceiling: the stepper starts at 1 with no upper bound, and this
+   * value is used only to display “Default N” and determine that matching the default means no custom ceiling.
+   */
+  defaultConcurrency?: number;
+}
+
+/**
+ * The two settings adjustable in the confirmation dialog (docs/dynamic-workflow/launch.md,
+ * “Adjusting the settings in the window”). Read from input rather than display: display fields are
+ * frozen, and an older client drops the whole object if an extra key appears. If the block is
+ * absent, this is an older agent that will not apply dialog edits, so keep rendering plain-text
+ * condition rows as before.
+ */
+export function readWorkflowAdjustableSettings(
+  input: unknown,
+): WorkflowAdjustableSettings | undefined {
+  if (!isPlainRecord(input) || !isPlainRecord(input.adjustable_settings)) {
+    return undefined;
+  }
+  const block = input.adjustable_settings;
+  // Keep the wire key `concurrency_ceiling` for compatibility with older clients; it predates the default-concurrency concept and now carries D.
+  const defaultConcurrency = block.concurrency_ceiling;
+  return {
+    subagentModel: block.subagent_model === true,
+    ...(typeof defaultConcurrency === "number" &&
+    Number.isInteger(defaultConcurrency) &&
+    defaultConcurrency > 0
+      ? { defaultConcurrency }
+      : {}),
+  };
 }
 
 /**

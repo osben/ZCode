@@ -127,8 +127,8 @@ export async function updateSession(
         time_title_updated = ?,
         time_compacting = ?,
         time_archived = ?,
-        -- Path self-healing may carry a timestamp from before a concurrent read; do not roll back
-        -- the actual activity time.
+        -- Fix cause: path self-healing may carry a timestamp from before a concurrent read; do
+        -- not roll back the actual activity time.
         time_updated = max(time_updated, ?)
       where id = ?
       `,

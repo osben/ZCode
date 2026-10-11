@@ -25,6 +25,7 @@ import { LoginApiKeyForm } from "./login/LoginApiKeyForm.js";
 import { renderOAuthProviderIcon } from "./lib/oauthProviderIcon.js";
 import { ThemeHeroVisual } from "./openWorkspacePageThemeHero.js";
 import { useZCodeStore } from "./store/StoreProvider.js";
+import { DesktopOverlayWindowControls } from "@/DesktopOverlayWindowControls.js";
 
 interface WelcomeScreenProps {
   onComplete: (reason: LoginCompleteReason) => void | Promise<void>;
@@ -36,7 +37,9 @@ export function WelcomeScreen({ onComplete }: WelcomeScreenProps) {
   return (
     <main className="relative flex h-full min-h-dvh items-center justify-center overflow-hidden bg-background px-4 py-6 text-foreground sm:px-6">
       <ThemeHeroVisual className="absolute inset-0" />
-      <div className="pointer-events-none absolute left-0 top-0 right-0 z-10 flex h-12 w-full items-center [app-region:drag]" />
+      {/* Native drag hit testing is not constrained by pointer-events/z-index; the drag layer must avoid window controls and be declared before the no-drag region. */}
+      <div className="pointer-events-none absolute left-0 top-0 right-0 z-10 flex h-12 items-center [app-region:drag] platform-windows-desktop:right-[134px] platform-linux-desktop:right-[134px]" />
+      <DesktopOverlayWindowControls />
       <section className="relative z-10 w-full flex flex-col gap-10 max-w-sm rounded-2xl border border-popover-border bg-background p-8 text-ui-base/relaxed shadow-md sm:p-10">
         <LoginPanel active onComplete={onComplete} />
       </section>
@@ -54,21 +57,21 @@ interface ActiveLoginEntryAttempt {
   providerId: OAuthProviderMeta["id"];
 }
 
-function shouldCompleteProviderLoginAttempt(params: {
+export function shouldCompleteProviderLoginAttempt(params: {
   attempt: ActiveLoginEntryAttempt | null;
   successProvider: OAuthProviderMeta["id"] | null;
 }): boolean {
   return !params.attempt || params.successProvider === params.attempt.providerId;
 }
 
-function shouldCompleteLoginFromExistingUser(params: {
+export function shouldCompleteLoginFromExistingUser(params: {
   hasUser: boolean;
   attempt: ActiveLoginEntryAttempt | null;
 }): boolean {
   return params.hasUser && !params.attempt;
 }
 
-function LoginPanel({ active, onComplete }: LoginPanelProps) {
+export function LoginPanel({ active, onComplete }: LoginPanelProps) {
   const { intl } = useZCodeIntl();
   const {
     startLogin,
@@ -288,7 +291,7 @@ function LoginPanel({ active, onComplete }: LoginPanelProps) {
       </LoginPanelHeader>
 
       <div className="space-y-6">
-        {/* After Root writes oauthError (polling/callback failure), an effect resets useOAuth to idle,
+        {/* Bugfix: after Root writes oauthError (polling/callback failure), an effect resets useOAuth to idle,
             so checking only status==="idle" would show the failure block alongside the provider buttons and mix their states.
             While failed, the error block below takes over (retry/cancel); the provider list returns after the error is cleared. */}
         {status === "idle" && !oauthError && loginMode === "providers" && (
@@ -403,8 +406,8 @@ function LoginPanel({ active, onComplete }: LoginPanelProps) {
             >
               <TriangleAlertIcon className="size-4" />
               <AlertDescription className="text-center">
-                {/* Sign-in failures are usually retryable or allow switching providers; the destructive red style would misleadingly imply a destructive error.
-                    Use warning semantics consistently and center the message to match the sign-in panel’s visual alignment. */}
+                {/* Bugfix: sign-in failures are usually retryable or allow switching providers; the destructive red style would misleadingly imply a destructive error.
+                    Use warning semantics consistently and center the message to match the sign-in panel's visual alignment. */}
                 {oauthError || error}
               </AlertDescription>
             </Alert>
@@ -536,15 +539,15 @@ function getProviderPriority(provider: OAuthProviderMeta): number {
   }
 }
 
-function resolveVisibleLoginProviders(providers: OAuthProviderMeta[]): OAuthProviderMeta[] {
-  // ZAI / BigModel now share the App sign-in source of truth, so the sign-in entry must show both options when signed out.
-  // Do not temporarily hide BigModel, or users cannot explicitly select it as the active provider.
+export function resolveVisibleLoginProviders(providers: OAuthProviderMeta[]): OAuthProviderMeta[] {
+  // Bugfix: ZAI and BigModel now share the App login source of truth, so both login entries must be shown when signed out.
+  // The old logic temporarily hid BigModel, preventing users from choosing it as the active provider.
   return [...providers].sort((left, right) => {
     return getProviderPriority(left) - getProviderPriority(right);
   });
 }
 
-function resolveLoginRetryProvider({
+export function resolveLoginRetryProvider({
   pendingProvider,
   lastAttemptProvider,
   providers,

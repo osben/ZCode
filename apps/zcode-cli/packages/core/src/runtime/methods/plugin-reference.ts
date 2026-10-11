@@ -66,7 +66,7 @@ function collectLivePluginSkills(runtime: AgentRuntimeInternal): LivePluginSkill
 
 function collectLivePluginSubagents(runtime: AgentRuntimeInternal): LivePluginSubagent[] {
   const subagents: LivePluginSubagent[] = [];
-  for (const profile of runtime.config.subagents?.profiles ?? []) {
+  for (const profile of runtime.getAgentDefinitions().activeAgents) {
     const name = profile.name.trim();
     const path = profile.path?.trim();
     // A Plugin profile enters config only after bootstrap successfully parses its Markdown, and it always includes a path.

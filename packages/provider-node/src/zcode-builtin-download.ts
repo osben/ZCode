@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { stripZcodeForkVersionSuffix } from "@zcode/shared";
 import { decodeZCodeBuiltinRelease, type ZCodeBuiltinRelease } from "./zcode-builtin-release.js";
 
 const clientConfigSchema = z
@@ -48,7 +49,10 @@ export async function downloadZCodeBuiltinRelease(
   let stage = "client-config";
   try {
     const url = new URL("/api/v1/client/configs", options.endpointOrigin);
-    url.searchParams.set("app_version", options.appVersion);
+    // Send only the upstream baseline externally: appVersion is also used for local cache
+    // directory naming (which keeps the full fork version); here the prerelease suffix is
+    // stripped from the outbound query only.
+    url.searchParams.set("app_version", stripZcodeForkVersionSuffix(options.appVersion));
     url.searchParams.set("platform", options.platform);
     const payload = clientConfigSchema.parse(await readJson(url));
     const downloadUrl = payload.data.configs.builtin_provider_config_json;

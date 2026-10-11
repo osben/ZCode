@@ -170,10 +170,8 @@ function authorizeRequest(request: NodeReplBrowserBrokerRequest, input: { token:
   // A shared MCP subprocess cannot be bound to one session, but top-level MCP metadata also cannot
   // grant Browser access directly. The private socket token first proves that the request came from
   // a host-started node_repl; BrowserControlPort.requireSession then validates sessionId
-  // authoritatively and rejects subagents before they reach the port.
-  if (request.runtimeScope === "subagent") {
-    throw new Error("Browser is not available in subagent");
-  }
+  // authoritatively—a subagent's child session resolves to a client session only after the parent
+  // runtime registers it via forChildSession; unregistered ones are always rejected.
 }
 
 async function executeRequest(

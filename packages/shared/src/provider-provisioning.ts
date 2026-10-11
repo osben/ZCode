@@ -23,7 +23,7 @@ export type ProviderProvisioningCredentialScope = z.infer<
   typeof providerProvisioningCredentialScopeSchema
 >;
 
-/** Only request-time API keys for synchronized Account Providers are allowed; account identity and future extension fields are not synchronized. */
+/** Only for validating legacy schema v1 envelopes; new Sources do not export and new Targets do not apply these historical Keys. */
 export function isProviderProvisioningAccountCredentialKey(key: string): boolean {
   const normalized = key.trim();
   return normalized === key && /^account-provider:.+:api-key$/.test(normalized);
@@ -73,15 +73,36 @@ export type ProviderProvisioningCredentialEntry = z.infer<
 
 export const providerProvisioningEnvelopeSchema = z
   .object({
-    schemaVersion: z.literal(1),
+    // In v2, a missing account Key no longer means deletion; old Targets must reject the envelope before any write.
+    schemaVersion: z.union([z.literal(1), z.literal(2)]),
     syncId: nonEmptyString,
     personalConfig: providerProvisioningPersonalConfigSchema,
     accountSettings: providerProvisioningAccountSettingsSchema,
     credentials: z.array(providerProvisioningCredentialEntrySchema).max(256),
   })
-  .strict();
+  .strict()
+  .refine(
+    (value) =>
+      value.schemaVersion === 1 ||
+      value.credentials.every((entry) => entry.scope === "oauth-session"),
+    { message: "Provisioning v2 only accepts OAuth credentials", path: ["credentials"] },
+  );
 
 export type ProviderProvisioningEnvelope = z.infer<typeof providerProvisioningEnvelopeSchema>;
+
+/** Only fixed phase codes cross processes; remote free text must not become publicly visible diagnostic information. */
+export const providerProvisioningErrorCodeSchema = z.enum([
+  "source-read-failed",
+  "target-call-failed",
+  "target-write-failed",
+  "target-refresh-failed",
+  "target-commit-failed",
+  "target-apply-failed",
+  "capability-unavailable",
+  "session-unavailable",
+  "host-execution-failed",
+]);
+export type ProviderProvisioningErrorCode = z.infer<typeof providerProvisioningErrorCodeSchema>;
 
 export const providerProvisioningResultSchema = z
   .object({
@@ -91,6 +112,7 @@ export const providerProvisioningResultSchema = z
     credentialCount: z.number().int().nonnegative(),
     configRevision: nonEmptyString.optional(),
     errorMessage: z.string().optional(),
+    errorCode: providerProvisioningErrorCodeSchema.optional(),
     rolledBack: z.boolean(),
   })
   .strict();

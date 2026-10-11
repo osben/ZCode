@@ -1,4 +1,5 @@
 import type {
+  RequestVerificationConfig,
   CodingPlanAgreementResponse,
   CodingPlanBatchPreviewRequest,
   CodingPlanBatchPreviewResponse,
@@ -15,6 +16,7 @@ import type {
   CodingPlanPaypalSupportResponse,
   CodingPlanProductInfo,
   CodingPlanProductInfoRequest,
+  CodingPlanBillingDiscountConfig,
   CodingPlanStaticProductsConfig,
   CodingPlanStaticTeamProductsConfig,
   CodingPlanPreviewRequest,
@@ -42,6 +44,9 @@ import type {
   StartPlanPreviewConfig,
   ZCodeModelContextBudgetStrategy,
   ForceUpdateConfig,
+  ManualClaimPlanPreviewSnapshot,
+  ManualClaimPlanClaimRequest,
+  ManualClaimPlanClaimResult,
   DynamicWorkflowClientConfig,
 } from "@zcode/shared";
 import type { ModelSelectionView } from "@zcode/provider";
@@ -60,7 +65,9 @@ export interface ICodingPlanSubscriptionService {
   getStaticProducts(): Promise<CodingPlanStaticProductsConfig>;
   getStaticTeamProducts(): Promise<CodingPlanStaticTeamProductsConfig>;
   getStartPlanPreview(): Promise<StartPlanPreviewConfig | null>;
-  /** Off-peak task rollout config; forceRefresh lets the entry point fetch again when opened (bypassing the 1h snapshot cache). */
+  getManualClaimPlanPreviews(): Promise<ManualClaimPlanPreviewSnapshot>;
+  claimManualPlan(request: ManualClaimPlanClaimRequest): Promise<ManualClaimPlanClaimResult>;
+  /** Off-peak task rollout config (D31); forceRefresh lets the entry point fetch again when opened (bypassing the 1h snapshot cache). */
   getOffPeakClientConfig(options?: { forceRefresh?: boolean }): Promise<OffPeakClientConfig>;
   /**
    * Dynamic-workflow rollout snapshot: remote `configs.dynamicWorkflow.mode`
@@ -71,6 +78,8 @@ export interface ICodingPlanSubscriptionService {
   }): Promise<DynamicWorkflowClientConfig>;
   /** Compatibility interface: always returns preflight-v1 without reading remote configuration or cache. */
   getModelContextBudgetStrategy(): Promise<ZCodeModelContextBudgetStrategy>;
+  getBillingDiscount(): Promise<CodingPlanBillingDiscountConfig | undefined>;
+  getRequestVerificationConfig(): Promise<RequestVerificationConfig | null>;
   getForceUpdateConfig(): Promise<ForceUpdateConfig | null>;
   productInfo(request: CodingPlanProductInfoRequest): Promise<CodingPlanProductInfo>;
   preview(request: CodingPlanPreviewRequest): Promise<CodingPlanPreviewResponse>;

@@ -44,7 +44,7 @@ const WORKFLOW_DRAFT_MAX_SLUG_CHARS = 64;
 /**
  * Fallback when the name contains no usable characters (most commonly a name written in Chinese).
  */
-const WORKFLOW_DRAFT_FALLBACK_SLUG = "workflow";
+export const WORKFLOW_DRAFT_FALLBACK_SLUG = "workflow";
 
 /**
  * Maximum suffix attempts for duplicate names. Reaching the limit means someone is repeatedly submitting the same name; giving up
@@ -52,7 +52,7 @@ const WORKFLOW_DRAFT_FALLBACK_SLUG = "workflow";
  */
 const WORKFLOW_DRAFT_MAX_ATTEMPTS = 1_000;
 
-interface WriteWorkflowDraftInput {
+export interface WriteWorkflowDraftInput {
   /**
    * Session working directory; drafts go under its `.zcode/workflow-drafts/`. When absent, the host has no working-directory concept
    * (port stub / missing session context), so there is nowhere to write; treat it like a write failure.
@@ -120,7 +120,7 @@ export function resolveWorkflowDraftName(
  * the limit by code point rather than UTF-16 unit so a character is not split into half a surrogate pair. Use the fallback when nothing
  * remains or only dots remain (`.` / `..` are directory entries, not filenames).
  */
-function workflowDraftSlug(name: string): string {
+export function workflowDraftSlug(name: string): string {
   const reduced = Array.from(
     name
       .trim()

@@ -15,10 +15,16 @@ export const WORKFLOW_RUNS_LIMITS = {
   /** Most recent runs; evict the oldest when over the limit. */
   maxRuns: 8,
   /**
-   * Actors and nodes share a capacity limit, so a node cannot remain visible after its owning subagent is truncated.
-   * Key-level deltas mean each event transmits only changes; the capacity limit bounds each run's projection size
-   * and resource use from a faulty script that keeps creating entries. The total across runs is controlled by {@link maxTotalEntries}.
-   * This limits display state, not the number of subagents the engine can actually run.
+   * Actors and nodes share the same limit. Every node belongs to an actor, so the node limit already
+   * implies the scale of actors. A lower actor limit (previously 32) would silently hide 18 subagents
+   * from the inspector during an ordinary 50-way fan-out, even though the node table, engine, and graph can all hold them.
+   *
+   * Raised from 256 to 1024 on 2026-09-20. The original reason for the limit was that the whole state
+   * key was resent with every event, making unbounded data O(N²) bytes. With key-level deltas
+   * (workflow-runs-delta.ts), each event now sends only its changes, so that reason no longer applies.
+   * The other two reasons remain, but do not require a limit as low as 256: guard against a broken
+   * script calling `agent()` in a loop, and bound bytes per run. {@link maxTotalEntries} handles the
+   * total **across runs**. This is still not a product-level subagent limit.
    */
   maxActors: 1_024,
   maxNodes: 1_024,
@@ -32,9 +38,10 @@ export const WORKFLOW_RUNS_LIMITS = {
    */
   maxTotalEntries: 6_144,
   /**
-   * **Display** budget for the Results section on the details page, intentionally much smaller than the engine's per-run report limit (256):
-   * the protocol limit is a display budget, while the engine limit is the contract; they need not match. Entries over this limit remain
-   * in the journal (`dwf_node.kind = "report"`), but are omitted from this high-frequency state key.
+   * **Display** budget for the Results section on the details page, intentionally much smaller than
+   * the engine's per-run report limit (`REPORT_CAPS.maxItemsPerRun`). The protocol limit is a display
+   * budget; the engine limit is the contract, so they need not match. Entries above this limit remain
+   * in the journal (`dwf_node.kind = "report"`) but are omitted from this high-frequency state key.
    */
   maxReports: 64,
   maxReportPreviewLength: 2_048,
@@ -56,8 +63,15 @@ export const WORKFLOW_RUNS_LIMITS = {
    */
   maxSubagentModelLength: 256,
   /**
-   * Limit for `run.concurrencyCeiling`. The ceiling is derived as `min(16, cores − 2)`; this limit only rejects malformed payloads
-   * (if the reducer sees a value outside it, it treats it as unreadable and keeps the known value).
+   * Wire limit for an actor's `sessionId`. A session ID is a generated or read identifier, not display
+   * text, so reject an over-limit value instead of truncating it: a shortened ID would refer to another
+   * session or to no session at all.
+   */
+  maxSessionIdLength: 256,
+  /**
+   * Limit for `run.concurrencyCeiling` (default concurrency D). D is derived from
+   * `max(4, min(16, cores − 2))`; this limit only rejects malformed payloads (the reducer treats an
+   * out-of-range value as unreadable and keeps the known value).
    */
   maxConcurrencyCeiling: 1_024,
   /**
@@ -81,6 +95,16 @@ export const WORKFLOW_RUNS_LIMITS = {
   /** Wire limit for phase names, matching display's `CREATE_WORKFLOW_GRAPH_MAX_NAME_CHARS` (the UI associates both sides by name). */
   maxPhaseNameLength: 128,
   /**
+   * Number of holes remembered by a run (docs/dynamic-workflow/presentation.md, "Holes on the timeline").
+   * It shares the display payload's `holes` limit: a hole that cannot be drawn on the timeline need not
+   * be stored in the projection. Each hole is a phase, so this cannot exceed `maxPhases`.
+   */
+  maxHoles: 32,
+  /** Wire limit for the original hole type (`Plan`), matching the display field with the same name. */
+  maxHoleTypeLength: 128,
+  /** Limit for a hole prompt in run state (the sidebar waiting view displays it); truncate longer text to 499 characters plus `…`. */
+  maxHolePromptLength: 500,
+  /**
    * **Task summary** limit for one ask (`instructionsHead` in `node-queued`). Matches the engine's
    * `INSTRUCTIONS_HEAD_MAX_CHARS`: the engine already truncates to this limit, and this is the second gate on the wire.
    * 240 characters are enough to see at a glance what the subagent was asked to do; anything longer would move the full instructions over the protocol,
@@ -100,9 +124,11 @@ export const WORKFLOW_RUNS_LIMITS = {
 /**
  * Actors / nodes limits compiled into **legacy consumers** (the generation without `workflowRunDeltas` capability).
  *
- * ⚠ These numbers must **never change**: they are validation limits compiled into someone else's binary, not our limits. An oversized payload does not
- * lose one key; it makes the entire `state.updated` patch fail parsing and drops the whole frame, silently breaking that subscription. So before sending a frame to these consumers,
- * it must pass through `clampWorkflowRunsForLegacy`.
+ * ⚠ **Never change these two values**: they are validation limits in another binary, not ours. An
+ * over-limit payload does not lose just one key; it makes the entire `state.updated` patch fail to
+ * parse, drops the whole frame, and leaves that subscription silent (as in the 2026-09-04
+ * `fault.subscription.recoveryFailed` incident). Run `clampWorkflowRunsForLegacy` before sending
+ * frames to these subscribers.
  *
  * “First 256” is deliberate: the legacy reducer rejected new entries at the limit, so it produced exactly the earliest 256.
  */
@@ -112,8 +138,10 @@ export const WORKFLOW_RUNS_LEGACY_LIMITS = {
 } as const;
 
 /**
- * A phase entered by control flow (a `phase("…")` marker). `name` is the author's original term (the timeline associates it with display's `phases[].name`); `rounds` is the entry
- * count — monotonic (the reducer takes max), so replaying a prefix on resume does not double it.
+ * A phase entered by control flow (marked by `phase("…")`; see docs/dynamic-workflow/presentation.md,
+ * 2026-09-05). `name` is the author's original text (the timeline uses it to associate the display
+ * `phases[].name`); `rounds` is the entry count and is monotonic (the reducer takes max), so replaying
+ * a prefix on resume does not double it.
  */
 export const workflowRunPhaseSchema = z.object({
   name: z.string().min(1).max(WORKFLOW_RUNS_LIMITS.maxPhaseNameLength),
@@ -122,7 +150,7 @@ export const workflowRunPhaseSchema = z.object({
 export type WorkflowRunPhase = z.infer<typeof workflowRunPhaseSchema>;
 
 /**
- * How much of the limit was consumed in a **birth phase**.
+ * Amount of the limit spent in a **birth phase** (docs/dynamic-workflow/presentation.md, "Reduction").
  *
  * The two counters (`nodesUnlisted` / `nodesUnlistedSettled` in {@link workflowRunUsageSchema}) say how many entries a run omitted in total,
  * but not **which phase** omitted them. The read view is drawn by phase: each phase's roster, count ring, and “N more” need to add back its own unlisted entries,
@@ -144,16 +172,18 @@ export const workflowRunUnlistedPhaseSchema = z.object({
 export type WorkflowRunUnlistedPhase = z.infer<typeof workflowRunUnlistedPhaseSchema>;
 
 /**
- * Run-level usage: observational, not control-plane state. `spentTokens` comes directly from the total in the engine's `usage-updated` event
- * (written in the same sync step as `dwf_run.spent_tokens`, so the two always match); `nodesUsed` counts nodes dispatched in this run from node events —
- * there is no limit from which to derive it, and none is needed.
+ * Run-level usage is observational, not a control surface (docs/dynamic-workflow/authoring.md).
+ * `spentTokens` comes directly from the total in the engine's `usage-updated` event (written in the
+ * same synchronization step as `dwf_run.spent_tokens`, so the two always match). `nodesUsed` counts
+ * nodes dispatched by this run from node events; there is no limit to derive it from, nor a need to.
  */
 export const workflowRunUsageSchema = z.object({
   spentTokens: z.number().int().nonnegative(),
   nodesUsed: z.number().int().nonnegative(),
   /**
-   * Number of instances **rejected from the table** after hitting {@link WORKFLOW_RUNS_LIMITS.maxNodes}, and how many of those have settled. `truncated` only says “something was omitted,” not
-   * how many — so a run with 3,000-way fan-out would appear as “1,024 steps” in the read view, which would be false.
+   * Number of instances rejected from the table after reaching {@link WORKFLOW_RUNS_LIMITS.maxNodes},
+   * and how many of those have settled (docs/dynamic-workflow/presentation.md). `truncated` only says
+   * that something was omitted, not how much; showing a 3,000-way fan-out as "1024 steps" would be false.
    *
    * Both are **additive** counters (rejected instances are not in the table and have no identity to deduplicate), so the reducer counts them only when an event
    * **advances the high-water mark**; retransmitted tail events cannot keep increasing them. `run-started` resets the entire usage object too:
@@ -174,14 +204,19 @@ export type WorkflowRunUsage = z.infer<typeof workflowRunUsageSchema>;
  *   - `completed`: otherwise (all nodes settled or the run is terminal).
  * There is no observable actor-level failed state: a failed ask still means “its work is done”; the outcome is on the node.
  *
- * `sessionId` is the actor session ID (phase 5 transcript drill-down reads it directly). It is also absent from Boundary C;
- * the run service deterministically derives it from `(runId, actorRef)` using the same function.
+ * `sessionId` is **the session that owns this subagent transcript** (transcript drill-down reads it
+ * directly; see docs/dynamic-workflow/presentation.md, "Subagent transcripts"). Usually it is the
+ * current run's session, deterministically generated by the run service from `(runId, actorRef)`. A
+ * subagent in a revised run may have no session if all answers so far came from imported hits (hits
+ * do not create sessions). In that case, this is the session read from the predecessor and carried by
+ * the cache's `sourceSessionId`; after the first live dispatch, it switches back to this run's session
+ * (the seed has been copied into the prefix).
  */
 export const workflowRunActorSchema = z.object({
   siteId: z.string().min(1).max(64),
   ordinal: z.number().int().nonnegative(),
   name: z.string().min(1).max(WORKFLOW_RUNS_LIMITS.maxActorNameLength).optional(),
-  sessionId: z.string().min(1).max(256).optional(),
+  sessionId: z.string().min(1).max(WORKFLOW_RUNS_LIMITS.maxSessionIdLength).optional(),
   status: z.enum(["waiting", "running", "completed"]),
   /**
    * The phase this instance was **born** in: the name of the `phase("…")` marker active when its ordinal was minted. The UI associates it with `phases[].name` by **name**;
@@ -191,6 +226,13 @@ export const workflowRunActorSchema = z.object({
    * or the event came from an older CLI that did not include this key.
    */
   phaseName: z.string().min(1).max(WORKFLOW_RUNS_LIMITS.maxPhaseNameLength).optional(),
+  /**
+   * This subagent's model: when a persona names a model, the host resolves it through this run's
+   * binding table to the canonical string `providerId/modelId[$level]` (docs/dynamic-workflow/presentation.md,
+   * "Reduction"). If absent, it uses the run's subagent model (or the event came from an older CLI
+   * that does not send this key). Shares the `subagentModel` limit.
+   */
+  model: z.string().min(1).max(WORKFLOW_RUNS_LIMITS.maxSubagentModelLength).optional(),
 });
 export type WorkflowRunActor = z.infer<typeof workflowRunActorSchema>;
 
@@ -273,17 +315,20 @@ export type WorkflowRunNode = z.infer<typeof workflowRunNodeSchema>;
  * Current concurrency state for this run. There are two limits;
  * actual concurrency is **the lower of the two**:
  *
- * - `cap`: current **shared** gate for this run's provider key (the coordinator buckets by key, fans out by run,
- *   and updates it on `concurrency-changed`); `ceiling`: CPU-derived maximum. Events do not include ceiling;
- *   reduction derives it from the largest `previous` / `next` seen by this run (the bucket starts at the ceiling, so the first event's
- *   `previous` is it; in a decreasing-only sequence it remains the maximum).
- * - `limit`: this run's **own** limit (`max_concurrency` from `CreateWorkflow` / `AmendWorkflow`
- *   mapped to `caps.maxConcurrency`), delivered with `run-started` and stable for the run. **Present only when below the ceiling**:
- *   a run at the ceiling is unchanged and needs no extra key.
- * - `cooldownMs`: duration for which rate limiting with Retry-After blocks new dispatches, a **relative value** (same reason as `retryInMs`);
- *   cleared by `idle_reset` and terminal run state.
+ * - `cap`: current **shared** gate state for this run's provider key (the governor buckets by key and
+ *   fans out by run; it changes with `concurrency-changed`).
+ * - `ceiling`: default concurrency D (the wire key predates the term "default concurrency" and is
+ *   retained because older clients still read it). It is a reference point, not a limit: shared cap
+ *   can grow to 2D, and users can raise this run above D. Use `run.concurrencyCeiling` when known;
+ *   only older CLIs that omit D fall back to the greatest observed `previous` / `next` value.
+ * - `limit`: this run's **own** limit (`max_concurrency` from `CreateWorkflow` / `AmendWorkflow`,
+ *   projected as `caps.maxConcurrency`). It arrives with `run-started` and moves with
+ *   `run-caps-changed` when retuned in place. **Present only when ≠ D**: a run at the default has no
+ *   extra key and behaves exactly as before.
+ * - `cooldownMs`: **relative** duration of the Retry-After rate-limit freeze on new dispatches
+ *   (same reasoning as `retryInMs`); `idle_reset` and terminal run states clear it.
  *
- * UI shows the reading only when `min(cap, limit) < ceiling` (see workflowRunConcurrencyView).
+ * See workflowRunConcurrencyView for UI display rules (docs/dynamic-workflow/concurrency.md, "What the user sees").
  */
 export const workflowRunConcurrencySchema = z.object({
   key: z.string().min(1).max(WORKFLOW_RUNS_LIMITS.maxConcurrencyKeyLength).optional(),
@@ -356,6 +401,37 @@ export const workflowRunPendingQuestionSchema = z.object({
 });
 export type WorkflowRunPendingQuestion = z.infer<typeof workflowRunPendingQuestionSchema>;
 
+/**
+ * A hole (docs/dynamic-workflow/authoring.md, "Holes"; for the projection, see
+ * docs/dynamic-workflow/presentation.md, "Holes on the timeline"): a `hole<T>("name")` call in a script.
+ * When a run reaches it, that branch waits for the main agent to provide code with `FillWorkflowHole`.
+ * Its identity is a **site ID** (name key `hole#<8 hex digits>`). The same site can wait at multiple
+ * ordinals in a loop, but the table keeps only the latest one: filling is once per site, and the read
+ * view only needs to say that the hole is waiting or filled.
+ *
+ * `state`: `waiting` means the engine has a deferred suspended in memory (the source of truth is in
+ * the CLI process, like pendingQuestions, so it is removed on a new incarnation and in terminal
+ * states); `filled` means the completion has joined the run (recorded in the journal's `hole-filled`
+ * event and retained across incarnations).
+ * `type` is the author's original type text; it is absent when not sent by the payload, and the read
+ * view falls back to `holes[].type` in the display payload, matched by site ID.
+ * `since` is the arrival time (epoch milliseconds supplied by the event; this module has no clock).
+ * `filledAt` / `filledBy` arrive with `hole-filled`.
+ */
+export const workflowRunHoleSchema = z.object({
+  siteId: z.string().min(1).max(64),
+  ordinal: z.number().int().nonnegative(),
+  name: z.string().min(1).max(WORKFLOW_RUNS_LIMITS.maxPhaseNameLength),
+  type: z.string().min(1).max(WORKFLOW_RUNS_LIMITS.maxHoleTypeLength).optional(),
+  /** Prompt shown to the main agent (`prompt` in the `hole-reached` payload), truncated to {@link WORKFLOW_RUNS_LIMITS.maxHolePromptLength}. */
+  prompt: z.string().min(1).max(WORKFLOW_RUNS_LIMITS.maxHolePromptLength).optional(),
+  state: z.enum(["waiting", "filled"]),
+  since: z.number().int().nonnegative().optional(),
+  filledAt: z.number().int().nonnegative().optional(),
+  filledBy: z.string().min(1).max(128).optional(),
+});
+export type WorkflowRunHole = z.infer<typeof workflowRunHoleSchema>;
+
 export const workflowRunSchema = z.object({
   runId: z.string().min(1).max(128),
   /** CreateWorkflow tool call that started this run (correlation key from the tool card to the details page). */
@@ -409,16 +485,21 @@ export const workflowRunSchema = z.object({
     .max(WORKFLOW_RUNS_LIMITS.maxPendingQuestions)
     .optional(),
   /**
-   * Current concurrency state (see {@link workflowRunConcurrencySchema}). Present only when **one of the two limits is below the ceiling**:
-   * the run received `concurrency-changed` (rate limiting lowered the shared bucket), or `run-started` supplied a `limit` below the ceiling
-   * (the user capped this run). A run with neither always runs at the ceiling, so there is nothing to report.
+   * Current observed capacity (see {@link workflowRunConcurrencySchema}). Present after a
+   * `concurrency-changed` event updates the shared bucket, or when `run-started` / `run-caps-changed`
+   * provides a `limit` different from the default (the user set a limit for this run). A run with
+   * neither remains at the default and has nothing to report.
    * Optional for the same reason as `reports` / `pendingQuestions`.
    */
   concurrency: workflowRunConcurrencySchema.optional(),
   /**
-   * Local concurrency ceiling (`concurrencyCeiling` in the `run-started` payload, a process fact added by the CLI when building the payload).
-   * Unlike `concurrency.ceiling`, which is the reading chip's limit and appears only when the chip is present, this one is **always present when known**,
-   * whether or not this run is below it — the stepper in the “Settings” dialog stops here. Optional for the same reason as `concurrency`: an older CLI omits it, resulting in a degraded response.
+   * Default concurrency D (`concurrencyCeiling` in the `run-started` payload, a process fact added by
+   * the CLI when it creates the payload; the key predates the term "default concurrency" and remains
+   * for older clients). It is a starting point, not a limit. Unlike `concurrency`, it is **present
+   * whenever available**, whether or not this run has its own limit. The settings dialog uses it to
+   * display "Default N" and determine that matching the default means no run-specific limit
+   * (docs/dynamic-workflow/concurrency.md, "Protocol state"). Optional because older CLIs omit it,
+   * degrading by one key just like `concurrency`.
    */
   concurrencyCeiling: z
     .number()
@@ -481,6 +562,25 @@ export const workflowRunSchema = z.object({
     .array(z.array(z.number().int().nonnegative()).max(WORKFLOW_RUNS_LIMITS.maxPhases))
     .max(WORKFLOW_RUNS_LIMITS.maxPhases)
     .optional(),
+  /**
+   * Which entries in `phaseNames` are **still-open holes** (an index array from `run-launched.holes` /
+   * `hole-filled.holes`; see "The model" in docs/dynamic-workflow/presentation.md, "Holes on the
+   * timeline"). The sidebar draws its mini-track from `phaseNames` and cannot query a display
+   * payload, so this array is its only basis for drawing holes as dashed markers. A filled phase is
+   * no longer a hole, and the whole array is replaced by `hole-filled`. It depends on `phaseNames`:
+   * absent when that field is absent, and also absent when there are no holes.
+   */
+  phaseHoles: z
+    .array(z.number().int().nonnegative())
+    .max(WORKFLOW_RUNS_LIMITS.maxPhases)
+    .optional(),
+  /**
+   * Holes for this run (see {@link workflowRunHoleSchema}), ordered by first arrival. **The entire
+   * key is absent when empty**, like `pendingQuestions`. Optional for the same reason as `reports`:
+   * adding a field to an existing state key degrades by one key when an older CLI omits it instead of
+   * causing the whole frame to be dropped.
+   */
+  holes: z.array(workflowRunHoleSchema).max(WORKFLOW_RUNS_LIMITS.maxHoles).optional(),
   /**
    * How much of the limit was consumed in each birth phase (see {@link workflowRunUnlistedPhaseSchema}). **Omit the entire key
    * when there are no buckets**. The table may have one more entry than `maxPhases`: the extra entry is the unphased bucket, in the same table as named phases.

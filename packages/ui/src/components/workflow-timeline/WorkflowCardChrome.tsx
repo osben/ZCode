@@ -85,7 +85,7 @@ export function WorkflowRunStatus({
         aria-hidden
         className={cn("wf-lamp size-2 shrink-0 rounded-full", RUN_STATUS_DOT[effectiveStatus])}
       />
-      {/* Swap status labels by value: the old label exits as the new one enters. */}
+      {/* Transition status labels by value: the old label exits and the new one enters (see the “Hover and motion” note, Kind section). */}
       <span
         className={cn("wf-swap text-ui-sm", RUN_STATUS_TEXT[effectiveStatus])}
         data-testid={testId}

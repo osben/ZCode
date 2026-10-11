@@ -23,7 +23,7 @@ interface RendererHeapSnapshot {
 }
 
 /** Chromium-only `performance.memory`; returns undefined when unavailable in a Web browser. */
-function readRendererHeapSnapshot(): RendererHeapSnapshot | undefined {
+export function readRendererHeapSnapshot(): RendererHeapSnapshot | undefined {
   if (typeof performance === "undefined") {
     return undefined;
   }
@@ -48,7 +48,7 @@ interface StartMemoryDiagnosticsLoggerOptions {
   reportHeapSample?: (sample: RendererHeapSample) => void;
 }
 
-interface MemoryDiagnosticsLoggerHandle {
+export interface MemoryDiagnosticsLoggerHandle {
   sampleNow(): boolean;
   stop(): void;
 }

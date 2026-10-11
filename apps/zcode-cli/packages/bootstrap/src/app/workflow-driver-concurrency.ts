@@ -121,9 +121,10 @@ export function createActorModelActivity(input: {
   live?: () => InstanceRef | undefined;
   handlers: ActorModelActivityHandlers;
   /**
-   * This run's seat gate and this subagent's key within it. When present, wrap admission once more:
-   * wait for a seat, then pass through the coordinator. When absent, this run's limit never changes
-   * mid-run (snippet execution or an ungated assembly), and the admission port behaves exactly as before.
+   * This run's seat gate and this subagent's key within it (docs/dynamic-workflow/concurrency.md
+   * "Retuning a live run"). When present, wrap admission once more: wait for a seat, then pass
+   * through the coordinator. When absent, this run's limit never changes mid-run (snippet
+   * execution or an ungated assembly), and the admission port behaves exactly as before.
    */
   seat?: { gate: WorkflowRunSeatGate; key: string };
 }): ActorModelActivity {
@@ -181,8 +182,7 @@ export function createActorModelActivity(input: {
     if (!chains.delete(key) || anyExecuting()) return;
     let latest: Chain | undefined;
     for (const chain of chains.values()) {
-      if (chain.wait !== undefined && (latest === undefined || chain.waitSeq > latest.waitSeq))
-        latest = chain;
+      if (chain.wait !== undefined && (latest === undefined || chain.waitSeq > latest.waitSeq)) latest = chain;
     }
     if (latest?.wait !== undefined) reportWaiting(latest.wait);
   };
@@ -203,9 +203,10 @@ export function createActorModelActivity(input: {
             );
           },
         };
-  // Wrap this run's own limit **on top of the shared cap**. The gate needs the same subagent fact—
-  // whether a tool is running right now—provided by this object's tool observer, so both readers
-  // share one source.
+  // Wrap this run's own limit **on top of the shared cap** (the division between the two limits is
+  // covered in docs/dynamic-workflow/concurrency.md "Two bounds on a run"). The gate needs the same
+  // subagent fact—whether a tool is running right now—provided by this object's tool observer, so
+  // both readers share one source.
   const admission =
     seat === undefined
       ? governed
@@ -236,8 +237,7 @@ export function createActorModelActivity(input: {
       if (typeof (runtime as Partial<AgentRuntime>).subscribeEvents !== "function") return;
       unsubscribeEvents = runtime.subscribeEvents({
         onSessionEvent: (event: SessionEvent) => {
-          if (event.type !== SessionEventType.ModelNetworkStatus || event.sessionId !== sessionId)
-            return;
+          if (event.type !== SessionEventType.ModelNetworkStatus || event.sessionId !== sessionId) return;
           const status = event.payload as ModelNetworkStatusEvent;
           const key = chainKey(status);
           switch (status.type) {
@@ -302,8 +302,8 @@ function chainKey(status: ModelNetworkStatusEvent): string {
 
 // ————————————————————————————— Run-level stall clock —————————————————————————————
 
-/** Notify the main agent after this much time without a successful model request. */
-const WORKFLOW_STALL_NOTIFY_AFTER_MS = 20 * 60_000;
+/** Notify the main agent after this much time without a successful model request (apps/zcode-cli/packages/dynamic-workflow/docs/execution-engine.md "Terminal states"). */
+export const WORKFLOW_STALL_NOTIFY_AFTER_MS = 20 * 60_000;
 
 /** Clock and timer interface (injectable for tests using fake time). */
 export interface WorkflowClock {

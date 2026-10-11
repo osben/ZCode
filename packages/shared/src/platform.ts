@@ -5,6 +5,7 @@ import type {
   SSHConnectOptions,
   WSLConnectOptions,
 } from "./remoteTarget.js";
+import type { PluginSandboxPlatformPort } from "./mcp-apps/contract.js";
 import type {
   LoadCliMcpFromUserDirectoryRequest,
   LoadCliMcpFromUserDirectoryResult,
@@ -13,6 +14,15 @@ import type {
   SaveCliMcpToUserDirectoryRequest,
 } from "./mcp.js";
 import type { OAuthStateRegistration } from "./oauth.js";
+import type {
+  WebRemoteControlContext,
+  WebRemoteControlReconnectWorkspaceResult,
+  WebRemoteControlStartOperationResult,
+  WebRemoteControlStatus,
+  WebRemoteControlTaskTarget,
+  WebRemoteControlReconnectWorkspaceRequest,
+  WebRemoteControlWorkspaceTarget,
+} from "./web-remote-control.js";
 import type { AppSettings, Locale } from "./protocol.js";
 import type { ArmsCustomEventPayload, RendererTelemetryEventPayload } from "./telemetry.js";
 import type {
@@ -248,6 +258,27 @@ export interface CreateTempTextAttachmentResult {
   sizeBytes: number;
 }
 
+/**
+ * Open a dwf artifact as a file: write the bytes of a particular artifact version to a local copy on the host machine.
+ * （docs/dynamic-workflow/authoring.md「How the user sees them」）。
+ *
+ * ⚠ Terminology: artifact means output published to the user by a script via `artifact.*`, not the engine's `RunSettlement.artifact`.
+ */
+export interface MaterializeWorkflowArtifactFileRequest {
+  runId: string;
+  artifactId: string;
+  /** Which version these bytes belong to; copies are stored in per-version directories, one per version. */
+  version: number;
+  /** Desired filename (including extension, which determines the app the system uses to open it); the host sanitizes it again. */
+  fileName: string;
+  bytes: Uint8Array;
+}
+
+export interface MaterializeWorkflowArtifactFileResult {
+  /** Absolute path to the copy on the host machine. */
+  localPath: string;
+}
+
 export type SaveFileRequest =
   | {
       data: ArrayBuffer;
@@ -275,7 +306,9 @@ export interface PrintPageToPdfResult {
   error?: string;
 }
 
-export function createOpenInEditorRemoteTarget(target: RemoteTarget): OpenInEditorRemoteTarget {
+export function createOpenInEditorRemoteTarget(
+  target: RemoteTarget,
+): OpenInEditorRemoteTarget | undefined {
   switch (target.kind) {
     case "ssh":
       // openInEditor needs only the connection identifier for a VS Code Remote-SSH URI;
@@ -300,6 +333,8 @@ export function createOpenInEditorRemoteTarget(target: RemoteTarget): OpenInEdit
         kind: "docker",
         container: target.container,
       };
+    case "server":
+      return undefined;
   }
 }
 
@@ -405,6 +440,18 @@ export interface DesktopZoomState {
   zoomLevel: number;
 }
 
+/**
+ * Desktop capability for "close to tray" (spec: docs/desktop/linux-close-to-tray.md).
+ * On Linux, it depends on whether the session DBus has a StatusNotifierWatcher (built in on KDE/XFCE;
+ * GNOME requires the AppIndicator extension). Windows always reports supported=true; macOS/Web do not query it.
+ */
+export interface DesktopCloseToTrayCapability {
+  /** Whether close-to-tray is available. */
+  supported: boolean;
+  /** Whether this is a GNOME-like desktop without a tray; the settings page uses this to add an "Install the AppIndicator extension" hint. */
+  gnomeLikeWithoutTray: boolean;
+}
+
 export interface DesktopWindowChromeState {
   isMaximized: boolean;
   /** Local macOS major version; null on non-macOS or when it cannot be parsed. */
@@ -443,6 +490,84 @@ export interface EmbeddedBrowserOpenUrlRequest {
   browserId?: string;
   browserGeneration?: number;
   sourceTabId?: string;
+}
+
+export interface EmbeddedBrowserPermissionDeviceOption {
+  deviceId: string;
+  name?: string;
+  vendorId?: number;
+  productId?: number;
+  serialNumber?: string;
+}
+
+export interface EmbeddedBrowserPermissionScreenOption {
+  sourceId: string;
+  name: string;
+  /** Source type: entire screen / window, determined by main from the desktopCapturer source ID prefix. */
+  kind: "screen" | "window";
+  thumbnailDataUrl?: string;
+}
+
+/** Embedded-browser permission prompt request from Main → Renderer; kind determines which prompt the renderer displays. */
+export type EmbeddedBrowserPermissionPromptEvent =
+  | {
+      requestId: string;
+      kind: "permission";
+      origin: string;
+      permission: string;
+      mediaTypes?: string[];
+      /** webContents ID of the requesting guest; the renderer uses it to show the prompt only in its owning tab,
+       *  preventing a background tab's request from appearing in the current tab and being approved by mistake. */
+      guestWebContentsId?: number;
+    }
+  | {
+      requestId: string;
+      kind: "screen-share";
+      origin: string;
+      screens: EmbeddedBrowserPermissionScreenOption[];
+      /** Screen sharing has no tab-anchoring semantics; always omitted (use fallback rendering). */
+      guestWebContentsId?: number;
+    }
+  | {
+      requestId: string;
+      kind: "device";
+      origin: string;
+      /** select-hid-device / select-usb-device / select-serial-port / select-bluetooth-device */
+      permission: string;
+      devices: EmbeddedBrowserPermissionDeviceOption[];
+      /** webContents ID of the requesting guest (available for serial/Bluetooth; omitted for hid/usb due to frame limitations,
+       *  so the renderer uses fallback rendering). */
+      guestWebContentsId?: number;
+    };
+
+export type EmbeddedBrowserPermissionResolution =
+  | { action: "allow-always" }
+  | { action: "allow-session" }
+  | { action: "block-always" }
+  | { action: "dismiss" }
+  | { action: "share-screen"; sourceId: string }
+  | { action: "select-device"; deviceId: string }
+  | { action: "cancel" };
+
+export interface EmbeddedBrowserPermissionResolveRequest {
+  requestId: string;
+  resolution: EmbeddedBrowserPermissionResolution;
+}
+
+export type EmbeddedBrowserSitePermissionsSnapshot = Record<
+  string,
+  Record<string, "allow" | "deny">
+>;
+
+export interface EmbeddedBrowserSitePermissionUpdateRequest {
+  origin: string;
+  permission: string;
+  /** "ask" means delete this record and ask each time again. */
+  state: "allow" | "deny" | "ask";
+}
+
+export interface EmbeddedBrowserSitePermissionResetRequest {
+  origin: string;
 }
 
 export interface BotRemoteWorkspaceReconnectedEvent {
@@ -530,6 +655,12 @@ export interface IPlatformService {
   /** Whether the current platform's file picker can return a local absolute path accessible to the Agent. */
   canSelectFilePath?: boolean;
 
+  /**
+   * Plugin UI sandbox platform ports. Implemented only on desktop;
+   * undefined on web / mobile remote control, which plugin-ui uses to fall back to ordinary MCP tool cards.
+   */
+  pluginSandbox?: PluginSandboxPlatformPort;
+
   /** Open the system directory picker and return the selected path or null. */
   selectDirectory(): Promise<string | null>;
 
@@ -565,6 +696,14 @@ export interface IPlatformService {
     payload: CreateTempTextAttachmentRequest,
   ): Promise<CreateTempTextAttachmentResult>;
 
+  /**
+   * Write the bytes of a dwf artifact version to a local copy on the host machine (only when the path is empty) and return its path.
+   * Implemented only on Desktop: mobile remote control and ordinary Web cannot open a file in a local app, so omit this capability to hide the entry point.
+   */
+  materializeWorkflowArtifactFile?(
+    payload: MaterializeWorkflowArtifactFileRequest,
+  ): Promise<MaterializeWorkflowArtifactFileResult>;
+
   /** Subscribe to remote-connection progress logs for the current window; returns a disposer. */
   onRemoteConnectionLog(handler: (entry: RemoteConnectionRuntimeLog) => void): () => void;
 
@@ -597,6 +736,25 @@ export interface IPlatformService {
   bindRemoteWorkspaceSessionContext?(
     context: BindRemoteWorkspaceSessionContextRequest,
   ): Promise<void>;
+
+  /** Enable Web remote control for the current workspace. */
+  startWebRemoteControl(
+    context: WebRemoteControlContext,
+  ): Promise<WebRemoteControlStartOperationResult>;
+
+  /** Clear old pairing data and generate a new Web remote-control QR code. */
+  refreshWebRemoteControlPairing(
+    context: WebRemoteControlContext,
+  ): Promise<WebRemoteControlStartOperationResult>;
+
+  /** Disable Web remote control enabled for the current window. */
+  stopWebRemoteControl(): Promise<void>;
+
+  /** Get Web remote-control status for the current window. */
+  getWebRemoteControlStatus(): Promise<WebRemoteControlStatus>;
+
+  /** Subscribe to Web remote-control status changes for the current window; older platforms may omit this and the UI will keep polling as a fallback. */
+  onWebRemoteControlStatusChanged?(handler: (status: WebRemoteControlStatus) => void): () => void;
 
   /** Release remote sessions created in the current window. */
   disposeRemoteSession(sessionId: string): Promise<void>;
@@ -721,6 +879,19 @@ export interface IPlatformService {
   /** Sync workspace paths for all tabs in the current window to the main process (for cross-window deduplication). */
   syncWindowTabs(paths: string[]): void;
 
+  /** Sync workspaces that Web remote control may switch to in the current window; the Web fallback may ignore this. */
+  syncWebRemoteControlWorkspaces?(workspaces: WebRemoteControlWorkspaceTarget[]): void;
+
+  /** Sync task snapshots that Web remote control may display in the current window; the Web fallback may ignore this. */
+  syncWebRemoteControlTasks?(tasks: WebRemoteControlTaskTarget[]): void;
+
+  /** Register a callback for mobile Web remote-control requests to reconnect a workspace; return a disposer. */
+  onWebRemoteControlReconnectWorkspace?(
+    handler: (
+      request: WebRemoteControlReconnectWorkspaceRequest,
+    ) => Promise<WebRemoteControlReconnectWorkspaceResult>,
+  ): () => void;
+
   /** Sync the unread task count for the current window to the host for Dock/taskbar badge aggregation. */
   syncWindowUnreadCount(count: number): void;
   /** Active task changed in the current window; Main publishes global PiP focus only while this window is foregrounded. */
@@ -728,6 +899,12 @@ export interface IPlatformService {
 
   /** Sync app settings that the main process must observe immediately; Web fallback may ignore. */
   syncAppSettings?(patch: Partial<AppSettings>): void;
+
+  /**
+   * Query the "close to tray" capability; the desktop main process probes and returns it, while Web/mobile remote control without a bridge omits it.
+   * The settings page uses this to determine whether the Linux toggle should be disabled.
+   */
+  getCloseToTrayCapability?(): Promise<DesktopCloseToTrayCapability>;
 
   /** Shortcut-recording state from Settings; Desktop main temporarily removes configurable menu accelerators, while Web may ignore. */
   setShortcutRecordingActive?(active: boolean): void;
@@ -743,6 +920,24 @@ export interface IPlatformService {
 
   /** Register a callback for a built-in browser webview requesting a new page; returns a disposer. */
   onOpenBrowserUrl?(handler: (request: EmbeddedBrowserOpenUrlRequest) => void): () => void;
+  /** Register embedded-browser permission prompt requests (main → renderer); return a disposer. */
+  onEmbeddedBrowserPermissionPrompt?(
+    handler: (event: EmbeddedBrowserPermissionPromptEvent) => void,
+  ): () => void;
+  /** Send the user's embedded-browser permission decision back (renderer → main). */
+  resolveEmbeddedBrowserPermissionPrompt?(request: EmbeddedBrowserPermissionResolveRequest): void;
+  /** Read embedded-browser site permission records (settings page: "Website permissions"). */
+  getEmbeddedBrowserSitePermissions?(): Promise<EmbeddedBrowserSitePermissionsSnapshot>;
+  /** Update/delete one site permission; return the updated snapshot. */
+  setEmbeddedBrowserSitePermission?(
+    request: EmbeddedBrowserSitePermissionUpdateRequest,
+  ): Promise<EmbeddedBrowserSitePermissionsSnapshot>;
+  /** Clear all site permission records. */
+  clearEmbeddedBrowserSitePermissions?(): Promise<EmbeddedBrowserSitePermissionsSnapshot>;
+  /** Reset all permission records for one site (delete all persisted decisions for that origin); return the updated snapshot. */
+  resetEmbeddedBrowserSitePermission?(
+    request: EmbeddedBrowserSitePermissionResetRequest,
+  ): Promise<EmbeddedBrowserSitePermissionsSnapshot>;
   /** Register a callback for when an Agent's first browser command creates a controlled view (automatically opens a browser-use tab); returns a disposer. */
   onBrowserViewReady?(
     handler: (payload: {

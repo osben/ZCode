@@ -1,8 +1,13 @@
-import type { BackgroundBashOutputResult, SessionDebugSnapshot } from "@zcode/shared";
+import type {
+  BackgroundBashOutputResult,
+  SessionDebugSnapshot,
+  ZCodeSessionContentProfile,
+} from "@zcode/shared";
 /* eslint-disable max-lines -- The ZCode Agent service interface declares protocol/session/workspace methods together; splitting it would increase service descriptor migration costs. */
 import type { Event, IDisposable } from "@zcode/rpc";
 import { ServiceChannels } from "@zcode/shared";
 import type { AppUsageRange, AppUsageSnapshot, ZCodeTaskTokenUsageResult } from "@zcode/shared";
+import type { DynamicWorkflowMode } from "@zcode/shared";
 import type { ZCodeAutomation, ZCodeAutomationRun } from "@zcode/shared";
 import type {
   ZCodeStorageStartupState,
@@ -29,11 +34,23 @@ import type {
   ZCodePluginsInstallResult,
   ZCodePluginsReferenceCatalogResult,
   ZCodeSkillsReferenceCatalogResult,
+  ZCodeMcpReadResourceResult,
+  ZCodeMcpUiCallToolResult,
+  ZCodeMcpUiCancelCallResult,
+  ZCodeMcpUiReadResourceResult,
+  ZCodeMcpUiListResourcesResult,
+  ZCodeMcpUiAppToolAcceptedResult,
+  ZCodeMcpUiRegisterAppToolsResult,
+  ZCodeMcpUiUnregisterAppToolsResult,
+  ZCodeMcpUiListResourceTemplatesResult,
+  ZCodePluginsListUiSurfacesResult,
   ZCodeWorkflowsDeleteResult,
+  ZCodeWorkflowsForRunResult,
   ZCodeWorkflowsGetResult,
   ZCodeWorkflowsListResult,
   ZCodeWorkflowsMoveResult,
   ZCodeWorkflowsRunsResult,
+  ZCodeWorkflowsSaveResult,
   ZCodeWorkflowsUpdateMetaResult,
   ZCodePluginsUninstallResult,
   ZCodePluginsRestoreBuiltinResult,
@@ -43,6 +60,8 @@ import type {
   ZCodePluginsSetEnabledResult,
   ZCodePluginsCancelOperationResult,
   ZCodePluginOperationProgressNotification,
+  ZCodeProviderRuntimeHeadersRequestParams,
+  ZCodeProviderRuntimeHeadersCancelled,
   ZCodeProviderTestModelConnectivityParams,
   ZCodeProviderTestModelConnectivityResult,
   ZCodeUserInputRequestParams,
@@ -120,6 +139,16 @@ import type {
   ZCodeAgentPluginViewParams,
   ZCodeAgentPluginReferenceCatalogParams,
   ZCodeAgentSkillReferenceCatalogParams,
+  ZCodeAgentReadMcpResourceParams,
+  ZCodeAgentReadMcpResourceForUiParams,
+  ZCodeAgentListMcpResourcesForUiParams,
+  ZCodeAgentAppToolCallForUiParams,
+  ZCodeAgentAppToolInstanceForUiParams,
+  ZCodeAgentRegisterAppToolsForUiParams,
+  ZCodeAgentResolveAppToolCallForUiParams,
+  ZCodeAgentMcpResourceSubscriptionForUiParams,
+  ZCodeAgentCallMcpToolForUiParams,
+  ZCodeAgentCancelMcpToolCallForUiParams,
   ZCodeAgentResolveSuggestedPluginReferenceParams,
   ZCodeAgentRemovePluginMarketplaceParams,
   ZCodeAgentRestoreBuiltinPluginParams,
@@ -134,10 +163,12 @@ import type {
 } from "./zcodeAgentPluginParams.js";
 import type {
   ZCodeAgentDeleteSavedWorkflowParams,
+  ZCodeAgentFindSavedWorkflowForRunParams,
   ZCodeAgentGetSavedWorkflowParams,
   ZCodeAgentListSavedWorkflowRunsParams,
   ZCodeAgentListSavedWorkflowsParams,
   ZCodeAgentMoveSavedWorkflowParams,
+  ZCodeAgentSaveSavedWorkflowFromRunParams,
   ZCodeAgentUpdateSavedWorkflowMetaParams,
 } from "./zcodeAgentWorkflowParams.js";
 
@@ -232,6 +263,8 @@ export interface ZCodeAgentReadSessionParams extends ZCodeAgentSessionTarget {
   afterSeq?: number;
   /** Passive indexers/observers may read only an existing runtime and must not start a session just to read a snapshot. */
   runtimePolicy?: ZCodeAgentRuntimePolicy;
+  /** “index” is only for the task index: return a snapshot with the same structure but large payloads stripped; do not write back UI state. */
+  contentProfile?: ZCodeSessionContentProfile;
 }
 
 export interface ZCodeAgentReadSessionMessagesParams extends ZCodeAgentSessionTarget {
@@ -323,6 +356,16 @@ export interface ZCodeAgentGenerateWorkspaceTextParams extends ZCodeAgentWorkspa
 export interface ZCodeAgentTestModelConnectivityParams extends ZCodeAgentWorkspaceTarget {
   selection: ZCodeProviderTestModelConnectivityParams["selection"];
   signal?: AbortSignal;
+}
+
+// The merge previously mixed in the Agent’s full authentication response; the UI can only return request validation, while account authentication must be composed by the Host.
+export type ProviderRuntimeHeadersUiResponse =
+  | { headersApplied: true; runtimeProviderHeaders: Record<string, string>; errorMessage?: string }
+  | { headersApplied: false; errorMessage?: string };
+
+export interface ZCodeAgentRespondProviderRuntimeHeadersParams extends ZCodeAgentSessionTarget {
+  requestId: string;
+  response: ProviderRuntimeHeadersUiResponse;
 }
 
 export interface ZCodeAgentSessionRuntimePreferencesRequest extends ZCodeSessionRequestRuntimePreferencesParams {
@@ -548,6 +591,7 @@ export type ZCodeAgentServiceEvent =
       requestId: string;
       response: ZCodeUserInputResponse;
     }
+  | { type: "providerRuntimeHeaders.request"; request: ZCodeProviderRuntimeHeadersRequestParams }
   | { type: "snapshot"; snapshot: ZCodeSessionStateSnapshot };
 
 export interface ZCodeAgentAppRuntimePreferences {
@@ -583,6 +627,12 @@ export interface IZCodeAgentService {
    * for this purpose.
    */
   syncAppRuntimePreferences(preferences: ZCodeAgentAppRuntimePreferences): Promise<void>;
+  /**
+   * Signal that the user’s dynamic-workflow choice changed (docs/dynamic-workflow/launch.md “The user’s choice”): the Host recomputes the
+   * effective mode and serially resends workspace/updateDynamicWorkflowPolicy. A Host with local settings authority uses its settings file;
+   * a desktop-attached remote Host uses the incoming value (omitted = follow the server). Do not start an idle Agent for this.
+   */
+  syncDynamicWorkflowUserMode(params: { mode?: DynamicWorkflowMode }): Promise<void>;
   getWorkspaceRuntimeIdentity(
     params: ZCodeAgentWorkspaceTarget,
   ): Promise<ZCodeAgentWorkspaceRuntimeIdentity>;
@@ -621,6 +671,64 @@ export interface IZCodeAgentService {
   getSkillReferenceCatalog(
     params: ZCodeAgentSkillReferenceCatalogParams,
   ): Promise<ZCodeSkillsReferenceCatalogResult>;
+  /** Plugin UI: read plugin MCP `ui://` resources through the workspace agent process for the session. */
+  openMcpUiInstance(
+    params: import("../plugin-ui-bridge/contract.js").PluginUiPrepareSandboxParams & {
+      accountContext?: string;
+    },
+  ): Promise<import("@zcode/shared/mcp-apps").McpAppInstance>;
+  validateMcpUiInstance(
+    params: import("../plugin-ui-bridge/contract.js").PluginUiPluginScope,
+  ): Promise<void>;
+  recycleMcpUiInstance(
+    params: import("../plugin-ui-bridge/contract.js").PluginUiPluginScope,
+  ): Promise<boolean>;
+  closeMcpUiInstance(
+    params: import("../plugin-ui-bridge/contract.js").PluginUiPluginScope,
+  ): Promise<void>;
+  readMcpResource(params: ZCodeAgentReadMcpResourceParams): Promise<ZCodeMcpReadResourceResult>;
+  /** Plugin UI: tool calls initiated by the UI; reuse existing permission approval and do not create a transcript row. */
+  sampleMcpApp(
+    params: import("../plugin-ui-bridge/samplingContract.js").PluginUiSamplingParams,
+  ): Promise<import("@zcode/shared/mcp-apps").McpAppsSamplingResult>;
+  cancelMcpAppSampling(
+    params: import("../plugin-ui-bridge/samplingContract.js").PluginUiCancelSamplingParams,
+  ): Promise<{ cancelled: boolean }>;
+  callMcpToolForUi(params: ZCodeAgentCallMcpToolForUiParams): Promise<ZCodeMcpUiCallToolResult>;
+  /** Plugin UI cancels an in-progress UI tool call by callId; abort it on the agent side through the MCP client. */
+  cancelMcpToolCallForUi(
+    params: ZCodeAgentCancelMcpToolCallForUiParams,
+  ): Promise<ZCodeMcpUiCancelCallResult>;
+  /** `resources/read` initiated by a plugin UI page; the agent restricts it to the same plugin server, 8 MiB, and the mimeType allowlist. */
+  readMcpResourceForUi(
+    params: ZCodeAgentReadMcpResourceForUiParams,
+  ): Promise<ZCodeMcpUiReadResourceResult>;
+  /** Proxy resources/list, resources/templates/list, subscribe, and unsubscribe requests initiated by a plugin UI page. */
+  listMcpResourcesForUi(
+    params: ZCodeAgentListMcpResourcesForUiParams,
+  ): Promise<ZCodeMcpUiListResourcesResult>;
+  listMcpResourceTemplatesForUi(
+    params: ZCodeAgentListMcpResourcesForUiParams,
+  ): Promise<ZCodeMcpUiListResourceTemplatesResult>;
+  subscribeMcpResourceForUi(params: ZCodeAgentMcpResourceSubscriptionForUiParams): Promise<void>;
+  unsubscribeMcpResourceForUi(params: ZCodeAgentMcpResourceSubscriptionForUiParams): Promise<void>;
+  /** App-Provided Tools: register/unregister page tools and claim/return model calls (mailbox delivery uses V4 live deltas). */
+  registerAppToolsForUi(
+    params: ZCodeAgentRegisterAppToolsForUiParams,
+  ): Promise<ZCodeMcpUiRegisterAppToolsResult>;
+  unregisterAppToolsForUi(
+    params: ZCodeAgentAppToolInstanceForUiParams,
+  ): Promise<ZCodeMcpUiUnregisterAppToolsResult>;
+  claimAppToolCallForUi(
+    params: ZCodeAgentAppToolCallForUiParams,
+  ): Promise<ZCodeMcpUiAppToolAcceptedResult>;
+  resolveAppToolCallForUi(
+    params: ZCodeAgentResolveAppToolCallForUiParams,
+  ): Promise<ZCodeMcpUiAppToolAcceptedResult>;
+  /** Plugin UI workspace-level panel entry point (the enabled plugin list `ui.surfaces[]`). */
+  listPluginUiSurfaces(
+    params: ZCodeAgentWorkspaceTarget,
+  ): Promise<ZCodePluginsListUiSurfacesResult>;
   // GUI entry point for saved workflows: workspace-level, sessionless, and rescans
   // `<cwd>/.zcode/workflows/` on every call.
   // For global scope, pass `scope: "global"`; use the supplied workspace as the carrier,
@@ -640,6 +748,15 @@ export interface IZCodeAgentService {
   // `workspace` is the carrier (target project when moving to project scope, source project
   // when moving to global scope); `to` is the destination scope. Existing targets are not overwritten.
   moveSavedWorkflow(params: ZCodeAgentMoveSavedWorkflowParams): Promise<ZCodeWorkflowsMoveResult>;
+  // “Save directly” on the completion card (docs/dynamic-workflow/transcript-and-notifications.md): use runId to read
+  // the scripts actually run in this run from the journal and save them without a model turn. Both require a workspace (where the journal is stored).
+  saveSavedWorkflowFromRun(
+    params: ZCodeAgentSaveSavedWorkflowFromRunParams,
+  ): Promise<ZCodeWorkflowsSaveResult>;
+  /** Which saved workflow corresponds to this run (derived, not remembered); also return the run arguments to prefill “Run again.” */
+  findSavedWorkflowForRun(
+    params: ZCodeAgentFindSavedWorkflowForRunParams,
+  ): Promise<ZCodeWorkflowsForRunResult>;
   resolveSuggestedPluginReference(
     params: ZCodeAgentResolveSuggestedPluginReferenceParams,
   ): Promise<import("@zcode/shared").ZCodePluginsResolveSuggestedReferenceResult>;
@@ -712,9 +829,34 @@ export interface IZCodeAgentService {
   setModel(params: ZCodeAgentSetModelParams): Promise<ZCodeSessionStateSnapshot>;
   setThoughtLevel(params: ZCodeAgentSetThoughtLevelParams): Promise<ZCodeSessionStateSnapshot>;
   setMode(params: ZCodeAgentSetModeParams): Promise<ZCodeSessionStateSnapshot>;
+  respondProviderRuntimeHeaders(
+    params: ZCodeAgentRespondProviderRuntimeHeadersParams,
+  ): Promise<void>;
   respondSessionRuntimePreferences(
     params: ZCodeAgentRespondSessionRuntimePreferencesParams,
   ): Promise<void>;
+  /**
+   * The V4 UI Start Plan runtime-auth bridge needs only local pending-request events,
+   * and must not open the legacy `session/subscribe` for this, or it will reintroduce the old replay/continuous read path
+   * into the V4 pane.
+   */
+  onDynamicProviderRuntimeHeadersRequest(
+    params: ZCodeAgentSessionTarget,
+  ): Event<ZCodeProviderRuntimeHeadersRequestParams>;
+  /**
+   * Workspace-level subscription entry point for Start Plan runtime headers (used by the production responder).
+   * Bug cause (2026-08-16 Web remote-control hang): the session-level entry point subscribes only when a Desktop pane mounts,
+   * but sessions created by Web remote control have no Desktop pane and no Web responder, leaving request validation pending,
+   * and the task stuck “working” forever. The Desktop window uses this entry point to keep a persistent responder for each open workspace tab;
+   * register a live listener first, then deliver pending requests by workspaceKey prefix, matching session-level semantics.
+   */
+  onDynamicWorkspaceProviderRuntimeHeadersRequest(
+    params: ZCodeAgentWorkspaceTarget,
+  ): Event<ZCodeProviderRuntimeHeadersRequestParams>;
+  /** Deliver validation cancellations for this workspace only; these are not part of the conversation stream. */
+  onDynamicWorkspaceProviderRuntimeHeadersCancelled(
+    params: ZCodeAgentWorkspaceTarget,
+  ): Event<ZCodeProviderRuntimeHeadersCancelled>;
   onDynamicSessionRuntimePreferencesRequest(): Event<ZCodeAgentSessionRuntimePreferencesRequest>;
   /**
    * CLI process-level resource samples, tagged with the lane by services (the CLI does not

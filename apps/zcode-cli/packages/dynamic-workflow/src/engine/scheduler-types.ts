@@ -9,7 +9,6 @@
  * scheduler itself.
  */
 
-import { INSTRUCTIONS_HEAD_MAX_CHARS, refToString, WorkflowError } from "./types.js";
 import type { ImportedActorState } from "./imported-cache.js";
 import type {
   ActorId,
@@ -23,6 +22,7 @@ import type {
   SessionRef,
   ValidateFn,
   WorkflowDriver,
+  WorkflowError,
 } from "./types.js";
 
 /** A promise that can be settled externally. */
@@ -46,10 +46,10 @@ export function defer<T>(): Deferred<T> {
 export interface SchedulerHost {
   readonly runId: string;
   /**
-   * Concurrency ceiling for this run. **Read it before every dispatch**, rather than copying it at
-   * construction: `setMaxConcurrency` replaces the caps held by the engine, and the scheduler's
-   * dispatch decision must see the new value. The engine therefore implements this property as a
-   * getter.
+   * Concurrency cap for this run. Read its current value **before every dispatch** rather than caching
+   * it at construction: `setMaxConcurrency` replaces the engine's caps object
+   * (docs/dynamic-workflow/concurrency.md, “Two bounds on a run”), and the scheduler's dispatch
+   * decision must see the new value. The engine implements this property with a getter.
    */
   readonly caps: Caps;
   readonly driver: WorkflowDriver;
@@ -57,8 +57,8 @@ export interface SchedulerHost {
   /** Allocate the next execution ordinal for a site (shared counter with world-read/actor). */
   nextOrdinal(siteId: string): number;
   /**
-   * Release a hit subject to replay settlement order.
-   * Immediately run `release` when this is not a resume or the order table has no entry for this instance.
+   * Release a cache hit subject to replay settle order (docs/execution-engine.md, “Replaying the settle order”).
+   * Execute `release` immediately when not resuming or when the instance is absent from the order table.
    */
   holdForReplay(instance: InstanceRef, release: () => void): void;
   /** Persist and fan out the event (Boundary C). */
@@ -135,61 +135,4 @@ export interface Actor {
    * actor runs again from scratch.
    */
   imported?: ImportedActorState;
-}
-
-// After merge, the current formatter would expand this past the scheduler's 400-line limit; keep
-// these pure helpers here with the existing defer, without changing behavior.
-/** Replay found a match but inputHash differs: the purity contract was violated, so fail the run loudly. */
-export function hashMismatch(instance: InstanceRef, expected: string, got: string): WorkflowError {
-  return new WorkflowError(
-    "InputHashMismatch",
-    `Replay hit at ${refToString(instance)} but inputHash differs (expected ${expected}, got ` +
-      `${got}): the script is not deterministic, so the journal cannot be replayed.`,
-    // Align the structured mismatch with ScriptHashMismatch: both hash-mismatch errors share this
-    // field, so readers do not need to extract hashes from message text.
-    { mismatch: { expected, got } },
-  );
-}
-
-/** Convert a cause to one bounded line of text (Error uses message, others use String(); empty values get a placeholder). */
-export function describeCause(cause: unknown): string {
-  const text = cause instanceof Error ? cause.message : String(cause);
-  const trimmed = text.trim();
-  if (trimmed.length === 0) return "unknown error";
-  return trimmed.length > 300 ? `${trimmed.slice(0, 300)}…` : trimmed;
-}
-
-/**
- * Prefix of the author's instructions (first {@link INSTRUCTIONS_HEAD_MAX_CHARS} characters,
- * trimmed, **without an ellipsis**).
- * Empty instructions return undefined: an absent key is more honest than an empty string, letting
- * readers fall back to “unknown instructions.”
- */
-export function headOfInstructions(instructions: string): string | undefined {
-  const trimmed = instructions.trim();
-  if (trimmed.length === 0) return undefined;
-  return trimmed.length <= INSTRUCTIONS_HEAD_MAX_CHARS
-    ? trimmed
-    : trimmed.slice(0, INSTRUCTIONS_HEAD_MAX_CHARS);
-}
-
-/** Drain the actor queue in its existing admission order; dispatch remains the scheduler's sole responsibility. */
-export function drainActorAdmission(actor: Actor): void {
-  let progressed = true;
-  while (progressed) {
-    progressed = false;
-    const release = actor.pendingRecorded.get(actor.nextAdmitSeq);
-    if (release !== undefined) {
-      actor.pendingRecorded.delete(actor.nextAdmitSeq);
-      actor.nextAdmitSeq++;
-      release();
-      progressed = true;
-      continue;
-    }
-    if (actor.nextAdmitSeq >= actor.recordedCount && actor.pendingLive.length > 0) {
-      const admit = actor.pendingLive.shift()!;
-      admit();
-      progressed = true;
-    }
-  }
 }

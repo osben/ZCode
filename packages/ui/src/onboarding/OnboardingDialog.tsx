@@ -237,6 +237,8 @@ export function OnboardingDialog(props: {
   }, [sessionMigration.candidates]);
 
   const selectedWorkspaceCount = selectedWorkspacePaths.length;
+  // Temporarily hide the provider-settings step in the data-migration wizard, without silently including the default provider in the migration.
+  const settingsTaskCount = 0;
   /** Disable the migration step when there are neither sessions nor external items to import. */
   const beginMigrationDisabled =
     selectedWorkspaceCount === 0 &&
@@ -252,6 +254,7 @@ export function OnboardingDialog(props: {
   const totalExecutionTaskCount =
     finishExecution.sessionTotalCount +
     finishExecution.agentsFileTotalCount +
+    settingsTaskCount +
     externalImportSelections.length;
   const completedExecutionTaskCount =
     finishExecution.sessionCompletedCount +
@@ -490,6 +493,7 @@ export function OnboardingDialog(props: {
               <OnboardingWizardFooter
                 currentStep={wizardStep}
                 selectedWorkspaceCount={selectedWorkspaceCount}
+                settingsTaskCount={settingsTaskCount}
                 finishRunning={finishExecution.running}
                 finishReady={finishExecution.finished}
                 onBackToWelcome={() => setView("welcome")}
@@ -499,6 +503,13 @@ export function OnboardingDialog(props: {
                 onFinish={settingsSync.actions.finish}
                 beginMigrationDisabled={beginMigrationDisabled}
               />
+              {/*
+                Temporarily hide the proxy settings step in the data migration wizard; the bulk
+                selection buttons hide along with the step.
+                onAgentSettingsBulkToggle={toggleAgentSettingsBulk}
+                agentSettingsBulkToggleDisabled={agentSettingsBulkToggleDisabled}
+                agentSettingsBulkIsClear={agentSettingsFullySelected}
+              */}
             </div>
           </div>
         )}

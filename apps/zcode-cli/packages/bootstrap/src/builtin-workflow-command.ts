@@ -3,12 +3,15 @@ import { BUILTIN_ZCODE_SLASH_COMMAND_HELP_ENTRIES } from "@zcode/shared";
 import { DYNAMIC_WORKFLOW_SKILL_NAME } from "./app/bundled-skills.js";
 
 /**
- * Built-in `/workflow` command.
- * Its body is compiled with the CLI; like `/init`, it is a prompt command defined in code and does
- * not depend on an uninstallable plugin. The command name is reserved, so same-named user or plugin
- * commands are not expanded.
+ * Built-in `/workflow` command (see "The `/workflow` command and the skill" in docs/dynamic-workflow/authoring.md).
  *
- * The body reuses contracts' custom-command expansion rules: replace $ARGUMENTS and add the `skills:` preamble.
+ * It used to be `commands/workflow.md` in the zcode-guide built-in plugin: the moment that plugin was uninstalled or disabled,
+ * the command and its plus-menu entry disappeared while the ten workflow tools remained (2026-09-19 incident). The command body is now compiled
+ * with the CLI; like `/init`, it is a prompt-style built-in command defined in code, and its name is on the reserved list so same-named
+ * user or plugin commands are no longer expanded.
+ *
+ * The body deliberately reuses contracts' custom-command expansion ($ARGUMENTS replacement + `skills:` preamble),
+ * keeping the prompt the model sees byte-identical to the plugin era, with no re-tuning.
  */
 export const BUILTIN_WORKFLOW_COMMAND_NAME = "workflow";
 

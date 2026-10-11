@@ -20,7 +20,7 @@ import {
 } from "./processResourceAppTotals.js";
 
 /** Default sampling period when a source does not report one (the CLI self-sampling interval). */
-const EXTERNAL_APP_RESOURCE_SAMPLE_DEFAULT_INTERVAL_MS = 60_000;
+export const EXTERNAL_APP_RESOURCE_SAMPLE_DEFAULT_INTERVAL_MS = 60_000;
 
 /**
  * Maximum number of source entries (bounded memory).
@@ -28,9 +28,9 @@ const EXTERNAL_APP_RESOURCE_SAMPLE_DEFAULT_INTERVAL_MS = 60_000;
  * existing space for MCP sources. Increase only the memory limit; add no queue or timer, and drop
  * new sources above the limit.
  */
-const PROCESS_RESOURCE_MAX_EXTERNAL_SAMPLE_SOURCES = 128;
+export const PROCESS_RESOURCE_MAX_EXTERNAL_SAMPLE_SOURCES = 128;
 
-interface ExternalAppResourceSample extends AppResourceTotals {
+export interface ExternalAppResourceSample extends AppResourceTotals {
   /**
    * Stable source key (such as CLI instance or MCP source group), used only to replace old samples
    * and determine expiration. It is not included in ARMS properties, so it must not contain a PID,

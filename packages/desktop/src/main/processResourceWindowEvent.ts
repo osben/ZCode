@@ -18,7 +18,7 @@ export interface ProcessResourceReportContext {
 }
 
 /** The ARMS `platform` dimension has only these three values; dashboards group by it. */
-type ProcessResourceOsCategory = "macos" | "windows" | "linux";
+export type ProcessResourceOsCategory = "macos" | "windows" | "linux";
 
 export function normalizeOsCategory(platform: NodeJS.Platform): ProcessResourceOsCategory {
   switch (platform) {

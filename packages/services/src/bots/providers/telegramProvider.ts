@@ -398,9 +398,7 @@ export function createTelegramBotProvider(deps: TelegramProviderDeps): BotProvid
 
     async send(bot: BotConfig, message: BotOutboundMessage) {
       const token = await loadToken(bot);
-      if (!token?.trim()) {
-        return;
-      }
+      if (!token?.trim()) throw new Error("Telegram bot token is missing");
       const selection = message.selection;
       const replyMarkup = selection ? buildSelectionReplyMarkup(selection) : undefined;
       const chunks = splitTelegramText(message.text);
@@ -408,31 +406,40 @@ export function createTelegramBotProvider(deps: TelegramProviderDeps): BotProvid
         // Bug fix: a long Plan is split across multiple messages, with the approval prompt on the last one.
         // Attach buttons to the final decision context, not the first message before the full body has been sent.
         const shouldAttachReplyMarkup = index === chunks.length - 1 && replyMarkup;
-        const response = await fetchBotProvider(
-          `https://api.telegram.org/bot${token}/sendMessage`,
-          {
+        const send = (markdown: boolean) =>
+          fetchBotProviderJson<{
+            ok?: boolean;
+            description?: string;
+            error_code?: number;
+            parameters?: { retry_after?: number };
+          }>(`https://api.telegram.org/bot${token}/sendMessage`, {
             method: "POST",
             headers: { "content-type": "application/json" },
             body: JSON.stringify({
               chat_id: message.providerUserId,
               text,
-              parse_mode: "Markdown",
-              ...(shouldAttachReplyMarkup ? { reply_markup: replyMarkup } : {}),
-            }),
-          },
-        );
-        if (!response.ok) {
-          // Bug fix: Telegram Markdown is sensitive to unclosed `_*[]()`, which can cause occasional rejection of model output.
-          // If parsing fails, retry as plain text: prefer Markdown when valid while ensuring the message is not lost.
-          await fetchBotProvider(`https://api.telegram.org/bot${token}/sendMessage`, {
-            method: "POST",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify({
-              chat_id: message.providerUserId,
-              text,
+              ...(markdown ? { parse_mode: "Markdown" } : {}),
               ...(shouldAttachReplyMarkup ? { reply_markup: replyMarkup } : {}),
             }),
           });
+        let response = await send(true);
+        // Retry as plain text only for an explicit format rejection; rate limits, bans, and unknown outcomes must not trigger a blind resend.
+        if (
+          response.status === 400 &&
+          (!response.payload?.description ||
+            /parse|entities|markdown/i.test(response.payload.description))
+        )
+          response = await send(false);
+        if (!response.ok || response.payload?.ok !== true) {
+          throw Object.assign(
+            new Error(
+              `Telegram send failed (${response.payload?.error_code ?? response.status}): ${response.payload?.description ?? "unknown delivery result"}`,
+            ),
+            {
+              deliveryRejected: response.payload?.ok === false,
+              retryAfter: response.payload?.parameters?.retry_after,
+            },
+          );
         }
       }
     },

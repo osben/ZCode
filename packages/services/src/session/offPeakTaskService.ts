@@ -2,12 +2,12 @@
    polling sync (offPeakTaskSync), terminal settlement outbox, and 3102 continuation ticket renewal together until they can be split by responsibility. */
 /* Off-peak task orchestration service (host domain, modeled after automationService).
    Responsibilities:
-   - Request a ticket on creation (persist only after POST /ticket succeeds); throw typed 3103/3101 errors for the UI.
-   - Orchestrate state guards for cancel/pause/continue/delete/edit.
-   - offPeakTaskSync: batch-poll /ticket/status only when non-terminal tasks exist (polling triggers server promotion),
-     write back schedulable/position/next_poll_at; automatically request a new ticket for expired tasks that are not paused.
-   - Terminal settlement outbox: settle on terminal state, retry failures with poll cycles, and scan at startup.
-   - 3102 continuation: after host terminal writeback recognizes the marker, call handleTicketExpiredDuringRun → requeue and request a new ticket. */
+   - Request a ticket on creation (persist only after POST /ticket succeeds, §4.1); throw typed 3103/3101 errors for the UI
+   - Orchestrate state guards for cancel/pause/continue/delete/edit (D29-3/D30-7/D30-10)
+   - offPeakTaskSync: batch-poll /ticket/status only when non-terminal tasks exist (polling triggers server promotion, D25/D26),
+     write back schedulable/position/next_poll_at; automatically request a new ticket with the same task_id for expired tasks that are not paused (D26/D27)
+   - Terminal settlement outbox: settle on terminal state, retry failures with poll cycles, and scan at startup (D22/§7.7)
+   - 3102 continuation: after host terminal writeback recognizes the marker, call handleTicketExpiredDuringRun → requeue and request a new ticket (§4.6) */
 import { randomUUID } from "node:crypto";
 import { ZodError } from "zod";
 import {
@@ -27,11 +27,11 @@ import { OffPeakServerError, type OffPeakServerClient } from "./offPeakServerCli
 import type { ModelSelection, ModelSelectionValidation } from "@zcode/provider";
 
 /** Polling minimum/maximum and failure backoff (prefer server next_poll_after and clamp it to avoid over-polling/starvation). */
-const OFF_PEAK_SYNC_MIN_INTERVAL_MS = 5_000;
-const OFF_PEAK_SYNC_MAX_INTERVAL_MS = 5 * 60_000;
+export const OFF_PEAK_SYNC_MIN_INTERVAL_MS = 5_000;
+export const OFF_PEAK_SYNC_MAX_INTERVAL_MS = 5 * 60_000;
 const SYNC_FAILURE_BASE_MS = 10_000;
 
-interface OffPeakTaskServiceDeps {
+export interface OffPeakTaskServiceDeps {
   repo: OffPeakTaskRepo;
   client: OffPeakServerClient;
   /** Redacted result from the resolver shared with ticket/runtime, used to gate creation in the renderer. */
@@ -64,10 +64,15 @@ interface OffPeakTaskServiceDeps {
 }
 
 const VALID_CREATE_PERMISSION_MODES = new Set([
+  "default",
   "yolo",
+  "guarded",
   "plan",
   "edit",
+  "acceptEdits",
   "auto",
+  "dontAsk",
+  "bypassPermissions",
   "autoEdit",
   "build",
 ]);
@@ -85,7 +90,7 @@ function isValidCreateParams(params: ZCodeOffPeakTaskCreateParams): boolean {
   );
 }
 
-function classifyOffPeakCreateFailure(
+export function classifyOffPeakCreateFailure(
   error: unknown,
   failureStage: OffPeakTaskCreateFailureStage,
 ): Pick<

@@ -22,7 +22,7 @@ export const PROCESS_RESOURCE_MAX_SAMPLES_PER_WINDOW = 32;
  */
 const PROCESS_RESOURCE_MAX_WINDOWS = 64;
 
-type ProcessResourceScene = "foreground" | "background";
+export type ProcessResourceScene = "foreground" | "background";
 
 /** Machine running this role; the output layer supplies desktop-machine values when absent. */
 export interface ProcessResourceHardware {

@@ -8,6 +8,7 @@ import {
   DEFAULT_ENABLED_OFFICIAL_PLUGIN_IDS,
   ZCODE_OFFICIAL_PLUGIN_MARKETPLACE_ID,
   modelSelectionSchema,
+  type SubagentRuntimeConfig,
   type AgentCreateParams,
   type AgentDeleteParams,
   type AgentDiagnostic,
@@ -42,6 +43,8 @@ import {
   scanOfficialPluginCacheRoots,
 } from "@zcode/shared/node";
 import { createServiceLogger } from "#src/logger/serviceLogger.js";
+
+import { createSubagentRuntimeConfigCache } from "./subagentRuntimeConfig.js";
 
 const subagentLogger = createServiceLogger("subagents");
 
@@ -156,9 +159,13 @@ async function exists(path: string): Promise<boolean> {
 }
 
 async function readAgentStateFile(options?: SubagentsServiceOptions): Promise<AgentsStateFile> {
-  await migrateSubagentStateFile(await resolveSubagentStateFile(options));
+  return readAgentStateAtPath(await resolveSubagentStateFile(options));
+}
+
+async function readAgentStateAtPath(stateFile: string): Promise<AgentsStateFile> {
+  await migrateSubagentStateFile(stateFile);
   try {
-    const raw = await readFile(await resolveSubagentStateFile(options), "utf-8");
+    const raw = await readFile(stateFile, "utf-8");
     const parsed = JSON.parse(raw) as {
       builtInModelSelectionOverrides?: unknown;
       pluginAgentModelSelectionOverrides?: unknown;
@@ -179,8 +186,12 @@ async function readAgentStateFile(options?: SubagentsServiceOptions): Promise<Ag
           )
         : [],
     };
-  } catch {
-    return emptyAgentsState();
+  } catch (error) {
+    // Missing/corrupt files keep the existing empty-override semantics; an IO failure must
+    // not masquerade as empty config and re-enable a disabled agent.
+    if (error instanceof SyntaxError || (error as NodeJS.ErrnoException).code === "ENOENT")
+      return emptyAgentsState();
+    throw error;
   }
 }
 
@@ -247,7 +258,7 @@ async function discoverFileAgents(params: {
   return agents;
 }
 
-async function collectAgentMarkdownPaths(rootPath: string): Promise<string[]> {
+async function collectAgentMarkdownPaths(rootPath: string, recursive = false): Promise<string[]> {
   if (!(await exists(rootPath))) {
     return [];
   }
@@ -262,7 +273,9 @@ async function collectAgentMarkdownPaths(rootPath: string): Promise<string[]> {
   for (const entry of entries) {
     const entryPath = join(rootPath, entry.name);
     if (entry.isDirectory()) {
-      result.push(...(await collectAgentMarkdownPaths(entryPath)));
+      // Custom profiles support only the first level; plugins keep the existing recursive
+      // discovery rule.
+      if (recursive) result.push(...(await collectAgentMarkdownPaths(entryPath, true)));
       continue;
     }
     if (entry.isFile() && /\.(md|markdown)$/iu.test(entry.name)) {
@@ -474,7 +487,7 @@ function isInstalledPluginRecord(value: unknown): value is InstalledPluginRecord
 async function collectPluginAgentMarkdownPaths(rootPath: string): Promise<string[]> {
   const manifest = await readPluginManifest(rootPath);
   const roots = collectPluginAgentRoots(rootPath, manifest?.agents);
-  const paths = await Promise.all(roots.map((root) => collectAgentMarkdownPaths(root)));
+  const paths = await Promise.all(roots.map((root) => collectAgentMarkdownPaths(root, true)));
   return paths.flat().sort((left, right) => left.localeCompare(right));
 }
 
@@ -541,26 +554,59 @@ function normalizeBuiltInSelectionOverrides(
 }
 
 export function createSubagentsService(options?: SubagentsServiceOptions): ISubagentsService & {
-  /** One-time storage import before the Host starts the Agent; not exposed as Renderer RPC. */
-  prepareRuntimeState(): Promise<void>;
+  /** Prepare configuration before the Host starts/restarts the Agent; not exposed as Renderer RPC. */
+  prepareRuntimeState(workspace?: {
+    workspacePath: string;
+    workspaceIdentity?: string;
+  }): Promise<void>;
+  readRuntimeConfig(workspace: {
+    workspacePath: string;
+    workspaceIdentity?: string;
+  }): Promise<SubagentRuntimeConfig>;
+  disposeAll(): void;
 } {
   let writeQueue = Promise.resolve();
+  let disposed = false;
   const storageOptions: SubagentsServiceOptions = {
     homeDir: options?.homeDir,
   };
 
-  return {
-    async prepareRuntimeState() {
-      const markdownMigration = await migrateUserSubagentMarkdown(
-        await resolveUserSubagentRoot(storageOptions),
-      );
-      for (const failure of markdownMigration.failures)
-        subagentLogger.warn(undefined, "用户 Subagent Markdown 迁移失败，保留原文件", failure);
-      const runImport = async () =>
-        migrateSubagentStateFile(await resolveSubagentStateFile(storageOptions));
-      const queued = writeQueue.then(runImport, runImport);
-      writeQueue = queued.catch(() => {});
-      await queued;
+  const runtimeConfig = createSubagentRuntimeConfigCache({
+    readUserRoot: () => resolveUserSubagentRoot(storageOptions),
+    readStatePath: () => resolveSubagentStateFile(storageOptions),
+    readState: readAgentStateAtPath,
+  });
+  function enqueue<T>(run: () => Promise<T>): Promise<T> {
+    const queued = writeQueue.then(run, run);
+    writeQueue = queued.then(
+      () => {},
+      () => {},
+    );
+    return queued;
+  }
+  function mutate<T>(run: () => Promise<T>): Promise<T> {
+    return enqueue(async () => {
+      if (disposed) throw new Error("Subagents service is disposed");
+      return run();
+    });
+  }
+  const service = {
+    readRuntimeConfig: runtimeConfig.read,
+    disposeAll() {
+      disposed = true;
+      runtimeConfig.dispose();
+    },
+    async prepareRuntimeState(workspace?: { workspacePath: string; workspaceIdentity?: string }) {
+      return enqueue(async () => {
+        const markdownMigration = await migrateUserSubagentMarkdown(
+          await resolveUserSubagentRoot(storageOptions),
+        );
+        for (const failure of markdownMigration.failures)
+          subagentLogger.warn(undefined, "用户 Subagent Markdown 迁移失败，保留原文件", failure);
+        // State migration runs at the cache read entry point; an IO failure also publishes
+        // the fallback and must not block CLI startup early.
+        await runtimeConfig.prepare(workspace);
+      });
     },
 
     async list(params: {
@@ -642,9 +688,7 @@ export function createSubagentsService(options?: SubagentsServiceOptions): ISuba
         await writeAgentStateFile(state, storageOptions);
       };
 
-      const queued = writeQueue.then(runUpdate, runUpdate);
-      writeQueue = queued.catch(() => {});
-      await queued;
+      await mutate(runUpdate);
     },
 
     async setBuiltInModelOverride(params: BuiltInSubagentModelOverrideParams): Promise<void> {
@@ -668,9 +712,7 @@ export function createSubagentsService(options?: SubagentsServiceOptions): ISuba
         );
       };
 
-      const queued = writeQueue.then(runUpdate, runUpdate);
-      writeQueue = queued.catch(() => {});
-      await queued;
+      await mutate(runUpdate);
     },
 
     async setPluginAgentModelOverride(params: PluginSubagentModelOverrideParams): Promise<void> {
@@ -687,9 +729,7 @@ export function createSubagentsService(options?: SubagentsServiceOptions): ISuba
           storageOptions,
         );
       };
-      const queued = writeQueue.then(runUpdate, runUpdate);
-      writeQueue = queued.catch(() => {});
-      await queued;
+      await mutate(runUpdate);
     },
 
     async getPrimaryUserAgentsDirectory(_params: { provider: ZCodeProvider }): Promise<{
@@ -761,6 +801,12 @@ export function createSubagentsService(options?: SubagentsServiceOptions): ISuba
       await writeAgentStateFile(state, storageOptions);
     },
   };
+  return {
+    ...service,
+    createAgent: (params: AgentCreateParams) => mutate(() => service.createAgent(params)),
+    updateAgent: (params: AgentUpdateParams) => mutate(() => service.updateAgent(params)),
+    deleteAgent: (params: AgentDeleteParams) => mutate(() => service.deleteAgent(params)),
+  };
 }
 
 function validateUserAgentConfig(config: SubAgentConfig): void {
@@ -803,7 +849,7 @@ async function migrateDisabledAgentId(
   }
   disabledSet.delete(previousAgentId);
   disabledSet.add(nextAgentId);
-  await writeAgentStateFile(
+  return writeAgentStateFile(
     {
       ...state,
       disabledAgentIds: [...disabledSet].sort(),

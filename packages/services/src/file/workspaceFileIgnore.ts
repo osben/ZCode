@@ -8,7 +8,7 @@ import type { ServiceLogger } from "../logger/serviceLogger.js";
  * Single source of truth for ignoring files in workspace search.
  *
  * `.zcodeignore` (at the workspace root, using gitignore syntax) is the only rules file for search indexing:
- * create it automatically the first time rules are needed if it does not exist, copying the root `.gitignore` (or using the default template if absent);
+ * automatic creation is temporarily disabled: when the file does not exist, only the root `.gitignore` plus default exclusion rules are used in memory;
  * subsequent `.gitignore` changes do not affect search. Users edit it in Settings or choose "Sync from .gitignore."
  *
  * Delegate rule parsing to the `ignore` npm package (reference implementation of gitignore spec 2.22, also used by ESLint):
@@ -21,19 +21,20 @@ const GITIGNORE_FILE_NAME = ".gitignore";
 
 type WorkspaceFileIgnoreLogger = Pick<ServiceLogger, "info" | "warn">;
 
-type WorkspaceFileSearchIgnoreRulesSource =
+export type WorkspaceFileSearchIgnoreRulesSource =
   | "file"
+  | "template"
   | "created-from-gitignore"
   | "created-from-template"
   | "fallback-gitignore"
   | "fallback-builtin";
 
-interface WorkspaceFileSearchIgnoreRules {
+export interface WorkspaceFileSearchIgnoreRules {
   matcher: Ignore;
   source: WorkspaceFileSearchIgnoreRulesSource;
 }
 
-interface WorkspaceFileSearchIgnoreContent {
+export interface WorkspaceFileSearchIgnoreContent {
   content: string;
   /** file: .zcodeignore already exists; template: it has not been created yet, and content previews what will be written when saved. */
   source: "file" | "template";
@@ -89,9 +90,9 @@ const TEMPLATE_HEADER = [
  * "Restore default rules" rewrites only the default-exclusion section between the two markers;
  * The custom-rule section below the DEFAULTS marker; no button modifies it.
  */
-const WORKSPACE_FILE_SEARCH_IGNORE_SYNC_MARKER =
+export const WORKSPACE_FILE_SEARCH_IGNORE_SYNC_MARKER =
   "# ===== ↑ 以上同步自 .gitignore（「从 .gitignore 同步」只重写以上部分）=====";
-const WORKSPACE_FILE_SEARCH_IGNORE_DEFAULTS_MARKER =
+export const WORKSPACE_FILE_SEARCH_IGNORE_DEFAULTS_MARKER =
   "# ----- ↑ 以上为 ZCode 默认排除规则（自定义规则请写在本行下方，不会被同步/恢复改动）-----";
 
 const CUSTOM_SECTION_HINT = "# 自定义规则写在下方（本行提示可删除）";
@@ -128,7 +129,7 @@ function buildBuiltinDefaultsSection(gitignoreContent: string | null): string {
  * for users to edit; removing a rule re-enables it, preserving the promise of "one source of truth, no code-level union".
  * Deduplicate rules against the gitignore section before writing defaults (see buildBuiltinDefaultsSection).
  */
-function buildWorkspaceFileSearchIgnoreTemplate(gitignoreContent: string | null): string {
+export function buildWorkspaceFileSearchIgnoreTemplate(gitignoreContent: string | null): string {
   const gitignoreSection =
     gitignoreContent !== null && gitignoreContent.trim().length > 0
       ? gitignoreContent.endsWith("\n")
@@ -183,7 +184,7 @@ function splitWorkspaceFileSearchIgnoreSections(
  * preserving the default exclusion and custom sections exactly as-is (including user edits to defaults).
  * If markers are missing, rebuild the initial contents because the sections cannot be located structurally.
  */
-function syncWorkspaceFileSearchIgnoreFromGitignore(
+export function syncWorkspaceFileSearchIgnoreFromGitignore(
   currentContent: string,
   gitignoreContent: string | null,
 ): string {
@@ -212,7 +213,7 @@ function syncWorkspaceFileSearchIgnoreFromGitignore(
  * "Restore default rules": reset only the default exclusion section to the built-in list, preserving the gitignore and custom sections as-is.
  * If markers are missing, rebuild the initial contents.
  */
-function resetWorkspaceFileSearchIgnoreDefaults(
+export function resetWorkspaceFileSearchIgnoreDefaults(
   currentContent: string,
   gitignoreContent: string | null,
 ): string {
@@ -282,9 +283,9 @@ async function atomicWriteIgnoreFile(path: string, content: string): Promise<voi
 }
 
 /**
- * Load `.zcodeignore` rules before scanning, including automatic creation and a fail-open fallback chain:
- * file missing → atomically create it (copy .gitignore / default template);
- * creation or read failure (read-only fs, permissions) → use .gitignore contents in memory → if that fails, use built-in defaults.
+ * Load `.zcodeignore` rules before scanning; automatic creation is temporarily commented out:
+ * file missing → use .gitignore plus default exclusion rules in memory, without writing to disk;
+ * read failure (permissions, etc.) → use .gitignore contents in memory → if that fails, use built-in defaults.
  * Log any fallback only once; an unavailable rules file must never prevent scanning in the @ panel.
  */
 export async function loadWorkspaceFileSearchIgnoreRules(
@@ -333,6 +334,9 @@ export async function loadWorkspaceFileSearchIgnoreRules(
     () => null,
   );
   const initialContent = buildWorkspaceFileSearchIgnoreTemplate(gitignoreContent);
+  // The management entry has been temporarily hidden, but the auto-creation logic would still write files into user projects, so it is disabled for now.
+  // Keep the original creation and logging logic for re-enabling when the entry returns; currently rules are used in memory only.
+  /*
   try {
     await atomicWriteIgnoreFile(ignorePath, initialContent);
   } catch (error) {
@@ -356,9 +360,11 @@ export async function loadWorkspaceFileSearchIgnoreRules(
       gitignoreContent !== null ? ".gitignore 拷贝" : "默认模板"
     }）`,
   );
+  */
   return {
     matcher: buildIgnoreMatcher(initialContent),
-    source: gitignoreContent !== null ? "created-from-gitignore" : "created-from-template",
+    // source: gitignoreContent !== null ? "created-from-gitignore" : "created-from-template",
+    source: "template",
   };
 }
 
@@ -394,7 +400,7 @@ export async function readWorkspaceFileSearchIgnore(
   };
 }
 
-type WorkspaceFileSearchIgnoreTransform = "sync-gitignore" | "reset-defaults";
+export type WorkspaceFileSearchIgnoreTransform = "sync-gitignore" | "reset-defaults";
 
 /**
  * Section actions in Settings (return new content for the editor; write to disk only on save):

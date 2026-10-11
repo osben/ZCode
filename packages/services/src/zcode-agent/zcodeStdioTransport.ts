@@ -39,7 +39,8 @@ export class ZCodeStdioTransport implements ZCodeProtocolTransport {
   private readonly closeEmitter = new Emitter<ZCodeProtocolTransportClosedEvent>();
   private readonly stderrCollector: AgentStderrCollector;
   private readonly stdoutDecoder = new StringDecoder("utf8");
-  private stdoutBuffer = "";
+  // Chunks of the current unfinished line; joined only when an LF arrives (see the handleStdoutData comment).
+  private stdoutPendingChunks: string[] = [];
   private stdoutFlushed = false;
   private readersDisposed = false;
   private disposed = false;
@@ -210,8 +211,15 @@ export class ZCodeStdioTransport implements ZCodeProtocolTransport {
     if (this.closed) {
       return;
     }
-    this.stdoutBuffer += typeof chunk === "string" ? chunk : this.stdoutDecoder.write(chunk);
-    this.drainStdoutFrames();
+    // Cause: the old implementation did `stdoutBuffer += chunk` and then indexOf("\n") over the
+    // whole buffer, so every 64KB chunk made V8 flatten the cons string and rescan from the start,
+    // giving O(n²) total cost for a single-line frame of length n. A task-index-resync session/read
+    // returns a full snapshot of about 15MB on one line; measured over 30s, real stdout of 95MB
+    // caused 9.4GB of flattened allocations, Host CPU at 100%, and RSS spiking to 1.5–1.9GB.
+    // Fix: search for LF only within the new chunk, keep unfinished parts in a chunk array, and
+    // join once when the frame completes — linear cost.
+    const text = typeof chunk === "string" ? chunk : this.stdoutDecoder.write(chunk);
+    this.consumeStdoutText(text);
   };
 
   private readonly handleStdoutEnd = (): void => {
@@ -219,25 +227,31 @@ export class ZCodeStdioTransport implements ZCodeProtocolTransport {
       return;
     }
     this.stdoutFlushed = true;
-    this.stdoutBuffer += this.stdoutDecoder.end();
-    const trailing = this.stdoutBuffer;
-    this.stdoutBuffer = "";
+    this.stdoutPendingChunks.push(this.stdoutDecoder.end());
+    const trailing = this.stdoutPendingChunks.join("");
+    this.stdoutPendingChunks = [];
     if (trailing.length > 0 && !this.closed) {
       this.handleStdoutFrame(trailing);
     }
     this.fireClose({ reason: "stdout_closed" });
   };
 
-  private drainStdoutFrames(): void {
-    let newlineIndex = this.stdoutBuffer.indexOf("\n");
+  private consumeStdoutText(text: string): void {
+    let start = 0;
+    let newlineIndex = text.indexOf("\n", start);
     while (newlineIndex >= 0) {
-      const frame = this.stdoutBuffer.slice(0, newlineIndex);
-      this.stdoutBuffer = this.stdoutBuffer.slice(newlineIndex + 1);
+      this.stdoutPendingChunks.push(text.slice(start, newlineIndex));
+      const frame = this.stdoutPendingChunks.join("");
+      this.stdoutPendingChunks = [];
+      start = newlineIndex + 1;
       this.handleStdoutFrame(frame);
       if (this.closed) {
         return;
       }
-      newlineIndex = this.stdoutBuffer.indexOf("\n");
+      newlineIndex = text.indexOf("\n", start);
+    }
+    if (start < text.length) {
+      this.stdoutPendingChunks.push(text.slice(start));
     }
   }
 

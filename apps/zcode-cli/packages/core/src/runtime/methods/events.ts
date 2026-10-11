@@ -25,6 +25,7 @@ import { buildPersistedConversationInputIntent } from "./input-intent-persistenc
 import { recordToolUsageFromEvent } from "./usage-observability.js";
 import { persistSessionShellEnvironmentSnapshot } from "./session-shell-environment.js";
 import { persistRuntimeModelSelection } from "./turn-model.js";
+import { writeDynamicWorkflowActivationEntryIfActivated } from "./dynamic-workflow-activation.js";
 import {
   persistWorkspaceCheckpointEntry,
   persistWorkspaceFileRewindEntry,
@@ -555,7 +556,25 @@ export function isSessionPersisted(this: AgentRuntimeInternal): boolean {
   return this.sessionPersisted;
 }
 
+const pendingSessionPersistence = new WeakMap<AgentRuntimeInternal, Promise<void>>();
+
 export async function ensureSessionPersisted(
+  this: AgentRuntimeInternal,
+  input: string,
+  traceContext: TraceContext,
+): Promise<void> {
+  if (!this.sessionStore || this.sessionPersisted) return;
+  const pending = pendingSessionPersistence.get(this);
+  if (pending) return pending;
+  // App sampling can run concurrently with the first task; merge creation for the same task to avoid duplicate insertion and model-configuration overwrites.
+  const created = persistSession
+    .call(this, input, traceContext)
+    .finally(() => pendingSessionPersistence.delete(this));
+  pendingSessionPersistence.set(this, created);
+  return created;
+}
+
+async function persistSession(
   this: AgentRuntimeInternal,
   input: string,
   traceContext: TraceContext,
@@ -612,6 +631,8 @@ export async function ensureSessionPersisted(
     await this.sessionStore.saveSessionEntry?.(
       buildExecutionStateEntry(this.sessionId, readRuntimeExecutionState(this)),
     );
+    // When `/workflow` is the first turn, activation happens before persistence (launch.md, “On demand: activation”); add the entry here afterward.
+    await writeDynamicWorkflowActivationEntryIfActivated(this);
     this.sessionPersisted = true;
     this.logger?.debug("Session persisted", {
       ...traceContextToLogContext(traceContext),

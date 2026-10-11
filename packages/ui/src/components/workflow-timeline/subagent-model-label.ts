@@ -126,3 +126,24 @@ export function workflowSubagentModelCardLabel(
   const label = describeWorkflowSubagentModel(canonical, deps);
   return { name: label.name, title: workflowSubagentModelTooltip(deps.formatMessage, label) };
 }
+
+/**
+ * Model label for a subagent row on the spine (docs/dynamic-workflow/presentation.md, “The spine”): if the persona names a
+ * model, append its name after the row’s trailing count and add a canonical model line to the row tooltip. Index once by instance key `siteId@ordinal`;
+ * rows only look it up. Subagents using the run model are omitted because the summary row already names that model.
+ */
+export function workflowActorModelLabels(
+  actors: readonly { siteId: string; ordinal: number; model?: string }[] | undefined,
+  deps: WorkflowSubagentModelDeps,
+): ReadonlyMap<string, { name: string; canonical: string }> {
+  const labels = new Map<string, { name: string; canonical: string }>();
+  for (const actor of actors ?? []) {
+    if (actor.model === undefined) continue;
+    const label = describeWorkflowSubagentModel(actor.model, deps);
+    labels.set(`${actor.siteId}@${actor.ordinal}`, {
+      name: label.name,
+      canonical: label.canonical,
+    });
+  }
+  return labels;
+}

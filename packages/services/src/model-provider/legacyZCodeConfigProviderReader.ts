@@ -984,7 +984,7 @@ function resolveRuntimeBaseUrlForStore(
   }
 
   // The legacy store may still contain only endpoints.anthropic/openai.
-  // OpenCode runtime config can store only the current kind's baseURL, so select one legacy endpoint based on defaultKind.
+  // runtime config can store only the current kind's baseURL, so select one legacy endpoint based on defaultKind.
   return resolveLegacyRuntimeBaseUrlForKind(endpoints, defaultKind);
 }
 

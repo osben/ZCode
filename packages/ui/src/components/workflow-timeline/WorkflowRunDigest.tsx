@@ -13,8 +13,10 @@ import { ControlHintTooltip } from "@/ControlHintTooltip.js";
 import type { WorkflowCausalityGraphData } from "@/components/workflow-graph/types.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import type { WorkflowRunCardSummary } from "@/ToolCallBlocks/fileSummaryTypes.js";
+import type { HoleLabels } from "./timeline-holes.js";
 import { buildWorkflowTimeline, type TimelinePill } from "./timeline-model.js";
 import { workflowCardDetail } from "./timeline-summary.js";
+import { HolesWaitingChip } from "./WorkflowHoleParts.js";
 import {
   WORKFLOW_RUN_ENDED_KIND_ID,
   WorkflowCardHeader,
@@ -35,6 +37,8 @@ export interface WorkflowRunDigestProps {
   runId: string;
   /** Initiating graph for this run (looked up by initiating toolCallId); absent means no phase line can be drawn because the row window did not include the initiating row. */
   graph: WorkflowCausalityGraphData | undefined;
+  /** Name and type of a filled hole (from the fill-row input); the header uses these when the projection has no type. */
+  holeLabels?: HoleLabels;
   /** Summary joined from the live projection. Missing means the run is absent from the projection (evicted by the eight-run limit or cold recovery found no journal entry): render a neutral one-line card — type label “Workflow finished,” with no light, track, Cancel, or Resume; keep only ⤢ (the side panel explains that live tracking ended). */
   summary: WorkflowRunCardSummary | undefined;
   /** Number of pending questions for this run; when > 0, show a warning-colored chip in the header. */
@@ -61,6 +65,7 @@ export interface WorkflowRunDigestProps {
 
 export function WorkflowRunDigest({
   graph,
+  holeLabels,
   name,
   onOpenArtifact,
   onOpenPill,
@@ -83,9 +88,9 @@ export function WorkflowRunDigest({
   const model = useMemo(
     () =>
       graph !== undefined && graph.steps.length > 0 && run !== undefined
-        ? buildWorkflowTimeline(graph, run)
+        ? buildWorkflowTimeline(graph, run, holeLabels)
         : undefined,
-    [graph, run],
+    [graph, holeLabels, run],
   );
   const hasRail = model !== undefined && model.stations.length > 0;
   const shown = useMemo(
@@ -139,6 +144,19 @@ export function WorkflowRunDigest({
         <MessageCircleQuestionIcon aria-hidden className="size-3" />
         {questionsLabel}
       </button>
+    );
+  // “{n} holes waiting to be filled” (docs/dynamic-workflow/presentation.md, “Holes on the timeline”):
+  // pen chip in the issue-chip slot; both can appear at once. Clicking it opens the entire run.
+  const holesWaiting = (run?.holes ?? []).filter((hole) => hole.state === "waiting").length;
+  const leading =
+    questions === undefined && holesWaiting === 0 ? undefined : (
+      <>
+        {questions}
+        <HolesWaitingChip
+          count={holesWaiting}
+          {...(onOpenRun === undefined ? {} : { onOpen: () => onOpenRun() })}
+        />
+      </>
     );
   const resume =
     summary?.resumable === true && onResume !== undefined ? (
@@ -203,7 +221,7 @@ export function WorkflowRunDigest({
         {...(cardDetail?.title === undefined ? {} : { detailTitle: cardDetail.title })}
         expanded={expanded}
         kind={kind}
-        leading={questions}
+        leading={leading}
         live={live}
         name={name}
         trailing={
@@ -232,7 +250,14 @@ export function WorkflowRunDigest({
             {...(onOpenWorkspace === undefined ? {} : { onOpenWorkspace })}
             {...(onOpenRun === undefined
               ? {}
-              : { onOpenMore: (station) => onOpenRun({ phaseId: station.id }) })}
+              : {
+                  onOpenMore: (station) => onOpenRun({ phaseId: station.id }),
+                  // Fill header: open the side pane and focus the first station it wrote (that station's phase header is the fill title).
+                  onOpenFill: (fill) => {
+                    const first = shown.stations[fill.from];
+                    if (first !== undefined) onOpenRun({ phaseId: first.id });
+                  },
+                })}
           />
         </div>
       )}

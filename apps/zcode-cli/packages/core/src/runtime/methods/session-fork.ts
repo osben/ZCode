@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { resolveExecutionState, type ExecutionState } from "@zcode/shared";
+import { isHighspeedProviderId, resolveExecutionState, type ExecutionState } from "@zcode/shared";
 import { buildExecutionStateEntry, readRuntimeExecutionState } from "../execution-state.js";
 import {
   createModelId,
@@ -68,6 +68,15 @@ function stableForkError(message: string, context: Record<string, unknown> = {})
 const MODEL_SELECTION_ENTRY_SUFFIX = ":runtime-model-selection";
 
 function modelSelectionFromMessage(message: MessageWithParts): ModelSelection | undefined {
+  const selection = persistedModelSelectionOfMessage(message);
+  // Accelerated-card Selection is a one-turn execution fact (`selectionScope=execution`, highspeed-card-spec §5),
+  // valid only when paired with requestAuth from that same turn. If a child inherits it, it remains on an accelerated Provider without credentials:
+  // the user sees “the original model did not carry over after forking,” and the child's first turn fails with ModelRequestAuthMissing.
+  // Skip this message and continue backward to the most recent ordinary selection, finally falling back to the persistent runtime Selection.
+  return selection && isHighspeedProviderId(selection.providerId) ? undefined : selection;
+}
+
+function persistedModelSelectionOfMessage(message: MessageWithParts): ModelSelection | undefined {
   if (message.info.role === "user") {
     return message.info.modelSelection && cloneModelSelection(message.info.modelSelection);
   }
@@ -86,7 +95,9 @@ function resolveForkModelSelection(
   messages: readonly MessageWithParts[],
   explicit?: ModelSelection,
 ): ModelSelection | undefined {
-  if (explicit) return cloneModelSelection(explicit);
+  // An accelerated Provider cannot become a child's persistent Selection (see modelSelectionFromMessage);
+  // skip it when explicitly supplied by the caller too, falling back to the historical ordinary selection / persistent runtime Selection.
+  if (explicit && !isHighspeedProviderId(explicit.providerId)) return cloneModelSelection(explicit);
   const historical = [...messages].reverse().map(modelSelectionFromMessage).find(Boolean);
   const runtimeSelection = runtime.getSessionModelSelection();
   const identity = historical ?? runtimeSelection;
@@ -123,7 +134,7 @@ function buildModelSelectionEntry(
 }
 
 /** Complete child-local identity preallocated once for a stable/compact-edit fork. */
-interface ForkIdentityMap {
+export interface ForkIdentityMap {
   parentSessionId: SessionId;
   childSessionId: SessionId;
   messageIds: Map<MessageId, MessageId>;
@@ -205,7 +216,7 @@ function collectVerifierEntryIds(
   return ids;
 }
 
-function createForkIdentityMap(options: {
+export function createForkIdentityMap(options: {
   childSessionId: SessionId;
   entries: readonly SessionEntryInfo[];
   goalSnapshots: readonly SessionGoal[];
@@ -374,7 +385,7 @@ function cloneVerifierEntryForAtomicFork(
   };
 }
 
-function buildAtomicForkNotice(
+export function buildAtomicForkNotice(
   runtime: AgentRuntimeInternal,
   options: {
     identities: ForkIdentityMap;
@@ -830,7 +841,7 @@ export async function createSelectionSideConversation(
   });
 }
 
-function selectionSideChatHistoryMessages(
+export function selectionSideChatHistoryMessages(
   activeMessages: readonly MessageWithParts[],
   activeTurnId?: TurnId,
 ): MessageWithParts[] {
@@ -1105,7 +1116,7 @@ export async function forkConversationBeforeMessage(
   });
 }
 
-function conversationHistoryBeforeInput(
+export function conversationHistoryBeforeInput(
   activeMessages: readonly MessageWithParts[],
   targetMessageId: MessageId,
 ): MessageWithParts[] {
@@ -1129,7 +1140,7 @@ function conversationHistoryBeforeInput(
  * before the segment start and requires ordered ids to be strictly contiguous in the active branch; it no longer extends
  * past the boundary based on parentID or "same assistant turn."
  */
-function stableForkHistoryMessages(
+export function stableForkHistoryMessages(
   activeMessages: readonly MessageWithParts[],
   target: StableConversationForkTarget,
 ): MessageWithParts[] {
@@ -1352,7 +1363,7 @@ function cloneGoalVerificationEntryForFork(
   };
 }
 
-function deriveForkedGoalStatusFromCopiedVerifications(
+export function deriveForkedGoalStatusFromCopiedVerifications(
   parentStatus: GoalStatus,
   copiedVerificationPayloads: readonly TargetCompletionVerificationPayload[],
 ): GoalStatus {
@@ -1386,7 +1397,7 @@ function asRecord(value: unknown): Record<string, unknown> {
     : {};
 }
 
-function activeForkTranscriptMessages(
+export function activeForkTranscriptMessages(
   messages: MessageWithParts[],
   options: {
     branchCutAfterMessageId?: MessageId;

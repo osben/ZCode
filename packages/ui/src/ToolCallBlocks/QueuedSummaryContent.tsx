@@ -1,9 +1,9 @@
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 
-const SUMMARY_ROLL_TRANSITION_MS = 300;
-const SUMMARY_ROLL_HOLD_MS = 500;
-const SUMMARY_ROLL_TOTAL_MS = SUMMARY_ROLL_TRANSITION_MS + SUMMARY_ROLL_HOLD_MS;
+export const SUMMARY_ROLL_TRANSITION_MS = 300;
+export const SUMMARY_ROLL_HOLD_MS = 500;
+export const SUMMARY_ROLL_TOTAL_MS = SUMMARY_ROLL_TRANSITION_MS + SUMMARY_ROLL_HOLD_MS;
 const SUMMARY_ROLL_TIMER_DRIFT_SKIP_MS = 250;
 const SUMMARY_ROLL_MAX_PENDING = 2;
 const SUMMARY_ROLL_TRANSITION = {
@@ -18,7 +18,7 @@ function getCurrentTimestamp() {
   return Date.now();
 }
 
-function resolveQueuedSummaryPlaybackQueue<T>(
+export function resolveQueuedSummaryPlaybackQueue<T>(
   queuedContent: readonly T[],
   timerDriftMs: number,
 ): T[] {
@@ -28,7 +28,7 @@ function resolveQueuedSummaryPlaybackQueue<T>(
   return [...queuedContent];
 }
 
-function shouldAnimateQueuedSummaryContent({
+export function shouldAnimateQueuedSummaryContent({
   enabled,
   disableAnimation,
   reducedMotion,
@@ -48,7 +48,7 @@ interface SummaryContentSnapshot {
   trailingText?: ReactNode;
 }
 
-function shouldRefreshQueuedSummaryContent(
+export function shouldRefreshQueuedSummaryContent(
   current: Pick<SummaryContentSnapshot, "key" | "refreshVersion" | "trailingText">,
   next: Pick<SummaryContentSnapshot, "key" | "refreshVersion" | "trailingText">,
 ) {
@@ -246,8 +246,8 @@ export function QueuedSummaryContent({
           {displayedContent.secondaryText}
         </motion.span>
       </AnimatePresence>
-      {/* The Changes diff count must belong to the same queued snapshot as the file summary,
-          while the number itself continues to flip independently with FlipMetricValue instead of scrolling vertically with the whole summary. */}
+      {/* Reason for the fix: The Changes diff count must come from the same queued snapshot as the file summary,
+          but the number should keep animating independently with FlipMetricValue rather than scrolling vertically with the whole summary. */}
       {displayedContent.trailingText}
     </span>
   );

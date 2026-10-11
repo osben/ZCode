@@ -247,7 +247,7 @@ export function ThoughtLevelCycleControl({
           data-composer-collapse-priority={composerCollapsePriority}
           data-testid={TID_CHAT_THOUGHT_LEVEL_SELECT_TRIGGER}
         >
-          {/* A single-level model (such as Kimi K3) has no state to switch, so do not render a Select with an arrow.*/}
+          {/* Bugfix: A single-level model has no state to switch between, so do not render a Select with an arrow. */}
           {triggerContent}
         </span>
       </ControlHintTooltip>

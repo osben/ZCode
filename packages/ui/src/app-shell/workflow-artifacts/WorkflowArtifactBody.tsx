@@ -298,8 +298,7 @@ function WorkflowArtifactContent({
   }
 
   // Types outside the table (`application/octet-stream` and everything unrecognized): show a **metadata card**
-  // without pretending they can be rendered. The card includes “Show in workspace,” the only available action for this artifact (there is no “Download”:
-  // the renderer has no host capability to save these bytes as a user file).
+  // Do not pretend to render it. The card offers “Show in workspace”; to open it in another app, use “Open as file” in the tab header.
   return (
     <ArtifactMetadataCard
       artifact={artifact}

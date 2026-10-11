@@ -34,6 +34,7 @@ export * from "./create-workflow.js";
 // Amendment entry point: the name constant is used by core dispatch, permission-service ownership
 // rules, and bootstrap's actor denylist, as well as TUI/headless bypasses.
 export * from "./amend-workflow.js";
+export * from "./workflow-settings.js";
 export * from "./saved-workflow.js";
 export * from "./save-workflow.js";
 export * from "./list-saved-workflows.js";
@@ -53,6 +54,9 @@ export * from "./resume-workflow-run.js";
 // constants; omitting either line silently breaks those paths (same rationale as resume-workflow-run).
 export * from "./escalate.js";
 export * from "./resolve-workflow-question.js";
+// Hole completion (docs/dynamic-workflow/launch.md, “The `FillWorkflowHole` tool”): core registration,
+// permission-service owner rules, workflow-child denylist, and display dispatch all use this name constant.
+export * from "./fill-workflow-hole.js";
 export * from "./workflow-observation-display.js";
 export * from "./tool-result-metadata.js";
 export * from "./performance.js";

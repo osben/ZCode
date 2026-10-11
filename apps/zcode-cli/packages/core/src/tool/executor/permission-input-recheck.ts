@@ -1,38 +1,36 @@
-import {
-  type CollaborationMode,
-  type PermissionBrokerRequest,
-  type PermissionBrokerResult,
-  type PermissionRuleset,
-  type TraceContext,
-} from "@zcode/contracts";
+import { type CollaborationMode, type PermissionRuleset } from "@zcode/contracts";
 
 import type { PermissionDecisionResult, PermissionContext } from "../../permission/service.js";
-import type { ExecutableToolCall, ToolEntry } from "../types.js";
+import type {
+  ExecutableToolCall,
+  ToolEntry,
+  ToolRuntimePermissionCapabilityContext,
+} from "../types.js";
 import { applyMemoryFilePermission, targetsMemoryFile } from "./memory-file-permission.js";
-import {
-  resolveRuntimePermissionCapability,
-  resolveRuntimePermissionContext,
-} from "./permission-capability.js";
-import { buildDefaultPermissionUpdates } from "./permission-suggestions.js";
+import { resolveRuntimePermissionCapability } from "./permission-capability.js";
 import type { ToolExecutorDeps } from "./types.js";
 
-interface PermissionHookInputRecheckResult {
-  brokerResult?: PermissionBrokerResult;
+export interface PermissionHookInputRecheckResult {
   permissionDecision?: PermissionDecisionResult;
 }
 
-export async function recheckPermissionHookModifiedInput(input: {
+export function recheckPermissionHookModifiedInput(input: {
   deps: ToolExecutorDeps;
   entry: ToolEntry;
   mode: CollaborationMode;
   modifiedInput: unknown;
   projectRules: PermissionRuleset | null;
-  requestId: string;
-  signal?: AbortSignal;
   toolCall: ExecutableToolCall;
-  traceContext: TraceContext;
-}): Promise<PermissionHookInputRecheckResult> {
-  const runtimePermissionContext = resolveRuntimePermissionContext(input.deps);
+  /** Same context as the initial permission check (mode, bashShellSelection, cwd snapshot), constructed and passed through by the executor. */
+  context: ToolRuntimePermissionCapabilityContext & {
+    workingDirectory: string;
+    workspaceRoot: string;
+  };
+}): PermissionHookInputRecheckResult {
+  // Root cause (2026-09-17 review): this previously reconstructed a reduced context containing only runtimeScope/cwd, dropping mode and
+  // bashShellSelection; when Guarded reused the recheck path, the matcher silently stopped working. Context must have a single construction point.
+  const { context: runtimePermissionContext } = input;
+  const { workingDirectory, workspaceRoot } = runtimePermissionContext;
   const permissionContext: PermissionContext = {
     input: input.modifiedInput,
     mode: input.mode,
@@ -42,7 +40,7 @@ export async function recheckPermissionHookModifiedInput(input: {
     toolName: input.toolCall.name,
     // Use the same source as the initial decision: after a hook changes the input,
     // recheck draft auto-approval against the same working directory.
-    workingDirectory: input.deps.getWorkingDirectory(),
+    workingDirectory,
   };
   const rulePolicy = input.entry.resolvePermissionRulePolicy?.(
     input.modifiedInput,
@@ -59,13 +57,12 @@ export async function recheckPermissionHookModifiedInput(input: {
     executionInput: input.modifiedInput,
     memoryRoot: input.deps.getMemoryRoot?.(),
     toolName: input.toolCall.name,
-    workingDirectory: input.deps.getWorkingDirectory(),
-    workspaceRoot: input.deps.getWorkspaceRoot(),
+    workingDirectory,
+    workspaceRoot,
   });
 
   if (decision.decision === "deny") {
     return {
-      brokerResult: { decision: "deny", reason: decision.reason },
       permissionDecision: decision,
     };
   }
@@ -76,37 +73,13 @@ export async function recheckPermissionHookModifiedInput(input: {
         executionInput: input.modifiedInput,
         memoryRoot: input.deps.getMemoryRoot?.(),
         toolName: input.toolCall.name,
-        workingDirectory: input.deps.getWorkingDirectory(),
-        workspaceRoot: input.deps.getWorkspaceRoot(),
+        workingDirectory,
+        workspaceRoot,
       }))
   ) {
     return {};
   }
 
-  const suggestedPermissionUpdates =
-    rulePolicy?.suggestedPermissionUpdates ??
-    buildDefaultPermissionUpdates(input.toolCall.name, input.modifiedInput);
-  const brokerResult = await input.deps.permissionBroker.requestPermission(
-    {
-      input: input.modifiedInput,
-      mode: input.mode,
-      reason: decision.reason ?? `Tool ${input.toolCall.name} requires approval`,
-      requestId: input.requestId,
-      requestedAt: new Date(),
-      riskLevel: decision.riskLevel,
-      ruleId: decision.ruleId,
-      sessionId: input.deps.sessionId,
-      sideEffectScope: decision.sideEffectScope,
-      suggestedPermissionUpdates,
-      toolCallId: input.toolCall.id as PermissionBrokerRequest["toolCallId"],
-      toolName: input.toolCall.name,
-      traceId: input.traceContext.traceId,
-      turnId: input.traceContext.turnId ?? input.deps.turnId,
-    },
-    {
-      signal: input.signal,
-      timeoutMs: input.deps.permissionTimeoutMs,
-    },
-  );
-  return { brokerResult, permissionDecision: decision };
+  // Return only policy facts needed to preserve legacy behavior; the executor centrally handles request registration, publication, and terminal state.
+  return { permissionDecision: decision };
 }

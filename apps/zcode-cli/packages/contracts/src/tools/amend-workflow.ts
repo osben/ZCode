@@ -10,6 +10,10 @@
 import { z } from "zod";
 import { toToolJsonSchema } from "./json-schema.js";
 import {
+  WorkflowAdjustableSettingsSchema,
+  WorkflowModelBindingsSchema,
+} from "./workflow-settings.js";
+import {
   WORKFLOW_RUN_LIFECYCLE_STATUSES,
   WORKFLOW_RUN_STOP_REASONS,
 } from "./list-workflow-runs.js";
@@ -33,9 +37,7 @@ const AmendWorkflowModelInputSchema = z.object({
   run_id: z
     .string()
     .min(1)
-    .describe(
-      "ID of the run to amend (from a result, a notification, GetWorkflowRun or ListWorkflowRuns).",
-    ),
+    .describe("ID of the run to amend (from a result, a notification, GetWorkflowRun or ListWorkflowRuns)."),
   /**
    * Omit both `script` and `path` to reuse the predecessor's archived script: amendments that change
    * only settings need not copy thousands of tokens of script again. It follows the same lifecycle as
@@ -69,11 +71,12 @@ const AmendWorkflowModelInputSchema = z.object({
     .optional()
     .describe("Display label for the new run; defaults to the predecessor's."),
   /**
-   * Three states: omitted = reuse the predecessor's limit; `null` = clear it (return to the ceiling);
-   * number = set it (clamped below the ceiling). The three states exist only through `resolveInput`,
-   * which normalizes them to a number or omission; the confirmation window and handler see the value
-   * that will take effect. The runtime schema keeps `nullable` because call-runner validates the
-   * model's original shape again after hook rewriting.
+   * Three states (docs/dynamic-workflow/concurrency.md, “Two bounds on a run”): omitted = keep the
+   * predecessor's cap; `null` = clear it (return to default concurrency); number = set it (round down
+   * to at least 1, no upper bound). The three states exist only until `resolveInput`, where they are
+   * normalized to a number or omission; the confirmation dialog and handler see the effective value.
+   * Keep `nullable` in the runtime schema because call-runner validates the model's original shape
+   * again after hook rewriting.
    */
   max_concurrency: z
     .number()
@@ -82,7 +85,7 @@ const AmendWorkflowModelInputSchema = z.object({
     .nullable()
     .optional()
     .describe(
-      "Omit to keep the predecessor's limit, null to remove it, a number to set one (only when the user asks).",
+      "Omit to keep the predecessor's limit, null to return to the default, a number to set one above or below it (only when the user asks).",
     ),
   /**
    * Three states, with exactly the same semantics as `max_concurrency`:
@@ -130,14 +133,15 @@ export const AmendWorkflowPredecessorSchema = z
 export type AmendWorkflowPredecessor = z.infer<typeof AmendWorkflowPredecessorSchema>;
 
 /**
- * "This predecessor belongs to this session and was not stopped manually by the user"—the owner rule
- * for skipping confirmation.
+ * “This predecessor belongs to the current session and was not stopped by the user”—the owner rule
+ * for skipping confirmation
+ * （docs/dynamic-workflow/launch.md「Amending this session's runs」）。
  *
- * Lives in the contract rather than the permission service because it now has **two** readers, which
+ * It lives in the contract rather than the permission service because it now has **two** readers that
  * must agree exactly: the permission service uses it to allow the always-ask branch, and when an
- * in-place concurrency adjustment gets `not_live`, the handler uses it to decide whether the fallback
- * amendment needs a confirmation window. Duplicating this rule would eventually let a call that
- * approved nothing silently start a new run.
+ * in-place concurrency retune returns `not_live`, the handler uses it to decide whether the fallback
+ * revision needs a confirmation dialog (“When the port says `not_live`”). Duplicating the rule would
+ * eventually let a call that approved nothing silently start a new run.
  *
  * Accepts `unknown`: the permission service receives unresolved tool input, while the handler receives
  * the resolved fact block.
@@ -160,11 +164,15 @@ export const AmendWorkflowInputSchema = AmendWorkflowModelInputSchema.extend({
    * the model's JSON schema.
    */
   script_line_offset: z.number().int().nonnegative().optional(),
+  /** Two settings adjustable in the confirmation dialog; same block and filling rule as CreateWorkflow (workflow-settings.ts). */
+  adjustable_settings: WorkflowAdjustableSettingsSchema.optional(),
+  /** Binding table resolved for models named by the new script; same block as CreateWorkflow (same names reuse predecessor bindings; see launch.md). */
+  model_bindings: WorkflowModelBindingsSchema.optional(),
 }).strict();
 
 export type AmendWorkflowInput = z.infer<typeof AmendWorkflowInputSchema>;
 
-/** JSON schema shown to the model: excludes `predecessor` and `script_line_offset`. */
+/** JSON schema sent to the model: excludes `predecessor`, `script_line_offset`, `adjustable_settings`, and `model_bindings`. */
 export const AmendWorkflowInputJsonSchema = toToolJsonSchema(
   AmendWorkflowModelInputSchema.strict(),
 );

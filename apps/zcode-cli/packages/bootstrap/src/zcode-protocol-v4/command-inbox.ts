@@ -13,8 +13,8 @@ import {
   parseCommandEnvelope,
 } from "@zcode/shared/zcode-protocol-v4";
 
-/** Guard decision: reject (revert optimistic state) or noop (silently finalize a late request). */
-type GuardDecision =
+/** Guard decision: reject (revert optimistic state) or noop (silently finalize a late request, §6.3). */
+export type GuardDecision =
   | { verdict: "allow" }
   | { verdict: "stale"; reasonCode: string; message?: string }
   | { verdict: "reject"; reasonCode: string; message?: string }
@@ -22,7 +22,7 @@ type GuardDecision =
 
 type PersistentLookup = (key: CommandKey) => Promise<CommandAck | null> | CommandAck | null;
 
-interface CommandInboxHost {
+export interface CommandInboxHost {
 /** Current session revision; return null for an unknown session (createSession uses a null sessionId). */
   getRevision(sessionId: string): number | null;
 /** Current projection generation for the session; CAS must check epoch before revision. */
@@ -55,7 +55,7 @@ interface LiveInputEntry {
   intent: ConversationInputIntent;
 }
 
-type CommandInboxOutcome =
+export type CommandInboxOutcome =
   | { kind: "ack"; ack: CommandAck }
   | {
       kind: "execute";

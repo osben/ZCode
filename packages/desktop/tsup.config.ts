@@ -1,21 +1,34 @@
-import { pickProductEndpointEnv } from "@zcode/shared/zcodeEndpoint";
 import { readFileSync, existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { defineConfig } from "tsup";
 import { getBuildMetadata } from "./scripts/build-metadata.mjs";
 import { resolveDesktopProductFlavor } from "./scripts/desktop-product-identity.mjs";
+const { copyGenUiRuntimeAssets } = await import(
+  pathToFileURL(resolve(import.meta.dirname, "scripts/gen-ui-runtime-assets.mjs")).href
+);
 // tsup bundles this config first; load the build tool dynamically so its import.meta.dirname is not relocated to desktop.
 const { loadBuiltinProviderConfig } = await import(
   pathToFileURL(resolve(import.meta.dirname, "../../scripts/builtin-provider-config.mjs")).href
 );
+const { resolveBuildTimeConfig, createBuildTimeConfigDefines } = await import(
+  pathToFileURL(resolve(import.meta.dirname, "../../scripts/build-time-config.mjs")).href
+);
+// Build-time optional capabilities (ARMS, event reporting, auto-update); see docs/desktop/build-time-optional-capabilities.md
+const buildTimeConfigDefines = createBuildTimeConfigDefines(
+  await resolveBuildTimeConfig(process.env),
+);
 
 const buildMetadata = getBuildMetadata();
+
+function resolveZCodeEnv(value: string | undefined): "test" | "production" {
+  return value?.trim().toLowerCase() === "production" ? "production" : "test";
+}
 
 // Load .env files manually; unlike Vite, tsup does not read .env.* automatically. These files provide URL constants only.
 function loadEnvFiles(): Record<string, string> {
   const vars: Record<string, string> = {};
-  const files = ["../../.env", "../../.env.local"];
+  const files = ["../../.env"];
   if (process.env.NODE_ENV === "production") {
     files.push("../../.env.production");
   } else {
@@ -42,20 +55,15 @@ function loadEnvFiles(): Record<string, string> {
   if (process.env.ZAI_BUSINESS_LOGIN_URL) {
     vars.ZAI_BUSINESS_LOGIN_URL = process.env.ZAI_BUSINESS_LOGIN_URL;
   }
+  if (process.env.CDN_DOMAIN) vars.CDN_DOMAIN = process.env.CDN_DOMAIN;
+  if (process.env.OSS_PATH_PREFIX) vars.OSS_PATH_PREFIX = process.env.OSS_PATH_PREFIX;
   if (process.env.VITE_ZAI_OAUTH_CLIENT_ID) {
     vars.VITE_ZAI_OAUTH_CLIENT_ID = process.env.VITE_ZAI_OAUTH_CLIENT_ID;
   }
   if (process.env.VITE_ZAI_OAUTH_ORIGIN) {
     vars.VITE_ZAI_OAUTH_ORIGIN = process.env.VITE_ZAI_OAUTH_ORIGIN;
   }
-  return {
-    ...vars,
-    ...Object.fromEntries(
-      Object.entries(process.env).filter(
-        (entry): entry is [string, string] => entry[1] !== undefined,
-      ),
-    ),
-  };
+  return vars;
 }
 
 const env = loadEnvFiles();
@@ -63,6 +71,93 @@ const { environment: zcodeEnv } = await loadBuiltinProviderConfig();
 // Package identity and backend environment are independent: ZCODE_PREVIEW_IDENTITY=1 lets a production-backend build run as ZCode Preview.
 const zcodeProductFlavor = resolveDesktopProductFlavor({ ...process.env, ZCODE_ENV: zcodeEnv });
 console.log(`[tsup] ZCODE_ENV=${zcodeEnv} ZCODE_PRODUCT_FLAVOR=${zcodeProductFlavor}`);
+
+function parseCsvEnv(value: string | undefined): string[] {
+  return (value ?? "")
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+}
+
+export function resolveBuildRemoteCdnReleaseRoots(runtimeEnv: Record<string, string | undefined>) {
+  const domains = parseCsvEnv(runtimeEnv.CDN_DOMAIN);
+  const pathPrefixes = parseCsvEnv(runtimeEnv.OSS_PATH_PREFIX || "zcode/electron/releases");
+  if (domains.length === 0) {
+    return [];
+  }
+  if (pathPrefixes.length !== 1 && pathPrefixes.length !== domains.length) {
+    throw new Error(
+      `OSS_PATH_PREFIX must contain one value or match CDN_DOMAIN count (${domains.length}), got ${pathPrefixes.length}`,
+    );
+  }
+
+  return domains.map((domain, index) => {
+    const pathPrefix = pathPrefixes.length === 1 ? pathPrefixes[0] : pathPrefixes[index];
+    return `https://${domain}/${pathPrefix}`.replace(/\/+$/, "");
+  });
+}
+
+export function resolveBuildPackagedAgentTelemetryEnv(
+  runtimeEnv: Record<string, string | undefined>,
+): Record<string, string> {
+  const endpoint = runtimeEnv.ZCODE_PACKAGED_AGENT_OTEL_ENDPOINT?.trim();
+  const headers = runtimeEnv.ZCODE_PACKAGED_AGENT_OTEL_HEADERS?.trim();
+  const serviceName =
+    runtimeEnv.ZCODE_PACKAGED_AGENT_OTEL_SERVICE_NAME?.trim() || "zcode-cli-agent";
+
+  if (!endpoint && !headers) {
+    if (
+      runtimeEnv.CI &&
+      (runtimeEnv.CI_COMMIT_TAG || runtimeEnv.CI_COMMIT_BRANCH === "release/current")
+    ) {
+      throw new Error("Packaged Agent OTLP configuration is required for release builds");
+    }
+    return {};
+  }
+  if (!endpoint || !headers) {
+    throw new Error(
+      "ZCODE_PACKAGED_AGENT_OTEL_ENDPOINT and ZCODE_PACKAGED_AGENT_OTEL_HEADERS must be configured together",
+    );
+  }
+  if (endpoint.length > 2_048) {
+    throw new Error("ZCODE_PACKAGED_AGENT_OTEL_ENDPOINT exceeds 2048 characters");
+  }
+  if (headers.length > 8_192 || /[\r\n]/u.test(headers)) {
+    throw new Error("ZCODE_PACKAGED_AGENT_OTEL_HEADERS is invalid");
+  }
+  if (!/^[A-Za-z0-9._:-]{1,128}$/u.test(serviceName)) {
+    throw new Error("ZCODE_PACKAGED_AGENT_OTEL_SERVICE_NAME is invalid");
+  }
+
+  let parsedEndpoint: URL;
+  try {
+    parsedEndpoint = new URL(endpoint);
+  } catch {
+    throw new Error("ZCODE_PACKAGED_AGENT_OTEL_ENDPOINT must be a valid HTTP(S) URL");
+  }
+  if (
+    !["http:", "https:"].includes(parsedEndpoint.protocol) ||
+    parsedEndpoint.username ||
+    parsedEndpoint.password
+  ) {
+    throw new Error("ZCODE_PACKAGED_AGENT_OTEL_ENDPOINT must be a valid HTTP(S) URL");
+  }
+  if (
+    resolveZCodeEnv(runtimeEnv.ZCODE_ENV) === "production" &&
+    parsedEndpoint.protocol !== "https:"
+  ) {
+    throw new Error("ZCODE_PACKAGED_AGENT_OTEL_ENDPOINT must use HTTPS in production");
+  }
+
+  return {
+    OTEL_EXPORTER_OTLP_ENDPOINT: parsedEndpoint.toString(),
+    OTEL_EXPORTER_OTLP_HEADERS: headers,
+    OTEL_SERVICE_NAME: serviceName,
+    // Only an Agent shipped in the official Desktop installer can be trusted by the build chain as packaged;
+    // source/development_bundle are not guessed at runtime—stay unknown unless explicitly injected.
+    ZCODE_TELEMETRY_RUNTIME_DISTRIBUTION: "packaged",
+  };
+}
 
 export function resolveDesktopTsupBundleSecurityOptions(
   runtimeEnv: Record<string, string | undefined> = process.env,
@@ -100,16 +195,30 @@ function createSharedDefines() {
     __ZCODE_COMMIT__: JSON.stringify(buildMetadata.buildCommitId),
     __ZCODE_BUILD_TIME__: JSON.stringify(buildMetadata.buildTime),
     __ZCODE_ENV__: JSON.stringify(zcodeEnv),
-    __ZCODE_ENDPOINT_ENV__: JSON.stringify(pickProductEndpointEnv(env)),
     __ZCODE_PRODUCT_FLAVOR__: JSON.stringify(zcodeProductFlavor),
+    ...buildTimeConfigDefines,
     // Computer Use Helper build identity — helperInstaller reads this to choose which Helper bundle to download.
     // If missing, the installer throws "Packaged ZCode is missing its embedded Computer Use Helper build identity".
     // CI injects it through ZCODE_CUA_HELPER_BUILD_ID; an empty value in dev uses the fallback (dev helpers are not downloaded).
     __ZCODE_CUA_HELPER_BUILD_ID__: JSON.stringify(
       process.env.ZCODE_CUA_HELPER_BUILD_ID?.trim() ?? "",
     ),
-    // The client has one CDN configuration, separate from the release-side OSS target list.
-    __ZCODE_CDN_BASE_URL__: JSON.stringify(env.ZCODE_CDN_BASE_URL?.trim() || ""),
+    // Bugfix: the remote runtime CDN root was previously hardcoded in the main bundle, so OSS/CDN
+    // switching required code changes. Inject it at build time from CI's CDN_DOMAIN/OSS_PATH_PREFIX;
+    // keep the old default when unconfigured.
+    __ZCODE_REMOTE_CDN_RELEASE_ROOTS__: JSON.stringify(resolveBuildRemoteCdnReleaseRoots(env)),
+  };
+}
+
+function createMainDefines() {
+  return {
+    ...createSharedDefines(),
+    // Release installers cannot inherit the GitLab Runner or development-terminal environment.
+    // Compile only the low-privilege write configuration CI provides into Desktop Main, then
+    // deliver it through the existing Main -> Host -> Agent security boundaries.
+    __ZCODE_PACKAGED_AGENT_TELEMETRY_ENV__: JSON.stringify(
+      resolveBuildPackagedAgentTelemetryEnv(process.env),
+    ),
   };
 }
 
@@ -167,10 +276,10 @@ export default defineConfig([
       // Bundle the producer's JS broker with services; the native addon remains only in the separate Helper.
       "@zcode/zcode-cua",
     ],
-    // OTLP endpoints and authentication are read only at runtime; credentials from the build environment must not be written into public packages.
-    define: createSharedDefines(),
-    // When main and host watch builds share an output root, default chunk names can overwrite each other,
-    // causing main imports to point to a chunk just rewritten by host and intermittently fail with a missing named export.
+    define: createMainDefines(),
+    // Bugfix: when main and host watch builds share an output root, default chunk names can
+    // overwrite each other, causing main imports to point to a chunk just rewritten by host and
+    // intermittently fail with a missing-named-export startup error.
     // Write chunks to target-specific directories to isolate concurrent build outputs.
     esbuildOptions(options) {
       applyDesktopTsupEsbuildSecurityOptions(options);
@@ -184,10 +293,12 @@ export default defineConfig([
     entry: {
       "preload/embeddedBrowserJavaScriptDialog": "src/preload/embeddedBrowserJavaScriptDialog.ts",
       "preload/codingPlanWebview": "src/preload/codingPlanWebview.ts",
+      "preload/rewardsWebview": "src/preload/rewardsWebview.ts",
       "preload/browserVideoRecorder": "src/preload/browserVideoRecorder.ts",
       "preload/index": "src/preload/index.ts",
       "preload/resourceManager": "src/preload/resourceManager.ts",
       "preload/cuaPermissionPanel": "src/preload/cuaPermissionPanel.ts",
+      "preload/pluginSandbox": "src/preload/pluginSandbox/index.ts",
     },
     outDir: "out",
     format: "cjs",
@@ -201,6 +312,33 @@ export default defineConfig([
       applyDesktopTsupEsbuildSecurityOptions(options);
     },
     onSuccess: createDevReadyMarkerHook("preload"),
+    ...desktopTsupBundleSecurityOptions,
+  },
+  {
+    // window.zcode / window.openai alias scripts inside the plugin iframe (a thin wrapper over the
+    // official ext-apps `App`): IIFE, browser platform, served same-origin by the zcode-sandbox://
+    // protocol handler.
+    name: "plugin-sandbox-alias",
+    loader: { ".css": "text" },
+    entry: {
+      "plugin-sandbox-alias": "src/renderer/src/plugin-sandbox/alias.ts",
+      "gen-ui": "src/renderer/src/plugin-sandbox/genUi.ts",
+    },
+    // Cannot go under out/renderer: the vite renderer build's emptyOutDir would wipe the alias
+    // scripts written earlier.
+    outDir: "out/plugin-sandbox",
+    onSuccess: () => copyGenUiRuntimeAssets(resolve("out/plugin-sandbox")),
+    format: "iife",
+    platform: "browser",
+    target: "es2022",
+    // Sandbox pages have no node_modules: the SDKs (ext-apps / client / core / zod) must all be
+    // bundled into the IIFE.
+    noExternal: [/.*/],
+    outExtension: () => ({ js: ".js" }),
+    define: createSharedDefines(),
+    esbuildOptions(options) {
+      applyDesktopTsupEsbuildSecurityOptions(options);
+    },
     ...desktopTsupBundleSecurityOptions,
   },
   {

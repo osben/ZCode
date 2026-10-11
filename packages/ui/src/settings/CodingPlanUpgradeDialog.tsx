@@ -32,7 +32,7 @@ interface CodingPlanUpgradeDialogProps {
 }
 
 // Completion refresh: called after the official-site page reports a successful purchase through window.zcodeBridge.notifyPurchaseComplete.
-async function refreshCodingPlanUpgradeCompletion(params: {
+export async function refreshCodingPlanUpgradeCompletion(params: {
   productsProviderId: CodingPlanProviderId | null;
   providerId: CodingPlanProviderId | null;
   refreshCodingPlanEntitlements: () => Promise<unknown> | unknown;
@@ -48,7 +48,7 @@ async function refreshCodingPlanUpgradeCompletion(params: {
   ]);
 }
 
-async function closeAndRefreshCodingPlanUpgradeFromWebview(params: {
+export async function closeAndRefreshCodingPlanUpgradeFromWebview(params: {
   onClose: () => void;
   refresh: () => Promise<unknown> | unknown;
   onRefreshError?: (error: unknown) => void;

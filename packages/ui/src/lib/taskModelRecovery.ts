@@ -24,7 +24,7 @@ function isSyntheticModelPlaceholder(model: string): boolean {
   return model.trim().toLocaleLowerCase() === "<synthetic>";
 }
 
-function resolveGlmRecoveredTaskModelValue(taskModel: string | undefined): string | null {
+export function resolveGlmRecoveredTaskModelValue(taskModel: string | undefined): string | null {
   const normalizedTaskModel = taskModel?.trim();
   if (!normalizedTaskModel || isSyntheticModelPlaceholder(normalizedTaskModel)) {
     return null;
@@ -46,7 +46,7 @@ function resolveGlmRecoveredTaskModelValue(taskModel: string | undefined): strin
   return normalizedTaskModel;
 }
 
-function resolveRecoveredTaskModelValue(
+export function resolveRecoveredTaskModelValue(
   taskMeta: Pick<ZCodeTaskMeta, "provider" | "model">,
 ): string | null {
   const normalizedTaskModel = taskMeta.model?.trim();
@@ -157,7 +157,7 @@ function ensureSelectOptionCurrentValue(
   };
 }
 
-function mergeRecoveredTaskModelConfigOptions({
+export function mergeRecoveredTaskModelConfigOptions({
   taskMeta,
   configOptions,
 }: {
@@ -251,4 +251,18 @@ export function resolveTaskRestorePreloadConfigOptions({
   // the toolbar first hides mode/thought and shows them again after the new snapshot arrives. Keep the task-level cache here,
   // and let setTaskConfigOptions replace/hide values only when they are actually absent from new settings.
   return cachedOptions;
+}
+
+export function mergeGlmRecoveredTaskModelConfigOptions({
+  taskMeta,
+  configOptions,
+}: {
+  taskMeta: Pick<ZCodeTaskMeta, "provider" | "model">;
+  configOptions: readonly ZCodeConfigOption[];
+}): ZCodeConfigOption[] | null {
+  if (taskMeta.provider !== "glm") {
+    return null;
+  }
+
+  return mergeRecoveredTaskModelConfigOptions({ taskMeta, configOptions });
 }

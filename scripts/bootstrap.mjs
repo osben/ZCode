@@ -133,6 +133,54 @@ function runBootstrapServerBuild() {
   );
 }
 
+function runBootstrapE2eReportBuild() {
+  const e2eReportDir = resolve(rootDir, "packages/e2e-report");
+  // Bugfix: the final bootstrap:with-remote build must not nest pnpm build:node.
+  // In low-memory environments, the pnpm shim plus tsc can be SIGKILLed; run the equivalent entry point directly from the bootstrap runner only.
+  runCommand(
+    process.execPath,
+    [resolve(rootDir, "node_modules/typescript/bin/tsc"), "-p", "tsconfig.json"],
+    {
+      cwd: e2eReportDir,
+      env: {
+        ...process.env,
+        ...bootstrapWithRemoteEnv,
+      },
+    },
+  );
+  runCommand(process.execPath, [resolve(rootDir, "node_modules/vite/bin/vite.js"), "build"], {
+    cwd: e2eReportDir,
+    env: {
+      ...process.env,
+      ...bootstrapWithRemoteEnv,
+    },
+  });
+}
+
+function runBootstrapStreamAnimateBuild() {
+  const streamAnimateDir = resolve(rootDir, "packages/stream-animate");
+  // Bugfix: during the serial final build in bootstrap:with-remote, continuing to run stream-animate’s tsc through pnpm
+  // can still hit the shim and be SIGKILLed; run the equivalent entry point directly from the bootstrap runner only.
+  runCommand(
+    process.execPath,
+    [resolve(rootDir, "node_modules/typescript/bin/tsc"), "-p", "tsconfig.server.json"],
+    {
+      cwd: streamAnimateDir,
+      env: {
+        ...process.env,
+        ...bootstrapWithRemoteEnv,
+      },
+    },
+  );
+  runCommand(process.execPath, [resolve(rootDir, "node_modules/vite/bin/vite.js"), "build"], {
+    cwd: streamAnimateDir,
+    env: {
+      ...process.env,
+      ...bootstrapWithRemoteEnv,
+    },
+  });
+}
+
 function runBootstrapDesktopBuild() {
   const desktopDir = resolve(rootDir, "packages/desktop");
   // bootstrap:with-remote initializes remote resources and the local runtime.
@@ -154,6 +202,8 @@ function runBootstrapWithRemoteBuild() {
     // Remote assets have already reached a memory peak, so build packages serially here without changing build:bootstrap/CI commands.
     runPnpm(["--filter", filter, "build"]);
   }
+  runBootstrapE2eReportBuild();
+  runBootstrapStreamAnimateBuild();
   runBootstrapServerBuild();
   runBootstrapDesktopBuild();
 }

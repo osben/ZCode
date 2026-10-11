@@ -16,7 +16,7 @@ export function isZCodeCuaToolName(value: string | null | undefined): boolean {
   return normalized === "computer-use" || normalized.includes("computer-use");
 }
 
-function didReturnFromCuaPermissionSettings(
+export function didReturnFromCuaPermissionSettings(
   result: CuaAccessibilitySettingsResult | null | undefined,
 ): boolean {
   // main sets this to true only after the entire staged pane group finishes and a return to the

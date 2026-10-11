@@ -12,9 +12,10 @@ import {
 
 export interface ListProtocolSlashCommandsOptions extends ListZCodeCustomCommandsOptions {
   /**
-   * Dynamic workflow switch. Remove the built-in `workflow` from the catalog only when explicitly false.
-   * Callers that omit this field keep the default catalog; the protocol server passes an explicit
-   * boolean from appRuntimePreferences.
+   * Dynamic-workflow rollout gate (docs/dynamic-workflow/launch.md "Gray release"). **Remove the
+   * built-in `workflow` only when explicitly false**: the CLI's own catalog assembly (TUI / callers
+   * not participating in the rollout) omits this field and must stay unchanged. The protocol server
+   * always passes an explicit boolean from appRuntimePreferences.
    */
   dynamicWorkflowEnabled?: boolean;
 }
@@ -22,10 +23,10 @@ export interface ListProtocolSlashCommandsOptions extends ListZCodeCustomCommand
 export async function listProtocolSlashCommands(
   options: ListProtocolSlashCommandsOptions = {},
 ): Promise<ZCodeSlashCommand[]> {
-  // When dynamic workflows are disabled, both the Composer plus menu and `/` panel read only this
-  // catalog, so removing the entry hides it in both places. `workflow` is a built-in reserved name;
-  // same-named user/plugin commands are removed by the reserved-name filter below and cannot reappear
-  // under a custom-command identity while the gate is closed.
+  // Rollout off: both the Composer plus menu and the `/` panel read only this catalog, so removing
+  // the entry hides it in both places (DWG-03). `workflow` is a built-in reserved name; same-named
+  // user/plugin custom commands are also removed by the reserved-name filter below and cannot
+  // reappear under a custom-command identity while the gate is closed.
   const builtins = listAppProtocolBuiltinSlashCommands().filter(
     (command) =>
       options.dynamicWorkflowEnabled !== false || command.name !== BUILTIN_WORKFLOW_COMMAND_NAME,

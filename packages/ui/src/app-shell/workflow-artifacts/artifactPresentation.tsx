@@ -244,3 +244,26 @@ export function canRevealArtifactInWorkspace(params: {
     !params.remoteSessionId
   );
 }
+
+/**
+ * Filename for the “Open as file” copy. `markdown` is always `<id>.md` (`id` is restricted to `[A-Za-z0-9_.-]`);
+ * `file` uses the basename of this version’s `sourcePath`—the extension determines which app the system opens, and the same id can
+ * come from different paths in different versions. Fall back to the id when the source is unavailable.
+ */
+export function artifactOpenAsFileName(
+  artifact: {
+    id: string;
+    kind: WorkflowRunArtifactKind;
+    version: number;
+    sourcePath?: string;
+    versions?: readonly { version: number; sourcePath?: string }[];
+  },
+  version: number,
+): string {
+  if (artifact.kind === "markdown") return `${artifact.id}.md`;
+  const sourcePath =
+    artifact.versions?.find((entry) => entry.version === version)?.sourcePath ??
+    (version === artifact.version ? artifact.sourcePath : undefined);
+  const leaf = sourcePath?.split(/[\\/]/u).at(-1)?.trim();
+  return leaf ? leaf : artifact.id;
+}

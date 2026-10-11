@@ -2,6 +2,17 @@ import type { GitRepositorySummary } from "@zcode/shared";
 
 type GitActionMenuPrimaryActionId = "commit" | "push";
 
+export function canRenderGitActionMenu(options: {
+  actionAvailable: boolean;
+  commitEnabled: boolean;
+  pushEnabled: boolean;
+}): boolean {
+  // Bugfix: The top-level Git action previously used branch creation as the empty-state fallback,
+  // so clean repositories with nothing to push still showed “Create branch,” implying that users had to create one.
+  // Render the entry only when a commit/push workflow is available; keep branch creation as a secondary menu action.
+  return options.actionAvailable && (options.commitEnabled || options.pushEnabled);
+}
+
 export function canUseGitActionMenu(
   summary: Pick<GitRepositorySummary, "isGitAvailable" | "isRepository">,
 ): boolean {

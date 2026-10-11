@@ -416,9 +416,13 @@ export function registerDeepLinkProtocol(
 ) {
   const scheme = "zcode";
 
+  // The external URL must sit after --; otherwise Windows quote splitting can turn URL
+  // content into Electron launch arguments. The inspector starts before app JS and the
+  // single-instance lock, so it cannot rely on later handleDeepLink validation to block it.
   if (process.defaultApp && process.argv.length >= 2) {
     const entry = resolve(process.argv[1]!);
-    const ok = app.setAsDefaultProtocolClient(scheme, process.execPath, [entry]);
+    const args = process.platform === "win32" ? [entry, "--"] : [entry];
+    const ok = app.setAsDefaultProtocolClient(scheme, process.execPath, args);
     if (!ok) {
       logger.warn("[deep-link] 注册协议失败（defaultApp）", {
         scheme,
@@ -435,7 +439,10 @@ export function registerDeepLinkProtocol(
     return;
   }
 
-  const ok = app.setAsDefaultProtocolClient(scheme);
+  const ok =
+    process.platform === "win32"
+      ? app.setAsDefaultProtocolClient(scheme, process.execPath, ["--"])
+      : app.setAsDefaultProtocolClient(scheme);
   if (!ok) {
     logger.warn("[deep-link] 注册协议失败", { scheme });
   } else {

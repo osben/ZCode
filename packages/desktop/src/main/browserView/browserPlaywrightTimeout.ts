@@ -1,4 +1,4 @@
-const PLAYWRIGHT_DEFAULT_TIMEOUT_MS = 3_000;
+export const PLAYWRIGHT_DEFAULT_TIMEOUT_MS = 3_000;
 
 /**
  * The built-in browser uses a short failure budget for ordinary Playwright operations: 3s by default, with a cap supplied by the call site.

@@ -1,9 +1,9 @@
 // ============================================================
 // Two fields in the Configure popover
 // ============================================================
-// Split from WorkflowRunSettingsPopover.tsx: that component owns form state, commands, and consequence copy.
-// This file renders only two controlled fields: subagent model (Composer's model menu + reasoning level) and the "concurrency limit" stepper.
-// All props are ready-to-render values.
+// Split out from WorkflowRunSettingsPopover.tsx: that component owns form state, commands, and
+// consequence copy; this one renders only two controlled fields—the subagent model (composer model
+// menu + reasoning level) and the “Maximum concurrency” stepper. Props are fully resolved values.
 
 import { useMemo, useRef, useState } from "react";
 import { MinusIcon, PlusIcon } from "lucide-react";
@@ -140,29 +140,31 @@ export function WorkflowRunSettingsModelField({
 }
 
 /**
- * "Concurrency limit" stepper: minus, monospaced number, plus, from 1 to the local ceiling. The ceiling itself means "this run has no limit of its own",
- * so show "= local limit" as the hint. When the ceiling is unknown (older CLI), show no upper limit or hint and allow direct number entry.
+ * “Maximum concurrency” stepper: minus button, fixed-width number, plus button. Starts at 1 with
+ * **no upper bound**; default concurrency D is a starting point, not a ceiling (docs/dynamic-workflow/presentation.md,
+ * “The settings popover”). The hint says “Default N”; at D, the run has no custom ceiling and the
+ * hint becomes “= default.” If D is unknown (older CLI), show no hint; the number remains editable.
  */
 export function WorkflowRunSettingsBoundField({
   bound,
-  ceiling,
+  defaultConcurrency,
   disabled,
   onChange,
 }: {
   bound: number | null;
-  ceiling: number | undefined;
+  defaultConcurrency: number | undefined;
   disabled: boolean;
   onChange: (bound: number) => void;
 }) {
   const { intl } = useZCodeIntl();
   const hint =
-    ceiling === undefined
+    defaultConcurrency === undefined
       ? undefined
-      : bound !== null && bound >= ceiling
-        ? intl.formatMessage({ id: "chat.toolCall.workflow.run.settings.limit.atCeiling" })
+      : bound === defaultConcurrency
+        ? intl.formatMessage({ id: "chat.toolCall.workflow.run.settings.limit.atDefault" })
         : intl.formatMessage(
-            { id: "chat.toolCall.workflow.run.settings.limit.ceiling" },
-            { n: ceiling },
+            { id: "chat.toolCall.workflow.run.settings.limit.default" },
+            { n: defaultConcurrency },
           );
   return (
     <div className="flex flex-col gap-1" data-testid="workflow-run-settings-bound">
@@ -178,9 +180,7 @@ export function WorkflowRunSettingsBoundField({
               })}
               data-testid="workflow-run-settings-bound-decrease"
               disabled={disabled || bound === null || bound <= 1}
-              onClick={() =>
-                bound !== null && onChange(clampWorkflowRunSettingsBound(bound - 1, ceiling))
-              }
+              onClick={() => bound !== null && onChange(clampWorkflowRunSettingsBound(bound - 1))}
               size="icon-xs"
             >
               <MinusIcon className="size-3.5" />
@@ -194,7 +194,7 @@ export function WorkflowRunSettingsBoundField({
             inputMode="numeric"
             onChange={(event) => {
               const parsed = Number.parseInt(event.target.value, 10);
-              if (Number.isFinite(parsed)) onChange(clampWorkflowRunSettingsBound(parsed, ceiling));
+              if (Number.isFinite(parsed)) onChange(clampWorkflowRunSettingsBound(parsed));
             }}
             placeholder="—"
             value={bound === null ? "" : String(bound)}
@@ -205,10 +205,8 @@ export function WorkflowRunSettingsBoundField({
                 id: "chat.toolCall.workflow.run.settings.limit.increase",
               })}
               data-testid="workflow-run-settings-bound-increase"
-              disabled={disabled || bound === null || (ceiling !== undefined && bound >= ceiling)}
-              onClick={() =>
-                bound !== null && onChange(clampWorkflowRunSettingsBound(bound + 1, ceiling))
-              }
+              disabled={disabled || bound === null}
+              onClick={() => bound !== null && onChange(clampWorkflowRunSettingsBound(bound + 1))}
               size="icon-xs"
             >
               <PlusIcon className="size-3.5" />

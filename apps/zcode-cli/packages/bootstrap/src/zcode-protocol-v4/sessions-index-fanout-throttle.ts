@@ -1,14 +1,14 @@
-// Throttle high-frequency sessions-index fan-out events.
+// Throttle high-frequency sessions-index fan-out events (docs/v4-refactor/14-sessions-index.md, "Event fan-out pacing").
 // Scheduling only: window state and timers live here; the caller injects publish, and the gateway keeps only the call site.
 //
-// Workflow progress events update record.updatedAt. Publishing a summary for every event would make
-// the Host and renderer recompute the task list at engine-event frequency. Coalesce progress updates
-// within a window to control task-index publication frequency.
+// Root-cause memo: one workflow run's engine events reach the parent session as DynamicWorkflowRunProgress, measured at 4000 events in 8s.
+// Each bumps record.updatedAt, so the summary changes on every event → the old implementation flushed one sessions-index delta per event
+// → the Host recomputed task rows → the renderer re-pulled the task list at event frequency. ModelStreaming was excluded long ago for the same reason.
 
 /** Fan-out window for workflow progress events: coalesce progress into one publication at the end of the window (sidebar running rows <= 4 Hz). */
 export const WORKFLOW_PROGRESS_INDEX_FANOUT_MS = 250;
 
-/** The scheduler treats timer handles as opaque: use setTimeout by default, or allow the caller to inject an implementation. */
+/** The scheduler treats timer handles as opaque: production uses setTimeout; tests may inject any implementation. */
 export type FanoutTimerHandle = unknown;
 
 export interface SessionsIndexFanoutThrottleOptions {

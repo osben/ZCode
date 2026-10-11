@@ -38,7 +38,7 @@ function attachWindowListeners(): () => void {
  * Split panes and multi-window content trees may mount multiple Composers at once. Modifier keys are window-level facts,
  * so binding keydown/keyup in every Composer would process them repeatedly; use one external store to broadcast transient state.
  */
-function subscribePrimaryFollowupModifier(listener: () => void): () => void {
+export function subscribePrimaryFollowupModifier(listener: () => void): () => void {
   listeners.add(listener);
   if (!detachWindowListeners && typeof window !== "undefined") {
     detachWindowListeners = attachWindowListeners();
@@ -52,7 +52,7 @@ function subscribePrimaryFollowupModifier(listener: () => void): () => void {
   };
 }
 
-function getPrimaryFollowupModifierSnapshot(): boolean {
+export function getPrimaryFollowupModifierSnapshot(): boolean {
   return pressed;
 }
 

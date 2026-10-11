@@ -27,11 +27,12 @@ export interface UseCuaComposerEntryParams {
   workspaceIdentity?: string;
   remoteSessionId?: string | null;
   /** Mobile Web remote-control shell; under remote-control restrictions, do not render the local CUA entry. */
+  isWebRemoteControl?: boolean;
   /** v4 snapshot.control.canStop for the current composer, used as a low-latency authority for runtime state. */
   currentSessionBusy?: boolean;
 }
 
-interface CuaComposerEntryController {
+export interface CuaComposerEntryController {
   view: CuaComposerEntryView;
   /** Button click; side effects occur only when view.clickAction === "open-settings". */
   onActivate: () => void;
@@ -41,6 +42,7 @@ export function useCuaComposerEntry({
   workspacePath,
   workspaceIdentity,
   remoteSessionId,
+  isWebRemoteControl = false,
   currentSessionBusy = false,
 }: UseCuaComposerEntryParams): CuaComposerEntryController {
   const platform = usePlatform();
@@ -53,6 +55,7 @@ export function useCuaComposerEntry({
   // Same local-workspace check as ComputerUseSection: CUA in a remote workspace would control
   // the remote machine’s screen, which the product does not support.
   const isLocalWorkspace =
+    !isWebRemoteControl &&
     !remoteSessionId &&
     !(workspaceIdentity?.trim() && isRemoteWorkspaceIdentity(workspaceIdentity.trim()));
 

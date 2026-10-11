@@ -13,8 +13,11 @@ import {
   collectSites,
   isFacadeDeclared,
   resolveSymbol,
+  type HoleSite,
   type SiteTable,
 } from "../analysis/sites.js";
+import { collectHoleDiagnostics } from "../analysis/hole-sites.js";
+import { lowerHoleCall, printHoleBodies, TRANSPILE_OPTIONS } from "./lower-hole.js";
 
 /**
  * Lowering (instrumentation emit step): convert a workflow script that passed typecheck and
@@ -39,8 +42,13 @@ import {
  *        artifact.file(id, p, o)     -> __host.publishArtifact("artifact#1", "file", [id, p, o])
  *        artifact.chart(id, spec)    -> __host.declareArtifact("artifact#2", "chart", [id, spec])
  *        log(msg)                    -> __host.log(msg)
- *        phase("gate")               -> __host.enterPhase("gate") (no site; engine emits one event)
- *      Join (Promise.all) and fan-out are ordinary sandbox promise mechanisms, not host calls, and remain unchanged.
+ *        phase("gate")               -> __host.enterPhase("gate") (no site; the engine emits one event)
+ *        model("GLM-5.3-Flash")      -> "GLM-5.3-Flash" (no site or host call: ModelRef is the name at runtime)
+ *        channel<T>("facts")         -> __host.channel("facts") (no site; queue is constructed in the cell)
+ *        future(async () => {...})   -> __host.future(async () => {...}) (no site; the cell calls it immediately)
+ *        hole<T>(n, p?, body?)       -> __host.hole("hole#1", n, p ?? void 0, (__src) => eval(__src), body?)
+ *                                       (lower-hole.ts; filled bodies are also emitted as text in holeBodies)
+ *      Join (Promise.all) and fan-out are ordinary sandbox promise mechanisms, not host calls, so they are preserved.
  *
  * ————————————————————————————————————————————————————————————————
  * Output contract (harness contract; the sandbox wraps it):
@@ -67,12 +75,26 @@ import {
 /** Free identifier that the harness must bind for lowered code (Boundary A host handle). */
 export const HOST_BINDING = "__host";
 
+/**
+ * Top-level facade functions with no site that are passed through by name to `__host.<name>(...)`:
+ * `log` (progress narration), and `channel` / `future` (sandbox pipeline primitives;
+ * docs/dynamic-workflow/authoring.md, “Streams”). They have no journal key and are omitted from the
+ * site table; identity is still determined by the declaration resolved by the checker.
+ */
+const HOST_PASSTHROUGH_FUNCTIONS: ReadonlySet<string> = new Set(["log", "channel", "future"]);
+
 /** Lowering output: JavaScript body passed to the sandbox + list of instrumented site IDs. */
 export interface LoweredWorkflow {
   /** Lowered script's async function body (top-level await/trailing return are valid; only free identifier is `__host`). */
   code: string;
-  /** Instrumented facade site IDs in source order (`log` is omitted because it has no site ID). */
+  /** Stubbed facade site IDs in source order (excluding `log`, which has no site ID; includes holes and sites in their bodies). */
   siteIds: string[];
+  /**
+   * Text for each **filled** hole body (`(async () => {\n…\n})`), keyed by site ID. Printed in the same
+   * transform pass as the main body and with the same type-parameter erasure
+   * (execution-engine.md, “The text that runs”). Open holes are not included.
+   */
+  holeBodies: Record<string, string>;
 }
 
 /** Result of {@link lowerWorkflowScript}, matching analyze: invalid scripts are not lowered, and `lowered` is present only when `ok`. */
@@ -87,6 +109,8 @@ type SiteEmit =
   | { kind: "actor"; siteId: string }
   | { kind: "artifact"; siteId: string; op: ArtifactOp }
   | { kind: "ask"; siteId: string }
+  /** Hole: rewriting needs its name, prompt, and body arguments, so retain the complete site (lower-hole.ts). */
+  | { kind: "hole"; site: HoleSite }
   /** Phase marker: no site ID, only the trimmed name (a marker without a name falls back to `void 0`). */
   | { kind: "phase"; name: string | undefined }
   | { kind: "report"; siteId: string }
@@ -103,7 +127,12 @@ export function lowerWorkflowScript(scriptText: string): LowerResult {
   if (diagnostics.length > 0) return { diagnostics, ok: false };
 
   const table = collectSites(workflow);
-  const misuse = collectFacadeMisuse(workflow, table);
+  // Apply the hole rule (9012) alongside facade-siting: a hole without a resolved value or inside a
+  // fan-out would become a runtime error if lowered, so enforce the same gate as analyzeWorkflowScript.
+  const misuse = [
+    ...collectFacadeMisuse(workflow, table),
+    ...collectHoleDiagnostics(workflow, table),
+  ];
   if (misuse.length > 0) return { diagnostics: misuse, ok: false };
 
   return { diagnostics, lowered: lowerWorkflow(workflow, table), ok: true };
@@ -119,6 +148,8 @@ export function lowerWorkflowScript(scriptText: string): LowerResult {
 export function lowerWorkflow(workflow: WorkflowProgram, table: SiteTable): LoweredWorkflow {
   const checker = workflow.program.getTypeChecker();
   const siteMap = buildSiteMap(table);
+  // Filled hole bodies (rewritten nodes) are printed into holeBodies after the transform completes.
+  const holeBodyNodes = new Map<string, ts.Expression>();
 
   // Pass one: instrumentation. Transform the same scriptFile whose nodes are referenced by the site
   // table so lookups can match node identity; types have not yet been erased.
@@ -142,11 +173,24 @@ export function lowerWorkflow(workflow: WorkflowProgram, table: SiteTable): Lowe
       if (ts.isCallExpression(node)) {
         const emit = siteMap.get(node);
         if (emit !== undefined) return lowerSited(node, emit);
-        // The only non-site facade call can be log (agent/ask/glob/read always have sites in siteMap).
+        // Non-site facade calls: log, channel, and future (agent/ask/glob/read always produce sites and
+        // are already in siteMap). Handle all three alike: identify them by the facade declaration the
+        // checker resolves, rewrite to the corresponding `__host.*`, discard type arguments
+        // (`channel<Fact>(...)`), and pass through value arguments. channel / future are pure sandbox
+        // promise mechanisms (docs/dynamic-workflow/authoring.md, “Streams”); they do not cross the
+        // host boundary or create journal rows, so they need no site IDs.
         const name = facadeCalleeName(node, checker);
-        if (name === "log") {
+        // model("x") -> "x": `ModelRef` exists only in the type system and is the name string at
+        // runtime (docs/dynamic-workflow/authoring.md, “Choosing a model per subagent”). The host uses
+        // this string to look up the binding resolved at launch. No site or host call is involved; if
+        // the argument is absent (already rejected by 9010), fall back to `void 0`.
+        if (name === "model") {
+          const arg = node.arguments[0];
+          return arg === undefined ? factory.createVoidZero() : visitExpr(arg);
+        }
+        if (name !== undefined && HOST_PASSTHROUGH_FUNCTIONS.has(name)) {
           return factory.createCallExpression(
-            hostMember("log"),
+            hostMember(name),
             undefined,
             node.arguments.map(visitExpr),
           );
@@ -171,6 +215,17 @@ export function lowerWorkflow(workflow: WorkflowProgram, table: SiteTable): Lowe
         return factory.createCallExpression(hostMember("enterPhase"), undefined, [
           factory.createStringLiteral(name),
         ]);
+      }
+      if (emit.kind === "hole") {
+        return lowerHoleCall(
+          call,
+          emit.site,
+          factory,
+          hostMember,
+          siteArg,
+          visitExpr,
+          holeBodyNodes,
+        );
       }
       if (emit.kind === "actor") {
         // agent(name?, persona?) -> __host.createActor(siteId, name?, persona?)
@@ -272,21 +327,16 @@ export function lowerWorkflow(workflow: WorkflowProgram, table: SiteTable): Lowe
   const instrumented = workflowBody(transformed)
     .map((statement) => printer.printNode(ts.EmitHint.Unspecified, statement, transformed))
     .join("\n");
+  const holeBodies = printHoleBodies(holeBodyNodes, printer, transformed);
   result.dispose();
 
   // Pass two: type erasure. Instrumentation is complete and node identity is no longer needed, so transpile-level text erasure is sufficient.
   const code = ts.transpileModule(instrumented, {
-    compilerOptions: {
-      isolatedModules: false,
-      module: ts.ModuleKind.ESNext,
-      newLine: ts.NewLineKind.LineFeed,
-      removeComments: false,
-      target: ts.ScriptTarget.ES2022,
-    },
+    compilerOptions: TRANSPILE_OPTIONS,
     reportDiagnostics: false,
   }).outputText;
 
-  return { code, siteIds: sourceOrderSiteIds(table) };
+  return { code, holeBodies, siteIds: sourceOrderSiteIds(table) };
 }
 
 /**
@@ -301,6 +351,7 @@ function buildSiteMap(table: SiteTable): Map<ts.CallExpression, SiteEmit> {
     map.set(site.call, { kind: "artifact", op: site.op, siteId: site.id });
   }
   for (const site of table.asks) map.set(site.call, { kind: "ask", siteId: site.id });
+  for (const site of table.holes) map.set(site.call, { kind: "hole", site });
   for (const marker of table.phases) map.set(marker.call, { kind: "phase", name: marker.name });
   for (const site of table.reports) map.set(site.call, { kind: "report", siteId: site.id });
   for (const site of table.worldReads) {
@@ -315,6 +366,7 @@ function sourceOrderSiteIds(table: SiteTable): string[] {
     ...table.actors,
     ...table.artifacts,
     ...table.asks,
+    ...table.holes,
     ...table.reports,
     ...table.worldReads,
   ];

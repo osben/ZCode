@@ -484,7 +484,11 @@ export function createZCodeSessionService({
       return withApiRetryRuntime(await agentService.setMode(params));
     },
 
-    // onDynamicSessionEvent (the old Renderer session/subscribe surface) has been removed.
+    respondProviderRuntimeHeaders(params) {
+      return agentService.respondProviderRuntimeHeaders(params);
+    },
+
+    // M5 removal wave 2: onDynamicSessionEvent (the old Renderer session/subscribe surface) has been removed.
     // V4 UI session events use agentService's conversation frame channel; this service no longer subscribes to
     // agentService.onDynamicSessionEvent.
   };

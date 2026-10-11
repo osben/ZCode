@@ -7,13 +7,20 @@
 //     and passes it to the engine to persist.
 //   - Resume and progress-event derivation read it back from the journal, so the same run retains one anchor across lifecycles.
 //
-// The same event also carries three related pieces of host metadata: the script-declared phase table (`phaseNames`), the run's subagent
-// model selection (`subagentModel`), and the script file path (`scriptPath`). All four are written once when the run is created, never read by the engine, and require no SQL—`dwf_run`
+// The same event also carries several related pieces of host metadata: the script-declared phase table (`phaseNames`), the run's subagent
+// model selection (`subagentModel`) and permission mode (`subagentPermissionMode`, see "Permissions inside a run" in
+// docs/dynamic-workflow/launch.md), the script-named model binding table (`modelBindings`), and the file the script came from
+// (`scriptPath`, see "Script files" in docs/dynamic-workflow/launch.md). All of them are written once when the run is created,
+// never read by the engine, and require no SQL—`dwf_run`
 // has no corresponding columns.
 
 import type { TraceContext } from "@zcode/contracts";
-import type { JournalStorePort } from "@zcode/dynamic-workflow";
+import type { JournalStorePort, RunEvent } from "@zcode/dynamic-workflow";
 import { uuidv7 } from "@zcode/shared";
+import {
+  parseWorkflowSubagentPermissionMode,
+  type WorkflowSubagentPermissionMode,
+} from "./workflow-actor-permission.js";
 
 export interface RunLaunchAnchor {
   /** inputId of the turn that launched the run (a minted UUID v7 for direct hub launches). */
@@ -22,7 +29,7 @@ export interface RunLaunchAnchor {
 
 /**
  * All data passed to the engine for the `run-launched` event: anchor + script-declared phase table + this run's subagent selection (`subagentModel`, canonical picker string
- * `providerId/modelId[$reasoningLevel]`）。
+ * `providerId/modelId[$reasoningLevel]`).
  *
  * The latter two are **not** part of the anchor: an amended run reuses the predecessor's inputId but uses the new script's phase table, and never inherits
  * the predecessor's model ("omitted means inherit predecessor" is the tool surface's three-state value, normalized by AmendWorkflow's resolveInput).
@@ -32,61 +39,118 @@ export interface RunLaunch extends RunLaunchAnchor {
   phaseNames?: string[];
   subagentModel?: string;
   /**
+   * Model names used by the script → canonical strings (see "Models the script names" in docs/dynamic-workflow/launch.md). Like the subagent
+   * selection, not part of the anchor: an amendment's binding table is normalized by AmendWorkflow's resolveInput (same name keeps the predecessor's entry); ports do not inherit it.
+   */
+  modelBindings?: Record<string, string>;
+  /**
    * Absolute path to this run's script file. Like the phase table and
    * subagent selection, it is not part of the anchor: an amendment records the script file for **this amendment**, never the predecessor's.
    */
   scriptPath?: string;
+  /**
+   * Permission mode for this run's subagents (see "Permissions inside a run" in docs/dynamic-workflow/launch.md):
+   * the launching session's permission mode (plan is not carried in). Likewise not part of the anchor: an amendment is a new run and takes
+   * the session's mode at amendment time, never the predecessor's.
+   */
+  subagentPermissionMode?: WorkflowSubagentPermissionMode;
   /** "Run together" table aligned by index with `phaseNames`; also written to the journal only when the run is created. */
   phaseAlongside?: number[][];
 }
 
 /**
+ * The run's first `run-launched` (written to the journal only when the run is created). Type filtering and `limit: 1` are both pushed down
+ * to the storage layer (see "Reading the journal" in docs/execution-engine.md): one query, one row—no need to read the journal's
+ * first 8 events and search in memory as before.
+ */
+function firstRunLaunched(
+  journal: JournalStorePort,
+  runId: string,
+): Extract<RunEvent, { type: "run-launched" }> | undefined {
+  const [stored] = journal.listEvents(runId, {
+    types: ["run-launched"],
+    reportItems: { limit: 0 },
+    limit: 1,
+  });
+  return stored?.event.type === "run-launched" ? stored.event : undefined;
+}
+
+/**
  * Read the run's anchor from the first `run-launched` event in the journal. Runs launched before the upgrade do not have this event, so return `undefined`;
  * the caller then omits `launchInputId` (the facts layer consequently emits no `workflow.lifecycle`; do not report subagents or synthesize one).
- *
- * The anchor immediately follows the first `run-started` (engine recording order), so read only the first few journal events instead of
- * loading the whole journal into memory. `RUN_LAUNCH_ANCHOR_SCAN_LIMIT` leaves room for future run-creation events inserted before it.
  */
-const RUN_LAUNCH_ANCHOR_SCAN_LIMIT = 8;
-
 export function readRunLaunchAnchor(
   journal: JournalStorePort,
   runId: string,
 ): RunLaunchAnchor | undefined {
-  for (const stored of journal.listEvents(runId, { limit: RUN_LAUNCH_ANCHOR_SCAN_LIMIT })) {
-    if (stored.event.type === "run-launched") return { inputId: stored.event.inputId };
-  }
-  return undefined;
+  const launched = firstRunLaunched(journal, runId);
+  return launched === undefined ? undefined : { inputId: launched.inputId };
 }
 
 /**
  * Read the run's subagent selection from `subagentModel` on the same `run-launched` event. Resume, both read surfaces, and cold replay use it to reconstruct the same canonical string—
  * zero SQL; `dwf_run` has no such column. If absent, the subagent uses the session model (the case for most runs, including those launched before the upgrade).
  *
- * Use the same scan and limit as the anchor, but **deliberately do not attach it** to {@link RunLaunchAnchor}:
+ * Read from the same event as the anchor, but **deliberately do not attach it** to {@link RunLaunchAnchor}:
  * {@link resolveLaunchAnchor} makes amended runs reuse the predecessor's anchor, but the model must never be inherited that way. Its three-state tool value
  * (omitted = inherit predecessor, null = return to session model, string = set explicitly) is normalized by `AmendWorkflow`'s resolveInput, following the same rationale as `max_concurrency`.
  */
 export function readRunSubagentModel(journal: JournalStorePort, runId: string): string | undefined {
-  for (const stored of journal.listEvents(runId, { limit: RUN_LAUNCH_ANCHOR_SCAN_LIMIT })) {
-    if (stored.event.type === "run-launched") return stored.event.subagentModel;
-  }
-  return undefined;
+  return firstRunLaunched(journal, runId)?.subagentModel;
 }
 
 /**
- * Read this run's script file from `scriptPath` on the same `run-launched` event. Both read surfaces use it on cold paths to
+ * Read the script-named models for this run from `modelBindings` on the same `run-launched` event
+ * (see "Models the script names" in docs/dynamic-workflow/launch.md). Subagent session creation (including resume), both read surfaces, and
+ * cold replay use it to map the model names in personas to canonical strings—the names were resolved once at launch and are never re-resolved
+ * against the catalog afterwards, so a resumed run still runs the same models the user approved. If absent, the script named no models.
+ *
+ * Read from the same event as {@link readRunSubagentModel}, and not attached to the anchor for the same reason.
+ */
+export function readRunModelBindings(
+  journal: JournalStorePort,
+  runId: string,
+): Record<string, string> | undefined {
+  return firstRunLaunched(journal, runId)?.modelBindings;
+}
+
+/**
+ * Read this run's subagent permission mode from `subagentPermissionMode` on the same `run-launched` event
+ * (see "Permissions inside a run" in docs/dynamic-workflow/launch.md). Resume uses it to keep subagents running in the
+ * mode in effect when the run was created, regardless of the session's current mode. Absent or unknown values mean YOLO (including runs launched before this feature).
+ */
+export function readRunSubagentPermissionMode(
+  journal: JournalStorePort,
+  runId: string,
+): WorkflowSubagentPermissionMode | undefined {
+  const launched = firstRunLaunched(journal, runId);
+  return launched === undefined
+    ? undefined
+    : parseWorkflowSubagentPermissionMode(launched.subagentPermissionMode);
+}
+
+/**
+ * Read this run's script file from `scriptPath` on the same `run-launched` event
+ * (the Provenance section of "Script files" in docs/dynamic-workflow/launch.md). Both read surfaces use it on cold paths to
  * reconstruct the same absolute path—zero SQL; `dwf_run` has no such column. If absent, this run has no editable script file
  * (the project cannot save drafts, or the run predates this feature).
  *
- * Same scan and limit as {@link readRunSubagentModel}; also **deliberately not attached**
- * to {@link RunLaunchAnchor}: amendments reuse the anchor, but the predecessor's script path points to the old script, so reusing it would make the model edit a file that is no longer running.
+ * Read from the same event as {@link readRunSubagentModel}, likewise **deliberately not attached**
+ * to {@link RunLaunchAnchor}: amendments reuse the anchor, but the predecessor's script path points to the old script,
+ * so reusing it would make the model next edit a file that is no longer running.
  */
 export function readRunScriptPath(journal: JournalStorePort, runId: string): string | undefined {
-  for (const stored of journal.listEvents(runId, { limit: RUN_LAUNCH_ANCHOR_SCAN_LIMIT })) {
-    if (stored.event.type === "run-launched") return stored.event.scriptPath;
+  // A fill can mint one for a run without a draft (see "The draft after a fill" in docs/dynamic-workflow/launch.md);
+  // the path lands in the journal with that `hole-filled` event, and the last one present wins over the run-creation record. A narrow read
+  // with type filtering: the vast majority of runs have no hole-filled events at all.
+  let minted: string | undefined;
+  for (const { event } of journal.listEvents(runId, {
+    types: ["hole-filled"],
+    reportItems: { limit: 0 },
+  })) {
+    if (event.type === "hole-filled" && event.scriptPath !== undefined) minted = event.scriptPath;
   }
-  return undefined;
+  return minted ?? firstRunLaunched(journal, runId)?.scriptPath;
 }
 
 /**

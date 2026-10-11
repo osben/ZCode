@@ -1,0 +1,167 @@
+name: Fork release
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fork-release
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  resolve-version:
+    name: Resolve next fork version
+    runs-on: ubuntu-26.04
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 1
+
+      - name: Fetch tags
+        # release-fork.mjs derives the next -fork.N counter from existing git tags.
+        run: git fetch --tags origin
+
+      - name: Resolve next fork version
+        id: version
+        run: |
+          next="$(node scripts/release-fork.mjs --print)"
+          if git rev-parse -q --verify "refs/tags/v${next}" >/dev/null 2>&1; then
+            echo "::error::Tag v${next} already exists on origin"
+            exit 1
+          fi
+          echo "version=${next}" >> "$GITHUB_OUTPUT"
+
+  build-macos-arm64:
+    name: Build macOS arm64 (dmg + zip)
+    needs: resolve-version
+    runs-on: macos-latest
+    timeout-minutes: 120
+    env:
+      # The desktop installer does not bundle the dev mock-cdn remote assets; skipping their
+      # cross-platform download keeps the release job well under the timeout (same as upstream CI).
+      ZCODE_SKIP_REMOTE_ASSETS: "1"
+      ZCODE_TARGET_OS: darwin
+      ZCODE_TARGET_ARCH: arm64
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Set build-only version
+        # Build-only: package.json in git keeps the upstream version, so upstream syncs stay
+        # conflict-free. prepare:build-meta and electron-builder pick the version up from here.
+        run: pnpm pkg set version="${{ needs.resolve-version.outputs.version }}"
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build desktop bundles and runtime assets
+        run: pnpm --filter @zcode/desktop build
+
+      - name: Package with electron-builder (unsigned)
+        # --publish never: the config's generic publish URL is a localhost placeholder; the
+        # GitHub Release is created separately in the release job.
+        run: >-
+          pnpm --filter @zcode/desktop exec electron-builder
+          --config electron-builder.config.js --mac --publish never
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-macos-arm64
+          path: |
+            packages/desktop/dist/*.dmg
+            packages/desktop/dist/*.zip
+          retention-days: 7
+          if-no-files-found: error
+
+  build-windows-x64:
+    name: Build Windows x64 (nsis)
+    needs: resolve-version
+    runs-on: windows-latest
+    timeout-minutes: 120
+    env:
+      ZCODE_SKIP_REMOTE_ASSETS: "1"
+      ZCODE_TARGET_OS: win32
+      ZCODE_TARGET_ARCH: x64
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Set build-only version
+        run: pnpm pkg set version="${{ needs.resolve-version.outputs.version }}"
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build desktop bundles and runtime assets
+        run: pnpm --filter @zcode/desktop build
+
+      - name: Package with electron-builder (unsigned)
+        run: >-
+          pnpm --filter @zcode/desktop exec electron-builder
+          --config electron-builder.config.js --win --x64 --publish never
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-windows-x64
+          path: |
+            packages/desktop/dist/*.exe
+          retention-days: 7
+          if-no-files-found: error
+
+  release:
+    name: Tag and create GitHub Release
+    needs: [resolve-version, build-macos-arm64, build-windows-x64]
+    runs-on: ubuntu-26.04
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    env:
+      # GitHub's GITHUB_TOKEN cannot create a release for a commit that changes workflows.
+      GH_TOKEN: ${{ secrets.FORK_RELEASE_TOKEN }}
+      GH_REPO: ${{ github.repository }}
+      VERSION: ${{ needs.resolve-version.outputs.version }}
+    steps:
+      - name: Verify release token
+        run: |
+          if [[ -z "$GH_TOKEN" ]]; then
+            echo "::error::Repository Actions secret FORK_RELEASE_TOKEN is required (Contents: write, Workflows: write)."
+            exit 1
+          fi
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+
+      - name: Create GitHub Release
+        run: |
+          ls -la release-assets
+          gh release create "v${VERSION}" \
+            --target "$GITHUB_SHA" \
+            --title "ZCode ${VERSION}" \
+            --notes "Unsigned fork build (upstream base ${VERSION%%-fork.*}). macOS arm64 + Windows x64. On macOS Gatekeeper may block the first launch; run \`xattr -cr /Applications/ZCode.app\` to allow it." \
+            release-assets/*

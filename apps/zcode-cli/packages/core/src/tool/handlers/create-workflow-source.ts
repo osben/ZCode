@@ -27,8 +27,8 @@ import {
 import { writeWorkflowDraft } from "./workflow-drafts.js";
 import { readWorkflowScriptFile } from "./workflow-path-source.js";
 
-/** Business-failure error codes, matching the existing handler failure convention. */
-const CREATE_WORKFLOW_FAILURE_CODE = 400;
+/** Business failure codes, matching the existing handler failure convention (also used for confirmation-dialog adjustment failures). */
+export const CREATE_WORKFLOW_FAILURE_CODE = 400;
 
 function failure(message: string): ToolHandlerFailure {
   return { result: false, errorCode: CREATE_WORKFLOW_FAILURE_CODE, message };
@@ -61,22 +61,17 @@ export function validateCreateWorkflowSource(
 }
 
 /**
- * Clamp the concurrency limit to `[1, ceiling]`.
- * Values above the ceiling are **lowered, not rejected**: when the model says "at most 32," the
- * user wants an upper bound, not an error.
+ * Normalize the concurrency limit (docs/dynamic-workflow/concurrency.md, “Two bounds on a run”): round down, with a minimum of 1,
+ * and **no upper bound**. Default concurrency D is a starting point, not a ceiling—if the user asks for 40, use 40, whether above or below D;
+ * the process-level governor's 429 feedback, not the CPU count, actually regulates providers.
  *
- * If the ceiling is unknown (port absent or host port lacks `concurrencyCeiling`), pass the value
- * through unchanged. The port implementation will clamp again; skipping a clamp here only makes
- * the confirmation dialog show a somewhat larger number, while rejecting would break the entire path.
- *
- * CreateWorkflow and AmendWorkflow share this function: clamping the same number differently in
- * two tools would be an inconsistency discovered only when a user changes concurrency.
+ * `CreateWorkflow`, `AmendWorkflow`, confirmation-dialog adjustments, and GUI settings share this function: normalizing the same number
+ * differently along different paths would create an inconsistency discovered only when a user changes concurrency.
  */
-export function clampWorkflowMaxConcurrency(value: number, ceiling: number | undefined): number {
-  // The value already passed schema validation (positive integer), but keep the lower bound here:
-  // this helper is shared by two tools, and schema changes must not allow zero or negative values through.
-  const atLeastOne = Math.max(1, value);
-  return ceiling === undefined ? atLeastOne : Math.min(atLeastOne, Math.max(1, ceiling));
+export function normalizeWorkflowMaxConcurrency(value: number): number {
+  // The value passed schema validation (positive integer), but keep the lower bound explicit: this helper is shared by several paths, and a schema change
+  // must not let zero, negative values, or decimals through (“3.7 in-flight asks” makes no sense, and rounding up would silently exceed the user's request).
+  return Math.max(1, Math.floor(value));
 }
 
 /**
@@ -123,15 +118,12 @@ export const SUBAGENT_MODEL_UNAVAILABLE =
  * **provenance**: run-label fallback, argument persistence, and script-file recording read them;
  * execution does not read them at all.
  *
- * `ceiling` is this host's concurrency limit (`port.concurrencyCeiling?.()`, absent means no
- * clamping); `catalog` is this host's model catalog (`context.modelCatalogPort`, absent means no
- * model selection). `max_concurrency` and `subagent_model` are top-level fields handled the same
- * way for all three sources.
+ * `catalog` is the local model catalog (`context.modelCatalogPort`; if absent, no model can be selected). `max_concurrency` and
+ * `subagent_model` are both top-level fields and are handled the same way for all three sources.
  */
 export async function resolveCreateWorkflowInput(
   input: unknown,
   cwd: string,
-  ceiling?: number,
   catalog?: ModelCatalogPort,
 ): Promise<ToolInputResolutionResult> {
   const parsed = CreateWorkflowInputSchema.safeParse(input);
@@ -144,37 +136,34 @@ export async function resolveCreateWorkflowInput(
   if (!subagentModel.result) return subagentModel;
   const subagentModelField =
     subagentModel.canonical === undefined ? {} : { subagent_model: subagentModel.canonical };
-  const clampedField =
-    requested === undefined
-      ? {}
-      : { max_concurrency: clampWorkflowMaxConcurrency(requested, ceiling) };
+  const boundField =
+    requested === undefined ? {} : { max_concurrency: normalizeWorkflowMaxConcurrency(requested) };
 
   if (model.path !== undefined) {
     return resolvePathSource(model, model.path, cwd, {
-      ...clampedField,
+      ...boundField,
       ...subagentModelField,
     });
   }
 
   // Inline: identity. The inline path must not touch disk at all; this is the testable form of "zero regression."
   if (model.saved === undefined) {
-    // Both exceptions rewrite values without reading from disk; otherwise the confirmation dialog
-    // would not show what takes effect: an over-ceiling concurrency limit and a model name not yet
-    // normalized. If neither changes, preserve the input byte-for-byte.
-    const clamped =
-      requested === undefined ? undefined : clampWorkflowMaxConcurrency(requested, ceiling);
+    // Both exceptions follow the same rule: rewriting requires no disk read, but without rewriting the dialog would not show the effective value—
+    // the concurrency limit that needs rounding and model names not yet in canonical form. If neither changes, preserve the input byte for byte.
+    const normalized =
+      requested === undefined ? undefined : normalizeWorkflowMaxConcurrency(requested);
     // Compare the model name against the **raw** input, not `model.subagent_model`: the schema
     // applies `.trim()`, so a string with surrounding whitespace resolves to the canonical value,
     // but passing through the original would make the confirmation dialog show those spaces.
     const rawSubagentModel = (input as { subagent_model?: unknown } | null)?.subagent_model;
-    if (clamped === requested && subagentModel.canonical === rawSubagentModel) {
+    if (normalized === requested && subagentModel.canonical === rawSubagentModel) {
       return { result: true, input };
     }
     return {
       result: true,
       input: {
         ...model,
-        ...(clamped === undefined ? {} : { max_concurrency: clamped }),
+        ...(normalized === undefined ? {} : { max_concurrency: normalized }),
         ...subagentModelField,
       } satisfies CreateWorkflowInput,
     };
@@ -224,9 +213,7 @@ export async function resolveCreateWorkflowInput(
       },
       // The copy preserves the metadata block byte-for-byte, so diagnostic file lines must skip those block lines.
       ...(found.bodyLineOffset === 0 ? {} : { script_line_offset: found.bodyLineOffset }),
-      ...(requested === undefined
-        ? {}
-        : { max_concurrency: clampWorkflowMaxConcurrency(requested, ceiling) }),
+      ...boundField,
       // The saved branch builds a new input object from scratch, so name every top-level field here
       // or it will be silently dropped. "Dropped only on the saved path" is one of the hardest failures to detect.
       ...subagentModelField,

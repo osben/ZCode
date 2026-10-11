@@ -7,6 +7,7 @@ import {
 import { registerMcpTools, traceContextToLogContext } from "../deps.js";
 import type { McpConnectionSnapshot, McpServerConfig, TraceContext } from "../deps.js";
 import type { AgentRuntimeInternal } from "../internal.js";
+import type { McpToolDescriptor, PluginReferenceCatalog } from "@zcode/contracts";
 
 const MCP_SESSION_OAUTH_AUTHORIZATION_TIMEOUT_MS = 15_000;
 
@@ -142,10 +143,16 @@ export async function initializeMcp(
         this.config.mcp?.servers ?? {},
         new Set(this.config.mcp?.trustedOfficialCuaServerNames ?? []),
       ),
+      // Plugin UI: display.ui needs the server → pluginId ownership mapping; the session-frozen catalog is the only authority.
+      pluginIdByServerName: buildPluginIdByServerName(this.config.pluginReferenceCatalog),
     });
     if (registered.length > 0) {
       this.invalidateToolCache();
     }
+    // A7: remember the registered set and signature; refreshMcpToolsIfChanged uses them at turn boundaries to decide whether to register again.
+    this.registeredMcpToolNames = registered;
+    this.mcpToolsSignature = mcpToolsSignature(snapshot.tools);
+    this.mcpToolListRevision = mcpPort.toolListRevision?.();
     this.logger?.info("MCP tools registered", {
       ...traceContextToLogContext(traceContext),
       event: "mcp.tools.registered",
@@ -165,4 +172,71 @@ export async function initializeMcp(
     });
   }
   this.mcpToolsRegistered = true;
+}
+
+/**
+ * Server name → stable plugin ID. Disabled plugins have no mcpServerNames in the catalog, so they are naturally excluded;
+ * conflicting plugins have distinct server names (prefixed with plugin name), so no additional deduplication is needed.
+ */
+function buildPluginIdByServerName(
+  catalog: PluginReferenceCatalog | undefined,
+): ReadonlyMap<string, string> {
+  const map = new Map<string, string>();
+  for (const plugin of catalog?.plugins ?? []) {
+    for (const serverName of plugin.mcpServerNames) map.set(serverName, plugin.pluginId);
+  }
+  return map;
+}
+
+function mcpToolsSignature(descriptors: readonly McpToolDescriptor[]): string {
+  return descriptors
+    .map((tool) => `${tool.serverName}\u0001${tool.toolName}\u0001${tool.description ?? ""}`)
+    .sort()
+    .join("\n");
+}
+
+/**
+ * Refresh the MCP tool list before a turn. Call listTools again only when the port reports a changed tools/list_changed count
+ * (the adapter reloads the server that sent the notification), then compare tool signatures; when they differ, unregister the old tools, register the new ones, and invalidate the tool cache.
+ * Ports without toolListRevision (mocks / static servers) never refresh; do not refresh within a turn either (decided).
+ */
+export async function refreshMcpToolsIfChanged(
+  this: AgentRuntimeInternal,
+  traceContext: TraceContext,
+): Promise<void> {
+  const mcpPort = this.mcpPort;
+  if (!mcpPort || !this.mcpToolsRegistered) return;
+  const revision = mcpPort.toolListRevision?.();
+  if (revision === undefined || revision === this.mcpToolListRevision) return;
+  let descriptors: McpToolDescriptor[];
+  try {
+    descriptors = await mcpPort.listTools();
+  } catch {
+    return;
+  }
+  this.mcpToolListRevision = revision;
+  const signature = mcpToolsSignature(descriptors);
+  if (this.mcpToolsSignature === signature) return;
+  const previous = new Set(this.registeredMcpToolNames ?? []);
+  for (const name of previous) this.registry.unregister(name);
+  const registered = registerMcpTools(this.registry, mcpPort, descriptors, {
+    allowedTools: this.config.toolAllowlist,
+    disallowedTools: this.config.toolDisallowlist,
+    officialCuaServerNames: computeOfficialCuaServerNames(
+      this.config.mcp?.servers ?? {},
+      new Set(this.config.mcp?.trustedOfficialCuaServerNames ?? []),
+    ),
+    pluginIdByServerName: buildPluginIdByServerName(this.config.pluginReferenceCatalog),
+  });
+  this.registeredMcpToolNames = registered;
+  this.mcpToolsSignature = signature;
+  this.invalidateToolCache();
+  this.logger?.info("MCP tools re-registered after list_changed", {
+    ...traceContextToLogContext(traceContext),
+    event: "mcp.tools.reregistered",
+    module: "core.runtime",
+    removedToolCount: previous.size,
+    registeredToolCount: registered.length,
+    status: "completed",
+  });
 }

@@ -15,6 +15,7 @@ import {
 import {
   buildWriteLiteralFileCommand,
   quotePosixPathArg,
+  quotePosixShellArg,
 } from "@zcode/server/remote/posixShell.js";
 import { createTarGzArchive } from "@zcode/server/remote/localTarGz.js";
 import {
@@ -196,6 +197,7 @@ async function shouldSkipDevelopmentZCodeAgentDeploy(params: {
   runtimeResourceDir: string;
   runtimeVersion: string;
   devVersion: string;
+  localBundleSha256: string;
   force: boolean;
   missingOfficialPluginAssetPaths: string[];
   loggers: DeployLoggers;
@@ -237,6 +239,27 @@ async function shouldSkipDevelopmentZCodeAgentDeploy(params: {
   }
 
   if (params.missingOfficialPluginAssetPaths.length > 0) {
+    return false;
+  }
+
+  // An older published bundle or another client may overwrite the bundle yet leave the same
+  // .dev-version. The marker only describes the last deployment intent; verify the actual
+  // file on the remote before skipping the upload, so the PAT is not handed to an older
+  // Agent's outdated authentication logic.
+  const verifyBundleScript =
+    "require('node:fs/promises').readFile(process.argv[1]).then(content => {" +
+    "process.exitCode = require('node:crypto').createHash('sha256').update(content).digest('hex') === process.argv[2] ? 0 : 1;" +
+    "}).catch(() => { process.exitCode = 1; });";
+  try {
+    await waitForClose(
+      await params.backend.exec(
+        `"\${ZCODE_SERVER_RUNTIME_ROOT:-$HOME/.zcode/server}/node" -e ${quotePosixShellArg(verifyBundleScript)} ${quotePosixPathArg(params.remoteBundlePath)} ${quotePosixShellArg(params.localBundleSha256)}`,
+      ),
+    );
+  } catch {
+    params.loggers.logWarn(
+      `[zcode-agent-deploy] ${ZCODE_AGENT_PROVIDER}: 远端 bundle SHA 不匹配或无法校验，重新上传`,
+    );
     return false;
   }
 
@@ -376,6 +399,9 @@ export async function deployDevelopmentZCodeAgentRuntime(
       runtimeResourceDir: params.runtimeResourceDir,
       runtimeVersion: params.runtimeVersion,
       devVersion,
+      localBundleSha256: createHash("sha256")
+        .update(await readFile(developmentBundle.localBundlePath))
+        .digest("hex"),
       force: params.force,
       missingOfficialPluginAssetPaths,
       loggers,

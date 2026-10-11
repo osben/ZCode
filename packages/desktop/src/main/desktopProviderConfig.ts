@@ -1,5 +1,6 @@
 import { app } from "electron";
 import { join } from "node:path";
+import { ZCODE_ENV } from "@zcode/shared";
 
 export function resolveZCodeBuiltinProviderConfigFilePath(options?: {
   readonly appPath?: string;
@@ -15,7 +16,8 @@ export function resolveZCodeBuiltinProviderConfigFilePath(options?: {
       "config/provider/zcode-builtin.json",
     );
   }
-  // Development and packaged builds share the single production configuration source.
-  const filename = "zcode-builtin.json";
+  // Development has no resources-copy step and must read the same source file as the production
+  // environment injected by the build.
+  const filename = ZCODE_ENV === "production" ? "zcode-builtin.json" : "zcode-builtin.test.json";
   return join(options?.appPath ?? app.getAppPath(), "../../config/provider", filename);
 }

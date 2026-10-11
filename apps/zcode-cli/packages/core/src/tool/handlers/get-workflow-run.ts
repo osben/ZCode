@@ -15,6 +15,7 @@
 // Intentionally **no** wait/block semantics: waiting is TaskOutput's job; this is an immediate snapshot.
 
 import {
+  GET_WORKFLOW_RUN_MAX_HOLES,
   GET_WORKFLOW_RUN_TOOL_NAME,
   GetWorkflowRunInputJsonSchema,
   GetWorkflowRunInputSchema,
@@ -86,12 +87,14 @@ const getWorkflowRunHandler: ToolHandler = async (input, context) => {
     status: detail.status,
     ...(detail.stopReason === undefined ? {} : { stopReason: detail.stopReason }),
     ...(detail.resumedFrom === undefined ? {} : { resumedFrom: detail.resumedFrom }),
-    // The port includes this field only below the ceiling (a run at the ceiling has nothing to report), so forwarding it as-is
-    // already follows the “omit when absent” rule.
+    // The port includes this field only when it differs from default concurrency (a run at the default has nothing to report), so forwarding it unchanged
+    // already means “omit when absent.”
     ...(detail.maxConcurrency === undefined ? {} : { maxConcurrency: detail.maxConcurrency }),
     // Same “omit when absent” rule: a run using the session model has nothing to report. AmendWorkflow reuses this string when
     // `subagent_model` is omitted, so it must be visible to the model.
     ...(detail.subagentModel === undefined ? {} : { subagentModel: detail.subagentModel }),
+    // Same “omit when absent” rule: a run whose script names no models has nothing to report. Amendments inherit these bindings for matching names.
+    ...(detail.modelBindings === undefined ? {} : { modelBindings: detail.modelBindings }),
     // Same “omit when absent” rule: a run without a script file has nothing to report. The port provides an absolute path as part
     // of run identity; give the model a workspace-relative path because it will use Edit on that file.
     ...(detail.scriptPath === undefined
@@ -151,6 +154,22 @@ const getWorkflowRunHandler: ToolHandler = async (input, context) => {
             question: pending.question,
             ...(pending.context === undefined ? {} : { context: pending.context }),
             askedAt: pending.askedAt,
+          })),
+        }),
+    // Holes (docs/dynamic-workflow/launch.md, “The `FillWorkflowHole` tool”): same as pendingQuestions,
+    // omit the entire field when empty; the limit of 32 matches the display contract's hole limit.
+    ...(detail.holes === undefined || detail.holes.length === 0
+      ? {}
+      : {
+          holes: detail.holes.slice(0, GET_WORKFLOW_RUN_MAX_HOLES).map((hole) => ({
+            siteId: hole.siteId,
+            ordinal: hole.ordinal,
+            name: hole.name,
+            type: hole.type,
+            state: hole.state,
+            ...(hole.since === undefined ? {} : { since: hole.since }),
+            ...(hole.filledAt === undefined ? {} : { filledAt: hole.filledAt }),
+            ...(hole.filledBy === undefined ? {} : { filledBy: hole.filledBy }),
           })),
         }),
     // User-facing artifacts. Omit the field when empty. The limit of 32 matches `ARTIFACT_CAPS.maxArtifactsPerRun`; the port will

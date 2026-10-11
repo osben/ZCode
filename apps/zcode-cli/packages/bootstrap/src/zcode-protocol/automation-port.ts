@@ -21,14 +21,14 @@ import {
   type ZCodeProtocolSessionRecord,
 } from "./server-types.js";
 
-const AUTOMATION_CREATE_FROM_AUTOMATION_RUN_ERROR =
+export const AUTOMATION_CREATE_FROM_AUTOMATION_RUN_ERROR =
   "Cannot create a scheduled task while running a scheduled task.";
 
-const AUTOMATION_CREATE_IN_BOUND_SESSION_ERROR =
+export const AUTOMATION_CREATE_IN_BOUND_SESSION_ERROR =
   "Cannot create a scheduled task inside a session that already belongs to a scheduled task. " +
   "Ask the user to start a new chat to create another scheduled task.";
 
-const AUTOMATION_CREATE_BOUND_SESSION_CHECK_ERROR =
+export const AUTOMATION_CREATE_BOUND_SESSION_CHECK_ERROR =
   "Cannot verify whether this session belongs to a scheduled task. Try again later.";
 
 export function createProtocolAutomationPort(
@@ -107,6 +107,10 @@ export function createProtocolAutomationPort(
       // CronCreate's tool context carries only part of the configuration, causing permission or
       // reasoning level to be lost across layers. Read the active runtime by sessionId at the
       // protocol boundary so the saved settings match what the user saw when invoking the tool.
+      // Scheduled tasks inherit only the session's stable Selection: single-turn executions such
+      // as speed-card runs go through modelExecution (selectionScope=execution) and never rewrite
+      // the Session Selection, so what is read here is never a turn-only model, and there is no
+      // need to distinguish persistent vs. temporary read paths.
       const runtimeModelSelection =
         activeSession?.app.runtime.getSessionModelSelection() ??
         (() => {
@@ -245,10 +249,16 @@ function normalizeCronAutomationMode(
       return undefined;
     case "plan":
     case "edit":
+    case "guarded":
     case "yolo":
     case "build":
       return mode;
+    case "dontAsk":
+    case "bypassPermissions":
+      return "yolo";
+    case "default":
     case "auto":
+    case "acceptEdits":
     case "autoEdit":
       return "build";
     default: {

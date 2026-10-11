@@ -4,7 +4,7 @@
 // Split out of WorkflowRunPhaseList.tsx (max-lines 400): the list file owns expanded state, question ownership, and pill wiring;
 // this file contains four presentation-only parts—rail segment, lamp, avatars on collapsed phase headers, and rounds.
 
-import { useId, type CSSProperties } from "react";
+import { useId, useMemo, type CSSProperties } from "react";
 import { Repeat2Icon } from "lucide-react";
 import { cn } from "@/components/lib/utils.js";
 import { STATUS_DOT } from "@/components/workflow-graph/run-status-presentation.js";
@@ -14,17 +14,26 @@ import type {
   TimelinePill,
   TimelineStation,
 } from "@/components/workflow-timeline/timeline-model.js";
+import { workflowActorModelLabels } from "@/components/workflow-timeline/subagent-model-label.js";
 import { LaneGlyph, agentColor } from "@/components/workflow-timeline/WorkflowAgentPill.js";
 import { MarchLight } from "@/components/workflow-timeline/WorkflowMarchLight.js";
-import type { SpineSection } from "@/app-shell/workflowRunSpine.js";
+import { StreamChevronsBox } from "@/components/workflow-timeline/WorkflowStreamChevrons.js";
+import {
+  SPINE_JOINT_PX,
+  SPINE_TRACK_X,
+  type SpineJoint,
+  type SpineSection,
+} from "@/app-shell/workflowRunSpine.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
+
+/** Length of the main rail stub extending outside an open joint row (TAIL on the card). */
+const SPINE_STUB_PX = 4;
+
+/** Each half of a stream rail leaves this much space before/after a phase boundary for two downward chevrons. */
+const SPINE_STREAM_GAP_PX = 7;
 
 /** Maximum avatars shown on a collapsed phase header; the rest go into `+n`. */
 const CLUSTER_MAX = 3;
-
-/** Center of the vertical rail at t; main rail is at 21, with each branch shifted right by 12px (`workflowRunSpine.ts`). */
-const TRACK_X = 21;
-const TRACK_GAP = 12;
 
 /**
  * One half of a rail segment. Draw the segment between adjacent stations in two pieces: from the bottom of the lamp to the bottom of the previous station,
@@ -39,35 +48,50 @@ const TRACK_GAP = 12;
  * `below` (bottom half of the previous station) fades from transparent to 70% warning color; `above` (top half of the running station) rises from 70% to full,
  * continuing into the lamp; `full` stays at 70% throughout.
  */
-function SpineRail({
-  from,
+export function SpineRail({
   ink,
+  overhang,
+  pitch,
   position,
-  to,
+  stream,
   track = 0,
 }: {
   ink: TimelineInk;
   position: "above" | "below" | "full";
+  /** One half of a stream rail: leaves `SPINE_STREAM_GAP_PX` at the phase boundary and does not overlay the transit light. */
+  stream?: true;
   track?: number;
-  from?: number;
-  to?: number;
+  /** Rail pitch (`workflowRunSpine.ts`); read only when track > 0. */
+  pitch: number;
+  /** Main rail in an open joint row: extends `SPINE_STUB_PX` outside the row—root above, sink below. */
+  overhang?: "top" | "bottom";
 }) {
+  const x = SPINE_TRACK_X + pitch * track;
   const style: CSSProperties = {};
-  if (track > 0)
-    style.left = (ink === "march" ? TRACK_X - 0.75 : TRACK_X - 0.5) + TRACK_GAP * track;
-  if (from !== undefined) style.top = from;
-  if (to !== undefined) style.bottom = to;
+  // Stream-rail ink belongs on the chevrons; both rail halves remain a flat 1px line.
+  const lit = ink === "march" && stream !== true;
+  if (track > 0) style.left = lit ? x - 0.75 : x - 0.5;
+  if (stream === true && position === "below") style.bottom = SPINE_STREAM_GAP_PX;
+  if (stream === true && position === "above") {
+    style.top = SPINE_STREAM_GAP_PX;
+    style.height = 12 - SPINE_STREAM_GAP_PX;
+  }
+  if (overhang !== undefined) {
+    style.top = overhang === "top" ? -SPINE_STUB_PX : 0;
+    style.bottom = overhang === "bottom" ? -SPINE_STUB_PX : 0;
+  }
   return (
     <span
       aria-hidden
       className={cn(
         "wf-ink absolute rounded-full",
-        ink === "march" ? "left-[20.25px] w-[1.5px]" : "left-[20.5px] w-px",
+        lit ? "left-[20.25px] w-[1.5px]" : "left-[20.5px] w-px",
         position === "above" ? "top-0 h-3" : position === "below" ? "bottom-0 top-6" : "inset-y-0",
-        ink !== "march" && "bg-foreground-subtlest",
-        ink === "march" && "wf-spine-march",
+        !lit && "bg-foreground-subtlest",
+        lit && "wf-spine-march",
       )}
       data-rail-ink={ink}
+      data-rail-kind={stream === true ? "stream" : undefined}
       data-rail-position={position}
       data-rail-track={track}
       data-testid="workflow-run-spine-rail"
@@ -77,66 +101,124 @@ function SpineRail({
 }
 
 /**
- * Branch/merge curves: the branch rail leaves the main rail within the 13px above the band's first station and returns with a mirrored curve at the merge station's top (or the band's last station's bottom).
- * Use the same drawing for muted and bright rails (as for vertical rails); while active, overlay the same path with a lit gradient
- * (`MarchLight`) that fades in from the control-flow side and is brightest at the lamp. Gradient endpoints are the two points used to draw the `path`
- * (branch from main-rail top to branch-rail bottom; merge is reversed); do not parse the path string. `id` uses `useId()` to remain unique within an SVG.
+ * Draw all vertical rails for a phase (computed by `workflowRunSpine.ts`) at once. The lower half
+ * of a stream rail places two downward chevrons in the center of the phase's bottom edge
+ * (presentation.md, “The spine”); z-index 1 keeps the next phase header's hover background from covering them.
  */
-function SpineCurve({
-  at,
-  ink,
-  kind,
-  track,
-}: {
-  kind: "fork" | "merge";
-  track: number;
-  ink: TimelineInk;
-  at: "top" | "bottom";
-}) {
-  const lightId = useId();
-  const x = TRACK_X - 0.5 + TRACK_GAP * track;
-  const main = TRACK_X - 0.5;
-  const path =
-    kind === "fork"
-      ? `M${main},0 V1 C${main},8 ${x},5 ${x},13`
-      : `M${x},0 C${x},8 ${main},5 ${main},13`;
-  const from = kind === "fork" ? { x: main, y: 0 } : { x, y: 0 };
-  const to = kind === "fork" ? { x, y: 13 } : { x: main, y: 13 };
-  const width = x + 8;
-  return (
-    <svg
-      aria-hidden
-      className={cn("absolute left-0", at === "top" ? "top-0" : "bottom-0")}
-      data-curve-ink={ink}
-      data-curve-track={track}
-      data-testid={`workflow-run-spine-${kind}`}
-      height={13}
-      viewBox={`0 0 ${width} 13`}
-      width={width}
-    >
-      <path
-        d={path}
-        fill="none"
-        stroke="var(--color-foreground-subtlest)"
-        strokeLinecap="round"
-        strokeWidth={1}
-      />
-      {ink === "march" ? <MarchLight d={path} from={from} id={lightId} to={to} /> : null}
-    </svg>
-  );
-}
-
-/** Draw all vertical rails and curves for one station in one pass (calculated by `workflowRunSpine.ts`). */
-export function SpinePieces({ section }: { section: SpineSection }) {
+export function SpinePieces({ pitch, section }: { pitch: number; section: SpineSection }) {
   return (
     <>
       {section.rails.map((rail) => (
-        <SpineRail key={`${rail.track}:${rail.position}`} {...rail} />
+        <SpineRail key={`${rail.track}:${rail.position}`} pitch={pitch} {...rail} />
       ))}
-      {section.curves.map((curve) => (
-        <SpineCurve key={`${curve.kind}:${curve.track}`} {...curve} />
-      ))}
+      {section.rails.map((rail) =>
+        rail.stream === true && rail.position === "below" ? (
+          <StreamChevronsBox
+            count={2}
+            direction="down"
+            ink={rail.ink}
+            key={`stream:${rail.track}`}
+            style={{ left: SPINE_TRACK_X + pitch * rail.track, top: "100%", zIndex: 1 }}
+          />
+        ) : null,
+      )}
     </>
+  );
+}
+
+/**
+ * Joint row (presentation.md, “The spine”): a branch or merge occupies a 16px row **between** two
+ * phases. The main rail passes straight through; each branch leaves (or rejoins) the main rail on
+ * the same y = 8 baseline: down, turn with radius min(6, pitch/2), move horizontally to its own
+ * column, then turn and descend to the row bottom. With one branch, the two turns form an S. A merge
+ * mirrors a branch.
+ *
+ * Draw every curve with base ink first. For transit, overlay a lit path on the same route
+ * (`MarchLight`): fade in at the control-flow end and stay brightest at the lamp. The gradient ends
+ * match the first and last points of the path; `useId()` gives each SVG a unique `id`.
+ * In an open row (a branch without a predecessor or a merge without a merge station), the main rail
+ * does not connect to the previous/next phase; it extends 4px outside the row and ends in a round
+ * cap: a root or a sink (TAIL/STUB on the card). The whole row is decorative (`aria-hidden`); the
+ * lamp and phase header already convey its meaning. If `joint` is absent, there is no joint here and nothing is drawn.
+ */
+export function SpineJointRow({
+  joint,
+  kind,
+  pitch,
+}: {
+  joint: SpineJoint | undefined;
+  kind: "fork" | "merge";
+  pitch: number;
+}) {
+  const lightBase = useId();
+  if (joint === undefined) return null;
+  const main = SPINE_TRACK_X - 0.5;
+  const r = Math.min(6, pitch / 2);
+  const bus = SPINE_JOINT_PX / 2;
+  const curves = joint.branches.map((branch) => {
+    const x = main + pitch * branch.track;
+    const d =
+      kind === "fork"
+        ? `M${main},0 V${bus - r} Q${main},${bus} ${main + r},${bus} H${x - r} Q${x},${bus} ${x},${bus + r} V${SPINE_JOINT_PX}`
+        : `M${x},0 V${bus - r} Q${x},${bus} ${x - r},${bus} H${main + r} Q${main},${bus} ${main},${bus + r} V${SPINE_JOINT_PX}`;
+    const from = kind === "fork" ? { x: main, y: 0 } : { x, y: 0 };
+    const to = kind === "fork" ? { x, y: SPINE_JOINT_PX } : { x: main, y: SPINE_JOINT_PX };
+    return { ...branch, d, from, to };
+  });
+  const width = main + pitch * Math.max(1, ...joint.branches.map((branch) => branch.track)) + 8;
+  return (
+    <div
+      aria-hidden
+      className="relative shrink-0"
+      data-joint-kind={kind}
+      data-joint-open={joint.open === true ? "true" : undefined}
+      data-testid="workflow-run-spine-joint"
+      style={{ height: SPINE_JOINT_PX }}
+    >
+      <SpineRail
+        ink={joint.main}
+        pitch={pitch}
+        position="full"
+        {...(joint.open === true ? { overhang: kind === "fork" ? "top" : "bottom" } : {})}
+      />
+      <svg
+        className="absolute left-0 top-0 overflow-visible"
+        height={SPINE_JOINT_PX}
+        viewBox={`0 0 ${width} ${SPINE_JOINT_PX}`}
+        width={width}
+      >
+        {curves.map((curve) => (
+          <g
+            data-curve-ink={curve.ink}
+            data-curve-track={curve.track}
+            data-testid={`workflow-run-spine-${kind}`}
+            key={curve.track}
+          >
+            <path
+              className="wf-ink"
+              d={curve.d}
+              fill="none"
+              stroke="var(--color-foreground-subtlest)"
+              strokeLinecap="round"
+              strokeWidth={1}
+            />
+          </g>
+        ))}
+        {/* Draw the glow above all base strokes: branches share a trunk, and a later base stroke must not cover an earlier branch’s glow. */}
+        {curves.map((curve) =>
+          curve.ink === "march" ? (
+            <g data-testid={`workflow-run-spine-${kind}-lit`} key={`lit:${curve.track}`}>
+              <MarchLight
+                d={curve.d}
+                from={curve.from}
+                id={`${lightBase}lit-${curve.track}`}
+                to={curve.to}
+              />
+            </g>
+          ) : null,
+        )}
+      </svg>
+    </div>
   );
 }
 
@@ -144,7 +226,15 @@ export function SpinePieces({ section }: { section: SpineSection }) {
  * Lamp on the rail: hollow = pending, green = complete, red with ring = failed, pulsing amber = running. The running lamp shares the card's
  * `wf-lamp-running` animation: constant glow plus a heartbeat; under `motion-reduce`, only the glow remains.
  */
-export function SpineLamp({ status, track = 0 }: { status: StepRunStatus; track?: number }) {
+export function SpineLamp({
+  pitch,
+  status,
+  track = 0,
+}: {
+  status: StepRunStatus;
+  track?: number;
+  pitch: number;
+}) {
   return (
     <span
       aria-hidden
@@ -156,7 +246,7 @@ export function SpineLamp({ status, track = 0 }: { status: StepRunStatus; track?
       )}
       data-lamp={status}
       data-testid="workflow-run-phase-lamp"
-      style={track === 0 ? undefined : { left: 16 + TRACK_GAP * track }}
+      style={track === 0 ? undefined : { left: 16 + pitch * track }}
     />
   );
 }
@@ -222,5 +312,52 @@ export function Rounds({ station }: { station: TimelineStation }) {
       <Repeat2Icon aria-hidden className="size-[11px]" />
       <span>{station.rounds}</span>
     </span>
+  );
+}
+
+/**
+ * Subagent row suffix: counts (“{n} tasks · {n} reads”), followed by the model name only when the
+ * persona specifies one (presentation.md, “The spine”). Model names may be long (custom provider
+ * “name/model”), so they yield along with the subagent name while the counts stay visible.
+ */
+export function SpinePillTrailer({
+  counts,
+  modelName,
+}: {
+  counts: readonly string[];
+  modelName: string | undefined;
+}) {
+  return (
+    <>
+      {counts.length === 0 ? null : (
+        <span className="shrink-0 font-mono text-ui-xs tabular-nums text-foreground-subtlest">
+          {counts.join(" · ")}
+        </span>
+      )}
+      {modelName === undefined ? null : (
+        <span
+          className="min-w-0 max-w-[45%] truncate font-mono text-ui-xs text-foreground-subtlest"
+          data-testid="workflow-run-agent-model"
+        >
+          {counts.length === 0 ? modelName : `· ${modelName}`}
+        </span>
+      )}
+    </>
+  );
+}
+
+/** Memoize {@link workflowActorModelLabels} by the actors table and locale (the spine queries it on every rerender). */
+export function useWorkflowActorModelLabels(
+  actors: readonly { siteId: string; ordinal: number; model?: string }[] | undefined,
+  providerName: ((providerId: string) => string | undefined) | undefined,
+): ReadonlyMap<string, { name: string; canonical: string }> {
+  const { intl } = useZCodeIntl();
+  return useMemo(
+    () =>
+      workflowActorModelLabels(actors, {
+        formatMessage: intl.formatMessage.bind(intl),
+        ...(providerName === undefined ? {} : { providerName }),
+      }),
+    [actors, intl, providerName],
   );
 }

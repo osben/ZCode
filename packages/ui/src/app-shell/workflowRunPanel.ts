@@ -437,7 +437,7 @@ export interface WorkflowActorInstance {
 type WorkflowActorStartState = "notStarted" | "started" | "unknown";
 
 /** Identity passed from an actor transcript tab to the gate: slot + session ID known at open time (optional). */
-interface WorkflowActorSlotRef {
+export interface WorkflowActorSlotRef {
   runId: string;
   siteId: string;
   ordinal: number;

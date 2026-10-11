@@ -21,7 +21,7 @@ import {
   type UseCuaComposerEntryParams,
 } from "@/hooks/useCuaComposerEntry.js";
 
-type V4ComposerCuaEntryProps = UseCuaComposerEntryParams;
+export type V4ComposerCuaEntryProps = UseCuaComposerEntryParams;
 
 /**
  * Platform-gate wrapper: do not mount the inner component when the platform is unsupported (or when the host does not provide platform / services context).

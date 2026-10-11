@@ -6,7 +6,7 @@ import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 /** The two top-level tabs for the Automations page. */
 export type AutomationsPageTab = "automation" | "workflow";
 
-const AUTOMATIONS_PAGE_TABS: readonly AutomationsPageTab[] = ["automation", "workflow"];
+export const AUTOMATIONS_PAGE_TABS: readonly AutomationsPageTab[] = ["automation", "workflow"];
 
 /**
  * Title for the Automations page. When the dynamic-workflow rollout is off,

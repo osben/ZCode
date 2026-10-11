@@ -1,5 +1,7 @@
-import { useEffect, useMemo } from "react";
-import type { ICodingPlanSubscriptionService } from "@zcode/services";
+import { useEffect, useMemo, useRef } from "react";
+import type { ICodingPlanSubscriptionService, IZCodeAgentService } from "@zcode/services";
+import type { DynamicWorkflowMode } from "@zcode/shared";
+import { logger } from "@/logger.js";
 import {
   useDynamicWorkflowAvailabilityStore,
   type DynamicWorkflowAvailabilitySnapshot,
@@ -30,4 +32,41 @@ export function useDynamicWorkflowAvailabilityLoader(
   useEffect(() => {
     void ensureLoaded(service);
   }, [ensureLoaded, service]);
+}
+
+/**
+ * Synchronize after the user's selection changes (docs/dynamic-workflow/launch.md, “The user's
+ * choice”), registered once in Root. The settings file is the sole source of the selection. After
+ * any window writes it, the shared settings broadcast lets every Root read the new value; each
+ * notifies its Host (resend CLI policy and forward to the remote Host), then the Host rereads the snapshot.
+ * - The first value is only a baseline: Host reads the settings file at startup, so no signal is needed.
+ * - Serialize repeated changes: start the next “signal → reread” only after the previous one finishes, so a slow reread cannot overwrite a newer result.
+ * - Reread even if Host synchronization fails: the snapshot reflects the result currently computed by Host.
+ */
+export function useDynamicWorkflowUserModeSync(params: {
+  settingsLoaded: boolean;
+  userMode: DynamicWorkflowMode | undefined;
+  zcodeAgentService: Pick<IZCodeAgentService, "syncDynamicWorkflowUserMode">;
+  codingPlanSubscriptionService: ICodingPlanSubscriptionService;
+}): void {
+  const { settingsLoaded, userMode, zcodeAgentService, codingPlanSubscriptionService } = params;
+  const reload = useDynamicWorkflowAvailabilityStore((state) => state.reload);
+  const observedRef = useRef<{ userMode: DynamicWorkflowMode | undefined } | null>(null);
+  const chainRef = useRef<Promise<void>>(Promise.resolve());
+  useEffect(() => {
+    if (!settingsLoaded) return;
+    const observed = observedRef.current;
+    observedRef.current = { userMode };
+    if (observed === null || observed.userMode === userMode) return;
+    chainRef.current = chainRef.current.then(async () => {
+      try {
+        await zcodeAgentService.syncDynamicWorkflowUserMode(userMode ? { mode: userMode } : {});
+      } catch (error) {
+        logger.warn("[dynamic-workflow] 用户选择同步到 Host 失败", {
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+      await reload(codingPlanSubscriptionService);
+    });
+  }, [codingPlanSubscriptionService, reload, settingsLoaded, userMode, zcodeAgentService]);
 }

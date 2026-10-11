@@ -7,7 +7,7 @@ export const DEFAULT_COMPACT_CONTEXT_WINDOW = 200_000;
 // Normal requests now default to a 32K output budget, and auto-compact must reserve the same target;
 // otherwise request budgeting and the compaction window would continue using separate constants.
 export const DEFAULT_AUTOCOMPACT_OUTPUT_RESERVE_TOKENS = 32_000;
-const PREFLIGHT_AUTOCOMPACT_OUTPUT_RESERVE_TOKENS = 21_000;
+export const PREFLIGHT_AUTOCOMPACT_OUTPUT_RESERVE_TOKENS = 21_000;
 export const MAX_OUTPUT_TOKENS_FOR_SUMMARY = 20_000;
 export const AUTOCOMPACT_BUFFER_TOKENS = 13_000;
 export const DEFAULT_AUTOCOMPACT_THRESHOLD_PERCENT = 100;

@@ -109,8 +109,8 @@ function renderSnapshotTree(nodes: SnapshotTreeNode[], depth = 0): string {
   return lines.join("\n");
 }
 
-/** Normalize the public DOM snapshot: remove internal refs/cursors and flatten semantic-free containers. */
-function normalizeBrowserDomSnapshot(snapshot: string): string {
+/** Normalize the public Playwright DOM snapshot result: remove internal refs/cursors and flatten semantic-free containers. */
+export function normalizeBrowserDomSnapshot(snapshot: string): string {
   if (!snapshot.startsWith("- ") && !snapshot.includes("\n- ") && !snapshot.includes("\n  - ")) {
     return snapshot;
   }

@@ -31,6 +31,11 @@ export const ZCODE_KNOWN_TOOL_NAMES = [
   // Revision entry point: register it in the workflow family to show the confirmation dialog.
   // Select the run confirmation block by family; tool rows first dispatch by name (resolveRenderer.ts), so the family fallback will not consume it.
   "AmendWorkflow",
+  // Hole filling (docs/dynamic-workflow/launch.md "The `FillWorkflowHole` tool"): like
+  // AmendWorkflow, register it in the workflow family so the confirmation dialog selects the run
+  // confirmation block by family; tool rows first dispatch by name to the CreateWorkflow renderer
+  // with hole-filling wording.
+  "FillWorkflowHole",
   // The wire name is snake_case submit_result (the only one in the repository), so the underscore must be present literally:
   // If unregistered, UI identity falls back to unknown and Dynamic Workflow actor submissions use the raw fallback renderer.
   "submit_result",
@@ -88,6 +93,7 @@ const TOOL_FAMILY_BY_NAME: Record<ZCodeKnownToolName, ZCodeToolFamily> = {
   Skill: "skill",
   CreateWorkflow: "workflow",
   AmendWorkflow: "workflow",
+  FillWorkflowHole: "workflow",
   submit_result: "workflow",
 };
 

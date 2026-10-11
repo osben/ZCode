@@ -34,8 +34,15 @@ export const SaveWorkflowInputSchema = z
       .min(1)
       .max(SAVED_WORKFLOW_MAX_NAME_CHARS)
       .describe("File-safe identifier: letters, digits, dot, dash and underscore."),
-    description: z.string().min(1).describe("One line saying what the workflow does."),
-    whenToUse: z.string().min(1).optional().describe("When this workflow is the right answer."),
+    description: z
+      .string()
+      .min(1)
+      .describe("One line saying what the workflow does."),
+    whenToUse: z
+      .string()
+      .min(1)
+      .optional()
+      .describe("When this workflow is the right answer."),
     args: SavedWorkflowArgsDeclarationSchema.optional().describe(
       "Argument declarations the script reads off `args`.",
     ),
@@ -63,6 +70,22 @@ export const SaveWorkflowInputSchema = z
     scope: SavedWorkflowScopeSchema.describe(
       '"project" when the script depends on this repository; "global" when it depends on nothing in it. Required, no default.',
     ),
+    /**
+     * Provenance (docs/dynamic-workflow/launch.md, “`SaveWorkflow`”): identifies the run from which
+     * this definition was distilled. It is **not a third source of script content**; the body still
+     * comes only from `script` / `script_path`, and the handler does not read this field.
+     * Its sole purpose is to let that run's completion card recognize that it has been saved,
+     * （docs/dynamic-workflow/transcript-and-notifications.md「Which workflow a run is saved as」），
+     * which is the **only** persistent link between the saved definition and that run: the model may
+     * choose a new name and summarize the script, so neither can be used to reconnect them.
+     */
+    run_id: z
+      .string()
+      .min(1)
+      .optional()
+      .describe(
+        "Provenance only: the id of the run this workflow was distilled from, when saving a workflow that just ran. Pass it whenever you know it; it does not change what is saved.",
+      ),
     // The following three fields are resolved and filled by `resolveInput`; the model does not
     // supply them.
     // They are **facts shown in the confirmation dialog**: which file this save targets,

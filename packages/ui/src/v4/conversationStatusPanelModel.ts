@@ -7,8 +7,13 @@ import type {
   ToolCallRow,
   WorkflowRunState,
 } from "@zcode/shared/zcode-protocol-v4";
-import { workflowRunStepCounts } from "@zcode/shared/zcode-protocol-v4";
+import type { SessionWorkflowPhaseSummary } from "@zcode/shared/zcode-protocol-v4";
+import {
+  deriveSessionWorkflowPhases,
+  workflowRunStepCounts,
+} from "@zcode/shared/zcode-protocol-v4";
 import { extractPlanToolCallContent, getPlanDirectoryTitle } from "@/lib/planToolCall.js";
+import { workflowRunParallelPhaseLabel } from "@/lib/workflowRunLine.js";
 
 export interface ConversationStatusPanelGitModel {
   branchName: string | null;
@@ -56,6 +61,13 @@ export interface ConversationStatusPanelWorkflowRun {
   status?: "pending" | "running";
   nodesSettled?: number;
   nodesTotal?: number;
+  /**
+   * Station list (declaration order) and current station, derived the same way as the sidebar run
+   * row through shared `deriveSessionWorkflowPhases`. Present only when backed by a run, like
+   * `status`; degraded rows omit it. An empty array means the script declares no phases.
+   */
+  phases?: SessionWorkflowPhaseSummary[];
+  currentPhase?: string;
   /** Display name. When `title ≡ workId`, it means “unnamed,” and the renderer substitutes an i18n fallback. The core workflowTaskSubject fallback ultimately uses taskId (≡ runId ≡ workId), while the projection copies a non-empty description directly to title; therefore title exactly equal to ID is the only reliable unnamed signal. The model does not perform this replacement because i18n does not belong in the model layer; it passes title through unchanged. */
   title?: string;
   startedAt?: number;
@@ -94,7 +106,7 @@ export interface ConversationStatusPanelModel {
   runningWorkflowRuns: ConversationStatusPanelWorkflowRun[];
 }
 
-interface BuildConversationStatusPanelModelInput {
+export interface BuildConversationStatusPanelModelInput {
   isOfficeMode?: boolean;
   gitSummary?: GitRepositorySummary | null;
   gitDirtyFileCount?: number;
@@ -211,6 +223,8 @@ function buildRunningWorkflowRuns(
       status: run.status,
       nodesSettled: steps.settled,
       nodesTotal: steps.total,
+      phases: deriveSessionWorkflowPhases(run),
+      ...(run.currentPhase === undefined ? {} : { currentPhase: run.currentPhase }),
       ...(work ? { title: work.title, startedAt: work.startedAt } : {}),
       ...(work?.status === "running"
         ? {
@@ -233,6 +247,36 @@ function buildRunningWorkflowRuns(
     });
   }
   return rows;
+}
+
+/**
+ * Words describing what a run is doing now (docs/dynamic-workflow/presentation.md, “Other places
+ * a run appears”); the run row's second line and the capsule share this rule:
+ * - pending → status word;
+ * - no declared phases → step count (the only place the step count appears);
+ * - more than one station is active → join their names with ` ∥ ` (parallel stations are equally current);
+ * - otherwise, use the current station; if none exists yet (the run started but has not entered its first phase), use the status word;
+ * - degraded row (no status) → null: when status is unknown, say nothing.
+ * The model returns structure only; the rendering layer composes copy (status words and step-count keys) through i18n.
+ */
+export type ConversationStatusPanelWorkflowRunWords =
+  | { kind: "status"; status: "pending" | "running" }
+  | { kind: "steps"; done: number; total: number }
+  | { kind: "phases"; text: string };
+
+export function workflowRunWords(
+  run: ConversationStatusPanelWorkflowRun,
+): ConversationStatusPanelWorkflowRunWords | null {
+  if (run.status === undefined) return null;
+  if (run.status === "pending") return { kind: "status", status: "pending" };
+  const phases = run.phases ?? [];
+  if (phases.length === 0) {
+    return { kind: "steps", done: run.nodesSettled ?? 0, total: run.nodesTotal ?? 0 };
+  }
+  const parallel = workflowRunParallelPhaseLabel(phases);
+  if (parallel !== undefined) return { kind: "phases", text: parallel };
+  if (run.currentPhase !== undefined) return { kind: "phases", text: run.currentPhase };
+  return { kind: "status", status: "running" };
 }
 
 /** Direct navigation from the composer badge: return an open intent only when the current conversation has exactly one active workflow run with a detail page. Otherwise return null so the badge can expand to a pill. No terminals/subagents: the badge is their only entry point and direct navigation would hide them. Exactly one workflow: choosing among multiple is the user’s decision. Require toolCallId: degraded rows (work exists but run is absent) and old-CLI runs have no detail page, just like non-clickable panel rows; use the pill so Stop remains available. The input is buildConversationStatusPanelModel’s output, so the badge and pill share the same runtime facts. */

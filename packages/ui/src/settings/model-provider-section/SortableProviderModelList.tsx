@@ -18,7 +18,7 @@ import { CSS } from "@dnd-kit/utilities";
 import type { PointerEvent as ReactPointerEvent, ReactNode } from "react";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 
-function resolveReorderedModelIds(params: {
+export function resolveReorderedModelIds(params: {
   activeModelId: string;
   overModelId: string;
   modelIds: readonly string[];
@@ -41,7 +41,7 @@ class ModelRowPointerSensor extends PointerSensor {
   ];
 }
 
-function isInteractiveModelDragTarget(target: EventTarget | null): boolean {
+export function isInteractiveModelDragTarget(target: EventTarget | null): boolean {
   return (
     target instanceof Element &&
     target.closest(
@@ -50,7 +50,7 @@ function isInteractiveModelDragTarget(target: EventTarget | null): boolean {
   );
 }
 
-function resolveSortableProviderModelRowClassName({
+export function resolveSortableProviderModelRowClassName({
   isDragging,
   isLast,
 }: {
@@ -99,9 +99,9 @@ function SortableProviderModelRow({
         if (!isInteractiveModelDragTarget(event.target)) listeners?.onKeyDown?.(event);
       }}
     >
-      {/* useSortable adds role=button to this row. The old sensor treated the nearest
-                        [role=button] as an interactive control, so dragging could never start from
-                        the model name or blank space. */}
+      {/* Bug cause: useSortable adds role=button to this row. The old sensor treated the nearest
+          [role=button] as an interactive control, so dragging could never start from the model
+          name or blank space. */}
       {children}
     </div>
   );

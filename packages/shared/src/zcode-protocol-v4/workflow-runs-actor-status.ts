@@ -1,7 +1,9 @@
 // ============================================================
 // **Derived** actor tri-state (one rule in workflowRuns reduction).
 // ============================================================
-// Pure function derived only from node and run status; reads no clock and performs no I/O.
+// Lives outside the main reduction file for the same reason as workflow-runs-concurrency.ts /
+// -phases.ts / -started.ts / -caps.ts (the main file's max-lines limit), and follows the same
+// discipline: pure functions, no clock, no I/O.
 //
 // Why this must be derived: outside `actor-created`, the engine's Boundary C **emits no actor lifecycle events**,
 // so there are no events to transport for "is this subagent active, waiting, or done?"; derive that from the phases of its nodes and the run's
@@ -19,7 +21,7 @@ function actorKey(siteId: string, ordinal: number): string {
 }
 
 /**
- * Three-state derivation:
+ * Three-state derivation (docs/dynamic-workflow/concurrency.md, "Protocol state"):
  *   running   at least one node is executing / repairing / nudged (a model request has been sent and is running)
  *   waiting   a live node exists (queued / dispatched / waiting), or there are no nodes yet and the run is non-terminal
  *   completed otherwise: all nodes have settled or the run is terminal (terminal state takes precedence; nobody in a terminal run

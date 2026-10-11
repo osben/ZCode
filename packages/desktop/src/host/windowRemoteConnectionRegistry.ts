@@ -7,7 +7,7 @@ import {
   type WindowHostRemoteWorkspaceDescriptor,
 } from "@zcode/shared";
 
-interface WindowRemoteAssetDirs {
+export interface WindowRemoteAssetDirs {
   mockCdnDir?: string;
   remoteCdnBaseUrl?: string;
   remoteCdnBaseUrls?: string[];
@@ -27,15 +27,20 @@ export interface WindowRemoteConnectionHandle<TServices, TCapabilities = never> 
   onDidClose?(listener: (event: WindowRemoteConnectionCloseEvent) => void): { dispose(): void };
 }
 
-interface WindowRemoteConnectionConnectRequest {
+export interface WindowRemoteConnectionConnectRequest {
   target: RemoteTarget;
   remoteAssets: WindowRemoteAssetDirs;
   signal: AbortSignal;
 }
 
-type WindowRemoteConnectionState = "connecting" | "online" | "closing" | "failed" | "disconnected";
+export type WindowRemoteConnectionState =
+  | "connecting"
+  | "online"
+  | "closing"
+  | "failed"
+  | "disconnected";
 
-interface WindowRemoteLogicalSessionSnapshot {
+export interface WindowRemoteLogicalSessionSnapshot {
   remoteSessionId: string;
   requestId: string;
   target: RemoteTarget;
@@ -46,14 +51,14 @@ interface WindowRemoteLogicalSessionSnapshot {
   sourceAvailability: "online" | "offline";
 }
 
-class WindowRemoteConnectCancelledError extends Error {
+export class WindowRemoteConnectCancelledError extends Error {
   constructor() {
     super("远程连接已取消");
     this.name = "WindowRemoteConnectCancelledError";
   }
 }
 
-class WindowRemoteConnectionUnavailableError extends Error {
+export class WindowRemoteConnectionUnavailableError extends Error {
   constructor(remoteSessionId: string) {
     super(`远程连接当前不可用，remoteSessionId=${remoteSessionId}`);
     this.name = "WindowRemoteConnectionUnavailableError";
@@ -120,7 +125,8 @@ function buildConnectionKey(target: RemoteTarget, remoteSessionId: string): stri
     case "wsl":
       return `wsl:${normalizeWslSegment(target.distro)}\0${normalizeWslSegment(target.user)}`;
     case "docker":
-      // Docker keeps its existing dedicated logical-session lifecycle and is not reused by target.
+    case "server":
+      // Docker/Server keeps its existing dedicated logical-session lifecycle and is not reused by target.
       return `${target.kind}:dedicated:${remoteSessionId}`;
   }
 }
@@ -542,7 +548,10 @@ export function createWindowRemoteConnectionRegistry<TServices, TCapabilities = 
         entry.sessions.delete(remoteSessionId);
         session.state = "failed";
         session.sourceAvailability = "offline";
-        if (entry.sessions.size === 0 && entry.target.kind === "docker") {
+        if (
+          entry.sessions.size === 0 &&
+          (entry.target.kind === "docker" || entry.target.kind === "server")
+        ) {
           await disposeEntry(entry);
         }
       }
@@ -573,7 +582,7 @@ export function createWindowRemoteConnectionRegistry<TServices, TCapabilities = 
     session.rejectCancellation(new WindowRemoteConnectCancelledError());
     if (session.entry.sessions.size === 0) {
       if (session.entry.target.kind === "ssh" && session.entry.state === "connecting") {
-        // After the last waiter cancels, the old entry remains in the reuse table as connecting; an immediate reconnect would
+        // Bug root cause: After the last waiter cancels, the old entry remains in the reuse table as connecting; an immediate reconnect would
         // keep waiting on aborted readiness and reuse the previous credentials. Retire the old entry by object identity first,
         // then cancel the underlying operation; a late old completion cannot delete or revive the new connection with the same key.
         if (entriesByKey.get(session.entry.key) === session.entry) {
@@ -698,6 +707,18 @@ export function createWindowRemoteConnectionRegistry<TServices, TCapabilities = 
     },
     listSessions(): WindowRemoteLogicalSessionSnapshot[] {
       return Array.from(sessionsById.values(), toSessionSnapshot);
+    },
+    /**
+     * Ready, unreleased connections (deduplicated by connection; multiple logical sessions on the same
+     * SSH connection appear only once). Used by window-level fact broadcasts to every remote Host,
+     * e.g. dynamic-workflow user choices (launch.md “The user's choice”).
+     */
+    listReadyConnections(): Array<{ target: RemoteTarget; services: TServices }> {
+      return Array.from(entriesByKey.values()).flatMap((entry) =>
+        entry.handle && !entry.disposed
+          ? [{ target: entry.target, services: entry.handle.services }]
+          : [],
+      );
     },
     findSessionForWorkspace(params: {
       workspacePath: string;

@@ -25,7 +25,7 @@ import { parseV4VisibleSlashCommand } from "@/v4/slashCommands.js";
 const GOAL_QUERY_TOKEN_PATTERN = /^(\s*)(\/(?:goal|target))(?=\s|$)([\s\S]*)$/i;
 const EMPTY_ATTACHMENTS: readonly unknown[] = [];
 
-interface V4UserInputGoalQueryDisplay {
+export interface V4UserInputGoalQueryDisplay {
   leadingText: string;
   commandText: string;
   trailingText: string;
@@ -36,7 +36,7 @@ interface V4UserInputGoalQueryDisplay {
  * Reason: user-message display must not infer command intent just because it contains `/goal`, or a context prompt
  * may be incorrectly rendered as a goal control command after its hidden attachment block is removed.
  */
-function parseV4UserInputGoalQuery(
+export function parseV4UserInputGoalQuery(
   text: string,
   attachments: readonly unknown[] = EMPTY_ATTACHMENTS,
   contextAttachmentCount = 0,
@@ -152,9 +152,8 @@ function V4UserInputMention({
       ) : (
         <SquareSlash aria-hidden="true" className="size-4 shrink-0" />
       )}
-      {/* Rendering an authoritative goal with its original slash token exposed control syntax
-          twice in the user bubble. Keep the Goal meaning in the label while omitting `/`; copying,
-          editing, and the protocol still use the original row.text. */}
+      {/* Bug root cause: the authoritative goal echoed the raw slash token, repeatedly exposing the
+          control syntax in the user bubble. The label keeps Goal semantics and omits only the `/`; copy, edit, and the protocol still use the original row.text. */}
       {part.label}
     </span>
   );

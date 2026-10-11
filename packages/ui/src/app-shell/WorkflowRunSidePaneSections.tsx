@@ -7,6 +7,7 @@
 
 import { workflowRunStopReasonMessageId } from "@/components/workflow-graph/run-status-presentation.js";
 import { memo, type ReactNode } from "react";
+import type { WorkflowRunSaveSlots } from "@/components/workflow-timeline/WorkflowRunSaveControls.js";
 import {
   ArrowUpRightIcon,
   ListIcon,
@@ -19,14 +20,13 @@ import { Button } from "@/components/ui/button.js";
 import { ControlHintTooltip } from "@/ControlHintTooltip.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import type { workflowRunResultView } from "@/app-shell/workflowRunPanel.js";
-import { workflowRunConcurrencyView } from "@/app-shell/workflowRunThrottle.js";
+import { workflowRunConcurrencyChip } from "@/app-shell/workflowRunThrottle.js";
 import { WorkflowRunStatus } from "@/components/workflow-timeline/WorkflowCardChrome.js";
+import { RunHolesWaitingChip } from "@/components/workflow-timeline/WorkflowHoleParts.js";
 import { WorkflowTruncatedNotice } from "@/components/workflow-timeline/WorkflowTruncatedNotice.js";
 import { useNowTicker } from "@/components/workflow-graph/use-now-ticker.js";
 
-function formatCount(value: number): string {
-  return value.toLocaleString();
-}
+const formatCount = (value: number): string => value.toLocaleString();
 
 /**
  * Model segment of the summary row: when the run is configurable, this is a button too (underlined on hover) that opens the same "Configure" popover anchored to itself;
@@ -83,6 +83,7 @@ export const WorkflowRunStatusHeader = memo(function WorkflowRunStatusHeader({
   rejection,
   resumable,
   run,
+  saveSlots,
   subagentModel,
   summaryParts,
   title,
@@ -104,7 +105,16 @@ export const WorkflowRunStatusHeader = memo(function WorkflowRunStatusHeader({
   resumable: boolean;
   run: WorkflowRunState | undefined;
   /**
-   * Subagent model for this run: `name` is shown on screen; `title` contains reasoning tier and canonical identifier. The first status-header row no longer shows a model chip—
+   * “Saved” chip and “Save”/“Run again” actions (docs/dynamic-workflow/transcript-and-notifications.md,
+   * “Saving the run, and running it again”). The same run must use the same wording on the completion
+   * card and here, so both use these nodes from the same controller. This component only positions
+   * them: the verb before Stop and the chip on the second row. `null`/absent means there is no service context (render no controls).
+   */
+  saveSlots?: WorkflowRunSaveSlots | null;
+  /**
+   * Subagent model for this run: `name` is the visible label, and `title` contains the reasoning
+   * level and canonical value (docs/dynamic-workflow/presentation.md, “The run pane”). The model
+   * chip no longer appears on the first line of the status header—
    * the model is the first word on the second row, and both summary and fallback usage rows begin with it. If absent, there is nothing to show.
    */
   subagentModel?: { name: string; title: string };
@@ -114,14 +124,17 @@ export const WorkflowRunStatusHeader = memo(function WorkflowRunStatusHeader({
   usage: WorkflowRunUsage | undefined;
 }) {
   const { intl } = useZCodeIntl();
+  const saveChip = saveSlots?.leading ?? null;
+  const saveVerb = saveSlots?.trailing ?? null;
   const cancelLabel = intl.formatMessage({ id: "chat.toolCall.workflow.run.cancel" });
   const resumeLabel = intl.formatMessage({ id: "chat.toolCall.workflow.run.resume" });
-  // Concurrency reading: present only when actual concurrency (the lower of shared cap and this run's own limit) is below its ceiling.
-  // Cooldown is a deadline, so use a one-second ticker while it exists and let it expire naturally.
+  // Concurrency chip (docs/dynamic-workflow/concurrency.md, “What the user sees”): show it when
+  // the effective ceiling (the lower of shared cap and this run's ceiling) is binding or the run
+  // has a custom ceiling, and the run can be configured. Cooldown is a deadline, so tick once per second while it is active.
   const cooldownActive = run?.concurrency?.cooldownMs !== undefined;
   const now = useNowTicker(cooldownActive);
-  const concurrency = workflowRunConcurrencyView(run?.concurrency, now);
-  // Lineage rows (status header): a revised run says which run it came from;
+  const concurrency = workflowRunConcurrencyChip(run, now);
+  // Lineage row (status header in docs/dynamic-workflow/presentation.md, “The run pane”): a retuned run says what it was changed from,
   // a superseded run points to its successor. These are not mutually exclusive (a revised run may later be superseded), so render separate rows.
   const resumedFrom = run?.resumedFrom;
   const supersededBy = run?.supersededBy;
@@ -167,6 +180,9 @@ export const WorkflowRunStatusHeader = memo(function WorkflowRunStatusHeader({
             </Button>
           </ControlHintTooltip>
         ) : null}
+        {/* Place Save / Run again before Stop: same order as the completed-card header—"keep it"
+            first, "stop it" last. */}
+        {saveVerb}
         {/* Stop uses the same icon as the card button (a solid square); the same action should look the same in both places. When available, its tooltip
             includes a second line explaining that the stopped run can be resumed. Since the action changed from “cancel,” make clear before clicking
             that stopping does not discard the run. When unavailable, show only the reason; there is no second line to add. */}
@@ -196,15 +212,21 @@ export const WorkflowRunStatusHeader = memo(function WorkflowRunStatusHeader({
         </ControlHintTooltip>
       </div>
       {/* Second row: status dot and label plus the concurrency chip. If the run is absent from the projection, omit the whole row. */}
-      {run === undefined && concurrency === undefined ? null : (
+      {run === undefined && concurrency === undefined && saveChip === null ? null : (
         <div
           className="mt-1.5 flex min-w-0 flex-wrap items-center gap-2"
           data-testid="workflow-run-status-row"
         >
           {run ? <WorkflowRunStatus run={run} testId="workflow-run-status" /> : null}
-          {/* “Concurrency 4” shows how many subagents this run can actually have in flight now—either the governor lowered the shared limit,
-            or the user set a lower limit for this run. This makes the reason for a slower run immediately visible.
-            Omit the whole block when running at the limit; there is nothing useful to report.
+          {/* “{n} holes to complete” (docs/dynamic-workflow/presentation.md, “Holes on the timeline”): use the same chip as on the card. */}
+          <RunHolesWaitingChip run={run} testId="workflow-run-holes" />
+          {/* Place the chip after the status label: the first row is already full with three buttons, and this chip is not an action. */}
+          {saveChip}
+          {/* “Max concurrency 4” shows how many subagents this run can have in flight at once—either
+            the governor lowered the shared bucket below this run’s bound, or the user set this run’s
+            own limit (above or below the default). This makes the reason for a fast or slow run
+            immediately visible. Omit the whole block when running at the default or when the run can
+            no longer be configured (completed / superseded).
             Match the status badge shape (border + text) and use the active color: this is runtime adjustment, not a failure. */}
           {concurrency === undefined ? null : (
             <span
@@ -426,7 +448,8 @@ export const WorkflowRunResultSections = memo(function WorkflowRunResultSections
             “run cancelled,” “typed ask ended without submitting a result,” and “node count exceeded the limit of 100.” So render it as
             body text rather than a monospace code block (DESIGN.md reserves font-mono for paths, commands, code, identifiers,
             and terminal data). Keep pre-wrap so any newlines in the message are preserved.
-            There is no `code` to show and no other destination in the panel: the event log has been removed, and the structured payload
+            There is no `code` to show and no other destination in the panel: the event log has been removed (2026-09-04
+            user instruction; see docs/dynamic-workflow/presentation.md), and the structured payload
             remains only in the journal for the model and CLI, not for the person viewing this panel.
           */}
           <p

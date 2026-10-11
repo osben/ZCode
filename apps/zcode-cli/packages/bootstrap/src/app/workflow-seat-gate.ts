@@ -1,14 +1,14 @@
 // ============================================================
 // Run-level seat gate: apply this run's concurrency limit at the **next model request**.
 // ============================================================
-// The scheduler is the first enforcement point, but it checks the limit only when dispatching. An ask is a full subagent turn and can take minutes; telling a run with eight active asks to allow at most two would require waiting for six asks to finish if we relied on the scheduler alone. This gate is the second enforcement point: after completing its current request, an over-limit subagent **parks before its next turn step**, preserving its session, transcript, and place in the run.
+// See docs/dynamic-workflow/concurrency.md "Retuning a live run". The scheduler is the first enforcement point, but it checks the limit only when dispatching. An ask is a full subagent turn and can take minutes; telling a run with eight active asks to allow at most two would require waiting for six asks to finish if we relied on the scheduler alone. This gate is the second enforcement point: after completing its current request, an over-limit subagent **parks before its next turn step**, preserving its session, transcript, and place in the run.
 //
 // Three rules:
 //   1. **Pure:** no clock reads, I/O, or subscriptions. The driver supplies both facts (which asks are active and which subagents have running tools) through its existing observation surfaces (`startAsk` / `emit` in workflow-driver.ts and in-flight counts in workflow-driver-tool-activity.ts). The gate keeps no duplicate state.
 //   2. **No shared state with the scheduler**, and neither calls the other. They agree through the equation `activeAsks = working + parked`: a parked subagent's ask remains active and counts against the scheduler's limit. Once anyone is parked, `activeAsks ≥ limit`, so the scheduler cannot dispatch a new ask ahead of a parked one.
 //   3. **A limit ≥ 1 cannot deadlock:** parking requires the number working to exceed the limit, so someone is always working; when the FIFO queue is nonempty, its final seat cannot be empty.
 //
-// Requests made by tools **never** park: that subagent is already working and occupies a seat, so making its WebSearch wait behind itself would be pointless. The admission call only receives `{model}`, which cannot distinguish request types, so the gate reads the fact the driver already tracks for this subagent: whether a tool is currently running.
+// Requests made by tools **never** park (see "Why a tool's own requests never park" in the same document): that subagent is already working and occupies a seat, so making its WebSearch wait behind itself would be pointless. The admission call only receives `{model}`, which cannot distinguish request types, so the gate reads the fact the driver already tracks for this subagent: whether a tool is currently running.
 
 import type { ModelRequestAdmission } from "@zcode/contracts";
 import { refToString, type InstanceRef } from "@zcode/dynamic-workflow";

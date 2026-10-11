@@ -5,7 +5,9 @@ import { collectFacadeMisuse } from "./facade-misuse.js";
 import { collectWorldRunCommands } from "./world-run.js";
 import { collectArtifactDeclarations, type DeclaredArtifact } from "./artifacts.js";
 import { collectPhaseMarkerDiagnostics } from "./phases.js";
+import { collectHoleDiagnostics } from "./hole-sites.js";
 import { collectDuplicateActorNames, FANOUT_ACTOR_NAME_CODE } from "./actor-names.js";
+import { collectActorModels, type ModelReference } from "./actor-models.js";
 import { interpret } from "./interpret.js";
 import { projectSiteGraph } from "./graph.js";
 import { projectCausalityGraph, type CausalityGraph } from "./causality-graph.js";
@@ -49,6 +51,14 @@ export interface AnalyzeResult {
    * present (it is read directly from the site table and does not depend on interpretation).
    */
   declaredArtifacts: DeclaredArtifact[];
+  /**
+   * Each model name that the script can assign to a subagent, with one entry per occurrence
+   * (docs/dynamic-workflow/authoring.md, “Choosing a model per subagent”). Before the confirmation
+   * dialog, the launch tool resolves these against the host's model catalog
+   * (docs/dynamic-workflow/launch.md, “Models the script names”). As with `declaredArtifacts`, this is
+   * an empty array when compilation fails; authoring diagnostics are still returned.
+   */
+  modelReferences: ModelReference[];
 }
 
 /**
@@ -68,11 +78,15 @@ export function analyzeWorkflowScript(scriptText: string): AnalyzeResult {
   // If compilation fails or the facade is escaped, even the site table is untrustworthy, so the
   // artifact manifest must be empty (defaulted rather than absent: readers always receive an array
   // and need not distinguish “no artifacts” from “analysis failed” at every use site).
-  if (diagnostics.length > 0) return { declaredArtifacts: [], diagnostics, ok: false };
+  if (diagnostics.length > 0) {
+    return { declaredArtifacts: [], diagnostics, modelReferences: [], ok: false };
+  }
 
   const table = collectSites(workflow);
   const misuse = collectFacadeMisuse(workflow, table);
-  if (misuse.length > 0) return { declaredArtifacts: [], diagnostics: misuse, ok: false };
+  if (misuse.length > 0) {
+    return { declaredArtifacts: [], diagnostics: misuse, modelReferences: [], ok: false };
+  }
 
   // Validate world.run's literal cmd with misuse: a command formed only at runtime has no
   // authorization item to display (the confirmation dialog's command set is closed at compile
@@ -88,10 +102,17 @@ export function analyzeWorkflowScript(scriptText: string): AnalyzeResult {
   // point to a declared preset, and one ID cannot span two member families. All three should teach
   // corrections now rather than fail at runtime.
   const artifacts = collectArtifactDeclarations(workflow, table);
+  // Enforce the closed set of subagent model names (9010): a name formed only at runtime cannot be
+  // resolved or displayed before the confirmation dialog (docs/dynamic-workflow/authoring.md,
+  // “Choosing a model per subagent”).
+  const models = collectActorModels(workflow, table);
   const authoring = [
     ...worldRun.diagnostics,
     ...artifacts.diagnostics,
+    ...models.diagnostics,
     ...collectPhaseMarkerDiagnostics(workflow, table),
+    // Apply the compile-time hole rule (9012) as well (docs/dynamic-workflow/authoring.md, “Holes”).
+    ...collectHoleDiagnostics(workflow, table),
     ...collectDuplicateActorNames(workflow, table),
   ];
   // Static actor names in fan-out (9006) are the only diagnostics in this group that **do not
@@ -104,7 +125,12 @@ export function analyzeWorkflowScript(scriptText: string): AnalyzeResult {
   // in the fixtures.
   const withholding = authoring.filter((d) => d.code !== FANOUT_ACTOR_NAME_CODE);
   if (withholding.length > 0) {
-    return { declaredArtifacts: artifacts.declaredArtifacts, diagnostics: authoring, ok: false };
+    return {
+      declaredArtifacts: artifacts.declaredArtifacts,
+      diagnostics: authoring,
+      modelReferences: models.references,
+      ok: false,
+    };
   }
 
   // One interpretation feeds everything: the core carries the taint facts AND the
@@ -120,6 +146,7 @@ export function analyzeWorkflowScript(scriptText: string): AnalyzeResult {
     flow: projectControlFlow(core),
     graph,
     handoff: projectHandoffGraph(core, causality, graph),
+    modelReferences: models.references,
     ok: authoring.length === 0,
   };
 }

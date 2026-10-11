@@ -87,19 +87,19 @@ export async function countActorTranscript(
  *      is a partially copied prefix and can still be completed. A session containing
  *      anything else has its own history and must not be changed at all.
  *
- *    The second rule prevents **recopying after the boundary grows**. `inFlight.messageBoundary`
- *    is the predecessor's current message count and the only import-cache value that is
- *    not a journal fact (see the header of dynamic-workflow-import.ts). It can grow
- *    between builds if the predecessor is resumed and writes more turns, or a delayed
- *    background notification arrives. A normal stop → resume of the revision run then
- *    brings a larger M here. If the target already has live messages but fewer than M in
- *    total, the old rule recopies 0..M-1: the first N upserts match existing seed ids
- *    (harmless), but N..M-1 get **new ids**, appending predecessor messages **after** the
- *    target's own history (`message.sequence` uses `max+1` on insert in adapters'
- *    messages.ts). This silently creates out-of-order context that does not belong to
- *    this subagent. “Modify only sessions containing seed ids” closes this once at the
- *    copy point and applies to any future non-journal fact without proving each one
- *    cannot grow.
+ *    The second rule was added on 2026-09-19; the root cause is not crashes but that
+ *    **the boundary can grow**. `inFlight.messageBoundary` is the predecessor's current
+ *    message count and the only import-cache value that is not a journal fact (see the
+ *    header of dynamic-workflow-import.ts). It can grow between builds if the predecessor
+ *    is resumed and writes more turns, or a delayed background notification arrives. A
+ *    normal stop → resume of the revision run then brings a larger M here. If the target
+ *    already has live messages but fewer than M in total, the old rule recopies 0..M-1:
+ *    the first N upserts match existing seed ids (harmless), but N..M-1 get **new ids**,
+ *    appending predecessor messages **after** the target's own history (`message.sequence`
+ *    uses `max+1` on insert in adapters' messages.ts). This silently creates out-of-order
+ *    context that does not belong to this subagent. "Modify only sessions containing seed
+ *    ids" closes this once at the copy point and applies to any future non-journal fact
+ *    without proving each one cannot grow.
  * 3. **Fail loudly when data is missing.** If the source session does not exist (reads as
  *    empty) or is shorter than the boundary, the store cannot fulfill the seed that the
  *    service constructed from journal facts. This indicates corruption, not a

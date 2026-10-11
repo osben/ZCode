@@ -6,11 +6,11 @@ import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import { pdfJsCMapsPlugin } from "../ui/vite/pdfJsCMapsPlugin.js";
 import { thirdPartyNoticesVitePlugin } from "../../scripts/third-party-notices.mjs";
-// Vite config runs while Node is loading; do not import the @zcode/shared root entry here.
+import { resolveRemoteFrontendVersion } from "./vite/remoteFrontendVersion.mjs";
+// Bugfix: Vite config runs while Node is loading; do not import the @zcode/shared root entry here.
 // It contains NodeNext-style source re-exports, so Node looks for real .js files and fails during bootstrap.
 import {
   resolveRuntimeZCodeEndpointOrigin,
-  pickProductEndpointEnv,
   resolveZaiOAuthClientId,
   resolveZaiOAuthOrigin,
 } from "@zcode/shared/zcodeEndpoint";
@@ -82,8 +82,9 @@ export default defineConfig(({ mode }) => {
       },
     },
     define: {
-      __ZCODE_ENDPOINT_ENV__: JSON.stringify(pickProductEndpointEnv(env)),
-      __ZCODE_VERSION__: JSON.stringify(version),
+      __ZCODE_VERSION__: JSON.stringify(
+        resolveRemoteFrontendVersion(version, process.env.WEB_REMOTE_FRONTEND_VERSION),
+      ),
       __ZCODE_COMMIT__: JSON.stringify(env.ZCODE_COMMIT || "unknown"),
       __ZCODE_ENV__: JSON.stringify(zcodeEnv),
       "import.meta.env.VITE_ZCODE_BASE_URL": JSON.stringify(zcodeEndpointOrigin),

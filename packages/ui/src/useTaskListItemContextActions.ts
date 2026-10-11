@@ -3,7 +3,10 @@ import { useCallback } from "react";
 import { usePlatform } from "@/hooks/usePlatform.js";
 import { useTaskNativeSessionLogFile } from "@/hooks/useTaskNativeSessionLogFile.js";
 import { useTaskSessionFilePath } from "@/hooks/useTaskSessionFilePath.js";
+import { useWorkspaceProviderConfigFile } from "@/hooks/useWorkspaceProviderConfigFile.js";
 import { useWorkspaceOpenInEditorTarget } from "@/hooks/useWorkspaceOpenInEditorTarget.js";
+import { readLastSelectedEditorId } from "@/lib/editorPreference.js";
+import { sortInstalledEditorsForOpenWith } from "@/lib/openWithEditors.js";
 import { logger } from "@/logger.js";
 
 interface TaskPathState {
@@ -15,9 +18,39 @@ interface TaskPathState {
 interface TaskListItemContextActionsResult {
   taskSessionFile: TaskPathState;
   taskNativeSessionLogFile: TaskPathState;
+  providerConfigFile: TaskPathState;
   fileManagerLabel: string;
   handleCopyText: (label: string, value: string | null) => Promise<void>;
   handleOpenTaskPathInFileManager: () => Promise<void>;
+  handleOpenProviderConfig: () => Promise<void>;
+}
+
+export function resolveProviderConfigOpenTargetPath(path: string, exists: boolean): string {
+  if (exists) {
+    return path;
+  }
+
+  // Bugfix: when the provider's main config file has not been written yet, the More menu used to
+  // disable “Go to config” entirely. Users could not see the containing directory or create the
+  // file there. Fall back to opening the parent directory, preserving the navigation intent and
+  // avoiding passing a nonexistent file path to the editor.
+  const trimmedPath = path.replace(/[\\/]+$/, "");
+  const lastSeparatorIndex = Math.max(trimmedPath.lastIndexOf("/"), trimmedPath.lastIndexOf("\\"));
+
+  if (lastSeparatorIndex < 0) {
+    return path;
+  }
+
+  if (lastSeparatorIndex === 0) {
+    return trimmedPath[0] ?? path;
+  }
+
+  const parentPath = trimmedPath.slice(0, lastSeparatorIndex);
+  if (/^[A-Za-z]:$/.test(parentPath)) {
+    return `${parentPath}\\`;
+  }
+
+  return parentPath || path;
 }
 
 export function useTaskListItemContextActions({
@@ -28,6 +61,7 @@ export function useTaskListItemContextActions({
   provider,
   intl,
   loadTaskPaths = true,
+  loadProviderConfig = true,
 }: {
   workspacePath: string;
   remoteSessionId?: string;
@@ -38,6 +72,7 @@ export function useTaskListItemContextActions({
     formatMessage: (desc: { id: string }, values?: Record<string, string>) => string;
   };
   loadTaskPaths?: boolean;
+  loadProviderConfig?: boolean;
 }): TaskListItemContextActionsResult {
   const platform = usePlatform();
   const workspaceOpenTarget = useWorkspaceOpenInEditorTarget({
@@ -45,6 +80,7 @@ export function useTaskListItemContextActions({
     workspaceIdentity,
     workspaceRemoteSessionId: remoteSessionId,
   });
+  const taskProvider = provider ?? "glm";
   const taskSessionFile = useTaskSessionFilePath(workspacePath, taskId, workspaceIdentity, {
     // Task session/log paths are used only by context-menu items; do not issue bulk RPCs during list reordering while the menu is closed.
     enabled: loadTaskPaths,
@@ -56,6 +92,25 @@ export function useTaskListItemContextActions({
     workspaceIdentity,
     { enabled: loadTaskPaths },
   );
+  const providerConfigFile = useWorkspaceProviderConfigFile(
+    workspacePath,
+    taskProvider,
+    remoteSessionId,
+    workspaceIdentity,
+    {
+      // Bugfix: in a remote workspace, “Go to config” opens a provider config that can be edited
+      // locally. Using the remote zcodeTaskService for its path returned an absolute path on the
+      // remote machine (for example, /root/...), which the local platform layer then opened at the
+      // wrong location or failed to open. Always use the base service in remote mode so the UI gets
+      // a config path available on this machine.
+      serviceScope: remoteSessionId ? "base" : "workspace",
+      // Bugfix: every task-list item mounts context-menu actions. Reading the provider config path
+      // at mount time would multiply base RPCs and logs by the number of tasks in a remote
+      // workspace. Load it only when the menu is opened.
+      enabled: loadProviderConfig,
+    },
+  );
+
   const handleCopyText = useCallback(async (label: string, value: string | null) => {
     if (!value) {
       return;
@@ -136,12 +191,62 @@ export function useTaskListItemContextActions({
     workspacePath,
   ]);
 
+  const handleOpenProviderConfig = useCallback(async () => {
+    if (!providerConfigFile.path) {
+      return;
+    }
+
+    const openTargetPath = resolveProviderConfigOpenTargetPath(
+      providerConfigFile.path,
+      providerConfigFile.exists,
+    );
+
+    try {
+      const preferredEditorId = readLastSelectedEditorId();
+      const editors = await platform.getInstalledEditors();
+      const sortedEditors = sortInstalledEditorsForOpenWith(editors);
+      const preferredEditor =
+        sortedEditors.find((editor) => editor.id === preferredEditorId) ?? sortedEditors[0] ?? null;
+
+      // Bugfix: the task context menu is in the sidebar and cannot access the Header's local
+      // selectedEditor state. Hardcoding an editor here would give “Go to config” different paths
+      // from the Header. Read the persisted editor preference so both use the same user selection.
+      if (preferredEditor) {
+        const result = await platform.openInEditor(preferredEditor.id, openTargetPath);
+        if (result.success) {
+          return;
+        }
+      }
+
+      const result = await platform.openInFileManager(openTargetPath);
+      if (!result.success) {
+        logger.warn("[TaskListItem] 打开 provider 配置失败", {
+          taskId,
+          provider: taskProvider,
+          path: providerConfigFile.path,
+          openTargetPath,
+          error: result.error ?? "unknown-error",
+        });
+      }
+    } catch (error) {
+      logger.warn("[TaskListItem] 打开 provider 配置失败", {
+        taskId,
+        provider: taskProvider,
+        path: providerConfigFile.path,
+        openTargetPath,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }, [platform, providerConfigFile.exists, providerConfigFile.path, taskId, taskProvider]);
+
   return {
     taskSessionFile,
     taskNativeSessionLogFile,
+    providerConfigFile,
     fileManagerLabel: getFileManagerLabel(intl),
     handleCopyText,
     handleOpenTaskPathInFileManager,
+    handleOpenProviderConfig,
   };
 }
 

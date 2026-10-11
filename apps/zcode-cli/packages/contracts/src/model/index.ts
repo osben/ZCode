@@ -28,6 +28,7 @@ export type ModelId = string & { readonly __brand: "ModelId" };
 export const ModelRequestSessionType = {
   Main: "main",
   Other: "other",
+  SideChat: "side_chat",
   Subagent: "subagent",
 } as const;
 
@@ -38,10 +39,16 @@ export const ModelRequestSessionType = {
  *   then probed indefinitely); permanent failures still throw immediately. Used by workflow actors
  *   (taskType workflow_child / nested_workflow_child): model errors are not workflow errors, and user
  *   cancellation is the only exit.
+ * - `single-attempt`: reduce maxAttempts to 1 for this request; do not retry transient failures, and
+ *   throw on the first failure. Used for execution-scoped Selections with a selectionFallback
+ *   declaration (for example, a Highspeed accelerator card): core falls back to the session model for
+ *   the current turn after a failure, while the adapter's default ten backoff retries would delay that
+ *   fallback by several minutes.
  */
 export const ModelRetryBudget = {
   Default: "default",
   Unbounded: "unbounded",
+  SingleAttempt: "single-attempt",
 } as const;
 
 export type ModelRetryBudget = (typeof ModelRetryBudget)[keyof typeof ModelRetryBudget];
@@ -276,9 +283,21 @@ export interface ModelTelemetryMilestoneStatusEvent extends ModelNetworkStatusBa
   elapsedMs: number;
 }
 
+/** Delivered only to the in-process telemetry statusSink, not request UI events; fields must not contain credentials or user content. */
+export type ModelRequestObservation = Readonly<{
+  kind: string;
+  [field: string]: string | number | boolean | undefined;
+}>;
+
+export interface ModelRequestObservationStatusEvent extends ModelNetworkStatusBase {
+  type: "model_request_observation";
+  observation: ModelRequestObservation;
+}
+
 export type ModelNetworkStatusEvent =
   | ModelRequestQueuedStatusEvent
   | ModelRequestAdmittedStatusEvent
+  | ModelRequestObservationStatusEvent
   | ModelRequestStartedStatusEvent
   | ModelRequestCompletedStatusEvent
   | ModelRequestFailedStatusEvent

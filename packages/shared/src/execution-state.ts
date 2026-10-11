@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 /** Keep auto as an internal permission; accept plan only at the legacy-format read boundary. */
-export const executionPermissionModeSchema = z.enum(["build", "edit", "yolo", "auto"]);
+export const executionPermissionModeSchema = z.enum(["build", "edit", "yolo", "guarded", "auto"]);
 export const executionStateSchema = z.object({
   mode: executionPermissionModeSchema,
   planEnabled: z.boolean(),

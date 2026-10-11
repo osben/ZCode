@@ -22,7 +22,7 @@ import {
   primaryConflictMessage,
 } from "./engine-artifacts-primary.js";
 import { validateArtifactSpec } from "./artifact-spec.js";
-import { hashMismatch } from "./scheduler.js";
+import { hashMismatch } from "./hash-mismatch.js";
 import type { EngineState } from "./engine-state.js";
 import type {
   ArtifactPublishRequest,
@@ -117,9 +117,10 @@ export function publishContentArtifact(
       state.failRun(err);
       return Promise.reject(err);
     }
-    // Follow ask/world hit behavior: pass the release point through the replay ordering gate.
-    // Publication is an effect and the script awaits it, so it can determine the order of later
-    // continuations. Predeclared artifacts are synchronous void and never use or occupy this gate.
+    // Match ask / world cache hits: pass the release point through the replay-order gate
+    // (docs/execution-engine.md, “Replaying the settle order”). Publication is an effect and scripts
+    // await it, so this release point can determine the order of later continuations. Preset
+    // declarations are synchronous void operations and never use this path or occupy the gate.
     if (recorded.status === "completed") {
       const record = recorded.result as ArtifactVersionRecord;
       return heldResolution(state.holdForReplay, instance, () => ({
@@ -399,12 +400,7 @@ function settleArtifactPublish(
       issued,
       new WorkflowError(
         "ArtifactPrimaryConflict",
-        primaryConflictMessage(
-          issued.id,
-          holder,
-          `publish "${issued.id}" without primary`,
-          instance,
-        ),
+        primaryConflictMessage(issued.id, holder, `publish "${issued.id}" without primary`, instance),
       ),
     );
   }

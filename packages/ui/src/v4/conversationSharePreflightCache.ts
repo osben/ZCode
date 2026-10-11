@@ -15,7 +15,7 @@ function hashString(value: string): string {
   return (hash >>> 0).toString(16).padStart(8, "0");
 }
 
-interface ConversationShareTurnFingerprintContext {
+export interface ConversationShareTurnFingerprintContext {
   capabilitiesFingerprint?: string;
   logEpoch?: string;
   productTurnId?: string;
@@ -54,6 +54,7 @@ export function conversationShareTurnFingerprint(
     status: "status" in row ? row.status : undefined,
     text: "text" in row ? row.text : undefined,
     fileChanges: row.kind === "turnHeader" ? row.fileChanges : undefined,
+    display: row.kind === "toolCall" ? row.display : undefined,
     attachments:
       row.kind === "userInput"
         ? row.attachments?.map((attachment) => ({
@@ -175,4 +176,21 @@ export function getMissingConversationSharePreflightTurnIds(
         entry.turnFingerprint !== turnFingerprints.get(productTurnId))
     );
   });
+}
+
+/** The line limit applies to the entire selected set; recalculate after removing or adding turns instead of reusing a batch RPC total. */
+export function aggregateConversationShareBlockingIssues(
+  entries: readonly ConversationShareTurnPreflightResult[],
+): ConversationShareFailureIssue[] {
+  const issues = entries.flatMap((entry) => entry.blockingIssues);
+  if (!entries.length || entries.some((entry) => !entry.rowBudget))
+    return dedupeConversationShareIssues(issues);
+  const actual = entries.reduce((count, entry) => count + entry.rowBudget!.count, 0);
+  const limit = Math.min(...entries.map((entry) => entry.rowBudget!.limit));
+  return dedupeConversationShareIssues([
+    ...issues.filter((issue) => issue.code !== "rows_limit"),
+    ...(actual > limit
+      ? [{ code: "rows_limit" as const, scope: "conversation" as const, actual, limit }]
+      : []),
+  ]);
 }

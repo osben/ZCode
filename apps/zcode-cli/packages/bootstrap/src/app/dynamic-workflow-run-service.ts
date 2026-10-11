@@ -49,16 +49,17 @@
 
 import type { DwfRunSessionListItem } from "@zcode/adapters/storage";
 import type {
+  CollaborationMode,
   TraceContext,
-  DynamicWorkflowRunEvent,
   DynamicWorkflowRunArtifact,
   DynamicWorkflowRunArtifactBytes,
-  DynamicWorkflowRunArtifactItem,
   DynamicWorkflowRunArtifactItemPage,
+  DynamicWorkflowRunArtifactItemsResult,
   DynamicWorkflowRunWorkspaceNode,
   DynamicWorkflowRunWorkspaceNodeResult,
   DynamicWorkflowRunWorkspaceNodeResultQuery,
   DynamicWorkflowRunEventPage,
+  DynamicWorkflowRunEventsResult,
   DynamicWorkflowResolveQuestionResult,
   DynamicWorkflowRunPort,
   DynamicWorkflowRunProgressPayload,
@@ -70,8 +71,10 @@ import type {
   DynamicWorkflowRunAmendRequest,
   DynamicWorkflowRunAmendResult,
   DynamicWorkflowRunCancelInitiator,
+  DynamicWorkflowRunFillHoleRequest,
   DynamicWorkflowRunSubmitRequest,
   DynamicWorkflowRunSubmitResult,
+  FillWorkflowHoleResult,
   ExecutionPort,
   FileSystemPort,
   Logger,
@@ -83,7 +86,10 @@ import type {
   WorkflowSubmitPort,
 } from "@zcode/contracts";
 import type { AgentRuntime } from "@zcode/core";
-import { WORKFLOW_RUNS_LIMITS } from "@zcode/shared/zcode-protocol-v4";
+import {
+  WORKFLOW_RUN_EVENTS_PAGE_LIMITS,
+  WORKFLOW_RUNS_LIMITS,
+} from "@zcode/shared/zcode-protocol-v4";
 import type {
   ActorSubmitProfile,
   ActorRef,
@@ -96,6 +102,8 @@ import { readWorkflowArtifactBytes } from "./dynamic-workflow-run-artifact-read.
 import { replayRunProgress } from "./dynamic-workflow-run-replay.js";
 import { listArtifactItemsFrom } from "./dynamic-workflow-run-artifact-queries.js";
 import {
+  pageByCountOnly,
+  supportsEventPages,
   supportsRunEnumeration,
   supportsRunIntrospection,
   type DynamicWorkflowTaskLinkStore,
@@ -124,12 +132,15 @@ import {
   type DynamicWorkflowRunSettledNotice,
 } from "./dynamic-workflow-run-lifecycle.js";
 import { retuneRunConcurrency } from "./dynamic-workflow-run-retune.js";
+import { fillDynamicWorkflowHole } from "./dynamic-workflow-run-fill.js";
+import { runHolesOf } from "./dynamic-workflow-run-holes.js";
 import type { ActorTranscriptStore } from "./workflow-actor-transcript.js";
 import {
-  clampRunConcurrency,
-  resolveWorkflowConcurrencyCeiling,
-} from "./workflow-concurrency-ceiling.js";
+  normalizeRunConcurrency,
+  resolveWorkflowDefaultConcurrency,
+} from "./workflow-default-concurrency.js";
 import type { WorkflowConcurrencyPort } from "./workflow-concurrency-governor.js";
+import type { WorkflowSubagentPermissionMode } from "./workflow-actor-permission.js";
 import type { AgentRuntimeWorkflowDriverDeps } from "./workflow-driver-types.js";
 import {
   createWorkflowEscalationRegistry,
@@ -177,8 +188,22 @@ export interface DynamicWorkflowActorRuntimeInput {
    */
   runSubagentModel?: ModelSelection;
   /**
-   * Model-request admission port for this actor runtime. The driver supplies it when a governance
-   * port is present, and the factory passes it unchanged to runtime deps. Omission means no gate applies.
+   * The model this actor's persona names, resolved into a full selection via this run's binding
+   * table (the `modelBindings` on `run-launched`; docs/dynamic-workflow/launch.md, "Models the
+   * script names"). Takes priority over {@link runSubagentModel}: it is the choice written for this
+   * one subagent. Omission means the persona named no model.
+   */
+  actorModel?: ModelSelection;
+  /**
+   * Permission mode for this run's subagents (the one on the journal's `run-launched`;
+   * docs/dynamic-workflow/launch.md, "Permissions inside a run"). The factory runs the actor in
+   * this mode (workflow-actor-permission.ts). Omission means YOLO.
+   */
+  subagentPermissionMode?: WorkflowSubagentPermissionMode;
+  /**
+   * Model-request admission port for this actor runtime (docs/dynamic-workflow/concurrency.md,
+   * "One ticket per request attempt"): the driver supplies it when a governance port is present,
+   * and the factory passes it unchanged to runtime deps. Omission means no gate applies.
    */
   modelRequestAdmission?: ModelRequestAdmission;
 }
@@ -202,6 +227,14 @@ export interface DynamicWorkflowRunServiceDeps {
    * where a run stays `running` forever). Make wiring errors visible at compile time.
    */
   parentSessionId: string;
+  /**
+   * The parent session's permission mode **at this moment** (create-app wires
+   * `runtime.getMode()`). Read exactly once in the turn that creates the run (submit / amend) and
+   * recorded into `run-launched` (docs/dynamic-workflow/launch.md, "Permissions inside a run");
+   * resume reads only events, never this. Lazy: the run service is constructed before the runtime.
+   * Omission means the host has no mode concept (CLI test assembly); subagents stay YOLO.
+   */
+  permissionMode?: () => CollaborationMode;
   /** File-system port used by world-read (files.glob / files.read / files.grep). */
   fileSystemPort: FileSystemPort;
   /** Child-process execution port for git.* world-read (cwd = the run's workspace). */
@@ -277,6 +310,19 @@ export interface DynamicWorkflowRunServiceDeps {
    * stall window to milliseconds); production assembly never sets it, so omission uses real time.
    */
   driverClock?: AgentRuntimeWorkflowDriverDeps["clock"];
+  /**
+   * Mint a draft by the inline rules (docs/dynamic-workflow/launch.md, "The draft after a fill"):
+   * when a fill lands on a run without a draft, the effective script needs a home. The rules
+   * (slug, `-2`/`-3` suffixing, exclusive creation, the directory's `.gitignore`) have exactly one
+   * implementation, in the tool layer, injected by host assembly; this service does not duplicate
+   * it. Returns `undefined` when writing fails (never throws). Omission means no draft is minted:
+   * the fill still succeeds, only without a path in the reply.
+   */
+  writeWorkflowDraft?: (input: {
+    cwd: string;
+    name: string;
+    source: string;
+  }) => Promise<{ path: string } | undefined>;
 }
 
 export {
@@ -328,29 +374,33 @@ export function createDynamicWorkflowRunService(
    * Persisting a pending table would misrepresent reality.
    */
   const escalations: WorkflowEscalationRegistry = createWorkflowEscalationRegistry();
+  /** Per-run fill serialization chain (see the dynamic-workflow-run-fill.ts header); keys are deleted once drained. */
+  const fillQueues = new Map<string, Promise<unknown>>();
 
   // Reconcile during construction: this instance currently owns no active runs, so every nonterminal
   // row for this session was left by a dead process. See header invariant 4 and {@link reconcileOrphanRuns}.
   reconcileOrphanRuns(deps);
 
   /**
-   * Concurrency ceiling for this process.
-   * Uses the same implementation as the process-level governor's bucket ceiling, keeping the run
-   * ceiling aligned with the bucket ceiling.
+   * Default concurrency D for this process (docs/dynamic-workflow/concurrency.md, "Two bounds on
+   * a run"). Uses the same implementation as the process-level governor's bucket starting point
+   * (decision 30): the run's default bound and the bucket's starting point always agree.
    *
-   * Four consumers in this service use this function: the new run's initial caps, the port's
-   * {@link DynamicWorkflowRunPort.concurrencyCeiling} (used by tools to clamp and decide whether
-   * the value is worth mentioning), the `maxConcurrency` checks in both read paths, and the derived
-   * field in the `run-started` payload.
+   * Four consumers in this service use this function: the new run's caps default, the port's
+   * {@link DynamicWorkflowRunPort.defaultConcurrency} (used by tools to render "(default)" and to
+   * decide whether the value is worth mentioning), the `maxConcurrency` checks in both read paths,
+   * and the derived field in the `run-started` payload.
    */
-  const concurrencyCeiling = (): number =>
-    resolveWorkflowConcurrencyCeiling(deps.availableParallelism);
+  const defaultConcurrency = (): number =>
+    resolveWorkflowDefaultConcurrency(deps.availableParallelism);
 
-  // Caps contain only a concurrency ceiling, no wall-clock timeout; cancellation is the only stop mechanism.
-  // The ceiling **starts at the host ceiling** and requests may lower it, never raise it:
-  // omission means the ceiling; supplied values are clamped to [1, ceiling].
+  // Caps retain only the concurrency bound (docs/dynamic-workflow/authoring.md: token budgets and
+  // node caps were removed entirely; no wall-clock timeout; cancellation is the only stop
+  // mechanism). Omission means the default concurrency; a supplied value is used as-is (floored,
+  // at least 1), including values above the default—there is no upper limit
+  // (docs/dynamic-workflow/concurrency.md).
   const caps = (requested?: number): Caps => {
-    return { maxConcurrency: clampRunConcurrency(requested, concurrencyCeiling()) };
+    return { maxConcurrency: normalizeRunConcurrency(requested, defaultConcurrency()) };
   };
 
   // Attach introspection based on capabilities (those four queries are not on the engine port).
@@ -411,12 +461,11 @@ export function createDynamicWorkflowRunService(
     },
 
     /**
-     * Concurrency ceiling for this process (port contract: {@link DynamicWorkflowRunPort.concurrencyCeiling}).
-     * Uses the **same** {@link concurrencyCeiling} as the caps starting point: the value clamped by
-     * the tool layer must equal the value later persisted by the port, or the confirmation window
-     * would display a value different from the one that takes effect.
+     * Default concurrency for this process (port contract: {@link DynamicWorkflowRunPort.defaultConcurrency}).
+     * Uses the **same** {@link defaultConcurrency} as the caps default: the "default N" shown in
+     * the confirmation window must be exactly the number a run without an explicit bound will use.
      */
-    concurrencyCeiling,
+    defaultConcurrency,
 
     /**
      * Change the concurrency ceiling of an active run in place (port contract:
@@ -429,7 +478,7 @@ export function createDynamicWorkflowRunService(
     async retuneConcurrency(
       request: DynamicWorkflowRunRetuneRequest,
     ): Promise<DynamicWorkflowRunRetuneResult> {
-      return retuneRunConcurrency({ runs, journal: deps.journal, concurrencyCeiling }, request);
+      return retuneRunConcurrency({ runs, journal: deps.journal, defaultConcurrency }, request);
     },
 
     async resume(runId: string): Promise<DynamicWorkflowRunResumeResult> {
@@ -489,9 +538,9 @@ export function createDynamicWorkflowRunService(
         // process) or that are active in the registry. Their events are already in the in-memory
         // store; feeding them again would make run-started reset the phase.
         if (input.excludeRunIds.has(row.runId) || runs.has(row.runId)) continue;
-        // Use the same ceiling source as live execution: the cold-replay `run-started` payload must
-        // be byte-for-byte equal to the live payload.
-        payloads.push(...replayRunProgress(row, deps.journal, concurrencyCeiling()));
+        // Use the same default-concurrency source as live execution: the cold-replay `run-started`
+        // payload must be byte-for-byte equal to the live payload.
+        payloads.push(...replayRunProgress(row, deps.journal, defaultConcurrency()));
       }
       return payloads;
     },
@@ -503,8 +552,21 @@ export function createDynamicWorkflowRunService(
         runs,
         deps.journal,
         escalations.pendingFor(taskId),
-        concurrencyCeiling(),
+        defaultConcurrency(),
+        // Holes follow the same rule as parked questions and are projected here before being
+        // passed in: `waiting` reads the engine's quiescence table (via the entry's control plane).
+        runHolesOf(taskId, runs.get(taskId), deps.journal),
       );
+    },
+
+    /**
+     * Fill the body of a waiting hole (port contract: {@link DynamicWorkflowRunPort.fillHole};
+     * implementation in dynamic-workflow-run-fill.ts). Like `retuneConcurrency`, it intentionally
+     * **does not pass through the close gate**: it starts nothing, and in a closing service the
+     * engine itself rejects with `settled`.
+     */
+    async fillHole(request: DynamicWorkflowRunFillHoleRequest): Promise<FillWorkflowHoleResult> {
+      return fillDynamicWorkflowHole({ deps, runs, fillQueues }, request);
     },
 
     /**
@@ -531,7 +593,8 @@ export function createDynamicWorkflowRunService(
           runs,
           deps.journal,
           escalations.pendingFor(taskId),
-          concurrencyCeiling(),
+          defaultConcurrency(),
+          runHolesOf(taskId, undefined, deps.journal),
         );
       }
       if (entry.terminal === undefined) await settleOrAbort(entry.settlement, options?.signal);
@@ -541,7 +604,8 @@ export function createDynamicWorkflowRunService(
         runs,
         deps.journal,
         escalations.pendingFor(taskId),
-        concurrencyCeiling(),
+        defaultConcurrency(),
+        runHolesOf(taskId, entry, deps.journal),
       );
     },
 
@@ -583,12 +647,24 @@ export function createDynamicWorkflowRunService(
     async listEvents(
       runId: string,
       options: DynamicWorkflowRunEventPage,
-    ): Promise<DynamicWorkflowRunEvent[]> {
-      const page = deps.journal.listEvents(runId, {
+    ): Promise<DynamicWorkflowRunEventsResult> {
+      // The audit surface needs byte-exact events (including report items, which the payload
+      // boundary trims later on the wire), but a page's item count and byte count are both bounded
+      // (docs/execution-engine.md, "Reading the journal"): when the caller omits them, the
+      // protocol's two limits apply. The gateway always supplies both; these defaults only prevent
+      // another caller from issuing an unbounded read.
+      const page = {
         ...(options.afterSequence === undefined ? {} : { afterSequence: options.afterSequence }),
-        ...(options.limit === undefined ? {} : { limit: options.limit }),
-      });
-      return page.map((stored) => toProtocolEvent(stored.sequence, stored.event));
+        limit: options.limit ?? WORKFLOW_RUN_EVENTS_PAGE_LIMITS.maxEvents,
+        maxBytes: options.maxBytes ?? WORKFLOW_RUN_EVENTS_PAGE_LIMITS.maxBytes,
+      };
+      const { events, hasMore } = supportsEventPages(deps.journal)
+        ? deps.journal.listEventPage(runId, page)
+        : pageByCountOnly(deps.journal, runId, page);
+      return {
+        events: events.map((stored) => toProtocolEvent(stored.sequence, stored.event)),
+        hasMore,
+      };
     },
 
     /**
@@ -619,11 +695,8 @@ export function createDynamicWorkflowRunService(
       runId: string,
       artifactId: string,
       page: DynamicWorkflowRunArtifactItemPage,
-    ): Promise<readonly DynamicWorkflowRunArtifactItem[]> {
-      return listArtifactItemsFrom(deps.journal, runId, artifactId, {
-        ...(page.afterSequence === undefined ? {} : { afterSequence: page.afterSequence }),
-        limit: page.limit,
-      });
+    ): Promise<DynamicWorkflowRunArtifactItemsResult> {
+      return listArtifactItemsFrom(deps.journal, runId, artifactId, page);
     },
 
     /**
@@ -690,7 +763,7 @@ export function createDynamicWorkflowRunService(
           parentSessionId: deps.parentSessionId,
           runs,
           escalations,
-          concurrencyCeiling,
+          defaultConcurrency,
         })),
   };
 }

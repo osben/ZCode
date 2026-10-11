@@ -20,7 +20,7 @@ export interface PanelSize {
   height: number;
 }
 
-interface ResolvePanelBoundsInput {
+export interface ResolvePanelBoundsInput {
   /** System Settings main-window screen coordinates; null means unavailable (fail open at the bottom of the screen). */
   settings: Rect | null;
   /** Available work area of the target display (excluding the menu bar/Dock). */

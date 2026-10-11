@@ -29,9 +29,10 @@ export interface ImportedAskEntry {
  * The ask that was **still in flight** when the predecessor stopped (`actorSeq === entries.length`,
  * the running row immediately after the prefix).
  *
- * It has no result to import; what is imported is **the transcript it already produced**. If the
- * amended run sends the same instruction at the same position (`inputHash` matches), the new
- * session continues from here rather than discarding the partial exchange and starting over.
+ * There is no result to import; instead, the **transcript it has already produced** is imported. If a
+ * revision issues the same instruction at the same position (`inputHash` matches), the new session
+ * continues from here rather than discarding the partial conversation and starting over
+ * (see `docs/execution-engine.md`, “How the engine consumes the cache”).
  */
 export interface ImportedInFlightAsk {
   /** inputHash from the predecessor record (for the instruction body); continuation requires a match with the current ask. */
@@ -102,8 +103,9 @@ export interface ImportedRunCache {
 }
 
 /**
- * Session seed passed to {@link WorkflowDriver.createActorSession} at the first live dispatch of a
- * diverged actor, so the new session begins with the source session's **full-fidelity transcript prefix**.
+ * Session seed passed to {@link WorkflowDriver.createActorSession} on an actor's first live dispatch
+ * after divergence. It lets the new session begin with the source session's **full-fidelity transcript
+ * prefix** (the “Transcript truncation” row in the spec).
  */
 export interface ActorSessionSeed {
   /** Source session for the transcript (the actor's session in the predecessor or an earlier ancestor). */

@@ -41,6 +41,7 @@ export function createWindow(options: {
   syncAutoUpdaterStateToWindow: (win: BrowserWindow) => void;
   syncReadyUpdateToWindow: (win: BrowserWindow) => void;
   syncPostUpdateReleaseNotesToWindow: (win: BrowserWindow) => void;
+  webRemoteControlManager: { disposeWindow(windowId: number): Promise<void> };
   disposeRemoteWorkspaceSessionsForWindow: (windowId: number, reason: string) => void;
   reattachRemoteWorkspaceSessionsForWindow: (win: BrowserWindow, reason: string) => void;
   bootstrap?: WindowBootstrapOptions;
@@ -273,6 +274,7 @@ export function createWindow(options: {
       options.disposeHostProcess(child, `${label}:window-closed`);
       options.windowHostProcessMap.delete(wcId);
     }
+    void options.webRemoteControlManager.disposeWindow(browserWindowId);
     options.disposeRemoteWorkspaceSessionsForWindow(wcId, `${label}:window-closed`);
   });
 
@@ -372,7 +374,14 @@ export function handleDesktopWindowCloseRequest(options: {
   platform: NodeJS.Platform;
   forceQuit: boolean;
   explicitQuitRequested?: boolean;
-  closeToTrayOnWindows?: boolean;
+  closeToTray?: boolean;
+  /**
+   * Tray capability for Linux close-to-tray (spec: docs/desktop/linux-close-to-tray.md).
+   * Desktops without a StatusNotifierWatcher, such as GNOME, silently do not render the tray, so the
+   * capability must be confirmed explicitly before hiding; a null value safely defaults to
+   * "unavailable" and takes the confirm-quit path to avoid losing the window after hiding it.
+   */
+  closeToTraySupported?: boolean;
   isLastWindow: boolean;
   label: string;
   logger: { info: (...args: unknown[]) => void };
@@ -381,9 +390,16 @@ export function handleDesktopWindowCloseRequest(options: {
   requestQuit: () => void;
   hideWindow?: () => void;
 }) {
+  // CR fix: win32 must not short-circuit and drop closeToTraySupported—it carries
+  // resolveCloseToTraySupported's merged verdict (Windows = tray instance created successfully).
+  // Hiding the window after a tray creation failure loses it; this matches the spec that "the
+  // close-window branch and the settings-page capability query read the same merged result."
+  const canHideToTray =
+    (options.platform === "win32" || options.platform === "linux") &&
+    options.closeToTraySupported === true;
   if (
-    options.platform === "win32" &&
-    options.closeToTrayOnWindows &&
+    canHideToTray &&
+    options.closeToTray &&
     !options.forceQuit &&
     !options.explicitQuitRequested
   ) {

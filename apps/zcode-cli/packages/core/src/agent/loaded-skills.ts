@@ -1,5 +1,5 @@
 // ============================================================
-// "Has this skill been loaded in this history?"
+// “Was a skill loaded in this history?” (docs/dynamic-workflow/authoring.md, “The authoring surface”)
 // ============================================================
 // The skill gate for workflow-creation tools (tool/handlers/workflow-skill-gate.ts) asks this question. Read the answer deliberately from
 // the runtime's provider-visible history rather than creating a session-level Set: history is what the model remembers now.

@@ -34,6 +34,8 @@ import {
   getSessionShellSelection,
   restoreSessionShellEnvironmentSelectionForResume,
 } from "./session-shell-environment.js";
+import { resetProjectMemoryRecall } from "../helpers/project-memory-recall.js";
+import { restoreDynamicWorkflowActivationOnResume } from "./dynamic-workflow-activation.js";
 import { repairPersistedRemoteSessionPaths } from "../helpers/persisted-remote-session-path-repair.js";
 import {
   restoreWorkspaceCheckpointEntries,
@@ -128,6 +130,7 @@ export async function resumeFromStore(
       ? String(session.workspaceID)
       : undefined;
   }
+  resetProjectMemoryRecall(this);
   this.messageHistory = new MessageHistoryImpl();
   this.contextBuilder = null;
   this.contextInitialized = false;
@@ -214,6 +217,9 @@ export async function resumeFromStore(
   if (savedExecution.success && options?.modeOverride === undefined) {
     Object.assign(this.config, savedExecution.data);
   }
+  // Restore the tool surface for onDemand sessions from persisted state (launch.md, “On demand: activation”): activate if an entry exists or history
+  // contains `/workflow` / one of the ten tool calls. This must finish before the first turn, so do it during resume rather than waiting for the next turn.
+  await restoreDynamicWorkflowActivationOnResume.call(this, messages);
 
   await restorePermissionGrantMarker(this, traceContext);
 

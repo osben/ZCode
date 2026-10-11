@@ -472,7 +472,7 @@ function WeekdayPicker({
               }}
               className="flex h-7 w-full items-center gap-2 rounded-md px-2 text-left text-ui-base text-foreground transition-colors hover:bg-menu-hover"
             >
-              {/* Putting the checkbox at the start of the row would move the weekday menu away from the
+              {/* Bug cause: Putting the checkbox at the start of the row would move the weekday menu away from the
                   standard trailing-status layout. */}
               <span className="min-w-0 flex-1 truncate">
                 {intl.formatMessage({ id: `automations.weekday.${day}` })}
@@ -1015,7 +1015,7 @@ function CustomRepeatDialog({
                 })}
               </button>
             </div>
-            {/* Native date inputs open an uncontrollable white system calendar in dark mode. */}
+            {/* Fix reason: Native date inputs open an uncontrollable white system calendar in dark mode. */}
             <EndDatePicker
               value={endDate}
               min={toDateInputValue(Date.now())}
@@ -1068,7 +1068,7 @@ export interface AutomationEditSubmit {
   workspaceIdentity?: string;
 }
 
-interface AutomationEditViewProps {
+export interface AutomationEditViewProps {
   /** null = create; otherwise edit. */
   editing: ZCodeAutomation | null;
   /** Creation prefill (from a More ideas template). */
@@ -1091,7 +1091,7 @@ interface AutomationEditViewProps {
   onOpenSession?: (sessionId: string) => void;
 }
 
-async function saveAndRunAutomation(
+export async function saveAndRunAutomation(
   save: () => Promise<boolean>,
   run: () => Promise<void> | void,
 ): Promise<boolean> {
@@ -2092,7 +2092,7 @@ export function AutomationEditView({
                   {intl.formatMessage({ id: "automations.form.status.label" })}
                 </div>
                 <div className="flex min-h-8 flex-wrap items-center gap-2">
-                  {/* The status dot and pill used oversized 8px / 36px dimensions instead of the
+                  {/* Bug cause: The status dot and pill used oversized 8px / 36px dimensions instead of the
                       6px glyph + 20px frame specification. */}
                   <span className="inline-flex h-8 max-w-full items-center gap-1 rounded-lg bg-card pl-2 pr-4 text-ui-base leading-5 text-foreground">
                     <span className="flex size-5 shrink-0 items-center justify-center">
@@ -2122,7 +2122,7 @@ export function AutomationEditView({
               >
                 {intl.formatMessage({ id: "automations.form.title.label" })}
               </label>
-              {/* Task title uses the standard Input; do not locally remove its global outline. */}
+              {/* Fix reason: Task title uses the standard Input; do not locally remove its global outline. */}
               <Input
                 id="automation-title"
                 size="lg"
@@ -2233,7 +2233,7 @@ export function AutomationEditView({
                   </DropdownMenu>
                 ) : (
                   <>
-                    {/* Avoid min-height, wrapping, and a full-row summary in the schedule bar; a second
+                    {/* Bugfix: Avoid min-height, wrapping, and a full-row summary in the schedule bar; a second
                         row would make it taller when tags are added. After restoring the global 1px
                         Input border, use 7px left padding to offset the border and keep the first tag
                         8px from the edge. Add 1px vertical padding to tags while keeping them centered
@@ -2263,7 +2263,7 @@ export function AutomationEditView({
                           }));
                         }}
                       >
-                        {/* The frequency trigger once used a hard-coded dark color, reducing contrast
+                        {/* Fix reason: The frequency trigger once used a hard-coded dark color, reducing contrast
                             in light mode. Use semantic hover/selected tokens and add 1px padding above
                             and below the 20px line height. */}
                         <SelectTrigger
@@ -2335,7 +2335,7 @@ export function AutomationEditView({
                         />
                       ) : null}
 
-                      {/* The repeat interval once hard-coded #F8F8F8 and used inconsistent tag
+                      {/* Bugfix: The repeat interval once hard-coded #F8F8F8 and used inconsistent tag
                             radii; use semantic text color and consistent pill rounding. */}
                       {builder.frequency === "custom" ? (
                         <button
@@ -2376,7 +2376,7 @@ export function AutomationEditView({
 
                       {builder.frequency !== "custom" && builder.frequency !== "hourly" ? (
                         <>
-                          {/* The conjunction once used a secondary color, creating an unintended
+                          {/* Fix reason: The conjunction once used a secondary color, creating an unintended
                               highlight break between the primary-colored neighboring tags. */}
                           <span className="text-foreground">
                             {intl.formatMessage({
@@ -2650,7 +2650,7 @@ export function AutomationEditView({
                       </Button>
                     )}
 
-                    {/* Automations once duplicated the home-page permission menu, causing its icon,
+                    {/* Bugfix: Automations once duplicated the home-page permission menu, causing its icon,
                         font size, and selected state to drift. Reuse the home-page ConfigSelect and
                         override only the compact trigger layout. */}
                     <ConfigSelect
@@ -2747,7 +2747,7 @@ export function AutomationEditView({
         ) : (
           // History tab: inline run-history table.
           <div>
-            {/* The Settings entry already explains run conditions; repeating them on the history
+            {/* Fix reason: The Settings entry already explains run conditions; repeating them on the history
                   page would take up space above the table. */}
             {runsLoading && runs.length === 0 ? (
               <div className="flex h-32 items-center justify-center">
@@ -2764,7 +2764,7 @@ export function AutomationEditView({
               </AutomationHistoryEmptyState>
             ) : (
               <div className="overflow-x-auto rounded-[8px]">
-                {/* Run history uses a scalable font size and cannot keep a fixed 18px line
+                {/* Fix reason: Run history uses a scalable font size and cannot keep a fixed 18px line
                             height. */}
                 <table className="w-full text-left text-ui-base font-normal leading-normal tracking-[-0.08px]">
                   <thead className="bg-surface text-foreground-subtle">

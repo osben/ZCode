@@ -93,6 +93,36 @@ export const GetWorkflowRunPendingQuestionSchema = z
   })
   .strict();
 
+/** Upper bound for `holes`, matching the display contract (docs/dynamic-workflow/presentation.md). */
+export const GET_WORKFLOW_RUN_MAX_HOLES = 32;
+
+/**
+ * A hole (docs/dynamic-workflow/authoring.md, “Holes”). A `waiting` hole is waiting for the main agent
+ * to supply a body with `FillWorkflowHole`; a `filled` hole already has one. `since` / `filledAt` use
+ * the same clock as createdAt. Like pending elicitation, this is the model-side discovery surface if a
+ * notification is lost.
+ */
+export const GetWorkflowRunHoleSchema = z
+  .object({
+    /** Hole site ID (name key, e.g. `hole#21b40fca`); used as `hole_id` by `FillWorkflowHole`. */
+    siteId: z.string(),
+    ordinal: z.number(),
+    /** Hole's literal name. */
+    name: z.string(),
+    /** Original type-argument text (`Verdict`). */
+    type: z.string(),
+    state: z.enum(["waiting", "filled"]),
+    /** Arrival time (epoch ms); present when `waiting`. */
+    since: z.number().optional(),
+    /** Completion time (epoch ms); present when `filled`. */
+    filledAt: z.number().optional(),
+    /** Session that filled it. */
+    filledBy: z.string().optional(),
+  })
+  .strict();
+
+export type GetWorkflowRunHole = z.infer<typeof GetWorkflowRunHoleSchema>;
+
 /**
  * One **user-facing artifact**: output published to the user by the script through `artifact.*`,
  * already displayed as a card.
@@ -192,6 +222,11 @@ export const GetWorkflowRunOutputSchema = WorkflowRunSummarySchema.extend({
    */
   subagentModel: z.string().optional(),
   /**
+   * Models named by this run's script: names exactly as written → canonical forms. **Present only if
+   * the script named models.** AmendWorkflow reuses these bindings for names that appear again.
+   */
+  modelBindings: z.record(z.string()).optional(),
+  /**
    * Script file for this run, **already formatted for the model-facing surface** (workspace-relative
    * when inside the session working directory; absolute otherwise). **Present only when this run
    * recorded a file** (same omission rule as `subagentModel`): drafts that could not be written and
@@ -238,6 +273,13 @@ export const GetWorkflowRunOutputSchema = WorkflowRunSummarySchema.extend({
    * section instead of rendering an empty section.
    */
   pendingQuestions: z.array(GetWorkflowRunPendingQuestionSchema).optional(),
+  /**
+   * Holes in this run (docs/dynamic-workflow/launch.md, “The `FillWorkflowHole` tool”; engine docs,
+   * “The run snapshot”): every hole reached; `waiting` means it awaits a body from the main agent,
+   * while `filled` means it has one. Same rules as pendingQuestions: **omit the whole field when empty**,
+   * capped at 32. This is the query fallback when hole notifications are lost.
+   */
+  holes: z.array(GetWorkflowRunHoleSchema).max(GET_WORKFLOW_RUN_MAX_HOLES).optional(),
   /**
    * User-facing artifacts published by this run, in first-publication order, **included in any state**
    * (a running run may already have delivered its first chart). **Omit the whole field when empty**, as

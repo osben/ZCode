@@ -8,7 +8,7 @@ import { listProtocolSlashCommands } from "./slash-commands.js";
 import type { ZCodeProtocolAgentServerContext } from "./server-types.js";
 
 /** Project only non-model workspace mode and slash commands from Session settings. */
-function toV4WorkspaceConfigState(
+export function toV4WorkspaceConfigState(
   settings: ZCodeSessionSettingsState,
   slashCommands: readonly ZCodeSlashCommand[],
 ): WorkspaceConfigState {

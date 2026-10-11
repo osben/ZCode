@@ -578,7 +578,10 @@ export const browserCommandSchema = z.discriminatedUnion("method", [
     })
     .strict(),
   z.object({ method: z.literal("turnEnded"), turnId: z.string().min(1).optional() }).strict(),
-  z.object({ method: z.literal("closeSession") }).strict(),
+  // closeTabs: also close the tabs owned by the session (including tabs already released back to it).
+  // Intended only for sessions that never return to claim them—dwf subagents
+  // (docs/browser-use/2026-07-14-browser-tab-conversation-isolation-spec.md §2.3).
+  z.object({ method: z.literal("closeSession"), closeTabs: z.boolean().optional() }).strict(),
   z.object({ method: z.literal("cancelRequest"), requestId: z.string().min(1) }).strict(),
   // close: close the specified controlled tab (tabId defaults to the current tab). The manager detaches it and tells the renderer to unload the webview.
   z.object({ method: z.literal("close"), tabId: z.string().optional() }).strict(),

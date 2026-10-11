@@ -30,6 +30,7 @@ export function createBotRemoteWorkspaceService(params: {
   parentPort?: ParentPortLike | null;
   settingService: ISettingService;
   credentialService: ICredentialService;
+  createRuntimeServicesFromPort?: (port: unknown) => RemoteBotWorkspaceRuntimeServices;
 }) {
   const parentPort = params.parentPort;
   if (!parentPort) {
@@ -308,7 +309,9 @@ export function createBotRemoteWorkspaceService(params: {
     // Bug fix: Bot tasks previously knew only the remote identity but continued calling the local task service.
     // Wrap the remote RPC port forwarded by main as a set of runtime services here;
     // task-wrapper commands use IZCodeTaskService, and primary session state uses the ZCode session facade.
-    const services = createRemoteRuntimeServicesFromPort(result.port);
+    const services =
+      params.createRuntimeServicesFromPort?.(result.port) ??
+      createRemoteRuntimeServicesFromPort(result.port);
     // The remote Bot and UI workspace share the same remote Environment. Confirm only that the remote
     // Model Selection Facade is ready; Desktop no longer injects the full Provider Registry into remote environments.
     await services.modelSelectionService.getView();

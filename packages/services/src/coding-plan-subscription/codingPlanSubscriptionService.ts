@@ -1,4 +1,4 @@
-import type { ApiClient } from "@zcode/shared";
+import { applyDynamicWorkflowUserMode, type ApiClient } from "@zcode/shared";
 import type { ICredentialService } from "../credential/credential.js";
 import type { ICodingPlanSubscriptionService } from "./codingPlanSubscription.js";
 import { BigModelCodingPlanSubscriptionProvider } from "./bigmodelCodingPlanSubscriptionProvider.js";
@@ -9,6 +9,12 @@ interface CodingPlanSubscriptionServiceDependencies {
   apiClient: ApiClient;
   credentialService: Pick<ICredentialService, "load">;
   resolveOffPeakModelSelectionView?: () => Promise<ModelSelectionView>;
+  /**
+   * Dynamic-workflow mode chosen by the user in Settings (launch.md "The user's choice"). Injected only
+   * by assemblies that own settings authority (desktop local Host, web/standalone server); when absent,
+   * the snapshot contains only the server-side "offer".
+   */
+  resolveDynamicWorkflowUserMode?: () => Promise<unknown>;
 }
 
 /**
@@ -41,12 +47,21 @@ export function createCodingPlanSubscriptionService(
     getStaticProducts: () => bigmodelProvider.getStaticProducts(),
     getStaticTeamProducts: () => bigmodelProvider.getStaticTeamProducts(),
     getStartPlanPreview: () => bigmodelProvider.getStartPlanPreview(),
+    getManualClaimPlanPreviews: () => bigmodelProvider.getManualClaimPlanPreviews(),
+    claimManualPlan: (request) => bigmodelProvider.claimManualPlan(request),
     getOffPeakClientConfig: (options) => bigmodelProvider.getOffPeakClientConfig(options),
     // Dynamic-workflow rollout data comes from the same source as client/configs,
     // so like other platform-level configuration it always uses the bigmodel provider, regardless of family.
-    getDynamicWorkflowClientConfig: (options) =>
-      bigmodelProvider.getDynamicWorkflowClientConfig(options),
+    // The user's choice is applied to the "offer" here so the renderer reads the effective value; the
+    // rule lives only in shared's applyDynamicWorkflowUserMode—the renderer does not recompute it.
+    getDynamicWorkflowClientConfig: async (options) => {
+      const offer = await bigmodelProvider.getDynamicWorkflowClientConfig(options);
+      const resolveUserMode = dependencies.resolveDynamicWorkflowUserMode;
+      return resolveUserMode ? applyDynamicWorkflowUserMode(offer, await resolveUserMode()) : offer;
+    },
     getModelContextBudgetStrategy: () => bigmodelProvider.getModelContextBudgetStrategy(),
+    getBillingDiscount: () => bigmodelProvider.getBillingDiscount(),
+    getRequestVerificationConfig: () => bigmodelProvider.getRequestVerificationConfig(),
     getForceUpdateConfig: () => bigmodelProvider.getForceUpdateConfig(),
     productInfo: (request) => bigmodelProvider.productInfo(request),
     preview: (request) => bigmodelProvider.preview(request),

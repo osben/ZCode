@@ -1,9 +1,9 @@
 import { chmod, readFile, rm } from "node:fs/promises";
-import { readThirdPartyNotices, stageThirdPartyNotices } from "../../../../../scripts/third-party-notices.mjs";
 import { basename, dirname, relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { build } from "esbuild";
 import { stageBuiltinProviderConfig } from "../../../../../scripts/builtin-provider-config.mjs";
+import { stageThirdPartyNotices } from "../../../../../scripts/third-party-notices.mjs";
 
 const cliRoot = resolve(import.meta.dirname, "..");
 const projectRoot = resolve(cliRoot, "../..");
@@ -196,7 +196,14 @@ export const resolveBuildAliases = ({
     rootDirectory,
     "../../packages/shared/src/zcodeEndpoint.ts",
   ),
+  // Plugin UI (MCP Apps) protocol subpath: dist builds in adapters/core/contracts reference it, so declare it before the general entry.
+  "@zcode/shared/mcp-apps": resolve(rootDirectory, "../../packages/shared/src/mcp-apps/index.ts"),
   "@zcode/shared/node": resolve(rootDirectory, "../../packages/shared/src/node.ts"),
+  // The general alias appends sub-entry paths to index.ts, so the release implementation must resolve this independently.
+  "@zcode/shared/request-security": resolve(
+    rootDirectory,
+    "../../packages/shared/src/request-security-edition/index.ts",
+  ),
   "@zcode/shared": resolve(rootDirectory, "../../packages/shared/src/index.ts"),
   "@zcode/core": resolve(cliDirectory, "../core/dist/index.js"),
 });
@@ -214,7 +221,6 @@ export const buildCli = async ({
   const cliVersion = await version;
   const outfile = resolve(cliDirectory, "dist/zcode.cjs");
   const sourcemapFile = `${outfile}.map`;
-  const notices = await readThirdPartyNotices(resolve(rootDirectory, "../.."));
 
   await stageBuiltinProviderConfig({
     root: resolve(rootDirectory, "../.."),
@@ -224,10 +230,8 @@ export const buildCli = async ({
 
   await build({
     banner: {
-      // SEA and the regular CLI share this entry point; it must be readable independently before Agent initialization and native-resource extraction.
-      js: `#!/usr/bin/env node\n"use strict";\nif (process.argv.length === 3 && process.argv[2] === "--licenses") { const sea = require("node:sea"); const nodeNotice = sea.isSea() ? "\\n\\n## Bundled Node.js runtime\\n\\n" + sea.getAsset("zcode-node-license", "utf8") : ""; process.stdout.write(${JSON.stringify(notices.toString("utf8"))} + nodeNotice, () => process.exit(0)); } else {`,
+      js: "#!/usr/bin/env node",
     },
-    footer: { js: "}" },
     bundle: true,
     define: {
       __CLI_VERSION__: JSON.stringify(cliVersion),
@@ -267,6 +271,7 @@ export const buildCli = async ({
   }
 
   await chmod(outfile, executableFileMode);
+  // zcode.cjs bundles third-party code; the adjacent declaration file is copied by the release CLI and unified distribution package (build-zcode).
   await stageThirdPartyNotices(resolve(cliDirectory, "dist"), resolve(rootDirectory, "../.."));
 };
 

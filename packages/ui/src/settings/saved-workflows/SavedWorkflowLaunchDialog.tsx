@@ -67,6 +67,11 @@ interface SavedWorkflowLaunchDialogProps {
   targets?: readonly AutomationWorkspaceOption[];
   /** Default selected project key (active project); fall back to the first candidate if it is not among the options. */
   defaultTargetKey?: string | null;
+  /**
+   * Prefilled arguments: “Run again” on a completion card passes the values used by this run (from the journal). Ignore keys not in the declaration;
+   * absent keys use the declaration defaults (the hub’s own “Run” action follows this path).
+   */
+  initialArgs?: Record<string, unknown>;
   /** Launching: show the primary button as loading + disabled to prevent duplicate clicks (launcher.pending). */
   pending?: boolean;
   /** Launch failure: show in the inline error area (title from reason + server message); the group clears it by closing the dialog on success. */
@@ -87,6 +92,7 @@ export function SavedWorkflowLaunchDialog({
   onSubmit,
   targets,
   defaultTargetKey,
+  initialArgs,
   pending = false,
   error = null,
 }: SavedWorkflowLaunchDialogProps) {
@@ -96,9 +102,9 @@ export function SavedWorkflowLaunchDialog({
   const [targetKey, setTargetKey] = useState<string | null>(null);
 
   useEffect(() => {
-    setFields(buildSavedWorkflowArgFields(entry?.args));
+    setFields(buildSavedWorkflowArgFields(entry?.args, initialArgs));
     setErrors({});
-  }, [entry]);
+  }, [entry, initialArgs]);
 
   // When candidates change, keep the selection if it is still valid; otherwise fall back to the default project, first candidate, or null (same rule as reconcile).
   useEffect(() => {

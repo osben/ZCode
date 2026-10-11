@@ -25,7 +25,7 @@ export function readMarkdownFrontmatter(filePath: string): {
 }
 
 /** Pure-function version that parses frontmatter directly from Markdown text, making block-scalar branches easy to test. */
-function parseMarkdownFrontmatter(content: string): {
+export function parseMarkdownFrontmatter(content: string): {
   name?: string;
   description?: string;
 } {
@@ -105,7 +105,10 @@ function readBlockScalar(
     line.trim().length === 0 ? "" : line.slice(indent ?? 0),
   );
   return {
-    value: style === "folded" ? foldBlockScalarLines(contentLines) : contentLines.join("\n").trim(),
+    value:
+      style === "folded"
+        ? foldBlockScalarLines(contentLines)
+        : contentLines.join("\n").trim(),
     nextIndex: index,
   };
 }

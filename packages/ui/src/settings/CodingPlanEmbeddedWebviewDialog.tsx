@@ -32,6 +32,7 @@ import {
   CodingPlanWebviewChannels,
   type CodingPlanPurchaseCompletePayload,
   toServiceLocale,
+  ZCODE_ENV,
   ZCODE_VERSION,
 } from "@zcode/shared";
 
@@ -51,6 +52,7 @@ interface CodingPlanEmbeddedWebviewDialogProps {
 }
 
 interface CodingPlanWebviewImportMetaEnv {
+  DEV?: boolean;
   VITE_CODING_PLAN_WEBVIEW_ORIGIN?: string;
   VITE_ZCODE_E2E_STORE_BRIDGE?: string;
 }
@@ -116,9 +118,11 @@ export function CodingPlanEmbeddedWebviewDialog({
   const computedWebviewUrl = useMemo(() => {
     const env = readCodingPlanWebviewImportMetaEnv();
     const origin = resolveCodingPlanEmbeddedOrigin({
+      dev: env.DEV === true,
       endpointOrigin: RENDERER_ZCODE_ENDPOINT_URLS.origin,
       e2eStoreBridgeEnabled: env.VITE_ZCODE_E2E_STORE_BRIDGE === "1",
       overrideOrigin: env.VITE_CODING_PLAN_WEBVIEW_ORIGIN,
+      zcodeEnv: ZCODE_ENV,
     });
     // Add a ?lang= hint to the URL so the official site uses the correct language on its first frame, avoiding a flash of English before injection.
     // Also add a ?theme= hint to prevent the site's default dark SSR frame from flashing under the App's light theme.

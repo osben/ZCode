@@ -7,7 +7,7 @@ import { refreshMcpOAuthTokensUnderLock } from "./oauth-refresh.js";
 
 type McpAuthorizationCodeOAuthConfig = Extract<McpOAuthConfig, { type: "authorization_code" }>;
 
-interface CreateMcpOAuthTokenProviderInput {
+export interface CreateMcpOAuthTokenProviderInput {
   config: McpAuthorizationCodeOAuthConfig;
   credentialStore: SharedZCodeCredentialStore;
   fetchFn?: FetchLike;
@@ -31,7 +31,9 @@ interface CreateMcpOAuthTokenProviderInput {
  * Never pass `OAuthClientProvider` to the runtime transport: it is wrapped by `adaptOAuthProvider`, and 401s go
  * through the SDK's `handleOAuthUnauthorized()` → `auth()`, bypassing the refresh lock and reintroducing concurrent refreshes.
  */
-export function createMcpOAuthTokenProvider(input: CreateMcpOAuthTokenProviderInput): AuthProvider {
+export function createMcpOAuthTokenProvider(
+  input: CreateMcpOAuthTokenProviderInput,
+): AuthProvider {
   const refreshInput = {
     credentialStore: input.credentialStore,
     ...(input.fetchFn ? { fetchFn: input.fetchFn } : {}),

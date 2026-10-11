@@ -1,3 +1,8 @@
+import {
+  createTurnAgentDefinitions,
+  createAgentDefinitionsReader,
+  type GetAgentDefinitions,
+} from "../subagent/definitions.js";
 import { DEFAULT_ZCODE_MODEL_CONTEXT_BUDGET_STRATEGY, resolveExecutionState } from "@zcode/shared";
 import type { BackgroundBashOutputResult } from "@zcode/shared";
 import {
@@ -84,6 +89,10 @@ import type {
   RuntimeBackgroundStopResult,
 } from "./methods/background.js";
 import { initializeRuntimeTooling } from "./helpers/runtime-tools.js";
+import {
+  resolveInitialDynamicWorkflowToolsActivated,
+  type DynamicWorkflowActivationSource,
+} from "./methods/dynamic-workflow-activation.js";
 import type {
   ActiveTurnInfo,
   ActiveForegroundExecutionState,
@@ -120,8 +129,12 @@ import type {
 } from "./types.js";
 import type { AgentRuntimeInternal } from "./internal.js";
 import { InMemoryRuntimeTaskRegistry, type RuntimeTaskRegistry } from "../runtime-task/registry.js";
+import { createMemoryRecallState } from "../memory/recall/index.js";
+import type { MemoryRecallState } from "../memory/recall/index.js";
 import type { ChildClientPortsContext, ClientFacingPorts } from "./helpers/child-client-ports.js";
+import type { ProjectMemoryRecallPrefetch } from "./helpers/project-memory-recall.js";
 import type { ProjectMemoryExtractionScheduler } from "./helpers/project-memory-extraction.js";
+import type { ProjectMemoryUpdate } from "./helpers/project-memory-dream.js";
 import { projectPersistentAgentMemoryTools } from "../subagent/persistent-memory.js";
 import { RuntimeTelemetryFacade } from "../telemetry/runtime-telemetry.js";
 import type { WorkspaceHookRuntimeAdmissionPort } from "../hooks/workspace-hook-runtime-admission.js";
@@ -158,13 +171,20 @@ export class AgentRuntime {
   private messageHistory: MessageHistory;
   private readFileState: ReadFileStateMap;
   private cachedTools: ModelToolContract[] | null = null;
+  /** launch.md, “On demand: activation”: onDemand sessions start as false; `activateDynamicWorkflowTools` changes this to true. */
+  private dynamicWorkflowToolsActivated: boolean;
+  private dynamicWorkflowActivationSource?: DynamicWorkflowActivationSource;
   private contextBuilder: ContextBuilder | null = null;
   private contextInitialized = false;
   private contextSourceSnapshot?: ContextSourceSnapshot;
   private latestContextBuildResult?: ContextBuildResult;
   private memoryRoot?: string;
   private memoryIndexContent?: string;
+  private memoryRecallState: MemoryRecallState;
+  private memoryRecallPrefetch?: ProjectMemoryRecallPrefetch;
   private memoryExtractionScheduler?: ProjectMemoryExtractionScheduler;
+  private memoryDreamLastScanAtMs = 0;
+  private pendingMemoryUpdate?: ProjectMemoryUpdate;
   private contextSourcePort?: ContextSourcePort;
   private skillPort?: SkillPort;
   private mcpPort?: McpPort;
@@ -172,7 +192,14 @@ export class AgentRuntime {
   private residencyBlockingWorkCount = 0;
   private mcpInitialized = false;
   private mcpToolsRegistered = false;
+  private registeredMcpToolNames?: string[];
+  private mcpToolsSignature?: string;
+  private mcpToolListRevision?: number;
   private subagentPort?: SubagentPort;
+  private readonly getAgentDefinitions: GetAgentDefinitions;
+  private readonly prepareAgentDefinitions: ReturnType<
+    typeof createTurnAgentDefinitions
+  >["prepare"];
   private dynamicWorkflowRunPort?: DynamicWorkflowRunPort;
   private modelCatalogPort?: ModelCatalogPort;
   private runtimeTaskRegistry: RuntimeTaskRegistry;
@@ -237,6 +264,15 @@ export class AgentRuntime {
       modelContextBudgetStrategy: DEFAULT_ZCODE_MODEL_CONTEXT_BUDGET_STRATEGY,
     });
     Object.assign(this.config, resolveExecutionState(config));
+    const definitions = createTurnAgentDefinitions(
+      deps.getAgentDefinitions ??
+        createAgentDefinitionsReader(this.config.subagents?.profiles ?? [], {
+          builtInModelSelectionOverrides: this.config.subagents?.builtInModelSelectionOverrides,
+        }),
+      deps.loadAgentDefinitions,
+    );
+    this.getAgentDefinitions = definitions.get;
+    this.prepareAgentDefinitions = definitions.prepare;
     this.agentTelemetry = new RuntimeTelemetryFacade({
       agentName: config.agentName,
       causation: deps.agentTelemetryCausation,
@@ -278,6 +314,7 @@ export class AgentRuntime {
       config.modelSelection && cloneModelSelection(config.modelSelection);
     this.messageHistory = new MessageHistoryImpl();
     this.readFileState = new Map();
+    this.memoryRecallState = createMemoryRecallState();
     this.runtimeCommandQueue = createRuntimeCommandQueue();
     this.workingDirectory = config.workingDirectory ?? ".";
     this.contextSourcePort = deps.contextSourcePort;
@@ -296,6 +333,8 @@ export class AgentRuntime {
     this.modelCatalogPort = deps.modelCatalogPort;
     this.registry = deps.toolRegistry ?? createToolRegistry();
     this.workspaceRoot = this.workingDirectory;
+    // This must happen before tool setup: the gradual rollout gate in registerRuntimeBuiltInTools reads this state.
+    this.dynamicWorkflowToolsActivated = resolveInitialDynamicWorkflowToolsActivated(this.config);
     const tooling = initializeRuntimeTooling(runtime, deps, sessionId);
     this.hookRunner = tooling.hookRunner;
     this.workspaceHookAdmission = deps.workspaceHookAdmission;
@@ -520,6 +559,11 @@ export interface AgentRuntime {
     childSessionId: SessionId;
     event: SessionEvent;
     traceContext?: TraceContext;
+    /**
+     * Ownership of child-runtime interactions (shared with `createChildClientPorts`). When present, interaction events
+     * (PermissionRequested / Resolved / Denied) are also mirrored to this session so confirmation dialogs appear in the parent interface.
+     */
+    interactionOrigin?: ChildClientPortsContext;
   }): Promise<void>;
   /**
    * External subruntime seam (3): create the child runtime's external interaction ports
@@ -541,7 +585,15 @@ export interface AgentRuntime {
   recordDynamicWorkflowRunProgress(
     input: DynamicWorkflowRunProgressPayload & { traceContext?: TraceContext },
   ): Promise<void>;
-  /** Rearm tracking for a resumed workflow run (registry registration + started event + waiter + settlement notification). */
+  /** Re-arm tracking for a restored dwf run (registry entry + started event + waiter + settlement notification). */
+  /**
+   * Register the ten workflow tools in an onDemand session (docs/dynamic-workflow/launch.md, “On demand: activation”).
+   * If already activated, do nothing and return false. Triggered by expanding `/workflow`, GUI Resume / Configure / direct start, and cold restore.
+   */
+  activateDynamicWorkflowTools(input: {
+    source: DynamicWorkflowActivationSource;
+    traceContext?: TraceContext;
+  }): Promise<boolean>;
   trackResumedDynamicWorkflowRun(input: {
     runId: string;
     toolCallId?: string;
@@ -664,6 +716,10 @@ export interface AgentRuntime {
     traceContext?: TraceContext;
     commitAfterApply?: () => Promise<void>;
   }): Promise<WorkspaceFileRewindApplyResult>;
+  sampleModel(
+    input: import("./methods/sample-model.js").SampleModelInput,
+    options: { abortSignal: AbortSignal; traceContext?: TraceContext },
+  ): Promise<import("@zcode/shared/mcp-apps").McpAppsSamplingResult>;
   generateWorkspaceText(
     input: WorkspaceGenerateTextInput,
     options?: { abortSignal?: AbortSignal; traceContext?: TraceContext },

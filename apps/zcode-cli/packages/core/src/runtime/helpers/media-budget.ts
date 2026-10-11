@@ -25,7 +25,7 @@ import {
 
 // A separate video budget cannot constrain total request size; count all media by encoded size toward 40 MiB,
 // leaving room for non-media content such as text. The attachment-input/Read layer handles per-file raw-byte limits.
-const DEFAULT_MODEL_REQUEST_MEDIA_BUDGET_BYTES = 40 * 1024 * 1024;
+export const DEFAULT_MODEL_REQUEST_MEDIA_BUDGET_BYTES = 40 * 1024 * 1024;
 
 interface MediaBlockRef {
   blockIndex: number;
@@ -42,7 +42,7 @@ export interface MediaBudgetProjection {
   totalMediaBytes: number;
 }
 
-interface ModelMediaPolicyProjection {
+export interface ModelMediaPolicyProjection {
   capabilityProjection: MediaCapabilityProjection;
   mediaBudgetProjection: MediaBudgetProjection;
   messages: ModelInputMessage[];

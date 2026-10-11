@@ -4,10 +4,11 @@
 // Split out of workflow-runs-reducer.ts to satisfy the max-lines limit: the main reducer is left with only switch dispatch, following the same pattern as
 // `concurrency-changed` / `phase-entered`. This event has the most to cover — resume's
 // re-arming semantics, lineage pointer, and this run's own concurrency limit — and these are related: a second `run-started` for the same runId
-// must clear settlement remnants from the previous life without resetting the shared cap learned by the process back to its ceiling.
+// must clear settlement remnants from the previous life without resetting the shared cap learned by the process back to the default concurrency.
 
 import { reduceRunStartedConcurrency } from "./workflow-runs-concurrency.js";
 import { workflowRunTablesForNewLife } from "./workflow-runs-eviction.js";
+import { withoutWaitingHoles } from "./workflow-runs-holes.js";
 import { readRunIdField } from "./workflow-runs-lineage.js";
 import { WORKFLOW_RUNS_LIMITS, type WorkflowRunState } from "./workflow-runs.js";
 
@@ -73,9 +74,11 @@ export function reduceRunStarted(
   // this event. If it cannot be read, fall back to the known value — old CLIs do not send this key, and erasing an already displayed model is one of the worst
   // regressions: the run would appear to switch models when only a field was missing. Absence means the entire key is omitted (not undefined).
   const subagentModel = readSubagentModel(payload.subagentModel) ?? rebased.subagentModel;
+  // Waiting holes and suspended questions are both remnants of the previous life (workflow-runs-holes.ts): when resume re-executes
+  // past that site it emits another `hole-reached`; a hole that has been filled is code wired into the run and survives across lives.
   return reduceRunStartedConcurrency(
     {
-      ...rebased,
+      ...withoutWaitingHoles(rebased as WorkflowRunState),
       ...(resumedFrom === undefined ? {} : { resumedFrom }),
       ...(subagentModel === undefined ? {} : { subagentModel }),
       status: "running",

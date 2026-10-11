@@ -116,7 +116,7 @@ type ActionProbeExecution =
   | { kind: "timeout" }
   | { kind: "cancelled" };
 
-type IabLocatorExecution =
+export type IabLocatorExecution =
   | { kind: "done"; value?: unknown }
   | { kind: "timeout"; reason: string }
   | { kind: "cancelled" };
@@ -597,9 +597,10 @@ class IabPlaywrightLocatorSession {
         let stableFrames = 0;
         for (let index = 0; index < 10 && stableFrames < 2; index += 1) {
           await waitForAnimationFrame();
-          // Pages such as el-table may replace a DOM node between animation frames with a new node
-          // matching the same locator and geometry. A locator describes the current match, not the
-          // identity of the first node; after detach, resolve again before comparing geometry.
+          // Bug root cause: pages such as el-table may replace a DOM node between animation frames
+          // with a new node matching the same locator and geometry. A locator describes the current
+          // match, not the identity of the first node; after detach, resolve again before comparing
+          // geometry.
           const currentElement = element.isConnected ? element : resolveCurrentElement();
           if (!currentElement) return { count: 0, actionable: false };
           const next = currentElement.getBoundingClientRect();

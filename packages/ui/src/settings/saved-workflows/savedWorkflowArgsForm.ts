@@ -16,7 +16,10 @@ export interface SavedWorkflowArgField {
 export type SavedWorkflowArgFieldError = "required" | "invalid_number" | "invalid_json";
 
 /** Convert a default / existing value to editor text according to its type. */
-function formatSavedWorkflowArgValue(type: ZCodeSavedWorkflowArgType, value: unknown): string {
+export function formatSavedWorkflowArgValue(
+  type: ZCodeSavedWorkflowArgType,
+  value: unknown,
+): string {
   if (value === undefined) return type === "boolean" ? "false" : "";
   switch (type) {
     case "string":
@@ -30,18 +33,29 @@ function formatSavedWorkflowArgValue(type: ZCodeSavedWorkflowArgType, value: unk
   }
 }
 
+/**
+ * Convert declarations into editable fields. When `initialArgs` is present, **prefer** its value
+ * for each declared field. “Run again” on a completion card prefills the arguments used by that run
+ * (docs/dynamic-workflow/transcript-and-notifications.md, “Run again”): what worked last time is
+ * likely what the user wants to run next. Do not add keys absent from the declaration; declarations
+ * determine the form shape, and old arguments should not invent new fields.
+ */
 export function buildSavedWorkflowArgFields(
   declaration: ZCodeSavedWorkflowArgsDeclaration | undefined,
+  initialArgs?: Record<string, unknown>,
 ): SavedWorkflowArgField[] {
   if (!declaration) return [];
-  return Object.entries(declaration).map(([name, spec]) => ({
-    name,
-    type: spec.type,
-    ...(spec.description === undefined ? {} : { description: spec.description }),
-    required: spec.required === true,
-    hasDefault: spec.default !== undefined,
-    value: formatSavedWorkflowArgValue(spec.type, spec.default),
-  }));
+  return Object.entries(declaration).map(([name, spec]) => {
+    const initial = initialArgs?.[name];
+    return {
+      name,
+      type: spec.type,
+      ...(spec.description === undefined ? {} : { description: spec.description }),
+      required: spec.required === true,
+      hasDefault: spec.default !== undefined,
+      value: formatSavedWorkflowArgValue(spec.type, initial === undefined ? spec.default : initial),
+    };
+  });
 }
 
 type SavedWorkflowArgParse =
@@ -53,7 +67,7 @@ type SavedWorkflowArgParse =
  * Single field → argument value. Empty text means “omit” for string / number / json: the server fills in a default if present,
  * and otherwise an optional field is simply absent; an empty required field is the only required error. Boolean always has a value.
  */
-function parseSavedWorkflowArgField(field: SavedWorkflowArgField): SavedWorkflowArgParse {
+export function parseSavedWorkflowArgField(field: SavedWorkflowArgField): SavedWorkflowArgParse {
   const raw = field.value;
   if (field.type === "boolean") {
     return { ok: true, omitted: false, value: raw === "true" };

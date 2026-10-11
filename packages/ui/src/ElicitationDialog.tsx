@@ -35,12 +35,16 @@ interface ElicitationDialogProps {
   onFormDraftChange?: (requestId: string, draft: ElicitationFormDraft) => void;
 }
 
-type ElicitationAutoResolutionSnoozeSource = "panelHover" | "answer" | "navigation" | "countdown";
+export type ElicitationAutoResolutionSnoozeSource =
+  | "panelHover"
+  | "answer"
+  | "navigation"
+  | "countdown";
 
 const ELICITATION_FINAL_MINUTE_MS = 60_000;
 const PLAN_APPROVAL_APPROVE_VALUE = "approve";
 
-function getElicitationCountdownSeconds(
+export function getElicitationCountdownSeconds(
   autoResolution: InteractionAutoResolution | undefined,
   now: number,
 ): number | null {
@@ -98,18 +102,18 @@ function useElicitationCountdownSeconds(autoResolution: InteractionAutoResolutio
   return getElicitationCountdownSeconds(autoResolution, clockNow);
 }
 
-interface NormalizedElicitationQuestion extends ZCodeElicitationQuestion {
+export interface NormalizedElicitationQuestion extends ZCodeElicitationQuestion {
   key: string;
 }
 
-interface AnswerDraft {
+export interface AnswerDraft {
   selectedValues: string[];
   customAnswer: string;
 }
 
-type DraftState = Record<string, AnswerDraft>;
+export type DraftState = Record<string, AnswerDraft>;
 
-type ElicitationCustomInputKeyAction =
+export type ElicitationCustomInputKeyAction =
   | "advance"
   | "submit"
   | "previous"
@@ -117,7 +121,7 @@ type ElicitationCustomInputKeyAction =
   | "previousOption"
   | "nextOption";
 
-function resolveElicitationCustomInputKeyAction(event: {
+export function resolveElicitationCustomInputKeyAction(event: {
   key: string;
   advanceKind?: "next" | "submit";
   ctrlKey?: boolean;
@@ -157,7 +161,7 @@ function resolveElicitationCustomInputKeyAction(event: {
   return null;
 }
 
-function normalizeElicitationQuestions(
+export function normalizeElicitationQuestions(
   request: ZCodeElicitationRequest,
 ): NormalizedElicitationQuestion[] {
   const sourceQuestions =
@@ -196,7 +200,7 @@ function isPlanApprovalElicitationRequest(request: ZCodeElicitationRequest): boo
   );
 }
 
-function createInitialElicitationDrafts(
+export function createInitialElicitationDrafts(
   questions: readonly NormalizedElicitationQuestion[],
   request: ZCodeElicitationRequest,
 ): DraftState {
@@ -265,7 +269,7 @@ function getQuestionAnswers(question: NormalizedElicitationQuestion, drafts: Dra
   return [...draft.selectedValues, ...(customAnswer ? [customAnswer] : [])];
 }
 
-function buildElicitationResponseContent(
+export function buildElicitationResponseContent(
   questions: readonly NormalizedElicitationQuestion[],
   drafts: DraftState,
 ): Record<string, unknown> {
@@ -298,7 +302,7 @@ function buildElicitationResponseContent(
   return content;
 }
 
-function updateElicitationDraftsForOption(
+export function updateElicitationDraftsForOption(
   drafts: DraftState,
   question: NormalizedElicitationQuestion,
   optionValue: string,
@@ -321,7 +325,7 @@ function updateElicitationDraftsForOption(
   };
 }
 
-function getElicitationQuestionAdvanceKind(
+export function getElicitationQuestionAdvanceKind(
   questions: readonly NormalizedElicitationQuestion[],
   questionIndex: number,
 ): "next" | "submit" {
@@ -785,7 +789,7 @@ function ElicitationDialogContent({
             {index + 1}.
           </span>
         )}
-        {/* The UI font size can grow dynamically; a fixed 20px line height makes larger text touch the edges or get clipped.*/}
+        {/* Reason for the fix: UI text can be scaled up, and a fixed 20px line height can make larger text touch the edges or clip. */}
         <span className="min-w-0 flex-1 text-ui-base leading-normal">
           <span className="text-ui-base font-medium leading-normal text-foreground">
             {optionLabel}
@@ -957,7 +961,7 @@ function ElicitationDialogContent({
 
   return (
     <div className="w-full shrink-0">
-      {/* The mobile remote-control viewport is short; long questions and many options can push buttons out of the dialog. Limit the card height and scroll its content internally.*/}
+      {/* Bugfix: The mobile remote-control viewport is short, so long questions and multiple options can push buttons out of the dialog. Cap the card height and scroll its content area. */}
       <div
         ref={cardRef}
         tabIndex={activeOptionIndex < 0 ? 0 : -1}
@@ -985,7 +989,7 @@ function ElicitationDialogContent({
                     {titleHeader}
                   </Badge>
                 ) : null}
-                {/* Do not put the question only in a truncating title; mobile has no hover, so show the full question after the tag.*/}
+                {/* Bugfix: Do not put the question only in a truncating title row; mobile has no hover, so the full question must be readable directly after the tag. */}
                 <span
                   title={titleQuestion}
                   className={cn(

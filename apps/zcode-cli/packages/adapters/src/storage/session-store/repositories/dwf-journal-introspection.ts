@@ -12,6 +12,7 @@
 import type { DatabaseSync } from "node:sqlite";
 import type { NodeRecord, NodeRecordStatus, RunStatus, StoredEvent } from "@zcode/dynamic-workflow";
 import type { DwfArtifactItem, DwfArtifactItemsQuery } from "./dwf-journal-artifacts.js";
+import type { DwfEventPageQuery } from "./dwf-journal-pages.js";
 import {
   decodeEvent,
   decodeNode,
@@ -103,21 +104,28 @@ export interface DwfRunIntrospectionQueries {
     runId: string,
     artifactId: string,
     query: DwfArtifactItemsQuery,
-  ): DwfArtifactItem[];
+  ): { items: DwfArtifactItem[]; hasMore: boolean };
+  /** One page of the event log: item and byte limits (dwf-journal-pages.ts); the storage layer determines `hasMore`. */
+  listEventPage(
+    runId: string,
+    query: DwfEventPageQuery,
+  ): { events: StoredEvent[]; hasMore: boolean };
   listArtifactRows(runId: string): NodeRecord[];
+  /** Number of tagged reports for each declared artifact (`group by artifact_id`, without reading the rows). */
+  countTaggedReports(runId: string): ReadonlyMap<string, number>;
   listRecentLogEvents(runId: string, limit: number): StoredEvent[];
   listRuns(query: DwfListRunsQuery): DwfRunListItem[];
   /**
-   * Activity intervals for each life of this run, ordered by time (the completion card's Time
-   * section). A run may have multiple lives (one per resume), and only the event log knows the
-   * wall-clock duration of each.
+   * Active intervals for each generation of this run, in chronological order (the completion card's “Time” field; see
+   * `docs/dynamic-workflow/transcript-and-notifications.md`, “How long it took”). A run can have multiple generations (one per resume),
+   * and only the event log knows each generation's wall-clock interval.
    */
   listRunLifeSpans(runId: string): DwfRunLifeSpan[];
   /**
-   * world-read/world-run rows for this run, in persistence order (`order by id`), with journal
-   * timestamps. **Do not select `result_json`**: this is a listing (op/args/status/time); the body
-   * has a separate read path by (siteId, ordinal). Decoding 256 stdout bodies of 256 KB each on one
-   * page would load the entire journal into memory.
+   * world-read / world-run rows for this run, ordered by insertion (`order by id`) and including journal timestamps
+   * (the `workflowRunWorkspace` row in docs/dynamic-workflow/transcript-and-notifications.md). **Do not fetch
+   * `result_json`**: this read surface is an index (op / args / status / time); a separate read surface fetches bodies by (siteId, ordinal)—
+   * returning a page of 256 nodes with 256 KB of stdout each would load the entire journal into memory.
    */
   listWorldNodes(runId: string): DwfWorldNodeRow[];
 }
@@ -227,9 +235,9 @@ export function listRecentLogEvents(db: DatabaseSync, runId: string, limit: numb
 /**
  * Activity intervals for each life of this run (`run-started` time -> that life's final event time), ordered by time.
  *
- * The completion card's duration is the sum of **active** time across the lineage, with one
- * interval per life of a run. Gaps between lives (process dead, not yet resumed) have no work
- * running and must not count.
+ * See `docs/dynamic-workflow/transcript-and-notifications.md`, “How long it took,” for the definition: the completion card duration is the sum of **active**
+ * intervals across the lineage, with a separate interval for every generation of a run. Gaps between generations (process stopped, not yet resumed)
+ * contain no activity and must not be counted.
  *
  * One SQL query, and **no payload decoding**: `lead()` pairs each life's start with the next life's
  * start to form intervals; a correlated subquery finds the timestamp of the highest sequence in

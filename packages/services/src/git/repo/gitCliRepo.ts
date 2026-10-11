@@ -3,6 +3,8 @@ import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, resolve, sep } from "node:path";
 import type {
+  GitBranchMergeStatus,
+  GitBranchMergeState,
   GitBranchMutationAction,
   GitBranchMutationIssue,
   GitBranchMutationResult,
@@ -113,6 +115,19 @@ const MAX_GIT_GRAPH_MAX_COUNT = 200;
 const GIT_GRAPH_RECORD_SEPARATOR = "\x1e";
 const GIT_GRAPH_FIELD_SEPARATOR = "\x00";
 const log = createServiceLogger("git-repo");
+// branch-merge-status routinely lands on unknown (no origin/HEAD, ref missing
+// locally); a warn about a real command failure must fire once per cause, not
+// on every sidebar refresh.
+const branchMergeStatusWarnedKeys = new Set<string>();
+
+function warnBranchMergeStatusOnce(workspacePath: string, cause: string, detail: unknown): void {
+  const key = `${workspacePath}:${cause}`;
+  if (branchMergeStatusWarnedKeys.has(key)) {
+    return;
+  }
+  branchMergeStatusWarnedKeys.add(key);
+  log.warn(undefined, "branch-merge-status git probe failed", { workspacePath, cause, detail });
+}
 
 function normalizeWatchPath(path: string): string {
   const trimmed = path.trim();
@@ -1418,6 +1433,127 @@ export function createGitCliRepo(options?: { commandProvider?: GitCommandProvide
           : `HEAD -> ${status.summary.trackingBranchName}`,
         changes,
       };
+    },
+
+    async getBranchMergeStatus(workspacePath: string): Promise<GitBranchMergeStatus> {
+      // Bugfix: контракт метода — «unknown без throw», но getStatus() внутри
+      // ensureGitCommandSucceeded бросает на таймауте/ошибке git status.
+      // Ошибка пробы наблюдения не должна рваться в UI — возвращаем полный unknown.
+      let status: GitStatusSnapshot;
+      try {
+        status = await this.getStatus(workspacePath);
+      } catch (error) {
+        warnBranchMergeStatusOnce(workspacePath, "status-failed", {
+          error: error instanceof Error ? error.message : String(error),
+        });
+        return {
+          state: "unknown" satisfies GitBranchMergeState,
+          baseRef: null,
+          headRef: null,
+          lastCommitAt: null,
+        };
+      }
+      const toUnknown = (): GitBranchMergeStatus => ({
+        state: "unknown" satisfies GitBranchMergeState,
+        baseRef: null,
+        headRef: status.summary.branchName,
+        lastCommitAt: null,
+      });
+      if (
+        !status.resolution.isGitAvailable ||
+        !status.resolution.isRepository ||
+        status.summary.headRefType !== "branch" ||
+        !status.summary.branchName
+      ) {
+        return toUnknown();
+      }
+
+      // origin/HEAD is a local remote-tracking ref; its freshness depends on the
+      // user's last fetch (this probe never touches the network).
+      const baseRefResult = await commandProvider.run({
+        cwd: status.resolution.repoRoot,
+        args: ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
+        timeoutMs: DEFAULT_GIT_COMMAND_TIMEOUT_MS,
+        maxOutputBytes: DEFAULT_GIT_OUTPUT_BYTES,
+      });
+      log.debug(undefined, "branch-merge-status origin/HEAD", {
+        workspacePath,
+        exitCode: baseRefResult.exitCode,
+        stdout: baseRefResult.stdout,
+      });
+      if (baseRefResult.timedOut) {
+        warnBranchMergeStatusOnce(workspacePath, "origin-HEAD-timeout", {
+          durationMs: baseRefResult.durationMs,
+        });
+      }
+      if (baseRefResult.timedOut || baseRefResult.exitCode !== 0) {
+        return toUnknown();
+      }
+      const baseRef = baseRefResult.stdout.trim();
+      if (!baseRef) {
+        return toUnknown();
+      }
+
+      // %cI emits strict ISO-8601; empty output means the branch has no commits.
+      const logResult = await commandProvider.run({
+        cwd: status.resolution.repoRoot,
+        args: ["log", "-1", "--format=%cI", "HEAD"],
+        timeoutMs: DEFAULT_GIT_COMMAND_TIMEOUT_MS,
+        maxOutputBytes: DEFAULT_GIT_OUTPUT_BYTES,
+      });
+      const lastCommitAt =
+        logResult.exitCode === 0 && !logResult.timedOut ? logResult.stdout.trim() || null : null;
+
+      // The exit code itself carries the state: 0 = ancestor, 1 = not an
+      // ancestor, anything else (128: ref missing locally, timeout, …) = unknown
+      // surfaced without throwing.
+      const mergeBaseResult = await commandProvider.run({
+        cwd: status.resolution.repoRoot,
+        args: ["merge-base", "--is-ancestor", "HEAD", baseRef],
+        timeoutMs: DEFAULT_GIT_COMMAND_TIMEOUT_MS,
+        maxOutputBytes: DEFAULT_GIT_OUTPUT_BYTES,
+      });
+      log.debug(undefined, "branch-merge-status merge-base", {
+        workspacePath,
+        baseRef,
+        exitCode: mergeBaseResult.exitCode,
+        stderr: mergeBaseResult.stderr,
+      });
+      if (mergeBaseResult.timedOut) {
+        warnBranchMergeStatusOnce(workspacePath, "merge-base-timeout", {
+          durationMs: mergeBaseResult.durationMs,
+        });
+      }
+      let state: GitBranchMergeState;
+      if (mergeBaseResult.exitCode === 0 && !mergeBaseResult.timedOut) {
+        state = "merged";
+      } else if (mergeBaseResult.exitCode === 1 && !mergeBaseResult.timedOut) {
+        state = "not_merged";
+      } else {
+        state = "unknown";
+      }
+
+      return { state, baseRef, headRef: status.summary.branchName, lastCommitAt };
+    },
+
+    async readHeadBranch(workspacePath: string): Promise<string | null> {
+      // Один symbolic-ref без полного статуса: валидация попаданий кэша
+      // merge-статуса не должна стоить как сама проба. detached HEAD и любые
+      // неуспехи читаются как null — попадание при этом принимается.
+      const resolution = await this.resolveRepository(workspacePath);
+      if (!resolution.isGitAvailable || !resolution.isRepository) {
+        return null;
+      }
+      const result = await commandProvider.run({
+        cwd: resolution.repoRoot,
+        args: ["symbolic-ref", "--short", "HEAD"],
+        timeoutMs: DEFAULT_GIT_COMMAND_TIMEOUT_MS,
+        maxOutputBytes: DEFAULT_GIT_OUTPUT_BYTES,
+      });
+      if (result.exitCode !== 0 || result.timedOut) {
+        return null;
+      }
+      return result.stdout.trim() || null;
     },
 
     async stage(workspacePath: string, paths: string[]): Promise<void> {

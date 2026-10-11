@@ -1,3 +1,5 @@
+import { getTurnTools } from "./turn-tool-visibility.js";
+import { appendRuntimeAgentListing } from "../helpers/agent-listing.js";
 import { beginLocalTurnPreparation } from "@zcode/contracts";
 import {
   CompactPhase,
@@ -23,17 +25,16 @@ import {
 import type { AgentRuntimeInternal } from "../internal.js";
 import { runModelBackedTurnStep } from "./turn-model-step.js";
 import {
-  AUTOMATION_MUTATION_TOOL_NAMES,
   evaluateRapidRefill,
-  isAutomationMutationRestrictedTurn,
-  isOffPeakCreateRestrictedTurn,
   MAX_CONSECUTIVE_RAPID_REFILLS,
-  OFF_PEAK_MUTATION_TOOL_NAMES,
   RAPID_REFILL_TOOL_TURN_THRESHOLD,
   recordCompactHistoryRound,
   recordCompactSuccess,
 } from "./turn-loop-state.js";
 import type { RegularTurnLoopState } from "./turn-loop-state.js";
+import { consumeSettledProjectMemoryRecall } from "../helpers/project-memory-recall.js";
+import { consumePendingProjectMemoryUpdate } from "../helpers/project-memory-dream.js";
+import { ACTIVE_PROJECT_MEMORY_RETRIEVAL_BRANCH } from "../../memory/project-memory-retrieval-branch.js";
 import {
   appendTurnRequestEntries,
   commitTurnRequestEntries,
@@ -64,6 +65,15 @@ export async function runRegularTurnLoop(
       }
     }
 
+    if (state.completedRealToolResultBatch && !outputTokenRecoveryActive) {
+      state.completedRealToolResultBatch = false;
+      const recallEntry = consumeSettledProjectMemoryRecall(
+        this,
+        ACTIVE_PROJECT_MEMORY_RETRIEVAL_BRANCH,
+      );
+      appendTurnRequestEntries(state.turnRequestState, recallEntry ? [recallEntry] : []);
+    }
+
     const compactPhase =
       state.modelStepCount === 0 ? CompactPhase.PreRequest : CompactPhase.MidTurn;
     await this.microcompactIfNeeded(state.turnTraceContext, state.events, state.turnAbortSignal, {
@@ -80,6 +90,7 @@ export async function runRegularTurnLoop(
       state.events,
       state.turnAbortSignal,
       {
+        getAgentListingTools: () => getTurnTools(this, state),
         compactReason: CompactReason.ContextLimit,
         modelStepIndex: state.modelStepCount,
         phase: compactPhase,
@@ -104,19 +115,16 @@ export async function runRegularTurnLoop(
 
     const finishMcp = beginLocalTurnPreparation(state.turnTraceContext, "mcp");
     await this.initializeMcp(state.turnTraceContext);
+    // Apply tools/list_changed only before a turn starts.
+    await this.refreshMcpToolsIfChanged(state.turnTraceContext);
     finishMcp();
     throwIfTurnAborted(state.turnAbortSignal);
     const finishTools = beginLocalTurnPreparation(state.turnTraceContext, "tools");
-    const turnDisallowedTools = buildTurnDisallowedTools(state);
-      // When automation dispatches to an already-active session or a retry resumes, entry metadata may not reach
-      // loop state, but queryId remains automation-*. The provider-request boundary must hard-filter automation write tools by queryId,
-      // or the model could see and create, modify, or delete task definitions.
-    const tools = state.automationCreateLimitReached
-      ? []
-      : turnDisallowedTools
-        ? this.getTools(state.model).filter((tool) => !turnDisallowedTools.has(tool.name))
-        : this.getTools(state.model);
+    const tools = getTurnTools(this, state);
     finishTools();
+    if (!outputTokenRecoveryActive) {
+      await appendRuntimeAgentListing(this, state.turnRequestState, tools, state.turnTraceContext);
+    }
     if (!outputTokenRecoveryActive && this.needsPlanModeExitReminder) {
       this.needsPlanModeExitReminder = false;
       commitTurnRequestEntries(this, state.turnRequestState, [
@@ -165,10 +173,17 @@ export async function runRegularTurnLoop(
         systemReminderAttachmentEntry("output_style", outputStyleReminderBody),
       ]);
     }
+    // (2026-09-12): the former “inject plugin_ui_state reminder at turn start” behavior was removed; plugin context for the model
+    // always goes through ui/update-model-context.
     const providerEntries = [...state.turnRequestState.entries];
-    const requestEntries = providerEntries;
-      // The provider-visible user-ordering projection changes the final latest-user position.
-      // Set cache-control after projection to prevent a raw synthetic entry from taking over the cache anchor.
+    // Dream may finish while the first model request in the same turn is running; check on each attachment collection
+    // so its one-time update is included in the next model request instead of waiting for the next user input.
+    const memoryUpdate = outputTokenRecoveryActive
+      ? undefined
+      : consumePendingProjectMemoryUpdate(this);
+    const requestEntries = memoryUpdate ? [...providerEntries, memoryUpdate] : providerEntries;
+    // Reason for the fix: provider-visible user-order projection changes where the final latest user message lands;
+    // set cache-control after projection so a raw synthetic entry cannot take the cache anchor.
     const providerProjection = buildRuntimeProviderRequestMessages(this, {
       entries: requestEntries,
       applyCacheControl: true,
@@ -216,23 +231,4 @@ export async function runRegularTurnLoop(
       break;
     }
   }
-}
-
-function buildTurnDisallowedTools(state: RegularTurnLoopState): Set<string> | null {
-  const tools = new Set(state.toolDisallowlist ?? []);
-  if (isAutomationMutationRestrictedTurn(state)) {
-      // A scheduled-task turn should execute only its task prompt and must not manage its own definition.
-      // Keep CronList available for read-only queries; hide all mutations at the provider-request boundary.
-    for (const toolName of AUTOMATION_MUTATION_TOOL_NAMES) {
-      tools.add(toolName);
-    }
-  }
-  if (isOffPeakCreateRestrictedTurn(state)) {
-      // An off-peak turn cannot create another off-peak task (prevent recursive spawning); retain OffPeakList as read-only.
-      // Automation turns do not enter this branch—cron turns allow OffPeakCreate.
-    for (const toolName of OFF_PEAK_MUTATION_TOOL_NAMES) {
-      tools.add(toolName);
-    }
-  }
-  return tools.size > 0 ? tools : null;
 }

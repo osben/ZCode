@@ -18,11 +18,13 @@ import {
 } from "../../tool/handlers/workflow-analysis-display.js";
 import { writeWorkflowDraft } from "../../tool/handlers/workflow-drafts.js";
 import { analyzeScript } from "../../tool/handlers/workflow-script-analysis.js";
+import { bindScriptModels } from "../../tool/handlers/workflow-script-models.js";
 import type { ExecutableToolCall } from "../../tool/types.js";
 import { uuidv7 } from "@zcode/shared";
 import { createMessageId, traceContextToLogContext } from "../deps.js";
 import type { AgentRuntimeInternal } from "../internal.js";
 import { emitControlOnlyUserTurn, persistWorkflowLaunchUserMessage } from "./control-only-turn.js";
+import { activateDynamicWorkflowTools } from "./dynamic-workflow-activation.js";
 
 /**
  * Structured result from `startSavedWorkflowRun`. On success, it provides the two run
@@ -135,16 +137,21 @@ export async function startSavedWorkflowRun(
   // that do not compile (launching a run that is certain to fail only delays the same
   // error). Include diagnostics in a bounded message.
   const analysis = analyzeScript(found.script);
-  if (!analysis.ok || analysis.diagnostics.length > 0) {
+  // Resolve script-named models with the same code as CreateWorkflow (docs/dynamic-workflow/launch.md, “Models the script
+  // names”); reject unbound names as 9011 alongside compile diagnostics under compile_failed.
+  const models = analysis.ok ? bindScriptModels(analysis, this.modelCatalogPort) : undefined;
+  const diagnostics = [...analysis.diagnostics, ...(models?.unbound ?? [])];
+  if (!analysis.ok || diagnostics.length > 0) {
     return {
       ok: false,
       reason: "compile_failed",
       message: boundedCompileDiagnostics(
         `The saved workflow '${found.name}' has errors:`,
-        analysis.diagnostics,
+        diagnostics,
       ),
     };
   }
+  const modelSelections = models?.selections;
 
   // —— No side effects up to this point: no run, message, event, or task. ——
 
@@ -162,6 +169,9 @@ export async function startSavedWorkflowRun(
   // receiving a rejected ACK.
   await this.ensureContextInitialized(traceContext);
   await this.ensureSessionPersisted(found.name, traceContext);
+  // A direct start activates the tool surface (launch.md, “On demand: activation”): the notification after the start turn tells the model to call
+  // GetWorkflowRun. Do this after persistence so the entry has a session to attach to.
+  await activateDynamicWorkflowTools.call(this, { source: "run_control", traceContext });
 
   // (3) toolCallId: the `launch-` prefix distinguishes it in logs and tool cards from model tool-call ids (`tool_*`) and resume rearming.
   const toolCallId = `launch-${randomUUID()}`;
@@ -199,6 +209,7 @@ export async function startSavedWorkflowRun(
       launchInputId,
       ...(phaseNames === undefined ? {} : { phaseNames }),
       ...(phaseAlongside === undefined ? {} : { phaseAlongside }),
+      ...(modelSelections === undefined ? {} : { modelBindings: modelSelections }),
       ...(draft === undefined ? {} : { scriptPath: draft.path }),
       trace: traceContext,
     });

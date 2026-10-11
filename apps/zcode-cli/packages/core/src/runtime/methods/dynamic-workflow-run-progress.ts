@@ -8,6 +8,7 @@ import {
   formatWorkflowStallNotification,
 } from "../../runtime-task/notification.js";
 import type { AgentRuntimeInternal } from "../internal.js";
+import { notifyHoleReached } from "./dynamic-workflow-run-hole-notification.js";
 
 /**
  * Appends a workflow run progress event to the **parent session** (the run has no session of its own).
@@ -37,6 +38,9 @@ export async function recordDynamicWorkflowRunProgress(
   );
   notifyEscalationRaised.call(this, payload, traceContext);
   notifyRunStalled.call(this, payload, traceContext);
+  // Hole notifications (dynamic-workflow-run-hole-notification.ts) need a snapshot to add types / draft / surrounding phases, making this
+  // the only asynchronous path among the three; the event is already persisted, so this only waits for the notification to enqueue.
+  await notifyHoleReached.call(this, payload, traceContext);
 }
 
 /** Event type for run-level stalls (the engine's `RunEvent.type`). */

@@ -14,7 +14,7 @@ import type { TuiListWorkflowRuns, TuiReplayWorkflowRuns, TuiWorkflowRunSummary 
 import type { TuiWorkflowRunSeed } from "./app-workflow-mirror.js";
 
 /** Convert a summary to a seed entry. Copy only display facts from the server and preserve missing values (do not invent a label). */
-function workflowRunSeedFromSummary(summary: TuiWorkflowRunSummary): TuiWorkflowRunSeed {
+export function workflowRunSeedFromSummary(summary: TuiWorkflowRunSummary): TuiWorkflowRunSeed {
   return {
     runId: summary.runId,
     ...(summary.label === undefined ? {} : { label: summary.label }),
@@ -23,7 +23,7 @@ function workflowRunSeedFromSummary(summary: TuiWorkflowRunSummary): TuiWorkflow
 }
 
 /** Notice text for one run. Fall back to runId when label is missing; a list with one fewer label is degraded, not erroneous. */
-function workflowInterruptedNoticeText(seed: TuiWorkflowRunSeed, copy: TuiCopy): string {
+export function workflowInterruptedNoticeText(seed: TuiWorkflowRunSeed, copy: TuiCopy): string {
   return copy.transcript.workflow.interruptedNotice({
     label: seed.label ?? seed.runId,
     runId: seed.runId,
@@ -35,7 +35,7 @@ function workflowInterruptedNoticeText(seed: TuiWorkflowRunSeed, copy: TuiCopy):
  *
  * Use a system line instead of fabricating a user line; this is not something the user said.
  */
-function appendWorkflowInterruptedNotices(
+export function appendWorkflowInterruptedNotices(
   messages: Message[],
   seeds: readonly TuiWorkflowRunSeed[],
   copy: TuiCopy,
@@ -56,7 +56,7 @@ function appendWorkflowInterruptedNotices(
  * **Intentionally do not sort**: `updatedAt` is display-only, and the port comment explicitly forbids the read side from reordering by it.
  * Sorting belongs to storage (most recently updated first); sorting again on the read side could drift from the server's tie-break.
  */
-function interruptedWorkflowNotices(
+export function interruptedWorkflowNotices(
   summaries: readonly TuiWorkflowRunSummary[],
 ): readonly TuiWorkflowRunSeed[] {
   return summaries.filter((summary) => summary.resumable === true).map(workflowRunSeedFromSummary);

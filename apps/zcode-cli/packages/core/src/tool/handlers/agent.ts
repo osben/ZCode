@@ -16,7 +16,6 @@ import {
 } from "@zcode/contracts";
 import { TASK_TOOL_NAME } from "../compat.js";
 import type { ToolEntry, ToolHandler } from "../types.js";
-import { formatAgentProfilesForPrompt, type AgentProfile } from "../../subagent/profile.js";
 
 const MAX_AGENT_MODEL_BYTES = 120_000;
 
@@ -90,19 +89,13 @@ const AGENT_TOOL_OUTPUT_SCHEMA = {
  */
 function buildAgentProviderDescription(
   options: {
-    embeddedSearchEnabled?: boolean;
-    profiles?: readonly AgentProfile[];
     dynamicWorkflowEnabled?: boolean;
   } = {},
 ): string {
-  const agentList = formatAgentProfilesForPrompt(options.profiles ?? [], {
-    embeddedSearchEnabled: options.embeddedSearchEnabled,
-  });
-
   return [
     "Launch a new agent to handle complex, multi-step tasks. Each agent type has specific capabilities and tools available to it.",
     "",
-    agentList,
+    "Available agent types are listed in <system-reminder> messages in the conversation.",
     "",
     "When using the Agent tool, specify a subagent_type parameter to select which agent type to use. If omitted, the general-purpose agent is used.",
     "",
@@ -111,9 +104,9 @@ function buildAgentProviderDescription(
     "Reach for this when the task matches an available agent type, when you have independent work to run in parallel, or when answering would mean reading across several files — delegate it and you keep the conclusion, not the file dumps. For a single-fact lookup where you already know the file, symbol, or value, search directly. Once you've delegated a search, don't also run it yourself — wait for the result.",
     "",
     "- The agent's final message is returned to you as the tool result; it is not shown to the user — relay what matters.",
-    "- A new Agent call starts fresh, so the prompt must be self-contained.",
+    "- Use SendMessage with the agent's ID to continue a previously spawned agent with its context intact; a new Agent call starts fresh.",
+    "- Each agent type's model, reasoning effort, and tools come from its definition (`.zcode/agents/*.md` frontmatter).",
     "- `run_in_background: true` runs the agent asynchronously; you'll be notified when it completes.",
-    "- When you launch multiple agents for independent work, send them in a single message with multiple tool uses so they run concurrently.",
     // Keep only the case where the user explicitly names a workflow: workflows are always triggered by an explicit user request,
     // consistent with the rest of the system prompt. Do not assign multi-agent orchestration that feeds each result into the next step
     // to CreateWorkflow; that would let the model choose a workflow without the user asking.
@@ -317,9 +310,7 @@ function createTaskToolEntryFromAgent(entry: ToolEntry): ToolEntry {
 }
 
 export function createAgentToolEntry(
-  _options: {
-    embeddedSearchEnabled?: boolean;
-    profiles?: readonly AgentProfile[];
+  options: {
     /** See buildAgentProviderDescription: defaults to true; remove the workflow line only when explicitly disabled for rollout. */
     dynamicWorkflowEnabled?: boolean;
   } = {},
@@ -328,15 +319,13 @@ export function createAgentToolEntry(
     ...agentToolEntry,
     metadata: {
       ...agentToolEntry.metadata,
-      description: buildAgentProviderDescription(_options),
+      description: buildAgentProviderDescription(options),
     },
   };
 }
 
 export function createTaskToolEntry(
   options: {
-    embeddedSearchEnabled?: boolean;
-    profiles?: readonly AgentProfile[];
     /** Task is a compatibility alias for Agent and embeds the full Agent description, so pass the same gate through. */
     dynamicWorkflowEnabled?: boolean;
   } = {},

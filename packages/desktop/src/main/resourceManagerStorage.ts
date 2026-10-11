@@ -56,7 +56,7 @@ function bindSubscriber(event: IpcMainInvokeEvent): void {
 }
 
 /** Pure function: resolve paths only within a data root so the renderer cannot make the system file manager open an arbitrary path. */
-function isPathInsideStorageRoots(absolutePath: string, roots: StorageRootSpec[]): boolean {
+export function isPathInsideStorageRoots(absolutePath: string, roots: StorageRootSpec[]): boolean {
   const target = resolve(absolutePath);
   return roots.some((root) => {
     const back = relative(resolve(root.path), target);

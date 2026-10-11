@@ -112,6 +112,10 @@ export function RemoteConnectionDialog({
     wslUser,
     dockerContainer,
     manualDockerContainer,
+    serverUrl,
+    serverName,
+    serverToken,
+    serverWorkspacePath,
     sshConfigAliases,
     sshConfigAliasesLoading,
     sshConfigAliasesError,
@@ -133,6 +137,10 @@ export function RemoteConnectionDialog({
     setWslUser,
     setDockerContainer,
     setManualDockerContainer,
+    setServerUrl,
+    setServerName,
+    setServerToken,
+    setServerWorkspacePath,
     refreshDockerContainers,
     applySshConfigAlias,
     clearSelectedSshConfigAlias,
@@ -328,6 +336,10 @@ export function RemoteConnectionDialog({
       wslUser,
       dockerContainer,
       manualDockerContainer,
+      serverUrl,
+      serverName,
+      serverToken,
+      serverWorkspacePath,
     });
     if (!nextTarget) {
       // Missing required fields are a form-validation issue and should not use the destructive error style for an actual connection failure.
@@ -526,6 +538,10 @@ export function RemoteConnectionDialog({
                     wslDistros={wslDistros}
                     dockerContainer={dockerContainer}
                     manualDockerContainer={manualDockerContainer}
+                    serverUrl={serverUrl}
+                    serverName={serverName}
+                    serverToken={serverToken}
+                    serverWorkspacePath={serverWorkspacePath}
                     dockerContainers={dockerContainers}
                     dockerAvailable={dockerAvailable}
                     sshConfigAliases={sshConfigAliases}
@@ -553,6 +569,10 @@ export function RemoteConnectionDialog({
                     onWslUserChange={setWslUser}
                     onDockerContainerChange={setDockerContainer}
                     onManualDockerContainerChange={setManualDockerContainer}
+                    onServerUrlChange={setServerUrl}
+                    onServerNameChange={setServerName}
+                    onServerTokenChange={setServerToken}
+                    onServerWorkspacePathChange={setServerWorkspacePath}
                     onDockerContainersRefresh={refreshDockerContainers}
                     onApplySshConfigAlias={applySshConfigAlias}
                     onClearSelectedSshConfigAlias={clearSelectedSshConfigAlias}

@@ -1,12 +1,14 @@
 // ============================================================
 // Ownership ledger for unlisted entries: how each `unlistedByPhase` cell is incremented, decremented, and removed.
 // ============================================================
-// This module contains pure functions and reads no clock or performs I/O. Eviction rules determine who leaves the table; this module maintains the per-phase counts afterward.
+// Split out of workflow-runs-eviction.ts (the main file's max-lines gate), under the same
+// discipline: pure functions, no clock, no I/O. Eviction describes "who leaves the table"; this
+// module describes "how it is still counted after leaving".
 //
-// The read side is drawn by **site**: a site's
-// roster, count ring, and "N more" must each add back the unlisted entries from their own cell. The two run-level counters
-// (workflow-runs-caps.ts) say how many entries a run omitted in total, but not which site omitted them — this cell table fills
-// that gap.
+// The read side is drawn by **site** (docs/dynamic-workflow/presentation.md "Past six
+// participants"): a site's roster, count ring, and "N more" must each add back the unlisted entries
+// from their own cell. The two run-level counters (workflow-runs-caps.ts) say how many entries a
+// run omitted in total, but not which site omitted them — this cell table fills that gap.
 //
 // The four values in each cell answer different questions; all describe **the current state** (not historical totals):
 //   - `actors`: how many subagents from this birth phase are **currently absent from the table**, whether rejected, evicted, or
@@ -16,13 +18,19 @@
 //   - `settled`: number of **settled nodes** omitted from this cell.
 // Drop a cell when all four values are zero; when the last cell is dropped, remove the entire key, following this family's "omit when empty" convention.
 //
-// After every change, clamp the cell so `actorsFailed ≤ actorsSettled ≤ actors`. This is the cell's **invariant**, not
-// a patch: this rule is what lets `actorsSettled` both increase and decrease. It must be able to decrease — a subagent may look "completed" between two
-// asks, so eviction marks it as settled; its next dispatch then returns it to the table. This cell does not record **which** subagent returned, so decrementing
-// `actorsSettled` at activation would require guessing, and a wide fan-out makes that guess wildly inaccurate: hundreds of subagents in the phase may have been **rejected at birth**
-// and never settled; each returning entry would subtract from a counter that does not belong to it. Clamping is wrong only when a cell is crowded, and only
-// temporarily — the settled marker from the returning completed subagent is effectively attributed to another unlisted subagent in the same phase until that cell
-// drains; as subagents return to the table, each phase's count corrects itself. The two run-level counters remain exact throughout.
+// After every change, clamp the cell so `actorsFailed ≤ actorsSettled ≤ actors`. This is the cell's
+// **invariant**, not a patch: this rule is what lets `actorsSettled` both increase and decrease. It
+// must be able to decrease — a subagent may look "completed" between two asks, so eviction marks it
+// as settled; its next dispatch then returns it to the table (this section once said actorsSettled
+// "only ever increases, because a settled subagent is never dispatched back onto the table," which
+// was wrong for subagents with multiple asks). But this cell cannot remember **which** subagent
+// returned, so decrementing `actorsSettled` at activation would require guessing, and a wide
+// fan-out makes that guess wildly inaccurate: hundreds of subagents in the phase may have been
+// **rejected at birth** and never settled; each returning entry would subtract from a counter that
+// does not belong to it. Clamping is wrong only when a cell is crowded, and only temporarily — the
+// settled marker from the returning completed subagent is effectively attributed to another
+// unlisted subagent in the same phase until that cell drains; as subagents return to the table, each
+// phase's count corrects itself. The two run-level counters remain exact throughout.
 
 import type { WorkflowRunState, WorkflowRunUnlistedPhase } from "./workflow-runs.js";
 

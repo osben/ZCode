@@ -3,12 +3,7 @@ import { randomUUID } from "node:crypto";
 import { basename } from "node:path";
 import armsRum from "@arms/rum-electron";
 import { ZCODE_AGENT_LIFECYCLE_LOG_MARKER } from "@zcode/shared/process-diagnostic";
-import {
-  ZCODE_ARMS_RUM_ENDPOINT,
-  ZCODE_VERSION,
-  ZCODE_TELEMETRY_ENABLED,
-  mapZCodeEnvToArmsRumEnv,
-} from "@zcode/shared";
+import { ZCODE_ARMS_RUM_ENDPOINT, ZCODE_VERSION, mapZCodeEnvToArmsRumEnv } from "@zcode/shared";
 import { ARMS_BROWSER_COLLECTORS, parseArmsViewName } from "../shared/armsRumShared.js";
 import { redactArmsEventBatch } from "./armsEventRedaction.js";
 import { ensureDesktopDeviceMidSync } from "./desktopDeviceMid.js";
@@ -172,107 +167,101 @@ armsRum.client.useReporter = (reporter) => {
   });
   useReporter(reporter);
 };
-function startArmsRum(): Promise<void> {
-  return armsRum
-    .init({
-      enable: true,
+export const armsInitPromise = armsRum
+  .init({
+    enable: ZCODE_ARMS_RUM_ENDPOINT !== "",
+    version: ZCODE_VERSION,
+    endpoint: ZCODE_ARMS_RUM_ENDPOINT,
+    env: armsRumEnv,
+    // The SDK injects Browser SDK through executeJavaScript at dom-ready; do not initialize it again in preload/renderer or events will be collected twice.
+    autoInject: true,
+    browserCollectors: { ...ARMS_BROWSER_COLLECTORS },
+    app: {
+      name: runtimeApplicationName,
       version: ZCODE_VERSION,
-      endpoint: ZCODE_ARMS_RUM_ENDPOINT,
       env: armsRumEnv,
-      // The SDK injects Browser SDK through executeJavaScript at dom-ready; do not initialize it again in preload/renderer or events will be collected twice.
-      autoInject: true,
-      browserCollectors: { ...ARMS_BROWSER_COLLECTORS },
-      app: {
-        name: runtimeApplicationName,
-        version: ZCODE_VERSION,
-        env: armsRumEnv,
-        type: "electron",
-        framework: "react",
-      },
-      user: {
-        name: armsDeviceMid,
-      },
-      // Session sampling must be 1; otherwise ARMS drops session-wide events such as PV/perf/webvitals by default (at 0.1 in development, about 90% of page-performance events are lost).
-      sessionConfig: {
-        sampleRate: 1,
-      },
-      // Electron desktop performs full-page loads from file:// / dev-server with no History routing; false enables the SDK's default full-page-load performance collection.
-      spaMode: false,
-      parseViewName: parseArmsViewName,
-      collectors: {
-        jsError: true,
-        consoleError: true,
-        crash: true,
-        application: true,
-        api: true,
-        rpc: true,
-      },
-      // Main-process collectors run on the Electron side; renderer-side collectors are configured by browserCollectors + autoInject.
-      // SDK tracing.sample ranges from 0–100 percent; 0.1 means 0.1% sampling and is rarely triggered.
-      tracing: {
-        enable: true,
-        sample: armsRumEnv === "prod" ? 0.1 : 1,
-      },
-      // HTTP end-to-end timings come from ARMS API batches; ingest in production and local runs, and print batch summaries locally.
-      beforeReport: (payload: { events?: Array<Record<string, unknown>> }) => {
-        // Bugfix: the crash collector scans a shared dump directory, which may also contain dumps
-        // from external descendant processes. Keep only native crashes containing the current
-        // product executable; filtering examines existing batch metadata and adds no I/O.
-        const events = filterAndEnrichNativeCrashEvents(
-          // Do not collect local error logs again as console JS exceptions when they already have a
-          // structured lifecycle report. Filter only explicitly marked wrapped events, preserving
-          // real uncaughtException events and other console.error calls.
-          (payload?.events ?? []).filter(
-            (event) =>
-              !(
-                event.event_type === "exception" &&
-                event.type === "error" &&
-                event.source === "console.error" &&
-                typeof event.message === "string" &&
-                event.message.includes(ZCODE_AGENT_LIFECYCLE_LOG_MARKER)
-              ),
-          ),
-          runtimeApplicationName,
-          basename(process.execPath),
+      type: "electron",
+      framework: "react",
+    },
+    user: {
+      name: armsDeviceMid,
+    },
+    // Session sampling must be 1; otherwise ARMS drops session-wide events such as PV/perf/webvitals by default (at 0.1 in development, about 90% of page-performance events are lost).
+    sessionConfig: {
+      sampleRate: 1,
+    },
+    // Electron desktop performs full-page loads from file:// / dev-server with no History routing; false enables the SDK's default full-page-load performance collection.
+    spaMode: false,
+    parseViewName: parseArmsViewName,
+    collectors: {
+      jsError: true,
+      consoleError: true,
+      crash: true,
+      application: true,
+      api: true,
+      rpc: true,
+    },
+    // Main-process collectors run on the Electron side; renderer-side collectors are configured by browserCollectors + autoInject.
+    // SDK tracing.sample ranges from 0–100 percent; 0.1 means 0.1% sampling and is rarely triggered.
+    tracing: {
+      enable: true,
+      sample: armsRumEnv === "prod" ? 0.1 : 1,
+    },
+    // HTTP end-to-end timings come from ARMS API batches; ingest in production and local runs, and print batch summaries locally.
+    beforeReport: (payload: { events?: Array<Record<string, unknown>> }) => {
+      // Bugfix: the crash collector scans a shared dump directory, which may also contain dumps
+      // from external descendant processes. Keep only native crashes containing the current
+      // product executable; filtering examines existing batch metadata and adds no I/O.
+      const events = filterAndEnrichNativeCrashEvents(
+        // Do not collect local error logs again as console JS exceptions when they already have a
+        // structured lifecycle report. Filter only explicitly marked wrapped events, preserving
+        // real uncaughtException events and other console.error calls.
+        (payload?.events ?? []).filter(
+          (event) =>
+            !(
+              event.event_type === "exception" &&
+              event.type === "error" &&
+              event.source === "console.error" &&
+              typeof event.message === "string" &&
+              event.message.includes(ZCODE_AGENT_LIFECYCLE_LOG_MARKER)
+            ),
+        ),
+        runtimeApplicationName,
+        basename(process.execPath),
+      );
+      payload.events = events;
+      ingestArmsApiEventsFromBatch(events);
+      enrichLongTaskAttribution(events);
+      // Apply privacy redaction after ingest and attribution summaries: network aggregation uses
+      // its own interface-normalization rules, and longTask summaries need the original snapshots.
+      // Redact only the final copy that leaves the machine.
+      redactArmsEventBatch(events);
+      if (desktopRuntimeEnv === "development") {
+        const perfEvents = events.filter(
+          (event) => String(event.type ?? "").toLowerCase() === "perf",
         );
-        payload.events = events;
-        ingestArmsApiEventsFromBatch(events);
-        enrichLongTaskAttribution(events);
-        // Apply privacy redaction after ingest and attribution summaries: network aggregation uses
-        // its own interface-normalization rules, and longTask summaries need the original snapshots.
-        // Redact only the final copy that leaves the machine.
-        redactArmsEventBatch(events);
-        if (desktopRuntimeEnv === "development") {
-          const perfEvents = events.filter(
-            (event) => String(event.type ?? "").toLowerCase() === "perf",
-          );
-          const summary = events
-            .map((event) => {
-              const eventType = String(event.event_type ?? "?");
-              const subType = String(event.type ?? "");
-              const name = String(event.name ?? "");
-              if (subType === "perf") {
-                return `${eventType}:perf`;
-              }
-              return `${eventType}:${name || subType || "?"}`;
-            })
-            .join(", ");
-          logger.info(
-            `[arms] beforeReport batch=${events.length} perf=${perfEvents.length}${summary ? ` [${summary}]` : ""}`,
-          );
-        }
-        return payload;
-      },
-    })
-    .then(() => {
-      logger.info(`[arms] electron initialized env=${armsRumEnv} version=${ZCODE_VERSION}`);
-    })
-    .catch((error) => {
-      logger.error("[arms] electron init failed:", error);
-      throw error;
-    });
-}
-
-// Do not initialize the SDK when the master switch is off or no endpoint is configured.
-export const armsInitPromise: Promise<void> =
-  ZCODE_TELEMETRY_ENABLED && ZCODE_ARMS_RUM_ENDPOINT ? startArmsRum() : Promise.resolve();
+        const summary = events
+          .map((event) => {
+            const eventType = String(event.event_type ?? "?");
+            const subType = String(event.type ?? "");
+            const name = String(event.name ?? "");
+            if (subType === "perf") {
+              return `${eventType}:perf`;
+            }
+            return `${eventType}:${name || subType || "?"}`;
+          })
+          .join(", ");
+        logger.info(
+          `[arms] beforeReport batch=${events.length} perf=${perfEvents.length}${summary ? ` [${summary}]` : ""}`,
+        );
+      }
+      return payload;
+    },
+  })
+  .then(() => {
+    logger.info(`[arms] electron initialized env=${armsRumEnv} version=${ZCODE_VERSION}`);
+  })
+  .catch((error) => {
+    logger.error("[arms] electron init failed:", error);
+    throw error;
+  });

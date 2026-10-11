@@ -31,6 +31,7 @@ import { DataBaseDirControl } from "@/settings/DataBaseDirControl.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { useOptionalServices } from "@/hooks/useServices.js";
 import { ProactiveSuggestionsSetting } from "@/settings/ProactiveSuggestionsSetting.js";
+import { DynamicWorkflowModeSetting } from "@/settings/DynamicWorkflowModeSetting.js";
 import { normalizeInterfaceMode, type InterfaceMode } from "@/lib/interfaceMode.js";
 import {
   createSettingsPageConfig,
@@ -69,6 +70,8 @@ export function GeneralSectionContent({
   defaultHomeDir,
   isDesktop,
   isWindowsDesktop,
+  isLinuxDesktop,
+  linuxCloseToTray,
   showIntegratedTerminalShell = false,
   setLocalePreference,
   setNotificationEnabled,
@@ -133,6 +136,17 @@ export function GeneralSectionContent({
   defaultHomeDir: string;
   isDesktop?: boolean;
   isWindowsDesktop?: boolean;
+  /** Linux desktop (`isDesktop` and not Windows/macOS); show the close-to-tray setting based on capabilities. */
+  isLinuxDesktop?: boolean;
+  /** Linux close-to-tray capability state (spec: docs/desktop/linux-close-to-tray.md); omitted on Windows. */
+  linuxCloseToTray?: {
+    /** Capability is being detected or confirmed unavailable; lock the toggle. */
+    disabled: boolean;
+    /** Confirmed unavailable (description changes to “System tray not provided”). */
+    unavailable: boolean;
+    /** GNOME-based desktop without a tray (add a prompt to install the AppIndicator extension). */
+    gnomeLikeHint: boolean;
+  };
   showIntegratedTerminalShell?: boolean;
   platform?: IPlatformService;
   setLocalePreference: (locale: LocalePreference) => void;
@@ -654,15 +668,24 @@ export function GeneralSectionContent({
             />
           }
         />
-        {isWindowsDesktop ? (
+        {isWindowsDesktop || isLinuxDesktop ? (
           <SettingsRow
             label={intl.formatMessage({ id: "settings.closeToTrayOnWindows" })}
-            description={intl.formatMessage({
-              id: "settings.closeToTrayOnWindowsDescription",
-            })}
+            description={
+              linuxCloseToTray?.unavailable
+                ? linuxCloseToTray.gnomeLikeHint
+                  ? `${intl.formatMessage({ id: "settings.closeToTrayUnavailable" })} ${intl.formatMessage({ id: "settings.closeToTrayGnomeHint" })}`
+                  : intl.formatMessage({ id: "settings.closeToTrayUnavailable" })
+                : intl.formatMessage({
+                    id: "settings.closeToTrayOnWindowsDescription",
+                  })
+            }
             control={
               <Switch
                 checked={closeToTrayOnWindows}
+                // Lock the setting when Linux tray capability is unknown (still probing) or confirmed unavailable, so enabling it cannot make the window inaccessible after close.
+                //（spec：docs/desktop/linux-close-to-tray.md）。
+                disabled={Boolean(linuxCloseToTray?.disabled)}
                 onCheckedChange={(checked) => {
                   void onCloseToTrayOnWindowsChange(checked);
                 }}
@@ -739,6 +762,8 @@ export function GeneralSectionContent({
             />
           }
         />
+        {/* docs/dynamic-workflow/launch.md "The user's choice": the entire row is not rendered when the server does not provide it. */}
+        {hasServices ? <DynamicWorkflowModeSetting /> : null}
         <SettingsRow
           label={intl.formatMessage({ id: "settings.modelIoFullRetention" })}
           description={intl.formatMessage({

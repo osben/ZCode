@@ -4,6 +4,7 @@
 // One instance corresponds to one host connection; split views across workspaces use a shell-level
 // Map<workspaceKey, SessionDataLayer>; this layer is workspace-agnostic.
 import { ConversationProjectionStore } from "@/v4/conversationProjectionStore.js";
+import { ConversationRowPool } from "@/v4/conversationRowSharing.js";
 import { shouldExposeE2EStoreBridge } from "@/lib/e2eStoreBridge.js";
 import type { SessionOpenKind } from "@/lib/sessionOpenArmsTelemetry.js";
 import { conversationTopic, type ConversationTransport } from "@/v4/transport.js";
@@ -21,16 +22,16 @@ export interface SessionLease {
   release(): void;
 }
 
-interface SessionDataLayerOptions {
+export interface SessionDataLayerOptions {
   transport: ConversationTransport;
   /** Delayed-unsubscribe window after the reference count reaches zero (ms); 30s by default. */
   keepWarmMs?: number;
 }
 
-const SESSION_DATA_LAYER_KEEP_WARM_MS = 30_000;
-const E2E_SESSION_DATA_LAYER_KEEP_WARM_MS = 1_000;
+export const SESSION_DATA_LAYER_KEEP_WARM_MS = 30_000;
+export const E2E_SESSION_DATA_LAYER_KEEP_WARM_MS = 1_000;
 
-function resolveSessionDataLayerKeepWarmMs(
+export function resolveSessionDataLayerKeepWarmMs(
   e2eStoreBridgeEnabled = shouldExposeE2EStoreBridge(),
 ): number {
   return e2eStoreBridgeEnabled
@@ -52,6 +53,9 @@ export class SessionDataLayer {
   private readonly transport: ConversationTransport;
   private readonly keepWarmMs: number;
   private readonly entries = new Map<string, SessionEntry>();
+  // The shared row-structure pool outlives store instances: after keep-warm expires, a newly opened store can still reuse retained rows.
+  // （docs/performance/conversation-row-structural-sharing.md）。
+  private readonly rowPool = new ConversationRowPool();
   private readonly offFrame: () => void;
   private disposed = false;
 
@@ -85,7 +89,7 @@ export class SessionDataLayer {
         entry.keepWarmTimer = null;
       }
     } else {
-      const store = new ConversationProjectionStore(topic, this.transport);
+      const store = new ConversationProjectionStore(topic, this.transport, this.rowPool);
       entry = { store, refCount: 1, keepWarmTimer: null };
       this.entries.set(topic, entry);
       openKind = "cold";

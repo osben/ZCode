@@ -3,6 +3,9 @@ import type {
   CodingPlanResetType,
   UsageQuotaLimit,
 } from "@zcode/shared";
+
+// Animation duration for the progress bar to recover from its current usage to 100%; reuse the existing 500ms ease-out.
+export const CODING_PLAN_QUOTA_RESET_PROGRESS_DURATION_MS = 500;
 // How long to show the "quota reset" message before hiding it automatically (the quota bar remains at 100%).
 export const CODING_PLAN_QUOTA_RESET_DONE_DISPLAY_MS = 2_600;
 // For automatic/operational resets, briefly synthesize a "resetting" state on the Composer trigger, then switch to "reset".
@@ -12,7 +15,7 @@ const FIVE_HOURS_MS = 5 * 60 * 60 * 1_000;
 const WEEK_MS = 7 * 24 * 60 * 60 * 1_000;
 
 // Optimistically update the "next reset" interval after completion: 5 hours for the five-hour quota and 7 days for the weekly quota.
-function resolveCodingPlanQuotaResetDurationMs(resetType: CodingPlanResetType): number {
+export function resolveCodingPlanQuotaResetDurationMs(resetType: CodingPlanResetType): number {
   return resetType === "WEEK" ? WEEK_MS : FIVE_HOURS_MS;
 }
 
@@ -117,13 +120,23 @@ function createCompletedEntry(
   observedAt: number,
   manualStartedAt: number | null,
   nextResetMs: number,
+  remainingOpportunities: ReadonlyArray<{ expireAt: number }>,
 ): CodingPlanQuotaResetUiEntry {
   const isSameCompletion = previous?.status === "completed" && previous.completedAt === completedAt;
   return {
     status: "completed",
-    opportunityCount: 0,
-    opportunityExpiresAt: null,
-    // A manual click and completion history may be observed through different entry points. Relying only on processing for the current source
+    // Bugfix: the completed state used to clear the opportunity count and expiry. When multiple
+    // opportunities of the same type were held, consuming one left the remaining cards unavailable
+    // until the next status returned to available. During that interval, the dialog showed an empty
+    // expiry as “expires in 0m 0s,” and reset() silently ignored another click; reopening the dialog
+    // was required to correct it immediately. Completion and opportunity balance are independent
+    // dimensions of the same status snapshot, so preserve remaining valid opportunities here (the
+    // caller already sorts them by expiry). hasUsableCodingPlanQuotaResetOpportunity is the single
+    // check for whether another opportunity can be consumed.
+    opportunityCount: remainingOpportunities.length,
+    opportunityExpiresAt: remainingOpportunities[0]?.expireAt ?? null,
+    // Bugfix: manual clicks and completion history may be observed through different entry points.
+    // Relying only on processing from the current source
     // would make Composer misclassify a manual reset started on the settings page as automatic, showing the tooltip and confetti twice.
     // Reconciliation of the same completion history must preserve its original classification; a later poll must not reclassify it as automatic.
     startedAt: isSameCompletion
@@ -176,13 +189,23 @@ export function applyCodingPlanQuotaResetStatus(
   // completion message and correct the quota first, then yield on the next cycle after history/read. Processing reconciliation is also
   // unaffected: while opportunities remain, the manual /use confirmation loop must still see completed.
   const hasValidOpportunity = validOpportunities.length > 0;
+  // Bugfix: processing used to treat any non-empty used_at as success. When consuming another
+  // opportunity from COMPLETED (with N remaining), the pre-click baseline is the previous card's
+  // used_at. A stale status after /use (still showing the previous used_at, and possibly uncleared
+  // unread state) was mistaken for another success: the dialog showed success early, the balance
+  // remained stale, and the shared trace stayed at completedAt=null, causing the cross-entry
+  // duplicate-consumption guard to silently block the next click. During processing, accept only
+  // manualStartedAt from the manual flow (the hook returns it only when used_at differs from the
+  // pre-click baseline). Keep waiting when the baseline is read; after four reconciliations without
+  // a new used_at, let the hook recover as a failure.
   const shouldComplete = Boolean(
     latestUsedAt !== null &&
-    (ownsUnread ||
-      previous?.status === "processing" ||
-      ((manualStartedAt !== null ||
-        (previous?.status === "completed" && previous.completedAt === latestUsedAt)) &&
-        !hasValidOpportunity)),
+    (previous?.status === "processing"
+      ? manualStartedAt !== null
+      : ownsUnread ||
+        ((manualStartedAt !== null ||
+          (previous?.status === "completed" && previous.completedAt === latestUsedAt)) &&
+          !hasValidOpportunity)),
   );
   if (shouldComplete && latestUsedAt !== null) {
     return createCompletedEntry(
@@ -191,6 +214,7 @@ export function applyCodingPlanQuotaResetStatus(
       now,
       manualStartedAt,
       resolveCodingPlanQuotaResetDurationMs(resetType),
+      validOpportunities,
     );
   }
 
@@ -212,12 +236,49 @@ export function applyCodingPlanQuotaResetStatus(
   return null;
 }
 
+/**
+ * The single check for whether an opportunity can still be consumed: not processing, count > 0,
+ * and the earliest opportunity expires after now. It applies to both available and completed
+ * states with remaining opportunities; the badge, “Reset” action beside the title, dialog row, and
+ * reset() gate all use it instead of checking status === "available" independently.
+ */
+export function hasUsableCodingPlanQuotaResetOpportunity(
+  entry: CodingPlanQuotaResetUiEntry | null,
+  now: number,
+): boolean {
+  return Boolean(
+    entry &&
+    entry.status !== "processing" &&
+    entry.opportunityCount > 0 &&
+    entry.opportunityExpiresAt !== null &&
+    entry.opportunityExpiresAt > now,
+  );
+}
+
+/**
+ * Completion time for the action beside the quota title: return null while a consumable opportunity
+ * remains (show a clickable “Reset” action that opens the dialog); otherwise return completedAt
+ * (completed state shows “Reset”).
+ * Bugfix: after completed states began retaining remaining opportunities, passing entry.completedAt
+ * directly still made the title show “Reset” when same-type cards remained, preventing the user
+ * from reopening the dialog to consume them.
+ */
+export function resolveCodingPlanQuotaResetActionCompletedAt(controller: {
+  entry: CodingPlanQuotaResetUiEntry | null;
+  opportunityVisible: boolean;
+}): number | null {
+  return controller.opportunityVisible ? null : (controller.entry?.completedAt ?? null);
+}
+
 export function startCodingPlanQuotaResetManualUse(
   entry: CodingPlanQuotaResetUiEntry | null,
   idempotencyKey: string,
   now: number,
 ): CodingPlanQuotaResetUiEntry | null {
-  if (!entry || entry.status !== "available") {
+  // Remaining opportunities carried by completed can also be consumed directly (completed →
+  // processing). Its idempotencyKey was cleared on completion, and the code below uses a new key
+  // for this attempt rather than reusing the previous card's key.
+  if (!entry || !hasUsableCodingPlanQuotaResetOpportunity(entry, now)) {
     return entry;
   }
 
@@ -259,6 +320,13 @@ export function failCodingPlanQuotaResetManualUse(
     nextResetAt: null,
     error,
   };
+}
+
+export function resolveCodingPlanQuotaResetRemainingPercentage(
+  remainingPercentage: number | null,
+  entry: CodingPlanQuotaResetUiEntry | null,
+): number | null {
+  return entry?.status === "completed" && entry.quotaOverridePending ? 100 : remainingPercentage;
 }
 
 /** Combine opportunity badges for five-hour and weekly quotas: show one gift badge and add their counts. Use the earliest expiration among visible opportunities for the countdown; when one type expires or is hidden, fall back to the remaining type. This affects only the badge; reset buttons remain independent by type. */

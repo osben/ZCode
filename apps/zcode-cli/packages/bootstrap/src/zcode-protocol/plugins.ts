@@ -35,6 +35,7 @@ import {
   addZCodePluginMarketplace,
   configureZCodePlugin,
   describeZCodePlugin,
+  enrichCachedClaudeMarketplaceIconsForOverview,
   getZCodePluginsOverview,
   installZCodeMarketplacePlugin,
   removeZCodePluginMarketplace,
@@ -175,13 +176,15 @@ function createMissingConfiguredPluginInfos(
         rootPath: "",
         packageStatus: "missing",
         ...(enabledSource ? { enabledSource } : {}),
-        ...(optionSources && Object.keys(optionSources).length > 0 ? { optionSources } : {}),
+        ...(optionSources && Object.keys(optionSources).length > 0
+          ? { optionSources }
+          : {}),
       },
     ];
   });
 }
 
-function normalizePluginRootForComparison(
+export function normalizePluginRootForComparison(
   rootPath: string,
   platform: NodeJS.Platform = process.platform,
 ): string {
@@ -189,7 +192,9 @@ function normalizePluginRootForComparison(
   // Windows paths are case-insensitive, and config and loader may return forward and backward
   // slashes respectively. A direct string comparison would incorrectly treat the same Workspace
   // plugins.dirs root as unowned.
-  return platform === "win32" ? resolvedRoot.replaceAll("\\", "/").toLowerCase() : resolvedRoot;
+  return platform === "win32"
+    ? resolvedRoot.replaceAll("\\", "/").toLowerCase()
+    : resolvedRoot;
 }
 
 function toPluginDiagnostic(diagnostic: PluginDiagnostic): ZCodePluginDiagnostic {
@@ -216,7 +221,9 @@ export async function listPlugins(
     logger: context.logger,
     workingDirectory: params.workspace.workspacePath,
   });
-  const plugins = outcome.plugins.map((plugin) => toPluginInfo(plugin, configResult));
+  const plugins = outcome.plugins.map((plugin) =>
+    toPluginInfo(plugin, configResult),
+  );
   return {
     plugins: [
       ...plugins,
@@ -260,6 +267,10 @@ export async function getPluginsOverview(
   rawParams: unknown,
 ): Promise<ZCodePluginsOverviewResult> {
   const params = parseParams(zcodePluginsOverviewParamsSchema, rawParams);
+  enrichCachedClaudeMarketplaceIconsForOverview({
+    logger: context.logger,
+    workingDirectory: params.workspace.workspacePath,
+  });
   const overview = getZCodePluginsOverview({
     configResult: createPluginConfigView(
       context,

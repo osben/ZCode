@@ -50,7 +50,7 @@ function resolveLegacyProviderApiType(
 }
 
 /** Migrate explicit Provider definitions from the legacy CLI user file to the new Personal Overlay. */
-function importLegacyCliPersonalProviderConfig(
+export function importLegacyCliPersonalProviderConfig(
   input: LegacyCliPersonalProviderConfigImportInput,
 ): ProviderConfigLayerUpdate {
   const runtimePatch = parseLegacyCliModelConfig(input.input);
@@ -146,7 +146,7 @@ export async function readLegacyCliPersonalProviderConfig(input: {
 }
 
 /** Migrate only the main model in the legacy CLI user file as the Environment default selection. */
-function importLegacyCliConfiguredDefault(input: unknown): ModelSelection | null {
+export function importLegacyCliConfiguredDefault(input: unknown): ModelSelection | null {
   const main = parseLegacyCliModelConfig(input).model?.main;
   if (!main || main.provider === RETIRED_ZAPI_PROVIDER_ID) return null;
   return Object.freeze({

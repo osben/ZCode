@@ -8,6 +8,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button.js";
+import { Switch } from "@/components/ui/switch.js";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -40,7 +41,7 @@ export interface PluginStoreActions {
   togglingPluginId: string | null;
 }
 
-function isItemBusy(item: StorePluginItem, actions: PluginStoreActions): boolean {
+export function isItemBusy(item: StorePluginItem, actions: PluginStoreActions): boolean {
   return (
     actions.operationId === `plugin:install:${item.name}@${item.marketplace}` ||
     actions.operationId === `plugin:restore:${item.id}` ||
@@ -80,6 +81,34 @@ export function PluginStorePaidPlanBadge({
         {badgeLabel}
       </span>
     </ControlHintTooltip>
+  );
+}
+
+/** Plugin-level enable/disable switch for detail and management views; compact store cards keep only the “…” menu. */
+export function PluginStoreEnabledSwitch({
+  item,
+  actions,
+}: {
+  item: StorePluginItem;
+  actions: PluginStoreActions;
+}) {
+  const { intl } = useZCodeIntl();
+  if (!item.info || !actions.onSetEnabled) return null;
+  const enabled = item.info.enabled;
+  return (
+    <Switch
+      data-testid="plugin-store-enabled-switch"
+      data-plugin-id={item.id}
+      checked={enabled}
+      disabled={actions.togglingPluginId === item.id}
+      aria-label={
+        enabled
+          ? intl.formatMessage({ id: "settings.plugins.store.menu.disable" })
+          : intl.formatMessage({ id: "settings.plugins.store.menu.enable" })
+      }
+      onClick={(event) => event.stopPropagation()}
+      onCheckedChange={(checked) => actions.onSetEnabled?.(item.id, checked)}
+    />
   );
 }
 
@@ -345,9 +374,9 @@ export function PluginStoreCard({
         {item.installed ? (
           <>
             <PluginStoreUpdateButton item={item} actions={actions} />
-            {/* A previous bad suppression write may leave only an installation record with no
-                    runtime info. Keep the Uninstall menu available so users can remove the record
-                    and stale suppression entry. */}
+            {/* Bugfix: a previous bad suppression write may leave only an installation record with
+                no runtime info. Keep the Uninstall menu available so users can remove the record
+                and the stale suppression entry. */}
             <PluginStoreItemMenu item={item} actions={actions} />
           </>
         ) : (

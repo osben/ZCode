@@ -48,14 +48,19 @@ export class SubagentContextBuilder extends ContextBuilder {
     const orderedSections = orderSubagentSections(sections);
     const totalChars = orderedSections.reduce((sum, section) => sum + section.chars, 0);
     const totalTokens = orderedSections.reduce((sum, section) => sum + section.tokens, 0);
-    const systemMessages = orderedSections
-      .filter((section) => section.injectionTarget === "system")
+    const systemSections = orderedSections.filter(
+      (section) => section.injectionTarget === "system",
+    );
+    // Marking each segment separately exhausts the cache-breakpoint budget and drops the marker at the end of the conversation; preserve each segment's newlines when joining the text.
+    const systemMessages = [
+      systemSections.filter((section) => section.source === "cli_prefix"),
+      systemSections.filter((section) => section.source !== "cli_prefix"),
+    ]
+      .filter((group) => group.length > 0)
       .map(
-        (section): ModelInputMessage => ({
+        (group): ModelInputMessage => ({
           role: "system",
-          content: section.content,
-          // The subagent context builder bypasses ContextBuilder's main system assembly,
-          // so retain a provider cache breakpoint on each stable child system prompt section.
+          content: group.map((section) => section.content).join(""),
           cacheControl: EPHEMERAL_CACHE_CONTROL,
         }),
       );

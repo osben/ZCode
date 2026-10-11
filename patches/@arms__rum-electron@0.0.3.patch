@@ -3,12 +3,12 @@ index d26925cd014c42b6c6d470f9d2d4d75196203339..ce203cba549db3b21cddf71bb7a2c741
 --- a/dist/index.mjs
 +++ b/dist/index.mjs
 @@ -505,6 +505,48 @@ const p = /* @__PURE__ */ new WeakMap(), _ = class _ {
- /** Initialization window duration (ms), used to combine framework route redirects. */
+ /** 初始化窗口期时长(ms)，用于合并框架路由重定向 */
  F(_, "INITIAL_LOAD_WINDOW_MS", 200);
  let kA = _;
-+// ZCode 修复：main logger 把公共前缀、业务消息和上下文作为多个 console.error 参数传入。
-+// SDK 原先只采第一个参数，导致 ARMS 里只剩 [timestamp] [pid] [source]，完全丢失错误正文。
-+// 采集边界统一去前缀、安全序列化、脱敏和截断，避免为了监控改坏 console 的原生多参数语义。
++// ZCode fix: the main logger passes the shared prefix, business message, and context as separate console.error arguments.
++// The SDK previously captured only the first argument, so ARMS showed only [timestamp] [pid] [source] and lost the error body.
++// The boundary now uniformly strips prefixes, serializes safely, redacts, and truncates, without breaking console's native multi-argument semantics.
 +const zcodeConsoleErrorMaxLength = 2e3;
 +const zcodeMainLogPrefixPattern = /^\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3}\]\s+\[pid:\d+\]\s+\[[a-z][a-z0-9_-]*\]\s*$/;
 +const zcodeConsoleSensitiveKeyPattern = /(?:api[-_]?key|authorization|cookie|credential|password|secret|token)/i;
@@ -71,9 +71,9 @@ index d26925cd014c42b6c6d470f9d2d4d75196203339..ce203cba549db3b21cddf71bb7a2c741
    const A = await LQ(I, null);
    return JSON.parse(A);
  }
-+// ZCode 修复：旧版 WASM 没有透传 Crashpad 进程角色。minidump 还包含任意内存片段，
-+// 因此不能全文件搜索 process_type 字节；必须从 Crashpad info stream 沿 RVA 读取结构化
-+// annotation，避免 renderer 内存里的同名字节被误判成 browser 并污染 Native Crash 指标。
++// ZCode fix: the legacy WASM build did not forward the Crashpad process role. Minidumps also contain arbitrary memory fragments,
++// so process_type bytes must not be searched across the whole file; read the structured annotations from the Crashpad info stream
++// via RVA instead, so identically named bytes in renderer memory are not misread as browser and do not pollute Native Crash metrics.
 +const zcodeCrashpadInfoStreamType = 1129316353;
 +function zcodeHasDumpRange(I, A, Q) {
 +  return Number.isSafeInteger(A) && Number.isSafeInteger(Q) && A >= 0 && Q >= 0 && A <= I.length - Q;

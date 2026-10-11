@@ -56,6 +56,7 @@ export function GroupItem({
   activeWorkspacePath,
   activeWorkspaceIdentity,
   activeTaskId,
+  mobileActiveTaskKey,
   getTaskRemoteSessionId,
   getTaskWorkspaceLabel,
   onSelectTask,
@@ -88,6 +89,7 @@ export function GroupItem({
   activeWorkspacePath: string;
   activeWorkspaceIdentity?: string;
   activeTaskId: string | null;
+  mobileActiveTaskKey?: string | null;
   getTaskRemoteSessionId: (task: ZCodeTaskMeta) => string | undefined;
   getTaskWorkspaceLabel: (task: ZCodeTaskMeta) => string;
   onSelectTask: (workspacePath: string, taskId: string, workspaceIdentity?: string) => void;
@@ -672,7 +674,7 @@ export function GroupItem({
         )}
       >
         <div className="min-h-0 overflow-hidden">
-          {/* Collapsed grouped-task content no longer uses Radix Collapsible.
+          {/* Bugfix: collapsed grouped-task content no longer uses Radix Collapsible.
                 Radix Presence and height variables replay animations during frequent mounts. Use a locally controlled container here,
                 and unmount the group’s tasks after the collapse animation. */}
           {shouldRenderGroupContent ? (
@@ -699,6 +701,7 @@ export function GroupItem({
                     activeWorkspacePath={activeWorkspacePath}
                     activeWorkspaceIdentity={activeWorkspaceIdentity}
                     activeTaskId={activeTaskId}
+                    mobileActiveTaskKey={mobileActiveTaskKey}
                     onSelectTask={onSelectTask}
                     onCloseTask={onCloseTask}
                     onOpenFileTree={onOpenFileTree}
@@ -726,6 +729,7 @@ export function GroupItem({
                       activeWorkspacePath={activeWorkspacePath}
                       activeWorkspaceIdentity={activeWorkspaceIdentity}
                       activeTaskId={activeTaskId}
+                      mobileActiveTaskKey={mobileActiveTaskKey}
                       onSelectTask={onSelectTask}
                       onCloseTask={onCloseTask}
                       onOpenFileTree={onOpenFileTree}

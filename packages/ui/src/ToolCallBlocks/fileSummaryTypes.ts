@@ -1,3 +1,4 @@
+import type { PluginUiToolBinding } from "@/plugin-ui/contract.js";
 import type { ReactNode } from "react";
 import type { WorkflowRunState } from "@zcode/shared/zcode-protocol-v4";
 import type { MessageFileLinkTarget } from "@/components/ai-elements/message.js";
@@ -205,6 +206,12 @@ export interface ToolCallBlockRenderContext {
   toolCallNode: TaskChatToolCallTreeNode;
   workspacePath: string;
   /**
+   * Plugin UI: scope is the session scope required for sandbox registration; onOpenSidePane is the
+   * “open in side pane” callback. Both are injected at the boundary by PluginUiSessionProvider.
+   * When absent, the host does not provide them, and tools with ui:// resources fall back to regular MCP cards.
+   */
+  pluginUi?: PluginUiToolBinding;
+  /**
    * App theme (store coupling removed): passed from higher-level state by the host building render context
    * (ToolCallBlock / PermissionDialog, etc.) so display components such as MessageResponse / EditInlineDiffContent
    * can select light/dark styling. Display components fall back to "system" when omitted.
@@ -216,6 +223,8 @@ export interface ToolCallBlockRenderContext {
   viewerSource: CodeViewerSource | null;
   rawFileSummaries: RawToolCallFileSummary[];
   isRunning: boolean;
+  /** Permission preview has not executed; show neither output nor an empty-output placeholder. */
+  isPermissionPreview?: boolean;
   statusLabel: string;
   sourceLabel?: string;
   errorText?: string;

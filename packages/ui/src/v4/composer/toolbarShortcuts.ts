@@ -23,8 +23,8 @@ import { logger } from "@/logger.js";
 
 type ChatToolbarShortcutKey = "m" | "ctrlShiftM" | "t" | null;
 
-/** Resolves a toolbar shortcut slot by config category. */
-function getChatToolbarShortcutKey(
+/** Restore the previous chatInputControlShortcuts.getChatToolbarShortcutKey behavior unchanged. */
+export function getChatToolbarShortcutKey(
   category: ZCodeConfigOption["category"],
 ): ChatToolbarShortcutKey {
   switch (category) {
@@ -82,7 +82,7 @@ type ToolbarShortcutAction = "openModelMenu" | "cycleSessionMode" | "cycleThough
  * Key matching uses the core command table + matcher with exact modifier matching, consistent with the old matchesCtrlShortcut behavior
  * for "Ctrl+m" / "Ctrl+Shift+m" / "Ctrl+t". Existing option ownership and disabled gates remain unchanged. The caller passes the event and effective keymap, so this pure function is independently testable.
  */
-function resolveToolbarShortcutAction(
+export function resolveToolbarShortcutAction(
   event: ToolbarShortcutKeyboardEvent,
   effective: EffectiveShortcutBindings,
   {

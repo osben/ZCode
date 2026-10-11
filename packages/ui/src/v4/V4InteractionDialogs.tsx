@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ZCodeElicitationRequest, ZCodePermissionOption, ZCodeProvider } from "@zcode/shared";
 import type { ConversationSnapshot } from "@zcode/shared/zcode-protocol-v4";
 import { ElicitationDialog } from "@/ElicitationDialog.js";
 import { PermissionDialog } from "@/PermissionDialog.js";
+import { workflowSessionModelOf } from "@/components/workflow-timeline/workflowRunSettings.js";
 import { useOptionalPlatform } from "@/hooks/usePlatform.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { usePendingInteractionTaskNotifications } from "@/hooks/useTaskNotifications.js";
@@ -26,25 +27,26 @@ import {
 import { V4UserInputDialog } from "@/v4/V4UserInputDialog.js";
 import { useV4Conversation } from "@/v4/V4ConversationContext.js";
 
-interface V4InteractionDialogsProps {
+export interface V4InteractionDialogsProps {
   sessionId: string;
   workspacePath: string;
   workspaceIdentity?: string;
   remoteSessionId?: string;
+  isWebRemoteControl?: boolean;
   provider?: ZCodeProvider;
   snapshot: ConversationSnapshot | null;
   onCommandSettled?: (commandId: string) => void;
   onPlanInteractionAccepted?: (interactionId: string) => void;
 }
 
-function getCurrentSessionInteractionSnapshot(
+export function getCurrentSessionInteractionSnapshot(
   sessionId: string,
   snapshot: ConversationSnapshot | null,
 ): ConversationSnapshot | null {
   return snapshot?.sessionId === sessionId ? snapshot : null;
 }
 
-function resolveV4ElicitationRequest(
+export function resolveV4ElicitationRequest(
   projected: ZCodeElicitationRequest | null,
   botProgress: ZCodeElicitationRequest | null,
 ): ZCodeElicitationRequest | null {
@@ -55,17 +57,17 @@ function resolveV4ElicitationRequest(
   return projected;
 }
 
-function buildV4ElicitationProgressKey(request: ZCodeElicitationRequest): string {
+export function buildV4ElicitationProgressKey(request: ZCodeElicitationRequest): string {
   return `${request.requestId}:${request.currentQuestionIndex ?? 0}:${JSON.stringify(request.answerDrafts ?? {})}`;
 }
 
-interface InteractionAutoResolutionIntentTracker {
+export interface InteractionAutoResolutionIntentTracker {
   markInteracted(interactionId: string): void;
   consumeSnooze(interactionId: string, autoResolutionReady: boolean): boolean;
   releaseSnooze(interactionId: string): void;
 }
 
-function createInteractionAutoResolutionIntentTracker(): InteractionAutoResolutionIntentTracker {
+export function createInteractionAutoResolutionIntentTracker(): InteractionAutoResolutionIntentTracker {
   const interactedIds = new Set<string>();
   const sentIds = new Set<string>();
   return {
@@ -94,6 +96,7 @@ export function V4InteractionDialogs({
   workspacePath,
   workspaceIdentity,
   remoteSessionId,
+  isWebRemoteControl = false,
   provider,
   snapshot,
   onCommandSettled,
@@ -109,7 +112,12 @@ export function V4InteractionDialogs({
   // On task switch, sessionId updates first and the old task snapshot may remain for one frame.
   // Using the old snapshot directly would mark the current task's renderer-local question draft as stale and clear it.
   const currentSnapshot = getCurrentSessionInteractionSnapshot(sessionId, snapshot);
-  // workspaceHookReview is a special interaction handled by Settings/Hooks and cannot be rendered by the generic Dialog.
+  // Name of the “Session model” item in the workflow confirmation dialog (same source as the run card’s “Configure” popover).
+  const workflowSessionModel = useMemo(
+    () => workflowSessionModelOf(currentSnapshot?.config),
+    [currentSnapshot?.config],
+  );
+  // Bug cause: workspaceHookReview is a special interaction handled by Settings/Hooks and cannot be rendered by the generic Dialog;
   // It can coexist with permission/userInput, so always reading [0] could hide a later interaction that actually needs a dialog.
   // Select the first interaction this component can render while preserving permission/userInput queue order.
   const pending =
@@ -327,6 +335,10 @@ export function V4InteractionDialogs({
         key={pending.interactionId}
         request={request}
         workspacePath={workspacePath}
+        {...(workspaceIdentity === undefined ? {} : { workspaceIdentity })}
+        {...(remoteSessionId === undefined ? {} : { remoteSessionId })}
+        {...(workflowSessionModel === undefined ? {} : { workflowSessionModel })}
+        isWebRemoteControl={isWebRemoteControl}
         provider={provider}
         responding={
           permissionResponse?.interactionId === pending.interactionId && permissionResponse.pending
@@ -336,14 +348,17 @@ export function V4InteractionDialogs({
             ? intl.formatMessage({ id: "chat.permission.responseFailed" })
             : undefined
         }
-        onRespond={(_requestId, option: ZCodePermissionOption, feedback?: string) => {
+        onRespond={(_requestId, option: ZCodePermissionOption, feedback, content) => {
           if (permissionResponseFlight.current === pending.interactionId) return;
           const interactionId = pending.interactionId;
           permissionResponseFlight.current = interactionId;
           setPermissionResponse({ interactionId, pending: true, failed: false });
+          // content: Settings changed in the workflow confirmation dialog, included only in the approval response (docs/dynamic-workflow/launch.md
+          // 「Adjusting the settings in the window」）。
           void resolveInteraction(interactionId, {
             optionId: option.optionId,
             ...(feedback ? { freeText: feedback } : {}),
+            ...(content === undefined ? {} : { content }),
           }).then((accepted) => {
             if (permissionResponseFlight.current !== interactionId) return;
             permissionResponseFlight.current = null;

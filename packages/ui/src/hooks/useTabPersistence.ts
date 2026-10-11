@@ -10,14 +10,14 @@ import { logger } from "../logger.js";
 
 const DEBOUNCE_MS = 300;
 
-interface TabPersistenceRestoreLifecycle {
+export interface TabPersistenceRestoreLifecycle {
   settingService?: ISettingService;
   restoreSession: boolean;
   completed: boolean;
   fullyCompleted: boolean;
 }
 
-interface TabPersistenceRestoreResult {
+export interface TabPersistenceRestoreResult {
   /** Path recognized during restore as app-owned; do not use it to update recent projects. */
   excludedRecentProjectPaths?: readonly string[];
   /** After restoring the active workspace, fill in inactive workspaces during the idle period after the first frame. */
@@ -36,7 +36,7 @@ function scheduleDeferredRestore(callback: () => void): () => void {
   return () => globalThis.clearTimeout(timer);
 }
 
-function hasCompletedTabPersistenceInitialRestore({
+export function hasCompletedTabPersistenceInitialRestore({
   settingService,
   restoreSession,
   restoreLifecycle,
@@ -54,7 +54,7 @@ function hasCompletedTabPersistenceInitialRestore({
   );
 }
 
-function getRecentProjectPathsFromSettings(
+export function getRecentProjectPathsFromSettings(
   settings: Pick<AppSettings, "lastWorkspaceSession">,
   excludedPaths: readonly string[] = [],
 ): string[] {
@@ -70,7 +70,7 @@ function getRecentProjectPathsFromSettings(
     .slice(0, 10);
 }
 
-function buildRestoredRecentProjectPaths(
+export function buildRestoredRecentProjectPaths(
   settings: Pick<AppSettings, "lastWorkspaceSession" | "recentProjects">,
   excludedPaths: readonly string[] = [],
 ): string[] {

@@ -5,89 +5,31 @@ import type {
   CommandEnvelope,
   CommandPayloadMap,
   CommandResult,
-  SubmissionMode,
 } from "@zcode/shared/zcode-protocol-v4";
-import type { ModelSelection } from "@zcode/shared";
+import { isHighspeedProviderId } from "@zcode/shared";
 import { createModelExecutionContext } from "../../../zcode-protocol/model-execution.js";
-import type { SteerTurnOptions } from "../../../app/types.js";
-import { parseProviderQualifiedModelSelection } from "../../../app/provider-registry-selection.js";
-import type { TurnAttachment } from "@zcode/core";
 import { mapAttachmentRefsToTurnAttachments } from "../attachment-refs.js";
+import {
+  applyHeldQueueDisposition,
+  hasPromptInput,
+  resolveSubmittedExecutionState,
+  V4InputAdmissionRejectedError,
+} from "../input-admission.js";
 import { inputIntentMetadata } from "../input-intent.js";
-import { startPromptTurn, turnBackgroundAttributionOf } from "../prompt-turn.js";
+import {
+  resolveTurnAutomationId,
+  startPromptTurn,
+  turnBackgroundAttributionOf,
+  V4PromptRejectedError,
+} from "../prompt-turn.js";
 import { requireRecord } from "../record-access.js";
-import type { V4CommandCoreHost, V4SessionRecordView } from "../types.js";
+import type { V4CommandCoreHost, V4QueuedTurnExecution, V4SessionRecordView } from "../types.js";
 import { V4CommandNoopError } from "../../v4-gateway.js";
 
 /** Idle polling parameters: 25 ms interval, 5 s timeout. */
 const IDLE_POLL_INTERVAL_MS = 25;
 const IDLE_POLL_TIMEOUT_MS = 5_000;
-
-export class V4InputAdmissionRejectedError extends Error {
-  constructor(
-    readonly reasonCode: string,
-    message: string,
-  ) {
-    super(message);
-    this.name = "V4InputAdmissionRejectedError";
-  }
-}
-
-/** Unified admission for v4 user input: require at least text or an attachment. */
-export function hasPromptInput(text: string, attachments: readonly unknown[] | undefined): boolean {
-  return text.trim().length > 0 || Boolean(attachments && attachments.length > 0);
-}
-
-/** Reject sendText/sendGoalCommand when held (inputRouting.mode=choice) and disposition is missing. */
-class V4HeldQueueDispositionRequiredError extends Error {
-  readonly reasonCode = "heldQueueDispositionRequired";
-  constructor() {
-    super("held queue requires heldQueueDisposition (clearQueueAndSend | keepQueueAndSend)");
-    this.name = "V4HeldQueueDispositionRequiredError";
-  }
-}
-
-/** If another client edits the queue while the confirmation dialog is open, do not use the stale choice to clear/keep and send. */
-class V4HeldQueueConfirmationStaleError extends Error {
-  readonly reasonCode = "guard.heldQueueConfirmationStale";
-  constructor() {
-    super("paused queue changed after send confirmation opened");
-    this.name = "V4HeldQueueConfirmationStaleError";
-  }
-}
-
-export async function enqueueDeferredInputForBusyWork(
-  record: V4SessionRecordView,
-  text: string,
-  options: {
-    commandKind?: SteerTurnOptions["commandKind"];
-    inputId: string;
-    queryId: SteerTurnOptions["queryId"];
-    intent?: SteerTurnOptions["intent"];
-    attachments?: TurnAttachment[];
-    toolDisallowlist?: SteerTurnOptions["toolDisallowlist"];
-  },
-): Promise<boolean> {
-  if (!record.app.enqueueDeferredInput) return false;
-  const result = await record.app.enqueueDeferredInput(text, {
-    ...(options.commandKind ? { commandKind: options.commandKind } : {}),
-    delivery: "queue",
-    inputId: options.inputId,
-    ...(options.intent ? { intent: options.intent } : {}),
-    ...(options.attachments ? { attachments: options.attachments } : {}),
-    ...(options.toolDisallowlist ? { toolDisallowlist: options.toolDisallowlist } : {}),
-    queryId: options.queryId,
-  });
-  if (result.kind === "queued") return true;
-  throw new V4InputAdmissionRejectedError(
-    result.reason === "input_too_large"
-      ? "proto.payloadTooLarge"
-      : result.reason === "empty_input"
-        ? "proto.invalidPayload"
-        : "fault.command.inputRejected",
-    `deferred input rejected: ${result.reason}`,
-  );
-}
+const HIGHSPEED_QUEUE_FALLBACK_REASON = "highspeed.requiresQueue";
 
 /** Wait for idle; if the active turn's finally block does not release the lock within 5 s, fail instead of resending. */
 export class V4SessionIdleTimeoutError extends Error {
@@ -98,87 +40,6 @@ export class V4SessionIdleTimeoutError extends Error {
 }
 
 /**
- * When completed + queue>0 + autoDrain=false (projected inputRouting.mode=choice),
- * do not silently enqueue input:
- * clear → clear the queue before startNow; keep → preserve the queue and startNow; omitted → reject.
- */
-export async function applyHeldQueueDisposition(
-  host: V4CommandCoreHost,
-  record: V4SessionRecordView,
-  disposition: "clearQueueAndSend" | "keepQueueAndSend" | undefined,
-  expectedQueueItemIds?: readonly string[],
-): Promise<void> {
-  const routing = host.getInputRoutingMode?.(record.app.sessionId) ?? null;
-  if (routing !== "choice") return;
-  if (!disposition) {
-    throw new V4HeldQueueDispositionRequiredError();
-  }
-  if (expectedQueueItemIds) {
-    const expected = new Set(expectedQueueItemIds);
-    const sameItems =
-      expected.size === expectedQueueItemIds.length &&
-      host.getQueueLength?.(record.app.sessionId) === expected.size &&
-      expectedQueueItemIds.every(
-        (queueItemId) => host.getQueueItem?.(record.app.sessionId, queueItemId) !== null,
-      );
-    if (!sameItems) {
-      throw new V4HeldQueueConfirmationStaleError();
-    }
-  }
-  if (disposition === "clearQueueAndSend") {
-    await record.app.clearQueueItems();
-  }
-}
-
-/**
- * Compatible admission: new senders explicitly submit Selection/Mode; at the CLI
- * receive boundary, legacy senders snapshot the current Session values into the canonical intent.
- * After this snapshot, Queue/Guide no longer read mutable Session state.
- */
-export function resolveSubmittedExecutionState(
-  record: V4SessionRecordView,
-  payload: {
-    modelSelection?: ModelSelection;
-    mode?: SubmissionMode;
-    planEnabled?: boolean;
-  },
-): { modelSelection: ModelSelection; mode: SubmissionMode; planEnabled: boolean } {
-  let modelSelection = payload.modelSelection;
-  if (!modelSelection) {
-    const runtimeSelection = record.app.runtime?.getSessionModelSelection?.();
-    const entrySelection = runtimeSelection
-      ? undefined
-      : parseProviderQualifiedModelSelection(record.app.getModel());
-    if (!runtimeSelection && !entrySelection) {
-      throw new Error(`Session model must be provider-qualified: ${record.app.getModel()}`);
-    }
-    // getThoughtLevel() is an effective display fact from the Active Model. Adding it to the
-    // canonical intent would disguise a Config default as an explicit pin; legacy senders can
-    // only snapshot the sparse Selection already held by Session, not reinterpret it at admission.
-    modelSelection = runtimeSelection
-      ? {
-          providerId: runtimeSelection.providerId,
-          modelId: runtimeSelection.modelId,
-          ...(runtimeSelection.options ? { options: { ...runtimeSelection.options } } : {}),
-        }
-      : {
-          providerId: entrySelection!.providerId,
-          modelId: entrySelection!.modelId,
-          ...(entrySelection!.options ? { options: { ...entrySelection!.options } } : {}),
-        };
-  }
-  const current = resolveExecutionState({
-    mode: record.app.getMode?.(),
-    planEnabled: record.app.runtime?.getPlanEnabled?.(),
-  });
-  const state = resolveExecutionState(payload, current);
-  return {
-    modelSelection,
-    mode: state.mode === "auto" ? "build" : state.mode,
-    planEnabled: state.planEnabled,
-  };
-}
-/**
  * sendText: validate the protocol, held queue, model, and attachments; delegate start/queue
  * to Core admission for the same session. When held (choice), still honor heldQueueDisposition.
  */
@@ -186,19 +47,118 @@ async function sendText(
   host: V4CommandCoreHost,
   envelope: CommandEnvelope,
 ): Promise<CommandResult | undefined> {
-  const payload = envelope.payload as CommandPayloadMap["sendText"];
+  const rawPayload = envelope.payload as CommandPayloadMap["sendText"];
   const record = requireRecord(host, envelope.sessionId);
-  // The old validation checked only the body, so attachment-only queries allowed by the UI
-  // were incorrectly treated as empty by the CLI.
-  if (!hasPromptInput(payload.text, payload.attachments)) {
+  // Bug root cause: the old validation checked only the body, so attachment-only queries allowed
+  // by the UI were incorrectly treated as empty by the CLI.
+  if (!hasPromptInput(rawPayload.text, rawPayload.attachments) && !rawPayload.conversationQuotes?.length) {
     throw new V4InputAdmissionRejectedError("proto.invalidPayload", "input must not be empty");
   }
+  const activeAutomationId = resolveTurnAutomationId({
+    automationId: rawPayload.automationId,
+    inputId: envelope.commandId,
+  });
+  // Bug root cause: Highspeed admission and automation dispatch come from different upstreams;
+  // contract drift could send automationId, highspeedMeta, and acceleration execution material
+  // to the same turn. The scheduled-execution identity must take priority: never issue requests
+  // with acceleration-card credentials, and never persist ordinary model output as a Highspeed
+  // message.
+  const dropsHighspeed =
+    activeAutomationId !== undefined &&
+    (rawPayload.highspeedMeta !== undefined ||
+      isHighspeedProviderId(rawPayload.modelSelection?.providerId));
+  const payload: CommandPayloadMap["sendText"] = dropsHighspeed
+    ? {
+        ...rawPayload,
+        highspeedMeta: undefined,
+        modelSelection: undefined,
+        modelExecution: undefined,
+      }
+    : rawPayload;
+  // The canonical intent must see the same payload as admission; otherwise the transcript keeps
+  // an acceleration marker without credentials.
+  const intentEnvelope = dropsHighspeed ? ({ ...envelope, payload } as CommandEnvelope) : envelope;
   const attachments = await mapAttachmentRefsToTurnAttachments(record.app, payload.attachments);
   const submittedExecutionState = resolveSubmittedExecutionState(record, payload);
   const submissionIntent = (options: Parameters<typeof inputIntentMetadata>[1]) =>
-    inputIntentMetadata(envelope, { ...options, ...submittedExecutionState });
+    inputIntentMetadata(intentEnvelope, { ...options, ...submittedExecutionState });
   const routingMode = host.getInputRoutingMode?.(envelope.sessionId ?? "") ?? null;
   const forceStartNow = payload.requestedDelivery === "startNow";
+  // An accelerated turn is expressed as "standard Selection pointing at an acceleration Provider
+  // + one-shot execution material"; detection must use the Family predicate rather than compare
+  // against a single provider id constant, or a BigModel account's card would be silently
+  // dropped as an ordinary turn.
+  const highspeedExecution: V4QueuedTurnExecution | undefined = isHighspeedProviderId(
+    payload.modelSelection?.providerId,
+  )
+    ? payload.modelExecution
+    : undefined;
+  const highspeedActiveTurn = highspeedExecution
+    ? record.app.runtime?.getActiveTurnInfo?.()
+    : undefined;
+  const highspeedRequiresQueue =
+    !forceStartNow &&
+    highspeedExecution !== undefined &&
+    (record.activeAbortController !== undefined ||
+      highspeedActiveTurn !== undefined ||
+      routingMode === "enqueue" ||
+      routingMode === "guide");
+
+  const queueHighspeedTurn = async (): Promise<CommandResult | undefined> => {
+    if (!highspeedExecution) {
+      throw new V4InputAdmissionRejectedError(
+        "fault.command.inputRejected",
+        "Highspeed queue requires turn execution material",
+      );
+    }
+    // Acceleration credentials live only in CLI memory: retrieved at promotion time by
+    // (sessionId, sourceCommandId) and never stored in queue events.
+    host.retainQueuedTurnExecution?.(record.app.sessionId, envelope.commandId, highspeedExecution);
+    try {
+      const requestedDelivery = routingMode === "guide" ? "guide" : "queue";
+      // The accelerated turn's Selection must enter the canonical intent: at promotion time the
+      // model is read only from the queue item, never re-read from the session.
+      const intent = submissionIntent({
+        text: payload.text,
+        requestedDelivery,
+        admittedDelivery: "queue",
+        ...(routingMode === "guide" ? { fallbackReasonCode: HIGHSPEED_QUEUE_FALLBACK_REASON } : {}),
+        attachmentRefs: payload.attachments,
+      });
+      const queued = await startPromptTurn(host, record, {
+        content: payload.text,
+        ...(payload.browserAmbientContext
+          ? { browserAmbientContext: payload.browserAmbientContext }
+          : {}),
+        inputId: envelope.commandId,
+        intent,
+        requireQueue: true,
+        ...(attachments ? { attachments } : {}),
+        toolDisallowlist: payload.toolDisallowlist,
+      });
+      if (queued.admission.kind !== "queued") {
+        throw new V4InputAdmissionRejectedError(
+          "fault.command.inputRejected",
+          "Highspeed input was not admitted to the queue",
+        );
+      }
+      return {
+        type: "inputAccepted",
+        delivery: "queue",
+        inputId: envelope.commandId,
+      };
+    } catch (error) {
+      host.deleteQueuedTurnExecution?.(record.app.sessionId, envelope.commandId);
+      throw error;
+    }
+  };
+
+  if (highspeedRequiresQueue) {
+    // Bug root cause: a temporary Highspeed provider cannot be guided onto the current turn;
+    // hand it to Core's requireQueue atomic admission so a cross-layer busy snapshot that goes
+    // stale across an await does not start it directly with an ordinary model.
+    return await queueHighspeedTurn();
+  }
   const foregroundPromotionLeaseId = forceStartNow ? `send-now:${envelope.commandId}` : undefined;
   let foregroundPromotionLeaseAcquired = false;
   let preempted = false;
@@ -208,9 +168,9 @@ async function sendText(
     foregroundPromotionLeaseAcquired = false;
   };
   if (forceStartNow) {
-    // If modifier-key "send now" first enters Core busy admission, it briefly creates a queue item.
-    // Acquire the exclusive foreground lease and preempt the current turn first, then let Core
-    // atomically start an idle start_turn.
+    // Bug root cause: Highspeed prepare makes "send now" more likely to land in Core busy
+    // admission; hold the foreground lease and preempt the current turn first so
+    // requestedDelivery=startNow is not silently downgraded to queue.
     const leaseResult = record.app.runtime.acquireForegroundPromotionLease({
       leaseId: foregroundPromotionLeaseId!,
       mode: "after-current",
@@ -224,10 +184,8 @@ async function sendText(
     }
     foregroundPromotionLeaseAcquired = true;
     try {
-      // The old startNow branch treated held-queue disposition as part of default routing and
-      // skipped it entirely. As a result, old input could still drain after the user confirmed
-      // "clear queue and send." A message's delivery only determines when new input is consumed;
-      // it cannot bypass the user's decision about the existing queue or its staleness check.
+      // A message's delivery only determines when new input is consumed; it cannot bypass the
+      // user's decision about the existing queue.
       await applyHeldQueueDisposition(
         host,
         record,
@@ -257,14 +215,18 @@ async function sendText(
   try {
     const intent = submissionIntent({
       text: payload.text,
+      inputOrigin: payload.inputOrigin,
+      botGroupSource: payload.botGroupSource,
+      conversationQuotes: payload.conversationQuotes,
       requestedDelivery:
         payload.requestedDelivery ??
         (routingMode === "guide" ? "guide" : routingMode === "enqueue" ? "queue" : "startNow"),
-      ...(routingMode === "guide" && attachments?.length
+      ...(payload.requestedDelivery !== "guide" && routingMode === "guide" && attachments?.length
         ? { fallbackReasonCode: "guide.attachmentsUnsupported" }
         : {}),
       attachmentRefs: payload.attachments,
       sharedContextRefs: payload.context_refs,
+      ...(payload.source ? { source: payload.source } : {}),
     });
     started = await startPromptTurn(host, record, {
       content: payload.text,
@@ -288,6 +250,18 @@ async function sendText(
       // startNow after preemption would enter the deferred queue and drain automatically after lease release.
       ...(forceStartNow ? { requireIdle: true } : {}),
     });
+  } catch (error) {
+    if (
+      highspeedExecution &&
+      error instanceof V4PromptRejectedError &&
+      error.reasonCode === "activePrompt"
+    ) {
+      // Bug root cause: a new reservation may appear between Bootstrap's idle read and Core
+      // admission. Highspeed must not be lost to degradation, nor may acceleration credentials
+      // be inserted into the current turn; let Core force it into the queue instead.
+      return await queueHighspeedTurn();
+    }
+    throw error;
   } finally {
     releaseForegroundPromotionLease();
   }
@@ -376,7 +350,7 @@ async function stop(
 }
 
 /** Shared goal-pause barrier reused by stop and sendQueuedNow (preempt and resend). */
-async function pauseActiveGoal(
+export async function pauseActiveGoal(
   host: V4CommandCoreHost,
   record: V4SessionRecordView,
 ): Promise<boolean> {
@@ -397,13 +371,22 @@ async function pauseActiveGoal(
   }
 }
 
-/** Poll until both Bootstrap turns and Core foreground commands release authority in finally blocks. */
-async function waitForSessionIdle(record: V4SessionRecordView): Promise<void> {
+/** Poll until both Bootstrap turns and Core turns release authority in finally blocks. */
+export async function waitForSessionIdle(record: V4SessionRecordView): Promise<void> {
   const deadline = Date.now() + IDLE_POLL_TIMEOUT_MS;
-  while (
-    record.activeAbortController !== undefined ||
-    record.app.runtime?.getActiveForegroundExecutionId?.() !== undefined
-  ) {
+  while (true) {
+    // Bug root cause: Bootstrap's abort/foreground flags clear before Core cleans up activeTurn,
+    // so an edit that rewinds and re-enters admission within this window receives
+    // turn_not_steerable. Core's activeTurn is the authoritative closing boundary for prompt
+    // admission and must be awaited together.
+    const coreTurnActive = record.app.runtime?.getActiveTurnInfo?.() !== undefined;
+    if (
+      record.activeAbortController === undefined &&
+      record.app.runtime?.getActiveForegroundExecutionId?.() === undefined &&
+      !coreTurnActive
+    ) {
+      return;
+    }
     if (Date.now() >= deadline) {
       throw new V4SessionIdleTimeoutError(record.app.sessionId);
     }
@@ -443,4 +426,3 @@ export async function preemptActiveTurnAndWait(
 }
 
 export const sessionFlowHandlers = { sendText, stop };
-import { resolveExecutionState } from "@zcode/shared";

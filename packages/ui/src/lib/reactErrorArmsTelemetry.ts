@@ -6,16 +6,16 @@ import {
 import { logger } from "@/logger.js";
 
 /** ARMS custom event name for renderer exceptions caught by React error boundaries. */
-const REACT_ERROR_ARMS_EVENT_NAME = "perf_react_error";
+export const REACT_ERROR_ARMS_EVENT_NAME = "perf_react_error";
 /** ARMS business grouping. */
-const REACT_ERROR_ARMS_GROUP = "react_error";
+export const REACT_ERROR_ARMS_GROUP = "react_error";
 
 /**
  * Maximum length for truncating stack / componentStack.
  * React component stacks and error stacks can be long, and ARMS may truncate/reject oversized fields;
  * truncating proactively to this limit ensures the critical beginning (the component that threw most recently) is included.
  */
-const REACT_ERROR_STACK_MAX_LEN = 4000;
+export const REACT_ERROR_STACK_MAX_LEN = 4000;
 
 type ArmsReporter = Pick<IPlatformService, "reportArmsCustomEvent">;
 
@@ -30,6 +30,10 @@ let armsReporter: ArmsReporter | null = null;
  */
 export function setReactErrorArmsReporter(reporter: ArmsReporter | null): void {
   armsReporter = reporter;
+}
+
+export function clearReactErrorArmsReporterForTest(): void {
+  armsReporter = null;
 }
 
 /**

@@ -1,4 +1,5 @@
 import {
+  ModelRetryBudget,
   SESSION_ENTRY_MODEL_SELECTION,
   type Model,
   type ModelSelection,
@@ -12,17 +13,34 @@ import { createRefreshRuntimeHeadersBeforeModelAttempt } from "./model-runtime-h
 import { createRuntimeModel, withModelInvocationContext } from "./runtime-model.js";
 import { applyRuntimeExecutionState } from "../execution-state.js";
 
+/**
+ * An execution handle with a fallback declaration whose Selection points to that provider allows only one physical request: after failure, core falls back to the session model
+ * for the rest of the turn. Letting the adapter retry with its default backoff budget would delay fallback by minutes (spec §2.2, “Accelerated requests: 0 retries”).
+ * Return undefined for other handles so they use the default budget resolved from taskType.
+ */
+export function resolveExecutionModelRetryBudget(input: {
+  selection: ModelSelection | undefined;
+  selectionFallback: import("../types.js").ModelExecutionContext["selectionFallback"];
+}): ModelRetryBudget | undefined {
+  if (!input.selection || !input.selectionFallback) return undefined;
+  return input.selection.providerId === input.selectionFallback.providerId
+    ? ModelRetryBudget.SingleAttempt
+    : undefined;
+}
+
 export function createTurnModel(
   runtime: AgentRuntimeInternal,
   options: {
     selection?: ModelSelection;
     requestDependencies?: import("@zcode/contracts").ModelRequestDependencies;
+    retryBudget?: ModelRetryBudget;
   } = {},
 ): Model {
   const selection = options.selection ?? runtime.getSessionModelSelection();
   const model = createRuntimeModel(runtime, {
     selection,
     requestDependencies: options.requestDependencies,
+    retryBudget: options.retryBudget,
   });
   return withModelInvocationContext(model, (request) => ({
     refreshRuntimeHeadersBeforeAttempt: createRefreshRuntimeHeadersBeforeModelAttempt(runtime, {
@@ -52,6 +70,10 @@ export async function applySubmissionExecutionState(
     model ??= createTurnModel(runtime, {
       selection,
       requestDependencies: modelExecution?.requestDependencies,
+      retryBudget: resolveExecutionModelRetryBudget({
+        selection,
+        selectionFallback: modelExecution?.selectionFallback,
+      }),
     });
     if (modelExecution?.selectionScope !== "execution") {
       const appliedSelection = cloneModelSelection(selection);

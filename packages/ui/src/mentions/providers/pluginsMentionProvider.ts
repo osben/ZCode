@@ -15,7 +15,7 @@ import { usePluginStoreOrder } from "@/hooks/usePluginStoreOrder.js";
 import { useIsOfficeMode } from "@/hooks/useInterfaceMode.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 
-interface PluginMentionLabels {
+export interface PluginMentionLabels {
   conflictReason: string;
 }
 
@@ -27,7 +27,7 @@ interface PluginMentionLabels {
 //   item.label; localizing the label would make message bubble copy reconstructed from markdown inconsistent).
 // - Include display names in every language from the listing as keywords, regardless of the current locale: users can type Chinese in the English UI
 //   to find official plugins (Chinese search for Plugin @ mentions).
-function mapPluginCatalogToMentionItemsForTest(
+export function mapPluginCatalogToMentionItemsForTest(
   entries: ZCodePluginReferenceCatalogEntry[],
   labels: PluginMentionLabels,
   locale: string,

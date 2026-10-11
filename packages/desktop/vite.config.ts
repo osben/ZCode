@@ -1,13 +1,23 @@
 import { createRequire } from "node:module";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, extname, isAbsolute, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import { defineConfig, loadEnv, type Plugin } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
-import { resolveZCodeEndpointOrigin, pickProductEndpointEnv } from "@zcode/shared/zcodeEndpoint";
+import { resolveZCodeEndpointOrigin } from "@zcode/shared/zcodeEndpoint";
 import { pdfJsCMapsPlugin } from "../ui/vite/pdfJsCMapsPlugin.js";
 import { getBuildMetadata } from "./scripts/build-metadata.mjs";
 import { resolveDesktopProductFlavor } from "./scripts/desktop-product-identity.mjs";
+
+// Dynamically load repo-root build tooling so its import.meta.dirname is not relocated to desktop after the config is bundled.
+// Build-time optional capabilities (ARMS, event reporting, auto-update), see docs/desktop/build-time-optional-capabilities.md
+const { resolveBuildTimeConfig, createBuildTimeConfigDefines } = await import(
+  pathToFileURL(resolve(__dirname, "../../scripts/build-time-config.mjs")).href
+);
+const buildTimeConfigDefines = createBuildTimeConfigDefines(
+  await resolveBuildTimeConfig(process.env),
+);
 
 const buildMetadata = getBuildMetadata();
 const desktopRequire = createRequire(import.meta.url);
@@ -146,7 +156,7 @@ function stripViteRequestQuery(id: string) {
 export default defineConfig(({ mode }) => {
   // `.env*` provides only link constants; the startup script or CI injects the current product
   // environment through ZCODE_ENV.
-  const env = { ...loadEnv(mode, "../..", ""), ...process.env };
+  const env = loadEnv(mode, "../..", "");
   const repoRoot = resolve(__dirname, "../..");
   const zcodeEnv = resolveZCodeEnv(env.ZCODE_ENV);
   // Package identity is independent of the backend environment; the renderer uses it to decide
@@ -162,7 +172,10 @@ export default defineConfig(({ mode }) => {
     env.VITE_ZCODE_E2E_STORE_BRIDGE === "1" || process.env.VITE_ZCODE_E2E_STORE_BRIDGE === "1";
   const zcodeEndpointOrigin = resolveZCodeEndpointOrigin({
     env: zcodeEnv,
-    envBaseOrigin: env.ZCODE_BASE_URL ?? env.ZCODE_ENDPOINT_ORIGIN,
+    envBaseOrigin:
+      env.ZCODE_BASE_URL ??
+      env.ZCODE_ENDPOINT_ORIGIN ??
+      (zcodeEnv === "production" ? env.ZCODE_PRODUCTION_BASE_URL : env.ZCODE_TEST_BASE_URL),
   });
   const codingPlanWebviewOrigin =
     env.VITE_CODING_PLAN_WEBVIEW_ORIGIN ?? process.env.VITE_CODING_PLAN_WEBVIEW_ORIGIN ?? "";
@@ -195,12 +208,12 @@ export default defineConfig(({ mode }) => {
     },
     server: { port: 5174, strictPort: true },
     define: {
-      __ZCODE_ENDPOINT_ENV__: JSON.stringify(pickProductEndpointEnv(env)),
       __ZCODE_VERSION__: JSON.stringify(buildMetadata.appVersion),
       __ZCODE_COMMIT__: JSON.stringify(buildMetadata.buildCommitId),
       __ZCODE_BUILD_TIME__: JSON.stringify(buildMetadata.buildTime),
       __ZCODE_ENV__: JSON.stringify(zcodeEnv),
       __ZCODE_PRODUCT_FLAVOR__: JSON.stringify(zcodeProductFlavor),
+      ...buildTimeConfigDefines,
       __ZCODE_LOCAL_DEVELOPMENT_RUNTIME__: JSON.stringify(mode !== "production"),
       "import.meta.env.VITE_ZCODE_BASE_URL": JSON.stringify(zcodeEndpointOrigin),
       // Support the legacy name read by older renderers; new code consistently reads
@@ -210,7 +223,7 @@ export default defineConfig(({ mode }) => {
       "import.meta.env.VITE_REWARDS_WEBVIEW_ORIGIN": JSON.stringify(
         env.VITE_REWARDS_WEBVIEW_ORIGIN ?? process.env.VITE_REWARDS_WEBVIEW_ORIGIN ?? "",
       ),
-      // Enable the E2E store bridge only with the WDIO-specific variable, so a product environment
+      // Bugfix: Enable the E2E store bridge only with the WDIO-specific variable, so a product environment
       // of ZCODE_ENV=test is not mistaken for a test run.
       "import.meta.env.VITE_ZCODE_E2E_STORE_BRIDGE": JSON.stringify(
         e2eStoreBridgeEnabled ? "1" : "",
@@ -241,6 +254,8 @@ export default defineConfig(({ mode }) => {
           index: resolve(__dirname, "src/renderer/index.html"),
           "resource-manager": resolve(__dirname, "src/renderer/resource-manager.html"),
           "cua-permission-panel": resolve(__dirname, "src/renderer/cua-permission-panel.html"),
+          // Trusted shell for the plugin UI sandbox, served via zcode-sandbox://
+          "plugin-sandbox": resolve(__dirname, "src/renderer/plugin-sandbox.html"),
         },
       },
     },

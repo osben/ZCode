@@ -2,8 +2,9 @@ import { BUILTIN_ZCODE_SLASH_COMMAND_HELP_ENTRIES, type ZCodeSlashCommand } from
 
 /**
  * The App `/` panel and plus menu display entries in this order (the UI does not maintain a separate
- * ordering allowlist). `workflow` follows `goal`; both start a unit of work. It is gated by the
- * dynamic-workflow switch and filtered during assembly by zcode-protocol/slash-commands.ts.
+ * ordering allowlist). `workflow` follows `goal`; both start a unit of work (see "Workflow entry" in
+ * docs/ui/chat-composer-action-menu.md). It is gated by the gradual-rollout flag and filtered during
+ * assembly by zcode-protocol/slash-commands.ts.
  */
 export const APP_PROTOCOL_VISIBLE_BUILTIN_SLASH_COMMAND_NAMES = [
   "goal",
@@ -31,7 +32,7 @@ const RESERVED_SLASH_COMMAND_NAMES = new Set(
   ]).concat([...EXTRA_RESERVED_SLASH_COMMAND_NAMES]),
 );
 
-function normalizeZCodeSlashCommandName(name: string): string {
+export function normalizeZCodeSlashCommandName(name: string): string {
   return name.trim().replace(/^\/+/, "").toLowerCase();
 }
 

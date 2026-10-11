@@ -1,10 +1,23 @@
+import { GenUiMessageResponse } from "@/gen-ui/index.js";
+import { ConversationUserInputBubble } from "@/v4/ConversationUserInputBubble.js";
+import { expandTopicInputMessages } from "@/v4/topicInputMessages.js";
+import { ConnectedBotGroupDeliveryAction } from "@/v4/BotGroupDeliveryAction.js";
 /* oxlint-disable eslint(max-lines) -- v4 row rendering is dispatched centrally (one memo leaf per row kind plus timelineMarker dividers); splitting it would scatter the row-type mapping. */
 import { useIsOfficeMode } from "@/hooks/useInterfaceMode.js";
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  type ComponentProps,
+  memo,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   ArchiveIcon,
   ArrowRightLeftIcon,
   CheckIcon,
+  Clock,
   CopyIcon,
   FileClockIcon,
   FileIcon,
@@ -28,6 +41,7 @@ import {
   TID_V4_FORK,
   TID_V4_ROW,
   TID_V4_ROW_ATTACHMENTS,
+  parseAutomationRunId,
   testId,
 } from "@zcode/shared";
 import type {
@@ -61,11 +75,7 @@ import {
   type ChatMediaAttachmentPreviewTarget,
 } from "@/ChatMediaAttachmentPreviewDialog.js";
 import type { PdfViewerRangeSource } from "@/components/ui/pdf-viewer.js";
-import {
-  MessageAction,
-  MessageActions,
-  MessageResponse,
-} from "@/components/ai-elements/message.js";
+import { MessageAction, MessageActions } from "@/components/ai-elements/message.js";
 import {
   Reasoning,
   ReasoningContent,
@@ -80,8 +90,12 @@ import {
   readWorkflowRetuneCall,
 } from "@/ToolCallBlocks/renderers/createWorkflowInput.js";
 import { WorkflowRetuneRow } from "@/ToolCallBlocks/renderers/WorkflowRetuneRow.js";
-import { workflowRunSettingsCeiling } from "@/components/workflow-timeline/workflowRunSettings.js";
-import { isAmendWorkflowToolCall } from "@/lib/workflowToolNames.js";
+import { workflowRunDefaultConcurrency } from "@/components/workflow-timeline/workflowRunSettings.js";
+import { isAmendWorkflowToolCall, isFillWorkflowHoleToolCall } from "@/lib/workflowToolNames.js";
+import {
+  readWorkflowHoleTarget,
+  workflowFillCounts,
+} from "@/ToolCallBlocks/renderers/createWorkflowHoleInput.js";
 import { ToolCallBlock } from "@/ToolCallBlocks.js";
 import { resolveWorkflowRunOpenToolCallId } from "@/v4/workflowRunCardJoin.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
@@ -89,6 +103,7 @@ import { useOptionalPlatform } from "@/hooks/usePlatform.js";
 import { reportAppTelemetryEvent } from "@/lib/appTelemetry.js";
 import { runUserAction, runUserActionAsync } from "@/lib/userActionTelemetry.js";
 import { logger } from "@/logger.js";
+import { PluginUiModelContextChip, formatPluginDisplayName } from "@/plugin-ui/index.js";
 import type { AssistantPreviewCard } from "@/lib/assistantPreviewCards.js";
 import {
   FileDisplayIcon,
@@ -119,12 +134,8 @@ import { ConversationSelectionReferenceChip } from "@/v4/composer/ConversationSe
 import { PptxElementReferenceChip } from "@/v4/composer/PptxElementReferenceChip.js";
 import { useOpenPptxElementReference } from "@/v4/composer/useOpenPptxElementReference.js";
 import { ConversationFileRewindDialog } from "@/v4/ConversationFileRewindDialog.js";
-import { ConversationUserInputBody } from "@/v4/ConversationUserInputBody.js";
-import { ConversationUserInputContent } from "@/v4/ConversationUserInputContent.js";
-import {
-  ConversationUserInputEpilogue,
-  splitUserInputEpilogue,
-} from "@/v4/ConversationUserInputEpilogue.js";
+import { BotGroupSourceLabel } from "@/v4/BotGroupSourceLabel.js";
+import { splitUserInputEpilogue } from "@/v4/ConversationUserInputEpilogue.js";
 import { ConversationHookDetailsAction } from "@/v4/ConversationHookDetailsAction.js";
 import { formatModelChangeLabel } from "@/v4/composer/modelTriggerDisplay.js";
 import { formatMessageTimeLabel } from "@/v4/messageTimeLabel.js";
@@ -211,6 +222,7 @@ type UserInputEditHandler = (
   newText: string,
   attachments?: readonly AttachmentRef[],
   workspaceMode?: "preserve" | "rewind",
+  conversationQuotes?: import("@zcode/shared").ConversationSelectionText[],
 ) => Promise<CommandAck | boolean | void> | CommandAck | boolean | void;
 
 type AssistantMessageFeedback = "like" | "dislike";
@@ -240,7 +252,7 @@ export interface EditWorkspaceRewindAvailability {
   reason: "available" | "noFiles" | "reverted" | "running" | "unavailable";
 }
 
-interface ConversationRowViewProps {
+export interface ConversationRowViewProps {
   row: ConversationRow;
   /** Rendering context (theme/codePreviewSettings/workspacePath); the host guarantees a stable reference. */
   context: ConversationRowRenderContext;
@@ -318,6 +330,48 @@ const UserInputAttachmentList = memo(function UserInputAttachmentList({
   const [videoPreviewRef, setVideoPreviewRef] = useState<string | null>(null);
   const [videoPreviewLoading, setVideoPreviewLoading] = useState(false);
   const [videoPreviewError, setVideoPreviewError] = useState(false);
+  const [textPreview, setTextPreview] = useState<ChatMediaAttachmentPreviewTarget | null>(null);
+  const [textLoading, setTextLoading] = useState(false);
+  const [textError, setTextError] = useState(false);
+  const textReadAbort = useRef<AbortController | null>(null);
+  useEffect(() => () => textReadAbort.current?.abort(), []);
+  const closeTextPreview = () => {
+    textReadAbort.current?.abort();
+    textReadAbort.current = null;
+    setTextPreview(null);
+  };
+  const openTextPreview = async (attachment: AttachmentRef, index: number) => {
+    if (!sessionId || !readAttachment) return;
+    textReadAbort.current?.abort();
+    const controller = new AbortController();
+    textReadAbort.current = controller;
+    setTextPreview({ filename: attachment.fileName, mediaType: "text/plain" });
+    setTextLoading(true);
+    setTextError(false);
+    try {
+      const result = await readAttachment({
+        sessionId,
+        ref: attachment.ref,
+        mediaType: attachment.mime,
+        ...(entityId ? { target: { rowId, entityId }, attachmentIndex: index } : {}),
+        signal: controller.signal,
+      });
+      if (controller.signal.aborted) return;
+      if (!("bytes" in result)) throw new Error("Text attachment bytes unavailable");
+      setTextPreview({
+        filename: attachment.fileName,
+        mediaType: "text/plain",
+        textContent: new TextDecoder().decode(result.bytes),
+      });
+    } catch (error) {
+      if (!controller.signal.aborted) {
+        setTextError(true);
+        logger.warn("Text attachment preview failed", error);
+      }
+    } finally {
+      if (!controller.signal.aborted) setTextLoading(false);
+    }
+  };
   const [pdfPreview, setPdfPreview] = useState<ChatMediaAttachmentPreviewTarget | null>(null);
   const [pdfPreviewLoading, setPdfPreviewLoading] = useState(false);
   const [pdfPreviewError, setPdfPreviewError] = useState(false);
@@ -686,6 +740,8 @@ const UserInputAttachmentList = memo(function UserInputAttachmentList({
     setPreviewOpen(true);
   };
   const items = visibleAttachments.map(({ attachment, index }) => {
+    const isTextMaterial =
+      attachment.sourceKind === "topic-history" || attachment.sourceKind === "clipboard-text";
     const ref = attachment.previewRef ?? attachment.ref;
     const isImage = attachment.mime.startsWith("image/");
     const isVideo = attachment.mime.startsWith("video/");
@@ -699,6 +755,7 @@ const UserInputAttachmentList = memo(function UserInputAttachmentList({
     const previewItemIndex = previewEntries.findIndex((entry) => entry.index === index);
     // Images and videos share the current message's media gallery; read a video only when it first becomes the active item.
     const canOpen =
+      (isTextMaterial && Boolean(sessionId && readAttachment)) ||
       (isImage && !isUnavailable && previewItemIndex >= 0) ||
       (isVideo && Boolean(sessionId && readAttachment)) ||
       (isPdf && Boolean(sessionId && (readAttachment || readAttachmentRange)));
@@ -733,18 +790,22 @@ const UserInputAttachmentList = memo(function UserInputAttachmentList({
         onOpen={
           canOpen
             ? () =>
-                isPdf
-                  ? void openPdfPreview(attachment, attachmentIndices?.[index] ?? index)
-                  : selectPreviewItem(previewItemIndex)
+                isTextMaterial
+                  ? void openTextPreview(attachment, attachmentIndices?.[index] ?? index)
+                  : isPdf
+                    ? void openPdfPreview(attachment, attachmentIndices?.[index] ?? index)
+                    : selectPreviewItem(previewItemIndex)
             : undefined
         }
         openLabel={
           canOpen
-            ? isVideo
-              ? previewVideoOpenLabel
-              : isPdf
-                ? previewPdfOpenLabel
-                : previewOpenLabel
+            ? isTextMaterial
+              ? intl.formatMessage({ id: "chat.attachments.preview.openText" })
+              : isVideo
+                ? previewVideoOpenLabel
+                : isPdf
+                  ? previewPdfOpenLabel
+                  : previewOpenLabel
             : undefined
         }
         title={isUnavailable ? previewUnavailableLabel : undefined}
@@ -781,6 +842,13 @@ const UserInputAttachmentList = memo(function UserInputAttachmentList({
               </span>
             </div>
           </>
+        ) : attachment.sourceKind === "topic-history" ? (
+          <span className="truncate text-ui-base font-medium text-foreground">
+            {intl.formatMessage(
+              { id: "chat.attachments.topicHistory" },
+              { count: attachment.messageCount ?? 0 },
+            )}
+          </span>
         ) : (
           <FileDisplayInline
             path={attachment.fileName}
@@ -820,6 +888,15 @@ const UserInputAttachmentList = memo(function UserInputAttachmentList({
           {items}
         </Attachments>
       )}
+      <ChatMediaAttachmentPreviewDialog
+        attachment={textPreview}
+        open={textPreview !== null}
+        onOpenChange={(open) => {
+          if (!open) closeTextPreview();
+        }}
+        loading={textLoading}
+        error={textError}
+      />
       <ImagePreviewDialog
         initialIndex={previewIndex}
         items={previewItems}
@@ -847,7 +924,7 @@ const UserInputAttachmentList = memo(function UserInputAttachmentList({
   );
 });
 
-const UserInputRowView = memo(function UserInputRowView({
+const SingleUserInputRowView = memo(function SingleUserInputRowView({
   row,
   context,
   onEdit,
@@ -865,12 +942,14 @@ const UserInputRowView = memo(function UserInputRowView({
   // Prompt-context parsing also reads only the body; epilogues contain no user references.
   const { body: bodyText, epilogue } = splitUserInputEpilogue(row.text, row.epilogueStart);
   const parsedPrompt = useMemo(
-    () =>
-      parseComposerPromptContexts(bodyText, {
+    () => ({
+      ...parseComposerPromptContexts(bodyText, {
         workspacePath: context.workspacePath,
         workspaceIdentity: context.workspaceIdentity,
       }),
-    [bodyText, context.workspaceIdentity, context.workspacePath],
+      ...(row.conversationQuotes ? { conversationSelections: row.conversationQuotes } : {}),
+    }),
+    [context.workspaceIdentity, context.workspacePath, bodyText, row.conversationQuotes],
   );
   // Used only to strip the share URL trailing block from visible historical message bodies.
   // The block is no longer produced (see ConversationComposer's promptText comment); keep parsing it so messages sent
@@ -927,15 +1006,26 @@ const UserInputRowView = memo(function UserInputRowView({
         !attachment.mime.startsWith("image/") && !attachment.mime.startsWith("video/"),
     ) ?? false;
   const hasVisibleText = visibleText.trim().length > 0;
+  const pluginUiContexts = parsedPrompt.pluginUiContexts;
   // A nudge turn contains only engine text: the body is empty, but render a bubble with only the disclosure.
   const hasBubble = hasVisibleText || epilogue !== undefined;
   const hasContextReferences =
     codeCommentContexts.length > 0 ||
     webElementContexts.length > 0 ||
     pptxElementReferences.length > 0 ||
-    conversationSelections.length > 0;
+    conversationSelections.length > 0 ||
+    pluginUiContexts.length > 0;
   const hasAttachmentArea = hasAttachments || hasContextReferences;
-  const hasAttachmentPills = hasFileAttachments || hasContextReferences;
+  const hasAttachmentPills =
+    hasFileAttachments ||
+    codeCommentContexts.length > 0 ||
+    webElementContexts.length > 0 ||
+    pptxElementReferences.length > 0 ||
+    (!row.botGroupSource && conversationSelections.length > 0);
+  // Root cause: the old logic accepted only schedule runIds, leaving manual runs from “Run now”
+  // without a source marker. Show both valid automation runId forms; ordinary conversation input
+  // still stays hidden because parsing fails.
+  const isScheduledAutomationPrompt = parseAutomationRunId(row.sourceCommandId ?? "") !== null;
   const openPptxElementReference = useOpenPptxElementReference({
     workspacePath: context.workspacePath,
     workspaceIdentity: context.workspaceIdentity,
@@ -997,12 +1087,17 @@ const UserInputRowView = memo(function UserInputRowView({
       try {
         const result = await onEdit(
           { rowId: row.rowId, entityId: row.entityId! },
-          // Do not write the share URL trailing block again; it has no consumers, so remove it when editing a historical message.
-          serializeComposerPromptContexts(nextText, editPromptContexts),
+          serializeComposerPromptContexts(nextText, {
+            ...editPromptContexts,
+            conversationSelections: [],
+          }),
           // Omitting an empty array makes the CLI restore canonical original attachments by default,
           // so edit must always submit the full current list; only explicit [] means "remove all".
           editAttachments,
           workspaceMode,
+          ...(parsedPrompt.conversationSelections.length || row.conversationQuotes
+            ? [[...editPromptContexts.conversationSelections]]
+            : []),
         );
         if (
           typeof result === "object" &&
@@ -1023,7 +1118,16 @@ const UserInputRowView = memo(function UserInputRowView({
         setSubmitting(false);
       }
     },
-    [editAttachments, editContextCount, editPromptContexts, onEdit, row.entityId, row.rowId],
+    [
+      editAttachments,
+      editContextCount,
+      editPromptContexts,
+      onEdit,
+      row.entityId,
+      row.rowId,
+      row.conversationQuotes,
+      parsedPrompt.conversationSelections.length,
+    ],
   );
   const rewindWorkspaceDisabled = submitting || editWorkspaceRewindAvailability?.enabled !== true;
   const rewindWorkspaceButton = (
@@ -1192,12 +1296,36 @@ const UserInputRowView = memo(function UserInputRowView({
 
   return (
     <RowShell rowId={row.rowId} className="group/user-row flex flex-col items-end">
+      {isScheduledAutomationPrompt ? (
+        <div
+          data-v4-user-input-automation-origin="schedule"
+          className="mb-1 flex max-w-xl items-center gap-1 text-ui-sm text-foreground-subtle"
+        >
+          <Clock data-cron-task-icon="true" aria-hidden="true" className="size-3.5 shrink-0" />
+          <span>{intl.formatMessage({ id: "chat.message.sentByScheduledTask" })}</span>
+        </div>
+      ) : null}
+      {row.botGroupSource ? (
+        // Group attribution used to appear between attachments and message text, splitting one input; place it before attachments.
+        <div data-v4-user-input-source="true" className="mb-2 flex min-w-0 max-w-full">
+          <BotGroupSourceLabel source={row.botGroupSource} />
+        </div>
+      ) : null}
+
       {hasAttachmentArea ? (
         <div
           data-v4-user-input-attachments="true"
           data-testid={testId(TID_V4_ROW_ATTACHMENTS, String(row.rowId))}
           className="mb-2 flex max-w-xl flex-col items-end gap-2"
         >
+          {row.botGroupSource && conversationSelections.length > 0 ? (
+            <div data-v4-user-input-quotes="true" className="flex max-w-full justify-end">
+              <ConversationSelectionReferenceChip
+                references={conversationSelections}
+                contentAlign="end"
+              />
+            </div>
+          ) : null}
           {hasMediaAttachments ? (
             <div
               data-v4-user-input-media-attachments="true"
@@ -1241,10 +1369,13 @@ const UserInputRowView = memo(function UserInputRowView({
                 contentAlign="end"
                 onOpen={context.onOpenCodeViewer ? openPptxElementReference : undefined}
               />
-              <ConversationSelectionReferenceChip
-                references={conversationSelections}
-                contentAlign="end"
-              />
+              {!row.botGroupSource ? (
+                <ConversationSelectionReferenceChip
+                  references={conversationSelections}
+                  contentAlign="end"
+                />
+              ) : null}
+              <PluginUiModelContextChip contexts={pluginUiContexts} contentAlign="end" />
             </div>
           ) : null}
         </div>
@@ -1253,20 +1384,33 @@ const UserInputRowView = memo(function UserInputRowView({
         // Attachments and context references belong to the message row, not the bubble; otherwise attachment-only messages leave an empty bubble.
         // The same row renders in the main conversation and Subagent sidebar, so a fixed width would ignore the actual host width.
         // Keep the bubble's automatic flex-item width; cap it at 36rem with 48px of remaining space only when the host is at least 624px wide.
+        <ConversationUserInputBubble
+          text={visibleText}
+          contentParts={row.botGroupSource?.contentParts}
+          rowId={row.rowId}
+          epilogue={epilogue}
+          attachments={row.attachments}
+          contextAttachmentCount={countComposerPromptContexts(parsedPrompt)}
+        />
+      ) : null}
+      {row.source?.kind === "genUi" && (
         <div
-          data-v4-user-input-bubble="true"
-          className="flex max-w-full flex-col gap-2 rounded-xl rounded-tr-xs border border-border bg-surface px-4 py-3 text-ui-base text-foreground @min-[624px]/conversation:max-w-xl"
+          className="mt-1 text-right text-ui-sm text-foreground-subtlest"
+          data-v4-user-input-source="genUi"
         >
-          {hasVisibleText ? (
-            <ConversationUserInputBody contentText={visibleText} rowId={row.rowId}>
-              <ConversationUserInputContent
-                text={visibleText}
-                attachments={row.attachments}
-                contextAttachmentCount={countComposerPromptContexts(parsedPrompt)}
-              />
-            </ConversationUserInputBody>
-          ) : null}
-          {epilogue === undefined ? null : <ConversationUserInputEpilogue text={epilogue} />}
+          {intl.formatMessage({ id: "genUi.from" }, { name: row.source.title || "Gen UI" })}
+        </div>
+      )}
+      {row.source?.kind === "pluginUi" ? (
+        // Sent on behalf of plugin UI: the source marker comes from the CLI-persisted intent.source; do not infer it in the renderer.
+        <div
+          data-v4-user-input-source={row.source.pluginId}
+          className="mt-1 text-right text-ui-sm text-foreground-subtlest"
+        >
+          {intl.formatMessage(
+            { id: "pluginUi.fromPlugin" },
+            { name: formatPluginDisplayName(row.source.pluginId) },
+          )}
         </div>
       ) : null}
       {status ? (
@@ -1278,13 +1422,15 @@ const UserInputRowView = memo(function UserInputRowView({
           {status}
         </div>
       ) : null}
-      {/* Mobile remote control has no hover. The v4 migration omitted the old UserMessage always-
+      {/* Bugfix: Mobile remote control has no hover. The v4 migration omitted the old UserMessage always-
           visible branch, making Copy and Edit hard to discover. Show them directly for remote
           control; desktop continues to reduce visual noise with hover/focus. */}
       <MessageActions
         className={cn(
           "mt-1",
-          "opacity-0 transition-opacity group-hover/user-row:opacity-100 focus-within:opacity-100",
+          context.compactForRemoteControl
+            ? "opacity-100"
+            : "opacity-0 transition-opacity group-hover/user-row:opacity-100 focus-within:opacity-100",
         )}
       >
         <CopyRowAction
@@ -1307,15 +1453,40 @@ const UserInputRowView = memo(function UserInputRowView({
   );
 });
 
+const UserInputRowView = memo(function UserInputRowView(
+  props: ComponentProps<typeof SingleUserInputRowView>,
+) {
+  const rows = useMemo(() => expandTopicInputMessages(props.row), [props.row]);
+  if (rows.length === 1) return <SingleUserInputRowView {...props} row={rows[0]!} />;
+  return (
+    <div className="flex min-w-0 flex-col gap-3" data-v4-topic-messages="true">
+      {rows.map((row) => (
+        <div
+          key={row.botGroupSource!.messageId}
+          data-topic-message-id={row.botGroupSource!.messageId}
+        >
+          {/* Multiple source rows share one accepted input; do not mistake a local edit for replacing the whole batch. */}
+          <SingleUserInputRowView {...props} row={row} onEdit={undefined} />
+        </div>
+      ))}
+    </div>
+  );
+});
+
+// Array defaults for memoized components must be module-level constants; an inline [] is a new reference on every render and defeats memo comparison.
+const EMPTY_SOURCE_COMMAND_IDS: readonly string[] = [];
+
 export const ConversationAssistantTextActions = memo(function ConversationAssistantTextActions({
   rowId,
   entityId,
   text,
   createdAt,
+  compactForRemoteControl = false,
   feedback = null,
   hookInvocations,
   sessionId,
   turnId,
+  sourceCommandIds = EMPTY_SOURCE_COMMAND_IDS,
   onFork,
   onFeedbackChange,
   className,
@@ -1324,10 +1495,12 @@ export const ConversationAssistantTextActions = memo(function ConversationAssist
   entityId?: string;
   text: string;
   createdAt: number;
+  compactForRemoteControl?: boolean;
   feedback?: AssistantMessageFeedback | null;
   hookInvocations?: readonly HookInvocationRow[];
   sessionId?: string | null;
   turnId?: string;
+  sourceCommandIds?: readonly string[];
   onFork?: (target: ConversationRowTarget) => void;
   onRetry?: (target: ConversationRowTarget) => void;
   onFeedbackChange?: AssistantFeedbackHandler;
@@ -1345,7 +1518,8 @@ export const ConversationAssistantTextActions = memo(function ConversationAssist
   });
   const forkLabel = intl.formatMessage({ id: "chat.message.fork" });
   const timeLabel = formatMessageTimeLabel(createdAt, locale, intl);
-  const resolveTooltip = (label: string): string | undefined => label;
+  const resolveTooltip = (label: string): string | undefined =>
+    compactForRemoteControl ? undefined : label;
 
   useEffect(() => {
     setLocalFeedback(feedback);
@@ -1404,7 +1578,7 @@ export const ConversationAssistantTextActions = memo(function ConversationAssist
     }
   }, [entityId, onFork, rowId]);
   return (
-    <MessageActions className={cn(className)}>
+    <MessageActions className={cn(className, "has-[[data-bot-group-delivery]]:opacity-100")}>
       <CopyRowAction
         text={text}
         rowId={rowId}
@@ -1465,11 +1639,14 @@ export const ConversationAssistantTextActions = memo(function ConversationAssist
       {turnId && hookInvocations ? (
         <ConversationHookDetailsAction rows={hookInvocations} turnId={turnId} />
       ) : null}
-      {/* Removing the old conversation surface also dropped the message creation time from the
+      {/* Bugfix: Removing the old conversation surface also dropped the message creation time from the
               V4 action bar. This is a read-only display derived from row.createdAt; do not add
               renderer state. */}
       {timeLabel ? (
         <span className="select-none text-ui-sm text-foreground-subtlest">{timeLabel}</span>
+      ) : null}
+      {turnId ? (
+        <ConnectedBotGroupDeliveryAction turnId={turnId} sourceCommandIds={sourceCommandIds} />
       ) : null}
     </MessageActions>
   );
@@ -1516,14 +1693,16 @@ const AssistantTextRowView = memo(function AssistantTextRowView({
   const visiblePreviewCards = previewCards && previewCards.length > 0 ? previewCards : null;
   return (
     <RowShell rowId={row.rowId} className="group/assistant-row">
-      {/* Assistant text uses streamdown (MessageResponse) for Markdown and code block rendering;
+      {/* M5④ phase 2: Assistant text uses streamdown (MessageResponse) for Markdown and code block rendering;
           streaming mode tolerates incomplete Markdown. */}
-      {/* MessageResponse consumes only its declared props and does not forward data-* attributes to
+      {/* Bugfix: MessageResponse consumes only its declared props and does not forward data-* attributes to
           the real DOM. Although the assistant body was marked selectable in JSX, the selection
           logic could never find it. Put selectable on a stable DOM wrapper and use the same path
           for completed and streaming messages. */}
       <div data-conversation-selectable="true" className="w-full text-ui-base">
-        <MessageResponse
+        <GenUiMessageResponse
+          completed={row.state === "complete"}
+          messageKey={`${row.rowId}:${row.entityId ?? ""}`}
           renderZCodeFileCitations
           streaming={streaming}
           workspacePath={context.workspacePath}
@@ -1539,7 +1718,7 @@ const AssistantTextRowView = memo(function AssistantTextRowView({
           readAttachment={context.readAttachment}
         >
           {visibleText}
-        </MessageResponse>
+        </GenUiMessageResponse>
       </div>
       {codeCommentCardsEnabled && codeCommentCards && codeCommentCards.length > 0 ? (
         <div className="mt-3">
@@ -1564,6 +1743,7 @@ const AssistantTextRowView = memo(function AssistantTextRowView({
             onOpenFileLink={context.onOpenFileLink}
             autoOpenPptxKey={previewCardsAutoOpenKey}
             onAutoOpenPptx={context.onAutoOpenAssistantPptx}
+            compactForRemoteControl={context.compactForRemoteControl}
           />
         </div>
       ) : null}
@@ -1577,6 +1757,7 @@ const AssistantTextRowView = memo(function AssistantTextRowView({
           entityId={row.entityId}
           text={copyText ?? row.text}
           createdAt={row.createdAt}
+          compactForRemoteControl={context.compactForRemoteControl}
           feedback={readAssistantFeedback(row)}
           sessionId={context.sessionId}
           onFork={onFork}
@@ -1584,7 +1765,9 @@ const AssistantTextRowView = memo(function AssistantTextRowView({
           onFeedbackChange={onFeedbackChange}
           className={cn(
             "mt-1",
-            "opacity-0 transition-opacity group-hover/assistant-row:opacity-100 focus-within:opacity-100",
+            context.compactForRemoteControl
+              ? "opacity-100"
+              : "opacity-0 transition-opacity group-hover/assistant-row:opacity-100 focus-within:opacity-100",
           )}
         />
       ) : null}
@@ -1617,7 +1800,7 @@ const ReasoningRowView = memo(function ReasoningRowView({
         autoCollapseKey={streaming ? null : row.state}
         {...(durationSeconds !== undefined ? { duration: durationSeconds } : {})}
       >
-        {/* The attachment refactor accidentally dropped the streamingText wiring, leaving the summary
+        {/* Bug cause: The attachment refactor accidentally dropped the streamingText wiring, leaving the summary
             component in place but always passing it empty text. */}
         <ReasoningTrigger streamingText={row.text} />
         <div data-conversation-selectable="true">
@@ -1916,6 +2099,53 @@ const ToolCallRowView = memo(function ToolCallRowView({
     (row.display?.kind === "resume_workflow_run"
       ? context.workflowRunByRunId?.get(row.display.runId)
       : undefined);
+  // A fill row joined to a run (docs/dynamic-workflow/presentation.md, “The fill row”) displays
+  // “Hole filled · {name} · {k} phases · {m} subagents ↗”. Join the projection by input `run_id`
+  // (the fill row's toolCallId differs from the launch row's) and accept only successful, compiled
+  // rows. Failed fills appear as compilation feedback below and do not join the run. A new station
+  // appears beneath the card (the turn-tail summary uses this row's graph).
+  // The name comes from the display's `fill` block; the row input has no name because the transcript stores only the model's input.
+  const fillTarget = isFillWorkflowHoleToolCall(row)
+    ? readWorkflowHoleTarget(
+        row.input,
+        row.display?.kind === "create_workflow" ? row.display.fill : undefined,
+      )
+    : undefined;
+  const fillRun =
+    fillTarget?.runId === undefined ? undefined : context.workflowRunByRunId?.get(fillTarget.runId);
+  if (
+    fillTarget !== undefined &&
+    fillTarget.holeId !== undefined &&
+    fillRun !== undefined &&
+    row.status === "success" &&
+    row.display?.kind === "create_workflow" &&
+    row.display.ok
+  ) {
+    const sessionId = context.sessionId;
+    const counts = workflowFillCounts(row.display.causalityGraph, fillTarget.holeId);
+    return (
+      <RowShell rowId={row.rowId} className="py-0">
+        <WorkflowToolSummary
+          toolCallId={row.toolCallId}
+          summary={fillRun}
+          fill={{
+            name: fillTarget.name ?? fillTarget.holeId,
+            ...counts,
+          }}
+          onOpen={
+            context.onOpenWorkflowRun && sessionId
+              ? () =>
+                  context.onOpenWorkflowRun?.({
+                    parentSessionId: sessionId,
+                    toolCallId: resolveWorkflowRunOpenToolCallId(row.toolCallId, fillRun),
+                    runId: fillRun.runId,
+                  })
+              : undefined
+          }
+        />
+      </RowShell>
+    );
+  }
   // Reason: the started tool card and end-of-turn summary duplicated the same live progress; the summary above is now a regular entry point.
   // Replace only the successfully matched initiating row; compiler diagnostics, Resume, and other tools keep their existing rendering.
   if (
@@ -1959,18 +2189,19 @@ const ToolCallRowView = memo(function ToolCallRowView({
     !context.workflowRunByToolCallId?.has(row.toolCallId)
   ) {
     const sessionId = context.sessionId;
-    // Projection of the adjusted run, used only for two things: the local ceiling (so the wording never reports a number above it)
-    // and the initiating-row ID for the run in the open request. It is not added to `workflowRun`, which answers whether
-    // this row initiated a run; this row did not.
+    // Projection of the run being retuned, used only for two things: default concurrency (so
+    // wording can describe “equal to default” as “restore default”) and the launch-row id for the
+    // run in the open request. It does not go into `workflowRun` above, which answers whether this
+    // row launched a run; this row did not.
     const retuned = context.workflowRunByRunId?.get(retune.runId);
-    const ceiling =
-      retuned?.run === undefined ? undefined : workflowRunSettingsCeiling(retuned.run);
+    const defaultConcurrency =
+      retuned?.run === undefined ? undefined : workflowRunDefaultConcurrency(retuned.run);
     return (
       <RowShell rowId={row.rowId} className="py-0">
         <WorkflowRetuneRow
           requested={retune.requested}
           runId={retune.runId}
-          {...(ceiling === undefined ? {} : { ceiling })}
+          {...(defaultConcurrency === undefined ? {} : { defaultConcurrency })}
           {...(context.onOpenWorkflowRun && sessionId
             ? {
                 onOpen: () =>

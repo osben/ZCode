@@ -91,7 +91,7 @@ export interface GitCommitResult {
 const GIT_REF_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._/@^~-]*$/;
 
 /** `git log` field format: NUL-separated hash / subject / author name / author date (ISO-8601). */
-const GIT_LOG_PRETTY = "--pretty=format:%H%x00%s%x00%an%x00%aI";
+export const GIT_LOG_PRETTY = "--pretty=format:%H%x00%s%x00%an%x00%aI";
 
 /**
  * Workspace prefix relative to the repository root (`"sub/nested/"`, empty at the repo root).
@@ -118,7 +118,7 @@ export const GIT_STATUS_ARGV: readonly string[] = [
  * paths repository-root-relative instead of cwd-relative, matching status/diff (output contract
  * 2 at the top of this module).
  */
-const GIT_UNTRACKED_ARGV: readonly string[] = [
+export const GIT_UNTRACKED_ARGV: readonly string[] = [
   "ls-files",
   "--others",
   "--exclude-standard",

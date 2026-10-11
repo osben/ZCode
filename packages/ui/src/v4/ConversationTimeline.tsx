@@ -1,3 +1,5 @@
+import { useBotTopicPreparations } from "@/v4/BotTopicPreparation.js";
+import { withTopicPreparationMessages } from "@/v4/topicPreparationRenderUnits.js";
 /* oxlint-disable eslint(max-lines) -- ConversationTimeline coordinates virtual scrolling, scroll anchoring, loadOlder, and find highlighting; splitting it would pass the same scroll state across files. */
 import {
   Component,
@@ -8,12 +10,14 @@ import {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
   type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
   type TouchEvent as ReactTouchEvent,
   type WheelEvent as ReactWheelEvent,
 } from "react";
+import { flushSync } from "react-dom";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { ArrowDownIcon } from "lucide-react";
 import { TID_V4_TIMELINE, TID_V4_TIMELINE_BOTTOM } from "@zcode/shared";
@@ -32,18 +36,28 @@ import { Button } from "@/components/ui/button.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { logger } from "@/logger.js";
 import { ConversationTurnGroup } from "@/v4/ConversationTurnGroup.js";
+import {
+  deriveLogicalUiInstances,
+  getPluginUiDisclosureVersion,
+  getPluginUiManualPin,
+  setPluginUiInstanceDerivation,
+  subscribePluginUiDisclosure,
+  type PluginUiRowPinResolver,
+} from "@/plugin-ui/index.js";
 import { ConversationPendingGuideList } from "@/v4/ConversationPendingGuideList.js";
 import type { AssistantFeedbackHandler } from "@/v4/ConversationRowView.js";
 import { ConversationTurnNavigator } from "@/v4/ConversationTurnNavigator.js";
 import { syncConversationShareSelectionPanelLayout } from "@/v4/conversationShareSelectionPanelLayout.js";
 import type { ConversationRowRenderContext } from "@/v4/conversationRowContext.js";
 import { splitConversationTimelineLiveTail } from "@/v4/conversationTimelineLiveTail.js";
+import { armHighspeedFooterExpiryClock } from "@/highspeed/highspeedFooterExpiryClock.js";
 import {
   getConversationContentWidthClassName,
   getConversationStatusPanelOffsetClassName,
 } from "@/v4/conversationLayout.js";
 import {
   buildConversationTurnRenderUnits,
+  resolveNextHighspeedExpiryMs,
   type ConversationTurnRenderUnit,
 } from "@/v4/conversationTurnRenderUnits.js";
 import {
@@ -246,8 +260,10 @@ function getUnitHeightCacheKey(unit: ConversationTurnRenderUnit | undefined): st
   return unit?.key;
 }
 
-interface ConversationTimelineProps {
+export interface ConversationTimelineProps {
   rows: readonly ConversationRow[];
+  /** On narrow mobile remote-control screens, allow the entire conversation flex chain to shrink to drawer width; keep desktop layout unchanged. */
+  compactForRemoteControl?: boolean;
   /** Guide awaiting model-step injection in the CLI-authoritative queue; affects only renderer placement. */
   pendingGuides?: readonly QueueItem[];
   /** Runtime memory state, passed only to the current live turn and excluded from the historical virtual list. */
@@ -351,6 +367,7 @@ interface ConversationTimelineProps {
  */
 function ConversationTimelineImpl({
   rows,
+  compactForRemoteControl = false,
   pendingGuides = EMPTY_PENDING_GUIDES,
   apiRetry = null,
   totalCount,
@@ -414,19 +431,47 @@ function ConversationTimelineImpl({
     return () => observer.disconnect();
   }, [hasHeaderSlot]);
   const [liveNowMs, setLiveNowMs] = useState(() => Date.now());
+  // Plugin-card display model—same-resource replacement, automatic expansion for the last three turns, and manual pinning; publish the derived result for cards to read.
+  const pluginUiDerivation = useMemo(() => deriveLogicalUiInstances(rows), [rows]);
+  useEffect(() => {
+    setPluginUiInstanceDerivation(sessionKey, pluginUiDerivation);
+  }, [pluginUiDerivation, sessionKey]);
+  const pluginUiDisclosureVersion = useSyncExternalStore(
+    subscribePluginUiDisclosure,
+    getPluginUiDisclosureVersion,
+    getPluginUiDisclosureVersion,
+  );
+  const pluginUiPinResolver = useMemo<PluginUiRowPinResolver>(() => {
+    // Rebuild the resolver when manual pin/collapse state changes (version increments), and recompute the collapse boundary.
+    void pluginUiDisclosureVersion;
+    return (toolCallId) => ({
+      disposition: pluginUiDerivation.byToolCallId[toolCallId],
+      manualPinned: getPluginUiManualPin(sessionKey, toolCallId),
+    });
+  }, [pluginUiDerivation, sessionKey, pluginUiDisclosureVersion]);
+  const topicPreparations = useBotTopicPreparations();
   const renderUnits = useMemo(
     () =>
-      buildConversationTurnRenderUnits(rows, {
-        nowMs: liveNowMs,
-        sessionPhase,
-      }),
-    [liveNowMs, rows, sessionPhase],
+      withTopicPreparationMessages(
+        buildConversationTurnRenderUnits(rows, {
+          nowMs: liveNowMs,
+          sessionPhase,
+          pluginUiPinResolver,
+        }),
+        rows,
+        topicPreparations,
+      ),
+    [liveNowMs, pluginUiPinResolver, rows, sessionPhase, topicPreparations],
   );
   const { virtualizedUnits, liveUnit, liveUnitIndex } = useMemo(
     () => splitConversationTimelineLiveTail(renderUnits),
     [renderUnits],
   );
   const hasRunningUnit = useMemo(() => renderUnits.some((unit) => unit.isRunning), [renderUnits]);
+  const nextHighspeedExpiryMs = useMemo(
+    () => resolveNextHighspeedExpiryMs(rows, liveNowMs),
+    [liveNowMs, rows],
+  );
   const turnNavigatorQueryRowIds = useMemo(
     () =>
       new Set(
@@ -453,10 +498,13 @@ function ConversationTimelineImpl({
   const stableContentWidthRef = useRef<number | null>(null);
   const contentWidthResizeActiveRef = useRef(false);
   const contentWidthResizeSettleTimerRef = useRef<number | null>(null);
+  const committingMeasuredLayoutRef = useRef(false);
+  const messageLayerMaskObserverRef = useRef<ResizeObserver | null>(null);
   const isContentWidthChanging = useCallback(() => {
     const currentContentWidth = virtualHistoryRef.current?.clientWidth ?? null;
     const stableContentWidth = stableContentWidthRef.current;
     return (
+      committingMeasuredLayoutRef.current ||
       contentWidthResizeActiveRef.current ||
       (currentContentWidth !== null &&
         stableContentWidth !== null &&
@@ -581,6 +629,20 @@ function ConversationTimelineImpl({
 
     return () => window.clearInterval(timer);
   }, [hasRunningUnit]);
+
+  useEffect(() => {
+    if (nextHighspeedExpiryMs === undefined) return;
+
+    // Root cause: the work clock stops after a session completes. If a Highspeed card expires later,
+    // the footer would not appear on its own. Subscribe only to the nearest card-expiry boundary
+    // instead of continuously refreshing the entire history list for a countdown.
+    // Spec §9.3: expiry wakeups use renderer setTimeout, which Chromium freezes when the window is
+    // hidden or occluded. The helper also listens for the window becoming visible/focused and
+    // immediately catches liveNowMs up, allowing the footer to appear without another user message.
+    // This complements SessionPane's highspeedAutoShareClock wake compensation: that refreshes
+    // sharing entry/view-button completion data; this refreshes the visibility clock for the turn footer.
+    return armHighspeedFooterExpiryClock(nextHighspeedExpiryMs, () => setLiveNowMs(Date.now()));
+  }, [nextHighspeedExpiryMs]);
 
   useLayoutEffect(() => {
     const element = timelineRootRef.current;
@@ -719,6 +781,7 @@ function ConversationTimelineImpl({
     return height;
   }, []);
 
+  const [, commitMeasuredLayout] = useState(0);
   const virtualizer = useVirtualizer({
     count: virtualizedUnits.length,
     getScrollElement,
@@ -955,9 +1018,14 @@ function ConversationTimelineImpl({
     sync();
     if (typeof ResizeObserver !== "undefined") {
       const observer = new ResizeObserver(sync);
+      messageLayerMaskObserverRef.current = observer;
       observer.observe(scrollElement);
       observer.observe(messageLayer);
-      return () => observer.disconnect();
+      return () => {
+        observer.disconnect();
+        if (messageLayerMaskObserverRef.current === observer)
+          messageLayerMaskObserverRef.current = null;
+      };
     }
 
     window.addEventListener("resize", sync);
@@ -1059,8 +1127,86 @@ function ConversationTimelineImpl({
     if (!contentColumn || typeof ResizeObserver === "undefined") return;
 
     stableContentWidthRef.current = contentColumn.clientWidth;
+    let observedViewportHeight = scrollRef.current?.clientHeight ?? 0;
+    let observeContentFrame: number | null = null;
+    let disposed = false;
     const observer = new ResizeObserver(() => {
       const nextWidth = contentColumn.clientWidth;
+      const element = scrollRef.current;
+      if (!element) return;
+      const viewportHeightChanged = observedViewportHeight !== element.clientHeight;
+      observedViewportHeight = element.clientHeight;
+      if (nextWidth === stableContentWidthRef.current && !viewportHeightChanged) return;
+      markLayoutScrollGuard();
+      commitFollowing(
+        reconcileFollowingForContentAnchor({
+          following: followingRef.current,
+          metrics: {
+            scrollTop: element.scrollTop,
+            viewportHeight: element.clientHeight,
+            contentHeight: element.scrollHeight,
+          },
+          lastObservedScrollTop: lastObservedScrollTopRef.current,
+          userScrollIntent: getActiveUserScrollIntent(),
+        }),
+      );
+      if (followingRef.current) {
+        if (contentWidthResizeSettleTimerRef.current !== null) {
+          window.clearTimeout(contentWidthResizeSettleTimerRef.current);
+          contentWidthResizeSettleTimerRef.current = null;
+        }
+        // Commit layout and scroll-to-bottom together for this batch; other content effects must not scroll using an intermediate height.
+        observer.unobserve(contentColumn);
+        const messageLayer = messageLayerRef.current;
+        const maskObserver = messageLayerMaskObserverRef.current;
+        // Synchronously updating the placeholder height also changes the parent message layer's
+        // height, so pause its overlay observer too. Otherwise, changing the parent from a deeper
+        // ResizeObserver notification can produce undelivered notifications.
+        if (messageLayer) maskObserver?.unobserve(messageLayer);
+        committingMeasuredLayoutRef.current = true;
+        try {
+          // The virtualizer's ResizeObserver normally commits React updates asynchronously. Scrolling
+          // to the bottom first would use the old placeholder height, then jump again after the next
+          // frame's measurement. Measure in a batch and commit synchronously inside the observer to avoid catching up across frames.
+          const measurements = Array.from(
+            contentColumn.querySelectorAll(":scope > [data-index]"),
+            (node) => ({
+              index: Number(node.getAttribute("data-index")),
+              height: measureElement(node, undefined),
+            }),
+          );
+          flushSync(() => {
+            for (const item of measurements) virtualizer.resizeItem(item.index, item.height);
+            // The cache may already be updated with no delta; still commit explicitly instead of relying on an empty callback to flush old work.
+            commitMeasuredLayout((revision) => revision + 1);
+          });
+        } finally {
+          committingMeasuredLayoutRef.current = false;
+          // Pause only the observer target whose height this batch updates; do not defer measurement
+          // or scrolling to the bottom. Continue observing the content-column width next frame to
+          // cover CSS width transitions that continue after viewport resizing stops.
+          if (observeContentFrame !== null) window.cancelAnimationFrame(observeContentFrame);
+          if (!disposed) {
+            observeContentFrame = window.requestAnimationFrame(() => {
+              observeContentFrame = null;
+              observer.observe(contentColumn);
+              if (
+                messageLayer &&
+                messageLayerRef.current === messageLayer &&
+                messageLayerMaskObserverRef.current === maskObserver
+              )
+                maskObserver?.observe(messageLayer);
+            });
+          }
+        }
+        if (disposed) return;
+        stableContentWidthRef.current = contentColumn.clientWidth;
+        contentWidthResizeActiveRef.current = false;
+        // Synchronous commits may trigger other layout work; user scrolling up or navigating to a position always takes precedence.
+        if (followingRef.current && getActiveUserScrollIntent() !== "awayFromBottom")
+          scrollToBottom();
+        return;
+      }
       if (nextWidth === stableContentWidthRef.current) return;
 
       // Width changes make virtual rows remeasure in batches; compensating per row or following the bottom per batch
@@ -1079,16 +1225,27 @@ function ConversationTimelineImpl({
       }, CONTENT_WIDTH_RESIZE_SETTLE_MS);
     });
     observer.observe(contentColumn);
+    if (scrollRef.current) observer.observe(scrollRef.current);
 
     return () => {
+      disposed = true;
       observer.disconnect();
+      if (observeContentFrame !== null) window.cancelAnimationFrame(observeContentFrame);
       if (contentWidthResizeSettleTimerRef.current !== null) {
         window.clearTimeout(contentWidthResizeSettleTimerRef.current);
         contentWidthResizeSettleTimerRef.current = null;
       }
       contentWidthResizeActiveRef.current = false;
     };
-  }, [renderUnits.length === 0, scrollToBottom]);
+  }, [
+    commitFollowing,
+    getActiveUserScrollIntent,
+    markLayoutScrollGuard,
+    measureElement,
+    renderUnits.length === 0,
+    scrollToBottom,
+    virtualizer,
+  ]);
 
   useLayoutEffect(() => {
     const element = liveTailRef.current;
@@ -1686,7 +1843,10 @@ function ConversationTimelineImpl({
   // Raw projection rows and render units merged by turn use different units.
   // Expose them separately so restoration/paging checks do not mistake visible units for persisted rows.
   return (
-    <div ref={timelineRootRef} className="relative flex min-h-0 flex-1 flex-col">
+    <div
+      ref={timelineRootRef}
+      className={cn("relative flex min-h-0 flex-1 flex-col", compactForRemoteControl && "min-w-0")}
+    >
       {selectionActions ? (
         <ConversationSelectionTooltip
           rootRef={scrollRef}
@@ -1703,9 +1863,9 @@ function ConversationTimelineImpl({
         capture={captureScrollMemoryBeforeScopeMutation}
         commit={commitCapturedScrollMemory}
       />
-      {/* During share selection, the share panel or reopen button owns the left rail whether the
-            panel is expanded or collapsed. Hide turn navigation to prevent the absolutely
-            positioned controls from overlapping; it returns automatically when share selection ends. */}
+      {/* Bugfix: During share selection, the share panel or reopen button owns the left rail whether the
+          panel is expanded or collapsed. Hide turn navigation to prevent the absolutely
+          positioned controls from overlapping; it returns automatically when share selection ends. */}
       {hideTurnNavigator ? null : (
         <ConversationTurnNavigator
           renderUnits={renderUnits}
@@ -1750,7 +1910,8 @@ function ConversationTimelineImpl({
           // When the share-selection panel is open, switch to overflow-hidden. scrollTop and scrollbar-gutter stay unchanged,
           // but the native scrollbar, wheel, and keyboard paging can no longer move the background, so selection targets do not drift.
           backgroundScrollLocked && "!overflow-y-hidden",
-          // The Conversation turn map covers 48px on the left side of the timeline. If enhanced table scrolling still borrows
+          compactForRemoteControl && "min-w-0",
+          // Root cause: Conversation turn map covers the leftmost 48px of the timeline; if table-enhanced scrolling still uses
           // the normal 16px margin, 32px falls underneath the turn map; include the full occupied width in the left boundary.
           turnNavigatorQueryRowIds.size >= 2 &&
             "@min-[864px]/conversation:[--markdown-table-layout-left-inset:48px]",
@@ -1762,7 +1923,7 @@ function ConversationTimelineImpl({
             // Scale top whitespace with viewport height so the input position is independent of the recommendation list below;
             // when space is short, the top can shrink to its minimum while the bottom follows content naturally.
             responsiveCenteredEmptyLayout
-              ? // Dynamically changing the native window minimum feeds content reflow back into window dragging and causes lag;
+              ? // Bugfix root cause: dynamically changing the native window minimum feeds content reflow back into window dragging and causes lag;
                 // Keep the container's intrinsic minimum height; the outer timeline handles overflow when height is constrained.
                 "flex min-h-full flex-col items-center px-4 before:block before:min-h-[52px] before:w-full before:shrink before:basis-[29dvh] before:content-[''] after:block after:min-h-4 after:w-full after:flex-1 after:content-['']"
               : centeredEmptyLayout
@@ -1789,6 +1950,7 @@ function ConversationTimelineImpl({
             <div
               ref={messageLayerRef}
               data-v4-timeline-message-layer="true"
+              data-sandbox-page-container="true"
               className="relative w-full flex-1 [mask-repeat:no-repeat] [-webkit-mask-repeat:no-repeat]"
             >
               {/*
@@ -1840,6 +2002,7 @@ function ConversationTimelineImpl({
                     >
                       <ConversationTurnGroup
                         unit={unit}
+                        nowMs={liveNowMs}
                         apiRetry={null}
                         context={rowContext}
                         onFork={onFork}
@@ -1870,6 +2033,7 @@ function ConversationTimelineImpl({
                 >
                   <ConversationTurnGroup
                     unit={liveUnit}
+                    nowMs={liveNowMs}
                     apiRetry={apiRetry}
                     context={rowContext}
                     onFork={onFork}

@@ -61,7 +61,10 @@ function V4ComposerModeSwitchImpl({
   const modeShortcutLabel = useShortcutCommandLabel("cycleSessionMode");
   const modes = getZCodeAgentAvailableModes();
   const permissions = modes.filter((mode) => mode.id !== "plan");
-  const selected = permissions.find((mode) => mode.id === draftConfig?.mode);
+  // The new menu hides Edit, but historical drafts can still be restored; a changed candidate list must not hide the entire permission entry.
+  const selected =
+    permissions.find((mode) => mode.id === draftConfig?.mode) ??
+    (draftConfig?.mode === "edit" ? { id: "edit", name: "Edit" } : undefined);
   const label = (mode: (typeof modes)[number]) =>
     getModeOptionDisplayLabel(intl, displayProvider, { value: mode.id, name: mode.name });
   const plan = modes.find((mode) => mode.id === "plan")!;
@@ -118,6 +121,8 @@ function V4ComposerModeSwitchImpl({
               className={cn(
                 "group/mode h-7 gap-1 rounded-lg px-2 text-ui-base data-[composer-compact=true]:w-7 data-[composer-compact=true]:px-0",
                 selected.id === "yolo" && "text-warning hover:text-warning",
+                selected.id === "guarded" &&
+                  "text-icon-blue hover:text-icon-blue aria-expanded:text-icon-blue",
               )}
             >
               <Icon className="size-4" />

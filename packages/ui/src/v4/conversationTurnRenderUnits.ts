@@ -1,4 +1,12 @@
 import type {
+  ConversationTurnRenderUnit,
+  BuildConversationTurnRenderUnitsOptions,
+} from "@/v4/conversationTurnRenderUnitTypes.js";
+export type {
+  ConversationTurnRenderUnit,
+  BuildConversationTurnRenderUnitsOptions,
+} from "@/v4/conversationTurnRenderUnitTypes.js";
+import type {
   AssistantTextRow,
   ConversationRow,
   HookInvocationRow,
@@ -6,7 +14,6 @@ import type {
   TimelineMarkerRow,
   TurnHeaderRow,
   UserInputRow,
-  WorkflowLaunchMeta,
 } from "@zcode/shared/zcode-protocol-v4";
 import type { AssistantWorkRow, ConversationTurnFlowItem } from "@/v4/conversationTurnFlowItems.js";
 import {
@@ -18,58 +25,14 @@ import {
   resolveConversationTurnWorkDurationMs,
   resolveConversationTurnWorkStatus,
 } from "@/v4/conversationTurnWorkSegments.js";
-import type {
-  ConversationTurnWorkSegment,
-  ConversationTurnWorkStatus,
-} from "@/v4/conversationTurnWorkSegments.js";
+import { markHighspeedOutputFooterUnits } from "@/highspeed/highspeedOutputFooter.js";
 
 export type { AssistantWorkRow, ConversationTurnFlowItem } from "@/v4/conversationTurnFlowItems.js";
 export type {
   ConversationTurnWorkSegment,
   ConversationTurnWorkStatus,
 } from "@/v4/conversationTurnWorkSegments.js";
-
-export interface ConversationTurnRenderUnit {
-  key: string;
-  turnId: string;
-  header?: TurnHeaderRow;
-  visibleUserInputs: UserInputRow[];
-  assistantWorkRows: AssistantWorkRow[];
-  /** Historical-row aggregation for all visual work segments, used only for copy, preview, and compatibility with older callers. Actual collapse boundaries come from workSegments, and each segment must preserve CLI row order. */
-  assistantHistoryRows: AssistantWorkRow[];
-  /** Rows after the operation-body anchor and before the actual turn-tail marker; render them in place in CLI total order. */
-  assistantFollowingRows: AssistantWorkRow[];
-  assistantTailRows: AssistantWorkRow[];
-  /** Browser automatic end-of-turn screenshot: in completed state, render it after the file-diff summary and before the message toolbar. */
-  browserTurnEndRows: AssistantWorkRow[];
-  /** Turn-local Hook product rows; excluded from assistant work/collapse and used only by the turn-tail details action. */
-  hookInvocations: HookInvocationRow[];
-  /** All assistant text segments in the turn, aggregated for copy/preview; does not indicate render position. */
-  assistantTextRows: AssistantTextRow[];
-  /** Light boundary (modelChange): render a divider at the top of the turn, before user input. */
-  leadingBoundaryRows: TimelineMarkerRow[];
-  /** Final body text for a completed turn; fork/retry/action/preview attach only to this segment. */
-  latestAssistantTextRow?: AssistantTextRow;
-  /** Visible interleaving order of user/assistant within the same product turn; keep adjacent work rows grouped. */
-  flowItems: ConversationTurnFlowItem[];
-  /** Original input and each accepted guide form their own visual work segment. */
-  workSegments?: ConversationTurnWorkSegment[];
-  renderRows: ConversationRow[];
-  isLastTurn: boolean;
-  isRunning: boolean;
-  assistantHistoryDefaultOpen: boolean;
-  timelineOnly: boolean;
-  /** Turn-level aggregated work status, retained only for old callers; new components use workSegments[].workStatus. */
-  workStatus?: ConversationTurnWorkStatus;
-  startedAt?: number;
-  /** Launch metadata for a turn started directly from the hub (see `workflowLaunchTurn.ts`); when present, the run card represents the turn and there is no user bubble. */
-  workflowLaunch?: WorkflowLaunchMeta;
-}
-
-interface BuildConversationTurnRenderUnitsOptions {
-  nowMs?: number;
-  sessionPhase?: SessionPhase;
-}
+export { resolveNextHighspeedExpiryMs } from "@/highspeed/highspeedConversationRows.js";
 
 interface DraftTurnRenderUnit {
   key: string;
@@ -309,6 +272,7 @@ function materializeDraftUnit(
     forceOpenHistory,
     timelineOnly,
     nowMs: options.nowMs,
+    ...(options.pluginUiPinResolver ? { pluginUiPinResolver: options.pluginUiPinResolver } : {}),
   });
   const orderedAssistantHistoryRows = workSegments.flatMap(
     (segment) => segment.assistantHistoryRows,
@@ -463,7 +427,8 @@ export function buildConversationTurnRenderUnits(
     materializeDraftUnit(unit, index, units.length, options),
   );
   const keptUnits = materializedUnits.filter(shouldKeepRenderUnit);
-  return keptUnits.map((unit, index) =>
+  const normalizedUnits = keptUnits.map((unit, index) =>
     normalizeRenderUnitPosition(unit, index, keptUnits.length, options),
   );
+  return markHighspeedOutputFooterUnits(normalizedUnits, options.nowMs ?? Date.now());
 }

@@ -1,8 +1,9 @@
 /**
- * Read and stamp the phase at which an instance was created.
- * Two read paths share `instancePhases` (instance `siteId@ordinal` → phase name at creation): add
- * phase data to events and add phase data to `ProviderStop` details.
- * The engine owns the map and writes it when instances are created; this module only reads it.
+ * Two helpers that stamp birth-phase coordinates (docs/dynamic-workflow/presentation.md, added 2026-09-09).
+ *
+ * Split because engine.ts reached oxlint's 400-line limit. These two helpers were chosen because they are closely related—the only two readers
+ * of the same `instancePhases` table (instance `siteId@ordinal` → its **birth phase**): one stamps events, the other adds a phase to
+ * `ProviderStop` details. Both are pure functions; the caller (engine) owns the table and writes at creation time, while these helpers only read it. Only engine.ts uses them publicly.
  */
 
 import type { RunEvent } from "./types.js";
@@ -51,14 +52,19 @@ export function stampBirthPhase(event: RunEvent, instancePhases: InstancePhases)
     const phaseName = instancePhases.get(refToString(event.instance));
     return phaseName === undefined ? event : { ...event, phaseName };
   }
+  // Reaching a hole is also a birth (docs/execution-engine.md, “Holes”): its ordinal is generated like a node's and its birth
+  // phase comes from the same table—there is no row, so the event is its only coordinate.
+  if (event.type === "hole-reached") {
+    const phaseName = instancePhases.get(refToString(event.instance));
+    return phaseName === undefined ? event : { ...event, phaseName };
+  }
   return event;
 }
 
 /**
- * Add the **creation phase** of the subagent that triggered a `ProviderStop`: the driver knows only
- * the actor ref, while the engine knows the phase from the same map used for `phaseName` on events.
- * Return unchanged if there is no providerStop, no subagent, a phase is already present, or the ref
- * was created before any `phase()` marker.
+ * Add the triggering subagent's **birth phase** to `ProviderStop` (the `phase=` in docs/execution-engine.md,
+ * “Notification copy”): the driver knows only the actor ref, while only the engine knows its phase (from the same table used for event-stream `phaseName`).
+ * Return unchanged if there is no providerStop, no subagent, a phase is already present, or the ref was created before any `phase()` marker.
  */
 export function enrichProviderStopPhase(
   error: WorkflowError,

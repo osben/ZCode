@@ -2,10 +2,10 @@ import type { SkillSummary } from "@zcode/shared";
 import type { CreateTaskOptions } from "@/app-shell/types.js";
 import { buildSkillMentionMarkdown } from "@/mentions/mentionMarkdown.js";
 
-const PLUGIN_CREATOR_SKILL = "plugin-creator";
-const PLUGIN_CREATOR_ID = "plugin-creator@zcode-plugins-official";
+export const PLUGIN_CREATOR_SKILL = "plugin-creator";
+export const PLUGIN_CREATOR_ID = "plugin-creator@zcode-plugins-official";
 
-function buildPluginCreatorPrefill(skills: readonly SkillSummary[]): CreateTaskOptions {
+export function buildPluginCreatorPrefill(skills: readonly SkillSummary[]): CreateTaskOptions {
   // The create entry trusts only official sources; user directories or same-named marketplace skills must not intercept this product action.
   const skill = skills.find(
     (entry) =>

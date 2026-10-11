@@ -1,6 +1,11 @@
-// Dynamic Workflow Run Port: read types for workspace operation records.
-// Includes manifest rows and result bodies for `files.*`, `git.*`, and `world.run` calls.
-// Re-exported from dynamic-workflow-run.port.ts; consumers use `@zcode/contracts`.
+// ============================================================
+// Dynamic Workflow Run Port: read types for workspace transcripts.
+// ============================================================
+// docs/dynamic-workflow/transcript-and-notifications.md. Split for the same reason as the roster view
+// (dynamic-workflow-run-roster.port.ts) and retune types (dynamic-workflow-run-retune.port.ts):
+// dynamic-workflow-run.port.ts reached oxlint's 400-line limit, and these six types form a group (the
+// listing and body of one `files.*` / `git.*` / `world.run` call). The public surface is unchanged: that
+// module re-exports them, so `@zcode/contracts` import paths remain the same.
 
 // The structured failure shape stays in the main file, where it is referenced by two fields
 // in this group. Import its type here: this creates no runtime dependency, and each file

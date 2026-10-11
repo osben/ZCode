@@ -6,14 +6,21 @@
 // the host has no lite-model source; "lite" and "main" already follow the same path by inheriting
 // the parent's current model.
 //
-// This module answers one question: **which model should this actor's session run on?** Three
-// sources are ordered by priority: this run's `subagentModel` (`subagent_model` from
-// CreateWorkflow/AmendWorkflow) > resume pin (model actually used last time, stored in journal) >
-// parent session's current model.
+// This module answers one question: **which model should this actor's session run on?** Four
+// sources are ordered by priority: the persona-named model (`agent(…, { model })` in the script,
+// resolved through the run-launched binding table; docs/dynamic-workflow/authoring.md, "Choosing a
+// model per subagent") > this run's `subagentModel` (`subagent_model` from CreateWorkflow /
+// AmendWorkflow, docs/dynamic-workflow/launch.md) > resume pin (model actually used last time,
+// stored in journal) > parent session's current model.
+//
+// 2026-09-26 addendum: the persona model is back, but not as the retired tier—the script names a
+// concrete model, launch resolves it against the model catalog into a binding table, and here we
+// only look it up ({@link resolveActorPersonaModel}).
 // This is a sibling to workflow-actor-tools.ts at the same seam: one supplies the tool surface, the
 // other the model surface. Both are expanded by the driver-side runtime factory when it creates AgentRuntime.
 
 import type { ModelSelection } from "@zcode/shared/model-selection";
+import { parseModelPickerValue } from "@zcode/shared/model-selection";
 import { parseProviderQualifiedModelSelection } from "./provider-registry-selection.js";
 
 /** Host-side facts needed to resolve the model surface. */
@@ -34,6 +41,13 @@ interface WorkflowActorModelHost {
    * parent model are defaults it replaces (see the function comment below). It affects subagents only, not the main agent.
    */
   runSelection?: ModelSelection | undefined;
+  /**
+   * The model this actor's persona names, resolved through this run's binding table into a full
+   * selection (including reasoning tier; {@link resolveActorPersonaModel}). Priority: **highest**—it
+   * is the selection written for this one subagent whose binding the user approved in the
+   * confirmation window, more specific than "the run-wide default subagent model."
+   */
+  actorSelection?: ModelSelection | undefined;
 }
 
 /** Model-surface slice of AgentRuntimeConfig. */
@@ -64,12 +78,54 @@ export class WorkflowActorPinnedModelError extends Error {
 }
 
 /**
- * Map the run selection and journal pin to AgentRuntime model config. Pure function.
+ * The persona names a model that is absent from this run's binding table. Only a type assertion
+ * bypassing compiler rule 9010 can reach here (the compile step guarantees the name set is closed
+ * and launch resolves the whole table); include the name and the names the table does have so a
+ * troubleshooter knows which script line is off and by what. Fail loudly: silently falling back to
+ * the run's subagent model would run a model the user never approved.
+ */
+export class WorkflowActorModelUnboundError extends Error {
+  readonly modelName: string;
+
+  constructor(modelName: string, bound: readonly string[]) {
+    super(
+      `This subagent's persona names the model "${modelName}", which the run did not resolve at launch` +
+        (bound.length === 0
+          ? " (the script named no models)."
+          : ` (it resolved: ${bound.map((name) => `"${name}"`).join(", ")}).`),
+    );
+    this.name = "WorkflowActorModelUnboundError";
+    this.modelName = modelName;
+  }
+}
+
+/**
+ * Persona model name → full selection (docs/dynamic-workflow/launch.md, "Models the script
+ * names"). Pure function.
+ *
+ * Names are looked up **verbatim**: lowering erases `model("x")` to `"x"`, the persona carries the
+ * exact string the script wrote, and that string is also the table's key. When the persona names no
+ * model, return undefined (deferring to run selection / pin / parent model).
+ */
+export function resolveActorPersonaModel(
+  personaModel: string | undefined,
+  bindings: Readonly<Record<string, string>> | undefined,
+): ModelSelection | undefined {
+  if (personaModel === undefined) return undefined;
+  const canonical = bindings?.[personaModel];
+  if (canonical === undefined) {
+    throw new WorkflowActorModelUnboundError(personaModel, Object.keys(bindings ?? {}));
+  }
+  return parseModelPickerValue(canonical);
+}
+
+/**
+ * Map the persona model, run selection, and journal pin to AgentRuntime model config. Pure function.
  *
  * `pinnedModel` is this actor's `resolvedModel` (`providerId/modelId`) recorded in the journal;
  * only resume includes it (including amend-resume seeds inherited from a predecessor).
  *
- * Priority: **this run's `subagentModel` > resume pin > parent session's current model**.
+ * Priority: **persona-named model > this run's `subagentModel` > resume pin > parent session's current model**.
  *
  * | Run selection | Pin | Resolution |
  * |---|---|---|
@@ -116,6 +172,11 @@ export function workflowActorModelPolicy(
   host: WorkflowActorModelHost,
   pinnedModel?: string,
 ): WorkflowActorModelPolicy {
+  // The persona names a model: it is this subagent's explicit choice, and the run selection and
+  // pin are merely defaults it replaces.
+  if (host.actorSelection !== undefined) {
+    return { configOverrides: { modelSelection: host.actorSelection } };
+  }
   // Run selection is present: replace the whole selection and do not even parse the pin; it is only the default this run replaces.
   if (host.runSelection !== undefined) {
     return { configOverrides: { modelSelection: host.runSelection } };

@@ -3,7 +3,6 @@ import type {
   WorkflowRunArtifactSummary,
   WorkflowRunPendingQuestion,
 } from "@zcode/shared/zcode-protocol-v4";
-import type { WorkflowCausalityGraphData } from "@/components/workflow-graph/types.js";
 import { buildWorkflowTimeline } from "@/components/workflow-timeline/timeline-model.js";
 import { workflowSubagentModelCardLabel } from "@/components/workflow-timeline/subagent-model-label.js";
 import { workflowSummaryParts } from "@/components/workflow-timeline/timeline-summary.js";
@@ -19,6 +18,7 @@ import {
   workflowRunTabScope,
 } from "@/app-shell/useWorkflowRunPaneSettings.js";
 import { WorkflowRunSettingsPopover } from "@/components/workflow-timeline/WorkflowRunSettingsPopover.js";
+import { WorkflowRunPaneSaveSlots } from "@/app-shell/WorkflowRunPaneSaveSlots.js";
 import { resolveWorkflowLaunchProvenance } from "@/app-shell/workflowRunLaunchProvenance.js";
 import {
   describeWorkflowRunActionRejection,
@@ -46,8 +46,9 @@ import { useDynamicWorkflowAvailability } from "@/hooks/useDynamicWorkflowAvaila
 import { useWorkflowRunArtifacts } from "@/hooks/useWorkflowRunArtifacts.js";
 import { createCommandEnvelope } from "@/v4/commandFactory.js";
 import {
+  buildWorkflowFillGraphByRunId,
   buildWorkflowGraphByToolCallId,
-  resolveWorkflowRunGraph,
+  resolveWorkflowRunGraphForRun,
 } from "@/v4/workflowRunCardJoin.js";
 import type { PaneWorkspaceScope } from "@/v4/paneLayoutStore.js";
 import type { SessionLease } from "@/v4/sessionDataLayer.js";
@@ -121,15 +122,16 @@ const WorkflowRunContent = memo(function WorkflowRunContent({
   // and the script transcript—either a CreateWorkflow tool row or direct-launch metadata may own the graph. The row window is
   // bounded, so an initiating row missing from an old conversation is normal, not an error; there is no graph to show then.
   // A run created by a “Settings” revision borrows the predecessor’s graph until the settings turn is recorded (see resolveWorkflowRunGraph for the rule and rationale).
-  const graph = useMemo<WorkflowCausalityGraphData | undefined>(
-    () =>
-      resolveWorkflowRunGraph(
-        buildWorkflowGraphByToolCallId(snapshot?.rows.window),
-        tab.toolCallId,
-        snapshot?.workflowRuns?.runs,
-      ),
-    [snapshot?.rows.window, snapshot?.workflowRuns, tab.toolCallId],
-  );
+  // For a completed run, use the effective workflow graph from its latest completion row (docs/dynamic-workflow/presentation.md, “Holes on the timeline”).
+  const { graph, holeLabels } = useMemo(() => {
+    const fills = buildWorkflowFillGraphByRunId(snapshot?.rows.window);
+    const graphs = buildWorkflowGraphByToolCallId(snapshot?.rows.window);
+    const runs = snapshot?.workflowRuns?.runs;
+    return {
+      graph: resolveWorkflowRunGraphForRun(graphs, fills, tab.toolCallId, tab.runId, runs),
+      holeLabels: fills.get(tab.runId)?.holeLabels,
+    };
+  }, [snapshot?.rows.window, snapshot?.workflowRuns, tab.runId, tab.toolCallId]);
 
   // Provenance for a directly launched run: scope, description, arguments, and
   // “launched by you from the workflow hub.” Present only for hub-launched runs; runs launched through a tool path have no such section.
@@ -140,8 +142,8 @@ const WorkflowRunContent = memo(function WorkflowRunContent({
 
   // One model, three consumers: both the roster and summary row start from it.
   const model = useMemo(
-    () => (graph === undefined ? undefined : buildWorkflowTimeline(graph, run)),
-    [graph, run],
+    () => (graph === undefined ? undefined : buildWorkflowTimeline(graph, run, holeLabels)),
+    [graph, holeLabels, run],
   );
   // Subagent model: remove the chip from the first status-header row,
   // and make the model name the first segment of the summary row—the row already represents “the key figures for this run.” Put thinking level and canonical ID in the tooltip.
@@ -340,23 +342,29 @@ const WorkflowRunContent = memo(function WorkflowRunContent({
       data-workflow-run-id={tab.runId}
       data-workflow-run-status={run?.status ?? "absent"}
     >
-      <WorkflowRunStatusHeader
-        cancellable={cancellable}
-        configureOpen={settings.popover.open}
-        onCancel={handleCancel}
-        {...(settings.configurable ? { onConfigureFrom: settings.popover.toggleFrom } : {})}
-        {...(onOpenWorkflowRun === undefined || successor === undefined
-          ? {}
-          : { onOpenSuccessor: handleOpenSuccessor })}
-        onResume={handleResume}
-        {...(rejectionView === undefined ? {} : { rejection: rejectionView })}
-        resumable={resumable}
-        run={run}
-        {...(subagentModel === undefined ? {} : { subagentModel })}
-        summaryParts={summaryParts}
-        title={runTitle}
-        usage={run?.usage}
-      />
+      {/* “Save / Run again” (docs/dynamic-workflow/transcript-and-notifications.md, “Saving the run, and running it again”): the same controller drives this pane and the completion card, so both use the same wording for a given run. */}
+      <WorkflowRunPaneSaveSlots rows={snapshot?.rows.window} run={run} tab={tab}>
+        {(slots) => (
+          <WorkflowRunStatusHeader
+            cancellable={cancellable}
+            configureOpen={settings.popover.open}
+            onCancel={handleCancel}
+            {...(settings.configurable ? { onConfigureFrom: settings.popover.toggleFrom } : {})}
+            {...(onOpenWorkflowRun === undefined || successor === undefined
+              ? {}
+              : { onOpenSuccessor: handleOpenSuccessor })}
+            onResume={handleResume}
+            {...(rejectionView === undefined ? {} : { rejection: rejectionView })}
+            resumable={resumable}
+            run={run}
+            saveSlots={slots}
+            {...(subagentModel === undefined ? {} : { subagentModel })}
+            summaryParts={summaryParts}
+            title={runTitle}
+            usage={run?.usage}
+          />
+        )}
+      </WorkflowRunPaneSaveSlots>
 
       {run === undefined || !settings.configurable ? null : (
         <WorkflowRunSettingsPopover
@@ -396,6 +404,7 @@ const WorkflowRunContent = memo(function WorkflowRunContent({
             ? {}
             : { onOpenWorkspace: handleOpenWorkspace })}
           {...(landing === undefined ? {} : { landing })}
+          {...(subagentModelProviderName === undefined ? {} : { subagentModelProviderName })}
         />
       ) : (
         <p

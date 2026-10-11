@@ -7,17 +7,14 @@
 //
 // This file owns three responsibilities:
 //   1. Journal-sequence capture (the emit side gets the sequence of the event just appended).
-//   2. RunEvent → session-event payload (bounded payload + two derived fields).
+//   2. RunEvent → session-event payload (bounded payload + derived fields; implemented in dynamic-workflow-run-progress-payload.ts).
 //   3. Actor-runtime integration: new runtime (persist session row + task link) or rehydration (resumeFromStore).
 
 import { randomUUID } from "node:crypto";
 import {
-  boundDynamicWorkflowRunEventPayload,
   CoreErrorType,
   ZCODE_DWF_CHILD_COMMAND,
   type CreateSessionTaskLinkInput,
-  type DynamicWorkflowRunEvent,
-  type DynamicWorkflowRunProgressPayload,
   type SessionId,
 } from "@zcode/contracts";
 import type { AgentRuntime } from "@zcode/core";
@@ -32,25 +29,30 @@ import {
   type ImportedRunCache,
   type JournalStorePort,
   type JsonSchema,
-  type RunEvent,
   type RunSettlement,
   type ValidateFn,
 } from "@zcode/dynamic-workflow";
 import { runWorkflowScript } from "@zcode/dynamic-workflow-runtime";
 import { createJournalSequenceCapture } from "./dynamic-workflow-run-sequence-capture.js";
-import { isResumableSettlement } from "./dynamic-workflow-run-observation.js";
+import type { CompiledHole } from "./dynamic-workflow-run-holes.js";
+import { toProgressPayload } from "./dynamic-workflow-run-progress-payload.js";
 import {
   readRunLaunchAnchor,
+  readRunModelBindings,
   readRunSubagentModel,
+  readRunSubagentPermissionMode,
   type RunLaunch,
 } from "./dynamic-workflow-run-launch-anchor.js";
-import { resolveWorkflowConcurrencyCeiling } from "./workflow-concurrency-ceiling.js";
+import { resolveWorkflowDefaultConcurrency } from "./workflow-default-concurrency.js";
 import type { ActorSessionQuiescence } from "./workflow-driver-quiescence.js";
-import { createAgentRuntimeWorkflowDriver, mintActorSessionId } from "./workflow-driver.js";
+import { resolveActorPersonaModel } from "./workflow-actor-model.js";
+import { createAgentRuntimeWorkflowDriver } from "./workflow-driver.js";
 import type { WorkflowEscalationRegistry } from "./workflow-escalation-registry.js";
-import type { WorkflowRunControl } from "./workflow-run-control.js";
+import { runBoundTarget, type WorkflowRunControl } from "./workflow-run-control.js";
 import { createWorkflowRunSeatGate } from "./workflow-seat-gate.js";
 import type { DynamicWorkflowRunServiceDeps } from "./dynamic-workflow-run-service.js";
+
+export { toProgressPayload, toProtocolEvent } from "./dynamic-workflow-run-progress-payload.js";
 
 /** Adapt the package validator to the engine's ValidateFn contract (launch is the only caller of runWorkflowScript). */
 const validateFn: ValidateFn = (schema, value) => validate(schema as JsonSchema, value);
@@ -60,10 +62,23 @@ export interface CompiledDynamicWorkflowScript {
   lowered: string;
   scriptHash: string;
   askSpecs: Map<string, AskSpec>;
-  /** Approved world.run commands (collected as literals at compile time). */
-  declaredRunCommands: ReadonlySet<string>;
   /** Submit profile for each actor site. */
   actorSubmitProfiles: ReadonlyMap<string, ActorSubmitProfile>;
+  /** Site → lexical birth phase name (docs/execution-engine.md “Identity: sites, ordinals, phases”). */
+  sitePhases: ReadonlyMap<string, string>;
+  /**
+   * Function-body text of completed holes (site id → `(async () => { … })`; docs/execution-engine.md
+   * “The text that runs”). The completion service hands `holeBodies[siteId]` to the engine as that hole's `code`.
+   */
+  holeBodies: Readonly<Record<string, string>>;
+  /** Compile-time facts for every hole in the script (open and completed, in source order): source of type / line for snapshots and progress payloads. */
+  holes: readonly CompiledHole[];
+  /**
+   * Phase table taken from the control-flow projection plus indices of its open holes (`collectPhaseNames`).
+   * The completion service uses it for the engine `fillHole` `phaseNames` / `holes`; the launch declaration
+   * table still comes from the submitter (the tool layer computes from the same projection).
+   */
+  phases: { phaseNames: string[]; holes: number[] };
 }
 
 interface LaunchDynamicWorkflowRunInput {
@@ -123,11 +138,11 @@ interface LaunchDynamicWorkflowRunInput {
    */
   escalationRegistry: WorkflowEscalationRegistry;
   /**
-   * Live control plane for this run. The run service creates one per **registry entry** (all three
-   * entry points: submit/amend/resume); this function connects both ends: the harness handles
-   * `bind(engine)`, and this function handles `bindSeatGate`.
+   * Live control plane for this run (docs/dynamic-workflow/concurrency.md “The control path”). The run
+   * service creates one per **registry entry** (all three entry points: submit/amend/resume); this
+   * function connects both ends: the harness handles `bind(engine)`, and this function handles `bindSeatGate`.
    *
-   * If absent, this launch has no control plane (for example, snippet execution): the run completes
+   * If absent, this launch has no control plane (snippet execution, integration tests): the run completes
    * normally, but its limits cannot be changed while running.
    */
   control?: WorkflowRunControl;
@@ -138,6 +153,14 @@ interface LaunchDynamicWorkflowRunInput {
    * Pass it through unchanged; this file does not inspect it.
    */
   onQuiescenceProbe?: (probe: ActorSessionQuiescence) => void;
+  /**
+   * Raw type-argument text of a hole (the progress payload adds `type` to `hole-reached`;
+   * docs/execution-engine.md “Holes”). This is a function, not a table: a completion replaces the
+   * effective script, new holes nested inside the function body appear with it, and the table changes
+   * over the run's lifetime — the caller (run service) has it read the current one on the registry
+   * entry. If absent, no `type` is added.
+   */
+  holeTypeOf?: (siteId: string) => string | undefined;
 }
 
 /**
@@ -166,23 +189,30 @@ export function launchDynamicWorkflowRun(
     toolCallId,
   } = input;
   const childSpawn = dynamicWorkflowChildSpawn();
-  // **Second** enforcement point for this run's own cap: the scheduler checks "can we dispatch
-  // another ask?" while this gate checks "can the already-running asks send their next request?"
-  // The starting caps are those supplied for this launch (clamped request for submit, journal row
-  // for resume), so a run never retuned stays on the gate's fast path — no event, no permit, exactly
-  // the same behavior as before.
+  // **Second** enforcement point for this run's own cap (docs/dynamic-workflow/concurrency.md “Two
+  // enforcement points”): the scheduler checks “can we dispatch another ask?” while this gate checks
+  // “can the already-running asks send their next request?” The starting caps are those supplied for
+  // this launch (clamped request for submit, journal row for resume), so a run never retuned stays
+  // on the gate's fast path — no event, no permit, exactly the same behavior as before.
   const seatGate = createWorkflowRunSeatGate({ limit: caps.maxConcurrency });
-  control?.bindSeatGate(seatGate);
+  // The same bound is also registered with the process-level governor (docs/dynamic-workflow/concurrency.md “The governor”):
+  // it raises the growth cap for provider keys this run has used — the user wants 40, and only then can
+  // the bucket's cap climb to 40; otherwise the scheduler dispatches 40 subagents while the governor
+  // allows only 2D requests, leaving most stuck “waiting for a slot”. Cleared when the launch settles.
+  // retune lands here through the control plane and swaps values at the same moment as the seat gate,
+  // so the three places (scheduler, gate, governor) never disagree.
+  deps.concurrency?.setRunBound(runId, caps.maxConcurrency);
+  control?.bindSeatGate(runBoundTarget(seatGate, deps.concurrency, runId));
   // Anchor: supplied by submit (this run's creation) or read from the journal (resume). Runs created
   // before the upgrade have neither, so omit it and do not report subagents in progress events.
   const launch = input.launch ?? readRunLaunchAnchor(deps.journal, runId);
   // Lineage pointer: supplied for submit/amend; absent on resume because createRun already persisted
   // it, so read it from the journal row. This keeps `run-started` payloads identical across both paths.
   const lineageFrom = resumedFrom ?? deps.journal.getRun(runId)?.resumedFrom;
-  // Concurrency ceiling: second host-derived field in the `run-started` payload. Calculate once per
-  // launch rather than for every event: it is a process fact, CPU count does not change mid-run, and
-  // `availableParallelism()` is a system call.
-  const concurrencyCeiling = resolveWorkflowConcurrencyCeiling(deps.availableParallelism);
+  // Default concurrency: second host-derived field in the `run-started` payload (wire key
+  // `concurrencyCeiling`). Calculate once per launch rather than for every event: it is a process
+  // fact, CPU count does not change mid-run, and `availableParallelism()` is a system call.
+  const defaultConcurrency = resolveWorkflowDefaultConcurrency(deps.availableParallelism);
   // Subagent model: supplied by submit (alongside the anchor) or read from the same run-launched
   // journal event on resume. Same reasoning as the anchor, so both paths have the same shape; older
   // runs have neither, so absence means use the session model.
@@ -192,6 +222,18 @@ export function launchDynamicWorkflowRun(
   // reasoning level, which cannot be recovered from the pin's two-part identity.
   const runSubagentModel =
     subagentModel === undefined ? undefined : parseModelPickerValue(subagentModel);
+  // Script-named model binding table: same source and path as the subagent model (given by submit, or
+  // read back by resume from the same run-launched row). Names are resolved once at launch and never
+  // re-resolved against the catalog afterwards — a resumed run still runs the models the user approved.
+  const modelBindings = input.launch?.modelBindings ?? readRunModelBindings(deps.journal, runId);
+  // Subagent permission mode (docs/dynamic-workflow/launch.md “Permissions inside a run”): submit uses
+  // the session's mode at the moment the run is created; resume only reads back from run-launched and
+  // **ignores the session's current mode** — switching the session to Full access mid-run must not
+  // unlock the subagents of a guarded / build run.
+  const subagentPermissionMode =
+    input.launch === undefined
+      ? readRunSubagentPermissionMode(deps.journal, runId)
+      : input.launch.subagentPermissionMode;
 
   // Only appendEvent knows the journal sequence. In engine record(), `driver.emit(...)` is called
   // **synchronously** right after `journal.appendEvent(...)`, and the returned StoredEvent is
@@ -215,10 +257,19 @@ export function launchDynamicWorkflowRun(
             runId,
             sequence: sequenceCapture.sequenceOf(event),
             ...(toolCallId === undefined ? {} : { toolCallId }),
+            // Two host-derived fields for hole-reached: the type comes from the compile artifact, and the
+            // arrival time comes from the stamp the journal put on this event (cold replay reads the same
+            // number back from `timeCreated`, keeping payloads byte-for-byte equal on both sides).
+            ...(input.holeTypeOf === undefined ? {} : { holeTypeOf: input.holeTypeOf }),
+            ...(() => {
+              const reachedAt = sequenceCapture.timeCreatedOf(event);
+              return reachedAt === undefined ? {} : { reachedAt };
+            })(),
             ...(launch === undefined ? {} : { launchInputId: launch.inputId }),
             ...(lineageFrom === undefined ? {} : { resumedFrom: lineageFrom }),
-            concurrencyCeiling,
+            concurrencyCeiling: defaultConcurrency,
             ...(subagentModel === undefined ? {} : { subagentModel }),
+            ...(modelBindings === undefined ? {} : { modelBindings }),
           }),
           // Routing and payload are separate: the event must go to the session that **launched this
           // run**, and parentSessionId is the only way to identify that session.
@@ -248,7 +299,6 @@ export function launchDynamicWorkflowRun(
           artifactStore: deps.artifactStore,
           parentSessionId: deps.parentSessionId as SessionId,
         }),
-    declaredRunCommands: compiled.declaredRunCommands,
     // Which submit_result variant each actor site uses (typed/generic/none) is determined at compile time.
     actorSubmitProfiles: compiled.actorSubmitProfiles,
     runId,
@@ -312,6 +362,14 @@ export function launchDynamicWorkflowRun(
         // implicit default when this value is absent. Unlike a pin, this value includes the
         // reasoning level; the journal pin stores only the two-part identity.
         ...(runSubagentModel === undefined ? {} : { runSubagentModel }),
+        // Persona-named model (highest priority, workflow-actor-model.ts): looked up in this run's
+        // binding table as a full selection. A name missing from the table can only come from a type
+        // assertion bypassing 9010 — throw here at session creation; this ask fails with a DriverError.
+        ...(() => {
+          const actorModel = resolveActorPersonaModel(persona.model, modelBindings);
+          return actorModel === undefined ? {} : { actorModel };
+        })(),
+        ...(subagentPermissionMode === undefined ? {} : { subagentPermissionMode }),
       });
       // Only the constructed runtime knows which model a persona's model tier resolved to (see the
       // tier mapping in workflow-actor-model.ts). Persist it before connecting to the session: if
@@ -344,8 +402,9 @@ export function launchDynamicWorkflowRun(
     },
   });
 
-  return runWorkflowScript({
+  const settlement = runWorkflowScript({
     askSpecs: compiled.askSpecs,
+    sitePhases: compiled.sitePhases,
     caps,
     // SEA requires a different spawn strategy; do not pass it outside SEA.
     ...(childSpawn === undefined ? {} : { childSpawn }),
@@ -396,6 +455,10 @@ export function launchDynamicWorkflowRun(
     ...(control === undefined ? {} : { control }),
     validate: validateFn,
   });
+  // The governor bound ends with the launch: after settlement (including failure and cancellation),
+  // this run no longer raises any key's growth cap; caps above the new limit are pulled down by the
+  // governor on the spot (`limit_lowered`).
+  return settlement.finally(() => deps.concurrency?.clearRunBound(runId));
 }
 
 /**
@@ -599,154 +662,11 @@ function requireActorModelSelection(runtime: AgentRuntime, actor: ActorRef): Mod
  * subagentModel (the run selection takes priority; the pin is only the default when no run
  * selection exists, preserving the persisted side of the frozen-persona invariant).
  */
-function pinnedActorModel(input: {
+export function pinnedActorModel(input: {
   actor: ActorRef;
   journal: JournalStorePort;
   runId: string;
 }): string | undefined {
   return input.journal.getActor(input.runId, input.actor.siteId, input.actor.ordinal)
     ?.resolvedModel;
-}
-
-/**
- * Map RunEvent to a protocol event (**this comment is the contract**): `type` is the event's
- * discriminator, and `payload` contains the remaining fields of the same event object after
- * removing `type`, bounded by {@link boundDynamicWorkflowRunEventPayload}. Field names are
- * intentionally preserved: readers (the detail-page event log) interpret payload by event kind,
- * and the engine's vocabulary is the schema.
- *
- * Event kinds actually emitted by the engine: run-started / actor-created / node-queued / node-dispatched /
- * node-repairing / node-nudged / node-settled / usage-updated / log / report / phase-entered /
- * run-settled。
- * (`executing` is not an observable event; v1 never emits `compaction`.) The **driver** emits
- * two additional event kinds through the same two tracks: escalation-raised / escalation-resolved
- * (the escalation bridge in workflow-driver.ts).
- *
- * Adding an event kind requires no change to **this function**, which is the benefit of preserving
- * field names: `type` comes from the discriminator and payload contains the remaining fields, so
- * there is no per-kind branch to miss here. **There is, however, a downstream switch by kind**:
- * `applyWorkflowRunEvent` in `zcode-protocol-v4/product-projection.ts` reduces each event kind.
- * Its `eventType` parameter is `string`, not `RunEvent["type"]`, so TypeScript will not report a
- * missing branch. Read that switch when adding an event kind; the compiler will not catch it.
- */
-export function toProtocolEvent(sequence: number, event: RunEvent): DynamicWorkflowRunEvent {
-  const { type, ...rest } = event;
-  const { payload, truncated } = boundDynamicWorkflowRunEventPayload(
-    rest as Record<string, unknown>,
-  );
-  return { sequence, type, payload, ...(truncated ? { truncated } : {}) };
-}
-
-/**
- * Map RunEvent to a session-event payload. `payload` uses the same serialization as
- * {@link toProtocolEvent}; derived fields stay outside payload so the original engine event is preserved.
- *
- * `actorSessionId` comes from the same generator used by the driver, so the renderer does not
- * duplicate the session ID rule. Both `actor-created` and `node-dispatched` events with an actor
- * include this field, allowing active instances placed in the bounded table to remain associated
- * with their subagent session. The process concurrency ceiling and subagent source are added under
- * their respective event conditions below.
- */
-export function toProgressPayload(input: {
-  event: RunEvent;
-  runId: string;
-  sequence: number;
-  toolCallId?: string;
-  /** The run's anchor inputId; derived only for actor-created / run-settled (the two subagent ownership moments). */
-  launchInputId?: string;
-  /** The predecessor of a revised run; derived only for `run-started` (the card's "revised from run X" label). */
-  resumedFrom?: string;
-  /**
-   * The process concurrency ceiling at the time this payload is created; derived for `run-started`
-   * and `run-caps-changed` events.
-   *
-   * Engine events carry only their own `caps.maxConcurrency`; whether that value is worth displaying
-   * depends on comparing it with the ceiling. The ceiling is a host fact (machine CPU count), which
-   * the engine neither sees nor should see. The projection records this run's own upper bound when
-   * `caps.maxConcurrency < concurrencyCeiling`; the UI concurrency chip then uses
-   * min(shared cap, this run's upper bound).
-   *
-   * An in-place retune emits `run-caps-changed` with the **new** caps, but uses the same rule:
-   * record the upper bound when below the ceiling, and clear it when equal to the ceiling (removing
-   * the restriction). Both event kinds must therefore receive the same ceiling: this one.
-   */
-  concurrencyCeiling?: number;
-  /**
-   * This run's subagent model (the canonical picker string); derived only for `run-started`, and
-   * **present only when configured**. Unlike `concurrencyCeiling`, it does not need comparison with
-   * a default: the engine does not know about model selection (the model surface is entirely on the
-   * host), so absence means "subagents use the session model." Cold replay reads the same key from
-   * the same `run-launched` event, keeping payloads byte-for-byte equal on both sides.
-   */
-  subagentModel?: string;
-}): DynamicWorkflowRunProgressPayload {
-  const {
-    event,
-    runId,
-    sequence,
-    toolCallId,
-    launchInputId,
-    resumedFrom,
-    concurrencyCeiling,
-    subagentModel,
-  } = input;
-  const protocolEvent = toProtocolEvent(sequence, event);
-  const actorRef = actorSessionRefOf(event);
-  return {
-    runId,
-    ...(toolCallId === undefined ? {} : { toolCallId }),
-    sequence,
-    eventType: protocolEvent.type,
-    // `run-settled` also carries `resumable`: the resume-gate predicate exists only in the CLI, so
-    // the projection and UI transport this value without deriving it from status. The predicate is
-    // stopped and not superseded; cold replay gives orphaned, converged rows the same value. Two
-    // paths, one predicate (`isResumableSettlement`). stopReason / supersededBy pass through in the
-    // event payload unchanged.
-    // `run-started` also carries `resumedFrom`: the engine event omits it (the engine does not read
-    // lineage), but the card needs to draw this edge. The same seam also carries `concurrencyCeiling`:
-    // the engine emits only its own caps, and determining whether the upper bound is the default
-    // requires comparing it with the host ceiling (see the field comment above). These fields are
-    // independent; absence of either omits only that field.
-    // `run-caps-changed` uses the **same** seam and ceiling. After an in-place retune, readers need
-    // it to decide whether to record or clear the new upper bound; without it, the event contains
-    // only two numbers with no reference point.
-    payload:
-      event.type === "run-settled" && isResumableSettlement(event.status, event.stopReason)
-        ? { ...protocolEvent.payload, resumable: true }
-        : event.type === "run-started"
-          ? {
-              ...protocolEvent.payload,
-              ...(resumedFrom === undefined ? {} : { resumedFrom }),
-              ...(concurrencyCeiling === undefined ? {} : { concurrencyCeiling }),
-              ...(subagentModel === undefined ? {} : { subagentModel }),
-            }
-          : event.type === "run-caps-changed"
-            ? {
-                ...protocolEvent.payload,
-                ...(concurrencyCeiling === undefined ? {} : { concurrencyCeiling }),
-              }
-            : protocolEvent.payload,
-    ...(protocolEvent.truncated ? { truncated: true } : {}),
-    ...(actorRef === undefined ? {} : { actorSessionId: mintActorSessionId(runId, actorRef) }),
-    // Third derived field: the telemetry facts layer needs an anchor only for these two events—
-    // actor-created records subagent ownership, and run-settled settles all subagents for the run.
-    ...((event.type === "actor-created" || event.type === "run-settled") &&
-    launchInputId !== undefined
-      ? { launchInputId }
-      : {}),
-  };
-}
-
-/**
- * Return the subagent named by this event (the ref used to add `actorSessionId`), or undefined
- * when the event names none.
- *
- * Two event kinds qualify: `actor-created` (subagent creation) and `node-dispatched` with an
- * `actor` (the ask dispatch repeats the creation fact). A world-read dispatch has no `actor`, so
- * it gets no field; there is no transcript to open.
- */
-function actorSessionRefOf(event: RunEvent): ActorRef | undefined {
-  if (event.type === "actor-created") return event.actor;
-  if (event.type === "node-dispatched") return event.actor;
-  return undefined;
 }

@@ -6,7 +6,7 @@
 //   2. Adjacent state.updated entries shallow-merge patch keys (whole-key replacement makes this safe).
 //   3. A row.upserted with the same rowId after row.delta drops the earlier delta (whole-row replacement includes all appends).
 //   4. row.removed is a barrier that no rule may cross.
-//   5. Splitting frames that exceed limits is outside this function (the transport frames them).
+//   5. Splitting frames that exceed limits is outside this function (the transport frames them, §3.2).
 //   6. Merge workflowRun.updated entries with the same runId into the **earliest** one (see mergeWorkflowRunUpdate below).
 import type { ConversationDelta, WorkflowRunUpdatedDelta } from "./delta.js";
 import {
@@ -74,7 +74,9 @@ function mergeWorkflowRunUpdate(
 /**
  * Semantics-preserving merge of the delta sequence in one flush window.
  * Input and output both follow authoritative log order; this is a pure function and does not mutate its input.
- * `bounds` defaults to protocol capacity limits; merged state must match the result of applying each delta individually.
+ *
+ * `bounds` is an injection point kept for tests (the default is the real limit): the rule 6 branch that rejects a merge needs
+ * thousands of events to reach under the 1024 limit, and it is exactly where the "merging equals sequential application" law breaks most easily.
  */
 export function coalesceConversationDeltas(
   deltas: readonly ConversationDelta[],

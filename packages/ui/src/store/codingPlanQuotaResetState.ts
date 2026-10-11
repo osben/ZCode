@@ -22,7 +22,7 @@ export interface CodingPlanQuotaResetAutoPlayedSlot {
   week: number | null;
 }
 
-interface CodingPlanQuotaResetStoreState {
+export interface CodingPlanQuotaResetStoreState {
   authSessionSeq: number;
   codingPlanQuotaResetUiBySource: Record<string, CodingPlanQuotaResetUiEntries>;
   codingPlanQuotaResetAutomaticObservationsBySource: Record<
@@ -33,15 +33,15 @@ interface CodingPlanQuotaResetStoreState {
 }
 
 /** Cross-window broadcast channel for "play automatic completion once across windows" (the state: prefix follows the cross-window sync convention). */
-const CODING_PLAN_QUOTA_RESET_AUTO_PLAYED_CHANNEL = "state:codereset-autoplayed";
+export const CODING_PLAN_QUOTA_RESET_AUTO_PLAYED_CHANNEL = "state:codereset-autoplayed";
 
-interface CodingPlanQuotaResetAutoPlayedBroadcastPayload {
+export interface CodingPlanQuotaResetAutoPlayedBroadcastPayload {
   sourceKey: string;
   resetType: CodingPlanResetType;
   completedAt: number;
 }
 
-function buildCodingPlanQuotaResetAutoPlayClaimKey(
+export function buildCodingPlanQuotaResetAutoPlayClaimKey(
   sourceKey: string,
   resetType: CodingPlanResetType,
   completedAt: number,
@@ -49,7 +49,7 @@ function buildCodingPlanQuotaResetAutoPlayClaimKey(
   return `coding-plan-reset-autoplay:${encodeURIComponent(sourceKey)}:${resetType}:${completedAt}`;
 }
 
-function parseCodingPlanQuotaResetAutoPlayedPayload(
+export function parseCodingPlanQuotaResetAutoPlayedPayload(
   payload: unknown,
 ): CodingPlanQuotaResetAutoPlayedBroadcastPayload | null {
   if (!payload || typeof payload !== "object") {
@@ -91,7 +91,7 @@ export function parseCodingPlanQuotaResetAutoPlayedBroadcastMessage(
 /**
  * Broadcast the used_at of the first automatic completion played in this window; other windows suppress the prompt for the same used_at.
  */
-function broadcastCodingPlanQuotaResetAutoPlayed(
+export function broadcastCodingPlanQuotaResetAutoPlayed(
   broadcastService: Pick<IBroadcastService, "send">,
   sourceKey: string,
   resetType: CodingPlanResetType,
@@ -103,7 +103,7 @@ function broadcastCodingPlanQuotaResetAutoPlayed(
   });
 }
 
-interface CodingPlanQuotaResetStoreUpdate {
+export interface CodingPlanQuotaResetStoreUpdate {
   patch: Pick<
     CodingPlanQuotaResetStoreState,
     | "codingPlanQuotaResetUiBySource"
@@ -118,7 +118,7 @@ interface CodingPlanQuotaResetStoreUpdate {
  * Keep status observation separate from Composer playback eligibility. Settings and Usage pages also call this function;
  * writing played here would consume cross-window playback eligibility before showing a tooltip or confetti.
  */
-function updateCodingPlanQuotaResetStoreState(
+export function updateCodingPlanQuotaResetStoreState(
   state: CodingPlanQuotaResetStoreState,
   sourceKey: string,
   resetType: CodingPlanResetType,
@@ -401,7 +401,7 @@ export async function releaseCodingPlanQuotaResetAutoPlay(params: {
   await params.broadcastService.releaseClaim(params.reservation.lease);
 }
 
-interface CodingPlanQuotaResetStoreActions {
+export interface CodingPlanQuotaResetStoreActions {
   setCodingPlanQuotaResetUiEntry: (
     sourceKey: string,
     resetType: CodingPlanResetType,

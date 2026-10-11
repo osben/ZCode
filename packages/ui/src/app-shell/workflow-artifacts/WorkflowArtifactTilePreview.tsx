@@ -6,6 +6,7 @@ import {
   isArtifactPresetKind,
 } from "@/app-shell/workflow-artifacts/artifactPresentation.js";
 import { ArtifactPresetBody } from "@/app-shell/workflow-artifacts/ArtifactPresetBody.js";
+import { artifactPresetFieldPaths } from "@/app-shell/workflow-artifacts/presets/spec.js";
 import { cn } from "@/components/lib/utils.js";
 import {
   ArtifactSheetGlyph,
@@ -44,7 +45,7 @@ const CSV_CELL_MAX_CHARS = 28;
 
 type PreviewMode = "markdown" | "csv" | "text" | "image";
 
-function previewModeFor(artifact: {
+export function previewModeFor(artifact: {
   kind: WorkflowCompletionArtifact["kind"];
   contentType?: string;
   bytes?: number;
@@ -64,7 +65,7 @@ function previewModeFor(artifact: {
 }
 
 /** Minimal CSV reader: recognizes commas and paired quotes, enough to draw a thumbnail; it is not a parser. */
-function csvPreviewRows(text: string): string[][] {
+export function csvPreviewRows(text: string): string[][] {
   const rows: string[][] = [];
   for (const line of text.split(/\r?\n/u)) {
     if (line.trim().length === 0) continue;
@@ -135,12 +136,21 @@ export function WorkflowArtifactTilePreview({
     version: artifact.version ?? 1,
     enabled: mode !== undefined,
   });
+  // The board asks the CLI only for fields named in the spec. If the spec has not arrived or cannot be rendered, do not fetch data because the preview cannot be drawn anyway.
+  const fields = useMemo(
+    () =>
+      isArtifactPresetKind(artifact.kind)
+        ? artifactPresetFieldPaths(artifact.kind, artifact.spec)
+        : undefined,
+    [artifact.kind, artifact.spec],
+  );
   const dataState = useWorkflowRunArtifactData({
     sessionId,
     runId,
     artifactId: artifact.id,
     ...(artifact.itemCount === undefined ? {} : { itemCount: artifact.itemCount }),
-    enabled: preset,
+    enabled: fields !== undefined,
+    ...(fields === undefined ? {} : { fields }),
   });
   const labels = useMemo(
     () => buildPresetLabels((descriptor, values) => intl.formatMessage(descriptor, values)),

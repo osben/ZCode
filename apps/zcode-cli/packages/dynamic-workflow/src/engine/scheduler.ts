@@ -10,21 +10,14 @@
  * Internal types and SchedulerHost live in scheduler-types.ts; submit/turn callback handling lives
  * in scheduler-submit.ts (split to satisfy oxlint's 400-line max-lines limit). SchedulerHost is
  * re-exported here so import paths remain unchanged.
+ * Replay hash-mismatch errors ({@link hashMismatch}) live in hash-mismatch.ts for the same reason.
  */
 
+import { cachedAskFacts, headOfInstructions, type CachedAskFacts } from "./cached-ask-facts.js";
 import { inputHash } from "./hash.js";
+import { hashMismatch } from "./hash-mismatch.js";
 import { importedAskRecord, type ImportedActorState } from "./imported-cache.js";
-import {
-  defer,
-  drainActorAdmission,
-  hashMismatch,
-  describeCause,
-  headOfInstructions,
-  type Actor,
-  type AskNode,
-  type Deferred,
-  type SchedulerHost,
-} from "./scheduler-types.js";
+import { defer, type Actor, type AskNode, type Deferred, type SchedulerHost } from "./scheduler-types.js";
 import { handleSubmitAttempted, handleTurnEnded, type SubmitSeam } from "./scheduler-submit.js";
 import type {
   ActorId,
@@ -38,9 +31,13 @@ import type {
   PersonaSpec,
   SessionRef,
 } from "./types.js";
-import { NUDGE_ATTEMPTS, refToString, REPAIR_ATTEMPTS, WorkflowError } from "./types.js";
+import {
+  NUDGE_ATTEMPTS,
+  refToString,
+  REPAIR_ATTEMPTS,
+  WorkflowError,
+} from "./types.js";
 
-export { hashMismatch } from "./scheduler-types.js";
 export type { SchedulerHost } from "./scheduler-types.js";
 
 export class AskScheduler {
@@ -54,6 +51,13 @@ export class AskScheduler {
    * because late stats backfills still need to look them up.
    */
   private readonly priorTranscriptAsks = new Set<string>();
+  /**
+   * Number of ask rows already recorded in the journal per actor (`siteId@ordinal` → row count), built once by the engine's resume branch
+   * from ask rows it has already read ({@link seedRecordedAsks}). Reason for the fix: registerActor previously read and filtered the entire node table for every actor—
+   * O(actors × rows) decoding under wide fan-out, including every ask answer and report item. Building the table once is correct: actors are always registered before their first ask,
+   * so ask rows for an actor at registration can only come from previous generations; a new run's table is empty.
+   */
+  private readonly recordedAsks = new Map<string, number>();
   private activeAsks = 0;
 
   /** Lets scheduler-submit.ts free functions look up live nodes and settle by result (see {@link SubmitSeam}). */
@@ -72,6 +76,17 @@ export class AskScheduler {
     return this.host.driver.journal;
   }
 
+  /** Provide ask rows already persisted for this run during resume (results may be omitted) to build {@link recordedAsks}. */
+  seedRecordedAsks(askRows: readonly NodeRecord[]): void {
+    for (const row of askRows) {
+      if (row.kind !== "ask" || row.actorSiteId === undefined || row.actorOrdinal === undefined) {
+        continue;
+      }
+      const actorKey = refToString({ siteId: row.actorSiteId, ordinal: row.actorOrdinal });
+      this.recordedAsks.set(actorKey, (this.recordedAsks.get(actorKey) ?? 0) + 1);
+    }
+  }
+
   hasActor(id: ActorId): boolean {
     return this.actors.has(id);
   }
@@ -88,11 +103,7 @@ export class AskScheduler {
     persona: PersonaSpec,
     imported?: ImportedActorState,
   ): Actor {
-    const recordedCount = this.journal
-      .listNodes(this.host.runId)
-      .filter(
-        (n) => n.kind === "ask" && n.actorSiteId === ref.siteId && n.actorOrdinal === ref.ordinal,
-      ).length;
+    const recordedCount = this.recordedAsks.get(refToString(ref)) ?? 0;
     const actor: Actor = {
       ref,
       id,
@@ -120,12 +131,7 @@ export class AskScheduler {
   }
 
   /** Accept an ask: short-circuit completed hits (using hold rules); live-dispatch running hits and misses. */
-  admitAsk(
-    siteId: string,
-    actorId: ActorId,
-    instructions: string,
-    spec: AskSpec,
-  ): Promise<unknown> {
+  admitAsk(siteId: string, actorId: ActorId, instructions: string, spec: AskSpec): Promise<unknown> {
     const actor = this.actors.get(actorId)!;
     const ordinal = this.host.nextOrdinal(siteId);
     const instance: InstanceRef = { siteId, ordinal };
@@ -157,10 +163,11 @@ export class AskScheduler {
           this.admitLive(instance, actor, seq, instructions, hash, spec, deferred, true);
         });
       } else {
-        // completed/failed: settle by short-circuit without calling the driver.
+        // completed / failed: settle immediately without calling the driver. Read birth facts **now**, after reconciliation
+        // (whether the answer came from the predecessor's transcript depends on the current import-consumption state; the event may be delayed by the settlement-order gate).
         actor.pendingRecorded.set(seq, () => {
           reconcile();
-          this.releaseCachedAsk(instance, recorded, deferred);
+          this.releaseCachedAsk(instance, recorded, deferred, cachedAskFacts(actor.ref, seq, instructions, actor.imported));
         });
       }
       this.drainAdmission(actor);
@@ -172,7 +179,7 @@ export class AskScheduler {
     // instead of live-dispatching.
     actor.pendingLive.push(() => {
       const seq = actor.nextAdmitSeq++;
-      if (this.tryImportedSettle(instance, actor, seq, hash, deferred)) return;
+      if (this.tryImportedSettle(instance, actor, seq, hash, instructions, deferred)) return;
       // Only after a miss can we know whether this is an in-flight ask from the continuation
       // predecessor; take determines that together with the divergence.
       const carried = actor.imported?.carriedAt(seq) === true;
@@ -201,10 +208,9 @@ export class AskScheduler {
     priorTranscript = false,
   ): void {
     if (priorTranscript) this.priorTranscriptAsks.add(refToString(instance));
-    // Record the instruction prefix with the birth event. These instructions are still the
-    // author's original text; the driver's quality/schema suffix is appended in startAsk, so the
-    // summary does not include engine text. Compute this once on the node: dispatch repeats the
-    // birth facts, and both events must carry the same string.
+    // Persist instructions with the birth event at the start (docs/execution-engine.md, “Events”): these instructions are still
+    // the author's original text—the driver adds quality / schema suffixes only in startAsk, so the summary does not contain engine text.
+    // Compute once and store on the node: dispatch repeats birth facts, and both events must carry the same string.
     const instructionsHead = headOfInstructions(instructions);
     const node: AskNode = {
       instance,
@@ -256,15 +262,16 @@ export class AskScheduler {
    * settle** and returns true (the caller does not live-dispatch); {@link ImportedActorState}
    * handles the decision and divergence accounting.
    *
-   * A hit writes a **real** dwf_node row and emits only `node-settled cached:true`, matching the
-   * replay-hit behavior in {@link releaseCachedAsk}: no node-queued/node-dispatched events, no
-   * liveQueue entry, no session creation, and no `actor.current` occupancy.
+   * A hit writes one **real** dwf_node row and emits only `node-settled cached:true`—the same shape as replay hits in
+   * {@link releaseCachedAsk}: no node-queued / node-dispatched, no liveQueue entry, no session creation, and no `actor.current` slot. That settlement is therefore also the birth event: repeat birth facts
+   * and identify the session holding this exchange in the predecessor ({@link cachedAskFacts}).
    */
   private tryImportedSettle(
     instance: InstanceRef,
     actor: Actor,
     seq: number,
     hash: string,
+    instructions: string,
     deferred: Deferred<unknown>,
   ): boolean {
     // Once the cache is closed, allow only **pure** asks (the predecessor recorded toolCalls === 0).
@@ -277,7 +284,8 @@ export class AskScheduler {
       : actor.imported?.take(seq, hash);
     if (entry === undefined) return false;
     this.journal.putNode(importedAskRecord(this.host.runId, instance, actor.ref, seq, hash, entry));
-    this.host.record({ type: "node-settled", instance, outcome: "ok", cached: true });
+    const facts = cachedAskFacts(actor.ref, seq, instructions, actor.imported);
+    this.host.record({ type: "node-settled", instance, outcome: "ok", cached: true, ...facts });
     deferred.resolve(entry.result);
     return true;
   }
@@ -363,49 +371,50 @@ export class AskScheduler {
   // ——————————————————————————————— Internal: admission / dispatch ———————————————————————————————
 
   private drainAdmission(actor: Actor): void {
-    drainActorAdmission(actor);
+    let progressed = true;
+    while (progressed) {
+      progressed = false;
+      const release = actor.pendingRecorded.get(actor.nextAdmitSeq);
+      if (release !== undefined) {
+        actor.pendingRecorded.delete(actor.nextAdmitSeq);
+        actor.nextAdmitSeq++;
+        release();
+        progressed = true;
+        continue;
+      }
+      if (actor.nextAdmitSeq >= actor.recordedCount && actor.pendingLive.length > 0) {
+        const admit = actor.pendingLive.shift()!;
+        admit();
+        progressed = true;
+      }
+    }
     this.pumpActor(actor);
   }
 
   /**
-   * Release asks with recorded hits in the **settlement order** stored in the journal. Hold rules
-   * define admission order within an actor; this gate restores completion order across actors, so
-   * every journal call after an await in a fan-out branch receives the same sequence number.
+   * Release a cached ask according to its **settlement order** in the journal (docs/execution-engine.md,
+   * “Replaying the settle order”). The hold rule preserves admission order within one actor; this gate restores completion order across actors—
+   * every journal call a fan-out branch makes after an await is numbered by that order.
    */
-  private releaseCachedAsk(
-    instance: InstanceRef,
-    recorded: NodeRecord,
-    deferred: Deferred<unknown>,
-  ): void {
-    this.host.holdForReplay(instance, () => this.settleCachedAsk(instance, recorded, deferred));
+  private releaseCachedAsk(instance: InstanceRef, recorded: NodeRecord, deferred: Deferred<unknown>, facts: CachedAskFacts): void {
+    this.host.holdForReplay(instance, () => this.settleCachedAsk(instance, recorded, deferred, facts));
   }
 
-  private settleCachedAsk(
-    instance: InstanceRef,
-    recorded: NodeRecord,
-    deferred: Deferred<unknown>,
-  ): void {
+  private settleCachedAsk(instance: InstanceRef, recorded: NodeRecord, deferred: Deferred<unknown>, facts: CachedAskFacts): void {
     if (recorded.status === "completed") {
-      this.host.record({ type: "node-settled", instance, outcome: "ok", cached: true });
+      this.host.record({ type: "node-settled", instance, outcome: "ok", cached: true, ...facts });
       deferred.resolve(recorded.result);
     } else {
       // Reproduce recorded failures by short-circuit too: the script may have caught the error and branched on it, so replay must produce the same rejection.
-      this.host.record({
-        type: "node-settled",
-        instance,
-        outcome: "failed",
-        cached: true,
-        error: recorded.error,
-      });
+      this.host.record({ type: "node-settled", instance, outcome: "failed", cached: true, error: recorded.error, ...facts });
       deferred.reject(WorkflowError.fromJSON(recorded.error!));
     }
   }
 
   /**
-   * Rescan each actor's dispatch queue. This public method has **one caller**: the engine invokes it
-   * after raising this run's concurrency limit. {@link pumpActor} reads the limit before each
-   * dispatch, but no other event triggers a rescan; queued asks would otherwise wait until the next
-   * settlement. Immediate additional dispatches after raising the limit are the purpose of this command.
+   * Rescan each actor's queue of pending work. The public API has **one caller**: the engine invokes it after raising this run's concurrency limit
+   * (docs/dynamic-workflow/concurrency.md, “Two bounds on a run”). {@link pumpActor} reads the limit before each dispatch, but no other event triggers a rescan—queued asks
+   * would otherwise remain idle until another settlement, while the purpose of this command is to “run more immediately after raising the limit.”
    */
   pumpAll(): void {
     for (const actor of this.actorOrder) this.pumpActor(actor);
@@ -443,18 +452,20 @@ export class AskScheduler {
       return;
     }
     if (this.host.isRunSettled() || node.settled) return;
-    // node-dispatched follows session readiness. The process-level concurrency gate does not live
-    // here: it admits **model requests** and lives in runtime deps below the driver; the scheduler
-    // enforces only the per-run ask limit.
-    // This repeats the instance's birth facts (`node-dispatched` in types.ts). The values already
-    // available to the scheduler share a source with `node-queued`; the engine fills both event
-    // names from the same construction table in the record.
+    // node-dispatched occurs after the session is ready (docs/dynamic-workflow/concurrency.md, “Two bounds on a run”). The process-level concurrency gate
+    // does not live here: it admits **model requests** and belongs to runtime deps below the driver (decisions 34/38); the scheduler enforces only
+    // the per-run ask-level limit (decision 17).
+    // Repeat this instance's birth facts (types.ts, `node-dispatched`): the facts available to the scheduler here
+    // came from its `node-queued` event, and the engine stamps both phase names from the same table in the record.
     this.host.record({
       type: "node-dispatched",
       instance: node.instance,
       kind: "ask",
       actor: node.actor.ref,
       ...(node.actor.name === undefined ? {} : { actorName: node.actor.name }),
+      ...(node.actor.persona.model === undefined
+        ? {}
+        : { actorPersonaModel: node.actor.persona.model }),
       ...(node.instructionsHead === undefined ? {} : { instructionsHead: node.instructionsHead }),
     });
     node.dispatched = true;
@@ -472,30 +483,27 @@ export class AskScheduler {
     // pass it to the driver here. The engine owns import state and the driver owns the session
     // store; this signature is their smallest shared boundary.
     const seed = actor.imported?.seed();
-    const promise = this.host.driver
-      .createActorSession(actor.ref, actor.persona, seed)
-      .then((session) => {
-        actor.session = session;
-        // resolvedModel is written **inside** createActorSession by the host runtime factory (only
-        // it knows which model "lite" resolves to). putActor replaces the entire record, so read
-        // back and preserve the value just written or this update will erase it, losing the model
-        // tier resolution audit trail and resume basis.
-        const resolvedModel = this.journal.getActor(
-          this.host.runId,
-          actor.ref.siteId,
-          actor.ref.ordinal,
-        )?.resolvedModel;
-        this.journal.putActor({
-          runId: this.host.runId,
-          siteId: actor.ref.siteId,
-          ordinal: actor.ref.ordinal,
-          name: actor.name,
-          persona: actor.persona,
-          sessionId: session.id,
-          resolvedModel,
-        });
-        return session;
+    const promise = this.host.driver.createActorSession(actor.ref, actor.persona, seed).then((session) => {
+      actor.session = session;
+      // resolvedModel is written **inside** createActorSession by the host runtime factory (only it knows which model "lite" resolves to).
+      // putActor replaces the entire record, so read the newly written value and carry it forward here; otherwise this update would erase it,
+      // losing the tier-resolution audit trail and the value needed for resume.
+      const resolvedModel = this.journal.getActor(
+        this.host.runId,
+        actor.ref.siteId,
+        actor.ref.ordinal,
+      )?.resolvedModel;
+      this.journal.putActor({
+        runId: this.host.runId,
+        siteId: actor.ref.siteId,
+        ordinal: actor.ref.ordinal,
+        name: actor.name,
+        persona: actor.persona,
+        sessionId: session.id,
+        resolvedModel,
       });
+      return session;
+    });
     actor.sessionPromise = promise;
     return promise;
   }
@@ -518,12 +526,7 @@ export class AskScheduler {
     // failure is terminal, and the script may have observed the rejection and branched on it, so
     // replay must reproduce it. Journaling failures is required for replay correctness.
     this.journal.putNode(this.nodeRecordFor(node, { status: "failed", error: error.toJSON() }));
-    this.host.record({
-      type: "node-settled",
-      instance: node.instance,
-      outcome: "failed",
-      error: error.toJSON(),
-    });
+    this.host.record({ type: "node-settled", instance: node.instance, outcome: "failed", error: error.toJSON() });
     this.finishLiveNode(node);
     // A node failure rejects only this ask, not the whole run; the script can catch it.
     node.deferred.reject(error);
@@ -540,9 +543,7 @@ export class AskScheduler {
 
   private nodeRecordFor(
     node: AskNode,
-    outcome:
-      | { status: "completed"; result: unknown }
-      | { status: "failed"; error: NodeRecord["error"] },
+    outcome: { status: "completed"; result: unknown } | { status: "failed"; error: NodeRecord["error"] },
   ): NodeRecord {
     const record: NodeRecord = {
       runId: this.host.runId,
@@ -561,4 +562,12 @@ export class AskScheduler {
       record.stats = this.journaledStats(node.instance, node.lastStats);
     return record;
   }
+}
+
+/** Convert cause → one bounded line of text (use message for Error, otherwise String(); use a placeholder when empty). */
+function describeCause(cause: unknown): string {
+  const text = cause instanceof Error ? cause.message : String(cause);
+  const trimmed = text.trim();
+  if (trimmed.length === 0) return "unknown error";
+  return trimmed.length > 300 ? `${trimmed.slice(0, 300)}…` : trimmed;
 }

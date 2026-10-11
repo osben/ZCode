@@ -1,7 +1,7 @@
 /* eslint-disable max-lines -- The full-page Off-Peak task editor centralizes create/edit/History and the composer's project, permission, and model toolbar; splitting it would fragment form state. */
 /* Full-page Off-Peak task create/edit. Composer layout: page title +
    back row + inline keep-computer-awake toggle + Settings/History tabs + title input + large composer box
-   (textarea + toolbar: project/permission | model/reasoning level). Permission defaults to build among four options; models use an allowlist. */
+   (textarea + toolbar: project/permission | model/reasoning level). Permission defaults to build among four options; models use an allowlist (D31). */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ModelSelectionView } from "@zcode/services";
 import { completeNewModelSelection } from "@zcode/provider";
@@ -61,7 +61,7 @@ import { resolveModelThoughtOption } from "@/lib/modelThoughtOption.js";
 
 const MODEL_ITEM_NEVER_LOCKED = () => false;
 
-function buildOffPeakSubmissionModelSelection(
+export function buildOffPeakSubmissionModelSelection(
   providerId: string,
   modelId: string,
   displayedReasoningLevel: string | undefined,
@@ -526,8 +526,8 @@ export function OffPeakEditView({
             <span className="text-ui-base font-normal leading-5 text-foreground-subtle">
               {intl.formatMessage({ id: "offPeak.form.titleLabel" })}
             </span>
-            {/* The Off-Peak title once used a transparent border over the shared Input state,
-                    making its outline inconsistent with scheduled tasks and Instructions. */}
+            {/* Bug cause: the Off-Peak title once used a transparent border over the shared Input
+                state, making its outline inconsistent with scheduled tasks and Instructions. */}
             <Input
               value={title}
               disabled={readOnly}
@@ -566,8 +566,8 @@ export function OffPeakEditView({
                 <div className="flex min-w-0 flex-wrap items-center gap-0">
                   {/* Project: creation can select only local projects open in the current window;
                       editing is locked to the original project. */}
-                  {/* UI font size scales with settings; a fixed 18px line height would compress the
-                      project text at larger sizes. */}
+                  {/* Fix rationale: UI font size scales with settings; a fixed 18px line height
+                      would compress the project text at larger sizes. */}
                   {editing ? (
                     <span className="flex h-7 min-w-0 items-center gap-1 rounded-full px-2 text-ui-base font-normal leading-snug text-foreground-subtle">
                       <FolderOpen className="size-4 shrink-0" aria-hidden="true" />
@@ -619,9 +619,9 @@ export function OffPeakEditView({
                       })}
                     </Button>
                   )}
-                  {/* The Off-Peak permission menu was rendered separately and lacked the home
-                        page's mode icon and standard selected state. Reuse ConfigSelect to prevent
-                        the two styles from drifting again. */}
+                  {/* Bugfix: the Off-Peak permission menu was rendered separately and lacked the
+                      home page's mode icon and standard selected state. Reuse ConfigSelect to
+                      prevent the two styles from drifting again. */}
                   <ConfigSelect
                     option={modeOption}
                     provider={ZCODE_AGENT_PROVIDER}
@@ -640,9 +640,9 @@ export function OffPeakEditView({
                     restoreFocusSelector={null}
                   />
                 </div>
-                {/* The right group and its child trigger once allowed shrinking, wrapping model
-                        and reasoning content across multiple lines. On small screens the whole
-                        group moves to the next row, but stays on one line internally. */}
+                {/* Bug cause: the right group and its child trigger once allowed shrinking,
+                    wrapping model and reasoning content across multiple lines. On small screens
+                    the whole group moves to the next row, but stays on one line internally. */}
                 <div className="flex w-full shrink-0 flex-nowrap items-center justify-end gap-0 sm:w-auto">
                   {/* The model list is still driven by the Off-Peak allowlist; reuse only the
                         display picker from New Task. */}
@@ -669,8 +669,8 @@ export function OffPeakEditView({
                     )}
                     triggerLabelClassName="inline-flex min-w-0 truncate text-left"
                   />
-                  {/* Reasoning level: shown only for reasoning models; defaults to the workspace
-                          setting. */}
+                  {/* Reasoning level (D34): shown only for reasoning models; defaults to the
+                      workspace setting. */}
                   {thoughtLevelOption ? (
                     <ThoughtLevelCycleControl
                       intl={intl}
@@ -688,9 +688,9 @@ export function OffPeakEditView({
                 </div>
               </AutomationInstructionsToolbar>
             </AutomationInstructionsComposer>
-            {/* This copy explains runtime behavior rather than warning about risk, so an orange
-                  triangle would overstate its meaning. Add 4px between it and the composite input
-                  so the supporting text does not sit against the input border. */}
+            {/* Fix rationale: this copy explains runtime behavior rather than warning about risk,
+                so an orange triangle would overstate its meaning. Add 4px between it and the
+                composite input so the supporting text does not sit against the input border. */}
             <div className="mt-1 flex items-start gap-1.5 text-ui-base leading-5 text-foreground-subtle">
               <span className="flex size-5 shrink-0 items-center justify-center" aria-hidden="true">
                 <AutomationInfoIcon className="size-4" />

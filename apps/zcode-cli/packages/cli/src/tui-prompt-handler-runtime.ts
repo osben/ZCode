@@ -2,6 +2,7 @@
 // setup from createApp—read dotenv → find the session to resume → load bootstrap modules
 // → start the persistent Provider Registry runtime → read the default model selection—
 // was moved here. Keep exporting it from tui-prompt-handler.ts.
+import type { ZCodeAppOptions } from "@zcode/bootstrap";
 import { loadBootstrapModule } from "./bootstrap-loader.js";
 import { loadCliDotenv } from "./env.js";
 import { createCliProviderRefreshReporter } from "./provider-runtime-env.js";
@@ -17,11 +18,13 @@ type ProviderRegistryRuntime = Awaited<
 // on terminal close. Previously these were three let-bound closure variables inside
 // createTuiSubmitPrompt.
 interface TuiProcessRuntimeState {
+  providerEndpointRoutingPort: ZCodeAppOptions["providerEndpointRoutingPort"];
   providerRegistryRuntimePromise: Promise<ProviderRegistryRuntime> | undefined;
   shutdownTelemetry: (() => Promise<void>) | undefined;
 }
 
 export const createTuiProcessRuntimeState = (): TuiProcessRuntimeState => ({
+  providerEndpointRoutingPort: undefined,
   providerRegistryRuntimePromise: undefined,
   shutdownTelemetry: undefined,
 });
@@ -85,6 +88,17 @@ export async function prepareTuiAppRuntime(
   const configuredDefaultModelSelection = providerRegistryRuntime?.modelSelectionConfigRepository
     ? await providerRegistryRuntime.modelSelectionConfigRepository.read()
     : providerRegistryRuntime?.configuredDefaultModelSelection;
+  const createProviderEndpointRoutingPort =
+    deps.createProviderEndpointRoutingPort ??
+    bootstrapModule?.createDefaultProviderEndpointRoutingPort;
+  state.providerEndpointRoutingPort ??= createProviderEndpointRoutingPort?.({
+    appVersion: version,
+    env,
+    projectConfigPath: deps.projectConfigPath,
+    skipUserConfig: deps.skipUserConfig,
+    userConfigPath: deps.userConfigPath,
+    workingDirectory,
+  });
 
   return {
     appEnv,

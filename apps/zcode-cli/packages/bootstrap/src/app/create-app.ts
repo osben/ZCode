@@ -1,3 +1,4 @@
+import { subagentProfilesFromSnapshot } from "../subagent-runtime-config.js";
 import { isAbsolute, join, resolve } from "node:path";
 import {
   createInMemorySessionEventStore,
@@ -19,8 +20,10 @@ import { createNodeSkillAdapter } from "@zcode/adapters/skills";
 import { createMcpAdapter } from "@zcode/adapters/mcp";
 import {
   AgentRuntime,
+  normalizeAgentProfiles,
   PermissionService,
   buildPluginReferenceCatalog,
+  writeWorkflowDraft,
   type AmendWorkflowRunSettingsInput,
   type ResumeSessionResult,
 } from "@zcode/core";
@@ -84,6 +87,10 @@ import { createModelCatalogPort } from "./model-catalog-port.js";
 import { createDynamicWorkflowRunProgressSink } from "./dynamic-workflow-run-progress-sink.js";
 import { createScriptWorkflowAgentRuntime } from "./script-workflow-child-runtime.js";
 import { workflowActorModelPolicy } from "./workflow-actor-model.js";
+import {
+  workflowActorInteractionDescription,
+  workflowActorPermissionPolicy,
+} from "./workflow-actor-permission.js";
 import { workflowActorToolPolicy } from "./workflow-actor-tools.js";
 import {
   createNodeReplBrowserBroker,
@@ -92,9 +99,14 @@ import {
 } from "./node-repl-browser-broker.js";
 import { resolveBuiltInNodeReplMcpServers } from "./built-in-node-repl.js";
 import { resolveZCodeCustomCommandPrompt } from "../custom-command-prompt.js";
-import { resolveZCodeBuiltinPromptCommand } from "../builtin-prompt-command.js";
+import { resolveZCodeBuiltinPromptCommandInvocation } from "../builtin-prompt-command.js";
+import { BUILTIN_WORKFLOW_COMMAND_NAME } from "../builtin-workflow-command.js";
 import { collectDisabledPaths } from "../skill-command-overrides.js";
-import { loadPluginAgentProfiles, loadZCodeAgentProfiles } from "../subagents.js";
+import {
+  loadPluginAgentTemplates,
+  resolvePluginAgentProfiles,
+  loadZCodeAgentProfiles,
+} from "../subagents.js";
 import { createRuntimeAiSdkModelExecutionConfig } from "../model-config.js";
 import { ApiProviderModelRuntime } from "./provider-registry-model-runtime.js";
 import {
@@ -130,7 +142,13 @@ function decodePromptAttachmentDataUrl(
   if (
     !mediaType.startsWith("image/") &&
     !mediaType.startsWith("video/") &&
-    mediaType !== "application/pdf"
+    mediaType !== "application/pdf" &&
+    // Root cause: text materials reuse uploaded artifacts, but the original data URL decoder
+    // accepted only media types, so a legitimate preview was rejected a second time.
+    !(
+      mediaType === "text/plain" &&
+      fallbackMime.split(";", 1)[0]?.trim().toLowerCase() === "text/plain"
+    )
   ) {
     throw new Error("fault.attachment.previewNotMedia");
   }
@@ -203,11 +221,15 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
       cliStorageRoot,
       resolveZCodeRuntimeEnv(options.env ?? process.env) === "development",
     );
-    const zcodeSubagentProfileOutcome = await loadZCodeAgentProfiles({
-      logger,
-      storageRoot,
-      workingDirectory,
+    // Initialization and the parent turn must use the same Host source, preventing a separate
+    // CLI storage.dir definition from disappearing in the first turn.
+    const hostSubagentSnapshot = await options.readSubagentRuntimeConfig?.({
+      signal: new AbortController().signal,
+      traceContext,
     });
+    const zcodeSubagentProfileOutcome = hostSubagentSnapshot
+      ? subagentProfilesFromSnapshot(hostSubagentSnapshot)
+      : await loadZCodeAgentProfiles({ logger, storageRoot, workingDirectory });
     const zcodeSubagentProfiles = zcodeSubagentProfileOutcome.profiles;
     const pluginOutcome = resolveStartupPlugins({
       cliStorageRoot,
@@ -219,13 +241,21 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
       workingDirectory,
     });
     // Skills shipped with the CLI (such as dynamic-workflows): they do not belong to a plugin, so users cannot disable or uninstall them.
-    const bundledSkillRoots = await resolveBundledSkillRoots({ cliStorageRoot, logger });
-    const pluginSubagentProfiles = loadPluginAgentProfiles({
-      logger,
-      plugins: pluginOutcome.plugins,
-      reservedProfileNames: zcodeSubagentProfiles.map((profile) => profile.name),
-      modelSelectionOverrides: zcodeSubagentProfileOutcome.pluginAgentModelSelectionOverrides,
-    }).profiles;
+    const bundledSkillRoots = resolveBundledSkillRoots({ cliStorageRoot, logger });
+    const pluginTemplates = loadPluginAgentTemplates({ logger, plugins: pluginOutcome.plugins });
+    const pluginSubagentProfiles =
+      hostSubagentSnapshot?.kind === "built-in-fallback"
+        ? []
+        : resolvePluginAgentProfiles(
+            {
+              logger,
+              plugins: pluginOutcome.plugins,
+              reservedProfileNames: zcodeSubagentProfiles.map((profile) => profile.name),
+              modelSelectionOverrides:
+                zcodeSubagentProfileOutcome.pluginAgentModelSelectionOverrides,
+            },
+            pluginTemplates,
+          ).profiles;
     const pluginRuntimeFeatures = resolvePluginRuntimeFeatures(pluginOutcome);
     const builtInMcpServers = resolveBuiltInNodeReplMcpServers({
       pluginOutcome,
@@ -418,6 +448,7 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
         noProxy: configResult.config.network.noProxy,
         caCertFile: configResult.config.network.caCertFile,
       });
+    const providerEndpointRoutingPort = options.providerEndpointRoutingPort;
     markMcpAdapterInitialized({
       configuredMcpServers,
       hasInjectedMcpPort: options.mcpPort !== undefined,
@@ -469,6 +500,21 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
         });
       }
       const validation = selection && registry.validateSelection(selection);
+      if (selection && validation && !validation.ok) {
+        // Observability: a validation failure affects only the runtime binding, not the saved
+        // intent; but once unbound, a later acceleration turn scoped to execution only has no
+        // chance to rebind. This once silently cleared the selection in the ~600ms window where
+        // the Registry was ready but account entitlements were unresolved; it only surfaced when
+        // the expired acceleration card downgraded and found no target to fall back to, while
+        // the logs showed no trace of this step.
+        logger.warn("Session model selection restored but not bound to the runtime", {
+          event: "session.model_selection.restore_unbound",
+          modelId: selection.modelId,
+          providerId: selection.providerId,
+          sessionId,
+          validationCode: validation.code,
+        });
+      }
       // Checking only whether a model exists would rebind selections with a missing level or a
       // deleted model into Runtime, undoing unbound initialization. History restore does not
       // require an executable model; only a complete selection can be bound.
@@ -529,6 +575,7 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
 
     const modelExecutionConfig = createRuntimeAiSdkModelExecutionConfig(options.env, {
       appVersion,
+      endpointRoutingPort: providerEndpointRoutingPort,
       network: configResult.config.network,
       sourceTitle: options.sourceTitle,
     });
@@ -578,6 +625,7 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
       mcpPort,
       modelFactory,
       permissionService,
+      pluginSkillRoots: pluginOutcome.skillRoots,
       prepareUserExecutionBoundary,
       getRuntime,
       runtimeConfig,
@@ -601,9 +649,12 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
         : createDynamicWorkflowRunService({
             concurrency: workflowConcurrencyGovernor,
             createActorRuntime: ({
+              actor,
               persona,
               pinnedModel,
               runSubagentModel,
+              actorModel,
+              subagentPermissionMode,
               sessionId: actorSessionId,
               submitPort,
               submitProfile,
@@ -620,10 +671,14 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
                     ...(persona.name === undefined ? {} : { name: persona.name }),
                     ...(persona.system === undefined ? {} : { persona: persona.system }),
                   },
-                  // The actor tool surface is subtractive (all tools minus interactive tools that
-                  // could hang or exceed authority), so it must be expressed through
+                  // The actor tool surface is subtractive (all tools minus plan and
+                  // authority-exceeding meta-tools), so it must be expressed through
                   // configOverrides (request.opts.tools supports only an allowlist).
                   ...workflowActorToolPolicy(),
+                  // Permission surface: subagents run the launching session's permission mode
+                  // (plan excepted); when nothing was recorded, YOLO applies
+                  // (docs/dynamic-workflow/launch.md "Permissions inside a run").
+                  ...workflowActorPermissionPolicy(subagentPermissionMode),
                   // Model selection: `runSubagentModel` is specific to this run (`subagent_model`)
                   // and overrides the full selection when present, taking precedence over the
                   // pin; it does not affect the main agent. If neither it nor a pin is present,
@@ -638,6 +693,9 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
                     {
                       parentSelection: getRuntime().getSessionModelSelection(),
                       ...(runSubagentModel === undefined ? {} : { runSelection: runSubagentModel }),
+                      // A model named by the persona (`agent(…, { model })` in the script) takes
+                      // precedence over the run selection.
+                      ...(actorModel === undefined ? {} : { actorSelection: actorModel }),
                     },
                     pinnedModel,
                   ).configOverrides,
@@ -657,6 +715,7 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
                   // same Registry view instead of freezing separate copies.
                   modelFactory,
                   permissionService,
+                  pluginSkillRoots: pluginOutcome.skillRoots,
                   runtime: getRuntime(),
                   runtimeConfig,
                   sessionId,
@@ -669,6 +728,15 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
                 // request is only a placeholder for the factory signature here: empty opts means
                 // "override nothing."
                 request: { opts: {} } as never,
+                // The permission window's source badge names this subagent:
+                // `<persona name> (<siteId>@<ordinal>)`.
+                interactionDescription: workflowActorInteractionDescription({ actor, persona }),
+                // Browser Use for subagents: the parent session's port, from which the factory
+                // derives a child port via forChildSession (tab ownership belongs to the actor's
+                // own sessionId). The actor runtime calls closeBrowserSession on run dispose,
+                // which closes the tab as well and revokes its registration
+                // (dynamic-workflow/docs/execution-engine.md "Subagent sessions").
+                ...(browserControlPort === undefined ? {} : { browserControlPort }),
                 traceContext,
                 // Submit profile → submit_result shape:
                 // `untyped` does not inject the port (core registers the tool only when the port is
@@ -719,7 +787,19 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
             // nonterminal runs in the journal for **this session** (remnants of a dead process)
             // as failed, so in-flight runs belonging to sibling sessions are never affected.
             parentSessionId: sessionId,
-            // An in-flight engine pins this session as resident.
+            // Mints a draft when a fill lands on a run that has none
+            // (docs/dynamic-workflow/launch.md "The draft after a fill"): the inline rules have a
+            // single implementation in the tool layer, injected here instead of duplicated in the
+            // run service.
+            writeWorkflowDraft,
+            // The session's permission mode at the moment the run was created (recorded in
+            // run-launched; subagents follow it).
+            // Lazy like onRunEvent: starts come only from tool calls or v4 commands, when the
+            // runtime is necessarily ready.
+            permissionMode: () => getRuntime().getMode(),
+            // An in-flight engine pins this session as resident. 2026-09-15 bug: the engine was
+            // not registered in the runtime task registry, so the residency pool closed an App
+            // with an in-flight run as idle (10 minutes), and resume then started a second engine.
             // Resolve runtime lazily, like onRunEvent: the run service is an AgentRuntime
             // dependency and is constructed earlier, while starts come only from tool calls or
             // v4 commands, when the runtime is ready.
@@ -756,6 +836,41 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
       currentSelection: () => getRuntime().getSessionModelSelection(),
     });
     runtime = new AgentRuntime(sessionId, runtimeConfig, {
+      ...(options.readSubagentRuntimeConfig
+        ? {
+            loadAgentDefinitions: async (input) => {
+              const snapshot = await options.readSubagentRuntimeConfig!(input);
+              const parsed = subagentProfilesFromSnapshot(snapshot);
+              const pluginProfiles =
+                snapshot.kind === "built-in-fallback"
+                  ? []
+                  : resolvePluginAgentProfiles(
+                      {
+                        logger,
+                        plugins: pluginOutcome.plugins,
+                        reservedProfileNames: parsed.profiles.map((profile) => profile.name),
+                        modelSelectionOverrides: parsed.pluginAgentModelSelectionOverrides,
+                      },
+                      pluginTemplates,
+                    ).profiles;
+              return {
+                activeAgents: normalizeAgentProfiles(
+                  [
+                    ...(options.runtimeConfig?.subagents?.profiles ?? []),
+                    ...parsed.profiles,
+                    ...pluginProfiles,
+                  ],
+                  {
+                    builtInModelSelectionOverrides: {
+                      ...parsed.builtInModelSelectionOverrides,
+                      ...options.runtimeConfig?.subagents?.builtInModelSelectionOverrides,
+                    },
+                  },
+                ),
+              };
+            },
+          }
+        : {}),
       agentTelemetry: modelTelemetry.agentExecution,
       // Main-agent model requests pass through the governor's observer: allow immediately, but
       // expose 429s and successes to the governor.
@@ -808,6 +923,7 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
       modelCatalogPort,
       automationPort: options.automationPort,
       offPeakPort: options.offPeakPort,
+      topicResourcePort: options.topicResourcePort,
       appVersion,
       traceContext,
     });
@@ -825,17 +941,28 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
     const inputFacade = createInputFacade({
       artifactStore,
       customCommandPromptResolver: async (text, resolverOptions) => {
-        const builtinPrompt = resolveZCodeBuiltinPromptCommand(text, {
-          // Do not expand the built-in `/workflow` when dynamic workflows are disabled. The
-          // catalog already removes it from the `/` panel, but users can still type the command
-          // name manually, so both paths must reach the same conclusion. Do not gate when the TUI
-          // is absent; headless mode uses the explicit --enable-workflow value (see the
-          // runtimeConfig field comment).
+        const builtin = resolveZCodeBuiltinPromptCommandInvocation(text, {
+          // Do not expand the built-in `/workflow` when the dynamic-workflow rollout gate is off
+          // (DWG-03). The catalog already removes it from the `/` panel, but users can still
+          // type the command name manually, so both paths must reach the same conclusion. The
+          // standalone CLI's TUI and headless modes use the explicit --workflow-mode value; when
+          // it is absent (in-process embedders), do not gate (see the runtimeConfig field comment).
           dynamicWorkflowEnabled: runtimeConfig.dynamicWorkflowEnabled,
           workingDirectory,
         });
-        if (builtinPrompt !== undefined) {
-          return builtinPrompt;
+        if (builtin !== undefined) {
+          if (builtin.name === BUILTIN_WORKFLOW_COMMAND_NAME) {
+            // The `/workflow` expansion point is also the onDemand session's activation point
+            // (launch.md "On demand: activation"): it runs before executeTurn, so the first model
+            // request of the turn already carries the ten tools. It is a no-op in alwaysOn or
+            // already-activated sessions. Ask the runtime, not the runtimeConfig captured in the
+            // closure — the config was copied at construction, so the closure cannot observe flips.
+            await runtime?.activateDynamicWorkflowTools({
+              source: "command",
+              traceContext: resolverOptions?.traceContext ?? traceContext,
+            });
+          }
+          return builtin.prompt;
         }
         return await resolveZCodeCustomCommandPrompt(text, {
           env: options.env,
@@ -1175,12 +1302,14 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
               runId: string;
               afterSequence?: number;
               limit?: number;
+              maxBytes?: number;
             }) =>
               dynamicWorkflowRunPort.listEvents(input.runId, {
                 ...(input.afterSequence === undefined
                   ? {}
                   : { afterSequence: input.afterSequence }),
                 ...(input.limit === undefined ? {} : { limit: input.limit }),
+                ...(input.maxBytes === undefined ? {} : { maxBytes: input.maxBytes }),
               }),
           }),
       // Read surface for **user-facing artifacts** from workflow runs. Register or omit all three
@@ -1202,12 +1331,16 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
               artifactId: string;
               afterSequence?: number;
               limit: number;
+              maxBytes: number;
+              fields?: readonly string[];
             }) =>
               dynamicWorkflowRunPort.listArtifactItems!(input.runId, input.artifactId, {
                 ...(input.afterSequence === undefined
                   ? {}
                   : { afterSequence: input.afterSequence }),
                 limit: input.limit,
+                maxBytes: input.maxBytes,
+                ...(input.fields === undefined ? {} : { fields: input.fields }),
               }),
             readDynamicWorkflowRunArtifact: async (input: {
               runId: string;
@@ -1240,8 +1373,8 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
           }),
       // Session-level lifecycle read surface for workflow runs (in-flight count + settlement
       // subscription). The consumer is the host's provider registry safety boundary: subagents
-      // share this session's live adapter, so the registry cannot be replaced during an in-flight
-      // run. Same absence condition as above.
+      // share this session's live adapter, and replacing the registry during an in-flight run
+      // would dispose the request resources they are bound to. Same absence condition as above.
       ...(dynamicWorkflowRunPort === undefined ? {} : {}),
       // Enumeration surface for workflow runs (discovery query after restart). Same capability
       // absence condition as above; listRunsForSession is optional on the port, so do not register

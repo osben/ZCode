@@ -8,33 +8,27 @@
 // One popover, multiple triggers: anchor to **the element that opened it** (virtual anchor), so both details-page entries align independently.
 // Mount the form only while open; the model-list subscription is active only for that period.
 
-import { useCallback, useMemo, useRef, useState, type RefObject } from "react";
-import { completeNewModelSelection } from "@zcode/provider";
-import { ZCODE_AGENT_PROVIDER } from "@zcode/shared";
+import { useCallback, useRef, useState, type RefObject } from "react";
 import type { CommandAck, WorkflowRunState } from "@zcode/shared/zcode-protocol-v4";
 import { Button } from "@/components/ui/button.js";
 import { Popover, PopoverAnchor, PopoverContent, PopoverTitle } from "@/components/ui/popover.js";
 import { Spinner } from "@/components/ui/spinner.js";
-import { useModelSelectionView } from "@/hooks/useModelSelectionView.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
-import { buildRegistryModelSelectGroups } from "@/lib/modelSelectionGroups.js";
-import { resolveModelThoughtOption } from "@/lib/modelThoughtOption.js";
-import { encodeCustomModelValue } from "@/lib/zcodeCustomModelValue.js";
-import { parseModelPickerValue } from "@/lib/zcodeSessionProjection.js";
 import { logger } from "@/logger.js";
-import { formatProviderModelLabel } from "@/v4/composer/modelTriggerDisplay.js";
-import { describeWorkflowSubagentModel } from "./subagent-model-label.js";
 import {
   WorkflowRunSettingsBoundField,
   WorkflowRunSettingsModelField,
 } from "./WorkflowRunSettingsFields.js";
 import {
+  useWorkflowSettingsModelChoices,
+  type WorkflowSettingsModelScope,
+} from "./useWorkflowSettingsModelChoices.js";
+import {
   describeWorkflowRunSettingsRejection,
   initialWorkflowRunSettingsDraft,
-  workflowRunSettingsCeiling,
+  workflowRunDefaultConcurrency,
   workflowRunSettingsChange,
   workflowRunSettingsConsequenceId,
-  workflowRunSettingsModelCanonical,
   workflowRunSettingsRejectionDetail,
   workflowRunSettingsRejectionMessageId,
   type WorkflowRunSettingsChange,
@@ -42,16 +36,8 @@ import {
   type WorkflowRunSettingsRejection,
 } from "./workflowRunSettings.js";
 
-/** Value for the "Session model" menu item; outside encodeCustomModelValue's value range so it cannot collide with a real model. */
-const SESSION_MODEL_VALUE = "workflow-settings:session-model";
-
 /** Everything the host supplies to the popover: model-list scope, session model, and command dispatch. */
-export interface WorkflowRunSettingsHost {
-  workspacePath: string;
-  workspaceIdentity?: string;
-  remoteSessionId?: string;
-  /** Current session model (used by the first menu item and trigger); if absent, the first item says only "Session model." */
-  sessionModel?: { providerId: string; modelId: string };
+export interface WorkflowRunSettingsHost extends WorkflowSettingsModelScope {
   /** Send `amendWorkflowRunSettings` (the host adds workId and session) and return the ACK. */
   apply: (change: WorkflowRunSettingsChange) => Promise<CommandAck>;
 }
@@ -141,118 +127,26 @@ function WorkflowRunSettingsForm({
     (id: string, values?: Record<string, string | number>) => intl.formatMessage({ id }, values),
     [intl],
   );
-  const modelRead = useModelSelectionView(
-    host.workspacePath,
-    host.remoteSessionId,
-    host.workspaceIdentity,
-  );
-  const view = modelRead.state.status === "ready" ? modelRead.state.view : null;
-  const groups = useMemo(
-    () =>
-      view === null
-        ? []
-        : buildRegistryModelSelectGroups(ZCODE_AGENT_PROVIDER, view, {
-            apiKeyLabel: format("settings.modelProvider.apiKey"),
-            apiKeyBadgeLabel: format("settings.modelProvider.connectionMode.apiKeyBadge"),
-            codingPlanLabel: format("settings.modelProvider.connectionMode.codingPlan"),
-            codingPlanBadgeLabel: format("settings.modelProvider.connectionMode.codingPlanBadge"),
-            startPlanLabel: format("settings.modelProvider.connectionMode.startPlan"),
-            startPlanBadgeLabel: format("settings.modelProvider.connectionMode.startPlanBadge"),
-            teamPlanBadgeLabel: format("settings.modelProvider.connectionMode.teamPlanBadge"),
-            teamPlanFallbackLabel: format("settings.modelProvider.connectionMode.teamPlan"),
-          }),
-    [format, view],
-  );
-  const providerName = useCallback(
-    (providerId: string) =>
-      view?.providers.find((provider) => provider.providerId === providerId)?.providerName ??
-      undefined,
-    [view],
-  );
+  // Checklist, the session-model item, trigger copy, and thinking-level rules for model changes are shared with the confirmation dialog.
+  // （useWorkflowSettingsModelChoices.ts）。
+  const choices = useWorkflowSettingsModelChoices(host);
 
   // Set the initial values when opening; a run-state change while the popover is open must not reset the form the user is editing.
   const [initial] = useState(() => initialWorkflowRunSettingsDraft(run));
   const [draft, setDraft] = useState<WorkflowRunSettingsDraft>(initial);
   const [pending, setPending] = useState(false);
   const [rejection, setRejection] = useState<WorkflowRunSettingsRejection | undefined>(undefined);
-  const ceiling = workflowRunSettingsCeiling(run);
-  const change = workflowRunSettingsChange(initial, draft, ceiling);
+  const defaultConcurrency = workflowRunDefaultConcurrency(run);
+  const change = workflowRunSettingsChange(initial, draft, defaultConcurrency);
   const updateDraft = (next: WorkflowRunSettingsDraft) => {
     setDraft(next);
     setRejection(undefined);
   };
 
-  const sessionModelName =
-    host.sessionModel === undefined
-      ? format("chat.toolCall.workflow.run.settings.model.sessionFallback")
-      : formatProviderModelLabel(
-          host.sessionModel.providerId,
-          providerName(host.sessionModel.providerId),
-          host.sessionModel.modelId,
-        );
-  const sessionBadge = format("chat.toolCall.workflow.run.settings.model.session");
-  // Both fields are strings, so replace this value only when the copy changes; the downstream model selector is memoized.
-  const sessionModelItem = useMemo(
-    () => ({
-      key: "workflow-settings:session-model",
-      value: SESSION_MODEL_VALUE,
-      name: sessionModelName,
-      badgeLabel: sessionBadge,
-    }),
-    [sessionModelName, sessionBadge],
-  );
   const draftModel = draft.model;
-  const modelValue =
-    draftModel.kind === "session"
-      ? SESSION_MODEL_VALUE
-      : encodeCustomModelValue(draftModel.providerId, draftModel.modelId);
-  const listed = groups.some((group) => group.items.some((item) => item.value === modelValue));
-  // The list loaded but does not contain this model: it was removed or disabled. Require the user to choose another before Apply;
-  // keeping it would make the Agent return model_unavailable (the same tool error as "The selected model is no longer available"), so explain it before submission.
-  const unavailable = draftModel.kind === "model" && view !== null && groups.length > 0 && !listed;
-  const canonical = workflowRunSettingsModelCanonical(draftModel);
-  const triggerLabel =
-    draftModel.kind === "session" || canonical === undefined
-      ? sessionModelName
-      : describeWorkflowSubagentModel(canonical, {
-          formatMessage: intl.formatMessage.bind(intl),
-          providerName,
-        }).name;
-  const thoughtOption =
-    draftModel.kind === "model" && view !== null && !unavailable
-      ? resolveModelThoughtOption({
-          modelSelectionView: view,
-          providerId: draftModel.providerId,
-          modelId: draftModel.modelId,
-          ...(draftModel.level === undefined ? {} : { currentValue: draftModel.level }),
-        })
-      : null;
-
+  const face = choices.describe(draftModel);
   const handleModelChange = (value: string) => {
-    if (value === SESSION_MODEL_VALUE) {
-      updateDraft({ ...draft, model: { kind: "session" } });
-      return;
-    }
-    const picked = parseModelPickerValue(value);
-    const same =
-      draftModel.kind === "model" &&
-      draftModel.providerId === picked.providerId &&
-      draftModel.modelId === picked.modelId;
-    // When changing models, use its default effort from the registry (same rule as the subagent setting in Settings); keep the current effort for the same model.
-    const level = same
-      ? draftModel.level
-      : view === null
-        ? undefined
-        : completeNewModelSelection(view, picked)?.options?.reasoningLevel;
-    updateDraft({
-      ...draft,
-      model: {
-        kind: "model",
-        providerId: picked.providerId,
-        modelId: picked.modelId,
-        ...(level === undefined ? {} : { level }),
-      },
-    });
+    updateDraft({ ...draft, model: choices.pick(value, draftModel) });
   };
 
   const handleApply = () => {
@@ -291,25 +185,26 @@ function WorkflowRunSettingsForm({
 
   const rejectionDetail =
     rejection === undefined ? undefined : workflowRunSettingsRejectionDetail(rejection);
+  const consequenceId = workflowRunSettingsConsequenceId(run.status, change);
   return (
     <>
       <PopoverTitle>{format("chat.toolCall.workflow.run.settings.title")}</PopoverTitle>
       <WorkflowRunSettingsModelField
-        disabled={pending || view === null}
-        groups={groups}
-        leadingItem={sessionModelItem}
-        noCatalog={view !== null && groups.length === 0}
+        disabled={pending || choices.loading}
+        groups={choices.groups}
+        leadingItem={choices.sessionModelItem}
+        noCatalog={choices.noCatalog}
         onLevelChange={(level) => {
           if (draftModel.kind !== "model" || level === draftModel.level) return;
           updateDraft({ ...draft, model: { ...draftModel, level } });
         }}
         onValueChange={handleModelChange}
-        thoughtOption={thoughtOption}
-        triggerLabel={triggerLabel}
-        value={modelValue}
+        thoughtOption={face.thoughtOption}
+        triggerLabel={face.triggerLabel}
+        value={face.value}
         {...(draftModel.kind === "session"
-          ? { badge: { text: sessionBadge, tone: "subtle" as const } }
-          : unavailable
+          ? { badge: { text: choices.sessionBadge, tone: "subtle" as const } }
+          : face.unavailable
             ? {
                 badge: {
                   text: format("chat.toolCall.workflow.run.settings.model.unavailable"),
@@ -320,15 +215,16 @@ function WorkflowRunSettingsForm({
       />
       <WorkflowRunSettingsBoundField
         bound={draft.bound}
-        ceiling={ceiling}
+        defaultConcurrency={defaultConcurrency}
         disabled={pending}
         onChange={(bound) => updateDraft({ ...draft, bound })}
       />
+      {/* When nothing has changed, the consequence sentence is empty but retains one line of height (min-h-lh), so the footer does not jump down after the first edit. */}
       <p
-        className="text-ui-sm text-foreground-subtle"
+        className="min-h-lh text-ui-sm text-foreground-subtle"
         data-testid="workflow-run-settings-consequence"
       >
-        {format(workflowRunSettingsConsequenceId(run.status, change))}
+        {consequenceId === undefined ? null : format(consequenceId)}
       </p>
       {rejection === undefined ? null : (
         <div
@@ -352,7 +248,7 @@ function WorkflowRunSettingsForm({
       <div className="flex justify-end">
         <Button
           data-testid="workflow-run-settings-apply"
-          disabled={change === undefined || pending || unavailable}
+          disabled={change === undefined || pending || face.unavailable}
           onClick={handleApply}
           size="default"
           type="button"

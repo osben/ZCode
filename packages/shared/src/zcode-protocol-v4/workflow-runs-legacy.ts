@@ -21,8 +21,10 @@ import {
 /**
  * Truncate to the legacy bounds; set `truncated: true` on truncated runs (the read side uses it to show "showing details for only N/M steps").
  *
- * **Do not truncate anything else**: new optional keys unknown to old consumers are harmless (the container is not strict, so extra keys are simply stripped),
- * while stripping them for "cleanliness" would require maintaining a second field list and increase the risk of mismatches.
+ * **Do not truncate anything else**: new optional keys unknown to old consumers are harmless (the
+ * container is not strict, so extra keys are simply stripped), while stripping them for
+ * "cleanliness" would require maintaining a second field list — exactly the shape of the
+ * 2026-09-04 incident.
  *
  * Return the **same object** when no truncation is needed: this function runs on every flush, and creating a new state object unnecessarily would invalidate
  * downstream memoization by reference.

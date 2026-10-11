@@ -13,7 +13,6 @@
 // - Resubscription replaces: subscribing again with the same connectionId invalidates the old
 //   subscription and clears its flush buffer. The old subscriptionId emits no more frames, and
 //   the client drops frames from older generations by subId.
-import { Buffer } from "node:buffer";
 import { SessionEventType, type SessionEvent } from "@zcode/contracts";
 import type {
   CommandEnvelope,
@@ -25,8 +24,8 @@ import type {
   DeliveryProfileName,
   QueueItem,
   SubscribeAck,
-  TopicFrameDeliveryKind,
   ToolCallRow,
+  TopicFrameDeliveryKind,
   V4ConversationPlansResult,
   V4ConversationRowsRangeResult,
 } from "@zcode/shared/zcode-protocol-v4";
@@ -39,18 +38,19 @@ import {
   filterConversationRowsForProfile,
   utf8JsonByteLength,
 } from "@zcode/shared/zcode-protocol-v4";
+import { Buffer } from "node:buffer";
 import {
   encodeConversationDeltasForLegacy,
   workflowRunDeltaGrowthUpperBound,
 } from "./conversation-workflow-run-deltas.js";
 import {
   ProductProjection,
-  type StableForkCandidateResolution,
   type ConversationRowTargetAction,
   type ConversationRowTargetResolution,
   type SessionConfigSeed,
   type SessionSubagentsSeed,
   type SessionUsageSeed,
+  type StableForkCandidateResolution,
 } from "./product-projection.js";
 import type { TopicFrameReservation } from "./topic-frame-reservation.js";
 
@@ -70,7 +70,7 @@ const TERMINAL_PLAN_STATUSES: ReadonlySet<ToolCallRow["status"]> = new Set([
  * for every measurement. The CLI is guaranteed to run in Node, so calculate the exact UTF-8 byte
  * count directly from the same JSON text instead of estimating.
  */
-function coldHydrationJsonByteLength(value: unknown): number {
+export function coldHydrationJsonByteLength(value: unknown): number {
   const json = JSON.stringify(value);
   return json === undefined ? 0 : Buffer.byteLength(json, "utf8");
 }
@@ -116,7 +116,7 @@ interface Subscription {
   nextLogicalFrameOrdinal: number;
 }
 
-interface ConversationSubscribeParams {
+export interface ConversationSubscribeParams {
   connectionId: string;
   base?: { logEpoch: string; seq: number };
   /** Defaults to replayable (the WebSocket default; MessagePort hosts explicitly pass continuous). */
@@ -129,7 +129,7 @@ interface ConversationSubscribeParams {
   workflowRunDeltas?: boolean;
 }
 
-interface ConversationSubscribeResult {
+export interface ConversationSubscribeResult {
   ack: SubscribeAck;
   reservation: TopicFrameReservation<ConversationTopicFrame> | null;
   /** Atomically restore the replaced subscription if initial encoding fails before ACK admission. */
@@ -138,12 +138,12 @@ interface ConversationSubscribeResult {
   readonly frame: ConversationTopicFrame | null;
 }
 
-interface ConversationResyncRequest {
+export interface ConversationResyncRequest {
   base: { logEpoch: string; seq: number } | null;
   forceSnapshot?: boolean;
 }
 
-interface ConversationTopicPublisherOptions {
+export interface ConversationTopicPublisherOptions {
   /** CLI clock (source for frame.sentAt / clockOffset estimation). */
   now?: () => number;
   /** Event retention window (entry count), defaults to PROTOCOL_V4_LIMITS.eventRetentionPerSession. */
@@ -154,9 +154,12 @@ interface ConversationTopicPublisherOptions {
   subscriberBufferMaxBytes?: number;
 }
 
-interface ConversationSubscriberBufferLimits {
+export interface ConversationSubscriberBufferLimits {
   maxOps?: number;
+  /** Byte floor (default 1MiB); for the effective limit see conversationSubscriberBufferByteLimit. */
   maxBytes?: number;
+  /** Conservative upper bound of the current wire snapshot logical frame; default 0 means the floor alone decides. */
+  snapshotBytesUpperBound?: number;
 }
 
 export class ProjectionPayloadTooLargeError extends Error {
@@ -173,7 +176,7 @@ export class ProjectionPayloadTooLargeError extends Error {
 // While running, leave room for the bounded terminal patch from TurnError/TurnComplete; otherwise,
 // if the body reaches 16 MiB exactly, the terminal state that stops the turn cannot fit in a
 // transportable snapshot either.
-const PROJECTION_TERMINAL_RESERVE_BYTES = 64 * 1024;
+export const PROJECTION_TERMINAL_RESERVE_BYTES = 64 * 1024;
 
 // The row.actions schema has only four true booleans and one short enum; including JSON keys and
 // parent wrappers it is under 128 bytes. Reserve the full amount for each wire-tail row between
@@ -187,7 +190,7 @@ function hydrationSequenceNumberBytes(sequenceNumber: number): number {
   return String(sequenceNumber).length * HYDRATION_SEQUENCE_NUMBER_OCCURRENCES;
 }
 
-type ConversationSubscriberBufferResult =
+export type ConversationSubscriberBufferResult =
   | {
       kind: "buffered";
       deltas: ConversationDelta[];
@@ -204,12 +207,29 @@ function nonNegativeHardBound(value: number | undefined, maximum: number, name: 
 }
 
 /**
+ * The subscriber buffer's effective byte limit = min(max(floor, snapshot upper bound), 16MiB - 64KiB) (05 §3).
+ * Fix rationale: overflow exists to trade a backlog of deltas for a smaller snapshot; the old implementation fixed it at 1MiB, so a single large
+ * delta (for example a tool row upsert carrying 3MiB of bash output) would degrade to a snapshot, yet the snapshot is larger still because the
+ * same row remains in the tail window. It also made the client replace the whole state and drop already-paginated history rows, so the turn
+ * navigator re-paginated in full—once per turn in long sessions. The outer clamp leaves assembly headroom for the frame shell; deltas frames stay <=16MiB.
+ */
+export function conversationSubscriberBufferByteLimit(
+  floorBytes: number,
+  snapshotBytesUpperBound: number,
+): number {
+  return Math.min(
+    Math.max(floorBytes, snapshotBytesUpperBound),
+    PROTOCOL_V4_LIMITS.logicalFrameAssemblyMaxBytes - PROJECTION_TERMINAL_RESERVE_BYTES,
+  );
+}
+
+/**
  * Deltas after profile filtering enter this pure function; merge them with the existing buffer
  * and coalesce first, then enforce both op and UTF-8 byte limits. Limits must actually be
  * enforced: storing raw delta[] without checking them would keep accumulating data for slow
  * subscribers and eventually produce an unbounded frame.
  */
-function appendConversationSubscriberBuffer(
+export function appendConversationSubscriberBuffer(
   current: readonly ConversationDelta[],
   incoming: readonly ConversationDelta[],
   limits: ConversationSubscriberBufferLimits = {},
@@ -224,10 +244,14 @@ function appendConversationSubscriberBuffer(
     PROTOCOL_V4_LIMITS.subscriberBufferMaxBytes,
     "maxBytes",
   );
+  const byteLimit = conversationSubscriberBufferByteLimit(
+    maxBytes,
+    limits.snapshotBytesUpperBound ?? 0,
+  );
   const deltas = coalesceConversationDeltas([...current, ...incoming]);
   if (deltas.length > maxOps) return { kind: "overflow" };
   const encodedBytes = utf8JsonByteLength({ kind: "deltas", deltas });
-  if (encodedBytes > maxBytes) return { kind: "overflow" };
+  if (encodedBytes > byteLimit) return { kind: "overflow" };
   return { kind: "buffered", deltas, encodedBytes };
 }
 
@@ -604,10 +628,11 @@ export class ConversationTopicPublisher {
     for (const subscription of this.subscriptions.values()) {
       if (subscription.resyncRequired) continue;
       const filtered = this.encodeDeltasForSubscription(deltas, subscription);
-      const next = appendConversationSubscriberBuffer(subscription.buffer, filtered, {
-        maxOps: this.subscriberBufferMaxOps,
-        maxBytes: this.subscriberBufferMaxBytes,
-      });
+      const next = appendConversationSubscriberBuffer(
+        subscription.buffer,
+        filtered,
+        this.subscriberBufferLimits(),
+      );
       if (next.kind === "overflow") {
         subscription.buffer = [];
         subscription.bufferBytes = 0;
@@ -720,6 +745,14 @@ export class ConversationTopicPublisher {
         const wireDeltas = deltas.filter((delta) => {
           if (delta.op === "state.updated" || delta.op === "row.appended") return true;
           if (delta.op === "row.removed") return false;
+          // 4b-2: plugin resource notifications go through live deltas only and are excluded from cold-start measurement.
+          if (
+            delta.op === "pluginUi.resourceUpdated" ||
+            delta.op === "pluginUi.resourceListChanged" ||
+            delta.op === "pluginUi.appToolCall" ||
+            delta.op === "pluginUi.instanceClosed"
+          )
+            return false;
           // Key-level deltas apply to state keys, not the 60-row wire tail, so they are always
           // counted even if they are no longer in the window, matching state.updated.
           if (delta.op === "workflowRun.updated" || delta.op === "workflowRun.removed") return true;
@@ -1063,10 +1096,11 @@ export class ConversationTopicPublisher {
       }
       const recoveryBuffer = subscription.buffer;
       const recoveryResyncRequired = subscription.resyncRequired;
-      const merged = appendConversationSubscriberBuffer(previous.buffer, recoveryBuffer, {
-        maxOps: this.subscriberBufferMaxOps,
-        maxBytes: this.subscriberBufferMaxBytes,
-      });
+      const merged = appendConversationSubscriberBuffer(
+        previous.buffer,
+        recoveryBuffer,
+        this.subscriberBufferLimits(),
+      );
       if (merged.kind === "overflow" || previous.resyncRequired || recoveryResyncRequired) {
         subscription.buffer = [];
         subscription.bufferBytes = 0;
@@ -1083,7 +1117,15 @@ export class ConversationTopicPublisher {
     };
   }
 
-  /** Overflow fallback: clear the buffer and send a snapshot frame to realign. */
+  private subscriberBufferLimits(): ConversationSubscriberBufferLimits {
+    return {
+      maxOps: this.subscriberBufferMaxOps,
+      maxBytes: this.subscriberBufferMaxBytes,
+      snapshotBytesUpperBound: this.wireSnapshotBytesUpperBound,
+    };
+  }
+
+  /** Overflow fallback (05 § two-tier backpressure): clear the buffer and send a snapshot frame to realign. */
   resync(subscriptionId: string): ConversationTopicFrame | null {
     const reservation = this.resyncReserved(subscriptionId, {
       base: null,

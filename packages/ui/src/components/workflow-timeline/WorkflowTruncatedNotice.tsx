@@ -3,7 +3,8 @@ import { cn } from "@/components/lib/utils.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 
 /**
- * "Showing details for {shown}/{total} steps": after a run exceeds `WORKFLOW_RUNS_LIMITS.maxNodes`, the instance table is capped, while
+ * “Showing details for {shown}/{total} steps” (docs/dynamic-workflow/presentation.md, “The run card”
+ * and “The run pane”): when a run exceeds `WORKFLOW_RUNS_LIMITS.maxNodes`, the instance table stops at the limit, while
  * the counts above (steps, settled) already include items outside the table. This row states that difference: **the run is not truncated;
  * details for individual steps are**.
  *

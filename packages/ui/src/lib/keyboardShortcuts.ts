@@ -45,6 +45,10 @@ function getCommandModifierLabel(platformInfo?: KeyboardShortcutPlatformInfo): s
   return isAppleKeyboardPlatform(platformInfo) ? "⌘" : "Ctrl";
 }
 
+function getCtrlModifierLabel(platformInfo?: KeyboardShortcutPlatformInfo): string {
+  return isAppleKeyboardPlatform(platformInfo) ? "⌃" : "Ctrl";
+}
+
 function formatAppleShortcutLabel(...parts: string[]): string {
   return parts.join(" ");
 }
@@ -58,6 +62,31 @@ export function formatCommandShortcutLabel(
     return formatAppleShortcutLabel(mod, formatShortcutKeyLabel(key));
   }
   return `${mod}+${key.toUpperCase()}`;
+}
+
+export function formatAltCommandShortcutLabel(
+  key: string,
+  platformInfo?: KeyboardShortcutPlatformInfo,
+): string {
+  const isApple = isAppleKeyboardPlatform(platformInfo);
+  const command = getCommandModifierLabel(platformInfo);
+  if (isApple) {
+    return formatAppleShortcutLabel("⌥", command, formatShortcutKeyLabel(key));
+  }
+  return `Ctrl+Alt+${key.toUpperCase()}`;
+}
+
+export function formatShiftCommandShortcutLabel(
+  key: string,
+  platformInfo?: KeyboardShortcutPlatformInfo,
+): string {
+  const isApple = isAppleKeyboardPlatform(platformInfo);
+  const command = getCommandModifierLabel(platformInfo);
+  const displayKey = formatShortcutKeyLabel(key);
+  if (isApple) {
+    return formatAppleShortcutLabel("⇧", command, displayKey);
+  }
+  return `Ctrl+Shift+${displayKey}`;
 }
 
 function formatShortcutKeyLabel(key: string): string {
@@ -84,6 +113,32 @@ export function matchesPrimaryShortcut(
   );
 }
 
+export function matchesPrimaryShiftShortcut(
+  event: PrimaryShortcutKeyboardEvent,
+  key: string,
+  platformInfo?: KeyboardShortcutPlatformInfo,
+): boolean {
+  return (
+    matchesPrimaryModifier(event, platformInfo) &&
+    event.shiftKey &&
+    !event.altKey &&
+    matchesShortcutKey(event, key)
+  );
+}
+
+export function matchesPrimaryAltShortcut(
+  event: PrimaryShortcutKeyboardEvent,
+  key: string,
+  platformInfo?: KeyboardShortcutPlatformInfo,
+): boolean {
+  return (
+    matchesPrimaryModifier(event, platformInfo) &&
+    !event.shiftKey &&
+    event.altKey &&
+    matchesShortcutKey(event, key)
+  );
+}
+
 function matchesPrimaryModifier(
   event: PrimaryShortcutKeyboardEvent,
   platformInfo?: KeyboardShortcutPlatformInfo,
@@ -102,6 +157,37 @@ export function matchesCtrlShortcut(event: PrimaryShortcutKeyboardEvent, key: st
     !event.altKey &&
     matchesShortcutKey(event, key)
   );
+}
+
+export function matchesCtrlShiftShortcut(
+  event: PrimaryShortcutKeyboardEvent,
+  key: string,
+): boolean {
+  return (
+    event.ctrlKey &&
+    !event.metaKey &&
+    event.shiftKey &&
+    !event.altKey &&
+    matchesShortcutKey(event, key)
+  );
+}
+
+/**
+ * Match the standalone Shift+Tab shortcut (without Ctrl/Cmd/Alt).
+ * Chat-toolbar mode used this combination in the past; retain it for callers that still need to distinguish reverse Tab navigation.
+ */
+export function matchesShiftTab(event: PrimaryShortcutKeyboardEvent): boolean {
+  return (
+    event.shiftKey &&
+    !event.ctrlKey &&
+    !event.metaKey &&
+    !event.altKey &&
+    (event.key === "Tab" || event.code === "Tab")
+  );
+}
+
+export function formatShiftTabShortcutLabel(platformInfo?: KeyboardShortcutPlatformInfo): string {
+  return isAppleKeyboardPlatform(platformInfo) ? formatAppleShortcutLabel("⇧", "Tab") : "Shift+Tab";
 }
 
 function matchesShortcutKey(

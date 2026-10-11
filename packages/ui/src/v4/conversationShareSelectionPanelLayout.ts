@@ -1,21 +1,21 @@
 /** Geometric constraints for the share-selection panel; CSS still adapts the panel content itself. */
-const CONVERSATION_SHARE_SELECTION_PANEL_EDGE_INSET_PX = 24;
-const CONVERSATION_SHARE_SELECTION_PANEL_DOCK_GAP_PX = 16;
+export const CONVERSATION_SHARE_SELECTION_PANEL_EDGE_INSET_PX = 24;
+export const CONVERSATION_SHARE_SELECTION_PANEL_DOCK_GAP_PX = 16;
 /** Two candidate rows (48px each, 8px gap) plus 16px panel padding; below this height, the panel is unusable. */
-const CONVERSATION_SHARE_SELECTION_PANEL_MIN_HEIGHT_PX = 120;
+export const CONVERSATION_SHARE_SELECTION_PANEL_MIN_HEIGHT_PX = 120;
 export const CONVERSATION_SHARE_SELECTION_PANEL_MAX_HEIGHT_PROPERTY =
   "--conversation-share-selection-panel-max-height";
 export const CONVERSATION_SHARE_SELECTION_PANEL_CENTER_Y_PROPERTY =
   "--conversation-share-selection-panel-center-y";
 
-interface ConversationShareSelectionPanelLayoutInput {
+export interface ConversationShareSelectionPanelLayoutInput {
   /** Session content container height, excluding WorkspaceHeader. */
   containerHeightPx: number;
   /** Top of the bottom composer/share dock, relative to the session content container. */
   dockStartPx: number;
 }
 
-interface ConversationShareSelectionPanelLayout {
+export interface ConversationShareSelectionPanelLayout {
   centerYPx: number;
   maxHeightPx: number;
   topPx: number;
@@ -37,7 +37,7 @@ function normalizeSize(value: number): number {
  * the latter approaches 0 and compresses the panel into an unusable sliver. Preserve a minimum height:
  * first reclaim the top safe margin, then allow overlap into the dock gap if needed, while never exceeding the container itself.
  */
-function resolveConversationShareSelectionPanelLayout({
+export function resolveConversationShareSelectionPanelLayout({
   containerHeightPx,
   dockStartPx,
 }: ConversationShareSelectionPanelLayoutInput): ConversationShareSelectionPanelLayout {

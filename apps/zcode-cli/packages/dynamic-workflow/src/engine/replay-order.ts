@@ -1,13 +1,12 @@
 /**
- * **Settlement-order gate** for replay.
+ * **Settlement-order gate** for replay (docs/execution-engine.md, “Replaying the settle order”).
  *
- * Site ordinals are counters incremented when calls arrive, so journal calls a branch makes after
- * `await` are numbered by fan-out completion order, not script invocation order. That order is
- * wall-clock-dependent and cannot be reconstructed from node rows: if cached settlements are
- * released in admission order, replayed `Promise.all` continuations run in array order. The first
- * `report` after the join then gets the ordinal the journal assigned to “the branch that completed
- * first,” and the run fails its own defensive check (`InputHashMismatch`) even when the script is
- * deterministic, simply because replay completed branches in a different order.
+ * Site ordinals are counters assigned when calls arrive, so each journal call a branch makes **after** an await
+ * is numbered by the order in which fan-out work completes, not by the order in which the script started it. That ordering depends on wall-clock timing, and node rows contain nothing
+ * that can reproduce it: releasing cached settlements in admission order makes replayed `Promise.all` resume continuations in array order. The first `report`
+ * after the join then receives the journal sequence for the branch that finished first, and the run fails its own defensive check
+ * (`InputHashMismatch`), blaming a deterministic script for nondeterminism. Observed in production on 2026-09-17: five parallel research branches
+ * completed in order 1, 4, 2, 5, 3, and resume failed at report#2@2.
  *
  * Therefore resume replays **scheduling**, not only answers: this gate holds the original
  * settlement order, parking cached settlements at their release point until all earlier entries
@@ -17,8 +16,39 @@
  */
 
 import { isArtifactPresetOp } from "../facade/registry.js";
-import type { InstanceRef, JournalStorePort, NodeRecord, RunEvent } from "./types.js";
+import { NODE_KINDS, type RunEventType } from "./journal-read-types.js";
+import type { InstanceRef, JournalStorePort, NodeKind, NodeRecord, RunEvent } from "./types.js";
 import { refToString } from "./types.js";
+
+/**
+ * Node kinds that always resolve a promise during replay: every kind except `report` (void) and `artifact` (see member-specific rules in
+ * {@link claimsOnReplay}). Derived from {@link NODE_KINDS}, so newly added kinds are included by default.
+ */
+export const REPLAY_WORK_KINDS: readonly NodeKind[] = NODE_KINDS.filter(
+  (kind) => kind !== "report" && kind !== "artifact",
+);
+
+/** Settlement order depends only on these three event kinds ({@link settledInstanceKey}); other events need not be read. */
+const SETTLE_EVENT_TYPES: readonly RunEventType[] = [
+  "node-settled",
+  "artifact-published",
+  "artifact-failed",
+];
+
+/**
+ * Node rows needed for settlement ordering: work rows **omit results** (only kind / status / coordinates are needed); artifact rows include results (member family is in
+ * `result.kind`, and artifact rows are bounded: 32 IDs × 16 versions each). Report rows are never read—they do not claim
+ * the gate, and a run can contain 65,536 of them (docs/execution-engine.md, “Reading the journal”).
+ */
+export function readReplayRows(
+  journal: JournalStorePort,
+  runId: string,
+): { workRows: NodeRecord[]; artifactRows: NodeRecord[] } {
+  return {
+    workRows: journal.listNodes(runId, { kinds: REPLAY_WORK_KINDS, withResult: false }),
+    artifactRows: journal.listNodes(runId, { kinds: ["artifact"], withResult: true }),
+  };
+}
 
 export class ReplaySettleOrder {
   /** Instance key → its position in the original settlement order. */
@@ -43,7 +73,7 @@ export class ReplaySettleOrder {
     return new ReplaySettleOrder([]);
   }
 
-  /** Original settlement order (for diagnostics). */
+  /** First-observed settlement order (for diagnostics and tests). */
   recorded(): readonly string[] {
     return this.order;
   }
@@ -93,10 +123,9 @@ export class ReplaySettleOrder {
   /**
    * Run settlement: permanently open the gate and release parked actions in recorded order.
    *
-   * If they are not released, promises on the script side never settle. The harness immediately
-   * closes its sandbox, but an in-process script setup (such as `EvalWorkflowSnippet`) would hang.
-   * Releasing after settlement is safe: the engine has marked the run settled, and every host path
-   * starts with `isRunSettled()`.
+   * If not released, the script-side promise never resolves—the harness immediately closes its sandbox, but in same-process
+   * execution (engine tests, `EvalWorkflowSnippet`) this hangs forever. Releasing after settlement is safe:
+   * the engine has called markSettled, and every host path starts with `isRunSettled()`.
    */
   open(): void {
     if (this.opened) return;
@@ -155,8 +184,8 @@ export class ReplaySettleOrder {
 export function recoverSettleOrder(
   journal: JournalStorePort,
   runId: string,
-  /** Node rows already read (the engine's resume branch reads them anyway; passing them avoids a second full-table read). */
-  nodes: readonly NodeRecord[] = journal.listNodes(runId),
+  /** Node rows already read (the engine's resume path needs them anyway; pass them here to avoid a second read). */
+  nodes: readonly NodeRecord[] = Object.values(readReplayRows(journal, runId)).flat(),
 ): ReplaySettleOrder {
   const claimable = new Set<string>();
   for (const node of nodes) {
@@ -168,7 +197,10 @@ export function recoverSettleOrder(
 
   const order: string[] = [];
   const seen = new Set<string>();
-  for (const { event } of journal.listEvents(runId)) {
+  for (const { event } of journal.listEvents(runId, {
+    types: SETTLE_EVENT_TYPES,
+    reportItems: { limit: 0 },
+  })) {
     const key = settledInstanceKey(event);
     if (key === undefined || seen.has(key) || !claimable.has(key)) continue;
     seen.add(key);

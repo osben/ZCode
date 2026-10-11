@@ -2,13 +2,14 @@
 // Dynamic Workflow Run Service: three launch entry points (submit / amend / resume) and "compile once"
 // ============================================================
 // dynamic-workflow-run-service.ts reached oxlint's 400-line limit, so its `submit` and `resume`
-// entry points, along with their shared compileOnce / mintRunId helpers, moved here. The public
-// exports still come from dynamic-workflow-run-service.ts. The two entry points have opposite
-// directions and never share a gate (invariant 1 in that file's header), but they share the same
-// registry, quiescence table, and settlement bookkeeping. The service explicitly passes these
-// through {@link DynamicWorkflowRunEntryContext}; this file owns no state of its own.
+// entry points, along with their shared mintRunId helper, moved here (compileOnce was split out
+// further into dynamic-workflow-run-compile.ts). The public exports still come from
+// dynamic-workflow-run-service.ts. The two entry points have opposite directions and never share a
+// gate (invariant 1 in that file's header), but they share the same registry, quiescence table,
+// and settlement bookkeeping. The service explicitly passes these through
+// {@link DynamicWorkflowRunEntryContext}; this file owns no state of its own.
 
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import type {
   DynamicWorkflowRunAmendRequest,
   DynamicWorkflowRunAmendResult,
@@ -18,19 +19,11 @@ import type {
   TraceContext,
 } from "@zcode/contracts";
 import {
-  buildAskSpecs,
   collectDiagnostics,
-  collectSites,
-  collectWorldRunCommands,
   createWorkflowProgram,
-  deriveActorSubmitProfilesFor,
-  lowerWorkflow,
-  synthesizeAskSchemas,
   type Caps,
-  type CompileDiagnostic,
   type ImportedRunCache,
   type RunSettlement,
-  type WorkflowProgram,
 } from "@zcode/dynamic-workflow";
 import { formatModelPickerValue } from "@zcode/shared/model-selection";
 import type { ModelSelection } from "@zcode/shared/model-selection";
@@ -40,11 +33,19 @@ import {
   rebuildImportedCacheForResume,
 } from "./dynamic-workflow-import.js";
 import {
-  launchDynamicWorkflowRun,
-  type CompiledDynamicWorkflowScript,
-} from "./dynamic-workflow-run-launch.js";
+  boundedResumeDiagnostics,
+  compileOnce,
+  compileProgram,
+} from "./dynamic-workflow-run-compile.js";
+import {
+  openHoleIndexes,
+  phaseNamesFromEvents,
+  readRunHoleEvents,
+} from "./dynamic-workflow-run-holes.js";
+import { launchDynamicWorkflowRun } from "./dynamic-workflow-run-launch.js";
 import {
   readRunLaunchAnchor,
+  readRunModelBindings,
   readRunScriptPath,
   readRunSubagentModel,
   resolveLaunchAnchor,
@@ -52,6 +53,7 @@ import {
 } from "./dynamic-workflow-run-launch-anchor.js";
 import { isResumableRecord, type RunRegistryEntry } from "./dynamic-workflow-run-observation.js";
 import type { DynamicWorkflowRunServiceDeps } from "./dynamic-workflow-run-service.js";
+import { workflowSubagentPermissionModeField } from "./workflow-actor-permission.js";
 import type { WorkflowEscalationRegistry } from "./workflow-escalation-registry.js";
 import { createWorkflowRunControl } from "./workflow-run-control.js";
 
@@ -68,7 +70,7 @@ export interface DynamicWorkflowRunEntryContext {
   /**
    * Caps for this launch. The input is the **requested** concurrency ceiling (`max_concurrency`
    * from `CreateWorkflow` / `AmendWorkflow`, normalized by the tool layer to a number or omitted):
-   * omission means the host ceiling; a supplied value is clamped to [1, host ceiling].
+   * omission means default concurrency; a supplied value is floored to at least 1, with no upper limit.
    */
   caps: (requestedMaxConcurrency?: number) => Caps;
   trackSettlement: (
@@ -95,6 +97,7 @@ export async function submitDynamicWorkflowRun(
     ...(request.phaseNames === undefined ? {} : { phaseNames: request.phaseNames }),
     ...(request.maxConcurrency === undefined ? {} : { maxConcurrency: request.maxConcurrency }),
     ...(request.subagentModel === undefined ? {} : { subagentModel: request.subagentModel }),
+    ...(request.modelBindings === undefined ? {} : { modelBindings: request.modelBindings }),
     // The script file travels with the subagent model and passes through unchanged. The port does
     // not infer anything: whether a draft was saved is a tool-side fact, and omission means there is no file.
     ...(request.scriptPath === undefined ? {} : { scriptPath: request.scriptPath }),
@@ -163,7 +166,7 @@ export async function amendDynamicWorkflowRun(
     });
   }
 
-  // Quiescence gate.
+  // Quiescence gate (apps/zcode-cli/packages/dynamic-workflow/docs/execution-engine.md, "What is imported").
   //
   // Root cause: `dispose()` is synchronous. For a session with an active turn, it only attaches
   // `state.turn.then(close, close)` without awaiting it; the engine settles immediately after
@@ -235,8 +238,8 @@ export async function amendDynamicWorkflowRun(
     ...(request.phaseNames === undefined ? {} : { phaseNames: request.phaseNames }),
     // Do not inherit the concurrency ceiling from the predecessor. "Omitted means inherit" is a
     // three-state rule at the **tool surface**; `AmendWorkflow`'s resolveInput has normalized it to
-    // a number or omission here (omission = host ceiling). Inheriting again at the port would make
-    // "remove the limit" (`null`) impossible to express.
+    // a number or omission here (omission = default concurrency). Inheriting again at the port
+    // would make "remove the limit" (`null`) impossible to express.
     ...(request.maxConcurrency === undefined ? {} : { maxConcurrency: request.maxConcurrency }),
     // Do not inherit the subagent model from the predecessor either; the same reasoning applies as
     // for the concurrency ceiling above. "Omitted means inherit" is a three-state rule at the
@@ -244,6 +247,10 @@ export async function amendDynamicWorkflowRun(
     // (omission = use the session model). Inheriting again at the port would make "use the session
     // model" (`null`) impossible to express.
     ...(request.subagentModel === undefined ? {} : { subagentModel: request.subagentModel }),
+    // Script-named models are likewise not inherited from the predecessor at the port: "reuse the
+    // predecessor's binding for the same name" is a tool-surface rule, and `AmendWorkflow`'s
+    // resolveInput has already normalized it into a table here.
+    ...(request.modelBindings === undefined ? {} : { modelBindings: request.modelBindings }),
     // **Never inherit the script file from the predecessor**: an amendment records which file this
     // revision's script came from (`path` submission means that file; inline submission means the
     // newly written draft). Reusing the predecessor's path would make the model edit the old script next time.
@@ -266,13 +273,15 @@ interface StartNewRunInput {
   launchInputId?: string;
   /** Script-declared phase table (passed for submit and amend; amendments use the **new script's** phases). */
   phaseNames?: string[];
-  /** Requested concurrency ceiling; omission means the host ceiling. Clamped in {@link DynamicWorkflowRunEntryContext.caps}. */
+  /** Requested concurrency ceiling; omission means default concurrency. Normalized in {@link DynamicWorkflowRunEntryContext.caps}. */
   maxConcurrency?: number;
   /**
    * This run's subagent model. Omission means subagents use the session model.
    * The structured selection is normalized to a picker string before persistence; see the comment in startNewRun.
    */
   subagentModel?: ModelSelection;
+  /** Script-named models (name → structured selection); normalized to canonical strings together with the subagent model before persistence. Omission means none were named. */
+  modelBindings?: Record<string, ModelSelection>;
   /**
    * Absolute path of this run's script file. Omission means this run has no editable script file.
    * Model-surface metadata only: it does not affect execution or resume validation.
@@ -297,16 +306,19 @@ function startNewRun(ctx: DynamicWorkflowRunEntryContext, input: StartNewRunInpu
   const { deps, runs, escalations } = ctx;
   const { imported, runId } = input;
   const compiled = compileOnce(input.scriptText);
-  // Compute the clamped ceiling only **once**: it is persisted in EngineConfig as
+  // Compute the normalized ceiling only **once**: it is persisted in EngineConfig as
   // dwf_run.caps_max_concurrency and copied into the registry entry for the gap before the journal
   // row appears (the only source for getTask / getRunDetail during that gap). Computing it twice
-  // could make the two read paths disagree if the host ceiling changes between reads.
+  // could make the two read paths disagree if the default value changes between reads.
   const caps = ctx.caps(input.maxConcurrency);
   // Canonical string format (`providerId/modelId[$reasoningLevel]`). The port accepts a structured
   // selection, while the journal event, both read paths, and progress payload use a string. Normalize
   // it once here, then pass it through unchanged downstream.
   const subagentModel =
     input.subagentModel === undefined ? undefined : formatModelPickerValue(input.subagentModel);
+  // Same normalization point for the binding table: structured selections → canonical strings,
+  // with the same table recorded in `run-launched` and the entry.
+  const modelBindings = formatModelBindings(input.modelBindings);
 
   // Launch anchor: amendments reuse the predecessor's value, direct launches use an explicit value,
   // and chat uses the active turn; if none exists, mint one. The engine records it as run-launched
@@ -333,10 +345,26 @@ function startNewRun(ctx: DynamicWorkflowRunEntryContext, input: StartNewRunInpu
     // amendments never inherit the predecessor's model). It lives in this event; dwf_run intentionally
     // has no corresponding column or migration.
     ...(subagentModel === undefined ? {} : { subagentModel }),
+    // Script-named models travel alongside the subagent model (also excluded from
+    // resolveLaunchAnchor). Zero SQL.
+    ...(modelBindings === undefined ? {} : { modelBindings }),
+    // Subagent permission mode: read the session's mode **at the moment the run is created**
+    // (docs/dynamic-workflow/launch.md, "Permissions inside a run"). Excluded from
+    // resolveLaunchAnchor—an amendment is a new run and never reuses the predecessor's; resume
+    // does not go through here.
+    ...workflowSubagentPermissionModeField(deps.permissionMode?.()),
     // The script file travels alongside the subagent model (also excluded from resolveLaunchAnchor:
     // amendments record the new script's file). It lives in this event; dwf_run has no corresponding column.
     ...(input.scriptPath === undefined ? {} : { scriptPath: input.scriptPath }),
     ...(input.phaseAlongside === undefined ? {} : { phaseAlongside: input.phaseAlongside }),
+    // Which sites in the phase table are open holes (docs/execution-engine.md, "Holes"): holes
+    // stand by name in the submitter's declared table (9012 guarantees the names are unique), and
+    // their indexes are matched against the compiled artifact's open hole names. No holes means
+    // the field is omitted.
+    ...(() => {
+      const holes = openHoleIndexes(input.phaseNames, compiled.holes);
+      return holes === undefined ? {} : { holes };
+    })(),
   };
 
   // Register before launch: cancellation can arrive any time after submit returns, and the
@@ -367,9 +395,16 @@ function startNewRun(ctx: DynamicWorkflowRunEntryContext, input: StartNewRunInpu
     // selection to canonical string. The value written to `run-launched` is the same value read by
     // both read paths and the `run-started` payload, so their formats cannot diverge.
     ...(subagentModel === undefined ? {} : { subagentModel }),
+    // Gap copy of the binding table, following the same rule as the subagent model (see
+    // RunRegistryEntry.modelBindings).
+    ...(modelBindings === undefined ? {} : { modelBindings }),
     // Gap copy of the script file, following the same rule as the subagent model (see RunRegistryEntry.scriptPath).
     ...(input.scriptPath === undefined ? {} : { scriptPath: input.scriptPath }),
     ...(imported === undefined ? {} : { resumedFrom: imported.resumedFrom }),
+    // Hole fact table and phase table (see RunRegistryEntry.holes / phaseNames): one fill replaces
+    // both with the effective script's.
+    holes: compiled.holes,
+    ...(input.phaseNames === undefined ? {} : { phaseNames: input.phaseNames }),
     // Gap copy of the usage baseline, following the concurrency-ceiling rule: before the journal
     // row exists, both read paths can get usage only from the entry. An amendment of a newly started
     // run can land in those microtasks; reporting 0 would make the detail view say the lineage spent nothing.
@@ -409,6 +444,9 @@ function startNewRun(ctx: DynamicWorkflowRunEntryContext, input: StartNewRunInpu
       onQuiescenceProbe: (probe) => {
         entry.quiescence = probe;
       },
+      // Hole types read the entry's fact table **as of right now**: after a fill swaps the table,
+      // holes newly reached inside the function body can still resolve their types.
+      holeTypeOf: (siteId) => entry.holes?.find((hole) => hole.siteId === siteId)?.type,
       // Pass the lineage pointer and cache together (launch → harness → EngineConfig): the pointer
       // is written once to dwf_run.resumed_from during createRun; the cache exists only for this execution.
       ...(imported === undefined
@@ -511,7 +549,11 @@ export async function resumeDynamicWorkflowRun(
   // Replace the registry entry: same runId, new AbortController, new settlement promise, restoring
   // cancel support. Do this before launch (header invariant 5: the entry is required by the watcher).
   const resumedSubagentModel = readRunSubagentModel(deps.journal, runId);
+  const resumedModelBindings = readRunModelBindings(deps.journal, runId);
   const resumedScriptPath = readRunScriptPath(deps.journal, runId);
+  // The phase table in effect right now: after a fill it is the one on the last `hole-filled`
+  // event; otherwise it is the declared table from `run-launched`.
+  const resumedPhaseNames = phaseNamesFromEvents(readRunHoleEvents(deps.journal, runId));
   const controller = new AbortController();
   // Same rule as submit: a new entry gets a new AbortController and control surface. The previous
   // generation's handles point to a settled engine; keeping them would make retune talk to a dead engine.
@@ -537,10 +579,16 @@ export async function resumeDynamicWorkflowRun(
     // never changes, so the copy cannot diverge from the event. Both read paths then follow one
     // rule: use the entry when present, and scan events only for cold rows.
     ...(resumedSubagentModel === undefined ? {} : { subagentModel: resumedSubagentModel }),
+    // Binding table: same read and same rationale as the subagent model.
+    ...(resumedModelBindings === undefined ? {} : { modelBindings: resumedModelBindings }),
     // Script file: same read and rationale as the subagent model (fixed at run creation and
     // unchanged afterward, so the copy cannot diverge from the event). After resume, both read
     // paths still use the entry when present.
     ...(resumedScriptPath === undefined ? {} : { scriptPath: resumedScriptPath }),
+    // The hole fact table comes from this compilation of the (effective) script in the row; the
+    // phase table is read back from events (for filled runs, the `hole-filled` one).
+    holes: compiled.holes,
+    ...(resumedPhaseNames === undefined ? {} : { phaseNames: resumedPhaseNames }),
     settlement: Promise.resolve<RunSettlement>({ status: "stopped", reason: "user" }),
   };
   runs.set(runId, entry);
@@ -549,6 +597,7 @@ export async function resumeDynamicWorkflowRun(
     runId,
     entry,
     launchDynamicWorkflowRun({
+      holeTypeOf: (siteId) => entry.holes?.find((hole) => hole.siteId === siteId)?.type,
       // Reuse the journaled caps: spentTokens accumulated under these caps, and recalculating them
       // would silently move the goalposts.
       caps: record.caps,
@@ -594,101 +643,21 @@ export async function resumeDynamicWorkflowRun(
 }
 
 /**
- * Compile once: a single ts.Program supplies the site table, schema synthesis, and lowering.
- *
- * Invalid source fails hard here and **does not create a run**: the handler calls submit only when
- * analysis is `ok`, so invalid source reaching this point indicates a wiring error. The defensive
- * check reads diagnostics from the same compilation instead of creating a second Program (which
- * would violate "compile once"). Resume recompiles the original journal text with the same function;
- * byte-identical source necessarily passes the same checks again.
- */
-function compileOnce(scriptText: string): CompiledDynamicWorkflowScript {
-  return compileProgram(scriptText, createWorkflowProgram(scriptText));
-}
-
-/** Maximum diagnostic length in a resume refusal (same order of magnitude as direct-launch compile_failed). */
-const RESUME_DIAGNOSTICS_MAX_CHARS = 2000;
-
-/** Human-readable compile_failed diagnostics: one `L:C message` per line, with a total size bound. */
-function boundedResumeDiagnostics(runId: string, diagnostics: CompileDiagnostic[]): string {
-  const body = [
-    `The stored script of run ${runId} no longer compiles against the current workflow facade:`,
-    ...diagnostics.map(
-      (diagnostic) => `L${diagnostic.line}:C${diagnostic.column} ${diagnostic.message}`,
-    ),
-  ].join("\n");
-  return body.length > RESUME_DIAGNOSTICS_MAX_CHARS
-    ? `${body.slice(0, RESUME_DIAGNOSTICS_MAX_CHARS - 1)}…`
-    : body;
-}
-
-/**
- * Second half of compileOnce: build the site table, synthesize schemas, and lower the **existing**
- * Program. Resume reads diagnostics from the same Program before passing it here, still compiling
- * once (the Program caches diagnostics, so rereading does not recompute them).
- */
-function compileProgram(
-  scriptText: string,
-  workflow: WorkflowProgram,
-): CompiledDynamicWorkflowScript {
-  const diagnostics = [
-    ...workflow.program.getSyntacticDiagnostics(),
-    ...workflow.program.getSemanticDiagnostics(),
-  ];
-  if (diagnostics.length > 0) {
-    throw new Error(
-      `dynamic workflow submit received a script that does not typecheck (${diagnostics.length} diagnostics); no run was created`,
-    );
-  }
-
-  const table = collectSites(workflow);
-  const { diagnostics: schemaDiagnostics, schemas } = synthesizeAskSchemas(workflow, table);
-  if (schemaDiagnostics.length > 0) {
-    throw new Error(
-      `dynamic workflow submit received a script with unsupported ask result types: ${schemaDiagnostics
-        .map((diagnostic) => `L${diagnostic.line}:C${diagnostic.column} ${diagnostic.message}`)
-        .join("; ")}`,
-    );
-  }
-  // Collect world.run commands during the same compilation (authorization surface: compile-time
-  // literals + confirmation-window display + driver revalidation). The handler's analyze stage
-  // already rejects nonliteral commands; one reaching this point is a wiring error, so fail without creating a run.
-  const worldRun = collectWorldRunCommands(workflow, table);
-  if (worldRun.diagnostics.length > 0) {
-    throw new Error(
-      `dynamic workflow submit received a script with non-literal world.run commands (${worldRun.diagnostics.length} diagnostics); no run was created`,
-    );
-  }
-
-  // buildAskSpecs is the only correct way to construct askSpecs: untyped sites are explicitly
-  // recorded as {typed:false}. Building from schema keys would omit untyped sites, which the engine
-  // treats as a wiring error and fails hard.
-  const askSpecs = buildAskSpecs(table, schemas);
-
-  return {
-    askSpecs,
-    // Submit profile for each actor site: interpret and project the site graph using the **same**
-    // Program (analyzeWorkflowScript already ran these steps on the same source during the handler's
-    // analyze stage), preserving "compile once." Resume recomputes it with this function from
-    // byte-identical source, so the result is deterministic.
-    actorSubmitProfiles: deriveActorSubmitProfilesFor(workflow, table, askSpecs),
-    declaredRunCommands: new Set(worldRun.commands),
-    lowered: lowerWorkflow(workflow, table).code,
-    // **This function**, not the harness, owns scriptHash. The harness receives scriptText and
-    // lowered code together and intentionally does not verify that they agree; doing so would compile
-    // again, which is exactly what "compile once" avoids (harness.ts records this as a caller
-    // invariant). Therefore hash the author's original source. If the harness hashed the text it
-    // sees, the lowered path would persist a hash of the lowered function body while resume compares
-    // the author's source, silently comparing different inputs. This function produces lowered code
-    // and its hash from the same compilation, keeping them consistent by construction.
-    scriptHash: createHash("sha256").update(scriptText, "utf8").digest("hex"),
-  };
-}
-
-/**
  * Mint a run ID using a safe character set: it appears in actor session IDs, URLs, file paths, and
  * logs, so use only `[A-Za-z0-9-]` (the character set produced by randomUUID), never `#`/`@`/`/`.
  */
 function mintRunId(): string {
   return `dwfrun-${randomUUID()}`;
+}
+
+/** Sole normalization point for the binding table: structured selections → canonical picker strings. An empty table is equivalent to omission (no empty shell keys). */
+function formatModelBindings(
+  bindings: Record<string, ModelSelection> | undefined,
+): Record<string, string> | undefined {
+  if (bindings === undefined) return undefined;
+  const entries = Object.entries(bindings);
+  if (entries.length === 0) return undefined;
+  return Object.fromEntries(
+    entries.map(([name, selection]) => [name, formatModelPickerValue(selection)]),
+  );
 }

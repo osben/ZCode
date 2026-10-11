@@ -147,6 +147,7 @@ interface SkillsSectionProps {
   workspaceIdentity?: string;
   remoteSessionId?: string;
   remoteTarget?: RemoteTarget;
+  isWebRemoteControl?: boolean;
   scopeFilter: "user" | "workspace";
   searchQuery: string;
   onVisibleCountChange?: (count: number) => void;
@@ -162,6 +163,7 @@ export function SkillsSection({
   workspaceIdentity,
   remoteSessionId,
   remoteTarget,
+  isWebRemoteControl = false,
   scopeFilter,
   searchQuery,
   onVisibleCountChange,
@@ -247,7 +249,7 @@ export function SkillsSection({
     shouldShowRemoteSyncActions({
       remoteSessionId,
       remoteTarget,
-      clientMode: "desktop-continuous" as const,
+      clientMode: isWebRemoteControl ? "web-remote-replayable" : "desktop-continuous",
       hasLocalSourceService: Boolean(baseServices.skillSyncService),
     }) &&
     activeWorkspacePath
@@ -680,8 +682,8 @@ export function SkillsSection({
 
   return (
     <div className="space-y-4">
-      {/* Details in the standalone Skills section use a dialog, not page-level navigation; only
-              the plugin container needs to report the details level. */}
+      {/* Bug cause: details in the standalone Skills section use a dialog, not page-level
+          navigation; only the plugin container needs to report the details level. */}
       {reportDetailBreadcrumb && detailSkill ? (
         <SettingsBreadcrumbReporter
           items={

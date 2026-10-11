@@ -1,5 +1,5 @@
 import { access, cp, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { dirname, posix } from "node:path";
 
 export const DEV_ELECTRON_PROTOCOL_SCHEME = "zcode";
 export const DEV_ELECTRON_APP_NAME = "ZCode Dev";
@@ -49,7 +49,7 @@ export function patchDevElectronInfoPlist(plist) {
 }
 
 export function resolveDevElectronAppBundlePath({ runtimeRoot, electronVersion, arch }) {
-  return join(runtimeRoot, `${electronVersion}-${arch}`, `${DEV_ELECTRON_APP_NAME}.app`);
+  return posix.join(runtimeRoot, `${electronVersion}-${arch}`, `${DEV_ELECTRON_APP_NAME}.app`);
 }
 
 export async function prepareDevElectronAppBundle({
@@ -59,15 +59,15 @@ export async function prepareDevElectronAppBundle({
   arch,
 }) {
   const appPath = resolveDevElectronAppBundlePath({ runtimeRoot, electronVersion, arch });
-  const infoPlistPath = join(appPath, "Contents", "Info.plist");
-  const sourceExecutablePath = join(electronAppPath, "Contents", "MacOS", "Electron");
-  const existingExecutablePath = join(appPath, "Contents", "MacOS", "Electron");
+  const infoPlistPath = posix.join(appPath, "Contents", "Info.plist");
+  const sourceExecutablePath = posix.join(electronAppPath, "Contents", "MacOS", "Electron");
+  const existingExecutablePath = posix.join(appPath, "Contents", "MacOS", "Electron");
   // Store the source binary fingerprint outside the .app; placing it in Contents would alter the bundle structure.
-  const sourceStampPath = join(dirname(appPath), ".zcode-dev-electron-source.json");
-  // This previously read both Electron executables (over 100 MB each) into memory for an equals check,
-  // causing a full disk read on every dev startup. The source binary is extracted from an npm package,
-  // so its size and mtime are enough to determine whether it needs to be copied again, with equivalent
-  // semantics and constant-time cost.
+  const sourceStampPath = posix.join(dirname(appPath), ".zcode-dev-electron-source.json");
+  // Fix reason: this previously read both Electron executables (over 100 MB each) into memory for
+  // an equals check, causing a full disk read on every dev startup. The source binary is extracted
+  // from an npm package, so recording its size+mtime is enough to determine whether it needs to be
+  // copied again — equivalent semantics at constant-time cost.
   //
   // Do not compare source and copy mtimes directly: cp rounds mtime to milliseconds even with
   // preserveTimestamps, so the source's sub-millisecond precision is lost and the values never match.
@@ -118,6 +118,6 @@ export async function prepareDevElectronAppBundle({
 
   return {
     appPath,
-    executablePath: join(appPath, "Contents", "MacOS", "Electron"),
+    executablePath: posix.join(appPath, "Contents", "MacOS", "Electron"),
   };
 }

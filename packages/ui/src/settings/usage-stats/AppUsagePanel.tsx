@@ -47,7 +47,7 @@ export function AppUsagePanel() {
           </div>
           <AppUsageRangeTabs range={range} onRangeChange={setRange} />
         </div>
-        {/* App Usage aggregates only local session history; it cannot reuse the Coding Plan monitor API loading description. */}
+        {/* Bugfix: App Usage aggregates only local session history; it cannot reuse the Coding Plan monitor API loading description. */}
         <UsageEmptyState
           title={intl.formatMessage({ id: "settings.usage.loadingTitle" })}
           description={intl.formatMessage({
@@ -130,7 +130,7 @@ export function AppUsagePanel() {
   );
 }
 
-function AppUsageLifetimeSummaryStrip({ snapshot }: { snapshot: AppUsageSnapshot | null }) {
+export function AppUsageLifetimeSummaryStrip({ snapshot }: { snapshot: AppUsageSnapshot | null }) {
   const { intl, locale } = useZCodeIntl();
   const items = [
     {

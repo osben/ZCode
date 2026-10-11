@@ -1,6 +1,3 @@
-import { randomUUID } from "node:crypto";
-import { resolve } from "node:path";
-import { isDeepStrictEqual } from "node:util";
 import {
   Client,
   ClientCredentialsProvider,
@@ -21,11 +18,20 @@ import type {
   Logger,
   McpCallToolOptions,
   McpCallToolRequest,
-  McpConnectOptions,
   McpConnectionSnapshot,
+  McpConnectOptions,
   McpContentBlock,
+  McpElicitationPort,
+  McpElicitationTrace,
+  McpListResourcesRequest,
+  McpListResourcesResult,
+  McpListResourceTemplatesResult,
+  McpNotificationPort,
   McpOAuthConfig,
   McpPort,
+  McpReadResourceRequest,
+  McpReadResourceResult,
+  McpResourceSubscriptionRequest,
   McpServerConfig,
   McpServerStatus,
   McpToolCallResult,
@@ -33,36 +39,32 @@ import type {
   OfficialMcpAuthFailureReason,
   OfficialMcpAuthHeadersPort,
   OfficialMcpTrustedOriginRegistry,
-  TraceContext,
 } from "@zcode/contracts";
-import { ZCODE_MCP_SERVER_REQUEST_ID_META_KEY } from "@zcode/contracts";
-import { normalizeMcpToolDescriptor } from "./descriptor.js";
 import {
-  createOfficialMcpAuthFetch,
-  OfficialMcpAuthError,
-  type OfficialMcpServerResponseInfo,
-} from "./official-auth.js";
+  McpResourceSubscribeUnsupportedError,
+  ZCODE_MCP_SERVER_REQUEST_ID_META_KEY,
+} from "@zcode/contracts";
 import {
   OFFICIAL_MCP_AUTH_META_KEY,
   ZCODE_OFFICIAL_MCP_AUTH_TYPE,
   type McpServerFailureKind,
   type OfficialMcpAuthFailureKind,
 } from "@zcode/shared";
+import { buildMcpAppsClientCapabilities } from "@zcode/shared/mcp-apps";
+import { createHash, randomUUID } from "node:crypto";
+import { resolve } from "node:path";
+import { isDeepStrictEqual } from "node:util";
+import {
+  createSharedZCodeCredentialStore,
+  type SharedZCodeCredentialStore,
+} from "../auth/shared-credentials.js";
+import { normalizeMcpToolDescriptor } from "./descriptor.js";
 import {
   buildMcpStdioEnv,
   createMcpTransportFetch,
   type NetworkEgressEnvPolicy,
 } from "./network.js";
-import {
-  createMcpConnectionPool,
-  type McpConnectionContext,
-  type McpConnectionPool,
-} from "./pool.js";
-import {
-  createCredentialKeyPrefix,
-  type McpOAuthAuthorizationContext,
-  type McpOAuthRuntimeOptions,
-} from "./oauth.js";
+import { loadCredentialPair } from "./oauth-credentials.js";
 import {
   classifyInteractiveAuthorizationTrigger,
   type InteractiveAuthorizationTrigger,
@@ -72,22 +74,33 @@ import {
   runMcpInteractiveAuthorization,
   type McpInteractiveAuthorizationOutcome,
 } from "./oauth-interactive.js";
-import {
-  createSharedZCodeCredentialStore,
-  type SharedZCodeCredentialStore,
-} from "../auth/shared-credentials.js";
-import { loadCredentialPair } from "./oauth-credentials.js";
 import { createMcpOAuthTokenProvider } from "./oauth-provider.js";
+import {
+  createCredentialKeyPrefix,
+  type McpOAuthAuthorizationContext,
+  type McpOAuthRuntimeOptions,
+} from "./oauth.js";
+import {
+  createOfficialMcpAuthFetch,
+  OfficialMcpAuthError,
+  type OfficialMcpServerResponseInfo,
+} from "./official-auth.js";
+import {
+  createMcpConnectionPool,
+  type McpConnectionContext,
+  type McpConnectionPool,
+} from "./pool.js";
 import { terminateMcpStdioProcessTree } from "./process-tree.js";
+import { McpResourceSubscriptionRegistry } from "./resource-subscriptions.js";
 import { ProcessTreeStdioClientTransport } from "./stdio-transport.js";
 import type { McpTelemetryTracker } from "./telemetry.js";
 import {
   createMcpDeadline,
   McpTimeoutError,
-  type McpDeadline,
   remainingMcpDeadlineMs,
   waitWithinMcpDeadline,
   withTimeout,
+  type McpDeadline,
 } from "./timeout.js";
 
 const DEFAULT_MCP_TIMEOUT_MS = 30_000;
@@ -129,6 +142,10 @@ export interface CreateMcpAdapterOptions {
     workspaceIdentity?: string;
   };
   workingDirectory?: string;
+  /** Advertise elicitation capability to the server only when this port is present; otherwise elicitation/create returns method not found. */
+  elicitation?: McpElicitationPort;
+  /** Outlet for server → client notifications (resource updates / list changes / tool-list changes / logs); if absent, log at debug only. */
+  notifications?: McpNotificationPort;
 }
 
 type McpClient = Client;
@@ -148,6 +165,12 @@ type OfficialMcpAuthMetaPayload =
   | { ok: true; headers: Record<string, string> }
   | { ok: false; reason: OfficialMcpAuthFailureReason };
 
+/** Server → client notification method names for subscriptions (MCP specification). */
+export const MCP_NOTIFICATION_TOOLS_LIST_CHANGED = "notifications/tools/list_changed";
+export const MCP_NOTIFICATION_RESOURCES_UPDATED = "notifications/resources/updated";
+export const MCP_NOTIFICATION_RESOURCES_LIST_CHANGED = "notifications/resources/list_changed";
+export const MCP_NOTIFICATION_MESSAGE = "notifications/message";
+
 interface McpServerRecord {
   client?: McpClient;
   abortController?: AbortController;
@@ -155,7 +178,32 @@ interface McpServerRecord {
   config: McpServerConfig;
   status: McpServerStatus;
   tools: McpToolDescriptor[];
+  /** Set after receiving tools/list_changed; the next listTools call reloads the list. */
+  toolsStale?: boolean;
   transport?: McpTransport;
+}
+
+/** resources/list item: pass through standard fields only (including _meta) and discard SDK-added runtime fields. */
+function pickResourceDescriptor(
+  resource: unknown,
+  includeUri = true,
+): {
+  uri?: string;
+  name?: string;
+  title?: string;
+  description?: string;
+  mimeType?: string;
+  _meta?: Record<string, unknown>;
+} {
+  const item = isRecord(resource) ? resource : {};
+  return {
+    ...(includeUri ? { uri: typeof item.uri === "string" ? item.uri : "" } : {}),
+    ...(typeof item.name === "string" ? { name: item.name } : {}),
+    ...(typeof item.title === "string" ? { title: item.title } : {}),
+    ...(typeof item.description === "string" ? { description: item.description } : {}),
+    ...(typeof item.mimeType === "string" ? { mimeType: item.mimeType } : {}),
+    ...(isRecord(item._meta) ? { _meta: item._meta } : {}),
+  };
 }
 
 export function createMcpAdapter(options: CreateMcpAdapterOptions = {}): McpPort {
@@ -188,6 +236,12 @@ export {
   type McpTelemetryTracker,
   type McpTrackedProcess,
 } from "./telemetry.js";
+
+/** Elicitation mode allowlist (MCP form and compatibility aliases). */
+const SUPPORTED_ELICITATION_MODES = new Set(["form", "openai/form", "openaiForm"]);
+function isSupportedElicitationMode(mode: unknown): boolean {
+  return mode === undefined || (typeof mode === "string" && SUPPORTED_ELICITATION_MODES.has(mode));
+}
 
 class NodeMcpAdapter implements McpPort {
   private readonly adapterInstanceId = randomUUID();
@@ -228,6 +282,14 @@ class NodeMcpAdapter implements McpPort {
   >();
   private readonly records = new Map<string, McpServerRecord>();
   private readonly workingDirectory?: string;
+  private readonly elicitation?: McpElicitationPort;
+  private readonly notifications?: McpNotificationPort;
+  /** Resource-subscription registry: serverName → uri → subscriberKey; single owner, counted at the connection layer. */
+  private readonly resourceSubscriptions = new McpResourceSubscriptionRegistry();
+  /** Cumulative tools/list_changed count; runtime uses it to determine whether to register tools again. */
+  private toolListRevisionCounter = 0;
+  /** Active tool-call trace per server; elicitation uses it to attach to the session / tool row. */
+  private readonly activeCallTraces = new Map<string, McpElicitationTrace>();
 
   constructor(options: CreateMcpAdapterOptions) {
     this.clientName = options.clientName ?? "zcode";
@@ -243,6 +305,8 @@ class NodeMcpAdapter implements McpPort {
     this.officialMcpAuth = options.officialMcpAuth;
     this.telemetry = options.telemetry;
     this.workingDirectory = options.workingDirectory;
+    this.elicitation = options.elicitation;
+    this.notifications = options.notifications;
   }
 
   async connectConfiguredServers(
@@ -443,45 +507,308 @@ class NodeMcpAdapter implements McpPort {
     }
   }
 
+  toolListRevision(): number {
+    return this.toolListRevisionCounter;
+  }
+
   async listTools(): Promise<McpToolDescriptor[]> {
+    // Reload a server after notifications/tools/list_changed the next time listTools is called
+    // (runtime calls this only before a turn, so the tool list remains stable during that turn).
+    for (const [name, record] of this.records) {
+      if (!record.toolsStale || !record.client || record.status.status !== "connected") continue;
+      try {
+        const listed = await record.client.listTools();
+        record.tools = listed.tools.map((tool) =>
+          normalizeMcpToolDescriptor(
+            name,
+            tool,
+            record.config.timeoutMs,
+            record.config.type === "http" &&
+              record.config.auth?.type === ZCODE_OFFICIAL_MCP_AUTH_TYPE,
+          ),
+        );
+        record.status = { ...record.status, toolCount: record.tools.length };
+        record.toolsStale = false;
+        this.logger?.info("MCP tool list refreshed after list_changed", {
+          event: "mcp.tools.refreshed",
+          mcpServerName: name,
+          toolCount: record.tools.length,
+        });
+      } catch (error) {
+        this.logger?.warn("MCP tool list refresh failed", {
+          event: "mcp.tools.refresh_failed",
+          mcpServerName: name,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
     return Array.from(this.records.values()).flatMap((record) => record.tools);
+  }
+
+  /** `resources/list`, passing through pagination cursors. */
+  async listResources(
+    request: McpListResourcesRequest,
+    options: McpCallToolOptions = {},
+  ): Promise<McpListResourcesResult> {
+    const { record, deadline, timeoutMessage } = await this.resolveForResourceRequest(
+      request.serverName,
+      "resources/list",
+      options,
+    );
+    const result = await record.client.listResources(
+      request.cursor ? { cursor: request.cursor } : {},
+      { signal: options.signal, timeout: remainingMcpDeadlineMs(deadline, timeoutMessage) },
+    );
+    return {
+      resources: (result.resources ?? []).map((resource) => {
+        const { uri, ...rest } = pickResourceDescriptor(resource);
+        return { uri: uri ?? "", ...rest };
+      }),
+      ...(typeof result.nextCursor === "string" ? { nextCursor: result.nextCursor } : {}),
+    };
+  }
+
+  async listResourceTemplates(
+    request: McpListResourcesRequest,
+    options: McpCallToolOptions = {},
+  ): Promise<McpListResourceTemplatesResult> {
+    const { record, deadline, timeoutMessage } = await this.resolveForResourceRequest(
+      request.serverName,
+      "resources/templates/list",
+      options,
+    );
+    const result = await record.client.listResourceTemplates(
+      request.cursor ? { cursor: request.cursor } : {},
+      { signal: options.signal, timeout: remainingMcpDeadlineMs(deadline, timeoutMessage) },
+    );
+    return {
+      resourceTemplates: (result.resourceTemplates ?? []).map((template) => {
+        const item = template as Record<string, unknown>;
+        return {
+          uriTemplate: typeof item.uriTemplate === "string" ? item.uriTemplate : "",
+          ...pickResourceDescriptor(item, false),
+        };
+      }),
+      ...(typeof result.nextCursor === "string" ? { nextCursor: result.nextCursor } : {}),
+    };
+  }
+
+  /**
+   * Subscriptions counted by (serverName, uri). If multiple sessions share one connection, subscribe to the server only once;
+   * if the server does not declare resources.subscribe capability, return McpResourceSubscribeUnsupportedError.
+   */
+  async subscribeResource(
+    request: McpResourceSubscriptionRequest,
+    options: McpCallToolOptions = {},
+  ): Promise<void> {
+    const { record, deadline, timeoutMessage } = await this.resolveForResourceRequest(
+      request.serverName,
+      "resources/subscribe",
+      options,
+    );
+    if (!record.client.getServerCapabilities()?.resources?.subscribe) {
+      throw new McpResourceSubscribeUnsupportedError(request.serverName);
+    }
+    const { first } = this.resourceSubscriptions.add(
+      request.serverName,
+      request.uri,
+      request.subscriberKey,
+    );
+    if (!first) return;
+    try {
+      await record.client.subscribeResource(
+        { uri: request.uri },
+        { signal: options.signal, timeout: remainingMcpDeadlineMs(deadline, timeoutMessage) },
+      );
+    } catch (error) {
+      this.resourceSubscriptions.remove(request.serverName, request.uri, request.subscriberKey);
+      throw error;
+    }
+    this.logger?.info("MCP resource subscribed", {
+      event: "mcp.resource.subscribe",
+      mcpServerName: request.serverName,
+      uri: request.uri,
+      status: "completed",
+    });
+  }
+
+  async unsubscribeResource(
+    request: McpResourceSubscriptionRequest,
+    options: McpCallToolOptions = {},
+  ): Promise<void> {
+    const removed = this.resourceSubscriptions.remove(
+      request.serverName,
+      request.uri,
+      request.subscriberKey,
+    );
+    if (!removed?.last) return;
+    await this.unsubscribeOnServer(request.serverName, request.uri, options);
+  }
+
+  async unsubscribeResourcesBySubscriber(subscriberKeyPrefix: string): Promise<number> {
+    const released = this.resourceSubscriptions.removeByPrefix(subscriberKeyPrefix);
+    for (const { serverName, uri } of released) {
+      await this.unsubscribeOnServer(serverName, uri, {});
+    }
+    return released.length;
+  }
+
+  /** Registry snapshot (tests / diagnostics): serverName → uri → subscriber count. */
+  resourceSubscriptionCounts(): Record<string, Record<string, number>> {
+    return this.resourceSubscriptions.counts();
+  }
+
+  private async unsubscribeOnServer(
+    serverName: string,
+    uri: string,
+    options: McpCallToolOptions,
+  ): Promise<void> {
+    const record = this.records.get(serverName);
+    if (!record?.client || record.status.status !== "connected") return;
+    try {
+      await record.client.unsubscribeResource({ uri }, { signal: options.signal });
+      this.logger?.info("MCP resource unsubscribed", {
+        event: "mcp.resource.unsubscribe",
+        mcpServerName: serverName,
+        uri,
+        status: "completed",
+      });
+    } catch (error) {
+      // Log unsubscribe failures only: the registry is already clear, so extra server notifications will be dropped because there are no subscribers.
+      this.logger?.warn("MCP resource unsubscribe failed", {
+        event: "mcp.resource.unsubscribe",
+        mcpServerName: serverName,
+        uri,
+        error: error instanceof Error ? error.message : String(error),
+        status: "failed",
+      });
+    }
+  }
+
+  /** Replay subscriptions from the registry after reconnecting (A3); a single failure does not affect the others. */
+  private async replayResourceSubscriptions(serverName: string, client: McpClient): Promise<void> {
+    const uris = this.resourceSubscriptions.uris(serverName);
+    if (uris.length === 0) return;
+    if (!client.getServerCapabilities()?.resources?.subscribe) return;
+    for (const uri of uris) {
+      try {
+        await client.subscribeResource({ uri });
+      } catch (error) {
+        this.logger?.warn("MCP resource subscription replay failed", {
+          event: "mcp.resource.subscribe",
+          mcpServerName: serverName,
+          uri,
+          error: error instanceof Error ? error.message : String(error),
+          status: "failed",
+        });
+      }
+    }
+    this.logger?.info("MCP resource subscriptions replayed after reconnect", {
+      event: "mcp.resource.subscribe.replayed",
+      mcpServerName: serverName,
+      uriCount: uris.length,
+    });
+  }
+
+  private async resolveForResourceRequest(
+    serverName: string,
+    operation: string,
+    options: McpCallToolOptions,
+  ): Promise<{
+    record: McpServerRecord & { client: McpClient };
+    deadline: McpDeadline;
+    timeoutMessage: string;
+  }> {
+    const timeoutMs =
+      options.timeoutMs ?? this.records.get(serverName)?.config.timeoutMs ?? DEFAULT_MCP_TIMEOUT_MS;
+    const deadline = createMcpDeadline(timeoutMs);
+    const timeoutMessage = `MCP ${operation} ${serverName} timed out after ${timeoutMs}ms`;
+    const record = await this.resolveConnectedRecord(
+      serverName,
+      deadline,
+      timeoutMessage,
+      options.signal,
+    );
+    return { record, deadline, timeoutMessage };
+  }
+
+  /**
+   * Server-initiated notifications. Subscription notifications include the current subscriberKey (the host uses it to split by session);
+   * tools/list_changed only marks the list stale, and the next listTools call reloads it; the SDK discards notifications when no port is provided.
+   */
+  private installNotificationHandlers(client: McpClient, serverName: string): void {
+    const setNotificationHandler = (client as unknown as { setNotificationHandler?: unknown })
+      .setNotificationHandler;
+    if (typeof setNotificationHandler !== "function") return;
+    // SDK 2.x: the first argument is the notification method name (the spec method is passed as a string); schema is an optional second argument.
+    const typed = client as unknown as {
+      setNotificationHandler(method: string, handler: (notification: unknown) => void): void;
+    };
+    typed.setNotificationHandler(MCP_NOTIFICATION_TOOLS_LIST_CHANGED, () => {
+      const record = this.records.get(serverName);
+      if (record) record.toolsStale = true;
+      this.toolListRevisionCounter += 1;
+      this.notifications?.onNotification({ kind: "toolListChanged", serverName });
+    });
+    typed.setNotificationHandler(MCP_NOTIFICATION_RESOURCES_UPDATED, (notification) => {
+      const uri = (notification as { params?: { uri?: unknown } }).params?.uri;
+      if (typeof uri !== "string") return;
+      this.notifications?.onNotification({
+        kind: "resourceUpdated",
+        serverName,
+        uri,
+        subscribers: this.resourceSubscriptions.subscribers(serverName, uri),
+      });
+    });
+    typed.setNotificationHandler(MCP_NOTIFICATION_RESOURCES_LIST_CHANGED, () => {
+      this.notifications?.onNotification({
+        kind: "resourceListChanged",
+        serverName,
+        subscribers: this.resourceSubscriptions.allSubscribers(serverName),
+      });
+    });
+    typed.setNotificationHandler(MCP_NOTIFICATION_MESSAGE, (notification) => {
+      const params = (notification as { params?: Record<string, unknown> }).params ?? {};
+      this.notifications?.onNotification({
+        kind: "loggingMessage",
+        serverName,
+        level: typeof params.level === "string" ? params.level : "info",
+        ...(typeof params.logger === "string" ? { logger: params.logger } : {}),
+        data: params.data,
+      });
+    });
   }
 
   async callTool(
     request: McpCallToolRequest,
     options: McpCallToolOptions = {},
   ): Promise<McpToolCallResult> {
-    const initialRecord = this.records.get(request.serverName);
     const timeoutMs =
-      options.timeoutMs ?? initialRecord?.config.timeoutMs ?? DEFAULT_MCP_TIMEOUT_MS;
+      options.timeoutMs ??
+      this.records.get(request.serverName)?.config.timeoutMs ??
+      DEFAULT_MCP_TIMEOUT_MS;
     const deadline = createMcpDeadline(timeoutMs);
     const timeoutMessage = `MCP tool ${request.serverName}/${request.toolName} timed out after ${timeoutMs}ms`;
-    const pending = initialRecord?.connecting;
-    if (pending) {
-      // `connecting` is a shared connection/OAuth-recovery task owned by the adapter. A plain await
-      // made tool-caller timeout/abort ineffective; aborting the underlying task would close the
-      // callback listener shared by other callers. Limit only this waiter; the record lifecycle
-      // continues to own the shared task.
-      await waitWithinMcpDeadline(pending, deadline, timeoutMessage, options.signal);
-    }
-
-    // Previously there was no recovery after a stdio MCP child process died (for example, an async
-    // error crashed node_repl): the connection was created only with the session and not recreated
-    // on resume, so the session's tools failed forever. Reconnect a disconnected record once before
-    // calling it. Server-process state (such as REPL variables) cannot be restored, but the tool becomes available again.
-    const disconnected = this.records.get(request.serverName);
-    if (disconnected && disconnected.status.status === "disconnected") {
-      await waitWithinMcpDeadline(
-        this.reconnectForCall(request.serverName, disconnected.config),
+    let record: McpServerRecord & { client: McpClient };
+    if (options.appConnection) {
+      const snapshot = this.appConnectionSnapshot(request.serverName);
+      const current = this.records.get(request.serverName);
+      if (
+        !snapshot ||
+        snapshot.identity !== options.appConnection.identity ||
+        snapshot.generation !== options.appConnection.generation ||
+        !current?.client
+      )
+        throw new Error("MCP App connection changed");
+      options.signal?.throwIfAborted();
+      record = current as McpServerRecord & { client: McpClient };
+    } else {
+      record = await this.resolveConnectedRecord(
+        request.serverName,
         deadline,
         timeoutMessage,
         options.signal,
       );
-    }
-
-    const record = this.records.get(request.serverName);
-    if (!record?.client || record.status.status !== "connected") {
-      throw new Error(`MCP server is not connected: ${request.serverName}`);
     }
 
     try {
@@ -490,8 +817,10 @@ class NodeMcpAdapter implements McpPort {
         request,
         remainingMcpDeadlineMs(deadline, timeoutMessage),
         options.signal,
+        options.onProgress,
       );
     } catch (error) {
+      if (options.appConnection) throw error;
       // If a token expires, is revoked, or lacks scope after connection, these auth errors used to
       // bubble up unchanged, exposing a raw error to users with no recovery; OAuth recovery existed
       // only during startup connect. Runtime and connection setup now share the same Phase 2 → Phase 1 orchestration.
@@ -505,6 +834,7 @@ class NodeMcpAdapter implements McpPort {
           timeoutMessage,
           trigger,
           ...(options.signal ? { signal: options.signal } : {}),
+          ...(options.onProgress ? { onProgress: options.onProgress } : {}),
         });
       }
       // Handle the race before onclose is dispatched: the SDK throws plain "Not connected" when the
@@ -534,8 +864,87 @@ class NodeMcpAdapter implements McpPort {
         request,
         remainingMcpDeadlineMs(deadline, timeoutMessage),
         options.signal,
+        options.onProgress,
       );
     }
+  }
+
+  /**
+   * Read a plugin UI `ui://` resource. Share the connection wait / reconnect skeleton with callTool (resolveConnectedRecord)
+   * so both use the same connection and OAuth recovery path. Do not retry OAuth at the tool level; bubble resource-read failures
+   * so the UI can fall back to a regular card.
+   */
+  async readResource(
+    request: McpReadResourceRequest,
+    options: McpCallToolOptions = {},
+  ): Promise<McpReadResourceResult> {
+    const timeoutMs =
+      options.timeoutMs ??
+      this.records.get(request.serverName)?.config.timeoutMs ??
+      DEFAULT_MCP_TIMEOUT_MS;
+    const deadline = createMcpDeadline(timeoutMs);
+    const timeoutMessage = `MCP resource ${request.serverName} ${request.uri} timed out after ${timeoutMs}ms`;
+    const record = await this.resolveConnectedRecord(
+      request.serverName,
+      deadline,
+      timeoutMessage,
+      options.signal,
+    );
+    const result = await record.client.readResource(
+      { uri: request.uri },
+      { signal: options.signal, timeout: remainingMcpDeadlineMs(deadline, timeoutMessage) },
+    );
+    return {
+      contents: (result.contents ?? []).map((content) => {
+        const item = content as Record<string, unknown>;
+        return {
+          uri: typeof item.uri === "string" ? item.uri : request.uri,
+          ...(typeof item.mimeType === "string" ? { mimeType: item.mimeType } : {}),
+          ...(typeof item.text === "string" ? { text: item.text } : {}),
+          ...(typeof item.blob === "string" ? { blob: item.blob } : {}),
+          ...(isRecord(item._meta) ? { _meta: item._meta } : {}),
+        };
+      }),
+    };
+  }
+
+  /**
+   * Shared by callTool / readResource: await the shared connecting task, reconnect a disconnected record once,
+   * and return a connected record. Extracted so resource reads and tool calls use exactly the same recovery path.
+   */
+  private async resolveConnectedRecord(
+    serverName: string,
+    deadline: McpDeadline,
+    timeoutMessage: string,
+    signal: AbortSignal | undefined,
+  ): Promise<McpServerRecord & { client: McpClient }> {
+    const pending = this.records.get(serverName)?.connecting;
+    if (pending) {
+      // Reason for the fix: connecting is a shared connection/OAuth recovery task owned by the adapter. Previously this awaited it directly,
+      // so the tool caller's timeout/abort had no effect; aborting the underlying task instead would close callback listeners shared by other callers.
+      // Limit only the current waiter here; the record lifecycle continues to own the shared task.
+      await waitWithinMcpDeadline(pending, deadline, timeoutMessage, signal);
+    }
+
+    // Bug fix: there was no recovery after an stdio MCP child process died (for example, node_repl crashed on an asynchronous error):
+    // the connection was created only once at session creation and was not rebuilt on session resume, leaving that session's tools permanently broken.
+    // Reconnect a disconnected record once before the call; server process state (such as REPL variables) cannot be restored,
+    // but the tools become available again.
+    const disconnected = this.records.get(serverName);
+    if (disconnected && disconnected.status.status === "disconnected") {
+      await waitWithinMcpDeadline(
+        this.reconnectForCall(serverName, disconnected.config),
+        deadline,
+        timeoutMessage,
+        signal,
+      );
+    }
+
+    const record = this.records.get(serverName);
+    if (!record?.client || record.status.status !== "connected") {
+      throw new Error(`MCP server is not connected: ${serverName}`);
+    }
+    return record as McpServerRecord & { client: McpClient };
   }
 
   /** Connection diagnostics are stored per server; tool-call request IDs remain isolated by span. */
@@ -684,11 +1093,71 @@ class NodeMcpAdapter implements McpPort {
     return { ok: true, headers: resolved.headers };
   }
 
+  /** Server-initiated elicitation/create: attach to the session of that server's active tool call and pass to the host's question port. */
+  private installElicitationHandler(client: McpClient, serverName: string): void {
+    const port = this.elicitation;
+    const setRequestHandler = (client as unknown as { setRequestHandler?: unknown })
+      .setRequestHandler;
+    if (!port || typeof setRequestHandler !== "function") return;
+    (
+      client as unknown as {
+        setRequestHandler(
+          method: "elicitation/create",
+          handler: (request: {
+            params: { message: string; requestedSchema?: unknown };
+          }) => Promise<unknown>,
+        ): void;
+      }
+    ).setRequestHandler("elicitation/create", async (request) => {
+      // Accept absent / "form" / compatibility values "openai/form" / "openaiForm"; decline other modes such as url.
+      const mode = (request.params as { mode?: unknown }).mode;
+      if (!isSupportedElicitationMode(mode)) {
+        this.logger?.warn("MCP elicitation mode not supported, declining", {
+          event: "mcp.elicitation.unsupported_mode",
+          mcpServerName: serverName,
+          mode: String(mode),
+        });
+        return { action: "decline" };
+      }
+      const trace = this.activeCallTraces.get(serverName);
+      const result = await port.requestElicitation({
+        serverName,
+        message: request.params.message,
+        requestedSchema: request.params.requestedSchema,
+        ...(trace ? { trace } : {}),
+      });
+      return result.action === "accept"
+        ? { action: "accept", content: result.content ?? {} }
+        : { action: result.action };
+    });
+  }
+
+  /** Register the trace during the call so server-initiated elicitation in this interval can be attached to the session / tool row. */
   private async callToolOnClient(
     client: McpClient,
     request: McpCallToolRequest,
     timeoutMs: number,
     signal: AbortSignal | undefined,
+    onProgress?: McpCallToolOptions["onProgress"],
+  ): Promise<McpToolCallResult> {
+    this.activeCallTraces.set(request.serverName, {
+      ...(request.trace?.sessionId ? { sessionId: String(request.trace.sessionId) } : {}),
+      ...(request.trace?.turnId ? { turnId: String(request.trace.turnId) } : {}),
+      ...(request.trace?.traceId ? { traceId: String(request.trace.traceId) } : {}),
+    });
+    try {
+      return await this.callToolOnClientInner(client, request, timeoutMs, signal, onProgress);
+    } finally {
+      this.activeCallTraces.delete(request.serverName);
+    }
+  }
+
+  private async callToolOnClientInner(
+    client: McpClient,
+    request: McpCallToolRequest,
+    timeoutMs: number,
+    signal: AbortSignal | undefined,
+    onProgress?: McpCallToolOptions["onProgress"],
   ): Promise<McpToolCallResult> {
     // Tool calls previously had no logs: on timeout, we could not see the budget or distinguish a
     // slow server from a short client budget. Record budget and elapsed time, but only parameter
@@ -713,14 +1182,31 @@ class NodeMcpAdapter implements McpPort {
         {
           name: request.toolName,
           arguments: request.arguments ?? {},
-          ...((request.trace || request.runtimeScope || request.workspaceKey || request.workspacePath)
+          ...(request.trace || request.runtimeScope || request.workspaceKey || request.workspacePath
             ? { _meta: mcpRequestMeta(request) }
             : {}),
         },
         {
           signal,
           timeout: timeoutMs,
+          // Progress notifications reset the timeout (A8): a long task that keeps reporting progress will not be interrupted by timeoutMs; total duration is bounded by tool-level _meta.timeoutMs.
           resetTimeoutOnProgress: true,
+          ...(onProgress
+            ? {
+                onprogress: (notification: {
+                  progress: number;
+                  total?: number;
+                  message?: string;
+                }) =>
+                  onProgress({
+                    progress: notification.progress,
+                    ...(notification.total !== undefined ? { total: notification.total } : {}),
+                    ...(notification.message !== undefined
+                      ? { message: notification.message }
+                      : {}),
+                  }),
+              }
+            : {}),
         },
       );
 
@@ -810,6 +1296,7 @@ class NodeMcpAdapter implements McpPort {
     record: McpServerRecord;
     request: McpCallToolRequest;
     signal?: AbortSignal;
+    onProgress?: McpCallToolOptions["onProgress"];
     timeoutMessage: string;
     trigger: InteractiveAuthorizationTrigger;
   }): Promise<McpToolCallResult> {
@@ -851,6 +1338,7 @@ class NodeMcpAdapter implements McpPort {
       request,
       remainingMcpDeadlineMs(input.deadline, input.timeoutMessage),
       input.signal,
+      input.onProgress,
     );
   }
 
@@ -1073,8 +1561,17 @@ class NodeMcpAdapter implements McpPort {
         },
         {
           versionNegotiation: resolveVersionNegotiation(config, timeoutMs),
+          capabilities: {
+            // MCP Apps specification: the host declares renderable UI mimeTypes through `extensions["io.modelcontextprotocol/ui"]`;
+            // the official SDK server uses this to decide whether to send UI resources (getUiCapability).
+            ...buildMcpAppsClientCapabilities(),
+            // Advertise only form mode (not url mode); the server uses this to choose an elicitation form.
+            ...(this.elicitation ? { elicitation: { form: {} } } : {}),
+          },
         },
       );
+      this.installElicitationHandler(client, name);
+      this.installNotificationHandlers(client, name);
       this.updateCurrentRecord(name, generation, {
         client,
         transport,
@@ -1134,6 +1631,8 @@ class NodeMcpAdapter implements McpPort {
         tools,
         transport,
       });
+      // A3: after reconnecting (on the same adapter instance), replay subscriptions from the registry; skip on first connection when the registry is empty.
+      await this.replayResourceSubscriptions(name, client);
       const mcpTransportPid = getStdioTransportPid(transport);
       const mcpProcessIdentity =
         mcpTransportPid != null && this.connectionContext
@@ -1150,6 +1649,7 @@ class NodeMcpAdapter implements McpPort {
         if (!this.isCurrentConnection(name, generation)) return;
         const current = this.records.get(name);
         if (!current || current.client !== client) return;
+        this.nextConnectionGeneration(name);
         const recentStderr = getRecentStderr?.();
         const processExit = getStdioTransportExitInfo(transport);
         current.status = this.createStatus(current.config, "disconnected", {
@@ -1727,9 +2227,51 @@ class NodeMcpAdapter implements McpPort {
     }
   }
 
+  private readonly appConnectionListeners = new Map<string, Set<() => void>>();
+  onAppConnectionInvalidated(name: string, listener: () => void): () => void {
+    const listeners = this.appConnectionListeners.get(name) ?? new Set();
+    listeners.add(listener);
+    this.appConnectionListeners.set(name, listeners);
+    return () => {
+      listeners.delete(listener);
+      if (!listeners.size) this.appConnectionListeners.delete(name);
+    };
+  }
+  appConnectionSnapshot(name: string): { identity: string; generation: number } | null {
+    const record = this.records.get(name);
+    if (!record?.client || record.status.status !== "connected") return null;
+    // Expose only a summary to the host; credentials from configuration must not enter the protocol or logs. Sort properties so configuration serialization order cannot change the source identity.
+    const canonical = (value: unknown): unknown => {
+      if (Array.isArray(value)) return value.map(canonical);
+      if (value && typeof value === "object")
+        return Object.fromEntries(
+          Object.entries(value)
+            .sort(([a], [b]) => a.localeCompare(b))
+            .map(([k, v]) => [k, canonical(v)]),
+        );
+      return value;
+    };
+    return {
+      identity: createHash("sha256")
+        .update(
+          JSON.stringify([
+            process.platform,
+            process.execPath,
+            this.workingDirectory ?? "",
+            name,
+            canonical(record.config),
+          ]),
+        )
+        .digest("hex"),
+      generation: this.connectionGenerations.get(name) ?? 0,
+    };
+  }
+
   private nextConnectionGeneration(name: string): number {
     const generation = (this.connectionGenerations.get(name) ?? 0) + 1;
     this.connectionGenerations.set(name, generation);
+    // eslint-disable-next-line unicorn/no-useless-spread -- A callback may add or remove listeners; keep the recipient set fixed for this notification.
+    for (const listener of [...(this.appConnectionListeners.get(name) ?? [])]) listener();
     return generation;
   }
 

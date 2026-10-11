@@ -9,7 +9,7 @@
 
 import type { DwfRunIntrospectionQueries, DwfRunSessionListItem } from "@zcode/adapters/storage";
 import type { CreateSessionTaskLinkInput, Logger, SessionStorePort } from "@zcode/contracts";
-import type { JournalStorePort, RunRecord } from "@zcode/dynamic-workflow";
+import type { JournalStorePort, RunRecord, StoredEvent } from "@zcode/dynamic-workflow";
 
 /** Persistence surface for task links (SqliteSessionStore in production; tests provide a spy). */
 export interface DynamicWorkflowTaskLinkStore {
@@ -103,7 +103,8 @@ export interface DynamicWorkflowIntrospectableJournal
   extends JournalStorePort, DwfRunIntrospectionQueries {}
 
 /**
- * Whether the journal has the "active interval per lifecycle" read surface (duration for completion cards).
+ * Whether the journal has the "active interval per lifecycle" read surface (duration for completion cards; see
+ * "How long it took" in `docs/dynamic-workflow/transcript-and-notifications.md`).
  *
  * **Detect independently; do not add this to the four checks in {@link supportsRunIntrospection}:** those four jointly
  * enable two tools, while this one only supplies a single number. Without it, duration falls back to this lifecycle's wall clock—a more conservative
@@ -113,6 +114,37 @@ export function supportsRunLifeSpans(
   journal: JournalStorePort,
 ): journal is JournalStorePort & Pick<DwfRunIntrospectionQueries, "listRunLifeSpans"> {
   return typeof (journal as Partial<DwfRunIntrospectionQueries>).listRunLifeSpans === "function";
+}
+
+/**
+ * Whether the journal has the "page events by count and byte limits" read surface (event log; see "Reading the journal"
+ * in docs/execution-engine.md). Detect independently, for the same reason as {@link supportsRunLifeSpans}: without it the event log falls back
+ * to count-only paging (the in-memory journal case: its runs do not outlive the process and never accumulate large pages).
+ */
+export function supportsEventPages(
+  journal: JournalStorePort,
+): journal is JournalStorePort & Pick<DwfRunIntrospectionQueries, "listEventPage"> {
+  return typeof (journal as Partial<DwfRunIntrospectionQueries>).listEventPage === "function";
+}
+
+/**
+ * Event page on a journal without the {@link supportsEventPages} read surface: count only, fetching one extra to decide `hasMore`.
+ * The byte limit cannot be honored here—knowing an event's size requires reading it first—and such journals (the in-memory
+ * implementation) never accumulate large pages anyway.
+ */
+export function pageByCountOnly(
+  journal: JournalStorePort,
+  runId: string,
+  page: { afterSequence?: number; limit: number },
+): { events: StoredEvent[]; hasMore: boolean } {
+  const read = journal.listEvents(runId, {
+    types: "all",
+    reportItems: "all",
+    ...(page.afterSequence === undefined ? {} : { afterSequence: page.afterSequence }),
+    limit: page.limit + 1,
+  });
+  const hasMore = read.length > page.limit;
+  return { events: hasMore ? read.slice(0, page.limit) : read, hasMore };
 }
 
 /**

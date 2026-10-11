@@ -22,9 +22,6 @@ import { useV4Conversation } from "@/v4/V4ConversationContext.js";
  * ```
  */
 
-/** Maximum pages in one drain. REPORT_CAPS is 256 rows/run and page size is 200, so normally at most two pages; this bound protects the renderer thread if an implementation never returns hasMore: false. */
-const MAX_PAGES_PER_DRAIN = 16;
-
 /** Maximum extra fetch rounds before finishing if itemCount rises during a fetch (see pendingRef). Each is an incremental read from the current local end; normally one round drains it. */
 const MAX_FOLLOW_UP_ROUNDS = 8;
 
@@ -35,6 +32,26 @@ interface WorkflowRunArtifactDataState {
   unavailable: boolean;
   error: string | null;
 }
+
+/**
+ * Older CLIs do not recognize `fields`; their strict schema rejects the entire request, and after
+ * crossing JSON-RPC the error contains only the zod message (`unrecognized_keys` and the key
+ * name). Detect that case and retry by fetching the whole item.
+ */
+function isFieldsParamUnsupported(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.includes("unrecognized_keys") && message.includes("fields");
+}
+
+/**
+ * Sessions known not to recognize `fields` (the CLI in a remote workspace may be older than the
+ * desktop). Store this at module scope so every board/card in the same session does not hit the
+ * same rejection again. Key by sessionId; each session corresponds to one CLI.
+ */
+const sessionsWithoutFieldReads = new Set<string>();
+
+/** Stable key for a field-path list so a new array from the caller on every render does not trigger a refetch. */
+const FIELD_KEY_SEPARATOR = "\u0000";
 
 /** Same missing-capability check as useWorkflowRunArtifacts: across JSON-RPC, only message is reliable. */
 function isWorkflowRunArtifactDataCapabilityMissing(error: unknown): boolean {
@@ -57,6 +74,11 @@ export function useWorkflowRunArtifactData(options: {
    */
   itemCount?: number;
   enabled?: boolean;
+  /**
+   * Field paths the board will read (`artifactPresetFieldPaths`). When provided, ask the CLI for
+   * only these fields so a 1 MiB item is not sent in full to the renderer; otherwise fetch the whole item.
+   */
+  fields?: readonly string[];
 }): WorkflowRunArtifactDataState {
   const { workflowRunArtifactData } = useV4Conversation();
   const [state, setState] = useState<WorkflowRunArtifactDataState>(emptyState);
@@ -79,6 +101,8 @@ export function useWorkflowRunArtifactData(options: {
   const lastDrainedCountRef = useRef<number | undefined>(undefined);
 
   const { artifactId, runId, sessionId } = options;
+  const fieldsKey = options.fields?.join(FIELD_KEY_SEPARATOR);
+  const fields = useMemo(() => fieldsKey?.split(FIELD_KEY_SEPARATOR), [fieldsKey]);
   const enabled =
     options.enabled !== false && sessionId.length > 0 && runId.length > 0 && artifactId.length > 0;
 
@@ -107,19 +131,37 @@ export function useWorkflowRunArtifactData(options: {
           pendingRef.current = false;
           const collected: ArtifactItem[] = [];
           let cursor = currentMode === "append" ? cursorRef.current : undefined;
-          for (let page = 0; page < MAX_PAGES_PER_DRAIN; page += 1) {
-            const result = await workflowRunArtifactData({
+          // Keep paging until the storage layer reports there is no more data. This was previously
+          // capped at 16 pages (3,200 items), a safeguard against infinite loops when report limits
+          // were 256. After the limit rose to 65,536, it silently truncated results: a completed run
+          // with 5,000 labels showed only its first 3,200 items, and no later itemCount change could
+          // trigger another fetch. Prevent infinite loops by requiring the cursor to advance; stop
+          // when a page does not increase it.
+          for (;;) {
+            const request = {
               sessionId,
               runId,
               artifactId,
               ...(cursor === undefined ? {} : { afterSequence: cursor }),
               limit: WORKFLOW_ARTIFACT_LIMITS.defaultItemsPerPage,
-            });
+            };
+            const withFields = fields !== undefined && !sessionsWithoutFieldReads.has(sessionId);
+            let result;
+            try {
+              result = await workflowRunArtifactData(withFields ? { ...request, fields } : request);
+            } catch (caught) {
+              if (!withFields || !isFieldsParamUnsupported(caught)) throw caught;
+              sessionsWithoutFieldReads.add(sessionId);
+              logger.info("[workflow-artifacts] CLI 不支持只取字段，退回取整条条目", { sessionId });
+              result = await workflowRunArtifactData(request);
+            }
             if (requestVersion !== requestVersionRef.current) return;
             collected.push(...result.items);
             const lastSequence = result.items.at(-1)?.sequence;
+            const advanced =
+              lastSequence !== undefined && (cursor === undefined || lastSequence > cursor);
             if (lastSequence !== undefined) cursor = lastSequence;
-            if (!result.hasMore || result.items.length === 0) break;
+            if (!result.hasMore || !advanced) break;
           }
           if (requestVersion !== requestVersionRef.current) return;
           cursorRef.current = cursor;
@@ -158,7 +200,7 @@ export function useWorkflowRunArtifactData(options: {
         pendingRef.current = false;
       }
     },
-    [artifactId, enabled, runId, sessionId, workflowRunArtifactData],
+    [artifactId, enabled, fields, runId, sessionId, workflowRunArtifactData],
   );
 
   // Artifact/run switch or closed → open: clear first, then refetch everything. Never leave points from another dashboard on this canvas.

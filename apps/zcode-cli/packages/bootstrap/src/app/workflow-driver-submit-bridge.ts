@@ -44,8 +44,15 @@ export function makeSessionSubmitPort(
         // Submit arrived without an active ask: reject directly instead of routing to the engine (which would hang).
         return Promise.resolve(rejectWith("no active ask is awaiting a submitted result"));
       }
-      // An ask without a declared result type may still have submit_result registered; reject it here and suggest a normal reply.
-      // Do not send it to the engine and wait for a decision: the engine ignores submit for untyped asks, leaving the deferred unresolved.
+      // Untyped-ask guard (phase 1.5 deviation note): the spec requires "an all-untyped actor does
+      // not register submit_result," but the driver cannot see the actor's aggregated typed info at
+      // createActorSession time (it needs the site graph, which is not passed through), so it always
+      // registers. To avoid depending on the engine's "submitAttempted early-returns for untyped"
+      // behavior (which would leave the deferred hanging forever), intercept inside the driver:
+      // when an untyped ask receives a submit, immediately reply with a synthetic rejection so the
+      // model uses plain text instead, and never report askSubmitAttempted. Phase 2 should pass
+      // per-actor typed info through from the actor-graph projection and actually skip registration
+      // on untyped-only actors (this matters for the prompt-cache frozen-tools invariant).
       if (!state.currentTyped) {
         return Promise.resolve(
           rejectWith(
@@ -53,7 +60,7 @@ export function makeSessionSubmitPort(
           ),
         );
       }
-      // Invariant for the current instance: at most one deferred may be pending. If one already exists (unexpected), reject the old one first to avoid a leak.
+      // Single-current-instance invariant: at most one deferred may be pending. If one already exists (unexpected), reject the old one first to avoid a leak.
       state.pendingSubmit?.reject(
         new WorkflowError("DriverError", "This submit was superseded by a newer submit."),
       );

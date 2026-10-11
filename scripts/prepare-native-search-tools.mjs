@@ -8,7 +8,11 @@ import {
   isNativeSearchBundleCurrent,
   writeNativeSearchBundleMeta,
 } from "./native-search-tools-bundle-meta.mjs";
-import { resolveNativeSearchPrebuiltPlan } from "./native-search-tools-config.mjs";
+import { downloadNativeSearchTools } from "./download-native-search-tools.mjs";
+import {
+  resolveNativeSearchArtifactSource,
+  resolveNativeSearchPrebuiltPlan,
+} from "./native-search-tools-config.mjs";
 import { verifyNativeSearchBinaryTarget } from "./native-search-tools-verify.mjs";
 import { extractPrebuiltBinary, verifyPrebuiltArchiveSha256 } from "./prebuilt-binary-extract.mjs";
 import { stageNativeSearchNotices } from "./third-party-notices.mjs";
@@ -23,13 +27,37 @@ function ensureCachedBinaryExecutable(binaryPath, targetPlatform) {
   chmodSync(binaryPath, 0o755);
 }
 
+/**
+ * The single preparation entry point for native search prebuilt tools, shared by desktop prepare:native-search, SEA, server-cli, and remote.
+ *
+ * `resolveNativeSearchArtifactSource` selects the source: when an intranet dependency source is configured, use the existing
+ * `downloadNativeSearchTools` path (same release plan, SHA-256 verification, and bundle metadata cache semantics);
+ * otherwise unpack the built-in repository archives. Both paths refresh the license notices next to the tool directory before returning.
+ */
 export async function prepareNativeSearchTools({
   platform = process.env.ZCODE_TARGET_OS || process.platform,
   arch = process.env.ZCODE_TARGET_ARCH || process.arch,
   outputDir,
   dependenciesDir,
+  env = process.env,
+  source = resolveNativeSearchArtifactSource(env),
   prebuiltPlan,
 } = {}) {
+  if (source === "intranet") {
+    const downloadedPlan = await downloadNativeSearchTools({
+      platform,
+      arch,
+      outputDir,
+      env,
+      prebuiltPlan,
+    });
+    await stageNativeSearchNotices(downloadedPlan, repoRoot, { origin: "intranet-mirror" });
+    return downloadedPlan;
+  }
+  if (source !== "repository") {
+    throw new Error(`Unsupported native search artifact source: ${String(source)}`);
+  }
+
   const plan =
     prebuiltPlan ?? resolveNativeSearchPrebuiltPlan({ platform, arch, outputDir, dependenciesDir });
 

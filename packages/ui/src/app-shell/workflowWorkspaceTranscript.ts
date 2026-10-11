@@ -53,12 +53,12 @@ function argList(args: readonly unknown[] | undefined, index: number): string[] 
 }
 
 /** Display one argv item: quote arguments containing spaces, matching how they appear in a terminal command. */
-function formatCommandLine(cmd: string, args: readonly string[]): string {
+export function formatCommandLine(cmd: string, args: readonly string[]): string {
   const quote = (part: string) => (/[\s"']/.test(part) ? JSON.stringify(part) : part);
   return [cmd, ...args].map(quote).join(" ");
 }
 
-function workspaceCardKindOf(op: string | undefined): WorkspaceCardKind {
+export function workspaceCardKindOf(op: string | undefined): WorkspaceCardKind {
   if (op === undefined) return "step";
   if (op === "read") return "read";
   if (op === "glob" || op === "grep") return "search";

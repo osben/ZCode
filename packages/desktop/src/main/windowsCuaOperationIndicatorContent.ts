@@ -18,7 +18,7 @@ const INDICATOR_COPY: Record<Locale, { text: string; width: number }> = {
   "uk-UA": { text: "ZCode керує вашим комп'ютером", width: 300 },
 };
 
-function indicatorCopy(locale: Locale): { text: string; width: number } {
+export function indicatorCopy(locale: Locale): { text: string; width: number } {
   return INDICATOR_COPY[locale] ?? INDICATOR_COPY["en-US"];
 }
 
@@ -38,7 +38,7 @@ function escapeHtml(value: string): string {
     .replaceAll('"', "&quot;");
 }
 
-function indicatorHtml(locale: Locale): string {
+export function indicatorHtml(locale: Locale): string {
   const copy = indicatorCopy(locale);
   return `<!doctype html>
 <html lang="${locale}" data-state="active">

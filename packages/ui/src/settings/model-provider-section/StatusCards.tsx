@@ -17,15 +17,16 @@ import { logger } from "@/logger.js";
 import { LocalizedCodingPlanQuotaResetAction } from "@/components/coding-plan-quota-reset/CodingPlanQuotaResetAction.js";
 import { CodingPlanQuotaResetOpportunity } from "@/components/coding-plan-quota-reset/CodingPlanQuotaResetOpportunity.js";
 import { buildCodingPlanQuotaResetDialogConfig } from "@/components/coding-plan-quota-reset/buildCodingPlanQuotaResetDialogConfig.js";
+import {
+  CodingPlanBillingDiscountBadge,
+  useCodingPlanBillingDiscount,
+} from "@/CodingPlanBillingDiscount.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { useCodingPlanQuotaResetUi } from "@/hooks/useCodingPlanQuotaResetUi.js";
-import {
-  formatQuotaResetTime,
-  isCodingPlanQuotaLimitFull,
-  isSameLimitCategory,
-} from "@/lib/codingPlanQuotaPresentation.js";
+import { formatQuotaResetTime, isSameLimitCategory } from "@/lib/codingPlanQuotaPresentation.js";
 import {
   mergeCodingPlanQuotaResetOpportunityBadges,
+  resolveCodingPlanQuotaResetActionCompletedAt,
   resolveCodingPlanQuotaResetLimit,
 } from "@/lib/codingPlanQuotaResetUi.js";
 import {
@@ -217,6 +218,7 @@ export function CodingPlanStatusPanel({
   onQuotaResetEntitlementRefresh?: () => void | Promise<void>;
 }) {
   const { intl } = useZCodeIntl();
+  const billingDiscount = useCodingPlanBillingDiscount();
   const [internalUpgradePlansVisible, setInternalUpgradePlansVisible] = useState(false);
   const [startPlanEntitlementRefreshing, setStartPlanEntitlementRefreshing] = useState(false);
   const upgradePlansVisible = controlledUpgradePlansVisible ?? internalUpgradePlansVisible;
@@ -373,6 +375,8 @@ export function CodingPlanStatusPanel({
           ? "settings.modelProvider.codingPlan.renew"
           : "settings.modelProvider.codingPlan.upgrade"
       }
+      billingDiscountActive={isStartPlanProvider && billingDiscount.active}
+      billingDiscountConfig={billingDiscount.config}
       onUpgradePlansVisibleChange={(visible) => {
         if (visible) {
           openUpgradePlans(
@@ -432,6 +436,7 @@ export function CodingPlanStatusPanel({
       id: "settings.modelProvider.planCard.codingPlan",
     }),
   });
+  const titleBillingDiscountVisible = !isStartPlanProvider && billingDiscount.active;
   const notPurchasedStatusLabel = isNotPurchased ? (
     <span className="flex w-fit items-center gap-1.5 text-foreground-subtle">
       <InfoIcon className="size-3 shrink-0" aria-hidden="true" />
@@ -604,6 +609,11 @@ export function CodingPlanStatusPanel({
           <PlanStatusCardSurface
             key="current-plan"
             planTitle={planTitle}
+            titleAccessory={
+              titleBillingDiscountVisible ? (
+                <CodingPlanBillingDiscountBadge config={billingDiscount.config} size="compact" />
+              ) : undefined
+            }
             statusMeta={statusContent}
             trailingAction={trailingAction}
             usageContent={
@@ -647,7 +657,7 @@ export function CodingPlanStatusPanel({
   );
 }
 
-function hasStartPlanEntitlementQuota(
+export function hasStartPlanEntitlementQuota(
   entitlements: UsageEntitlementSubscriptionDetail["entitlements"],
   limits: readonly UsageQuotaLimit[],
 ): boolean {
@@ -662,7 +672,7 @@ function hasStartPlanEntitlementQuota(
   return limits.some((limit) => entitlementIds.has(limit.type.trim().toLowerCase()));
 }
 
-function resolveCodingPlanStatusCardTitle({
+export function resolveCodingPlanStatusCardTitle({
   isPurchased,
   isUnavailable = false,
   isStartPlanProvider,
@@ -738,9 +748,6 @@ function CodingPlanUsageSummaryCards({
     findUsageLimit(limits, "TOKENS_LIMIT", 6),
     resetUi.week.entry,
   );
-  // Resetting at 100% remaining has no benefit: hide the reset button and opportunity badge (display only; issuance and polling are unaffected).
-  const fiveHourQuotaFull = isCodingPlanQuotaLimitFull(fiveHourLimit);
-  const weeklyQuotaFull = isCodingPlanQuotaLimitFull(weeklyLimit);
   const standardCards = [
     createCodingPlanUsageSummaryCard({
       key: "fiveHour",
@@ -799,21 +806,23 @@ function CodingPlanUsageSummaryCards({
   const fiveHourCardVisible = cards.some((card) => card.key === "fiveHour");
   const weeklyCardVisible = cards.some((card) => card.key === "weekly");
   // Combine five-hour and weekly opportunities into one badge, add their counts, and show the countdown for the earliest expiration.
+  // Bugfix: the badge and button used to be hidden when “reset has no benefit at 100% remaining.”
+  // Redeeming an opportunity rewrites remaining quota to 100%, hiding other opportunities of the
+  // same type and making users think the card disappeared. Show them whenever the quota card is present and an opportunity is available.
   const opportunityBadge = mergeCodingPlanQuotaResetOpportunityBadges([
     {
       count: resetUi.entry?.opportunityCount ?? 0,
       expiresAt: resetUi.entry?.opportunityExpiresAt ?? null,
-      visible: fiveHourCardVisible && resetUi.opportunityVisible && !fiveHourQuotaFull,
+      visible: fiveHourCardVisible && resetUi.opportunityVisible,
     },
     {
       count: resetUi.week.entry?.opportunityCount ?? 0,
       expiresAt: resetUi.week.entry?.opportunityExpiresAt ?? null,
-      visible: weeklyCardVisible && resetUi.week.opportunityVisible && !weeklyQuotaFull,
+      visible: weeklyCardVisible && resetUi.week.opportunityVisible,
     },
   ]);
   const quotaResetDialog = buildCodingPlanQuotaResetDialogConfig({
     fiveHourEnabled: Boolean(fiveHourLimit),
-    fiveHourQuotaFull,
     resetUi,
     usageItems: cards.map((card) => {
       const percentage = resolveLimitRemainingPercentage(card.limit);
@@ -832,7 +841,6 @@ function CodingPlanUsageSummaryCards({
       };
     }),
     weekEnabled: Boolean(weeklyLimit),
-    weekQuotaFull: weeklyQuotaFull,
   });
 
   return (
@@ -859,25 +867,27 @@ function CodingPlanUsageSummaryCards({
             key={card.key}
             action={
               // The entry next to the quota title only opens the shared dialog; the matching button inside the dialog actually redeems it.
+              // Bugfix: this also required opportunityBadge.count <= 1, which hid the card's Reset
+              // entry when multiple opportunities existed (already fixed on the Usage page, but
+              // missed here). Match the Usage page: show it whenever an opportunity is available,
+              // regardless of full quota or count.
               card.key === "fiveHour" &&
               resetUi.entry &&
-              ((resetUi.opportunityVisible && !fiveHourQuotaFull && opportunityBadge.count <= 1) ||
+              (resetUi.opportunityVisible ||
                 resetUi.processing ||
                 resetUi.entry.status === "completed") ? (
                 <LocalizedCodingPlanQuotaResetAction
-                  completedAt={resetUi.entry.completedAt}
+                  completedAt={resolveCodingPlanQuotaResetActionCompletedAt(resetUi)}
                   processing={resetUi.processing}
                   onOpenDialog={() => setQuotaResetDialogOpen(true)}
                 />
               ) : card.key === "weekly" &&
                 resetUi.week.entry &&
-                ((resetUi.week.opportunityVisible &&
-                  !weeklyQuotaFull &&
-                  opportunityBadge.count <= 1) ||
+                (resetUi.week.opportunityVisible ||
                   resetUi.week.processing ||
                   resetUi.week.entry.status === "completed") ? (
                 <LocalizedCodingPlanQuotaResetAction
-                  completedAt={resetUi.week.entry.completedAt}
+                  completedAt={resolveCodingPlanQuotaResetActionCompletedAt(resetUi.week)}
                   processing={resetUi.week.processing}
                   resetType="WEEK"
                   onOpenDialog={() => setQuotaResetDialogOpen(true)}

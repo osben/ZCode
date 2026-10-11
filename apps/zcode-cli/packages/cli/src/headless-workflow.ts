@@ -59,7 +59,7 @@ export const createHeadlessPermissionBroker = (): NonNullable<
  * `zcodeSessionEventSchema`; adding a value would make the v3 app-server declare a type-level event
  * it never emits. stream-json is a CLI-private output format and is not constrained by the protocol's strict schema.
  */
-const WORKFLOW_RUN_PROGRESS_STREAM_TYPE = "workflow.run.progress";
+export const WORKFLOW_RUN_PROGRESS_STREAM_TYPE = "workflow.run.progress";
 
 /**
  * One typed NDJSON line for dwf progress. Envelope fields match `mapSessionEvent` exactly (same
@@ -77,7 +77,7 @@ interface WorkflowRunProgressStreamLine {
 }
 
 /** Is this a dwf progress session event? stream-json and stderr progress share this check. */
-const isDynamicWorkflowRunProgressEvent = (event: SessionEvent): boolean =>
+export const isDynamicWorkflowRunProgressEvent = (event: SessionEvent): boolean =>
   event.type === SessionEventType.DynamicWorkflowRunProgress;
 
 const progressPayloadOf = (event: SessionEvent): DynamicWorkflowRunProgressPayload =>
@@ -94,7 +94,9 @@ const progressPayloadOf = (event: SessionEvent): DynamicWorkflowRunProgressPaylo
  * Note that dwf events are **outside turns** (`turnId` is always empty), so the envelope omits
  * `turnId`; an always-undefined key would mislead readers into thinking it sometimes has a value.
  */
-const mapWorkflowRunProgressStreamLine = (event: SessionEvent): WorkflowRunProgressStreamLine => ({
+export const mapWorkflowRunProgressStreamLine = (
+  event: SessionEvent,
+): WorkflowRunProgressStreamLine => ({
   type: WORKFLOW_RUN_PROGRESS_STREAM_TYPE,
   eventId: String(event.id),
   sessionId: String(event.sessionId),
@@ -182,7 +184,7 @@ const DEFAULT_WORKFLOW_PROGRESS_THROTTLE_MS = 400;
  * stderr progress printer for `--output-format text`.
  * Handles only dwf progress events; all other session events are ignored with no side effects.
  */
-const createWorkflowProgressReporter = (
+export const createWorkflowProgressReporter = (
   input: WorkflowProgressReporterInput,
 ): ((event: SessionEvent) => void) => {
   const now = input.now ?? Date.now;

@@ -38,8 +38,8 @@ export function ConversationWorkflowDigests({
         const { runId, summary } = digest;
         const name = digest.name ?? fallbackName;
         const sessionId = context.sessionId;
-        // An in-place settings turn is fully represented by that row.
-        // Return early so none of the card wiring below (open, Resume, Stop, pills, Settings) is created—
+        // An immediately applied settings turn (docs/dynamic-workflow/presentation.md, “The settings turn”): that row is the
+        // entire presentation. Return early so none of the card wiring below (open, Resume, Stop, pills, or “Configure”) is created—
         // these controls belong to a card, and this turn has no card.
         if (digest.rowOnly && digest.settings !== undefined) {
           return (
@@ -149,6 +149,7 @@ export function ConversationWorkflowDigests({
         const card = (
           <WorkflowRunDigest
             graph={digest.graph}
+            {...(digest.holeLabels === undefined ? {} : { holeLabels: digest.holeLabels })}
             key={digest.key}
             name={name}
             pendingQuestions={pendingQuestions}

@@ -14,12 +14,12 @@ import {
   type SplitDirection,
 } from "@/v4/paneLayoutTree.js";
 
-const PANE_LAYOUT_STORAGE_KEY = "zcode-v4-pane-layout:v2";
-/** Key for the legacy single-value split view (read-only migration; no longer written). */
-const PANE_LAYOUT_STORAGE_KEY_V1 = "zcode-v4-pane-layout:v1";
+export const PANE_LAYOUT_STORAGE_KEY = "zcode-v4-pane-layout:v2";
+/** Legacy key for the first-phase single-value split pane (read-only migration; no longer written). */
+export const PANE_LAYOUT_STORAGE_KEY_V1 = "zcode-v4-pane-layout:v1";
 
-/** Reserved pane ID for v1 migration (the legacy split pane had a fixed ID retained by the e2e/testid contract). */
-const V4_LEGACY_SPLIT_PANE_ID = "split";
+/** Reserved pane ID for v1 migration (the fixed ID from the first-phase split pane, retained by the e2e/testid contract). */
+export const V4_LEGACY_SPLIT_PANE_ID = "split";
 
 interface PersistedScopeV2 {
   workspacePath: string;
@@ -109,7 +109,7 @@ function sanitizeScope(raw: unknown): PaneWorkspaceScope | null {
  * number of leaves ≤ limit, and a valid binding for each non-primary leaf. Add restoredUnvalidated to restored
  * session bindings (pending sessions-index validation); if focusedPaneId is not in the tree, use the primary.
  */
-function sanitizePersistedPaneLayout(raw: unknown): PaneLayoutSnapshot | null {
+export function sanitizePersistedPaneLayout(raw: unknown): PaneLayoutSnapshot | null {
   if (typeof raw !== "object" || raw === null) {
     return null;
   }
@@ -168,7 +168,7 @@ function isPlausibleLocalPath(value: string): boolean {
  * Migrate legacy v1 (single splitPane value) → v2: v1 stored only workspaceKey (identity ?? path),
  * which cannot restore remote scope — migrate to a two-leaf tree only if it is a trusted local path; otherwise discard it and return to a single pane (null).
  */
-function migratePersistedPaneLayoutV1(raw: unknown): PaneLayoutSnapshot | null {
+export function migratePersistedPaneLayoutV1(raw: unknown): PaneLayoutSnapshot | null {
   if (typeof raw !== "object" || raw === null) {
     return null;
   }

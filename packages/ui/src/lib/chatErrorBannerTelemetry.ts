@@ -8,13 +8,14 @@ import { logger } from "@/logger.js";
 import {
   getProviderBusinessErrorUiAction,
   isProviderBusinessErrorCode,
+  resolveRequestVerificationBusinessCode,
   type ProviderBusinessErrorUiAction,
 } from "@/lib/providerBusinessError.js";
 import { resolveTelemetryAttribution } from "@/lib/chatErrorAttribution.js";
 import type { ZCodeUiError } from "@/lib/zcodeUiError.js";
 
-const CHAT_ERROR_BANNER_ARMS_EVENT_NAME = "chat_error_banner";
-const CHAT_ERROR_BANNER_ARMS_GROUP = "ui_error";
+export const CHAT_ERROR_BANNER_ARMS_EVENT_NAME = "chat_error_banner";
+export const CHAT_ERROR_BANNER_ARMS_GROUP = "ui_error";
 export type ChatErrorBannerSurface = "chat_input_error_banner" | "session_subscription_error";
 
 const CHAT_ERROR_BANNER_MESSAGE_LIMIT = 500;
@@ -45,7 +46,10 @@ export function resolveVisibleChatErrorTelemetryRecoveryAction(
   error: Pick<ZCodeUiError, "code" | "message">,
 ): ChatProviderBusinessRecoveryAction | null {
   // Fix rationale: the old UI reported visible recovery actions for ordinary provider business errors as aggregation dimensions;
-  // business codes with no visible action (such as 3007/3001) naturally return null here and no longer report an action dimension.
+  // The request verification retry for 3007 is an internal recovery action with no button, so it must remain empty.
+  if (resolveRequestVerificationBusinessCode(error.code, error.message)) {
+    return null;
+  }
   if (!isProviderBusinessErrorCode(error.code)) {
     return null;
   }
@@ -112,7 +116,7 @@ function resolveErrorKey(params: {
   ].join(":");
 }
 
-function buildChatErrorBannerTelemetryPayload(params: {
+export function buildChatErrorBannerTelemetryPayload(params: {
   surface?: ChatErrorBannerSurface;
   errorKey?: string | null;
   displayMessage: string;

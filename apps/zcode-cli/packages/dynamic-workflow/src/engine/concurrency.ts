@@ -39,7 +39,7 @@ export const CONCURRENCY_INCREASE_STEP = 1;
 export const CONCURRENCY_INCREASE_AFTER_SUCCESSES = 4;
 /** Always keep at least one probe running. */
 export const CONCURRENCY_FLOOR = 1;
-/** After a key is idle this long with nothing in flight, forget its learned cap and return to the ceiling. */
+/** Forget the learned cap and return to `initial` after a key has been idle this long with no in-flight requests (decision 20). */
 export const CONCURRENCY_IDLE_RESET_MS = 300_000;
 
 /** Throttle reasons that reduce the cap. */
@@ -51,7 +51,10 @@ export type ConcurrencyThrottleReason = Extract<
 /** Read-only controller snapshot (for test assertions and the governor's `concurrency` projection in the run header). */
 export interface ConcurrencyControllerSnapshot {
   readonly key: string;
-  readonly ceiling: number;
+  /** Starting value and idle-reset target: default concurrency D. */
+  readonly initial: number;
+  /** Automatic growth ceiling (set and adjustable by the governor; always ≥ initial). */
+  readonly growthLimit: number;
   readonly cap: number;
   /** Throttle-decision counter, attached to a request on admission and returned for comparison when it ends. */
   readonly epoch: number;
@@ -62,10 +65,13 @@ export interface ConcurrencyControllerSnapshot {
   readonly lastRequestAt?: number;
   readonly lastGood?: number;
   readonly lastBad?: number;
+  /** Time of the most recent rejection, regardless of epoch; do not seed if one occurred within five minutes ({@link ConcurrencyController.seed}). */
+  readonly lastThrottledAt?: number;
 }
 
 export class ConcurrencyController {
   private cap: number;
+  private growthLimit_: number;
   private epoch = 0;
   private inFlight = 0;
   private waiters_ = 0;
@@ -74,24 +80,30 @@ export class ConcurrencyController {
   private lastRequestAt?: number;
   private lastGood?: number;
   private lastBad?: number;
+  private lastThrottledAt?: number;
 
   /**
-   * @param key Provider key (`${providerId}/${modelId}`), used only in change events—the controller
-   *   itself does not inspect it. It is an identity, not a per-signal parameter, so it is passed at
-   *   construction; one controller serves exactly one key.
-   * @param ceiling CPU-derived ceiling, used as both the initial value and upper bound.
+   * @param key provider key (`${providerId}/${modelId}`), used only in change events; the controller itself
+   *   does not interpret it. Passed to the constructor rather than each signal because one controller serves one key—this is identity, not a parameter.
+   * @param initial Default concurrency D (docs/dynamic-workflow/concurrency.md, “Two bounds on a run”): the cap's
+   *   starting value and idle-reset target. It is **not** the ceiling.
+   * @param growthLimit Automatic growth ceiling; defaults to `initial` (the previous behavior of backing off but never exceeding the starting value). The governor computes
+   *   `max(2D, highest limit among in-flight runs that have used this key)` and adjusts it through {@link setGrowthLimit}.
    */
   constructor(
     readonly key: string,
-    readonly ceiling: number,
+    readonly initial: number,
+    growthLimit: number = initial,
   ) {
-    this.cap = ceiling;
+    this.cap = initial;
+    this.growthLimit_ = Math.max(initial, growthLimit);
   }
 
   snapshot(): ConcurrencyControllerSnapshot {
     return {
       key: this.key,
-      ceiling: this.ceiling,
+      initial: this.initial,
+      growthLimit: this.growthLimit_,
       cap: this.cap,
       epoch: this.epoch,
       inFlight: this.inFlight,
@@ -101,14 +113,14 @@ export class ConcurrencyController {
       ...(this.lastRequestAt === undefined ? {} : { lastRequestAt: this.lastRequestAt }),
       ...(this.lastGood === undefined ? {} : { lastGood: this.lastGood }),
       ...(this.lastBad === undefined ? {} : { lastBad: this.lastBad }),
+      ...(this.lastThrottledAt === undefined ? {} : { lastThrottledAt: this.lastThrottledAt }),
     };
   }
 
   /**
-   * Gate (admission condition): in-flight request count is below cap and Retry-After cooldown is
-   * inactive. This is a pure query and does not reset idle state; callers (the governor) invoke
-   * {@link observe} first on the admission path. Admission is also a signal, so the first run after
-   * an hour of idleness must start at the ceiling immediately.
+   * Gate (admission condition): in-flight request count is below cap and Retry-After cooldown is inactive. This is a pure query and does not reset idle state—
+   * the caller (governor) invokes {@link observe} first on the admission path (admission is also a “signal”; the first
+   * run after an hour of idle must start immediately at `initial`, decision 20).
    */
   canAdmit(now: number): boolean {
     return (
@@ -133,12 +145,10 @@ export class ConcurrencyController {
   }
 
   /**
-   * A request succeeded: decrement `inFlight`; only success in the **current epoch** increments
-   * `successStreak`. Success in an old epoch proves the load under the old, backed-off cap, not that
-   * the new cap can be higher.
-   * `successStreak ≥ K` **proves** the current cap works: `lastGood = max(lastGood, cap)` (only a
-   * completed streak can set lastGood; reducing the cap cannot). If there are waiters **and**
-   * `cap < ceiling`, increase by 1. Without waiters, the streak accumulates but is not applied.
+   * A request completed successfully: `inFlight--`; only a success in the **current epoch** increments
+   * `successStreak`—success from an old epoch proves only the load under its backed-off cap, not that the new cap can be higher.
+   * `successStreak ≥ K` **proves** the current cap is viable: `lastGood = max(lastGood, cap)` (decision 40: only a completed streak may set lastGood; reducing the cap may not).
+   * If there are waiters **and** `cap < growthLimit`, increase by 1. Without waiters, keep accumulating the streak but do not apply it (decision 15).
    */
   succeeded(now: number, epoch: number): ConcurrencyChange[] {
     const changes = this.idleReset(now);
@@ -148,9 +158,9 @@ export class ConcurrencyController {
     if (this.successStreak < CONCURRENCY_INCREASE_AFTER_SUCCESSES) return changes;
     // A full streak has proved this level works, regardless of whether anyone is waiting to scale up.
     if (this.lastGood === undefined || this.cap > this.lastGood) this.lastGood = this.cap;
-    if (this.waiters_ <= 0 || this.cap >= this.ceiling) return changes;
+    if (this.waiters_ <= 0 || this.cap >= this.growthLimit_) return changes;
     const previous = this.cap;
-    this.cap = Math.min(this.ceiling, previous + CONCURRENCY_INCREASE_STEP);
+    this.cap = Math.min(this.growthLimit_, previous + CONCURRENCY_INCREASE_STEP);
     this.successStreak = 0;
     changes.push(this.change(previous, "recovered"));
     return changes;
@@ -179,6 +189,8 @@ export class ConcurrencyController {
     const changes = this.idleReset(now);
     this.inFlight = Math.max(0, this.inFlight - 1);
     this.successStreak = 0;
+    // Record rejections from old epochs too: they do not evaluate the current cap, but they show the provider is hitting a wall right now (seeding checks this).
+    this.lastThrottledAt = now;
     const cooldownMs = retryAfterMs !== undefined && retryAfterMs > 0 ? retryAfterMs : undefined;
     if (cooldownMs !== undefined) {
       this.cooldownUntil = Math.max(this.cooldownUntil ?? 0, now + cooldownMs);
@@ -225,12 +237,64 @@ export class ConcurrencyController {
     return changes;
   }
 
+  /**
+   * Change the automatic growth ceiling (docs/dynamic-workflow/concurrency.md, “Increase”). This is the only value inside the controller
+   * owned externally: the governor sets it to the greater of 2D and the highest limit among in-flight runs using this key; it changes as runs start, finish,
+   * or retune. Always clamp to ≥ initial.
+   *
+   * Raising the ceiling changes nothing immediately: cap continues to grow one step at a time. If it is lowered below cap, immediately lower cap to the new ceiling and emit
+   * `limit_lowered`; otherwise a high cap learned for a large run would remain shared with later default runs until idle reset.
+   * Also clamp `lastGood`, clear the streak, and advance the epoch: a 429 from a request sent under the old cap does not judge the new cap.
+   */
+  setGrowthLimit(now: number, limit: number): ConcurrencyChange[] {
+    const changes = this.idleReset(now);
+    this.growthLimit_ = Math.max(this.initial, Math.floor(limit));
+    if (this.cap <= this.growthLimit_) return changes;
+    const previous = this.cap;
+    this.cap = this.growthLimit_;
+    if (this.lastGood !== undefined && this.lastGood > this.cap) this.lastGood = this.cap;
+    this.successStreak = 0;
+    this.epoch += 1;
+    changes.push(this.change(previous, "limit_lowered"));
+    return changes;
+  }
+
+  /**
+   * Seed (docs/dynamic-workflow/concurrency.md, “Seeding”): when a user raises a run's limit, the governor asks
+   * cap to jump directly to `min(target, growthLimit)` instead of growing one step every K successes—from 8 to 32 would take about 96
+   * successes, making the user think the setting had no effect.
+   *
+   * Clear `lastGood`: the seed point is a new starting value, not a probe above a proven level; otherwise the first 429 would fall back to the old
+   * proven level rather than reducing multiplicatively (32 → 24 → 18 …). Also clear `lastBad`, reset the streak, and advance the epoch.
+   *
+   * Do not jump in two cases: the target is not above cap; or any rejection occurred within five minutes (the same window as idle reset)—jumping then
+   * would knowingly hit the same wall again, so cap continues to grow one step at a time.
+   */
+  seed(now: number, target: number): ConcurrencyChange[] {
+    const changes = this.idleReset(now);
+    const next = Math.min(this.growthLimit_, Math.floor(target));
+    if (next <= this.cap) return changes;
+    if (
+      this.lastThrottledAt !== undefined &&
+      now - this.lastThrottledAt < CONCURRENCY_IDLE_RESET_MS
+    ) {
+      return changes;
+    }
+    const previous = this.cap;
+    this.cap = next;
+    this.lastGood = undefined;
+    this.lastBad = undefined;
+    this.successStreak = 0;
+    this.epoch += 1;
+    changes.push(this.change(previous, "seeded"));
+    return changes;
+  }
+
   // ——————————————————————————————— Internal ———————————————————————————————
 
   /**
-   * Idle reset: when `now − lastRequestAt ≥ IDLE_RESET_MS` and nothing is in flight, restore cap to
-   * the ceiling, clear streak / cooldown / lastGood / lastBad, and increment epoch. Reset lazily
-   * when any signal arrives (no timer).
+   * Idle reset (decision 20): when `now − lastRequestAt ≥ IDLE_RESET_MS` and nothing is in flight, reset cap to `initial`,
+   * clear streak / cooldown / lastGood / lastBad, and increment epoch. It happens lazily on any incoming signal (no timer).
    */
   private idleReset(now: number): ConcurrencyChange[] {
     if (
@@ -241,24 +305,25 @@ export class ConcurrencyController {
       return [];
     }
     const previous = this.cap;
-    // Idempotent: do nothing when already at the ceiling with clean state (otherwise every idle
-    // signal would increment epoch again).
+    // Idempotent: do nothing when already at the initial value with clean state (otherwise every idle signal would increment epoch).
     if (
-      previous === this.ceiling &&
+      previous === this.initial &&
       this.successStreak === 0 &&
       this.cooldownUntil === undefined &&
       this.lastGood === undefined &&
-      this.lastBad === undefined
+      this.lastBad === undefined &&
+      this.lastThrottledAt === undefined
     ) {
       return [];
     }
-    this.cap = this.ceiling;
+    this.cap = this.initial;
     this.successStreak = 0;
     this.cooldownUntil = undefined;
     this.lastGood = undefined;
     this.lastBad = undefined;
+    this.lastThrottledAt = undefined;
     this.epoch += 1;
-    // Keep lastRequestAt: another idle signal should not reset again; state is already at the ceiling.
+    // Keep lastRequestAt: another idle signal should not reset again; state is already at the initial value.
     return previous === this.cap ? [] : [this.change(previous, "idle_reset")];
   }
 

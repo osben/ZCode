@@ -21,6 +21,7 @@ import {
 
 interface FeishuChannelRuntimeDeps {
   runBackgroundTasks?: boolean;
+  onConnectionInvalidated?(botId: string): void;
   credentialService: ICredentialService;
   logger: BotRuntimeLogger;
   statusSink: BotRuntimeStatusSink;
@@ -31,6 +32,8 @@ interface FeishuChannelRuntimeDeps {
     provider: BotProvider,
     payload: unknown,
   ): Promise<BotProviderCallbackResult>;
+  acquireWebSocketLock?: typeof acquireFeishuWebSocketLock;
+  startWebSocket?: typeof startFeishuBotWebSocket;
 }
 
 export function createFeishuChannelRuntime(deps: FeishuChannelRuntimeDeps) {
@@ -60,7 +63,7 @@ export function createFeishuChannelRuntime(deps: FeishuChannelRuntimeDeps) {
     while (!signal.aborted) {
       let lock: Awaited<ReturnType<typeof acquireFeishuWebSocketLock>>;
       try {
-        lock = await acquireFeishuWebSocketLock(bot);
+        lock = await (deps.acquireWebSocketLock ?? acquireFeishuWebSocketLock)(bot);
       } catch (error) {
         if (signal.aborted) {
           return;
@@ -99,10 +102,12 @@ export function createFeishuChannelRuntime(deps: FeishuChannelRuntimeDeps) {
           messageId: "bots.runtime.feishuWebSocketConnecting",
           message: "Feishu WebSocket is connecting.",
         });
-        client = await startFeishuBotWebSocket({
+        deps.onConnectionInvalidated?.(bot.id);
+        client = await (deps.startWebSocket ?? startFeishuBotWebSocket)({
           bot,
           signal,
           onConnectionStateChange: (state) => {
+            if (state === "reconnecting") deps.onConnectionInvalidated?.(bot.id);
             deps.statusSink.setRuntimeStatus({
               botId: bot.id,
               provider: bot.provider,
@@ -143,7 +148,10 @@ export function createFeishuChannelRuntime(deps: FeishuChannelRuntimeDeps) {
         });
         // Bug fix: the first ready event is not the end of the long-lived connection. Exhausting SDK reconnects must enter catch
         // so the error state can be updated, the client closed, the cross-window lock released, and the outer recovery loop entered.
-        await Promise.race([waitForAbort(signal), client.terminated]);
+        await Promise.race([
+          waitForAbort(signal),
+          client.terminated ?? new Promise<void>(() => undefined),
+        ]);
       } catch (error) {
         if (signal.aborted) {
           return;

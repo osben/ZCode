@@ -58,9 +58,17 @@ export type DriverFactory = (sink: WorkflowReportSink) => WorkflowDriver;
 /**
  * The run's **live control surface**: after constructing the engine, the harness binds this
  * run's engine to it, so the holder of the handle (the run service) can reach the live engine.
- * Today there is only one command: change this run's concurrency limit in place.
+ * Two commands — change this run's concurrency limit in place
+ * (docs/dynamic-workflow/concurrency.md "Two bounds on a run") and fill one hole
+ * (docs/execution-engine.md "Holes").
  *
- * Narrow the surface to `Pick<…, "setMaxConcurrency">` rather than exposing the whole engine:
+ * Plus two read-only surfaces, `openHoles` / `filledHoles`: `holes[].state === "waiting"` in the
+ * run snapshot must be projected from the engine's parked table (docs/execution-engine.md "The run
+ * snapshot" — after the process has died there is no promise waiting, and reading events alone
+ * would report holes nobody asked about as waiting), and this binding is the only seam where the
+ * run service reaches the live engine.
+ *
+ * Narrow the surface to `Pick<…>` rather than exposing the whole engine:
  * this is a **command** channel, not a backdoor for the host to bypass the harness and drive run
  * lifecycle (settlement still occurs only through complete/stop/fail).
  *
@@ -69,7 +77,9 @@ export type DriverFactory = (sink: WorkflowReportSink) => WorkflowDriver;
  * returning false means nothing happened).
  */
 export interface RunControlBinding {
-  bind(engine: Pick<WorkflowEngine, "setMaxConcurrency">): void;
+  bind(
+    engine: Pick<WorkflowEngine, "setMaxConcurrency" | "fillHole" | "openHoles" | "filledHoles">,
+  ): void;
 }
 
 /**
@@ -104,6 +114,12 @@ export interface RunWorkflowOptions {
   caps: Caps;
   /** Static spec for each ask site. **Must cover every ask site in the script**; the engine treats missing entries as wiring errors and fails. */
   askSpecs: ReadonlyMap<string, AskSpec>;
+  /**
+   * Site → lexical birth phase name (`collectSitePhases`); forwarded verbatim to
+   * `EngineConfig.sitePhases`. Omission means an empty table: the engine falls back to the dynamic
+   * current phase for every site (legacy compiled artifacts, snippets, directly fed lowered bodies).
+   */
+  sitePhases?: ReadonlyMap<string, string>;
   /** Injected schema validator (the engine does not import the schema implementation). */
   validate: ValidateFn;
   /** External cancellation signal: abort the in-flight ask and kill the child process; settle the run as cancelled. */
@@ -111,7 +127,8 @@ export interface RunWorkflowOptions {
   /**
    * Binding point for the live control surface (see {@link RunControlBinding}). Passed through
    * the same seam as `signal`: that channel stops the run, while this one changes one run
-   * setting. If absent, this invocation has no control surface (for example, snippet execution).
+   * setting. If absent, this invocation has no control surface (integration tests, snippet
+   * execution).
    */
   control?: RunControlBinding;
   /** Wall-clock timeout (ms): kill the child process at expiry and settle the run as failed. Unlimited by default. */
@@ -189,7 +206,11 @@ export interface RunWorkflowOptions {
     inputId: string;
     phaseNames?: string[];
     subagentModel?: string;
+    /** Models named by the script → canonical strings (docs/dynamic-workflow/launch.md "Models the script names"), same payload, same rules. */
+    modelBindings?: Record<string, string>;
     phaseAlongside?: number[][];
+    /** Indices of unfilled holes within `phaseNames` (docs/execution-engine.md "Holes"), same payload, same rules. */
+    holes?: number[];
   };
   importedCache?: ImportedRunCache;
   /**
@@ -241,6 +262,7 @@ export async function runWorkflowScript(options: RunWorkflowOptions): Promise<Ru
     caps: options.caps,
     askSpecs: options.askSpecs,
     validate: options.validate,
+    ...(options.sitePhases === undefined ? {} : { sitePhases: options.sitePhases }),
     // Pass metadata verbatim and keep missing fields absent (do not write undefined keys). The
     // cwd here is the same value used by the child process, including the process.cwd() fallback,
     // so the persisted cwd is the directory where the run actually executes.
@@ -560,7 +582,7 @@ function handleChildMessage(message: ChildMessage, deps: MessageDeps): void {
   }
 }
 
-/** Bridge one host call requiring a response (ask / world-read) to the engine, then respond after settlement. */
+/** Bridge one host call requiring a response (ask / world-read / publish-artifact / hole) to the engine, then respond after settlement. */
 function handleRequest(
   message: Extract<ChildMessage, { kind: "request" }>,
   deps: MessageDeps,
@@ -612,6 +634,11 @@ function handleRequest(
       return;
     }
     promise = engine.publishArtifact(message.siteId, op, message.args ?? []);
+  } else if (message.type === "hole") {
+    // Hole: the engine parks the promise at the site; only after the main agent releases it via the
+    // control plane's fillHole is there a `{code}` to answer with; until then it is just an
+    // in-flight request (docs/execution-engine.md "The vm cell").
+    promise = engine.hole(message.siteId, message.name ?? "", message.prompt);
   } else {
     // Pass op/args unchanged to the engine: this layer does not inspect op or validate arity
     // (that is the driver's responsibility). Normalize missing args to an empty array so the

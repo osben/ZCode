@@ -31,7 +31,7 @@ import { savedWorkflowRunBadgeKind } from "@/settings/saved-workflows/savedWorkf
 const MAX_ARG_CHIPS = 3;
 
 /** Card's "Last run" badge: four states + never run. Reuses the scheduled-task card badge shape (rounded-lg, 20px icon slot). */
-function SavedWorkflowLastRunBadge({
+export function SavedWorkflowLastRunBadge({
   run,
   now,
 }: {

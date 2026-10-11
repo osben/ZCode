@@ -14,6 +14,8 @@ import type { JournalStorePort, RunEvent, StoredEvent } from "@zcode/dynamic-wor
 export function createJournalSequenceCapture(journal: JournalStorePort): {
   journal: JournalStorePort;
   sequenceOf: (event: RunEvent) => number;
+  /** Timestamp stamped when this very event was persisted (`StoredEvent.timeCreated`); when the reference is not equal, do not guess—return `undefined`. */
+  timeCreatedOf: (event: RunEvent) => number | undefined;
 } {
   let lastStored: StoredEvent | undefined;
   // Forward each method explicitly rather than using `{...journal, appendEvent}`: both implementations
@@ -28,12 +30,22 @@ export function createJournalSequenceCapture(journal: JournalStorePort): {
       journal.updateRunStatus(runId, status, settlement),
     updateRunUsage: (runId, spentTokens) => journal.updateRunUsage(runId, spentTokens),
     updateRunCaps: (runId, caps) => journal.updateRunCaps(runId, caps),
+    // A fill writes the effective script back to the run row (docs/execution-engine.md,
+    // "Holes"); forward it unchanged like every other write.
+    updateRunScript: (runId, scriptText, scriptHash) =>
+      journal.updateRunScript(runId, scriptText, scriptHash),
     putActor: (record) => journal.putActor(record),
     getActor: (runId, siteId, ordinal) => journal.getActor(runId, siteId, ordinal),
-    listActors: (runId) => journal.listActors(runId),
+    // Read-surface options must be forwarded unchanged (docs/execution-engine.md, "Reading the
+    // journal"): TS permits an implementation with fewer parameters than the signature, so
+    // `(runId) => journal.listNodes(runId, <fixed options>)` still compiles while silently
+    // replacing the caller's filter—degrading the engine's narrow reads back to full-table reads.
+    listActors: (runId, opts) => journal.listActors(runId, opts),
     putNode: (record) => journal.putNode(record),
-    getNode: (runId, siteId, ordinal) => journal.getNode(runId, siteId, ordinal),
-    listNodes: (runId) => journal.listNodes(runId),
+    getNode: (runId, siteId, ordinal, opts) => journal.getNode(runId, siteId, ordinal, opts),
+    listNodes: (runId, opts) => journal.listNodes(runId, opts),
+    countNodes: (runId, kind) => journal.countNodes(runId, kind),
+    sumResultBytes: (runId, kind) => journal.sumResultBytes(runId, kind),
     appendEvent: (runId, event) => {
       const stored = journal.appendEvent(runId, event);
       lastStored = stored;
@@ -45,5 +57,9 @@ export function createJournalSequenceCapture(journal: JournalStorePort): {
     journal: wrapped,
     sequenceOf: (event) =>
       lastStored?.event === event ? lastStored.sequence : (lastStored?.sequence ?? 0),
+    // Same fallback as sequenceOf: the in-memory journal deep-copies events at the storage
+    // boundary (references differ), while "just appended is being emitted" is the engine
+    // record() contract, so return the stamp from the last append.
+    timeCreatedOf: () => lastStored?.timeCreated,
   };
 }

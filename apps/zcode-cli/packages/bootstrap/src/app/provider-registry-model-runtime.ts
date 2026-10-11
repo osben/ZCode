@@ -77,8 +77,15 @@ export class ApiProviderModelRuntime {
       modelId: registryModel.modelId,
       providerConfig: provider.config,
       modelConfig: config,
+      // Off-Peak and Highspeed both rely on execution-scoped dynamic requestAuth (JWT /
+      // plan key / card ID header) when sending, so the source carrying it must be passed
+      // through to the adapter. This gate corresponds one-to-one with the
+      // requestAuthRequired gate in runner.ts: omitting highspeed drops the source here,
+      // leaving runner-side requestAuth missing so the turn throws
+      // model_request_auth_missing before sending.
       ...(provider.config.access.type === "zhipu-account" &&
-      provider.config.access.mode === "off-peak"
+      (provider.config.access.mode === "off-peak" ||
+        provider.config.access.mode === "highspeed")
         ? {
             requestDependencies: {
               requestAuth: {

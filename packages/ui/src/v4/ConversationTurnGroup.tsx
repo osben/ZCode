@@ -1,7 +1,19 @@
+import { BotTopicPreparation } from "@/v4/BotTopicPreparation.js";
+import { useBotTopicInterruption } from "@/v4/botGroupDeliveryContext.js";
+import { ConnectedBotGroupDeliveryAction } from "@/v4/BotGroupDeliveryAction.js";
 /* eslint-disable max-lines -- The turn group must maintain the strict row order of regular assistant content and background results in one place; splitting it would duplicate the actions/preview/tail protocol. */
 import { useIsOfficeMode } from "@/hooks/useInterfaceMode.js";
-import { Fragment, memo, useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
-import { ChevronRightIcon } from "lucide-react";
+import {
+  Fragment,
+  memo,
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  useSyncExternalStore,
+  type ReactNode,
+} from "react";
+import { ChevronRightIcon, EyeIcon } from "lucide-react";
 import {
   TID_CHAT_ASSISTANT_HISTORY_CONTENT,
   TID_CHAT_ASSISTANT_HISTORY_TRIGGER,
@@ -9,6 +21,7 @@ import {
   TID_CHAT_LOADING,
   TID_V4_ROW,
   testId,
+  type HighspeedMessageMeta,
   type ZCodeApiRetryStatus,
 } from "@zcode/shared";
 import type {
@@ -21,6 +34,7 @@ import type {
 import { ChatLoading } from "@/components/ai-elements/chat-loading.js";
 import { ChatApiRetryStatus } from "@/chat-input-toolbar/display.js";
 import { cn } from "@/components/lib/utils.js";
+import { Button } from "@/components/ui/button.js";
 import { Checkbox } from "@/components/ui/checkbox.js";
 import { MessageActions } from "@/components/ai-elements/message.js";
 import {
@@ -42,6 +56,15 @@ import {
   type OffPeakCreateTaskSummary,
 } from "@/ToolCallBlocks/renderers/offpeak-create.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
+import { HighspeedShareDialog } from "@/highspeed/HighspeedShareNoticeCard.js";
+import { isHighspeedShareEligible } from "@/highspeed/highspeedShare.js";
+import {
+  aggregateHighspeedCardMetrics,
+  getHighspeedTurnByCommandId,
+  getHighspeedTurnVersion,
+  subscribeHighspeedTurns,
+  type HighspeedShareMetrics,
+} from "@/highspeed/highspeedTurnStore.js";
 import type { AssistantPreviewCard } from "@/lib/assistantPreviewCards.js";
 import { useAssistantCodeCommentFeatureEnabled } from "@/AssistantCodeCommentFeatureProvider.js";
 import {
@@ -95,6 +118,8 @@ import { toolCallRowToLegacyNode } from "@/v4/toolCallRowAdapter.js";
 
 interface ConversationTurnGroupProps {
   unit: ConversationTurnRenderUnit;
+  /** Shared UI clock for the timeline; removes the running purple shimmer immediately at the Highspeed expiry boundary. */
+  nowMs?: number;
   /** Injected by Timeline only for the current live turn; historical turns never carry runtime retry state. */
   apiRetry?: ApiRetryState | null;
   context: ConversationRowRenderContext;
@@ -128,6 +153,56 @@ interface OffPeakTurnCard {
 }
 
 const MIN_VISIBLE_API_RETRY_ATTEMPT = 3;
+
+interface HighspeedOutputFooterProps {
+  generatedLabel: string;
+  shareLabel: string;
+  shareAriaLabel: string;
+  shareEnabled: boolean;
+  sharePending: boolean;
+  onShare: () => void;
+}
+
+function HighspeedOutputFooter({
+  generatedLabel,
+  shareLabel,
+  shareAriaLabel,
+  shareEnabled,
+  sharePending,
+  onShare,
+}: HighspeedOutputFooterProps) {
+  return (
+    <div
+      data-highspeed-output-footer="true"
+      className="relative flex w-full items-center justify-center py-[18px] opacity-80"
+    >
+      <div aria-hidden="true" className="absolute inset-x-0 top-1/2 border-t border-border" />
+      <div className="relative flex items-center gap-2 bg-background px-3">
+        <span className="text-ui-base text-foreground-subtle">{generatedLabel}</span>
+        {shareEnabled ? (
+          <Button
+            type="button"
+            variant="ghost"
+            size="default"
+            className="h-7 gap-1 rounded-[8px] bg-black/5 px-2 py-1 text-ui-base font-medium leading-5 text-foreground hover:bg-black/10 dark:bg-white/5 dark:hover:bg-white/10"
+            data-highspeed-output-share="true"
+            disabled={sharePending}
+            aria-label={shareAriaLabel}
+            onClick={onShare}
+          >
+            <EyeIcon
+              className="size-4 text-foreground/85"
+              strokeWidth={4 / 3}
+              aria-hidden="true"
+              data-highspeed-output-share-icon="true"
+            />
+            {shareLabel}
+          </Button>
+        ) : null}
+      </div>
+    </div>
+  );
+}
 
 function toRetryStatus(apiRetry: ApiRetryState): ZCodeApiRetryStatus {
   const attempt = Math.max(1, Math.floor(apiRetry.attempt));
@@ -571,12 +646,19 @@ function AssistantHistoryStatus({
   segment,
   open,
   context,
+  highspeed,
+  highspeedMeta,
+  sourceCommandIds,
 }: {
   segment: ConversationTurnWorkSegment;
   open: boolean;
   context: ConversationRowRenderContext;
+  highspeed: boolean;
+  highspeedMeta?: HighspeedMessageMeta;
+  sourceCommandIds: readonly string[];
 }) {
   const { intl, locale } = useZCodeIntl();
+  const topicInterrupted = useBotTopicInterruption(sourceCommandIds);
   const durationLabel = formatConversationWorkDuration(
     segment.workStatus?.durationMs,
     intl,
@@ -603,9 +685,17 @@ function AssistantHistoryStatus({
   });
   const isEstimate = streamingTokensPerSecond !== null;
   const throughputTokensPerSecond = isEstimate ? streamingTokensPerSecond : tokensPerSecond;
+  const savedDurationLabel =
+    segment.workStatus?.state === "completed" &&
+    highspeedMeta?.savedDurationMs !== undefined &&
+    highspeedMeta.savedDurationMs > 0
+      ? formatConversationWorkDuration(highspeedMeta.savedDurationMs, intl, locale)
+      : null;
   const label =
     segment.workStatus?.state === "interrupted"
-      ? intl.formatMessage({ id: "chat.history.stopped" })
+      ? intl.formatMessage({
+          id: topicInterrupted ? "chat.history.topicInterrupted" : "chat.history.stopped",
+        })
       : segment.workStatus?.state === "running"
         ? intl.formatMessage({ id: "chat.history.workingFor" }, { duration: durationLabel ?? "" })
         : durationLabel
@@ -613,7 +703,12 @@ function AssistantHistoryStatus({
           : intl.formatMessage({ id: "chat.history.worked" });
 
   return (
-    <div className="flex w-full items-center border-b border-[var(--color-border)]/50 pb-2">
+    <div
+      className={cn(
+        "flex w-full flex-wrap items-center justify-between gap-2 border-b",
+        highspeed ? "border-icon-purple/30 pb-3 pl-1" : "border-[var(--color-border)]/50 pb-2",
+      )}
+    >
       <CollapsibleTrigger asChild>
         <button
           type="button"
@@ -621,7 +716,12 @@ function AssistantHistoryStatus({
           data-history-open={String(open)}
           className="group/history-message inline-flex max-w-full items-center gap-2 text-left text-ui-base text-foreground-subtle focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-input-border-focused)]"
         >
-          <span className="truncate">{label}</span>
+          <span
+            className={cn("truncate", highspeed && "font-medium leading-5 text-icon-purple")}
+            data-highspeed-duration={highspeed ? "true" : undefined}
+          >
+            {label}
+          </span>
           {!segment.assistantHistoryDefaultOpen ? (
             <ChevronRightIcon
               aria-hidden
@@ -633,7 +733,24 @@ function AssistantHistoryStatus({
           ) : null}
         </button>
       </CollapsibleTrigger>
-      {isRunning && throughputTokensPerSecond !== null ? (
+      {highspeed ? (
+        <div className="ml-auto flex shrink-0 items-center gap-2 text-icon-purple">
+          {savedDurationLabel ? (
+            <span className="text-ui-sm font-medium leading-4" data-highspeed-saved-duration="true">
+              {intl.formatMessage(
+                { id: "chat.highspeed.savedDuration" },
+                { duration: savedDurationLabel },
+              )}
+            </span>
+          ) : null}
+          <span
+            className="rounded-full bg-hover px-2 py-0.5 text-ui-sm leading-4"
+            data-highspeed-status-tag="true"
+          >
+            {intl.formatMessage({ id: "chat.highspeed.statusTag" })}
+          </span>
+        </div>
+      ) : isRunning && throughputTokensPerSecond !== null ? (
         // Right-aligned live throughput: during streaming, use the sliding-window estimate (~ prefix); otherwise,
         // use exact tok/s from the most recently completed model request (same source as the developer-tools TPS).
         // Hide the whole section when both are absent (the first request is unfinished and the sample span is too short).
@@ -657,6 +774,7 @@ function AssistantHistoryStatus({
 
 function ConversationWorkSegmentFlow({
   segment,
+  sourceCommandIds,
   context,
   onFork,
   onRetry,
@@ -669,10 +787,13 @@ function ConversationWorkSegmentFlow({
   assistantCodeCommentProjectionEnabled,
   canForkLatestAssistant,
   canRetryLatestAssistant,
+  highspeed,
+  highspeedMeta,
   shareSelectionToggle,
   shareSelectionRowId,
 }: {
   segment: ConversationTurnWorkSegment;
+  sourceCommandIds: readonly string[];
   context: ConversationRowRenderContext;
   onFork?: (target: ConversationRowTarget) => void;
   onRetry?: (target: ConversationRowTarget) => void;
@@ -685,6 +806,8 @@ function ConversationWorkSegmentFlow({
   assistantCodeCommentProjectionEnabled: boolean;
   canForkLatestAssistant: boolean;
   canRetryLatestAssistant: boolean;
+  highspeed: boolean;
+  highspeedMeta?: HighspeedMessageMeta;
   shareSelectionToggle?: ReactNode;
   shareSelectionRowId?: number;
 }) {
@@ -801,14 +924,28 @@ function ConversationWorkSegmentFlow({
         return (
           <Fragment key={itemKey}>
             {showHistoryStatus ? (
-              <AssistantHistoryStatus segment={segment} open={open} context={context} />
+              <AssistantHistoryStatus
+                segment={segment}
+                open={open}
+                context={context}
+                highspeed={highspeed}
+                highspeedMeta={highspeedMeta}
+                sourceCommandIds={sourceCommandIds}
+              />
             ) : null}
             {content}
           </Fragment>
         );
       })}
       {shouldShowHistoryStatus && firstAssistantFlowItemIndex < 0 ? (
-        <AssistantHistoryStatus segment={segment} open={open} context={context} />
+        <AssistantHistoryStatus
+          segment={segment}
+          open={open}
+          context={context}
+          highspeed={highspeed}
+          highspeedMeta={highspeedMeta}
+          sourceCommandIds={sourceCommandIds}
+        />
       ) : null}
     </Collapsible>
   );
@@ -826,6 +963,8 @@ function ConversationTurnFlow({
   assistantCodeCommentCards,
   assistantCodeCommentProjectionEnabled,
   assistantPreviewCardsAutoOpenKey,
+  highspeed,
+  highspeedMeta,
   shareSelectionToggle,
   shareSelectionRowId,
 }: {
@@ -840,6 +979,8 @@ function ConversationTurnFlow({
   assistantCodeCommentCards: AssistantCodeCommentCard[];
   assistantCodeCommentProjectionEnabled: boolean;
   assistantPreviewCardsAutoOpenKey?: string;
+  highspeed: boolean;
+  highspeedMeta?: HighspeedMessageMeta;
   shareSelectionToggle?: ReactNode;
   shareSelectionRowId?: number;
 }) {
@@ -858,6 +999,7 @@ function ConversationTurnFlow({
     latestAssistantTextRow: unit.latestAssistantTextRow,
     workspacePath: context.workspacePath,
     workspaceHomePath: context.workspaceHomePath,
+    compactForRemoteControl: context.compactForRemoteControl,
     fileChangesTarget: unit.header?.entityId
       ? { rowId: unit.header.rowId, entityId: unit.header.entityId }
       : null,
@@ -923,6 +1065,16 @@ function ConversationTurnFlow({
         <ConversationWorkSegmentFlow
           key={segment.key}
           segment={segment}
+          sourceCommandIds={[
+            ...segment.flowItems.flatMap((item) =>
+              item.kind === "userInput" && item.row.sourceCommandId
+                ? [item.row.sourceCommandId]
+                : [],
+            ),
+            ...(segment === workSegments[0] && unit.header?.sourceCommandId
+              ? [unit.header.sourceCommandId]
+              : []),
+          ]}
           context={context}
           onFork={onFork}
           onRetry={onRetry}
@@ -935,6 +1087,8 @@ function ConversationTurnFlow({
           assistantCodeCommentProjectionEnabled={assistantCodeCommentProjectionEnabled}
           canForkLatestAssistant={canForkLatestAssistant}
           canRetryLatestAssistant={canRetryLatestAssistant}
+          highspeed={highspeed}
+          highspeedMeta={highspeedMeta}
           shareSelectionToggle={shareSelectionToggle}
           shareSelectionRowId={shareSelectionRowId}
         />
@@ -1028,6 +1182,7 @@ function ConversationBackgroundResultWork({
     latestAssistantTextRow,
     workspacePath: context.workspacePath,
     workspaceHomePath: context.workspaceHomePath,
+    compactForRemoteControl: context.compactForRemoteControl,
     fileChangesTarget: unit.header?.entityId
       ? { rowId: unit.header.rowId, entityId: unit.header.entityId }
       : null,
@@ -1101,6 +1256,12 @@ function ConversationBackgroundResultWork({
           onOpenRun={openWorkflowRun}
           onOpenArtifact={openWorkflowArtifact}
           pendingQids={workflowPendingQids}
+          // Three states for the hole row (docs/dynamic-workflow/transcript-and-notifications.md,
+          // “The hole row's live state”): pass its hole map when the run is in the live projection
+          // (possibly empty = completed/no record); if absent, use undefined → neutral wording.
+          holes={
+            workflowRunSummary?.run === undefined ? undefined : (workflowRunSummary.run.holes ?? [])
+          }
         />
       ) : (
         <div className="flex w-full border-b border-[var(--color-border)]/50 pb-2">
@@ -1150,6 +1311,7 @@ function ConversationBackgroundResultWork({
 
 function ConversationTurnGroupImpl({
   unit,
+  nowMs = Date.now(),
   apiRetry = null,
   context,
   onFork,
@@ -1161,6 +1323,69 @@ function ConversationTurnGroupImpl({
   const isOfficeMode = useIsOfficeMode();
   const { intl } = useZCodeIntl();
   const visibleUserRows = useMemo(() => unit.visibleUserInputs, [unit.visibleUserInputs]);
+  useSyncExternalStore(subscribeHighspeedTurns, getHighspeedTurnVersion, getHighspeedTurnVersion);
+  const sourceCommandId = unit.header?.sourceCommandId ?? visibleUserRows[0]?.sourceCommandId;
+  const highspeedTurn = getHighspeedTurnByCommandId(sourceCommandId);
+  // Root cause: historical identification used to rely only on Renderer memory. After card expiry
+  // or cold restore, that record was unavailable, so accelerated output rendered as regular time
+  // even when the transcript persisted Highspeed metadata.
+  const isHighspeed = highspeedTurn !== null || visibleUserRows.some((row) => row.highspeed);
+  const highspeedExpiresAt = Math.max(
+    highspeedTurn?.card.expiresAt ?? Number.NEGATIVE_INFINITY,
+    ...visibleUserRows.flatMap((row) => (row.highspeed ? [row.highspeed.expiresAt] : [])),
+  );
+  // Root cause: the purple shimmer previously checked only whether the turn had used Highspeed.
+  // Metadata remains after card expiry, so a Tool still running in the fallback phase stayed purple
+  // forever. Running styles must also respect the card's validity period.
+  const showHighspeedAnimatedGradient = isHighspeed && unit.isRunning && highspeedExpiresAt > nowMs;
+  // Even if completed statistics arrive first through a replayable event, do not show them in the UI until the whole turn has stopped generating.
+  const highspeedMeta = unit.isRunning
+    ? undefined
+    : visibleUserRows.find((row) => row.highspeed)?.highspeed;
+  const highspeedShareTarget = useMemo(() => {
+    let target: { cardId: string; metrics: HighspeedShareMetrics } | null = null;
+    if (
+      highspeedTurn?.metrics &&
+      highspeedTurn.metricsPersistedAt !== undefined &&
+      highspeedTurn.metrics.regularTps > 0 &&
+      highspeedTurn.metrics.highspeedTps !== undefined &&
+      highspeedTurn.metrics.highspeedTps > 0
+    ) {
+      target = {
+        cardId: highspeedTurn.card.cardId,
+        metrics: aggregateHighspeedCardMetrics(highspeedTurn.card.cardId),
+      };
+    } else if (unit.highspeedOutputFooterTarget) {
+      target = unit.highspeedOutputFooterTarget;
+    } else if (
+      highspeedMeta?.outputTokens !== undefined &&
+      highspeedMeta.outputTokens > 0 &&
+      highspeedMeta.highspeedTps !== undefined &&
+      highspeedMeta.highspeedTps > 0 &&
+      highspeedMeta.regularTps !== undefined &&
+      highspeedMeta.regularTps > 0
+    ) {
+      // Root cause: after cold restore, Renderer memory is empty even though the transcript has
+      // persisted complete sharing metrics. Relying only on highspeedTurn would leave the visible
+      // historical Share button disabled forever.
+      target = {
+        cardId: highspeedMeta.cardId,
+        metrics: {
+          outputTokens: highspeedMeta.outputTokens,
+          // The sharing API does not require durationMs; if missing, fall back to 0 for local duration without blocking sharing.
+          durationMs: highspeedMeta.durationMs ?? 0,
+          regularTps: highspeedMeta.regularTps,
+          highspeedTps: highspeedMeta.highspeedTps,
+          ...(highspeedMeta.savedDurationMs !== undefined
+            ? { savedDurationMs: highspeedMeta.savedDurationMs }
+            : {}),
+        },
+      };
+    }
+    // Keep the card and historical marker, but do not offer sharing when speedup is at most 1.2x or complete duration data is missing.
+    return target && isHighspeedShareEligible(target.metrics) ? target : null;
+  }, [highspeedMeta, highspeedTurn, unit.highspeedOutputFooterTarget]);
+  const [highspeedShareDialogOpen, setHighspeedShareDialogOpen] = useState(false);
   const firstReasoningRowId = useMemo(
     () => unit.assistantWorkRows.find((row) => row.kind === "reasoning")?.rowId,
     [unit.assistantWorkRows],
@@ -1185,6 +1410,10 @@ function ConversationTurnGroupImpl({
   const assistantRawCopyText = useMemo(
     () => resolveAssistantCopyText(unit),
     [unit.assistantTextRows, unit.assistantWorkRows, unit.latestAssistantTextRow],
+  );
+  const assistantFileSummaryText = useMemo(
+    () => unit.assistantTextRows.map((row) => row.text).join("\n\n"),
+    [unit.assistantTextRows],
   );
   const assistantCopyText = useMemo(
     () =>
@@ -1225,14 +1454,22 @@ function ConversationTurnGroupImpl({
   const workflowRunByToolCallId = context.workflowRunByToolCallId;
   const workflowRunByRunId = context.workflowRunByRunId;
   const workflowGraphByToolCallId = context.workflowGraphByToolCallId;
+  const workflowFillGraphByRunId = context.workflowFillGraphByRunId;
   const workflowTurnDigests = useMemo(
     () =>
       resolveWorkflowTurnDigests(unit, {
         byToolCallId: workflowRunByToolCallId,
         byRunId: workflowRunByRunId,
         graphByToolCallId: workflowGraphByToolCallId,
+        fillGraphByRunId: workflowFillGraphByRunId,
       }),
-    [unit, workflowGraphByToolCallId, workflowRunByRunId, workflowRunByToolCallId],
+    [
+      unit,
+      workflowFillGraphByRunId,
+      workflowGraphByToolCallId,
+      workflowRunByRunId,
+      workflowRunByToolCallId,
+    ],
   );
   // Completion card: render at the end of the turn where the main agent consumes the completed notification.
   // Use the same gate (turn end); join only by byRunId because a notification turn has no CreateWorkflow row to join by toolCallId.
@@ -1251,6 +1488,11 @@ function ConversationTurnGroupImpl({
     !unit.timelineOnly &&
     latestAssistantTextRow?.state === "complete" &&
     assistantCopyText !== undefined;
+  // The runtime turnId differs from the product turn ID; correlate delivery using command attribution on the CLI row, including headers for trimmed input.
+  const deliverySourceCommandIds = [
+    ...(unit.header?.sourceCommandId ? [unit.header.sourceCommandId] : []),
+    ...unit.visibleUserInputs.flatMap((row) => (row.sourceCommandId ? [row.sourceCommandId] : [])),
+  ];
   const hasHookActions =
     // Hook actions share turn eligibility with copy/feedback/fork.
     // timelineOnly maintenance turns (compact/modelChange marker turns) must not show the icon even if they contain
@@ -1261,6 +1503,8 @@ function ConversationTurnGroupImpl({
   const canRetryLatestAssistant = latestAssistantTextRow?.actions?.canRetry === true;
   const canForkLatestAssistant = latestAssistantTextRow?.actions?.canFork === true;
   const backgroundResultTitle = resolveBackgroundResultTitle(unit);
+  const showHighspeedOutputFooter =
+    unit.showHighspeedOutputFooter === true && isHighspeed && !unit.timelineOnly && !unit.isRunning;
   const hasAssistantWorkContent = unit.timelineOnly
     ? unit.assistantWorkRows.length > 0
     : unit.assistantWorkRows.length > 0 ||
@@ -1271,6 +1515,7 @@ function ConversationTurnGroupImpl({
     Boolean(unit.header?.fileChanges) ||
     canRenderAssistantActions ||
     hasHookActions ||
+    showHighspeedOutputFooter ||
     workflowTurnDigests.length > 0;
   const editWorkspaceRewindAvailability = useMemo<EditWorkspaceRewindAvailability>(() => {
     const fileChanges = unit.header?.fileChanges;
@@ -1286,6 +1531,17 @@ function ConversationTurnGroupImpl({
   // Remove top padding from turns starting with a workflow notification card; the card uses only the normal flow spacing from the previous turn's pb-5.
   const startsWithWorkflowNotificationCard =
     backgroundResultTitle !== undefined && resolveWorkflowNotification(unit) !== undefined;
+  // The same rule applies to two other sources: a turn launched directly from the hub and a
+  // settings turn from “Configure” (docs/dynamic-workflow/presentation.md, “The run card”). Their
+  // user rows are canonical sentences for the model and are removed by conversationTurnRenderUnits,
+  // making the card or “Settings updated” row the first node in the turn.
+  //
+  // Root cause: `pt-14` reserves space for a user bubble, but the condition checked whether a turn
+  // existed rather than whether it had a bubble. Without a bubble, these 56px stacked with the
+  // previous turn's pb-5 and left about 76px of blank space above the row (especially noticeable
+  // because settings turns appear mid-conversation).
+  const startsWithoutUserBubble =
+    startsWithWorkflowNotificationCard || unit.workflowLaunch !== undefined;
 
   const shareSelectionRows = shareSelection
     ? unit.visibleUserInputs.filter(
@@ -1352,9 +1608,11 @@ function ConversationTurnGroupImpl({
     <section
       data-turn-id={unit.turnId}
       data-turn-key={unit.key}
+      data-highspeed-gradient={showHighspeedAnimatedGradient ? "true" : undefined}
       className={cn(
         "relative mx-auto flex w-full flex-col gap-5 px-4 @md/conversation:px-6 pb-5",
-        startsWithWorkflowNotificationCard ? "pt-0" : "pt-14",
+        startsWithoutUserBubble ? "pt-0" : "pt-14",
+        showHighspeedAnimatedGradient && "highspeed-animated-gradient-text",
       )}
     >
       {unit.leadingBoundaryRows.map((row) => (
@@ -1423,6 +1681,8 @@ function ConversationTurnGroupImpl({
               assistantCopyText={assistantCopyText}
               assistantCodeCommentCards={assistantCodeCommentCards}
               assistantCodeCommentProjectionEnabled={assistantCodeCommentProjectionEnabled}
+              highspeed={isHighspeed}
+              highspeedMeta={highspeedMeta}
               assistantPreviewCardsAutoOpenKey={
                 assistantPreviewPptxAutoOpenTarget?.turnId === unit.turnId
                   ? assistantPreviewPptxAutoOpenTarget.key
@@ -1446,13 +1706,17 @@ function ConversationTurnGroupImpl({
             digests={workflowTurnDigests}
             turnKey={unit.key}
           />
-          {/* CronCreate/CronUpdate tools remain ordinary tool rows. The success card summarizes the
+          {/* Fix reason: CronCreate/CronUpdate tools remain ordinary tool rows. The success card summarizes the
               result after the whole turn completes, so show it after the final assistant text only
               when the reply has ended. */}
           <CronAutomationTurnCards cards={cronAutomationTurnCards} context={context} />
           <OffPeakTurnCards cards={offPeakTurnCards} context={context} />
           {!isOfficeMode && unit.header?.fileChanges ? (
-            <ConversationFileSummaryPanel header={unit.header} context={context} />
+            <ConversationFileSummaryPanel
+              header={unit.header}
+              context={context}
+              assistantText={assistantFileSummaryText}
+            />
           ) : null}
           {unit.browserTurnEndRows.length > 0 ? (
             // The automatic screenshot represents the page's final state at the end of the turn. If placed inside assistant work,
@@ -1471,6 +1735,7 @@ function ConversationTurnGroupImpl({
               entityId={latestAssistantTextRow.entityId}
               text={assistantCopyText}
               createdAt={latestAssistantTextRow.createdAt}
+              compactForRemoteControl={context.compactForRemoteControl}
               feedback={readAssistantFeedback(latestAssistantTextRow)}
               sessionId={context.sessionId}
               onFork={canForkLatestAssistant ? onFork : undefined}
@@ -1478,12 +1743,50 @@ function ConversationTurnGroupImpl({
               onFeedbackChange={onFeedbackChange}
               hookInvocations={unit.hookInvocations}
               turnId={unit.turnId}
-              className="opacity-0 transition-opacity group-hover/assistant-turn:opacity-100 focus-within:opacity-100"
+              sourceCommandIds={deliverySourceCommandIds}
+              className={cn(
+                "flex items-center gap-1",
+                context.compactForRemoteControl
+                  ? "opacity-100"
+                  : "opacity-0 transition-opacity group-hover/assistant-turn:opacity-100 focus-within:opacity-100 has-[[data-bot-group-delivery]]:opacity-100",
+              )}
             />
-          ) : hasHookActions ? (
-            <MessageActions className="opacity-0 transition-opacity group-hover/assistant-turn:opacity-100 focus-within:opacity-100">
-              <ConversationHookDetailsAction rows={unit.hookInvocations} turnId={unit.turnId} />
+          ) : (hasHookActions || !unit.isRunning) && !canRenderAssistantActions ? (
+            // A conflict merge once attached this fallback to the Highspeed footer's else branch,
+            // duplicating the entry for regular replies and removing it from Highspeed turns with
+            // no body. It is mutually exclusive only with the regular action bar; the footer renders independently.
+            <MessageActions
+              className={cn(
+                context.compactForRemoteControl
+                  ? "opacity-100"
+                  : "opacity-0 transition-opacity group-hover/assistant-turn:opacity-100 focus-within:opacity-100 has-[[data-bot-group-delivery]]:opacity-100",
+              )}
+            >
+              {hasHookActions ? (
+                <ConversationHookDetailsAction rows={unit.hookInvocations} turnId={unit.turnId} />
+              ) : null}
+              <ConnectedBotGroupDeliveryAction
+                turnId={unit.turnId}
+                sourceCommandIds={deliverySourceCommandIds}
+              />
             </MessageActions>
+          ) : null}
+          {showHighspeedOutputFooter ? (
+            <HighspeedOutputFooter
+              generatedLabel={intl.formatMessage({ id: "chat.highspeed.generatedBy" })}
+              shareLabel={intl.formatMessage({ id: "chat.highspeed.viewAction" })}
+              shareAriaLabel={intl.formatMessage({ id: "chat.highspeed.share" })}
+              shareEnabled={highspeedShareTarget !== null}
+              sharePending={false}
+              onShare={() => setHighspeedShareDialogOpen(true)}
+            />
+          ) : null}
+          {highspeedShareTarget ? (
+            <HighspeedShareDialog
+              metrics={highspeedShareTarget.metrics}
+              open={highspeedShareDialogOpen}
+              onOpenChange={setHighspeedShareDialogOpen}
+            />
           ) : null}
           {unit.assistantTailRows.length > 0 ? (
             // turnTailBoundary was split from work history but still rendered inside the flow,
@@ -1508,8 +1811,13 @@ function ConversationTurnGroupImpl({
           assistantCopyText={assistantCopyText}
           assistantCodeCommentCards={assistantCodeCommentCards}
           assistantCodeCommentProjectionEnabled={assistantCodeCommentProjectionEnabled}
+          highspeed={isHighspeed}
+          highspeedMeta={highspeedMeta}
         />
       )}
+      {unit.topicPreparations?.length ? (
+        <BotTopicPreparation items={unit.topicPreparations} />
+      ) : null}
     </section>
   );
 }

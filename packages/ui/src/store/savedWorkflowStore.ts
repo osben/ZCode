@@ -11,6 +11,7 @@ import {
 } from "@zcode/shared";
 import type { IZCodeAgentService, ZCodeAgentSavedWorkflowTarget } from "@zcode/services";
 import { logger } from "@/logger.js";
+import { useWorkflowRunSavedStore } from "@/store/workflowRunSavedStore.js";
 
 /** Maximum runs to fetch per page to compute "last run"; a project rarely has more active workflows than this. */
 const SAVED_WORKFLOW_RUNS_PAGE = 50;
@@ -110,6 +111,10 @@ export const useSavedWorkflowStore = create<SavedWorkflowStoreState>((set) => ({
     }));
     const request = fetchWorkspace(target, agentService)
       .then(({ list, runs }) => {
+        // The hub just read from disk: invalidate the completion-card read cache for “which workflow this run was saved as” too
+        // （docs/dynamic-workflow/transcript-and-notifications.md「Which workflow a run is saved as」）。
+        // Delete, move, and metadata changes in the hub all finish with a refresh; this line propagates those actions to the cards in the conversation.
+        useWorkflowRunSavedStore.getState().invalidate();
         set((state) => ({
           byWorkspaceKey: {
             ...state.byWorkspaceKey,
@@ -156,4 +161,10 @@ export function selectSavedWorkflowState(
 ): SavedWorkflowWorkspaceState {
   if (!target) return EMPTY_SAVED_WORKFLOW_STATE;
   return state.byWorkspaceKey[savedWorkflowStoreKey(target)] ?? EMPTY_SAVED_WORKFLOW_STATE;
+}
+
+/** For tests: clear the in-flight deduplication table. */
+export function resetSavedWorkflowStoreForTests(): void {
+  inFlight.clear();
+  useSavedWorkflowStore.setState({ byWorkspaceKey: {} });
 }

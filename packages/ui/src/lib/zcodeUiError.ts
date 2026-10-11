@@ -1,5 +1,6 @@
-import type { ZCodeError, TraceId } from "@zcode/shared";
+import type { ZCodeError, ZCodeTaskMeta, TraceId } from "@zcode/shared";
 import { errorAttributionSchema, type ErrorAttribution } from "@zcode/shared/zcode-protocol-v4";
+import { resolveRequestVerificationBusinessCode } from "@/lib/providerBusinessError.js";
 
 export interface ZCodeUiError extends ZCodeError {
   attribution?: ErrorAttribution;
@@ -233,6 +234,10 @@ export function normalizeZCodeUiError(
     ["data", "zcode", "error", "underlyingErrorDetail"],
   ]);
   const providerCodeFromDetail = detailFromError?.match(/provider_code=([0-9]+)/)?.[1];
+  const verificationRejectedCode = resolveRequestVerificationBusinessCode(
+    codeFromError ?? providerCodeFromDetail,
+    primaryMessage,
+  );
   const traceIdFromError = readFirstStringFromPaths(error, [
     ["traceId"],
     ["data", "traceId"],
@@ -251,7 +256,12 @@ export function normalizeZCodeUiError(
     // Some upstream errors use only PROVIDER_BUSINESS_ERROR as the outer code,
     // while the actual GLM / zcode-plan business code is stored only in detail as provider_code=xxxx.
     // The business code must reach the shared error classification layer, or the ChatView quota banner will not match it.
-    code: providerCodeFromDetail ?? codeFromError ?? options.fallbackCode ?? "UNKNOWN",
+    code:
+      verificationRejectedCode ??
+      providerCodeFromDetail ??
+      codeFromError ??
+      options.fallbackCode ??
+      "UNKNOWN",
     message: primaryMessage,
     detail: detailMessage,
     ...(underlyingErrorMessage ? { underlyingErrorMessage } : {}),
@@ -260,4 +270,18 @@ export function normalizeZCodeUiError(
     taskId: options.taskId ?? taskIdFromError,
     ...(attribution ? { attribution } : {}),
   };
+}
+
+export function normalizeRestoredTaskFailureError(meta: ZCodeTaskMeta): ZCodeUiError | null {
+  if (!meta.lastError) {
+    return null;
+  }
+
+  // Bugfix: During mobile Web reconnection, only an error snapshot may be available, without the task_error from the disconnected period.
+  // Without a server-persisted lastError, do not invent fallback copy that suggests a cause that did not occur.
+  return normalizeZCodeUiError(meta.lastError, {
+    fallbackCode: meta.lastError.code,
+    traceId: meta.lastError.traceId ?? meta.traceId,
+    taskId: meta.lastError.taskId ?? meta.taskId,
+  });
 }

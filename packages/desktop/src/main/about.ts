@@ -1,4 +1,4 @@
-import type { BrowserWindow, MessageBoxReturnValue } from "electron";
+import type { AboutPanelOptionsOptions, BrowserWindow, MessageBoxReturnValue } from "electron";
 import { existsSync, readFileSync } from "node:fs";
 import { arch, hostname, platform, release, type, version as osVersion } from "node:os";
 import { join } from "node:path";
@@ -199,14 +199,14 @@ export function formatAboutDetail(snapshot: AboutSnapshot): string {
   ].join("\n");
 }
 
-function formatAboutCopyright(
+export function formatAboutCopyright(
   year = new Date().getFullYear(),
   locale: Locale = DEFAULT_LOCALE,
 ): string {
   return getAboutMessages(locale).copyright(year);
 }
 
-function formatAboutOptimizationLine(
+export function formatAboutOptimizationLine(
   snapshot: Pick<AboutSnapshot, "osPlatform" | "osArch">,
   locale: Locale = DEFAULT_LOCALE,
 ): string {
@@ -215,6 +215,24 @@ function formatAboutOptimizationLine(
   }
 
   return "";
+}
+
+export function createSystemAboutPanelOptions(
+  snapshot: AboutSnapshot,
+  year = new Date().getFullYear(),
+  locale: Locale = DEFAULT_LOCALE,
+): AboutPanelOptionsOptions {
+  const messages = getAboutMessages(locale);
+  const credits = formatAboutOptimizationLine(snapshot, locale);
+  return {
+    applicationName: ABOUT_APPLICATION_NAME,
+    applicationVersion: `${messages.versionLabel} ${snapshot.appVersion}`,
+    copyright: formatAboutCopyright(year, locale),
+    // Design rationale: the macOS About Panel credits area is the closest match to where
+    // the reference design puts the hardware-optimization note. Let the system-level panel
+    // render it so a custom window does not clash with the native About dialog.
+    ...(credits ? { credits } : {}),
+  };
 }
 
 function resolveAboutIconPath(isPackaged: boolean): string {

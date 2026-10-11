@@ -10,9 +10,9 @@
 //
 
 /** Tolerance for deciding whether the view is at the bottom; smaller distances count as at bottom. Covers subpixel scrolling and last-row padding. */
-const BOTTOM_ANCHOR_EPSILON_PX = 48;
+export const BOTTOM_ANCHOR_EPSILON_PX = 48;
 
-interface TimelineScrollMetrics {
+export interface TimelineScrollMetrics {
   /** Scroll container scrollTop. */
   scrollTop: number;
   /** Scroll container viewport height (clientHeight). */
@@ -34,14 +34,14 @@ export function isAtBottom(
 }
 
 /** Following state after a scroll event. Rule: follow iff the final position is at the bottom. Covers user scrolling up (away from bottom → stop following), scrolling back (at bottom → resume), and programmatic pinning (at bottom → keep following) without distinguishing their source. */
-function nextFollowingAfterScroll(
+export function nextFollowingAfterScroll(
   metrics: TimelineScrollMetrics,
   epsilonPx: number = BOTTOM_ANCHOR_EPSILON_PX,
 ): boolean {
   return isAtBottom(metrics, epsilonPx);
 }
 
-type TimelineScrollEventSource = "user" | "programmatic" | "layout";
+export type TimelineScrollEventSource = "user" | "programmatic" | "layout";
 
 /** Scroll-ownership decision after a scroll event. Layout/programmatic scrolls must not change user intent; only user input decides whether to follow based on the final position. */
 export function resolveFollowingAfterScroll(input: {
@@ -77,7 +77,7 @@ export function shouldAdjustVirtualizerForItemSizeChange(input: {
 }
 
 /** Tolerance for unobserved scrolling: a scrollTop decrease smaller than this is treated as subpixel jitter, not user scrolling upward. */
-const UNOBSERVED_SCROLL_EPSILON_PX = 2;
+export const UNOBSERVED_SCROLL_EPSILON_PX = 2;
 
 export type TimelineUserScrollIntent = "none" | "awayFromBottom" | "towardBottom" | "unknown";
 
@@ -189,7 +189,7 @@ export function prependVirtualAnchorAdjustment(
   return next.start - previous.offsetTop - currentScrollTop;
 }
 
-interface PrependAnchorInput {
+export interface PrependAnchorInput {
   /** First row rowId from the previous commit (null means there were no rows yet). */
   prevFirstRowId: number | null;
   /** First row rowId in this commit (null means rows were cleared). */
@@ -211,10 +211,10 @@ export function prependScrollAdjustment(input: PrependAnchorInput): number | nul
 }
 
 /** Top trigger threshold: within this distance of the top, treat the view as at the top and fetch an earlier window. */
-const LOAD_OLDER_TRIGGER_PX = 64;
+export const LOAD_OLDER_TRIGGER_PX = 64;
 
 /** Prefetch two viewports ahead so network and rendering finish before the user reaches the window boundary. */
-const LOAD_OLDER_PREFETCH_VIEWPORTS = 2;
+export const LOAD_OLDER_PREFETCH_VIEWPORTS = 2;
 
 export function historyPrefetchTriggerPx(viewportHeight: number): number {
   if (!Number.isFinite(viewportHeight) || viewportHeight <= 0) {

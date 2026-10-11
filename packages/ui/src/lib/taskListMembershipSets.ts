@@ -6,18 +6,18 @@ import type { IZCodeTaskService } from "@zcode/services";
 import type { ZCodeTaskMeta } from "@zcode/shared";
 import { buildTaskEntityKey } from "@/lib/taskQueryCache.js";
 
-interface TaskListMembershipScope {
+export interface TaskListMembershipScope {
   workspacePath: string;
   workspaceIdentity?: string;
 }
 
-type TaskListMembershipService = Pick<
+export type TaskListMembershipService = Pick<
   IZCodeTaskService,
   "listPinnedTaskIds" | "listArchivedTasks" | "listTasks" | "listPinnedTasks"
 > &
   Partial<Pick<IZCodeTaskService, "listDeletedTaskIds">>;
 
-interface TaskListMembershipSets {
+export interface TaskListMembershipSets {
   /** Union of complete task rows from the three persisted tasks-index partitions (active/pinned/archived). */
   taskIndexItems: ZCodeTaskMeta[];
   pinnedIds: Set<string>;
@@ -100,8 +100,8 @@ async function holdTaskListMembershipRefreshResultForE2E(): Promise<void> {
   await hold.released;
 }
 
-/** Remote shard ownership lives in each endpoint’s tasks-index; fetch by endpoint shard and merge. */
-interface TaskListMembershipEndpoint {
+/** M5 ③: Remote shard ownership is recorded in each endpoint’s tasks-index; fetch by endpoint and merge the results. */
+export interface TaskListMembershipEndpoint {
   service: TaskListMembershipService;
   scopes: TaskListMembershipScope[];
 }
@@ -320,12 +320,12 @@ export function fetchTaskListMembershipSetsForEndpointsCached(params: {
 }
 
 /** Clear the membership cache for tests and error recovery. */
-function clearTaskListMembershipCache(): void {
+export function clearTaskListMembershipCache(): void {
   membershipPromiseByCacheKey.clear();
 }
 
 /** Fetch memberships concurrently by endpoint and compute their union (taskId is a sessionId and cannot collide across endpoints). */
-async function fetchTaskListMembershipSetsForEndpoints(
+export async function fetchTaskListMembershipSetsForEndpoints(
   endpoints: TaskListMembershipEndpoint[],
 ): Promise<TaskListMembershipSets> {
   const results = await Promise.all(

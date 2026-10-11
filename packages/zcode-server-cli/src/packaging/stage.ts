@@ -14,7 +14,7 @@ const NODE_BUILTIN_MODULES = new Set(builtinModules);
  * The result is only syntactically normalized (scoped packages use the first two segments); callers intersect it with
  * workspace node_modules to decide whether a reference is a real npm package. Node built-ins are filtered here.
  */
-function collectBareModuleSpecifiers(source: string): Set<string> {
+export function collectBareModuleSpecifiers(source: string): Set<string> {
   const names = new Set<string>();
   const specifierPattern =
     /(?:\bfrom\s*|\bimport\s*\(\s*|\brequire\s*\(\s*|\bimport\s+)["']([^"'\n]+)["']/g;
@@ -65,7 +65,7 @@ async function findDependencyDir(fromDir: string, name: string): Promise<string 
  * Return package name → real directory. If the same name resolves to different real directories, throw an error: a flat release layout cannot contain two versions,
  * and silently choosing one would introduce version drift into the package. Skip missing optional dependencies.
  */
-async function resolveProductionPackageClosure(
+export async function resolveProductionPackageClosure(
   entryPackageNames: readonly string[],
   nodeModulesDir: string,
   workspacePackageDirs: ReadonlyMap<string, string> = new Map(),
@@ -126,9 +126,10 @@ async function resolveProductionPackageClosure(
  * Leaving build/ in a cross-platform package makes the target machine load the wrong pty.node architecture first and crash immediately.
  * Also exclude prebuilds for other platforms to keep the release package small.
  */
-function isNodePtyRuntimePath(relativePath: string, target: ServerTarget): boolean {
+export function isNodePtyRuntimePath(relativePath: string, target: ServerTarget): boolean {
   const normalized = relativePath.split(sep).join("/");
   if (normalized === "" || normalized === "package.json") return true;
+  // Fix: node-pty's runtime allowlist used to omit license files inside the package, leaving the release with code but no notices.
   if (/^(?:LICENSE|NOTICE|COPYING)(?:[._-].*)?$/iu.test(normalized)) return true;
   if (normalized === "lib" || normalized.startsWith("lib/")) return true;
   if (normalized === "typings" || normalized.startsWith("typings/")) return true;
@@ -147,7 +148,7 @@ function isTargetSpecificPackage(packageName: string, target: ServerTarget): boo
   return packageName === `@mbears/opentui-core-${target}`;
 }
 
-interface StageOptions {
+export interface StageOptions {
   target: ServerTarget;
   appVersion: string;
   /** tsup output directory (server-cli.js / server-core.js). */
@@ -156,7 +157,7 @@ interface StageOptions {
   agentBundlePath: string;
   /** Prepared Node binary for the target platform. */
   nodeBinaryPath: string;
-  /** Passed from the build entry point after validation by the single compliance owner; component assembly must not construct its own license list. */
+  /** Read from the single compliance owner (scripts/third-party-notices.mjs) by the build entry point; component assembly must not construct its own license list. */
   notices: { thirdParty: string; node: string; nodeSource: string };
   /** Source node_modules used to resolve and copy the dependency closure. */
   workspaceNodeModulesDir: string;
@@ -172,7 +173,7 @@ interface StageOptions {
   archive?: boolean;
 }
 
-interface StagedRelease {
+export interface StagedRelease {
   releaseDir: string;
   archivePath: string | null;
   componentArchivePaths: string[];
@@ -391,6 +392,7 @@ export async function stageRelease(options: StageOptions): Promise<StagedRelease
   await rm(join(outputRoot, ".components"), { force: true, recursive: true });
   await mkdir(join(releaseDir, "bin"), { recursive: true });
   await mkdir(runtimeDir, { recursive: true });
+  // Every independently downloadable component must carry the applicable notices, written before component hashes are computed.
   await writeFile(join(runtimeDir, "THIRD-PARTY-NOTICES.md"), options.notices.thirdParty);
   await writeFile(join(runtimeDir, "LICENSE.node.txt"), options.notices.node);
   await writeFile(join(runtimeDir, "NODE-SOURCES.json"), options.notices.nodeSource);

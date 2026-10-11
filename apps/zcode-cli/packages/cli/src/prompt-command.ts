@@ -25,6 +25,13 @@ import {
   runCliCleanupWithTimeout,
 } from "./shutdown.js";
 import { runSkillsCommand } from "./skills-command.js";
+import {
+  DEFAULT_CLI_WORKFLOW_MODE,
+  isWorkflowModeEnabled,
+  resolveWorkflowModeRuntimeConfig,
+  WORKFLOW_DISABLED_NOTICE,
+} from "./workflow-mode.js";
+import type { DynamicWorkflowMode } from "@zcode/shared";
 import type { CommandCenterApp, SlashCommand } from "./command-center.js";
 import type {
   CliPermissionMode,
@@ -70,6 +77,7 @@ export const runPrompt = async (
   toolDisallowlist?: readonly string[],
   forceMcs = false,
   presentationSurface: PresentationSurface = "terminal",
+  workflowMode: DynamicWorkflowMode = DEFAULT_CLI_WORKFLOW_MODE,
 ): Promise<number> => {
   if (prompt.trim().length === 0) {
     ctx.stderr.write(`${EMPTY_PROMPT_ERROR}\n`);
@@ -79,9 +87,23 @@ export const runPrompt = async (
   const slashCommand = parseSlashCommand(prompt);
   if (slashCommand?.type === "known" && slashCommand.name === "help") {
     ctx.stdout.write(
-      `${formatSlashCommandHelp(slashCommand.args, await listCustomCommandsForPrompt(deps))}\n`,
+      `${formatSlashCommandHelp(slashCommand.args, await listCustomCommandsForPrompt(deps), {
+        workflowMode,
+      })}\n`,
     );
     return 0;
+  }
+  // With workflows disabled, `/workflow` is not expanded (as determined by the builtin resolver).
+  // If the app were created and submitted normally, the original text would be sent to the model and
+  // exit "successfully," which scripts could not detect. Fail before creating the app, using the same
+  // local message as the TUI.
+  if (
+    slashCommand?.type === "known" &&
+    slashCommand.name === "workflow" &&
+    !isWorkflowModeEnabled(workflowMode)
+  ) {
+    ctx.stderr.write(`Error: ${WORKFLOW_DISABLED_NOTICE}\n`);
+    return 1;
   }
   if (slashCommand?.type === "known" && slashCommand.name === "skill" && !slashCommand.skillName) {
     return await runSkillsCommand(ctx, options, deps, []);
@@ -210,6 +232,14 @@ export const runPrompt = async (
             },
           },
     );
+    const createProviderEndpointRoutingPort =
+      deps.createProviderEndpointRoutingPort ??
+      bootstrapModule?.createDefaultProviderEndpointRoutingPort;
+    const providerEndpointRoutingPort = createProviderEndpointRoutingPort?.({
+      appVersion: version,
+      env,
+      workingDirectory,
+    });
     browserRuntime = createCliHeadlessBrowserRuntime(options, deps);
     app = await createApp({
       browserControlPort: browserRuntime?.browserControlPort,
@@ -220,6 +250,7 @@ export const runPrompt = async (
       // by tool name and delegates all other tools to the same deny broker, preserving
       // their exact behavior. See the comment in headless-workflow.ts.
       permissionBroker: createHeadlessPermissionBroker(),
+      ...(providerEndpointRoutingPort ? { providerEndpointRoutingPort } : {}),
       providerRegistry: providerRegistryRuntime.runtime.registryService,
       configuredDefaultModelSelection: providerRegistryRuntime.configuredDefaultModelSelection,
       ...(providerRegistryRuntime.providerRuntimeHeadersPort
@@ -232,8 +263,7 @@ export const runPrompt = async (
         ...(mode ? { mode } : {}),
         ...(toolDisallowlist ? { toolDisallowlist } : {}),
         ...(forceMcs ? { midConversationSystem: { mode: "force" as const } } : {}),
-        // Headless is an explicit switch for this invocation; do not change core defaults or existing TUI/stdio policy.
-        dynamicWorkflowEnabled: options.enableWorkflow === true,
+        ...resolveWorkflowModeRuntimeConfig(workflowMode),
         memory: { extractionEnabled: options.memoryBench === true },
         modelStreaming: "on",
         presentationSurface,
@@ -283,6 +313,7 @@ export const runPrompt = async (
         traceId,
         abortController.signal,
         deps,
+        workflowMode,
       );
     }
 
@@ -512,6 +543,7 @@ async function runPromptCommandCenterCommand(
   traceId: string | undefined,
   abortSignal: AbortSignal,
   deps: RunDependencies,
+  workflowMode: DynamicWorkflowMode,
 ): Promise<number> {
   const commandCenter = createCommandCenter({
     getApp: async () => app as unknown as CommandCenterApp,
@@ -522,6 +554,7 @@ async function runPromptCommandCenterCommand(
       await app.recordInputHistory?.(input, kind);
     },
     resumeApp: async () => app as unknown as CommandCenterApp,
+    workflowMode,
     setLocale: async (locale) => {
       if (!app.setLocale) {
         throw new Error("Locale switching is not available in this client.");

@@ -1,9 +1,8 @@
-// Persistent description for AmendWorkflow.
+// Persistent description for AmendWorkflow (docs/dynamic-workflow/launch.md, “What the model is told”).
 //
-// Cache matching, the three fields where omission means reuse, the `path` and `script` inputs, and when the confirmation dialog
-// appears are documented in the `dynamic-workflows` skill's “Tool reference,” which the skill gate ensures has been read. Keep only
-// routing guidance here—when to revise instead of recreate, and not to stop first or wait—because it determines whether to call this
-// tool and must be available before the skill is loaded.
+// Shortened starting 2026-09-21: cache matching, the three fields inherited when omitted, the `path` and `script` inputs, and when to show
+// the confirmation dialog are documented in the `Tool reference` section of the `dynamic-workflows` skill, which the skill gate ensures the model has read. Keep only
+// routing here—when to amend instead of recreate, and not to stop or wait—because it determines whether to call this tool and must be read before the skill loads.
 
 import { DYNAMIC_WORKFLOW_SKILL_NAME } from "@zcode/contracts";
 

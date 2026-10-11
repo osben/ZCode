@@ -2,7 +2,9 @@ import type { WorkflowRunState } from "@zcode/shared/zcode-protocol-v4";
 import type { WorkflowCausalityGraphData } from "@/components/workflow-graph/types.js";
 
 /**
- * Cache the result from `timeline-model.ts`; build it once for each (graph, run) pair.
+ * Build the timeline model only once per (graph, run) pair (docs/dynamic-workflow/presentation.md, “The timeline
+ * model,” Cost section). Keep this separate from `timeline-model.ts`: that file contains the model itself, while this file only holds its
+ * cache, and the oxlint max-lines budget there is already tight.
  *
  * Why **object identity** is a sound key: both inputs are immutable protocol objects—the graph is the validated `causalityGraph`
  * in a row's display payload and the run is an entry in the `workflowRuns` projection. Projection reduction and key-level

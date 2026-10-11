@@ -60,6 +60,7 @@ export const activeWorkSummarySchema = z.object({
     "turnSteer",
   ]),
   foregroundExecutionId: z.string().min(1).optional(),
+  sourceCommandId: z.string().min(1).optional(),
   startedAt: timestampSchema,
 });
 export type ActiveWorkSummary = z.infer<typeof activeWorkSummarySchema>;
@@ -502,6 +503,8 @@ export const conversationSnapshotSchema = z.object({
   // Older snapshots/senders omit it, so it parses as null and remains compatible (per the frozen-schema rule).
   // The projection sets it to null when pendingCount === 0, hiding the banner.
   workspaceHookAdmission: workspaceHookAdmissionStateSchema.nullable().default(null),
+  // (2026-09-12): the former additive field pluginUiSurfaces was removed; plugin panel widgetState now
+  // lives only in the host renderer's memory.
   // Section B
   rows: rowsWindowSchema,
 });

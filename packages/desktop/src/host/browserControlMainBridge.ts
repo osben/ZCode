@@ -15,7 +15,7 @@ import type {
  * Designed with an injectable postMessage and no global dependencies for unit testing (with a fake parentPort).
  */
 
-interface BrowserExecuteRequestMessage {
+export interface BrowserExecuteRequestMessage {
   type: typeof HostResponseTypes.BrowserExecuteRequest;
   requestId: string;
   browserId: string;
@@ -31,7 +31,7 @@ interface BrowserExecuteRequestMessage {
   command: BrowserCommand;
 }
 
-interface BrowserExecuteResultMessage {
+export interface BrowserExecuteResultMessage {
   requestId: string;
   result: BrowserCommandResult;
 }
@@ -92,7 +92,7 @@ function mayHaveSideEffects(command: BrowserCommand): boolean {
   ].includes(command.method);
 }
 
-interface BrowserControlMainBridge {
+export interface BrowserControlMainBridge {
   list(): Promise<BrowserBackendDescriptor[]>;
   execute(input: {
     requestId?: string;

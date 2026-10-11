@@ -10,7 +10,7 @@ import { WORKFLOW_RUNS_LIMITS } from "./workflow-runs.js";
 
 /**
  * Command payload. Both settings follow the tool's three-state rule: omitted = keep current, `null` =
- * reset to the default (session model / machine limit), value = set. The GUI sends only fields changed by
+ * reset to the default (session model / default concurrency), value = set. The GUI sends only fields changed by
  * the user. Intentionally omits baseRevision, like cancelBackgroundWork and resumeWorkflowRun; the
  * workflowRuns surface has no revision.
  */
@@ -24,7 +24,7 @@ export const amendWorkflowRunSettingsPayloadSchema = z.object({
     .max(WORKFLOW_RUNS_LIMITS.maxSubagentModelLength)
     .nullable()
     .optional(),
-  /** Concurrent-subagent limit; `null` removes this run's override and returns to the machine limit. The agent clamps it to `[1, ceiling]`. */
+  /** Concurrent-subagent limit; `null` removes this run's override and returns to the default concurrency. No upper bound: values above the default are allowed. */
   maxConcurrency: z.number().int().min(1).nullable().optional(),
 });
 export type AmendWorkflowRunSettingsPayload = z.infer<typeof amendWorkflowRunSettingsPayloadSchema>;

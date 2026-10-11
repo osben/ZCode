@@ -35,7 +35,11 @@ export function uuidv7(now: number = Date.now()): string {
 /** Stable clientId for the host services process; pendingCommands display and the idempotency table use it to distinguish submitters. */
 const hostV4ClientId = `host-services-${uuidv7()}`;
 
-interface CreateHostCommandEnvelopeInput<T extends CommandType> {
+export function getHostV4ClientId(): string {
+  return hostV4ClientId;
+}
+
+export interface CreateHostCommandEnvelopeInput<T extends CommandType> {
   type: T;
   payload: CommandPayloadMap[T];
   /** Null when calling createSession. */
@@ -58,7 +62,9 @@ export function createHostCommandEnvelope<T extends CommandType>(
   input: CreateHostCommandEnvelopeInput<T>,
 ): CommandEnvelope {
   if (COMMANDS_REQUIRING_BASE_REVISION.has(input.type) && input.baseRevision === undefined) {
-    throw new Error(`command ${input.type} 是 CAS 命令，必须携带 baseRevision`);
+    throw new Error(
+      `command ${input.type} 是 CAS 命令，必须携带 baseRevision（10-protocol-spec §6.4）`,
+    );
   }
   if (ROW_TARGETING_COMMANDS.has(input.type) && !input.baseLogEpoch) {
     throw new Error(`command ${input.type} 是 row target 命令，必须携带 baseLogEpoch`);
@@ -76,7 +82,7 @@ export function createHostCommandEnvelope<T extends CommandType>(
 }
 
 /** A v4 command rejected by the server (rejected/stale/failed). Callers branch on code, not error text. */
-class ZCodeV4CommandRejectedError extends Error {
+export class ZCodeV4CommandRejectedError extends Error {
   readonly code = "ZCODE_V4_COMMAND_REJECTED";
 
   constructor(

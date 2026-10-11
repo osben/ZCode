@@ -24,7 +24,10 @@ export const NODE_REPL_DEFAULT_TIMEOUT_MS = 60_000;
 // provide that path, and the host can inject it directly. Both tools had zero observed
 // calls. When the host protocol changes, update serverInfo so the host can identify which
 // generation of the tool surface it connected to.
-export const NODE_REPL_SERVER_VERSION = "0.6.0";
+// Upgrade to 0.6.1: the browser bridge no longer rejects subagents based on runtime_scope, so they
+// can use Browser Use too. Existing installations must switch to the new cache directory to get
+// the updated server.js.
+export const NODE_REPL_SERVER_VERSION = "0.6.1";
 
 // node_repl provides general-purpose JS, but the old descriptions did not define a model
 // routing boundary, so non-browser tasks could also select this high-privilege tool.

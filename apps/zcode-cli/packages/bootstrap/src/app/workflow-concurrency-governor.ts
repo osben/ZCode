@@ -24,7 +24,10 @@ import {
   type ConcurrencyControllerSnapshot,
   type ConcurrencyThrottleReason,
 } from "@zcode/dynamic-workflow";
-import { resolveWorkflowConcurrencyCeiling } from "./workflow-concurrency-ceiling.js";
+import {
+  resolveWorkflowDefaultConcurrency,
+  WORKFLOW_CONCURRENCY_AUTO_GROWTH_FACTOR,
+} from "./workflow-default-concurrency.js";
 
 /** Provider key: the most specific quota key. */
 export function workflowConcurrencyKey(model: ModelRequestTarget): string {
@@ -39,13 +42,19 @@ export function workflowConcurrencyKey(model: ModelRequestTarget): string {
  *   the fast path to jump ahead of other runs.
  * - `admit`: queue (rotating across runs) until `inFlight < cap` and Retry-After cooldown has expired; aborting `signal` removes the request
  *   from the queue and rejects it with `signal.reason`.
- * - `subscribe`: cap changes for any key touched by this run. Fan out only to runs that **currently have an in-flight or queued request** on that key.
- *   run。
+ * - `subscribe`: cap changes for any key touched by this run. Fan out only to runs that **currently have an in-flight or queued request** on that key
+ *   (decision 8).
+ * - `setRunBound` / `clearRunBound`: this run's own concurrency bound (registered at launch, overwritten on each retune, cleared when the launch
+ *   settles). It raises the growth limit of the keys this run **has used**: `max(2D, the largest bound registered by those runs)`
+ *   (docs/dynamic-workflow/concurrency.md "The governor")—only if the user tunes a run to 40 can the bucket's cap climb
+ *   to 40; otherwise most of the 40 subagents would sit in "waiting for a slot."
  */
 export interface WorkflowConcurrencyPort {
   tryAdmit(runId: string, key: string): ModelRequestAdmissionTicket | undefined;
   admit(runId: string, key: string, signal: AbortSignal): Promise<ModelRequestAdmissionTicket>;
   subscribe(runId: string, listener: (change: ConcurrencyChange) => void): () => void;
+  setRunBound(runId: string, bound: number): void;
+  clearRunBound(runId: string): void;
 }
 
 interface WorkflowConcurrencyGovernor extends WorkflowConcurrencyPort {
@@ -59,8 +68,8 @@ interface WorkflowConcurrencyGovernor extends WorkflowConcurrencyPort {
 }
 
 interface WorkflowConcurrencyGovernorOptions {
-  /** Ceiling: initial value and upper bound when a bucket is created; computed once at process startup. */
-  ceiling: number;
+  /** Default concurrency D: initial value when a bucket is created and the idle reset point; auto-grows to `2 × D`. Computed once at process startup. */
+  defaultConcurrency: number;
   /** Clock (injectable). */
   now?: () => number;
   /** Timer (injectable): wake waiters when cooldown expires. Returns a cancel function. */
@@ -96,6 +105,11 @@ interface Bucket {
   readonly queues: Map<string, Waiter[]>;
   /** Rotation cursor: the last run granted a slot; the next search starts after it. */
   lastGrantedRun?: string;
+  /**
+   * Runs that have requested admission on this key (except the observer). The growth limit considers only bounds they registered:
+   * a large run on a different model must not raise this key. A run is removed from this set when it clears its bound.
+   */
+  readonly runs: Set<string>;
   cancelCooldownWake?: () => void;
 }
 
@@ -109,7 +123,7 @@ const defaultSchedule = (callback: () => void, delayMs: number): (() => void) =>
   return () => clearTimeout(timer);
 };
 
-function createWorkflowConcurrencyGovernor(
+export function createWorkflowConcurrencyGovernor(
   options: WorkflowConcurrencyGovernorOptions,
 ): WorkflowConcurrencyGovernor {
   const now = options.now ?? Date.now;
@@ -117,16 +131,20 @@ function createWorkflowConcurrencyGovernor(
   const buckets = new Map<string, Bucket>();
   /** Run-level subscription (not per key); fanout filters it by each bucket's engaged set. */
   const listeners = new Map<string, Set<(change: ConcurrencyChange) => void>>();
+  const baseGrowthLimit = WORKFLOW_CONCURRENCY_AUTO_GROWTH_FACTOR * options.defaultConcurrency;
+  /** Own bounds registered by in-flight runs (setRunBound / clearRunBound). */
+  const runBounds = new Map<string, number>();
 
   const bucketFor = (key: string): Bucket => {
     let bucket = buckets.get(key);
     if (bucket === undefined) {
-      // Create buckets lazily with the ceiling as the initial value; runs starting/ending do not reset them (only five idle minutes do).
+      // Create buckets lazily with the default concurrency as the initial value; runs starting/ending do not reset them (only five idle minutes do, decisions 19/20).
       bucket = {
         key,
-        controller: new ConcurrencyController(key, options.ceiling),
+        controller: new ConcurrencyController(key, options.defaultConcurrency, baseGrowthLimit),
         inFlightByRun: new Map(),
         queues: new Map(),
+        runs: new Set(),
       };
       buckets.set(key, bucket);
     }
@@ -139,17 +157,59 @@ function createWorkflowConcurrencyGovernor(
     return total;
   };
 
-  /** Fan out only to runs that currently have an in-flight or queued request on this key. */
-  const fanOut = (bucket: Bucket, changes: ConcurrencyChange[]): void => {
+  /**
+   * Fan out only to runs that currently have an in-flight or queued request on this key (decision 8); `alsoTo` adds another set of
+   * recipients (bound-driven changes must also reach runs registered on this key; see refreshGrowthLimit).
+   */
+  const fanOut = (
+    bucket: Bucket,
+    changes: ConcurrencyChange[],
+    alsoTo?: ReadonlySet<string>,
+  ): void => {
     if (changes.length === 0) return;
     for (const [runId, set] of listeners) {
       const engaged =
-        (bucket.inFlightByRun.get(runId) ?? 0) > 0 || (bucket.queues.get(runId)?.length ?? 0) > 0;
+        (bucket.inFlightByRun.get(runId) ?? 0) > 0 ||
+        (bucket.queues.get(runId)?.length ?? 0) > 0 ||
+        alsoTo?.has(runId) === true;
       if (!engaged) continue;
       for (const change of changes) {
         for (const listener of set) listener(change);
       }
     }
+  };
+
+  /**
+   * Recompute a bucket's growth limit: `max(2D, the largest bound registered by runs that used it)`, and at the same moment try to **seed** up to that
+   * largest bound (docs/dynamic-workflow/concurrency.md "Seeding"): if the user tunes a run to 32, the cap becomes 32 on the spot
+   * rather than climbing one step every four successes. When the bound drops below the cap, the controller lowers the cap at once (`limit_lowered`);
+   * if seeding was rejected within the last five minutes, the controller refuses it (`seeded` is not emitted) and the cap climbs as usual.
+   *
+   * Both kinds of changes originate from a run's bound rather than a request, so fanout must reach not only currently engaged runs but also
+   * every run registered on this key—at the moment of a retune, the newly raised run likely has no requests in flight.
+   */
+  const refreshGrowthLimit = (bucket: Bucket): void => {
+    let largestBound: number | undefined;
+    for (const runId of bucket.runs) {
+      const bound = runBounds.get(runId);
+      if (bound !== undefined && (largestBound === undefined || bound > largestBound)) {
+        largestBound = bound;
+      }
+    }
+    const limit = Math.max(baseGrowthLimit, largestBound ?? 0);
+    const changes =
+      limit === bucket.controller.snapshot().growthLimit
+        ? []
+        : bucket.controller.setGrowthLimit(now(), limit);
+    if (largestBound !== undefined) changes.push(...bucket.controller.seed(now(), largestBound));
+    fanOut(bucket, changes, bucket.runs);
+  };
+
+  /** A run's first admission request on this key: record it so its registered bound counts toward this bucket from then on. */
+  const noteRunUsed = (bucket: Bucket, runId: string): void => {
+    if (bucket.runs.has(runId)) return;
+    bucket.runs.add(runId);
+    if (runBounds.has(runId)) refreshGrowthLimit(bucket);
   };
 
   const bumpInFlight = (bucket: Bucket, runId: string, delta: number): void => {
@@ -163,11 +223,7 @@ function createWorkflowConcurrencyGovernor(
    * sees no terminal event, treat it as `ended`. Publish / release after settlement are no-ops because the runner may still send
    * a fallback event in rare paths after the attempt has ended.
    */
-  const mintTicket = (
-    bucket: Bucket,
-    runId: string,
-    epoch: number,
-  ): ModelRequestAdmissionTicket => {
+  const mintTicket = (bucket: Bucket, runId: string, epoch: number): ModelRequestAdmissionTicket => {
     let settled = false;
     const settle = (signal: (at: number) => ConcurrencyChange[]): void => {
       if (settled) return;
@@ -245,9 +301,7 @@ function createWorkflowConcurrencyGovernor(
 
   /** Select the next run with waiters using round-robin order. */
   const nextRunWithWaiters = (bucket: Bucket): string | undefined => {
-    const runs = [...bucket.queues.keys()].filter(
-      (runId) => (bucket.queues.get(runId)?.length ?? 0) > 0,
-    );
+    const runs = [...bucket.queues.keys()].filter((runId) => (bucket.queues.get(runId)?.length ?? 0) > 0);
     if (runs.length === 0) return undefined;
     const last = bucket.lastGrantedRun;
     const lastIndex = last === undefined ? -1 : runs.indexOf(last);
@@ -287,6 +341,7 @@ function createWorkflowConcurrencyGovernor(
 
   const tryAdmit: WorkflowConcurrencyPort["tryAdmit"] = (runId, key) => {
     const bucket = bucketFor(key);
+    noteRunUsed(bucket, runId);
     fanOut(bucket, bucket.controller.observe(now()));
     if (waiterCount(bucket) > 0 || !bucket.controller.canAdmit(now())) return undefined;
     return grant(bucket, runId);
@@ -295,6 +350,7 @@ function createWorkflowConcurrencyGovernor(
   const admit: WorkflowConcurrencyPort["admit"] = (runId, key, signal) => {
     const bucket = bucketFor(key);
     if (signal.aborted) return Promise.reject(abortedError(signal));
+    noteRunUsed(bucket, runId);
     return new Promise<ModelRequestAdmissionTicket>((resolve, reject) => {
       const waiter: Waiter = { runId, resolve, reject, signal, onAbort: () => {} };
       waiter.onAbort = () => {
@@ -326,8 +382,22 @@ function createWorkflowConcurrencyGovernor(
     };
   };
 
-  // No queue or cooldown check; observe happens in grant. The fast path always succeeds, so the runner never emits queued / admitted
-  // for main-agent requests.
+  const setRunBound: WorkflowConcurrencyPort["setRunBound"] = (runId, bound) => {
+    runBounds.set(runId, bound);
+    for (const bucket of buckets.values()) {
+      if (bucket.runs.has(runId)) refreshGrowthLimit(bucket);
+    }
+  };
+
+  const clearRunBound: WorkflowConcurrencyPort["clearRunBound"] = (runId) => {
+    runBounds.delete(runId);
+    for (const bucket of buckets.values()) {
+      if (bucket.runs.delete(runId)) refreshGrowthLimit(bucket);
+    }
+  };
+
+  // No queue or cooldown check (decisions 37/47); observe happens in grant. The fast path always succeeds, so the runner never emits queued / admitted
+  // for main-agent requests (decision 44).
   const observerAdmission: ModelRequestAdmission = {
     tryAcquire: ({ model }) => grant(bucketFor(workflowConcurrencyKey(model)), OBSERVER_RUN_ID),
     acquire: ({ model }) =>
@@ -338,6 +408,8 @@ function createWorkflowConcurrencyGovernor(
     tryAdmit,
     admit,
     subscribe,
+    setRunBound,
+    clearRunBound,
     observer: () => observerAdmission,
     snapshot(key) {
       return buckets.get(key)?.controller.snapshot();
@@ -354,12 +426,12 @@ function abortedError(signal: AbortSignal): Error {
 let processGovernor: WorkflowConcurrencyGovernor | undefined;
 
 /**
- * Process-level singleton: compute the ceiling on first access. Each app (session) then attaches its main runtime observer,
+ * Process-level singleton (decision 5): compute the default concurrency on first access. Each app (session) then attaches its main runtime observer,
  * and the run service passes the same port to its driver.
  */
 export function getWorkflowConcurrencyGovernor(): WorkflowConcurrencyGovernor {
   processGovernor ??= createWorkflowConcurrencyGovernor({
-    ceiling: resolveWorkflowConcurrencyCeiling(),
+    defaultConcurrency: resolveWorkflowDefaultConcurrency(),
   });
   return processGovernor;
 }

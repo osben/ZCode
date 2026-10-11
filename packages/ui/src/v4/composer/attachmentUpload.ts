@@ -45,6 +45,10 @@ export async function uploadComposerAttachment(
 ): Promise<AttachmentRef | null> {
   const fileName = attachment.filename;
   const mime = attachment.mimeType;
+  const source =
+    attachment.kind === "file" && attachment.sourceKind
+      ? { sourceKind: attachment.sourceKind, messageCount: attachment.messageCount }
+      : {};
   // Audio variants have no sizeBytes field; use narrowed access for all variants.
   const sizeBytes =
     "sizeBytes" in attachment && typeof attachment.sizeBytes === "number"
@@ -52,6 +56,7 @@ export async function uploadComposerAttachment(
       : undefined;
   if (attachment.localPath) {
     return {
+      ...source,
       ref: attachment.localPath,
       fileName,
       mime,
@@ -72,9 +77,28 @@ export async function uploadComposerAttachment(
   }
   const { ref } = await put({ sessionId, fileName, mime, dataBase64 }, options);
   return {
+    ...source,
     ref,
     fileName,
     mime,
     bytes: sizeBytes ?? base64ByteLength(dataBase64),
   };
+}
+
+/**
+ * Attachment array → AttachmentRef[] (preserving order). Propagate put failures unchanged so the caller can abort sending and keep the draft.
+ */
+export async function uploadComposerAttachments(
+  put: AttachmentPutFn,
+  sessionId: string,
+  attachments: readonly ZCodePromptAttachment[],
+): Promise<AttachmentRef[]> {
+  const refs: AttachmentRef[] = [];
+  for (const attachment of attachments) {
+    const ref = await uploadComposerAttachment(put, sessionId, attachment);
+    if (ref) {
+      refs.push(ref);
+    }
+  }
+  return refs;
 }

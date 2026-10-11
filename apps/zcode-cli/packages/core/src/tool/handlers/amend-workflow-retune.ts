@@ -1,7 +1,14 @@
-// AmendWorkflow: apply concurrency-only changes in place.
-// When the call includes only `run_id` and `max_concurrency` and the predecessor is still running, preserve the run ID, subagents, transcript, and pending asks.
-// This module handles routing, the port call, and result messaging. If the run settles between the check and call, reread predecessor state
-// before deciding whether to fall back to the revision flow.
+// ============================================================
+// AmendWorkflow: changing only concurrency takes effect in place.
+// ============================================================
+// See docs/dynamic-workflow/launch.md, “Changing only the parallelism of a live run”; for how the engine and driver
+// apply the new limit, see docs/dynamic-workflow/concurrency.md, “Retuning a live run.”
+//
+// A call containing only `run_id` and `max_concurrency` while its predecessor is live is **not an amendment**: it changes one value in place.
+// The run keeps its ID, subagents, transcript, and in-flight asks; nothing stops or gets replaced, and no dialog opens.
+// This was split from amend-workflow.ts for the same reason as amend-workflow-source.ts (the 400-line limit and clear ownership):
+// that file handles amendments; this file owns the entire retune route—detection, port call, model-facing copy, and
+// the facts that must be reread if a settlement race falls back to a real amendment.
 
 import {
   AmendWorkflowInputSchema,
@@ -19,13 +26,13 @@ import {
   resolveAmendMaxConcurrency,
   resolveAmendScript,
 } from "./amend-workflow-source.js";
-import { clampWorkflowMaxConcurrency } from "./create-workflow-source.js";
+import { normalizeWorkflowMaxConcurrency } from "./create-workflow-source.js";
 import { workflowRunNotFoundFailure } from "./workflow-run-introspection.js";
 
 /**
- * "Nothing changed except concurrency": check the **shape of the input**, not whether fields are new.
- * Any presence of `script`, `path`, `subagent_model`, or `name` routes this call through revision, regardless of their values;
- * each could change what will run, while this path requires "the same script and the same set of subagents are still running."
+ * “Nothing changed except concurrency” (docs/dynamic-workflow/launch.md) is determined from the **input shape**, not from new field values.
+ * Any `script`, `path`, `subagent_model`, or `name` sends this call through the amendment route, regardless of its value:
+ * each can change what will run, while this route requires the same script and same set of subagents.
  *
  * The same applies after normalization: the revision path always resolves a script, so "no script but a concurrency value" can only mean
  * an in-place concurrency change.
@@ -41,8 +48,9 @@ export function isConcurrencyOnlyAmend(model: AmendWorkflowInput): boolean {
 }
 
 /**
- * Routing decision used by resolveInput. On a match, return normalized input **without a script**; prepareApproval then allows it and the handler calls
- * `retuneConcurrency`. On no match, return `undefined` and let the caller continue through revision as usual.
+ * Route detection in resolveInput (docs/dynamic-workflow/launch.md: routing belongs at the only step that knows both conditions).
+ * On a match, return normalized input **without a script**—prepareApproval then allows it and the handler calls
+ * `retuneConcurrency`; otherwise return `undefined` and let the caller proceed with an amendment.
  *
  * All three conditions are required: the input changes only concurrency; the predecessor is still live (try both `pending` and `running`,
  * with the port deciding whether it is live); and the port supports this control surface. If the port lacks `retuneConcurrency` (an older host),
@@ -52,7 +60,7 @@ export function resolveConcurrencyRetuneRoute(options: {
   model: AmendWorkflowInput;
   port: DynamicWorkflowRunPort;
   predecessor: AmendWorkflowPredecessor;
-  /** Upper bound from the predecessor snapshot; if absent, it runs at the ceiling. */
+  /** The predecessor snapshot's limit; if absent, it runs at the default concurrency. */
   inherited: number | undefined;
 }): { result: true; input: AmendWorkflowInput } | ToolHandlerFailure | undefined {
   const { model, port, predecessor } = options;
@@ -62,8 +70,13 @@ export function resolveConcurrencyRetuneRoute(options: {
 
   // Do **not** normalize the three states here: pass `null` through to the port unchanged (see the resolveAmendMaxConcurrency comment).
   const requested = model.max_concurrency ?? null;
-  const ceiling = port.concurrencyCeiling?.();
-  const unchanged = refuseUnchangedBound(model.run_id, requested, options.inherited, ceiling);
+  const defaultConcurrency = port.defaultConcurrency?.();
+  const unchanged = refuseUnchangedBound(
+    model.run_id,
+    requested,
+    options.inherited,
+    defaultConcurrency,
+  );
   if (unchanged !== undefined) return unchanged;
   return {
     result: true,
@@ -72,19 +85,19 @@ export function resolveConcurrencyRetuneRoute(options: {
 }
 
 /**
- * Handle an unchanged value here, before hooks and the confirmation window, without touching the port. If the ceiling is unavailable
- * (an older host has no `concurrencyCeiling`), `null` cannot be converted to a number, so let the port return `unchanged` itself.
+ * Handle unchanged values here—before hooks and the confirmation dialog, without calling the port. If the default concurrency is unavailable (older hosts omit
+ * `defaultConcurrency`), `null` cannot be converted to a number; skip this check and let the port return `unchanged`.
  */
 function refuseUnchangedBound(
   runId: string,
   requested: number | null,
   inherited: number | undefined,
-  ceiling: number | undefined,
+  defaultConcurrency: number | undefined,
 ): ToolHandlerFailure | undefined {
-  const current = inherited ?? ceiling;
-  const next = requested === null ? ceiling : clampWorkflowMaxConcurrency(requested, ceiling);
+  const current = inherited ?? defaultConcurrency;
+  const next = requested === null ? defaultConcurrency : normalizeWorkflowMaxConcurrency(requested);
   if (current === undefined || next === undefined || current !== next) return undefined;
-  return retuneUnchangedFailure(runId, current, ceiling);
+  return retuneUnchangedFailure(runId, current, defaultConcurrency);
 }
 
 /**
@@ -101,33 +114,34 @@ export async function runConcurrencyRetune(
   if (port === undefined || typeof port.retuneConcurrency !== "function") return undefined;
   const answer = await port.retuneConcurrency({
     runId: parsed.run_id,
-    // Routing guarantees this is "a number or null"; `?? null` treats missing input that bypassed normalization as "use the ceiling."
+    // Route detection guarantees this is a number or null; `?? null` treats missing input that bypassed normalization as “use the default.”
     maxConcurrency: parsed.max_concurrency ?? null,
   });
   if (answer.ok) {
     return {
       diagnostics: [],
       ok: true,
-      // Do not add this to the background tracker: the run is already there and remains the same run throughout. There is no `backgrounded`
-      // contract and no compiled artifact to display. `retuned` is an **explicit** discriminator; consumers should not infer it from "ok with no status,"
-      // because that shape can come from other paths.
+      // Do not add this to the background tracker: the run is already tracked and remains the same run, so it has no `backgrounded`
+      // contract or compiled artifact to display (docs/dynamic-workflow/launch.md). `retuned` is an **explicit**
+      // discriminator; consumers must not infer it from “ok with no status,” which has other meanings.
       response: retuneResponse(parsed.run_id, answer),
       retuned: {
         runId: parsed.run_id,
         maxConcurrency: answer.maxConcurrency,
         previous: answer.previous,
-        ceiling: answer.ceiling,
+        defaultConcurrency: answer.defaultConcurrency,
       },
     } satisfies CreateWorkflowOutput;
   }
   if (answer.reason === "unchanged") {
-    return retuneUnchangedFailure(parsed.run_id, answer.current, port.concurrencyCeiling?.());
+    return retuneUnchangedFailure(parsed.run_id, answer.current, port.defaultConcurrency?.());
   }
   return undefined;
 }
 
 /**
- * Settlement race: this input now describes a revision. Whether it can proceed depends on one thing—**whether that revision would normally open a confirmation window**.
+ * Settlement race (docs/dynamic-workflow/launch.md, “When the port says `not_live`”): the same input now
+ * describes an amendment. Whether to proceed depends on one thing: **whether that amendment would have opened a dialog**.
  *
  * A run owned by this session and not manually stopped by the user: owner rules would not open a window anyway, so proceed with revision; resolve the script
  * and compile it now (report a missing or invalid script as a revision rejection). Another owner's run, or one stopped by the user: reject it.
@@ -161,11 +175,7 @@ export async function resolveRetuneFallbackAmend(
       run_id: parsed.run_id,
       ...script.fields,
       // Revision returns to "a number or nothing": this call explicitly supplied a value, so there is nothing to inherit.
-      ...resolveAmendMaxConcurrency(
-        parsed.max_concurrency,
-        undefined,
-        port?.concurrencyCeiling?.(),
-      ),
+      ...resolveAmendMaxConcurrency(parsed.max_concurrency, undefined),
       predecessor: {
         ...predecessor,
         ...(script.inherited ? { script_inherited: true as const } : {}),
@@ -183,10 +193,15 @@ function predecessorNotFoundFailure(runId: string): ToolHandlerFailure {
   };
 }
 
-/** Describe the active upper bound; the ceiling means there is no lower per-run limit. */
-function describeBoundInForce(bound: number | undefined, ceiling: number | undefined): string {
-  if (bound === undefined || bound === ceiling) {
-    return "has no limit on how many subagents run at once (it runs at this machine's maximum)";
+/** Render the currently effective limit as a sentence; a limit equal to the default means “no per-run limit.” */
+function describeBoundInForce(
+  bound: number | undefined,
+  defaultConcurrency: number | undefined,
+): string {
+  if (bound === undefined || bound === defaultConcurrency) {
+    return defaultConcurrency === undefined
+      ? "already runs at the default parallelism"
+      : `already runs at the default parallelism (at most ${defaultConcurrency} subagents at once)`;
   }
   return bound === 1
     ? "already runs at most 1 subagent at once"
@@ -197,12 +212,12 @@ function describeBoundInForce(bound: number | undefined, ceiling: number | undef
 export function retuneUnchangedFailure(
   runId: string,
   current: number | undefined,
-  ceiling: number | undefined,
+  defaultConcurrency: number | undefined,
 ): ToolHandlerFailure {
   return {
     result: false,
     errorCode: AMEND_WORKFLOW_ERROR_CODE.RETUNE_UNCHANGED,
-    message: `workflow_retune_unchanged: run ${runId} ${describeBoundInForce(current, ceiling)}, so there is nothing to change. Nothing was stopped, created or changed — pass a different \`max_concurrency\`, or a revised script if you meant to amend the run.`,
+    message: `workflow_retune_unchanged: run ${runId} ${describeBoundInForce(current, defaultConcurrency)}, so there is nothing to change. Nothing was stopped, created or changed — pass a different \`max_concurrency\`, or a revised script if you meant to amend the run.`,
   };
 }
 
@@ -225,23 +240,24 @@ export function notRetunableFailure(runId: string): ToolHandlerFailure {
 }
 
 /**
- * Model-facing response: **name one run and no successor**; this lets the model
- * distinguish which path this call took without exposing the routing itself. When the upper bound equals the ceiling, say "the limit is removed"
- * instead of reporting a number, matching the rule used by `CreateWorkflow`.
+ * Model-facing response (docs/dynamic-workflow/launch.md): **identify one run and no successor**—this lets the model
+ * distinguish which route the call took without describing the routing itself. Mark a limit equal to the default as “(default),”
+ * matching the distinction used by `CreateWorkflow`.
  *
  * ⚠ This text is the **only fact that reaches v4**: this path has no display payload (`retuned` is process-local,
  * while the protocol's `toolOutputSchema` carries only text / display / truncated), and the tool card renders it as one line. It must therefore
  * stand alone—name the run, state the active bound, and clarify that no new run was started—and remain stable because changing the wording changes the UI.
+ * Exact-string tests for both limit forms are in core/tests/amend-workflow-permission.test.ts.
  */
 function retuneResponse(
   runId: string,
   answer: Extract<DynamicWorkflowRunRetuneResult, { ok: true }>,
 ): string {
+  const count =
+    answer.maxConcurrency === 1
+      ? "at most 1 subagent runs at once"
+      : `at most ${answer.maxConcurrency} subagents run at once`;
   const bound =
-    answer.maxConcurrency === answer.ceiling
-      ? "the limit on how many subagents run at once is removed (this machine's maximum applies)"
-      : answer.maxConcurrency === 1
-        ? "at most 1 subagent runs at once"
-        : `at most ${answer.maxConcurrency} subagents run at once`;
+    answer.maxConcurrency === answer.defaultConcurrency ? `${count} (the default)` : count;
   return `Applied to the running run ${runId}; ${bound}. Run ${runId} keeps running under it: nothing was stopped and no new run was started.`;
 }

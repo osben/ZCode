@@ -26,11 +26,11 @@ import { CrashBudget } from "./crashBudget.js";
 // high-frequency heartbeat/task-activity details use debug to avoid inflating production logs.
 const log = createServiceLogger("server-supervisor");
 
-interface CoreLauncher {
+export interface CoreLauncher {
   launch(generation: number, release?: ReleaseManifest | null): ChildProcess;
 }
 
-interface SupervisorOptions {
+export interface SupervisorOptions {
   layout?: ServerLayout;
   launcher: CoreLauncher;
   version: string;
@@ -499,10 +499,11 @@ export class Supervisor {
       case "confirm-uninstall":
         if (request.confirmation !== "DELETE")
           throw new Error("Uninstall confirmation must be DELETE");
-        // Check for running tasks before uninstall:
-        // prepare-uninstall can return blocked without any caller consuming that result, while confirm-uninstall
-        // directly stops Core and deletes data, silently interrupting running tasks. Enforce the guard at this final boundary;
-        // when tasks are active, return a structured error and preserve the current state.
+        // Bug fix: the spec requires checking running tasks before uninstall (R2-CLI-10). The old
+        // implementation returned blocked from prepare-uninstall with no caller consuming it, while
+        // confirm-uninstall directly stopped Core and deleted data, silently interrupting running
+        // tasks. Enforce the guard at this final boundary; when tasks are active, return a
+        // structured error and preserve the current state.
         if (this.runningTaskCount > 0) {
           throw new Error(
             `Cannot uninstall while ${this.runningTaskCount} task(s) are running; stop the server first`,

@@ -104,7 +104,10 @@ function readQuestions(input: unknown): unknown[] {
   if (Array.isArray(questions)) {
     return questions;
   }
-  // Single-question ZCode Agent input and multi-question interaction requests share the same presentation pipeline.
+  // Bugfix: ZCode Agent's AskUserQuestion tool input has a single-question shape,
+  // { header, question, options }, not the multi-question shape { questions: [...] }.
+  // Normalize the single question into the same questions pipeline so the message-stream tool
+  // block does not show “No questions to answer.”
   return typeof input.question === "string" && Array.isArray(input.options) ? [input] : [];
 }
 
@@ -114,6 +117,24 @@ function readAnswers(input: unknown): ZCodeUserQuestionAnswers | undefined {
   }
   const answers = input.answers;
   return isPlainRecord(answers) ? answers : undefined;
+}
+
+function parseClaudeAskUserQuestionOutput(output: unknown): ZCodeUserQuestionAnswers | undefined {
+  if (typeof output !== "string" || output.trim().length === 0) {
+    return undefined;
+  }
+
+  const answers: ZCodeUserQuestionAnswers = {};
+  const answerPattern = /"([^"]+)"="([^"]*)"/g;
+  for (const match of output.matchAll(answerPattern)) {
+    const question = match[1]?.trim();
+    if (!question) {
+      continue;
+    }
+    answers[question] = match[2] ?? "";
+  }
+
+  return Object.keys(answers).length > 0 ? answers : undefined;
 }
 
 function parseJsonRecord(output: unknown): Record<string, unknown> | undefined {
@@ -132,6 +153,11 @@ function parseJsonRecord(output: unknown): Record<string, unknown> | undefined {
 }
 
 function readNestedAskUserQuestionAnswers(input: unknown): ZCodeUserQuestionAnswers | undefined {
+  const directTextAnswers = parseClaudeAskUserQuestionOutput(input);
+  if (directTextAnswers) {
+    return directTextAnswers;
+  }
+
   const record = parseJsonRecord(input);
   if (!record) {
     return undefined;
@@ -154,6 +180,11 @@ function readNestedAskUserQuestionAnswers(input: unknown): ZCodeUserQuestionAnsw
         return itemAnswers;
       }
     }
+  }
+
+  const textAnswers = parseClaudeAskUserQuestionOutput(record.text);
+  if (textAnswers) {
+    return textAnswers;
   }
 
   const rawOutputAnswers = readNestedAskUserQuestionAnswers(record.rawOutput);
@@ -288,6 +319,13 @@ export function readAskUserQuestionAnswers(value: {
   if (nestedOutputAnswers) {
     return nestedOutputAnswers;
   }
+  // Bugfix: AskUserQuestion output in Claude history may be stored as text in the form
+  // `"question"="answer"` instead of structured answers. After a history snapshot replaces live
+  // state, read-only results fall back to “No answer provided” because answers are missing; parse this format as a compatibility path.
+  const parsedOutputAnswers = parseClaudeAskUserQuestionOutput(value.output);
+  if (parsedOutputAnswers) {
+    return parsedOutputAnswers;
+  }
   const parsedZCodeOutputAnswers = parseZCodeAskUserQuestionOutput(
     value.output,
     readAskUserQuestionInput(value),
@@ -303,6 +341,10 @@ export function readAskUserQuestionAnswers(value: {
     if (nestedRawOutputAnswers) {
       return nestedRawOutputAnswers;
     }
+    const parsedRawOutputAnswers = parseClaudeAskUserQuestionOutput(value.raw.rawOutput);
+    if (parsedRawOutputAnswers) {
+      return parsedRawOutputAnswers;
+    }
     const parsedRawZCodeOutputAnswers = parseZCodeAskUserQuestionOutput(
       value.raw.rawOutput,
       readAskUserQuestionInput(value),
@@ -313,6 +355,10 @@ export function readAskUserQuestionAnswers(value: {
     const nestedRawAnswers = readNestedAskUserQuestionAnswers(value.raw.output);
     if (nestedRawAnswers) {
       return nestedRawAnswers;
+    }
+    const parsedRawAnswers = parseClaudeAskUserQuestionOutput(value.raw.output);
+    if (parsedRawAnswers) {
+      return parsedRawAnswers;
     }
     const parsedRawZCodeAnswers = parseZCodeAskUserQuestionOutput(
       value.raw.output,

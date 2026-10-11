@@ -19,14 +19,16 @@ import {
   actorNamePattern,
   askLabel,
   askLabelPattern,
-  Counter,
   eachCandidate,
   forOfCandidate,
   isFacadeDeclared,
   literalText,
   resolveSymbol,
+  SiteCounters,
   worldReadLabel,
 } from "./sites-labels.js";
+import { holeSiteOf } from "./hole-sites.js";
+import { holeSiteId } from "./hole-id.js";
 
 // Split: this file reached oxlint's max-lines limit (400). Name/label helpers and symbol
 // resolution (resolveSymbol / isFacadeDeclared) were moved to sites-labels.ts. The latter two were
@@ -238,6 +240,42 @@ export interface IterationCandidate {
   iterated: ts.Expression;
 }
 
+/**
+ * A `hole<T>(name, prompt?, body?)` call site: a typed gap the main agent fills with code
+ * while the run waits at it (docs/dynamic-workflow/authoring.md「Holes」, docs/analysis.md
+ * 「Sites」). Its id is the key of its NAME (`hole#<hash>`, hole-id.ts), the same at any
+ * nesting depth, so every existing id stays unchanged when a fill inserts code; it consumes
+ * the global `order` like every other site. A hole whose name is not a literal (9012) falls
+ * back to a positional `hole#N`, which never reaches a run.
+ *
+ * When collecting a hole body (`body`), the walk uses **a fresh set of per-kind counters**. Every ID
+ * minted inside gets the `<holeId>/` prefix (see {@link SiteCounters}); a `return` inside the body
+ * returns from the hole, not from the top level. Every ID outside remains byte-for-byte unchanged
+ * before and after filling, which is what allows a live run to be completed.
+ */
+export interface HoleSite {
+  id: string;
+  /** ID of the filled hole containing this hole; absent at top level. Nesting is recorded here, not in the ID. */
+  fill?: string;
+  order: number;
+  /** Hole name (also its phase name), set only when the first argument is a hole-free literal. */
+  name?: string;
+  /** Preserve the name argument as written so rule 9012 diagnostics can point to it. */
+  nameExpr: ts.Expression | undefined;
+  /** Source text of the explicit type argument (`Plan` in `hole<Plan>`); rule 9012 applies when absent. */
+  typeText?: string;
+  typeArg?: ts.TypeNode;
+  /** Prompt for the main agent (second argument, when not a function body); treated as a sink by the taint pass. */
+  prompt?: ts.Expression;
+  /** Body of a filled hole (the inline function literal in the last argument); absent for open holes. */
+  body?: ts.ArrowFunction | ts.FunctionExpression;
+  loc: ScriptLoc;
+  /** The `hole(...)` call. */
+  call: ts.CallExpression;
+  /** The call is the operand of a top-level (awaited) `return`: the script ends open and the run result is the filled value. */
+  tail: boolean;
+}
+
 /** A `return` in the top-level script body (not inside a nested function). */
 export interface TopLevelReturn {
   loc: ScriptLoc;
@@ -256,6 +294,8 @@ export interface SiteTable {
   /** `phase("…")` markers — collected but NOT sited (see {@link PhaseMarkerSite}). */
   phases: PhaseMarkerSite[];
   joins: JoinSite[];
+  /** `hole<T>(...)` sites — open and filled, body sites included with prefixed ids (see {@link HoleSite}). */
+  holes: HoleSite[];
   iterations: IterationCandidate[];
   topLevelReturns: TopLevelReturn[];
 }
@@ -270,6 +310,7 @@ export function collectSites(workflow: WorkflowProgram): SiteTable {
     actors: [],
     artifacts: [],
     asks: [],
+    holes: [],
     iterations: [],
     joins: [],
     phases: [],
@@ -278,16 +319,12 @@ export function collectSites(workflow: WorkflowProgram): SiteTable {
     worldReads: [],
   };
   let order = 0;
-  const askCounter = new Counter();
-  const actorCounter = new Counter();
-  const worldReadCounter = new Counter();
-  const joinCounter = new Counter();
-  const reportCounter = new Counter();
-  const artifactCounter = new Counter();
 
   const locOf = (node: ts.Node): ScriptLoc => toScriptLoc(node.getStart(scriptFile));
 
-  const classify = (node: ts.Node, funcDepth: number): void => {
+  // `ids` is the current scope's set of per-kind counters: one at top level and a fresh prefixed set for each hole body.
+  // The return value is nonempty only for a **hole with a body**; walk uses it to switch counters for that body.
+  const classify = (node: ts.Node, funcDepth: number, ids: SiteCounters): HoleSite | undefined => {
     if (ts.isReturnStatement(node)) {
       if (funcDepth === 0) {
         table.topLevelReturns.push({ expression: node.expression, loc: locOf(node) });
@@ -309,7 +346,7 @@ export function collectSites(workflow: WorkflowProgram): SiteTable {
           const labelPattern = askLabelPattern(access.expression, checker);
           table.asks.push({
             call: node,
-            id: `ask#${askCounter.next()}`,
+            id: ids.next("ask"),
             instructions: node.arguments[0],
             label: askLabel(access.expression, checker),
             ...(labelPattern === undefined ? {} : { labelPattern }),
@@ -331,7 +368,7 @@ export function collectSites(workflow: WorkflowProgram): SiteTable {
             artifactIdExpr: idExpr,
             ...(id === undefined ? {} : { artifactId: id }),
             call: node,
-            id: `artifact#${artifactCounter.next()}`,
+            id: ids.next("artifact"),
             loc: toScriptLoc(access.name.getStart(scriptFile)),
             op: artifact.op,
             order: order++,
@@ -349,7 +386,7 @@ export function collectSites(workflow: WorkflowProgram): SiteTable {
           table.worldReads.push({
             args: node.arguments,
             call: node,
-            id: `world-read#${worldReadCounter.next()}`,
+            id: ids.next("world-read"),
             label: worldReadLabel(op, node.arguments[0]),
             loc: toScriptLoc(access.name.getStart(scriptFile)),
             op,
@@ -366,7 +403,7 @@ export function collectSites(workflow: WorkflowProgram): SiteTable {
         table.joins.push({
           arg: node.arguments[0],
           call: node,
-          id: `join#${joinCounter.next()}`,
+          id: ids.next("join"),
           label: "join",
           loc: toScriptLoc(access.name.getStart(scriptFile)),
           method,
@@ -400,7 +437,7 @@ export function collectSites(workflow: WorkflowProgram): SiteTable {
       const namePattern = name === undefined ? actorNamePattern(node) : undefined;
       table.actors.push({
         call: node,
-        id: `actor#${actorCounter.next()}`,
+        id: ids.next("actor"),
         loc: locOf(node),
         name,
         ...(namePattern === undefined ? {} : { namePattern }),
@@ -419,12 +456,23 @@ export function collectSites(workflow: WorkflowProgram): SiteTable {
         artifactIdExpr: tagExpr,
         ...(tag === undefined ? {} : { artifactId: tag }),
         call: node,
-        id: `report#${reportCounter.next()}`,
+        id: ids.next("report"),
         item: node.arguments[0],
         loc: locOf(node),
         order: order++,
       });
       return;
+    }
+    if (fn === "hole") {
+      // Hole (docs/analysis.md, “Sites”, “Hole sites”): its ID is a name key (hole-id.ts) and it occupies global order.
+      // If it has a body, return it to walk so the body is traversed with a **fresh prefixed** counter set.
+      // If the name is not a literal (rule 9012; the script cannot be submitted), fall back to a positional
+      // counter only to provide a locatable site for diagnostics.
+      const holeName = literalText(node.arguments[0]);
+      const holeId = holeName === undefined ? ids.next("hole") : holeSiteId(holeName);
+      const site = holeSiteOf(node, holeId, order++, locOf(node), funcDepth, ids.holeId);
+      table.holes.push(site);
+      return site.body === undefined ? undefined : site;
     }
     // `phase("…")` is a marker, not a site: no id and no counter of any kind is consumed
     // here (see PhaseMarkerSite). Resolved by declaration like the calls above — a
@@ -441,12 +489,16 @@ export function collectSites(workflow: WorkflowProgram): SiteTable {
     }
   };
 
-  const walk = (node: ts.Node, funcDepth: number): void => {
-    classify(node, funcDepth);
+  const walk = (node: ts.Node, funcDepth: number, ids: SiteCounters): void => {
+    const hole = classify(node, funcDepth, ids);
     const childDepth = funcDepth + (isFunctionLike(node) ? 1 : 0);
-    ts.forEachChild(node, (child) => walk(child, childDepth));
+    ts.forEachChild(node, (child) =>
+      walk(child, childDepth, hole !== undefined && child === hole.body ? ids.child(hole.id) : ids),
+    );
   };
-  for (const statement of body.statements) walk(statement, 0);
+  // One top-level counter set spans the entire script body (shared by every statement); each hole body gets its own prefixed set.
+  const topLevel = new SiteCounters();
+  for (const statement of body.statements) walk(statement, 0, topLevel);
 
   return table;
 }

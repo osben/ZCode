@@ -5,14 +5,15 @@
 
    - 429 (including business code 3105) = queued response: wait once for min(Retry-After, 5min),
      then perform unlimited idempotent probes; the caller freezes the attempt budget (otherwise it
-     is misclassified as an API failure after the default 11 attempts); abort propagates through
-     sleep.
-  - 400/3102 = unusable ticket (active ticket expired after 3h / ready ticket is invalid): fail immediately with a
-    stable marker; Desktop recognizes it and retries with the same task_id before resuming, rather than treating it
-    as an ordinary failure.
-  - Do not implement first-dispatch abandonment in the adapter: if the first dispatch is stuck at the gateway, the
-    ready ticket's 5-minute TTL naturally triggers 3102 and requeues the resume. The wait is bounded by about TTL
-    plus one clamped probe (≤ 10 minutes), meeting the intent with one fewer state. */
+     is misclassified as an API failure after the default 11 attempts, D24 rule 2); abort propagates
+     through sleep.
+   - 400/3102 = unusable ticket (active ticket expired after 3h / ready ticket is invalid): fail
+     immediately with a stable marker; Desktop recognizes it and retries with the same task_id
+     before resuming (§4.6), rather than treating it as an ordinary failure.
+   - D24 rule 1 (first-dispatch abandonment) is not implemented in the adapter: if the first dispatch
+     is stuck at the gateway, the ready ticket's 5-minute TTL naturally triggers 3102 and requeues
+     the resume. The wait is bounded by about TTL plus one clamped probe (≤ 10 minutes), meeting the
+     intent with one fewer state (this simplification was written back into tech-design §4.3). */
 import type { ClassifiedModelFailure } from "./failure-classifier.js";
 import { isProviderBusinessError } from "./model-execution.js";
 
@@ -23,11 +24,13 @@ import { isProviderBusinessError } from "./model-execution.js";
  */
 export const OFF_PEAK_TICKET_EXPIRED_MARKER = "off-peak-ticket-expired";
 
-/** Cap a single queue wait at min(Retry-After, 5 min); conservatively probe after 60 s when Retry-After is absent. */
-const OFF_PEAK_QUEUE_WAIT_CAP_MS = 5 * 60_000;
-const OFF_PEAK_QUEUE_WAIT_DEFAULT_MS = 60_000;
+/** Clamp a single queued wait (D24 rule 2): min(Retry-After, 5min); probe conservatively after 60s when Retry-After is absent. */
+export const OFF_PEAK_QUEUE_WAIT_CAP_MS = 5 * 60_000;
+export const OFF_PEAK_QUEUE_WAIT_DEFAULT_MS = 60_000;
 
-type OffPeakFailureDecision = { kind: "queued"; delayMs: number } | { kind: "ticketExpired" };
+export type OffPeakFailureDecision =
+  | { kind: "queued"; delayMs: number }
+  | { kind: "ticketExpired" };
 
 /**
  * Classify off-peak-specific failure semantics; always return null for providers outside the idle plan (no effect).

@@ -2,6 +2,7 @@ import ts from "typescript";
 import type { ScriptLoc, WorkflowProgram } from "../compiler/compile.js";
 import {
   findWorkflowBody,
+  type HoleSite,
   type IterationCandidate,
   type PhaseMarkerSite,
   type SiteTable,
@@ -41,6 +42,8 @@ export interface TraceState {
   readonly askByCall: ReadonlyMap<ts.Node, string>;
   readonly readByCall: ReadonlyMap<ts.Node, string>;
   readonly actorByCall: ReadonlyMap<ts.Node, string>;
+  /** `hole<T>()` calls by CALL node, open and filled (causality-order-holes.ts). */
+  readonly holeByCall: ReadonlyMap<ts.Node, HoleSite>;
   /** Per-element callback calls by CALL node (the fan-out region opens there). */
   readonly candByCall: ReadonlyMap<ts.Node, IterationCandidate>;
   /** Their inline literals (an iteration construct for the admission test). */
@@ -101,6 +104,13 @@ export interface TraceState {
   readonly markerByStatement: ReadonlyMap<ts.Node, PhaseMarkerSite>;
   readonly phases: PhaseInfo[];
   readonly phaseIdByName: Map<string, string>;
+  /** Hole phases already minted (a hole in a helper is reached per call, minted once). */
+  readonly holePhases: Set<string>;
+  /**
+   * The filled holes whose bodies the walk is inside, innermost last: every phase minted
+   * while the stack is non-empty carries its top as `fill` ({@link PhaseInfo.fill}).
+   */
+  readonly fillStack: string[];
   currentPhase: string;
   /** The root `seq` region id; every other region descends from it. */
   readonly root: string;
@@ -160,6 +170,9 @@ export function createTraceState(
   const askByCall = new Map<ts.Node, string>(table.asks.map((site) => [site.call, site.id]));
   const readByCall = new Map<ts.Node, string>(table.worldReads.map((site) => [site.call, site.id]));
   const actorByCall = new Map<ts.Node, string>(table.actors.map((site) => [site.call, site.id]));
+  const holeByCall = new Map<ts.Node, HoleSite>(table.holes.map((site) => [site.call, site]));
+  // Only open holes are steps (docs/analysis.md, “Sites”); a filled hole is represented in place by its body.
+  const openHoles = table.holes.filter((site) => site.body === undefined);
   const candByCall = new Map<ts.Node, IterationCandidate>();
   const candByCallback = new Map<ts.Node, IterationCandidate>();
   for (const cand of table.iterations) {
@@ -175,10 +188,12 @@ export function createTraceState(
   const realSteps = new Set<string>([
     ...table.asks.map((site) => site.id),
     ...table.worldReads.map((site) => site.id),
+    ...openHoles.map((site) => site.id),
   ]);
   const callByStep = new Map<string, ts.Node>([
     ...table.asks.map((site) => [site.id, site.call] as const),
     ...table.worldReads.map((site) => [site.id, site.call] as const),
+    ...openHoles.map((site) => [site.id, site.call] as const),
   ]);
 
   const markerByStatement = new Map<ts.Node, PhaseMarkerSite>();
@@ -204,8 +219,11 @@ export function createTraceState(
     currentPhase: UNPHASED_ID,
     eachCallbackFns,
     events: [],
+    fillStack: [],
     fnStack: [],
     frames: [{ region: root, settled: new Set<string>() }],
+    holeByCall,
+    holePhases: new Set<string>(),
     issued: new Set<string>(),
     iterationAncestorCache: new Map<ts.Node, Set<ts.Node>>(),
     joined: new Set<string>(),
@@ -283,8 +301,11 @@ export function phaseIdOf(state: TraceState, marker: PhaseMarkerSite): string | 
   if (name === undefined || name === "") return undefined;
   const existing = state.phaseIdByName.get(name);
   if (existing !== undefined) return existing;
-  const id = `phase#${state.phases.length + 1}`;
+  // Number only phases emitted by markers. A hole phase uses its site ID and is absent from
+  // phaseIdByName, so an intervening hole does not make `phase#N` skip a number.
+  const id = `phase#${state.phaseIdByName.size + 1}`;
   state.phaseIdByName.set(name, id);
-  state.phases.push({ id, loc: marker.loc, name });
+  const fill = state.fillStack[state.fillStack.length - 1];
+  state.phases.push({ id, loc: marker.loc, name, ...(fill === undefined ? {} : { fill }) });
   return id;
 }

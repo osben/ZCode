@@ -83,8 +83,8 @@ export function ProviderFamilyHeader({
             : familySpec.label}
         </h3>
       </div>
-      {/* Letting the full team name's intrinsic width drive outer wrapping can leave empty space
-              after the title while moving the whole group to the next line. Allocate space using
+      {/* Fix reason: letting the full team name's intrinsic width drive outer wrapping can leave empty
+              space after the title while moving the whole group to the next line. Allocate space using
               the actions' base width, then let the name shrink into the remainder. */}
       {trailingAction ? (
         <div className="min-w-0 max-w-full flex-1 basis-64">{trailingAction}</div>
@@ -217,7 +217,7 @@ export function ProviderFamilyPlanModeSwitch({
   );
 }
 
-function buildProviderFamilyConnectionOptions({
+export function buildProviderFamilyConnectionOptions({
   familyId,
   navigationItems,
   codingPlanLabel,

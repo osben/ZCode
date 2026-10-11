@@ -1,6 +1,12 @@
 import { CodingPlanEntryButton } from "@/settings/CodingPlanEntryButton.js";
+import type { CodingPlanBillingDiscountConfig } from "@zcode/shared";
 import { ArrowLeftIcon, Loader2Icon, RocketIcon } from "lucide-react";
+import { cn } from "@/components/lib/utils.js";
 import { Button } from "@/components/ui/button.js";
+import {
+  CodingPlanBillingDiscountBadgePill,
+  CodingPlanBillingDiscountInfoDialog,
+} from "@/CodingPlanBillingDiscount.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import type { CodingPlanLoginOptions } from "./codingPlanPricingCards.js";
 
@@ -61,21 +67,29 @@ export function CodingPlanUpgradeAction({
   loginLoading,
   upgradePlansVisible,
   actionLabelId = "settings.modelProvider.codingPlan.upgrade",
+  billingDiscountActive,
+  billingDiscountConfig,
   onUpgradePlansVisibleChange,
 }: {
   loginLoading?: boolean;
   upgradePlansVisible: boolean;
   actionLabelId?: string;
+  billingDiscountActive?: boolean;
+  billingDiscountConfig?: CodingPlanBillingDiscountConfig;
   onUpgradePlansVisibleChange: (visible: boolean) => void;
 }) {
   const { intl } = useZCodeIntl();
+  const billingDiscountButtonActive = billingDiscountActive === true && !upgradePlansVisible;
 
-  // The open-source edition is not eligible for quota promotions; the upgrade entry shows the action without a discount badge or promotion details.
-  return (
+  const upgradeButton = (
     <CodingPlanEntryButton
       bypassGate={upgradePlansVisible}
       type="button"
       size="lg"
+      className={cn(
+        billingDiscountButtonActive &&
+          "button-gradient dark:bg-[#484A58] text-white hover:bg-transparent hover:opacity-90 dark:hover:bg-[#484A58] pr-[5px] rounded-full",
+      )}
       onClick={() => {
         // The purchase/upgrade entry must open the panel first. The panel handles expired OAuth after the user selects
         // a plan/cycle, so clicking Upgrade does not jump straight to login and hide the purchase flow.
@@ -95,6 +109,24 @@ export function CodingPlanUpgradeAction({
       {intl.formatMessage({
         id: upgradePlansVisible ? "settings.modelProvider.codingPlan.cancelUpgrade" : actionLabelId,
       })}
+      {billingDiscountButtonActive ? (
+        <CodingPlanBillingDiscountBadgePill
+          config={billingDiscountConfig}
+          iconVisible={false}
+          variant="surface"
+        />
+      ) : null}
     </CodingPlanEntryButton>
+  );
+
+  if (!billingDiscountButtonActive) {
+    return upgradeButton;
+  }
+
+  return (
+    <div className="inline-flex shrink-0 items-center gap-1">
+      {upgradeButton}
+      <CodingPlanBillingDiscountInfoDialog config={billingDiscountConfig} />
+    </div>
   );
 }

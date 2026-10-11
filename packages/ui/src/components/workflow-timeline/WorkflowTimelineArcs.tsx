@@ -12,6 +12,7 @@ import {
   type TimelineLayout,
 } from "./timeline-geometry.js";
 import { MarchLight } from "./WorkflowMarchLight.js";
+import { STREAM_GAP, StreamChevrons } from "./WorkflowStreamChevrons.js";
 
 /**
  * Arc layer: the timeline's only SVG; draws only non-adjacent edges.
@@ -60,10 +61,14 @@ export function WorkflowTimelineArcs({
   const { inset, rowY } = layout;
   const rowOf = (track: number): number => rowY[track] ?? rowY[0]!;
   const trackOf = (index: number): number => stations[index]?.track ?? 0;
+  // The entire layer is decorative and does not receive pointer events. Root cause (observed
+  // 2026-09-29): this SVG covered the whole timeline and was painted above fill headers, swallowing
+  // their hover and click events—the frame would not light up and the header could not open the side
+  // pane. Stations and pills were painted above it, so the issue went unnoticed.
   return (
     <svg
       aria-hidden
-      className="absolute left-0 top-0 overflow-visible"
+      className="pointer-events-none absolute left-0 top-0 overflow-visible"
       height={height}
       viewBox={`0 0 ${width} ${height}`}
       width={width}
@@ -105,12 +110,18 @@ export function WorkflowTimelineArcs({
         const ya = fromBand ? rowY[0]! - 3 : rowOf(trackOf(arc.from)) - 7;
         const yb = toBand ? rowY[0]! - 4 : rowOf(trackOf(arc.to)) - 9;
         const tail = `V${yb}`;
-        const path = `M${xa},${ya} V${ly + 8} Q${xa},${ly} ${xa + 8 * sign},${ly} H${xb - 8 * sign} Q${xb},${ly} ${xb},${ly + 8} ${tail}`;
+        // Stream arc (presentation.md, “Stream rails”): split the horizontal segment at the center to make room for chevrons pointing along the arc.
+        const mid = (xa + xb) / 2;
+        const across = arc.stream
+          ? `H${mid - (STREAM_GAP / 2) * sign} M${mid + (STREAM_GAP / 2) * sign},${ly} H${xb - 8 * sign}`
+          : `H${xb - 8 * sign}`;
+        const path = `M${xa},${ya} V${ly + 8} Q${xa},${ly} ${xa + 8 * sign},${ly} ${across} Q${xb},${ly} ${xb},${ly + 8} ${tail}`;
         const ink = arc.ink === "march" ? "strong" : arc.ink;
         return (
           <g
             data-arc-from={arc.from}
             data-arc-ink={arc.ink}
+            data-arc-stream={arc.stream ? "true" : undefined}
             data-arc-to={arc.to}
             data-testid="workflow-timeline-arc"
             key={`${arc.from}-${arc.to}-${arc.air}`}
@@ -124,7 +135,15 @@ export function WorkflowTimelineArcs({
               stroke={INK_STROKE[ink]}
               strokeWidth={1}
             />
-            {arc.ink === "march" ? (
+            {arc.stream ? (
+              <StreamChevrons
+                direction={sign < 0 ? "left" : "right"}
+                ink={arc.ink}
+                x={mid}
+                y={ly}
+              />
+            ) : null}
+            {arc.ink === "march" && !arc.stream ? (
               // Shorten the moving-edge light by 6px so it stops at the arrow base.
               <MarchLight
                 d={`${path.slice(0, -tail.length)}V${yb - 6}`}

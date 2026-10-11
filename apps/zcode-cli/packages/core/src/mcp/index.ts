@@ -2,6 +2,8 @@
 
 import {
   modelMessageContentToText,
+  resolveMcpToolVisibility,
+  SessionEventType,
   ZCODE_MCP_ERROR_PRESENTATION_MESSAGE_ONLY,
   ZCODE_MCP_ERROR_PRESENTATION_META_KEY,
   type JsonSchema,
@@ -13,12 +15,15 @@ import {
   type ModelToolSideEffectScope,
   type PermissionCapabilityGroup,
   type RiskLevel,
+  type SessionEvent,
+  type ToolCallProgressPayload,
 } from "@zcode/contracts";
 import { ZCODE_CUA_OFFICIAL_MCP_NAMESPACE_NAME as ZCODE_CUA_OFFICIAL_MCP_SERVER_NAME } from "@zcode/shared";
 import { OFFICIAL_CUA_FRAME_MODEL_CONTENT_PROTECTION } from "@zcode/zcode-cua/frame-contract";
+import { randomUUID } from "node:crypto";
 import type { ToolRegistry } from "../tool/registry.js";
-import type { ToolEntry } from "../tool/types.js";
 import { createToolRuleNameSet } from "../tool/tool-visibility.js";
+import type { ToolEntry } from "../tool/types.js";
 import {
   asDataUrl,
   base64PayloadFromMcpImageData,
@@ -26,6 +31,12 @@ import {
 } from "./image-normalization.js";
 import { toMcpToolName, toModelVisibleMcpNamePart } from "./name.js";
 
+export {
+  createMcpAppProvidedToolEntry,
+  MCP_APP_PROVIDED_TOOL_ENTRY_TIMEOUT_MS,
+  type McpAppProvidedToolDefinition,
+  type McpAppProvidedToolExecutor,
+} from "./app-tools.js";
 export { toMcpToolName } from "./name.js";
 
 export {
@@ -55,6 +66,11 @@ export interface RegisterMcpToolsOptions {
    * without projecting official CUA canonical names or attaching provider spelling aliases.
    */
   officialCuaServerNames?: ReadonlySet<string>;
+  /**
+   * Namespaced server name → stable plugin ID, from the PluginReferenceCatalog frozen for this session.
+   * Used only to project ownership into display.ui; if absent, this server's tools do not project UI.
+   */
+  pluginIdByServerName?: ReadonlyMap<string, string>;
 }
 
 export function registerMcpTools(
@@ -76,7 +92,11 @@ export function registerMcpTools(
     // namespaced denylists saved before the upgrade. Deny if either old or new name matches deny; allow if either matches allow.
     if (allowed && !allowed.has(name) && !allowed.has(descriptorName)) continue;
     if (disallowed?.has(name) || disallowed?.has(descriptorName)) continue;
-    registry.register(createMcpToolEntry(name, descriptor, mcpPort, officialCuaAuthorityVerified));
+    registry.register(
+      createMcpToolEntry(name, descriptor, mcpPort, officialCuaAuthorityVerified, {
+        pluginId: options.pluginIdByServerName?.get(descriptor.serverName),
+      }),
+    );
     registered.push(name);
   }
 
@@ -99,14 +119,19 @@ function toRegisteredMcpToolName(
   return toMcpToolName(descriptor);
 }
 
-function createMcpToolEntry(
+export function createMcpToolEntry(
   name: string,
   descriptor: McpToolDescriptor,
   mcpPort: McpPort,
   officialCuaAuthorityVerified: boolean,
+  presentation: { pluginId?: string } = {},
 ): ToolEntry {
   const readOnly = descriptor.annotations?.readOnlyHint === true;
   const destructive = descriptor.annotations?.destructiveHint === true;
+  // Plugin UI: tools whose visibility excludes "model" are available only through UI callbacks (mcp/uiCallTool).
+  // Keep them in the registry to reuse metadata, but omit them from provider contracts (registry.toContracts filters providerVisible=false).
+  // Fix: previously only ui.visibility was checked, so app-only data tools without a resourceUri were incorrectly exposed to the model.
+  const providerVisible = resolveMcpToolVisibility(descriptor).includes("model");
   const isHostNodeReplExecution =
     descriptor.serverName === "node_repl" && descriptor.toolName === "js";
   const isCuaAppObservation = isZCodeCuaGetAppState(descriptor);
@@ -148,7 +173,6 @@ function createMcpToolEntry(
         };
 
   return {
-
     // Exact lookup returned Tool not found. Add a one-way alias only when the unforgeable official-authority gate passes and the internal
     // serverName is still the official namespaced name; the provider continues to see only the canonical name.
     aliases: officialCuaProviderSpellingAliases(name, descriptor, officialCuaAuthorityVerified),
@@ -179,8 +203,11 @@ function createMcpToolEntry(
         ...(descriptor.description ? { description: descriptor.description } : {}),
         // Only results from official MCPs may carry structured identifiers trusted by the client (quota exhausted / no plan).
         ...(descriptor.official ? { official: true } : {}),
+        ...(presentation.pluginId ? { pluginId: presentation.pluginId } : {}),
+        ...(descriptor.ui ? { ui: descriptor.ui } : {}),
       },
       needsApproval,
+      ...(providerVisible ? {} : { providerVisible: false }),
       readOnly,
       riskLevel,
       sideEffectScope,
@@ -212,6 +239,7 @@ function createMcpToolEntry(
       recordOutput: "summary",
     },
     handler: async (input, context) => {
+      const startedAt = Date.now();
       const result = await mcpPort.callTool(
         {
           serverName: descriptor.serverName,
@@ -240,6 +268,16 @@ function createMcpToolEntry(
         {
           signal: context.abortSignal,
           timeoutMs,
+          // MCP progress notifications (A8) → ToolCallProgress: use the same event as Bash output progress, so the UI uses its existing tool-row progress path.
+          ...(context.emitEvent
+            ? {
+                onProgress: (progress: { progress: number; total?: number; message?: string }) => {
+                  void context.emitEvent?.(
+                    createMcpProgressEvent(context, name, startedAt, progress),
+                  );
+                },
+              }
+            : {}),
         },
       );
       // MCP servers can return large base64 images, while resultBudget sees only image placeholder text.
@@ -254,6 +292,32 @@ function createMcpToolEntry(
       });
     },
     formatModelContent: (output) => formatMcpToolResult(output),
+  };
+}
+
+function createMcpProgressEvent(
+  context: Parameters<ToolEntry["handler"]>[1],
+  toolName: string,
+  startedAt: number,
+  progress: { progress: number; total?: number; message?: string },
+): SessionEvent {
+  const payload: ToolCallProgressPayload = {
+    toolCallId: context.toolCallId as ToolCallProgressPayload["toolCallId"],
+    toolName,
+    elapsedMs: Math.max(0, Date.now() - startedAt),
+    progress: progress.progress,
+    ...(progress.total !== undefined ? { total: progress.total } : {}),
+    ...(progress.message !== undefined ? { message: progress.message } : {}),
+  };
+  return {
+    id: randomUUID() as SessionEvent["id"],
+    sessionId: context.sessionId,
+    turnId: context.turnId,
+    type: SessionEventType.ToolCallProgress,
+    timestamp: new Date(),
+    traceId: context.traceId,
+    sequenceNumber: 0,
+    payload,
   };
 }
 
@@ -366,7 +430,7 @@ function hasInformativeStructuredContent(value: unknown): boolean {
   return true;
 }
 
-function formatMcpToolResult(output: unknown): ModelMessageContent {
+export function formatMcpToolResult(output: unknown): ModelMessageContent {
   if (!isMcpToolCallResult(output)) {
     return stringify(output);
   }

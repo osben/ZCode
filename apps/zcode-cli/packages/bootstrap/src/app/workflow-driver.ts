@@ -109,7 +109,10 @@ import {
   schemaEpilogue,
   toWorkflowError,
 } from "./workflow-driver-helpers.js";
-import { makeSessionSubmitPort, type SubmitBridgeHost } from "./workflow-driver-submit-bridge.js";
+import {
+  makeSessionSubmitPort,
+  type SubmitBridgeHost,
+} from "./workflow-driver-submit-bridge.js";
 import {
   countSessionTranscript,
   journalAskMessageBoundary,
@@ -148,7 +151,7 @@ class AgentRuntimeWorkflowDriver implements WorkflowDriver {
   private readonly modelFailureHost: ModelFailureHost;
   /** Host surface passed to submit bridging (workflow-driver-submit-bridge.ts), likewise sharing both values by reference. */
   private readonly submitHost: SubmitBridgeHost;
-  /** Run-level stall clock: success/retry beats from all actors feed into this one table. */
+  /** Run-level stall clock (decision 4): success/retry beats from all actors feed into this one table. */
   private readonly stallClock: RunStallClock;
   /**
    * Session quiescence record (workflow-driver-quiescence.ts): whether each session still had a
@@ -274,7 +277,8 @@ class AgentRuntimeWorkflowDriver implements WorkflowDriver {
       live,
       // The seat gate is keyed by **actor** (not ask instance): per-actor FIFO guarantees at
       // most one in-flight ask per actor, so "working subagents" and "in-flight asks" have the
-      // same count. The admission port is already created per actor session.
+      // same count, and the admission port is already created per actor session.
+      // See docs/dynamic-workflow/concurrency.md "Park and unpark".
       ...(this.deps.seatGate === undefined
         ? {}
         : { seat: { gate: this.deps.seatGate, key: refToString(actor) } }),
@@ -314,12 +318,7 @@ class AgentRuntimeWorkflowDriver implements WorkflowDriver {
         : { modelRequestAdmission: modelActivity.admission }),
     });
     if (seed !== undefined) {
-      await seedActorSession(this.deps, {
-        journaledSessionId: journaled,
-        runtime,
-        seed,
-        sessionId,
-      });
+      await seedActorSession(this.deps, { journaledSessionId: journaled, runtime, seed, sessionId });
     }
     state = {
       ref,

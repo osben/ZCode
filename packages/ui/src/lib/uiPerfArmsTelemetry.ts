@@ -6,29 +6,29 @@ import {
 } from "@zcode/shared";
 import { logger } from "@/logger.js";
 
-const UI_PERF_ARMS_GROUP = "ui_perf";
+export const UI_PERF_ARMS_GROUP = "ui_perf";
 
-const UI_PERF_EVENT_LAUNCH_TO_INPUT = "perf_ui_launch_to_input";
-const UI_PERF_EVENT_LAUNCH_ELECTRON_INIT = "perf_ui_launch_electron_init_ms";
-const UI_PERF_EVENT_LAUNCH_APP_READY = "perf_ui_launch_app_ready_ms";
-const UI_PERF_EVENT_LAUNCH_WINDOW = "perf_ui_launch_window_ms";
-const UI_PERF_EVENT_LAUNCH_RENDERER_LOAD = "perf_ui_launch_renderer_load_ms";
-const UI_PERF_EVENT_LAUNCH_REACT_COMMIT = "perf_ui_launch_react_commit_ms";
-const UI_PERF_EVENT_LAUNCH_STARTUP_GATE = "perf_ui_launch_startup_gate_ms";
+export const UI_PERF_EVENT_LAUNCH_TO_INPUT = "perf_ui_launch_to_input";
+export const UI_PERF_EVENT_LAUNCH_ELECTRON_INIT = "perf_ui_launch_electron_init_ms";
+export const UI_PERF_EVENT_LAUNCH_APP_READY = "perf_ui_launch_app_ready_ms";
+export const UI_PERF_EVENT_LAUNCH_WINDOW = "perf_ui_launch_window_ms";
+export const UI_PERF_EVENT_LAUNCH_RENDERER_LOAD = "perf_ui_launch_renderer_load_ms";
+export const UI_PERF_EVENT_LAUNCH_REACT_COMMIT = "perf_ui_launch_react_commit_ms";
+export const UI_PERF_EVENT_LAUNCH_STARTUP_GATE = "perf_ui_launch_startup_gate_ms";
 
 // If total duration exceeds this value, treat it as a clock anomaly/process suspension and discard the entire batch to avoid skewing the distribution.
-const LAUNCH_TO_INPUT_SANITY_MAX_MS = 300000;
+export const LAUNCH_TO_INPUT_SANITY_MAX_MS = 300000;
 
-const UI_PERF_EVENT_FIRST_TOKEN = "perf_ui_first_token";
-const UI_PERF_EVENT_MESSAGE_COMPLETE = "perf_ui_message_complete";
-const UI_PERF_EVENT_TURN_BREAKDOWN = "perf_ui_turn_breakdown";
-const UI_PERF_EVENT_TOOL_CALL_DETAIL = "perf_ui_tool_call_detail";
-const UI_PERF_EVENT_STREAM_STALL = "perf_ui_stream_stall";
+export const UI_PERF_EVENT_FIRST_TOKEN = "perf_ui_first_token";
+export const UI_PERF_EVENT_MESSAGE_COMPLETE = "perf_ui_message_complete";
+export const UI_PERF_EVENT_TURN_BREAKDOWN = "perf_ui_turn_breakdown";
+export const UI_PERF_EVENT_TOOL_CALL_DETAIL = "perf_ui_tool_call_detail";
+export const UI_PERF_EVENT_STREAM_STALL = "perf_ui_stream_stall";
 
 // If no new chunk arrives for longer than this interval (ms), treat it as a stall and report it; value remains the actual interval. Tighten based on production data if needed.
 // Do not count tool_call/tool_call_update: tool events clearStreamStallTracking,
 // and the first content chunk after a tool is treated as the first one; do not compare it with the chunk before the tool, which would mistake tool execution for a stall.
-const STREAM_STALL_REPORT_THRESHOLD_MS = 3000;
+export const STREAM_STALL_REPORT_THRESHOLD_MS = 3000;
 
 type ArmsReporter = Pick<IPlatformService, "reportArmsCustomEvent">;
 
@@ -36,6 +36,11 @@ let armsReporter: ArmsReporter | null = null;
 
 export function setUiPerfArmsReporter(reporter: ArmsReporter | null): void {
   armsReporter = reporter;
+}
+
+export function clearUiPerfArmsReporterForTest(): void {
+  armsReporter = null;
+  lastChunkAtByTask.clear();
 }
 
 /**
@@ -349,16 +354,16 @@ export function clearStreamStallTracking(taskId: string): void {
 
 // Input lag: measure “single input processing duration” inside the Lexical update listener (the synchronous getEditorMarkdown + onChange section).
 // Unlike stream_stall (output-side), this is input-side. Report only threshold violations to minimize event volume.
-const UI_PERF_EVENT_INPUT_LAG = "perf_ui_input_lag";
+export const UI_PERF_EVENT_INPUT_LAG = "perf_ui_input_lag";
 
 // Conservative starting point: capture only the most severe stalls. Adjust downward based on production data.
-const INPUT_LAG_REPORT_THRESHOLD_MS = 500;
+export const INPUT_LAG_REPORT_THRESHOLD_MS = 500;
 // Durations above this value are likely due to breakpoint debugging, a suspended tab, or waking from device sleep; discard them to avoid skewing the distribution.
-const INPUT_LAG_SANITY_MAX_MS = 5000;
+export const INPUT_LAG_SANITY_MAX_MS = 5000;
 
 // Extract the decision into a pure function for tests: programmatic updates (paste/setText/mention/history restore) and IME composition
 // do not count as typing stalls, even when they exceed the threshold.
-function shouldReportInputLag(args: {
+export function shouldReportInputLag(args: {
   lagMs: number;
   isProgrammatic: boolean;
   isComposing: boolean;

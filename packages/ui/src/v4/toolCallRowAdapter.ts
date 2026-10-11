@@ -118,6 +118,8 @@ export function toolCallRowToLegacyNode(row: ToolCallRow): TaskChatToolCallTreeN
         v4Status: row.status,
         ...(row.cuaApp ? { cuaApp: row.cuaApp } : {}),
         ...(legacyDisplay ? { display: legacyDisplay } : {}),
+        // R7: Running progress (MCP notifications/progress) is consumed by the progress bar in the McpToolCallBlock header.
+        ...(row.progress ? { progress: row.progress } : {}),
         inputPreviewComplete: inputPreview.inputPreviewComplete,
         streamingRawInputLength: inputPreview.streamingRawInputLength,
       },

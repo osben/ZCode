@@ -41,7 +41,7 @@ import { useZCodeSessionStore } from "@/store/zcodeSessionStore.js";
 /** Single-flight directory hydration per workspaceKey; drafts, existing sessions, and strict-mode double mounts share one RPC. */
 const workspaceCatalogHydrationFlights = new Map<string, Promise<void>>();
 
-function applyDraftModelSelection(
+export function applyDraftModelSelection(
   current: Partial<SessionConfigState>,
   model: ModelSelection,
 ): Partial<SessionConfigState> {
@@ -61,7 +61,7 @@ function applyDraftModelSelection(
   return next;
 }
 
-function shouldHydrateWorkspaceCatalog(params: {
+export function shouldHydrateWorkspaceCatalog(params: {
   configOptions: readonly ZCodeConfigOption[];
   sessionId: string | null;
   slashCommands: readonly ZCodeSlashCommand[];
@@ -74,7 +74,7 @@ function shouldHydrateWorkspaceCatalog(params: {
   return params.slashCommands.length === 0 || !hasModePresentation;
 }
 
-interface DraftConfigControl {
+export interface DraftConfigControl {
   modelSelectionRead: ModelSelectionRead;
   /** Configuration for the Renderer’s next submission; Session provides a seed only when a scope is initialized for the first time. */
   draftConfig: Partial<SessionConfigState>;

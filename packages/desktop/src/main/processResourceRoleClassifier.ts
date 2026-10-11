@@ -12,7 +12,7 @@ import {
 import { roundMetric } from "./resourceMetricsStats.js";
 
 /** Seven roles covered by getAppMetrics; cli_* and mcp come from CLI samples and are not included here. */
-const CHROMIUM_PROCESS_RESOURCE_ROLES = [
+export const CHROMIUM_PROCESS_RESOURCE_ROLES = [
   "main",
   "renderer_main",
   "renderer_guest",
@@ -22,7 +22,7 @@ const CHROMIUM_PROCESS_RESOURCE_ROLES = [
   "scheduler",
 ] as const satisfies readonly ProcessResourceRole[];
 
-type ChromiumProcessResourceRole = (typeof CHROMIUM_PROCESS_RESOURCE_ROLES)[number];
+export type ChromiumProcessResourceRole = (typeof CHROMIUM_PROCESS_RESOURCE_ROLES)[number];
 
 /** Normalized sample for one process: CPU is normalized to machine-wide usage; memory is in KB. */
 export interface ChromiumProcessMetricSample {
@@ -76,7 +76,7 @@ export function sumChromiumRoleAggregates(
   return totals;
 }
 
-function classifyChromiumProcessRole(
+export function classifyChromiumProcessRole(
   sample: Pick<ChromiumProcessMetricSample, "pid" | "type">,
   pids: ChromiumProcessRolePids,
 ): ChromiumProcessResourceRole {

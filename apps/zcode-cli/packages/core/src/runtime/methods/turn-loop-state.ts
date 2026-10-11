@@ -12,7 +12,7 @@ import type {
 } from "../deps.js";
 import type { ActiveTurnSteeringState } from "../types.js";
 import type { SubagentRunOptions } from "@zcode/contracts";
-import type { DrainedPendingInputDiagnostics } from "../types.js";
+import type { DrainedPendingInputDiagnostics, ModelExecutionContext } from "../types.js";
 import type { TurnMachineImpl } from "../deps.js";
 import type { RuntimeMessageEntry } from "../../agent/message-history.js";
 
@@ -52,6 +52,7 @@ export type CompactAttemptOutcome = "skipped" | "compacted" | "failed";
 export type AutoCompactOutcome = CompactAttemptOutcome | "rapid_refill_blocked";
 
 export interface AutoCompactLoopContext {
+  getAgentListingTools?: () => readonly { name: string }[];
   compactReason: CompactReason;
   modelStepIndex: number;
   phase: CompactPhase;
@@ -61,6 +62,7 @@ export interface AutoCompactLoopContext {
 }
 
 export interface ReactiveCompactLoopContext {
+  agentListingTools?: readonly { name: string }[];
   activeEntries?: readonly RuntimeMessageEntry[];
   modelStepIndex: number;
   model: Model;
@@ -91,16 +93,20 @@ export interface RegularTurnLoopState {
   drainedSteerForNextRequest?: DrainedPendingInputDiagnostics;
   events: SessionEvent[];
   input: string;
+  inputId?: string;
   modelResponse: string;
   /** The callable model fixed for this turn; configuration changes affect only Loops created later. */
   model: Model;
   /** execution means the current Active Model cannot be changed by a guide in the same loop. */
   modelSelectionScope?: "execution";
+  /** Fallback declaration for this turn's execution Selection; clear after one match so the fallback model cannot trigger another fallback. */
+  selectionFallback?: ModelExecutionContext["selectionFallback"];
   /** Foreground child Selection override from Core Server; takes precedence over profile and parent-model inheritance. */
   subagentModelOverride?: SubagentRunOptions["modelOverride"];
   modelStepCount: number;
   /** Number of assistant/compact outputs for the current query successfully written to provider-visible persistent history. */
   historyRoundCount: number;
+  completedRealToolResultBatch: boolean;
   reactiveCompactAttemptedInCurrentModelStep: boolean;
   repeatedToolCallSignature?: string;
   repeatedToolCallStreakCount: number;

@@ -1,6 +1,6 @@
 /* oxlint-disable eslint(max-lines) -- The footer groups account, theme, mode, and shortcut menus. */
 import type { Locale, UserInfo } from "@zcode/shared";
-import { memo, useCallback, useEffect, useState } from "react";
+import { memo, useCallback, useEffect, useState, type ReactNode } from "react";
 import {
   DesktopCommandIds,
   TID_LOGIN_MENU_ITEM,
@@ -12,6 +12,8 @@ import { ControlHintTooltip } from "@/ControlHintTooltip.js";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar.js";
 import { cn } from "@/components/lib/utils.js";
 import { Button } from "@/components/ui/button.js";
+import { toast } from "@/components/ui/toast.js";
+import { Badge } from "@/components/ui/badge.js";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -26,8 +28,10 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu.js";
 import {
+  Copy,
   PencilRuler,
   Globe,
+  Gift,
   Loader2,
   LogInIcon,
   LogOut,
@@ -39,6 +43,7 @@ import {
   ZoomOut,
 } from "lucide-react";
 import { usePlatform } from "@/hooks/usePlatform.js";
+import { useOpenRewards } from "@/rewards/RewardsProvider.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { useShortcutCommandLabel } from "@/shortcuts/useShortcutBindings.js";
 import { useZCodeStore } from "@/store/StoreProvider.js";
@@ -101,6 +106,7 @@ export const WorkspaceSidebarFooter = memo(function WorkspaceSidebarFooterCompon
   workspaceRemoteSessionId,
   activeTaskId,
   isDesktop = false,
+  banner,
   className,
 }: {
   theme: Theme;
@@ -121,10 +127,12 @@ export const WorkspaceSidebarFooter = memo(function WorkspaceSidebarFooterCompon
   workspaceRemoteSessionId?: string;
   activeTaskId?: string | null;
   isDesktop?: boolean;
+  banner?: ReactNode;
   className?: string;
 }) {
   const { intl } = useZCodeIntl();
   const platform = usePlatform();
+  const openRewards = useOpenRewards();
   const interfaceMode = useZCodeStore((state) => state.interfaceMode);
   const setInterfaceMode = useZCodeStore((state) => state.setInterfaceMode);
   const zoomInShortcutLabel = useShortcutCommandLabel("zoomIn");
@@ -140,6 +148,15 @@ export const WorkspaceSidebarFooter = memo(function WorkspaceSidebarFooterCompon
     workspaceIdentity,
     workspacePath,
   });
+  const copyUserId = async () => {
+    if (!user?.id) return;
+    try {
+      await navigator.clipboard.writeText(user.id);
+      toast(intl.formatMessage({ id: "sidebar.profile.userIdCopied" }));
+    } catch {
+      toast(intl.formatMessage({ id: "sidebar.profile.userIdCopyFailed" }));
+    }
+  };
   const profileContent = (
     <>
       <Avatar key={avatarKey} size="default">
@@ -149,9 +166,9 @@ export const WorkspaceSidebarFooter = memo(function WorkspaceSidebarFooterCompon
             avatarFallbackText
           ) : showAuthRestoreLoading ? (
             <>
-              {/* Before OAuth startup restoration settled, the footer showed the signed-out avatar immediately,
+              {/* Bugfix: Before OAuth startup recovery finished, the footer immediately showed a signed-out avatar,
                   making it easy to mistake “still checking” for “signed out.”
-                  Show a loading icon to clearly indicate “checking status” and display the final state only after restoration succeeds or fails. */}
+                  Show a loading icon to indicate that the status is being checked, then show the final state after recovery succeeds or fails. */}
               <Loader2 className="size-4 animate-spin" />
               <span className="sr-only">{intl.formatMessage({ id: "common.loading" })}</span>
             </>
@@ -165,7 +182,6 @@ export const WorkspaceSidebarFooter = memo(function WorkspaceSidebarFooterCompon
           <span className="min-w-0 truncate text-ui-base font-semibold text-foreground">
             {profileBadge}
           </span>
-          {user ? <WorkspaceSidebarFooterPlanBadge state={usageSummaryState} /> : null}
         </div>
       </div>
     </>
@@ -216,11 +232,12 @@ export const WorkspaceSidebarFooter = memo(function WorkspaceSidebarFooterCompon
   return (
     // Settings also reuses the footer; the caller supplies page-specific margins to avoid changing the shared default style.
     <footer className={cn("flex shrink-0 flex-col gap-2.5 px-4 pt-2 pb-4", className)}>
+      {banner}
       <div className="flex min-w-0 gap-2">
         <DropdownMenu open={profileMenuOpen} onOpenChange={setProfileMenuOpen}>
           <DropdownMenuTrigger asChild>
-            {/* The avatar and Login were previously bound directly to the sign-in action, preventing users from opening preferences here.
-              Make this a shared settings-menu entry, with sign-in/sign-out kept in menu items, for clearer interaction responsibilities. */}
+            {/* Bugfix: The avatar and Login entry used to trigger login directly, preventing users from opening preferences here.
+              Make this a shared settings-menu entry, with login/logout actions inside the menu to clarify their roles. */}
             <Button
               type="button"
               variant="ghost"
@@ -229,13 +246,78 @@ export const WorkspaceSidebarFooter = memo(function WorkspaceSidebarFooterCompon
               data-testid={TID_LOGIN_TRIGGER}
               aria-label={profileBadge}
             >
-              {/* Button defaults to shrink-0 and whitespace-nowrap, so a long username can push the footer outside the sidebar.
-                Allow the trigger and text column to shrink, and truncate only the username to one line. */}
+              {/* Bugfix: Button defaults to shrink-0 and whitespace-nowrap, so a very long username can push the footer beyond the sidebar.
+                Allow both the trigger and text column to shrink, and truncate only the username to one line. */}
               {profileContent}
             </Button>
           </DropdownMenuTrigger>
-          {/* Keep the menu content mounted so clicking the avatar menu does not recreate the footer’s internal state.*/}
-          <DropdownMenuContent align="start" className="w-max min-w-50" forceMount>
+          {/* Bugfix: Keep the menu content mounted to avoid rebuilding the footer’s internal state every time the avatar menu is opened. */}
+          <DropdownMenuContent
+            align="start"
+            className="w-max min-w-50 max-w-[calc(100vw-2rem)]"
+            forceMount
+          >
+            {user ? (
+              <>
+                <div
+                  data-testid="profile-menu-header"
+                  className="flex max-w-80 items-center gap-2 px-2 py-1.5"
+                >
+                  <Avatar key={avatarKey} size="default">
+                    {user.avatarUrl ? (
+                      <AvatarImage src={user.avatarUrl} alt={profileBadge} />
+                    ) : null}
+                    <AvatarFallback className="bg-background text-foreground">
+                      {avatarFallbackText}
+                    </AvatarFallback>
+                  </Avatar>
+                  <div className="flex min-w-0 flex-1 flex-col">
+                    <div className="flex min-w-0 items-center gap-1.5">
+                      <span
+                        data-testid="profile-menu-name"
+                        className="truncate text-ui-base font-medium"
+                      >
+                        {profileBadge}
+                      </span>
+                      <span
+                        data-testid="profile-menu-plan"
+                        className="flex shrink-0 [&>span]:border-border/50 [&>span]:bg-transparent [&>span]:font-normal"
+                      >
+                        <WorkspaceSidebarFooterPlanBadge state={usageSummaryState} />
+                      </span>
+                    </div>
+                    {user.id ? (
+                      <div className="flex min-w-0 items-center gap-1 text-ui-sm text-foreground-subtle">
+                        <span data-testid="profile-menu-id" className="min-w-0 truncate">
+                          {intl.formatMessage({ id: "sidebar.profile.accountId" }, { id: user.id })}
+                        </span>
+                        <DropdownMenuItem
+                          asChild
+                          className="data-[highlighted]:bg-transparent data-[highlighted]:hover:bg-menu-hover data-[highlighted]:focus-visible:bg-menu-hover"
+                          onSelect={(event) => {
+                            event.preventDefault();
+                            void copyUserId();
+                          }}
+                        >
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon-xs"
+                            data-testid="copy-user-id"
+                            className="min-h-0 p-0 text-foreground-subtle"
+                            aria-label={intl.formatMessage({ id: "sidebar.profile.copyUserId" })}
+                            title={intl.formatMessage({ id: "sidebar.profile.copyUserId" })}
+                          >
+                            <Copy className="size-3" />
+                          </Button>
+                        </DropdownMenuItem>
+                      </div>
+                    ) : null}
+                  </div>
+                </div>
+                <DropdownMenuSeparator />
+              </>
+            ) : null}
             <DropdownMenuSub>
               <DropdownMenuSubTrigger>
                 <Globe className="size-4" />
@@ -310,10 +392,14 @@ export const WorkspaceSidebarFooter = memo(function WorkspaceSidebarFooterCompon
                 </DropdownMenuRadioGroup>
               </DropdownMenuSubContent>
             </DropdownMenuSub>
-            {/* Shortcut settings: the zoom submenu label reads from the effective map and updates immediately after a rebind in Settings */}
-            {/* When consolidating duplicate zoom submenus, the one after Language was mistakenly kept, making the menu order
-                Language → Zoom → Theme; the account-menu group order is fixed as Language → Theme → Interface mode → Zoom → Usage → Sign in/out,
-                so move the sole copy (which reads the effective map) before the usage summary; do not add a second zoom submenu. */}
+            {/* Shortcut settings (a58fdef series): the zoom submenu label reads the active mapping and updates immediately after rebinding on the settings page. */}
+            {/* Bugfix: ecc6952 consolidated duplicate zoom submenus but mistakenly kept the one after
+                Language, making the menu order Language → Zoom → Theme; the account-menu group order
+                is fixed as Language → Theme → Interface mode → Zoom → Usage → Sign in/out, so move
+                the sole copy (which reads the effective map) before the usage summary. Staging's
+                1d3179cb83 independently made the same move (same position, missing this comment and
+                the JSX indentation); keep this version when merging and do not add a second zoom
+                submenu. */}
             {isDesktop ? (
               <DropdownMenuSub>
                 <DropdownMenuSubTrigger>
@@ -348,12 +434,24 @@ export const WorkspaceSidebarFooter = memo(function WorkspaceSidebarFooterCompon
                 </DropdownMenuSubContent>
               </DropdownMenuSub>
             ) : null}
-            {/* The upgrade entry state no longer uses the menu open state as its lifecycle boundary.*/}
+            {/* Bugfix: The upgrade-entry state no longer uses the menu toggle as its lifecycle boundary. */}
             <WorkspaceSidebarFooterUsageSummaryContent
               state={usageSummaryState}
               onUsageClick={usageButtonClick}
               onUpgradeClick={onUpgradeClick}
             />
+            {user ? (
+              <DropdownMenuItem onSelect={() => openRewards?.()} data-testid="rewards-menu-item">
+                <Gift className="size-4" />
+                {intl.formatMessage({ id: "rewards.menuTitle" })}
+                <Badge
+                  data-testid="rewards-reward-badge"
+                  className="-ml-0.5 h-auto border-0 px-1.5 py-0.5 text-ui-sm leading-none bg-[var(--color-plugin-paid-plan-badge)] text-[var(--color-plugin-paid-plan-badge-foreground)]"
+                >
+                  {intl.formatMessage({ id: "rewards.menuBadge" })}
+                </Badge>
+              </DropdownMenuItem>
+            ) : null}
             {onLogin && !user ? (
               <>
                 <DropdownMenuSeparator />
@@ -363,14 +461,12 @@ export const WorkspaceSidebarFooter = memo(function WorkspaceSidebarFooterCompon
                 </DropdownMenuItem>
               </>
             ) : null}
+            {onLogout ? <DropdownMenuSeparator /> : null}
             {onLogout ? (
-              <>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem onSelect={onLogout} data-testid={TID_LOGOUT_BUTTON}>
-                  <LogOut className="size-4" />
-                  {intl.formatMessage({ id: "app.logout" })}
-                </DropdownMenuItem>
-              </>
+              <DropdownMenuItem onSelect={onLogout} data-testid={TID_LOGOUT_BUTTON}>
+                <LogOut className="size-4" />
+                {intl.formatMessage({ id: "app.logout" })}
+              </DropdownMenuItem>
             ) : null}
           </DropdownMenuContent>
         </DropdownMenu>
@@ -379,6 +475,8 @@ export const WorkspaceSidebarFooter = memo(function WorkspaceSidebarFooterCompon
             <WorkspaceWebRemoteControlTrigger
               workspacePath={workspacePath}
               workspaceIdentity={workspaceIdentity}
+              remoteSessionId={workspaceRemoteSessionId}
+              initialTaskId={activeTaskId ?? undefined}
               compact
             />
           ) : null}

@@ -1,11 +1,11 @@
-interface ArmsUserIdentitySyncDeps {
+export interface ArmsUserIdentitySyncDeps {
   /** Device-level ID, reported directly as ARMS user.name. */
   deviceMid: string;
   /** Write the ARMS user configuration (by default, wraps armsRum.setConfig("user", ...)). */
   setUser: (user: { name: string }) => void;
 }
 
-interface ArmsUserIdentitySync {
+export interface ArmsUserIdentitySync {
   /** Write deviceMid to ARMS user.name (deduplicated). */
   refresh: () => void;
 }

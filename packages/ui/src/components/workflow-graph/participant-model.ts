@@ -3,6 +3,7 @@ import { phaseBinder } from "./instance-phases.js";
 import { aggregateRunStatuses, statusOfRunNode } from "./run-status.js";
 import {
   IMPLICIT_PHASE_ID,
+  MAIN_LANE_ID,
   type StepRunStatus,
   type StepStatusTable,
   type WorkflowCausalityGraphData,
@@ -52,12 +53,21 @@ export function withImplicitPhase(graph: WorkflowCausalityGraphData): WorkflowCa
   };
 }
 
-/** Participants in one phase, preserving payload order (handoff order). */
+/**
+ * Participants in a phase, preserving payload order (handoff order). Exclude the lead agent's
+ * `main` lane: its only step is an open hole, and the hole itself is a station (presentation.md, “Pills”).
+ *
+ * Root cause (observed in testfield on 2026-09-29): the analyzer placed an open hole in the phase
+ * containing the `hole()` call and emitted a `main`-lane participant for it. Passing it through
+ * unchanged made the timeline draw it as an unnamed subagent, adding an extra “Unnamed subagent” at that station.
+ */
 export function participantsOfPhase(
   graph: WorkflowCausalityGraphData,
   phaseId: string,
 ): WorkflowParticipantData[] {
-  return graph.participants.filter((participant) => participant.phase === phaseId);
+  return graph.participants.filter(
+    (participant) => participant.phase === phaseId && participant.lane !== MAIN_LANE_ID,
+  );
 }
 
 export function participantById(
@@ -99,7 +109,10 @@ export function participantCounts(
   let asks = 0;
   let reads = 0;
   for (const id of participant.steps) {
-    if (kinds.get(id) === "world-read") reads += 1;
+    const kind = kinds.get(id);
+    // The hole's own station (kind `hole`) is not an ask; there is no code there yet.
+    if (kind === "hole") continue;
+    if (kind === "world-read") reads += 1;
     else asks += 1;
   }
   return { asks, reads };
@@ -333,8 +346,11 @@ interface RunIndex {
 }
 
 /**
- * Build the two indexes once per view. Without them, every instance card would rescan `run.nodes` to collect its status: the table limit
- * is 1024 instances × 1024 nodes, or about one million comparisons per frame. With indexes, modeling is linear in actors + nodes.
+ * Two indexes built once per view (Cost section of “The timeline model” in
+ * docs/dynamic-workflow/presentation.md). Without them, every instance card rescans `run.nodes` to
+ * collect its state—up to 1,024 instances × 1,024 nodes, or one million comparisons per frame
+ * (measured at 14ms each time, with the card and detail page each building one). With the indexes,
+ * model construction is linear in actors + nodes.
  *
  * Nodes without actors (world-read) and legacy payloads without ordinals are not indexed: the old filter
  * `node.actorSiteId === lane && node.actorOrdinal === ordinal` always rejected them, so dropping them is equivalent.

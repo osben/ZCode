@@ -1,6 +1,6 @@
 import type { UsageEntitlementSnapshot, UsageQuotaLimit } from "@zcode/shared";
 
-type CodingPlanQuotaResetFormat = "date" | "dateTime" | "adaptive";
+export type CodingPlanQuotaResetFormat = "date" | "dateTime" | "adaptive";
 
 /**
  * Equivalent types for Token / Credit quotas.
@@ -64,6 +64,13 @@ export function resolveMcpQuotaLimit(
   return snapshot?.mcpQuota?.aggregate ?? null;
 }
 
+export function normalizeQuotaPercentage(value: number | undefined): number {
+  if (value == null || !Number.isFinite(value)) {
+    return 0;
+  }
+  return Math.max(0, Math.min(100, value));
+}
+
 export function getQuotaRemainingPercentage(limit: UsageQuotaLimit | null): number | null {
   if (typeof limit?.percentage !== "number" || !Number.isFinite(limit.percentage)) {
     return null;
@@ -72,15 +79,6 @@ export function getQuotaRemainingPercentage(limit: UsageQuotaLimit | null): numb
   // The quota API’s percentage represents the amount used, while Usage Remaining and
   // usage-stat quota cards both represent “how much remains.” Invert it consistently here so the two displays agree.
   return Math.max(0, Math.min(100, 100 - limit.percentage));
-}
-
-/**
- * When 100% of the quota remains (no usage yet), resetting has no benefit; the UI hides the “Reset” button and opportunity badge.
- * This is a display-only gate; it does not affect server allocation, status polling, or opportunity state itself.
- * The processing/completed displays do not use this check, so completion feedback for a manual reset still plays fully.
- */
-export function isCodingPlanQuotaLimitFull(limit: UsageQuotaLimit | null | undefined): boolean {
-  return getQuotaRemainingPercentage(limit ?? null) === 100;
 }
 
 export function formatQuotaRemainingPercentage(

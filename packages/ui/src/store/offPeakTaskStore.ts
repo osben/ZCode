@@ -18,7 +18,7 @@ import { logger } from "@/logger.js";
 // Off-peak task management store (separate from automationManagementStore): uses IOffPeakTaskService RPC.
 // Position/status are refreshed by polling the list (host offPeakTaskSync writes to SQLite; the renderer reads snapshots only).
 
-interface CreateOffPeakTaskInput {
+export interface CreateOffPeakTaskInput {
   title: string;
   prompt: string;
   /** Four permission tiers (build/edit/plan/yolo); type narrowing happens at the server input boundary. */
@@ -28,7 +28,7 @@ interface CreateOffPeakTaskInput {
   workspaceIdentity?: string;
 }
 
-interface UpdateOffPeakTaskInput {
+export interface UpdateOffPeakTaskInput {
   title?: string;
   prompt?: string;
   permissionMode?: string;
@@ -118,13 +118,13 @@ export function isCurrentOffPeakCodingPlanSupported(
 }
 
 /** Recognize server code 3103 (queue limit exceeded) only by its structured category; do not parse error text across RPC. */
-function isOffPeakQuotaError(result: OffPeakTaskCreateResult | null | undefined): boolean {
+export function isOffPeakQuotaError(result: OffPeakTaskCreateResult | null | undefined): boolean {
   return (
     result?.ok === false && result.errorCategory === "quota_3103" && result.errorCode === "3103"
   );
 }
 
-type OffPeakCreateErrorMessageId =
+export type OffPeakCreateErrorMessageId =
   | "offPeak.error.quota"
   | "offPeak.error.unavailable"
   | "offPeak.error.generic";

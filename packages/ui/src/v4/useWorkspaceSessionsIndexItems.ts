@@ -33,7 +33,7 @@ export interface WorkspaceSessionsIndexScope {
   agentService?: SessionsIndexAgentService;
 }
 
-interface WorkspaceSessionsIndexItemsResult {
+export interface WorkspaceSessionsIndexItemsResult {
   /** Aggregated session metadata (running first; remaining entries sorted by updatedAt descending; tick-driven recomputation with stable references). */
   items: ZCodeTaskMeta[];
   /**

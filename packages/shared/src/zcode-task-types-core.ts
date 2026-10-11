@@ -146,7 +146,18 @@ export interface ZCodeTaskGoalChangedPatch {
 }
 // ---- ZCode task mode ----
 
-export type ZCodeTaskMode = "yolo" | "plan" | "edit" | "auto" | "autoEdit" | "build";
+export type ZCodeTaskMode =
+  | "default"
+  | "yolo"
+  | "guarded"
+  | "plan"
+  | "edit"
+  | "acceptEdits"
+  | "auto"
+  | "dontAsk"
+  | "bypassPermissions"
+  | "autoEdit"
+  | "build";
 
 export type ZCodeOffPeakRunType = "init" | "resume";
 
@@ -198,7 +209,8 @@ export interface ZCodePromptFileAttachment {
   mimeType: string;
   sizeBytes: number;
   /** Attachment source; clipboard-text means long pasted text was written to disk and the agent should treat it only as a temporary file reference. */
-  sourceKind?: "clipboard-text";
+  sourceKind?: "clipboard-text" | "topic-history";
+  messageCount?: number;
   /** Compatibility fallback for older/pathless environments; the new Desktop GUI no longer sends base64 for ordinary files. */
   dataBase64?: string;
   /** Small-text fallback when there is no local path; when localPath exists, the agent reads it directly. */
@@ -338,10 +350,18 @@ export interface ZCodeTaskMeta {
    * without the error text, making the user think the send never started. Persist the failure reason with task metadata here.
    */
   lastError?: ZCodeTaskLastError;
+  /** Task-level repair history state, used to avoid rerunning one-time migration logic when reading snapshots. */
+  repairState?: ZCodeTaskRepairState;
   /** Task-level file-change summary for list/title display only; fileChanges remains the source of truth for rollback. */
   changeSummary?: ZCodeTaskChangeSummary;
   /** zcode-cli /goal session target; null means it was explicitly cleared. */
   target?: ZCodeTaskGoal | null;
+}
+export interface ZCodeTaskRepairState {
+  /** Repair version for backfilling assistant message bodies in historical snapshots from Claude native logs. */
+  claudeNativeSnapshotAssistantContentVersion?: number;
+  /** Repair version for backfilling subagent tool blocks in historical snapshots from Codex native logs. */
+  codexNativeSnapshotSubagentToolsVersion?: number;
 }
 export interface ZCodeTaskChangeSummary {
   /** Number of unique files involved in the task. */
@@ -700,6 +720,7 @@ export interface ZCodeTaskComplete {
   usage?: ZCodeUsage;
 }
 export interface ZCodeTaskRunStarted {
+  inputOrigin?: "desktop" | "mobile";
   type: "task_run_started";
   taskId: string;
   traceId: TraceId;

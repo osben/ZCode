@@ -30,12 +30,13 @@ import type {
   ConversationFindMatchState,
 } from "@/v4/legacyChatViewTypes.js";
 
-interface V4ChatPaneProps {
+export interface V4ChatPaneProps {
   workspacePath: string;
   workspaceIdentity?: string;
   /** Prompt-template telemetry currently covers Desktop only. */
   isDesktop?: boolean;
   readOnly?: boolean;
+  compactForRemoteControl?: boolean;
   /** CLI session ID; null = first send from a draft. */
   sessionId: string | null;
   /** Open entry point for the current workspace's primary pane; count as sidebar when not provided. */
@@ -87,6 +88,7 @@ export function V4ChatPane({
   workspaceIdentity,
   isDesktop = false,
   readOnly = false,
+  compactForRemoteControl = false,
   sessionId,
   openTrigger = "sidebar",
   provider,
@@ -134,6 +136,7 @@ export function V4ChatPane({
         workspacePath={workspacePath}
         workspaceIdentity={workspaceIdentity}
         isDesktop={isDesktop}
+        compactForRemoteControl={compactForRemoteControl}
         provider={provider}
         onSessionCreated={onSessionCreated}
         onSessionDeleted={onSessionDeleted}

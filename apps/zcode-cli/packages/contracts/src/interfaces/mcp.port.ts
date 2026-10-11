@@ -1,8 +1,9 @@
 // MCP Port - Model Context Protocol adapter boundary
 
+import type { McpServerFailureKind, OfficialMcpAuthPortFailureReason } from "@zcode/shared";
+import type { McpAppsToolVisibility, McpToolUiDescriptor } from "@zcode/shared/mcp-apps";
 import type { JsonSchema } from "../model/index.js";
 import type { TraceContext } from "../tracing/tracer.js";
-import type { McpServerFailureKind, OfficialMcpAuthPortFailureReason } from "@zcode/shared";
 
 export type McpServerTransportType = "stdio" | "http" | "sse";
 export type McpProtocolVersion = "legacy" | "auto" | "2026-07-28";
@@ -189,6 +190,25 @@ export interface McpToolDescriptor {
    * `@zcode/shared`.
    */
   official?: boolean;
+  /**
+   * Which callers may use the tool (`_meta.ui.visibility`, defaulting to `["model", "app"]`),
+   * independent of whether the tool has UI resources. Tools without "model" are excluded from provider
+   * contracts; tools without "app" reject `mcp/uiCallTool`. Set by the adapter after normalization;
+   * for older descriptors, fall back to `ui.visibility`, then default to visible to both.
+   */
+  visibility?: McpAppsToolVisibility[];
+  /**
+   * Normalized plugin-UI presentation descriptor from the tool's `_meta`.
+   * Present only for tools that declare a valid `ui://` resourceUri; its visibility comes from the same source as the field above.
+   */
+  ui?: McpToolUiDescriptor;
+}
+
+/** Sole visibility resolver: descriptor.visibility → ui.visibility → visible to both. */
+export function resolveMcpToolVisibility(
+  descriptor: Pick<McpToolDescriptor, "visibility" | "ui">,
+): McpAppsToolVisibility[] {
+  return descriptor.visibility ?? descriptor.ui?.visibility ?? ["model", "app"];
 }
 
 export type McpContentBlock = Record<string, unknown>;
@@ -198,6 +218,84 @@ export interface McpToolCallResult {
   structuredContent?: unknown;
   isError?: boolean;
   _meta?: Record<string, unknown>;
+}
+
+export interface McpReadResourceRequest {
+  serverName: string;
+  uri: string;
+  trace?: TraceContext;
+}
+
+export interface McpResourceContent {
+  uri: string;
+  mimeType?: string;
+  text?: string;
+  blob?: string;
+  _meta?: Record<string, unknown>;
+}
+
+export interface McpReadResourceResult {
+  contents: McpResourceContent[];
+}
+
+/** `resources/list` / `resources/templates/list` (pagination cursor passed through unchanged). */
+export interface McpListResourcesRequest {
+  serverName: string;
+  cursor?: string;
+  trace?: TraceContext;
+}
+export interface McpResourceDescriptor {
+  uri: string;
+  name?: string;
+  title?: string;
+  description?: string;
+  mimeType?: string;
+  _meta?: Record<string, unknown>;
+}
+export interface McpListResourcesResult {
+  resources: McpResourceDescriptor[];
+  nextCursor?: string;
+}
+export interface McpResourceTemplateDescriptor {
+  uriTemplate: string;
+  name?: string;
+  title?: string;
+  description?: string;
+  mimeType?: string;
+  _meta?: Record<string, unknown>;
+}
+export interface McpListResourceTemplatesResult {
+  resourceTemplates: McpResourceTemplateDescriptor[];
+  nextCursor?: string;
+}
+/**
+ * Resource subscription. The caller supplies `subscriberKey` (bootstrap uses sessionId|scopeId|generation).
+ * The connection layer counts registrations by (serverName, uri): call SDK subscribe only on 0→1 and
+ * unsubscribe only on 1→0. Replay registrations after reconnecting.
+ */
+export interface McpResourceSubscriptionRequest {
+  serverName: string;
+  uri: string;
+  subscriberKey: string;
+  trace?: TraceContext;
+}
+/** Thrown when the server has not declared `capabilities.resources.subscribe` (mapped to -32001 not_supported by the protocol layer). */
+export class McpResourceSubscribeUnsupportedError extends Error {
+  readonly code = "not_supported" as const;
+  constructor(readonly serverName: string) {
+    super(`MCP server ${serverName} does not support resource subscriptions`);
+    this.name = "McpResourceSubscribeUnsupportedError";
+  }
+}
+
+/** Server → client notification converted by the adapter to a host-consumable shape; subscription notifications include the currently registered subscriberKey. */
+export type McpServerNotification =
+  | { kind: "resourceUpdated"; serverName: string; uri: string; subscribers: string[] }
+  | { kind: "resourceListChanged"; serverName: string; subscribers: string[] }
+  | { kind: "toolListChanged"; serverName: string }
+  | { kind: "loggingMessage"; serverName: string; level: string; logger?: string; data: unknown };
+export interface McpNotificationPort {
+  onNotification(notification: McpServerNotification): void;
 }
 
 export interface McpConnectionSnapshot {
@@ -243,10 +341,25 @@ export interface McpCallToolRequest {
   turnId?: string;
 }
 
+/** MCP `notifications/progress` (A8): progress is monotonic, total is optional; the adapter forwards it unchanged without throttling. */
+export interface McpToolCallProgress {
+  progress: number;
+  total?: number;
+  message?: string;
+}
+
 export interface McpCallToolOptions {
+  /** Pin page write operations to this connection; do not replay automatically after recovery or reauthorization. */
+  appConnection?: { identity: string; generation: number };
   signal?: AbortSignal;
   timeoutMs?: number;
+  /** Called for server progress notifications; the SDK also uses resetTimeoutOnProgress to reset the timeout on each update. */
+  onProgress?: (progress: McpToolCallProgress) => void;
 }
+
+/** Allowed range for tool-level `_meta.timeoutMs`: discard values below the minimum as invalid and clamp values above the maximum. */
+export const MCP_TOOL_META_TIMEOUT_MIN_MS = 1_000;
+export const MCP_TOOL_META_TIMEOUT_MAX_MS = 30 * 60 * 1_000;
 
 /**
  * Port-level failure categories (cases where no request is sent).
@@ -299,7 +412,36 @@ export interface OfficialMcpTrustedOriginRegistry {
   }>;
 }
 
+/** Port for asking the host to handle MCP elicitation (server → client `elicitation/create`). */
+export interface McpElicitationTrace {
+  sessionId?: string;
+  turnId?: string;
+  toolCallId?: string;
+  traceId?: string;
+}
+export interface McpElicitationRequest {
+  serverName: string;
+  message: string;
+  requestedSchema: unknown;
+  /** Tool call currently executing on this server when elicitation begins; reject if absent because the session cannot be determined. */
+  trace?: McpElicitationTrace;
+}
+export interface McpElicitationResult {
+  action: "accept" | "decline" | "cancel";
+  content?: Record<string, unknown>;
+}
+export interface McpElicitationPort {
+  requestElicitation(
+    request: McpElicitationRequest,
+    options?: { signal?: AbortSignal },
+  ): Promise<McpElicitationResult>;
+}
+
 export interface McpPort {
+  /** Stable source derived from trusted configuration and the existing connection generation. Do not issue new page credentials after disconnect. */
+  onAppConnectionInvalidated?(serverName: string, listener: () => void): () => void;
+  appConnectionSnapshot?(serverName: string): { identity: string; generation: number } | null;
+
   connectConfiguredServers(
     servers: Record<string, McpServerConfig>,
     options?: McpConnectOptions,
@@ -319,6 +461,40 @@ export interface McpPort {
   pingServer?(name: string, options?: { timeoutMs?: number }): Promise<boolean>;
   status(): Promise<Record<string, McpServerStatus>>;
   listTools(): Promise<McpToolDescriptor[]>;
+  /**
+   * Cumulative number of `notifications/tools/list_changed` notifications received since the port was
+   * created. Before a turn, runtime compares this value and relists tools and re-registers them only if
+   * it changed. If unimplemented, the port does not change proactively.
+   */
+  toolListRevision?(): number;
   callTool(request: McpCallToolRequest, options?: McpCallToolOptions): Promise<McpToolCallResult>;
+  /**
+   * Read an MCP resource (plugin UI `ui://` HTML). Optional like pingServer: mock ports need not
+   * implement it, and callers treat absence as “resources unsupported.” Implementations must share the
+   * same connection and reconnect path as callTool.
+   */
+  readResource?(
+    request: McpReadResourceRequest,
+    options?: McpCallToolOptions,
+  ): Promise<McpReadResourceResult>;
+  /** Resource listing and subscriptions; omission means this port does not support them (protocol layer returns -32001). */
+  listResources?(
+    request: McpListResourcesRequest,
+    options?: McpCallToolOptions,
+  ): Promise<McpListResourcesResult>;
+  listResourceTemplates?(
+    request: McpListResourcesRequest,
+    options?: McpCallToolOptions,
+  ): Promise<McpListResourceTemplatesResult>;
+  subscribeResource?(
+    request: McpResourceSubscriptionRequest,
+    options?: McpCallToolOptions,
+  ): Promise<void>;
+  unsubscribeResource?(
+    request: McpResourceSubscriptionRequest,
+    options?: McpCallToolOptions,
+  ): Promise<void>;
+  /** Remove every registration whose subscriberKey begins with prefix (session close); return the number of URIs actually unsubscribed from the server. */
+  unsubscribeResourcesBySubscriber?(subscriberKeyPrefix: string): Promise<number>;
   close(): Promise<void>;
 }

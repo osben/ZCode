@@ -23,6 +23,7 @@ import {
   applyCodingPlanQuotaResetStatus,
   completeCodingPlanQuotaResetEntitlementRefresh,
   failCodingPlanQuotaResetManualUse,
+  hasUsableCodingPlanQuotaResetOpportunity,
   resolveCodingPlanQuotaResetStatusVisible,
   startCodingPlanQuotaResetManualUse,
   type CodingPlanQuotaResetUiEntries,
@@ -700,9 +701,12 @@ export function useCodingPlanQuotaResetUi({
     if (!enabled) {
       return;
     }
-    setNow(Date.now());
-    const anyAvailable = fiveHourEntry?.status === "available" || weekEntry?.status === "available";
-    if (!anyAvailable) {
+    const nowMs = Date.now();
+    setNow(nowMs);
+    const anyUsable =
+      hasUsableCodingPlanQuotaResetOpportunity(fiveHourEntry, nowMs) ||
+      hasUsableCodingPlanQuotaResetOpportunity(weekEntry, nowMs);
+    if (!anyUsable) {
       return;
     }
     const ticker = window.setInterval(() => setNow(Date.now()), 1_000);
@@ -739,7 +743,11 @@ export function useCodingPlanQuotaResetUi({
         return;
       }
       const key = entryKeyForType(resetType);
-      if (entriesRef.current[key]?.status !== "available") {
+      // Bugfix: the gate used to require status === "available". When completed carried remaining
+      // opportunities of the same type, another dialog click was silently ignored here (the dialog
+      // still played success feedback, but no /use occurred). Use the shared “can this still be
+      // redeemed?” check, matching dialog rows, badges, and the “Reset” action beside the title.
+      if (!hasUsableCodingPlanQuotaResetOpportunity(entriesRef.current[key], Date.now())) {
         return;
       }
       // Prevent duplicate redemption across entries: when a manual-redemption trace already exists for the same scope + type (started by another entry in this window),
@@ -752,16 +760,20 @@ export function useCodingPlanQuotaResetUi({
         ?.get(buildManualAttemptKey(scope, resetType));
       if (priorAttempt) {
         const reconciled = await refreshStatus(true);
-        if (priorAttempt.completedAt === null || reconciled[key]?.status !== "available") {
+        if (
+          priorAttempt.completedAt === null ||
+          !hasUsableCodingPlanQuotaResetOpportunity(reconciled[key], Date.now())
+        ) {
           return;
         }
       }
       const current = entriesRef.current[key];
-      if (!current || current.status !== "available") {
+      // Use the same timestamp for the gate and processing start so an opportunity cannot expire between two clock reads.
+      const startedAt = Date.now();
+      if (!current || !hasUsableCodingPlanQuotaResetOpportunity(current, startedAt)) {
         return;
       }
       const idempotencyKey = current.idempotencyKey ?? createIdempotencyKey();
-      const startedAt = Date.now();
       const processing = startCodingPlanQuotaResetManualUse(current, idempotencyKey, startedAt);
       if (!processing) {
         return;
@@ -868,10 +880,9 @@ export function useCodingPlanQuotaResetUi({
     resetFn: () => Promise<void>,
   ): CodingPlanQuotaResetTypeController => ({
     entry,
-    opportunityVisible:
-      entry?.status === "available" &&
-      entry.opportunityCount > 0 &&
-      (entry.opportunityExpiresAt ?? 0) > now,
+    // Bugfix: checking only status === "available" hid remaining opportunities carried by a
+    // completed state, undercounted badges, and made the title say “Reset.” Use the same check as the reset() gate.
+    opportunityVisible: hasUsableCodingPlanQuotaResetOpportunity(entry, now),
     processing: entry?.status === "processing",
     done: entry?.status === "completed",
     statusVisible: enabled && resolveCodingPlanQuotaResetStatusVisible(entry, now),

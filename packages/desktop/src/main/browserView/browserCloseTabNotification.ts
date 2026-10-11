@@ -2,7 +2,7 @@ import type { BrowserViewCloseTabNotification } from "@zcode/shared";
 import type { BrowserGuestExecutionContext } from "./browserGuestManager.js";
 
 /** Build the owner-scope subset needed for a main→renderer close notification; the renderer does not need the rest of the execution context. */
-type BrowserCloseTabNotificationOwner = Pick<
+export type BrowserCloseTabNotificationOwner = Pick<
   BrowserGuestExecutionContext,
   "workspaceKey" | "sessionId" | "remoteSessionId"
 >;

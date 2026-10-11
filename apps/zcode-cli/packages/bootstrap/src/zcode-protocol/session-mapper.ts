@@ -478,9 +478,16 @@ function protocolInstantValue(value: unknown): number | string | undefined {
 
 function mapModelRequestPayload(payload: unknown): Record<string, unknown> {
   const record = asRecord(payload);
-  const messages = Array.isArray(record.messages) ? record.messages : [];
+  // When the in-memory event store evicts a sealed turn, it slims messages down to messageCount
+  // (session-event-store-retention.md); both shapes must map to the same messageCount.
+  const messageCount =
+    typeof record.messageCount === "number"
+      ? record.messageCount
+      : Array.isArray(record.messages)
+        ? record.messages.length
+        : 0;
   const result: Record<string, unknown> = {
-    messageCount: messages.length,
+    messageCount,
   };
   for (const key of [
     "providerId",
@@ -546,7 +553,7 @@ function mapStreamRecoveryPayload(payload: unknown): Record<string, unknown> {
   };
 }
 
-function mapSessionProjection(projection: SessionProjection): ZCodeSessionProjection {
+export function mapSessionProjection(projection: SessionProjection): ZCodeSessionProjection {
   return {
     activeToolCalls: projection.activeToolCalls.map(mapActiveToolCall),
     backgroundJobs: projection.backgroundTasks.map(mapBackgroundTask),
@@ -869,7 +876,9 @@ function contextCacheUsageFromMessages(
   };
 }
 
-function mapPendingPermission(permission: PendingPermission): ZCodePendingPermission {
+function mapPendingPermission(
+  permission: PendingPermission,
+): ZCodePendingPermission {
   // Deliberately omit display/optionsPolicy from legacy v3 output.
   // The root cause is not that "schema expansion is only backward-compatible in one direction";
   // strict schemas are bundled into every desktop build from packages/shared. Making
@@ -899,7 +908,9 @@ function mapPendingPermission(permission: PendingPermission): ZCodePendingPermis
   };
 }
 
-function mapPermissionRequestedPayload(payload: unknown): Record<string, unknown> {
+function mapPermissionRequestedPayload(
+  payload: unknown,
+): Record<string, unknown> {
   // Same as mapPendingPermission: this payload is spread as a whole, so destructure new fields out
   // here explicitly or they will leak into the strict zcodePermissionRequestedEventPayloadSchema.
   const { display: _display, optionsPolicy, ...record } = asRecord(payload);
@@ -907,6 +918,7 @@ function mapPermissionRequestedPayload(payload: unknown): Record<string, unknown
   return {
     ...record,
     options: buildProtocolPermissionOptions({
+      approvalMode: record.approvalMode === "user-once" ? "user-once" : undefined,
       input: record.input,
       suggestedPermissionUpdates: Array.isArray(record.suggestedPermissionUpdates)
         ? (record.suggestedPermissionUpdates as PendingPermission["suggestedPermissionUpdates"])

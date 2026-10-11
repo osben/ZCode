@@ -93,11 +93,12 @@ const requiredRuntimeModules = [
   // hide an electron-builder packaging omission, so mechanically validate this dependency closure in
   // the final artifact to prevent shipping an installer that builds but cannot start.
   "@opentelemetry/sdk-metrics",
-  // Match the injected dependency closure: verify that the OTLP proto export chain
-  // (exporter → otlp-transformer → protobufjs) is fully packaged.
+  // Match the afterPack injection list: verify that the OTLP proto export chain
+  // (exporter → otlp-transformer → protobufjs) is fully packaged; a missing module fails the build
+  // right away instead of crashing on startup after installation.
   "@opentelemetry/exporter-trace-otlp-proto",
   "@opentelemetry/exporter-metrics-otlp-proto",
-  // @arms/rum-core continues to require('@babel/runtime/helpers/*') at runtime from its CJS entry.
+  // Bugfix: @arms/rum-core continues to require('@babel/runtime/helpers/*') at runtime from its CJS entry.
   // It declares @babel/runtime as a peer dependency, which pnpm workspace development can usually
   // resolve. If the production package omits that peer runtime from app.asar, the installed app crashes
   // during main-process startup. Include it in the bundle checks to prevent shipping a broken package.
@@ -164,9 +165,14 @@ export function createElectronRuntimeMirrorEnv(mirror) {
 }
 
 function resolveDefaultElectronBuilderBinariesMirror(env = process.env) {
-  return env.ZCODE_DEPS_BASE_URL?.trim() || env.INTRANET_MACHINE_HOST?.trim()
-    ? `${resolveIntranetDepsBaseUrl(env)}/electron-builder-binaries/`
-    : NPMMIRROR_ELECTRON_BUILDER_BINARIES_MIRROR;
+  // Fix: when no internal dependency mirror is configured (e.g. open-source builds), resolving the
+  // internal host throws and packaging fails outright; fall back to the official electron-builder
+  // release download URL then. Internal builds are unchanged.
+  try {
+    return `${resolveIntranetDepsBaseUrl(env)}/electron-builder-binaries/`;
+  } catch {
+    return OFFICIAL_ELECTRON_BUILDER_BINARIES_MIRROR;
+  }
 }
 
 export function resolveElectronBuilderBinariesMirror(env = process.env) {

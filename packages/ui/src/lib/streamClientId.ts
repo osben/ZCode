@@ -11,6 +11,25 @@ import { createUuid } from "@zcode/shared";
 let cachedStreamClientId: string | null = null;
 
 /**
+ * Get a stable device ID.
+ *
+ * Desktop: deviceMid (process singleton)
+ * Mobile: hardware fingerprint (browserPlatform | screen.width | screen.height | colorDepth)
+ */
+export function getStreamClientId(): string {
+  if (cachedStreamClientId) {
+    return cachedStreamClientId;
+  }
+  // Bugfix: each hook instance used to generate its own streamClientId, so the same device could
+  // send messages with different clientIds on different pages/instances and be mistaken for
+  // “another device” when switching tasks. Use a renderer-process singleton so all tasks on this
+  // device share one clientId. On mobile, use a hardware fingerprint instead of a random UUID so
+  // the ID stays stable across browsers, networks, languages, and time zones.
+  cachedStreamClientId = `renderer:${createUuid()}`;
+  return cachedStreamClientId;
+}
+
+/**
  * Set the stable device ID (provided by platform.getDeviceId()).
  * Must be called before the first getStreamClientId() call.
  */

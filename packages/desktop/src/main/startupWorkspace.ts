@@ -37,7 +37,11 @@ export interface StartupWorkspaceWarmupTarget {
   workspaceIdentity?: string;
 }
 
-const STARTUP_AGENT_WARMUP_LIMIT = 3;
+// Fix reason: the session CLI has no idle reclamation, so warming up 3 agents at startup would
+// keep 3 Agent processes resident per window; the cold-start benefit of switching to recent
+// projects does not outweigh that resident cost, so warm up only the active workspace.
+// Matches @zcode/protocol's init-local `agentWarmupTargets.max(1)`.
+export const STARTUP_AGENT_WARMUP_LIMIT = 1;
 
 export interface StartupWindowBootstrap {
   restoreSession?: boolean;
@@ -71,7 +75,7 @@ function resolvePersistedActiveSession(
   return sessions[activeIndex];
 }
 
-function resolveStartupAgentWarmupTargets(
+export function resolveStartupAgentWarmupTargets(
   settings: Pick<ReturnType<typeof appSettingsSchema.parse>, "recentProjects">,
   activeTarget: StartupWorkspaceWarmupTarget,
 ): StartupWorkspaceWarmupTarget[] {
@@ -146,10 +150,10 @@ export async function resolveStartupWindowBootstrap({
     const activeSession =
       localActiveSessionIndex == null ? undefined : sessions[localActiveSessionIndex];
     if (activeSession?.kind === "local") {
-      // Passive full sessions-index recovery must not start every workspace, but warming only the
-      // current one would make users pay the full cold-start cost when switching among recent
-      // projects. Main selects the three most recent at the single startup boundary; Host still uses
-      // the existing initializeWorkspace path, and failure does not trigger a scan for a fourth.
+      // Passive full sessions-index recovery must not start every workspace; at the single startup
+      // boundary Main selects only the active workspace (STARTUP_AGENT_WARMUP_LIMIT), and Host uses
+      // the existing initializeWorkspace path. recentProjects stay dormant, and a warmup failure
+      // does not scan other workspaces to fill the slot.
       const agentWarmupTargets = resolveStartupAgentWarmupTargets(settings, {
         workspacePath: activeSession.workspacePath,
       });
@@ -170,4 +174,22 @@ export async function resolveStartupWindowBootstrap({
     initialWorkspacePurpose: "conversation",
     agentWarmupTargets: [{ workspacePath: conversationWorkspaceDir }],
   };
+}
+
+export async function resolveStartupWorkspacePath({
+  settingsFile,
+  conversationWorkspaceDir,
+  logger,
+}: {
+  settingsFile: string;
+  conversationWorkspaceDir: string;
+  logger?: StartupWorkspaceLogger;
+}): Promise<string | undefined> {
+  return (
+    await resolveStartupWindowBootstrap({
+      settingsFile,
+      conversationWorkspaceDir,
+      logger,
+    })
+  ).initialWorkspacePath;
 }

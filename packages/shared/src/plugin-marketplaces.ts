@@ -9,6 +9,13 @@ export interface DefaultPluginMarketplace {
 
 export const ZCODE_OFFICIAL_PLUGIN_MARKETPLACE_ID = "zcode-plugins-official";
 
+/**
+ * Claude Code official marketplace (GitHub git source). It is not a hard dependency of ZCode:
+ * refreshing necessarily fails when GitHub is unreachable, and that failure should not disturb
+ * the user as an error — the UI silently ignores refresh failures (for any reason) by this id.
+ */
+export const CLAUDE_OFFICIAL_PLUGIN_MARKETPLACE_ID = "claude-plugins-official";
+
 /** Shared by the three resource-discovery surfaces in Settings; the Bootstrap unit test mechanically compares defaultEnabled against official definitions. */
 export const DEFAULT_ENABLED_OFFICIAL_PLUGIN_IDS: ReadonlySet<string> = new Set([
   "browser-use@zcode-plugins-official",
@@ -24,6 +31,10 @@ export const DEFAULT_ENABLED_OFFICIAL_PLUGIN_IDS: ReadonlySet<string> = new Set(
   "skill-creator@zcode-plugins-official",
   "plugin-creator@zcode-plugins-official",
   "zcode-guide@zcode-plugins-official",
+  // visualize (interactive views) was already marked defaultEnabled in the CLI definitions when it
+  // landed with the UI plugin, but it was missed here — Settings treated it as disabled by
+  // default, disagreeing with the CLI's actual enabled state.
+  "visualize@zcode-plugins-official",
   // Computer control falls back to disabled by default, so computer-use is not included in this list.
   // This set must match every plugin marked defaultEnabled in official-plugin-definitions.ts,
   // and the Bootstrap test mechanically compares them to ensure the default-enabled Settings set matches the CLI's official plugin declarations.
@@ -37,6 +48,16 @@ export const DEFAULT_PLUGIN_MARKETPLACES: DefaultPluginMarketplace[] = [
     source: "https://cdn-zcode.z.ai/zcode/official-plugin/marketplace.json",
     name: ZCODE_OFFICIAL_PLUGIN_MARKETPLACE_ID,
     description: "Official ZCode plugins marketplace: built-in and community plugins for ZCode.",
+    pluginCount: 0,
+  },
+  {
+    id: CLAUDE_OFFICIAL_PLUGIN_MARKETPLACE_ID,
+    source: "anthropics/claude-plugins-official",
+    name: CLAUDE_OFFICIAL_PLUGIN_MARKETPLACE_ID,
+    description:
+      "Directory of popular Claude Code extensions including development tools, productivity plugins, and MCP integrations",
+    // Ship only the official catalog source; no remote manifest snapshot is bundled into the
+    // repository, so the count is unknown before the first refresh.
     pluginCount: 0,
   },
 ];

@@ -2,7 +2,7 @@ import type { ApiClient } from "@zcode/shared";
 import {
   buildRuntimeZCodeEndpointUrls,
   normalizeOfficialGlmModelId,
-  ZCODE_VERSION,
+  ZCODE_UPSTREAM_BASE_VERSION,
 } from "@zcode/shared";
 import { readApiJson } from "../providers/api/apiJson.js";
 
@@ -64,7 +64,9 @@ export function buildZaiStartPlanBalanceUrl(): string {
   const url = new URL(ZAI_START_PLAN_BALANCE_URL);
   // The Start Plan balance endpoint determines capabilities from the actual app_version;
   // development must not pin it to 3.0.0, or local verification would bypass backend policy for the current app version.
-  url.searchParams.set("app_version", ZCODE_VERSION);
+  // Send only the upstream baseline externally: a fork's -fork.N suffix sorts below the same-baseline
+  // release under semver and would wrongly trigger old-client policy handling.
+  url.searchParams.set("app_version", ZCODE_UPSTREAM_BASE_VERSION);
   return url.toString();
 }
 

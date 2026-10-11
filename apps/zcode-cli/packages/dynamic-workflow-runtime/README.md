@@ -1,10 +1,12 @@
 # @zcode/dynamic-workflow-runtime
 
-A sandbox harness (dynamic workflow execution engine). It runs a workflow script in a controlled child process and uses NDJSON to bridge the child's `__host.*` calls to the pure engine core in `@zcode/dynamic-workflow`.
+A sandbox harness for phase 1.4 of the dynamic workflow execution engine. It runs a workflow script in a controlled child process and uses NDJSON to bridge the child's `__host.*` calls to the pure engine core in `@zcode/dynamic-workflow`.
+
+Spec: `@zcode/dynamic-workflow/docs/execution-engine.md` (this package is named under “The sandbox” and “The shape of a run: three boundaries”).
 
 ## Dependency Boundary
 
-Depends **only** on `@zcode/dynamic-workflow` (workspace) and Node built-ins. It must **never** import `@zcode/core` / `@zcode/contracts` / `@zcode/bootstrap` / `@zcode/adapters`—this package proves that the full sandbox-to-engine pipeline can run without the app.
+Depends **only** on `@zcode/dynamic-workflow` (workspace) and Node built-ins. It must **never** import `@zcode/core` / `@zcode/contracts` / `@zcode/bootstrap` / `@zcode/adapters`—this package proves that phase 1’s full sandbox-to-engine pipeline can run without the app.
 
 ## Usage
 

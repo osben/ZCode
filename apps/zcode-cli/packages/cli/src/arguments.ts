@@ -34,9 +34,6 @@ export const parseGlobalArgs = (argv: string[]) =>
       "memory-bench": {
         type: "boolean",
       },
-      "enable-workflow": {
-        type: "boolean",
-      },
       attach: {
         multiple: true,
         type: "string",
@@ -84,7 +81,10 @@ export const parseGlobalArgs = (argv: string[]) =>
       surface: {
         type: "string",
       },
-
+      "workflow-mode": {
+        type: "string",
+      },
+      // `zcode plugins` subcommand flags: the strict parser requires
       // Register globally; run.ts collects and forwards this to plugins-command without affecting other commands' option semantics.
       all: {
         short: "a",

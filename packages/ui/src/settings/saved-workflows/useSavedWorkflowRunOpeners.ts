@@ -6,7 +6,7 @@ import type {
 } from "@/settings/saved-workflows/savedWorkflowContract.js";
 
 /** Project owning a run-history row (fixed for project workflows; global workflows resolve it from `run.cwd`). */
-interface SavedWorkflowRunOpenTarget {
+export interface SavedWorkflowRunOpenTarget {
   workspacePath: string;
   workspaceIdentity?: string;
 }

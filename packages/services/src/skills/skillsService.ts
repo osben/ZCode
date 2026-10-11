@@ -823,8 +823,8 @@ async function resolvePluginSkillRootDescriptors(): Promise<SkillRootDescriptor[
       continue;
     }
     // The Agent runtime already adds skillRoots from plugin manifests, but the UI skillsService
-    // previously scanned only the built-in official cache/manual directories and missed official Claude and custom marketplace plugins in installed_plugins.json,
-    // leaving plugin details with a skill count but no skill names.
+    // previously scanned only the built-in official cache/manual directories and missed personal-source marketplace
+    // plugins (claude-plugins-official, custom marketplaces, etc.) in installed_plugins.json, leaving plugin details with a skill count but no skill names.
     for (const rootPath of resolvePluginSkillRoots({ manifest, rootPath: candidate.rootPath })) {
       descriptors.push({
         scope: "plugin",
@@ -1235,3 +1235,10 @@ export function createSkillsService(options?: SkillsServiceOptions): ISkillsServ
     },
   };
 }
+
+// Test/debug only: makes it easy to fixture diagnostic results directly in vitest.
+export const __INTERNAL__ = {
+  discoverSkills,
+  readFrontmatter,
+  MAX_DESCRIPTION_LENGTH,
+};

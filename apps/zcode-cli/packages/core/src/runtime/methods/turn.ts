@@ -1,5 +1,7 @@
 import { beginLocalTurnPreparation, type LocalTtftDetail } from "@zcode/contracts";
 import { runtimeInputMetadata } from "../../agent/runtime-input-presentation.js";
+import { withConversationQuotes } from "../helpers/conversation-quotes.js";
+import { ensureGroupTaskPermissionScope } from "./input-intent-persistence.js";
 import {
   CoreErrorType,
   HookEventName,
@@ -59,10 +61,19 @@ import {
   closeGoalStateChangeReminderDeferral,
   openGoalStateChangeReminderDeferral,
 } from "./goal-state-reminder.js";
+import {
+  disposeProjectMemoryRecallPrefetch,
+  startProjectMemoryRecallPrefetch,
+} from "../helpers/project-memory-recall.js";
+import { ACTIVE_PROJECT_MEMORY_RETRIEVAL_BRANCH } from "../../memory/project-memory-retrieval-branch.js";
 import { scheduleProjectMemoryExtraction } from "../helpers/project-memory-extraction.js";
 import { appendBrowserTurnScreenshot } from "./browser-turn-screenshot.js";
 import { clearBrowserTurnState } from "../../repl/browser-turn-state.js";
-import { applySubmissionExecutionState, createTurnModel } from "./turn-model.js";
+import {
+  applySubmissionExecutionState,
+  createTurnModel,
+  resolveExecutionModelRetryBudget,
+} from "./turn-model.js";
 import { rebuildContextPrefix } from "./context-refresh.js";
 
 const TARGET_RUN_HEARTBEAT_MS = 15_000;
@@ -192,6 +203,11 @@ export async function executeTurnCommand(
             ? createTurnModel(this, {
                 requestDependencies: options?.modelExecution?.requestDependencies,
                 selection: admittedModelSelection,
+                // Execution handles with a fallback declaration allow zero retries; pass failures immediately to the turn step to fall back to the session model.
+                retryBudget: resolveExecutionModelRetryBudget({
+                  selection: admittedModelSelection,
+                  selectionFallback: options?.modelExecution?.selectionFallback,
+                }),
               })
             : undefined;
       } catch (error) {
@@ -279,6 +295,7 @@ export async function executeTurnCommand(
       turnMachine = new TurnMachineImpl(turnMachine.start());
       phaseStartedAt = startTurnPhase("session_persistence");
       await this.ensureSessionPersisted(displayInput, turnTraceContext);
+      await ensureGroupTaskPermissionScope(this.sessionStore, this.sessionId, options?.intent);
       // An execution-scoped temporary Provider (such as an off-peak task) owns its own model for this turn and does not change
       // Session Selection. Ordinary submissions apply their atomic selection only when execution actually starts.
       const submissionModel = await applySubmissionExecutionState(
@@ -422,6 +439,7 @@ export async function executeTurnCommand(
           userPromptHookResult.additionalContexts,
         );
         injectReferencedSessionContextReminderIntoMessageHistory.call(this, input, options);
+        // Read the original topic text on demand from the standard text attachment; trusted source archives must not generate hidden context again.
         injectDateChangeReminderIntoMessageHistory.call(this);
         const resolvedAttachments = await resolveTurnAttachments(attachments, {
           abortSignal: turnAbortSignal,
@@ -502,9 +520,17 @@ export async function executeTurnCommand(
           });
         } else if (options?.skipInputRecord !== true) {
           this.messageHistory.addEntries(
-            buildRuntimeUserEntriesFromTurn(input, resolvedAttachments, {
-              browserAmbientContext: options?.browserAmbientContext,
-            }).map((entry) => {
+            buildRuntimeUserEntriesFromTurn(
+              withConversationQuotes(
+                input,
+                options?.intent?.conversationQuotes,
+                options?.intent?.botGroupSource,
+              ),
+              resolvedAttachments,
+              {
+                browserAmbientContext: options?.browserAmbientContext,
+              },
+            ).map((entry) => {
               const metadata = runtimeInputMetadata(options?.inputPresentation);
               return entry.kind !== "attachment" && metadata ? { ...entry, metadata } : entry;
             }),
@@ -527,8 +553,17 @@ export async function executeTurnCommand(
                 : { epilogueStart: options.epilogueStart }),
             },
           );
-          // Title generation used to wait until the main turn succeeded; if the user stopped/cancelled the first request,
-          // generation never started. Start it asynchronously as soon as the first query is persisted so cancellation of the main flow cannot block it.
+        }
+        // Configuration was previously read before displaying/persisting input, so a read failure made a sent message disappear from the UI.
+        // Freeze this turn's definition after recording the input; reuse this layer's cleanup for errors/cancellation and do not start title generation or a model request.
+        await this.prepareAgentDefinitions({
+          signal: turnAbortSignal,
+          traceContext: turnTraceContext,
+        });
+        throwIfTurnAborted(turnAbortSignal);
+        if (options?.skipInputRecord !== true && options?.inputVisibility !== "model-only") {
+          // Reason for the fix: title generation used to wait for the main turn to succeed, so if the user stopped/cancelled the first request
+          // the generated title was never started. Generate it asynchronously after persisting the first query so cancellation of the main path cannot block it.
           const titleGenerationStarted = maybeStartSessionTitleGeneration.call(
             this,
             displayInput,
@@ -558,6 +593,15 @@ export async function executeTurnCommand(
         if (!loopModel) {
           throw new Error("Turn model was not created before execution");
         }
+        startProjectMemoryRecallPrefetch(
+          this,
+          {
+            model: loopModel,
+            traceContext: turnTraceContext,
+            turnAbortSignal,
+          },
+          ACTIVE_PROJECT_MEMORY_RETRIEVAL_BRANCH,
+        );
         loopState = {
           activeTurn,
           ...(options?.automationId ? { automationId: options.automationId } : {}),
@@ -566,13 +610,19 @@ export async function executeTurnCommand(
           anomalyWarningsInjected: 0,
           backgroundSubagentResultConsumed: options?.backgroundSubagentResultConsumed === true,
           workflowResultConsumed: options?.workflowResultConsumed === true,
+          completedRealToolResultBatch: false,
           currentUserMessageId: userMessageId,
           events,
           input,
+          ...(options?.inputId ? { inputId: options.inputId } : {}),
           modelResponse: "",
           model: loopModel,
           ...(options?.modelExecution?.selectionScope === "execution"
             ? { modelSelectionScope: "execution" as const }
+            : {}),
+          // If the accelerated card expires during tool execution, do not fail the whole turn; fall back to Session Selection and finish it.
+          ...(options?.modelExecution?.selectionFallback
+            ? { selectionFallback: options.modelExecution.selectionFallback }
             : {}),
           ...(options?.modelExecution?.subagents && options.intent?.modelSelection
             ? {
@@ -821,6 +871,7 @@ export async function executeTurnCommand(
     );
 
   return turnTelemetry.run(execute).finally(async () => {
+    disposeProjectMemoryRecallPrefetch(this);
     if (targetRunHeartbeat) {
       clearInterval(targetRunHeartbeat);
     }

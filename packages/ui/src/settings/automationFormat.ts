@@ -31,6 +31,16 @@ export function hasAutomationFailureState(automation: AutomationFailureLike): bo
   );
 }
 
+/** When a failed dispatch enters the backoff queue, show the actual retry-queue information beside the failure state. */
+export function hasAutomationRetryQueueState(automation: AutomationFailureLike): boolean {
+  return (
+    hasAutomationFailureState(automation) &&
+    automation.dispatchStatus === "failed_to_dispatch" &&
+    (automation.dispatchAttempts ?? 0) > 0 &&
+    typeof automation.retryAt === "number"
+  );
+}
+
 /** Display status for the scheduled-task lifecycle: terminal states first, then paused/enabled, then active. */
 export function resolveAutomationStatusKind(
   automation: AutomationStatusLike,
@@ -76,6 +86,14 @@ export function isSessionCreatedAutomation(
   automation: { targetTaskId?: string } | null | undefined,
 ): boolean {
   return Boolean(automation?.targetTaskId?.trim());
+}
+
+export function buildAutomationEditCronExpr(
+  state: CronBuilderState,
+  automation: { cronExpr: string; targetTaskId?: string } | null | undefined,
+): string {
+  // Bugfix: A cron created in a session may exceed the UI builder’s capabilities, so edits to other fields must preserve it unchanged.
+  return isSessionCreatedAutomation(automation) ? automation!.cronExpr : buildCronExpr(state);
 }
 
 /** Assemble cron builder state into a five-part cron expression (minute, hour, day, month, weekday). */

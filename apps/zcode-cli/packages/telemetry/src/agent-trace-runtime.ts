@@ -1,3 +1,4 @@
+import { recordRequestObservation } from "./request-security-edition/index.js";
 /* oxlint-disable eslint(max-lines) -- Each concrete Writer explicitly maintains its own canonical keys in this file, avoiding another runtime Schema/Registry mapping layer. */
 import {
   context,
@@ -42,6 +43,7 @@ import type {
   ToolExecutionSpanWriter,
   ToolTraceStart,
 } from "@zcode/contracts/telemetry";
+import type { ModelRequestObservation } from "@zcode/contracts/model";
 import {
   activeWriterContext,
   BaseSpanWriter,
@@ -1428,6 +1430,16 @@ class ModelAttemptWriter extends TrackedBaseWriter implements ModelAttemptSpanWr
     this.addEvent("stream_stalled", { idle_ms: normalized });
   }
 
+  recordRequestObservation(observation: ModelRequestObservation): void {
+    recordRequestObservation(
+      {
+        setAttribute: (name, value) => this.setAttribute(name, value),
+        addEvent: (name, attributes) => this.addEvent(name, attributes),
+      },
+      observation,
+    );
+  }
+
   finishCompleted(): void {
     this.finishCompletedIfOpen();
   }
@@ -1618,6 +1630,7 @@ const NOOP_MODEL_ATTEMPT_WRITER: ModelAttemptSpanWriter = {
   markFirstProviderEvent() {},
   markFirstText() {},
   markStreamStalled() {},
+  recordRequestObservation() {},
   setCacheReadTokens() {},
   setCacheWriteTokens() {},
   setEffectiveReasoningBudgetTokens() {},

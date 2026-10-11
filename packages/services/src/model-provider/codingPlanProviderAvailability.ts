@@ -17,7 +17,6 @@ import {
 } from "#src/bigmodel/codingPlanEntitlement.js";
 import { createServiceLogger } from "#src/logger/serviceLogger.js";
 import { readApiJson } from "../providers/api/apiJson.js";
-import { normalizeApiKeyForHeader } from "../providers/api/index.js";
 import { resolveBigModelStartPlanZcodeJwt } from "./bigmodelStartPlanZcodeJwt.js";
 import {
   buildZaiStartPlanBalanceUrl,
@@ -99,7 +98,7 @@ export interface CodingPlanAvailabilityProvider {
   readonly apiKey?: string | null;
 }
 
-async function validateCodingPlanProviderAvailability(
+export async function validateCodingPlanProviderAvailability(
   provider: CodingPlanAvailabilityProvider,
   context: CodingPlanAvailabilityContext,
 ): Promise<CodingPlanAvailabilityResult> {
@@ -371,8 +370,14 @@ async function validateSubscriptionListAvailability(
   context: CodingPlanAvailabilityContext,
   url: string,
 ): Promise<CodingPlanAvailabilityResult> {
-  const authorization = normalizeApiKeyForHeader(provider.apiKey ?? "");
-  // A key that is not ready means the entitlement is unknown; missing call credentials do not prove that the user is unsubscribed.
+  // Account credentials are already three-segment PATs; normalizing legacy manual keys
+  // would truncate the signature at id.secret.
+  const authorization = (provider.apiKey ?? "")
+    .trim()
+    .replace(/^Bearer\s+/i, "")
+    .trim();
+  // A request-time token not being ready can only mean entitlements are unknown; missing
+  // credentials cannot prove the account is unsubscribed.
   if (!authorization) return { kind: "unknown" };
   try {
     const result = await fetchPersonalCodingPlanEntitlement({
@@ -453,7 +458,10 @@ async function resolveStartPlanAuthorization(
   }
 
   const credentialJwt = await loadZaiProviderConnectionZcodeJwtToken(context);
-  const providerJwt = normalizeApiKeyForHeader(provider.apiKey ?? "");
+  const providerJwt = (provider.apiKey ?? "")
+    .trim()
+    .replace(/^Bearer\s+/i, "")
+    .trim();
   return {
     value: credentialJwt || providerJwt ? `Bearer ${credentialJwt || providerJwt}` : "",
     missingReason: "coding_plan_not_authenticated",

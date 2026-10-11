@@ -146,7 +146,7 @@ export function WorkflowFeedbackContent({
  * Whether to show a draft number in the detail slot: always show it for failed rows (when the host provides a position); for in-progress rows, show it from draft 2 onward.
  * Run cards, launch summaries, and confirmation dialogs do not use this path and never show draft numbers.
  */
-function workflowDraftOrdinalShown(
+export function workflowDraftOrdinalShown(
   draft: WorkflowDraftPosition | undefined,
   phase: { compileErrors: boolean; inFlight: boolean },
 ): number | undefined {
@@ -155,7 +155,7 @@ function workflowDraftOrdinalShown(
   return phase.inFlight && draft.ordinal >= 2 ? draft.ordinal : undefined;
 }
 
-function WorkflowDraftOrdinal({ ordinal }: { ordinal: number }) {
+export function WorkflowDraftOrdinal({ ordinal }: { ordinal: number }) {
   const { intl } = useZCodeIntl();
   return (
     <span className="shrink-0 whitespace-nowrap tabular-nums" data-testid="workflow-draft-ordinal">
@@ -171,7 +171,7 @@ function WorkflowDraftOrdinal({ ordinal }: { ordinal: number }) {
  * Hollow ring: its shape means “nothing ran,” and its color shows whether attention is still needed (warning color for the latest draft, then neutral after a newer draft).
  * `wf-lamp` transitions the color instead of switching abruptly.
  */
-function WorkflowDraftLamp({ superseded }: { superseded: boolean }) {
+export function WorkflowDraftLamp({ superseded }: { superseded: boolean }) {
   return (
     <span
       aria-hidden

@@ -18,10 +18,10 @@ import {
 import type {
   DynamicWorkflowRunArtifact,
   DynamicWorkflowRunArtifactBytes,
-  DynamicWorkflowRunArtifactItem,
+  DynamicWorkflowRunArtifactItemsResult,
   DynamicWorkflowRunWorkspaceNode,
   DynamicWorkflowRunWorkspaceNodeResult,
-  DynamicWorkflowRunEvent,
+  DynamicWorkflowRunEventsResult,
   DynamicWorkflowRunSessionSummary,
   MessageWithParts,
   SessionEvent,
@@ -114,6 +114,7 @@ import {
   v4ConversationWorkflowRunWorkspaceParamsSchema,
   v4ConversationWorkflowRunWorkspaceResultSchema,
   WORKFLOW_WORKSPACE_LIMITS,
+  WORKFLOW_RUN_EVENTS_PAGE_LIMITS,
   v4ConversationWorkflowRunEventsParamsSchema,
   v4ConversationWorkflowRunEventsResultSchema,
   v4ConversationWorkflowRunsParamsSchema,
@@ -163,6 +164,7 @@ function rowTargetActionForCommand(
     case "retryTurn":
     case "applyFileRewind":
     case "setAssistantFeedback":
+    case "setHighspeedMetrics":
       return type;
     default:
       return null;
@@ -182,7 +184,7 @@ interface PersistedEventsLoadResult {
   usageSeed?: SessionUsageSeed | null;
 }
 
-type V4GatewayErrorContext = Record<string, unknown>;
+export type V4GatewayErrorContext = Record<string, unknown>;
 
 /**
  * One complete **read-back byte buffer**, reused for chunked reads.
@@ -334,6 +336,12 @@ export interface V4GatewayHost {
   invalidatePersistentCommandFacts?(sessionId: string): void;
   /** Canonical goal completion has entered the projection; detach host side effects so ingest is never blocked. */
   onTargetCompleted?(sessionId: string, event: SessionEvent): void;
+  /** Highspeed wall-clock duration lands in the transcript via the CLI terminal state; host side effects must stay detached. */
+  onHighspeedTurnTerminal?(
+    sessionId: string,
+    event: SessionEvent,
+    snapshot: ConversationSnapshot,
+  ): void;
   /** Write the session artifact once, after the complete chunk transaction commits. */
   putSessionAttachment?(
     sessionId: string,
@@ -389,8 +397,8 @@ export interface V4GatewayHost {
    */
   listDynamicWorkflowRunEvents?(
     sessionId: string,
-    input: { runId: string; afterSequence?: number; limit?: number },
-  ): Promise<DynamicWorkflowRunEvent[]>;
+    input: { runId: string; afterSequence?: number; limit?: number; maxBytes?: number },
+  ): Promise<DynamicWorkflowRunEventsResult>;
   /**
    * Enumerate DWF runs (discovery query after restart).
    * Absence has the same meaning as {@link listDynamicWorkflowRunEvents}.
@@ -412,8 +420,15 @@ export interface V4GatewayHost {
   ): Promise<readonly DynamicWorkflowRunArtifact[] | undefined>;
   listDynamicWorkflowRunArtifactItems?(
     sessionId: string,
-    input: { runId: string; artifactId: string; afterSequence?: number; limit: number },
-  ): Promise<readonly DynamicWorkflowRunArtifactItem[]>;
+    input: {
+      runId: string;
+      artifactId: string;
+      afterSequence?: number;
+      limit: number;
+      maxBytes: number;
+      fields?: readonly string[];
+    },
+  ): Promise<DynamicWorkflowRunArtifactItemsResult>;
   readDynamicWorkflowRunArtifact?(
     sessionId: string,
     input: { runId: string; artifactId: string; version: number },
@@ -448,7 +463,7 @@ export interface V4GatewayHost {
   onError?(scope: string, error: unknown, context?: V4GatewayErrorContext): void;
 }
 
-interface ConversationV4GatewayOptions {
+export interface ConversationV4GatewayOptions {
   now?: () => number;
   /** logEpoch generator (random per process by default; tests inject a fixed value for determinism). */
   createLogEpoch?: (sessionId: string) => string;
@@ -495,7 +510,7 @@ interface ProjectionEventCommitWaiter {
 const PROJECTION_EVENT_COMMIT_TIMEOUT_MS = 25_000;
 const MAX_TELEMETRY_EVENT_IDS = 2_000;
 /** Retention period before a low-frequency tick releases the publisher for a detached, terminal subagent child without subscribers. */
-const DETACHED_CHILD_PUBLISHER_GRACE_MS = 120_000;
+export const DETACHED_CHILD_PUBLISHER_GRACE_MS = 120_000;
 
 class ProjectionEventCommitWaitError extends Error {
   constructor(
@@ -518,14 +533,14 @@ class ProjectionEventCommitWaitError extends Error {
  * Internal server dispatch result: the initial frame is consumed only by the request-scoped
  * post-response outbox; the public JSON-RPC result schema remains strictly `{ ack }`.
  */
-interface V4SubscribeDispatchResult<TFrame> {
+export interface V4SubscribeDispatchResult<TFrame> {
   ack: SubscribeAck & { openTiming?: ConversationOpenTiming };
   initialFrame: TFrame | null;
   initialWires: RoutedTopicWireFrame[];
   commit(): boolean;
 }
 
-function encodeReservedTopicFrame(
+export function encodeReservedTopicFrame(
   reservation: TopicFrameReservation<RoutedTopicFrame>,
 ): RoutedTopicWireFrame[] {
   return encodeTopicWireFrames(reservation.frame, {
@@ -536,6 +551,16 @@ function encodeReservedTopicFrame(
     logicalFrameOrdinal: reservation.logicalFrameOrdinal,
     measurePhysicalFrameBytes: (wire) => measureTopicNotificationEnvelopeBytes(wire).maxBytes,
   }) as RoutedTopicWireFrame[];
+}
+
+/** Commit the publisher watermark only after all physical wire frames are accepted downstream. */
+export function emitReservedTopicFrame<F extends RoutedTopicFrame>(
+  reservation: TopicFrameReservation<F>,
+  emit: (wire: RoutedTopicWireFrame) => unknown,
+): boolean {
+  const wires = encodeReservedTopicFrame(reservation as TopicFrameReservation<RoutedTopicFrame>);
+  for (const wire of wires) emit(wire);
+  return reservation.commit();
 }
 
 function subscriptionRouteKey(topic: string, subscriptionId: string, connectionId: string): string {
@@ -970,6 +995,16 @@ export class ConversationV4Gateway {
       return;
     }
     this.resolveProjectionEventCommit(sessionId, String(event.id));
+    if (
+      !this.hydrationBuffers.has(sessionId) &&
+      (event.type === SessionEventType.TurnComplete || event.type === SessionEventType.TurnError)
+    ) {
+      try {
+        this.host.onHighspeedTurnTerminal?.(sessionId, event, publisher.getSnapshot());
+      } catch (error) {
+        this.host.onError?.("v4.projection.highspeedMetrics", error);
+      }
+    }
     if (
       event.type === SessionEventType.TargetChanged &&
       (event.payload as TargetChangedPayload).target?.status === "complete"
@@ -1643,8 +1678,11 @@ export class ConversationV4Gateway {
    * Deliberately **not** a v4 command: command ACK results use a closed "mutation result" union,
    * which does not include a page of read-only events.
    *
-   * Determine `hasMore` by reading `limit + 1`: an extra row confirms more data more reliably than
-   * having the renderer guess from "this page is exactly full" (which causes an unnecessary empty page at the end).
+   * Both page bounds—item count and bytes—are fixed here (docs/execution-engine.md, "Reading the
+   * journal"): the count comes from the caller's limit, defaulting to the protocol maximum; bytes
+   * are always the protocol maximum, which the renderer must not relax. `hasMore` is decided by
+   * the storage layer—a page may end early on the byte bound, so "filled the limit" is no longer
+   * the criterion.
    */
   async workflowRunEvents(rawParams: unknown): Promise<V4ConversationWorkflowRunEventsResult> {
     const params = v4ConversationWorkflowRunEventsParamsSchema.parse(rawParams);
@@ -1652,18 +1690,13 @@ export class ConversationV4Gateway {
       throw new V4CapabilityUnsupportedError("listDynamicWorkflowRunEvents", params.sessionId);
     }
     await this.ensureHostRecordForJournalRead(params.sessionId);
-    const limit = params.limit;
-    const events = await this.host.listDynamicWorkflowRunEvents(params.sessionId, {
+    const page = await this.host.listDynamicWorkflowRunEvents(params.sessionId, {
       runId: params.runId,
       ...(params.afterSequence === undefined ? {} : { afterSequence: params.afterSequence }),
-      // Read one extra row only to determine hasMore; it is not included in the result page.
-      ...(limit === undefined ? {} : { limit: limit + 1 }),
+      limit: params.limit ?? WORKFLOW_RUN_EVENTS_PAGE_LIMITS.maxEvents,
+      maxBytes: WORKFLOW_RUN_EVENTS_PAGE_LIMITS.maxBytes,
     });
-    const hasMore = limit !== undefined && events.length > limit;
-    return v4ConversationWorkflowRunEventsResultSchema.parse({
-      events: hasMore ? events.slice(0, limit) : events,
-      hasMore,
-    });
+    return v4ConversationWorkflowRunEventsResultSchema.parse(page);
   }
 
   /**
@@ -1710,10 +1743,11 @@ export class ConversationV4Gateway {
   /**
    * Data surface for preset dashboards: paginate `report` entries for an artifact.
    *
-   * **Default and clamp `limit` here** (the storage layer fulfills it exactly and must not invent a
-   * page size or clamp again). Determine `hasMore` like workflowRunEvents by reading one extra row;
-   * never infer it from "this page is exactly full," which falsely reports more data when the count
-   * exactly equals limit and makes the dashboard request a nonexistent page.
+   * The count's **default and clamp**, plus the byte bound, are fixed here (the storage layer
+   * fulfills them exactly and must not invent a page size or clamp again). `fields` is passed
+   * through unchanged: the dashboard wants only the fields its spec names, selected by SQLite.
+   * `hasMore` is decided by the storage layer—a page may end early on the byte bound, so the
+   * criterion must never be "this page is exactly full," nor the gateway reading one extra row.
    */
   async workflowRunArtifactData(
     rawParams: unknown,
@@ -1733,18 +1767,15 @@ export class ConversationV4Gateway {
         WORKFLOW_ARTIFACT_LIMITS.maxItemsPerPage,
       ),
     );
-    const items = await this.host.listDynamicWorkflowRunArtifactItems(params.sessionId, {
+    const page = await this.host.listDynamicWorkflowRunArtifactItems(params.sessionId, {
       runId: params.runId,
       artifactId: params.artifactId,
       ...(params.afterSequence === undefined ? {} : { afterSequence: params.afterSequence }),
-      // Read one extra row only to determine hasMore; it is not included in the result page.
-      limit: limit + 1,
+      limit,
+      maxBytes: WORKFLOW_ARTIFACT_LIMITS.maxPageBytes,
+      ...(params.fields === undefined ? {} : { fields: params.fields }),
     });
-    const hasMore = items.length > limit;
-    return v4ConversationWorkflowRunArtifactDataResultSchema.parse({
-      items: hasMore ? items.slice(0, limit) : items,
-      hasMore,
-    });
+    return v4ConversationWorkflowRunArtifactDataResultSchema.parse(page);
   }
 
   /**
@@ -2235,7 +2266,17 @@ export class ConversationV4Gateway {
   ): { attachment: AttachmentRef; messageId?: string; attachmentIndex?: number } | null {
     const isPreviewable = (attachment: AttachmentRef) => {
       const mime = attachment.mime.split(";", 1)[0]?.trim().toLowerCase() ?? "";
-      return mime.startsWith("image/") || mime.startsWith("video/") || mime === "application/pdf";
+      // Root cause: the preview only allowed images, videos, and PDF; text attachments were
+      // rejected even when they belonged to the current row. Text now only reuses the existing
+      // material marker and must still pass ownership checks against the authoritative row,
+      // attachment index, and ref.
+      return (
+        mime.startsWith("image/") ||
+        mime.startsWith("video/") ||
+        mime === "application/pdf" ||
+        (mime === "text/plain" &&
+          (attachment.sourceKind === "topic-history" || attachment.sourceKind === "clipboard-text"))
+      );
     };
     const matchesRef = (attachment: AttachmentRef) =>
       attachment.ref === ref || attachment.previewRef === ref;
@@ -2342,7 +2383,11 @@ export class ConversationV4Gateway {
           !allowGeneric &&
           !resultMime.startsWith("image/") &&
           !resultMime.startsWith("video/") &&
-          resultMime !== "application/pdf"
+          resultMime !== "application/pdf" &&
+          !(
+            resultMime === "text/plain" &&
+            mime.split(";", 1)[0]?.trim().toLowerCase() === "text/plain"
+          )
         ) {
           throw new ZCodeAttachmentFaultError(ZCODE_ATTACHMENT_FAULT_CODES.previewNotMedia);
         }
@@ -2388,7 +2433,7 @@ export class ConversationV4Gateway {
     this.binaryReadCacheBytes = Math.max(0, this.binaryReadCacheBytes - (entry.bytes ?? 0));
   }
 
-  /** v4/conversation/unsubscribe。 */
+  /** v4/conversation/unsubscribe. */
   unsubscribe(rawParams: unknown): void {
     const params = v4ConversationUnsubscribeParamsSchema.parse(rawParams);
     const sessionId = parseConversationTopic(params.topic);

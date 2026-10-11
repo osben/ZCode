@@ -6,52 +6,53 @@ import type { RuntimeInputPresentation } from "../interfaces/runtime-input-prese
 // ============================================================
 
 import type {
+  CompactBoundaryPayload,
+  CompactTimelinePayload,
+  MicrocompactBoundaryPayload,
+} from "../compact/index.js";
+import type { HookRunLifecyclePayload } from "../hooks/index.js";
+import type { HttpClientEgressInfo } from "../interfaces/http-client.port.js";
+import type { PermissionOptionsPolicy, PermissionUpdate } from "../interfaces/permission.port.js";
+import type {
+  MessageVisibility,
+  SessionTitleSource,
+  SyntheticUserMessageSource,
+} from "../interfaces/session-store.port.js";
+import type {
+  CollaborationMode,
+  HighspeedMessageMetadata,
+  RiskLevel,
+  TurnInputIntentMetadata,
+  TurnSteerCommandKind,
+  TurnSteerDeliveryMode,
+  TurnSteerRejectReason,
+  TurnSteerSource,
+} from "../interfaces/session.port.js";
+import type {
   EventId,
   InteractionRequestOrigin,
   MessageId,
   PartId,
   QueryId,
   SessionId,
-  TraceId,
   ToolCallId,
+  TraceId,
   TurnId,
 } from "../interfaces/shared.js";
-import type {
-  CollaborationMode,
-  RiskLevel,
-  TurnSteerCommandKind,
-  TurnSteerDeliveryMode,
-  TurnSteerRejectReason,
-  TurnSteerSource,
-  TurnInputIntentMetadata,
-} from "../interfaces/session.port.js";
 import type {
   ModelNetworkStatusEvent,
   ModelSelection,
   ModelUsage,
   ModelUsageSummary,
 } from "../model/index.js";
-import type { HttpClientEgressInfo } from "../interfaces/http-client.port.js";
 import { createModelUsageSummary } from "../model/index.js";
-import type { ModelApiErrorPhase, ModelFailureExceptionKind } from "../telemetry/index.js";
-import type {
-  CompactBoundaryPayload,
-  CompactTimelinePayload,
-  MicrocompactBoundaryPayload,
-} from "../compact/index.js";
-import type { HookRunLifecyclePayload } from "../hooks/index.js";
 import type { CheckpointCreatedPayload, RewindTriggeredPayload } from "../rewind/index.js";
-import type { GoalCompletionVerificationOutput, SessionGoal } from "../tools/target.js";
-import type { ToolSideEffectScope } from "../tools/contract.js";
-import type { ToolResultDisplayPayload } from "../tools/tool-result-metadata.js";
 import type { SkillTelemetryMetadata } from "../skills/index.js";
-import type {
-  MessageVisibility,
-  SessionTitleSource,
-  SyntheticUserMessageSource,
-} from "../interfaces/session-store.port.js";
+import type { ModelApiErrorPhase, ModelFailureExceptionKind } from "../telemetry/index.js";
+import type { ToolSideEffectScope } from "../tools/contract.js";
 import type { SavedWorkflowScope } from "../tools/saved-workflow.js";
-import type { PermissionOptionsPolicy, PermissionUpdate } from "../interfaces/permission.port.js";
+import type { GoalCompletionVerificationOutput, SessionGoal } from "../tools/target.js";
+import type { ToolResultDisplayPayload } from "../tools/tool-result-metadata.js";
 import type {
   StreamRecoveryAnchorPayload,
   StreamRecoveryAnchorSelectedPayload,
@@ -111,9 +112,13 @@ export const SessionEventType = {
   UserMessage: "user_message",
   AssistantMessage: "assistant_message",
   AssistantFeedbackUpdated: "assistant_feedback_updated",
+  HighspeedMetricsUpdated: "highspeed_metrics_updated",
+  // (2026-09-12): the former ToolWidgetStateUpdated / SessionPluginUiStateUpdated events were removed.
+  // Plugin UI widgetState now falls back to renderer memory and no longer travels through the CLI event stream.
   SystemMessage: "system_message",
   ModelRequest: "model_request",
   ModelSelected: "model_selected",
+  TurnExecutionModelFallback: "turn_execution_model_fallback",
   ModelStreaming: "model_streaming",
   StreamingToolLedgerUpdated: "streaming_tool_ledger_updated",
   StreamRecoveryAnchorCreated: "stream_recovery_anchor_created",
@@ -144,6 +149,12 @@ export const SessionEventType = {
   PermissionRequested: "permission_requested",
   PermissionResolved: "permission_resolved",
   PermissionDenied: "permission_denied",
+  // MCP resource changes subscribed to by plugin UI. Included only in the live projection (v4Gateway.ingest, seq 0); not persisted or restored on cold start.
+  PluginUiResourceUpdated: "plugin_ui_resource_updated",
+  PluginUiResourceListChanged: "plugin_ui_resource_list_changed",
+  /** App-Provided Tools: model-initiated page tool call; included only in the live projection (instance mailbox), not persisted. */
+  PluginUiInstanceClosed: "plugin_ui_instance_closed",
+  PluginUiAppToolCallRequested: "plugin_ui_app_tool_call_requested",
   UserInputAutoResolutionUpdated: "user_input_auto_resolution_updated",
   WorkspaceHookReviewRequested: "workspace_hook_review_requested",
   WorkspaceHookReviewSettled: "workspace_hook_review_settled",
@@ -278,6 +289,25 @@ export type WorkflowNotificationMeta =
       context?: string;
       askedAt?: number;
     }
+  /**
+   * The script reached a hole (the `hole` payload in docs/dynamic-workflow/transcript-and-notifications.md):
+   * the main agent owes this run a code body. `prompt` ≤4000 (same cap as elicitation); `before` /
+   * `after` are the phase names before and after the hole, and `draftPath` / `line` point to its line in
+   * the run draft. Exactly one event is emitted per `hole-reached`.
+   */
+  | {
+      kind: "hole";
+      siteId: string;
+      ordinal: number;
+      name: string;
+      type: string;
+      prompt?: string;
+      draftPath?: string;
+      line?: number;
+      before?: string;
+      after?: string;
+      reachedAt?: number;
+    }
   /** Run-level stall: one per stall interval; not a terminal state. */
   | {
       kind: "stall";
@@ -327,17 +357,19 @@ export type TurnBackgroundAttribution =
 export type WorkflowLaunchDisplay = Extract<ToolResultDisplayPayload, { kind: "create_workflow" }>;
 
 /**
- * "What changed" for a settings turn: only changed settings are present.
- * If either `from` / `to` is missing, that side uses its default (model = session model, limit = machine
- * ceiling). `ceiling` is the machine limit, used for descriptions such as "13 → 4." Same shape as
- * shared `workflowSettingsAmendMetaSchema`.
+ * Describes what changed in a settings turn (docs/dynamic-workflow/launch.md, “The settings turn”):
+ * only changed settings are present. If either `from` or `to` is absent, that side is the default
+ * (model = session model; cap = default concurrency). `ceiling` is the default concurrency D; its
+ * wire name predates the “default concurrency” concept and is retained for older clients. It supports
+ * displays such as “default 13 → 4”. Matches shared's `workflowSettingsAmendMetaSchema`.
  */
 export interface WorkflowSettingsAmendMeta {
   /**
-   * Run replaced by this adjustment (or continued after it). **Omission means the change took effect
-   * in place**: when only the concurrency ceiling changes and the run is still active, the settings
-   * turn neither stops the run nor starts another one, so there is no predecessor to reference—`runId`
-   * identifies the adjusted run itself. Same shape as shared `workflowSettingsAmendMetaSchema`.
+   * Run replaced by this adjustment (or continued from it). **Omission means the change took effect
+   * in place** (docs/dynamic-workflow/launch.md, “The settings turn”): when only the concurrency cap
+   * changes while the run is still live, the settings turn neither stops it nor starts another run, so
+   * there is no predecessor to identify; `runId` refers to the adjusted run itself. Matches shared's
+   * `workflowSettingsAmendMetaSchema` (which documents an older desktop discrepancy).
    */
   predecessorRunId?: string;
   subagentModel?: { from?: string; to?: string };
@@ -637,6 +669,11 @@ export interface AssistantFeedbackUpdatedPayload {
   feedback: "like" | "dislike" | null;
 }
 
+export interface HighspeedMetricsUpdatedPayload {
+  entityId: string;
+  highspeed: HighspeedMessageMetadata;
+}
+
 export interface SystemMessagePayload {
   type: "init" | "compact_boundary" | "interrupted";
   content: string;
@@ -703,6 +740,25 @@ export interface ModelSelectedPayload {
   supportedThoughtLevels?: string[];
   /** Context window actually applied at runtime for the current selection; null means explicitly cleared, and omission supports older events. */
   contextWindow?: number | null;
+}
+
+/**
+ * Reason that the execution Selection fell back to the session Selection. Uses the same value set as
+ * @zcode/shared's selectionFallback rule: an expired card is identified by a declared provider error
+ * code; every other accelerated-request failure is classified as request_failed.
+ */
+export type TurnExecutionModelFallbackReason = "highspeed_card_expired" | "highspeed_request_failed";
+
+export interface TurnExecutionModelFallbackPayload {
+  inputId?: string;
+  reason: TurnExecutionModelFallbackReason;
+  /**
+   * After the provider refactor, per-turn execution models use sparse Selections (the old ModelRef was
+   * removed): `from` is the accelerated Selection scoped to this execution; `to` is the persistent
+   * session Selection.
+   */
+  fromModelSelection: ModelSelection;
+  toModelSelection: ModelSelection;
 }
 
 export type ModelStreamingKind =
@@ -863,6 +919,10 @@ export interface ToolCallProgressPayload {
   toolCallId: ToolCallId;
   toolName?: string;
   elapsedMs?: number;
+  /** MCP `notifications/progress` (A8): forward progress / total / message unchanged. */
+  progress?: number;
+  total?: number;
+  message?: string;
   pid?: number;
   stdoutBytes?: number;
   stderrBytes?: number;
@@ -971,6 +1031,7 @@ export interface DynamicWorkflowRunProgressPayload {
 }
 
 export interface PermissionRequestedPayload {
+  approvalMode?: "user-once";
   requestId?: string;
   toolCallId: ToolCallId;
   toolName: string;
@@ -986,6 +1047,35 @@ export interface PermissionRequestedPayload {
   display?: ToolResultDisplayPayload;
   fullAccessSupported?: boolean;
   optionsPolicy?: PermissionOptionsPolicy;
+}
+
+/** Identify a sandbox instance by (scopeId, generation); the renderer delivers only to a matching generation. */
+export interface PluginUiResourceSubscriberRef {
+  instance: import("@zcode/shared/mcp-apps").McpAppInstance;
+  scopeId: string;
+  generation: number;
+}
+export interface PluginUiResourceUpdatedPayload {
+  pluginId: string;
+  serverName: string;
+  uri: string;
+  subscribers: PluginUiResourceSubscriberRef[];
+}
+export interface PluginUiResourceListChangedPayload {
+  pluginId: string;
+  serverName: string;
+  subscribers: PluginUiResourceSubscriberRef[];
+}
+/** App-Provided Tools: a pending page-tool call delivered to the single matching subscriber instance. */
+export interface PluginUiAppToolCallRequestedPayload {
+  activity?: boolean;
+  cancelled?: boolean;
+  pluginId: string;
+  serverName: string;
+  subscribers: PluginUiResourceSubscriberRef[];
+  callId: string;
+  toolName: string;
+  arguments: Record<string, unknown>;
 }
 
 export interface PermissionResolvedPayload {
@@ -1215,6 +1305,7 @@ export type SessionEventPayload =
   | SystemMessagePayload
   | ModelRequestPayload
   | ModelSelectedPayload
+  | TurnExecutionModelFallbackPayload
   | ModelStreamingPayload
   | StreamingToolLedgerPayload
   | StreamRecoveryAnchorPayload
@@ -1242,6 +1333,9 @@ export type SessionEventPayload =
   | PermissionRequestedPayload
   | PermissionResolvedPayload
   | PermissionDeniedPayload
+  | PluginUiResourceUpdatedPayload
+  | PluginUiResourceListChangedPayload
+  | PluginUiAppToolCallRequestedPayload
   | UserInputAutoResolutionUpdatedPayload
   | WorkspaceHookReviewRequestedPayload
   | WorkspaceHookReviewSettledPayload

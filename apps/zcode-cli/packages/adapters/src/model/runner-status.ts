@@ -1,5 +1,6 @@
 import type {
   Logger,
+  ModelRequestObservationStatusEvent,
   ModelNetworkStatusEvent,
   ModelReasoningCallHint,
   ModelStatusSink,
@@ -19,6 +20,7 @@ import { UNBOUNDED_RETRY_MAX_ATTEMPTS } from "./retry-budget.js";
 // this file still exports the public API so existing importers do not need to change paths.
 import { resolveModelRequestSessionType } from "./runner-attribution.js";
 import type { AiSdkModelTextRequest, ResolvedAiSdkModel } from "./runner-runtime.js";
+import type { ModelRequestObservationSource } from "./request-security.js";
 import { stringMetadata } from "./runner-record.js";
 
 export {
@@ -193,6 +195,7 @@ export async function publishModelStatus(
      * sinks (failures only warn).
      */
     admissionTicket?: ModelStatusSink;
+    requestObservations?: ModelRequestObservationSource;
     failureError?: unknown;
     logger?: Logger;
     requestStatusSink?: ModelStatusSink;
@@ -200,6 +203,7 @@ export async function publishModelStatus(
   },
 ): Promise<void> {
   logStatusEvent(event, options.logger);
+  await publishRequestObservations(event, options);
 
   const deliveries: Array<() => void | Promise<void>> = [];
   if (options.admissionTicket) {
@@ -233,6 +237,43 @@ export async function publishModelStatus(
         errorMessage:
           result.reason instanceof Error ? result.reason.message : String(result.reason),
         event: "model.status_sink.failed",
+        status: "failed",
+      });
+    }
+  }
+}
+
+/**
+ * Before the attempt reaches a terminal state, take the signer's buffered signature observations by requestId and send them only to the process-level Telemetry Sink.
+ * Publish them before the terminal event: the recorder releases this attempt's span writer when it receives the terminal event.
+ * Local logs were already written immediately at the fetch layer, so do not record them again here.
+ */
+async function publishRequestObservations(
+  event: ModelNetworkStatusEvent,
+  options: {
+    requestObservations?: ModelRequestObservationSource;
+    logger?: Logger;
+    statusSink?: ModelStatusSink;
+  },
+): Promise<void> {
+  if (event.type !== "model_request_completed" && event.type !== "model_request_failed") return;
+  const store = options.requestObservations;
+  if (!store) return;
+  const observations = store.take(event.requestId);
+  if (observations.length === 0 || !options.statusSink) return;
+  for (const observation of observations) {
+    const observationEvent: ModelRequestObservationStatusEvent = {
+      ...event,
+      observation,
+      type: "model_request_observation",
+    };
+    try {
+      await options.statusSink.publish(observationEvent);
+    } catch (error) {
+      options.logger?.warn("Model request observation sink failed", {
+        ...modelStatusLogContext(event),
+        errorMessage: error instanceof Error ? error.message : String(error),
+        event: "model.request_observation.sink_failed",
         status: "failed",
       });
     }
@@ -385,6 +426,10 @@ function logStatusEvent(event: ModelNetworkStatusEvent, logger?: Logger): void {
         event: event.type,
         status: "completed",
       });
+      return;
+
+    case "model_request_observation":
+      // The fetch layer already wrote local logs immediately; this only publishes telemetry.
       return;
   }
 }

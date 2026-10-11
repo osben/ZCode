@@ -10,7 +10,7 @@ import type { SendInputOptions, SendInputResult } from "../../app/types.js";
 import { runWithSessionResidencyFinalization } from "../../zcode-protocol/session-residency.js";
 import type { V4CommandCoreHost, V4SessionRecordView } from "./types.js";
 
-interface StartPromptTurnParamsBase {
+export interface StartPromptTurnParamsBase {
   content: string;
 /** v4 anchor: inputId=queryId=commandId (reconciled against authoritative sourceCommandId). */
   inputId: string;
@@ -23,15 +23,17 @@ interface StartPromptTurnParamsBase {
   modelExecution?: SendInputOptions["modelExecution"];
   sharedContextRefs?: SendInputOptions["sharedContextRefs"];
   toolDisallowlist?: readonly string[];
+  /** The current input must be preserved for a future independent turn; do not start it directly just because admission momentarily goes idle. */
+  requireQueue?: boolean;
 /** sendQueuedNow already holds the Core promotion lease, so this admission must occupy only an idle slot. */
   requireIdle?: boolean;
 /** Stable callback address for an inbound Bot turn; exposed to CronCreate only during this turn. */
   botDeliveryTarget?: ZCodeAutomationBotDeliveryTarget;
 }
 
-type StartPromptTurnParams = StartPromptTurnParamsBase & TurnBackgroundAttribution;
+export type StartPromptTurnParams = StartPromptTurnParamsBase & TurnBackgroundAttribution;
 
-interface PromptTurnStartResult {
+export interface PromptTurnStartResult {
 /** Core admission is complete; do not wait for TurnStarted or the projection commit. */
   turnStarted: Promise<void>;
 /** The actual Core completion promise, used only for lifecycle cleanup; it is not part of the ACK boundary. */
@@ -51,6 +53,11 @@ export class V4PromptRejectedError extends Error {
     super(message);
     this.name = "V4PromptRejectedError";
   }
+}
+
+/** Legacy queue-promotion compatibility predicate: the new Core admission no longer produces an indeterminate projection-authority state. */
+export function isPromptTurnStartUncertainFailure(_error: unknown): boolean {
+  return false;
 }
 
 /**
@@ -134,6 +141,7 @@ export async function startPromptTurn(
         ...(params.modelExecution ? { modelExecution: params.modelExecution } : {}),
         ...(params.sharedContextRefs ? { sharedContextRefs: params.sharedContextRefs } : {}),
         ...(turnToolDisallowlist ? { toolDisallowlist: turnToolDisallowlist } : {}),
+        ...(params.requireQueue ? { requireQueue: true } : {}),
         ...(params.requireIdle ? { requireIdle: true } : {}),
         queryId: params.inputId as SendInputOptions["queryId"],
       },
@@ -216,7 +224,7 @@ function clearPromptRecordState(
   record.activeBotDeliveryTarget = previousBotDeliveryTarget;
 }
 
-function buildTurnToolDisallowlist(
+export function buildTurnToolDisallowlist(
   params: Pick<StartPromptTurnParams, "automationId" | "offPeakTaskId" | "toolDisallowlist">,
   activeAutomationId = params.automationId,
   activeOffPeakTaskId = params.offPeakTaskId,
@@ -249,7 +257,7 @@ export function resolveTurnAutomationId(
   return automationId.length > AUTOMATION_INPUT_ID_PREFIX.length ? automationId : undefined;
 }
 
-function resolveTurnOffPeakTaskId(
+export function resolveTurnOffPeakTaskId(
   params: Pick<StartPromptTurnParams, "offPeakTaskId" | "inputId">,
 ): string | undefined {
   const explicit = params.offPeakTaskId?.trim();

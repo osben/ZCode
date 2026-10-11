@@ -20,7 +20,7 @@ import { isRecord, readJsonObject, writeTextAtomic } from "./utils.js";
 import { migrateLegacyCommonMcp } from "./legacy.js";
 
 // Re-export types and functions.
-export type { McpConfigKeyName, McpSourceDescriptor } from "./types.js";
+export type { McpConfigKeyName, OpenCodeMcpServerConfig, McpSourceDescriptor } from "./types.js";
 export { MCP_SOURCE_DESCRIPTORS, getSourceDescriptor } from "./types.js";
 export { migrateLegacyCommonMcp } from "./legacy.js";
 

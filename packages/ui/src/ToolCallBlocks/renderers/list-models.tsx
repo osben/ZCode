@@ -116,7 +116,7 @@ function readResultRecord(value: unknown): ListModelsResult | null {
  * matches it, which is why it falls through to the raw fallback card today); the legacy JSON probe supports old sessions and non-v4 hosts. If neither can be read,
  * return null—"this machine has no models" and "this result could not be read" must remain distinguishable.
  */
-function readListModelsResult(
+export function readListModelsResult(
   toolCall: ToolCallBlockRenderContext["toolCallNode"]["toolCall"],
 ): ListModelsResult | null {
   const display = readToolResultDisplay(toolCall.raw);
@@ -178,7 +178,7 @@ function listModelsGroupName(
  * Context-window formatting: preserve values below one thousand; round to K below one million; above that, show M and retain one decimal only when needed
  * (`1M` / `1.5M`). This column is for quickly comparing sizes, not verifying exact token counts.
  */
-function formatContextWindow(contextWindow: number): string {
+export function formatContextWindow(contextWindow: number): string {
   if (contextWindow < 1_000) {
     return String(contextWindow);
   }

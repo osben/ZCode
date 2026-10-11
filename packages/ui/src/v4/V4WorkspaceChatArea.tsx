@@ -66,7 +66,7 @@ function dragPayloadSessionTarget(payload: WorkbenchSessionDragPayload): Workben
   };
 }
 
-interface V4WorkspaceChatAreaProps {
+export interface V4WorkspaceChatAreaProps {
   workspacePath: string;
   workspaceIdentity?: string;
   /** Prompt-template telemetry currently covers Desktop only; Web/mobile remote control keeps the UI behavior but does not emit this event. */
@@ -75,6 +75,7 @@ interface V4WorkspaceChatAreaProps {
   /** False when an overlay such as Settings is open; hidden panes must not consume one-time Composer requests. */
   foregroundEnabled?: boolean;
   remoteSessionId?: string;
+  compactForRemoteControl?: boolean;
   /** CLI session bound to the primary pane (the existing activeTaskId selection); null means draft. */
   sessionId: string | null;
   activeSelectionSideChatSessionId?: string | null;
@@ -145,6 +146,7 @@ export function V4WorkspaceChatArea({
   readOnly = false,
   foregroundEnabled = true,
   remoteSessionId,
+  compactForRemoteControl = false,
   sessionId,
   activeSelectionSideChatSessionId = null,
   provider,
@@ -201,7 +203,9 @@ export function V4WorkspaceChatArea({
   const setSplitRatioAction = usePaneLayoutStore((state) => state.setSplitRatio);
   const resetPaneLayoutAction = usePaneLayoutStore((state) => state.resetToPrimaryPane);
   const activeGroup = useWorkbenchGroupStore((state) =>
-    state.activeGroupId ? (state.groups[state.activeGroupId] ?? null) : null,
+    compactForRemoteControl || !state.activeGroupId
+      ? null
+      : (state.groups[state.activeGroupId] ?? null),
   );
   const focusGroupPaneAction = useWorkbenchGroupStore((state) => state.focusPane);
   const closeGroupPaneAction = useWorkbenchGroupStore((state) => state.closePane);
@@ -216,12 +220,14 @@ export function V4WorkspaceChatArea({
 
   const containerRef = useRef<HTMLDivElement | null>(null);
 
-  const root = activeGroup?.root ?? paneRoot;
-  const panes = activeGroup?.panes ?? paneBindings;
-  const focusedPaneId = activeGroup?.focusedPaneId ?? paneFocusedPaneId;
+  const root = compactForRemoteControl ? PRIMARY_LEAF : (activeGroup?.root ?? paneRoot);
+  const panes = compactForRemoteControl ? {} : (activeGroup?.panes ?? paneBindings);
+  const focusedPaneId = compactForRemoteControl
+    ? V4_PRIMARY_PANE_ID
+    : (activeGroup?.focusedPaneId ?? paneFocusedPaneId);
   const layout = useMemo(() => collectWorkbenchLayout(root), [root]);
   const shellSessionOwnedBySplitPane = useMemo(() => {
-    if (activeGroup || !sessionId) {
+    if (compactForRemoteControl || activeGroup || !sessionId) {
       return false;
     }
     return Object.values(paneBindings).some(
@@ -229,8 +235,8 @@ export function V4WorkspaceChatArea({
         binding.sessionId === sessionId &&
         paneWorkspaceKey(binding.workspaceScope) === shellWorkspaceKey,
     );
-  }, [activeGroup, paneBindings, sessionId, shellWorkspaceKey]);
-  // A primary draft has no sessionId of its own. When a session is dragged in, shell active
+  }, [activeGroup, compactForRemoteControl, paneBindings, sessionId, shellWorkspaceKey]);
+  // Reason for the fix: The primary draft has no sessionId of its own; when a session is dragged in, the shell’s active
   // may already point to the right pane's session; do not pass that sessionId to the primary pane.
   const primaryPaneSessionId = shellSessionOwnedBySplitPane ? null : sessionId;
 
@@ -267,6 +273,7 @@ export function V4WorkspaceChatArea({
       ...(workspaceIdentity ? { workspaceIdentity } : {}),
       ...(remoteSessionId ? { remoteSessionId } : {}),
       isDesktop,
+      compactForRemoteControl,
       readOnly,
       sessionId: primaryPaneSessionId,
       // primaryPaneSessionId is deliberately cleared when the active task is taken over by split panes;
@@ -315,6 +322,7 @@ export function V4WorkspaceChatArea({
       workspaceIdentity,
       remoteSessionId,
       isDesktop,
+      compactForRemoteControl,
       readOnly,
       primaryPaneSessionId,
       activeSelectionSideChatSessionId,
@@ -567,13 +575,13 @@ export function V4WorkspaceChatArea({
           }
           shell={shell}
           onFocusRequest={handleFocusRequest}
-          onSplit={activeGroup ? undefined : splitPaneAction}
+          onSplit={compactForRemoteControl || activeGroup ? undefined : splitPaneAction}
           onClosePane={handleClosePane}
           onConfirmRestoredSession={handleConfirmRestoredSession}
           onBindSession={handleBindSession}
           onPaneActiveSessionChange={onPaneActiveSessionChange}
-          canDropSession={canDropSession}
-          onDropSession={handleDropSession}
+          canDropSession={compactForRemoteControl ? undefined : canDropSession}
+          onDropSession={compactForRemoteControl ? undefined : handleDropSession}
         />
       ))}
       {layout.dividers.map((divider) => (

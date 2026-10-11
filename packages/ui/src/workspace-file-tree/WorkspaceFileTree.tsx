@@ -78,7 +78,7 @@ import type {
   WorkspaceFileTreeStickyFolderItem,
 } from "@/workspace-file-tree/types.js";
 
-function getWorkspaceFileTreeDirectoryLoadDepth(
+export function getWorkspaceFileTreeDirectoryLoadDepth(
   workspacePath: string,
   directoryPath: string,
 ): number {
@@ -226,7 +226,7 @@ export function WorkspaceFileTree({
       return;
     }
     lastNonBlockingRootErrorRef.current = errorMessage;
-    // If the root directory is cached, a refresh failure is only a non-blocking notice; a blocking error page would hide the retained old file tree.
+    // Bugfix: If the root directory is cached, a refresh failure must remain a non-blocking notice; a blocking error page would hide the retained file tree.
     toast(`${intl.formatMessage({ id: "workspaceFileTree.readFailed" })}: ${errorMessage}`);
   }, [intl, rootError, rootLoaded]);
   const gitStatusLabelByStatus = useMemo<Record<WorkspaceFileGitStatus, string>>(
@@ -792,7 +792,7 @@ export function WorkspaceFileTree({
   );
 }
 
-function getWorkspaceFileTreeBlockingRootError({
+export function getWorkspaceFileTreeBlockingRootError({
   rootLoaded,
   rootError,
 }: {

@@ -28,7 +28,7 @@ interface FeedbackBackgroundUploadIndicatorProps {
   feedbackDialogOpen: boolean;
 }
 
-interface FeedbackBackgroundUploadIndicatorViewProps {
+export interface FeedbackBackgroundUploadIndicatorViewProps {
   status: FeedbackSubmissionJobStatus;
   progress: FeedbackSubmissionProgressState;
   ticketId?: string;
@@ -39,18 +39,18 @@ interface FeedbackBackgroundUploadIndicatorViewProps {
   defaultExpanded?: boolean;
 }
 
-function shouldOpenExistingFeedbackTicket(
+export function shouldOpenExistingFeedbackTicket(
   status: FeedbackSubmissionJobStatus,
   ticketId: string | undefined,
 ): ticketId is string {
   return Boolean(ticketId) && (status === "success" || status === "error");
 }
 
-type FeedbackBackgroundOpenTarget =
+export type FeedbackBackgroundOpenTarget =
   | { kind: "submission"; jobId: string }
   | { kind: "ticket"; ticketId: string };
 
-function getFeedbackBackgroundOpenTarget(
+export function getFeedbackBackgroundOpenTarget(
   job: Pick<FeedbackSubmissionJobSnapshot, "id" | "status" | "ticketId">,
 ): FeedbackBackgroundOpenTarget {
   if (shouldOpenExistingFeedbackTicket(job.status, job.ticketId)) {
@@ -141,7 +141,7 @@ function FeedbackBackgroundUploadJobCard({
   );
 }
 
-function FeedbackBackgroundUploadIndicatorView({
+export function FeedbackBackgroundUploadIndicatorView({
   status,
   progress,
   ticketId,
@@ -238,7 +238,7 @@ function FeedbackBackgroundUploadIndicatorView({
           >
             {expanded ? <ChevronDown className="size-3" /> : <ChevronUp className="size-3" />}
           </Button>
-          {/* paused-log can only resume uploading; allowing it to be hidden would leave a background job waiting for user action in an unrecoverable suspended state.*/}
+          {/* Bugfix: A paused log can only resume uploading. Allowing it to be hidden would leave a background job waiting for user action in an unrecoverable suspended state. */}
           {!isPaused ? (
             <Button
               type="button"

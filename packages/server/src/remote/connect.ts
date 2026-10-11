@@ -1,8 +1,9 @@
-import { SocketProtocol, ChannelClient } from "@zcode/rpc";
+import { SocketProtocol, ChannelClient, ChannelServer, type IServerChannel } from "@zcode/rpc";
 import type { IServiceAccessor } from "@zcode/services";
 import { RemoteServiceAccess } from "@zcode/client";
 import {
   SERVICE_AUTHORITY_MODE_ENV,
+  TOPIC_RESOURCE_RELAY_CHANNEL,
   ZCODE_APP_VERSION_ENV,
   ZCODE_DESKTOP_CONTEXT_PROMPT_ENABLED_ENV,
   ZCODE_DYNAMIC_WORKFLOW_MODE_ENV,
@@ -23,6 +24,8 @@ import { formatWslProxyForLog } from "./wslProxy.js";
 const BACKEND_DISCONNECT_EXIT_CODE = -1;
 
 export interface ConnectOptions extends DeployOptions {
+  /** Private reverse resource channel over the current stdio, injected only by the Desktop Host. */
+  topicResourceChannel?: IServerChannel;
   /** Client identifier for handshake */
   clientId?: string;
   /** Handshake timeout in ms (default: 10000) */
@@ -57,10 +60,18 @@ const REMOTE_RUNTIME_ENV_KEYS = [
   "ZCODE_ENV",
   "ZCODE_BASE_URL",
   "ZCODE_ENDPOINT_ORIGIN",
+  "ZCODE_TEST_BASE_URL",
+  "ZCODE_PRODUCTION_BASE_URL",
   "ZAI_OAUTH_ORIGIN",
+  "ZAI_TEST_OAUTH_ORIGIN",
+  "ZAI_PRODUCTION_OAUTH_ORIGIN",
   "ZAI_BUSINESS_BASE_URL",
+  "ZAI_TEST_BUSINESS_BASE_URL",
+  "ZAI_PRODUCTION_BUSINESS_BASE_URL",
   "ZAI_OAUTH_CLIENT_ID",
-  // Computed and supplied by Desktop Main; the remote server consumes it without recomputing.
+  "ZAI_TEST_OAUTH_CLIENT_ID",
+  "ZAI_PRODUCTION_OAUTH_CLIENT_ID",
+  // Per-feature rollout decisions already computed by Desktop Main; the remote server consumes them without re-bucketing.
   ZCODE_DESKTOP_CONTEXT_PROMPT_ENABLED_ENV,
   // Likewise, Desktop Main sets the local override by build tier (buildHostProcessEnv). Passing it
   // through gives SSH/WSL/Docker remote Hosts the same tier as the local Host.
@@ -220,6 +231,11 @@ async function connectRemoteUnchecked(
   const socket = wrapStdioStream(stream);
   const protocol = new SocketProtocol(socket);
   const client = new ChannelClient(protocol);
+  const reverseServer = options?.topicResourceChannel
+    ? new ChannelServer(protocol, "desktop-resource")
+    : undefined;
+  if (reverseServer && options?.topicResourceChannel)
+    reverseServer.registerChannel(TOPIC_RESOURCE_RELAY_CHANNEL, options.topicResourceChannel);
   const services = new RemoteServiceAccess(client);
   let hasReportedRemoteClose = false;
   let hasStreamClosed = false;
@@ -262,6 +278,7 @@ async function connectRemoteUnchecked(
     }
     disposalStarted = true;
     backendDisconnectDisposable?.dispose();
+    reverseServer?.dispose();
     client.dispose();
     protocol.dispose();
     // Call stdin.end synchronously before any await so the remote stdio server receives EOF immediately.

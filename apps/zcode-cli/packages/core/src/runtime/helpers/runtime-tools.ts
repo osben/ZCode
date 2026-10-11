@@ -71,13 +71,12 @@ function registerRuntimeBuiltInTools(runtime: AgentRuntimeInternal, deps: AgentR
     includeOffPeak: Boolean(deps.offPeakPort) && runtime.config.taskType !== "subagent_child",
     // Dynamic-workflow rollout gate: unlike off-peak, port presence cannot be the criterion here; all ten tool ports are wired in
     // every CLI, and rollout is a Host decision. The value is defined in tool-allowlist.ts and shared with the branch-refresh entry point.
-    includeDynamicWorkflow: resolveRuntimeDynamicWorkflowToolsIncluded(runtime.config),
-    // browserControlPort is only a host capability and must not implicitly expose the high-privilege node_repl.
-    // node_repl/browser-use are controlled by runtimeFeatures derived from the ZCode official browser-use plugin state.
+    includeDynamicWorkflow: resolveRuntimeDynamicWorkflowToolsIncluded(runtime),
+    // Reason for the fix: browserControlPort is a host capability and must not implicitly expose the privileged node_repl.
+    // node_repl/browser-use is controlled by runtimeFeatures derived from whether the official ZCode browser-use plugin is enabled.
     includeNodeRepl: nodeReplEnabled,
     includeBrowserUse: browserUseEnabled,
     embeddedSearchEnabled: resolveRuntimeEmbeddedSearchEnabled(runtime),
-    agentProfiles: runtime.config.subagents?.profiles,
     allowedTools: resolveBuiltInToolAllowlist(runtime.config),
     // Structural workflow_child exclusions (CreateWorkflow/SaveWorkflow invisibly hang on alwaysAsk; ResumeWorkflowRun no longer
     // asks but remains excluded because children cannot orchestrate) are merged with the turn-level list in the helper; see the root
@@ -191,6 +190,7 @@ function createRuntimeToolExecutor(
     artifactStore: deps.artifactStore,
     automationPort: deps.automationPort,
     offPeakPort: deps.offPeakPort,
+    topicResourcePort: deps.topicResourcePort,
     sessionStore: deps.sessionStore,
     sessionModePort: createRuntimeSessionModePort(runtime),
     workflowPort: deps.workflowPort,

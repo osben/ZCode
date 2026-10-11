@@ -1,7 +1,8 @@
 import { Hourglass, MessageCircleQuestion, Workflow } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import type { WorkflowNotificationMeta } from "@zcode/shared/zcode-protocol-v4";
+import type { WorkflowNotificationMeta, WorkflowRunHole } from "@zcode/shared/zcode-protocol-v4";
 import { CodeBlock, CodeBlockHeader } from "@/components/ai-elements/code-block.js";
+import { WorkflowNotificationHoleRow } from "@/v4/WorkflowNotificationHoleRow.js";
 import { ToolLayout } from "@/ToolCallBlocks/ToolLayout.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import type { Theme } from "@/useTheme.js";
@@ -80,7 +81,7 @@ function escalationState(
   return pendingQids.has(qid) ? "waiting" : "answered";
 }
 
-interface WorkflowNotificationToolRowProps {
+export interface WorkflowNotificationToolRowProps {
   notification: WorkflowNotificationMeta;
   /** Run name = originMeta.title (authoritative from CLI, not localized). */
   runName: string;
@@ -99,9 +100,33 @@ interface WorkflowNotificationToolRowProps {
   pendingQids?: ReadonlySet<string>;
   /** Force expanded state for tests/host (passed through to ToolLayout.forceOpen); collapsed by default in product. */
   forceOpen?: boolean;
+  /**
+   * Presence lookup for the hole row (docs/dynamic-workflow/transcript-and-notifications.md, “The
+   * hole row's live state”): `holes` from the run projection; undefined means the run is absent from
+   * the live projection (use neutral wording).
+   */
+  holes?: readonly WorkflowRunHole[];
 }
 
-export function WorkflowNotificationToolRow({
+export function WorkflowNotificationToolRow(props: WorkflowNotificationToolRowProps) {
+  // Render hole rows separately (WorkflowNotificationHoleRow.tsx): they have their own three
+  // states and expanded body. Putting them into the three branches below would add a “not a hole” check to each branch.
+  if (props.notification.kind === "hole") {
+    return (
+      <WorkflowNotificationHoleRow
+        forceOpen={props.forceOpen ?? false}
+        holes={props.holes}
+        notification={props.notification}
+        runName={props.runName}
+        toolId={`${TID_CHAT_WORKFLOW_NOTIFICATION_ROW}-${props.testIdKey}`}
+        {...(props.onOpenRun === undefined ? {} : { onOpenRun: props.onOpenRun })}
+      />
+    );
+  }
+  return <WorkflowNotificationBaseRow {...props} notification={props.notification} />;
+}
+
+function WorkflowNotificationBaseRow({
   notification,
   runName,
   testIdKey,
@@ -110,7 +135,9 @@ export function WorkflowNotificationToolRow({
   onOpenArtifact,
   pendingQids,
   forceOpen = false,
-}: WorkflowNotificationToolRowProps) {
+}: WorkflowNotificationToolRowProps & {
+  notification: Exclude<WorkflowNotificationMeta, { kind: "hole" }>;
+}) {
   const { intl } = useZCodeIntl();
 
   // Waiting duration must keep advancing without an event stream (a stalled run emits no events); provide a fresh "now" on a fixed interval.

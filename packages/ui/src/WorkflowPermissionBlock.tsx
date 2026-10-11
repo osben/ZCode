@@ -15,6 +15,7 @@ import { WorkflowTimeline } from "@/components/workflow-timeline/WorkflowTimelin
 import {
   formatWorkflowArgValue,
   isWorkflowAmendPredecessorLive,
+  readWorkflowAdjustableSettings,
   readWorkflowAmendPredecessor,
   readWorkflowAmendScriptInherited,
   readWorkflowAmendTarget,
@@ -23,6 +24,7 @@ import {
   readWorkflowSaved,
   readWorkflowScript,
   readWorkflowSubagentModel,
+  workflowScriptNamesModels,
   type WorkflowSavedSource,
 } from "@/ToolCallBlocks/renderers/createWorkflowInput.js";
 import {
@@ -30,9 +32,15 @@ import {
   workflowSubagentModelText,
   workflowSubagentModelTooltip,
 } from "@/components/workflow-timeline/subagent-model-label.js";
+import { WorkflowAskSettings } from "@/components/workflow-timeline/WorkflowAskSettingsLines.js";
+import { WorkflowAskPlainSettings } from "@/components/workflow-timeline/WorkflowAskSettingsParts.js";
+import type { WorkflowAskSettingsContent } from "@/components/workflow-timeline/workflowAskSettings.js";
 import { useWorkflowSubagentModelProviderName } from "@/hooks/useWorkflowSubagentModelProviderName.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
-import { isAmendWorkflowToolCall } from "@/lib/workflowToolNames.js";
+import { isAmendWorkflowToolCall, isFillWorkflowHoleToolCall } from "@/lib/workflowToolNames.js";
+import { readWorkflowHoleTarget } from "@/ToolCallBlocks/renderers/createWorkflowHoleInput.js";
+import { narrowTimelineToFill } from "@/components/workflow-timeline/timeline-holes.js";
+import { WorkflowPermissionHoles } from "@/WorkflowPermissionHoles.js";
 
 /**
  * Saved-source badge: the script for this run comes from a project file, not text newly written by the model.
@@ -100,9 +108,13 @@ function WorkflowSavedSourceBadge({ saved }: { saved: WorkflowSavedSource }) {
 }
 
 /**
- * Run confirmation block for CreateWorkflow / AmendWorkflow: header (question +
- * name, with only `N phases` on the right—no “compiled” badge or subagent/step counts) + lineage (revisions only) + concurrency limit
- * (only if the user mentioned one) + saved badge + **timeline** + collapsed script. Deny / Refine / Run remain in PermissionDialog.
+ * Run confirmation block for CreateWorkflow / AmendWorkflow (docs/dynamic-workflow/presentation.md,
+ * “The confirmation window”): header (question + name, with only `N phases` on the right—since
+ * 2026-09-09 there is no “compiled” lamp and no subagent/step count) + lineage (revisions only) +
+ * two run settings (model above, ceiling below; values are editable when the agent supplies
+ * `adjustable_settings`) + saved badge + **timeline** + collapsed script.
+ * Deny / Refine / Run still come from PermissionDialog. Edited settings are returned through
+ * `onSettingsChange` and sent with the Allow response.
  *
  * The revision confirmation appears only when the predecessor is a run from **another session** (or one the user stopped manually): the question becomes “Adjust this workflow?” and the lineage row says which run will change and whether it is still running.
  *
@@ -110,11 +122,27 @@ function WorkflowSavedSourceBadge({ saved }: { saved: WorkflowSavedSource }) {
  * are critical to the decision and cannot be collapsed, while the script is an audit detail.
  */
 export function WorkflowPermissionBlock({
+  onSettingsBlockedChange,
+  onSettingsChange,
+  remoteSessionId,
   request,
+  sessionModel,
+  settingsDisabled = false,
+  workspaceIdentity,
   workspacePath,
 }: {
+  /** The selected subagent model is unavailable; the user must choose another before Allow. */
+  onSettingsBlockedChange?: (blocked: boolean) => void;
+  /** Settings edited in the dialog; includes only changed fields and is undefined if all values are restored. */
+  onSettingsChange?: (content: WorkflowAskSettingsContent | undefined) => void;
+  remoteSessionId?: string;
   request: ZCodePermissionRequest;
-  /** Scope for the session model catalog (provided by PermissionDialog); used only to map provider IDs to provider names. */
+  /** Current session model, used for the “Session model” option label. */
+  sessionModel?: { providerId: string; modelId: string };
+  /** A response is in progress; disable both controls and options. */
+  settingsDisabled?: boolean;
+  workspaceIdentity?: string;
+  /** Scope for the session model catalog (provided by PermissionDialog); both the model menu and provider names come from it. */
   workspacePath?: string;
 }) {
   const { intl } = useZCodeIntl();
@@ -126,6 +154,11 @@ export function WorkflowPermissionBlock({
   const saved = readWorkflowSaved(request.raw);
   // Detect revisions by tool name (kind/title are tool names attached by v4 ask); lineage applies only to revisions.
   const amend = isAmendWorkflowToolCall(request);
+  // Confirmation dialog for filling a hole (docs/dynamic-workflow/launch.md, “Approval”): change
+  // the question to “Fill this hole?” and show the fill's draft phase line on the timeline (the new
+  // station sits between ghost neighbors). The tool supplies the name and type in the input's `hole` block.
+  const fill = isFillWorkflowHoleToolCall(request);
+  const holeTarget = fill ? readWorkflowHoleTarget(request.raw) : undefined;
   const amendTarget = amend ? readWorkflowAmendTarget(request.raw) : undefined;
   const predecessor = amend ? readWorkflowAmendPredecessor(request.raw) : undefined;
   // This revision keeps the predecessor's script:
@@ -139,6 +172,12 @@ export function WorkflowPermissionBlock({
   // and one that is even more important to state—the approval lets these subagents run on another model. resolveInput
   // has normalized the input, so this ID is the one that will actually be used. The main Agent is unaffected, so the copy refers only to subagents.
   const subagentModel = readWorkflowSubagentModel(request.raw);
+  // The agent reports which adjustments this host can apply (docs/dynamic-workflow/launch.md,
+  // “Adjusting the settings in the window”). If absent (older agent), show only fields set by the
+  // call as plain text; do not offer edits that the agent would discard.
+  const adjustable = readWorkflowAdjustableSettings(request.raw);
+  // The model catalog requires a scope; when unavailable, render the model row as plain text while keeping the ceiling editable.
+  const hasModelScope = Boolean(workspacePath?.trim() || workspaceIdentity?.trim());
   // Show the canonical string only in the tooltip; display the model name (plus reasoning level when needed), using the same name construction as the model menu.
   const subagentModelProviderName = useWorkflowSubagentModelProviderName(workspacePath);
   const describedSubagentModel = useMemo(
@@ -161,11 +200,15 @@ export function WorkflowPermissionBlock({
       ? display.causalityGraph
       : undefined;
   const hasGraph = causalityGraph !== undefined;
-  const model = useMemo(
-    () =>
-      causalityGraph === undefined ? undefined : buildWorkflowTimeline(causalityGraph, undefined),
-    [causalityGraph],
-  );
+  const holeId = holeTarget?.holeId;
+  const holeName = holeTarget?.name;
+  const model = useMemo(() => {
+    if (causalityGraph === undefined) return undefined;
+    if (holeId === undefined) return buildWorkflowTimeline(causalityGraph, undefined);
+    const labels = new Map(holeName === undefined ? [] : [[holeId, { name: holeName }]]);
+    const whole = buildWorkflowTimeline(causalityGraph, undefined, labels);
+    return narrowTimelineToFill(whole, holeId) ?? whole;
+  }, [causalityGraph, holeId, holeName]);
 
   // Collapse the script by default when there is a diagram; a zero-step script has no diagram to show, so expand its only content by default.
   const [scriptOpen, setScriptOpen] = useState(!hasGraph);
@@ -178,7 +221,11 @@ export function WorkflowPermissionBlock({
 
   const fallbackName = intl.formatMessage({ id: "chat.toolCall.workflow.fallbackName" });
   const title = intl.formatMessage({
-    id: amend ? "chat.permission.workflow.amend.title" : "chat.permission.workflow.title",
+    id: fill
+      ? "chat.permission.workflow.hole.title"
+      : amend
+        ? "chat.permission.workflow.amend.title"
+        : "chat.permission.workflow.title",
   });
   const amendsLabel = intl.formatMessage({ id: "chat.permission.workflow.amends" });
   const stillRunningLabel = intl.formatMessage({ id: "chat.permission.workflow.amends.running" });
@@ -199,8 +246,12 @@ export function WorkflowPermissionBlock({
         detail={detail}
         expanded
         kind={title}
-        name={workflowName ?? fallbackName}
+        name={fill ? (holeName ?? holeId ?? fallbackName) : (workflowName ?? fallbackName)}
       />
+
+      {/* Holes row (docs/dynamic-workflow/presentation.md, "Holes on the timeline"): holes still
+          open plus their types, with one line saying the run pauses when it reaches a hole. */}
+      <WorkflowPermissionHoles holes={causalityGraph?.holes} />
 
       {/* The lineage row (only for revisions) sits directly below the name and together they identify what will change. If the predecessor is still running,
           add that it will be stopped; approval covers both the new script and stopping the active run. */}
@@ -231,41 +282,49 @@ export function WorkflowPermissionBlock({
         </div>
       )}
 
-      {/* Concurrency limit: the model writes this field only when requested by the user, so its presence means it is **a user-specified condition**—
-          a secondary fact like the lineage row. Place it immediately after that row and before the source badge.If absent, leave no space for it. */}
-      {maxConcurrency === undefined ? null : (
-        <p
-          className="min-w-0 text-ui-xs text-foreground-subtlest"
-          data-testid="workflow-permission-max-concurrency"
-        >
-          {intl.formatMessage(
-            { id: "chat.permission.workflow.maxConcurrency" },
-            { count: String(maxConcurrency) },
-          )}
-        </p>
-      )}
-
-      {/* Subagent model: like the concurrency limit, place it next. Both rows describe conditions the user set for this run,
-          and this one clarifies that approval lets these subagents run on a different model. The main agent is unaffected. */}
-      {describedSubagentModel === undefined ? null : (
-        <p
-          className="min-w-0 text-ui-xs text-foreground-subtlest"
-          data-testid="workflow-permission-subagent-model"
-          title={workflowSubagentModelTooltip(
-            intl.formatMessage.bind(intl),
-            describedSubagentModel,
-          )}
-        >
-          {intl.formatMessage(
-            { id: "chat.permission.workflow.subagentModel" },
-            {
-              model: workflowSubagentModelText(
-                intl.formatMessage.bind(intl),
-                describedSubagentModel,
-              ),
-            },
-          )}
-        </p>
+      {/* Two run settings: like the lineage row, they state "what constrains this run"; placed
+          right after it and before the source badge. When adjustable, both sentences are always
+          shown (even untouched, they state what would happen); remounted by requestId, so a new
+          request starts from the new inputs' baseline. */}
+      {adjustable === undefined ? (
+        <WorkflowAskPlainSettings
+          maxConcurrency={maxConcurrency}
+          scriptNamesModels={workflowScriptNamesModels(request.raw)}
+          subagentModel={
+            describedSubagentModel === undefined
+              ? undefined
+              : {
+                  text: workflowSubagentModelText(
+                    intl.formatMessage.bind(intl),
+                    describedSubagentModel,
+                  ),
+                  tooltip: workflowSubagentModelTooltip(
+                    intl.formatMessage.bind(intl),
+                    describedSubagentModel,
+                  ),
+                }
+          }
+        />
+      ) : (
+        <WorkflowAskSettings
+          key={request.requestId}
+          adjustable={{
+            ...adjustable,
+            subagentModel: adjustable.subagentModel && hasModelScope,
+          }}
+          disabled={settingsDisabled}
+          input={request.raw}
+          scope={{
+            workspacePath: workspacePath ?? "",
+            ...(workspaceIdentity === undefined ? {} : { workspaceIdentity }),
+            ...(remoteSessionId === undefined ? {} : { remoteSessionId }),
+            ...(sessionModel === undefined ? {} : { sessionModel }),
+          }}
+          {...(onSettingsChange === undefined ? {} : { onContentChange: onSettingsChange })}
+          {...(onSettingsBlockedChange === undefined
+            ? {}
+            : { onBlockedChange: onSettingsBlockedChange })}
+        />
       )}
 
       {saved ? <WorkflowSavedSourceBadge saved={saved} /> : null}

@@ -1,3 +1,4 @@
+/* eslint-disable max-lines -- the testid registry keeps growing with features as a single source; splitting it would break "one place to look". */
 /**
  * Centralized registry of all data-testid values, shared by UI components and E2E tests.
  * Add new test IDs here instead of hard-coding strings in components.
@@ -125,6 +126,15 @@ export const TID_BROWSER_OPEN_EXTERNAL_ITEM = "browser-open-external-item";
 export const TID_BROWSER_DEVTOOLS_BUTTON = "browser-devtools-button";
 /** Browser web view. */
 export const TID_BROWSER_WEBVIEW = "browser-webview";
+/** Built-in browser permission prompt bar container. */
+export const TID_BROWSER_PERMISSION_PROMPTS = "browser-permission-prompts";
+/** Permission bar "allow just this once" button. */
+export const TID_BROWSER_PERMISSION_ALLOW_ONCE = "browser-permission-allow-once";
+/** Permission bar "always allow for this site" button. */
+export const TID_BROWSER_PERMISSION_ALLOW_ALWAYS = "browser-permission-allow-always";
+/** Permission bar "deny" button (deny this time, do not remember). */
+export const TID_BROWSER_PERMISSION_DENY = "browser-permission-deny";
+export const TID_BROWSER_PERMISSION_DISMISS = "browser-permission-dismiss";
 /** Readable error state when a browser page fails to load. */
 export const TID_BROWSER_LOAD_ERROR = "browser-load-error";
 /** Certificate-bypass guidance in the browser load-failure state. */
@@ -153,6 +163,8 @@ export const TID_SSH_CONNECT_TRIGGER = "ssh-connect-trigger";
 export const TID_SSH_DIALOG = "ssh-dialog";
 /** Switch remote connection type to SSH. */
 export const TID_REMOTE_KIND_SSH = "remote-kind-ssh";
+/** Switch remote connection type to Server. */
+export const TID_REMOTE_KIND_SERVER = "remote-kind-server";
 /** Switch remote connection type to WSL. */
 export const TID_REMOTE_KIND_WSL = "remote-kind-wsl";
 /** Switch remote connection type to Docker. */
@@ -181,6 +193,14 @@ export const TID_WSL_USER_INPUT = "wsl-user-input";
 export const TID_DOCKER_CONTAINER_SELECT = "docker-container-select";
 /** Docker container name/ID input. */
 export const TID_DOCKER_CONTAINER_INPUT = "docker-container-input";
+/** Server remote service URL input. */
+export const TID_SERVER_URL_INPUT = "server-url-input";
+/** Server remote service name input. */
+export const TID_SERVER_NAME_INPUT = "server-name-input";
+/** Server remote service token input. */
+export const TID_SERVER_TOKEN_INPUT = "server-token-input";
+/** Server remote default workspace path input. */
+export const TID_SERVER_WORKSPACE_PATH_INPUT = "server-workspace-path-input";
 /** SSH connection confirmation button. */
 export const TID_SSH_CONNECT_BUTTON = "ssh-connect-button";
 /** SSH dialog cancel button. */
@@ -750,6 +770,13 @@ export function testId(base: string, suffix: string): string {
   return `${base}-${suffix}`;
 }
 
+/** Manually claimable Start Plan banner above the avatar in the left sidebar. */
+export const TID_MANUAL_CLAIM_PLAN_BANNER = "manual-claim-plan-banner";
+
+/** Plugin UI sandbox card container and the webview inside it. */
+export const TID_PLUGIN_UI_CARD = "plugin-ui-card";
+export const TID_PLUGIN_UI_OPEN_SIDE_PANE = "plugin-ui-open-side-pane";
+export const TID_PLUGIN_UI_WEBVIEW = "plugin-ui-webview";
 export const TID_START_PLAN_RECOMMENDATION_DIALOG = "start-plan-recommendation-dialog";
 
 /** Diagnostic-log consent toggle for user feedback. */

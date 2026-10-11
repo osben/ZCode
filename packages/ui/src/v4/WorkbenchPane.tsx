@@ -255,6 +255,7 @@ export interface WorkbenchShellBinding {
   /** Prompt-template telemetry currently covers Desktop only. */
   isDesktop?: boolean;
   readOnly?: boolean;
+  compactForRemoteControl?: boolean;
   sessionId: string | null;
   /** Task actually active in the shell; when a split pane takes over the active task, this is not the primary sessionId. */
   activeSessionId?: string | null;
@@ -286,6 +287,7 @@ export interface WorkbenchShellBinding {
   onSyncSubagentSessionTabs?: (request: SyncSubagentSessionTabsRequest) => void;
   onOpenSelectionSideChat?: (request: OpenSelectionSideChatRequest) => void;
   onOpenPlanDetail?: (request: OpenScopedPlanDetailSideTabRequest) => void;
+  /** Plugin UI side pane: passed to SessionPane through the shell binding along the same path as onOpenPlanDetail. */
   onOpenWorkflowRun?: (request: OpenScopedWorkflowRunSideTabRequest) => void;
   onOpenWorkflowArtifact?: (request: OpenScopedWorkflowArtifactSideTabRequest) => void;
   onOpenWorkflowRunDirectory?: (request: OpenScopedWorkflowRunDirectorySideTabRequest) => void;
@@ -299,7 +301,7 @@ export interface WorkbenchShellBinding {
   onSearchResultHighlightDone?: (requestId: number) => void;
 }
 
-interface WorkbenchLeafPaneProps {
+export interface WorkbenchLeafPaneProps {
   paneId: string;
   rect: RectExpr;
   focused: boolean;
@@ -556,6 +558,7 @@ export function WorkbenchLeafPane({
           workspaceIdentity={scope.workspaceIdentity}
           remoteSessionId={scope.remoteSessionId}
           isDesktop={shell.isDesktop}
+          compactForRemoteControl={shell.compactForRemoteControl ?? false}
           provider={isPrimary && isShellWorkspace ? shell.provider : undefined}
           onSessionCreated={handleSessionCreated}
           onSessionDeleted={handleSessionDeleted}
@@ -619,7 +622,7 @@ export function WorkbenchLeafPane({
   );
 }
 
-function resolvePaneActiveSelectionSideChatSessionId(
+export function resolvePaneActiveSelectionSideChatSessionId(
   paneSessionId: string | null,
   shellActiveSessionId: string | null,
   activeSelectionSideChatSessionId: string | null | undefined,

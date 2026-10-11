@@ -8,6 +8,7 @@ import type {
   ZCodePluginScope,
   ZCodePluginsDescribeResult,
 } from "@zcode/shared";
+import { CLAUDE_OFFICIAL_PLUGIN_MARKETPLACE_ID } from "@zcode/shared";
 import type { IPluginManagementService } from "@zcode/services";
 import { logger } from "@/logger.js";
 import { loadInto, runWorkspaceOperation } from "@/store/pluginManagementStoreLoading.js";
@@ -216,7 +217,9 @@ export const usePluginManagementStore = create<PluginManagementState>((set, get)
         // would make Desktop and mobile Web report the stale snapshot as a successful refresh. Save the error first, then after reload
         // write the visible error state shared by the store and return false so all entry points have consistent partial-failure semantics.
         const blockingDiagnostic = result.diagnostics?.find(
-          (diagnostic) => diagnostic.severity === "error",
+          (diagnostic) =>
+            diagnostic.severity === "error" &&
+            diagnostic.pluginId !== CLAUDE_OFFICIAL_PLUGIN_MARKETPLACE_ID,
         );
         if (blockingDiagnostic) {
           refreshError = blockingDiagnostic.message;

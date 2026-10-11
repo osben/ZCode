@@ -145,3 +145,22 @@ export function buildWorkspacePrepareUiError(
     detail: buildWorkspacePrepareDetail(context),
   };
 }
+
+export function buildCachedWorkspacePrepareUiError(
+  message: string,
+  cachedError: (ZCodeError & { detail?: string }) | null | undefined,
+  context: WorkspacePrepareErrorContext,
+): ZCodeError & { detail?: string } {
+  if (cachedError?.message === message) {
+    // Bugfix: workspaceInit currently caches only the plain message. When returning to a page and taking the failed short circuit,
+    // reuse the structured code from the previous prepare, or a missing model configuration will show the raw CLI text again.
+    return cachedError.detail
+      ? cachedError
+      : {
+          ...cachedError,
+          detail: buildWorkspacePrepareDetail(context),
+        };
+  }
+
+  return buildWorkspacePrepareUiError(new Error(message), context);
+}

@@ -58,23 +58,7 @@ export function mirrorSubagentToolEvent(
   }
 
   if (MIRRORED_INTERACTION_EVENT_TYPES.has(event.type)) {
-    // V4 creates blocking interactions only from the parent task's live projection. Forwarding only the broker request would leave
-    // the child agent's permission / AskUserQuestion in the child session, where the parent UI cannot respond.
-    const mirroredPayload = {
-      ...payload,
-      toolCallId,
-      ...(toolName ? { toolName } : {}),
-      childSessionId: context.childSessionId,
-      ...(context.background ? { background: true } : {}),
-      ...(event.type === SessionEventType.PermissionRequested
-        ? { origin: buildSubagentInteractionOrigin(context, event.turnId) }
-        : {}),
-    };
-
-    return createSessionEvent(event.type, context.parentSessionId, mirroredPayload, {
-      traceId: event.traceId,
-      turnId: context.parentTurnId,
-    });
+    return mirrorInteraction(event, payload, toolCallId, toolName, context);
   }
 
   const mirroredPayload = {
@@ -92,6 +76,54 @@ export function mirrorSubagentToolEvent(
     source: SUBAGENT_EVENT_SOURCE,
   };
 
+  return createSessionEvent(event.type, context.parentSessionId, mirroredPayload, {
+    traceId: event.traceId,
+    turnId: context.parentTurnId,
+  });
+}
+
+/**
+ * Mirror interaction events only (PermissionRequested / Resolved / Denied), not tool activity.
+ * Used by child runtimes constructed outside the class (dwf actors): their tool activity has its own display surface (run card /
+ * child-session transcript) and should not appear in the parent timeline; however, confirmation dialogs are generated only from the parent's live projection, so interactions must be mirrored
+ * （docs/dynamic-workflow/launch.md「Permissions inside a run」）。
+ */
+export function mirrorSubagentInteractionEvent(
+  event: SessionEvent,
+  context: SubagentInteractionOriginContext,
+): SessionEvent | undefined {
+  if (!MIRRORED_INTERACTION_EVENT_TYPES.has(event.type)) return undefined;
+  const payload = asRecord(event.payload);
+  const childToolCallId = stringField(payload, "toolCallId");
+  if (!childToolCallId) return undefined;
+  return mirrorInteraction(
+    event,
+    payload,
+    mirroredToolCallId(context.agentId, childToolCallId),
+    stringField(payload, "toolName"),
+    context,
+  );
+}
+
+function mirrorInteraction(
+  event: SessionEvent,
+  payload: Record<string, unknown>,
+  toolCallId: ToolCallId,
+  toolName: string | undefined,
+  context: SubagentInteractionOriginContext & { background?: boolean },
+): SessionEvent {
+  // Reason for the fix: V4 generates blocking interactions only from the parent task's live projection; forwarding only the broker request leaves
+  // child-agent permission / AskUserQuestion requests in the child session, where the parent UI cannot respond.
+  const mirroredPayload = {
+    ...payload,
+    toolCallId,
+    ...(toolName ? { toolName } : {}),
+    childSessionId: context.childSessionId,
+    ...(context.background ? { background: true } : {}),
+    ...(event.type === SessionEventType.PermissionRequested
+      ? { origin: buildSubagentInteractionOrigin(context, event.turnId) }
+      : {}),
+  };
   return createSessionEvent(event.type, context.parentSessionId, mirroredPayload, {
     traceId: event.traceId,
     turnId: context.parentTurnId,

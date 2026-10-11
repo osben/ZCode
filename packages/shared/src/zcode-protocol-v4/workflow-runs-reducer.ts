@@ -12,16 +12,17 @@
 // DynamicWorkflowRunProgressPayload; bootstrap assigns the bounded contracts payload to
 // WorkflowRunProgressEnvelope, and that assignment is the compile-time guard that keeps both shapes aligned.
 //
-// Three **structural** facts from engine Boundary C are useful before reading the code; otherwise several branches below may look like fallbacks:
+// Three **structural** facts from engine Boundary C are useful before reading the code; otherwise the following cases may look like fallbacks:
 //   1. Node phases are the events the engine actually emits: queued/dispatched/executing/waiting/repairing/nudged/settled.
-//      `executing` / `waiting` are driver observations:
-//      the model request was actually sent / the node is waiting for a process-level slot or backing off; they alternate after dispatched.
-//   2. A completed cache hit on resume **emits node-settled directly**, bypassing node-queued (asks use
-//      releaseCachedAsk / tryImportedSettle in scheduler.ts; world-read uses replay and imported hits in engine-world.ts),
-//      and `kind` is carried only on queued — so node.kind is optional by design, not missing data.
-//   3. Run-level usage: `usage-updated` carries the total tokens spent directly;
-//      `nodesUsed` counts the first phase transition to `node-dispatched` (replaying the same instance does not count it again),
-//      and there is no limit from which to derive it, nor is one needed.
+//      `executing` / `waiting` are driver observations: the model request was sent / it is waiting for a process-level slot or backoff.
+//      They alternate after dispatched.
+//   2. A completed resume hit **emits node-settled directly**, without node-queued (asks use releaseCachedAsk / tryImportedSettle
+//      in scheduler.ts; world-read uses replay and imported hits in engine-world.ts).
+//      The replayed ask includes its birth facts (kind / actor / actorSeq / instructionsHead); world-read and older journal entries do not.
+//      Therefore node.kind and actor ref may be absent; they are not missing data.
+//   3. Run-level usage (docs/dynamic-workflow/authoring.md): `usage-updated` carries total spent tokens directly;
+//      `nodesUsed` counts the first phase transition in `node-dispatched` (replaying the same instance does not count it again).
+//      There is no limit to derive it from, nor a need to.
 
 import {
   WORKFLOW_RUNS_LIMITS,
@@ -33,6 +34,7 @@ import {
 } from "./workflow-runs.js";
 
 import { serializeWorkflowArtifact } from "./workflow-artifact.js";
+import { actorsWithTranscriptSession } from "./workflow-runs-actor-session.js";
 import { withDerivedWorkflowActorStatuses } from "./workflow-runs-actor-status.js";
 import {
   countTaggedReport,
@@ -62,10 +64,12 @@ import {
   boundedPhaseName,
   nonEmptyString,
   workflowActorEntry,
+  workflowInstanceRef,
 } from "./workflow-runs-entries.js";
 import { canonicalWorkflowRun, workflowRunUnchanged } from "./workflow-runs-delta.js";
 import { readRunIdField, readWorkflowRunStopReason } from "./workflow-runs-lineage.js";
 import { carryNodeProgress, reduceNodeProgress } from "./workflow-runs-node-progress.js";
+import { reduceHoleFilled, reduceHoleReached, withoutWaitingHoles } from "./workflow-runs-holes.js";
 import { reducePhaseEntered, reduceRunLaunched } from "./workflow-runs-phases.js";
 import { reduceRunStarted } from "./workflow-runs-started.js";
 import { upsertBoundedByInstance, upsertBoundedByQid } from "./workflow-runs-tables.js";
@@ -109,8 +113,8 @@ export interface WorkflowRunProgressEnvelope {
  * content is byte-for-byte identical. The caller then skips `state.updated` / UI refresh, so revision increases only when
  * something actually changes (idempotent replay does not advance it).
  *
- * Missing `previous` is equivalent to empty state `{ revision: 0, runs: [] }`. `limits` defaults to
- * {@link WORKFLOW_RUNS_LIMITS} (production has no second set of limits).
+ * Missing `previous` is equivalent to empty state `{ revision: 0, runs: [] }`. `limits` is an injection point for tests only;
+ * its default is {@link WORKFLOW_RUNS_LIMITS} (production has no second set of limits).
  */
 export function reduceWorkflowRunsState(
   previous: WorkflowRunsState | undefined,
@@ -197,10 +201,11 @@ function applyWorkflowRunEvent(
     case "actor-created": {
       const ref = workflowInstanceRef(payload.actor);
       if (!ref) return run;
-      // Birth phase: `actor-created` is the actor's birth event, and the stamp arrives only here;
+      // Birth phase (added 2026-09-09): `actor-created` is the actor's birth event, and its timestamp arrives only here;
       // no later event can carry or change it.
       const phaseName = boundedPhaseName(nonEmptyString(payload.phaseName));
-      const actor = workflowActorEntry(ref, payload.name, phaseName, derived.actorSessionId);
+      const { actorSessionId } = derived;
+      const actor = workflowActorEntry(ref, payload.name, phaseName, actorSessionId, payload.model);
       // Make room for this active newcomer when the table is full (workflow-runs-eviction.ts); otherwise keep rejecting new entries.
       // Replayed events neither evict nor take a slot (the latter is restricted only on **overflowed** runs; see admitsNewEntry).
       const seated = derived.advancesWaterMark ? withRoomForActor(run, ref, derived.limits) : run;
@@ -235,9 +240,10 @@ function applyWorkflowRunEvent(
       const born =
         eventType === "node-queued" || (eventType === "node-settled" && payload.cached === true);
       const actorRef = workflowInstanceRef(payload.actor);
-      // `node-dispatched` with birth facts: when dispatching, the engine resends the same facts previously carried by this instance's `node-queued` and its subagent's `actor-created`,
-      // so an unlisted instance can return to the table with its actor **when it is assigned work**.
-      // If actor ref is absent, this is an old journal or a bare world-read dispatch; handle it as before.
+      // `node-dispatched` with birth facts (the activation step in docs/dynamic-workflow/presentation.md, "Reduction"): at dispatch,
+      // the engine resends the same facts carried by this instance's `node-queued` and its subagent's `actor-created` events,
+      // allowing an instance omitted from the table to return with its actor **when it is dispatched**.
+      // Without an actor ref, this is a bare dispatch from an old journal or world-read; keep the existing handling.
       const dispatchActor =
         eventType === "node-dispatched" && actorRef !== null
           ? workflowActorEntry(
@@ -245,6 +251,7 @@ function applyWorkflowRunEvent(
               payload.actorName,
               boundedPhaseName(nonEmptyString(payload.actorPhaseName)),
               derived.actorSessionId,
+              payload.actorModel,
             )
           : null;
       // Sole entry point for eviction, B2 rejection, and activation (workflow-runs-eviction.ts).
@@ -295,12 +302,12 @@ function applyWorkflowRunEvent(
       const upsertedNodes = upsertBoundedByInstance(seated.nodes, node, derived.limits.maxNodes, {
         admitNew: seating.admitNew,
       });
-      // Steps: an instance counts once on its **first** dispatch. On replay of the same node-dispatched event, previousNode is already
-      // in a later phase than dispatched, so it is not counted again — reduction must be idempotent (the top level uses structural comparison to detect “no change”).
-      // An instance rejected at the limit has no previousNode, so it is still counted: steps are a run-level fact, not constrained by display limits.
-      // Because previousNode is absent, phase-based deduplication does not work for it — replaying dispatched would keep increasing the count.
-      // Therefore on **overflowed** runs, use the same rule as nodesUnlisted and count only events that advance the high-water mark;
-      // below the limit, each instance has its own row, so phase deduplication suffices without changing a byte.
+      // Count one step at an instance's **first** dispatch. When the same node-dispatched event is replayed, previousNode is already
+      // in a phase after dispatched, so do not count it again; reduction must be idempotent (the top level detects "no change" structurally).
+      // An instance rejected at the limit is still counted because steps are run-level facts, not bounded by display limits.
+      // Since it has no previousNode, phase-based deduplication does not work; replaying dispatched would keep increasing the count
+      // (caught by a property test). Therefore, on a run that **has overflowed**, count by the same watermark rule as nodesUnlisted;
+      // below the limit every instance has its own row, so phase deduplication suffices without changing a byte.
       const firstDispatch =
         eventType === "node-dispatched" &&
         admitsNewEntry(run, derived.advancesWaterMark) &&
@@ -326,6 +333,14 @@ function applyWorkflowRunEvent(
           : seated;
       return withDerivedWorkflowActorStatuses({
         ...absorbed,
+        // Which session owns the transcript (workflow-runs-actor-session.ts): cache-hit settlement and dispatch each report it.
+        actors: actorsWithTranscriptSession(
+          absorbed.actors,
+          eventType,
+          payload,
+          actorRef,
+          derived.actorSessionId,
+        ),
         ...(usage === seated.usage ? {} : { usage }),
         nodes: upsertedNodes.list,
         ...(upsertedNodes.truncated || seated.truncated ? { truncated: true } : {}),
@@ -500,9 +515,10 @@ function applyWorkflowRunEvent(
       return reduceConcurrencyChanged(run, payload);
 
     /**
-     * run-caps-changed: this run's own concurrency cap changed **while it was running** (a revision that only changes `max_concurrency` takes effect in place; it does not stop or restart the run). Payload matches
-     * `run-started`, and the rules are the same, so it lives in workflow-runs-concurrency.ts too.
-     * Again, it does not touch `nodes[]` or actor state: the cap is a gate, not a node property.
+     * run-caps-changed: this run's concurrency limit changed **while it was running** (a revision changing only `max_concurrency`
+     * takes effect in place without stopping or restarting the run; docs/dynamic-workflow/concurrency.md). Its payload and rule match
+     * `run-started`, so the reducer lives alongside it in workflow-runs-concurrency.ts.
+     * It also leaves `nodes[]` and actor state untouched: a limit is a gate, not a node fact.
      */
     case "run-caps-changed":
       return reduceRunCapsChanged(run, payload);
@@ -512,6 +528,15 @@ function applyWorkflowRunEvent(
       return reducePhaseEntered(run, payload);
     case "run-launched":
       return reduceRunLaunched(run, payload);
+
+    /**
+     * hole-reached / hole-filled: a hole waiting and being filled (docs/dynamic-workflow/presentation.md, "Holes on the timeline").
+     * Do not touch nodes / actors; a hole has no node row. The rules live in workflow-runs-holes.ts.
+     */
+    case "hole-reached":
+      return reduceHoleReached(run, payload);
+    case "hole-filled":
+      return reduceHoleFilled(run, payload);
 
     case "run-settled": {
       const status = payload.status;
@@ -523,7 +548,10 @@ function applyWorkflowRunEvent(
       // Clear on **all** terminal states, including completed: pending questions on a completed run are only remnants with no future response.
       // Cooldown means “until new dispatches are unblocked”; a terminal run dispatches nothing, so keeping it would show a countdown with no subject.
       // Keep cap / ceiling: they are historical facts about the concurrency under which this run executed.
-      const cleared = withoutCooldown(withoutPendingQuestions(run, () => false));
+      // A waiting hole is like a pending question: its source of truth is an in-process deferred, and no one is waiting to fill it after the run is terminal; keep filled holes.
+      const cleared = withoutWaitingHoles(
+        withoutCooldown(withoutPendingQuestions(run, () => false)),
+      );
       // The boundary between waiting / completed in the actor's three-state status depends on whether the run is terminal, so derive it again:
       // an actor that was created but never asked changes from waiting to completed when the run ends.
       // Three terminal state values; carry `stopReason` only when stopped,
@@ -556,15 +584,6 @@ function applyWorkflowRunEvent(
     default:
       return run;
   }
-}
-
-/** Engine `InstanceRef` / `ActorRef` equivalent: site ID × ordinal. Return null if either part is missing. */
-function workflowInstanceRef(value: unknown): { siteId: string; ordinal: number } | null {
-  if (!isPlainRecord(value)) return null;
-  const siteId = nonEmptyString(value.siteId);
-  const ordinal = value.ordinal;
-  if (siteId === undefined || typeof ordinal !== "number") return null;
-  return { siteId, ordinal };
 }
 
 /**

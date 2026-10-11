@@ -10,7 +10,7 @@
 import { inputHash } from "./hash.js";
 import { REPORT_CAPS } from "../facade/report-caps.js";
 import { declaredPresetIds, isDeclaredPreset } from "./engine-artifacts.js";
-import { hashMismatch } from "./scheduler.js";
+import { hashMismatch } from "./hash-mismatch.js";
 import type { EngineState } from "./engine-state.js";
 import type { InstanceRef } from "./types.js";
 import { refToString, WorkflowError } from "./types.js";
@@ -21,19 +21,16 @@ import { refToString, WorkflowError } from "./types.js";
  *
  * The four steps below must stay in this order:
  *
- * 1. **Probe serialization first.** Use one `JSON.stringify` call to get both whether the item is
- *    representable as JSON and its byte length (the unit used by the cap). This must happen before
- *    canonicalJson: a circular item makes canonicalJson recurse until stack overflow, which is a
- *    crash rather than a readable failure.
- * 2. **Skip replay hits immediately**: emit no event and do not rewrite the record. Compare
- *    inputHash first; on mismatch, fail the run loudly for violating the purity contract. This is
- *    a **defensive** comparison (a report is derived from a value already fixed by the journal), but
- *    it is free, and a mismatch here means the whole replay is unreliable—Results-panel readers
- *    must never see that unknowingly.
- * 3. **Check caps before storage**: exceeding either the item count or per-item byte limit fails the
- *    entire run with `ReportCapExceeded`. It is run-level rather than node-level because `report`
- *    returns `void` and has no rejection channel.
- * 4. **One write**: `completed`, with no actor field.
+ * 1. **Probe serialization first**. One `JSON.stringify` yields both whether the item is JSON-representable
+ *    and its byte size (the limit metric). This must happen before canonicalJson: a cyclic item makes
+ *    canonicalJson recurse until a stack overflow, a crash rather than a readable failure.
+ * 2. **Skip replay hits immediately**: emit no event and rewrite no records. Before skipping, compare inputHash; on mismatch, fail the run loudly as a
+ *    purity violation. This comparison is **defensive** (the report derives from a value already fixed by the journal),
+ *    but it is free, and a mismatch here means the entire replay is unreliable—the Results panel must never show it without warning.
+ * 3. **Check limits before persistence**: exceeding the per-item byte limit, item count, or run-level byte total raises `ReportCapExceeded`
+ *    and fails the entire run.
+ *    This is run-level rather than node-level because `report` returns `void` and has no rejection channel.
+ * 4. **Write once**: `completed`, with no actor field.
  */
 export function publishReport(
   state: EngineState,
@@ -54,7 +51,9 @@ export function publishReport(
   // payload change with no benefit.
   const hash = inputHash(item);
 
-  const recorded = state.journal.getNode(state.runId, siteId, ordinal);
+  // Compare hashes only; do not read the item (docs/execution-engine.md, “Reading the journal”): replaying a script with 65,536 reports would otherwise
+  // decode and discard an item up to 1 MiB on every cache hit, paying the cost of all serialized bytes.
+  const recorded = state.journal.getNode(state.runId, siteId, ordinal, { withResult: false });
   if (recorded !== undefined) {
     if (recorded.inputHash !== hash) {
       state.failRun(hashMismatch(instance, recorded.inputHash, hash));
@@ -152,7 +151,12 @@ function probeReportItem(
   return serialized;
 }
 
-/** The two report caps (item count and per-item bytes). Exceeding either calls failRun and returns false. */
+/**
+ * The three report limits (per-item bytes, item count, and run-level byte total). Exceeding any of them calls failRun and returns false.
+ *
+ * Check in the order that identifies the failure: an oversized item is a problem with that item, regardless of how much the run has accumulated, so check it first;
+ * then check the two run-level limits, both before incrementing counters so a rejected item is excluded and failure messages report accurate counts.
+ */
 function reserveReport(state: EngineState, instance: InstanceRef, serialized: string): boolean {
   const bytes = utf8ByteLength(serialized);
   if (bytes > REPORT_CAPS.maxItemSerializedBytes) {
@@ -165,7 +169,8 @@ function reserveReport(state: EngineState, instance: InstanceRef, serialized: st
     );
     return false;
   }
-  if (state.reportCount() >= REPORT_CAPS.maxItemsPerRun) {
+  const tally = state.reportTally();
+  if (tally.count >= REPORT_CAPS.maxItemsPerRun) {
     state.failRun(
       new WorkflowError(
         "ReportCapExceeded",
@@ -175,7 +180,18 @@ function reserveReport(state: EngineState, instance: InstanceRef, serialized: st
     );
     return false;
   }
-  state.countReport();
+  if (tally.bytes + bytes > REPORT_CAPS.maxBytesPerRun) {
+    state.failRun(
+      new WorkflowError(
+        "ReportCapExceeded",
+        `report() item at ${refToString(instance)} would take this run's reports to ` +
+          `${tally.bytes + bytes} bytes, over the ${REPORT_CAPS.maxBytesPerRun}-byte limit per run. ` +
+          `Report summaries, and publish large results with artifact.file.`,
+      ),
+    );
+    return false;
+  }
+  state.countReport(bytes);
   return true;
 }
 

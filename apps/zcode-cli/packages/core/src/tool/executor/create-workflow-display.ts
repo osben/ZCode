@@ -10,8 +10,20 @@ import {
   CREATE_WORKFLOW_DISPLAY_MAX_MESSAGE_CHARS,
   CREATE_WORKFLOW_TOOL_NAME,
   CreateWorkflowOutputSchema,
+  FILL_WORKFLOW_HOLE_TOOL_NAME,
   type ToolResultDisplayPayload,
 } from "@zcode/contracts";
+
+/**
+ * Three tools share the `create_workflow` display: the two start tools and hole completion—its output is
+ * CreateWorkflowOutput, the graph represents the effective script, and the UI's shared row renderer recognizes completion by tool name
+ * (docs/dynamic-workflow/presentation.md, “The fill row” in “Holes on the timeline”).
+ */
+const CREATE_WORKFLOW_DISPLAY_TOOL_NAMES: ReadonlySet<string> = new Set([
+  CREATE_WORKFLOW_TOOL_NAME,
+  AMEND_WORKFLOW_TOOL_NAME,
+  FILL_WORKFLOW_HOLE_TOOL_NAME,
+]);
 
 /**
  * ⚠ The field set in this projection is **frozen** (see the schema comment in
@@ -23,19 +35,16 @@ export function createCreateWorkflowDisplay(
   output: unknown,
 ): ToolResultDisplayPayload | undefined {
   // Both launch tools share one display kind, so the UI needs only one implementation of the graph, draft pen, and diagnostics card.
-  if (toolName !== CREATE_WORKFLOW_TOOL_NAME && toolName !== AMEND_WORKFLOW_TOOL_NAME) {
-    return undefined;
-  }
+  if (!CREATE_WORKFLOW_DISPLAY_TOOL_NAMES.has(toolName)) return undefined;
   const parsed = CreateWorkflowOutputSchema.safeParse(output);
   if (!parsed.success) return undefined;
-  // In-place concurrency tuning has no display: it does not compile any script, while
-  // the UI interprets `ok` in this `create_workflow` payload as “compiled”. Check for an
-  // **explicit `retuned` block**, not just the shape: this tool can also return “ok with
-  // no status” when there is no run port and only typechecking occurred. In that case,
-  // the tool card falls back to the response body.
+  // In-place concurrency updates have no display (docs/dynamic-workflow/launch.md, “Changing only the parallelism of a
+  // live run”): this route does not compile any script, while `ok` in this `create_workflow` payload means “compiled” in the UI.
+  // Check for the **explicit `retuned` block**, not the shape—“ok with no status” also means “no run port, typecheck only” for this tool.
+  // The tool card therefore falls back to the response body.
   if (parsed.data.retuned !== undefined) return undefined;
 
-  const { causalityGraph, diagnostics, ok } = parsed.data;
+  const { causalityGraph, diagnostics, fill, ok } = parsed.data;
   // Display bypasses the tool-result budget, so both diagnostic count and individual
   // message length need independent limits before entering live events and persisted
   // metadata. This prevents type errors from expanding continuous/replayable messages
@@ -59,5 +68,7 @@ export function createCreateWorkflowDisplay(
     diagnostics: bounded,
     ...(causalityGraph === undefined ? {} : { causalityGraph }),
     ...(truncated ? { truncated: true } : {}),
+    // The field that gives the completion row its name (see contracts' CreateWorkflowOutputSchema.fill for why it is part of display).
+    ...(fill === undefined ? {} : { fill }),
   };
 }

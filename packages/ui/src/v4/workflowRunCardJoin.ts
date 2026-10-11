@@ -1,7 +1,13 @@
 import { workflowRunStepCounts, type WorkflowRunState } from "@zcode/shared/zcode-protocol-v4";
 import type { ConversationRow } from "@zcode/shared/zcode-protocol-v4";
+import {
+  ZCODE_WORKFLOWS_FOR_RUN_MAX_CANDIDATES,
+  type ZCodeWorkflowsForRunCandidate,
+} from "@zcode/shared";
 import type { WorkflowCausalityGraphData } from "@/components/workflow-graph/types.js";
 import type { WorkflowRunCardSummary } from "@/ToolCallBlocks/shared.js";
+import { readWorkflowHoleTarget } from "@/ToolCallBlocks/renderers/createWorkflowHoleInput.js";
+import { isFillWorkflowHoleToolCall } from "@/lib/workflowToolNames.js";
 
 /**
  * Join tool cards to DWF runs.
@@ -159,8 +165,71 @@ export function buildWorkflowGraphByToolCallId(
   return byToolCallId;
 }
 
-/** Prefix for the originating toolCallId of a run created by a “configure” revision (the agent generates `settings-<uuid>`). */
-const WORKFLOW_SETTINGS_TOOL_CALL_PREFIX = "settings-";
+/**
+ * runId → most recent successful fill display (docs/dynamic-workflow/presentation.md, “The model”
+ * under “Holes on the timeline”): a `FillWorkflowHole` row outputs `CreateWorkflowOutput`, whose
+ * `causalityGraph` is the graph of the **effective script**—the filled hole now occupies its place.
+ * The card and side pane use the latest display whose run id matches: after filling, this is the
+ * fill row; before filling, it is the launch row. Scan the row window once in order, letting later
+ * entries replace earlier ones. Only accept successful, compiled rows (a failed fill never joined
+ * the run, so its graph does not belong to it). The name comes from the display's `fill` block
+ * (the filled hole has no position in the resulting graph, and the row input has no name—the
+ * transcript stores only the model's input). Do not expose the type in the UI.
+ */
+export interface WorkflowFillGraph {
+  graph: WorkflowCausalityGraphData;
+  holeLabels: ReadonlyMap<string, { name: string }>;
+}
+
+function readFillRow(
+  row: ConversationRow,
+): { runId: string; holeId: string; name?: string; graph: WorkflowCausalityGraphData } | undefined {
+  if (row.kind !== "toolCall" || row.status !== "success") return undefined;
+  if (!isFillWorkflowHoleToolCall(row)) return undefined;
+  const display = row.display;
+  if (display?.kind !== "create_workflow" || display.ok !== true) return undefined;
+  const graph = display.causalityGraph;
+  if (graph === undefined || graph.steps.length === 0) return undefined;
+  const target = readWorkflowHoleTarget(row.input, display.fill);
+  if (target?.runId === undefined || target.holeId === undefined) return undefined;
+  return {
+    runId: target.runId,
+    holeId: target.holeId,
+    ...(target.name === undefined ? {} : { name: target.name }),
+    graph,
+  };
+}
+
+export function buildWorkflowFillGraphByRunId(
+  rows: readonly ConversationRow[] | undefined,
+): ReadonlyMap<string, WorkflowFillGraph> {
+  const byRunId = new Map<string, WorkflowFillGraph>();
+  for (const row of rows ?? []) {
+    const fill = readFillRow(row);
+    if (fill === undefined) continue;
+    // Names accumulate across fills: the graph for the second fill still contains the first hole, whose name appears only in the first row's input.
+    const labels = new Map(byRunId.get(fill.runId)?.holeLabels ?? []);
+    if (fill.name !== undefined) labels.set(fill.holeId, { name: fill.name });
+    byRunId.set(fill.runId, { graph: fill.graph, holeLabels: labels });
+  }
+  return byRunId;
+}
+
+/** Single entry point for the card and side pane to get a graph: use the fill row's graph after a fill; otherwise use the launch toolCallId (including the “Configure” graph-reuse rule). */
+export function resolveWorkflowRunGraphForRun(
+  graphs: ReadonlyMap<string, WorkflowCausalityGraphData>,
+  fills: ReadonlyMap<string, WorkflowFillGraph> | undefined,
+  toolCallId: string | undefined,
+  runId: string | undefined,
+  runs: readonly WorkflowRunState[] | undefined,
+): WorkflowCausalityGraphData | undefined {
+  const fill = runId === undefined ? undefined : fills?.get(runId);
+  if (fill !== undefined) return fill.graph;
+  return toolCallId === undefined ? undefined : resolveWorkflowRunGraph(graphs, toolCallId, runs);
+}
+
+/** Launch toolCallId prefix for runs retuned through “Configure” (agent-generated `settings-<uuid>`, docs/dynamic-workflow/launch.md). */
+export const WORKFLOW_SETTINGS_TOOL_CALL_PREFIX = "settings-";
 
 /**
  * Find the graph by originating toolCallId, with one graph-borrowing exception:
@@ -193,4 +262,53 @@ export function resolveWorkflowRunGraph(
         : runs?.find((candidate) => candidate.runId === predecessorId)?.toolCallId;
   }
   return undefined;
+}
+
+/**
+ * Transcript of which workflow the model saved this run as (docs/dynamic-workflow/transcript-and-notifications.md,
+ * “Which workflow a run is saved as”): successful `SaveWorkflow` rows in the row window are
+ * assigned to the run claimed by their input `run_id`.
+ *
+ * These are **candidates**, not final results: the row only says “the model saved this name at the
+ * time.” Whether the file still exists and whether it is the same file is resolved again by the
+ * agent-side `workflows/forRun`. So do not read output or infer anything beyond success here;
+ * rows without `status === "success"` (compile failures, rejections, or still streaming) were never written to a file.
+ *
+ * Follow the same rules as other joins: pure function, one pass over the row window, identity comes
+ * only from the input channel (display does not contain this information).
+ */
+export type WorkflowSaveCandidate = ZCodeWorkflowsForRunCandidate;
+
+function readWorkflowSaveCandidate(
+  row: ConversationRow,
+): { runId: string; candidate: WorkflowSaveCandidate } | undefined {
+  if (row.kind !== "toolCall" || row.toolName !== "SaveWorkflow" || row.status !== "success") {
+    return undefined;
+  }
+  const input = row.input;
+  if (typeof input !== "object" || input === null) return undefined;
+  const record = input as Record<string, unknown>;
+  const runId = typeof record.run_id === "string" ? record.run_id.trim() : "";
+  const name = typeof record.name === "string" ? record.name.trim() : "";
+  if (runId.length === 0 || name.length === 0) return undefined;
+  const scope = record.scope === "global" || record.scope === "project" ? record.scope : undefined;
+  return { runId, candidate: { name, ...(scope === undefined ? {} : { scope }) } };
+}
+
+export function buildWorkflowSaveCandidatesByRunId(
+  rows: readonly ConversationRow[] | undefined,
+): ReadonlyMap<string, readonly WorkflowSaveCandidate[]> {
+  const byRunId = new Map<string, WorkflowSaveCandidate[]>();
+  for (const row of rows ?? []) {
+    const found = readWorkflowSaveCandidate(row);
+    if (found === undefined) continue;
+    const list = byRunId.get(found.runId) ?? [];
+    // Keep only one candidate for a save under the same name (for example, after metadata changes): resolving once gives the same answer as resolving three times.
+    if (list.some((entry) => entry.name === found.candidate.name)) continue;
+    // Enforce the protocol candidate limit here; keep the earliest entries if there are too many (the first saved copy is more likely to still exist).
+    if (list.length >= ZCODE_WORKFLOWS_FOR_RUN_MAX_CANDIDATES) continue;
+    list.push(found.candidate);
+    byRunId.set(found.runId, list);
+  }
+  return byRunId;
 }

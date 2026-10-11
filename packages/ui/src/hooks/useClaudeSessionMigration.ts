@@ -26,7 +26,7 @@ function resolveModifiedSince(range: ClaudeMigrationRange): number | undefined {
   return Date.now() - RANGE_TO_DURATION_MS[range];
 }
 
-function resolveClaudeMigrationScanLimit(limitInput: string): number | undefined {
+export function resolveClaudeMigrationScanLimit(limitInput: string): number | undefined {
   if (limitInput === UNLIMITED_SCAN_LIMIT_INPUT) {
     return undefined;
   }
@@ -209,9 +209,9 @@ export function useClaudeSessionMigration(params: {
         );
         if (result.imported.length > 0) {
           const importedWorkspacePaths = new Set(result.imported.map((item) => item.workspacePath));
-          // Claude import previously called bumpTaskListVersion to make every task list query again, but only the affected
-          // workspace results need to be invalidated and fetched again. Local invalidation still shows imported tasks in
-          // the sidebar without refreshing unrelated workspaces.
+          // Bugfix: Claude import used to call bumpTaskListVersion, causing every task list to refetch in full,
+          // although only queries for the affected workspace need to be invalidated and refetched.
+          // Targeted invalidation still shows newly imported tasks in the sidebar without refreshing unrelated workspaces.
           const importedWorkspaceScopes = result.imported.map((item) => ({
             workspacePath: item.workspacePath,
           }));

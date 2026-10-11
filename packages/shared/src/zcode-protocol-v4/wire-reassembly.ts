@@ -69,9 +69,9 @@ export function reassembleTopicWireFrames<F>(
   }
 
   if (first.fragmentCount > PROTOCOL_V4_LIMITS.logicalFrameAssemblyMaxFragments) {
-    // fragmentCount was previously bounded only by logicalBytes, so malicious metadata could allocate
-    // millions of missingIndexes for a frame with missing fragments. Apply the protocol hard limit to
-    // prevent unbounded allocation.
+    // Fix rationale: fragmentCount was previously bounded only by logicalBytes, so malicious
+    // metadata could allocate tens of millions of missingIndexes on the missing-fragment path.
+    // The protocol hard limit blocks the unbounded allocation.
     return {
       kind: "rejected",
       reasonCode: "proto.frameFragmentCountExceeded",

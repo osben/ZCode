@@ -52,6 +52,16 @@ export interface ArtifactIdState {
 }
 
 /** Seam for private engine state: sibling-module free functions use it to read/write WorkflowEngine's private fields. */
+/**
+ * Run-level report counters: item count and the sum of their UTF-8 serialized byte lengths
+ * (`JSON.stringify(item)`). This uses the same byte measure as persisted `result_json`, so resume can
+ * restore the count exactly from `sumResultBytes`.
+ */
+export interface ReportTally {
+  count: number;
+  bytes: number;
+}
+
 export interface EngineState {
   readonly runId: string;
   readonly driver: WorkflowDriver;
@@ -79,15 +89,15 @@ export interface EngineState {
   /** Sole allocator for site ordinals. */
   nextOrdinal(siteId: string): number;
   /**
-   * Release a hit subject to replay settlement order.
-   * Immediately execute `release` when this is not a resume or the order table has no entry for this instance.
+   * Release a cache hit subject to replay settle order (docs/execution-engine.md, “Replaying the settle order”).
+   * Execute `release` immediately when not resuming or when the instance is absent from the order table.
    */
   holdForReplay(instance: InstanceRef, release: () => void): void;
 
-  /** Number of reports published in this run (counter for REPORT_CAPS.maxItemsPerRun, continuous across resume). */
-  reportCount(): number;
-  /** Increment the counter when a report passes the cap check and is about to be stored. */
-  countReport(): void;
+  /** Number of reports published by this run and their item bytes (the two run-level REPORT_CAPS counters, continuous across resume). */
+  reportTally(): ReportTally;
+  /** A report passed the cap check and is about to be persisted: increment the count and add this item's serialized byte length. */
+  countReport(bytes: number): void;
 
   /** Whether the imported cache is closed. */
   importClosed(): boolean;

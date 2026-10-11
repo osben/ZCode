@@ -9,13 +9,10 @@ import {
   CollapsibleTrigger,
 } from "@/components/ui/collapsible.js";
 import { cn } from "@/components/lib/utils.js";
-import { draftTimeline, scanWorkflowDraft } from "@/components/workflow-timeline/draft-scan.js";
 import { WorkflowArtifactStrip } from "@/components/workflow-timeline/WorkflowArtifactStrip.js";
-import {
-  buildWorkflowTimeline,
-  type TimelinePill,
-  type TimelineStation,
-  type WorkflowTimelineModel,
+import type {
+  TimelinePill,
+  TimelineStation,
 } from "@/components/workflow-timeline/timeline-model.js";
 import { workflowCardDetail } from "@/components/workflow-timeline/timeline-summary.js";
 import {
@@ -28,6 +25,11 @@ import {
 } from "@/components/workflow-timeline/WorkflowCardChrome.js";
 import { WorkflowTimeline } from "@/components/workflow-timeline/WorkflowTimeline.js";
 import { isAmendWorkflowToolCall } from "@/lib/workflowToolNames.js";
+import {
+  useWorkflowCardModel,
+  useWorkflowHoleRow,
+  useWorkflowRowPrimaryText,
+} from "@/ToolCallBlocks/renderers/workflow-fill-row.js";
 import {
   isPlainRecord,
   readWorkflowAmendTarget,
@@ -78,18 +80,23 @@ export function CreateWorkflowToolCallBlock(context: ToolCallBlockRenderContext)
   const { toolCall } = context.toolCallNode;
   const amend = isAmendWorkflowToolCall(toolCall);
   const amendTarget = amend ? readWorkflowAmendTarget(toolCall.input) : undefined;
+  // Hole-fill row (docs/dynamic-workflow/presentation.md, “The fill row”): reuse this renderer with hole-filling vocabulary (workflow-fill-row.tsx).
+  const { fill, holeTarget, vocabulary } = useWorkflowHoleRow(toolCall, amend);
 
   const display = useMemo(() => readWorkflowDisplay(toolCall.raw), [toolCall.raw]);
-  // In-flight wording: a call that only changes the concurrency limit does not write a script or compile one,
-  // so “Validating workflow” does not apply. Reverting the whole row to a settings row happens **after settlement**, handled by the wiring layer using the same input shape
-  // (ConversationRowView); this component handles only these in-flight labels.
+  // In-progress wording (docs/dynamic-workflow/concurrency.md): a call that only changes the
+  // concurrency ceiling neither writes nor compiles a script, so “Validating workflow” does not
+  // apply. The wiring layer (ConversationRowView) converts the whole row to a settings row only
+  // **after settlement**; this component handles only the in-flight labels.
   const retuning = amend && readWorkflowRetuneCall(toolCall.input) !== undefined;
   const scriptText = useMemo(() => readWorkflowScript(toolCall.input), [toolCall.input]);
   const workflowName = readWorkflowName(toolCall.input);
   const saved = useMemo(() => readWorkflowSaved(toolCall.input), [toolCall.input]);
   const fallbackOutputText = display ? null : readFallbackOutputText(toolCall.output);
   const fallbackName = intl.formatMessage({ id: "chat.toolCall.workflow.fallbackName" });
-  const name = workflowName ?? fallbackName;
+  const name = fill
+    ? (holeTarget?.name ?? holeTarget?.holeId ?? fallbackName)
+    : (workflowName ?? fallbackName);
 
   const workflowRun = context.workflowRun;
   const run = workflowRun?.run;
@@ -119,12 +126,9 @@ export function CreateWorkflowToolCallBlock(context: ToolCallBlockRenderContext)
     saved: saved !== undefined,
   });
 
-  const model = useMemo<WorkflowTimelineModel | undefined>(() => {
-    if (graph !== undefined) return buildWorkflowTimeline(graph, run);
-    // Streaming draft: before display arrives, extract stations from the partial script; once display arrives, replace the entire model.
-    if (writing && scriptText !== undefined) return draftTimeline(scanWorkflowDraft(scriptText));
-    return undefined;
-  }, [graph, run, scriptText, writing]);
+  // Use the graph when available (the fill row is narrowed to the filled segment); scan the draft
+  // while streaming. Once display arrives, the whole model is replaced.
+  const model = useWorkflowCardModel({ graph, holeTarget, run, scriptText, writing });
 
   const [isOpen, setIsOpen] = useState(() => workflowCardOpenState.get(toolCall.toolId) ?? true);
   const forceOpen = context.forceOpen ?? false;
@@ -190,10 +194,7 @@ export function CreateWorkflowToolCallBlock(context: ToolCallBlockRenderContext)
   );
 
   // ToolLayout is a memoized component: nodes and callbacks passed to it must have stable references (enforced by reactStableReferences).
-  const diagnosticsPrimaryText = useMemo(
-    () => <span className="truncate text-foreground-subtlest">{name}</span>,
-    [name],
-  );
+  const diagnosticsPrimaryText = useWorkflowRowPrimaryText(fill, name);
   const renderDiagnosticsContent = useCallback(
     () => (
       <WorkflowFeedbackContent
@@ -249,7 +250,7 @@ export function CreateWorkflowToolCallBlock(context: ToolCallBlockRenderContext)
                   writing,
                   revising: (draft?.ordinal ?? 1) >= 2,
                 },
-                amend,
+                vocabulary,
               ),
             })
           }
@@ -276,7 +277,7 @@ export function CreateWorkflowToolCallBlock(context: ToolCallBlockRenderContext)
   const kindId =
     workflowRun !== undefined
       ? workflowRunKindMessageId(workflowRun)
-      : readWorkflowKindMessageId(toolCall.raw, context.isRunning, amend, retuning);
+      : readWorkflowKindMessageId(toolCall.raw, context.isRunning, vocabulary, retuning);
   const kindText = context.kindLabelOverride ?? intl.formatMessage({ id: kindId });
   // The kind label changes with its copy (writing → awaiting confirmation → running); the header owns the label transition animation. See WorkflowCardHeader.
   const live = workflowRun !== undefined ? workflowRun.status === "running" : context.isRunning;
@@ -373,7 +374,7 @@ export function CreateWorkflowToolCallBlock(context: ToolCallBlockRenderContext)
               />
             )}
 
-            {/* Artifact strip: what the run delivered, up to 3 items + N; the full list is in the details side panel. */}
+            {/* Artifact row (see “Artifact pills” note): what the run delivered, up to 3 items + N; the full list is in the details side pane. */}
             {run?.artifacts !== undefined && run.artifacts.length > 0 ? (
               <WorkflowArtifactStrip
                 artifacts={run.artifacts}
@@ -450,9 +451,8 @@ export function CreateWorkflowToolCallBlock(context: ToolCallBlockRenderContext)
           </div>
         ) : null}
 
-        {/* Keep the footer visible while expanded; when collapsed, retain it only for terminal states (failure/cancellation) so Resume remains reachable. */}
-        {/* The footer used to summarize subagents, steps, tokens, turns, and artifacts. The card now shows phase and
-            subagents in the header, leaving only Resume for the footer; without Resume, there is no footer. */}
+        {/* Footer: always present when expanded; when collapsed, keep it only for terminal states (failure/cancel), so Resume remains accessible. */}
+        {/* The footer used to be a summary row (subagents, steps, tokens, turns, artifacts). Since 2026-09-09, the card shows only phases and subagents in the header; the footer is only for Resume, and is omitted when Resume is unavailable. */}
         {resume !== undefined && run !== undefined && (expanded || terminal) ? (
           <WorkflowCardFooter status={run.status} trailing={resume} />
         ) : null}

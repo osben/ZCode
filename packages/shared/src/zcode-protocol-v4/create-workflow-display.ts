@@ -41,7 +41,10 @@ const toolCallCreateWorkflowCausalityGraphSchema = z
         z
           .object({
             id: z.string().min(1).max(64),
-            kind: z.enum(["ask", "world-read"]),
+            // `hole`: the open hole's own site (docs/dynamic-workflow/presentation.md, "Holes on the timeline");
+            // its lane is always `main`, and its phase is the hole's own phase (no members). The run's `holes[]`
+            // joins with it by siteId. Keep in sync with contracts' CREATE_WORKFLOW_STEP_KINDS.
+            kind: z.enum(["ask", "world-read", "hole"]),
             label: z.string().min(1).max(128),
             // Static name shape when an inline `agent()` receiver makes the label fall back to a string.
             labelPattern: namePatternSchema.optional(),
@@ -56,6 +59,12 @@ const toolCallCreateWorkflowCausalityGraphSchema = z
             // Present or absent together with the graph's phases / phaseEdges / exits.
             phase: z.string().min(1).max(64).optional(),
             repeat: z.enum(["stack", "serial"]).optional(),
+            // This site was written by a fill (docs/dynamic-workflow/presentation.md, "Holes on the timeline"):
+            // the value is the filled hole's site id (name key `hole#<8 hex digits>`). The hole's **own** phase /
+            // station is the hole enclosing it (the nesting lives only here, not in the id). The timeline draws the
+            // fill's head and region from the same-named key on the phase; this copy on the step is inspector
+            // material. Additive: old payloads without it still pass .strict().
+            fill: z.string().min(1).max(64).optional(),
           })
           .strict(),
       )
@@ -116,12 +125,42 @@ const toolCallCreateWorkflowCausalityGraphSchema = z
             // and omitted when empty. This is a node fact, not an edge: control did not transfer from those phases, so they are not included in phaseEdges.
             // The timeline uses this to fold adjacent phases into a forked band; the sidebar mini track draws them as double segments.
             alongside: z.array(z.string().min(1).max(64)).min(1).max(32).optional(),
+            // This phase was produced by a fill: the value is the filled hole's site id. The timeline folds
+            // consecutive sites of the same `fill` into one "fill head + region"
+            // (docs/dynamic-workflow/presentation.md, "Holes on the timeline").
+            fill: z.string().min(1).max(64).optional(),
           })
           .strict(),
       )
       .max(32)
       .optional(),
     phaseEdges: z.array(workflowEdgeSchema).max(128).optional(),
+    // Phase streams (docs/dynamic-workflow/presentation.md, "Streams"): data edges whose endpoints
+    // are alongside each other, carrying only {from, to}—not runs after, not part of phaseEdges, no
+    // back. Present or absent together with the vocabulary above.
+    phaseStreams: z
+      .array(z.object({ from: z.string().min(1).max(64), to: z.string().min(1).max(64) }).strict())
+      .max(128)
+      .optional(),
+    // Still-open holes, in source order (docs/dynamic-workflow/authoring.md, "Holes"): each hole is
+    // also a phase (id = site id, name = literal), so it appears in `phases` too. This table adds the
+    // two things the phase table cannot express—that it is a hole, and its type source text—plus
+    // `tail` (it is the script's tail: the track runs 40px past it before fading out). Filled holes
+    // are not listed here.
+    holes: z
+      .array(
+        z
+          .object({
+            siteId: z.string().min(1).max(64),
+            name: z.string().min(1).max(128),
+            type: z.string().min(1).max(128),
+            phase: z.string().min(1).max(64).optional(),
+            tail: z.boolean().optional(),
+          })
+          .strict(),
+      )
+      .max(32)
+      .optional(),
     // Phases after which control flow can complete normally (the phase-view "phase → return" arrow); may be an empty array within a group.
     exits: z.array(z.string().min(1).max(64)).max(32).optional(),
     sink: z.array(z.string().min(1).max(64)).max(64).optional(),
@@ -151,6 +190,20 @@ export const toolCallCreateWorkflowDisplaySchema = z
       .max(100),
     causalityGraph: toolCallCreateWorkflowCausalityGraphSchema.optional(),
     truncated: z.boolean().optional(),
+    // Which hole a FillWorkflowHole row filled (docs/dynamic-workflow/presentation.md, "The fill
+    // row"): site id, **name**, draft path, and line. The row names itself with it, and the card's
+    // linkage accumulates the head's labels from it—the transcript stores only the model's own
+    // arguments, and the `hole` block backfilled by resolveInput never reaches the row, so the name
+    // must travel with the display. Present for both success and refusal.
+    fill: z
+      .object({
+        siteId: z.string().min(1).max(64),
+        name: z.string().min(1).max(128),
+        draftPath: z.string().min(1).max(1_024).optional(),
+        line: z.number().int().positive().optional(),
+      })
+      .strict()
+      .optional(),
   })
   .strict();
 export type ToolCallCreateWorkflowDisplay = z.infer<typeof toolCallCreateWorkflowDisplaySchema>;

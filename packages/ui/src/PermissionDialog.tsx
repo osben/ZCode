@@ -21,6 +21,11 @@ import { cn } from "@/components/lib/utils.js";
 import { Textarea } from "@/components/ui/textarea.js";
 import { isImeComposingKeyEvent } from "@/lib/imeComposition.js";
 import {
+  resolveMobileInputTextSizeClassName,
+  shouldAvoidIosInputFocusZoom,
+  useIsMobileTextInputViewport,
+} from "@/lib/mobileTextInput.js";
+import {
   getPermissionOptionDisplayKind,
   getPermissionRequestPreview,
   shouldPreferPermissionOptionName,
@@ -42,6 +47,12 @@ import { SkillToolCallBlock } from "@/ToolCallBlocks/renderers/skill.js";
 import { resolveToolCallIdentity } from "@/lib/toolIdentity.js";
 import { InteractionRequestOriginBadge } from "@/InteractionRequestOriginBadge.js";
 import { WorkflowPermissionBlock } from "@/WorkflowPermissionBlock.js";
+import {
+  focusLastWorkflowSettingsControl,
+  isWorkflowSettingsCarrier,
+  usePermissionWorkflowSettings,
+  workflowAdjustedOptionDescriptionId,
+} from "@/permissionWorkflowSettings.js";
 import { SaveWorkflowPermissionBlock } from "@/SaveWorkflowPermissionBlock.js";
 import { isSaveWorkflowToolCall } from "@/lib/workflowToolNames.js";
 import { useZCodeStoreWithDefault } from "@/store/StoreProvider.js";
@@ -387,6 +398,8 @@ function buildPermissionBlockContext(
     // The tool has not run while a permission dialog awaits confirmation, so do not reuse running status.
     // Bash permissions previously showed “Executing” with a loading indicator, obscuring the actual request reason.
     isRunning: false,
+    // Permission previews use a synthetic completed node; distinguish it explicitly to avoid incorrectly reporting “No output.”
+    isPermissionPreview: true,
     statusLabel: "",
     childToolList: null,
     showIcon: true,
@@ -431,19 +444,46 @@ export function PermissionDialog({
   request,
   onRespond,
   workspacePath,
+  workspaceIdentity,
+  remoteSessionId,
+  workflowSessionModel,
   provider,
+  isWebRemoteControl = false,
   responding = false,
   responseError,
 }: {
   request: ZCodePermissionRequest;
   responding?: boolean;
   responseError?: string;
-  onRespond: (requestId: string, option: ZCodePermissionOption, feedback?: string) => void;
+  /**
+   * `content` appears only in Allow responses from the workflow confirmation dialog and contains
+   * settings edited there (docs/dynamic-workflow/launch.md, “Adjusting the settings in the window”).
+   * Omit it when nothing changed.
+   */
+  onRespond: (
+    requestId: string,
+    option: ZCodePermissionOption,
+    feedback?: string,
+    content?: Record<string, unknown>,
+  ) => void;
   workspacePath: string;
+  /** Model-catalog scope and current session model for workflow confirmation (provided by the host). */
+  workspaceIdentity?: string;
+  remoteSessionId?: string;
+  workflowSessionModel?: { providerId: string; modelId: string };
   provider?: ZCodeProvider;
+  isWebRemoteControl?: boolean;
 }) {
   const { intl } = useZCodeIntl();
-  // Store coupling removed: the host reads theme/code-preview settings and passes them down through props/render context.
+  const isMobileTextInputViewport = useIsMobileTextInputViewport();
+  // Root cause: the feedback input also appears in PermissionDialog during mobile Web remote
+  // control, and focusing a 14px input triggers iOS page zoom. Reuse the composer's viewport check
+  // and 16px compatibility token; preserve existing font sizes on desktop and non-remote Web.
+  const avoidIosInputFocusZoom = shouldAvoidIosInputFocusZoom({
+    isMobileTextInputViewport,
+    isWebRemoteControl,
+  });
+  // M5②.5 store decoupling: read theme/code-preview settings from the store in the host and pass them down through props/render context.
   const theme = useZCodeStoreWithDefault((state) => state.theme, "system");
   const codePreviewSettings = useZCodeStoreWithDefault(
     (state) => state.codePreviewSettings,
@@ -492,6 +532,16 @@ export function PermissionDialog({
     [blockKind, codePreviewSettings, intl, rawFileSummaries, theme, toolCall, workspacePath],
   );
   const displayReason = useMemo(() => getPermissionDisplayReason(request), [request]);
+  // Two run settings for workflow confirmation (rendered by WorkflowPermissionBlock); store only edited values and “model unavailable” state here.
+  const isWorkflowAsk = blockKind === "workflow";
+  const workflowSettings = usePermissionWorkflowSettings(request.requestId);
+  const workflowSettingsContent = isWorkflowAsk ? workflowSettings.content : undefined;
+  const isOptionBlocked = useCallback(
+    (option: ZCodePermissionOption) =>
+      isWorkflowAsk && workflowSettings.blocked && isWorkflowSettingsCarrier(option),
+    [isWorkflowAsk, workflowSettings.blocked],
+  );
+  const rootRef = useRef<HTMLDivElement | null>(null);
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [feedback, setFeedback] = useState("");
   const optionRefs = useRef<Array<HTMLButtonElement | null>>([]);
@@ -559,16 +609,33 @@ export function PermissionDialog({
 
   const respondWithOption = useCallback(
     (option: ZCodePermissionOption) => {
-      if (responding) return;
+      // The selected subagent model is unavailable; the user must choose another before allowing, matching the Apply rule in the Configure dialog.
+      if (responding || isOptionBlocked(option)) return;
       const selectedKind = getPermissionOptionDisplayKind(option.kind);
       // In a generic confirmation dialog, Deny also sends the feedback-row draft as the rejection reason. In a workflow confirmation,
       // the draft belongs to Refine, so Deny is an ordinary rejection. Otherwise revision guidance would be sent as a plain rejection reason
       // and the model would not receive the workflow_refine_feedback upgraded delivery.
       const trimmedFeedback =
         !refineOption && selectedKind.startsWith("reject") ? feedback.trim() : "";
-      onRespond(request.requestId, option, trimmedFeedback || undefined);
+      const content =
+        workflowSettingsContent !== undefined && isWorkflowSettingsCarrier(option)
+          ? { ...workflowSettingsContent }
+          : undefined;
+      if (content === undefined) {
+        onRespond(request.requestId, option, trimmedFeedback || undefined);
+      } else {
+        onRespond(request.requestId, option, trimmedFeedback || undefined, content);
+      }
     },
-    [feedback, onRespond, refineOption, request.requestId, responding],
+    [
+      feedback,
+      isOptionBlocked,
+      onRespond,
+      refineOption,
+      request.requestId,
+      responding,
+      workflowSettingsContent,
+    ],
   );
 
   const submitFeedback = useCallback(() => {
@@ -650,6 +717,29 @@ export function PermissionDialog({
           moveSelection(1);
           return;
         case "Tab":
+          // Long commands added a read button, and the old option loop trapped focus. Let the
+          // browser handle Shift+Tab from the first option so DOM order moves focus to the command
+          // button above; Tab naturally returns to the first option without triggering authorization.
+          if (
+            event.shiftKey &&
+            optionRefs.current.indexOf(event.currentTarget) === 0 &&
+            rootRef.current?.querySelector("[data-command-preview-toggle]")
+          ) {
+            return;
+          }
+          // Workflow confirmation: Shift+Tab from the first option leaves the list and returns to
+          // the settings controls above (reading order matches focus order). Check which button
+          // received the event instead of reading selectedIndex; focus and key events can occur in
+          // the same frame before state is committed.
+          if (
+            event.shiftKey &&
+            optionRefs.current.indexOf(event.currentTarget) === 0 &&
+            isWorkflowAsk &&
+            focusLastWorkflowSettingsControl(rootRef.current)
+          ) {
+            event.preventDefault();
+            return;
+          }
           event.preventDefault();
           moveSelection(event.shiftKey ? -1 : 1);
           return;
@@ -665,6 +755,7 @@ export function PermissionDialog({
       confirmSelection,
       feedbackIndex,
       hasFeedbackInput,
+      isWorkflowAsk,
       moveSelection,
       orderedOptions,
       respondWithOption,
@@ -687,11 +778,11 @@ export function PermissionDialog({
   // Reuse tool identity here to prevent plan-mode tool routing from drifting between the permission dialog and chat.
   const shouldUseSwitchModePlaceholder = resolveToolCallIdentity(toolCall).family === "switch-mode";
   // The workflow confirmation dialog has its own localized title (“Run this workflow?”) and graph body, so use its dedicated block instead of the generic preview.
-  const shouldUseWorkflowBlock = blockKind === "workflow";
+  const shouldUseWorkflowBlock = isWorkflowAsk;
   // The save-confirmation dialog is similar, but has different question, content, and options: no graph or Refine; its body is destination + metadata + script.
   const shouldUseSaveWorkflowBlock = blockKind === "saveWorkflow";
   return (
-    <div className="w-full shrink-0 relative z-1">
+    <div ref={rootRef} className="w-full shrink-0 relative z-1">
       <div className="w-full overflow-hidden rounded-2xl border border-border bg-popover shadow-xs">
         <div className="flex flex-col gap-3 p-3">
           <div className="space-y-4">
@@ -719,7 +810,18 @@ export function PermissionDialog({
             ) : shouldUseWorkflowBlock ? (
               // The CLI reason is for protocol diagnostics ("createWorkflow.runConfirmation: ...");
               // intentionally do not render displayReason here because the block's localized title is the question intended for users.
-              <WorkflowPermissionBlock request={request} workspacePath={workspacePath} />
+              <WorkflowPermissionBlock
+                onSettingsBlockedChange={workflowSettings.onBlockedChange}
+                onSettingsChange={workflowSettings.onContentChange}
+                request={request}
+                settingsDisabled={responding}
+                workspacePath={workspacePath}
+                {...(workspaceIdentity === undefined ? {} : { workspaceIdentity })}
+                {...(remoteSessionId === undefined ? {} : { remoteSessionId })}
+                {...(workflowSessionModel === undefined
+                  ? {}
+                  : { sessionModel: workflowSessionModel })}
+              />
             ) : shouldUseSaveWorkflowBlock ? (
               // Same as above: the block supplies the save-gate question (save/overwrite); do not reuse the protocol reason.
               <SaveWorkflowPermissionBlock request={request} />
@@ -745,12 +847,19 @@ export function PermissionDialog({
                     ? "chat.permission.allowCommand"
                     : getOptionLabelMessageId(option.kind);
                 const nameMessageIds = getProviderOptionNameMessageIds(provider, option.name);
-                const descriptionMessageId = officialCuaProjectPermission
+                const baseDescriptionMessageId = officialCuaProjectPermission
                   ? "chat.permission.cua.allowForProject.description"
                   : labelMessageId === "chat.permission.allowCommand"
                     ? "chat.permission.allowCommand.description"
                     : (nameMessageIds?.description ??
                       getOptionDescriptionMessageId(option.kind, preview.scope));
+                // If workflow confirmation settings were edited, update both Allow options to say
+                // “with the adjusted settings” (docs/dynamic-workflow/launch.md, “The options”).
+                const descriptionMessageId =
+                  workflowSettingsContent === undefined
+                    ? baseDescriptionMessageId
+                    : workflowAdjustedOptionDescriptionId(baseDescriptionMessageId);
+                const blocked = isOptionBlocked(option);
                 const fallbackLabel = labelMessageId
                   ? intl.formatMessage({ id: labelMessageId })
                   : null;
@@ -788,6 +897,7 @@ export function PermissionDialog({
                     role="option"
                     aria-label={label}
                     aria-selected={isSelected}
+                    {...(blocked ? { "aria-disabled": true } : {})}
                     tabIndex={isSelected ? 0 : -1}
                     onClick={() => {
                       if (isSelected) {
@@ -801,6 +911,7 @@ export function PermissionDialog({
                     className={cn(
                       "flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left outline-none transition-colors focus-visible:bg-selected",
                       isSelected ? "bg-selected" : "hover:bg-hover",
+                      blocked && "cursor-not-allowed opacity-50",
                     )}
                   >
                     <span
@@ -843,7 +954,8 @@ export function PermissionDialog({
                 <span
                   className={cn(
                     // Match the textarea's first-line height and 1px border; mobile input rows have a different height, but keep the number font size unchanged.
-                    "mt-px w-5 shrink-0 self-start text-ui-base font-medium leading-5 md:leading-relaxed",
+                    "mt-px w-5 shrink-0 self-start text-ui-base font-medium md:leading-relaxed",
+                    avoidIosInputFocusZoom ? "leading-6" : "leading-5",
                     isFeedbackSelected ? "text-foreground" : "text-foreground-subtlest",
                   )}
                 >
@@ -885,8 +997,10 @@ export function PermissionDialog({
                   }}
                   onKeyDown={handleFeedbackKeyDown}
                   className={cn(
-                    // Rejection feedback wraps automatically but is capped at 5 lines and scrolls inside the input so it does not cover permission options or the confirmation button on narrow screens.
-                    "h-auto !min-h-5 max-h-[5lh] min-w-0 max-w-full overflow-y-auto rounded-none border-transparent bg-transparent !px-0 !py-0 font-medium text-ui-base leading-5 shadow-none hover:border-transparent focus-visible:border-transparent focus-visible:bg-transparent focus-visible:ring-0",
+                    // Bugfix: wrap rejection feedback automatically, but cap it at five lines and
+                    // scroll inside the input so it does not cover permission options or the confirmation button on narrow screens.
+                    "h-auto !min-h-5 max-h-[5lh] min-w-0 max-w-full overflow-y-auto rounded-none border-transparent bg-transparent !px-0 !py-0 font-medium shadow-none hover:border-transparent focus-visible:border-transparent focus-visible:bg-transparent focus-visible:ring-0",
+                    resolveMobileInputTextSizeClassName({ avoidIosInputFocusZoom }),
                   )}
                 />
               </div>
@@ -912,7 +1026,8 @@ export function PermissionDialog({
                 responding ||
                 (isFeedbackSelected
                   ? !feedback.trim()
-                  : orderedOptions[selectedIndex] === undefined)
+                  : orderedOptions[selectedIndex] === undefined ||
+                    isOptionBlocked(orderedOptions[selectedIndex]))
               }
               className="bg-brand text-foreground-inverse hover:bg-brand/80"
             >

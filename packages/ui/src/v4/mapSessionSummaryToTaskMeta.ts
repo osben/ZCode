@@ -25,7 +25,7 @@ function phaseToStatus(phase: SessionSummary["phase"]): ZCodeTaskMeta["status"] 
   }
 }
 
-interface MapSessionSummaryOptions {
+export interface MapSessionSummaryOptions {
   workspacePath: string;
   workspaceIdentity?: string;
   /** Existing local metadata (preserve manual title/provider and other old values so list refresh does not overwrite them). */
@@ -62,7 +62,7 @@ export function mapSessionSummaryToTaskMeta(
       ...(options.workspaceIdentity ? { workspaceIdentity: options.workspaceIdentity } : {}),
       createdAt: summary.createdAt || previous?.createdAt || 0,
       updatedAt: summary.lastActivityAt || previous?.updatedAt || 0,
-      mode: previous?.mode ?? "build",
+      mode: previous?.mode ?? "default",
       ...(previous?.model ? { model: previous.model } : {}),
       ...(summary.parentSessionId ? { forkedFromTaskId: summary.parentSessionId } : {}),
       ...(previous?.provider ? { provider: previous.provider as ZCodeProvider } : {}),

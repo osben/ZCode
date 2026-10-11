@@ -1,10 +1,15 @@
+import { conversationQuotesSchema } from "../conversationSelection.js";
+import { botGroupInputSourceSchema } from "../bots.js";
 // ConversationRow: self-contained row types.
 // Three structural rules: each row is self-contained (rendering a row requires no other row);
 // structural changes replace the whole row (row.upserted), text growth uses append (row.delta), and turn is a row label, not a container.
 import { z } from "zod";
+import { highspeedMessageMetaSchema } from "../highspeed.js";
 import { executionOutputPreviewSchema } from "../execution-output-preview.js";
 import { timestampSchema } from "./core.js";
+import { conversationInputSourceSchema } from "./input-intent.js";
 import { backgroundResultOriginMetaSchema, workflowLaunchMetaSchema } from "./workflow-row-meta.js";
+import { attachmentRefSchema } from "./attachment-ref.js";
 
 // RowBase. rowId is monotonic and never reused within a session; deterministic pure function of the event log.
 const rowBaseFields = {
@@ -79,6 +84,12 @@ export const turnHeaderRowSchema = z.object({
   endedAt: timestampSchema.optional(),
   // Authoritative elapsed time: excludes permission / user-input / verifier waits.
   activeMs: z.number().optional(),
+  // Cumulative output usage from main-chain ModelComplete events within the current product turn; optional for old snapshot compatibility.
+  outputTokens: z.number().int().nonnegative().optional(),
+  // Real durations aggregated by the CLI from runtime events; optional for old snapshots and ordinary turns.
+  modelDurationMs: z.number().nonnegative().optional(),
+  toolDurationMs: z.number().nonnegative().optional(),
+  otherDurationMs: z.number().nonnegative().optional(),
   // guide does not split a product turn, but each accepted guide starts a separate visual work segment.
   // Defaults to absent to preserve old snapshot compatibility; once guide is present, CLI projects the first and subsequent segments fully.
   workSegments: z.array(turnWorkSegmentSchema).optional(),
@@ -100,6 +111,9 @@ export type TurnHeaderRow = z.infer<typeof turnHeaderRowSchema>;
 export const userInputRowSchema = z.object({
   ...rowBaseFields,
   kind: z.literal("userInput"),
+  inputOrigin: z.enum(["desktop", "mobile"]).optional(),
+  botGroupSource: botGroupInputSourceSchema.optional(),
+  conversationQuotes: conversationQuotesSchema.optional(),
   text: z.string(),
   // Text from this index onward is appended by the engine (dwf ask suffix /
   // nudge); GUI folds it into a disclosure collapsed by default. 0 = entire text; absent = none (old transcript or non-workflow session).
@@ -135,17 +149,12 @@ export const userInputRowSchema = z.object({
   rootSourceCommandId: z.string().optional(),
   // Submitting client identity is written by CLI admission; may be absent in old transcripts.
   clientId: z.string().optional(),
-  attachments: z
-    .array(
-      z.object({
-        ref: z.string(),
-        fileName: z.string(),
-        mime: z.string(),
-        bytes: z.number(),
-        previewRef: z.string().optional(),
-      }),
-    )
-    .optional(),
+  // Persistent facts for accelerated history display; absent for ordinary messages and old snapshots.
+  highspeed: highspeedMessageMetaSchema.optional(),
+  // A previous duplicate definition had its source stripped by post-dequeue row validation, making history attachments lose their preview entry; shares the schema with the inbound reference.
+  attachments: z.array(attachmentRefSchema).optional(),
+  // Messages sent on behalf of plugin UI carry a source; the card shows "from plugin X". May be absent in old transcripts.
+  source: conversationInputSourceSchema.optional(),
 });
 export type UserInputRow = z.infer<typeof userInputRowSchema>;
 
@@ -203,9 +212,10 @@ export const toolCallRowSchema = z.object({
   // If display parsing fails, discard only this card's payload, not the whole row (see the toolOutputSchema
   // comment in toolDisplay.ts: decorative payload must not determine the fate of a row/frame/subscription).
   display: toolCallDisplaySchema.optional().catch(undefined),
+  // (2026-09-12): the former widgetState / widgetStateVisibility fields were removed; plugin UI view state no longer goes into rows.
   // Required when status=error.
   error: z.object({ code: z.string(), message: z.string() }).optional(),
-  // Present only while running in replayable mode; cleared on terminal state.
+  // Present while running (ToolCallProgress events); cleared on terminal state.
   progress: toolProgressSchema.optional(),
   // Bounded Bash content shared by continuous/replayable; cleared on terminal state or background handoff.
   outputPreview: executionOutputPreviewSchema.optional(),

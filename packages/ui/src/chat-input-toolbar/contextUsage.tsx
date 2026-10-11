@@ -82,7 +82,7 @@ const CONTEXT_PROGRESS_TONE_COLORS = [
 const PERCENT_MAX = 100;
 const CACHE_HIT_RATE_DISPLAY_THRESHOLD = 0.78;
 
-function formatContextUsageTokenCount(
+export function formatContextUsageTokenCount(
   value: number,
   locale: string,
   options: { maximumFractionDigits?: number } = {},
@@ -90,7 +90,7 @@ function formatContextUsageTokenCount(
   return formatCompactTokenNumber(locale, value, options);
 }
 
-function formatContextUsageSummary({
+export function formatContextUsageSummary({
   locale,
   percent,
   size,
@@ -114,7 +114,7 @@ function formatContextUsageSummary({
   )} (${percentageFormatter.format(percent)})`;
 }
 
-function formatContextCacheHitRateLabel(
+export function formatContextCacheHitRateLabel(
   hitRate: number | null | undefined,
   locale: string,
   options: { showBelowThreshold?: boolean } = {},
@@ -163,7 +163,7 @@ const BREAKDOWN_SOURCE_ORDER: Record<ContextUsageBreakdownSource, number> = {
   mcp_tool_schemas: 6,
 };
 
-function buildContextUsageBreakdownSegments(
+export function buildContextUsageBreakdownSegments(
   breakdown: readonly ZCodeContextUsageBreakdownItem[] | undefined,
 ): ContextUsageBreakdownSegment[] {
   const charsBySource = new Map<ContextUsageBreakdownSource, number>();
@@ -192,7 +192,9 @@ function buildContextUsageBreakdownSegments(
     );
 }
 
-function buildContextUsageProgressSegments(segments: readonly ContextUsageBreakdownSegment[]) {
+export function buildContextUsageProgressSegments(
+  segments: readonly ContextUsageBreakdownSegment[],
+) {
   return segments.map((segment, index) => ({
     id: segment.source,
     percent: segment.percent,
@@ -230,6 +232,15 @@ function resolveAutomaticCompletedAt(entry: CodingPlanQuotaResetUiEntry | null):
   return entry?.status === "completed" && entry.startedAt === null && entry.observedAt !== null
     ? entry.completedAt
     : null;
+}
+
+export function refreshContextUsageOnOpen(
+  open: boolean,
+  onAccess: (() => Promise<void> | void) | undefined,
+): void {
+  if (open) {
+    void onAccess?.();
+  }
 }
 
 export function ChatContextUsage({
@@ -876,9 +887,7 @@ export function ChatContextUsage({
           ) : null
         }
       >
-        {/* The span is the asChild anchor for ControlHintTooltip; keep the inner ContextTrigger as the
-            HoverCard trigger to prevent two Radix popovers from stacking refs on the same DOM node. Manual usage resets
-            show their processing state on the Reset button inside the popover; the trigger does not spin. */}
+        {/* Bugfix: The span hosts ControlHintTooltip’s asChild anchor while the inner ContextTrigger remains the HoverCard trigger, avoiding two Radix overlays attaching refs to the same DOM node. Manual-redemption processing is shown by the “Reset” button inside the popover, not as a spinner on the trigger. */}
         <span className="inline-flex shrink-0">
           <ContextTrigger
             aria-label={triggerLabel}
@@ -913,8 +922,8 @@ export function ChatContextUsage({
         sideOffset={2}
       >
         <ContextContentBody className="space-y-3">
-          {/* The default ai-elements Header hardcodes a title and separates the summary into its own header.
-          The toolbar context hover needs only a compact information panel, with the summary and details together in the body. */}
+          {/* Bugfix: the default ai-elements Header hardcodes a title and splits the summary into a separate header.
+          The toolbar context hover needs only one compact info panel, with the summary and details together in the body. */}
           {renderableTaskUsage && compactTokenUsageLabel ? (
             <div className="space-y-2">
               <div className="flex min-w-0 mb-3 items-center gap-3">
@@ -958,7 +967,7 @@ export function ChatContextUsage({
                             id: BREAKDOWN_SOURCE_LABEL_ID[segment.source],
                           })}
                         </span>
-                        {/* Breakdown rows show only percentages; per-item token counts would be confused with the total shown above.*/}
+                        {/* Bugfix: Breakdown rows show only percentages; item token counts would be confused with the total shown above. */}
                         <span className="ml-auto min-w-10 shrink-0 text-right font-mono text-ui-sm tabular-nums text-foreground">
                           {percentageFormatter.format(segment.percent)}
                         </span>

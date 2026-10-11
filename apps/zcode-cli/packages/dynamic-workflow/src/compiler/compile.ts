@@ -29,6 +29,12 @@ export const WORKFLOW_FUNCTION_NAME = "__workflowScript__";
 // No return-type annotation: an annotated Promise<unknown> would demand a return
 // statement (TS2355), but scripts may legitimately end without one.
 const SCRIPT_PRELUDE = `async function ${WORKFLOW_FUNCTION_NAME}() {\n`;
+/**
+ * Length of the wrapper prefix: subtract it from a position in wrapped source to get the offset in
+ * the author's source. Hole completion splicing (analysis/hole-splice.ts) uses this conversion to
+ * insert text into the original source at the node positions recorded in the site table.
+ */
+export const SCRIPT_PRELUDE_LENGTH = SCRIPT_PRELUDE.length;
 const SCRIPT_EPILOGUE = "\n}\nexport {};\n";
 const PRELUDE_LINES = 1;
 

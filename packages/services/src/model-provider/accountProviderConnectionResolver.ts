@@ -66,6 +66,16 @@ export interface AccountProviderConfigSourceOptions extends AccountProviderConne
 }
 
 /**
+ * off-peak and highspeed are not standalone plans; they are execution entry points derived
+ * from a connected personal/team Coding Plan: per-request auth comes from a ticket and the
+ * highspeed-card JWT respectively, with no plan key of their own to validate. They therefore
+ * neither enter Coding Plan availability checks nor compare modes directly by selection.kind.
+ */
+function isCodingPlanDerivedMode(mode: string | undefined): mode is "off-peak" | "highspeed" {
+  return mode === "off-peak" || mode === "highspeed";
+}
+
+/**
  * Project the existing account domain, connection mode, and plan entitlements into a domain-level Connection Result.
  *
  * This adapter does not store credentials. The injected dependency determines the physical source for Personal Coding Plan keys;
@@ -98,7 +108,7 @@ export function createAccountProviderConnectionResolver(
           config.access?.type === "zhipu-account" &&
           config.access.accountType === family &&
           config.access.mode &&
-          config.access.mode !== "off-peak"
+          !isCodingPlanDerivedMode(config.access.mode)
             ? [{ providerId, config, planKind: config.access.mode }]
             : [],
         );
@@ -168,7 +178,7 @@ export function createAccountProviderConnectionResolver(
       scopes.set(providerId, scope);
       const resetPrevious =
         previousScopes.has(providerId) && previousScopes.get(providerId) !== scope;
-      if (access.mode === "off-peak") {
+      if (isCodingPlanDerivedMode(access.mode)) {
         const selectedPlanKind = selection?.kind;
         const matchingPlanAvailable =
           settings.providerFamilyDomain === access.accountType &&
@@ -318,7 +328,7 @@ export async function resolveCurrentAccountAccess(input: {
   }
   const selection = settings.selections[accountType];
   if (!selection) return null;
-  if (mode === "off-peak") {
+  if (isCodingPlanDerivedMode(mode)) {
     if (selection.kind !== "individual-coding-plan" && selection.kind !== "team-coding-plan") {
       return null;
     }

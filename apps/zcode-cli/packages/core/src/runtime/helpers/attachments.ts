@@ -113,6 +113,45 @@ async function resolveTurnAttachment(
     };
   }
 
+  if (
+    attachment.content &&
+    (attachment.sourceKind === "topic-history" || attachment.sourceKind === "clipboard-text")
+  ) {
+    // Persist uploaded text material in its owning runtime; do not decode and inject it as message text or use a Host-local path.
+    const inline = await readInlineAttachmentContent(attachment, options);
+    const write = options.artifactStore?.writeToolResultBinaryArtifact?.bind(options.artifactStore);
+    if (!inline || !write || !options.sessionId)
+      throw new Error("Text attachment materialization unavailable");
+    const encoded = /^data:text\/plain(?:;charset=utf-8)?;base64,([A-Za-z0-9+/]*={0,2})$/.exec(
+      inline.dataUrl,
+    );
+    if (!encoded) throw new Error("Invalid text attachment encoding");
+    const data = Buffer.from(encoded[1]!, "base64");
+    const file = await write(
+      {
+        sessionId: options.sessionId,
+        turnId: options.turnId,
+        trace: options.traceContext,
+        toolCallId: `text-attachment-${index}`,
+        toolName: "prompt-attachment:text",
+        content: data,
+        contentType: "text/plain",
+        extension: "txt",
+        retention: "session",
+      },
+      { signal: options.abortSignal },
+    );
+    if (!file.path) throw new Error("Text attachment path unavailable");
+    return resolvedPathReferenceAttachment({ ...attachment, path: file.path }, file.path, {
+      filename: attachment.filename,
+      mime: "text/plain",
+      sizeBytes: data.length,
+      reason:
+        attachment.sourceKind === "topic-history"
+          ? "deferred_topic_history"
+          : "deferred_clipboard_text",
+    });
+  }
   if (attachment.content) {
     if (attachment.type === "pdf" && !isDataOrArtifactUrl(attachment.content)) {
       // PDF previously followed the ordinary file inline-text path, so corrupted or spoofed bodies were UTF-8 decoded
@@ -242,7 +281,7 @@ async function resolveLocalFileAttachment(
       });
     }
 
-    if (attachment.sourceKind === "clipboard-text") {
+    if (attachment.sourceKind === "clipboard-text" || attachment.sourceKind === "topic-history") {
       // Long pasted text has already been written to a temporary file; pre-reading it would put the body back into the prompt_attachment system message.
       // Pass only a real local attachment reference here, and let a file-reading tool add it to context if the model explicitly needs it.
       return resolvedPathReferenceAttachment(attachment, attachment.path!, {
@@ -250,7 +289,10 @@ async function resolveLocalFileAttachment(
         mime,
         sizeBytes: stat.sizeBytes,
         source,
-        reason: "deferred_clipboard_text",
+        reason:
+          attachment.sourceKind === "topic-history"
+            ? "deferred_topic_history"
+            : "deferred_clipboard_text",
       });
     }
 

@@ -1,69 +1,50 @@
-import type { ZCodeToolExecResource, BackgroundBashOutputResult } from "@zcode/shared";
 import type { AiSdkModelAdapter } from "@zcode/adapters/model";
 import type {
-  AgentRuntime,
-  AgentRuntimeConfig,
-  ExecuteTurnOptions,
-  ExpertWorkflowCommandResult,
-  ProviderRuntimeHeadersPort,
-  PresentationSurface,
-  ResumeSessionResult,
-  StartSavedWorkflowRunResult,
-  AmendWorkflowRunSettingsInput,
-  AmendWorkflowRunSettingsResult,
-  TurnAttachment,
-  ModelExecutionContext,
-  TurnResult,
-  WorkflowAgentRunner,
-  WorkspaceCheckpointSummary,
-  WorkspaceForkResult,
-  WorkspaceGenerateTextInput,
-  WorkspaceHookReviewTarget,
-  WorkspaceHookPolicyProvider,
-} from "@zcode/core";
-import type {
-  WorkspaceHookReviewDecision,
-  WorkspaceHookTrustRevokeTarget,
-} from "@zcode/shared/zcode-protocol-v4";
-import type { ZCodeModelOption } from "@zcode/shared";
-import type { EffectiveModelSelectionResult } from "@zcode/shared/model-selection";
-export type { ZCodeModelOption } from "@zcode/shared";
-import type { ModelProviderSourceTitle } from "../model-config.js";
-import type { ZCodeInstalledPluginData } from "../plugins.js";
-import type {
+  AgentTelemetryRuntimeOwner,
   AutomationPort,
-  OffPeakPort,
   BackgroundTaskCancelResult,
+  BrowserControlPort,
   CollaborationMode,
   ContextSourcePort,
   DynamicWorkflowRunArtifact,
   DynamicWorkflowRunArtifactBytes,
-  DynamicWorkflowRunArtifactItem,
+  DynamicWorkflowRunArtifactItemsResult,
+  DynamicWorkflowRunEventsResult,
+  DynamicWorkflowRunProgressPayload,
+  DynamicWorkflowRunResumeResult,
+  DynamicWorkflowRunSessionSummary,
   DynamicWorkflowRunWorkspaceNode,
   DynamicWorkflowRunWorkspaceNodeResult,
-  DynamicWorkflowRunEvent,
-  DynamicWorkflowRunResumeResult,
-  DynamicWorkflowRunProgressPayload,
-  DynamicWorkflowRunSessionSummary,
   ExecutionPort,
-  BrowserControlPort,
+  ExecutionShellSelection,
   FileSystemPort,
   GoalStatus,
   HttpClientPort,
   ImageProcessorPort,
-  PdfDocumentPort,
   InputDelivery,
   InputHistoryEntry,
   InputHistoryKind,
   InputHistoryStorePort,
   LoggerFactory,
+  McpListResourceTemplatesResult,
+  McpListResourcesResult,
   McpPort,
+  McpReadResourceResult,
   McpServerStatus,
+  McpToolCallResult,
+  MessageWithParts,
   ModelSelection,
+  ModelToolCall,
+  ModelUsage,
+  OffPeakPort,
+  TopicResourcePort,
+  PdfDocumentPort,
   PermissionBrokerPort,
   PluginLoadOutcome,
   PluginMetadata,
   PluginReferenceCatalog,
+  ProviderEndpointRoutingPort,
+  QueryId,
   SessionEvent,
   SessionEventSink,
   SessionEventStorePort,
@@ -73,30 +54,63 @@ import type {
   SessionStorePort,
   SkillLoadOutcome,
   SkillPort,
+  SupportedLocale,
+  TodoItem,
   ToolArtifactReadResult,
   ToolArtifactStorePort,
-  TodoItem,
-  QueryId,
   TraceContext,
   TurnId,
-  TurnSteerResult,
   TurnInputIntentMetadata,
-  MessageWithParts,
-  ModelUsage,
-  ModelToolCall,
-  SupportedLocale,
+  TurnSteerResult,
   UiLocale,
   UiThemePalette,
   UiThemePreference,
   WorkflowEvent,
   WorkflowRunListItem,
-  ExecutionShellSelection,
+  WorkspaceHookPolicy,
 } from "@zcode/contracts";
-import type { NodeReplBrowserBroker } from "./node-repl-browser-broker.js";
+import type {
+  AgentRuntime,
+  AgentRuntimeConfig,
+  AmendWorkflowRunSettingsInput,
+  AmendWorkflowRunSettingsResult,
+  ExecuteTurnOptions,
+  ExpertWorkflowCommandResult,
+  McpAppProvidedToolDefinition,
+  McpAppProvidedToolExecutor,
+  ModelExecutionContext,
+  PresentationSurface,
+  ProviderRuntimeHeadersPort,
+  ResumeSessionResult,
+  StartSavedWorkflowRunResult,
+  TurnAttachment,
+  TurnResult,
+  WorkflowAgentRunner,
+  WorkspaceCheckpointSummary,
+  WorkspaceForkResult,
+  WorkspaceGenerateTextInput,
+  WorkspaceHookPolicyProvider,
+  WorkspaceHookReviewTarget,
+} from "@zcode/core";
+import type {
+  BackgroundBashOutputResult,
+  SubagentRuntimeConfig,
+  ZCodeModelOption,
+  ZCodeToolExecResource,
+} from "@zcode/shared";
+import type { McpAppsToolVisibility } from "@zcode/shared/mcp-apps";
+import type { EffectiveModelSelectionResult } from "@zcode/shared/model-selection";
+import type {
+  WorkspaceHookReviewDecision,
+  WorkspaceHookTrustRevokeTarget,
+} from "@zcode/shared/zcode-protocol-v4";
+import type { ModelProviderSourceTitle } from "../model-config.js";
+import type { ZCodeInstalledPluginData } from "../plugins.js";
 import type { SessionTranscriptMessage } from "../session-transcript.js";
-import type { WorkspaceHookReviewCommandResult } from "./workspace-hook-review-controller.js";
-import type { AgentTelemetryRuntimeOwner, WorkspaceHookPolicy } from "@zcode/contracts";
+import type { NodeReplBrowserBroker } from "./node-repl-browser-broker.js";
 import type { ProviderRegistryModelSource } from "./provider-registry-model-runtime.js";
+import type { WorkspaceHookReviewCommandResult } from "./workspace-hook-review-controller.js";
+export type { ZCodeModelOption } from "@zcode/shared";
 
 export interface WorkspaceHookReviewHostContext {
   taskId: string;
@@ -132,6 +146,11 @@ export interface ZCodeAppOptions {
    * to see the electron source. Regular CLI does not pass this and continues using the cli default.
    */
   sourceTitle?: ModelProviderSourceTitle;
+  /** Read local Host source documents; keep the startup configuration when this capability is absent. */
+  readSubagentRuntimeConfig?: (input: {
+    signal: AbortSignal;
+    traceContext: TraceContext;
+  }) => Promise<SubagentRuntimeConfig>;
   eventStore?: SessionEventStorePort;
   sessionStore?: SessionStorePort;
   sessionMailboxPort?: SessionMailboxPort;
@@ -145,6 +164,7 @@ export interface ZCodeAppOptions {
   modelIoFullRetentionEnabled?: boolean;
   /** Same-process embedded hosts may inject the full borrowed process-level Owner; Endpoint config must not override it. */
   telemetryOwner?: AgentTelemetryRuntimeOwner;
+  providerEndpointRoutingPort?: ProviderEndpointRoutingPort;
   /**
    * Provider runtime headers port: the main runtime reports its own session on every call;
    * child runtimes always obtain a derived instance from the parent runtime.
@@ -166,6 +186,8 @@ export interface ZCodeAppOptions {
   pdfDocumentPort?: PdfDocumentPort;
   artifactStore?: ToolArtifactStorePort;
   contextSourcePort?: ContextSourcePort;
+  /** Injected only by the protocol host; the regular CLI does not load the built-in visualize skill. */
+  includeVisualize?: boolean;
   skillPort?: SkillPort;
   mcpPort?: McpPort;
   /** Per-app lease supplied by the host; the resulting port is owned by the app. */
@@ -182,6 +204,7 @@ export interface ZCodeAppOptions {
   onWorkflowEvent?: (event: WorkflowEvent) => void | Promise<void>;
   automationPort?: AutomationPort;
   offPeakPort?: OffPeakPort;
+  topicResourcePort?: TopicResourcePort;
   /** Resolve once on the first real user execution or cold-resume fallback, then cache for the app lifetime. */
   resolveInitialBashShellSelection?: () => Promise<ExecutionShellSelection | undefined>;
   /** Trusted embedder policy; workspace/project files cannot populate this field. */
@@ -241,6 +264,8 @@ export type SendInputOptions = SubmitPromptOptions & {
   delivery?: InputDelivery;
   /** Product guide/queue intent for sendText; Core admission still determines whether the session is busy. */
   queueDelivery?: "guide" | "queue";
+  /** Inputs like Highspeed must be deferred to a separate turn; they stay queued even if the session has become idle by admission time. */
+  requireQueue?: boolean;
   requireIdle?: boolean;
   expectedTurnId?: TurnId;
   commandKind?: "sendText" | "sendGoalCommand" | "compact";
@@ -398,6 +423,70 @@ export interface ZCodeApp {
   getSkillCatalog(): Promise<SkillLoadOutcome>;
   listMcpServers(): Promise<Record<string, McpServerStatus>>;
   connectMcpServer(name: string): Promise<McpServerStatus>;
+  /**
+   * Plugin UI: resource reads and tool calls initiated by the UI
+   * go through the session's own mcpPort; ownership checks happen in the mcp-ui handler and are not repeated here.
+   */
+  readMcpResource(
+    serverName: string,
+    uri: string,
+    options?: { signal?: AbortSignal },
+  ): Promise<McpReadResourceResult>;
+  onMcpAppConnectionInvalidated(serverName: string, listener: () => void): () => void;
+  getMcpAppConnectionSnapshot(serverName: string): { identity: string; generation: number } | null;
+  callMcpToolForUi(
+    serverName: string,
+    toolName: string,
+    args: Record<string, unknown> | undefined,
+    options?: { signal?: AbortSignal },
+  ): Promise<McpToolCallResult>;
+  /**
+   * Tool visibility based on the tools/list descriptor; returns null when the tool does not exist.
+   * mcp-ui uses it to reject UI calls to model-only tools.
+   */
+  getMcpToolVisibility(
+    serverName: string,
+    toolName: string,
+  ): Promise<readonly McpAppsToolVisibility[] | null>;
+  /**
+   * App-Provided Tools: replace this session's App tools wholesale with the given set; invalidate the tool cache so the next model request sees them.
+   * Definitions whose names collide with non-App tools are skipped. Returns the model-side names actually registered.
+   */
+  replaceMcpAppProvidedTools(
+    definitions: readonly McpAppProvidedToolDefinition[],
+    execute: McpAppProvidedToolExecutor,
+  ): string[];
+  /** Page-initiated resources/list, resources/templates/list, and subscriptions (the caller supplies the subscriber identity). */
+  listMcpResourcesForUi(
+    serverName: string,
+    cursor?: string,
+    options?: { signal?: AbortSignal },
+  ): Promise<McpListResourcesResult>;
+  listMcpResourceTemplatesForUi(
+    serverName: string,
+    cursor?: string,
+    options?: { signal?: AbortSignal },
+  ): Promise<McpListResourceTemplatesResult>;
+  subscribeMcpResourceForUi(
+    serverName: string,
+    uri: string,
+    subscriberKey: string,
+    options?: { signal?: AbortSignal },
+  ): Promise<void>;
+  unsubscribeMcpResourceForUi(
+    serverName: string,
+    uri: string,
+    subscriberKey: string,
+    options?: { signal?: AbortSignal },
+  ): Promise<void>;
+  /** Session close: clear all subscriptions for this session (subscriberKey prefix). */
+  unsubscribeMcpResourcesForUi(subscriberKeyPrefix: string): Promise<number>;
+  /** Plugin-page-initiated resources/read; same port as readMcpResource, with a separate entry point for auditing and rate limiting. */
+  readMcpResourceForUi(
+    serverName: string,
+    uri: string,
+    options?: { signal?: AbortSignal },
+  ): Promise<McpReadResourceResult>;
   readBackgroundBashOutput(workId: string, sessionId?: string): Promise<BackgroundBashOutputResult>;
   cancelBackgroundTask?(
     taskId: string,
@@ -416,7 +505,8 @@ export interface ZCodeApp {
     runId: string;
     afterSequence?: number;
     limit?: number;
-  }): Promise<DynamicWorkflowRunEvent[]>;
+    maxBytes?: number;
+  }): Promise<DynamicWorkflowRunEventsResult>;
   /**
    * Resume a dwf run. Optional capability, with the same absence condition as
    * {@link listDynamicWorkflowRunEvents}. On success, in addition to port.resume it must
@@ -492,17 +582,18 @@ export interface ZCodeApp {
     runId: string;
   }): Promise<readonly DynamicWorkflowRunArtifact[] | undefined>;
   /**
-   * Paginate `report` entries for a predeclared dashboard (cursor = journal sequence, strictly
-   * greater than). The gateway clamps `limit` before passing it here; honor it **exactly** so the
-   * caller can pass "limit + 1" to detect hasMore. Same absence condition as
-   * {@link listDynamicWorkflowRunArtifacts}.
+   * Paginate `report` entries for a predeclared dashboard (cursor = journal sequence, strictly greater than).
+   * The gateway decides `limit` and `maxBytes` before passing them here; honor them **exactly**; `hasMore` is decided by the storage layer.
+   * Same absence condition as {@link listDynamicWorkflowRunArtifacts}.
    */
   listDynamicWorkflowRunArtifactItems?(input: {
     runId: string;
     artifactId: string;
     afterSequence?: number;
     limit: number;
-  }): Promise<readonly DynamicWorkflowRunArtifactItem[]>;
+    maxBytes: number;
+    fields?: readonly string[];
+  }): Promise<DynamicWorkflowRunArtifactItemsResult>;
   /**
    * Read **all** bytes for one artifact version; the gateway handles chunking (≤ 512 KiB per
    * chunk). Authorization belongs to the port implementation: the run must belong to this
@@ -541,6 +632,10 @@ export interface ZCodeApp {
     targetMessageId?: string;
     traceContext?: TraceContext;
   }): Promise<WorkspaceForkResult>;
+  sampleModel(
+    input: Parameters<AgentRuntime["sampleModel"]>[0],
+    options: Parameters<AgentRuntime["sampleModel"]>[1],
+  ): ReturnType<AgentRuntime["sampleModel"]>;
   generateWorkspaceText(
     input: WorkspaceGenerateTextInput,
     options?: { abortSignal?: AbortSignal; traceContext?: TraceContext },
@@ -763,6 +858,7 @@ export interface RunZCodeProtocolAgentOptions {
   input?: NodeJS.ReadableStream;
   output?: NodeJS.WritableStream;
   presentationSurface?: PresentationSurface;
+  providerEndpointRoutingPort?: ProviderEndpointRoutingPort;
   version?: string;
 }
 

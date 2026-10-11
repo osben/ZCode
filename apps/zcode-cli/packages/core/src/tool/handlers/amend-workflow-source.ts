@@ -17,7 +17,7 @@ import {
   type DynamicWorkflowRunSnapshot,
 } from "@zcode/contracts";
 import type { ToolHandlerFailure } from "../types.js";
-import { clampWorkflowMaxConcurrency } from "./create-workflow-source.js";
+import { normalizeWorkflowMaxConcurrency } from "./create-workflow-source.js";
 import { readWorkflowScriptFile } from "./workflow-path-source.js";
 
 /**
@@ -32,7 +32,8 @@ export const AMEND_WORKFLOW_ERROR_CODE = {
   SCRIPT_UNCHANGED: 24,
   SCRIPT_FILE: 25,
   SCRIPT_UNAVAILABLE: 26,
-  // These are the three rejections for the concurrency-only route; none of them changes the run.
+  // The three rejections specific to the concurrency-only route (docs/dynamic-workflow/launch.md, “Changing only the
+  // parallelism of a live run”); none of them changes the run.
   RETUNE_UNCHANGED: 27,
   RUN_SETTLED: 28,
   NOT_RETUNABLE: 29,
@@ -81,32 +82,30 @@ export function scriptUnavailableFailure(
 }
 
 /**
- * Normalize the concurrency limit's three states:
+ * Normalize the concurrency limit's three states (docs/dynamic-workflow/concurrency.md, “Two bounds on a run”):
  *
- *   - Number → clamp to `[1, ceiling]`;
- *   - `null` → clear it, removing the key entirely (the new run uses the ceiling);
- *   - Omitted → reuse the predecessor's limit. Snapshots include `maxConcurrency` **only when it is below the ceiling**, so
- *     “unset on predecessor” and “predecessor used the ceiling” are equivalent here: the key is absent. Clamp the inherited value
- *     again because the predecessor may have started on another machine with a different ceiling.
+ *   - number → round down to at least 1, with no upper bound (values above and below the default both apply);
+ *   - `null` → remove the limit entirely (the new run uses default concurrency);
+ *   - omitted → inherit the predecessor's limit **unchanged**. Snapshots include `maxConcurrency` **only when it differs from the default**, so “the predecessor never set a limit”
+ *     and “the predecessor ran at the default” are equivalent here: both omit the key; a predecessor whose limit was raised passes that number on.
  *
- * The three states end here: confirmation and the handler see only one number or none. **The sole exception is the in-place
- * concurrency adjustment route** (amend-workflow-retune.ts): `retuneConcurrency` itself accepts `number | null`, and only the port
- * knows the ceiling, so the tool must not guess it a second time.
+ * The three states exist only up to this point: the confirmation dialog and handler see only “a number or none.” **The sole exception is the in-place concurrency route**
+ * (amend-workflow-retune.ts): `retuneConcurrency` accepts `number | null` itself because only the port knows the default concurrency; the tool must not infer it again.
  */
 export function resolveAmendMaxConcurrency(
   requested: number | null | undefined,
   inherited: number | undefined,
-  ceiling: number | undefined,
 ): { max_concurrency?: number } {
   if (requested === null) return {};
   const resolved = requested ?? inherited;
   if (resolved === undefined) return {};
-  return { max_concurrency: clampWorkflowMaxConcurrency(resolved, ceiling) };
+  return { max_concurrency: normalizeWorkflowMaxConcurrency(resolved) };
 }
 
 /**
- * Facts about the predecessor. resolveInput and the fallback path for an in-place concurrency update (which rereads the snapshot
- * after a settlement race) share this derivation so they do not disagree about the run's current state.
+ * Predecessor facts (step 2 in docs/dynamic-workflow/launch.md, “From call to run”). resolveInput and the fallback from an in-place
+ * concurrency change (which rereads the snapshot after a settlement race) share this derivation so they cannot disagree about
+ * the run's current state.
  */
 export function describePredecessor(
   snapshot: DynamicWorkflowRunSnapshot,
@@ -127,7 +126,7 @@ export function describePredecessor(
 }
 
 /** Normalized script fields (same shape for all three sources), plus the model-facing file path and whether the script was inherited. */
-type AmendScriptResolution =
+export type AmendScriptResolution =
   | {
       result: true;
       fields: { script: string; path?: string; script_line_offset?: number };

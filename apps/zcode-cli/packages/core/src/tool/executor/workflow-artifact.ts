@@ -17,10 +17,9 @@ export { serializeWorkflowArtifact };
 /**
  * Character budget for the `<reports>` section in completion notifications.
  *
- * Notifications already have a 120k total limit, but that is the **last** guard and
- * truncates later fields first. Progressive artifacts can have 256 entries; letting
- * them expand freely could push `<result>` and `<error>` out of the notification, even
- * though those are what the model needs first. This section therefore has its own budget.
+ * Notifications already have a 120k overall truncation limit, but that is the **last** gate and truncates later fields first. Snapshots can contain
+ * up to 256 progressive artifacts (`DYNAMIC_WORKFLOW_SNAPSHOT_MAX_REPORTS`); expanding them without a local limit could push `<result>` and
+ * `<error>` out of the notification, even though those are what the model needs first. So this section has its own budget.
  */
 const WORKFLOW_REPORTS_PREVIEW_MAX_CHARS = 8_000;
 /** Per-item limit: a 32 KB artifact should not consume the whole section budget and keep the next ten entries out. */
@@ -42,10 +41,14 @@ interface WorkflowReportsNotificationSection {
  * partial and the full set can be retrieved by run id. A preview alone could make the
  * model think it saw everything; a count alone would return no artifact content.
  *
+ * `total` is the run's actual item count (snapshot `reportCount`); `items` contains only the first portion (snapshots are capped
+ * at 256 items). Fall back to `items.length` when absent—older snapshots lack this field, and their `items` contain everything.
+ *
  * Return `undefined` for zero entries so the caller omits the entire section instead of emitting an empty `<reports>`.
  */
 export function buildWorkflowReportsNotificationSection(
   items: readonly unknown[] | undefined,
+  total?: number,
 ): WorkflowReportsNotificationSection | undefined {
   if (items === undefined || items.length === 0) return undefined;
 
@@ -60,7 +63,11 @@ export function buildWorkflowReportsNotificationSection(
     used += line.length + 1;
   }
 
-  return { count: items.length, shown: lines.length, preview: lines.join("\n") };
+  return {
+    count: Math.max(total ?? 0, items.length),
+    shown: lines.length,
+    preview: lines.join("\n"),
+  };
 }
 
 /**
@@ -76,10 +83,13 @@ export function buildWorkflowReportsNotificationSection(
  * when persisted). `count` is always the **actual total**: `count ≠ shown` signals that
  * the preview is partial and the full set is available by run id.
  *
+ * `total` has the same meaning as in the notification section (snapshot `reportCount`, falling back to `items.length` when absent).
+ *
  * Return `undefined` for zero entries so the caller omits the field entirely.
  */
 export function buildWorkflowReportsManifestSection(
   items: readonly unknown[] | undefined,
+  total?: number,
 ): { count: number; shown: number; preview: string[] } | undefined {
   if (items === undefined || items.length === 0) return undefined;
 
@@ -88,7 +98,7 @@ export function buildWorkflowReportsManifestSection(
     if (preview.length >= WORKFLOW_NOTIFICATION_REPORTS_MAX_ITEMS) break;
     preview.push(clip(serializeWorkflowArtifact(item) ?? "", WORKFLOW_NOTIFICATION_REPORT_ITEM_MAX_CHARS));
   }
-  return { count: items.length, shown: preview.length, preview };
+  return { count: Math.max(total ?? 0, items.length), shown: preview.length, preview };
 }
 
 /** Per-entry artifact preview limit in the manifest payload (shared schema: ≤500 characters). */

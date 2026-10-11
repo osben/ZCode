@@ -1,4 +1,6 @@
 import { stat } from "node:fs/promises";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { session as electronSession } from "electron";
 import type {
   ChromeBrowserDataImportError,
@@ -26,6 +28,7 @@ import {
 } from "./chromeProfileDiscovery.js";
 import type { LinuxChromePasswordStore } from "./chromeInstallationCandidates.js";
 import type { WindowsChromeAppBoundKeyReader } from "./windowsChromeAppBoundKey.js";
+import { clearEmbeddedBrowserSitePermissions } from "./embeddedBrowserSitePermissions.js";
 
 export const EMBEDDED_BROWSER_PARTITION = "persist:zcode-embedded-browser";
 const CACHE_STORAGE_TYPES: Electron.ClearStorageDataOptions["storages"] = [
@@ -59,6 +62,31 @@ function pathExists(path: string): Promise<boolean> {
     () => true,
     () => false,
   );
+}
+
+/** Kept for legacy callers; the actual import uses discoverChromeProfile to pick the most recently used Profile. */
+export function resolveChromeDefaultProfilePath(
+  options: {
+    platform?: NodeJS.Platform;
+    homeDir?: string;
+    localAppData?: string;
+  } = {},
+): string {
+  const platform = options.platform ?? process.platform;
+  const homeDir = options.homeDir ?? homedir();
+  if (platform === "darwin") {
+    return join(homeDir, "Library", "Application Support", "Google", "Chrome", "Default");
+  }
+  if (platform === "win32") {
+    return join(
+      options.localAppData ?? process.env.LOCALAPPDATA ?? join(homeDir, "AppData", "Local"),
+      "Google",
+      "Chrome",
+      "User Data",
+      "Default",
+    );
+  }
+  return join(homeDir, ".config", "google-chrome", "Default");
 }
 
 function emptyImportResult(error?: ChromeBrowserDataImportError): ChromeBrowserDataImportResult {
@@ -219,6 +247,9 @@ export async function clearEmbeddedBrowserData(options: {
     await targetSession.clearCache();
     if (options.mode === "all") {
       await targetSession.clearStorageData();
+      // "Clear all" also clears site permission consent records: login state and permission
+      // grants are both within the cleanup scope users expect.
+      await clearEmbeddedBrowserSitePermissions();
     } else {
       // Ordinary cache cleanup must not delete LocalStorage/IndexedDB, which hold the login state.
       await targetSession.clearStorageData({ storages: CACHE_STORAGE_TYPES });

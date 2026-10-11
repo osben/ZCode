@@ -9,6 +9,15 @@
  * has only the `phaseNames` index space and no display graph.
  */
 
+/**
+ * A phase stream (docs/dynamic-workflow/presentation.md, “Streams”): while both stations are
+ * running, `from` passes work to `to`. Uses indexes in the same space as `alongside`.
+ */
+export interface StreamSpec {
+  from: number;
+  to: number;
+}
+
 /** One band: all stations in the closed interval `[from, to]`; `tracks[0]` is the main line. */
 export interface PhaseBand {
   from: number;
@@ -25,10 +34,16 @@ export interface PhaseBand {
  *    count as members for robustness (they cannot occur without cycles).
  * 3. Tracks use greedy interval-graph coloring in **declaration order**: place each member on the lowest track with no parallel member,
  *    otherwise create a new track. The first member therefore always lands on track 0.
+ * 4. With streams (`streams`), color only treats two stations as parallel when neither can reach
+ *    the other: a phase and every downstream phase belong to the same line of work and should use
+ *    one track even when they run simultaneously. **Dissolve** a band when all its members fit on
+ *    one track—it is not a band, so return its stations to the main line and connect them with
+ *    stream rails (spec, “Bands and tracks”). The sidebar's mini run line does not pass streams.
  */
 export function foldPhaseBands(
   count: number,
   alongside: readonly (readonly number[])[],
+  streams: readonly StreamSpec[] = [],
 ): PhaseBand[] {
   const near = Array.from({ length: Math.max(0, count) }, () => new Set<number>());
   for (let i = 0; i < near.length; i += 1) {
@@ -68,16 +83,41 @@ export function foldPhaseBands(
     else merged.push({ ...span });
   }
 
-  return merged.map((span) => {
+  const reach = streamReach(near.length, streams);
+  const apart = (i: number, j: number): boolean =>
+    near[i]!.has(j) && !reach[i]!.has(j) && !reach[j]!.has(i);
+  return merged.flatMap((span) => {
     const tracks: number[][] = [];
     for (let i = span.from; i <= span.to; i += 1) {
-      const free = tracks.find((members) => !members.some((member) => near[i]!.has(member)));
+      const free = tracks.find((members) => !members.some((member) => apart(i, member)));
       if (free === undefined) tracks.push([i]);
       else free.push(i);
     }
-    return { from: span.from, to: span.to, tracks };
+    return tracks.length > 1 ? [{ from: span.from, to: span.to, tracks }] : [];
   });
 }
+
+/** Reachability along streams: `reach[i]` is the set of stations reachable by following streams from station i (ignore out-of-range and self-referential streams). */
+function streamReach(count: number, streams: readonly StreamSpec[]): Set<number>[] {
+  const next = Array.from({ length: count }, () => [] as number[]);
+  for (const stream of streams) {
+    if (!inRange(stream.from, count) || !inRange(stream.to, count)) continue;
+    if (stream.from !== stream.to) next[stream.from]!.push(stream.to);
+  }
+  return next.map((_, start) => {
+    const reached = new Set<number>();
+    const stack = [...next[start]!];
+    while (stack.length > 0) {
+      const i = stack.pop()!;
+      if (reached.has(i)) continue;
+      reached.add(i);
+      stack.push(...next[i]!);
+    }
+    return reached;
+  });
+}
+
+const inRange = (i: number, count: number): boolean => Number.isInteger(i) && i >= 0 && i < count;
 
 /** Band containing station i; undefined outside any band. */
 export function bandOf<T extends PhaseBand>(bands: readonly T[], i: number): T | undefined {
@@ -90,8 +130,8 @@ export function trackOf(bands: readonly PhaseBand[], i: number): number {
   return track === undefined || track < 0 ? 0 : track;
 }
 
-/** Kind of track segment; absent means an ordinary segment on a track. */
-export type TimelineRailKind = "fork" | "merge" | "twin";
+/** Rail segment kind; absent means a regular segment on one track, while `stream` means a phase stream between adjacent stations on the same track. */
+export type TimelineRailKind = "fork" | "merge" | "twin" | "stream";
 
 export interface RailSpec {
   from: number;
@@ -104,6 +144,8 @@ export interface ArcSpec {
   to: number;
   /** Which track's airspace to draw in: arcs on the same track inside a band use that track's airspace; all others use the topmost track's. */
   air: number;
+  /** Non-adjacent phase stream: draw as an arc to indicate “feeds,” not a loop or control-flow jump. */
+  stream?: true;
 }
 
 /** A band plus its two visual endpoints: the predecessor station where it forks and the successor station where it merges. */
@@ -142,13 +184,22 @@ function bindBands(
   });
 }
 
-/** Track segments generated inside a band: adjacent members on one track (**always**, since one track is one strand), forks, merges, and double segments. */
-function bandRails(bands: readonly BoundBand[]): RailSpec[] {
+/**
+ * Rail segments produced within a band: adjacent members on the same track (**unconditionally**, as
+ * one track is one strand; use a stream rail if a stream connects them), branches, merges, and double segments.
+ */
+function bandRails(bands: readonly BoundBand[], streamed: ReadonlySet<string>): RailSpec[] {
   const rails: RailSpec[] = [];
   for (const band of bands) {
     band.tracks.forEach((members, track) => {
       for (let k = 1; k < members.length; k += 1) {
-        rails.push({ from: members[k - 1]!, to: members[k]! });
+        const from = members[k - 1]!;
+        const to = members[k]!;
+        rails.push({
+          from,
+          ...(streamed.has(`${from}>${to}`) ? { kind: "stream" as const } : {}),
+          to,
+        });
       }
       if (band.pred !== undefined) {
         rails.push({
@@ -182,11 +233,37 @@ export function foldPhaseEdges(
   count: number,
   folded: readonly PhaseBand[],
   edges: readonly { from: number; to: number }[],
+  streams: readonly StreamSpec[] = [],
 ): PhaseEdgeFold {
   const bands = bindBands(count, folded, edges);
   const top = Math.max(1, ...bands.map((band) => band.tracks.length)) - 1;
-  const rails = bandRails(bands);
+  const streamed = new Set(
+    streams
+      .filter((stream) => inRange(stream.from, count) && inRange(stream.to, count))
+      .map((stream) => `${stream.from}>${stream.to}`),
+  );
+  const rails = bandRails(bands, streamed);
   const arcs: ArcSpec[] = [];
+  // Streams (spec, “Rails,” type 6 and following section): adjacent stations on the same track use
+  // stream rails (already drawn within bands by bandRails); non-adjacent stations use stream arcs.
+  // Do not draw streams across tracks within a band; the branch and merge already show that both are running.
+  for (const key of streamed) {
+    const [from, to] = key.split(">").map(Number) as [number, number];
+    if (from === to) continue;
+    const source = bandOf(bands, from);
+    const target = bandOf(bands, to);
+    if (source === undefined && target === undefined) {
+      if (to === from + 1) rails.push({ from, kind: "stream", to });
+      else arcs.push({ air: top, from, stream: true, to });
+      continue;
+    }
+    if (source === undefined || source !== target) continue;
+    const track = trackOf(bands, from);
+    if (track !== trackOf(bands, to)) continue;
+    const members = source.tracks[track]!;
+    if (members[members.indexOf(from) + 1] !== to)
+      arcs.push({ air: track, from, stream: true, to });
+  }
   for (const edge of edges) {
     const source = bandOf(bands, edge.from);
     const target = bandOf(bands, edge.to);
@@ -220,10 +297,18 @@ export function foldPhaseEdges(
     }
     arcs.push({ air: top, from, to });
   }
+  // A stream rail replaces the regular segment between the same pair of stations: draw only one rail between them, and the stream conveys more than a regular segment.
+  const streamRails = new Set(
+    rails.filter((rail) => rail.kind === "stream").map((rail) => `${rail.from}>${rail.to}`),
+  );
   return {
-    arcs: dedupe(arcs, (arc) => `${arc.air}:${arc.from}>${arc.to}`),
+    arcs: dedupe(arcs, (arc) => `${arc.air}:${arc.from}>${arc.to}:${arc.stream ? "s" : ""}`),
     bands,
-    rails: order(rails),
+    rails: order(
+      rails.filter(
+        (rail) => rail.kind !== undefined || !streamRails.has(`${rail.from}>${rail.to}`),
+      ),
+    ),
   };
 }
 

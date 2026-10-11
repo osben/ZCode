@@ -174,6 +174,59 @@ const SelectItem = React.forwardRef<React.ElementRef<typeof SelectPrimitive.Item
 
 SelectItem.displayName = "SelectItem";
 
+type SelectRichItemProps = Omit<React.ComponentProps<typeof SelectPrimitive.Item>, "children"> & {
+  /** 16–18px icon on the left. */
+  icon?: React.ReactNode;
+  /** Rendered inside ItemText; the trigger (SelectValue) displays only this part. */
+  title: React.ReactNode;
+  /** Badge on the same line as the title (for example, “Default”); not shown in the trigger. */
+  titleAdornment?: React.ReactNode;
+  /** Description below the title; not shown in the trigger. */
+  description?: React.ReactNode;
+};
+
+/**
+ * Two-line option: icon + title + description, with a trailing checkmark when selected (same layout
+ * as the composer permission-mode menu). Use for settings whose choices need an explanation; pair
+ * the list with `position="popper"` to avoid item-aligned placement covering the row label.
+ */
+const SelectRichItem = React.forwardRef<
+  React.ElementRef<typeof SelectPrimitive.Item>,
+  SelectRichItemProps
+>(({ className, icon, title, titleAdornment, description, ...props }, ref) => {
+  return (
+    <SelectPrimitive.Item
+      ref={ref}
+      data-slot="select-item"
+      className={cn(
+        "relative flex min-h-13 w-full cursor-default items-start gap-3 rounded-md py-2 pr-8 pl-2 text-ui-base text-foreground outline-hidden select-none data-[highlighted]:bg-menu-hover data-[highlighted]:text-foreground data-disabled:pointer-events-none data-disabled:text-foreground-subtlest [&_svg]:pointer-events-none [&_svg]:shrink-0",
+        className,
+      )}
+      {...props}
+    >
+      {icon ? (
+        <span className="mt-0.5 flex size-4.5 items-center justify-center">{icon}</span>
+      ) : null}
+      <span className="flex min-w-0 flex-col gap-0.5">
+        <span className="flex min-w-0 items-center gap-1.5">
+          <SelectPrimitive.ItemText>{title}</SelectPrimitive.ItemText>
+          {titleAdornment}
+        </span>
+        {description ? (
+          <span className="text-ui-sm text-foreground-subtle">{description}</span>
+        ) : null}
+      </span>
+      <span className="pointer-events-none absolute top-2.5 right-2 flex items-center justify-center">
+        <SelectPrimitive.ItemIndicator>
+          <CheckIcon className="pointer-events-none size-4 text-foreground-subtle" />
+        </SelectPrimitive.ItemIndicator>
+      </span>
+    </SelectPrimitive.Item>
+  );
+});
+
+SelectRichItem.displayName = "SelectRichItem";
+
 function SelectSeparator({
   className,
   ...props
@@ -228,6 +281,7 @@ export {
   SelectContent,
   SelectGroup,
   SelectItem,
+  SelectRichItem,
   SelectLabel,
   SelectScrollDownButton,
   SelectScrollUpButton,

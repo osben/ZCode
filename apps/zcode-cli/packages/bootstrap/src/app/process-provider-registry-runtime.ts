@@ -95,9 +95,15 @@ export async function startProcessProviderRegistryRuntime(
                 const snapshot = await readStandaloneAccountProviderConfigSnapshot(
                   credentialStore,
                   env,
-                  { revision: configRevision, providers: configuredProviders },
+                  {
+                    revision: configRevision,
+                    providers: configuredProviders,
+                  },
                 );
-                return { providers: snapshot.providers, states: snapshot.states ?? {} };
+                return {
+                  providers: snapshot.providers,
+                  states: snapshot.states ?? {},
+                };
               },
             });
             standaloneAccount.onDidRefreshError(({ error }) => {
@@ -133,7 +139,11 @@ export async function startProcessProviderRegistryRuntime(
       })
     : undefined;
   // Reuse AccountService's serialization and stale-result discard behavior; credential changes and Built-in changes must not publish independently.
+  const standaloneHeaders = credentialStore
+    ? createStandaloneProviderRuntimeHeadersPort(credentialStore, env)
+    : undefined;
   const disposeCredentialSubscription = credentialStore?.onDidChange?.(async () => {
+    await standaloneHeaders?.invalidateChangedCredentials();
     await standaloneAccount!.refresh("standalone-credentials-changed");
     await runtime.registryService.refresh("standalone-credentials-barrier");
   });
@@ -159,6 +169,7 @@ export async function startProcessProviderRegistryRuntime(
         },
         dispose() {
           disposeCredentialSubscription?.();
+          standaloneHeaders?.clearProjectTokens();
           disposeRecovery?.();
           standaloneAccount?.dispose();
           modelSelectionConfigRepository.dispose();
@@ -166,10 +177,7 @@ export async function startProcessProviderRegistryRuntime(
         },
         ...(credentialStore
           ? {
-              providerRuntimeHeadersPort: createStandaloneProviderRuntimeHeadersPort(
-                credentialStore,
-                env,
-              ),
+              providerRuntimeHeadersPort: standaloneHeaders!,
             }
           : {}),
         runtime,

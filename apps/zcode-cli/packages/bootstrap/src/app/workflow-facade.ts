@@ -230,7 +230,7 @@ export function createWorkflowFacade(deps: CreateWorkflowFacadeDeps): WorkflowFa
       : `/workflow ${definition.kind} ${task}`;
 
   const switchWorkflowToYolo = (): void => {
-    if (deps.runtime.getMode() !== "yolo") {
+    if (deps.runtime.getMode() !== "yolo" && deps.runtime.getMode() !== "guarded") {
       deps.runtime.updateConfig({ mode: "yolo" });
     }
   };
@@ -285,6 +285,7 @@ function createWorkflowChildRuntime(
     {
       ...deps.runtimeConfig,
       agentName: options.workflowKind === "expert" ? "zcode-expert" : "zcode-workflow",
+      // The workflow child is not part of the Guarded contract; it only isolates the parent's task mode and does not inherit approvals.
       mode: "yolo",
       modelSelection: deps.runtime.getSessionModelSelection(),
       parentSessionId: deps.sessionId,

@@ -22,6 +22,8 @@ export interface PermissionRuleValue {
 }
 
 export interface PermissionRuleset {
+  /** Memory grants for group collaboration tasks apply only within the current session. */
+  scope?: "session";
   version?: 1;
   allow?: PermissionRuleValue[];
   deny?: PermissionRuleValue[];
@@ -50,6 +52,7 @@ export type PermissionBrokerReasonSource = "plan_approval_feedback" | "workflow_
 export type PermissionOptionsPolicy = "no-always-allow" | "session-always-allow";
 
 export interface PermissionBrokerRequest {
+  approvalMode?: "user-once";
   requestId: string;
   sessionId: SessionId;
   turnId?: TurnId;
@@ -82,6 +85,14 @@ export interface PermissionBrokerResult {
    * by the broker on the answer side because the wire option schema is strict.
    */
   sessionPermissionUpdates?: PermissionUpdate[];
+  /**
+   * Fields the user changed in the confirmation window before approving, keyed by the tool's own
+   * input field names; `null` means "back to the field's default". Carried only on an allow and
+   * applied only by a tool that declares `applyInputAdjustments` (CreateWorkflow and
+   * AmendWorkflow: docs/dynamic-workflow/launch.md「Adjusting the settings in the window」).
+   * Synthesized by the broker from the v4 answer's `content`.
+   */
+  inputAdjustments?: Readonly<Record<string, unknown>>;
   resolvedAt?: Date;
 }
 
@@ -96,5 +107,8 @@ export interface PermissionBrokerPort {
   requestPermission(
     request: PermissionBrokerRequest,
     options?: PermissionBrokerRequestOptions,
-  ): Promise<PermissionBrokerResult>;
+  ): Promise<PermissionBrokerResult> & {
+    /** Required for asynchronous registration; omission means synchronous registration during the call. Indicates only that a response is possible; it does not hold grant state. */
+    readonly registered?: Promise<void>;
+  };
 }

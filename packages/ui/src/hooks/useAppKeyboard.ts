@@ -9,7 +9,7 @@ import {
 import { useEffectiveShortcutBindings } from "@/shortcuts/useShortcutBindings.js";
 
 /** Handler table for window-channel shortcuts: command ID → callback; null/missing means the command is currently unavailable. */
-type AppKeyboardHandlers = Partial<Record<ShortcutCommandId, (() => void) | null>>;
+export type AppKeyboardHandlers = Partial<Record<ShortcutCommandId, (() => void) | null>>;
 
 /**
  * Thin global keyboard-dispatch wrapper: window keydown capture → shared shortcut matching → command handler.

@@ -7,6 +7,8 @@ import {
 } from "@zcode/shared";
 import { PROTOCOL_V4_LIMITS } from "@zcode/shared/zcode-protocol-v4";
 import {
+  MissingInlineImageContentError,
+  MissingInlinePdfContentError,
   OversizedInlineImageAttachmentError,
   OversizedInlinePdfAttachmentError,
   OversizedInlineVideoAttachmentError,
@@ -33,7 +35,7 @@ export {
 } from "@/lib/chatAttachmentMetadata.js";
 
 export const MAX_CHAT_ATTACHMENTS = 8;
-const LONG_PASTE_TEXT_ATTACHMENT_CHAR_THRESHOLD = 15 * 1024;
+export const LONG_PASTE_TEXT_ATTACHMENT_CHAR_THRESHOLD = 15 * 1024;
 const INLINE_IMAGE_ATTACHMENT_MAX_BYTES = 20 * 1024 * 1024;
 const INLINE_VIDEO_ATTACHMENT_MAX_BYTES = Math.min(
   VIDEO_INPUT_MAX_BYTES,
@@ -41,13 +43,14 @@ const INLINE_VIDEO_ATTACHMENT_MAX_BYTES = Math.min(
 );
 const INLINE_TEXT_ATTACHMENT_MAX_CHARS = 64 * 1024;
 
-export type ChatComposerAttachmentSourceKind = "clipboard-text";
+export type ChatComposerAttachmentSourceKind = "clipboard-text" | "topic-history";
 
 export interface ChatComposerAttachment {
   id: string;
   file?: File;
   filename: string;
   sourceKind?: ChatComposerAttachmentSourceKind;
+  messageCount?: number;
   lineCount?: number;
   charCount?: number;
   mimeType: string;
@@ -107,6 +110,20 @@ export function createChatComposerPathAttachment(localPath: string): ChatCompose
   };
 }
 
+export function createClipboardTextComposerAttachment(
+  text: string,
+  options: { now?: Date } = {},
+): ChatComposerAttachment {
+  const filename = createClipboardTextAttachmentFilename(options.now ?? new Date());
+  const file = new File([text], filename, { type: "text/plain" });
+  return {
+    ...createChatComposerAttachment(file),
+    charCount: text.length,
+    lineCount: countClipboardTextLines(text),
+    sourceKind: "clipboard-text",
+  };
+}
+
 export function createClipboardTextPathComposerAttachment(
   text: string,
   attachment: CreateTempTextAttachmentResult,
@@ -129,6 +146,163 @@ export function shouldCreateClipboardTextAttachment(text: string): boolean {
 
 export function createClipboardTextAttachmentFilenameForDate(now: Date = new Date()): string {
   return createClipboardTextAttachmentFilename(now);
+}
+
+function decodeBase64ToBytes(dataBase64: string) {
+  const binary = atob(dataBase64);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+  return bytes;
+}
+
+function estimateDecodedBase64Bytes(dataBase64: string) {
+  const paddingBytes = dataBase64.endsWith("==") ? 2 : dataBase64.endsWith("=") ? 1 : 0;
+  return Math.max(0, Math.floor((dataBase64.length * 3) / 4) - paddingBytes);
+}
+
+export function restoreChatComposerAttachment(
+  attachment: ZCodePromptAttachment,
+): ChatComposerAttachment {
+  const mimeType = normalizeComposerMimeType(
+    attachment.mimeType || inferAttachmentMimeType(attachment.filename),
+  );
+  const sizeBytes = "sizeBytes" in attachment ? (attachment.sizeBytes ?? 0) : 0;
+
+  if (attachment.localPath && !attachment.dataBase64) {
+    return {
+      id: nanoid(),
+      filename: attachment.filename,
+      localPath: attachment.localPath,
+      mimeType,
+      ...("sourceKind" in attachment &&
+      (attachment.sourceKind === "clipboard-text" || attachment.sourceKind === "topic-history")
+        ? { sourceKind: attachment.sourceKind, messageCount: attachment.messageCount }
+        : {}),
+      sizeBytes,
+    };
+  }
+
+  if (!attachment.dataBase64) {
+    if (mimeType.startsWith("image/")) {
+      if (!attachment.localPath && sizeBytes <= INLINE_IMAGE_ATTACHMENT_MAX_BYTES) {
+        // Root cause: a small image in metadata-only state has no File/base64/localPath and cannot
+        // be read when sent later. Reject it with a structured error during restore so the UI does
+        // not show an attachment chip that appears sendable but will fail.
+        throw new MissingInlineImageContentError({
+          filename: attachment.filename,
+          sizeBytes,
+        });
+      }
+      return {
+        id: nanoid(),
+        filename: attachment.filename,
+        localPath: attachment.localPath,
+        mimeType,
+        sizeBytes,
+      };
+    }
+    if (mimeType.split(";", 1)[0]?.trim().toLowerCase() === PDF_MIME_TYPE) {
+      if (!attachment.localPath) {
+        throw new MissingInlinePdfContentError({
+          filename: attachment.filename,
+          sizeBytes,
+        });
+      }
+      return {
+        id: nanoid(),
+        filename: attachment.filename,
+        localPath: attachment.localPath,
+        mimeType,
+        sizeBytes,
+      };
+    }
+    const file = new File(
+      [attachment.kind === "file" ? (attachment.textContent ?? "") : ""],
+      attachment.filename,
+      {
+        type: mimeType,
+      },
+    );
+    return createChatComposerAttachment(file, attachment.localPath);
+  }
+
+  const hasImageBase64 = mimeType.startsWith("image/") && Boolean(attachment.dataBase64);
+  const hasVideoBase64 = mimeType.startsWith("video/") && Boolean(attachment.dataBase64);
+  const hasPdfBase64 = mimeType.split(";", 1)[0]?.trim().toLowerCase() === PDF_MIME_TYPE;
+  // Root cause: video restore initially reused effectiveSizeBytes, which was calculated only for
+  // images. An optional or understated sizeBytes could bypass the pre-decode limit. Use content
+  // length for inline media; metadata supplies only a lower bound.
+  const estimatedSizeBytes =
+    hasImageBase64 || hasVideoBase64 || hasPdfBase64
+      ? estimateDecodedBase64Bytes(attachment.dataBase64)
+      : sizeBytes;
+  const effectiveSizeBytes = Math.max(sizeBytes, estimatedSizeBytes);
+
+  if (hasImageBase64 && effectiveSizeBytes > INLINE_IMAGE_ATTACHMENT_MAX_BYTES) {
+    if (attachment.localPath) {
+      // Root cause: agent/core eventually checks the real file size for images with a localPath and
+      // decides whether to fall back to a path reference. The renderer should not fully decode a
+      // large leftover dataBase64 from an old draft just to restore the composer chip.
+      return {
+        id: nanoid(),
+        filename: attachment.filename,
+        localPath: attachment.localPath,
+        mimeType,
+        sizeBytes: effectiveSizeBytes,
+      };
+    }
+    // Root cause: draft/prefill restore also runs in the renderer, and historical/cross-device
+    // attachments may omit sizeBytes. Use base64 length as a fallback to reject oversized inline
+    // images before atob, preventing decode-time memory spikes for old drafts.
+    throw new OversizedInlineImageAttachmentError({
+      filename: attachment.filename,
+      maxSizeBytes: INLINE_IMAGE_ATTACHMENT_MAX_BYTES,
+      sizeBytes: effectiveSizeBytes,
+    });
+  }
+
+  // Apply the same size-limit rejection to videos and images; for files with a localPath, let the agent side fall back based on the real size.
+  if (hasVideoBase64 && effectiveSizeBytes > VIDEO_INPUT_MAX_BYTES) {
+    if (attachment.localPath) {
+      return {
+        id: nanoid(),
+        filename: attachment.filename,
+        localPath: attachment.localPath,
+        mimeType,
+        sizeBytes: effectiveSizeBytes,
+      };
+    }
+    throw new OversizedInlineVideoAttachmentError({
+      filename: attachment.filename,
+      maxSizeBytes: VIDEO_INPUT_MAX_BYTES,
+      sizeBytes: effectiveSizeBytes,
+    });
+  }
+
+  if (hasPdfBase64 && effectiveSizeBytes > PROTOCOL_V4_LIMITS.attachmentMaxBytes) {
+    if (attachment.localPath) {
+      return {
+        id: nanoid(),
+        filename: attachment.filename,
+        localPath: attachment.localPath,
+        mimeType,
+        sizeBytes: effectiveSizeBytes,
+      };
+    }
+    throw new OversizedInlinePdfAttachmentError({
+      filename: attachment.filename,
+      maxSizeBytes: PROTOCOL_V4_LIMITS.attachmentMaxBytes,
+      sizeBytes: effectiveSizeBytes,
+    });
+  }
+
+  const bytes = decodeBase64ToBytes(attachment.dataBase64);
+  const file = new File([bytes], attachment.filename, {
+    type: mimeType,
+  });
+  return createChatComposerAttachment(file, attachment.localPath);
 }
 
 export function revokeChatComposerAttachment(attachment: ChatComposerAttachment) {
@@ -245,7 +419,9 @@ export async function serializeChatComposerAttachment(
       filename: attachment.filename,
       localPath: attachment.localPath,
       mimeType,
-      ...(attachment.sourceKind === "clipboard-text" ? { sourceKind: "clipboard-text" } : {}),
+      ...(attachment.sourceKind
+        ? { sourceKind: attachment.sourceKind, messageCount: attachment.messageCount }
+        : {}),
       sizeBytes: attachment.sizeBytes,
     };
   }
@@ -260,6 +436,9 @@ export async function serializeChatComposerAttachment(
     mimeType,
     sizeBytes: attachment.sizeBytes,
     ...(textContent !== undefined ? { textContent } : {}),
+    ...(attachment.sourceKind
+      ? { sourceKind: attachment.sourceKind, messageCount: attachment.messageCount }
+      : {}),
   };
 }
 
@@ -273,6 +452,13 @@ async function readAttachmentBase64(attachment: ChatComposerAttachment): Promise
     throw new Error("附件数据格式不正确");
   }
   return dataUrl.slice(base64MarkerIndex + 1);
+}
+
+export function getChatAttachmentPreviewUrl(attachment: ZCodePromptAttachment): string | null {
+  if (!attachment.dataBase64) {
+    return null;
+  }
+  return `data:${attachment.mimeType};base64,${attachment.dataBase64}`;
 }
 
 export function isImageChatComposerAttachment(attachment: ChatComposerAttachment): boolean {

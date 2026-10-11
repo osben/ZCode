@@ -15,6 +15,7 @@ ZCode is an AI coding workspace with desktop, browser, and terminal interfaces. 
 
 ## Updates
 
+- 2026-10-10: Updated to ZCode v3.15.1.
 - 2026-9-23: Updated to ZCode v3.14.3.
 
 ## Setup
@@ -114,6 +115,12 @@ node apps/zcode-cli/packages/cli/dist/zcode.cjs --help
 ```
 
 This entry runs the Agent CLI directly and does not handle the distribution's `--web` switch. Use `pnpm dev:web` for Web development, or the extracted `bin/zcode.mjs` shown below to test the unified command.
+
+### UI Plugin Development
+
+See [UI Plugin: Capabilities, API, and Debugging](UI_PLUGIN.en.md), starting with the Excalidraw canvas collaboration example to learn about plugin installation and updates, page APIs, and host integration.
+
+**When submitting a plugin PR to `zcode-plugins`, declare in the PR template whether it is a UI Plugin and provide the plugin name.** See [Declare the plugin type when submitting a PR](UI_PLUGIN.en.md#declare-the-plugin-type-in-pull-requests) for the criteria.
 
 ## Configuration
 

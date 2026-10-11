@@ -1,7 +1,10 @@
-import type { ZCodeTaskMeta } from "@zcode/shared";
-import { mergeTaskMetaCandidates } from "@/lib/zcodeTaskMetaMerge.js";
-import { buildTaskEntityKey } from "@/lib/taskQueryCache.js";
-import { getTaskMeta, useZCodeSessionStore } from "@/store/zcodeSessionStore.js";
+import type { InputId, ZCodeProvider, ZCodeTaskMeta } from "@zcode/shared";
+import {
+  getTaskMeta,
+  resolveWorkspaceStateKey,
+  useZCodeSessionStore,
+} from "@/store/zcodeSessionStore.js";
+import { mergeTaskMetaCandidates, mergeTaskWithOptimisticMeta } from "@/lib/zcodeTaskMetaMerge.js";
 import {
   applyTaskQueryCacheMutation,
   removeTaskFromTaskQueryCaches,
@@ -10,29 +13,72 @@ import {
   useTaskQueryCacheStore,
   type TaskListMembershipState,
 } from "@/store/taskQueryCacheStore.js";
-
-export function removeTaskFromTaskCaches(params: {
-  workspacePath: string;
-  workspaceIdentity?: string;
-  taskId: string;
-}): boolean {
-  const store = useZCodeSessionStore.getState();
-  const workspaceState = store.getWorkspaceState(params.workspacePath, params.workspaceIdentity);
-  if (workspaceState.taskListCache) {
-    store.setTaskListCache(
-      params.workspacePath,
-      workspaceState.taskListCache.filter((task) => task.taskId !== params.taskId),
-      params.workspaceIdentity,
-    );
-  }
-  store.removeTaskState(params.workspacePath, params.taskId, params.workspaceIdentity);
-  return removeTaskFromTaskQueryCaches(params);
-}
+import { buildTaskEntityKey, buildTaskWorkspaceKey } from "@/lib/taskQueryCache.js";
 
 const ABSENT_MEMBERSHIP: TaskListMembershipState = {
   pinned: true,
   archived: true,
 };
+
+function inferTaskMembershipFromQueryCaches(params: {
+  workspacePath: string;
+  workspaceIdentity?: string;
+  taskId: string;
+}): TaskListMembershipState | null {
+  const entityKey = buildTaskEntityKey(params);
+  const workspaceKey = buildTaskWorkspaceKey(params.workspacePath, params.workspaceIdentity);
+  const { resultsByQueryKey } = useTaskQueryCacheStore.getState();
+  let foundActive = false;
+  let foundPinned = false;
+
+  for (const result of Object.values(resultsByQueryKey)) {
+    if (!result.taskKeys.includes(entityKey)) {
+      continue;
+    }
+    if (!result.descriptor.workspaceKeys.includes(workspaceKey)) {
+      continue;
+    }
+    if (result.descriptor.kind === "archived") {
+      return { pinned: false, archived: true };
+    }
+    if (result.descriptor.kind === "pinned") {
+      foundPinned = true;
+      continue;
+    }
+    if (
+      result.descriptor.kind === "workspace" ||
+      result.descriptor.kind === "timeline" ||
+      // Bugfix: active is the canonical active list used by search/Command Center. Omitting it makes
+      // active-only visible tasks appear absent, causing pin/archive events to update total incorrectly.
+      result.descriptor.kind === "active"
+    ) {
+      foundActive = true;
+    }
+  }
+
+  if (foundPinned) {
+    return { pinned: true, archived: false };
+  }
+  if (foundActive) {
+    return { pinned: false, archived: false };
+  }
+
+  return null;
+}
+
+function membershipForWorkspaceEventReason(
+  reason: "task_archived" | "task_unarchived" | "task_pinned" | "task_unpinned",
+): TaskListMembershipState {
+  switch (reason) {
+    case "task_archived":
+      return { pinned: false, archived: true };
+    case "task_pinned":
+      return { pinned: true, archived: false };
+    case "task_unarchived":
+    case "task_unpinned":
+      return { pinned: false, archived: false };
+  }
+}
 
 function sortTasksByUpdatedAt(tasks: readonly ZCodeTaskMeta[]): ZCodeTaskMeta[] {
   return [...tasks].sort((left, right) => {
@@ -121,6 +167,111 @@ export function syncTaskMetaToTaskCaches(params: {
   }
 }
 
+export function syncTaskMembershipEventToTaskCaches(params: {
+  workspacePath: string;
+  workspaceIdentity?: string;
+  task: ZCodeTaskMeta;
+  reason: "task_archived" | "task_unarchived" | "task_pinned" | "task_unpinned";
+}): void {
+  const previousMembership =
+    inferTaskMembershipFromQueryCaches({
+      workspacePath: params.workspacePath,
+      workspaceIdentity: params.workspaceIdentity,
+      taskId: params.task.taskId,
+    }) ?? ABSENT_MEMBERSHIP;
+  const nextMembership = membershipForWorkspaceEventReason(params.reason);
+
+  // Bugfix: when remote control or another window archives/pins a task, this window has no local
+  // optimistic mutation. Previously, only the entire query cache could be invalidated, making the
+  // list flicker after a click. Infer the old membership from the current cache position and move it incrementally.
+  syncTaskMetaToTaskCaches({
+    workspacePath: params.workspacePath,
+    workspaceIdentity: params.workspaceIdentity,
+    task: params.task,
+    membership: nextMembership,
+    applyQueryCacheMutation: false,
+  });
+  applyTaskQueryCacheMutation({
+    previousTask: params.task,
+    nextTask: params.task,
+    previousState: previousMembership,
+    nextState: nextMembership,
+  });
+}
+
+export function removeTaskFromTaskCaches(params: {
+  workspacePath: string;
+  workspaceIdentity?: string;
+  taskId: string;
+}): boolean {
+  const store = useZCodeSessionStore.getState();
+  const workspaceState = store.getWorkspaceState(params.workspacePath, params.workspaceIdentity);
+  if (workspaceState.taskListCache) {
+    store.setTaskListCache(
+      params.workspacePath,
+      workspaceState.taskListCache.filter((task) => task.taskId !== params.taskId),
+      params.workspaceIdentity,
+    );
+  }
+  store.removeTaskState(params.workspacePath, params.taskId, params.workspaceIdentity);
+  return removeTaskFromTaskQueryCaches(params);
+}
+
+export function patchTaskMetaInTaskCaches(params: {
+  workspacePath: string;
+  workspaceIdentity?: string;
+  taskId: string;
+  patch: (task: ZCodeTaskMeta) => Partial<ZCodeTaskMeta>;
+}): ZCodeTaskMeta | null {
+  const store = useZCodeSessionStore.getState();
+  const workspaceState = store.getWorkspaceState(params.workspacePath, params.workspaceIdentity);
+  const identityWorkspaceState = params.workspaceIdentity
+    ? store.workspaces[resolveWorkspaceStateKey(params.workspacePath, params.workspaceIdentity)]
+    : undefined;
+  const taskCacheState = identityWorkspaceState ?? workspaceState;
+  const currentTask =
+    getTaskMeta(workspaceState, params.taskId) ??
+    (identityWorkspaceState ? getTaskMeta(identityWorkspaceState, params.taskId) : null);
+  if (!currentTask) {
+    return null;
+  }
+
+  const patch = params.patch(currentTask);
+  const shouldPreserveManualTitle =
+    currentTask.titleOverridden === true &&
+    patch.title !== undefined &&
+    patch.title !== currentTask.title &&
+    patch.titleOverridden !== false;
+  const patchedTask = {
+    ...currentTask,
+    ...patch,
+    // Bugfix: after a user renames a task, session_info_update from the running session may still
+    // contain its automatic title. These patches should refresh only runtime fields and must not
+    // temporarily overwrite a manually set titleOverridden value.
+    title: shouldPreserveManualTitle ? currentTask.title : (patch.title ?? currentTask.title),
+    titleOverridden: patch.titleOverridden ?? currentTask.titleOverridden,
+  };
+  // Bugfix: session_info_update/snapshot patches may only be filling runtime state while carrying
+  // the “New session” placeholder title. Merge with current metadata again after the patch to keep
+  // status/target/updatedAt without writing the placeholder into the task/query cache.
+  const nextTask = mergeTaskWithOptimisticMeta(patchedTask, currentTask);
+
+  store.upsertOptimisticTaskListItem(params.workspacePath, nextTask, params.workspaceIdentity);
+  if (taskCacheState.taskListCache) {
+    store.setTaskListCache(
+      params.workspacePath,
+      taskCacheState.taskListCache.map((task) => (task.taskId === params.taskId ? nextTask : task)),
+      params.workspaceIdentity,
+    );
+  }
+  // Bugfix: when mobile returns from chat to the task list, run start patches only the current
+  // task's status/updatedAt. If the query cache replaces metadata without reordering, the
+  // remote-control home sorted by update time stays in the old order.
+  updateTaskQueryCacheTaskMetaPreservingMembership(nextTask);
+
+  return nextTask;
+}
+
 export function insertTaskIntoTaskCaches(params: {
   workspacePath: string;
   workspaceIdentity?: string;
@@ -138,5 +289,35 @@ export function insertTaskIntoTaskCaches(params: {
     forceInsertMembership: true,
     ensureInWorkspaceTaskCache:
       params.membership.pinned === false && params.membership.archived === false,
+  });
+}
+
+export function initializeBackgroundTaskInTaskCaches(params: {
+  workspacePath: string;
+  workspaceIdentity?: string;
+  task: ZCodeTaskMeta;
+  provider: ZCodeProvider;
+  activeInputId: InputId;
+}): void {
+  const store = useZCodeSessionStore.getState();
+  const workspaceState = store.getWorkspaceState(params.workspacePath, params.workspaceIdentity);
+  const previousTask = getTaskMeta(workspaceState, params.task.taskId);
+  const task = previousTask ? mergeTaskWithOptimisticMeta(params.task, previousTask) : params.task;
+
+  store.initializeBackgroundTaskRuntime(params.workspacePath, {
+    workspaceIdentity: params.workspaceIdentity,
+    task,
+    provider: params.provider,
+    activeInputId: params.activeInputId,
+  });
+  upsertTaskQueryCacheTaskMeta(task);
+  // Root cause: background first-send no longer writes optimistically before inserting into the
+  // cache. The query cache still needs to insert the member as “absent → active” so sidebar total
+  // and Show more match a regular first send.
+  applyTaskQueryCacheMutation({
+    previousTask: previousTask ?? task,
+    nextTask: task,
+    previousState: ABSENT_MEMBERSHIP,
+    nextState: { pinned: false, archived: false },
   });
 }

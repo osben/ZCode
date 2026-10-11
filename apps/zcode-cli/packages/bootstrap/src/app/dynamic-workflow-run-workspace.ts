@@ -41,7 +41,9 @@ interface WorkspaceReadableJournal
   extends JournalStorePort, Pick<DwfRunIntrospectionQueries, "listWorldNodes"> {}
 
 /** Whether the journal provides workspace reads. Deliberately a sibling of `supportsArtifactReads`, not an expansion of it (same rationale). */
-function supportsWorkspaceReads(journal: JournalStorePort): journal is WorkspaceReadableJournal {
+export function supportsWorkspaceReads(
+  journal: JournalStorePort,
+): journal is WorkspaceReadableJournal {
   return typeof (journal as Partial<DwfRunIntrospectionQueries>).listWorldNodes === "function";
 }
 
@@ -174,7 +176,7 @@ function truncateUtf8(text: string, maxBytes: number): string {
  * - `world.run`'s `{exitCode, stdout, stderr}`: always preserve exitCode and split the remaining budget evenly between both output streams.
  * - Other values: return unchanged if serialization fits; otherwise fall back to truncated JSON text (the shape can no longer be preserved).
  */
-function boundWorkspaceResult(
+export function boundWorkspaceResult(
   result: unknown,
   maxBytes: number,
 ): { result: unknown; truncated: boolean; totalBytes: number } {

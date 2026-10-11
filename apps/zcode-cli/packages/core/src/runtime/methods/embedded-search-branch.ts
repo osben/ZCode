@@ -36,8 +36,7 @@ export function refreshBranchAwareBuiltInTools(runtime: AgentRuntimeInternal): v
     // removed during initial setup when the shell snapshot initializes (registry.register overwrites same-name entries,
     // and silentDuplicateWarnings hides the warning, so it is silent). Derivation must therefore share the helper in runtime-tools.ts
     // instead of reimplementing the condition here.
-    includeDynamicWorkflow: resolveRuntimeDynamicWorkflowToolsIncluded(runtime.config),
-    agentProfiles: runtime.config.subagents?.profiles,
+    includeDynamicWorkflow: resolveRuntimeDynamicWorkflowToolsIncluded(runtime),
     allowedTools: resolveBuiltInToolAllowlist(runtime.config),
     disallowedTools: runtime.config.toolDisallowlist,
     silentDuplicateWarnings: true,

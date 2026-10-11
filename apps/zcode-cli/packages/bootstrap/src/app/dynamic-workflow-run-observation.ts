@@ -8,7 +8,10 @@
 import type { DwfRunListItem, DwfRunSessionListItem } from "@zcode/adapters/storage";
 import {
   boundDynamicWorkflowRunEventPayload,
+  DYNAMIC_WORKFLOW_SNAPSHOT_MAX_REPORT_BYTES,
+  DYNAMIC_WORKFLOW_SNAPSHOT_MAX_REPORTS,
   type DynamicWorkflowRunError,
+  type DynamicWorkflowRunHole,
   type DynamicWorkflowRunLogEntry,
   type DynamicWorkflowRunPendingQuestion,
   type DynamicWorkflowRunSessionSummary,
@@ -18,7 +21,6 @@ import {
 } from "@zcode/contracts";
 import type {
   JournalStorePort,
-  NodeRecord,
   RunRecord,
   RunSettlement,
   RunStatus,
@@ -29,9 +31,14 @@ import type {
 } from "@zcode/dynamic-workflow";
 import { artifactsOf } from "./dynamic-workflow-run-artifact-projection.js";
 import { runLineageActiveMs } from "./dynamic-workflow-run-elapsed.js";
-import { readRunScriptPath, readRunSubagentModel } from "./dynamic-workflow-run-launch-anchor.js";
+import {
+  readRunModelBindings,
+  readRunScriptPath,
+  readRunSubagentModel,
+} from "./dynamic-workflow-run-launch-anchor.js";
 import { resolveDynamicWorkflowRunLabel } from "./dynamic-workflow-run-label.js";
 import { lineageFields, supersededByOf } from "./dynamic-workflow-run-lineage.js";
+import type { CompiledHole } from "./dynamic-workflow-run-holes.js";
 import type { ActorSessionQuiescence } from "./workflow-driver-quiescence.js";
 import type { WorkflowRunControl } from "./workflow-run-control.js";
 
@@ -65,9 +72,10 @@ export interface RunRegistryEntry {
    */
   maxConcurrency?: number;
   /**
-   * Live control surface for this run. Kept alongside, not merged with, {@link controller}: that is
-   * the only channel for "stop this run," while this is the only channel for "change a run setting."
-   * Their recipients also differ (harness signal vs engine and admission gate).
+   * Live control surface for this run (docs/dynamic-workflow/concurrency.md "The control path").
+   * Kept alongside, not merged with, {@link controller}: that is the only channel for "stop this
+   * run," while this is the only channel for "change a run setting." Their recipients also differ
+   * (harness signal vs engine and admission gate).
    *
    * All three entry-creation paths (submit / amend / resume) create one; launch connects both ends.
    * If the entry exists but its `setMaxConcurrency` handle returns false, the run settled between
@@ -88,6 +96,13 @@ export interface RunRegistryEntry {
    */
   subagentModel?: string;
   /**
+   * Model bindings named by this run's script (in-memory copy of `modelBindings` on the
+   * `run-launched` event; docs/dynamic-workflow/launch.md "Models the script names"). Same rules as
+   * {@link subagentModel}: all three entry-creation paths set it, it never changes afterward, and
+   * read surfaces read the entry when present. Omission means the script named no models.
+   */
+  modelBindings?: Record<string, string>;
+  /**
    * Script file for this run (in-memory copy of the absolute path on the `run-launched` event).
    * Follows the same rules as {@link subagentModel}: all three entry paths set it (submit / amend
    * use the input, resume reads and copies the event header once), and the value is fixed at run
@@ -96,6 +111,21 @@ export interface RunRegistryEntry {
   scriptPath?: string;
   /** Predecessor of an amended run (in-memory copy of `dwf_run.resumed_from`, the only enumeration source before the journal row exists). */
   resumedFrom?: string;
+  /**
+   * Hole fact table of the **currently effective script** (docs/execution-engine.md "Holes"): the
+   * snapshot's `type` / `line` and the progress payload's `type` read it. All three entry-creation
+   * paths set it from the compiled artifact; a fill replaces it with the effective script's table —
+   * holes nested inside a function body appear this way. It is replaced in lockstep with
+   * `scriptText`; both must describe the same script.
+   */
+  holes?: readonly CompiledHole[];
+  /**
+   * Phase table in effect at this moment (holes keyed by name): submit / amend copy the table
+   * supplied by the submitter, resume reads it back from the event, and a fill replaces it with the
+   * effective script's table (the same one the engine records on `hole-filled`). The snapshot's
+   * before / after read it.
+   */
+  phaseNames?: readonly string[];
   /**
    * Usage baseline for this run (`spentTokens` after predecessor settlement). Same gap rationale:
    * before the row is persisted, both read surfaces can read usage only from the entry, and an
@@ -146,8 +176,8 @@ export const TERMINAL_RUN_STATUSES: ReadonlySet<RunStatus> = new Set<RunStatus>(
  * I/O and holds no state). An empty array means there are no pending questions, so omit the field
  * entirely rather than sending an empty array.
  *
- * The caller also supplies `concurrencyCeiling` (reading it probes process CPU count = I/O).
- * Omission means this read does not evaluate the ceiling and omits `maxConcurrency` entirely; see
+ * The caller also supplies `defaultConcurrency` (reading it probes process CPU count = I/O).
+ * Omission means this read does not evaluate the default and omits `maxConcurrency` entirely; see
  * {@link runConcurrencyField}.
  */
 export function snapshotOf(
@@ -155,7 +185,13 @@ export function snapshotOf(
   runs: Map<string, RunRegistryEntry>,
   journal: JournalStorePort,
   pendingQuestions: readonly DynamicWorkflowRunPendingQuestion[] = [],
-  concurrencyCeiling?: number,
+  defaultConcurrency?: number,
+  /**
+   * Holes (docs/execution-engine.md "The run snapshot"), projected by the caller under the same
+   * rule as `pendingQuestions` (`waiting` needs the engine's parked table, which is live state
+   * outside this I/O boundary); empty means the entire field is absent.
+   */
+  holes: readonly DynamicWorkflowRunHole[] = [],
 ): DynamicWorkflowRunSnapshot | undefined {
   const entry = runs.get(taskId);
   const record = journal.getRun(taskId);
@@ -169,18 +205,19 @@ export function snapshotOf(
     synthesizeRunStatus(entry, record?.status),
   );
 
-  // Scan node rows only **once**, shared by reports and artifacts (both are read only at terminal
-  // state; see their comments). Separate listNodes calls would decode all rows twice for a 256-node run.
-  const nodes = status === "running" ? undefined : journal.listNodes(taskId);
+  // reports / artifacts / active duration are read only at terminal state: their only consumers are
+  // terminal notifications and terminal TaskOutput, while snapshots are repeatedly polled by the
+  // background tracker — reading them while in flight has no readers, only cost.
+  const settled = status !== "running";
 
-  // Active duration of the lineage. Same terminal-state gate and rationale as nodes: its only
-  // consumer is terminal notification, while snapshots are repeatedly polled by the background tracker.
-  const activeDurationMs = status === "running" ? undefined : runLineageActiveMs(journal, taskId);
+  // Active duration of the lineage (docs/dynamic-workflow/transcript-and-notifications.md "How long it took").
+  const activeDurationMs = settled ? runLineageActiveMs(journal, taskId) : undefined;
 
-  // Actual terminal state + stop reason + structured failure: the snapshot base `status` uses the
-  // background task tracker's generic vocabulary (stopped becomes cancelled, errored becomes
-  // failed), so notifications need these three fields to report the real result. Omit them before
-  // terminal state because no final outcome exists yet.
+  // Actual terminal state + stop reason + structured failure
+  // (apps/zcode-cli/packages/dynamic-workflow/docs/execution-engine.md): the snapshot base `status`
+  // uses the background task tracker's generic vocabulary (stopped becomes cancelled, errored
+  // becomes failed), so notifications need these three fields to report the real result. Omit them
+  // before terminal state because no final outcome exists yet.
   const runStatus = synthesizeRunStatus(entry, record?.status);
   const terminal = TERMINAL_RUN_STATUSES.has(runStatus);
   const stopReason = terminal ? stopReasonOf(entry, record) : undefined;
@@ -203,7 +240,7 @@ export function snapshotOf(
     // during the microtasks between submit and createRun, when AmendWorkflow's resolveInput may read this snapshot.
     ...runConcurrencyField(
       entry?.maxConcurrency ?? record?.caps.maxConcurrency,
-      concurrencyCeiling,
+      defaultConcurrency,
     ),
     // Subagent model: **read the entry when present** (all three entry paths set it; see
     // RunRegistryEntry.subagentModel). Only scan the event header for a cold row (bounded scan of
@@ -219,20 +256,26 @@ export function snapshotOf(
     ...runScriptPathField(
       entry === undefined ? readRunScriptPath(journal, taskId) : entry.scriptPath,
     ),
+    // Models named by the script: same rules as the subagent model. AmendWorkflow and the GUI
+    // "configuration" view use it to let bindings with the same name carry over.
+    ...runModelBindingsField(
+      entry === undefined ? readRunModelBindings(journal, taskId) : entry.modelBindings,
+    ),
     ...(failure === undefined ? {} : { failure }),
     ...(activeDurationMs === undefined ? {} : { activeDurationMs }),
     ...(entry?.completedAt === undefined ? {} : { completedAt: entry.completedAt }),
     ...(error === undefined ? {} : { error }),
     // When there are no items, omit the entire field (same as reports) so readers remove the pending section instead of rendering it empty.
     ...(pendingQuestions.length === 0 ? {} : { pendingQuestions }),
-    ...reportsOf(nodes),
+    ...(holes.length === 0 ? {} : { holes }),
+    ...(settled ? reportsOf(taskId, journal) : {}),
     // User-facing artifacts. ⚠ This is **different from** the adjacent `output`
     // (`entry.terminal.artifact` = script's top-level return value, also called artifact inside the
     // engine): this is output published for users through `artifact.*`, while that is returned to the model.
-    ...(nodes === undefined ? {} : artifactsOf(taskId, journal, nodes)),
+    ...(settled ? artifactsOf(taskId, journal) : {}),
     ...(entry?.terminal?.status === "completed"
       ? { output: entry.terminal.artifact }
-      : // After restart, this process's registry is empty, so artifacts can only be read from journal records (the journal row's
+      : // After restart, this process's registry is empty, so artifacts can only be read from journal records (migration 0020's
         // result_json). In-memory terminal state takes precedence above; it is the original value just received from this process's engine.
         record?.status === "completed" && record.result !== undefined
         ? { output: record.result }
@@ -243,19 +286,21 @@ export function snapshotOf(
 /**
  * `maxConcurrency` on both read surfaces (`getTask` snapshot and `getRunDetail` detail)
  *
- * **Present only below the current ceiling**: a run at the ceiling has nothing to report; that is
- * the default behavior, and attaching the default value to every row would make the model read
- * "unlimited" as "limited." If the caller omits the ceiling, omit the entire field as well: without
- * the comparison, reporting a number would be a guess.
+ * **Present only when different from the default concurrency** (above or below both count): a run
+ * at the default has nothing to report; that is the default behavior, and attaching the default
+ * value to every row would make the model read "unlimited" as "limited." If the caller omits the
+ * default, omit the entire field as well: without the comparison, reporting a number would be a guess.
  *
  * One implementation is shared by both read surfaces; separate checks would eventually disagree on
- * whether a value equal to the ceiling should be present.
+ * whether a value equal to the default should be present.
  */
 export function runConcurrencyField(
   applied: number | undefined,
-  ceiling: number | undefined,
+  defaultConcurrency: number | undefined,
 ): { maxConcurrency?: number } {
-  if (applied === undefined || ceiling === undefined || applied >= ceiling) return {};
+  if (applied === undefined || defaultConcurrency === undefined || applied === defaultConcurrency) {
+    return {};
+  }
   return { maxConcurrency: applied };
 }
 
@@ -275,6 +320,15 @@ export function runSubagentModelField(subagentModel: string | undefined): {
   return subagentModel === undefined ? {} : { subagentModel };
 }
 
+/** `modelBindings` on both read surfaces: same rule as {@link runSubagentModelField}, present only when recorded (and non-empty). */
+export function runModelBindingsField(modelBindings: Record<string, string> | undefined): {
+  modelBindings?: Record<string, string>;
+} {
+  return modelBindings === undefined || Object.keys(modelBindings).length === 0
+    ? {}
+    : { modelBindings };
+}
+
 /**
  * `scriptPath` on both read surfaces. Same rule as {@link runSubagentModelField}: **present only
  * when recorded**, with no comparable default. "This run has no script file" is not a path that can
@@ -286,8 +340,8 @@ export function runScriptPathField(scriptPath: string | undefined): { scriptPath
 }
 
 /**
- * `reports` on a terminal snapshot: journal node rows with `kind = "report"` (written once, always
- * `completed`, reported item in `result`), in insertion order = report order.
+ * `reports` and `reportCount` on a terminal snapshot: journal node rows with `kind = "report"`
+ * (written once, always `completed`, reported item in `result`), in insertion order = report order.
  *
  * Why read from the journal instead of the projection: `workflowRuns.reports` is a bounded,
  * memory-only display surface (empty after cold recovery), while these rows are the **durable home**
@@ -295,17 +349,30 @@ export function runScriptPathField(scriptPath: string | undefined): { scriptPath
  * a run that failed on ask 12 still completed 11 asks, which is why `report` exists. Therefore read
  * the durable copy.
  *
- * Read only at **terminal state**: the background tracker polls `getTask` repeatedly, and listNodes
- * scans the entire table (a 256-node run would decode all 256 rows on every poll). The only
- * consumers are terminal notifications and terminal TaskOutput; reading while active has no
- * consumer, only cost. The caller enforces this rule: missing `nodes` means "active; do not read,"
- * allowing the same scan to feed {@link artifactsOf}.
+ * Read only the first {@link DYNAMIC_WORKFLOW_SNAPSHOT_MAX_REPORTS} items, at most
+ * {@link DYNAMIC_WORKFLOW_SNAPSHOT_MAX_REPORT_BYTES} bytes of items, with the total from a single
+ * `count(*)` (docs/execution-engine.md "Reading the journal"). Fix rationale: this used to read the
+ * entire node table with every report item into memory — a fully reported run had to decode
+ * GiB-scale items at settlement, while the notification section's character budget only fits a few
+ * dozen. A count limit alone is not enough: with a 1 MiB per-item cap, 256 items are 256 MiB. When
+ * there are none, both fields are absent so notifications drop the whole `<reports>` section
+ * instead of sending an empty one.
  */
-function reportsOf(nodes: readonly NodeRecord[] | undefined): { reports?: readonly unknown[] } {
-  if (nodes === undefined) return {};
-  const items = nodes.filter((node) => node.kind === "report").map((node) => node.result);
-  // Omit the entire field when there are no items so notifications remove the whole `<reports>` section instead of sending an empty section.
-  return items.length === 0 ? {} : { reports: items };
+function reportsOf(
+  taskId: string,
+  journal: JournalStorePort,
+): { reports?: readonly unknown[]; reportCount?: number } {
+  const reportCount = journal.countNodes(taskId, "report");
+  if (reportCount === 0) return {};
+  const reports = journal
+    .listNodes(taskId, {
+      kinds: ["report"],
+      withResult: true,
+      limit: DYNAMIC_WORKFLOW_SNAPSHOT_MAX_REPORTS,
+      maxResultBytes: DYNAMIC_WORKFLOW_SNAPSHOT_MAX_REPORT_BYTES,
+    })
+    .map((node) => node.result);
+  return { reports, reportCount };
 }
 
 /**

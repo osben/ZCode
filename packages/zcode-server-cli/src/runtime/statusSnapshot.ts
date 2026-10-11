@@ -2,7 +2,7 @@ import { readFile, rename, writeFile } from "node:fs/promises";
 import { serverStatusSchema, type ServerStatus } from "../contracts.js";
 import { resolveServerLayout, type ServerLayout } from "./paths.js";
 
-type PersistedStatusRead =
+export type PersistedStatusRead =
   | { state: "valid"; status: ServerStatus }
   | { state: "missing"; status: null }
   | { state: "invalid" | "unreadable"; status: null; error: unknown };
@@ -10,8 +10,9 @@ type PersistedStatusRead =
 export async function readPersistedStatusDetailed(
   layout: ServerLayout,
 ): Promise<PersistedStatusRead> {
-  // A missing file means offline; corrupt JSON/schema means the observation is untrustworthy. Do not collapse both into null,
-  // or uninstall/stop could mistake "cannot confirm stopped" for "already stopped".
+  // Bug cause: a missing file means offline; corrupt JSON/schema means the observation is
+  // untrustworthy. Do not collapse both into null, or uninstall/stop could mistake "cannot
+  // confirm stopped" for "already stopped".
   let raw: string;
   try {
     raw = await readFile(layout.statusFile, "utf8");

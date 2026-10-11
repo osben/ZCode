@@ -8,12 +8,12 @@ import {
   type ProviderSettingsState,
 } from "@/lib/providerSettingsSnapshot.js";
 
-interface ProviderSettingsRead {
+export interface ProviderSettingsRead {
   state: ProviderSettingsState;
   reload(): void;
 }
 
-interface ProviderSettingsServiceRead extends ProviderSettingsRead {
+export interface ProviderSettingsServiceRead extends ProviderSettingsRead {
   /** The authoritative View returned by the mutation; UI convergence does not depend on an asynchronous onDidChange event. */
   commit(view: ProviderSettingsView): void;
 }

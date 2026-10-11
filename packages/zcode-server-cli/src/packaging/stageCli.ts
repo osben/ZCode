@@ -155,15 +155,17 @@ async function ensureAgentBundle(repoRoot: string, skipBuild: boolean): Promise<
   return bundlePath;
 }
 
-export async function resolveNativeToolsDir(
-  repoRoot: string,
-  target: ServerTarget,
-): Promise<string> {
-  // Remote macOS assets use rg13, so file existence alone is not enough to reuse them for a local release package.
-  // Use the target platform's repository archive validation consistently; the package's own cache must also pass version, hash, and architecture checks.
+async function resolveNativeToolsDir(repoRoot: string, target: ServerTarget): Promise<string> {
+  // Fix: previously mock-cdn/releases/*/tools and bundled-tools were reused on "file exists". Remote
+  // macOS assets are pinned to rg13 but would be reused as rg14 for a standalone Server release
+  // package; those directories could also miss tool license notices. Preparation is now delegated to
+  // prepare-native-search-tools.mjs, which stages assets into server-cli's own cache per the target
+  // release plan: download when the intranet dependency source is configured, otherwise unpack the
+  // repository archive; cache hits must still pass version, digest, and architecture checks, and
+  // refresh the notices in the same directory.
   const [platform, arch] = target.split("-");
   const cacheDir = join(repoRoot, "node_modules/.cache/zcode-server-cli", "tools", target);
-  log(`prepare local native search target assets: ${target}`);
+  log(`prepare native search target assets: ${target}`);
   await runCommand(
     process.execPath,
     [
@@ -217,10 +219,14 @@ async function main(): Promise<void> {
   const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
   const repoRoot = await findRepoRoot(packageRoot);
   const target = parseTarget(argv);
-  // The build only reads and includes existing declarations; explicit commands perform validation, and the runtime server does not depend on repository scripts.
-  const { readThirdPartyNotices, readNodeNotices } = await import(
+  // The build only reads and includes existing notices; the explicit licenses command performs
+  // validation, and the runtime server does not depend on repository scripts.
+  const { readThirdPartyNotices, readNodeNotices } = (await import(
     pathToFileURL(join(repoRoot, "scripts/third-party-notices.mjs")).href
-  );
+  )) as {
+    readThirdPartyNotices: (root: string) => Promise<Buffer>;
+    readNodeNotices: (version: string, root: string) => Promise<{ source: unknown; bytes: Buffer }>;
+  };
   const [thirdParty, nodeNotice] = await Promise.all([
     readThirdPartyNotices(repoRoot),
     readNodeNotices(SERVER_RUNTIME_NODE_VERSION, repoRoot),
@@ -270,6 +276,4 @@ async function main(): Promise<void> {
   log(`packaged dependencies: ${staged.packagedDependencies.join(", ")}`);
 }
 
-if (resolve(process.argv[1] ?? "") === fileURLToPath(import.meta.url)) {
-  await main();
-}
+await main();

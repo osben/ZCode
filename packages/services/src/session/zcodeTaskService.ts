@@ -9,6 +9,9 @@ import type {
   ZCodeSessionCompactResult,
   ZCodeSessionGoalAction,
   ZCodeSessionGoalResult,
+  ZCodeCodexConnectivityCheckResult,
+  ZCodeSwitchAgentResult,
+  ZCodeSyncTaskSessionBindingResult,
   ZCodeTaskCreateResult,
   ZCodeTaskMeta,
   ZCodeStreamEvent,
@@ -209,6 +212,9 @@ export interface IZCodeTaskService {
     provider?: ZCodeProvider;
   }): Promise<void>;
 
+  /** Network check before Codex draft-state prewarming, used to warn early that chatgpt.com is unreachable. */
+  checkCodexConnectivity(): Promise<ZCodeCodexConnectivityCheckResult>;
+
   // ---- Task/Session management ----
 
   /** Create a ZCode session and sync the task index. */
@@ -237,7 +243,66 @@ export interface IZCodeTaskService {
     deferPersistenceUntilFirstPrompt?: boolean;
     /** Bot/host uses native v4 createSession to create a draft, then configures and sends it. */
     v4Create?: boolean;
+    permissionScope?: "session";
   }): Promise<ZCodeTaskCreateResult>;
+
+  readBotTopicSummaries?(params: {
+    taskId: string;
+    workspacePath: string;
+    workspaceIdentity?: string;
+    remoteSessionId?: string;
+  }): Promise<Array<{ checkpoint: string; text: string }>>;
+
+  invalidateBotTopicInputs?(params: {
+    taskId: string;
+    workspacePath: string;
+    workspaceIdentity?: string;
+    remoteSessionId?: string;
+  }): Promise<void>;
+  readBotTopicExecution?(params: {
+    taskId: string;
+    workspacePath: string;
+    workspaceIdentity?: string;
+    remoteSessionId?: string;
+  }): Promise<{ executionId: string; sourceCommandId?: string } | undefined>;
+  stopBotTopicExecution?(params: {
+    taskId: string;
+    workspacePath: string;
+    workspaceIdentity?: string;
+    remoteSessionId?: string;
+    executionId: string;
+  }): Promise<void>;
+
+  /** Read the block reason for bot group-task switching from the CLI's authoritative snapshot; returns null when idle. */
+  getBotGroupTaskBlockReason?(params: {
+    taskId: string;
+    remoteSessionId?: string;
+    workspacePath: string;
+    workspaceIdentity?: string;
+  }): Promise<"running" | "queued" | "interaction" | null>;
+  cancelBotGroupInput?(params: {
+    workspacePath?: string;
+    workspaceIdentity?: string;
+    taskId: string;
+    remoteSessionId?: string;
+    commandId: string;
+    sourceCommandId: string;
+    actorId: string;
+    ownerId: string;
+    botId: string;
+    chatId: string;
+  }): Promise<import("@zcode/shared/zcode-protocol-v4").CommandAck>;
+  submitBotGroupInput?(params: {
+    workspacePath?: string;
+    workspaceIdentity?: string;
+    taskId: string;
+    remoteSessionId?: string;
+    commandId: string;
+    content: string;
+    conversationQuotes?: import("@zcode/shared").ConversationSelectionText[];
+    attachments?: ZCodePromptAttachment[];
+    source: import("@zcode/shared").BotGroupInputSource;
+  }): Promise<import("@zcode/shared/zcode-protocol-v4").CommandAck>;
 
   /** Send a prompt to the specified task. */
   sendPrompt(
@@ -311,6 +376,8 @@ export interface IZCodeTaskService {
     workspacePath?: string;
     workspaceIdentity?: string;
     runId?: TraceId;
+    /** Execution identity observed in the CLI's activeWorks, so a late stop does not kill a fresh turn. */
+    expectedForegroundExecutionId?: string;
   }): Promise<void>;
 
   /** Run the agent's built-in /compact command; mobile replayable still routes through the shared host. */
@@ -539,6 +606,30 @@ export interface IZCodeTaskService {
     feedback: ZCodeAssistantMessageFeedback | null;
   }): Promise<ZCodeSessionFile>;
 
+  /**
+   * Backfill the provider session already attached to a task so it covers the full conversation
+   * boundary of the current canonical task. Only backfills the native log; does not switch the
+   * current active provider.
+   */
+  syncTaskSessionBinding(params: {
+    workspacePath: string;
+    workspaceIdentity?: string;
+    taskId: string;
+    provider: ZCodeProvider;
+    validate?: boolean;
+  }): Promise<ZCodeSyncTaskSessionBindingResult>;
+
+  /**
+   * Switch the current active provider within the same task.
+   * Currently supports `claude` / `codex` / `gemini` as switch targets.
+   */
+  switchAgent(params: {
+    workspacePath: string;
+    workspaceIdentity?: string;
+    taskId: string;
+    provider: ZCodeProvider;
+  }): Promise<ZCodeSwitchAgentResult>;
+
   /** Scan importable native Claude sessions, optionally filtered by workspace. */
   scanImportableClaudeSessions(params: {
     workspacePath?: string;
@@ -581,7 +672,18 @@ export interface IZCodeTaskService {
     mode?: ZCodeTaskMode;
   }): Promise<ZCodeConfigOption[]>;
 
-  /** Get the current structured log file path for the ZCode Agent. */
+  /** Get the primary config file path for a workspace + provider pair. */
+  getWorkspaceProviderConfigFile(params: {
+    workspacePath: string;
+    workspaceIdentity?: string;
+    provider?: ZCodeProvider;
+  }): Promise<{
+    provider: ZCodeProvider;
+    path: string;
+    exists: boolean;
+  }>;
+
+  /** Get the native session log file path for a task (e.g. Claude's session jsonl). */
   getTaskNativeSessionLogFile(params: {
     taskId: string;
     workspacePath: string;

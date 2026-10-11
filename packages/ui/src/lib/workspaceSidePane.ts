@@ -1,5 +1,10 @@
 /* eslint-disable max-lines -- Centralize open/reuse/close/sort rules for Browser/Git/CodeViewer/Treemapping/Whiteboard side-pane tabs; splitting this file would require moving existing in-memory recovery logic too. */
-import { createUuid, type BrowserTabResidencyState } from "@zcode/shared";
+import {
+  createUuid,
+  type BrowserTabResidencyState,
+  type BrowserViewRestoredTabShell,
+} from "@zcode/shared";
+import type { PluginUiSidePaneTab } from "@/plugin-ui/contract.js";
 import { inferMediaPreview, isPptxPreviewPath, type CodeViewerSource } from "@/lib/codeViewer.js";
 import { normalizeCodeViewerSource } from "@/lib/codeViewerSource.js";
 
@@ -24,6 +29,15 @@ export interface BrowserSidePaneTab {
 export type BrowserSidePaneMetadata = Partial<Pick<BrowserSidePaneTab, "faviconUrl" | "title">>;
 
 export const BROWSER_USE_OPERATION_INDICATOR_DURATION_MS = 5_000;
+
+export interface BrowserPermissionsSidePaneTab {
+  id: string;
+  type: "browser-permissions";
+  origin: string;
+  ownerTaskId?: string | null;
+  workspaceKey?: string | null;
+  openedAt?: number;
+}
 
 export interface GitSidePaneTab {
   id: "git";
@@ -420,6 +434,7 @@ export interface OpenScopedSubagentSideTabRequest extends OpenSubagentSideTabReq
 export type WorkspaceSidePaneTab =
   | BackgroundBashSidePaneTab
   | BrowserSidePaneTab
+  | BrowserPermissionsSidePaneTab
   | GitSidePaneTab
   | CodeViewerSidePaneTab
   | TreemappingSidePaneTab
@@ -432,6 +447,7 @@ export type WorkspaceSidePaneTab =
   | SubagentDirectorySidePaneTab
   | SelectionSideChatPaneTab
   | PlanDetailSidePaneTab
+  | PluginUiSidePaneTab
   | WorkflowRunSidePaneTab
   | WorkflowRunDirectorySidePaneTab
   | WorkflowActorSessionSidePaneTab
@@ -552,6 +568,17 @@ function createGitSidePaneTab(): GitSidePaneTab {
   return { id: "git", type: "git", openedAt: Date.now() };
 }
 
+function createTreemappingSidePaneTab(
+  source: TreemappingSidePaneSource = { kind: "current" },
+): TreemappingSidePaneTab {
+  return {
+    id: "treemapping",
+    type: "treemapping",
+    openedAt: Date.now(),
+    source,
+  };
+}
+
 function createModelTrajectorySidePaneTab(options: {
   taskId: string;
   title?: string | null;
@@ -589,11 +616,11 @@ function createTerminalSidePaneTab(options: {
   };
 }
 
-function encodeSidePaneTabIdPart(value: string): string {
+export function encodeSidePaneTabIdPart(value: string): string {
   return encodeURIComponent(value);
 }
 
-function createSubagentSessionSidePaneTab(options: {
+export function createSubagentSessionSidePaneTab(options: {
   workspaceKey: string;
   workspacePath: string;
   workspaceIdentity?: string;
@@ -626,7 +653,7 @@ function createSubagentSessionSidePaneTab(options: {
   };
 }
 
-function createSubagentDirectorySidePaneTab(options: {
+export function createSubagentDirectorySidePaneTab(options: {
   workspaceKey: string;
   workspacePath: string;
   workspaceIdentity?: string;
@@ -653,7 +680,7 @@ function createSubagentDirectorySidePaneTab(options: {
   };
 }
 
-function createSelectionSideChatPaneTab(
+export function createSelectionSideChatPaneTab(
   options: OpenSelectionSideChatRequest & {
     workspaceKey: string;
     ordinal: number;
@@ -678,7 +705,7 @@ function createSelectionSideChatPaneTab(
   };
 }
 
-function createPlanDetailSidePaneTab(
+export function createPlanDetailSidePaneTab(
   options: OpenScopedPlanDetailSideTabRequest & { workspaceKey: string },
 ): PlanDetailSidePaneTab {
   return {
@@ -914,7 +941,7 @@ function findTabIndexById(tabs: WorkspaceSidePaneTab[], tabId: string): number {
   return tabs.findIndex((tab) => tab.id === tabId);
 }
 
-function activateSidePaneTab(
+export function activateSidePaneTab(
   current: WorkspaceSidePaneState | null,
   tab: WorkspaceSidePaneTab,
 ): WorkspaceSidePaneState {
@@ -962,11 +989,11 @@ const WORKSPACE_GLOBAL_SIDE_PANE_TAB_TYPES = new Set<WorkspaceSidePaneTab["type"
   "treemapping",
 ]);
 
-function isWorkspaceGlobalSidePaneTab(tab: WorkspaceSidePaneTab): boolean {
+export function isWorkspaceGlobalSidePaneTab(tab: WorkspaceSidePaneTab): boolean {
   return WORKSPACE_GLOBAL_SIDE_PANE_TAB_TYPES.has(tab.type);
 }
 
-interface SidePaneVisibilityScope {
+export interface SidePaneVisibilityScope {
   workspaceKey: string | null;
   ownerTaskId: string | null;
 }
@@ -1026,6 +1053,7 @@ function getVisibleSidePaneTabsByScope(
     if (
       tab.type === "selection-side-chat" ||
       tab.type === "plan-detail" ||
+      tab.type === "plugin-ui" ||
       tab.type === "workflow-run" ||
       tab.type === "workflow-actor-session" ||
       tab.type === "workflow-workspace" ||
@@ -1037,7 +1065,7 @@ function getVisibleSidePaneTabsByScope(
   });
 }
 
-function resolveActiveTabForOwner(
+export function resolveActiveTabForOwner(
   state: WorkspaceSidePaneState | null,
   scope: SidePaneVisibilityScope,
   preferredTabId?: string | null,
@@ -1092,7 +1120,7 @@ export function restoreSidePaneTab(
   });
 }
 
-function activateBrowserSidePane(
+export function activateBrowserSidePane(
   current: WorkspaceSidePaneState | null,
   options?: {
     tabId?: string;
@@ -1116,6 +1144,29 @@ function activateBrowserSidePane(
   }
 
   return activateSidePaneTab(current, createBrowserSidePaneTab(options));
+}
+
+/** Open/reuse a site-permissions settings tab: keep one tab per site, workspace, and conversation. */
+export function openBrowserPermissionsSidePane(
+  current: WorkspaceSidePaneState | null,
+  options: Pick<BrowserPermissionsSidePaneTab, "origin" | "ownerTaskId" | "workspaceKey">,
+): WorkspaceSidePaneState {
+  const existing = current?.tabs.find(
+    (tab) =>
+      tab.type === "browser-permissions" &&
+      tab.origin === options.origin &&
+      tab.workspaceKey === options.workspaceKey &&
+      sidePaneOwnerKey(tab.ownerTaskId) === sidePaneOwnerKey(options.ownerTaskId),
+  );
+  return activateSidePaneTab(
+    current,
+    existing ?? {
+      ...options,
+      id: `browser-permissions:${createUuid()}`,
+      type: "browser-permissions",
+      openedAt: Date.now(),
+    },
+  );
 }
 
 export function openBrowserSidePane(
@@ -1194,7 +1245,7 @@ export function openOrActivateBrowserSidePaneByUrl(
 }
 
 /** Open or update a controlled browser-use tab; replaying ready is idempotent by tabId. */
-function openBrowserUseSidePane(
+export function openBrowserUseSidePane(
   current: WorkspaceSidePaneState | null,
   options: {
     workspaceKey: string;
@@ -1258,7 +1309,7 @@ function openBrowserUseSidePane(
   return { ...current, tabs: [...current.tabs, tab] };
 }
 
-interface BrowserUseSidePaneScope {
+export interface BrowserUseSidePaneScope {
   workspaceKey: string;
   remoteSessionId?: string;
   ownerTaskId: string | null;
@@ -1391,6 +1442,104 @@ export function applyBrowserTabResidencyEvent(
   return { ...current, tabs };
 }
 
+export function restoreBrowserTabShells(
+  current: WorkspaceSidePaneState | null,
+  shells: readonly BrowserViewRestoredTabShell[],
+  scope?: {
+    workspaceKey: string;
+    remoteSessionId?: string;
+    sessionId: string;
+  },
+): WorkspaceSidePaneState {
+  let next: WorkspaceSidePaneState = current ?? { tabs: [], activeTabId: "" };
+  const hadActiveTabInScope = Boolean(
+    scope &&
+    current?.tabs.some(
+      (tab) =>
+        tab.id === current.activeTabId &&
+        (tab.type === "browser" || tab.type === "browser-use") &&
+        tab.workspaceKey === scope.workspaceKey &&
+        (tab.remoteSessionId ?? "") === (scope.remoteSessionId ?? "") &&
+        (tab.type === "browser-use"
+          ? tab.sessionId === scope.sessionId
+          : (tab.ownerTaskId ?? "unscoped") === scope.sessionId),
+    ),
+  );
+  for (const shell of shells) {
+    const existing = next.tabs.find(
+      (tab) =>
+        (tab.type === "browser" && tab.id === shell.tabId) ||
+        (tab.type === "browser-use" && tab.tabId === shell.tabId),
+    );
+    if (existing) continue;
+    const tab: BrowserSidePaneTab | BrowserUseSidePaneTab =
+      shell.origin === "agent"
+        ? {
+            id: `browser-use:${shell.tabId}`,
+            type: "browser-use",
+            ownerTaskId: shell.sessionId,
+            workspaceKey: shell.workspaceKey,
+            ...(shell.remoteSessionId ? { remoteSessionId: shell.remoteSessionId } : {}),
+            sessionId: shell.sessionId,
+            tabId: shell.tabId,
+            browserId: shell.browserId,
+            browserGeneration: shell.browserGeneration,
+            openedAt: shell.openedAt,
+            title: shell.title,
+            faviconUrl: shell.faviconUrl,
+            residency: "suspended",
+            residencyGeneration: 0,
+          }
+        : {
+            id: shell.tabId,
+            type: "browser",
+            // Root cause: draft state uses null for the in-memory owner, while IPC/persistence encodes
+            // it as "unscoped." Cold restore must decode it symmetrically; otherwise the tab is restored
+            // into state but permanently hidden by the draft scope.
+            ownerTaskId: shell.sessionId === "unscoped" ? null : shell.sessionId,
+            workspaceKey: shell.workspaceKey,
+            ...(shell.remoteSessionId ? { remoteSessionId: shell.remoteSessionId } : {}),
+            initialUrl: shell.restoreUrl,
+            title: shell.title,
+            faviconUrl: shell.faviconUrl,
+            openedAt: shell.openedAt,
+            residency: "suspended",
+            residencyGeneration: 0,
+          };
+    next = {
+      tabs: [...next.tabs, tab],
+      activeTabId: next.activeTabId || tab.id,
+    };
+  }
+  if (scope && !hadActiveTabInScope) {
+    const preferred = shells
+      .filter(
+        (shell) =>
+          shell.workspaceKey === scope.workspaceKey &&
+          (shell.remoteSessionId ?? "") === (scope.remoteSessionId ?? "") &&
+          shell.sessionId === scope.sessionId,
+      )
+      .sort(
+        (left, right) =>
+          (right.lastSelectedAt ?? Number.NEGATIVE_INFINITY) -
+            (left.lastSelectedAt ?? Number.NEGATIVE_INFINITY) ||
+          left.openedAt - right.openedAt ||
+          left.tabId.localeCompare(right.tabId),
+      )[0];
+    if (preferred) {
+      // Root cause: the old restore activated the first tab by openedAt and ignored persisted
+      // lastSelectedAt. Keep tab-strip order by openedAt, but separately select the most recently
+      // used tab in the current scope.
+      next = {
+        ...next,
+        activeTabId:
+          preferred.origin === "agent" ? `browser-use:${preferred.tabId}` : preferred.tabId,
+      };
+    }
+  }
+  return next;
+}
+
 export function openCodeViewerSidePane(
   current: WorkspaceSidePaneState | null,
   source: CodeViewerSource,
@@ -1468,6 +1617,13 @@ export function activateGitSidePane(
   current: WorkspaceSidePaneState | null,
 ): WorkspaceSidePaneState {
   return activateSidePaneTab(current, createGitSidePaneTab());
+}
+
+export function activateTreemappingSidePane(
+  current: WorkspaceSidePaneState | null,
+  source?: TreemappingSidePaneSource,
+): WorkspaceSidePaneState {
+  return activateSidePaneTab(current, createTreemappingSidePaneTab(source));
 }
 
 export function openWhiteboardSidePane(
@@ -1703,10 +1859,10 @@ export function replaceWorkflowRunSidePane(
   );
   const previous = current.tabs[index];
   if (index < 0 || previous?.type !== "workflow-run") return current;
-  // An in-place revision (for example, changing only the concurrency limit while the run keeps running) has
-  // no successor, so the result runId is the one being replaced. Since tab IDs are derived only from runId,
-  // without this guard the “new tab already open” branch below would match this tab itself, close it, and
-  // leave activeTabId pointing to a tab that no longer exists.
+  // A retune applied in place (only the concurrency ceiling changed while the run was active;
+  // docs/dynamic-workflow/concurrency.md) has no successor, so the result's runId is the same run
+  // being replaced. Tab ids are derived only from runId; without this guard, the “new tab already
+  // open” branch below would mistake itself for the old tab and close it, leaving activeTabId pointing to a nonexistent tab.
   if (nextTab.id === previous.id) return current;
   const wasActive = current.activeTabId === previous.id;
   const existingIndex = findTabIndexById(current.tabs, nextTab.id);
@@ -1827,6 +1983,7 @@ export function isSidePaneTabVisibleForParent(
   if (
     tab.type === "selection-side-chat" ||
     tab.type === "plan-detail" ||
+    tab.type === "plugin-ui" ||
     tab.type === "workflow-run" ||
     tab.type === "workflow-directory" ||
     tab.type === "workflow-actor-session" ||
@@ -1864,7 +2021,7 @@ export function getVisibleSidePaneTabs(
   return input?.tabs.filter((tab) => isSidePaneTabVisibleForParent(tab, parentSessionId)) ?? [];
 }
 
-function selectSidePaneTabsForParent(
+export function selectSidePaneTabsForParent(
   current: WorkspaceSidePaneState | null,
   parentSessionId: string | null,
   preferredTabId?: string | null,
@@ -1964,6 +2121,31 @@ export function closeSidePaneTab(
     tabs: nextTabs,
     activeTabId: nextTabs[fallbackIndex]!.id,
   };
+}
+
+export function closeOtherSidePaneTabs(
+  current: WorkspaceSidePaneState | null,
+  tabId: string,
+): WorkspaceSidePaneState | null {
+  if (!current) {
+    return null;
+  }
+
+  const targetTab = current.tabs.find((tab) => tab.id === tabId);
+  if (!targetTab || current.tabs.length <= 1) {
+    return current;
+  }
+
+  return {
+    // Interaction: for “Close other tabs,” keep the tab that was right-clicked. Activate it even if
+    // it was not previously active, so the content area does not point to an activeTabId that was removed.
+    tabs: [targetTab],
+    activeTabId: targetTab.id,
+  };
+}
+
+export function closeAllSidePaneTabs(): WorkspaceSidePaneState | null {
+  return null;
 }
 
 export function setActiveSidePaneTab(

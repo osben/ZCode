@@ -3,26 +3,23 @@ import {
   createUuid,
   ZCODE_VERSION,
   ZCODE_ENV,
-  ZCODE_TELEMETRY_ENABLED,
   ZCODE_TELEMETRY_REPORT_ENDPOINT,
   buildZCodeSourceHeadersFromContext,
   rewriteZCodeEndpointUrl,
   sanitizeTelemetryEventDetail,
+  stripZcodeForkVersionSuffix,
   type TelemetryEventPayload,
   type TelemetryRendererContext,
   type OAuthLoginAttribution,
 } from "@zcode/shared";
-import {
-  ensureDeviceMid,
-  ensureDeviceMidInLockedState,
-  type EnsureDeviceMidOptions,
-} from "../device/deviceMid.js";
 import { mkdir, open, readFile, stat, unlink, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { version } from "node:os";
 import { dirname, join } from "node:path";
 import { createServiceLogger } from "#src/logger/serviceLogger.js";
 import { getAppConfigDir } from "../paths.js";
+
+const REPORT_ENDPOINT = ZCODE_TELEMETRY_REPORT_ENDPOINT;
 
 function sessionCreateEventId(userId: string, sessionId: string): string {
   const bytes = createHash("sha256")
@@ -99,6 +96,8 @@ interface TelemetryLockOwner {
   pid: number;
   createdAt: number;
 }
+
+const deviceMidCacheByStateFile = new Map<string, Promise<string>>();
 
 function normalizeOsCategory(platform: NodeJS.Platform): string {
   switch (platform) {
@@ -274,12 +273,70 @@ async function withTelemetryStateLock<T>(
   throw new Error("Telemetry state lock timeout");
 }
 
-// Persistent device identity is owned only by device/deviceMid: it uses the same telemetry-state file and lock.
-// Keep the old export name as a stable alias for reporting entry points and delegate internally to avoid a second write path.
-export type { EnsureDeviceMidOptions as EnsureTelemetryDeviceMidOptions } from "../device/deviceMid.js";
+export interface EnsureTelemetryDeviceMidOptions {
+  homeDir?: string;
+  randomUUID?: () => string;
+}
 
-export function ensureTelemetryDeviceMid(options: EnsureDeviceMidOptions = {}): Promise<string> {
-  return ensureDeviceMid(options);
+function rememberDeviceMid(telemetryStateFile: string, deviceMid: string): string {
+  deviceMidCacheByStateFile.set(telemetryStateFile, Promise.resolve(deviceMid));
+  return deviceMid;
+}
+
+/** The caller must already hold telemetry-state.lock; generate and write back a deviceMid only when state lacks one. */
+async function ensureDeviceMidInLockedState(
+  state: TelemetryState,
+  options: EnsureTelemetryDeviceMidOptions,
+): Promise<string> {
+  const telemetryStateFile = resolveTelemetryStateFile(options.homeDir);
+  if (state.deviceMid) {
+    return rememberDeviceMid(telemetryStateFile, state.deviceMid);
+  }
+
+  // device_mid is generated independently and no longer reuses the first event's eventId: it stands
+  // for a "device identity" rather than "one report", and stays identical to the same field the
+  // ARMS side (desktopDeviceMid) reads.
+  const deviceMid = (options.randomUUID ?? createUuid)();
+  state.deviceMid = deviceMid;
+  await writeTelemetryState(state, options.homeDir);
+  return rememberDeviceMid(telemetryStateFile, deviceMid);
+}
+
+/**
+ * Ensure telemetry-state.json contains a deviceMid and return it.
+ *
+ * Root cause of a bug: the host running the remote zcode-server has no Desktop main process, and
+ * in the past nothing wrote telemetry-state.json there; buildZCodeSourceHeaders() only read the
+ * file and never generated it, so requests from the remote side to the ZCode endpoint were
+ * permanently missing X-Device-Mid, billing/balance were rejected by the server as a parameter
+ * error, and Start Plan showed as unavailable in remote workspaces. This extracts the ensure
+ * logic from telemetry reporting into a standalone entry point for the remote server to call at
+ * startup: the same file, the same field, and the same telemetry-state.lock, yielding the same
+ * device identity as the co-located CLI.
+ */
+export function ensureTelemetryDeviceMid(
+  options: EnsureTelemetryDeviceMidOptions = {},
+): Promise<string> {
+  const telemetryStateFile = resolveTelemetryStateFile(options.homeDir);
+  const cached = deviceMidCacheByStateFile.get(telemetryStateFile);
+  if (cached) {
+    return cached;
+  }
+
+  // Bugfix: high-volume events such as message_completion / agent_step used to contend for
+  // telemetry-state.lock on every report, saturating the 2-second lock wait in bursts even when
+  // deviceMid was already on disk. Cache the deviceMid read promise per state file and enter the
+  // file lock only on the first miss or first read.
+  const pending = withTelemetryStateLock(options.homeDir, async (state) =>
+    ensureDeviceMidInLockedState(state, options),
+  ).catch((error) => {
+    if (deviceMidCacheByStateFile.get(telemetryStateFile) === pending) {
+      deviceMidCacheByStateFile.delete(telemetryStateFile);
+    }
+    throw error;
+  });
+  deviceMidCacheByStateFile.set(telemetryStateFile, pending);
+  return pending;
 }
 
 export function createTelemetryCore(dependencies: TelemetryCoreDependencies = {}) {
@@ -297,7 +354,7 @@ export function createTelemetryCore(dependencies: TelemetryCoreDependencies = {}
   const requestTimeoutMs = dependencies.requestTimeoutMs ?? REPORT_REQUEST_TIMEOUT_MS;
   const retrySleep = dependencies.sleep ?? sleep;
   const pendingReports = new Set<Promise<void>>();
-  const deviceMidOptions: EnsureDeviceMidOptions = {
+  const deviceMidOptions: EnsureTelemetryDeviceMidOptions = {
     homeDir: dependencies.homeDir,
     randomUUID,
   };
@@ -364,10 +421,8 @@ export function createTelemetryCore(dependencies: TelemetryCoreDependencies = {}
     userId: string,
     deviceMid: string,
   ): Promise<void> {
-    // Stop processing the event here when the master switch is off or no reporting endpoint is configured.
-    if (!ZCODE_TELEMETRY_ENABLED || !ZCODE_TELEMETRY_REPORT_ENDPOINT) {
-      return;
-    }
+    // Do not report when no event reporting endpoint was configured at build time (see docs/desktop/build-time-optional-capabilities.md)
+    if (!REPORT_ENDPOINT) return;
     let marketingParams: OAuthLoginAttribution | null = null;
     try {
       marketingParams = await loadMarketingParams();
@@ -395,7 +450,8 @@ export function createTelemetryCore(dependencies: TelemetryCoreDependencies = {}
       ),
       user_id: userId,
       screen_resolution: context.screenResolution,
-      app_version: appVersion,
+      // The public build reports only the upstream baseline; the local appVersion may still be the full version with a -fork.N suffix.
+      app_version: stripZcodeForkVersionSuffix(appVersion),
       device_os_category: normalizeOsCategory(platform),
       device_os_version: osVersion,
       device_mid: deviceMid,
@@ -407,8 +463,8 @@ export function createTelemetryCore(dependencies: TelemetryCoreDependencies = {}
 
     const endpoint = String(
       rewriteZCodeEndpointUrl(
-        ZCODE_TELEMETRY_REPORT_ENDPOINT,
-        (await dependencies.resolveZCodeEndpointOrigin?.()) ?? ZCODE_TELEMETRY_REPORT_ENDPOINT,
+        REPORT_ENDPOINT,
+        (await dependencies.resolveZCodeEndpointOrigin?.()) ?? REPORT_ENDPOINT,
       ),
     );
 

@@ -12,6 +12,11 @@ import type {
   DynamicWorkflowRunRetuneResult,
 } from "./dynamic-workflow-run-retune.port.js";
 import type {
+  DynamicWorkflowRunFillHoleRequest,
+  DynamicWorkflowRunHole,
+  FillWorkflowHoleResult,
+} from "./dynamic-workflow-run-hole.port.js";
+import type {
   DynamicWorkflowRunWorkspaceNode,
   DynamicWorkflowRunWorkspaceNodeResult,
   DynamicWorkflowRunWorkspaceNodeResultQuery,
@@ -69,12 +74,12 @@ export interface DynamicWorkflowRunSubmitRequest {
    */
   phaseNames?: string[];
   /**
-   * This run's concurrency limit: number of asks in flight at once. Stored in
-   * `dwf_run.caps_max_concurrency` and reused by resume. **Omitted means the ceiling** (derived
-   * from the machine by `resolveWorkflowConcurrencyCeiling`); a supplied value is clamped to
-   * `[1, ceiling]` and can only lower concurrency, never raise it. The tool layer already clamps
-   * in `resolveInput` so the confirmation dialog can show the effective value; clamping here
-   * again is the port's own contract.
+   * Concurrency cap owned by this run (docs/dynamic-workflow/concurrency.md, “Two bounds on a run”):
+   * the number of asks in flight at once. Persisted as `dwf_run.caps_max_concurrency` and reused on
+   * resume. **Omission means the default concurrency** (the machine-derived value from
+   * `resolveWorkflowDefaultConcurrency`). When provided, round down to an integer of at least 1, with
+   * **no upper bound**; values may be above or below the default. The tool layer already rounds in
+   * `resolveInput` so the confirmation dialog shows the effective value; this rounding is the port's contract.
    */
   maxConcurrency?: number;
   /**
@@ -89,6 +94,15 @@ export interface DynamicWorkflowRunSubmitRequest {
    * session's model.
    */
   subagentModel?: ModelSelection;
+  /**
+   * Models named by the script (docs/dynamic-workflow/launch.md, “Models the script names”): keys
+   * are names exactly as written in the script (also carried by runtime personas), and values are
+   * selections already resolved by the tool layer against the model catalog. Like {@link subagentModel},
+   * this uses structured selections for the same reason: record them once in `run-launched` (canonical
+   * form); the engine never reads them, and the host looks them up by persona name when creating a
+   * subagent session. Absent when the script names no models.
+   */
+  modelBindings?: Record<string, ModelSelection>;
   /**
    * Absolute path of the file **from which this run's script came**. Same treatment as
    * {@link subagentModel}: recorded once in `run-launched`, never read by the engine, and never
@@ -170,6 +184,13 @@ export interface DynamicWorkflowRunAmendRequest {
    */
   subagentModel?: ModelSelection;
   /**
+   * Models named by the **new script**; semantics match {@link DynamicWorkflowRunSubmitRequest.modelBindings}.
+   * “Reuse the predecessor's binding for the same name” is a **tool-layer** rule, normalized into this
+   * table by `AmendWorkflow.resolveInput` together with fresh resolution. The port inherits no bindings
+   * from the predecessor.
+   */
+  modelBindings?: Record<string, ModelSelection>;
+  /**
    * Absolute path of the file from which the **new script** came; same semantics as
    * {@link DynamicWorkflowRunSubmitRequest.scriptPath}.
    *
@@ -233,6 +254,23 @@ export type DynamicWorkflowRunAmendResult =
 export type DynamicWorkflowRunCancelInitiator = "user" | "model" | { superseded: string };
 
 /**
+ * Maximum report items included in a terminal snapshot (upper bound for `reports.length`). Set to
+ * 256, the value before the report-count cap increased from 256 to 65,536: snapshots and notifications
+ * remain byte-for-byte unchanged for runs within this count; larger runs expose the true total through
+ * `reportCount`. The completion-notification section's 8,000-character budget would not fit more items anyway.
+ */
+export const DYNAMIC_WORKFLOW_SNAPSHOT_MAX_REPORTS = 256;
+
+/**
+ * Byte cap for report items included in a terminal snapshot, measured using journal `result_json`
+ * bytes. Set to 8 MiB, the worst case for 256 items at the previous 32 KiB per-item cap, so raising
+ * the item cap to 1 MiB does not increase snapshot memory. Snapshots feed completion notifications,
+ * which display at most 2,000 characters per item and 8,000 characters total; 8 MiB is well above
+ * what they can use. Always include the first item, so a 1 MiB report does not produce an empty snapshot.
+ */
+export const DYNAMIC_WORKFLOW_SNAPSHOT_MAX_REPORT_BYTES = 8 * 1024 * 1024;
+
+/**
  * Run snapshot: reuses the shape of {@link WorkflowTaskSnapshot} (read by the background task
  * tracker and notification pipeline), relaxing only `output`. A workflow run's artifact is the
  * script's top-level return value, whose shape is determined by the script; it is not the
@@ -244,6 +282,9 @@ export type DynamicWorkflowRunCancelInitiator = "user" | "model" | { superseded:
  * entries (`workflowRuns.reports` is only a bounded memory-only display surface). Completion
  * notifications return them for completed / failed / cancelled runs alike: a run that died on
  * ask 12 still completed the work from 11 asks; retrieving that work is why `report` exists.
+ * It includes only the **first** {@link DYNAMIC_WORKFLOW_SNAPSHOT_MAX_REPORTS} items and at most
+ * {@link DYNAMIC_WORKFLOW_SNAPSHOT_MAX_REPORT_BYTES} bytes; the true total is available in `reportCount`
+ * （docs/execution-engine.md「Reading the journal」）。
  */
 export type DynamicWorkflowRunSnapshot = Omit<WorkflowTaskSnapshot, "output"> & {
   output?: unknown;
@@ -278,6 +319,13 @@ export type DynamicWorkflowRunSnapshot = Omit<WorkflowTaskSnapshot, "output"> & 
    */
   subagentModel?: string;
   /**
+   * Models named by this run's script (the table on the `run-launched` journal event): names exactly as
+   * written in the script → canonical selections. **Present only when the script names models.**
+   * `AmendWorkflow.resolveInput` and the GUI's “Configure” flow use it to preserve bindings for names
+   * that appear again (docs/dynamic-workflow/launch.md, “Models the script names”).
+   */
+  modelBindings?: Record<string, string>;
+  /**
    * Script file for this run (absolute path recorded in journal event `run-launched`).
    * **Present only when a file was recorded for this run.**
    *
@@ -289,9 +337,10 @@ export type DynamicWorkflowRunSnapshot = Omit<WorkflowTaskSnapshot, "output"> & 
   /** Structured failure (same source as {@link DynamicWorkflowRunDetail.error}); the base `error` is its message. */
   failure?: DynamicWorkflowRunError;
   /**
-   * **Active** duration in milliseconds for this run and its lineage: sum the active time of
-   * this run and every predecessor, excluding gaps between generations. This is the duration
-   * shown in the completion card's "time" field.
+   * **Active** duration in milliseconds for this run and its lineage: sum every incarnation of this
+   * run and each predecessor, excluding gaps between incarnations (definition and rationale in
+   * docs/dynamic-workflow/transcript-and-notifications.md, “How long it took”). This is shown in the
+   * completion card's “Time” field.
    *
    * Like `reports` / `artifacts`, **present only for terminal runs** (`getTask` is polled
    * repeatedly, while consumers only receive terminal notifications). Omit the whole field,
@@ -300,7 +349,14 @@ export type DynamicWorkflowRunSnapshot = Omit<WorkflowTaskSnapshot, "output"> & 
    * more conservative answer that never overstates activity.
    */
   activeDurationMs?: number;
+  /** First {@link DYNAMIC_WORKFLOW_SNAPSHOT_MAX_REPORTS} report items in report order; absent when empty. */
   reports?: readonly unknown[];
+  /**
+   * True total number of reports in this run (`count(*)`), present or absent together with `reports`.
+   * Notifications and the manifest read this `count`: when `reports` is capped, `count ≠ shown` signals
+   * that more items exist.
+   */
+  reportCount?: number;
   /**
    * Escalation question currently parked on this run, waiting for the main agent's answer.
    *
@@ -315,6 +371,13 @@ export type DynamicWorkflowRunSnapshot = Omit<WorkflowTaskSnapshot, "output"> & 
    * time. The whole field is omitted when there are no questions (no empty array).
    */
   pendingQuestions?: readonly DynamicWorkflowRunPendingQuestion[];
+  /**
+   * Holes in this run ({@link DynamicWorkflowRunHole}): every reached hole, whether waiting or filled.
+   * Same rules as `pendingQuestions`: omit the whole field when empty, and project `waiting` from the
+   * engine's parked-state table rather than relying on event replay alone. The hole-notification
+   * emitter and `FillWorkflowHole.resolveInput` both read it.
+   */
+  holes?: readonly DynamicWorkflowRunHole[];
   /**
    * **User-facing artifacts** published by this run, in first-seen order, sourced from journal
    * rows with `kind = "artifact"`—the durable home of version history (`workflowRuns.artifacts`
@@ -391,14 +454,34 @@ export interface DynamicWorkflowRunArtifactItem {
   sequence: number;
   siteId: string;
   ordinal: number;
-  item: unknown;
+  /** Complete item; absent when the request specifies `fields`. */
+  item?: unknown;
+  /** When the request specifies `fields`: path → value; paths that cannot be resolved are omitted. */
+  fields?: Record<string, unknown>;
 }
 
-/** Pagination input for {@link DynamicWorkflowRunPort.listArtifactItems} (cursor = journal sequence, strictly greater). */
+/**
+ * Page envelope for {@link DynamicWorkflowRunPort.listArtifactItems} (cursor = journal sequence,
+ * strictly greater). The two limits follow {@link DynamicWorkflowRunEventPage}: stop at `limit` items
+ * or before adding an item that would exceed `maxBytes`; always include the first item. The caller
+ * (gateway) supplies both limits, and implementations honor them exactly without clamping.
+ */
 export interface DynamicWorkflowRunArtifactItemPage {
   afterSequence?: number;
-  /** Required; callers may pass "limit + 1" to detect `hasMore`; implementations must not clamp it again. */
   limit: number;
+  maxBytes: number;
+  /**
+   * Select only these field paths (using `readWorkflowArtifactField` rules, applied by SQLite). Each
+   * result includes `fields` and omits `item`; `maxBytes` is measured over the selected field values.
+   * Defaults to the complete item.
+   */
+  fields?: readonly string[];
+}
+
+/** A page of board items. The storage layer determines whether `hasMore` items follow this page. */
+export interface DynamicWorkflowRunArtifactItemsResult {
+  items: readonly DynamicWorkflowRunArtifactItem[];
+  hasMore: boolean;
 }
 
 /** Return value of {@link DynamicWorkflowRunPort.readArtifact}: all bytes for one version. */
@@ -458,11 +541,25 @@ export interface DynamicWorkflowRunWaitOptions {
   signal?: AbortSignal;
 }
 
-/** Event-log pagination input; cursor = journal sequence (assigned monotonically by appendEvent). */
+/**
+ * Event-log pagination parameters; cursor = journal sequence (assigned monotonically by appendEvent).
+ *
+ * Both limits apply (docs/execution-engine.md, “Reading the journal”): stop when the page reaches
+ * `limit` items or when adding another would exceed `maxBytes` of serialized storage bytes. Always
+ * include the first item, so an event larger than `maxBytes` forms a page by itself. If either limit
+ * is omitted, implementations use a bounded default; event-log pages are always bounded.
+ */
 export interface DynamicWorkflowRunEventPage {
   /** Return only events with a sequence strictly greater than this value; defaults to the beginning. */
   afterSequence?: number;
   limit?: number;
+  maxBytes?: number;
+}
+
+/** A page of event-log entries. The storage layer determines whether `hasMore` events follow this page. */
+export interface DynamicWorkflowRunEventsResult {
+  events: DynamicWorkflowRunEvent[];
+  hasMore: boolean;
 }
 
 /**
@@ -629,19 +726,22 @@ export interface DynamicWorkflowRunPort {
     options?: DynamicWorkflowRunSubmitOptions,
   ): Promise<DynamicWorkflowRunAmendResult>;
   /**
-   * Ceiling for a run's concurrency limit (`max(1, min(16, availableParallelism() − 2))`, one value
-   * per process). Synchronous and side-effect free.
+   * Default concurrency D (docs/dynamic-workflow/concurrency.md, “Two bounds on a run”:
+   * `max(4, min(16, availableParallelism() − 2))`, one value per process). Synchronous and side-effect
+   * free. It is a **starting point**, not a cap: runs without `max_concurrency` use it, while explicit
+   * values may be above or below it.
    *
-   * The tool layer has two readers: `resolveInput` in `CreateWorkflow` / `AmendWorkflow` clamps the
-   * model's `max_concurrency` to this value (the confirmation window must show the value that will
-   * take effect), and `GetWorkflowRun` uses it to decide whether a run's limit is worth mentioning.
-   * **Optional member** (consumers detect it with `typeof`): port stubs need not implement it. If
-   * absent, the tool layer passes the value through unchanged (the port implementation clamps it again).
+   * Tool-layer consumers: the confirmation dialog and reply (“(default)” / “default N”), same-value
+   * checks in `AmendWorkflow` (`null` must be converted to a number for comparison), and
+   * `GetWorkflowRun`, which mentions a run's cap only when it differs from the default.
+   * **Optional member** (consumers detect it with `typeof`): port stubs need not implement it; if absent,
+   * the tool layer simply cannot report the default value.
    */
-  concurrencyCeiling?(): number;
+  defaultConcurrency?(): number;
   /**
-   * Change the concurrency limit of an **in-flight** run in place: keep the same runId, mint no
-   * successor, supersede nothing, import no cache, and do not lose in-flight asks.
+   * Retune the concurrency cap of a **live** run in place (docs/dynamic-workflow/concurrency.md,
+   * “Retuning a live run”): keep the same runId, create no successor, do not supersede or import cache,
+   * and preserve all in-flight asks.
    *
    * Kept alongside {@link amend} rather than merged with it: an amendment changes the **script** and
    * pays the cost of stopping the predecessor, minting a new run, and replaying from cache; simply
@@ -676,7 +776,7 @@ export interface DynamicWorkflowRunPort {
   listEvents(
     runId: string,
     options: DynamicWorkflowRunEventPage,
-  ): Promise<DynamicWorkflowRunEvent[]>;
+  ): Promise<DynamicWorkflowRunEventsResult>;
   /**
    * List runs for a project (cwd), most recently updated first. Serves the `ListWorkflowRuns` tool.
    *
@@ -763,6 +863,22 @@ export interface DynamicWorkflowRunPort {
    */
   resolveQuestion?(qid: string, answer: string): Promise<DynamicWorkflowResolveQuestionResult>;
   /**
+   * Supply a body for a hole that is currently waiting (docs/dynamic-workflow/launch.md,
+   * “The `FillWorkflowHole` tool”; engine docs, “The fill service's checks”). Serves the
+   * `FillWorkflowHole` tool.
+   *
+   * End-to-end implementation: read the script saved with the run → find the hole call by site ID and
+   * splice the body in as its last argument → compile the whole script (diagnostics become
+   * `compile_failed`; `inFill` assigns locations to the body or script) → check site stability
+   * (`fill_ids_unstable`) → call engine `fillHole` (`hole_not_waiting`) → rewrite the run draft in
+   * place with the valid script. **Rejection has no side effects**: the hole remains waiting.
+   *
+   * **Optional member** (consumers detect it with `typeof`), for the same reason as
+   * {@link resolveQuestion}: port stubs need not implement it. Consumers treat a missing port and a
+   * missing method as the same business failure (this session cannot fill holes).
+   */
+  fillHole?(request: DynamicWorkflowRunFillHoleRequest): Promise<FillWorkflowHoleResult>;
+  /**
    * List this run's user-facing artifacts (journal rows with `kind = "artifact"`, grouped by id and
    * ordered by version). Durable read path for UI cold recovery and central details. Returns
    * `undefined` for an unknown runId. **Optional member**, for the same reason as {@link listRuns}
@@ -778,7 +894,7 @@ export interface DynamicWorkflowRunPort {
     runId: string,
     artifactId: string,
     page: DynamicWorkflowRunArtifactItemPage,
-  ): Promise<readonly DynamicWorkflowRunArtifactItem[]>;
+  ): Promise<DynamicWorkflowRunArtifactItemsResult>;
   /**
    * Read bytes for an artifact version: **first** verify that the journal has a `completed` record
    * for `(runId, artifactId, version)`, then retrieve it through the tool-artifact store using the
@@ -997,6 +1113,8 @@ export type * from "./dynamic-workflow-run-roster.port.js";
 // The three retune types (changing an in-flight run's concurrency limit in place) live in
 // dynamic-workflow-run-retune.port.ts and are re-exported here unchanged for the same reason.
 export type * from "./dynamic-workflow-run-retune.port.js";
+// Hole types (snapshot entries and fillHole requests / results) live in dynamic-workflow-run-hole.port.ts, following the same split precedent.
+export type * from "./dynamic-workflow-run-hole.port.js";
 
 // The six workspace-transcript types live in dynamic-workflow-run-workspace.port.ts and are re-exported
 // here unchanged for the same reason.
@@ -1019,6 +1137,8 @@ export interface DynamicWorkflowRunDetail extends DynamicWorkflowRunSummary {
    * rarely set field.
    */
   subagentModel?: string;
+  /** Models named by this run's script; semantics match {@link DynamicWorkflowRunSnapshot.modelBindings}. */
+  modelBindings?: Record<string, string>;
   /**
    * Script file for this run, with the same semantics as
    * {@link DynamicWorkflowRunSnapshot.scriptPath}: present only when a file was recorded.
@@ -1072,6 +1192,13 @@ export interface DynamicWorkflowRunDetail extends DynamicWorkflowRunSummary {
    * here. Without this field, both paths would point to a tool that returns nothing.
    */
   pendingQuestions?: readonly DynamicWorkflowRunPendingQuestion[];
+  /**
+   * Holes in this run, from the **same source and projection** as
+   * {@link DynamicWorkflowRunSnapshot.holes} (omit the entire field when empty), exposed through a
+   * different read surface: this field serves `GetWorkflowRun`, the model-side discovery surface if a
+   * hole notification is lost.
+   */
+  holes?: readonly DynamicWorkflowRunHole[];
   /**
    * User-facing artifacts for this run (included in any state; journal-backed and sourced identically
    * to {@link DynamicWorkflowRunSnapshot.artifacts}). `GetWorkflowRun` uses this to tell the model
