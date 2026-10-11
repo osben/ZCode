@@ -6976,9 +6976,13 @@ const ukUA: Record<string, string> = {
   "voiceDictation.language.description":
     "Мова мовлення. Багатомовні моделі підтримують автоматичне визначення.",
   "voiceDictation.language.auto": "Визначати автоматично",
+  "voiceDictation.models.unloadDelay.title": "Вивантажити з пам'яті через",
+  "voiceDictation.models.unloadDelay.description":
+    "Після диктування модель залишатиметься готовою протягом цього часу, а потім звільнить пам'ять.",
+  "voiceDictation.models.unloadDelay.option": "{count} хв",
   "voiceDictation.models.title": "Моделі розпізнавання мовлення",
   "voiceDictation.models.description":
-    "Усе працює на цьому пристрої. Виділена модель вибрана для диктування; у пам’яті одночасно може бути лише одна модель. Після використання вона залишається в пам’яті 5 хвилин.",
+    "Усе працює на цьому пристрої. Виділена модель вибрана для диктування; у пам'яті одночасно може бути лише одна модель.",
   "voiceDictation.models.languages": "Підтримує мов: {count}",
   "voiceDictation.models.streaming": "Потокова",
   "voiceDictation.models.license": "Ліцензія: {license}",
@@ -6990,7 +6994,6 @@ const ukUA: Record<string, string> = {
   "voiceDictation.models.transcribing": "Розпізнавання мовлення",
   "voiceDictation.models.streamingActive": "Потокове розпізнавання мовлення",
   "voiceDictation.models.loaded": "Завантажена в пам'ять",
-  "voiceDictation.models.loadedWithCountdown": "Завантажена в пам'ять · буде вивантажена за {time}",
   "voiceDictation.models.remove": "Видалити",
   "voiceDictation.models.startingDownload": "Початок завантаження…",
   "voiceDictation.models.useWhenReady": "Використати після завантаження",
@@ -7017,6 +7020,7 @@ const ukUA: Record<string, string> = {
   "voiceDictation.composer.loading": "Завантаження моделі мовлення",
   "voiceDictation.composer.stop": "Зупинити голосове введення",
   "voiceDictation.composer.level": "Рівень сигналу мікрофона",
+  "voiceDictation.composer.listening": "Слухаю",
   "settings.computerUse.title": "Computer Use",
   "settings.computerUse.toggleLabel": "Увімкнути Computer Use",
   "settings.computerUse.toggleDescription": "Вмикає Computer Use — його сервер MCP і навички.",

@@ -465,6 +465,9 @@ const voiceDictationSettingsSchema = z.object({
   microphoneDeviceId: nonEmptyStringSchema.nullable().optional(),
   language: nonEmptyStringSchema.optional(),
   pushToTalk: z.boolean().optional(),
+  idleUnloadMinutes: z
+    .union([z.literal(1), z.literal(5), z.literal(10), z.literal(15), z.literal(30)])
+    .optional(),
 });
 
 const appSettingsObjectSchema = z.object({

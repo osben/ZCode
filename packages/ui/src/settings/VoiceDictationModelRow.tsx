@@ -9,7 +9,6 @@ interface VoiceModelRowProps {
   item: VoiceModelListItem;
   selected: boolean;
   runtimeState: VoiceDictationRuntimeState;
-  now: number;
   startingDownload?: boolean;
   pendingUse?: boolean;
   onSelect: () => void;
@@ -24,7 +23,6 @@ export function VoiceModelRow({
   item,
   selected,
   runtimeState,
-  now,
   startingDownload = false,
   pendingUse = false,
   onSelect,
@@ -143,12 +141,7 @@ export function VoiceModelRow({
             </SettingsBadge>
           ) : loaded ? (
             <SettingsBadge>
-              {runtimeState.idleUnloadAt === null
-                ? intl.formatMessage({ id: "voiceDictation.models.loaded" })
-                : intl.formatMessage(
-                    { id: "voiceDictation.models.loadedWithCountdown" },
-                    { time: formatRemainingTime(runtimeState.idleUnloadAt, now) },
-                  )}
+              {intl.formatMessage({ id: "voiceDictation.models.loaded" })}
             </SettingsBadge>
           ) : null}
           {ready && state.source === "handy" ? (
@@ -204,32 +197,13 @@ export function VoiceModelRow({
           <div className="h-1.5 w-full overflow-hidden rounded-full bg-surface">
             <div className="h-full bg-brand transition-[width]" style={{ width: `${percent}%` }} />
           </div>
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <div className="text-ui-base text-foreground-subtle">
-              {intl.formatMessage({ id: "voiceDictation.models.downloading" }, { percent })}
-            </div>
-            <Button
-              className="pointer-events-auto"
-              variant="outline"
-              size="sm"
-              onClick={onUseWhenReady}
-            >
-              {intl.formatMessage({
-                id: pendingUse
-                  ? "voiceDictation.models.cancelUseWhenReady"
-                  : "voiceDictation.models.useWhenReady",
-              })}
-            </Button>
+          <div className="text-ui-base text-foreground-subtle">
+            {intl.formatMessage({ id: "voiceDictation.models.downloading" }, { percent })}
           </div>
         </div>
       ) : null}
     </article>
   );
-}
-
-function formatRemainingTime(deadline: number, now: number): string {
-  const seconds = Math.max(0, Math.ceil((deadline - now) / 1000));
-  return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
 }
 
 export function formatVoiceModelSize(bytes: number): string {

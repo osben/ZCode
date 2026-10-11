@@ -47,39 +47,47 @@ function V4ComposerVoiceButtonImpl({
     >
       {recording ? (
         <div
-          className="pointer-events-none absolute right-full top-1/2 z-20 mr-2 flex h-8 w-44 -translate-y-1/2 items-center gap-1.5 overflow-hidden rounded-lg bg-popover px-2 text-popover-foreground shadow-md ring-1 ring-border/60 animate-in fade-in slide-in-from-right-2 duration-150 ease-out motion-reduce:animate-none"
+          className="pointer-events-none absolute right-full top-1/2 z-20 mr-2 w-56 -translate-y-1/2 overflow-hidden rounded-xl bg-popover p-2 text-popover-foreground shadow-lg ring-1 ring-border/60 animate-in fade-in slide-in-from-right-2 duration-150 ease-out motion-reduce:animate-none"
           data-testid="voice-dictation-feedback"
         >
-          <div
-            className="inline-flex h-6 shrink-0 items-center gap-0.5 text-destructive"
-            role="meter"
-            aria-label={intl.formatMessage({ id: "voiceDictation.composer.level" })}
-            aria-valuemin={0}
-            aria-valuemax={100}
-            aria-valuenow={levelPercent}
-            data-testid="voice-dictation-level"
-          >
-            {[0, 1, 2, 3, 4].map((index) => {
-              const barLevel = Math.max(0.12, level - Math.abs(index - 2) * 0.08);
-              return (
-                <span
-                  key={index}
-                  className="w-0.5 rounded-full bg-current transition-[height] duration-100"
-                  style={{ height: `${Math.max(2, Math.round(barLevel * 16))}px` }}
-                />
-              );
-            })}
+          <div className="flex items-center gap-2">
+            <span className="flex size-7 shrink-0 items-center justify-center rounded-full bg-destructive/10 text-destructive">
+              <Mic className="size-3.5" aria-hidden />
+            </span>
+            <span className="min-w-0 flex-1 truncate text-ui-sm font-medium">
+              {intl.formatMessage({ id: "voiceDictation.composer.listening" })}
+            </span>
+            <div
+              className="inline-flex h-6 shrink-0 items-center gap-0.5 text-destructive"
+              role="meter"
+              aria-label={intl.formatMessage({ id: "voiceDictation.composer.level" })}
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={levelPercent}
+              data-testid="voice-dictation-level"
+            >
+              {[0, 1, 2, 3, 4, 5, 6].map((index) => {
+                const barLevel = Math.max(0.1, level - Math.abs(index - 3) * 0.055);
+                return (
+                  <span
+                    key={index}
+                    className="w-0.5 rounded-full bg-current transition-[height] duration-100"
+                    style={{ height: `${Math.max(2, Math.round(barLevel * 20))}px` }}
+                  />
+                );
+              })}
+            </div>
           </div>
           {preview && (preview.committed || preview.tentative) ? (
             <div
-              className="min-w-0 truncate text-ui-sm text-muted-foreground"
+              className="mt-2 border-t border-border/70 pt-1.5 text-ui-sm leading-5 text-muted-foreground"
               data-testid="voice-dictation-preview"
               role="status"
               aria-live="polite"
               title={`${preview.committed}${preview.tentative}`}
             >
-              <span>{preview.committed}</span>
-              <span className="italic opacity-70">{preview.tentative}</span>
+              <span className="line-clamp-2">{preview.committed}</span>
+              <span className="line-clamp-1 italic opacity-70">{preview.tentative}</span>
             </div>
           ) : null}
         </div>

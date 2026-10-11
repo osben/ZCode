@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { createServiceLogger } from "#src/logger/serviceLogger.js";
+import type { VoiceModelIdleUnloadMinutes } from "@zcode/shared";
 import { getZCodeDataRootDir } from "../paths.js";
 import {
   IVoiceDictationService,
@@ -32,9 +33,8 @@ export interface VoiceDictationServiceOptions {
 export class VoiceDictationService implements IVoiceDictationService {
   private readonly store: VoiceModelStore;
   private readonly transcriber: VoiceTranscriber;
-  private readonly idleUnloadMs: number;
+  private idleUnloadMs: number;
   private idleTimer: ReturnType<typeof setTimeout> | null = null;
-  private idleUnloadAt: number | null = null;
   private activeStreamId: string | null = null;
 
   constructor(options: VoiceDictationServiceOptions) {
@@ -52,8 +52,12 @@ export class VoiceDictationService implements IVoiceDictationService {
       loadedModelId: this.transcriber.loadedModelId,
       activeModelId: this.transcriber.activeModelId,
       activePhase: this.transcriber.activePhase,
-      idleUnloadAt: this.idleUnloadAt,
     };
+  }
+
+  async setIdleUnloadMinutes(minutes: VoiceModelIdleUnloadMinutes): Promise<void> {
+    this.idleUnloadMs = minutes * 60_000;
+    if (this.idleTimer) this.scheduleIdleUnload();
   }
 
   downloadModel(modelId: string): Promise<void> {
@@ -147,19 +151,13 @@ export class VoiceDictationService implements IVoiceDictationService {
 
   private scheduleIdleUnload(): void {
     this.clearIdleTimer();
-    this.idleUnloadAt = Date.now() + this.idleUnloadMs;
     this.idleTimer = setTimeout(() => {
       this.idleTimer = null;
-      void this.transcriber
-        .unload()
-        .catch((error: unknown) => {
-          logger.warn(undefined, "voice model idle unload failed", {
-            error: error instanceof Error ? error.message : String(error),
-          });
-        })
-        .finally(() => {
-          this.idleUnloadAt = null;
+      void this.transcriber.unload().catch((error: unknown) => {
+        logger.warn(undefined, "voice model idle unload failed", {
+          error: error instanceof Error ? error.message : String(error),
         });
+      });
     }, this.idleUnloadMs);
     // 空闲计时器不应阻止进程退出。
     this.idleTimer.unref?.();
@@ -170,7 +168,6 @@ export class VoiceDictationService implements IVoiceDictationService {
       clearTimeout(this.idleTimer);
       this.idleTimer = null;
     }
-    this.idleUnloadAt = null;
   }
 
   private assertActiveStream(streamId: string): void {

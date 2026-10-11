@@ -16,6 +16,7 @@ export type {
   SystemInfo,
   AppSettings,
   VoiceDictationSettings,
+  VoiceModelIdleUnloadMinutes,
   ElectronReleaseChannel,
   IntegratedTerminalShellDialect,
   IntegratedTerminalShellOption,

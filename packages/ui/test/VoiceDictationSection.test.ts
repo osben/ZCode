@@ -66,6 +66,7 @@ const h = vi.hoisted(() => {
           },
         ];
       }),
+      setIdleUnloadMinutes: vi.fn(async () => {}),
       downloadModel: vi.fn(
         () =>
           new Promise<void>((resolve) => {
@@ -93,8 +94,7 @@ vi.mock("@/hooks/useSettingService.js", () => ({
 }));
 vi.mock("@/hooks/useVoiceDictationRuntimeState.js", () => ({
   useVoiceDictationRuntimeState: () => ({
-    runtimeState: { loadedModelId: null, activeModelId: null, idleUnloadAt: null },
-    now: Date.now(),
+    runtimeState: { loadedModelId: null, activeModelId: null, activePhase: null },
   }),
 }));
 vi.mock("@/shortcuts/useShortcutBindings.js", () => ({
@@ -122,6 +122,30 @@ beforeEach(() => {
 afterEach(() => cleanup());
 
 describe("VoiceDictationSection model downloads", () => {
+  it("persists and applies the selected idle-unload delay", async () => {
+    Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+      configurable: true,
+      value: vi.fn(),
+    });
+    render(createElement(VoiceDictationSection, { isDesktop: true }));
+
+    fireEvent.click(
+      await screen.findByRole("combobox", {
+        name: "voiceDictation.models.unloadDelay.title",
+      }),
+    );
+    const option = (await screen.findAllByRole("option"))[2];
+    expect(option).toBeTruthy();
+    fireEvent.click(option!);
+
+    await waitFor(() =>
+      expect(h.updateSettings).toHaveBeenCalledWith({
+        voiceDictation: { modelId: "model-one", idleUnloadMinutes: 10 },
+      }),
+    );
+    expect(h.voiceDictationService.setIdleUnloadMinutes).toHaveBeenCalledWith(10);
+  });
+
   it("selects a ready model when its card is clicked", async () => {
     h.state.downloadStatus = "ready";
     render(createElement(VoiceDictationSection, { isDesktop: true }));
@@ -170,6 +194,7 @@ describe("VoiceDictationSection model downloads", () => {
 
     expect(screen.getByText("voiceDictation.models.selected")).toBeTruthy();
     expect(screen.getByText("voiceDictation.models.willUseWhenReady")).toBeTruthy();
+    expect(screen.queryByText("voiceDictation.models.useWhenReady")).toBeNull();
     expect(h.updateSettings).not.toHaveBeenCalled();
     await screen.findByText("voiceDictation.models.downloading", {}, { timeout: 3000 });
 

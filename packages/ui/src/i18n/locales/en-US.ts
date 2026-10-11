@@ -7395,9 +7395,13 @@ const enUS: Record<string, string> = {
   "voiceDictation.language.description":
     "Spoken language. Auto-detect works with multilingual models.",
   "voiceDictation.language.auto": "Auto-detect",
+  "voiceDictation.models.unloadDelay.title": "Unload from memory after",
+  "voiceDictation.models.unloadDelay.description":
+    "After dictation ends, keep the model ready for this long before releasing its memory.",
+  "voiceDictation.models.unloadDelay.option": "{count} min",
   "voiceDictation.models.title": "Transcription models",
   "voiceDictation.models.description":
-    "Runs entirely on this device. The highlighted model is selected for dictation; only one model is loaded at a time. After use, it stays in memory for 5 minutes.",
+    "Runs entirely on this device. The highlighted model is selected for dictation; only one model is loaded at a time.",
   "voiceDictation.models.languages": "{count} languages",
   "voiceDictation.models.streaming": "Streaming",
   "voiceDictation.models.license": "License: {license}",
@@ -7409,7 +7413,6 @@ const enUS: Record<string, string> = {
   "voiceDictation.models.transcribing": "Transcribing",
   "voiceDictation.models.streamingActive": "Streaming transcription",
   "voiceDictation.models.loaded": "Loaded in memory",
-  "voiceDictation.models.loadedWithCountdown": "Loaded in memory · unloads in {time}",
   "voiceDictation.models.remove": "Delete",
   "voiceDictation.models.startingDownload": "Starting download…",
   "voiceDictation.models.useWhenReady": "Use when ready",
@@ -7436,6 +7439,7 @@ const enUS: Record<string, string> = {
   "voiceDictation.composer.loading": "Loading speech model",
   "voiceDictation.composer.stop": "Stop voice input",
   "voiceDictation.composer.level": "Microphone input level",
+  "voiceDictation.composer.listening": "Listening",
   "settings.computerUse.title": "Computer Use",
   "settings.computerUse.toggleLabel": "Enable Computer Use",
   "settings.computerUse.toggleDescription":

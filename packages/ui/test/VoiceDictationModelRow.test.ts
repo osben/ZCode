@@ -36,7 +36,7 @@ const secondModel: VoiceModelListItem = {
   state: { status: "ready", path: "/models/model-two.gguf", sizeBytes: 10, source: "zcode" },
 };
 
-function renderRows(runtimeState: VoiceDictationRuntimeState, now: number) {
+function renderRows(runtimeState: VoiceDictationRuntimeState) {
   return render(
     createElement(
       ZCodeIntlProvider,
@@ -48,7 +48,6 @@ function renderRows(runtimeState: VoiceDictationRuntimeState, now: number) {
           item: firstModel,
           selected: true,
           runtimeState,
-          now,
           onSelect: () => undefined,
           onUseWhenReady: () => undefined,
           onDownload: () => undefined,
@@ -59,7 +58,6 @@ function renderRows(runtimeState: VoiceDictationRuntimeState, now: number) {
           item: secondModel,
           selected: false,
           runtimeState,
-          now,
           onSelect: () => undefined,
           onUseWhenReady: () => undefined,
           onDownload: () => undefined,
@@ -79,8 +77,7 @@ function renderSingleRow(onRemove: () => void) {
       createElement(VoiceModelRow, {
         item: firstModel,
         selected: true,
-        runtimeState: { loadedModelId: null, activeModelId: null, idleUnloadAt: null },
-        now: 0,
+        runtimeState: { loadedModelId: null, activeModelId: null, activePhase: null },
         onSelect: () => undefined,
         onUseWhenReady: () => undefined,
         onDownload: () => undefined,
@@ -92,20 +89,18 @@ function renderSingleRow(onRemove: () => void) {
 }
 
 describe("VoiceModelRow runtime status", () => {
-  it("keeps the selected model distinct from the loaded model and shows its unload time", () => {
-    renderRows(
-      { loadedModelId: "model-two", activeModelId: null, idleUnloadAt: 1_299_000 },
-      1_000_000,
-    );
+  it("keeps the selected model distinct from the loaded model without an unload countdown", () => {
+    renderRows({ loadedModelId: "model-two", activeModelId: null, activePhase: null });
 
     const activeBadge = screen.getByText("Active");
     expect(activeBadge).toBeTruthy();
     expect(activeBadge.className).toContain("bg-surface");
-    expect(screen.getByText("Loaded in memory · unloads in 4:59")).toBeTruthy();
+    expect(screen.getByText("Loaded in memory")).toBeTruthy();
+    expect(screen.queryByText(/unloads in/)).toBeNull();
   });
 
   it("renders separate cards and highlights the selected model", () => {
-    const view = renderRows({ loadedModelId: null, activeModelId: null, idleUnloadAt: null }, 0);
+    const view = renderRows({ loadedModelId: null, activeModelId: null, activePhase: null });
     const cards = view.container.querySelectorAll("article[data-selected]");
     const selectedCard = view.container.querySelector('article[data-selected="true"]');
 
@@ -118,23 +113,23 @@ describe("VoiceModelRow runtime status", () => {
     expect(screen.getAllByText("License: mit")).toHaveLength(2);
   });
 
-  it("shows when the loaded model is transcribing instead of an idle countdown", () => {
-    renderRows({ loadedModelId: "model-one", activeModelId: "model-one", idleUnloadAt: null }, 0);
+  it("shows when the loaded model is transcribing without an idle countdown", () => {
+    renderRows({
+      loadedModelId: "model-one",
+      activeModelId: "model-one",
+      activePhase: "transcribing",
+    });
 
     expect(screen.getByText("Transcribing")).toBeTruthy();
     expect(screen.queryByText(/unloads in/)).toBeNull();
   });
 
   it("shows active streaming transcription distinctly", () => {
-    renderRows(
-      {
-        loadedModelId: "model-one",
-        activeModelId: "model-one",
-        activePhase: "streaming",
-        idleUnloadAt: null,
-      },
-      0,
-    );
+    renderRows({
+      loadedModelId: "model-one",
+      activeModelId: "model-one",
+      activePhase: "streaming",
+    });
 
     expect(screen.getByText("Streaming transcription")).toBeTruthy();
     expect(screen.queryByText(/unloads in/)).toBeNull();

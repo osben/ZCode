@@ -258,7 +258,11 @@ export interface VoiceDictationSettings {
   language?: string;
   /** true：按住快捷键录音，松开即转写；false：按一下开始，再按一下结束。 */
   pushToTalk?: boolean;
+  /** 空闲模型自动从内存卸载前等待的分钟数。 */
+  idleUnloadMinutes?: VoiceModelIdleUnloadMinutes;
 }
+
+export type VoiceModelIdleUnloadMinutes = 1 | 5 | 10 | 15 | 30;
 
 export interface AppSettings {
   /** The current App/Host no longer shows pre-submission trial-plan recommendations; this does not change model selection at any entry point. */

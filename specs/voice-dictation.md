@@ -23,8 +23,10 @@ Make the existing local desktop dictation flow easier to understand and avoid do
 7. Confirm before deleting a ZCode-owned model. Identify the model and explain that its local file will be removed; never offer deletion for Handy-owned files.
 8. Translate every voice-dictation setting, model action, state, confirmation, and error message in Ukrainian.
 9. Show a single System default microphone option. Filter Chromium's synthetic `deviceId === "default"` entry from the explicit-device list so it does not duplicate the system-default choice.
-10. Allow a downloading model to be marked for use after download. Keep the current selected model in effect until the requested model is fully ready; canceling or failing the download keeps the current selection.
-11. Present each model as a separate card with its name and description above a metadata/action footer. Clicking a ready card selects it; clicking a model that is not downloaded starts its download; clicking an in-progress download marks or unmarks it for use when ready. Download progress is shown when available, otherwise show an indeterminate starting state. Keep the current model selected until the requested model is ready. Use the shared settings badge style with the short `Active` label for the selected model; keep the distinct loaded/transcribing status.
+10. Allow a downloading model card to be marked for use after download by clicking the card; do not show a separate `Use when ready` button. Keep the current selected model in effect until the requested model is fully ready; canceling or failing the download keeps the current selection.
+11. Present each model as a separate card with its name and description above a metadata/action footer. Clicking a ready card selects it; clicking a model that is not downloaded starts its download; clicking an in-progress download marks or unmarks it for use when ready. Download progress is shown when available, otherwise show an indeterminate starting state. Keep the current model selected until the requested model is ready. Use the shared settings badge style with the short `Active` label for the selected model; keep the distinct loaded/transcribing status without an unload countdown.
+12. Let the user choose how many minutes an idle model remains in memory after transcription. Apply the preference to the Desktop Host idle-unload timer, use five minutes as the default, and show only that the model is loaded rather than a countdown.
+13. During recording, show a compact floating feedback panel to the left of the microphone button with a clear listening state, microphone-level meter, and optional live transcript preview. Keep it anchored without shifting composer actions.
 
 ## Ownership and interfaces
 
@@ -48,9 +50,11 @@ Make the existing local desktop dictation flow easier to understand and avoid do
 | VD-09 | Delete a ZCode-owned model                                                  | Click Delete, then cancel or confirm            | No file is removed before confirmation; confirming removes it and refreshes the model list. Handy-owned models have no delete action.                                  |
 | VD-10 | Enumerated inputs include a `deviceId` of `default`                         | Open the input selector                         | Only the System default choice and concrete input devices are shown; the synthetic entry is omitted.                                                                   |
 | VD-11 | Set the app language to Ukrainian                                           | Open Voice dictation settings and model actions | All labels, descriptions, statuses, confirmations, and toasts use Ukrainian text.                                                                                      |
-| VD-12 | A ready model is selected; another model is downloading                     | Choose `Use when ready` on the downloading row  | Keep using the selected model. Switch only after download succeeds; cancel/failure keeps the current selection.                                                        |
+| VD-12 | A ready model is selected; another model is downloading                     | Click the downloading model card                | Keep using the selected model, and show a pending-use badge. Switch only after download succeeds; cancel/failure keeps the current selection.                          |
 | VD-13 | Open Desktop voice-dictation settings                                       | Review the model list                           | Models appear as separate cards with description and metadata/actions; the selected model is clearly labeled and subtly highlighted.                                   |
 | VD-14 | One ready model is selected; another is downloaded, missing, or downloading | Click each model card                           | Ready model becomes selected; missing model starts downloading; in-progress model toggles use-when-ready. The old selection stays active until the new model is ready. |
+| VD-15 | Desktop voice dictation settings are open                                   | Change idle unload delay                        | Persist a supported minute value and apply it to the Host timer; no remaining-time countdown is shown.                                                                 |
+| VD-16 | Composer microphone starts recording                                        | Review the floating feedback panel              | Listening status and microphone level are clear, transcript preview is optional, and the mic button stays anchored without shifting composer actions.                  |
 
 ## Handy discovery roots
 
@@ -144,7 +148,7 @@ This section specifies the settings visibility change. A selected model is a use
 
 - Mark the selected model as `Active`. Switching with `Use` changes this preference and does not load a model immediately.
 - Show a separate `Loaded` marker on the model currently resident in memory. During model initialization show `Loading`; during one-shot inference show `Transcribing`; during an active stream show `Streaming transcription` for that model.
-- After transcription completes, show the remaining time until automatic unload. The current policy is five minutes after the most recent transcription completes.
+- After transcription completes, show `Loaded` without a remaining-time countdown. The configurable policy defaults to five minutes after the most recent transcription completes.
 - When the timer expires, or a different model is loaded for a later transcription, clear the loaded marker. At most one model may be loaded at once.
 - If the selected model differs from the loaded model, show both facts on their respective rows. This can happen after changing the preference and before the next dictation.
 - Removing the loaded model unloads it before deleting its file. Removing a different model does not affect the loaded model.
@@ -153,9 +157,9 @@ This section specifies the settings visibility change. A selected model is a use
 ### Ownership and interface
 
 - `VoiceTranscriber` remains the sole owner of which model is actually loaded and which model is currently executing. It exposes read-only loaded and active model IDs and the active phase (`loading`, `transcribing`, or `streaming`). It holds the native model stream lease until finalize, cancel, or unload.
-- `VoiceDictationService` owns the idle-unload deadline. It exposes a read-only runtime snapshot (`loadedModelId`, `activeModelId`, `activePhase`, `idleUnloadAt`) through `IVoiceDictationService`; the UI does not infer loaded status from the selected preference.
-- Settings reads this snapshot from the service. It derives a countdown from the absolute `idleUnloadAt` timestamp while the settings page is visible; it does not keep a second service timer or change the unload deadline.
-- Starting transcription or stream initialization clears the current unload deadline and identifies its model as active. After transcription, stream finalization, or stream cancellation, the service clears the active id and sets the deadline to completion time plus five minutes. When unload finishes, the snapshot reports no loaded model.
+- `VoiceDictationService` owns the idle-unload timer. It exposes a read-only runtime snapshot (`loadedModelId`, `activeModelId`, `activePhase`) through `IVoiceDictationService`; the UI does not infer loaded status from the selected preference.
+- Settings persists the selected idle-unload delay and applies it to the service. The UI does not keep a second timer or display a countdown.
+- Starting transcription or stream initialization clears the idle timer and identifies its model as active. After transcription, stream finalization, or stream cancellation, the service starts the timer using the configured delay. When unload finishes, the snapshot reports no loaded model.
 - If a new transcription begins as the deadline expires, service operations serialize through the existing transcriber queue. A stale snapshot must not be shown as the current state after a newer poll completes.
 
 ```mermaid
@@ -165,9 +169,10 @@ sequenceDiagram
   participant T as VoiceTranscriber
   UI->>S: getRuntimeState()
   S->>T: read loadedModelId + activeModelId
-  S-->>UI: runtime snapshot + idleUnloadAt
-  Note over S,T: transcription starts: clear deadline, transcriber marks active model
-  Note over S,T: transcription ends: clear active model, service sets deadline to now + 5 min
+  S-->>UI: runtime snapshot
+  UI->>S: setIdleUnloadMinutes(preference)
+  Note over S,T: transcription starts: clear idle timer, transcriber marks active model
+  Note over S,T: transcription ends: clear active model, service starts timer with configured delay
   Note over S,T: deadline expires: service unloads model, transcriber clears loaded ID
   UI->>S: poll getRuntimeState()
   S-->>UI: loadedModelId = null
@@ -180,7 +185,7 @@ sequenceDiagram
 | VD-MEM-01 | Several models are downloaded; one is selected and another is loaded | Each row identifies its own state: `Active` versus `Loaded`; no implication that selection loaded the model.                 |
 | VD-MEM-02 | Choose another ready model with `Use`                                | The selected marker moves immediately; the currently loaded model remains marked until the next transcription or its unload. |
 | VD-MEM-03 | Start transcription with the selected model                          | Its row shows `Loading` then `Transcribing`; no idle-unload countdown is shown while it is active.                           |
-| VD-MEM-04 | Finish transcription                                                 | The row shows `Loaded` and a countdown starting at five minutes.                                                             |
+| VD-MEM-04 | Finish transcription                                                 | The row shows `Loaded` with no countdown.                                                                                    |
 | VD-MEM-05 | Let the idle timer expire                                            | The loaded marker disappears after unload completes.                                                                         |
 | VD-MEM-06 | Remove the currently loaded model                                    | It unloads before its file is removed; runtime status then reports no loaded model.                                          |
 | VD-MEM-07 | Restart the app                                                      | No model is reported loaded until the next transcription loads one.                                                          |

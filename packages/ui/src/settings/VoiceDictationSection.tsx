@@ -1,7 +1,7 @@
 /* eslint-disable max-lines -- Voice dictation settings keeps microphone setup and model download/selection state together so their controls stay synchronized. */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { LoaderCircle } from "lucide-react";
-import type { VoiceDictationSettings } from "@zcode/shared";
+import type { VoiceDictationSettings, VoiceModelIdleUnloadMinutes } from "@zcode/shared";
 import type { VoiceModelListItem } from "@zcode/services";
 import { Button } from "@/components/ui/button.js";
 import { Kbd, KbdGroup } from "@/components/ui/kbd.js";
@@ -73,7 +73,7 @@ export function VoiceDictationSection({ isDesktop = false }: { isDesktop?: boole
 function DesktopVoiceDictationSection() {
   const { intl, locale } = useZCodeIntl();
   const { voiceDictationService } = useServices();
-  const { runtimeState, now: runtimeNow } = useVoiceDictationRuntimeState();
+  const { runtimeState } = useVoiceDictationRuntimeState();
   const { settings, update } = useSettings();
   const shortcutLabel = useShortcutCommandLabel("voiceDictation");
   const voice: VoiceDictationSettings = settings?.voiceDictation ?? {};
@@ -81,6 +81,7 @@ function DesktopVoiceDictationSection() {
   const microphoneDeviceId = voice.microphoneDeviceId ?? null;
   const language = voice.language ?? DEFAULT_LANGUAGE;
   const pushToTalk = voice.pushToTalk !== false;
+  const idleUnloadMinutes = voice.idleUnloadMinutes ?? 5;
 
   const [models, setModels] = useState<VoiceModelListItem[]>([]);
   const [startingDownloadIds, setStartingDownloadIds] = useState<Set<string>>(() => new Set());
@@ -134,6 +135,9 @@ function DesktopVoiceDictationSection() {
     async (patch: Partial<VoiceDictationSettings>) => {
       try {
         await update({ voiceDictation: { ...voice, ...patch } });
+        if (patch.idleUnloadMinutes !== undefined) {
+          await voiceDictationService?.setIdleUnloadMinutes(patch.idleUnloadMinutes);
+        }
       } catch (error) {
         logger.warn("voice dictation settings update failed", {
           error: error instanceof Error ? error.message : String(error),
@@ -141,7 +145,7 @@ function DesktopVoiceDictationSection() {
         toast(intl.formatMessage({ id: "voiceDictation.saveFailed" }));
       }
     },
-    [intl, update, voice],
+    [intl, update, voice, voiceDictationService],
   );
 
   const languageNames = useMemo(() => {
@@ -403,6 +407,39 @@ function DesktopVoiceDictationSection() {
               </Select>
             }
           />
+          <SettingsRow
+            label={intl.formatMessage({ id: "voiceDictation.models.unloadDelay.title" })}
+            description={intl.formatMessage({
+              id: "voiceDictation.models.unloadDelay.description",
+            })}
+            control={
+              <Select
+                value={String(idleUnloadMinutes)}
+                onValueChange={(value) =>
+                  void patchVoice({
+                    idleUnloadMinutes: Number(value) as VoiceModelIdleUnloadMinutes,
+                  })
+                }
+              >
+                <SelectTrigger
+                  aria-label={intl.formatMessage({ id: "voiceDictation.models.unloadDelay.title" })}
+                  className="w-full"
+                >
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {[1, 5, 10, 15, 30].map((minutes) => (
+                    <SelectItem key={minutes} value={String(minutes)}>
+                      {intl.formatMessage(
+                        { id: "voiceDictation.models.unloadDelay.option" },
+                        { count: minutes },
+                      )}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            }
+          />
         </SettingsGroupCard>
       </section>
 
@@ -422,7 +459,6 @@ function DesktopVoiceDictationSection() {
               item={item}
               selected={modelId === item.descriptor.id}
               runtimeState={runtimeState}
-              now={runtimeNow}
               startingDownload={startingDownloadIds.has(item.descriptor.id)}
               pendingUse={pendingUseModelId === item.descriptor.id}
               onSelect={() => handleSelectModel(item.descriptor.id)}

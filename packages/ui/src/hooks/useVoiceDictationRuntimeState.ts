@@ -7,7 +7,6 @@ const EMPTY_RUNTIME_STATE: VoiceDictationRuntimeState = {
   loadedModelId: null,
   activeModelId: null,
   activePhase: null,
-  idleUnloadAt: null,
 };
 const REFRESH_INTERVAL_MS = 1000;
 
@@ -15,7 +14,6 @@ const REFRESH_INTERVAL_MS = 1000;
 export function useVoiceDictationRuntimeState() {
   const { voiceDictationService } = useServices();
   const [runtimeState, setRuntimeState] = useState(EMPTY_RUNTIME_STATE);
-  const [now, setNow] = useState(() => Date.now());
 
   useEffect(() => {
     let disposed = false;
@@ -31,7 +29,6 @@ export function useVoiceDictationRuntimeState() {
         }
       }
       if (disposed) return;
-      setNow(Date.now());
       timeout = window.setTimeout(poll, REFRESH_INTERVAL_MS);
     };
     void poll();
@@ -41,5 +38,5 @@ export function useVoiceDictationRuntimeState() {
     };
   }, [voiceDictationService]);
 
-  return { runtimeState, now };
+  return { runtimeState };
 }

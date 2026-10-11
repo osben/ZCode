@@ -82,7 +82,8 @@ test("voice dictation service round-trips PCM bytes and model list over the RPC 
     assert.equal(runtime.loadedModelId, descriptor.id);
     assert.equal(runtime.activeModelId, null);
     assert.equal(runtime.activePhase, null);
-    assert.ok(runtime.idleUnloadAt && runtime.idleUnloadAt > Date.now());
+    assert.equal(runtime.loadedModelId, descriptor.id);
+    await remote.setIdleUnloadMinutes(10);
 
     const streamId = await remote.beginStream({ modelId: descriptor.id, language: "en" });
     assert.ok(streamId);

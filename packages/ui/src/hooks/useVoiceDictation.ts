@@ -43,6 +43,7 @@ export function useVoiceDictation({ enabled, onTranscript, scopeRef }: UseVoiceD
   const microphoneDeviceId = voice?.microphoneDeviceId ?? null;
   const language = voice?.language ?? "auto";
   const pushToTalk = voice?.pushToTalk !== false;
+  const idleUnloadMinutes = voice?.idleUnloadMinutes ?? 5;
 
   const [phase, setPhase] = useState<VoiceDictationPhase>("idle");
   const [level, setLevel] = useState(0);
@@ -139,6 +140,7 @@ export function useVoiceDictation({ enabled, onTranscript, scopeRef }: UseVoiceD
     const pending = (async () => {
       let streamId: string | null;
       try {
+        await voiceDictationService.setIdleUnloadMinutes(idleUnloadMinutes);
         streamId = await voiceDictationService.beginStream({ modelId, language });
       } catch (error) {
         logger.warn("voice dictation model stream initialization failed", {
@@ -194,6 +196,7 @@ export function useVoiceDictation({ enabled, onTranscript, scopeRef }: UseVoiceD
     enabled,
     enqueueStreamChunk,
     intl,
+    idleUnloadMinutes,
     language,
     microphoneDeviceId,
     modelId,

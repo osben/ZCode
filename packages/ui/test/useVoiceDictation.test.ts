@@ -62,6 +62,7 @@ afterEach(() => {
 beforeEach(() => {
   mocks.recorder = null;
   mocks.service = {
+    setIdleUnloadMinutes: vi.fn().mockResolvedValue(undefined),
     beginStream: vi.fn().mockResolvedValue("stream-1"),
     feedStream: vi.fn().mockResolvedValue({ committed: "Hello ", tentative: "there" }),
     finalizeStream: vi.fn().mockResolvedValue({ text: "Hello there", language: "en" }),

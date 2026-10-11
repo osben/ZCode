@@ -602,7 +602,7 @@ test("service streams ordered PCM updates and finalizes one transcript", async (
       language: "en",
     });
     assert.equal((await service.getRuntimeState()).activeModelId, null);
-    assert.ok((await service.getRuntimeState()).idleUnloadAt);
+    assert.equal((await service.getRuntimeState()).loadedModelId, descriptor.id);
     await service.removeModel(descriptor.id);
   });
 });
@@ -704,7 +704,6 @@ test("removing a model while its stream is starting leaves no stale stream lease
       loadedModelId: null,
       activeModelId: null,
       activePhase: null,
-      idleUnloadAt: null,
     });
   });
 });
@@ -725,7 +724,6 @@ test("service unloads an idle model after the configured timeout", async () => {
     assert.equal(runtimeBeforeExpiry.loadedModelId, "test-model");
     assert.equal(runtimeBeforeExpiry.activeModelId, null);
     assert.equal(runtimeBeforeExpiry.activePhase, null);
-    assert.ok(runtimeBeforeExpiry.idleUnloadAt && runtimeBeforeExpiry.idleUnloadAt > Date.now());
 
     await new Promise((resolve) => setTimeout(resolve, 80));
     assert.equal(transcriber.loadedModelId, null);
@@ -733,8 +731,26 @@ test("service unloads an idle model after the configured timeout", async () => {
       loadedModelId: null,
       activeModelId: null,
       activePhase: null,
-      idleUnloadAt: null,
     });
+  });
+});
+
+test("changing the idle-unload delay reschedules the current idle model", async () => {
+  await withTempDir(async (dir) => {
+    await installFakeModel(dir, makeDescriptor());
+    const store = makeStore(dir);
+    const transcriber = new VoiceTranscriber({
+      store,
+      loadEngine: async () => makeFakeEngine([]),
+    });
+    const service = new VoiceDictationService({ store, transcriber, idleUnloadMs: 20 });
+
+    await service.transcribe({ modelId: "test-model", pcm: new Uint8Array(2) });
+    await service.setIdleUnloadMinutes(1);
+    await new Promise((resolve) => setTimeout(resolve, 80));
+
+    assert.equal(transcriber.loadedModelId, "test-model");
+    await service.removeModel("test-model");
   });
 });
 
@@ -782,7 +798,6 @@ test("service runtime state identifies the model while transcription is active",
       loadedModelId: null,
       activeModelId: null,
       activePhase: null,
-      idleUnloadAt: null,
     });
 
     const pending = service.transcribe({ modelId: "test-model", pcm: new Uint8Array(2) });
@@ -791,7 +806,6 @@ test("service runtime state identifies the model while transcription is active",
       loadedModelId: null,
       activeModelId: "test-model",
       activePhase: "loading",
-      idleUnloadAt: null,
     });
 
     finishLoading();
@@ -800,7 +814,6 @@ test("service runtime state identifies the model while transcription is active",
       loadedModelId: "test-model",
       activeModelId: "test-model",
       activePhase: "transcribing",
-      idleUnloadAt: null,
     });
 
     finishTranscription();
@@ -828,7 +841,6 @@ test("service removes a loaded model by unloading it first", async () => {
       loadedModelId: null,
       activeModelId: null,
       activePhase: null,
-      idleUnloadAt: null,
     });
     assert.equal((await store.getState("test-model")).status, "not_downloaded");
   });

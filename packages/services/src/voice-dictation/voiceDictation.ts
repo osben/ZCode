@@ -1,4 +1,5 @@
 import { ServiceChannels } from "@zcode/shared";
+import type { VoiceModelIdleUnloadMinutes } from "@zcode/shared";
 import { createServiceDescriptor } from "../descriptors.js";
 import type { VoiceModelDescriptor } from "./voiceModelCatalog.js";
 
@@ -39,12 +40,12 @@ export interface VoiceDictationRuntimeState {
   loadedModelId: string | null;
   activeModelId: string | null;
   activePhase: "loading" | "transcribing" | "streaming" | null;
-  idleUnloadAt: number | null;
 }
 
 export interface IVoiceDictationService {
   listModels(): Promise<VoiceModelListItem[]>;
   getRuntimeState(): Promise<VoiceDictationRuntimeState>;
+  setIdleUnloadMinutes(minutes: VoiceModelIdleUnloadMinutes): Promise<void>;
   /** 下载进度通过 listModels() 的 downloading 状态读取；同一模型重复调用共享同一任务。 */
   downloadModel(modelId: string): Promise<void>;
   cancelDownload(modelId: string): Promise<void>;
