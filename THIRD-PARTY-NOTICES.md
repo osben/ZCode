@@ -326,7 +326,11 @@ Original copyright, license and NOTICE text is retained below. Identical text is
 
 - @modelcontextprotocol/client@2.0.0 — MIT
 
+- @modelcontextprotocol/client@2.2.0 — MIT
+
 - @modelcontextprotocol/core@2.0.0 — MIT
+
+- @modelcontextprotocol/core@2.2.0 — MIT
 
 - @modelcontextprotocol/ext-apps@2.0.0 — MIT
 
@@ -646,6 +650,16 @@ Original copyright, license and NOTICE text is retained below. Identical text is
 
 - @tokenlens/models@1.3.0 — MIT
 
+- @transcribe-cpp/darwin-arm64-metal@0.3.1 — MIT
+
+- @transcribe-cpp/darwin-x64-cpu@0.3.1 — MIT
+
+- @transcribe-cpp/linux-arm64-cpu-vulkan@0.3.1 — MIT
+
+- @transcribe-cpp/linux-x64-cpu-vulkan@0.3.1 — MIT
+
+- @transcribe-cpp/win32-x64-cpu-vulkan@0.3.1 — MIT
+
 - @ts-morph/common@0.27.0 — MIT
 
 - @types/cacheable-request@6.0.3 — MIT
@@ -781,6 +795,8 @@ Original copyright, license and NOTICE text is retained below. Identical text is
 - @xterm/addon-clipboard@0.2.0 — MIT
 
 - @xterm/addon-fit@0.10.0 — MIT
+
+- @xterm/addon-webgl@0.18.0 — MIT
 
 - @xterm/xterm@5.5.0 — MIT
 
@@ -955,6 +971,8 @@ Original copyright, license and NOTICE text is retained below. Identical text is
 - commander@11.1.0 — MIT
 
 - commander@14.0.3 — MIT
+
+- commander@15.0.0 — MIT
 
 - commander@2.20.3 — MIT
 
@@ -1525,6 +1543,8 @@ Original copyright, license and NOTICE text is retained below. Identical text is
 - jszip@3.10.1 — (MIT OR GPL-3.0-or-later)
 
 - katex@0.16.45 — MIT
+
+- katex@0.18.11 — MIT
 
 - keycharm@0.4.0 — (Apache-2.0 OR MIT)
 
@@ -2136,7 +2156,7 @@ Original copyright, license and NOTICE text is retained below. Identical text is
 
 - smart-buffer@4.2.0 — MIT
 
-- smol-toml@1.6.1 — BSD-3-Clause
+- smol-toml@1.9.1 — BSD-3-Clause
 
 - socks-proxy-agent@10.0.0 — MIT
 
@@ -2229,6 +2249,8 @@ Original copyright, license and NOTICE text is retained below. Identical text is
 - topojson-client@3.1.0 — ISC
 
 - tough-cookie@6.0.1 — BSD-3-Clause
+
+- transcribe-cpp@0.3.1 — MIT
 
 - trim-lines@3.0.1 — MIT
 
@@ -4990,7 +5012,11 @@ SOFTWARE.
 
 - @modelcontextprotocol/client@2.0.0: LICENSE
 
+- @modelcontextprotocol/client@2.2.0: LICENSE
+
 - @modelcontextprotocol/core@2.0.0: LICENSE
+
+- @modelcontextprotocol/core@2.2.0: LICENSE
 
 - @modelcontextprotocol/ext-apps@2.0.0: LICENSE
 
@@ -7048,6 +7074,126 @@ SOFTWARE.
 
 ````
 
+### Notice 86a53633b56f6b029d3cb42158bcc7aac0cdff898aceb13e83b93e368bbc4ac6
+
+- @transcribe-cpp/darwin-arm64-metal@0.3.1: licenses/LICENSE
+
+- @transcribe-cpp/darwin-x64-cpu@0.3.1: licenses/LICENSE
+
+- @transcribe-cpp/linux-arm64-cpu-vulkan@0.3.1: licenses/LICENSE
+
+- @transcribe-cpp/linux-x64-cpu-vulkan@0.3.1: licenses/LICENSE
+
+- @transcribe-cpp/win32-x64-cpu-vulkan@0.3.1: licenses/LICENSE
+
+- transcribe-cpp@0.3.1: LICENSE
+
+
+
+````text
+MIT License
+
+Copyright (c) 2026 The transcribe.cpp authors
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+````
+
+### Notice 94f29bbed6a22c35b992c5c6ebf0e7c92f13b836b90f36f461c9cf2f0f1d010d
+
+- @transcribe-cpp/darwin-arm64-metal@0.3.1: licenses/LICENSE.ggml
+
+- @transcribe-cpp/darwin-x64-cpu@0.3.1: licenses/LICENSE.ggml
+
+- @transcribe-cpp/linux-arm64-cpu-vulkan@0.3.1: licenses/LICENSE.ggml
+
+- @transcribe-cpp/linux-x64-cpu-vulkan@0.3.1: licenses/LICENSE.ggml
+
+- @transcribe-cpp/win32-x64-cpu-vulkan@0.3.1: licenses/LICENSE.ggml
+
+
+
+````text
+MIT License
+
+Copyright (c) 2023-2026 The ggml authors
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+````
+
+### Notice 6f20fa7672b00e2e975c291df737cf227addf3ad32e36fef3fe0f416e4664d3d
+
+- @transcribe-cpp/darwin-arm64-metal@0.3.1: licenses/LICENSE.miniz
+
+- @transcribe-cpp/darwin-x64-cpu@0.3.1: licenses/LICENSE.miniz
+
+- @transcribe-cpp/linux-arm64-cpu-vulkan@0.3.1: licenses/LICENSE.miniz
+
+- @transcribe-cpp/linux-x64-cpu-vulkan@0.3.1: licenses/LICENSE.miniz
+
+- @transcribe-cpp/win32-x64-cpu-vulkan@0.3.1: licenses/LICENSE.miniz
+
+
+
+````text
+Copyright 2013-2014 RAD Game Tools and Valve Software
+Copyright 2010-2014 Rich Geldreich and Tenacious Software LLC
+
+All Rights Reserved.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+
+````
+
 ### Notice c2a4cfb69592431f4b3a179c114909bb76a979d5748c19ca595c94133c623b12
 
 - @ts-morph/common@0.27.0: LICENSE
@@ -7583,6 +7729,35 @@ THE SOFTWARE.
 
 ````text
 Copyright (c) 2019, The xterm.js authors (https://github.com/xtermjs/xterm.js)
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+
+````
+
+### Notice 21b975c39532001d431dc3b2c29fbff691d83f370833a66b54698bda290fde0e
+
+- @xterm/addon-webgl@0.18.0: LICENSE
+
+
+
+````text
+Copyright (c) 2018, The xterm.js authors (https://github.com/xtermjs/xterm.js)
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -11167,6 +11342,8 @@ SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 - commander@11.1.0: LICENSE
 
 - commander@14.0.3: LICENSE
+
+- commander@15.0.0: LICENSE
 
 - commander@2.20.3: LICENSE
 
@@ -22333,6 +22510,10 @@ license. See [LICENSE.markdown](LICENSE.markdown).
 
 - katex@0.16.45: README.md (license section)
 
+- katex@0.18.11: dist/README.md (license section)
+
+- katex@0.18.11: README.md (license section)
+
 
 
 ````text
@@ -22345,6 +22526,8 @@ KaTeX is licensed under the [MIT License](https://opensource.org/licenses/MIT).
 ### Notice 766ccc1f306c885aa45542a9846bbd0a505b27a0374f146778171c2254ce18e3
 
 - katex@0.16.45: LICENSE
+
+- katex@0.18.11: LICENSE
 
 
 
@@ -35069,7 +35252,7 @@ This work is licensed under the [MIT license](http://en.wikipedia.org/wiki/MIT_L
 
 ### Notice fa5659948374d4f555594f47f6da073b40dc503e921aeeece30df4362b3051a5
 
-- smol-toml@1.6.1: LICENSE
+- smol-toml@1.9.1: LICENSE
 
 
 
@@ -36257,6 +36440,20 @@ Redistribution and use in source and binary forms, with or without modification,
 3. Neither the name of Salesforce.com nor the names of its contributors may be used to endorse or promote products derived from this software without specific prior written permission.
 
 THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+````
+
+### Notice 81a99ad1098885399edc7f812c1bc09a5b1c983e3c84e6e7d4c269e1b9657643
+
+- transcribe-cpp@0.3.1: README.md (license section)
+
+
+
+````text
+## License
+
+MIT. Bundled native packages include third-party license texts (ggml, miniz,
+and any bundled backend runtimes).
 
 ````
 

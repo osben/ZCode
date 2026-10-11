@@ -579,6 +579,7 @@ export const TID_V4_COMPOSER_INPUT = "v4-composer-input";
 export const TID_V4_COMPOSER_BACKGROUND_WORK_TRIGGER = "v4-composer-background-work-trigger";
 /** Persistent Computer Use (CUA) entry button in v4 Composer. */
 export const TID_V4_COMPOSER_CUA_ENTRY = "v4-composer-cua-entry";
+export const TID_V4_COMPOSER_VOICE_ENTRY = "v4-composer-voice-entry";
 /** v4 Composer send button. */
 export const TID_V4_COMPOSER_SEND = "v4-composer-send";
 /** v4 paused-queue send confirmation: clear queue and send. */

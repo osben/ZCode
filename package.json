@@ -2,6 +2,7 @@
   "name": "zcode",
   "version": "3.15.1",
   "private": true,
+  "license": "Apache-2.0",
   "type": "module",
   "scripts": {
     "dev:web": "concurrently -k -n server,web -c blue,green \"pnpm --filter @zcode/server dev\" \"pnpm --filter @zcode/web dev\"",
@@ -25,7 +26,7 @@
     "audit:conversation-session-coverage": "node scripts/audit-conversation-session-case-coverage.mjs --check",
     "audit:conversation-session-complete": "node scripts/audit-conversation-session-case-coverage.mjs --check --require-complete",
     "test": "pnpm run test:unit && pnpm run test:node",
-    "test:node": "tsx --tsconfig packages/ui/tsconfig.json --test packages/services/test/botMessagesLocale.test.ts packages/services/test/branchMergeStatusService.test.ts packages/services/test/userInstructionsService.test.ts packages/services/test/zcodeUpstreamBaseVersion.test.ts packages/ui/test/branchMergeStatusProbeRunner.test.ts packages/ui/test/chatErrorResume.test.ts packages/ui/test/i18nCatalogParity.test.ts packages/ui/test/intlPlural.test.ts packages/ui/test/localeContentCatalogs.test.ts packages/ui/test/localeFormatting.test.ts packages/ui/test/localeSettingsSchema.test.ts packages/ui/test/localeSupport.test.ts packages/ui/test/sessionThroughput.test.ts packages/ui/test/themeContrast.test.ts packages/ui/test/themeMigration.test.ts packages/ui/test/updateReleaseNotes.test.ts packages/ui/test/userInstructionsEditorModel.test.ts scripts/fork-release-version.test.mjs",
+    "test:node": "tsx --tsconfig packages/ui/tsconfig.json --test packages/services/test/botMessagesLocale.test.ts packages/services/test/branchMergeStatusService.test.ts packages/services/test/userInstructionsService.test.ts packages/services/test/voiceDictation.test.ts packages/services/test/voiceDictationRpc.test.ts packages/services/test/zcodeUpstreamBaseVersion.test.ts packages/ui/test/branchMergeStatusProbeRunner.test.ts packages/ui/test/chatErrorResume.test.ts packages/ui/test/i18nCatalogParity.test.ts packages/ui/test/intlPlural.test.ts packages/ui/test/localeContentCatalogs.test.ts packages/ui/test/localeFormatting.test.ts packages/ui/test/localeSettingsSchema.test.ts packages/ui/test/localeSupport.test.ts packages/ui/test/sessionThroughput.test.ts packages/ui/test/themeContrast.test.ts packages/ui/test/themeMigration.test.ts packages/ui/test/updateReleaseNotes.test.ts packages/ui/test/userInstructionsEditorModel.test.ts packages/ui/test/voiceDictation.test.ts scripts/fork-release-version.test.mjs",
     "test:e2e": "pnpm --filter @zcode/desktop test:e2e",
     "test:e2e:all:coverage": "pnpm --filter @zcode/desktop test:e2e:all:coverage",
     "test:e2e:windows:sharded": "pnpm --filter @zcode/desktop test:e2e:windows:sharded",
@@ -117,7 +118,8 @@
   "pnpm": {
     "overrides": {
       "react": "19.2.7",
-      "react-dom": "19.2.7"
+      "react-dom": "19.2.7",
+      "koffi": "2.15.6"
     },
     "patchedDependencies": {
       "vitest@4.1.7": "patches/vitest@4.1.7.patch",
@@ -126,6 +128,5 @@
       "@ai-sdk/openai-compatible@2.0.60": "patches/@ai-sdk__openai-compatible@2.0.60.patch",
       "@ai-sdk/anthropic@3.0.81": "patches/@ai-sdk__anthropic@3.0.81.patch"
     }
-  },
-  "license": "Apache-2.0"
+  }
 }

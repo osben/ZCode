@@ -1,0 +1,353 @@
+import { createHash, randomUUID } from "node:crypto";
+import { createReadStream, createWriteStream } from "node:fs";
+import { mkdir, rename, rm, stat } from "node:fs/promises";
+import { join } from "node:path";
+import { Readable } from "node:stream";
+import { pipeline } from "node:stream/promises";
+import type { ReadableStream as WebReadableStream } from "node:stream/web";
+import { createServiceLogger } from "#src/logger/serviceLogger.js";
+import {
+  VOICE_MODEL_CATALOG,
+  findVoiceModelDescriptor,
+  type VoiceModelDescriptor,
+} from "./voiceModelCatalog.js";
+import type { VoiceModelListItem, VoiceModelState } from "./voiceDictation.js";
+
+const logger = createServiceLogger("voice-dictation");
+
+export const DEFAULT_VOICE_MODEL_SOURCES: readonly string[] = ["https://huggingface.co"];
+
+export type VoiceModelDownloadFailureReason =
+  | "cancelled"
+  | "http_status"
+  | "network"
+  | "size_mismatch"
+  | "checksum_mismatch";
+
+export class VoiceModelDownloadError extends Error {
+  constructor(
+    readonly reason: VoiceModelDownloadFailureReason,
+    message: string,
+  ) {
+    super(message);
+    this.name = "VoiceModelDownloadError";
+  }
+}
+
+export interface VoiceModelStoreOptions {
+  /** 模型根目录；每次访问时求值，跟随数据目录设置变化。 */
+  getModelsDir: () => string;
+  /** Read-only model roots owned by another application. */
+  handyModelDirs?: readonly string[];
+  catalog?: readonly VoiceModelDescriptor[];
+  /** 下载源，按顺序尝试；每个源的 URL 形如 `${source}/${repo}/resolve/${revision}/${file}`。 */
+  sources?: readonly string[];
+  fetchImpl?: typeof fetch;
+}
+
+interface ActiveDownload {
+  controller: AbortController;
+  downloadedBytes: number;
+  totalBytes: number;
+  promise: Promise<void>;
+}
+
+/**
+ * 语音模型的唯一状态所有者：磁盘上的已安装文件与进行中的下载都只在这里维护。
+ * 文件先写入 `.part`，大小与 sha256 校验通过后才原子重命名为最终文件，因此 `ready` 状态总是完整文件。
+ */
+export class VoiceModelStore {
+  private readonly getModelsDir: () => string;
+  private readonly catalog: readonly VoiceModelDescriptor[];
+  private readonly handyModelDirs: readonly string[];
+  private readonly sources: readonly string[];
+  private readonly fetchImpl: typeof fetch;
+  private readonly active = new Map<string, ActiveDownload>();
+  private readonly handyHashCache = new Map<string, Promise<string>>();
+
+  constructor(options: VoiceModelStoreOptions) {
+    this.getModelsDir = options.getModelsDir;
+    this.handyModelDirs = options.handyModelDirs ?? [];
+    this.catalog = options.catalog ?? VOICE_MODEL_CATALOG;
+    this.sources = options.sources ?? DEFAULT_VOICE_MODEL_SOURCES;
+    this.fetchImpl = options.fetchImpl ?? fetch;
+  }
+
+  async list(): Promise<VoiceModelListItem[]> {
+    return Promise.all(
+      this.catalog.map(async (descriptor) => ({
+        descriptor,
+        state: await this.getState(descriptor.id),
+      })),
+    );
+  }
+
+  async getState(id: string): Promise<VoiceModelState> {
+    const descriptor = this.requireDescriptor(id);
+    const inFlight = this.active.get(id);
+    if (inFlight) {
+      return {
+        status: "downloading",
+        downloadedBytes: inFlight.downloadedBytes,
+        totalBytes: inFlight.totalBytes,
+      };
+    }
+    const path = this.modelFilePath(descriptor);
+    try {
+      const info = await stat(path);
+      // 列表只做大小检查，完整 sha256 在下载时已经验证过，避免每次打开设置都读取数百 MB 文件。
+      if (info.isFile() && info.size === descriptor.sizeBytes) {
+        return { status: "ready", path, sizeBytes: info.size, source: "zcode" };
+      }
+    } catch (error) {
+      if (!isNotFound(error)) throw error;
+    }
+    for (const handyDir of this.handyModelDirs) {
+      const handyPath = join(handyDir, descriptor.fileName);
+      try {
+        const info = await stat(handyPath);
+        if (!info.isFile() || info.size !== descriptor.sizeBytes) continue;
+
+        const cacheKey = `${handyPath}:${info.size}:${info.mtimeMs}:${info.ctimeMs}:${info.ino}`;
+        let digest = this.handyHashCache.get(cacheKey);
+        if (!digest) {
+          digest = hashFileSha256(handyPath);
+          this.handyHashCache.set(cacheKey, digest);
+        }
+        try {
+          const verified = (await digest) === descriptor.sha256;
+          const latestInfo = await stat(handyPath);
+          if (verified && sameFileVersion(info, latestInfo)) {
+            return {
+              status: "ready",
+              path: handyPath,
+              sizeBytes: info.size,
+              source: "handy",
+            };
+          }
+        } catch (error) {
+          this.handyHashCache.delete(cacheKey);
+          if (!isNotFound(error)) throw error;
+        }
+      } catch (error) {
+        if (!isNotFound(error)) throw error;
+      }
+    }
+    return { status: "not_downloaded" };
+  }
+
+  /** 返回已安装模型的文件路径；模型未就绪时抛错，调用方应先下载。 */
+  async getReadyModelPath(id: string): Promise<string> {
+    const state = await this.getState(id);
+    if (state.status !== "ready") {
+      throw new Error(`voice model ${id} is not ready (${state.status})`);
+    }
+    return state.path;
+  }
+
+  /** 同一模型的并发调用共享同一个下载任务。 */
+  download(id: string): Promise<void> {
+    const descriptor = this.requireDescriptor(id);
+    const inFlight = this.active.get(id);
+    if (inFlight) return inFlight.promise;
+
+    const controller = new AbortController();
+    const entry: ActiveDownload = {
+      controller,
+      downloadedBytes: 0,
+      totalBytes: descriptor.sizeBytes,
+      promise: Promise.resolve(),
+    };
+    entry.promise = this.runDownload(descriptor, entry).finally(() => {
+      if (this.active.get(id) === entry) this.active.delete(id);
+    });
+    this.active.set(id, entry);
+    return entry.promise;
+  }
+
+  cancelDownload(id: string): void {
+    this.active.get(id)?.controller.abort();
+  }
+
+  /** 删除已安装文件；若正在下载则先取消并等待下载结束。 */
+  async remove(id: string): Promise<void> {
+    const descriptor = this.requireDescriptor(id);
+    const inFlight = this.active.get(id);
+    if (inFlight) {
+      inFlight.controller.abort();
+      await inFlight.promise.catch(() => undefined);
+    }
+    await rm(this.modelDir(descriptor), { recursive: true, force: true });
+    logger.info(undefined, "voice model removed", { id });
+  }
+
+  private async runDownload(
+    descriptor: VoiceModelDescriptor,
+    entry: ActiveDownload,
+  ): Promise<void> {
+    const dir = this.modelDir(descriptor);
+    const finalPath = this.modelFilePath(descriptor);
+    // 每个下载任务使用唯一临时名：不同窗口各自持有 VoiceModelStore 进程，共享 `${finalPath}.part`
+    // 会互相覆盖字节，且一方失败时的清理会删掉另一方的半成品导致 rename 出错。
+    const partPath = `${finalPath}.${randomUUID()}.part`;
+    await mkdir(dir, { recursive: true });
+
+    let lastError: unknown;
+    for (const source of this.sources) {
+      if (entry.controller.signal.aborted) break;
+      const url = buildModelUrl(source, descriptor);
+      try {
+        await this.fetchToPartFile(url, partPath, descriptor, entry);
+        try {
+          await rename(partPath, finalPath);
+        } catch (error) {
+          // 另一窗口的 VoiceModelStore 进程可能刚完成同一模型的校验并落位；Windows 的
+          // rename 不覆盖已存在目标。目标已是同尺寸文件（下载时已做过 sha256 校验）时，
+          // 视为下载成功并清理本任务残留的 .part，而不是向用户报一次假失败。
+          const installed = await stat(finalPath).then(
+            (info) => info.isFile() && info.size === descriptor.sizeBytes,
+            () => false,
+          );
+          if (!installed) throw error;
+          await rm(partPath, { force: true });
+        }
+        logger.info(undefined, "voice model downloaded", { id: descriptor.id, source });
+        return;
+      } catch (error) {
+        lastError = error;
+        // 校验失败的文件一律丢弃，不能让错误内容留在最终路径上。
+        await rm(partPath, { force: true });
+        if (error instanceof VoiceModelDownloadError && error.reason === "cancelled") break;
+        logger.warn(undefined, "voice model download source failed", {
+          id: descriptor.id,
+          source,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+    if (lastError instanceof VoiceModelDownloadError) throw lastError;
+    if (entry.controller.signal.aborted) {
+      throw new VoiceModelDownloadError("cancelled", `download of ${descriptor.id} was cancelled`);
+    }
+    throw new VoiceModelDownloadError(
+      "network",
+      `download of ${descriptor.id} failed from all sources: ${
+        lastError instanceof Error ? lastError.message : String(lastError)
+      }`,
+    );
+  }
+
+  private async fetchToPartFile(
+    url: string,
+    partPath: string,
+    descriptor: VoiceModelDescriptor,
+    entry: ActiveDownload,
+  ): Promise<void> {
+    const signal = entry.controller.signal;
+    entry.downloadedBytes = 0;
+
+    let response: Response;
+    try {
+      response = await this.fetchImpl(url, { signal, redirect: "follow" });
+    } catch (error) {
+      if (signal.aborted) {
+        throw new VoiceModelDownloadError(
+          "cancelled",
+          `download of ${descriptor.id} was cancelled`,
+        );
+      }
+      throw new VoiceModelDownloadError(
+        "network",
+        error instanceof Error ? error.message : String(error),
+      );
+    }
+    if (!response.ok || !response.body) {
+      throw new VoiceModelDownloadError("http_status", `HTTP ${response.status} for ${url}`);
+    }
+
+    const hash = createHash("sha256");
+    try {
+      // 用 pipeline 而非手写 write/drain：写流（ENOSPC/EACCES）的 error 事件必须被消费，
+      // 否则未监听的 error 会直接击穿 Desktop Host 进程；pipeline 同时负责背压与取消。
+      await pipeline(
+        Readable.fromWeb(response.body as WebReadableStream),
+        async function* (source) {
+          for await (const chunk of source) {
+            const buffer = chunk as Buffer;
+            hash.update(buffer);
+            entry.downloadedBytes += buffer.length;
+            yield buffer;
+          }
+        },
+        createWriteStream(partPath),
+        { signal },
+      );
+    } catch (error) {
+      if (signal.aborted) {
+        throw new VoiceModelDownloadError(
+          "cancelled",
+          `download of ${descriptor.id} was cancelled`,
+        );
+      }
+      throw new VoiceModelDownloadError(
+        "network",
+        error instanceof Error ? error.message : String(error),
+      );
+    }
+
+    if (entry.downloadedBytes !== descriptor.sizeBytes) {
+      throw new VoiceModelDownloadError(
+        "size_mismatch",
+        `${descriptor.id}: expected ${descriptor.sizeBytes} bytes, got ${entry.downloadedBytes}`,
+      );
+    }
+    const digest = hash.digest("hex");
+    if (digest !== descriptor.sha256) {
+      throw new VoiceModelDownloadError("checksum_mismatch", `${descriptor.id}: sha256 mismatch`);
+    }
+  }
+
+  private requireDescriptor(id: string): VoiceModelDescriptor {
+    const descriptor = findVoiceModelDescriptor(id, this.catalog);
+    if (!descriptor) throw new Error(`unknown voice model: ${id}`);
+    return descriptor;
+  }
+
+  private modelDir(descriptor: VoiceModelDescriptor): string {
+    return join(this.getModelsDir(), descriptor.id);
+  }
+
+  private modelFilePath(descriptor: VoiceModelDescriptor): string {
+    return join(this.modelDir(descriptor), descriptor.fileName);
+  }
+}
+
+export function buildModelUrl(source: string, descriptor: VoiceModelDescriptor): string {
+  // CodeQL 对库输入上的回溯型正则告警；这里手写循环等价剥掉尾部斜杠，保持线性复杂度。
+  let base = source;
+  while (base.endsWith("/")) base = base.slice(0, -1);
+  return `${base}/${descriptor.huggingFaceRepo}/resolve/${descriptor.revision}/${descriptor.fileName}`;
+}
+
+function isNotFound(error: unknown): boolean {
+  return error instanceof Error && "code" in error && error.code === "ENOENT";
+}
+
+function sameFileVersion(
+  first: Awaited<ReturnType<typeof stat>>,
+  second: Awaited<ReturnType<typeof stat>>,
+): boolean {
+  return (
+    second.isFile() &&
+    first.size === second.size &&
+    first.mtimeMs === second.mtimeMs &&
+    first.ctimeMs === second.ctimeMs &&
+    first.ino === second.ino
+  );
+}
+
+async function hashFileSha256(path: string): Promise<string> {
+  const hash = createHash("sha256");
+  for await (const chunk of createReadStream(path)) hash.update(chunk as Buffer);
+  return hash.digest("hex");
+}

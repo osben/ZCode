@@ -5250,6 +5250,7 @@ export function SessionPane({
   const composerNode = readOnly ? null : (
     <ConversationComposer
       key="conversation-composer"
+      voiceDictationEnabled={isDesktop}
       // Snapshot still provides usage, routing, and runtime state; the toolbar reads mode/model only from the Composer Draft below.
       snapshot={snapshot}
       sessionId={sessionId}

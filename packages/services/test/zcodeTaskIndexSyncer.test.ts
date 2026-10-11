@@ -47,10 +47,11 @@ afterEach(async () => {
   currentEnv?.repo?.close();
   currentEnv = undefined;
   setDataBaseDir(null);
-  if (process.platform === "win32") {
-    // Windows 需要等待 SQLite 释放文件句柄，避免临时目录清理出现 EPERM。
-    await new Promise((resolve) => setTimeout(resolve, 50));
-  }
+  // 所有平台都等待一小段真实时间：被测 syncer 的失败/清理链路里存在跨用例存活的异步
+  // continuation，事件循环饥饿的 CI runner（2 核 4 worker）上会在下一个用例装好
+  // console.warn spy 之后才落地，导致「持续订阅故障…限频」用例计数多出 1（PR #22 上
+  // 5 次 CI 3 次复现）。50ms 的代价远小于整场全量重跑；Windows 另需它释放 SQLite 句柄。
+  await new Promise((resolve) => setTimeout(resolve, 50));
   try {
     rmSync(tempDir, { recursive: true, force: true });
   } catch {
@@ -3017,16 +3018,22 @@ describe("createZCodeTaskIndexSyncer", () => {
 
     vi.useFakeTimers();
     try {
+      // 只统计本用例两个 topic 的订阅失败 warn：worker 的 console 是跨文件共享的，
+      // 全量并发时任何相邻文件/残留链路的杂散 warn 都不应影响本用例的限频断言。
+      const topicWarnMessages = () =>
+        warnSpy.mock.calls
+          .map((call) => String(call[1]))
+          .filter((message) => message.includes("订阅失败") && message.includes("workspace=/repo"));
       syncer.ensureWorkspaceSubscription({ workspacePath: "/repo" });
       await vi.advanceTimersByTimeAsync(0);
-      expect(warnSpy).toHaveBeenCalledTimes(2);
+      expect(topicWarnMessages()).toHaveLength(2);
 
       await vi.advanceTimersByTimeAsync(59_999);
-      expect(warnSpy).toHaveBeenCalledTimes(2);
+      expect(topicWarnMessages()).toHaveLength(2);
 
       await vi.advanceTimersByTimeAsync(1_000);
-      expect(warnSpy).toHaveBeenCalledTimes(4);
-      const messages = warnSpy.mock.calls.map((call) => String(call[1]));
+      expect(topicWarnMessages()).toHaveLength(4);
+      const messages = topicWarnMessages();
       expect(messages.filter((message) => message.includes("reason=initial"))).toHaveLength(2);
       expect(messages.filter((message) => message.includes("reason=retry"))).toHaveLength(2);
       expect(messages.every((message) => !message.includes("retry:retry"))).toBe(true);

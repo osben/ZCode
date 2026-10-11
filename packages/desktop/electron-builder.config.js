@@ -826,6 +826,7 @@ export default {
       // Without this key, macOS silently denies CoreBluetooth enumeration and the embedded browser's Web Bluetooth
       // device picker is always empty (tested: Chrome works when it has Bluetooth privacy permission).
       NSBluetoothAlwaysUsageDescription: `${desktopProductIdentity.productName} needs Bluetooth access to list nearby devices when a website you open in the embedded browser requests one.`,
+      NSMicrophoneUsageDescription: `${desktopProductIdentity.productName} uses the microphone for voice dictation. Audio is transcribed on this device.`,
     },
     // The pre-signing script uses native codesign and requires the full "Developer ID Application: ..." identity string,
     // but electron-builder 26.x rejects names with that prefix in mac.identity.
