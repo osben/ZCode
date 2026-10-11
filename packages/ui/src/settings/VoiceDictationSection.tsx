@@ -415,7 +415,7 @@ function DesktopVoiceDictationSection() {
             {intl.formatMessage({ id: "voiceDictation.models.description" })}
           </p>
         </div>
-        <SettingsGroupCard>
+        <div className="space-y-3">
           {models.map((item) => (
             <VoiceModelRow
               key={item.descriptor.id}
@@ -432,7 +432,7 @@ function DesktopVoiceDictationSection() {
               onRemove={() => void handleRemove(item.descriptor.id)}
             />
           ))}
-        </SettingsGroupCard>
+        </div>
       </section>
     </div>
   );

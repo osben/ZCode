@@ -98,8 +98,22 @@ describe("VoiceModelRow runtime status", () => {
       1_000_000,
     );
 
-    expect(screen.getByText("Next dictation")).toBeTruthy();
+    expect(screen.getByText("Active for dictation")).toBeTruthy();
     expect(screen.getByText("Loaded in memory · unloads in 4:59")).toBeTruthy();
+  });
+
+  it("renders separate cards and highlights the selected model", () => {
+    const view = renderRows({ loadedModelId: null, activeModelId: null, idleUnloadAt: null }, 0);
+    const cards = view.container.querySelectorAll("article[data-selected]");
+    const selectedCard = view.container.querySelector('article[data-selected="true"]');
+
+    expect(cards).toHaveLength(2);
+    expect(selectedCard?.className).toContain("bg-card-selected");
+    expect(selectedCard?.className).toContain("border-brand/50");
+    expect(screen.getByText("Active for dictation")).toBeTruthy();
+    expect(screen.getAllByText("Test model")).toHaveLength(2);
+    expect(screen.getAllByText("1 languages")).toHaveLength(2);
+    expect(screen.getAllByText("License: mit")).toHaveLength(2);
   });
 
   it("shows when the loaded model is transcribing instead of an idle countdown", () => {

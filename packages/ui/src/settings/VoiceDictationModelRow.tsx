@@ -1,6 +1,6 @@
 import { Button } from "@/components/ui/button.js";
-import { LoaderCircle } from "lucide-react";
-import { SettingsBadge, SettingsRow } from "@/settings/SettingsPageParts.js";
+import { AudioLines, Globe2, HardDrive, LoaderCircle, Trash2 } from "lucide-react";
+import { SettingsBadge } from "@/settings/SettingsPageParts.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { useConfirmDialog } from "@/hooks/useConfirmDialog.js";
 import type { VoiceDictationRuntimeState, VoiceModelListItem } from "@zcode/services";
@@ -70,17 +70,14 @@ export function VoiceModelRow({
       </Button>
     ) : ready ? (
       <div className="flex items-center gap-2">
-        {selected ? (
-          <SettingsBadge>
-            {intl.formatMessage({ id: "voiceDictation.models.selected" })}
-          </SettingsBadge>
-        ) : (
+        {!selected && (
           <Button variant="outline" size="sm" onClick={onSelect}>
             {intl.formatMessage({ id: "voiceDictation.models.use" })}
           </Button>
         )}
         {state.source === "handy" ? null : (
           <Button variant="ghost" size="sm" onClick={() => void confirmRemove()}>
+            <Trash2 className="size-3" aria-hidden />
             {intl.formatMessage({ id: "voiceDictation.models.remove" })}
           </Button>
         )}
@@ -91,21 +88,23 @@ export function VoiceModelRow({
       </Button>
     );
 
-  const specs = [
-    descriptor.description,
-    formatVoiceModelSize(descriptor.sizeBytes),
-    intl.formatMessage(
-      { id: "voiceDictation.models.languages" },
-      { count: descriptor.languageCount },
-    ),
-    intl.formatMessage({ id: "voiceDictation.models.license" }, { license: descriptor.license }),
-  ];
-
   return (
-    <SettingsRow
-      label={
-        <span className="flex flex-wrap items-center gap-2">
-          {descriptor.name}
+    <article
+      data-selected={selected}
+      className={`rounded-xl border p-4 transition-colors ${
+        selected
+          ? "border-brand/50 bg-card-selected ring-1 ring-brand/20"
+          : "border-border bg-card hover:border-border-hover"
+      }`}
+    >
+      <div className="min-w-0">
+        <div className="flex flex-wrap items-center gap-2">
+          <h4 className="text-ui-lg font-semibold text-foreground">{descriptor.name}</h4>
+          {selected ? (
+            <span className="rounded-md border border-brand/25 bg-accent px-2.5 py-1 text-ui-caption font-semibold text-brand">
+              {intl.formatMessage({ id: "voiceDictation.models.selected" })}
+            </span>
+          ) : null}
           {active ? (
             <SettingsBadge>
               {intl.formatMessage({
@@ -137,44 +136,71 @@ export function VoiceModelRow({
               {intl.formatMessage({ id: "voiceDictation.models.willUseWhenReady" })}
             </SettingsBadge>
           ) : null}
+        </div>
+        <p className="mt-1 text-ui-base leading-6 text-foreground-subtle">
+          {descriptor.description}
+        </p>
+      </div>
+
+      <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-border pt-3">
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-ui-base text-foreground-subtle">
+          <span className="inline-flex items-center gap-1.5">
+            <Globe2 className="size-4" aria-hidden />
+            {intl.formatMessage(
+              { id: "voiceDictation.models.languages" },
+              { count: descriptor.languageCount },
+            )}
+          </span>
           {descriptor.streaming ? (
-            <SettingsBadge>
+            <span className="inline-flex items-center gap-1.5">
+              <AudioLines className="size-4" aria-hidden />
               {intl.formatMessage({ id: "voiceDictation.models.streaming" })}
-            </SettingsBadge>
+            </span>
           ) : null}
-        </span>
-      }
-      description={specs.join(" · ")}
-      control={control}
-      detail={
-        downloading || startingDownload ? (
-          <div className="space-y-2">
-            {downloading ? (
-              <div className="h-1.5 w-full overflow-hidden rounded-full bg-surface">
-                <div
-                  className="h-full bg-brand transition-[width]"
-                  style={{ width: `${percent}%` }}
-                />
-              </div>
-            ) : null}
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <div className="text-ui-base text-foreground-subtle">
-                {downloading
-                  ? intl.formatMessage({ id: "voiceDictation.models.downloading" }, { percent })
-                  : intl.formatMessage({ id: "voiceDictation.models.startingDownload" })}
-              </div>
-              <Button variant="outline" size="sm" onClick={onUseWhenReady}>
-                {intl.formatMessage({
-                  id: pendingUse
-                    ? "voiceDictation.models.cancelUseWhenReady"
-                    : "voiceDictation.models.useWhenReady",
-                })}
-              </Button>
+          <span>
+            {intl.formatMessage(
+              { id: "voiceDictation.models.license" },
+              { license: descriptor.license },
+            )}
+          </span>
+        </div>
+
+        <div className="flex flex-wrap items-center justify-end gap-3">
+          <span className="inline-flex items-center gap-1.5 text-ui-base text-foreground-subtle">
+            <HardDrive className="size-4" aria-hidden />
+            {formatVoiceModelSize(descriptor.sizeBytes)}
+          </span>
+          {control}
+        </div>
+      </div>
+
+      {downloading || startingDownload ? (
+        <div className="mt-3 space-y-2 border-t border-border pt-3">
+          {downloading ? (
+            <div className="h-1.5 w-full overflow-hidden rounded-full bg-surface">
+              <div
+                className="h-full bg-brand transition-[width]"
+                style={{ width: `${percent}%` }}
+              />
             </div>
+          ) : null}
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="text-ui-base text-foreground-subtle">
+              {downloading
+                ? intl.formatMessage({ id: "voiceDictation.models.downloading" }, { percent })
+                : intl.formatMessage({ id: "voiceDictation.models.startingDownload" })}
+            </div>
+            <Button variant="outline" size="sm" onClick={onUseWhenReady}>
+              {intl.formatMessage({
+                id: pendingUse
+                  ? "voiceDictation.models.cancelUseWhenReady"
+                  : "voiceDictation.models.useWhenReady",
+              })}
+            </Button>
           </div>
-        ) : undefined
-      }
-    />
+        </div>
+      ) : null}
+    </article>
   );
 }
 

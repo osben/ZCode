@@ -24,6 +24,7 @@ Make the existing local desktop dictation flow easier to understand and avoid do
 8. Translate every voice-dictation setting, model action, state, confirmation, and error message in Ukrainian.
 9. Show a single System default microphone option. Filter Chromium's synthetic `deviceId === "default"` entry from the explicit-device list so it does not duplicate the system-default choice.
 10. Allow a downloading model to be marked for use after download. Keep the current selected model in effect until the requested model is fully ready; canceling or failing the download keeps the current selection.
+11. Present each model as a separate card with its name and description above a metadata/action footer. Emphasize the selected model with an `Active for dictation` label and a subtle selected-card treatment; use only catalog metadata and do not invent quality or speed scores.
 
 ## Ownership and interfaces
 
@@ -48,6 +49,7 @@ Make the existing local desktop dictation flow easier to understand and avoid do
 | VD-10 | Enumerated inputs include a `deviceId` of `default`                      | Open the input selector                         | Only the System default choice and concrete input devices are shown; the synthetic entry is omitted.                                  |
 | VD-11 | Set the app language to Ukrainian                                        | Open Voice dictation settings and model actions | All labels, descriptions, statuses, confirmations, and toasts use Ukrainian text.                                                     |
 | VD-12 | A ready model is selected; another model is downloading                  | Choose `Use when ready` on the downloading row  | Keep using the selected model. Switch only after download succeeds; cancel/failure keeps the current selection.                       |
+| VD-13 | Open Desktop voice-dictation settings                                    | Review the model list                           | Models appear as separate cards with description and metadata/actions; the selected model is clearly labeled and subtly highlighted.  |
 
 ## Handy discovery roots
 
@@ -174,7 +176,7 @@ sequenceDiagram
 
 | Case      | Setup / action                                                       | Expected result                                                                                                              |
 | --------- | -------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
-| VD-MEM-01 | Several models are downloaded; one is selected and another is loaded | Each row identifies its own state: `Next dictation` versus `Loaded`; no implication that selection loaded the model.         |
+| VD-MEM-01 | Several models are downloaded; one is selected and another is loaded | Each row identifies its own state: `Active for dictation` versus `Loaded`; no implication that selection loaded the model.   |
 | VD-MEM-02 | Choose another ready model with `Use`                                | The selected marker moves immediately; the currently loaded model remains marked until the next transcription or its unload. |
 | VD-MEM-03 | Start transcription with the selected model                          | Its row shows `Loading` then `Transcribing`; no idle-unload countdown is shown while it is active.                           |
 | VD-MEM-04 | Finish transcription                                                 | The row shows `Loaded` and a countdown starting at five minutes.                                                             |
