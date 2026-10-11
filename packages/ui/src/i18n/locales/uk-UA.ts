@@ -6985,7 +6985,7 @@ const ukUA: Record<string, string> = {
   "voiceDictation.models.download": "Завантажити",
   "voiceDictation.models.cancel": "Скасувати",
   "voiceDictation.models.use": "Використовувати",
-  "voiceDictation.models.selected": "Активна для диктування",
+  "voiceDictation.models.selected": "Активна",
   "voiceDictation.models.loading": "Завантаження в пам'ять",
   "voiceDictation.models.transcribing": "Розпізнавання мовлення",
   "voiceDictation.models.streamingActive": "Потокове розпізнавання мовлення",

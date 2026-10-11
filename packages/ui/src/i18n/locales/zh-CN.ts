@@ -7039,7 +7039,7 @@ const zhCN: Record<string, string> = {
   "voiceDictation.models.download": "下载",
   "voiceDictation.models.cancel": "取消",
   "voiceDictation.models.use": "使用",
-  "voiceDictation.models.selected": "听写当前使用",
+  "voiceDictation.models.selected": "当前听写",
   "voiceDictation.models.loading": "正在加载到内存",
   "voiceDictation.models.transcribing": "正在转写",
   "voiceDictation.models.streamingActive": "正在流式转写",

@@ -122,10 +122,27 @@ beforeEach(() => {
 afterEach(() => cleanup());
 
 describe("VoiceDictationSection model downloads", () => {
+  it("selects a ready model when its card is clicked", async () => {
+    h.state.downloadStatus = "ready";
+    render(createElement(VoiceDictationSection, { isDesktop: true }));
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Model Two: voiceDictation.models.use" }),
+    );
+
+    await waitFor(() =>
+      expect(h.updateSettings).toHaveBeenCalledWith({
+        voiceDictation: { modelId: "model-two" },
+      }),
+    );
+  });
+
   it("shows a starting state immediately and keeps polling until download progress appears", async () => {
     render(createElement(VoiceDictationSection, { isDesktop: true }));
 
-    fireEvent.click(await screen.findByRole("button", { name: "voiceDictation.models.download" }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Model Two: voiceDictation.models.download" }),
+    );
 
     expect(
       (
@@ -144,9 +161,11 @@ describe("VoiceDictationSection model downloads", () => {
     render(createElement(VoiceDictationSection, { isDesktop: true }));
 
     expect(await screen.findByText("voiceDictation.models.selected")).toBeTruthy();
-    fireEvent.click(await screen.findByRole("button", { name: "voiceDictation.models.download" }));
     fireEvent.click(
-      await screen.findByRole("button", { name: "voiceDictation.models.useWhenReady" }),
+      await screen.findByRole("button", { name: "Model Two: voiceDictation.models.download" }),
+    );
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Model Two: voiceDictation.models.useWhenReady" }),
     );
 
     expect(screen.getByText("voiceDictation.models.selected")).toBeTruthy();

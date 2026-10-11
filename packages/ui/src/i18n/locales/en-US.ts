@@ -7404,7 +7404,7 @@ const enUS: Record<string, string> = {
   "voiceDictation.models.download": "Download",
   "voiceDictation.models.cancel": "Cancel",
   "voiceDictation.models.use": "Use",
-  "voiceDictation.models.selected": "Active for dictation",
+  "voiceDictation.models.selected": "Active",
   "voiceDictation.models.loading": "Loading into memory",
   "voiceDictation.models.transcribing": "Transcribing",
   "voiceDictation.models.streamingActive": "Streaming transcription",

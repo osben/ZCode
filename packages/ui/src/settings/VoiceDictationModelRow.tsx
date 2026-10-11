@@ -19,7 +19,7 @@ interface VoiceModelRowProps {
   onRemove: () => void;
 }
 
-/** 单个转写模型的一行：展示规格，并按状态给出下载 / 取消 / 选择 / 删除操作。 */
+/** 单个转写模型的卡片：展示规格，并按状态提供下载、取消、选择和删除操作。 */
 export function VoiceModelRow({
   item,
   selected,
@@ -44,6 +44,24 @@ export function VoiceModelRow({
     downloading && state.totalBytes > 0
       ? Math.floor((state.downloadedBytes / state.totalBytes) * 100)
       : 0;
+  const cardActionId = selected
+    ? "voiceDictation.models.selected"
+    : downloading || startingDownload
+      ? pendingUse
+        ? "voiceDictation.models.cancelUseWhenReady"
+        : "voiceDictation.models.useWhenReady"
+      : ready
+        ? "voiceDictation.models.use"
+        : "voiceDictation.models.download";
+  const handleCardAction = () => {
+    if (ready) {
+      if (!selected) onSelect();
+    } else if (downloading || startingDownload) {
+      onUseWhenReady();
+    } else {
+      onDownload();
+    }
+  };
   const confirmRemove = async () => {
     const confirmed = await confirmDialog({
       title: intl.formatMessage({ id: "voiceDictation.models.removeConfirm.title" }),
@@ -91,19 +109,26 @@ export function VoiceModelRow({
   return (
     <article
       data-selected={selected}
-      className={`rounded-xl border p-4 transition-colors ${
+      className={`relative rounded-xl border p-4 transition-colors ${
         selected
-          ? "border-brand/50 bg-card-selected ring-1 ring-brand/20"
-          : "border-border bg-card hover:border-border-hover"
+          ? "border-brand/40 bg-card-selected ring-1 ring-brand/15"
+          : "cursor-pointer border-card-border bg-card hover:border-border-hover hover:bg-surface-hover"
       }`}
     >
-      <div className="min-w-0">
+      <button
+        type="button"
+        aria-label={`${descriptor.name}: ${intl.formatMessage({ id: cardActionId })}`}
+        disabled={ready && selected}
+        onClick={handleCardAction}
+        className="absolute inset-0 z-0 rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-default"
+      />
+      <div className="relative z-10 min-w-0 pointer-events-none">
         <div className="flex flex-wrap items-center gap-2">
           <h4 className="text-ui-lg font-semibold text-foreground">{descriptor.name}</h4>
           {selected ? (
-            <span className="rounded-md border border-brand/25 bg-accent px-2.5 py-1 text-ui-caption font-semibold text-brand">
+            <SettingsBadge>
               {intl.formatMessage({ id: "voiceDictation.models.selected" })}
-            </span>
+            </SettingsBadge>
           ) : null}
           {active ? (
             <SettingsBadge>
@@ -142,7 +167,7 @@ export function VoiceModelRow({
         </p>
       </div>
 
-      <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-border pt-3">
+      <div className="relative z-10 mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-border pt-3 pointer-events-none">
         <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-ui-base text-foreground-subtle">
           <span className="inline-flex items-center gap-1.5">
             <Globe2 className="size-4" aria-hidden />
@@ -170,27 +195,25 @@ export function VoiceModelRow({
             <HardDrive className="size-4" aria-hidden />
             {formatVoiceModelSize(descriptor.sizeBytes)}
           </span>
-          {control}
+          <div className="pointer-events-auto">{control}</div>
         </div>
       </div>
 
-      {downloading || startingDownload ? (
-        <div className="mt-3 space-y-2 border-t border-border pt-3">
-          {downloading ? (
-            <div className="h-1.5 w-full overflow-hidden rounded-full bg-surface">
-              <div
-                className="h-full bg-brand transition-[width]"
-                style={{ width: `${percent}%` }}
-              />
-            </div>
-          ) : null}
+      {downloading ? (
+        <div className="relative z-10 mt-3 space-y-2 border-t border-border pt-3 pointer-events-none">
+          <div className="h-1.5 w-full overflow-hidden rounded-full bg-surface">
+            <div className="h-full bg-brand transition-[width]" style={{ width: `${percent}%` }} />
+          </div>
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="text-ui-base text-foreground-subtle">
-              {downloading
-                ? intl.formatMessage({ id: "voiceDictation.models.downloading" }, { percent })
-                : intl.formatMessage({ id: "voiceDictation.models.startingDownload" })}
+              {intl.formatMessage({ id: "voiceDictation.models.downloading" }, { percent })}
             </div>
-            <Button variant="outline" size="sm" onClick={onUseWhenReady}>
+            <Button
+              className="pointer-events-auto"
+              variant="outline"
+              size="sm"
+              onClick={onUseWhenReady}
+            >
               {intl.formatMessage({
                 id: pendingUse
                   ? "voiceDictation.models.cancelUseWhenReady"

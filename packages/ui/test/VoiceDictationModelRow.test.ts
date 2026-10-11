@@ -98,7 +98,9 @@ describe("VoiceModelRow runtime status", () => {
       1_000_000,
     );
 
-    expect(screen.getByText("Active for dictation")).toBeTruthy();
+    const activeBadge = screen.getByText("Active");
+    expect(activeBadge).toBeTruthy();
+    expect(activeBadge.className).toContain("bg-surface");
     expect(screen.getByText("Loaded in memory · unloads in 4:59")).toBeTruthy();
   });
 
@@ -109,8 +111,8 @@ describe("VoiceModelRow runtime status", () => {
 
     expect(cards).toHaveLength(2);
     expect(selectedCard?.className).toContain("bg-card-selected");
-    expect(selectedCard?.className).toContain("border-brand/50");
-    expect(screen.getByText("Active for dictation")).toBeTruthy();
+    expect(selectedCard?.className).toContain("border-brand/40");
+    expect(screen.getByText("Active")).toBeTruthy();
     expect(screen.getAllByText("Test model")).toHaveLength(2);
     expect(screen.getAllByText("1 languages")).toHaveLength(2);
     expect(screen.getAllByText("License: mit")).toHaveLength(2);
