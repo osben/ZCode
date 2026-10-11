@@ -263,8 +263,7 @@ export function createStandaloneProviderRuntimeHeadersPort(
         }
         // Fork note: this is the account scope fingerprint (compared for equality with expectedAccountScope to detect
         // account switching), not password storage — it needs a fast deterministic digest rather than a KDF; oauth is only an input and is not leaked.
-        accountScope = createHash("sha256").update(
-          // codeql[js/insufficient-password-hash]
+        accountScope = createHash("sha256").update( // codeql[js/insufficient-password-hash]
           JSON.stringify([providerId, family, currentIdentity, oauth]),
         ).digest("hex");
         if (
