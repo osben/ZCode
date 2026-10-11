@@ -1,3 +1,4 @@
+import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button.js";
 import { AudioLines, Globe2, HardDrive, LoaderCircle, Trash2 } from "lucide-react";
 import { SettingsBadge } from "@/settings/SettingsPageParts.js";
@@ -36,12 +37,34 @@ export function VoiceModelRow({
   const { descriptor, state } = item;
   const ready = state.status === "ready";
   const downloading = state.status === "downloading";
+  const showDownloadProgress = downloading || startingDownload;
   const active = runtimeState.activeModelId === descriptor.id;
   const loaded = runtimeState.loadedModelId === descriptor.id;
-  const percent =
-    downloading && state.totalBytes > 0
-      ? Math.floor((state.downloadedBytes / state.totalBytes) * 100)
-      : 0;
+  const downloadedBytes = downloading ? state.downloadedBytes : null;
+  const totalBytes = downloading ? state.totalBytes : null;
+  const hasKnownProgress = downloading && totalBytes !== null && totalBytes > 0;
+  const percent = hasKnownProgress
+    ? Math.max(0, Math.min(100, Math.floor(((downloadedBytes ?? 0) / totalBytes) * 100)))
+    : 0;
+  const downloadSampleRef = useRef<{ bytes: number; sampledAt: number } | null>(null);
+  const [downloadSpeed, setDownloadSpeed] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (!downloading || downloadedBytes === null) {
+      downloadSampleRef.current = null;
+      setDownloadSpeed(null);
+      return;
+    }
+
+    const sampledAt = Date.now();
+    const previousSample = downloadSampleRef.current;
+    downloadSampleRef.current = { bytes: downloadedBytes, sampledAt };
+    if (!previousSample || sampledAt <= previousSample.sampledAt) return;
+    const bytesPerSecond =
+      ((downloadedBytes - previousSample.bytes) * 1000) / (sampledAt - previousSample.sampledAt);
+    if (bytesPerSecond > 0) setDownloadSpeed(bytesPerSecond);
+    else if (bytesPerSecond < 0) setDownloadSpeed(null);
+  }, [downloadedBytes, downloading]);
   const cardActionId = selected
     ? "voiceDictation.models.selected"
     : downloading || startingDownload
@@ -74,35 +97,25 @@ export function VoiceModelRow({
     if (confirmed) onRemove();
   };
 
-  const control =
-    startingDownload && !downloading ? (
-      <Button variant="outline" size="sm" disabled>
-        <LoaderCircle className="size-3 animate-spin" aria-hidden />
-        {intl.formatMessage({ id: "voiceDictation.models.startingDownload" })}
-      </Button>
-    ) : downloading ? (
-      <Button variant="ghost" size="sm" onClick={onCancel}>
-        {intl.formatMessage({ id: "voiceDictation.models.cancel" })}
-      </Button>
-    ) : ready ? (
-      <div className="flex items-center gap-2">
-        {!selected && (
-          <Button variant="outline" size="sm" onClick={onSelect}>
-            {intl.formatMessage({ id: "voiceDictation.models.use" })}
-          </Button>
-        )}
-        {state.source === "handy" ? null : (
-          <Button variant="ghost" size="sm" onClick={() => void confirmRemove()}>
-            <Trash2 className="size-3" aria-hidden />
-            {intl.formatMessage({ id: "voiceDictation.models.remove" })}
-          </Button>
-        )}
-      </div>
-    ) : (
-      <Button variant="outline" size="sm" onClick={onDownload}>
-        {intl.formatMessage({ id: "voiceDictation.models.download" })}
-      </Button>
-    );
+  const control = showDownloadProgress ? null : ready ? (
+    <div className="flex items-center gap-2">
+      {!selected && (
+        <Button variant="outline" size="sm" onClick={onSelect}>
+          {intl.formatMessage({ id: "voiceDictation.models.use" })}
+        </Button>
+      )}
+      {state.source === "handy" ? null : (
+        <Button variant="ghost" size="sm" onClick={() => void confirmRemove()}>
+          <Trash2 className="size-3" aria-hidden />
+          {intl.formatMessage({ id: "voiceDictation.models.remove" })}
+        </Button>
+      )}
+    </div>
+  ) : (
+    <Button variant="outline" size="sm" onClick={onDownload}>
+      {intl.formatMessage({ id: "voiceDictation.models.download" })}
+    </Button>
+  );
 
   return (
     <article
@@ -192,18 +205,61 @@ export function VoiceModelRow({
         </div>
       </div>
 
-      {downloading ? (
+      {showDownloadProgress ? (
         <div className="relative z-10 mt-3 space-y-2 border-t border-border pt-3 pointer-events-none">
-          <div className="h-1.5 w-full overflow-hidden rounded-full bg-surface">
-            <div className="h-full bg-brand transition-[width]" style={{ width: `${percent}%` }} />
+          <div
+            className="h-3 w-full overflow-hidden rounded-full bg-surface"
+            role="progressbar"
+            aria-label={
+              startingDownload && !downloading
+                ? intl.formatMessage({ id: "voiceDictation.models.startingDownload" })
+                : intl.formatMessage({ id: "voiceDictation.models.downloading" }, { percent })
+            }
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={hasKnownProgress ? percent : undefined}
+            data-testid="voice-model-download-progress"
+          >
+            <div
+              className={`h-full rounded-full bg-brand transition-[width] ${hasKnownProgress ? "" : "w-1/3 animate-pulse"}`}
+              style={hasKnownProgress ? { width: `${percent}%` } : undefined}
+            />
           </div>
-          <div className="text-ui-base text-foreground-subtle">
-            {intl.formatMessage({ id: "voiceDictation.models.downloading" }, { percent })}
+          <div className="flex flex-wrap items-center gap-3 text-ui-base text-foreground-subtle">
+            <span className="inline-flex min-w-0 flex-1 items-center gap-2">
+              {startingDownload && !downloading ? (
+                <LoaderCircle className="size-4 shrink-0 animate-spin" aria-hidden />
+              ) : null}
+              {downloading
+                ? intl.formatMessage({ id: "voiceDictation.models.downloading" }, { percent })
+                : intl.formatMessage({ id: "voiceDictation.models.startingDownload" })}
+            </span>
+            {downloadSpeed !== null ? (
+              <span className="shrink-0 tabular-nums">
+                {formatVoiceModelDownloadSpeed(downloadSpeed)}
+              </span>
+            ) : null}
+            {downloading ? (
+              <Button
+                className="pointer-events-auto shrink-0"
+                variant="ghost"
+                size="sm"
+                onClick={onCancel}
+              >
+                {intl.formatMessage({ id: "voiceDictation.models.cancel" })}
+              </Button>
+            ) : null}
           </div>
         </div>
       ) : null}
     </article>
   );
+}
+
+export function formatVoiceModelDownloadSpeed(bytesPerSecond: number): string {
+  if (bytesPerSecond >= 1_000_000) return `${(bytesPerSecond / 1_000_000).toFixed(1)} MB/s`;
+  if (bytesPerSecond >= 1_000) return `${Math.round(bytesPerSecond / 1_000)} KB/s`;
+  return `${Math.round(bytesPerSecond)} B/s`;
 }
 
 export function formatVoiceModelSize(bytes: number): string {

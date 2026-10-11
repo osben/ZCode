@@ -169,10 +169,11 @@ describe("VoiceDictationSection model downloads", () => {
     );
 
     expect(
-      (
-        await screen.findByRole("button", { name: "voiceDictation.models.startingDownload" })
-      ).hasAttribute("disabled"),
-    ).toBe(true);
+      await screen.findByRole("progressbar", {
+        name: "voiceDictation.models.startingDownload",
+      }),
+    ).toBeTruthy();
+    expect(screen.getByText("voiceDictation.models.startingDownload")).toBeTruthy();
     await waitFor(
       () => expect(screen.getByText("voiceDictation.models.downloading")).toBeTruthy(),
       { timeout: 2000 },

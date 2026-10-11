@@ -7,10 +7,13 @@ import type { VoiceDictationRuntimeState, VoiceModelListItem } from "@zcode/serv
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
 import enUS from "@/i18n/locales/en-US.js";
 import ukUA from "@/i18n/locales/uk-UA.js";
-import { VoiceModelRow } from "@/settings/VoiceDictationModelRow.js";
+import { formatVoiceModelDownloadSpeed, VoiceModelRow } from "@/settings/VoiceDictationModelRow.js";
 import { useConfirmDialogStore } from "@/store/confirmDialogStore.js";
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.restoreAllMocks();
+});
 
 const firstModel: VoiceModelListItem = {
   descriptor: {
@@ -88,6 +91,34 @@ function renderSingleRow(onRemove: () => void) {
   );
 }
 
+function renderDownloadingRow(downloadedBytes: number, totalBytes = 1000, onCancel = vi.fn()) {
+  const createRow = (bytes: number) =>
+    createElement(
+      ZCodeIntlProvider,
+      { initialLocale: "en-US" },
+      createElement(VoiceModelRow, {
+        item: {
+          ...firstModel,
+          state: { status: "downloading", downloadedBytes: bytes, totalBytes },
+        },
+        selected: false,
+        runtimeState: { loadedModelId: null, activeModelId: null, activePhase: null },
+        pendingUse: true,
+        onSelect: () => undefined,
+        onUseWhenReady: () => undefined,
+        onDownload: () => undefined,
+        onCancel,
+        onRemove: () => undefined,
+      }),
+    );
+  const view = render(createRow(downloadedBytes));
+  return {
+    onCancel,
+    ...view,
+    rerenderProgress: (bytes: number) => view.rerender(createRow(bytes)),
+  };
+}
+
 describe("VoiceModelRow runtime status", () => {
   it("keeps the selected model distinct from the loaded model without an unload countdown", () => {
     renderRows({ loadedModelId: "model-two", activeModelId: null, activePhase: null });
@@ -137,6 +168,35 @@ describe("VoiceModelRow runtime status", () => {
 });
 
 describe("VoiceModelRow model actions", () => {
+  it("places the progress bar above status and cancel, and displays the measured rate", () => {
+    const view = renderDownloadingRow(100);
+    const progress = screen.getByRole("progressbar", { name: "Downloading 10%" });
+    const status = screen.getByText("Downloading 10%");
+    const cancel = screen.getByRole("button", { name: "Cancel" });
+
+    expect(progress.getAttribute("aria-valuenow")).toBe("10");
+    expect(
+      progress.compareDocumentPosition(status) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(status.compareDocumentPosition(cancel) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.queryByText("Will use when ready")).toBeTruthy();
+    expect(formatVoiceModelDownloadSpeed(26_000_000)).toBe("26.0 MB/s");
+    expect(formatVoiceModelDownloadSpeed(26_000)).toBe("26 KB/s");
+    expect(
+      view.container.querySelector("[data-testid='voice-model-download-progress']"),
+    ).toBeTruthy();
+  });
+
+  it("shows download speed derived from progress updates", () => {
+    const now = vi.spyOn(Date, "now").mockReturnValue(1000);
+    const view = renderDownloadingRow(0, 30_000_000);
+
+    now.mockReturnValue(2000);
+    view.rerenderProgress(26_000_000);
+
+    expect(screen.getByText("26.0 MB/s")).toBeTruthy();
+  });
+
   it("asks before deleting and only removes the model after confirmation", async () => {
     const onRemove = vi.fn();
     renderSingleRow(onRemove);
