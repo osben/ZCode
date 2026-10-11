@@ -35,7 +35,8 @@ export type ShortcutCommandId =
   | "zoomOut"
   | "resetZoom"
   | "composerSend"
-  | "composerInsertNewline";
+  | "composerInsertNewline"
+  | "voiceDictation";
 
 /**
  * Command scope: global = dispatched globally (useAppKeyboard / menu accelerator);
@@ -97,6 +98,9 @@ export const SHORTCUT_COMMANDS: readonly ShortcutCommandEntry[] = [
   },
   { id: "toggleInterfaceMode", channel: "window", defaultBindings: ["CmdOrCtrl+Shift+u"] },
   { id: "openOnboarding", channel: "window", defaultBindings: ["CmdOrCtrl+Shift+o"] },
+  // 语音输入：默认按住 ⌘/Ctrl+Shift+D 录音（push-to-talk 模式下松开即转写），由 UI 层 keydown/keyup 处理。
+  // 注意：快捷键键名白名单不含 Space，因此不能用 Option+Space 这类默认值。
+  { id: "voiceDictation", channel: "window", defaultBindings: ["CmdOrCtrl+Shift+d"] },
 ];
 
 /** Get default bindings by command ID; unknown commands return an empty array (resolve ignores unknown commands in the active table). */
