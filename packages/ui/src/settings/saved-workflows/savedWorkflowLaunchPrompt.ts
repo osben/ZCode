@@ -1,7 +1,7 @@
-// 中枢的「通过对话创建 / 在对话里修订」预填文案。
-// 它们是普通 user message：只预填草稿、不自动发送，用户接着写要改什么 / 要建什么。
-// 「提升为全局」的文案（buildSavedWorkflowPromotePrompt）例外：它作为 createSession.firstInput
-// **自动发送**，所以是完整的指令而不是开头。
+// Prefill text for "Create via chat / Revise in chat" in the hub.
+// These are ordinary user messages: prefill the draft without sending, so the user can continue writing what to change/create.
+// The "Promote to global" text (buildSavedWorkflowPromotePrompt) is an exception: as createSession.firstInput it is
+// **sent automatically**, so it must be a complete instruction rather than a starter.
 
 function isZh(locale: string): boolean {
   return locale.toLowerCase().startsWith("zh");
@@ -11,14 +11,14 @@ function isUk(locale: string): boolean {
   return locale.toLowerCase().startsWith("uk");
 }
 
-/** 「在对话里修订」：只预填、不自动发送——用户接着写要改什么。 */
+/** "Revise in chat": prefill only, do not send; the user continues by writing what to change. */
 export function buildSavedWorkflowRevisePrompt(input: {
   name: string;
   path: string;
   locale: string;
   scope?: "project" | "global";
 }): string {
-  // 全局档修订时追加一句「保持 scope: "global"」，让模型覆盖保存时落回同一档。
+  // When revising a global workflow, append "keep scope: \"global\"" so the model saves the replacement at the same scope.
   const globalReminderZh =
     input.scope === "global" ? '它是全局工作流，保存时保持 scope: "global"。' : "";
   const globalReminderEn =
@@ -35,7 +35,7 @@ export function buildSavedWorkflowRevisePrompt(input: {
     : `Please revise the saved workflow "${input.name}" (${input.path}): ${globalReminderEn}`;
 }
 
-/** 空态 / 顶栏「通过对话创建」：预填一个开头。 */
+/** Empty state / header "Create through conversation": prefill an opening prompt. */
 export function buildSavedWorkflowCreatePrompt(
   locale: string,
   scope?: "project" | "global",
@@ -56,11 +56,11 @@ export function buildSavedWorkflowCreatePrompt(
 }
 
 /**
- * 「提升为全局」：把项目档概括成全局档的完整指令（自动发送，不是预填开头）。
+ * "Promote to global": summarize a project workflow as a complete instruction for a global workflow (sent automatically, not a prefilled opening).
  *
- * 只给名字与路径，模型自己读文件。清单是用户裁定的：读 → 找仓库特有引用 → 抽成 args 或中性
- * 表述 → 保持因果结构 → SaveWorkflow(scope: "global"，名字可改) → 总结；天然绑定项目时可以说不。
- * 明说「不要改动原文件」：两份并存、用户自删是既定边界（不变式 9）。
+ * Provide only the name and path; the model reads the file. The checklist is user-approved: read → find repository-specific references → extract them as args or neutral
+ * wording → preserve the causal structure → SaveWorkflow(scope: "global", name may be changed) → summarize; decline if it is inherently tied to the project.
+ * Explicitly say "do not modify the original file": both copies coexist, and the user may delete either one (invariant 9).
  */
 export function buildSavedWorkflowPromotePrompt(input: {
   name: string;

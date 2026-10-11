@@ -4,8 +4,8 @@ import { estimateMessageTokens, hasEnoughMessagesToCompact } from "./manual.js";
 import type { LocalMicrocompactPolicyConfig } from "./microcompact.js";
 
 export const DEFAULT_COMPACT_CONTEXT_WINDOW = 200_000;
-// 正常请求默认输出已收敛到 32K，auto compact 必须预留同一目标；
-// 否则请求预算和压缩窗口会继续按两套常量计算。
+// Normal requests now default to a 32K output budget, and auto-compact must reserve the same target;
+// otherwise request budgeting and the compaction window would continue using separate constants.
 export const DEFAULT_AUTOCOMPACT_OUTPUT_RESERVE_TOKENS = 32_000;
 export const PREFLIGHT_AUTOCOMPACT_OUTPUT_RESERVE_TOKENS = 21_000;
 export const MAX_OUTPUT_TOKENS_FOR_SUMMARY = 20_000;
@@ -66,15 +66,15 @@ export interface AutoCompactDecision {
 
 export function getEffectiveContextWindowSize(config: AutoCompactPolicyConfig = {}): number {
   const contextWindow = positiveInt(config.contextWindow) ?? DEFAULT_COMPACT_CONTEXT_WINDOW;
-  // provider 的 context window 是 input + output 共享窗口；自动压缩只能让出输入侧，
-  // 因此阈值分母必须先扣掉当前模型允许的 output token，而不是继续吃完整 contextWindow。
+  // The provider's context window is shared by input and output; auto-compaction can only free input space,
+  // so subtract the current model's allowed output tokens from the threshold denominator instead of using the full contextWindow.
   const reserve = Math.min(getAutoCompactOutputReserveTokens(config), contextWindow);
   return Math.max(0, contextWindow - reserve);
 }
 
 export function getAutoCompactOutputReserveTokens(config: AutoCompactPolicyConfig = {}): number {
   const maxOutputTokens = positiveInt(config.maxOutputTokens);
-  // 旧 legacy 分支为完整模型输出预留窗口，既过早压缩又要求远端选择；现在统一保留至多 21K。
+  // The old legacy branch reserved a full model-output window, causing early compaction and requiring remote selection; now reserve at most 21K consistently.
   return Math.min(
     maxOutputTokens ?? DEFAULT_AUTOCOMPACT_OUTPUT_RESERVE_TOKENS,
     PREFLIGHT_AUTOCOMPACT_OUTPUT_RESERVE_TOKENS,

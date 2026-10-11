@@ -31,8 +31,8 @@ async function runBotProviderRequest<T>(
   }, timeoutMs);
   try {
     const response = await fetch(input, { ...init, signal: controller.signal });
-    // 修复原因：收到响应头不代表请求完成。必须在同一个 AbortSignal 和 deadline 下
-    // 消费响应体，否则服务端 headers 后停滞仍会永久堵住 Bot actor 队列。
+    // Reason for fix: receiving response headers does not mean the request is complete. Consume the response body under the same AbortSignal and deadline,
+    // or the server can stall after sending headers and block the Bot actor queue indefinitely.
     return await consume(response);
   } finally {
     clearTimeout(timeout);
@@ -41,8 +41,8 @@ async function runBotProviderRequest<T>(
 }
 
 /**
- * 第三方 Bot API 不一定会自行结束悬挂请求。所有回调 ACK 和出站消息都必须有界，
- * 否则单个请求会占住 actor 串行队列，后续权限、问答和计划审批都无法继续。
+ * Third-party Bot APIs may not terminate hung requests themselves. Bound all callback ACKs and outbound messages,
+ * or one request can occupy the actor's serial queue and prevent later permission, Q&A, and plan-approval steps.
  */
 export async function fetchBotProvider(
   input: string | URL | Request,
@@ -50,8 +50,8 @@ export async function fetchBotProvider(
   timeoutMs = BOT_PROVIDER_REQUEST_TIMEOUT_MS,
 ): Promise<BotProviderResponse> {
   return runBotProviderRequest(input, init, timeoutMs, async (response) => {
-    // Bugfix：fetch() 在响应头到达时就会完成，直接返回 Response 会提前撤销 deadline。
-    // Telegram 调用方只需要状态，因此在受控 signal 下收完响应体后返回轻量结果。
+    // Bug fix: fetch() completes when response headers arrive; returning Response directly would clear the deadline too early.
+    // Telegram callers need only the status, so consume the response body under the controlled signal and return a lightweight result.
     await response.arrayBuffer();
     return { ok: response.ok, status: response.status };
   });

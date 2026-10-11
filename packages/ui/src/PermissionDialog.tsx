@@ -125,9 +125,10 @@ function isOfficialCuaProjectPermission(option: ZCodePermissionOption): boolean 
 }
 
 /**
- * workflow Refine（拒绝并附修改意见）。
- * 该选项不渲染成按钮，而是作为反馈行的应答目标：用户在其他确认窗同一行编号输入行里写修改意见，
- * 提交时应答携带 freeText，CLI broker 据此把 deny 升级为带 workflow_refine_feedback 的用户反馈。
+ * Workflow Refine (deny and include revision guidance).
+ * This option is not rendered as a button; it is the response target for the feedback row. The user enters revision guidance
+ * in the numbered input row shared with other confirmation dialogs, and the submitted response carries freeText. The CLI broker
+ * uses it to upgrade deny into user feedback with workflow_refine_feedback.
  */
 function isWorkflowRefineOption(option: ZCodePermissionOption): boolean {
   return option.optionId === WORKFLOW_REFINE_PERMISSION_OPTION_ID;
@@ -174,15 +175,15 @@ const PROVIDER_PERMISSION_OPTION_NAME_LABELS: Partial<
   Record<ZCodeProvider, Record<string, string>>
 > = {
   glm: {
-    // GLM/ZCode Agent 通过 ZCode Agent 发来的项目级记忆授权文案是英文原文。
-    // 这里把已知 provider-native 权限文案统一归一到 i18n，避免被当成自定义选项直出英文。
+    // Project-level memory authorization copy from GLM/ZCode Agent via ZCode Agent is originally in English.
+    // Normalize known provider-native permission copy through i18n so it is not displayed in English as a custom option.
     "always allow in this project": "chat.permission.allowForProject",
   },
 };
 
 interface PermissionOptionNameMessageIds {
   label: string;
-  /** 按 name 命中时可覆盖 kind 推导的描述：会话级选项不能沿用「相同请求不再询问」的项目级文案。 */
+  /** Description override when matched by name: a session-level option must not reuse the project-level “Do not ask again for the same request” copy derived from kind. */
   description?: string;
 }
 
@@ -193,8 +194,8 @@ const GLOBAL_PERMISSION_OPTION_NAME_LABELS: Record<string, PermissionOptionNameM
   },
   "always allow in this project": { label: "chat.permission.allowForProject" },
   "always allow computer use in this project": { label: "chat.permission.cua.allowForProject" },
-  // workflow 运行确认窗的会话免确认：
-  // CLI 侧 name 是匹配键，wire kind 是 allowAlways（排序 / 样式同 always allow）。
+  // Session-level “do not ask again” in the workflow run confirmation dialog:
+  // name is the matching key on the CLI side, while wire kind is allowAlways (same order/style as always allow).
   "always allow in this session": {
     label: "chat.permission.workflow.allowForSession",
     description: "chat.permission.workflow.allowForSession.description",
@@ -237,8 +238,8 @@ function readNonEmptyString(value: unknown): string | null {
 
 function readUserFacingPermissionReason(value: unknown): string | null {
   const reason = readNonEmptyString(value);
-  // 通用权限策略原因用于协议诊断，不是能帮助用户判断本次操作的具体说明。
-  // 之前 UI 无差别展示 reason，导致权限弹窗重复出现和“等待确认”语义相同的英文文案。
+  // Generic permission-policy reasons are for protocol diagnostics, not specific explanations that help users decide on this operation.
+  // The UI previously displayed every reason, causing the permission dialog to repeat the same English copy as “waiting for confirmation.”
   return reason && !NON_USER_FACING_PERMISSION_REASONS.has(reason) ? reason : null;
 }
 
@@ -278,9 +279,9 @@ function resolvePermissionBlockKind(
   toolCall: TaskChatToolCall,
   rawFileSummaries: ToolCallBlockRenderContext["rawFileSummaries"],
 ): PermissionBlockKind {
-  // SaveWorkflow 按**工具名**最先判定，早于文件摘要与 family 分流。它归一化入参里带着 `path`
-  // 与完整 `script`，任何一条「看起来像写文件」的启发式都可能把它吸进 edit 块；而 workflow
-  // family 一旦登记这个名字，它又会掉进运行确认块（图 + Refine，对一次写盘完全是错的语言）。
+  // Match SaveWorkflow by **tool name** first, before file-summary and family routing. Its normalized input includes `path`
+  // and the full `script`, so any “looks like a file write” heuristic could route it into the edit block. If registered in the workflow
+  // family, it would then fall into the run-confirmation block (graph + Refine), which is entirely wrong language for a disk write.
   if (isSaveWorkflowToolCall(toolCall)) {
     return "saveWorkflow";
   }
@@ -292,26 +293,26 @@ function resolvePermissionBlockKind(
   const identity = resolveToolCallIdentity(toolCall);
 
   if (getMcpPermissionToolName(toolCall)) {
-    // MCP 权限请求不是普通未知工具；以前走 fallback 会把 raw JSON 摊开，并把工具名显示两次。
-    // 这里单独展示 MCP 名称和协议里的 reason，避免用户在审批时读调试 payload。
+    // MCP permission requests are not ordinary unknown tools; the previous fallback exposed raw JSON and displayed the tool name twice.
+    // Show the MCP name and protocol reason separately so users do not have to read a debug payload while approving.
     return "mcp";
   }
 
-  // 权限弹窗之前单独猜 kind/title/rawInput.skill，和聊天区分流规则会漂移。
-  // 这里复用固定 tool identity，让 Skill 权限请求在确认前后都走同一套语义。
+  // The permission dialog previously guessed kind/title/rawInput.skill separately, allowing its routing rules to drift from chat.
+  // Reuse the fixed tool identity so Skill permission requests have the same semantics before and after confirmation.
   if (identity.family === "skill") {
     return "skill";
   }
 
   if (identity.family === "workflow") {
-    // 工作流确认窗的主体是因果图 + 折叠脚本，和聊天区同一 tool identity 分流；
-    // 必须早于 search/execute 判定，否则脚本里的命令片段会把它误判成普通命令确认。
+    // The workflow confirmation dialog consists of a causal graph + collapsed script and uses the same tool-identity routing as chat.
+    // Check it before search/execute routing, or command snippets in the script could make it look like an ordinary command confirmation.
     return "workflow";
   }
 
   if (identity.family === "search") {
-    // WebFetch/WebSearch 权限请求以前落到 fallback，会把整包 toolCall JSON 打出来。
-    // 这里和聊天区一样走 search renderer，只展示用户关心的 URL/query 摘要。
+    // WebFetch/WebSearch permission requests previously used the fallback and printed the entire toolCall JSON.
+    // Route them through the same search renderer as chat and show only the relevant URL/query summary.
     return "search";
   }
 
@@ -336,9 +337,9 @@ function getPermissionBlockInteraction(blockKind: PermissionBlockKind): Permissi
     case "workflow":
     case "saveWorkflow":
     case "fallback":
-      // 这里是权限弹窗的中间态展示，不提供收起/展开交互，避免用户把关键内容藏起来。
-      // workflow / saveWorkflow 只为穷尽性列在这里：它们由各自的专用块直接渲染，不走通用块，
-      // 块内脚本折叠是 spec 记录的刻意例外（图、名称与落点仍不可折叠）。
+      // This is an intermediate display in the permission dialog; it has no collapse/expand interaction so users cannot hide important content.
+      // workflow/saveWorkflow are listed only for exhaustiveness: each is rendered by its own dedicated block, not the generic block.
+      // Script collapse inside those blocks is an intentional exception documented in the spec (the graph, name, and destination remain non-collapsible).
       return {
         canToggle: false,
         forceOpen: true,
@@ -379,7 +380,7 @@ function buildPermissionBlockContext(
       childToolCalls: [],
     } as ToolCallBlockRenderContext["toolCallNode"],
     workspacePath,
-    // store 耦合剥离：展示组件不再自取 store，主题/代码预览设置由对话框宿主注入。
+    // Store coupling removed: display components no longer read the store themselves; the dialog host injects theme/code-preview settings.
     theme,
     codePreviewSettings,
     displayModel: {
@@ -394,10 +395,10 @@ function buildPermissionBlockContext(
     },
     viewerSource: null,
     rawFileSummaries,
-    // 权限弹窗等待用户确认时工具还没有执行，不能复用 running 状态。
-    // 之前 Bash 权限会显示“执行中”并带 loading，遮住真正的申请原因。
+    // The tool has not run while a permission dialog awaits confirmation, so do not reuse running status.
+    // Bash permissions previously showed “Executing” with a loading indicator, obscuring the actual request reason.
     isRunning: false,
-    // 权限预览使用合成 completed 节点，必须显式区分，避免误报“没有输出”。
+    // Permission previews use a synthetic completed node; distinguish it explicitly to avoid incorrectly reporting “No output.”
     isPermissionPreview: true,
     statusLabel: "",
     childToolList: null,
@@ -455,8 +456,9 @@ export function PermissionDialog({
   responding?: boolean;
   responseError?: string;
   /**
-   * `content` 只在工作流确认窗的放行应答上出现：用户在窗里改过的设置（docs/dynamic-workflow/launch.md
-   * 「Adjusting the settings in the window」）。没改过即不传。
+   * `content` appears only in Allow responses from the workflow confirmation dialog and contains
+   * settings edited there (docs/dynamic-workflow/launch.md, “Adjusting the settings in the window”).
+   * Omit it when nothing changed.
    */
   onRespond: (
     requestId: string,
@@ -465,7 +467,7 @@ export function PermissionDialog({
     content?: Record<string, unknown>,
   ) => void;
   workspacePath: string;
-  /** 工作流确认窗的模型清单作用域与会话模型（宿主给）。 */
+  /** Model-catalog scope and current session model for workflow confirmation (provided by the host). */
   workspaceIdentity?: string;
   remoteSessionId?: string;
   workflowSessionModel?: { providerId: string; modelId: string };
@@ -474,19 +476,20 @@ export function PermissionDialog({
 }) {
   const { intl } = useZCodeIntl();
   const isMobileTextInputViewport = useIsMobileTextInputViewport();
-  // Bug 根因：反馈输入也会渲染在手机 Web 远控的 PermissionDialog 中，14px 输入框聚焦时会触发 iOS 页面放大。
-  // 与 composer 复用同一套视口判断和 16px 兼容 token，桌面和非远控 Web 保持原有字号。
+  // Root cause: the feedback input also appears in PermissionDialog during mobile Web remote
+  // control, and focusing a 14px input triggers iOS page zoom. Reuse the composer's viewport check
+  // and 16px compatibility token; preserve existing font sizes on desktop and non-remote Web.
   const avoidIosInputFocusZoom = shouldAvoidIosInputFocusZoom({
     isMobileTextInputViewport,
     isWebRemoteControl,
   });
-  // M5②.5 store 耦合剥离：主题/代码预览设置在宿主处取 store，向下走 props/render context。
+  // M5②.5 store decoupling: read theme/code-preview settings from the store in the host and pass them down through props/render context.
   const theme = useZCodeStoreWithDefault((state) => state.theme, "system");
   const codePreviewSettings = useZCodeStoreWithDefault(
     (state) => state.codePreviewSettings,
     DEFAULT_CODE_PREVIEW_SETTINGS,
   );
-  // 工作流确认窗的 Refine 选项不进按钮列表：它就是这个窗的反馈行（见 feedbackOption）。
+  // The workflow confirmation's Refine option is not in the button list; it is this dialog's feedback row (see feedbackOption).
   const refineOption = useMemo(
     () => request.options.find(isWorkflowRefineOption),
     [request.options],
@@ -500,8 +503,8 @@ export function PermissionDialog({
   const toolCall = useMemo(() => buildPermissionToolCall(request, preview), [preview, request]);
   const rawFileSummaries = useMemo(
     () =>
-      // 权限弹窗之前只认 preview.fileChanges，Write 请求如果只带 file_path/content，
-      // 这里就会丢失文件摘要；改成复用聊天区同一套 edit 解析，避免两个入口展示结果不一致。
+      // The permission dialog previously recognized only preview.fileChanges. A Write request containing only file_path/content
+      // lost its file summary here; reuse the edit parser from chat so the two entry points display results consistently.
       readRawToolCallFileSummaries(toolCall.raw, {
         kind: toolCall.kind,
         title: toolCall.title,
@@ -529,7 +532,7 @@ export function PermissionDialog({
     [blockKind, codePreviewSettings, intl, rawFileSummaries, theme, toolCall, workspacePath],
   );
   const displayReason = useMemo(() => getPermissionDisplayReason(request), [request]);
-  // 工作流确认窗的两项 run 设置（WorkflowPermissionBlock 画，这里只存改过的值与「模型不可用」）。
+  // Two run settings for workflow confirmation (rendered by WorkflowPermissionBlock); store only edited values and “model unavailable” state here.
   const isWorkflowAsk = blockKind === "workflow";
   const workflowSettings = usePermissionWorkflowSettings(request.requestId);
   const workflowSettingsContent = isWorkflowAsk ? workflowSettings.content : undefined;
@@ -552,10 +555,10 @@ export function PermissionDialog({
       ),
     [orderedOptions],
   );
-  // 反馈行的应答目标：工作流确认窗是 Refine（拒绝 + 修改意见升级为真实 user message），
-  // 其他确认窗是 Deny（拒绝 + 反馈）。两种确认窗共用同一行输入，只换应答目标与文案，
-  // 不再各画一套输入框——同一停靠区里两种反馈输入长得不一样是设计债。
-  // 原因：复用 Deny 索引会让拒绝按钮和输入框同时高亮；输入行独立导航，提交才用目标选项。
+  // Response target for the feedback row: workflow confirmation uses Refine (deny + revision guidance upgraded to a real user message),
+  // while other confirmations use Deny (deny + feedback). Both dialog types share the same input row and vary only the target and copy,
+  // rather than drawing separate inputs—different-looking feedback inputs in the same dock are a design debt.
+  // Reusing the Deny index would highlight both the Deny button and input row; navigate the input row independently and use the target option only on submit.
   const feedbackOption = refineOption ?? (request.freeText === true ? denyOption : undefined);
   const hasFeedbackInput = Boolean(feedbackOption);
   const feedbackIndex = orderedOptions.length;
@@ -564,7 +567,7 @@ export function PermissionDialog({
 
   useEffect(() => {
     setSelectedIndex(0);
-    // 草稿按 requestId 归零，避免一个请求的反馈（或工作流修改意见）泄漏进下一个确认窗。
+    // Reset the draft by requestId so one request's feedback (or workflow revision guidance) does not leak into the next dialog.
     setFeedback("");
   }, [request.requestId]);
 
@@ -576,8 +579,8 @@ export function PermissionDialog({
       return;
     }
 
-    // 反馈输入框新增后，旧的 RAF 可能在用户获得输入焦点后才回调，重新抢回选项焦点。
-    // 回调执行时再次确认焦点状态，避免打断用户输入。
+    // After the feedback input was added, an old RAF could run after the user focused the input and steal focus back to an option.
+    // Check focus state again in the callback to avoid interrupting typing.
     const frameId = requestAnimationFrame(() => {
       if (!feedbackInputFocusedRef.current) {
         if (isFeedbackSelected) feedbackInputRef.current?.focus();
@@ -606,12 +609,12 @@ export function PermissionDialog({
 
   const respondWithOption = useCallback(
     (option: ZCodePermissionOption) => {
-      // 所选子代理模型已不可用：放行要等用户换一个，与「配置」弹层的 Apply 同一条规则。
+      // The selected subagent model is unavailable; the user must choose another before allowing, matching the Apply rule in the Configure dialog.
       if (responding || isOptionBlocked(option)) return;
       const selectedKind = getPermissionOptionDisplayKind(option.kind);
-      // 通用确认窗里 Deny 顺带把反馈行草稿作为拒绝理由发出；工作流确认窗的草稿属于 Refine，
-      // 点 Deny 就是普通拒绝——否则一段修改意见会以普通拒绝理由的身份发出，
-      // 模型收不到 workflow_refine_feedback 的升级递送。
+      // In a generic confirmation dialog, Deny also sends the feedback-row draft as the rejection reason. In a workflow confirmation,
+      // the draft belongs to Refine, so Deny is an ordinary rejection. Otherwise revision guidance would be sent as a plain rejection reason
+      // and the model would not receive the workflow_refine_feedback upgraded delivery.
       const trimmedFeedback =
         !refineOption && selectedKind.startsWith("reject") ? feedback.trim() : "";
       const content =
@@ -636,7 +639,7 @@ export function PermissionDialog({
   );
 
   const submitFeedback = useCallback(() => {
-    // 提交前 trim：CLI broker 对空白 freeText 落普通 deny，不能把纯空白当反馈。
+    // Trim before submit: the CLI broker treats blank freeText as an ordinary deny, so whitespace alone is not feedback.
     const trimmedFeedback = feedback.trim();
     if (responding || !feedbackOption || !trimmedFeedback) {
       return;
@@ -714,8 +717,9 @@ export function PermissionDialog({
           moveSelection(1);
           return;
         case "Tab":
-          // 长命令新增了阅读按钮，旧的选项循环会困住焦点；第一项反向 Tab 交还浏览器，
-          // 按 DOM 顺序进入上方命令按钮，其正向 Tab 自然回到当前第一项，不触发授权。
+          // Long commands added a read button, and the old option loop trapped focus. Let the
+          // browser handle Shift+Tab from the first option so DOM order moves focus to the command
+          // button above; Tab naturally returns to the first option without triggering authorization.
           if (
             event.shiftKey &&
             optionRefs.current.indexOf(event.currentTarget) === 0 &&
@@ -723,8 +727,10 @@ export function PermissionDialog({
           ) {
             return;
           }
-          // 工作流确认窗：第一个选项上的 Shift+Tab 离开列表、回到上方的设置控件（阅读次序即焦点次序）。
-          // 按事件落在哪个按钮上判，不读 selectedIndex：聚焦与按键可能在同一帧，状态还没提交。
+          // Workflow confirmation: Shift+Tab from the first option leaves the list and returns to
+          // the settings controls above (reading order matches focus order). Check which button
+          // received the event instead of reading selectedIndex; focus and key events can occur in
+          // the same frame before state is committed.
           if (
             event.shiftKey &&
             optionRefs.current.indexOf(event.currentTarget) === 0 &&
@@ -768,12 +774,12 @@ export function PermissionDialog({
             : blockKind === "execute"
               ? ExecuteToolCallBlock
               : FallbackToolCallBlock;
-  // 当前 ZCode Agent 的 ExitPlanMode 权限请求不再传 legacy switch_mode。
-  // 这里复用 tool identity，避免审批弹窗和聊天区的计划模式工具分流再次漂移。
+  // Current ZCode Agent ExitPlanMode permission requests no longer pass legacy switch_mode.
+  // Reuse tool identity here to prevent plan-mode tool routing from drifting between the permission dialog and chat.
   const shouldUseSwitchModePlaceholder = resolveToolCallIdentity(toolCall).family === "switch-mode";
-  // 工作流确认窗自带本地化标题（「运行此工作流？」）和图主体，走独立块而不是通用预览块。
+  // The workflow confirmation dialog has its own localized title (“Run this workflow?”) and graph body, so use its dedicated block instead of the generic preview.
   const shouldUseWorkflowBlock = isWorkflowAsk;
-  // 保存确认窗同理，但问句、内容与选项都不同：没有图、没有 Refine，主体是落点 + 元数据 + 脚本。
+  // The save-confirmation dialog is similar, but has different question, content, and options: no graph or Refine; its body is destination + metadata + script.
   const shouldUseSaveWorkflowBlock = blockKind === "saveWorkflow";
   return (
     <div ref={rootRef} className="w-full shrink-0 relative z-1">
@@ -802,8 +808,8 @@ export function PermissionDialog({
                 </span>
               </div>
             ) : shouldUseWorkflowBlock ? (
-              // CLI 侧的 reason 是给协议诊断用的（"createWorkflow.runConfirmation: ..."），
-              // 这里刻意不渲染 displayReason：块内的本地化标题才是给用户看的那句问句。
+              // The CLI reason is for protocol diagnostics ("createWorkflow.runConfirmation: ...");
+              // intentionally do not render displayReason here because the block's localized title is the question intended for users.
               <WorkflowPermissionBlock
                 onSettingsBlockedChange={workflowSettings.onBlockedChange}
                 onSettingsChange={workflowSettings.onContentChange}
@@ -817,14 +823,14 @@ export function PermissionDialog({
                   : { sessionModel: workflowSessionModel })}
               />
             ) : shouldUseSaveWorkflowBlock ? (
-              // 同上：保存 gate 的问句（保存 / 覆盖两句）由块自己给出，不复用协议 reason。
+              // Same as above: the block supplies the save-gate question (save/overwrite); do not reuse the protocol reason.
               <SaveWorkflowPermissionBlock request={request} />
             ) : (
               <PermissionBlock {...blockContext} />
             )}
           </div>
 
-          {/* 反馈行曾被外层 gap-3 隔开；用同一 4px 视觉分组，保留 listbox 的权限选项边界。 */}
+          {/* The outer gap-3 used to separate feedback rows; use the same 4px visual grouping while preserving the listbox permission-option boundary. */}
           <div className="space-y-1">
             <div
               role="listbox"
@@ -847,8 +853,8 @@ export function PermissionDialog({
                     ? "chat.permission.allowCommand.description"
                     : (nameMessageIds?.description ??
                       getOptionDescriptionMessageId(option.kind, preview.scope));
-                // 工作流确认窗改过设置：放行的两项改口说「按调整后的设置」（docs/dynamic-workflow/launch.md
-                // 「The options」）。
+                // If workflow confirmation settings were edited, update both Allow options to say
+                // “with the adjusted settings” (docs/dynamic-workflow/launch.md, “The options”).
                 const descriptionMessageId =
                   workflowSettingsContent === undefined
                     ? baseDescriptionMessageId
@@ -860,9 +866,9 @@ export function PermissionDialog({
                 const knownNameLabel = nameMessageIds
                   ? intl.formatMessage({ id: nameMessageIds.label })
                   : null;
-                // ZCode Agent 协议里 option.name 才是给用户看的真实选项文案，kind 只表示按钮语义。
-                // 之前这里一律按 kind 本地化，像 switch_mode 这类不同语义但同属 allow_always 的选项，
-                // 会被错误压成两条一模一样的“始终允许”。
+                // In the ZCode Agent protocol, option.name is the actual user-facing option text; kind describes only button semantics.
+                // Previously every option was localized by kind, so options such as switch_mode with different meanings but the same allow_always kind
+                // were incorrectly collapsed into two identical “Always allow” labels.
                 const preferOptionName = shouldPreferPermissionOptionName(option);
                 const label =
                   (labelMessageId === "chat.permission.allowCommand"
@@ -881,8 +887,8 @@ export function PermissionDialog({
                 return (
                   <button
                     key={option.optionId}
-                    // exact rule 按产品语义不展示后，E2E 不能再靠可见规则文本猜 option；
-                    // 暴露规范化语义供无障碍自动化稳定选择，不泄露原始命令内容。
+                    // Once exact rules are hidden by product semantics, E2E can no longer guess the option from visible rule text.
+                    // Expose normalized semantics for stable accessibility automation without leaking raw command content.
                     data-permission-option-kind={getPermissionOptionDisplayKind(option.kind)}
                     ref={(node) => {
                       optionRefs.current[index] = node;
@@ -947,7 +953,7 @@ export function PermissionDialog({
               >
                 <span
                   className={cn(
-                    // 匹配 textarea 的首行行高和 1px 边框；手机输入行高不同，但序号字号不变。
+                    // Match the textarea's first-line height and 1px border; mobile input rows have a different height, but keep the number font size unchanged.
                     "mt-px w-5 shrink-0 self-start text-ui-base font-medium md:leading-relaxed",
                     avoidIosInputFocusZoom ? "leading-6" : "leading-5",
                     isFeedbackSelected ? "text-foreground" : "text-foreground-subtlest",
@@ -961,7 +967,7 @@ export function PermissionDialog({
                   wrap="soft"
                   value={feedback}
                   maxLength={MAX_PERMISSION_FEEDBACK_CHARS}
-                  // Refine 行的文案按稳定 optionId 本地化：协议里的 name 是服务端英文兜底。
+                  // Localize the Refine row using its stable optionId; the protocol name is an English server-side fallback.
                   aria-label={intl.formatMessage({
                     id: refineOption
                       ? "chat.permission.workflow.refine"
@@ -991,7 +997,8 @@ export function PermissionDialog({
                   }}
                   onKeyDown={handleFeedbackKeyDown}
                   className={cn(
-                    // Bugfix: 拒绝反馈自动换行，但限制为 5 行并在输入框内滚动，避免窄屏遮住权限选项和确认按钮。
+                    // Bugfix: wrap rejection feedback automatically, but cap it at five lines and
+                    // scroll inside the input so it does not cover permission options or the confirmation button on narrow screens.
                     "h-auto !min-h-5 max-h-[5lh] min-w-0 max-w-full overflow-y-auto rounded-none border-transparent bg-transparent !px-0 !py-0 font-medium shadow-none hover:border-transparent focus-visible:border-transparent focus-visible:bg-transparent focus-visible:ring-0",
                     resolveMobileInputTextSizeClassName({ avoidIosInputFocusZoom }),
                   )}

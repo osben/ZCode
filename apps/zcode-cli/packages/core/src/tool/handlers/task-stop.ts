@@ -13,8 +13,8 @@ import type { ToolEntry, ToolHandler } from "../types.js";
 
 const MAX_TASK_STOP_MODEL_BYTES = 100_000;
 
-// provider 请求直接使用 metadata.description，内部短说明会让模型看不到
-// 参数、返回值和使用时机。capability 继续保留短说明。
+// Provider requests use metadata.description directly; a short internal summary would hide parameters, return values, and usage
+// context from the model. Keep the short summary for the capability.
 const TASK_STOP_PROVIDER_DESCRIPTION = [
   "",
   "- Stops a running background task by its ID",
@@ -48,7 +48,7 @@ const taskStopHandler: ToolHandler = async (input, context) => {
   }
 
   const result = await context.backgroundTaskControlPort.stopBackgroundTask(taskId, {
-    // 模型自己停的：终态通知会说「stopped by you」，而不是把它写成用户的决定。
+    // The model itself stopped the run: the terminal notification says “stopped by you,” rather than attributing the decision to the user.
     initiator: "model",
     strict: true,
     traceContext: context.traceContext,

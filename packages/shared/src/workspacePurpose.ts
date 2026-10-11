@@ -1,2 +1,2 @@
-/** App 持有的 workspace 展示分类；不参与 workspace identity。 */
+/** Workspace display category owned by the App; does not participate in workspace identity. */
 export type WorkspacePurpose = "project" | "conversation";

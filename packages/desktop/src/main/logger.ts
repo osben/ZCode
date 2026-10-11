@@ -13,7 +13,7 @@ function getLogDir() {
   return join(getAppConfigDir(), "logs");
 }
 
-// 启动时确保日志目录存在
+// Ensure the log directory exists at startup.
 const LOG_DIR = getLogDir();
 mkdirSync(LOG_DIR, { recursive: true });
 
@@ -39,8 +39,8 @@ function isBrokenPipeError(error: unknown): boolean {
 }
 
 function ignoreBrokenPipeStreamError(error: Error): void {
-  // WDIO / dev runner 结束后可能先关闭 stdout/stderr 管道，随后主进程日志还在刷新。
-  // stream error 是异步事件，try/catch 包 console.log 不一定兜得住；这里统一吞掉 EPIPE。
+  // WDIO / the dev runner may close stdout/stderr pipes before the main process finishes flushing logs.
+  // Stream errors are asynchronous, so try/catch around console.log may not catch them; handle EPIPE here.
   if (!isBrokenPipeError(error)) {
     throw error;
   }
@@ -55,8 +55,8 @@ function safeConsoleWrite(level: LogLevel, ...args: unknown[]): void {
   try {
     consoleFn(...args);
   } catch (error) {
-    // dev 脚本或父终端退出后，Electron main 的 stdout/stderr 管道可能已关闭。
-    // 这时 console.* 会抛 EPIPE，不能让日志输出反过来杀掉主进程；文件日志仍会继续写入。
+    // After the dev script or parent terminal exits, Electron main's stdout/stderr pipes may be closed.
+    // console.* can then throw EPIPE; logging must not terminate the main process, and file logging should continue.
     if (!isBrokenPipeError(error)) {
       throw error;
     }
@@ -80,14 +80,14 @@ function write(level: LogLevel, source: string, ...args: unknown[]) {
   mkdirSync(logDir, { recursive: true });
   const filePath = join(logDir, `${formatDate(now)}.log`);
 
-  // 同时保留 console 输出，方便开发调试；console 也加时间戳和 PID，与文件格式对齐
+  // Keep console output for development debugging; include timestamps and PID to match the file format.
   safeConsoleWrite(level, `[${ts}] [pid:${pid}] [${source}]`, ...args);
 
   try {
     maybeThrowInjectedFsFault({ operation: "appendFile", path: filePath });
     appendFileSync(filePath, line);
   } catch {
-    // 日志写入失败不应影响应用运行
+    // A log-write failure must not affect application operation.
   }
 }
 
@@ -99,8 +99,9 @@ function writeDedicated(filePrefix: string, level: LogLevel, source: string, ...
   const line = `[${ts}] [${level}] [pid:${pid}] [${source}] ${message}\n`;
   const logDir = getLogDir();
   mkdirSync(logDir, { recursive: true });
-  // Bugfix: 远控 relay trace 与主日志混放时，目录内文件会快速增多，人工排查不直观。
-  // 这里把高频 trace 分流到 logs 子目录，避免影响主日志浏览与导出定位。
+  // Bugfix: mixing remote-control relay traces into the main log made the directory fill up
+  // quickly and hard to inspect by hand. Route high-frequency traces into a logs subdirectory so
+  // they do not interfere with browsing or locating exported main logs.
   const dedicatedDir = join(logDir, "web-remote-control");
   mkdirSync(dedicatedDir, { recursive: true });
   const filePath = join(dedicatedDir, `${filePrefix}-${formatDate(now)}.log`);
@@ -109,16 +110,16 @@ function writeDedicated(filePrefix: string, level: LogLevel, source: string, ...
     maybeThrowInjectedFsFault({ operation: "appendFile", path: filePath });
     appendFileSync(filePath, line);
   } catch {
-    // 日志写入失败不应影响应用运行
+    // A log-write failure must not affect application operation.
   }
 }
 
 /**
- * main 进程日志，默认写入 ~/.zcode/v2/logs/YYYY-MM-DD.log；E2E 测试使用 worker 专属目录。
- * 同时保留 console 输出方便开发调试
+ * Main-process logs are written to ~/.zcode/v2/logs/YYYY-MM-DD.log by default; E2E tests use a worker-specific directory.
+ * Console output is also kept for development debugging.
  */
 export const logger = {
-  // 高频 browser/CDP 等协议细节只在本地开发记录，避免生产日志量与命令流同数量级。
+  // Record high-frequency browser/CDP protocol details only in local development to keep production log volume below command-stream volume.
   debug: (...args: unknown[]) => {
     if (process.env.NODE_ENV !== "production") {
       write("debug", "main", ...args);
@@ -128,13 +129,13 @@ export const logger = {
   warn: (...args: unknown[]) => write("warn", "main", ...args),
   error: (...args: unknown[]) => write("error", "main", ...args),
 
-  /** renderer 日志通过 IPC 传入后调用此方法写入同一文件 */
+  /** Called to write renderer logs, received over IPC, to the same file. */
   fromRenderer: (level: LogLevel, args: unknown[]) => write(level, "renderer", ...args),
 };
 
 /**
- * Web remote control relay message trace 专用日志。
- * 仅用于高频链路排障，独立落盘避免淹没主日志文件。
+ * Dedicated log for Web remote-control relay message traces.
+ * Used only for high-frequency link debugging; written to separate files to avoid drowning the main log.
  */
 export const webRemoteControlRelayLogger = {
   info: (...args: unknown[]) =>

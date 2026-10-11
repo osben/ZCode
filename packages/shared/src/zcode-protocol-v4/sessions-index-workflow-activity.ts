@@ -1,10 +1,10 @@
 // ============================================================
-// sessions-index 的工作流运行摘要
+// Workflow run summary for sessions-index.
 // ============================================================
-// 侧栏要在会话标题下画一条「Workflow 图标 + 迷你轨道灯 + 当前 phase 名」，却不能为此订阅整个
-// workflowRuns（那是 conversation 权威投影，按 run 进度高频变化）。这里把同一 snapshot 的
-// `workflowRuns` + `backgroundWorks` 派生成一份**有界、只装侧栏真正读的字段**的摘要：
-// 纯函数、无时钟——「已结束的行何时折叠」由渲染端的已确认集合决定，不在这里记时间。
+// The sidebar needs a “Workflow icon + mini phase lights + current phase name” under each session title, but must not subscribe to all
+// workflowRuns (the authoritative conversation projection, which changes frequently as each run progresses). This derives a bounded summary
+// from `workflowRuns` + `backgroundWorks` in the same snapshot, containing **only fields the sidebar reads**:
+// it is a pure function with no clock; the renderer's acknowledged set decides when ended rows collapse, so this code stores no time.
 
 import { z } from "zod";
 import { timestampSchema } from "./core.js";
@@ -17,17 +17,16 @@ import {
   type WorkflowRunsState,
 } from "./workflow-runs.js";
 
-/** 每会话最多下发的 run 数：在跑的按启动序在前，其后是最近结束的。 */
+/** Maximum runs sent per session: active runs first in start order, followed by the most recently ended. */
 export const SESSION_WORKFLOW_ACTIVITY_MAX_RUNS = 4;
 
 /**
- * 站点灯的四态，与卡片时间线同一词汇（`STATUS_DOT`）。控制流给出骨架：在跑时当前 phase
- * running、已进入 done、其余 pending；completed 已进入 done；errored 当前 failed；stopped 当前 pending。
+ * Four phase-light states, using the same vocabulary as the card timeline (`STATUS_DOT`). Control flow provides the outline: while running,
+ * the current phase is running, entered phases are done, and the rest are pending; completed means entered phases are done; errored means the current phase failed; stopped means the current phase is pending.
  *
- * 成员节点再补一条：run 在跑时，
- * **出生在这一站**且此刻真在跑的节点把它点亮。并行阶段因此能同时烧——控制流只记得最后一个标记，
- * 而 A 的子代理在 B 的标记之后仍在干活。节点只会说「还在跑」，绝不把 done / failed / pending
- * 改成别的：失败词留给控制流。
+ * Member nodes add one more rule: while a run is active, a node **born in this phase** and actually running now lights it up.
+ * Parallel phases can therefore be active at once: control flow remembers only the latest marker, while A's subagent may still work after the marker for B.
+ * Nodes can only say “still running”; they never change done/failed/pending. Failure status comes from control flow.
  */
 export const sessionWorkflowPhaseStatusSchema = z.enum(["pending", "running", "done", "failed"]);
 export type SessionWorkflowPhaseStatus = z.infer<typeof sessionWorkflowPhaseStatusSchema>;
@@ -36,15 +35,16 @@ export const sessionWorkflowPhaseSummarySchema = z.object({
   name: z.string().min(1).max(WORKFLOW_RUNS_LIMITS.maxPhaseNameLength),
   status: sessionWorkflowPhaseStatusSchema,
   /**
-   * 进入本站时仍在跑的其他站的**下标**（下标落在本 `phases` 数组上），来自
-   * `run.phaseAlongside`。侧栏据此把并行的两站之间画成双线段。只有声明表那条路有这个事实——
-   * 退化路（已进入的 phase）是按进入序拼出来的，没有并行可言，所以那时整个键缺席。
+   * **Indexes** of other phases still running when this phase was entered (indexes into this `phases` array), from
+   * `run.phaseAlongside`. The sidebar uses these to draw a double connector between parallel phases. This fact exists only when using the declared phase list;
+   * the fallback list (entered phases) is built in entry order and has no parallelism, so the key is omitted there.
    */
   alongside: z.array(z.number().int().nonnegative()).max(WORKFLOW_RUNS_LIMITS.maxPhases).optional(),
   /**
-   * 这一站是一处**还开着的留白**（docs/dynamic-workflow/presentation.md「Holes on the timeline」）：
-   * `open` = 还没走到，`waiting` = run 停在这里等主代理补全。侧栏据此把灯画成虚线（等待时警示色）。
-   * 补全之后它就是一个普通的站，键缺席。只有声明表那条路有这个事实（`run.phaseHoles`）。
+   * This phase is an **open hole** (docs/dynamic-workflow/presentation.md “Holes on the timeline”):
+   * `open` = not yet reached, `waiting` = the run is parked here waiting for the main agent to fill it in.
+   * The sidebar draws the light with a dashed outline (warning color while waiting). Once filled in it is
+   * an ordinary phase and the key is omitted. Only the declared-list path carries this fact (`run.phaseHoles`).
    */
   hole: z.enum(["open", "waiting"]).optional(),
 });
@@ -52,26 +52,26 @@ export type SessionWorkflowPhaseSummary = z.infer<typeof sessionWorkflowPhaseSum
 
 export const sessionWorkflowRunSummarySchema = z.object({
   runId: z.string().min(1),
-  /** 发起行的工具调用 id：点击运行行打开 run pane 的键；直接启动的 run 也有（`launch-` 前缀）。 */
+  /** Tool call ID of the initiating row, used to open the run pane when the row is clicked; directly launched runs also have one (`launch-` prefix). */
   toolCallId: z.string().min(1).optional(),
-  /** 工作流后台工作的标题（= run 的展示名）；投影里没有对应后台工作时缺席。 */
+  /** Title of the workflow background work (= run display name); omitted when the projection has no matching background work. */
   name: z.string().min(1).optional(),
   status: workflowRunSchema.shape.status,
   stopReason: workflowRunSchema.shape.stopReason,
-  /** 后台工作的开始时刻，tooltip 的 elapsed 用；没有后台工作时缺席。 */
+  /** Background work start time, used for elapsed time in the tooltip; omitted when there is no background work. */
   startedAt: timestampSchema.optional(),
   /**
-   * 站点表，声明序：`run.phaseNames`（run-launched 带来的声明表）在场用它，否则退化为已进入的
-   * phase + 当前 phase（进入序）。两者都没有时为空数组，UI 画一个隐含站点「Workflow」。
+   * Phase list in declaration order: use `run.phaseNames` (declared list from run-launched) when present; otherwise fall back to entered
+   * phases plus the current phase in entry order. If both are empty, the UI draws an implicit phase named “Workflow”.
    */
   phases: z.array(sessionWorkflowPhaseSummarySchema).max(WORKFLOW_RUNS_LIMITS.maxPhases),
   currentPhase: z.string().min(1).max(WORKFLOW_RUNS_LIMITS.maxPhaseNameLength).optional(),
-  /** status === "running" 的子代理数（tooltip 的「{n} agents working」）。 */
+  /** Number of subagents with status === "running" (shown in the tooltip as “{n} agents working”). */
   agentsWorking: z.number().int().nonnegative(),
   /**
-   * 正在等主代理补全的留白名（`run.holes` 里第一条 waiting 的 `name`）：侧栏运行行写
-   * 「{name} · 等待补全」（docs/dynamic-workflow/presentation.md「Holes on the timeline」的「The sidebar」）。
-   * 没有停驻的留白时缺席。
+   * Name of the hole currently waiting for the main agent (the `name` of the first waiting entry in
+   * `run.holes`): the sidebar run row renders “{name} · waiting to be filled” (see “The sidebar” under
+   * “Holes on the timeline” in docs/dynamic-workflow/presentation.md). Omitted when no hole is parked.
    */
   waitingHole: z.string().min(1).max(WORKFLOW_RUNS_LIMITS.maxPhaseNameLength).optional(),
 });
@@ -87,21 +87,20 @@ export function isSessionWorkflowRunLive(status: SessionWorkflowRunSummary["stat
 }
 
 /**
- * 「这个节点此刻真在跑」：与 packages/ui 的 `statusOfRunNode` 的 running 臂逐条相同，也与
- * reducer 推 actor 三态用的那一组相同（workflow-runs-reducer.ts），所以站点灯与
- * 「{n} agents working」永远对同一件事说「在跑」。
+ * “This node is actually running now”: matches the running branch of `statusOfRunNode` in packages/ui and the statuses used by
+ * the reducer for the actor's three states (workflow-runs-reducer.ts), so phase lights and “{n} agents working” always agree on what counts as running.
  *
- * `dispatched` / `waiting` 不算：前者是「会话就绪、首个请求尚未准入」的短暂相位，后者在等槽位
- * 或在退避——真正发出去了由 `node-executing` 说。
+ * `dispatched` / `waiting` do not count: the former is the brief phase after the session is ready but before the first request is admitted; the latter waits for a slot
+ * or backs off. `node-executing` indicates that work was actually dispatched.
  */
 function isRunNodeRunning(node: WorkflowRunNode): boolean {
   return node.phase === "executing" || node.phase === "repairing" || node.phase === "nudged";
 }
 
 /**
- * 站名 ↔ 实例出生戳的关联规则。与 packages/ui 的 `phaseNameMatches`（workflow-graph/phase-name.ts）
- * 逐条相同：精确匹配，站名**恰好顶到上界**时才按前缀兜底——前缀只在截断真的发生过时才开，
- * 否则「计划」会误认「计划修复」。那个 helper 在 ui 层，shared 不能反向依赖，所以这里内联同一条规则。
+ * Association rule between phase names and instance birth timestamps. Matches `phaseNameMatches` in packages/ui (workflow-graph/phase-name.ts):
+ * exact match first, with prefix fallback only when the phase name **exactly reaches the limit**. Prefix matching is enabled only when truncation actually occurred;
+ * otherwise “Plan” could match “Plan repair”. That helper lives in the UI layer, so shared inlines the same rule instead of depending on UI.
  */
 function phaseNameMatches(stationName: string, stamp: string): boolean {
   return (
@@ -111,17 +110,18 @@ function phaseNameMatches(stationName: string, stamp: string): boolean {
 }
 
 /**
- * 站点表的唯一推导。侧栏运行行（经 `summarizeRun`）与任务岛的 run 行都读它，所以两处的灯
- * 永远对同一件事说同一句话；任务岛不另写第二套。
+ * The only derivation of the phase list. Both the sidebar run row (via `summarizeRun`) and the run rows
+ * in the task island read it, so both sets of lights always tell the same story about the same thing;
+ * the task island does not keep a second implementation.
  */
 export function deriveSessionWorkflowPhases(run: WorkflowRunState): SessionWorkflowPhaseSummary[] {
   const entered = new Set((run.phases ?? []).map((phase) => phase.name));
   const current = run.currentPhase;
   let names: string[];
-  // 「同时在跑」的下标说的是**声明表**里的位置，所以只有走声明表这条路时它才有意义；退化路
-  // （已进入的 phase + 当前 phase）是另一个下标空间，那时整张表不带。
+  // “Running alongside” indexes refer to positions in the **declared phase list**, so they are meaningful only on that path; the fallback list
+  // (entered phases plus current phase) uses a different index space, so omit the whole field there.
   let alongside: readonly (readonly number[])[] | undefined;
-  // 还开着的留白（声明表的下标）；等待中的按名字从 `run.holes` 认——留白名按规则 9012 唯一。
+  // Still-open holes (indexes into the declared list); waiting ones are recognized by name from `run.holes`—hole names are unique per rule 9012.
   let holeIndexes: ReadonlySet<number> = new Set();
   const waitingNames = new Set(
     (run.holes ?? []).filter((hole) => hole.state === "waiting").map((hole) => hole.name),
@@ -135,8 +135,8 @@ export function deriveSessionWorkflowPhases(run: WorkflowRunState): SessionWorkf
     if (current !== undefined && !entered.has(current)) names = [...names, current];
   }
   const live = isSessionWorkflowRunLive(run.status);
-  // 在跑的节点的出生戳。run 不在跑时整张表为空：终态 run 里没有人还在干活，哪怕某条 settled
-  // 事件没来得及落下（与 actor 三态里「终态压过一切」同一姿态）。
+  // Birth timestamps for running nodes. The list is empty when the run is not active: no one is working in a terminal run, even if a settled
+  // event has not yet been recorded (matching the actor's three-state rule that terminal state takes precedence).
   const burning = live
     ? run.nodes.filter(isRunNodeRunning).flatMap((node) => node.phaseName ?? [])
     : [];
@@ -144,7 +144,7 @@ export function deriveSessionWorkflowPhases(run: WorkflowRunState): SessionWorkf
   return names.slice(0, WORKFLOW_RUNS_LIMITS.maxPhases).map((name, index) => {
     const isCurrent = name === current;
     const wasEntered = entered.has(name) || isCurrent;
-    // 出生在这一站的节点还在跑 → 这一站还在烧，哪怕控制流早已走到下一个标记。
+    // A node born in this phase is still running, so this phase remains active even if control flow has advanced to the next marker.
     const burningHere = burning.some((stamp) => phaseNameMatches(name, stamp));
     let status: SessionWorkflowPhaseStatus;
     if (live) {
@@ -154,14 +154,14 @@ export function deriveSessionWorkflowPhases(run: WorkflowRunState): SessionWorkf
     } else if (run.status === "errored") {
       status = isCurrent ? "failed" : wasEntered ? "done" : "pending";
     } else {
-      // stopped：控制流停在当前 phase，它没有完成也没有失败——留空心灯。
+      // stopped: control flow stopped at the current phase; it is neither complete nor failed, so leave an unfilled light.
       status = isCurrent ? "pending" : wasEntered ? "done" : "pending";
     }
-    // 裁表之后下标空间跟着变窄：指向被裁掉的站的引用一起丢掉，剩下空的就不建键。
+    // Trimming the list narrows its index space: discard references to trimmed phases, and omit the key if none remain.
     const beside = (alongside?.[index] ?? []).filter(
       (other) => Number.isInteger(other) && other >= 0 && other < emitted && other !== index,
     );
-    // 留白站：等待中的按 `run.holes` 认（名字唯一），其余下标表点名的是还没走到的留白。
+    // Hole phases: waiting ones are recognized from `run.holes` (names are unique); the remaining indexes in the hole table name holes not yet reached.
     const hole = waitingNames.has(name) ? "waiting" : holeIndexes.has(index) ? "open" : undefined;
     return {
       name,
@@ -177,7 +177,7 @@ function summarizeRun(
   work: BackgroundWorkSummary | undefined,
 ): SessionWorkflowRunSummary {
   const name = work?.title.trim();
-  // 在跑的 run 才有「等补全」可言：终态 run 的 waiting 记录已被 reducer 剥掉，这里再守一道。
+  // Only active runs can be “waiting to be filled”: the reducer already strips waiting records from terminal runs; this guards once more.
   const waitingHole = isSessionWorkflowRunLive(run.status)
     ? (run.holes ?? []).find((hole) => hole.state === "waiting")?.name
     : undefined;
@@ -196,10 +196,10 @@ function summarizeRun(
 }
 
 /**
- * 从同一 snapshot 的 `workflowRuns` + `backgroundWorks` 派生会话的工作流运行摘要。
- * 在跑的 run（pending / running）按 `runs[]` 序（= 启动序）在前；其后是已结束的，按后台工作的
- * `endedAt` 倒序、无 endedAt 时按 `runs[]` 倒序（越晚建的越新）。总数裁到 4。
- * 会话一个 run 都没有 → `undefined`（键整个缺席，旧 CLI 因此什么都不变）。
+ * Derive a session's workflow run summary from `workflowRuns` + `backgroundWorks` in the same snapshot.
+ * Active runs (pending/running) come first in `runs[]` order (= start order); ended runs follow, sorted by background work `endedAt`
+ * descending, or by `runs[]` descending when `endedAt` is absent (later-created first). Trim the total to 4.
+ * If the session has no runs, return `undefined` (omit the key entirely so older CLIs remain unchanged).
  */
 export function deriveSessionWorkflowActivity(input: {
   workflowRuns: WorkflowRunsState | undefined;

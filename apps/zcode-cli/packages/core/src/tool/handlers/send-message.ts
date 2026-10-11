@@ -14,10 +14,10 @@ import { assertNotOffPeakTurn } from "./off-peak.js";
 
 const MAX_SEND_MESSAGE_MODEL_BYTES = 4096;
 /**
- * SendMessage 续跑已完成子 Agent 走
- * resumeTerminalAgentInBackground，不携带闲时轮的 subagentModelOverride，子 Agent 按父会话
- * 常驻选择重建模型，请求全部计入用户 Coding Plan。闲时轮内子 Agent 均为前台同步完成，
- * SendMessage 唯一有意义的用途就是这条泄漏路径，因此直接拒绝。
+ * SendMessage resumes a completed subagent through
+ * resumeTerminalAgentInBackground without the off-peak subagentModelOverride. The subagent rebuilds its model from the parent's
+ * persistent selection, so all requests count against the user's Coding Plan. Subagents in off-peak turns always complete synchronously in the foreground,
+ * making this the only meaningful SendMessage use case for that leakage path; reject it directly.
  */
 const OFF_PEAK_SEND_MESSAGE_HINT =
   "Spawn a new foreground Agent with the full context instead of resuming a completed one.";

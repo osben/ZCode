@@ -254,7 +254,7 @@ function hasMediaToolResultContent(content: ModelMessageContent): boolean {
   if (!Array.isArray(content)) return false;
   return content.some((block) => {
     if (!block || typeof block !== "object" || !("type" in block)) return false;
-    // video 与 image/file 同为受保护媒体：Read 视频结果漏判会被 microcompact 清掉。
+    // Video is protected media like image/file; otherwise Read video results would be removed by micro-compaction.
     return block.type === "image" || block.type === "video" || block.type === "file";
   });
 }

@@ -144,7 +144,8 @@ function mintCore(
   const checker = workflow.program.getTypeChecker();
   const fanouts: CoreFanoutSite[] = facts.promoted.map((fanout) => {
     const cand = candByOrder.get(fanout.order);
-    // 字面量基数也是铸造期的事：它要看被迭代表达式的 AST 与绑定，投影只读一个数。
+    // Literal cardinality is also construction-time work: it needs the AST and binding of the
+    // iterated expression, while projection reads only a number.
     const cardinality = cand === undefined ? undefined : literalCardinality(cand.iterated, checker);
     return {
       id: fanoutId.get(fanout.id) as string,
@@ -155,8 +156,8 @@ function mintCore(
       ...(cardinality === undefined ? {} : { cardinality }),
     };
   });
-  // 只有开放的留白是站点（docs/analysis.md「Sites」）：已补全的留白是一个阶段，不是一步。
-  // 名字 / 类型缺席的留白在 9012 处已挡下，这里的兜底只是把不变量写下来。
+  // Only open holes are sites (docs/analysis.md, “Sites”); a filled hole is a phase, not a step.
+  // Rule 9012 already rejects holes without a name or type. This fallback documents that invariant.
   const holes: CoreHoleSite[] = table.holes
     .filter((site) => site.body === undefined)
     .map((site) => ({

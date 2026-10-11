@@ -1,24 +1,24 @@
 /**
- * CUA 权限状态的本地缓存。
+ * Local cache for CUA permission status.
  *
- * 为什么需要：`useCuaPermissionStatus` 的 status 冷启动时是 null，而设置页两行权限的
- * detail 按钮只在 `=== "granted"` 时隐藏，于是 null 期间两行都会渲染出「打开辅助功能 /
- * 打开屏幕录制」按钮，等首次查询（真实结果是已授权）返回后按钮又整体消失，行高塌陷 ——
- * 用户每次进设置页都要看一次抖动。输入框常驻入口也一样，冷启动先走 starting 再跳 ready。
+ * Why this is needed: `useCuaPermissionStatus` starts with a null status, while the detail buttons on the two permission rows in Settings
+ * are hidden only when `=== "granted"`, so while status is null both rows render “Open Accessibility /
+ * Open Screen Recording” buttons. When the first query returns (the actual result is granted), both buttons disappear and the row height collapses —
+ * users see a layout jump every time they open Settings. The persistent input entry has the same issue: it starts at starting and then jumps to ready.
  *
- * 缓存把上一次的真实结果留到下次启动，作为首屏的乐观初值，让常见路径（授权状态没变）
- * 首屏即终态、不再跳变。
+ * The cache retains the previous real result for the next launch as an optimistic initial value, so in the common case (permission has not changed)
+ * the first screen is already in its final state and does not jump.
  *
- * 边界（重要）：这里缓存的值**只用于渲染**，绝不参与任何授权决策。
- * - 展示跟 `settled`（有可展示内容即成立），所以缓存命中时设置页的「打开系统设置」按钮
- *   **立即可点**，不会等到真实结果返回——这是有意的取舍，否则按钮文案会在「验证中…」与
- *   终态之间抖动。安全性不靠这个按钮的 disabled 兜底，而是靠点击边沿：
- *   `openPermissionSettings` 会重新 `getStatus` 并用 `requiredCuaPermissionsForFreshStatus`
- *   精确校验，陈旧值点不出错误的系统面板，只会 toast 提示并触发刷新。
- * - `fresh` 仍然只在真实结果到达后才置 true，供决策类判断使用。
- * - 真正的功能门禁在 Helper/producer；失败作为普通 MCP tool error 到达模型，
- *   与本缓存无关，也不会由 Renderer 自动触发权限副作用。
- * 因此缓存最坏的后果是首屏多显示一瞬正确性未知的状态，随即被下一次事件驱动的查询覆盖。
+ * Boundary (important): cached values here are **for rendering only** and never participate in permission decisions.
+ * - Display follows `settled` (true as soon as there is content to show), so when the cache hits, the Settings “Open System Settings” button
+ *   is **immediately clickable** without waiting for the real result — this is intentional; otherwise the button label would jump between “Checking…” and
+ *   the final state. Safety does not rely on disabling this button; it is enforced at the click boundary:
+ *   `openPermissionSettings` calls `getStatus` again and uses `requiredCuaPermissionsForFreshStatus`
+ *   for precise validation; a stale value cannot open the wrong system panel and instead shows a toast and triggers a refresh.
+ * - `fresh` is still set to true only when the real result arrives, for decision-making checks.
+ * - The actual feature gate is in the Helper/producer; failures reach the model as regular MCP tool errors,
+ *   independent of this cache, and the Renderer does not trigger permission side effects automatically.
+ * Thus, the worst case is briefly showing a state of unknown accuracy on the first screen before the next event-driven query replaces it.
  */
 import {
   isCuaPermissionStatusAvailable,
@@ -32,21 +32,16 @@ interface StorageLike {
   setItem(key: string, value: string): void;
 }
 
-/** TCC 授权是 App（Helper bundle）级而非 workspace 级，因此全局单键，不按 workspace 分。 */
+/** TCC permission is scoped to the app (Helper bundle), not the workspace, so use one global key rather than one per workspace. */
 export const CUA_PERMISSION_STATUS_CACHE_KEY = "zcode-cua-permission-status";
 
 /**
- * 缓存有效期。授权状态可能在 ZCode 未运行时被用户在系统设置里改掉，缓存越旧越不可信；
- * 超期后宁可回到冷启动态（null），也不要用一个可能已被撤销的 granted 去渲染首屏。
+ * Cache lifetime. Users may change permissions in System Settings while ZCode is not running, so older cache entries are less trustworthy;
+ * after expiration, return to the cold-start state (null) rather than render the first screen from a grant that may have been revoked.
  */
 export const CUA_PERMISSION_STATUS_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
-const PERMISSION_STATES: readonly CuaPermissionState[] = [
-  "granted",
-  "stale",
-  "denied",
-  "unknown",
-];
+const PERMISSION_STATES: readonly CuaPermissionState[] = ["granted", "stale", "denied", "unknown"];
 
 interface CachedEnvelope {
   savedAt: number;
@@ -67,8 +62,8 @@ function isPermissionState(value: unknown): value is CuaPermissionState {
 }
 
 /**
- * 全字段校验。缓存是跨版本存活的，字段一旦漂移（改名/改类型）就可能把 undefined 喂进
- * 渲染分支，产生比抖动更难查的问题；这里宁可判定失效回到 null。
+ * Validate every field. The cache survives version changes, so a field change (rename/type change) could feed undefined into
+ * a rendering branch and cause a harder-to-diagnose issue than a layout jump; treat it as invalid and return null instead.
  */
 function parseCachedStatus(value: unknown): CuaPermissionStatus | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
@@ -110,7 +105,7 @@ export function readCachedCuaPermissionStatus(
   try {
     raw = storage?.getItem(CUA_PERMISSION_STATUS_CACHE_KEY) ?? null;
   } catch {
-    // 隐私模式 / storage 被禁用：等价于没有缓存。
+    // Private mode / disabled storage: treat as no cache.
     return null;
   }
   if (!raw) return null;
@@ -125,7 +120,7 @@ export function readCachedCuaPermissionStatus(
 
   const { savedAt, status } = envelope as Partial<CachedEnvelope>;
   if (typeof savedAt !== "number" || !Number.isFinite(savedAt)) return null;
-  // savedAt 在未来 = 时钟回拨或被篡改，无法判断新鲜度，不采信。
+  // A savedAt value in the future means the clock changed or was tampered with; freshness cannot be determined, so do not trust it.
   const age = now - savedAt;
   if (age < 0 || age > CUA_PERMISSION_STATUS_CACHE_TTL_MS) return null;
 
@@ -137,14 +132,14 @@ export function persistCuaPermissionStatus(
   storage: StorageLike | null = getBrowserStorage(),
   now: number = Date.now(),
 ): void {
-  // unavailable 表示 Helper 没起来 / 非 macOS / 非 product 模式，是环境态而不是授权态。
-  // 记住它只会让下次冷启动复现一个错误的首屏，因此不写入（也不清除已有的有效缓存）。
+  // unavailable means the Helper is not running, the platform is not macOS, or this is not product mode; it is an environment state, not a permission state.
+  // Persisting it would reproduce an incorrect initial screen next time, so do not write it (and do not clear an existing valid cache).
   if (!isCuaPermissionStatusAvailable(status)) return;
 
   const envelope: CachedEnvelope = { savedAt: now, status };
   try {
     storage?.setItem(CUA_PERMISSION_STATUS_CACHE_KEY, JSON.stringify(envelope));
   } catch {
-    // 配额满 / 隐私模式：缓存只是首屏优化，写不进去不影响功能。
+    // Quota full / private mode: the cache is only a first-screen optimization, so a failed write does not affect functionality.
   }
 }

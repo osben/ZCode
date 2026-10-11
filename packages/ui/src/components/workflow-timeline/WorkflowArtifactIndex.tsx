@@ -14,24 +14,21 @@ import type { WorkflowCompletionArtifact } from "./WorkflowArtifactTile.js";
 import { PILL_STAGGER_MS } from "./WorkflowTimeline.js";
 
 /**
- * 产物索引（侧板）：交付物行之后的**其余产物**，一件一行。
+ * Artifact index (side pane): **remaining artifacts** after the deliverables row, one per line.
  *
- * 规则只有一条：**预览要么读得清，要么不画**。交付物留着它的框；其余产物把框丢掉，只剩瓦片说明行
- * 那一套语法——kind 图标、完整标题、等宽细节（迷你瓦片曾把它藏进 tooltip）、尾槽（v{n}，悬停让位
- * 给 ↗）——独立成行。层级由此来自**形态**（有图的一件 vs 只有字的其余），而不是大框与小框。
+ * There is one rule: **either a preview is readable or it is not rendered**. Deliverables keep their frame; remaining artifacts drop the frame and use only the tile description-row
+ * grammar—kind icon, full title, monospace detail (previously hidden in a tooltip on mini tiles), and trailing slot (v{n}, yielding to ↗ on hover)—as a standalone row. Hierarchy comes from **form** (one item with an image vs. the remaining text-only items), rather than large and small frames.
  *
- * 一行 26px。卡上按 `repeat(auto-fit, minmax(220px, 1fr))` 流成两列（窄卡一列）；侧板恒为一列。
- * 与交付物行之间隔一条细线（`--color-workflow-rule`，四格数字前的那条），卡因此读作收据的三段：
- * 交付了什么、还做了什么、花了多少。
+ * Each row is 26px high. Cards flow into two columns with `repeat(auto-fit, minmax(220px, 1fr))` (one column on narrow cards); the side pane always uses one column.
+ * A thin line separates this from the deliverables row (`--color-workflow-rule`, the same rule before the four metrics), so the card reads as a three-part receipt:
+ * what was delivered, what else happened, and what it cost.
  *
- * 「还有 N 个」是一扇门不是一件产物：省略号图标、次要色的字、↗ 不等悬停就在（与名册的「还有 n 个」
- * 一行同一条规则），点开 run 侧板看全部。
+ * “N more” is a doorway, not an artifact: an ellipsis icon, secondary text, and a visible ↗ without hover (following the same rule as the roster's “n more”
+ * row); click it to open the run side pane and see everything.
  *
- * 每一行永远是一颗 `<button>`：宿主没给回调时是**禁用**的按钮（「交付了什么」是事实，「能不能
- * 打开」是能力），与药丸、瓦片同一条门。悬停 / 聚焦时整行填 `surface-hover`（像侧栏行），填色向
- * 文字左右各多出 6px（负外边距），文字本身仍与交付物框的左边对齐。
+ * Every row is always a `<button>`: when the host provides no callback, it is **disabled** (“what was delivered” is a fact, while “whether it can be opened” is a capability), using the same interaction boundary as pills and tiles. On hover/focus, the whole row fills with `surface-hover` (like a sidebar row), extending 6px beyond the text on each side via negative margins while keeping the text aligned with the deliverable frame.
  *
- * ⚠ 术语：artifact = 脚本经 `artifact.*` 发布给用户看的产出。
+ * ⚠ Terminology: artifact = an output published to the user by a script through `artifact.*`.
  */
 function enterStyle(enterDelayMs: number | undefined): CSSProperties | undefined {
   return enterDelayMs === undefined || enterDelayMs <= 0
@@ -55,7 +52,7 @@ function WorkflowArtifactLine({
   onOpen?: (artifactId: string) => void;
   enterDelayMs?: number;
   testId?: string;
-  /** tooltip 覆盖（侧板把工作区出处放进来）；缺席时是「种类词 · 标题」。 */
+  /** Tooltip override (the side pane supplies the workspace source); absent means "kind · title". */
   title?: string;
 }) {
   const { intl } = useZCodeIntl();
@@ -102,7 +99,7 @@ function WorkflowArtifactLine({
       {showVersion || openable ? (
         <span className="grid size-3 shrink-0 place-items-center [&>*]:col-start-1 [&>*]:row-start-1">
           {showVersion ? (
-            // 按版本重挂：同 id 再发布时尾槽弹入一次（wf-mark 的进场），悬停时让位给 ↗。
+            // Remount by version so a republish with the same ID animates the tail slot once (wf-mark entrance); on hover it yields to ↗.
             <span
               className="wf-mark font-mono text-ui-xs leading-none tabular-nums text-foreground-subtlest"
               data-testid="workflow-artifact-tile-version"
@@ -133,7 +130,7 @@ function WorkflowArtifactLine({
   );
 }
 
-/** 「还有 N 个」——门，不是产物。砍过的清单不知道 N，写 `…`。 */
+/** "N more" is a door, not an artifact. A truncated list has unknown N, so show `…`. */
 function WorkflowArtifactMoreLine({
   count,
   enterDelayMs,
@@ -142,7 +139,7 @@ function WorkflowArtifactMoreLine({
   truncated = false,
 }: {
   count: number;
-  /** 发射侧砍过（超 8）：N 不可知，写 `…`。 */
+  /** The emitting side truncated the list (over 8), so N is unknown; show `…`. */
   truncated?: boolean;
   onOpen?: () => void;
   enterDelayMs?: number;
@@ -169,7 +166,7 @@ function WorkflowArtifactMoreLine({
         )}
       </span>
       {openable ? (
-        // 一扇门没有状态标记可让位：↗ 在场即在，不等悬停（wf-pill-go-rest）。
+        // A door has no status marker to replace: ↗ is always visible, not only on hover (wf-pill-go-rest).
         <span className="grid size-3 shrink-0 place-items-center">
           <span
             aria-hidden
@@ -187,9 +184,9 @@ function WorkflowArtifactMoreLine({
 type WorkflowArtifactIndexColumns = "auto" | "one";
 
 /**
- * 索引本身：行 + 可选的门。`columns="auto"` 是卡上的两列流（≥ 2 × 220px 才成两列），`"one"` 是侧板
- * 的单列。`rule` 在上方画那条细线（跟在交付物行之后时要；索引独占卡时不要）。行依次落地，从
- * `firstDelayMs` 起每行错 30ms，门排在最后一行之后。
+ * The index itself: rows + optional door. `columns="auto"` gives cards a two-column flow (requires ≥ 2 × 220px); `"one"` is the side pane's single column.
+ * `rule` draws a thin line above (needed after a deliverable row; omit it when the index occupies the card alone). Rows appear in sequence,
+ * offset by 30ms from `firstDelayMs`; the door follows the last row.
  */
 export function WorkflowArtifactIndex({
   artifacts,
@@ -211,7 +208,7 @@ export function WorkflowArtifactIndex({
   labels: PresetLabels;
   columns?: WorkflowArtifactIndexColumns;
   rule?: boolean;
-  /** 画「还有 N 个」；`folded` 是 N。 */
+  /** Render "N more"; `folded` supplies N. */
   more?: boolean;
   folded?: number;
   truncated?: boolean;

@@ -1,48 +1,47 @@
 /**
- * 引擎的结构化错误（docs/execution-engine.md「Errors are first-class」）：稳定错误码、
- * 它的可序列化形态，以及跨 Boundary A 抛出的 {@link WorkflowError} 本身。
+ * Structured engine errors (docs/execution-engine.md, “Errors are first-class”): stable error codes,
+ * their serializable representation, and {@link WorkflowError} itself, thrown across Boundary A.
  *
- * 独立成文件的理由与 run-terminal.ts 同一条：types.ts 已抵 oxlint 的 400 行门，而这一族
- * 高度自足——它只依赖 schema 的 `Violation` 与终态明细，不依赖词汇表里的任何别的东西。
- * 消费者按惯例仍从 types.ts 取（那边原样再导出），导入路径因此一处都不必改。
+ * Split into its own file for the same reason as run-terminal.ts: types.ts had reached oxlint's 400-line limit, and this family
+ * is self-contained—it depends only on the schema's `Violation` and terminal details, not on anything else in the vocabulary.
+ * Consumers still import from types.ts by convention (it re-exports these types unchanged), so no import paths need to change.
  */
 
 import type { Violation } from "../schema/types.js";
 import type { ProviderStopDetails } from "./run-terminal.js";
 
 /**
- * 稳定错误码。区分 node 级（拒绝单个 ask 的 promise）与 run 级（使整个 run 失败）：
- * - node 级：ValidationFailed / ResultNotSubmitted / DriverError / Cancelled / ContextLimit /
- *   WorldReadCapExceeded——一次世界读取超过它那个 op 的上限（`files.grep`：2000 条命中或
- *   256KB 序列化，先到先拒；`git.diff`：512KB；见 `facade/world-read-caps.ts`）。它是 node 级
- *   而不是 run 级，靠的是**拒绝通道**而不是严重程度：世界读取返回一个脚本能 `catch` 的
- *   promise，所以"缩窄 pattern 或加个 glob"是一条脚本真能走的路。也刻意**不**折进
- *   DriverError——上限是脚本可以据以重写自己的契约，而靠匹配 message 文本区分两者，
- *   正是这个联合类型存在的目的所要防的。
- * - run 级：InputHashMismatch / UnknownActor / MissingAskSpec /
- *   DuplicateActorName——同一个 run 内两次 createActor 得到相同的**非空**有效名
- *   （有效名 = normalizePersona 后的 `spec.name`，persona.name 压过 name 实参）。规则对
- *   **所有** run 生效而不只是修订 run：具名 actor 是 amend-resume 缓存导入的身份键，而任何
- *   run 都是未来修订的潜在前驱，前驱里重名会让导入匹配歧义（docs/execution-engine.md
- *   的「命名唯一性（引擎）」行）。匿名（名缺席或空串）不查、不禁——代价是没有缓存资格。
- *   字面量重名另有编译期 courtesy 诊断（analysis/actor-names.ts），但动态名只有运行期能查，
- *   所以这条才是真正的门。
- *   ReportCapExceeded——一个 run 超过 65,536 条报告、单条 item 序列化超过 1 MiB，或全部 item 超过 1 GiB
- *   （见 `facade/report-caps.ts`）。它是 run 级而不是 node 级，与上面 WorldReadCapExceeded 的
- *   分界同理、结论相反：`report` 返回 `void`，脚本**没有**可以 catch 的通道，除了 run 无处可放。
- *   也正因如此这两个数字必须宽到讲道理的脚本永远碰不到——脚本作者写不出恢复路径。
- *   同样刻意不折进 DriverError：上限是脚本可据以重写自己的契约。
- * - 构造期（run 尚未开始，引擎构造函数同步抛出）：ScriptHashMismatch
- * - 宿主级（**引擎从不产出**）：Interrupted——拥有该 run 的进程在结算之前就没了，由宿主在
- *   下一次构造时收敛那行永远停在 running 的记录（`bootstrap/src/app/dynamic-workflow-run-service.ts`
- *   的孤儿收敛，桌面实测 bug 2026-08-19）。它必须是**独立的码**而不是复用 DriverError：脚本
- *   自己抛错也编码成 DriverError（`dynamic-workflow-runtime/src/harness.ts:311`），两者若同码，
- *   「进程被杀」与「脚本真失败」就只能靠 message 文本区分——而这正是本联合类型要避免的。
- *   ProviderStop——一个子代理（或工具侧）的模型请求撞上**确定性的**模型侧错误（认证失效、
- *   模型不在套餐里、配额耗尽……，docs/execution-engine.md 的策略表），driver 让
- *   run 以 `stopped(provider)` 停下而不是让节点失败；结构化明细在 `providerStop`。它是宿主级
- *   的另一条：引擎只在 `stop("provider", error)` 里原样落库。
- * 流程判断一律用这里的码，绝不匹配错误文本。
+ * Stable error codes. Distinguish node-level errors (reject one ask promise) from run-level errors (fail the entire run):
+ * - Node-level: ValidationFailed / ResultNotSubmitted / DriverError / Cancelled / ContextLimit /
+ *   WorldReadCapExceeded—a world read exceeded its operation's limit (`files.grep`: 2,000 matches or
+ *   256 KB serialized, whichever comes first; `git.diff`: 512 KB; see `facade/world-read-caps.ts`). This is node-level
+ *   rather than run-level because of the **rejection channel**, not severity: a world read returns a promise the script can `catch`,
+ *   so “narrow the pattern or add a glob” is a real recovery path for scripts. It is intentionally **not** folded into
+ *   DriverError—the limit lets a script revise its own contract, while distinguishing them by matching message text
+ *   is exactly what this union type is meant to prevent.
+ * - Run-level: InputHashMismatch / UnknownActor / MissingAskSpec /
+ *   DuplicateActorName—two createActor calls in one run resolve to the same **non-empty** effective name
+ *   (effective name = `spec.name` after normalizePersona; persona.name takes precedence over the name argument). This applies to
+ *   **all** runs, not only amended runs: named actors are identity keys for amend-resume cache imports, and any
+ *   run may become a predecessor for a future amendment; duplicate names in a predecessor make import matching ambiguous (the
+ *   “engine naming uniqueness” row in docs/execution-engine.md). Anonymous names (missing or empty) are neither checked nor forbidden—the tradeoff is no cache eligibility.
+ *   Literal duplicate names also get a compile-time courtesy diagnostic (analysis/actor-names.ts), but only runtime can check dynamic names,
+ *   so this is the actual guard.
+ *   ReportCapExceeded—a run exceeds 65,536 reports, one serialized item exceeds 1 MiB, or all items exceed 1 GiB
+ *   (see `facade/report-caps.ts`). It is run-level rather than node-level, the same boundary as WorldReadCapExceeded but with the opposite result:
+ *   `report` returns `void`, so the script has **no** catchable channel and the error has nowhere to go except the run.
+ *   For that reason, both limits must be high enough that a reasonable script never reaches them—the author has no recovery path.
+ *   It is also intentionally not folded into DriverError: the limit lets the script revise its own contract.
+ * - Construction-time (run has not started; engine constructor throws synchronously): ScriptHashMismatch
+ * - Host-level (**never emitted by the engine**): Interrupted—the process owning the run ended before settlement, so the host reconciles the row
+ *   stuck in running during the next construction (`bootstrap/src/app/dynamic-workflow-run-service.ts` orphan reconciliation, desktop bug observed 2026-08-19).
+ *   This must have a **distinct code** rather than reuse DriverError: script-thrown exceptions also become DriverError (`dynamic-workflow-runtime/src/harness.ts:311`),
+ *   and sharing a code would force “process killed” and “script failed” to be distinguished by message text—the exact problem this union type prevents.
+ *   ProviderStop—a subagent (or tool-side) model request encounters a **deterministic** model error (invalid authentication,
+ *   model not included in the plan, quota exhausted, etc.; see the policy table in docs/execution-engine.md), and the driver stops
+ *   the run as `stopped(provider)` instead of failing a node; structured details are in `providerStop`. This is another host-level case:
+ *   the engine only persists it unchanged in `stop("provider", error)`.
+ * Always use these codes for control-flow decisions; never match error text.
  */
 export type WorkflowErrorCode =
   | "ValidationFailed"
@@ -59,14 +58,16 @@ export type WorkflowErrorCode =
   | "ScriptHashMismatch"
   | "Interrupted"
   | "ProviderStop"
-  // ——————————— 用户面产物（docs/dynamic-workflow/authoring.md「Publishing content」）———————————
-  // ⚠ 术语：这一批 artifact 全是**用户面产物**（脚本发布给用户看的产出），与
-  // `RunSettlement.artifact`（顶层返回值）无关。
+  // ——————————— User-facing artifacts (docs/dynamic-workflow/authoring.md, “Publishing content”) ———————————
+  // ⚠ Terminology: these artifacts are all **user-facing outputs** published by scripts, unrelated to
+  // `RunSettlement.artifact` (the top-level return value).
   //
-  // 通道按**成员族**分裂，与 WorldReadCapExceeded / ReportCapExceeded 的分界同一条论证：
-  // 内容成员（`file`/`markdown`）返回 promise，脚本可 catch，所以是节点级拒绝；预置成员
-  // 返回 void，没有可拒绝进去的地方，所以同样的事实在那一族是 failRun。三个 driver 侧的
-  // 码（Missing/Outside/TooLarge/StoreUnavailable）只可能来自内容成员，故恒为节点级。
+  // The error channel splits by **member family**, using the same reasoning as the
+  // WorldReadCapExceeded / ReportCapExceeded distinction: content members (`file`/`markdown`)
+  // return promises that scripts can catch, so failures reject at node level. Preset members return
+  // void and have nowhere to reject, so the same facts fail the run for that family. The three
+  // driver-side codes (Missing/Outside/TooLarge/StoreUnavailable) can only come from content
+  // members, so they are always node-level.
   | "ArtifactSourceMissing"
   | "ArtifactPathOutsideWorkspace"
   | "ArtifactTooLarge"
@@ -77,34 +78,36 @@ export type WorkflowErrorCode =
   | "ArtifactSpecInvalid"
   | "ArtifactRedeclared"
   | "ArtifactUndeclared"
-  // 第二个 id 想当 primary（docs/dynamic-workflow/authoring.md「Ids, tags and versions」）：内容成员是节点级拒绝，
-  // 预置成员是 failRun——与上面几条同一条分界。
+  // A second ID tries to become primary (docs/dynamic-workflow/authoring.md, “Ids, tags and versions”): content members cause a node-level rejection,
+  // while declared members fail the run—the same boundary as above.
   | "ArtifactPrimaryConflict";
 
 /**
- * 值不匹配的结构化比对（哪一侧变了）。记录里的值是 `expected`，本次传入的是 `got`。
- * 排查 resume 被拒的人需要的是这两个值，而不是从 message 里正则抠——流程判断与展示
- * 都不该依赖错误文本。
+ * Structured comparison for mismatched values (which side changed). The recorded value is
+ * `expected`; the current input is `got`.
+ * When diagnosing a rejected resume, callers need these two values rather than extracting them
+ * from the message with a regex—flow decisions and display should not depend on error text.
  */
 export interface WorkflowErrorMismatch {
   expected: string;
   got: string;
 }
 
-/** 错误的可序列化形态，落 journal（dwf_node.error_json / dwf_run.failure_json）。 */
+/** Serializable error shape stored in the journal (dwf_node.error_json / dwf_run.failure_json). */
 export interface WorkflowErrorJson {
   code: WorkflowErrorCode;
   message: string;
   violations?: Violation[];
   finalText?: string;
   mismatch?: WorkflowErrorMismatch;
-  /** 只在 `code === "ProviderStop"` 时在场。 */
+  /** Present only when `code === "ProviderStop"`. */
   providerStop?: ProviderStopDetails;
 }
 
 /**
- * 跨 Boundary A 抛出的结构化错误。带稳定 code 与可选的 violations / finalText / mismatch，
- * 使脚本侧 try/catch 与上层都能按结构处理，而不依赖字符串匹配。
+ * Structured error thrown across Boundary A. Includes a stable code and optional violations /
+ * finalText / mismatch so script-side try/catch and callers can handle it structurally without
+ * relying on string matching.
  */
 export class WorkflowError extends Error {
   readonly code: WorkflowErrorCode;
@@ -134,7 +137,7 @@ export class WorkflowError extends Error {
     if (extra?.cause !== undefined) (this as { cause?: unknown }).cause = extra.cause;
   }
 
-  /** 转为可序列化形态落 journal。 */
+  /** Convert to a serializable shape for journal storage. */
   toJSON(): WorkflowErrorJson {
     const json: WorkflowErrorJson = { code: this.code, message: this.message };
     if (this.violations !== undefined) json.violations = this.violations;
@@ -144,7 +147,7 @@ export class WorkflowError extends Error {
     return json;
   }
 
-  /** 从 journal 记录重建（replay 命中失败节点时用）。 */
+  /** Reconstruct from a journal record (used when replay hits a failed node). */
   static fromJSON(json: WorkflowErrorJson): WorkflowError {
     return new WorkflowError(json.code, json.message, {
       violations: json.violations,

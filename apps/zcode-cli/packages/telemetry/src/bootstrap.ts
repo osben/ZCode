@@ -39,7 +39,7 @@ export interface ModelTelemetryBootstrap {
 export function createModelTelemetry(
   options: CreateModelTelemetryOptions = {},
 ): ModelTelemetryBootstrap {
-  // 显式注入优先，Endpoint 永远不能覆盖宿主提供的进程级 Owner。
+  // Explicit injection takes precedence; an Endpoint must never override the host-provided process-level Owner.
   const owner = options.owner ?? preparedOwner;
   if (!owner) {
     return {
@@ -56,8 +56,8 @@ export function createModelTelemetry(
     statusSink: owner.statusSink,
     async shutdown() {
       if (options.sessionId) owner.abandonSession(options.sessionId);
-      // Session 只借用进程 Owner。关闭 Session 可以 flush，但不能关闭 Provider、Exporter、
-      // Context Manager 或其他 Session 仍在使用的队列。
+      // A Session only borrows the process Owner. Closing a Session may flush, but must not close
+      // the Provider, Exporter, Context Manager, or queues still used by other Sessions.
       await owner.flush({ timeoutMs: 1_500 });
     },
   };
@@ -95,8 +95,9 @@ export function resolveOtlpMetricEndpoint(env: EnvRecord): string | undefined {
     parsed.pathname = `${parsed.pathname.replace(/\/$/u, "")}/v1/metrics`;
     return parsed.toString();
   }
-  // ARMS 的自定义 OTLP HTTP 接入点对 Trace/Metric 共用同一 URL；只有 traces 专用
-  // 配置时沿用它，避免打包环境必须额外维护一套密钥和接入点。
+  // ARMS uses the same custom OTLP HTTP endpoint URL for Trace and Metric; reuse it only when a
+  // traces-specific setting is present, so packaged environments do not need another set of
+  // credentials and endpoints.
   return resolveOtlpTraceEndpoint(env);
 }
 
@@ -114,8 +115,9 @@ export function parseOtlpHeaders(value: string | undefined): Record<string, stri
 }
 
 /**
- * 在 CLI 的异步启动边界准备身份并动态加载 OTel SDK。同步 App 工厂只借用已准备好的
- * 进程级 Owner；disabled 路径不会 import SDK/Exporter。
+ * Prepare identity and dynamically load the OTel SDK at the CLI's asynchronous startup boundary.
+ * The synchronous App factory only borrows the prepared process-level Owner; the disabled path
+ * does not import the SDK or Exporter.
  */
 export async function prepareModelTelemetryEnv(
   env: EnvRecord,
@@ -255,8 +257,10 @@ async function resolveStandaloneDeviceMidFromFile(stateFile: string): Promise<st
       return deviceMid;
     });
   } catch {
-    // Bug 根因：Telemetry 身份过去在同步工厂里直接做文件 I/O，慢盘会阻塞 CLI 启动；
-    // 异步准备仍必须保持旁路，读写失败只缺少匿名关联，不能影响 Agent 主链路。
+    // Root cause: Telemetry identity previously performed file I/O directly in the synchronous
+    // factory, allowing slow disks to block CLI startup. Asynchronous preparation must still be
+    // bypassed on failure: failed reads/writes only omit anonymous correlation and must not affect
+    // the Agent's main path.
     return undefined;
   }
 }
@@ -286,12 +290,14 @@ async function withTelemetryStateLock(
         try {
           await unlink(lockFile);
         } catch {
-          // 另一个进程可能已回收异常残留；锁清理失败不影响模型链路。
+          // Another process may already have cleaned up the stale residue; lock cleanup failure
+          // does not affect the model path.
         }
       }
     }
   }
-  // 另一个活跃进程正在更新同一文件时不等待；本次仅缺少匿名 device 关联。
+  // Do not wait while another active process updates the same file; this run only lacks anonymous
+  // device correlation.
   return await readDeviceMid(stateFile);
 }
 

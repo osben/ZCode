@@ -1,6 +1,7 @@
 /**
- * 受控视图的最小抽象：executor 只依赖这些方法，便于用 stub 单测（无需真 Electron webContents）。
- * 真实实现由 browserGuestManager 用 `<webview>` guest 的 webContents + webContents.debugger 提供。
+ * Minimal abstraction for the controlled view: the executor depends only on these methods, making
+ * stub-based unit tests possible without a real Electron webContents. browserGuestManager provides
+ * the production implementation through a `<webview>` guest's webContents and webContents.debugger.
  */
 export interface ControlledViewWebContents {
   loadURL(url: string): Promise<void>;
@@ -12,14 +13,14 @@ export interface ControlledViewWebContents {
   goForward(): void;
   reload(): void;
   /**
-   * 在页面上下文执行脚本并返回最后一个表达式的值（结构化克隆）。
-   * 由 browserGuestManager wire 到 `guest.executeJavaScript(script, true)`（userGesture=true，与 element-picker 一致）。
+   * Execute a script in the page context and return the value of the final expression (structured-cloned).
+   * browserGuestManager wires this to `guest.executeJavaScript(script, true)` (userGesture=true, matching element-picker).
    */
   executeJavaScript(script: string): Promise<unknown>;
 }
 
 export interface ControlledViewCdp {
-  /** webContents.debugger.sendCommand 的直通；sessionId 用于跨进程 iframe/OOPIF target。 */
+  /** Direct access to webContents.debugger.sendCommand; sessionId targets cross-process iframe/OOPIF targets. */
   send(method: string, params?: unknown, sessionId?: string): Promise<unknown>;
 }
 
@@ -27,18 +28,21 @@ export interface ControlledView {
   webContents: ControlledViewWebContents;
   cdp: ControlledViewCdp;
   /**
-   * 已由宿主 compositor 合成的 viewport 截图。仅用于无 clip、非 fullPage 的普通截图；
-   * Desktop 生产实现从 main 进程直接读取 guest surface，避开 Windows 下 CDP 对小 surface 的平铺。
+   * Viewport screenshot already composited by the host. Used only for ordinary screenshots without
+   * clip or fullPage; the Desktop production implementation reads the guest surface directly from
+   * main, avoiding CDP tiling of small surfaces on Windows.
    */
   captureViewportScreenshot?: () => Promise<string | undefined>;
   /**
-   * 自由尺寸 guest 的 visible surface 保留宿主 backing scale；截图目标仍按 CSS px 计算。
-   * executor 仅在该标记开启时读取 CDP layout metrics 并校验实际 raster。
+   * A free-size guest's visible surface retains the host backing scale, while screenshot targets are
+   * still calculated in CSS px. The executor reads CDP layout metrics and validates the actual raster
+   * only when this flag is enabled.
    */
   normalizeScreenshotToCssPixels?: boolean;
   /**
-   * 宿主图像引擎提供的高质量降采样能力。核心 executor 不直接依赖 Electron，
-   * Desktop 生产装配使用 nativeImage，测试和其它宿主可注入等价实现。
+   * High-quality downsampling provided by the host image engine. The core executor does not depend
+   * directly on Electron; Desktop production uses nativeImage, while tests and other hosts can inject
+   * an equivalent implementation.
    */
   resizeScreenshotToCssPixels?: (
     base64Png: string,

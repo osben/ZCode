@@ -18,7 +18,7 @@ export const serverRemoteInfoSchema = z.object({
   capabilities: z.object({
     desktopContinuous: z.literal(true),
     websocketRpc: z.literal(true),
-    // 旧 Server 缺少新增 dynamic event，必须先声明能力再订阅，避免异常打进对端读循环。
+    // Older Servers lack the new dynamic event; declare capability before subscribing to keep exceptions out of the peer's read loop.
     processResourceTelemetry: z.boolean().optional(),
   }),
 });

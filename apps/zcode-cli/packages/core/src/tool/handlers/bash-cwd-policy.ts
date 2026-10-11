@@ -62,8 +62,8 @@ function normalizeCwdBoundaryInput(input: BashCwdPolicyInput): NormalizedCwdBoun
   const resolvedCwd = normalizeCwdBoundary(input.resolvedCwd ?? "", isWindows);
   const workspaceRoot = normalizeCwdBoundary(input.workspaceRoot, isWindows);
   const equivalentPairs = [{ resolvedCwd, workspaceRoot }];
-  // cwd 捕获使用 pwd -P/realpath 得到物理路径；session root 可能是 symlink。
-  // 统一收集等价边界后再判断，避免把项目内物理路径误判成离开项目。
+  // CWD capture uses pwd -P/realpath to get the physical path; the session root may be a symlink.
+  // Collect equivalent boundaries before checking so a physical path inside the project is not mistaken for an outside path.
   const realResolvedCwd = realpathCwdBoundary(input.resolvedCwd ?? "", isWindows);
   const realWorkspaceRoot = realpathCwdBoundary(input.workspaceRoot, isWindows);
 

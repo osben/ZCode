@@ -79,8 +79,8 @@ export function WorkspaceEditorButtonGroup({
     onSelectedEditorChange?.(selectedEditor);
   }, [onSelectedEditorChange, selectedEditor]);
   const editorIconClassName = useMemo(() => {
-    // Windows 上编辑器图标的视觉占比普遍更大，继续用 size-6 会让按钮显得偏挤。
-    // 这里只在当前按钮做平台级微调，不影响菜单里的通用图标尺寸。
+    // Editor icons generally occupy more visual space on Windows, so continuing to use size-6 makes the button look cramped.
+    // Apply this platform-specific adjustment only to the current button; it does not affect generic icon sizes in menus.
     if (typeof navigator !== "undefined" && /windows/i.test(navigator.userAgent)) {
       return "size-4 shrink-0";
     }

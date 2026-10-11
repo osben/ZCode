@@ -22,7 +22,7 @@ export function getActiveTuiThemePalette(): UiThemePalette {
   return activeThemePalette;
 }
 
-/** 配置缺失时回退到 neutral，即不覆盖任何强调色，与未引入调色板前的输出一致。 */
+/** Fall back to neutral when configuration is missing; this overrides no accent colors and matches output from before palettes were added. */
 export function setActiveTuiThemePalette(palette: UiThemePalette | undefined): void {
   activeThemePalette = palette ?? DEFAULT_TUI_THEME_PALETTE;
 }

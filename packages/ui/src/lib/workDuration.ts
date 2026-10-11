@@ -1,16 +1,16 @@
 /**
- * 「工作了 1 分 42 秒」的时长写法（`chat.history.workedFor`），从 `ConversationTurnGroup` 抽出，
- * 好让工作流完成卡的「时间」格与轮头的折叠标签
- * 一字不差：同一段时间在两处必须写成同一个样子。
+ * Duration wording such as “Worked for 1m 42s” (`chat.history.workedFor`), extracted from `ConversationTurnGroup`
+ * so the “Time” cell in the workflow completion card and the collapsed turn-header label
+ * match exactly: the same duration must look the same in both places.
  *
- * 规则：秒向最近取整、至少 1 秒；天 / 时 / 分 / 秒里只写非零的，**最多两段**（`1h 3m`，
- * 不写秒）；英文缩写单位紧贴数字，其他语言的单位词前留一个空格。
+ * Rules: round seconds to the nearest integer, minimum 1 second; show only nonzero units among days / hours / minutes / seconds, with **at most two parts** (`1h 3m`,
+ * no seconds); English abbreviated units are adjacent to the number, while other languages leave a space before the unit word.
  */
 type FormatMessage = (descriptor: { id: string }) => string;
 
 interface WorkDurationPart {
   value: number;
-  /** 本地化后的单位词（`m` / `分`）。 */
+  /** Localized unit label (`m` / localized equivalent). */
   unit: string;
 }
 
@@ -21,7 +21,7 @@ const UNIT_IDS = {
   second: "chat.history.duration.second",
 } as const;
 
-/** 拆成 `[{value, unit}]`，给要把数字与单位分开排的地方（完成卡的大数字）。 */
+/** Split into `[{value, unit}]` for places that lay out numbers and units separately (large figures in completion cards). */
 export function workDurationParts(
   durationMs: number,
   formatMessage: FormatMessage,
@@ -42,8 +42,8 @@ export function workDurationParts(
 }
 
 /**
- * 只有英文缩写单位（`m` / `s`）紧贴数字；中文、乌克兰文等单位词与数字之间留空格。
- * 之前按 `zh-CN` 判断，uk-UA 会写成「1хв 42с」，所以改为只对 en-US 去掉空格。
+ * Only English abbreviated units (`m` / `s`) are adjacent to numbers; leave a space before units in languages such as Chinese and Ukrainian.
+ * The previous `zh-CN` check produced “1хв 42с” for uk-UA, so remove the space only for en-US.
  */
 export function workDurationUnitSeparator(locale: string): string {
   return locale === "en-US" ? "" : " ";

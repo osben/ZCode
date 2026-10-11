@@ -71,7 +71,7 @@ export function ConversationQuotaBanner({
   const bannerRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!onShown || !state.visible || !bannerRef.current) return;
-    // 后台任务也会计算额度状态，只有实际可见时才能消耗该桶周期的一次提醒。
+    // Background tasks also compute quota state; consume the bucket's one reminder per period only when it is actually visible.
     let intersecting = false;
     const report = () => {
       if (intersecting && document.visibilityState === "visible") onShown();
@@ -96,7 +96,7 @@ export function ConversationQuotaBanner({
           { id: resolveMessageId(state) },
           {
             model: state.modelName ?? "",
-            // MCP 提示点名具体 server；服务端那句是英文的，界面文案一律走 i18n。
+            // The MCP notice names a specific server; the server-side text is English, so all UI copy must use i18n.
             server: state.mcpServerName ?? "",
             remaining:
               state.remainingTokens === null
@@ -128,8 +128,8 @@ export function ConversationQuotaBanner({
               size="sm"
               className={cn(
                 "h-auto gap-1.5 rounded-full",
-                // Bugfix：V4 迁移时只带回了白色活动徽标，漏掉同款升级按钮的活动背景，
-                // 导致默认黑底和徽标拼接突兀。这里与 Model Settings / Context 面板统一。
+                // Bugfix: The V4 migration restored only the white promotional badge and omitted the matching promotional background on the upgrade button,
+                // making it clash with the default black background. Keep it consistent with the Model Settings and Context panels.
                 showBillingDiscountBadge &&
                   "button-gradient pr-px text-white hover:bg-transparent hover:opacity-90 dark:bg-[#484A58] dark:hover:bg-[#484A58]",
               )}

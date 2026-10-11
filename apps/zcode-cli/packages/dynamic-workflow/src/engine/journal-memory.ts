@@ -1,8 +1,10 @@
 /**
- * 内存版 {@link JournalStorePort}：阶段一用于 fake-driver 测试与 replay/resume。
- * 纯内存、同步；深拷贝进出以杜绝调用方持有的引用被后续写入意外改动（模拟存储边界）。
- * 生产实现落在 zcode session store 的 node:sqlite（DatabaseSync，同步）之上，共用 JournalStorePort；
- * 事务性不在端口面上，由 driver 组合 journal+session 写入。
+ * In-memory {@link JournalStorePort}: used in phase one for fake-driver tests and replay/resume.
+ * Purely in-memory and synchronous; deep-copy on input and output so later writes cannot
+ * accidentally mutate references held by callers (simulating a storage boundary).
+ * The production implementation uses node:sqlite (DatabaseSync, synchronous) in the ZCode
+ * session store and shares JournalStorePort. Transactions are not part of the port; the driver
+ * combines journal and session writes.
  */
 
 import type {
@@ -22,25 +24,25 @@ import type {
   StoredEvent,
 } from "./types.js";
 
-/** 结构化深拷贝：隔离存储边界两侧的引用。值均为 JSON 兼容或 PersonaSpec 等纯数据。 */
+/** Structured deep copy to isolate references on either side of the storage boundary. Values are JSON-compatible or plain data such as PersonaSpec. */
 function clone<T>(value: T): T {
   return structuredClone(value);
 }
 
-/** 节点行的出库副本；`withResult: false` 与 SQLite 侧不 select `result_json` 同语义（键缺席）。 */
+/** Exported copy of a node row; `withResult: false` matches SQLite omitting `result_json` from the select (key absent). */
 function nodeCopy(node: NodeRecord, withResult: boolean): NodeRecord {
   const copy = clone(node);
   if (!withResult) delete copy.result;
   return copy;
 }
 
-/** actor / node 的复合键。 */
+/** Composite key for an actor / node. */
 function key(siteId: string, ordinal: number): string {
   return `${siteId}@${ordinal}`;
 }
 
 export class InMemoryJournalStore implements JournalStorePort {
-  // 以 runId 分桶，贴合"一个 store 可承载多个 run"的存储语义。
+  // Bucket by runId to match the storage semantics: one store can hold multiple runs.
   private readonly runs = new Map<string, RunRecord>();
   private readonly actors = new Map<string, Map<string, ActorRecord>>();
   private readonly nodes = new Map<string, Map<string, NodeRecord>>();
@@ -66,27 +68,30 @@ export class InMemoryJournalStore implements JournalStorePort {
     if (r === undefined) throw new Error(`journal: unknown run ${runId}`);
     r.status = status;
     if (status === "pending" || status === "running") {
-      // 非终态 = 无 settlement：resume 把 run 翻回 running 时必须清掉上一世的残留，否则
-      // 孤儿收敛写下的 failure_json 会与 running 并存（journal 快照读面同时报「在跑」与
-      // 「已失败」）。矛盾的结算袋（非终态却携带 failure/result）同样按清空处理。
+      // Non-terminal means no settlement: when resume moves a run back to running, clear remnants
+      // from its previous lifecycle, or the failure_json written by orphan reconciliation would
+      // coexist with running (the journal snapshot would report both “running” and “failed”). Also
+      // clear contradictory settlement data (failure/result attached to a non-terminal run).
       delete r.failure;
       delete r.result;
       delete r.stopReason;
       delete r.supersededBy;
       return;
     }
-    // 失败三件套（failure / stopReason / supersededBy）**整体改写**：结算袋是这一刻失败的
-    // 全部真相，缺席即没有失败。旧的「缺席 = 不触碰」语义下，外部写入的 failed + Interrupted
-    // 会在随后的 completed 结算里幸存，行同时说「完成了」和「被打断了」
-    // （SQLite 侧是同一条 coalesce，两实现同语义）。
+    // The failure tuple (failure / stopReason / supersededBy) is **rewritten as a whole**: the
+    // settlement object contains the complete truth about this failure, and absent fields mean no
+    // failure. Under the old “absent = leave untouched” semantics, an externally written failed +
+    // Interrupted state survived a later completed settlement, so the row said both “completed”
+    // and “interrupted” (SQLite uses the same coalesce behavior, so both implementations match).
     if (settlement?.stopReason === undefined) delete r.stopReason;
     else r.stopReason = settlement.stopReason;
     if (settlement?.supersededBy === undefined) delete r.supersededBy;
     else r.supersededBy = settlement.supersededBy;
     if (settlement?.failure === undefined) delete r.failure;
     else r.failure = clone(settlement.failure);
-    // 产物相反：缺席的键表示「不触碰」，一次不带产物的重复结算不会抹掉已结算的产物。
-    // `result: null` 是合法产物，只有 undefined 才算缺席。
+    // Artifacts follow the opposite rule: an absent key means “leave untouched,” so a repeated
+    // settlement without an artifact does not erase the previously settled artifact. `result: null`
+    // is a valid artifact; only undefined means absent.
     if (settlement?.result !== undefined) r.result = clone(settlement.result);
   }
 
@@ -99,15 +104,15 @@ export class InMemoryJournalStore implements JournalStorePort {
   updateRunCaps(runId: string, caps: Caps): void {
     const r = this.runs.get(runId);
     if (r === undefined) throw new Error(`journal: unknown run ${runId}`);
-    // 深拷贝与其余写入同规（存储边界两侧不共享引用）：调用方手里的那份 caps 随后被换掉，
-    // 不该顺手改动已落库的行。
+    // Deep-copy like other writes so references are not shared across the storage boundary: a later
+    // replacement of the caller's caps must not accidentally modify the stored row.
     r.caps = clone(caps);
   }
 
   updateRunScript(runId: string, scriptText: string, scriptHash: string): void {
     const r = this.runs.get(runId);
     if (r === undefined) throw new Error(`journal: unknown run ${runId}`);
-    // 两列同一笔写（resume 拿哈希对文本），行上其余一切不碰（与 updateRunUsage 同族）。
+    // Write both columns together (resume compares the hash with the text); leave every other row field untouched, like updateRunUsage.
     r.scriptText = scriptText;
     r.scriptHash = scriptHash;
   }
@@ -153,8 +158,8 @@ export class InMemoryJournalStore implements JournalStorePort {
   listNodes(runId: string, opts: ListNodesOptions): NodeRecord[] {
     const bucket = this.nodes.get(runId);
     if (bucket === undefined) return [];
-    // Map 的迭代序 = 首次插入序，与 SQLite 侧的 `order by id` 同语义（upsert 不改 id，也不改
-    // Map 里的位置）。
+    // Map iteration order is insertion order, matching SQLite's `order by id` (upsert changes neither
+    // the ID nor its position in the Map).
     const kinds = opts.kinds;
     const matched = [...bucket.values()].filter(
       (node) => kinds === "all" || kinds.includes(node.kind),
@@ -182,12 +187,15 @@ export class InMemoryJournalStore implements JournalStorePort {
   }
 
   appendEvent(runId: string, event: RunEvent): StoredEvent {
-    // 孤儿事件（run 尚未 createRun）与 putActor/putNode 一样是契约破坏：静默建桶
-    // 会写出一批永远归属不到任何 run 的事件；SQLite 侧有 FK 兜底，内存侧靠这句。
+    // An orphan event (before createRun) violates the contract, just like putActor/putNode. Silently
+    // creating a bucket would write events that can never belong to any run; SQLite has a foreign
+    // key safeguard, while the in-memory version relies on this check.
     const list = this.events.get(runId);
     if (list === undefined) throw new Error(`journal: unknown run ${runId}`);
-    // 追加时刻与 SQLite 侧的 `dwf_event.time_created` 同语义（两实现共用一份契约测）：事件日志里
-    // 一切「多久以前」只能从它算，让读者现取 Date.now() 会把冷重放的整段历史全标成「刚刚」。
+    // The append timestamp has the same meaning as SQLite's `dwf_event.time_created` (both
+    // implementations share one contract test). All “how long ago” values in the event log must be
+    // calculated from it; using Date.now() at read time would label the entire cold-replayed history
+    // as “just now.”
     const stored: StoredEvent = {
       sequence: list.length,
       event: clone(event),
@@ -200,8 +208,9 @@ export class InMemoryJournalStore implements JournalStorePort {
   listEvents(runId: string, opts: ListEventsOptions): StoredEvent[] {
     const list = this.events.get(runId);
     if (list === undefined) return [];
-    // report 的排名按**全 run** 计（与 types / cursor / limit 无关），所以先在未过滤的序列上
-    // 给每条 report 事件定名次，再过滤——SQLite 侧的 row_number() 也开在过滤之前。
+    // Report rank is counted across the **entire run**, independent of types / cursor / limit. Assign
+    // each report event a rank in the unfiltered sequence before filtering, matching SQLite's
+    // row_number() being computed before the filter.
     const reportLimit = opts.reportItems === "all" ? undefined : opts.reportItems.limit;
     const stripped = new Set<number>();
     if (reportLimit !== undefined) {
@@ -212,9 +221,10 @@ export class InMemoryJournalStore implements JournalStorePort {
         if (rank > reportLimit) stripped.add(stored.sequence);
       }
     }
-    // sequence 与数组下标在内存实现里恒等（appendEvent 用 list.length 分配），但这里仍按
-    // sequence 比较而不是按下标偏移：cursor 的语义是"严格大于该 sequence"，SQLite 侧也是
-    // `where sequence > ?`。两侧共用同一份契约测，语义必须逐字相同。
+    // sequence and array index are identical in the in-memory implementation (appendEvent assigns
+    // list.length), but compare by sequence rather than index offset: the cursor means “strictly
+    // greater than this sequence,” matching SQLite's `where sequence > ?`. Both implementations
+    // share the same contract test, so the semantics must be identical.
     const types = opts.types;
     const after = opts.afterSequence;
     const filtered = list.filter(
@@ -245,8 +255,8 @@ export class InMemoryJournalStore implements JournalStorePort {
 }
 
 /**
- * 一行 `result` 的 UTF-8 序列化字节数，与 SQLite 侧 `octet_length(result_json)` 同一把尺
- * （`result_json` 就是 `JSON.stringify(result)`）。无结果的行计 0。
+ * UTF-8 serialized byte length of a row's `result`, measured the same way as SQLite's
+ * `octet_length(result_json)` (`result_json` is `JSON.stringify(result)`). Rows without a result count as 0.
  */
 function resultBytes(node: NodeRecord): number {
   if (node.result === undefined) return 0;
@@ -254,7 +264,7 @@ function resultBytes(node: NodeRecord): number {
   return text === undefined ? 0 : new TextEncoder().encode(text).length;
 }
 
-/** `maxResultBytes` 的前缀规则：再加一行就超界时收尾，第一行总是带上（同 SQLite 侧）。 */
+/** Prefix rule for `maxResultBytes`: stop before adding a row that would exceed the cap; always include the first row, matching SQLite. */
 function withinBytes(nodes: readonly NodeRecord[], maxResultBytes: number): NodeRecord[] {
   const kept: NodeRecord[] = [];
   let total = 0;

@@ -59,9 +59,9 @@ export class WorkspaceHookTrustCoordinator {
   }
 
   /**
-   * 非抛错版资格判定：controller 的 respond 在 mutation 前用它返回精确 reasonCode
-   * （策略拒绝不得被 catch-all 误报为 trust_store_corrupt）；
-   * applyDecision 内的 assert 版保留作为纵深第二道。
+   * Non-throwing eligibility check: controller.respond uses it before mutation to return the exact reasonCode
+   * (a policy rejection must not be misreported as trust_store_corrupt by a catch-all);
+   * the asserting version in applyDecision remains as defense in depth.
    */
   canMutatePersistentTrust(workspaceIdentity: string): boolean {
     return this.resolvePolicy(workspaceIdentity).policy.mode === "user_decides";

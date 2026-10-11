@@ -10,16 +10,16 @@ import {
 } from "./WorkflowArtifactPill.js";
 
 /**
- * 产物条：一行产物药丸，至多三枚，
- * 其余折成等宽的 `+N`。时间线下（工具卡、轮尾摘要）、完成通知的折叠头部、中枢的运行历史行与
- * 「最近产物」条都是它——同一个产物在四处必须长得一样。全量清单在 run 侧板。
+ * Artifact strip: one row of up to three artifact pills,
+ * with the rest folded into a fixed-width `+N`. Used below the timeline (tool cards/end-of-turn summaries), in collapsed completion notices,
+ * in the hub's run-history rows, and in "Recent artifacts"; the same artifact must look the same in all four places. The full list is in the run side pane.
  *
- * ⚠ 术语：artifact = 脚本经 `artifact.*` 发布给用户看的产出。
+ * ⚠ Terminology: artifact = output published for the user by a script through `artifact.*`.
  *
- * 事件只替**药丸**止步：条常坐在别的可点区域里（通知行的折叠开关、轮尾
- * 摘要的整块开关、中枢的历史行），药丸是一颗按钮而不是那块区域的一部分——**包括禁用的**：禁用
- * 只让打开变成空操作，不该顺带把外面那块点开（浏览器对禁用控件不派发 click，jsdom 会派到祖先；
- * 这里两边一致）。条的空白与 `+N` 则**是**那块区域的一部分：点它们冒泡给宿主，轮尾摘要因此切换。
+ * Stop event propagation only for the **pills**: the strip often sits inside another clickable region (completion-notice collapse control,
+ * end-of-turn summary toggle, or hub history row). A pill is a button, not part of that outer region—**even when disabled**.
+ * Disabled means opening is a no-op; it must not also open the outer region (browsers do not dispatch clicks on disabled controls, but jsdom bubbles to ancestors;
+ * keep behavior consistent in both). Blank strip space and `+N` **are** part of the outer region: let their clicks bubble so the end-of-turn summary toggles.
  */
 function hitsPill(target: EventTarget | null): boolean {
   return target instanceof Element && target.closest("button") !== null;
@@ -39,9 +39,9 @@ export function WorkflowArtifactStrip({
   variant?: "pill" | "link";
   artifacts: readonly ArtifactPillData[];
   size?: ArtifactPillSize;
-  /** 缺席即药丸全部禁用（回调的存在即门控）。 */
+  /** Absent means all pills are disabled (callback presence is the gate). */
   onOpenArtifact?: (artifactId: string) => void;
-  /** 发射侧砍过（超上界或被过滤）——`+N` 因此可能少报，用 `…` 而不是数字。 */
+  /** The emitting side truncated the list (limit exceeded or items filtered), so `+N` may undercount; use `…` instead of a number. */
   truncated?: boolean;
   testId?: string;
   pillTestId?: string;

@@ -17,8 +17,10 @@ export async function runToolCallWithTelemetry(
     try {
       return await execute(scope);
     } catch (error) {
-      // 业务执行器会在所有正常返回分支按事实收口；这里只负责连 ToolCallStarted/Error
-      // 事件发布都直接抛出的非结构化异常，避免 Span 最终只能标记为 missing_terminal。
+      // The business executor closes spans based on actual outcomes on every normal
+      // return path. Handle only unstructured exceptions thrown directly while
+      // publishing ToolCallStarted/Error events, so the span does not end up marked
+      // missing_terminal.
       if (options?.signal?.aborted) {
         scope.finishCancelled("abort_signal");
       } else {

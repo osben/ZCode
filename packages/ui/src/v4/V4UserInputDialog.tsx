@@ -15,14 +15,18 @@ export interface V4UserInputDialogProps {
   onSubmit: (answer: { optionId?: string; freeText?: string }) => void;
 }
 
-/** v4 userInput 交互最小弹窗（竖切）。 */
+/** Minimal dialog for v4 userInput interaction (vertical split). */
 export function V4UserInputDialog({ model, onSubmit }: V4UserInputDialogProps) {
   const [freeText, setFreeText] = useState("");
 
   const handleOption = useCallback(
     (optionId: string) => {
       runUserAction({
-        input: { featureId: "conversation.blocking.user_input", action: "select_option", trigger: "button" },
+        input: {
+          featureId: "conversation.blocking.user_input",
+          action: "select_option",
+          trigger: "button",
+        },
         operation: () => onSubmit({ optionId }),
         completed: { resultSource: "optimistic_projection" },
         failureStage: "user_input_submit",

@@ -10,8 +10,9 @@ export function createBashResultDisplay(output: unknown): ToolResultDisplayPaylo
   const truncated = result.stdoutTruncated === true || result.stderrTruncated === true;
   if (!truncated && !outputPath) return undefined;
 
-  // 原因：模型 envelope 会再次缩短正文且隐藏 Bash 的截断事实；Desktop 必须使用
-  // 独立的有界头部展示，不能解析模型文案或把文件路径误当协议按需读取 ref。
+  // The model envelope may shorten the body again and hide Bash's truncation state.
+  // Desktop needs a separate bounded header display; it must not parse model-facing
+  // text or mistake a file path for a protocol reference that can be fetched on demand.
   const text = [result.stdout, result.stderr].filter(Boolean).join("\n");
   const exceedsDisplayBudget = Buffer.byteLength(text, "utf8") > 150_000;
   const bounded = exceedsDisplayBudget

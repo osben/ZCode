@@ -1,8 +1,4 @@
-import type {
-  AboutPanelOptionsOptions,
-  BrowserWindow,
-  MessageBoxReturnValue,
-} from "electron";
+import type { AboutPanelOptionsOptions, BrowserWindow, MessageBoxReturnValue } from "electron";
 import { existsSync, readFileSync } from "node:fs";
 import { arch, hostname, platform, release, type, version as osVersion } from "node:os";
 import { join } from "node:path";
@@ -57,8 +53,9 @@ interface AboutSnapshotOptions {
 }
 
 const ABOUT_APPLICATION_NAME = "ZCode Desktop App";
-// 自定义 About 内容本体是 256x280；原生窗口如果同尺寸会让内容贴满透明窗口边界。
-// 这里给 BrowserWindow 额外留出背景呼吸空间，避免正式 About 看起来比 demo 更局促。
+// The custom About content itself is 256x280; a native window of the same size would make it fill
+// the transparent window bounds. Add breathing room around the BrowserWindow background so the
+// production About view does not feel more cramped than the demo.
 const ABOUT_WINDOW_WIDTH = 256;
 const ABOUT_WINDOW_HEIGHT = 312;
 const ABOUT_MESSAGES: Record<
@@ -131,9 +128,10 @@ function resolveBuildMetadataPath(): string {
 export function readBuildMetadata(
   filePath = resolveBuildMetadataPath(),
 ): DesktopBuildMetadata | null {
-  // 之前 About 直接读取编译时注入的常量，commit/time 只能代表 tsup 那一刻。
-  // 问题原因：构建和打包是分步执行的，安装包里的 about 需要的是“最终产物”的统一元数据，而不是某个编译子步骤的快照。
-  // 这里优先读打包前生成的 build-meta.json；只有缺文件时才回退到编译时常量。
+  // About previously read constants injected at compile time, so commit/time described only the
+  // moment tsup ran. Build and packaging are separate steps; the About view in the installer needs
+  // metadata for the final artifact, not a snapshot from an intermediate compile step. Prefer the
+  // build-meta.json generated before packaging, and fall back to compile-time constants only if it is missing.
   return readJsonFile<DesktopBuildMetadata>(filePath);
 }
 
@@ -230,8 +228,9 @@ export function createSystemAboutPanelOptions(
     applicationName: ABOUT_APPLICATION_NAME,
     applicationVersion: `${messages.versionLabel} ${snapshot.appVersion}`,
     copyright: formatAboutCopyright(year, locale),
-    // 设计原因：macOS About Panel 的 credits 区最接近参考图里的硬件优化说明位置。
-    // 保持信息交给系统级面板渲染，避免自绘窗口和原生关于弹窗风格割裂。
+    // Design rationale: the macOS About Panel credits area is the closest match to where
+    // the reference design puts the hardware-optimization note. Let the system-level panel
+    // render it so a custom window does not clash with the native About dialog.
     ...(credits ? { credits } : {}),
   };
 }
@@ -252,9 +251,10 @@ export async function showAboutDialog(
     buildMetadata: readBuildMetadata(),
   });
   const aboutMessages = getAboutMessages(locale);
-  // 之前只有 macOS 使用自绘 About，Windows/Linux 仍走原生 message box。
-  // 问题原因：各平台原生消息框的排版、图标和按钮样式差异很大，无法复用 macOS 参考样式。
-  // 这里统一使用自绘 modal，保证 About 的品牌展示和多语言文案在三端一致。
+  // Previously only macOS used a custom About view; Windows/Linux still used native message boxes.
+  // Native message-box layout, icons, and button styles vary by platform, so the macOS reference
+  // style could not be reused. Use a custom modal on all platforms to keep branding and localized
+  // copy consistent across the three systems.
   const iconPath = resolveAboutIconPath(app.isPackaged);
   const aboutWindow = new BrowserWindow({
     width: ABOUT_WINDOW_WIDTH,

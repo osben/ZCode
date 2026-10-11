@@ -20,7 +20,7 @@ export interface CuaOperationStateReporter {
 
 export interface CuaOperationTurnTracker {
   accept(workspace: CuaOperationWorkspaceTarget, event: ZCodeComputerUseOperationEvent): void;
-  /** 当前是否存在仍在执行 Computer Use 工具的 turn。 */
+  /** Whether a turn currently has a Computer Use tool in progress. */
   hasActiveTurn(): boolean;
   clearWorkspaceKey(workspaceKey: string): void;
   clearAll(): void;
@@ -52,12 +52,12 @@ function toReportedState(record: ActiveTurnRecord, active: boolean): CuaOperatio
 }
 
 export function createCuaOperationTurnTracker(options: {
-  /** Windows 顶部提示条的桌面投影；非 win32 不注入。 */
+  /** Desktop projection for the Windows top indicator; not injected on platforms other than win32. */
   reporter?: CuaOperationStateReporter;
-  /** Windows operation indicator 的聚合边界；PiP 不再消费该聚合状态。 */
+  /** Aggregation boundary for the Windows operation indicator; PiP no longer consumes this aggregated state. */
   onTurnsActive?: () => void;
   onTurnsIdle?: () => void;
-  /** macOS desktop-local PiP 只消费这些产品事实；panel policy 留在 producer。 */
+  /** macOS desktop-local PiP consumes only these product facts; panel policy remains with the producer. */
   onPipSessionLifecycle?: (
     workspace: CuaOperationWorkspaceTarget,
     event: Exclude<PipSessionEvent, { kind: "focus-changed" }>,
@@ -67,11 +67,11 @@ export function createCuaOperationTurnTracker(options: {
   const currentTurnBySession = new Map<string, string>();
   const lastSeqBySession = new Map<string, number>();
   /**
-   * 已排期、且经确认在用 Computer Use 的 tool call（键为 turnKey\0toolCallId）。
+   * Scheduled tool calls confirmed to use Computer Use (keyed by turnKey\0toolCallId).
    *
-   * 只有 tool-scheduled 携带模型源码（ToolCallStartedPayload 没有 input 字段），所以
-   * "是否 CUA" 只能在排期时判定；但浮层要等真正开始执行才亮——排期与开始之间可能卡在
-   * 权限审批上，那时还没有人在操作电脑。于是这里把排期时的事实存下来，交给 tool-started 兑现。
+   * Only tool-scheduled includes model source (ToolCallStartedPayload has no input field), so
+   * "whether this is CUA" can be determined only at scheduling time. The overlay should light up only once execution starts, though—the gap between scheduling and start may be spent waiting for
+   * permission approval, when nobody is operating the computer. Store the scheduling-time fact here and apply it when tool-started arrives.
    */
   const computerUseScheduledCalls = new Set<string>();
   const activeTurns = new Map<string, ActiveTurnRecord>();
@@ -94,7 +94,7 @@ export function createCuaOperationTurnTracker(options: {
     try {
       callback();
     } catch (error) {
-      // 边界回调是展示旁路（PiP 收口），不能截断主 session event 链路。
+      // The boundary callback is a presentation side path (PiP coordination) and must not interrupt the main session event path.
       options.logger?.warn(`CUA operation turn boundary callback failed error=${String(error)}`);
     }
   }
@@ -117,7 +117,7 @@ export function createCuaOperationTurnTracker(options: {
       try {
         options.reporter.onStateChanged(toReportedState(record, active));
       } catch (error) {
-        // Reporter 是桌面投影旁路；MessagePort 关闭竞态不能截断主 session event 链路。
+        // Reporter is a desktop projection side path; a MessagePort close race must not interrupt the main session event path.
         options.logger?.warn(
           `CUA operation reporter failed workspace=${record.workspaceKey} session=${record.sessionId} turn=${record.turnId} error=${String(error)}`,
         );
@@ -151,7 +151,7 @@ export function createCuaOperationTurnTracker(options: {
     for (const key of computerUseScheduledCalls) {
       if (key.startsWith(toolPrefix)) computerUseScheduledCalls.delete(key);
     }
-    // 只有真的清掉了一个操作 turn 才可能归零；从未 active 过的 turn 不会触发边界。
+    // The count can reach zero only after an operation turn was actually cleared; a turn that was never active does not trigger the boundary.
     if (record && activeTurns.size === 0) notifyBoundary("idle");
   }
 
@@ -187,8 +187,8 @@ export function createCuaOperationTurnTracker(options: {
       );
       return;
     }
-    // sideband 使用 runtime 原始 sequenceNumber；不能与旧 session/event 的投影 seq
-    // 混用，否则较大的 raw 序号会让后续旧协议终态被误判为迟到并留下永久浮层。
+    // Sideband uses the runtime's original sequenceNumber; do not mix it with projected seq values from legacy session/events,
+    // or a larger raw sequence could make a later legacy terminal event appear stale and leave the overlay stuck permanently.
     lastSeqBySession.set(sessionKey, Math.max(lastSeq, event.sequenceNumber));
 
     if (event.kind === "turn-started") {
@@ -250,7 +250,7 @@ export function createCuaOperationTurnTracker(options: {
     const currentTurnId = currentTurnBySession.get(sessionKey);
     const turnId = event.turnId ?? currentTurnId;
     if (!toolCallId || !turnId) return;
-    // 根因：新 turn 已替换旧 turn 后，迟到的旧 tool event 不能再次复活已终止的顶部提示。
+    // Root cause: after a new turn replaces an old one, a late tool event from the old turn must not revive the terminated top indicator.
     if (currentTurnId && turnId !== currentTurnId) return;
     if (!currentTurnId) currentTurnBySession.set(sessionKey, turnId);
 
@@ -262,15 +262,15 @@ export function createCuaOperationTurnTracker(options: {
       return;
     }
 
-    // 只认"这次 tool call 在用 Computer Use"这一个布尔事实，不解析动作名：
-    // 动作名要从模型源码里抽出来再拿动作词表比对，SDK 面一改就整条链失配。
-    // 判定在 bootstrap 侧一次做完（usesComputerUse）。
+    // Check only the boolean fact "this tool call uses Computer Use"; do not parse action names:
+    // action names would need to be extracted from model source and matched against a vocabulary, making the whole path fragile to SDK changes.
+    // This is determined once on the bootstrap side (usesComputerUse).
     if (!computerUseScheduledCalls.delete(toolKey)) return;
 
     const existingRecord = activeTurns.get(turnKey);
     if (existingRecord) {
-      // 同一 turn 内每个新 CUA cell 都要刷新桌面浮层的安全截止时间；Reporter 会在 Main 侧
-      // 重置兜底计时器，但不会重复创建原生窗口。
+      // Each new CUA cell in the same turn must refresh the desktop overlay's safety deadline. Reporter resets the fallback timer in Main
+      // without creating another native window.
       report(existingRecord, true, true);
       return;
     }

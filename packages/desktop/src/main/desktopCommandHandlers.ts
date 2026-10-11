@@ -1,5 +1,5 @@
 import { getPluginSandboxHost } from "./pluginSandbox/index.js";
-/* eslint-disable max-lines -- 桌面命令分发需要共享窗口与平台上下文，集中维护更便于一致性 */
+/* eslint-disable max-lines -- Desktop command dispatch shares window/platform context; keeping it together makes behavior easier to keep consistent. */
 import { readZCodeStdioTapDevState, setZCodeStdioTapDevEnabled } from "@zcode/services/node";
 import {
   buildZCodeEndpointUrls,
@@ -64,8 +64,8 @@ export function updateDesktopZoomLevel(
   const nextLevel =
     action === "reset" ? 0 : clampDesktopZoomLevel(currentLevel + (action === "in" ? 1 : -1));
 
-  // 系统缩放快捷键需要可用，但不能无限放大/缩小导致界面失控。
-  // Electron zoomLevel 的真实比例是 1.2^level；这里改用 zoomFactor，保证每档统一为 1.1。
+  // System zoom shortcuts should work without allowing unbounded zoom in either direction.
+  // Electron zoomLevel uses a real scale of 1.2^level; use zoomFactor here so each step is consistently 1.1.
   targetWindow.webContents.setZoomFactor(resolveDesktopZoomFactorForLevel(nextLevel));
   syncWindowControlsOverlayForZoomLevel(targetWindow, nextLevel);
   targetWindow.webContents.send(PlatformChannels.DesktopZoomLevelChanged, { zoomLevel: nextLevel });
@@ -114,7 +114,7 @@ async function clearAllDataAndRelaunch(options: {
     try {
       await win.webContents.executeJavaScript("localStorage.clear()");
     } catch {
-      // 窗口可能已经销毁，忽略
+      // The window may already be destroyed; ignore it.
     }
   }
 
@@ -139,8 +139,9 @@ export async function clearCodingPlanWebviewStorage(options: {
   };
 }) {
   try {
-    // Coding Plan webview 使用独立持久 partition，默认窗口 session.clearStorageData()
-    // 不会覆盖它；退出登录/清理数据时必须显式清除，避免旧账号 token 被下一次官网首屏读到。
+    // The Coding Plan webview uses a separate persistent partition, which is not covered by the
+    // default window's session.clearStorageData(). Explicitly clear it on logout/data cleanup so the
+    // next visit to the official site cannot read an old account token.
     await session.fromPartition(CODING_PLAN_WEBVIEW_PARTITION).clearStorageData();
     await session.fromPartition(REWARDS_PARTITION).clearStorageData();
     options.logger.info("[coding-plan-webview] cleared persistent partition storage");
@@ -164,8 +165,9 @@ export function resolveLocalAppConfigPath(options?: {
 }): string {
   const isPackaged = options?.isPackaged ?? app.isPackaged;
   if (isPackaged) {
-    // app.getAppPath() 在正式包中指向 resources/app.asar，向上两级后会误读
-    // Contents/config。内置配置由 electron-builder 放在 resources/config，必须从 resourcesPath 解析。
+    // In production, app.getAppPath() points to resources/app.asar; walking up two levels would
+    // incorrectly read Contents/config. electron-builder places bundled config in resources/config,
+    // so resolve it from resourcesPath.
     return join(options?.resourcesPath ?? process.resourcesPath, "config/default.json");
   }
   return join(options?.appPath ?? app.getAppPath(), "../../config/default.json");
@@ -397,8 +399,9 @@ function showZCodeEndpointPromptWindow(options: {
       finish(decodeURIComponent(title.slice("zcode-endpoint-submit:".length)));
     });
 
-    // Electron 菜单命令在主进程触发，调用 renderer 的 window.prompt 可能被禁用或没有焦点，表现为点击无反应。
-    // 这里改为主进程创建受控 modal 输入窗，确保 Custom... 始终有可见交互入口。
+    // Electron menu commands run in main; calling renderer window.prompt may be disabled or unfocused,
+    // making the click appear to do nothing. Create a controlled modal input window in main so
+    // Custom... always has a visible interaction path.
     void promptWindow.loadURL(
       `data:text/html;charset=utf-8,${encodeURIComponent(
         buildZCodeEndpointPromptHtml(options.currentValue),
@@ -427,8 +430,9 @@ async function persistDesktopZoomLevel(options: {
   settingService: { update(patch: Pick<AppSettings, "desktopZoomLevel">): Promise<void> };
 }) {
   try {
-    // 桌面缩放命令原本只改当前 BrowserWindow，重启后没有任何恢复来源。
-    // 这里在命令成功后把夹取后的档位写入 setting.json，让快捷键、View 菜单和侧边栏菜单共享同一持久化事实源。
+    // The desktop zoom command previously changed only the current BrowserWindow, with no source to
+    // restore the setting after restart. Persist the clamped level to setting.json on success so
+    // keyboard shortcuts, the View menu, and the sidebar menu share one source of truth.
     await options.settingService.update({ desktopZoomLevel: options.zoomLevel });
   } catch (error) {
     options.logger.warn("[desktop-zoom] persist zoom level failed:", error);
@@ -453,8 +457,9 @@ function resolveChangelogUrl(
   locale: Locale,
   endpointOrigin = DEFAULT_ZCODE_ENDPOINT_ORIGIN,
 ): string {
-  // 帮助菜单里的外链以前只有固定英文地址，切到中文界面后仍会落到英文 changelog。
-  // 这里统一收口到主进程按当前应用语言分流，避免菜单模板里手写分支后续再出现多处不一致。
+  // The Help menu's external link used a fixed English URL, so the changelog remained in English
+  // after switching the interface to Chinese. Route it through main using the current app language
+  // to avoid adding inconsistent branches to menu templates.
   const origin = buildZCodeEndpointUrls(endpointOrigin).origin;
   return locale === "zh-CN" ? `${origin}/cn/changelog` : `${origin}/en/changelog`;
 }
@@ -593,7 +598,7 @@ export async function executeDesktopCommand(options: {
       );
       return;
     case DesktopCommandIds.CheckForUpdates:
-      // 按产品身份而不是后端环境放行：生产后端的 Preview 同样没有更新器。
+      // Gate by product identity rather than backend environment: Preview also has no updater when using the production backend.
       if (ZCODE_PRODUCT_FLAVOR === "production") {
         checkForUpdateMenuClick(targetWindow);
       } else {

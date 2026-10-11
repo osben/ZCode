@@ -16,8 +16,8 @@ if (requestedEnv !== "test" && requestedEnv !== "production") {
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const pnpmCommand = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
-// Computer Use Helper 只由真实 producer 提供；开源占位包下不构建 Helper、不注入 Helper 环境。
-// 见 docs/desktop/computer-use-producer-detection.md。
+// The Computer Use Helper is provided only by the real producer; the open-source placeholder package does not build the Helper or inject its environment.
+// See docs/desktop/computer-use-producer-detection.md.
 const hasComputerUseProducer = isRealComputerUseProducerInstalled({
   desktopPackageRoot: join(repoRoot, "packages", "desktop"),
 });
@@ -46,11 +46,11 @@ async function resolveComputerUseDevEnv() {
     ZCODE_CUA_HELPER_VERSION: sourceBuiltCuaHelperVersion,
     // Keep Dev Desktop separate from signed Stable/Preview and standalone MCP installs.
     ZCODE_CUA_HELPER_INSTALL_VARIANT: "dev-desktop",
-    // 修复原因：仅传 bundled path 不会进入 unsigned-local 的同版本内容刷新分支，
-    // 导致标准 dev 启动继续复用 ~/.zcode 中 native ABI 已过期的 Helper。
+    // Fix rationale: passing only the bundled path does not enter the same-version content refresh branch for unsigned-local builds,
+    // so a standard development launch keeps reusing the Helper in ~/.zcode with an outdated native ABI.
     ...(process.platform === "darwin" ? { ZCODE_CUA_HELPER_ALLOW_UNSIGNED_LOCAL: "1" } : {}),
-    // Windows 侧对应物：缺省把 CUA runtime 绑到本 checkout 已安装的 producer，
-    // 否则 host 会去读 dev 下不存在的 resources/tools/cua-helper。见 dev-desktop-cua-env.mjs。
+    // Windows counterpart: by default, bind the CUA runtime to the producer installed in this checkout,
+    // or the host will look for resources/tools/cua-helper, which does not exist under dev. See dev-desktop-cua-env.mjs.
     ...resolveDevDesktopWindowsCuaEnv({
       platform: process.platform,
       repoRoot,
@@ -61,8 +61,8 @@ async function resolveComputerUseDevEnv() {
 
 function run(command, args) {
   return new Promise((resolveRun, rejectRun) => {
-    // Windows 下 shell:true 只按空格拼接参数；仓库路径含空格（如 E:\Z Code\...）时
-    // node <script> 的脚本路径会被 cmd 截断成 E:\Z 并报 Cannot find module，因此先补引号。
+    // On Windows, shell:true joins arguments with spaces. If the repository path contains spaces (for example E:\Z Code\...),
+    // cmd truncates the `node <script>` path to E:\Z and reports Cannot find module, so quote it first.
     const spawnArgs = process.platform === "win32" ? quoteArgsForWindowsShell(args) : args;
     const child = spawn(command, spawnArgs, {
       cwd: repoRoot,

@@ -52,9 +52,9 @@ export interface RuntimeMessageMessageEntry {
   kind?: "message";
   message: ModelInputMessage;
   metadata?: RuntimeMessageMetadata;
-  /** 已提交 assistant 自己的 provider tokens；不会发送到 provider。 */
+  /** Provider tokens from the committed assistant message itself; not sent to the provider. */
   tokens?: TokenUsageInfo;
-  /** 仅在当前 query 内生效；不得进入 canonical history 或 Session persistence。 */
+  /** Applies only to the current query; must not enter canonical history or session persistence. */
   queryScope?: "output_token_continuation";
 }
 
@@ -109,10 +109,10 @@ export interface MessageHistory {
     isError?: boolean,
   ): void;
 
-  // 借用当前权威 entries，只允许同步只读；跨异步边界时由调用方做数组浅快照。
+  // Borrow the current authoritative entries for synchronous read-only use; callers take a shallow array snapshot across async boundaries.
   borrowReadOnlyRuntimeEntries(): readonly RuntimeMessageEntry[];
 
-  // 创建可写的防御性副本；Runtime 内部普通只读点应使用 borrowReadOnlyRuntimeEntries。
+  // Create a writable defensive copy; ordinary read-only points inside Runtime should use borrowReadOnlyRuntimeEntries.
   toRuntimeEntries(): RuntimeMessageEntry[];
 
   // Replace the active provider-visible history after compact/rewind.
@@ -426,8 +426,8 @@ export function cloneRuntimeMessageEntry(entry: RuntimeMessageEntry): RuntimeMes
 }
 
 /**
- * Compact 之后 preserved assistant 的 provider usage 仍属于被替换的旧前缀。
- * 只对 projection 副本清零，不能改写 SessionStore 中的原始 tokens。
+ * Provider usage on preserved assistant messages after Compact still belongs to the replaced old prefix.
+ * Zero it only in the projection copy; do not modify the original tokens in SessionStore.
  */
 export function invalidateRuntimeTokenUsage(tokens: TokenUsageInfo): TokenUsageInfo {
   return {
@@ -492,7 +492,7 @@ export function cloneModelInputMessage(message: ModelInputMessage): ModelInputMe
   if (message.cacheControl) next.cacheControl = { ...message.cacheControl };
   if (message.toolCalls) next.toolCalls = message.toolCalls.map((toolCall) => ({ ...toolCall }));
   if (message.toolCallId) next.toolCallId = message.toolCallId;
-  // 空字符串是可恢复调用的 provider 原始名称，不能在 request-local clone 时按 falsy 丢失。
+  // An empty string is the provider's original name for a recoverable call; do not drop it as falsy during a request-local clone.
   if (message.toolName !== undefined) next.toolName = message.toolName;
   if (message.isError !== undefined) next.isError = message.isError;
   if (message.providerId) next.providerId = message.providerId;

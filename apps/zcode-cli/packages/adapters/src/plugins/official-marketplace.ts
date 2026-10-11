@@ -71,10 +71,10 @@ function rebuildOfficialMarketplaceSync(storageRoot: string): Record<string, unk
     return name !== undefined && !cdnPluginNames.has(name);
   });
 
-  // 内置插件与 CDN 插件曾使用两个 marketplace id，UI 会把内置市场当成
-  // 无 source 的独立市场并在刷新时报 not found。两个分片必须独立持久化后再合并，
-  // 否则应用启动时的 seed 会覆盖 CDN 目录，或 CDN 刷新会覆盖内置目录。同名时以
-  // 可刷新的 CDN 市场条目为准，但只过滤合并目录，不删除应用内置缓存。
+  // Built-in and CDN plugins previously used two marketplace IDs, so the UI treated the built-in marketplace as a
+  // separate source-less marketplace and reported not found on refresh. Persist the two slices separately before
+  // merging them; otherwise startup seeding can overwrite the CDN catalog or a CDN refresh can overwrite built-ins.
+  // When names collide, prefer the refreshable CDN entry, but filter only the merged catalog and do not delete the app's built-in cache.
   const merged = {
     ...(bundledManifest ?? {}),
     ...(cdnManifest ?? {}),
@@ -143,12 +143,14 @@ function writeJsonFileSync(path: string, value: unknown): void {
   const contents = `${JSON.stringify(value, null, 2)}\n`;
   mkdirSync(dirname(path), { recursive: true });
   try {
-    // 官方目录在每次启动都会重建；同内容反复写盘会增加 Windows 上
-    // marketplace 文件被杀毒/索引器占用的概率。只跳过字节完全相同的单文件写入，
-    // 读取失败或内容变化仍执行写入并保留原有失败语义。
+    // The official marketplace is rebuilt at every startup. Rewriting identical content increases the
+    // chance that antivirus or an indexer will lock the marketplace file on Windows. Skip only a
+    // single-file write whose bytes are identical; still write when reading fails or the content
+    // changes, preserving the existing failure semantics.
     if (readFileSync(path, "utf8") === contents) return;
   } catch {
-    // 文件不存在或暂时不可读时继续写，让真实更新失败继续向调用方暴露。
+    // If the file is missing or temporarily unreadable, continue with the write so any actual
+    // update failure is still exposed to the caller.
   }
   writeFileSync(path, contents, "utf8");
 }

@@ -10,8 +10,8 @@ export interface ObservableSettingService extends ISettingService {
 }
 
 /**
- * 为 Host 内的设置服务增加提交后通知，不扩大 Setting RPC 契约。
- * 底层 update 失败时不会发布事件。
+ * Add post-commit notifications to the Host settings service without expanding the Setting RPC contract.
+ * Do not publish an event if the underlying update fails.
  */
 export function createObservableSettingService(base: ISettingService): ObservableSettingService {
   const listeners = new Set<(event: SettingServiceUpdatedEvent) => void>();

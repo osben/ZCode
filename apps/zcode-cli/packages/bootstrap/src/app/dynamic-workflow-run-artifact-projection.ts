@@ -1,13 +1,13 @@
 // ============================================================
-// Dynamic Workflow Run：用户面产物的归并投影（journal 行 → 端口的 artifacts）
+// Dynamic Workflow Run: merged projection of user-facing artifacts (journal rows → port artifacts).
 // ============================================================
-// dynamic-workflow-run-observation.ts 顶到 oxlint max-lines 上限（400 行），把整段
-// 产物归并（{@link artifactsOf} 与它的私有解码器）拆到本文件。观察面仍原样再导出它，四个
-// 调用点（快照 / getRunDetail / listArtifacts / saved-workflows 中枢）因此一行都不用改。
+// dynamic-workflow-run-observation.ts reached oxlint's 400-line max-lines limit, so the artifact merge logic
+// ({@link artifactsOf} and its private decoder) was moved here. The observation module still re-exports it unchanged, so its four
+// callers (snapshot / getRunDetail / listArtifacts / saved-workflows hub) need no changes.
 //
-// ⚠ 术语：这里的 artifact 是脚本经 `artifact.*` **发布给用户看的产出**（journal
-// `kind = "artifact"` 的行），不是引擎内部的 `RunSettlement.artifact`（脚本顶层返回值，端口上
-// 叫 `output` / `result`）。同一个词两个义。
+// ⚠ Terminology: artifact here means an output **published for the user** through `artifact.*` (a journal
+// row with `kind = "artifact"`), not the engine-internal `RunSettlement.artifact` (the script's top-level return value, called
+// `output` / `result` at the port). The same word has two meanings.
 
 import type { DwfRunIntrospectionQueries } from "@zcode/adapters/storage";
 import type {
@@ -18,29 +18,28 @@ import type {
 import type { JournalStorePort } from "@zcode/dynamic-workflow";
 
 /**
- * 终态快照与 `getRunDetail` 上的 `artifacts`：**用户面产物**。
+ * **User-facing artifacts** in terminal snapshots and `getRunDetail`'s `artifacts`.
  *
- * ⚠ 术语：这里的 artifact 是脚本经 `artifact.*` 发布给用户看的产出（journal `kind = "artifact"`
- * 的行），**不是**引擎内部的 `RunSettlement.artifact`（脚本顶层返回值，端口上叫 `output` /
- * `result`）。同一个词两个义。
+ * ⚠ Terminology: artifact here means an output published for the user through `artifact.*` (a journal row with `kind = "artifact"`),
+ * **not** the engine-internal `RunSettlement.artifact` (the script's top-level return value, called `output` /
+ * `result` at the port). The same word has two meanings.
  *
- * 取数与观察面的 `reportsOf` 同规——journal 是版本历史的**持久家**（memory-only 的
- * `workflowRuns.artifacts` 投影只带最新版元数据、冷恢复后为空），而 failed / cancelled 的 run
- * 一样要交出它已经发布的产物（一个死在第 12 步的 run 仍然交付了前面那张图）。
+ * Data access follows the same rules as the observation surface's `reportsOf`: the journal is the **durable home** of version history (the memory-only
+ * `workflowRuns.artifacts` projection contains only latest metadata and is empty after cold recovery). Failed / canceled runs must still return artifacts they already published (a run that dies at step 12 still delivered the earlier chart).
  *
- * `listArtifactRows` 不在引擎的 {@link JournalStorePort} 上（引擎从不枚举、不聚合），所以按
- * 房规**能力探测**接上：缺席即整字段缺席，而不是抛错——注入的测试 store 与不带内省查询的
- * 实现都必须继续可用。
+ * `listArtifactRows` is not on the engine's {@link JournalStorePort} (the engine never enumerates or aggregates), so connect it through
+ * capability detection. If unavailable, omit the entire field instead of throwing; injected test stores and implementations without introspection queries must remain usable.
  *
- * 归并规则：
- *   - 只收 `completed` 的行。失败的发布不占 id、不占版本号，把它算进版本
- *     历史会让「第 3 版」在 UI 上指向一个从未存在的字节。
- *   - 同 id 的行按 `version` 升序；`title` / `contentType` / `sourcePath` / `spec` 等提到
- *     顶层的是**最新版**的值，方便只关心「现在是什么」的读者不必自己翻 versions。
- *   - `itemCount` = 打了这个 id 标签的 `report` 行数（预置看板的数据量，也是 UI 的刷新信号）。
- *     内容产物恒 0。
+ * Merge rules:
+ *   - Include only `completed` rows. Failed publishes do not claim an ID or version; counting one in version
+ *     history would make UI version 3 point to bytes that never existed.
+ *   - Sort rows with the same ID by `version` ascending. Top-level `title` / `contentType` / `sourcePath` / `spec` values come from the **latest version**,
+ *     so readers interested only in the current state need not inspect versions themselves.
+ *   - `itemCount` = number of `report` rows tagged with this ID (the data count for prebuilt dashboards and the UI refresh signal).
+ *     Content artifacts always have 0.
  *
- * 零件时整字段缺席——空数组读起来像「跑过但没产出」，而缺席才是「这个 run 没有产物这个概念」。
+ * If introspection is unavailable, omit the whole field: an empty array implies the run completed
+ * but produced nothing, while omission means artifacts are not supported for this run.
  */
 export function artifactsOf(
   runId: string,
@@ -51,7 +50,7 @@ export function artifactsOf(
   const rows = candidate.listArtifactRows(runId);
   if (rows.length === 0) return {};
 
-  // id → 版本累积器。插入顺序 = 首次出现顺序，也就是端口契约上 `artifacts` 的顺序。
+  // id → version accumulator. Insertion order = first-seen order, which is the port contract's `artifacts` order.
   const byId = new Map<
     string,
     { kind: DynamicWorkflowRunArtifactKind; versions: DynamicWorkflowRunArtifactVersion[] }
@@ -74,15 +73,16 @@ export function artifactsOf(
   }
   if (byId.size === 0) return {};
 
-  // 标签计数只在**真有预置看板**时才查：内容产物的 `itemCount` 恒 0。中枢一页 50 行、每行调一次
-  // 本函数，这条短路让没有看板的 run 连那条 group by 都不发。
+  // Query label counts only when a **prebuilt dashboard actually exists**: content artifact
+  // `itemCount` is always 0. The hub can have 50 rows per page and calls this function once per
+  // row, so this short circuit keeps runs without dashboards from issuing that group by at all.
   const needsTally = [...byId.values()].some((bucket) => PRESET_ARTIFACT_KINDS.has(bucket.kind));
   const itemCounts = needsTally ? tagItemCounts(runId, journal) : undefined;
   const artifacts = [...byId].map(([id, bucket]) => {
     const versions = [...bucket.versions].sort((left, right) => left.version - right.version);
-    // 最新版 = 版本号最大的那一条。空 bucket 不可能（构造时至少一条）。
+    // Latest version = row with the highest version number. A bucket cannot be empty; construction adds at least one row.
     const latest = versions[versions.length - 1]!;
-    // 旗子按 id 粘着（引擎保证后续版本都带），任一版带上即算——老 CLI 落的行没有这个键。
+    // Flags are sticky by ID (the engine includes them on later versions); any version can set one because rows from older CLIs lack this key.
     const primary = versions.some((version) => version.primary === true);
     return {
       id,
@@ -98,20 +98,21 @@ export function artifactsOf(
       ...(primary ? { primary: true as const } : {}),
     } satisfies DynamicWorkflowRunArtifact;
   });
-  // 交付物带头，其余保持首次发布顺序：
-  // 顺序在这里定一次，快照 / GetWorkflowRun / 中枢 / v4 查询都从这里读，任何上界都砍不到它。
-  // `Array.prototype.sort` 在 ES2019 起稳定，所以非 primary 之间的相对顺序不动。
+  // Put deliverables first and preserve first-publish order for the rest:
+  // define order here once; snapshots / GetWorkflowRun / hub / v4 queries all read from here, so no limit can truncate it.
+  // `Array.prototype.sort` has been stable since ES2019, preserving the relative order of non-primary items.
   artifacts.sort((left, right) => Number(right.primary === true) - Number(left.primary === true));
   return { artifacts };
 }
 
 /**
- * 标签 report 行的按 id 计数（`kind = "report" ∧ artifact_id = ?`——看板的数据量）。
+ * Count labeled report rows by ID (`kind = "report" ∧ artifact_id = ?`—the dashboard's data count).
  *
- * SQLite 实现带 `countTaggedReports`（`group by` 下推，行一条都不读）；不带它的 store（引擎的内存
- * 实现、测试替身）退回读 report 行的**元数据**（不带 item）在内存里数——两条路给同一个数。修复
- * 原因：此前这里把整张节点表连同每条 report item 读进内存再数（docs/execution-engine.md
- * 「Reading the journal」）。
+ * The SQLite implementation ships `countTaggedReports` (a pushed-down `group by` that reads no
+ * rows); stores without it (the engine's in-memory implementation, test doubles) fall back to
+ * reading report-row **metadata** (without items) and counting in memory—both paths return the
+ * same number. Fix: this used to read the entire node table with every report item into memory
+ * before counting (docs/execution-engine.md "Reading the journal").
  */
 function tagItemCounts(runId: string, journal: JournalStorePort): ReadonlyMap<string, number> {
   const candidate = journal as Partial<DwfRunIntrospectionQueries>;
@@ -134,7 +135,7 @@ const ARTIFACT_KINDS: ReadonlySet<string> = new Set<DynamicWorkflowRunArtifactKi
   "board",
 ]);
 
-/** 预置看板的四个成员：只有它们会被标签 `report` 喂数据，内容产物的 `itemCount` 恒 0。 */
+/** The four prebuilt dashboards: only these receive data through tagged `report` rows; content artifact `itemCount` is always 0. */
 const PRESET_ARTIFACT_KINDS: ReadonlySet<string> = new Set<DynamicWorkflowRunArtifactKind>([
   "chart",
   "table",
@@ -149,9 +150,9 @@ function artifactKindOf(value: unknown): DynamicWorkflowRunArtifactKind | undefi
 }
 
 /**
- * `dwf_node.result_json` 上的 `ArtifactVersionRecord` → 端口的版本项。行的形状来自引擎与
- * driver，但它经过一次 JSON 往返又可能来自更老的 CLI，所以每个字段都防御性收窄：`version`
- * 不是正整数就整行丢弃（一个没有版本号的版本在 UI 上无法定位、也无法读字节）。
+ * Convert an `ArtifactVersionRecord` in `dwf_node.result_json` to a port version item. The row shape comes from the engine and
+ * driver, but it has passed through JSON and may come from an older CLI, so narrow every field defensively: discard the whole row if `version`
+ * is not a positive integer (the UI cannot locate or read bytes for a version without a version number).
  */
 function artifactVersionOf(
   record: Record<string, unknown>,
@@ -159,8 +160,8 @@ function artifactVersionOf(
   const version = record.version;
   if (typeof version !== "number" || !Number.isInteger(version) || version < 1) return undefined;
   const bytes = record.bytes;
-  // driver 恒写 `publishedAt`，引擎的类型上它才是可选的。缺席时给 0 而不是丢行：
-  // 一个没有时间戳的产物仍然可看，而丢掉它会让版本号在 UI 上出现空洞。
+  // The driver always writes `publishedAt`, though it is optional in the engine type. Use 0 when it is absent instead of dropping the row:
+  // an artifact without a timestamp is still viewable, while dropping it would leave a gap in the UI's version numbers.
   const publishedAt = typeof record.publishedAt === "number" ? record.publishedAt : 0;
   const title = stringField(record, "title");
   const description = stringField(record, "description");

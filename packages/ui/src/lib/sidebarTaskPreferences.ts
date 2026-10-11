@@ -9,8 +9,7 @@ interface SidebarTaskPreferences {
   sortBy: SidebarTaskSortBy;
 }
 
-export const SIDEBAR_TASK_PREFERENCES_STORAGE_KEY =
-  "zcode-sidebar-task-preferences";
+export const SIDEBAR_TASK_PREFERENCES_STORAGE_KEY = "zcode-sidebar-task-preferences";
 
 const DEFAULT_SIDEBAR_TASK_PREFERENCES: SidebarTaskPreferences = {
   organizeBy: "project",
@@ -57,9 +56,9 @@ export function persistSidebarTaskPreferences(
   preferences: SidebarTaskPreferences,
   storage: BrowserStorageLike | null = getSafeLocalStorage(),
 ) {
-  // timeline/排序设置之前只存在 WorkspaceSidebar 的 React state 里。
-  // 刷新或重启后会回到默认 project/updated，用户以为 timeline 设置没有生效。
-  // 这里统一写入本地偏好，桌面端和 Web 端都能恢复同一个侧栏展示方式。
+  // Timeline/sort settings previously lived only in WorkspaceSidebar React state.
+  // After refresh or restart they reverted to the default project/updated, making users think timeline settings had not taken effect.
+  // Persist them as local preferences so desktop and Web restore the same sidebar presentation.
   try {
     storage?.setItem(
       SIDEBAR_TASK_PREFERENCES_STORAGE_KEY,
@@ -69,6 +68,6 @@ export function persistSidebarTaskPreferences(
       }),
     );
   } catch {
-    // 受限浏览器或 SSR 测试里 storage 可能不可写，偏好写入失败不能阻断侧栏交互。
+    // Storage may not be writable in restricted browsers or SSR tests; preference write failures must not block sidebar interaction.
   }
 }

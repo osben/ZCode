@@ -4,12 +4,12 @@ import { FALLBACK_UI_LOCALE } from "@zcode/shared";
 type MessageValues = Record<string, string | number>;
 type MessageCatalog = Record<string, string>;
 
-/** 简易 intl 工具：根据 id 查找翻译，支持 {key} 占位符替换与显式复数。 */
+/** Lightweight intl utility: looks up translations by ID, supports {key} placeholders and explicit plural forms. */
 export interface IntlInstance {
   formatMessage(descriptor: { id: string }, values?: MessageValues): string;
   /**
-   * 显式复数：id 为不带后缀的复数族名，按各语言 CLDR 规则选择 `.one`/`.few`/`.many`/`.other`。
-   * 自动注入 `{count}`；调用方在 values 里传入的 count 优先（保留千分位等既有格式）。
+   * Explicit plurals: the ID is the unsuffixed plural family name; choose `.one`/`.few`/`.many`/`.other` by each language's CLDR rules.
+   * Automatically inject `{count}`; a count supplied in values takes precedence (preserving existing formatting such as grouping separators).
    */
   formatPlural(descriptor: { id: string }, count: number, values?: MessageValues): string;
 }
@@ -36,7 +36,7 @@ function interpolate(message: string, values: MessageValues | undefined): string
   return result;
 }
 
-/** 依次在 [当前语言, 英文] 目录中查找；目录缺失某个 key 时回退英文，而不是直接展示 id。 */
+/** Look up keys in [current language, English] order; fall back to English when a locale lacks a key instead of displaying the ID. */
 export function createIntl(
   locale: Locale,
   catalogs: Partial<Record<Locale, MessageCatalog>>,
@@ -63,7 +63,7 @@ export function createIntl(
     formatPlural({ id }, count, values) {
       const mergedValues = { count, ...values };
       for (const { locale: catalogLocale, messages } of chain) {
-        // 复数类别只在同一语言内有效：uk 的 one 也覆盖 21，不能拿去选英文的 one。
+        // Plural categories are valid only within the same language: Ukrainian one also covers 21 and cannot select English one.
         const category = getPluralRules(catalogLocale).select(count);
         const message = messages[`${id}.${category}`] ?? messages[`${id}.other`];
         if (message !== undefined) {

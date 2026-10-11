@@ -19,7 +19,7 @@ const LOCK_RETRY_MS = 10;
 const DEFAULT_RENAME_RETRY_DELAYS_MS = [50, 100, 200, 400, 800] as const;
 const SECURITY_DIRECTORY = "security";
 const TRUST_STORE_FILE = "workspace-hook-trust-v1.json";
-// 进程启动时间的比较容差：ps/proc 的秒级精度 + 调度延迟，2s 足以覆盖且不放过复用。
+// Tolerance for comparing process start times: ps/proc has second-level precision plus scheduling delay; 2s covers both without accepting pid reuse.
 const LOCK_START_TIME_TOLERANCE_MS = 2_000;
 const PROC_CLOCK_TICKS_PER_SECOND = 100;
 
@@ -28,7 +28,7 @@ const execFileAsync = promisify(execFile);
 interface LockOwnerMetadata {
   pid: number;
   token: string;
-  /** 进程实例启动时间（墙钟 ms）；上一版锁格式无此字段（undefined）。 */
+  /** Process instance start time (wall-clock ms); absent (undefined) in the previous lock format. */
   startTime?: number;
 }
 
@@ -39,7 +39,7 @@ async function defaultWriteLockOwnerMetadata(
   await handle.writeFile(content, "utf8");
 }
 
-/** 本进程启动时间的墙钟毫秒（惰性缓存：进程生命周期内不变）。 */
+/** This process's wall-clock start time in milliseconds (lazily cached; stable for the process lifetime). */
 let ownStartTimeMs: number | undefined;
 function currentProcessStartTimeMs(): number {
   if (ownStartTimeMs === undefined) {
@@ -49,13 +49,13 @@ function currentProcessStartTimeMs(): number {
 }
 
 /**
- * 查询指定 pid 的当前进程实例启动时间（墙钟毫秒）；无法确定时返回 null。
- * 用于 stale 回收时区分「原 owner 实例仍存活」与「pid 已被复用给无关进程」
- * （裸 pid 只标识进程表槽位，不具备跨时间唯一性）。
- * - linux: /proc/<pid>/stat 字段 22（boot 后 ticks）
+ * Get the current process instance start time for a pid (wall-clock ms); return null if it cannot be determined.
+ * Used during stale-lock recovery to distinguish a still-live original owner from a pid reused by an unrelated
+ * process (a bare pid identifies only a process-table slot and is not unique over time).
+ * - linux: field 22 in /proc/<pid>/stat (ticks since boot)
  * - darwin: ps -o lstart=
- * - win32: powershell Get-Process StartTime（成本较高，但只在超龄回收路径触发）
- * - 失败/不支持 → null，调用方保守视为原 owner 存活（不回收）。
+ * - win32: powershell Get-Process StartTime (relatively expensive, but only used during over-age reclamation)
+ * - On failure/unsupported platforms, return null; callers conservatively treat the original owner as alive (do not reclaim).
  */
 async function probeProcessStartTimeDefault(pid: number): Promise<number | null> {
   if (pid === process.pid) return currentProcessStartTimeMs();
@@ -64,7 +64,7 @@ async function probeProcessStartTimeDefault(pid: number): Promise<number | null>
       const stat = await readFile(`/proc/${pid}/stat`, "utf8");
       const close = stat.lastIndexOf(")");
       if (close < 0) return null;
-      // ')' 之后 token[0] 是 state（字段 3）；starttime 是字段 22 → token[19]。
+      // After ')', token[0] is the state (field 3); starttime is field 22 → token[19].
       const tokens = stat.slice(close + 2).split(" ");
       const ticks = Number(tokens[19]);
       if (!Number.isFinite(ticks)) return null;
@@ -104,9 +104,9 @@ export interface FileWorkspaceHookTrustStoreOptions {
   beforeRename?: () => void | Promise<void>;
   renameFile?: typeof rename;
   renameRetryDelaysMs?: readonly number[];
-  /** 测试注入：查询 pid 当前实例启动时间；默认按平台实现（/proc / ps / powershell）。 */
+  /** Test injection for querying the current process instance start time by PID; defaults to the platform implementation (/proc / ps / PowerShell). */
   probeProcessStartTime?: (pid: number) => Promise<number | null>;
-  /** 测试注入：写锁 owner metadata；默认 FileHandle.writeFile。 */
+  /** Test injection for writing lock owner metadata; defaults to FileHandle.writeFile. */
   writeLockOwnerMetadata?: (handle: FileHandle, content: string) => Promise<void>;
 }
 
@@ -207,9 +207,9 @@ export class FileWorkspaceHookTrustStore {
 
   revoke(options: WorkspaceHookTrustStoreRevokeOptions): Promise<WorkspaceHookTrustStoreFile> {
     if (options.hookDeclarationDigests?.length === 0) {
-      // 空数组会生成空 Set，filter 因而保留全部记录并静默成功，调用方无法
-      // 区分“撤销全部”的 undefined 与“没有目标”的无效请求。三态固定为：undefined
-      // 撤销 workspace 全部、非空数组精确撤销、空数组在任何 IO 前拒绝。
+      // An empty array creates an empty Set, so filter retains every record and silently succeeds; callers cannot
+      // distinguish `undefined` (revoke all) from an invalid request with no targets. The three states are fixed: `undefined`
+      // revokes all entries for the workspace, a non-empty array revokes exact entries, and an empty array is rejected before any I/O.
       return Promise.reject(
         new Error("hookDeclarationDigests must be undefined or non-empty"),
       );
@@ -312,9 +312,9 @@ export class FileWorkspaceHookTrustStore {
       return await operation();
     } finally {
       await handle.close().catch(() => undefined);
-      // 释放前必须验证所有权。本进程的锁可能已被 stale 回收并归属
-      // 新持有者；无条件 unlink 会删掉新持有者的锁，让后续 writer 与之并发
-      // 进入临界区，造成基于旧快照的 read-modify-write 覆盖已提交的 revoke/grant。
+      // Verify ownership before release. This process’s lock may have been reclaimed as stale and assigned to
+      // a new owner; unconditional unlink would delete the new owner’s lock and let later writers race with it
+      // in the critical section, allowing a read-modify-write from an old snapshot to overwrite a committed revoke/grant.
       await this.releaseLockIfOwned(token);
     }
   }
@@ -325,11 +325,11 @@ export class FileWorkspaceHookTrustStore {
       let handle: FileHandle | undefined;
       try {
         handle = await open(this.lockPath, "wx", 0o600);
-        // 锁内容写入 pid + 进程启动时间 + 不可预测 owner token。
-        // startTime 是进程实例标识——裸 pid 会被系统复用，仅凭
-        // process.kill(pid, 0) 判活会把「崩溃后 pid 被复用」的锁误判为
-        // 活 owner 而永不回收，revoke/grant 全部卡死。回收侧用 probe 比对
-        // 当前实例启动时间与锁内记录来区分原 owner 与复用者。
+        // The lock stores the PID, process start time, and an unpredictable owner token.
+        // startTime identifies a process instance: the OS reuses bare PIDs, so checking only
+        // process.kill(pid, 0) can mistake a lock as live after its owner crashes and the PID is reused,
+        // preventing reclamation and blocking all revoke/grant operations. Reclamation compares the probe result
+        // with the recorded start time to distinguish the original owner from a process reusing its PID.
         const token = randomUUID();
         const owner = `${JSON.stringify({
           pid: process.pid,
@@ -339,9 +339,9 @@ export class FileWorkspaceHookTrustStore {
         await this.writeLockOwnerMetadata(handle, owner);
         return { handle, token };
       } catch (error) {
-        // open(wx) 成功但 metadata 写失败（磁盘满等）时，必须关闭句柄
-        // 并删除自己刚创建的锁——残留空锁会被后续 writer 当作无主锁回收，
-        // 破坏互斥；这里只可能删掉自己 wx 独占创建的文件，无越权风险。
+        // If open(wx) succeeds but writing metadata fails (for example, the disk is full), close the handle
+        // and remove the lock just created; otherwise later writers may reclaim the leftover empty lock as ownerless,
+        // breaking mutual exclusion. This can only remove the file created exclusively by our own wx call.
         if (handle) {
           await handle.close().catch(() => undefined);
           await unlink(this.lockPath).catch(() => undefined);
@@ -356,7 +356,7 @@ export class FileWorkspaceHookTrustStore {
     }
   }
 
-  /** 仅当锁仍属于 token 对应持有者时才删除；无主（缺失/他人）一律不动。 */
+  /** Delete only if the lock still belongs to the holder identified by the token; leave ownerless (missing/other-owned) locks untouched. */
   private async releaseLockIfOwned(token: string): Promise<void> {
     const owner = await this.readLockOwner();
     if (!owner || owner.token !== token) return;
@@ -383,12 +383,12 @@ export class FileWorkspaceHookTrustStore {
       }
       return null;
     } catch {
-      // 旧版本空锁/损坏锁 → 无主。
+      // Empty or corrupt locks from older versions are ownerless.
       return null;
     }
   }
 
-  /** pid 存活检测：signal 0 探测。EPERM（Windows 无权限）视为存活，ESRCH/EINVAL 视为死亡。 */
+  /** Check whether a PID is alive using signal 0. Treat EPERM (no permission on Windows) as alive and ESRCH/EINVAL as dead. */
   private isProcessAlive(pid: number): boolean {
     if (pid === process.pid) return true;
     try {
@@ -403,9 +403,9 @@ export class FileWorkspaceHookTrustStore {
     try {
       const lockStats = await stat(this.lockPath);
       if (Date.now() - lockStats.mtimeMs <= this.staleLockMs) return;
-      // 超龄但持有进程仍存活（休眠/调试暂停/杀毒拖慢 IO）→ 不回收。
-      // mtime 无法区分"持有者死亡"与"持有者暂停或慢"；pid 存活检测可以。
-      // 无法解析的锁（旧版空文件）无 pid 可查 → 按死亡回收。
+      // Do not reclaim an expired lock while its owning process is alive (sleep, debugger pause, or slow antivirus I/O).
+      // mtime cannot distinguish a dead owner from a paused or slow owner; a PID liveness check can.
+      // An unparseable lock (an empty file from an older version) has no PID to check, so reclaim it as dead.
       const owner = await this.readLockOwner();
       if (!owner) {
         await rm(this.lockPath, { force: true });
@@ -416,13 +416,13 @@ export class FileWorkspaceHookTrustStore {
         await rm(this.lockPath, { force: true });
         return;
       }
-      // pid 存活 ≠ 原 owner 存活。pid 会被系统复用——原 owner 崩溃后
-      // 其 pid 若被分配给无关长命进程，纯 kill(0) 判活会让锁永不回收，
-      // revoke/grant 全部卡死。用进程实例启动时间核验：锁内记录的 startTime
-      // 与该 pid 当前实例的实际启动时间一致 → 原 owner 确实活着（不回收）；
-      // 不一致 → 原 owner 已死、pid 已易主（安全回收）。probe 不可用（平台
-      // 不支持/查询失败）或锁记录无 startTime（上一版格式混存窗口）→ 保守
-      // 视为原 owner 存活，不回收。
+      // A live PID does not prove the original owner is alive. PIDs are reused: after the original owner crashes,
+      // if its PID is assigned to an unrelated long-lived process, a kill(0)-only check prevents reclamation indefinitely,
+      // blocking all revoke/grant operations. Verify the process instance using its start time: the recorded startTime
+      // matches the current process start time → the original owner is alive (do not reclaim);
+      // differs → the original owner is dead and the PID has changed hands (safe to reclaim). If the probe is unavailable (unsupported platform
+      // or query failure), or the lock has no startTime (a mixed-format window from the previous version), conservatively
+      // treat the original owner as alive and do not reclaim.
       const currentStart = await this.probeProcessStartTime(owner.pid);
       if (currentStart === null || owner.startTime === undefined) return;
       if (Math.abs(currentStart - owner.startTime) > LOCK_START_TIME_TOLERANCE_MS) {
@@ -450,24 +450,25 @@ export class FileWorkspaceHookTrustStore {
 
     try {
       const parsed = workspaceHookTrustStoreFileSchema.parse(JSON.parse(content) as unknown);
-      // chmod 是权限加固副作用，不是 load 的核心职责。只读目录/异常所有权下
-      // chmod 会抛 EPERM/EROFS，若任其冒泡，整个 load 都会失败——比一次加固失败
-      // 应有的后果重得多。加固失败只降级为忽略：读出来的记录仍然有效，
-      // 后续 mutate 的 atomicWrite 会再次尝试。
+      // chmod is a hardening side effect, not a core responsibility of load. In a read-only directory or with unusual ownership,
+      // chmod may throw EPERM/EROFS; letting it propagate would fail the entire load, which is worse than a failed hardening attempt.
+      // Ignore hardening failures: the loaded records remain valid,
+      // and a later atomicWrite during mutate will try again.
       await chmod(this.filePath, 0o600).catch(() => undefined);
       return { status: "ok", records: parsed.records };
     } catch (error) {
       if (!recoverCorrupt) throw error;
       const recoveredCorruptPath = `${this.filePath}.corrupt-${this.now()}`;
-      // 损坏文件改名失败（只读目录等）若让错误冒泡，会绕过"返回 corrupt 状态"
-      // 的设计路径——调用方看到的是意外异常而非 fail-closed 的 corrupt 状态。
-      // 改名失败仍按 corrupt 返回：corrupt 语义即全部 Hook 不受信（fail-closed），
-      // 原文件残留在原地不会让任何记录被当作可信。
+      // If renaming a corrupt file fails (for example, in a read-only directory), propagating the error bypasses the designed “return corrupt status”
+      // path, so callers see an unexpected exception instead of the fail-closed corrupt state.
+      // Still return corrupt if the rename fails: corrupt means all Hooks are untrusted (fail-closed),
+      // and leaving the original file in place does not cause any record to be trusted.
       try {
         await rename(this.filePath, recoveredCorruptPath);
         await chmod(recoveredCorruptPath, 0o600).catch(() => undefined);
       } catch {
-        // 改名失败：仍返回 corrupt 状态，原损坏文件留在原地（下次 load 仍判 corrupt）。
+        // If renaming fails, still return the corrupt state and leave the damaged file in place;
+        // the next load will still classify it as corrupt.
       }
       return { status: "corrupt", records: [], recoveredCorruptPath };
     }
@@ -515,8 +516,8 @@ async function renameWithRetry(
     } catch (error) {
       const delayMs = retryDelaysMs[attempt];
       if (delayMs === undefined || !isRetryableRenameError(error)) throw error;
-      // Windows 杀软/索引器可能短暂占用目标文件，单次 rename 会让已完成
-      // fsync 的 Trust mutation 误报失败。仅对已知短暂占用错误做有界异步重试。
+      // Windows antivirus or indexers may briefly lock the target file; a single rename could make a completed
+      // and fsynced trust mutation report a false failure. Retry asynchronously with a bound only for known transient lock errors.
       await sleep(delayMs);
     }
   }
@@ -543,7 +544,7 @@ async function readUserConfig(path: string): Promise<Record<string, unknown>> {
 function resolveTrustedUserPath(path: string, home: string): string {
   if (path.startsWith("~/")) return join(home, path.slice(2));
   if (isAbsolute(path)) return resolve(path);
-  // 安全原因：user config 中的相对 storage.dir 绑定用户目录，不能随 workspace cwd 漂移。
+  // Security: a relative storage.dir in user config is anchored to the user directory and must not drift with workspace cwd.
   return resolve(home, path);
 }
 

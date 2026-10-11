@@ -13,15 +13,15 @@ export async function unregisterInstalledService(layout: ServerLayout): Promise<
   const platform = currentServicePlatform();
   const descriptor = createDaemonServiceDescriptor({ platform, layout });
   const descriptorPath = serviceDescriptorPath(layout, descriptor);
-  // 卸载先解除 OS 服务注册，再清理 descriptor/data root；否则 systemd/launchd 可能
-  // 在目录删除后继续拉起一个找不到 runtime 的孤儿服务。
+  // Unregister the OS service before removing the descriptor/data root; otherwise systemd/launchd may
+  // start an orphaned service after its directory is deleted and fail to find the runtime.
   if (await pathExists(descriptorPath)) await unregisterService(descriptor, descriptorPath);
   await unregisterRootScopedAliasServices(layout, platform, descriptorPath);
   await unregisterLegacyServiceForRoot(layout);
 }
 
 export async function hasLegacyServiceRegistration(layout: ServerLayout): Promise<boolean> {
-  return await resolveLegacyServiceRegistration(layout) !== null;
+  return (await resolveLegacyServiceRegistration(layout)) !== null;
 }
 
 export async function unregisterLegacyServiceForRoot(layout: ServerLayout): Promise<boolean> {
@@ -37,9 +37,11 @@ async function resolveLegacyServiceRegistration(layout: ServerLayout): Promise<{
   descriptorPath: string;
 } | null> {
   const platform = currentServicePlatform();
-  const kind = platform === "darwin" ? "launchd" : platform === "linux" ? "systemd" : "task-scheduler";
+  const kind =
+    platform === "darwin" ? "launchd" : platform === "linux" ? "systemd" : "task-scheduler";
   const descriptorPath = join(layout.serviceDir, `${kind}.service`);
-  if (!await legacyDescriptorBelongsToRoot(descriptorPath, platform, layout.serverRoot)) return null;
+  if (!(await legacyDescriptorBelongsToRoot(descriptorPath, platform, layout.serverRoot)))
+    return null;
   return {
     descriptor: createServiceDescriptor({
       platform,
@@ -78,7 +80,7 @@ async function legacyDescriptorBelongsToRoot(
   const declaredRoot = extractServerRoot(content, platform);
   if (!declaredRoot) return false;
   try {
-    return await resolveCanonicalServerRoot(declaredRoot) === serverRoot;
+    return (await resolveCanonicalServerRoot(declaredRoot)) === serverRoot;
   } catch {
     return false;
   }
@@ -89,10 +91,15 @@ async function unregisterRootScopedAliasServices(
   platform: ServicePlatform,
   currentDescriptorPath: string,
 ): Promise<void> {
-  // 过去只按当前拼写的 stablePathId 卸载 descriptor，root 别名留下的旧注册会
-  // 在卸载后继续被 launchd/systemd 拉起。扫描同一 service 目录并按 canonical root 比对。
+  // Previously, descriptor uninstall matched only the current stablePathId spelling, so old registrations under a root alias
+  // could still be started by launchd/systemd after uninstall. Scan the same service directory and compare canonical roots.
   const extension = platform === "darwin" ? ".plist" : platform === "linux" ? ".service" : ".json";
-  const legacyEntry = platform === "darwin" ? "launchd.service" : platform === "linux" ? "systemd.service" : "task-scheduler.service";
+  const legacyEntry =
+    platform === "darwin"
+      ? "launchd.service"
+      : platform === "linux"
+        ? "systemd.service"
+        : "task-scheduler.service";
   let entries: string[];
   try {
     entries = await readdir(layout.serviceDir);
@@ -101,21 +108,34 @@ async function unregisterRootScopedAliasServices(
   }
   for (const entry of entries) {
     const descriptorPath = join(layout.serviceDir, entry);
-    if (descriptorPath === currentDescriptorPath || entry === legacyEntry || !entry.endsWith(extension)) continue;
+    if (
+      descriptorPath === currentDescriptorPath ||
+      entry === legacyEntry ||
+      !entry.endsWith(extension)
+    )
+      continue;
     const content = await readFile(descriptorPath, "utf8").catch(() => null);
     if (!content) continue;
     const declaredRoot = extractServerRoot(content, platform);
     if (!declaredRoot) continue;
     let belongs = false;
     try {
-      belongs = await resolveCanonicalServerRoot(declaredRoot) === layout.serverRoot;
+      belongs = (await resolveCanonicalServerRoot(declaredRoot)) === layout.serverRoot;
     } catch {
       continue;
     }
     if (!belongs) continue;
     const name = descriptorNameFromContent(content, platform, entry);
     if (!name) continue;
-    await unregisterService({ kind: platform === "darwin" ? "launchd" : platform === "linux" ? "systemd" : "task-scheduler", name, content }, descriptorPath);
+    await unregisterService(
+      {
+        kind:
+          platform === "darwin" ? "launchd" : platform === "linux" ? "systemd" : "task-scheduler",
+        name,
+        content,
+      },
+      descriptorPath,
+    );
     await rm(descriptorPath, { force: true });
   }
 }
@@ -131,14 +151,20 @@ function extractServerRoot(content: string, platform: ServicePlatform): string |
       return null;
     }
   }
-  const match = platform === "darwin"
-    ? content.match(/<string>--server-root<\/string><string>([^<]+)<\/string>/u)
-    : content.match(/'--server-root'\s+'((?:[^']|'\\'\\'\\'')*)'/u);
+  const match =
+    platform === "darwin"
+      ? content.match(/<string>--server-root<\/string><string>([^<]+)<\/string>/u)
+      : content.match(/'--server-root'\s+'((?:[^']|'\\'\\'\\'')*)'/u);
   return match?.[1]?.replaceAll("'\\''", "'") ?? null;
 }
 
-function descriptorNameFromContent(content: string, platform: ServicePlatform, entry: string): string | null {
-  if (platform === "darwin") return content.match(/<key>Label<\/key><string>([^<]+)<\/string>/u)?.[1] ?? null;
+function descriptorNameFromContent(
+  content: string,
+  platform: ServicePlatform,
+  entry: string,
+): string | null {
+  if (platform === "darwin")
+    return content.match(/<key>Label<\/key><string>([^<]+)<\/string>/u)?.[1] ?? null;
   if (platform === "win32") {
     try {
       const parsed = JSON.parse(content) as { taskName?: unknown };
@@ -165,9 +191,14 @@ export function serviceDescriptorBelongsToRoot(
       return false;
     }
   }
-  const encodedRoot = platform === "darwin"
-    ? serverRoot.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;")
-    : `'${serverRoot.replaceAll("'", "'\\''")}'`;
+  const encodedRoot =
+    platform === "darwin"
+      ? serverRoot
+          .replaceAll("&", "&amp;")
+          .replaceAll("<", "&lt;")
+          .replaceAll(">", "&gt;")
+          .replaceAll('"', "&quot;")
+      : `'${serverRoot.replaceAll("'", "'\\''")}'`;
   return platform === "darwin"
     ? content.includes(`<string>--server-root</string><string>${encodedRoot}</string>`)
     : content.includes(`'--server-root' ${encodedRoot}`);

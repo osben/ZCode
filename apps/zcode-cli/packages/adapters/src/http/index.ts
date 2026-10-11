@@ -199,8 +199,8 @@ function fetchHttpResponse(
         lookup: proxyUrl ? undefined : lookup,
       },
       (message) => {
-        // 不包成 `Response`：它表示不了 999 之类的状态码，而这里只要状态、头与正文（与原生 fetch 一样原样带回）。
-        // 回调里抛出的东西没人接得住、会打死整个 agent 进程，所以一律转成这一次请求的 reject。
+        // Do not wrap this as `Response`: it cannot represent status codes such as 999, and we only need to pass through status, headers, and body (as native fetch does).
+        // No caller can catch errors thrown by the callback, and they would crash the entire agent process, so always reject only this request.
         try {
           resolve(readIncomingResponse(message));
         } catch (error) {
@@ -261,7 +261,7 @@ function createRequestAgent(
 
 function assertPublicEgressProxyBoundary(url: URL, proxyUrl: string | undefined): void {
   if (!proxyUrl) return;
-  // 普通代理会在代理侧解析目标域名，本地 DNS 校验无法证明最终 IP 仍是公网地址。
+  // A regular proxy resolves the target hostname on the proxy side, so local DNS validation cannot prove the final IP is still public.
   throw createHttpClientError({
     code: "egress_blocked",
     url: url.toString(),

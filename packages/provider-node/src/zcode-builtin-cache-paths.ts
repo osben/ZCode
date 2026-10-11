@@ -20,7 +20,7 @@ export interface ZCodeBuiltinCachePaths {
   readonly controlFilePath: string;
 }
 
-/** 按平台与 App 版本隔离 Active/LKG；路径本身就是兼容范围。 */
+/** Isolate Active/LKG by platform and App version; the path itself defines the compatibility scope. */
 export function resolveZCodeBuiltinCachePaths(
   options: ZCodeBuiltinCachePathOptions,
 ): ZCodeBuiltinCachePaths {
@@ -41,7 +41,7 @@ export function resolveZCodeBuiltinCachePaths(
   };
 }
 
-/** 将 ZCode 控制面 Origin 规范化后映射为安全、稳定且碰撞风险可忽略的缓存路径段。 */
+/** Normalize the ZCode control-plane origin and map it to a safe, stable cache-path segment with negligible collision risk. */
 export function createZCodeBuiltinEndpointKey(zcodeEndpointOrigin: string): string {
   const normalized = normalizeZCodeBuiltinEndpointOrigin(zcodeEndpointOrigin);
   const digest = createHash("sha256").update(normalized).digest("hex").slice(0, 32);

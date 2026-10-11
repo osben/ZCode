@@ -9,9 +9,9 @@ export function rebuildContextPrefix(
   options: { model?: Model; turnRequestEntries?: readonly RuntimeMessageEntry[] } = {},
 ): readonly RuntimeMessageEntry[] {
   if (!runtime.contextBuilder || !runtime.contextInitialized) {
-    // 首轮 context 初始化前，model/outputStyle/language 变更只能刷新同步预览，
-    // 不能把 config-only fallback envInfo 写入 config.envInfo。否则真实 context source
-    // 会以为 envInfo 已由外部显式提供，跳过平台和 git 探测。
+    // Before the first context initialization, model/outputStyle/language changes may refresh only the synchronous preview;
+    // do not write config-only fallback envInfo into config.envInfo. Otherwise the real context source would treat envInfo as externally supplied
+    // and skip platform and git detection.
     if (runtime.contextBuilder) {
       runtime.contextBuilder = runtime.createContextBuilderFromSnapshot(
         runtime.createConfigOnlyContextSnapshot(runtime.workingDirectory),

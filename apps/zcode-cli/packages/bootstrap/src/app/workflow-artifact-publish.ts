@@ -1,28 +1,32 @@
 // ============================================================
-// 产物发布的执行侧（Boundary B 的 executeArtifactPublish）
+// Execution side of artifact publishing (Boundary B's executeArtifactPublish).
 // ============================================================
-// ⚠ 术语：本文件里的 artifact 一律指**用户面
-// 产物**——脚本经 `artifact.file` / `artifact.markdown` 交付给**用户**看的字节；不是引擎内部
-// 那个 artifact（`RunSettlement.artifact`、`serializeWorkflowArtifact` 的顶层返回值，那是给
-// **模型**看的）。本文件不触及后者。
+// Terminology: artifact in this file always means a **user-facing artifact**—bytes the script
+// delivers for the **user** through `artifact.file` / `artifact.markdown`. It does not mean the
+// engine-internal artifact (`RunSettlement.artifact`, the top-level return value of
+// `serializeWorkflowArtifact`, which is for the **model**). This file does not handle the latter.
 //
-// 与 workflow-world-read.ts 同一条分工线：driver 本体（workflow-driver.ts）做 actor 会话与
-// turn 的编排，这一半把一次 `(op, id, path | content, opts)` 变成一次真实的**字节拷贝**，
-// 且完全不碰会话、模型与 journal。四件事在这里，而且只在这里：
-//   1. **实参与 opts 的形状校验**。引擎只保证 `id` 与 payload 是非空字符串（运行期护栏），
-//      `opts` 是脚本原样透传的第三实参——「一个 title 长什么样」归这一侧，纪律与
-//      `worldReadStringArgs` 相同：大声失败，绝不 `String(...)` 强转。
-//   2. **路径解析与越界判定**。解析器复用 world-read 的那一个（`resolveWithinWorkspace`），
-//      再加一次 realpath 复核，见 {@link resolveWorkspaceFile}。
-//   3. **上限的执行**。常量在纯包（`ARTIFACT_CAPS`），执行在这里，因为只有这一侧读得到
-//      字节；超限一律**拒绝不截断**（与 world-read 同 house policy——一份被悄悄截断的 PDF
-//      是一件坏交付物，而一条指名上限的拒绝是脚本能据以改写自己的契约）。
-//   4. **写 tool-artifact store**，并把 store 的回执归一成 `ArtifactVersionRecord`。
+// The division of responsibilities matches workflow-world-read.ts: workflow-driver.ts handles
+// actor sessions and turn orchestration, while this half converts an `(op, id, path | content,
+// opts)` call into a real **byte copy**, without touching sessions, models, or the journal. Four
+// responsibilities live here and only here:
+//   1. **Validate argument and opts shapes.** The engine guarantees only that `id` and payload
+//      are nonempty strings (runtime guard); `opts` is the script's unchanged third argument.
+//      This side defines what a title looks like, following `worldReadStringArgs`: fail loudly
+//      and never coerce with `String(...)`.
+//   2. **Resolve paths and check containment.** Reuse the world-read resolver
+//      (`resolveWithinWorkspace`) and add a realpath check; see {@link resolveWorkspaceFile}.
+//   3. **Enforce limits.** Constants are in the pure package (`ARTIFACT_CAPS`), but enforcement
+//      is here because only this side can read the bytes. Always **reject rather than truncate**
+//      over-limit content (same policy as world-read: a silently truncated PDF is a bad
+//      deliverable, while a rejection that states the limit gives the script a contract it can
+//      adjust to).
+//   4. **Write to the tool-artifact store** and normalize its receipt to `ArtifactVersionRecord`.
 //
-// 拒绝一律是结构化 `WorkflowError`（错误码：ArtifactSourceMissing /
-// ArtifactPathOutsideWorkspace / ArtifactTooLarge / ArtifactStoreUnavailable），因为内容成员
-// 在脚本里是一个可 `catch` 的 promise——门控习语 `try { await artifact.file(…) } catch { … }`
-// 的前提就是这些拒绝到得了脚本手上。
+// All rejections are structured `WorkflowError`s (codes: ArtifactSourceMissing /
+// ArtifactPathOutsideWorkspace / ArtifactTooLarge / ArtifactStoreUnavailable), because content
+// methods return catchable promises in scripts. The gated pattern
+// `try { await artifact.file(…) } catch { … }` depends on these rejections reaching the script.
 
 import { realpath } from "node:fs/promises";
 import { basename } from "node:path";
@@ -43,35 +47,36 @@ import {
 } from "@zcode/dynamic-workflow";
 import { resolveWithinWorkspace, toWorkspaceRelative } from "./workflow-world-read.js";
 
-/** 产物发布需要的端口与基准目录（driver deps 的一个子集，同 {@link WorldReadDeps}）。 */
+/** Ports and base directory needed for artifact publishing (a subset of driver deps, like {@link WorldReadDeps}). */
 interface ArtifactPublishDeps {
-  /** 读取被发布文件的字节所用的文件系统端口。 */
+  /** Filesystem port used to read bytes from a file being published. */
   readonly fileSystemPort: FileSystemPort;
-  /** 路径解析与相对化的基准目录（workspace 根）。 */
+  /** Base directory for path resolution and relativization (workspace root). */
   readonly cwd: string;
   /**
-   * 字节的落点。**可选**：纯 replay / fake 装配没有 store。
-   * 缺席时内容成员以 `ArtifactStoreUnavailable` 大声拒绝——不是静默降级成
-   * 「发布了一个空产物」，也不是退回写工作区。
+   * Destination for the bytes. **Optional**: pure replay / fake assemblies have no store.
+   * If absent, content methods reject loudly with `ArtifactStoreUnavailable`; they do not
+   * silently degrade to "published an empty artifact" or fall back to writing in the workspace.
    */
   readonly artifactStore?: ToolArtifactStorePort;
   /**
-   * store 写入的会话作用域 = 本 run 的**父会话**。与 `artifactStore`
-   * 成对出现：store 的每次写入都按会话记账（`zcode-artifact://<session>/<id>`），没有会话 id
-   * 就写不出一条日后读得回来的记录。两者都在场才算装配了发布能力，缺一即
-   * `ArtifactStoreUnavailable`（缺 store 是「这个装配没有存储」，缺 id 是接线错误——两者对
-   * 脚本是同一件事：这次发布做不了，且必须大声）。
+   * Session scope for store writes = this run's **parent session**. It is paired with
+   * `artifactStore`: each store write is recorded per session (`zcode-artifact://<session>/<id>`),
+   * and without a session ID the record cannot be read back later. Both must be present for
+   * publishing capability; if either is missing, return `ArtifactStoreUnavailable`. A missing
+   * store means this assembly has no storage, while a missing ID is a wiring error, but to the
+   * script both mean the same thing: publishing cannot happen and must fail loudly.
    */
   readonly parentSessionId?: SessionId;
 }
 
 /**
- * 执行一次内容产物发布：校验形状 → 确认 store 在场 → 取字节（文件读盘 / markdown 正文）→
- * 写 store → 归一成落库记录。
+ * Publish one content artifact: validate shape → confirm the store exists → read bytes (file
+ * from disk / markdown body) → write to the store → normalize to a persisted record.
  *
- * 顺序不是随意的：**先形状、再 store、最后 IO**。形状校验最便宜且与装配无关；store 缺席时
- * 一次读盘是白做的功，更糟的是它会用一条 `ArtifactSourceMissing` 盖掉真正的病因
- * （「这个装配根本没有存储」）。
+ * The order is intentional: **shape first, store second, I/O last**. Shape validation is cheapest
+ * and independent of assembly; reading a file when the store is missing is wasted work and
+ * could mask the real cause ("this assembly has no storage") with `ArtifactSourceMissing`.
  */
 export async function executeArtifactPublish(
   deps: ArtifactPublishDeps,
@@ -91,34 +96,39 @@ export async function executeArtifactPublish(
     version: request.version,
     ...(opts.title === undefined ? {} : { title: opts.title }),
     ...(opts.description === undefined ? {} : { description: opts.description }),
-    // contentType 取**本地算出的**那一个而不是 store 的回执：扩展名表 + `opts.contentType`
-    // 覆盖共同决定内容类型，UI 在这个字符串上做 switch 分派；让 store 的归一化（它按
-    // 落盘文件名回推类型）成为权威，会让一次分派结果取决于 store 实现。
+    // Use the **locally computed** contentType rather than the store receipt: the extension table
+    // and `opts.contentType` override together determine the type, and the UI switches on this
+    // string. Making store normalization (which infers the type from the persisted filename)
+    // authoritative would make dispatch depend on the store implementation.
     contentType: payload.contentType,
-    // bytes / uri 取 store 的回执：那是**真正落进 store 的那一份**，也是日后读回来的那一份。
+    // Take bytes / uri from the store receipt: those are the bytes **actually written to the
+    // store** and the same bytes that will be read back later.
     bytes: written.bytes,
     uri: written.uri,
     ...(payload.kind === "binary" ? { sourcePath: payload.sourcePath } : {}),
-    // 引擎没有时钟（纯核心，可重放），所以发布时刻由这一侧填。发布时刻为必填字段。
+    // The engine has no clock (pure core, replayable), so this side supplies the publication
+    // time. Publication time is required.
     publishedAt: Date.now(),
   };
 }
 
-// ——————————————————————————————— 内部：形状校验 ———————————————————————————————
+// ——————————————————————————————— Internal: shape validation ———————————————————————————————
 
-/** 校验过的 `opts`（facade 的 `ArtifactOptions` / `ArtifactFileOptions`）。 */
+/** Validated `opts` (facade's `ArtifactOptions` / `ArtifactFileOptions`). */
 interface ArtifactPublishOptions {
   title?: string;
   description?: string;
-  /** 只有 `file` 读它：markdown 恒 `text/markdown`。 */
+  /** Used only for `file`; markdown is always `text/markdown`. */
   contentType?: string;
 }
 
 /**
- * 产物 id 的运行期护栏。编译期的字面量诊断（分析器）是正门，引擎又挡了一次「必须是非空
- * 字符串」——这里再验字符集与长度，是因为**只有这一侧把 id 当键用**：它进 store 的
- * `toolCallId`，最终成为落盘文件名的一段。走到这里的非法 id 只可能是有东西绕过了编译，
- * 用 `DriverError` 而不是某个 `Artifact*` 码，让那些码只表示它们各自的那件事。
+ * Runtime guard for artifact IDs. Compile-time literal diagnostics (the analyzer) are the main
+ * gate, and the engine separately checks that an ID is a nonempty string. Validate its
+ * character set and length again here because **this is the only side that uses the ID as a
+ * key**: it becomes the store's `toolCallId` and eventually part of the persisted filename. An
+ * invalid ID reaching here means something bypassed compilation, so use `DriverError` instead
+ * of an `Artifact*` code; those codes should each describe their own specific failure.
  */
 function assertArtifactId(request: ArtifactPublishRequest): void {
   const { id } = request;
@@ -132,12 +142,14 @@ function assertArtifactId(request: ArtifactPublishRequest): void {
 }
 
 /**
- * 取出并校验脚本给的 `opts`。三条规则与 {@link worldRunArgs} 同源：
- *   1. 缺席合法（`opts?`），在场必须是选项对象（不是数组、不是 null）。
- *   2. 认识的键逐个验类型与上限，**绝不强转**——一个被 `String(undefined)` 变成
- *      `"undefined"` 的标题，会在卡片上显示成一个查不明白的字符串而不是一条能改的错误。
- *   3. 不认识的键静默忽略（facade 的类型签名在编译期就拦住了它们；运行期为它们报错只会
- *      把一个编译期问题搬到运行期）。`markdown` 一族因此根本不读 `contentType`。
+ * Read and validate script-supplied `opts`. Three rules, shared with {@link worldRunArgs}:
+ *   1. It may be absent (`opts?`); if present, it must be an options object (not an array or null).
+ *   2. Validate each recognized key's type and limit; **never coerce**. A title changed from
+ *      undefined to `"undefined"` via `String(undefined)` would appear as an opaque string on the
+ *      card instead of an actionable error.
+ *   3. Ignore unknown keys (the facade's type signature rejects them at compile time; reporting
+ *      them at runtime would move a compile-time issue to runtime). Therefore markdown methods
+ *      do not read `contentType` at all.
  */
 function artifactPublishOptions(request: ArtifactPublishRequest): ArtifactPublishOptions {
   const raw = request.opts;
@@ -165,7 +177,7 @@ function artifactPublishOptions(request: ArtifactPublishRequest): ArtifactPublis
   };
 }
 
-/** 一个可选的有界文本选项（title / description）。长度按字符数（UTF-16 码元）计。 */
+/** An optional bounded text option (title / description). Length is measured in characters (UTF-16 code units). */
 function optionalText(
   request: ArtifactPublishRequest,
   name: string,
@@ -180,8 +192,8 @@ function optionalText(
     );
   }
   if (value.length > max) {
-    // 拒绝而不是截断：一个被砍掉后半句的标题是一件**看起来正常**的坏交付物，而卡片上
-    // 没有任何地方能显示"这里被截过"。
+    // Reject instead of truncating: a title cut off halfway through looks like a **valid** but
+    // bad artifact, and the card has no way to show that it was truncated.
     throw new WorkflowError(
       "ArtifactTooLarge",
       `artifact.${request.op}: opts.${name} is ${value.length} characters, over the cap of ` +
@@ -192,9 +204,10 @@ function optionalText(
 }
 
 /**
- * `opts.contentType` 的覆盖值。要求是**不带参数的**裸 MIME（`type/subtype`）：这个字符串的
- * 消费者是 UI 的一个精确分派（`text/markdown` 走 markdown 卡、`application/pdf` 走 pdf 卡），
- * 一条 `text/markdown; charset=utf-8` 会整条错过那个分支，表现是「明明写了类型却掉进下载卡」。
+ * Override value for `opts.contentType`. It must be a bare MIME without parameters (`type/subtype`):
+ * the UI dispatches on this exact string (`text/markdown` uses a markdown card,
+ * `application/pdf` a PDF card), and `text/markdown; charset=utf-8` would miss the branch entirely,
+ * landing in the download card despite an explicit type.
  */
 function optionalContentType(request: ArtifactPublishRequest, value: unknown): string | undefined {
   if (value === undefined) return undefined;
@@ -215,23 +228,23 @@ function optionalContentType(request: ArtifactPublishRequest, value: unknown): s
   return value;
 }
 
-// ——————————————————————————————— 内部：取字节 ———————————————————————————————
+// ——————————————————————————————— Internal: read bytes ———————————————————————————————
 
-/** 待写入 store 的一份内容。`file` 走二进制写，`markdown` 走文本写。 */
+/** Content to write to the store. `file` uses binary write; `markdown` uses text write. */
 type ArtifactPayload =
   | {
       readonly kind: "binary";
       readonly bytes: Uint8Array;
       readonly contentType: string;
-      /** 落盘文件名的扩展名（store 读回时按文件名回推类型，所以要保真）。 */
+      /** Extension for the persisted filename (preserve it because the store infers type from the filename when reading back). */
       readonly extension?: string;
-      /** 工作区相对的原路径（出处 + 「在工作区显示」）。 */
+      /** Original workspace-relative path (source attribution + "show in workspace"). */
       readonly sourcePath: string;
     }
   | { readonly kind: "text"; readonly text: string; readonly contentType: "text/markdown" };
 
 /**
- * `artifact.file(id, path, opts)`：解析路径 → 读字节（cap+1 探测）→ 定 contentType。
+ * `artifact.file(id, path, opts)`: resolve path → read bytes (cap+1 probe) → determine contentType.
  */
 async function readFilePayload(
   deps: ArtifactPublishDeps,
@@ -240,7 +253,7 @@ async function readFilePayload(
 ): Promise<ArtifactPayload> {
   const given = request.path;
   if (typeof given !== "string" || given === "") {
-    // 引擎已验过 payload 是字符串；空串只可能来自接线错误。
+    // The engine already verified payload is a string; an empty string can only come from a wiring error.
     throw new WorkflowError(
       "DriverError",
       `artifact.file: path must be a non-empty string, got ${describeArg(given)}. Pass the ` +
@@ -256,8 +269,8 @@ async function readFilePayload(
     contentType:
       opts.contentType ??
       (extension === undefined ? undefined : EXTENSION_CONTENT_TYPES[extension]) ??
-      // 未列入扩展名表 = 不猜（不做 magic bytes 嗅探）。UI 据此给「下载 / 在工作区
-      // 显示」卡而不是渲染一份它读不懂的东西。
+      // If the extension is absent from the table, do not guess (no magic-byte sniffing). The UI
+      // will show a "download / show in workspace" card instead of rendering something it cannot read.
       "application/octet-stream",
     ...(extension === undefined ? {} : { extension }),
     sourcePath: relative,
@@ -265,16 +278,17 @@ async function readFilePayload(
 }
 
 /**
- * 把脚本给的**工作区相对**路径解析成一个可读的真实路径，并两次判定越界。
+ * Resolve the script's **workspace-relative** path to a readable real path and check containment twice.
  *
- * 第一次是词法的（{@link resolveWithinWorkspace}，与 `files.read` 同一个判据）；第二次在
- * realpath 之后——**符号链接按解析后的真实路径判越界**。世界读取
- * 那一侧刻意只做词法检查（读出来的字节就是脚本自己看到的值，越界与否脚本自己负责），
- * 这一侧不能照抄：发布把字节**拷进一个持久 store 并摆到用户面前**，一条软链就能让
- * `~/.ssh/id_rsa` 变成一张卡片。这道复核就是那条不变式在写入端的落点。
+ * First perform a lexical check ({@link resolveWithinWorkspace}, same criterion as `files.read`),
+ * then check again after realpath—**symlinks are checked using their resolved real path**.
+ * World reads intentionally perform only the lexical check (the script sees the bytes it reads
+ * and is responsible for whether it escapes). This side cannot copy that behavior: publishing
+ * **copies bytes into a persistent store and presents them to the user**, so a symlink could
+ * turn `~/.ssh/id_rsa` into a card. This check enforces the same invariant on the write side.
  *
- * `cwd` 自己也要 realpath：macOS 上 `/tmp` 就是 `/private/tmp` 的软链，不归一的话工作区内的
- * 每一个文件都会被判成越界。
+ * Resolve `cwd` itself with realpath too: on macOS `/tmp` is a symlink to `/private/tmp`, and
+ * without normalization every file inside the workspace would appear to escape it.
  */
 async function resolveWorkspaceFile(
   deps: ArtifactPublishDeps,
@@ -282,8 +296,8 @@ async function resolveWorkspaceFile(
 ): Promise<{ real: string; relative: string }> {
   const resolved = resolveWithinWorkspace(deps.cwd, given);
   if (resolved === undefined) throw outsideWorkspace(given);
-  // 出处用的是**脚本给的那个路径**（归一后），不是 realpath：卡片上的「在工作区显示」要
-  // 指回用户认得的那个位置，而不是软链的落点。
+  // Use the **script-supplied path** (normalized) for source attribution, not realpath: "show in
+  // workspace" on the card should point to a location the user recognizes, not the symlink target.
   const relative = toWorkspaceRelative(deps.cwd, resolved);
 
   let realCwd: string;
@@ -300,7 +314,8 @@ async function resolveWorkspaceFile(
   try {
     real = await realpath(resolved);
   } catch (cause) {
-    // ENOENT（含中途某一段不存在）走这里：路径不存在与"指向一个不存在的软链目标"是同一件事。
+    // ENOENT (including a missing intermediate segment) reaches this branch: a missing path and
+    // a symlink pointing to a missing target mean the same thing.
     throw sourceMissing(given, cause);
   }
   if (resolveWithinWorkspace(realCwd, real) === undefined) throw outsideWorkspace(given);
@@ -308,9 +323,9 @@ async function resolveWorkspaceFile(
 }
 
 /**
- * 读字节，**cap+1 探测**：端口的 `maxBytes` 是"超了就 `too_large`，不截断"，所以取 cap+1
- * 时，"恰好 cap 字节"（放行）与"超过 cap"（拒绝）可区分，且最坏也只多读一个字节。
- * 与 `files.grep` / `git.diff` 的同一惯用法。
+ * Read bytes with a **cap+1 probe**: the port's `maxBytes` means "return too_large when exceeded,
+ * do not truncate," so requesting cap+1 distinguishes "exactly cap bytes" (allow) from "over
+ * cap" (reject) while reading at most one extra byte. Same pattern as `files.grep` / `git.diff`.
  */
 async function readCappedBytes(
   deps: ArtifactPublishDeps,
@@ -324,7 +339,7 @@ async function readCappedBytes(
   } catch (cause) {
     if (isFileSystemPortError(cause)) {
       if (cause.code === "too_large") throw tooLarge(given, cap);
-      // not_found / is_directory / not_file 都是"这里没有一个可发布的普通文件"。
+      // not_found / is_directory / not_file all mean "there is no regular file to publish here."
       if (cause.code === "not_found" || cause.code === "is_directory" || cause.code === "not_file") {
         throw sourceMissing(given, cause);
       }
@@ -339,7 +354,7 @@ async function readCappedBytes(
   return result.content;
 }
 
-/** `artifact.markdown(id, content, opts)`：正文按 UTF-8 计字节，超限拒绝。 */
+/** `artifact.markdown(id, content, opts)`: measure body size in UTF-8 bytes and reject if over the limit. */
 function markdownPayload(request: ArtifactPublishRequest): ArtifactPayload {
   const content = request.content;
   if (typeof content !== "string") {
@@ -360,19 +375,20 @@ function markdownPayload(request: ArtifactPublishRequest): ArtifactPayload {
   return { kind: "text", text: content, contentType: "text/markdown" };
 }
 
-// ——————————————————————————————— 内部：写 store ———————————————————————————————
+// ——————————————————————————————— Internal: write to store ———————————————————————————————
 
-/** 已确认可用的发布落点：store 本体 + 会话作用域（见 {@link ArtifactPublishDeps}）。 */
+/** Confirmed publishing destination: store and session scope (see {@link ArtifactPublishDeps}). */
 interface ArtifactStoreTarget {
   readonly store: ToolArtifactStorePort;
   readonly sessionId: SessionId;
 }
 
 /**
- * 确认这次发布有落点，否则 `ArtifactStoreUnavailable`。**按 op 分别探测**：文件要二进制写
- * （`writeToolResultBinaryArtifact` 在端口上是可选方法），markdown 只要文本写。一个只有文本
- * 写的 store 因此能发 markdown、发不了文件——而"发不了"是一条命名的拒绝，不是把 PDF 当
- * UTF-8 塞进文本通道（那会静默毁掉字节）。
+ * Confirm that this publish operation has a destination, or return `ArtifactStoreUnavailable`.
+ * **Probe each op separately**: files require binary write (`writeToolResultBinaryArtifact` is
+ * optional on the port), while markdown needs only text write. A store with only text write can
+ * therefore publish markdown but not files. Return a named rejection instead of sending a PDF
+ * through the text channel as UTF-8, which would silently corrupt the bytes.
  */
 function requireArtifactStore(
   deps: ArtifactPublishDeps,
@@ -395,8 +411,9 @@ function requireArtifactStore(
   }
   const sessionId = deps.parentSessionId;
   if (sessionId === undefined || sessionId === "") {
-    // store 在场而会话 id 缺席只可能是接线错误（两者在生产装配里同进同出）。仍然报同一个
-    // 码：对脚本而言这是同一件事——这次发布没有落点。
+    // A present store with a missing session ID can only be a wiring error (production assembly
+    // always provides both together). Still report the same code: to the script, both mean this
+    // publish has no destination.
     throw new WorkflowError(
       "ArtifactStoreUnavailable",
       `artifact.${request.op}: cannot publish "${request.id}" because the artifact store has ` +
@@ -407,12 +424,13 @@ function requireArtifactStore(
 }
 
 /**
- * 写入 store。四个参数的约束如下：
- *   - `retention: "project"`——产物必须活过会话（中枢跨会话读运行历史里的产物）。
- *   - `toolName: "CreateWorkflow"`——发布的归属工具就是启动这个 run 的那一个。
- *   - `toolCallId: `${runId}:${siteId}@${ordinal}``——每一版一份字节，而 (run, 站点, 序号)
- *     恰好唯一标定一次发布（版本号由引擎在 dispatch 前算好，同一版重跑 = 同一个 ordinal）。
- *   - `sessionId` = 父会话。
+ * Write to the store. Constraints for the four arguments:
+ *   - `retention: "project"`: the artifact must outlive the session (the hub reads run-history artifacts across sessions).
+ *   - `toolName: "CreateWorkflow"`: the artifact belongs to the tool that started this run.
+ *   - `toolCallId: `${runId}:${siteId}@${ordinal}``: each version stores one set of bytes, and
+ *     (run, site, ordinal) uniquely identifies a publish (the engine computes the version before
+ *     dispatch; rerunning the same version uses the same ordinal).
+ *   - `sessionId` = parent session.
  */
 async function writePayload(
   target: ArtifactStoreTarget,
@@ -433,7 +451,7 @@ async function writePayload(
         contentType: payload.contentType,
       });
     }
-    // 二进制写的存在性已在 requireArtifactStore 里探测过（op === "file" 分支）。
+    // Binary-write support was already checked in requireArtifactStore (op === "file" branch).
     const writeBinary = target.store.writeToolResultBinaryArtifact;
     if (writeBinary === undefined) {
       throw new WorkflowError(
@@ -446,15 +464,16 @@ async function writePayload(
       ...common,
       content: payload.bytes,
       contentType: payload.contentType,
-      // 扩展名随字节一起交给 store：它读回时按落盘文件名回推类型，丢了扩展名就等于把一份
-      // .xlsx 读成 application/octet-stream。
+      // Pass the extension to the store with the bytes: it infers type from the persisted
+      // filename on readback, and losing the extension would make an .xlsx appear as
+      // application/octet-stream.
       ...(payload.extension === undefined ? {} : { extension: payload.extension }),
     });
   } catch (cause) {
     if (cause instanceof WorkflowError) throw cause;
-    // 写失败（磁盘满、权限、store 自身的错误）是一次**具体**的失败，与"没有 store"不是
-    // 同一件事，所以不复用 ArtifactStoreUnavailable：带上原因文本，让 journal 里的
-    // failure_json 说得出为什么。
+    // A write failure (disk full, permissions, store error) is a **specific** failure, unlike a
+    // missing store, so do not reuse ArtifactStoreUnavailable. Include the reason so the
+    // journal's failure_json explains what happened.
     throw new WorkflowError(
       "DriverError",
       `artifact.${request.op}: writing "${request.id}" v${request.version} to the artifact ` +
@@ -464,18 +483,20 @@ async function writePayload(
   }
 }
 
-// ——————————————————————————————— 纯辅助 ———————————————————————————————
+// ——————————————————————————————— Pure helpers ———————————————————————————————
 
-/** 产物在 store 里的归属工具名：发布是 `CreateWorkflow` 这次调用的产物。 */
+/** Owning tool name for the artifact in the store: it was published by this CreateWorkflow call. */
 const ARTIFACT_TOOL_NAME = "CreateWorkflow";
 
 /**
- * 扩展名 → MIME。表外的一律 `application/octet-stream`：
- * **不做内容嗅探**（magic bytes 会引入第二个判据，而两个判据迟早会给出两个答案）。
+ * Extension → MIME. Anything outside the table uses `application/octet-stream`:
+ * **do not sniff content** (magic bytes would introduce a second criterion, and the two
+ * criteria would eventually disagree).
  *
- * 为什么不复用 core 的 `inferAttachmentMimeFromPath`：那张表服务的是**模型输入附件**，
- * 兜底是 `text/plain`（把一切像文本的东西喂给模型是它想要的行为）。这里的消费者是 UI 的
- * 分派，兜底必须是"我不认识它，给下载卡"——同一个兜底在两处的正确值恰好相反。
+ * Why not reuse core's `inferAttachmentMimeFromPath`: that table is for **model input
+ * attachments**, with a `text/plain` fallback (feeding text-like files to the model is
+ * intentional). Here the consumer is UI dispatch, and the fallback must mean "unknown, show a
+ * download card"—the correct fallback is the opposite in these two places.
  */
 const EXTENSION_CONTENT_TYPES: Readonly<Record<string, string>> = {
   csv: "text/csv",
@@ -497,12 +518,12 @@ const EXTENSION_CONTENT_TYPES: Readonly<Record<string, string>> = {
   xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
 };
 
-/** 裸 MIME（`type/subtype`，不带参数）。见 {@link optionalContentType} 的理由。 */
+/** Bare MIME (`type/subtype`, no parameters). See {@link optionalContentType} for the rationale. */
 const CONTENT_TYPE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]*\/[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]*$/;
 
 /**
- * 文件名的扩展名（小写，不含点）。只认 `[a-z0-9]+`：`archive.tar.gz` 取 `gz`，
- * `Makefile`、`.gitignore`（点开头无后缀）与 `report.v2 final` 一律无扩展名。
+ * Filename extension (lowercase, without the dot). Accept only `[a-z0-9]+`: `archive.tar.gz`
+ * yields `gz`; `Makefile`, `.gitignore` (leading dot, no suffix), and `report.v2 final` have no extension.
  */
 function fileExtension(path: string): string | undefined {
   const name = basename(path);
@@ -537,14 +558,14 @@ function tooLarge(given: string, cap: number): WorkflowError {
   );
 }
 
-/** 实参形状的简短描述（只用于错误消息，不回显完整内容）。 */
+/** Short description of an argument shape (for error messages only; do not echo full contents). */
 function describeArg(value: unknown): string {
   if (value === undefined) return "undefined";
   if (value === null) return "null";
   return Array.isArray(value) ? "array" : typeof value;
 }
 
-/** 任意抛出物的单行文本（错误消息用）。 */
+/** One-line text for an arbitrary thrown value (for error messages). */
 function errorText(cause: unknown): string {
   return cause instanceof Error ? cause.message : String(cause);
 }

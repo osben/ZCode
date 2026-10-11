@@ -1,7 +1,7 @@
 import type { RequestVerificationReason } from "@zcode/shared";
 import type { GetAgentDefinitions, LoadAgentDefinitions } from "../subagent/definitions.js";
 import type { RuntimeInputPresentation, TurnExecutionModelFallbackReason } from "@zcode/contracts";
-/* eslint-disable max-lines -- Runtime 类型集中承载 core/runtime 对外结构，拆分需要单独迁移。 */
+/* eslint-disable max-lines -- Runtime types centrally define the public core/runtime structures; splitting them requires a separate migration. */
 import { PermissionService, ToolScheduler } from "./deps.js";
 import type {
   JsonSchema,
@@ -131,7 +131,7 @@ export interface AgentRuntimeConfig {
   planEnabled?: boolean;
   modelStreaming?: "off" | "on";
   streamingToolExecution?: "off" | "readOnly";
-  /** Session 创建时固定；缺省使用共享的模型上下文预算默认策略。 */
+  /** Fixed when the Session is created; defaults to the shared model-context budget policy. */
   modelContextBudgetStrategy?: "legacy" | "preflight-v1";
   maxTurns?: number;
   permissionTimeoutMs?: number;
@@ -142,7 +142,7 @@ export interface AgentRuntimeConfig {
   };
   subagents?: {
     enabled?: boolean;
-    // foreground subagent 没有任何 child 事件的最大静默时间；默认对齐模型流 idle timeout。
+    // Maximum idle time for a foreground subagent with no child events; defaults to the model-stream idle timeout.
     inactivityTimeoutMs?: number;
     autoBackgroundMs?: number;
     backgroundBashMaxMs?: number;
@@ -155,26 +155,27 @@ export interface AgentRuntimeConfig {
   toolDisallowlist?: readonly string[];
   /**
    * Defaults to main. Explore child runtimes use the explore toolset to opt into
-   * 只读探索工具白名单；是否包含 direct Glob/Grep 由 embedded search branch 决定。
-   * 主模式下 allowlist 仅做直接交集过滤，explore 子运行时还会补齐默认只读白名单。
+   * Read-only exploration tool allowlist; whether direct Glob/Grep are included is determined by
+   * the embedded search branch. In main mode, allowlist only filters by direct intersection;
+   * explore child runtimes also add the default read-only allowlist.
    */
   toolset?: "main" | "explore";
   toolConcurrency?: { maxConcurrency?: number };
   runtimeFeatures?: {
     /**
-     * 是否注册 node_repl 工具（js）。
-     * 由 bootstrap 根据 ZCode 官方插件启停推导，不由普通插件 manifest 自声明。
+     * Whether to register the node_repl tool (js).
+     * Derived by bootstrap from whether the official ZCode plugin is enabled; ordinary plugin manifests cannot declare it.
      */
     nodeRepl?: boolean;
     /**
-     * 是否允许 node_repl 注入 agent.browsers。还需要宿主提供 browserControlPort。
+     * Whether node_repl may inject agent.browsers. The host must also provide browserControlPort.
      */
     browserUse?: boolean;
-    /** 是否把 CUA broker 凭据注入共享 node_repl；不代表注册独立 CUA MCP。 */
+    /** Whether to inject CUA broker credentials into shared node_repl; this does not register a separate CUA MCP. */
     computerUse?: boolean;
     /**
-     * 官方 browser-use plugin 的 docs 资产目录。由 bootstrap 从 plugin metadata.rootPath 推导，
-     * 不属于 plugin manifest schema。
+     * Docs asset directory for the official browser-use plugin. Derived by bootstrap from
+     * plugin metadata.rootPath; not part of the plugin manifest schema.
      */
     browserDocumentationRoot?: string;
   };
@@ -189,18 +190,18 @@ export interface AgentRuntimeConfig {
     trustedOfficialCuaServerNames?: readonly string[];
   };
   /**
-   * Session 冻结的 Plugin 身份 catalog。
-   * 由 bootstrap 在 App 创建时从 plugin loader 结果构建；runtime 只读，
-   * 用于 turn start 解析 `plugin://` 引用并与 live inventory 取交集。
+   * Plugin identity catalog frozen by the Session.
+   * Built by bootstrap from plugin loader results when the App is created; runtime reads it only
+   * to resolve `plugin://` references at turn start and intersect them with the live inventory.
    */
   pluginReferenceCatalog?: PluginReferenceCatalog;
   hooks?: HooksRuntimeConfig;
   bashShellSelection?: ExecutionShellSelection | undefined;
   embeddedSearchBackend?: EmbeddedSearchBackend;
-  /** 根 Session runtime 创建时固定；false 只关闭 Bash 的 bfs/ugrep prelude。 */
+  /** Fixed when the root Session runtime is created; false disables only the Bash bfs/ugrep prelude. */
   nativeSearchEnhancementsEnabled?: boolean;
   memory?: MemoryRuntimeConfig;
-  /** 历史恢复允许未绑定；只有完整选择才能创建本轮执行 Model。 */
+  /** Historical restore may be unbound; only a complete selection can create this turn's execution Model. */
   modelSelection?: ModelSelection;
   titleGeneration?: {
     enabled?: boolean;
@@ -210,27 +211,27 @@ export interface AgentRuntimeConfig {
   parentSessionId?: SessionId;
   taskType?: SessionTaskType;
   /**
-   * 动态工作流灰度门（docs/dynamic-workflow/launch.md「Gray release」）：Host 判定后经
-   * ZCode Protocol 下发，runtime 只消费。**缺席即开启**（进程内嵌入方靠这个极性）；
-   * 独立 CLI 的 TUI 与 headless 按 --workflow-mode 显式传 true/false（缺省 disabled，DWG-04），
-   * workflow_child 继承父配置。
-   * false 会关闭十个工作流工具，不改变其他工具的注册策略。
+   * Dynamic-workflow gradual rollout gate (docs/dynamic-workflow/launch.md, “Gray release”): Host decides and sends it through
+   * ZCode Protocol; runtime only consumes it. **Absent means enabled** (this polarity is used by in-process embedders);
+   * standalone CLI TUI and headless modes explicitly pass true/false through --workflow-mode (default disabled, DWG-04),
+   * and workflow_child inherits the parent configuration.
+   * false disables the ten workflow tools without changing registration policy for other tools.
    */
   dynamicWorkflowEnabled?: boolean;
   /**
-   * 灰度 mode `onDemand`（docs/dynamic-workflow/launch.md「On demand: activation」）：十个工作流
-   * 工具推迟到会话首次 `/workflow`（或 GUI 对本会话 run 的 Resume / 配置 / 直接启动、冷恢复时记录里
-   * 已有工作流）才注册。**缺席即立刻注册**，与 dynamicWorkflowEnabled 同极性；只有协议服务端在
-   * Host 下发的 mode 为 onDemand 时写 true。激活状态归 runtime（dynamicWorkflowToolsActivated）。
+   * Gradual rollout mode `onDemand` (docs/dynamic-workflow/launch.md, “On demand: activation”): defer registration of the ten workflow
+   * tools until the session's first `/workflow` (or a GUI Resume / Configure / direct start for this session, or cold restore when a workflow already exists).
+   * **Absent means register immediately**, matching the polarity of dynamicWorkflowEnabled; only the protocol server writes true when the Host sends mode onDemand.
+   * Activation state belongs to runtime (`dynamicWorkflowToolsActivated`).
    */
   dynamicWorkflowToolsOnDemand?: boolean;
 
   // Context Builder config
   systemPrompt?: string;
   /**
-   * 动态工作流子代理的身份输入：在场即让
-   * context builder 走「基座 + 工作流子代理契约 + persona 叠加」路径，而不是把 persona 当
-   * `systemPrompt` 整段替换。与 `systemPrompt` 互斥（builder 抛错）。
+   * Identity input for a dynamic-workflow subagent. When present, the context builder uses the
+   * "base + workflow subagent contract + persona overlay" path instead of replacing the entire
+   * `systemPrompt` with the persona. Mutually exclusive with `systemPrompt` (the builder throws).
    */
   workflowActor?: { name?: string; persona?: string };
   /**
@@ -248,11 +249,11 @@ export interface AgentRuntimeConfig {
   agentName?: string; // Default: "zcode-agent"
   workingDirectory?: string; // Required for context builder
   /**
-   * 调用方传入的实际工作区路径表示，用于 session 持久化与本地身份恢复。
-   * 文件和命令执行仍只使用规范化后的 workingDirectory。
+   * Actual workspace path representation supplied by the caller, used for session persistence and
+   * local identity restoration. File and command execution still use only normalized workingDirectory.
    */
   workspacePath?: string;
-  /** 仅用于持久化隔离；文件与命令执行仍使用 workingDirectory。 */
+  /** Used only for persistence isolation; file and command execution still use workingDirectory. */
   workspaceIdentity?: WorkspaceId;
   envInfo?: EnvInfo; // Optional, will be auto-detected if not provided
   currentDate?: string; // YYYY-MM-DD, resolved by adapter when omitted
@@ -262,14 +263,15 @@ export interface AgentRuntimeConfig {
 }
 
 export interface ResumeSessionOptions {
-  /** 中止 cold-resume admission wait；不会伪造 Workspace Hook review decision。 */
+  /** Abort the cold-resume admission wait; does not fabricate a Workspace Hook review decision. */
   abortSignal?: AbortSignal;
   traceContext?: TraceContext;
-  /** 冷恢复调用方提供的调用级已物化结果；不进入生命周期缓存，修补后按返回值重新读取。 */
+  /** Call-level materialized result supplied by the cold-restore caller; not stored in the lifecycle cache, and reread from the return value after patching. */
   persistedMessages?: MessageWithParts[];
   /**
-   * 本次 invocation 已解析出的 mode。显式 --mode 与 headless 默认 yolo 都属于调用级覆盖，
-   * 必须高于历史 session mode；交互式 resume 未指定时保持 undefined，让历史 mode 生效。
+   * Mode resolved for this invocation. Explicit --mode and headless's default yolo are call-level
+   * overrides and must take precedence over historical session mode. For interactive resume with
+   * no explicit mode, leave undefined so the historical mode applies.
    */
   modeOverride?: CollaborationMode;
 }
@@ -312,7 +314,7 @@ export interface EnqueueSubagentMessageInput {
 export interface MemoryRuntimeConfig {
   cliStorageRoot?: string;
   enabled?: boolean;
-  /** 是否调度成功 Main turn 后的自动 Extraction；缺省按 true 处理。 */
+  /** Whether to schedule automatic Extraction after a successful Main turn; defaults to true. */
   extractionEnabled?: boolean;
   storageRoot?: string;
   use?: boolean;
@@ -320,9 +322,9 @@ export interface MemoryRuntimeConfig {
 }
 
 export interface AgentRuntimeDeps {
-  /** 只读目录入口；必须同步读取内存，不在请求收集阶段进行 I/O。 */
+  /** Read-only catalog access; read synchronously from memory and do not perform I/O while collecting a request. */
   getAgentDefinitions?: GetAgentDefinitions;
-  /** 新父上下文读取一次；子执行不得继承此加载器。 */
+  /** Read once for a new parent context; child executions must not inherit this loader. */
   loadAgentDefinitions?: LoadAgentDefinitions;
   agentTelemetry?: AgentExecutionTelemetryPort;
   agentTelemetryCausation?: AgentTelemetryCausation;
@@ -332,7 +334,7 @@ export interface AgentRuntimeDeps {
   sessionStore?: SessionStorePort;
   sessionMailboxPort?: SessionMailboxPort;
   modelFactory: RuntimeModelFactory;
-  /** 可选宿主能力：解析未来执行的显式意图；不用于修改已冻结 Model。 */
+  /** Optional host capability: resolve explicit intent for future execution; does not modify the frozen Model. */
   resolveEffectiveModelSelection?: (selection: ModelSelection) => EffectiveModelSelectionResult;
   modelIoDir?: string;
   providerRuntimeHeadersPort?: ProviderRuntimeHeadersPort;
@@ -345,7 +347,7 @@ export interface AgentRuntimeDeps {
   workspaceHookAdmission?: WorkspaceHookRuntimeAdmissionPort;
   workspaceHookSnapshot?: WorkspaceHookBundleSnapshot;
   executionPort?: ExecutionPort;
-  /** browser-use 控制端口；透传到 ToolExecutionContext.browserControlPort 供 node_repl 使用。 */
+  /** Browser Use control port, passed to ToolExecutionContext.browserControlPort for node_repl. */
   browserControlPort?: BrowserControlPort;
   fileSystemPort?: FileSystemPort;
   httpClientPort?: HttpClientPort;
@@ -355,30 +357,32 @@ export interface AgentRuntimeDeps {
   mcpPort?: McpPort;
   subagentPort?: SubagentPort;
   coordinatorResponsePort?: CoordinatorResponsePort;
-  /** 工作流 actor 提交终态结果的端口；存在即作为 submit_result 工具的注册门。 */
+  /** Port for workflow actors to submit terminal results; when present, gates registration of the submit_result tool. */
   workflowSubmitPort?: WorkflowSubmitPort;
   /**
-   * mono 子代理的 typed `submit_result`：在场时注册的工具声明是 `{ result: <这份 schema> }` 而非
-   * 任意 JSON。只改
-   * provider 可见的声明与 strict 资格；handler、权限、终止语义与 workflowSubmitPort 单独在场时相同。
-   * 没有端口时忽略（端口才是注册门）。
+   * Typed `submit_result` for a mono subagent: when present, the registered tool declaration is
+   * `{ result: <this schema> }` instead of arbitrary JSON. This changes only the provider-visible
+   * declaration and strict eligibility; handler, permissions, and termination semantics match the
+   * workflowSubmitPort-only case. Ignored when the port is absent (the port is the registration gate).
    */
   workflowSubmitSchema?: JsonSchema;
   /**
-   * 工作流 actor 升级阻塞问题的端口；存在即作为 escalate 工具的注册门。与 workflowSubmitPort 同一注入方式与同一条门。
+   * Port for workflow actors to escalate blocking questions; when present, gates registration of
+   * the escalate tool. Injected in the same way as workflowSubmitPort and uses the same gate.
    */
   workflowEscalatePort?: WorkflowEscalatePort;
   /**
-   * 模型请求的进程级准入端口：在场时
-   * 每次模型请求尝试先经它拿票据；沿调用上下文到 adapter。dwf actor runtime 拿 driver 的 per-actor
-   * 包装（受闸门约束），主 runtime 拿治理器的 observer（只喂信号）；缺席即不设闸门。
+   * Process-level admission port for model requests. When present, every model request attempt
+   * first obtains a permit here, which flows through call context to the adapter. The dwf actor
+   * runtime gets a per-actor driver wrapper (gated), while the main runtime gets the coordinator's
+   * observer (signals only). Absence means no gate.
    */
   modelRequestAdmission?: ModelRequestAdmission;
   workflowPort?: WorkflowPort;
-  /** workflow run 的提交/观察/取消端口；存在即 CreateWorkflow 真启动，缺席则回占位诊断。 */
+  /** Submit/observe/cancel port for workflow runs; when present, CreateWorkflow launches for real, otherwise it returns a placeholder diagnostic. */
   dynamicWorkflowRunPort?: DynamicWorkflowRunPort;
   dynamicWorkflowSnippetPort?: DynamicWorkflowSnippetPort;
-  /** 模型目录端口；缺席则 ListModels 报能力缺席，CreateWorkflow 的 subagent_model 被拒。 */
+  /** Model-catalog port; when absent, ListModels reports missing capability and CreateWorkflow rejects subagent_model. */
   modelCatalogPort?: ModelCatalogPort;
   runtimeTaskRegistry?: RuntimeTaskRegistry;
   artifactStore?: ToolArtifactStorePort;
@@ -397,18 +401,19 @@ export interface AgentRuntimeDeps {
 
 export interface RuntimeModelFactoryInput {
   selection: ModelSelection;
-  /** 只绑定到本次创建的 Model，不进入公共 ModelRequest 或 Session 持久化。 */
+  /** Bound only to the Model created for this request; not included in public ModelRequest or Session persistence. */
   requestDependencies?: ModelRequestDependencies;
 }
 
 export type RuntimeModelFactory = (input: RuntimeModelFactoryInput) => Model;
 
 /**
- * 面向协议客户端的 provider runtime headers 端口。
+ * Provider runtime headers port for protocol clients.
  *
- * 入参的 sessionId 必须能路由到客户端持有的会话。child runtime 的账本身份不能
- * 直接用于客户端请求，否则客户端无法找到会话并返回响应，首个模型请求会一直等待。
- * 子 runtime 通过 deriveChildClientPorts 派生端口，将请求路由到父端口绑定的客户端会话。
+ * The input sessionId must route to a session held by the client. A child runtime's ledger identity
+ * cannot be used directly for client requests: the client could not find the session or return a
+ * response, leaving the first model request waiting indefinitely. Child runtimes derive ports
+ * through deriveChildClientPorts to route requests to the client session bound to the parent port.
  */
 export interface ProviderRuntimeHeadersPort {
   shouldRefreshBeforeModelRequest?(input: { providerId: string; modelId: string }): boolean;
@@ -439,11 +444,11 @@ export interface TurnResult {
 }
 
 /**
- * 标准 Submission Selection 的执行期约束。它不携带 Provider/Model 静态事实，
- * 也不会成为 Session Selection 的第二份来源。
+ * Execution-time constraints for the standard Submission Selection. It carries no static
+ * Provider/Model facts and is not a second source for Session Selection.
  */
 export interface ModelExecutionContext {
-  /** 仅当前 Turn 跳过自动 Project Memory Extraction；不修改 Session Memory 配置。 */
+  /** Skip automatic Project Memory Extraction for this Turn only; does not modify Session Memory config. */
   memoryExtraction?: "skip";
   selectionScope: "execution";
   requestDependencies?: ModelRequestDependencies;
@@ -452,12 +457,12 @@ export interface ModelExecutionContext {
     background: "deny";
   };
   /**
-   * 本次执行的 Selection 失败时，同一 Turn 内退回原模型继续跑完（保留已提交历史，只替换后续请求的
-   * 模型），而不是让整轮直接失败。触发条件必须由发起方声明：`providerId` 限定只匹配本轮 execution
-   * Selection 指向的 provider，`rules` 按声明顺序匹配、首个命中决定退回原因，`providerErrorCode` 缺省
-   * 表示该 provider 的任何失败。core 不按 provider id、模型名或错误文案硬编码。
-   * 退回目标先取 `target`（发起方抽卡时的提交选择，即会话原模型），再取会话常驻 Session Selection；
-   * 两者都解析不出时无处可退，按真实错误失败。
+   * If this execution's Selection fails, fall back to the original model within the same Turn and continue (preserving committed history and replacing only the model for subsequent requests),
+   * rather than failing the whole turn. The caller must declare the trigger conditions: `providerId` restricts matching to the provider selected by this execution,
+   * `rules` are checked in declaration order and the first match determines the fallback reason, and an omitted `providerErrorCode` means any failure from that provider.
+   * Core does not hard-code provider IDs, model names, or error messages.
+   * Resolve the fallback target from `target` first (the committed selection at draw time, meaning the session's original model), then from the persistent Session Selection;
+   * if neither resolves, there is no fallback and the real error is returned.
    */
   selectionFallback?: {
     providerId: string;
@@ -478,8 +483,9 @@ export interface ExecuteTurnOptionsBase {
   continueActiveTargetAfterTurn?: boolean;
   displayInput?: string;
   /**
-   * `input` 从此下标起是调用方追加的引擎文本（dwf ask 尾注 / nudge）。只进 TurnStarted 与用户
-   * 消息 metadata 供 GUI 折叠；模型历史、持久 text part 仍是全文（amend-resume 的转录复制要全文）。
+   * From this index onward, `input` is engine text appended by the caller (dwf ask suffix/nudge).
+   * It is recorded only in TurnStarted and user-message metadata for GUI collapsing; model history
+   * and persisted text parts retain the full text (amend-resume transcript copying needs it all).
    */
   epilogueStart?: number;
   inputId?: string;
@@ -490,20 +496,20 @@ export interface ExecuteTurnOptionsBase {
   inputPresentation?: RuntimeInputPresentation;
   inputVisibility?: MessageVisibility;
   originMeta?: BackgroundResultOriginMeta;
-  /** 仅用于冻结 background notification batch 的整批因果来源，不用于展示。 */
+  /** Used only to freeze the causal source for the entire background notification batch; not for display. */
   backgroundSource?: BackgroundResultOriginMeta["backgroundSource"];
-  /** 由 runtime command drain 计算，表示本轮消费过 subagent 后台结果。 */
+  /** Computed by runtime command drain; indicates this turn consumed a subagent background result. */
   backgroundSubagentResultConsumed?: boolean;
-  /** 由 runtime command drain 计算，表示本轮消费过 dynamic-workflow run 的通知（完成 / 提问）。 */
+  /** Computed by runtime command drain; indicates this turn consumed a dynamic-workflow run notification (completion/question). */
   workflowResultConsumed?: boolean;
   recordedInputMessageId?: MessageId;
   skipInputRecord?: boolean;
   skipUserPromptSubmitHooks?: boolean;
   targetId?: string;
-  /** 仅当前 turn 对 provider 隐藏的工具；不修改 session runtime 的持久工具面。 */
+  /** Tools hidden from the provider for this turn only; does not modify the session runtime's persistent tool surface. */
   toolDisallowlist?: readonly string[];
   traceContext?: TraceContext;
-  /** 当前 Submission 的 Selection 只用于本次执行，并可绑定逐请求依赖。 */
+  /** Selection for the current Submission applies only to this execution and may bind per-request dependencies. */
   modelExecution?: ModelExecutionContext;
 }
 
@@ -511,18 +517,18 @@ export type ExecuteTurnOptions = ExecuteTurnOptionsBase &
   import("@zcode/contracts").TurnBackgroundAttribution;
 
 /**
- * Core prompt admission 的调用参数。Bootstrap 只提供输入事实和期望投递语义，
- * start/queue 的选择由持有该 session 状态的 AgentRuntime 原子完成。
+ * Call parameters for Core prompt admission. Bootstrap supplies input facts and desired delivery
+ * semantics only; AgentRuntime, which owns the session state, atomically chooses start or queue.
  */
 export type PromptAdmissionOptions = ExecuteTurnOptions & {
   commandKind?: "sendText" | "sendGoalCommand" | "compact";
   delivery?: "auto" | "start_turn" | "steer_active_turn";
   expectedTurnId?: TurnId;
-  /** busy 时的产品队列语义；附件或不可 steer 时由 Core 回退 queue。 */
+  /** Product queue semantics when busy; Core falls back to queue for attachments or non-steerable input. */
   queueDelivery?: "guide" | "queue";
-  /** 强制进入 FIFO；用于携带只能在未来独立 turn 安装的临时运行模型。 */
+  /** Force FIFO admission; used for temporary run models that can only be installed in a future independent turn. */
   requireQueue?: boolean;
-  /** queue promotion 等内部调用要求 admission 必须 idle，否则直接拒绝。 */
+  /** Internal calls such as queue promotion require idle admission; otherwise reject immediately. */
   requireIdle?: boolean;
 };
 
@@ -577,7 +583,7 @@ export type AcquireForegroundPromotionLeaseResult =
 
 export interface ActiveTurnInfo {
   kind: ActiveTurnKind;
-  /** 本轮的 inputId（TurnStarted.inputId 的同一个值）；workflow run 的发起锚点从这里取。 */
+  /** This turn's inputId (same value as TurnStarted.inputId); workflow runs use it as their launch anchor. */
   inputId?: string;
   queueLength: number;
   steerable: boolean;
@@ -666,10 +672,10 @@ export interface WorkspaceForkResult {
   response: string;
 }
 
-/** V4 resolver 已固定的目标 product turn raw transcript segment。 */
+/** Raw transcript segment for the target product turn fixed by the V4 resolver. */
 export type StableConversationForkTarget = StableForkTargetMetadata;
 
-/** 显式 none 或完整 fork 点 goal/verifier 快照；undefined 不属于新数据。 */
+/** Explicit none or complete goal/verifier snapshot at a fork point; undefined is not valid new data. */
 export type StableConversationForkGoalBoundary = StableForkGoalBoundaryMetadata;
 
 export type StableConversationForkChildMetadata = ForkChildSessionMetadata;
@@ -684,7 +690,7 @@ export interface StableConversationForkOptions {
   traceContext?: TraceContext;
 }
 
-/** 从父会话稳定落盘边界创建隐藏副屏 child；不复制 goal/queue/阻塞运行态。 */
+/** Create a hidden side-panel child from a stable persisted boundary in the parent session; do not copy goal/queue/blocked runtime state. */
 export interface SelectionSideChatCreateOptions {
   modelSelection?: ModelSelection;
   sourceCommandId: string;
@@ -746,9 +752,9 @@ export interface CompactTimelineContext {
 
 export interface ResumeSessionResult extends SessionHistoryHydrationResult {
   directory: string;
-  /** 当前恢复候选：允许仅有有效模型身份供界面补选档位，不代表 Runtime 已绑定。 */
+  /** Current restore candidate: a valid model identity alone is enough for the UI to select a tier; this does not mean Runtime is bound. */
   modelSelection?: ModelSelection;
-  /** resume 是否写回了当前 materialization 无法完整反映的 compact 修补事实。 */
+  /** Whether resume persisted compact repair facts that the current materialization cannot fully represent. */
   persistedMessagesReloadRequired: boolean;
   readFileStateRestoredCount: number;
   readFileStateSkippedRangeReadCount: number;
@@ -768,7 +774,7 @@ export interface ExecuteToolsOptions {
   offPeakTurn?: boolean;
   signal?: AbortSignal;
   traceContext?: TraceContext;
-  /** 仅透传给当前 turn 同步等待的 Agent child。 */
+  /** Passed only to the Agent child synchronously awaited by the current turn. */
   subagentModelOverride?: import("@zcode/contracts").SubagentRunOptions["modelOverride"];
   model?: Model;
   onBatchStart?: (toolCallIds: string[]) => Promise<void>;
@@ -804,8 +810,8 @@ export interface PreparedImageData {
 
 export interface ActiveTurnSteeringState {
   kind: ActiveTurnKind;
-  // active turn 被 Stop 时，goal reminder 不能插进尚未闭合的 tool results。
-  // deferral 只在 regular model/tool loop 内打开，退出 loop 时先关闭再物化 pending。
+  // When Stop aborts an active turn, a goal reminder must not be inserted before tool results are closed.
+  // Deferral is opened only inside the regular model/tool loop; close it and materialize pending reminders when leaving the loop.
   goalStateChangeReminderDeferralOpen: boolean;
   pendingGoalStateChangeReminder?: {
     text: string;
@@ -814,7 +820,7 @@ export interface ActiveTurnSteeringState {
   steerable: boolean;
   traceContext: TraceContext;
   turnId: TurnId;
-  /** 本轮的 inputId（与 TurnStarted.inputId 同源）；regular turn 在 beginActiveTurn 时记下。 */
+  /** This turn's inputId (same source as TurnStarted.inputId); recorded by beginActiveTurn for regular turns. */
   inputId?: string;
 }
 
@@ -826,14 +832,14 @@ export interface ActiveTurnStartReservation {
 
 export interface DrainedPendingInputDiagnostics {
   injectedMessageIds: MessageId[];
-  /** 行内 Guide 本身携带的原子 Submission 配置；由下一次 model-step 边界消费。 */
+  /** Atomic Submission config carried by the inline Guide itself; consumed at the next model-step boundary. */
   intent?: TurnInputIntentMetadata;
   latestMessageId: MessageId | undefined;
   pendingInputIds: string[];
   queryIds?: QueryId[];
-  /** 本次 drain 已提交 canonical history 的不可变 entries，供 turn-local query 同步推进。 */
+  /** Immutable entries from canonical history committed by this drain, used to advance the turn-local query in sync. */
   runtimeEntries: readonly RuntimeMessageEntry[];
-  /** 本次 drain 注入的输入附带的工具隐藏列表，下一次 provider 请求必须继续生效。 */
+  /** Tool-hidden list attached to input injected by this drain; it must remain effective for the next provider request. */
   toolDisallowlist?: readonly string[];
 }
 
@@ -857,7 +863,7 @@ export interface RunModelTextRequestOptions {
   maxOutputTokens?: number;
   latestRealUserMessageIndex?: number;
   messages: ModelInputMessage[];
-  /** 与 messages 按索引对应的 canonical 来源，仅用于本地用量统计。 */
+  /** Canonical sources aligned by index with messages; used only for local usage accounting. */
   sourceEntries?: readonly (RuntimeMessageEntry | undefined)[];
   model: Model;
   onStreamSnapshot?: (snapshot: RuntimeModelStreamSnapshot) => void;

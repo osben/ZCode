@@ -35,7 +35,7 @@ async function cleanupCreatedArtifacts(paths: readonly string[]): Promise<void> 
     try {
       await rm(path, { force: true });
     } catch {
-      // 清理失败不阻断主流程
+      // Cleanup failures do not block the main flow.
     }
   }
 }
@@ -142,8 +142,8 @@ export async function importClaudeNativeSessions(params: {
             workspaceIdentity: targetWorkspaceIdentity ?? meta.workspaceIdentity,
           },
           searchableText: buildSearchableTextFromMessages(sessionFile.messages),
-          // 已导入会话被删除/归档后再次导入，不能继承旧行隐藏状态，
-          // 否则导入结果成功但 active 列表查不到对应会话。
+          // If an imported session is deleted/archived and later imported again, do not inherit the old row's hidden state;
+          // otherwise, the import succeeds but the session cannot be found in the active list.
           archived: false,
           deleted: false,
         });

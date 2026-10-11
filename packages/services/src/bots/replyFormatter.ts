@@ -1,4 +1,4 @@
-/* eslint-disable max-lines -- Bot bot reply formatter 集中维护第三方消息的文本颗粒度、工具摘要和权限摘要，避免 provider 间文案分叉。 */
+/* eslint-disable max-lines -- Keep third-party message text chunking, tool summaries, and permission summaries for Bot replies together to prevent copy from diverging across providers. */
 import type {
   ZCodePermissionRequest,
   ZCodeStreamEvent,
@@ -150,7 +150,7 @@ function truncateMiddleText(value: string, maxLength = MAX_COMMAND_FIELD_LENGTH)
 }
 
 function formatMarkdownInlineCode(value: string): string {
-  // Telegram Markdown 的 inline code 需要转义反斜杠和反引号，否则路径/命令里的特殊字符会导致文本退回裸显示。
+  // Telegram Markdown inline code must escape backslashes and backticks; otherwise special characters in paths/commands make the text fall back to plain display.
   return `\`${value.replace(/\\/gu, "\\\\").replace(/`/gu, "\\`")}\``;
 }
 
@@ -284,8 +284,8 @@ function formatEditPermissionKindLabel(
   if (/\b(update|updating|updated)\b/u.test(normalizedText)) {
     return t(locale, "editUpdating");
   }
-  // Bugfix: edit 权限标题直接透传 ZCode Agent 的 "Edit <path>" 时，第三方消息无法像 UI kindLabel 一样区分写入/更新/删除。
-  // 这里至少把泛化的 Edit 换成 edit kind label，具体操作能从 raw/fileChange 推断时再细分。
+  // Bug fix: when an edit permission title passes through the ZCode Agent's "Edit <path>", third-party messages cannot distinguish write/update/delete like the UI kindLabel.
+  // At minimum, replace the generic Edit with the edit kind label; refine the operation when it can be inferred from raw/fileChange.
   return t(locale, "editEditing");
 }
 
@@ -345,8 +345,8 @@ export function extractBotAssistantResponseMessages(
     return { messages: [], rest: normalizedBuffer };
   }
 
-  // Bugfix: Bot channel 的 provider chunk 常按词或子词到达，非终态时必须继续留在
-  // assistantReplyBuffer 里合并；真正的发送边界由 tool_call / task_complete 等 force flush 决定。
+  // Bug fix: provider chunks on Bot channels often arrive by word or subword. Keep merging them in
+  // assistantReplyBuffer until a terminal state; tool_call / task_complete and other force flushes determine the actual send boundary.
   return {
     messages: splitLongReplyText(normalizedBuffer),
     rest: "",

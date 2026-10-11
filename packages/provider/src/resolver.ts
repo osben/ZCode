@@ -1,4 +1,4 @@
-/* oxlint-disable eslint(max-lines) -- Resolver 同时产出 Settings 分层结果与唯一 Registry 完整类型证明。 */
+/* oxlint-disable eslint(max-lines) -- Resolver produces both layered Settings results and the sole proof of a complete Registry type. */
 import type { z } from "zod";
 import type { completeModelConfigDataSchema } from "@zcode/shared/model-config";
 import type {
@@ -217,7 +217,7 @@ export class ProviderConfigResolver {
     for (const providerId of resolveProviderOrder(input, effectiveProviders)) {
       const rule = effectiveProviders.getRule(providerId)!;
       const { config, providerName } = rule;
-      // 账号不再支持总禁用；旧覆盖值不能让无开关的账号永久失效，其他资格仍正常校验。
+      // Accounts no longer support global disable; an old overlay must not permanently disable an account with no toggle, while other eligibility checks still apply.
       const enabled = config.access?.type === "zhipu-account" || (rule.enabled ?? true);
       const providerPath = ["providers", providerId];
       const registryProviderResult = createRegistryProviderConfig(config, providerPath);
@@ -248,8 +248,8 @@ export class ProviderConfigResolver {
       );
       const accessEntitled =
         config.access?.type !== "zhipu-account" || config.access.entitled === true;
-      // 账号权益与当前连接是两件事。非当前账号仍保留设置展示，不向普通 Registry 发布模型。
-      // Off-Peak 不定义 current，沿用其独立调度、隐藏和鉴权规则。
+      // Account entitlement and the current connection are separate facts. Keep non-current accounts visible in Settings, but do not publish their models to the regular Registry.
+      // Off-Peak does not define current and keeps its independent scheduling, visibility, and authentication rules.
       const accountCurrent = input.accountStates?.[providerId]?.current !== false;
       const providerExecutable =
         enabled && accessEntitled && accountCurrent && providerIssues.length === 0;

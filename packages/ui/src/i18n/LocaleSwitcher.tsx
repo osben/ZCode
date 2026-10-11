@@ -12,7 +12,7 @@ const LOCALE_LABELS: Record<Locale, string> = {
 };
 
 /**
- * 语言切换按钮 —— 点击循环切换语言
+ * Language switch button — clicking cycles through the available languages.
  */
 export function LocaleSwitcher() {
   const { intl, locale, setLocale } = useZCodeIntl();

@@ -54,9 +54,10 @@ function errorMessage(error: unknown): string {
 }
 
 /**
- * 全局指令编辑器状态的唯一所有者（loaded + draft + 冲突）。
- * 事实源是目标主机磁盘上的 ~/.zcode/AGENTS.md；这里不缓存、不广播。
- * 目标主机由调用方传入的 target 决定：本机走窗口级 base Host，远端走 workspace 连接。
+ * The sole owner of global instruction editor state (loaded content, draft, and conflicts).
+ * The source of truth is ~/.zcode/AGENTS.md on the target host; this hook does not cache or broadcast it.
+ * The caller-provided target determines the host: local edits use the window-level base Host,
+ * while remote edits use the workspace connection.
  */
 export function useUserInstructionsEditor(
   target: UserInstructionsHostTarget,
@@ -71,13 +72,14 @@ export function useUserInstructionsEditor(
   );
   const isRemote = isRemoteUserInstructionsTarget(target);
   const hostKey = getUserInstructionsHostKey(target);
-  // 远端目标必须等 resolution 也确认是远端且连接就绪；否则拿到的是当前 context 服务，
-  // 可能是本机 Host，会静默编辑本机文件。
+  // A remote target must be confirmed as remote by resolution and have a ready connection.
+  // Otherwise, the current context service could be the local Host and silently edit a local file.
   const rpcReady = isRemote ? resolution.isRemoteTarget && resolution.rpcReady : true;
   const service = isRemote
     ? resolution.services.userInstructionsService
     : baseServices.userInstructionsService;
-  // 同一主机重连会替换服务实例；通过 ref 读取最新实例，避免因实例变化重载并丢弃草稿。
+  // Reconnecting to the same host replaces the service instance. Read the latest instance through
+  // a ref so that the instance change does not reload the file and discard the draft.
   const serviceRef = useRef(service);
   useLayoutEffect(() => {
     serviceRef.current = service;
@@ -91,7 +93,8 @@ export function useUserInstructionsEditor(
   const [claudeImportAvailable, setClaudeImportAvailable] = useState(false);
   const [conflict, setConflict] = useState<{ currentRevision: string | null } | null>(null);
   const loadVersionRef = useRef(0);
-  // 仅在读取 RPC 成功返回后记录；失败时保持 null，连接恢复后可自动重试。
+  // Record this only after the read RPC succeeds. Keep it null on failure so it can retry
+  // automatically when the connection recovers.
   const loadedHostKeyRef = useRef<string | null>(null);
 
   const resetForHost = useCallback(() => {
@@ -145,7 +148,8 @@ export function useUserInstructionsEditor(
 
   useEffect(() => {
     if (loadedHostKeyRef.current === hostKey) {
-      // 同一主机重连（remoteSessionId / 服务实例变化）不重载，草稿保持。
+      // Reconnecting to the same host (remoteSessionId or service instance change) does not reload;
+      // preserve the draft.
       return;
     }
     resetForHost();
@@ -156,7 +160,8 @@ export function useUserInstructionsEditor(
     void load(hostKey);
   }, [hostKey, load, resetForHost, rpcReady]);
 
-  // 展示状态由 rpcReady 派生：断线即使已加载过文件也显示 waiting，草稿仍保留在 state 中。
+  // Derive the display state from rpcReady: show waiting while disconnected, even if the file was
+  // loaded earlier. Keep the draft in state.
   const effectiveStatus = resolveUserInstructionsEditorStatus({ status, rpcReady });
   const dirty = isUserInstructionsDraftDirty(loaded, draft);
   const canSave = effectiveStatus === "ready" && canSaveUserInstructions({ loaded, draft, saving });
@@ -169,7 +174,7 @@ export function useUserInstructionsEditor(
 
   const write = useCallback(
     async (expectedRevision: string | null) => {
-      // 断线时服务代理已失效，不能再发起写入。
+      // The service proxy is invalid while disconnected, so do not start a write.
       if (!loaded || !rpcReady) return;
       const key = hostKey;
       const content = draft;
@@ -181,7 +186,8 @@ export function useUserInstructionsEditor(
           eol: loaded.eol,
           hasBom: loaded.hasBom,
         });
-        // 保存期间目标主机已切换：结果属于旧主机，不能覆盖新主机的状态。
+        // The target host changed while saving. This result belongs to the old host and must not
+        // overwrite the new host's state.
         if (loadedHostKeyRef.current !== key) return;
         if (result.kind === "ok") {
           setLoaded({

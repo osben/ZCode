@@ -12,7 +12,7 @@ export function resolveAutomationEditRequiredFieldErrors(params: {
   return errors;
 }
 
-/** 正常编辑只撤销当前字段已有的提交告警，不主动产生新的告警。 */
+/** Normal editing clears an existing submit warning for the current field without creating a new warning. */
 export function clearAutomationEditRequiredFieldError(
   errors: ReadonlySet<AutomationEditRequiredField>,
   field: AutomationEditRequiredField,

@@ -7,9 +7,12 @@ export type PersistedStatusRead =
   | { state: "missing"; status: null }
   | { state: "invalid" | "unreadable"; status: null; error: unknown };
 
-export async function readPersistedStatusDetailed(layout: ServerLayout): Promise<PersistedStatusRead> {
-  // Bug 原因：文件缺失表示离线，JSON/schema 损坏表示观测不可信；两者不能再折叠成同一个 null，
-  // 否则 uninstall/stop 会把“无法确认已停止”误判成“已经停止”。
+export async function readPersistedStatusDetailed(
+  layout: ServerLayout,
+): Promise<PersistedStatusRead> {
+  // Bug cause: a missing file means offline; corrupt JSON/schema means the observation is
+  // untrustworthy. Do not collapse both into null, or uninstall/stop could mistake "cannot
+  // confirm stopped" for "already stopped".
   let raw: string;
   try {
     raw = await readFile(layout.statusFile, "utf8");
@@ -26,7 +29,9 @@ export async function readPersistedStatusDetailed(layout: ServerLayout): Promise
   }
 }
 
-export async function readPersistedStatus(layout = resolveServerLayout()): Promise<ServerStatus | null> {
+export async function readPersistedStatus(
+  layout = resolveServerLayout(),
+): Promise<ServerStatus | null> {
   return (await readPersistedStatusDetailed(layout)).status;
 }
 
@@ -37,12 +42,15 @@ export function createStatusPersister<T>(
 ): () => Promise<void> {
   let inFlight: Promise<void> = Promise.resolve();
   return async () => {
-    // 一次 status 写盘失败不能让排队链永久 reject，否则后续生命周期快照
-    // 会全部丢失；status.json 只是观测快照，失败时记录告警并继续服务生命周期。
+    // A single failed status write must not leave the write queue permanently rejected and cause all later lifecycle snapshots
+    // to be lost; status.json is only an observation snapshot, so log a warning and continue the service lifecycle on failure.
     inFlight = inFlight
       .then(async () => {
         const temporary = `${statusFile}.${process.pid}.tmp`;
-        await writeFile(temporary, `${JSON.stringify(getStatus(), null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
+        await writeFile(temporary, `${JSON.stringify(getStatus(), null, 2)}\n`, {
+          encoding: "utf8",
+          mode: 0o600,
+        });
         await rename(temporary, statusFile);
       })
       .catch((error: unknown) => onError(error));

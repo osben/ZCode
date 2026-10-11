@@ -25,9 +25,9 @@ function isInvalidPrivateKeyPassphraseMessage(message: string): boolean {
 export function buildSSHConnectConfig(input: SSHConnectConfigInput): ConnectConfig {
   const hasPassword = typeof input.password === "string" && input.password.length > 0;
 
-  // 密码登录场景里如果无条件带上 SSH_AUTH_SOCK，ssh2 会先走 agent 公钥尝试。
-  // 某些主机 MaxAuthTries 很小，公钥阶段就会把认证次数耗尽，导致正确密码也无法进入认证。
-  // 这里改成“显式传入 agent 才启用”；否则密码模式默认禁用隐式 agent。
+  // If SSH_AUTH_SOCK is always included for password login, ssh2 tries agent public keys first.
+  // On hosts with a low MaxAuthTries, authentication attempts may be exhausted during the public-key phase before the correct password is tried.
+  // Enable the agent only when it is explicitly provided; password mode otherwise disables the implicit agent.
   const resolvedAgent = input.agent ?? (hasPassword ? undefined : process.env["SSH_AUTH_SOCK"]);
 
   return {
@@ -38,15 +38,15 @@ export function buildSSHConnectConfig(input: SSHConnectConfigInput): ConnectConf
     passphrase: input.passphrase,
     password: hasPassword ? input.password : undefined,
     agent: resolvedAgent,
-    // ssh2 默认 readyTimeout 是 20s，公网弱网或服务端抖动时容易误判超时。
-    // 这里显式放宽连接握手超时，既给真实慢连接机会，也让错误归一化能和实际配置保持一致。
+    // ssh2's default readyTimeout is 20s, which can falsely time out on weak public networks or during server jitter.
+    // Explicitly extend the connection handshake timeout to allow genuinely slow connections and keep error normalization aligned with actual configuration.
     readyTimeout: SSH_READY_TIMEOUT_MS,
-    // SSH 项目空闲后如果被 NAT、防火墙或服务端静默断开，stdio channel 不一定会立刻 close。
-    // 启用 SSH-level keepalive，让 ssh2 在连续无响应后主动触发 error/close，避免 UI 任务长期卡在 loading。
+    // If an idle SSH project is silently disconnected by NAT, a firewall, or the server, the stdio channel may not close immediately.
+    // Enable SSH-level keepalive so ssh2 emits error/close after repeated missed responses instead of leaving UI tasks stuck loading.
     keepaliveInterval: SSH_KEEPALIVE_INTERVAL_MS,
     keepaliveCountMax: SSH_KEEPALIVE_COUNT_MAX,
-    // 一些 SSH 服务端只开启 keyboard-interactive（challenge-response）而关闭 plain password。
-    // 开启 tryKeyboard + 交互回调后，同一份密码可以覆盖这类主机，避免“命令行可登录、应用里认证失败”。
+    // Some SSH servers enable only keyboard-interactive (challenge-response) and disable plain password authentication.
+    // Enabling tryKeyboard with an interaction callback lets the same password work on these hosts, avoiding cases where CLI login works but app authentication fails.
     tryKeyboard: hasPassword,
   };
 }
@@ -90,9 +90,9 @@ export function normalizeSSHConnectError(error: unknown): Error {
   }
 
   if (error instanceof Error) {
-    // ssh2 对不同私钥格式（OpenSSH 旧/新格式、PPK）会返回不同文案。
-    // 之前仅匹配单一字符串，导致部分“缺少口令/口令错误”场景泄露底层错误文本，用户难以判断应输入哪种凭据。
-    // 这里改为模式化归一化，把同类错误稳定映射成产品语义提示，便于用户直接修正输入。
+    // ssh2 returns different messages for different private-key formats (old/new OpenSSH formats, PPK).
+    // Matching only one string previously leaked raw errors for some missing-passphrase/incorrect-passphrase cases, leaving users unsure which credential to enter.
+    // Normalize by patterns so these errors map consistently to product-level guidance users can act on.
     if (isMissingPrivateKeyPassphraseMessage(error.message)) {
       return new Error("SSH 私钥需要口令：检测到加密私钥，但当前未提供私钥口令");
     }

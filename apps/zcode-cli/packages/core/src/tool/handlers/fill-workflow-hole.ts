@@ -1,14 +1,14 @@
 // ============================================================
 // FillWorkflowHole Tool Handler
 // ============================================================
-// docs/dynamic-workflow/launch.md「The `FillWorkflowHole` tool」；引擎侧见
+// docs/dynamic-workflow/launch.md, “The `FillWorkflowHole` tool”; for the engine side, see
 // apps/zcode-cli/packages/dynamic-workflow/docs/execution-engine.md「Holes」。
 //
-// 一个正在跑的 run 到达一处留白就停下那一支、发一条留白通知；这个工具是模型还它代码的地方。它**什么
-// 都不启动**：拼接、编译、站点稳定性检查、引擎放行与草稿改写全在端口实现侧（`port.fillHole`），这里
-// 做的是 handler 该做的四件事——把内联函数体先写进 fill 文件（编译结果读出来**之前**）、调端口、
-// 把诊断锚到它落在的那个文件、成功时用有效脚本铸 display（与 CreateWorkflow 同一条投影路径）。
-// 确认之前的一切（run / 留白 / 归属 / 函数体字节）在 fill-workflow-hole-resolve.ts。
+// When a running run reaches a hole, that branch pauses and emits a hole notification; this tool is where the model supplies its code. It **starts nothing**:
+// splicing, compilation, site stability checks, resuming the engine, and rewriting the draft all belong to the port implementation (`port.fillHole`). This handler
+// does the four things a handler should: write an inline function body to a fill file (before reading compile results), call the port,
+// anchor diagnostics to the file they refer to, and create display from the effective script on success (the same projection path as CreateWorkflow).
+// Everything before approval (run / hole / ownership / function-body bytes) is in fill-workflow-hole-resolve.ts.
 
 import path from "node:path";
 import {
@@ -56,8 +56,8 @@ const FILL_WORKFLOW_HOLE_TIMEOUT_MS = 15_000;
 const FILL_WORKFLOW_HOLE_MODEL_BYTES = 24_000;
 
 /**
- * 「本会话不能补全留白」。端口缺席（journal 不可用 → run service 整个不构造）与方法缺席（老宿主）
- * 回同一个失败：对模型这是同一件事。绝不静默成功——那会让一支脚本永远停在留白处。
+ * “This session cannot fill holes.” Return the same failure when the port is absent (journal unavailable → no run service constructed) or the method is absent (older host):
+ * these are the same to the model. Never succeed silently, because that would leave the workflow permanently paused at a hole.
  */
 function fillUnavailableFailure(): ToolHandlerFailure {
   return {
@@ -68,7 +68,7 @@ function fillUnavailableFailure(): ToolHandlerFailure {
   };
 }
 
-/** 端口的非诊断拒绝 → 各配稳定错误码；message 原样来自端口（它说的就是模型的下一步）。 */
+/** Map each non-diagnostic port rejection to a stable error code; preserve the port's message (it tells the model what to do next). */
 function fillRefusalFor(reason: string, message: string, runId: string): ToolHandlerFailure {
   switch (reason) {
     case "run_not_found":
@@ -80,7 +80,7 @@ function fillRefusalFor(reason: string, message: string, runId: string): ToolHan
         message: `hole_not_waiting: ${message}`,
       };
     case "fill_ids_unstable":
-      // 宿主故障，不是模型的错：留白照旧在等，函数体不必改。
+      // This is a host failure, not a model error: the hole remains pending and the function body does not need to change.
       return {
         result: false,
         errorCode: FILL_WORKFLOW_HOLE_ERROR_CODE.IDS_UNSTABLE,
@@ -95,17 +95,17 @@ function fillRefusalFor(reason: string, message: string, runId: string): ToolHan
   }
 }
 
-/** fill 文件的模型面身份：内联提交刚写下的（「saved at」）或模型自己给的（「The fill file is」）。 */
+/** Model-facing identity of the fill file: the one just written by an inline submission (“saved at”) or supplied by the model (“The fill file is”). */
 interface FillFileLocation {
   kind: "draft" | "path";
   described: string;
 }
 
 /**
- * 内联函数体的 fill 文件：`<slug>.<hole-slug>.dwf.ts`（docs/dynamic-workflow/launch.md「The fill file」）。
- * `<slug>` 是 run 草稿的主干（草稿文件名去掉扩展名），run 没记过草稿时取 run 名；`<hole-slug>` 是
- * 留白名走同一条铸名规则。同名顺延 `-2`、`-3`… 由 writeWorkflowDraft 负责：一次内联重提铸新文件，
- * 绝不在模型背后覆盖。写不成回 `undefined`（尽力而为，与草稿同规）。
+ * Fill file for an inline function body: `<slug>.<hole-slug>.dwf.ts` (docs/dynamic-workflow/launch.md, “The fill file”).
+ * `<slug>` is the stem of the run draft filename (without its extension), or the run name if no draft is recorded; `<hole-slug>` is
+ * derived from the hole name using the same naming rule. `writeWorkflowDraft` handles duplicate suffixes `-2`, `-3`, etc.: every inline resubmission creates a new file,
+ * never silently overwriting behind the model. Return `undefined` if writing fails (best effort, like draft writing).
  */
 async function writeFillFile(
   parsed: FillWorkflowHoleInput,
@@ -127,9 +127,9 @@ async function writeFillFile(
 }
 
 /**
- * 诊断行：`{path}:L{line}:C{column} {message}`，锚到**它落在的文件**——函数体内的（`inFill`）按 fill
- * 文件的行，函数体外的（如 9005 的另一处在父脚本里）按 run 草稿的行与路径，因为那才是它指着的代码。
- * 没有可锚的文件时退回 `L:C`。
+ * Diagnostic line: `{path}:L{line}:C{column} {message}`, anchored to **the file it refers to**—diagnostics inside the function body (`inFill`) use fill-file lines;
+ * diagnostics outside it (for example, another 9005 in the parent script) use the run draft's lines and path because that is where the referenced code lives.
+ * Fall back to `L:C` when there is no file to anchor.
  */
 function formatFillDiagnosticLines(
   diagnostics: readonly DynamicWorkflowRunFillHoleDiagnostic[],
@@ -144,9 +144,9 @@ function formatFillDiagnosticLines(
 }
 
 /**
- * 输出里的 `fill` 块：行给自己起名的唯一来源（docs/dynamic-workflow/presentation.md「The fill row」）。
- * transcript 只存模型自己的入参，resolveInput 回填的 `hole` 到不了行，所以名字必须随输出走；
- * `hole` 缺席（端口 stub、绕过归一化的调用方）时退回站点 id，行至少有 id 可写。
+ * The output `fill` block is the row's only source of its name (docs/dynamic-workflow/presentation.md, “The fill row”).
+ * The transcript stores only the model's input, and the `hole` added by resolveInput does not reach the row, so include the name in output;
+ * if `hole` is absent (port stub or caller bypassed normalization), fall back to the site ID so the row has at least an ID.
  */
 function fillBlock(parsed: FillWorkflowHoleInput): NonNullable<CreateWorkflowOutput["fill"]> {
   const hole = parsed.hole;
@@ -174,9 +174,9 @@ function compileFailureResponse(
     parsed.hole?.draft_path === undefined
       ? undefined
       : describeWorkflowScriptPath(parsed.hole.draft_path, cwd ?? "");
-  // 落在函数体之外的诊断指着 run **记录在案**的脚本：这个工具改不了它，磁盘上的草稿改了也不算数
-  // （2026-09-28 首次实测：主代理把草稿改好又重提，拿到逐字相同的诊断，才猜到要 AmendWorkflow）。
-  // 所以这里直接把出路写明，省掉那一轮猜。
+  // Diagnostics outside the function body refer to the run's **recorded** script: this tool cannot change it, and editing a draft on disk is irrelevant
+  // (first observed 2026-09-28: the main agent edited the draft and resubmitted, received the exact same diagnostic, and only then inferred that AmendWorkflow was needed).
+  // State the next step here to avoid that extra round of guesswork.
   const outsideFill = diagnostics.some((diagnostic) => diagnostic.inFill !== true);
   const recordedScriptNote = outsideFill
     ? `The lines outside the fill are in the run's recorded script${draftFile === undefined ? "" : ` (${draftFile} as the run launched it)`}: this tool cannot change them, and editing the draft on disk does not change what the fill is compiled into. Fix them with AmendWorkflow (pass the corrected script, or its \`path\`); the revised run will reach the hole and ask again.`
@@ -195,7 +195,7 @@ const fillWorkflowHoleHandler: ToolHandler = async (input, context: ToolExecutio
   const parsed = FillWorkflowHoleInputSchema.parse(input) as FillWorkflowHoleInput;
   const port = context.dynamicWorkflowRunPort;
   if (port === undefined || typeof port.fillHole !== "function") return fillUnavailableFailure();
-  // resolveInput 恒把函数体落定进 `script`（`path` 读成字节）；到这里还缺，只可能是绕过归一化的调用方。
+  // resolveInput always stores the function body in `script` (reading `path` into bytes); if it is missing here, the caller must have bypassed normalization.
   const body = parsed.script;
   if (body === undefined) {
     return {
@@ -207,14 +207,14 @@ const fillWorkflowHoleHandler: ToolHandler = async (input, context: ToolExecutio
   }
   const cwd = context.workingDirectory;
 
-  // 内联函数体**先**落盘，再读编译结果（docs/dynamic-workflow/launch.md「The fill file」）：编不过的
-  // 函数体走不到别处，这里是它唯一必经的地方。`path` 提交什么都不铸——那个文件已经是工作副本。
+  // Write inline function bodies to disk **before** reading compile results (docs/dynamic-workflow/launch.md, “The fill file”):
+  // function bodies that fail compilation have no other path through the system, so this is their only required write. A `path` submission creates nothing—the file is already the working copy.
   let fillFile: FillFileLocation | undefined;
   if (parsed.path === undefined) {
     const written = await writeFillFile(parsed, body, port, cwd);
     if (written !== undefined) {
       fillFile = { kind: "draft", described: describeWorkflowScriptPath(written, cwd ?? "") };
-      // 这份字节就是模型本次的 `script`：记作它写过的文件，下一次 Edit 不必先 Read。
+      // These bytes are the model's `script` for this call: record them as a file it has written so the next Edit does not require a prior Read.
       await recordAuthoredWorkflowDraft(context, {
         path: written,
         source: body,
@@ -238,7 +238,7 @@ const fillWorkflowHoleHandler: ToolHandler = async (input, context: ToolExecutio
     if (result.reason !== "compile_failed") {
       return fillRefusalFor(result.reason, result.message, parsed.run_id);
     }
-    // 记下这份被拒的字节：同一份再经 `path` 交回来就是忘了编辑（`fill_unchanged`）。
+    // Record these rejected bytes: resubmitting the same content through `path` means it was not edited (`fill_unchanged`).
     rememberRejectedFill(context.sessionId, parsed.run_id, parsed.hole_id, body);
     const diagnostics = result.diagnostics ?? [];
     return {
@@ -256,8 +256,8 @@ const fillWorkflowHoleHandler: ToolHandler = async (input, context: ToolExecutio
     } satisfies CreateWorkflowOutput;
   }
 
-  // 成功：display 铸自端口交回的**有效脚本**（已拼入函数体、已落库的那一份），走 CreateWorkflow 的同一条
-  // 投影路径，run 卡取它 run id 下最新的 display（docs/dynamic-workflow/presentation.md「Holes on the timeline」）。
+  // Success: create display from the **effective script** returned by the port (with the function body inserted and persisted), using the same projection
+  // path as CreateWorkflow. The run card takes the latest display for that run ID (docs/dynamic-workflow/presentation.md, “Holes on the timeline”).
   const analysis = analyzeScript(result.scriptText);
   const causalityGraph = boundGraphOfAnalysis(analysis);
   const holeName = parsed.hole?.name ?? parsed.hole_id;
@@ -279,9 +279,9 @@ const fillWorkflowHoleHandler: ToolHandler = async (input, context: ToolExecutio
 };
 
 /**
- * 确认窗预览：有效脚本的图（resolveInput 拼好、记在单槽里的那份）。拼不出来窗照开、只是没图；
- * 有效脚本编不过、或点名了 run 绑定表之外的模型，则放行给 handler——端口会回诊断（后者是 9011），
- * 一个注定作废的窗没有意义（与 AmendWorkflow、CreateWorkflow 同规）。
+ * Confirmation-dialog preview: graph of the effective script (spliced by resolveInput and kept in the single-slot cache). If it cannot be spliced, open the dialog without a graph;
+ * if the effective script does not compile or names a model outside the run's binding table, allow the handler to proceed—the port returns diagnostics (9011 for the latter),
+ * and a dialog guaranteed to be discarded is pointless (same behavior as AmendWorkflow and CreateWorkflow).
  */
 function prepareFillWorkflowHoleApproval(input: unknown): ToolApprovalGate {
   const parsed = FillWorkflowHoleInputSchema.safeParse(input);
@@ -312,10 +312,10 @@ export const fillWorkflowHoleToolEntry: ToolEntry = {
     needsApproval: true,
   },
   handler: fillWorkflowHoleHandler,
-  // 函数体来源恰好一个，只对模型入参成立（归一化后 `script` 与 `path` 同时在场是合法执行态）。
+  // Exactly one function-body source is required; this applies to model input only (after normalization, both `script` and `path` may be present in a valid execution state).
   validateInput: (input) => validateFillWorkflowHoleSource(input),
   resolveInput: async (input, context) => {
-    // 技能门先于 run 解析：补全永远是在写脚本。
+    // Apply the skill gate before resolving the run: completion always means writing a script.
     const refused = requireDynamicWorkflowSkill(context, FILL_WORKFLOW_HOLE_TOOL_NAME);
     if (refused) return refused;
     return resolveFillWorkflowHoleInput(input, context);
@@ -336,8 +336,8 @@ export const fillWorkflowHoleToolEntry: ToolEntry = {
     patternSources: ["toolName"],
     alwaysAllowPatternSources: ["toolName"],
     denyPriority: "beforeAsk",
-    // 与 CreateWorkflow / AmendWorkflow 同一道门（alwaysAsk）；本会话自己的 run 由权限服务的 owner
-    // 规则在 always-ask 分支里放行（docs/dynamic-workflow/launch.md「Approval」）。
+    // Same gate as CreateWorkflow / AmendWorkflow (alwaysAsk); the permission service's owner rule allows this session's own run
+    // through the always-ask branch (docs/dynamic-workflow/launch.md, “Approval”).
     alwaysAsk: true,
     askOptions: { allowAlways: "session" },
   },

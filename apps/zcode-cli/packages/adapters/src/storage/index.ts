@@ -23,8 +23,8 @@ import { maybeThrowStorageFsFault } from "./fs-fault-injection.js";
 
 export * from "./session-store.js";
 
-// 内存 event store 实现已下沉到 @zcode/contracts，
-// 这里保持 `@zcode/adapters/storage` 的导出路径不变，避免调用方改 import。
+// The in-memory event store implementation moved to @zcode/contracts.
+// Keep the `@zcode/adapters/storage` export path unchanged so callers do not need to change imports.
 export {
   InMemorySessionEventStore,
   createInMemorySessionEventStore,
@@ -145,8 +145,8 @@ export class NodeToolArtifactStore implements ToolArtifactStorePort {
   }
 
   /**
-   * 直接读取原始字节，供 v4 分块查询和查看器使用，避免编解码改变内容。
-   * contentType 仍按文件名推断，仅作兜底。
+   * Read the raw bytes directly for v4 chunked queries and viewers, avoiding content changes from encoding/decoding.
+   * Infer contentType from the filename as a fallback only.
    */
   async readToolResultBinaryArtifact(
     request: ToolArtifactReadRequest,
@@ -161,7 +161,7 @@ export class NodeToolArtifactStore implements ToolArtifactStorePort {
     return { uri: request.uri, path, bytes: new Uint8Array(bytes), contentType };
   }
 
-  /** 两条读回共用的定位 + 读文件：uri → 会话目录里含 artifactId 的那个文件。 */
+  /** Shared locate-and-read helper for both read paths: uri → file in the session directory containing the artifactId. */
   private async readArtifactFile(
     uri: string,
   ): Promise<{ path: string; contentType: string; bytes: Buffer }> {
@@ -249,8 +249,8 @@ export class NodeToolArtifactStore implements ToolArtifactStorePort {
     const inFlight = this.mediaAttachmentPathFlights.get(uri);
     if (inFlight) return inFlight;
 
-    // paste 落盘与紧随其后的发送会并发进入物化；URI 级 singleflight
-    // 保证发送等待同一写任务，不会对同一派生媒体重复落盘。
+    // Persisting a paste and the immediately following send can materialize concurrently; URI-level singleflight
+    // makes the send await the same write task and prevents duplicate writes of the same derived media.
     let flight!: Promise<MediaAttachmentPathResult>;
     flight = materialize().finally(() => {
       if (this.mediaAttachmentPathFlights.get(uri) === flight) {
@@ -273,8 +273,8 @@ export class NodeToolArtifactStore implements ToolArtifactStorePort {
       uri,
       mediaType,
     );
-    // 既有媒体处理链可接收派生缓存无法命名的格式。
-    // 派生 path 是增强信息，不支持该 MIME 时应跳过，不能阻断原 media/base64 请求。
+    // The existing media pipeline can handle formats that the derived cache cannot name.
+    // A derived path is only an enhancement; skip unsupported MIME types without blocking the original media/base64 request.
     if (!path) return { status: "unsupported" };
     if (await isRegularFile(path)) return { status: "ready", path };
 
@@ -354,14 +354,14 @@ function contentTypeForFileName(fileName: string): string {
   if (lower.endsWith(".webp")) return "image/webp";
   if (lower.endsWith(".pdf")) return "application/pdf";
   if (lower.endsWith(".bin")) return "application/octet-stream";
-  // dwf 产物按原扩展名落盘（`extension` 入参），推断表补齐它们。文本类给 text/*
-  // （utf8 读回正确），办公文件与 svg 之外的未知二进制一律 octet-stream——**绝不**再让一个
-  // 不认识的扩展名落到 application/json 走 utf8（那正是读回损坏的根因）。
+  // DWF artifacts are written with their original extension (the `extension` argument), so add them to the inference table. Use text/*
+  // for text files (so UTF-8 reads correctly); use octet-stream for unknown binary files except office files and SVG. Never let an
+  // unknown extension fall through to application/json and UTF-8, which caused the readback corruption.
   if (lower.endsWith(".html") || lower.endsWith(".htm")) return "text/html";
   if (lower.endsWith(".csv")) return "text/csv";
   if (lower.endsWith(".svg")) return "image/svg+xml";
-  // 文本写入的默认扩展名就是 .json（extensionForContentType 的 default），所以既有文件全部
-  // 落在上面的分支里；到这里的只有按原扩展名落盘的二进制产物（.xlsx / .docx / .pptx …）。
+  // Text writes already default to .json (`extensionForContentType` default), so existing files all
+  // take the branch above; only binary artifacts written with their original extension (.xlsx / .docx / .pptx, etc.) reach here.
   if (lower.endsWith(".json")) return "application/json";
   return "application/octet-stream";
 }

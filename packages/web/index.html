@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#161616" />
     <meta name="color-scheme" content="dark" />
-    <!-- Bugfix: Chrome dev 下可能不发 favicon 网络请求；内嵌小尺寸 App 图标，避免标签页回退到默认图标。 -->
+    <!-- Bugfix: Chrome dev may not request a favicon; embed a small App icon so the tab does not fall back to the default icon. -->
     <link
       rel="icon"
       type="image/png"
@@ -15,12 +15,13 @@
     <title>ZCode</title>
     <script>
       (() => {
-        // JS bundle 执行前先按本地主题偏好决定首屏底色，避免 dark 用户在这一帧看到白底闪烁。
-        // 此脚本先于 JS bundle 执行，无法 import useTheme.ts，因此复制了 migrateThemeSelection 与 applyTheme 的最小逻辑。
-        // Web 远控跨 workspace 跳转时，JS bundle 还没执行前就会先渲染启动壳，优先采用 bootstrap snapshot 的主题。
+        // Choose the initial background from the local theme preference before the JS bundle runs, avoiding a white flash for dark-mode users.
+        // This script runs before the JS bundle and cannot import useTheme.ts, so it duplicates the minimal migrateThemeSelection and applyTheme logic.
+        // When web remote control navigates across workspaces, the boot shell renders before the
+        // JS bundle executes, so prefer the bootstrap snapshot's theme.
         const STORAGE_KEY = "zcode-theme";
         const PALETTE_STORAGE_KEY = "zcode-theme-palette";
-        // 分享页无本地配置时默认浅色，与 main.tsx 的路由默认一致，避免 /share 首访者先看到深色启动帧。
+        // Share pages default to light without local configuration, matching the route default in main.tsx and avoiding a dark startup frame on the first /share visit.
         const isConversationSharePath = (pathname) =>
           pathname === "/cn/share" ||
           pathname.startsWith("/cn/share/") ||
@@ -45,7 +46,7 @@
         };
         const BOOTSTRAP_SNAPSHOT_KEY = "zcode:web-remote-control:bootstrap-shell";
 
-        // 旧版把配色写进模式值（zai-dark 等），统一迁移为模式。无法识别的值回退为路由默认模式。
+        // Older versions stored the palette in the mode value (such as zai-dark); migrate these values to a mode. Unknown values fall back to the route's default mode.
         const normalizeMode = (saved) => {
           if (saved === "light" || saved === "zai-light") return "light";
           if (saved === "dark" || saved === "zai-dark") return "dark";
@@ -170,8 +171,10 @@
       html[data-zcode-browser-theme-surface],
       html[data-zcode-browser-theme-surface] body,
       html[data-zcode-browser-theme-surface] #root {
-        /* 修复原因：共享 UI 样式为 Electron vibrancy 强制透明根背景；浏览器入口必须用语义背景
-           覆盖该桌面专属行为，否则浏览器工具栏、overscroll 和页面画布会回退为系统白色。 */
+        /* Fix rationale: shared UI styles force a transparent root background for Electron
+           vibrancy; the browser entry must use a semantic background to override this
+           desktop-only behavior, or the browser toolbar, overscroll area, and page canvas will
+           fall back to system white. */
         background: var(--color-background, var(--zcode-bootstrap-bg, #161616)) !important;
       }
 
@@ -187,7 +190,7 @@
         justify-content: center;
         width: 100%;
         height: 100%;
-        /* Bugfix: UI 全局样式会把 body/#root 置为透明，预渲染壳必须自己承接主题背景，否则深色主题会露出浏览器白底。 */
+        /* Bugfix: UI global styles make body/#root transparent; the prerendered shell must provide the theme background or a dark theme will show the browser's white background. */
         background: var(--zcode-bootstrap-bg, var(--color-background, #0f172a));
         color: var(--zcode-bootstrap-fg, var(--color-foreground, #e2e8f0));
       }
@@ -216,7 +219,7 @@
         inset: 0;
         pointer-events: none;
         content: "";
-        /* 修复原因：启动 logo 壳是固定深色底，边框不能跟随浅色主题 token，否则首屏边框过重。 */
+        /* Fix rationale: the startup logo shell has a fixed dark background; its border must not follow light-theme tokens or it will look too heavy on the first screen. */
         border: 1px solid rgba(255, 255, 255, 0.1);
         border-radius: inherit;
       }
@@ -230,7 +233,7 @@
   </head>
   <body>
     <div id="root">
-      <!-- Bugfix: 远程控制跨 workspace 时会整页跳转；在 JS 入口执行前先给出 loading 壳，避免出现白屏空档。 -->
+      <!-- Bugfix: remote control navigates the whole page when switching workspaces; show a loading shell before the JS entry runs to avoid a blank-screen gap. -->
       <div
         class="zcode-boot-loading"
         role="status"

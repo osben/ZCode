@@ -45,11 +45,11 @@ function send(
     });
     armsRum.sendCustom(payload as Parameters<typeof armsRum.sendCustom>[0]);
   } catch {
-    /* 上报入口失败不能阻断启动或失败提示。 */
+    /* Failure in the reporting path must not block startup or failure notifications. */
   }
 }
 
-/** 输入是 Host 聚合镜像；不访问数据库/故障磁盘、不写逐样本日志。 */
+/** Input is the Host aggregate mirror; do not access the database/failure disk or write per-sample logs. */
 export function reportDatabaseStartupState(state: DatabaseStartupState): void {
   let attempt = attempts.get(state.attemptId);
   if (!attempt) {

@@ -32,17 +32,17 @@ export function useWorkspaceMainViewSettingsExit({
 
     if (!wasWorkspaceVisible && isWorkspaceVisible) {
       if (preserveNextSettingsExitRef.current) {
-        // 插件市场已经打开时，从设置页再次点击“新建”，主视图值仍是
-        // plugin-store，单靠前后值无法识别这是一次显式导航。消费这个一次性标记，
-        // 防止设置退出流程把市场错误关闭；标记只允许在设置层打开时写入。
+        // If the plugin marketplace is already open, clicking “New” again from settings leaves the main-view value as
+        // plugin-store, so the before/after values alone cannot recognize explicit navigation. Consume this one-time marker
+        // to keep the settings-exit flow from closing the marketplace incorrectly; the marker can be written only while the settings layer is open.
         preserveNextSettingsExitRef.current = false;
         return;
       }
 
       if (workspaceMainView === settingsEntryMainViewRef.current) {
-        // Settings 只是覆盖 workspace，底层 App 不卸载，进入前的
-        // automations 主视图会一直保留。设置层退出时统一回到对话，
-        // 让 Back、插件提示词、创建 Skill 和设置页快捷键共享同一导航语义。
+        // Settings only overlays the workspace and does not unmount the underlying App, so the Automations main view from before entry
+        // remains active. Always return to conversation when leaving settings,
+        // giving Back, plugin prompts, Skill creation, and settings shortcuts the same navigation semantics.
         onExitSettings();
       }
     }

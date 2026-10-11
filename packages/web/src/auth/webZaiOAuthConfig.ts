@@ -31,11 +31,11 @@ function buildZaiOAuthAuthorizeUrl(origin: string | undefined): string {
 }
 
 /**
- * BigModel 的授权入口。
+ * BigModel authorization entry point.
  *
- * 必须跟随环境：测试环境写死 bigmodel.cn 会把测试账号带到生产授权页。构建期由
- * vite.config 用 resolveBigModelApiOrigin 注入 VITE_BIGMODEL_OAUTH_ORIGIN；这里的
- * resolveBigModelApiOrigin({}) 只是最后兜底（等价于生产 origin）。
+ * It must follow the environment: hard-coding bigmodel.cn in tests would send test accounts to the production authorization page.
+ * At build time, vite.config injects VITE_BIGMODEL_OAUTH_ORIGIN using resolveBigModelApiOrigin; the
+ * resolveBigModelApiOrigin({}) call here is only a final fallback (equivalent to the production origin).
  */
 function buildBigModelAuthorizeUrl(origin: string | undefined): string {
   const trimmed = origin?.trim();
@@ -51,13 +51,13 @@ export function createWebZaiOAuthConfig(env: WebImportMetaEnv = {}): WebZaiOAuth
   );
 
   return {
-    // ZAI 当前 OAuth 授权入口使用 /api/oauth 前缀，继续走 /auth/oauth 会打开旧入口。
+    // The current ZAI OAuth authorization entry uses the /api/oauth prefix; /auth/oauth opens the legacy entry.
     authorizeUrl: buildZaiOAuthAuthorizeUrl(env.VITE_ZAI_OAUTH_ORIGIN),
     tokenUrl: "/api/v1/oauth/token",
-    // client_id 会出现在授权 URL 中，属于公开配置；这里允许 VITE_ 注入，但不能放 secret/token。
+    // client_id appears in the authorization URL and is public configuration; VITE_ injection is allowed, but secrets/tokens are not.
     clientId: env.VITE_ZAI_OAUTH_CLIENT_ID?.trim() || "client_P8X5CMWmlaRO9gyO-KSqtg",
     bigmodelAuthorizeUrl: buildBigModelAuthorizeUrl(env.VITE_BIGMODEL_OAUTH_ORIGIN),
-    // BigModel 用 appId 而不是 client_id，且默认值就是桌面端在用的 "zcode"。
+    // BigModel uses appId rather than client_id, and its default is "zcode", as used by Desktop.
     bigmodelAppId: env.VITE_BIGMODEL_OAUTH_APP_ID?.trim() || "zcode",
     redirectUri: zcodeEndpointUrls.webRemoteCallbackUrl,
     shareRedirectUri: zcodeEndpointUrls.webShareCallbackUrl,

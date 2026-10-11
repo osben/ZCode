@@ -44,8 +44,8 @@ export interface WorkspaceHookTrustCliStatus {
     | "workspace_hooks_trusted_persistent"
     | "workspace_hooks_feature_disabled"
     | "workspace_hooks_require_trust_capable_host"
-    // status 必须与 grant/revoke 的失败语义一致——损坏 store 若伪装成
-    // pending_trust，用户按提示 grant 只会撞上 trust_store_corrupt，恢复指引矛盾。
+    // Status must use the same failure semantics as grant/revoke. If a corrupt store is presented as
+    // pending_trust, following the prompt to grant will only hit trust_store_corrupt, contradicting the recovery guidance.
     | "workspace_hooks_trust_store_corrupt";
   items: WorkspaceHookTrustCliItem[];
 }
@@ -59,10 +59,11 @@ export async function inspectWorkspaceHookTrust(
     userConfigPath: target.userConfigPath,
   });
   const loaded = await store.load();
-  // 损坏 store 优先于任何信任计算——所有记录不可信（adapters load 已
-  // fail-closed 返回空 records），显式报 corrupt 让用户先修复/移除损坏文件，
-  // 不再给出"grant 即可"的错误指引。恢复：adapters load 已把损坏文件改名为
-  // *.corrupt-<ts>，确认无需保留后删除该文件或从备份恢复即可重建。
+  // A corrupt store takes precedence over all trust evaluation: no records are trusted (adapters
+  // load has already failed closed and returned empty records). Report corruption explicitly so the
+  // user repairs/removes the file first, rather than receiving incorrect "grant to proceed" guidance.
+  // For recovery, adapters load already renamed the corrupt file to *.corrupt-<ts>; after confirming
+  // it is no longer needed, delete it or restore from a backup to recreate the store.
   if (loaded.status === "corrupt") {
     const corruptItems = (snapshot?.hooks ?? []).map((entry) => ({
       reviewItemId: entry.reviewItemId,
@@ -155,9 +156,10 @@ export async function grantWorkspaceHookTrust(
   const store = await createDefaultFileWorkspaceHookTrustStore({
     userConfigPath: target.userConfigPath,
   });
-  // workspace 级 Settings 预信任没有 session controller 帮忙拦截损坏存储；
-  // 若直接 grant，store 的恢复逻辑会把 corrupt 当空记录并立即覆盖。首次显式授权必须
-  // fail closed，让用户先看到损坏状态，不能把恢复副作用伪装成一次成功授权。
+  // Workspace-level Settings pretrust has no session controller to intercept a corrupt store.
+  // Granting directly would let store recovery treat corruption as empty records and overwrite it.
+  // The first explicit authorization must fail closed so the user sees the corrupt state; do not
+  // disguise a recovery side effect as successful authorization.
   const loaded = await store.load();
   if (loaded.status === "corrupt") {
     throw new Error("workspace_hooks_trust_store_corrupt");

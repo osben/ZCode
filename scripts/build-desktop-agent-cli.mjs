@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { stageAgentBundle } from "../packages/desktop/scripts/stage-agent-bundle.mjs";
 import { runCommand } from "./spawn-command.mjs";
 
-// adapters tsc 在内存受限机器上会 OOM（exit 134），给整条构建链路提高堆上限。
+// Adapters tsc can OOM (exit 134) on memory-constrained machines; raise the heap limit for the entire build chain.
 process.env.NODE_OPTIONS = `${process.env.NODE_OPTIONS ? process.env.NODE_OPTIONS + " " : ""}--max-old-space-size=8192`;
 import { stageDevCuaPluginRuntime } from "./stage-dev-cua-plugin-runtime.mjs";
 import {
@@ -19,35 +19,35 @@ const useBootstrapWithRemoteBuild = process.env.ZCODE_BOOTSTRAP_WITH_REMOTE === 
 const pnpmRunEnv = {
   ...process.env,
   ZCODE_ENV: await resolveBuiltinProviderBuildEnvironment({ root: repoRoot }),
-  // pnpm 11 的 verify-deps-before-run 会在 apps/zcode-cli 子 workspace
-  // 执行每个 run 前触发 pnpm install；子 workspace 运行时依赖根仓库 @zcode/shared，
-  // 自动 install 无法解析根 workspace 包，导致 dev:desktop:test 和 E2E onPrepare 失败。
+  // pnpm 11's verify-deps-before-run runs pnpm install before each command in the apps/zcode-cli sub-workspace.
+  // The sub-workspace runtime depends on the root workspace's @zcode/shared, which automatic install cannot resolve,
+  // causing dev:desktop:test and E2E onPrepare to fail.
   PNPM_CONFIG_VERIFY_DEPS_BEFORE_RUN: "false",
 };
-// Bug 根因：filesystem plugin seed 若缺少 Sharp closure，会一直到 screenshot/zoom 才报错。
-// 此脚本同时服务本地 Dev、prebuild、server CLI 和 packaged desktop agent；三条构建分支
-// 都必须补齐同一份可复制 runtime。ZCODE_CUA_DEV_MODE 只传给 staging helper，不进入最终
-// product/runtime 环境，因此这里描述的是 staging 输入，而不是产品运行模式。
+// Root cause: if the filesystem plugin seed is missing the Sharp closure, the failure appears only when screenshot/zoom is used.
+// This script serves local development, prebuild, the server CLI, and the packaged desktop agent; all three build paths
+// must include the same copyable runtime. ZCODE_CUA_DEV_MODE is passed only to the staging helper and does not enter the final
+// product/runtime environment, so this describes staging input rather than product runtime mode.
 const cuaPluginRuntimeStagingEnv = {
   ...process.env,
   ZCODE_CUA_DEV_MODE: "1",
 };
-// 修复原因：桌面 Agent 构建有普通 pnpm 和 bootstrap:with-remote 直跑 tsc 两条路径。
-// 过去两条路径分别维护依赖顺序，新增 @zcode/telemetry 后只更新了 bootstrap 依赖，
-// 干净 CI 中 telemetry/dist 尚不存在，bootstrap 会因无法解析类型入口而失败。
-// 两条路径统一从这一份有序清单派生，避免后续新增 workspace 依赖时再次漂移。
+// Fix rationale: the desktop Agent has two build paths: regular pnpm and direct tsc through bootstrap:with-remote.
+// Previously, each path maintained its own dependency order. After @zcode/telemetry was added, only the bootstrap dependencies were updated,
+// so in a clean CI environment telemetry/dist did not exist and bootstrap failed to resolve the type entry point.
+// Both paths now derive from this ordered list to prevent future workspace dependencies from drifting again.
 const cliWorkspaceBuilds = [
   { packageName: "@zcode/shared-types", packageDir: "shared-types" },
   { packageName: "@zcode/contracts", packageDir: "contracts" },
-  // dynamic-workflow 的 tsc 构建依赖 gitignored 的 libs.generated.ts，
-  // 而 bare-tsc 路径（runBootstrapWithRemoteBuild）不会执行 package build script，
-  // 所以需要先跑生成脚本；必须排在 @zcode/core 之前，core 依赖 dynamic-workflow。
+  // dynamic-workflow's tsc build depends on the gitignored libs.generated.ts.
+  // The bare-tsc path (runBootstrapWithRemoteBuild) does not run the package build script,
+  // so run the generator first. It must precede @zcode/core, which depends on dynamic-workflow.
   {
     packageName: "@zcode/dynamic-workflow",
     packageDir: "dynamic-workflow",
     prepareScript: "scripts/generate-libs.mjs",
   },
-  // dynamic-workflow-runtime 的类型入口是 dist/index.d.ts，必须先于 bootstrap 构建。
+  // dynamic-workflow-runtime's type entry point is dist/index.d.ts; build it before bootstrap.
   { packageName: "@zcode/dynamic-workflow-runtime", packageDir: "dynamic-workflow-runtime" },
   { packageName: "@zcode/core", packageDir: "core" },
   { packageName: "@zcode/adapters", packageDir: "adapters" },
@@ -55,17 +55,17 @@ const cliWorkspaceBuilds = [
   { packageName: "@zcode/telemetry", packageDir: "telemetry" },
   { packageName: "@zcode/bootstrap", packageDir: "bootstrap" },
 ];
-// 官方插件 manifest 可以在 server.js 缺失时被 filesystem seed，直到 session
-// 连接 MCP 才报错，造成“Helper ready 但 CUA 工具不存在”的半启动状态。所有普通 Dev 必需的
-// 独立 MCP runtime 必须集中登记，并在构建后验证真实入口文件，再允许 Agent bundle 启动。
+// An official plugin manifest can be seeded from the filesystem even when server.js is missing, and fail only when the session
+// connects to MCP, leaving a half-started state where Helper is ready but CUA tools are missing. Register all standalone MCP runtimes
+// required for normal development in one place, and verify their actual entry files after building before starting the Agent bundle.
 const requiredDevPluginRuntimeBuilds = [
   {
-    // node_repl 宿主：Browser Use 与 Computer Use 共用，产物归属独立包。
+    // node_repl host shared by Browser Use and Computer Use; its artifact belongs to a separate package.
     packageName: "@zcode/node-repl-host",
     artifactPath: "node-repl-host/dist/mcp/server.js",
   },
   {
-    // browser-use 自己的 runtime 只剩 browser-client；宿主不再由它携带。
+    // browser-use now contains only browser-client at runtime; it no longer bundles the host.
     packageName: "@zcode/browser-use-plugin",
     artifactPath: "browser-use-plugin/scripts/browser-client.mjs",
   },
@@ -90,15 +90,14 @@ async function verifyRequiredDevPluginRuntimeArtifacts() {
 }
 
 /**
- * 把刚构建出的 agent bundle 暂存进 bundled-agents。
+ * Stage the newly built agent bundle in bundled-agents.
  *
- * 必须做：dev 未打包时 agent 二进制由 desktopRuntimeEnv.ts 的
- * resolveBundledZCodeAgentBinaryPath() 解析，候选**只有** bundled-agents/，没有
- * cli/dist/。只靠打包链暂存会让 dev 一直跑上一次打包留下的那份 —— 实测陈旧
- * 3 天，任何 agent CLI 侧改动在 dev 里静默不生效，把「改动没进去」伪装成「代码没作用」。
- * 实现与打包链共用 stage-agent-bundle.mjs，两边不可能再各自漂移。
+ * Required: when dev is unpackaged, desktopRuntimeEnv.ts resolves the Agent binary through
+ * resolveBundledZCodeAgentBinaryPath(); its only candidate is bundled-agents/, not cli/dist/. Staging only in the packaging
+ * chain leaves dev running the previous bundle. It was observed to remain stale for 3 days, silently ignoring Agent CLI changes
+ * and making "the change was not included" look like "the code has no effect". Share stage-agent-bundle.mjs with packaging so the two paths cannot drift.
  *
- * dev 只跑宿主平台，所以 platformKey 直接取 process；打包链的跨平台 target 由它自己解析。
+ * Dev runs only on the host platform, so platformKey comes directly from process; the packaging chain resolves cross-platform targets itself.
  */
 function stageDevAgentBundle() {
   stageAgentBundle({
@@ -119,11 +118,11 @@ async function runBootstrapWithRemoteBuild() {
   }
 
   for (const { packageDir, prepareScript } of cliWorkspaceBuilds) {
-    // bootstrap:with-remote 会在 remote assets 阶段构建 agent bundle。
-    // 通过 pnpm 逐包执行 tsc 时会再走 shim/env node 层，低内存本地环境里容易长时间卡住。
-    // 这里只有 bootstrap 专用环境变量生效，直接复用当前 Node 启动 TypeScript CLI。
-    // bare tsc 绕过 package build script，所以带 prepareScript 的包（dynamic-workflow）
-    // 必须先手动跑生成脚本补齐 gitignored 的 libs.generated.ts，否则 tsc 因缺文件报错。
+    // bootstrap:with-remote builds the Agent bundle during the remote-assets stage.
+    // Running tsc package by package through pnpm also traverses the shim/env Node layers and can hang for a long time on low-memory local machines.
+    // Only bootstrap-specific environment variables apply here, so invoke the TypeScript CLI with the current Node directly.
+    // Bare tsc skips package build scripts, so packages with prepareScript (dynamic-workflow) need their generator run first
+    // to create the gitignored libs.generated.ts; otherwise tsc fails because the file is missing.
     if (prepareScript) {
       runCommand(process.execPath, [prepareScript], {
         cwd: `apps/zcode-cli/packages/${packageDir}`,
@@ -153,10 +152,10 @@ if (useBootstrapWithRemoteBuild) {
 }
 
 if (!useTurboBuild) {
-  // Linux 容器 demo 里没有仓库级 turbo 根，`turbo --cwd apps/zcode-cli`
-  // 会把 apps/zcode-cli 当根目录，并拒绝 turbo.json 中指向 ../../packages/shared 的 inputs。
-  // 同时 agent 子 workspace 不包含根 packages/shared，但 agent 包依赖 @zcode/shared。
-  // 因此默认改用仓库根 workspace 的明确 pnpm 包顺序构建，避免 WDIO 前置构建卡在子 workspace 解析。
+  // The Linux container demo has no repository-level turbo root. `turbo --cwd apps/zcode-cli`
+  // treats apps/zcode-cli as the root and rejects turbo.json inputs pointing to ../../packages/shared.
+  // The Agent sub-workspace also omits the root packages/shared even though the Agent package depends on @zcode/shared.
+  // Build in the explicit pnpm package order from the repository root by default to avoid WDIO setup hanging during sub-workspace resolution.
   for (const filter of defaultBuildFilters) {
     runCommand("pnpm", ["--filter", filter, "build"], {
       env: pnpmRunEnv,

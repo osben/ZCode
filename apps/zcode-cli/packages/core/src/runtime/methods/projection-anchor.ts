@@ -5,9 +5,9 @@ import type {
   TraceContext,
 } from "../deps.js";
 
-// ── v4 transcript 锚点（清单）──
-// additive JSON：旧数据无 anchor，读侧宽容降级；turnId 取值现成（traceContext）。
-// sourceCommandId 在 v4 command inbox 接线后随命令执行上下文写入。
+// ── v4 transcript anchors (manifest) ──
+// Additive JSON: old data has no anchor, so the read side degrades gracefully; turnId comes from the existing traceContext value.
+// sourceCommandId is written from command execution context once the v4 command inbox is wired.
 export function buildProjectionAnchor(
   traceContext: TraceContext,
   origin?: MessageAnchorOrigin,
@@ -23,7 +23,7 @@ export function buildProjectionAnchor(
   };
 }
 
-// 旧 SyntheticUserMessageSource → v4 userInput.origin 词表的只读映射。
+// Read-only mapping from the legacy SyntheticUserMessageSource to the v4 userInput.origin vocabulary.
 export function mapSyntheticSourceToAnchorOrigin(
   source: SyntheticUserMessageSource,
 ): MessageAnchorOrigin {

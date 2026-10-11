@@ -43,8 +43,9 @@ export function buildExecutionEnv(
         env[key] = value;
       }
     }
-    // Bash/tool 子进程不能直接继承运行时的 NODE_ENV、http_proxy 或证书变量。
-    // 网络变量会在 applyNetworkEgressEnv 中从 ZCode 内部封存恢复，避免 app/provider 运行时先被污染。
+    // Bash/tool subprocesses must not inherit runtime NODE_ENV, http_proxy, or certificate variables.
+    // applyNetworkEgressEnv restores network variables from ZCode's internal snapshot to avoid
+    // contaminating the app/provider runtime first.
     sanitizeZCodeRuntimeEnvInPlace(env);
   }
 

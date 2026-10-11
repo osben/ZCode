@@ -28,7 +28,7 @@ export async function openProtocolStartupStorage(options: {
     });
     failedReported ||= params.phase === "failed";
     options.onProgress?.(params);
-    // 不能先写入 JS 缓冲后立即阻塞执行 SQL；等待 Writable 确认控制帧已交给传输层。
+    // Do not write to the JS buffer and immediately block on SQL; wait for Writable to confirm the control frame was handed to the transport.
     await new Promise<void>((resolve, reject) => {
       options.output.write(
         `${JSON.stringify({ method: zcodeProtocolNotifications.storageStartup, params })}\n`,
@@ -49,14 +49,14 @@ export async function openProtocolStartupStorage(options: {
           ...databaseStartupErrorDetails(error),
         });
       } catch {
-        /* 传输已断开时保留最初的数据库/传输异常。 */
+        /* Preserve the original database/transport error if the transport is disconnected. */
       }
     }
     throw error;
   }
 }
 
-/** 只准备存储，不创建 Provider/MCP/工作区 runtime；Host 确认观测边界后才允许写库。 */
+/** Prepare storage only; do not create Provider/MCP/workspace runtime. Wait for the Host to confirm the observation boundary before writing to the database. */
 export async function prepareProtocolStartupStorage(options: {
   dbPath: string;
   input: NodeJS.ReadableStream;
@@ -92,7 +92,7 @@ export async function prepareProtocolStartupStorage(options: {
       ),
     );
   });
-  // 路径通知发送失败时也要消费已创建的等待 promise，避免未处理拒绝。
+  // Consume the created wait promise even if sending the path notification fails, to avoid an unhandled rejection.
   void acknowledgement.catch(() => {});
   let store: SqliteSessionStore | undefined;
   let failure: unknown;
@@ -107,7 +107,7 @@ export async function prepareProtocolStartupStorage(options: {
     const reuse = await acknowledgement;
     clearTimeout(timer!);
     lines.close();
-    // reuse 仅由同一次 Host 准备的成功路径集合授予；不打开连接，也不写永久跳过标记。
+    // Grant reuse only for successful paths prepared by this same Host; do not open a connection or write a permanent skip marker.
     if (!reuse) {
       store = await openProtocolStartupStorage(options);
       store.close();
@@ -132,7 +132,7 @@ export async function prepareProtocolStartupStorage(options: {
         },
       });
     } catch {
-      /* 原始存储异常优先于失败通知的 IO 异常。 */
+      /* The original storage error takes precedence over an I/O error while sending the failure notification. */
     }
     throw error;
   } finally {

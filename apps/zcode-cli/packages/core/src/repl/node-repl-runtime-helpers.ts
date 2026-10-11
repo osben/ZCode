@@ -43,8 +43,8 @@ export function stringifyReplResult(value: unknown): string | undefined {
   if (value === undefined) return undefined;
   if (typeof value === "string") return value;
   if (ArrayBuffer.isView(value) && !(value instanceof DataView)) {
-    // screenshot() 返回 Uint8Array；JSON.stringify 会把每个字节展开成数字键，
-    // 因此使用有界 inspect，避免二进制结果膨胀为大段数字文本。
+    // screenshot() returns a Uint8Array; JSON.stringify expands every byte into a numeric key,
+    // so use bounded inspect to prevent binary output from ballooning into a large block of numbers.
     return inspect(value, { maxArrayLength: 100 });
   }
   try {
@@ -55,7 +55,7 @@ export function stringifyReplResult(value: unknown): string | undefined {
   }
 }
 
-/** vm context 的 Error 属于不同 realm，按 error-like 字段提取，避免 instanceof 误判。 */
+/** Errors from the vm context belong to another realm; extract error-like fields to avoid instanceof misclassification. */
 export function normalizeReplError(error: unknown): {
   name: string;
   message: string;

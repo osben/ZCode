@@ -27,7 +27,7 @@ export function formatCompactTokenUsage(locale: string, value: number): string {
 export function formatSummaryCompactTokenUsage(locale: string, value: number): string {
   const formatted = formatCompactTokenUsage(locale, value);
 
-  // 通用紧凑格式会把中文单位直接贴在数字后；摘要卡片与相邻的时长、天数指标统一保留单位间距。
+  // Generic compact formatting places Chinese units directly after the number; summary cards keep spacing before adjacent duration/day units for consistency.
   return locale.startsWith("zh") ? formatted.replace(/(?<=\d)(?=[万亿])/u, " ") : formatted;
 }
 
@@ -44,8 +44,8 @@ export function formatDay(locale: string, dateKey: string | null): string {
   }
   const date = new Date(`${dateKey}T00:00:00.000Z`);
   if (Number.isNaN(date.getTime())) {
-    // BigModel monitor 接口偶尔返回空字符串或非 yyyy-MM-dd 格式的日期,
-    // 之前直接交给 Intl.DateTimeFormat 会抛 RangeError 把整个图表炸掉。
+    // The BigModel monitor endpoint sometimes returns an empty date or one not in yyyy-MM-dd format.
+    // Passing it directly to Intl.DateTimeFormat previously threw RangeError and broke the whole chart.
     return dateKey;
   }
   return new Intl.DateTimeFormat(locale, {
@@ -86,9 +86,7 @@ export function resolveModelLabel(
   intl: ReturnType<typeof useZCodeIntl>["intl"],
   modelId: string | null,
 ): string {
-  return (
-    modelId?.trim() || intl.formatMessage({ id: "settings.usage.unknownModel" })
-  );
+  return modelId?.trim() || intl.formatMessage({ id: "settings.usage.unknownModel" });
 }
 
 export function UsageMetricCard({
@@ -113,10 +111,10 @@ export function UsageMetricCard({
         valueSize === "sm"
           ? "text-ui-base"
           : valueSize === "base"
-          ? "text-ui-lg"
-          : valueSize === "lg"
-            ? "text-lg"
-            : "text-3xl",
+            ? "text-ui-lg"
+            : valueSize === "lg"
+              ? "text-lg"
+              : "text-3xl",
       )}
     >
       {value}
@@ -132,29 +130,19 @@ export function UsageMetricCard({
       {helperPlacement === "inline" && helper ? (
         <div className="mt-2 flex min-w-0 items-baseline gap-2">
           {valueNode}
-          <div className="min-w-0 truncate text-ui-base text-foreground-subtle">
-            {helper}
-          </div>
+          <div className="min-w-0 truncate text-ui-base text-foreground-subtle">{helper}</div>
         </div>
       ) : (
         <div className="mt-2">{valueNode}</div>
       )}
       {helper && helperPlacement === "below" ? (
-        <div className="mt-0.5 truncate text-ui-base text-foreground-subtle">
-          {helper}
-        </div>
+        <div className="mt-0.5 truncate text-ui-base text-foreground-subtle">{helper}</div>
       ) : null}
     </div>
   );
 }
 
-export function UsageEmptyState({
-  title,
-  description,
-}: {
-  title: string;
-  description: string;
-}) {
+export function UsageEmptyState({ title, description }: { title: string; description: string }) {
   return (
     <div className="rounded-xl border border-dashed border-border px-4 py-10 text-center">
       <div className="text-ui-base font-medium text-foreground">{title}</div>

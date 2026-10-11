@@ -1,4 +1,4 @@
-/* eslint-disable max-lines -- 远程连接字段较多，SSH/WSL/Docker 分支暂集中在单文件维护。 */
+/* eslint-disable max-lines -- There are many remote-connection fields, so the SSH/WSL/Docker branches are temporarily maintained in one file. */
 import { useCallback, useEffect, useRef, useState } from "react";
 import type {
   DockerContainerInfo,
@@ -178,9 +178,9 @@ export function RemoteConnectionFields({
       return;
     }
 
-    // Popover 嵌在 Dialog 中时，外层滚动锁会吞掉默认滚轮行为，
-    // 导致 alias CommandList 只能拖滚动条、不能直接滚轮滚动。
-    // 这里显式驱动列表自身 scrollTop，确保鼠标滚轮和触控板都能滚动候选项。
+    // When a Popover is nested inside a Dialog, the outer scroll lock consumes the default wheel behavior,
+    // leaving the alias CommandList scrollable only by dragging its scrollbar.
+    // Update the list's own scrollTop explicitly so both the mouse wheel and trackpad can scroll the options.
     listElement.scrollTop += event.deltaY;
     event.preventDefault();
     event.stopPropagation();
@@ -340,13 +340,13 @@ export function RemoteConnectionFields({
             </p>
           </div>
 
-          {/* Bugfix: Electron / Chromium 的原生 autocomplete 在 SSH 向导里不稳定，
-              而且默认值（如 localhost / 22）会把历史候选提前过滤掉。
-              这里改成用应用自身持久化的远程连接历史做显式候选，focus 时先展示完整历史；密码仍然不参与历史回填。 */}
-          {/* Bugfix: 建议列表之前直接跟着全宽输入框展开，在大对话框里会变成长条。
-              这里把宽度限制在字段语义范围内，只收窄建议列表，不改变原输入框布局。 */}
-          {/* Bugfix: 示例值直接作为 placeholder 会被误认为已有默认值。
-              这里改成“输入提示 + 示例”，让用户知道仍需手动填写必填字段。 */}
+          {/* Bugfix: Native autocomplete in Electron/Chromium is unreliable in the SSH wizard,
+              and defaults (such as localhost / 22) filter out history suggestions prematurely.
+              Use the app’s persisted remote-connection history as explicit suggestions, showing the full history on focus; passwords are still excluded from history autofill. */}
+          {/* Bugfix: The suggestion list used to expand to the full width of the input, making it a long bar in large dialogs.
+              Constrain its width to the field’s semantic scope, narrowing only the suggestion list without changing the input layout. */}
+          {/* Bugfix: Using an example value as the placeholder made it look like a default value had already been set.
+              Use “input hint + example” so users know that required fields still need to be filled in manually. */}
           <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_6.5rem]">
             <RemoteConnectionHistoryInput
               className="h-9 text-ui-base"
@@ -375,8 +375,8 @@ export function RemoteConnectionFields({
             />
           </div>
 
-          {/* Bugfix: 认证方式之前复用了端口的 6.5rem 窄列，两个选项扣除 padding 后会把中英文文案挤到换行或溢出。
-              这里单独给认证方式保留 12rem，并禁止选项文字换行。 */}
+          {/* Bugfix: The authentication method reused the port’s narrow 6.5rem column, causing its two options to wrap or overflow after padding.
+              Reserve 12rem for the authentication method and prevent its option text from wrapping. */}
           <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_12rem] sm:items-end">
             <RemoteConnectionHistoryInput
               className="h-9 text-ui-base"
@@ -680,9 +680,7 @@ export function RemoteConnectionFields({
               )}
             >
               {intl.formatMessage({
-                id: wslUserIsInvalid
-                  ? "wsl.validation.invalidUser"
-                  : "wsl.userDescription",
+                id: wslUserIsInvalid ? "wsl.validation.invalidUser" : "wsl.userDescription",
               })}
             </p>
           </div>

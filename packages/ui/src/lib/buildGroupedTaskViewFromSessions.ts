@@ -1,8 +1,8 @@
-// Grouped 客户端投影：服务端回原始分组结构，tasks-index task rows 决定持久行，
-// sessions-index 只补实时 activity/detail，最终拼出旧 ZCodeGroupedTaskView 同形结果。
-// 排序语义对齐 taskIndexRepo.queryGroupedTaskView，但服务端的懒补序（normalize* 写回 sqlite）
-// 改为只读的内存补序：缺 sort_order 的成员/顶层节点按同样规则（added_at / createdAt 降序，
-// max+STEP 递增）派生展示序，不落库；用户拖拽保存时 applyGroupedTaskViewOrder 会全量持久化。
+// Grouped client projection: the server returns the raw group structure; tasks-index task rows determine persisted rows,
+// while sessions-index supplies only live activity/details, producing a result shaped like the old ZCodeGroupedTaskView.
+// Ordering matches taskIndexRepo.queryGroupedTaskView, but the server’s lazy normalization (normalize* writes back to sqlite)
+// becomes a read-only in-memory normalization: members/top-level nodes without sort_order use the same rules (added_at / createdAt descending,
+// then max+STEP increments) to derive display order without writing it back; applyGroupedTaskViewOrder persists the full order when users save a drag.
 import type {
   ZCodeGroupedTaskView,
   ZCodeGroupedTaskViewNode,
@@ -14,7 +14,7 @@ import type { ZCodeTaskMeta } from "@zcode/shared";
 import { buildTaskWorkspaceKey } from "@/lib/taskQueryCache.js";
 import { mergeTaskIndexRowsWithSessions } from "@/v4/buildTaskListResultFromSessions.js";
 
-// 与 taskIndexRepo GROUPED_TASK_ORDER_STEP 对齐。
+// Matches taskIndexRepo GROUPED_TASK_ORDER_STEP.
 const GROUPED_TASK_ORDER_STEP = 1000;
 
 function memberTaskKey(params: { workspaceKey: string; taskId: string }): string {
@@ -28,7 +28,7 @@ function taskKeyOf(task: ZCodeTaskMeta): string {
   });
 }
 
-/** 与 taskIndexRepo.taskOrderNodeKey 对齐（node_key = JSON.stringify([workspaceKey, taskId]）。 */
+/** Matches taskIndexRepo.taskOrderNodeKey (node_key = JSON.stringify([workspaceKey, taskId])). */
 function taskOrderMapKey(task: ZCodeTaskMeta): string {
   return `task:${JSON.stringify([
     buildTaskWorkspaceKey(task.workspacePath, task.workspaceIdentity),
@@ -52,7 +52,7 @@ function compareGroupedNodes(
   return nodeMapKey(left).localeCompare(nodeMapKey(right));
 }
 
-/** 组内成员排序：已有 sort_order 用之；缺失的按 added_at 降序在 max 后补内存序。 */
+/** Sort group members: use existing sort_order; append missing entries in descending added_at order after the maximum in-memory order. */
 function sortGroupTasks(
   tasks: ZCodeTaskListItem[],
   membersByTaskKey: Map<string, ZCodeGroupedTaskViewStructureMember>,
@@ -93,18 +93,18 @@ function sortGroupTasks(
 
 export interface BuildGroupedTaskViewParams {
   structure: ZCodeGroupedTaskViewStructure;
-  /** tasks-index active/pinned/archived 三个持久分区的 task 行并集。 */
+  /** Union of task rows from the three persistent tasks-index partitions: active/pinned/archived. */
   taskIndexItems: ZCodeTaskMeta[];
-  /** sessions-index 派生的会话 activity/detail，只 enrich 命中的持久行。 */
+  /** Session activity/detail derived from sessions-index; enrich only matching persistent rows. */
   sessions: ZCodeTaskMeta[];
-  /** 服务端权威 pin/archive id 集（grouped 视图口径 = 非 pinned 非 archived）。 */
+  /** Authoritative server sets of pinned/archived IDs (grouped view includes entries that are neither pinned nor archived). */
   pinnedIds: ReadonlySet<string>;
   archivedIds: ReadonlySet<string>;
-  /** tasks-index 持久删除 tombstone；优先于所有 task row/session detail。 */
+  /** Persistent deletion tombstones from tasks-index; take precedence over all task rows/session details. */
   deletedIds?: ReadonlySet<string>;
 }
 
-/** 客户端 join：分组结构 + task rows + session details → 与旧 listGroupedTaskView 同形的视图。 */
+/** Client-side join: group structure + task rows + session details → a view with the same shape as the old listGroupedTaskView. */
 export function buildGroupedTaskViewFromSessions(
   params: BuildGroupedTaskViewParams,
 ): ZCodeGroupedTaskView {
@@ -115,8 +115,8 @@ export function buildGroupedTaskViewFromSessions(
     sessions: params.sessions,
   });
   for (const task of taskRows) {
-    // sessions-index 仍可能保留 deleted session；deleted 是所有 grouped
-    // membership 之前的负向 guard，不能依赖 archivedIds 缺失来推断它仍是普通任务。
+    // sessions-index may still contain a deleted session; deleted is a negative guard before all grouped
+    // membership checks. Do not infer that it is an ordinary task from its absence in archivedIds.
     if (params.deletedIds?.has(task.taskId)) {
       continue;
     }
@@ -158,7 +158,7 @@ export function buildGroupedTaskViewFromSessions(
   });
 
   for (const [taskKey, task] of activeTaskByKey) {
-    // 任一组的成员（含不可见 bootstrap 组）都不出现在顶层——与服务端排除规则一致。
+    // Members of every group (including invisible bootstrap groups) are excluded from the top level, matching the server's exclusion rule.
     if (membersByTaskKey.has(taskKey)) {
       continue;
     }
@@ -170,7 +170,7 @@ export function buildGroupedTaskViewFromSessions(
     });
   }
 
-  // 顶层缺序节点内存补序（normalizeGroupedTopNodeOrders 只读版）：createdAt 降序 → max+STEP。
+  // Fill in-memory order for top-level nodes with no order (read-only normalizeGroupedTopNodeOrders): createdAt descending → max+STEP.
   const missingNodes = nodes
     .filter((node) => node.sortOrder === undefined)
     .sort((left, right) => {

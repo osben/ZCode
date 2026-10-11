@@ -2,17 +2,17 @@ import ts from "typescript";
 import type { JsonSchema, JsonValue } from "./types.js";
 
 /**
- * JSDoc 采集：把符号（interface 成员、类型别名、ask 结果类型）上的文档注释与受支持的
- * 约束标签抽成 JSON Schema 片段。
+ * JSDoc harvesting: extract documentation comments and supported constraint tags from symbols
+ * (interface members, type aliases, and ask result types) as JSON Schema fragments.
  *
- * - 文档正文 → `description`。
- * - 标签子集 → 约束关键字：`@minimum @maximum @exclusiveMinimum @exclusiveMaximum
+ * - Documentation body → `description`.
+ * - Supported tag subset → constraint keywords: `@minimum @maximum @exclusiveMinimum @exclusiveMaximum
  *   @minLength @maxLength @pattern @format @minItems @maxItems @default`。
  *
- * 子集之外的标签被静默忽略（不是错误）。
+ * Tags outside this subset are silently ignored (they are not errors).
  */
 
-/** 取数值的标签 → 对应的数值型关键字名。 */
+/** Numeric tags → corresponding numeric keyword names. */
 const NUMERIC_TAGS: Record<string, keyof JsonSchema> = {
   exclusiveMaximum: "exclusiveMaximum",
   exclusiveMinimum: "exclusiveMinimum",
@@ -24,15 +24,15 @@ const NUMERIC_TAGS: Record<string, keyof JsonSchema> = {
   minLength: "minLength",
 };
 
-/** 取字符串的标签 → 对应的字符串型关键字名。 */
+/** String tags → corresponding string keyword names. */
 const STRING_TAGS: Record<string, keyof JsonSchema> = {
   format: "format",
   pattern: "pattern",
 };
 
 /**
- * 采集一个符号上的 description 与约束标签，返回一个只含相关关键字的 schema 片段，
- * 供合成侧合并进该符号对应的 schema。
+ * Harvest the description and constraint tags from a symbol. Return a schema fragment containing
+ * only relevant keywords for the synthesis side to merge into the schema for that symbol.
  */
 export function harvestConstraints(symbol: ts.Symbol, checker: ts.TypeChecker): Partial<JsonSchema> {
   const out: Partial<JsonSchema> = {};
@@ -63,10 +63,10 @@ function applyTag(out: Partial<JsonSchema>, tag: ts.JSDocTagInfo): void {
   if (tag.name === "default") {
     out.default = parseDefault(raw);
   }
-  // 子集之外的标签：忽略。
+  // Ignore tags outside the supported subset.
 }
 
-/** `@default` 的值先按 JSON 解析（数字/布尔/对象/数组/带引号字符串），失败则当作裸字符串。 */
+/** Parse `@default` as JSON first (number/boolean/object/array/quoted string); if parsing fails, treat it as a bare string. */
 function parseDefault(raw: string): JsonValue {
   if (raw.length === 0) return "";
   try {
@@ -76,7 +76,7 @@ function parseDefault(raw: string): JsonValue {
   }
 }
 
-/** 把采集到的片段合并进已有 schema：约束关键字补充上去，description 不覆盖已有值。 */
+/** Merge harvested fragments into an existing schema: add constraint keywords without overwriting an existing description. */
 export function mergeConstraints(schema: JsonSchema, extra: Partial<JsonSchema>): JsonSchema {
   const merged: JsonSchema = { ...schema };
   for (const [key, value] of Object.entries(extra)) {

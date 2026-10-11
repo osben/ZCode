@@ -101,7 +101,7 @@ export function FeedbackSubmitForm({
   const [description, setDescription] = useState("");
   const [contact, setContact] = useState(() => readFeedbackContactPreference());
   const [screenshots, setScreenshots] = useState<ScreenshotAttachmentDraft[]>([]);
-  // 新反馈默认附带诊断日志；显式草稿值保留用户取消勾选及后台恢复时的选择。
+  // New feedback includes diagnostic logs by default; an explicit draft value preserves the user’s unchecked choice and the selection restored in the background.
   const [includeLogs, setIncludeLogs] = useState(initialDraft?.includeLogs ?? true);
   const [ticketType, setTicketType] = useState<FeedbackTicketType>(DEFAULT_FEEDBACK_TYPE);
   const [ticketSeverity, setTicketSeverity] =
@@ -162,8 +162,8 @@ export function FeedbackSubmitForm({
   useEffect(() => {
     if (submissionJob) return;
     if (!submissionJobId) return;
-    // 后台提交必须由用户点击的 card 通过 jobId 精确绑定。
-    // 新建问题上报不再猜测“最后一个活动 job”，避免旧上传状态锁住新表单。
+    // Background submissions must be bound by jobId to the card the user clicked.
+    // New issue reports must not guess the “last active job,” which could let stale upload state lock the new form.
     const selectedJob = getFeedbackSubmissionJob(submissionJobId);
     if (!selectedJob) return;
     logger.debug("[FeedbackSubmitForm] 恢复后台反馈任务", {
@@ -171,8 +171,8 @@ export function FeedbackSubmitForm({
       hasFormDraft: Boolean(selectedJob.formDraft),
       screenshotCount: selectedJob.formDraft.screenshots?.length ?? 0,
     });
-    // 恢复 job 进度时必须同时恢复该 job 的原始表单，否则问题描述为空。
-    // 表单快照随 job 保存，确保并发提交时点击不同 card 能看到各自的内容。
+    // Restore the job's original form along with its progress; otherwise the issue description is empty.
+    // Save a form snapshot with each job so concurrent submissions show their own content when their cards are clicked.
     applySubmitDraft(selectedJob.formDraft);
     activeSubmissionJobRef.current = selectedJob;
     setSubmissionJob(selectedJob);
@@ -257,7 +257,7 @@ export function FeedbackSubmitForm({
       });
       const job = await startSimplifiedFeedbackSubmission({
         feedbackService,
-        // 后端正文使用 trim 后的内容，但后台卡片恢复时必须保留用户输入原文。
+        // The backend body uses trimmed content, but background-card restoration must preserve the user's original input.
         description,
         contact,
         screenshots,

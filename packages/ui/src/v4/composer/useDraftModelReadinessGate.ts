@@ -1,9 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import {
-  isZCodeAgentProvider,
-  ZCODE_AGENT_PROVIDER,
-  type ZCodeProvider,
-} from "@zcode/shared";
+import { isZCodeAgentProvider, ZCODE_AGENT_PROVIDER, type ZCodeProvider } from "@zcode/shared";
 import type { IModelSelectionService, ModelSelectionView } from "@zcode/services";
 import {
   buildModelConfigMissingUiError,
@@ -20,30 +16,28 @@ interface DraftModelReadinessState {
 }
 
 export interface DraftModelReadinessGate {
-  /** 只有 readiness 已确认或检查本身不可用时，才允许进入 workspace prepare/prewarm。 */
+  /** Allow workspace prepare/prewarm only after readiness is confirmed or the check itself is unavailable. */
   agentStartupAllowed: boolean;
   error: ModelConfigMissingUiError | null;
   dismissError(): void;
-  /** 首发 admission 的权威复查；false 表示应保留 composer 并返回 blocked。 */
+  /** Authoritative recheck at first-send admission; false means keep the composer and return blocked. */
   ensureReadyForSend(): Promise<boolean>;
-  /** Host 门禁在 UI 复查后竞态命中时，将同一错误重新投影到草稿横幅。 */
+  /** Reproject the same error into the draft banner if the Host gate wins a race after the UI recheck. */
   markProviderNotReady(): void;
 }
 
 export function resolveModelSelectionReadinessStatus(
   view: ModelSelectionView,
 ): Extract<DraftModelReadinessStatus, "ready" | "missing"> {
-  return view.providers.some((provider) => provider.models.length > 0)
-    ? "ready"
-    : "missing";
+  return view.providers.some((provider) => provider.models.length > 0) ? "ready" : "missing";
 }
 
 /**
- * V4 草稿的 provider/model admission。
+ * Provider/model admission for V4 drafts.
  *
- * V4 迁移删除了旧 useWorkspacePrepare 的 renderer readiness 门禁，草稿首发
- * 会先登记 pending command，再由 Host 以 provider_not_ready 拒绝。这个确定性拒绝随后会
- * 被恢复账本误判成 unknown。这里恢复 UI 前置门禁；Host 门禁继续负责进程级竞态兜底。
+ * The V4 migration removed the renderer readiness gate from the old useWorkspacePrepare; the first draft send
+ * now registers a pending command before Host rejects it with provider_not_ready. The recovery ledger then misclassifies this deterministic rejection as
+ * unknown. Restore a UI preflight gate here; the Host gate remains as process-level race protection.
  */
 export function useDraftModelReadinessGate(params: {
   workspacePath: string;
@@ -52,13 +46,7 @@ export function useDraftModelReadinessGate(params: {
   sessionId: string | null;
   modelSelectionService: Pick<IModelSelectionService, "getView" | "onDidChange">;
 }): DraftModelReadinessGate {
-  const {
-    workspacePath,
-    workspaceIdentity,
-    provider,
-    sessionId,
-    modelSelectionService,
-  } = params;
+  const { workspacePath, workspaceIdentity, provider, sessionId, modelSelectionService } = params;
   const workspaceKey = workspaceIdentity?.trim() || workspacePath;
   const displayProvider = provider ?? ZCODE_AGENT_PROVIDER;
   const enabled = sessionId === null && isZCodeAgentProvider(displayProvider);
@@ -108,7 +96,7 @@ export function useDraftModelReadinessGate(params: {
     void modelSelectionService
       .getView()
       .then((view) => {
-        // 读取在变更事件之前发起、之后才返回时，事件快照更新；禁止旧读取覆盖新状态。
+        // If a read starts before a change event but returns afterward, the event snapshot is newer; prevent the old read from overwriting it.
         if (registryEventVersion !== initialReadVersion) return;
         applyStatus(resolveModelSelectionReadinessStatus(view));
       })
@@ -118,8 +106,8 @@ export function useDraftModelReadinessGate(params: {
 
     function handleReadinessFailure(error: unknown) {
       if (disposed) return;
-      // registry 读取异常不等价于“确实没有模型”。保留 Host 门禁作为兜底，避免把
-      // app-global service 的瞬时故障错误显示成用户配置问题。
+      // Registry read failure does not mean “there are definitely no models.” Keep the Host gate as a fallback to avoid
+      // incorrectly showing a transient app-global service failure as a user configuration problem.
       commitStatus("check-failed");
       logger.warn("[v4-draft-readiness] provider registry 检查失败，回落 Host 门禁", {
         error: error instanceof Error ? error.message : String(error),
@@ -131,12 +119,7 @@ export function useDraftModelReadinessGate(params: {
       disposed = true;
       subscription?.dispose();
     };
-  }, [
-    commitStatus,
-    enabled,
-    modelSelectionService,
-    workspaceKey,
-  ]);
+  }, [commitStatus, enabled, modelSelectionService, workspaceKey]);
 
   const effectiveState: DraftModelReadinessState =
     state.gateKey === gateKey
@@ -163,7 +146,7 @@ export function useDraftModelReadinessGate(params: {
       }
       return true;
     } catch (error) {
-      // 与 mount 检查一致：读 registry 失败不冒充“没有模型”，继续由 Host 启动门禁裁决。
+      // Match the mount check: registry read failure does not masquerade as “no models”; let the Host launch gate decide.
       commitStatus("check-failed");
       logger.warn("[v4-draft-readiness] 首发复查 provider registry 失败，回落 Host 门禁", {
         error: error instanceof Error ? error.message : String(error),
@@ -171,12 +154,7 @@ export function useDraftModelReadinessGate(params: {
       });
       return true;
     }
-  }, [
-    commitStatus,
-    enabled,
-    modelSelectionService,
-    workspaceKey,
-  ]);
+  }, [commitStatus, enabled, modelSelectionService, workspaceKey]);
 
   const error = useMemo(
     () =>

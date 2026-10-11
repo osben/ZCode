@@ -47,7 +47,7 @@ export function CapabilityMapGraph({
             }
           }}
           onPaneClick={onPaneClick}
-          // 交互约定：滚轮缩放，平移只通过拖拽；panOnScroll 会吞掉滚轮缩放。
+          // Interaction contract: the wheel zooms, and panning is drag-only; panOnScroll would consume wheel zoom.
           panOnDrag
           panOnScroll={false}
           proOptions={{ hideAttribution: true }}

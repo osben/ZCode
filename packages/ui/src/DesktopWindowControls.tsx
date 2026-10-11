@@ -18,7 +18,7 @@ export function DesktopWindowControls() {
       receivedEvent = true;
       if (!disposed) setMaximized(state.isMaximized);
     });
-    // 订阅后读取初态；较晚返回的初态不能覆盖用户刚触发的最大化事件。
+    // Read the initial state after subscribing; a late initial value must not overwrite a maximize event just triggered by the user.
     void platform
       .getDesktopWindowChromeState?.()
       .then((state) => {

@@ -10,21 +10,21 @@ import type { RecordingState } from "./ShortcutBindingRow.js";
 interface UseShortcutRecordingOptions {
   recording: RecordingState | null;
   setRecording: Dispatch<SetStateAction<RecordingState | null>>;
-  /** 生效绑定表（Section 已按 overrides resolve）。 */
+  /** Effective binding table (Section has already resolved overrides). */
   effective: EffectiveShortcutBindings;
   overrides: Record<string, readonly string[]> | undefined;
   isDesktop: boolean;
-  /** 录制态 Backspace：恢复默认（Section 的预检逻辑）。 */
+  /** Backspace during recording: restore default (preflight logic in Section). */
   clearBinding: (commandId: ShortcutCommandId) => void;
   appendBinding: (commandId: ShortcutCommandId, binding: string) => void;
   replaceBindingAt: (commandId: ShortcutCommandId, bindingIndex: number, binding: string) => void;
 }
 
 /**
- * 录制态键盘捕获：window keydown capture。Escape 取消；Backspace 恢复默认；
- * 其余交给内核录制器。落盘按 RecordingState.mode 分派：add → 追加一条；replace → 替换
- * bindingIndex 指向的条（null = 未分配占位行录第一条，等价追加）。
- * 同命令物理等价重复在录制入口标红拒绝（add 比全部条目，replace 跳过目标条）。
+ * Capture keyboard events while recording via window keydown capture. Escape cancels; Backspace restores the default;
+ * all other keys go to the core recorder. Persist according to RecordingState.mode: add → append a binding; replace → replace
+ * the binding at bindingIndex (null = record the first binding for an unassigned placeholder row, equivalent to append).
+ * Reject physical duplicates for the same command at the recording entry point (add compares all entries; replace skips the target row).
  */
 export function useShortcutRecording({
   recording,
@@ -60,8 +60,8 @@ export function useShortcutRecording({
 
         const result = recordShortcutBinding(event);
         if (result.kind === "pending") {
-          // 残留的冲突/无效提示会让人以为录制器没在听新按键 —— 修饰键按下即刻清空，
-          // 保证「冲突后直接重按第二组组合」在视觉上是活的（实际本来就一直监听着）。
+          // Stale conflict/invalid messages make users think the recorder is not listening for new keys — clear them as soon as a modifier is pressed,
+          // so “press a second combination directly after a conflict” visibly works (the recorder was already listening).
           if (
             current.preview === null &&
             current.error === null &&
@@ -85,8 +85,8 @@ export function useShortcutRecording({
           };
         }
 
-        // 同命令物理等价重复：add 与全部生效条目比；replace 跳过正在替换的
-        // 目标条。一个命令挂同一组键没有意义，直接标红拒绝。
+        // Physically equivalent duplicate for the same command: add compares against all active bindings; replace skips the
+        // target binding being replaced. The same key combination has no meaning twice for one command, so mark it as an error and reject.
         const sameCommandBindings = effective[current.commandId] ?? [];
         const duplicate = sameCommandBindings.some((binding, index) =>
           current.mode === "replace" && index === current.bindingIndex
@@ -102,7 +102,7 @@ export function useShortcutRecording({
           };
         }
 
-        // Web 端 menu 通道命令不可配置但默认键仍被根级回退监听消费，按保留键拒绝抢绑
+        // Web menu-channel commands are not configurable, but the root fallback listener still consumes their default keys; reject reserved keys instead of stealing them.
         const conflict = checkShortcutBindingConflict(
           current.commandId,
           result.binding,
@@ -115,7 +115,7 @@ export function useShortcutRecording({
           return {
             ...current,
             preview: formatShortcutBindingLabel(result.binding),
-            // 系统保留键直接拒绝（无确认入口）；app 内命令占用提示占用者并支持二次确认抢绑
+            // Reject system-reserved keys directly (no confirmation flow); for app-command conflicts, show the current owner and allow a second confirmation to take over.
             conflictBinding: conflict.kind === "occupied" ? result.binding : null,
             error:
               conflict.kind === "reserved"

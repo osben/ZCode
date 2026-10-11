@@ -40,26 +40,26 @@ export type {
   SavedWorkflowLaunchTarget,
 };
 
-/** 深链目标：默认 project（缺 scope 兼容旧调用），或 global（无 workspaceKey）。 */
+/** Deep-link target: project by default (scope may be omitted by older callers), or global (no workspaceKey). */
 export type SavedWorkflowsOpenTarget =
   | { scope?: "project"; workspaceKey: string; name: string }
   | { scope: "global"; name: string };
 
 interface SavedWorkflowsSectionProps {
-  /** 页头（标题切换 + 副标题）；只在列表态渲染，详情页与定时任务编辑页一样独占整页。 */
+  /** Page header (title switch + subtitle); rendered only in list mode, while detail and scheduled-task editing each occupy the full page. */
   header?: ReactNode;
-  /** 活动 workspace：只用来打「当前」标记和作全局空态的创建目标。 */
+  /** Active workspace: used only for the "Current" marker and as the create target in the global empty state. */
   workspacePath?: string | null;
   workspaceIdentity?: string;
-  /** 「运行」= GUI 直接启动：accepted 后切到新会话。 */
+  /** "Run" = launch directly from the GUI; switch to the new session after acceptance. */
   onNavigateToLaunchedRun?: (target: SavedWorkflowLaunchTarget, sessionId: string) => void;
-  /** 「通过对话创建」/「在对话里修订」：只预填草稿，不发送；target = 所属项目（空态卡取活动项目）。 */
+  /** "Create through chat" / "Revise in chat": prefill a draft only, without sending; target is the owning project (the empty-state card uses the active project). */
   onCreateViaChat?: (prompt: string, target: SavedWorkflowProjectTarget) => void;
-  /** 运行历史「查看实例」：切到发起它的会话并打开实例详情页。 */
+  /** "View instance" in run history: switch to the session that started it and open the instance detail page. */
   onOpenWorkflowRun?: (params: SavedWorkflowsOpenRunParams) => void;
-  /** 产物 chip → `workflow-artifact` tab。 */
+  /** Artifact chip → `workflow-artifact` tab. */
   onOpenWorkflowArtifact?: (params: SavedWorkflowsOpenArtifactParams) => void;
-  /** 深链直接落到详情页；定位后由调用方清空。project 需 workspaceKey，global 只需 name。 */
+  /** Deep links open directly to the detail page and are cleared by the caller after resolution. A project requires workspaceKey; global requires only name. */
   openWorkflow?: SavedWorkflowsOpenTarget | null;
   onOpenWorkflowConsumed?: () => void;
 }
@@ -69,7 +69,7 @@ type SavedWorkflowsView =
   | { mode: "detail"; scope: "project"; workspaceKey: string; name: string }
   | { mode: "detail"; scope: "global"; name: string };
 
-/** 全局组的 readiness 用固定键 `"global"`，与项目组的 workspaceKey 同存一张表。 */
+/** The global group uses the fixed readiness key `"global"`, stored in the same table as project workspaceKeys. */
 const GLOBAL_READINESS_KEY = "global";
 
 function resolveOptionKey(option: AutomationWorkspaceOption): string {
@@ -79,10 +79,7 @@ function resolveOptionKey(option: AutomationWorkspaceOption): string {
   });
 }
 
-/**
- * 已保存工作流中枢：顶部固定「全局」组，
- * 其下按已打开项目分组。页只持有刷新计数器、每组的加载态、详情态；「项目」= `buildAutomationWorkspaceOptions`。
- */
+/** Saved-workflow hub: a fixed "Global" group at the top, with open projects grouped below. The page owns only a refresh counter, each group's loading state, and detail state; "projects" come from `buildAutomationWorkspaceOptions`. */
 export function SavedWorkflowsSection({
   header,
   workspacePath,
@@ -97,10 +94,12 @@ export function SavedWorkflowsSection({
   const { intl, locale } = useZCodeIntl();
   const tabs = useTabStore((store) => store.tabs);
   const openSettingsTab = useTabStore((store) => store.openSettingsTab);
-  // launch.md「The hub page」「The user's choice」：标题行的「工作流设置」直达设置 › 常规的模式行，
-  // 旁边写当前生效模式。中枢只在生效模式不是关闭时出现，所以这里不处理关闭态。
-  // 链接与它要打开的设置行同进同退：行只在功能被提供时出现（isDynamicWorkflowOffered），旧 Host 的
-  // 快照没有 offeredMode，行不出，链接也不出——否则点过去是一个找不到的设置。
+  // launch.md, “The hub page” and “The user's choice”: the “Workflow settings” link in the title
+  // row goes directly to the mode row in Settings → General and shows the current effective mode.
+  // The hub appears only when the effective mode is not off, so there is no off state to handle here.
+  // Show/hide the link together with its destination setting row, which appears only when the
+  // feature is offered (`isDynamicWorkflowOffered`). Older Host snapshots have no offeredMode, so
+  // neither row nor link appears; otherwise the link would lead to a setting that is not present.
   const dynamicWorkflowConfig = useDynamicWorkflowAvailability().config;
   const dynamicWorkflowMode = dynamicWorkflowConfig?.mode;
   const showWorkflowSettings =
@@ -110,7 +109,7 @@ export function SavedWorkflowsSection({
     openSettingsTab();
   }, [openSettingsTab]);
   const projects = useMemo(() => buildAutomationWorkspaceOptions(tabs), [tabs]);
-  // 全局组的运行 / 移动落点只能是本机项目：过滤掉远程 workspace。
+  // The global group may run or move workflows only to local projects; filter out remote workspaces.
   const localProjects = useMemo(
     () => projects.filter((project) => !project.remoteSessionId),
     [projects],
@@ -120,7 +119,7 @@ export function SavedWorkflowsSection({
   const [refreshSeq, setRefreshSeq] = useState(0);
   const [readiness, setReadiness] = useState<Record<string, SavedWorkflowGroupState>>({});
 
-  // 活动 workspace（由调用方以 prop 传入）：打「当前」标记、全局组默认落点与全局空态的创建目标。
+  // Active workspace (passed by the caller as a prop): used for the "Current" marker, the global group default target, and the global empty-state create target.
   const activeKey = useMemo(
     () =>
       workspacePath
@@ -147,11 +146,11 @@ export function SavedWorkflowsSection({
     });
   }, []);
 
-  // 全局组「移到项目…」搬走一份文件后两组都要重拉。项目组没有会改动两组内容的动作（「提升为全局」
-  // 只是开会话，全局档由模型另存，靠全局组的目录监听自然出现），所以只有全局组回调它。
+  // After the global group moves a file to a project, reload both groups. Project groups have no action that changes both groups ("promote to global"
+  // only opens a session; the model saves a separate global copy, which appears through the global directory watcher), so only the global group receives this callback.
   const handleMoved = useCallback(() => setRefreshSeq((seq) => seq + 1), []);
 
-  // 深链：把 openWorkflow 落到对应详情页，然后消费。project 不在候选里就只消费不跳转。
+  // Deep link: open the matching workflow detail page, then consume it. If the project is not a candidate, consume it without navigating.
   const consumedRef = useRef<SavedWorkflowsOpenTarget | null>(null);
   useEffect(() => {
     if (!openWorkflow) {
@@ -175,7 +174,7 @@ export function SavedWorkflowsSection({
     onOpenWorkflowConsumed?.();
   }, [onOpenWorkflowConsumed, openWorkflow, projects]);
 
-  // 项目详情打开后项目被关闭：回退到列表（用 effect，不在渲染里 setState）。
+  // If a project is closed while its detail page is open, return to the list (using an effect rather than setState during render).
   useEffect(() => {
     if (
       view.mode === "detail" &&
@@ -186,7 +185,7 @@ export function SavedWorkflowsSection({
     }
   }, [projects, view]);
 
-  // 全局空态卡的创建目标：活动项目，活动项目不在候选里则第一个候选（项目档创建）。
+  // Target for the global empty-state create card: the active project, or the first candidate if the active project is not among them (create a project workflow).
   const emptyCardTarget = useMemo<SavedWorkflowProjectTarget | null>(() => {
     const active = projects.find((project) => resolveOptionKey(project) === activeKey);
     const target = active ?? projects[0];
@@ -214,7 +213,7 @@ export function SavedWorkflowsSection({
     onMoved: handleMoved,
   };
 
-  // 详情态：只渲染选中的那一组（它内部渲染整页详情），不带页头 / 工具行。
+  // Detail mode renders only the selected group (which renders the full-page detail); omit the page header and toolbar.
   if (view.mode === "detail" && view.scope === "global") {
     return (
       <SavedWorkflowGlobalGroup
@@ -247,20 +246,20 @@ export function SavedWorkflowsSection({
         />
       );
     }
-    // 项目在详情打开后被关闭：上面的 effect 会把 view 复位为列表，这里先落回列表渲染。
+    // If the project is closed while its detail page is open, the effect above resets the view to the list; render the list here first.
   }
 
   const globalReady = readiness[GLOBAL_READINESS_KEY];
   const anyLoaded =
     Boolean(globalReady?.loaded) ||
     projects.some((project) => readiness[resolveOptionKey(project)]?.loaded);
-  // 全局空态卡只看项目组：所有项目组都加载且空时出现，忽略全局组的空/满。
+  // The global empty-state card depends only on project groups: show it once all project groups have loaded and are empty, regardless of whether the global group is empty or populated.
   const allProjectsLoaded =
     projects.length > 0 &&
     projects.every((project) => readiness[resolveOptionKey(project)]?.loaded);
   const allProjectsEmpty =
     allProjectsLoaded && projects.every((project) => readiness[resolveOptionKey(project)]?.empty);
-  // 标题旁的总数 = 各已加载组（含全局组）的合法工作流条数之和。
+  // The total next to the title is the sum of valid workflows in all loaded groups, including the global group.
   const totalCount = projects.reduce(
     (sum, project) => {
       const entry = readiness[resolveOptionKey(project)];
@@ -322,8 +321,7 @@ export function SavedWorkflowsSection({
         </div>
       ) : null}
 
-      {/* 组始终挂载才能各自加载并回报状态（未就绪 / 空项目组内部渲染 null；全局组空也显示）；
-         首屏 spinner 只是覆盖在上，不阻断加载。全局组恒置顶，项目组在其下。 */}
+      {/* Keep every group mounted so each can load and report its state (an unready/empty project group renders null; an empty global group remains visible). The first-screen spinner overlays content without blocking loading. The global group always stays on top, with project groups below. */}
       <div className={cn("flex flex-col", anyLoaded ? "mt-5" : "hidden")}>
         <SavedWorkflowGlobalGroup
           {...globalGroupCommonProps}

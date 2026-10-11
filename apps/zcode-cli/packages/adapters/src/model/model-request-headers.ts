@@ -1,7 +1,7 @@
 const MODEL_AUTH_HEADER_NAMES = new Set(["authorization", "x-api-key"]);
 export const MODEL_QUERY_SOURCE_HEADER = "x-zcode-query-source";
 
-/** 请求用途由调用上下文拥有，不能从 Provider 静态配置或 SDK 默认 header 继承。 */
+/** Request purpose belongs to the call context; do not inherit it from static Provider config or SDK default headers. */
 export function withoutModelQuerySourceHeader(
   headers: Readonly<Record<string, string>> | undefined,
 ): Record<string, string> {
@@ -12,7 +12,7 @@ export function withoutModelQuerySourceHeader(
   );
 }
 
-/** 账号认证由请求期 owner 决定，静态默认值和 Personal 配置不能覆盖新凭据。 */
+/** Account authentication is decided by the request-time owner; static defaults and Personal config cannot override fresh credentials. */
 export function withoutModelAuthHeaders(
   headers: Readonly<Record<string, string>> | undefined,
 ): Record<string, string> {
@@ -23,7 +23,7 @@ export function withoutModelAuthHeaders(
   );
 }
 
-/** HTTP 头名不区分大小写；后来的值替换旧值，避免不同大小写被 SDK 拼成重复头。 */
+/** HTTP header names are case-insensitive; later values replace earlier ones to prevent the SDK from combining differently cased duplicates. */
 export function mergeModelRequestHeaders(
   ...sources: (Readonly<Record<string, string>> | undefined)[]
 ): Record<string, string> {

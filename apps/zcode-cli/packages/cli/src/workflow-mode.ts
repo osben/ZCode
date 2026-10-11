@@ -1,6 +1,7 @@
-// 独立 CLI 的动态工作流 mode（docs/dynamic-workflow/launch.md「The standalone CLI: `--workflow-mode`」）。
-// TUI 与 headless 没有 Host 下发灰度 mode，由进程参数决定；缺省 disabled，即工作流在独立 CLI 里需显式开启。
-// mode 只在这里折成 core 的两个显式字段，bootstrap / core 沿用协议服务端的同一套后果。
+// Dynamic workflow mode for the standalone CLI (see docs/dynamic-workflow/launch.md "The standalone CLI: `--workflow-mode`").
+// The TUI and headless modes do not receive a rollout mode from the Host; the process arguments
+// determine it. The default is disabled, so workflows must be explicitly enabled in the standalone CLI.
+// Convert mode to the two explicit core fields here; bootstrap/core retain the same behavior as the protocol server.
 import {
   DYNAMIC_WORKFLOW_MODES,
   normalizeDynamicWorkflowMode,
@@ -20,7 +21,7 @@ export type CliWorkflowRuntimeConfig = {
   dynamicWorkflowToolsOnDemand: boolean;
 };
 
-/** 非法值抛错，由入口层格式化；缺省值不在这里补，入口层据此区分「未传」做作用域检查。 */
+/** Throw on invalid values for the entry point to format; do not supply a default here, since the entry point uses absence to check scope. */
 export function normalizeWorkflowModeOption(
   value: string | undefined,
 ): DynamicWorkflowMode | undefined {
@@ -33,8 +34,8 @@ export function normalizeWorkflowModeOption(
 }
 
 /**
- * 两个字段都显式写出：core 把缺席当作开启（子代理、进程内嵌入方靠这个极性），
- * 独立 CLI 若留空就会绕过缺省 disabled。
+ * Write both fields explicitly: core treats absence as enabled (subagents and in-process embedders
+ * rely on this default), so leaving them empty in the standalone CLI would bypass its disabled default.
  */
 export function resolveWorkflowModeRuntimeConfig(
   mode: DynamicWorkflowMode,
@@ -46,6 +47,7 @@ export function resolveWorkflowModeRuntimeConfig(
 }
 
 export function isWorkflowModeEnabled(mode: DynamicWorkflowMode | undefined): boolean {
-  // 缺席 = 调用方没接入 mode（单测、嵌入方），不在命令面设门；CLI 入口总会传入解析后的值。
+  // Absence means the caller does not use mode (tests and embedders), so do not gate at the command
+  // surface; the CLI entry point always passes the parsed value.
   return mode !== "disabled";
 }

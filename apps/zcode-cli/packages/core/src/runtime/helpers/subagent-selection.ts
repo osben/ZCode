@@ -11,7 +11,7 @@ const SUBAGENT_SELECTION_MESSAGES = {
   "reasoning-level-not-supported": "Reasoning level unsupported / 不支持所选思考档位",
 } satisfies Record<NonNullable<EffectiveModelSelectionResult["selectionIssue"]>, string>;
 
-/** 显式 profile 是待解析意图；继承与内部 override 已有执行归属，不重新对应账号。 */
+/** An explicit profile is intent that still needs resolution; inherited and internal overrides already have execution ownership and are not mapped to an account again. */
 export function resolveSubagentSelection(input: {
   profileSelection?: ModelSelection | null;
   parentSelection?: ModelSelection | null;
@@ -30,9 +30,9 @@ export function resolveSubagentSelection(input: {
     const reason = result.selectionIssue ?? "selection-missing";
     const requested = input.overrideSelection ?? explicit ?? input.parentSelection;
     const identity = requested ? `; selection=${requested.providerId}/${requested.modelId}` : "";
-    // 解析失败不能落回父模型，否则会悄悄改变用户显式指定的子任务模型。
-    // 公共错误投影不读取结构化字段（只有 selectionIssue 时消费方看不到）；后台也只保留 message。
-    // 因此同时给既有 reason 和消息补上原因，两个消费路径都能定位，不增加专用错误协议。
+    // Do not fall back to the parent model on resolution failure; that would silently change the model explicitly selected by the user for the subtask.
+    // The public error projection does not read structured fields (consumers cannot see them when only selectionIssue is set); background state also retains only message.
+    // Add the cause to both the existing reason and message so both consumption paths can identify it without a dedicated error protocol.
     throw createCoreError(
       CoreErrorType.ConfigurationError,
       `Cannot start subagent: ${SUBAGENT_SELECTION_MESSAGES[reason]} [reason=${reason}${identity}]`,

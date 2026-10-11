@@ -19,7 +19,7 @@ export type ConversationShareSelectionPreflightState =
   | { status: "idle" | "checking" }
   | ({ status: "ready" | "stale" } & ConversationSharePreflightResult);
 
-// memo 组件的默认对象每次创建会破坏引用稳定性；idle 默认值仅供读取。
+// Creating the memo component's default object on every render breaks reference stability; the idle default is read-only.
 const DEFAULT_PREFLIGHT: ConversationShareSelectionPreflightState = { status: "idle" };
 
 export interface ConversationShareSelectionDockProps {
@@ -30,11 +30,11 @@ export interface ConversationShareSelectionDockProps {
   onSelectAll: () => void;
   onDeselectAll: () => void;
   /**
-   * 整轮取消选择。只接受 productTurnId：turnOrdinal 是 service 按全部 turnHeader
-   * 编号的展示序号，用它反查 UI 的 per-query 列表会取消到别的轮次。
+   * Cancel selection for an entire turn. Accept only productTurnId: turnOrdinal is a display index
+   * assigned by the service across all turnHeaders, so using it to look up the UI's per-query list could cancel a different turn.
    */
   onDeselectTurn?: (productTurnId: string) => void;
-  /** 传输类阻断（网络/RPC 抖动）没有可操作对象，只能整体重新预检。 */
+  /** Transport-level blocks (network/RPC interruptions) have no actionable item, so the whole selection must be rechecked. */
   onRetryPreflight?: () => void;
   preflight?: ConversationShareSelectionPreflightState;
   pending?: boolean;
@@ -101,8 +101,8 @@ function ConversationShareSelectionDockImpl({
   });
 
   return (
-    // 分享 dock 曾在同一输入区额外叠加 popover ring、阴影和固定宽度，
-    // 切换时会产生不必要的层级光晕；这里只继承普通 Composer 的基础输入 surface。
+    // The share dock once added a popover ring, shadow, and fixed width on top of the same input area,
+    // creating an unnecessary layered halo when switching. Inherit only the regular Composer's base input surface.
     <section
       data-conversation-share-keep-open="selection-dock"
       data-testid="conversation-share-selection-dock"
@@ -139,7 +139,8 @@ function ConversationShareSelectionDockImpl({
                 className="size-3.5 rounded-sm [&_[data-slot=checkbox-checked-icon]]:size-2.5 [&_[data-slot=checkbox-indeterminate-icon]]:size-2.5"
               />
             </div>
-            {/* 固定宽度会拆开英文标签；按内容宽度保持单行，让操作组整体换行。 */}
+            {/* A fixed width wraps English labels. Size to the content to keep each label on one line
+                and let the action group wrap as a whole. */}
             <span
               data-testid="conversation-share-bulk-label"
               className="shrink-0 whitespace-nowrap text-ui-sm leading-4"
@@ -257,7 +258,8 @@ function ConversationShareSelectionDockImpl({
             data-testid="conversation-share-next"
             className="px-3"
           >
-            {/* 预检进度已由状态入口展示，按钮只通过禁用状态阻止提前进入下一步。 */}
+            {/* Preflight progress is already shown by the status entry; disable the button to prevent
+                moving to the next step too early. */}
             {intl.formatMessage({ id: "conversationShare.partial.next" })}
           </Button>
         </div>

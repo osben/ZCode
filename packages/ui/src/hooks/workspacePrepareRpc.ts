@@ -1,8 +1,8 @@
 /**
- * workspace prepare 的协议 RPC 收口。
+ * Protocol RPC boundary for workspace prepare.
  *
- * 拆出原因：useWorkspacePrepare.ts 只保留可单测的轻量判定入口；
- * 这里只读取 workspace presentation（mode/slash commands）；模型选择事实由目标 Host View 提供。
+ * Extraction rationale: useWorkspacePrepare.ts keeps only the lightweight, testable decision entry point;
+ * this module reads only workspace presentation (mode/slash commands); model-selection facts come from the target Host View.
  */
 import type { IZCodeSessionService } from "@zcode/services";
 import { type ZCodeProvider, type ZCodeWorkspacePrepareResult } from "@zcode/shared";

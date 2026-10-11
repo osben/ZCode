@@ -1,7 +1,9 @@
-// workspace-config topic publisher（v4 additive 新增）：workspace 级配置目录（config options +
-// slash 命令目录）的 conflated 最新态 + seq 区间记账 + snapshot/delta 帧构造。
-// 与 SessionsIndexPublisher 同构且更简单：载荷是单个整体替换态（config.updated），
-// conflation = 深比较去抖；重放缓冲有界，断档退化为 snapshot（conflated 语义下等价）。
+// workspace-config topic publisher (added in v4): maintains the conflated latest state of the
+// workspace-level configuration catalog (config options + slash-command catalog), accounts for seq
+// ranges, and constructs snapshot/delta frames.
+// Same shape as SessionsIndexPublisher, but simpler: the payload is a single whole-state replacement
+// (config.updated); conflation uses deep-comparison debounce. The replay buffer is bounded, and gaps
+// fall back to a snapshot (equivalent under conflated semantics).
 import type {
   WorkspaceConfigDelta,
   WorkspaceConfigState,
@@ -14,7 +16,7 @@ import type { TopicFrameReservation } from "./topic-frame-reservation.js";
 interface ConfigSubscription {
   subscriptionId: string;
   connectionId: string;
-  /** 下一帧 fromSeq（(fromSeq, toSeq] 语义）。 */
+/** fromSeq for the next frame (with (fromSeq, toSeq] semantics). */
   sentSeq: number;
   inFlight: TopicFrameReservation<WorkspaceConfigTopicFrame> | null;
   nextLogicalFrameOrdinal: number;
@@ -33,7 +35,7 @@ interface WorkspaceConfigResyncRequest {
   forceSnapshot?: boolean;
 }
 
-/** 配置目录体量小、变更低频，深比较直接用稳定序列化（构建器输出字段顺序稳定）。 */
+/** The config catalog is small and changes infrequently, so deep comparison uses stable serialization (the builder emits fields in a stable order). */
 function statesEqual(a: WorkspaceConfigState, b: WorkspaceConfigState): boolean {
   return JSON.stringify(a) === JSON.stringify(b);
 }
@@ -41,7 +43,7 @@ function statesEqual(a: WorkspaceConfigState, b: WorkspaceConfigState): boolean 
 export class WorkspaceConfigPublisher {
   private state: WorkspaceConfigState = { configOptions: [], slashCommands: [] };
   private currentSeq = 0;
-  /** (seq, delta) 有界重放缓冲；溢出/断档退化为 snapshot。 */
+/** Bounded (seq, delta) replay buffer; overflow or a gap falls back to a snapshot. */
   private readonly deltaLog: Array<{
     seq: number;
     delta: WorkspaceConfigDelta;
@@ -66,7 +68,7 @@ export class WorkspaceConfigPublisher {
     return this.state;
   }
 
-  /** 最新配置目录进入 → conflated 去抖，变化则记账推进 seq。返回是否有变化。 */
+/** Receive the latest config catalog, debounce through conflation, and account for changes by advancing seq. Return whether it changed. */
   publish(state: WorkspaceConfigState): boolean {
     if (statesEqual(this.state, state)) return false;
     this.state = state;
@@ -83,7 +85,7 @@ export class WorkspaceConfigPublisher {
     return this.currentSeq;
   }
 
-  /** 订阅：base 有效且可续传则 resume，否则 snapshot。每连接单订阅（重订阅替换旧代际）。 */
+/** Subscribe: resume if base is valid and resumable; otherwise send a snapshot. One subscription per connection (resubscription replaces the previous generation). */
   subscribe(
     connectionId: string,
     base?: { logEpoch: string; seq: number },
@@ -151,7 +153,7 @@ export class WorkspaceConfigPublisher {
     return this.subscribeResult(subscriptionId, "snapshot", reservation, rollback);
   }
 
-  /** same-sub recovery：从客户端 base 重建，不信 sentSeq。 */
+  /** Same-subscription recovery: rebuild from the client's base; do not trust sentSeq. */
   resyncReserved(
     subscriptionId: string,
     request: WorkspaceConfigResyncRequest,
@@ -263,7 +265,7 @@ export class WorkspaceConfigPublisher {
     };
   }
 
-  /** 排出某订阅未发的增量帧；无增量返回 null。 */
+  /** Drain unsent delta frames for a subscription; return null if there are none. */
   flush(subscriptionId: string): WorkspaceConfigTopicFrame | null {
     const reservation = this.reserveFlush(subscriptionId);
     if (!reservation || !reservation.commit()) return null;
@@ -283,7 +285,8 @@ export class WorkspaceConfigPublisher {
     deliveryKind: TopicFrameDeliveryKind = "online",
   ): TopicFrameReservation<WorkspaceConfigTopicFrame> {
     const pending = this.deltaLog.filter((entry) => entry.seq > subscription.sentSeq);
-    // 重放缓冲已丢弃部分区间（seq 断档）→ 退化为 snapshot（conflated 语义下等价）。
+    // The replay buffer dropped part of the range (a sequence gap); fall back to a snapshot, which
+    // is equivalent under conflated semantics.
     if (pending.length === 0 || pending[0]!.seq !== subscription.sentSeq + 1) {
       return this.reserveFrame(
         subscription,

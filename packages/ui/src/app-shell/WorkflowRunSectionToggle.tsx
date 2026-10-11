@@ -3,19 +3,19 @@ import { ChevronRightIcon } from "lucide-react";
 import { cn } from "@/components/lib/utils.js";
 
 /**
- * workflow run 详情页里可折叠分区的表头栏。
+ * Header bar for collapsible sections on the workflow run detail page.
  *
- * 待答问题区与产物区共用这一条栏：它们的折叠语义完全一样，各写一遍迟早在圆角、hover 色
- * 或 chevron 角度上漂开。原型是当年 Script 区那个 toggle（从它原样抽出），所以这条栏
- * **不含任何新的视觉词汇**。Results / 事件日志 / Script 三节已撤走，
- * 留下的两个调用方默认态相反（问题收起、产物展开），而那是各节自己的事，不是本组件的。
+ * The pending-questions and artifacts sections share this bar: their collapse semantics are identical, and separate implementations would eventually diverge in corner radius, hover color,
+ * or chevron angle. It is extracted verbatim from the former Script-section toggle, so this bar
+ * **introduces no new visual language**. Results / event log / Script sections have been removed;
+ * the two remaining callers have opposite default states (questions collapsed, artifacts expanded), which belongs to each section, not this component.
  *
- * 表头只负责「开合这件事」：正文的取数、门控与布局都留在各节自己手里。
+ * The header handles only expansion/collapse; each section owns its content fetching, gating, and layout.
  *
- * **刻意不 memo**：它的调用方本身都是 memo 组件，只在自己的状态或投影变化时重渲染——
- * 那时这条栏的 `expanded`/`label`/`trailing` 正好也变了。包上 memo 只会把 `onToggle` 与
- * `trailing` 逼进 `useCallback`/`useMemo`（reactStableReferences 那条守卫会要求），
- * 换来的是一层永远命中不了的比较。
+ * **Intentionally not memoized**: callers are already memoized components and rerender only when their state or projection changes —
+ * exactly when this bar's `expanded`/`label`/`trailing` also changes. Wrapping it in memo would force `onToggle` and
+ * `trailing` into `useCallback`/`useMemo` (as required by the reactStableReferences guard),
+ * adding a comparison layer that can never hit.
  */
 export function WorkflowRunSectionToggle({
   expanded,
@@ -26,14 +26,14 @@ export function WorkflowRunSectionToggle({
   trailing,
 }: {
   expanded: boolean;
-  /** aria-label：按当前状态给「展开 X」/「收起 X」，标题本身由 `title` 承担。 */
+  /** aria-label: “Expand X” / “Collapse X” according to current state; `title` provides the visible heading. */
   label: string;
   onToggle: () => void;
   testId: string;
   title: string;
   /**
-   * 表头右侧的附属信息（条数、loading 提示等）。收起时也在场——折叠不能让
-   * 「这一节里到底有没有东西」变得不可见。
+   * Supplementary information on the right side of the header (count, loading indicator, etc.). It remains visible while collapsed — collapsing must not hide
+   * whether this section contains anything.
    */
   trailing?: ReactNode;
 }) {

@@ -65,8 +65,8 @@ export function getPublicEgressIpBlockReason(value: string): PublicEgressIpBlock
   }
 
   const family = version === 4 ? "ipv4" : "ipv6";
-  // BlockList 按 CIDR 匹配时能覆盖 IPv4-mapped IPv6，
-  // 避免手写正则漏掉 ::ffff:7f00:1 这类标准化后的 loopback 表示。
+  // BlockList's CIDR matching covers IPv4-mapped IPv6, avoiding hand-written regexes that
+  // miss normalized loopback representations such as ::ffff:7f00:1.
   for (const range of BLOCKED_PUBLIC_EGRESS_RANGES) {
     if (range.blockList.check(normalized, family)) {
       return { reason: range.reason, version };

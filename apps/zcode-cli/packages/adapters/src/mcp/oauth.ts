@@ -197,9 +197,9 @@ class ZCodeMcpAuthorizationCodeProvider implements OAuthClientProvider {
       return this.transactionClientInformation;
     }
 
-    // 修复原因（根因 2 的过渡 seam）：返回 undefined 会让 SDK 立刻做一次动态注册，而 DCR 的
-    // 归属已经整体移交 Phase 2。没有 client 也就没有 refresh token，本来就只能交互授权，
-    // 因此这里直接抛 interactiveRequired，避免在授权服务器上留下一个永不会被使用的注册。
+    // Reason for the fix (root-cause 2 transition seam): returning undefined makes the SDK perform dynamic registration immediately, but DCR ownership
+    // has moved entirely to Phase 2. Without a client there can be no refresh token, so interactive authorization is required;
+    // throw interactiveRequired here instead of leaving an unused registration on the authorization server.
     throw createInteractiveAuthorizationRequiredError({
       reason: "no_credentials",
       serverName: this.serverName,
@@ -207,9 +207,9 @@ class ZCodeMcpAuthorizationCodeProvider implements OAuthClientProvider {
   }
 
   async saveClientInformation(clientInformation: OAuthClientInformationMixed): Promise<void> {
-    // 修复原因：MCP SDK 在 authorization code exchange 时会再次读取 provider。
-    // 动态注册结果必须固定在当前 state 对应的 provider 实例；同时先写入 legacy client
-    // 作为 provider 重建后的恢复种子。当前事务后续只读内存值，不会被并发注册覆盖。
+    // Reason for the fix: the MCP SDK reads the provider again during authorization-code exchange.
+    // Pin the dynamic-registration result to the provider instance for the current state; also persist it as the legacy client
+    // to seed recovery if the provider is rebuilt. The rest of this transaction reads only the in-memory value, so concurrent registrations cannot overwrite it.
     await this.credentialStore.save(
       this.key("client_information"),
       JSON.stringify(clientInformation),
@@ -228,9 +228,9 @@ class ZCodeMcpAuthorizationCodeProvider implements OAuthClientProvider {
       throw new Error(`Missing MCP OAuth client information for ${this.serverName}`);
     }
     const previousTokens = this.storedCredentialPair?.tokens;
-    // 通过共享 helper 发布，确保 Phase 2 与本 provider 写出的 canonical 形态完全一致
-    // （含每次 publication 唯一的 generation）。client 与 refresh token 必须来自同一次授权，
-    // 三个 key 仍在同一个跨进程 read-modify-write 临界区内原子写入。
+    // Publish through the shared helper so Phase 2 and this provider write exactly the same canonical shape
+    // (including a generation unique to each publication). The client and refresh token must come from the same authorization;
+    // the three keys are still written atomically inside one cross-process read-modify-write critical section.
     const published = await publishCanonicalCredentials(this.credentialStore, this.keyPrefix, {
       clientInformation,
       publishedBy: this.transactionId,
@@ -247,8 +247,8 @@ class ZCodeMcpAuthorizationCodeProvider implements OAuthClientProvider {
     };
     this.storedCredentialPairLoaded = true;
     this.transactionClientSource = "canonical";
-    // 修复原因：授权与刷新过去都没有成功侧事件，日志里只能看到 authorization.required，
-    // 无法判断一次 refresh 到底成功过没有。只记录安全标识与形态，不记录任何 token 明文。
+    // Reason for the fix: authorization and refresh previously emitted no success event, so logs showed only authorization.required
+    // and could not tell whether a refresh succeeded. Record only safe identifiers and shapes; never log token plaintext.
     this.logger?.info("MCP OAuth credentials published", {
       event: "mcp.oauth.credentials.published",
       ...this.logContext(),
@@ -268,11 +268,11 @@ class ZCodeMcpAuthorizationCodeProvider implements OAuthClientProvider {
 
   async redirectToAuthorization(authorizationUrl: URL): Promise<void> {
     this.pendingAuthorization = true;
-    // 修复原因（根因 2 的过渡 seam）：本 provider 复用持久化的 DCR client，而它的 redirect_uris
-    // 锁死在注册当时的随机端口，`authorizationUrl` 因此可能带「旧 client_id + 新 redirect_uri」。
-    // 授权服务器按 RFC 6749 §4.1.2.1 禁止回跳、就地渲染错误页，回调永不到达且重试永不自愈。
-    // 所以这里不再投影该 URL、也不打开浏览器，而是抛出 interactiveRequired，由 adapter 编排层
-    // 转入 Phase 2 的 fresh DCR 授权事务（见 docs/mcp-oauth-two-phase.md §4.7）。
+    // Reason for the fix (root-cause 2 transition seam): this provider reuses a persisted DCR client whose redirect_uris
+    // are fixed to the random port used at registration, so `authorizationUrl` may combine an old client_id with a new redirect_uri.
+    // Under RFC 6749 §4.1.2.1 the authorization server rejects the redirect and renders an error page; the callback never arrives and retry cannot recover.
+    // So do not expose this URL or open the browser here; throw interactiveRequired so the adapter orchestration layer
+    // can start a fresh DCR authorization transaction in Phase 2 (docs/mcp-oauth-two-phase.md §4.7).
     this.logger?.warn("MCP OAuth authorization handed off to interactive transaction", {
       event: "mcp.oauth.authorization.handoff",
       ...this.logContext(),
@@ -301,8 +301,8 @@ class ZCodeMcpAuthorizationCodeProvider implements OAuthClientProvider {
   }
 
   async saveDiscoveryState(state: OAuthDiscoveryState): Promise<void> {
-    // 与 Phase 2 共用同一份带时间戳的 discovery 记录：否则一侧刷新了 AS metadata，另一侧
-    // 仍可能使用无 TTL 的旧缓存。
+    // Share the same timestamped discovery record with Phase 2; otherwise one side could refresh AS metadata while the other
+    // continues using an old cache with no TTL.
     await saveDiscoveryRecord(this.credentialStore, this.keyPrefix, state);
   }
 
@@ -311,9 +311,9 @@ class ZCodeMcpAuthorizationCodeProvider implements OAuthClientProvider {
   }
 
   async invalidateCredentials(scope: "all" | "client" | "tokens" | "verifier" | "discovery") {
-    // 修复原因：过去 refresh 失败只在 SDK 内部分类，ZCode 侧不留任何痕迹，事后无法区分
-    // token 过期、被撤销、client mismatch 和服务端临时错误（见 docs/analysis 的可观测性缺口）。
-    // SDK 不把 OAuth error code 传给 provider，但 invalidation scope 与之一一对应：
+    // Reason for the fix: refresh failures used to be classified only inside the SDK, leaving no trace in ZCode and making it impossible to distinguish
+    // expired tokens, revoked tokens, client mismatch, and temporary server errors afterward (see the observability gap in docs/analysis).
+    // The SDK does not pass OAuth error codes to the provider, but each invalidation scope maps to one of them:
     // tokens ← invalid_grant；client/all ← invalid_client / unauthorized_client。
     this.logger?.warn("MCP OAuth credentials invalidated", {
       event: "mcp.oauth.credentials.invalidated",
@@ -337,9 +337,9 @@ class ZCodeMcpAuthorizationCodeProvider implements OAuthClientProvider {
   }
 
   async close(): Promise<void> {
-    // 修复原因：PKCE verifier 只属于当前 state。adapter 超时或关闭时必须清理本事务，
-    // 不能再删除相同 MCP 配置下另一个并发授权正在等待的 verifier。清理属于 best-effort：
-    // token exchange 已成功时，锁超时或损坏文件不能把主链路反转成连接失败。
+    // Reason for the fix: a PKCE verifier belongs only to the current state. On adapter timeout or shutdown, clean up this transaction,
+    // but do not delete the verifier awaited by another concurrent authorization for the same MCP configuration. Cleanup is best-effort:
+    // after token exchange succeeds, lock timeout or a corrupt file must not turn the main path into a connection failure.
     try {
       await this.clearVerifier();
     } catch (error) {
@@ -382,8 +382,8 @@ class ZCodeMcpAuthorizationCodeProvider implements OAuthClientProvider {
       event: "mcp.oauth.credentials.invalidate_snapshot",
       ...this.logContext(),
       canonicalDeleted,
-      // canonicalDeleted=false 表示 compare-and-delete 失败：另一个事务已发布新 pair，
-      // 本次失效必须保留 winner。这是并发收口的正常结果，不是错误。
+      // canonicalDeleted=false means compare-and-delete failed: another transaction published a new pair,
+      // and this invalidation must preserve the winner. This is a normal concurrency outcome, not an error.
       hadCanonicalSnapshot: Boolean(canonicalSnapshot),
       invalidationScope: scope,
       legacyClientDeleted: deleted[this.key("client_information")],
@@ -399,12 +399,12 @@ class ZCodeMcpAuthorizationCodeProvider implements OAuthClientProvider {
       (canonicalSnapshot && this.transactionClientSource === "legacy")
     ) {
       if (canonicalDeleted === false) {
-        // 修复原因：当前快照已被其他进程替换时，失败方不能删除新 pair；清空本地缓存，
-        // 让 SDK 的同一次重试重新读取获胜事务发布的 client/tokens。
+        // Reason for the fix: if another process replaced the current snapshot, the losing process must not delete the new pair. Clear the local cache
+        // so the SDK's same retry rereads the client/tokens published by the winning transaction.
         this.transactionClientInformation = undefined;
         this.transactionClientSource = undefined;
       } else if (canonicalDeleted === true) {
-        // token 已失效但动态 client 仍可用于当前 provider 重新授权。
+        // The token is invalid, but the dynamic client can still be used to reauthorize this provider.
         this.transactionClientSource = "registered";
       }
     }
@@ -433,8 +433,8 @@ class ZCodeMcpAuthorizationCodeProvider implements OAuthClientProvider {
       typeof parsedCanonicalSnapshot.value.version === "number" &&
       !MCP_OAUTH_SUPPORTED_CREDENTIAL_VERSIONS.has(parsedCanonicalSnapshot.value.version)
     ) {
-      // 修复原因：CLI 与 desktop 会独立升级但共享凭据文件。旧版本只能忽略未知版本，
-      // 不能把新版本写入的 canonical pair 当损坏数据删除。
+      // Reason for the fix: CLI and desktop upgrade independently but share the credential file. Older versions must ignore unknown versions,
+      // not delete canonical pairs written by newer versions as if they were corrupt.
     } else if (parsedCanonicalSnapshot && !isCanonicalCredentials(parsedCanonicalSnapshot.value)) {
       await this.credentialStore.deleteIfValue(canonicalKey, parsedCanonicalSnapshot.raw);
     } else {
@@ -449,8 +449,8 @@ class ZCodeMcpAuthorizationCodeProvider implements OAuthClientProvider {
       values[legacyTokensKey],
     );
 
-    // 修复原因：共享凭据读取可能因锁超时或临时 I/O 失败而抛错。只有完整快照成功后
-    // 才发布缓存和 loaded 标志，确保同一个 provider 的下一次调用仍会重试。
+    // Reason for the fix: reading shared credentials can throw on lock timeout or transient I/O failure. Publish the cache and loaded flag only after a complete snapshot succeeds,
+    // so the next call for this provider will retry.
     this.canonicalSnapshot = canonicalSnapshot;
     this.legacyClientSnapshot = legacyClientSnapshot;
     this.legacyTokensSnapshot = legacyTokensSnapshot;
@@ -473,9 +473,9 @@ class ZCodeMcpAuthorizationCodeProvider implements OAuthClientProvider {
   private async loadStoredCredentialPair(): Promise<StoredCredentialPair | undefined> {
     if (this.storedCredentialPairLoaded) return this.storedCredentialPair;
     await this.loadCredentialSnapshots();
-    // 委托给共享的纯函数：canonical 与 legacy 镜像的交错兼容规则只能有一份，两处各写一遍必然
-    // 发散。用已经读到的快照派生，不再多读一次凭据文件；快照本身仍留在本类里，因为
-    // compare-and-delete 需要发起方读到的原始值。
+    // Delegate to the shared pure function: the interleaved compatibility rules for canonical and legacy mirrors must have one implementation or the two copies will
+    // diverge. Derive from the snapshot already read instead of reading the credential file again; keep the snapshot in this class because
+    // compare-and-delete needs the original value read by the caller.
     const pair = deriveCredentialPair({
       canonicalRaw: this.canonicalSnapshot?.raw,
       legacyClientRaw: this.legacyClientSnapshot?.raw,
@@ -521,7 +521,7 @@ class ZCodeMcpAuthorizationCodeProvider implements OAuthClientProvider {
     return `${this.keyPrefix}:${name}`;
   }
 
-  /** 并发诊断日志只允许安全标识：PID、adapter id、credential key prefix、state 短哈希。 */
+  /** Concurrency diagnostics may log only safe identifiers: PID, adapter ID, credential-key prefix, and short state hash. */
   private logContext(): Record<string, unknown> {
     return {
       adapterInstanceId: this.adapterInstanceId,
@@ -543,7 +543,7 @@ class ZCodeMcpAuthorizationCodeProvider implements OAuthClientProvider {
   }
 }
 
-/** 日志用脱敏摘要：client_id 等标识只记录哈希前缀，不记录原值。 */
+/** Redacted summary for logs: identifiers such as client_id are represented by hash prefixes, never their original values. */
 function hashIdentifier(value: string | undefined): string | undefined {
   if (!value) return undefined;
   return createHash("sha256").update(value).digest("hex").slice(0, 12);
@@ -560,7 +560,7 @@ export function createCredentialKeyPrefix(
   serverUrl: string,
   config: McpAuthorizationCodeOAuthConfig,
 ): string {
-  // OAuth token 和动态 client 注册都依赖授权语义，scope/client/redirect 变化时必须重新授权。
+  // OAuth tokens and dynamic client registration depend on authorization semantics; reauthorize when scope/client/redirect changes.
   const hash = createHash("sha256")
     .update(
       [

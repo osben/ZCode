@@ -9,17 +9,19 @@ const INIT_COMMAND_NAME = "init";
 
 export interface ResolveZCodeBuiltinPromptCommandOptions {
   /**
-   * 动态工作流灰度门（docs/dynamic-workflow/launch.md「Gray release」）。**只有显式 false 才挡下**
-   * `/workflow`：TUI / headless 从不设置该字段，那里的功能始终开启。挡下时返回 undefined，
-   * 与「命令不存在」同形——`workflow` 是保留名，后续的自定义命令解析同样拒绝展开，于是原文作为
-   * 普通 prompt 交给模型，与目录侧剔除它的结论一致（DWG-03）。
+   * Dynamic-workflow rollout gate (docs/dynamic-workflow/launch.md "Gray release"). **Block
+   * `/workflow` only when explicitly false**: TUI / headless never set this field, so the feature is
+   * always enabled there. When blocked, return undefined — the same shape as "command does not
+   * exist": `workflow` is a reserved name, so the later custom-command parsing also refuses to
+   * expand it, and the original text reaches the model as a normal prompt, matching the catalog
+   * side's decision to remove it (DWG-03).
    */
   dynamicWorkflowEnabled?: boolean;
   workingDirectory?: string;
 }
 
 export interface ResolvedZCodeBuiltinPromptCommand {
-  /** 命中的内置命令名（`init` / `workflow`），调用方据此挂命令特有的副作用（如 onDemand 激活）。 */
+  /** Matched built-in command name (`init` / `workflow`); callers attach command-specific side effects (such as onDemand activation). */
   name: string;
   prompt: string;
 }

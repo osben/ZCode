@@ -2,7 +2,7 @@ export interface OfficialMcpIssuanceAudit {
   markFirst(pluginId: string, mcpKey: string, workspaceKey: string): boolean;
 }
 
-/** 进程内有界首次发放审计；返回 true 表示该三元组第一次出现。 */
+/** Bounded in-process audit of first issuance; returns true when the tuple appears for the first time. */
 export function createOfficialMcpIssuanceAudit(maxEntries = 256): OfficialMcpIssuanceAudit {
   const capacity = Math.max(1, Math.trunc(maxEntries));
   const keys = new Map<string, true>();

@@ -4,7 +4,7 @@ import {
   type AutomationSessionCreateTelemetry,
 } from "@zcode/shared";
 
-/** 仅实际新建并完成首发 admission 的派发分支调用；不从恢复订阅推断创建。 */
+/** Call only from the dispatch branch that actually creates a session and completes its initial admission; do not infer creation from a recovery subscription. */
 export function reportHostSessionCreate(
   port: { postMessage(message: unknown): void } | null | undefined,
   input: {
@@ -35,6 +35,6 @@ export function reportHostSessionCreate(
     };
     port?.postMessage({ type: HostResponseTypes.SessionCreateTelemetry, event });
   } catch {
-    // Main 已退出或 IPC 不可用时丢弃本次旁路上报，不能把 accepted 派发误判为失败。
+    // If Main has exited or IPC is unavailable, drop this side-channel report; do not misclassify an accepted dispatch as a failure.
   }
 }

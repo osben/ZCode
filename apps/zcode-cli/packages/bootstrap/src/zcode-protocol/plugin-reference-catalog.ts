@@ -1,6 +1,6 @@
-// Plugin 对话引用 catalog 的协议 handler。
-// 与 plugins.ts（安装/市场/启停等管理面）分文件：本查询是会话/草稿 Picker 的只读投影，
-// 且 plugins.ts 已接近 max-lines 门禁。
+// Protocol handler for the Plugin conversation-reference catalog.
+// Kept separate from plugins.ts (installation/marketplace/start-stop management): this query is a
+// read-only projection for the session/draft Picker, and plugins.ts is near the max-lines limit.
 import {
   ZCODE_OFFICIAL_PLUGIN_MARKETPLACE_ID,
   zcodeProtocolNotifications,
@@ -25,9 +25,10 @@ import {
   type ZCodeProtocolAgentServerContext,
 } from "./server-types.js";
 
-// Picker 权威：带 sessionId → 该 Session 创建时冻结的 identity catalog（session-owned）；
-// 不带 → workspace 当前 catalog（新建草稿）。session 不存在时按协议错误 fail closed，
-// 禁止静默回退 workspace authority——否则草稿/会话两种权威会被混淆。
+// Picker authority: with sessionId, use the identity catalog frozen when that Session was created
+// (session-owned); without one, use the current workspace catalog (new draft). If the session does
+// not exist, fail closed with a protocol error. Do not silently fall back to workspace authority,
+// which would confuse draft and session authority.
 export async function getPluginReferenceCatalog(
   context: ZCodeProtocolAgentServerContext,
   rawParams: unknown,
@@ -63,7 +64,7 @@ export async function getPluginReferenceCatalog(
 const SUGGESTED_PLUGIN_MARKETPLACE = ZCODE_OFFICIAL_PLUGIN_MARKETPLACE_ID;
 const SUGGESTED_PLUGIN_MARKETPLACE_REFRESH_TIMEOUT_MS = 10_000;
 
-/** 推荐 Prompt 的安装前可信解析；missing 必须先刷新官方目录，失败时禁止旧快照安装。 */
+/** Trusted pre-install resolution for a recommended Prompt; refresh the official catalog before resolving missing entries, and do not install from a stale snapshot if refresh fails. */
 export async function resolveSuggestedPluginReference(
   context: ZCodeProtocolAgentServerContext,
   rawParams: unknown,
@@ -107,8 +108,9 @@ export async function resolveSuggestedPluginReference(
   };
   let displayByPluginId: Map<string, PluginReferenceListingDisplay> | undefined;
   const resolveIcon = () => {
-    // 图标只来自目标 Host 已缓存的官方 listing，并随可信解析一次返回；UI 不再为它读取
-    // workspace referenceCatalog。overview 不等待网络，缺失时按无图标降级。
+    // Icons come only from the target Host's cached official listing and are returned with trusted
+    // resolution. The UI no longer reads workspace referenceCatalog for them. overview does not
+    // wait for the network and falls back to no icon when unavailable.
     displayByPluginId ??= resolveReferenceListingDisplayByPluginId(workingDirectory);
     return displayByPluginId.get(stableId)?.icon;
   };
@@ -140,8 +142,9 @@ export async function resolveSuggestedPluginReference(
   const initial = readState();
   if (initial.entry) return toResult(initial.entry);
 
-  // 旧流程只有官方 Marketplace 刷新完成后才把 missing 结果返回 UI，网络等待期间
-  // 没有任何反馈，用户会误以为点击未生效。首次本地检查缺失后先通知同一 operation 进入 loading。
+  // The old flow returned a missing result to the UI only after refreshing the official Marketplace,
+  // providing no feedback during the network wait and making the click look ineffective. After the
+  // first local check finds a missing entry, notify the same operation that it is loading.
   context.notify({
     method: zcodeProtocolNotifications.pluginOperationProgress,
     params: { operationId: params.operationId, state: "refreshing" },
@@ -161,7 +164,8 @@ export async function resolveSuggestedPluginReference(
       workingDirectory,
     });
     const refreshTimeoutRequest = new Promise<never>((_, reject) => {
-      // 刷新超时必须中止底层网络/进程；仅结束协议等待会让旧 operation 继续改写目录快照。
+      // A refresh timeout must abort the underlying network/process; ending only the protocol wait
+      // would let the old operation continue modifying the catalog snapshot.
       refreshTimeout = setTimeout(() => {
         refreshTimedOut = true;
         const timeoutError = new Error("刷新 zcode-plugins-official 超时（10000 ms）");
@@ -220,11 +224,11 @@ export async function resolveSuggestedPluginReference(
 }
 
 /**
- * icon/displayName(I18n) 是目标 Host Marketplace listing 的可变展示投影，不属于冻结
- * Session 身份。根因：商店 listing 才是原始图标/本地化显示名的事实源，plugin
- * manifest/runtime metadata 不携带它们。workingDirectory 只用于沿既有 Host/config
- * 边界定位数据；这里按 stable ID join，只用于 Picker/chip 展示与搜索，
- * reminder 仍只消费 core identity catalog。
+ * icon/displayName(I18n) is a mutable display projection from the target Host Marketplace listing,
+ * not part of the frozen Session identity. The marketplace listing is the source of truth for the
+ * original icon/localized display name; plugin manifest/runtime metadata do not contain them.
+ * workingDirectory is used only to locate data through the existing Host/config boundary. Join by
+ * stable ID for Picker/chip display and search only; reminders still consume the core identity catalog.
  */
 interface PluginReferenceListingDisplay {
   category?: string;
@@ -267,8 +271,9 @@ function resolveReferenceListingDisplayByPluginId(
   return displayByPluginId;
 }
 
-// 身份/能力投影显式丢弃 rootPath（仅 runtime 内部 provenance 用，路径不出协议）；
-// icon/displayName(I18n)/description(I18n) 仅供展示，不改变 identifiers-only reminder 契约。
+// Identity/capability projection explicitly drops rootPath (runtime provenance only; paths do not
+// leave the protocol). icon/displayName(I18n)/description(I18n) are display-only and do not change
+// the identifiers-only reminder contract.
 function toReferenceCatalogEntry(
   entry: PluginReferenceCatalogEntry,
   displayByPluginId: ReadonlyMap<string, PluginReferenceListingDisplay>,

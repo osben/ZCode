@@ -101,7 +101,7 @@ export function UserInstructionsReadyEditor({ editor }: { editor: UserInstructio
             value={editor.draft}
             onChange={(event) => editor.setDraft(event.target.value)}
             onKeyDown={(event) => {
-              // 编辑器内 Cmd/Ctrl+S 与保存按钮等价，门控一致（canSave）。
+              // Cmd/Ctrl+S inside the editor is equivalent to the Save button and uses the same gate (canSave).
               if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "s") {
                 event.preventDefault();
                 if (editor.canSave) void editor.save();
@@ -116,7 +116,7 @@ export function UserInstructionsReadyEditor({ editor }: { editor: UserInstructio
           />
         </TabsContent>
         <TabsContent value="preview">
-          {/* 不传 workspacePath / selectionTarget：远端文档的相对链接不能解析到本机。 */}
+          {/* Do not pass workspacePath / selectionTarget: relative links in remote documents cannot be resolved locally. */}
           <div className="max-h-[60vh] min-h-80 overflow-hidden rounded-lg border border-border">
             {editor.draft.trim() ? (
               <MarkdownPreviewContent

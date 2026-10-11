@@ -1,4 +1,4 @@
-// 能力群、节点与连线必须作为同一份审计数据集整体校验，避免跨文件产生悬空引用。
+// Validate capability groups, nodes, and edges together as one audit dataset to prevent dangling cross-file references.
 /* oxlint-disable max-lines */
 export type CapabilityRelationType = "delivery" | "invariant" | "runtime" | "shared" | "state";
 
@@ -346,7 +346,7 @@ const groupDefinitions: readonly CapabilityGroupDefinition[] = [
   ],
 ];
 
-// 能力节点是一份人工维护的紧凑清单；每个 tuple 保持一行，便于 review。
+// Capability nodes are a compact, manually maintained list; keep each tuple on one line for review.
 // prettier-ignore
 const nodeDefinitions: readonly CapabilityNodeDefinition[] = [
   ["composer", "conversation-experience", "输入与意图（Composer & Intent）", "输入草稿、附件引用、模型/模式选择、媒体能力提示和 command intent。", "Renderer local draft"],

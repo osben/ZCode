@@ -1,8 +1,8 @@
 /**
- * useFileWatcherService —— 文件系统监视 hooks
+ * useFileWatcherService — filesystem-watcher hooks
  *
- * 在 useReaddir 基础上增加 fs.watch 订阅。
- * 目录内容变更时自动 refresh，无需手动刷新。
+ * Adds an fs.watch subscription on top of useReaddir.
+ * Automatically refreshes when directory contents change.
  */
 import { useState, useEffect, useCallback } from "react";
 import type { FileEntry } from "@zcode/shared";
@@ -11,10 +11,10 @@ import { useServices } from "./useServices.js";
 import { logger } from "@/logger.js";
 
 /**
- * 带文件系统监视的目录读取 hook
+ * Directory-reading hook with filesystem watching.
  *
- * 与 useReaddir 接口一致，但在挂载时自动 watch 目录，
- * 收到变更事件时自动 refresh。卸载时自动 unwatch。
+ * Uses the same interface as useReaddir, but automatically watches the directory on mount,
+ * refreshes when it receives a change event, and unwatches on unmount.
  */
 export function useWatchedReaddir(path: string) {
   const { fileService, fileWatcherService } = useServices();
@@ -35,31 +35,31 @@ export function useWatchedReaddir(path: string) {
     }
   }, [fileService, path]);
 
-  // 初始读取
+  // Initial read
   useEffect(() => {
     refresh();
   }, [refresh]);
 
-  // 文件系统监视：挂载时 watch，卸载时 unwatch
+  // Filesystem watch: watch on mount and unwatch on unmount
   useEffect(() => {
     let cancelled = false;
     let watcherId: string | null = null;
     const disposables: IDisposable[] = [];
 
-    // 用 ref 保存 refresh 引用，避免事件回调闭包过期
+    // Store the refresh callback in a ref to avoid a stale event-handler closure.
     const refreshRef = { current: refresh };
 
     fileWatcherService
       .watch({ path })
       .then(({ id }) => {
         if (cancelled) {
-          // 组件已卸载，立即释放 watcher
+          // The component has unmounted; release the watcher immediately.
           fileWatcherService.unwatch({ id });
           return;
         }
         watcherId = id;
 
-        // 订阅变更事件，收到时自动刷新目录列表
+        // Subscribe to change events and automatically refresh the directory listing.
         const sub = fileWatcherService.onDynamicChange(id)(() => {
           logger.info(`[FileWatcher] 目录变更，自动刷新 path=${path}`);
           refreshRef.current();
@@ -67,7 +67,7 @@ export function useWatchedReaddir(path: string) {
         disposables.push(sub);
       })
       .catch((err) => {
-        // watch 失败不影响基础功能（readdir 仍可用），仅记录日志
+        // A watch failure does not affect basic functionality (readdir still works); log it only.
         if (!cancelled) {
           logger.warn(`[FileWatcher] 监视目录失败 path=${path}:`, err);
         }

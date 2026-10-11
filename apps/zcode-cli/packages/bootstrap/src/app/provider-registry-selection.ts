@@ -15,8 +15,8 @@ export interface ResolvedRegistrySelection {
 }
 
 /**
- * Registry 是模型选择的正式候选来源。当前 Turn 临时携带的 Provider 属于执行输入，
- * 不进入模型选择列表。
+ * Registry is the authoritative source of model-selection candidates. A Provider temporarily
+ * carried by the current Turn is execution input and does not enter the selection list.
  */
 export function listRegistryBackedModels(
   registry: ProviderRegistryModelSource,
@@ -37,8 +37,8 @@ export function getRegistryBackedModel(
 }
 
 /**
- * 为连通性等辅助调用补齐最低推理档位。Factory 只接受完整执行选择，
- * 因而必须在创建 Model 之前完成，不能等 Model 创建后再 bind。
+ * Supply the minimum reasoning level for auxiliary calls such as connectivity checks. Factory accepts
+ * only a complete execution selection, so this must happen before creating the Model, not by binding afterward.
  */
 export function completeAuxiliaryRegistryModelSelection(
   registry: ProviderRegistryModelSource,
@@ -92,10 +92,10 @@ export function parseProviderQualifiedModelSelection(
 }
 
 /**
- * 解析由 Registry 已接管 Provider 的模型选择。
+ * Resolve model selection for a Provider already owned by the Registry.
  *
- * 返回 undefined 表示进程 Registry 不拥有该 Provider。Registry 已拥有 Provider 时，
- * 缺失 Model 必须直接报错；调用方不能再回退 Turn Overlay 或临时 Provider 快照。
+ * Return undefined when the process Registry does not own the Provider. If it does, a missing Model
+ * must throw; callers must not fall back to the Turn Overlay or a temporary Provider snapshot.
  */
 export function resolveRegistryOwnedModelSelection(
   registry: ProviderRegistryModelSource,
@@ -115,7 +115,7 @@ export function resolveRegistryOwnedModelSelection(
   return resolved;
 }
 
-/** Registry 选择校验失败到稳定 Model 协议错误的唯一映射。 */
+/** The single mapping from Registry selection-validation failures to stable Model protocol errors. */
 export function createRegistrySelectionProtocolError(
   validation: Exclude<ReturnType<ProviderRegistryModelSource["validateSelection"]>, { ok: true }>,
 ): ModelProtocolError {

@@ -11,8 +11,8 @@ export const browserElementRectSchema = z
 export type BrowserElementRect = z.infer<typeof browserElementRectSchema>;
 
 /**
- * 单个可交互元素的快照条目，以 role、name、ref 提供定位信息，避免转储整页 DOM。
- * ref 为按 DOM 序分配的稳定引用（e1, e2, ...），后续 action 用 ref 定位。
+ * Snapshot entry for one interactive element, providing role, name, and ref for targeting without dumping the entire page DOM.
+ * ref is a stable reference assigned in DOM order (e1, e2, ...); subsequent actions use it to locate the element.
  */
 export const browserSnapshotElementSchema = z
   .object({
@@ -29,19 +29,19 @@ export const browserSnapshotElementSchema = z
     xpath: z.string(),
     rect: browserElementRectSchema,
     inViewport: z.boolean(),
-    /** 父级可交互元素的 ref（层级线索；顶层/无父可交互元素时省略）。 */
+    /** ref of the parent interactive element (hierarchy hint; omitted for top-level elements or when there is no interactive parent). */
     parentRef: z.string().optional(),
-    /** 元素来源的 frame 路径（同源 iframe 穿透时标注，如 "0>2"；主文档省略）。 */
+    /** Frame path for the element (marked when traversing same-origin iframes, e.g. "0>2"; omitted for the main document). */
     framePath: z.string().optional(),
-    /** 有界稳定属性，用于从 DOM 事实构造 locator；不返回 class/style/src 等高噪声字段。 */
+    /** Bounded stable attributes used to build locators from DOM facts; noisy fields such as class/style/src are omitted. */
     attributes: z.record(z.string(), z.string()).optional(),
   })
   .strict();
 export type BrowserSnapshotElement = z.infer<typeof browserSnapshotElementSchema>;
 
 /**
- * 可见语义 DOM 节点。它只负责“读懂页面”，可动作句柄仍由 elements/ref 单独维护，
- * 防止正文节点占满 action ref 预算。ref 仅在该语义节点同时属于 elements 时存在。
+ * Visible semantic DOM node. It is only for understanding the page; actionable handles remain in elements/ref
+ * so body nodes do not consume the action-ref budget. ref is present only when this semantic node is also in elements.
  */
 export const browserSnapshotDomNodeSchema = z
   .object({
@@ -62,15 +62,15 @@ export const browserSnapshotSchema = z
     url: z.string(),
     title: z.string(),
     /**
-     * 有界的可见语义 DOM；optional 保持旧 backend/result 的协议兼容。
-     * 必须排在 elements 前定义：Zod 会按 schema 顺序重建对象，大页面工具结果被截断时
-     * 应先让模型看到页面语义，而不是 selector/xpath/rect 等动作细节。
+     * Bounded visible semantic DOM; optional to preserve protocol compatibility with older backends/results.
+     * Must be defined before elements: Zod rebuilds objects in schema order, so when a large tool result is truncated,
+     * the model should see page semantics before action details such as selector/xpath/rect.
      */
     dom: z.array(browserSnapshotDomNodeSchema).optional(),
-    /** 语义 DOM 节点超过内部预算时置 true。 */
+    /** True when semantic DOM nodes exceed the internal budget. */
     domTruncated: z.boolean().optional(),
     elements: z.array(browserSnapshotElementSchema),
-    /** 元素数超过 maxElements 时截断。 */
+    /** Truncated when the number of elements exceeds maxElements. */
     truncated: z.boolean(),
   })
   .strict();

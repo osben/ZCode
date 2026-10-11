@@ -54,7 +54,7 @@ type ScriptWorkflowRunOptions = {
 } & Parameters<PrepareUserExecutionBoundary>[0];
 
 export class ScriptWorkflowRuntime {
-  // 与 dwf run service / 进程级治理器同一份默认并发实现（决策 30）；legacy 工具仍只有本地 limiter，不接治理器。
+  // Use the same default-concurrency implementation as the dwf run service / process-level governor (decision 30); legacy tools still use only a local limiter and do not connect to the governor.
   private readonly concurrency = resolveWorkflowDefaultConcurrency();
   private readonly limiter = new WorkflowLimiter(this.concurrency);
   private callIndex = 0;

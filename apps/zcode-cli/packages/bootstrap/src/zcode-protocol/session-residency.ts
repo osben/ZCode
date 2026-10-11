@@ -1,4 +1,4 @@
-// Session 常驻池的真实事实适配与去激活执行面。
+// Adapter for session residency pool facts and deactivation operations.
 
 import type { SessionId } from "@zcode/contracts";
 import type {
@@ -12,9 +12,10 @@ export interface SessionResidencyFinalizationOwner {
 }
 
 /**
- * residency lease 只覆盖 Bootstrap detached runner 的收尾窗口，避免 pool 回收仍在使用的
- * record。Prompt admission 的 busy/idle authority 已归 Core；activeAbortController 仅是旧命令
- * 路径的兼容取消句柄，不能再作为 prompt 调度锁。
+ * The residency lease covers only the cleanup window for a Bootstrap detached runner, preventing
+ * the pool from reclaiming a record that is still in use. Core now owns busy/idle authority for
+ * prompt admission; activeAbortController is only a compatibility cancellation handle for the old
+ * command path and must not be used as a prompt scheduling lock.
  */
 export function acquireSessionResidencyFinalization(
   record: SessionResidencyFinalizationOwner,
@@ -28,7 +29,7 @@ export function acquireSessionResidencyFinalization(
   };
 }
 
-/** 同步登记 lease，再启动 detached runner；同步抛错和异步终态都保证释放。 */
+/** Register the lease synchronously, then start the detached runner; release it on synchronous throws and asynchronous termination. */
 export function runWithSessionResidencyFinalization<T>(
   record: SessionResidencyFinalizationOwner,
   run: () => Promise<T>,
@@ -43,12 +44,13 @@ export function runWithSessionResidencyFinalization<T>(
 }
 
 /**
- * 只释放 resident runtime，不删除任何持久 session/task 事实。
+ * Release only the resident runtime; do not delete any persistent session/task facts.
  *
- * 若先 await app.close，再从 registry 摘除，新的 cold subscribe 会在 await
- * 窗口命中一个已进入 shutdown 的旧 runtime；若先删 record 但不设置 pool gate，新旧 app
- * 又会并发碰同一 session 资源。因此同步摘除与异步 close 必须由 pool 的 in-flight gate
- * 组合成一个生命周期事务。
+ * If app.close is awaited before removing the registry entry, a new cold subscribe may hit the old
+ * runtime while it is shutting down. If the record is removed first without setting the pool gate,
+ * the old and new apps may concurrently access the same session resources. Therefore, synchronous
+ * removal and asynchronous close must be combined into one lifecycle transaction by the pool's
+ * in-flight gate.
  */
 export async function deactivateSessionRecord(
   context: ZCodeProtocolAgentServerContext,
@@ -56,14 +58,15 @@ export async function deactivateSessionRecord(
 ): Promise<void> {
   const record = context.sessions.get(sessionId);
   if (!record) return;
-  // CommandInbox pin 的拒绝曾发生在 unsubscribe 之后，异常会留下仍在 registry
-  // 但收不到 runtime event 的半清 record。所有可预检拒绝必须早于第一个副作用。
+  // CommandInbox pin rejection used to occur after unsubscribe, leaving a partially cleared record
+  // that remained in the registry but no longer received runtime events. All preflightable rejections
+  // must happen before the first side effect.
   context.v4Gateway?.assertSessionRuntimeDeactivatable(sessionId);
   record.unsubscribe?.();
   context.v4Gateway?.deactivateSession(sessionId);
   context.sessions.delete(sessionId);
   await record.app.close?.();
-  // 去激活后内存 event store 必须与“从未加载”等价。
+  // After deactivation, the in-memory event store must be equivalent to one that was never loaded.
   await record.eventStore.deleteSession(sessionId as SessionId);
 }
 
@@ -80,8 +83,9 @@ export function createSessionResidentPoolHost(
         hasPendingInteractions: context.v4Interactions.hasPendingForSession(sessionId),
         hasQueuedCommands: context.v4Gateway?.hasResidencyBlockingCommands(sessionId) ?? false,
         hasLegacySubscriber: record.legacyStreamSubscribed === true,
-        // active/queue 与 registry background task 不能覆盖 title、MCP、memory
-        // 等 detached work；统一查询由 runtime 维护，协议 finalization 只补协议所有权。
+        // active/queue and registry background tasks cannot cover detached work such as title, MCP,
+        // and memory. The runtime maintains the unified query; protocol finalization only adds
+        // protocol ownership.
         hasResidencyBlockingWork:
           record.activeAbortController !== undefined ||
           (record.residencyFinalizationCount ?? 0) > 0 ||

@@ -6,10 +6,12 @@ import type { NamePattern } from "./types.js";
 import type { CallbackSemantics } from "./callbacks.js";
 import type { IterationCandidate } from "./sites.js";
 
-// sites.ts 顶到 oxlint max-lines 上限（400 行），把名字 / 标签辅助（ask 标签与模板
-// 形状、actor 名与模板形状、world-read 标签、字面量文本、迭代候选的构造、计数器）与它们依赖的
-// 符号解析（resolveSymbol / isFacadeDeclared）拆到本文件；公开面仍从 sites.ts 导出（后两者
-// 在那里原样再导出，其余本就不公开）。站点类型留在 sites.ts，这里只按类型导入。
+// sites.ts reached oxlint's max-lines limit (400), so name/label helpers (ask labels and template
+// shape, actor names and template shape, world-read labels, literal text, iteration-candidate
+// construction, counters) and their symbol-resolution dependencies (resolveSymbol /
+// isFacadeDeclared) were moved here. The public surface is still exported from sites.ts (the latter
+// two are re-exported there; the rest were not public). Site types remain in sites.ts and are
+// imported here as types only.
 
 /** Resolve a node's symbol, following one alias hop (imports never occur here). */
 export function resolveSymbol(node: ts.Node, checker: ts.TypeChecker): ts.Symbol | undefined {
@@ -30,46 +32,51 @@ export function isFacadeDeclared(symbol: ts.Symbol | undefined): boolean {
 }
 
 /**
- * 一个实参**无洞字符串字面量**的文本，其余（标识符、带洞模板、任意表达式）一律 undefined。
+ * Text of an argument that is a **string literal without substitutions**; all other forms
+ * (identifier, interpolated template, arbitrary expression) return undefined.
  *
- * 三处共用一条判定：phase 的名字、产物的 id、report 的标签。三者的规矩完全相同——只有编译期
- * 就闭合的字面量才算数，看不穿的一律留给各自的诊断趟按原表达式定位，**绝不在这里猜一个值
- * 出来**（猜出来的名字会让一条本该被教改写的调用静默通过）。`ts.isStringLiteralLike` 覆盖
- * 无插值的反引号串。
+ * Three sites share this rule: phase names, artifact IDs, and report labels. Their requirements are
+ * identical—only literals resolved at compile time count. Leave anything opaque to the respective
+ * diagnostic pass, which can locate the original expression; **never guess a value here** (a
+ * guessed name would let a call pass silently when it should be corrected). `ts.isStringLiteralLike`
+ * also covers template strings without substitutions.
  */
 export function literalText(expr: ts.Expression | undefined): string | undefined {
   return expr !== undefined && ts.isStringLiteralLike(expr) ? expr.text : undefined;
 }
 
 /**
- * 一套 per-kind 站点计数器（`ask#N` / `actor#N` / …），外加 id 前缀。
+ * A set of per-kind site counters (`ask#N` / `actor#N` / …), plus an ID prefix.
  *
- * 前缀是留白的事（docs/analysis.md「Sites」的 Hole sites 段）：走查进入一个留白的函数体时
- * **开一套全新的计数器**，体内铸出的每个 id 都带 `<holeId>/`（`hole#a91f3c07/ask#1`），外层
- * 计数器从不看见体内的站点。于是补全一个留白（在脚本中间插入代码）不改动任何已有的 `ask#N` /
- * `actor#N` / …——这是站点 id 稳定性规则从「加标记」到「加函数体」的延伸；活 run 的 journal
- * 键、ask spec、站点阶段表都靠它在补全后幸存。前缀只有**一层**：留白自己的 id 是名字键
- * （hole-id.ts），不带外层前缀，体内再留的留白因此不会让 id 随深度增长；`holeId` 记着
- * 这套计数器属于哪个留白，让体内的留白站点把包着它的留白写进 `fill`。
- * 全局 `order` 不在这里：它是文本输出的归并键，穿过函数体连续计数。
+ * Prefixes are used for holes (docs/analysis.md, “Sites”, “Hole sites”): when the walk enters a hole
+ * body, it **starts a fresh set of counters**. Every ID minted inside carries `<holeId>/`
+ * (`hole#a91f3c07/ask#1`), and outer counters never see sites inside the body. Filling a hole (inserting
+ * code into the middle of a script) therefore leaves every existing `ask#N` / `actor#N` / … unchanged.
+ * This extends site-ID stability from adding markers to adding function bodies; live-run journal keys,
+ * ask specs, and the site phase table all survive hole filling. The prefix is only **one level**: a
+ * hole's own ID is a name key (hole-id.ts) without an outer prefix, so nested holes do not make IDs grow
+ * with depth. `holeId` records which hole owns these counters, allowing sites inside its body to store
+ * the containing hole in `fill`.
+ * The global `order` is not managed here: it is the merge key for text output and counts continuously
+ * across function bodies.
  */
 export class SiteCounters {
   private readonly counts = new Map<string, number>();
 
   constructor(
     private readonly prefix = "",
-    /** 这套计数器所在的留白函数体（顶层没有）。 */
+    /** The hole body that owns this counter set; absent at the top level. */
     readonly holeId?: string,
   ) {}
 
-  /** 铸下一个 `<prefix><kind>#<n>`。 */
+  /** Mint the next `<prefix><kind>#<n>`. */
   next(kind: string): string {
     const n = (this.counts.get(kind) ?? 0) + 1;
     this.counts.set(kind, n);
     return `${this.prefix}${kind}#${n}`;
   }
 
-  /** 进入留白 `holeId` 的函数体：全新一套计数器，前缀就是这个留白的 id（不叠加外层的）。 */
+  /** Enter the body of hole `holeId`: start fresh counters prefixed by this hole's ID, without the outer prefix. */
   child(holeId: string): SiteCounters {
     return new SiteCounters(`${holeId}/`, holeId);
   }
@@ -135,13 +142,15 @@ export function actorNamePattern(call: ts.CallExpression): NamePattern | undefin
 }
 
 /**
- * 模板字符串两端的字面量：第一个洞之前（`head`）与最后一个洞之后（`tail`）。
+ * Literal portions at the two ends of a template string: before the first substitution (`head`) and
+ * after the last one (`tail`).
  *
- * `ts.isStringLiteralLike` 已经覆盖了无插值的反引号串（那是字面量，走 `name` 那条路），
- * 所以这里只处理真正带洞的 `ts.TemplateExpression`。
+ * `ts.isStringLiteralLike` already covers template strings without substitutions (they are literals
+ * and use the `name` path), so this handles only actual `ts.TemplateExpression`s with substitutions.
  *
- * **中间的字面量刻意丢弃**：`` `a${x}b${y}c` `` 给出 `a` 与 `c`，不是 `a…b…c`。名字是一行
- * 上的标签，不是产生它的那个表达式的渲染。
+ * **Intermediate literal portions are intentionally discarded**: `` `a${x}b${y}c` `` gives `a`
+ * and `c`, not `a…b…c`. The name is a one-line label, not a rendering of the expression that
+ * produced it.
  */
 function templateAffixes(arg: ts.Expression | undefined): NamePattern | undefined {
   if (arg === undefined || !ts.isTemplateExpression(arg)) return undefined;
@@ -155,10 +164,11 @@ function templateAffixes(arg: ts.Expression | undefined): NamePattern | undefine
 }
 
 /**
- * 一个 affix 值不值得显示：trim 后必须至少含一个字母或数字。
+ * Whether an affix is worth displaying: after trimming it must contain at least one letter or digit.
  *
- * 为什么要这道门：`` agent(`${x}-`) `` 的 tail 是 `-`，渲染出来是 `…-`——那比「未命名智能体」
- * 更差，读者既得不到名字，还多了一串标点。`\p{L}` 覆盖 CJK，所以「研究员」照常通过。
+ * Why this gate exists: the tail of `` agent(`${x}-`) `` is `-`, which renders as `…-`—worse than
+ * an unnamed actor because the reader gets no name and an extra punctuation mark. `\p{L}` covers
+ * CJK, so `研究员` passes as expected.
  */
 function meaningfulAffix(text: string | undefined): string | undefined {
   const trimmed = text?.trim();

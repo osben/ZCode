@@ -12,16 +12,12 @@ import {
 } from "./chromeInstallationCandidates.js";
 
 const DISCOVERY_COMMAND_TIMEOUT_MS = 3_000;
-const SUPPORTED_PLATFORMS = new Set<NodeJS.Platform>([
-  "darwin",
-  "linux",
-  "win32",
-]);
+const SUPPORTED_PLATFORMS = new Set<NodeJS.Platform>(["darwin", "linux", "win32"]);
 
 export interface ChromeExecutableDiscoveryOptions extends ChromeInstallationPathOptions {
   installations?: ChromeInstallationCandidate[];
   processCommandLines?: string[];
-  /** 测试可注入已由操作系统注册表/索引解析出的可执行文件，避免依赖宿主环境。 */
+  /** Tests can inject executables resolved from the OS registry/index, avoiding host-environment dependencies. */
   registeredExecutablePaths?: string[];
 }
 
@@ -68,12 +64,7 @@ export async function readRunningChromeProcessCommandLines(
       const script =
         "Get-CimInstance Win32_Process | Where-Object { $_.Name -match '^(chrome|chromium)\\.exe$' } | ForEach-Object { $_.CommandLine }";
       return (
-        await execFileText("powershell.exe", [
-          "-NoProfile",
-          "-NonInteractive",
-          "-Command",
-          script,
-        ])
+        await execFileText("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script])
       )
         .split(/\r?\n/)
         .filter(Boolean);
@@ -82,15 +73,12 @@ export async function readRunningChromeProcessCommandLines(
       .split(/\r?\n/)
       .filter((line) => /(?:chrome|chromium)/i.test(line));
   } catch {
-    // 进程枚举受系统策略限制时，仍应继续使用注册信息和标准目录，不能阻断导入。
+    // If process enumeration is restricted by system policy, continue using registry data and standard directories; do not block import.
     return [];
   }
 }
 
-async function isExecutableFile(
-  path: string,
-  platform: NodeJS.Platform,
-): Promise<boolean> {
+async function isExecutableFile(path: string, platform: NodeJS.Platform): Promise<boolean> {
   try {
     const details = await stat(path);
     if (!details.isFile()) return false;
@@ -128,9 +116,7 @@ function desktopExecutableToken(value: string): string | undefined {
     (match) => match[1] ?? match[2] ?? match[3] ?? "",
   );
   if (tokens[0] !== "env") return tokens[0];
-  return tokens
-    .slice(1)
-    .find((token) => !token.startsWith("-") && !token.includes("="));
+  return tokens.slice(1).find((token) => !token.startsWith("-") && !token.includes("="));
 }
 
 function resolvePathCommand(command: string, env: NodeJS.ProcessEnv): string[] {
@@ -153,9 +139,7 @@ async function readMacRegisteredChromeExecutablePaths(): Promise<string[]> {
   ];
   try {
     const output = await execFileText("mdfind", [
-      bundleIds
-        .map((bundleId) => `kMDItemCFBundleIdentifier == '${bundleId}'`)
-        .join(" || "),
+      bundleIds.map((bundleId) => `kMDItemCFBundleIdentifier == '${bundleId}'`).join(" || "),
     ]);
     const executablePaths: string[] = [];
     for (const appPath of output.split(/\r?\n/).filter(Boolean)) {
@@ -164,20 +148,17 @@ async function readMacRegisteredChromeExecutablePaths(): Promise<string[]> {
         for (const entry of await readdir(executableDirectory, {
           withFileTypes: true,
         })) {
-          if (
-            (entry.isFile() || entry.isSymbolicLink()) &&
-            isChromeBrowserExecutable(entry.name)
-          ) {
+          if ((entry.isFile() || entry.isSymbolicLink()) && isChromeBrowserExecutable(entry.name)) {
             executablePaths.push(join(executableDirectory, entry.name));
           }
         }
       } catch {
-        // Spotlight 索引可能含已移除应用；忽略陈旧记录并继续检查其他候选。
+        // The Spotlight index may contain removed applications; ignore stale entries and continue checking other candidates.
       }
     }
     return uniquePaths(executablePaths);
   } catch {
-    // Spotlight 被禁用或受系统策略限制时，仍会继续使用运行进程和标准目录。
+    // If Spotlight is disabled or restricted by system policy, continue using running processes and standard directories.
     return [];
   }
 }
@@ -200,23 +181,19 @@ async function readLinuxDesktopChromeExecutablePaths(
       })) {
         if (!entry.isFile() || !entry.name.endsWith(".desktop")) continue;
         try {
-          const source = await readFile(
-            join(applicationsDirectory, entry.name),
-            "utf8",
-          );
+          const source = await readFile(join(applicationsDirectory, entry.name), "utf8");
           if (!/(?:chrome|chromium)/i.test(source)) continue;
           for (const line of source.split(/\r?\n/)) {
             const value = line.match(/^(?:TryExec|Exec)=(.+)$/)?.[1];
             const command = value ? desktopExecutableToken(value) : undefined;
-            if (command)
-              executablePaths.push(...resolvePathCommand(command, env));
+            if (command) executablePaths.push(...resolvePathCommand(command, env));
           }
         } catch {
-          // 单个 desktop entry 损坏或无权限不应阻断其他已注册应用发现。
+          // A damaged or inaccessible desktop entry must not block discovery of other registered applications.
         }
       }
     } catch {
-      // 某个 XDG applications 目录不存在是正常状态。
+      // It is normal for an XDG applications directory not to exist.
     }
   }
   return uniquePaths(executablePaths);
@@ -242,11 +219,9 @@ async function readRegisteredChromeExecutablePaths(
   options: ChromeExecutableDiscoveryOptions,
   platform: NodeJS.Platform,
 ): Promise<string[]> {
-  if (options.registeredExecutablePaths)
-    return options.registeredExecutablePaths;
+  if (options.registeredExecutablePaths) return options.registeredExecutablePaths;
   if (platform === "darwin") return readMacRegisteredChromeExecutablePaths();
-  if (platform === "linux")
-    return readLinuxDesktopChromeExecutablePaths(options);
+  if (platform === "linux") return readLinuxDesktopChromeExecutablePaths(options);
   return [];
 }
 
@@ -257,9 +232,7 @@ export async function resolveChromeExecutablePath(
   const env = options.env ?? process.env;
   const commandLines =
     options.processCommandLines ??
-    (options.installations
-      ? []
-      : await readRunningChromeProcessCommandLines(platform));
+    (options.installations ? [] : await readRunningChromeProcessCommandLines(platform));
   const directlyDiscovered = await resolveFirstExecutable(
     [
       stripMatchingQuotes(env.CHROME_PATH ?? ""),
@@ -276,8 +249,7 @@ export async function resolveChromeExecutablePath(
   );
   if (registered) return registered;
 
-  const installations =
-    options.installations ?? buildStandardChromeInstallations(options);
+  const installations = options.installations ?? buildStandardChromeInstallations(options);
   return resolveFirstExecutable(
     [
       ...(platform === "linux" ? buildLinuxPathChromeExecutablePaths(env) : []),

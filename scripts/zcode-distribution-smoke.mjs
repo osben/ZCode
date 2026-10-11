@@ -1,4 +1,4 @@
-// 在仓库外验证发行包，避免开发机 node_modules 掩盖缺失的 TUI/native/worker 依赖。
+// Verify the distribution package outside the repository so the development machine's node_modules cannot hide missing TUI/native/worker dependencies.
 import assert from "node:assert/strict";
 import { execFile, spawn } from "node:child_process";
 import { once } from "node:events";
@@ -57,8 +57,8 @@ try {
   );
   await until(
     () => {
-      // 修复：TUI 渲染器会在相邻字符之间插入 SGR/光标定位序列，原始 PTY 输出里的提示词不连续；
-      // 先去掉终端控制序列再匹配可见文本，避免界面已就绪却被判定为超时。
+      // Fix: the TUI renderer inserts SGR/cursor-positioning sequences between adjacent characters, so the prompt is not contiguous in raw PTY output;
+      // strip terminal control sequences before matching visible text, so a ready interface is not incorrectly reported as timed out.
       const visible = stripVTControlCharacters(screen);
       return /ZCode/.test(visible) && /(?:登录|\/login|输入提示词|Type a prompt)/i.test(visible);
     },
@@ -67,7 +67,7 @@ try {
   );
   assert.equal(terminalExit, undefined, screen);
   assert.doesNotMatch(screen, /Cannot find (?:module|package)|ERR_MODULE_NOT_FOUND/);
-  // 保留真实键盘退出链路；不发送 prompt，不调用模型。
+  // Keep the real keyboard exit path; do not send a prompt or call a model.
   terminal.write("\u0003");
   await setTimeout(200);
   if (!terminalExit) terminal.write("\u0003");

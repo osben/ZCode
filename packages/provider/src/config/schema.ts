@@ -56,7 +56,7 @@ export function parsePersonalProviderConfigMap(input: unknown): ProviderConfigMa
   return createProviderRules(personalProviderConfigRulesSchema.parse(input).providerRules);
 }
 
-/** Account 运行时事实仍只有成员及权益；不是磁盘配置规则的第二种格式。 */
+/** Account runtime facts still consist only of members and entitlements; this is not a second format for on-disk config rules. */
 export function parseAccountProviderConfigMap(input: unknown): ProviderConfigMap {
   const parsed = z.record(z.string().min(1), accountProviderConfigSchema).parse(input);
   return new ProviderConfigMap(

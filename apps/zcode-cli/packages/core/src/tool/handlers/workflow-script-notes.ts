@@ -1,35 +1,35 @@
 // ============================================================
-// 脚本文件在模型面的三句话
+// Three model-facing sentences about script files
 // ============================================================
 //
-// 工具响应是三个读者之一（另两个是终态通知与 `GetWorkflowRun`），而三个读者要把模型推向同一个
-// 下一步：**去编辑那个文件**。所以这里只放一件事——知道脚本落在哪个文件之后，诊断行与 NOTE
-// 该怎么写。`CreateWorkflow` 与 `AmendWorkflow` 共用它，因为「改完再 `path` 交回来」在两个工具
-// 上是同一句话，分开写就会分叉成两句。
+// Tool responses are one of three readers (the others are terminal notifications and `GetWorkflowRun`), and all three should direct
+// the model to the same next step: **edit that file**. Keep only one concern here: once the script file is known, how to format
+// diagnostic lines and notes. `CreateWorkflow` and `AmendWorkflow` share this because “edit it and return it via `path`” should be the
+// same sentence in both tools.
 //
-// 文件未知（草稿写不下去的项目）时这里一句都不出：调用方保留改动之前的老文案，模型读到的仍是
-// 「改好脚本再提交一次」。
+// When the file is unknown (for example, draft writing failed), emit no sentence; the caller keeps the previous message, which still
+// tells the model to fix the script and submit it again.
 
 import type { CreateWorkflowDiagnostic } from "@zcode/contracts";
 
 /**
- * 脚本文件在模型面的身份。`kind` 只影响一个动词：`draft` 是**工具刚写下**的拷贝（「saved at」），
- * `path` 是模型自己给的那个文件（「The script file is」）——对一个本来就存在的文件说「已保存到」，
- * 读起来像工具刚动过它。
+ * Model-facing identity of the script file. `kind` changes only one verb: `draft` is a copy **just written by the tool** (“saved at”),
+ * while `path` is the file provided by the model (“The script file is”). Saying “saved at” for a file that already existed would imply
+ * that the tool just modified it.
  */
 export interface WorkflowScriptLocation {
   kind: "draft" | "path";
-  /** 模型面的写法（工作区相对或绝对），由 `describeWorkflowScriptPath` 算出。 */
+  /** Model-facing form (workspace-relative or absolute), computed by `describeWorkflowScriptPath`. */
   described: string;
-  /** 正文行 → 文件行的偏移；无元数据块即 0。 */
+  /** Offset from body lines to file lines; 0 when there is no metadata block. */
   lineOffset: number;
 }
 
 /**
- * 诊断的模型面行。有文件就写成 `{path}:L{line}:C{column} {message}`，行号按**文件**数——
- * 这个数要能直接粘进一次对该文件的 `Edit`。没有文件时退回老的 `L:C` 形式（正文行）。
+ * Model-facing diagnostic line. With a file, format as `{path}:L{line}:C{column} {message}` using **file** line numbers so the
+ * location can be pasted into an `Edit` for that file. Without a file, use the old `L:C` form (body line numbers).
  *
- * 输出里的 `diagnostics` 数组与 display 载荷**不**跟着改：转录面画的是正文，正文行才是它的坐标。
+ * Do **not** change the output's `diagnostics` array or display payload: transcript views render the body, so body lines remain their coordinates.
  */
 export function formatWorkflowDiagnosticLines(
   diagnostics: readonly CreateWorkflowDiagnostic[],
@@ -47,8 +47,8 @@ export function formatWorkflowDiagnosticLines(
 }
 
 /**
- * 编不过、且脚本有文件时的 NOTE（内联与 `path` 两条来源）。最后半句是这整个特性的目的：
- * **别再把脚本贴一遍**。
+ * NOTE for a script file that did not compile (inline and `path` sources). The final phrase captures the entire purpose of this feature:
+ * **do not paste the script again**.
  */
 export function workflowScriptFileNote(location: WorkflowScriptLocation): string {
   const where =
@@ -59,9 +59,9 @@ export function workflowScriptFileNote(location: WorkflowScriptLocation): string
 }
 
 /**
- * 编不过、来源是 saved 定义时的 NOTE。多说两件事：这份拷贝是**从哪个定义抄来的**（模型据此知道
- * 改的是拷贝不是定义），以及改定义本身要走 `SaveWorkflow`。实参要再传一次——拷贝带着元数据块，
- * 声明还在，所以 `path` 提交同样会校验它们。
+ * NOTE for a saved-definition source that did not compile. Explain two additional things: **which definition** was copied (so the model
+ * knows to edit the copy, not the definition), and that changing the definition itself requires `SaveWorkflow`. Arguments must be
+ * passed again; the copy retains its metadata block and declarations, so submitting via `path` validates them too.
  */
 export function workflowSavedDraftNote(options: {
   savedName: string;
@@ -71,7 +71,7 @@ export function workflowSavedDraftNote(options: {
   return `NOTE: The workflow was NOT executed. A working copy of the saved workflow '${options.savedName}' (${options.savedPath}) was written to ${options.draft}. Edit that copy in place and resubmit with \`path: "${options.draft}"\` (pass its \`args\` again); to change the saved definition itself, use SaveWorkflow.`;
 }
 
-/** 启动成功后追加的一句：下一次修订从编辑这个文件开始。 */
+/** Sentence appended after a successful launch: edit this file for the next revision. */
 export function workflowLaunchedScriptSentence(location: WorkflowScriptLocation): string {
   const where =
     location.kind === "draft"
@@ -80,7 +80,7 @@ export function workflowLaunchedScriptSentence(location: WorkflowScriptLocation)
   return ` ${where}; to revise it later, edit that file and pass \`path\` to AmendWorkflow.`;
 }
 
-/** 修订启动成功后追加的一句（再修订一次仍是同一个动作）。 */
+/** Sentence appended after a successful revision launch (the same action applies to another revision). */
 export function workflowAmendedScriptSentence(location: WorkflowScriptLocation): string {
   return ` The revision's script is at ${location.described}; edit it there for a further revision.`;
 }

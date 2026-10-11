@@ -167,9 +167,9 @@ export const useSubagentsContextStore = create<SubagentsContextStoreState>((set,
   contexts: {},
   async initialize(workspacePath, provider, subagentsService, workspaceIdentity) {
     const key = getSubagentsContextKey(workspacePath, provider, workspaceIdentity);
-    // 多个可见 pane 会各自挂载 Subagents 消费者。旧单例把“当前 workspace”
-    // 当成全局可变字段，跨 workspace pane 会互相触发 initialize；按 workspaceKey+provider
-    // 分桶后，每个 effect 只订阅自己的稳定快照。
+    // Each visible pane mounts its own Subagents consumer. The old singleton treated the "current workspace"
+    // as a mutable global field, so panes in different workspaces triggered each other's initialize calls. Bucket by workspaceKey+provider
+    // so each effect subscribes to its own stable snapshot.
     if (get().contexts[key]) return;
     await loadContext(
       { workspacePath, provider, subagentsService, workspaceIdentity, bypassCache: false },

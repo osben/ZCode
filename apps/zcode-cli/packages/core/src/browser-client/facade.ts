@@ -1,4 +1,4 @@
-/* eslint-disable max-lines -- Browser/Tab/Tabs facade 共享 selection、transport 与对象 identity；拆分前保持同一连接状态机。 */
+/* eslint-disable max-lines -- Browser/Tab/Tabs share selection, transport, and object identity in this facade; keeping them together preserves one connection state machine. */
 import {
   BROWSER_VIEWPORT_LIMITS,
   type BrowserBackendDescriptor,
@@ -43,7 +43,7 @@ export type BrowserTransportExecuteFn = (
 export type { BrowserBackendType };
 export type BrowserCapabilityInfo = BrowserCapabilityDescriptor;
 
-/** 视口坐标点（cua 坐标路 / drag / elementInfo 用；与 CDP Input 同坐标系）。 */
+/** A viewport point used by CUA coordinates, drag, and elementInfo; it uses the same coordinate system as CDP Input. */
 export interface Point {
   x: number;
   y: number;
@@ -134,8 +134,8 @@ export class BrowserCapabilityCollection {
 }
 
 /**
- * browser-client 只依赖 backend-neutral transport。IAB、Chrome extension 和 CDP provider
- * 都通过相同 descriptor/execute 接口接入，facade 不再自行伪造某个 backend 可用。
+ * browser-client depends only on a backend-neutral transport. IAB, Chrome extension, and CDP providers
+ * use the same descriptor/execute interface, so the facade no longer fabricates backend availability.
  */
 export interface BrowserClientTransport {
   list(): Promise<BrowserInfo[]>;
@@ -432,7 +432,7 @@ export class Tab {
     return this.execute(withTab);
   }
 
-  /** Browser connection capability policy 在对象建好后注入，并保持 Playwright 对象 identity。 */
+  /** Browser connection capability policy is injected after object creation while preserving Playwright object identity. */
   applyPlaywrightPolicy(policy: BrowserApiPolicy): this {
     const wrap = <T extends object>(value: T, objectName: string): T =>
       createBrowserApiProxy(value, objectName, policy, { hideUnknown: true });
@@ -468,14 +468,14 @@ export class Tab {
     return expectPayload(command, result, result.state, "state");
   }
 
-  /** 对齐 Playwright Page.setViewportSize；ZCode 额外施加内置自由尺寸的安全边界。 */
+  /** Matches Playwright Page.setViewportSize; ZCode additionally enforces safety bounds for built-in free-form sizes. */
   async setViewportSize(viewportSize: BrowserViewportSize): Promise<void> {
     validateViewportSize(viewportSize);
     await this.action({ method: "browserViewportSet", ...viewportSize });
     this.viewportSizeValue = { ...viewportSize };
   }
 
-  /** 对齐 Playwright Page.viewportSize；返回本次 tab binding 最近一次观察到的实际值。 */
+  /** Matches Playwright Page.viewportSize; returns the latest actual value observed by this tab binding. */
   viewportSize(): BrowserViewportSize | null {
     return this.viewportSizeValue ? { ...this.viewportSizeValue } : null;
   }
@@ -781,9 +781,9 @@ export class BrowserTabs {
   }
 
   /**
-   * open(url) 的复用入口：按 URL 匹配已有 agent-owned tab，命中则激活（activateTab，
-   * 用户立即看到该 tab）并返回，未命中返回 undefined。list/activate 的失败向调用方抛出，
-   * 由 open() 统一降级为 newTab，复用链路绝不阻断任务。
+   * Reuse entry point for open(url): match an existing agent-owned tab by URL, activate it on a match
+   * (activateTab, so the user sees it immediately), and return it; return undefined if there is no match. Propagate list/activate failures
+   * to the caller, where open() consistently falls back to newTab so reuse never blocks the task.
    */
   async reuse(url: string): Promise<Tab | undefined> {
     const summaries = await this.summaries();
@@ -858,8 +858,8 @@ export class BrowserUser {
   }
 
   async history(_options: BrowserHistoryOptions = {}): Promise<BrowserHistoryEntry[]> {
-    // IAB 没有 Chromium History provider。该 member 会由 IAB manifest override 隐藏；保留方法
-    // 只用于未来 extension backend 复用同一对象类型，避免当前 backend 伪造历史记录。
+    // IAB has no Chromium History provider. The IAB manifest override hides this member; keep the method
+    // only so a future extension backend can reuse the same object type without fabricating history for the current backend.
     throw new Error("Browser history is unavailable for the iab backend");
   }
 }
@@ -937,12 +937,12 @@ export class Browser {
     return this.info.generation;
   }
 
-  /** @deprecated 迁移兼容；新代码使用 browserId。 */
+  /** @deprecated Kept for migration compatibility; new code should use browserId. */
   get id(): string {
     return this.browserId;
   }
 
-  /** @deprecated 迁移兼容；新代码使用 descriptor.type。 */
+  /** @deprecated Kept for migration compatibility; new code should use descriptor.type. */
   get backend(): BrowserBackendType {
     return this.type;
   }
@@ -961,7 +961,7 @@ export class Browser {
     expectOk(command, await this.execute(command));
   }
 
-  /** registry refresh 后保留对象 identity，同时更新 capability/metadata。 */
+  /** Preserve object identity while updating capabilities/metadata after a registry refresh. */
   updateInfo(info: BrowserInfo): void {
     this.info = info;
     this.policy.updateDescriptor(info);
@@ -1003,8 +1003,8 @@ export class BrowsersFacade {
   ) {
     const assertAvailable = options.assertAvailable ?? (() => undefined);
     this.assertAvailable = assertAvailable;
-    // Browser 对象是持久引用，内核 reset 后旧绑定必须失效。guard 必须包住持久对象的每次
-    // transport/doc 调用，不能只在初始化时判断。
+    // The Browser object is a persistent reference, so old bindings must become invalid after a kernel reset. The guard must wrap every
+    // transport/doc call on the persistent object; checking only during initialization is not enough.
     this.transport = {
       list: async () => {
         assertAvailable();
@@ -1106,10 +1106,10 @@ export class BrowsersFacade {
   async open(url?: string, options: { reuseTab?: boolean } = {}): Promise<Tab> {
     const browser = await this.getDefault();
     if (url && options.reuseTab !== false) {
-      // 已知问题：模型每次 open() 都新开 tab，任务结束后内置浏览器堆满标签页。
-      // 默认按 URL 复用已有 agent-owned tab（tabs.list 只含本 scope 的 owned tabs，
-      // 不会误接管用户 tab）：激活给用户并在原地 goto 刷新；复用链路任何失败都
-      // 降级 newTab。需要并排独立 tab 时模型可显式传 reuseTab: false。
+      // Previously, the model opened a new tab on every open(), leaving the built-in browser full of tabs after a task.
+      // Reuse an existing agent-owned tab by URL by default (tabs.list contains only tabs owned by this scope,
+      // so it cannot take over a user tab): activate it for the user and refresh it with goto in place. Any reuse failure
+      // falls back to newTab. The model can pass reuseTab: false when it needs a separate side-by-side tab.
       const reusable = await browser.tabs.reuse(url).catch(() => undefined);
       if (reusable) {
         await reusable.goto(url);
@@ -1130,14 +1130,14 @@ export class BrowsersFacade {
 
   async listTabs(): Promise<Tab[]> {
     const browser = await this.getDefault();
-    // 兼容 listTabs 只枚举 binding，不能逐个调用 tabs.get()；get 现在有显式激活语义，
-    // 批量 get 会依次抢占 active tab，且并发执行时最终选中项不确定。
+    // For compatibility, listTabs enumerates bindings only; do not call tabs.get() for each one. get now explicitly activates a tab,
+    // so batch calls would repeatedly steal the active tab and concurrent execution would make the final selection nondeterministic.
     return (await browser.tabs.list()).map((tab) => browser.createTab(tab.id));
   }
 
   tab(tabId: string): Tab {
-    // 兼容入口仍需冻结创建时选中的 browser；不能在每条命令时重跑 default，
-    // 否则 backend 上下线后同一个 tabId 可能被错误发送到另一连接。
+    // The compatibility entry point must keep the browser selected at creation time; do not resolve the default for every command,
+    // or a backend coming online/offline could send the same tabId to a different connection.
     const browser = this.getDefault();
     return new Tab(async (command) => (await browser).executeCommand(command), tabId);
   }

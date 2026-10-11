@@ -1,28 +1,24 @@
-# 内置默认配置
+# Built-in Default Configuration
 
-`config/default.json` 是随客户端发布的默认配置，必须保留。Desktop 从打包文件读取，
-Web 在构建时导入；远端请求失败或缺少有效字段时使用内置值。
+`config/default.json` is the default configuration distributed with the client and must be retained. Desktop reads it from the packaged file; Web imports it at build time. If a remote request fails or lacks valid fields, the built-in values are used.
 
-## 帮助配置来源
+## Help Configuration Sources
 
-新版社群和反馈入口请求当前 endpoint 的 `GET /api/v1/client/configs`，
-读取 `data.configs.feedbackUrl`：
+The community and feedback entry points in the current release request `GET /api/v1/client/configs` from the current endpoint and read `data.configs.feedbackUrl`:
 
-- `community_urls["zh-CN" | "en-US"]`：只按当前语言回退到内置入口，不跨语言回退。
-- `feedback_url`：远端有效地址优先，否则使用内置地址。
-- `feedback_use_external_form`：远端布尔值优先，`false` 也是有效覆盖。
+- `community_urls["zh-CN" | "en-US"]`: Fall back to the built-in entry for the current language only; do not fall back across languages.
+- `feedback_url`: Use the remote URL if valid; otherwise use the built-in URL.
+- `feedback_use_external_form`: Prefer the remote boolean value; `false` is a valid override too.
 
-请求携带 `app_version`；Desktop 另带 `platform-arch`，Web 省略平台参数。
-成功响应仅做 1 小时内存缓存，请求使用 `cache: no-store`，失败不缓存。
+The request includes `app_version`. Desktop also sends `platform-arch`; Web omits the platform parameter. Successful responses are cached in memory for one hour only. Requests use `cache: no-store`, and failures are not cached.
 
 ```text
-当前 endpoint client/configs -> 有效帮助字段 -> 平台入口
-                  | 缺失 / 失败
+current endpoint client/configs -> valid help fields -> platform entry point
+                  | missing / failure
                   v
-          内置 default.json -> 平台入口
+          built-in default.json -> platform entry point
 ```
 
-旧 CDN default.json 仅为旧版客户端兼容保留；新版无请求或 URL 构造链路，
-不要因此删除线上旧文件或本目录内置文件。内置文件的其他字段与既有消费者保持不变。
+`default.json` on the legacy CDN is retained only for compatibility with older clients. The current version has no request or URL-construction path. Do not delete the old online file or the built-in file in this directory for that reason. All other built-in fields and existing consumers must remain unchanged.
 
-详细规则见 [用户社群入口配置](../docs/ui/settings-community-link-config.md)。
+See [Community Entry Point Configuration](../docs/ui/settings-community-link-config.md) for details.

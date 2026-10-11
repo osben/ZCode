@@ -141,8 +141,8 @@ const readToolStrategy: ToolDisplayStrategy = {
 
     return {
       inlinePreview,
-      // 读类工具的标题里通常已经包含目标文件，摘要行再额外补一个匹配出的文件名，
-      // 会把同一文件重复显示两次。这里只保留标题和正文预览，避免只读操作显得像“又点开了一个文件”。
+      // Read-tool titles usually already include the target file. Adding another matched filename to the summary row
+      // would show the same file twice. Keep only the title and body preview here so a read-only action does not look like “opening another file.”
       showSummaryFileLink: false,
       showInput: !hasInlinePreview,
       showOutput: Boolean(context.errorText),
@@ -162,8 +162,8 @@ const writeToolStrategy: ToolDisplayStrategy = {
     return {
       inlinePreview,
       showInput: !hasInlinePreview,
-      // Write 工具的成功 output 常只是结构化确认结果，继续渲染会多出一块无意义的 Result。
-      // 写入内容已经由 inlinePreview / 文件摘要承载；这里只在失败时保留错误，避免重复展示 result。
+      // A successful Write tool output is often just a structured confirmation; rendering it would add a meaningless Result block.
+      // The written content is already represented by inlinePreview / the file summary. Keep only errors here to avoid duplicate result content.
       showOutput: Boolean(context.errorText),
       showKind: !hasInlinePreview,
     };
@@ -206,10 +206,10 @@ const searchToolStrategy: ToolDisplayStrategy = {
     return context.identity.family === "search";
   },
   build(context) {
-    // search/fetch 类工具的输入通常只是 query、路径或过滤条件，
-    // 用户真正关心的是命中的结果。之前走通用展示会把 Parameters 和 Result 一起展开，
-    // 搜索结果被挤到下面很难扫读；这里统一只保留 result/error，避免无效输入信息抢主视觉。
-    // 同时搜索范围本身已经体现在标题或结果里，摘要行再额外补一个匹配出的目录/文件名会重复噪音。
+    // Inputs for search/fetch tools are usually just a query, path, or filter condition,
+    // while users care about the matches. The generic view previously expanded both Parameters and Result,
+    // pushing search results down and making them hard to scan; keep only result/error here so irrelevant inputs do not dominate.
+    // The search scope is already reflected in the title or result, so adding a matched directory/filename to the summary row is redundant noise.
     return {
       inlinePreview: { type: "none" },
       showSummaryFileLink: false,
@@ -225,8 +225,8 @@ const goalToolStrategy: ToolDisplayStrategy = {
     return context.identity.family === "goal";
   },
   build(context) {
-    // Goal 工具的 input 是模型给 runtime 的状态变更参数，不是用户要读的结果。
-    // 之前走通用 fallback 会同时摊开 Parameters、Result 和整包 raw，goal 状态反而被噪音淹没。
+    // Goal tool input is a state-change parameter sent by the model to the runtime, not the result the user needs to read.
+    // The generic fallback previously exposed Parameters, Result, and the full raw payload, burying the goal state in noise.
     return {
       inlinePreview: { type: "none" },
       showSummaryFileLink: false,
@@ -242,8 +242,8 @@ const nodeReplToolStrategy: ToolDisplayStrategy = {
     return context.identity.family === "node-repl";
   },
   build() {
-    // 展示语义由专用 renderer 从 title/result/error 中归一化；通用 Parameters、Result
-    // 和 kind 会暴露工具实现细节，并与专用结果区重复，因此这里全部关闭。
+    // A dedicated renderer normalizes presentation semantics from title/result/error. Generic Parameters, Result
+    // and kind expose implementation details and duplicate the dedicated result area, so disable all of them here.
     return {
       inlinePreview: { type: "none" },
       showSummaryFileLink: false,
@@ -273,9 +273,9 @@ export function buildToolDisplayModel(
   const contentPreview = getToolCallCodeContentPreview(toolCall, workspacePath);
   const errorText = getToolCallErrorText(toolCall);
   const identity = resolveToolCallIdentity(toolCall);
-  // 用户要看的 plan 来自 tool result，不是 tool input。
-  // EnterPlanMode 一类输入里也可能带 plan/todo 结构；如果这里兜底读 input，
-  // 同一份计划会被误当成结果渲染，和顶部真实 plan 事件的职责再次混在一起。
+  // The plan users need to see comes from the tool result, not its input.
+  // EnterPlanMode input may also include a plan/todo structure; falling back to input here
+  // would render that same plan as a result and mix it up with the real plan event rendered above.
   const planResult = extractToolPlanResultFromValue(toolCall.output, workspacePath);
   const context: ToolDisplayContext = {
     toolCall,
@@ -298,9 +298,9 @@ export function buildToolDisplayModel(
 
   const matchedStrategy = TOOL_DISPLAY_STRATEGIES.find((strategy) => strategy.matches(context));
 
-  // tool 展示之前靠 `kind === "edit"` 直接分叉，预览提取层已经能识别 read/replace/image，
-  // 但渲染层完全吃不到，最后只剩一堆零散特判。这里收敛成“通用模型 + kind 策略增强”，
-  // 后续新增 execute/search/fetch 的专用展示时，只需要追加策略，不再重写主渲染骨架。
+  // Tool display previously branched directly on `kind === "edit"`. The preview extraction layer already recognized read/replace/image,
+  // but the rendering layer could not use it, leaving scattered special cases. Converge on “generic model + kind-specific policy enhancements”;
+  // future dedicated execute/search/fetch views can add a policy without rewriting the main rendering structure.
   const model = matchedStrategy
     ? {
         ...defaultModel,
@@ -308,9 +308,9 @@ export function buildToolDisplayModel(
       }
     : defaultModel;
 
-  // 退出计划模式的 result 会同时带 markdown plan 和 allowedPrompts 等结构化字段。
-  // 之前这里直接走通用 JSON Result，聊天区很难读，而且同一份 plan 还会在别处重复渲染。
-  // 现在优先把 `plan` 当成当前 tool 的专用结果块展示，只在出错时再回退到通用输出区。
+  // The result from leaving plan mode can contain both a markdown plan and structured fields such as allowedPrompts.
+  // This previously used the generic JSON Result, which was difficult to read in chat and rendered the same plan elsewhere too.
+  // Now prefer a dedicated result block for `plan` in this tool, falling back to the generic output area only on error.
   if (planResult) {
     return {
       ...model,
@@ -322,8 +322,8 @@ export function buildToolDisplayModel(
   if (errorText) {
     return {
       ...model,
-      // edit/write 失败时继续展示 Parameters，会把 oldString/newString 整坨 JSON 顶上来，
-      // 真正的报错反而被挤到下面甚至完全看不到。失败态优先收敛成错误信息视图，避免用户继续读无效参数。
+      // Showing Parameters after edit/write fails puts the entire oldString/newString JSON first,
+      // pushing the actual error down or hiding it. In the failed state, prioritize an error view so users do not keep reading invalid parameters.
       inlinePreview: { type: "none" },
       showInput: false,
       showOutput: true,

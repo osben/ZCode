@@ -12,8 +12,8 @@ import type { McpToolDescriptor, PluginReferenceCatalog } from "@zcode/contracts
 const MCP_SESSION_OAUTH_AUTHORIZATION_TIMEOUT_MS = 15_000;
 
 /**
- * 只有同时携带 resolver 注入的官方 plugin id 和本进程私有 authority 的 server 才能共享
- * Computer Use 项目授权。server 名、tool 名和 manifest env 都可被第三方仿造，不能单独作为信任依据。
+ * Only servers carrying both the official plugin ID injected by the resolver and this process's private authority may share
+ * Computer Use project authorization. Server names, tool names, and manifest env can all be spoofed by third parties and cannot be trusted alone.
  */
 export function computeOfficialCuaServerNames(
   servers: Record<string, McpServerConfig>,
@@ -71,8 +71,8 @@ export function startMcpStartup(
   const startedAt = Date.now();
   const startup = this.mcpPort
     .connectConfiguredServers(servers, {
-      // authorization_code MCP 无人完成浏览器授权时，session 启动过去会等默认 5 分钟，
-      // 导致模型请求迟迟不发出；session 只等 15s，授权入口由设置页 mcp/list 展示。
+      // If nobody completes browser authorization for an authorization_code MCP, session startup previously waited for the default five minutes,
+      // delaying model requests. Wait only 15 seconds; settings exposes the authorization entry point through mcp/list.
       oauthAuthorizationTimeoutMs: MCP_SESSION_OAUTH_AUTHORIZATION_TIMEOUT_MS,
       trace: traceContext,
       workingDirectory: this.workingDirectory,
@@ -143,13 +143,13 @@ export async function initializeMcp(
         this.config.mcp?.servers ?? {},
         new Set(this.config.mcp?.trustedOfficialCuaServerNames ?? []),
       ),
-      // 插件 UI：display.ui 需要 server → pluginId 的归属；catalog 是 session 冻结的唯一权威。
+      // Plugin UI: display.ui needs the server → pluginId ownership mapping; the session-frozen catalog is the only authority.
       pluginIdByServerName: buildPluginIdByServerName(this.config.pluginReferenceCatalog),
     });
     if (registered.length > 0) {
       this.invalidateToolCache();
     }
-    // A7：记住注册集合与签名，回合边界 refreshMcpToolsIfChanged 据此判断是否重注册。
+    // A7: remember the registered set and signature; refreshMcpToolsIfChanged uses them at turn boundaries to decide whether to register again.
     this.registeredMcpToolNames = registered;
     this.mcpToolsSignature = mcpToolsSignature(snapshot.tools);
     this.mcpToolListRevision = mcpPort.toolListRevision?.();
@@ -175,8 +175,8 @@ export async function initializeMcp(
 }
 
 /**
- * server 名 → 插件稳定 id。catalog 里 disabled 插件的 mcpServerNames 为空，天然不参与；
- * 同名冲突插件的 server 名互不相同（带插件名前缀），不需要额外去重。
+ * Server name → stable plugin ID. Disabled plugins have no mcpServerNames in the catalog, so they are naturally excluded;
+ * conflicting plugins have distinct server names (prefixed with plugin name), so no additional deduplication is needed.
  */
 function buildPluginIdByServerName(
   catalog: PluginReferenceCatalog | undefined,
@@ -196,9 +196,9 @@ function mcpToolsSignature(descriptors: readonly McpToolDescriptor[]): string {
 }
 
 /**
- * 回合开始前刷新 MCP 工具表。只有端口报告 tools/list_changed 计数变化时才重新 listTools
- * （adapter 对收到通知的 server 重拉），再比较工具签名，变了就注销旧的、注册新的并失效工具缓存。
- * 不实现 toolListRevision 的端口（mock / 静态 server）永远不刷新；回合内也不刷新（已拍板）。
+ * Refresh the MCP tool list before a turn. Call listTools again only when the port reports a changed tools/list_changed count
+ * (the adapter reloads the server that sent the notification), then compare tool signatures; when they differ, unregister the old tools, register the new ones, and invalidate the tool cache.
+ * Ports without toolListRevision (mocks / static servers) never refresh; do not refresh within a turn either (decided).
  */
 export async function refreshMcpToolsIfChanged(
   this: AgentRuntimeInternal,

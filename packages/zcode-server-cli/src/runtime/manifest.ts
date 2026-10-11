@@ -75,8 +75,8 @@ export function createRuntimeManifest(
     target,
     appVersion,
     nodeVersion: SERVER_RUNTIME_NODE_VERSION,
-    // 入口是 ESM `.js`（tsup 产物）：server-cli 通过 `new URL("./server-core.js")` fork Core、
-    // 通过同目录 zcode.cjs 委派既有 CLI，三者必须同目录且文件名与产物一致。
+    // The entry point is ESM `.js` (a tsup artifact): server-cli forks Core through `new URL("./server-core.js")`
+    // and delegates to the existing CLI through the colocated zcode.cjs; all three must share a directory and match the artifact filenames.
     entrypoints: {
       cli: "runtime/server-cli.js",
       core: "runtime/server-core.js",

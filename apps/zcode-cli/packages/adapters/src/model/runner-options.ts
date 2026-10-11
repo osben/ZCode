@@ -17,7 +17,7 @@ type ExperimentalIncludeWithResponseBody = {
   responseBody?: boolean;
 };
 
-/** zcode-plan 业务码常只出现在 finish chunk 的 response.body，流式路径需显式开启。 */
+/** zcode-plan business codes often appear only in the finish chunk's response.body, so the streaming path must enable it explicitly. */
 export function shouldIncludeStreamResponseBody(resolved: ResolvedAiSdkModel): boolean {
   return (
     resolved.providerKind === "openai-compatible" && resolved.accountAccess?.mode === "start-plan"
@@ -28,7 +28,7 @@ function mergeRequestHeaders(
   providerHeaders: Record<string, string> | undefined,
   attributionHeaders: Record<string, string>,
 ): Record<string, string> {
-  // 通用大小写去重会改变旧归因头的 SDK 合并结果；本次只剔除 query-source 静态值。
+  // Generic case-insensitive deduplication would change how the SDK merges legacy attribution headers; remove only the static query-source value here.
   return {
     ...withoutModelQuerySourceHeader(providerHeaders),
     ...attributionHeaders,
@@ -150,10 +150,11 @@ export function createStreamTextOptions(input: {
     // printing its generic system-message warning to process stderr.
     allowSystemInMessages: true,
     maxRetries: 0,
-    // AI SDK 会吞掉 Anthropic message_start 等 metadata 事件；compact 需要
-    // 在 adapter 内观察 raw event 才能精确结束 SSE retry，raw chunk 不会上送 Core/UI。
+    // The AI SDK consumes metadata events such as Anthropic message_start. Compact needs to observe
+    // the raw event in the adapter to end SSE retries precisely; raw chunks are not sent to Core/UI.
     includeRawChunks: input.request.preserveProviderStreamBoundaries ? true : undefined,
-    // zcode-plan 的业务码可能只在流式响应尾部 body 里，需保留 responseBody 供错误分类读取。
+    // zcode-plan business codes may appear only in the body at the end of a streaming response;
+    // preserve responseBody so error classification can read them.
     experimental_include: createStreamExperimentalInclude(input),
   }) as AiSdkStreamTextOptions;
 }
@@ -202,8 +203,8 @@ function withNativeGenerateOutputFormat(input: {
   const anthropicOptions = asPlainRecord(input.providerOptions?.anthropic);
   return {
     ...input.providerOptions,
-    // Lite role 的真实模型 ID 可能不在 AI SDK 的静态能力表中；
-    // 显式 schema 必须继续生成目标 output_config，而不能退化成 JSON tool。
+    // The actual model ID for a Lite role may not be in the AI SDK's static capability table.
+    // An explicit schema must still produce the target output_config instead of falling back to a JSON tool.
     anthropic: { ...anthropicOptions, structuredOutputMode: "outputFormat" },
   };
 }

@@ -106,8 +106,8 @@ export async function verifyWindowsProcessIdentityAsync(
 ): Promise<boolean> {
   if (process.platform !== "win32" || timeoutMs <= 0) return false;
   if (windowsCimCapability === "identity-unavailable") return false;
-  // Windows 11 24H2 及部分 Win10 镜像不再提供 WMIC；Windows 10+ 统一使用
-  // PowerShell/CIM，查询失败仍按 CreationDate 无法确认处理，禁止绕过身份校验强杀。
+  // Windows 11 24H2 and some Windows 10 images no longer include WMIC; use
+  // PowerShell/CIM on all Windows 10+ systems. If the query fails, treat CreationDate as unverified and do not force-kill without identity validation.
   return await new Promise<boolean>((resolve) => {
     execFile(
       "powershell.exe",
@@ -157,14 +157,14 @@ export async function readWindowsProcessListAsync(
     return await awaitWindowsProcessListWithinDeadline(windowsProcessListInFlight.promise, options);
   }
 
-  // Get-CimInstance 在部分 Windows 机器上会超过 1 秒。同步等待会阻塞 Host
-  // 的退出 deadline；共享同一个异步查询后，多个 workspace 可以复用一次系统进程表。
-  // 旧共享 Promise 可能早于新 Agent 的 spawn 开始，复用这张进程表必然找不到
-  // 新 root 并退化为 unverified。只有严格晚于 root 启动的查询才具备可复用资格。
+  // Get-CimInstance can take more than one second on some Windows machines. Synchronous waiting would block the Host
+  // exit deadline; sharing one asynchronous query lets multiple workspaces reuse a single system process list.
+  // An older shared Promise may have started before a new Agent was spawned, so reusing that process list would miss
+  // the new root and fall back to unverified. A query is reusable only if it started strictly after the root.
   const startedAtMs = Date.now();
   const request = new Promise<readonly ProcessIdentity[]>((resolve) => {
-    // 移除 WMIC 后直接走受支持的 CIM 后端，避免 ENOENT fallback 消耗 cleanup
-    // deadline；查询失败返回空身份，调用方继续沿 fail-closed 路径观察退出。
+    // With WMIC removed, use the supported CIM backend directly so an ENOENT fallback does not consume the cleanup
+    // deadline. Return an empty identity on query failure so the caller continues observing exit through the fail-closed path.
     const timeoutMs = boundedWindowsLookupTimeoutMs(WINDOWS_PROCESS_LOOKUP_TIMEOUT_MS, options);
     if (timeoutMs <= 0) {
       resolve([]);

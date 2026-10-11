@@ -70,8 +70,8 @@ export function registerBrowserViewIpcHandlers(
   reportBrowserScreenshotSurfaceReady?: ReportBrowserScreenshotSurfaceReady,
   residencyHandlers: BrowserViewResidencyIpcHandlers = {},
 ) {
-  // renderer 只能拿到 guest webContentsId，必须由 main 绑定发送方窗口后再 attach，
-  // 否则相同 key 在多个窗口之间可能错误复用 BrowserGuestManager 状态。
+  // The renderer knows only the guest webContentsId, so main must bind the sender window before attach;
+  // otherwise the same key could incorrectly reuse BrowserGuestManager state across windows.
   ipcMain.handle(
     PlatformChannels.BrowserViewAttachGuest,
     async (
@@ -159,7 +159,7 @@ export function registerBrowserViewIpcHandlers(
       const tabId = nonEmptyStringSchema.parse(payload.tabId);
       const viewport =
         payload.viewport === null ? null : browserViewportInputSchema.parse(payload.viewport);
-      // zoom factor 只能从 IPC 绑定的 BrowserWindow 读取，不能信任 renderer payload。
+      // Read the zoom factor only from the BrowserWindow bound to this IPC call; do not trust the renderer payload.
       await updateBrowserGuestViewport?.(tabId, viewport, win.id, win.webContents.getZoomFactor());
     },
   );

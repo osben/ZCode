@@ -43,10 +43,7 @@ export function TaskActionMenuContent({
   onOpenProviderConfig,
 }: {
   intl: {
-    formatMessage: (
-      desc: { id: string },
-      values?: Record<string, string>,
-    ) => string;
+    formatMessage: (desc: { id: string }, values?: Record<string, string>) => string;
   };
   isPinned: boolean;
   fileManagerLabel: string;
@@ -69,9 +66,9 @@ export function TaskActionMenuContent({
   onStartRenameTask: () => void;
   onArchiveTask: () => void;
   onMarkTaskAsUnread: () => void;
-  /** 「在分屏打开」（仅桌面 shell 传入；手机远控不显示该入口）。 */
+  /** “Open in split pane” (provided only by the desktop shell; hidden on mobile remote control). */
   onOpenInSplitPane?: () => void;
-  /** 当前 session 或 pane 数达上限且目标无已有归属时禁用（保留布局与层级）。 */
+  /** Disabled when the session or pane count is at its limit and the target is not already assigned (preserving layout and hierarchy). */
   openInSplitPaneDisabled?: boolean;
   onOpenTaskFeedback?: () => void;
   onOpenTaskPathInFileManager: () => void;
@@ -82,8 +79,7 @@ export function TaskActionMenuContent({
   onViewModelTrajectory?: () => void;
   onOpenProviderConfig: () => void;
 }) {
-  const taskTargetActionsDisabled =
-    disableTaskActions || disableTaskTargetActions;
+  const taskTargetActionsDisabled = disableTaskActions || disableTaskTargetActions;
 
   return (
     <>
@@ -162,11 +158,7 @@ export function TaskActionMenuContent({
         {intl.formatMessage({ id: "appHeader.copyPath" })}
       </Item>
       <Item
-        disabled={
-          taskTargetActionsDisabled ||
-          taskSessionFile.loading ||
-          !taskSessionFile.path
-        }
+        disabled={taskTargetActionsDisabled || taskSessionFile.loading || !taskSessionFile.path}
         title={taskTargetActionsDisabled ? disabledReason : undefined}
         onSelect={onCopyTaskPath}
       >
@@ -181,8 +173,8 @@ export function TaskActionMenuContent({
         title={taskTargetActionsDisabled ? disabledReason : undefined}
         onSelect={onCopyTaskLogPath}
       >
-        {/* Bugfix: ZCode Agent 的日志路径可能先按运行时约定得出，当前日期文件尚未落盘。
-            复制动作只依赖路径字符串，不能把 exists=false 当成不可复制，否则菜单会表现成“不能点”。 */}
+        {/* Bugfix: The ZCode Agent log path may be determined from runtime conventions before the current date’s file has been written to disk.
+            Copying depends only on the path string; do not treat exists=false as non-copyable, or the menu will look disabled. */}
         {intl.formatMessage({ id: "appHeader.copyLogPath" })}
       </Item>
       {onCopySessionId ? (
@@ -195,14 +187,11 @@ export function TaskActionMenuContent({
         </Item>
       ) : null}
       {!hideMobileUnsupportedActions ? (
-        /* Bugfix: 手机远控运行在浏览器里，无法可靠打开桌面端 provider 配置文件。
-           这里只在远控移动端隐藏入口，桌面端仍沿用“路径已知即可前往配置”的能力。 */
+        /* Bugfix: mobile remote control runs in a browser and cannot reliably open desktop provider
+           configuration files. Hide the entry on mobile remote control only; desktop keeps the
+           existing "go to configuration as long as the path is known" behavior. */
         <Item
-          disabled={
-            disableTaskActions ||
-            providerConfigFile.loading ||
-            !providerConfigFile.path
-          }
+          disabled={disableTaskActions || providerConfigFile.loading || !providerConfigFile.path}
           title={disableTaskActions ? disabledReason : undefined}
           onSelect={() => {
             if (!disableTaskActions) {
@@ -218,8 +207,8 @@ export function TaskActionMenuContent({
       {onViewModelTrajectory ? (
         <>
           <Separator />
-          {/* 调用轨迹查看：从 ~/.zcode/cli 的 model-io 还原该 task 的模型请求/响应/工具调用，
-              在右侧边栏可视化。只依赖 taskId（即 sessionId），不依赖快照文件是否落盘。 */}
+          {/* View the call trace: reconstruct this task's model requests/responses/tool calls from model-io in ~/.zcode/cli,
+              and visualize them in the right sidebar. This depends only on taskId (sessionId), not on whether a snapshot file has been written. */}
           <Item
             disabled={taskTargetActionsDisabled || !activeSessionId}
             title={taskTargetActionsDisabled ? disabledReason : undefined}
@@ -233,8 +222,8 @@ export function TaskActionMenuContent({
         <>
           <Separator />
           <Item disabled={taskTargetActionsDisabled} onSelect={onOpenTaskFeedback}>
-            {/* Bugfix: 任务菜单之前只有复制日志/路径，用户遇到任务问题时还要手动回到反馈中心。
-                “反馈问题”不是任务管理动作，单独放在菜单底部更符合兜底求助入口的层级。 */}
+            {/* Bugfix: The task menu previously offered only copy-log/path actions, so users had to return to the feedback center to report a task issue.
+                “Report an issue” is not a task-management action; placing it separately at the bottom of the menu gives it the right level as a fallback help entry. */}
             {intl.formatMessage({ id: "taskList.feedback" })}
           </Item>
         </>

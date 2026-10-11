@@ -9,7 +9,7 @@ export function useRunningBackgroundTaskElapsedClock(runningTaskCount: number) {
       return;
     }
 
-    // 单个任务完成不应重启整组计时器，否则剩余任务的秒数会短暂停顿后跳变。
+    // Completing one task should not restart the whole timer group, or the remaining tasks' seconds will pause briefly and then jump.
     const timer = setInterval(() => {
       setNow(Date.now());
     }, 1000);

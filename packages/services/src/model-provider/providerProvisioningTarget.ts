@@ -49,7 +49,7 @@ interface ProvisioningStateFile {
   readonly records: readonly ProvisioningStateRecord[];
 }
 
-/** 运行在目标 Environment 内的 Provisioning target；负责写正式 Store 并在失败时回滚。 */
+/** Provisioning target running in the target Environment; writes to the production Store and rolls back on failure. */
 export function createProviderProvisioningTarget(
   options: ProviderProvisioningTargetOptions,
 ): IProviderProvisioningTargetService {
@@ -69,8 +69,9 @@ export function createProviderProvisioningTarget(
         }
 
         validateCredentialEntries(envelope);
-        // schema v1 接受旧 Source 的账号 Key 字段，但新 Host 不再读取或应用它。
-        // 旧/手工 Key 留在原 Store，避免升级同步误删其它客户端共享的凭据。
+        // schema v1 accepts the legacy Source's account key field, but the new Host no
+        // longer reads or applies it. Legacy/manual keys stay in the original store so an
+        // upgrade sync cannot accidentally delete credentials shared by other clients.
         const oauthCredentials = envelope.credentials.filter(
           (entry) => entry.scope === "oauth-session",
         );
@@ -87,7 +88,7 @@ export function createProviderProvisioningTarget(
 
         let errorCode: ProviderProvisioningErrorCode = "target-write-failed";
         try {
-          // 先登记再写入：底层原子写即使在替换完成后才抛错，也必须进入回滚集合。
+          // Register before writing: even an atomic write that throws after replacement must be included in the rollback set.
           applied.settings = true;
           await options.settingService.update({
             providerFamilyDomain: envelope.accountSettings.providerFamilyDomain ?? undefined,
@@ -107,7 +108,7 @@ export function createProviderProvisioningTarget(
 
           applied.personalConfig = true;
           await options.personalRepository.update((current) => {
-            // 其他域写入期间 Personal 可能已被编辑；检查与替换必须在同一个文件锁内。
+            // Personal may be edited while another domain is being written; check and replace under the same file lock.
             if (!samePersonalConfig(current, before.personal)) {
               throw new Error("Personal Provider Config 在同步期间被其它操作修改");
             }
@@ -118,8 +119,10 @@ export function createProviderProvisioningTarget(
           await options.accountProviderSource.refresh("provider-provisioning");
           const snapshot =
             await options.providerRuntime.registryService.refresh("provider-provisioning");
-          // 失效默认只是新会话偏好；把它当同步硬条件会让正常 SSH 被旧模型/档位阻断。
-          // 原样保留偏好，由 Host 现有推荐逻辑解析；真实写入/刷新失败仍按事务回滚。
+          // An invalid default is only a session preference; treating it as a hard sync
+          // condition would let normal SSH be blocked by an old model/tier. Keep the
+          // preference as-is for the Host's existing recommendation logic to resolve; real
+          // write/refresh failures still roll back via the transaction.
 
           const result = {
             syncId: envelope.syncId,
@@ -133,8 +136,8 @@ export function createProviderProvisioningTarget(
           await writeStateFile(options.stateFilePath, appendStateRecord(previousState, result));
           return result;
         } catch (error) {
-          // 回滚前对每个 domain 做 CAS 式校验；若期间已有其它写入，宁可报告
-          // rollback_failed，也不能用过期快照覆盖或删除用户的新配置。
+          // Perform a CAS-style check for each domain before rollback; if another write happened in the meantime, prefer reporting
+          // rollback_failed to overwriting or deleting the user's new configuration with a stale snapshot.
           const rollbackError = await rollback(before, applied, options);
           if (rollbackError) {
             return {
@@ -177,7 +180,7 @@ interface AppliedProvisioningState {
 }
 
 function parsePersonalConfig(envelope: ProviderProvisioningEnvelope): ProviderConfigLayerUpdate {
-  // 信封与本地保存复用正式 Personal codec，不在接收端另建字段清单或模式判断。
+  // Reuse the production Personal codec for the envelope and local persistence; do not create another field list or mode check at the receiver.
   return decodeProviderConfigFile({ schemaVersion: 1, config: envelope.personalConfig });
 }
 
@@ -221,7 +224,7 @@ async function rollback(
         if (!samePersonalConfig(current, applied.personalConfigExpected)) {
           throw new Error("Personal Provider Config 在同步期间被其它操作修改，跳过回滚");
         }
-        // 默认选择与 Provider/Model 共用一份 CAS；不能分别回滚制造混合状态或覆盖新选择。
+        // The default selection shares one CAS with Provider/Model; do not roll them back separately, which could create mixed state or overwrite a new selection.
         return before.personal;
       });
     } catch (error) {
@@ -253,7 +256,7 @@ async function rollback(
       const current = await options.settingService.get();
       const previousSettings = toProvisioningAccountSettings(before.settings);
       if (sameAccountSettings(current, previousSettings)) {
-        // 写入失败发生在落盘前，目标已经处于回滚前的状态。
+        // The write failed before hitting disk, so the target is already in its pre-rollback state.
       } else if (!sameAccountSettings(current, applied.settingsExpected)) {
         errors.push(new Error("Account Settings 在同步期间被其它操作修改，跳过回滚"));
       } else {

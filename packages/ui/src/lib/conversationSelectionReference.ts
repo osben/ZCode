@@ -157,7 +157,7 @@ export function parsePromptConversationSelections(text: string): {
   if (userSelectMatch) {
     return parseConversationSelectionBlock(text, userSelectMatch, (value) => {
       if (!isConversationSelectionText(value)) return null;
-      // 与发送合同一致，历史保留文件路径，普通对话继续只恢复正文。
+      // Match the send contract: preserve file paths in history, while ordinary conversations continue to restore only the body.
       return value.path ? { path: value.path, text: value.text } : { text: value.text };
     });
   }

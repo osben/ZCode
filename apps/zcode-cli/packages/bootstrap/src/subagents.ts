@@ -33,7 +33,7 @@ interface LoadPluginAgentProfilesInput {
   logger?: Logger;
   plugins: readonly PluginMetadata[];
   reservedProfileNames?: Iterable<string>;
-  /** 来自已完成存储迁移的启动快照；不在插件 loader 另读磁盘或查询账号。 */
+/** Startup snapshot from completed storage migration; do not reread disk or query accounts in the plugin loader. */
   modelSelectionOverrides?: PluginSubagentModelSelectionOverrides;
 }
 
@@ -124,7 +124,7 @@ export function resolvePluginAgentProfiles(
   for (const parsed of parsedProfiles) {
     const override =
       input.modelSelectionOverrides?.[createPluginAgentStateId(parsed.plugin.id, parsed.bareName)];
-    // 先替换完整选择再展开别名，避免同一插件的两个调用入口使用不同模型/档位。
+    // Replace the complete selection before expanding aliases so two call paths for the same plugin do not use different models or tiers.
     const canonical = {
       ...namespacePluginAgentProfile(parsed),
       ...(override ? { modelSelection: override } : {}),
@@ -283,7 +283,7 @@ function listMarkdownFiles(root: string): string[] {
   const result: string[] = [];
   for (const entry of readdirSync(root, { withFileTypes: true })) {
     const path = join(root, entry.name);
-    // 与 Host / Settings 一致，只加载根目录直接文件；插件使用独立发现入口。
+    // Consistent with Host / Settings: load only files directly in the root directory; plugins use a separate discovery entry point.
     if (entry.isFile() && /\.(md|markdown)$/iu.test(entry.name)) {
       result.push(path);
     }

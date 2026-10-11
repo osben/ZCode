@@ -1,4 +1,4 @@
-/* eslint-disable max-lines -- 远程连接向导的状态编排暂集中在同一组件，后续有独立拆分计划。 */
+/* eslint-disable max-lines -- State orchestration for the remote-connection wizard is temporarily kept in one component, with a separate split planned later. */
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createUuid, type RemoteTarget, type RemoteWorkspaceSessionEntry } from "@zcode/shared";
 import {
@@ -215,7 +215,7 @@ export function RemoteConnectionDialog({
       if (!options?.preserveSession && sessionId) {
         void handleCancelSession(sessionId);
       } else if (!options?.preserveSession && loading && currentStep === "connecting") {
-        // 连接过程里 sessionId 尚未返回时，关闭弹窗会只重置 UI；这里补上显式取消，确保后台下载同步停止。
+        // If the dialog closes before sessionId is returned during connection, only the UI would reset. Explicitly cancel here so the background download also stops.
         void cancelPendingRemoteConnection(connectingRequestId ?? undefined);
       }
       resetFeedback();
@@ -276,8 +276,8 @@ export function RemoteConnectionDialog({
     const nextTarget = withDefaultRemoteResourcePackages(target);
 
     if (loading) {
-      // React 还没来得及把按钮置 disabled 时，快速重复点击会启动多个 SSH host process。
-      // 这里在事件入口再做一次并发保护，避免同一个 dialog 产生多条部署流并把上传进度混在一起。
+      // Rapid repeated clicks can start multiple SSH host processes before React disables the button.
+      // Add another concurrency guard at the event entry point so one dialog cannot create multiple deployment flows and mix their upload progress.
       return;
     }
 
@@ -316,8 +316,8 @@ export function RemoteConnectionDialog({
 
   const handleConnect = async () => {
     if (loading) {
-      // React 还没来得及把按钮置 disabled 时，快速重复点击会启动多个 SSH host process。
-      // 这里在事件入口再做一次并发保护，避免同一个 dialog 产生多条部署流并把上传进度混在一起。
+      // Rapid repeated clicks can start multiple SSH host processes before React disables the button.
+      // Add another concurrency guard at the event entry point so one dialog cannot create multiple deployment flows and mix their upload progress.
       return;
     }
 
@@ -342,8 +342,8 @@ export function RemoteConnectionDialog({
       serverWorkspacePath,
     });
     if (!nextTarget) {
-      // 必填项缺失属于表单校验，不应该和真实连接失败共用 destructive 错误样式。
-      // 这里单独落到 settings 步骤内的 warning 提示，用户能更快理解是“缺少输入”而不是“连接出错”。
+      // Missing required fields are a form-validation issue and should not use the destructive error style for an actual connection failure.
+      // Show a warning within the settings step so users can tell quickly that input is missing rather than the connection failing.
       setValidationMessage(errorMessage ?? "Connection failed");
       return;
     }
@@ -385,8 +385,8 @@ export function RemoteConnectionDialog({
         return;
       }
 
-      // 选中远程目录后还要做 realpath、provider 同步、session 持久化和任务列表刷新。
-      // 这些异步步骤之前没有独立的提交中状态，用户会看到按钮无响应；这里在入口设置状态并用 ref 防重复提交。
+      // After selecting a remote directory, the flow still needs to resolve realpath, sync the provider, persist the session, and refresh the task list.
+      // These async steps previously had no dedicated submitting state, making the button appear unresponsive. Set the state at entry and use a ref to prevent duplicate submissions.
       selectingDirectoryRef.current = true;
       setSelectingDirectory(true);
       resetFeedback();
@@ -401,7 +401,7 @@ export function RemoteConnectionDialog({
       } catch (selectionError) {
         const failureState = getRemoteConnectionDirectoryFailureState({
           connectedSessionId,
-          // 事件处理器只在失败时读取一次最新 snapshot，避免为了回调判断新增重复 Zustand 订阅。
+          // The event handler reads the latest snapshot once, only on failure, avoiding a duplicate Zustand subscription just to decide whether to call back.
           sessionStillRegistered: Boolean(
             useRemoteWorkspaceSessionStore.getState().sessionsById[connectedSessionId],
           ),
@@ -483,14 +483,14 @@ export function RemoteConnectionDialog({
                   onMinimize={
                     flowActive
                       ? () => {
-                          // 连接慢时用户只能关闭弹窗，关闭会取消 pending 连接并丢失当前步骤。
-                          // 这里把“收起”明确拆成仅隐藏 dialog，不重置状态、不取消后台连接，后续入口可恢复到当前步骤。
+                          // When the connection is slow, users could only close the dialog, which canceled the pending connection and lost the current step.
+                          // Define “minimize” as hiding the dialog only: keep state and the background connection so a later entry can resume the current step.
                           applyOpenState(false);
                         }
                       : undefined
                   }
                   onClose={() => {
-                    // 关闭和收起的语义不同。关闭仍走确认和取消逻辑，避免已连接但未选目录的 session 泄漏。
+                    // Close and minimize have different semantics. Close still uses confirmation and cancellation logic to avoid leaking a connected session whose directory has not been selected.
                     void handleCloseRequest();
                   }}
                 />
@@ -499,8 +499,8 @@ export function RemoteConnectionDialog({
               {error && currentStep !== "connecting" ? (
                 <div
                   data-testid={TID_SSH_ERROR}
-                  // 远程连接的错误提示以前直接拼接颜色 token，和全局状态反馈样式不一致。
-                  // 这里统一改成 destructive 语义色对，避免 SSH/Docker 两种模式出现不同的错误视觉。
+                  // Remote-connection errors previously composed color tokens directly, making them inconsistent with the global status-feedback styles.
+                  // Use the destructive semantic color pair consistently so SSH and Docker modes do not display errors differently.
                   className="flex items-start gap-3 rounded-xl bg-destructive px-4 py-3 text-ui-base text-destructive-foreground"
                 >
                   <AlertTriangleIcon className="mt-0.5 size-4 shrink-0" />
@@ -622,9 +622,7 @@ export function RemoteConnectionDialog({
                       localPluginSyncService={baseServices.pluginSyncService}
                       remotePluginSyncService={directoryBrowserServices?.pluginSyncService ?? null}
                       localZCodeAgentService={baseServices.zcodeAgentService}
-                      remoteZCodeAgentService={
-                        directoryBrowserServices?.zcodeAgentService ?? null
-                      }
+                      remoteZCodeAgentService={directoryBrowserServices?.zcodeAgentService ?? null}
                       localWorkspacePath={localWorkspacePath}
                       selecting={selectingDirectory}
                       onSelect={(path) => {

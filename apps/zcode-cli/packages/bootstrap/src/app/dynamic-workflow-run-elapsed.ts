@@ -1,37 +1,41 @@
 // ============================================================
-// dwf run 的活动时长（完成卡的「时间」格）
+// Active duration of a dwf run (the completion card's time field)
 // ============================================================
-// 口径与论证见仓库根 docs/dynamic-workflow/transcript-and-notifications.md「How long it took」：
-// 完成卡的时长是**整条 lineage 的活动时长**——本 run 的每一世，加上沿 `resumedFrom` 上溯的每一个
-// 前驱的每一世，世与世之间的空档不计。
+// Definition and rationale: see docs/dynamic-workflow/transcript-and-notifications.md, "How long it took":
+// the completion card's duration is **the active duration of the full lineage**—every lifecycle of
+// this run, plus every lifecycle of each predecessor reached through `resumedFrom`; gaps between
+// lifecycles do not count.
 //
-// 缺陷原因（2026-09-21）：时长曾是「结算它的那个进程自己的时钟」（注册表条目的
-// `completedAt − startedAt`）。resume 换一个新条目、修订换一个新 runId，两者都把那个时钟归零，
-// 而修订/恢复出来的那一世大半是缓存重放——秒级。于是一个跑了四小时、修订过一次的 run 报「12 秒」，
-// 旁边的 tokens 格却是整条 lineage 的总数（那一格从建 run 起就按 lineage 计，见 execution-engine.md
-// 「Usage across the lineage」）。两格答的是同一个问题，必须按同一个跨度计。
+// Defect history (2026-09-21): the duration used to be "the clock of whichever process settled the
+// run" (the registry entry's `completedAt − startedAt`). Resume swaps in a new entry and amendment
+// mints a new runId; both reset that clock to zero, and the amendment/resumed lifecycle is mostly
+// cache replay—seconds. So a run that worked four hours and was amended once reported "12 seconds,"
+// while the neighboring tokens field showed the full-lineage total (that field has counted by
+// lineage since run creation; see execution-engine.md, "Usage across the lineage"). Both fields
+// answer the same question and must use the same span.
 //
-// 时长不需要像 tokens 那样在行上累加：事件日志已经给每一世标了日期（`run-started` → 那一世
-// 最后一条事件），所以这里是一次**只读求和**，零写入、零迁移，对升级前就存在的老 run 同样成立。
+// Duration needs no per-row accumulation like tokens: the event log already dates every lifecycle
+// (`run-started` → the last event of that lifecycle), so this is a **read-only sum** with zero
+// writes and zero migrations, and it holds equally for runs that predate the upgrade.
 
 import type { JournalStorePort } from "@zcode/dynamic-workflow";
 import { supportsRunLifeSpans } from "./dynamic-workflow-run-journal.js";
 
 /**
- * lineage 上溯的跳数上限。一次修订一跳，链条实际是个位数；上限只为「行里的 `resumedFrom`
- * 被外力写成一条长链」留一道闸——读一条 run 的时长不该扫过任意多行。
+ * Maximum number of hops when traversing lineage. Each amendment adds one hop and chains are typically single digits; the limit guards against
+ * `resumedFrom` being externally written into an arbitrarily long chain—a duration read for one run should not scan an unlimited number of rows.
  */
 const LINEAGE_HOP_LIMIT = 64;
 
 /**
- * 本 run 及其 lineage 的活动时长（毫秒），或 `undefined`（无任何一世的证据）。
+ * Active duration in milliseconds for this run and its lineage, or `undefined` if there is no evidence from any lifecycle.
  *
- * `undefined` 与 `0` 是两件事：前者是「journal 说不出话」（读面不在场、run 的事件早于本记账、
- * 行已被清理），调用方据此退回自己观察到的那一世；后者是「确有一世，但它的时长不足 1 毫秒」。
+ * `undefined` and `0` are different: the former means "the journal has no answer" (read surface unavailable, events predate this tracking,
+ * or rows were cleaned up), so the caller falls back to the lifecycle it observed; the latter means a lifecycle exists but lasted less than 1 ms.
  *
- * 防环不是防御性编程的摆设：`resumedFrom` 是建 run 那一刻写死的元数据，理论上不成环，但这个
- * 循环的终止条件依赖的是**库里的数据**而不是本进程的逻辑——一条被外力写成自指的行会把一次
- * 读快照变成死循环，而快照读在后台追踪器的轮询路径上。
+ * Cycle prevention is not decorative defensive programming: `resumedFrom` is fixed when a run is created and should not form a cycle, but this
+ * loop's termination depends on **database data**, not process logic. An externally written self-referential row could make a snapshot read loop forever,
+ * and snapshot reads run on the background tracker's polling path.
  */
 export function runLineageActiveMs(journal: JournalStorePort, runId: string): number | undefined {
   if (!supportsRunLifeSpans(journal)) return undefined;
@@ -44,12 +48,12 @@ export function runLineageActiveMs(journal: JournalStorePort, runId: string): nu
     visited.add(cursor);
     for (const life of journal.listRunLifeSpans(cursor)) {
       sawLife = true;
-      // 钳到非负：两个时刻同源于 `dwf_event.time_created`，但那是**墙钟**——一次系统对时可以
-      // 让「最后一条」早于「第一条」。负数会从总和里减掉别的世的真实时长，那比丢掉这一世更糟。
+      // Clamp to zero or above: both timestamps come from `dwf_event.time_created`, which is **wall-clock** time; a system clock adjustment can
+      // make the "last" time earlier than the "first." A negative duration would subtract real time from another lifecycle, worse than dropping this one.
       total += Math.max(0, life.lastActivityAt - life.startedAt);
     }
-    // 只上溯 lineage，不下溯 supersededBy：修订是「同一件工作的下一版」，而被替代的前驱的活
-    // 是这一版的底座；反方向的后继与本 run 的时长无关（它有自己的卡）。
+    // Traverse lineage upward only, not down through supersededBy: an amendment is the next version of the same work, so the superseded predecessor's active
+    // time underlies this version. Later successors are unrelated to this run's duration (they have their own cards).
     cursor = journal.getRun(cursor)?.resumedFrom;
   }
   return sawLife ? total : undefined;

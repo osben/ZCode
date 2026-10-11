@@ -61,7 +61,7 @@ function buildRequestUserContextContent(input: {
   }
 
   return [
-    // 聚合字段标题不能绑定到 AGENTS.md，否则仅有 Project Memory 时缺少标题。
+    // The aggregate heading cannot depend on AGENTS.md, or it will be missing when only Project Memory is present.
 
     "# agentsMd",
     "Codebase and user instructions are shown below. Be sure to adhere to these instructions. IMPORTANT: These instructions OVERRIDE any default behavior and you MUST follow them exactly as written.",

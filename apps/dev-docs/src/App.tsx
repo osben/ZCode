@@ -1,4 +1,4 @@
-/* eslint-disable max-lines -- 文档站首屏、结构表格和概念索引需要共享筛选与高亮状态，先集中在单入口组件维护。 */
+/* eslint-disable max-lines -- The docs homepage, structure tables, and concept index share filtering and highlighting state, so they are maintained in one entry component. */
 import {
   Suspense,
   lazy,
@@ -1138,7 +1138,7 @@ function StdioTrafficView() {
       return;
     }
 
-    // mock replay 只用于演示；真实调试默认走 Vite 本地 API 读取 tap proxy 的 NDJSON。
+    // Mock replay is for demos only; real debugging reads the tap proxy NDJSON through the local Vite API by default.
     const timer = window.setInterval(() => {
       liveSequenceRef.current += 1;
       const nextFrame = createLiveStdioTrafficFrame(

@@ -1,4 +1,4 @@
-/* oxlint-disable eslint(max-lines) -- settings helper 聚合多个设置分组；终端、网络与自动归档多侧能力暂时超过行数限制。 */
+/* oxlint-disable eslint(max-lines) -- Settings helpers group several settings sections; terminal, network, and auto-archive capabilities across multiple surfaces temporarily exceed the line limit. */
 import type {
   IntegratedTerminalShellOption,
   IntegratedTerminalShellSelection,
@@ -136,15 +136,15 @@ export function GeneralSectionContent({
   defaultHomeDir: string;
   isDesktop?: boolean;
   isWindowsDesktop?: boolean;
-  /** Linux 桌面端（isDesktop 且非 win/mac）；关闭驻留托盘设置在 Linux 上按能力自适应展示 */
+  /** Linux desktop (`isDesktop` and not Windows/macOS); show the close-to-tray setting based on capabilities. */
   isLinuxDesktop?: boolean;
-  /** Linux 关闭驻留托盘能力状态（spec：docs/desktop/linux-close-to-tray.md）；Windows 不传 */
+  /** Linux close-to-tray capability state (spec: docs/desktop/linux-close-to-tray.md); omitted on Windows. */
   linuxCloseToTray?: {
-    /** 能力探测中或确认不可用，开关锁定 */
+    /** Capability is being detected or confirmed unavailable; lock the toggle. */
     disabled: boolean;
-    /** 确认不可用（描述文案切换为"未提供系统托盘"） */
+    /** Confirmed unavailable (description changes to “System tray not provided”). */
     unavailable: boolean;
-    /** GNOME 系桌面且无托盘（追加 AppIndicator 扩展安装提示） */
+    /** GNOME-based desktop without a tray (add a prompt to install the AppIndicator extension). */
     gnomeLikeHint: boolean;
   };
   showIntegratedTerminalShell?: boolean;
@@ -191,8 +191,8 @@ export function GeneralSectionContent({
 }) {
   const { intl } = useZCodeIntl();
   const hasServices = Boolean(useOptionalServices());
-  // 部分 SSR 单测会用精简 props 直接渲染本组件，新增终端设置项后旧 helper 未必同步传值。
-  // 这里把运行时缺省值兜到“继承系统 profile”，避免 undefined.trim() 把无关测试打断。
+  // Some SSR unit tests render this component directly with minimal props, and older helpers may not pass the new terminal setting.
+  // Default to “inherit system profile” at runtime so undefined.trim() does not interrupt unrelated tests.
   const [localTerminalFontFamily, setLocalTerminalFontFamily] = useState(terminalFontFamily);
 
   useEffect(() => {
@@ -516,7 +516,7 @@ export function GeneralSectionContent({
             />
           }
         />
-        {/* No Proxy 与 HTTP 代理共同决定同一出口策略，必须贴在代理地址下面。*/}
+        {/* No Proxy and the HTTP proxy jointly determine the same egress policy, so this must sit below the proxy address.*/}
         <SettingsRow
           label={intl.formatMessage({ id: "settings.httpProxyNoProxy" })}
           description={intl.formatMessage({
@@ -551,7 +551,7 @@ export function GeneralSectionContent({
             />
           }
         />
-        {/* 自定义 CA 属于 HTTP 代理的同一网络出口策略，必须跟代理输入放在同一卡片里。*/}
+        {/* A custom CA is part of the HTTP proxy’s network egress policy and must be in the same card as the proxy input.*/}
         <SettingsRow
           label={intl.formatMessage({ id: "settings.httpProxyCaCertPath" })}
           description={intl.formatMessage({
@@ -683,7 +683,7 @@ export function GeneralSectionContent({
             control={
               <Switch
                 checked={closeToTrayOnWindows}
-                // Linux 上托盘能力未知（探测中）或确认不可用时都锁定，防止误开导致关窗失联
+                // Lock the setting when Linux tray capability is unknown (still probing) or confirmed unavailable, so enabling it cannot make the window inaccessible after close.
                 //（spec：docs/desktop/linux-close-to-tray.md）。
                 disabled={Boolean(linuxCloseToTray?.disabled)}
                 onCheckedChange={(checked) => {
@@ -762,7 +762,7 @@ export function GeneralSectionContent({
             />
           }
         />
-        {/* docs/dynamic-workflow/launch.md「The user's choice」：服务端未提供时整行不渲染。 */}
+        {/* docs/dynamic-workflow/launch.md "The user's choice": the entire row is not rendered when the server does not provide it. */}
         {hasServices ? <DynamicWorkflowModeSetting /> : null}
         <SettingsRow
           label={intl.formatMessage({ id: "settings.modelIoFullRetention" })}

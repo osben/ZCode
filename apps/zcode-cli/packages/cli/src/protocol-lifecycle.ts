@@ -6,7 +6,7 @@ const PROTOCOL_INPUT_DRAIN_MS = 100;
 const COVERAGE_FLUSH_ALLOWANCE_MS = 500;
 const SIGNAL_EXIT_CODES = { SIGINT: 130, SIGTERM: 143, SIGHUP: 129 } as const;
 
-/** CLI 入口的唯一退出 owner；在加载 runtime 之前安装，不依赖 run() 返回。 */
+/** Sole exit owner for the CLI entry; install it before loading the runtime and do not depend on run() returning. */
 export function createProtocolProcessLifecycle(
   options: {
     input?: NodeJS.ReadableStream;
@@ -36,7 +36,7 @@ export function createProtocolProcessLifecycle(
       PROTOCOL_SHUTDOWN_TIMEOUT_MS +
         (process.env.ZCODE_E2E_COVERAGE === "1" ? COVERAGE_FLUSH_ALLOWANCE_MS : 0);
     deadlineAt = Date.now() + timeoutMs;
-    // 保持 ref：即使初始化 Promise 永不 settle、已经没有 IO，也必须交付终态。
+    // Keep the ref: even if initialization never settles and no I/O remains, the process must still reach a terminal state.
     deadlineTimer = setTimeout(() => exit(exitCode), timeoutMs);
     if (error) controller.abort(error);
     else
@@ -55,7 +55,7 @@ export function createProtocolProcessLifecycle(
   for (const signal of signals) {
     const listener = () =>
       stop(new Error(`Protocol received ${signal}`), SIGNAL_EXIT_CODES[signal]);
-    // on 而不是 once：重复信号不绕过清理，也不重置首次 deadline。
+    // Use on instead of once: repeated signals must not bypass cleanup or reset the first deadline.
     process.on(signal, listener);
   }
   source.on("end", onInputEnd);
@@ -64,7 +64,7 @@ export function createProtocolProcessLifecycle(
   output.on("error", onIoError);
   output.on("close", onOutputClose);
   input.on("error", onIoError);
-  // 启动阶段就消费原始 stdin 来观察父端 EOF；背压缓冲保留尚未被协议消费的字节。
+  // Consume raw stdin during startup to observe parent EOF; the backpressure buffer preserves bytes not yet consumed by the protocol.
   source.pipe(input);
   if ((source as NodeJS.ReadableStream & { readableEnded?: boolean }).readableEnded) onInputEnd();
 

@@ -1,12 +1,14 @@
 import { PERMISSION_FULL_ACCESS_OPTION_ID } from "@zcode/shared/zcode-protocol-v4";
-// ProductProjection —— CLI 权威投影第二 reducer。
-// 输入：CLI 事件日志（SessionEvent，权威事实源）；输出：ConversationDelta[]。
-// 快照推进复用协议规范 apply（applyConversationDeltas）——投影演进与 delta 流
-// 逐字节一致是构造保证，黄金测试再用独立重放交叉验证。
+// ProductProjection — the second authoritative reducer in the CLI projection.
+// Input: the CLI event log (SessionEvent, the source of truth); output: ConversationDelta[].
+// Snapshot advancement reuses the protocol's canonical apply function (applyConversationDeltas).
+// Byte-for-byte agreement between projection evolution and the delta stream is guaranteed by
+// construction, then cross-checked by independent replay in golden tests.
 //
-// 覆盖：session/turn 生命周期、流式文本/思考、tool call 状态机、
-// 权限交互、turn-steer 队列、usage、错误态、迟到终态拒收、
-// compact marker、goal 状态机、fork marker。传输外壳（TopicFrame/subscribe）在后续片。
+// Covers session/turn lifecycle, streamed text/reasoning, the tool-call state machine,
+// permission interactions, the turn-steer queue, usage, error states, rejection of late terminal
+// events, compact markers, the goal state machine, and fork markers. The transport wrapper
+// (TopicFrame/subscribe) is handled in a later slice.
 import type {
   AssistantFeedbackUpdatedPayload,
   HighspeedMetricsUpdatedPayload,
@@ -63,10 +65,10 @@ import {
   clearSettledOutputPreviews,
   projectToolActivity,
 } from "./product-projection-bash-progress.js";
-// review 单调性裁决单一来源；projection 只实现“应用策略”（advance/no_current 接受，
-// 其余忽略；跨 flow 等 onSessionResumed 清空）。
-// （改直连 monotonicity subpath；discovery barrel 的该 re-export
-// 会在 packages/ui 的 Desktop 构建链解析失败，App 重启后打不开。）
+// The review monotonicity decision has one source of truth; the projection only applies the
+// policy (accept advance/no_current, ignore other verdicts, and clear onSessionResumed across flows).
+// Import directly from the monotonicity subpath: this re-export from the discovery barrel fails in
+// the packages/ui Desktop build chain, preventing the app from opening after restart.
 import {
   WORKFLOW_REFINE_PERMISSION_OPTION_ID,
   ZCODE_FILE_STREAMING_TOOL_INPUT_PREVIEW_MIN_INTERVAL_MS,
@@ -235,9 +237,10 @@ function hookExecutionDisplayName(
 }
 
 /**
- * config 种子：投影初始化/冷恢复后从 runtime 真值注入的初值。
- * 与事件写入路径（ModelSelected / SessionModeChanged）的关系：种子只填「事件尚未
- * 触碰」的字段——日志重放值永远优先（"最终值以日志为准"）。
+ * Config seed: initial values injected from runtime truth after projection initialization or cold
+ * recovery.
+ * Relationship to event write paths (ModelSelected / SessionModeChanged): seeds fill only fields
+ * untouched by events; replayed log values always take precedence ("the log is the final authority").
  */
 export interface SessionConfigSeed {
   permissionGrant?: { interactionId: string };
@@ -361,7 +364,8 @@ export type ConversationRowTargetResolution =
       reasonCode: "proto.staleTarget" | "guard.actionUnavailable";
     };
 
-// 旧事件没有 retryable 字段；保持历史 UI 的可重试语义，但新事件必须尊重显式 false。
+// Old events have no retryable field, so preserve the historical UI retry behavior; new events must
+// respect an explicit false.
 const LEGACY_TURN_ERROR_RECOVERABLE_FALLBACK = true;
 
 function modelRetryReasonCode(
@@ -370,7 +374,8 @@ function modelRetryReasonCode(
   switch (reason) {
     case "rate_limited":
       return "fault.provider.rateLimited";
-    // off-peak 排队（429/3105）语义上就是"上游让我们等"，UI 归入限流可恢复形态。
+    // Off-peak queueing (429/3105) means "the upstream asked us to wait"; the UI groups it with
+    // recoverable rate-limit states.
     case "offpeak_queued":
       return "fault.provider.rateLimited";
     case "provider_overloaded":
@@ -431,89 +436,103 @@ type TurnModelBaseline =
 
 export class ProductProjection {
   private snapshot: ConversationSnapshot;
-  // reducer 内部的 rowId 查找必须与 rows.window 同步；冷恢复过去每次 find 都扫描全表，
-  // tool/turn 终态越多退化越明显。普通归约增量维护，rewind 才重建。
+  // Keep the reducer's rowId lookup synchronized with rows.window. Cold recovery previously scanned
+  // the entire table on every find, with worse degradation as tool/turn terminal events accumulated.
+  // Normal reduction maintains it incrementally; only rewind rebuilds it.
   private rowIndexById = new Map<number, number>();
   private hydrationAccumulator: MutableConversationSnapshotAccumulator | null = null;
   private nextRowId = 1;
   private streamingTextRowId: number | null = null;
   private streamingReasoningRowId: number | null = null;
-  // output-token Continue 是同一 product turn 内的请求级恢复，不应泄漏成新的正文行。
-  // 这里只保留上一条满足 length/zero-tool/视觉紧邻条件的 text row，任何真实边界都会清空。
+  // An output-token Continue is request-level recovery within the same product turn and must not
+  // leak into a new body row. Keep only the previous text row satisfying the length/zero-tool/
+  // visual-adjacency conditions; any real boundary clears it.
   private outputContinuationTextRowId: number | null = null;
   private toolRowIdByCallId = new Map<string, number>();
   private latestListAppsSnapshot = new Map<number, CuaAppIdentity>();
-  // snapshot 是权威状态；该 Set 只是 TurnComplete 缺终态兜底的派生索引，避免每轮扫描全表。
+  // The snapshot is authoritative; this Set is only a derived index for the TurnComplete fallback
+  // when terminal state is missing, avoiding a full-table scan on every turn.
   private openForegroundToolCallIds = new Set<string>();
   private fileToolInputPreviewByCallId = new Map<string, FileToolInputPreviewState>();
   private subagentRowIdByAgentId = new Map<string, number>();
   private hookRowIdByInvocationId = new Map<string, number>();
-  // resume SessionStart 没有 turnId；先保留在 CLI projection，下一条真实 user-intent
-  // TurnStarted 到达后再分配 rowId/turnId。不得构造 session-hooks:* synthetic turn。
+  // A resumed SessionStart has no turnId. Keep it in the CLI projection until the next real
+  // user-intent TurnStarted arrives, then assign rowId/turnId. Do not create a synthetic
+  // session-hooks:* turn.
   private pendingSessionHookInvocations = new Map<string, PendingSessionHookInvocation>();
-  // rewind 后 async Hook 的 terminal 仍可能迟到；保留 invocation 墓碑，避免被删旧分支
-  // 因找不到原 row 而被 terminal-only 兼容路径重新 append。
+  // An async Hook terminal may arrive late after rewind. Keep an invocation tombstone so a deleted
+  // old branch is not appended again by the terminal-only compatibility path when its original row
+  // cannot be found.
   private rewoundHookInvocationIds = new Set<string>();
-  // 冷恢复 transcript 可能含旧版本先发布、后持久化失败的 ghost child。store seed 后
-  // 必须持续排除，而不是只覆盖一次 snapshot；否则下一条无关事件会从历史 row 再物化它。
+  // A cold-recovery transcript may contain a ghost child that an older version published before
+  // persistence failed. Keep excluding it after the store seed rather than overriding one snapshot;
+  // otherwise the next unrelated event can materialize it again from a historical row.
   private invalidSubagentChildSessionIds = new Set<string>();
-  // rowId → 权威 messageId 侧表。forkAssistant/editUserQuery 的命令载荷用 rowId
-  // 定位，但旧 fork/rewind operations 用 messageId（history target）——桥接层经本表翻译。
-  // 不进 row schema（客户端只发 rowId，messageId 是服务端内部锚点，避免污染冻结的行结构）。
+  // Side table mapping rowId to authoritative messageId. forkAssistant/editUserQuery command
+  // payloads address rows by rowId, while legacy fork/rewind operations use messageId (the history
+  // target); the bridge translates through this table. Keep it out of the row schema: clients send
+  // only rowId, while messageId is a server-internal anchor, preserving the frozen row structure.
   private messageIdByRowId = new Map<number, string>();
-  // Continue 复用 rowId 后，动作锚点推进到最后一条 assistant message；旧 partial messageId
-  // 仍需能命中同一 row，供 compact coverage、rewind 和整轮文件事实恢复使用。
+  // After Continue reuses rowId, advance the action anchor to the last assistant message. Older
+  // partial messageIds must still resolve to the same row for compact coverage, rewind, and
+  // full-turn file-fact recovery.
   private outputContinuationRowIdByMessageId = new Map<string, number>();
   private entityIdByRowId = new Map<number, string>();
-  // canonical command target 只按稳定实体身份寻址；rowId 仅是本次 materialization 的
-  // transient lookup，刷新/replay 后变化也不会改变 target identity。
+  // Canonical command targets address only stable entity identities. rowId is a transient lookup
+  // for this materialization, so changes after refresh/replay do not change target identity.
   private editTargetByEntityId = new Map<string, ConversationEditTarget>();
   private currentEditableEntityId: string | null = null;
   private stableCompactCoverageBoundaryRowId: number | null = null;
   private turnHeaderRowIdByTurnId = new Map<string, number>();
   private compactMarkerRowIdByOperationId = new Map<string, number>();
-  // goal verify boundary 身份 = targetId_goalIteration
-  // （verificationId 仅 attempt alias——同 iteration 重试携带新 verificationId，
-  // 旧实现按 verificationId keying 会长出第二个 marker）。
+  // Goal verification boundary identity = targetId_goalIteration.
+  // verificationId is only an attempt alias: a retry in the same iteration carries a new
+  // verificationId, and the old keying by verificationId created a second marker.
   private goalVerifyMarkerRowIdByLifecycleKey = new Map<string, number>();
-  // queue drain 在同一 runtimeTurn 内切出新的
-  // product turn。runtimeTurnId → 当前 productTurnId 映射；后续事件行经 turnIdOf
-  // 归入最新 productTurn。steer（guide）不切轮，内联当前轮。
+  // Queue drain creates a new product turn within the same runtimeTurn. Map runtimeTurnId to the
+  // current productTurnId; turnIdOf assigns later event rows to the latest productTurn. A steer
+  // (guide) does not split the turn and stays inline.
   private productTurnIdByRuntimeTurnId = new Map<string, string>();
   private runtimeTurnIdByProductTurnId = new Map<string, string>();
   private productTurnSplitOrdinalByRuntimeTurnId = new Map<string, number>();
   private currentProductTurnStartedAtMs: number | null = null;
-  // Highspeed 分享需要的真实耗时由 CLI 事件聚合，避免 renderer 离场后丢失拆分数据。
+  // The CLI aggregates real durations needed by Highspeed sharing so split data is not lost after the renderer exits.
   private highspeedModelDurationByTurnId = new Map<string, number>();
   private highspeedToolIntervalsByTurnId = new Map<string, Map<string, HighspeedToolInterval>>();
-  // 投递语义侧表：TurnSteerQueued 时按事件 payload（或 followupMode 兜底）记录，
-  // drain 时决定切轮 vs 内联；账本落地后以账本为准。
+  // Side table for delivery semantics: record the event payload (or followupMode fallback) when
+  // TurnSteerQueued arrives, then choose between splitting a turn and inlining at drain time. Once
+  // the ledger is persisted, it becomes authoritative.
   private deliveryByPendingInputId = new Map<string, "guide" | "queue">();
   private currentTurnId: string | null = null;
-  // 当前 runtime turn 是否由 model-only TurnStarted 建立（manual /compact、
-  // goal continuation 等维护 turn）。SessionStart 摘要的 pending 归位不得以维护
-  // turn 为收口目标，必须等下一条 user-visible 真实 turn。
+  // Whether the current runtime turn was created by a model-only TurnStarted (maintenance turns
+  // such as manual /compact or goal continuation). Pending summaries from SessionStart must not be
+  // settled against a maintenance turn; wait for the next real user-visible turn.
   private currentTurnStartedModelOnly = false;
-  // contextWindow=null 时协议不暴露分母与已用量，但 reducer 仍需保留最新 context 用量，
-  // 以便 registry 后续恢复已知容量时原子重建 usage，而不是错误归零。
+  // When contextWindow=null, the protocol exposes neither the denominator nor usage, but the
+  // reducer must retain the latest context usage so the registry can atomically rebuild usage if a
+  // known capacity is restored later, instead of incorrectly resetting it to zero.
   private contextWindowState: ContextWindowProjectionState = {
     maxTokens: null,
     touchedByEvent: false,
     usedTokens: 0,
   };
-  // modelChange marker 在「下一个 turn 开始时」生成。
-  // silentInitial 保持普通 Main 首轮静默；sourceLess 表示显式 ∅→X；known 保存上一轮
-  // 实际使用的 provider/model。thought 只随基线记录，不触发模型身份变化。
+  // Generate the modelChange marker when the next turn starts.
+  // silentInitial keeps the ordinary first Main turn silent; sourceLess represents an explicit
+  // ∅→X transition; known stores the provider/model actually used in the previous turn. Record
+  // thought alongside the baseline, but do not let it trigger a model-identity change.
   private lastTurnModel: TurnModelBaseline = { kind: "silentInitial" };
-  // 种子守卫：事件（权威日志）触碰过的 config 区块不再接受种子覆盖。
+  // Seed guard: do not let seeds overwrite config sections touched by events (the authoritative log).
   private configModelTouchedByEvent = false;
-  // 旧 ModelSelected 不含能力集合；独立守卫允许 runtime seed 补齐旧日志，
-  // 又避免后续种子覆盖新事件已原子发布的模型能力。
+  // Old ModelSelected events do not include the capability set. A separate guard lets runtime seeds
+  // fill gaps in old logs while preventing later seeds from overwriting model capabilities already
+  // atomically published by a newer event.
   private configThoughtLevelsTouchedByEvent = false;
   private configModeTouchedByEvent = false;
-  // assistant 守恒：非运行期拒收的正文流计数（gateway 据此置 stale）。
+  // Assistant conservation: count body-stream events rejected outside a running state; the gateway
+  // uses this to mark the projection stale.
   private droppedContentStreamEventCount = 0;
-  // 读取期 legacy fallback 必须可观测；否则 normalizer 缺字段后仍会退化为“可见但不可寻址”。
+  // The legacy fallback during reads must be observable; otherwise a missing normalizer field still
+  // degrades into content that is visible but cannot be addressed.
   private normalizationDiagnostics: ConversationNormalizationDiagnostic[] = [];
 
   constructor(sessionId: string, logEpoch: string) {
@@ -524,7 +543,7 @@ export class ProductProjection {
     return this.snapshot;
   }
 
-  /** assistant 守恒：被拒收的正文流事件数（>0 = 投影可能缺段，需重 hydration）。 */
+  /** Assistant conservation: rejected body-stream event count (>0 means the projection may be incomplete and needs rehydration). */
   getDroppedContentStreamEventCount(): number {
     return this.droppedContentStreamEventCount;
   }
@@ -533,7 +552,7 @@ export class ProductProjection {
     return this.normalizationDiagnostics;
   }
 
-  /** 仅供 publisher 的有界增量估算；返回 null 表示必须走候选快照精确校验。 */
+  /** Bounded incremental estimate for the publisher only; null means exact validation against a candidate snapshot is required. */
   establishedStreamingAppend(event: SessionEvent): string | null {
     if (event.type !== SessionEventType.ModelStreaming || !this.isRunning()) return null;
     const payload = event.payload as ModelStreamingPayload;
@@ -554,7 +573,8 @@ export class ProductProjection {
         ) {
           return "";
         }
-        // 上界估算必须包含窗口内累计 suffix；只算当前 delta 会低估下一份 wire snapshot。
+        // The upper-bound estimate must include the suffix accumulated in the window; counting only
+        // the current delta would underestimate the next wire snapshot.
         return `${state.pendingAppend}${payload.delta}`;
       }
       return payload.delta;
@@ -563,18 +583,20 @@ export class ProductProjection {
   }
 
   /**
-   * config 种子注入。
+   * Inject config seeds.
    *
-   * 初始快照 config 曾写死空 provider/model +
-   * mode="build"，而 ModelSelected 只在 switchModelConfig 后补发、SessionCreated 刻意
-   * 不产 delta——runtime 真值（启动默认模型/项目持久化 mode/历史会话上次选型）从头到尾
-   * 进不了投影。后果：① 新会话模型选择器显示空；② 项目持久化 mode=yolo 时 UI 显示
-   * build，点 yolo 命中 handler 同值 no-op（判的是 runtime 真值），UI 永远无法收敛——
-   * 打破了「revision 不变 ⇔ 无状态变化」的 CAS 不变量。
+   * The initial snapshot hard-coded empty provider/model values plus mode="build". ModelSelected
+   * was emitted only after switchModelConfig, while SessionCreated intentionally emitted no delta,
+   * so runtime truth (the startup default model, persisted project mode, and the last model selected
+   * in a historical session) never entered the projection. Consequences: (1) a new session's model
+   * picker was empty; (2) when the persisted project mode was yolo, the UI showed build, and
+   * selecting yolo hit a same-value no-op in the handler (which checks runtime truth), so the UI
+   * could never converge and the CAS invariant "unchanged revision iff unchanged state" broke.
    *
-   * 为什么这么修：种子直改 snapshot.config，不产 delta、不递增 revision/seq——
-   * draft「无可见 delta」裁决不被破坏；事件触碰过的区块跳过（重放序
-   * 在种子之后时日志值优先）。幂等：可在 ensurePublisher / hydration 后重复调用。
+   * Why this fix: seeds update snapshot.config directly without producing a delta or incrementing
+   * revision/seq, preserving the draft's "no visible delta" decision. Skip sections touched by
+   * events (when replay follows the seed, log values take precedence). Idempotent: safe to call
+   * repeatedly after ensurePublisher/hydration.
    */
   seedConfig(seed: SessionConfigSeed): void {
     const config = { ...this.snapshot.config };
@@ -588,7 +610,8 @@ export class ProductProjection {
         Object.hasOwn(seed, "modelSelection") &&
         !sameSparseModelSelection(config.modelSelection, seed.modelSelection)
       ) {
-        // 恢复的空选择也有明确语义，不能因为 falsy 而保留历史事件里的旧选型。
+        // A restored empty selection has explicit meaning too; do not preserve an old event's
+        // selection just because the restored value is falsy.
         config.modelSelection = seed.modelSelection
           ? cloneSparseModelSelection(seed.modelSelection)
           : undefined;
@@ -635,11 +658,12 @@ export class ProductProjection {
   }
 
   /**
-   * 导入分享上下文的来源只读种子。
+   * Read-only seed for the source of imported shared context.
    *
-   * shared_context 是 provider-only message，不应物化为用户气泡；来源标记通过
-   * snapshot additive 字段下发，供 Desktop 在打开新会话后显示持久提示。该字段
-   * 不属于 conversation rows，也不递增 revision/seq，避免伪造一轮对话。
+   * shared_context is a provider-only message and must not be materialized as a user bubble. Send
+   * the source marker through an additive snapshot field so Desktop can show a persistent notice
+   * after opening a new session. This field is not part of conversation rows and does not increment
+   * revision/seq, avoiding a fabricated conversation turn.
    */
   seedSharedContextImport(
     source: ConversationSnapshot["sharedContextImport"] | null | undefined,
@@ -670,7 +694,8 @@ export class ProductProjection {
     if (currentContextWindow) {
       this.contextWindowState.usedTokens = currentContextWindow.usedTokens;
     }
-    // 未知容量也有内部用量事实；迟到的恢复种子不能覆盖真实 ModelComplete/Compact 水位。
+    // Internal usage facts exist even when capacity is unknown; a late recovery seed must not
+    // overwrite the real ModelComplete/Compact watermark.
     if (this.contextWindowState.usedTokens > 0) {
       return;
     }
@@ -685,8 +710,9 @@ export class ProductProjection {
       cacheWriteTokens: seed.cumulative?.cacheWriteTokens ?? current.cumulative.cacheWriteTokens,
     };
     if (this.contextWindowState.touchedByEvent) {
-      // 同类守卫：显式 ModelSelected.contextWindow（含 null）是日志权威容量，
-      // hydration seed 只能补回更准确的 token 事实，不得覆盖 maxTokens 或重新显示 null。
+      // Same guard: explicit ModelSelected.contextWindow (including null) is the log's authoritative
+      // capacity. A hydration seed may restore more accurate token facts, but must not overwrite
+      // maxTokens or make null visible again.
       this.contextWindowState.usedTokens = seededContextWindow.usedTokens;
       this.snapshot = {
         ...this.snapshot,
@@ -709,7 +735,8 @@ export class ProductProjection {
       return;
     }
 
-    // 合成历史事件只有零用量占位；种子补真实水位，未知容量不妨碍内部保留 token。
+    // Synthetic history events contain only a zero-usage placeholder; seeds restore the real
+    // watermark, and unknown capacity does not prevent retaining tokens internally.
     this.contextWindowState.usedTokens = seededContextWindow.usedTokens;
     this.contextWindowState.maxTokens = seededContextWindow.maxTokens;
     this.snapshot = {
@@ -725,9 +752,10 @@ export class ProductProjection {
   }
 
   /**
-   * 冷恢复的 subagent store 校验种子。transcript 可以恢复可见 row，但只有 session
-   * store 能证明 child 已持久化为 subagent_child；因此在 candidate publisher 发布前
-   * 用该种子整体替换 manifest，旧版本遗留的幽灵 child 不得进入 UI 权威态。
+   * Validation seed from the subagent store during cold recovery. The transcript can restore a
+   * visible row, but only the session store can prove that a child was persisted as
+   * subagent_child. Replace the manifest with this seed before the candidate publisher publishes
+   * it, so ghost children left by older versions never enter authoritative UI state.
    */
   seedSubagents(seed: SessionSubagentsSeed): void {
     const childSessionIds = [...new Set(seed.childSessionIds)];
@@ -743,8 +771,9 @@ export class ProductProjection {
     this.snapshot = {
       ...this.snapshot,
       subagents: {
-        // 非空 cold manifest 必须至少从 1 开始；renderer 用 0 区分尚未建立权威态，
-        // 否则旧 session 的 stateRevision=0 会让 child tab 失效同步被永久跳过。
+        // A non-empty cold manifest must start at 1 or later. The renderer uses 0 to mean that
+        // authoritative state has not been established; otherwise a legacy session with
+        // stateRevision=0 would permanently skip child-tab synchronization.
         revision: Math.max(childSessionIds.length > 0 ? 1 : 0, Math.floor(seed.revision)),
         childSessionIds,
         running,
@@ -754,9 +783,10 @@ export class ProductProjection {
   }
 
   /**
-   * rowId → 权威 messageId。桥接层执行 forkAssistant/editUserQuery 时把命令载荷的
-   * 内部 rowId 翻译成 core 需要的 messageId。未知 rowId（非 assistant/user 行、
-   * 或迟到）返回 null，桥接层据此回 rejected。
+   * Map rowId to authoritative messageId. When the bridge executes forkAssistant/editUserQuery, it
+   * translates the command payload's internal rowId to the messageId required by core. Return null
+   * for an unknown rowId (not an assistant/user row or a late request), allowing the bridge to
+   * respond with rejected.
    */
   getMessageIdForRow(rowId: number): string | null {
     return this.messageIdByRowId.get(rowId) ?? null;
@@ -779,9 +809,9 @@ export class ProductProjection {
   }
 
   /**
-   * V3 行动作的唯一解析器。展示 rowId 与稳定 entityId 必须同时命中当前 projection；
-   * action 可用性直接读取同一次 materialization 生成的 row.actions，handler/preview
-   * 不得再各自按位置、phase 或文本重算。
+   * The sole resolver for V3 row actions. Both the displayed rowId and stable entityId must match
+   * the current projection. Read action availability directly from row.actions generated by the
+   * same materialization; handlers/previews must not recalculate it from position, phase, or text.
    */
   resolveRowActionTarget(
     target: ConversationRowTarget,
@@ -880,17 +910,18 @@ export class ProductProjection {
   }
 
   /**
-   * 文件摘要撤销以 turn rowId 为入口，服务端解析同一 product turn 内所有
-   * messageId，覆盖多段 assistant / 多个 checkpoint；UI 不暴露内部 messageId。
+   * File-summary undo starts from the turn rowId. The server resolves every messageId in the same
+   * product turn, covering multiple assistant segments/checkpoints; the UI does not expose internal
+   * messageIds.
    */
   getMessageIdsForTurnRow(rowId: number): string[] {
     const row = this.findRow(rowId);
     if (!row) return [];
     const messageIds = new Set<string>();
     const runtimeTurnId = this.runtimeTurnIdByProductTurnId.get(row.turnId);
-    // Bug 原因：model-only turn 不生成可见 userInput row，过去只扫描 row 会漏掉
-    // checkpoint 使用的隐藏 user messageId。新 turn 有持久消息时 productTurnId
-    // 就是该 messageId；把它作为精确锚点后无需扩大 runtime turn 的兜底范围。
+    // Cause: a model-only turn creates no visible userInput row, so scanning rows missed the hidden
+    // user messageId used by checkpoints. When a new turn has a persisted message, productTurnId is
+    // that messageId; using it as an exact anchor avoids broadening the runtime-turn fallback.
     if (runtimeTurnId && runtimeTurnId !== row.turnId) {
       messageIds.add(row.turnId);
     }
@@ -907,9 +938,9 @@ export class ProductProjection {
   }
 
   /**
-   * core 侧强校验：
-   * rowId 是否为其所属 productTurn 的最后一段 assistantText。UI（平铺后）已只在
-   * 最后段暴露 fork 入口，这里是防御闸——直接命令面/旧客户端不得 fork 中间段。
+   * Core-side strict validation: is rowId the final assistantText segment of its productTurn? The
+   * flattened UI exposes the fork action only on the final segment; this is a defensive gate so
+   * direct command callers/legacy clients cannot fork from a middle segment.
    */
   isLatestAssistantSegmentRow(rowId: number): boolean {
     const row = this.findRow(rowId);
@@ -924,8 +955,9 @@ export class ProductProjection {
   }
 
   /**
-   * running fork 的同步投影闸门：这里只解析 row/product-turn 与 message 边界；完整
-   * orderedMessageIds 由 host 再用 session store 权威顺序补齐并持久化 anchor。
+   * Synchronous projection gate for a running fork: resolve only row/product-turn and message
+   * boundaries here. The host fills in the complete orderedMessageIds using the authoritative
+   * session-store order and persists the anchor.
    */
   resolveStableForkCandidate(rowId: number): StableForkCandidateResolution {
     if (this.snapshot.control.activeWorks.some((work) => work.kind === "compact")) {
@@ -966,7 +998,7 @@ export class ProductProjection {
     };
   }
 
-  /** latestAssistantRetryOnly：retry 只能指向全时间线最新且有 realUser cause 的 assistantText。 */
+  /** latestAssistantRetryOnly: retry may target only the latest assistantText in the full timeline that has a realUser cause. */
   isLatestRetryAssistantRow(rowId: number): boolean {
     const row = this.findRow(rowId);
     return Boolean(
@@ -976,7 +1008,7 @@ export class ProductProjection {
     );
   }
 
-  /** latestQueryEditOnly：只有当前投影里的最后一条 realUser userInput row 可 edit。 */
+  /** latestQueryEditOnly: only the last realUser userInput row in the current projection may be edited. */
   isLatestEditableUserRow(rowId: number): boolean {
     const row = this.findRow(rowId);
     return Boolean(
@@ -987,19 +1019,20 @@ export class ProductProjection {
     );
   }
 
-  /** rowId → product turnId（命令层 running edit 在无 assistant anchor 时回查 store 用）。 */
+  /** rowId → product turnId, used by the command layer to query the store for running edits without an assistant anchor. */
   getTurnIdForRow(rowId: number): string | null {
     return this.findRow(rowId)?.turnId ?? null;
   }
 
-  /** 应用一个权威事件，返回该事件产生的 delta 序列（可能为空）。 */
+  /** Apply an authoritative event and return its delta sequence (possibly empty). */
   applyEvent(event: SessionEvent): ConversationDelta[] {
     return this.applyEventInternal(event, true);
   }
 
   /**
-   * 冷恢复批量路径只允许在尚未发布的候选 projection 上使用。begin 后 rows.window
-   * 原地推进，避免每个事件复制增长数组；publisher 在完整校验通过前不会 adopt 候选。
+   * The cold-recovery batch path may be used only on an unpublished candidate projection. After
+   * begin, rows.window advances in place to avoid copying a growing array for every event; the
+   * publisher does not adopt the candidate until full validation succeeds.
    */
   beginHydrationReplay(): void {
     if (this.hydrationAccumulator) throw new Error("hydration replay already active");
@@ -1014,8 +1047,9 @@ export class ProductProjection {
   }
 
   /**
-   * 把批量期间延迟的 command actions 收敛到当前快照。actions 是同一 reducer 的派生
-   * materialization，不单独递增 revision；触发它变化的结构/guard 事件已经记账。
+   * Reconcile command actions deferred during batching with the current snapshot. Actions are a
+   * derived materialization of the same reducer and do not increment revision separately; the
+   * structural/guard events that changed them have already been accounted for.
    */
   completeHydrationReplay(): ConversationDelta[] {
     if (!this.hydrationAccumulator) throw new Error("hydration replay is not active");
@@ -1034,8 +1068,9 @@ export class ProductProjection {
         event.payload as Record<string, unknown>,
         "childSessionId",
       );
-      // live spawn 已经过 core persist-before-publish 闸门；若它是旧 ghost 的合法 resume，
-      // 以新事件恢复资格。hydration 期间 seed 尚未建立排除集合，不会误放历史引用。
+      // A live spawn has passed core's persist-before-publish gate. If it legally resumes an old
+      // ghost, the new event makes it eligible again. During hydration, the seed has not established
+      // the exclusion set yet, so historical references are not accidentally admitted.
       if (childSessionId) this.invalidSubagentChildSessionIds.delete(childSessionId);
     }
     const runtimeTurnId = String(event.turnId ?? this.currentTurnId ?? "turn-unknown");
@@ -1062,9 +1097,10 @@ export class ProductProjection {
       ? this.materializeSubagentProjection(reduced)
       : [];
     const reducedWithSubagents = [...reduced, ...subagentDeltas];
-    // row、命令 target 与 actions 必须属于同一个 materialization transaction。
-    // 旧实现只维护 side-map/最新行判断，UI action 由别处推断，cold/tool-only/failed
-    // 轮会出现“入口可见但 target 不可解析”，新目标出现后旧入口也不会撤销。
+    // The row, command target, and actions must belong to the same materialization transaction.
+    // The old implementation maintained only a side map/latest-row check while the UI inferred
+    // actions elsewhere. Cold, tool-only, and failed turns could show an entry whose target could
+    // not be resolved, and old entries remained after a new target appeared.
     const deltas = materializeActions
       ? [...reducedWithSubagents, ...this.materializeCommandRowActions(reducedWithSubagents)]
       : reducedWithSubagents;
@@ -1085,17 +1121,18 @@ export class ProductProjection {
   }
 
   /**
-   * 在独立候选投影上归约事件，校验通过后才原子提交。
+   * Reduce the event on an independent candidate projection and commit atomically only after validation.
    *
-   * projection 超过 logical frame assembly 上限时，如果先修改当前实例再等
-   * wire encoder 报错，权威内存态会永久停在“无法发 snapshot”的状态。候选实例同时
-   * 隔离 snapshot 与 reducer 的各类 side-map；拒绝时当前实例完全不变，客户端仍可从
-   * 最后一个可传输 snapshot 恢复。
+   * If the projection exceeds the logical frame assembly limit, mutating the current instance
+   * before the wire encoder fails would leave authoritative memory permanently unable to send a
+   * snapshot. The candidate also isolates the snapshot and reducer side maps; on rejection, the
+   * current instance remains unchanged and clients can recover from the last transmittable snapshot.
    *
-   * `accept` 同时拿到这条事件**实际产出**的 delta：有些事件类别可以只按 delta 的字节数给出
-   * 一个可靠上界，不必把整份候选快照再序列化一遍（publisher 的 ingest 快路径）。传的是实际
-   * 产出而不是预演，正是因为预演算不准——投影在 reducer 之上还叠了 subagent 镜像与命令
-   * actions 的 materialization，少算一条就把 16MiB 闸门算松了。
+   * `accept` also receives the delta **actually produced** by this event. Some event categories can
+   * use delta byte length as a reliable upper bound and avoid serializing the entire candidate
+   * snapshot again (the publisher's fast ingest path). Pass actual output rather than a preview
+   * because preview sizes are inaccurate: the projection also materializes subagent mirrors and
+   * command actions on top of the reducer, and missing one item would weaken the 16 MiB gate.
    */
   applyEventAtomically(
     event: SessionEvent,
@@ -1118,7 +1155,8 @@ export class ProductProjection {
     clone.streamingReasoningRowId = this.streamingReasoningRowId;
     clone.outputContinuationTextRowId = this.outputContinuationTextRowId;
     clone.toolRowIdByCallId = new Map(this.toolRowIdByCallId);
-    // 实时发布逐事件走原子 clone；遗漏该侧表会让成功的 list_apps 快照在提交时丢失。
+    // Live publishing uses an atomic clone for each event; omitting this side table would lose a
+    // successful list_apps snapshot at commit time.
     clone.latestListAppsSnapshot = new Map(this.latestListAppsSnapshot);
     clone.openForegroundToolCallIds = new Set(this.openForegroundToolCallIds);
     clone.fileToolInputPreviewByCallId = new Map(
@@ -1223,9 +1261,10 @@ export class ProductProjection {
   }
 
   /**
-   * 基于本事件归约后的 prospective rows 原子生成 edit/retry actions。
-   * action=true 必须蕴含命令层同 revision 下能解析出持久 message target；最新目标
-   * 改变时同时 upsert 旧、新两行，客户端不需要按数组位置补推断。
+   * Atomically generate edit/retry actions from the prospective rows after reducing this event.
+   * action=true must imply that the command layer can resolve a persistent message target at the
+   * same revision. When the latest target changes, upsert both the old and new rows so clients do
+   * not need to infer from array positions.
    */
   private materializeCommandRowActions(reduced: ConversationDelta[]): ConversationDelta[] {
     const prospective = applyConversationDeltas(this.snapshot, reduced);
@@ -1258,10 +1297,11 @@ export class ProductProjection {
       }
       if (latestEditable && latestAssistant) break;
     }
-    // 旧逻辑只按“最新完整 assistant”挑 retry，background result 的
-    // synthetic turn 因此会错误获得入口；若只在 find 条件里过滤 synthetic，又会跳过
-    // 最新 background assistant，让更早真实用户轮的 retry 复活。这里必须先锁定全时间线
-    // 最新 assistant，再校验同轮 realUser canonical cause，保证普通 retry 不跨轮回退。
+    // The old logic selected retry using only the "latest complete assistant," so a background
+    // result's synthetic turn incorrectly gained the action. Filtering synthetic turns only in the
+    // find predicate would instead skip the latest background assistant and revive retry on an
+    // older real-user turn. First lock onto the latest assistant in the full timeline, then validate
+    // its same-turn realUser canonical cause so ordinary retry never falls back across turns.
     const latestRetryable = (() => {
       if (
         completionBlockingActive ||
@@ -1292,8 +1332,9 @@ export class ProductProjection {
       latestEditable === undefined
         ? null
         : (this.entityIdByRowId.get(latestEditable.rowId) ?? null);
-    // edit action 与命令 resolver 必须共用 canonical target authority。过去 drain 分支只
-    // 登记 messageId，UI 因而显示 Edit，但提交必被 resolver 以 actionUnavailable 拒绝。
+    // The edit action and command resolver must share canonical target authority. The old drain
+    // branch registered only messageId, so the UI showed Edit while submission was rejected by the
+    // resolver as actionUnavailable.
     const latestEditableRowId =
       latestEditable &&
       latestEditableEntityId &&
@@ -1301,9 +1342,10 @@ export class ProductProjection {
       this.editTargetByEntityId.has(latestEditableEntityId)
         ? latestEditable.rowId
         : null;
-    // entity target 历史表会保留旧记录；仅撤销 row action 不足以阻止
-    // entityId 直查绕过 latest-only 语义。当前可编辑 authority 与 actions 在同一次
-    // materialization 中更新，resolver 不再遍历 rows，也不把 rowId 当 canonical key。
+    // The entity-target history table retains old records; revoking a row action alone cannot stop
+    // direct entityId lookup from bypassing latest-only semantics. Update current edit authority and
+    // actions in the same materialization; the resolver no longer scans rows or treats rowId as a
+    // canonical key.
     this.currentEditableEntityId = latestEditableRowId === null ? null : latestEditableEntityId;
     const latestRetryableRowId = latestRetryable?.rowId ?? null;
     const deltas: ConversationDelta[] = [];
@@ -1352,8 +1394,8 @@ export class ProductProjection {
     return deltas;
   }
 
-  // revision 递进：本事件含任一结构性 delta → revision +1，
-  // 且携带规则要求 deltas 中必含 state.updated.revision。
+  // Revision advancement: if this event contains any structural delta, increment revision and
+  // require state.updated.revision in the deltas.
   private attachRevision(deltas: ConversationDelta[]): ConversationDelta[] {
     if (!deltas.some(deltaBumpsRevision)) return deltas;
     const revision = this.snapshot.revision + 1;
@@ -1377,8 +1419,8 @@ export class ProductProjection {
         if (fact.semanticKind !== "userIntent") return [];
         return [
           ...this.onTurnStarted(fact),
-          // model-only 维护 turn（manual /compact、goal continuation）没有资格
-          // 承载 SessionStart 摘要；pending 保持到下一条 user-visible 真实 turn。
+          // Model-only maintenance turns (manual /compact, goal continuation) cannot carry a
+          // SessionStart summary; keep it pending until the next real user-visible turn.
           ...(this.currentTurnStartedModelOnly
             ? []
             : this.flushPendingSessionHookInvocations(fact.productTurnId)),
@@ -1424,7 +1466,7 @@ export class ProductProjection {
       case SessionEventType.PermissionDenied:
         return this.onPermissionDenied(event);
       case SessionEventType.PluginUiResourceUpdated: {
-        // live-only，不改快照；renderer 按 subscribers 派发给沙箱实例。
+        // Live-only; does not change the snapshot. The renderer dispatches to sandbox instances by subscribers.
         const payload = event.payload as PluginUiResourceUpdatedPayload;
         return [
           {
@@ -1452,7 +1494,7 @@ export class ProductProjection {
         return [{ op: "pluginUi.instanceClosed", ...payload }];
       }
       case SessionEventType.PluginUiAppToolCallRequested: {
-        // App-Provided Tools 信箱：live-only，投递给 subscribers 里唯一的实例。
+        // App-provided tools mailbox: live-only, delivered to the single instance among subscribers.
         const payload = event.payload as PluginUiAppToolCallRequestedPayload;
         return [
           {
@@ -1541,8 +1583,8 @@ export class ProductProjection {
   private onSessionResumed(event: SessionEvent): ConversationDelta[] {
     const endedAt = this.ms(event);
     const deltas: ConversationDelta[] = [];
-    // Runtime epoch 切换前尚未归位的 session Hook 不得附着到新 epoch 的下一轮；
-    // 新 Runtime 会重新产生自己的 resume SessionStart lifecycle。
+    // A session Hook not yet assigned before the Runtime epoch changes must not attach to the next
+    // turn in the new epoch; the new Runtime emits its own resume SessionStart lifecycle.
     this.pendingSessionHookInvocations.clear();
     for (const row of this.snapshot.rows.window) {
       if (row.kind !== "hookInvocation" || row.state !== "running") continue;
@@ -1573,13 +1615,15 @@ export class ProductProjection {
       (interaction) => interaction.payload.kind !== "workspaceHookReview",
     );
     if (pendingInteractions.length !== this.snapshot.pendingInteractions.length) {
-      // reviewFlowId/generation 只在单个 Runtime controller 内单调。
-      // Runtime 重启后旧 Requested 会先被 replay，而新 flow 又从 generation=1 开始；
-      // SessionResumed 是明确的新 Runtime epoch 边界，必须先淘汰旧 Runtime 无法再解析的审核。
+      // reviewFlowId/generation is monotonic only within one Runtime controller. After a Runtime
+      // restart, old Requested events replay first while the new flow starts again at generation=1.
+      // SessionResumed marks the new Runtime epoch, so discard reviews the old Runtime can no longer
+      // resolve.
       deltas.push({ op: "state.updated", patch: { pendingInteractions } });
     }
-    // 软门禁:resume 后 activate 会重新上报 admission 状态。
-    // epoch 清理时置 null,避免旧 Runtime 的提示条残留到新 Runtime 接管前。
+    // Soft gate: activate reports admission state again after resume.
+    // Set this to null during epoch cleanup so the old Runtime's banner does not remain until the
+    // new Runtime takes over.
     if (this.snapshot.workspaceHookAdmission !== null) {
       deltas.push({ op: "state.updated", patch: { workspaceHookAdmission: null } });
     }
@@ -1707,17 +1751,18 @@ export class ProductProjection {
     if (
       pending ||
       !event.turnId ||
-      // 维护 turn 排除只属于 SessionStart——首条输入即 /compact 时
-      // SessionStart Hook 携带 compact turnId 到达，不能直挂，先入 pending 等
-      // 真实 turn。model-only ≠ 维护 turn：background_task / subagent_message /
-      // goal continuation 轮同样是 model-only，但它们是会真实跑工具的 agent 轮，
-      // 其 PreToolUse/PostToolUse/Stop 必须按 event.turnId 直挂原轮（与 cold
-      // merge 归属对齐），否则会被 pending 吞掉、错误堆到下一个用户轮。
+      // Maintenance-turn exclusion applies only to SessionStart. If the first input is /compact,
+      // the SessionStart Hook carries the compact turnId and cannot attach directly; keep it pending
+      // until a real turn. Model-only does not mean maintenance: background_task, subagent_message,
+      // and goal-continuation turns are also model-only, but are agent turns that run tools. Their
+      // PreToolUse/PostToolUse/Stop events must attach directly using event.turnId (matching cold
+      // merge ownership), or pending will absorb them and incorrectly move them to the next user turn.
       (payload.hookEventName === "SessionStart" &&
         (this.currentTurnId === null || this.currentTurnStartedModelOnly))
     ) {
-      // startup SessionStart 虽可能已经携带 runtime turnId，但此时 TurnStarted 尚未建立
-      // runtimeTurnId -> productTurnId 映射；提前 append 会把它拆成独立 footer。
+      // Startup SessionStart may already carry a runtime turnId, but TurnStarted has not yet created
+      // the runtimeTurnId -> productTurnId mapping. Appending early would split it into a separate
+      // footer.
       this.pendingSessionHookInvocations.set(hookInvocationId, {
         firstEvent: pending?.firstEvent ?? event,
         content,
@@ -1737,9 +1782,10 @@ export class ProductProjection {
   }
 
   /**
-   * UserPromptSubmit 的 executed block 是当前输入的可见错误，但不是 task 失败。
-   * 将它投影到 transient lastError，让 ChatErrorBanner 直接展示原因；下一轮 TurnStarted
-   * 会按既有生命周期清理它。admission-only block 和工具边界 block 仍只保留在 Hook 摘要。
+   * An executed block from UserPromptSubmit is a visible error for the current input, but does not
+   * mean the task failed. Project it into transient lastError so ChatErrorBanner can show the cause;
+   * the next TurnStarted clears it through the existing lifecycle. Admission-only and tool-boundary
+   * blocks remain only in the Hook summary.
    */
   private hookBlockErrorDelta(
     event: SessionEvent,
@@ -1846,12 +1892,13 @@ export class ProductProjection {
   }
 
   /**
-   * rewind/edit/retry 的 live 投影截断（editUserQuery/retryTurn 的
-   * `row.removed(target 起)`）。RewindTriggered 带 targetMessageId → 反查 rowId →
-   * 从该行所属 turn 的首行（turnHeader）起整段移除，让 live 订阅者即时看到截断，
-   * 后续 editRerun 新 turn 走既有事件路径追加。冷订阅/刷新的 truncated transcript
-   * 由 transcript 合成 hydration 兜底重建。
-   * messageId 反查不到（user 行暂无 messageId、或迟到）时返回空，不误删。
+   * Live-projection truncation for rewind/edit/retry (editUserQuery/retryTurn's
+   * `row.removed(target onward)`). RewindTriggered carries targetMessageId; reverse-resolve rowId,
+   * then remove the full segment starting at that row's turn header so live subscribers see the
+   * truncation immediately. A later editRerun appends a new turn through the existing event path.
+   * For cold subscriptions/refreshes, transcript hydration reconstructs the truncated transcript
+   * as a fallback. Return empty if messageId cannot be reverse-resolved (the user row has no
+   * messageId yet, or the event is late), avoiding accidental deletion.
    */
   private onRewindTriggered(event: SessionEvent): ConversationDelta[] {
     const payload = event.payload as {
@@ -1885,8 +1932,9 @@ export class ProductProjection {
         },
       ];
     }
-    // 新语义只消费带 branchGeneration/cut 的已提交 conversation rewind；createdMessageId
-    // 仅兼容旧 transcript。失败/冲突不发事件，因此不会制造 UI 假截断。
+    // The new semantics consume only committed conversation rewinds carrying branchGeneration/cut;
+    // createdMessageId is only for legacy transcript compatibility. Failures/conflicts emit no
+    // event, so they cannot create a false UI truncation.
     const applied =
       (payload.branchGeneration !== undefined && payload.branchCutAfterMessageId !== undefined) ||
       payload.createdMessageId !== undefined;
@@ -1897,10 +1945,10 @@ export class ProductProjection {
     if (targetRowId === null) return [];
     const targetRow = this.findRow(targetRowId);
     if (!targetRow) return [];
-    // 从该行所属 turn 的首行起移除（整段 turn 被 rewind/edit/retry 替换）。
+    // Remove from the first row of this row's turn (the whole turn is replaced by rewind/edit/retry).
     const turnHeaderRowId = this.turnHeaderRowIdByTurnId.get(targetRow.turnId) ?? targetRowId;
     const fromRowId = Math.min(turnHeaderRowId, targetRowId);
-    // 清理被移除行的 messageId/tool 索引，避免悬挂映射。
+    // Clear messageId/tool indexes for removed rows to avoid dangling mappings.
     for (const [rowId] of this.messageIdByRowId) {
       if (rowId >= fromRowId) this.messageIdByRowId.delete(rowId);
     }
@@ -1922,7 +1970,7 @@ export class ProductProjection {
     return [{ op: "row.removed", fromRowId }];
   }
 
-  /** messageId → rowId 反查（messageIdByRowId 的逆向线性扫描；行数有界，无需额外索引）。 */
+  /** Reverse lookup from messageId to rowId (linear scan of messageIdByRowId; row count is bounded, so no extra index is needed). */
   private rowIdForMessageId(messageId: string): number | null {
     const continuationRowId = this.outputContinuationRowIdByMessageId.get(messageId);
     if (continuationRowId !== undefined) return continuationRowId;
@@ -1933,9 +1981,9 @@ export class ProductProjection {
   }
 
   /**
-   * 任意 rowId → 其所属 turn 的 rewind 锚点 messageId。新 live/cold user row 都应
-   * 直接携持久 user messageId；同 turn assistant 只保留为旧事件兼容 fallback。
-   * `canEdit` 不允许依赖该 fallback，必须由 user row 自身的 exact target 驱动。
+   * Map any rowId to the rewind-anchor messageId for its turn. New live/cold user rows should carry
+   * the persistent user messageId directly; a same-turn assistant is retained only as a fallback for
+   * legacy events. `canEdit` must not rely on this fallback and must use the user row's exact target.
    */
   getTurnRewindAnchor(rowId: number): string | null {
     return this.rewindAnchorForRows(this.snapshot.rows.window, rowId);
@@ -1953,9 +2001,9 @@ export class ProductProjection {
   }
 
   /**
-   * real-user row 的展示身份与命令身份必须原子登记。
-   * TurnSteerDrained 曾只写 messageId/entityId，漏写 edit target，
-   * 导致 UI action 与 editUserQuery resolver 对同一行得出相反结论。
+   * Register the display identity and command identity of a real-user row atomically.
+   * TurnSteerDrained previously wrote only messageId/entityId and omitted the edit target, causing
+   * the UI action and editUserQuery resolver to reach opposite conclusions for the same row.
    */
   private registerCanonicalUserRowTarget(
     rowId: number,
@@ -1968,25 +2016,27 @@ export class ProductProjection {
     this.editTargetByEntityId.set(entityId, editTarget);
   }
 
-  // ── 生命周期 ──
+  // ── Lifecycle ──
 
   private onSessionCreated(event: SessionEvent): ConversationDelta[] {
     const payload = event.payload as { contextWindow?: number };
     this.contextWindowState.maxTokens = payload.contextWindow ?? null;
-    // draft 语义：会话实体已存在、无 row；phase 保持 draft，无可见 delta。
+    // Draft semantics: the session entity exists but has no rows; keep phase as draft with no visible delta.
     return [];
   }
 
-  // renameSession / 自动标题：SessionTitleUpdated(title, source) → 更新 meta。
-  // custom（用户重命名）优先级最高，已 custom 后不再被 generated 覆盖（与 core titleSource 一致）。
+  // renameSession / automatic title: SessionTitleUpdated(title, source) updates metadata.
+  // custom (user rename) has the highest priority; once custom, it is not overwritten by generated,
+  // matching core titleSource.
   private onSessionTitleUpdated(event: SessionEvent): ConversationDelta[] {
     const payload = event.payload as {
       title?: string;
       source?: string;
     };
     const title = payload.title ?? "";
-    // core 的 titleSource 有 4 值（default/first_input/generated/custom）；投影 meta 归一为
-    // default/generated/custom（first_input 归入 generated：都属"非用户显式"）。
+    // core titleSource has four values (default/first_input/generated/custom); normalize projection
+    // metadata to default/generated/custom (first_input maps to generated because both are
+    // "not explicitly set by the user").
     const source: "default" | "generated" | "custom" =
       payload.source === "custom"
         ? "custom"
@@ -2010,7 +2060,7 @@ export class ProductProjection {
     const turnId = fact.productTurnId;
     this.currentTurnId = runtimeTurnId;
     this.currentTurnStartedModelOnly = fact.visibility === "modelOnly";
-    // 新 runtimeTurn：product turn 映射归零（1:1），工时基准 = 本轮起点。
+    // New runtimeTurn: reset the product-turn mapping (1:1); the elapsed-time baseline is this turn's start.
     this.productTurnIdByRuntimeTurnId.delete(runtimeTurnId);
     if (turnId !== runtimeTurnId) this.productTurnIdByRuntimeTurnId.set(runtimeTurnId, turnId);
     this.runtimeTurnIdByProductTurnId.set(turnId, runtimeTurnId);
@@ -2020,9 +2070,10 @@ export class ProductProjection {
     this.streamingReasoningRowId = null;
     this.outputContinuationTextRowId = null;
 
-    // background Agent 的 ToolCallResult 只是 launch ACK，先把工具行收口成
-    // success；子 Agent 的真实终态随后只作为 model-only task-notification 开新轮。
-    // V4 过去没有按 tool-use-id 消费这条权威事实，因此 429 后卡片会永久停在 completed。
+    // A background Agent's ToolCallResult is only a launch ACK, so first settle the tool row as
+    // success. The subagent's real terminal state later starts a new model-only task-notification
+    // turn. V4 previously did not consume this authoritative fact by tool-use-id, leaving the card
+    // stuck at completed forever after a 429.
     const deltas: ConversationDelta[] = this.applyBackgroundTaskNotification(fact);
     const sharedContextRef = fact.sharedContextRefs?.[0];
     if (
@@ -2040,12 +2091,12 @@ export class ProductProjection {
       this.snapshot = { ...this.snapshot, sharedContextImport };
       deltas.push({ op: "state.updated", patch: { sharedContextImport } });
     }
-    // marker 时机：只有当
-    // 本轮实际使用的 provider/model 身份与上一轮不同时，才在 turnHeader 之前落
-    // modelChange marker。普通首轮 silentInitial 不产 marker；显式 sourceLess 边界
-    // 生成“正在使用”marker。思考深度变化只更新 config.thought，不是模型身份变化。
-    // Bug 背景：旧实现在 onModelSelected（切换动作时）即落 marker，草稿态预热会话
-    // 切一次模型就会在首条消息上方挂出 [modelChange]。
+    // Marker timing: add a modelChange marker before turnHeader only when the provider/model
+    // identity actually used this turn differs from the previous turn. The ordinary first turn with
+    // silentInitial emits no marker; an explicit sourceLess boundary emits a "now using" marker.
+    // A change in reasoning depth updates config.thought only; it is not a model-identity change.
+    // Bug background: the old implementation added the marker in onModelSelected (at switch time),
+    // so switching models in a prewarmed draft session put [modelChange] above the first message.
     const config = this.snapshot.config;
     const hasModel = config.provider !== "" && config.model !== "";
     if (hasModel && this.lastTurnModel.kind === "sourceLess") {
@@ -2081,7 +2132,7 @@ export class ProductProjection {
             `model-change:${turnId}:${this.lastTurnModel.provider}/${this.lastTurnModel.model}->${config.provider}/${config.model}`,
           ),
           kind: "timelineMarker",
-          // lane 由投影裁决（UI 不得按 marker type 自行推断落位语义）。
+          // The projection determines the lane; the UI must not infer placement semantics from marker type.
           lane: "lightBoundary",
           marker: {
             type: "modelChange",
@@ -2117,7 +2168,7 @@ export class ProductProjection {
     this.turnHeaderRowIdByTurnId.set(turnId, header.rowId);
     deltas.push({ op: "row.appended", row: header });
 
-    // model-only 输入（goal continuation 等）不产生可见 userInput row。
+    // Model-only input (such as goal continuation) does not create a visible userInput row.
     if (fact.visibility === "visible") {
       const rowBase = this.rowBase(event, turnId, fact.entityId);
       const rootSourceCommandId = fact.provenance?.sourceCommandId ?? fact.sourceCommandId;
@@ -2145,9 +2196,9 @@ export class ProductProjection {
         ...(attachments && attachments.length > 0 ? { attachments } : {}),
         ...(fact.source ? { source: fact.source } : {}),
       };
-      // workspace checkpoint 以 user messageId 为 targetMessageId。
-      // 普通 TurnStarted 也要登记 userInput row 的内部锚点，否则文件摘要 query
-      // 只能找到 assistant messageId，展开列表会查不到该轮 checkpoint。
+      // A workspace checkpoint uses the user messageId as targetMessageId.
+      // Ordinary TurnStarted must also register the userInput row's internal anchor; otherwise the
+      // file-summary query can find only the assistant messageId and cannot find this turn's checkpoint.
       this.registerCanonicalUserRowTarget(
         row.rowId,
         fact.entityId,
@@ -2201,20 +2252,22 @@ export class ProductProjection {
               ...(fact.foregroundExecutionId
                 ? { foregroundExecutionId: fact.foregroundExecutionId }
                 : {}),
-              // 自动中断必须关联实际执行输入，不能由客户端按最后一条消息猜测。
+              // An automatic interruption must be tied to the actual execution input; clients cannot
+              // guess it from the last message.
               ...(fact.sourceCommandId ? { sourceCommandId: fact.sourceCommandId } : {}),
               startedAt: this.ms(event),
             },
           ],
-          // 新一轮被接受后，旧错误不再是当前事实（与旧 reducer 同一裁决）。
+          // Once a new turn is accepted, the old error is no longer current (same decision as the old reducer).
           lastError: null,
           apiRetry: null,
         }),
       });
     }
-    // /goal 的可见 query 用 controlOnly turn 建立 live 时间线身份，
-    // 但真实执行属于紧随其后的 goalContinuation。若控制轮也推进 running，连续链路
-    // 会短暂生成第二份 activeWorks，恢复投影也会出现伪造的工作生命周期。
+    // The visible /goal query uses a controlOnly turn to establish live timeline identity, but
+    // actual execution belongs to the following goalContinuation. If the control turn also advances
+    // to running, the continuous path briefly creates a second activeWorks entry and recovery
+    // projection shows a fabricated work lifecycle.
     return deltas;
   }
 
@@ -2262,9 +2315,10 @@ export class ProductProjection {
     const headerState = mapTurnResultToHeaderState(payload.resultType);
     const header = this.turnHeaderForEvent(event);
     if (header?.executionKind === "controlOnly") {
-      // controlOnly 没有 Agent 工时；尤其不能把 duration=0 下发给旧 UI，后者会为了
-      // 可读性把 0 秒格式化成“已工作 1 秒”。这里只收口可见轮次，不碰 session control——
-      // 除了 draft 的离场（见 leaveDraftAfterControlOnlyTurn）。
+      // controlOnly has no Agent work duration. In particular, do not send duration=0 to the old
+      // UI, which formats zero seconds as "worked for 1 second" for readability. Only settle the
+      // visible turn here; do not change session control, except when leaving draft (see
+      // leaveDraftAfterControlOnlyTurn).
       const deltas = [
         ...this.upsertTurnHeader(event, headerState, undefined, payload.historyRoundCount),
         ...this.leaveDraftAfterControlOnlyTurn(
@@ -2272,7 +2326,7 @@ export class ProductProjection {
         ),
       ];
       this.currentTurnId = null;
-      // turn 收口后 model-only 标记随之失效，避免影响下一次归属判断。
+      // The model-only marker expires when the turn settles so it cannot affect the next ownership decision.
       this.currentTurnStartedModelOnly = false;
       return deltas;
     }
@@ -2285,8 +2339,8 @@ export class ProductProjection {
     const streamClose = payload.resultType === "success" ? "complete" : "interrupted";
     const activeMs = this.activeMsForCompletion(event, payload.duration);
 
-    // stopPausesActiveGoalTarget：stop 作用于任何 foreground work 时，
-    // active/verifying 的 goal 强制进入 paused，等待显式 resumeGoal。
+    // stopPausesActiveGoalTarget: when stop applies to any foreground work, force an active/verifying
+    // goal into paused and wait for an explicit resumeGoal.
     const goal = this.snapshot.goal;
     const pausedGoal: GoalState | undefined =
       payload.resultType === "cancelled" &&
@@ -2294,8 +2348,9 @@ export class ProductProjection {
         ? { ...goal, status: "paused" }
         : undefined;
 
-    // stopKeepsQueueAndDisablesAutoDrain（stop 效果）：中断后 queue 原样保留
-    // 且不自动消费 → 形成暂停队列；pauseReason 只用于 UI 解释原因，不参与路由裁决。
+    // stopKeepsQueueAndDisablesAutoDrain (stop effect): preserve the queue after interruption and do
+    // not consume it automatically, leaving it paused. pauseReason explains the cause to the UI and
+    // does not participate in routing decisions.
     const heldQueue =
       payload.resultType === "cancelled" &&
       payload.preserveQueueAutoDrainOnCancel !== true &&
@@ -2310,8 +2365,9 @@ export class ProductProjection {
 
     const deltas: ConversationDelta[] = [
       ...this.closeStreamingRows(streamClose),
-      // turn 终态一并收口在飞的 foreground tool row（收口不变量：被 profile
-      // 过滤的 inputText 流必须被不可过滤的 row.upserted 蕴含，见 profiles.ts）。
+      // A terminal turn also settles any in-flight foreground tool row. Settlement invariant: an
+      // inputText stream filtered by the profile must be implied by an unfiltered row.upserted (see
+      // profiles.ts).
       ...this.closeOpenToolRows(event, payload.resultType === "cancelled" ? "cancelled" : "error"),
       ...this.upsertTurnHeader(
         event,
@@ -2331,8 +2387,9 @@ export class ProductProjection {
             stopState: "idle",
             stopTargetKind: "unknown",
             activeWorks: [],
-            // 旧 V4 reducer 没有消费 ModelNetworkStatus，补投影后若 turn
-            // 直接进入终态仍不清理，会让“重新连接中”残留到下一轮。
+            // The old V4 reducer did not consume ModelNetworkStatus. After adding projection, failing
+            // to clear it when a turn goes directly to terminal would leave "reconnecting" visible
+            // into the next turn.
             apiRetry: null,
           },
           pausedGoal,
@@ -2341,19 +2398,23 @@ export class ProductProjection {
       },
     ];
     this.currentTurnId = null;
-    // turn 收口后 model-only 标记随之失效，避免影响下一次归属判断。
+    // The model-only marker expires when the turn settles so it cannot affect the next ownership decision.
     this.currentTurnStartedModelOnly = false;
     return deltas;
   }
 
   /**
-   * draft 只有一种离场方式：第一轮收口。phase `draft` 的定义是「纯内存、从未有过真实内容、CLI 重启即
-   * 消失」；一条 controlOnly 轮一旦收口，会话已有一段持久化的可见历史，再叫 draft 就与
-   * 冷恢复矛盾——store 种子会给它一个终态 phase，而活投影却停在 draft。中枢直接启动
-   * 的会话只有一条 controlOnly 启动轮，活投影 phase 恒为 draft，sessions-index 摘要因此被 task-index
-   * syncer 当 draft 丢弃，侧栏要等重启才出现。所以 controlOnly 收口只在**会话仍是 draft**时推进 phase
-   * （成功 → completedSuccess，取消 → completedInterrupted，失败 → error）；非 draft 会话上的控制轮
-   * 照旧不碰 session control（goal 的可见 query 轮不得伪造 running / 工时，见 onTurnStarted）。
+   * A draft has one exit: settlement of its first turn. `draft` means "in-memory only, never had
+   * real content, and disappears when the CLI restarts." Once a controlOnly turn settles, the
+   * session has persisted visible history; continuing to call it a draft conflicts with cold
+   * recovery, where the store seed assigns a terminal phase while the live projection remains in
+   * draft. Sessions started directly by the hub have only a controlOnly startup turn, so the live
+   * projection stays in draft and the task-index syncer discards the sessions-index summary as a
+   * draft; it appears in the sidebar only after restart. Therefore, advance phase on controlOnly
+   * settlement only while the session is still a draft (success → completedSuccess, cancellation →
+   * completedInterrupted, failure → error). As before, control turns on non-draft sessions do not
+   * change session control (the visible goal query turn must not fabricate running/work duration;
+   * see onTurnStarted).
    */
   private leaveDraftAfterControlOnlyTurn(
     phase: Exclude<SessionControl["phase"], "draft" | "prewarming" | "running">,
@@ -2383,14 +2444,14 @@ export class ProductProjection {
         ...this.leaveDraftAfterControlOnlyTurn("error"),
       ];
       this.currentTurnId = null;
-      // turn 收口后 model-only 标记随之失效，避免影响下一次归属判断。
+      // The model-only marker expires when the turn settles so it cannot affect the next ownership decision.
       this.currentTurnStartedModelOnly = false;
       return deltas;
     }
-    // TurnError 结束的是当前 turn，
-    // 不是已经 accepted 的 future input。旧 reducer 没有 terminal queue patch，core 为了
-    // 防止 error 后悬挂只能先发 TurnSteerDiscarded，造成用户消息丢失；现在把现有 queue
-    // 原样转成 error-paused，等待显式 setAutoDrain(true) 恢复 FIFO。
+    // TurnError ends the current turn, not already-accepted future input. The old reducer had no
+    // terminal queue patch, so core had to emit TurnSteerDiscarded to prevent a queue hanging after
+    // an error, losing the user's message. Now preserve the existing queue as error-paused and wait
+    // for explicit setAutoDrain(true) to resume FIFO.
     const heldQueue =
       this.snapshot.queue.items.length > 0
         ? {
@@ -2419,13 +2480,15 @@ export class ProductProjection {
             stopState: "idle",
             stopTargetKind: "unknown",
             activeWorks: [],
-            // 事件侧尚未携带 fault.* 分类，先透传错误类型，待补齐分类后再细化映射。
+            // Events do not yet carry fault.* classification; pass through the error type for now
+            // and refine the mapping when classification is added.
             lastError: {
               code: payload.error.code ?? payload.error.type ?? "fault.runtime.unknown",
               message: payload.error.message,
               recoverable: payload.error.retryable ?? LEGACY_TURN_ERROR_RECOVERABLE_FALLBACK,
               at: this.ms(event),
-              // 旧投影把所有 TurnError 都写成 runtime，丢失 adapter 已识别的 provider/network 事实。
+              // The old projection labeled every TurnError as runtime, losing provider/network facts
+              // already identified by the adapter.
               source: payload.error.attribution?.source ?? "runtime",
               traceId: String(event.traceId),
               ...(payload.error.detail ? { detail: payload.error.detail } : {}),
@@ -2437,7 +2500,7 @@ export class ProductProjection {
                 : {}),
               ...(payload.error.attribution ? { attribution: payload.error.attribution } : {}),
             },
-            // 同 onTurnComplete：终态是重试生命周期的兜底清理边界。
+            // As with onTurnComplete, terminal state is the fallback cleanup boundary for the retry lifecycle.
             apiRetry: null,
           },
           undefined,
@@ -2447,7 +2510,7 @@ export class ProductProjection {
     ];
   }
 
-  // ── 流式输出 ──
+  // ── Streaming output ──
 
   private onModelNetworkStatus(event: SessionEvent): ConversationDelta[] {
     if (!this.acceptsActiveModelEvent(event)) return [];
@@ -2455,13 +2518,15 @@ export class ProductProjection {
     if (
       (payload.querySource === undefined || payload.querySource === "main_turn") &&
       (payload.type === "model_request_completed" || payload.type === "model_request_failed") &&
-      // 加速卡按 family 拆成了多个隐藏 Provider（zai/bigmodel），不能再和单个常量比较，
-      // 否则 BigModel 账号的加速轮会被判成普通轮、节省时间恒为 0。
+      // Highspeed cards are split into several hidden providers by family (zai/bigmodel), so this can
+      // no longer compare against a single constant; otherwise a BigModel account's accelerated turns
+      // are treated as ordinary and the saved time is always 0.
       isHighspeedProviderId(payload.providerId) &&
       payload.durationMs !== undefined
     ) {
-      // Bug 根因：混合 Turn 卡过期后会切到普通 provider，旧逻辑把普通模型的重试/超时
-      // 也累计进 Highspeed modelDurationMs，导致节省时间按高速倍率放大数小时。
+      // Cause: after a hybrid turn card expires, the session switches to the ordinary provider. The
+      // old logic also accumulated ordinary-model retries/timeouts into Highspeed modelDurationMs,
+      // inflating the saved time by the highspeed multiplier for hours.
       const turnId = this.turnIdOf(event);
       this.highspeedModelDurationByTurnId.set(
         turnId,
@@ -2493,8 +2558,9 @@ export class ProductProjection {
             ),
           );
         }
-        // adapter attempt=2+ 只说明重试请求已发出，不代表连接恢复；
-        // 保持当前状态，等首个有效 text/reasoning/tool 进展再清理，避免标签闪退。
+        // adapter attempt=2+ means only that a retry request was sent, not that the connection
+        // recovered. Keep the current state until the first valid text/reasoning/tool progress to
+        // avoid the label disappearing briefly.
         return positiveInteger(payload.attempt, 1) <= 1 ? this.setApiRetry(null) : [];
       case "model_request_completed":
         return this.setApiRetry(null);
@@ -2504,8 +2570,8 @@ export class ProductProjection {
       case "model_first_provider_event":
       case "model_first_content":
       case "model_first_text":
-      // 准入等待的两端是 runtime 观测，不是 UI 状态：
-      // 不映射成重试/等待标签。
+      // Both ends of admission waiting are runtime observations, not UI states; do not map them to
+      // retry/waiting labels.
       case "model_request_queued":
       case "model_request_admitted":
       case "model_request_observation":
@@ -2528,13 +2594,15 @@ export class ProductProjection {
 
   private onStreamRecoveryTailDiscarded(event: SessionEvent): ConversationDelta[] {
     if (!this.acceptsActiveModelEvent(event)) return [];
-    // Bug 原因：Core 已用 tail_discarded 切断失败 assistant attempt，但旧 V4 投影忽略该事件，
-    // 下一次 reasoning/text 到达时会把旧行误收口为 complete。这里必须先标 interrupted，
-    // 让恢复流用新 assistant identity 打开新行，避免 UI 看起来像一次连续完整输出。
-    // Bug 原因：断流时已由 tool_input_start 打开、但还没等到 tool_call 定稿的工具行也属于
-    // 被作废的 tail——core 只为已提交的工具合成终态，这些行没人收口；恢复请求会用新的
-    // toolCallId 再开一行，UI 于是并排出现两张「正在编写工作流」。已提交（running /
-    // pendingApproval）的行不在此列，它们的终态由 executor 自己发布。
+    // Cause: Core had already cut off the failed assistant attempt with tail_discarded, but the old
+    // V4 projection ignored the event. The next reasoning/text event then incorrectly settled the
+    // old row as complete. Mark it interrupted first so the recovery stream opens a new row with a
+    // new assistant identity, rather than appearing as one continuous complete output.
+    // Cause: tool rows opened by tool_input_start but not yet finalized by tool_call also belong to
+    // the discarded tail. Core synthesizes terminal events only for committed tools, leaving these
+    // rows unsettled; the recovery request opens another row with a new toolCallId, so the UI shows
+    // two parallel "writing workflow" cards. Committed rows (running/pendingApproval) are excluded;
+    // their terminal state is published by the executor.
     return [
       ...this.closeStreamingRows("interrupted"),
       ...this.closeOpenToolRows(event, "cancelled", (row) => row.status === "inputStreaming"),
@@ -2593,8 +2661,9 @@ export class ProductProjection {
 
   private acceptsActiveModelEvent(event: SessionEvent): boolean {
     if (!this.isRunning()) return false;
-    // stop/新一轮后旧请求可能迟到；仅凭 session 级状态会让旧 turn 的
-    // retry/progress 覆盖当前输入栏。当前 runtime turn 已知时必须按 turnId 隔离。
+    // An old request may arrive after stop/a new turn; session-level state alone would let a retry/
+    // progress event from the old turn overwrite the current input area. When the current runtime
+    // turn is known, isolate by turnId.
     return (
       this.currentTurnId === null ||
       event.turnId === undefined ||
@@ -2604,11 +2673,13 @@ export class ProductProjection {
 
   private onModelStreaming(fact: CanonicalAssistantSegmentFact): ConversationDelta[] {
     const event = fact.event;
-    // 迟到终态不复活：非运行期到达的流式事件一律拒收。
-    // assistant 守恒：正文类拒收不是无害丢弃——投影建立晚于
-    // TurnStarted（订阅中途建 publisher）时，整段回复会静默消失直到刷新
-    // （「回复整段消失」的 live 向量）。计数暴露给 gateway：置 stale 标记，
-    // 下次订阅强制重新 hydration 从持久事实补齐。
+    // Do not resurrect after a late terminal event: reject all streaming events received outside a
+    // running state.
+    // Assistant conservation: rejecting a body event is not a harmless drop. If the projection is
+    // created after TurnStarted (a publisher is created mid-subscription), the entire reply silently
+    // disappears until refresh (the live "whole reply vanished" failure mode). Expose the count to
+    // the gateway, which marks the projection stale; the next subscription forces rehydration from
+    // persisted facts.
     if (!this.isRunning()) {
       const dropped = fact.stream;
       if (
@@ -2686,10 +2757,11 @@ export class ProductProjection {
       continuationRow.turnId === currentTurnId &&
       lastVisibleRow?.rowId === continuationRow.rowId
     ) {
-      // runtime 的 output-token Continue 会为每次 provider 请求创建新的
-      // assistantMessageId；旧投影因此把一句话拆成 history partial + 轮尾正文。length
-      // 已经在 ModelComplete 上提供精确资格，这里只重新打开紧邻的同 turn text row，
-      // 让外部 continuous/replayable 客户端都只观察到一条持续增长的 assistant。
+      // Runtime output-token Continue creates a new assistantMessageId for each provider request,
+      // so the old projection split one answer into a history partial plus a turn-tail body.
+      // ModelComplete already provides exact eligibility through length; reopen only the adjacent
+      // same-turn text row so both continuous and replayable clients observe one steadily growing
+      // assistant message.
       const {
         actions: _actions,
         assistantResponseId: _assistantResponseId,
@@ -2716,7 +2788,8 @@ export class ProductProjection {
       return [...close, { op: "row.upserted", row }];
     }
 
-    // 不变量：非 output-token Continue 的新段必然新 rowId；已有 streaming 行先收口。
+    // Invariant: a new segment that is not output-token Continue always gets a new rowId; settle any
+    // existing streaming row first.
     const row: AssistantTextRow = {
       ...this.rowBase(event, this.turnIdOf(event), fact.entityId),
       kind: "assistantText",
@@ -2728,7 +2801,7 @@ export class ProductProjection {
     };
     this.streamingTextRowId = row.rowId;
     this.entityIdByRowId.set(row.rowId, fact.entityId);
-    // forkAssistant 锚点：assistant 行 → 权威 messageId（provider 流首帧即带）。
+    // forkAssistant anchor: assistant row → authoritative messageId (provided in the first provider stream frame).
     if (fact.transcriptMessageId) {
       this.messageIdByRowId.set(row.rowId, fact.transcriptMessageId);
     }
@@ -2766,9 +2839,11 @@ export class ProductProjection {
         candidate.kind === "userInput" && candidate.entityId === payload.entityId,
     );
     if (!row) return [];
-    // Bug 根因：终态指标更新曾整体替换 row.highspeed。payload 来自 transcript 原始 metadata + 耗时字段，
-    // 不含 live 投影刚由 TurnExecutionModelFallback 写入的 fallbackAt；降级 Toast 依赖的字段被清空，
-    // live 与 cold/replay 的结果也不一致。指标更新是增量补充：字段级合并、只增不删（spec §5）。
+    // Cause: the terminal metrics update used to replace row.highspeed wholesale. The payload comes
+    // from raw transcript metadata plus duration fields and lacks fallbackAt, which the live
+    // projection had just written via TurnExecutionModelFallback; clearing it broke the downgrade
+    // toast and made live and cold/replay disagree. Metrics updates are incremental supplements:
+    // merge at field level, add-only (spec §5).
     return [
       {
         op: "row.upserted",
@@ -2779,24 +2854,27 @@ export class ProductProjection {
 
   private onTurnExecutionModelFallback(event: SessionEvent): ConversationDelta[] {
     const payload = event.payload as TurnExecutionModelFallbackPayload;
-    // Bug 根因：fallback 会作废当前 assistant attempt，但旧投影只更新输入行元数据，仍把旧模型的
-    // text/reasoning row 留在 streaming；原模型续流时这些内容会被误标 complete，缺少 text_start 时
-    // 甚至直接拼到同一行。未定稿的 tool input 同样不会收到 tool_call，必须随废弃 attempt 一起收口。
-    // 已提交执行的工具不在这里处理，它们由 core 的 tool_abandoned 事件收口。
+    // Cause: a fallback discards the current assistant attempt, but the old projection updated only
+    // the input row's metadata and left the old model's text/reasoning rows streaming. When the
+    // original model resumed, that content was mislabeled complete, or even appended to the same row
+    // when text_start was missing. Unfinalized tool input likewise never receives tool_call and must
+    // be settled together with the discarded attempt. Committed tool executions are not handled
+    // here; core's tool_abandoned event settles them.
     const discardedStreamDeltas = this.acceptsActiveModelEvent(event)
       ? [
           ...this.closeStreamingRows("interrupted"),
           ...this.closeOpenToolRows(event, "cancelled", (row) => row.status === "inputStreaming"),
         ]
       : [];
-    // 卡过期与其他加速请求失败都投影到同一张加速输入行：fallbackAt 触发一次性提示，
-    // fallbackReason 让 Renderer 区分“卡已到期”与“加速服务不可用”两种文案。
+    // Both card expiry and other accelerated-request failures project onto the same accelerated
+    // input row: fallbackAt triggers the one-time notice, and fallbackReason lets the renderer
+    // distinguish "card expired" from "acceleration service unavailable" copy.
     const turnId = this.turnIdOf(event);
     const row = this.snapshot.rows.window.find(
       (candidate): candidate is UserInputRow =>
         candidate.kind === "userInput" &&
-        // Bug 根因：cold hydration 会重建 product turnId，不能再拿 runtime turnId
-        // 关联已持久化的输入；inputId/sourceCommandId 才是跨恢复稳定身份。
+        // Cause: cold hydration rebuilds product turnIds, so the runtime turnId can no longer
+        // associate persisted input; inputId/sourceCommandId are the recovery-stable identities.
         (candidate.turnId === turnId ||
           (payload.inputId !== undefined && candidate.sourceCommandId === payload.inputId)) &&
         candidate.highspeed !== undefined,
@@ -2826,8 +2904,9 @@ export class ProductProjection {
     const row: ReasoningRow = {
       ...this.rowBase(event, this.turnIdOf(event), fact.entityId),
       kind: "reasoning",
-      // Bug 原因：canonical stream 已携带 assistant response 身份，但旧投影只在正文与工具行
-      // 保存它，UI 因而无法把同 response 的 reasoning 确定性归入 CUA Group。
+      // Cause: the canonical stream carried assistant response identity, but the old projection
+      // stored it only on body and tool rows. The UI therefore could not reliably group reasoning
+      // with the same response in a CUA Group.
       ...(fact.stream.assistantResponseId
         ? { assistantResponseId: fact.stream.assistantResponseId }
         : {}),
@@ -2851,8 +2930,9 @@ export class ProductProjection {
     return [...this.closeTextRow(state), ...this.closeReasoningRow(state)];
   }
 
-  // turn 终态收口所有 foreground 未终态 tool row（迟到终态不复活由 isRunning 闸保证）；
-  // `only` 让 stream recovery 只收口未定稿的那一部分。
+  // A terminal turn settles every non-terminal foreground tool row (the isRunning gate prevents
+  // late terminal events from resurrecting it); `only` lets stream recovery settle only the
+  // unfinished subset.
   private closeOpenToolRows(
     event: SessionEvent,
     status: "cancelled" | "error",
@@ -2862,13 +2942,15 @@ export class ProductProjection {
     const openRows: ToolCallRow[] = [];
     for (const toolCallId of this.openForegroundToolCallIds) {
       const row = this.findToolRow(toolCallId);
-      // 派生索引不能成为第二份权威状态；收口前始终以当前 snapshot row 复核。
+      // A derived index must not become a second source of truth; always recheck the current snapshot
+      // row before settling it.
       if (!row || !this.isOpenForegroundToolRow(row)) continue;
       if (only && !only(row)) continue;
       openRows.push(row);
     }
     if (openRows.length === 0) return [];
-    // Set 可能因迟到 reopen 改变插入顺序；rowId 单调递增，排序后保持旧 timeline delta 顺序。
+    // A late reopen may change Set insertion order; rowId is monotonic, so sorting preserves the old
+    // timeline delta order.
     if (openRows.length > 1) {
       openRows.sort((left, right) => left.rowId - right.rowId);
     }
@@ -2883,8 +2965,9 @@ export class ProductProjection {
       };
       delete next.approvalInteractionId;
       if (status === "error") {
-        // executor 早退或事件缺失时，旧投影只在 stop 路径收口工具；
-        // success/error turn 会留下运行态行，cold snapshot 缺 header 后被 UI 误判为 thinking。
+        // If the executor exits early or an event is missing, the old projection settled tools only
+        // on the stop path. Success/error turns left running rows, and the cold snapshot lacked a
+        // header, causing the UI to misread the state as thinking.
         next.error = {
           code: "fault.runtime.toolLifecycleIncomplete",
           message: "Tool call ended without a terminal event.",
@@ -2933,8 +3016,9 @@ export class ProductProjection {
       if (delta.op !== "row.removed") continue;
       for (const [toolCallId, rowId] of this.toolRowIdByCallId) {
         if (rowId < delta.fromRowId) continue;
-        // Bug 原因：rewind 过去只删 rows/message 索引，旧 toolCallId 仍会阻止新分支
-        // 重新打开同 id 的流式工具；open tracker 也会留下已经不存在的 row。
+        // Cause: rewind previously removed only rows/message indexes. An old toolCallId could still
+        // prevent the new branch from reopening a streaming tool with the same ID, and the open
+        // tracker could retain a row that no longer existed.
         this.toolRowIdByCallId.delete(toolCallId);
         this.openForegroundToolCallIds.delete(toolCallId);
         this.fileToolInputPreviewByCallId.delete(toolCallId);
@@ -2946,14 +3030,15 @@ export class ProductProjection {
   private pruneRemovedSubagentIndexes(): void {
     for (const [agentId, rowId] of this.subagentRowIdByAgentId) {
       if (this.findRow(rowId)?.kind === "subagent") continue;
-      // Bug 原因：rewind 只重建 rowIndex，旧 agent alias 仍会被后续每次 subagent
-      // materialization 枚举。仅在 row.removed 已应用后按权威 snapshot 清理一次，
-      // 避免长会话随已删除历史持续增长；普通事件不会扫描该索引。
+      // Cause: rewind rebuilt only rowIndex, so old agent aliases remained enumerable by every later
+      // subagent materialization. Clean once from the authoritative snapshot after row.removed is
+      // applied to prevent long sessions growing with deleted history; ordinary events do not scan
+      // this index.
       this.subagentRowIdByAgentId.delete(agentId);
     }
   }
 
-  // ── tool call 状态机 ──
+  // ── Tool-call state machine ──
 
   private openToolRow(
     event: SessionEvent,
@@ -3091,8 +3176,9 @@ export class ProductProjection {
       }),
     );
     if (existing) {
-      // replayable 会过滤 row.delta(inputText)，定稿 upsert 必须携带完整 inputText。
-      // 否则断线恢复只能看到结构化 input，丢失 v4 row 的输入文本终态。
+      // Replayable filters row.delta(inputText), so the final upsert must include the complete
+      // inputText. Otherwise reconnect recovery sees only structured input and loses the v4 row's
+      // final input text.
       return [
         {
           op: "row.upserted",
@@ -3142,15 +3228,17 @@ export class ProductProjection {
   }
 
   /**
-   * MCP `notifications/progress`（A8）→ 行上的 progress。只在 running 时写：
-   * 终态之后迟到的进度通知不能把 success/error 行重新点亮；bash 的 stdout 字节进度不在这里消费。
+   * MCP `notifications/progress` (A8) → progress on the row. Write only while running: a progress
+   * notification arriving late after a terminal state must not relight a success/error row, and
+   * bash stdout byte progress is not consumed here.
    */
   private onToolCallProgress(event: SessionEvent): ConversationDelta[] {
     if (this.isMirroredSubagentToolEvent(event) || !this.isRunning()) return [];
     const payload = event.payload as ToolCallProgressPayload;
     const row = this.findToolRow(String(payload.toolCallId));
     if (!row || row.status !== "running") return [];
-    // 两个分支共用 ToolCallProgress：Bash 尾窗与 MCP 百分比必须分别投影，避免合并后互相覆盖。
+    // Both branches share ToolCallProgress: the Bash tail window and MCP percentages must be
+    // projected separately so merged results do not overwrite each other.
     if (row.toolName === "Bash") return projectToolActivity(event, row);
     const total =
       typeof payload.total === "number" && Number.isFinite(payload.total) && payload.total > 0
@@ -3197,7 +3285,8 @@ export class ProductProjection {
     if (!row) return [];
     const success = payload.result.success;
     if (success && readOfficialCuaAction(row.toolName) === "list_apps") {
-      // 摘要身份必须来自 Agent 已观察到的成功事实；失败结果不能清空旧快照。
+      // Summary identity must come from a success fact observed by the Agent; a failed result must
+      // not clear the old snapshot.
       const snapshot = parseListAppsSnapshot(payload.result.content, payload.result.display);
       if (snapshot) this.latestListAppsSnapshot = snapshot;
     }
@@ -3205,7 +3294,7 @@ export class ProductProjection {
     const next: ToolCallRow = {
       ...row,
       status: success ? "success" : "error",
-      // 终态清除运行中进度（R7）。
+      // Terminal state clears in-progress updates (R7).
       progress: undefined,
       output: buildToolOutput(payload.result, toolCallId),
       ...(display ? { display } : {}),
@@ -3231,9 +3320,10 @@ export class ProductProjection {
   }
 
   /**
-   * TodoWrite 同时投影 live plan 与当前 goal iteration。
-   * V4 之前只保留 tool row，右上角摘要无法在 live/cold 恢复后重建每轮 action/status。
-   * 轮次只由 verifier boundary 推进；TodoWrite 只更新当前打开轮次，不能自行加一轮。
+   * TodoWrite projects both the live plan and the current goal iteration.
+   * Before V4, only the tool row was retained, so the top-right summary could not rebuild each
+   * iteration's action/status after live/cold recovery. Only the verifier boundary advances the
+   * iteration; TodoWrite updates the currently open one and cannot start another.
    */
   private todoPlanDeltas(
     event: SessionEvent,
@@ -3288,8 +3378,9 @@ export class ProductProjection {
         op: "row.upserted",
         row: {
           ...row,
-          // Stop 会先产生 tool_cancelled，再产生 cancelled turn；若先把工具
-          // 终态写成 error，后续只收口 running row 的 turn reducer 无法纠正为 stopped。
+          // Stop emits tool_cancelled before the cancelled turn. If the tool terminal state is first
+          // written as error, the later turn reducer, which settles only running rows, cannot
+          // correct it to stopped.
           status: cancelled ? "cancelled" : "error",
           progress: undefined,
           ...(cancelled
@@ -3301,7 +3392,7 @@ export class ProductProjection {
     ];
   }
 
-  // ── 权限交互（阻塞交互 → 状态）──
+  // ── Permission interactions (blocking interaction → state) ──
 
   private onPermissionRequested(event: SessionEvent): ConversationDelta[] {
     const payload = event.payload as PermissionRequestedPayload;
@@ -3341,8 +3432,8 @@ export class ProductProjection {
     interactionId: string,
   ): PendingInteraction {
     if (isAskUserQuestionToolName(payload.toolName)) {
-      // AskUserQuestion 的 permission_requested 只是 runtime 等待态；
-      // v4 UI 需要结构化 questions 才能回填 answers，而不是 Allow/Deny 权限弹窗。
+      // AskUserQuestion's permission_requested is only a runtime waiting state. The v4 UI needs
+      // structured questions to submit answers, not an Allow/Deny permission dialog.
       return {
         interactionId,
         kind: "userInput",
@@ -3363,8 +3454,8 @@ export class ProductProjection {
       };
     }
     if (payload.toolName === MCP_ELICITATION_TOOL_NAME) {
-      // MCP elicitation：requestedSchema → 结构化问题，
-      // 与 broker 用同一映射，v4 UI 复用 ElicitationDialog。
+      // MCP elicitation: requestedSchema → structured questions,
+      // using the same mapping as the broker; the v4 UI reuses ElicitationDialog.
       const elicitation = isPlainRecord(payload.input) ? payload.input : {};
       return {
         interactionId,
@@ -3390,8 +3481,8 @@ export class ProductProjection {
       };
     }
     if (isExitPlanModeToolName(payload.toolName)) {
-      // ExitPlanMode 复用 userInput/elicitation 通道承载计划审批反馈；
-      // 普通 permission payload 无法表达 approve/custom feedback 的业务语义。
+      // ExitPlanMode reuses the userInput/elicitation channel for plan-approval feedback; a regular
+      // permission payload cannot express the business semantics of approve/custom feedback.
       return {
         interactionId,
         kind: "userInput",
@@ -3454,8 +3545,9 @@ export class ProductProjection {
                   ? "allowAlways"
                   : option.optionId,
             label: option.name,
-            // 会话免确认的 kind 映到闭集里的 allowAlways（排序槽位 / 样式与 always allow 同），
-            // optionId 原样 allowSession——broker 靠它精确命中，GUI 靠 name 本地化。
+            // Map the session-level no-confirmation kind to allowAlways in the closed set (same sort
+            // position/style as always allow). Keep optionId as allowSession: the broker matches it
+            // exactly, while the GUI localizes by name.
             kind:
               option.kind === "allow_once"
                 ? ("allowOnce" as const)
@@ -3465,10 +3557,10 @@ export class ProductProjection {
                   : ("deny" as const),
             response: option.response,
           })),
-          // workflow Refine 只在 v4 投放（legacy 选项列表刻意不含，见 session-mapper 注释）。
-          // 静态 response 是普通 deny：任何不认识该
-          // optionId 的消费面（无 freeText 的应答）都退化为拒绝，反馈升级只发生在
-          // interaction-broker 对 freeText 的特判里。
+          // Workflow Refine is available only in v4 (the legacy option list intentionally omits it;
+          // see the session-mapper comment). A static response is an ordinary deny: consumers that
+          // do not recognize this optionId (responses without freeText) fall back to rejection.
+          // Feedback escalation happens only in interaction-broker's freeText special case.
           ...(payload.toolName === CREATE_WORKFLOW_TOOL_NAME ||
           payload.toolName === AMEND_WORKFLOW_TOOL_NAME
             ? [
@@ -3506,8 +3598,9 @@ export class ProductProjection {
     );
     if (current?.payload.kind === "workspaceHookReview") {
       const verdict = verdictWorkspaceHookReviewRequest(current.payload, request);
-      // 跨 flow 只能在 onSessionResumed 已清空旧 review 后接管（epoch 应用策略在
-      // onSessionResumed）；其余 stale/replay/conflict 均不得覆盖或延长当前 authority。
+      // A different flow may take over only after onSessionResumed clears the old review (the epoch
+      // policy is applied in onSessionResumed); other stale/replay/conflict cases must not overwrite
+      // or extend current authority.
       if (verdict !== "same_flow_advance") {
         return [];
       }
@@ -3519,8 +3612,9 @@ export class ProductProjection {
       createdAt: request.createdAt,
       payload: request,
     };
-    // 同 flow 的更高 generation 是唯一合法替换；Runtime 重启的跨 flow 接管必须先经过
-    // SessionResumed 清旧 authority。这里仍原子替换，避免历史异常状态残留多个 review。
+    // A higher generation in the same flow is the only valid replacement. Cross-flow takeover after
+    // a Runtime restart must first clear old authority through SessionResumed. Replace atomically
+    // here so historical anomalies cannot leave multiple reviews behind.
     const pendingInteractions = this.snapshot.pendingInteractions.filter(
       (item) => item.payload.kind !== "workspaceHookReview",
     );
@@ -3549,10 +3643,10 @@ export class ProductProjection {
   }
 
   /**
-   * 软门禁:处理 WorkspaceHookAdmissionUpdated 事件。
+   * Soft gate: handle a WorkspaceHookAdmissionUpdated event.
    *
-   * pendingCount > 0 → 写入 snapshot.workspaceHookAdmission(提示条出现);
-   * pendingCount === 0 → 置 null(提示条消失)。
+   * pendingCount > 0 → set snapshot.workspaceHookAdmission (show the banner);
+   * pendingCount === 0 → set it to null (hide the banner).
    */
   private onWorkspaceHookAdmissionUpdated(event: SessionEvent): ConversationDelta[] {
     const payload = event.payload as WorkspaceHookAdmissionUpdatedPayload;
@@ -3610,7 +3704,7 @@ export class ProductProjection {
     return deltas;
   }
 
-  // ── turn-steer 队列──
+  // ── Turn-steer queue ──
 
   private onTurnSteerQueued(event: SessionEvent): ConversationDelta[] {
     const payload = event.payload as TurnSteerQueuedPayload;
@@ -3619,8 +3713,9 @@ export class ProductProjection {
       (item) => item.queueItemId === queueItemId,
     );
     const existing = existingIndex >= 0 ? this.snapshot.queue.items[existingIndex] : undefined;
-    // queued 事件的 admittedDelivery 只能是 queue/guide。若读到早期或损坏事件里的
-    // startNow，必须以实际 queue delivery 为准，不能让投影声称输入已立即启动。
+    // A queued event's admittedDelivery can only be queue/guide. If an early or corrupted event
+    // contains startNow, use the actual queue delivery so the projection does not claim the input
+    // started immediately.
     const admittedDelivery: "queue" | "guide" =
       payload.intent?.admittedDelivery === "queue" || payload.intent?.admittedDelivery === "guide"
         ? payload.intent.admittedDelivery
@@ -3634,7 +3729,8 @@ export class ProductProjection {
       payload.intent?.requestedDelivery ?? existing?.delivery.requested ?? admittedDelivery;
     const fallbackReasonCode =
       payload.intent?.fallbackReasonCode ?? existing?.delivery.fallbackReasonCode;
-    // Bug 根因：队列投影曾漏掉 intent.highspeed，自动和手动提升都因此把有效卡误判为不存在。
+    // Cause: the queue projection used to drop intent.highspeed, so both automatic and manual
+    // promotion misjudged a valid card as absent.
     const highspeed = payload.intent?.highspeed ?? existing?.highspeed;
     const nextItem: QueueItem = {
       queueItemId,
@@ -3655,14 +3751,16 @@ export class ProductProjection {
       ...((payload.intent?.source ?? existing?.source)
         ? { source: payload.intent?.source ?? existing?.source }
         : {}),
-      // QueueItem 同时是提升执行的输入，不只是 UI 展示；漏字段会让新 Turn 沿用旧权限／模型。
-      // 旧的正文编辑事件可能没有 intent，只能保留同项原事实，不能读取当前 Session 补值。
+      // QueueItem is also input to promoted execution, not just UI display; omitting fields makes a
+      // new Turn inherit the old permissions/model. Older body-edit events may not have intent, so
+      // preserve the existing item's facts instead of filling them from the current Session.
       modelSelection: payload.intent?.modelSelection ?? existing?.modelSelection,
       mode: payload.intent?.mode ?? existing?.mode,
       planEnabled: payload.intent?.planEnabled ?? existing?.planEnabled,
       sharedContextRefs: payload.intent?.sharedContextRefs ?? existing?.sharedContextRefs,
       provenance: payload.intent?.provenance ?? existing?.provenance,
-      // 排队事件和原地编辑都必须保留可信接入来源，不能在 UI 投影时丢掉发送者。
+      // Both queued events and in-place edits must retain the trusted ingress origin; the UI
+      // projection must not drop the sender.
       ...((payload.intent?.inputOrigin ?? existing?.inputOrigin)
         ? { inputOrigin: payload.intent?.inputOrigin ?? existing?.inputOrigin }
         : {}),
@@ -3698,10 +3796,12 @@ export class ProductProjection {
       ...(payload.toolDisallowlist ? { toolDisallowlist: [...payload.toolDisallowlist] } : {}),
       admittedAt: payload.intent?.admittedAt ?? existing?.admittedAt ?? this.ms(event),
     };
-    // 投递语义侧表：payload 未带（旧 runtime 事件）时按当前 followupMode 兜底。
+    // Side table for delivery semantics: when the payload is absent (an old runtime event), fall
+    // back to the current followupMode.
     this.deliveryByPendingInputId.set(payload.pendingInputId, admittedDelivery);
-    // 同 id 重入 = editQueueItem 原地更新（保位）；新 id = 追加。旧逻辑 filter+append
-    // 会把编辑项移到队尾，破坏 queueContentIndependence 的位置语义。
+    // Reentry with the same ID updates editQueueItem in place (preserving its position); a new ID is
+    // appended. The old filter+append logic moved edited items to the tail, breaking the positional
+    // semantics of queueContentIndependence.
     const items =
       existingIndex >= 0
         ? this.snapshot.queue.items.map((item, index) =>
@@ -3785,9 +3885,10 @@ export class ProductProjection {
     const runtimeTurnId = String(
       payload.targetTurnId ?? event.turnId ?? this.currentTurnId ?? "turn-unknown",
     );
-    // drain 事实优先自带文本/messageId（drainedInputs），
-    // 投影不再依赖内存 queue 状态取文本——旧实现查不到 queue item 就静默 continue，
-    // 用户输入从 queue 消失后也不进 history。旧事件（无 drainedInputs）回退查表。
+    // Drain facts carry text/messageId directly (drainedInputs). The projection no longer relies on
+    // in-memory queue state to get text; the old implementation silently continued when it could
+    // not find a queue item, so the user's input disappeared from the queue and never entered
+    // history. Fall back to lookup for old events without drainedInputs.
     const items =
       payload.drainedInputs ??
       payload.pendingInputIds.flatMap((pendingInputId, index) => {
@@ -3829,8 +3930,9 @@ export class ProductProjection {
     for (const item of items) {
       const delivery =
         item.delivery ?? this.deliveryByPendingInputId.get(item.pendingInputId) ?? "queue";
-      // queue 消费 = product turn 边界（每条一轮：收口上一段
-      // header、开新 turnHeader、后续 assistant 归新轮）；guide steer 内联当前轮。
+      // Queue consumption is a product-turn boundary (one turn per item: settle the previous
+      // segment's header, open a new turnHeader, and assign later assistant events to the new turn);
+      // guide steer stays inline in the current turn.
       if (delivery === "queue") {
         deltas.push(
           ...this.splitProductTurn(
@@ -3866,8 +3968,9 @@ export class ProductProjection {
         ...(item.intent?.attachmentRefs?.length ? { attachments: item.intent.attachmentRefs } : {}),
         ...(item.intent?.source ? { source: item.intent.source } : {}),
       };
-      // queue/guide 消费后的 real-user row 与普通 TurnStarted 共用完整 canonical target；
-      // 缺 messageId 的旧事件仍只可展示，不暴露无法执行的 edit action。
+      // A real-user row consumed from queue/guide uses the same complete canonical target as an
+      // ordinary TurnStarted. Legacy events without messageId remain display-only and do not expose
+      // an unexecutable edit action.
       this.registerCanonicalUserRowTarget(
         row.rowId,
         entityId,
@@ -3930,9 +4033,9 @@ export class ProductProjection {
   }
 
   /**
-   * queue drain 边界 = product turn 边界（同一 runtimeTurn 内）。
-   * 收口上一段 productTurn 的 header（工时按边界拆分，加和 = 总工时），
-   * 映射 runtimeTurnId → 新 productTurnId，开新 turnHeader。
+   * A queue-drain boundary is a product-turn boundary (within the same runtimeTurn).
+   * Settle the previous productTurn's header (split work duration at the boundary so the sum equals
+   * the total), map runtimeTurnId → the new productTurnId, and open a new turnHeader.
    */
   private splitProductTurn(
     event: SessionEvent,
@@ -3966,10 +4069,11 @@ export class ProductProjection {
     }
     const ordinal = (this.productTurnSplitOrdinalByRuntimeTurnId.get(runtimeTurnId) ?? 0) + 1;
     this.productTurnSplitOrdinalByRuntimeTurnId.set(runtimeTurnId, ordinal);
-    // 旧实现用 runtimeTurnId + 本次进程内 ordinal 造 productTurnId；
-    // cold hydration 会改用 hydrate-turn-N，同一条 queue 输入恢复前后无法保持身份。
-    // promotion 已产生持久 user messageId，新 product turn 必须直接使用该权威身份；
-    // 只有 legacy drain 缺 messageId 时才保留 ordinal fallback。
+    // The old implementation built productTurnId from runtimeTurnId plus a process-local ordinal;
+    // cold hydration instead used hydrate-turn-N, so the same queue input had a different identity
+    // before and after recovery. Promotion already produces a persistent user messageId, so the
+    // new product turn must use that authoritative identity directly. Keep the ordinal fallback only
+    // for legacy drains without messageId.
     const productTurnId = promotedUserMessageId ?? `${runtimeTurnId}~q${ordinal}`;
     this.productTurnIdByRuntimeTurnId.set(runtimeTurnId, productTurnId);
     this.runtimeTurnIdByProductTurnId.set(productTurnId, runtimeTurnId);
@@ -3983,13 +4087,15 @@ export class ProductProjection {
     return deltas;
   }
 
-  // 工时按边界拆分：drain 切过轮的 runtimeTurn，最后一段 productTurn 的工时
-  // = 最后一次边界到完成，不再用整段 runtime duration（否则两段加和超真实时长）。
+  // Split work duration at boundaries: for a runtimeTurn split by drain, the final productTurn's
+  // duration is from the last boundary to completion, not the full runtime duration (otherwise the
+  // segments sum to more than the real elapsed time).
   private activeMsForCompletion(event: SessionEvent, runtimeDuration?: number): number | undefined {
     const runtimeTurnId = String(event.turnId ?? this.currentTurnId ?? "turn-unknown");
-    // 稳定 user messageId 映射并不代表发生过 queue drain 切段；只有 split ordinal
-    // 存在时才按边界时间计算最后一段工时。否则 cold 合成事件的展示时间戳跨度很小，
-    // 会错误覆盖 transcript 已计算好的整轮 duration。
+    // A stable user messageId mapping does not imply that queue drain split the turn. Calculate the
+    // final segment's duration from boundary timestamps only when a split ordinal exists. Otherwise,
+    // the display timestamps on synthetic cold events span only a short interval and would
+    // incorrectly overwrite the full-turn duration calculated from the transcript.
     if (!this.productTurnSplitOrdinalByRuntimeTurnId.has(runtimeTurnId)) return runtimeDuration;
     if (this.currentProductTurnStartedAtMs === null) return runtimeDuration;
     return Math.max(0, this.ms(event) - this.currentProductTurnStartedAtMs);
@@ -4002,14 +4108,14 @@ export class ProductProjection {
 
   private onSessionInputPromoted(event: SessionEvent): ConversationDelta[] {
     const payload = event.payload as SessionInputPromotedPayload;
-    // sendQueuedNow 启动成功后，显式 TurnSteerDiscarded(promoted)
-    // 可能在进程/链路边界丢失，使 UI 永久留下 promoting 幽灵项。
-    // SessionInputPromoted 只在 user message + session_input 同事务提交后产生，
-    // 因此它才是可以安全移除 queue 投影的 durable commit signal。
+    // After sendQueuedNow starts successfully, TurnSteerDiscarded(promoted) can be lost at a
+    // process/link boundary, leaving a promoting ghost item in the UI forever.
+    // SessionInputPromoted is emitted only after the user message and session_input are committed
+    // in the same transaction, so it is the durable commit signal that safely removes the queue projection.
     return this.removeQueueItems([payload.pendingInputId]);
   }
 
-  /** v4 queue 重排：按 orderedPendingInputIds 重排 queue rows（未列出的项保持相对顺序追加）。 */
+  /** Reorder v4 queue rows by orderedPendingInputIds (append unlisted items in their existing relative order). */
   private onTurnSteerReordered(event: SessionEvent): ConversationDelta[] {
     const payload = event.payload as { orderedPendingInputIds?: string[] };
     const order = payload.orderedPendingInputIds ?? [];
@@ -4017,7 +4123,7 @@ export class ProductProjection {
     const ordered = order
       .map((id) => byId.get(id))
       .filter((item): item is (typeof this.snapshot.queue.items)[number] => item !== undefined);
-    // 未在 order 里出现的项（防丢）追加保持原相对序。
+    // Append items omitted from order (to avoid loss), preserving their original relative order.
     const orderedIds = new Set(order);
     const rest = this.snapshot.queue.items.filter((item) => !orderedIds.has(item.queueItemId));
     const reordered = [...ordered, ...rest];
@@ -4026,7 +4132,7 @@ export class ProductProjection {
         ? item
         : { ...item, order: { ...item.order, queuePosition: index } },
     );
-    // 顺序无变化则不产 delta（幂等）。
+    // Emit no delta when the order is unchanged (idempotent).
     if (
       items.length === this.snapshot.queue.items.length &&
       items.every((item, index) => item === this.snapshot.queue.items[index])
@@ -4041,8 +4147,8 @@ export class ProductProjection {
     ];
   }
 
-  // setAutoDrain：queue.autoDrain 授权位翻转。autoDrain 影响 held 派生
-  // （heldQueueInputRequiresChoice）与 A 区可用性 → 走 queuePatch 统一重算。
+  // setAutoDrain: flip the queue.autoDrain authorization bit. autoDrain affects the held derivation
+  // (heldQueueInputRequiresChoice) and Area A availability, so use queuePatch for a unified recompute.
   private onQueueAutoDrainChanged(event: SessionEvent): ConversationDelta[] {
     const payload = event.payload as { autoDrain?: boolean };
     const autoDrain = payload.autoDrain ?? true;
@@ -4066,8 +4172,8 @@ export class ProductProjection {
     ];
   }
 
-  // setFollowupMode：config.followupMode 翻转。followupMode 是 running 时
-  // enqueue vs guide 的路由授权位（computeInputRouting）→ 改 config 后同步重算 A 区。
+  // setFollowupMode: flip config.followupMode. While running, followupMode authorizes enqueue vs
+  // guide routing (computeInputRouting), so recompute Area A after changing config.
   private onFollowupModeChanged(event: SessionEvent): ConversationDelta[] {
     const payload = event.payload as { mode?: "queue" | "guide" };
     const mode: "queue" | "guide" = payload.mode === "guide" ? "guide" : "queue";
@@ -4091,8 +4197,9 @@ export class ProductProjection {
 
   /**
    * switchCollaborationMode：SessionModeChanged → config.mode。
-   * 事件来源覆盖命令面（source=command）与 plan 工具路径（enterPlanMode/exitPlanMode，
-   * source=tool）——两条路径共用这条投影，UI 的模式选择器因此也能跟随工具驱动的模式切换。
+   * Event sources include the command surface (source=command) and plan-tool path
+   * (enterPlanMode/exitPlanMode, source=tool). Both paths share this projection, so the UI mode
+   * selector also follows tool-driven mode changes.
    */
   private onSessionModeChanged(event: SessionEvent): ConversationDelta[] {
     const payload = event.payload as {
@@ -4103,7 +4210,8 @@ export class ProductProjection {
       permissionGrant?: { interactionId: string; queueItemIds: string[] };
     };
     const mode = typeof payload.mode === "string" ? payload.mode : "";
-    // 日志事件触碰过 mode 后，种子不再覆盖（同值 return 也算触碰——日志有权威值）。
+    // Once a log event touches mode, a seed cannot overwrite it (even a same-value return counts as
+    // a touch because the log has an authoritative value).
     if (mode) this.configModeTouchedByEvent = true;
     if (!mode) return [];
     const planEnabled = payload.planEnabled ?? mode === "plan";
@@ -4147,15 +4255,17 @@ export class ProductProjection {
   }
 
   /**
-   * Subagent row 与摘要投影在同一个 event transaction 内 materialize。
-   * 旧 UI 在 spawn 后另查 session/subagents；7 个并发 child 中查询若恰好落在
-   * 最后一个 session 持久化前，就会永久缓存 6，直到切换 Session 才重查。现在 renderer
-   * 只消费这里随 row 一起提交的完整态，不再存在事件/查询双时钟。
+   * Materialize the subagent row and summary projection in the same event transaction.
+   * The old UI queried session/subagents separately after spawn. With seven concurrent children, if
+   * the query happened before the last session was persisted, it cached six permanently until the
+   * user switched sessions. The renderer now consumes the complete state committed with the row,
+   * eliminating the separate event/query clocks.
    */
   private shouldMaterializeSubagentProjection(reduced: readonly ConversationDelta[]): boolean {
-    // 性能问题根因：cold hydration 曾让 checkpoint 等无关事件也扫描全部历史 rows。
-    // 这里只在尚未发布的 batch accumulator 内按 materializer 的真实输入准入；live 与
-    // strict fallback 仍走原路径，batch 之后直接写权威 manifest 的 store seed 不受影响。
+    // Performance cause: cold hydration previously scanned all historical rows even for unrelated
+    // events such as checkpoints. Apply the materializer's actual input gate only in the unpublished
+    // batch accumulator; live and strict fallback keep the original path, and store seeds that write
+    // directly to the authoritative manifest after batching are unaffected.
     if (!this.hydrationAccumulator) return true;
 
     for (const delta of reduced) {
@@ -4170,7 +4280,7 @@ export class ProductProjection {
           if (this.findRow(delta.rowId)?.kind === "subagent") return true;
           break;
         case "row.removed":
-          // 后缀删除可能同时移除 subagent row；不为判定再预扫描一次 rows。
+          // Suffix removal may also remove a subagent row; do not scan rows again just to determine that.
           return true;
         case "state.updated":
           if (
@@ -4184,7 +4294,8 @@ export class ProductProjection {
         case "pluginUi.resourceListChanged":
         case "pluginUi.instanceClosed":
         case "pluginUi.appToolCall":
-        // 非行 op：只动 workflowRuns 状态键，与 subagent 行投影的输入没有交集。
+        // Non-row op: it changes only workflowRuns state keys, which do not intersect the input to
+        // subagent row projection.
         case "workflowRun.updated":
         case "workflowRun.removed":
           break;
@@ -4215,9 +4326,10 @@ export class ProductProjection {
         latestRowByChildId.set(row.childSessionId, row);
       }
     };
-    // 性能问题根因：旧实现先复制完整 rows 数组，再扫描所有普通 conversation rows。
-    // subagentRowIdByAgentId 已是 reducer 查找用的派生索引；这里按 rowId 去重，并通过
-    // rowIndexById 恢复当前时间线顺序；row.removed 应用后会清理已失效的 alias。
+    // Performance cause: the old implementation copied the full rows array and scanned every
+    // ordinary conversation row. subagentRowIdByAgentId is already the reducer's derived lookup
+    // index; deduplicate by rowId here and restore timeline order through rowIndexById. Applying
+    // row.removed clears invalid aliases.
     const currentRowIds = new Set(this.subagentRowIdByAgentId.values());
     for (const delta of reduced) {
       if (delta.op === "row.upserted") {
@@ -4256,7 +4368,8 @@ export class ProductProjection {
       }
     }
     const waitingChildIds = new Set<string>();
-    // workspace-hook-trust 新增的 hook review 交互 payload 没有 origin 字段，跳过守卫避免误读。
+    // Hook-review interaction payloads added by workspace-hook-trust have no origin field; skip the
+    // guard to avoid misreading them.
     for (const interaction of pendingInteractions) {
       if (!("origin" in interaction.payload)) continue;
       const origin = interaction.payload.origin;
@@ -4335,7 +4448,7 @@ export class ProductProjection {
         case "pluginUi.resourceListChanged":
         case "pluginUi.instanceClosed":
         case "pluginUi.appToolCall":
-        // 非行 op：改不了这一行的 prospective 形态。
+        // Non-row op: it cannot change this row's prospective shape.
         case "workflowRun.updated":
         case "workflowRun.removed":
           break;
@@ -4366,9 +4479,10 @@ export class ProductProjection {
     return prospective?.kind === "subagent" ? prospective : null;
   }
 
-  // ── subagent 行镜像──
-  // schema/UI 已有 subagent row，但旧 reducer 未消费 Subagent* 事件；
-  // cold hydration 即使合成事件也无法恢复下钻行。这里让 live/cold 共用同一状态机。
+  // ── Subagent row mirroring ──
+  // The schema/UI already support subagent rows, but the old reducer did not consume Subagent*
+  // events; cold hydration could not restore drill-down rows even with synthetic events. Use the
+  // same state machine for live and cold paths here.
 
   private onSubagentSpawned(event: SessionEvent): ConversationDelta[] {
     const payload = event.payload as Record<string, unknown>;
@@ -4399,8 +4513,9 @@ export class ProductProjection {
           this.stringPayload(payload, "description") ??
           this.stringPayload(payload, "prompt") ??
           existing.summaryText,
-        // resume 事件携带的是 SendMessage call id，但 parentToolCallId 是 row 的创建锚点；
-        // 已存在的锚点不能作为生命周期字段被覆盖，否则 UI 无法再关联原 Agent 行。
+        // The resume event carries the SendMessage call ID, but parentToolCallId is the row's
+        // creation anchor. Do not overwrite an existing anchor as a lifecycle field, or the UI can
+        // no longer associate the original Agent row.
         ...(!existing.parentToolCallId && parentToolCallId ? { parentToolCallId } : {}),
         ...(childSessionId ? { childSessionId } : {}),
         ...(payload.background === true ? { backgrounded: true as const } : {}),
@@ -4447,9 +4562,10 @@ export class ProductProjection {
       return undefined;
     }
 
-    // SendMessage resume 直接进入 subagent port，不经过 Agent tool executor，
-    // 因而不会产生 tracker 的 BackgroundTaskStarted。SubagentSpawned 已是单一启动事实，
-    // 这里在同一次 V4 transaction 内补齐可取消 work，避免再引入第二个可失败事件。
+    // SendMessage resume enters the subagent port directly and bypasses the Agent tool executor, so
+    // it does not emit the tracker's BackgroundTaskStarted. SubagentSpawned is already the single
+    // start fact; add cancellable work in the same V4 transaction to avoid introducing another
+    // fallible event.
     const previous = this.snapshot.backgroundWorks;
     const existing = previous.find((work) => work.workId === agentId);
     const title =
@@ -4512,7 +4628,8 @@ export class ProductProjection {
           status,
           summaryText,
           endedAt: this.ms(event),
-          // resumed child 的终态同样属于原 Agent row，只在旧 row 缺失锚点时补齐。
+          // A resumed child's terminal state still belongs to the original Agent row; fill the
+          // anchor only if the old row is missing it.
           ...(!existing.parentToolCallId && parentToolCallId ? { parentToolCallId } : {}),
           ...(this.stringPayload(payload, "childSessionId")
             ? { childSessionId: this.stringPayload(payload, "childSessionId") }
@@ -4540,9 +4657,10 @@ export class ProductProjection {
     return [{ op: existing ? "row.upserted" : "row.appended", row }];
   }
 
-  // cancelBackgroundWork：后台任务生命周期（BackgroundTaskStarted/Updated/Completed）
-  // → 维护 snapshot.backgroundWorks（后台工作面读它渲染 + cancel 入口）。
-  // taskId≡workId 无需翻译；status 归一到 summary 的 4 值封闭枚举。
+  // cancelBackgroundWork: project the background-task lifecycle
+  // (BackgroundTaskStarted/Updated/Completed) into snapshot.backgroundWorks, which the background
+  // work surface reads for rendering and the cancel action. taskId equals workId; normalize status
+  // to the summary's closed four-value enum.
   private onBackgroundTaskLifecycle(event: SessionEvent): ConversationDelta[] {
     const payload = event.payload as {
       taskId?: string;
@@ -4560,10 +4678,11 @@ export class ProductProjection {
     const prev = this.snapshot.backgroundWorks;
     const existing = prev.find((work) => work.workId === workId);
     const legacyKind = resolveZCodeBackgroundTaskControlKind(payload);
-    // 新事件使用 runtime 的显式 taskKind；旧事件统一走 shared resolver，
-    // 不能再在 reducer 内散落 Agent/Task/subagent 字符串分支。
-    // "workflow" 是 workflow run（此前错标成 bash）；legacy resolver 里没有对应值，因为
-    // legacy `Workflow` 工具刻意仍归 bash——两者是不同的东西，共用类别会让面板混在一起。
+    // New events use the explicit taskKind from runtime; older events all use the shared resolver.
+    // Do not scatter Agent/Task/subagent string branches throughout the reducer.
+    // "workflow" is a workflow run (previously mislabeled as bash). The legacy resolver has no
+    // equivalent because the legacy `Workflow` tool intentionally remains bash; they are different
+    // things, and sharing a category would mix them in the panel.
     const kind: BackgroundWorkSummary["kind"] =
       payload.taskKind === "subagent"
         ? "subagent"
@@ -4576,7 +4695,7 @@ export class ProductProjection {
               : legacyKind === "bash"
                 ? "bash"
                 : (existing?.kind ?? "bash");
-    // 事件 status（running/completed/failed/timed_out/cancelled/spawn_error/lost）
+    // Event statuses (running/completed/failed/timed_out/cancelled/spawn_error/lost)
     // → summary status（running/resultPending/failed/cancelled）。
     const rawStatus = payload.status ?? "running";
     const status: "running" | "resultPending" | "failed" | "cancelled" =
@@ -4617,7 +4736,7 @@ export class ProductProjection {
           ? { childSessionId: existing.childSessionId }
           : {}),
     };
-    // 幂等：内容无变化不产 delta。
+    // Idempotent: emit no delta when content is unchanged.
     if (
       existing &&
       existing.status === next.status &&
@@ -4635,26 +4754,33 @@ export class ProductProjection {
     return [{ op: "state.updated", patch: { backgroundWorks } }];
   }
 
-  // ── dwf 实时运行态：DynamicWorkflowRunProgress → workflowRuns 状态键 ──
-  // 一条引擎 RunEvent 一条会话事件，归约成键级整体替换的权威态。走 reducer 而不是侧通道，
-  // 所以持久、可回放、冷恢复免费（先例：subagents 键）。
+  // ── DWF live run state: DynamicWorkflowRunProgress → workflowRuns state key ──
+  // Each engine RunEvent becomes one session event and reduces to authoritative state replaced at
+  // the key level. Using the reducer instead of a side channel makes it persistent and replayable,
+  // with cold recovery included (precedent: the subagents key).
   //
-  // 归约本体在 @zcode/shared 的 workflow-runs-reducer（与状态 schema 同居）：TUI 镜像要用
-  // 同一份归约，两处各写一份就是两个时钟（docs/dynamic-workflow/launch.md「The inline card」）。
-  // 留在这里的只有投影的非纯部分——从事件信封取载荷、把新旧状态之差发成键级增量。
+  // The reducer lives in @zcode/shared's workflow-runs-reducer beside the state schema. The TUI
+  // mirror must use the same reducer; separate implementations would create two clocks
+  // (docs/dynamic-workflow/launch.md "The inline card").
+  // Only impure projection work remains here: extract the payload from the event envelope and emit
+  // the difference between old/new state as a key-level delta.
   private onDynamicWorkflowRunProgress(event: SessionEvent): ConversationDelta[] {
-    // 先转 contracts 的有界 payload、再赋给 shared 的结构化入参：这行赋值就是"两边形状不漂移"
-    // 的编译期闸（shared 不得反向依赖 contracts，所以入参类型只能结构化定义）。
+    // Convert the bounded contracts payload, then assign it to the structured shared input. This
+    // assignment is the compile-time guard that the two shapes do not drift (shared cannot depend
+    // on contracts in reverse, so its input type must be defined structurally).
     const envelope: WorkflowRunProgressEnvelope =
       event.payload as DynamicWorkflowRunProgressPayload;
     const prior = this.snapshot.workflowRuns;
     const workflowRuns = reduceWorkflowRunsState(prior, envelope);
-    // null = 语义无变化（无效事件或同一条事件重放）：不产 delta，revision 不抬。
+    // null means no semantic change (invalid event or replay of the same event): emit no delta and
+    // do not advance revision.
     if (workflowRuns === null) return [];
-    // 发**差**而不是整键：一条引擎事件只动一个节点，整键重发是每事件 O(N) 字节、一条 run
-    // 全程 O(N²)（workflow-runs-delta.ts 的文件头讲了这笔账怎么变成节点上界和 UI 卡死的）。
-    // `applyAll(prior, diff(prior, next))` 与 next **逐字节**一致是被 property 测试钉住的契约，
-    // 所以 applyEventInternal 把这串 delta 应用回去之后，this.snapshot.workflowRuns 仍是 next。
+    // Emit the **difference**, not the whole key: one engine event changes one node, while resending
+    // the whole key costs O(N) bytes per event and O(N²) over a run (the workflow-runs-delta.ts
+    // header explains how that becomes a per-node limit and a frozen UI).
+    // The contract that `applyAll(prior, diff(prior, next))` equals next **byte for byte** is pinned
+    // by property tests, so after applyEventInternal applies these deltas,
+    // this.snapshot.workflowRuns remains next.
     return diffWorkflowRunsState(prior, workflowRuns);
   }
 
@@ -4681,9 +4807,10 @@ export class ProductProjection {
 
   private onModelSelected(event: SessionEvent): ConversationDelta[] {
     const payload = event.payload as ModelSelectedPayload;
-    // Bug 原因：把 fresh child 身份另存为 pending side state 后，原子投影 clone/adopt
-    // 漏复制该字段，实时 marker 会消失。显式 null 直接复用模型基线表达 ∅→X，
-    // 公共投影不再识别 Subagent 身份；后续选型只更新 config，不覆盖上一轮实际模型。
+    // Cause: storing fresh-child identity in pending side state meant atomic projection clone/adopt
+    // forgot to copy the field, making the live marker disappear. Use explicit null in the model
+    // baseline to express ∅→X directly. The shared projection no longer recognizes Subagent identity;
+    // later selections update config without overwriting the model actually used in the prior turn.
     if (payload.previousModelSelection === null) {
       this.lastTurnModel = { kind: "sourceLess" };
     }
@@ -4702,9 +4829,10 @@ export class ProductProjection {
         : payload.contextWindow !== undefined
           ? positiveInteger(payload.contextWindow, 0) || undefined
           : undefined;
-    // Bug 原因：旧事件只更新 config，runtime 虽已切到新模型，历史 usage 的 maxTokens
-    // 仍停在源模型，直到下一次 ModelComplete 才偶然校准。窗口属于已应用模型能力，
-    // 必须在同一个 ModelSelected 中提交；usedTokens 仍保留历史上下文事实。
+    // Cause: old events updated only config. Although runtime had switched models, historical usage
+    // maxTokens stayed at the source model until the next ModelComplete happened to correct it. The
+    // window belongs to the applied model capability and must be committed in the same
+    // ModelSelected; usedTokens still preserves historical context facts.
     if (contextWindow !== undefined) {
       this.contextWindowState.touchedByEvent = true;
       this.contextWindowState.maxTokens =
@@ -4719,19 +4847,21 @@ export class ProductProjection {
       (contextWindow === null
         ? previousContextWindow !== null
         : previousContextWindow === null || previousContextWindow.maxTokens !== contextWindow);
-    // 日志事件触碰过模型选型后，种子不再覆盖（同值 return 也算触碰）。
-    // 冷恢复合成的 ModelSelected（HYDRATION_TRACE_ID）例外：它只是从 message 事实
-    // 重建历史选型供 modelChange marker 使用，不是权威选型动作；重放后 seedConfig
-    // 仍以 runtime 真值（resume 已回写的上次/草稿选型）收口。
+    // Once a log event touches model selection, a seed cannot overwrite it (even a same-value return
+    // counts as a touch).
+    // Exception: ModelSelected synthesized during cold recovery (HYDRATION_TRACE_ID) only rebuilds
+    // historical selection from message facts for the modelChange marker; it is not an authoritative
+    // selection action. After replay, seedConfig still settles on runtime truth (the previous/draft
+    // selection restored by resume).
     if (String(event.traceId) !== HYDRATION_TRACE_ID) {
       this.configModelTouchedByEvent = true;
       if (payload.supportedThoughtLevels !== undefined) {
         this.configThoughtLevelsTouchedByEvent = true;
       }
     }
-    // 选型事件只更新 config，不在选型时落 modelChange
-    // marker——切换动作是意向，marker 归 onTurnStarted 按「与上一轮实际选型不同」
-    // 裁决（见彼处注释与 Bug 背景）。
+    // A selection event updates config only; do not add a modelChange marker at selection time.
+    // Switching is an intent, and onTurnStarted decides whether to mark based on a difference from
+    // the model actually used in the previous turn (see the comment and bug background there).
     const configChanged = !(
       prev.provider === provider &&
       prev.model === model &&
@@ -4765,16 +4895,18 @@ export class ProductProjection {
           ...(configChanged
             ? { config: { ...prev, modelSelection, provider, model, thought, thoughtLevels } }
             : {}),
-          // Bug 原因：仅投影 config 会丢失“由 registry fallback 触发”的来源，
-          // renderer 无法安全地区分自动恢复和显式/历史切换。保留事件 ID 与起止身份，
-          // 具体 toast 仍只由客户端在实时 online delivery 边界触发。
+          // Cause: projecting only config loses the fact that a registry fallback triggered this,
+          // so the renderer cannot safely distinguish automatic recovery from an explicit/historical
+          // switch. Preserve the event ID and source/destination identities; the client still shows
+          // the toast only at the live online-delivery boundary.
           ...(modelTransition ? { modelTransition } : {}),
           ...(contextWindowChanged
             ? {
                 usage: {
                   ...this.snapshot.usage,
-                  // Bug 原因：null 是 registry 清除显式窗口的权威事件，必须清空整个
-                  // usage.contextWindow；字段缺失才保留旧事件兼容语义。
+                  // Cause: null is the registry's authoritative event clearing the explicit window,
+                  // so clear the entire usage.contextWindow. Only a missing field preserves legacy
+                  // event compatibility semantics.
                   contextWindow:
                     contextWindow === null
                       ? null
@@ -4796,7 +4928,7 @@ export class ProductProjection {
   private onModelComplete(event: SessionEvent): ConversationDelta[] {
     const payload = event.payload as ModelCompletePayload;
     const retryClearDeltas = this.acceptsActiveModelEvent(event) ? this.setApiRetry(null) : [];
-    // 与旧 reducer 同一裁决：只有主会话往返才能覆盖 context 水位。
+    // Same decision as the old reducer: only a main-session round trip can overwrite the context watermark.
     const isMainTurn =
       payload.querySource !== undefined
         ? payload.querySource === "main_turn"
@@ -4816,8 +4948,9 @@ export class ProductProjection {
         this.outputContinuationTextRowId = lastVisibleRow.rowId;
       }
     }
-    // subagent ModelComplete 的 usage 仍不是主会话水位，但它携带的
-    // fileChanges 是 child session 自己的 workspace 事实，必须独立投影到 child turn header。
+    // Usage from a subagent ModelComplete is still not the main-session watermark, but its
+    // fileChanges belong to the child session's workspace and must be projected independently into
+    // the child turn header.
     const supportsFileChangeSummary = isMainTurn || payload.querySource === "subagent";
     const usage = payload.usage as ModelUsage;
     const deltas: ConversationDelta[] = [];
@@ -4832,8 +4965,9 @@ export class ProductProjection {
                 additions: payload.fileChanges.additions,
                 deletions: payload.fileChanges.deletions,
                 files: payload.fileChanges.files,
-                // Bug 根因：该条件对象随后与 headerRow 展开合并，TS 会把字面量扩宽为
-                // string，导致 CLI 启动前构建无法满足 TurnFileChangeSummary 契约。
+                // Cause: this conditional object is later spread-merged with headerRow, and TS widens
+                // the literal to string, breaking the TurnFileChangeSummary contract in the
+                // pre-CLI-start build.
                 state: "active" as const,
               },
             }
@@ -4844,8 +4978,10 @@ export class ProductProjection {
           row: {
             ...headerRow,
             ...fileChanges,
-            // Bug 根因：Renderer 观察 running 快照的时机不可靠，continuous 可合并更新，
-            // replayable 也可能首次恢复即终态。单 Turn token 必须在权威事件投影中累计。
+            // Cause: when the renderer observes the running snapshot is unreliable; continuous
+            // clients may receive merged updates, and replayable clients may first recover with a
+            // terminal state already present. Per-turn tokens must accumulate in the authoritative
+            // event projection.
             ...(isMainTurn
               ? { outputTokens: (headerRow.outputTokens ?? 0) + (usage.outputTokens ?? 0) }
               : {}),
@@ -4862,8 +4998,9 @@ export class ProductProjection {
       op: "state.updated",
       patch: {
         usage: {
-          // Bug 原因：registry 已显式清除窗口时，缺少 contextWindow 的 ModelComplete
-          // 过去会用 0 重建对象，破坏未知容量语义。token 继续在侧状态和累计值中更新。
+          // Cause: after the registry explicitly cleared the window, a ModelComplete without
+          // contextWindow previously rebuilt the object with zero, breaking unknown-capacity
+          // semantics. Continue updating tokens in side state and accumulated values.
           contextWindow:
             maxTokens === null
               ? null
@@ -4886,14 +5023,16 @@ export class ProductProjection {
         },
       },
     });
-    // ModelComplete 是缺少 network completed 事件时的成功兜底，不能让重试提示悬挂。
+    // ModelComplete is the success fallback when a network completed event is missing; do not leave
+    // the retry notice hanging.
     deltas.push(...retryClearDeltas);
     return deltas;
   }
 
-  // ── compact marker（compact 命令效果）──
-  // 同一 operationId 全生命周期占同一 marker row：running → success/failed/noop/cancelled。
-  // 归属：marker 落在事件到达时的行尾，客户端零归属逻辑。
+  // ── Compact marker (effect of the compact command) ──
+  // One operationId uses the same marker row for its entire lifecycle: running →
+  // success/failed/noop/cancelled. The marker is placed at the end of the rows when the event
+  // arrives; clients need no ownership logic.
 
   private onCompactLifecycle(event: SessionEvent): ConversationDelta[] {
     const payload = event.payload as CompactLifecyclePayload & {
@@ -4934,12 +5073,12 @@ export class ProductProjection {
       type: "compact",
       origin: prev?.origin ?? mapCompactMarkerOrigin(payload.trigger),
       status,
-      // 终态事件才带 token 计数；upsert 时保留已知值（retry 不清零）。
+      // Only terminal events include token counts; preserve known values on upsert (retry does not reset them).
       ...(payload.preCompactTokenCount !== undefined || prev?.tokensBefore !== undefined
         ? { tokensBefore: payload.preCompactTokenCount ?? prev?.tokensBefore }
         : {}),
       ...(tokensAfter !== undefined ? { tokensAfter } : {}),
-      // summary 全文按 ref 拉（同 toolOutput/get）；以 summaryMessageId 占位。
+      // Fetch the full summary by ref (same as toolOutput/get); use summaryMessageId as the placeholder.
       ...(payload.summaryMessageId !== undefined || prev?.summaryRef
         ? {
             summaryRef:
@@ -4972,8 +5111,9 @@ export class ProductProjection {
       deltas.push({ op: "row.appended", row });
     }
 
-    // compacting 进出 activeWorks（guard 同源派生：compactOperationLock /
-    // compactingAcceptsFutureInput 由此驱动，与 formal-proof evaluateCompacting 对齐）。
+    // Enter/leave activeWorks while compacting. The guard is derived from the same source:
+    // compactOperationLock/compactingAcceptsFutureInput are driven here, matching the formal-proof
+    // evaluateCompacting rule.
     const otherWorks = this.snapshot.control.activeWorks.filter((work) => work.kind !== "compact");
     if (status === "running") {
       deltas.push({
@@ -5001,7 +5141,7 @@ export class ProductProjection {
       });
     }
 
-    // compact 成功 → context 水位立即回落（usage.contextWindow 更新）。
+    // Successful compact → immediately lower the context watermark (update usage.contextWindow).
     if (status === "success" && tokensAfter !== undefined) {
       this.contextWindowState.usedTokens = tokensAfter;
       const maxTokens =
@@ -5027,17 +5167,17 @@ export class ProductProjection {
     return deltas;
   }
 
-  // ── goal 状态机──
+  // ── Goal state machine ──
 
   private onTargetChanged(event: SessionEvent): ConversationDelta[] {
     const payload = event.payload as TargetChangedPayload;
     switch (payload.action) {
       case "set": {
         if (!payload.target) return [];
-        // 新目标：iteration/verifications 归零。
-        // goalSet 是 stateOnly——不产 timeline row（旧实现
-        // 的 goalSet marker 是「进 window 渲染 null」的隐形行，污染 turn 分组判定），
-        // 目标展示归 goal 面板/状态区。
+        // New target: reset iteration/verifications.
+        // goalSet is stateOnly and emits no timeline row (the old goalSet marker was an invisible
+        // row rendered as null inside the window, polluting turn grouping). The goal panel/status
+        // area owns target display.
         const goal: GoalState = {
           targetId: payload.target.targetID,
           objective: payload.target.objective,
@@ -5057,8 +5197,9 @@ export class ProductProjection {
       }
       default: {
         // status_updated / run_started / run_finished / usage_accounted / summary_updated：
-        // 同步刷新计时与摘要标题。旧实现只比较 status，会吞掉 1 秒以上 run accounting
-        // 和 summaryTitle 更新，导致刷新前后的 UI 不一致。
+        // Refresh elapsed time and summary title together. The old implementation compared only
+        // status, dropping run-accounting changes over one second and summaryTitle updates, which
+        // made the UI differ before and after refresh.
         const goal = this.snapshot.goal;
         if (!goal || !payload.target) return [];
         const nextGoal: GoalState = {
@@ -5088,10 +5229,11 @@ export class ProductProjection {
   private onTargetVerification(event: SessionEvent): ConversationDelta[] {
     const payload = event.payload as TargetCompletionVerificationPayload;
     const goal = this.snapshot.goal;
-    // goal verify boundary 不依赖 goal 状态在场。
-    // 冷恢复合成事件流没有 TargetChanged → goal 为 null，旧实现在此整条丢弃
-    // verification 事实，刷新后 goalVerify marker 消失。现在 marker
-    // 恒生成/恒更新；goal 状态 patch 仍只在 goal 在场时生效。
+    // The goal verification boundary does not depend on goal state being present.
+    // A cold-recovery synthetic event stream has no TargetChanged, so goal is null; the old
+    // implementation discarded the verification fact here and the goalVerify marker disappeared
+    // after refresh. Always create/update the marker now; apply the goal-state patch only when a goal
+    // is present.
 
     if (payload.status === "started") {
       const iteration = payload.goalIteration ?? (goal ? goal.iteration + 1 : 1);
@@ -5125,8 +5267,8 @@ export class ProductProjection {
           verifyingGoal,
         ),
       };
-      // GV-identity：同 targetId+iteration 的重试（新 verificationId）复用同一 marker
-      // 行回到 running，不长出第二个 marker。
+      // GV identity: retrying the same targetId+iteration with a new verificationId reuses the same
+      // marker row and returns it to running instead of creating a second marker.
       const existingRowId = this.goalVerifyMarkerRowIdByLifecycleKey.get(lifecycleKey);
       const existingRow = existingRowId !== undefined ? this.findRow(existingRowId) : undefined;
       if (existingRow?.kind === "timelineMarker") {
@@ -5151,8 +5293,9 @@ export class ProductProjection {
       return [{ op: "row.appended", row }, controlDelta];
     }
 
-    // 终态：completed（pass/notSatisfied 是有效结论）/ failed_closed（验证过程失败）
-    // / cancelled（被 stop：过程未产出结论 → marker=failed(detail=cancelled)，goal 回 paused）。
+    // Terminal states: completed (pass/notSatisfied are valid conclusions), failed_closed
+    // (verification process failed), or cancelled (stopped before producing a conclusion →
+    // marker=failed(detail=cancelled), goal returns to paused).
     const iteration = payload.goalIteration ?? goal?.iteration ?? 1;
     const outcome: "pass" | "notSatisfied" | "failed" =
       payload.status === "completed"
@@ -5191,9 +5334,10 @@ export class ProductProjection {
         row: { ...markerRow, marker: terminalMarker },
       });
     } else {
-      // GV-terminal-only：boundary 按 lifecycleKey upsert——任一生命周期
-      // 事件先到都能创建实体。旧实现终态找不到 started marker 就整条丢弃（冷恢复
-      // 后到达的终态、started 事件丢帧都触发）。
+      // GV terminal-only: upsert the boundary by lifecycleKey so any lifecycle event can create the
+      // entity, regardless of arrival order. The old implementation discarded terminal events if
+      // no started marker existed (for example, a terminal event arriving after cold recovery or a
+      // dropped started event).
       const row: TimelineMarkerRow = {
         ...this.rowBase(event, this.goalVerifyTurnId(payload, event), lifecycleKey),
         kind: "timelineMarker",
@@ -5229,9 +5373,9 @@ export class ProductProjection {
           }
         : undefined;
 
-    // goal 不在场（冷恢复合成流）：marker 行仍要保留；只有当前 live control
-    // 确实处于 verifier work 时才收口 control，避免 terminal-only 历史事实把 draft
-    // 冷恢复快照误推进成 completed。
+    // If goal is absent (cold-recovery synthetic stream), retain the marker row. Settle control only
+    // when the current live control is actually verifier work, preventing a terminal-only historical
+    // fact from incorrectly advancing a cold-recovery draft snapshot to completed.
     if (!goal) {
       if (!shouldPatchControl) return deltas;
       deltas.push({
@@ -5258,7 +5402,8 @@ export class ProductProjection {
       return deltas;
     }
 
-    // verifications 只记结论（cancelled 不是结论，不入摘要）；最近 N 条。
+    // Keep only conclusions in verifications (cancelled is not a conclusion and is omitted); retain
+    // the most recent N entries.
     const verifications =
       payload.status === "cancelled"
         ? goal.verifications
@@ -5308,7 +5453,7 @@ export class ProductProjection {
     return deltas;
   }
 
-  /** goal verify boundary 身份：targetId_goalIteration。 */
+  /** Goal verification boundary identity: targetId_goalIteration. */
   private goalVerifyLifecycleKey(
     payload: TargetCompletionVerificationPayload,
     iteration: number,
@@ -5316,10 +5461,10 @@ export class ProductProjection {
     return payload.targetId ? `${payload.targetId}_${iteration}` : payload.verificationId;
   }
 
-  // 落位：优先 anchorAssistantMessageId（解析到已渲染
-  // 行的所属轮——fork copy 后是 remap 过的 child local id）；次选 anchorTurnId
-  // （必须是已知轮，未知 id 不得当 turnId 用——否则会长出幽灵 turn 分组，
-  // fork 前的父 runtime turnId 就是典型）；最后按事件归属。
+  // Placement: prefer anchorAssistantMessageId (resolve to the turn containing the rendered row;
+  // after a fork copy, this is the remapped child-local ID); next use anchorTurnId (it must be a
+  // known turn, since an unknown ID must not be treated as turnId or it creates ghost turn groups,
+  // as with a parent runtime turnId from before the fork); finally use event ownership.
   private goalVerifyTurnId(
     payload: TargetCompletionVerificationPayload,
     event: SessionEvent,
@@ -5340,19 +5485,21 @@ export class ProductProjection {
     return this.turnIdOf(event);
   }
 
-  // ── fork marker（forkAssistant 命令效果）──
+  // ── Fork marker (effect of the forkAssistant command) ──
 
   private onSessionForked(event: SessionEvent): ConversationDelta[] {
     const payload = event.payload as SessionForkedPayload;
     const isParent = String(payload.originalSessionId) === this.snapshot.sessionId;
     if (isParent) {
-      // 父时间线不显示 forkCreated——fork 关系只在 sessions
-      // 树/列表体现。旧实现以 nextRowId-1 近似锚点产 row，且 UI 渲染为 null
-      // （隐形行污染 turn 分组）；child 首部 forkNotice 保留不变。
+      // Do not show forkCreated on the parent timeline; the fork relationship appears only in the
+      // sessions tree/list. The old implementation created a row anchored approximately at
+      // nextRowId-1, and the UI rendered it as null (an invisible row that polluted turn grouping).
+      // Keep the forkNotice at the start of the child unchanged.
       return [];
     }
-    // child 首部 forkNotice（forkTimelineIsBoundary）：事件 payload 不携带
-    // parent 侧 rowId，先以 0 占位；transcript 锚点 → rowId 映射随传输外壳补齐。
+    // forkNotice at the start of the child (forkTimelineIsBoundary): the event payload has no
+    // parent-side rowId, so use 0 as a placeholder. The transport wrapper fills the transcript
+    // anchor → rowId mapping.
     const row: TimelineMarkerRow = {
       ...this.rowBase(
         event,
@@ -5370,11 +5517,13 @@ export class ProductProjection {
     return [{ op: "row.appended", row }];
   }
 
-  // ── 内部工具 ──
+  // ── Internal helpers ──
 
-  // goal 传 undefined = 不动 goal；传 null/对象 = 随本 patch 一并替换（availability 同源派生）。
-  // queue 传 undefined = 不动 queue；held 派生（heldQueueInputRequiresChoice）依赖
-  // queue.items.length + autoDrain，所以任何 control/goal/queue 变化都从同一处重算 A 区。
+  // goal=undefined means leave goal unchanged; null/object replaces it with this patch (availability
+  // is derived from the same source).
+  // queue=undefined means leave the queue unchanged. The held derivation
+  // (heldQueueInputRequiresChoice) depends on queue.items.length + autoDrain, so any control/goal/
+  // queue change recomputes Area A from this one place.
   private controlPatch(
     control: Partial<SessionControl>,
     goal?: GoalState | null,
@@ -5386,7 +5535,7 @@ export class ProductProjection {
     const context = {
       phase: next.phase,
       goalStatus: nextGoal?.status ?? null,
-      // compacting 不是独立 phase（封闭枚举），从 activeWorks 派生。
+      // compacting is not a separate phase (the enum is closed); derive it from activeWorks.
       compacting: next.activeWorks.some((work) => work.kind === "compact"),
       goalVerifying: next.activeWorks.some((work) => work.kind === "goalVerifier"),
       queueLength: nextQueue.items.length,
@@ -5401,7 +5550,7 @@ export class ProductProjection {
     };
   }
 
-  // goal 单独变化时的 patch（availability 与 goal 同源，phase/activeWorks 不变）。
+  // Patch for a goal-only change (availability shares the goal source; phase/activeWorks stay unchanged).
   private goalPatch(goal: GoalState | null): StatePatch {
     return {
       goal,
@@ -5409,7 +5558,8 @@ export class ProductProjection {
     };
   }
 
-  // queue 单独变化时的 patch：queue 长度/autoDrain 影响 held 派生 → 同步重算 A 区。
+  // Patch for a queue-only change: queue length/autoDrain affect the held derivation, so recompute
+  // Area A at the same time.
   private queuePatch(queue: ConversationSnapshot["queue"]): StatePatch {
     const context = this.deriveContext({ queue });
     return {
@@ -5533,8 +5683,9 @@ export class ProductProjection {
         startedAt: row.startedAt,
       },
     ];
-    // 旧 UI 为整个 product turn 只维护一个折叠状态，accepted guide 只能
-    // 作为普通行插入，无法恢复独立工作区。分段边界必须由 CLI 记录，React 不能按邻接行猜。
+    // The old UI kept only one collapsed state for the whole product turn, so an accepted guide
+    // could be inserted only as an ordinary row and could not restore an independent work area.
+    // The CLI must record segment boundaries; React cannot infer them from adjacent rows.
     const workSegments = [
       ...this.completeWorkSegments(existingSegments, startedAt),
       {
@@ -5575,8 +5726,9 @@ export class ProductProjection {
     const headerIndex = headerRowId === undefined ? undefined : this.rowIndexById.get(headerRowId);
     const startIndex = headerIndex === undefined ? 0 : headerIndex + 1;
     let row: AssistantTextRow | undefined;
-    // 性能问题根因：旧实现每个成功 turn 都复制并反转完整历史 rows，冷恢复会累积为
-    // 近似 O(turns * rows) 的分配与扫描。当前 turn 的行只会出现在自身 header 之后。
+    // Performance cause: the old implementation copied and reversed all historical rows for every
+    // successful turn, causing cold recovery to accumulate approximately O(turns * rows) allocations
+    // and scans. Rows for the current turn can appear only after its own header.
     for (let index = rows.length - 1; index >= startIndex; index -= 1) {
       const candidate = rows[index];
       if (candidate?.kind !== "assistantText" || candidate.turnId !== turnId) continue;
@@ -5603,9 +5755,10 @@ export class ProductProjection {
 
   private isMirroredSubagentToolEvent(event: SessionEvent): boolean {
     const payload = event.payload as unknown as Record<string, unknown>;
-    // Bug 原因：child tool lifecycle 会镜像到父 runtime，但它不是父 session 的工具事实。
-    // V4 过去把 mirror 当普通 ToolCallRow，导致 main timeline 展示 child 的 Read/Bash，
-    // 并让 replayable snapshot 同样带上脏 row。完整工具历史只应由 child topic 物化。
+    // Cause: child tool lifecycle is mirrored to the parent runtime, but it is not a tool fact for
+    // the parent session. V4 previously treated the mirror as an ordinary ToolCallRow, showing the
+    // child's Read/Bash on the main timeline and including the dirty row in replayable snapshots.
+    // The complete tool history should be materialized only by the child topic.
     return payload.source === "subagent";
   }
 
@@ -5646,7 +5799,8 @@ export class ProductProjection {
 
   private turnIdOf(event: SessionEvent): string {
     const runtimeTurnId = String(event.turnId ?? this.currentTurnId ?? "turn-unknown");
-    // queue drain 切轮后，同一 runtimeTurn 的后续事件行归入最新 productTurn。
+    // After queue drain splits a turn, subsequent event rows in the same runtimeTurn belong to the
+    // latest productTurn.
     return this.productTurnIdByRuntimeTurnId.get(runtimeTurnId) ?? runtimeTurnId;
   }
 
@@ -5702,10 +5856,12 @@ export class ProductProjection {
     const parentToolCallId = this.stringPayload(payload, "parentToolCallId");
     if (!parentToolCallId) return undefined;
     const turnId = this.turnIdOf(event);
-    // 晚订阅 hydration 无法从后台 Agent 的文本 tool output 恢复真实 agentId，
-    // 会先用 toolCallId 合成一条 SubagentRow。后到的 live lifecycle 携带真实 agentId，
-    // 旧逻辑因此追加第二行，UI 又会让无 childSessionId 的合成行抢占配对。父 tool call
-    // 在同一 turn 内是稳定唯一身份，这里将真实事件归并回合成行并补齐 childSessionId。
+    // Late-subscription hydration cannot recover the real agentId from a background Agent's text
+    // tool output, so it first synthesizes a SubagentRow using toolCallId. A later live lifecycle
+    // carries the real agentId, and the old logic appended a second row; the UI then let the
+    // synthetic row without childSessionId take precedence in pairing. The parent tool call is a
+    // stable unique identity within the turn, so merge the real event into the synthetic row and fill
+    // in childSessionId.
     return this.snapshot.rows.window.find(
       (row): row is SubagentRow =>
         row.kind === "subagent" &&
@@ -5747,11 +5903,12 @@ function isAskUserQuestionToolName(value: string | undefined): boolean {
 }
 
 /**
- * 把 core 的 tool display 收窄成 v4 协议能承载的那几种 kind。
+ * Narrow core tool display to the kinds that the v4 protocol can carry.
  *
- * 这份白名单原先在每个投影点各写一份内联判断，引入
- * create_workflow display 时漏改了其中一份，实时投影把图整个丢掉、而 hydration 路径没过滤，
- * 于是桌面端只有重载之后才看得到。收成一个谓词后，所有投影点共用同一份名单。
+ * This allowlist used to be duplicated as inline checks at each projection site. When create_workflow
+ * display was introduced, one check was missed: live projection dropped the entire graph, while
+ * hydration did not filter it, so Desktop showed it only after reload. Consolidate the checks into
+ * one predicate so every projection site shares the same allowlist.
  */
 function toProtocolToolCallDisplay(
   display: ToolResultDisplayPayload | undefined,
@@ -5763,14 +5920,15 @@ function toProtocolToolCallDisplay(
     case "respond_to_coordinator":
     case "mcp_tool":
     case "create_workflow":
-    // 观察类工作流工具的五个 display kind——shared 侧 toolCallDisplaySchema 已同步加
-    // 成员，这里放行后 UI 才能在 row.display 上拿到结构化载荷。
+    // The five display kinds for workflow observation tools. The shared toolCallDisplaySchema has
+    // added these members too; allowing them here lets the UI receive structured payloads on
+    // row.display.
     case "get_workflow_run":
     case "list_workflow_runs":
     case "eval_workflow_snippet":
     case "saved_workflow_list":
     case "list_models":
-    // ResumeWorkflowRun 的恢复卡。
+    // ResumeWorkflowRun recovery card.
     case "resume_workflow_run":
       return display;
     default:

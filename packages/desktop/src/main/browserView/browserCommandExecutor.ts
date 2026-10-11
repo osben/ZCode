@@ -34,10 +34,10 @@ export type {
 } from "./browserCommandTypes.js";
 
 /**
- * 核心子集：navigate / getState / screenshot / snapshot / click / type / press / scroll；
- * 其余（fill/waitFor/capabilities）返回 capability_unsupported；playwrightWaitForTimeout 由
- * BrowserGuestManager 在校验 scope/tab 后处理，不进入页面 executor。
- * 抛错结构化返回，不 throw（保证 host↔main 桥能拿到结果）。
+ * Core subset: navigate / getState / screenshot / snapshot / click / type / press / scroll.
+ * Other commands (fill/waitFor/capabilities) return capability_unsupported; BrowserGuestManager
+ * handles playwrightWaitForTimeout after validating scope/tab, outside the page executor.
+ * Return errors in a structured result instead of throwing so the host↔main bridge can receive them.
  */
 export async function executeBrowserCommandOnView(
   view: ControlledView,
@@ -101,7 +101,7 @@ export async function executeBrowserCommandOnView(
         return await handlePlaywrightAction(view, command.action, done, opts?.signal);
       default:
         // fill/waitFor/capabilities/getDialog/handleDialog/close/list/playwrightWaitForTimeout
-        // 未在本 executor 实现（由 manager 层或后续增量处理）。
+        // Not implemented in this executor (handled by the manager or a later increment).
         return done({
           ok: false,
           error: {
@@ -111,8 +111,9 @@ export async function executeBrowserCommandOnView(
         });
     }
   } catch (error) {
-    // AbortError 表示调用方主动终止当前 generation。过去统一包装成 execution_error，
-    // 会让上层误判为页面或 Playwright 执行失败，无法按取消生命周期清理请求。
+    // AbortError means the caller deliberately terminated the current generation. Previously it was
+    // always wrapped as execution_error, causing callers to treat cancellation as a page/Playwright
+    // failure and preventing request cleanup from following the cancellation lifecycle.
     const cancelled =
       opts?.signal?.aborted === true || (error instanceof Error && error.name === "AbortError");
     const timedOut =

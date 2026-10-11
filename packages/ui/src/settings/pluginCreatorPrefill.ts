@@ -6,7 +6,7 @@ export const PLUGIN_CREATOR_SKILL = "plugin-creator";
 export const PLUGIN_CREATOR_ID = "plugin-creator@zcode-plugins-official";
 
 export function buildPluginCreatorPrefill(skills: readonly SkillSummary[]): CreateTaskOptions {
-  // 创建入口只信任官方来源，不让用户目录或同名市场技能截获这项产品动作。
+  // The create entry trusts only official sources; user directories or same-named marketplace skills must not intercept this product action.
   const skill = skills.find(
     (entry) =>
       entry.name === PLUGIN_CREATOR_SKILL &&

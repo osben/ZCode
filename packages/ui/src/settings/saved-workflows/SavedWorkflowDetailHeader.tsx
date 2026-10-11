@@ -29,14 +29,12 @@ interface SavedWorkflowDetailHeaderProps {
   onRun: () => void;
   onRevise: () => void;
   onCopyPath: () => void;
-  /** 作用域动作：项目档「提升为全局」（AI 概括）/ 全局档「移到项目…」；仅在传入时出现。 */
+  /** Scope action: project-level "Promote to global" (AI summary) / global-level "Move to project…"; appears only when passed in. */
   onMove?: () => void;
   onDelete: () => void;
 }
 
-/**
- * 详情页头行：标题 + 说明 + 右上「运行」与 ⋯ 菜单。从详情页拆出以守住 max-lines（≤400）。
- */
+/** Detail-page header row: title + description + top-right Run and ⋯ menu. Extracted from the detail page to stay within max-lines (≤400). */
 export function SavedWorkflowDetailHeader({
   name,
   description,

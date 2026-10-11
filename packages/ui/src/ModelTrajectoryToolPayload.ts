@@ -41,7 +41,7 @@ function displayTrajectoryToolCallId(toolCallId: string): string {
 
 function formatTrajectoryToolPayload(value: unknown): string {
   if (typeof value === "string") return value;
-  // Tool Result 的错误采用结构化包装；展示与复制都应使用真实错误文本，避免泄漏传输层 JSON。
+  // Tool Result errors use a structured wrapper; display and copy the actual error text to avoid exposing transport-layer JSON.
   const errorText = trajectoryToolPayloadErrorText(value);
   if (errorText !== undefined) return errorText;
   if (isStringContentObject(value)) return value.content;

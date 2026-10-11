@@ -48,10 +48,7 @@ export function appendRemoteConnectionRuntimeLog(
     let matchingProgressIndex = -1;
     for (let index = currentLogs.length - 1; index >= 0; index -= 1) {
       const currentLog = currentLogs[index];
-      if (
-        currentLog &&
-        getRemoteTransferProgressKey(currentLog.message) === incomingProgressKey
-      ) {
+      if (currentLog && getRemoteTransferProgressKey(currentLog.message) === incomingProgressKey) {
         matchingProgressIndex = index;
         break;
       }
@@ -60,9 +57,10 @@ export function appendRemoteConnectionRuntimeLog(
     if (matchingProgressIndex >= 0) {
       const matchingLog = currentLogs[matchingProgressIndex];
       if (matchingLog) {
-        // 上传多个 remote 资源时不同文件的进度会交错到达，只合并相邻进度行时，
-        // 同一文件稍后再更新就会追加成一长串速度行。这里按“传输类型 + 文件标识”在整个日志窗口内去重，
-        // 并把最新进度移到末尾，保证每个活跃传输只占一行且最新速度始终靠近可视区域底部。
+        // Progress updates for multiple remote resources can interleave. Merging only adjacent
+        // progress rows caused later updates for the same file to append a long series of speed rows.
+        // Deduplicate across the entire log window by "transfer type + file identifier" and move the
+        // latest progress to the end, keeping one row per active transfer and the latest speed near the bottom.
         return [
           ...currentLogs.slice(0, matchingProgressIndex),
           ...currentLogs.slice(matchingProgressIndex + 1),
@@ -103,9 +101,7 @@ export function shouldAcceptRemoteConnectionRuntimeLog(
 export function useRemoteConnectionLogs(activeRequestId?: string | null) {
   const platform = usePlatform();
   const activeRequestIdRef = useRef(activeRequestId);
-  const [connectionLogs, setConnectionLogs] = useState<
-    RemoteConnectionLogEntry[]
-  >([]);
+  const [connectionLogs, setConnectionLogs] = useState<RemoteConnectionLogEntry[]>([]);
 
   useEffect(() => {
     activeRequestIdRef.current = activeRequestId;
@@ -139,10 +135,7 @@ export function useRemoteConnectionLogs(activeRequestId?: string | null) {
     setConnectionLogs([]);
   };
 
-  const appendConnectionLog = (
-    level: RemoteConnectionLogEntry["level"],
-    message: string,
-  ) => {
+  const appendConnectionLog = (level: RemoteConnectionLogEntry["level"], message: string) => {
     setConnectionLogs((currentLogs) => [
       ...currentLogs,
       {

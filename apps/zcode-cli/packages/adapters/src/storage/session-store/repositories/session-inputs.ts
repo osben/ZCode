@@ -1,7 +1,6 @@
-// session_input 账本仓库。
-// 语义：admitted（已接受）→ promoted（与 user message/parts 同事务落 transcript）
-// / cancelled / discarded / failed。promotion 的原子性是硬要求：杜绝
-// 「queue 已消费但 transcript 无 user message」的孤儿窗口（旧 drain 跨 store 无事务）。
+// session_input ledger repository.
+// Semantics: admitted (accepted) → promoted (committed to the transcript in the same transaction as the user message/parts)
+// / cancelled / discarded / failed. Promotion must be atomic to prevent the orphan state “queue consumed but no user message in the transcript” (the old drain crossed stores without a transaction).
 import type { DatabaseSync } from "node:sqlite";
 import type {
   MessageInfo,
@@ -42,8 +41,8 @@ export async function saveSessionInput(
   },
 ): Promise<void> {
   const now = Date.now();
-  // admitted_sequence 按 session 内账本单调分配；同 id 重入会用 runtime 的实际
-  // kind/delivery/payload 修正执行前预 admission，同时保留原序与状态（幂等）。
+  // admitted_sequence is allocated monotonically within the session ledger. Re-entry with the same id uses the
+  // runtime's actual kind/delivery/payload to correct pre-admission before execution while preserving the original sequence and state (idempotently).
   db.prepare(
     `
       insert into session_input (
@@ -133,7 +132,7 @@ function patchObject(value: unknown, patch: SessionInputPatch): unknown {
   };
 }
 
-/** queue edit/reorder 必须同步更新 durable intent，避免 CLI restart 后恢复旧 payload。 */
+/** Queue edit/reorder must update durable intent too, so a CLI restart does not restore the old payload. */
 export async function updateSessionInputs(
   db: DatabaseSync,
   input: {
@@ -161,7 +160,7 @@ export async function updateSessionInputs(
       if ("conversationInputIntent" in payload) {
         payload.conversationInputIntent = patchObject(payload.conversationInputIntent, update);
       }
-      // 兼容当前 runtime metadata；新写入权威格式仍是 conversationInputIntent。
+      // Support current runtime metadata; conversationInputIntent remains the authoritative format for new writes.
       if (update.intent) {
         payload.intent = update.intent;
       } else if ("intent" in payload && update.queuePosition !== undefined) {
@@ -320,7 +319,7 @@ export async function settleSessionInput(
     reason?: string;
   },
 ): Promise<void> {
-  // 只收口未终态的记录：promoted 后到达的迟到 discard 不得回退状态。
+  // Settle only non-terminal records; a late discard after promotion must not roll the state back.
   db.prepare(
     `
       update session_input

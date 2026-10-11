@@ -15,8 +15,8 @@ type FormalModelConnectivityExecutor = (
 ) => Promise<{ readonly success: true }>;
 
 /**
- * 设置页只负责把已经落盘并进入 Registry 的 ModelSelection 交给目标 Environment。
- * Provider 鉴权、headers、reasoning 映射和流消费全部由正式 Model 执行链负责。
+ * The settings page only passes a persisted ModelSelection registered in the Registry to the target Environment.
+ * Provider auth, headers, reasoning mapping, and stream consumption all belong to the normal Model execution path.
  */
 export function createProviderSettingsConnectivityTester(dependencies: {
   readonly testModelConnectivity: FormalModelConnectivityExecutor;

@@ -1,19 +1,19 @@
 // ============================================================
-// Workflow draft path - 「这个写入目标落在草稿目录里吗」的纯判定
+// Workflow draft path - pure check for whether a write target is inside the draft directory.
 // ============================================================
 //
-// 单独成模块有两个理由：PermissionService 只需要一个布尔值，不需要知道路径怎么比；
-// 而这条判定是免确认的**唯一**闸门，必须能脱离 service 被逐例测到（含 Windows 语义）。
-// 全程不碰文件系统：不 realpath、不 stat。权限判定必须是纯函数——同一份输入在任何机器上
-// 给出同一个答案，且不会因为一次磁盘读失败而把「不放行」错判成「放行」。
+// This is a separate module for two reasons: PermissionService needs only a boolean, not the path comparison details;
+// and this check is the **only** gate for skipping confirmation, so it must be testable case by case outside the service (including Windows semantics).
+// It never touches the filesystem: no realpath or stat. Permission checks must be pure so the same input
+// gives the same answer on every machine and a failed disk read cannot turn a denial into an allow.
 
 import nodePath from "node:path";
 
 import { WORKFLOW_DRAFTS_DIR } from "@zcode/contracts";
 
 /**
- * 判定所需的 `node:path` 子集。做成参数是为了在测试里注入 `path.win32` / `path.posix`：
- * 盘符、反斜杠和大小写这些 Windows 语义，只有用 win32 实现跑一遍才算验过。
+ * The subset of `node:path` needed for the check. It is a parameter so tests can inject `path.win32` / `path.posix`:
+ * Windows semantics such as drive letters, backslashes, and case are verified only when run with the win32 implementation.
  */
 export interface WorkflowDraftPathModule {
   isAbsolute: (path: string) => boolean;
@@ -22,40 +22,40 @@ export interface WorkflowDraftPathModule {
 }
 
 export interface WorkflowDraftPathInput {
-  /** 工具输入里的写入目标，相对路径按 workingDirectory 解析，绝对路径原样保留。 */
+  /** Write target from tool input; resolve relative paths against workingDirectory and keep absolute paths unchanged. */
   filePath: string;
-  /** 会话工作目录；缺席（空串）即不成立，见下。 */
+  /** Session working directory; if absent (empty string), the check does not match, as described below. */
   workingDirectory: string;
-  /** 平台 path 实现，默认取当前平台的 `node:path`。 */
+  /** Platform path implementation; defaults to the current platform's `node:path`. */
   pathModule?: WorkflowDraftPathModule;
 }
 
 /**
- * 命中草稿免确认的内置写文件工具。这两个共用 `edit` 权限名，且都以单一 `file_path` 指向
- * 目标——判定"目标在不在草稿目录里"才有意义。同为 `edit` 的 ApplyPatch 不在其列：它的输入是
- * `patch_text` 补丁正文，一次可以改多个文件，没有单一路径可判。
+ * Built-in file-writing tools eligible for draft-directory confirmation bypass. Both use the `edit` permission name
+ * and a single `file_path` target, so checking whether the target is in the draft directory is meaningful. ApplyPatch also uses `edit`
+ * but is excluded: its `patch_text` input can change multiple files and has no single path to check.
  */
 const WORKFLOW_DRAFT_PREAPPROVED_TOOL_NAMES = new Set(["Edit", "Write"]);
 
 export interface WorkflowDraftWriteInput {
   toolName: string;
-  /** 工具输入（尚未按具体工具的 schema 解析），只从中取 `file_path`。 */
+  /** Tool input before validation against a specific tool schema; only `file_path` is read. */
   input: unknown;
-  /** 会话工作目录；调用方拿不到时可以缺席，缺席即不免确认。 */
+  /** Session working directory; callers may omit it if unavailable, which means confirmation is not bypassed. */
   workingDirectory?: string;
   pathModule?: WorkflowDraftPathModule;
 }
 
 /**
- * 这次工具调用是不是「往草稿目录里写」，也就是能不能免掉确认窗。
+ * Check whether this tool call writes into the draft directory and can therefore skip the confirmation dialog.
  *
- * 为什么安全：那个目录是机器自有的——里面的文件由工具自己写下，目录自带 `*` 的 .gitignore
- * 而不进版本库，用户不会往里放需要保护的东西，改动一份草稿不影响项目里任何东西。而
- * 「让脚本跑起来」另有一道闸：CreateWorkflow 声明 alwaysAsk，确认窗看的是提交上来的脚本，
- * 无论该文件曾被改成什么样。所以放行这里的写入并不等于放行任何执行。
+ * Why it is safe: this is a machine-owned directory whose files are written by the tool itself; its .gitignore excludes everything,
+ * the files are not versioned, and users do not store protected data there. Changing a draft does not affect the project.
+ * Running a script has a separate gate: CreateWorkflow declares alwaysAsk, and the confirmation dialog reviews the submitted script
+ * regardless of how this file was edited. Allowing a write here does not authorize execution.
  *
- * 没有 workingDirectory（调用方没传）就一律不成立：免确认的前提是能算出目标落在哪，
- * 算不出时该弹的窗照弹。
+ * If workingDirectory is absent (not supplied by the caller), the check never matches: confirmation can be skipped only when the target location can be determined;
+ * if it cannot, show the dialog.
  */
 export function isPreapprovedWorkflowDraftWrite(input: WorkflowDraftWriteInput): boolean {
   if (!WORKFLOW_DRAFT_PREAPPROVED_TOOL_NAMES.has(input.toolName)) return false;
@@ -70,20 +70,20 @@ export function isPreapprovedWorkflowDraftWrite(input: WorkflowDraftWriteInput):
   });
 }
 
-/** `filePath` 是否落在 `<workingDirectory>/.zcode/workflow-drafts/` 之内。 */
+/** Check whether `filePath` is inside `<workingDirectory>/.zcode/workflow-drafts/`. */
 export function isWorkflowDraftPath(input: WorkflowDraftPathInput): boolean {
   const path = input.pathModule ?? nodePath;
-  // 没有工作目录就没有"哪个项目的草稿目录"可言，宁可不放行：免确认的前提是目标可被定位。
+  // Without a working directory there is no way to identify the project's draft directory; deny the bypass because the target must be locatable.
   if (input.workingDirectory.length === 0 || input.filePath.length === 0) return false;
 
   const draftsDir = path.resolve(input.workingDirectory, WORKFLOW_DRAFTS_DIR);
   const resolved = path.resolve(input.workingDirectory, input.filePath);
   const relativePath = path.relative(draftsDir, resolved);
 
-  // 三个条件缺一不可：非空排除「目标就是目录本身」，非绝对排除跨盘符（Windows 上
-  // `relative("C:\\a", "D:\\b")` 返回的是绝对路径而不是 `..`），不以 `..` 开头排除穿越。
-  // 只看路径字符串，不看文件系统：`.zcode/workflow-drafts-other/x.ts` 因此不会因为前缀
-  // 相同被误判为目录内——`relative` 给出的是 `../workflow-drafts-other/x.ts`。
+  // All three conditions are required: non-empty excludes the directory itself; non-absolute excludes another drive
+  // (on Windows, `relative("C:\\a", "D:\\b")` returns an absolute path, not `..`); not starting with `..` excludes traversal.
+  // This checks path strings, not the filesystem: `.zcode/workflow-drafts-other/x.ts` will not be mistaken for a child based on its prefix;
+  // `relative` returns `../workflow-drafts-other/x.ts`.
   return (
     relativePath.length > 0 && !path.isAbsolute(relativePath) && !relativePath.startsWith("..")
   );

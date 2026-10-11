@@ -1,8 +1,8 @@
 import { applyTheme, type Theme, type ThemeSelection } from "../useTheme.js";
 
 /**
- * 返回一个同步函数：模式切换到 system 时订阅系统亮暗变化，切离 system 时取消订阅。
- * getSelection 每次都读取最新状态，保证监听回调应用的是当前配色而不是订阅时的配色。
+ * Returns a synchronization function: subscribe to system light/dark changes when switching to system mode, and unsubscribe when leaving it.
+ * getSelection reads the latest state each time so the listener applies the current colors rather than those from subscription time.
  */
 export function createSystemThemeSync(getSelection: () => ThemeSelection) {
   let cleanup: (() => void) | null = null;
@@ -21,8 +21,8 @@ export function createSystemThemeSync(getSelection: () => ThemeSelection) {
         return;
       }
 
-      // system 模式需要持续订阅系统亮暗变化，不能只在切换到 system 的瞬间应用一次。
-      // 否则用户后续切系统主题时，DOM 上的 dark class 不会同步更新，看起来就像“跟随系统失效”。
+      // System mode must stay subscribed to system light/dark changes; applying them only once when switching to system is insufficient.
+      // Otherwise, when the user changes the system theme later, the DOM's dark class will not update and "follow system" will appear broken.
       applyTheme("system", getSelection().palette);
     };
 
@@ -34,8 +34,8 @@ export function createSystemThemeSync(getSelection: () => ThemeSelection) {
       return;
     }
 
-    // 某些 Electron / Chromium 组合仍然只支持旧版 MediaQueryList listener API。
-    // 如果这里只调用 addEventListener，system 模式切系统主题时会完全收不到通知。
+    // Some Electron/Chromium combinations still support only the legacy MediaQueryList listener API.
+    // If only addEventListener is called here, system mode will receive no notification when the system theme changes.
     mediaQuery.addListener(handleSystemThemeChange);
     cleanup = () => {
       mediaQuery.removeListener(handleSystemThemeChange);

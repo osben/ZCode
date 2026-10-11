@@ -90,7 +90,9 @@ function normalizePathPattern(pattern: string | undefined): string | undefined {
 
 function assertNonEmptyString(value: unknown, field: string, ruleIndex: number): string {
   if (typeof value !== "string" || value.trim().length === 0) {
-    throw new Error(`Invalid fs fault rule at index ${ruleIndex}: ${field} must be a non-empty string`);
+    throw new Error(
+      `Invalid fs fault rule at index ${ruleIndex}: ${field} must be a non-empty string`,
+    );
   }
   return value.trim();
 }
@@ -100,7 +102,9 @@ function parseOperations(value: unknown, ruleIndex: number): readonly FsFaultOpe
     return ["any"];
   }
   if (!Array.isArray(value) || value.length === 0) {
-    throw new Error(`Invalid fs fault rule at index ${ruleIndex}: operations must be a non-empty array`);
+    throw new Error(
+      `Invalid fs fault rule at index ${ruleIndex}: operations must be a non-empty array`,
+    );
   }
   return value.map((operation) => {
     if (typeof operation !== "string" || !SUPPORTED_OPERATIONS.has(operation as FsFaultOperation)) {
@@ -117,7 +121,9 @@ function parseMaxMatches(value: unknown, ruleIndex: number): number {
     return 1;
   }
   if (typeof value !== "number" || !Number.isInteger(value) || value < 0) {
-    throw new Error(`Invalid fs fault rule at index ${ruleIndex}: maxMatches must be a non-negative integer`);
+    throw new Error(
+      `Invalid fs fault rule at index ${ruleIndex}: maxMatches must be a non-negative integer`,
+    );
   }
   return value;
 }
@@ -138,8 +144,12 @@ function normalizeRule(input: FsFaultRuleConfig, ruleIndex: number): NormalizedF
   const code = assertNonEmptyString(record.code, "code", ruleIndex);
   const operations = new Set(parseOperations(record.operations, ruleIndex));
   const maxMatches = parseMaxMatches(record.maxMatches, ruleIndex);
-  const pathIncludes = normalizePathPattern(parseOptionalString(record.pathIncludes, "pathIncludes", ruleIndex));
-  const pathEndsWith = normalizePathPattern(parseOptionalString(record.pathEndsWith, "pathEndsWith", ruleIndex));
+  const pathIncludes = normalizePathPattern(
+    parseOptionalString(record.pathIncludes, "pathIncludes", ruleIndex),
+  );
+  const pathEndsWith = normalizePathPattern(
+    parseOptionalString(record.pathEndsWith, "pathEndsWith", ruleIndex),
+  );
   const pathRegexRaw = parseOptionalString(record.pathRegex, "pathRegex", ruleIndex);
   const message = parseOptionalString(record.message, "message", ruleIndex);
 
@@ -299,7 +309,7 @@ export function createFsFaultInjectorFromEnv(
     return createFsFaultInjector();
   }
 
-  // 测试故障注入必须默认被生产环境隔离，避免用户机器残留环境变量后误伤真实配置和会话落盘。
+  // Test fault injection must be isolated from production by default so leftover environment variables on a user's machine cannot affect real configuration or session writes.
   if (env.ZCODE_ENV !== "test" && env[ZCODE_E2E_FS_FAULTS_ALLOW_ENV] !== "1") {
     return createFsFaultInjector();
   }

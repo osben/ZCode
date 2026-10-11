@@ -1,5 +1,5 @@
 // ============================================================
-// ListWorkflowRuns Tool - 按项目（cwd）枚举 workflow run，含跨会话历史
+// ListWorkflowRuns Tool - list workflow runs for the project (cwd), including cross-session history
 // ============================================================
 
 import { z } from "zod";
@@ -8,9 +8,11 @@ import { toToolJsonSchema } from "./json-schema.js";
 export const LIST_WORKFLOW_RUNS_TOOL_NAME = "ListWorkflowRuns";
 
 /**
- * run 的生命周期词汇表。字面与 `DynamicWorkflowRunLifecycleStatus`（端口侧）同集，但在这里
- * 重新声明成 zod 枚举：schema 是**运行时**校验面，type-only 的联合类型在这里派不上用场。
- * 两处一旦分叉，症状是模型传下来的合法状态被工具拒掉——所以端口那一侧的注释也指回这里。
+ * Workflow-run lifecycle vocabulary. The literals match the port's
+ * `DynamicWorkflowRunLifecycleStatus`, but are redeclared here as a zod enum because the schema
+ * is the **runtime** validation surface; a type-only union cannot serve that purpose. If the
+ * two diverge, the tool will reject a valid status from the model, so the port-side comment
+ * also points here.
  */
 export const WORKFLOW_RUN_LIFECYCLE_STATUSES = [
   "completed",
@@ -20,7 +22,7 @@ export const WORKFLOW_RUN_LIFECYCLE_STATUSES = [
   "stopped",
 ] as const;
 
-/** `stopped` 的原因（端口 `DynamicWorkflowRunStopReason` 的 zod 面）。 */
+/** Reasons for `stopped` (zod surface for the port's `DynamicWorkflowRunStopReason`). */
 export const WORKFLOW_RUN_STOP_REASONS = [
   "user",
   "model",
@@ -29,7 +31,7 @@ export const WORKFLOW_RUN_STOP_REASONS = [
   "superseded",
 ] as const;
 
-/** limit 的界与默认值。50 是「run 是低基数实体」下不需要游标分页的那个上限。 */
+/** Bounds and default for limit. 50 is the maximum that avoids cursor pagination for a low-cardinality entity like a run. */
 export const LIST_WORKFLOW_RUNS_MIN_LIMIT = 1;
 export const LIST_WORKFLOW_RUNS_MAX_LIMIT = 50;
 export const LIST_WORKFLOW_RUNS_DEFAULT_LIMIT = 20;
@@ -46,8 +48,9 @@ export const ListWorkflowRunsInputSchema = z
         "Optional status filter. Omit to see every run in this project. Pass [\"running\", \"pending\"] to see only what is still in flight.",
       ),
   })
-  // 刻意没有 cwd 输入：工具恒查当前会话的工作目录（模型无权跨项目扫库，这同时是
-  // `sideEffectScope: "none"` 成立的前提）。.strict() 让"多传一个 cwd"成为可见错误。
+  // Deliberately no cwd input: the tool always queries the current session's working directory
+  // (the model cannot query other projects, which is also required for `sideEffectScope: "none"`).
+  // .strict() makes an extra cwd argument a visible error.
   .strict();
 
 export type ListWorkflowRunsInput = z.infer<typeof ListWorkflowRunsInputSchema>;
@@ -55,29 +58,31 @@ export type ListWorkflowRunsInput = z.infer<typeof ListWorkflowRunsInputSchema>;
 export const ListWorkflowRunsInputJsonSchema = toToolJsonSchema(ListWorkflowRunsInputSchema);
 
 /**
- * 列表与详情**共同的截面**（端口侧 `DynamicWorkflowRunSummary` 的 schema 面）。
+ * **Shared summary** for list and detail (schema surface for the port's
+ * `DynamicWorkflowRunSummary`).
  *
- * 之所以是一个共享的字段袋而不是两份各自演化的字段表：同一个 run 在列表里和详情里显示不同的
- * 名字或归属，是最难被测试抓住、又最直接损害信任的那类不一致。字段袋放在**列表**这一侧，
- * 因为列表就是这个截面最浅的投影；详情按它 extend。
+ * Use one shared set of fields rather than two independently evolving tables: showing the same
+ * run with different names or ownership in the list and detail view is hard to catch in tests
+ * and directly undermines trust. Keep the shared fields on the **list** side because the list
+ * is the shallowest projection of this summary; detail extends it.
  */
 export const WorkflowRunSummarySchema = z.object({
   runId: z.string().min(1),
-  /** 已烹熟的展示标签（name → 脚本首行 → runId 由服务侧派生）。 */
+  /** Resolved display label (name → first script line → runId, derived by the service). */
   label: z.string(),
-  /** `"name"` = 用户起的名字；`"script"` = 读时从脚本派生（含 runId 兜底）。 */
+  /** `"name"` = name supplied by the user; `"script"` = derived from the script when read (including runId fallback). */
   labelSource: z.enum(["name", "script"]),
   status: z.enum(WORKFLOW_RUN_LIFECYCLE_STATUSES),
-  /** `status === "stopped"` 才在场。 */
+  /** Present only when `status === "stopped"`. */
   stopReason: z.enum(WORKFLOW_RUN_STOP_REASONS).optional(),
-  /** 本 run 修订自哪个 run（`dwf_run.resumed_from`）；不是修订则缺席。 */
+  /** Run this one was amended from (`dwf_run.resumed_from`); omitted when it is not an amendment. */
   resumedFrom: z.string().min(1).optional(),
-  /** 本 run 被哪次修订停下并替代（`stopped(superseded)` 的结算袋）；未被替代则缺席。 */
+  /** Amendment that stopped and replaced this run (settlement data for `stopped(superseded)`); omitted when it was not replaced. */
   supersededBy: z.string().min(1).optional(),
   ownedByThisSession: z.boolean(),
-  /** 「本会话无法证实它还活着」的标注，为真时才在场。绝不是状态改写。 */
+  /** Marker that this session cannot confirm the run is still alive; present only when true. Never rewrites the status. */
   possiblyInterrupted: z.boolean().optional(),
-  /** epoch ms（journal 的 time_created / time_updated）。 */
+  /** Epoch milliseconds (`time_created` / `time_updated` in the journal). */
   createdAt: z.number(),
   updatedAt: z.number(),
 });
@@ -91,7 +96,7 @@ export type ListWorkflowRunsRun = z.infer<typeof ListWorkflowRunsRunSchema>;
 export const ListWorkflowRunsOutputSchema = z
   .object({
     runs: z.array(ListWorkflowRunsRunSchema),
-    /** 还有更多 run 没进这一页（按 limit+1 探到）。为真时才在场。 */
+    /** More runs remain beyond this page (detected by fetching limit+1); present only when true. */
     truncated: z.boolean().optional(),
   })
   .strict();
@@ -101,14 +106,15 @@ export type ListWorkflowRunsOutput = z.infer<typeof ListWorkflowRunsOutputSchema
 export const ListWorkflowRunsOutputJsonSchema = toToolJsonSchema(ListWorkflowRunsOutputSchema);
 
 /**
- * limit 是**钳制**而不是拒绝：一次只读枚举没有理由因为一个越界数字变成模型要从中恢复的工具
- * 错误；`limit` 默认 20，并钳到 [1, 50]。
+ * Clamp rather than reject limit: a read-only listing should not become a tool error the model
+ * must recover from just because a number is out of range. `limit` defaults to 20 and is
+ * clamped to [1, 50].
  *
- * 钳制放在 preprocess 里而不是 handler 里，图的是两件事同时成立：JSON schema 仍然按内层
- * schema 投影（`type: integer` + minimum/maximum/default，模型看得到界），而运行时的越界值被
- * 折进界内。写在 handler 里的 `Math.min/max` 会被本 schema 的 min/max 抢先拒掉，是永不执行的
- * 死代码。语义强制转换走 preprocess 是既有惯例（task-output 的 semanticBoolean、bash 的
- * timeout）。
+ * Clamp in preprocess rather than the handler to preserve two properties: JSON schema still
+ * projects the inner schema (`type: integer` + minimum/maximum/default, visible to the model),
+ * while out-of-range runtime values are brought within bounds. `Math.min/max` in the handler
+ * would be rejected by this schema's min/max first and never execute. Semantic coercion in
+ * preprocess follows existing conventions (task-output's semanticBoolean and bash's timeout).
  */
 function clampedLimit(): z.ZodEffects<z.ZodDefault<z.ZodNumber>, number, unknown> {
   return z.preprocess((value) => {

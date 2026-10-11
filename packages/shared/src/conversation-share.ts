@@ -8,21 +8,22 @@ import {
 } from "./zcode-protocol-v4/rows.js";
 
 /**
- * 分享站按语言分路径：中文站带 /cn 前缀，英文站是裸 /share。
- * web 路由、发布回链改写、导入回链共用这一份定义，避免三处各写一遍前缀。
+ * Share-site paths are locale-specific: the Chinese site uses the /cn prefix, while the English site
+ * uses /share without a prefix. Web routing, published-link rewriting, and imported-link handling share
+ * this definition instead of duplicating the prefix in three places.
  */
 const CONVERSATION_SHARE_LOCALE_PATH_PREFIX: Readonly<Record<Locale, string>> = {
   "zh-CN": "/cn",
   "en-US": "",
-  // 分享站只有中英两版，uk 走英文站。
+  // The share site supports Chinese and English only; Ukrainian uses the English site.
   "uk-UA": "",
 };
 
 const CONVERSATION_SHARE_PATHNAME_RE = /^\/(cn\/)?share\/([^/]+)\/?$/u;
 
 /**
- * 解析分享页 pathname，返回未解码的 code 段与该路径对应的语言。
- * 只认 `/share/<code>` 与 `/cn/share/<code>` 两种形状；调用方负责 code 的解码与安全校验。
+ * Parse a share-page pathname and return the undecoded code segment and the locale for that path.
+ * Recognize only `/share/<code>` and `/cn/share/<code>`; callers handle code decoding and validation.
  */
 export function parseConversationSharePathname(
   pathname: string,
@@ -33,11 +34,12 @@ export function parseConversationSharePathname(
 }
 
 /**
- * 把分享链接改写到目标语言站点。
+ * Rewrite a share link for the target locale's site.
  *
- * 只在 pathname 精确匹配已知分享形状时改写，且只替换语言前缀、不碰 code 段
- * （避免 decode/encode 往返改变 code）。其它任何形状原样返回 —— 服务端将来若改用
- * 别的 URL 形状或独立域名，这里会安静地不作为，而不是改错。
+ * Rewrite only when the pathname exactly matches a known share shape, and replace only the locale
+ * prefix without touching the code segment (avoiding changes from a decode/encode round trip). Return
+ * every other shape unchanged. If the server later adopts a different URL shape or a separate domain,
+ * this function will leave it alone rather than rewriting it incorrectly.
  */
 export function localizeConversationShareUrl(shareUrl: string, locale: Locale): string {
   let url: URL;
@@ -60,36 +62,40 @@ export const conversationShareAccessModeSchema = z.enum([
 export type ConversationShareAccessMode = z.infer<typeof conversationShareAccessModeSchema>;
 
 /**
- * 本端产出与理解的分享载荷版本。
+ * Share-payload version produced and understood by this client.
  *
- * 只有 rows 的语义发生「不可跳过的」破坏性变化时才 bump（新增 row kind / enum 值不算——
- * 那些由 decodeConversationShareRows 逐行降级消化）。bump 一次就等于让所有存量客户端和
- * 所有已部署的落地页镜像同时看不了新分享，所以 bump 前必须先看存量版本占比。
+ * Bump only for a breaking change in row semantics that cannot be skipped. New row kinds and enum
+ * values do not count; decodeConversationShareRows handles those row by row. A bump makes all older
+ * clients and deployed landing-page mirrors unable to read new shares, so check the installed-version
+ * distribution before bumping.
  */
 export const CONVERSATION_SHARE_SCHEMA_VERSION = 1;
 
 /**
- * 入站 schema_version 一律先按数字收下，再由 isConversationShareSchemaVersionSupported
- * 判定。用 z.literal 会让「版本太新」和「响应形状不对」挤进同一个 invalid_contract，
- * 用户看到的是「分享格式无效」而不是「请升级 ZCode」。
+ * Accept inbound schema_version as a number first, then check it with
+ * isConversationShareSchemaVersionSupported. Using z.literal would group "version too new" with
+ * "response shape invalid" under the same invalid_contract error, so the user would see "invalid share
+ * format" instead of "please upgrade ZCode."
  */
 const conversationShareSchemaVersionSchema = z.number().int().positive();
 
-/** 版本高于本端认知时不猜语义：调用方必须转成「请升级」而不是通用契约错误。 */
+/** Do not guess semantics for a version newer than this client supports; callers must report an upgrade request instead of a generic contract error. */
 export function isConversationShareSchemaVersionSupported(version: number): boolean {
   return version <= CONVERSATION_SHARE_SCHEMA_VERSION;
 }
 
 /**
- * 逐行解码公开投影 rows，认不出的行跳过并计数。
+ * Decode public-projection rows individually, skipping and counting rows this client does not recognize.
  *
- * 传输层刻意不理解 row 语义（wire 上 rows 是 unknown[]）：整份分享不能因为其中一行用了
- * 新 kind、新 enum 值或新 timelineMarker type 就打不开。一个机制覆盖这三种情况，因此
- * 也不需要给任何 enum 配 .catch(fallback)——猜错枚举语义比丢一行危险得多。
+ * The transport layer intentionally does not interpret row semantics (rows are unknown[] on the wire),
+ * so one row with a new kind, enum value, or timelineMarker type cannot make the entire share unreadable.
+ * One mechanism handles all three cases, so enums do not need .catch(fallback): guessing enum semantics
+ * incorrectly is more dangerous than dropping a row.
  *
- * 渲染链本来就容错（buildConversationTurnRenderUnits 把认不出的 kind 归入 assistantWork，
- * ConversationShareReadonlyTimeline 的 switch 认不出就不渲染），所以这里只需要不抛。
- * 计数交给调用方转成「部分内容需要更新 ZCode 查看」的软提示，不能静默。
+ * The rendering pipeline is already tolerant: buildConversationTurnRenderUnits groups unknown kinds
+ * under assistantWork, and ConversationShareReadonlyTimeline skips unknown values in its switch. This
+ * decoder only needs to avoid throwing. Callers turn the count into a soft warning that some content
+ * requires an updated ZCode; do not omit it silently.
  */
 export function decodeConversationShareRows(rows: readonly unknown[]): {
   rows: ConversationRow[];
@@ -132,10 +138,10 @@ const conversationShareArtifactDescriptorFields = {
 } as const;
 
 /**
- * 出站 descriptor（upload / confirm）：严格，用来抓自己的 bug。
+ * Outbound descriptor (upload / confirm): strict, to catch our own bugs.
  *
- * 出站严格、入站宽容是这份契约的通用纪律：我们发出去的东西多一个字段是我们的错，
- * 服务端回来的东西多一个字段是它的自由。
+ * The general rule for this contract is strict outbound and tolerant inbound: an extra field in our
+ * request is our bug; an extra field in the server response is allowed.
  */
 export const conversationShareArtifactDescriptorSchema = z
   .object(conversationShareArtifactDescriptorFields)
@@ -144,15 +150,16 @@ export type ConversationShareArtifactDescriptor = z.infer<
   typeof conversationShareArtifactDescriptorSchema
 >;
 
-/** 入站 descriptor（preview / continuation 回显）：允许服务端加字段。 */
+/** Inbound descriptor (preview / continuation response): allows the server to add fields. */
 export const conversationShareInboundArtifactDescriptorSchema = z.object(
   conversationShareArtifactDescriptorFields,
 );
 
 const conversationShareAllowedArtifactShapeSchema = z.object({
-  // 故意不用 artifact type 枚举：capabilities 是服务端的能力发现列表，后端新增一种
-  // 结果物类型不能让整个响应校验失败、把发布（包括不含任何结果物的发布）一起打死。
-  // 未知类型在 narrow 时丢弃——客户端产不出这种类型，参与不了任何 allow 判断。
+  // Intentionally do not use an artifact-type enum: capabilities is the server's capability-discovery
+  // list, and a new artifact type must not invalidate the whole response and block every publish,
+  // including publishes without artifacts. Discard unknown types while narrowing; this client cannot
+  // produce them, so they cannot participate in any allow check.
   type: z.string().trim().min(1),
   extensions: z.array(z.string().trim().min(1)),
   mime_types: z.array(z.string().trim().min(1)),
@@ -168,10 +175,11 @@ const conversationShareCapabilitiesBaseFields = {
 };
 
 /**
- * 线上响应形状：非 strict，且 type / access mode 的取值向前兼容。
+ * Wire response shape: non-strict, with forward-compatible type and access-mode values.
  *
- * access_modes 与 allowed_artifacts 同理：后端上线一种新访问模式，不能把老客户端的
- * 能力发现（即整个发布入口）打死。未知取值在 narrow 时丢弃——客户端选不出它不认识的模式。
+ * As with allowed_artifacts, a new backend access mode must not break capability discovery (and thus
+ * the entire publish entry point) on older clients. Discard unknown values while narrowing; a client
+ * cannot select a mode it does not recognize.
  */
 export const conversationShareCapabilitiesWireSchema = z.object({
   ...conversationShareCapabilitiesBaseFields,
@@ -183,7 +191,7 @@ export type ConversationShareCapabilitiesWire = z.infer<
   typeof conversationShareCapabilitiesWireSchema
 >;
 
-/** narrow 之后的内部形状：取值已收窄到本端认识的枚举，可以继续严格。 */
+/** Internal shape after narrowing: values are limited to enums recognized by this client and can be validated strictly. */
 export const conversationShareCapabilitiesDataSchema = z
   .object({
     ...conversationShareCapabilitiesBaseFields,
@@ -203,13 +211,15 @@ export const conversationShareCapabilitiesDataSchema = z
 export type ConversationShareCapabilities = z.infer<typeof conversationShareCapabilitiesDataSchema>;
 
 /**
- * 丢弃客户端不认识的结果物类型与访问模式，并把被丢弃的取值回报给调用方做日志。
+ * Discard artifact types and access modes this client does not recognize, and return the discarded
+ * values to the caller for logging.
  *
- * 注意丢弃只对「客户端确实产不出/选不出的取值」无损。一旦本地能把某个可上传扩展名抽成
- * 预览候选（见 conversation-preview-artifacts 的 PREVIEW_FILE_TYPES），却没有把对应类型加进
- * conversationArtifactTypeSchema，这里就会把服务端明明允许的类型削掉，然后拿被削过的白名单
- * 反过来告诉用户「该类型不支持」——md 曾经就是这样被误判的。video/audio 是只用于内部预览
- * warning 的明确例外，不应加入可上传 artifact 枚举。
+ * Discarding is lossless only for values the client truly cannot produce or select. If the client can
+ * turn an uploadable extension into a preview candidate (see PREVIEW_FILE_TYPES in
+ * conversation-preview-artifacts) but has not added its type to conversationArtifactTypeSchema, this
+ * will remove a type the server allows and then incorrectly tell the user it is unsupported. Markdown
+ * was misclassified this way before. Video/audio are explicit exceptions used only for internal preview
+ * warnings and must not be added to the uploadable artifact enum.
  */
 export function narrowConversationShareCapabilities(wire: ConversationShareCapabilitiesWire): {
   capabilities: ConversationShareCapabilities;
@@ -246,7 +256,7 @@ export const conversationShareConfirmDataSchema = z.object({
 });
 export type ConversationShareRecord = z.infer<typeof conversationShareConfirmDataSchema>;
 
-// 出站请求保持 strict：schema_version 写死本端常量，多一个字段是我们自己的 bug。
+// Keep outbound requests strict: schema_version is fixed to this client's constant, and an extra field is our bug.
 export const conversationSharePreparationRequestSchema = z
   .object({
     client_request_id: z.string().trim().min(1),
@@ -296,19 +306,19 @@ const conversationShareIntegrityFields = {
   artifact_set_sha256: conversationShareSha256Schema,
 } as const;
 
-/** 入站 integrity：非 strict，服务端将来多带一个摘要字段不该打死响应。 */
+/** Inbound integrity: non-strict so an additional future server digest field does not invalidate the response. */
 export const conversationShareIntegritySchema = z.object(conversationShareIntegrityFields);
 export type ConversationShareIntegrity = z.infer<typeof conversationShareIntegritySchema>;
 
 /**
- * 出站 integrity：strict。confirm 只提交两个摘要（不含 payload_sha256），
- * 多带一个字段是本端的 bug，必须当场炸掉而不是发到线上。
+ * Outbound integrity: strict. confirm submits only two digests (not payload_sha256); an extra field is
+ * our bug and must fail here instead of being sent to production.
  */
 const conversationShareOutboundIntegritySchema = z
   .object(conversationShareIntegrityFields)
   .strict();
 
-// 出站请求：rows 用正式 row schema 且全程 strict——发出去的投影必须是我们完全理解的东西。
+// Outbound request: validate rows with the formal row schema and keep the request strict; we must fully understand every projection we send.
 export const conversationShareConfirmRequestSchema = z
   .object({
     selected_product_turn_ids: z.array(z.string().trim().min(1)).min(1),
@@ -343,10 +353,11 @@ export const conversationSharePreviewArtifactSchema =
   });
 
 /**
- * 入站 wire 形状：rows 是 unknown[]，由 decodeConversationShareRows 逐行降级。
+ * Inbound wire shape: rows are unknown[] and decodeConversationShareRows downgrades them individually.
  *
- * 传输层不理解 row 语义是刻意的——否则老客户端遇到一行新 kind 就整份分享打不开。
- * 对外类型 ConversationSharePreview 是「解码后」的形状，不从这份 schema 推断。
+ * The transport layer intentionally does not interpret row semantics; otherwise an older client would
+ * be unable to open an entire share when it encounters one row with a new kind. The public type
+ * ConversationSharePreview represents the decoded shape and is not inferred from this schema.
  */
 export const conversationSharePreviewDataSchema = z.object({
   schema_version: conversationShareSchemaVersionSchema,
@@ -358,7 +369,7 @@ export const conversationSharePreviewDataSchema = z.object({
 export type ConversationSharePreviewWire = z.infer<typeof conversationSharePreviewDataSchema>;
 export type ConversationSharePreview = Omit<ConversationSharePreviewWire, "rows"> & {
   rows: ConversationRow[];
-  /** 本端认不出、已跳过的行数；>0 时 UI 必须给「部分内容需要更新 ZCode 查看」软提示。 */
+  /** Number of rows skipped because this client does not recognize them; when >0, the UI must show a soft warning that some content requires an updated ZCode. */
   unsupportedRowCount: number;
 };
 
@@ -394,13 +405,13 @@ export type ConversationShareContinuationWire = z.infer<
 >;
 export type ConversationShareContinuation = Omit<ConversationShareContinuationWire, "rows"> & {
   rows: ConversationRow[];
-  /** 未解析的原始 rows：落盘只读副本时按原样保存，避免未知字段被本端永久抹掉。 */
+  /** Unparsed raw rows, preserved as-is in the on-disk read-only copy so unknown fields are not permanently lost by this client. */
   rawRows: readonly unknown[];
-  /** 本端认不出、已跳过的行数；>0 时 UI 必须给「部分内容需要更新 ZCode 查看」软提示。 */
+  /** Number of rows skipped because this client does not recognize them; when >0, the UI must show a soft warning that some content requires an updated ZCode. */
   unsupportedRowCount: number;
 };
 
-/** 本端已知的业务错误码；wire 上不做枚举校验，未知码保留服务端 msg 并落 unknown。 */
+/** Business error codes known to this client; do not enum-validate on the wire, so unknown codes retain the server msg and map to unknown. */
 export const conversationShareKnownErrorCodeSchema = z.union([
   z.literal(3001),
   z.literal(3002),
@@ -423,8 +434,9 @@ export const conversationShareKnownErrorCodeSchema = z.union([
 export type ConversationShareApiErrorCode = z.infer<typeof conversationShareKnownErrorCodeSchema>;
 
 /**
- * 错误信封对 code 不设枚举：后端上线一个新业务码时，老客户端应该照样能拿到服务端 msg，
- * 而不是整条信封解析失败、退化成没有上下文的 "HTTP 4xx"。
+ * Do not enum-validate code in the error envelope. When the backend adds a business code, older clients
+ * should still receive the server msg instead of failing to parse the envelope and degrading it to a
+ * context-free "HTTP 4xx".
  */
 export const conversationShareErrorEnvelopeSchema = z.object({
   code: z.number().int(),
@@ -437,7 +449,8 @@ export function createConversationShareSuccessEnvelopeSchema<TSchema extends z.Z
 ) {
   return z.object({
     code: z.literal(0),
-    // msg 曾是 z.literal("")：后端哪天回个 "ok" 就会把所有成功响应判成契约错误。
+    // msg used to be z.literal(""). If the backend ever returned "ok", every successful response would
+    // be treated as a contract error.
     msg: z.string(),
     data: dataSchema,
   });

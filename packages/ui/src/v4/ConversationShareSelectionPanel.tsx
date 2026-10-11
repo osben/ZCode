@@ -21,8 +21,8 @@ export interface ConversationShareSelectionPanelProps {
 }
 
 const PANEL_LAYOUT_STYLE: CSSProperties = {
-  // 固定高度会让少量候选留下大块空白，并在底部 dock 增高时覆盖输入区。
-  // 面板自身按内容自然撑开，max-height 与 top 由共享会话容器动态提供。
+  // A fixed height leaves a large blank area for a small number of candidates and can cover the input when the bottom dock grows.
+  // Let the panel size itself to its content; the shared conversation container provides max-height and top dynamically.
   height: "auto",
   maxHeight: `var(${CONVERSATION_SHARE_SELECTION_PANEL_MAX_HEIGHT_PROPERTY}, calc(100% - 3rem))`,
   top: `var(${CONVERSATION_SHARE_SELECTION_PANEL_CENTER_Y_PROPERTY}, 50%)`,
@@ -50,8 +50,8 @@ function ConversationShareSelectionPanelImpl({
     if (!panel || !content) return;
 
     const syncNaturalHeight = () => {
-      // 面板的上下 padding 各 8px；content 的 scrollHeight 始终代表完整候选列表，
-      // 即使外层已经被 max-height 截断，也不会把可滚动内容误测成当前 viewport 高度。
+      // The panel has 8px top/bottom padding; content.scrollHeight always represents the full candidate list,
+      // even when the outer panel is clipped by max-height, so it does not mistake scrollable content for the current viewport height.
       const naturalHeight = content.scrollHeight + 16;
       if (naturalHeight > 16) panel.style.height = `${naturalHeight}px`;
     };
@@ -110,8 +110,8 @@ function ConversationShareSelectionPanelImpl({
   return (
     <AnimatePresence initial={false}>
       {visible ? (
-        // motion transform 已包含 -50% 的纵向居中；再叠加 Tailwind translate
-        // 会把面板重复上移半个自身高度，越过会话内容区并被 WorkspaceHeader 覆盖。
+        // The motion transform already includes -50% vertical centering; adding Tailwind translate
+        // would move the panel up by half its height again, past the conversation area and under WorkspaceHeader.
         <motion.aside
           ref={panelRef}
           key="conversation-share-selection-panel"
@@ -126,16 +126,16 @@ function ConversationShareSelectionPanelImpl({
           exit={motionConfig.exit}
           transition={motionConfig.transition}
         >
-          {/* Bugfix：Radix 默认的 table wrapper 会被长文本撑宽，必须锁回 viewport 宽度，否则右侧间距、截断和 hover 都会失真。 */}
-          {/* Bug 根因：auto 会按滚动事件挂载/卸载 scrollbar，无法让整个面板 hover 稳定控制可见性；始终挂载后只切 opacity。 */}
+          {/* Bugfix: Radix's default table wrapper expands to fit long text. Constrain it to the viewport width, or right-side spacing, truncation, and hover behavior all degrade. */}
+          {/* Bug root cause: auto mounts and unmounts the scrollbar on scroll events, so panel hover cannot control its visibility reliably. Keep it mounted and toggle opacity instead. */}
           <div ref={scrollShellRef} className="relative min-h-0 flex-1">
             <ScrollArea
               type="always"
               data-testid="conversation-share-selection-scroll-area"
               className="size-full min-h-0 flex-1 [&_[data-radix-scroll-area-viewport]>div]:!block [&_[data-radix-scroll-area-viewport]>div]:!w-full"
-              // scale-y-50 只缩短 Radix thumb 的绘制结果，位移仍按原长度计算，
-              // 因而滚动到底后可见 thumb 仍停在轨道中段。原始 thumb 仅保留拖动命中，
-              // 视觉 thumb 由完整 scroll progress 独立映射到整条轨道。
+              // scale-y-50 shortens only the rendered Radix thumb while its offset still uses the original length,
+              // so the visible thumb stays in the middle of the track after scrolling to the bottom. Keep the original thumb for drag hit-testing;
+              // map a visual thumb independently across the full track using scroll progress.
               scrollbarClassName="opacity-0 transition-opacity group-hover/share-selection-panel:opacity-100 group-focus-within/share-selection-panel:opacity-100 data-vertical:!w-2.5 data-vertical:!pr-1 data-vertical:!pl-0 [&_[data-slot=scroll-area-thumb]]:!min-w-1.5 [&_[data-slot=scroll-area-thumb]]:!bg-transparent [@media(hover:none)]:opacity-100"
             >
               <div ref={scrollContentRef} className="flex min-w-0 flex-col gap-2 px-2">
@@ -151,12 +151,12 @@ function ConversationShareSelectionPanelImpl({
                         }
                         className={cn(
                           "group flex items-center rounded-lg p-1 transition-colors hover:bg-menu-hover",
-                          // 设计稿首项采用 12/4px 间距，其余项采用 8/6px，保留该光学差异。
+                          // The design uses 12/4px spacing for the first item and 8/6px for the rest; preserve this optical difference.
                           index === 0 ? "gap-3" : "gap-2",
                         )}
                       >
                         <div className="relative flex size-6 shrink-0 items-center justify-center">
-                          {/* Bugfix：原先只有 14px Checkbox 本体接收点击，24px 槽位只是布局容器；用不占布局的 32px label 扩大热区，避免改变列表间距和视觉尺寸。 */}
+                          {/* Bugfix: previously only the 14px Checkbox itself was clickable while the 24px slot was just a layout container. Use a 32px label that does not affect layout to enlarge the hit area without changing list spacing or visual size. */}
                           <label
                             data-conversation-share-checkbox-hit-area="true"
                             className="absolute flex size-8 cursor-pointer items-center justify-center"
@@ -168,7 +168,7 @@ function ConversationShareSelectionPanelImpl({
                               onCheckedChange={() => {
                                 if (!item.isRunning) onToggle(item.rowId);
                               }}
-                              // 共享 Checkbox 会继承全局图标线宽，局部分享设计稿的勾选路径明确要求 1.33。
+                              // The shared Checkbox inherits the global icon stroke width; the share-specific design explicitly requires 1.33.
                               checkIconStrokeWidth={1.33}
                               className="size-3.5 border-foreground bg-transparent data-[state=checked]:border-foreground data-[state=checked]:bg-foreground data-[state=checked]:text-background"
                             />
