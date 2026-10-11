@@ -2324,6 +2324,8 @@ function ConversationComposerImpl({
         {voiceDictationEnabled ? (
           <V4ComposerVoiceButton
             phase={voiceDictation.phase}
+            level={voiceDictation.level}
+            preview={voiceDictation.preview}
             disabled={disabled}
             onToggle={() => void voiceDictation.toggle()}
           />
@@ -2345,6 +2347,8 @@ function ConversationComposerImpl({
       runningSubagentCount,
       snapshot?.backgroundWorks,
       voiceDictation.phase,
+      voiceDictation.level,
+      voiceDictation.preview,
       voiceDictation.toggle,
       voiceDictationEnabled,
       workspaceIdentity,

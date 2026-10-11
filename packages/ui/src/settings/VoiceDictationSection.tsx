@@ -14,12 +14,13 @@ import {
 import { Switch } from "@/components/ui/switch.js";
 import { toast } from "@/components/ui/toast.js";
 import { useServices } from "@/hooks/useServices.js";
+import { useVoiceDictationRuntimeState } from "@/hooks/useVoiceDictationRuntimeState.js";
 import { useSettings } from "@/hooks/useSettingService.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { logger } from "@/logger.js";
 import { useShortcutCommandLabel } from "@/shortcuts/useShortcutBindings.js";
 import { listAudioInputDevices, VoiceDictationRecorder } from "@/lib/voiceDictationRecorder.js";
-import { SettingsGroupCard, SettingsRow } from "@/settings/SettingsPageParts.js";
+import { SettingsBadge, SettingsGroupCard, SettingsRow } from "@/settings/SettingsPageParts.js";
 import { VoiceModelRow } from "@/settings/VoiceDictationModelRow.js";
 
 const MIC_TEST_DURATION_MS = 3000;
@@ -48,9 +49,30 @@ const LANGUAGE_CODES = [
  * 语音输入设置：输入设备、麦克风测试、快捷键与录音方式、转写模型（下载/选择/删除）。
  * 模型状态与下载进度由 services 的 IVoiceDictationService 持有；这里只轮询展示并写入偏好。
  */
-export function VoiceDictationSection() {
+export function VoiceDictationSection({ isDesktop = false }: { isDesktop?: boolean }) {
+  const { intl } = useZCodeIntl();
+  if (!isDesktop) {
+    return (
+      <SettingsGroupCard>
+        <SettingsRow
+          label={intl.formatMessage({ id: "voiceDictation.webUnavailable.title" })}
+          description={intl.formatMessage({ id: "voiceDictation.webUnavailable.description" })}
+          control={
+            <SettingsBadge>
+              {intl.formatMessage({ id: "voiceDictation.webUnavailable.badge" })}
+            </SettingsBadge>
+          }
+        />
+      </SettingsGroupCard>
+    );
+  }
+  return <DesktopVoiceDictationSection />;
+}
+
+function DesktopVoiceDictationSection() {
   const { intl, locale } = useZCodeIntl();
   const { voiceDictationService } = useServices();
+  const { runtimeState, now: runtimeNow } = useVoiceDictationRuntimeState();
   const { settings, update } = useSettings();
   const shortcutLabel = useShortcutCommandLabel("voiceDictation");
   const voice: VoiceDictationSettings = settings?.voiceDictation ?? {};
@@ -60,6 +82,7 @@ export function VoiceDictationSection() {
   const pushToTalk = voice.pushToTalk !== false;
 
   const [models, setModels] = useState<VoiceModelListItem[]>([]);
+  const [startingDownloadIds, setStartingDownloadIds] = useState<Set<string>>(() => new Set());
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
   const [micTesting, setMicTesting] = useState(false);
   const [micLevel, setMicLevel] = useState(0);
@@ -97,11 +120,12 @@ export function VoiceDictationSection() {
   }, [refreshDevices, refreshModels]);
 
   const anyDownloading = models.some((item) => item.state.status === "downloading");
+  const hasPendingDownloadRequests = startingDownloadIds.size > 0;
   useEffect(() => {
-    if (!anyDownloading) return;
+    if (!anyDownloading && !hasPendingDownloadRequests) return;
     const timer = window.setInterval(() => void refreshModels(), MODEL_REFRESH_INTERVAL_MS);
     return () => window.clearInterval(timer);
-  }, [anyDownloading, refreshModels]);
+  }, [anyDownloading, hasPendingDownloadRequests, refreshModels]);
 
   const patchVoice = useCallback(
     async (patch: Partial<VoiceDictationSettings>) => {
@@ -170,10 +194,19 @@ export function VoiceDictationSection() {
   };
 
   const handleDownload = (id: string) => {
-    if (!voiceDictationService) return;
+    if (!voiceDictationService) {
+      toast(intl.formatMessage({ id: "voiceDictation.downloadFailed" }));
+      return;
+    }
+    setStartingDownloadIds((current) => new Set(current).add(id));
+    // 首次 listModels 可能早于 Host 写入下载状态；轮询期间保留启动态，避免用户误以为点击无效。
+    void refreshModels();
     // 下载是长任务：不 await，进度由 refreshModels 轮询刷新。
-    void voiceDictationService
-      .downloadModel(id)
+    void Promise.resolve()
+      .then(() => voiceDictationService.downloadModel(id))
+      .then(() => {
+        toast(intl.formatMessage({ id: "voiceDictation.downloadComplete" }));
+      })
       .catch((error: unknown) => {
         logger.warn("voice model download failed", {
           id,
@@ -181,7 +214,14 @@ export function VoiceDictationSection() {
         });
         toast(intl.formatMessage({ id: "voiceDictation.downloadFailed" }));
       })
-      .finally(() => void refreshModels());
+      .finally(() => {
+        setStartingDownloadIds((current) => {
+          const next = new Set(current);
+          next.delete(id);
+          return next;
+        });
+        void refreshModels();
+      });
   };
 
   const handleRemove = async (id: string) => {
@@ -352,6 +392,9 @@ export function VoiceDictationSection() {
               key={item.descriptor.id}
               item={item}
               selected={modelId === item.descriptor.id}
+              runtimeState={runtimeState}
+              now={runtimeNow}
+              startingDownload={startingDownloadIds.has(item.descriptor.id)}
               onSelect={() => void patchVoice({ modelId: item.descriptor.id })}
               onDownload={() => handleDownload(item.descriptor.id)}
               onCancel={() => handleCancel(item.descriptor.id)}

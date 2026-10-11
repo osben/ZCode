@@ -19,8 +19,11 @@ export {
 export { IProviderProvisioningTargetService } from "./model-provider/providerProvisioning.js";
 export {
   IVoiceDictationService,
+  type VoiceDictationRuntimeState,
   type VoiceModelListItem,
   type VoiceModelState,
+  type VoiceStreamRequest,
+  type VoiceTranscriptionPreview,
   type VoiceTranscriptionRequest,
   type VoiceTranscriptionResponse,
 } from "./voice-dictation/voiceDictation.js";

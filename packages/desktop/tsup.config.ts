@@ -232,6 +232,8 @@ const desktopNodeRuntimeExternals = [
   "node-forge",
   // ZIP 解包器内部依赖 CommonJS require("fs")，不能内联到 ESM main/host 产物。
   "yauzl",
+  // 原生转写依赖 Koffi 的动态 require，并在运行时按包路径读取 package.json；内联到 ESM 会启动时报错。
+  "transcribe-cpp",
 ];
 
 function createDevReadyMarkerHook(target: "main" | "host" | "preload"): string {

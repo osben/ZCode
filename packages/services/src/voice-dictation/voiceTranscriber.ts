@@ -1,5 +1,6 @@
-import { TranscribeModel } from "transcribe-cpp";
+import { TranscribeModel, type Stream } from "transcribe-cpp";
 import type { VoiceModelStore } from "./voiceModelStore.js";
+import type { VoiceTranscriptionPreview } from "./voiceDictation.js";
 
 export interface VoiceTranscriptionResult {
   text: string;
@@ -11,6 +12,11 @@ export interface VoiceEngineModel {
     samples: Float32Array,
     options: { language?: string },
   ): Promise<VoiceTranscriptionResult>;
+  supportsStreaming?(): boolean;
+  beginStream?(options: { language?: string }): Promise<boolean>;
+  feedStream?(samples: Float32Array): Promise<VoiceTranscriptionPreview>;
+  finalizeStream?(): Promise<VoiceTranscriptionResult>;
+  cancelStream?(): void;
   dispose(): void;
 }
 
@@ -20,13 +26,16 @@ export interface VoiceTranscriberOptions {
 }
 
 /**
- * 当前加载模型的唯一所有者。加载、转写、卸载共用一个队列串行执行，
- * 避免转写过程中模型被替换或释放。
+ * 当前加载模型和活动 stream lease 的唯一所有者。加载、转写、流操作、卸载共用队列串行执行，
+ * 避免计算过程中模型被替换或释放。
  */
 export class VoiceTranscriber {
   private readonly store: VoiceModelStore;
   private readonly loadEngine: (modelPath: string) => Promise<VoiceEngineModel>;
   private loaded: { id: string; engine: VoiceEngineModel } | null = null;
+  private activeModelIdValue: string | null = null;
+  private activePhaseValue: "loading" | "transcribing" | "streaming" | null = null;
+  private activeStreamModelId: string | null = null;
   private queue: Promise<unknown> = Promise.resolve();
 
   constructor(options: VoiceTranscriberOptions) {
@@ -38,8 +47,20 @@ export class VoiceTranscriber {
     return this.loaded?.id ?? null;
   }
 
+  get activeModelId(): string | null {
+    return this.activeModelIdValue;
+  }
+
+  get activePhase(): "loading" | "transcribing" | "streaming" | null {
+    return this.activePhaseValue;
+  }
+
   load(id: string): Promise<void> {
-    return this.enqueue(() => this.ensureLoaded(id));
+    return this.enqueue(async () => {
+      if (this.activeStreamModelId)
+        throw new Error("cannot load a model while a voice stream is active");
+      await this.ensureLoaded(id);
+    });
   }
 
   /** 按需加载 `modelId` 后转写；加载与转写在同一队列项内完成，避免中间被卸载或替换。 */
@@ -49,14 +70,89 @@ export class VoiceTranscriber {
     options: { language?: string } = {},
   ): Promise<VoiceTranscriptionResult> {
     return this.enqueue(async () => {
+      if (this.activeStreamModelId) {
+        throw new Error("voice transcription is unavailable while a stream is active");
+      }
       if (samples.length === 0) return { text: "", language: "" };
-      await this.ensureLoaded(modelId);
-      return this.loaded!.engine.transcribe(samples, options);
+      this.activeModelIdValue = modelId;
+      this.activePhaseValue = "loading";
+      try {
+        await this.ensureLoaded(modelId);
+        this.activePhaseValue = "transcribing";
+        return await this.loaded!.engine.transcribe(samples, options);
+      } finally {
+        this.activeModelIdValue = null;
+        this.activePhaseValue = null;
+      }
+    });
+  }
+
+  beginStream(modelId: string, options: { language?: string } = {}): Promise<boolean> {
+    return this.enqueue(async () => {
+      if (this.activeStreamModelId) throw new Error("a voice dictation stream is already active");
+      this.activeModelIdValue = modelId;
+      this.activePhaseValue = "loading";
+      try {
+        await this.ensureLoaded(modelId);
+        const engine = this.loaded!.engine;
+        if (
+          !engine.supportsStreaming?.() ||
+          !engine.beginStream ||
+          !engine.feedStream ||
+          !engine.finalizeStream ||
+          !engine.cancelStream
+        ) {
+          return false;
+        }
+        const started = await engine.beginStream(options);
+        if (!started) return false;
+        this.activeStreamModelId = modelId;
+        this.activePhaseValue = "streaming";
+        return true;
+      } finally {
+        if (!this.activeStreamModelId) {
+          this.activeModelIdValue = null;
+          this.activePhaseValue = null;
+        }
+      }
+    });
+  }
+
+  feedStream(samples: Float32Array): Promise<VoiceTranscriptionPreview> {
+    return this.enqueue(async () => {
+      const engine = this.getActiveStreamEngine();
+      return engine.feedStream!(samples);
+    });
+  }
+
+  finalizeStream(): Promise<VoiceTranscriptionResult> {
+    return this.enqueue(async () => {
+      const engine = this.getActiveStreamEngine();
+      try {
+        return await engine.finalizeStream!();
+      } finally {
+        this.clearActiveStream();
+      }
+    });
+  }
+
+  cancelStream(): Promise<void> {
+    return this.enqueue(async () => {
+      if (!this.activeStreamModelId) return;
+      try {
+        this.loaded?.engine.cancelStream?.();
+      } finally {
+        this.clearActiveStream();
+      }
     });
   }
 
   unload(): Promise<void> {
     return this.enqueue(async () => {
+      if (this.activeStreamModelId) {
+        this.loaded?.engine.cancelStream?.();
+        this.clearActiveStream();
+      }
       this.disposeLoaded();
     });
   }
@@ -72,6 +168,20 @@ export class VoiceTranscriber {
   private disposeLoaded(): void {
     this.loaded?.engine.dispose();
     this.loaded = null;
+    if (this.activeStreamModelId) this.clearActiveStream();
+  }
+
+  private getActiveStreamEngine(): VoiceEngineModel {
+    if (!this.activeStreamModelId || !this.loaded?.engine.feedStream) {
+      throw new Error("voice dictation stream is not active");
+    }
+    return this.loaded.engine;
+  }
+
+  private clearActiveStream(): void {
+    this.activeStreamModelId = null;
+    this.activeModelIdValue = null;
+    this.activePhaseValue = null;
   }
 
   private enqueue<T>(task: () => Promise<T>): Promise<T> {
@@ -99,6 +209,10 @@ export function decodePcm16LeToFloat32(bytes: Uint8Array): Float32Array {
 
 async function loadTranscribeCppEngine(modelPath: string): Promise<VoiceEngineModel> {
   const model = await TranscribeModel.load(modelPath);
+  const session = model.createSession();
+  let stream: Stream | null = null;
+  const supportsStreaming = () =>
+    model.capabilities.supportsStreaming && model.accepts({ kind: "parakeet" });
   return {
     transcribe: async (samples, options) => {
       const result = await model.transcribe(samples, {
@@ -107,6 +221,43 @@ async function loadTranscribeCppEngine(modelPath: string): Promise<VoiceEngineMo
       });
       return { text: result.text.trim(), language: result.language };
     },
-    dispose: () => model.dispose(),
+    supportsStreaming,
+    beginStream: async (options) => {
+      if (!supportsStreaming()) return false;
+      stream = await session.stream({
+        language: options.language,
+        timestamps: "none",
+        commitPolicy: "stable_prefix",
+        family: { kind: "parakeet" },
+      });
+      return true;
+    },
+    feedStream: async (samples) => {
+      if (!stream) throw new Error("voice dictation stream is not active");
+      await stream.feed(samples);
+      return { ...stream.text };
+    },
+    finalizeStream: async () => {
+      if (!stream) throw new Error("voice dictation stream is not active");
+      const current = stream;
+      try {
+        await current.finalize();
+        const result = current.snapshot;
+        return { text: result.text.trim(), language: result.language };
+      } finally {
+        current.reset();
+        stream = null;
+      }
+    },
+    cancelStream: () => {
+      stream?.reset();
+      stream = null;
+    },
+    dispose: () => {
+      stream?.reset();
+      stream = null;
+      session.dispose();
+      model.dispose();
+    },
   };
 }

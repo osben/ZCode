@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { createWriteStream } from "node:fs";
+import { createReadStream, createWriteStream } from "node:fs";
 import { mkdir, rename, rm, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { Readable } from "node:stream";
@@ -37,6 +37,8 @@ export class VoiceModelDownloadError extends Error {
 export interface VoiceModelStoreOptions {
   /** 模型根目录；每次访问时求值，跟随数据目录设置变化。 */
   getModelsDir: () => string;
+  /** Read-only model roots owned by another application. */
+  handyModelDirs?: readonly string[];
   catalog?: readonly VoiceModelDescriptor[];
   /** 下载源，按顺序尝试；每个源的 URL 形如 `${source}/${repo}/resolve/${revision}/${file}`。 */
   sources?: readonly string[];
@@ -57,12 +59,15 @@ interface ActiveDownload {
 export class VoiceModelStore {
   private readonly getModelsDir: () => string;
   private readonly catalog: readonly VoiceModelDescriptor[];
+  private readonly handyModelDirs: readonly string[];
   private readonly sources: readonly string[];
   private readonly fetchImpl: typeof fetch;
   private readonly active = new Map<string, ActiveDownload>();
+  private readonly handyHashCache = new Map<string, Promise<string>>();
 
   constructor(options: VoiceModelStoreOptions) {
     this.getModelsDir = options.getModelsDir;
+    this.handyModelDirs = options.handyModelDirs ?? [];
     this.catalog = options.catalog ?? VOICE_MODEL_CATALOG;
     this.sources = options.sources ?? DEFAULT_VOICE_MODEL_SOURCES;
     this.fetchImpl = options.fetchImpl ?? fetch;
@@ -92,10 +97,41 @@ export class VoiceModelStore {
       const info = await stat(path);
       // 列表只做大小检查，完整 sha256 在下载时已经验证过，避免每次打开设置都读取数百 MB 文件。
       if (info.isFile() && info.size === descriptor.sizeBytes) {
-        return { status: "ready", path, sizeBytes: info.size };
+        return { status: "ready", path, sizeBytes: info.size, source: "zcode" };
       }
     } catch (error) {
       if (!isNotFound(error)) throw error;
+    }
+    for (const handyDir of this.handyModelDirs) {
+      const handyPath = join(handyDir, descriptor.fileName);
+      try {
+        const info = await stat(handyPath);
+        if (!info.isFile() || info.size !== descriptor.sizeBytes) continue;
+
+        const cacheKey = `${handyPath}:${info.size}:${info.mtimeMs}:${info.ctimeMs}:${info.ino}`;
+        let digest = this.handyHashCache.get(cacheKey);
+        if (!digest) {
+          digest = hashFileSha256(handyPath);
+          this.handyHashCache.set(cacheKey, digest);
+        }
+        try {
+          const verified = (await digest) === descriptor.sha256;
+          const latestInfo = await stat(handyPath);
+          if (verified && sameFileVersion(info, latestInfo)) {
+            return {
+              status: "ready",
+              path: handyPath,
+              sizeBytes: info.size,
+              source: "handy",
+            };
+          }
+        } catch (error) {
+          this.handyHashCache.delete(cacheKey);
+          if (!isNotFound(error)) throw error;
+        }
+      } catch (error) {
+        if (!isNotFound(error)) throw error;
+      }
     }
     return { status: "not_downloaded" };
   }
@@ -275,4 +311,23 @@ export function buildModelUrl(source: string, descriptor: VoiceModelDescriptor):
 
 function isNotFound(error: unknown): boolean {
   return error instanceof Error && "code" in error && error.code === "ENOENT";
+}
+
+function sameFileVersion(
+  first: Awaited<ReturnType<typeof stat>>,
+  second: Awaited<ReturnType<typeof stat>>,
+): boolean {
+  return (
+    second.isFile() &&
+    first.size === second.size &&
+    first.mtimeMs === second.mtimeMs &&
+    first.ctimeMs === second.ctimeMs &&
+    first.ino === second.ino
+  );
+}
+
+async function hashFileSha256(path: string): Promise<string> {
+  const hash = createHash("sha256");
+  for await (const chunk of createReadStream(path)) hash.update(chunk as Buffer);
+  return hash.digest("hex");
 }

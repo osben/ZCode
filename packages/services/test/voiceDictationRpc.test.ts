@@ -27,6 +27,14 @@ test("voice dictation service round-trips PCM bytes and model list over the RPC 
         received.push({ isUint8Array: true, length: samples.length, language: options.language });
         return { text: "round trip", language: "en" };
       },
+      supportsStreaming: () => true,
+      beginStream: async () => true,
+      feedStream: async (samples) => {
+        assert.equal(samples.length, 320);
+        return { committed: "live ", tentative: "text" };
+      },
+      finalizeStream: async () => ({ text: "live text", language: "en" }),
+      cancelStream: () => undefined,
       dispose: () => undefined,
     };
     const store = new VoiceModelStore({ getModelsDir: () => dir });
@@ -70,6 +78,23 @@ test("voice dictation service round-trips PCM bytes and model list over the RPC 
 
     assert.deepEqual(result, { text: "round trip", language: "en" });
     assert.deepEqual(received, [{ isUint8Array: true, length: 320, language: undefined }]);
+    const runtime = await remote.getRuntimeState();
+    assert.equal(runtime.loadedModelId, descriptor.id);
+    assert.equal(runtime.activeModelId, null);
+    assert.equal(runtime.activePhase, null);
+    assert.ok(runtime.idleUnloadAt && runtime.idleUnloadAt > Date.now());
+
+    const streamId = await remote.beginStream({ modelId: descriptor.id, language: "en" });
+    assert.ok(streamId);
+    assert.deepEqual(await remote.feedStream(streamId, pcm), {
+      committed: "live ",
+      tentative: "text",
+    });
+    assert.deepEqual(await remote.finalizeStream(streamId), {
+      text: "live text",
+      language: "en",
+    });
+    assert.equal((await remote.getRuntimeState()).activePhase, null);
 
     server.dispose();
     client.dispose();

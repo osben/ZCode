@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 import { toast } from "@/components/ui/toast.js";
+import type { VoiceTranscriptionPreview } from "@zcode/services";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { useServices } from "@/hooks/useServices.js";
 import { useSettings } from "@/hooks/useSettingService.js";
@@ -14,7 +15,9 @@ import {
 } from "@/lib/voiceDictationAudio.js";
 import { VoiceDictationRecorder } from "@/lib/voiceDictationRecorder.js";
 
-export type VoiceDictationPhase = "idle" | "recording" | "transcribing";
+export type VoiceDictationPhase = "idle" | "loading" | "recording" | "transcribing";
+
+const MAX_PENDING_STREAM_CHUNKS = 4;
 
 interface UseVoiceDictationOptions {
   /** 仅桌面端为 true：转写由本机 Desktop Host 执行，Web/远端不提供语音输入。 */
@@ -43,10 +46,16 @@ export function useVoiceDictation({ enabled, onTranscript, scopeRef }: UseVoiceD
 
   const [phase, setPhase] = useState<VoiceDictationPhase>("idle");
   const [level, setLevel] = useState(0);
+  const [preview, setPreview] = useState<VoiceTranscriptionPreview | null>(null);
   const [recorder] = useState(() => new VoiceDictationRecorder());
   const phaseRef = useRef<VoiceDictationPhase>("idle");
   const startedAtRef = useRef(0);
   const startPromiseRef = useRef<Promise<void> | null>(null);
+  const streamIdRef = useRef<string | null>(null);
+  const streamQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const pendingChunksRef = useRef(0);
+  const streamErrorRef = useRef<unknown>(null);
+  const startGenerationRef = useRef(0);
   const heldBindingRef = useRef<string | null>(null);
   const onTranscriptRef = useRef(onTranscript);
   onTranscriptRef.current = onTranscript;
@@ -56,6 +65,63 @@ export function useVoiceDictation({ enabled, onTranscript, scopeRef }: UseVoiceD
     setPhase(next);
   }, []);
 
+  const cancelServiceStream = useCallback(
+    (streamId: string) => {
+      void voiceDictationService?.cancelStream(streamId).catch((error: unknown) => {
+        logger.warn("voice dictation stream cancellation failed", {
+          error: error instanceof Error ? error.message : String(error),
+        });
+      });
+    },
+    [voiceDictationService],
+  );
+
+  const failStream = useCallback(
+    (streamId: string, error: unknown) => {
+      if (streamIdRef.current !== streamId) return;
+      streamErrorRef.current = error;
+      streamIdRef.current = null;
+      recorder.cancel();
+      setLevel(0);
+      setPreview(null);
+      updatePhase("idle");
+      logger.warn("voice dictation streaming failed", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      toast(intl.formatMessage({ id: "voiceDictation.transcribeFailed" }));
+      cancelServiceStream(streamId);
+    },
+    [cancelServiceStream, intl, recorder, updatePhase],
+  );
+
+  const enqueueStreamChunk = useCallback(
+    (samples: Float32Array) => {
+      const streamId = streamIdRef.current;
+      if (!streamId || streamErrorRef.current || !voiceDictationService) return;
+      if (pendingChunksRef.current >= MAX_PENDING_STREAM_CHUNKS) {
+        failStream(streamId, new Error("voice dictation stream exceeded its bounded PCM queue"));
+        return;
+      }
+
+      pendingChunksRef.current += 1;
+      const next = streamQueueRef.current
+        .then(async () => {
+          if (streamIdRef.current !== streamId || streamErrorRef.current) return;
+          const update = await voiceDictationService.feedStream(
+            streamId,
+            float32ToPcm16Le(samples),
+          );
+          if (streamIdRef.current === streamId) setPreview(update);
+        })
+        .catch((error: unknown) => failStream(streamId, error))
+        .finally(() => {
+          pendingChunksRef.current -= 1;
+        });
+      streamQueueRef.current = next;
+    },
+    [failStream, voiceDictationService],
+  );
+
   const start = useCallback(async (): Promise<void> => {
     if (!enabled || phaseRef.current !== "idle" || recorder.isRecording) return;
     if (!voiceDictationService) return;
@@ -63,53 +129,135 @@ export function useVoiceDictation({ enabled, onTranscript, scopeRef }: UseVoiceD
       toast(intl.formatMessage({ id: "voiceDictation.noModelSelected" }));
       return;
     }
-    const pending = recorder
-      .start({ deviceId: microphoneDeviceId, onLevel: setLevel })
-      .then(() => {
-        startedAtRef.current = Date.now();
-        updatePhase("recording");
-      })
-      .catch((error: unknown) => {
-        logger.warn("voice dictation microphone unavailable", {
+    const generation = ++startGenerationRef.current;
+    streamErrorRef.current = null;
+    pendingChunksRef.current = 0;
+    streamQueueRef.current = Promise.resolve();
+    setLevel(0);
+    setPreview(null);
+    updatePhase("loading");
+    const pending = (async () => {
+      let streamId: string | null;
+      try {
+        streamId = await voiceDictationService.beginStream({ modelId, language });
+      } catch (error) {
+        logger.warn("voice dictation model stream initialization failed", {
           error: error instanceof Error ? error.message : String(error),
         });
-        toast(intl.formatMessage({ id: "voiceDictation.microphoneFailed" }));
-      });
+        if (generation === startGenerationRef.current) {
+          updatePhase("idle");
+          toast(intl.formatMessage({ id: "voiceDictation.transcribeFailed" }));
+        }
+        return;
+      }
+      if (generation !== startGenerationRef.current) {
+        if (streamId) cancelServiceStream(streamId);
+        return;
+      }
+      streamIdRef.current = streamId;
+      try {
+        await recorder.start({
+          deviceId: microphoneDeviceId,
+          onLevel: setLevel,
+          onChunk: enqueueStreamChunk,
+          collectSamples: streamId === null,
+        });
+        if (generation !== startGenerationRef.current) {
+          recorder.cancel();
+          if (streamId) {
+            streamIdRef.current = null;
+            cancelServiceStream(streamId);
+          }
+          return;
+        }
+        startedAtRef.current = Date.now();
+        updatePhase("recording");
+      } catch (error) {
+        recorder.cancel();
+        streamIdRef.current = null;
+        if (streamId) cancelServiceStream(streamId);
+        setLevel(0);
+        setPreview(null);
+        if (generation === startGenerationRef.current) {
+          updatePhase("idle");
+          logger.warn("voice dictation microphone unavailable", {
+            error: error instanceof Error ? error.message : String(error),
+          });
+          toast(intl.formatMessage({ id: "voiceDictation.microphoneFailed" }));
+        }
+      }
+    })();
     startPromiseRef.current = pending;
     await pending;
-  }, [enabled, intl, microphoneDeviceId, modelId, recorder, updatePhase, voiceDictationService]);
+  }, [
+    cancelServiceStream,
+    enabled,
+    enqueueStreamChunk,
+    intl,
+    language,
+    microphoneDeviceId,
+    modelId,
+    recorder,
+    updatePhase,
+    voiceDictationService,
+  ]);
 
   const stop = useCallback(async (): Promise<void> => {
     // 按住后很快松开时，录音可能还在等待麦克风授权；等它就绪后再结束，保证松开的动作不丢失。
     await startPromiseRef.current;
     startPromiseRef.current = null;
     if (!recorder.isRecording) return;
+    const generation = startGenerationRef.current;
     const durationMs = Date.now() - startedAtRef.current;
     const samples = recorder.stop();
     setLevel(0);
-    if (durationMs < VOICE_MIN_RECORDING_MS || samples.length === 0 || !voiceDictationService) {
+    const streamId = streamIdRef.current;
+    if (
+      durationMs < VOICE_MIN_RECORDING_MS ||
+      (!streamId && samples.length === 0) ||
+      !voiceDictationService
+    ) {
+      streamIdRef.current = null;
+      if (streamId) cancelServiceStream(streamId);
+      setPreview(null);
       updatePhase("idle");
       return;
     }
     updatePhase("transcribing");
     try {
-      const result = await voiceDictationService.transcribe({
-        modelId: modelId ?? "",
-        pcm: float32ToPcm16Le(samples),
-        language,
-      });
+      let result;
+      if (streamId) {
+        await streamQueueRef.current;
+        if (streamErrorRef.current) throw streamErrorRef.current;
+        result = await voiceDictationService.finalizeStream(streamId);
+        streamIdRef.current = null;
+      } else {
+        result = await voiceDictationService.transcribe({
+          modelId: modelId ?? "",
+          pcm: float32ToPcm16Le(samples),
+          language,
+        });
+      }
       const text = result.text.trim();
-      if (text) onTranscriptRef.current(text);
+      if (text && generation === startGenerationRef.current) onTranscriptRef.current(text);
     } catch (error) {
+      if (streamId && streamIdRef.current === streamId) {
+        streamIdRef.current = null;
+        cancelServiceStream(streamId);
+      }
       logger.warn("voice dictation transcription failed", {
         durationMs: samplesToMilliseconds(samples.length),
         error: error instanceof Error ? error.message : String(error),
       });
-      toast(intl.formatMessage({ id: "voiceDictation.transcribeFailed" }));
+      if (!streamErrorRef.current) {
+        toast(intl.formatMessage({ id: "voiceDictation.transcribeFailed" }));
+      }
     } finally {
+      streamIdRef.current = null;
+      setPreview(null);
       updatePhase("idle");
     }
-  }, [intl, language, modelId, recorder, updatePhase, voiceDictationService]);
+  }, [cancelServiceStream, intl, language, modelId, recorder, updatePhase, voiceDictationService]);
 
   const toggle = useCallback(async (): Promise<void> => {
     if (recorder.isRecording) {
@@ -149,10 +297,23 @@ export function useVoiceDictation({ enabled, onTranscript, scopeRef }: UseVoiceD
     const handleBlur = () => {
       // 窗口失焦时松开键不会收到 keyup；直接取消录音，避免一直录音。
       heldBindingRef.current = null;
-      if (recorder.isRecording) {
+      if (phaseRef.current === "loading" || recorder.isRecording) {
+        startGenerationRef.current += 1;
         recorder.cancel();
         setLevel(0);
+        setPreview(null);
         updatePhase("idle");
+        const streamId = streamIdRef.current;
+        streamIdRef.current = null;
+        if (streamId) {
+          void streamQueueRef.current
+            .then(() => voiceDictationService?.cancelStream(streamId))
+            .catch((error: unknown) => {
+              logger.warn("voice dictation stream cancellation failed", {
+                error: error instanceof Error ? error.message : String(error),
+              });
+            });
+        }
       }
     };
     window.addEventListener("keydown", handleKeyDown, true);
@@ -173,9 +334,27 @@ export function useVoiceDictation({ enabled, onTranscript, scopeRef }: UseVoiceD
     stop,
     toggle,
     updatePhase,
+    voiceDictationService,
   ]);
 
-  useEffect(() => () => recorder.cancel(), [recorder]);
+  useEffect(
+    () => () => {
+      startGenerationRef.current += 1;
+      recorder.cancel();
+      const streamId = streamIdRef.current;
+      streamIdRef.current = null;
+      if (streamId) {
+        void streamQueueRef.current
+          .then(() => voiceDictationService?.cancelStream(streamId))
+          .catch((error: unknown) => {
+            logger.warn("voice dictation stream cancellation failed", {
+              error: error instanceof Error ? error.message : String(error),
+            });
+          });
+      }
+    },
+    [recorder, voiceDictationService],
+  );
 
-  return { phase, level, start, stop, toggle };
+  return { phase, level, preview, start, stop, toggle };
 }

@@ -7,7 +7,10 @@ import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { VoiceDictationService } from "../src/voice-dictation/voiceDictationService.js";
+import {
+  getHandyModelDirectories,
+  VoiceDictationService,
+} from "../src/voice-dictation/voiceDictationService.js";
 import {
   VoiceModelDownloadError,
   VoiceModelStore,
@@ -109,18 +112,48 @@ async function listPartFiles(dir: string): Promise<string[]> {
 
 function makeStore(
   modelsDir: string,
-  options: { catalog?: VoiceModelDescriptor[]; sources?: string[] } = {},
+  options: {
+    catalog?: VoiceModelDescriptor[];
+    sources?: string[];
+    handyModelDirs?: string[];
+  } = {},
 ) {
   return new VoiceModelStore({
     getModelsDir: () => modelsDir,
     catalog: options.catalog ?? [makeDescriptor()],
     sources: options.sources,
+    handyModelDirs: options.handyModelDirs,
   });
+}
+
+async function installHandyModel(
+  modelsDir: string,
+  descriptor: VoiceModelDescriptor,
+  bytes: Buffer = MODEL_BYTES,
+): Promise<string> {
+  await mkdir(modelsDir, { recursive: true });
+  const path = join(modelsDir, descriptor.fileName);
+  await writeFile(path, bytes);
+  return path;
 }
 
 test("buildModelUrl pins the catalog revision", () => {
   const url = buildModelUrl("https://huggingface.co/", makeDescriptor());
   assert.equal(url, "https://huggingface.co/owner/repo/resolve/abc123/model.gguf");
+});
+
+test("Handy discovery uses only its documented default directory for each desktop OS", () => {
+  assert.deepEqual(getHandyModelDirectories("darwin", "/Users/example", undefined), [
+    "/Users/example/Library/Application Support/com.pais.handy/models",
+  ]);
+  assert.deepEqual(
+    getHandyModelDirectories("win32", "C:/Users/example", "C:/Users/example/AppData/Roaming"),
+    ["C:/Users/example/AppData/Roaming/com.pais.handy/models"],
+  );
+  assert.deepEqual(getHandyModelDirectories("linux", "/home/example", undefined), [
+    "/home/example/.config/com.pais.handy/models",
+  ]);
+  assert.deepEqual(getHandyModelDirectories("win32", "C:/Users/example", undefined), []);
 });
 
 test("download verifies sha256 and marks the model ready", async () => {
@@ -139,6 +172,74 @@ test("download verifies sha256 and marks the model ready", async () => {
     } finally {
       await source.close();
     }
+  });
+});
+
+test("discovers a matching Handy model and returns its read-only path", async () => {
+  await withTempDir(async (dir) => {
+    const managedDir = join(dir, "zcode");
+    const handyDir = join(dir, "handy", "models");
+    const descriptor = makeDescriptor();
+    const handyPath = await installHandyModel(handyDir, descriptor);
+    const store = makeStore(managedDir, { handyModelDirs: [handyDir] });
+
+    assert.deepEqual(await store.getState(descriptor.id), {
+      status: "ready",
+      path: handyPath,
+      sizeBytes: MODEL_BYTES.length,
+      source: "handy",
+    });
+    assert.equal(await store.getReadyModelPath(descriptor.id), handyPath);
+  });
+});
+
+test("does not treat a Handy file with a wrong checksum as installed", async () => {
+  await withTempDir(async (dir) => {
+    const handyDir = join(dir, "handy", "models");
+    const descriptor = makeDescriptor();
+    await installHandyModel(handyDir, descriptor, Buffer.alloc(MODEL_BYTES.length, 1));
+    const store = makeStore(join(dir, "zcode"), { handyModelDirs: [handyDir] });
+
+    assert.deepEqual(await store.getState(descriptor.id), { status: "not_downloaded" });
+  });
+});
+
+test("prefers ZCode's verified model when the same model is also in Handy", async () => {
+  await withTempDir(async (dir) => {
+    const source = await startServer(serveModel());
+    const handyDir = join(dir, "handy", "models");
+    const descriptor = makeDescriptor();
+    await installHandyModel(handyDir, descriptor);
+    try {
+      const store = makeStore(join(dir, "zcode"), {
+        handyModelDirs: [handyDir],
+        sources: [source.base],
+      });
+      await store.download(descriptor.id);
+
+      const state = await store.getState(descriptor.id);
+      assert.equal(state.status, "ready");
+      if (state.status === "ready") {
+        assert.equal(state.source, "zcode");
+        assert.equal(state.path, join(dir, "zcode", descriptor.id, descriptor.fileName));
+      }
+    } finally {
+      await source.close();
+    }
+  });
+});
+
+test("removing a model never deletes the Handy-owned file", async () => {
+  await withTempDir(async (dir) => {
+    const handyDir = join(dir, "handy", "models");
+    const descriptor = makeDescriptor();
+    const handyPath = await installHandyModel(handyDir, descriptor);
+    const store = makeStore(join(dir, "zcode"), { handyModelDirs: [handyDir] });
+
+    await store.remove(descriptor.id);
+
+    assert.deepEqual(await readFile(handyPath), MODEL_BYTES);
+    assert.equal((await store.getState(descriptor.id)).status, "ready");
   });
 });
 
@@ -461,6 +562,153 @@ test("service passes an explicit language code through", async () => {
   });
 });
 
+test("service streams ordered PCM updates and finalizes one transcript", async () => {
+  await withTempDir(async (dir) => {
+    const descriptor = makeDescriptor({ family: "parakeet", streaming: true });
+    await installFakeModel(dir, descriptor);
+    const store = makeStore(dir, { catalog: [descriptor] });
+    const seen: number[] = [];
+    const engine: VoiceEngineModel = {
+      transcribe: async () => ({ text: "one-shot", language: "en" }),
+      supportsStreaming: () => true,
+      beginStream: async (options) => {
+        assert.equal(options.language, "en");
+        return true;
+      },
+      feedStream: async (samples) => {
+        seen.push(samples.length);
+        return { committed: "hello ", tentative: "there" };
+      },
+      finalizeStream: async () => ({ text: "hello there", language: "en" }),
+      cancelStream: () => undefined,
+      dispose: () => undefined,
+    };
+    const service = new VoiceDictationService({
+      store,
+      transcriber: new VoiceTranscriber({ store, loadEngine: async () => engine }),
+      idleUnloadMs: 60_000,
+    });
+
+    const streamId = await service.beginStream({ modelId: descriptor.id, language: "en" });
+    assert.ok(streamId);
+    assert.equal((await service.getRuntimeState()).activePhase, "streaming");
+    assert.deepEqual(await service.feedStream(streamId, new Uint8Array(640)), {
+      committed: "hello ",
+      tentative: "there",
+    });
+    assert.deepEqual(seen, [320]);
+    assert.deepEqual(await service.finalizeStream(streamId), {
+      text: "hello there",
+      language: "en",
+    });
+    assert.equal((await service.getRuntimeState()).activeModelId, null);
+    assert.ok((await service.getRuntimeState()).idleUnloadAt);
+    await service.removeModel(descriptor.id);
+  });
+});
+
+test("service declines streaming when the loaded runtime does not support it", async () => {
+  await withTempDir(async (dir) => {
+    const descriptor = makeDescriptor({ family: "parakeet", streaming: true });
+    await installFakeModel(dir, descriptor);
+    const store = makeStore(dir, { catalog: [descriptor] });
+    const calls: Array<{ language?: string }> = [];
+    const service = new VoiceDictationService({
+      store,
+      transcriber: new VoiceTranscriber({ store, loadEngine: async () => makeFakeEngine(calls) }),
+      idleUnloadMs: 60_000,
+    });
+
+    assert.equal(await service.beginStream({ modelId: descriptor.id }), null);
+    assert.deepEqual(await service.transcribe({ modelId: descriptor.id, pcm: new Uint8Array(2) }), {
+      text: " hi there ",
+      language: "en",
+    });
+    assert.deepEqual(calls, [{ language: undefined }]);
+    await service.removeModel(descriptor.id);
+  });
+});
+
+test("service rejects overlapping stream ownership and stale stream ids", async () => {
+  await withTempDir(async (dir) => {
+    const descriptor = makeDescriptor({ family: "parakeet", streaming: true });
+    await installFakeModel(dir, descriptor);
+    const store = makeStore(dir, { catalog: [descriptor] });
+    const engine: VoiceEngineModel = {
+      ...makeFakeEngine([]),
+      supportsStreaming: () => true,
+      beginStream: async () => true,
+      feedStream: async () => ({ committed: "", tentative: "" }),
+      finalizeStream: async () => ({ text: "done", language: "en" }),
+      cancelStream: () => undefined,
+    };
+    const service = new VoiceDictationService({
+      store,
+      transcriber: new VoiceTranscriber({ store, loadEngine: async () => engine }),
+      idleUnloadMs: 60_000,
+    });
+
+    const streamId = await service.beginStream({ modelId: descriptor.id });
+    assert.ok(streamId);
+    await assert.rejects(service.beginStream({ modelId: descriptor.id }), /already active/);
+    await assert.rejects(
+      service.transcribe({ modelId: descriptor.id, pcm: new Uint8Array(2) }),
+      /stream is active/,
+    );
+    await assert.rejects(service.feedStream("stale-stream", new Uint8Array(2)), /not active/);
+    await service.cancelStream(streamId);
+    assert.equal((await service.getRuntimeState()).activeModelId, null);
+    await service.removeModel(descriptor.id);
+  });
+});
+
+test("removing a model while its stream is starting leaves no stale stream lease", async () => {
+  await withTempDir(async (dir) => {
+    const descriptor = makeDescriptor({ family: "parakeet", streaming: true });
+    await installFakeModel(dir, descriptor);
+    const store = makeStore(dir, { catalog: [descriptor] });
+    let markBeginStarted!: () => void;
+    let releaseBegin!: () => void;
+    const beginStarted = new Promise<void>((resolve) => {
+      markBeginStarted = resolve;
+    });
+    const beginGate = new Promise<void>((resolve) => {
+      releaseBegin = resolve;
+    });
+    const engine: VoiceEngineModel = {
+      ...makeFakeEngine([]),
+      supportsStreaming: () => true,
+      beginStream: async () => {
+        markBeginStarted();
+        await beginGate;
+        return true;
+      },
+      feedStream: async () => ({ committed: "", tentative: "" }),
+      finalizeStream: async () => ({ text: "done", language: "en" }),
+      cancelStream: () => undefined,
+    };
+    const service = new VoiceDictationService({
+      store,
+      transcriber: new VoiceTranscriber({ store, loadEngine: async () => engine }),
+      idleUnloadMs: 60_000,
+    });
+
+    const starting = service.beginStream({ modelId: descriptor.id });
+    await beginStarted;
+    const removing = service.removeModel(descriptor.id);
+    releaseBegin();
+
+    assert.equal(await starting, null);
+    await removing;
+    assert.deepEqual(await service.getRuntimeState(), {
+      loadedModelId: null,
+      activeModelId: null,
+      activePhase: null,
+      idleUnloadAt: null,
+    });
+  });
+});
+
 test("service unloads an idle model after the configured timeout", async () => {
   await withTempDir(async (dir) => {
     await installFakeModel(dir, makeDescriptor());
@@ -473,9 +721,92 @@ test("service unloads an idle model after the configured timeout", async () => {
 
     await service.transcribe({ modelId: "test-model", pcm: new Uint8Array(2) });
     assert.equal(transcriber.loadedModelId, "test-model");
+    const runtimeBeforeExpiry = await service.getRuntimeState();
+    assert.equal(runtimeBeforeExpiry.loadedModelId, "test-model");
+    assert.equal(runtimeBeforeExpiry.activeModelId, null);
+    assert.equal(runtimeBeforeExpiry.activePhase, null);
+    assert.ok(runtimeBeforeExpiry.idleUnloadAt && runtimeBeforeExpiry.idleUnloadAt > Date.now());
 
     await new Promise((resolve) => setTimeout(resolve, 80));
     assert.equal(transcriber.loadedModelId, null);
+    assert.deepEqual(await service.getRuntimeState(), {
+      loadedModelId: null,
+      activeModelId: null,
+      activePhase: null,
+      idleUnloadAt: null,
+    });
+  });
+});
+
+test("service runtime state identifies the model while transcription is active", async () => {
+  await withTempDir(async (dir) => {
+    await installFakeModel(dir, makeDescriptor());
+    const store = makeStore(dir);
+    let markStarted!: () => void;
+    const started = new Promise<void>((resolve) => {
+      markStarted = resolve;
+    });
+    let markLoadingStarted!: () => void;
+    const loadingStarted = new Promise<void>((resolve) => {
+      markLoadingStarted = resolve;
+    });
+    let finishLoading!: () => void;
+    const loading = new Promise<void>((resolve) => {
+      finishLoading = resolve;
+    });
+    let finishTranscription!: () => void;
+    const paused = new Promise<void>((resolve) => {
+      finishTranscription = resolve;
+    });
+    const service = new VoiceDictationService({
+      store,
+      transcriber: new VoiceTranscriber({
+        store,
+        loadEngine: async () => {
+          markLoadingStarted();
+          await loading;
+          return {
+            transcribe: async () => {
+              markStarted();
+              await paused;
+              return { text: "done", language: "en" };
+            },
+            dispose: () => undefined,
+          };
+        },
+      }),
+      idleUnloadMs: 60_000,
+    });
+
+    assert.deepEqual(await service.getRuntimeState(), {
+      loadedModelId: null,
+      activeModelId: null,
+      activePhase: null,
+      idleUnloadAt: null,
+    });
+
+    const pending = service.transcribe({ modelId: "test-model", pcm: new Uint8Array(2) });
+    await loadingStarted;
+    assert.deepEqual(await service.getRuntimeState(), {
+      loadedModelId: null,
+      activeModelId: "test-model",
+      activePhase: "loading",
+      idleUnloadAt: null,
+    });
+
+    finishLoading();
+    await started;
+    assert.deepEqual(await service.getRuntimeState(), {
+      loadedModelId: "test-model",
+      activeModelId: "test-model",
+      activePhase: "transcribing",
+      idleUnloadAt: null,
+    });
+
+    finishTranscription();
+    await pending;
+    assert.equal((await service.getRuntimeState()).activeModelId, null);
+    await service.removeModel("test-model");
   });
 });
 
@@ -493,6 +824,12 @@ test("service removes a loaded model by unloading it first", async () => {
     await service.removeModel("test-model");
 
     assert.equal(transcriber.loadedModelId, null);
+    assert.deepEqual(await service.getRuntimeState(), {
+      loadedModelId: null,
+      activeModelId: null,
+      activePhase: null,
+      idleUnloadAt: null,
+    });
     assert.equal((await store.getState("test-model")).status, "not_downloaded");
   });
 });

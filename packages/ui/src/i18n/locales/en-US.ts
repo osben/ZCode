@@ -1076,7 +1076,8 @@ const enUS: Record<string, string> = {
   "browser.permission.deviceBluetooth": "Bluetooth devices",
   "browser.permission.unknownCapability": "an unknown capability",
   "browser.permission.screenShareTitle": "{origin} wants to share your screen",
-  "browser.permission.screenShareDescription": "Choose the screen or window to share. This choice applies only to this session.",
+  "browser.permission.screenShareDescription":
+    "Choose the screen or window to share. This choice applies only to this session.",
   "browser.permission.deviceTitle": "{origin} wants to connect a device",
   "browser.permission.connect": "Connect",
   "browser.permission.screenGroup.screen": "Entire Screen",
@@ -7361,7 +7362,8 @@ const enUS: Record<string, string> = {
   "settings.voiceDictation.title": "Voice dictation",
   "settings.shortcuts.command.voiceDictation": "Voice dictation",
   "voiceDictation.inputDevice.title": "Input device",
-  "voiceDictation.inputDevice.description": "Microphone used when recording.",
+  "voiceDictation.inputDevice.description":
+    "Lists system-available audio inputs, including virtual devices. Use System default to follow your OS setting.",
   "voiceDictation.inputDevice.default": "System default",
   "voiceDictation.inputDevice.unnamed": "Microphone {index}",
   "voiceDictation.inputDevice.unavailable": "Selected device unavailable",
@@ -7386,16 +7388,31 @@ const enUS: Record<string, string> = {
   "voiceDictation.language.auto": "Auto-detect",
   "voiceDictation.models.title": "Transcription models",
   "voiceDictation.models.description":
-    "Runs entirely on this device. Download a model to get started. A model stays in memory for 5 minutes after use.",
+    "Runs entirely on this device. The selected model is used for the next dictation; only one model is loaded at a time. After use, it stays in memory for 5 minutes.",
   "voiceDictation.models.languages": "{count} languages",
   "voiceDictation.models.streaming": "Streaming",
   "voiceDictation.models.license": "License: {license}",
   "voiceDictation.models.download": "Download",
   "voiceDictation.models.cancel": "Cancel",
   "voiceDictation.models.use": "Use",
-  "voiceDictation.models.selected": "Selected",
+  "voiceDictation.models.selected": "Next dictation",
+  "voiceDictation.models.loading": "Loading into memory",
+  "voiceDictation.models.transcribing": "Transcribing",
+  "voiceDictation.models.streamingActive": "Streaming transcription",
+  "voiceDictation.models.loaded": "Loaded in memory",
+  "voiceDictation.models.loadedWithCountdown": "Loaded in memory · unloads in {time}",
   "voiceDictation.models.remove": "Delete",
+  "voiceDictation.models.startingDownload": "Starting download…",
+  "voiceDictation.models.removeConfirm.title": "Delete this model?",
+  "voiceDictation.models.removeConfirm.description":
+    "{model} will be removed from this device. You can download it again later.",
+  "voiceDictation.models.fromHandy": "In Handy",
   "voiceDictation.models.downloading": "Downloading {percent}%",
+  "voiceDictation.downloadComplete": "Model downloaded and ready to use.",
+  "voiceDictation.webUnavailable.title": "Available in ZCode Desktop",
+  "voiceDictation.webUnavailable.badge": "Desktop only",
+  "voiceDictation.webUnavailable.description":
+    "Web can capture microphone audio, but local transcription models run only in ZCode Desktop.",
   "voiceDictation.noModelSelected":
     "Choose a transcription model in Settings → Voice dictation first.",
   "voiceDictation.microphoneFailed":
@@ -7404,7 +7421,9 @@ const enUS: Record<string, string> = {
   "voiceDictation.downloadFailed": "Model download failed.",
   "voiceDictation.saveFailed": "Could not save voice dictation settings.",
   "voiceDictation.composer.start": "Voice input",
+  "voiceDictation.composer.loading": "Loading speech model",
   "voiceDictation.composer.stop": "Stop voice input",
+  "voiceDictation.composer.level": "Microphone input level",
   "settings.computerUse.title": "Computer Use",
   "settings.computerUse.toggleLabel": "Enable Computer Use",
   "settings.computerUse.toggleDescription":

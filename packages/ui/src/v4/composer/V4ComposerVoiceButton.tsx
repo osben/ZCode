@@ -1,6 +1,7 @@
 import { memo } from "react";
-import { Mic, Square } from "lucide-react";
+import { LoaderCircle, Mic, Square } from "lucide-react";
 import { TID_V4_COMPOSER_VOICE_ENTRY } from "@zcode/shared";
+import type { VoiceTranscriptionPreview } from "@zcode/services";
 import { Button } from "@/components/ui/button.js";
 import { ControlHintTooltip } from "@/ControlHintTooltip.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
@@ -9,39 +10,94 @@ import type { VoiceDictationPhase } from "@/hooks/useVoiceDictation.js";
 
 interface V4ComposerVoiceButtonProps {
   phase: VoiceDictationPhase;
+  level: number;
+  preview: VoiceTranscriptionPreview | null;
   disabled?: boolean;
   onToggle: () => void;
 }
 
 /** 输入框内的语音输入按钮：点击开始/结束录音（与快捷键共用同一套录音状态）。 */
-function V4ComposerVoiceButtonImpl({ phase, disabled, onToggle }: V4ComposerVoiceButtonProps) {
+function V4ComposerVoiceButtonImpl({
+  phase,
+  level,
+  preview,
+  disabled,
+  onToggle,
+}: V4ComposerVoiceButtonProps) {
   const { intl } = useZCodeIntl();
   const shortcutLabel = useShortcutCommandLabel("voiceDictation");
   const recording = phase === "recording";
-  const busy = phase === "transcribing";
+  const busy = phase === "loading" || phase === "transcribing";
   const label = intl.formatMessage({
-    id: recording ? "voiceDictation.composer.stop" : "voiceDictation.composer.start",
+    id:
+      phase === "loading"
+        ? "voiceDictation.composer.loading"
+        : recording
+          ? "voiceDictation.composer.stop"
+          : "voiceDictation.composer.start",
   });
   const tooltip = shortcutLabel ? `${label} (${shortcutLabel})` : label;
-  const Icon = recording ? Square : Mic;
+  const Icon = recording ? Square : busy ? LoaderCircle : Mic;
+  const levelPercent = Math.round(Math.max(0, Math.min(1, level)) * 100);
 
   return (
-    <ControlHintTooltip title={tooltip}>
-      <Button
-        type="button"
-        variant="ghost"
-        size="icon-sm"
-        data-testid={TID_V4_COMPOSER_VOICE_ENTRY}
-        data-voice-phase={phase}
-        aria-label={label}
-        aria-pressed={recording}
-        aria-disabled={busy || disabled || undefined}
-        className={recording ? "text-destructive" : undefined}
-        onClick={busy || disabled ? undefined : onToggle}
-      >
-        <Icon className={recording ? "size-3.5 fill-current" : "size-4"} aria-hidden />
-      </Button>
-    </ControlHintTooltip>
+    <div className="inline-flex min-w-0 items-center gap-1">
+      {recording && preview && (preview.committed || preview.tentative) ? (
+        <div
+          className="max-w-64 truncate text-ui-sm text-muted-foreground"
+          data-testid="voice-dictation-preview"
+          role="status"
+          aria-live="polite"
+          title={`${preview.committed}${preview.tentative}`}
+        >
+          <span>{preview.committed}</span>
+          <span className="italic opacity-70">{preview.tentative}</span>
+        </div>
+      ) : null}
+      {recording ? (
+        <div
+          className="inline-flex h-6 items-center gap-0.5 px-1 text-destructive"
+          role="meter"
+          aria-label={intl.formatMessage({ id: "voiceDictation.composer.level" })}
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-valuenow={levelPercent}
+          data-testid="voice-dictation-level"
+        >
+          {[0, 1, 2, 3, 4].map((index) => {
+            const barLevel = Math.max(0.12, level - Math.abs(index - 2) * 0.08);
+            return (
+              <span
+                key={index}
+                className="w-0.5 rounded-full bg-current transition-[height] duration-100"
+                style={{ height: `${Math.max(2, Math.round(barLevel * 16))}px` }}
+              />
+            );
+          })}
+        </div>
+      ) : null}
+      <ControlHintTooltip title={tooltip}>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-sm"
+          data-testid={TID_V4_COMPOSER_VOICE_ENTRY}
+          data-voice-phase={phase}
+          aria-label={label}
+          aria-pressed={recording}
+          aria-disabled={busy || disabled || undefined}
+          className={recording ? "text-destructive" : undefined}
+          onClick={busy || disabled ? undefined : onToggle}
+        >
+          <Icon
+            className={
+              recording ? "size-3.5 fill-current" : busy ? "size-4 animate-spin" : "size-4"
+            }
+            aria-hidden
+          />
+        </Button>
+      </ControlHintTooltip>
+    </div>
   );
 }
 

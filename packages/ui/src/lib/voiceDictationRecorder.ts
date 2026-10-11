@@ -4,6 +4,9 @@ export interface VoiceRecorderStartOptions {
   /** 麦克风 deviceId；缺省或设备不存在时使用系统默认输入。 */
   deviceId?: string | null;
   onLevel?: (level: number) => void;
+  onChunk?: (samples: Float32Array) => void;
+  /** Disable full-clip retention when the caller streams every PCM chunk live. */
+  collectSamples?: boolean;
 }
 
 const MICROPHONE_CONSTRAINTS = {
@@ -43,8 +46,9 @@ export class VoiceDictationRecorder {
       processor.onaudioprocess = (event) => {
         if (this.processor !== processor) return;
         const copy = new Float32Array(event.inputBuffer.getChannelData(0));
-        this.chunks.push(copy);
+        if (options.collectSamples !== false) this.chunks.push(copy);
         options.onLevel?.(peakLevel(copy));
+        options.onChunk?.(copy);
       };
       source.connect(processor);
       processor.connect(mute);
@@ -102,8 +106,12 @@ async function requestMicrophone(deviceId: string | null | undefined): Promise<M
   return navigator.mediaDevices.getUserMedia({ audio: MICROPHONE_CONSTRAINTS });
 }
 
-/** 列出音频输入设备；需要先获得麦克风授权才能拿到设备名称。 */
+/** 列出系统当前公开的所有音频输入设备（包括虚拟输入）；需要授权才能拿到设备名称。 */
 export async function listAudioInputDevices(): Promise<MediaDeviceInfo[]> {
   const devices = await navigator.mediaDevices.enumerateDevices();
-  return devices.filter((device) => device.kind === "audioinput");
+  return filterAudioInputDevices(devices);
+}
+
+export function filterAudioInputDevices(devices: readonly MediaDeviceInfo[]): MediaDeviceInfo[] {
+  return devices.filter((device) => device.kind === "audioinput" && device.deviceId !== "default");
 }

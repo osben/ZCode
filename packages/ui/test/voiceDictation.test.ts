@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { getDefaultShortcutBindings, SHORTCUT_COMMANDS } from "@zcode/shared";
 import {
   VOICE_SAMPLE_RATE,
   concatFloat32Chunks,
@@ -8,6 +9,7 @@ import {
   samplesToMilliseconds,
 } from "../src/lib/voiceDictationAudio.js";
 import { isVoiceShortcutReleased } from "../src/lib/voiceDictationShortcut.js";
+import { filterAudioInputDevices } from "../src/lib/voiceDictationRecorder.js";
 
 test("float32ToPcm16Le encodes little-endian and clamps out-of-range samples", () => {
   const bytes = float32ToPcm16Le(new Float32Array([0, 0.5, -1, 2, -2]));
@@ -63,3 +65,28 @@ test("unrelated keys do not end push-to-talk", () => {
   );
   assert.equal(isVoiceShortcutReleased({ key: "d", code: "KeyD" }, "not a binding+++"), false);
 });
+
+test("voice dictation remains an editable shared shortcut", () => {
+  assert.ok(SHORTCUT_COMMANDS.some((command) => command.id === "voiceDictation"));
+  assert.deepEqual(getDefaultShortcutBindings("voiceDictation"), ["CmdOrCtrl+Shift+d"]);
+});
+
+test("audio input list omits the synthetic default and retains concrete virtual inputs", () => {
+  const audioInput = (deviceId: string, label: string) =>
+    ({ kind: "audioinput", deviceId, label }) as MediaDeviceInfo;
+  const devices = [
+    audioInput("default", "Default - Built-in microphone"),
+    audioInput("mic-1", "Built-in microphone"),
+    audioInput("virtual-1", "Virtual audio input"),
+    { kind: "audiooutput", deviceId: "speaker-1", label: "Speakers" } as MediaDeviceInfo,
+  ];
+
+  expectDeviceIds(filterAudioInputDevices(devices), ["mic-1", "virtual-1"]);
+});
+
+function expectDeviceIds(devices: MediaDeviceInfo[], expected: string[]) {
+  assert.deepEqual(
+    devices.map((device) => device.deviceId),
+    expected,
+  );
+}

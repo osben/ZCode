@@ -1,7 +1,10 @@
 export {
   IVoiceDictationService,
+  type VoiceDictationRuntimeState,
   type VoiceModelListItem,
   type VoiceModelState,
+  type VoiceStreamRequest,
+  type VoiceTranscriptionPreview,
   type VoiceTranscriptionRequest,
   type VoiceTranscriptionResponse,
 } from "./voiceDictation.js";
