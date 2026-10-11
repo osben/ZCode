@@ -3,7 +3,8 @@
 // committed; the tgrep archive digest is pinned here and verified before extraction.
 
 import { execFileSync } from "node:child_process";
-import { mkdir, writeFile, rm, access } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { mkdir, writeFile, rm, access, readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -58,6 +59,13 @@ async function extractTar(archive, dir) {
   execFileSync("tar", ["-xzf", archive, "-C", dir]);
 }
 
+// Node hashing keeps the spike portable: Linux hosts may ship sha256sum but not shasum.
+async function sha256File(path) {
+  return createHash("sha256")
+    .update(await readFile(path))
+    .digest("hex");
+}
+
 /**
  * Ensures the pinned tgrep binary plus the repository-bundled rg/ugrep are ready.
  * Returns absolute binary paths and evidence metadata for the results file.
@@ -79,8 +87,10 @@ export async function resolveSpikeTools({ repoRoot, cacheDir = DEFAULT_CACHE_DIR
         archivePath,
       );
     }
-    const actual = execFileSync("shasum", ["-a", "256", archivePath]).toString().split(/\s+/)[0];
+    const actual = await sha256File(archivePath);
     if (actual !== pinnedSha) {
+      // Drop the bad bytes so the next run re-downloads instead of failing on the same file.
+      await rm(archivePath, { force: true });
       throw new Error(
         `tgrep archive digest mismatch for ${archiveName}: ${actual} != ${pinnedSha}`,
       );

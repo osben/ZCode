@@ -51,7 +51,10 @@ refresh 确认命令，不能用于加速态。
 | broad_count            | 12003 行  |    1242 ms |  169 ms |      89 ms |  7.4x 慢 | ✅          |
 
 全部 8 个 pattern 的排序输出与退出码与随包 rg 完全一致（G3 预览通过；完整 parity 语料
-按 TG10 在实现阶段扩展）。
+按 TG10 在实现阶段扩展）。ugrep 使用 agent 的嵌入式默认参数（`-G` BRE 等），其
+`regex_alternation`/`broad_count` 计时与 rg 语义不同，**仅作参考**；parity 只在 tgrep 与 rg
+之间成立。延迟与资源测量均在 shared daemon `--no-watch` 模式下取得（静态语料，阶段 1 取证
+许可；产品模式按契约必须 watch-on，其常驻开销不在本表内）。
 
 **「每次编辑后搜索」循环**（agent 的主导用法，15 循环）：tgrep `refresh --changed` + 查询
 中位 **519 ms**，对照纯 rg 查询中位 **84 ms**——编辑后加速路径比 baseline 慢 6.2x。
@@ -60,7 +63,7 @@ refresh 确认命令，不能用于加速态。
 
 1. 新鲜度 gate（D09）机制成立：阶段 3 可以按 shared-daemon 契约实现确定性新鲜度。
 2. **性能前提（G5）在中等规模语料上被证伪**：索引只在选择性强的查询（罕见字面量）上
-   赢（~4.7x）；agent 常见的高命中查询与编辑后循环全面慢于现有路径（4.4–7.4x）。
+   赢（~4.7x）；agent 常见的高命中查询与编辑后循环全面慢于现有路径（4.4–8.4x）。
    早前会话 8.6–18.3x 的结论基于 filenames-only、暖索引、无编辑成本的窄集合，不成立为
    产品依据。
 3. 50k 文件补充测量见 `results/benchmark-darwin-arm64-large.json`（规模外推，下节）。

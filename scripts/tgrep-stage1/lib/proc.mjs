@@ -96,10 +96,13 @@ export async function startDaemon(tgrep, daemonArgs, logPath) {
     async stop() {
       if (child.exitCode !== null) return;
       child.kill("SIGTERM");
-      await Promise.race([
-        new Promise((resolveStop) => child.on("close", resolveStop)),
-        sleep(5000).then(() => child.kill("SIGKILL")),
-      ]);
+      await new Promise((resolveStop) => {
+        const killTimer = setTimeout(() => child.kill("SIGKILL"), 5000);
+        child.once("close", () => {
+          clearTimeout(killTimer);
+          resolveStop();
+        });
+      });
     },
     async flushLog() {
       await appendFile(logPath, log);

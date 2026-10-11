@@ -248,6 +248,7 @@ async function main() {
           const afterFull = await search(tgrep, "valux_", sharedCorpus.root, ["-F"]);
           const ok =
             statusBefore.ready === true &&
+            staleQuery.code === 1 &&
             !staleQuery.stdout.includes(sneakyRelative) &&
             full.code === 0 &&
             afterFull.stdout.includes(sneakyRelative);
@@ -255,6 +256,7 @@ async function main() {
           s2.steps.push({
             i,
             readyStayedTrue: statusBefore.ready === true,
+            staleExit: staleQuery.code,
             staleBeforeFull: !staleQuery.stdout.includes(sneakyRelative),
             fullMs,
             visibleAfterFull: afterFull.stdout.includes(sneakyRelative),
@@ -350,8 +352,13 @@ async function main() {
       s3.foundWhileNotReady = queryWhileNotReady.code === 0;
       s3.readinessReopenedMs = reopenedMs;
       s3.visibleAfterReopen = afterReopen.code === 0;
+      // The README claims queries stay correct while readiness is closed, so the scan
+      // fallback finding the marker is part of the machine-checked verdict.
       s3.verdict =
-        readinessClosedMs !== null && reopenedMs !== null && afterReopen.code === 0
+        readinessClosedMs !== null &&
+        reopenedMs !== null &&
+        queryWhileNotReady.code === 0 &&
+        afterReopen.code === 0
           ? "pass"
           : "fail";
       recordTest(s3);

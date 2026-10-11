@@ -1,6 +1,6 @@
 {
   "meta": {
-    "startedAt": "2026-10-11T07:08:56.488Z",
+    "startedAt": "2026-10-11T07:45:32.922Z",
     "corpusFiles": 6000,
     "iterations": 25,
     "seed": 20261010,
@@ -30,9 +30,9 @@
   "tests": [
     {
       "id": "S0_shared_attach_build",
-      "attachToReadyMs": 1870,
+      "attachToReadyMs": 1997,
       "storageBytes": 33259520,
-      "daemonRssKb": 62320
+      "daemonRssKb": 62288
     },
     {
       "id": "S1_shared_no_watch_acknowledged_read_after_write",
@@ -41,7 +41,7 @@
           "i": 0,
           "immediateHit": false,
           "refreshOk": true,
-          "refreshMs": 290,
+          "refreshMs": 285,
           "processedEpoch": 3,
           "ready": true,
           "visibleAfterAck": true,
@@ -51,7 +51,7 @@
           "i": 1,
           "immediateHit": false,
           "refreshOk": true,
-          "refreshMs": 267,
+          "refreshMs": 279,
           "processedEpoch": 5,
           "ready": true,
           "visibleAfterAck": true,
@@ -61,7 +61,7 @@
           "i": 2,
           "immediateHit": false,
           "refreshOk": true,
-          "refreshMs": 267,
+          "refreshMs": 276,
           "processedEpoch": 7,
           "ready": true,
           "visibleAfterAck": true,
@@ -71,7 +71,7 @@
           "i": 3,
           "immediateHit": false,
           "refreshOk": true,
-          "refreshMs": 272,
+          "refreshMs": 288,
           "processedEpoch": 9,
           "ready": true,
           "visibleAfterAck": true,
@@ -81,7 +81,7 @@
           "i": 4,
           "immediateHit": false,
           "refreshOk": true,
-          "refreshMs": 268,
+          "refreshMs": 305,
           "processedEpoch": 11,
           "ready": true,
           "visibleAfterAck": true,
@@ -91,7 +91,7 @@
           "i": 5,
           "immediateHit": false,
           "refreshOk": true,
-          "refreshMs": 320,
+          "refreshMs": 286,
           "processedEpoch": 13,
           "ready": true,
           "visibleAfterAck": true,
@@ -101,7 +101,7 @@
           "i": 6,
           "immediateHit": false,
           "refreshOk": true,
-          "refreshMs": 265,
+          "refreshMs": 313,
           "processedEpoch": 15,
           "ready": true,
           "visibleAfterAck": true,
@@ -111,7 +111,7 @@
           "i": 7,
           "immediateHit": false,
           "refreshOk": true,
-          "refreshMs": 272,
+          "refreshMs": 268,
           "processedEpoch": 17,
           "ready": true,
           "visibleAfterAck": true,
@@ -121,7 +121,7 @@
           "i": 8,
           "immediateHit": false,
           "refreshOk": true,
-          "refreshMs": 294,
+          "refreshMs": 313,
           "processedEpoch": 19,
           "ready": true,
           "visibleAfterAck": true,
@@ -131,7 +131,7 @@
           "i": 9,
           "immediateHit": false,
           "refreshOk": true,
-          "refreshMs": 272,
+          "refreshMs": 264,
           "processedEpoch": 21,
           "ready": true,
           "visibleAfterAck": true,
@@ -141,7 +141,7 @@
           "i": 10,
           "immediateHit": false,
           "refreshOk": true,
-          "refreshMs": 267,
+          "refreshMs": 280,
           "processedEpoch": 23,
           "ready": true,
           "visibleAfterAck": true,
@@ -151,7 +151,7 @@
           "i": 11,
           "immediateHit": false,
           "refreshOk": true,
-          "refreshMs": 274,
+          "refreshMs": 279,
           "processedEpoch": 25,
           "ready": true,
           "visibleAfterAck": true,
@@ -161,7 +161,7 @@
           "i": 12,
           "immediateHit": false,
           "refreshOk": true,
-          "refreshMs": 264,
+          "refreshMs": 266,
           "processedEpoch": 27,
           "ready": true,
           "visibleAfterAck": true,
@@ -171,7 +171,7 @@
           "i": 13,
           "immediateHit": false,
           "refreshOk": true,
-          "refreshMs": 289,
+          "refreshMs": 274,
           "processedEpoch": 29,
           "ready": true,
           "visibleAfterAck": true,
@@ -181,7 +181,7 @@
           "i": 14,
           "immediateHit": false,
           "refreshOk": true,
-          "refreshMs": 269,
+          "refreshMs": 299,
           "processedEpoch": 31,
           "ready": true,
           "visibleAfterAck": true,
@@ -191,7 +191,7 @@
           "i": 15,
           "immediateHit": false,
           "refreshOk": true,
-          "refreshMs": 274,
+          "refreshMs": 313,
           "processedEpoch": 33,
           "ready": true,
           "visibleAfterAck": true,
@@ -201,7 +201,7 @@
           "i": 16,
           "immediateHit": false,
           "refreshOk": true,
-          "refreshMs": 269,
+          "refreshMs": 283,
           "processedEpoch": 35,
           "ready": true,
           "visibleAfterAck": true,
@@ -211,7 +211,7 @@
           "i": 17,
           "immediateHit": false,
           "refreshOk": true,
-          "refreshMs": 275,
+          "refreshMs": 277,
           "processedEpoch": 37,
           "ready": true,
           "visibleAfterAck": true,
@@ -221,7 +221,7 @@
           "i": 18,
           "immediateHit": false,
           "refreshOk": true,
-          "refreshMs": 288,
+          "refreshMs": 268,
           "processedEpoch": 39,
           "ready": true,
           "visibleAfterAck": true,
@@ -231,7 +231,7 @@
           "i": 19,
           "immediateHit": false,
           "refreshOk": true,
-          "refreshMs": 282,
+          "refreshMs": 271,
           "processedEpoch": 41,
           "ready": true,
           "visibleAfterAck": true,
@@ -241,7 +241,7 @@
           "i": 20,
           "immediateHit": false,
           "refreshOk": true,
-          "refreshMs": 269,
+          "refreshMs": 276,
           "processedEpoch": 43,
           "ready": true,
           "visibleAfterAck": true,
@@ -251,7 +251,7 @@
           "i": 21,
           "immediateHit": false,
           "refreshOk": true,
-          "refreshMs": 316,
+          "refreshMs": 277,
           "processedEpoch": 45,
           "ready": true,
           "visibleAfterAck": true,
@@ -261,7 +261,7 @@
           "i": 22,
           "immediateHit": false,
           "refreshOk": true,
-          "refreshMs": 270,
+          "refreshMs": 271,
           "processedEpoch": 47,
           "ready": true,
           "visibleAfterAck": true,
@@ -271,7 +271,7 @@
           "i": 23,
           "immediateHit": false,
           "refreshOk": true,
-          "refreshMs": 274,
+          "refreshMs": 295,
           "processedEpoch": 49,
           "ready": true,
           "visibleAfterAck": true,
@@ -281,7 +281,7 @@
           "i": 24,
           "immediateHit": false,
           "refreshOk": true,
-          "refreshMs": 271,
+          "refreshMs": 278,
           "processedEpoch": 51,
           "ready": true,
           "visibleAfterAck": true,
@@ -296,9 +296,9 @@
         "refreshMs": {
           "count": 25,
           "min": 264,
-          "median": 272,
-          "p95": 316,
-          "max": 320
+          "median": 279,
+          "p95": 313,
+          "max": 313
         }
       }
     },
@@ -539,24 +539,27 @@
         {
           "i": 0,
           "readyStayedTrue": true,
+          "staleExit": 1,
           "staleBeforeFull": true,
-          "fullMs": 582,
+          "fullMs": 612,
           "visibleAfterFull": true,
           "ok": true
         },
         {
           "i": 1,
           "readyStayedTrue": true,
+          "staleExit": 1,
           "staleBeforeFull": true,
-          "fullMs": 536,
+          "fullMs": 598,
           "visibleAfterFull": true,
           "ok": true
         },
         {
           "i": 2,
           "readyStayedTrue": true,
+          "staleExit": 1,
           "staleBeforeFull": true,
-          "fullMs": 543,
+          "fullMs": 585,
           "visibleAfterFull": true,
           "ok": true
         }
@@ -567,10 +570,10 @@
         "failures": 0,
         "fullRefreshMs": {
           "count": 3,
-          "min": 536,
-          "median": 543,
-          "p95": 582,
-          "max": 582
+          "min": 585,
+          "median": 598,
+          "p95": 612,
+          "max": 612
         }
       }
     },
@@ -582,10 +585,10 @@
     },
     {
       "id": "S3_shared_native_watch_external_write",
-      "readinessClosedMs": 21,
+      "readinessClosedMs": 18,
       "queryWhileNotReadyExit": 0,
       "foundWhileNotReady": true,
-      "readinessReopenedMs": 539,
+      "readinessReopenedMs": 589,
       "visibleAfterReopen": true,
       "verdict": "pass"
     },
@@ -600,7 +603,7 @@
         {
           "i": 1,
           "immediateHit": false,
-          "visibleDelayMs": 44
+          "visibleDelayMs": 45
         },
         {
           "i": 2,
@@ -610,47 +613,47 @@
         {
           "i": 3,
           "immediateHit": false,
-          "visibleDelayMs": 45
+          "visibleDelayMs": 62
         },
         {
           "i": 4,
           "immediateHit": false,
-          "visibleDelayMs": 46
+          "visibleDelayMs": 64
         },
         {
           "i": 5,
           "immediateHit": false,
-          "visibleDelayMs": 44
+          "visibleDelayMs": 46
         },
         {
           "i": 6,
           "immediateHit": false,
-          "visibleDelayMs": 46
+          "visibleDelayMs": 65
         },
         {
           "i": 7,
           "immediateHit": false,
-          "visibleDelayMs": 46
+          "visibleDelayMs": 63
         },
         {
           "i": 8,
           "immediateHit": false,
-          "visibleDelayMs": 45
+          "visibleDelayMs": 65
         },
         {
           "i": 9,
           "immediateHit": false,
-          "visibleDelayMs": 63
+          "visibleDelayMs": 64
         },
         {
           "i": 10,
           "immediateHit": false,
-          "visibleDelayMs": 48
+          "visibleDelayMs": 65
         },
         {
           "i": 11,
           "immediateHit": false,
-          "visibleDelayMs": 66
+          "visibleDelayMs": 65
         },
         {
           "i": 12,
@@ -660,17 +663,17 @@
         {
           "i": 13,
           "immediateHit": false,
-          "visibleDelayMs": 48
+          "visibleDelayMs": 47
         },
         {
           "i": 14,
           "immediateHit": false,
-          "visibleDelayMs": 47
+          "visibleDelayMs": 45
         },
         {
           "i": 15,
           "immediateHit": false,
-          "visibleDelayMs": 46
+          "visibleDelayMs": 48
         },
         {
           "i": 16,
@@ -680,42 +683,42 @@
         {
           "i": 17,
           "immediateHit": false,
-          "visibleDelayMs": 67
+          "visibleDelayMs": 65
         },
         {
           "i": 18,
           "immediateHit": false,
-          "visibleDelayMs": 48
+          "visibleDelayMs": 65
         },
         {
           "i": 19,
           "immediateHit": false,
-          "visibleDelayMs": 63
+          "visibleDelayMs": 64
         },
         {
           "i": 20,
           "immediateHit": false,
-          "visibleDelayMs": 50
+          "visibleDelayMs": 64
         },
         {
           "i": 21,
           "immediateHit": false,
-          "visibleDelayMs": 48
+          "visibleDelayMs": 46
         },
         {
           "i": 22,
           "immediateHit": false,
-          "visibleDelayMs": 45
+          "visibleDelayMs": 48
         },
         {
           "i": 23,
           "immediateHit": false,
-          "visibleDelayMs": 65
+          "visibleDelayMs": 47
         },
         {
           "i": 24,
           "immediateHit": false,
-          "visibleDelayMs": 49
+          "visibleDelayMs": 64
         }
       ],
       "summary": {
@@ -724,9 +727,9 @@
         "visibleDelayMs": {
           "count": 25,
           "min": 0,
-          "median": 47,
-          "p95": 66,
-          "max": 67
+          "median": 62,
+          "p95": 65,
+          "max": 65
         },
         "neverVisible": 0
       }
