@@ -10,7 +10,7 @@ Make the existing local desktop dictation flow easier to understand and avoid do
 - Web and remote settings do not provide transcription. `getUserMedia` alone is only microphone capture and does not supply a transcription engine.
 - The selected microphone is a preference. The selector lists all OS-exposed `audioinput` devices, including virtual inputs; it does not infer which device is physically active.
 - The voice-dictation shortcut is a normal editable Keyboard Shortcuts command. Its default is `CmdOrCtrl+Shift+d`.
-- Downloaded models are owned by ZCode under its data directory. Downloads are verified by expected size and SHA-256 before installation.
+- Downloaded models are owned by ZCode under its data directory. Downloads are verified by expected size and SHA-256 before installation. Downloads go through the host network transport so proxy and custom CA settings apply, and each download task writes to its own unique `.part` file that is promoted by an atomic rename.
 
 ## Improvements in this change
 
@@ -48,6 +48,7 @@ sequenceDiagram
 ## Ownership and interfaces
 
 - `VoiceModelStore` remains the only owner of model discovery, download state, model path, and removal. It may return a verified Handy path as ready with source metadata; it never deletes that path.
+- The Host registers `IVoiceDictationService` only for the desktop-local service authority. Remote and standalone-server hosts keep the channel absent (the accessor stays optional), so transcription never runs off-device.
 - `VoiceDictationSection` owns only display and settings edits. The service remains authoritative for model readiness.
 - Mount the voice hook only when Desktop local voice input is enabled. Web and test composers without a `ServiceProvider` must render without mounting the voice hook.
 - Keyboard bindings remain owned by `SHORTCUT_COMMANDS` and the existing shortcut settings flow.
@@ -154,7 +155,7 @@ sequenceDiagram
 
 ### E2E validation handoff
 
-- The E2E scenario must use a Desktop runtime with a runtime-verified streaming Parakeet GGUF and a working microphone. Assert that the level meter responds, preview text appears without changing the editor draft, stopping inserts the finalized transcript once, and cancelling preserves the pre-existing draft.
+- The E2E scenario must use a Desktop runtime with a runtime-verified streaming Parakeet GGUF and a working microphone. Assert that the level meter responds, preview text appears without changing the editor draft, stopping inserts the finalized transcript once, and canceling preserves the pre-existing draft.
 - A fallback scenario must use a model whose loaded runtime reports no compatible stream support and assert that the existing one-shot insertion still works without a streaming preview.
 - Current local model inventory has Whisper Tiny and Parakeet TDT only; neither is a streaming candidate. Real microphone E2E remains pending until a compatible model is installed.
 

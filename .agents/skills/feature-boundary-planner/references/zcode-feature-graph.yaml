@@ -5026,7 +5026,7 @@ nodes:
   - id: "capability.voice-dictation"
     kind: "capability"
     label: "Local desktop voice dictation"
-    aliases: ["голосовой ввод", "диктовка", "voice dictation", "speech-to-text"]
+    aliases: ["voice dictation", "speech-to-text", "语音输入"]
     docs: ["specs/voice-dictation.md"]
     codeSeeds:
       - file: "packages/ui/src/settings/VoiceDictationSection.tsx"

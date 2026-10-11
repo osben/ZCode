@@ -183,10 +183,14 @@ function normalizeLanguage(language: string | undefined): string | undefined {
   return trimmed && trimmed !== "auto" ? trimmed : undefined;
 }
 
-export function createVoiceDictationService(): VoiceDictationService {
+export function createVoiceDictationService(
+  options: { fetchImpl?: typeof fetch } = {},
+): VoiceDictationService {
   const store = new VoiceModelStore({
     getModelsDir: () => join(getZCodeDataRootDir(), "voice-models"),
     handyModelDirs: getHandyModelDirectories(),
+    // 模型下载必须走 host 统一网络栈（代理、自签证书），否则依赖代理访问 huggingface.co 的用户无法下载。
+    fetchImpl: options.fetchImpl,
   });
   const transcriber = new VoiceTranscriber({ store });
   return new VoiceDictationService({ store, transcriber });

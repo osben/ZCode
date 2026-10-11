@@ -1,4 +1,4 @@
-import { TranscribeModel, type Stream } from "transcribe-cpp";
+import type { Stream } from "transcribe-cpp";
 import type { VoiceModelStore } from "./voiceModelStore.js";
 import type { VoiceTranscriptionPreview } from "./voiceDictation.js";
 
@@ -208,6 +208,9 @@ export function decodePcm16LeToFloat32(bytes: Uint8Array): Float32Array {
 }
 
 async function loadTranscribeCppEngine(modelPath: string): Promise<VoiceEngineModel> {
+  // transcribe-cpp 的依赖 koffi 在模块求值期就加载平台原生库；必须推迟到真正加载模型时再 import，
+  // 否则没有对应平台二进制的 host（远端 server、CI 容器）会在启动 import 链上直接崩溃。
+  const { TranscribeModel } = await import("transcribe-cpp");
   const model = await TranscribeModel.load(modelPath);
   const session = model.createSession();
   let stream: Stream | null = null;

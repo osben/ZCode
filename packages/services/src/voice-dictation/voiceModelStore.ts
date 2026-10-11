@@ -1,9 +1,9 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { createReadStream, createWriteStream } from "node:fs";
 import { mkdir, rename, rm, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { Readable } from "node:stream";
-import { finished } from "node:stream/promises";
+import { pipeline } from "node:stream/promises";
 import type { ReadableStream as WebReadableStream } from "node:stream/web";
 import { createServiceLogger } from "#src/logger/serviceLogger.js";
 import {
@@ -187,7 +187,9 @@ export class VoiceModelStore {
   ): Promise<void> {
     const dir = this.modelDir(descriptor);
     const finalPath = this.modelFilePath(descriptor);
-    const partPath = `${finalPath}.part`;
+    // 每个下载任务使用唯一临时名：不同窗口各自持有 VoiceModelStore 进程，共享 `${finalPath}.part`
+    // 会互相覆盖字节，且一方失败时的清理会删掉另一方的半成品导致 rename 出错。
+    const partPath = `${finalPath}.${randomUUID()}.part`;
     await mkdir(dir, { recursive: true });
 
     let lastError: unknown;
@@ -252,20 +254,23 @@ export class VoiceModelStore {
     }
 
     const hash = createHash("sha256");
-    const writer = createWriteStream(partPath);
     try {
-      for await (const chunk of Readable.fromWeb(response.body as WebReadableStream)) {
-        const buffer = chunk as Buffer;
-        hash.update(buffer);
-        entry.downloadedBytes += buffer.length;
-        if (!writer.write(buffer)) {
-          await new Promise<void>((resolve) => writer.once("drain", resolve));
-        }
-      }
-      writer.end();
-      await finished(writer);
+      // 用 pipeline 而非手写 write/drain：写流（ENOSPC/EACCES）的 error 事件必须被消费，
+      // 否则未监听的 error 会直接击穿 Desktop Host 进程；pipeline 同时负责背压与取消。
+      await pipeline(
+        Readable.fromWeb(response.body as WebReadableStream),
+        async function* (source) {
+          for await (const chunk of source) {
+            const buffer = chunk as Buffer;
+            hash.update(buffer);
+            entry.downloadedBytes += buffer.length;
+            yield buffer;
+          }
+        },
+        createWriteStream(partPath),
+        { signal },
+      );
     } catch (error) {
-      writer.destroy();
       if (signal.aborted) {
         throw new VoiceModelDownloadError(
           "cancelled",
@@ -306,7 +311,10 @@ export class VoiceModelStore {
 }
 
 export function buildModelUrl(source: string, descriptor: VoiceModelDescriptor): string {
-  return `${source.replace(/\/+$/, "")}/${descriptor.huggingFaceRepo}/resolve/${descriptor.revision}/${descriptor.fileName}`;
+  // CodeQL 对库输入上的回溯型正则告警；这里手写循环等价剥掉尾部斜杠，保持线性复杂度。
+  let base = source;
+  while (base.endsWith("/")) base = base.slice(0, -1);
+  return `${base}/${descriptor.huggingFaceRepo}/resolve/${descriptor.revision}/${descriptor.fileName}`;
 }
 
 function isNotFound(error: unknown): boolean {
