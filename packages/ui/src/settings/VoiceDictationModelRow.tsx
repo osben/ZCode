@@ -187,7 +187,10 @@ export function VoiceModelRow({
         </div>
         <p className="mt-1 text-ui-base leading-6 text-foreground-subtle">
           {descriptionMessageId
-            ? intl.formatMessage({ id: descriptionMessageId }, { languages: descriptor.languageCount })
+            ? intl.formatMessage(
+                { id: descriptionMessageId },
+                { languages: descriptor.languageCount },
+              )
             : descriptor.description}
         </p>
       </div>

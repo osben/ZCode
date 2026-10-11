@@ -7067,9 +7067,11 @@ const zhCN: Record<string, string> = {
   "voiceDictation.transcribeFailed": "语音转写失败。",
   "voiceDictation.downloadFailed": "模型下载失败。",
   "voiceDictation.cancelDownloadFailed": "无法取消模型下载。",
-  "voiceDictation.models.description.whisper": "支持 {languages} 种语言，自动检测语言并生成分段时间戳。",
+  "voiceDictation.models.description.whisper":
+    "支持 {languages} 种语言，自动检测语言并生成分段时间戳。",
   "voiceDictation.models.description.parakeetLive": "快速、准确的英语实时转写。",
-  "voiceDictation.models.description.parakeetMultilingual": "快速且准确，支持 {languages} 种欧洲语言。",
+  "voiceDictation.models.description.parakeetMultilingual":
+    "快速且准确，支持 {languages} 种欧洲语言。",
   "voiceDictation.models.description.canary": "极小且即时，在任何硬件上都能流畅运行。",
   "voiceDictation.models.description.nemotron": "英语语音转写，支持流式与词级时间戳。",
   "voiceDictation.saveFailed": "无法保存语音输入设置。",
