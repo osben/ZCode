@@ -1,3 +1,4 @@
+/* eslint-disable max-lines -- Voice dictation settings keeps microphone setup and model download/selection state together so their controls stay synchronized. */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { LoaderCircle } from "lucide-react";
 import type { VoiceDictationSettings } from "@zcode/shared";
@@ -83,6 +84,8 @@ function DesktopVoiceDictationSection() {
 
   const [models, setModels] = useState<VoiceModelListItem[]>([]);
   const [startingDownloadIds, setStartingDownloadIds] = useState<Set<string>>(() => new Set());
+  const [pendingUseModelId, setPendingUseModelId] = useState<string | null>(null);
+  const pendingUseModelIdRef = useRef<string | null>(null);
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
   const [micTesting, setMicTesting] = useState(false);
   const [micLevel, setMicLevel] = useState(0);
@@ -204,7 +207,13 @@ function DesktopVoiceDictationSection() {
     // 下载是长任务：不 await，进度由 refreshModels 轮询刷新。
     void Promise.resolve()
       .then(() => voiceDictationService.downloadModel(id))
-      .then(() => {
+      .then(async () => {
+        if (pendingUseModelIdRef.current === id) {
+          // 下载未完成时不能提前写入 modelId，否则录音会把未就绪的模型交给 Host 并导致转写失败。
+          await patchVoice({ modelId: id });
+          pendingUseModelIdRef.current = null;
+          setPendingUseModelId(null);
+        }
         toast(intl.formatMessage({ id: "voiceDictation.downloadComplete" }));
       })
       .catch((error: unknown) => {
@@ -212,6 +221,10 @@ function DesktopVoiceDictationSection() {
           id,
           error: error instanceof Error ? error.message : String(error),
         });
+        if (pendingUseModelIdRef.current === id) {
+          pendingUseModelIdRef.current = null;
+          setPendingUseModelId(null);
+        }
         toast(intl.formatMessage({ id: "voiceDictation.downloadFailed" }));
       })
       .finally(() => {
@@ -222,6 +235,18 @@ function DesktopVoiceDictationSection() {
         });
         void refreshModels();
       });
+  };
+
+  const handleUseWhenReady = (id: string) => {
+    const nextId = pendingUseModelIdRef.current === id ? null : id;
+    pendingUseModelIdRef.current = nextId;
+    setPendingUseModelId(nextId);
+  };
+
+  const handleSelectModel = (id: string) => {
+    pendingUseModelIdRef.current = null;
+    setPendingUseModelId(null);
+    void patchVoice({ modelId: id });
   };
 
   const handleRemove = async (id: string) => {
@@ -240,6 +265,10 @@ function DesktopVoiceDictationSection() {
   };
 
   const handleCancel = (id: string) => {
+    if (pendingUseModelIdRef.current === id) {
+      pendingUseModelIdRef.current = null;
+      setPendingUseModelId(null);
+    }
     void voiceDictationService?.cancelDownload(id).finally(() => void refreshModels());
   };
 
@@ -395,7 +424,9 @@ function DesktopVoiceDictationSection() {
               runtimeState={runtimeState}
               now={runtimeNow}
               startingDownload={startingDownloadIds.has(item.descriptor.id)}
-              onSelect={() => void patchVoice({ modelId: item.descriptor.id })}
+              pendingUse={pendingUseModelId === item.descriptor.id}
+              onSelect={() => handleSelectModel(item.descriptor.id)}
+              onUseWhenReady={() => handleUseWhenReady(item.descriptor.id)}
               onDownload={() => handleDownload(item.descriptor.id)}
               onCancel={() => handleCancel(item.descriptor.id)}
               onRemove={() => void handleRemove(item.descriptor.id)}

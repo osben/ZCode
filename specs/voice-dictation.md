@@ -23,6 +23,7 @@ Make the existing local desktop dictation flow easier to understand and avoid do
 7. Confirm before deleting a ZCode-owned model. Identify the model and explain that its local file will be removed; never offer deletion for Handy-owned files.
 8. Translate every voice-dictation setting, model action, state, confirmation, and error message in Ukrainian.
 9. Show a single System default microphone option. Filter Chromium's synthetic `deviceId === "default"` entry from the explicit-device list so it does not duplicate the system-default choice.
+10. Allow a downloading model to be marked for use after download. Keep the current selected model in effect until the requested model is fully ready; canceling or failing the download keeps the current selection.
 
 ## Ownership and interfaces
 
@@ -46,6 +47,7 @@ Make the existing local desktop dictation flow easier to understand and avoid do
 | VD-09 | Delete a ZCode-owned model                                               | Click Delete, then cancel or confirm            | No file is removed before confirmation; confirming removes it and refreshes the model list. Handy-owned models have no delete action. |
 | VD-10 | Enumerated inputs include a `deviceId` of `default`                      | Open the input selector                         | Only the System default choice and concrete input devices are shown; the synthetic entry is omitted.                                  |
 | VD-11 | Set the app language to Ukrainian                                        | Open Voice dictation settings and model actions | All labels, descriptions, statuses, confirmations, and toasts use Ukrainian text.                                                     |
+| VD-12 | A ready model is selected; another model is downloading                  | Choose `Use when ready` on the downloading row  | Keep using the selected model. Switch only after download succeeds; cancel/failure keeps the current selection.                       |
 
 ## Handy discovery roots
 

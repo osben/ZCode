@@ -1,14 +1,14 @@
 // @vitest-environment jsdom
 
 import { createElement } from "react";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const h = vi.hoisted(() => {
   const state: {
     downloadRequested: boolean;
     downloadPolls: number;
-    downloadStatus: "not_downloaded" | "downloading";
+    downloadStatus: "not_downloaded" | "downloading" | "ready";
     resolveDownload?: () => void;
   } = {
     downloadRequested: false,
@@ -29,8 +29,11 @@ const h = vi.hoisted(() => {
     sizeBytes: 10,
     sha256: "test",
   };
+  const secondDescriptor = { ...descriptor, id: "model-two", name: "Model Two" };
+  const updateSettings = vi.fn(async () => {});
   return {
     state,
+    updateSettings,
     voiceDictationService: {
       listModels: vi.fn(async () => {
         if (state.downloadRequested) {
@@ -40,10 +43,26 @@ const h = vi.hoisted(() => {
         return [
           {
             descriptor,
+            state: {
+              status: "ready" as const,
+              path: "/models/model-one.gguf",
+              sizeBytes: 10,
+              source: "zcode" as const,
+            },
+          },
+          {
+            descriptor: secondDescriptor,
             state:
               state.downloadStatus === "downloading"
                 ? { status: "downloading" as const, downloadedBytes: 0, totalBytes: 10 }
-                : { status: "not_downloaded" as const },
+                : state.downloadStatus === "ready"
+                  ? {
+                      status: "ready" as const,
+                      path: "/models/model-two.gguf",
+                      sizeBytes: 10,
+                      source: "zcode" as const,
+                    }
+                  : { status: "not_downloaded" as const },
           },
         ];
       }),
@@ -51,7 +70,10 @@ const h = vi.hoisted(() => {
         () =>
           new Promise<void>((resolve) => {
             state.downloadRequested = true;
-            state.resolveDownload = resolve;
+            state.resolveDownload = () => {
+              state.downloadStatus = "ready";
+              resolve();
+            };
           }),
       ),
       cancelDownload: vi.fn(async () => {}),
@@ -64,7 +86,10 @@ vi.mock("@/hooks/useServices.js", () => ({
   useServices: () => ({ voiceDictationService: h.voiceDictationService }),
 }));
 vi.mock("@/hooks/useSettingService.js", () => ({
-  useSettings: () => ({ settings: { voiceDictation: {} }, update: vi.fn(async () => {}) }),
+  useSettings: () => ({
+    settings: { voiceDictation: { modelId: "model-one" } },
+    update: h.updateSettings,
+  }),
 }));
 vi.mock("@/hooks/useVoiceDictationRuntimeState.js", () => ({
   useVoiceDictationRuntimeState: () => ({
@@ -113,5 +138,27 @@ describe("VoiceDictationSection model downloads", () => {
     );
     expect(h.voiceDictationService.listModels.mock.calls.length).toBeGreaterThan(2);
     h.state.resolveDownload?.();
+  });
+
+  it("keeps the ready model selected until the requested download finishes", async () => {
+    render(createElement(VoiceDictationSection, { isDesktop: true }));
+
+    expect(await screen.findByText("voiceDictation.models.selected")).toBeTruthy();
+    fireEvent.click(await screen.findByRole("button", { name: "voiceDictation.models.download" }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: "voiceDictation.models.useWhenReady" }),
+    );
+
+    expect(screen.getByText("voiceDictation.models.selected")).toBeTruthy();
+    expect(screen.getByText("voiceDictation.models.willUseWhenReady")).toBeTruthy();
+    expect(h.updateSettings).not.toHaveBeenCalled();
+    await screen.findByText("voiceDictation.models.downloading", {}, { timeout: 3000 });
+
+    await act(async () => h.state.resolveDownload?.());
+    await waitFor(() =>
+      expect(h.updateSettings).toHaveBeenCalledWith({
+        voiceDictation: { modelId: "model-two" },
+      }),
+    );
   });
 });

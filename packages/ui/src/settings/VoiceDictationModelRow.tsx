@@ -11,7 +11,9 @@ interface VoiceModelRowProps {
   runtimeState: VoiceDictationRuntimeState;
   now: number;
   startingDownload?: boolean;
+  pendingUse?: boolean;
   onSelect: () => void;
+  onUseWhenReady: () => void;
   onDownload: () => void;
   onCancel: () => void;
   onRemove: () => void;
@@ -24,7 +26,9 @@ export function VoiceModelRow({
   runtimeState,
   now,
   startingDownload = false,
+  pendingUse = false,
   onSelect,
+  onUseWhenReady,
   onDownload,
   onCancel,
   onRemove,
@@ -128,6 +132,11 @@ export function VoiceModelRow({
               {intl.formatMessage({ id: "voiceDictation.models.fromHandy" })}
             </SettingsBadge>
           ) : null}
+          {(downloading || startingDownload) && pendingUse ? (
+            <SettingsBadge>
+              {intl.formatMessage({ id: "voiceDictation.models.willUseWhenReady" })}
+            </SettingsBadge>
+          ) : null}
           {descriptor.streaming ? (
             <SettingsBadge>
               {intl.formatMessage({ id: "voiceDictation.models.streaming" })}
@@ -138,16 +147,29 @@ export function VoiceModelRow({
       description={specs.join(" · ")}
       control={control}
       detail={
-        downloading ? (
-          <div className="space-y-1">
-            <div className="h-1.5 w-full overflow-hidden rounded-full bg-surface">
-              <div
-                className="h-full bg-brand transition-[width]"
-                style={{ width: `${percent}%` }}
-              />
-            </div>
-            <div className="text-ui-base text-foreground-subtle">
-              {intl.formatMessage({ id: "voiceDictation.models.downloading" }, { percent })}
+        downloading || startingDownload ? (
+          <div className="space-y-2">
+            {downloading ? (
+              <div className="h-1.5 w-full overflow-hidden rounded-full bg-surface">
+                <div
+                  className="h-full bg-brand transition-[width]"
+                  style={{ width: `${percent}%` }}
+                />
+              </div>
+            ) : null}
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="text-ui-base text-foreground-subtle">
+                {downloading
+                  ? intl.formatMessage({ id: "voiceDictation.models.downloading" }, { percent })
+                  : intl.formatMessage({ id: "voiceDictation.models.startingDownload" })}
+              </div>
+              <Button variant="outline" size="sm" onClick={onUseWhenReady}>
+                {intl.formatMessage({
+                  id: pendingUse
+                    ? "voiceDictation.models.cancelUseWhenReady"
+                    : "voiceDictation.models.useWhenReady",
+                })}
+              </Button>
             </div>
           </div>
         ) : undefined

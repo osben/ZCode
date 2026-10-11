@@ -7412,6 +7412,9 @@ const enUS: Record<string, string> = {
   "voiceDictation.models.loadedWithCountdown": "Loaded in memory · unloads in {time}",
   "voiceDictation.models.remove": "Delete",
   "voiceDictation.models.startingDownload": "Starting download…",
+  "voiceDictation.models.useWhenReady": "Use when ready",
+  "voiceDictation.models.cancelUseWhenReady": "Keep current model",
+  "voiceDictation.models.willUseWhenReady": "Will use when ready",
   "voiceDictation.models.removeConfirm.title": "Delete this model?",
   "voiceDictation.models.removeConfirm.description":
     "{model} will be removed from this device. You can download it again later.",

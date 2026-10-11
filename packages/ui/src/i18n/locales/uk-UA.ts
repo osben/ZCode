@@ -6993,6 +6993,9 @@ const ukUA: Record<string, string> = {
   "voiceDictation.models.loadedWithCountdown": "Завантажена в пам'ять · буде вивантажена за {time}",
   "voiceDictation.models.remove": "Видалити",
   "voiceDictation.models.startingDownload": "Початок завантаження…",
+  "voiceDictation.models.useWhenReady": "Використати після завантаження",
+  "voiceDictation.models.cancelUseWhenReady": "Залишити поточну модель",
+  "voiceDictation.models.willUseWhenReady": "Буде вибрана після завантаження",
   "voiceDictation.models.removeConfirm.title": "Видалити цю модель?",
   "voiceDictation.models.removeConfirm.description":
     "{model} буде видалено з цього пристрою. Пізніше її можна буде завантажити знову.",
