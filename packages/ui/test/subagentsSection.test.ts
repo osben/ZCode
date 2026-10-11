@@ -1087,8 +1087,10 @@ describe("SubagentsSection", () => {
     const onModelValueChange = initialPicker?.onValueChange;
     expect(onModelValueChange).toBeTypeOf("function");
     const beforeOptimisticRender = capturedModelConfigSelects.length;
-    act(() => {
+    // Обработчик продолжает выбор через асинхронную рекомендацию; асинхронный act сбрасывает всю цепочку обновления React.
+    await act(async () => {
       (onModelValueChange as (value: string) => void)("custom:custom-openai:gpt-5.4");
+      await Promise.resolve();
     });
     await waitFor(() => {
       expect(

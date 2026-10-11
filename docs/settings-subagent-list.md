@@ -23,3 +23,13 @@ The Subagents settings list is an independent Agent capabilities entry. It uses 
 - Group headings communicate ownership, so rows do not repeat scope labels.
 - Item descriptions use `text-ui-sm text-foreground-subtle` as secondary copy.
 - Model and tool metadata labels use `rounded-md bg-surface px-1.5 py-0.5 text-ui-sm text-foreground-subtle ring-1 ring-border`, matching MCP tool-count labels.
+
+## Model override updates
+
+- Built-in and plugin model controls update the displayed model and reasoning level optimistically when a selection is made.
+- If persistence fails, the control restores the previous model and reasoning level. After persistence succeeds, a later list refresh failure does not roll back the committed selection.
+
+```text
+selection → control-local config updates → service persists → refresh projections
+                         └─ persistence failure → restore previous config
+```
