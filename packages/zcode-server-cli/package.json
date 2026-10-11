@@ -28,10 +28,10 @@
   },
   "devDependencies": {
     "@types/node": "^25.5.0",
-    "@types/ws": "^8.18.1",
+    "@types/ws": "^8.18.2",
     "@types/yauzl": "^2.10.3",
     "tsup": "^8.4.0",
-    "tsx": "^4.19.4",
+    "tsx": "^4.23.15",
     "typescript": "^6.0.2",
     "vitest": "^4.1.1"
   }
