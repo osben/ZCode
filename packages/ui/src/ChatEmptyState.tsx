@@ -742,18 +742,20 @@ export function ChatEmptyWorktreeTaskToggle({
     if (busy) {
       return true;
     }
+    // 发送前校验（镜像 palette Start 门槛）：空名 / 客户端预校验问题 / Custom 位置无效都拦截在内联表单。
+    if (!trimmedBranchName) {
+      setSubmitError(intl.formatMessage({ id: "chat.empty.worktree.branchNameRequired" }));
+      return true;
+    }
     // Ветки ещё грузятся или их загрузка упала: без списка baseBranch уйдёт undefined и
     // проектный default-base-branch override молча игнорируется — блокируем отправку.
+    // Проверяется после пустого имени: оно не зависит от списка веток (иначе гонка с
+    // загрузкой меняет текст ошибки).
     if (!branchesResult) {
       setSubmitError(
         (current) =>
           current ?? intl.formatMessage({ id: "commandCenter.worktree.baseBranch.loading" }),
       );
-      return true;
-    }
-    // 发送前校验（镜像 palette Start 门槛）：空名 / 客户端预校验问题 / Custom 位置无效都拦截在内联表单。
-    if (!trimmedBranchName) {
-      setSubmitError(intl.formatMessage({ id: "chat.empty.worktree.branchNameRequired" }));
       return true;
     }
     if (branchNameIssue) {
