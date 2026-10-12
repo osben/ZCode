@@ -65,6 +65,12 @@ const enabledBuiltinAgentCliProvidersSchema = z
   .transform(() => [...ZCODE_ENABLED_AGENT_PROVIDERS]);
 const providerFamilyDomainSchema = z.enum(["zai", "bigmodel"]);
 
+const worktreeLocationModeSchema = z.enum(["sibling", "inside", "global", "custom"]);
+const worktreeProjectOverrideSchema = z.object({
+  defaultBaseBranch: nonEmptyStringSchema.optional(),
+  branchPrefix: nonEmptyStringSchema.optional(),
+});
+
 export const postUpdateReleaseNotesPayloadSchema = z.object({
   version: nonEmptyStringSchema,
   title: nonEmptyStringSchema,
@@ -526,6 +532,10 @@ const appSettingsObjectSchema = z.object({
   webRemoteControlExternalRelayDevice: webRemoteControlExternalRelayDeviceSchema.optional(),
   webRemoteControlLastEnabledContext: webRemoteControlLastEnabledContextSchema.optional(),
   zcodeEndpointOrigin: zcodeEndpointOriginSchema.optional(),
+  worktreeLocationMode: worktreeLocationModeSchema.optional(),
+  worktreeCustomLocationPath: nonEmptyStringSchema.optional(),
+  worktreeBranchPrefix: nonEmptyStringSchema.optional(),
+  worktreeProjectOverrides: z.record(z.string(), worktreeProjectOverrideSchema).optional(),
 });
 
 export const appSettingsSchema = z.preprocess(
@@ -621,4 +631,8 @@ export const appSettingsPatchSchema = z.object({
   webRemoteControlExternalRelayDevice: webRemoteControlExternalRelayDeviceSchema.optional(),
   webRemoteControlLastEnabledContext: webRemoteControlLastEnabledContextSchema.optional(),
   zcodeEndpointOrigin: zcodeEndpointOriginSchema.optional(),
+  worktreeLocationMode: worktreeLocationModeSchema.optional(),
+  worktreeCustomLocationPath: nonEmptyStringSchema.optional(),
+  worktreeBranchPrefix: nonEmptyStringSchema.optional(),
+  worktreeProjectOverrides: z.record(z.string(), worktreeProjectOverrideSchema).optional(),
 });

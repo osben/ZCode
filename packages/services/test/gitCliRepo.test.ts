@@ -1,4 +1,13 @@
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { execFileSync, spawnSync } from "node:child_process";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  realpathSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -90,6 +99,72 @@ afterEach(() => {
     }
   }
 });
+
+const gitAvailable = spawnSync("git", ["--version"], { stdio: "ignore" }).status === 0;
+const describeIfGit = gitAvailable ? describe : describe.skip;
+// 与 gitCheckpointService.test.ts 相同：真实临时仓库用例会执行多次 Git 子进程，
+// 全量并发调度可能超过默认 5 秒，统一保留充足的调度余量。
+const GIT_INTEGRATION_TEST_TIMEOUT_MS = 30_000;
+const gitLocalEnvVars = gitAvailable
+  ? execFileSync("git", ["rev-parse", "--local-env-vars"], {
+      encoding: "utf-8",
+    })
+      .split("\n")
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0)
+  : [];
+
+function createDetachedGitEnv(): NodeJS.ProcessEnv {
+  const env = {
+    ...process.env,
+  };
+
+  // Bugfix: 测试进程可能携带宿主仓库的 GIT_DIR/GIT_WORK_TREE 等局部变量，
+  // 会让临时仓库的辅助命令“串仓”；进入子进程前先清理。
+  for (const variableName of gitLocalEnvVars) {
+    delete env[variableName];
+  }
+
+  return env;
+}
+
+function runGit(cwd: string | undefined, args: string[]): string {
+  return execFileSync("git", args, {
+    cwd,
+    encoding: "utf-8",
+    env: createDetachedGitEnv(),
+  }).trim();
+}
+
+function createWorktreeTestRepo(): {
+  container: string;
+  repoPath: string;
+  mainTip: string;
+  baseTip: string;
+} {
+  // 每个用例一个 container：主仓库与 worktree 目标目录都在其中，afterEach 的
+  // tempDirs 清理一次回收，避免 sibling worktree 目录残留。
+  const container = makeTempDir("zcode-git-worktree-case-");
+  const repoPath = join(container, "repo");
+  mkdirSync(repoPath);
+  runGit(repoPath, ["init"]);
+  runGit(repoPath, ["branch", "-M", "main"]);
+  runGit(repoPath, ["config", "user.name", "ZCode Tester"]);
+  runGit(repoPath, ["config", "user.email", "tester@example.com"]);
+  runGit(repoPath, ["config", "commit.gpgsign", "false"]);
+  runGit(repoPath, ["config", "core.autocrlf", "false"]);
+  runGit(repoPath, ["commit", "--allow-empty", "-m", "chore: initial"]);
+  runGit(repoPath, ["switch", "-c", "release"]);
+  runGit(repoPath, ["commit", "--allow-empty", "-m", "chore: release base"]);
+  runGit(repoPath, ["switch", "main"]);
+
+  return {
+    container,
+    repoPath,
+    mainTip: runGit(repoPath, ["rev-parse", "main"]),
+    baseTip: runGit(repoPath, ["rev-parse", "release"]),
+  };
+}
 
 describe("gitCliRepo", () => {
   it("reuses the in-flight status snapshot for concurrent readers", async () => {
@@ -469,4 +544,201 @@ describe("gitCliRepo", () => {
       summary: null,
     });
   });
+});
+
+describeIfGit("gitCliRepo worktree operations", () => {
+  it(
+    "lists the main worktree only for a plain repository",
+    async () => {
+      const { repoPath, mainTip } = createWorktreeTestRepo();
+      const repo = createGitCliRepo();
+
+      const result = await repo.listWorktrees(repoPath);
+
+      expect(result.isGitAvailable).toBe(true);
+      expect(result.isRepository).toBe(true);
+      expect(result.worktrees).toHaveLength(1);
+      expect(result.worktrees[0]).toMatchObject({
+        // porcelain 输出的是规范化后的绝对路径（macOS 上 /var -> /private/var）。
+        path: realpathSync(repoPath),
+        headCommitHash: mainTip,
+        branchName: "main",
+        isMain: true,
+        isBare: false,
+        isDetached: false,
+        isCurrent: true,
+      });
+    },
+    GIT_INTEGRATION_TEST_TIMEOUT_MS,
+  );
+
+  it(
+    "lists linked worktrees with path and branch after creation",
+    async () => {
+      const { container, repoPath, baseTip } = createWorktreeTestRepo();
+      const repo = createGitCliRepo();
+      const linkedPath = join(container, "linked");
+
+      const created = await repo.createWorktree(repoPath, "feature", linkedPath, "release");
+      expect(created).toEqual({
+        ok: true,
+        worktreePath: linkedPath,
+        branchName: "feature",
+        issues: [],
+      });
+
+      // 直接经 Git 创建 detached worktree，覆盖解析器的 detached 分支。
+      runGit(repoPath, ["worktree", "add", "--detach", join(container, "detached")]);
+
+      const result = await repo.listWorktrees(repoPath);
+      expect(result.worktrees).toHaveLength(3);
+      // 主工作树固定排在首位，但关联 worktree 的顺序没有契约；按路径查找条目。
+      const findByPath = (path: string) =>
+        result.worktrees.find((entry) => entry.path === realpathSync(path));
+      const main = findByPath(repoPath);
+      const linked = findByPath(linkedPath);
+      const detached = findByPath(join(container, "detached"));
+      expect(main).toMatchObject({
+        path: realpathSync(repoPath),
+        branchName: "main",
+        isMain: true,
+        isCurrent: true,
+        isDetached: false,
+      });
+      expect(linked).toMatchObject({
+        path: realpathSync(linkedPath),
+        headCommitHash: baseTip,
+        branchName: "feature",
+        isMain: false,
+        isCurrent: false,
+        isDetached: false,
+      });
+      expect(detached).toMatchObject({
+        path: realpathSync(join(container, "detached")),
+        branchName: null,
+        isDetached: true,
+        isCurrent: false,
+      });
+
+      // isCurrent 跟随发起请求的 workspace 所在的 worktree。
+      const fromLinked = await repo.listWorktrees(linkedPath);
+      expect(fromLinked.worktrees.find((entry) => entry.branchName === "feature")?.isCurrent).toBe(
+        true,
+      );
+      expect(fromLinked.worktrees.find((entry) => entry.branchName === "main")?.isCurrent).toBe(
+        false,
+      );
+    },
+    GIT_INTEGRATION_TEST_TIMEOUT_MS,
+  );
+
+  it(
+    "creates the worktree directory and branch from the base branch",
+    async () => {
+      const { container, repoPath, mainTip, baseTip } = createWorktreeTestRepo();
+      const repo = createGitCliRepo();
+      const worktreePath = join(container, "wt-feature");
+
+      const created = await repo.createWorktree(repoPath, "feature", worktreePath, "release");
+
+      expect(created.ok).toBe(true);
+      expect(statSync(worktreePath).isDirectory()).toBe(true);
+      expect(runGit(worktreePath, ["rev-parse", "--abbrev-ref", "HEAD"])).toBe("feature");
+      expect(runGit(worktreePath, ["rev-parse", "HEAD"])).toBe(baseTip);
+      runGit(repoPath, ["show-ref", "--verify", "refs/heads/feature"]);
+
+      // 缺省 base 时从当前 HEAD（main）创建。
+      const defaultBasePath = join(container, "wt-default");
+      const defaultCreated = await repo.createWorktree(repoPath, "no-base", defaultBasePath);
+      expect(defaultCreated.ok).toBe(true);
+      expect(runGit(defaultBasePath, ["rev-parse", "HEAD"])).toBe(mainTip);
+    },
+    GIT_INTEGRATION_TEST_TIMEOUT_MS,
+  );
+
+  it(
+    "classifies a branch already checked out in another worktree",
+    async () => {
+      const { container, repoPath } = createWorktreeTestRepo();
+      const repo = createGitCliRepo();
+      await repo.createWorktree(repoPath, "feature", join(container, "wt-a"), "release");
+
+      const blocked = await repo.createWorktree(
+        repoPath,
+        "feature",
+        join(container, "wt-b"),
+        "release",
+      );
+
+      expect(blocked.ok).toBe(false);
+      expect(blocked.worktreePath).toBeNull();
+      expect(blocked.issues).toEqual([
+        expect.objectContaining({ code: "branch-in-other-worktree" }),
+      ]);
+      expect(existsSync(join(container, "wt-b"))).toBe(false);
+    },
+    GIT_INTEGRATION_TEST_TIMEOUT_MS,
+  );
+
+  it(
+    "rejects an existing target path",
+    async () => {
+      const { container, repoPath } = createWorktreeTestRepo();
+      const existingPath = join(container, "existing");
+      mkdirSync(existingPath);
+      const repo = createGitCliRepo();
+
+      const blocked = await repo.createWorktree(repoPath, "fresh", existingPath);
+
+      expect(blocked.ok).toBe(false);
+      expect(blocked.issues).toEqual([expect.objectContaining({ code: "target-path-exists" })]);
+    },
+    GIT_INTEGRATION_TEST_TIMEOUT_MS,
+  );
+
+  it(
+    "rejects invalid branch names and non-absolute target paths",
+    async () => {
+      const { container, repoPath } = createWorktreeTestRepo();
+      const repo = createGitCliRepo();
+
+      const invalidBranch = await repo.createWorktree(
+        repoPath,
+        "bad..name",
+        join(container, "wt-invalid"),
+      );
+      expect(invalidBranch.ok).toBe(false);
+      expect(invalidBranch.issues).toEqual([
+        expect.objectContaining({ code: "invalid-branch-name" }),
+      ]);
+
+      const emptyBranch = await repo.createWorktree(repoPath, "  ", join(container, "wt-empty"));
+      expect(emptyBranch.issues[0]?.code).toBe("invalid-branch-name");
+
+      const relativeTarget = await repo.createWorktree(repoPath, "valid-name", "relative/path");
+      expect(relativeTarget.issues[0]?.code).toBe("target-path-invalid");
+      expect(existsSync(join(container, "wt-invalid"))).toBe(false);
+    },
+    GIT_INTEGRATION_TEST_TIMEOUT_MS,
+  );
+
+  it(
+    "returns an empty result outside a repository",
+    async () => {
+      const container = makeTempDir("zcode-git-worktree-norepo-");
+      const repo = createGitCliRepo();
+
+      const list = await repo.listWorktrees(container);
+      expect(list).toEqual({
+        isGitAvailable: true,
+        isRepository: false,
+        worktrees: [],
+      });
+
+      const blocked = await repo.createWorktree(container, "feature", join(container, "wt"));
+      expect(blocked.ok).toBe(false);
+      expect(blocked.issues).toEqual([expect.objectContaining({ code: "not-a-repository" })]);
+    },
+    GIT_INTEGRATION_TEST_TIMEOUT_MS,
+  );
 });

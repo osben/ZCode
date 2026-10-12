@@ -6,6 +6,8 @@ import type {
   GitChangeKind,
   GitDiffResult,
   GitHeadRefType,
+  GitWorktreeEntry,
+  GitWorktreeMutationIssue,
 } from "@zcode/shared";
 import {
   GIT_UNTRACKED_STAT_CHUNK_BYTES,
@@ -164,6 +166,127 @@ export function parseGitBranchMutationIssues(
       detail,
     },
   ];
+}
+
+export function toInvalidWorktreeBranchNameIssue(detail?: string | null): GitWorktreeMutationIssue {
+  return {
+    code: "invalid-branch-name",
+    message: "Branch name is invalid.",
+    detail: detail?.trim() || null,
+  };
+}
+
+export function parseGitWorktreeIssues(
+  result: GitCommandExecutionResult,
+): GitWorktreeMutationIssue[] {
+  const detail = result.stderr.trim() || result.stdout.trim() || null;
+  const normalizedDetail = detail?.toLowerCase() ?? "";
+
+  // Same principle as parseGitBranchMutationIssues: blockage is decided by Git's actual
+  // error, and common stderr wordings are normalized into stable issue codes for the UI.
+
+  if (normalizedDetail.includes("a branch named") && normalizedDetail.includes("already exists")) {
+    return [
+      {
+        code: "branch-already-exists",
+        message: "Branch already exists.",
+        detail,
+      },
+    ];
+  }
+
+  if (normalizedDetail.includes("is already used by worktree at")) {
+    return [
+      {
+        code: "branch-in-other-worktree",
+        message: "Branch is already checked out in another worktree.",
+        detail,
+      },
+    ];
+  }
+
+  if (normalizedDetail.includes("invalid reference:")) {
+    return [
+      {
+        code: "target-branch-not-found",
+        message: "Base branch was not found.",
+        detail,
+      },
+    ];
+  }
+
+  if (normalizedDetail.includes("already exists")) {
+    return [
+      {
+        code: "target-path-exists",
+        message: "Target path already exists.",
+        detail,
+      },
+    ];
+  }
+
+  return [
+    {
+      code: "unknown",
+      message: "Git could not create the worktree.",
+      detail,
+    },
+  ];
+}
+
+export function parseWorktreeListPorcelain(
+  stdout: string,
+): Array<Omit<GitWorktreeEntry, "isMain" | "isCurrent">> {
+  const entries: Array<Omit<GitWorktreeEntry, "isMain" | "isCurrent">> = [];
+  let entry: Omit<GitWorktreeEntry, "isMain" | "isCurrent"> | null = null;
+
+  const finishEntry = () => {
+    if (entry && entry.path.length > 0) {
+      entries.push(entry);
+    }
+    entry = null;
+  };
+
+  // `git worktree list --porcelain` emits one blank-line-separated block per worktree
+  // with `worktree <path>` first, followed by HEAD/branch/bare/detached attribute lines.
+  // locked/prunable carry optional reasons and have no consumer yet.
+  for (const line of stdout.replace(/\r\n/g, "\n").split("\n")) {
+    if (line.length === 0) {
+      finishEntry();
+      continue;
+    }
+
+    if (line.startsWith("worktree ")) {
+      finishEntry();
+      entry = {
+        path: line.slice("worktree ".length).trim(),
+        headCommitHash: null,
+        branchName: null,
+        isBare: false,
+        isDetached: false,
+      };
+      continue;
+    }
+
+    if (!entry) {
+      continue;
+    }
+
+    if (line.startsWith("HEAD ")) {
+      entry.headCommitHash = line.slice("HEAD ".length).trim() || null;
+    } else if (line.startsWith("branch ")) {
+      const ref = line.slice("branch ".length).trim();
+      const headsPrefix = "refs/heads/";
+      entry.branchName = ref.startsWith(headsPrefix) ? ref.slice(headsPrefix.length) : ref;
+    } else if (line === "bare") {
+      entry.isBare = true;
+    } else if (line === "detached") {
+      entry.isDetached = true;
+    }
+  }
+
+  finishEntry();
+  return entries;
 }
 
 export function ensureGitCommandSucceeded(

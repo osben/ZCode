@@ -160,6 +160,62 @@ export interface GitWorkspaceRepositoryInfo {
   isGitAvailable: boolean;
 }
 
+/** Modeled after `git worktree list --porcelain`: one entry per worktree of the repository. */
+export interface GitWorktreeEntry {
+  /** Absolute worktree path (from the porcelain `worktree` line). */
+  path: string;
+  headCommitHash: string | null;
+  /** Short branch name from refs/heads/<name>; null for detached HEAD and bare repositories. */
+  branchName: string | null;
+  /** The main worktree; porcelain always lists it first. */
+  isMain: boolean;
+  isBare: boolean;
+  isDetached: boolean;
+  /** True when this entry is the worktree that contains the requested workspacePath. */
+  isCurrent: boolean;
+}
+
+export interface GitWorktreeListResult {
+  isGitAvailable: boolean;
+  isRepository: boolean;
+  worktrees: GitWorktreeEntry[];
+}
+
+/** Invalid-branch-name / branch-already-exists / target-branch-not-found / branch-in-other-worktree / unknown reuse the literals of GitBranchMutationIssueCode; the rest are worktree-specific. */
+export type GitWorktreeMutationIssueCode =
+  | "invalid-branch-name"
+  | "branch-already-exists"
+  | "target-branch-not-found"
+  | "branch-in-other-worktree"
+  | "target-path-invalid"
+  | "target-path-exists"
+  | "not-a-repository"
+  | "git-unavailable"
+  | "unknown";
+
+export interface GitWorktreeMutationIssue {
+  code: GitWorktreeMutationIssueCode;
+  message: string;
+  paths?: string[];
+  detail?: string | null;
+}
+
+export interface GitCreateWorktreeRequest extends GitRepositoryRequest {
+  branchName: string;
+  /** Start point of the newly created branch; defaults to HEAD. Ignored when branchName already exists locally. */
+  baseBranch?: string;
+  /** Absolute path of the worktree directory to create; must not exist yet. */
+  targetPath: string;
+}
+
+export interface GitWorktreeCreateResult {
+  ok: boolean;
+  /** The created worktree path on success; null on failure. */
+  worktreePath: string | null;
+  branchName: string | null;
+  issues: GitWorktreeMutationIssue[];
+}
+
 export interface GitSwitchBranchRequest extends GitRepositoryRequest {
   targetBranchName: string;
 }

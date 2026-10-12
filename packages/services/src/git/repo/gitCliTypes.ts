@@ -9,6 +9,8 @@ import type {
   GitLocalBranchListResult,
   GitPushResult,
   GitRepositorySummary,
+  GitWorktreeCreateResult,
+  GitWorktreeListResult,
   GitWorkspaceRepositoryInfo,
 } from "@zcode/shared";
 
@@ -81,6 +83,13 @@ export interface GitCliRepo {
   ): Promise<GitCommitGraphSnapshot>;
   getIgnoredPaths(workspacePath: string, paths: string[]): Promise<string[]>;
   listLocalBranches(workspacePath: string): Promise<GitLocalBranchListResult>;
+  listWorktrees(workspacePath: string): Promise<GitWorktreeListResult>;
+  createWorktree(
+    workspacePath: string,
+    branchName: string,
+    targetPath: string,
+    baseBranch?: string,
+  ): Promise<GitWorktreeCreateResult>;
   switchBranch(workspacePath: string, targetBranchName: string): Promise<GitBranchMutationResult>;
   createBranchAndSwitch(
     workspacePath: string,
