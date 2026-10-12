@@ -520,9 +520,7 @@ describe("SidePaneTabIcon plan-detail", () => {
 // icon; the tab must match it, otherwise the icon jumps when clicking the card into the detail view.
 describe("SidePaneTabIcon workflow-run", () => {
   it("uses the same Workflow icon as the CreateWorkflow source card", () => {
-    const html = renderToStaticMarkup(
-      createElement(SidePaneTabIcon, { tab: workflowRunTab }),
-    );
+    const html = renderToStaticMarkup(createElement(SidePaneTabIcon, { tab: workflowRunTab }));
 
     expect(html).toContain("lucide-workflow");
   });
@@ -533,9 +531,7 @@ describe("SidePaneTabIcon workflow-run", () => {
 // indistinguishable, yet their visibility and recycling semantics are completely different.
 describe("SidePaneTabIcon workflow-actor-session", () => {
   it("is visually distinct from both the run tab and a subagent tab", () => {
-    const html = renderToStaticMarkup(
-      createElement(SidePaneTabIcon, { tab: workflowActorTab }),
-    );
+    const html = renderToStaticMarkup(createElement(SidePaneTabIcon, { tab: workflowActorTab }));
 
     expect(html).toContain("lucide-bot-message-square");
     expect(html).not.toContain("lucide-workflow");

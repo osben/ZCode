@@ -58,12 +58,9 @@ describe("会话区 插件 MCP Skill 生命周期 E2E / 已安装并启用", () 
     expect(requestRecord).not.toBeNull();
     if (!requestRecord) return;
     // Strong evidence: the model request's tools array must contain the plugin MCP tool.
-    expect(
-      captureArtifactAdvertisesToolName(
-        requestRecord.requestJson,
-        PLUGIN_MCP_TOOL_NAME,
-      ),
-    ).toBe(true);
+    expect(captureArtifactAdvertisesToolName(requestRecord.requestJson, PLUGIN_MCP_TOOL_NAME)).toBe(
+      true,
+    );
 
     // Wait for the tool-call block to appear in chat; actively dismiss blocking dialogs while polling.
     let block = await getToolCallBlockByToolName(PLUGIN_MCP_TOOL_NAME);

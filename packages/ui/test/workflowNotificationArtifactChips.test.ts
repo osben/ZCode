@@ -144,8 +144,8 @@ describe("通知行的产物 chips", () => {
   });
 
   it("点**禁用的** chip 同样不展开行：禁用只是把打开变成空操作，不是把 chip 交还给开关", () => {
-  // Regression: before the strip, propagation was only stopped in the chip's own onClick, and React does not run
-  // onClick on a disabled button, so that click bubbled all the way to the collapse toggle and expanded the whole row.
+    // Regression: before the strip, propagation was only stopped in the chip's own onClick, and React does not run
+    // onClick on a disabled button, so that click bubbled all the way to the collapse toggle and expanded the whole row.
     const view = renderRow(terminal([{ id: "book", kind: "file", version: 1 }]), {
       openable: false,
     });

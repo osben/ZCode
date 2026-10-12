@@ -117,10 +117,7 @@ export interface EmbeddedBrowserPermissionPolicyOptions {
    * need desktopCapturer context, so everything is forwarded to the bridge and the policy keeps
    * only logging and default-deny.
    */
-  onDisplayMediaRequest?: (
-    input: { origin: string },
-    callback: (result: unknown) => void,
-  ) => void;
+  onDisplayMediaRequest?: (input: { origin: string }, callback: (result: unknown) => void) => void;
 }
 
 export const EMBEDDED_BROWSER_PERMISSION_LOG_TAG = "[embedded-browser-permission]";
@@ -134,7 +131,6 @@ export function originFromUrl(url: string | undefined): string {
     return UNKNOWN_ORIGIN;
   }
 }
-
 
 export async function applyEmbeddedBrowserPermissionPolicy(
   targetSession: EmbeddedBrowserPermissionSession,
@@ -229,8 +225,7 @@ export async function applyEmbeddedBrowserPermissionPolicy(
           });
           if (action === "allow-always") {
             void writeEmbeddedBrowserSitePermission(origin, permission, "allow");
-          }
-          else if (action === "allow-session") {
+          } else if (action === "allow-session") {
             const grantedSet = sessionAllow.get(origin) ?? new Set<string>();
             grantedSet.add(permission);
             sessionAllow.set(origin, grantedSet);
@@ -398,9 +393,11 @@ export async function applyEmbeddedBrowserPermissionPolicy(
     ) => {
       // Same as hid/usb: prevent the default cancel and wait for the user's choice.
       (event as { preventDefault?: () => void }).preventDefault?.();
-      const contents = webContents as
-        | { hostWebContents?: { id?: number }; id?: number; getURL?: () => string }
-        | null;
+      const contents = webContents as {
+        hostWebContents?: { id?: number };
+        id?: number;
+        getURL?: () => string;
+      } | null;
       const hostWebContentsId = contents?.hostWebContents?.id ?? contents?.id;
       settleDeviceSelection(
         "select-serial-port",
@@ -414,4 +411,3 @@ export async function applyEmbeddedBrowserPermissionPolicy(
     },
   );
 }
-

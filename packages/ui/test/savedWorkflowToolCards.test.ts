@@ -276,11 +276,16 @@ describe("SaveWorkflowToolCallBlock", () => {
     renderCard(SaveWorkflowToolCallBlock, buildContext(buildSaveToolCall({ scope: "global" })));
     expect(screen.getByText("Global · visible from every project")).toBeTruthy();
     // The global copy's collapsed row gets a "Global" badge (on the same row as the overwrite badge).
-    expect(document.querySelector('[data-workflow-scope-badge="global"]')?.textContent).toBe("Global");
+    expect(document.querySelector('[data-workflow-scope-badge="global"]')?.textContent).toBe(
+      "Global",
+    );
     cleanup();
 
     // scope absent (old agent) → no scope row is rendered.
-    const { scope: _dropped, ...withoutScope } = buildSaveToolCall().input as Record<string, unknown>;
+    const { scope: _dropped, ...withoutScope } = buildSaveToolCall().input as Record<
+      string,
+      unknown
+    >;
     renderCard(
       SaveWorkflowToolCallBlock,
       buildContext({ ...buildSaveToolCall(), input: withoutScope }),
@@ -294,7 +299,9 @@ describe("SaveWorkflowToolCallBlock", () => {
       SaveWorkflowToolCallBlock,
       buildContext(buildSaveToolCall({ scope: "global", shadowing: "hides_global" })),
     );
-    expect(screen.getByText("A global workflow with this name will be hidden by this one")).toBeTruthy();
+    expect(
+      screen.getByText("A global workflow with this name will be hidden by this one"),
+    ).toBeTruthy();
     cleanup();
 
     renderCard(
@@ -302,7 +309,9 @@ describe("SaveWorkflowToolCallBlock", () => {
       buildContext(buildSaveToolCall({ scope: "project", shadowing: "hidden_by_project" })),
     );
     expect(
-      screen.getByText("This project already has a workflow with this name, which will hide this one here"),
+      screen.getByText(
+        "This project already has a workflow with this name, which will hide this one here",
+      ),
     ).toBeTruthy();
   });
 
@@ -314,7 +323,9 @@ describe("SaveWorkflowToolCallBlock", () => {
     );
     expect(screen.getByText("作用域")).toBeTruthy();
     expect(screen.getByText("全局 · 对所有项目可见")).toBeTruthy();
-    expect(document.querySelector('[data-workflow-scope-badge="global"]')?.textContent).toBe("全局");
+    expect(document.querySelector('[data-workflow-scope-badge="global"]')?.textContent).toBe(
+      "全局",
+    );
   });
 });
 
@@ -395,7 +406,9 @@ describe("ListSavedWorkflowsToolCallBlock", () => {
     // Root-cause regression pin: on the v4 wire, output is formatModelContent's XML-style projection (a JSON probe
     // never hits); when the display channel is present it must take priority over any text probe.
     const toolCall = {
-      ...buildListToolCall('<saved_workflows count="1"><workflow name="release-check"/></saved_workflows>'),
+      ...buildListToolCall(
+        '<saved_workflows count="1"><workflow name="release-check"/></saved_workflows>',
+      ),
       raw: {
         display: {
           kind: "saved_workflow_list",
@@ -486,11 +499,20 @@ describe("ListSavedWorkflowsToolCallBlock", () => {
     const withGlobal = {
       workflows: [
         LIST_RESULT.workflows[0],
-        { name: "deep-research", description: "深度调研", scope: "global", path: "/home/.zcode/workflows/deep-research.dwf.ts" },
+        {
+          name: "deep-research",
+          description: "深度调研",
+          scope: "global",
+          path: "/home/.zcode/workflows/deep-research.dwf.ts",
+        },
       ],
       invalid: [],
     };
-    renderCard(ListSavedWorkflowsToolCallBlock, buildContext(buildListToolCall(withGlobal)), "en-US");
+    renderCard(
+      ListSavedWorkflowsToolCallBlock,
+      buildContext(buildListToolCall(withGlobal)),
+      "en-US",
+    );
     const tag = document.querySelector('[data-workflow-scope-tag="global"]');
     expect(tag?.textContent).toBe("Global");
     // The project copy gets no such tag (its scope text is still project).

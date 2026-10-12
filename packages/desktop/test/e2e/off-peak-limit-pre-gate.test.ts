@@ -20,8 +20,7 @@ import { loginWithApiKey } from "./helpers/conversation-session.js";
  * Pauses are kept throughout and key states are screenshotted (ZCODE_OFFPEAK_SHOT_DIR) for screen-recording review.
  */
 // Bugfix: a hardcoded system temp directory is unusable on Windows; the default screenshot directory must follow the running platform.
-const SHOT_DIR =
-  process.env.ZCODE_OFFPEAK_SHOT_DIR ?? join(tmpdir(), "zc-offpeak-verify-shots");
+const SHOT_DIR = process.env.ZCODE_OFFPEAK_SHOT_DIR ?? join(tmpdir(), "zc-offpeak-verify-shots");
 let shotSeq = 0;
 async function shot(label: string): Promise<void> {
   shotSeq += 1;
@@ -127,9 +126,9 @@ async function offPeakCreateButtonState(): Promise<{
   await browser.waitUntil(
     () =>
       browser.execute(() =>
-        Array.from(
-          document.querySelectorAll<HTMLElement>("[data-slot='tooltip-content']"),
-        ).some((item) => item.dataset.state !== "closed"),
+        Array.from(document.querySelectorAll<HTMLElement>("[data-slot='tooltip-content']")).some(
+          (item) => item.dataset.state !== "closed",
+        ),
       ),
     { timeout: 5_000, timeoutMsg: "额度 Tooltip 没有在真实悬停后打开" },
   );

@@ -612,9 +612,9 @@ describe("useAppPanels BrowserView lifecycle", () => {
       sessionId: "sess-a",
     });
     // Once authorization is obtained, the UI shell must actually be removed (after the tab is cleared, sidePaneState itself empties out).
-    expect((result.current.sidePaneState?.tabs ?? []).filter((tab) => tab.type === "browser")).toEqual(
-      [],
-    );
+    expect(
+      (result.current.sidePaneState?.tabs ?? []).filter((tab) => tab.type === "browser"),
+    ).toEqual([]);
     unmount();
   });
 });

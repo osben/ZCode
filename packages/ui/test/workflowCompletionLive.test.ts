@@ -23,7 +23,11 @@ const workflowRunArtifactRead = vi.fn();
 let hasConversation = true;
 
 vi.mock("@/v4/V4ConversationContext.js", () => ({
-  useV4Conversation: () => ({ workflowRunArtifacts, workflowRunArtifactData, workflowRunArtifactRead }),
+  useV4Conversation: () => ({
+    workflowRunArtifacts,
+    workflowRunArtifactData,
+    workflowRunArtifactRead,
+  }),
   useHasV4Conversation: () => hasConversation,
 }));
 
@@ -69,7 +73,14 @@ beforeEach(() => {
 /** 12 artifacts: the deliverable + 11 notes; the payload carries only the first 8 (deliverable first) and sets artifactsTruncated. */
 const IDS = Array.from({ length: 11 }, (_unused, index) => `note-${index + 1}`);
 const payloadArtifacts: WorkflowTurnCompletion["artifacts"] = [
-  { id: "report", kind: "markdown", title: "审计报告", version: 1, primary: true, description: "结论" },
+  {
+    id: "report",
+    kind: "markdown",
+    title: "审计报告",
+    version: 1,
+    primary: true,
+    description: "结论",
+  },
   ...IDS.slice(0, 7).map((id) => ({ id, kind: "markdown" as const, title: id, version: 1 })),
 ];
 const journalArtifacts: WorkflowRunArtifact[] = [
