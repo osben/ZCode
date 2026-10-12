@@ -230,7 +230,16 @@ One replica owns both sockets for each SID. SQLite volume contains only the regi
 
 A reverse proxy serves `https://<public-origin>/remote/v4/` and forwards `wss://<public-origin>/ws` to relay. Preserve WebSocket Upgrade and configure read timeouts to accommodate heartbeat. Deployment sizing and caps require a local load/recovery measurement; this design has no demonstrated throughput claim.
 
-Public relay and Web URLs must be compiled into the fork's Desktop release and Web build. Desktop's current `ZCODE_WEB_REMOTE_CONTROL_RELAY_WS_URL` and `ZCODE_WEB_REMOTE_CONTROL_URL` are runtime overrides, not automatically inherited by an app launched from Finder/Explorer. Extend the existing build-time configuration path with public URL defaults and tests; do not bake secrets into bundles. Web uses its existing `VITE_ZCODE_WEB_REMOTE_CONTROL_RELAY_WS_URL` override.
+Public relay and Web URLs are compiled into the fork's Desktop release through the
+existing build-time configuration: `ZCODE_WEB_REMOTE_CONTROL_RELAY_WS_URL` and
+`ZCODE_WEB_REMOTE_CONTROL_URL` set in the release build environment (GitHub
+repository variables feed `fork-release.yml`) become baked defaults. Both must be
+set together and must use `wss:`/`https:` respectively; a one-sided or invalid
+configuration fails the build instead of silently routing users to another
+operator. The runtime `ZCODE_WEB_REMOTE_CONTROL_RELAY_WS_URL` and
+`ZCODE_WEB_REMOTE_CONTROL_URL` variables remain overrides that take precedence
+over the baked defaults; unconfigured builds keep the
+external-relay behavior. Web uses its existing `VITE_ZCODE_WEB_REMOTE_CONTROL_RELAY_WS_URL` override.
 
 Activate the new window-registration policy explicitly with the fork's self-hosted relay configuration. Unconfigured builds retain the existing external-relay behavior; do not infer the policy from an arbitrary hostname. Compatibility of multiple registrations sharing a MID with the upstream hosted relay is unverified and is not part of the self-hosted acceptance claim. Tests must distinguish configured fork behavior from the untouched external-relay path.
 
@@ -240,13 +249,13 @@ Add a separate relay container build/smoke CI path at implementation time. Follo
 
 ## Implementation Status
 
-| Area                                                | Current status     | Evidence / remaining work                                                                                   |
-| --------------------------------------------------- | ------------------ | ----------------------------------------------------------------------------------------------------------- |
-| Shared transport contract and module boundaries     | Implemented        | HMAC vectors, envelope schemas, shared type imports and architecture checks                                 |
-| Relay executable and encrypted registration store   | Implemented        | Real socket integration, store restart persistence, authentication rejection and pressure tests             |
-| Window-scoped Desktop registration and release URLs | Pending            | QR lifetime policy, two-window credential isolation, public release defaults and UI E2E                     |
-| Standalone container and operator configuration     | Implemented        | Final-image readiness/pairing/forwarding/restart smoke; Railway settings in the package README              |
-| Public-service readiness and client recovery        | Partially verified | Real client transports covered; browser/Desktop UI E2E, load measurement and live deployment remain pending |
+| Area                                                | Current status     | Evidence / remaining work                                                                                                                               |
+| --------------------------------------------------- | ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Shared transport contract and module boundaries     | Implemented        | HMAC vectors, envelope schemas, shared type imports and architecture checks                                                                             |
+| Relay executable and encrypted registration store   | Implemented        | Real socket integration, store restart persistence, authentication rejection and pressure tests                                                         |
+| Window-scoped Desktop registration and release URLs | Partial            | Public release URL defaults implemented via the build-time configuration; QR lifetime policy, two-window credential isolation and UI E2E remain pending |
+| Standalone container and operator configuration     | Implemented        | Final-image readiness/pairing/forwarding/restart smoke; Railway settings in the package README                                                          |
+| Public-service readiness and client recovery        | Partially verified | Real client transports covered; browser/Desktop UI E2E, load measurement and live deployment remain pending                                             |
 
 No implementation slice may erase owner/lease, stale-run or workspace guards to make a happy-path test pass.
 
@@ -370,9 +379,10 @@ pnpm build:relay
 pnpm --filter @zcode/remote-relay test:bundle
 ```
 
-The server is implemented; independent-window Desktop registration, QR lifetime
-and release URL defaults remain integration work. Real multi-window/browser E2E,
-public-service load measurements and a Railway deployment are not yet verified.
+The server is implemented; independent-window Desktop registration and QR lifetime
+remain integration work. Real multi-window/browser E2E and public-service load
+measurements are still pending. The relay and the static `/remote/v4/` web page
+run as two Railway services with live domains and git-triggered builds.
 The existing mobile onboarding case excludes real relay pairing and does not
 cover those remaining acceptance cases.
 

@@ -11,6 +11,8 @@ declare const __ZCODE_PRODUCT_FLAVOR__: string;
 declare const __ZCODE_ARMS_RUM_ENDPOINT__: string;
 declare const __ZCODE_TELEMETRY_REPORT_ENDPOINT__: string;
 declare const __ZCODE_AUTO_UPDATE_ENABLED__: boolean;
+declare const __ZCODE_WEB_REMOTE_CONTROL_RELAY_WS_URL__: string;
+declare const __ZCODE_WEB_REMOTE_CONTROL_URL__: string;
 
 export function normalizeZCodeEnv(value: string | undefined): ZCodeEnv {
   return value?.trim().toLowerCase() === "production" ? "production" : "test";
@@ -60,6 +62,17 @@ export const ZCODE_TELEMETRY_REPORT_ENDPOINT: string =
 /** Whether desktop auto-update is enabled. */
 export const ZCODE_AUTO_UPDATE_ENABLED: boolean =
   typeof __ZCODE_AUTO_UPDATE_ENABLED__ !== "undefined" ? __ZCODE_AUTO_UPDATE_ENABLED__ : false;
+
+// ── Fork release self-hosted remote-control defaults (public deployment inputs, see docs/web-remote-control/self-hosted-remote-relay.md) ──
+// Empty when the build did not inject them, keeping the upstream external-relay behavior.
+/** Baked default relay WebSocket endpoint; the runtime `ZCODE_WEB_REMOTE_CONTROL_RELAY_WS_URL` env overrides it. */
+export const ZCODE_WEB_REMOTE_CONTROL_RELAY_WS_URL_DEFAULT: string =
+  typeof __ZCODE_WEB_REMOTE_CONTROL_RELAY_WS_URL__ !== "undefined"
+    ? __ZCODE_WEB_REMOTE_CONTROL_RELAY_WS_URL__
+    : "";
+/** Baked default `/remote/v4/` page URL encoded into the QR; the runtime `ZCODE_WEB_REMOTE_CONTROL_URL` env overrides it. */
+export const ZCODE_WEB_REMOTE_CONTROL_URL_DEFAULT: string =
+  typeof __ZCODE_WEB_REMOTE_CONTROL_URL__ !== "undefined" ? __ZCODE_WEB_REMOTE_CONTROL_URL__ : "";
 
 /** Maps local runtime state and compile-time ZCODE_ENV to an environment label recognized by the ARMS console. */
 export function mapZCodeEnvToArmsRumEnv(runtimeEnv: ZCodeRuntimeEnv): ArmsRumEnv {

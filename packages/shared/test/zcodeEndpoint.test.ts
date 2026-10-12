@@ -176,6 +176,37 @@ describe("zcodeEndpoint", () => {
     ).toBe("ws://localhost:8787/ws");
   });
 
+  it("prefers the baked release default over endpoint defaults and keeps the override on top", () => {
+    // The baked default replaces the endpoint-derived (z.ai) defaults in fork release builds.
+    expect(
+      resolveWebRemoteControlRelayWsUrl({
+        endpointOrigin: DEFAULT_ZCODE_ENDPOINT_ORIGIN,
+        defaultUrl: "wss://relay.example.com/ws",
+      }),
+    ).toBe("wss://relay.example.com/ws");
+    expect(
+      resolveWebRemoteControlRelayWsUrl({
+        endpointOrigin: TEST_ZCODE_ENDPOINT_ORIGIN,
+        defaultUrl: "wss://relay.example.com/ws",
+      }),
+    ).toBe("wss://relay.example.com/ws");
+    // The runtime environment override still wins over the baked default.
+    expect(
+      resolveWebRemoteControlRelayWsUrl({
+        endpointOrigin: DEFAULT_ZCODE_ENDPOINT_ORIGIN,
+        overrideUrl: "wss://override.example.com/ws",
+        defaultUrl: "wss://relay.example.com/ws",
+      }),
+    ).toBe("wss://override.example.com/ws");
+    // An empty baked default falls back to endpoint-derived behavior.
+    expect(
+      resolveWebRemoteControlRelayWsUrl({
+        endpointOrigin: TEST_ZCODE_ENDPOINT_ORIGIN,
+        defaultUrl: "  ",
+      }),
+    ).toBe("wss://zcode.z.ai/ws");
+  });
+
   it("derives BigModel API origin from ZCODE_ENV", () => {
     expect(resolveBigModelApiOrigin({ ZCODE_ENV: "production" })).toBe("https://bigmodel.cn");
     expect(resolveBigModelApiOrigin({ ZCODE_ENV: "test" })).toBe("https://bigmodel.cn");
@@ -231,9 +262,7 @@ describe("zcodeEndpoint", () => {
     expect(buildRuntimeZaiBusinessUrl({ ZCODE_ENV: "test" }, "/api/auth/z/login")).toBe(
       "https://api.z.ai/api/auth/z/login",
     );
-    expect(buildBigModelApiUrl({ ZCODE_ENV: "test" }, "/login")).toBe(
-      "https://bigmodel.cn/login",
-    );
+    expect(buildBigModelApiUrl({ ZCODE_ENV: "test" }, "/login")).toBe("https://bigmodel.cn/login");
   });
 
   it("keeps environment-scoped endpoint overrides centralized", () => {
