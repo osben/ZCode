@@ -143,6 +143,7 @@ import {
 import { isAppleKeyboardPlatform } from "@/lib/keyboardShortcuts.js";
 import { usePrimaryFollowupModifier } from "@/v4/composer/usePrimaryFollowupModifier.js";
 import { consumeV4ComposerDraftWorkspaceTransferRequest } from "@/v4/composer/composerDraftWorkspaceTransfer.js";
+import { useComposerDraftWorktreeIntentSlot } from "@/v4/composer/composerDraftWorktreeIntent.js";
 import { useComposerAttachments } from "@/v4/composer/useComposerAttachments.js";
 import type { ConversationDropTargetController } from "@/v4/composer/conversationDropTarget.js";
 import { CodeCommentAttachmentChip } from "@/v4/composer/CodeCommentAttachmentChip.js";
@@ -580,6 +581,8 @@ function ConversationComposerImpl({
   });
   const draftScopeId = sessionId ?? V4_DRAFT_SCOPE_ROOT;
   const workspaceKey = workspaceIdentity?.trim() || workspacePath;
+  // Empty-state “New worktree”首发拦截槽位（稳定对象，值变化不触发重渲染）。
+  const worktreeIntentSlot = useComposerDraftWorktreeIntentSlot();
   const configPickerScopeKey = `${workspaceKey}\0${draftScopeId}`;
   const [text, setText] = useState("");
   const [pending, setPending] = useState(false);
@@ -1277,6 +1280,36 @@ function ConversationComposerImpl({
       ) {
         return;
       }
+      // Empty-state “New worktree” interception (review 6c): before the draft's first send
+      // creates any runtime session, hand the send to the registered intent so it can create
+      // the worktree and redirect the draft there first. Handled sends never claim the draft —
+      // the text stays in the editor and follows the workspace switch via the existing
+      // draft-transfer machinery; errors surface inline in the worktree form.
+      const worktreeIntent = worktreeIntentSlot?.current;
+      if (
+        draftMode &&
+        sessionId === null &&
+        worktreeIntent &&
+        worktreeIntent.workspaceKey === workspaceKey
+      ) {
+        pendingRef.current = true;
+        setPending(true);
+        let handledByWorktreeIntent = true;
+        try {
+          handledByWorktreeIntent = await worktreeIntent.interceptFirstSend();
+        } catch (error) {
+          logger.warn(
+            `[v4-composer] worktree 发送拦截失败: ${error instanceof Error ? error.message : String(error)}`,
+          );
+          handledByWorktreeIntent = true;
+        } finally {
+          pendingRef.current = false;
+          setPending(false);
+        }
+        if (handledByWorktreeIntent) {
+          return;
+        }
+      }
       const sendAction = startUserAction({
         featureId: "conversation.composer.message",
         action: "send",
@@ -1554,6 +1587,7 @@ function ConversationComposerImpl({
       conversationSelectionReferences,
       conversationTelemetry,
       draftConfig,
+      draftMode,
       createSubmissionFromComposer,
       submissionReady,
       getCodeCommentContexts,
@@ -1574,6 +1608,7 @@ function ConversationComposerImpl({
       updateText,
       updateComposerContent,
       webElementContexts,
+      worktreeIntentSlot,
       pptxElementReferences,
       workspaceIdentity,
       workspacePath,

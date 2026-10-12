@@ -79,7 +79,7 @@ export function QuickPickCommandDialog({
                     className={quickPickItemClassName}
                     onSelect={() => {
                       onOpenChange(false);
-                      void Promise.resolve(command.run()).catch((error) => {
+                      void Promise.resolve(command.run?.()).catch((error) => {
                         logger.error("[QuickPick] 命令执行失败", {
                           commandId: command.id,
                           error,

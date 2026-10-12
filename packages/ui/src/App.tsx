@@ -373,6 +373,8 @@ export function App({
   });
   const theme = useZCodeStore((s) => s.theme);
   const setTheme = useZCodeStore((s) => s.setTheme);
+  const palette = useZCodeStore((s) => s.palette);
+  const setPalette = useZCodeStore((s) => s.setPalette);
   const {
     isMacFullscreen,
     desktopWindowChromeState,
@@ -823,6 +825,18 @@ export function App({
     ],
   );
 
+  /**
+   * Command Center “New task in worktree” open contract: reuse the shared
+   * workspace-open + startDraft path. Worktree results are explicit project-scope
+   * creations, so never inherit the current workspace's grouped-draft placement.
+   */
+  const handleCreateTaskInWorkspace = useCallback(
+    (targetWorkspacePath: string, targetWorkspaceIdentity?: string) => {
+      handleStartDraftInWorkspace(targetWorkspacePath, targetWorkspaceIdentity, undefined, "project");
+    },
+    [handleStartDraftInWorkspace],
+  );
+
   useWorkspaceShellLifecycle({
     workspaceAbsPath,
     workspaceIdentity,
@@ -1072,6 +1086,7 @@ export function App({
         supportsTerminal: !isOfficeMode,
         supportsReview: !isOfficeMode,
         allowOpenWorkspace,
+        supportsWorktreeTasks: isDesktop === true,
         canOpenCommunity: canOpenCommunityFromQuickPick,
         isSidebarVisible,
         supportsEmbeddedBrowser,
@@ -1079,6 +1094,9 @@ export function App({
         // Depending on the full user object recreates all command/run closures when the auth store returns an equivalent new reference.
         isLoggedIn,
         themeTarget,
+        themeMode: theme,
+        themePalette: palette,
+        resolvedTheme: resolveTheme(theme),
         shortcuts: {
           newTask: newTaskShortcutLabel,
           openWorkspace: openWorkspaceShortcutLabel,
@@ -1098,6 +1116,8 @@ export function App({
             openSettingsTab();
           },
           switchTheme: handleSwitchTheme,
+          setThemeMode: setTheme,
+          setThemePalette: setPalette,
           openFeedback: handleOpenFeedback,
           openCommunity: handleOpenCommunity,
           openProductDocs: handleOpenProductDocs,
@@ -1114,6 +1134,7 @@ export function App({
     [
       allowOpenWorkspace,
       isOfficeMode,
+      isDesktop,
       canOpenCommunityFromQuickPick,
       handleOpenCommunity,
       handleOpenFeedback,
@@ -1133,10 +1154,14 @@ export function App({
       onLogin,
       onLogout,
       onOpenWorkspace,
+      palette,
       runVisibleWorkspaceCommand,
       openSettingsTab,
       openWorkspaceShortcutLabel,
+      setPalette,
+      setTheme,
       supportsEmbeddedBrowser,
+      theme,
       toggleSidebarShortcutLabel,
       toggleTerminalShortcutLabel,
       themeTarget,
@@ -1191,6 +1216,7 @@ export function App({
         workspaceTabs={commandCenterWorkspaceTabs}
         onOpenChange={setIsQuickPickOpen}
         onSelectTask={handleSelectTask}
+        onCreateTaskInWorkspace={handleCreateTaskInWorkspace}
         onSearchResultHighlightRequest={handleSearchResultHighlightRequest}
         onOpenCodeViewer={handleOpenCodeViewerIfWritable}
       />

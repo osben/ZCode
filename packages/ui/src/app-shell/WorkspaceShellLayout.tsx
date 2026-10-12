@@ -34,7 +34,11 @@ import {
 } from "@/v4/workbenchSessionPlacement.js";
 import { usePaneSessionPersistence } from "@/v4/usePaneSessionPersistence.js";
 import { requestV4ComposerDraftWorkspaceTransfer } from "@/v4/composer/composerDraftWorkspaceTransfer.js";
-import { ChatEmptyWorkspacePreviewMenu } from "@/ChatEmptyState.js";
+import {
+  ComposerDraftWorktreeIntentContext,
+  createComposerDraftWorktreeIntentSlot,
+} from "@/v4/composer/composerDraftWorktreeIntent.js";
+import { ChatEmptyWorkspacePreviewMenu, ChatEmptyWorktreeTaskToggle } from "@/ChatEmptyState.js";
 import { DesktopTopOverlay } from "@/DesktopTopOverlay.js";
 import { DesktopWindowFrame } from "@/DesktopWindowFrame.js";
 import { WorkspacePluginPreview } from "@/WorkspacePluginPreview.js";
@@ -1448,6 +1452,15 @@ export const WorkspaceShellLayout = memo(function WorkspaceShellLayoutComponent(
       handleStartDraftInWorkspaceInChat(path, identity, undefined, "project"),
     [handleStartDraftInWorkspaceInChat],
   );
+  // Empty-state “New worktree”checkbox 的重定向入口：与 palette Start 相同的 App 打开 + startDraft 契约。
+  const handleOpenWorktreeDraft = useCallback(
+    (targetWorkspacePath: string) => {
+      handleStartDraftInWorkspaceInChat(targetWorkspacePath, undefined, undefined, "project");
+    },
+    [handleStartDraftInWorkspaceInChat],
+  );
+  // 首发拦截槽位（稳定对象）：checkbox 写入、ConversationComposer 读取；见 composerDraftWorktreeIntent。
+  const draftWorktreeIntentSlot = useMemo(() => createComposerDraftWorktreeIntentSlot(), []);
   const activeWorkspacePurpose =
     workspaceTabs.find(
       (tab) =>
@@ -1557,11 +1570,23 @@ export const WorkspaceShellLayout = memo(function WorkspaceShellLayoutComponent(
             avoidPopoverCollisions={false}
           />
         ) : null}
+        {/* 评审建议 6c：本地 git 项目的 draft empty state 提供“新建 worktree”勾选 + 迷你表单。 */}
+        {isDesktop === true && !isWebRemoteControlShell ? (
+          <ChatEmptyWorktreeTaskToggle
+            workspacePath={workspaceAbsPath}
+            workspaceIdentity={workspaceIdentity}
+            workspaceTabs={workspaceTabs}
+            isDesktop={isDesktop === true}
+            isWebRemoteControlShell={isWebRemoteControlShell}
+            onOpenWorktreeDraft={handleOpenWorktreeDraft}
+          />
+        ) : null}
       </>
     ),
     [
       isOfficeMode,
       workspaceRemoteSessionId,
+      handleOpenWorktreeDraft,
       handleOpenPluginStore,
       handleSelectComposerPlugin,
       allowOpenWorkspace,
@@ -1574,6 +1599,7 @@ export const WorkspaceShellLayout = memo(function WorkspaceShellLayoutComponent(
       handleStartDraftInWorkspaceInChat,
       isWebRemoteControlShell,
       isWindowsDesktop,
+      isDesktop,
       onCancelRemoteProject,
       onConnectRemote,
       onOpenFolderFromWorkspaceMenu,
@@ -2110,567 +2136,575 @@ export const WorkspaceShellLayout = memo(function WorkspaceShellLayoutComponent(
       openWorkflow={handleOpenSavedWorkflowInHub}
       navigateToRun={handleNavigateToLaunchedRun}
     >
-      <DesktopWindowFrame
-        title={`ZCode / ${getPathLeaf(workspaceAbsPath)}`}
-        showHeader
-        isDesktop={isDesktop}
-        isMacDesktop={isMacDesktop}
-        isWindowsDesktop={isWindowsDesktop}
-        headerTestId={TID_APP_HEADER}
-      >
-        <div
-          ref={workspaceShellRef}
-          data-workspace-shell="true"
-          style={workspaceShellSplitStyle}
-          className={cn(
-            "relative flex h-full min-h-0 w-full overflow-hidden",
-            // Root cause: during native window resize, the outer react-resizable-panels wrote every
-            // frame to the layout store, repeatedly committing sidebar tooltip/menu subtrees. Use
-            // a dedicated CSS-variable-driven split so ordinary window resizes use browser layout
-            // without triggering React state updates.
-            isWebRemoteControlShell && "max-md:flex-col",
-          )}
+      {/* Empty-state “New worktree”首发拦截槽位：须包住 ConversationComposer 所在子树。 */}
+      <ComposerDraftWorktreeIntentContext.Provider value={draftWorktreeIntentSlot}>
+        <DesktopWindowFrame
+          title={`ZCode / ${getPathLeaf(workspaceAbsPath)}`}
+          showHeader
+          isDesktop={isDesktop}
+          isMacDesktop={isMacDesktop}
+          isWindowsDesktop={isWindowsDesktop}
+          headerTestId={TID_APP_HEADER}
         >
           <div
-            ref={workspaceSidebarPanelElementRef}
-            data-panel=""
-            data-workspace-sidebar-panel="true"
-            id="sidebar"
+            ref={workspaceShellRef}
+            data-workspace-shell="true"
+            style={workspaceShellSplitStyle}
             className={cn(
-              "w-[var(--workspace-sidebar-panel-width)] max-w-[50%] flex-none overflow-hidden duration-200 ease-out transition-[width,opacity] data-[workspace-sidebar-resizing=true]:transition-opacity",
-              // Root cause: continuing to transition width while dragging the sidebar makes its
-              // actual width lag behind the pointer. Use a DOM marker to toggle the transition while
-              // dragging, avoiding a full workspace rerender to change a class on pointerdown/up.
-              isWebRemoteControlShell &&
-                cn(
-                  // Bugfix: Web remote control still reused the desktop horizontal shell in mobile
-                  // browsers; the 264px sidebar plus 320px content exceeded the viewport and forced
-                  // horizontal scrolling. Stack the main layout vertically only at the small-screen
-                  // breakpoint in remote-control mode; desktop keeps its existing columns.
-                  // Interaction fix: on mobile remote control, a button on the WorkspaceHeader's
-                  // bottom edge now adjusts the top height. Sync it through a CSS variable so
-                  // dragging does not unmount navigation content or interrupt task-list state.
-                  renderWebRemoteNavigationPanel
-                    ? "max-md:!h-[var(--web-remote-navigation-height)] max-md:!min-h-0 max-md:!w-full max-md:!max-w-none max-md:!flex-none max-md:!basis-auto max-md:border-b max-md:border-border max-md:bg-sidebar"
-                    : "max-md:!h-0 max-md:!min-h-0 max-md:!w-full max-md:!max-w-none max-md:!flex-none max-md:!basis-0 max-md:!border-b-0",
-                ),
-              isSidebarPanelVisible ? "opacity-100" : "pointer-events-none opacity-0",
+              "relative flex h-full min-h-0 w-full overflow-hidden",
+              // Root cause: during native window resize, the outer react-resizable-panels wrote every
+              // frame to the layout store, repeatedly committing sidebar tooltip/menu subtrees. Use
+              // a dedicated CSS-variable-driven split so ordinary window resizes use browser layout
+              // without triggering React state updates.
+              isWebRemoteControlShell && "max-md:flex-col",
             )}
           >
-            {/* Bugfix: Keep the remote-control top navigation mounted while collapsed to prevent the entire sidebar from reloading when expanded. */}
-            <aside
-              id={isWebRemoteControlShell ? "web-remote-control-navigation-panel" : undefined}
-              ref={sidebarContainerRef}
-              className={cn(
-                "h-full overflow-hidden select-none",
-                isWebRemoteControlShell && "max-md:min-h-0 max-md:flex-1",
-                !renderWebRemoteNavigationPanel && "max-md:hidden",
-              )}
-              aria-hidden={!isSidebarPanelVisible || !renderWebRemoteNavigationPanel}
-            >
-              <ScopedErrorBoundary
-                scope="workspace-sidebar"
-                resetKeys={workspaceOnlyResetKeys}
-                variant="panel"
-                className="h-full"
-              >
-                {/* Session workbench groups: split panes are enabled on desktop and regular web apps, but not on mobile or /remote control. */}
-                <V4SplitPaneEntryProvider
-                  enabled={!isWebRemoteControlShell && !isWebRemoteControlMobileViewport}
-                  canOpenSession={canOpenSessionInSplitPane}
-                  onOpenSession={handleOpenSessionInSplitPane}
-                >
-                  <WorkflowRunOpenProvider onOpenRun={handleOpenSidebarWorkflowRun}>
-                    <WorkspaceSidebar
-                      workspacePath={workspaceAbsPath}
-                      workspaceRemoteSessionId={workspaceRemoteSessionId}
-                      activePreviewPath={activePreviewPath}
-                      onSelectTask={handleSelectTaskInChat}
-                      onStartDraftInWorkspace={handleCreateProjectDraft}
-                      onOpenCodeViewer={handleOpenCodeViewer}
-                      onOpenBrowserUrl={handleOpenBrowserUrl}
-                      fileTreeOpenRequest={fileTreeOpenRequest}
-                      onCreateTask={handleCreateTaskInChat}
-                      onCreateConversationTask={onCreateConversationTask ?? handleCreateTaskInChat}
-                      onOpenFolderFromWorkspaceMenu={onOpenFolderFromWorkspaceMenu}
-                      onOpenRemoteWorkspace={onOpenRemoteWorkspace}
-                      webRemoteControlWorkspaceSwitcher={webRemoteControlWorkspaceSwitcher}
-                      theme={theme}
-                      onConnectRemote={onConnectRemote}
-                      onSelectRemoteProject={onSelectRemoteProject}
-                      onCancelRemoteProject={onCancelRemoteProject}
-                      onReconnectRemoteWorkspace={onReconnectRemoteWorkspace}
-                      reconnectingRemoteWorkspaceKeys={reconnectingRemoteWorkspaceKeys}
-                      remoteWorkspaceErrorByWorkspaceKey={remoteWorkspaceErrorByWorkspaceKey}
-                      reconnectingRemoteWorkspaceLogsByWorkspaceKey={
-                        reconnectingRemoteWorkspaceLogsByWorkspaceKey
-                      }
-                      onLogout={onLogout}
-                      onLogin={onLogin}
-                      user={user}
-                      isDesktop={isDesktop}
-                      isWebRemoteControl={isWebRemoteControlShell}
-                      isMacDesktop={isMacDesktop}
-                      isWindowsDesktop={isWindowsDesktop}
-                      isSidebarVisible={isSidebarVisible}
-                      onToggleSidebar={handleToggleSidebar}
-                      toggleSidebarShortcutLabel={toggleSidebarShortcutLabel}
-                      canGoBack={canPrimaryNavigationBack}
-                      canGoForward={canTaskNavForward}
-                      onGoBack={primaryNavigationBack}
-                      onGoForward={handleTaskNavForward}
-                      goBackShortcutLabel={goBackShortcutLabel}
-                      goForwardShortcutLabel={goForwardShortcutLabel}
-                      onOpenCommandCenter={handleOpenCommandCenter}
-                      onOpenAutomations={handleOpenAutomations}
-                      automationsActive={workspaceMainView === "automations"}
-                      onOpenPluginStore={handleOpenPluginStore}
-                      pluginStoreActive={workspaceMainView === "plugin-store"}
-                      onFileTreeOpenChange={setIsSidebarFileTreeOpen}
-                      onWebRemoteTaskOpen={handleWebRemoteTaskOpen}
-                      onWebRemoteTaskSwitchingChange={handleWebRemoteTaskSwitchingChange}
-                    />
-                  </WorkflowRunOpenProvider>
-                </V4SplitPaneEntryProvider>
-              </ScopedErrorBoundary>
-            </aside>
-          </div>
-
-          {isSidebarVisible && renderWebRemoteNavigationPanel ? (
             <div
-              role="separator"
-              tabIndex={0}
-              aria-controls="sidebar"
-              aria-label={workspaceSidebarResizeLabel}
-              aria-orientation="vertical"
-              aria-valuemin={WORKSPACE_SIDEBAR_MIN_WIDTH_PX}
-              aria-valuenow={Math.round(workspaceSidebarPanelWidthPx)}
-              data-testid="resizable-handle"
-              onKeyDown={handleWorkspaceSidebarResizeKeyDown}
-              onPointerCancel={(event) => finishWorkspaceSidebarResize(event, true)}
-              onPointerDown={handleWorkspaceSidebarResizeStart}
-              onPointerMove={handleWorkspaceSidebarResizeMove}
-              onPointerUp={(event) => finishWorkspaceSidebarResize(event)}
+              ref={workspaceSidebarPanelElementRef}
+              data-panel=""
+              data-workspace-sidebar-panel="true"
+              id="sidebar"
               className={cn(
-                "group/handle relative z-10 flex h-full w-1 shrink-0 touch-none cursor-ew-resize items-center justify-center bg-transparent outline-none [app-region:no-drag] focus:outline-none focus-visible:ring-0",
-                "after:pointer-events-none after:absolute after:rounded-full after:bg-foreground-subtlest/50 after:opacity-0 after:transition-opacity after:content-[''] after:inset-y-[var(--workspace-panel-radius)] after:w-0.5",
-                "hover:after:opacity-100 data-[separator=hover]:after:opacity-100 data-[separator=active]:after:opacity-100 focus-visible:after:opacity-100 [[data-workspace-sidebar-resizing=true]_&]:after:opacity-100",
-                hasDesktopPanelInset && "after:inset-y-[var(--workspace-resize-handle-inset)]",
-                isWebRemoteControlShell && "max-md:hidden",
+                "w-[var(--workspace-sidebar-panel-width)] max-w-[50%] flex-none overflow-hidden duration-200 ease-out transition-[width,opacity] data-[workspace-sidebar-resizing=true]:transition-opacity",
+                // Root cause: continuing to transition width while dragging the sidebar makes its
+                // actual width lag behind the pointer. Use a DOM marker to toggle the transition while
+                // dragging, avoiding a full workspace rerender to change a class on pointerdown/up.
+                isWebRemoteControlShell &&
+                  cn(
+                    // Bugfix: Web remote control still reused the desktop horizontal shell in mobile
+                    // browsers; the 264px sidebar plus 320px content exceeded the viewport and forced
+                    // horizontal scrolling. Stack the main layout vertically only at the small-screen
+                    // breakpoint in remote-control mode; desktop keeps its existing columns.
+                    // Interaction fix: on mobile remote control, a button on the WorkspaceHeader's
+                    // bottom edge now adjusts the top height. Sync it through a CSS variable so
+                    // dragging does not unmount navigation content or interrupt task-list state.
+                    renderWebRemoteNavigationPanel
+                      ? "max-md:!h-[var(--web-remote-navigation-height)] max-md:!min-h-0 max-md:!w-full max-md:!max-w-none max-md:!flex-none max-md:!basis-auto max-md:border-b max-md:border-border max-md:bg-sidebar"
+                      : "max-md:!h-0 max-md:!min-h-0 max-md:!w-full max-md:!max-w-none max-md:!flex-none max-md:!basis-0 max-md:!border-b-0",
+                  ),
+                isSidebarPanelVisible ? "opacity-100" : "pointer-events-none opacity-0",
               )}
-            />
-          ) : null}
-          {/* Right-side main workspace: header on top; session and terminal on the lower left; shared browser/code-viewer slot on the right. */}
-          <div
-            data-panel=""
-            id="content"
-            className={cn(
-              "flex min-w-[320px] flex-1 flex-col",
-              hasDesktopPanelInset ? "p-1 pl-0 pt-0" : "p-0",
-              isWebRemoteControlShell &&
-                "max-md:!w-full max-md:!min-w-0 max-md:!flex-1 max-md:!basis-0",
-            )}
-          >
-            {
-              hasDesktopPanelInset && (
-                <div className="h-1 w-full [app-region:drag]" />
-              ) /* Fix the issue where the header covered the top macOS window controls and made them unclickable. */
-            }
-            <ResizablePanelGroup
-              layoutId="workspace-body-layout"
-              panelIds={WORKSPACE_BODY_PANEL_IDS}
-              className={cn("min-h-0 flex-1", isWebRemoteControlShell && "max-md:!flex-col")}
             >
-              <ResizablePanel
-                id="conversation-column"
-                minSize={isWebRemoteControlShell ? "0px" : "35%"}
-                defaultSize={isSidePaneVisible ? "52%" : undefined}
-                className={
-                  isWebRemoteControlShell
-                    ? "max-md:!w-full max-md:!min-w-0 max-md:!flex-1 max-md:!basis-0"
-                    : undefined
-                }
+              {/* Bugfix: Keep the remote-control top navigation mounted while collapsed to prevent the entire sidebar from reloading when expanded. */}
+              <aside
+                id={isWebRemoteControlShell ? "web-remote-control-navigation-panel" : undefined}
+                ref={sidebarContainerRef}
+                className={cn(
+                  "h-full overflow-hidden select-none",
+                  isWebRemoteControlShell && "max-md:min-h-0 max-md:flex-1",
+                  !renderWebRemoteNavigationPanel && "max-md:hidden",
+                )}
+                aria-hidden={!isSidebarPanelVisible || !renderWebRemoteNavigationPanel}
               >
-                <ResizablePanelGroup
-                  orientation="vertical"
-                  layoutId="workspace-conversation-column-layout"
-                  panelIds={WORKSPACE_CONVERSATION_PANEL_IDS}
-                  className="h-full min-h-0"
+                <ScopedErrorBoundary
+                  scope="workspace-sidebar"
+                  resetKeys={workspaceOnlyResetKeys}
+                  variant="panel"
+                  className="h-full"
                 >
-                  <ResizablePanel
-                    id="conversation"
-                    elementRef={conversationPanelElementRef}
-                    minSize="35%"
+                  {/* Session workbench groups: split panes are enabled on desktop and regular web apps, but not on mobile or /remote control. */}
+                  <V4SplitPaneEntryProvider
+                    enabled={!isWebRemoteControlShell && !isWebRemoteControlMobileViewport}
+                    canOpenSession={canOpenSessionInSplitPane}
+                    onOpenSession={handleOpenSessionInSplitPane}
                   >
-                    <section
-                      data-workspace-conversation-frame="true"
-                      className={cn(
-                        "relative flex h-full min-h-0 flex-1 flex-col overflow-hidden bg-background",
-                        isSidePaneVisible
-                          ? "rounded-[var(--workspace-panel-radius)] border border-border"
-                          : resolveWorkspaceShellWindowChromeClass({
-                              isMacDesktop,
-                              isWindowsDesktop,
-                              isLinuxDesktop,
-                              macOSMajorVersion: desktopWindowChromeState?.macOSMajorVersion,
-                              isWindowsMaximized: desktopWindowChromeState?.isMaximized ?? false,
-                              supportsNativeRoundedCorners:
-                                desktopWindowChromeState?.supportsNativeRoundedCorners ?? null,
-                            }),
-                        isTerminalVisible && "rounded-b-[var(--workspace-panel-radius)] border-b",
-                        isWebRemoteControlShell &&
-                          "max-md:rounded-none max-md:border-x-0 max-md:border-b-0",
-                      )}
+                    <WorkflowRunOpenProvider onOpenRun={handleOpenSidebarWorkflowRun}>
+                      <WorkspaceSidebar
+                        workspacePath={workspaceAbsPath}
+                        workspaceRemoteSessionId={workspaceRemoteSessionId}
+                        activePreviewPath={activePreviewPath}
+                        onSelectTask={handleSelectTaskInChat}
+                        onStartDraftInWorkspace={handleCreateProjectDraft}
+                        onOpenCodeViewer={handleOpenCodeViewer}
+                        onOpenBrowserUrl={handleOpenBrowserUrl}
+                        fileTreeOpenRequest={fileTreeOpenRequest}
+                        onCreateTask={handleCreateTaskInChat}
+                        onCreateConversationTask={
+                          onCreateConversationTask ?? handleCreateTaskInChat
+                        }
+                        onOpenFolderFromWorkspaceMenu={onOpenFolderFromWorkspaceMenu}
+                        onOpenRemoteWorkspace={onOpenRemoteWorkspace}
+                        webRemoteControlWorkspaceSwitcher={webRemoteControlWorkspaceSwitcher}
+                        theme={theme}
+                        onConnectRemote={onConnectRemote}
+                        onSelectRemoteProject={onSelectRemoteProject}
+                        onCancelRemoteProject={onCancelRemoteProject}
+                        onReconnectRemoteWorkspace={onReconnectRemoteWorkspace}
+                        reconnectingRemoteWorkspaceKeys={reconnectingRemoteWorkspaceKeys}
+                        remoteWorkspaceErrorByWorkspaceKey={remoteWorkspaceErrorByWorkspaceKey}
+                        reconnectingRemoteWorkspaceLogsByWorkspaceKey={
+                          reconnectingRemoteWorkspaceLogsByWorkspaceKey
+                        }
+                        onLogout={onLogout}
+                        onLogin={onLogin}
+                        user={user}
+                        isDesktop={isDesktop}
+                        isWebRemoteControl={isWebRemoteControlShell}
+                        isMacDesktop={isMacDesktop}
+                        isWindowsDesktop={isWindowsDesktop}
+                        isSidebarVisible={isSidebarVisible}
+                        onToggleSidebar={handleToggleSidebar}
+                        toggleSidebarShortcutLabel={toggleSidebarShortcutLabel}
+                        canGoBack={canPrimaryNavigationBack}
+                        canGoForward={canTaskNavForward}
+                        onGoBack={primaryNavigationBack}
+                        onGoForward={handleTaskNavForward}
+                        goBackShortcutLabel={goBackShortcutLabel}
+                        goForwardShortcutLabel={goForwardShortcutLabel}
+                        onOpenCommandCenter={handleOpenCommandCenter}
+                        onOpenAutomations={handleOpenAutomations}
+                        automationsActive={workspaceMainView === "automations"}
+                        onOpenPluginStore={handleOpenPluginStore}
+                        pluginStoreActive={workspaceMainView === "plugin-store"}
+                        onFileTreeOpenChange={setIsSidebarFileTreeOpen}
+                        onWebRemoteTaskOpen={handleWebRemoteTaskOpen}
+                        onWebRemoteTaskSwitchingChange={handleWebRemoteTaskSwitchingChange}
+                      />
+                    </WorkflowRunOpenProvider>
+                  </V4SplitPaneEntryProvider>
+                </ScopedErrorBoundary>
+              </aside>
+            </div>
+
+            {isSidebarVisible && renderWebRemoteNavigationPanel ? (
+              <div
+                role="separator"
+                tabIndex={0}
+                aria-controls="sidebar"
+                aria-label={workspaceSidebarResizeLabel}
+                aria-orientation="vertical"
+                aria-valuemin={WORKSPACE_SIDEBAR_MIN_WIDTH_PX}
+                aria-valuenow={Math.round(workspaceSidebarPanelWidthPx)}
+                data-testid="resizable-handle"
+                onKeyDown={handleWorkspaceSidebarResizeKeyDown}
+                onPointerCancel={(event) => finishWorkspaceSidebarResize(event, true)}
+                onPointerDown={handleWorkspaceSidebarResizeStart}
+                onPointerMove={handleWorkspaceSidebarResizeMove}
+                onPointerUp={(event) => finishWorkspaceSidebarResize(event)}
+                className={cn(
+                  "group/handle relative z-10 flex h-full w-1 shrink-0 touch-none cursor-ew-resize items-center justify-center bg-transparent outline-none [app-region:no-drag] focus:outline-none focus-visible:ring-0",
+                  "after:pointer-events-none after:absolute after:rounded-full after:bg-foreground-subtlest/50 after:opacity-0 after:transition-opacity after:content-[''] after:inset-y-[var(--workspace-panel-radius)] after:w-0.5",
+                  "hover:after:opacity-100 data-[separator=hover]:after:opacity-100 data-[separator=active]:after:opacity-100 focus-visible:after:opacity-100 [[data-workspace-sidebar-resizing=true]_&]:after:opacity-100",
+                  hasDesktopPanelInset && "after:inset-y-[var(--workspace-resize-handle-inset)]",
+                  isWebRemoteControlShell && "max-md:hidden",
+                )}
+              />
+            ) : null}
+            {/* Right-side main workspace: header on top; session and terminal on the lower left; shared browser/code-viewer slot on the right. */}
+            <div
+              data-panel=""
+              id="content"
+              className={cn(
+                "flex min-w-[320px] flex-1 flex-col",
+                hasDesktopPanelInset ? "p-1 pl-0 pt-0" : "p-0",
+                isWebRemoteControlShell &&
+                  "max-md:!w-full max-md:!min-w-0 max-md:!flex-1 max-md:!basis-0",
+              )}
+            >
+              {
+                hasDesktopPanelInset && (
+                  <div className="h-1 w-full [app-region:drag]" />
+                ) /* Fix the issue where the header covered the top macOS window controls and made them unclickable. */
+              }
+              <ResizablePanelGroup
+                layoutId="workspace-body-layout"
+                panelIds={WORKSPACE_BODY_PANEL_IDS}
+                className={cn("min-h-0 flex-1", isWebRemoteControlShell && "max-md:!flex-col")}
+              >
+                <ResizablePanel
+                  id="conversation-column"
+                  minSize={isWebRemoteControlShell ? "0px" : "35%"}
+                  defaultSize={isSidePaneVisible ? "52%" : undefined}
+                  className={
+                    isWebRemoteControlShell
+                      ? "max-md:!w-full max-md:!min-w-0 max-md:!flex-1 max-md:!basis-0"
+                      : undefined
+                  }
+                >
+                  <ResizablePanelGroup
+                    orientation="vertical"
+                    layoutId="workspace-conversation-column-layout"
+                    panelIds={WORKSPACE_CONVERSATION_PANEL_IDS}
+                    className="h-full min-h-0"
+                  >
+                    <ResizablePanel
+                      id="conversation"
+                      elementRef={conversationPanelElementRef}
+                      minSize="35%"
                     >
-                      {shouldRenderWorkspaceHeader ? (
-                        <ScopedErrorBoundary
-                          scope="workspace-header"
-                          resetKeys={workspaceOnlyResetKeys}
-                          variant="compact"
-                          className="border-b"
-                        >
-                          <WorkspaceHeader
-                            reserveWindowControls={!isSidePaneVisible}
-                            variant={activeTaskId === null ? "draft" : "task"}
-                            draftDropTargetController={
-                              activeTaskId === null ? draftHeaderDropTargetController : undefined
-                            }
-                            readOnlyReason={workspaceReadOnlyReason}
-                            workspaceAbsPath={workspaceAbsPath}
-                            remoteSessionId={workspaceRemoteSessionId}
-                            workspaceIdentity={workspaceIdentity}
-                            remoteTarget={workspaceRemoteTarget}
-                            localWorkspacePath={workspaceLocalPathForRemoteMcpSync}
-                            projectName={projectName}
-                            activeTaskTitle={activeTaskTitle}
-                            activeTaskChangeSummary={activeTaskChangeSummary}
-                            hasUpdateReady={hasUpdateStatusButton}
-                            activeTaskId={activeTaskId}
-                            user={user}
-                            activeTraceId={activeTraceId}
-                            activeSessionId={activeSessionId}
-                            activeTaskProvider={activeTaskProvider}
-                            resolvedActiveTaskMeta={resolvedActiveTaskMeta}
-                            sessionLogPath={taskSessionFile.path}
-                            nativeSessionLogProvider={taskNativeSessionLogFile.provider}
-                            nativeSessionLogPath={taskNativeSessionLogFile.path}
-                            nativeSessionLogExists={taskNativeSessionLogFile.exists}
-                            nativeSessionLogLoading={taskNativeSessionLogFile.loading}
-                            providerWorkspaceConfigPath={providerConfigFile.path}
-                            providerWorkspaceConfigExists={providerConfigFile.exists}
-                            providerWorkspaceConfigLoading={providerConfigFile.loading}
-                            workspaceHeaderState={workspaceShellZCodeState}
-                            gitSummary={gitState.summary}
-                            gitDirtyFileCount={gitDirtyFileCount}
-                            isMacDesktop={isMacDesktop}
-                            isMacFullscreen={isMacFullscreen}
-                            isWindowsDesktop={isWindowsDesktop}
-                            isWebRemoteControl={isWebRemoteControlShell}
-                            windowsWindowControlsRightPaddingPx={
-                              windowsWindowControlsRightPaddingPx
-                            }
-                            isDesktop={isDesktop}
-                            simplifyForNarrowRemote={simplifyHeaderForNarrowRemote}
-                            isSidebarVisible={isSidebarVisible}
-                            isTerminalOpen={isTerminalOpen}
-                            isSidePaneOpen={isSidePaneOpen}
-                            onRefreshGit={handleRefreshGit}
-                            onToggleTerminal={handleToggleTerminal}
-                            onToggleBrowser={handleToggleBrowser}
-                            onToggleSidePane={handleToggleSidePane}
-                            toggleSidePaneShortcutLabel={toggleSidePaneShortcutLabel}
-                            onReloadSession={handleReloadSession}
-                            reloadSessionDisabled={workspaceSessionActionDisabled}
-                            reloadSessionPending={reloadSessionPending}
-                            onCreateTask={handleCreateTaskInChat}
-                            onOpenWorkspace={onOpenWorkspace}
-                            allowOpenWorkspace={allowOpenWorkspace}
-                          />
-                        </ScopedErrorBoundary>
-                      ) : null}
-                      {isWebRemoteControlShell ? (
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="icon-md"
-                          data-web-remote-navigation-resize-handle="true"
-                          className={cn(
-                            "absolute left-1/2 z-30 hidden -translate-x-1/2 -translate-y-1/2 touch-none cursor-ns-resize border-border bg-surface text-foreground-subtle shadow-sm hover:bg-surface-hover hover:text-foreground max-md:inline-flex [app-region:no-drag]",
-                            shouldRenderWorkspaceHeader ? "top-12" : "top-0",
-                            isWebRemoteControlNavigationDragging &&
-                              "border-border-hover bg-surface-hover text-foreground",
-                          )}
-                          aria-expanded={!isWebRemoteControlNavigationCollapsed}
-                          aria-controls="web-remote-control-navigation-panel"
-                          aria-label={intl.formatMessage({
-                            id: isWebRemoteControlNavigationCollapsed
-                              ? "webRemoteControl.expandNavigation"
-                              : "webRemoteControl.collapseNavigation",
-                          })}
-                          onPointerDown={handleWebRemoteNavigationResizeStart}
-                          onPointerMove={handleWebRemoteNavigationResizeMove}
-                          onPointerUp={(event) => {
-                            finishWebRemoteNavigationResize(event);
-                          }}
-                          onPointerCancel={(event) => {
-                            finishWebRemoteNavigationResize(event, true);
-                          }}
-                          onClick={handleWebRemoteNavigationHandleClick}
-                        >
-                          <GripHorizontal className="size-4" />
-                        </Button>
-                      ) : null}
-                      <div className="min-h-0 flex-1 overflow-hidden">
-                        {workspaceMainView === "automations" && !isWebRemoteControlShell ? (
-                          <main
-                            id={AUTOMATIONS_TOAST_ANCHOR_ID}
-                            className="flex h-full min-h-0 flex-1 flex-col bg-background"
+                      <section
+                        data-workspace-conversation-frame="true"
+                        className={cn(
+                          "relative flex h-full min-h-0 flex-1 flex-col overflow-hidden bg-background",
+                          isSidePaneVisible
+                            ? "rounded-[var(--workspace-panel-radius)] border border-border"
+                            : resolveWorkspaceShellWindowChromeClass({
+                                isMacDesktop,
+                                isWindowsDesktop,
+                                isLinuxDesktop,
+                                macOSMajorVersion: desktopWindowChromeState?.macOSMajorVersion,
+                                isWindowsMaximized: desktopWindowChromeState?.isMaximized ?? false,
+                                supportsNativeRoundedCorners:
+                                  desktopWindowChromeState?.supportsNativeRoundedCorners ?? null,
+                              }),
+                          isTerminalVisible && "rounded-b-[var(--workspace-panel-radius)] border-b",
+                          isWebRemoteControlShell &&
+                            "max-md:rounded-none max-md:border-x-0 max-md:border-b-0",
+                        )}
+                      >
+                        {shouldRenderWorkspaceHeader ? (
+                          <ScopedErrorBoundary
+                            scope="workspace-header"
+                            resetKeys={workspaceOnlyResetKeys}
+                            variant="compact"
+                            className="border-b"
                           >
-                            <AutomationsMainBreadcrumbFrame
-                              isDesktop={Boolean(isDesktop)}
-                              sectionLabel={intl.formatMessage({
-                                id: "settings.automations.title",
-                              })}
-                              ariaLabel={intl.formatMessage({
-                                id: "automations.breadcrumbLabel",
-                              })}
+                            <WorkspaceHeader
+                              reserveWindowControls={!isSidePaneVisible}
+                              variant={activeTaskId === null ? "draft" : "task"}
+                              draftDropTargetController={
+                                activeTaskId === null ? draftHeaderDropTargetController : undefined
+                              }
+                              readOnlyReason={workspaceReadOnlyReason}
+                              workspaceAbsPath={workspaceAbsPath}
+                              remoteSessionId={workspaceRemoteSessionId}
+                              workspaceIdentity={workspaceIdentity}
+                              remoteTarget={workspaceRemoteTarget}
+                              localWorkspacePath={workspaceLocalPathForRemoteMcpSync}
+                              projectName={projectName}
+                              activeTaskTitle={activeTaskTitle}
+                              activeTaskChangeSummary={activeTaskChangeSummary}
+                              hasUpdateReady={hasUpdateStatusButton}
+                              activeTaskId={activeTaskId}
+                              user={user}
+                              activeTraceId={activeTraceId}
+                              activeSessionId={activeSessionId}
+                              activeTaskProvider={activeTaskProvider}
+                              resolvedActiveTaskMeta={resolvedActiveTaskMeta}
+                              sessionLogPath={taskSessionFile.path}
+                              nativeSessionLogProvider={taskNativeSessionLogFile.provider}
+                              nativeSessionLogPath={taskNativeSessionLogFile.path}
+                              nativeSessionLogExists={taskNativeSessionLogFile.exists}
+                              nativeSessionLogLoading={taskNativeSessionLogFile.loading}
+                              providerWorkspaceConfigPath={providerConfigFile.path}
+                              providerWorkspaceConfigExists={providerConfigFile.exists}
+                              providerWorkspaceConfigLoading={providerConfigFile.loading}
+                              workspaceHeaderState={workspaceShellZCodeState}
+                              gitSummary={gitState.summary}
+                              gitDirtyFileCount={gitDirtyFileCount}
+                              isMacDesktop={isMacDesktop}
+                              isMacFullscreen={isMacFullscreen}
+                              isWindowsDesktop={isWindowsDesktop}
+                              isWebRemoteControl={isWebRemoteControlShell}
+                              windowsWindowControlsRightPaddingPx={
+                                windowsWindowControlsRightPaddingPx
+                              }
+                              isDesktop={isDesktop}
+                              simplifyForNarrowRemote={simplifyHeaderForNarrowRemote}
+                              isSidebarVisible={isSidebarVisible}
+                              isTerminalOpen={isTerminalOpen}
+                              isSidePaneOpen={isSidePaneOpen}
+                              onRefreshGit={handleRefreshGit}
+                              onToggleTerminal={handleToggleTerminal}
+                              onToggleBrowser={handleToggleBrowser}
+                              onToggleSidePane={handleToggleSidePane}
+                              toggleSidePaneShortcutLabel={toggleSidePaneShortcutLabel}
+                              onReloadSession={handleReloadSession}
+                              reloadSessionDisabled={workspaceSessionActionDisabled}
+                              reloadSessionPending={reloadSessionPending}
+                              onCreateTask={handleCreateTaskInChat}
+                              onOpenWorkspace={onOpenWorkspace}
+                              allowOpenWorkspace={allowOpenWorkspace}
+                            />
+                          </ScopedErrorBoundary>
+                        ) : null}
+                        {isWebRemoteControlShell ? (
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="icon-md"
+                            data-web-remote-navigation-resize-handle="true"
+                            className={cn(
+                              "absolute left-1/2 z-30 hidden -translate-x-1/2 -translate-y-1/2 touch-none cursor-ns-resize border-border bg-surface text-foreground-subtle shadow-sm hover:bg-surface-hover hover:text-foreground max-md:inline-flex [app-region:no-drag]",
+                              shouldRenderWorkspaceHeader ? "top-12" : "top-0",
+                              isWebRemoteControlNavigationDragging &&
+                                "border-border-hover bg-surface-hover text-foreground",
+                            )}
+                            aria-expanded={!isWebRemoteControlNavigationCollapsed}
+                            aria-controls="web-remote-control-navigation-panel"
+                            aria-label={intl.formatMessage({
+                              id: isWebRemoteControlNavigationCollapsed
+                                ? "webRemoteControl.expandNavigation"
+                                : "webRemoteControl.collapseNavigation",
+                            })}
+                            onPointerDown={handleWebRemoteNavigationResizeStart}
+                            onPointerMove={handleWebRemoteNavigationResizeMove}
+                            onPointerUp={(event) => {
+                              finishWebRemoteNavigationResize(event);
+                            }}
+                            onPointerCancel={(event) => {
+                              finishWebRemoteNavigationResize(event, true);
+                            }}
+                            onClick={handleWebRemoteNavigationHandleClick}
+                          >
+                            <GripHorizontal className="size-4" />
+                          </Button>
+                        ) : null}
+                        <div className="min-h-0 flex-1 overflow-hidden">
+                          {workspaceMainView === "automations" && !isWebRemoteControlShell ? (
+                            <main
+                              id={AUTOMATIONS_TOAST_ANCHOR_ID}
+                              className="flex h-full min-h-0 flex-1 flex-col bg-background"
                             >
-                              <div
-                                // Root cause: Automations tabs have different content heights, so the
-                                // scrollbar appearing/disappearing changes the available width of the mx-auto
-                                // content column and shifts the whole page horizontally. Reserve a stable
-                                // gutter to keep the centering reference unchanged.
-                                className="min-h-0 flex-1 overflow-y-auto [scrollbar-gutter:stable]"
+                              <AutomationsMainBreadcrumbFrame
+                                isDesktop={Boolean(isDesktop)}
+                                sectionLabel={intl.formatMessage({
+                                  id: "settings.automations.title",
+                                })}
+                                ariaLabel={intl.formatMessage({
+                                  id: "automations.breadcrumbLabel",
+                                })}
                               >
-                                <ScopedErrorBoundary
-                                  scope="automations-main"
-                                  resetKeys={workspaceOnlyResetKeys}
-                                  variant="panel"
-                                  className="min-h-full"
+                                <div
+                                  // Root cause: Automations tabs have different content heights, so the
+                                  // scrollbar appearing/disappearing changes the available width of the mx-auto
+                                  // content column and shifts the whole page horizontally. Reserve a stable
+                                  // gutter to keep the centering reference unchanged.
+                                  className="min-h-0 flex-1 overflow-y-auto [scrollbar-gutter:stable]"
                                 >
-                                  <div className="mx-auto flex w-full max-w-5xl flex-col px-4 py-4 md:px-6 md:py-6">
-                                    <AutomationsSection
+                                  <ScopedErrorBoundary
+                                    scope="automations-main"
+                                    resetKeys={workspaceOnlyResetKeys}
+                                    variant="panel"
+                                    className="min-h-full"
+                                  >
+                                    <div className="mx-auto flex w-full max-w-5xl flex-col px-4 py-4 md:px-6 md:py-6">
+                                      <AutomationsSection
+                                        workspacePath={workspaceAbsPath}
+                                        workspaceIdentity={workspaceIdentity}
+                                        onCreateViaChat={handleCreateAutomationInChat}
+                                        onNavigateToLaunchedRun={handleNavigateToLaunchedRun}
+                                        onOpenWorkflowRun={handleOpenSavedWorkflowRun}
+                                        onOpenWorkflowArtifact={handleOpenSavedWorkflowArtifact}
+                                        openAutomationId={openAutomationId}
+                                        openAutomationTab={openAutomationTab}
+                                        onOpenAutomationConsumed={onOpenAutomationConsumed}
+                                        openWorkflow={openWorkflow}
+                                        onOpenWorkflowConsumed={onOpenWorkflowConsumed}
+                                        onOpenSession={({
+                                          sessionId,
+                                          workspacePath,
+                                          workspaceIdentity,
+                                        }) =>
+                                          handleSelectTaskInChat(
+                                            workspacePath,
+                                            sessionId,
+                                            workspaceIdentity,
+                                          )
+                                        }
+                                      />
+                                    </div>
+                                  </ScopedErrorBoundary>
+                                </div>
+                              </AutomationsMainBreadcrumbFrame>
+                            </main>
+                          ) : workspaceMainView === "plugin-store" && !isWebRemoteControlShell ? (
+                            <main className="flex h-full min-h-0 flex-1 flex-col bg-background">
+                              <AutomationsMainBreadcrumbFrame
+                                isDesktop={Boolean(isDesktop)}
+                                sectionLabel={intl.formatMessage({
+                                  id: "workspace.openPluginsSettings",
+                                })}
+                                ariaLabel={intl.formatMessage({
+                                  id: "settings.breadcrumbLabel",
+                                })}
+                              >
+                                <div className="min-h-0 flex-1 overflow-y-auto [scrollbar-gutter:stable]">
+                                  <div className="mx-auto flex w-full max-w-4xl flex-col px-4 py-4 md:px-6 md:py-6">
+                                    <PluginStorePage
+                                      isWebRemoteControl={isWebRemoteControlShell}
+                                      key={`plugin-store:${pluginStoreOpenVersion}`}
                                       workspacePath={workspaceAbsPath}
                                       workspaceIdentity={workspaceIdentity}
-                                      onCreateViaChat={handleCreateAutomationInChat}
-                                      onNavigateToLaunchedRun={handleNavigateToLaunchedRun}
-                                      onOpenWorkflowRun={handleOpenSavedWorkflowRun}
-                                      onOpenWorkflowArtifact={handleOpenSavedWorkflowArtifact}
-                                      openAutomationId={openAutomationId}
-                                      openAutomationTab={openAutomationTab}
-                                      onOpenAutomationConsumed={onOpenAutomationConsumed}
-                                      openWorkflow={openWorkflow}
-                                      onOpenWorkflowConsumed={onOpenWorkflowConsumed}
-                                      onOpenSession={({
-                                        sessionId,
-                                        workspacePath,
-                                        workspaceIdentity,
-                                      }) =>
-                                        handleSelectTaskInChat(
-                                          workspacePath,
-                                          sessionId,
-                                          workspaceIdentity,
-                                        )
-                                      }
+                                      onCreateTask={handleCreateTaskInChat}
+                                      onManageInstalled={handleManageInstalledPlugins}
                                     />
                                   </div>
-                                </ScopedErrorBoundary>
-                              </div>
-                            </AutomationsMainBreadcrumbFrame>
-                          </main>
-                        ) : workspaceMainView === "plugin-store" && !isWebRemoteControlShell ? (
-                          <main className="flex h-full min-h-0 flex-1 flex-col bg-background">
-                            <AutomationsMainBreadcrumbFrame
-                              isDesktop={Boolean(isDesktop)}
-                              sectionLabel={intl.formatMessage({
-                                id: "workspace.openPluginsSettings",
-                              })}
-                              ariaLabel={intl.formatMessage({
-                                id: "settings.breadcrumbLabel",
-                              })}
-                            >
-                              <div className="min-h-0 flex-1 overflow-y-auto [scrollbar-gutter:stable]">
-                                <div className="mx-auto flex w-full max-w-4xl flex-col px-4 py-4 md:px-6 md:py-6">
-                                  <PluginStorePage
-                                    isWebRemoteControl={isWebRemoteControlShell}
-                                    key={`plugin-store:${pluginStoreOpenVersion}`}
-                                    workspacePath={workspaceAbsPath}
-                                    workspaceIdentity={workspaceIdentity}
-                                    onCreateTask={handleCreateTaskInChat}
-                                    onManageInstalled={handleManageInstalledPlugins}
-                                  />
                                 </div>
-                              </div>
-                            </AutomationsMainBreadcrumbFrame>
-                          </main>
-                        ) : (
-                          <main className="relative flex h-full min-h-0 flex-1 flex-col overflow-hidden">
-                            {renderChatFindDialog()}
-                            <ScopedErrorBoundary
-                              scope="workspace-chat"
-                              resetKeys={workspaceDraftResetKeys}
-                              variant="panel"
-                              className="h-full"
-                            >
-                              {/* Bugfix(2026-07-05, M3 acceptance): Pane binding must use the original activeTaskId selection,
+                              </AutomationsMainBreadcrumbFrame>
+                            </main>
+                          ) : (
+                            <main className="relative flex h-full min-h-0 flex-1 flex-col overflow-hidden">
+                              {renderChatFindDialog()}
+                              <ScopedErrorBoundary
+                                scope="workspace-chat"
+                                resetKeys={workspaceDraftResetKeys}
+                                variant="panel"
+                                className="h-full"
+                              >
+                                {/* Bugfix(2026-07-05, M3 acceptance): Pane binding must use the original activeTaskId selection,
                                   not activeSessionId derived from metadata. A session just created by v4 createSession
                                   is not in taskListCache/optimistic cache, so metadata resolves to null and leaves the pane
                                   stuck in draft. In v4, sessionId ≡ taskId; metadata is only for Header display.
                                   M5⑤: The Desktop main area now hosts two split-pane layers (Layout/Focus); primary-pane
                                   binding semantics and the testid contract (paneId=workspace-main) remain unchanged. */}
-                              <V4WorkspaceChatArea
-                                readOnly={Boolean(workspaceReadOnlyReason)}
-                                foregroundEnabled={isWorkspaceVisible}
-                                workspacePath={workspaceAbsPath}
-                                workspaceIdentity={workspaceIdentity}
-                                isDesktop={isDesktop === true}
-                                remoteSessionId={workspaceRemoteSessionId}
-                                compactForRemoteControl={isWebRemoteControlShell}
-                                sessionId={activeTaskId}
-                                activeSelectionSideChatSessionId={activeSelectionSideChatSessionId}
-                                provider={activeTaskProvider ?? undefined}
-                                onSessionCreated={handleV4SessionCreated}
-                                onSessionDeleted={handleV4SessionDeleted}
-                                draftComposerHeader={draftComposerHeader}
-                                onPrimaryDraftDropTargetControllerChange={
-                                  setDraftHeaderDropTargetController
-                                }
-                                gitSummary={gitState.summary}
-                                gitDirtyFileCount={gitDirtyFileCount}
-                                activeTaskChangeSummary={activeTaskChangeSummary}
-                                gitWorktreeReviewSourceId={gitWorktreeReviewSourceId}
-                                gitWorktreeChangeSummary={gitWorktreeChangeSummary}
-                                summaryPanelVariantOverride={summaryPanelVariantOverride}
-                                onSummaryPanelVariantOverrideChange={
-                                  onSummaryPanelVariantOverrideChange
-                                }
-                                onRefreshGit={handleRefreshGit}
-                                onOpenGitReview={handleOpenGitReview}
-                                onPaneActiveSessionChange={handlePaneActiveSessionChange}
-                                onOpenBrowserUrl={handleOpenBrowserUrl}
-                                onOpenAutomationsMain={handleOpenAutomations}
-                                onOpenCodeViewer={handleOpenCodeViewer}
-                                onAutoOpenAssistantPptx={
-                                  isDesktop && !isWebRemoteControlShell
-                                    ? handleAutoOpenAssistantPptx
-                                    : undefined
-                                }
-                                onOpenBackgroundBash={handleOpenBackgroundBash}
-                                onOpenSubagentSession={handleOpenSubagentSession}
-                                onOpenSubagentDirectory={handleOpenSubagentDirectory}
-                                onSyncSubagentSessionTabs={handleSyncSubagentSessionTabs}
-                                onOpenSelectionSideChat={handleOpenSelectionSideChat}
-                                onOpenPlanDetail={handleOpenPlanDetail}
-                                onOpenWorkflowRun={handleOpenWorkflowRun}
-                                onOpenWorkflowArtifact={handleOpenWorkflowArtifact}
-                                onOpenWorkflowRunDirectory={handleOpenWorkflowRunDirectory}
-                                onOpenWorkflowActorSession={handleOpenWorkflowActorSession}
-                                onOpenWorkflowWorkspace={handleOpenWorkflowWorkspace}
-                                onOpenFileLink={handleOpenMarkdownFileLink}
-                                conversationFindQuery={conversationFindQuery}
-                                conversationFindActiveIndex={conversationFindActiveIndex}
-                                conversationFindNavigationRequestId={
-                                  conversationFindNavigationRequestId
-                                }
-                                onConversationFindMatchStateChange={
-                                  onConversationFindMatchStateChange
-                                }
-                                searchResultHighlightRequest={activeSearchResultHighlightRequest}
-                                onSearchResultHighlightDone={onSearchResultHighlightDone}
-                              />
-                            </ScopedErrorBoundary>
-                          </main>
+                                <V4WorkspaceChatArea
+                                  readOnly={Boolean(workspaceReadOnlyReason)}
+                                  foregroundEnabled={isWorkspaceVisible}
+                                  workspacePath={workspaceAbsPath}
+                                  workspaceIdentity={workspaceIdentity}
+                                  isDesktop={isDesktop === true}
+                                  remoteSessionId={workspaceRemoteSessionId}
+                                  compactForRemoteControl={isWebRemoteControlShell}
+                                  sessionId={activeTaskId}
+                                  activeSelectionSideChatSessionId={
+                                    activeSelectionSideChatSessionId
+                                  }
+                                  provider={activeTaskProvider ?? undefined}
+                                  onSessionCreated={handleV4SessionCreated}
+                                  onSessionDeleted={handleV4SessionDeleted}
+                                  draftComposerHeader={draftComposerHeader}
+                                  onPrimaryDraftDropTargetControllerChange={
+                                    setDraftHeaderDropTargetController
+                                  }
+                                  gitSummary={gitState.summary}
+                                  gitDirtyFileCount={gitDirtyFileCount}
+                                  activeTaskChangeSummary={activeTaskChangeSummary}
+                                  gitWorktreeReviewSourceId={gitWorktreeReviewSourceId}
+                                  gitWorktreeChangeSummary={gitWorktreeChangeSummary}
+                                  summaryPanelVariantOverride={summaryPanelVariantOverride}
+                                  onSummaryPanelVariantOverrideChange={
+                                    onSummaryPanelVariantOverrideChange
+                                  }
+                                  onRefreshGit={handleRefreshGit}
+                                  onOpenGitReview={handleOpenGitReview}
+                                  onPaneActiveSessionChange={handlePaneActiveSessionChange}
+                                  onOpenBrowserUrl={handleOpenBrowserUrl}
+                                  onOpenAutomationsMain={handleOpenAutomations}
+                                  onOpenCodeViewer={handleOpenCodeViewer}
+                                  onAutoOpenAssistantPptx={
+                                    isDesktop && !isWebRemoteControlShell
+                                      ? handleAutoOpenAssistantPptx
+                                      : undefined
+                                  }
+                                  onOpenBackgroundBash={handleOpenBackgroundBash}
+                                  onOpenSubagentSession={handleOpenSubagentSession}
+                                  onOpenSubagentDirectory={handleOpenSubagentDirectory}
+                                  onSyncSubagentSessionTabs={handleSyncSubagentSessionTabs}
+                                  onOpenSelectionSideChat={handleOpenSelectionSideChat}
+                                  onOpenPlanDetail={handleOpenPlanDetail}
+                                  onOpenWorkflowRun={handleOpenWorkflowRun}
+                                  onOpenWorkflowArtifact={handleOpenWorkflowArtifact}
+                                  onOpenWorkflowRunDirectory={handleOpenWorkflowRunDirectory}
+                                  onOpenWorkflowActorSession={handleOpenWorkflowActorSession}
+                                  onOpenWorkflowWorkspace={handleOpenWorkflowWorkspace}
+                                  onOpenFileLink={handleOpenMarkdownFileLink}
+                                  conversationFindQuery={conversationFindQuery}
+                                  conversationFindActiveIndex={conversationFindActiveIndex}
+                                  conversationFindNavigationRequestId={
+                                    conversationFindNavigationRequestId
+                                  }
+                                  onConversationFindMatchStateChange={
+                                    onConversationFindMatchStateChange
+                                  }
+                                  searchResultHighlightRequest={activeSearchResultHighlightRequest}
+                                  onSearchResultHighlightDone={onSearchResultHighlightDone}
+                                />
+                              </ScopedErrorBoundary>
+                            </main>
+                          )}
+                        </div>
+                      </section>
+                    </ResizablePanel>
+                    {isWebRemoteControlShell ||
+                    (workspaceMainView !== "automations" &&
+                      workspaceMainView !== "plugin-store") ? (
+                      <AnimatedTerminalPanel
+                        frameClassName={cn(
+                          isSidePaneVisible
+                            ? "rounded-[var(--workspace-panel-radius)] border border-border"
+                            : resolveWorkspaceShellWindowChromeClass({
+                                isMacDesktop,
+                                isWindowsDesktop,
+                                isLinuxDesktop,
+                                macOSMajorVersion: desktopWindowChromeState?.macOSMajorVersion,
+                                isWindowsMaximized: desktopWindowChromeState?.isMaximized ?? false,
+                                supportsNativeRoundedCorners:
+                                  desktopWindowChromeState?.supportsNativeRoundedCorners ?? null,
+                              }),
+                          "rounded-t-[var(--workspace-panel-radius)] border-t",
                         )}
-                      </div>
-                    </section>
-                  </ResizablePanel>
-                  {isWebRemoteControlShell ||
-                  (workspaceMainView !== "automations" && workspaceMainView !== "plugin-store") ? (
-                    <AnimatedTerminalPanel
-                      frameClassName={cn(
-                        isSidePaneVisible
-                          ? "rounded-[var(--workspace-panel-radius)] border border-border"
-                          : resolveWorkspaceShellWindowChromeClass({
-                              isMacDesktop,
-                              isWindowsDesktop,
-                              isLinuxDesktop,
-                              macOSMajorVersion: desktopWindowChromeState?.macOSMajorVersion,
-                              isWindowsMaximized: desktopWindowChromeState?.isMaximized ?? false,
-                              supportsNativeRoundedCorners:
-                                desktopWindowChromeState?.supportsNativeRoundedCorners ?? null,
-                            }),
-                        "rounded-t-[var(--workspace-panel-radius)] border-t",
-                      )}
-                      services={services}
-                      workspaceAbsPath={workspaceAbsPath}
-                      workspaceIdentity={workspaceIdentity}
-                      openWorkspaceKeys={openWorkspaceKeys}
-                      isVisible={isTerminalVisible}
-                      isWindowsDesktop={isWindowsDesktop}
-                      panelRef={terminalPanelRef}
-                      panelElementRef={terminalPanelElementRef}
-                      onClose={() => setIsTerminalOpen(false)}
-                      onOpenBrowserUrl={handleOpenBrowserUrl}
-                    />
-                  ) : null}
-                </ResizablePanelGroup>
-              </ResizablePanel>
-              {/* Bugfix: Decouple Browser Guest Host from the main-view route so switching automations/plugins does not unmount the Guest. During screenshot requests, the parent temporarily expands the real panel to host compositable WebContents. */}
-              {sidePanePanel}
-            </ResizablePanelGroup>
-          </div>
-          <ScopedErrorBoundary
-            scope="desktop-top-overlay"
-            resetKeys={workspaceSidebarVisibilityResetKeys}
-            variant="silent"
-          >
-            <DesktopTopOverlay
-              newTaskDisabledReason={workspaceReadOnlyReason}
-              workspaceAbsPath={workspaceAbsPath}
-              isMacDesktop={isMacDesktop}
-              isMacFullscreen={isMacFullscreen}
-              macWindowControlsLeftPaddingPx={macWindowControlsLeftPaddingPx}
-              windowsWindowControlsRightPaddingPx={windowsWindowControlsRightPaddingPx}
-              isWindowsDesktop={isWindowsDesktop}
-              isDesktop={isDesktop}
-              isSidebarVisible={isSidebarVisible}
-              updateReadyVersion={updateReadyVersion}
-              updateState={updateState}
-              toggleSidebarShortcutLabel={toggleSidebarShortcutLabel}
-              newTaskShortcutLabel={newTaskShortcutLabel}
-              goBackShortcutLabel={goBackShortcutLabel}
-              goForwardShortcutLabel={goForwardShortcutLabel}
-              canTaskNavBack={canPrimaryNavigationBack}
-              canTaskNavForward={canTaskNavForward}
-              canGoBack={canGoBack}
-              canGoForward={canGoForward}
-              showNewTaskButton={showTopOverlayNewTaskButton}
-              appLogoUrl={appLogoUrl}
-              platform={platform}
-              onToggleSidebar={handleToggleSidebar}
-              onCreateTask={handleCreateTaskInChat}
-              onGoBack={primaryNavigationBack}
-              onGoForward={handleTaskNavForward}
-              hideTaskNavigationButtons={simplifyHeaderForNarrowRemote}
-            />
-          </ScopedErrorBoundary>
-
-          {isWebRemoteControlShell && isWebRemoteControlTaskSwitching ? (
-            <div
-              className="absolute inset-0 z-40 flex items-center justify-center bg-background/72 backdrop-blur-[1px]"
-              aria-live="polite"
-              aria-busy="true"
-            >
-              <div className="flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-2 text-ui-base text-foreground-subtle shadow-sm">
-                <LoaderIcon className="size-4 animate-spin" />
-                {/* Bugfix: when clicking a task from another workspace, the old page unmounts quickly and previously had no unified placeholder before unmount,
-                  visually appearing as “blank first, then render”. Add a global loading overlay here to give stable feedback during the switch. */}
-                {intl.formatMessage({ id: "common.loading" })}
-              </div>
+                        services={services}
+                        workspaceAbsPath={workspaceAbsPath}
+                        workspaceIdentity={workspaceIdentity}
+                        openWorkspaceKeys={openWorkspaceKeys}
+                        isVisible={isTerminalVisible}
+                        isWindowsDesktop={isWindowsDesktop}
+                        panelRef={terminalPanelRef}
+                        panelElementRef={terminalPanelElementRef}
+                        onClose={() => setIsTerminalOpen(false)}
+                        onOpenBrowserUrl={handleOpenBrowserUrl}
+                      />
+                    ) : null}
+                  </ResizablePanelGroup>
+                </ResizablePanel>
+                {/* Bugfix: Decouple Browser Guest Host from the main-view route so switching automations/plugins does not unmount the Guest. During screenshot requests, the parent temporarily expands the real panel to host compositable WebContents. */}
+                {sidePanePanel}
+              </ResizablePanelGroup>
             </div>
-          ) : null}
-        </div>
-      </DesktopWindowFrame>
+            <ScopedErrorBoundary
+              scope="desktop-top-overlay"
+              resetKeys={workspaceSidebarVisibilityResetKeys}
+              variant="silent"
+            >
+              <DesktopTopOverlay
+                newTaskDisabledReason={workspaceReadOnlyReason}
+                workspaceAbsPath={workspaceAbsPath}
+                isMacDesktop={isMacDesktop}
+                isMacFullscreen={isMacFullscreen}
+                macWindowControlsLeftPaddingPx={macWindowControlsLeftPaddingPx}
+                windowsWindowControlsRightPaddingPx={windowsWindowControlsRightPaddingPx}
+                isWindowsDesktop={isWindowsDesktop}
+                isDesktop={isDesktop}
+                isSidebarVisible={isSidebarVisible}
+                updateReadyVersion={updateReadyVersion}
+                updateState={updateState}
+                toggleSidebarShortcutLabel={toggleSidebarShortcutLabel}
+                newTaskShortcutLabel={newTaskShortcutLabel}
+                goBackShortcutLabel={goBackShortcutLabel}
+                goForwardShortcutLabel={goForwardShortcutLabel}
+                canTaskNavBack={canPrimaryNavigationBack}
+                canTaskNavForward={canTaskNavForward}
+                canGoBack={canGoBack}
+                canGoForward={canGoForward}
+                showNewTaskButton={showTopOverlayNewTaskButton}
+                appLogoUrl={appLogoUrl}
+                platform={platform}
+                onToggleSidebar={handleToggleSidebar}
+                onCreateTask={handleCreateTaskInChat}
+                onGoBack={primaryNavigationBack}
+                onGoForward={handleTaskNavForward}
+                hideTaskNavigationButtons={simplifyHeaderForNarrowRemote}
+              />
+            </ScopedErrorBoundary>
+
+            {isWebRemoteControlShell && isWebRemoteControlTaskSwitching ? (
+              <div
+                className="absolute inset-0 z-40 flex items-center justify-center bg-background/72 backdrop-blur-[1px]"
+                aria-live="polite"
+                aria-busy="true"
+              >
+                <div className="flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-2 text-ui-base text-foreground-subtle shadow-sm">
+                  <LoaderIcon className="size-4 animate-spin" />
+                  {/* Bugfix: when clicking a task from another workspace, the old page unmounts quickly and previously had no unified placeholder before unmount,
+                  visually appearing as “blank first, then render”. Add a global loading overlay here to give stable feedback during the switch. */}
+                  {intl.formatMessage({ id: "common.loading" })}
+                </div>
+              </div>
+            ) : null}
+          </div>
+        </DesktopWindowFrame>
+      </ComposerDraftWorktreeIntentContext.Provider>
     </SavedWorkflowHubProvider>
   );
 });

@@ -79,6 +79,7 @@ import { PluginsSection } from "@/settings/PluginsSection.js";
 import { HooksSection } from "@/settings/HooksSection.js";
 import { WorkspaceFileSearchSection } from "@/settings/WorkspaceFileSearchSection.js";
 import { MemorySettingsSection } from "@/settings/MemorySettingsSection.js";
+import { WorktreesSection } from "@/settings/WorktreesSection.js";
 import { UserInstructionsSettingsSection } from "@/settings/UserInstructionsSettingsSection.js";
 import type { UserInstructionsHostTarget } from "@/settings/userInstructionsEditorModel.js";
 import { useConfirmDialogStore } from "@/store/confirmDialogStore.js";
@@ -2093,6 +2094,15 @@ export function SettingsPage({
                           <HooksSection
                             workspacePath={activeWorkspacePath}
                             workspaceIdentity={activeWorkspaceIdentity}
+                          />
+                        ) : activeSection === "worktrees" ? (
+                          <WorktreesSection
+                            settings={sharedSettings}
+                            onUpdate={updateSharedSettings}
+                            workspaceTabs={workspaceTabs}
+                            recentProjects={sharedSettings?.recentProjects ?? []}
+                            onSelectDirectory={selectDirectory}
+                            gitService={localHostServices.gitService}
                           />
                         ) : activeSection === "workspaceFileSearch" ? (
                           <WorkspaceFileSearchSection
