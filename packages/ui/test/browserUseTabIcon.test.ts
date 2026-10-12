@@ -56,10 +56,12 @@ describe("BrowserUseTabIcon", () => {
   });
 
   it("defines a visible wrapper animation with a reduced-motion fallback", () => {
-    // Bugfix：下面断言里有跨行片段（`.browser-use-operation-breathe {\n    animation: none;`），
-    // 而仓库只对 *.mjs / *.sh 声明了 `eol=lf`，styles.css 在 `core.autocrlf=true` 的 Windows
-    // 检出里是 CRLF，`toContain` 的 `\n` 匹配不到 `\r\n`，用例在 Windows 上必然失败。
-    // 它想断言的是样式表内容契约，与换行字节无关，统一归一成 LF 再比对。
+    // Bugfix: some assertions below contain multi-line fragments
+    // (`.browser-use-operation-breathe {\n    animation: none;`), but the repo only declares
+    // `eol=lf` for *.mjs / *.sh; styles.css is CRLF in a Windows checkout with
+    // `core.autocrlf=true`, so `toContain`'s `\n` never matches `\r\n` and the case would always
+    // fail on Windows. What it asserts is a stylesheet-content contract, independent of
+    // line-ending bytes; normalize to LF before comparing.
     const styles = readFileSync(
       resolve(process.cwd(), "packages/ui/src/styles.css"),
       "utf8",

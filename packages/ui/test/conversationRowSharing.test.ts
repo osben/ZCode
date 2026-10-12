@@ -1,9 +1,9 @@
-// Conversation row 结构共享单测（docs/performance/conversation-row-structural-sharing.md）。
+// Structural-sharing unit tests for the conversation row (docs/performance/conversation-row-structural-sharing.md).
 import { describe, expect, it } from "vitest";
 import type { ConversationRow, ToolCallRow } from "@zcode/shared/zcode-protocol-v4";
 import { ConversationRowPool, shareStructure } from "@/v4/conversationRowSharing.js";
 
-/** 模拟一次反序列化：内容相同、引用全新（包括字符串）。 */
+/** Simulates one deserialization pass: identical content, all-new references (including strings). */
 function fresh<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
 }
@@ -84,7 +84,7 @@ describe("ConversationRowPool", () => {
     expect(done).not.toBe(first);
     expect(done.status).toBe("success");
     expect(done.input).toBe(first.input);
-    // 字符串无法用 toBe 区分引用，这里至少确保值正确；引用复用由 heap snapshot 验证。
+    // toBe cannot tell string references apart, so this only checks values; reference reuse is verified via heap snapshots.
     expect(done.inputText).toBe(first.inputText);
   });
 

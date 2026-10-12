@@ -10,10 +10,11 @@ import {
   CommandCenterSearchHistory,
 } from "@/command-center/CommandCenterDialog.js";
 
-// Cmd+K 命令中心内字号语义（DESIGN.md）的固化为单测目标：
-// - scope tabs / 历史 chip 搜索词：可交互/可读内容 → text-ui-base
-// - 历史分区标题 / 时间戳：次要文案、helper text → text-ui-sm
-// - chip scope 前缀：badge 标记 → text-ui-xs
+// Codifies the font-size semantics (DESIGN.md) inside the Cmd+K command center as unit-test
+// targets:
+// - Scope tabs / history chip search terms: interactive/readable content → text-ui-base
+// - History section titles / timestamps: secondary copy, helper text → text-ui-sm
+// - Chip scope prefix: badge marker → text-ui-xs
 
 afterEach(() => {
   cleanup();
@@ -37,11 +38,7 @@ describe("CommandCenterScopeButton", () => {
   it("点击时触发 onClick", () => {
     const onClick = vi.fn();
     render(
-      createElement(
-        CommandCenterScopeButton,
-        { active: false, label: "命令", onClick },
-        null,
-      ),
+      createElement(CommandCenterScopeButton, { active: false, label: "命令", onClick }, null),
     );
 
     fireEvent.click(screen.getByRole("tab", { name: "命令" }));
@@ -73,13 +70,7 @@ describe("CommandCenterScopeButton", () => {
 
 describe("CommandCenterConversationTimestamp", () => {
   it("使用 text-ui-sm 而非 text-ui-xs", () => {
-    render(
-      createElement(
-        CommandCenterConversationTimestamp,
-        null,
-        "2小时前",
-      ),
-    );
+    render(createElement(CommandCenterConversationTimestamp, null, "2小时前"));
 
     const span = screen.getByText("2小时前");
     expect(span.className).toContain("text-ui-sm");
@@ -87,7 +78,9 @@ describe("CommandCenterConversationTimestamp", () => {
   });
 });
 
-function makeEntry(overrides: Partial<CommandCenterSearchHistoryEntry> = {}): CommandCenterSearchHistoryEntry {
+function makeEntry(
+  overrides: Partial<CommandCenterSearchHistoryEntry> = {},
+): CommandCenterSearchHistoryEntry {
   return {
     query: "登录",
     scope: "all",
@@ -97,9 +90,7 @@ function makeEntry(overrides: Partial<CommandCenterSearchHistoryEntry> = {}): Co
 }
 
 describe("CommandCenterSearchHistory", () => {
-  function renderHistory(
-    overrides: Record<string, unknown> = {},
-  ) {
+  function renderHistory(overrides: Record<string, unknown> = {}) {
     const props = {
       entries: [makeEntry()],
       expanded: false,
@@ -120,7 +111,7 @@ describe("CommandCenterSearchHistory", () => {
     renderHistory();
     const heading = screen.getByText("历史搜索");
     expect(heading.className).not.toContain("text-ui");
-    // 标题在 div 容器上，向上取父元素校验
+    // The title sits on a div container; walk up to the parent element to check it.
     const container = heading.parentElement;
     expect(container?.className ?? "").toContain("text-ui-sm");
   });
@@ -130,13 +121,13 @@ describe("CommandCenterSearchHistory", () => {
       entries: [makeEntry({ query: "登录", scope: "commands" })],
     });
 
-    // chip 是 button；点击它再检查 className
+    // The chip is a button; click it and then check className
     const chip = screen.getByText("登录").closest("button");
     expect(chip).not.toBeNull();
     expect(chip!.className).toContain("text-ui-base");
     expect(chip!.className).not.toContain("text-ui-xs");
 
-    // commands scope 的前缀是 ">"，作为 badge 保持 text-ui-xs
+    // The commands scope prefix is ">" and keeps text-ui-xs as a badge
     const prefix = screen.getByText(">");
     expect(prefix.className).toContain("text-ui-xs");
   });
@@ -177,10 +168,12 @@ describe("CommandCenterSearchHistory", () => {
     expect(screen.queryByLabelText("收起")).toBeNull();
   });
 
-  // CR-01: text-ui-base 会随 --ui-font-size（12–20px）缩放，但固定高度 h-5(20px
-  // border-box) 不会变化。字号调到 20px 时，扣除 2px 边框后内容区仅剩 18px，
-  // 无法容纳 20px 字体的行盒，配合外层 overflow-hidden 会导致文字上下裁切。
-  // 可缩放 UI 文本禁止绑定固定高度，与 uiFontTokenMigration 的约束同源。
+  // CR-01: text-ui-base scales with --ui-font-size (12-20px), but the fixed height h-5 (20px
+  // border-box) does not change. At a 20px font size, the content box is only 18px after
+  // subtracting the 2px border, which cannot fit the line box of a 20px font; combined with the
+  // outer overflow-hidden this clips the text vertically.
+  // Scalable UI text must not be bound to a fixed height, same constraint as
+  // uiFontTokenMigration.
   it("历史 chip 不用固定高度 h-5 限制可缩放的 text-ui-base", () => {
     renderHistory({
       entries: [makeEntry({ query: "登录" })],
@@ -188,9 +181,9 @@ describe("CommandCenterSearchHistory", () => {
 
     const chip = screen.getByText("登录").closest("button");
     expect(chip).not.toBeNull();
-    // 可缩放文本应使用 min-h + 行高，而非固定高度 h-5（min-h-5 是允许的）
+    // Scalable text should use min-h + line height instead of a fixed h-5 (min-h-5 is allowed)
     expect(chip!.className).not.toMatch(/(^| )h-5( |$)/);
-    // 必须用 min-h-5 让高度随字号增长
+    // min-h-5 is required so the height grows with the font size
     expect(chip!.className).toContain("min-h-5");
     expect(chip!.className).toContain("leading-none");
   });

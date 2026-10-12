@@ -4,7 +4,7 @@ import { ConversationUserInputEpilogue } from "@/v4/ConversationUserInputEpilogu
 import { ConversationUserInputBody } from "@/v4/ConversationUserInputBody.js";
 import { ConversationUserInputContent } from "@/v4/ConversationUserInputContent.js";
 
-/** 正式消息和准备态共用完整正文渲染；状态由消息来源行展示。 */
+/** Formal messages and pending state share the full body rendering; status is shown by the message source row. */
 export function ConversationUserInputBubble({
   text,
   contentParts,

@@ -50,7 +50,8 @@ function Fixture() {
   const [opened, setOpened] = useState<WorkspaceSidePaneState | null>(null);
   const panelRef = useRef<PanelImperativeHandle | null>(null);
   const panelElementRef = useRef<HTMLDivElement | null>(null);
-  // 本测试在 tab owner 边界验收命令与去重；沙箱/Agent 不属于菜单交互回归。
+  // This test validates commands and deduplication at the tab-owner boundary; sandbox/Agent is
+  // not part of the menu interaction regression.
   const open = (next: OpenPluginUiSideTabRequest) => {
     setRequest(next);
     setOpened((current) =>

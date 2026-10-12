@@ -28,14 +28,18 @@ function isAgentProvider(value: unknown): value is ZCodeProvider {
   return typeof value === "string" && ZCODE_AGENT_PROVIDERS.includes(value as ZCodeProvider);
 }
 
-export function readLastSelectedAgentProvider(storage: StorageLike | null = getBrowserStorage()): ZCodeProvider | null {
+export function readLastSelectedAgentProvider(
+  storage: StorageLike | null = getBrowserStorage(),
+): ZCodeProvider | null {
   const rawValue = storage?.getItem(LAST_SELECTED_AGENT_PROVIDER_STORAGE_KEY);
   if (!isAgentProvider(rawValue)) {
     return ZCODE_AGENT_PROVIDER;
   }
 
-  // Bugfix: 单 ZCode Agent 迁移后，旧本地存储里已移除的第三方 provider 值不能再参与首屏预热。
-  // 否则 UI 会短暂以旧 provider 作为事实源发起 prepare/create，和 agent server 的 glm 状态产生竞态。
+  // Bugfix: after the single ZCode Agent migration, third-party provider values removed from the
+  // old local storage must no longer take part in first-screen warm-up. Otherwise the UI briefly
+  // prepares/creates against the old provider as its source of truth, racing the agent server's
+  // glm state.
   return normalizeAgentProviderToZCodeAgent(rawValue);
 }
 
@@ -43,8 +47,9 @@ export function persistLastSelectedAgentProvider(
   provider: ZCodeProvider,
   storage: StorageLike | null = getBrowserStorage(),
 ) {
-  // Bugfix: 迁移到单 ZCode Agent 后，旧本地存储里可能还保存已移除的第三方 provider。
-  // 如果继续照读，草稿预热和首发 createTask 会在 UI 层短暂走错 provider。这里统一收敛到 glm。
+  // Bugfix: after migrating to the single ZCode Agent, the old local storage may still hold a
+  // removed third-party provider. Reading it as-is would briefly send draft warm-up and the first
+  // createTask down the wrong provider at the UI layer; converge uniformly to glm here.
   storage?.setItem(
     LAST_SELECTED_AGENT_PROVIDER_STORAGE_KEY,
     normalizeAgentProviderToZCodeAgent(provider),

@@ -19,36 +19,36 @@ export interface UsePluginUiHostInput {
   displayMode: McpAppsDisplayMode;
   toolInput: Record<string, unknown> | undefined;
   toolResult: McpAppsToolResultPayload | undefined;
-  /** 投喂的是哪次调用；变化（面板换到新一次调用）时把 toolInput 作为 tool-input 通知推给页面。 */
+  /** Which tool call feeds this host; when it changes (the pane switches to a new call), toolInput is pushed to the page as a tool-input notification. */
   toolCallId?: string;
-  /** 宿主工具被停止；变为 true 时向页面发一次 tool-cancelled。 */
+  /** The host tool was stopped; when this becomes true, a single tool-cancelled notification is sent to the page. */
   toolCancelled?: boolean;
   hostVersion: string;
-  /** 本实例真实可切换到的模式；缺省两种都可。变化时经 host-context-changed 通知页面。 */
+  /** Display modes this instance can actually switch to; both by default. Changes are notified to the page via host-context-changed. */
   availableDisplayModes?: readonly McpAppsDisplayMode[];
   onDisplayModeRequest?: (mode: McpAppsDisplayMode) => McpAppsDisplayMode;
   onOpenExternal?: (url: string) => void;
-  /** 容器宽度，用于 hostContext.containerDimensions；未知时 0。 */
+  /** Container width, used for hostContext.containerDimensions; 0 when unknown. */
   width: number;
-  /** fullscreen 容器的头部；inline 不传。 */
+  /** Header for the fullscreen container; omitted for inline. */
   titleBar?: McpAppsHostTitleBar;
-  /** false 时不创建沙箱（如侧栏已接管同一作用域）；默认 true。 */
+  /** When false, no sandbox is created (e.g. the side pane already owns the same scope); defaults to true. */
   enabled?: boolean;
-  /** 会话交互回调：缺省时对应请求回 -32601，能力声明也不带该项。 */
+  /** Session interaction callbacks: when absent, the corresponding requests return -32601 and the capability is not declared. */
   interactions?: Pick<PluginUiHostControllerDeps, "onSendFollowUpMessage" | "onUpdateModelContext">;
 }
 
 export interface UsePluginUiHostResult {
-  /** 平台或服务不支持插件 UI 时为 false，调用方回退到普通 MCP 卡片。 */
+  /** False when the platform or service does not support plugin UI; the caller falls back to a plain MCP card. */
   pageKey: string;
   supported: boolean;
   phase: PluginUiHostPhase;
   handle: PluginSandboxHandle | null;
   height: number;
   error: string | null;
-  /** 页面 `ui/initialize` 声明的能力；握手前 undefined。`availableDisplayModes` 决定宿主能否把它切到 fullscreen。 */
+  /** Capabilities declared by the page's `ui/initialize`; undefined before the handshake. `availableDisplayModes` decides whether the host can switch it to fullscreen. */
   appCapabilities: McpUiAppCapabilities | undefined;
-  /** 销毁当前实例并重新 prepare（Agent 运行凭证换代）；guest 崩溃 / 加载失败后由错误态按钮触发。 */
+  /** Destroys the current instance and re-prepares (Agent run credentials rotated); triggered by the error-state button after a guest crash / load failure. */
   reload(): void;
 }
 

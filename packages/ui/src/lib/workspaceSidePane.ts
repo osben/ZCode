@@ -204,7 +204,7 @@ export interface PlanDetailSidePaneTab {
   workspaceIdentity?: string;
   remoteSessionId?: string;
   parentSessionId: string;
-  /** 子会话提供计划 projection 时，根任务仍是 Side Pane tab 的可见范围所有者。 */
+  /** When the child session provides the plan projection, the root task is still the visibility-scope owner of the Side Pane tab. */
   rootSessionId?: string;
   toolCallId: string;
   markdown: string;
@@ -1065,7 +1065,7 @@ function getVisibleSidePaneTabsByScope(
       return tab.parentSessionId === scope.ownerTaskId;
     }
     if (tab.type === "plan-detail") {
-      // 计划正文来自 child session；tab 生命周期与可见性仍属于根任务的 Side Pane。
+      // The plan body comes from the child session; the tab's lifecycle and visibility still belong to the root task's Side Pane.
       return (tab.rootSessionId ?? tab.parentSessionId) === scope.ownerTaskId;
     }
     return sidePaneOwnerKey(tab.ownerTaskId) === ownerKey;
@@ -2002,7 +2002,7 @@ export function isSidePaneTabVisibleForParent(
     return tab.parentSessionId === parentSessionId;
   }
   if (tab.type === "plan-detail") {
-    // 子会话 projection 标识不能替代 side chat 所属的根任务可见范围。
+    // The child session's projection identity must not stand in for the root task visibility scope the side chat belongs to.
     return (tab.rootSessionId ?? tab.parentSessionId) === parentSessionId;
   }
   if (

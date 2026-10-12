@@ -30,7 +30,8 @@ vi.mock("@/i18n/IntlProvider.js", () => ({
 vi.mock("@/ControlHintTooltip.js", () => ({
   ControlHintTooltip: ({ children }: { children: ReactNode }) => children,
 }));
-// 虚拟列表的尺寸与真实焦点由 Electron E2E 验证；这里保留菜单接线和所有候选。
+// The virtual list's sizing and real focus are verified by Electron E2E; this file keeps the menu
+// wiring and all candidates.
 vi.mock("@/mentions/components/MentionPanel.js", () => ({
   MentionPanel: ({ sections, onSelect, footer }: ComponentProps<typeof MentionPanel>) => {
     let index = 0;
@@ -74,7 +75,8 @@ function setup(
   excludedSlashCommandNames: readonly string[] = [],
   workflowInCatalog = false,
 ) {
-  // 命令目录以 CLI catalog 为权威：仅当 catalog 含 workflow 时 + 菜单才提供工作流。
+  // The command catalog treats the CLI catalog as authoritative: the + menu offers workflows only
+  // when the catalog contains one.
   mocks.slashCommands.mockReturnValue(
     workflowInCatalog ? [{ name: "goal" }, { name: "workflow" }, { name: "compact" }] : [],
   );

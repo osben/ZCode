@@ -100,8 +100,9 @@ export function migrateTaskScrollMemoryToSession({
   if (!chatSessionScrollMemory.has(sessionKey)) {
     const fallbackState = chatSessionScrollMemory.get(fallbackTaskKey);
     if (fallbackState) {
-      // sessionId 可能晚于 taskId 回填。这里把临时 task 桶迁移到真实 session 桶，
-      // 避免同一会话在元数据补齐前后丢失滚动位置。
+      // sessionId may be backfilled later than taskId. Migrate the temporary task bucket into the
+      // real session bucket here, so the same conversation does not lose its scroll position
+      // across metadata backfill.
       touchChatSessionScrollMemoryEntry(sessionKey, {
         ...fallbackState,
         updatedAt: Date.now(),

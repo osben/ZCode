@@ -9,8 +9,8 @@ const MODIFIER_RELEASE_KEYS: Readonly<Record<string, readonly string[]>> = {
 };
 
 /**
- * 判断一次 keyup 是否松开了语音快捷键的一部分（主键或任一修饰键）。
- * push-to-talk 模式下，松开即结束录音。
+ * Whether a keyup releases part of the voice shortcut (the main key or any modifier).
+ * In push-to-talk mode, releasing ends the recording.
  */
 export function isVoiceShortcutReleased(
   event: Pick<KeyboardEvent, "key" | "code">,
@@ -20,8 +20,9 @@ export function isVoiceShortcutReleased(
   if (!parsed) return false;
   if (event.key.length === 1 && event.key.toLowerCase() === parsed.key) return true;
   if (event.code === `Key${parsed.key.toUpperCase()}` && /^[a-z]$/.test(parsed.key)) return true;
-  // 命名主键（F5、Enter、ArrowUp…）不走字母 code 分支：它们 event.key.length > 1 且
-  // 规范名与 event.key 完全一致，直接比较，否则按住修饰键松开主键无法结束 push-to-talk。
+  // Named main keys (F5, Enter, ArrowUp...) do not take the letter-code branch: their
+  // event.key.length > 1 and the canonical name matches event.key exactly, so compare directly;
+  // otherwise releasing the main key while holding a modifier cannot end push-to-talk.
   if (event.key.length > 1 && event.key === parsed.key) return true;
   const modifierKeys = [
     parsed.cmdOrCtrl ? MODIFIER_RELEASE_KEYS.CmdOrCtrl : [],

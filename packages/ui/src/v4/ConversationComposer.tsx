@@ -506,7 +506,7 @@ export interface ConversationComposerProps {
   appSlashCommands?: readonly AppSlashCommand[];
   /** Expose the composer's drop routing to the full conversation pane / desktop draft title bar. */
   onDropTargetControllerChange?: (controller: ConversationDropTargetController | null) => void;
-  /** 语音输入仅本机桌面端可用（转写在 Desktop Host 执行）；Web/远端入口不显示麦克风。 */
+  /** Voice input is available only on the local desktop (transcription runs in the Desktop Host); Web / remote entries show no microphone. */
   voiceDictationEnabled?: boolean;
 }
 
@@ -525,7 +525,7 @@ function VoiceDictationComposerControl({
   scopeRef: RefObject<HTMLElement | null>;
 }) {
   const voiceDictation = useVoiceDictation({ enabled: true, onTranscript, scopeRef });
-  // V4ComposerVoiceButton 是 memo 组件；内联箭头函数会让 memo 失效（见 reactStableReferences 测试）。
+  // V4ComposerVoiceButton is a memo component; an inline arrow function would defeat the memo (see the reactStableReferences tests).
   const handleToggle = useCallback(() => void voiceDictation.toggle(), [voiceDictation.toggle]);
   return (
     <V4ComposerVoiceButton
@@ -695,7 +695,7 @@ function ConversationComposerImpl({
   const insertVoiceTranscript = useCallback((text: string) => {
     const api = inputApiRef.current;
     if (!api) return;
-    // 必须走 appendText：getText/setText 会把编辑器重建为纯文本节点，已有的结构化 mention 会被打平。
+    // Must go through appendText: getText/setText rebuild the editor as plain text nodes, flattening existing structured mentions.
     api.appendText(text);
     api.focus();
   }, []);

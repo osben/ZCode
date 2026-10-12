@@ -32,7 +32,8 @@ function buildLimit(overrides: Partial<UsageQuotaLimit> = {}): UsageQuotaLimit {
 
 describe("coding plan quota reset ui state", () => {
   it("触发器撒花只认自动完成的新 used_at，手动完成不播放", () => {
-    // 手动核销（非自动完成窗口）：无论是否经历 processing，触发器都不撒花。
+    // Manual redemption (not the automatic completion window): the trigger never celebrates,
+    // regardless of whether processing was passed through.
     const manualDone = advanceCodingPlanQuotaResetCelebration(null, {
       sourceKey: "builtin:personal",
       completedAt: 1_000,
@@ -40,7 +41,8 @@ describe("coding plan quota reset ui state", () => {
     });
     expect(manualDone.shouldCelebrate).toBe(false);
 
-    // 自动完成：同一 source 的新 used_at 播放一次，重复渲染/轮询不重播。
+    // Automatic completion: a new used_at for the same source plays once; repeated
+    // renders/polling do not replay.
     const automaticDone = advanceCodingPlanQuotaResetCelebration(manualDone.state, {
       sourceKey: "builtin:personal",
       completedAt: 2_000,
@@ -55,7 +57,7 @@ describe("coding plan quota reset ui state", () => {
       }).shouldCelebrate,
     ).toBe(false);
 
-    // 同一 source 之后又发生新的自动重置（新 used_at），仍应再播放一次。
+    // A new automatic reset for the same source afterwards (new used_at) should play once more.
     const nextAutomatic = advanceCodingPlanQuotaResetCelebration(automaticDone.state, {
       sourceKey: "builtin:personal",
       completedAt: 3_000,
@@ -63,7 +65,8 @@ describe("coding plan quota reset ui state", () => {
     });
     expect(nextAutomatic.shouldCelebrate).toBe(true);
 
-    // source 切换清空轨迹：新 source 的同一 used_at 独立判断，不继承旧 source 的记录。
+    // Switching source clears the trail: the same used_at for a new source is judged
+    // independently, not inheriting the old source's record.
     const switched = advanceCodingPlanQuotaResetCelebration(nextAutomatic.state, {
       sourceKey: "team-plan:builtin:team-a",
       completedAt: 3_000,
@@ -75,7 +78,7 @@ describe("coding plan quota reset ui state", () => {
       celebratedCompletedAt: 3_000,
     });
 
-    // 没有 completedAt 时（available/processing）永不撒花。
+    // Without completedAt (available/processing), never celebrate.
     expect(
       advanceCodingPlanQuotaResetCelebration(switched.state, {
         sourceKey: "team-plan:builtin:team-a",
@@ -158,7 +161,8 @@ describe("coding plan quota reset ui state", () => {
       now,
     );
     const processing = startCodingPlanQuotaResetManualUse(available, "retry-same-key", now);
-    // 手动对账的 manualStartedAt 由 hook 共享轨迹给出：used_at 已不同于点击前基线。
+    // The manual reconciliation's manualStartedAt is provided by the hook's shared trail:
+    // used_at already differs from the pre-click baseline.
     const manual = applyCodingPlanQuotaResetStatus(
       processing,
       { ...status, hasUnreadHistory: false },
@@ -179,7 +183,8 @@ describe("coding plan quota reset ui state", () => {
       availableWeekResets: [],
       latestFiveHourResetHistory: { usedAt },
       latestWeekResetHistory: null,
-      // 其他入口读取前，发起入口可能已经把 unread 历史标记为已读。
+      // Before other entries read, the originating entry may already have marked the unread
+      // history as read.
       hasUnreadHistory: false,
     };
 
@@ -269,8 +274,9 @@ describe("coding plan quota reset ui state", () => {
     const refreshed = completeCodingPlanQuotaResetEntitlementRefresh(completed, now);
     expect(refreshed?.quotaOverridePending).toBe(false);
     expect(resolveCodingPlanQuotaResetLimit(buildLimit(), refreshed)).toEqual(buildLimit());
-    // Bugfix：重置后额度池无活跃窗口时，刷新回来的真实额度缺失 nextResetTime；
-    // 完成态期间继续用 completedAt + 周期 兜底，重置时间不能闪现即消失。
+    // Bugfix: after a reset, when the quota pool has no active window, the refreshed real quota
+    // lacks nextResetTime; during the completed state keep falling back to completedAt + period,
+    // so the reset time does not flash and vanish.
     expect(
       resolveCodingPlanQuotaResetLimit(buildLimit({ nextResetTime: undefined }), refreshed),
     ).toMatchObject({ percentage: 42, nextResetTime: now + FIVE_HOURS_MS });
@@ -287,7 +293,7 @@ describe("coding plan quota reset ui state", () => {
     );
     expect(repeated?.quotaOverridePending).toBe(false);
 
-    // 未完成（available / processing）时保留服务端真实额度。
+    // Keep the server's real quota when not completed (available / processing).
     expect(
       resolveCodingPlanQuotaResetLimit(
         buildLimit(),
@@ -421,7 +427,7 @@ describe("coding plan quota reset ui state", () => {
     expect(automatic?.startedAt).toBeNull();
     expect(automatic?.observedAt).toBe(observedAt);
 
-    // 首次观察起约 1 秒展示“正在重置”。
+    // Shows "resetting" for about 1 second from the first observation.
     expect(resolveCodingPlanQuotaResetAutomaticPhase(automatic, observedAt, false)).toBe(
       "processing",
     );
@@ -433,7 +439,7 @@ describe("coding plan quota reset ui state", () => {
       ),
     ).toBe("processing");
 
-    // 到期后切换为“已重置”，且无上限、一直保留。
+    // After the window expires it switches to "reset", with no upper bound — it stays forever.
     expect(
       resolveCodingPlanQuotaResetAutomaticPhase(
         automatic,
@@ -445,15 +451,15 @@ describe("coding plan quota reset ui state", () => {
       resolveCodingPlanQuotaResetAutomaticPhase(automatic, observedAt + 3_600_000, false),
     ).toBe("completed");
 
-    // hover 收起后返回 null。
+    // Returns null once collapsed by hover.
     expect(resolveCodingPlanQuotaResetAutomaticPhase(automatic, observedAt, true)).toBeNull();
 
-    // 手动完成（startedAt 不为空）不进入触发器合成阶段。
+    // Manual completions (startedAt not null) do not enter the trigger synthesis phase.
     const manual = applyCodingPlanQuotaResetStatus(null, snapshot, observedAt, usedAt - 500);
     expect(manual?.startedAt).toBe(usedAt - 500);
     expect(resolveCodingPlanQuotaResetAutomaticPhase(manual, observedAt, false)).toBeNull();
 
-    // available / null 不进入。
+    // available / null do not enter.
     const available = applyCodingPlanQuotaResetStatus(
       null,
       {
@@ -472,7 +478,8 @@ describe("coding plan quota reset ui state", () => {
   it("按 resetType 读取周额度机会创建 AVAILABLE", () => {
     const now = Date.UTC(2026, 7, 7, 10, 0, 0);
     const status: CodingPlanResetStatusSnapshot = {
-      // 五小时无机会，周额度有机会：resetType=WEEK 只应读取周字段。
+      // Five hours has no opportunity, the weekly quota does: resetType=WEEK should read only the
+      // week fields.
       availableFiveHourResets: [],
       availableWeekResets: [{ expireAt: now + 90_000 }, { expireAt: now + 45_000 }],
       latestFiveHourResetHistory: null,
@@ -485,7 +492,8 @@ describe("coding plan quota reset ui state", () => {
       opportunityCount: 2,
       opportunityExpiresAt: now + 45_000,
     });
-    // 同一 status 下 FIVE_HOUR 无机会，不应被周机会带出 available。
+    // Within the same status, FIVE_HOUR has no opportunity and must not be pulled into available
+    // by the weekly opportunities.
     expect(applyCodingPlanQuotaResetStatus(null, status, now)).toBeNull();
   });
 
@@ -527,8 +535,10 @@ describe("coding plan quota reset ui state", () => {
     const completed = applyCodingPlanQuotaResetStatus(null, completedSnapshot, now);
     expect(completed?.status).toBe("completed");
 
-    // 后端在同一周期内(used_at 未变)再次发放机会:完成态必须让位,否则新机会被
-    // UI 永久吞掉,用户要重新登录清空窗口内存态才能看到重置入口。
+    // The backend re-grants an opportunity within the same cycle (used_at unchanged): the
+    // completed state must yield, otherwise the UI swallows the new opportunity forever and the
+    // user has to sign in again to clear the window's in-memory state before seeing the reset
+    // entry.
     const regrantSnapshot: CodingPlanResetStatusSnapshot = {
       ...completedSnapshot,
       availableFiveHourResets: [{ expireAt: now + 120_000 }],
@@ -538,12 +548,14 @@ describe("coding plan quota reset ui state", () => {
     expect(revived?.status).toBe("available");
     expect(revived?.opportunityCount).toBe(1);
 
-    // 共享手动轨迹归因同理:有新机会时不再把 used_at 归为旧的手动完成。
+    // Shared manual-trail attribution follows the same rule: with a new opportunity, used_at is
+    // no longer attributed to the old manual completion.
     expect(
       applyCodingPlanQuotaResetStatus(null, regrantSnapshot, now + 60_000, usedAt - 500)?.status,
     ).toBe("available");
 
-    // 没有新机会时粘滞保持:重复轮询不得把完成态清空。
+    // Sticky retention without new opportunities: repeated polling must not clear the completed
+    // state.
     const sticky = applyCodingPlanQuotaResetStatus(
       completed,
       { ...completedSnapshot, hasUnreadHistory: false },
@@ -551,7 +563,8 @@ describe("coding plan quota reset ui state", () => {
     );
     expect(sticky?.status).toBe("completed");
 
-    // 刚发现的未读完成优先于新机会:完成提示与额度校正先播,下一轮再让位。
+    // A just-discovered unread completion takes priority over new opportunities: the completion
+    // notice and quota correction play first, yielding on the next round.
     const unreadWithOpportunity = applyCodingPlanQuotaResetStatus(
       null,
       {
@@ -562,7 +575,8 @@ describe("coding plan quota reset ui state", () => {
     );
     expect(unreadWithOpportunity?.status).toBe("completed");
 
-    // processing 对账不受影响:机会余额 >0 时手动 /use 确认循环仍能看到 completed。
+    // processing reconciliation is unaffected: with an opportunity balance > 0, the manual /use
+    // confirmation loop can still see completed.
     const available = applyCodingPlanQuotaResetStatus(
       null,
       {
@@ -599,10 +613,11 @@ describe("coding plan quota reset ui state", () => {
     );
     expect(hasUsableCodingPlanQuotaResetOpportunity(available, now)).toBe(true);
     const processing = startCodingPlanQuotaResetManualUse(available, "first-key", now);
-    // processing 期间不可再次核销，避免同一张机会重复发 /use。
+    // No second redemption during processing, preventing the same ticket from being /use'd twice.
     expect(hasUsableCodingPlanQuotaResetOpportunity(processing, now)).toBe(false);
 
-    // 核销最早到期的一张：同一 status 快照同时给出 used_at 与余下 1 张机会。
+    // Redeem the earliest-expiring ticket: the same status snapshot yields both used_at and the
+    // remaining 1 opportunity.
     const afterFirstUse: CodingPlanResetStatusSnapshot = {
       availableFiveHourResets: [{ expireAt: now + 120_000 }],
       availableWeekResets: [],
@@ -614,14 +629,16 @@ describe("coding plan quota reset ui state", () => {
     expect(completed).toMatchObject({
       status: "completed",
       completedAt: firstUsedAt,
-      // 完成态不再把余下机会清零，否则弹框会把空到期渲染成「0 分 0 秒」。
+      // The completed state no longer zeroes out remaining opportunities; otherwise the dialog
+      // would render the empty expiry as "0m 0s".
       opportunityCount: 1,
       opportunityExpiresAt: now + 120_000,
       idempotencyKey: null,
     });
     expect(hasUsableCodingPlanQuotaResetOpportunity(completed, now + 2_000)).toBe(true);
 
-    // 完成态下直接再次核销：进入 processing 并生成新的幂等键，保留机会快照供失败恢复。
+    // Direct re-redemption in the completed state: enter processing with a new idempotency key,
+    // keeping the opportunity snapshot for failure recovery.
     const secondProcessing = startCodingPlanQuotaResetManualUse(
       completed,
       "second-key",
@@ -642,7 +659,8 @@ describe("coding plan quota reset ui state", () => {
       idempotencyKey: "second-key",
     });
 
-    // 最后一张核销后机会耗尽：完成态张数为 0、到期为空，不可再核销。
+    // After the last ticket is redeemed, opportunities are exhausted: the completed state has
+    // count 0 and empty expiry, and no further redemption is possible.
     const exhausted = applyCodingPlanQuotaResetStatus(
       secondProcessing,
       {
@@ -662,14 +680,15 @@ describe("coding plan quota reset ui state", () => {
     expect(hasUsableCodingPlanQuotaResetOpportunity(exhausted, now + 5_000)).toBe(false);
     expect(startCodingPlanQuotaResetManualUse(exhausted, "noop-key", now + 5_000)).toBe(exhausted);
 
-    // 余下机会已过期：同样不可核销，start 保持原状态。
+    // Remaining opportunities expired: likewise not redeemable; start keeps the original state.
     expect(hasUsableCodingPlanQuotaResetOpportunity(completed, now + 120_000)).toBe(false);
     expect(startCodingPlanQuotaResetManualUse(completed, "expired-key", now + 120_000)).toBe(
       completed,
     );
     expect(hasUsableCodingPlanQuotaResetOpportunity(null, now)).toBe(false);
 
-    // 额度标题旁操作：仍有可核销机会时不展示「已重置」锚点，保持「重置」入口；耗尽后才展示。
+    // Action next to the quota title: while a redeemable opportunity exists, no "reset done"
+    // anchor is shown and the "Reset" entry stays; it only appears after exhaustion.
     expect(
       resolveCodingPlanQuotaResetActionCompletedAt({ entry: completed, opportunityVisible: true }),
     ).toBeNull();
@@ -684,7 +703,8 @@ describe("coding plan quota reset ui state", () => {
   it("processing 只认不同于点击前基线的新 used_at：滞后快照（含 unread 未清）保持处理中", () => {
     const now = Date.UTC(2026, 7, 7, 10, 0, 0);
     const firstUsedAt = now - 2_000;
-    // 第一张刚核销：完成态携带余下 1 张，上一张的 history/read 可能尚未生效。
+    // The first ticket was just redeemed: the completed state carries the remaining 1, and the
+    // previous ticket's history/read may not have taken effect yet.
     const afterFirstUse: CodingPlanResetStatusSnapshot = {
       availableFiveHourResets: [{ expireAt: now + 60_000 }],
       availableWeekResets: [],
@@ -701,8 +721,10 @@ describe("coding plan quota reset ui state", () => {
     expect(completed).toMatchObject({ status: "completed", opportunityCount: 1 });
 
     const processing = startCodingPlanQuotaResetManualUse(completed, "second-key", now);
-    // /use 后 status 仍是消费前快照：共享轨迹比较基线后不给 manualStartedAt。
-    // 无论 unread 是否已清，都不能把上一张的 used_at 当成本次完成。
+    // After /use, status is still the pre-consumption snapshot: after comparing the shared-trail
+    // baseline, no manualStartedAt is given.
+    // Regardless of whether unread has been cleared, the previous ticket's used_at must not be
+    // treated as this completion.
     for (const hasUnreadHistory of [true, false]) {
       expect(
         applyCodingPlanQuotaResetStatus(
@@ -713,7 +735,8 @@ describe("coding plan quota reset ui state", () => {
       ).toBe(processing);
     }
 
-    // 读到新的 used_at 后轨迹绑定、给出 manualStartedAt，才进入完成并按新快照展示余下张数。
+    // Only after reading a new used_at does the trail bind and manualStartedAt get supplied,
+    // entering completion and showing the remaining count from the new snapshot.
     const confirmed = applyCodingPlanQuotaResetStatus(
       processing,
       {
@@ -734,7 +757,7 @@ describe("coding plan quota reset ui state", () => {
 
   it("五小时与周机会徽标合并:次数累加,倒计时取最早到期,单侧可见时只计该侧", () => {
     const now = Date.UTC(2026, 7, 7, 10, 0, 0);
-    // 双侧可见:次数累加,倒计时取更早的周机会到期时间。
+    // Both sides visible: counts add up and the countdown takes the earlier weekly expiry.
     expect(
       mergeCodingPlanQuotaResetOpportunityBadges([
         { count: 2, expiresAt: now + 60_000, visible: true },
@@ -742,7 +765,8 @@ describe("coding plan quota reset ui state", () => {
       ]),
     ).toEqual({ count: 3, expiresAt: now + 30_000, visible: true });
 
-    // 一侧隐藏(额度满/无机会):只显示可见一侧,不把隐藏侧的次数累进去。
+    // One side hidden (quota full / no opportunity): only the visible side counts; the hidden
+    // side's count is not included.
     expect(
       mergeCodingPlanQuotaResetOpportunityBadges([
         { count: 2, expiresAt: now + 60_000, visible: true },
@@ -750,7 +774,7 @@ describe("coding plan quota reset ui state", () => {
       ]),
     ).toEqual({ count: 2, expiresAt: now + 60_000, visible: true });
 
-    // 全部隐藏或次数为 0:徽标不可见。
+    // All hidden or count 0: badge not visible.
     expect(
       mergeCodingPlanQuotaResetOpportunityBadges([
         { count: 0, expiresAt: now + 60_000, visible: true },
@@ -763,7 +787,8 @@ describe("coding plan quota reset ui state", () => {
     const now = Date.UTC(2026, 7, 7, 10, 0, 0);
     const staleFiveHourUsedAt = now - FIVE_HOURS_MS;
     const freshWeekUsedAt = now - 1_000;
-    // 单一 unread 游标 + 两类历史：只有 used_at 最新的周额度应进入完成态。
+    // A single unread cursor + two history kinds: only the weekly quota with the newest used_at
+    // should enter the completed state.
     const snapshot: CodingPlanResetStatusSnapshot = {
       availableFiveHourResets: [],
       availableWeekResets: [],
@@ -772,15 +797,17 @@ describe("coding plan quota reset ui state", () => {
       hasUnreadHistory: true,
     };
 
-    // 过期的五小时历史不拥有 unread 标记，首次挂载不得伪造完成。
+    // The expired five-hour history does not own the unread mark; first mount must not fabricate
+    // a completion.
     expect(applyCodingPlanQuotaResetStatus(null, snapshot, now, null, "FIVE_HOUR")).toBeNull();
 
-    // 更新的周历史拥有 unread 标记，正常完成。
+    // The newer weekly history owns the unread mark and completes normally.
     const week = applyCodingPlanQuotaResetStatus(null, snapshot, now, null, "WEEK");
     expect(week?.status).toBe("completed");
     expect(week?.completedAt).toBe(freshWeekUsedAt);
 
-    // used_at 相等时按当前类型归属：两类都能各自完成，不会互相抢占。
+    // With equal used_at, attribution follows the current type: both kinds can complete on their
+    // own without stealing from each other.
     const tie: CodingPlanResetStatusSnapshot = {
       ...snapshot,
       latestFiveHourResetHistory: { usedAt: freshWeekUsedAt },

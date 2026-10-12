@@ -6,7 +6,8 @@ interface PendingModeSwitchGuard {
   expiresAt: number;
 }
 
-// Bugfix: 保护窗口只覆盖“本地 setMode 刚发起后的并发回包”，窗口过长会吞掉后续真实 mode 变更。
+// Bugfix: the protection window only covers concurrent responses arriving right after a local
+// setMode; a window that is too long would swallow subsequent real mode changes.
 const PENDING_MODE_SWITCH_GUARD_TTL_MS = 3000;
 const pendingModeSwitchGuardByWorkspaceKey = new Map<string, PendingModeSwitchGuard>();
 
@@ -46,10 +47,7 @@ export function markPendingModeSwitchGuard(params: {
     return;
   }
 
-  const workspaceKey = resolveWorkspaceStateKey(
-    params.workspacePath,
-    params.workspaceIdentity,
-  );
+  const workspaceKey = resolveWorkspaceStateKey(params.workspacePath, params.workspaceIdentity);
   pendingModeSwitchGuardByWorkspaceKey.set(workspaceKey, {
     taskId: normalizedTaskId,
     modeId: normalizedModeId,
@@ -62,10 +60,7 @@ export function clearPendingModeSwitchGuard(params: {
   workspaceIdentity?: string;
   modeId?: string;
 }): void {
-  const workspaceKey = resolveWorkspaceStateKey(
-    params.workspacePath,
-    params.workspaceIdentity,
-  );
+  const workspaceKey = resolveWorkspaceStateKey(params.workspacePath, params.workspaceIdentity);
   if (typeof params.modeId !== "string") {
     pendingModeSwitchGuardByWorkspaceKey.delete(workspaceKey);
     return;
@@ -84,10 +79,7 @@ export function ackPendingModeSwitchGuardFromModeUpdate(params: {
   workspaceIdentity?: string;
   modeId: string | null | undefined;
 }): void {
-  const guard = readPendingModeSwitchGuard(
-    params.workspacePath,
-    params.workspaceIdentity,
-  );
+  const guard = readPendingModeSwitchGuard(params.workspacePath, params.workspaceIdentity);
   const normalizedModeId = normalizeModeId(params.modeId);
   if (!guard || !normalizedModeId || guard.modeId !== normalizedModeId) {
     return;
@@ -105,10 +97,7 @@ export function shouldPreserveModeAgainstConfigUpdate(params: {
   currentModeId: string | null;
   incomingModeId: string | null;
 }): boolean {
-  const guard = readPendingModeSwitchGuard(
-    params.workspacePath,
-    params.workspaceIdentity,
-  );
+  const guard = readPendingModeSwitchGuard(params.workspacePath, params.workspaceIdentity);
   if (!guard) {
     return false;
   }
@@ -122,7 +111,9 @@ export function shouldPreserveModeAgainstConfigUpdate(params: {
   const normalizedIncomingModeId = normalizeModeId(params.incomingModeId);
 
   if (normalizedIncomingModeId === guard.modeId) {
-    // Bugfix: 运行态已经回到本次切换目标 mode，说明保护窗口可关闭，避免后续合法回包被继续拦截。
+    // Bugfix: the running state has already returned to this switch's target mode, so the
+    // protection window can close, letting later legitimate responses through instead of being
+    // blocked.
     clearPendingModeSwitchGuard({
       workspacePath: params.workspacePath,
       workspaceIdentity: params.workspaceIdentity,
@@ -135,10 +126,7 @@ export function shouldPreserveModeAgainstConfigUpdate(params: {
     return false;
   }
 
-  return Boolean(
-    normalizedIncomingModeId &&
-      normalizedIncomingModeId !== normalizedCurrentModeId,
-  );
+  return Boolean(normalizedIncomingModeId && normalizedIncomingModeId !== normalizedCurrentModeId);
 }
 
 export function resetPendingModeSwitchGuardForTest(): void {

@@ -77,7 +77,7 @@ it.each(["initial", "urgent"] as const)(
     expect(query()).toBeNull();
     fireEvent.pointerDown(document.body);
     expect(state.dismiss).not.toHaveBeenCalled();
-    // 设置期间新机会到达也不能打开 Portal。
+    // A new opportunity arriving during setup must not open the Portal either.
     state.phase = null;
     rendered.rerender(view());
     state.phase = phase;

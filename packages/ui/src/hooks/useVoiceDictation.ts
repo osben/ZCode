@@ -19,24 +19,27 @@ import { VoiceDictationRecorder } from "@/lib/voiceDictationRecorder.js";
 export type VoiceDictationPhase = "idle" | "loading" | "recording" | "transcribing";
 
 /**
- * 积压上限：16 kHz 单声道约 30 秒。正常抖动下积压远小于此（256ms/块）；
- * 持续超过说明 Host 卡死，按规格要求明确失败，而不是无限占住内存让用户干等。
+ * Backlog cap: about 30 seconds at 16 kHz mono. Under normal jitter the backlog stays far below
+ * this (256ms/chunk); sustained excess means the Host is stuck, so fail explicitly per spec
+ * instead of holding memory indefinitely while the user waits.
  */
 const MAX_STREAM_BACKLOG_SAMPLES = 16_000 * 30;
 
 interface UseVoiceDictationOptions {
-  /** 仅桌面端为 true：转写由本机 Desktop Host 执行，Web/远端不提供语音输入。 */
+  /** True only on desktop: transcription runs on the local Desktop Host; Web/remote provide no voice input. */
   enabled: boolean;
-  /** 转写得到非空文本时回调，由调用方决定插入位置。 */
+  /** Called with non-empty transcribed text; the caller decides where to insert it. */
   onTranscript: (text: string) => void;
-  /** 快捷键只在该容器内有焦点时生效，避免其他面板的输入触发录音。 */
+  /** The shortcut is active only when this container has focus, so inputs in other panels cannot trigger recording. */
   scopeRef: RefObject<HTMLElement | null>;
 }
 
 /**
- * 语音输入：录音（麦克风 → 16 kHz PCM）→ 本机转写（services 的 IVoiceDictationService）→ 回调插入。
- * 录音状态只在本 hook 持有；模型与设备偏好读取自 settings.voiceDictation。
- * push-to-talk：按住快捷键录音，松开结束；关闭时按一下开始、再按一下结束。
+ * Voice dictation: record (microphone → 16 kHz PCM) → local transcription (services'
+ * IVoiceDictationService) → callback insert. Recording state lives only in this hook; model and
+ * device preferences are read from settings.voiceDictation.
+ * Push-to-talk: hold the shortcut to record, release to finish; when off, press once to start and
+ * press again to finish.
  */
 export function useVoiceDictation({ enabled, onTranscript, scopeRef }: UseVoiceDictationOptions) {
   const { intl } = useZCodeIntl();
@@ -59,7 +62,7 @@ export function useVoiceDictation({ enabled, onTranscript, scopeRef }: UseVoiceD
   const startPromiseRef = useRef<Promise<void> | null>(null);
   const streamIdRef = useRef<string | null>(null);
   const streamQueueRef = useRef<Promise<void>>(Promise.resolve());
-  /** 待发送的 PCM 块；由串行 flush 任务合并发送，RPC 短暂慢于麦克风时只积压、不失败。 */
+  /** PCM chunks awaiting send; merged and sent by the serial flush task, so a transiently slow RPC versus the microphone only backs up and never fails. */
   const streamBacklogRef = useRef<Float32Array[]>([]);
   const streamFlushScheduledRef = useRef(false);
   const streamErrorRef = useRef<unknown>(null);
@@ -108,7 +111,8 @@ export function useVoiceDictation({ enabled, onTranscript, scopeRef }: UseVoiceD
       if (!voiceDictationService) return;
       const next = streamQueueRef.current
         .then(async () => {
-          // 任务开始即复位调度标记：此后送来的新块可以再次排队，队列深度因此不超过两条。
+          // Reset the scheduling flag as soon as the task starts: chunks arriving after this can
+          // queue again, keeping queue depth at most two.
           streamFlushScheduledRef.current = false;
           if (streamIdRef.current !== streamId || streamErrorRef.current) return;
           const backlog = streamBacklogRef.current;
@@ -132,11 +136,13 @@ export function useVoiceDictation({ enabled, onTranscript, scopeRef }: UseVoiceD
     (samples: Float32Array) => {
       const streamId = streamIdRef.current;
       if (!streamId || streamErrorRef.current || !voiceDictationService) return;
-      // ScriptProcessor 固定周期送块，RPC 短暂变慢（慢机器、调度抖动）属正常现象；
-      // 之前达到上限直接 failStream 会丢掉整段已录语音，这里改为积压成批合并发送，
-      // 顺序由单一串行 flush 任务保证。
+      // ScriptProcessor delivers chunks on a fixed cadence, so the RPC being briefly slower
+      // (slow machines, scheduling jitter) is normal; hitting the cap previously called
+      // failStream directly and discarded the whole recorded audio. Back up and batch-merge
+      // instead; ordering is guaranteed by the single serial flush task.
       streamBacklogRef.current.push(samples);
-      // 规格要求"有界顺序队列 + 明确失败"：超过上限说明 Host 持续无法消费，终止本次听写。
+      // Spec requires a "bounded ordered queue + explicit failure": exceeding the cap means the
+      // Host persistently cannot consume, so terminate this dictation.
       const backlogSamples = streamBacklogRef.current.reduce((sum, chunk) => sum + chunk.length, 0);
       if (backlogSamples > MAX_STREAM_BACKLOG_SAMPLES) {
         failStream(streamId, new Error("voice dictation stream exceeded its bounded PCM backlog"));
@@ -170,7 +176,8 @@ export function useVoiceDictation({ enabled, onTranscript, scopeRef }: UseVoiceD
           await voiceDictationService.setIdleUnloadMinutes(idleUnloadMinutes);
         } catch (error) {
           if (!isMissingIdleUnloadMethod(error)) throw error;
-          // 旧 Desktop Host 尚未实现此偏好 RPC；保留 Host 默认卸载时间，不能因此阻止录音和转写。
+          // Older Desktop Hosts do not implement this preference RPC yet; keep the Host's default
+          // unload time rather than blocking recording and transcription over it.
           logger.warn(
             "voice dictation host does not support idle unload preference; using host default",
             {
@@ -243,7 +250,8 @@ export function useVoiceDictation({ enabled, onTranscript, scopeRef }: UseVoiceD
   ]);
 
   const stop = useCallback(async (): Promise<void> => {
-    // 按住后很快松开时，录音可能还在等待麦克风授权；等它就绪后再结束，保证松开的动作不丢失。
+    // When released quickly after a press, recording may still be waiting for microphone
+    // authorization; wait for it to be ready before finishing so the release is not lost.
     await startPromiseRef.current;
     startPromiseRef.current = null;
     if (!recorder.isRecording) return;
@@ -336,7 +344,8 @@ export function useVoiceDictation({ enabled, onTranscript, scopeRef }: UseVoiceD
       void stop();
     };
     const handleBlur = () => {
-      // 窗口失焦时松开键不会收到 keyup；直接取消录音，避免一直录音。
+      // Key release during window blur produces no keyup; cancel recording directly to avoid
+      // recording forever.
       heldBindingRef.current = null;
       if (phaseRef.current === "loading" || recorder.isRecording) {
         startGenerationRef.current += 1;

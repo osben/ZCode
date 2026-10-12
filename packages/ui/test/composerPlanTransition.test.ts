@@ -11,7 +11,8 @@ describe("Plan 工具定向同步", () => {
     );
   });
   it.each([true, false])("新工具结果按 %s 设置标记，不保护期间的手动改选", (planEnabled) => {
-    // 包含未上线初版留下的额外字段，不能再改变最新裁决的结果。
+    // Includes extra fields left behind by the unreleased first version; they must not change the
+    // latest ruling's outcome.
     const draft = {
       text: "下一条消息",
       mode: "yolo" as const,

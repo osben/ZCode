@@ -20,9 +20,9 @@ interface VoiceModelRowProps {
 }
 
 /**
- * Каталожные description написаны по-английски; интерфейс локализуется (спека VD-11 требует
- * локальные описания), поэтому известным моделям сопоставлен i18n-ключ. Неизвестные модели
- * (новый каталог со старым UI) падают назад на английский текст каталога.
+ * Catalog descriptions are written in English; the UI is localized (spec VD-11 requires localized
+ * descriptions), so known models are mapped to an i18n key. Unknown models (a new catalog with an
+ * older UI) fall back to the catalog's English text.
  */
 const MODEL_DESCRIPTION_MESSAGE_IDS: Readonly<Record<string, string>> = {
   "whisper-tiny": "voiceDictation.models.description.whisper",
@@ -35,7 +35,7 @@ const MODEL_DESCRIPTION_MESSAGE_IDS: Readonly<Record<string, string>> = {
   "nemotron-speech-streaming-en-0.6b": "voiceDictation.models.description.nemotron",
 };
 
-/** 单个转写模型的卡片：展示规格，并按状态提供下载、取消、选择和删除操作。 */
+/** Card for a single transcription model: shows specs and offers download, cancel, select, and remove actions by state. */
 export function VoiceModelRow({
   item,
   selected,
@@ -204,9 +204,9 @@ export function VoiceModelRow({
               { count: descriptor.languageCount },
             )}
           </span>
-          {/* Рантайм-гейт допускает streaming только у моделей с Parakeet stream slot
-              (supportsStreaming && accepts parakeet); каталог помечает streaming и у Nemotron,
-              но она всегда идёт one-shot — реклама Streaming на такой карточке противоречит спеке. */}
+          {/* The runtime gate allows streaming only for models with a Parakeet stream slot
+              (supportsStreaming && accepts parakeet); the catalog also marks Nemotron as streaming,
+              but it always runs one-shot — advertising Streaming on that card would contradict the spec. */}
           {descriptor.streaming && descriptor.family === "parakeet" ? (
             <span className="inline-flex items-center gap-1.5">
               <AudioLines className="size-4" aria-hidden />

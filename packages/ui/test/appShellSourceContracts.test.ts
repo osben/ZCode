@@ -5,7 +5,8 @@ let appSource = "";
 let taskNavigationSource = "";
 
 beforeAll(async () => {
-  // 同一套源码契约共享不可变 fixture，避免重复读取 App 和 task 导航源码。
+  // The source contracts share one immutable fixture, avoiding repeated reads of the App and
+  // task navigation sources.
   [appSource, taskNavigationSource] = await Promise.all([
     readFile(new URL("../src/App.tsx", import.meta.url), "utf8"),
     readFile(new URL("../src/app-shell/useWorkspaceTaskNavigation.ts", import.meta.url), "utf8"),
@@ -21,8 +22,9 @@ function getQuickPickCommandsMemoBlock(source: string): string {
 }
 
 function expectNoTaskQueryCacheHookSubscription(source: string) {
-  // 性能回归保护：task meta 高频刷新只应在命令触发时通过 getState 读取快照，
-  // 不应让 App 或导航 hook 订阅整个 task query cache 后带动 shell 重渲染。
+  // Performance regression guard: task meta refreshes at high frequency and should read
+  // snapshots via getState only when a command triggers it; App or navigation hooks must not
+  // subscribe to the whole task query cache and drag the shell into re-renders.
   expect(source).not.toMatch(/\buseTaskQueryCacheStore\s*\(/);
 }
 
@@ -30,15 +32,17 @@ describe("App quick pick command render stability", () => {
   it("does not recreate quick pick commands when only the user object reference changes", () => {
     const memoBlock = getQuickPickCommandsMemoBlock(appSource);
 
-    // 性能回归保护：commands 会一路传给 CommandCenterDialog。
-    // 这里只需要登录态布尔值，不应订阅完整 user 对象引用。
+    // Performance regression guard: commands are passed all the way down to CommandCenterDialog.
+    // Only the logged-in boolean is needed here; do not subscribe to the full user object
+    // reference.
     expect(memoBlock).toContain("isLoggedIn");
     expect(memoBlock).not.toMatch(/\n\s+user,\n/);
   });
 
   it("memoizes task find dialog props before passing them to the shell layout", () => {
-    // 性能回归保护：taskFindDialogProps 是对象 prop，内联创建会让 WorkspaceShellLayout
-    // 在无关流式刷新中看到新引用并继续向下重渲染。
+    // Performance regression guard: taskFindDialogProps is an object prop; creating it inline
+    // would hand WorkspaceShellLayout a new reference on unrelated streaming refreshes and keep
+    // re-rendering downstream.
     expect(appSource).toContain("const taskFindDialogProps = useMemo<TaskFindDialogProps>");
     expect(appSource).toContain("taskFindDialogProps={taskFindDialogProps}");
   });
@@ -58,8 +62,9 @@ describe("task query cache render subscription boundary", () => {
   });
 
   it("选择已有 task 时保留 workspace slash command 目录", () => {
-    // Bug 原因：目录属于 workspace identity；task 导航若主动清空，session projection
-    // 不会替 composer 回填，已知 session 的自定义 slash command 会永久消失。
+    // Bug cause: the catalog belongs to workspace identity; if task navigation clears it
+    // proactively, session projection does not backfill it for the composer, and the custom
+    // slash commands of known sessions disappear permanently.
     expect(taskNavigationSource).not.toMatch(/\.setSlashCommands\s*\(/);
     expect(taskNavigationSource).not.toMatch(/const\s+setSlashCommands\s*=\s*useZCodeSessionStore/);
   });

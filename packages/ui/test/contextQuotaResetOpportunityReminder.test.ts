@@ -57,7 +57,7 @@ describe("context quota reset opportunity reminder state", () => {
     expect(reminder?.phase).toBe("initial");
     store.dismiss(reminder!);
 
-    // 模拟切换会话后的组件重新挂载：窗口级 store 仍是同一个实例。
+    // Simulate the component remounting after a session switch: the window-level store is still the same instance.
     expect(
       resolveContextQuotaResetOpportunityReminder({
         dismissal: store.getSnapshot(),

@@ -1976,7 +1976,7 @@ export function SettingsPage({
                         ) : activeSection === "voiceDictation" ? (
                           isDesktop ? (
                             <ServiceProvider services={localHostServices}>
-                              {/* 语音模型与麦克风属于本机设备；与模型配置同样固定使用本机 Host。 */}
+                              {/* Voice model and microphone belong to the local device; like model configuration, always use the local Host. */}
                               <VoiceDictationSection isDesktop />
                             </ServiceProvider>
                           ) : (

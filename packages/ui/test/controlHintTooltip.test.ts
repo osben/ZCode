@@ -30,15 +30,15 @@ describe("ControlHintTooltip", () => {
       "utf8",
     );
 
-    // 共享 Provider 统一放在 Root（见 Root.tsx）。这里只允许 `standalone` 逃生舱各自建一个，
-    // 因此断言的是"Provider 必须被 standalone 门控"，而不是"源码里不许出现 Provider"——
-    // 后者会把 standalone 这个有意的能力一并禁掉。
+    // The shared Provider lives in Root (see Root.tsx). Only the `standalone` escape hatch may create its own,
+    // so what is asserted is "the Provider must be gated behind standalone", not "no Provider in the source" —
+    // the latter would also ban the intentional standalone capability.
     expect(source).toContain("standalone ? <TooltipProvider>{tooltip}</TooltipProvider> : tooltip");
     expect(source.match(/<TooltipProvider>/g)).toHaveLength(1);
     expect(source.match(/<\/TooltipProvider>/g)).toHaveLength(1);
 
-    // 承重项：默认必须是 false。一旦默认值翻转，大会话里每条消息动作都会各建一个
-    // Provider，Radix 上下文树被放大到消息数量级——这正是本用例要挡住的退化。
+    // Load-bearing: the default must be false. If the default ever flips, every message action in a large session
+    // builds its own Provider, blowing the Radix context tree up to message scale — exactly the regression this test blocks.
     expect(source).toContain("standalone = false");
   });
 

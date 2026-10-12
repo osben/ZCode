@@ -121,7 +121,8 @@ export function GenUiCard({
           setCopying(true);
           setError("");
           try {
-            // 复制成功不保留视觉状态；原 copied 未复位，会让图标永久停在对勾。
+            // No visual state is kept on a successful copy; the original copied flag was never
+            // reset, which would leave the icon stuck on the checkmark.
             await page.copyImage();
           } catch (reason) {
             setError(String(reason));
@@ -160,7 +161,8 @@ export function GenUiCard({
     tweaks && snapshot.groups.length > 0 && page ? (
       <TweakPanel snapshot={snapshot} page={page} />
     ) : null;
-  // 会话父容器已经负责宽度；卡片再次限宽会让 inline UI 无法填满正文。
+  // The session parent container already controls width; constraining the card again would keep
+  // the inline UI from filling the body.
   return (
     <section className="my-3 w-full" data-testid="gen-ui-card" data-gen-ui-phase={snapshot.phase}>
       <div className="group relative flow-root">

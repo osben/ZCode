@@ -3,9 +3,9 @@ import { cn } from "@/components/lib/utils.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 
 /**
- * 简化的工单流转进度（用户视角）：
- *   已提交 → 评估中 → 处理中 → 已完结
- * 「已拒绝」是单独的终态，单独高亮一条灰红色完结。
+ * Simplified ticket progress (user's view):
+ *   submitted → reviewing → in progress → done
+ * "Rejected" is its own terminal state, highlighted separately as a gray-red conclusion.
  */
 type Stage = "submitted" | "reviewing" | "in_progress" | "done";
 
@@ -51,7 +51,7 @@ export function FeedbackProgress({
   const formatMessage = intl.formatMessage;
   const { current, rejected } = statusToStage(status);
   const currentIdx = STAGES.findIndex((item) => item.key === current);
-  // Bugfix: 用户侧不需要暴露具体开发同学姓名；后端仍保留真实处理人供管理员端协作。
+  // Bugfix: the user-facing side must not expose developer names; the backend still keeps the real handler for admin-side collaboration.
   const assigneeLabel = assigneeDisplay
     ? formatMessage({ id: "feedback.progress.assignee.dev" })
     : formatMessage({ id: "feedback.progress.assignee.unassigned" });
@@ -59,9 +59,7 @@ export function FeedbackProgress({
   return (
     <div className="space-y-3">
       <div className="flex items-center justify-between gap-3 text-ui-base text-foreground-subtle">
-        <span className="font-medium">
-          {formatMessage({ id: "feedback.progress.title" })}
-        </span>
+        <span className="font-medium">{formatMessage({ id: "feedback.progress.title" })}</span>
         <span className="inline-flex items-center gap-1.5 rounded-full bg-surface px-2.5 py-1 text-foreground-subtle">
           <span>{formatMessage({ id: "feedback.progress.currentHandler" })}</span>
           <span className="font-medium text-foreground">{assigneeLabel}</span>

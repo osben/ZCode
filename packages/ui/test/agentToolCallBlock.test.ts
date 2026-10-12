@@ -547,8 +547,9 @@ describe("AgentToolCallBlock", () => {
       ),
     );
 
-    // Bugfix: Agent 收起态参考普通 active Explore 聚合，使用最新子工具摘要，
-    // 同时外层仍展示子智能体，而不是把子智能体类型 Explore 当 kind label。
+    // Bugfix: the collapsed Agent state mirrors a normal active Explore aggregate, using the
+    // latest child tool summary while still showing the subagent outside, instead of treating
+    // the subagent type Explore as the kind label.
     expect(html).toContain("lucide-bot");
     expect(html).toMatch(/>(SubAgent|子智能体)</);
     expect(html).toContain("·");
@@ -633,8 +634,9 @@ describe("AgentToolCallBlock", () => {
       ),
     );
 
-    // Bugfix: 父 Agent 的完成态只看父 tool 生命周期；
-    // 子工具属于展开区明细，不能让 completed 父块继续显示 running 渐变。
+    // Bugfix: the parent Agent's completed state follows only the parent tool lifecycle;
+    // child tools belong to the expanded details and must not keep a completed parent block
+    // showing the running gradient.
     expect(html).toMatch(/>(SubAgent|子智能体)</);
     expect(html).toContain("Explore");
     expect(html).not.toContain("正在读取");
@@ -966,7 +968,7 @@ describe("AgentToolCallBlock", () => {
       ),
     );
 
-    // 外层 kind 固定显示 SubAgent；真实子智能体类型作为彩色名称展示。
+    // The outer kind is fixed to SubAgent; the real subagent type is shown as the colored name.
     expect(html).toMatch(/>(SubAgent|子智能体)</);
     expect(html).toContain("·");
     expect(html).toContain("Explore project structure");
@@ -1037,8 +1039,9 @@ describe("AgentToolCallBlock", () => {
       ),
     );
 
-    // Bugfix: provider 原生子 agent 工具名 spawn_agent 直接展示会暴露实现细节；
-    // 外层 kind 固定为 SubAgent，nickname 作为彩色名称和摘要正文展示。
+    // Bugfix: showing the provider-native subagent tool name spawn_agent directly would leak
+    // implementation details; the outer kind is fixed to SubAgent and the nickname is shown as
+    // the colored name and summary body.
     expect(html).not.toMatch(/>explorer</);
     expect(html).toMatch(/>(SubAgent|子智能体)</);
     expect(html).toContain("Locke");
@@ -1189,7 +1192,8 @@ describe("AgentToolCallBlock", () => {
       ),
     );
 
-    // Agent/Task 在消息流中固定为单行；详情只通过持久化 child session 打开。
+    // Agent/Task is fixed to a single line in the message stream; details open only through the
+    // persisted child session.
     expect(html).toMatch(/>(SubAgent|子智能体)</);
     expect(html).toMatch(/>Explore</);
     expect(html).toContain("Explore project structure");

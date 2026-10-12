@@ -273,7 +273,7 @@ describe("CodingPlanUsagePanel", () => {
     const zaiSelectedKey = "team:zai:prod:org:proj";
     expect(matchesTeamPlanUsageSourceKey(zaiSourceId, zaiSelectedKey)).toBe(true);
 
-    // 不同 projectId 不匹配
+    // A different projectId does not match
     expect(matchesTeamPlanUsageSourceKey(zaiSourceId, "team:zai:prod:org:other")).toBe(false);
   });
 
@@ -379,7 +379,8 @@ describe("CodingPlanUsagePanel", () => {
     expect(source).toContain("createSettingsUsageCodingPlanTabId");
     expect(source).toContain("usageCodingPlanSources");
     expect(source).toContain("codingPlanSources.map");
-    // 修复原因：JSX 格式化可能把属性换行，断言应验证绑定语义而不是排版。
+    // Fix rationale: JSX formatting may wrap the attribute; the assertion should verify the
+    // binding semantics, not the layout.
     expect(source).toMatch(/selectedCodingPlanSource=\{\s*selectedUsageCodingPlanSource\s*\}/);
   });
 
@@ -389,8 +390,9 @@ describe("CodingPlanUsagePanel", () => {
       "utf8",
     );
 
-    // Bugfix 回归：个人 source 依赖 entitlement snapshot。冷启动无缓存时必须先进行
-    // access 探测，否则 source 不会出现，子面板也没有机会触发后续刷新。
+    // Bugfix regression: the personal source depends on the entitlement snapshot. On a cold start
+    // with no cache, the access probe must run first; otherwise the source never appears and the
+    // sub-panel never gets a chance to trigger the follow-up refresh.
     const usageEntitlementBlock = source.slice(
       source.indexOf("const usageZaiEntitlement"),
       source.indexOf("const usageBigmodelEnterpriseProducts"),
@@ -463,8 +465,9 @@ describe("CodingPlanUsagePanel", () => {
     expect(source).toContain("CODING_PLAN_DETAIL_SERIES_COLORS");
     expect(source).toContain("MAX_SELECTED_CODING_PLAN_DETAIL_SERIES");
     expect(source).toContain("settings.usage.activityTitle");
-    // 修复回归：summary.totalUsageDurationMs 是累计使用时长，曾被错标成
-    // “最长聊天时长”（longestSessionMs 是 App Usage 侧字段，Coding Plan 快照没有）。
+    // Fix regression: summary.totalUsageDurationMs is cumulative usage time and was previously
+    // mislabeled "longest chat duration" (longestSessionMs is an App Usage field; the Coding Plan
+    // snapshot has no such field).
     expect(source).toContain("settings.usage.totalUsageDuration");
     expect(source).not.toContain("settings.usage.longestSession");
     expect(source).not.toContain("settings.usage.favoriteModel");
@@ -831,9 +834,10 @@ describe("CodingPlanUsagePanel", () => {
     expect(formatUsageStatsQuotaResetTime("zh-CN", undefined)).toBeUndefined();
   });
 
-  // 修复原因：zai 业务后端 Team Plan 的 quota/limit 用 CREDIT_LIMIT 作为 type，
-  // bigmodel 用 TOKENS_LIMIT。unit/number 语义一致，消费方按 TOKENS_LIMIT 查询时
-  // 必须命中 CREDIT_LIMIT，否则 zai team plan 的 5 小时/每周配额卡不会渲染。
+  // Fix rationale: the zai business backend's Team Plan quota/limit uses CREDIT_LIMIT as the
+  // type, while bigmodel uses TOKENS_LIMIT. unit/number semantics are identical, so a consumer
+  // querying by TOKENS_LIMIT must also hit CREDIT_LIMIT; otherwise the zai team plan's 5-hour /
+  // weekly quota cards would not render.
   it("findCodingPlanQuotaLimit 按 TOKENS_LIMIT 查询时等价命中 CREDIT_LIMIT", () => {
     const zaiTeamLimits = [
       {
@@ -852,11 +856,11 @@ describe("CodingPlanUsagePanel", () => {
       },
     ];
 
-    // 5 小时窗口（unit=3, number=5）
+    // 5-hour window (unit=3, number=5)
     expect(findCodingPlanQuotaLimit(zaiTeamLimits, "TOKENS_LIMIT", 3, 5)).toEqual(zaiTeamLimits[0]);
-    // 每周（unit=6）
+    // Weekly (unit=6)
     expect(findCodingPlanQuotaLimit(zaiTeamLimits, "TOKENS_LIMIT", 6)).toEqual(zaiTeamLimits[1]);
-    // 缺失的 monthly tool 仍返回 null
+    // A missing monthly tool still returns null
     expect(findCodingPlanQuotaLimit(zaiTeamLimits, "TIME_LIMIT", 5, 1)).toBeNull();
   });
 
@@ -882,7 +886,7 @@ describe("CodingPlanUsagePanel", () => {
       bigmodelLimits[0],
     );
     expect(findCodingPlanQuotaLimit(bigmodelLimits, "TIME_LIMIT", 5, 1)).toEqual(bigmodelLimits[1]);
-    // CREDIT_LIMIT 不会误匹配 TIME_LIMIT 查询
+    // CREDIT_LIMIT must not match a TIME_LIMIT query
     expect(findCodingPlanQuotaLimit(bigmodelLimits, "CREDIT_LIMIT", 5, 1)).toBeNull();
   });
 });

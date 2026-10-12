@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
-// 自动化页顶级标签「自动化 / 工作流」（docs/dynamic-workflow/launch.md「Where it lives」「标签记忆」）。
+// Top-level tabs of the automations page: "Automation / Workflows"
+// (docs/dynamic-workflow/launch.md, "Where it lives" / "label memory").
 import { createElement, useState } from "react";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -25,7 +26,8 @@ function Harness({ initial = "automation" }: { initial?: AutomationsPageTab }) {
   );
 }
 
-// jsdom 环境下 `new URL(…, import.meta.url)` 不是 file: URL；vitest 从仓库根运行，按 cwd 定位源码。
+// Under jsdom, `new URL(…, import.meta.url)` is not a file: URL; vitest runs from the repo root,
+// so resolve the source relative to cwd.
 const automationsSectionSource = readFileSync(
   resolve(process.cwd(), "packages/ui/src/settings/AutomationsSection.tsx"),
   "utf8",
@@ -43,7 +45,7 @@ describe("AutomationsPageTitleSwitch", () => {
     expect(tabs.map((tab) => tab.textContent)).toEqual(["自动化", "工作流"]);
     expect(tabs[0]?.getAttribute("aria-selected")).toBe("true");
     expect(tabs[1]?.getAttribute("aria-selected")).toBe("false");
-    // 只有选中项进 Tab 序；未选中项靠方向键。
+    // Only the selected item joins the Tab order; unselected items rely on arrow keys.
     expect(tabs[0]?.getAttribute("tabindex")).toBe("0");
     expect(tabs[1]?.getAttribute("tabindex")).toBe("-1");
     fireEvent.click(screen.getByTestId(testId(TID_AUTOMATIONS_PAGE_TAB, "workflow")));
@@ -97,7 +99,7 @@ describe("automationsPageTabMemory", () => {
     expect(readAutomationsPageTab()).toBe("automation");
     writeAutomationsPageTab("workflow");
     expect(readAutomationsPageTab()).toBe("workflow");
-    // 只用一个 key，与活动项目无关。
+    // A single key, independent of the active project.
     expect(sessionStorage.length).toBe(1);
     expect(sessionStorage.getItem("zcode-automations-page-tab")).toBe("workflow");
     sessionStorage.setItem("zcode-automations-page-tab", "bogus");
@@ -110,22 +112,26 @@ describe("automationsPageTabMemory", () => {
 
 describe("AutomationsSection 顶级标签接线", () => {
   it('页标题即切换，且 openAutomationTab: "workflow" 深链直接落到工作流页', () => {
-    // 标题组件按灰度决定是切换还是平铺 h1（灰度断言在 dynamicWorkflowGrayAutomationsPage.test.ts）。
+    // The title component decides between switch and flat h1 via the gray-scale flag
+    // (gray-scale assertions live in dynamicWorkflowGrayAutomationsPage.test.ts).
     expect(automationsSectionSource).toMatch(
       /<AutomationsPageTitle\s+workflowTabEnabled=\{dynamicWorkflowEnabled\}\s+value=\{pageTab\}\s+onValueChange=\{setPageTab\}\s*\/>/,
     );
-    // 记忆已 app 级化：不再有 pageTabStorageKey，读写都无参 / 单参。
+    // Memory is app-level now: no more pageTabStorageKey; reads take no arguments and writes take
+    // one.
     expect(automationsSectionSource).not.toContain("pageTabStorageKey");
     expect(automationsSectionSource).toContain("readAutomationsPageTab()");
     expect(automationsSectionSource).toContain("writeAutomationsPageTab(next)");
     expect(automationsSectionSource).toMatch(
       /if \(openAutomationTab === "workflow"\) \{\s*setPageTab\("workflow"\);\s*onOpenAutomationConsumed\?\.\(\);\s*return;/,
     );
-    // 定时任务 / 闲时任务的胶囊行留在「自动化」内部：工作流页整页交给 SavedWorkflowsSection。
+    // The scheduled / off-peak task pill rows stay inside "Automation": the whole Workflows page
+    // is delegated to SavedWorkflowsSection.
     expect(automationsSectionSource).toMatch(
       /if \(pageTab === "workflow"\) \{\s*return \(\s*<SavedWorkflowsSection/,
     );
-    // 深链 openWorkflow / 消费回调透传给 SavedWorkflowsSection（不变式 8 多项目视图）。
+    // Deep-link openWorkflow / consumption callbacks are passed through to SavedWorkflowsSection
+    // (invariant 8, multi-project view).
     expect(automationsSectionSource).toContain("openWorkflow={openWorkflow}");
     expect(automationsSectionSource).toContain("onOpenWorkflowConsumed={onOpenWorkflowConsumed}");
   });

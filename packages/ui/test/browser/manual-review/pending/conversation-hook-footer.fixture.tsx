@@ -86,7 +86,8 @@ const rows: ConversationRow[] = [
 ];
 const [unit] = buildConversationTurnRenderUnits(rows);
 
-// 真实组件、主题与点击行为；只读投影输入固定，不建立 runtime 或远控连接。
+// Real components, theme, and click behavior; read-only projection inputs are fixed, and no
+// runtime or remote-control connection is established.
 createRoot(document.getElementById("root")!).render(
   <TooltipProvider>
     <ZCodeIntlProvider initialLocale={mobile ? "en-US" : "zh-CN"}>

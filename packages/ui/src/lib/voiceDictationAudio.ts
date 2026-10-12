@@ -1,7 +1,7 @@
-/** 语音输入使用的采样率：与 services/voice-dictation 的转写输入保持一致（16 kHz 单声道）。 */
+/** Sample rate for voice dictation: matches the transcription input of services/voice-dictation (16 kHz mono). */
 export const VOICE_SAMPLE_RATE = 16000;
 
-/** 短于该时长的录音视为误触（例如快速按下又松开），不送去转写。 */
+/** Recordings shorter than this are treated as accidental taps (quick press-release) and are not transcribed. */
 export const VOICE_MIN_RECORDING_MS = 250;
 
 export function concatFloat32Chunks(chunks: readonly Float32Array[]): Float32Array {
@@ -15,7 +15,7 @@ export function concatFloat32Chunks(chunks: readonly Float32Array[]): Float32Arr
   return result;
 }
 
-/** 浮点采样（[-1, 1]）转 PCM16 小端字节；超出范围的值先截断。 */
+/** Float samples ([-1, 1]) to little-endian PCM16 bytes; out-of-range values are clamped first. */
 export function float32ToPcm16Le(samples: Float32Array): Uint8Array {
   const bytes = new Uint8Array(samples.length * 2);
   const view = new DataView(bytes.buffer);
@@ -27,7 +27,7 @@ export function float32ToPcm16Le(samples: Float32Array): Uint8Array {
   return bytes;
 }
 
-/** 峰值电平，范围 [0, 1]，用于录音时的音量指示与麦克风测试。 */
+/** Peak level in [0, 1], used for the volume indicator while recording and microphone testing. */
 export function peakLevel(samples: Float32Array): number {
   let peak = 0;
   for (let i = 0; i < samples.length; i += 1) {

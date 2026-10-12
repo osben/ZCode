@@ -22,7 +22,7 @@ function normalizeModelIdentity(value: string | null | undefined): string | null
 
   const providerId = trimmed.slice(0, separatorIndex).trim();
   const rawModelId = trimmed.slice(separatorIndex + 1).trim();
-  // Bugfix：冒号可能属于 OpenRouter modelId，模型身份 guard 只忽略 `$variant`。
+  // Bugfix: the colon may belong to an OpenRouter modelId; the model-identity guard only strips `$variant`.
   const reasoningSeparatorIndex = rawModelId.indexOf(ZCODE_MODEL_REASONING_SEPARATOR);
   const modelId =
     reasoningSeparatorIndex > 0 ? rawModelId.slice(0, reasoningSeparatorIndex).trim() : rawModelId;

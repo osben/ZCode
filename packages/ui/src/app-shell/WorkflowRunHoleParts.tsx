@@ -5,14 +5,18 @@ import { workflowRunQuestionWaitedLabel } from "@/app-shell/workflowRunQuestions
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 
 /**
- * 侧板脊线上的留白零件（docs/dynamic-workflow/presentation.md「Holes on the timeline」的「The pane」）。
- * 从 WorkflowRunPhaseList.tsx 拆出（max-lines 门）。
+ * Hole parts on the side pane's spine (docs/dynamic-workflow/presentation.md "Holes on the timeline",
+ * section "The pane"). Split out of WorkflowRunPhaseList.tsx (max-lines gate).
  *
- * - 留白的节头：虚线灯（等待时警示色描边 + 3px 常亮光晕）落在主轨上；补全后名字后面是笔标。
- * - 等待中的节体：等了多久、「等待主代理补全」。提示全文不在投影里（它随通知走），这里不复述。
- * - 有阶段的补全：一行 24px 的标题站在它写下的第一节之前，笔（14px，底色盖住主轨）落在灯的位置，
- *   然后是名字。补全的几节**不缩进**（用户修订 2026-09-29：嵌套由框套框说出）；标题是这次补全的头，
- *   指针或焦点落在它上面时画出框（WorkflowRunFillFrames.tsx）。
+ * - Hole section head: a dashed lamp (warning-colored outline while waiting + a 3px constant glow)
+ *   sits on the main track; once filled, a pen mark follows the name.
+ * - Waiting section body: how long it has waited and "waiting for the main agent to fill it". The full
+ *   prompt is not in the projection (it travels with the notification) and is not repeated here.
+ * - Fill with phases: a 24px heading row stands before the first section it wrote; the pen (14px, its
+ *   background covering the main track) sits at the lamp's position, followed by the name. The fill's
+ *   sections are **not indented** (user revision 2026-09-29: nesting is expressed by frames within
+ *   frames); the heading is this fill's head — when the pointer or focus lands on it, the frame is
+ *   drawn (WorkflowRunFillFrames.tsx).
  */
 
 export function SpineHoleLamp({
@@ -40,7 +44,7 @@ export function SpineHoleLamp({
   );
 }
 
-/** 等待中的留白的节体（docs/dynamic-workflow/presentation.md「The pane」）：等了多久 + 「等待主代理补全」+ 主代理收到的提示语。 */
+/** Waiting hole's section body (docs/dynamic-workflow/presentation.md "The pane"): how long it has waited + "waiting for the main agent to fill it" + the prompt the main agent received. */
 export function HoleWaitingBody({ hole, now }: { hole: TimelineHole; now: number }) {
   const { intl } = useZCodeIntl();
   const waited = workflowRunQuestionWaitedLabel(hole.since, now, (descriptor, values) =>
@@ -68,9 +72,12 @@ export function HoleWaitingBody({ hole, now }: { hole: TimelineHole; now: number
 }
 
 /**
- * 补全的标题行：站在它写下的第一节之前。主轨从上到下穿过这一行，笔盖在轨上（底色遮住那一截）。
- * 它是框的图例：笔与名字都带底色，框的上缘从它们后面穿过。悬停只换字色、不铺底（铺了底，名字的
- * 底色就成了一块补丁）。点它与点节头同一条路（展开 / 落点由清单管）；tooltip 与卡上的头同一句。
+ * The fill's heading row: stands before the first section it wrote. The main track runs through this
+ * row top to bottom, with the pen covering it (its background hides that segment). The row is the
+ * frame's legend: pen and name both carry a background, and the frame's top edge passes behind them.
+ * Hover changes only the text color, not the background (a background would turn the name's backdrop
+ * into a patch). Clicking takes the same path as clicking a section head (expand/target managed by the
+ * list); the tooltip matches the card's head.
  */
 export function FillHeadingRow({
   fill,
@@ -81,9 +88,9 @@ export function FillHeadingRow({
 }: {
   fill: TimelineFill;
   textColumn: { paddingLeft: number } | undefined;
-  /** 它的框此刻画着。 */
+  /** Its frame is currently drawn. */
   on?: boolean;
-  /** 补全刚接进 run 的两秒：笔与名字染警示色。 */
+  /** The two seconds after the fill joins the run: pen and name are tinted warning. */
   fresh?: boolean;
   onSelect?: () => void;
 }) {

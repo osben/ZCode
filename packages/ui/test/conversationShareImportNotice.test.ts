@@ -75,7 +75,7 @@ describe("conversation share import notice", () => {
     const html = render({ rows, locale: "zh-CN", onOpenShareUrl: () => {} });
     expect(html).toContain('data-conversation-share-import-notice="true"');
     expect(html).toContain('data-conversation-share-import-divider="true"');
-    // 复用分享页渲染器：用户气泡与助手正文都应出现。
+    // Reuses the share page renderer: both the user bubble and assistant body should appear.
     expect(html).toContain("帮我看下这个报错");
     expect(html).toContain("根因是 signer 被提前释放");
     expect(html).toContain("已从分享导入");
@@ -97,8 +97,8 @@ describe("conversation share import notice", () => {
   });
 
   it("不给 artifactUrls：结果物不出现点不开的预览按钮", () => {
-    // 本地结果物在 .zcode-share/<share-id>/shared-artifacts/ 下，渲染器的预览按钮走
-    // window.open，给本地路径会点不开；这里与实时时间线的 ArtifactRowView 保持一致。
+    // Local artifacts live under .zcode-share/<share-id>/shared-artifacts/ and the renderer's preview
+    // button uses window.open, which cannot open local paths; this mirrors the live timeline's ArtifactRowView.
     const html = render({
       rows: [
         ...rows,

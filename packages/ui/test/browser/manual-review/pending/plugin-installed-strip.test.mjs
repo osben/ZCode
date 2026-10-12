@@ -94,7 +94,7 @@ for (const width of [390, 1200]) {
               verticalScroll: false,
             });
           }
-          // 回归：旧 overflow-x-auto 容器会裁去 -top-1 角标的顶部 4px。
+          // Regression: the old overflow-x-auto container clipped the top 4px of the -top-1 badge.
           await assertUnclipped(badges.first());
           for (const badge of [badges.first(), badges.last()]) {
             await badge.scrollIntoViewIfNeeded();

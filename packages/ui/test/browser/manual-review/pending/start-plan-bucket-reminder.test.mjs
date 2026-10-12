@@ -139,7 +139,7 @@ for (const width of [390, 1200])
       });
     }
 
-// CR-01：真实 hook + Banner 使用快照时钟；Renderer 重载保留 localStorage。
+// CR-01: the real hook + Banner use a snapshot clock; a Renderer reload keeps localStorage.
 for (const deviceTime of [4102444900000, 4102444600000]) {
   test(`SPB04 clock skew ${deviceTime}`, async () => {
     const page = await browser.newPage({ viewport: { width: 390, height: 700 } });

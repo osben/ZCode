@@ -2,7 +2,8 @@
 import { describe, expect, it } from "vitest";
 import { fitComposerToolbar } from "@/prompt-editor/useComposerToolbarFit.js";
 
-// jsdom 不做排版：只替代几何读数，保留真实 DOM、裁决和各阶段的空间变化。
+// jsdom does no layout: only the geometry readings are substituted; the real DOM, the rulings,
+// and the per-phase spatial changes are preserved.
 function fixture() {
   const root = document.createElement("div");
   root.style.columnGap = "12px";

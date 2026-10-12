@@ -160,7 +160,8 @@ for (const [width, locale, theme] of [
           ?.startsWith("plugin:dev@"),
       );
       assert.deepEqual(await names(), ["dev", "beta", "alpha", "conflict", "personal"]);
-      // 模式按钮点击不让编辑器失焦，验证打开菜单期间的本地重排。
+      // Clicking the mode button does not blur the editor; verify the local reordering while the
+      // menu is open.
       await page.getByTestId("work").evaluate((e) => e.click());
       await page.waitForFunction(() =>
         document

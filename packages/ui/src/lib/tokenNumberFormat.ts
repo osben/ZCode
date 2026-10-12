@@ -10,8 +10,9 @@ export function formatCompactTokenNumber(
   const maximumFractionDigits = options.maximumFractionDigits ?? 1;
   const absValue = Math.abs(value);
 
-  // Token counts should still use localized compact formatting: Chinese displays 万/亿, while English displays K/M/B.
-  // A previous fix for long English units in Start Plan incorrectly forced K/M/B for every locale.
+  // Token counts should still use localized compact formatting: Chinese displays 万/亿, English
+  // displays K/M/B. A previous fix for long English units in Start Plan incorrectly forced K/M/B
+  // for every locale.
   return new Intl.NumberFormat(locale || undefined, {
     notation: absValue >= 1_000 ? "compact" : "standard",
     maximumFractionDigits,
@@ -20,6 +21,7 @@ export function formatCompactTokenNumber(
 }
 
 export function formatModelContextWindowLabel(contextWindow: number, _locale = "en-US"): string {
-  // Capacity badges in the model list are technical specifications and should not switch to 万/亿 in the Chinese locale.
+  // Capacity badges in the model list are technical specifications and must not switch to 万/亿 in
+  // the Chinese locale.
   return formatCompactTokenNumber("en-US", contextWindow);
 }
