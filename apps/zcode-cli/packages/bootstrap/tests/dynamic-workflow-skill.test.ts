@@ -1,23 +1,31 @@
 // ============================================================
 // bundled-skills: builtin /workflow command + dynamic-workflows skill tripwire
 // ============================================================
-// 契约见 docs/dynamic-workflow/authoring.md「The `/workflow` command and the skill」。
+// Contract: docs/dynamic-workflow/authoring.md, "The `/workflow` command and the skill".
 //
-// 这套断言守的是一件事：**技能正文与 facade 同步，且 facade 只出现一次**。2026-09-21 起 facade 的
-// .d.ts 不再随 CreateWorkflow 的描述每次请求重发（那是约 4.4k token），而是逐字嵌在 SKILL.md
-// §16.2 的标记块里，由 resolveInput 上的技能门保证模型写脚本之前读过。标记块之外的正文不得再抄
-// 任何一段签名——第二份必然漂移。因此这里（1）钉住标记块与 FACADE_DTS 逐字相等，（2）从
-// FACADE_DTS 派生正文允许的成员集合——facade 一改，本文件就红，而不是让正文默默烂掉。
+// These assertions guard one thing: **the skill body stays in sync with the facade, and the facade
+// appears exactly once**. Since 2026-09-21 the facade's .d.ts is no longer re-sent with the
+// CreateWorkflow description on every request (that was about 4.4k tokens); it is embedded verbatim
+// in the marked block of SKILL.md §16.2, and the skill gate on resolveInput guarantees the model
+// has read it before writing a script. Outside the marked block, the body must not copy any
+// signature again — a second copy would inevitably drift. So this file (1) pins the marked block as
+// verbatim-equal to FACADE_DTS and (2) derives the set of members the body may mention from
+// FACADE_DTS — the moment the facade changes, this file goes red instead of the body silently
+// rotting.
 //
-// 另有一条负向断言：另一套常见的 Workflow 工具 API（pipeline/parallel/
-// budget.total…）与本 facade 形近而实不同。它的词汇一旦漏进正文，模型会写出编译不过的脚本，且诊断信息
-// 指向的是"不存在的标识符"而非"你用错了 API"，极难自查。`phase` 是这份名单里唯一被撤下的：
-// dwf 自己有了 `phase("名字")` 阶段标注（docs/dynamic-workflow/presentation.md），黑名单
-// 因此变成假阳性，改由「marker 形态」正向断言接管。
+// There is also a negative assertion: another common Workflow tool API (pipeline/parallel/
+// budget.total...) resembles this facade but is actually different. Once its vocabulary leaks into
+// the body, the model writes scripts that do not compile, and the diagnostics point at "cannot find
+// name" rather than "you used the wrong API" — extremely hard to self-diagnose. `phase` is the only
+// entry removed from that list: dwf gained its own `phase("name")` stage annotation
+// (docs/dynamic-workflow/presentation.md), which turned the blacklist into a false positive, so a
+// positive "marker form" assertion took over.
 //
-// 2026-09-21 起命令与技能都不再随 zcode-guide 插件发布：命令编进 CLI（builtin-workflow-command.ts），
-// 技能进 packages/bundled-skills（bundled-skills.ts）。插件一被卸载/停用，入口就整体消失的事故形态
-// 由此关闭；本文件同时钉住两件资产的新住址。
+// Since 2026-09-21 neither the command nor the skill ships with the zcode-guide plugin: the command
+// is compiled into the CLI (builtin-workflow-command.ts) and the skill moved to
+// packages/bundled-skills (bundled-skills.ts). This closes the incident pattern where uninstalling
+// or disabling the plugin made the entry point vanish wholesale; this file also pins the new homes
+// of both assets.
 
 import { readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -47,27 +55,27 @@ const PACKAGES_ROOT = fileURLToPath(new URL("../../", import.meta.url));
 const PACK_ROOT = join(PACKAGES_ROOT, "bundled-skills");
 const SKILL_NAME = DYNAMIC_WORKFLOW_SKILL_NAME;
 const SKILL_DIR = join(PACK_ROOT, "skills", SKILL_NAME);
-/** zcode-guide 仍是一个普通插件技能根：用来证明灰度门不会连坐技能包之外的技能。 */
+/** zcode-guide remains an ordinary plugin skill root: it proves the gray gate does not take down skills outside the skill pack. */
 const GUIDE_PLUGIN_SKILLS_ROOT = join(PACKAGES_ROOT, "zcode-guide-plugin", "skills");
 
-/** 技能正文三件套：SKILL.md 常驻，另两份由模型按需 Read。 */
+/** The three skill body files: SKILL.md is always present; the model Reads the other two on demand. */
 const SKILL_FILES = ["SKILL.md", "patterns.md", "examples.md"] as const;
 
-/** adapters/src/skills/index.ts:20 —— 超长直接丢弃技能，不是警告。 */
+/** adapters/src/skills/index.ts:20 — an over-long description drops the skill entirely; it is not a warning. */
 const MAX_DESCRIPTION_LENGTH = 1024;
-/** core/src/context/sections/skills.ts:10 —— 会话清单里每条描述只露出这么多字符。 */
+/** core/src/context/sections/skills.ts:10 — the session listing exposes only this many characters of each description. */
 const LISTING_DESCRIPTION_CHARS = 250;
 /**
- * core/src/tool/handlers/skill.ts 的 WORKFLOW_SKILL_MAX_BYTES —— 这份技能专有的上限（其余技能是
- * 100 000）。超出即截断，而截掉的会是 §16 的契约。
+ * WORKFLOW_SKILL_MAX_BYTES from core/src/tool/handlers/skill.ts — a cap specific to this skill
+ * (other skills get 100 000). Exceeding it truncates, and what gets truncated is the §16 contract.
  */
 const SKILL_TOOL_MAX_BYTES = 200_000;
-/** SKILL.md §16.2 里逐字嵌入 FACADE_DTS 的标记块。 */
+/** The marked block in SKILL.md §16.2 that embeds FACADE_DTS verbatim. */
 const FACADE_BLOCK_START = "<!-- facade-dts:start -->";
 const FACADE_BLOCK_END = "<!-- facade-dts:end -->";
 const FACADE_BLOCK_PATTERN = /<!-- facade-dts:start -->[\s\S]*?<!-- facade-dts:end -->/g;
 
-/** 负向断言（declare / phase 形态 / 外来词汇）看的是正文，不看那一块 ambient 声明。 */
+/** The negative assertions (declare / phase form / foreign vocabulary) look at the body, not at that ambient-declaration block. */
 function stripFacadeBlock(text: string): string {
   return text.replace(FACADE_BLOCK_PATTERN, "");
 }
@@ -83,7 +91,7 @@ async function readAllContent(): Promise<{ name: string; text: string }[]> {
   return [...skills, { name: "builtin /workflow", text: BUILTIN_WORKFLOW_COMMAND.content }];
 }
 
-/** 抽 `---` 包裹的 flat frontmatter；解析规则对齐 adapters 的 parseFlatYaml（只认顶层标量）。 */
+/** Extracts the flat frontmatter wrapped in `---`; parsing rules mirror adapters' parseFlatYaml (top-level scalars only). */
 function parseFlatFrontmatter(text: string): Record<string, string> {
   const lines = text.split(/\r?\n/);
   if (lines[0] !== "---") return {};
@@ -103,15 +111,17 @@ function parseFlatFrontmatter(text: string): Record<string, string> {
 
 describe("builtin /workflow command", () => {
   it("declares the skill it depends on and passes the user's request through", () => {
-    // skills: 会让 contracts 的 formatCommandSkillInstructions 生成 "先调 Skill 工具" 前置指令。
-    // 名字写错不会报错，只会静默失去技能加载——所以钉住它等于技能目录名。
+    // skills: makes contracts' formatCommandSkillInstructions emit a leading "call the Skill tool
+    // first" instruction. A wrong name does not error — skill loading is silently lost — so
+    // pinning it equal to the skill directory name matters.
     expect(BUILTIN_WORKFLOW_COMMAND.metadata.name).toBe(BUILTIN_WORKFLOW_COMMAND_NAME);
     expect(BUILTIN_WORKFLOW_COMMAND.metadata.skills).toEqual([SKILL_NAME]);
     expect(BUILTIN_WORKFLOW_COMMAND.metadata.description).toBeTruthy();
     expect(BUILTIN_WORKFLOW_COMMAND.metadata.argumentHint).toBeTruthy();
 
-    // 没有 $ARGUMENTS 时 expandCustomCommandTemplate 会把参数追加成 "User arguments:" 尾块，
-    // 位置不受控；命令的正文要自己决定用户请求落在哪。
+    // Without $ARGUMENTS, expandCustomCommandTemplate appends the arguments as an uncontrolled
+    // "User arguments:" trailing block; the command body decides for itself where the user's
+    // request lands.
     expect(BUILTIN_WORKFLOW_COMMAND.content).toContain("$ARGUMENTS");
 
     const prompt = expandBuiltinWorkflowCommandPrompt("ship the release");
@@ -123,7 +133,8 @@ describe("builtin /workflow command", () => {
   });
 
   it("expands through the builtin prompt resolver, and not while the gray gate is off", () => {
-    // DWG-03：目录侧剔除了它，但用户仍可手打命令名，两条路径必须给出同一个结论。
+    // DWG-03: the directory side excludes it, but a user can still type the command name by hand;
+    // both paths must reach the same conclusion.
     expect(resolveZCodeBuiltinPromptCommand("/workflow ship it")).toContain("ship it");
     expect(
       resolveZCodeBuiltinPromptCommand("/workflow ship it", { dynamicWorkflowEnabled: true }),
@@ -131,12 +142,14 @@ describe("builtin /workflow command", () => {
     expect(
       resolveZCodeBuiltinPromptCommand("/workflow ship it", { dynamicWorkflowEnabled: false }),
     ).toBe(undefined);
-    // 无参数也展开：模型会按技能自行向用户要任务，而不是把 "/workflow" 当普通文本。
+    // Expands even with no arguments: the model asks the user for a task per the skill, instead of
+    // treating "/workflow" as plain text.
     expect(resolveZCodeBuiltinPromptCommand("/workflow")).toContain("Required skills");
     expect(resolveZCodeBuiltinPromptCommand("please /workflow now")).toBe(undefined);
   });
 
-  // launch.md「On demand: activation」：装配层要知道展开的是哪个命令，才能在 `/workflow` 上挂激活。
+  // launch.md "On demand: activation": the wiring layer must know which command was expanded so it
+  // can attach activation to `/workflow`.
   it("invocation 形态带命令名", () => {
     expect(resolveZCodeBuiltinPromptCommandInvocation("/workflow ship it")).toMatchObject({
       name: BUILTIN_WORKFLOW_COMMAND_NAME,
@@ -160,8 +173,9 @@ describe("bundled dynamic-workflows skill", () => {
     expect(frontmatter.description).toBeTruthy();
     expect(frontmatter.description.length).toBeLessThan(MAX_DESCRIPTION_LENGTH);
 
-    // 自动触发只看得见前 250 字符，所以触发词必须前置——而且必须是 CreateWorkflow 这个专名，
-    // 不能是泛泛的 "multi-agent"：后者会在 Agent 工具才是正解的场合把模型拽向 workflow。
+    // Automatic triggering only sees the first 250 characters, so the trigger word must come
+    // first — and it must be the specific name CreateWorkflow, not a generic "multi-agent": the
+    // latter would pull the model toward workflow even when the Agent tool is the right answer.
     expect(frontmatter.description.slice(0, LISTING_DESCRIPTION_CHARS)).toContain("CreateWorkflow");
   });
 
@@ -169,8 +183,9 @@ describe("bundled dynamic-workflows skill", () => {
     const contents = await Promise.all(SKILL_FILES.map((name) => readSkillFile(name)));
     for (const text of contents) expect(text.length).toBeGreaterThan(0);
 
-    // 双向对齐：技能目录里的每个文件都是必需资产（bundled-skills.ts 缺一拒绝整包），
-    // 契约里也不得残留已不存在的文件（否则 stage/SEA 构建永远失败）。
+    // Two-way alignment: every file in the skill directory is a required asset (bundled-skills.ts
+    // rejects the whole pack if one is missing), and the contract must not retain files that no
+    // longer exist (otherwise the stage/SEA build fails forever).
     const pinned = new Set(BUNDLED_SKILL_PACK_REQUIRED_PATHS);
     for (const name of SKILL_FILES) expect(pinned).toContain(`skills/${SKILL_NAME}/${name}`);
     expect(pinned.size).toBe(SKILL_FILES.length);
@@ -178,17 +193,20 @@ describe("bundled dynamic-workflows skill", () => {
 
   it("embeds the facade verbatim, once, and stays under the Skill tool's byte cap", async () => {
     const skill = await readSkillFile("SKILL.md");
-    // docs/dynamic-workflow/authoring.md「The authoring surface」：标记块里是编译器吃的同一个常量，
-    // 逐字相等——模型读到的契约不可能漂离能编译过的东西。
+    // docs/dynamic-workflow/authoring.md "The authoring surface": the marked block holds the same
+    // constant the compiler consumes, verbatim-equal — the contract the model reads cannot drift
+    // from the thing that compiles.
     const block = `${FACADE_BLOCK_START}\n\`\`\`ts\n${FACADE_DTS.trim()}\n\`\`\`\n${FACADE_BLOCK_END}`;
     expect(skill.split(block)).toHaveLength(2);
     expect(skill.match(FACADE_BLOCK_PATTERN)).toHaveLength(1);
-    // 技能是 Skill 工具一次性返回的正文；超过上限会被从尾部截掉，而 §16 正在尾部。
+    // The skill body is returned in one shot by the Skill tool; anything past the cap is truncated
+    // from the tail, and §16 lives at the tail.
     expect(Buffer.byteLength(skill, "utf8")).toBeLessThan(SKILL_TOOL_MAX_BYTES);
   });
 
   it("carries the contract the tool descriptions used to carry", async () => {
-    // 描述收短后，这些句子只活在这里（core/tests/workflow-routing-hints.test.ts 钉的是描述那一侧）。
+    // After the description was shortened, these sentences live only here
+    // (core/tests/workflow-routing-hints.test.ts pins the description side).
     const skill = await readSkillFile("SKILL.md");
     expect(skill).toContain("## 16. Tool reference");
     expect(skill).toContain("refuses\nto run until this skill has been loaded");
@@ -212,8 +230,10 @@ describe("bundled dynamic-workflows skill", () => {
     expect(skill).toContain("never\n  paste the script a second time");
     expect(skill).toContain("### 16.4 `AmendWorkflow`");
     expect(skill).toContain("`script_unchanged`");
-    // 沿用规则按固定顺序：脚本先（两个来源字段都不给）、并发、子代理模型；就地调并发那一句紧贴并发
-    // 字段（docs/dynamic-workflow/launch.md「What the model is told」，2026-09-21 起由技能承载）。
+    // The carry-over rules come in a fixed order: script first (omit both source fields), then
+    // concurrency, then subagent model; the in-place-retune sentence sits right next to the
+    // concurrency field (docs/dynamic-workflow/launch.md "What the model is told", carried by the
+    // skill since 2026-09-21).
     const amend = skill.slice(skill.indexOf("### 16.4 `AmendWorkflow`"), skill.indexOf("### 16.5"));
     const keptScript = amend.indexOf("Omit both to keep the predecessor's script");
     const limit = amend.indexOf("- `max_concurrency`: omit to keep the predecessor's limit");
@@ -225,9 +245,11 @@ describe("bundled dynamic-workflows skill", () => {
     expect(inPlace).toBeLessThan(model);
     expect(amend).toContain("`path` or `script`, never both. `path` is the usual form");
     expect(skill).toContain("picks that\nask up where it left off");
-    // 缓存的精确规则（docs/dynamic-workflow/launch.md「What the model is told」）：首次写工作区之后，只有
-    // 读过/跑过的子代理的 ask 转为实跑，只作答的 ask 继续命中。§13 曾把它说成「之后一切都实跑」，与
-    // 描述矛盾；描述收短后技能是唯一出处，两处必须同一个说法。
+    // The exact cache rule (docs/dynamic-workflow/launch.md "What the model is told"): after the
+    // first write to the workspace, only asks to subagents that were Read or run switch to live
+    // runs; asks that were only answered keep hitting the cache. §13 used to say "everything runs
+    // live after that", contradicting the description; with the description shortened, the skill is
+    // the single source of truth and both places must say the same thing.
     expect(skill).toContain("**How the cache works.**");
     expect(skill).toContain("Asks that only\nanswered keep settling from the cache");
     expect(skill).not.toContain("every ask to any subagent runs live even if its text is unchanged");
@@ -240,10 +262,11 @@ describe("bundled dynamic-workflows skill", () => {
 
   it("never restates the facade outside its marked block", async () => {
     for (const { name, text } of await readAllContent()) {
-      // 标记块（§16.2）是唯一的 ambient 声明来源。正文里再出现 `declare ` 意味着抄了一份签名进来，
-      // 也意味着模型会看到两份、且其中一份会漂移。
+      // The marked block (§16.2) is the only source of ambient declarations. A `declare ` in the
+      // body means a signature was copied in, meaning the model sees two copies and one of them
+      // will drift.
       expect(text, name).not.toMatch(/\bdeclare\s/);
-      // RULES 已经禁掉这三样；示例里出现就是在示范违规。
+      // RULES already bans these three; showing them in an example is demonstrating a violation.
       expect(text, name).not.toMatch(/^\s*import\s/m);
       expect(text, name).not.toMatch(/^\s*export\s/m);
     }
@@ -252,9 +275,10 @@ describe("bundled dynamic-workflows skill", () => {
   it("mentions only facade members that actually exist", async () => {
     for (const { name, text } of await readAllContent()) {
       for (const [, container, member] of text.matchAll(
-        // artifact 加入扫描面：产物成员名（file/markdown/chart/table/metrics/board）里有四个
-        // 是普通英文词，正文写错一个字母不会像 `glob` 那样显眼。`artifact.*` 这种散文写法
-        // 匹配不到（`*` 不是标识符首字符），所以只有真调用会被查。
+        // artifact joins the scan surface: four of the artifact member names
+        // (file/markdown/chart/table/metrics/board) are ordinary English words, so a one-letter
+        // typo in the body is not as conspicuous as with `glob`. Prose like `artifact.*` does not
+        // match (`*` is not a valid identifier start), so only real calls get checked.
         /\b(artifact|files|git|world)\.([A-Za-z_$][\w$]*)/g,
       )) {
         expect(FACADE_DTS, `${name}: ${container}.${member}`).toContain(`${member}(`);
@@ -263,8 +287,9 @@ describe("bundled dynamic-workflows skill", () => {
   });
 
   it("teaches world.run and the EvalWorkflowSnippet pre-flight (amendment 1)", async () => {
-    // docs/dynamic-workflow/authoring.md「The skill」：确定性门控归 world.run、片段预检归
-    // EvalWorkflowSnippet。正文丢了任何一个，指导面就静默塌回「一切效应都外包给 actor」。
+    // docs/dynamic-workflow/authoring.md "The skill": deterministic gating belongs to world.run,
+    // snippet pre-flight to EvalWorkflowSnippet. If the body loses either one, the guidance
+    // silently collapses back to "outsource every effect to an actor".
     const skill = await readSkillFile("SKILL.md");
     expect(skill).toContain("world.run");
     expect(skill).toContain("EvalWorkflowSnippet");
@@ -272,38 +297,46 @@ describe("bundled dynamic-workflows skill", () => {
     expect(patterns).toContain("world.run");
   });
 
-  // docs/dynamic-workflow/authoring.md「The guidance」。产物是 run 交给用户的唯一通道，而
-  // facade 只给签名：不写进 §9，模型会继续把子代理产出的 pdf 留在工作区，或者把同一段
-  // markdown 同时塞进 return 和产物。三条正向断言分别钉住三种成员的判断依据。
+  // docs/dynamic-workflow/authoring.md "The guidance". Artifacts are the only channel through
+  // which a run hands anything to the user, and the facade only provides signatures: without §9,
+  // the model keeps leaving subagent-produced pdfs in the workspace, or stuffs the same markdown
+  // into both the return value and an artifact. The three positive assertions pin the rationale
+  // for each of the three member kinds.
   it("teaches artifact delivery: file, markdown and the report-fed dashboard (amendment 6)", async () => {
     const skill = await readSkillFile("SKILL.md");
     expect(skill).toContain("**Deliver artifacts.**");
     expect(skill).toContain('report(item, "perf")');
     expect(skill).toContain("compile-time string literals");
-    // 拒绝是可接的，而且拒绝那一刻正是把缺口交回子代理的时机——产物族里唯一的控制流教学点。
+    // Rejection is catchable, and the moment of rejection is exactly when the gap is handed back
+    // to the subagent — the only control-flow teaching point in the artifact family.
     expect(skill).toContain("reject catchably");
   });
 
   it("teaches no persona knob: neither a tool profile nor a model tier (amendments 7–8)", async () => {
-    // docs/dynamic-workflow/authoring.md：`tools` 与模型档位都已退场。技能正文里再出现任何一个，
-    // 就是在教一个编译不过的成员；「只读」的说法也一并禁掉——每个子代理都有完整工作工具集，
-    // 不改文件是 ask 说的，不是档位保证的。2026-09-26 起 persona 可以点名一个**具体**模型
-    // （「Choosing a model per subagent」），所以 `model:` 本身合法，被禁的只是档位词。
+    // docs/dynamic-workflow/authoring.md: `tools` and model tiers are both retired. If either
+    // appears in the skill body again, it teaches a member that does not compile; the "read-only"
+    // wording is banned too — every subagent has the full work toolset, and "won't touch files" is
+    // something the ask says, not something a tier guarantees. Since 2026-09-26 a persona may name
+    // a **specific** model ("Choosing a model per subagent"), so `model:` itself is legal; only
+    // the tier words are banned.
     for (const { name, text } of await readAllContent()) {
       expect(text, `${name}: persona tools`).not.toMatch(/\btools:\s*"/);
       expect(text, `${name}: persona model tier`).not.toMatch(
         /\bmodel:\s*"(lite|main|fast|strong)"/,
       );
-      // `"none"` 不在表里：`let feedback = "none"` 这类普通字符串是合法示例。
+      // "none" is not in the table: ordinary strings like `let feedback = "none"` are legitimate
+      // examples.
       expect(text, `${name}: tool profile vocabulary`).not.toMatch(
         /ToolProfile|"readonly"|read-only subagent/,
       );
     }
   });
 
-  // docs/dynamic-workflow/authoring.md「The skill」：流水线是默认姿态——每个条目一做完就进下一阶段，
-  // 只有下一步需要全部条目的地方才等齐。2026-09-30 之前 §7 以「只在数据需要全体时 join」立题，
-  // 读起来像「少设屏障」，而不是「默认流水线」；模型写出的脚本于是一阶段一屏障。
+  // docs/dynamic-workflow/authoring.md "The skill": pipelining is the default stance — each item
+  // moves to the next stage as soon as it is done, and you only wait for the full set where the
+  // next step needs every item. Before 2026-09-30, §7 framed itself as "join only where the data
+  // needs everyone", which reads like "use fewer barriers" rather than "pipeline by default";
+  // models then wrote scripts with one barrier per stage.
   it("teaches pipelining as the default and a join as the exception", async () => {
     const skill = await readSkillFile("SKILL.md");
     expect(skill).toContain(
@@ -312,21 +345,23 @@ describe("bundled dynamic-workflows skill", () => {
     expect(skill).toContain("each item moves on the moment it is ready");
     expect(skill).toContain("**Decide, at every hand-off, how an item leaves its stage:**");
     expect(skill).toContain("a join, with a comment saying what needs every item");
-    // §2 把它列为拓扑决策之一，§3 把它列入提交前自查。
+    // §2 lists it among the topology decisions, §3 puts it on the pre-handover checklist.
     expect(skill).toContain("**Where each item goes next.**");
     expect(skill).toContain("at every `Promise.all`\nask whether the next step needs every item");
     const patterns = await readSkillFile("patterns.md");
     expect(patterns).toContain("**Start with the pipeline shapes.**");
     expect(patterns).toContain("## 6. Staged handoff with typed results");
-    // 路由模式（#13）曾是两道屏障：先全部分诊，再全部作答。分诊与作答一对一，所以按条串起来。
+    // The routing pattern (#13) used to be two barriers: triage everything, then answer
+    // everything. Triage and answer map one to one, so they are chained per item.
     expect(patterns).not.toContain('phase("Decide which model each question needs")');
     expect(patterns).toContain(
       'phase("Route each question to the model it needs and answer it there")',
     );
   });
 
-  // docs/dynamic-workflow/authoring.md「Choosing a model per subagent」：两种写法、一个路由模式，
-  // 技能正文与 patterns.md 各钉一处；路由脚本本身带 `<!-- compile -->`，由下面的编译守卫验。
+  // docs/dynamic-workflow/authoring.md "Choosing a model per subagent": two spellings and one
+  // routing pattern, pinned once in the skill body and once in patterns.md; the routing script
+  // itself carries `<!-- compile -->` and is verified by the compile guard below.
   it("teaches the per-subagent model: a literal, a model() table, and routing by a typed key", async () => {
     const skill = await readSkillFile("SKILL.md");
     expect(skill).toContain("**Per-subagent model**");
@@ -339,12 +374,14 @@ describe("bundled dynamic-workflows skill", () => {
   });
 
   it("does not leak the other Workflow API's vocabulary", async () => {
-    // 这些标识符属于另一套 Workflow 工具 API，不属于本 facade。漏进来的后果是脚本编译不过，
-    // 而诊断只会说"找不到 pipeline"，读起来像 facade 缺功能，而不像"你记错了是哪套 API"。
+    // These identifiers belong to another Workflow tool API, not to this facade. If they leak in,
+    // the script fails to compile, and the diagnostic only says "cannot find pipeline", which reads
+    // like the facade is missing a feature rather than "you remembered the wrong API".
     const foreign = [
       /\bpipeline\(/,
       /\bparallel\(/,
-      // docs/dynamic-workflow/authoring.md：dwf 自己的 facade 也没有 budget 了，整个词都不该出现。
+      // docs/dynamic-workflow/authoring.md: dwf's own facade no longer has budget either; the
+      // whole word must not appear.
       /\bbudget\b/i,
       /\bagentType\b/,
       /\bisolation:/,
@@ -359,11 +396,13 @@ describe("bundled dynamic-workflows skill", () => {
   });
 
   it("uses phase() in the dwf marker form, never the other Workflow API's", async () => {
-    // `phase(` 曾在上面的 foreign 名单里（两套 API 都有 phase），dwf 补上阶段标注后它成了
-    // 真 facade 成员，黑名单变成假阳性，把唯一的分组教学面挡在门外。改成正向断言：出现即
-    // 必须是 marker 形态 `phase("字面量")`。两套 API 的调用形状几乎同形，所以真正的判别力
-    // 在别处——同组 foreign 项（pipeline/parallel/schema:…）仍在，且下面的编译守卫会让
-    // 任何非 dwf 的 phase 用法在真编译器上炸掉。
+    // `phase(` used to be in the foreign list above (both APIs have phase); after dwf added stage
+    // annotation it became a real facade member, the blacklist turned into a false positive, and it
+    // locked out the only grouping teaching surface. Replaced with a positive assertion: any
+    // occurrence must be the marker form `phase("literal")`. The call shapes of the two APIs are
+    // nearly identical, so the real discriminating power lives elsewhere — the sibling foreign
+    // entries (pipeline/parallel/schema:...) remain, and the compile guard below makes any non-dwf
+    // phase usage explode on a real compiler.
     for (const { name, text } of await readAllContent()) {
       for (const [call] of text.matchAll(/\bphase\([^)]*\)/g)) {
         expect(call, `${name}: ${call}`).toMatch(/^phase\("[^"]+"\)$/);
@@ -371,15 +410,17 @@ describe("bundled dynamic-workflows skill", () => {
     }
   });
 
-  // docs/dynamic-workflow/authoring.md「The skill」：门要与任务的验收标准同尺度——先盘点仓库的
-  // 检查面，快的一层驱动循环，最强的一层决定出口；示例本身不能再是弱门（§8 只门 cargo test、
-  // examples #4 把 `lake env lean` 当 real checker）。
+  // docs/dynamic-workflow/authoring.md "The skill": the gate must match the task's acceptance
+  // criteria in scale — survey the repository's check surface first, let the fastest tier drive
+  // the loop, and let the strongest tier decide the exit; the examples themselves must not be weak
+  // gates (§8 gating only cargo test, examples #4 treating `lake env lean` as a real checker).
   it("teaches gate adequacy: survey the repository's checks, strongest tier decides the exit", async () => {
     const skill = await readSkillFile("SKILL.md");
     expect(skill).toContain("**Choose the gate before you write it.**");
     expect(skill).toContain("**Gate at the task's scale.**");
     expect(skill).toContain("Run the end-to-end suite once before handing over");
-    // §8 的优化循环：单测驱动轮次，bench 决定 winner，而不是量完基线就再也不测。
+    // §8's optimization loop: unit tests drive the rounds and the bench decides the winner,
+    // instead of measuring a baseline once and never testing again.
     expect(skill).toContain('phase("Measure whether it is actually faster")');
     expect(skill).not.toContain('phase("Verify it actually works")');
 
@@ -393,8 +434,10 @@ describe("bundled dynamic-workflows skill", () => {
     expect(examples).toContain("Run the property tests for real");
   });
 
-  // docs/dynamic-workflow/authoring.md「The skill」：显式 workflow 请求默认取厚、发现必经独立确认
-  // 且未确认者保留标注、最终返回值取报告形态。三条都是文字守卫，防止再平衡被下一次润色抹掉。
+  // docs/dynamic-workflow/authoring.md "The skill": an explicit workflow request defaults to
+  // depth, findings must go through independent confirmation with unconfirmed ones keeping their
+  // label, and the final return value takes the report shape. All three are textual guards that
+  // keep the next polish from rubbing the rebalance away.
   it("teaches verify-before-report, the unconfirmed label, and the report shape", async () => {
     const skill = await readSkillFile("SKILL.md");
     expect(skill).toContain("## The bar: first-class, expert-level work");
@@ -416,13 +459,16 @@ describe("bundled dynamic-workflows skill", () => {
     expect(examples).toContain("notCovered:");
   });
 
-  // docs/dynamic-workflow/authoring.md「The skill」：验证与代价成比例、阶段间按条流水
-  // 而不是一律 Promise.all 屏障、发现脚本有错时停下当场修订。三条都曾是 skill 自己教出来的行为
-  //（本机 72 个 run：0 份脚本按条流水、37 份在验证阶段前设全屏障、0 次 cancelled 前驱的修订），
-  // 所以既钉住新说法，也钉住旧示例（先审全部文件、再确认全部发现）不再回来。
+  // docs/dynamic-workflow/authoring.md "The skill": verification proportional to cost, per-item
+  // streaming between stages instead of uniform Promise.all barriers, and stopping to repair
+  // mid-run when the script turns out to be wrong. All three used to be behaviors the skill itself
+  // taught against (72 local runs: 0 scripts streamed per item, 37 set a full barrier before the
+  // verification stage, 0 repairs of a cancelled predecessor), so this pins both the new wording
+  // and the old example (review every file first, then confirm every finding) staying gone.
   it("teaches proportional verification, per-item streaming, and mid-run repair (amendment 10)", async () => {
     const skill = await readSkillFile("SKILL.md");
-    // 2026-09-30 起 §7 以「默认流水线」立题（见上一条用例）；按条串接的规则住在 **Chaining.** 段。
+    // Since 2026-09-30 §7 is framed as "pipeline by default" (see the previous case); the per-item
+    // chaining rule lives in the **Chaining.** paragraph.
     expect(skill).toContain(
       "## 7. Pipeline by default; join only where the next step needs every item",
     );
@@ -431,15 +477,16 @@ describe("bundled dynamic-workflows skill", () => {
     expect(skill).toContain("Three things that look like verification and are waste.");
     expect(skill).toContain("**Repair a run while it is still going.**");
     expect(skill).toContain("`Promise.allSettled`");
-    // 完整示例（2026-09-21 起在 examples.md §5）按条流水：确认者链在各自文件的评审之后，名字带路径
-    // 与序号；旧的屏障式阶段名不再出现。SKILL.md §11 只留指路。
+    // The complete example (in examples.md §5 since 2026-09-21) streams per item: confirmers
+    // chain after the review of their own file, with path and index in the name; the old
+    // barrier-style stage name is gone. SKILL.md §11 only points there.
     expect(skill).toContain("## 11. A complete example");
     expect(skill).toContain("`${ZCODE_SKILL_DIR}/examples.md` §5");
     const movedExample = await readSkillFile("examples.md");
     expect(movedExample).toContain("## 5. Changed-file review with confirmation as reviews land");
     expect(movedExample).toContain("confirmer-${p}-${index}");
     expect(movedExample).not.toContain('phase("Confirm each kept finding independently and report it")');
-    // 过时的缓存关门说法（工具档位 2026-09-12 已退场）不得回来。
+    // The outdated cache-gating wording (the tool tier retired on 2026-09-12) must not come back.
     for (const { name, text } of await readAllContent()) {
       expect(text, name).not.toMatch(/first subagent with tools/i);
     }
@@ -454,11 +501,14 @@ describe("bundled dynamic-workflows skill", () => {
     expect(examples).not.toContain('phase("Confirm each survivor by reproducing it")');
   });
 
-  // 脚本文件（docs/dynamic-workflow/launch.md「Script files」）：每次提交的脚本都有一个磁盘文件，
-  // 内联脚本由工具写进 `.zcode/workflow-drafts/<slug>.dwf.ts`，诊断按文件行号给出，之后的每一次
-  // 修订都是「改那个文件 + 用 `path` 重新提交」。这三句是承重话，必须逐字在 skill 里：模型一旦回到
-  // 整段重贴，就同时踩中两个实测代价——约两万 token 的脚本重新流式输出会被部分 provider 卡死，
-  // 而 run 真正出错时脚本正文往往已被 compaction 丢出上下文，只有文件还在。
+  // Script files (docs/dynamic-workflow/launch.md "Script files"): every submitted script has a
+  // file on disk — the tool writes inline scripts to `.zcode/workflow-drafts/<slug>.dwf.ts`,
+  // diagnostics come back as file line numbers, and every later revision is "edit that file +
+  // resubmit with `path`". These three sentences are load-bearing and must be in the skill
+  // verbatim: the moment the model goes back to repasting the whole script, it hits two measured
+  // costs at once — re-streaming a script of roughly twenty thousand tokens gets stuck on some
+  // providers, and when a run actually fails the script body has often already been dropped from
+  // context by compaction, leaving only the file.
   it("teaches the script-file loop: edit the file, resubmit by path", async () => {
     const skill = await readSkillFile("SKILL.md");
     expect(skill).toContain(".zcode/workflow-drafts/");
@@ -466,27 +516,32 @@ describe("bundled dynamic-workflows skill", () => {
     expect(skill).toContain(
       "**Edit that file and resubmit with `path`. Do not paste the script inline again**",
     );
-    // 出错的 run 同样按文件修订：通知与 GetWorkflowRun 给出 scriptPath，AmendWorkflow 收 path。
+    // A failed run is revised through the file the same way: the notification and GetWorkflowRun
+    // give the scriptPath, and AmendWorkflow takes path.
     expect(skill).toContain("edit the run's script file, which the notification names,");
     expect(skill).toContain("**Every run remembers its script file, so a revision is an `Edit`.**");
     expect(skill).toContain("`scriptPath`");
     expect(skill).toContain("`script_unchanged`");
-    // 草稿目录免审批，否则模型会以为改文件也要等用户点确认，于是又回去贴脚本。
+    // The drafts directory is approval-free; otherwise the model assumes editing the file also
+    // waits for the user to confirm, and goes back to pasting the script.
     expect(skill).toContain("**Editing a draft asks nothing.**");
-    // EvalWorkflowSnippet 的第二个来源。
+    // The second source for EvalWorkflowSnippet.
     expect(skill).toContain("or as `path` to a file holding it");
-    // 旧的「整段重来」说法不得回流。
+    // The old "start over with the whole script" wording must not flow back.
     for (const { name, text } of await readAllContent()) {
       expect(text, name).not.toMatch(/call\s+`CreateWorkflow` again/);
       expect(text, name).not.toMatch(/resubmit with `AmendWorkflow`\./);
     }
   });
 
-  // 2026-09-07 用户裁决（docs/dynamic-workflow/authoring.md「The skill」）：用户可见文本按
-  // 「像告诉同事那样说」的一条原则 + 英中成对例子教，不列禁用词。同时钉住一处更正：分析器没有
-  // 「同一子代理上无序 ask」的告警（诊断集 9001/9003/9004/9005/9006），skill 不得再声称编译器会警告。
-  // 2026-09-08 用户实测：模型把 skill 里的 "cold read" / "fresh eyes" 逐字译成「冷读」「冷眼」并写进
-  // 阶段名与子代理名。正文改称 independent read，§9 表格加成对例子，示例子代理不再叫 cold-reviewer。
+  // 2026-09-07 user ruling (docs/dynamic-workflow/authoring.md "The skill"): user-visible text is
+  // taught as the single principle "say it like you would tell a colleague" plus paired English/
+  // Chinese examples, without a banned-word list. Also pins one correction: the analyzer has no
+  // "out-of-order asks on the same subagent" warning (diagnostics 9001/9003/9004/9005/9006), so the
+  // skill must no longer claim the compiler warns. 2026-09-08 user testing: the model translated
+  // the skill's "cold read" / "fresh eyes" literally into Chinese and put them into stage names and
+  // subagent names. The body now says independent read, the §9 table gained paired examples, and
+  // the example subagent is no longer named cold-reviewer.
   it("teaches writing for the user, and does not claim an analyzer warning", async () => {
     const skill = await readSkillFile("SKILL.md");
     expect(skill).toMatch(/^## \d+\. Write for the user$/m);
@@ -497,23 +552,27 @@ describe("bundled dynamic-workflows skill", () => {
 
     for (const { name, text } of await readAllContent()) {
       expect(text, name).not.toMatch(/compiler warns/i);
-      // 表格的 Not 列故意保留这两个词作反例，只查表格之外的正文。
+      // The table's Not column deliberately keeps these two words as counterexamples; only the
+      // body outside the table is checked.
       expect(text.replace(/^\| .*$/gm, ""), name).not.toMatch(/cold[- ]read|cold-reviewer/i);
     }
   });
 
   it("names CreateWorkflow explicitly wherever it routes", async () => {
-    // legacy 的 script/expert `Workflow` 工具仍在（core/src/tool/handlers/workflow.ts），
-    // 与 dwf 共用 "workflow" 这个词。所以正文必须指名 CreateWorkflow，不能说"the workflow tool"。
+    // The legacy script/expert `Workflow` tool still exists (core/src/tool/handlers/workflow.ts)
+    // and shares the word "workflow" with dwf. So the body must name CreateWorkflow and must not
+    // say "the workflow tool".
     for (const { name, text } of await readAllContent()) {
       expect(text, name).toContain("CreateWorkflow");
       expect(text, name).not.toMatch(/\bthe workflow tool\b/i);
     }
   });
 
-  // 最强的一条守卫：示例脚本过真编译器。标识符匹配只能证明"名字存在"，编译能证明"这段脚本真能跑"。
-  // 只查显式标注 `<!-- compile -->` 的块——patterns.md 的片段刻意省略接口声明，不是完整脚本；
-  // 用启发式（"含 return 就编译"）区分两者，迟早会把某个真错误当成片段放过去。
+  // The strongest guard: example scripts go through the real compiler. Identifier matching only
+  // proves "the name exists"; compiling proves "this script actually runs". Only blocks explicitly
+  // marked `<!-- compile -->` are checked — the patterns.md snippets deliberately omit interface
+  // declarations and are not complete scripts; a heuristic ("has return, so compile it") to tell
+  // them apart would sooner or later wave a real error through as a snippet.
   it("compiles every script block marked as complete", async () => {
     const marked: { file: string; index: number; source: string }[] = [];
     for (const { name, text } of await readAllContent()) {
@@ -523,20 +582,23 @@ describe("bundled dynamic-workflows skill", () => {
       });
     }
 
-    // SKILL.md 的完整示例 + §9 的报告形状 + §9 的产物发布例 + examples.md 的四个脚本。
-    // 掉到 6 以下意味着标记被误删——那会让这条守卫静默退化成空断言。
-    // 下限沿革：4（初版）→ 5（Amendment 1 的 world.run 例）→ 6（Amendment 6 的产物例）。
+    // SKILL.md's complete example + §9's report shape + §9's artifact publishing example +
+    // examples.md's four scripts. Dropping below 6 means a marker was deleted by mistake — that
+    // would let this guard silently degrade into an empty assertion. History of the floor:
+    // 4 (initial) → 5 (Amendment 1's world.run example) → 6 (Amendment 6's artifact example).
     expect(marked.length).toBeGreaterThanOrEqual(6);
 
     for (const { file, index, source } of marked) {
       const result = compileWorkflowScript(source);
       expect(result.diagnostics, `${file} block #${index}`).toEqual([]);
       expect(result.ok, `${file} block #${index}`).toBe(true);
-      // 编译只跑 typecheck，看不见 authoring 诊断（world.run 字面量、phase 标记形态、actor
-      // 重名 / fan-out 静态名）。而 CreateWorkflow / SaveWorkflow 的 handler 先过
-      // analyzeScript，`!ok` 即拒绝提交——所以「示例能编译」曾经不等于「模型照抄能提交」。
-      // 2026-08-31 amend-resume 把 actor 名变成唯一身份键后这条缝真的漏了东西：技能里每一个
-      // fan-out 都写着 `agent("reviewer")`，全是 9006。补上这一趟，守卫才对齐真实的提交门。
+      // Compiling only runs typecheck; it cannot see the authoring diagnostics (world.run
+      // literals, phase marker form, duplicate actor names / static fan-out names). The
+      // CreateWorkflow / SaveWorkflow handlers run analyzeScript first and reject submission on
+      // `!ok` — so "the example compiles" did not imply "the model can submit what it copies".
+      // After 2026-08-31 amend-resume made the actor name the unique identity key, this seam
+      // really did leak: every fan-out in the skill wrote `agent("reviewer")`, all hitting 9006.
+      // Only with this extra pass does the guard line up with the real submission gate.
       const analyzed = analyzeWorkflowScript(source);
       expect(analyzed.diagnostics, `${file} block #${index} (analyze)`).toEqual([]);
       expect(analyzed.ok, `${file} block #${index} (analyze)`).toBe(true);
@@ -545,8 +607,9 @@ describe("bundled dynamic-workflows skill", () => {
 });
 
 /**
- * 灰度门（docs/dynamic-workflow/launch.md「Gray release」）按**目录名**定位技能资产，而技能包里改名
- * 不会让任何类型报错，门会静默失效。这里把名字钉死在真实文件上。
+ * The gray gate (docs/dynamic-workflow/launch.md "Gray release") locates skill assets by
+ * **directory name**, and renaming inside the skill pack produces no type error, so the gate would
+ * silently stop working. This pins the names to the real files.
  */
 describe("gray release gate names stay pinned to the real bundled assets", () => {
   function bundledRoots(): SkillRoot[] {
@@ -567,9 +630,10 @@ describe("gray release gate names stay pinned to the real bundled assets", () =>
   });
 
   /**
-   * 端到端地跑一遍真实的 NodeSkillAdapter，把 create-app 的装配复现出来：内置技能根与插件技能根并列，
-   * adapter 在发现阶段按 SKILL.md 的绝对路径比对 disabledPaths。任一假设不成立，这条用例立刻红，
-   * 而不是灰度门静默失效。
+   * Runs the real NodeSkillAdapter end to end, reproducing create-app's wiring: the bundled skill
+   * root and the plugin skill root side by side, with the adapter comparing disabledPaths against
+   * SKILL.md absolute paths during discovery. If any assumption fails, this case goes red
+   * immediately instead of the gray gate silently breaking.
    */
   describe("real NodeSkillAdapter discovery", () => {
     const guidePluginRoot: SkillRoot = {
@@ -603,7 +667,8 @@ describe("gray release gate names stay pinned to the real bundled assets", () =>
       );
       const names = skills.map((skill) => skill.name);
       expect(names).not.toContain(SKILL_NAME);
-      // 反向断言：门只剔一个 SKILL.md，其他根没有被连坐。
+      // Converse assertion: the gate removes exactly one SKILL.md; the other roots are not taken
+      // down with it.
       expect(names).toContain("zcode-configuration-guide");
       expect(names.length).toBeGreaterThan(1);
     });

@@ -1,8 +1,11 @@
 // @vitest-environment jsdom
 
-// 「还有 n 个」那一行（docs/dynamic-workflow/presentation.md「Past six participants」）：卡上名册站的
-// 第六枚药丸——三张脸一叠、`还有 n 个`、藏着失败时一枚 `✕ n`、↗ 常驻；一扇门不是状态。侧板上同一具身体
-// 是门（追记「一扇门与一卷名单」）：尾槽换下箭头、关着带其余人的计数行、开着计数行走人。
+// The "n more" row (docs/dynamic-workflow/presentation.md "Past six participants"): the
+// sixth pill of the card's roster station — a stack of three faces, `n more`, hiding an
+// `✕ n` badge when there are failures, and a permanent ↗; the door is not a state. The
+// same body on the side panel is the door (see "the door and the rolled list"): the tail
+// slot swaps to a down arrow, closed it carries a count row of the rest, open the count
+// row walks out.
 import { cleanup, fireEvent, render } from "@testing-library/react";
 import { createElement } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -54,7 +57,7 @@ const faceStates = (view: ReturnType<typeof renderRow>) =>
     face.getAttribute("data-face-state"),
   );
 
-// 钉 5：running 3、6 → failed 4 → 补位 1、2；其余 5 done、7 pending、8 done、9 done。
+// Pin 5: running 3, 6 -> failed 4 -> backfill 1, 2; the rest are 5 done, 7 pending, 8 done, 9 done.
 const STATUSES: StepRunStatus[] = [
   "done",
   "done",
@@ -81,7 +84,7 @@ describe("WorkflowMoreRow", () => {
     expect(row.getAttribute("aria-label")).toBe(row.getAttribute("title"));
     expect(row.className).toContain("wf-pill-open");
     expect(row.style.animationDelay).toBe("150ms");
-    // 叠：pending 的 7 在 done 的 5、8 前面；每张带描边的类。
+    // Stack: pending 7 comes before done 5, 8; each face carries the outlined class.
     expect(faceStates(view)).toEqual(["waiting", "content", "content"]);
     const faces = view.getByTestId("workflow-more-deck").querySelectorAll("[data-face-state]");
     expect([...faces].every((face) => face.classList.contains("wf-more-face"))).toBe(true);
@@ -92,7 +95,7 @@ describe("WorkflowMoreRow", () => {
   });
 
   it("藏着失败时一枚红色 `✕ n`，失败的脸排在叠的最前；没有回调时是静态的 span", () => {
-    // 六个 failed、一个 running 钉在最前：两个 failed 藏在这一行后面。
+    // Six failed, one running pinned to the front: two failed hide behind this row.
     const list = pills([
       "failed",
       "failed",
@@ -123,9 +126,9 @@ describe("WorkflowMoreRow", () => {
     expect(row.getAttribute("title")).toBe("还有 4 个子代理 · 在运行侧栏里列出全部");
   });
 
-  // ── 门（侧板）──
+  // ── Door (side panel) ──
   it("门关着：尾槽是下箭头、aria-expanded=false、带其余人的计数行（钉住的不算）、没有 ✕ n 徽记", () => {
-    // 六个 running 占满钉位：其余是第六个 running、一个 failed、一个 done。
+    // Six running fill the pinned slots: the rest are the sixth running, one failed, one done.
     const list = pills([
       "running",
       "running",
@@ -152,7 +155,7 @@ describe("WorkflowMoreRow", () => {
     expect(row.className).not.toContain("bg-surface-hover");
     expect(view.queryByTestId("workflow-more-open")).toBeNull();
     expect(view.getByTestId("workflow-more-chevron").className).not.toContain("rotate-180");
-    // 其余 = 一个 running、一个 failed、一个 done。
+    // The rest = one running, one failed, one done.
     const tally = view.getByTestId("workflow-roster-tally");
     const items = [...tally.querySelectorAll("[data-roster-count]")];
     expect(
@@ -206,7 +209,7 @@ describe("WorkflowMoreRow", () => {
     );
   });
 
-  // ── 表外的那些（docs/dynamic-workflow/presentation.md「Past six participants」）──
+  // ── Those outside the table (docs/dynamic-workflow/presentation.md "Past six participants") ──
   it("被淘汰的子代理也在这一行后面：人数与红 ✕ 把它们算进来，叠上的脸只有表内的", () => {
     const roster = stationRoster(
       pills(["running", "running", "running", "running", "running", "failed", "done"]),
@@ -215,13 +218,13 @@ describe("WorkflowMoreRow", () => {
     const view = renderRow({ more: rosterMore(roster) });
     const row = view.getByTestId("workflow-roster-more-row");
     expect(row.getAttribute("data-more-count")).toBe("12");
-    // 行尾那枚红 ✕ 4 也在 textContent 里。
+    // The red ✕ 4 at the end of the row is also in textContent.
     expect(row.textContent).toBe("12 more4");
     expect(view.getByTestId("workflow-more-failed").textContent).toBe("4");
     expect(faceStates(view)).toEqual(["sad", "content"]);
     cleanup();
 
-    // 侧板的门：关着时的计数行同样是「其余 + 表外」。
+    // The side panel's door: closed, its count row is likewise "the rest + those outside the table".
     const door = renderRow({
       door: { open: false, tally: rosterRestCounts(roster) },
       more: rosterMore(roster),

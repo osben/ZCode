@@ -1,5 +1,5 @@
-// 已保存工作流 GUI 中枢的五个 workspace 级协议方法（docs/dynamic-workflow/launch.md）。
-// 真实 tmp 目录 + core 的真实 store / codec；只有 journal 用能力探测式的假实现。
+// The five workspace-level protocol methods of the saved-workflow GUI hub (docs/dynamic-workflow/launch.md).
+// Real tmp directories + core's real store / codec; only the journal uses a capability-probing fake.
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
@@ -35,8 +35,9 @@ const SCRIPT = [
 ].join("\n");
 
 let cwd = "";
-// 每个用例一份隔离的 HOME：全局档落在 `<HOME>/.zcode/workflows/`，core 恒取 `os.homedir()`
-// （posix 上即 `$HOME`）。不隔离的话 list/get/move 的全局变体会读到真实家目录、结果非确定。
+// An isolated HOME per case: global-scoped workflows land in `<HOME>/.zcode/workflows/`, and core
+// always uses `os.homedir()` (i.e. `$HOME` on posix). Without isolation, the global variants of
+// list/get/move would read the real home directory and the results would be non-deterministic.
 let home = "";
 let prevHome: string | undefined;
 let prevUserProfile: string | undefined;
@@ -124,7 +125,7 @@ describe("workflows/* protocol methods", () => {
     );
 
     const result = await listSavedWorkflowsOp(contextWith(), { workspace: workspace() });
-    // 协议 schema（shared）与 contracts 的 entry schema 都要认同一份结果——两边形状互相钉住。
+    // The protocol schema (shared) and the contracts entry schema must both accept the same result — the two sides pin each other's shape.
     expect(() => zcodeWorkflowsListResultSchema.parse(result)).not.toThrow();
     for (const entry of result.workflows) {
       expect(() => SavedWorkflowEntrySchema.parse(entry)).not.toThrow();
@@ -334,7 +335,7 @@ describe("workflows/* protocol methods", () => {
       truncated: true,
     });
 
-    // 恰好 limit 条：没有探测行 → 不带 truncated 键。
+    // Exactly limit rows: no probe row -> no truncated key.
     const exact = await listSavedWorkflowRunsOp(contextWith(sessionStore), {
       workspace: workspace(),
       limit: 3,
@@ -342,12 +343,14 @@ describe("workflows/* protocol methods", () => {
     expect(exact).not.toHaveProperty("truncated");
     expect(exact.runs).toHaveLength(3);
     expect(queries.at(-1)).toEqual({ cwd, limit: 4 });
-    // 上面那个假 journal 没有 listArtifactRows：能力缺席 ⇒ 每行的 artifacts 整字段缺席
-    // （老 CLI / 注入的测试 store 逐字不变）。上面的 toEqual 已经把这一点钉死了。
+    // The fake journal above has no listArtifactRows: capability absent => the whole artifacts
+    // field is absent on every row (verbatim-compatible with the old CLI / injected test stores).
+    // The toEqual above already pins this down.
   });
 
-  // 用户面产物的中枢摘要（docs/dynamic-workflow/authoring.md「How the user sees them」）。
-  // ⚠ 术语：这里的 artifact 是脚本经 `artifact.*` 发布给用户看的产出，不是脚本的顶层返回值。
+  // Hub summary of user-facing artifacts (docs/dynamic-workflow/authoring.md, "How the user sees them").
+  // Terminology warning: artifact here means outputs the script publishes for the user to see via
+  // `artifact.*`, not the script's top-level return value.
   it("runs：能力在场时按 runId 逐行汇总 artifacts，只取 completed 行、取最新版、≤ 8 件", async () => {
     const artifactRow = (
       runId: string,
@@ -373,7 +376,7 @@ describe("workflows/* protocol methods", () => {
           contentType: "application/pdf",
           bytes: 4_096,
         }),
-        // 失败的发布不占版本号，也不该进 chips。
+        // Failed publications consume no version number and must not enter the chips.
         {
           runId: "run_2",
           siteId: "artifact#3",
@@ -398,13 +401,13 @@ describe("workflows/* protocol methods", () => {
           { runId: "run_1", status: "errored", spentTokens: 1, timeCreated: 1, timeUpdated: 2 },
         ].slice(0, (query as { limit: number }).limit),
       listArtifactRows: (runId: string) => artifactRows[runId] ?? [],
-      // 预置看板在场时才会被调到：标签 report 行的计数。
+      // Only called when a preset board is present: counting the tagged report rows.
       listNodes: (runId: string) =>
         runId === "run_2"
           ? [
               { runId, siteId: "report#1", ordinal: 1, kind: "report", inputHash: "h", status: "completed", artifactId: "perf", result: {} },
               { runId, siteId: "report#2", ordinal: 2, kind: "report", inputHash: "h", status: "completed", artifactId: "perf", result: {} },
-              // 无标签的 report 不计入任何产物。
+              // Untagged reports do not count toward any artifact.
               { runId, siteId: "report#3", ordinal: 3, kind: "report", inputHash: "h", status: "completed", result: {} },
             ]
           : [],
@@ -416,24 +419,24 @@ describe("workflows/* protocol methods", () => {
       limit: 5,
     });
     expect(() => zcodeWorkflowsRunsResultSchema.parse(result)).not.toThrow();
-    // 顶层字段取最新版（title 是 v2 的「审计报告」而不是 v1 的「旧版」）；失败行不出现。
+    // Top-level fields take the latest version (title is v2's "审计报告" rather than v1's "旧版"); failed rows do not appear.
     expect(result.runs[0]?.artifacts).toEqual([
       { id: "audit", kind: "file", title: "审计报告", version: 2, contentType: "application/pdf" },
       { id: "perf", kind: "chart", version: 1 },
     ]);
-    // 字节 / 条目 / spec 刻意不进中枢载荷：chip 上放不下，点开侧板即可。
+    // Bytes / item counts / spec are deliberately kept out of the hub payload: a chip cannot fit them; the side pane shows them on click.
     expect(JSON.stringify(result.runs[0]?.artifacts)).not.toContain("4096");
     expect(JSON.stringify(result.runs[0]?.artifacts)).not.toContain("round");
-    // 零件的 run：整字段缺席，不是空数组。
+    // A run with zero items: the whole field is absent, not an empty array.
     expect(result.runs[1]).not.toHaveProperty("artifacts");
   });
 });
 
-// 全局作用域（docs/dynamic-workflow/launch.md）：五个方法的定向 `scope` 变体 + workflows/move。
-// 全局档落在隔离的 `<HOME>/.zcode/workflows/`（见顶部 beforeEach）；同名的项目档不受牵连。
+// Global scope (docs/dynamic-workflow/launch.md): the targeted `scope` variants of the five methods + workflows/move.
+// Global-scoped workflows land in the isolated `<HOME>/.zcode/workflows/` (see the beforeEach at the top); project-scoped ones with the same name are untouched.
 describe("workflows/* 全局作用域与 workflows/move", () => {
   it("list：项目变体只列项目档 + dir=项目根（即使目录不存在）；全局变体只列全局档 + dir=全局根", async () => {
-    // 项目根不存在也回 dir（GUI 靠它 watch）。
+    // dir is returned even when the project root does not exist (the GUI relies on it to watch).
     expect(
       await listSavedWorkflowsOp(contextWith(), { workspace: workspace(), scope: "project" }),
     ).toEqual({
@@ -516,7 +519,7 @@ describe("workflows/* 全局作用域与 workflows/move", () => {
     const def = await getSavedWorkflowOp(contextWith(), { workspace: workspace(), name: "shared" });
     expect(def).toMatchObject({ ok: true, scope: "project", meta: { description: "项目那份" } });
 
-    // 只在全局档存在：项目变体 not_found，全局变体命中。
+    // Exists only in the global scope: the project variant gets not_found, the global variant hits.
     await seedGlobalWorkflow("global-only", { description: "只全局" });
     expect(
       await getSavedWorkflowOp(contextWith(), {
@@ -554,7 +557,7 @@ describe("workflows/* 全局作用域与 workflows/move", () => {
     expect(globParsed.ok).toBe(true);
     if (!globParsed.ok) throw new Error("unreachable");
     expect(globParsed.meta.description).toBe("全局新说明");
-    // 项目档逐字不变。
+    // The project-scoped file is byte-for-byte unchanged.
     expect(await readFile(projPath, "utf8")).toBe(projBefore);
   });
 
@@ -570,7 +573,7 @@ describe("workflows/* 全局作用域与 workflows/move", () => {
     expect(() => zcodeWorkflowsDeleteResultSchema.parse(deleted)).not.toThrow();
     expect(deleted).toEqual({ ok: true, path: globPath });
     await expect(readFile(globPath, "utf8")).rejects.toThrow();
-    // 项目档留存。
+    // The project-scoped file survives.
     await expect(readFile(projPath, "utf8")).resolves.toContain("项目那份");
     expect(
       (await listSavedWorkflowsOp(contextWith(), { workspace: workspace(), scope: "project" }))
@@ -624,7 +627,7 @@ describe("workflows/* 全局作用域与 workflows/move", () => {
       scope: "global",
     });
     expect(() => zcodeWorkflowsRunsResultSchema.parse(glob)).not.toThrow();
-    // 全局变体：查询袋没有 cwd 键（跨所有项目）。
+    // Global variant: the query bag has no cwd key (spans all projects).
     expect(queries).toEqual([{ limit: 11, name: "research" }]);
     expect(glob.runs).toEqual([
       {
@@ -647,7 +650,7 @@ describe("workflows/* 全局作用域与 workflows/move", () => {
       },
     ]);
 
-    // 项目变体：仍带 cwd 谓词。
+    // Project variant: still carries the cwd predicate.
     await listSavedWorkflowRunsOp(contextWith(sessionStore), {
       workspace: workspace(),
       name: "research",
@@ -657,8 +660,8 @@ describe("workflows/* 全局作用域与 workflows/move", () => {
     expect(queries.at(-1)).toEqual({ cwd, limit: 11, name: "research" });
   });
 
-  // move 只有全局→项目一向（docs/dynamic-workflow/launch.md「Promote to global」）：项目→全局
-  // 是模型的概括「提升为全局」，协议上没有那一向。
+  // move only has the global -> project direction (docs/dynamic-workflow/launch.md, "Promote to global"):
+  // project -> global is the model's shorthand "promote to global"; the protocol has no such direction.
   it("move：全局→项目成功——逐字节相同、源删除、结果 {ok, from, to}（无 to 参数）", async () => {
     const globPath = await seedGlobalWorkflow("mover", {
       description: "回项目",
@@ -673,9 +676,9 @@ describe("workflows/* 全局作用域与 workflows/move", () => {
     expect(() => zcodeWorkflowsMoveResultSchema.parse(result)).not.toThrow();
     const projPath = join(projectDir(), "mover.dwf.ts");
     expect(result).toEqual({ ok: true, from: globPath, to: projPath });
-    // 源已删。
+    // The source is deleted.
     await expect(readFile(globPath, "utf8")).rejects.toThrow();
-    // 目标逐字节相同。
+    // The target is byte-for-byte identical.
     expect(await readFile(projPath, "utf8")).toBe(before);
   });
 
@@ -684,7 +687,7 @@ describe("workflows/* 全局作用域与 workflows/move", () => {
     await expect(
       moveSavedWorkflowOp(contextWith(), { workspace: workspace(), name: "mover", to: "global" }),
     ).rejects.toThrow();
-    // 项目档原样不动。
+    // The project-scoped file is left untouched.
     await expect(readFile(join(projectDir(), "mover.dwf.ts"), "utf8")).resolves.toContain(
       "项目那份",
     );
@@ -700,7 +703,7 @@ describe("workflows/* 全局作用域与 workflows/move", () => {
     });
     expect(() => zcodeWorkflowsMoveResultSchema.parse(result)).not.toThrow();
     expect(result).toEqual({ ok: false, reason: "target_exists", path: projPath });
-    // 两份都还在。
+    // Both copies remain.
     await expect(readFile(join(projectDir(), "dup.dwf.ts"), "utf8")).resolves.toContain("项目那份");
     await expect(readFile(globPath, "utf8")).resolves.toContain("全局那份");
   });

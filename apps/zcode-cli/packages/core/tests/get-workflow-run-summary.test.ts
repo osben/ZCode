@@ -1,8 +1,8 @@
-// GetWorkflowRun 的摘要拼装与「多久以前」这把尺（docs/dynamic-workflow/launch.md「`GetWorkflowRun`」）。
+// GetWorkflowRun's summary assembly and the "how long ago" ruler (docs/dynamic-workflow/launch.md "`GetWorkflowRun`").
 //
-// 这两件东西被单独钉住，是因为模型面上每一句话都建立在它们之上：摘要是确定性的（同一份
-// 快照永远同一句话），年龄是对 `generatedAt` 算的（一次输出一把尺）。任何一处飘了，
-// 整段情势报告就开始说一些它并不知道的事。
+// These two are pinned separately because every sentence on the model surface is built on them: the summary is
+// deterministic (the same snapshot always yields the same sentence), and age is computed against `generatedAt` (one
+// ruler per output). If either drifts, the whole situation report starts saying things it does not know.
 
 import { describe, expect, it } from "vitest";
 import type { GetWorkflowRunOutput } from "@zcode/contracts";
@@ -16,7 +16,7 @@ import {
 
 const NOW = Date.UTC(2026, 7, 21, 9, 5, 40);
 
-/** 一个最小但完整的输出：五个必填字段齐备，其余由各用例按需覆盖。 */
+/** A minimal but complete output: the five required fields are present, the rest are overridden per case as needed. */
 const BASE: Omit<GetWorkflowRunOutput, "summary"> = {
   runId: "dwfrun-1",
   label: "nightly triage",
@@ -38,7 +38,8 @@ function summaryOf(patch: Partial<Omit<GetWorkflowRunOutput, "summary">>): strin
 }
 
 describe("workflow run duration and age", () => {
-  // 四级阶梯：秒、分秒、时分、日时。分与秒补零（`1m 5s` 与 `1m 50s` 一眼难分）。
+  // A four-step ladder: seconds, minutes+seconds, hours+minutes, days+hours. The 60-base units are zero-padded
+  // (`1m 5s` and `1m 50s` are hard to tell apart at a glance).
   it("writes two units at most, padding the 60-base ones", () => {
     expect(formatWorkflowRunDuration(40_000)).toBe("40s");
     expect(formatWorkflowRunDuration(310_000)).toBe("5m 10s");
@@ -47,13 +48,13 @@ describe("workflow run duration and age", () => {
     expect(formatWorkflowRunDuration(266_400_000)).toBe("3d 2h");
   });
 
-  // 时钟回拨或坏值不该让一条时间戳把整个工具结果变成 NaN。
+  // A clock rollback or a bad value must not let one timestamp turn the whole tool result into NaN.
   it("folds a negative or non-finite span to zero", () => {
     expect(formatWorkflowRunDuration(-5_000)).toBe("0s");
     expect(formatWorkflowRunDuration(Number.NaN)).toBe("0s");
   });
 
-  // 缺席读作「不知道」：老 journal 没有时间列，那样的行就没有年龄，而不是「0s ago」。
+  // Absent reads as "unknown": old journals have no time column, so such a row has no age rather than "0s ago".
   it("returns nothing when the instant is unknown", () => {
     expect(formatRelativeAge(NOW, undefined)).toBeUndefined();
     expect(formatRelativeAge(NOW, Number.NaN)).toBeUndefined();
@@ -64,7 +65,8 @@ describe("workflow run duration and age", () => {
     expect(formatWorkflowRunInstant(NOW, NOW - 40_000)).toBe("2026-08-21T09:05:00.000Z (40s ago)");
   });
 
-  // 千分位自己插逗号：`toLocaleString` 的结果取决于宿主 ICU，而模型面要能逐字钉住。
+  // Thousands separators are inserted by hand: `toLocaleString` depends on the host's ICU, while the model surface
+  // must be pin-able verbatim.
   it("groups thousands without leaning on the host locale", () => {
     expect(formatWorkflowRunCount(6_210)).toBe("6,210");
     expect(formatWorkflowRunCount(41_200)).toBe("41,200");
@@ -77,7 +79,8 @@ describe("workflow run summary — the live shapes", () => {
   it("says how long it has been running and how far the steps got", () => {
     expect(
       summaryOf({
-        // 计数与花名册对齐：活相位的子代理各占一条还在跑的 ask 行，observed 是三态之和。
+        // Counts align with the roster: each live-phase subagent holds one still-running ask line, and observed is the
+        // sum of the three states.
         usage: {
           spentTokens: 10,
           nodesObserved: 7,
@@ -102,7 +105,8 @@ describe("workflow run summary — the live shapes", () => {
     );
   });
 
-  // 花名册读不出来时（只有计数、没有 actor 行）宁可不给括号，也不拿计数去编一个细分。
+  // When the roster is unreadable (counts only, no actor lines), better to give no parentheses than to invent a
+  // breakdown from counts.
   it("omits the breakdown instead of inventing one when the roster is empty", () => {
     const summary = summaryOf({
       usage: {
@@ -117,7 +121,8 @@ describe("workflow run summary — the live shapes", () => {
     expect(summary).not.toContain("(");
   });
 
-  // 在飞那几步分别在干什么，从花名册的相位数出来——「2 running」本身不回答「卡住了没」。
+  // What the in-flight steps are each doing is counted from the roster's phases — "2 running" by itself does not
+  // answer "is it stuck".
   it("breaks the running steps down by what the roster says they are doing", () => {
     const summary = summaryOf({
       usage: {
@@ -148,7 +153,7 @@ describe("workflow run summary — the live shapes", () => {
     ).toContain("in phase 2 of 3 (judge)");
   });
 
-  // 脚本没有阶段就不提阶段：一句「across 0 phases」是在回答一个没人问的问题。
+  // If the script has no phases, say nothing about phases: "across 0 phases" answers a question nobody asked.
   it("says nothing about phases when the run has none", () => {
     expect(summaryOf({})).not.toContain("phase");
   });
@@ -165,7 +170,8 @@ describe("workflow run summary — the live shapes", () => {
     expect(summaryOf({})).not.toContain("awaiting your answer");
   });
 
-  // 「没有人在等」与「查不到」是两个不同的事实，而沉默会把后者读成前者。
+  // "Nobody is waiting" and "cannot be determined" are two different facts, and silence makes the latter read as the
+  // former.
   it("says outright that pending questions are unknown when they are", () => {
     expect(summaryOf({ health: { ...BASE.health, pendingQuestionsKnown: false } })).toContain(
       "Pending questions are unknown from this session.",
@@ -209,11 +215,12 @@ describe("workflow run summary — the terminal shapes", () => {
     expect(
       summaryOf({ status: "errored", error: { code: "DriverError", message: "the script threw" } }),
     ).toContain("Failure: DriverError.");
-    // 普通的 user 取消没有失败可报。
+    // A plain user cancellation has no failure to report.
     expect(summaryOf({ status: "stopped", stopReason: "user" })).not.toContain("Failure:");
   });
 
-  // 终态 run 里标着 running 的那些行是进程死在它们下面的残留，恢复会重派它们。
+  // Lines still marked running in a terminal run are leftovers from the process dying under them; resume re-dispatches
+  // them.
   it("explains the leftovers of an exited process instead of counting them as running", () => {
     expect(
       summaryOf({
@@ -262,7 +269,7 @@ describe("workflow run summary — the terminal shapes", () => {
         ],
       }),
     ).toContain("Deliverable: Nightly triage report (markdown, primary).");
-    // 没有 primary 的 run 不去挑一件充数。
+    // A run without a primary artifact does not promote one to fill the slot.
     expect(
       summaryOf({
         status: "completed",
@@ -273,7 +280,8 @@ describe("workflow run summary — the terminal shapes", () => {
 });
 
 describe("workflow run summary — the budget", () => {
-  // 上界是整句整句地丢尾巴，而不是从中间切断一句话；头两句（处境 + 步数）任何预算下都在。
+  // The cap drops whole trailing sentences rather than cutting one mid-way; the first two sentences (situation + step
+  // count) survive under any budget.
   it("drops whole trailing sentences to stay inside 400 characters", () => {
     const longTitle = "R".repeat(360);
     const summary = summaryOf({

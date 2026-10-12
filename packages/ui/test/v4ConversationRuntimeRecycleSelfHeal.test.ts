@@ -1,23 +1,26 @@
-// CUA Helper 冷启动就绪会回收 agent runtime，已打开的对话面板必须自愈。
+// CUA Helper cold-start readiness recycles the agent runtime; an already-open conversation panel must self-heal.
 //
-// 线上/dev 复现时序（2026-08-22 dev 日志）：
-//   17:26:41.5  用户点开已有对话 → subscribeConversationV4 在途（agent 仍在 warmup）
+// Live/dev reproduction timeline (2026-08-22 dev log):
+//   17:26:41.5  user opens an existing conversation → subscribeConversationV4 in flight (agent still warming up)
 //   17:26:44.395 [cua-product-helper] cua helper ready
 //                → reconcileRecoveredHelper → recycleUntilStable → disposeWorkspace
-//   17:26:44.719 在途 subscribe 被 transport.onClose 的 rejectAll 打断：
+//   17:26:44.719 the in-flight subscribe is interrupted by transport.onClose's rejectAll:
 //                Error: ZCode agent transport closed
 //   17:26:44.96  ZCode agent process exited terminationReason='workspace-dispose'
 //
-// 修复前 store 的两处缺陷让面板永久卡死（SessionPane 的 errored 分支整块替换成红字+重连按钮）：
-//   1. constructor 无条件只订阅 onRuntimeRestart。但 transport.ts 已写明：dispose 当场只有
-//      onRuntimeLifecycle 的 unavailable 可观测，onRuntimeRestart 要等新进程 spawn 才发；
-//      agent 是懒启动，用户只看历史不发消息则永不 spawn，换代信号永不到达。
-//   2. connect() 的 catch 除 initialFrameStagingOverflow 外一律定格 status="error"，
-//      没有 sessionsIndexStore 那样的有界退避。
+// Before the fix, two defects in the store left the panel stuck forever (SessionPane's errored branch replaces
+// the whole pane with red text plus a reconnect button):
+//   1. The constructor unconditionally subscribed only to onRuntimeRestart. But transport.ts already states:
+//      on dispose, only onRuntimeLifecycle's unavailable is observable; onRuntimeRestart fires only after the
+//      new process spawns. The agent is lazily started — if the user only reads history and sends no message it
+//      never spawns, so the generation-change signal never arrives.
+//   2. connect()'s catch freezes status="error" for everything except initialFrameStagingOverflow,
+//      with no bounded backoff like sessionsIndexStore has.
 //
-// 自愈成立的前提（zcodeAgentService.ts:5581）：subscribeConversationV4 走
-// getReadOnlyClient(params) 默认 start-if-needed，重订阅本身会把 agent 拉起来——这与侧栏
-// subscribeSessionsIndexV4 显式用 existing-only + dormant 的策略差异是故意设计的。
+// Prerequisite for self-heal to work (zcodeAgentService.ts:5581): subscribeConversationV4 goes through
+// getReadOnlyClient(params), which defaults to start-if-needed, so resubscribing itself pulls the agent up —
+// the deliberate policy contrast with the sidebar's subscribeSessionsIndexV4, which explicitly uses
+// existing-only + dormant, is intentional design.
 import { Emitter } from "@zcode/rpc";
 import type { ConversationTopicWireFrame } from "@zcode/shared/zcode-protocol-v4";
 import {
@@ -40,7 +43,7 @@ type LifecycleEvent = {
   state: "available" | "unavailable";
 };
 
-/** connectionScope 的 unavailable 分支要读 runtimeIdentity.generation 来失效本地 owner。 */
+/** The unavailable branch of connectionScope must read runtimeIdentity.generation to invalidate the local owner. */
 function lifecycleEvent(state: "available" | "unavailable", generation: number): LifecycleEvent {
   return {
     workspaceKey: WORKSPACE_PATH,
@@ -54,10 +57,10 @@ function lifecycleEvent(state: "available" | "unavailable", generation: number):
   };
 }
 
-/** workspace-dispose 打断在途 subscribe 时，ZCodeProtocolClient.rejectAll 抛出的真实文案。 */
+/** The exact message ZCodeProtocolClient.rejectAll throws when a workspace-dispose interrupts an in-flight subscribe. */
 const TRANSPORT_CLOSED = "ZCode agent transport closed";
 
-/** 与实现的 RUNTIME_RECYCLE_RETRY_DELAYS_MS 长度一致（250/1000/3000ms）。 */
+/** Same length as the implementation's RUNTIME_RECYCLE_RETRY_DELAYS_MS (250/1000/3000ms). */
 const RUNTIME_RECYCLE_RETRY_ATTEMPTS = 3;
 
 function setupBase(options: { withLifecycle?: boolean } = {}) {
@@ -72,7 +75,7 @@ function setupBase(options: { withLifecycle?: boolean } = {}) {
     nextSerialByConnection.set(connection.connectionId, serial);
     return `sub-${connection.connectionId}-${serial}`;
   };
-  /** 每次 subscribe 依次消费一个错误；用尽后正常 ACK。 */
+  /** Each subscribe consumes one error in order; once exhausted, ACKs normally. */
   const pendingFailures: Error[] = [];
   const mocks = {
     helloConversationV4: vi.fn(),
@@ -176,12 +179,12 @@ describe("conversation projection 在 CUA Helper 回收 agent runtime 后自愈"
     expect(store.getState().status).toBe("live");
     expect(mocks.subscribeConversationV4).toHaveBeenCalledTimes(1);
 
-    // workspace-dispose 当场：唯一可观测信号。此时新 runtime 尚不存在，不可重订阅。
+    // workspace-dispose in the moment: the only observable signal. The new runtime does not exist yet, so no resubscribe.
     runtimeLifecycle.fire(lifecycleEvent("unavailable", 2));
     await Promise.resolve();
     expect(mocks.subscribeConversationV4).toHaveBeenCalledTimes(1);
 
-    // 新 runtime 就绪：必须自动重订阅，否则面板永久停在旧订阅/错误态。
+    // New runtime ready: must resubscribe automatically, otherwise the panel stays stuck on the old subscription/error state forever.
     runtimeLifecycle.fire(lifecycleEvent("available", 2));
     await new Promise<void>((resolve) => setTimeout(resolve, 0));
     expect(mocks.subscribeConversationV4).toHaveBeenCalledTimes(2);
@@ -204,8 +207,9 @@ describe("conversation projection 在 CUA Helper 回收 agent runtime 后自愈"
     const connectPromise = store.connect();
     await vi.waitFor(() => expect(mocks.subscribeConversationV4).toHaveBeenCalledTimes(1));
 
-    // 冷启动时 agent spawn 会先广播 available；首次 subscribe 已在途时，
-    // 该通知不应把同一个 pane 再推进一轮 connect，避免旧 ACK 立刻被退订。
+    // On cold start the agent spawn broadcasts available first; while the first subscribe is still in flight,
+    // that notification must not push the same pane through another round of connect, or the stale ACK is
+    // unsubscribed immediately.
     runtimeLifecycle.fire(lifecycleEvent("available", 1));
     await Promise.resolve();
     expect(mocks.subscribeConversationV4).toHaveBeenCalledTimes(1);
@@ -227,13 +231,14 @@ describe("conversation projection 在 CUA Helper 回收 agent runtime 后自愈"
       await store.connect();
       expect(store.getState().status).toBe("live");
 
-      // 只发 unavailable，不发 available——正是懒启动下的真实情形：dispose 后无人拉起
-      // agent，onRuntimeRestart/available 都永不到达。若此处仅 dormant，面板会永久转圈。
+      // Send only unavailable, never available — exactly the real lazy-start situation: after dispose nobody
+      // pulls the agent up, so neither onRuntimeRestart nor available ever arrives. With only dormant here,
+      // the panel would spin forever.
       runtimeLifecycle.fire(lifecycleEvent("unavailable", 2));
       await vi.advanceTimersByTimeAsync(0);
       expect(mocks.subscribeConversationV4).toHaveBeenCalledTimes(1);
 
-      // 重订阅走 start-if-needed，自身会把 runtime 拉起来。
+      // Resubscribe goes through start-if-needed, which itself pulls the runtime up.
       await vi.advanceTimersByTimeAsync(1_000);
       expect(mocks.subscribeConversationV4).toHaveBeenCalledTimes(2);
       expect(store.getState().status).toBe("live");
@@ -242,8 +247,9 @@ describe("conversation projection 在 CUA Helper 回收 agent runtime 后自愈"
     }
   });
 
-  // 回归保护（非 TDD 驱动，实现时已正确）：退避必须有界，耗尽后把失败暴露成 error，
-  // SessionPane 的 errored 分支才会渲染「重新连接」按钮。
+  // Regression protection (not TDD-driven; the implementation was already correct): the backoff must be bounded,
+  // and once exhausted the failure must surface as error so SessionPane's errored branch renders the
+  // "Reconnect" button.
   it("退避耗尽后落 error 暴露「重新连接」入口", async () => {
     vi.useFakeTimers();
     try {
@@ -278,8 +284,9 @@ describe("conversation projection 在 CUA Helper 回收 agent runtime 后自愈"
       await store.connect();
       expect(store.getState().status).toBe("live");
 
-      // Helper 反复崩溃/liveness 反复判死时，unavailable 会连续到达而中间没有 available，
-      // 每一次都消耗一格退避额度。额度用尽的那次若只清状态不落 error，面板永久转圈。
+      // When the Helper crashes repeatedly / liveness repeatedly declares it dead, unavailable arrives in a row with
+      // no available in between, each one consuming one unit of backoff budget. If the final attempt only clears
+      // state without landing in error, the panel spins forever.
       for (let i = 0; i < RUNTIME_RECYCLE_RETRY_ATTEMPTS + 1; i += 1) {
         runtimeLifecycle.fire(lifecycleEvent("unavailable", i + 2));
         await vi.advanceTimersByTimeAsync(0);
@@ -292,10 +299,11 @@ describe("conversation projection 在 CUA Helper 回收 agent runtime 后自愈"
     }
   });
 
-  // CR-01 回归：远程 workspace 的 proxy 换代只走 onRuntimeRestart("transportReplaced")，
-  // ReplaceableConversationTransport.replace() 不发任何 lifecycle 事件。若 store 在
-  // lifecycle 模式下完全放弃 restart 通道，这条通知无人接收——replace() 已 best-effort
-  // 退订旧 proxy 上的订阅，store 却停在 live + 旧 subscriptionId，帧流静默中断且不自愈。
+  // CR-01 regression: a remote workspace's proxy generation change only goes through onRuntimeRestart("transportReplaced");
+  // ReplaceableConversationTransport.replace() fires no lifecycle events. If the store, in lifecycle mode, gave up the
+  // restart channel entirely, nobody would receive this notification — replace() already unsubscribes from the old
+  // proxy on a best-effort basis, but the store would stay live with the old subscriptionId, and the frame stream
+  // would silently break with no self-heal.
   it("lifecycle 模式下仍接收 proxy 换代（transportReplaced），携原水位重订阅", async () => {
     const { base, mocks } = setupBase({ withLifecycle: true });
     const scope = createZCodeAgentConnectionScope(base, {
@@ -305,7 +313,7 @@ describe("conversation projection 在 CUA Helper 回收 agent runtime 后自愈"
     const replaceable = new ReplaceableConversationTransport(
       createAgentConversationTransport(scope.service, { workspacePath: WORKSPACE_PATH }),
     );
-    // 远程 registry 的真实形态：底层支持 lifecycle，故 Replaceable 也暴露它。
+    // The real shape of the remote registry: the underlying transport supports lifecycle, so Replaceable exposes it too.
     expect(replaceable.onRuntimeLifecycle).toBeTypeOf("function");
     const store = new ConversationProjectionStore(TOPIC, replaceable);
 
@@ -313,7 +321,7 @@ describe("conversation projection 在 CUA Helper 回收 agent runtime 后自愈"
     expect(store.getState().status).toBe("live");
     expect(mocks.subscribeConversationV4).toHaveBeenCalledTimes(1);
 
-    // activateRemoteService() → replace()：新 proxy 接管，旧订阅已被退订。
+    // activateRemoteService() → replace(): the new proxy takes over and the old subscription has been unsubscribed.
     const nextScope = createZCodeAgentConnectionScope(base, {
       connectionId: "conn-proxy-2",
       clientMode: "desktop-continuous",
@@ -327,9 +335,10 @@ describe("conversation projection 在 CUA Helper 回收 agent runtime 后自愈"
     expect(store.getState().status).toBe("live");
   });
 
-  // CR-01 的对偶约束：加回 restart 通道后不能让同一次 runtime 换代被两条通道各处理一次
-  // （会白建订阅、重复拉起 runtime）。判据是 reason——直连 transport 转发时传 "runtimeRestart"，
-  // Replaceable 转发底层时传 undefined，两者都必须被过滤掉，只有 "transportReplaced" 放行。
+  // The dual constraint of CR-01: after adding the restart channel back, a single runtime generation change must not
+  // be handled once by each of the two channels (that would create a wasted subscription and pull the runtime up twice).
+  // The discriminator is reason — the direct transport forwards with "runtimeRestart", Replaceable forwards the
+  // underlying transport with undefined; both must be filtered out, and only "transportReplaced" passes.
   it("runtime 换代同时到达两条通道时只重订阅一次", async () => {
     const { base, mocks, runtimeLifecycle, runtimeRestarts } = setupBase({ withLifecycle: true });
     const { store } = createStore(base, "conn-no-double");
@@ -337,7 +346,7 @@ describe("conversation projection 在 CUA Helper 回收 agent runtime 后自愈"
     await store.connect();
     expect(mocks.subscribeConversationV4).toHaveBeenCalledTimes(1);
 
-    // 真实的 runtime 换代：available 与 onAgentRuntimeRestarted 同刻到达。
+    // A real runtime generation change: available and onAgentRuntimeRestarted arrive at the same instant.
     runtimeRestarts.fire({ workspaceKey: WORKSPACE_PATH });
     runtimeLifecycle.fire(lifecycleEvent("available", 2));
     await new Promise<void>((resolve) => setTimeout(resolve, 0));
@@ -354,12 +363,12 @@ describe("conversation projection 在 CUA Helper 回收 agent runtime 后自愈"
       const { store } = createStore(base, "conn-retry");
 
       await store.connect();
-      // 修复前：这里已是 status="error" + lastError="ZCode agent transport closed"，
-      // 且没有任何 timer——面板从此只能靠用户点「重新连接」。
+      // Before the fix: status was already "error" + lastError="ZCode agent transport closed" here,
+      // with no timer at all — from then on the panel could only be recovered by the user clicking "Reconnect".
       expect(store.getState().status).not.toBe("error");
       expect(mocks.subscribeConversationV4).toHaveBeenCalledTimes(1);
 
-      // 退避窗口内自动重订阅并恢复 live。
+      // Within the backoff window it resubscribes automatically and returns to live.
       await vi.advanceTimersByTimeAsync(1_000);
       expect(mocks.subscribeConversationV4).toHaveBeenCalledTimes(2);
       expect(store.getState().status).toBe("live");

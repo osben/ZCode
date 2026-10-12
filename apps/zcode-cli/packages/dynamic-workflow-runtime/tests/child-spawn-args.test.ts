@@ -1,19 +1,19 @@
 /**
- * 沙箱子进程的 **spawn 策略**契约（`RunWorkflowOptions.childSpawn`）。
+ * The **spawn strategy** contract for the sandbox child process (`RunWorkflowOptions.childSpawn`).
  *
- * 2026-09-09 追记（docs/dynamic-workflow/launch.md）之后，payload 不再过命令行：harness 先把
- * 入口文件写到 `<cwd>/.zcode/workflow-runs/<runId>.mjs`，argv 只剩路径。
- *   - 缺省策略：`node --max-old-space-size=… <entry>`（没有 `--input-type` / `--eval`）；
- *   - SEA（bug 根因见同一 spec 的「SEA 子命令」）：SEA 单文件二进制**不解释 Node CLI 旗标**，
- *     故 harness 允许调用方（bootstrap，只在 SEA 下）改用 `childSpawn.argsPrefix`：
- *     `execPath [...argsPrefix, <entry>]`，零旗标。
+ * After the 2026-09-09 addendum (docs/dynamic-workflow/launch.md), the payload no longer goes through the command line: the harness first
+ * writes the entry file to `<cwd>/.zcode/workflow-runs/<runId>.mjs`, and argv is left with only the path.
+ *   - Default strategy: `node --max-old-space-size=… <entry>` (no `--input-type` / `--eval`);
+ *   - SEA (bug root cause in the same spec's "SEA subcommand"): a SEA single-file binary **does not interpret Node CLI flags**,
+ *     so the harness allows the caller (bootstrap, only under SEA) to switch to `childSpawn.argsPrefix`:
+ *     `execPath [...argsPrefix, <entry>]`, zero flags.
  *
- * 两条断言方向缺一不可：
- *   - 缺省分支的 argv 形状（旗标、入口路径、`ELECTRON_RUN_AS_NODE`）必须钉住，否则 SEA 修法会
- *     顺手回归掉桌面 Electron helper 的既有修复；
- *   - argsPrefix 分支必须**真的能跑完一个 run**，光断言 argv 形状只能证明我们拼对了字符串，
- *     证明不了子进程侧「import 入口文件、调 start」的形态也成立。这里用一个 SEA CLI 的替身脚本
- *     （正是 dwf-child-command.ts 做的事）跑真链路。
+ * Both assertion directions are indispensable:
+ *   - The default branch's argv shape (flags, entry path, `ELECTRON_RUN_AS_NODE`) must be pinned, otherwise the SEA fix would
+ *     casually regress the existing fix for the desktop Electron helper;
+ *   - The argsPrefix branch must **really complete a run**; asserting only the argv shape proves we concatenated the string correctly
+ *     but cannot prove the child-side shape of "import the entry file, call start" also holds. This uses a stand-in script for a SEA CLI
+ *     (exactly what dwf-child-command.ts does) to run the real chain.
  */
 
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
@@ -26,7 +26,7 @@ import { runWorkflowScript } from "../src/index.js";
 import { AutoDriver } from "./auto-driver.js";
 import { askSpecsFor } from "./helpers.js";
 
-// 包一层真 spawn：只截获 args/options，子进程照常启动——桥接、结算全走真实路径。
+// Wrap the real spawn: only intercept args/options; the child starts as usual — bridging and settlement both take the real path.
 const spawnCalls: Array<{ args: readonly string[]; options: Record<string, unknown> }> = [];
 vi.mock("node:child_process", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:child_process")>();
@@ -55,7 +55,7 @@ async function tempRoot(prefix: string): Promise<string> {
   return root;
 }
 
-/** 跑一个真实 run（一次 ask，AutoDriver 回 "hi"），返回结算与 run cwd。 */
+/** Run a real run (one ask, AutoDriver replies "hi"), returning the settlement and the run cwd. */
 async function runOnce(extra: Partial<Parameters<typeof runWorkflowScript>[0]> = {}) {
   const cwd = await tempRoot("dwf-spawn-args-cwd-");
   const journal = new InMemoryJournalStore();
@@ -77,7 +77,7 @@ async function runOnce(extra: Partial<Parameters<typeof runWorkflowScript>[0]> =
   return { settlement, cwd };
 }
 
-/** 从入口文件文本里取出内嵌的 payload（不 import 它：import 会在测试进程里跑它的顶层逻辑）。 */
+/** Extract the embedded payload from the entry file's text (do not import it: importing would run its top-level logic in the test process). */
 async function readEntryPayload(entryPath: string): Promise<Record<string, unknown>> {
   const text = await readFile(entryPath, "utf8");
   const match = /^export const payload = (.*);$/m.exec(text);
@@ -86,8 +86,8 @@ async function readEntryPayload(entryPath: string): Promise<Record<string, unkno
 }
 
 /**
- * 写一个 SEA CLI 的替身：它就是 `dwf-child-command.ts` 的最小形态——import 入口文件、注入真实
- * deps 调 `start`。关键是它**不接受任何 Node 旗标**，只认 argv 末位的路径——正是 SEA 二进制的行为。
+ * Write a stand-in for a SEA CLI: it is the minimal form of `dwf-child-command.ts` — import the entry file and
+ * call `start` with real deps injected. Crucially it **accepts no Node flags at all**, recognizing only the path at the end of argv — exactly a SEA binary's behavior.
  */
 async function writeSeaCliStandIn(): Promise<string> {
   const root = await tempRoot("dwf-sea-standin-");
@@ -98,7 +98,7 @@ async function writeSeaCliStandIn(): Promise<string> {
 import { pathToFileURL } from "node:url";
 import { createContext, runInContext } from "node:vm";
 
-// 严格模拟 SEA 主程序：除了 argv 末位的入口路径，任何多余 token 都是错误。
+// Strictly simulate a SEA main program: other than the entry path at the end of argv, any extra token is an error.
 if (process.argv.length !== 3) {
   process.stderr.write("sea-cli-stand-in: unexpected argv " + JSON.stringify(process.argv.slice(2)) + "\\n");
   process.exit(1);
@@ -125,7 +125,7 @@ describe("sandbox child spawn strategy", () => {
     expect(spawnCalls).toHaveLength(1);
     const args = spawnCalls[0]!.args;
 
-    // 命令行上只有旗标与路径——payload 与子进程源码都不在这里（Windows 32,767 字符上限）。
+    // Only the flag and the path are on the command line — neither the payload nor the child source lives here (Windows 32,767-character limit).
     expect(args).toEqual(["--max-old-space-size=256", join(cwd, ".zcode", "workflow-runs", "run.mjs")]);
     await expect(readEntryPayload(args[1]!)).resolves.toMatchObject({ lowered: expect.any(String) });
     expect(spawnCalls[0]!.options.env).toMatchObject({ ELECTRON_RUN_AS_NODE: "1" });
@@ -133,13 +133,13 @@ describe("sandbox child spawn strategy", () => {
   });
 
   it("keeps host-only run metadata out of the child payload (launch stays host-side)", async () => {
-    // 只有 `args` 过界——沙箱脚本要读它。其余 run 元数据（lineage 指针、工具调用 id、父会话、
-    // 展示名、以及 launch 那一整块：发起锚点与子代理模型）全是宿主事实。把它们写进入口文件
-    // 只会让一份 run 级事实多出一个永远不会被读的副本，而那个副本还会随入口文件留在项目的
-    // .zcode 目录里。launch 里的 `subagentModel` 尤其如此：模型面整个在宿主侧（子进程只把
-    // ask 经桥递回来），子进程知道跑在哪个模型上既无用处，也没有任何代码路径会去读。
+    // Only `args` crosses the boundary — the sandbox script reads it. All other run metadata (lineage pointer, tool call id, parent session,
+    // display name, and the whole launch block: the initiating anchor and the subagent model) are host-side facts. Writing them into the entry
+    // file would only give one run-level fact an extra copy that is never read, and that copy would also stay behind in the project's
+    // .zcode directory along with the entry file. The `subagentModel` in launch especially: the model surface lives entirely host-side (the child
+    // only relays asks back over the bridge); the child knowing which model it runs on is both useless and read by no code path.
     //
-    // 五个都真的传下去，否则「不在 payload 里」是一句废话。
+    // All five are genuinely passed in; otherwise "not in the payload" would be an empty claim.
     const { settlement, cwd } = await runOnce({
       launch: { inputId: "input-origin", subagentModel: "zhipu/glm-5.3-flash$high" },
       resumedFrom: "run-predecessor",
@@ -151,7 +151,7 @@ describe("sandbox child spawn strategy", () => {
 
     expect(settlement).toEqual({ status: "completed", artifact: "hi" });
     const payload = await readEntryPayload(join(cwd, ".zcode", "workflow-runs", "run.mjs"));
-    // 过界的那一个还在：这条断言让「全都没过界」不能靠一个空 payload 蒙混过去。
+    // The one that does cross the boundary is still there: this assertion keeps "none of them crossed" from being faked with an empty payload.
     expect(payload.args).toEqual({ topic: "release" });
     for (const field of ["launch", "resumedFrom", "toolCallId", "parentSessionId", "name"]) {
       expect(field in payload).toBe(false);
@@ -169,30 +169,30 @@ describe("sandbox child spawn strategy", () => {
 
     const { settlement, cwd } = await runOnce({ childSpawn: { argsPrefix: [standIn] } });
 
-    // 真链路跑完是这条分支的主张：argv 拼对了，子进程侧「import 入口、调 start」的形态也成立。
+    // Completing the real chain is this branch's claim: argv is assembled correctly and the child-side shape of "import the entry, call start" also holds.
     expect(settlement).toEqual({ status: "completed", artifact: "hi" });
     expect(spawnCalls).toHaveLength(1);
     const args = spawnCalls[0]!.args;
     expect(args).toEqual([standIn, join(cwd, ".zcode", "workflow-runs", "run.mjs")]);
-    // 一个旗标都不许漏出去——SEA 主程序会把它们当未知参数而报错退出。
+    // Not a single flag may leak out — a SEA main program would treat them as unknown arguments and exit with an error.
     expect(args.some((arg) => arg.startsWith("--"))).toBe(false);
-    // 堆上限只能随 payload 走（argsPrefix 路上没有旗标可传），由入口文件 best-effort 施加。
+    // The heap cap can only travel with the payload (the argsPrefix path has no flags to pass) and is applied best-effort by the entry file.
     await expect(readEntryPayload(args[1]!)).resolves.toMatchObject({ maxOldSpaceSizeMb: 256 });
-    // Electron helper 的既有修复对两条分支都成立。
+    // The Electron helper's existing fix holds on both branches.
     expect(spawnCalls[0]!.options.env).toMatchObject({ ELECTRON_RUN_AS_NODE: "1" });
   });
 
   it("forwards every argsPrefix token in order, entry path last", async () => {
     const standIn = await writeSeaCliStandIn();
 
-    // 替身脚本只接受 argv.length === 3，所以多一个 token 必然让它自述失败——这正好证明
-    // 「prefix 原样透传、入口路径在末位」不是靠巧合成立的。
+    // The stand-in script only accepts argv.length === 3, so one extra token necessarily makes it report its own failure — which proves
+    // "the prefix is forwarded verbatim, the entry path last" does not hold by coincidence.
     const { settlement } = await runOnce({
       childSpawn: { argsPrefix: [standIn, "__zcode-dwf-child"] },
       timeoutMs: 20000,
     });
 
-    // 子进程非零退出而无 complete：宿主侧故障，stopped(interrupted)。
+    // The child exits non-zero with no complete: a host-side fault, stopped(interrupted).
     expect(settlement).toMatchObject({ status: "stopped", reason: "interrupted" });
     expect(spawnCalls[0]!.args).toEqual([
       standIn,

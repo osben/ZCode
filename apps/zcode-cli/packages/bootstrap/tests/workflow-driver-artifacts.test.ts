@@ -1,15 +1,21 @@
 /**
- * 用户面产物的 driver 侧执行（docs/dynamic-workflow/authoring.md「Publishing content」 + Tests 表的
- * driver 一行）。照 workflow-driver-world-run.test.ts 的形状：只碰 driver 端口本身，不经脚本、
- * 不经引擎——facade 的类型签名、id 的编译期字面量规则与版本号推导都在上游，这里防的是
- * 编译期之外的接线错误，以及「一次发布 → 一条落库记录 / 一条命名拒绝」的映射契约。
+ * Driver-side execution of user-facing artifacts (docs/dynamic-workflow/authoring.md
+ * "Publishing content" + the driver row in the Tests table). Follows the shape of
+ * workflow-driver-world-run.test.ts: only the driver port itself is touched, without going
+ * through the script or the engine — the facade's type signature, the compile-time literal
+ * rules for ids, and version inference all live upstream. What this file guards against is
+ * wiring mistakes beyond the type system, plus the mapping contract of "one publish ->
+ * one persisted record / one named rejection".
  *
- * ⚠ 术语：本文件的 artifact 一律指**用户面产物**（脚本交付给用户看的字节），不是引擎内部
- * 那个 artifact（顶层返回值，给模型看的）。见 spec 的「术语」表。
+ * ⚠ Terminology: in this file, artifact always means the **user-facing artifact** (the
+ * bytes a script delivers for the user to see), not the engine-internal artifact (the
+ * top-level return value, for the model to read). See the spec's terminology table.
  *
- * 文件系统用**真实的**临时目录 + NodeFileSystemAdapter：这一侧要证的两件事（软链按真实路径
- * 判越界、cap+1 探测）都是真实文件系统的性质，用一个 fake 端口证不出来。store 则是 fake——
- * 它的落盘行为不归本切片，本切片只对「写进去的参数」负责。
+ * The file system uses a **real** temp directory + NodeFileSystemAdapter: the two things
+ * proven on this side (symlinks judged out-of-bounds by real path, cap+1 probing) are
+ * properties of a real file system and cannot be proven with a fake port. The store is a
+ * fake — its persistence behavior is not part of this slice; this slice is only
+ * responsible for "the parameters written in".
  */
 
 import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
@@ -39,7 +45,7 @@ import { createAgentRuntimeWorkflowDriver } from "../src/app/workflow-driver.js"
 
 const SESSION_ID = "sess_parent" as SessionId;
 
-/** 触及即失败的执行端口：产物发布不该起子进程。 */
+/** Execution port that fails on any touch: artifact publishing must not spawn subprocesses. */
 function unsupportedExecutionPort(): ExecutionPort {
   return new Proxy({} as ExecutionPort, {
     get(_target, name) {
@@ -75,7 +81,7 @@ interface RecordedWrite {
   text?: string;
 }
 
-/** 记录写入参数的 fake store。`binary: false` 造一个只有文本写的 store（能力探测用）。 */
+/** Fake store that records write parameters. `binary: false` builds a text-write-only store (for capability probing). */
 function fakeArtifactStore(options?: { binary?: boolean; failWith?: Error }): {
   store: ToolArtifactStorePort;
   writes: RecordedWrite[];
@@ -177,7 +183,7 @@ function markdownRequest(overrides: Partial<ArtifactPublishRequest> = {}): Artif
   };
 }
 
-/** 断言一次发布以某个结构化码被拒绝，并把错误交回给调用方做消息断言。 */
+/** Asserts that a publish is rejected with a given structured code and hands the error back to the caller for message assertions. */
 async function rejection(promise: Promise<unknown>, code: string): Promise<WorkflowError> {
   let caught: unknown;
   try {
@@ -191,7 +197,7 @@ async function rejection(promise: Promise<unknown>, code: string): Promise<Workf
   return error;
 }
 
-/** 本套件共用的工作区：真实临时目录，含一个越界目标供软链用例指向。 */
+/** Workspace shared by this suite: a real temp directory containing an out-of-bounds target for the symlink cases. */
 let workspace: string;
 let outside: string;
 
@@ -233,7 +239,7 @@ describe("workflow driver — 产物发布（artifact.file）", () => {
       uri: `zcode-artifact://${SESSION_ID}/artifact-1`,
       sourcePath: "out/report.pdf",
     });
-    // publishedAt 由 driver 填（引擎没有时钟），且必须是本次调用期间的时刻。
+    // publishedAt is filled in by the driver (the engine has no clock), and must be a moment within this call.
     expect(record.publishedAt ?? 0).toBeGreaterThanOrEqual(before);
     expect(record.publishedAt ?? 0).toBeLessThanOrEqual(Date.now());
     expect(writes).toHaveLength(1);
@@ -250,13 +256,13 @@ describe("workflow driver — 产物发布（artifact.file）", () => {
     expect(writes[0]).toMatchObject({
       kind: "binary",
       sessionId: SESSION_ID,
-      // 每一版一份字节，而 (run, 站点, 序号) 恰好唯一标定一次发布。
+      // One set of bytes per version; (run, site, ordinal) uniquely identifies exactly one publish.
       toolCallId: "run-42:artifact#7@5",
       toolName: "CreateWorkflow",
-      // 产物要活过会话（中枢跨会话读运行历史）。
+      // Artifacts must outlive the session (the hub reads run history across sessions).
       retention: "project",
       contentType: "application/pdf",
-      // 扩展名随字节一起交出去：store 读回时按落盘文件名回推类型。
+      // The extension is handed over together with the bytes: on read-back the store infers the type from the persisted file name.
       extension: "pdf",
     });
   });
@@ -298,8 +304,9 @@ describe("workflow driver — 产物发布（artifact.file）", () => {
   });
 
   it("工作区内指向外部的软链按解析后的真实路径判越界", async () => {
-    // 这一条是发布与世界读取的分界：files.read 只做词法检查，而发布会把字节拷进一个持久
-    // store 摆到用户面前，所以软链必须堵住。
+    // This is the boundary between publishing and world reads: files.read only does lexical
+    // checks, while publishing copies bytes into a persistent store and puts them in front
+    // of the user, so symlinks must be sealed off.
     const link = join(workspace, "leak.txt");
     await rm(link, { force: true });
     await symlink(join(outside, "secret.txt"), link);
@@ -350,7 +357,7 @@ describe("workflow driver — 产物发布（artifact.file）", () => {
       driver.executeArtifactPublish!(fileRequest({ path: "out/huge.bin" })),
       "ArtifactTooLarge",
     );
-    // code 已由 rejection() 断言；消息只验可变部分（上限值）。
+    // The code is already asserted by rejection(); the message only checks the variable part (the cap value).
     expect(error.message).toContain(String(ARTIFACT_CAPS.maxFileBytes));
     expect(writes).toHaveLength(0);
     await rm(big, { force: true });
@@ -358,8 +365,9 @@ describe("workflow driver — 产物发布（artifact.file）", () => {
 
   it("按 cap+1 向端口探测上限（恰好 cap 字节必须放行，而不是与溢出混为一谈）", async () => {
     const seen: (number | undefined)[] = [];
-    // 只桩掉 readBinaryFile：路径解析走真实文件系统（软链复核要真的 realpath），
-    // 而"端口收到的 maxBytes 是几"是本用例唯一要证的事。
+    // Only readBinaryFile is stubbed: path resolution goes through the real file system
+    // (symlink re-check needs a real realpath), and "what maxBytes the port received" is
+    // the only thing this case needs to prove.
     const port = {
       readBinaryFile: async (request: { path: string; maxBytes?: number }) => {
         seen.push(request.maxBytes);
@@ -457,7 +465,7 @@ describe("workflow driver — 产物的内容类型", () => {
       fileRequest({ opts: { contentType: "text/html" } }),
     );
     expect(record.contentType).toBe("text/html");
-    // 扩展名仍取自源文件：覆盖的是展示类型，不是落盘文件名。
+    // The extension still comes from the source file: the override changes the display type, not the persisted file name.
     expect(writes[0]).toMatchObject({ contentType: "text/html", extension: "pdf" });
   });
 
@@ -471,7 +479,7 @@ describe("workflow driver — 产物的内容类型", () => {
       ),
       "DriverError",
     );
-    // 消息只验可变部分：被拒的那个 contentType 原样出现。
+    // The message only checks the variable part: the rejected contentType appears verbatim.
     expect(error.message).toContain("text/markdown; charset=utf-8");
   });
 });
@@ -523,7 +531,7 @@ describe("workflow driver — 产物发布（artifact.markdown）", () => {
     const { store } = fakeArtifactStore();
     const driver = makeDriver({ cwd: workspace, artifactStore: store, parentSessionId: SESSION_ID });
 
-    // 「中」是 3 字节：字符数远未超限，字节数刚好越线。
+    // "中" is 3 bytes in UTF-8: the character count is far below the limit while the byte count just crosses it.
     const content = "中".repeat(Math.floor(ARTIFACT_CAPS.maxMarkdownBytes / 3) + 1);
     expect(content.length).toBeLessThan(ARTIFACT_CAPS.maxMarkdownBytes);
     await rejection(
@@ -597,7 +605,7 @@ describe("workflow driver — 产物的实参形状", () => {
       ),
       "ArtifactTooLarge",
     );
-    // 恰好等于上限放行。
+    // Exactly at the limit is allowed through.
     const ok = await driver.executeArtifactPublish!(
       markdownRequest({ opts: { title: "x".repeat(ARTIFACT_CAPS.maxTitleLength) } }),
     );

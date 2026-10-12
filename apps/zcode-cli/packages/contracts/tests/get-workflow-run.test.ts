@@ -45,7 +45,7 @@ describe("GetWorkflowRun input schema", () => {
     expect(GET_WORKFLOW_RUN_TOOL_NAME).toBe("GetWorkflowRun");
   });
 
-  // snake_case 随 TaskOutput 的 task_id：两个工具在模型眼里是同一族的 run/task 键。
+  // snake_case matching TaskOutput's task_id: to the model the two tools are the same family of run/task keys.
   it("requires a non-empty snake_case run_id", () => {
     expect(GetWorkflowRunInputSchema.parse({ run_id: "dwfrun-1" })).toEqual({
       run_id: "dwfrun-1",
@@ -79,8 +79,9 @@ describe("GetWorkflowRun output schema", () => {
     expect("error" in parsed).toBe(false);
   });
 
-  // 子代理模型（docs/dynamic-workflow/launch.md）：设过才在场，继承会话模型的 run 整字段缺席——
-  // AmendWorkflow 省略 `subagent_model` 时沿用的就是这个值，所以「缺席」必须与「空串」可分辨。
+  // Subagent model (docs/dynamic-workflow/launch.md): present only when set; a run inheriting the
+  // session model omits the whole field — AmendWorkflow falls back to exactly this value when
+  // `subagent_model` is omitted, so "absent" must stay distinguishable from "empty string".
   it("round-trips a subagent model and keeps it absent when the run inherits the session model", () => {
     const withModel = GetWorkflowRunOutputSchema.parse({
       ...RUNNING,
@@ -90,8 +91,9 @@ describe("GetWorkflowRun output schema", () => {
     expect("subagentModel" in GetWorkflowRunOutputSchema.parse(RUNNING)).toBe(false);
   });
 
-  // 脚本文件（docs/dynamic-workflow/launch.md「Script files」）：记过才在场。在场时它就是下一次
-  // AmendWorkflow 该传的 `path`，所以「缺席」必须与「空串」一样可分辨。
+  // Script file (docs/dynamic-workflow/launch.md, "Script files"): present only when recorded. When
+  // present it is the `path` the next AmendWorkflow should pass, so "absent" must be as
+  // distinguishable from "empty string".
   it("round-trips the run's script file and keeps it absent when the run recorded none", () => {
     const withPath = GetWorkflowRunOutputSchema.parse({
       ...RUNNING,
@@ -111,8 +113,8 @@ describe("GetWorkflowRun output schema", () => {
   });
 
   it("accepts an errored run and keeps the failure code verbatim", () => {
-    // DriverError（脚本真失败）与 ReportCapExceeded 等契约码必须能被模型分辨，所以 code 是
-    // 自由字符串而不是一个我们自己收窄的枚举。
+    // DriverError (a genuine script failure) and contract codes like ReportCapExceeded must be
+    // distinguishable by the model, so code is a free string rather than an enum we narrow ourselves.
     for (const code of ["DriverError", "ReportCapExceeded"]) {
       const output = {
         ...RUNNING,
@@ -126,7 +128,7 @@ describe("GetWorkflowRun output schema", () => {
     }
   });
 
-  // stopped（apps/zcode-cli/packages/dynamic-workflow/docs/execution-engine.md）：reason 四值；provider 停下带结构化明细。
+  // stopped (apps/zcode-cli/packages/dynamic-workflow/docs/execution-engine.md): four reason values; a provider stop carries structured details.
   it("accepts a stopped run with its reason and a provider stop's details", () => {
     const interrupted = {
       ...RUNNING,
@@ -178,7 +180,7 @@ describe("GetWorkflowRun output schema", () => {
     expect("name" in parsed.actors[0]!).toBe(false);
   });
 
-  // docs/dynamic-workflow/authoring.md：用量是观察面，没有任何上限字段。
+  // docs/dynamic-workflow/authoring.md: usage is an observation surface with no cap fields at all.
   it("has no cap fields on usage: budgetTotal / maxNodes are unknown keys", () => {
     for (const extra of [{ budgetTotal: 200_000 }, { maxNodes: 100 }]) {
       expect(
@@ -226,10 +228,11 @@ describe("GetWorkflowRun output schema", () => {
   });
 
   // ————————————————————————————————————————————————
-  // 情势截面（阶段 / 花名册 / 健康）。docs/dynamic-workflow/launch.md「`GetWorkflowRun`」。
+  // The situational cross-section (phases / roster / health). docs/dynamic-workflow/launch.md, "`GetWorkflowRun`".
   // ————————————————————————————————————————————————
 
-  // `at` 是事件的落库时刻；老 journal 上缺席，那样的行读不出年龄——两者必须可分辨。
+  // `at` is the moment the event was persisted; absent on old journals, and such rows have no
+  // readable age — the two must remain distinguishable.
   it("takes an optional journal time on a log entry and keeps it absent otherwise", () => {
     const timed = GetWorkflowRunOutputSchema.parse({
       ...RUNNING,
@@ -249,7 +252,7 @@ describe("GetWorkflowRun output schema", () => {
       ],
     };
     expect(GetWorkflowRunOutputSchema.parse(withPhases)).toEqual(withPhases);
-    // 声明了阶段但一个都没进过的 run 整字段缺席，而不是空数组。
+    // A run that declared phases but never entered one omits the whole field, not an empty array.
     expect("phases" in GetWorkflowRunOutputSchema.parse(RUNNING)).toBe(false);
     expect(
       GetWorkflowRunOutputSchema.safeParse({
@@ -259,8 +262,8 @@ describe("GetWorkflowRun output schema", () => {
     ).toBe(false);
   });
 
-  // turn / toolCalls 缺席读作「不知道」，`0` 读作「一个工具都没调过」：老 journal 没有
-  // node-progress，两者必须能在同一个 schema 下分别表达。
+  // turn / toolCalls absent reads as "unknown", `0` reads as "not a single tool call": old journals
+  // have no node-progress, and both must be expressible distinctly under the same schema.
   it("round-trips a full subagent row and keeps every progress reading optional", () => {
     const full = {
       ...RUNNING,
@@ -296,7 +299,7 @@ describe("GetWorkflowRun output schema", () => {
     for (const key of ["currentAsk", "wait", "parkedOn", "phaseName", "lastProgressAt"]) {
       expect(key in bare).toBe(false);
     }
-    // 花名册恒在场，一个 actor 都没有的 run 是空数组（与 phases 的「无则缺席」刻意不同）。
+    // The roster is always present; a run with zero actors is an empty array (deliberately unlike phases' "absent when none").
     expect(GetWorkflowRunOutputSchema.parse({ ...RUNNING, subagents: [] }).subagents).toEqual([]);
     expect(GetWorkflowRunOutputSchema.safeParse({ ...RUNNING, subagents: undefined }).success).toBe(false);
   });
@@ -326,8 +329,9 @@ describe("GetWorkflowRun output schema", () => {
     ).toBe(false);
   });
 
-  // leftoverRunning 为 0 时缺席（终态 run 没有残留是常态）；pendingQuestionsKnown 必填——
-  // 「没有人在等」与「查不到」是两个不同的事实，缺省会把后者读成前者。
+  // leftoverRunning is absent when 0 (no leftovers is the norm for terminal runs); pendingQuestionsKnown
+  // is required — "nobody is waiting" and "could not be checked" are two different facts, and a
+  // default would read the latter as the former.
   it("round-trips health, requires pendingQuestionsKnown and keeps concurrency optional", () => {
     const health = {
       lastProgressAt: 1_755_000_001_000,
@@ -360,7 +364,7 @@ describe("GetWorkflowRun output schema", () => {
     ).toBe(false);
   });
 
-  // 摘要是 handler 拼出来的一句话，不是模型写的散文：上界拦住「又一份报告」。
+  // The summary is one sentence assembled by the handler, not prose written by the model: the bound stops "yet another report".
   it("bounds the summary at 400 characters", () => {
     expect(GetWorkflowRunOutputSchema.safeParse({ ...RUNNING, summary: "x".repeat(400) }).success).toBe(true);
     expect(GetWorkflowRunOutputSchema.safeParse({ ...RUNNING, summary: "x".repeat(401) }).success).toBe(false);
@@ -381,8 +385,9 @@ describe("GetWorkflowRun output schema", () => {
     ).toBe(false);
   });
 
-  // result 是**已序列化的文本**：序列化在 core 只有一处实现（serializeWorkflowArtifact），
-  // 通知与本工具共用它。放行原值等于允许「同一个产物在两处长得不一样」。
+  // result is **already-serialized text**: serialization has exactly one implementation in core
+  // (serializeWorkflowArtifact), shared by notifications and this tool. Letting the raw value
+  // through would allow "the same artifact looking different in two places".
   it("takes result as text only, never as a raw structure", () => {
     expect(
       GetWorkflowRunOutputSchema.safeParse({
@@ -410,36 +415,36 @@ describe("GetWorkflowRun output schema", () => {
       "possiblyInterrupted",
       "createdAt",
       "updatedAt",
-      // 情势的一句话，以及它和模型面所有「多久以前」共用的那一把尺。
+      // The situation in one sentence, plus the single ruler it shares with every model-facing "how long ago".
       "summary",
       "generatedAt",
       "usage",
-      // run 自有的并发上界（docs/dynamic-workflow/concurrency.md「Two bounds on a run」）：只在低于本机天花板时出现。
+      // The run's own concurrency bound (docs/dynamic-workflow/concurrency.md, "Two bounds on a run"): appears only when below this machine's ceiling.
       "maxConcurrency",
-      // run 自有的子代理模型（docs/dynamic-workflow/launch.md）：只在设过时出现，继承会话模型的 run 缺席。
+      // The run's own subagent model (docs/dynamic-workflow/launch.md): appears only when set; a run inheriting the session model omits it.
       "subagentModel",
-      // 脚本点名的模型绑定表（docs/dynamic-workflow/launch.md「Models the script names」）：只在脚本点过名时出现。
+      // The model binding table the script names (docs/dynamic-workflow/launch.md, "Models the script names"): appears only when the script named some.
       "modelBindings",
-      // run 的脚本文件（docs/dynamic-workflow/launch.md「Script files」）：只在记过时出现，
-      // 已经写成模型面该看到的样子（工作区相对或绝对）。
+      // The run's script file (docs/dynamic-workflow/launch.md, "Script files"): appears only when recorded,
+      // already spelled the way the model-facing side should see it (workspace-relative or absolute).
       "scriptPath",
       "actors",
       "logTail",
-      // 情势截面：阶段表「无则缺席」，花名册恒在场，健康恒在场。
+      // Situational cross-section: the phase table is "absent when none", the roster is always present, health is always present.
       "phases",
       "subagents",
       "subagentsTruncated",
       "health",
       "result",
       "error",
-      // 停驻中的升级问题（apps/zcode-cli/packages/dynamic-workflow/docs/execution-engine.md）：可选、零条时整字段缺席。
-      // 它是模型侧唯一的发现面——升级通知丢弃后，主代理只能从这里重新拿到 qid。
+      // Escalation questions being parked on (apps/zcode-cli/packages/dynamic-workflow/docs/execution-engine.md): optional, the whole field absent at zero.
+      // It is the model side's only discovery surface — after the escalation notification is dropped, the main agent can only re-obtain the qid here.
       "pendingQuestions",
-      // 留白（docs/dynamic-workflow/launch.md「The `FillWorkflowHole` tool」）：等着的与补过的，零条时整字段缺席。
-      // 与 pendingQuestions 同一种角色——留白通知丢失后模型侧唯一的发现面。
+      // Holes (docs/dynamic-workflow/launch.md, "The `FillWorkflowHole` tool"): waiting and filled, the whole field absent at zero.
+      // Same role as pendingQuestions — the model side's only discovery surface once the hole notification is lost.
       "holes",
-      // 用户面产物（docs/dynamic-workflow/authoring.md）：任意状态都附、零件时整字段缺席。
-      // 模型据此知道哪些交付物已经以卡片呈现给用户，按标题引用而不复述内容。
+      // User-facing artifacts (docs/dynamic-workflow/authoring.md): attached in any state, the whole field absent at zero items.
+      // The model learns from it which deliverables were already shown to the user as cards, and cites them by title instead of restating content.
       "artifacts",
     ]);
     const required = schema.required ?? [];

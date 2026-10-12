@@ -91,12 +91,14 @@ describe("resolveBuiltInToolAllowlist", () => {
   });
 });
 
-// workflow_child 强制 yolo 且交互事件不镜像到父会话，CreateWorkflow 的 alwaysAsk 会在
-// child 里发出无人可见的确认请求（见 docs/dynamic-workflow/launch.md「Recorded exceptions」）。
-// SaveWorkflow 因同一个根因入列：它也声明了 alwaysAsk。ResumeWorkflowRun 同根因入列
-//（2026-08-29）：恢复一个 run 等于重新执行整块脚本，它的 alwaysAsk 在 child 里同样无窗可弹。
-// ResolveWorkflowQuestion 是第四条，守的是另一条不变式（apps/zcode-cli/packages/dynamic-workflow/docs/execution-engine.md）：
-// 升级问答里作答权只属于创建工作流的那一方，child 不得替它拍板。
+// workflow_child forces yolo and does not mirror interaction events into the parent session, so CreateWorkflow's
+// alwaysAsk would emit a confirmation request inside the child that nobody can see (see
+// docs/dynamic-workflow/launch.md "Recorded exceptions").
+// SaveWorkflow is listed for the same root cause: it also declares alwaysAsk. ResumeWorkflowRun joined for the same
+// reason (2026-08-29): resuming a run equals re-executing the whole script, and its alwaysAsk likewise has no window
+// to pop in the child. ResolveWorkflowQuestion is the fourth, guarding a different invariant
+// (apps/zcode-cli/packages/dynamic-workflow/docs/execution-engine.md):
+// in escalation Q&A the right to answer belongs only to the side that created the workflow; the child must not decide on its behalf.
 describe("resolveRuntimeDisallowedTools", () => {
   it("excludes the always-ask workflow tools from workflow-child runtimes", () => {
     const disallowed = resolveRuntimeDisallowedTools(config({ taskType: "workflow_child" }));
@@ -108,7 +110,8 @@ describe("resolveRuntimeDisallowedTools", () => {
       RESOLVE_WORKFLOW_QUESTION_TOOL_NAME,
       FILL_WORKFLOW_HOLE_TOOL_NAME,
     ]);
-    // 反向断言：只读 run 内省工具不在列——那条禁令的理由是无窗可弹，只读查询不适用。
+    // Reverse assertion: read-only run introspection tools are not listed — that ban's rationale is "no window to pop",
+    // which does not apply to read-only queries.
     expect(disallowed).not.toContain(LIST_WORKFLOW_RUNS_TOOL_NAME);
     expect(disallowed).not.toContain(GET_WORKFLOW_RUN_TOOL_NAME);
   });
@@ -151,26 +154,28 @@ describe("resolveRuntimeDisallowedTools", () => {
     ]);
   });
 
-  // 结构性那一半：禁令按 **taskType** 生效，因此不依赖 persona 档位是否恰好收窄掉它。
-  // bootstrap 的 DEFAULT_DISALLOWED_TOOLS 是刻意重复的第二道（照 CreateWorkflow 的双列先例），
-  // 只覆盖 "default" 档位；这一道覆盖全部 workflow child，将来新增 persona 档位也不会开门。
+  // The structural half: the ban takes effect by **taskType**, so it does not depend on whether the persona profile
+  // happens to narrow it away. bootstrap's DEFAULT_DISALLOWED_TOOLS is a deliberately duplicated second gate
+  // (following CreateWorkflow's two-column precedent) covering only the "default" profile; this gate covers every
+  // workflow child, so future persona profiles will not open the door either.
   it("keeps ResolveWorkflowQuestion out of every workflow child, whatever the persona profile", () => {
-    // 无 turn 级名单（相当于收窄档位下 persona 什么都没减）时，结构性禁令仍然生效。
+    // With no turn-level list (equivalent to the persona trimming nothing under a narrowed profile), the structural ban still holds.
     const registry = createToolRegistry();
     registerBuiltInTools(registry, {
       disallowedTools: resolveRuntimeDisallowedTools(config({ taskType: "workflow_child" })),
     });
     expect(registry.has(RESOLVE_WORKFLOW_QUESTION_TOOL_NAME)).toBe(false);
-    // 反向断言：actor 的**提问**通道绝不能被这条禁令误伤。
+    // Reverse assertion: the actor's **asking** channel must never be caught by this ban.
     expect(resolveRuntimeDisallowedTools(config({ taskType: "workflow_child" }))).not.toContain(
       ESCALATE_TOOL_NAME,
     );
   });
 
-  // 应答工具的身份边界（apps/zcode-cli/packages/dynamic-workflow/docs/execution-engine.md）：主会话有，actor 会话没有——
-  // 升级的整个意义是把判断权交给创建工作流的那一方，让另一个 actor 顺手作答等于把它悄悄
-  // 退化成 actor 之间的互相说服。actor 会话的禁令由 bootstrap 的 workflowActorToolPolicy
-  // 下发（DEFAULT_DISALLOWED_TOOLS），这里断的是它落到注册表上的效果。
+  // The answer tool's identity boundary (apps/zcode-cli/packages/dynamic-workflow/docs/execution-engine.md): the main
+  // session has it, actor sessions do not — the entire point of escalation is to hand the judgment to the side that
+  // created the workflow; letting another actor casually answer would quietly degrade it into actors persuading each
+  // other. The actor session's ban is pushed down by bootstrap's workflowActorToolPolicy (DEFAULT_DISALLOWED_TOOLS);
+  // what is asserted here is its effect on the registry.
   it("registers ResolveWorkflowQuestion in a main runtime but not in an actor session", () => {
     const mainRegistry = createToolRegistry();
     registerBuiltInTools(mainRegistry, {
@@ -178,7 +183,7 @@ describe("resolveRuntimeDisallowedTools", () => {
     });
     expect(mainRegistry.has(RESOLVE_WORKFLOW_QUESTION_TOOL_NAME)).toBe(true);
 
-    // actor 会话：persona 的 "default" 档位把它减掉（名单来自 bootstrap，这里以同一个名字模拟）。
+    // Actor session: the persona's "default" profile trims it away (the list comes from bootstrap; simulated here under the same name).
     const actorRegistry = createToolRegistry();
     registerBuiltInTools(actorRegistry, {
       disallowedTools: resolveRuntimeDisallowedTools(
@@ -208,7 +213,7 @@ describe("resolveRuntimeDisallowedTools", () => {
   });
 });
 
-// docs/dynamic-workflow/launch.md「Gray release」DWG-03 / DWG-04。
+// docs/dynamic-workflow/launch.md "Gray release" DWG-03 / DWG-04.
 const GATED_DYNAMIC_WORKFLOW_TOOL_NAMES = [
   CREATE_WORKFLOW_TOOL_NAME,
   AMEND_WORKFLOW_TOOL_NAME,
@@ -220,7 +225,8 @@ const GATED_DYNAMIC_WORKFLOW_TOOL_NAMES = [
   GET_WORKFLOW_RUN_TOOL_NAME,
   RESUME_WORKFLOW_RUN_TOOL_NAME,
   RESOLVE_WORKFLOW_QUESTION_TOOL_NAME,
-  // 留白补全随灰度门同进同退：关闭态下没有 run 会到达留白，留着它只会指向不存在的工具。
+  // Hole completion moves with the gray gate in lockstep: with the gate off, no run ever reaches a hole, and keeping
+  // the tool would only point at something that does not exist.
   FILL_WORKFLOW_HOLE_TOOL_NAME,
 ];
 
@@ -235,9 +241,9 @@ describe("registerBuiltInTools：动态工作流灰度门", () => {
     }
   });
 
-  // 灰度关闭只针对动态工作流：开门与关门之间的差集必须**恰好**是这十个。
-  // 反向地也守住了旧 `Workflow`（/expert 脚本通道）——它的门始终只有 includeWorkflow，
-  // 不因灰度多一道或少一道。
+  // Turning the gray gate off only targets dynamic workflow: the difference between gate-open and gate-closed must
+  // be **exactly** these ten. It also guards the old `Workflow` in reverse (the /expert script channel) — its gate
+  // has always been only includeWorkflow, gaining or losing nothing from the gray gate.
   it("关门与开门的差集恰好是十个，不多剃一件工具", () => {
     const enabled = createToolRegistry();
     registerBuiltInTools(enabled, { includeDynamicWorkflow: true, includeWorkflow: true });
@@ -253,7 +259,7 @@ describe("registerBuiltInTools：动态工作流灰度门", () => {
     ).toEqual([...GATED_TOOL_NAMES].toSorted());
   });
 
-  // 缺席即全开（进程内嵌入方）；独立 CLI 的 TUI / headless 按 --workflow-mode 显式传 true/false（DWG-04）。
+  // Absent means fully open (in-process embedders); the standalone CLI's TUI / headless pass true/false explicitly via --workflow-mode (DWG-04).
   it.each([{ includeDynamicWorkflow: undefined }, { includeDynamicWorkflow: true }])(
     "缺席或 true 时十个工具全部注册：%j",
     (options) => {
@@ -266,13 +272,13 @@ describe("registerBuiltInTools：动态工作流灰度门", () => {
   );
 });
 
-// 灰度门从 runtimeConfig 走到注册表的这一跳（runtime-tools.ts）：与 off-peak 不同，
-// 判据不是端口在场，而是 Host 或独立 CLI 入口写下的显式 false。
+// The hop that carries the gray gate from runtimeConfig to the registry (runtime-tools.ts): unlike off-peak,
+// the criterion is not the presence of a port but an explicit false written by the Host or the standalone CLI entry.
 describe("AgentRuntime：dynamicWorkflowEnabled 到工具注册表", () => {
   it.each([
     { config: { dynamicWorkflowEnabled: false }, registered: false },
     { config: { dynamicWorkflowEnabled: true }, registered: true },
-    // 进程内嵌入方不写这个字段，必须保留全部工具。
+    // In-process embedders do not write this field; all tools must be kept.
     { config: {}, registered: true },
   ])("config %j", ({ config: runtimeConfig, registered }) => {
     const registry = createToolRegistry();
@@ -285,9 +291,10 @@ describe("AgentRuntime：dynamicWorkflowEnabled 到工具注册表", () => {
   });
 });
 
-// 回归（2026-09-16）：注册面有两个入口，第二个（分支刷新）当初漏了灰度门，于是十个工具
-// 在 Bash shell 快照初始化时被原样加回来。真实触发路径就是 initializeSessionShellEnvironmentIfNeeded，
-// 所以这里走公开方法而不是直接调内部的 refreshBranchAwareBuiltInTools。
+// Regression (2026-09-16): the registration surface had two entry points and the second one (branch refresh) missed
+// the gray gate, so the ten tools were added right back when the Bash shell snapshot was initialized. The real trigger
+// path is initializeSessionShellEnvironmentIfNeeded, so this test goes through the public method instead of calling
+// the internal refreshBranchAwareBuiltInTools directly.
 describe("AgentRuntime：分支刷新后灰度门仍然成立", () => {
   const CMD_SHELL_SELECTION = {
     dialect: "cmd",
@@ -307,26 +314,27 @@ describe("AgentRuntime：分支刷新后灰度门仍然成立", () => {
       eventStore: createTestSessionEventStore(),
       toolRegistry: createToolRegistry(),
     });
-    // 首次装配后的形态。
+    // The shape after first assembly.
     expect(runtime.getToolRegistry().has(CREATE_WORKFLOW_TOOL_NAME)).toBe(registered);
 
-    // 第一次真实用户执行前的 shell 快照初始化，内部走 refreshBranchAwareBuiltInTools。
+    // Shell snapshot initialization before the first real user execution; internally goes through refreshBranchAwareBuiltInTools.
     expect(runtime.initializeSessionShellEnvironmentIfNeeded(CMD_SHELL_SELECTION)).toBe(true);
 
     const registry = runtime.getToolRegistry();
     for (const name of GATED_DYNAMIC_WORKFLOW_TOOL_NAMES) {
       expect({ name, registered: registry.has(name) }).toEqual({ name, registered });
     }
-    // 反向断言：刷新本身的职责（embedded search 分支下的 Glob/Grep）不受影响，
-    // 普通工具面在三种取值下都还在。
+    // Reverse assertion: the refresh's own duty (Glob/Grep under the embedded search branch) is unaffected,
+    // and the ordinary tool surface remains under all three values.
     expect(registry.has("Read")).toBe(true);
   });
 });
 
-// 灰度门不止管注册面，也管**描述**（docs/dynamic-workflow/launch.md「Gray release」）：
-// Agent / Task 的 provider 描述里有一条「用户点名工作流时 CreateWorkflow 是强制的」，
-// 关闭时那个工具不在注册表里，留着这句话只会把模型指向一个不存在的工具。
-// 两个注册入口共用 options.includeDynamicWorkflow，所以分支刷新后的描述也必须一致。
+// The gray gate governs more than the registration surface — it also governs the **description**
+// (docs/dynamic-workflow/launch.md "Gray release"): the Agent / Task provider descriptions contain a line saying
+// "CreateWorkflow is mandatory when the user names a workflow". With the gate off that tool is not in the registry,
+// and keeping the sentence would only point the model at a tool that does not exist.
+// Both registration entry points share options.includeDynamicWorkflow, so the description after a branch refresh must be consistent too.
 describe("Agent / Task 描述随灰度门增删工作流那一行", () => {
   function descriptionsOf(options: { includeDynamicWorkflow?: boolean }): {
     agent: string;
@@ -343,7 +351,7 @@ describe("Agent / Task 描述随灰度门增删工作流那一行", () => {
     const { agent, task } = descriptionsOf({ includeDynamicWorkflow: false });
     expect(agent).not.toContain("CreateWorkflow");
     expect(task).not.toContain("CreateWorkflow");
-    // 反向断言：只去掉那一行，描述本体还在。
+    // Reverse assertion: only that line was removed; the description body remains.
     expect(agent).toContain("Launch a new agent");
     expect(task).toContain("Claude Code-compatible alias");
   });

@@ -66,9 +66,10 @@ describe("Provider/model readiness 只门禁模型执行", () => {
     await waitForDefaultWorkspaceReady(30000);
     await waitForModelConfigMissingBanner();
 
-    // 修复原因：只看 Process Monitor 只能证明 CLI 启动，不能证明用户真的拿到了历史。
-    // fixture 同时预置 tasks-index membership 与 CLI session：前者负责侧栏 row，后者必须
-    // 通过真实 sessions-index/conversation 只读订阅打开并展示正文。
+    // Reason for the fix: the Process Monitor alone can only prove the CLI started, not that the user
+    // actually got the history. The fixture pre-seeds both tasks-index membership and a CLI session:
+    // the former drives the sidebar row, the latter must be opened via a real sessions-index/conversation
+    // read-only subscription and display the body.
     await waitForProviderReadinessHistory();
     await selectV4TaskById(PROVIDER_READINESS_HISTORY_SESSION_ID);
     await waitForV4TimelineContaining(PROVIDER_READINESS_HISTORY_USER_TEXT);
@@ -113,9 +114,10 @@ describe("Provider/model readiness 只门禁模型执行", () => {
     await openResourceManager();
     await switchToElectronRendererTarget(isResourceManagerUrl);
     await waitForResourceManagerReady();
-    // 修复原因：sessions-index 是活动与详情的事实源。provider 未就绪时若完全禁止
-    // workspace CLI 启动，已有 task-index row 也无法读取正文；这里只允许只读 topic，
-    // 写路径仍由门禁拒绝。
+    // Reason for the fix: sessions-index is the source of truth for the activity and detail views. If the
+    // workspace CLI were fully blocked from starting while the provider is not ready, an existing
+    // task-index row could not have its body read either; only read-only topics are allowed here, and
+    // write paths are still rejected by the gate.
     await waitForAgentProcessCount(1, { workspaceNameSuffix: "-zcodeproject" });
 
     await switchToElectronRendererTarget(isMainRendererUrl);
@@ -146,8 +148,9 @@ describe("Provider/model readiness 只门禁模型执行", () => {
     await switchToElectronRendererTarget(isResourceManagerUrl);
     await waitForAgentProcessCount(1, { workspaceNameSuffix: "-zcodeproject" });
 
-    // 修复原因：只读 sessions-index 已经启动 workspace CLI；provider 就绪只提升写能力，
-    // 稳定窗口内仍只能有一个 Agent，防止 read→write 升级重复创建进程。
+    // Reason for the fix: the read-only sessions-index already started the workspace CLI; provider
+    // readiness only promotes write capability. Within the stability window there must still be exactly
+    // one Agent, preventing the read→write upgrade from creating a duplicate process.
     await browser.pause(1500);
     expect(await countAgentProcessRows({ workspaceNameSuffix: "-zcodeproject" })).toBe(1);
   });
@@ -189,10 +192,11 @@ async function clickModelSettingsFromMissingBanner() {
 }
 
 async function selectActiveFamilyApiKeyProvider() {
-  // ProviderFamilyPlanModeSwitch 只展示当前 family 的连接方式；从缺模型横幅进入时
-  // 默认会落在 BigModel Coding Plan，并按当前 OAuth family 隐藏 Z.ai。I23/I24 的
-  // 业务目标是配置一个可用 API Key provider，不是跨 family 切换，因此在当前 family
-  // 的连接方式下拉框选择 BigModel API Key，触发产品规定的 apiKey mode 持久化。
+  // ProviderFamilyPlanModeSwitch only shows the current family's connection methods; when entering from
+  // the missing-model banner it defaults to BigModel Coding Plan and hides Z.ai based on the current OAuth
+  // family. The I23/I24 business goal is to configure a usable API Key provider, not to switch families,
+  // so we pick BigModel API Key in the current family's connection-method dropdown, triggering the
+  // product-specified apiKey mode persistence.
   const modelProviderSectionTestId = testId(TID_SETTINGS_SECTION_NAV, "modelProvider");
   await waitForTestIdByDom(modelProviderSectionTestId, {
     timeout: 15_000,

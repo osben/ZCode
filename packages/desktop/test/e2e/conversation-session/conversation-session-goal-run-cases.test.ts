@@ -1,4 +1,4 @@
-/* eslint-disable max-lines -- 22 个历史 MR-GOAL 编号集中保留，便于 catalog 与正式门禁逐条对账。 */
+/* eslint-disable max-lines -- The 22 historical MR-GOAL numbered cases are kept together so the catalog and the formal gates can be reconciled item by item. */
 import { clearAppData } from "../helpers/desktop-app.js";
 import {
   countUpstreamRequestsContaining,
@@ -129,8 +129,7 @@ describe("会话区 Goal Run 正式 E2E", () => {
     await clickV4Stop();
     const snapshot = await waitForV4ConversationState(
       (candidate) =>
-        candidate.state !== "streaming" &&
-        candidate.targetObjective?.includes(goal) === true,
+        candidate.state !== "streaming" && candidate.targetObjective?.includes(goal) === true,
       "MR-GOAL-05 Stop 后 goal work 没有结束",
       30000,
     );
@@ -182,9 +181,9 @@ describe("会话区 Goal Run 正式 E2E", () => {
     await clickV4Stop();
     await waitForHeldQueue(3);
 
-    // 最后一条 enqueue 的 command ACK 可以先于 composer pending finally 投影到 queue；
-    // 这时首个 edit click 会按产品 guard 被忽略。等 busy 收口后重试真实按钮动作，
-    // 并以权威 queue 删除作为成功边界。
+    // The last enqueued command's ACK can project onto the queue before the composer's pending finally;
+    // the first edit click is then ignored by the product guard. Retry the real button action after busy
+    // settles, and treat the authoritative queue deletion as the success boundary.
     await browser.waitUntil(
       async () => {
         if ((await getQueueItems()).length === 2) {
@@ -198,16 +197,13 @@ describe("会话区 Goal Run 正式 E2E", () => {
         timeoutMsg: "MR-GOAL-07 goal queue item 没有撤回到 composer",
       },
     );
-    await browser.waitUntil(
-      async () => (await getV4ComposerText())?.includes(second) === true,
-      {
-        timeout: 30000,
-        timeoutMsg: "MR-GOAL-07 编辑项没有撤回到 V4 composer",
-      },
-    );
-    // MR-GOAL-07 只覆盖 held queue CRUD，不与 active goal streaming 的 revision
-    // CAS 做交叉。先在 idle held queue 完成删除，再发送撤回编辑后的 goal；否则
-    // target/title 流式投影可能恰好推进 revision，把一次删除点击裁决为 stale。
+    await browser.waitUntil(async () => (await getV4ComposerText())?.includes(second) === true, {
+      timeout: 30000,
+      timeoutMsg: "MR-GOAL-07 编辑项没有撤回到 V4 composer",
+    });
+    // MR-GOAL-07 only covers held queue CRUD and does not cross with the active goal streaming's revision
+    // CAS. Finish the deletion on the idle held queue first, then send the withdrawn-and-edited goal; otherwise
+    // the target/title streaming projection may advance the revision at just the wrong moment, adjudicating a single delete click as stale.
     await waitForHeldQueue(2);
     await waitForQueueOrderContaining([third, first]);
     await clickQueueRemove(firstId);
@@ -231,10 +227,7 @@ describe("会话区 Goal Run 正式 E2E", () => {
     const goal = goalSlowMarker(8);
 
     await sendV4Prompt("/compact");
-    await waitForV4CompactMarker(
-      { origin: "manual", status: "running" },
-      30000,
-    );
+    await waitForV4CompactMarker({ origin: "manual", status: "running" }, 30000);
     await sendV4Prompt(goalPrompt(goal));
     const queue = await waitForQueueCount(1);
 
@@ -278,8 +271,7 @@ describe("会话区 Goal Run 正式 E2E", () => {
     await selectV4TaskById(sessionA.taskId as string);
     const restoredA = await waitForV4ConversationState(
       (snapshot) =>
-        snapshot.taskId === sessionA.taskId &&
-        snapshot.targetObjective?.includes(goal) === true,
+        snapshot.taskId === sessionA.taskId && snapshot.targetObjective?.includes(goal) === true,
       "MR-GOAL-10 没有恢复 session A 的 paused goal",
       30000,
     );
@@ -306,8 +298,8 @@ describe("会话区 Goal Run 正式 E2E", () => {
     await sendV4Prompt(goalPrompt(newGoal));
     await waitForQueueContaining(newGoal);
     await clickFirstQueueSendNow();
-    // 修复原因：Send Now 会先投影新 goal，再异步删除 queue item。只等待
-    // objective 会读到 target 已更新但 queueCount 仍为 1 的短暂混合状态。
+    // Fix rationale: Send Now first projects the new goal, then asynchronously deletes the queue item. Waiting
+    // only for the objective reads a brief mixed state where the target has updated but queueCount is still 1.
     const snapshot = await waitForActiveGoalWithEmptyQueue(newGoal);
 
     expect(snapshot.queueCount).toBe(0);
@@ -360,27 +352,13 @@ describe("会话区 Goal Run 正式 E2E", () => {
     await waitForVerifierRequest(goal);
     await sendQueuedPromptAndWait(simplePrompt(textOne), textOne);
     await sendQueuedPromptAndWait(goalPrompt(queuedGoal), queuedGoal);
-    const compactBefore = await countUpstreamRequestsContaining(
-      COMPACT_REQUEST_SENTINEL,
-    );
+    const compactBefore = await countUpstreamRequestsContaining(COMPACT_REQUEST_SENTINEL);
     await sendQueuedPromptAndWait("/compact", "/compact");
     await sendQueuedPromptAndWait(simplePrompt(textTwo), textTwo);
-    const queue = await waitForQueueOrderContaining([
-      textOne,
-      queuedGoal,
-      "/compact",
-      textTwo,
-    ]);
+    const queue = await waitForQueueOrderContaining([textOne, queuedGoal, "/compact", textTwo]);
 
-    expect(queue.map((item) => item.kind)).toEqual([
-      "text",
-      "goal",
-      "compact",
-      "text",
-    ]);
-    expect(
-      await countUpstreamRequestsContaining(COMPACT_REQUEST_SENTINEL),
-    ).toBe(compactBefore);
+    expect(queue.map((item) => item.kind)).toEqual(["text", "goal", "compact", "text"]);
+    expect(await countUpstreamRequestsContaining(COMPACT_REQUEST_SENTINEL)).toBe(compactBefore);
     await assertVisibleV4UserMessagesNotContaining("/compact");
   });
 
@@ -407,16 +385,10 @@ describe("会话区 Goal Run 正式 E2E", () => {
     const goal = goalFastMarker(16);
 
     await sendV4Prompt("/compact");
-    await waitForV4CompactMarker(
-      { origin: "manual", status: "running" },
-      30000,
-    );
+    await waitForV4CompactMarker({ origin: "manual", status: "running" }, 30000);
     await sendV4Prompt(goalPrompt(goal));
     await waitForQueueContaining(goal);
-    await waitForV4CompactMarker(
-      { origin: "manual", status: "success" },
-      90000,
-    );
+    await waitForV4CompactMarker({ origin: "manual", status: "success" }, 90000);
     await waitForUpstreamRequestContaining(goal, 90000);
     await waitForV4ConversationState(
       (snapshot) => snapshot.state === "idle" && snapshot.queueCount === 0,
@@ -454,17 +426,14 @@ describe("会话区 Goal Run 正式 E2E", () => {
     await sendGoal(goal);
     await waitForGoalComplete(goal);
     await expandAssistantHistoriesWithContent();
-    // controlOnly 的 /goal 行不支持直接 edit；完成后恢复的是既有普通 query 的
-    // edit 与 assistant fork 控件。V4 行以 rowId 而非 legacy messageId 标识，
-    // 必须读取 V4 action 合同，避免旧 message helper 把已存在按钮误报为 null。
+    // A controlOnly /goal row does not support direct edit; after completion what is restored is the existing
+    // ordinary query's edit and assistant fork controls. V4 rows are identified by rowId rather than legacy
+    // messageId; the V4 action contract must be read so the old message helper does not misreport an existing button as null.
     await waitForV4Edit();
     await waitForV4Fork();
 
     await sendV4Prompt("/compact");
-    await waitForV4CompactMarker(
-      { origin: "manual", status: "success" },
-      90000,
-    );
+    await waitForV4CompactMarker({ origin: "manual", status: "success" }, 90000);
   });
 
   it("MR-GOAL-19 edit latest 普通 query 保持既有 goal scope", async function () {
@@ -480,9 +449,7 @@ describe("会话区 Goal Run 正式 E2E", () => {
     await editFirstV4UserQuery(simplePrompt(afterEdit));
     await waitForUpstreamRequestContaining(afterEdit, 45000);
     const existingGoal = await waitForV4ConversationState(
-      (snapshot) =>
-        snapshot.state === "idle" &&
-        snapshot.targetObjective?.includes(goal) === true,
+      (snapshot) => snapshot.state === "idle" && snapshot.targetObjective?.includes(goal) === true,
       "MR-GOAL-19 edit 普通 query 后 existing goal scope 丢失",
       90000,
     );
@@ -585,11 +552,9 @@ describe("会话区 Goal Run 正式 E2E", () => {
     await browser.pause(500);
 
     expect(snapshot.targetStatus).toBe("paused");
-    expect(
-      await countUpstreamRequestsContaining(
-        "Verify whether the active session goal",
-      ),
-    ).toBe(verifierBefore);
+    expect(await countUpstreamRequestsContaining("Verify whether the active session goal")).toBe(
+      verifierBefore,
+    );
   });
 });
 
@@ -600,8 +565,8 @@ async function freshTask() {
     "新建任务后没有进入空草稿",
     15000,
   );
-  // 旧 MR-GOAL 用例的入口是 completed session，而不是空 draft。空 draft 直接发送
-  // /goal 只会预建 session，无法覆盖 completed task 上的 target/queue 语义。
+  // The old MR-GOAL cases enter through a completed session, not an empty draft. Sending /goal on an empty draft
+  // only pre-creates the session and cannot cover target/queue semantics on a completed task.
   return sendFastPrompt(fastMarker(0, "SETUP"));
 }
 
@@ -620,9 +585,9 @@ async function sendFastPrompt(marker: string) {
 async function startSlowPrompt(marker: string) {
   await sendV4Prompt(simplePrompt(marker));
   await waitForV4ComposerText("", `${marker} 发送后输入框没有清空`);
-  // Bug 根因：只按 bodyIncludes 等待会先命中携带同一 user marker 的 title 请求，
-  // 随后把尚未进入主 turn 的 completed 快照误报为运行态失败。这里锁定最后一条
-  // user message，并排除 title/compact，确保 admission 对应 controlled-stream fixture。
+  // Bug root cause: waiting only on bodyIncludes first hits the title request carrying the same user marker,
+  // then misreports a completed snapshot that has not entered the main turn as a running-state failure. Lock onto
+  // the last user message and exclude title/compact so the admission corresponds to the controlled-stream fixture.
   await waitForV4UserMessageContaining(marker);
   await waitForUpstreamRequest(
     {
@@ -632,10 +597,11 @@ async function startSlowPrompt(marker: string) {
     `${marker} 主 turn 请求没有开始`,
     30000,
   );
-  // 运行时证据取 provider 主请求的 pending controlled-stream；completed session
-  // 恢复下一轮时，renderer 的 task bridge 会在 V4 delta 前短暂保留上一轮 completed，
-  // 不能让这条 legacy 诊断投影反过来否定已经开始的真实主请求。各 case 随后的
-  // queue/Stop 断言会继续验证 busy admission，而不是在这里放宽产品结果。
+  // The runtime evidence comes from the provider main request's pending controlled-stream; when a completed
+  // session resumes its next turn, the renderer's task bridge briefly keeps the previous turn's completed state
+  // before the V4 deltas, and this legacy diagnostic projection must not be allowed to negate the real main
+  // request that has already started. The per-case queue/Stop assertions that follow continue to verify busy
+  // admission rather than loosening the product outcome here.
 }
 
 async function sendGoal(marker: string) {
@@ -646,8 +612,9 @@ async function sendGoal(marker: string) {
 
 async function sendQueuedPromptAndWait(prompt: string, marker: string) {
   await sendV4Prompt(prompt);
-  // 修复原因：Windows 下连续点击发送后，上一条 prompt 的异步 composer 清空可能覆盖
-  // 下一条刚写入的内容；每一步必须同时确认输入已清空且本条 marker 已被队列接受。
+  // Fix rationale: after consecutive send clicks on Windows, the previous prompt's async composer clear can
+  // overwrite the next prompt just written; each step must simultaneously confirm the input is cleared and this
+  // marker was accepted into the queue.
   await waitForV4ComposerText("", `${marker} 入队后输入框没有清空`);
   return waitForQueueContaining(marker);
 }
@@ -655,8 +622,7 @@ async function sendQueuedPromptAndWait(prompt: string, marker: string) {
 function waitForGoalObjective(marker: string) {
   return waitForV4ConversationState(
     (snapshot) =>
-      snapshot.state === "streaming" &&
-      snapshot.targetObjective?.includes(marker) === true,
+      snapshot.state === "streaming" && snapshot.targetObjective?.includes(marker) === true,
     `${marker} 没有进入 active goal work`,
     45000,
   );
@@ -686,9 +652,9 @@ async function waitForNewGoalContinuationOutput(
     },
     {
       timeout: 30000,
-      // Bug 根因：只等 target=active 会早于 continuation 首个 delta；此时马上点击
-      // send-now 可能与该 delta 的 revision 递增交叉，CAS 按规范返回 stale，case 却
-      // 误报为 stop 失效。先锁定新 assistant row，才真正进入“active goal 输出中”。
+      // Bug root cause: waiting only for target=active happens before the continuation's first delta; clicking
+      // send-now immediately then can cross that delta's revision increment, the CAS returns stale per spec, and
+      // the case misreports stop as broken. Lock onto the new assistant row first to truly enter "active goal outputting".
       timeoutMsg: `${marker} goal continuation 首段输出没有进入新 assistant row`,
     },
   );
@@ -698,8 +664,8 @@ function waitForActiveGoalWithEmptyQueue(marker: string) {
   let stableSamples = 0;
   return waitForV4ConversationState(
     (snapshot) => {
-      // 修复原因：Send Now 会先更新 store/goal projection，再异步卸载队列 DOM；
-      // 只等 objective 会在 Windows 上读到 goal 已 active、旧队列节点仍存在的混合快照。
+      // Fix rationale: Send Now first updates the store/goal projection, then asynchronously unmounts the queue
+      // DOM; waiting only for the objective reads a mixed snapshot on Windows where the goal is already active but the old queue nodes still exist.
       const settled =
         snapshot.state === "streaming" &&
         snapshot.targetObjective?.includes(marker) === true &&
@@ -737,8 +703,7 @@ async function waitForVerifierRequest(marker: string) {
   );
   return waitForV4ConversationState(
     (snapshot) =>
-      snapshot.state === "streaming" &&
-      snapshot.targetObjective?.includes(marker) === true,
+      snapshot.state === "streaming" && snapshot.targetObjective?.includes(marker) === true,
     `${marker} verifier 没有保持 completion-blocking 状态`,
     30000,
   );
@@ -746,8 +711,7 @@ async function waitForVerifierRequest(marker: string) {
 
 function waitForHeldQueue(expectedCount: number) {
   return waitForV4ConversationState(
-    (snapshot) =>
-      snapshot.state !== "streaming" && snapshot.queueCount === expectedCount,
+    (snapshot) => snapshot.state !== "streaming" && snapshot.queueCount === expectedCount,
     `Stop 后没有保留 ${expectedCount} 条 held queue`,
     30000,
   );

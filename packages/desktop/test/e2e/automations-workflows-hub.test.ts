@@ -51,7 +51,8 @@ const WORKFLOW_NAME = "release-check";
 const WORKFLOWS_DIR = join(DEFAULT_WORKSPACE, ".zcode", "workflows");
 const WORKFLOW_FILE = join(WORKFLOWS_DIR, `${WORKFLOW_NAME}.dwf.ts`);
 const EDITED_DESCRIPTION = "发布前检查（E2E 已编辑）";
-// 脚本正文：元数据编辑只改文件顶部的 frontmatter，这一段必须逐字节保留（不变式 4）。
+// Script body: metadata edits only rewrite the frontmatter at the top of the file, so this part must be preserved
+// byte for byte (invariant 4).
 const SCRIPT = [
   "export default async ({ agent }) => {",
   '  await agent("跑测试并整理发布说明");',
@@ -95,10 +96,11 @@ async function readTestIdText(currentTestId: string): Promise<string | null> {
 }
 
 /**
- * 已保存工作流中枢「列表 → 详情 → 改元数据 → 删除」端到端（docs/dynamic-workflow/launch.md）。
+ * End-to-end "list → detail → edit metadata → delete" for the saved-workflows hub (docs/dynamic-workflow/launch.md).
  *
- * 只碰 UI + 项目目录里的 `.zcode/workflows/`：不发送 prompt、不依赖模型回放，因此是确定性的。
- * 「运行」走对话的用例在 conversation-session/ 下单独立案（需要回放 provider）。
+ * Only touches the UI + `.zcode/workflows/` in the project directory: no prompt is sent and no model replay is
+ * required, so it is deterministic. The "run via conversation" cases are filed separately under conversation-session/
+ * (they need a replay provider).
  */
 describe("已保存工作流中枢 E2E", () => {
   before(async () => {
@@ -115,10 +117,10 @@ describe("已保存工作流中枢 E2E", () => {
   it("预置的工作流可见，改说明只重写 frontmatter，删除后回到空态", async function () {
     this.timeout(150000);
 
-    // 只需要登录 + workspace 就绪即可进入自动化页，不需要配置模型 provider。
+    // Only login + workspace readiness are needed to enter the automations page; no model provider needs to be configured.
     await prepareConversationE2E({ skipProvider: true });
 
-    // 1) 打开自动化页，页标题切到「工作流」。
+    // 1) Open the automations page; the page title switches to "Workflows".
     await clickTestIdByDom(TID_AUTOMATIONS_OPEN, {
       timeoutMsg: "侧栏没有出现自动化入口",
     });
@@ -126,11 +128,11 @@ describe("已保存工作流中枢 E2E", () => {
       timeoutMsg: "自动化页标题没有「工作流」切换",
     });
 
-    // 2) 全局视图按项目分组：默认工作区（folder 名 ZCodeProject）自成一组，组头带名字，
-    //    组内「通过对话创建」按钮带以 workspaceKey 收尾的 test id。
-    //    group / create 的 test id 后缀是 workspaceKey（本地通常 = workspacePath），但
-    //    resolveWorkspaceKey 若对本地路径做归一化（大小写 / 去尾斜杠 / realpath）后缀就不等于
-    //    DEFAULT_WORKSPACE——所以只按前缀等待与断言，不钉死整串。
+    // 2) The global view groups by project: the default workspace (folder named ZCodeProject) forms its own group,
+    //    the group header carries the name, and the group's "create via chat" button carries a test id ending in the
+    //    workspaceKey. The test id suffix of group / create is the workspaceKey (locally usually = workspacePath), but
+    //    if resolveWorkspaceKey normalizes local paths (casing / trailing slash / realpath) the suffix will not equal
+    //    DEFAULT_WORKSPACE — so we wait and assert by prefix only, never pinning the whole string.
     const readGroupInfo = () =>
       browser.execute(
         (groupPrefix: string, createPrefix: string) => {
@@ -146,7 +148,7 @@ describe("已保存工作流中枢 E2E", () => {
           };
         },
         TID_WORKFLOW_PROJECT_GROUP,
-        // testId(base, "") = `${base}-`：create 按钮 test id 的前缀。
+        // testId(base, "") = `${base}-`: prefix of the create button's test id.
         testId(TID_WORKFLOWS_CREATE_VIA_CHAT, ""),
       ) as Promise<GroupHeaderInfo | null>;
 
@@ -164,7 +166,7 @@ describe("已保存工作流中枢 E2E", () => {
     expect(seen?.createTestId?.startsWith(testId(TID_WORKFLOWS_CREATE_VIA_CHAT, ""))).toBe(true);
     expect(seen?.createTestId).toContain("ZCodeProject");
 
-    // 3) 预置文件以卡片出现：名字 + frontmatter 里的说明。
+    // 3) The seeded file appears as a card: name + the description from the frontmatter.
     const cardTestId = testId(TID_WORKFLOW_CARD, WORKFLOW_NAME);
     await waitForTestIdByDom(cardTestId, {
       timeout: 20000,
@@ -172,7 +174,7 @@ describe("已保存工作流中枢 E2E", () => {
     });
     expect(await readTestIdText(cardTestId)).toContain("发布前检查");
 
-    // 4) 点卡片进详情，改说明并保存。
+    // 4) Click the card into detail view, edit the description, and save.
     await clickTestIdByDom(cardTestId, { timeoutMsg: "无法点击工作流卡片进入详情" });
     await waitForTestIdByDom(TID_WORKFLOW_DETAIL, { timeoutMsg: "没有进入工作流详情页" });
     await setInputValueByTestIdDom(TID_WORKFLOW_DETAIL_DESCRIPTION, EDITED_DESCRIPTION, {
@@ -182,7 +184,7 @@ describe("已保存工作流中枢 E2E", () => {
       timeoutMsg: "改说明后没有出现「保存元数据」",
     });
 
-    // 5) 磁盘：frontmatter 更新、脚本正文逐字节不变。
+    // 5) Disk: frontmatter updated, script body unchanged byte for byte.
     await browser.waitUntil(
       async () => (await readFile(WORKFLOW_FILE, "utf-8")).includes(EDITED_DESCRIPTION),
       { timeout: 15000, timeoutMsg: "保存后磁盘文件的说明没有更新" },
@@ -193,7 +195,7 @@ describe("已保存工作流中枢 E2E", () => {
     expect(saved).toContain("whenToUse: 准备发版时");
     expect(saved).toContain("required: true");
 
-    // 6) 详情页 ⋯ 菜单 → 删除 → 二次确认 → 回到列表空态，文件消失。
+    // 6) Detail page ⋯ menu → delete → confirm twice → back to the empty list state, file gone.
     await clickTestIdByWebDriver(TID_WORKFLOW_DETAIL_MENU, {
       timeoutMsg: "详情页没有「更多操作」菜单",
     });
@@ -214,9 +216,11 @@ describe("已保存工作流中枢 E2E", () => {
   });
 });
 
-// ── 全局工作流：置顶「全局」组 + 全局→项目搬文件 + 项目→全局 AI 概括（docs/dynamic-workflow/launch.md）──
-// E2E_HOME_DIR 由 wdio 配置设为隔离目录并写进 HOME（wdio.conf.ts:520），app / agent 进程都继承它，
-// 因此 agent 的 os.homedir() 解析到这里，全局根 = `<E2E_HOME>/.zcode/workflows/`。
+// ── Global workflows: pinned "Global" group + global→project file move + project→global AI summary
+// (docs/dynamic-workflow/launch.md) ──
+// E2E_HOME_DIR is set by the wdio config to an isolated directory written into HOME (wdio.conf.ts:520), and both the
+// app and agent processes inherit it, so the agent's os.homedir() resolves here and the global root =
+// `<E2E_HOME>/.zcode/workflows/`.
 const E2E_HOME = dirname(DEFAULT_WORKSPACE);
 const GLOBAL_WORKFLOW_NAME = "global-note";
 const GLOBAL_WORKFLOWS_DIR = join(E2E_HOME, ".zcode", "workflows");
@@ -226,7 +230,8 @@ const GLOBAL_PROJECT_WORKFLOW_FILE = join(
   GLOBAL_PROJECT_WORKFLOWS_DIR,
   `${GLOBAL_WORKFLOW_NAME}.dwf.ts`,
 );
-// 无实参的全局工作流：「移到项目…」是逐字节搬文件，脚本正文两端必须完全一致。
+// A global workflow without args: "Move to project…" copies the file byte for byte, so the script body must be
+// identical on both ends.
 const GLOBAL_SCRIPT = [
   "export default async ({ agent }) => {",
   '  await agent("做一次深度调研");',
@@ -258,13 +263,13 @@ describe("全局工作流中枢 E2E", () => {
 
     await prepareConversationE2E({ skipProvider: true });
 
-    // 1) 自动化页 →「工作流」标签。
+    // 1) Automations page → "Workflows" tab.
     await clickTestIdByDom(TID_AUTOMATIONS_OPEN, { timeoutMsg: "侧栏没有出现自动化入口" });
     await clickTestIdByDom(testId(TID_AUTOMATIONS_PAGE_TAB, "workflow"), {
       timeoutMsg: "自动化页标题没有「工作流」切换",
     });
 
-    // 2) 顶部「全局」组出现，且含预置的 global-note 卡片。
+    // 2) The "Global" group appears at the top and contains the seeded global-note card.
     await waitForTestIdByDom(TID_WORKFLOW_GLOBAL_GROUP, {
       timeout: 20000,
       timeoutMsg: "工作流页没有出现「全局」组",
@@ -275,7 +280,7 @@ describe("全局工作流中枢 E2E", () => {
       timeoutMsg: "「全局」组里没有出现预置的 global-note 卡片",
     });
 
-    // 3) 卡片 ⋯ →「移到项目…」→ 移动窗 → 提交。
+    // 3) Card ⋯ → "Move to project…" → move dialog → submit.
     await clickTestIdByWebDriver(testId(TID_WORKFLOW_CARD_MENU, GLOBAL_WORKFLOW_NAME), {
       timeoutMsg: "全局卡片没有「更多操作」菜单",
     });
@@ -287,7 +292,7 @@ describe("全局工作流中枢 E2E", () => {
       timeoutMsg: "「移到项目」窗没有提交按钮",
     });
 
-    // 4) 磁盘：文件已搬到项目目录，从 HOME 消失。
+    // 4) Disk: the file has moved into the project directory and is gone from HOME.
     await browser.waitUntil(async () => fileExists(GLOBAL_PROJECT_WORKFLOW_FILE), {
       timeout: 15000,
       timeoutMsg: "移到项目后文件没有出现在项目目录",
@@ -297,7 +302,8 @@ describe("全局工作流中枢 E2E", () => {
       timeoutMsg: "移到项目后 HOME 里的文件仍然存在",
     });
 
-    // 5) 卡片现在落在项目组里，且「全局」组仍在项目组之上（比较 DOM 顺序）。
+    // 5) The card now sits in the project group, and the "Global" group still sits above the project group
+    //    (compare DOM order).
     const projectGroupTestId = await browser.waitUntil(
       async () => {
         const tid = await browser.execute((prefix: string) => {
@@ -315,7 +321,7 @@ describe("全局工作流中枢 E2E", () => {
         const globalEl = document.querySelector<HTMLElement>(`[data-testid="${globalTid}"]`);
         const projectEl = document.querySelector<HTMLElement>(`[data-testid="${projectTid}"]`);
         if (!globalEl || !projectEl) return null;
-        // Node.DOCUMENT_POSITION_FOLLOWING = 4：project 在 global 之后。
+        // Node.DOCUMENT_POSITION_FOLLOWING = 4: project comes after global.
         return (globalEl.compareDocumentPosition(projectEl) & 4) !== 0
           ? "global-first"
           : "project-first";
@@ -324,13 +330,15 @@ describe("全局工作流中枢 E2E", () => {
       projectGroupTestId as string,
     );
     expect(order).toBe("global-first");
-    // 卡片仍可见（此刻在项目组里）。
+    // The card is still visible (in the project group at this point).
     await waitForTestIdByDom(globalCardTestId, { timeoutMsg: "移到项目后卡片消失了" });
 
-    // 6) 项目卡片 ⋯ →「提升为全局」（2026-09-04 追记）：不搬文件，而是在本项目开新会话、自动发送
-    //    概括提示（createSession.firstInput）。断言：切到新会话，首条用户消息含工作流名、路径与
-    //    scope: "global" 指令；两处文件都不动（不变式 9：提升不搬、不删）。模型回合本身不断言
-    //    （skipProvider 下没有 provider，那一跳失败与否与本特性无关）。
+    // 6) Project card ⋯ → "Promote to global" (2026-09-04 addendum): no file is moved; instead a new session opens in
+    //    this project and a summary prompt is sent automatically (createSession.firstInput). Assertions: the app switches
+    //    to the new session, the first user message contains the workflow name, the path, and the scope: "global"
+    //    instruction; neither file copy is touched (invariant 9: promotion neither moves nor deletes). The model turn
+    //    itself is not asserted (with skipProvider there is no provider, so whether that hop fails is irrelevant to this
+    //    feature).
     await clickTestIdByWebDriver(testId(TID_WORKFLOW_CARD_MENU, GLOBAL_WORKFLOW_NAME), {
       timeoutMsg: "项目卡片没有「更多操作」菜单",
     });
@@ -343,24 +351,27 @@ describe("全局工作流中枢 E2E", () => {
     );
     expect(promoteMessage?.text ?? "").toContain(GLOBAL_PROJECT_WORKFLOW_FILE);
     expect(promoteMessage?.text ?? "").toContain('scope: "global"');
-    // 文件不动：项目档还在，HOME 里没有被搬回去的同名文件。
+    // Files untouched: the project file is still there and no same-named file was moved back into HOME.
     expect(await fileExists(GLOBAL_PROJECT_WORKFLOW_FILE)).toBe(true);
     expect(await fileExists(GLOBAL_WORKFLOW_FILE)).toBe(false);
   });
 });
 
-// ── 直接启动：中枢「运行」→ 新会话顶部启动卡（docs/dynamic-workflow/launch.md）─────────
-// 与前两组一样只碰 UI + 项目目录里的 `.zcode/workflows/`，且刻意用**无 agent()/模型调用**的
-// 常量工作流：run 的子代理一个都不起，因此整条路（建会话 → startSavedWorkflow → run 结算）
-// 都不需要 provider 回放，skipProvider 下即可跑到 completed。run 终态之后会触发既有的完成
-// 通知回合（那一跳才第一次要模型），本组**刻意断言到启动卡 completed 为止**，不依赖模型——
-// 与 spec 测试地图「完成通知回合按既有 replay 惯例处理或断言到通知行为止」一致。
+// ── Direct launch: hub "Run" → launch card at the top of a new session (docs/dynamic-workflow/launch.md) ──
+// Like the two groups above, only touches the UI + `.zcode/workflows/` in the project directory, and deliberately uses
+// constant workflows **without agent()/model calls**: none of the run's subagents ever start, so the whole path
+// (create session → startSavedWorkflow → run settlement) needs no provider replay and reaches completed under
+// skipProvider. After the run reaches a terminal state, the existing completion-notification turn fires (that hop is the
+// first to need a model); this group **deliberately asserts only up to the launch card reaching completed** and does not
+// depend on the model — consistent with the spec test map's "the completion notification turn follows the existing replay
+// convention or asserts only up to the notification behavior".
 const LAUNCH_OK_NAME = "direct-launch-ok";
 const LAUNCH_OK_ARG = "topic";
 const LAUNCH_OK_ARG_VALUE = "adaptive concurrency in agent runtimes";
 const LAUNCH_OK_FILE = join(WORKFLOWS_DIR, `${LAUNCH_OK_NAME}.dwf.ts`);
-// 脚本体：无 agent()、立即返回常量。声明一个必填实参 `topic`，好让「运行」弹出实参窗
-// （无实参的项目档点击即跑、不弹窗，见 spec）。编译干净（`return <字面量>` 是合法脚本体）。
+// Script body: no agent(), returns a constant immediately. Declares a required arg `topic` so that "Run" pops the args
+// dialog (arg-less project files run on click with no dialog; see the spec). Compiles cleanly (`return <literal>` is a
+// legal script body).
 const LAUNCH_OK_SEED = [
   "/* zcode-workflow",
   "description: 常量工作流（直接启动 E2E）",
@@ -373,11 +384,12 @@ const LAUNCH_OK_SEED = [
   "",
 ].join("\n");
 
-// 在跑一段时间的常量工作流（composer 徽标直达 E2E，docs/dynamic-workflow/presentation.md）：
-// 零 agent、零 provider，靠 `world.run("sleep", …)` 停留在 running——这是沙箱里唯一不需要模型
-// 又能让 run 停住的手段（沙箱 realm 只有 ES intrinsics，没有 setTimeout）。cmd 是编译期字面量，
-// 直接启动把它编进 declaredRunCommands，不需要确认窗。无实参的项目档点「运行」即跑、不弹实参窗。
-// 注：`sleep` 依赖 POSIX 环境；桌面 e2e 只在 macOS / Linux 容器里跑。
+// A constant workflow that runs for a while (composer badge direct-open E2E, docs/dynamic-workflow/presentation.md):
+// zero agents, zero provider; it stays running via `world.run("sleep", …)` — the only sandbox means that needs no model
+// yet keeps a run parked (the sandbox realm only has ES intrinsics, no setTimeout). cmd is a compile-time literal, and
+// direct launch compiles it into declaredRunCommands, so no confirmation dialog is needed. Arg-less project files run
+// on "Run" without popping the args dialog.
+// Note: `sleep` depends on a POSIX environment; desktop e2e only runs in macOS / Linux containers.
 const LAUNCH_SLEEP_NAME = "direct-launch-sleeping";
 const LAUNCH_SLEEP_FILE = join(WORKFLOWS_DIR, `${LAUNCH_SLEEP_NAME}.dwf.ts`);
 const LAUNCH_SLEEP_SEED = [
@@ -389,9 +401,9 @@ const LAUNCH_SLEEP_SEED = [
   "",
 ].join("\n");
 
-// 保存 / 再次运行（docs/dynamic-workflow/transcript-and-notifications.md「Saving the run, and running
-// it again」）：无实参的项目档，点「运行」即跑。脚本体与本组其他常量工作流逐字不同——「按 run 跑的
-// 那一份认出已保存」这条规则必须只能命中它自己。
+// Save / run again (docs/dynamic-workflow/transcript-and-notifications.md, "Saving the run, and running it again"):
+// an arg-less project file that runs on "Run". Its script body is verbatim-different from the other constant workflows
+// in this group — the "recognize as saved by the copy the run executed" rule must only match this one.
 const LAUNCH_SAVE_NAME = "direct-launch-save";
 const LAUNCH_SAVE_FILE = join(WORKFLOWS_DIR, `${LAUNCH_SAVE_NAME}.dwf.ts`);
 const LAUNCH_SAVE_SCRIPT = "return { ok: true, savedFromRun: 1 };\n";
@@ -402,9 +414,10 @@ const LAUNCH_SAVE_SEED = [
   LAUNCH_SAVE_SCRIPT,
 ].join("\n");
 
-// 「作为文件打开」（docs/dynamic-workflow/authoring.md「How the user sees them」）：零 agent 的常量工作流
-// 发布一份 markdown 产物，run 完成后从侧板打开产物 tab，点「作为文件打开」。系统默认 App 那一跳由
-// shell.openPath 的 mock 接住——断言的是它收到的路径，以及那个路径上真的落了这一版的字节。
+// "Open as file" (docs/dynamic-workflow/authoring.md, "How the user sees them"): a zero-agent constant workflow
+// publishes a markdown artifact; after the run completes, open the artifact tab from the side pane and click
+// "Open as file". The system-default-app hop is caught by the shell.openPath mock — we assert the path it received and
+// that this version's bytes really landed at that path.
 const LAUNCH_ARTIFACT_NAME = "direct-launch-artifact";
 const LAUNCH_ARTIFACT_FILE = join(WORKFLOWS_DIR, `${LAUNCH_ARTIFACT_NAME}.dwf.ts`);
 const LAUNCH_ARTIFACT_ID = "e2e-report";
@@ -422,9 +435,10 @@ const LAUNCH_ARTIFACT_SEED = [
 
 const LAUNCH_FAIL_NAME = "direct-launch-broken";
 const LAUNCH_FAIL_FILE = join(WORKFLOWS_DIR, `${LAUNCH_FAIL_NAME}.dwf.ts`);
-// frontmatter 仍然合法（卡片照常出现、实参窗照常弹），脚本体带一个类型错误（TS2322：把字符串
-// 赋给 number）。编译只在启动的 ② 阶段发生，因此错误在 startSavedWorkflow 的 ACK 里以
-// compile_failed 回来，被实参窗行内错误区接住——会话在此之前不存在（不变式 2）。
+// The frontmatter stays legal (the card still appears and the args dialog still pops), but the script body carries a
+// type error (TS2322: assigning a string to a number). Compilation only happens in stage ② of launch, so the error
+// comes back as compile_failed in startSavedWorkflow's ACK and is caught by the args dialog's inline error area — the
+// session does not exist before that point (invariant 2).
 const LAUNCH_FAIL_SEED = [
   "/* zcode-workflow",
   "description: 编译失败工作流（直接启动 E2E）",
@@ -438,9 +452,10 @@ const LAUNCH_FAIL_SEED = [
   "",
 ].join("\n");
 
-// 脚本点名了一个本机目录里没有的模型（docs/dynamic-workflow/launch.md「Models the script names」）：
-// 编译本身干净，解不出来的名字按 9011 与编译诊断同一条路拒绝（compile_failed）。脚本里只**声明**
-// 这个子代理、从不 ask 它，所以即使解析意外放行也不会碰 provider。
+// The script names a model absent from the local catalog (docs/dynamic-workflow/launch.md, "Models the script names"):
+// compilation itself is clean, and an unresolvable name is rejected via 9011 on the same path as compile diagnostics
+// (compile_failed). The script only **declares** this subagent and never asks it, so even if resolution unexpectedly
+// let it through, the provider would never be touched.
 const LAUNCH_MODEL_NAME = "direct-launch-unknown-model";
 const LAUNCH_MODEL_FILE = join(WORKFLOWS_DIR, `${LAUNCH_MODEL_NAME}.dwf.ts`);
 const LAUNCH_MODEL_UNKNOWN = "no-such-model-e2e";
@@ -457,7 +472,7 @@ const LAUNCH_MODEL_SEED = [
   "",
 ].join("\n");
 
-/** 按前缀读某个 testid 元素的可见文本（启动卡 / 任务项的 testid 后缀是运行期才知道的 key）。 */
+/** Read the visible text of the testid element matched by prefix (the launch card / task item test id suffix is a key only known at runtime). */
 async function readTestIdPrefixText(prefix: string): Promise<string | null> {
   return browser.execute((currentPrefix) => {
     const element = Array.from(document.querySelectorAll<HTMLElement>("[data-testid]")).find(
@@ -468,8 +483,9 @@ async function readTestIdPrefixText(prefix: string): Promise<string | null> {
 }
 
 /**
- * 启动轮 run 卡当前的 run 状态（`data-workflow-run-status`）；卡不在时为 null。直接启动的会话顶部长出的
- * 就是普通的轮尾 run 卡（docs/dynamic-workflow/presentation.md「The run card」），不是别的卡。
+ * The run status (`data-workflow-run-status`) of the launch-turn run card; null when the card is absent. What grows at
+ * the top of a direct-launch session is the ordinary turn-tail run card (docs/dynamic-workflow/presentation.md,
+ * "The run card"), not some other card.
  */
 async function readLaunchCardStatus(): Promise<string | null> {
   return browser.execute(
@@ -483,7 +499,7 @@ async function readLaunchCardStatus(): Promise<string | null> {
   );
 }
 
-/** 读 run 详情侧板来龙去脉节的可见文本（docs/dynamic-workflow/launch.md「The launch turn」）。 */
+/** Read the visible text of the run details side pane's provenance section (docs/dynamic-workflow/launch.md, "The launch turn"). */
 async function readLaunchProvenanceText(): Promise<string | null> {
   return browser.execute(() => {
     const element = document.querySelector<HTMLElement>('[data-testid="workflow-run-provenance"]');
@@ -491,7 +507,7 @@ async function readLaunchProvenanceText(): Promise<string | null> {
   });
 }
 
-/** 侧栏任务项数量（compile_failed 用例比较提交前后不变）。 */
+/** Number of sidebar task items (the compile_failed case compares it before and after submission). */
 async function countTaskItems(): Promise<number> {
   return browser.execute(
     (prefix) => document.querySelectorAll(`[data-testid^="${prefix}"]`).length,
@@ -499,7 +515,7 @@ async function countTaskItems(): Promise<number> {
   );
 }
 
-/** 侧栏所有任务项的文本拼接（断言会话标题里出现工作流名）。 */
+/** Concatenated text of all sidebar task items (asserts the workflow name appears in the session title). */
 async function readTaskItemsText(): Promise<string> {
   return browser.execute(
     (prefix) =>
@@ -510,7 +526,7 @@ async function readTaskItemsText(): Promise<string> {
   );
 }
 
-/** 会话转写（v4 timeline）的全文（断言没有旧的合成 prompt 文案）。 */
+/** Full text of the session transcript (v4 timeline; asserts no legacy synthetic prompt copy remains). */
 async function readTimelineText(): Promise<string> {
   return browser.execute((timelineTestId) => {
     const element = document.querySelector<HTMLElement>(`[data-testid="${timelineTestId}"]`);
@@ -538,10 +554,10 @@ describe("直接启动 E2E", () => {
   it("中枢「运行」常量工作流：新会话顶部启动卡跑到 completed，无用户气泡、无确认窗", async function () {
     this.timeout(180000);
 
-    // 只需要登录 + workspace，就绪即可；常量工作流不碰 provider（见组注释）。
+    // Only login + workspace readiness are needed; the constant workflow never touches the provider (see the group comment).
     await prepareConversationE2E({ skipProvider: true });
 
-    // 1) 自动化页 →「工作流」标签 → 常量工作流的卡片。
+    // 1) Automations page → "Workflows" tab → the constant workflow's card.
     await clickTestIdByDom(TID_AUTOMATIONS_OPEN, { timeoutMsg: "侧栏没有出现自动化入口" });
     await clickTestIdByDom(testId(TID_AUTOMATIONS_PAGE_TAB, "workflow"), {
       timeoutMsg: "自动化页标题没有「工作流」切换",
@@ -552,7 +568,8 @@ describe("直接启动 E2E", () => {
       timeoutMsg: "工作流列表没有出现常量工作流卡片",
     });
 
-    // 2) 点卡片的「运行」→ 有实参的项目档弹出实参窗：头部 = 名字 + 作用域徽标，且带「新会话」说明。
+    // 2) Click the card's "Run" → the project file with args pops the args dialog: header = name + scope badge, plus
+    //    the "new session" note.
     await clickTestIdByDom(testId(TID_WORKFLOW_CARD_RUN, LAUNCH_OK_NAME), {
       timeoutMsg: "常量工作流卡片没有「运行」按钮",
     });
@@ -565,7 +582,7 @@ describe("直接启动 E2E", () => {
     expect(dialogText).toContain("项目"); // 作用域徽标（scope.project）
     expect(dialogText).toContain("的新会话中运行"); // 「将立即在 X 的新会话中运行」说明
 
-    // 3) 填实参并提交。提交前记下任务数，稍后新会话应比它多一个。
+    // 3) Fill the arg and submit. Note the task count before submitting; the new session should add one more shortly.
     const tasksBeforeLaunch = await countTaskItems();
     await setInputValueByTestIdDom(
       testId(TID_WORKFLOW_LAUNCH_ARG, LAUNCH_OK_ARG),
@@ -578,8 +595,9 @@ describe("直接启动 E2E", () => {
       timeoutMsg: "实参窗没有「运行」提交按钮",
     });
 
-    // 4) 应用切到新会话，转写顶部长出 run 卡（不是用户气泡、不是 CreateWorkflow 工具行），
-    //    卡上带工作流名；实参值不在卡上，而在 run 详情侧板的来龙去脉节里。
+    // 4) The app switches to the new session, and a run card grows at the top of the transcript (not a user bubble, not
+    //    a CreateWorkflow tool row), carrying the workflow name; the arg value is not on the card but in the run details
+    //    side pane's provenance section.
     const launchCardPrefix = testId(TID_CHAT_WORKFLOW_RUN_DIGEST, "");
     await browser.waitUntil(
       async () =>
@@ -594,7 +612,8 @@ describe("直接启动 E2E", () => {
     expect(cardText).toContain(LAUNCH_OK_NAME);
     expect(cardText).not.toContain(LAUNCH_OK_ARG_VALUE);
 
-    // 4b) 卡上的 ⤢ 开 run 详情侧板：来龙去脉节写着「由你从工作流中枢启动」、作用域与刚填的实参值。
+    // 4b) The card's ⤢ opens the run details side pane: the provenance section says "launched by you from the workflows
+    //     hub", plus the scope and the arg value just entered.
     await clickTestIdByDom("workflow-card-open-details", {
       timeoutMsg: "run 卡上没有「打开运行详情」",
     });
@@ -605,26 +624,26 @@ describe("直接启动 E2E", () => {
     const provenanceText = (await readLaunchProvenanceText()) ?? "";
     expect(provenanceText).toContain(LAUNCH_OK_ARG_VALUE);
 
-    // 5) 无用户气泡、无旧的合成 prompt 文案：转写里不出现「Run the saved workflow」这类
-    //    被本 spec 删除的 composer 文案。
+    // 5) No user bubble, no legacy synthetic prompt copy: the transcript must not contain composer copy such as
+    //    "Run the saved workflow" that this spec removed.
     expect(await readTimelineText()).not.toContain("Run the saved workflow");
 
-    // 6) 无确认窗：直接启动是记录在案的确认旁路，通用二次确认窗不应出现。
+    // 6) No confirmation dialog: direct launch is a documented confirmation bypass, so the generic confirm dialog must not appear.
     const hasConfirmDialog = await browser.execute(
       (confirmTestId) => Boolean(document.querySelector(`[data-testid="${confirmTestId}"]`)),
       TID_CONFIRM_DIALOG_CONFIRM,
     );
     expect(hasConfirmDialog).toBe(false);
 
-    // 7) run 卡的状态跑到 completed（常量工作流零 agent，立即结算）。宽超时：
-    //    run-started → run-settled 走真实 dwf 运行时的子进程。
+    // 7) The run card's status reaches completed (the constant workflow has zero agents and settles immediately). Wide
+    //    timeout: run-started → run-settled goes through the real dwf runtime subprocess.
     await browser.waitUntil(async () => (await readLaunchCardStatus()) === "completed", {
       timeout: 90000,
       timeoutMsg: "run 卡的状态没有跑到 completed",
     });
 
-    // 8) 侧栏会话标题 = 工作流名（titleSource: first_input，不用消息全文、不等 LLM）；
-    //    且确实新开了一个会话。
+    // 8) The sidebar session title = the workflow name (titleSource: first_input — no full message, no LLM wait);
+    //    and a new session was indeed created.
     await browser.waitUntil(async () => (await countTaskItems()) === tasksBeforeLaunch + 1, {
       timeout: 20000,
       timeoutMsg: "直接启动后没有新增一个会话",
@@ -637,7 +656,7 @@ describe("直接启动 E2E", () => {
 
     await prepareConversationE2E({ skipProvider: true });
 
-    // 1) 自动化页 →「工作流」标签 → 编译失败工作流的卡片（frontmatter 合法，卡片照常出现）。
+    // 1) Automations page → "Workflows" tab → the broken-workflow card (frontmatter is legal, so the card appears).
     await clickTestIdByDom(TID_AUTOMATIONS_OPEN, { timeoutMsg: "侧栏没有出现自动化入口" });
     await clickTestIdByDom(testId(TID_AUTOMATIONS_PAGE_TAB, "workflow"), {
       timeoutMsg: "自动化页标题没有「工作流」切换",
@@ -648,7 +667,7 @@ describe("直接启动 E2E", () => {
       timeoutMsg: "工作流列表没有出现编译失败工作流卡片",
     });
 
-    // 2) 「运行」→ 实参窗 → 填实参并提交。记下提交前的任务数。
+    // 2) "Run" → args dialog → fill the arg and submit. Note the task count before submitting.
     await clickTestIdByDom(testId(TID_WORKFLOW_CARD_RUN, LAUNCH_FAIL_NAME), {
       timeoutMsg: "编译失败工作流卡片没有「运行」按钮",
     });
@@ -664,20 +683,20 @@ describe("直接启动 E2E", () => {
       timeoutMsg: "实参窗没有「运行」提交按钮",
     });
 
-    // 3) 行内错误区出现，标题是 compile_failed 的文案；实参窗留着（不导航、不留会话）。
+    // 3) The inline error area appears, titled with the compile_failed copy; the args dialog stays (no navigation, no session).
     await waitForTestIdByDom(TID_WORKFLOW_LAUNCH_ERROR, {
       timeout: 30000,
       timeoutMsg: "编译失败没有在实参窗行内错误区显示",
     });
     const errorText = (await readTestIdPrefixText(TID_WORKFLOW_LAUNCH_ERROR)) ?? "";
     expect(errorText).toContain("工作流脚本编译失败");
-    // 实参窗仍在（失败不关窗）。
+    // The args dialog is still up (failure does not close it).
     await waitForTestIdByDom(TID_WORKFLOW_LAUNCH_DIALOG, {
       timeoutMsg: "编译失败后实参窗被意外关闭",
     });
 
-    // 4) 会话列表没有新增：agent 侧 ① ② 阶段失败前不建任何行，GUI 侧随即 deleteSession
-    //    收回刚建的空会话（不变式 2）。
+    // 4) The session list gains nothing: the agent side creates no row before stages ① ② fail, and the GUI side
+    //    immediately calls deleteSession to reclaim the just-created empty session (invariant 2).
     await browser.waitUntil(async () => (await countTaskItems()) === tasksBeforeReject, {
       timeout: 15000,
       timeoutMsg: "编译失败却新增了一个会话",
@@ -713,8 +732,9 @@ describe("直接启动 E2E", () => {
       timeoutMsg: "实参窗没有「运行」提交按钮",
     });
 
-    // 与脚本编不过同一个出口：标题是 compile_failed 的文案，细节是一条带位置的诊断。
-    // 宿主有目录时细节点出名字；没有目录时说「这台宿主选不了模型」——两种都是脚本侧的改法。
+    // Same exit as a script that fails to compile: the title is the compile_failed copy, and the detail is a located
+    // diagnostic. With a catalog the detail names the model; without one it says the host cannot choose models — both
+    // fixes are on the script side.
     await waitForTestIdByDom(TID_WORKFLOW_LAUNCH_ERROR, {
       timeout: 30000,
       timeoutMsg: "解不出来的模型没有在实参窗行内错误区显示",
@@ -734,14 +754,15 @@ describe("直接启动 E2E", () => {
     });
   });
 
-  // composer 徽标直达（docs/dynamic-workflow/presentation.md「Other places a run appears」）：
-  // 会话里唯一在跑的是一条工作流时，点徽标不展开状态胶囊，直接打开该 run 的详情 side tab。
+  // Composer badge direct-open (docs/dynamic-workflow/presentation.md, "Other places a run appears"): when the only
+  // thing running in the session is a workflow, clicking the badge does not expand the status capsule; it opens that
+  // run's details side tab directly.
   it("唯一在跑的工作流：composer 徽标直达详情 side tab，状态胶囊不展开", async function () {
     this.timeout(180000);
 
     await prepareConversationE2E({ skipProvider: true });
 
-    // 1) 自动化页 →「工作流」标签 → 无实参的项目档点「运行」即跑（不弹实参窗、不弹确认窗）。
+    // 1) Automations page → "Workflows" tab → the arg-less project file runs on "Run" (no args dialog, no confirm dialog).
     await clickTestIdByDom(TID_AUTOMATIONS_OPEN, { timeoutMsg: "侧栏没有出现自动化入口" });
     await clickTestIdByDom(testId(TID_AUTOMATIONS_PAGE_TAB, "workflow"), {
       timeoutMsg: "自动化页标题没有「工作流」切换",
@@ -754,15 +775,16 @@ describe("直接启动 E2E", () => {
       timeoutMsg: "常量工作流卡片没有「运行」按钮",
     });
 
-    // 2) 新会话顶部长出 run 卡，run 进入 running（world.run 的 sleep 让它停在这里）。
+    // 2) A run card grows at the top of the new session and the run enters running (world.run's sleep parks it here).
     const launchCardPrefix = testId(TID_CHAT_WORKFLOW_RUN_DIGEST, "");
     await browser.waitUntil(async () => Boolean(await readTestIdPrefixText(launchCardPrefix)), {
       timeout: 60000,
       timeoutMsg: "新会话顶部没有出现 run 卡",
     });
 
-    // 2b) 侧栏运行行（docs/dynamic-workflow/presentation.md「The sidebar run line」）：发起它的会话行在标题下
-    //     长出一条 running 的运行行；sleep 脚本没有 phase() 标记，所以轨道是一个隐含站点。
+    // 2b) Sidebar run line (docs/dynamic-workflow/presentation.md, "The sidebar run line"): the session row that launched
+    //     it grows a running run line under its title; the sleep script has no phase() markers, so the rail is a single
+    //     implicit station.
     await browser.waitUntil(
       async () =>
         browser.execute(
@@ -785,8 +807,8 @@ describe("直接启动 E2E", () => {
       { timeout: 60000, timeoutMsg: "侧栏里发起工作流的会话行没有长出 running 的运行行" },
     );
 
-    // 2c) 状态胶囊（docs/dynamic-workflow/presentation.md「Other places a run appears」）：在跑的工作流
-    //     排在胶囊最前，按名字显示（名字 · 灯 · 词），不再是「1 后台」这样的计数。
+    // 2c) Status capsule (docs/dynamic-workflow/presentation.md, "Other places a run appears"): the running workflow
+    //     sorts first in the capsule and shows by name (name · lamp · word) instead of a count like "1 background".
     await browser.waitUntil(
       async () =>
         browser.execute((panelTestId) => {
@@ -803,7 +825,7 @@ describe("直接启动 E2E", () => {
       { timeout: 30000, timeoutMsg: "状态胶囊没有按名字显示在跑的工作流" },
     );
 
-    // 3) composer 徽标：恰好一条 workflow、没有终端与子代理，且自述落点是 workflow-run。
+    // 3) Composer badge: exactly one workflow, no terminals and no subagents, and its declared open target is workflow-run.
     await browser.waitUntil(
       async () => {
         const counts = await getV4ComposerBackgroundWorkCounts();
@@ -825,7 +847,8 @@ describe("直接启动 E2E", () => {
     );
     expect(panelModeBefore).not.toBe("panel");
 
-    // 4) 点徽标 → 侧板出现该 run 的 workflow-run tab（结构化 id 前缀），胶囊没有被置成 panel。
+    // 4) Click the badge → the side pane shows that run's workflow-run tab (structured id prefix), and the capsule was
+    //    not switched to panel mode.
     await clickTestIdByDom(TID_V4_COMPOSER_BACKGROUND_WORK_TRIGGER, {
       timeoutMsg: "composer 后台任务入口不可点击",
     });
@@ -844,10 +867,11 @@ describe("直接启动 E2E", () => {
     );
     expect(panelModeAfter).not.toBe("panel");
 
-    // 5) 点胶囊展开：「工作流」分区随之打开，不用再点分区头——展开后看到的不能比胶囊还少
-    //    （docs/dynamic-workflow/presentation.md「Other places a run appears」）。run 行两行定高：第一行
-    //    名字 + 时长，第二行灯 + 词（sleep 脚本没有 phase() 标记，所以是一盏运行灯 + 步数）。悬停这一行
-    //    时 Stop 叠在时长上出现。
+    // 5) Click the capsule to expand: the "Workflows" section opens along with it, no separate section-header click
+    //    needed — what you see expanded must not be less than what the capsule shows
+    //    (docs/dynamic-workflow/presentation.md, "Other places a run appears"). The run row is a fixed two lines: name +
+    //    elapsed on the first, lamp + word on the second (the sleep script has no phase() markers, so it is one running
+    //    lamp + step count). Hovering the row overlays Stop on the elapsed time.
     await browser.execute((panelTestId) => {
       const panel = document.querySelector<HTMLElement>(`[data-testid="${panelTestId}"]`);
       panel?.querySelector<HTMLElement>("[data-workflow-pill]")?.closest("button")?.click();
@@ -883,15 +907,16 @@ describe("直接启动 E2E", () => {
     );
   });
 
-  // 并发芯片（docs/dynamic-workflow/concurrency.md「What the user sees」）：芯片的数是一条界，字是
-  // 「最大并发数」；它与 Configure 同进同退——run 在跑时就地调小界，芯片出现；run 完成后芯片离开，
-  // 不再把一条已经没有东西在它下面跑的界挂成实时读数。
+  // Concurrency chip (docs/dynamic-workflow/concurrency.md, "What the user sees"): the chip's number is a bound and its
+  // label is "Max concurrency"; it comes and goes together with Configure — while the run is in flight, lowering the
+  // bound in place makes the chip appear; once the run completes the chip leaves, rather than keeping a bound with
+  // nothing running under it hung up as a live reading.
   it("并发芯片：在跑的 run 就地调小界后显示「最大并发数 N」，run 完成后芯片离开", async function () {
     this.timeout(180000);
 
     await prepareConversationE2E({ skipProvider: true });
 
-    // 1) 跑那条停留 running 的常量工作流（world.run sleep 40s），打开它的 run 侧板。
+    // 1) Run the constant workflow that stays running (world.run sleep 40s) and open its run side pane.
     await clickTestIdByDom(TID_AUTOMATIONS_OPEN, { timeoutMsg: "侧栏没有出现自动化入口" });
     await clickTestIdByDom(testId(TID_AUTOMATIONS_PAGE_TAB, "workflow"), {
       timeoutMsg: "自动化页标题没有「工作流」切换",
@@ -915,28 +940,29 @@ describe("直接启动 E2E", () => {
       timeoutMsg: "在跑的 run 侧板上没有 Configure",
     });
 
-    // 2) 跑在默认并发 D 上（没有自己的界）：没有芯片。
+    // 2) Running at the default concurrency D (no bound of its own): no chip.
     expect(await readTestIdText("workflow-run-concurrency")).toBeNull();
 
-    // 3) Configure → 步进器减一 → 应用：只改界、run 在跑，就地生效（不另起 run）。
+    // 3) Configure → stepper minus one → apply: only the bound changes while the run is in flight, taking effect in
+    //    place (no new run).
     await clickTestIdByDom("workflow-run-configure", { timeoutMsg: "Configure 不可点击" });
     await waitForTestIdByDom("workflow-run-settings-popover", {
       timeoutMsg: "点 Configure 后没有设置弹层",
     });
-    // 步进器停在默认并发 D = max(4, min(16, 核数 − 2)) 上，减一总有可调小的余地。
+    // The stepper sits at the default concurrency D = max(4, min(16, cores − 2)), so minus one always has room to go lower.
     const defaultBound = Number(await readTestIdText("workflow-run-settings-bound-value"));
-    // 还没改：没有后果句（改动之前念哪一句都可能说错）。
+    // Not yet changed: no consequence sentence (before the change, either sentence could read wrong).
     expect(await readTestIdText("workflow-run-settings-consequence")).toBe("");
     await clickTestIdByDom("workflow-run-settings-bound-decrease", {
       timeoutMsg: "设置弹层没有「降低最大并发数」",
     });
-    // 只改界、run 在跑：后果句是「就地生效」，不是「将停止当前运行」。
+    // Only the bound changed and the run is in flight: the consequence sentence is the "in-place" one, not "will stop the current run".
     expect(await readTestIdText("workflow-run-settings-consequence")).toMatch(
       /^(立即应用到当前运行，不会新起一次运行。|Applies to this run right away; no new run is started\.)$/,
     );
     await clickTestIdByDom("workflow-run-settings-apply", { timeoutMsg: "设置弹层没有「应用」" });
 
-    // 4) 芯片出现，字是界的字，数是调小后的界。
+    // 4) The chip appears, with the bound's label and the lowered bound as its number.
     await browser.waitUntil(
       async () => {
         const text = await readTestIdText("workflow-run-concurrency");
@@ -948,7 +974,7 @@ describe("直接启动 E2E", () => {
       { timeout: 30000, timeoutMsg: "就地调小界后 run 侧板没有出现「最大并发数 N」芯片" },
     );
 
-    // 5) run 跑完（sleep 结束）：Configure 与芯片一起离开。
+    // 5) The run finishes (sleep ends): Configure and the chip leave together.
     await browser.waitUntil(async () => (await readLaunchCardStatus()) === "completed", {
       timeout: 90000,
       timeoutMsg: "run 卡的状态没有跑到 completed",
@@ -966,7 +992,7 @@ describe("直接启动 E2E", () => {
 
     await prepareConversationE2E({ skipProvider: true });
 
-    // 1) 中枢「运行」无实参的项目档：点即跑，新会话顶部的 run 卡跑到 completed。
+    // 1) Hub "Run" on the arg-less project file: runs on click, and the run card at the top of the new session reaches completed.
     await clickTestIdByDom(TID_AUTOMATIONS_OPEN, { timeoutMsg: "侧栏没有出现自动化入口" });
     await clickTestIdByDom(testId(TID_AUTOMATIONS_PAGE_TAB, "workflow"), {
       timeoutMsg: "自动化页标题没有「工作流」切换",
@@ -983,7 +1009,8 @@ describe("直接启动 E2E", () => {
       timeoutMsg: "run 卡的状态没有跑到 completed",
     });
 
-    // 2) ⤢ 打开 run 侧板：从中枢启动的 run 按名字规则天然「已保存」——芯片在状态行，动词是「再次运行」。
+    // 2) ⤢ opens the run side pane: a run launched from the hub is naturally "Saved" by the name rule — the chip sits in
+    //    the status line and the verb is "Run again".
     await clickTestIdByDom("workflow-card-open-details", {
       timeoutMsg: "run 卡上没有「打开运行详情」",
     });
@@ -996,7 +1023,7 @@ describe("直接启动 E2E", () => {
       timeoutMsg: "run 侧板没有「再次运行」",
     });
 
-    // 3) 芯片直达中枢里那个工作流的详情页。
+    // 3) The chip deep-links into that workflow's detail page in the hub.
     await clickTestIdByDom("workflow-saved-chip", { timeoutMsg: "「已保存」芯片不可点击" });
     await waitForTestIdByDom(TID_WORKFLOW_DETAIL, {
       timeout: 20000,
@@ -1004,7 +1031,7 @@ describe("直接启动 E2E", () => {
     });
     expect((await readTestIdText(TID_WORKFLOW_DETAIL)) ?? "").toContain(LAUNCH_SAVE_NAME);
 
-    // 4) 在中枢把它删掉：中枢刷新会作废卡片的读缓存，这次 run 不再「已保存」。
+    // 4) Delete it in the hub: the hub refresh invalidates the card's read cache, so this run is no longer "Saved".
     await clickTestIdByWebDriver(TID_WORKFLOW_DETAIL_MENU, {
       timeoutMsg: "详情页没有「更多操作」菜单",
     });
@@ -1019,7 +1046,7 @@ describe("直接启动 E2E", () => {
       timeoutMsg: "删除后磁盘文件仍然存在",
     });
 
-    // 5) 回到发起它的会话，侧板上的动词翻回「保存」。
+    // 5) Back in the launching session, the side pane's verb flips back to "Save".
     const sessionTaskTestId = await browser.execute(
       (prefix, name) =>
         Array.from(document.querySelectorAll<HTMLElement>(`[data-testid^="${prefix}"]`)).find(
@@ -1039,7 +1066,7 @@ describe("直接启动 E2E", () => {
       timeoutMsg: "删掉工作流之后 run 侧板没有翻回「保存」",
     });
 
-    // 6) 「保存」→ 弹层 → 按原样直接保存：不经模型回合，写下的是这次 run 实际执行的那一份脚本。
+    // 6) "Save" → popover → save directly as-is: no model turn involved; what gets written is the exact script this run executed.
     await clickTestIdByDom("workflow-save-open", { timeoutMsg: "「保存」不可点击" });
     await waitForTestIdByDom("workflow-save-popover", { timeoutMsg: "点「保存」后没有弹层" });
     await setInputValueByTestIdDom("workflow-save-name", LAUNCH_SAVE_NAME, {
@@ -1054,7 +1081,7 @@ describe("直接启动 E2E", () => {
     expect(written.startsWith("/* zcode-workflow")).toBe(true);
     expect(written.endsWith(`*/\n${LAUNCH_SAVE_SCRIPT}`)).toBe(true);
 
-    // 7) 卡片立刻翻面：芯片回来，动词又是「再次运行」。
+    // 7) The card flips immediately: the chip returns and the verb is "Run again" again.
     await waitForTestIdByDom("workflow-saved-chip", {
       timeout: 20000,
       timeoutMsg: "直接保存后 run 侧板没有出现「已保存」芯片",
@@ -1070,7 +1097,7 @@ describe("直接启动 E2E", () => {
 
     await prepareConversationE2E({ skipProvider: true });
 
-    // 1) 中枢「运行」无实参的项目档：点即跑，run 发布一份 markdown 产物后 completed。
+    // 1) Hub "Run" on the arg-less project file: runs on click, the run publishes a markdown artifact, then completes.
     await clickTestIdByDom(TID_AUTOMATIONS_OPEN, { timeoutMsg: "侧栏没有出现自动化入口" });
     await clickTestIdByDom(testId(TID_AUTOMATIONS_PAGE_TAB, "workflow"), {
       timeoutMsg: "自动化页标题没有「工作流」切换",
@@ -1087,7 +1114,7 @@ describe("直接启动 E2E", () => {
       timeoutMsg: "run 卡的状态没有跑到 completed",
     });
 
-    // 2) ⤢ 打开 run 侧板 → 唯一的产物即主产物行 → 产物 tab，正文是 markdown。
+    // 2) ⤢ opens the run side pane → the only artifact is the primary artifact row → artifact tab, whose body is markdown.
     await clickTestIdByDom("workflow-card-open-details", {
       timeoutMsg: "run 卡上没有「打开运行详情」",
     });
@@ -1105,7 +1132,8 @@ describe("直接启动 E2E", () => {
       { timeout: 20000, timeoutMsg: "产物 tab 没有画出 markdown 正文" },
     );
 
-    // 3) 点「作为文件打开」：main 落副本，再经 shell.openPath 交给系统默认 App（这里被 mock 接住）。
+    // 3) Click "Open as file": main writes the copy, then hands it to the system default app via shell.openPath
+    //    (caught by the mock here).
     const openPath = await browser.electron.mock("shell", "openPath");
     await openPath.mockResolvedValue("");
     try {
@@ -1125,7 +1153,7 @@ describe("直接启动 E2E", () => {
       expect(openedPath!.endsWith(join("v1", `${LAUNCH_ARTIFACT_ID}.md`))).toBe(true);
       expect(await readFile(openedPath!, "utf-8")).toBe(LAUNCH_ARTIFACT_MARKDOWN);
 
-      // 4) 再点一次：同一版开的是同一个副本。
+      // 4) Click again: the same version opens the same copy.
       await clickTestIdByDom("workflow-artifact-open-as-file", {
         timeoutMsg: "产物 tab 头部没有「作为文件打开」",
       });

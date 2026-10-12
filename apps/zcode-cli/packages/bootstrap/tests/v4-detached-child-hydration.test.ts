@@ -1,17 +1,23 @@
-// detached live child（dwf workflow actor / subagent child）的首次订阅 hydration。
+// First-subscription hydration of a detached live child (dwf workflow actor / subagent child).
 //
-// Bug 根因（本文件的存在理由）：这类子会话没有自己的 bootstrap record——事件经
-// ingestDetachedLiveSession 走父 record 的 sink 路由。旧 loadPersistedEvents 用
-// context.sessions.get(childSessionId) 直取，取不到就返回 synthesized:false，
-// performHydration 因此走"保留健康 live publisher"早退分支，durable transcript 三源合并
-// 从不执行：只有本次 live 事件进入投影，任何**不以 live 事件形态出现**的持久正文全部丢失。
-// amend-resume 正是这种形态——它把前驱 actor 的 transcript 前缀直接复制进 session store
-// 来播种新 actor 会话（apps/zcode-cli/packages/dynamic-workflow/docs/execution-engine.md），侧栏于是只剩本轮增量。
+// Bug root cause (the reason this file exists): these child sessions have no bootstrap record of their own —
+// events reach the sink routing of the parent record via ingestDetachedLiveSession. The old loadPersistedEvents
+// used context.sessions.get(childSessionId) as a direct lookup and returned synthesized:false when it missed,
+// so performHydration took the early-exit branch that "keeps the healthy live publisher" and the durable
+// transcript three-source merge never ran: only this session's live events entered the projection, and any
+// persisted body **not appearing as a live event** was lost entirely.
+// amend-resume is exactly that shape — it copies the predecessor actor's transcript prefix straight into the
+// session store
+// to seed the new actor session (apps/zcode-cli/packages/dynamic-workflow/docs/execution-engine.md), leaving the
+// sidebar with only this round's increment.
 //
-// 覆盖面：
-//   1. child 无 record + 持久 parentID 指向 live 父 record → 播种前缀与 live 增量同时在投影里
-//   2. child 既无 record 又无法经 parentID 落到任何 record → 维持修复前行为（空、非合成）
-//   3. 自身有 record 的会话仍走直取 record，不被 parentID 回退改写
+// Coverage:
+//   1. Child with no record + a persisted parentID pointing at a live parent record → seeded prefix and live
+//      increment both visible in the projection
+//   2. Child with neither a record nor any record reachable via parentID → keeps the pre-fix behavior (empty,
+//      non-synthesized)
+//   3. A session with its own record still goes through the direct lookup, not overridden by the parentID
+//      fallback
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -123,7 +129,7 @@ async function saveAssistantTextMessage(
   });
 }
 
-/** amend-resume 的播种形态：前驱 transcript 前缀被直接复制进新 actor 会话的 store。 */
+/** The seeding shape of amend-resume: the predecessor's transcript prefix is copied straight into the new actor session's store. */
 async function seedActorTranscriptPrefix(
   store: TestSessionStore,
   sessionId: SessionId,
@@ -147,9 +153,10 @@ async function seedActorTranscriptPrefix(
 }
 
 /**
- * 只包含 loadPersistedEvents 真正触碰到的字段：共享 event store、artifact reader、
- * contextWindow 解析用的 runtime 模型选择（getSessionModelSelection） 与 workspace。其余能力留空即可，
- * 缺失时 gateway 的 seed 钩子对 child 一律返回 null（child 本就没有 record）。
+ * Only the fields loadPersistedEvents actually touches: the shared event store, the artifact reader,
+ * the runtime model selection used for contextWindow resolution (getSessionModelSelection), and the workspace.
+ * The rest can stay empty — when missing, the gateway's seed hook simply returns null for a child (a child has
+ * no record anyway).
  */
 function makeBackingRecord(eventStore: SessionEventStorePort): ZCodeProtocolSessionRecord {
   return {
@@ -157,10 +164,12 @@ function makeBackingRecord(eventStore: SessionEventStorePort): ZCodeProtocolSess
       readToolResultArtifact: async () => ({ content: "" }),
       runtime: {
         getSessionModelSelection: () => ({ providerId: "glm", modelId: "glm-4-air" }),
-        // listSessionSubagents 只在会话**自身**有 record 时读它（subagent 投影的 live 补充）；
-        // 这里没有 subagent，返回空投影即可。
-        // readSessionContextUsage（staging 6d4c3cc571 起在 loadPersistedEvents 里同步读容量种子）要读
-        // projection.contextWindow / contextUsed；给一份最小投影即可，子代理投影本就为空。
+        // listSessionSubagents only reads the record when the session **itself** has one (the live supplement
+        // of the subagent projection);
+        // there are no subagents here, so an empty projection suffices.
+        // readSessionContextUsage (since staging 6d4c3cc571, loadPersistedEvents reads the capacity seed
+        // synchronously) needs projection.contextWindow / contextUsed; a minimal projection suffices — the
+        // subagent projection is empty anyway.
         getProjection: async () => ({ contextUsed: 0, contextWindow: 200_000 }) as never,
       },
       sessionId: PARENT_SESSION_ID,
@@ -198,7 +207,7 @@ function makeContext(input: {
   return context;
 }
 
-/** child 的 live in-flight turn：TurnStarted 无终结事件 → cold merge 认定为内存权威轮次。 */
+/** The child's live in-flight turn: TurnStarted with no terminal event → the cold merge treats it as the in-memory authoritative turn. */
 async function ingestLiveTurn(
   gateway: ReturnType<typeof createConversationV4Gateway>,
   eventStore: SessionEventStorePort,
@@ -220,8 +229,10 @@ async function ingestLiveTurn(
     ),
   ];
   for (const event of events) {
-    // 生产形态：子 runtime 与父 runtime 共享 event store（按子 sessionId 归档），
-    // 同一条事件另经父 record 的外部 sink 路由到 gateway 的 detached live 通道。
+    // Production shape: the child runtime shares the event store with the parent runtime (archived under the
+    // child sessionId),
+    // and the same event is additionally routed to the gateway's detached live channel via the parent record's
+    // external sink.
     await eventStore.append(event);
     gateway.ingestDetachedLiveSession(sessionId, event);
   }
@@ -287,12 +298,12 @@ describe("v4 detached live child 的首次订阅 hydration", () => {
     await ingestLiveTurn(gateway, eventStore, CHILD_SESSION_ID, "live");
     const texts = await snapshotRowTexts(gateway, CHILD_SESSION_ID);
 
-    // 修复前这里只有 live 两行：播种前缀从不进入投影。
+    // Before the fix there were only the two live rows here: the seeded prefix never entered the projection.
     expect(texts).toContain("actor 播种提问");
     expect(texts).toContain("actor 播种回答");
     expect(texts).toContain("live 提问");
     expect(texts).toContain("live 增量");
-    // 顺序也必须是"播种前缀在前、live 轮次在后"。
+    // The order must also be "seeded prefix first, live turn after".
     expect(texts.indexOf("actor 播种回答")).toBeLessThan(texts.indexOf("live 增量"));
   });
 
@@ -303,7 +314,7 @@ describe("v4 detached live child 的首次订阅 hydration", () => {
     await seedActorTranscriptPrefix(store, CHILD_SESSION_ID, "orphan");
 
     const eventStore = createInMemorySessionEventStore();
-    // 注册表里只有一个与本 child 无关的会话：parentID 查不到常驻 record。
+    // The registry contains only a session unrelated to this child: the parentID finds no resident record.
     const sessions = new Map<string, ZCodeProtocolSessionRecord>([
       [PARENT_SESSION_ID, makeBackingRecord(eventStore)],
     ]);
@@ -319,7 +330,7 @@ describe("v4 detached live child 的首次订阅 hydration", () => {
 
   it("自身有 record 的会话仍直取自己的 record，不被 parentID 回退改写", async () => {
     await createSessionRow(PARENT_SESSION_ID);
-    // 该会话既有自己的 record，持久层又记着 parentID；直取必须优先。
+    // The session has both its own record and a persisted parentID; the direct lookup must win.
     await createSessionRow(CHILD_SESSION_ID, PARENT_SESSION_ID);
     await seedActorTranscriptPrefix(store, CHILD_SESSION_ID, "self");
 
@@ -333,8 +344,9 @@ describe("v4 detached live child 的首次订阅 hydration", () => {
     const gateway = createConversationV4Gateway(context);
     context.v4Gateway = gateway;
 
-    // 判别器：父 record 的 store 里放一条**只有走 parentID 回退才读得到**的伪造事件。
-    // 直取生效时它不该出现在投影里。
+    // Discriminator: put a fabricated event in the parent record's store that is **only readable via the
+    // parentID fallback**.
+    // When the direct lookup is in effect, it must not appear in the projection.
     await ingestLiveTurn(gateway, ownEventStore, CHILD_SESSION_ID, "live");
     const decoy = new EventLog(`${CHILD_SESSION_ID}-decoy`);
     await parentEventStore.append({

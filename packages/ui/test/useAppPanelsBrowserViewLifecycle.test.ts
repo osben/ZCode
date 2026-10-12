@@ -137,8 +137,9 @@ const WORKSPACE_KEY = "ssh://host/repo";
 const OTHER_WORKSPACE_KEY = "ssh://host/other";
 
 /**
- * 设置页是覆盖层，App 不卸载但 isWorkspaceVisible 会变 false。
- * 这个 helper 让用例能在渲染后切换该标志，覆盖“订阅是否被可见性误关”的场景。
+ * The settings page is an overlay: the App does not unmount but isWorkspaceVisible becomes
+ * false. This helper lets cases flip that flag after rendering, covering the scenario of
+ * "subscriptions being wrongly closed due to visibility".
  */
 function renderSettingsOverlayHook(initialIsWorkspaceVisible: boolean) {
   const harness = createBrowserViewPlatformHarness();
@@ -161,7 +162,7 @@ function renderSettingsOverlayHook(initialIsWorkspaceVisible: boolean) {
   return { ...harness, ...rendered };
 }
 
-/** side pane memory 按 workspace 隔离，切换 workspace 才能覆盖“通知落在非活跃 workspace”的场景。 */
+/** side pane memory is isolated per workspace; switching workspaces covers the scenario of "a notification landing in a non-active workspace". */
 function renderCrossWorkspaceHook() {
   const harness = createBrowserViewPlatformHarness();
   const rendered = renderHook(
@@ -502,12 +503,14 @@ describe("useAppPanels BrowserView lifecycle", () => {
     act(() => emitReady(readyPayload("tab-a")));
     expect(result.current.sidePaneState?.tabs.map((tab) => tab.id)).toEqual(["browser-use:tab-a"]);
 
-    // 用户切到另一个 workspace，原 workspace 的 side pane 状态被存入 memory。
+    // The user switches to another workspace; the original workspace's side pane state is saved into memory.
     act(() => rerender({ workspaceIdentity: OTHER_WORKSPACE_KEY }));
     expect(result.current.sidePaneState?.tabs ?? []).toEqual([]);
 
-    // Bug 回归：Agent 此刻关掉 tab-a，通知只带 tabId 时 renderer 只能在“当前活跃 workspace”里找，
-    // 找不到就静默丢弃；原 workspace 的持久化 memory 仍保留这个 tab，切回来就是关不掉的幽灵 tab。
+    // Bug regression: when the Agent closes tab-a at this moment, if the notification only
+    // carries tabId the renderer can only look inside the "currently active workspace", and
+    // silently drops it when not found; the original workspace's persisted memory keeps the
+    // tab, and switching back shows a ghost tab that cannot be closed.
     act(() =>
       emitClose({
         tabId: "tab-a",
@@ -527,13 +530,17 @@ describe("useAppPanels BrowserView lifecycle", () => {
     act(() => emitReady(readyPayload("tab-a")));
     expect(result.current.sidePaneState?.tabs.map((tab) => tab.id)).toEqual(["browser-use:tab-a"]);
 
-    // 修复后 main 会给每条通知都带上 owner scope，所以「没切 workspace 时 Agent 关 tab」这条
-    // 生产最常见路径也走带 workspaceKey 的分支。它必须落回活跃分支、同步更新当前 React state，
-    // 而不是绕进 memory 分支 —— 后者只改持久化状态，UI 上的 tab 不会消失，正是用户报的症状。
-    // 这条用例锁的是 renderer 侧的分支选择：payload.workspaceKey 与当前活跃 workspace 相同时，
-    // 必须判定为「当前 workspace」。注意它锁不住 main 侧 workspaceKey 的构造式 —— 这里的
-    // WORKSPACE_KEY 是硬编码值，而 main 只是把 renderer attach 时传过去的 key 原样回声。
-    // 字段拼装那一侧由 packages/desktop/test/browserCloseTabNotification.test.ts 守。
+    // After the fix, main attaches an owner scope to every notification, so the
+    // production-most-common path of "the Agent closes a tab while no workspace switch
+    // happened" also goes through the branch carrying workspaceKey. It must land in the
+    // active branch and update the current React state synchronously, instead of detouring
+    // into the memory branch — the latter only changes persisted state and the tab never
+    // disappears from the UI, which is exactly the symptom users reported.
+    // This case locks the renderer-side branch choice: when payload.workspaceKey equals the
+    // currently active workspace, it must be judged as "the current workspace". Note that it
+    // cannot lock how main constructs workspaceKey — the WORKSPACE_KEY here is a hardcoded
+    // value, and main merely echoes back the key the renderer passed at attach time.
+    // The field-assembly side is guarded by packages/desktop/test/browserCloseTabNotification.test.ts.
     act(() =>
       emitClose({
         tabId: "tab-a",
@@ -567,10 +574,13 @@ describe("useAppPanels BrowserView lifecycle", () => {
   });
 
   it("远程下打开链接创建的 human tab，关闭请求必须带上 remoteSessionId", async () => {
-    // Bug 回归（远程内置浏览器 tab 关不掉）：attach 侧用 `tab.remoteSessionId ?? workspaceRemoteSessionId`
-    // 兜底冻结了 main 侧 owner.remoteSessionId，close 侧却只取 tab.remoteSessionId。human tab 从不写该
-    // 字段，且 stamp 会跳过已带 ownerTaskId 的 tab，于是远程下 close payload 缺 remoteSessionId，
-    // main 判 scope 失配抛错，renderer 拿不到授权就永不移除 UI 壳 —— tab 永远关不掉。
+    // Bug regression (remote built-in browser tab cannot be closed): the attach side froze
+    // main's owner.remoteSessionId with the `tab.remoteSessionId ?? workspaceRemoteSessionId`
+    // fallback, while the close side only read tab.remoteSessionId. A human tab never writes
+    // that field, and the stamp skips tabs already carrying ownerTaskId, so under remote the
+    // close payload lacked remoteSessionId, main judged the scope mismatched and threw, the
+    // renderer never got authorization and never removed the UI shell — the tab could never
+    // be closed.
     const { emitOpenBrowserUrl, platform, result, unmount } = renderBrowserViewLifecycleHook();
 
     act(() => {
@@ -601,10 +611,10 @@ describe("useAppPanels BrowserView lifecycle", () => {
       remoteSessionId: "remote-a",
       sessionId: "sess-a",
     });
-    // 授权拿到后 UI 壳必须真的移除（tab 清空后 sidePaneState 本身会归空）。
-    expect((result.current.sidePaneState?.tabs ?? []).filter((tab) => tab.type === "browser")).toEqual(
-      [],
-    );
+    // Once authorization is obtained, the UI shell must actually be removed (after the tab is cleared, sidePaneState itself empties out).
+    expect(
+      (result.current.sidePaneState?.tabs ?? []).filter((tab) => tab.type === "browser"),
+    ).toEqual([]);
     unmount();
   });
 });

@@ -1,12 +1,15 @@
-// dwf run 的冷回放接缝（docs/dynamic-workflow/presentation.md）：
-// 父会话冷物化时，`app.replayDynamicWorkflowRuns` 交出的进度载荷被铸成 DynamicWorkflowRunProgress
-// 会话事件、前置到内存事件之前，经既有 cold merge（memory-only 权威）与同一个 reducer 落进
-// `workflowRuns`——重启后订阅拿到的快照里 run 与重启前一致。
+// Cold-replay seam for dwf runs (docs/dynamic-workflow/presentation.md):
+// when a parent session is cold-materialized, the progress payloads handed over by `app.replayDynamicWorkflowRuns`
+// are cast into DynamicWorkflowRunProgress session events, prepended before the in-memory events, and land in
+// `workflowRuns` through the existing cold merge (memory-only authority) and the same reducer — so the snapshot
+// subscribers receive after a restart matches what it was before the restart.
 //
-// 覆盖面：
-//   1. 父会话直接命中 record：回放载荷进投影，内存里已有的 runId 被交给 CLI 排除；
-//   2. 子会话经 parentID 回落到父 record：**不**补种（journal 按父会话建键）；
-//   3. 回放抛错：只记日志，冷开照常完成。
+// Coverage:
+//   1. Parent session hits the record directly: replay payloads enter the projection, and runIds already in memory
+//      are handed to the CLI as exclusions;
+//   2. Child session falls back to the parent record via parentID: **no** reseeding (the journal is keyed by the
+//      parent session);
+//   3. Replay throws: only logged, the cold start completes as usual.
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -44,7 +47,7 @@ function progress(
   return { runId, toolCallId: `call-${runId}`, sequence, eventType, payload };
 }
 
-/** 一条 run 从 journal 回放出来的载荷：started → 一个 ask 结算 → 用量 → settle。 */
+/** Payloads of one run replayed from the journal: started → one ask settles → usage → settle. */
 function replayedRun(
   runId: string,
   status: "completed" | "stopped",
@@ -100,8 +103,9 @@ function makeRecord(
       ...(replay === undefined ? {} : { replayDynamicWorkflowRuns: replay }),
       runtime: {
         getSessionModelSelection: () => ({ providerId: "glm", modelId: "glm-4-air" }),
-        // readSessionContextUsage（staging 6d4c3cc571 起在 loadPersistedEvents 里同步读容量种子）要读
-        // projection.contextWindow / contextUsed；给一份最小投影即可，子代理投影本就为空。
+        // readSessionContextUsage (since staging 6d4c3cc571 it reads the capacity seed synchronously inside
+        // loadPersistedEvents) needs projection.contextWindow / contextUsed; a minimal projection suffices, as the
+        // subagent projection is empty anyway.
         getProjection: async () => ({ contextUsed: 0, contextWindow: 200_000 }) as never,
       },
       sessionId: PARENT_SESSION_ID,
@@ -191,7 +195,8 @@ describe("v4 冷物化 · dwf run 的冷回放", () => {
   it("父会话：回放载荷经同一个 reducer 落进 workflowRuns；内存里已有的 runId 交给 CLI 排除", async () => {
     await createSessionRow(PARENT_SESSION_ID);
     const eventStore = createInMemorySessionEventStore();
-    // 本进程已收到过 dwfrun-live 的事件（暖物化）：它必须出现在排除集里、且不被回放覆盖。
+    // This process already received events for dwfrun-live (warm materialization): it must appear in the exclusion
+    // set and must not be overwritten by the replay.
     const liveEvents = replayedRun("dwfrun-live", "completed").slice(0, 2);
     let seq = 0;
     for (const payload of liveEvents) {
@@ -212,7 +217,8 @@ describe("v4 冷物化 · dwf run 的冷回放", () => {
 
     expect(excludeSeen).toEqual([["dwfrun-live"]]);
     const byId = new Map(workflowRuns?.runs.map((run) => [run.runId, run]));
-    // 回放出来的 run 与 live 归约同形：状态、步数、用量、resumable 位一个不少。
+    // A replayed run reduces into the same shape as a live one: status, node count, usage, and the resumable bit,
+    // none missing.
     expect(byId.get("dwfrun-old")).toMatchObject({
       status: "stopped",
       stopReason: "user",
@@ -224,7 +230,8 @@ describe("v4 冷物化 · dwf run 的冷回放", () => {
     expect(byId.get("dwfrun-old")?.actors).toHaveLength(1);
     expect(byId.get("dwfrun-done")).toMatchObject({ status: "completed" });
     expect(byId.get("dwfrun-done")?.resumable).toBeUndefined();
-    // 回放在前、内存事件在后：live run 仍是内存事件归约出的形态（running，只有 actor）。
+    // Replay first, in-memory events after: the live run still has the shape reduced from the in-memory events
+    // (running, only the actor).
     expect(byId.get("dwfrun-live")).toMatchObject({ status: "running" });
     expect([...byId.keys()]).toEqual(["dwfrun-old", "dwfrun-done", "dwfrun-live"]);
     expect(warnings.some((line) => line.includes("dynamic workflow replay failed"))).toBe(false);
@@ -244,8 +251,9 @@ describe("v4 冷物化 · dwf run 的冷回放", () => {
     const gateway = createConversationV4Gateway(context);
     context.v4Gateway = gateway;
 
-    // 生产形态（与 v4-detached-child-hydration 同）：子会话没有自己的 record，事件按子 sessionId
-    // 归档进父的 event store，另经父 record 的 sink 路由到 gateway 的 detached live 通道。
+    // Production shape (same as v4-detached-child-hydration): the child session has no record of its own; events
+    // are archived under the child sessionId into the parent's event store, and separately routed through the
+    // parent record's sink to the gateway's detached live channel.
     let seq = 0;
     for (const [type, payload, turnId] of [
       [SessionEventType.SessionCreated, { mode: "build", contextWindow: 200_000 }, undefined],

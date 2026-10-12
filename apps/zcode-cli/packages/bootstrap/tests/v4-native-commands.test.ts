@@ -1,6 +1,6 @@
-// L2：v4 原生命令执行器（sendText / stop）——验证自旧 server-operations 搬运的
-// 决策语义在原生层保真：steer 分流、draft 提升、ready 边界、goal-pause barrier。
-// 08-phasing M4 完成定义的 L2 层（命令 → core 调用 → 状态推进，不经旧协议代码）。
+// L2: v4 native command executor (sendText / stop) — verifies that the decision semantics moved over
+// from the old server-operations stay faithful at the native layer: steer routing, draft promotion, ready boundary, goal-pause barrier.
+// The L2 layer of 08-phasing M4's definition of done (command → core call → state advance, without going through old protocol code).
 import { SessionEventType, type SessionEvent } from "@zcode/contracts";
 import { describe, expect, it, vi } from "vitest";
 import type { CommandEnvelope } from "@zcode/shared/zcode-protocol-v4";
@@ -92,7 +92,7 @@ function envelope(type: string, payload: unknown): CommandEnvelope {
 }
 
 async function settle() {
-  // 后台 turn 是 void 起跑的微任务链，flush 两轮保证 finally 执行完。
+  // A background turn is a microtask chain started with void; two flush rounds ensure the finally blocks finish.
   await new Promise((r) => setTimeout(r, 0));
   await new Promise((r) => setTimeout(r, 0));
 }
@@ -405,7 +405,7 @@ describe("v4 原生 sendText", () => {
         }),
       }),
     );
-    // Core completion 后再执行 legacy cleanup；Bootstrap controller 从不参与 busy 判定。
+    // legacy cleanup runs after Core completion; the Bootstrap controller never participates in busy decisions.
     expect(record.activeAbortController).toBeUndefined();
     expect(host.legacyMutations).toEqual(["prompt_completed"]);
   });
@@ -481,7 +481,7 @@ describe("v4 原生 sendText", () => {
         requireQueue: true,
         intent: expect.objectContaining({
           highspeed: expect.objectContaining({ cardId: "card-1" }),
-          // 加速轮的 Selection 必须进 canonical intent，提升时不再回看会话模型。
+          // The highspeed turn's Selection must enter the canonical intent; promotion no longer looks back at the session model.
           modelSelection: {
             providerId: "account:bigmodel-highspeed-card",
             modelId: "GLM-5.3",
@@ -489,7 +489,7 @@ describe("v4 原生 sendText", () => {
         }),
       }),
     );
-    // 凭据不进队列事件，只按 (sessionId, sourceCommandId) 暂存在 CLI 进程内。
+    // Credentials do not go into queue events; they are only stashed in the CLI process by (sessionId, sourceCommandId).
     expect(retainQueuedTurnExecution).toHaveBeenCalledWith(
       "s1",
       "cmd-1",
@@ -624,8 +624,8 @@ describe("v4 原生 sendText", () => {
         }),
       }),
     );
-    // 入队时不下发 modelExecution（凭据只驻留内存），因此仍按普通轮做 Session 模型 preflight：
-    // 该输入被提升时若卡已过期会退回会话常驻 Selection，会话模型不可用必须在 admission 就暴露。
+    // modelExecution is not issued at enqueue time (credentials stay in memory only), so the Session model preflight still runs as for a normal turn:
+    // if the card has expired when this input is promoted, it falls back to the session's resident Selection; an unavailable session model must surface at admission.
     expect(host.ensureModelReady).toHaveBeenCalledWith(record);
     expect(retainQueuedTurnExecution).toHaveBeenCalledWith(
       "s1",
@@ -832,9 +832,9 @@ describe("v4 原生 sendText", () => {
       }),
     );
     expect(app.sendInput.mock.calls[0]?.[1]?.intent).not.toHaveProperty("highspeed");
-    // 定时执行身份优先：加速 Selection 与执行材料必须在 admission 前被整体丢弃。intent 仍会
-    // 固化本会话常驻 Selection（普通轮的通用行为），但绝不能是加速卡 Provider，否则本轮会
-    // 拿加速卡凭据发请求，或把普通输出持久化成 Highspeed 消息。
+    // Scheduled execution identity takes priority: the highspeed Selection and execution materials must be discarded wholesale before admission. The intent will still
+    // pin this session's resident Selection (the generic behavior of a normal turn), but it must never be the highspeed card Provider — otherwise this turn would
+    // send its request with highspeed card credentials, or persist ordinary output as a Highspeed message.
     expect(app.sendInput.mock.calls[0]?.[1]?.intent?.modelSelection).toEqual({
       providerId: "account:bigmodel-start-plan",
       modelId: "glm-5",
@@ -931,8 +931,8 @@ describe("v4 原生 sendText", () => {
         offPeakRunType: "resume",
       }),
     );
-    // D49 新增闲时自建限制、D52 追加 SendMessage/Workflow；不混入 automation 写工具集，
-    // Host 的额外 denylist 另行合并。
+    // D49 added the off-peak self-creation restriction, D52 added SendMessage/Workflow; do not mix in the automation write-tool set —
+    // the Host's extra denylist is merged separately.
     expect(app.sendInput.mock.calls[0]?.[1].toolDisallowlist).toEqual([
       "OffPeakCreate",
       "SendMessage",
@@ -1047,7 +1047,7 @@ describe("v4 原生 sendText", () => {
             ),
         },
       });
-      // UI 即使仍显示 busy，Core 的 idle 回执也不能被猜成一次抢占。
+      // Even if the UI still shows busy, Core's idle receipt must not be guessed into a preemption.
       const host = makeHost(makeRecord({ app }), { getInputRoutingMode: () => "enqueue" });
       await new V4CommandExecutor(host).execute(
         envelope("sendText", {
@@ -1397,9 +1397,9 @@ describe("v4 原生 sendText", () => {
   });
 
   it("restoreWarning 时序自愈：进程 Registry 已有可用模型 → 清告警放行", async () => {
-    // 场景：app 重启后冷恢复跑在 provider registry 推送之前，record 挂上「模型
-    // 不可解析」告警；registry 随后到达（宿主探针判可用），发送不得再被这个
-    // 过期的一次性标志永久拒绝。
+    // Scenario: after an app restart, cold restore runs before the provider registry push, so the record carries a "model
+    // unresolvable" warning; the registry arrives later (the host probe deems it usable) and sending must not be permanently
+    // rejected by this stale one-shot flag.
     const app = makeApp();
     const record = makeRecord({
       app,
@@ -1445,8 +1445,8 @@ describe("v4 原生 sendText", () => {
 
 describe("v4 原生 sendText：软门禁（soft gate）", () => {
   it("pending hooks 不阻塞 turn:prompt 直接 TurnStarted,pending hooks 被跳过", async () => {
-    // 软门禁:turn 永不停等审核。pending hooks 直接跳过(HookRunBlocked),
-    // turn 照常执行,经 WorkspaceHookAdmissionUpdated 事件写入 snapshot。
+    // Soft gate: a turn never waits for review. Pending hooks are skipped directly (HookRunBlocked),
+    // the turn runs as usual, and the snapshot is written via the WorkspaceHookAdmissionUpdated event.
     const app = makeApp();
     const record = makeRecord({ app });
     const host = makeHost(record);
@@ -1454,7 +1454,7 @@ describe("v4 原生 sendText：软门禁（soft gate）", () => {
     await new V4CommandExecutor(host).execute(envelope("sendText", { text: "hello" }));
     await settle();
 
-    // sendInput 被调用且 TurnStarted 被观察
+    // sendInput was called and TurnStarted was observed
     expect(app.sendInput).toHaveBeenCalledTimes(1);
     expect(record.activeAbortController).toBeUndefined();
   });
@@ -1478,7 +1478,7 @@ describe("v4 原生 sendText：软门禁（soft gate）", () => {
     await settle();
 
     expect(capturedOptions).toBeDefined();
-    // projection observer 已移除，Core admission ACK 不等待 TurnStarted。
+    // The projection observer has been removed; Core admission ACK does not wait for TurnStarted.
     expect(capturedOptions!.onEvent).toBeUndefined();
     expect(capturedOptions!.onTurnStartedObserved).toBeUndefined();
   });
@@ -1508,7 +1508,7 @@ describe("v4 原生 sendText：软门禁（soft gate）", () => {
 
     await vi.waitFor(() => expect(app.sendInput).toHaveBeenCalled());
     await flushMicrotasks();
-    // projection commit 完全不参与 admission；故意不 resolve 它。
+    // Projection commit does not participate in admission at all; deliberately never resolve it.
     await executing;
     expect(commandSettled).toBe(true);
     turnGate.resolve(undefined);
@@ -1518,7 +1518,7 @@ describe("v4 原生 sendText：软门禁（soft gate）", () => {
   it("回归：TurnStarted 后 projection 延迟时，第二条只产生一个 Core queue item", async () => {
     const admissions: Array<"started" | "queued"> = [];
     const runtime = {
-      // Bootstrap 不再查询 activeTurn；Core admission 自己持有 starting/active 状态。
+      // Bootstrap no longer queries activeTurn; Core admission holds the starting/active state itself.
       getActiveTurnInfo: vi.fn(),
     };
     const sendInput = vi.fn().mockImplementation(async () => {
@@ -1835,7 +1835,7 @@ describe("v4 原生 stop", () => {
 describe("supports 分流", () => {
   it("协议命令全部原生（回落面清零）；未知命令不 supports", () => {
     const executor = new V4CommandExecutor(makeHost(makeRecord()));
-    // 与 packages/shared/src/zcode-protocol-v4/command.ts 的 payload map 同步维护。
+    // Maintained in sync with the payload map in packages/shared/src/zcode-protocol-v4/command.ts.
     const allCommands = [
       "createSession",
       "sendText",

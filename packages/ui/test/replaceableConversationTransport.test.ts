@@ -1,9 +1,10 @@
-// ReplaceableConversationTransport 的无状态 query 转发面。
+// The stateless query forwarding surface of ReplaceableConversationTransport.
 //
-// 这个类是 pane 侧的**稳定身份**：远程 service proxy 换代时存量 pane 继续持有同一个对象，
-// 所以 ConversationTransport 每新增一个成员，这里都必须长出对应的转发方法。漏掉一个不会在
-// pane 侧炸得明显——那个 query 只是变成 undefined，功能静静地不存在。workflowRunEvents
-// （dwf run 事件日志分页）就漏过一次，所以它在这里有一条用例。
+// This class is the pane side's **stable identity**: when the remote service proxy changes generation, existing
+// panes keep holding the same object, so every new ConversationTransport member must grow a corresponding
+// forwarding method here. Missing one does not fail loudly on the pane side — that query simply becomes
+// undefined and the feature quietly does not exist. workflowRunEvents (the dwf run event-log paging) missed once,
+// which is why it has a case here.
 import { describe, expect, it, vi } from "vitest";
 import type {
   V4ConversationWorkflowRunEventsResult,
@@ -12,8 +13,9 @@ import type {
 import { ReplaceableConversationTransport } from "../src/v4/replaceableConversationTransport.js";
 import type { ConversationTransport } from "../src/v4/transport.js";
 
-// 桩只带 workflowRunEvents：这条转发是无状态的（不看订阅 ownership 映射），replace 也不碰
-// 接口的其余成员（订阅映射与监听器集合都是空的）。补齐一整张接口只会淹掉用例在测什么。
+// The stub only carries workflowRunEvents: this forwarding is stateless (it does not consult the subscription
+// ownership map) and replace touches none of the interface's other members (the subscription map and listener set
+// are empty). Filling in a whole interface would only drown out what the case is testing.
 function stubTransport(result: V4ConversationWorkflowRunEventsResult) {
   const workflowRunEvents = vi.fn(async () => result);
   return {
@@ -52,8 +54,8 @@ describe("ReplaceableConversationTransport workflowRunEvents", () => {
   });
 });
 
-// workflowRuns（dwf run 枚举，重启后的发现面）：与 workflowRunEvents 同一类漏接风险，
-// 接口新增成员时这里必须同步长出转发（文件头注释的通则）。
+// workflowRuns (dwf run enumeration, the post-restart discovery surface): the same missed-forwarding risk as
+// workflowRunEvents; when the interface gains a member, a forwarding method must grow here in sync (the file-header rule).
 function stubRunsTransport(result: V4ConversationWorkflowRunsResult) {
   const workflowRuns = vi.fn(async () => result);
   return {
@@ -98,15 +100,17 @@ describe("ReplaceableConversationTransport workflowRuns", () => {
   });
 });
 
-// dwf 用户面产物的三条读面（docs/dynamic-workflow/authoring.md）：与上面两条同一类漏接风险。
-// ⚠ 术语：artifact = 脚本经 `artifact.*` 发布给用户看的产出，不是 run 的顶层返回值。
+// The three read surfaces of dwf user-facing artifacts (docs/dynamic-workflow/authoring.md): the same
+// missed-forwarding risk as the two above.
+// ⚠ Terminology: artifact = an output the script published for the user to see via `artifact.*`, not the run's top-level return value.
 //
-// 这三条比前两条更值得钉：漏掉 workflowRunArtifactRead 的症状是"侧板上有卡片、点开是空的"，
-// 而不是一个显式的错误——卡片来自状态键投影（不经本类），字节才走 transport。
-describe("ReplaceableConversationTransport 用户面产物与脚本 transcript 的转发", () => {
+// These three are worth pinning even more than the previous two: missing workflowRunArtifactRead presents as "a
+// card on the side pane, empty when opened" rather than an explicit error — the card comes from the state-key
+// projection (not through this class) while only the bytes travel over the transport.
+describe("ReplaceableConversationTransport user-facing artifact and script transcript forwarding", () => {
   /**
-   * 三条一起测：每条各写一遍「原样转发 + replace 之后打新的」会是六个几乎一样的用例，
-   * 而真正要证明的只有一件事——**接口上的每个成员在这个稳定身份上都有一条转发**。
+   * All three tested together: writing "verbatim forwarding + hit the new one after replace" per method would be
+   * six nearly identical cases, while the single thing to prove is — **every member of the interface has a forwarding method on this stable identity**.
    */
   const cases = [
     {
@@ -152,8 +156,8 @@ describe("ReplaceableConversationTransport 用户面产物与脚本 transcript �
         nextOffset: null,
       },
     },
-    // 脚本 transcript 的两条读面（docs/dynamic-workflow/transcript-and-notifications.md「Two read queries」）：
-    // 与产物同一类漏接风险——清单漏了是「面板一直转圈」，正文漏了是「卡片展开是空的」。
+    // The two read surfaces of the script transcript (docs/dynamic-workflow/transcript-and-notifications.md "Two read queries"):
+    // the same missed-forwarding risk as artifacts — missing the list means "the panel spins forever", missing the body means "the card expands empty".
     {
       method: "workflowRunWorkspace" as const,
       params: { sessionId: "session-1", runId: "dwfrun-1" },

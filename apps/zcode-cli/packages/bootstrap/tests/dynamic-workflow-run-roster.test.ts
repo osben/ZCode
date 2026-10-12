@@ -1,10 +1,12 @@
-// 情势截面（docs/dynamic-workflow/launch.md「`GetWorkflowRun`」）的规则层：阶段表、子代理花名册、
-// 健康三组字段从「journal 事件 + 节点行 + actor 行 + 归约状态」派生出来的那一套判定。
+// The rules layer of the situation snapshot (docs/dynamic-workflow/launch.md "`GetWorkflowRun`"): the set of judgments
+// that derive the phase table, the subagent roster, and the three health field groups from
+// "journal events + node rows + actor rows + reduced state".
 //
-// 这里刻意不碰 SQLite、不起引擎：规则密度高（状态词的判定顺序、缺席的读法、时间的唯一来源），
-// 而真取数面在测试里贵得离谱。事件与行都手搓，归约状态则走生产那条铸造链（toProgressPayload →
-// reduceWorkflowRunsState）——它是 run 面板与冷回放共用的那一个，不另起一份。接线是否通了由
-// dynamic-workflow-run-service.test.ts 的真库用例证明。
+// This deliberately touches neither SQLite nor the engine: rule density is high (the decision order of status words,
+// the reading of absences, the single source of time), and the real data-fetching surface is prohibitively expensive
+// in tests. Events and rows are hand-built; the reduced state goes through the production minting chain
+// (toProgressPayload → reduceWorkflowRunsState) — the one shared by the run panel and cold replay, not a second copy.
+// Whether the wiring works is proven by dynamic-workflow-run-service.test.ts's real-database cases.
 import { describe, expect, it } from "vitest";
 import type {
   ActorRecord,
@@ -22,14 +24,14 @@ import { toProgressPayload } from "../src/app/dynamic-workflow-run-launch.js";
 import { buildWorkflowRunRoster } from "../src/app/dynamic-workflow-run-roster.js";
 
 const RUN_ID = "dwfrun-roster";
-/** 事件时刻的基准（2023-11-14T22:13:20Z），断言里一律写成 `T0 + 偏移`。 */
+/** The base instant of event times (2023-11-14T22:13:20Z); assertions always write `T0 + offset`. */
 const T0 = 1_700_000_000_000;
-/** 本次读的时刻：落在所有事件之后，于是上钳不生效，断言读的就是事件自己的时刻。 */
+/** The instant of this read: after all events, so the upper clamp never engages and the assertions read the events' own times. */
 const NOW = T0 + 600_000;
 
 type Entry = readonly [offset: number | undefined, event: RunEvent];
 
-/** 手搓事件轨：sequence 按顺序分配，`undefined` 偏移即「这条事件没有时间戳」（老 journal）。 */
+/** Hand-built event track: sequence allocated in order; an `undefined` offset means "this event has no timestamp" (old journal). */
 function evented(entries: readonly Entry[]): StoredEvent[] {
   return entries.map(([offset, event], index) => ({
     sequence: index + 1,
@@ -39,10 +41,11 @@ function evented(entries: readonly Entry[]): StoredEvent[] {
 }
 
 /**
- * 与生产同一条铸造链：事件 → 进度载荷 → run 面板同款归约状态。
+ * The same minting chain as production: events → progress payload → the run panel's exact reduced state.
  *
- * `ceiling` 是铸载荷那一刻的默认并发（线上键 `concurrencyCeiling`，只落在 `run-started` 上）。给了它，
- * 归约状态才认得出「这个 run 自己定过一条不同于默认的界」——并发健康面的两个数正是从那条界算的。
+ * `ceiling` is the default concurrency at payload-minting time (the wire key `concurrencyCeiling`, only landing on
+ * `run-started`). With it, the reduced state can recognize "this run set its own bound different from the default" —
+ * the two numbers of the concurrency health surface are computed from exactly that bound.
  */
 function reduceOf(events: readonly StoredEvent[], ceiling?: number): WorkflowRunState | undefined {
   let state: WorkflowRunsState | undefined;
@@ -87,14 +90,14 @@ function askRow(input: {
   };
 }
 
-// ── (a) 在飞的 run：四个子代理各在一种处境上 ──────────────────────────────────────
+// ── (a) An in-flight run: four subagents each in one situation ──────────────────────────────────────
 describe("情势截面 — 在飞的 run", () => {
   const events = evented([
     [0, { type: "run-started", runId: RUN_ID, caps: { maxConcurrency: 4 } }],
     [0, { type: "run-launched", inputId: "in-1", phaseNames: ["collect", "verify"] }],
     [1_000, { type: "phase-entered", name: "collect", ordinal: 1 }],
 
-    // ① scout：模型请求真的在跑，两条进度事件说明它还在动。
+    // ① scout: the model request is genuinely running; two progress events say it is still moving.
     [
       1_100,
       {
@@ -141,7 +144,7 @@ describe("情势截面 — 在飞的 run", () => {
     ],
     [2_110, { type: "usage-updated", spentTokens: 900 }],
 
-    // ② runner：在退避阶梯上，连发两条 node-waiting。
+    // ② runner: on the backoff ladder, emitting two node-waiting in a row.
     [
       3_000,
       {
@@ -188,7 +191,7 @@ describe("情势截面 — 在飞的 run", () => {
       },
     ],
 
-    // ③ asker：把问题升级给了主代理，停在那儿等答案。
+    // ③ asker: escalated its question to the main agent and is stopped there waiting for the answer.
     [
       6_000,
       {
@@ -224,7 +227,7 @@ describe("情势截面 — 在飞的 run", () => {
       },
     ],
 
-    // ④ idler：两次 ask 都结算完了，后一次是 replay 命中（没有 queued，settled 就是出生事件）。
+    // ④ idler: both asks settled; the latter was a replay hit (no queued, settled is its birth event).
     [
       7_000,
       {
@@ -259,7 +262,7 @@ describe("情势截面 — 在飞的 run", () => {
       },
     ],
 
-    // ⑤ run 级观察：闸门被限流压低，随后一段时间没有任何进度。
+    // ⑤ Run-level observation: the gate was pushed down by rate limiting, then no progress for a while.
     [
       10_000,
       {
@@ -331,7 +334,7 @@ describe("情势截面 — 在飞的 run", () => {
         ordinal: 1,
         actorSeq: 1,
         instructionsHead: "Read the release notes and list every regression you can name.",
-        // 开始时刻是 node-dispatched，不是 node-queued：排队不是开跑。
+        // The start instant is node-dispatched, not node-queued: queueing is not running.
         startedAt: T0 + 1_300,
         turn: 2,
         toolCalls: 5,
@@ -339,7 +342,7 @@ describe("情势截面 — 在飞的 run", () => {
       },
       stepsSettled: 0,
       tokens: 0,
-      // run 级的 usage-updated 不带实例，所以它不算在**这个**子代理头上。
+      // The run-level usage-updated carries no instance, so it does not count against **this** subagent.
       lastProgressAt: T0 + 2_100,
     });
   });
@@ -350,14 +353,14 @@ describe("情势截面 — 在飞的 run", () => {
       wait: {
         cause: "backoff",
         reason: "provider returned 429",
-        // 阶梯上第二条带来的是新的重试间隔，但「卡了多久」要从第一条算。
+        // The ladder's second entry brings a new retry interval, but "how long stuck" counts from the first one.
         retryAfterMs: 60_000,
         since: T0 + 4_000,
       },
     });
-    // 等待不是进度：最后一条进度仍是它开跑的那一刻。
+    // Waiting is not progress: the last progress is still the moment it started running.
     expect(subagentOf("agent#2")?.lastProgressAt).toBe(T0 + 3_300);
-    // 没有 node-progress 的 ask 上三个读数一律缺席，不给 0。
+    // On an ask without node-progress, all three readings are absent — never 0.
     const currentAsk = subagentOf("agent#2")?.currentAsk;
     expect(currentAsk).toBeDefined();
     expect("turn" in currentAsk!).toBe(false);
@@ -401,7 +404,7 @@ describe("情势截面 — 在飞的 run", () => {
 
   it("健康：停滞时刻是最后一条 run-stalled（其后没有进度），并发报的是「自己那条界里放行了几个」", () => {
     expect(roster.health).toEqual({
-      // 最后一条进度是 idler 的缓存结算；concurrency-changed 与 run-stalled 都不算进度。
+      // The last progress is idler's cached settlement; neither concurrency-changed nor run-stalled counts as progress.
       lastProgressAt: T0 + 7_400,
       stalledSince: T0 + 11_000,
       concurrency: { effective: 2, cap: 4, reason: "rate_limited", since: T0 + 10_000 },
@@ -412,7 +415,7 @@ describe("情势截面 — 在飞的 run", () => {
   });
 });
 
-// ── 进度的定义：脚本自己在动也算，等槽位不算 ────────────────────────────────────
+// ── Definition of progress: the script moving itself counts; waiting for a slot does not ────────────────────────────────────
 describe("情势截面 — 什么算进度", () => {
   function healthOf(events: readonly StoredEvent[]) {
     return buildWorkflowRunRoster({
@@ -427,8 +430,8 @@ describe("情势截面 — 什么算进度", () => {
   }
 
   it("停滞之后的一行 log 就把停滞清掉，并把最后进度推到那一刻：那是脚本在往前走", () => {
-    // 两次 ask 之间跑一串 world read 的脚本一条 ask 事件都不发，把 log 排除掉，
-    // 那段时间会被整个误报成停滞。
+    // A script that runs a batch of world reads between two asks sends no ask events at all; exclude log and that
+    // whole stretch would be misreported as stalled.
     const narrated = evented([
       [0, { type: "run-started", runId: RUN_ID, caps: { maxConcurrency: 4 } }],
       [1_000, { type: "run-stalled", sinceMs: 120_000, reason: "no turn resolved" }],
@@ -478,14 +481,14 @@ describe("情势截面 — 什么算进度", () => {
     ]);
     const health = healthOf(stuck);
     expect(health.stalledSince).toBe(T0 + 2_000);
-    // 最后一条真正的进度还是那次排队。
+    // The last real progress is still that queueing.
     expect(health.lastProgressAt).toBe(T0 + 1_000);
   });
 });
 
-// ── 并发健康面：两个数说的是「它自己那条界里放行了几个」 ──────────────────────────
+// ── Concurrency health surface: the two numbers say "how many it admitted within its own bound" ──────────────────────────
 describe("情势截面 — 并发", () => {
-  /** 本 run 定了 3，机器天花板 6；治理器把共享闸门压到 2。 */
+  /** This run set 3, the machine ceiling 6; the governor pressed the shared gate to 2. */
   const throttled = evented([
     [0, { type: "run-started", runId: RUN_ID, caps: { maxConcurrency: 3 } }],
     [
@@ -522,7 +525,7 @@ describe("情势截面 — 并发", () => {
   });
 
   it("跑满自己那条界的 run：整个 concurrency 字段缺席（在场即「正被限着」）", () => {
-    // 只有本 run 的上界低于天花板，共享闸门没动过 ⇒ effective === cap ⇒ 无话可说。
+    // Only this run's own bound is below the ceiling and the shared gate never moved ⇒ effective === cap ⇒ nothing to say.
     const unthrottled = evented([
       [0, { type: "run-started", runId: RUN_ID, caps: { maxConcurrency: 3 } }],
     ]);
@@ -530,7 +533,7 @@ describe("情势截面 — 并发", () => {
   });
 });
 
-// ── (b) 已完成的 run：完整阶段表 + 终态的三个状态词 ──────────────────────────────
+// ── (b) A completed run: the full phase table + the terminal state's three status words ──────────────────────────────
 describe("情势截面 — 已完成的 run", () => {
   const events = evented([
     [0, { type: "run-started", runId: RUN_ID, caps: { maxConcurrency: 4 } }],
@@ -590,7 +593,7 @@ describe("情势截面 — 已完成的 run", () => {
     [2_600, { type: "node-dispatched", instance: { siteId: "ask#2", ordinal: 2 } }],
     [2_700, { type: "node-settled", instance: { siteId: "ask#2", ordinal: 2 }, outcome: "failed" }],
 
-    // 回边：控制流又回了一趟 plan，然后才去 verify。
+    // Back edge: control flow went back into plan once more, then went to verify.
     [3_000, { type: "phase-entered", name: "plan", ordinal: 2 }],
     [4_000, { type: "phase-entered", name: "verify", ordinal: 1 }],
     [5_000, { type: "run-settled", status: "completed" }],
@@ -634,7 +637,7 @@ describe("情势截面 — 已完成的 run", () => {
       {
         name: "plan",
         state: "done",
-        // 进过两次；取的是第二次的时刻，而不是第一次。
+        // Entered twice; the second instant is taken, not the first.
         rounds: 2,
         nodesSettled: 1,
         nodesRunning: 0,
@@ -650,7 +653,7 @@ describe("情势截面 — 已完成的 run", () => {
         enteredAt: T0 + 2_000,
         exitedAt: T0 + 3_000,
       },
-      // 最后进入的阶段没有离开时刻；run 已终态，所以它也不是 current。
+      // The last-entered phase has no exit instant; the run is already terminal, so it is not current either.
       {
         name: "verify",
         state: "done",
@@ -669,12 +672,12 @@ describe("情势截面 — 已完成的 run", () => {
       { name: "builder", state: "failed", stepsSettled: 2, stepsFailed: 2, tokens: 30 },
     ]);
     expect(roster.health).toMatchObject({ consecutiveFailures: 2, cachedSteps: 0 });
-    // 没有遗留行，整个字段缺席（0 是噪音）。
+    // No leftover rows: the whole field is absent (0 is noise).
     expect("leftoverRunning" in roster.health).toBe(false);
   });
 });
 
-// ── (c) 被打断、且不在本会话手里的 run ─────────────────────────────────────────
+// ── (c) An interrupted run not held by this session ─────────────────────────────────────────
 describe("情势截面 — 被打断且查不到停驻表的 run", () => {
   const events = evented([
     [0, { type: "run-started", runId: RUN_ID, caps: { maxConcurrency: 4 } }],
@@ -703,7 +706,7 @@ describe("情势截面 — 被打断且查不到停驻表的 run", () => {
     nodes: [askRow({ siteId: "ask#1", actorSiteId: "agent#1", actorSeq: 1, status: "running" })],
     actors: [actorRow("agent#1", "worker")],
     status: "stopped",
-    // 停驻表查不到：run 归另一个进程，这次读分不出「没人在等」与「不知道」。
+    // The parked table is unreadable: the run belongs to another process, and this read cannot tell "nobody waiting" from "unknown".
     now: NOW,
   });
 
@@ -731,7 +734,7 @@ describe("情势截面 — 被打断且查不到停驻表的 run", () => {
   });
 });
 
-// ── (d) 老 journal：没有 node-progress、没有 instructionsHead、没有时间戳 ──────────
+// ── (d) Old journal: no node-progress, no instructionsHead, no timestamps ──────────
 describe("情势截面 — 老 journal", () => {
   const events = evented([
     [undefined, { type: "run-started", runId: RUN_ID, caps: { maxConcurrency: 4 } }],
@@ -772,7 +775,7 @@ describe("情势截面 — 老 journal", () => {
     expect("startedAt" in subagent.currentAsk!).toBe(false);
     expect("lastProgressAt" in roster.health).toBe(false);
     expect("enteredAt" in roster.phases![0]!).toBe(false);
-    // 一趟 JSON 往返兜住整棵树：任何 NaN 都会在这里变成 null 而被断言抓住。
+    // A JSON round-trip guards the whole tree: any NaN would turn into null here and be caught by the assertion.
     expect(JSON.stringify(roster)).not.toContain("null");
     expect(JSON.stringify(roster)).not.toContain("NaN");
   });

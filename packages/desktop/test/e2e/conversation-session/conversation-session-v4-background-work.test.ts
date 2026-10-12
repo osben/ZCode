@@ -1,11 +1,9 @@
-// M4 门禁：cancelBackgroundWork（v4 后台工作面板取消）。
-// 证据层 L3：首轮模型返回 run_in_background 的 Bash tool_use → 批准权限 → 后台 bash 启动
-// → BackgroundTaskStarted 事件 → reducer 填充 backgroundWorks → 后台工作面板显示 running →
-// 点取消 → cancelBackgroundWork 命令 → v4-bridge cancelBackgroundTask → 进程被杀 →
-// BackgroundTaskCompleted(cancelled) → 面板状态 cancelled。证明后台工作全链路。
-import {
-  clearAppData,
-} from "../helpers/desktop-app.js";
+// M4 gate: cancelBackgroundWork (v4 background work panel cancel).
+// Evidence layer L3: the first round's model returns a run_in_background Bash tool_use → approve the permission → background bash starts
+// → BackgroundTaskStarted event → reducer fills backgroundWorks → background work panel shows running →
+// click cancel → cancelBackgroundWork command → v4-bridge cancelBackgroundTask → process killed →
+// BackgroundTaskCompleted(cancelled) → panel state cancelled. Proves the full background work chain.
+import { clearAppData } from "../helpers/desktop-app.js";
 import {
   approveV4Permission,
   clickV4BackgroundWorkCancel,
@@ -30,16 +28,16 @@ describe("v4 M4 门禁：cancelBackgroundWork", () => {
     await prepareV4ConversationE2E();
     await setV4ElectronWindowSize(1280, 900);
 
-    // 首轮触发 run_in_background 的 Bash tool_use。若出现权限弹窗则批准（best-effort）。
+    // First round triggers a run_in_background Bash tool_use. If a permission dialog appears, approve it (best-effort).
     await sendV4Prompt("E2E_V4_BGWORK 起一个后台任务");
     try {
       await waitForV4PermissionDialog(15000);
       await approveV4Permission();
     } catch {
-      // 未出现权限弹窗（可能默认放行 bash）——直接等后台工作面板。
+      // No permission dialog appeared (bash may be allowed by default) — go straight to waiting for the background work panel.
     }
 
-    // Composer 入口先暴露当前 session 的 typed running count。
+    // The Composer entry first exposes the current session's typed running count.
     await browser.waitUntil(
       async () => {
         const counts = await getV4ComposerBackgroundWorkCounts();
@@ -54,7 +52,7 @@ describe("v4 M4 门禁：cancelBackgroundWork", () => {
       { timeout: 60000, timeoutMsg: "Composer 没有显示 running Bash typed count" },
     );
 
-    // 窄 Composer 合并为 Activity 总数；点击后 panel 使用 overlay 并直达 Running。
+    // A narrow Composer merges into the total Activity count; after clicking, the panel uses an overlay and lands directly on Running.
     await setV4ElectronWindowSize(480, 800);
     await browser.waitUntil(
       async () => {
@@ -89,7 +87,7 @@ describe("v4 M4 门禁：cancelBackgroundWork", () => {
     );
     expect(workId).toBeTruthy();
 
-    // 取消该后台工作 → command accepted/noop，running item 从 active 面板消失。
+    // Cancel that background work → command accepted/noop, the running item disappears from the active panel.
     const clicked = await clickV4BackgroundWorkCancel(workId);
     expect(clicked).toBe(true);
     await browser.waitUntil(
@@ -101,9 +99,9 @@ describe("v4 M4 门禁：cancelBackgroundWork", () => {
     );
     const ack = await getLatestV4CommandAck("cancelBackgroundWork");
     expect(["accepted", "noop"]).toContain(ack?.status);
-    await browser.waitUntil(
-      async () => (await getV4ComposerBackgroundWorkCounts()) === null,
-      { timeout: 30000, timeoutMsg: "最后一个 running task 收口后 Composer 入口仍存在" },
-    );
+    await browser.waitUntil(async () => (await getV4ComposerBackgroundWorkCounts()) === null, {
+      timeout: 30000,
+      timeoutMsg: "最后一个 running task 收口后 Composer 入口仍存在",
+    });
   });
 });

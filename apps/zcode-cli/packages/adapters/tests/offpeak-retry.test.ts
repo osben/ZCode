@@ -17,8 +17,9 @@ import { executeAdapterGenerateText, executeAdapterStreamText } from "./test-ada
 
 const TEST_QUEUE_PROVIDER_ID = "configured-queue-provider";
 
-// off-peak 排队协议（D24/D26）：429/3105 豁免重试预算无限探测；400/3102 稳定标记触发续跑。
-// 语义仅对 idle plan provider 生效，普通 provider 走既有预算——两侧都要有回归证明。
+// Off-peak queueing protocol (D24/D26): 429/3105 is exempt from the retry budget and probes without limit;
+// a 400/3102 stable marker triggers resumption. The semantics only apply to idle plan providers; ordinary
+// providers keep the existing budget — both sides need regression proof.
 
 function offPeakRegistryConfig() {
   return {
@@ -79,7 +80,7 @@ describe("off-peak 排队重试（generate 路径）", () => {
     const runtime: AiSdkModelRuntime = {
       async generateText() {
         calls += 1;
-        if (calls <= 4) throw queue429(0); // retry-after 0 秒：测试零等待
+        if (calls <= 4) throw queue429(0); // retry-after 0s: test with zero wait
         return {
           text: "done",
           finishReason: "stop",
@@ -91,7 +92,7 @@ describe("off-peak 排队重试（generate 路径）", () => {
         throw new Error("not used");
       },
     };
-    const adapter = makeAdapter(runtime, 2); // 预算仅 2 次
+    const adapter = makeAdapter(runtime, 2); // budget of only 2 attempts
     const result = await executeAdapterGenerateText(adapter, {
       providerId: TEST_QUEUE_PROVIDER_ID as never,
       modelId: "GLM-5.2" as never,
@@ -99,7 +100,7 @@ describe("off-peak 排队重试（generate 路径）", () => {
       messages: [{ role: "user", content: "ping" }],
     });
     expect(result.text).toBe("done");
-    expect(calls).toBe(5); // 4 次排队 + 1 次成功 > maxAttempts=2
+    expect(calls).toBe(5); // 4 queued + 1 success > maxAttempts=2
   });
 
   it("排队等待不吞真实错误预算：排队探测后出现真实 5xx 仍有完整预算", async () => {
@@ -107,7 +108,7 @@ describe("off-peak 排队重试（generate 路径）", () => {
     const runtime: AiSdkModelRuntime = {
       async generateText() {
         calls += 1;
-        if (calls <= 3) throw queue429(0); // 3 次排队（若计入预算，maxAttempts=3 已耗尽）
+        if (calls <= 3) throw queue429(0); // 3 queued (if counted against the budget, maxAttempts=3 would already be exhausted)
         if (calls === 4) {
           throw Object.assign(new Error("upstream 500"), {
             isRetryable: true,
@@ -179,7 +180,7 @@ describe("off-peak 排队重试（generate 路径）", () => {
         messages: [{ role: "user", content: "ping" }],
       }),
     ).rejects.toBeInstanceOf(Error);
-    expect(calls).toBe(2); // 预算如常
+    expect(calls).toBe(2); // budget as usual
   });
 });
 
@@ -194,7 +195,7 @@ describe("off-peak 排队重试（stream 路径）", () => {
         calls += 1;
         if (calls <= 3) {
           return {
-            // eslint-disable-next-line require-yield -- 模拟流启动即抛错
+            // eslint-disable-next-line require-yield -- simulate the stream throwing as soon as it starts
             fullStream: (async function* () {
               throw queue429(0);
             })(),
@@ -218,7 +219,7 @@ describe("off-peak 排队重试（stream 路径）", () => {
     })) {
       events.push(event);
     }
-    expect(calls).toBe(4); // 3 次排队 + 1 次成功 > maxAttempts=2
+    expect(calls).toBe(4); // 3 queued + 1 success > maxAttempts=2
     expect(events.some((e) => (e as { type: string }).type === "text_delta")).toBe(true);
   });
 
@@ -229,7 +230,7 @@ describe("off-peak 排队重试（stream 路径）", () => {
       },
       streamText() {
         return {
-          // eslint-disable-next-line require-yield -- 模拟流启动即抛错
+            // eslint-disable-next-line require-yield -- simulate the stream throwing as soon as it starts
           fullStream: (async function* () {
             throw ticketUnavailable();
           })(),
@@ -271,7 +272,8 @@ describe("resolveOffPeakFailureDecision 纯函数", () => {
         error: queue429(120),
       }),
     ).toEqual({ kind: "queued", delayMs: 120_000 });
-    // 小时级 Retry-After 被钳到 5 分钟（现有 MAX_REASONABLE 是拒绝阈值，此处必须是钳制，D24）
+    // An hour-scale Retry-After is clamped to 5 minutes (the existing MAX_REASONABLE is a rejection
+    // threshold; here it must be a clamp, D24)
     expect(
       resolveOffPeakFailureDecision({
         offPeak: true,

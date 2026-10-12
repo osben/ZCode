@@ -1,14 +1,14 @@
-// formal-proof 全枚举 ↔ 投影 guard 一致性（13-golden-test-mapping §结构性 8）。
-// packages/formal-proof/src/model.ts 的 evaluate 是可执行裁决表（02-projection「规则模块下沉」）；
-// 本测试机械对账：每个 coherent ProductContext × Candidate 组合的 Decision，
-// 必须与投影同源派生（computeAvailability / computeInputRouting）一致。
+// formal-proof full enumeration ↔ projection guard consistency (13-golden-test-mapping §structural 8).
+// packages/formal-proof/src/model.ts's evaluate is the executable decision table (02-projection "rule module sink");
+// this test mechanically reconciles: each coherent ProductContext × Candidate combination's Decision
+// must match the same-source derivation in the projection (computeAvailability / computeInputRouting).
 //
-// 对账面（v4 A 区可观测量，10 §4.2.2）：
-//   compact / slashCompact → availability.compact（含 reasonCode ↔ ruleId 映射）
-//   sendText / setGoal     → inputRouting.mode（allow→startNow / enqueue→enqueue / reject→reject）
-// 不在对账面的候选：
-//   forkLatest/forkOld/editLatest/editOld —— 行级动作（RowActions §4.4.1），M3 rows guard 接线时对账；
-//   system 候选 —— 状态推进由 reducer 事件流黄金测试覆盖（product-projection.test.ts）。
+// Reconciliation surface (v4 zone A observables, 10 §4.2.2):
+//   compact / slashCompact → availability.compact (including the reasonCode ↔ ruleId mapping)
+//   sendText / setGoal     → inputRouting.mode (allow→startNow / enqueue→enqueue / reject→reject)
+// Candidates outside the reconciliation surface:
+//   forkLatest/forkOld/editLatest/editOld — row-level actions (RowActions §4.4.1), reconciled when M3 wires the rows guard;
+//   system candidates — state progression covered by the reducer event-stream golden tests (product-projection.test.ts).
 import { describe, expect, it } from "vitest";
 import {
   evaluate,
@@ -25,7 +25,7 @@ import {
   type AvailabilityContext,
 } from "../src/zcode-protocol-v4/index.js";
 
-// ── ProductContext（formal-proof 词表）→ AvailabilityContext（v4 guard 输入面）──
+// ── ProductContext (formal-proof vocabulary) → AvailabilityContext (v4 guard input surface) ──
 
 const RUN_PHASES = ["idle", "running", "completed", "compacting", "goalVerifying"] as const;
 const QUEUES = ["empty", "text", "goal", "compact", "mixed"] as const;
@@ -54,28 +54,28 @@ function toAvailabilityContext(context: ProductContext): AvailabilityContext {
     compacting: context.runPhase === "compacting",
     goalVerifying: context.runPhase === "goalVerifying",
     queueLength: context.queue === "empty" ? 0 : 1,
-    // formal-proof 无 autoDrain 维度；不变量：completed 下滞留的 queue 只可能是
-    // autoDrain=false 的 held queue（autoDrain=true 时 assistantComplete 即消费）。
+    // formal-proof has no autoDrain dimension; invariant: a queue lingering under completed can only be a held
+    // queue with autoDrain=false (with autoDrain=true, assistantComplete consumes it immediately).
     autoDrain: context.queue === "empty",
   };
 }
 
-// coherent 剪枝：goal=verifying ⇔ runPhase=goalVerifying（其余组合事件流不可达，
-// 由 feature-boundary 剪枝规则背书，非本测试对账对象）。
+// Coherent pruning: goal=verifying ⇔ runPhase=goalVerifying (the other combinations are unreachable by the event
+// stream, backed by the feature-boundary pruning rules; not a reconciliation target of this test).
 function isCoherent(context: ProductContext): boolean {
   return (context.runPhase === "goalVerifying") === (context.goal === "verifying");
 }
 
-// 裁决差异表（显式登记，禁止静默跳过）：
-//   justCompactedNoNeed —— v4 裁决：compact 保持可点击，noop 由 compact marker 表达
-//   （10 §4.4.7 noop 状态；G 组黄金测试已覆盖），availability 不禁用。
+// Decision divergence table (explicitly registered; silent skipping is forbidden):
+//   justCompactedNoNeed — v4 decision: compact stays clickable, the noop is expressed by the compact marker
+//   (10 §4.4.7 noop state; covered by the group G golden tests); availability does not disable it.
 const DECISION_OVERRIDES = new Set(["justCompactedNoNeed"]);
 
-// formal-proof ruleId → product-protocol guard reasonCode（09 §词表）。
+// formal-proof ruleId → product-protocol guard reasonCode (09 §vocabulary).
 const REASON_CODE_BY_RULE_ID: Record<string, string> = {
   compactingCannotCompact: "compactOperationLock",
   idleCannotCompact: "idleCannotCompact",
-  // 2026-07-05 重裁决：compacting 输入 enqueue（原 compactingCannotSend reject 已废弃）。
+  // 2026-07-05 re-decision: input enqueues while compacting (the old compactingCannotSend reject is deprecated).
   compactingAcceptsFutureInput: "compactingAcceptsFutureInput",
   goalVerifierAcceptsFutureInput: "goalVerifierAcceptsFutureInput",
   heldQueueInputRequiresChoice: "heldQueueInputRequiresChoice",
@@ -122,15 +122,15 @@ describe("formal-proof 全枚举 ↔ guard 同源派生一致", () => {
       for (const candidateId of ["compact", "slashCompact"]) {
         const decision = evaluate(context, candidateById(candidateId));
         if (DECISION_OVERRIDES.has(decision.ruleId)) {
-          // 裁决差异：见 DECISION_OVERRIDES 注释。
+          // Decision divergence: see the DECISION_OVERRIDES comment.
           expect(availability.compact.allowed).toBe(true);
           checked += 1;
           continue;
         }
         const label = `${JSON.stringify(context)} × ${candidateId} → ${decision.ruleId}`;
         if (decision.kind === "allow" || decision.kind === "enqueue") {
-          // compact enqueue 与立即执行共享同一个可用入口；真正的 route 由命令 admission
-          // 读取 inputRouting/held queue 决定，availability 只表达是否允许提交该意图。
+          // compact enqueue and immediate execution share the same availability entry; the real route is decided by
+          // command admission reading inputRouting/held queue — availability only expresses whether submitting the intent is allowed.
           expect(availability.compact, label).toEqual({ allowed: true });
         } else if (decision.kind === "reject") {
           const reasonCode = REASON_CODE_BY_RULE_ID[decision.ruleId];
@@ -145,7 +145,7 @@ describe("formal-proof 全枚举 ↔ guard 同源派生一致", () => {
         checked += 1;
       }
     }
-    // 全枚举非空防呆：coherent 上下文 × 2 候选应达千级组合。
+    // Non-empty enumeration sanity: coherent contexts × 2 candidates should reach the thousands of combinations.
     expect(checked).toBeGreaterThan(3000);
   });
 
@@ -160,7 +160,7 @@ describe("formal-proof 全枚举 ↔ guard 同源派生一致", () => {
           expect(routing.mode, label).toBe("startNow");
         } else if (decision.kind === "enqueue") {
           expect(routing.mode, label).toBe("enqueue");
-          // 维护/验证 work 入队必须带 reasonCode（催化 UI 提示「忙态中，已入队」）。
+          // Maintenance/verification work enqueues must carry a reasonCode (drives the UI hint "busy, queued").
           if (
             decision.ruleId === "compactingAcceptsFutureInput" ||
             decision.ruleId === "goalVerifierAcceptsFutureInput"
@@ -168,15 +168,15 @@ describe("formal-proof 全枚举 ↔ guard 同源派生一致", () => {
             expect(routing.reasonCode, label).toBe(REASON_CODE_BY_RULE_ID[decision.ruleId]);
           }
         } else if (decision.kind === "choice") {
-          // heldQueueInputRequiresChoice（2026-07-05 裁决）：held 输入让用户裁决。
+          // heldQueueInputRequiresChoice (2026-07-05 decision): held input lets the user decide.
           expect(routing.mode, label).toBe("choice");
           expect(routing.reasonCode, label).toBe(REASON_CODE_BY_RULE_ID[decision.ruleId]);
         } else if (decision.kind === "reject") {
           expect(routing.mode, label).toBe("reject");
           expect(routing.reasonCode, label).toBe(REASON_CODE_BY_RULE_ID[decision.ruleId]);
         } else if (decision.kind === "undefined") {
-          // formal-proof 未定义区：不作为一致性断言对象；登记数量防呆
-          // （膨胀说明规则被删）。
+          // formal-proof undefined region: not a consistency assertion target; count sanity
+          // (swelling means a rule was deleted).
           checked -= 1;
         } else {
           throw new Error(`send 候选出现未预期裁决种类：${label}`);
@@ -188,7 +188,7 @@ describe("formal-proof 全枚举 ↔ guard 同源派生一致", () => {
   });
 });
 
-// ── reducer 落地对账：五个 runPhase 原型经真实事件流构造，guard 与裁决表一致 ──
+// ── Reducer grounding reconciliation: five runPhase archetypes built from real event streams, guard matching the decision table ──
 
 describe("formal-proof 原型 ↔ reducer 事件流投影一致", () => {
   let eventSeq = 0;
@@ -371,16 +371,16 @@ describe("formal-proof 原型 ↔ reducer 事件流投影一致", () => {
       ),
     ]);
     const snapshot = projection.getSnapshot();
-    // stopKeepsQueueAndDisablesAutoDrain：queue 原样保留 + 不自动消费。
+    // stopKeepsQueueAndDisablesAutoDrain: the queue is preserved as-is + no automatic consumption.
     expect(snapshot.queue.items).toHaveLength(1);
     expect(snapshot.queue.autoDrain).toBe(false);
-    // heldQueueInputRequiresChoice（2026-07-05 裁决）：不静默入队，让用户裁决。
+    // heldQueueInputRequiresChoice (2026-07-05 decision): do not enqueue silently; let the user decide.
     expect(snapshot.inputRouting).toEqual({
       mode: "choice",
       reasonCode: "heldQueueInputRequiresChoice",
     });
 
-    // held 消解路径之一：queue 清空后回到 startNow（choice=clearQueueAndSend 的投影面）。
+    // One of held's resolution paths: once the queue empties, back to startNow (the projection face of choice=clearQueueAndSend).
     projection.applyEvent(
       makeEvent(
         SessionEventType.TurnSteerDiscarded,

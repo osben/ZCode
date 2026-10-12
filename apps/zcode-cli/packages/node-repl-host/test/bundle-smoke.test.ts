@@ -18,16 +18,16 @@ type ProbeResult = {
   stdout: string;
 };
 
-// Bug 原因：node_repl 的 MCP server 是 CLI spawn 的独立 stdio 子进程，plugin host 通过
-// `await import(pathToFileURL(dist/mcp/server.js))` 加载它。之前所有测试都跑在 TS 源码上，
-// 没有任何一条覆盖"打出来的 bundle 能不能被 import"，所以 2026-07-27 这次 ESM bundle 里
-// yaml 的 require("process") 命中 esbuild 抛错版 __require shim、加载即崩，
-// 从 lint 到单测到 CI 全绿通过，最后是用户发现 mcp__node_repl__js 工具整个消失。
-// 这个 smoke test 直接构建真实产物并在子进程里 import 一次，把"加载期崩溃"挡在提交之前。
+// Bug cause: the node_repl MCP server is a separate stdio child process spawned by the CLI, loaded by the
+// plugin host via `await import(pathToFileURL(dist/mcp/server.js))`. All prior tests ran against TS sources,
+// and none covered "whether the built bundle can be imported", so the 2026-07-27 ESM bundle's
+// yaml require("process") hit the esbuild throwing __require shim and crashed at load,
+// passing lint, unit tests, and CI all green until the user noticed the mcp__node_repl__js tool had disappeared entirely.
+// This smoke test builds the real artifact and imports it once in a child process, catching "load-time crashes" before commit.
 const runBundleProbe = (bundlePath: string): Promise<ProbeResult> => {
-  // 用 --input-type=module -e 而不是直接执行文件：import 时 process.argv[1] 为空，
-  // server.ts 的"直接执行"分支不会被触发，因此不会真的起一个 stdio server 挂住子进程，
-  // 但模块求值路径（也就是崩溃发生的地方）与真实 plugin host 完全一致。
+  // Use --input-type=module -e instead of executing the file directly: on import, process.argv[1] is empty,
+  // so server.ts's "direct execution" branch is not triggered and no stdio server actually starts and hangs the child process,
+  // while the module evaluation path (where the crash happened) is identical to the real plugin host.
   const probeSource = [
     `const bundle = await import(${JSON.stringify(pathToFileURL(bundlePath).href)});`,
     "process.stdout.write(typeof bundle.main);",
@@ -63,9 +63,9 @@ describe("node_repl host and browser-use runtime bundles", () => {
 
   beforeAll(async () => {
     outputDirectory = await mkdtemp(join(tmpdir(), "zcode-node-repl-bundle-"));
-    // 宿主产物由本包构建；browser-client 仍由 browser-use 构建。两个 bundle 都是 ESM，
-    // 都可能被 CJS 依赖在加载期炸掉，所以一起 smoke。
-    // 临时目录不在 type=module package 下；用 .mjs 保证直接 spawn 与正式 .js 产物语义一致。
+    // The host bundle is built by this package; browser-client is still built by browser-use. Both bundles are ESM,
+    // and both can be blown up at load time by CJS dependencies, so smoke them together.
+    // The temp directory is not inside a type=module package; use .mjs so a direct spawn matches the official .js artifact semantics.
     const [host, browser] = await Promise.all([
       buildNodeReplHostBundle({ outfile: join(outputDirectory, "mcp", "server.mjs") }),
       buildBrowserUsePluginBundles({
@@ -87,13 +87,13 @@ describe("node_repl host and browser-use runtime bundles", () => {
     async () => {
       const probe = await runBundleProbe(mcpOutfile);
 
-      // 断言 stderr 是为了失败时能直接看到崩溃原因，而不是只看到一个 exit code。
+      // Asserting on stderr is so that, on failure, the crash cause is directly visible instead of just an exit code.
       expect(probe.stderr).not.toContain("Dynamic require of");
       expect({ exitCode: probe.exitCode, stderr: probe.stderr }).toEqual({
         exitCode: 0,
         stderr: "",
       });
-      // plugin host 要求 runtime bundle 显式导出 main()，缺失时 MCP 握手前就会退出。
+      // The plugin host requires the runtime bundle to explicitly export main(); without it the process exits before the MCP handshake.
       expect(probe.stdout).toBe("function");
     },
     buildTimeoutMs,
@@ -174,14 +174,15 @@ describe("node_repl host and browser-use runtime bundles", () => {
   );
 
   it("guards its CLI entry with pathToFileURL so Windows actually builds", async () => {
-    // Bug 原因（2026-09-12，CI build:windows:x64）：入口守卫原先写成
-    // `import.meta.url === \`file://${process.argv[1]}\``。Windows 上 argv[1] 是
-    // `C:\\...\\build.mjs`，而 import.meta.url 是 `file:///C:/.../build.mjs`，两者永远不相等 ——
-    // 脚本被当成纯模块导入、什么都不做就退出，构建"成功"却没有产物，直到 dev 守卫报
-    // 「build succeeded without required MCP runtime」才暴露。
+    // Bug cause (2026-09-12, CI build:windows:x64): the entry guard was originally written as
+    // `import.meta.url === \`file://${process.argv[1]}\``. On Windows argv[1] is
+    // `C:\\...\\build.mjs` while import.meta.url is `file:///C:/.../build.mjs`, so they never compare equal —
+    // the script was treated as a plain module import and exited without doing anything, the build "succeeded"
+    // with no artifact, and it only surfaced when the dev guard reported
+    // "build succeeded without required MCP runtime".
     const source = await readFile(new URL("../scripts/build.mjs", import.meta.url), "utf8");
     expect(source).toContain("pathToFileURL");
-    // 字符串拼接的形态一旦回来，Windows 会再次静默不产出。只看代码行（注释里留了反例说明）。
+    // If the string-concatenation form ever comes back, Windows would silently produce nothing again. Only look at code lines (a counterexample is kept in a comment).
     const codeLines = source
       .split("\n")
       .filter((line) => !line.trimStart().startsWith("//"))
@@ -200,16 +201,16 @@ describe("node_repl host and browser-use runtime bundles", () => {
     }
   });
 
-  // 构建期守卫本身也要有测试：define 名漂移时必须**构建失败**，而不是静默产出空串 ——
-  // 后者的症状只在正式包出现，且表现为超时，没有任何日志。
+  // The build-time guard itself needs tests: if the define name drifts, the build must **fail**, not silently emit an empty string —
+  // the latter's symptom only appears in the official package and manifests as a timeout with no logs at all.
   it("fails the build when the injected build id does not reach the output", async () => {
     const outfile = join(outputDirectory, "mcp", "server.guard.mjs");
-    // 用一个不可能出现在产物里的值：走完整构建后守卫应当抛错。
-    // 这里通过临时改写 define 名不现实，所以直接验证守卫的判据 —— 产物必须包含该值。
+    // Use a value that cannot appear in the artifact: after a full build, the guard should throw.
+    // Temporarily rewriting the define name is impractical here, so verify the guard's criterion directly — the artifact must contain the value.
     const source = await readFile(new URL("../scripts/build.mjs", import.meta.url), "utf8");
     expect(source).toContain("__ZCODE_CUA_HELPER_BUILD_ID__");
     expect(source).toMatch(/未折叠进|did not reach/u);
-    // 并确认守卫只在 buildId 非空时生效（dev 空串不应让构建失败）。
+    // Also confirm the guard only applies when buildId is non-empty (the dev empty string must not fail the build).
     const devResult = await buildNodeReplHostBundle({ outfile, cuaHelperBuildId: "" });
     expect(devResult.cuaHelperBuildId).toBe("");
   }, buildTimeoutMs);

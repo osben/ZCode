@@ -1,15 +1,15 @@
-// Catalog 派生 case 全集 —— L1 黄金测试（M2 收尾，13-golden-test-mapping §Catalog 分组映射）。
-// 产品语义来源：docs/conversation-session-case-catalog.md；测试名携带 catalog case id，
-// 供 coverage matrix 审计脚本对账。形态：事件序列进 → ProductProjection → 投影断言出。
+// Full set of Catalog-derived cases — L1 golden tests (M2 wrap-up, 13-golden-test-mapping §Catalog group mapping).
+// Product semantics source: docs/conversation-session-case-catalog.md; test names carry the catalog case id
+// so the coverage matrix audit script can reconcile them. Shape: event sequence in → ProductProjection → projection assertions out.
 //
-// 本文件只收 L1 可证明面（phase / queue / availability / inputRouting / marker / rows 结构）。
-// 显式不在本文件（登记去向，防止静默漏测）：
-//   A10/K03/K10（latestQueryEditPreemptsActiveTurn / latestQueryEditOnly / latestAssistantRetryOnly）、K06/K07（fork/edit 目标行剪枝）、B08-B10（queue 命令操作）
-//     —— 行级 RowActions 与 command 接线属 M3，接线时以 command→投影断言补齐；
-//   D/E 组 —— edit rewind 与 fork child 投影需要 command inbox + 跨 session 构造，M3；
-//   I/N 组 —— config CAS 消费在 command 侧，M3；
-//   J 组隔离 —— fault 隔离已由 conversation-topic-publisher 测试覆盖双实例互不影响；
-//   O/P/Q/R 组 —— 工具 UI 复杂度 / 折叠交互 / 弹窗 / composer 草稿是 L3 主场。
+// This file only covers the L1 provable surface (phase / queue / availability / inputRouting / marker / rows structure).
+// Explicitly not in this file (destinations registered to prevent silent test gaps):
+//   A10/K03/K10 (latestQueryEditPreemptsActiveTurn / latestQueryEditOnly / latestAssistantRetryOnly), K06/K07 (fork/edit target-row pruning), B08-B10 (queue command operations)
+//     — row-level RowActions and command wiring belong to M3; when wired, fill in with command→projection assertions;
+//   D/E groups — edit rewind and fork child projection need the command inbox + cross-session construction, M3;
+//   I/N groups — config CAS consumption is on the command side, M3;
+//   J group isolation — fault isolation (two instances not affecting each other) is already covered by conversation-topic-publisher tests;
+//   O/P/Q/R groups — tool UI complexity / collapse interactions / dialogs / composer drafts are L3 territory.
 import { describe, expect, it } from "vitest";
 import type {
   EventId,
@@ -22,7 +22,7 @@ import type {
 import { SessionEventType } from "@zcode/contracts";
 import { ProductProjection, computeInputRouting } from "../src/zcode-protocol-v4/index.js";
 
-// ── 事件序列构造器（与 product-projection.test.ts 同构的精简版）──
+// ── Event sequence builder (slimmed-down version isomorphic to product-projection.test.ts) ──
 
 class EventLog {
   private seq = 0;
@@ -155,7 +155,7 @@ function compactMarkers(projection: ProductProjection) {
     );
 }
 
-// ── A 组：首发和运行中输入 ──
+// ── Group A: first-send and in-running input ──
 
 describe("catalog A 组：首发和运行中输入", () => {
   it("A01：draft 输入 startNow；首发后进入 running", () => {
@@ -199,7 +199,7 @@ describe("catalog A 组：首发和运行中输入", () => {
     for (const [index, text] of texts.entries()) {
       const extra = new EventLog();
       extra.steerQueued("turn-1", `pi-${index + 1}`, text);
-      // 借同一 projection 连续喂事件（seq 由断言侧忽略）。
+      // Feed events into the same projection in sequence (seq is ignored by the assertion side).
       projection.applyEvent({
         ...extra.events[0],
         sequenceNumber: 100 + index,
@@ -207,7 +207,7 @@ describe("catalog A 组：首发和运行中输入", () => {
       expect(projection.getSnapshot().queue.items).toHaveLength(index + 1);
     }
     expect(projection.getSnapshot().queue.items.map((item) => item.text)).toEqual(texts);
-    // running + queue>0 仍是 enqueue（held 只在 completed 下派生）。
+    // running + queue>0 is still enqueue (held is only derived under completed).
     expect(projection.getSnapshot().inputRouting.mode).toBe("enqueue");
   });
 
@@ -216,7 +216,7 @@ describe("catalog A 组：首发和运行中输入", () => {
     log.created();
     log.turnStarted("turn-1");
     const snapshot = project(log).getSnapshot();
-    // /goal 与普通文本同一 inputRouting 裁决面（kind=sendGoalCommand 的 queue 语义随 command 接线）。
+    // /goal shares the same inputRouting adjudication surface as plain text (the queue semantics of kind=sendGoalCommand follow the command wiring).
     expect(snapshot.inputRouting.mode).toBe("enqueue");
   });
 
@@ -255,8 +255,8 @@ describe("catalog A 组：首发和运行中输入", () => {
       expect.objectContaining({ kind: "primaryTurn" }),
     ]);
     expect(snapshot.queue.items).toHaveLength(1);
-    // S7（16-plan，2026-07-08 裁决）：fork 关系只在 sessions 树体现，父时间线零入侵
-    //（旧 forkCreated 是「渲染 null」的隐形行）。child 首部 forkNotice 不变。
+    // S7 (16-plan, ruling of 2026-07-08): the fork relationship shows up only in the sessions tree; the parent timeline is zero-intrusion
+    // (the old forkCreated was an invisible row "rendering null"). The forkNotice at the head of the child is unchanged.
     expect(
       snapshot.rows.window.find(
         (row) => row.kind === "timelineMarker" && row.marker.type === "forkCreated",
@@ -265,7 +265,7 @@ describe("catalog A 组：首发和运行中输入", () => {
   });
 });
 
-// ── B 组：Stop 和队列保留 ──
+// ── Group B: stop and queue preservation ──
 
 describe("catalog B 组：stop 和队列保留", () => {
   function stopWithQueue(queueSize: number): ProductProjection {
@@ -292,7 +292,7 @@ describe("catalog B 组：stop 和队列保留", () => {
       expect(snapshot.control.phase).toBe("completedInterrupted");
       expect(snapshot.queue.items).toHaveLength(size);
       expect(snapshot.queue.autoDrain).toBe(false);
-      // FIFO 原样：文本顺序与入队顺序一致。
+      // FIFO as-is: the text order matches the enqueue order.
       expect(snapshot.queue.items.map((item) => item.text)).toEqual(
         Array.from({ length: size }, (_, index) => `排队 ${index + 1}`),
       );
@@ -305,7 +305,7 @@ describe("catalog B 组：stop 和队列保留", () => {
   });
 
   it("B06/B07：held（completed(interrupted) + queue>0 + autoDrain=false）→ 输入 choice，不静默入队", () => {
-    // 2026-07-05 重裁决 heldQueueInputRequiresChoice：sendText 与 /goal 统一走 choice。
+    // Re-ruling of 2026-07-05, heldQueueInputRequiresChoice: sendText and /goal both go through choice.
     const snapshot = stopWithQueue(2).getSnapshot();
     expect(snapshot.inputRouting).toEqual({
       mode: "choice",
@@ -331,7 +331,7 @@ describe("catalog B 组：stop 和队列保留", () => {
   });
 });
 
-// ── C 组：Completed 成功态 ──
+// ── Group C: completed success state ──
 
 describe("catalog C 组：completed 成功态", () => {
   it("C01/C03：assistant complete → completed(success)；queue=0 输入 startNow", () => {
@@ -350,10 +350,10 @@ describe("catalog C 组：completed 成功态", () => {
     log.turnStarted("turn-1");
     log.steerQueued("turn-1", "pi-1", "接着做");
     log.turnComplete("turn-1", "success");
-    // 成功完成不动 autoDrain（只有 stop 置 false）→ runtime 自动 drain 队首。
+    // Successful completion does not touch autoDrain (only stop sets it to false) → the runtime auto-drains the queue head.
     const beforeDrain = project(log).getSnapshot();
     expect(beforeDrain.queue.autoDrain).toBe(true);
-    // 自动消费在事件面表现为 drained + 新 turn。
+    // On the event surface, auto-consumption shows up as drained + a new turn.
     log.push(
       SessionEventType.TurnSteerDrained,
       { pendingInputIds: ["pi-1"] },
@@ -366,13 +366,13 @@ describe("catalog C 组：completed 成功态", () => {
   });
 
   it("C02 补强（queuedPromptMessagePreserved）：drained 排队输入必须落为可见 userInput row", () => {
-    // Bugfix 回归（2026-07-06 case catalog 战役）：此前 onTurnSteerDrained 只删 queue
-    // row，drain 进当前 turn 的用户文本在 live 视图凭空消失（只见 assistant 回复）。
+    // Bugfix regression (2026-07-06 case catalog campaign): previously onTurnSteerDrained only deleted the queue
+    // row, so user text drained into the current turn vanished from the live view (only the assistant reply was visible).
     const log = new EventLog();
     log.created();
     log.turnStarted("turn-1", "第一个问题");
     log.steerQueued("turn-1", "pi-1", "排队的第二个问题");
-    // runtime 在同一 turn 的下一个 roundtrip 前 drain（无新 TurnStarted）。
+    // The runtime drains before the next roundtrip of the same turn (no new TurnStarted).
     log.push(
       SessionEventType.TurnSteerDrained,
       { pendingInputIds: ["pi-1"] },
@@ -398,8 +398,8 @@ describe("catalog C 组：completed 成功态", () => {
       objective: "修完登录流程",
       status: "active",
     });
-    // S10（16-plan，2026-07-08 裁决）：目标由 goal 面板承载，timeline 不显示
-    //（旧 goalSet marker 是「渲染 null」的隐形行，污染 turn 分组）。
+    // S10 (16-plan, ruling of 2026-07-08): the goal is carried by the goal panel and not shown on the timeline
+    // (the old goalSet marker was an invisible row "rendering null" that polluted turn grouping).
     expect(
       snapshot.rows.window.find(
         (row) => row.kind === "timelineMarker" && row.marker.type === "goalSet",
@@ -424,11 +424,11 @@ describe("catalog C 组：completed 成功态", () => {
   it("C08：completed(success) + held queue → 输入 choice（同 B06）", () => {
     const log = new EventLog();
     log.created();
-    // 第一轮 stop 形成 held（autoDrain=false）。
+    // The first turn's stop forms a held state (autoDrain=false).
     log.turnStarted("turn-1");
     log.steerQueued("turn-1", "pi-1", "held 意图");
     log.turnComplete("turn-1", "cancelled");
-    // 第二轮成功完成（用户 keepQueueAndSend 语义）：queue 仍在、autoDrain 仍 false。
+    // The second turn completes successfully (user keepQueueAndSend semantics): the queue remains and autoDrain is still false.
     log.turnStarted("turn-2", "保留 queue 立即发送的这条");
     log.turnComplete("turn-2", "success");
     const snapshot = project(log).getSnapshot();
@@ -456,7 +456,7 @@ describe("catalog C 组：completed 成功态", () => {
   });
 });
 
-// ── F 组：手动 Compact ──
+// ── Group F: manual compact ──
 
 describe("catalog F 组：手动 compact", () => {
   function completedThenCompact(queueSize = 0): EventLog {
@@ -488,7 +488,7 @@ describe("catalog F 组：手动 compact", () => {
   });
 
   it("F04/F05/H05：compacting 期输入（普通文本 / /goal）→ enqueue，不打断 compact", () => {
-    // 2026-07-05 重裁决 compactingAcceptsFutureInput（替代原 reject）。
+    // Re-ruling of 2026-07-05, compactingAcceptsFutureInput (replacing the original reject).
     const snapshot = project(completedThenCompact()).getSnapshot();
     expect(snapshot.inputRouting).toEqual({
       mode: "enqueue",
@@ -522,7 +522,7 @@ describe("catalog F 组：手动 compact", () => {
       tokensAfter: 250,
     });
     expect(projection.getSnapshot().usage.contextWindow?.usedTokens).toBe(250);
-    // compacting 解除，输入恢复 startNow。
+    // compacting is lifted and input returns to startNow.
     expect(projection.getSnapshot().inputRouting.mode).toBe("startNow");
   });
 
@@ -532,16 +532,16 @@ describe("catalog F 组：手动 compact", () => {
     const projection = project(log);
     const snapshot = projection.getSnapshot();
     expect(compactMarkers(projection)[0]).toMatchObject({ status: "failed" });
-    // 回到 compact 前的原状态：不 error、不 interrupted 化。
+    // Returns to the pre-compact state: no error, not converted to interrupted.
     expect(snapshot.control.phase).toBe("completedInterrupted");
     expect(snapshot.queue.items).toHaveLength(1);
     expect(snapshot.queue.autoDrain).toBe(false);
-    // 全部操作恢复：compact 重新可点（retry 入口语义）。
+    // All operations restored: compact is clickable again (retry entry-point semantics).
     expect(snapshot.availability.compact).toEqual({ allowed: true });
   });
 });
 
-// ── G 组：自动 Compact ──
+// ── Group G: auto compact ──
 
 describe("catalog G 组：自动 compact", () => {
   it("G05/G06：compacting(origin=auto) 期输入 → enqueue", () => {
@@ -574,7 +574,7 @@ describe("catalog G 组：自动 compact", () => {
     });
     const projection = project(log);
     const markers = compactMarkers(projection);
-    // 全生命周期占同一 marker row：不因 retry 产生多条。
+    // The whole lifecycle occupies the same marker row: retries do not produce multiple rows.
     expect(markers).toHaveLength(1);
     expect(markers[0]).toMatchObject({ origin: "auto", status: "success" });
     expect(projection.getSnapshot().control.activeWorks).toEqual([]);
@@ -597,7 +597,7 @@ describe("catalog G 组：自动 compact", () => {
   });
 });
 
-// ── H 组：Goal ──
+// ── Group H: goal ──
 
 describe("catalog H 组：goal", () => {
   it("H01/H02：/goal 设置与更新 —— goal 状态更新，goalSet 不再产 timeline row（S10）", () => {
@@ -609,7 +609,7 @@ describe("catalog H 组：goal", () => {
     log.goalSet("再修注册流程", "修完登录流程");
     const snapshot = project(log).getSnapshot();
     expect(snapshot.goal).toMatchObject({ objective: "再修注册流程" });
-    // S10：连续两次 set 也不产任何 goalSet row（旧断言两条隐形行已废弃）。
+    // S10: two consecutive sets still produce no goalSet row (the old assertion of two invisible rows is obsolete).
     expect(
       snapshot.rows.window.filter(
         (row) => row.kind === "timelineMarker" && row.marker.type === "goalSet",
@@ -623,7 +623,7 @@ describe("catalog H 组：goal", () => {
     log.turnStarted("turn-1");
     log.turnComplete("turn-1", "success");
     log.goalSet("目标一");
-    // 旧 target 两轮验证：第 1 轮未过、第 2 轮通过。
+    // Two verification rounds on the old target: round 1 failed, round 2 passed.
     log.push(SessionEventType.TargetCompletionVerification, {
       targetId: "target-目标一",
       status: "started",
@@ -650,7 +650,7 @@ describe("catalog H 组：goal", () => {
       goalIteration: 2,
       verification: { passed: true, reason: "ok" },
     });
-    // 新 target：iteration/verifications 归零。
+    // New target: iteration/verifications reset to zero.
     log.goalSet("目标二", "目标一");
     const afterNewTarget = project(log).getSnapshot();
     expect(afterNewTarget.goal).toMatchObject({
@@ -667,7 +667,7 @@ describe("catalog H 组：goal", () => {
     });
     const snapshot = project(log).getSnapshot();
     expect(snapshot.goal).toMatchObject({ objective: "目标二", iteration: 1 });
-    // 每个 iteration 一条 goalVerify marker（同 iteration 更新同一条）。
+    // One goalVerify marker per iteration (the same iteration updates the same marker).
     const verifyMarkers = snapshot.rows.window.flatMap((row) =>
       row.kind === "timelineMarker" && row.marker.type === "goalVerify" ? [row.marker] : [],
     );
@@ -675,7 +675,7 @@ describe("catalog H 组：goal", () => {
   });
 });
 
-// ── M 组：Turn Steer ──
+// ── Group M: turn steer ──
 
 describe("catalog M 组：turn steer", () => {
   it("M01/M02：running（流式/工具中）继续输入 → 只追加 queue，不打断当前 turn", () => {
@@ -695,7 +695,7 @@ describe("catalog M 组：turn steer", () => {
     log.steerQueued("turn-1", "pi-1", "顺便加个测试");
     const snapshot = project(log).getSnapshot();
     expect(snapshot.queue.items).toHaveLength(1);
-    // 当前 turn 不被打断：仍 running、streaming 行保持。
+    // The current turn is not interrupted: still running, the streaming row remains.
     expect(snapshot.control.phase).toBe("running");
     const assistant = snapshot.rows.window.find((row) => row.kind === "assistantText");
     expect(assistant).toMatchObject({ text: "流式中", state: "streaming" });

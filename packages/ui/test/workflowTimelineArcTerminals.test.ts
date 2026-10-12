@@ -1,8 +1,10 @@
 // @vitest-environment jsdom
 
-// 弧端的槽位（docs/dynamic-workflow/presentation.md「Rails and arcs」）：一站的起飞与落地各占一个槽，
-// 远端在左的在左、在右的在右，每一侧车道最低的在最外面；只有一个弧端的站仍用灯心；带的分叉点与
-// 汇合点不占槽。回归：一站既有进来的弧又有出去的弧时，出去的竖段穿过进来的箭头（testfield「工作流压力测试」）。
+// Arc terminal slots (docs/dynamic-workflow/presentation.md "Rails and arcs"): a station's takeoff and landing each
+// occupy a slot, arcs from the left stay left and arcs to the right stay right, and on each side the lowest lane is
+// outermost; a station with only one arc terminal keeps the lamp's centre; a band's fork and merge points take no
+// slot. Regression: when a station had arcs both coming in and going out, the outgoing vertical crossed the incoming
+// arrow (testfield "工作流压力测试" / workflow stress test).
 import { cleanup, render } from "@testing-library/react";
 import { createElement } from "react";
 import { afterEach, describe, expect, it } from "vitest";
@@ -14,7 +16,7 @@ import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
 
 interface GraphSpec {
   names: readonly string[];
-  /** 站下标 → 与它并行的站下标。 */
+  /** Station index → the indexes of stations running alongside it. */
   alongside?: Record<number, readonly number[]>;
   edges: readonly (readonly [number, number])[];
 }
@@ -54,7 +56,7 @@ function graphOf({ alongside = {}, edges, names }: GraphSpec): WorkflowCausality
 
 const modelOf = (spec: GraphSpec) => buildWorkflowTimeline(graphOf(spec));
 
-/** 每条弧（`from>to`）的起飞与落地偏移。 */
+/** Takeoff and landing offsets for each arc (`from>to`). */
 function offsetsOf(spec: GraphSpec): Record<string, { takeoff: number; landing: number }> {
   const model = modelOf(spec);
   const { landing, takeoff } = arcTerminalOffsets(model.arcs, model.bands, model.stations);
@@ -69,13 +71,13 @@ function offsetsOf(spec: GraphSpec): Record<string, { takeoff: number; landing: 
 const chain = (n: number): [number, number][] =>
   Array.from({ length: n - 1 }, (_, i) => [i, i + 1] as [number, number]);
 
-/** 两跳：plan → draft → publish，中间各隔一站。 */
+/** Two hops: plan → draft → publish, one station apart between each. */
 const HOPS: GraphSpec = {
   edges: [...chain(5), [0, 2], [2, 4]],
   names: ["plan", "gather", "draft", "review", "publish"],
 };
 
-/** 两个互不相干的二选一，复用同一对阶段名：left ⇄ right 两个方向都有边。 */
+/** Two independent choices reusing the same pair of phase names: edges exist in both directions, left ⇄ right. */
 const TWO_CHOICES: GraphSpec = {
   edges: [
     [0, 1],
@@ -88,7 +90,7 @@ const TWO_CHOICES: GraphSpec = {
   names: ["choose", "left", "right", "next"],
 };
 
-/** testfield「工作流压力测试」（dwfrun-c6d25e4f…）归约后的阶段图：十一站、十四条边、一条带。 */
+/** The phase graph reduced from testfield "工作流压力测试" (workflow stress test, dwfrun-c6d25e4f…): eleven stations, fourteen edges, one band. */
 const STRESS: GraphSpec = {
   alongside: { 9: [8] },
   edges: [
@@ -129,7 +131,7 @@ describe("arcTerminalOffsets", () => {
     expect(offsetsOf({ edges: [...chain(4), [3, 0]], names: ["a", "b", "c", "d"] })).toEqual({
       "3>0": { landing: 0, takeoff: 0 },
     });
-    // 两条互不相干的弧各在一头：每站只有一个弧端。
+    // Two independent arcs, each at an end: every station has a single arc terminal.
     expect(offsetsOf({ edges: [...chain(6), [0, 2], [5, 3]], names: "abcdef".split("") })).toEqual({
       "0>2": { landing: 0, takeoff: 0 },
       "5>3": { landing: 0, takeoff: 0 },
@@ -156,8 +158,8 @@ describe("arcTerminalOffsets", () => {
       [1, 3, 2],
     ]);
     expect(offsetsOf(TWO_CHOICES)).toEqual({
-      // left：两个弧端都朝右——落地（车道 0）在最右，起飞（车道 2）在它里面。
-      // right：两个弧端都朝左——起飞（车道 0）在最左，落地（车道 1）在它里面。
+      // left: both arc terminals face right — the landing (lane 0) is rightmost, the takeoff (lane 2) inside it.
+      // right: both arc terminals face left — the takeoff (lane 0) is leftmost, the landing (lane 1) inside it.
       "0>2": { landing: 5, takeoff: 0 },
       "1>3": { landing: 0, takeoff: -5 },
       "2>1": { landing: 5, takeoff: -5 },
@@ -177,7 +179,7 @@ describe("arcTerminalOffsets", () => {
   });
 
   it("both sides at once: leftward terminals first, then rightward ones", () => {
-    // c 有四个弧端：a → c 与 c → a 朝左，d → c 与 c → e 朝右。
+    // c has four arc terminals: a → c and c → a face left, d → c and c → e face right.
     const spec: GraphSpec = {
       edges: [...chain(5), [0, 2], [2, 4], [3, 2], [2, 0]],
       names: ["a", "b", "c", "d", "e"],
@@ -187,19 +189,20 @@ describe("arcTerminalOffsets", () => {
     );
     expect(lanes).toEqual({ "0>2": 1, "2>0": 3, "2>4": 2, "3>2": 0 });
     expect(offsetsOf(spec)).toEqual({
-      // a：两个弧端都朝右——回边落地（车道 3）在里面、起飞（车道 1）在外面。
+      // a: both arc terminals face right — the back-edge landing (lane 3) is inside, the takeoff (lane 1) outside.
       "0>2": { landing: -15, takeoff: 5 },
       "2>0": { landing: -5, takeoff: -5 },
-      // c：左侧 a → c（车道 1）−15、c → a（车道 3）−5；右侧 c → e（车道 2）+5、d → c（车道 0）+15。
+      // c: left side a → c (lane 1) −15, c → a (lane 3) −5; right side c → e (lane 2) +5, d → c (lane 0) +15.
       "2>4": { landing: 0, takeoff: 5 },
       "3>2": { landing: 15, takeoff: 0 },
     });
   });
 
   it("a band's fork and merge points take no slot and do not count at the lamp", () => {
-    // 带 [[B, D], [C]]，前驱 P、汇合 J。D → B 是主线上的回边，两端都是灯。S → B 与 T → C 被重挂到
-    // 分叉点（下标仍是 B），D → X 被重挂到汇合点（下标仍是 D）——它们若也占 B、D 的槽，那两枚灯上的
-    // 回边就会被挤出灯心。
+    // Band [[B, D], [C]] with predecessor P and merge J. D → B is the back edge on the main line, lamps at both ends.
+    // S → B and T → C are re-anchored to the fork point (the index is still B), and D → X to the merge point (the
+    // index is still D) — if they also took B's and D's slots, the back edges on those two lamps would be pushed out
+    // of the lamp centre.
     const spec: GraphSpec = {
       alongside: { 4: [3], 5: [4] },
       edges: [
@@ -282,9 +285,9 @@ describe("WorkflowTimeline arc terminals", () => {
     const lamp = (i: number) => lampX(i, 0);
     expect(Object.fromEntries(byStation)).toEqual({
       3: [lamp(3)],
-      // 支路甲：起飞到混合扇出（车道 2）在 −5，支路乙的回边（车道 0）落在 +5。
+      // Branch A: the takeoff to the mixed fan-out (lane 2) sits at −5, Branch B's back edge (lane 0) lands at +5.
       4: [lamp(4) - 5, lamp(4) + 5],
-      // 支路乙：回边起飞（车道 0）在 −5，条件分支的弧（车道 1）落在 +5。
+      // Branch B: the back-edge takeoff (lane 0) sits at −5, the conditional-branch arc (lane 1) lands at +5.
       5: [lamp(5) - 5, lamp(5) + 5],
       6: [lamp(6)],
     });

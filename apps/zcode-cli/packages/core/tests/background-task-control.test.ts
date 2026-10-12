@@ -822,8 +822,9 @@ describe("background task control", () => {
   });
 
   /**
-   * TaskOutput 的投影只读得到 registry 条目（dwf 从不写 outputFile），所以产物必须在终态
-   * 更新时就落到条目上。以下几条钉住「存什么、什么时候存、绝不用 undefined 清掉已有值」。
+   * TaskOutput's projection can only read the registry entry (dwf never writes outputFile), so
+   * the artifact must land on the entry at terminal-update time. The tests below pin "what is
+   * stored, when it is stored, and never clearing an existing value with undefined".
    */
   describe("dwf run 产物落到 registry 条目上", () => {
     const CREATE_WORKFLOW_CALL = {
@@ -904,7 +905,7 @@ describe("background task control", () => {
       expect(registry.get("dwfrun-result")?.resultText).toBeUndefined();
     });
 
-    // undefined 绝不清掉已有值：一次产物缺席的更新不该把先前存下的产物抹掉。
+    // undefined never clears an existing value: one artifact-absent update must not erase the artifact stored previously.
     it("已有的 resultText 不被产物缺席的更新清掉", () => {
       const registry = registryWithDwfRun();
       registry.update("dwfrun-result", (current) => ({
@@ -1009,9 +1010,10 @@ describe("background task control", () => {
 });
 
 /**
- * 后台生命周期的按工具名硬分派已改成按工具查表（见 docs/dynamic-workflow/presentation.md 的
- * 「后台生命周期泛化」）。这一组测两件事：CreateWorkflow 经 dynamicWorkflowRunPort 拿到
- * 完整的快照/等待/取消能力，以及既有工具的语义逐字未变。
+ * The background lifecycle's per-tool-name hard dispatch has become a per-tool table lookup
+ * (see docs/dynamic-workflow/presentation.md's "generalized background lifecycle"). This group
+ * tests two things: CreateWorkflow getting the full snapshot/wait/cancel capabilities through
+ * dynamicWorkflowRunPort, and the existing tools' semantics unchanged verbatim.
  */
 describe("background task per-tool provider lookup", () => {
   interface TrackedRun {
@@ -1087,8 +1089,8 @@ describe("background task per-tool provider lookup", () => {
     return { events, notifications };
   }
 
-  // 第五处分派（canCancelBackgroundTask）：它决定 started payload 的 cancellable。
-  // 不修它，详情页与后台面板的 Cancel 按钮点不动——整条取消路径不可达。
+  // The fifth dispatch site (canCancelBackgroundTask): it decides the started payload's cancellable.
+  // Without fixing it, the detail page's and background panel's Cancel buttons do nothing — the whole cancel path is unreachable.
   it("CreateWorkflow 的 started payload 可取消", async () => {
     const { events } = await trackDynamicWorkflowRun({ name: "dwf-cancellable" });
 
@@ -1101,9 +1103,10 @@ describe("background task per-tool provider lookup", () => {
     });
   });
 
-  // taskKind 是展示类别（面板分组与图标）。dwf run 此前落进 "bash"——一个我们知情的错标。
-  // 生命周期语义不受它影响（已由 per-tool lifecycleProvider 分派），但面板据它分组，
-  // 而一个能点开详情页、能取消的 run 与一条后台 shell 命令不是同一种东西。
+  // taskKind is the display category (panel grouping and icons). A dwf run previously landed in
+  // "bash" — a mislabel we were aware of. Lifecycle semantics are unaffected (already dispatched
+  // by per-tool lifecycleProvider), but the panel groups by it, and a run that can open a detail
+  // page and be cancelled is not the same kind of thing as a background shell command.
   it("CreateWorkflow 的 taskKind 是 workflow，不再错标成 bash", async () => {
     const { events } = await trackDynamicWorkflowRun({ name: "dwf-task-kind" });
 
@@ -1112,10 +1115,12 @@ describe("background task per-tool provider lookup", () => {
   });
 
   /**
-   * payload 的 `description` 是任务岛 Workflows 分区那一行的题名（经 backgroundWorks.title）。
-   * 原实现只认 `input.description`，而 CreateWorkflow 的输入 schema 里根本没有这个键
-   * （只有 `{name?, script}`，contracts/src/tools/create-workflow.ts），于是面板行退到 toolName
-   * 显示成 "CreateWorkflow"——每个 run 都同名。改走既有的 workflowTaskSubject 兜底链。
+   * The payload's `description` is the title of the task island's Workflows section row (via
+   * backgroundWorks.title). The original implementation only recognized `input.description`,
+   * which does not exist at all in CreateWorkflow's input schema (only `{name?, script}`,
+   * contracts/src/tools/create-workflow.ts), so the panel row fell back to toolName and showed
+   * "CreateWorkflow" — every run with the same name. Now it goes through the existing
+   * workflowTaskSubject fallback chain.
    */
   it("CreateWorkflow 的展示名取 input.name", async () => {
     const { events } = await trackDynamicWorkflowRun({
@@ -1127,8 +1132,8 @@ describe("background task per-tool provider lookup", () => {
     expect(started?.payload).toMatchObject({ description: "Nightly release audit" });
   });
 
-  // 名字缺席时兜底链走到最后一环 taskId：不是 undefined，也不是 toolName。
-  // 投影对这两者的处理本就一致（都会落到 UI 侧的 fallbackName），所以 taskId 可接受。
+  // With the name absent the fallback chain reaches its last link, taskId: not undefined, and not toolName.
+  // The projection already treats those two identically (both land in the UI-side fallbackName), so taskId is acceptable.
   it("CreateWorkflow 无 name 时展示名兜底到 taskId 而不是工具名", async () => {
     const { events } = await trackDynamicWorkflowRun({ name: "dwf-description-fallback" });
 
@@ -1136,7 +1141,7 @@ describe("background task per-tool provider lookup", () => {
     expect((started?.payload as { description?: string }).description).toBe("dwfrun-1");
   });
 
-  // 快照提供者与直接等待者都来自同一个端口：终态经 waitForTask 到达并收口成 completed。
+  // The snapshot provider and the direct waiter both come from the same port: the terminal state arrives via waitForTask and settles as completed.
   it("经端口的快照提供者与等待者把 run 结算成终态", async () => {
     const { events } = await trackDynamicWorkflowRun({ name: "dwf-terminal" });
 
@@ -1149,8 +1154,9 @@ describe("background task per-tool provider lookup", () => {
     expect(completed?.payload).toMatchObject({ status: "completed", taskId: "dwfrun-1" });
   });
 
-  // 完成通知复用 formatWorkflowTaskNotification，并带 backgroundSource "workflow"，
-  // 这样主 agent 的新回合渲染成后台结果头而不是退化成裸 model-only 消息。
+  // The completion notification reuses formatWorkflowTaskNotification and carries
+  // backgroundSource "workflow", so the main agent's new turn renders as a background result
+  // header instead of degrading into a bare model-only message.
   it("终态通知走 workflow 通知格式并标记 backgroundSource", async () => {
     const { events, notifications } = await trackDynamicWorkflowRun({ name: "dwf-notify" });
 
@@ -1161,8 +1167,7 @@ describe("background task per-tool provider lookup", () => {
     const notification = notifications[0]!;
     expect(notification.taskId).toBe("dwfrun-1");
     expect(notification.toolName).toBe("CreateWorkflow");
-    // formatWorkflowTaskNotification 的形状（不是 Bash 的那套）：workflow 措辞的 summary
-    // 加上截断后的结果。
+    // formatWorkflowTaskNotification's shape (not Bash's): a workflow-worded summary plus the truncated result.
     expect(notification.text).toContain('<summary>Workflow &quot;dwfrun-1&quot; completed.</summary>');
     expect(notification.text).toContain("workflow answer");
     expect(notification.originMeta).toMatchObject({
@@ -1172,13 +1177,16 @@ describe("background task per-tool provider lookup", () => {
   });
 
   /**
-   * run 产物的回投（桌面实测 bug）。原实现按 legacy `Workflow` 的输出形状取 `output.response`：
-   * dwf 产物是脚本的任意顶层返回值，record 时没有 `response` 键 → `<result>` 整个缺席；
-   * 非 record 时 `isRecord` 门把 output 退到 **launch output**，其 `response` 是「run 已在后台
-   * 启动」的陈旧散文——比缺席更糟。以下几条把序列化规则与「绝不回退散文」钉住。
+   * The run artifact's feed-back into the notification (bug observed on desktop). The original
+   * implementation took `output.response` per the legacy `Workflow` output shape: a dwf artifact
+   * is the script's arbitrary top-level return value, so on a record there is no `response` key
+   * → `<result>` entirely absent; on a non-record the `isRecord` gate demoted output to the
+   * **launch output**, whose `response` is the stale prose of "the run has started in the
+   * background" — worse than absence. The tests below pin the serialization rules and "never
+   * fall back to prose".
    *
-   * launchOutput 只在 `lost` 那两条路径上到得了通知（终态路径根本不传它），所以「不回退散文」
-   * 唯一能真正失败的地方是 lost 用例。
+   * launchOutput only reaches the notification on the two `lost` paths (terminal paths never
+   * pass it), so the only place "no prose fallback" can genuinely fail is the lost case.
    */
   const LAUNCH_PROSE =
     "The workflow script compiled cleanly and the run started in the background with ID: dwfrun-1.";
@@ -1211,7 +1219,7 @@ describe("background task per-tool provider lookup", () => {
       steps: [1, 2],
     });
 
-    // JSON.stringify(v, null, 2)，随后经 escapeXml（引号变 &quot;）。
+    // JSON.stringify(v, null, 2), then through escapeXml (quotes become &quot;).
     expect(text).toContain("&quot;report&quot;: &quot;done&quot;");
     expect(text).toContain("&quot;steps&quot;");
     expect(text).toContain("<result>{\n");
@@ -1224,7 +1232,7 @@ describe("background task per-tool provider lookup", () => {
     expect(text).toContain("<result>[\n");
   });
 
-  // 产物缺席时 `<result>` 整字段缺席。
+  // With the artifact absent, `<result>` is absent as a whole field.
   it("undefined 产物没有 <result>", async () => {
     const text = await notificationFor("dwf-artifact-absent", undefined);
 
@@ -1249,8 +1257,10 @@ describe("background task per-tool provider lookup", () => {
     expect(text).not.toContain("<result>");
   });
 
-  // 这条是「比缺席更糟」的那一种：lost 路径把 launch output 递进通知，原实现于是把
-  // 「run 已在后台启动」的陈旧散文当成 run 的结果回给模型。dwf 必须整字段缺席。
+  // This is the "worse than absence" case: the lost path hands launch output into the
+  // notification, and the original implementation then fed the model the stale prose of "the
+  // run has started in the background" as the run's result. dwf must leave the whole field
+  // absent.
   it("lost 的 dwf run 绝不把 launch 散文当结果回投", async () => {
     const { events, notifications } = await trackDynamicWorkflowRun({
       launchOutput: { response: LAUNCH_PROSE },
@@ -1267,11 +1277,12 @@ describe("background task per-tool provider lookup", () => {
     expect(text).not.toContain(LAUNCH_PROSE);
   });
 
-  // ── 渐进产物（report）随完成通知回投（docs/dynamic-workflow/transcript-and-notifications.md「Notifications」）──
+  // ── Progressive artifacts (reports) fed back with the completion notification (docs/dynamic-workflow/transcript-and-notifications.md "Notifications") ──
   //
-  // 三个终态一律携带，因为一个死在半途的 run 仍然做完了前面那些活——捞回它正是 report 存在
-  // 的理由，而一句「失败」把它全扔了。条目来自 journal 的 kind="report" 行（run service 把它
-  // 们放在快照的 `reports` 上），不是 memory-only 的 workflowRuns 投影。
+  // All three terminal states carry it, because a run that died halfway still finished the
+  // earlier work — salvaging it is the very reason report exists, and a bare "failed" would
+  // throw it all away. Entries come from the journal's kind="report" rows (the run service puts
+  // them on the snapshot's `reports`), not the memory-only workflowRuns projection.
 
   async function notificationWithReports(
     name: string,
@@ -1296,12 +1307,12 @@ describe("background task per-tool provider lookup", () => {
 
     expect(text).toContain('<reports count="2">');
     expect(text).toContain("[1] 3 stale imports");
-    // 序列化规则与 <result> 同源：object 走 pretty JSON（经 escapeXml，引号变 &quot;）。
+    // Serialization shares the <result> rules: object goes pretty JSON (through escapeXml, quotes become &quot;).
     expect(text).toContain("[2] {");
     expect(text).toContain("&quot;file&quot;: &quot;a.ts&quot;");
-    // 全部条目都进了预览，所以不带 shown 属性（shown 的存在本身就意味着"预览是局部的"）。
+    // All entries fit the preview, so no shown attribute (the presence of shown itself means "the preview is partial").
     expect(text).not.toContain("shown=");
-    // 产物与 run 结果是两件事，两者同时在场。
+    // The artifact and the run result are two different things; both present at once.
     expect(text).toContain("<result>final answer</result>");
   });
 
@@ -1314,7 +1325,7 @@ describe("background task per-tool provider lookup", () => {
     expect(failed).toContain('<reports count="1">');
     expect(failed).toContain("[1] finding before the crash");
     expect(failed).toContain("<error>script threw TypeError</error>");
-    // 失败的 run 没有产物，但有报告——两者必须能分辨。
+    // A failed run has no artifact but does have reports — the two must be distinguishable.
     expect(failed).not.toContain("<result>");
 
     const cancelled = await notificationWithReports("dwf-reports-cancelled", {
@@ -1325,10 +1336,11 @@ describe("background task per-tool provider lookup", () => {
     expect(cancelled).toContain("[1] finding before the cancel");
   });
 
-  // ── 呈现指引（docs/dynamic-workflow/authoring.md「What the main agent is told when a run ends」）──
+  // ── Presentation guidance (docs/dynamic-workflow/authoring.md "What the main agent is told when a run ends") ──
   //
-  // XML 之后追加一段散文，告诉主代理把 run 的结果当交付物呈现。completed 与非 completed 各一段；
-  // 散文排在 reports 之后，所以总截断先斩它。
+  // A prose paragraph appended after the XML tells the main agent to present the run's result as
+  // a deliverable. One paragraph each for completed and non-completed; the prose comes after
+  // reports, so the total truncation cuts it first.
   it("completed 的通知在 XML 之后带交付物呈现指引", async () => {
     const text = await notificationWithReports("dwf-guidance-completed", {
       status: "completed",
@@ -1379,8 +1391,9 @@ describe("background task per-tool provider lookup", () => {
   });
 
   /**
-   * 截断与计数**两者都重要**：计数才是让主 agent 知道「预览是局部的、全量可经 run id 取回」
-   * 的那个信号。只给预览会让模型以为它看到了全部。
+   * Truncation and counting are **both important**: the count is the signal that tells the main
+   * agent "the preview is partial, the full set can be fetched via the run id". Giving only the
+   * preview would make the model think it saw everything.
    */
   it("预览按预算截断，但 count 是真实总数且 shown 说明预览有多少条", async () => {
     const reports = Array.from({ length: 300 }, (_, index) => `finding ${index + 1} `.repeat(20));
@@ -1395,13 +1408,14 @@ describe("background task per-tool provider lookup", () => {
     const shownCount = Number(shown![1]);
     expect(shownCount).toBeGreaterThan(0);
     expect(shownCount).toBeLessThan(300);
-    // 预览从第一条开始给（最早的发现最可能是别的条目的前提）。
+    // The preview starts from the first entry (the earliest findings are most likely premises of later entries).
     expect(text).toContain("[1] finding 1");
   });
 
-  // 快照只带前 256 条 item，真实总数在 `reportCount`（docs/execution-engine.md「Reading the
-  // journal」）：count 必须说 run 的总数，而不是快照里的条数——否则一个报了 65,536 条的 run
-  // 会在通知里自称只报了 256 条，模型就不会去取剩下的。
+  // The snapshot carries only the first 256 items; the real total is in `reportCount`
+  // (docs/execution-engine.md "Reading the journal"): count must state the run's total, not the
+  // snapshot's item count — otherwise a run reporting 65,536 entries would claim in the
+  // notification that it reported only 256, and the model would never fetch the rest.
   it("count 读快照的 reportCount：快照截在 256 条时仍报真实总数", async () => {
     const reports = Array.from({ length: 256 }, (_, index) => `f${index + 1}`);
     const text = await notificationWithReports("dwf-reports-count-from-snapshot", {
@@ -1423,10 +1437,12 @@ describe("background task per-tool provider lookup", () => {
     expect(text).toContain('<reports count="3">');
   });
 
-  // ── run 的脚本文件（docs/dynamic-workflow/launch.md「Script files」）──
+  // ── The run's script file (docs/dynamic-workflow/launch.md "Script files") ──
   //
-  // 端口在快照上给绝对路径（run 身份的一部分），追踪器交给指引的是**工作区相对**写法：
-  // 主代理接下来要 Edit 这个文件，而那是它在别处读写文件时用的那一种路径。
+  // The port gives an absolute path on the snapshot (part of the run's identity); what the
+  // tracker hands to the guidance is the **workspace-relative** spelling: the main agent is
+  // about to Edit this file, and that is the kind of path it uses for file reads and writes
+  // elsewhere.
   it("errored 的指引带上快照里的脚本文件，写成工作区相对路径", async () => {
     const text = await notificationWithReports("dwf-script-path-errored", {
       status: "failed",
@@ -1439,7 +1455,7 @@ describe("background task per-tool provider lookup", () => {
       'The run\'s script is at .zcode/workflow-drafts/audit.dwf.ts. Edit that file in place, then call AmendWorkflow (run_id="dwfrun-1", path=".zcode/workflow-drafts/audit.dwf.ts")',
     );
     expect(text).not.toContain("Fix the script and submit it with AmendWorkflow");
-    // 路径只进指引，不进 XML 块：用户面一概不显示它（spec 的「What the user sees」）。
+    // The path goes into the guidance only, not the XML block: the user face never displays it (the spec's "What the user sees").
     expect(text.indexOf(".zcode/workflow-drafts")).toBeGreaterThan(
       text.indexOf("</task-notification>"),
     );
@@ -1482,11 +1498,13 @@ describe("background task per-tool provider lookup", () => {
     expect(text).not.toContain("Edit that file in place");
   });
 
-  // ── 用户面产物（docs/dynamic-workflow/authoring.md「How the user sees them」）──
+  // ── User-facing artifacts (docs/dynamic-workflow/authoring.md "How the user sees them") ──
   //
-  // ⚠ 术语：本 describe 里的 artifact 有两个义。`<result>` 那一族是脚本的**顶层返回值**
-  // （引擎内部的 `RunSettlement.artifact`），`<artifacts>` 这一节是脚本经 `artifact.*`
-  // **发布给用户看的产出**。两者在同一条通知里并列出现，措辞必须可区分。
+  // ⚠ Terminology: "artifact" has two senses in this describe. The `<result>` family is the
+  // script's **top-level return value** (the engine-internal `RunSettlement.artifact`), while
+  // the `<artifacts>` section is output the script **published for the user to see** via
+  // `artifact.*`. The two appear side by side in the same notification; the wording must keep
+  // them distinguishable.
 
   it("completed 的通知带 <artifacts>，排在 <reports> 之后，一行一件", async () => {
     const text = await notificationWithReports("dwf-artifacts-completed", {
@@ -1514,15 +1532,15 @@ describe("background task per-tool provider lookup", () => {
     });
 
     expect(text).toContain('<artifacts count="2">');
-    // 内容产物：contentType + 最新版的字节数。
+    // Content artifact: contentType plus the latest version's byte count.
     expect(text).toContain("- audit (file, v2, application/pdf, 4096 bytes): 审计报告");
-    // 预置看板：没有字节，数据量是标签 report 的条数；无 title 时不带冒号。
+    // Preset dashboard: no bytes; the data volume is the label report's entry count; no colon without a title.
     expect(text).toContain("- perf (chart, v1, 12 items)");
     expect(text).not.toContain("- perf (chart, v1, 12 items):");
-    // 顺序：<reports> 在前、<artifacts> 在后（120k 总截断先斩后者）。
+    // Order: <reports> first, <artifacts> after (the 120k total truncation cuts the latter first).
     expect(text.indexOf("<reports")).toBeGreaterThan(-1);
     expect(text.indexOf("<artifacts")).toBeGreaterThan(text.indexOf("</reports>"));
-    // 呈现指引追加句只在产物在场时出现。
+    // The presentation guidance appendage appears only when artifacts are present.
     expect(text).toContain("already in front of the user as cards");
   });
 
@@ -1585,7 +1603,7 @@ describe("background task per-tool provider lookup", () => {
         null,
         "not an object",
         { id: "ok", kind: "file", version: 1, itemCount: 0, versions: [] },
-        // version 缺席 ⇒ 无法定位版本，整条丢。
+        // version absent ⇒ cannot locate the version; the whole entry is dropped.
         { id: "broken", kind: "file", itemCount: 0, versions: [] },
       ],
     });
@@ -1594,8 +1612,9 @@ describe("background task per-tool provider lookup", () => {
     expect(text).not.toContain("broken");
   });
 
-  // legacy `Workflow` 的通知逐字节不变：它的 `output.response` 真实存在，lost 路径上的
-  // launchOutput 回退是它自己的契约。dwf 的修订不得溢出到这条路径上。
+  // The legacy `Workflow` notification stays byte-for-byte unchanged: its `output.response`
+  // genuinely exists, and the lost-path launchOutput fallback is its own contract. dwf's
+  // revision must not spill onto this path.
   it("legacy Workflow 的通知仍取 output.response 并保留 launchOutput 回退", async () => {
     async function legacyNotification(getTask?: () => Promise<unknown>): Promise<string> {
       const sessionId = createSessionId("legacy-workflow-result");
@@ -1634,10 +1653,11 @@ describe("background task per-tool provider lookup", () => {
       status: "completed",
       runId: "wfrun-1",
       output: { response: "legacy workflow answer" },
-      // 即便端口硬塞一个 reports 字段，legacy 通知也不长出 <reports> 这一节：渐进产物是
-      // dwf 独有的概念，两套 workflow 机制不共用通知形状。
+      // Even if the port force-feeds a reports field, the legacy notification does not grow a
+      // <reports> section: progressive artifacts are a dwf-exclusive concept; the two workflow
+      // mechanisms do not share a notification shape.
       reports: ["should not surface"],
-      // 用户面产物同理（docs/dynamic-workflow/authoring.md：legacy `Workflow` 通知逐字节不变）。
+      // Same for user-facing artifacts (docs/dynamic-workflow/authoring.md: the legacy `Workflow` notification stays byte-for-byte unchanged).
       artifacts: [
         {
           id: "should-not-surface",
@@ -1653,15 +1673,16 @@ describe("background task per-tool provider lookup", () => {
     expect(withResponse).not.toContain("should not surface");
     expect(withResponse).not.toContain("<artifacts");
     expect(withResponse).not.toContain("should-not-surface");
-    // 呈现指引整块也不属于 legacy：它的通知没有这一段。
+    // The presentation guidance block does not belong to legacy either: its notification has no such paragraph.
     expect(withResponse).not.toContain("already in front of the user");
 
-    // 端口缺席（lost）时回退到 launch output 的 response——legacy 的既有契约，逐字保留。
+    // Port absent (lost): falls back to the launch output's response — legacy's existing contract, kept verbatim.
     const fallback = await legacyNotification();
     expect(fallback).toContain("<result>legacy launch prose</result>");
   });
 
-  // 端口缺席的 CreateWorkflow：没有快照源就按既有语义标 lost，而不是永远挂着轮询。
+  // CreateWorkflow with the port absent: with no snapshot source it is marked lost per the
+  // existing semantics instead of hanging in the polling forever.
   it("端口缺席时 CreateWorkflow 立即标记 lost", async () => {
     const sessionId = createSessionId("dwf-no-port");
     const turnId = createTurnId("dwf-no-port");
@@ -1690,8 +1711,9 @@ describe("background task per-tool provider lookup", () => {
     expect(completed?.payload).toMatchObject({ status: "lost", taskId: "dwfrun-lost" });
   });
 
-  // 回归护栏：legacy Workflow 的四处语义不能被泛化改写——它没有快照提供者以外的取消能力，
-  // started payload 的 cancellable 必须仍为 false。
+  // Regression guard: legacy Workflow's four semantics must not be rewritten by the
+  // generalization — it has no cancel capability beyond the snapshot provider, and the started
+  // payload's cancellable must remain false.
   it("legacy Workflow 的 cancellable 仍为 false", async () => {
     const sessionId = createSessionId("legacy-workflow-cancellable");
     const turnId = createTurnId("legacy-workflow-cancellable");
@@ -1724,9 +1746,10 @@ describe("background task per-tool provider lookup", () => {
   });
 
   /**
-   * 回归护栏：展示名的修订只对 CreateWorkflow 生效，其他工具的 `description` 逐字节不变。
-   * Bash 的既有优先级是 `input.description` 先于 `snapshot.description`，两者都缺则整字段缺席
-   * （面板据此退到命令行文本）——三种情形一次钉住。
+   * Regression guard: the display-name revision applies only to CreateWorkflow; other tools'
+   * `description` stays byte-for-byte unchanged. Bash's existing precedence is
+   * `input.description` before `snapshot.description`, with the whole field absent when both are
+   * (the panel falls back to the command-line text) — all three cases pinned at once.
    */
   it("Bash 的展示名仍是 input.description 优先于快照，缺席时为 undefined", async () => {
     async function trackBash(input: Record<string, unknown>): Promise<
@@ -1774,7 +1797,7 @@ describe("background task per-tool provider lookup", () => {
     }
 
     const withDescription = await trackBash({ command: "npm run dev", description: "dev server" });
-    // started 没有快照，只能来自 input；completed 有快照，input 仍然优先。
+    // started has no snapshot, so it can only come from input; completed has a snapshot, yet input still wins.
     expect(
       withDescription.find((event) => event.type === SessionEventType.BackgroundTaskStarted)
         ?.payload.description,
@@ -1797,12 +1820,13 @@ describe("background task per-tool provider lookup", () => {
 });
 
 /**
- * 取消的唯一路径：`cancelBackgroundWork {workId}` → `app.cancelBackgroundTask` →
- * `runtime.cancelBackgroundTask` → `runtime.stopBackgroundTask` → 端口的 `cancel(runId)`。
+ * The only cancel path: `cancelBackgroundWork {workId}` → `app.cancelBackgroundTask` →
+ * `runtime.cancelBackgroundTask` → `runtime.stopBackgroundTask` → the port's `cancel(runId)`.
  *
- * 这条链按 RuntimeTaskType 分派（runtime/methods/background.ts），与追踪器的按工具名查表
- * 是两处独立的分派。spec 只点了追踪器那五处；这一组测的是链路后半段——不接它，
- * `cancellable: true` 只会给出一个点下去毫无反应的按钮。
+ * This chain dispatches by RuntimeTaskType (runtime/methods/background.ts), a separate dispatch
+ * site from the tracker's per-tool-name table. The spec only called out the tracker's five
+ * sites; this group tests the chain's second half — without wiring it, `cancellable: true` only
+ * yields a button that does nothing when clicked.
  */
 describe("dynamic workflow run cancellation", () => {
   it("cancelBackgroundTask 经运行时分派打到端口的 cancel", async () => {
@@ -1864,7 +1888,7 @@ describe("dynamic workflow run cancellation", () => {
 
     const result = await runtime.cancelBackgroundTask("dwfrun-cancel");
 
-    // 端口收到了 runId（workId ≡ taskId ≡ runId，无身份映射表）。
+    // The port received the runId (workId ≡ taskId ≡ runId; no identity mapping table).
     expect(cancelled).toEqual(["dwfrun-cancel"]);
     expect(result).toMatchObject({ cancelled: true, status: "cancelled", taskId: "dwfrun-cancel" });
   });
@@ -1916,7 +1940,7 @@ describe("dynamic workflow run cancellation", () => {
     expect(result.reason).toBe("background_task_not_found");
   });
 
-  // 端口整个缺席（未接线的宿主）：得结构化的"能力不支持"，不能假装取消成功。
+  // The port is entirely absent (an unwired host): get a structured "capability unsupported", not a faked successful cancel.
   it("端口缺席时报能力不支持", async () => {
     const sessionId = createSessionId("dwf-cancel-no-port");
     const eventStore = createTestSessionEventStore();
@@ -1946,16 +1970,17 @@ describe("dynamic workflow run cancellation", () => {
 });
 
 /**
- * FORK-1 的两个后果，各自钉一条测试。
+ * FORK-1's two consequences, one test each.
  *
- * 1. **回收护栏**：runtime task registry 是 `hasRunningBackgroundRuntimeTask` 的数据源，
- *    而那个谓词决定常驻 session 会不会被回收。CreateWorkflow 此前在
- *    `runtimeTaskTypeForToolCall` 里没有映射，registerRuntimeBackgroundTask 因此整个早退——
- *    一个在飞的 run 会让 session 看起来空闲，被回收掉之后完成通知无处投递。这比"取消按钮
- *    点不动"更难查，所以单独成测。
- * 2. **两个入口一个实现**：GUI 的 cancelBackgroundWork 与模型的 TaskStop 都落到
- *    runtime.stopBackgroundTask（后者经 backgroundTaskControlPort，runtime-tools.ts:144
- *    绑定的正是同一个方法），只在 strict 上不同。
+ * 1. **Reclamation guard**: the runtime task registry is the data source of
+ *    `hasRunningBackgroundRuntimeTask`, and that predicate decides whether a resident session is
+ *    reclaimed. CreateWorkflow previously had no mapping in `runtimeTaskTypeForToolCall`, so
+ *    registerRuntimeBackgroundTask bailed out entirely — an in-flight run would make the session
+ *    look idle, and once reclaimed the completion notification would have nowhere to land. This
+ *    is harder to debug than "the cancel button does nothing", hence its own test.
+ * 2. **Two entries, one implementation**: the GUI's cancelBackgroundWork and the model's
+ *    TaskStop both land in runtime.stopBackgroundTask (the latter via backgroundTaskControlPort;
+ *    runtime-tools.ts:144 binds exactly the same method), differing only in strictness.
  */
 describe("dynamic workflow background task registration", () => {
   async function trackWithRegistry(runtimeTaskRegistry: InMemoryRuntimeTaskRegistry) {
@@ -1970,7 +1995,7 @@ describe("dynamic workflow background task registration", () => {
         async getTask(taskId: string) {
           return { taskId, runId: taskId, startedAt: new Date(0), status: "running" };
         },
-        // 永不结算：run 在测试期间保持在飞。
+        // Never settles: the run stays in flight for the duration of the test.
         waitForTask: () => new Promise(() => {}),
         async cancel() {
           return true;
@@ -1997,19 +2022,19 @@ describe("dynamic workflow background task registration", () => {
 
   it("在飞的 run 登记进 registry，回收护栏因此为真", async () => {
     const runtimeTaskRegistry = new InMemoryRuntimeTaskRegistry();
-    // 前提：没有任何在飞后台任务时护栏为假。
+    // Prerequisite: the guard is false when there is no in-flight background task.
     expect(hasRunningBackgroundRuntimeTask(runtimeTaskRegistry)).toBe(false);
 
     await trackWithRegistry(runtimeTaskRegistry);
 
-    // 登记发生了，且类型是 dwf 专属的那个（不是 legacy local_workflow，也不是 undefined）。
+    // Registration happened, and the type is the dwf-exclusive one (not legacy local_workflow, and not undefined).
     expect(runtimeTaskRegistry.get("dwfrun-live")).toMatchObject({
       isBackgrounded: true,
       status: "running",
       taskId: "dwfrun-live",
       type: "local_dynamic_workflow",
     });
-    // 护栏为真 → 有在飞 run 的 session 不会被当作空闲回收。
+    // Guard true → a session with an in-flight run will not be reclaimed as idle.
     expect(hasRunningBackgroundRuntimeTask(runtimeTaskRegistry)).toBe(true);
   });
 
@@ -2057,7 +2082,7 @@ describe("dynamic workflow background task registration", () => {
       } as never,
     );
 
-    // 这就是 runtime-tools.ts:144 交给工具执行上下文的那个绑定。
+    // This is the exact binding runtime-tools.ts:144 hands to the tool execution context.
     const backgroundTaskControlPort = {
       stopBackgroundTask: runtime.stopBackgroundTask.bind(runtime),
     };
@@ -2066,16 +2091,16 @@ describe("dynamic workflow background task registration", () => {
       { backgroundTaskControlPort, toolCallId: "tool_task_stop" } as never,
     )) as { task_id?: string; task_type?: string };
 
-    // 关键断言：模型侧入口也把 runId 直送到了端口的 cancel。
+    // Key assertion: the model-side entry also delivered the runId straight to the port's cancel.
     expect(cancelled).toEqual(["dwfrun-taskstop"]);
-    // 并且工具向模型报告的是 dwf 专属类型，不是被归成 bash/legacy workflow。
+    // And what the tool reports to the model is the dwf-exclusive type, not something lumped into bash/legacy workflow.
     expect(output.task_id).toBe("dwfrun-taskstop");
     expect(output.task_type).toBe("local_dynamic_workflow");
   });
 });
 
-// 停止分支记「谁停的」（apps/zcode-cli/packages/dynamic-workflow/docs/execution-engine.md「Cancel and resume」 2026-09-09）：只在 dwf 分支、
-// 只在调用方给了 initiator 时写；写在 port.cancel 之前。
+// The stop branch records "who stopped it" (apps/zcode-cli/packages/dynamic-workflow/docs/execution-engine.md "Cancel and resume", 2026-09-09): written only on the dwf branch,
+// only when the caller supplied an initiator; written before port.cancel.
 describe("dwf 停止分支记录 stopInitiator", () => {
   function dwfRuntime(
     name: string,
@@ -2118,7 +2143,7 @@ describe("dwf 停止分支记录 stopInitiator", () => {
             return new Promise(() => undefined);
           },
           async cancel(runId: string) {
-            // 断言顺序：abort 时 initiator 已经在条目上。
+            // Assertion order: at abort time the initiator is already on the entry.
             cancelled.push(`${runId}:${registry.get(runId)?.stopInitiator ?? "none"}`);
             return true;
           },
