@@ -139,7 +139,7 @@ function createSharedContextImportBundle(params: {
       ],
     },
     provenance: {
-      // provenance.id 必须以 sessionID 作命名空间，见 sqlite-session-store 的守卫。
+      // provenance.id must be namespaced by sessionID; see the guard in sqlite-session-store.
       id: params.provenanceId ?? `v4_shared_context_import:${sessionID}:${params.shareId}`,
       sessionID,
       type: "v4/shared_context_import",
@@ -172,9 +172,9 @@ describe("shared context import transaction", () => {
     ).toEqual({ shareId: "share-1" });
   });
 
-  // Bug 回归：session_entry.id 是全库主键，且 saveSessionEntry 的 on conflict(id) 会
-  // 改绑 session_id。旧 provenance id 只含 shareId，同一个 share 被导入到第二个
-  // workspace（去重不命中）时会夺走第一个会话的条目，旧会话的 shared context 静默消失。
+  // Bug regression: session_entry.id is the database-wide primary key, and saveSessionEntry's on conflict(id)
+  // rebinds session_id. The old provenance id contained only the shareId, so when the same share was imported
+  // into a second workspace (dedup miss), it stole the first session's entry and the old session's shared context silently disappeared.
   it("keeps per-session entries when the same share is imported into two sessions", async () => {
     const store = createSqliteSessionStore({ dbPath: ":memory:" });
     const first = createSharedContextImportBundle({
@@ -645,7 +645,7 @@ describe("SQLite session store", () => {
       });
       seedStore.close();
 
-      // 模拟用户停在 0017 的真实旧库：保留全部旧数据，只撤销 0018 记录并恢复旧 CHECK。
+      // Simulate a real old database stuck at 0017: keep all old data, only revoke the 0018 record and restore the old CHECK.
       const legacyDb = new DatabaseSync(dbPath);
       legacyDb.exec(`
         delete from schema_migration where id = '0018_session_input_failed_status';
@@ -1859,7 +1859,7 @@ describe("SQLite session store", () => {
             parentSessionId: String(parentSessionId),
             sourceCommandId: "command-stable-fork-rollback",
             forkTarget: {
-              // BigInt 不能编码为 JSON，用于证明 session insert 与 fact insert 同事务回滚。
+              // BigInt cannot be encoded as JSON; used to prove the session insert and the fact insert roll back in the same transaction.
               productTurnId: 1n as unknown as string,
               transcriptTurnId: "runtime-1",
               orderedMessageIds: ["assistant-1"],
@@ -2086,9 +2086,9 @@ describe("SQLite session store", () => {
     }
   });
 
-  // 16-timeline-authority-plan P0 / null-seq-determinism：NULL sequence 历史行（迁移遗漏或
-  // 旧版本二进制写入）被再保存时，旧 on-conflict 的 coalesce(existing, excluded) 会把它
-  // 重排到队尾（excluded = max+1），造成时间线漂移。修复后同 scope 再保存原样保留 sequence。
+  // 16-timeline-authority-plan P0 / null-seq-determinism: when a NULL-sequence history row (migration miss or
+  // write from an old binary) is re-saved, the old on-conflict coalesce(existing, excluded) would
+  // re-sort it to the tail (excluded = max+1), drifting the timeline. After the fix, re-saving within the same scope preserves the sequence as-is.
   it("keeps a legacy NULL-sequence message in place when it is re-saved", async () => {
     const tempRoot = await mkdtemp(join(tmpdir(), "zcode-session-null-seq-"));
     const dbPath = join(tempRoot, "session.sqlite");
@@ -2128,7 +2128,7 @@ describe("SQLite session store", () => {
       await store.saveMessage(userMessage(messageIDs[1], created + 1));
       await store.saveMessage(userMessage(messageIDs[2], created + 2));
 
-      // 模拟迁移遗漏/旧二进制写入：前两条失去 sequence（AFTER INSERT 触发器不拦 UPDATE）。
+      // Simulate a migration miss / old-binary write: the first two rows lose their sequence (the AFTER INSERT trigger does not intercept UPDATE).
       const db = new DatabaseSync(dbPath);
       try {
         db.prepare("update message set sequence = null where id = ?").run(messageIDs[0]);
@@ -2137,7 +2137,7 @@ describe("SQLite session store", () => {
         db.close();
       }
 
-      // 读序基线：非空 sequence 在前，NULL 块按 time_created 兜底。
+      // Read-order baseline: non-null sequences first, the NULL block ordered by time_created as the fallback.
       const before = await store.messages({ sessionID });
       expect(before.map((message) => message.info.id)).toEqual([
         messageIDs[2],
@@ -2145,7 +2145,7 @@ describe("SQLite session store", () => {
         messageIDs[1],
       ]);
 
-      // 再保存较晚的 NULL 行：旧实现会给它 max+1=3，使其越过 messageIDs[0]（漂移）。
+      // Re-save the later NULL row: the old implementation would give it max+1=3, letting it jump past messageIDs[0] (drift).
       await store.saveMessage(userMessage(messageIDs[1], created + 1));
 
       const after = await store.messages({ sessionID });
@@ -2170,9 +2170,9 @@ describe("SQLite session store", () => {
     }
   });
 
-  // 16-timeline-authority-plan P0：0015 增量 backfill 只补 NULL 行且从各 scope 现有
-  // max(sequence)+1 起编号——backfill 前后读序不变；0014 的全量 row_number 写法在混排
-  // 数据下会撞号，不能复用。触发器兜底旧二进制的 NULL 写入。
+  // 16-timeline-authority-plan P0: the 0015 incremental backfill only fills NULL rows and numbers them from each scope's
+  // existing max(sequence)+1 — the read order is unchanged across the backfill; 0014's full row_number approach collides
+  // on mixed data and cannot be reused. The trigger guards against NULL writes from old binaries.
   it("backfills NULL sequences after existing rows and guards new inserts (0015)", async () => {
     const { SQLITE_MIGRATIONS } = await import("../src/storage/session-store/migrations.js");
     const guardIndex = SQLITE_MIGRATIONS.findIndex(
@@ -2196,7 +2196,7 @@ describe("SQLite session store", () => {
       );
       insertMessage.run("m-seq-0", created, created, 0);
       insertMessage.run("m-seq-1", created + 1, created + 1, 1);
-      // 两条 legacy NULL 行，time_created 交错在非空行之前——读序上它们仍排在非空行之后。
+      // Two legacy NULL rows whose time_created interleaves before the non-null rows — in read order they still come after the non-null rows.
       insertMessage.run("m-null-early", created - 10, created - 10, null);
       insertMessage.run("m-null-late", created - 5, created - 5, null);
 
@@ -2229,7 +2229,7 @@ describe("SQLite session store", () => {
         { id: "p-null", sequence: 1 },
       ]);
 
-      // 触发器兜底：旧二进制的 INSERT 不含 sequence 列 → 自动补当前 scope 队尾。
+      // Trigger fallback: an old binary's INSERT without the sequence column → automatically appended at the current scope's tail.
       db.prepare(
         `insert into message (id, session_id, time_created, time_updated, data)
            values ('m-legacy-writer', 'sess-1', ?, ?, '{}')`,
@@ -2625,7 +2625,7 @@ describe("SQLite session store", () => {
       try {
         firstStore.close();
       } catch {
-        // 测试清理允许重复 close；业务路径只关闭一次。
+        // Test cleanup tolerates a duplicate close; the business path closes exactly once.
       }
       await rm(tempRoot, { force: true, recursive: true });
     }
@@ -2964,9 +2964,9 @@ describe("SQLite session store", () => {
   });
 });
 
-// 16-timeline-authority-plan P3：session_input 账本生命周期。
-// promotion 原子性是硬要求：账本置 promoted 与 user message/parts 持久化同一事务，
-// 杜绝「queue 已消费但 transcript 无 user message」的孤儿窗口。
+// 16-timeline-authority-plan P3: the session_input ledger lifecycle.
+// Promotion atomicity is a hard requirement: marking the ledger promoted and persisting the user message/parts happen in the same transaction,
+// eliminating the orphan window of "queue consumed but no user message in the transcript".
 describe("session input ledger (0016)", () => {
   it("admits, promotes atomically with the user message, and settles without regressing", async () => {
     const tempRoot = await mkdtemp(join(tmpdir(), "zcode-session-input-"));
@@ -2999,7 +2999,7 @@ describe("session input ledger (0016)", () => {
         delivery: "guide",
         payload: { text: "引导二" },
       });
-      // 同 id 重入：runtime 的实际 queue 裁决覆盖预 admission，仍保序保状态（幂等）。
+      // Re-entry with the same id: the runtime's actual queue verdict overrides the pre-admission, still order- and state-preserving (idempotent).
       await store.saveSessionInput!({
         id: "input-1",
         sessionID,
@@ -3131,7 +3131,7 @@ describe("session input ledger (0016)", () => {
         },
       });
 
-      // promote 原子：账本 promoted + message + part 同事务。
+      // promote is atomic: ledger promoted + message + part in one transaction.
       const messageID = createMessageId("input-1-msg");
       await store.promoteSessionInput!({
         id: "input-1",
@@ -3171,7 +3171,7 @@ describe("session input ledger (0016)", () => {
         promotedSequence: 0,
       });
 
-      // settle 只收口 admitted：promoted 不回退（迟到 discard 不得改写已消费事实）。
+      // settle only closes out admitted: promoted never regresses (a late discard must not rewrite consumed facts).
       await store.settleSessionInput!({
         id: "input-1",
         sessionID,
@@ -3209,7 +3209,7 @@ describe("session input ledger (0016)", () => {
         conversationInputIntent: { order: { queuePosition: 0 } },
       });
 
-      // markSessionInputPromoted：非原子标记路径（background wake）。
+      // markSessionInputPromoted: the non-atomic marking path (background wake).
       await store.saveSessionInput!({
         id: "wake-1",
         sessionID,

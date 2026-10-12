@@ -1,9 +1,11 @@
 /**
- * SQLite 版 JournalStorePort（dwf_* 表）的测试。
+ * Tests for the SQLite JournalStorePort (dwf_* tables).
  *
- * 两层：共享契约套件（与内存实现同一份，来自 `@zcode/dynamic-workflow/testing`）+
- * 内存实现根本表达不了的 SQLite 专属语义——跨进程重开后记录还在、事件序号接着长、
- * run 删除级联清掉 actor/node/event。后者才是 roadmap step 8 的真正目的。
+ * Two layers: the shared contract suite (the same one as the in-memory implementation, from
+ * `@zcode/dynamic-workflow/testing`) plus SQLite-specific semantics the in-memory implementation
+ * fundamentally cannot express — records survive a cross-process close/reopen, event sequences
+ * keep counting on, and deleting a run cascades to its actors/nodes/events. The latter is the real
+ * purpose of roadmap step 8.
  */
 
 import { mkdtemp, rm } from "node:fs/promises";
@@ -25,7 +27,7 @@ import { runSqliteSessionMigrations } from "../src/storage/session-store/migrati
 
 const openDatabases: DatabaseSync[] = [];
 
-/** 每次调用开一个全新的已迁移库；契约套件要求实现之间互不共享状态。 */
+/** Opens a brand-new migrated database per call; the contract suite requires implementations to share no state. */
 function openJournalDb(dbPath = ":memory:"): { db: DatabaseSync; journal: JournalStorePort } {
   const db = new DatabaseSync(dbPath);
   openDatabases.push(db);
@@ -38,7 +40,7 @@ afterAll(() => {
     try {
       db.close();
     } catch {
-      // 测试用库；关闭失败不该掩盖真正的断言失败。
+      // Test-only database; a close failure must not mask a real assertion failure.
     }
   }
 });
@@ -66,7 +68,8 @@ const ACTOR: ActorRecord = {
   name: "planner",
   persona: { name: "planner", system: "plan carefully" },
   sessionId: "ses_actor",
-  // 冻结的 persona 与子代理实际跑的模型分列存放，两者都必须跨重开存活。
+  // The frozen persona and the model the subagent actually ran with are stored in separate
+  // columns; both must survive a reopen.
   resolvedModel: "anthropic/haiku",
 };
 
@@ -97,7 +100,7 @@ describe("SQLite dwf journal store", () => {
       journal.putNode(NODE);
       journal.appendEvent(RUN.runId, { type: "run-started", runId: RUN.runId, caps: CAPS });
       journal.appendEvent(RUN.runId, { type: "log", message: "before the crash" });
-      // 结算前最后一次用量回写：resume 必须看到它，而不是从零重来。
+      // The last usage write-back before settlement: resume must see it, not start over from zero.
       journal.updateRunUsage(RUN.runId, 120);
       first.close();
 
@@ -113,9 +116,10 @@ describe("SQLite dwf journal store", () => {
         resumed.listEvents(RUN.runId, { types: "all", reportItems: "all" }).map((e) => e.sequence),
       ).toEqual([0, 1]);
 
-      // 事件序号跨重开继续增长（engine-assigned、monotonic across resumes）。
-      // 断言用 toMatchObject：追加还会带回写入时刻（StoredEvent.timeCreated），而这条用例
-      // 说的是序号，不是时钟——时钟由契约套件的 timeCreated 用例钉住。
+      // Event sequences keep counting across reopens (engine-assigned, monotonic across resumes).
+      // The assertion uses toMatchObject: the append also returns the write instant
+      // (StoredEvent.timeCreated), but this case is about the sequence, not the clock — the clock
+      // is pinned by the contract suite's timeCreated case.
       expect(resumed.appendEvent(RUN.runId, { type: "log", message: "after resume" })).toMatchObject({
         sequence: 2,
         event: { type: "log", message: "after resume" },
@@ -132,9 +136,11 @@ describe("SQLite dwf journal store", () => {
     }
   });
 
-  // `caps_max_concurrency` 的第二个写入者（docs/dynamic-workflow/concurrency.md
-  // 「Two bounds on a run」）。契约套件已经钉住读写语义；这里钉的是内存实现表达不了的两件事：
-  // UPDATE 真的只列了这一列（其余列逐字不动），以及新值跨进程重开还在——resume 沿用的正是它。
+  // The second writer of `caps_max_concurrency` (docs/dynamic-workflow/concurrency.md
+  // "Two bounds on a run"). The contract suite already pins the read/write semantics; what is
+  // pinned here are the two things the in-memory implementation cannot express: the UPDATE really
+  // lists only that column (every other column verbatim untouched), and the new value survives a
+  // cross-process reopen — resume inherits exactly it.
   it("retunes caps_max_concurrency in place, touching no other column", async () => {
     const tempRoot = await mkdtemp(join(tmpdir(), "zcode-dwf-journal-caps-"));
     const dbPath = join(tempRoot, "session.sqlite");
@@ -145,7 +151,7 @@ describe("SQLite dwf journal store", () => {
       journal.updateRunUsage(RUN.runId, 120);
       journal.updateRunCaps(RUN.runId, { maxConcurrency: 2 });
 
-      // 同一个库里，除 caps 之外的每一列都还是建 run 时的那一份。
+      // In the same database, every column except caps still holds the value from run creation.
       expect(journal.getRun(RUN.runId)).toEqual({
         ...RUN,
         caps: { maxConcurrency: 2 },
@@ -176,19 +182,21 @@ describe("SQLite dwf journal store", () => {
     expect(journal.listActors(RUN.runId, { withPersona: true })).toEqual([]);
     expect(journal.listNodes(RUN.runId, { kinds: "all", withResult: true })).toEqual([]);
     expect(journal.listEvents(RUN.runId, { types: "all", reportItems: "all" })).toEqual([]);
-    // 级联只吃掉被删 run 的行。
+    // The cascade eats only the deleted run's rows.
     expect(journal.listActors("dwf_run_2", { withPersona: true })).toHaveLength(1);
   });
 
   it("rejects an actor belonging to no run", () => {
-    // FK 是开着的（migration runner 设 pragma foreign_keys = on），孤儿写入必须当场失败，
-    // 而不是留下一条永远读不回来的记录。孤儿事件与 null/absent result 的语义已由共享契约
-    // 套件在两个实现上一起把关，这里只补 FK 本身确实生效这一点。
+    // FK is on (the migration runner sets pragma foreign_keys = on), so an orphan write must fail
+    // on the spot instead of leaving a record that can never be read back. Orphan events and
+    // null/absent-result semantics are already covered by the shared contract suite on both
+    // implementations; this only adds that the FK itself really takes effect.
     const { journal } = openJournalDb();
     expect(() => journal.putActor({ ...ACTOR, runId: "ghost" })).toThrow();
   });
 
-  // run 产物的列。内存实现表达不了「列存在」与「旧行解码」这两件事。
+  // The run artifact's column. The in-memory implementation cannot express either "the column
+  // exists" or "decoding old rows".
   it("dwf_run 带 result_json 列", () => {
     const { db } = openJournalDb();
     const columns = (
@@ -212,7 +220,8 @@ describe("SQLite dwf journal store", () => {
       });
       first.close();
 
-      // 桌面实测 bug 的持久化面：进程一退，产物必须仍能从 journal 读回来。
+      // The persistence face of a desktop-observed bug: once the process exits, the artifact must
+      // still be readable back from the journal.
       const second = createSqliteSessionStore({ dbPath });
       const resumed = second.workflowJournalStore().getRun(RUN.runId);
       expect(resumed?.status).toBe("completed");
@@ -224,8 +233,9 @@ describe("SQLite dwf journal store", () => {
   });
 
   it("result_json 为 NULL 的旧行解码不炸且 result 缺席", () => {
-    // 0020 之前落库的 run 行：列是新加的、值为 NULL。decodeRun 必须回一条没有 result 键的
-    // 记录，而不是 undefined 值或抛错——否则升级后所有历史 run 都读不出来。
+    // A run row written before 0020: the column is newly added and its value is NULL. decodeRun
+    // must return a record without a result key, not an undefined value or a throw — otherwise
+    // every historical run becomes unreadable after the upgrade.
     const { db, journal } = openJournalDb();
     journal.createRun(RUN);
     db.prepare("update dwf_run set result_json = null where id = ?").run(RUN.runId);
@@ -235,7 +245,8 @@ describe("SQLite dwf journal store", () => {
     expect("result" in (record ?? {})).toBe(false);
   });
 
-  // actor 的档位解析结果。同样是内存实现表达不了的两件事。
+  // The actor's resolved model tier. Again the two things the in-memory implementation cannot
+  // express.
   it("dwf_actor 带 resolved_model 列", () => {
     const { db } = openJournalDb();
     const columns = (
@@ -247,8 +258,9 @@ describe("SQLite dwf journal store", () => {
   });
 
   it("resolved_model 为 NULL 的旧行解码不炸且 resolvedModel 缺席", () => {
-    // 0023 之前落库的 actor 行（以及宿主还没解析过的行）：必须解成没有 resolvedModel 键的
-    // 记录，而不是 undefined 值或抛错。persona 里的档位与这一列各自独立缺席。
+    // Actor rows written before 0023 (and rows the host has not resolved yet): must decode into a
+    // record without a resolvedModel key, not an undefined value or a throw. The tier inside the
+    // persona and this column are independently absent.
     const { db, journal } = openJournalDb();
     journal.createRun(RUN);
     journal.putActor(ACTOR);
@@ -257,13 +269,15 @@ describe("SQLite dwf journal store", () => {
     const record = journal.getActor(RUN.runId, "actor#1", 1);
     expect(record).toEqual({ ...ACTOR, resolvedModel: undefined });
     expect("resolvedModel" in (record ?? {})).toBe(false);
-    // persona 仍在 persona_json 里：模型记录丢了不等于身份丢了。
+    // The persona still lives in persona_json: losing the model record is not losing the identity.
     expect(record?.persona?.system).toBe("plan carefully");
   });
 
   it("同键重写只换 resolved_model，persona 与 session_id 原样保留", () => {
-    // 生产里这正是 driver 侧 `journalActorResolvedModel` 的读改写形状：putActor 是整条替换，
-    // 所以「只更新解析结果」必须由调用方带齐其余字段，而存储层要如实照写。
+    // In production this is exactly the driver-side read-modify-write shape of
+    // `journalActorResolvedModel`: putActor replaces the whole row, so "update only the resolved
+    // result" requires the caller to supply every other field, and the storage layer must write
+    // them faithfully.
     const { journal } = openJournalDb();
     journal.createRun(RUN);
     journal.putActor(ACTOR);
@@ -277,7 +291,8 @@ describe("SQLite dwf journal store", () => {
   });
 
   it("终态与产物一笔写：单条 UPDATE 同时落 status 与 result_json", () => {
-    // 分两笔写会造出「completed 但产物丢失」的崩溃窗口，正是本列要关死的损失类别。
+    // Writing in two statements would open a crash window of "completed but artifact lost" —
+    // exactly the loss category this column is meant to shut out.
     const { db, journal } = openJournalDb();
     journal.createRun(RUN);
     journal.updateRunStatus(RUN.runId, "completed", { result: "artifact text" });
@@ -289,7 +304,8 @@ describe("SQLite dwf journal store", () => {
     expect(row?.result_json).toBe(JSON.stringify("artifact text"));
   });
 
-  // `kind` 的 CHECK 含 'report'——只有对着真库才能验，内存实现连 CHECK 都没有。
+  // The `kind` CHECK includes 'report' — verifiable only against a real database; the in-memory
+  // implementation has no CHECK at all.
   it("dwf_node 接受 kind:\"report\" 并原样回读", () => {
     const { journal } = openJournalDb();
     journal.createRun(RUN);
@@ -304,7 +320,8 @@ describe("SQLite dwf journal store", () => {
     };
     journal.putNode(report);
 
-    // 整条 toEqual：actor 三列必须缺席地回来（report 没有 actor），status 恒为 completed。
+    // A whole-row toEqual: the three actor columns must come back absent (a report has no actor),
+    // and status is always completed.
     expect(journal.getNode(RUN.runId, "report#1", 1)).toEqual(report);
     const stored = journal.getNode(RUN.runId, "report#1", 1);
     expect(stored !== undefined && "actorSeq" in stored).toBe(false);
@@ -312,7 +329,8 @@ describe("SQLite dwf journal store", () => {
   });
 
   it("CHECK 仍然拒绝一个不存在的 kind", () => {
-    // 重建 CHECK 的意义在于它**还在拦**：放开一个值不等于把闸门拆了。
+    // The point of rebuilding the CHECK is that it **still blocks**: allowing one value is not
+    // tearing down the gate.
     const { journal } = openJournalDb();
     journal.createRun(RUN);
     expect(() =>
@@ -328,7 +346,8 @@ describe("SQLite dwf journal store", () => {
   });
 
 
-  // `kind` 的 CHECK 含 'world-run'（world.run 的 journal 化命令执行，docs/dynamic-workflow/authoring.md）。
+  // The `kind` CHECK includes 'world-run' (the journaled command execution of world.run,
+  // docs/dynamic-workflow/authoring.md).
   it("dwf_node 接受 kind:\"world-run\" 并原样回读", () => {
     const { journal } = openJournalDb();
     journal.createRun(RUN);
@@ -346,7 +365,7 @@ describe("SQLite dwf journal store", () => {
   });
 
   it("dwf_node 带 input_json 列：有界输入原样回读，ask 行缺席", () => {
-    // 工作区 transcript 的「what ran」（docs/dynamic-workflow/transcript-and-notifications.md）。
+    // The workspace transcript's "what ran" (docs/dynamic-workflow/transcript-and-notifications.md).
     const { db, journal } = openJournalDb();
     journal.createRun(RUN);
     const worldRun: NodeRecord = {
@@ -360,7 +379,7 @@ describe("SQLite dwf journal store", () => {
     };
     journal.putNode(worldRun);
     expect(journal.getNode(RUN.runId, "world-read#4", 1)).toEqual(worldRun);
-    // 结算是整条 upsert：input 必须随行回来，而不是被抹成 NULL。
+    // Settlement is a whole-row upsert: input must come back with the row, not be wiped to NULL.
     const settled: NodeRecord = {
       ...worldRun,
       status: "completed",
@@ -485,14 +504,15 @@ describe("SQLite dwf journal store", () => {
     const rows = queries.listWorldNodes(RUN.runId);
     expect(rows[0]).toMatchObject({ resultCount: 3 });
     expect("exitCode" in rows[0]!).toBe(false);
-    // stderr 是一个双字节字符：报的是 UTF-8 字节数，不是字符数。
+    // stderr is a two-byte character: the report is UTF-8 bytes, not character count.
     expect(rows[1]).toMatchObject({ exitCode: 1, stdoutBytes: 3, stderrBytes: 2 });
     expect("resultCount" in rows[1]!).toBe(false);
-    // 字符串正文：既不是数组也不是对象，摘要列全部缺席，只有字节数。
+    // String body: neither array nor object, so every summary column is absent except the byte
+    // count.
     expect(rows[2]).toMatchObject({ resultBytes: JSON.stringify(" M src/a.ts\n").length });
     expect("resultCount" in rows[2]!).toBe(false);
     expect("exitCode" in rows[2]!).toBe(false);
-    // 失败行没有正文：什么摘要都没有，只有 error。
+    // A failed row has no body: no summary at all, only the error.
     expect(rows[3]).toMatchObject({ status: "failed", error: { code: "DriverError", message: "boom" } });
     expect("resultBytes" in rows[3]!).toBe(false);
     expect("exitCode" in rows[3]!).toBe(false);
@@ -500,8 +520,9 @@ describe("SQLite dwf journal store", () => {
 
 
 
-  // dwf_event 上的表达式索引不只要存在，还得**真的被用上**：它存在的全部理由是让看板取数
-  // 不必扫完一条长 run 的整张事件表（那是最大的一张表）。查询计划变了这里就会响。
+  // The expression index on dwf_event must not merely exist, it must **actually be used**: its
+  // entire reason to exist is letting the board fetch data without scanning a long run's whole
+  // event table (the largest table there is). If the query plan changes, this test goes off.
   it("dwf_event 的表达式索引真的服务于按 artifactId 取事件", () => {
     const { db } = openJournalDb();
     const plan = (
@@ -521,17 +542,20 @@ describe("SQLite dwf journal store", () => {
 });
 
 /**
- * 孤儿收敛的窄查询。刻意**不在** `JournalStorePort` 上：引擎从不按父会话找 run，这条查询
- * 只服务于宿主侧的收敛（`bootstrap/src/app/dynamic-workflow-run-service.ts` 构造时按能力
- * 探测调用它）。内存实现不提供它，所以它的语义只能在这里、对着真库钉住。
+ * The narrow query for orphan sweeping. Deliberately **not** on `JournalStorePort`: the engine
+ * never looks up runs by parent session, and this query serves only the host-side sweep
+ * (`bootstrap/src/app/dynamic-workflow-run-service.ts` calls it after capability probing at
+ * construction). The in-memory implementation does not provide it, so its semantics can only be
+ * pinned here, against the real database.
  */
 interface DwfNonTerminalRunQuery {
   listNonTerminalRuns(parentSessionId: string): RunRecord[];
 }
 
 /**
- * 开一个带窄查询的 journal。这里用与宿主侧**同一种**能力探测：方法名一旦漂移，宿主的收敛
- * 会静默跳过（回到「孤儿 run 永远 running」那个 bug），所以在这里就要大声失败。
+ * Opens a journal with the narrow query. Uses the **same kind** of capability probing as the host
+ * side: if the method name drifts, the host's sweep would silently skip (back to the
+ * "orphan runs stay running forever" bug), so it must fail loudly here.
  */
 function openSweepableJournal(): JournalStorePort & DwfNonTerminalRunQuery {
   const { journal } = openJournalDb();
@@ -544,7 +568,7 @@ function openSweepableJournal(): JournalStorePort & DwfNonTerminalRunQuery {
 describe("SQLite dwf journal store — listNonTerminalRuns", () => {
   const PARENT = "ses_sweep_parent";
 
-  /** 预置一行 dwf_run（只关心父会话与状态）。 */
+  /** Seeds a dwf_run row (only parent session and status matter). */
   function seed(
     journal: JournalStorePort,
     input: { runId: string; status: RunRecord["status"]; parentSessionId?: string },
@@ -565,14 +589,16 @@ describe("SQLite dwf journal store — listNonTerminalRuns", () => {
     seed(journal, { parentSessionId: PARENT, runId: "run_completed", status: "completed" });
     seed(journal, { parentSessionId: PARENT, runId: "run_errored", status: "errored" });
     seed(journal, { parentSessionId: PARENT, runId: "run_stopped", status: "stopped" });
-    // 兄弟会话正在飞的 run 与父会话缺席的行都不属于本会话——查全了就会把它们标死。
+    // A sibling session's in-flight run and rows with no parent session do not belong to this
+    // session — querying too broadly would mark them dead.
     seed(journal, { parentSessionId: "ses_other", runId: "run_sibling", status: "running" });
     seed(journal, { runId: "run_parentless", status: "running" });
 
     const rows = journal.listNonTerminalRuns(PARENT);
 
     expect(rows.map((row) => row.runId).sort()).toEqual(["run_pending", "run_running"]);
-    // 回的是完整 RunRecord（同一个 decodeRun），收敛策略据 status 判断，不需要二次查询。
+    // What comes back is the full RunRecord (the same decodeRun); the sweep strategy branches on
+    // status and needs no second query.
     expect(rows.every((row) => row.parentSessionId === PARENT)).toBe(true);
     expect(rows.find((row) => row.runId === "run_running")?.status).toBe("running");
   });
@@ -598,18 +624,19 @@ describe("SQLite dwf journal store — listNonTerminalRuns", () => {
 });
 
 /**
- * run 内省（`ListWorkflowRuns` / `GetWorkflowRun`）的宿主侧查询面。与 listNonTerminalRuns
- * 同款处理：引擎从不枚举 run，所以这些方法不进领域 `JournalStorePort`，内存实现也不提供它们——
- * 它们的语义只能在这里、对着真库钉住（docs/dynamic-workflow/launch.md
- * 的「枚举查询归属」行）。
+ * The host-side query face for run introspection (`ListWorkflowRuns` / `GetWorkflowRun`). Same
+ * treatment as listNonTerminalRuns: the engine never enumerates runs, so these methods stay out of
+ * the domain `JournalStorePort` and the in-memory implementation does not provide them either —
+ * their semantics can only be pinned here, against the real database (the "enumeration query
+ * ownership" row of docs/dynamic-workflow/launch.md).
  */
 function openIntrospectableJournal(): {
   db: DatabaseSync;
   journal: JournalStorePort & DwfRunIntrospectionQueries;
 } {
   const { db, journal } = openJournalDb();
-  // 与宿主侧**同一种**能力探测：方法名一旦漂移，两个工具会静默降级成「本会话没有这个能力」，
-  // 所以在这里就要大声失败。
+  // The **same kind** of capability probing as the host side: if a method name drifts, the two
+  // tools silently degrade to "this session lacks the capability", so it must fail loudly here.
   for (const method of [
     "listRuns",
     "getRunRow",
@@ -629,8 +656,9 @@ function openIntrospectableJournal(): {
 }
 
 /**
- * 预置一行 dwf_run。`timeUpdated` 必须能被显式钉住：createRun 写的是 Date.now()，同毫秒内
- * 建的多个 run 会拿到相同的时间戳，倒序断言就无从谈起。
+ * Seeds a dwf_run row. `timeUpdated` must be pinnable explicitly: createRun writes Date.now(), so
+ * several runs created within the same millisecond get the same timestamp and a descending-order
+ * assertion would be impossible.
  */
 function seedRun(
   db: DatabaseSync,
@@ -679,7 +707,8 @@ describe("SQLite dwf journal store — dwf_run.name 与 cwd 索引", () => {
     ).map((row) => row.name);
     expect(columns).toContain("name");
 
-    // 索引列序就是查询形状（cwd 等值 + time_updated 排序）：顺序反了索引就只能扫。
+    // The index column order is the query shape (cwd equality + time_updated ordering): reversed,
+    // the index could only be scanned.
     const indexed = (
       db.prepare("select name from pragma_index_info('dwf_run_cwd_idx')").all() as unknown as {
         name: string;
@@ -689,8 +718,9 @@ describe("SQLite dwf journal store — dwf_run.name 与 cwd 索引", () => {
   });
 
   it("name 为 NULL 的旧行解码不炸且 name 缺席", () => {
-    // 0021 之前落库的 run 行：列是新加的、值为 NULL（不做回填）。decodeRun 必须回一条没有
-    // name 键的记录，否则升级后所有历史 run 都读不出来。
+    // Run rows written before 0021: the column is newly added and its value is NULL (no
+    // backfill). decodeRun must return a record without a name key, otherwise every historical run
+    // becomes unreadable after the upgrade.
     const { db, journal } = openJournalDb();
     journal.createRun(RUN);
     db.prepare("update dwf_run set name = null where id = ?").run(RUN.runId);
@@ -701,8 +731,8 @@ describe("SQLite dwf journal store — dwf_run.name 与 cwd 索引", () => {
   });
 
   it("updateRunStatus 不改写 name 列", () => {
-    // name 只在 createRun 那一刻写入（引擎独占的元数据路）。结算语句若把 name 也列进去，
-    // run 一结算就会丢名字。
+    // name is written only at createRun time (the engine-exclusive metadata path). If the
+    // settlement statement also listed name, a run would lose its name the moment it settled.
     const { db, journal } = openJournalDb();
     journal.createRun({ ...RUN, name: "triage the flake" });
     journal.updateRunStatus(RUN.runId, "completed", { result: "ok" });
@@ -715,8 +745,10 @@ describe("SQLite dwf journal store — dwf_run.name 与 cwd 索引", () => {
 });
 
 describe("SQLite dwf journal store — 基线形状", () => {
-  // docs/dynamic-workflow/authoring.md：预算构造整体移除。基线 0019 直接以终态建表，这里钉住
-  // 「两列不存在、用量列叫 spent_tokens」，以及老形状的 run 记录经 store 读回时 caps 只剩 maxConcurrency。
+  // docs/dynamic-workflow/authoring.md: the budget constructor was removed wholesale. Baseline
+  // 0019 creates the table directly with terminal states; this pins that the two columns do not
+  // exist, that the usage column is named spent_tokens, and that reading an old-shape run record
+  // back through the store leaves caps with only maxConcurrency.
   it("dwf_run 没有节点上限 / 预算列，用量列叫 spent_tokens", () => {
     const { db } = openJournalDb();
     const columns = (db.prepare("pragma table_info(dwf_run)").all() as Array<{ name: string }>).map(
@@ -749,7 +781,8 @@ describe("SQLite dwf journal store — listRuns", () => {
     seedRun(db, journal, { runId: "run_old", cwd: CWD, timeUpdated: 1_000 });
     seedRun(db, journal, { runId: "run_new", cwd: CWD, timeUpdated: 3_000 });
     seedRun(db, journal, { runId: "run_mid", cwd: CWD, timeUpdated: 2_000 });
-    // 他项目的 run 与没有 cwd 的行都不属于本项目：查全了就把别人的 run 摆到模型面前。
+    // Other projects' runs and rows without a cwd do not belong to this project: queried too
+    // broadly, someone else's run would be placed in front of the model.
     seedRun(db, journal, { runId: "run_other", cwd: "/repo/elsewhere", timeUpdated: 9_000 });
     seedRun(db, journal, { runId: "run_cwdless", timeUpdated: 9_000 });
 
@@ -758,8 +791,8 @@ describe("SQLite dwf journal store — listRuns", () => {
   });
 
   it("cwd 是字面匹配，不做路径规范化", () => {
-    // 与 submit 写入同源（context.workingDirectory 原样落库、原样查询）。在读侧单方面
-    // 规范化只会造出单侧不匹配。
+    // Same source as the submit write (context.workingDirectory is stored and queried verbatim).
+    // Normalizing unilaterally on the read side would only create one-sided mismatches.
     const { db, journal } = openIntrospectableJournal();
     seedRun(db, journal, { runId: "run_1", cwd: CWD });
 
@@ -777,7 +810,8 @@ describe("SQLite dwf journal store — listRuns", () => {
       "run_4",
       "run_3",
     ]);
-    // 超出条数不补空位；limit 0 是空页而不是全量（`limit -1` 那个 SQLite 惯用法不适用这里）。
+    // No padding when over the count; limit 0 is an empty page, not everything (the `limit -1`
+    // SQLite idiom does not apply here).
     expect(journal.listRuns({ cwd: CWD, limit: 50 })).toHaveLength(5);
     expect(journal.listRuns({ cwd: CWD, limit: 0 })).toEqual([]);
   });
@@ -796,7 +830,8 @@ describe("SQLite dwf journal store — listRuns", () => {
         .sort(),
     ).toEqual(["run_pending", "run_running"]);
     expect(journal.listRuns({ cwd: CWD, limit: 20, statuses: ["stopped"] })).toEqual([]);
-    // 空集合就是「不匹配任何状态」，不是「不过滤」——后者会把过滤器静默取消掉。
+    // An empty set means "matches no status", not "no filter" — the latter would silently cancel
+    // the filter.
     expect(journal.listRuns({ cwd: CWD, limit: 20, statuses: [] })).toEqual([]);
   });
 
@@ -822,16 +857,18 @@ describe("SQLite dwf journal store — listRuns", () => {
         .listRuns({ cwd: CWD, limit: 20, name: "release-check", statuses: ["errored"] })
         .map((row) => row.runId),
     ).toEqual(["run_a_failed"]);
-    // 名字是字面等值；不存在的名字回空页，而不是退回「不过滤」。
+    // The name is literal equality; a nonexistent name returns an empty page rather than falling
+    // back to "no filter".
     expect(journal.listRuns({ cwd: CWD, limit: 20, name: "nope" })).toEqual([]);
-    // 不带 name 时行为不变（nameless 行也在）。
+    // Without name the behavior is unchanged (nameless rows are still included).
     expect(journal.listRuns({ cwd: CWD, limit: 20 })).toHaveLength(5);
   });
 
   it("cwd 缺省即跨所有项目枚举（全局工作流的运行历史跨 cwd），行带 cwd", () => {
-    // 全局工作流在不同项目里被发起，dwf_run.cwd 记的是各自实际运行的项目。`workflows/runs`
-    // 的全局变体不按 cwd 过滤，把该名字在所有项目里的历史一并取出，行带 cwd 供 GUI 标项目
-    // （docs/dynamic-workflow/launch.md「Data path」）。
+    // A global workflow is launched from different projects; dwf_run.cwd records the project each
+    // run actually ran in. The global variant of `workflows/runs` does not filter by cwd and pulls
+    // the history of that name across all projects, with cwd on each row so the GUI can label the
+    // project (docs/dynamic-workflow/launch.md "Data path").
     const { db, journal } = openIntrospectableJournal();
     seedRun(db, journal, { runId: "run_a", cwd: "/repo/one", name: "deep-research", timeUpdated: 3 });
     seedRun(db, journal, { runId: "run_b", cwd: "/repo/two", name: "deep-research", timeUpdated: 2 });
@@ -839,15 +876,17 @@ describe("SQLite dwf journal store — listRuns", () => {
     seedRun(db, journal, { runId: "run_cwdless", name: "deep-research", timeUpdated: 1 });
 
     const rows = journal.listRuns({ name: "deep-research", limit: 20 });
-    // 跨两个 cwd + 没有 cwd 的行，按 time_updated 倒序；别的名字不进来。
+    // Across two cwds plus the row with no cwd, descending by time_updated; other names stay out.
     expect(rows.map((row) => row.runId)).toEqual(["run_a", "run_b", "run_cwdless"]);
     const byId = new Map(rows.map((row) => [row.runId, row]));
     expect(byId.get("run_a")?.cwd).toBe("/repo/one");
     expect(byId.get("run_b")?.cwd).toBe("/repo/two");
-    // cwd 为 NULL 的行不带 cwd 键（新列不回填，缺席可分辨）。
+    // A row with NULL cwd carries no cwd key (the new column is not backfilled; absence is
+    // distinguishable).
     expect(byId.get("run_cwdless") !== undefined && "cwd" in (byId.get("run_cwdless") ?? {})).toBe(false);
 
-    // 给了 cwd 就仍只回本项目那份（与全局变体互斥，行为逐字不变）。
+    // With a cwd given, still only this project's share (mutually exclusive with the global
+    // variant; behavior verbatim unchanged).
     expect(journal.listRuns({ cwd: "/repo/one", limit: 20, name: "deep-research" }).map((r) => r.runId)).toEqual([
       "run_a",
     ]);
@@ -890,8 +929,9 @@ describe("SQLite dwf journal store — listRuns", () => {
     expect(row).toMatchObject({
       runId: "run_1",
       name: "nightly triage",
-      // parentSessionId 是 ownedByThisSession / possiblyInterrupted 的判据，scriptText 是
-      // label 兜底的原料——两者缺一，下游就只能再查一遍。
+      // parentSessionId is the criterion for ownedByThisSession / possiblyInterrupted, and
+      // scriptText is the raw material for the label fallback — missing either forces the
+      // downstream to query again.
       parentSessionId: "ses_owner",
       cwd: CWD,
       scriptText: "const planner = agent('planner');",
@@ -901,7 +941,8 @@ describe("SQLite dwf journal store — listRuns", () => {
       timeUpdated: 4_242,
     });
     expect(typeof row?.timeCreated).toBe("number");
-    // 列表刻意轻：产物可以很大，一页 50 行全解出来等于把整库产物读进内存。
+    // The list is deliberately light: artifacts can be huge, and decoding all 50 rows of a page
+    // equals reading the whole database's artifacts into memory.
     expect(row !== undefined && "result" in row).toBe(false);
     expect(row !== undefined && "failure" in row).toBe(false);
   });
@@ -928,7 +969,8 @@ describe("SQLite dwf journal store — getRunRow", () => {
     });
 
     const row = journal.getRunRow("run_1");
-    // 时间戳直读 journal：RunRecord 本身不带时间，而详情页要报 createdAt / updatedAt。
+    // Timestamps read straight from the journal: RunRecord itself carries no times, while the
+    // detail page must report createdAt / updatedAt.
     expect(row).toMatchObject({
       runId: "run_1",
       name: "named run",
@@ -946,7 +988,7 @@ describe("SQLite dwf journal store — getRunRow", () => {
 });
 
 describe("SQLite dwf journal store — countNodesByStatus", () => {
-  /** 落一个节点（只关心 status 与归属 run）。 */
+  /** Seeds a node (only status and owning run matter). */
   function seedNode(
     journal: JournalStorePort,
     runId: string,
@@ -971,7 +1013,8 @@ describe("SQLite dwf journal store — countNodesByStatus", () => {
   });
 
   it("无节点（含未知 run）回三个 0，而不是缺键", () => {
-    // 下游要拿它直接算 nodesObserved；缺键会让「还没有节点」和「没有这个 run」都变成 NaN。
+    // Downstream computes nodesObserved from it directly; missing keys would turn both "no nodes
+    // yet" and "no such run" into NaN.
     const { db, journal } = openIntrospectableJournal();
     seedRun(db, journal, { runId: "run_1", cwd: "/repo" });
 
@@ -994,12 +1037,14 @@ describe("SQLite dwf journal store — listRecentLogEvents", () => {
     }
 
     const tail = journal.listRecentLogEvents("run_1", 3);
-    // 末 N 条按 sequence desc 取、再反转回时序：全量读进内存再筛是这条查询存在的反面。
+    // The last N are taken by sequence desc, then reversed back into chronological order: reading
+    // everything into memory and filtering is the opposite of why this query exists.
     expect(
       tail.map((e) => (e.event.type === "log" ? e.event.message : `<${e.event.type}>`)),
     ).toEqual(["l1", "l2", "l3"]);
-    // 序号是 journal 的真序号（log 之间夹着别的事件，所以不连续），不是重新编号的下标——
-    // 下游拿它定位「叙事走到哪」。
+    // The sequence numbers are the journal's real ones (other events are interleaved between
+    // logs, hence the gaps), not re-numbered indexes — downstream uses them to locate "where the
+    // narrative has reached".
     expect(tail.map((e) => e.sequence)).toEqual([3, 5, 7]);
   });
 
@@ -1044,7 +1089,7 @@ describe("SQLite dwf journal store — listRunsByParentSession", () => {
     listRunsByParentSession(parentSessionId: string, limit: number): DwfRunSessionListItem[];
   }
 
-  /** 能力探测同宿主侧（supportsRunEnumeration）：方法名漂移要在这里先红。 */
+  /** Capability probing same as the host side (supportsRunEnumeration): a drifted method name must go red here first. */
   function openEnumerableJournal(): JournalStorePort & DwfRunEnumerationQuery {
     const { journal } = openJournalDb();
     if (
@@ -1096,7 +1141,8 @@ describe("SQLite dwf journal store — listRunsByParentSession", () => {
 
     expect(rows.map((row) => row.runId).sort()).toEqual(["run_a", "run_b"]);
     expect(rows.find((row) => row.runId === "run_a")?.toolCallId).toBe("call-a");
-    // 逻辑词汇原样回来：stopped + reason + 结构化失败（物理层是 cancelled + 信封）。
+    // The logical vocabulary comes back as-is: stopped + reason + structured failure (the physical
+    // layer is cancelled + envelope).
     expect(rows.find((row) => row.runId === "run_a")).toMatchObject({
       status: "stopped",
       stopReason: "user",
@@ -1113,13 +1159,14 @@ describe("SQLite dwf journal store — listRunsByParentSession", () => {
     seed(journal, { parentSessionId: PARENT, runId: "run_old", status: "completed" });
     seed(journal, { parentSessionId: PARENT, runId: "run_mid", status: "completed" });
     seed(journal, { parentSessionId: PARENT, runId: "run_new", status: "running" });
-    // 让 time_updated 真正拉开（同一毫秒内 createRun 会并列）：更新最老那行，使它变最新。
+    // Make time_updated genuinely diverge (createRun within the same millisecond ties): touch the
+    // oldest row so it becomes the newest.
     await new Promise((resolve) => setTimeout(resolve, 5));
     journal.updateRunUsage("run_old", 42);
 
     const rows = journal.listRunsByParentSession(PARENT, 2);
     expect(rows).toHaveLength(2);
-    expect(rows[0]?.runId).toBe("run_old"); // 刚被触碰过 → 最近更新
+    expect(rows[0]?.runId).toBe("run_old"); // just touched → most recently updated
   });
 
   it("未知父会话返回空数组；limit 0 返回空", () => {
@@ -1129,7 +1176,8 @@ describe("SQLite dwf journal store — listRunsByParentSession", () => {
     expect(journal.listRunsByParentSession(PARENT, 0)).toEqual([]);
   });
 
-  // 窄投影：枚举面报 updatedAt，所以行必须带 journal 时间戳（`RunRecord` 自己不带时间）。
+  // Narrow projection: the enumeration face reports updatedAt, so rows must carry the journal
+  // timestamps (`RunRecord` itself carries none).
   it("行带 journal 时间戳（createdAt/updatedAt 的来源）", () => {
     const journal = openEnumerableJournal();
     seed(journal, { parentSessionId: PARENT, runId: "run_timed", status: "running" });
@@ -1139,25 +1187,29 @@ describe("SQLite dwf journal store — listRunsByParentSession", () => {
     expect(typeof row?.timeCreated).toBe("number");
     expect(typeof row?.timeUpdated).toBe("number");
     expect(row?.timeUpdated).toBeGreaterThanOrEqual(row?.timeCreated ?? 0);
-    // 元数据列齐全（标签派生要 name/scriptText，归属要 parentSessionId）。
+    // Metadata columns complete (label derivation needs name/scriptText, ownership needs
+    // parentSessionId).
     expect(row).toMatchObject({ parentSessionId: PARENT, runId: "run_timed", status: "running" });
   });
 
   /**
-   * `result_json` **不进这条查询的 SQL**。
+   * `result_json` **does not enter this query's SQL**.
    *
-   * 断言必须打在 SQL 上而不是解码结果上：`decodeRunListItem` 本来就不读 result_json，所以
-   * 把 select 改回 `select *` 之后行为**完全不变**（行里照样没有 `result` 键），只有内存代价
-   * 会悄悄回来——一页 run 把每个产物一起读进内存。行为断言在这里是个假哨兵，实测过。
+   * The assertion must hit the SQL, not the decoded result: `decodeRunListItem` never reads
+   * result_json anyway, so after changing the select back to `select *` the behavior is
+   * **completely unchanged** (the row still has no `result` key) — only the memory cost quietly
+   * comes back, a page of runs reading every artifact into memory. A behavioral assertion is a
+   * false sentinel here; verified in practice.
    *
-   * 反过来 `failure_json` 必须在 SQL 里：resumable 的谓词依赖 failure.code（见下一个用例）。
+   * Conversely `failure_json` must be in the SQL: the resumable predicate depends on
+   * failure.code (see the next case).
    */
   it("枚举查询的 SQL 取 failure_json 而不取 result_json", () => {
     const db = new DatabaseSync(":memory:");
     openDatabases.push(db);
     runSqliteSessionMigrations(db, ":memory:");
     const prepared: string[] = [];
-    // prepare 的旁路记录器：只为了看见这条查询真正发出的列清单。
+    // A bypass recorder for prepare: only to see the real column list this query sends.
     const recordingDb = new Proxy(db, {
       get(target, property, receiver) {
         if (property === "prepare") {
@@ -1173,7 +1225,8 @@ describe("SQLite dwf journal store — listRunsByParentSession", () => {
     const journal = createDwfJournalStore(recordingDb) as JournalStorePort & DwfRunEnumerationQuery;
     seed(journal, { parentSessionId: PARENT, runId: "run_a", status: "running" });
 
-    // 只看枚举查询自己发的 SQL（建行/迁移的语句当然会提到 result_json）。
+    // Look only at the SQL the enumeration query itself sends (the row-creation/migration
+    // statements naturally mention result_json).
     prepared.length = 0;
     journal.listRunsByParentSession(PARENT, 10);
     const sql = prepared.join("\n");
@@ -1183,7 +1236,7 @@ describe("SQLite dwf journal store — listRunsByParentSession", () => {
     expect(sql).not.toMatch(/select\s+\*/i);
   });
 
-  /** failure 必须活过窄投影：Interrupted 是 resume 门认可的可恢复形态。 */
+  /** failure must survive the narrow projection: Interrupted is the resumable shape the resume gate accepts. */
   it("窄投影仍解出 failure（resumable 谓词的输入）", () => {
     const journal = openEnumerableJournal();
     seed(journal, { parentSessionId: PARENT, runId: "run_dead", status: "running" });
@@ -1200,14 +1253,17 @@ describe("SQLite dwf journal store — listRunsByParentSession", () => {
 });
 
 /**
- * 用户面产物的两条宿主查询（docs/dynamic-workflow/authoring.md「Journal rows and events」）。
- * ⚠ 这里的 artifact 是脚本发布给用户看的交付物，不是 `RunSettlement.artifact`（顶层返回值）。
+ * The two host queries for user-facing artifacts (docs/dynamic-workflow/authoring.md "Journal rows
+ * and events").
+ * ⚠ The artifact here is the deliverable the script published to the user, not
+ * `RunSettlement.artifact` (the top-level return value).
  *
- * 两条都刻意**不在** `JournalStorePort` 上（同 `listRuns` 的论证：引擎不做的事不该进领域端口），
- * 所以它们的语义只能在这里、对着真库钉住——内存实现根本不提供它们。
+ * Both are deliberately **not** on `JournalStorePort` (same argument as `listRuns`: what the
+ * engine does not do should not enter the domain port), so their semantics can only be pinned
+ * here, against the real database — the in-memory implementation does not provide them at all.
  */
 describe("SQLite dwf journal store — listArtifactRows", () => {
-  /** 落一条产物行（发布或声明）。 */
+  /** Seeds an artifact row (published or declared). */
   function seedArtifact(
     journal: JournalStorePort,
     runId: string,
@@ -1235,7 +1291,8 @@ describe("SQLite dwf journal store — listArtifactRows", () => {
     seedRun(db, journal, { runId: "run_1", cwd: "/repo" });
     seedRun(db, journal, { runId: "run_2", cwd: "/repo" });
 
-    // 交错发布：同一个 id 的行**不**天然连续，所以排序只能是落库先后（版本的先后就是它）。
+    // Interleaved publishing: rows with the same id are **not** naturally adjacent, so the only
+    // possible ordering is insertion order (which is also the version order).
     seedArtifact(journal, "run_1", "artifact#1", 1, "perf", {
       id: "perf",
       kind: "chart",
@@ -1253,7 +1310,8 @@ describe("SQLite dwf journal store — listArtifactRows", () => {
       version: 2,
       bytes: 20,
     });
-    // 标签 report 与普通节点都不是产物行——混进来，读面会把每个数据点当成一个交付物。
+    // Tagged reports and ordinary nodes are not artifact rows — mixed in, the read face would
+    // treat every data point as a deliverable.
     journal.putNode({
       runId: "run_1",
       siteId: "report#1",
@@ -1272,7 +1330,8 @@ describe("SQLite dwf journal store — listArtifactRows", () => {
       inputHash: "k",
       status: "completed",
     });
-    // 别的 run 的产物：查全了就把别人的交付物摆到这个 run 的卡片区。
+    // Another run's artifacts: queried too broadly, someone else's deliverables would land in
+    // this run's card area.
     seedArtifact(journal, "run_2", "artifact#1", 1, "other", {
       id: "other",
       kind: "markdown",
@@ -1289,7 +1348,7 @@ describe("SQLite dwf journal store — listArtifactRows", () => {
   });
 
   it("失败的发布照样在结果里（带 error、无 result）", () => {
-    // 筛掉失败行等于让一个用户可见的失败在每张表面上都不存在。
+    // Filtering out failed rows would make a user-visible failure nonexistent on every surface.
     const { db, journal } = openIntrospectableJournal();
     seedRun(db, journal, { runId: "run_1", cwd: "/repo" });
     seedArtifact(journal, "run_1", "artifact#1", 1, "book", undefined);
@@ -1333,9 +1392,9 @@ describe("SQLite dwf journal store — countTaggedReports", () => {
     put("run_1", "report#1", 1, { artifactId: "perf" });
     put("run_1", "report#1", 2, { artifactId: "perf" });
     put("run_1", "report#2", 1, { artifactId: "queue" });
-    put("run_1", "report#3", 1, {}); // 未打标签
-    put("run_1", "artifact#1", 1, { kind: "artifact", artifactId: "perf" }); // 产物行不算
-    put("run_2", "report#1", 1, { artifactId: "perf" }); // 别的 run
+    put("run_1", "report#3", 1, {}); // untagged
+    put("run_1", "artifact#1", 1, { kind: "artifact", artifactId: "perf" }); // artifact rows do not count
+    put("run_2", "report#1", 1, { artifactId: "perf" }); // another run
 
     expect(journal.countTaggedReports("run_1")).toEqual(
       new Map([
@@ -1348,10 +1407,10 @@ describe("SQLite dwf journal store — countTaggedReports", () => {
 });
 
 describe("SQLite dwf journal store — listArtifactItems", () => {
-  /** 足够大的字节界：只想测条数 / 游标 / 筛选的用例用它，让字节界不参与。 */
+  /** A byte bound large enough that cases testing only counts / cursors / filtering can keep it out of the picture. */
   const ANY_BYTES = 1 << 30;
 
-  /** 追加一条标签 report 事件，回它拿到的 sequence。 */
+  /** Appends a tagged report event and returns its assigned sequence. */
   function seedTaggedReport(
     journal: JournalStorePort,
     runId: string,
@@ -1388,11 +1447,12 @@ describe("SQLite dwf journal store — listArtifactItems", () => {
     seedRun(db, journal, { runId: "run_1", cwd: "/repo" });
     seedRun(db, journal, { runId: "run_2", cwd: "/repo" });
     seedTaggedReport(journal, "run_1", "report#1", 1, { mine: true }, "perf");
-    // 未打标签：payload 里根本没有 artifactId 键，SQL 的 `= ?` 不匹配 NULL。
+    // Untagged: the payload has no artifactId key at all, and SQL's `= ?` does not match NULL.
     seedTaggedReport(journal, "run_1", "report#2", 1, { untagged: true });
     seedTaggedReport(journal, "run_1", "report#3", 1, { other: true }, "queue");
-    // 别种事件：`artifact-published` 的 id 藏在嵌套的 `artifact.id` 里，不是顶层 artifactId；
-    // 但 type 过滤才是这条不变式的守门人（明天别的事件可能带顶层 artifactId）。
+    // Other event kinds: `artifact-published`'s id hides inside the nested `artifact.id`, not a
+    // top-level artifactId; but the type filter is the gatekeeper of this invariant (tomorrow some
+    // other event might carry a top-level artifactId).
     journal.appendEvent("run_1", {
       type: "artifact-published",
       instance: { siteId: "artifact#1", ordinal: 1 },
@@ -1410,7 +1470,8 @@ describe("SQLite dwf journal store — listArtifactItems", () => {
     const { db, journal } = openIntrospectableJournal();
     seedRun(db, journal, { runId: "run_1", cwd: "/repo" });
     const s0 = seedTaggedReport(journal, "run_1", "report#1", 1, 1, "perf");
-    // 中间夹一条别的事件：游标是 journal 的全局 sequence，不是「第几条产物条目」。
+    // Another event interleaved in between: the cursor is the journal's global sequence, not "the
+    // Nth artifact item".
     journal.appendEvent("run_1", { type: "log", message: "between" });
     const s1 = seedTaggedReport(journal, "run_1", "report#1", 2, 2, "perf");
 
@@ -1421,7 +1482,8 @@ describe("SQLite dwf journal store — listArtifactItems", () => {
   });
 
   it("limit 逐字兑现，hasMore 由存储层判定：页之后还有没有条目", () => {
-    // 存储层不加自己的天花板，也不要调用方多取一条来猜：页尾后面那一行存在与否就是 hasMore。
+    // The storage layer adds no ceiling of its own and does not ask the caller to over-fetch one
+    // row to guess: whether the row after the page end exists is exactly hasMore.
     const { db, journal } = openIntrospectableJournal();
     seedRun(db, journal, { runId: "run_1", cwd: "/repo" });
     for (let round = 0; round < 5; round += 1) {
@@ -1433,7 +1495,7 @@ describe("SQLite dwf journal store — listArtifactItems", () => {
     expect(page(2)).toMatchObject({ hasMore: true });
     expect(page(2).items.map((entry) => entry.item)).toEqual([0, 1]);
     expect(page(4).hasMore).toBe(true);
-    // 恰好取尽：不报 hasMore（不会让看板白翻一页空的）。
+    // Exactly exhausted: no hasMore (so the board does not flip to an empty page for nothing).
     expect(page(5)).toMatchObject({ hasMore: false });
     expect(page(5).items).toHaveLength(5);
     expect(page(99).items).toHaveLength(5);
@@ -1446,11 +1508,11 @@ describe("SQLite dwf journal store — listArtifactItems", () => {
     for (let round = 0; round < 4; round += 1) {
       seedTaggedReport(journal, "run_1", "report#1", round + 1, { round, pad }, "perf");
     }
-    // 每条载荷约 1.1 KB：2.5 KB 的界放得下两条、放不下第三条。
+    // Each payload is about 1.1 KB: a 2.5 KB bound fits two items but not the third.
     const first = journal.listArtifactItems("run_1", "perf", { limit: 10, maxBytes: 2500 });
     expect(first.items.map((entry) => (entry.item as { round: number }).round)).toEqual([0, 1]);
     expect(first.hasMore).toBe(true);
-    // 续拉从页尾接上，不重不漏。
+    // Continuation picks up from the page end, no gaps and no repeats.
     const rest = journal.listArtifactItems("run_1", "perf", {
       afterSequence: first.items.at(-1)!.sequence,
       limit: 10,
@@ -1458,7 +1520,8 @@ describe("SQLite dwf journal store — listArtifactItems", () => {
     });
     expect(rest.items.map((entry) => (entry.item as { round: number }).round)).toEqual([2, 3]);
     expect(rest.hasMore).toBe(false);
-    // 一条就超过界：它自成一页（否则翻页永远卡在这一条上），后面的照样报 hasMore。
+    // One item alone exceeds the bound: it forms its own page (otherwise paging would be stuck on
+    // it forever), and what follows still reports hasMore.
     const tiny = journal.listArtifactItems("run_1", "perf", { limit: 10, maxBytes: 10 });
     expect(tiny.items).toHaveLength(1);
     expect(tiny.hasMore).toBe(true);
@@ -1563,12 +1626,12 @@ describe("SQLite dwf journal store — listArtifactItems with fields", () => {
 
     const [entry] = readFields(journal, [
       "rows.1.v",
-      "rows.01.v", // Number("01") = 1：数组上仍是下标 1
-      "rows.5.v", // 越界
-      "rows.x", // 数组上的非整数段
+      "rows.01.v", // Number("01") = 1: still index 1 on an array
+      "rows.5.v", // out of bounds
+      "rows.x", // non-integer segment on an array
       "byKey.0",
       "byKey.01",
-      "empty..b", // 空段是一个空键
+      "empty..b", // an empty segment is an empty key
     ]).items;
     expect(entry?.fields).toEqual({
       "rows.1.v": 2,
@@ -1612,15 +1675,16 @@ describe("SQLite dwf journal store — listArtifactItems with fields", () => {
       Array.from({ length: 5 }, (_v, round) => ({ round, pad: "z".repeat(50_000) })),
     );
 
-    // 整条 item 每条 50 KB，但只取 round：5 条远在 1 KB 之内。
+    // A whole item is 50 KB each, but only round is fetched: 5 items fit far inside 1 KB.
     const small = readFields(journal, ["round"], { maxBytes: 1000 });
     expect(small.items.map((entry) => entry.fields?.round)).toEqual([0, 1, 2, 3, 4]);
     expect(small.hasMore).toBe(false);
-    // 取 pad（每条截短到约 1 KB）时，同样的 2.5 KB 只装得下两条，并报 hasMore。
+    // Fetching pad (truncated to about 1 KB each), the same 2.5 KB fits only two items and reports
+    // hasMore.
     const padded = readFields(journal, ["pad"], { maxBytes: 2500 });
     expect(padded.items).toHaveLength(2);
     expect(padded.hasMore).toBe(true);
-    // 条数界与游标照常。
+    // The count bound and cursor work as usual.
     const limited = readFields(journal, ["round"], { limit: 2 });
     expect(limited.items.map((entry) => entry.fields?.round)).toEqual([0, 1]);
     expect(limited.hasMore).toBe(true);
@@ -1681,8 +1745,10 @@ describe("SQLite dwf journal store — listEventPage", () => {
 });
 
 // ————————————————————————————————————————————————————————————————
-// 零迁移终态编码（apps/zcode-cli/packages/dynamic-workflow/docs/execution-engine.md「The journal」）：物理列仍是旧五值，
-// 逻辑 `errored` / `stopped{reason}` 只活在编解码里。下面这张表就是 spec 里用户复核过的那张。
+// Zero-migration terminal-state encoding
+// (apps/zcode-cli/packages/dynamic-workflow/docs/execution-engine.md "The journal"): the physical
+// column still holds the old five values; the logical `errored` / `stopped{reason}` live only in
+// the codec. The table below is the very table the spec's user reviewed.
 // ————————————————————————————————————————————————————————————————
 describe("SqliteDwfJournalStore 终态编码（零迁移）", () => {
   const PARENT = "ses_terminal";
@@ -1765,7 +1831,7 @@ describe("SqliteDwfJournalStore 终态编码（零迁移）", () => {
       stopReason: "interrupted",
       code: "Interrupted",
     });
-    // 第 6 行（用户复核裁决）：老的 provider 崩溃仍是 errored，不可 resume。
+    // Row 6 (the user-reviewed ruling): an old provider crash is still errored, not resumable.
     expect(statusOf("old_provider_crash")).toEqual({
       status: "errored",
       stopReason: undefined,
@@ -1786,7 +1852,7 @@ describe("SqliteDwfJournalStore 终态编码（零迁移）", () => {
       stopReason: undefined,
       code: undefined,
     });
-    // 缺席的键真的缺席（契约测的 toEqual 风格）。
+    // Absent keys are genuinely absent (the contract suite's toEqual style).
     expect("stopReason" in journal.getRun("old_completed")!).toBe(false);
     expect("failure" in journal.getRun("old_cancelled")!).toBe(false);
   });
@@ -1868,9 +1934,9 @@ describe("SqliteDwfJournalStore 终态编码（零迁移）", () => {
       failure: { code: "DriverError" },
     });
     expect("stopReason" in journal.getRun("e_script")!).toBe(false);
-    // 物理终态集没变：非终态查询一条都不回。
+    // The physical terminal-state set is unchanged: the non-terminal query returns none of them.
     expect(journal.listNonTerminalRuns(PARENT)).toEqual([]);
-    // resume 翻回 running 清掉信封（与契约套件同语义）。
+    // resume flips back to running and clears the envelope (same semantics as the contract suite).
     journal.updateRunStatus("s_provider", "running");
     expect(journal.getRun("s_provider")).toMatchObject({ status: "running" });
     expect("stopReason" in journal.getRun("s_provider")!).toBe(false);
@@ -1913,11 +1979,13 @@ describe("SqliteDwfJournalStore 终态编码（零迁移）", () => {
     expect(ids(["stopped"])).toEqual(["n_stopped", "p_cancelled", "p_interrupted"]);
     expect(ids(["errored"])).toEqual(["p_errored", "p_errored_bare"]);
     expect(ids(["completed", "errored"])).toEqual(["p_completed", "p_errored", "p_errored_bare"]);
-    // limit 作用在过滤之后：errored 只有两条时 limit 1 回最近更新的那条，且不被 stopped 行挤占。
+    // limit applies after filtering: with only two errored rows, limit 1 returns the most
+    // recently updated one, not crowded out by stopped rows.
     expect(
       journal.listRuns({ cwd: "/repo", limit: 1, statuses: ["errored"] }).map((row) => row.runId),
     ).toEqual(["p_errored"]);
-    // 枚举行带 stopReason（逻辑词汇），不带 failure（仍是窄投影）。
+    // Enumeration rows carry stopReason (logical vocabulary) but not failure (still the narrow
+    // projection).
     const stopped = journal.listRuns({ cwd: "/repo", limit: 20, statuses: ["stopped"] });
     expect(stopped.find((row) => row.runId === "p_interrupted")).toMatchObject({
       stopReason: "interrupted",
@@ -1930,17 +1998,19 @@ describe("SqliteDwfJournalStore 终态编码（零迁移）", () => {
 });
 
 /**
- * 每一世的活动区间（完成卡的时长口径，
- * docs/dynamic-workflow/transcript-and-notifications.md「How long it took」）。
+ * The active spans of each life (the duration basis of the completion card,
+ * docs/dynamic-workflow/transcript-and-notifications.md "How long it took").
  *
- * 事件的时刻由 appendEvent 打 `Date.now()`，所以「一世持续了多久」在测试里只能事后钉：追加完
- * 事件再按 sequence 改写 `time_created`，模拟一条跑了几个小时、中间被重启打断的 run。改写的是
- * 这条读面唯一读的那一列，查询形状与真库上逐字相同。
+ * Event instants are stamped by appendEvent with `Date.now()`, so "how long a life lasted" can
+ * only be pinned after the fact in tests: append the events, then rewrite `time_created` by
+ * sequence to simulate a run that ran for hours and was interrupted by a restart midway. What gets
+ * rewritten is the only column this read face reads, with a query shape verbatim identical to the
+ * real database's.
  */
 describe("SQLite dwf journal store — listRunLifeSpans", () => {
   const RUN_ID = "run_lives";
 
-  /** 按 sequence 钉住某几条事件的时刻。 */
+  /** Pins the instants of specific events by sequence. */
   function stampEvent(db: DatabaseSync, sequence: number, timeCreated: number): void {
     db.prepare("update dwf_event set time_created = ? where run_id = ? and sequence = ?").run(
       timeCreated,
@@ -1972,10 +2042,10 @@ describe("SQLite dwf journal store — listRunLifeSpans", () => {
 
   it("多世：每一世各算一段，世与世之间的空档不出现在任何一段里", () => {
     const { db, journal } = seedLifeRun();
-    // 第一世：跑了一小时后被重启打断（没有 run-settled）。
+    // First life: ran for an hour, then interrupted by a restart (no run-settled).
     journal.appendEvent(RUN_ID, { type: "run-started", runId: RUN_ID, caps: CAPS });
     journal.appendEvent(RUN_ID, { type: "log", message: "第一世的最后一次动作" });
-    // 第二世：整个周末之后才 resume，两分钟后完成。
+    // Second life: resumed after an entire weekend, completed two minutes later.
     journal.appendEvent(RUN_ID, { type: "run-started", runId: RUN_ID, caps: CAPS });
     journal.appendEvent(RUN_ID, { type: "log", message: "重放" });
     journal.appendEvent(RUN_ID, { type: "run-settled", status: "completed" });
@@ -1991,7 +2061,8 @@ describe("SQLite dwf journal store — listRunLifeSpans", () => {
       { startedAt: 0, lastActivityAt: 3_600_000 },
       { startedAt: 200_000_000, lastActivityAt: 200_120_000 },
     ]);
-    // 活动时长之和 = 1 小时 + 2 分钟；两世之间那段死时间（≈ 54 小时）不在其中。
+    // Sum of active durations = 1 hour + 2 minutes; the dead time between the two lives
+    // (about 54 hours) is not in it.
     const activeMs = spans.reduce((sum, span) => sum + (span.lastActivityAt - span.startedAt), 0);
     expect(activeMs).toBe(3_600_000 + 120_000);
   });

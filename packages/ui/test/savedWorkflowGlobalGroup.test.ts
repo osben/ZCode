@@ -1,7 +1,9 @@
 // @vitest-environment jsdom
-// 全局工作流组（docs/dynamic-workflow/launch.md）：顶部固定「全局」组，空也显示；载体走
-// useServices().zcodeAgentService，RPC 带 { scope: "global" }。卡片 / 实参窗 / 移动窗 / 详情页换桩，
-// 只看组的状态流与全局语义（运行带 scope、修订 / 创建落到本地项目、移到项目、-32602 提示、运行行项目列）。
+// Global workflow group (docs/dynamic-workflow/launch.md): a fixed "Global" group at the top, shown even
+// when empty; the carrier goes through useServices().zcodeAgentService with RPC carrying { scope: "global" }.
+// Cards / args dialog / move dialog / detail page are stubbed out; we only look at the group's state flow
+// and global semantics (runs carry scope, revise / create land in the local project, move to project,
+// -32602 notice, run-row project column).
 import { createElement } from "react";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -126,7 +128,8 @@ vi.mock("@/settings/saved-workflows/SavedWorkflowCard.js", () => ({
     ),
 }));
 
-// 直接启动器换桩：组只负责按类型开窗 / 直发；launch 编排与导航由 useSavedWorkflowLauncher 单测覆盖。
+// Direct launcher is stubbed: the group only opens a window / dispatches by type; launch orchestration
+// and navigation are covered by the useSavedWorkflowLauncher unit tests.
 const launchMock = vi.fn(async () => ({
   ok: true as const,
   sessionId: "s-1",
@@ -325,7 +328,7 @@ describe("SavedWorkflowGlobalGroup", () => {
         count: 0,
       }),
     );
-    // RPC 带 scope: "global"（无 workspace）
+    // RPC carries scope: "global" (no workspace)
     expect(agent.listSavedWorkflows).toHaveBeenCalledWith({ scope: "global" });
     expect(agent.listSavedWorkflowRuns).toHaveBeenCalledWith({ scope: "global", limit: 50 });
   });
@@ -338,14 +341,14 @@ describe("SavedWorkflowGlobalGroup", () => {
     };
     mount();
     await screen.findByTestId(testId(TID_WORKFLOWS_LIST, "global"));
-    // 无实参也弹窗
+    // Opens the dialog even without args
     fireEvent.click(screen.getByTestId(testId(TID_WORKFLOW_CARD_RUN, "research")));
     const dialog = await screen.findByTestId("launch-dialog");
     expect(dialog.getAttribute("data-targets")).toBe("/a");
     expect(dialog.getAttribute("data-default")).toBe(keyOfA);
     fireEvent.click(screen.getByTestId("launch-submit"));
     await waitFor(() => expect(launchMock).toHaveBeenCalledTimes(1));
-    // 全局档直接启动：目标 = 选中的「运行于」项目，scope = global。
+    // Global-entry direct launch: target = the selected "run in" project, scope = global.
     expect(launchMock.mock.calls[0]?.[0]).toEqual({ workspacePath: "/a" });
     expect(launchMock.mock.calls[0]?.[1]).toEqual({ name: "research", scope: "global", args: {} });
   });
@@ -380,7 +383,7 @@ describe("SavedWorkflowGlobalGroup", () => {
         .disabled,
     ).toBe(true);
     fireEvent.click(screen.getByTestId(testId(TID_WORKFLOW_CARD_RUN, "research")));
-    fireEvent.click(await screen.findByTestId("launch-submit")); // targets 为空，target undefined
+    fireEvent.click(await screen.findByTestId("launch-submit")); // targets empty, target undefined
     expect(launchMock).not.toHaveBeenCalled();
     expect(onCreateViaChat).not.toHaveBeenCalled();
   });

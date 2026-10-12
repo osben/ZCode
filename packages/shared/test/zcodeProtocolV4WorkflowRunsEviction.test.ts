@@ -1,14 +1,21 @@
-// 表满时的**腾位**：淘汰已经跑完的，好让正在跑的那些一直在表里。
+// **Eviction** when the table is full: evict what has already finished so the running ones can
+// stay in the table.
 //
-// 这条规则要守的事实很短：读面（run 卡的子代理行、run 面板的站点花名册）画的是**此刻在跑的**
-// 子代理，而触界的老语义是拒新——于是一个宽 fan-out 的 run 跑到 1024 之后，新起的子代理一个都
-// 进不来，面板永远停在最早那批已经结束的身上。淘汰把这件事反过来：终态的条目让位，活着的进来。
+// The fact this rule protects is short: the read surface (a run card's subagent rows, the run
+// pane's station roster) draws the subagents **running right now**, while the old overflow
+// semantics was reject-new — so once a wide fan-out run passed 1024, not a single new subagent
+// could get in and the pane stayed stuck on the earliest batch of already-finished ones.
+// Eviction flips this: terminal entries yield, live ones come in.
 //
-// 淘汰因此必须同时满足四件事，本文件逐条钉住：
-//   - 淘汰只发生在**活的新人**撞上满表时，且事件抬过水位（重放永不淘汰）；
-//   - 受害者是已结算的游离节点或已完成的组，是 run 状态的纯函数（冷回放淘汰出同一个集合）；
-//   - 一个 actor 绝不比它最后一个已列节点活得久（否则它会变成一枚永远 pending 的徽章）；
-//   - 被淘汰的条目**仍然可数**：run 级两个计数器 + 每个出生阶段一格。
+// Eviction must therefore satisfy four things at once; this file pins each one:
+//   - eviction happens only when a **live newcomer** hits a full table, and only once the event
+//     has lifted the watermark (replay never evicts);
+//   - the victim is a settled loose node or a completed group, a pure function of run state (cold
+//     replay evicts the same set);
+//   - an actor never outlives its last listed node (otherwise it becomes a badge stuck on
+//     pending forever);
+//   - evicted entries **remain countable**: two run-level counters plus one bucket per birth
+//     phase.
 import { describe, expect, it } from "vitest";
 import {
   WORKFLOW_RUNS_LIMITS,
@@ -30,8 +37,10 @@ import {
 const RUN_ID = "dwfrun-1";
 
 /**
- * 测试用的小界。界必须可注入而不是改常量：1024 条要三千多条事件才撞得到，每步再做一次
- * 往返断言就是分钟级的跑时，而被测的规则与界的**大小**无关。
+ * Small limits for the tests. Limits must be injectable rather than constants: hitting 1024
+ * entries takes three thousand-plus events, and with a round-trip assertion at every step that
+ * becomes minutes of runtime, while the rules under test are independent of the **size** of the
+ * limits.
  */
 const LIMITS: WorkflowRunEntryLimits = { maxActors: 3, maxNodes: 3, maxPhases: 2 };
 
@@ -49,7 +58,7 @@ function snapshotWith(workflowRuns: WorkflowRunsState | undefined): Conversation
     : { ...base, workflowRuns }) as unknown as ConversationSnapshot;
 }
 
-/** 一条 run 的事件驱动器：sequence 按调用序自增，state 就地推进，重放用原信封再喂一次。 */
+/** Event driver for one run: sequence auto-increments per call, state advances in place, replay feeds the original envelope again. */
 function driver(limits: WorkflowRunEntryLimits = LIMITS, runId = RUN_ID) {
   let sequence = -1;
   let state: WorkflowRunsState | undefined;
@@ -71,7 +80,7 @@ function driver(limits: WorkflowRunEntryLimits = LIMITS, runId = RUN_ID) {
       state = reduceWorkflowRunsState(state, envelope, limits) ?? state;
       return envelope;
     },
-    /** 重放一条已发过的信封：返回归约结果（null = 逐字节无变化）。 */
+    /** Replay an already-sent envelope: returns the reduction result (null = byte-for-byte no change). */
     replay(envelope: WorkflowRunProgressEnvelope): WorkflowRunsState | null {
       return reduceWorkflowRunsState(state, envelope, limits);
     },
@@ -91,7 +100,7 @@ const worldRef = (index: number) => ({ siteId: `world#${index}`, ordinal: 1 });
 const nodeKeys = (run: WorkflowRunState) => run.nodes.map((node) => node.siteId);
 const actorKeys = (run: WorkflowRunState) => run.actors.map((actor) => actor.siteId);
 
-/** 一个子代理跑完一次 ask：建 actor、派一次活、结算。`outcome` 决定这个组算不算失败。 */
+/** One subagent runs a single ask: create actor, dispatch once, settle. `outcome` decides whether the group counts as failed. */
 function runOneAsk(
   driven: ReturnType<typeof driver>,
   index: number,
@@ -112,9 +121,10 @@ function runOneAsk(
 }
 
 /**
- * 带**出生事实**的 `node-dispatched`（引擎侧的 Part A）：派发时把这条实例的 `node-queued` 与它
- * 子代理的 `actor-created` 携带过的同一份事实原样重发一遍，于是归约可以在「被派活的那一刻」
- * 把表外的实例与它的子代理放回表上。
+ * `node-dispatched` carrying **birth facts** (the engine's Part A): at dispatch time it re-sends,
+ * verbatim, the same facts this instance's `node-queued` and its subagent's `actor-created`
+ * carried, so the reduction can put an unlisted instance and its subagent back on the table "at
+ * the moment of dispatch".
  */
 function dispatchWithFacts(
   driven: ReturnType<typeof driver>,
@@ -152,9 +162,9 @@ describe("2.1 什么时候淘汰", () => {
     expect(actorKeys(driven.run)).toEqual(["actor#1", "actor#2", "actor#3"]);
 
     driven.send("actor-created", { actor: actorRef(4), name: "a4" });
-    // 两个已完成组，同阶段、同类，取表内最靠前的那个。
+    // Two completed groups, same phase, same kind: take the earliest one in the table.
     expect(actorKeys(driven.run)).toEqual(["actor#2", "actor#3", "actor#4"]);
-    // 组是 actor + 它名下全部已列节点，一起走。
+    // The group is the actor plus every listed node under it: they go together.
     expect(nodeKeys(driven.run)).toEqual(["ask#2", "ask#3"]);
     expect(driven.run.usage).toMatchObject({ nodesUnlisted: 1, nodesUnlistedSettled: 1 });
     expect(driven.run.truncated).toBe(true);
@@ -169,11 +179,12 @@ describe("2.1 什么时候淘汰", () => {
     expect(nodeKeys(driven.run)).toEqual(["world#1", "ask#1", "ask#2"]);
 
     driven.send("node-queued", { instance: askRef(3), kind: "ask", actor: actorRef(2) });
-    // 游离节点先走：淘汰它只少一行，淘汰一个组会连着摘掉一个 actor。
+    // Loose nodes go first: evicting one only removes a row, evicting a group also removes an
+    // actor.
     expect(nodeKeys(driven.run)).toEqual(["ask#1", "ask#2", "ask#3"]);
     expect(actorKeys(driven.run)).toEqual(["actor#1", "actor#2"]);
-    // 淘汰照样置 truncated：这条 run 的表已经装不下它自己的事实，而 run-started 正是按这一位
-    // 决定新一世要不要从空表重开。
+    // Eviction still sets truncated: this run's table can no longer hold its own facts, and
+    // run-started decides by exactly this bit whether a new life restarts from an empty table.
     expect(driven.run.truncated).toBe(true);
   });
 
@@ -200,7 +211,8 @@ describe("2.1 什么时候淘汰", () => {
       actor: actorRef(2),
     });
     const before = driven.run;
-    // 同一条信封再喂一次：表里已有这条实例 → 逐字节无变化。
+    // Feeding the same envelope again: the table already has this instance → byte-for-byte no
+    // change.
     expect(driven.replay(queued)).toBeNull();
     expect(driven.run).toBe(before);
   });
@@ -219,7 +231,8 @@ describe("2.1 什么时候淘汰", () => {
       outcome: "ok",
       cached: true,
     });
-    // 已完成组还在表里（ask#1），但出生即结算的实例没有资格把它挤走。
+    // The completed group is still in the table (ask#1), but a born-settled instance has no
+    // standing to push it out.
     expect(nodeKeys(driven.run)).toEqual(before);
     expect(driven.run.usage).toMatchObject({ nodesUnlisted: 1, nodesUnlistedSettled: 1 });
   });
@@ -244,7 +257,8 @@ describe("2.2 受害者顺序", () => {
     runOneAsk(driven, 1, { outcome: "failed" });
     runOneAsk(driven, 2, { outcome: "ok" });
     driven.send("actor-created", { actor: actorRef(3), name: "a3" });
-    // actor#1 在表里更靠前，但它失败了，让位的是没失败的 actor#2。
+    // actor#1 is earlier in the table, but it failed: the one that yields is the unfailed
+    // actor#2.
     expect(actorKeys(driven.run)).toEqual(["actor#1", "actor#3"]);
     expect(nodeKeys(driven.run)).toEqual(["ask#1"]);
   });
@@ -263,7 +277,8 @@ describe("2.2 受害者顺序", () => {
     runOneAsk(driven, 2, { phaseName: "p2" });
     runOneAsk(driven, 3, { phaseName: "p2" });
     driven.send("actor-created", { actor: actorRef(4), name: "a4", phaseName: "p3" });
-    // p1 只有一个候选、p2 有两个：受害者出在 p2，取它里面表内最靠前的 actor#2。
+    // p1 has one candidate, p2 has two: the victim comes from p2, the earliest in-table actor#2
+    // within it.
     expect(actorKeys(driven.run)).toEqual(["actor#1", "actor#3", "actor#4"]);
   });
 
@@ -280,13 +295,14 @@ describe("2.2 受害者顺序", () => {
     runOneAsk(driven, 2, { phaseName: "p2" });
     runOneAsk(driven, 3, { phaseName: "p2" });
     driven.send("actor-created", { actor: actorRef(4), name: "a4" });
-    // actor#1 的节点戳着 p2，但它自己出生在 p1 —— p2 仍然只有 actor#2 / actor#3 两个候选。
+    // actor#1's node is stamped p2, but the actor itself was born in p1 — p2 still has only
+    // actor#2 / actor#3 as candidates.
     expect(actorKeys(driven.run)).toEqual(["actor#1", "actor#3", "actor#4"]);
   });
 
   it("新节点自己那个 actor 的组绝不当受害者（否则它会变成一条没有徽章的活节点）", () => {
     const driven = driver({ maxActors: 4, maxNodes: 3, maxPhases: 2 });
-    // actor#1 连做两次 ask，都结算了；actor#2 也做完一次。
+    // actor#1 runs two asks, both settled; actor#2 has also finished one.
     driven.send("actor-created", { actor: actorRef(1), name: "a1" });
     driven.send("node-queued", { instance: askRef(1), kind: "ask", actor: actorRef(1) });
     driven.send("node-settled", { instance: askRef(1), outcome: "ok" });
@@ -295,7 +311,8 @@ describe("2.2 受害者顺序", () => {
     runOneAsk(driven, 3);
     expect(nodeKeys(driven.run)).toEqual(["ask#1", "ask#2", "ask#3"]);
 
-    // actor#1 的第三次 ask 撞上满表：它自己那个「已完成」组正要重新开工，不能拿它顶账。
+    // actor#1's third ask hits the full table: its own "completed" group is about to start work
+    // again, so it cannot be spent to pay the bill.
     driven.send("node-queued", { instance: askRef(4), kind: "ask", actor: actorRef(1) });
     expect(actorKeys(driven.run)).toContain("actor#1");
     expect(nodeKeys(driven.run)).toEqual(["ask#1", "ask#2", "ask#4"]);
@@ -304,7 +321,8 @@ describe("2.2 受害者顺序", () => {
 
   it("未结算的节点与带着未结算节点的 actor 永远不是受害者", () => {
     const driven = driver({ maxActors: 4, maxNodes: 3, maxPhases: 2 });
-    // actor#1 有两次 ask，一次结算一次在跑 → 整个组都不算完成。
+    // actor#1 has two asks, one settled and one running → the whole group does not count as
+    // completed.
     driven.send("actor-created", { actor: actorRef(1), name: "a1" });
     driven.send("node-queued", { instance: askRef(1), kind: "ask", actor: actorRef(1) });
     driven.send("node-settled", { instance: askRef(1), outcome: "ok" });
@@ -314,7 +332,8 @@ describe("2.2 受害者顺序", () => {
     const before = nodeKeys(driven.run);
 
     driven.send("node-queued", { instance: askRef(3), kind: "ask", actor: actorRef(1) });
-    // 游离节点还没结算，组也没完成 → 没有受害者，照旧拒新。
+    // The loose node has not settled and the group is not complete → no victim, reject-new as
+    // usual.
     expect(nodeKeys(driven.run)).toEqual(before);
     expect(driven.run.truncated).toBe(true);
   });
@@ -335,7 +354,8 @@ describe("2.3 孤儿规则", () => {
       cached: true,
       phaseName: "p1",
     });
-    // 带不进自己那条节点的已完成子代理不上表：留着它就是一枚永远不会动的 pending 徽章。
+    // A completed subagent that cannot bring in its own node does not join the table: keeping it
+    // would be a pending badge that never moves.
     expect(actorKeys(driven.run)).toEqual(["actor#1", "actor#2"]);
     expect(driven.run.unlistedByPhase).toEqual([
       { phaseName: "p1", actors: 1, actorsSettled: 1, settled: 1 },
@@ -383,7 +403,7 @@ describe("2.4 计数", () => {
     runOneAsk(driven, 2, { settle: false });
     driven.send("actor-created", { actor: actorRef(3), name: "a3" });
     expect(driven.run.usage).toMatchObject({ nodesUnlisted: 1, nodesUnlistedSettled: 1 });
-    // 表内 1 条（ask#2，未结算）+ 表外 1 条（已结算）。
+    // 1 in-table entry (ask#2, unsettled) + 1 unlisted (settled).
     expect(workflowRunStepCounts(driven.run)).toEqual({ total: 2, settled: 1 });
   });
 
@@ -391,12 +411,12 @@ describe("2.4 计数", () => {
     const driven = driver({ maxActors: 2, maxNodes: 6, maxPhases: 4 });
     runOneAsk(driven, 1, { phaseName: "p1", outcome: "failed" });
     runOneAsk(driven, 2, { phaseName: "p2" });
-    // 未失败的先走：p2 让位。
+    // The unfailed yield first: p2 steps aside.
     driven.send("actor-created", { actor: actorRef(3), name: "a3" });
     expect(driven.run.unlistedByPhase).toEqual([
       { phaseName: "p2", actors: 1, actorsSettled: 1, settled: 1 },
     ]);
-    // 再来一个新人 → 只剩失败的那个组可淘汰。
+    // One more newcomer → only the failed group remains evictable.
     driven.send("actor-created", { actor: actorRef(4), name: "a4" });
     expect(driven.run.unlistedByPhase).toEqual([
       { phaseName: "p2", actors: 1, actorsSettled: 1, settled: 1 },
@@ -410,12 +430,13 @@ describe("2.4 计数", () => {
     runOneAsk(driven, 1);
     runOneAsk(driven, 2, { settle: false });
     driven.send("actor-created", { actor: actorRef(3), name: "a3" });
-    // 无阶段那一格的键就是**缺席的 phaseName**，不是空串（站点侧「没有 phase() 标记」同一个键）。
+    // The unphased bucket's key is the **absent phaseName**, not an empty string (the same key as
+    // the site side's "no phase() mark").
     expect(driven.run.unlistedByPhase).toEqual([{ actors: 1, actorsSettled: 1, settled: 1 }]);
   });
 
   it("阶段格满了丢归属，run 级计数照旧准", () => {
-    // maxPhases = 1 → 格子表最多 2 条（一条无阶段 + 一条有名字的）。
+    // maxPhases = 1 → the bucket table holds at most 2 entries (one unphased + one named).
     const driven = driver({ maxActors: 2, maxNodes: 8, maxPhases: 1 });
     runOneAsk(driven, 1, { phaseName: "p1" });
     runOneAsk(driven, 2, { phaseName: "p2" });
@@ -425,7 +446,8 @@ describe("2.4 计数", () => {
     driven.send("actor-created", { actor: actorRef(6), name: "a6" });
     const buckets = driven.run.unlistedByPhase!;
     expect(buckets).toHaveLength(2);
-    // 三个阶段被淘汰过，但格子表只装得下两条 —— 第三条的归属丢掉，总数不丢。
+    // Three phases have had evictions, but the bucket table only fits two — the third loses its
+    // attribution, the total does not.
     const attributed = buckets.reduce((sum, bucket) => sum + bucket.settled, 0);
     expect(attributed).toBeLessThan(driven.run.usage.nodesUnlistedSettled!);
     expect(driven.run.usage).toMatchObject({ nodesUnlisted: 3, nodesUnlistedSettled: 3 });
@@ -485,7 +507,8 @@ describe("2.5 resume：溢出过的 run 从空表重开", () => {
     const firstLife = workflowRunStepCounts(driven.run);
     expect(firstLife.total).toBe(3);
 
-    // 第二世：引擎把整段前缀重发一遍（已完成的走缓存命中的 settle，没完的重新 queue）。
+    // Second life: the engine re-sends the whole prefix (finished asks go through cache-hit
+    // settles, unfinished ones re-queue).
     driven.send("run-started", {});
     driven.send("actor-created", { actor: actorRef(1), name: "a1" });
     driven.send("node-settled", {
@@ -502,7 +525,8 @@ describe("2.5 resume：溢出过的 run 从空表重开", () => {
       cached: true,
     });
     runOneAsk(driven, 3, { settle: false });
-    // 三条实例，一条都不多：表内 + 表外恰好是这一世出生过的实例数。
+    // Three instances, not one more: in-table + unlisted equals exactly the instances born this
+    // life.
     expect(workflowRunStepCounts(driven.run).total).toBe(3);
     expect(workflowRunStepCounts(driven.run).settled).toBe(2);
   });
@@ -517,8 +541,9 @@ describe("B2 溢出之后，认不出主人的 queued 不上表", () => {
     const before = nodeKeys(driven.run);
 
     driven.send("node-queued", { instance: askRef(2), kind: "ask", actor: actorRef(2) });
-    // 节点表还有五个位子，但这条节点画不出徽章（pill 按 run.actors 过滤），列上去只是白占一个
-    // 位子，而后面被派下去的活正需要它。
+    // The node table still has five free slots, but this node cannot draw a badge (pills filter
+    // by run.actors); listing it would just burn a slot that the dispatches coming next actually
+    // need.
     expect(nodeKeys(driven.run)).toEqual(before);
     expect(driven.run.usage).toMatchObject({ nodesUnlisted: 1 });
   });
@@ -540,7 +565,7 @@ describe("B2 溢出之后，认不出主人的 queued 不上表", () => {
 });
 
 describe("B3 派发即入座", () => {
-  /** 事故形状：先把全部 actor 建好、再把全部活入队，然后 FIFO 派活。 */
+  /** Incident shape: create all actors first, queue all work, then dispatch FIFO. */
   function incident(driven: ReturnType<typeof driver>, agents: number): void {
     for (let index = 1; index <= agents; index += 1) {
       driven.send(
@@ -563,7 +588,8 @@ describe("B3 派发即入座", () => {
   it("被拒的子代理在**被派活的那一刻**连人带活回到表上", () => {
     const driven = driver({ maxActors: 2, maxNodes: 2, maxPhases: 2 });
     incident(driven, 3);
-    // 出生的那一刻一个终态条目都没有：前两个占满，第三个连人带活都被拒。
+    // At birth not a single terminal entry exists: the first two fill the table, and the third is
+    // rejected along with its work.
     expect(actorKeys(driven.run)).toEqual(["actor#1", "actor#2"]);
     expect(nodeKeys(driven.run)).toEqual(["ask#1", "ask#2"]);
     expect(driven.run.usage).toMatchObject({ nodesUnlisted: 1 });
@@ -592,7 +618,7 @@ describe("B3 派发即入座", () => {
       phaseName: "p1",
       instructionsHead: "do 3",
     });
-    // 三条实例，一条不多：表内两条 + 表外一条（被淘汰的 ask#1）。
+    // Three instances, not one more: two in-table + one unlisted (the evicted ask#1).
     expect(workflowRunStepCounts(driven.run)).toEqual({ total: 3, settled: 2 });
   });
 
@@ -603,7 +629,7 @@ describe("B3 派发即入座", () => {
     driven.send("node-settled", { instance: askRef(1), outcome: "ok" });
 
     dispatchWithFacts(driven, 4, { phaseName: "p1", instructionsHead: "do 4" });
-    // actor#1 已完成、actor#2 / actor#3 只排着队 —— 让位的是已完成的那个。
+    // actor#1 has completed, actor#2 / actor#3 are merely queued — the completed one yields.
     expect(actorKeys(driven.run)).toEqual(["actor#2", "actor#3", "actor#4"]);
   });
 
@@ -615,7 +641,7 @@ describe("B3 派发即入座", () => {
     dispatchWithFacts(driven, 4, { phaseName: "p1", instructionsHead: "do 4" });
     expect(actorKeys(driven.run)).toEqual(["actor#1", "actor#2", "actor#4"]);
     expect(nodeKeys(driven.run)).toEqual(["ask#1", "ask#2", "ask#4"]);
-    // 让位的是一条**排队中**的节点：它进 nodesUnlisted，但一条都没结算。
+    // What yields is a **queued** node: it enters nodesUnlisted, but not one of them has settled.
     expect(driven.run.usage.nodesUnlisted).toBe(1);
     expect(driven.run.usage.nodesUnlistedSettled).toBeUndefined();
   });
@@ -626,7 +652,7 @@ describe("B3 派发即入座", () => {
     driven.send("actor-created", { actor: actorRef(2), name: "a2" });
     driven.send("node-queued", { instance: worldRef(1), kind: "world-read" });
     driven.send("node-queued", { instance: askRef(1), kind: "ask", actor: actorRef(1) });
-    // world#1 还没结算 → 一个受害者都没有，ask#2 被拒。
+    // world#1 has not settled → no victim at all, ask#2 is rejected.
     driven.send("node-queued", { instance: askRef(2), kind: "ask", actor: actorRef(2) });
     expect(nodeKeys(driven.run)).toEqual(["world#1", "ask#1"]);
     driven.send("node-settled", { instance: worldRef(1), outcome: "ok" });
@@ -644,21 +670,23 @@ describe("B3 派发即入座", () => {
     driven.send("node-queued", { instance: askRef(1), kind: "ask", actor: actorRef(1) });
     driven.send("node-settled", { instance: askRef(1), outcome: "ok" });
     driven.send("node-queued", { instance: askRef(2), kind: "ask", actor: actorRef(2) });
-    // actor#1 的第二次 ask 撞上满表：出生这一刻挤不动任何人（自己那个组不顶账，别人那个
-    // 还排着队）→ 被拒。
+    // actor#1's second ask hits the full table: at birth it cannot displace anyone (its own group
+    // cannot pay the bill, everyone else's is still queued) → rejected.
     const second = { siteId: "ask#1", ordinal: 2 };
     driven.send("node-queued", { instance: second, kind: "ask", actor: actorRef(1) });
     expect(nodeKeys(driven.run)).toEqual(["ask#1", "ask#2"]);
 
     dispatchWithFacts(driven, 1, { instance: second });
-    // 让位的是**自己**那条已结算的节点：actor#1 还在表上（徽章不动），而别人那个空闲组
-    // 一行都没少——一个子代理在拿走别人的位子之前先交出自己的历史。
+    // What yields is **its own** settled node: actor#1 stays on the table (the badge does not
+    // move) and the other idle group does not lose a single row — a subagent gives up its own
+    // history before taking someone else's slot.
     expect(actorKeys(driven.run)).toEqual(["actor#1", "actor#2"]);
     expect(driven.run.nodes.map((node) => `${node.siteId}#${node.ordinal}`)).toEqual([
       "ask#2#1",
       "ask#1#2",
     ]);
-    // 记账与淘汰一条游离节点同规：两个计数器各加一，格子表只加节点那一格。
+    // Bookkeeping matches evicting a loose node: both counters +1, the bucket table gains only
+    // the node's bucket.
     expect(driven.run.usage).toMatchObject({ nodesUnlisted: 1, nodesUnlistedSettled: 1 });
     expect(driven.run.unlistedByPhase).toEqual([{ actors: 0, settled: 1 }]);
   });
@@ -667,14 +695,14 @@ describe("B3 派发即入座", () => {
     const driven = driver({ maxActors: 2, maxNodes: 2, maxPhases: 2 });
     driven.send("actor-created", { actor: actorRef(1), name: "a1" });
     driven.send("actor-created", { actor: actorRef(2), name: "a2" });
-    // actor#1 名下只有一条**排队中**的节点：它不是可丢的历史。
+    // actor#1 has only one **queued** node under it: not disposable history.
     driven.send("node-queued", { instance: askRef(1), kind: "ask", actor: actorRef(1) });
     driven.send("node-queued", { instance: askRef(2), kind: "ask", actor: actorRef(2) });
     const second = { siteId: "ask#1", ordinal: 2 };
     driven.send("node-queued", { instance: second, kind: "ask", actor: actorRef(1) });
 
     dispatchWithFacts(driven, 1, { instance: second });
-    // 动的是别人那个空闲组，actor#1 连人带两条活都留着。
+    // What moves is the other idle group; actor#1 keeps itself and both of its asks.
     expect(actorKeys(driven.run)).toEqual(["actor#1"]);
     expect(driven.run.nodes.map((node) => `${node.siteId}#${node.ordinal}`)).toEqual([
       "ask#1#1",
@@ -697,15 +725,17 @@ describe("B3 派发即入座", () => {
 
   it("最后一档：一张全是零节点 actor 的表也腾得出位（resume 的形状）", () => {
     const driven = driver({ maxActors: 3, maxNodes: 2, maxPhases: 2 });
-    // 先让这条 run 溢出过（truncated）：零节点这一档只在溢出之后、且只在 activation 时生效。
+    // First let this run have overflowed (truncated): the zero-node tier only applies after an
+    // overflow, and only at activation.
     driven.send("node-queued", { instance: worldRef(1), kind: "world-read", phaseName: "p1" });
     driven.send("node-queued", { instance: worldRef(2), kind: "world-read", phaseName: "p1" });
     driven.send("node-queued", { instance: worldRef(3), kind: "world-read", phaseName: "p1" });
     expect(driven.run.truncated).toBe(true);
     driven.send("node-settled", { instance: worldRef(1), outcome: "ok" });
 
-    // resume 的形状：actor 重新建出来，而命中完结缓存的结算**不带 actor**（引擎的 node-settled
-    // 没有这个字段），于是这些子代理名下一条已列节点都没有——三档老规则里它们谁都不是。
+    // Resume shape: the actors are re-created, while the cache-hit settles arrive **without the
+    // actor** (the engine's node-settled has no such field), so these subagents end up with not a
+    // single listed node — under all three older tiers none of them qualifies.
     for (const index of [1, 2, 3]) {
       driven.send(
         "actor-created",
@@ -716,7 +746,8 @@ describe("B3 派发即入座", () => {
     expect(actorKeys(driven.run)).toEqual(["actor#1", "actor#2", "actor#3"]);
     for (const actor of driven.run.actors) expect(nodesOfActor(driven.run, actor)).toEqual([]);
 
-    // 第四个子代理出生时被拒（表满、一个已完成组都没有）：先记一格。
+    // The fourth subagent is rejected at birth (table full, not a single completed group): one
+    // bucket is recorded first.
     driven.send(
       "actor-created",
       { actor: actorRef(4), name: "a4", phaseName: "p1" },
@@ -724,7 +755,8 @@ describe("B3 派发即入座", () => {
     );
     expect(driven.run.unlistedByPhase).toEqual([{ phaseName: "p1", actors: 1, settled: 0 }]);
 
-    // 它被派活：表满、一个组都没有，让位的是**表内最靠后**的零节点 actor。
+    // It gets dispatched: table full, no group at all, so what yields is the **latest in-table**
+    // zero-node actor.
     dispatchWithFacts(driven, 4, { phaseName: "p1", instructionsHead: "do 4" });
     expect(actorKeys(driven.run)).toEqual(["actor#1", "actor#2", "actor#4"]);
     expect(driven.run.nodes.at(-1)).toMatchObject({
@@ -732,12 +764,14 @@ describe("B3 派发即入座", () => {
       phase: "dispatched",
       actorSiteId: "actor#4",
     });
-    // 零节点 actor 离场只记 actors：它的结局这一格并不知道（没结算过，也可能只是还没被问）。
-    // 一进一出之后这一格仍是 1，而那 1 正是让了位的 actor#3；同一格上的 settled 来自那条让出
-    // 节点位的游离节点。
+    // A zero-node actor's exit records only actors: this bucket cannot know its outcome (never
+    // settled, or maybe simply never asked yet).
+    // After one in and one out the bucket is still 1, and that 1 is precisely actor#3 that yielded;
+    // the settled on the same bucket comes from the loose node that gave up its node slot.
     expect(driven.run.unlistedByPhase).toEqual([{ phaseName: "p1", actors: 1, settled: 1 }]);
 
-    // 而它自己下一次被派活时照样回得来——这正是这一档安全的理由。
+    // And the next time it is dispatched it gets back in all the same — that is exactly why this
+    // tier is safe.
     driven.send("node-settled", { instance: askRef(4), outcome: "ok" });
     dispatchWithFacts(driven, 3, { phaseName: "p1", instructionsHead: "do 3" });
     expect(actorKeys(driven.run)).toContain("actor#3");
@@ -785,12 +819,13 @@ describe("B3 派发即入座", () => {
     driven.send("actor-created", { actor: actorRef(2), name: "a2" });
     driven.send("node-queued", { instance: askRef(2), kind: "ask", actor: actorRef(2) });
     driven.send("node-dispatched", { instance: askRef(2) });
-    // actor#3 出生 → 已完成组 actor#1 让位，它连着 ask#1 一起离场。
+    // actor#3 is born → the completed group actor#1 yields, leaving together with ask#1.
     driven.send("actor-created", { actor: actorRef(3), name: "a3" });
     driven.send("node-queued", { instance: askRef(3), kind: "ask", actor: actorRef(3) });
     expect(actorKeys(driven.run)).toEqual(["actor#2", "actor#3"]);
 
-    // 脚本又给 actor#1 派了第二次活：queued 认不出主人被拒，派发时它连人带活回来。
+    // The script dispatches actor#1's second ask: the queued event cannot recognize its owner and
+    // is rejected; at dispatch it comes back along with its work.
     const second = { siteId: "ask#1", ordinal: 2 };
     driven.send("node-queued", { instance: second, kind: "ask", actor: actorRef(1) });
     dispatchWithFacts(driven, 1, { instance: second, phaseName: "p1" });
@@ -848,7 +883,8 @@ describe("B4 表外的子代理也按出生阶段可数", () => {
     expect(driven.run.unlistedByPhase).toEqual([{ phaseName: "p3", actors: 1, settled: 0 }]);
 
     dispatchWithFacts(driven, 3, { phaseName: "p3" });
-    // 空闲组 actor#2 让位（只加 actors，它的活还没开始）；actor#3 回表，p3 那一格归零被摘掉。
+    // The idle group actor#2 yields (only actors +1, its work has not started); actor#3 returns
+    // to the table, p3's bucket reaches zero and is removed.
     expect(driven.run.unlistedByPhase).toEqual([{ phaseName: "p2", actors: 1, settled: 0 }]);
     expect(driven.run.usage.nodesUnlistedSettled).toBeUndefined();
   });
@@ -864,32 +900,35 @@ describe("B4 表外的子代理也按出生阶段可数", () => {
       cached: true,
       phaseName: "p2",
     });
-    // 这条结算**不**记 actorsSettled：这个子代理已经作为 actors 计在**它自己**的出生阶段上，
-    // 而节点的阶段戳未必是同一个；何况一个有两次缓存命中的子代理会因此被记两次「已结束」。
-    // 它仍然是个未列出的子代理，读面把它算作 pending，直到它重新上表为止。
+    // This settle does **not** record actorsSettled: the subagent is already counted as actors on
+    // **its own** birth phase, and the node's phase stamp is not necessarily the same one; worse,
+    // a subagent with two cache hits would thereby be recorded as "finished" twice.
+    // It is still an unlisted subagent, and the read surface counts it as pending until it is
+    // back on the table.
     expect(driven.run.unlistedByPhase).toEqual([{ phaseName: "p2", actors: 1, settled: 1 }]);
   });
 
   it("每一格恒满足 actorsFailed ≤ actorsSettled ≤ actors（夹取是这一格的法律）", () => {
     const driven = driver({ maxActors: 1, maxNodes: 2, maxPhases: 4 });
-    // actor#1 跑完一次 ask（失败），随后被 actor#2 的出生挤走：p1 那一格记下「走了一个、
-    // 已结束、而且是失败的」。
+    // actor#1 runs one ask (failed), then is pushed out by actor#2's birth: p1's bucket records
+    // "one left, settled, and failed at that".
     runOneAsk(driven, 1, { phaseName: "p1", outcome: "failed" });
     driven.send("actor-created", { actor: actorRef(2), name: "a2", phaseName: "p2" });
     expect(driven.run.unlistedByPhase).toEqual([
       { phaseName: "p1", actors: 1, actorsSettled: 1, actorsFailed: 1, settled: 1 },
     ]);
 
-    // actor#1 其实还有第二次 ask。它入队时认不出主人（B2 拒），派发时把 actor#2 那个空闲组
-    // 挤掉、自己回表。
+    // actor#1 actually has a second ask. When queued it cannot be recognized (B2 rejects it); at
+    // dispatch it pushes out actor#2's idle group and returns to the table.
     driven.send("node-queued", { instance: askRef(2), kind: "ask", actor: actorRef(2) });
     const second = { siteId: "ask#1", ordinal: 2 };
     driven.send("node-queued", { instance: second, kind: "ask", actor: actorRef(1) });
     dispatchWithFacts(driven, 1, { phaseName: "p1", instance: second });
     expect(actorKeys(driven.run)).toEqual(["actor#1"]);
 
-    // 回表让 p1 的 actors 归零，而这一格认不出是谁回来的——夹取把 actorsSettled 与
-    // actorsFailed 一并压回零，读面于是不会把一个正在跑的子代理算成已完成的。
+    // Returning to the table zeroes p1's actors, and the bucket cannot tell who came back —
+    // clamping pulls actorsSettled and actorsFailed back to zero too, so the read surface never
+    // counts a running subagent as completed.
     expect(driven.run.unlistedByPhase).toEqual([
       { phaseName: "p1", actors: 0, settled: 1 },
       { phaseName: "p2", actors: 1, settled: 0 },
@@ -901,9 +940,9 @@ describe("B4 表外的子代理也按出生阶段可数", () => {
   });
 });
 
-// ── 不变量 I1–I6：用生成的单世事件流驱动真归约 ─────────────────────────────
+// ── Invariants I1–I6: drive the real reduction with a generated single-life event stream ─────
 
-/** 确定性 PRNG：随机化的输入必须可复现，否则红一次就再也不红了。 */
+/** Deterministic PRNG: randomized input must be reproducible, otherwise one red run stays red forever. */
 function rng(seed: number): () => number {
   let state = seed >>> 0;
   return () => {
@@ -914,15 +953,16 @@ function rng(seed: number): () => number {
 
 interface GeneratedStream {
   envelopes: WorkflowRunProgressEnvelope[];
-  /** 本世出生过的实例键（node-queued，或出生即结算的 cached settle）。 */
+  /** Instance keys born this life (node-queued, or a born-settled cached settle). */
   born: Set<string>;
-  /** 本世结算过的实例键。 */
+  /** Instance keys settled this life. */
   settled: Set<string>;
 }
 
 /**
- * 一条**单世**事件流：若干阶段、每个子代理 1–3 次 ask、夹着 world-read、若干失败，
- * 外加几条**重放**（原信封再喂一次）。宽度刻意超过界：淘汰路径必须被走满。
+ * A **single-life** event stream: a few phases, 1–3 asks per subagent, world-reads interleaved,
+ * a few failures, plus a few **replays** (the original envelope fed again). Deliberately wider
+ * than the limits: the eviction paths must be fully exercised.
  */
 function generateLife(seed: number, agents: number): GeneratedStream {
   const random = rng(seed);
@@ -949,7 +989,7 @@ function generateLife(seed: number, agents: number): GeneratedStream {
     const phaseName = pick(phases);
     if (random() < 0.2) emit("phase-entered", { name: phaseName, ordinal: 1 });
     if (random() < 0.25) {
-      // 游离节点：world-read 不属于任何人的组。
+      // Loose node: a world-read belongs to nobody's group.
       const world = worldRef(index);
       const worldKey = `${world.siteId}\u0000${world.ordinal}`;
       if (random() < 0.5) {
@@ -967,7 +1007,7 @@ function generateLife(seed: number, agents: number): GeneratedStream {
       const instance = { siteId: `ask#${index}`, ordinal: ask };
       const key = `${instance.siteId}\u0000${instance.ordinal}`;
       if (random() < 0.2) {
-        // resume 命中：出生即结算，不经 queued。
+        // Resume cache hit: born settled, without going through queued.
         emit("node-settled", {
           instance,
           actor: actorRef(index),
@@ -988,7 +1028,8 @@ function generateLife(seed: number, agents: number): GeneratedStream {
       born.add(key);
       emit("node-dispatched", { instance });
       emit("node-executing", { instance });
-      // 几条重放：原信封原样再来一次，归约必须当它不存在。
+      // A few replays: the original envelope once more, verbatim; the reduction must treat it as
+      // nonexistent.
       if (random() < 0.15) envelopes.push(queued);
       if (random() < 0.85) {
         emit("node-settled", { instance, outcome: pick(["ok", "ok", "failed", "cancelled"]) });
@@ -1008,18 +1049,21 @@ const nodesOfActor = (run: WorkflowRunState, actor: { siteId: string; ordinal: n
     (node) => node.actorSiteId === actor.siteId && node.actorOrdinal === actor.ordinal,
   );
 
-/** 归约走过的每一步：施加这一步增量之前的状态，以及这一步产出的增量。 */
+/** Every step the reduction took: the state before applying that step's delta, and the delta it produced. */
 interface ReducedStep {
   prior: WorkflowRunsState | undefined;
   deltas: ConversationDelta[];
 }
 
 /**
- * coalesce 契约：任取若干窗口，合并后施加与逐条施加逐字节一致。
+ * Coalesce contract: any choice of windows, merged then applied, is byte-for-byte identical to
+ * applying them one by one.
  *
- * 第二组界（`tight`）把规则 6 的**拒绝合并**那一支逼出来：真界 1024 下它要几千条事件才走得到，
- * 而它恰好是「合并等于顺序施加」最容易破的地方——被拒之后窗口里留下不止一条同 run 的 op，
- * 后来的 op 必须并进**最后**那条，否则它的 upsert 会跳到中间那条的删除之前。
+ * The second limit set (`tight`) forces out rule 6's **merge-rejected** branch: under the real
+ * limit of 1024 it takes thousands of events to reach, and it is exactly where "merge equals
+ * sequential apply" breaks most easily — after a rejection the window holds more than one op of
+ * the same run, and a later op must fold into the **last** one, otherwise its upsert would land
+ * before that middle op's delete.
  */
 function expectCoalesceEquivalence(steps: readonly ReducedStep[], seed: number): void {
   const random = rng(seed + 99);
@@ -1039,7 +1083,8 @@ function expectCoalesceEquivalence(steps: readonly ReducedStep[], seed: number):
       if (bounds !== undefined && merged.length > 1) declined += 1;
     }
   }
-  // 这条断言守的是上面那段注释：小界真的让合并被拒过，否则那一支从没被走到。
+  // This assertion guards the comment above: the small limits really did get a merge rejected,
+  // otherwise that branch was never exercised.
   expect(declined).toBeGreaterThan(0);
 }
 
@@ -1054,7 +1099,7 @@ describe("不变量 I1–I6（生成的单世事件流）", () => {
 
       for (const envelope of envelopes) {
         const next = reduceWorkflowRunsState(state, envelope, limits);
-        // I5（一半）：重放一条刚归约过的事件是彻底的 no-op。
+        // I5 (first half): replaying a just-reduced event is a complete no-op.
         if (next !== null) {
           expect(reduceWorkflowRunsState(next, envelope, limits)).toBeNull();
         }
@@ -1062,7 +1107,7 @@ describe("不变量 I1–I6（生成的单世事件流）", () => {
         const prior = state;
         const run = next.runs[0]!;
 
-        // I1：两张表都在界内。
+        // I1: both tables stay within the limits.
         expect(run.actors.length).toBeLessThanOrEqual(limits.maxActors);
         expect(run.nodes.length).toBeLessThanOrEqual(limits.maxNodes);
 
@@ -1070,7 +1115,8 @@ describe("不变量 I1–I6（生成的单世事件流）", () => {
           const priorRun = prior.runs[0]!;
           const keptNodes = nodeKeySet(run);
           const keptActors = actorKeySet(run);
-          // I2：走掉的节点一定已结算；走掉的 actor 名下一条未结算节点都没有。
+          // I2: a departed node has definitely settled; a departed actor has not a single
+          // unsettled node under it.
           for (const node of priorRun.nodes) {
             if (keptNodes.has(entryKey(node))) continue;
             expect(node.phase).toBe("settled");
@@ -1081,7 +1127,7 @@ describe("不变量 I1–I6（生成的单世事件流）", () => {
           }
         }
 
-        // I3：列过节点的 actor 永远不会掉到零条节点。
+        // I3: an actor that ever listed a node never drops to zero nodes.
         for (const actor of run.actors) {
           const key = entryKey(actor);
           if (nodesOfActor(run, actor).length > 0) {
@@ -1091,8 +1137,8 @@ describe("不变量 I1–I6（生成的单世事件流）", () => {
           expect(everListed.has(key)).toBe(false);
         }
 
-        // I6：归属之和不超过 run 级已结算计数，且每一格恒满足
-        // actorsFailed ≤ actorsSettled ≤ actors。
+        // I6: the sum of attributions never exceeds the run-level settled count, and every bucket
+        // always satisfies actorsFailed ≤ actorsSettled ≤ actors.
         const attributed = (run.unlistedByPhase ?? []).reduce(
           (sum, bucket) => sum + bucket.settled,
           0,
@@ -1103,7 +1149,7 @@ describe("不变量 I1–I6（生成的单世事件流）", () => {
           expect(bucket.actorsSettled ?? 0).toBeLessThanOrEqual(bucket.actors);
         }
 
-        // diff 契约：增量施加到 prior 之后与 next 逐字节一致。
+        // diff contract: applying the deltas to prior is byte-for-byte identical to next.
         const deltas = diffWorkflowRunsState(prior, next);
         expect(deltas.some((delta) => delta.op === "state.updated")).toBe(false);
         for (const delta of deltas) {
@@ -1117,11 +1163,12 @@ describe("不变量 I1–I6（生成的单世事件流）", () => {
       }
 
       const run = state!.runs[0]!;
-      // I4：表内 + 表外 = 本世出生过的实例数；已结算同理。
+      // I4: in-table + unlisted = the instances born this life; settled likewise.
       expect(run.nodes.length + (run.usage.nodesUnlisted ?? 0)).toBe(born.size);
       expect(workflowRunStepCounts(run)).toEqual({ total: born.size, settled: settled.size });
 
-      // I5（另一半）：同一串事件冷回放一遍得到逐字节相同的状态。
+      // I5 (other half): cold-replaying the same event stream yields a byte-for-byte identical
+      // state.
       let replayed: WorkflowRunsState | undefined;
       for (const envelope of envelopes) {
         replayed = reduceWorkflowRunsState(replayed, envelope, limits) ?? replayed;
@@ -1133,10 +1180,13 @@ describe("不变量 I1–I6（生成的单世事件流）", () => {
   }
 
   it("界之下的乱序投递一条都不丢：在线事件先开头、journal 前缀随后补齐", () => {
-    // 这一条守的是收紧规则**不能**越界生效。归约照常施加水位之下的事件（它只拒绝把水位拉
-    // 回去），而 CLI 的冷物化把 journal 重放与在线事件喂进同一个归约：真要是在线事件先给一条
-    // run 开了头，它整段 journal 前缀就全落在水位之下。无差别按水位收紧会让这条 run 的卡片
-    // 空着——那是界之下每一条普通 run 的退化，为的却是只有溢出之后才存在的问题。
+    // This one guards that the tightened rule must **not** apply below the limits. The reduction
+    // still applies below-watermark events as usual (it only refuses to pull the watermark back
+    // down), and the CLI's cold materialization feeds the journal replay and live events into the
+    // same reduction: if a live event really opened a run first, that run's entire journal prefix
+    // falls below the watermark. Tightening indiscriminately by watermark would leave this run's
+    // card empty — a regression for every ordinary below-limit run, bought for a problem that only
+    // exists after an overflow.
     const limits: WorkflowRunEntryLimits = { maxActors: 64, maxNodes: 64, maxPhases: 8 };
     const { envelopes, born } = generateLife(11, 10);
     const reduceSeq = (stream: readonly WorkflowRunProgressEnvelope[]) => {
@@ -1146,12 +1196,13 @@ describe("不变量 I1–I6（生成的单世事件流）", () => {
       return state!.runs[0]!;
     };
     const inOrder = reduceSeq(envelopes);
-    // 最后一条先到，水位直接抬到最高；其余整段都在水位之下。
+    // The last envelope arrives first, lifting the watermark straight to the top; the rest falls
+    // entirely below it.
     const seeded = reduceSeq([envelopes.at(-1)!, ...envelopes]);
     expect(inOrder.nodes).toHaveLength(born.size);
     expect(new Set(seeded.nodes.map(entryKey))).toEqual(new Set(inOrder.nodes.map(entryKey)));
     expect(new Set(seeded.actors.map(entryKey))).toEqual(new Set(inOrder.actors.map(entryKey)));
-    // 没撞过界 → 一条都没被拒、也没被淘汰。
+    // Never hit the limits → nothing rejected, nothing evicted.
     expect(seeded).not.toHaveProperty("truncated");
     expect(seeded.usage).not.toHaveProperty("nodesUnlisted");
   });
@@ -1163,57 +1214,63 @@ describe("不变量 I1–I6（生成的单世事件流）", () => {
       state = reduceWorkflowRunsState(state, envelope) ?? state;
     }
     const run = state!.runs[0]!;
-    // 没撞界 → 一条都没被淘汰，新键一个都不多。
+    // Never hit the limits → nothing evicted, not a single new key.
     expect(run.actors.length).toBeLessThanOrEqual(WORKFLOW_RUNS_LIMITS.maxActors);
     expect(run).not.toHaveProperty("unlistedByPhase");
     expect(run).not.toHaveProperty("truncated");
   });
 });
 
-// ── 不变量 I7 / I8：引擎形状的事件流 ───────────────────────────────────────
+// ── Invariants I7 / I8: engine-shaped event streams ────────────────────────
 //
-// 上面那个生成器把出生与结算**交织**在一起（建一个、跑一个、结算一个），于是表里永远有
-// 一个刚跑完的组可以让位——2026-09-20 的事故（5 × 2000 个子代理、并发 13）正是它没能逮到的
-// 那个形状：一个阶段在头几秒里把**全部** actor-created 与**全部** node-queued 发完，头 1024 条
-// 还排着队就把两张表塞满，一条终态都没有，于是后面 976 个子代理连人带活全被拒；调度器随后
-// 按 FIFO 派活，从第 1025 个开始，**每一个正在跑的子代理都不在表上**。
+// The generator above **interleaves** birth and settlement (create one, run one, settle one), so
+// the table always holds a just-finished group that can yield — and the 2026-09-20 incident
+// (5 × 2000 subagents, concurrency 13) was exactly the shape it failed to catch: one phase
+// fires **all** actor-created events and **all** node-queued events within the first seconds,
+// the first 1024 are still queued and already fill both tables with not one terminal entry, so
+// the remaining 976 subagents are rejected along with their work; the scheduler then dispatches
+// FIFO, and from number 1025 on **not one running subagent is on the table**.
 //
-// 所以这个生成器照着引擎的形状来：先建全部 actor、再入队全部第一次 ask、然后在并发上限之内
-// FIFO 派活，每条 node-dispatched 带着出生事实。一个子代理连做 1–3 次 ask，有失败的，
-// world-read 夹在中间（它的派发不带事实），偶尔重放一条信封。
+// So this generator follows the engine's shape: create all actors first, queue all first asks,
+// then dispatch FIFO within the concurrency cap, with every node-dispatched carrying birth facts.
+// A subagent runs 1–3 asks in a row, some fail, world-reads are interleaved (their dispatch
+// carries no facts), and an envelope is occasionally replayed.
 
-/** 生成流里的一个子代理：串行做 `asks` 次 ask，第 k+1 次要等第 k 次结算之后才入队。 */
+/** One subagent in a generated stream: runs `asks` asks serially; ask k+1 queues only after ask k settles. */
 interface EngineAgent {
   index: number;
   phaseName: string;
   asks: number;
-  /** 已经开始过的次数，同时就是下一次 ask 的 ordinal。 */
+  /** How many times it has started, which is also the next ask's ordinal. */
   done: number;
 }
 
-/** 一条生成流的形状。并发上界与两张表界的**相对大小**决定 I7 的豁免用不用得上。 */
+/** The shape of a generated stream. The **relative sizes** of the concurrency cap and the two table limits decide whether I7's exemption is needed. */
 interface EngineShape {
   phases: number;
   agentsPerPhase: number;
   concurrency: number;
   /**
-   * 一次 ask 命中完结缓存的概率（replay / amend-resume 的短路）：它不入队、不派发，直接发
-   * 一条出生即结算的 `node-settled { cached: true }`。
+   * Probability an ask hits the completion cache (replay / amend-resume short circuit): it never
+   * queues or dispatches, it just emits a born-settled `node-settled { cached: true }`.
    */
   cachedRate: number;
   /**
-   * 缓存结算带不带出生事实。现在的引擎带（kind / actor / actorSeq / instructionsHead，导入命中
-   * 另带前驱的 `sourceSessionId`，信封上补本 run 的 `actorSessionId`），它落成一条归属到子代理
-   * 的节点；更早的 journal 不带，它落成一条游离节点。两种形状都要跑：老 run 冷回放的仍是后者。
+   * Whether cache settles carry birth facts. The current engine does (kind / actor / actorSeq /
+   * instructionsHead, imported hits additionally carry the predecessor's `sourceSessionId`, and
+   * the envelope supplements this run's `actorSessionId`), so it lands as a node attributed to
+   * the subagent; older journals do not, so it lands as a loose node. Both shapes must run: cold
+   * replay of an old run still produces the latter.
    */
   cachedNamesActor: boolean;
   /**
-   * 第一世跑到第 n 次结算就被掐断（用户 stop），然后 `run-started` 重开一世：溢出过的 run 从
-   * 空表重来，重放的前缀把**全部** actor 重新建一遍、给做完的 ask 补一条不带 actor 的缓存结算、
-   * 给没做完的重新入队，然后照旧 FIFO 派活。0 = 只跑一世。
+   * The first life is cut off at the nth settle (user stop), then `run-started` opens a new one:
+   * an overflowed run restarts from an empty table, the replayed prefix re-creates **all**
+   * actors, adds a no-actor cached settle for each finished ask, re-queues the unfinished ones,
+   * and dispatches FIFO as before. 0 = run a single life.
    */
   interruptAfter: number;
-  /** 每个子代理最多做几次 ask（1 = 一次就走完，于是「结算过」等于「彻底做完」）。 */
+  /** How many asks a subagent may run at most (1 = one and done, so "settled" equals "fully done"). */
   maxAsks: number;
 }
 
@@ -1240,7 +1297,7 @@ function generateEngineLife(seed: number, shape: EngineShape): WorkflowRunProgre
     envelopes.push(envelope);
     return envelope;
   };
-  /** 偶尔把一条刚发过的信封原样再喂一次：归约必须当它不存在。 */
+  /** Occasionally feed a just-sent envelope again, verbatim: the reduction must treat it as nonexistent. */
   const maybeReplay = (envelope: WorkflowRunProgressEnvelope): void => {
     if (random() < 0.12) envelopes.push(envelope);
   };
@@ -1250,8 +1307,9 @@ function generateEngineLife(seed: number, shape: EngineShape): WorkflowRunProgre
   });
   const instructionsHead = (agent: EngineAgent) => `task ${agent.index}.${agent.done}`;
   /**
-   * 缓存命中的结算（scheduler.ts 的 tryImportedSettle / settleCachedAsk）。`imported` 只在第一世
-   * 的命中上为真：那是修订 run 的导入命中，答案读自前驱的会话；第二世的前缀是本 run 自己的重放。
+   * The cache-hit settle (scheduler.ts's tryImportedSettle / settleCachedAsk). `imported` is true
+   * only on first-life hits: those are the amend-run's imported hits, with the answer read from
+   * the predecessor's session; the second life's prefix is this run's own replay.
    */
   const settleCached = (agent: EngineAgent, phaseName: string, imported: boolean): void => {
     const facts = shape.cachedNamesActor
@@ -1271,8 +1329,8 @@ function generateEngineLife(seed: number, shape: EngineShape): WorkflowRunProgre
       ),
     );
   };
-  // 调度器的 node-queued（scheduler.ts）：kind / actor / actorSeq / instructionsHead 在这里落，
-  // 出生阶段名由引擎随后补（engine-phase-stamp.ts）。
+  // The scheduler's node-queued (scheduler.ts): kind / actor / actorSeq / instructionsHead land
+  // here; the engine stamps the birth phase name afterwards (engine-phase-stamp.ts).
   const queueAsk = (agent: EngineAgent): void => {
     maybeReplay(
       emit("node-queued", {
@@ -1285,9 +1343,10 @@ function generateEngineLife(seed: number, shape: EngineShape): WorkflowRunProgre
       }),
     );
   };
-  // 派发重发出生事实（DESIGN-3 Part A）：kind / actor / 节点阶段戳 / 任务摘要来自这条实例的
-  // node-queued，名字与出生阶段来自它的 actor-created，会话 id 与 actor-created 同一条信封字段
-  // （dynamic-workflow-run-launch.ts 的 actorSessionRefOf 在这两种事件上补它）。
+  // Dispatch re-sends the birth facts (DESIGN-3 Part A): kind / actor / the node's phase stamp /
+  // the task summary come from this instance's node-queued, the name and birth phase from its
+  // actor-created, and the session id rides the same envelope field as actor-created
+  // (dynamic-workflow-run-launch.ts's actorSessionRefOf supplements it on both event kinds).
   const dispatchAsk = (agent: EngineAgent): void => {
     maybeReplay(
       emit(
@@ -1305,8 +1364,9 @@ function generateEngineLife(seed: number, shape: EngineShape): WorkflowRunProgre
       ),
     );
     emit("node-executing", { instance: askInstance(agent) });
-    // 一次已解析轮次的读数。不是生命周期事件（不落相位、不计步），但它确实夹在这两条中间，
-    // 而它对一条**表外**实例必须是彻底的 no-op——否则表外的实例会被它凭空建出一行。
+    // A reading from a resolved turn. Not a lifecycle event (no phase, no step count), but it
+    // does sit between those two, and for an **unlisted** instance it must be a complete no-op —
+    // otherwise it would conjure a row for an unlisted instance out of thin air.
     if (random() < 0.4) {
       emit("node-progress", {
         instance: askInstance(agent),
@@ -1320,13 +1380,15 @@ function generateEngineLife(seed: number, shape: EngineShape): WorkflowRunProgre
     worldNumber += 1;
     const instance = worldRef(worldNumber);
     emit("node-queued", { instance, kind: "world-read", phaseName });
-    // 世界读的派发紧跟自己的入队，而且**不带事实**（engine-world.ts）。
+    // The world-read's dispatch follows its own queueing and carries **no facts**
+    // (engine-world.ts).
     emit("node-dispatched", { instance });
     emit("node-settled", { instance, outcome: "ok" });
   };
   /**
-   * 这个子代理的下一次 ask 开工。命中完结缓存的直接结算、接着看再下一次；真要跑的才入队。
-   * 串行由此成立：一个子代理同一时刻最多有一条 ask 在队列或在跑。
+   * Start this subagent's next ask. Cache hits settle immediately, then look at the one after;
+   * only genuinely-runnable asks queue.
+   * Serial here means: a subagent has at most one ask in the queue or running at any moment.
    */
   const beginNextAsk = (agent: EngineAgent, queue: EngineAgent[]): void => {
     while (agent.done < agent.asks) {
@@ -1345,14 +1407,15 @@ function generateEngineLife(seed: number, shape: EngineShape): WorkflowRunProgre
   let agentNumber = 0;
   let settles = 0;
   let interrupted = false;
-  /** 每个阶段的全部子代理，按出生序：第二世的重放前缀要照原样再走一遍。 */
+  /** Every subagent of each phase, in birth order: the second life's replayed prefix must walk it again verbatim. */
   const roster: EngineAgent[][] = [];
   for (let phase = 1; phase <= shape.phases; phase += 1) {
     const phaseName = `p${phase}`;
     emit("phase-entered", { name: phaseName, ordinal: 1 });
     const agents: EngineAgent[] = [];
     roster.push(agents);
-    // 先把这一阶段**全部** actor 建出来：事故里的 2000 条 actor-created 就是在这里一口气发完的。
+    // Create **all** of this phase's actors first: the incident's 2000 actor-created events were
+    // fired in one burst right here.
     for (let index = 0; index < shape.agentsPerPhase; index += 1) {
       agentNumber += 1;
       const agent: EngineAgent = {
@@ -1370,7 +1433,8 @@ function generateEngineLife(seed: number, shape: EngineShape): WorkflowRunProgre
         ),
       );
     }
-    // 再把**全部**第一次 ask 入队，一条都还没派下去：这一刻表已经满了，而一条终态都没有。
+    // Then queue **all** first asks, none dispatched yet: the table is full at this instant, with
+    // not one terminal entry.
     const queue: EngineAgent[] = [];
     for (const agent of agents) beginNextAsk(agent, queue);
     const running: EngineAgent[] = [];
@@ -1388,7 +1452,8 @@ function generateEngineLife(seed: number, shape: EngineShape): WorkflowRunProgre
       });
       agent.done += 1;
       settles += 1;
-      // 用户按了停止：在飞的 ask 与排着队的都留在原地，脚本不再往下走。
+      // The user pressed stop: in-flight asks and queued ones stay where they are; the script
+      // does not advance.
       if (shape.interruptAfter > 0 && settles >= shape.interruptAfter) {
         interrupted = true;
         break;
@@ -1399,9 +1464,11 @@ function generateEngineLife(seed: number, shape: EngineShape): WorkflowRunProgre
   }
   if (!interrupted) return envelopes;
 
-  // ── 第二世（resume）。溢出过的 run 从空表重开，脚本整段重跑：每个阶段的 actor 全部重建，
-  // 做完的 ask 补一条缓存结算（老形状不带 actor，落成游离节点、那个子代理名下一条已列节点都
-  // 没有；新形状带，落成它名下的一条已结算节点），没做完的重新入队，然后照旧派活。
+  // ── Second life (resume). An overflowed run restarts from an empty table and the script reruns
+  // in full: each phase's actors are all re-created, finished asks get a cached settle (the old
+  // shape without the actor lands as a loose node leaving the subagent with not a single listed
+  // node; the new shape with it lands as one of its settled nodes), unfinished asks re-queue, and
+  // dispatching proceeds as before.
   emit("run-started", {});
   for (const agents of roster) {
     const phaseName = agents[0]!.phaseName;
@@ -1443,15 +1510,18 @@ function generateEngineLife(seed: number, shape: EngineShape): WorkflowRunProgre
 }
 
 /**
- * 此刻表里可以为一个新人腾出位子的条目数。恒为 0 才算这次拒绝合法——这是 I7 / I8 唯一的豁免。
+ * The number of entries the table could currently yield for one newcomer. Legal rejection
+ * requires this to be 0 — the only exemption I7 / I8 allow.
  *
- * 要分两种缺位来数，因为两种缺位的受害者不是一回事：
- *   - 缺 **actor 位**（这个子代理不在表上、actor 表满）：只有整行的人能腾出一个 actor 位，
- *     也就是非 live 的组与零节点 actor；游离节点和自己名下的节点都不行。豁免因此收紧成
- *     「每个已列 actor 都在跑」。
- *   - 只缺 **节点位**：newcomer 自己名下那些已结算的节点先算（丢一条只少一行历史，徽章不动），
- *     然后是已结算的游离节点，最后才是别人的组——零节点 actor 在这里帮不上忙，它腾的是
- *     actor 位。
+ * Two kinds of missing slot must be counted separately, because their victims are different
+ * things:
+ *   - Missing an **actor slot** (this subagent is not on the table, actor table full): only a
+ *     whole row can free an actor slot — non-live groups and zero-node actors; loose nodes and
+ *     the newcomer's own nodes cannot. The exemption therefore tightens to "every listed actor is
+ *     running".
+ *   - Only a **node slot** is missing: the newcomer's own settled nodes count first (dropping one
+ *     costs a row of history, the badge stays), then settled loose nodes, and only then other
+ *     groups' — a zero-node actor cannot help here; what it frees is an actor slot.
  */
 function spareRoomFor(
   run: WorkflowRunState,
@@ -1469,7 +1539,8 @@ function spareRoomFor(
       zeroNode += 1;
       continue;
     }
-    // 非 live 的组都可以让位：全已结算的（活干完了）与还排着队的（在等槽位）。
+    // Any non-live group may yield: fully settled (work done) or still queued (waiting for a
+    // slot).
     if (owned.every((node) => node.phase === "settled" || node.phase === "queued")) groups += 1;
   }
   const needsActorSlot = !actorKeySet(run).has(ownerKey) && run.actors.length >= limits.maxActors;
@@ -1485,14 +1556,14 @@ function spareRoomFor(
   return groups + rows;
 }
 
-/** 一条生成流跑一遍要断言的全部东西。 */
+/** Everything one generated-stream run must assert. */
 interface EngineCase extends Omit<EngineShape, "cachedNamesActor"> {
   seed: number;
   limits: WorkflowRunEntryLimits;
 }
 
 const ENGINE_CASES: readonly EngineCase[] = [
-  // 事故的比例（并发远小于表界）。
+  // The incident's proportions (concurrency far below the table limits).
   {
     seed: 2,
     phases: 2,
@@ -1503,8 +1574,9 @@ const ENGINE_CASES: readonly EngineCase[] = [
     maxAsks: 3,
     limits: { maxActors: 6, maxNodes: 12, maxPhases: 3 },
   },
-  // 节点界紧到连 3 × 并发都装不下：在跑的子代理名下压着自己的已结算历史，只有「先丢自己的」
-  // 那条规则能把位子腾出来。改这条规则之前，这组界会让 3 个在跑的子代理掉出表。
+  // The node limit is so tight that not even 3 × concurrency fits: running subagents sit on
+  // their own settled history, and only the "drop your own first" rule can free the slots.
+  // Before that rule, this limit set would push the 3 running subagents off the table.
   {
     seed: 13,
     phases: 3,
@@ -1515,7 +1587,8 @@ const ENGINE_CASES: readonly EngineCase[] = [
     maxAsks: 3,
     limits: { maxActors: 7, maxNodes: 9, maxPhases: 4 },
   },
-  // 线上那条 run 的并发（13）与它的比例（子代理数远多于表界）。
+  // The live incident run's concurrency (13) and its proportions (far more subagents than table
+  // slots).
   {
     seed: 71,
     phases: 2,
@@ -1526,7 +1599,8 @@ const ENGINE_CASES: readonly EngineCase[] = [
     maxAsks: 3,
     limits: { maxActors: 20, maxNodes: 45, maxPhases: 3 },
   },
-  // 并发**高于** actor 表界：一张全是 live 组的表腾不出位，豁免这时才该用上。
+  // Concurrency **above** the actor table limit: a table of all-live groups frees nothing, and
+  // only now should the exemption apply.
   {
     seed: 404,
     phases: 2,
@@ -1537,7 +1611,8 @@ const ENGINE_CASES: readonly EngineCase[] = [
     maxAsks: 3,
     limits: { maxActors: 5, maxNodes: 7, maxPhases: 2 },
   },
-  // 夹着完结缓存命中：出生即结算的游离节点 + 一批名下没有任何已列节点的 actor。
+  // Completion-cache hits interleaved: born-settled loose nodes + a batch of actors with no
+  // listed nodes at all.
   {
     seed: 909,
     phases: 3,
@@ -1548,8 +1623,10 @@ const ENGINE_CASES: readonly EngineCase[] = [
     maxAsks: 3,
     limits: { maxActors: 8, maxNodes: 10, maxPhases: 4 },
   },
-  // 两世：第一世跑到一半被掐断，第二世重放整段前缀——全部 actor 重建 + 不带 actor 的缓存结算，
-  // 于是 actor 表会先被一批**零节点** actor 占满。少了零节点这一档，第二世的每一次派发都会被拒。
+  // Two lives: the first cut off halfway, the second replays the whole prefix — all actors
+  // re-created + cache settles without the actor, so the actor table fills first with a batch of
+  // **zero-node** actors. Without the zero-node tier, every second-life dispatch would be
+  // rejected.
   {
     seed: 5_150,
     phases: 2,
@@ -1557,8 +1634,9 @@ const ENGINE_CASES: readonly EngineCase[] = [
     concurrency: 4,
     cachedRate: 0,
     interruptAfter: 8,
-    // 每人只做一次 ask：于是第一世结算过的那 8 个在第二世是**彻底做完**的，重放只给它们补一条
-    // 不带 actor 的缓存结算 —— actor 表因此被一批零节点 actor 占满，没有任何组可以让位。
+    // One ask per agent: the 8 settled in the first life are **fully done** in the second, so the
+    // replay only gives them a cache settle without the actor — the actor table therefore fills
+    // with zero-node actors, with no group to yield.
     maxAsks: 1,
     limits: { maxActors: 6, maxNodes: 8, maxPhases: 3 },
   },
@@ -1581,9 +1659,9 @@ describe("不变量 I1–I9（引擎形状：先建全部 actor、再入队、FI
       const settledNodes = new Set<string>();
       const bornAgents = new Set<string>();
       const everListed = new Set<string>();
-      /** 此刻在跑的实例 → 它的 actor 键（world-read 记 null）。 */
+      /** Currently running instance → its actor key (world-read records null). */
       const live = new Map<string, string | null>();
-      /** 被派发的那一刻就没位子的实例：I8 对它们豁免，与 I7 同一条理由。 */
+      /** Instances that had no slot at the moment of dispatch: I8 exempts them, same reason as I7. */
       const homeless = new Set<string>();
       const steps: ReducedStep[] = [];
       let activations = 0;
@@ -1597,14 +1675,15 @@ describe("不变量 I1–I9（引擎形状：先建全部 actor、再入队、FI
         const actor = payload.actor as { siteId: string; ordinal: number } | undefined;
 
         const next = reduceWorkflowRunsState(state, envelope, limits);
-        // I5（一半）：重放一条刚归约过的事件是彻底的 no-op。
+        // I5 (first half): replaying a just-reduced event is a complete no-op.
         if (next !== null) {
           expect(reduceWorkflowRunsState(next, envelope, limits)).toBeNull();
         }
         const run = (next ?? state)!.runs[0]!;
 
-        // 新一世：溢出过的 run 从空表重开，所以这几本地面真相的账也从头记。I4 比的是**本世**
-        // 出生过的实例数，而 run-started 正是把两个计数器清零的那条事件。
+        // A new life: an overflowed run restarts from an empty table, so these local ledgers also
+        // restart. I4 compares against the instances born **this life**, and run-started is
+        // exactly the event that zeroes the two counters.
         if (envelope.eventType === "run-started" && advanced) {
           bornNodes.clear();
           settledNodes.clear();
@@ -1624,18 +1703,21 @@ describe("不变量 I1–I9（引擎形状：先建全部 actor、再入队、FI
             settledNodes.add(key);
             live.delete(key);
           }
-          // 只跟子代理的 ask：world-read 没有主人，也画不出徽章，I8 说的是「在跑的子代理」。
+          // Only subagent asks count: a world-read has no owner and draws no badge; I8 is about
+          // "running subagents".
           if (envelope.eventType === "node-dispatched" && actor !== undefined) {
             live.set(key, entryKey(actor));
           }
         }
 
-        // I1：两张表都在界内。
+        // I1: both tables stay within the limits.
         expect(run.actors.length).toBeLessThanOrEqual(limits.maxActors);
         expect(run.nodes.length).toBeLessThanOrEqual(limits.maxNodes);
 
-        // I2：走掉的节点只能是已结算的或还排着队的；走掉的 actor 名下一条**在跑**的都没有。
-        // `run-started` 不在此列：溢出过的 run 新一世从**空表**重开，那是重置而不是淘汰。
+        // I2: a departed node can only be settled or still queued; a departed actor has not a
+        // single **running** node under it.
+        // `run-started` is exempt: an overflowed run's new life restarts from an **empty** table —
+        // that is a reset, not an eviction.
         if (priorRun !== undefined && envelope.eventType !== "run-started") {
           const keptNodes = nodeKeySet(run);
           const keptActors = actorKeySet(run);
@@ -1651,7 +1733,7 @@ describe("不变量 I1–I9（引擎形状：先建全部 actor、再入队、FI
           }
         }
 
-        // I3：列过节点的 actor 永远不会掉到零条节点。
+        // I3: an actor that ever listed a node never drops to zero nodes.
         for (const actor_ of run.actors) {
           const key = entryKey(actor_);
           if (nodesOfActor(run, actor_).length > 0) {
@@ -1661,8 +1743,9 @@ describe("不变量 I1–I9（引擎形状：先建全部 actor、再入队、FI
           expect(everListed.has(key)).toBe(false);
         }
 
-        // I7：带事实的 dispatch 之后，这条实例与它的子代理都在表上——除非那一刻表里
-        // 一个可让位的组都没有（全是在跑的组，或名下一条已列节点都没有的 actor）。
+        // I7: after a dispatch with facts, the instance and its subagent are both on the table —
+        // unless at that instant the table held not a single yieldable group (all groups running,
+        // or actors with no listed node at all).
         if (
           envelope.eventType === "node-dispatched" &&
           advanced &&
@@ -1679,9 +1762,11 @@ describe("不变量 I1–I9（引擎形状：先建全部 actor、再入队、FI
           }
         }
 
-        // I9：点名了子代理的已列节点，它的子代理一定也在表上。反过来就是一行永远淘汰不掉的节点
-        // （它不是游离节点，而组是按已列 actor 建的）——缓存结算重发 actor ref 之后，B2 必须连它
-        // 一起拒，否则这一行会在溢出过的 run 里卡死一个节点位。
+        // I9: a listed node naming a subagent must have that subagent on the table too. The
+        // converse is a row that can never be evicted (it is not a loose node, and groups are
+        // built from listed actors) — after cached settles re-send the actor ref, B2 must reject
+        // it along with the node, otherwise this row would pin a node slot forever in an
+        // overflowed run.
         for (const node of run.nodes) {
           if (node.actorSiteId === undefined || node.actorOrdinal === undefined) continue;
           expect(
@@ -1691,7 +1776,8 @@ describe("不变量 I1–I9（引擎形状：先建全部 actor、再入队、FI
           ).toBe(true);
         }
 
-        // I8：此刻在跑的每条实例（与它的子代理）都在表上，豁免同 I7。
+        // I8: every currently running instance (and its subagent) is on the table; exemption same
+        // as I7.
         const listedNodes = nodeKeySet(run);
         const listedActors = actorKeySet(run);
         for (const [key, owner] of live) {
@@ -1700,9 +1786,11 @@ describe("不变量 I1–I9（引擎形状：先建全部 actor、再入队、FI
           expect(listedActors.has(owner)).toBe(true);
         }
 
-        // I6：每一格恒满足 actorsFailed ≤ actorsSettled ≤ actors（夹取是这一格的法律），
-        // 且 Σ actors 恰是「出生过但此刻不在表上」的子代理数——溢出之前没有格子，之后每一次
-        // 拒绝、淘汰与回表都要对得上。
+        // I6: every bucket always satisfies actorsFailed ≤ actorsSettled ≤ actors (clamping is
+        // this bucket's law),
+        // and Σ actors is exactly the number of subagents "born but not currently on the table" —
+        // no buckets before the overflow; after it, every rejection, eviction, and return to the
+        // table must reconcile.
         for (const bucket of run.unlistedByPhase ?? []) {
           expect(bucket.actorsFailed ?? 0).toBeLessThanOrEqual(bucket.actorsSettled ?? 0);
           expect(bucket.actorsSettled ?? 0).toBeLessThanOrEqual(bucket.actors);
@@ -1717,7 +1805,7 @@ describe("不变量 I1–I9（引擎形状：先建全部 actor、再入队、FI
         expect(attributedActors).toBe(unlistedAgents);
 
         if (next === null) continue;
-        // diff 契约：增量施加到 prior 之后与 next 逐字节一致。
+        // diff contract: applying the deltas to prior is byte-for-byte identical to next.
         const deltas = diffWorkflowRunsState(state, next);
         for (const delta of deltas) {
           expect(conversationDeltaSchema.safeParse(delta).success).toBe(true);
@@ -1730,17 +1818,18 @@ describe("不变量 I1–I9（引擎形状：先建全部 actor、再入队、FI
       }
 
       const run = state!.runs[0]!;
-      // 这条流真的走过了界，也真的走过了「派发即入座」那条路。
+      // This stream really crossed the limits, and really exercised the dispatch-reinstates path.
       expect(truncatedAt).toBeGreaterThan(0);
       expect(activations).toBeGreaterThan(0);
-      // I4：表内 + 表外 = 本世出生过的实例数；已结算同理。
+      // I4: in-table + unlisted = the instances born this life; settled likewise.
       expect(run.nodes.length + (run.usage.nodesUnlisted ?? 0)).toBe(bornNodes.size);
       expect(workflowRunStepCounts(run)).toEqual({
         total: bornNodes.size,
         settled: settledNodes.size,
       });
 
-      // I5（另一半）：同一串事件冷回放一遍得到逐字节相同的状态。
+      // I5 (other half): cold-replaying the same event stream yields a byte-for-byte identical
+      // state.
       let replayed: WorkflowRunsState | undefined;
       for (const envelope of envelopes) {
         replayed = reduceWorkflowRunsState(replayed, envelope, limits) ?? replayed;
@@ -1752,8 +1841,9 @@ describe("不变量 I1–I9（引擎形状：先建全部 actor、再入队、FI
   }
 });
 
-// 子代理的模型（docs/dynamic-workflow/presentation.md「Reduction」）：`actor-created` 的 `model`，
-// 以及派发时收回表的那条路上 `node-dispatched` 的 `actorModel`——两条出生路径长出同一个条目。
+// The subagent model (docs/dynamic-workflow/presentation.md "Reduction"): `actor-created`'s
+// `model`, plus `node-dispatched`'s `actorModel` on the dispatch-reinstates path — the two birth
+// paths grow the same entry.
 describe("子代理的模型", () => {
   it("actor-created 带 model 即落进条目；超界整个丢掉，不截断", () => {
     const driven = driver({ maxActors: 3, maxNodes: 3, maxPhases: 2 });
@@ -1774,7 +1864,8 @@ describe("子代理的模型", () => {
 
   it("被拒的子代理在派发时回到表上，带着 actorModel", () => {
     const driven = driver({ maxActors: 2, maxNodes: 2, maxPhases: 2 });
-    // 三个子代理都点了模型；第三个出生时表已满，连同它的 `model` 一起被拒。
+    // All three subagents carry a model; the third is rejected at birth with the table full,
+    // together with its `model`.
     for (let index = 1; index <= 3; index += 1) {
       driven.send(
         "actor-created",

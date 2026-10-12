@@ -163,8 +163,9 @@ describe("Browser Use Desktop IAB 全链 E2E", () => {
       ACTION_TOOL_CALL_ID,
     );
 
-    // 修复回归：旧 CUA type 依赖 Electron 当前焦点，网页 click 与 type 间若 Composer
-    // autofocus 抢焦，文本会串进宿主。这里主动制造该时序，Browser type 仍必须只写 guest。
+    // Regression fix: the old CUA type depended on Electron's current focus; between the page click and the type,
+    // if Composer autofocus stole focus, text would leak into the host. Here we deliberately create that timing;
+    // Browser type must still write only to the guest.
     const composerAtFocusSteal = await focusEmptyV4Composer();
     expect(composerAtFocusSteal.focused).toBe(true);
     expect(composerAtFocusSteal.text).toBe("");
@@ -221,8 +222,9 @@ describe("Browser Use Desktop IAB 全链 E2E", () => {
     expect(guest.devicePixelRatio).toBe(1);
     expect((await readV4ComposerSnapshot()).text).toBe("");
 
-    // 模型主动 setViewportSize 的布局收敛期不应误报；最后一个 Browser command
-    // 刚结束时 operationUntil 仍有效，立即执行用户 resize，避免慢机跨过 active deadline。
+    // The layout convergence window after the model's own setViewportSize must not produce a false positive; right
+    // after the last Browser command finishes, operationUntil is still valid, so run the user resize immediately to
+    // keep slow machines from crossing the active deadline.
     expect(activeSurface.warningCount).toBe(0);
     await setInputValueByTestIdDom(TID_BROWSER_RESPONSIVE_WIDTH_INPUT, "380");
     const warningSurface = await waitForResizeWarning();
@@ -237,8 +239,8 @@ describe("Browser Use Desktop IAB 全链 E2E", () => {
     ]);
     await assertBrowserUseImageGalleryPreview();
 
-    // 修复回归：切到无 tab 的 B 时 A 的 webview 必须后台保活；切回 A 时必须主动展开，
-    // 不能沿用 B 的 collapsed 状态或创建新的 guest。
+    // Regression fix: when switching to B which has no tab, A's webview must stay alive in the background; when
+    // switching back to A it must expand proactively, not reuse B's collapsed state or create a new guest.
     await startNewV4Draft();
     const backgroundSurface = await readBrowserSurfaceSnapshot();
     expect(backgroundSurface.browserPaneVisible).toBe(false);
@@ -265,7 +267,7 @@ describe("Browser Use Desktop IAB 全链 E2E", () => {
     expect(restoredGuest.url).toBe(fixtureUrl);
     expect(restoredGuest.status).toBe(SUBMITTED_TEXT);
 
-    // 越界草稿保留但不得部分应用到真实 guest。
+    // The out-of-bounds draft is kept but must not be partially applied to the real guest.
     await setInputValueByTestIdDom(TID_BROWSER_RESPONSIVE_HEIGHT_INPUT, "2161");
     const invalidDraft = await readResponsiveDraftSnapshot();
     expect(invalidDraft.heightInput).toBe("2161");
@@ -322,7 +324,7 @@ describe("Browser Use Desktop IAB 全链 E2E", () => {
     }
     await setDesktopZoomLevel(0);
 
-    // cold restart 只恢复 conversation 图片事实；IAB tab 本身不承诺跨进程恢复。
+    // A cold restart only restores conversation image facts; the IAB tab itself promises no cross-process recovery.
     await browser.reloadSession();
     await waitForRendererAfterReloadSession();
     await waitForDefaultWorkspaceReady(60000);
@@ -475,9 +477,10 @@ async function readBrowserSurfaceSnapshot(): Promise<BrowserSurfaceSnapshot> {
         };
       });
       return {
-        // 修复原因：旧 TID_BROWSER_PANE 已无生产挂载点，继续拿它判断会出现
-        // “webview 可见但 pane 不可见”的假失败。responsive viewport 是当前
-        // Browser surface 的真实可见容器，也能区分任务切换后的 collapsed 状态。
+        // Reason for the fix: the old TID_BROWSER_PANE has no production mount point anymore, so judging with it
+        // produces the false failure "webview visible but pane not visible". The responsive viewport is the real
+        // visible container of the current Browser surface, and it also distinguishes the collapsed state after a
+        // task switch.
         browserPaneVisible: isVisible(viewport),
         responsiveHeight:
           Number(viewport?.dataset.responsiveHeight ?? "") || null,
@@ -587,8 +590,8 @@ async function waitForGuestFocusedInput(
   const deadline = Date.now() + timeout;
   let latest = "";
   while (Date.now() <= deadline) {
-    // Bug 根因：WebdriverIO waitUntil 会把 predicate 抛出的工具错误当成重试信号，
-    // 最后只留下焦点超时。显式轮询可让真实的 node_repl 失败立即终止用例。
+    // Bug root cause: WebdriverIO waitUntil treats tool errors thrown by the predicate as retry signals, leaving only
+    // a focus timeout in the end. Explicit polling makes a real node_repl failure terminate the case immediately.
     await assertToolCallNotFailedByToolCallId(toolCallId);
     latest = await browser.electron.execute((electron, targetId) => {
       const guest = electron.webContents.fromId(targetId);
@@ -955,9 +958,10 @@ async function setDesktopZoomLevel(zoomLevel: number) {
           !candidate.isDestroyed() &&
           candidate.webContents.getURL().includes("/renderer/index.html"),
       );
-      // 修复原因：restoreSession 启动 URL 不再携带 initialWorkspacePath，按 URL
-      // 查 workspace 会漏掉健康主窗口。E2E 只接受唯一 renderer BrowserWindow，
-      // 多窗口时直接失败，避免退化成 focused-window 猜测并改错窗口。
+      // Reason for the fix: the restoreSession startup URL no longer carries initialWorkspacePath, so looking up the
+      // workspace by URL misses the healthy main window. E2E accepts only the unique renderer BrowserWindow and fails
+      // outright with multiple windows, avoiding a fallback to focused-window guessing that would change the wrong
+      // window.
       if (candidates.length !== 1) {
         return {
           applied: false,
@@ -1093,10 +1097,10 @@ async function waitForPermissionAndApproveOnce(expectedTitle: string) {
         };
       });
       latest = JSON.stringify(state);
-      // 修复原因：V4 permission payload 只保留 toolName/summary/detail，不会把
-      // node_repl 输入里的模型 title 投影到 PermissionDialog。调用方已先用固定
-      // tool call/continuation 锁定阶段；这里要求唯一弹窗和唯一 allowOnce，避免
-      // 退化成“随便批准第一个”而误响应并发请求。
+      // Reason for the fix: the V4 permission payload keeps only toolName/summary/detail and does not project the
+      // model's title from the node_repl input onto the PermissionDialog. The caller has already locked the phase
+      // with fixed tool call/continuation pairs; requiring a unique dialog and a unique allowOnce here avoids
+      // degrading into "approve the first one" and mistakenly answering concurrent requests.
       return state.count === 1 && state.allowOnceCount === 1;
     },
     {
@@ -1106,7 +1110,8 @@ async function waitForPermissionAndApproveOnce(expectedTitle: string) {
   );
 
   expect(await clickMatchingAllowOnce()).toBe(true);
-  // 修复原因：首个 tool result 后下一个权限可能在 100ms polling 间隔内立即出现。
-  // 旧 helper 看到“仍有 listbox”会再次点击，实际把下一次 Browser 调用也批准了。
-  // 单次 helper 只能点击一次；调用方用下一条 provider continuation 证明本次审批已生效。
+  // Reason for the fix: after the first tool result, the next permission may appear immediately within the 100ms
+  // polling interval. The old helper saw "a listbox still exists" and clicked again, in fact approving the next
+  // Browser call too. The once-helper may only click once; the caller proves this approval took effect with the next
+  // provider continuation.
 }

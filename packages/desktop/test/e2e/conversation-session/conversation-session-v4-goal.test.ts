@@ -1,8 +1,8 @@
-// M4 门禁：sendGoalCommand（v4 composer slash `/goal <目标>`）。
-// 证据层 L3：建立 session → composer `/goal E2E_V4_GOAL_OBJECTIVE …` → handleSlashCommand →
-// dispatchCommand("sendGoalCommand") → v4-bridge goalSession(set) → TargetChanged 事件 →
-// reducer 更新 goal 状态 → unified status-panel shell 投影 objective + active。
-// 证明 goal slash 入口 + goal 状态投影 + 摘要 timer/pause/resume UI 全链路。
+// M4 gate: sendGoalCommand (v4 composer slash `/goal <objective>`).
+// Evidence layer L3: establish session → composer `/goal E2E_V4_GOAL_OBJECTIVE …` → handleSlashCommand →
+// dispatchCommand("sendGoalCommand") → v4-bridge goalSession(set) → TargetChanged event →
+// reducer updates the goal state → unified status-panel shell projects objective + active.
+// Proves the full chain: goal slash entry + goal state projection + summary timer/pause/resume UI.
 import { TID_CHAT_SUMMARY_PANEL, TID_V4_COMPOSER_INPUT } from "@zcode/shared";
 import {
   clearAppData,
@@ -39,8 +39,8 @@ describe("v4 M4 门禁：sendGoalCommand（/goal slash）", () => {
       45000,
     );
 
-    // composer 设目标（objective 含 fixture 匹配 sentinel）
-    // 合并恢复：/goal 和普通发送应消费同一份提交档位，而不是重新读取或使用旧会话档位。
+    // Set the goal via the composer (objective contains a fixture-matching sentinel)
+    // Merged restore: /goal and a normal send must consume the same submission reasoning level, not re-read or reuse the old session's level.
     await selectUpstreamThoughtLevelValue("low");
     await setInputValueByTestIdDom(
       TID_V4_COMPOSER_INPUT,
@@ -49,7 +49,7 @@ describe("v4 M4 门禁：sendGoalCommand（/goal slash）", () => {
     );
     await clickV4Send();
 
-    // goal 横幅出现，objective 含 sentinel，状态为 active（continuation 慢流保持窗口）
+    // goal banner appears, objective contains the sentinel, status is active (continuation slow stream keeps the window)
     await browser.waitUntil(
       async () => {
         const banner = await getV4GoalProjection();
@@ -69,8 +69,8 @@ describe("v4 M4 门禁：sendGoalCommand（/goal slash）", () => {
     const goalRequest = await waitForUpstreamNetworkRequestStarted("E2E_V4_GOAL_OBJECTIVE");
     assertUpstreamThoughtLevelCapture(goalRequest, "low");
 
-    // Bug 原因：状态面板在窄窗口会自动收成 mini 胶囊，折叠态只提供展开入口，
-    // 不渲染 pause/resume。旧用例直接找 pause，把合法的响应式布局误报成投影失败。
+    // Bug cause: in narrow windows the status panel auto-collapses into a mini capsule; the collapsed state only offers the expand
+    // entry and does not render pause/resume. The old case looked for pause directly and misreported a legitimate responsive layout as a projection failure.
     await browser.waitUntil(
       async () =>
         browser.execute((panelTestId) => {

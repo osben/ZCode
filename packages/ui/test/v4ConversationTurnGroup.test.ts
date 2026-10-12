@@ -51,8 +51,9 @@ vi.mock("@/hooks/useServices.js", () => ({
   useOptionalServices: () => ({
     highspeedCardService: { share: vi.fn() },
   }),
-  // 实时吞吐链路（useSessionThroughput → useSessionDebug）读取会话调试快照；
-  // 测试里回退 null 即可，不影响断言（吞吐标签只在有数据时渲染）。
+  // The live throughput pipeline (useSessionThroughput → useSessionDebug) reads the session debug snapshot;
+  // returning null in tests is enough and does not affect assertions (the throughput label renders only when
+  // data exists).
   useServices: () => ({
     zcodeAgentService: {
       readSessionDebug: async () => null,
@@ -323,7 +324,7 @@ function renderUnit(
     onFork?: (rowId: number) => void;
     onRetry?: (target: ConversationRowTarget) => void;
     onFeedbackChange?: (target: ConversationRowTarget, feedback: "like" | "dislike" | null) => void;
-    /** 覆盖行渲染上下文的若干键（产物 chips 的门就是 `sessionId` + `onOpenWorkflowArtifact`）。 */
+    /** Overrides a few keys of the row render context (the artifact chips' gate is `sessionId` + `onOpenWorkflowArtifact`). */
     context?: Partial<ConversationRowRenderContext>;
     shareSelection?: {
       eligibleRowIds: ReadonlySet<number>;
@@ -586,8 +587,8 @@ describe("ConversationTurnGroup Hook footer", () => {
         { compactForRemoteControl },
       );
 
-      // 冲突合并曾把 Hook-only 分支接成 Highspeed footer 的 else：
-      // 普通有正文时重复显示，Highspeed 无正文时则完全丢失。
+      // A conflict merge once wired the Hook-only branch as the Highspeed footer's else:
+      // the ordinary case with body text duplicated, and the Highspeed case without body text lost it entirely.
       expect(html.match(/data-testid="v4-hook-details-trigger-turn-complete"/g) ?? []).toHaveLength(
         1,
       );
@@ -643,9 +644,10 @@ describe("ConversationTurnGroup Hook footer", () => {
   });
 
   it("HK17 does not render a Hook action on a timeline-only maintenance turn carrying legacy executed Hook rows", () => {
-    // Bug 根因：首条输入即 /compact 时 SessionStart Hook 曾被错误挂到 compact 维护 turn；
-    // 旧历史/旧投影数据可能仍含 timelineOnly + didExecute=true 组合。维护 turn 与普通
-    // assistant action 共用 turn eligibility：timelineOnly 不渲染 Hook 图标或空操作栏。
+    // Bug root cause: when the first input was /compact, the SessionStart Hook was wrongly attached to the
+    // compact maintenance turn; old history / old projection data may still contain the timelineOnly +
+    // didExecute=true combination. Maintenance turns share turn eligibility with ordinary assistant actions:
+    // timelineOnly renders no Hook icon and no empty action bar.
     const compactMarker = runningTimelineRow(2);
     const [unit] = buildConversationTurnRenderUnits([
       turnHeader({ state: "completedSuccess" }),
@@ -657,7 +659,7 @@ describe("ConversationTurnGroup Hook footer", () => {
 
     const html = renderUnit(unit!, { compactForRemoteControl: true });
     expect(html).not.toContain("v4-hook-details-trigger");
-    // 也不得留下只有 Hook 的空操作栏外壳。
+    // It must not leave behind an empty action-bar shell holding only the Hook either.
     expect(html).not.toContain("v4-copy-");
   });
 });
@@ -727,11 +729,11 @@ describe("ConversationTurnGroup message stream display settings", () => {
       messageStreamShowTodos: scenario.showTodos,
     });
 
-    // 每轮第一条 reasoning 不受开关影响；后续 reasoning 只在开关开启时展示。
+    // The turn's first reasoning is unaffected by the toggles; later reasoning shows only when the toggle is on.
     expect(html).toContain('data-row-id="3"');
     expect(html.includes('data-row-id="6"')).toBe(scenario.showReasoning);
     expect(html.includes('data-tool-call-id="tool-4"')).toBe(scenario.todoVisible);
-    // 单个 Execute 不创建父分组，仍直接展示原始工具。
+    // A single Execute creates no parent group; the raw tool is still shown directly.
     expect(html).toContain("tool-summary-trigger-tool-5");
   });
 
@@ -967,7 +969,7 @@ describe("ConversationTurnGroup assistant history status", () => {
     const html = renderUnit(
       baseUnit({
         visibleUserInputs: [input],
-        // 多段输出中，前段可已完成但整轮仍在生成；节省时间必须服从整轮终态。
+        // In multi-segment output an earlier segment may be complete while the whole turn is still generating; the saved time must obey the turn's terminal state.
         workStatus: { state: "completed", durationMs: 5_000 },
         assistantWorkRows: [work],
         assistantHistoryRows: [work],
@@ -1318,10 +1320,11 @@ describe("ConversationTurnGroup assistant history status", () => {
   it.each([
     ["subagent", "Review the projection chain"],
     ["bash", "pnpm typecheck"],
-    // 回归：dwf run 的终态回合也走后台结果头。标题由 CLI 的 workflowTaskSubject 铸造并经
-    // originMeta.title 送上来（rows.ts 的 backgroundResultOriginMetaSchema 要求 min(1)），
-    // UI 侧不本地化——与 bash / subagent 完全同构。漏掉这一支的表现是整条 run 完成之后
-    // 那一轮既没有标题、也退化成普通 assistant 的工时折叠。
+    // Regression: the dwf run's terminal turn also goes through the background result header. The title is minted
+    // by the CLI's workflowTaskSubject and delivered via originMeta.title (rows.ts's
+    // backgroundResultOriginMetaSchema requires min(1)); the UI side does not localize — exactly isomorphic to
+    // bash / subagent. Missing this branch shows up as the turn after the whole run completes having neither a
+    // title nor anything but the ordinary assistant work-duration collapse.
     ["workflow", "Fan out the review across three actors"],
   ] as const)(
     "BG27/BG28：%s background result 用任务标题永久展开历史",
@@ -1360,8 +1363,9 @@ describe("ConversationTurnGroup assistant history status", () => {
   );
 
   it("workflow 通知带载荷时渲染工具卡语法的通知行，替换裸标题行", () => {
-    // docs/dynamic-workflow/transcript-and-notifications.md「The notification row」：backgroundSource==="workflow"
-    // 且 workflowNotification 在场 → ToolLayout 通知行（自带 testid），不再走裸标题行。
+    // docs/dynamic-workflow/transcript-and-notifications.md "The notification row": backgroundSource==="workflow"
+    // with a workflowNotification present → a ToolLayout notification row (with its own testid) instead of the
+    // bare title line.
     const finalText = assistantTextRow(6, { text: "后台总结最终段" });
     const [unit] = buildConversationTurnRenderUnits([
       turnHeader({
@@ -1383,20 +1387,20 @@ describe("ConversationTurnGroup assistant history status", () => {
     const html = renderUnit(unit!, { locale: "en-US" });
 
     expect(html).toContain(`data-testid="chat-workflow-notification-row-${unit!.key}"`);
-    // 裸标题行的 testid 缺席——通知行取而代之。
+    // The bare title line's testid is absent — the notification row takes its place.
     expect(html).not.toContain(`data-testid="chat-background-result-title-${unit!.key}"`);
     expect(html).toContain("flaky-test-triage");
-    // kindLabel 承载状态（不再是 run 详情页的 Completed）。
+    // kindLabel carries the status (no longer the run detail page's Completed).
     expect(html).toContain("Workflow completed");
-    // 通知行之下的 assistant 反应行不受影响。
+    // The assistant reaction row below the notification row is unaffected.
     expect(html).toContain("后台总结最终段");
-    // 2026-09-03 tweak：通知卡是轮内第一个节点，轮容器去掉 pt-14（只贴上一轮 pb-5）。
+    // 2026-09-03 tweak: the notification card is the turn's first node, so the turn container drops pt-14 (it only hugs the previous turn's pb-5).
     expect(html).toMatch(/<section[^>]*class="[^"]*\bpt-0\b/u);
     expect(html).not.toMatch(/<section[^>]*class="[^"]*\bpt-14\b/u);
   });
 
   it("裸标题行（bash / subagent / 无载荷 workflow）保留轮顶 pt-14", () => {
-    // 范围裁决：只有通知卡去留白；标题行带底 rule，是分节头语义，轮顶间距照旧。
+    // Scope ruling: only the notification card drops the whitespace; the title line carries a bottom rule and is section-header semantics, so the top-of-turn spacing stays.
     for (const backgroundSource of ["bash", "subagent", "workflow"] as const) {
       const [unit] = buildConversationTurnRenderUnits([
         turnHeader({
@@ -1411,9 +1415,9 @@ describe("ConversationTurnGroup assistant history status", () => {
     }
   });
 
-  // ── 终态通知行的产物 chips（docs/dynamic-workflow/authoring.md「How the user sees them」）──
-  // ⚠ 术语：chip 上的 artifact 是脚本经 `artifact.*` 交付给用户的产出，与同一条通知里的
-  // `result`（脚本顶层返回值）不是一回事。
+  // ── Artifact chips of the terminal notification row (docs/dynamic-workflow/authoring.md "How the user sees them") ──
+  // ⚠ Terminology: the artifact on a chip is what the script delivered to the user via `artifact.*`, not the
+  // same thing as the `result` (the script's top-level return value) in the same notification.
   function workflowNotificationUnit(
     artifacts: readonly { id: string; kind: string; title?: string; version: number }[] | undefined,
     extra: Record<string, unknown> = {},
@@ -1461,8 +1465,9 @@ describe("ConversationTurnGroup assistant history status", () => {
     ).toBe(2);
     expect(html).toContain("审计报告");
     expect(html).toContain("每轮耗时");
-    // 药丸的尾槽从 v2 起带紧凑版号（追记「产物药丸」推翻了「chip 不放版本」的旧规则）：
-    // 「这次跑的是第 2 版」是一件值得在收据上看到的事；长写在 tooltip 里。
+    // The pill's tail slot carries a compact version number from v2 on (the addendum "artifact pills" overturned
+    // the old "no version on chips" rule):
+    // "this run was version 2" is worth seeing on a receipt; the long form lives in the tooltip.
     expect(html).toContain('data-testid="workflow-run-artifact-version"');
     expect(html).toContain(">v2<");
     expect(html).toContain('title="第 2 版"');
@@ -1510,7 +1515,7 @@ describe("ConversationTurnGroup assistant history status", () => {
     expect(withoutArtifacts).toContain("flaky-test-triage");
     expect(withoutArtifacts).toContain("后台总结最终段");
 
-    // 与「一件产物都没有」的空数组同构：两者都不该长出 chips。
+    // Isomorphic to the empty array of "not a single artifact": neither should grow chips.
     const emptyArtifacts = renderUnit(workflowNotificationUnit([]), {
       context: artifactContext,
       locale: "zh-CN",
@@ -1607,8 +1612,9 @@ describe("ConversationTurnGroup assistant history status", () => {
       }),
     );
 
-    // 折叠态不挂载详情正文；计数同时包含 reasoning 与 message，证明兼容路径没有退化为仅 child tools。
-    // CuaGroupToolCallBlock 的 forceOpen 测试另行覆盖详情正文渲染。
+    // The collapsed state mounts no detail body; the count includes both reasoning and message, proving the
+    // compatibility path has not degraded to child tools only.
+    // CuaGroupToolCallBlock's forceOpen tests separately cover detail-body rendering.
     expect(html).toContain("3 个事件, 1 条消息");
     expect(html).not.toContain("1 个事件");
   });
@@ -2138,7 +2144,7 @@ describe("ConversationTurnGroup assistant history status", () => {
     ]);
     const html = renderUnit(units[0]!);
 
-    // lastIndexOf 取 Website 卡片标题，避开正文中更早出现的同一 URL。
+    // lastIndexOf picks the Website card's title, avoiding the same URL appearing earlier in the body text.
     const previewIndex = html.lastIndexOf("localhost:3000");
     const summaryIndex = html.indexOf("1 个文件已更改");
     const screenshotIndex = html.indexOf("data:image/png;base64,AAAA");
@@ -2686,7 +2692,7 @@ const LAUNCH_META: WorkflowLaunchMeta = {
   args: { topic: "adaptive concurrency" },
 };
 
-// agent 铸造的规范英文句（进 userInput.text，旧客户端 / TUI 的降级呈现）；启动卡不显示它。
+// The canonical English sentence minted by the agent (goes into userInput.text as the degraded presentation for old clients / TUI); the launch card does not show it.
 const LAUNCH_CANONICAL =
   'Started the saved workflow "deep-research" (global) from the workflows hub as run run-42.';
 
@@ -2758,7 +2764,7 @@ describe("ConversationTurnGroup — 直接启动轮（workflowLaunch）", () => 
     expect(html).toContain("deep-research");
     expect(html).toContain('data-testid="workflow-timeline-station"');
     expect(html).toContain('data-testid="workflow-agent-pill"');
-    // 卡就是这一轮的全部呈现：不落那句规范英文气泡，也没有实参表（来龙去脉在详情侧板）。
+    // The card is the turn's entire presentation: no canonical English bubble, and no args table (the full story lives in the details side pane).
     expect(html).not.toContain(LAUNCH_CANONICAL);
     expect(html).not.toContain("adaptive concurrency");
     expect(html.match(/data-workflow-run-digest="true"/g)).toHaveLength(1);
@@ -2783,7 +2789,7 @@ describe("ConversationTurnGroup — 直接启动轮（workflowLaunch）", () => 
     const html = renderUnit(unit!);
 
     expect(html).not.toContain('data-workflow-run-digest="true"');
-    // 规范句进气泡（引号在 HTML 里转义，断言无引号片段）。
+    // The canonical sentence goes into the bubble (quotes are escaped in HTML, so assert the quote-free fragment).
     expect(html).toContain("from the workflows hub as run run-42.");
   });
 
@@ -2809,15 +2815,16 @@ describe("ConversationTurnGroup — 直接启动轮（workflowLaunch）", () => 
   });
 
   it("没有用户气泡的轮去掉轮顶 pt-14：卡 / 行只贴上一轮 pb-5 的常规流内间距", () => {
-    // Bug 根因：pt-14 是给用户气泡留的呼吸；启动轮与「配置」的设置轮都把用户行裁掉了
-    // （conversationTurnRenderUnits），轮内第一个节点直接是卡或那一行，56px 于是叠在
-    // 上一轮 pb-5 之上成了约 76px 空白。通知轮早已按同一条规则去过留白。
+    // Bug root cause: pt-14 is the breathing room for a user bubble; both the launch turn and the "configure"
+    // settings turn crop out the user row (conversationTurnRenderUnits), so the turn's first node is directly
+    // the card or that row, and the 56px stacked on the previous turn's pb-5 became roughly 76px of blank.
+    // Notification turns already dropped the whitespace by this same rule.
     const [launchUnit] = buildConversationTurnRenderUnits(launchRows(LAUNCH_META));
     const launchHtml = renderUnit(launchUnit!, { context: LAUNCH_JOIN });
     expect(launchHtml).toMatch(/<section[^>]*class="[^"]*\bpt-0\b/u);
     expect(launchHtml).not.toMatch(/<section[^>]*class="[^"]*\bpt-14\b/u);
 
-    // 设置轮：同一份元数据多一个 amend 块，呈现是「已调整设置」那一行加新 run 的卡。
+    // Settings turn: the same metadata plus an amend block, presented as the "settings adjusted" row plus the new run's card.
     const settingsMeta: WorkflowLaunchMeta = {
       ...LAUNCH_META,
       amend: { predecessorRunId: "run-41", maxConcurrency: { from: 2, to: 5 } },
@@ -2828,7 +2835,7 @@ describe("ConversationTurnGroup — 直接启动轮（workflowLaunch）", () => 
     expect(settingsHtml).toMatch(/<section[^>]*class="[^"]*\bpt-0\b/u);
     expect(settingsHtml).not.toMatch(/<section[^>]*class="[^"]*\bpt-14\b/u);
 
-    // 元数据缺席即退回普通渲染（那句规范英文成气泡）——有气泡的轮照旧留呼吸。
+    // With the metadata absent it falls back to ordinary rendering (the canonical English sentence becomes a bubble) — a turn with a bubble keeps its breathing room as before.
     const [plainUnit] = buildConversationTurnRenderUnits(launchRows(undefined));
     const plainHtml = renderUnit(plainUnit!, { context: LAUNCH_JOIN });
     expect(plainHtml).toMatch(/<section[^>]*class="[^"]*\bpt-14\b/u);
@@ -2836,7 +2843,7 @@ describe("ConversationTurnGroup — 直接启动轮（workflowLaunch）", () => 
   });
 });
 
-// ── 轮尾摘要（docs/dynamic-workflow/presentation.md「The run card」）──
+// ── Turn-tail digest (docs/dynamic-workflow/presentation.md "The run card") ──
 const DIGEST_GRAPH = {
   steps: [{ id: "ask#1", kind: "ask", label: "a", line: 1, column: 21, lane: "actor#1" }],
   lanes: [{ id: "actor#1", name: "planner", line: 1, column: 11 }],
@@ -2879,7 +2886,7 @@ const DIGEST_RUN: WorkflowRunState = {
 
 const DIGEST_JOIN: Partial<ConversationRowRenderContext> = {
   sessionId: "session-main",
-  // 图按发起 toolCallId 到图表取（docs/dynamic-workflow/presentation.md「The run card」）。
+  // The graph is looked up in the graph map by the originating toolCallId (docs/dynamic-workflow/presentation.md "The run card").
   workflowGraphByToolCallId: new Map([["tool-5", DIGEST_GRAPH]]),
   workflowRunByToolCallId: new Map([
     [
@@ -2921,13 +2928,13 @@ describe("ConversationTurnGroup — 轮尾摘要（workflow run digest）", () =
     expect(replyIndex).toBeLessThan(digestIndex);
     expect(digestIndex).toBeLessThan(actionIndex);
     expect(html.match(/data-workflow-run-digest="true"/g)).toHaveLength(1);
-    // 收起态：阶段线在、药丸不在（折叠里的卡照旧画药丸，只看摘要那一段）；名字与运行状态在表头。
+    // Collapsed state: the phase line is present, pills are not (the card inside a collapse still draws pills; only the digest segment is inspected); name and run status are in the header.
     const digestHtml = html.slice(digestIndex, actionIndex);
     expect(digestHtml).toContain('data-testid="workflow-timeline-station"');
     expect(digestHtml).toContain("implement-verify");
     expect(digestHtml).toContain('data-workflow-run-status="running"');
     expect(digestHtml).toContain('data-testid="workflow-agent-pill"');
-    // sessionId + onOpenWorkflowRun 都在场才有 ⤢；这里没注入回调，就没有。
+    // ⤢ appears only when both sessionId + onOpenWorkflowRun are present; no callback is injected here, so none.
     expect(digestHtml).not.toContain('data-testid="workflow-card-open-details"');
   });
 
@@ -2963,8 +2970,10 @@ describe("ConversationTurnGroup — 轮尾摘要（workflow run digest）", () =
   });
 });
 
-// 完成卡（docs/dynamic-workflow/transcript-and-notifications.md）：主代理消化 completed 通知的那一轮，轮尾落卡。
-// 这里没有会话上下文（静态渲染），卡画的是冷态那一层：通知载荷的产物（纸页字形）+ 联接到的数字。
+// Completion card (docs/dynamic-workflow/transcript-and-notifications.md): the turn where the main agent digests
+// the completed notification gets the card at its tail.
+// There is no session context here (static rendering), so the card draws the cold-state layer: the notification
+// payload's artifacts (page glyphs) + the joined-in numbers.
 const COMPLETION_RUN: WorkflowRunState = {
   ...DIGEST_RUN,
   runId: "run-done",
@@ -3041,21 +3050,21 @@ describe("ConversationTurnGroup — 完成卡（workflow completion card）", ()
     expect(html.match(/data-workflow-completion-card="true"/g)).toHaveLength(1);
 
     const card = html.slice(cardIndex, actionIndex);
-    // 表头：种类词 + 名字 + 状态词 + ⤢（sessionId + 回调 + 联接到的 toolCallId 都在）。
+    // Header: the kind word + name + status word + ⤢ (sessionId + callback + the joined toolCallId are all present).
     expect(card).toContain("Workflow completed");
     expect(card).toContain("deep-research");
     expect(card).toContain('data-testid="workflow-completion-status"');
     expect(card).toContain('data-testid="workflow-card-open-details"');
-    // 产物索引：没有交付物 ⇒ 两行、没有框（索引不画预览，也就没有纸页字形）；v2 尾槽在；可点。
+    // Artifact index: no deliverables ⇒ two lines, no frame (the index draws no preview, hence no page glyph); the v2 tail slot is present; clickable.
     expect(card.match(/data-testid="workflow-completion-line"/g)).toHaveLength(2);
     expect(card).toContain('data-testid="workflow-completion-index"');
     expect(card).not.toContain('data-testid="workflow-artifact-sheet"');
     expect(card).toContain(">v2<");
     expect(card).toContain('data-artifact-open="true"');
-    // 四格：时间来自通知，其余三格来自联接到的投影。
+    // Four figures: time comes from the notification; the other three come from the joined projection.
     expect(card).toContain('data-value="11m 48s"');
     expect(card).toContain('data-value="386.4k"');
-    // 夹具里一个子代理、一个进过的阶段；卡上不说「步」（2026-09-09）。
+    // One subagent and one entered phase in the fixture; the card does not say "steps" (2026-09-09).
     expect(card).toMatch(/workflow-completion-figure-subagents" data-value="1"/u);
     expect(card).toMatch(/workflow-completion-figure-phases" data-value="1"/u);
     expect(card).not.toContain("figure-steps");
@@ -3077,8 +3086,9 @@ describe("ConversationTurnGroup — 完成卡（workflow completion card）", ()
     expect(bare).not.toContain('data-testid="workflow-completion-index"');
   });
 
-  // 交付物（docs/dynamic-workflow/transcript-and-notifications.md「Artifact tiles」）：载荷上的 primary + description
-  // 让冷态卡（没有会话上下文）也画得出交付物行——冷 transcript 上只有这份载荷可读。
+  // Deliverables (docs/dynamic-workflow/transcript-and-notifications.md "Artifact tiles"): the payload's
+  // primary + description let the cold-state card (no session context) draw the deliverable row too — on a cold
+  // transcript this payload is the only readable source.
   it("载荷带 primary：冷态卡画交付物行（说明来自载荷）+ 索引行；没有「primary」字样", () => {
     const [unit] = buildConversationTurnRenderUnits([
       turnHeader({

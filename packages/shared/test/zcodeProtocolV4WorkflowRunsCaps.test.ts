@@ -1,9 +1,12 @@
-// workflowRuns 的**界**留下的三样东西：被拒实例的计数器、整键的条目预算、给旧消费者的裁剪。
+// The three things the **caps** on workflowRuns leave behind: a counter for rejected instances, an
+// entry budget over the whole key, and clamping for legacy consumers.
 //
-// 改造前 nodes/actors 压在 256，是因为状态键按事件整体重发、无界即 O(N²) 字节；键级增量落地后
-// 那条理由没了，界抬到 1024。但抬界不是免费的：一个 50 路 fan-out 的宽工作流仍然可能把整张表
-// 撑到几 MB，所以多了一条**跨 run 的**条目预算；而触界仍然会拒掉实例，所以读面必须能说出
-// 「有多少步没进表」——这就是两个计数器存在的全部理由。
+// Before the rework nodes/actors were capped at 256 because the state key resent the whole set on every
+// event — unbounded meant O(N²) bytes; once key-level deltas landed that reason was gone and the caps
+// rose to 1024. But raising the cap isn't free: a wide workflow with a 50-way fan-out can still push the
+// whole table to several MB, hence the new **cross-run** entry budget; and hitting the cap still rejects
+// instances, so the read surface must be able to say
+// "how many steps didn't make it into the table" — that is the entire reason the two counters exist.
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import {
@@ -27,7 +30,7 @@ import {
 
 const RUN_ID = "dwfrun-1";
 
-/** 一条手搓的 run：直接把表灌满，省下上千次归约（被测的是触界之后的事）。 */
+/** A hand-built run: fills the table directly, saving thousands of reductions (what's under test is what happens after the cap is hit). */
 function runWith(
   overrides: Partial<WorkflowRunState> & { runId?: string } = {},
   nodeCount = 0,
@@ -35,8 +38,9 @@ function runWith(
 ): WorkflowRunState {
   return {
     runId: overrides.runId ?? RUN_ID,
-    // 事件信封一律带 tc-1：不在夹具里先补上，第一条事件就会因为「补齐 toolCallId」而产生变化，
-    // 把本文件所有「这条事件什么都不该改」的断言变成假阳性。
+    // Event envelopes always carry tc-1: without filling it in here first, the very first event would
+    // produce a change due to "backfilling toolCallId",
+    // turning every "this event should change nothing" assertion in this file into a false positive.
     toolCallId: "tc-1",
     status: "running",
     usage: { spentTokens: 0, nodesUsed: 0 },
@@ -59,7 +63,7 @@ function stateWith(...runs: WorkflowRunState[]): WorkflowRunsState {
   return { revision: 10, runs };
 }
 
-/** 事件信封：sequence 显式给，本文件大半的断言都盯着水位。 */
+/** Event envelope: sequence given explicitly; most assertions in this file watch the watermark. */
 function event(
   eventType: string,
   payload: Record<string, unknown>,
@@ -71,11 +75,13 @@ function event(
 
 const FULL_NODES = WORKFLOW_RUNS_LIMITS.maxNodes;
 /**
- * 表已满、且**一条都淘汰不动**的 run：之后每一条新实例都会被拒。
+ * A run whose table is full and where **not a single entry can be evicted**: every new instance after
+ * this is rejected.
  *
- * 节点全部停在 `executing` 是这条夹具的要点：腾位只淘汰终态条目
- * （workflow-runs-eviction.ts），所以一张全是活节点的满表恰好就是「拒新」那条老路径，
- * 而本节钉的正是被拒实例怎么继续可数。淘汰路径在 …WorkflowRunsEviction.test.ts。
+ * All nodes resting at `executing` is the point of this fixture: eviction only removes terminal entries
+ * (workflow-runs-eviction.ts), so a full table of live nodes is exactly the old "reject new" path,
+ * and what this section pins is how rejected instances stay countable. The eviction path lives in
+ * …WorkflowRunsEviction.test.ts.
  */
 const fullRun = () =>
   runWith(
@@ -89,7 +95,7 @@ const fullRun = () =>
     },
     FULL_NODES,
   );
-/** 一个表里没有的实例（ordinal 远在界外）。 */
+/** An instance not in the table (ordinal far beyond the cap). */
 const rejected = (ordinal: number) => ({ siteId: "ask#9", ordinal });
 
 describe("WORKFLOW_RUNS_LIMITS：抬界之后的两条界", () => {
@@ -161,10 +167,13 @@ describe("被拒实例的计数器（usage.nodesUnlisted / nodesUnlistedSettled�
     }
     expect(state.runs[0]?.usage).not.toHaveProperty("nodesUnlisted");
     expect(state.runs[0]?.usage).not.toHaveProperty("nodesUnlistedSettled");
-    // `nodesUsed` 是另一码事，而且是**既有**行为：首次派发计一步，被拒实例照样计——
-    // 步数是 run 级事实，不受展示界约束（归约主文件里 firstDispatch 那段注释）。
+    // `nodesUsed` is a different matter and is **existing** behavior: the first dispatch counts a step, and
+    // rejected instances count too —
+    // step count is a run-level fact, not bound by the display cap (see the firstDispatch comment in the
+    // main reducer file).
     expect(state.runs[0]?.usage.nodesUsed).toBe(1);
-    // 水位照抬：事件到达过是事实，只是它不改变「有多少步没进表」。
+    // The watermark still advances: the event did arrive, it just doesn't change "how many steps didn't make
+    // it into the table".
     expect(state.runs[0]?.lastEventSequence).toBe(sequence);
   });
 
@@ -184,8 +193,10 @@ describe("被拒实例的计数器（usage.nodesUnlisted / nodesUnlistedSettled�
   });
 
   it("同一条事件重放仍是 null no-op：只有抬过水位的事件才计数", () => {
-    // 这是计数器唯一的幂等支点。没有这条守卫，一条被重传的队尾事件会把计数器越推越高，
-    // 而计数器是**加出来**的、没有可去重的身份（被拒实例根本不在表里）。
+    // This is the counters' only idempotence anchor. Without this guard, a retransmitted tail event would
+    // push the counters ever higher,
+    // and the counters are **additive** with no deduplicable identity (the rejected instance isn't in the
+    // table at all).
     const replayed = event("node-queued", { instance: rejected(5_000), kind: "ask" }, 101);
     const once = reduceWorkflowRunsState(stateWith(fullRun()), replayed)!;
     expect(once.runs[0]?.usage).toMatchObject({ nodesUnlisted: 1 });
@@ -197,13 +208,15 @@ describe("被拒实例的计数器（usage.nodesUnlisted / nodesUnlistedSettled�
       stateWith(fullRun()),
       event("node-queued", { instance: rejected(5_000), kind: "ask" }, 50),
     );
-    // 内容上没有任何变化：表满、水位不退、计数器不动 → 整条无变化。
+    // Content-wise nothing changes at all: table full, watermark doesn't regress, counters untouched → no
+    // change overall.
     expect(late).toBeNull();
   });
 
   it("run-started 清零两个计数器：resume 会把整段脚本前缀重发一遍", () => {
-    // 重开一世时引擎会把已完成实例的 cached settle 与新实例的 queued 全部再发一次，
-    // 不清零就等于把上一世的「没进表的步数」和这一世的加在一起。
+    // When reopening a lifetime the engine re-sends cached settles of completed instances and queues of new
+    // instances in full;
+    // not resetting would add the previous lifetime's "steps that didn't make the table" to this one's.
     const counted = reduceWorkflowRunsState(
       stateWith(fullRun()),
       event("node-settled", { instance: rejected(5_000), outcome: "ok", cached: true }, 101),
@@ -226,8 +239,10 @@ describe("被拒实例的计数器（usage.nodesUnlisted / nodesUnlistedSettled�
   });
 
   it("settled 永不超过 unlisted：每次结算的出生此前都计过（一世之内）", () => {
-    // 引擎在一世之内对同一实例最多发一条 queued、最多发一条 settled（scheduler 的 settled 闩），
-    // 缓存命中的结算则自带出生。所以这条不变量是**结构性**的，不靠夹逼。
+    // Within one lifetime the engine sends at most one queued and at most one settled for the same instance
+    // (the scheduler's settled latch),
+    // and a cache-hit settlement carries its own birth. So this invariant is **structural**, not enforced by
+    // clamping.
     let state: WorkflowRunsState = stateWith(fullRun());
     let sequence = 100;
     const step = (eventType: string, payload: Record<string, unknown>) => {
@@ -239,9 +254,10 @@ describe("被拒实例的计数器（usage.nodesUnlisted / nodesUnlistedSettled�
       step("node-dispatched", { instance: rejected(ordinal) });
       step("node-settled", { instance: rejected(ordinal), outcome: "ok" });
     }
-    // 一条只缓存命中的（没有 queued）。
+    // One that only hit the cache (no queued).
     step("node-settled", { instance: rejected(6_000), outcome: "ok", cached: true });
-    // 一条 queued 了但这一世永远没结算（run 级失败时引擎不补发 cancelled）。
+    // One that was queued but never settles in this lifetime (the engine doesn't backfill cancelled on
+    // run-level failure).
     step("node-queued", { instance: rejected(7_000), kind: "ask" });
     const usage = state.runs[0]!.usage;
     expect(usage.nodesUnlisted).toBe(7);
@@ -278,8 +294,10 @@ describe("workflowRunStepCounts：表内 + 表外的唯一读法", () => {
 });
 
 describe("条目预算：整键 6144 条，淘汰最旧的终态 run", () => {
-  // 一条**满界**的 run 是 1024 + 1024 = 2048 条，预算正好装得下三条。所以「四条满界的 run」
-  // 是这条规则最小的现实场景：淘汰一条就回到预算内，不多淘汰一条。
+  // A **cap-full** run is 1024 + 1024 = 2048 entries, and the budget fits exactly three. So "four cap-full
+  // runs"
+  // is the smallest realistic scenario for this rule: evicting one brings it back within budget, without
+  // evicting an extra one.
   const FULL_RUN_ENTRIES = WORKFLOW_RUNS_LIMITS.maxNodes + WORKFLOW_RUNS_LIMITS.maxActors;
   const big = (runId: string, status: WorkflowRunState["status"]) =>
     runWith(
@@ -304,7 +322,8 @@ describe("条目预算：整键 6144 条，淘汰最旧的终态 run", () => {
         big(RUN_ID, "running"),
       ),
     );
-    // 只淘汰一条：老二虽然也是终态，但淘汰老大之后已经回到预算内。
+    // Only one is evicted: the second-oldest is also terminal, but after evicting the oldest we're already
+    // back within budget.
     expect(next.runs.map((run) => run.runId)).toEqual(["dwfrun-old-2", "dwfrun-live", RUN_ID]);
   });
 
@@ -317,7 +336,8 @@ describe("条目预算：整键 6144 条，淘汰最旧的终态 run", () => {
         big(RUN_ID, "completed"),
       ),
     );
-    // 唯一的终态 run 正是事件所属的那条 → 无人可淘汰，超预算也照留（诚实优先于省字节）。
+    // The only terminal run is exactly the one the event belongs to → nobody can be evicted; over budget it
+    // stays anyway (honesty beats saving bytes).
     expect(next.runs.map((run) => run.runId)).toEqual([
       "dwfrun-live-1",
       "dwfrun-live-2",
@@ -357,8 +377,10 @@ describe("条目预算：整键 6144 条，淘汰最旧的终态 run", () => {
 });
 
 describe("clampWorkflowRunsForLegacy：没有增量能力的消费者", () => {
-  // 旧消费者编译进去的是 .max(256)：超界的帧会让**整个 state.updated patch** 解析失败、整帧被丢，
-  // 于是那条订阅从此静默。这个裁剪是生产侧的第二道闸，「前 256 条」正是旧归约（拒新）的产物。
+    // What legacy consumers compile in is .max(256): an over-cap frame makes the **entire state.updated
+    // patch** fail to parse and the whole frame is dropped,
+    // so that subscription goes silent from then on. This clamp is the producer-side second gate; "the first
+    // 256 entries" is exactly what the old reduction (reject-new) produced.
   const legacyStateSchema = z.object({
     revision: z.number().int().nonnegative(),
     runs: z
@@ -377,14 +399,17 @@ describe("clampWorkflowRunsForLegacy：没有增量能力的消费者", () => {
     expect(clamped.runs[0]?.nodes).toHaveLength(WORKFLOW_RUNS_LEGACY_LIMITS.maxNodes);
     expect(clamped.runs[0]?.actors).toHaveLength(WORKFLOW_RUNS_LEGACY_LIMITS.maxActors);
     expect(clamped.runs[0]?.truncated).toBe(true);
-    // 夹具里的条目全是终态，没有要先保的 → 留下的正是最早的那些实例。
+    // All entries in the fixture are terminal with nothing that must be kept → what remains is exactly the
+    // earliest instances.
     expect(clamped.runs[0]?.nodes[0]?.ordinal).toBe(0);
     expect(clamped.runs[0]?.nodes.at(-1)?.ordinal).toBe(WORKFLOW_RUNS_LEGACY_LIMITS.maxNodes - 1);
     expect(legacyStateSchema.safeParse(clamped).success).toBe(true);
   });
 
-  // 裁剪保留的是**还在动的那些**：旧手机收到的是整键快照，而它要画的和新客户端一样是
-  // 「此刻谁在跑」。一刀切前 256 条会让一个宽 run 在旧客户端上永远停在最早那批已结束的身上。
+  // Clamping keeps **the ones still moving**: legacy phones receive a whole-key snapshot, and what they need
+  // to draw, just like the new client, is
+  // "who is running right now". A blunt first-256 cut would leave a wide run stuck on the earliest finished
+  // batch forever on a legacy client.
   it("还在动的先留：未结算的 node 与状态不是 completed 的 actor 不会被裁掉", () => {
     const live = (ordinal: number, phase: WorkflowRunNode["phase"]) => ({
       siteId: "ask#1",
@@ -409,7 +434,8 @@ describe("clampWorkflowRunsForLegacy：没有增量能力的消费者", () => {
     expect(keptNodes).toHaveLength(WORKFLOW_RUNS_LEGACY_LIMITS.maxNodes);
     expect(keptNodes.map((node) => node.ordinal)).toContain(300);
     expect(keptNodes.map((node) => node.ordinal)).toContain(301);
-    // 输出仍按原表序：留下的两条活节点在最后，剩下的名额按表序补最早的条目。
+    // Output still follows the original table order: the two live nodes kept are at the end, and the
+    // remaining slots are filled with the earliest entries in table order.
     expect(keptNodes.map((node) => node.ordinal)).toEqual([
       ...Array.from({ length: WORKFLOW_RUNS_LEGACY_LIMITS.maxNodes - 2 }, (_, index) => index),
       300,
@@ -454,12 +480,12 @@ describe("clampWorkflowRunsForLegacy：没有增量能力的消费者", () => {
     };
     const clamped = clampWorkflowRunsForLegacy(state);
     expect(legacyStateSchema.safeParse(clamped).success).toBe(true);
-    // 新界的 schema 当然也过——裁剪只减不增。
+    // The new-cap schema of course passes too — clamping only removes, never adds.
     expect(workflowRunsStateSchema.safeParse(clamped).success).toBe(true);
   });
 });
 
-/** 只装 apply 会碰到的两处（与 …WorkflowRunsDelta.test.ts 同一个理由）。 */
+/** Only includes the two places apply touches (same reason as …WorkflowRunsDelta.test.ts). */
 function snapshotWith(workflowRuns: WorkflowRunsState | undefined): ConversationSnapshot {
   const base = {
     protocolVersion: 1,

@@ -1,12 +1,15 @@
-// 用户面产物在观察面的合成规则（docs/dynamic-workflow/authoring.md）：
-// `artifactsOf` 与终态快照上的 `artifacts` 键。
+// Composition rules for user-facing artifacts on the observation side (docs/dynamic-workflow/authoring.md):
+// `artifactsOf` and the `artifacts` key on final-state snapshots.
 //
-// ⚠ 术语：本文件里的 artifact 是脚本经 `artifact.*` **发布给用户看的产出**（journal
-// `kind = "artifact"` 的行），不是 `RunSettlement.artifact`（脚本顶层返回值，快照上叫
-// `output`）。同一个词两个义，spec 的「术语」表是唯一消歧处——两者在本文件的断言里并列出现。
+// Terminology warning: artifact in this file means outputs the script **publishes for the user to
+// see** via `artifact.*` (journal rows with `kind = "artifact"`), not `RunSettlement.artifact`
+// (the script's top-level return value, called `output` on the snapshot). One word, two meanings;
+// the spec's terminology table is the only disambiguation point — both appear side by side in this
+// file's assertions.
 //
-// 端口的两条查询（`listArtifactRows` / `listArtifactItems`）不在引擎的 JournalStorePort 上，
-// 所以生产路径靠能力探测接上；这里用一个带 / 不带那个方法的内存 journal 把两支都跑到。
+// The port's two queries (`listArtifactRows` / `listArtifactItems`) are not on the engine's
+// JournalStorePort, so the production path wires them in via capability probing; here an in-memory
+// journal with / without that method exercises both branches.
 import { describe, expect, it, vi } from "vitest";
 import { InMemoryJournalStore, type NodeRecord, type RunStatus } from "@zcode/dynamic-workflow";
 import {
@@ -15,11 +18,12 @@ import {
   type RunRegistryEntry,
 } from "../src/app/dynamic-workflow-run-observation.js";
 
-/** 带 `listArtifactRows` 的 journal：adapters 侧那条宿主查询的内存替身。 */
+/** A journal with `listArtifactRows`: the in-memory stand-in for the host-side query on the adapters side. */
 class ArtifactAwareJournalStore extends InMemoryJournalStore {
   listArtifactRows(runId: string): NodeRecord[] {
-    // 真实现按 id 升序（插入序 = 版本序）取 `kind = 'artifact'` 的行；内存实现的 listNodes
-    // 已经是插入序，所以过滤即可。
+    // The real implementation takes `kind = 'artifact'` rows in ascending id order (insertion
+    // order = version order); the in-memory listNodes is already in insertion order, so
+    // filtering is enough.
     return this.listNodes(runId, { kinds: ["artifact"], withResult: true });
   }
 }
@@ -115,16 +119,17 @@ describe("artifactsOf — journal 行 → 端口的 artifacts", () => {
     expect(audit.title).toBe("审计报告");
     expect(audit.contentType).toBe("application/pdf");
     expect(audit.sourcePath).toBe("out/audit.pdf");
-    // 版本历史完整保留、升序；字节与 uri 只挂在版本项上。
+    // The version history is fully preserved in ascending order; bytes and uri hang only on version entries.
     expect(audit.versions.map((version) => version.version)).toEqual([1, 2]);
     expect(audit.versions[1]?.bytes).toBe(4_096);
     expect(audit.versions[0]?.uri).toBe("zcode-artifact://one");
-    // 内容产物恒 0 条。
+    // Content artifacts always have 0 items.
     expect(audit.itemCount).toBe(0);
   });
 
-  // 交付物（docs/dynamic-workflow/authoring.md「Ids, tags and versions」）：旗子在版本记录上由引擎盖章、
-  // 按 id 粘着；投影把它抬到顶层，并让它带头——顺序在这里定一次，下游的每个上界都砍不到它。
+  // Deliverable (docs/dynamic-workflow/authoring.md, "Ids, tags and versions"): the primary flag is
+  // stamped onto version records by the engine and sticks across ids; the projection lifts it to the
+  // top level and lets it lead — ordering is decided once here, and no downstream bound can cut it off.
   it("primary 从版本记录抬到顶层，且交付物带头、其余保持首次发布顺序", () => {
     const journal = new ArtifactAwareJournalStore();
     makeRun(journal, "run-primary", "completed");
@@ -154,7 +159,7 @@ describe("artifactsOf — journal 行 → 端口的 artifacts", () => {
     const report = artifacts![0]!;
     expect(report.primary).toBe(true);
     expect(report.versions.map((version) => version.primary)).toEqual([true, true]);
-    // 非交付物的键缺席，不是 false。
+    // The key is absent for non-deliverables, not false.
     for (const other of artifacts!.slice(1)) expect("primary" in other).toBe(false);
     for (const version of artifacts![1]!.versions) expect("primary" in version).toBe(false);
   });
@@ -219,13 +224,14 @@ describe("artifactsOf — journal 行 → 端口的 artifacts", () => {
       ["perf", 2],
       ["board", 1],
     ]);
-    // 预置看板的 spec 原样带出（UI 据它渲染）。
+    // The preset board's spec is carried through as-is (the UI renders from it).
     expect(artifacts![0]!.spec).toEqual({ x: { field: "round" }, y: { field: "ms" } });
   });
 
   /**
-   * 中枢一页 50 行、每行调一次本函数：内容产物的 `itemCount` 恒 0，为它扫一遍全表是纯浪费。
-   * 这条断言是那条路径上唯一的挡板。
+   * The hub shows 50 rows per page and calls this function once per row: a content artifact's
+   * `itemCount` is always 0, so scanning the whole node table for it is pure waste. This assertion
+   * is the only guard on that path.
    */
   it("只有内容产物时不扫节点表；有预置看板时才扫一次", () => {
     const journal = new ArtifactAwareJournalStore();
@@ -239,8 +245,9 @@ describe("artifactsOf — journal 行 → 端口的 artifacts", () => {
     const contentSpy = vi.spyOn(journal, "listNodes");
     contentSpy.mockClear();
     artifactsOf("run-content", journal);
-    // listArtifactRows 自己会调一次 listNodes（内存替身的实现细节），所以判据是「没有为了
-    // 计数再调一次」：一次来自行查询，第二次才是计数。
+    // listArtifactRows itself calls listNodes once (an implementation detail of the in-memory
+    // stand-in), so the criterion is "no extra call for counting": the first call comes from the
+    // row query, and only a second one would be the count.
     expect(contentSpy).toHaveBeenCalledTimes(1);
 
     makeRun(journal, "run-preset", "completed");
@@ -277,8 +284,9 @@ describe("artifactsOf — journal 行 → 端口的 artifacts", () => {
     expect(artifacts?.map((artifact) => artifact.id)).toEqual(["d"]);
   });
 
-  // driver 恒写 publishedAt（引擎的类型上它才是可选的）。缺席时给 0 而不是丢行：一个没有
-  // 时间戳的产物仍然可看，丢掉它会让版本号在 UI 上出现空洞。
+  // Drivers always write publishedAt (it is only optional on the engine's types). When it is
+  // missing, use 0 instead of dropping the row: an artifact without a timestamp is still viewable,
+  // and dropping it would leave holes in the version numbers shown in the UI.
   it("缺 publishedAt 的老行仍然可读，时间戳落到 0", () => {
     const journal = new ArtifactAwareJournalStore();
     makeRun(journal, "run-old", "completed");
@@ -308,20 +316,21 @@ describe("snapshotOf — 终态快照上的 artifacts", () => {
     expect(running?.status).toBe("running");
     expect(running && "artifacts" in running).toBe(false);
     expect(running && "reports" in running).toBe(false);
-    // 在飞时既不扫节点表也不查产物行：`getTask` 会被后台追踪器反复轮询。
+    // While in flight, neither the node table nor artifact rows are scanned: `getTask` is polled repeatedly by the background tracker.
     expect(listNodes).not.toHaveBeenCalled();
 
     journal.updateRunStatus("run-live", "completed", { result: "done" });
     const settled = snapshotOf("run-live", entryFor(), journal);
     expect(settled?.artifacts).toHaveLength(1);
     expect(settled?.artifacts?.[0]?.id).toBe("notes");
-    // ⚠ 两个 artifact 并列：`output` 是脚本的顶层返回值，`artifacts` 是发布给用户看的产出。
+    // Both artifact meanings appear side by side: `output` is the script's top-level return value, `artifacts` are outputs published for the user to see.
     expect(settled?.output).toBe("done");
   });
 
   it("errored 与 stopped 的快照一样带 artifacts（半途交付的东西仍在用户面前）", () => {
-    // 快照基类的 status 是后台任务追踪器的通用词汇（errored → failed、stopped → cancelled）；
-    // 真实词在 runStatus 上（apps/zcode-cli/packages/dynamic-workflow/docs/execution-engine.md）。
+    // The snapshot base class's status uses the background task tracker's generic vocabulary
+    // (errored -> failed, stopped -> cancelled); the real term lives on runStatus
+    // (apps/zcode-cli/packages/dynamic-workflow/docs/execution-engine.md).
     for (const [status, taskStatus] of [
       ["errored", "failed"],
       ["stopped", "cancelled"],
@@ -360,8 +369,9 @@ describe("snapshotOf — 终态快照上的 artifacts", () => {
     expect(plainSnapshot && "artifacts" in plainSnapshot).toBe(false);
   });
 
-  // 终态快照的读形状（docs/execution-engine.md「Reading the journal」）：report item 只读到
-  // 快照的界，总数是 count，标签计数只读元数据——没有一次读把整张节点表连同 item 读出来。
+  // Read shape of final-state snapshots (docs/execution-engine.md, "Reading the journal"): report
+  // items are read only up to the snapshot bound, the total is a count, and the tagged count reads
+  // metadata only — no single read pulls the whole node table along with its items.
   it("reads report items only up to the snapshot bound and counts everything else", () => {
     const journal = new ArtifactAwareJournalStore();
     makeRun(journal, "run-share", "running");
@@ -383,9 +393,9 @@ describe("snapshotOf — 终态快照上的 artifacts", () => {
     expect(snapshot?.artifacts?.[0]?.itemCount).toBe(1);
     expect(listNodes.mock.calls.map(([, opts]) => opts)).toEqual([
       { kinds: ["report"], withResult: true, limit: 256, maxResultBytes: 8 * 1024 * 1024 },
-      // listArtifactRows 的内存替身
+      // the in-memory stand-in for listArtifactRows
       { kinds: ["artifact"], withResult: true },
-      // 不带 countTaggedReports 的 store 退回读 report 元数据（不带 item）
+      // a store without countTaggedReports falls back to reading report metadata (no items)
       { kinds: ["report"], withResult: false },
     ]);
   });
@@ -400,7 +410,7 @@ describe("snapshotOf — 终态快照上的 artifacts", () => {
     const snapshot = snapshotOf("run-many", entryFor(), journal);
     expect(snapshot?.reportCount).toBe(300);
     expect(snapshot?.reports).toHaveLength(256);
-    // 报告顺序：前 256 条，一条不跳。
+    // Report order: the first 256, none skipped.
     expect(snapshot?.reports?.[0]).toEqual({ round: 1 });
     expect(snapshot?.reports?.[255]).toEqual({ round: 256 });
   });

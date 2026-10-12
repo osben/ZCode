@@ -1,10 +1,12 @@
-// dwf run 进度的**出回合追加**（out-of-turn append）：run 事件到达时父会话可能正在跑一个
-// 回合，也可能完全空闲，两种都必须落地。见 docs/dynamic-workflow/presentation.md「The run state the pane draws」。
+// **Out-of-turn append** of dwf run progress: when run events arrive, the parent session may be
+// running a turn or completely idle, and both cases must land. See
+// docs/dynamic-workflow/presentation.md "The run state the pane draws".
 //
-// 为什么需要 runtime 上的一个公共方法：BackgroundTask* 走的是 core 内部
-// （tool executor 的 deps.emitEvent → runtime.appendEvent），而 dwf 的事件源在 bootstrap 的
-// run service 里，那一层拿不到 AgentRuntimeInternal。既有的同形先例是 recordTargetChanged
-// （bootstrap 的 session-facade 就那样出回合追加 TargetChanged）。
+// Why a public method on the runtime is needed: BackgroundTask* goes through core internals
+// (the tool executor's deps.emitEvent -> runtime.appendEvent), while dwf's event source lives in
+// bootstrap's run service, a layer with no access to AgentRuntimeInternal. The existing precedent
+// of the same shape is recordTargetChanged (bootstrap's session-facade appends TargetChanged
+// out-of-turn exactly that way).
 import { describe, expect, it, vi } from "vitest";
 import {
   SessionEventType,
@@ -45,7 +47,8 @@ describe("recordDynamicWorkflowRunProgress", () => {
     );
     expect(appended).toHaveLength(1);
     expect(appended[0]?.payload).toEqual(progress);
-    // 空闲期追加的事件不冒领任何回合：turnId 必须为空，否则冷恢复会把它塞进上一轮的尾巴。
+    // Events appended while idle must not claim any turn: turnId must be empty, otherwise cold
+    // recovery would stuff them into the previous turn's tail.
     expect(appended[0]?.turnId).toBeUndefined();
   });
 
@@ -58,7 +61,8 @@ describe("recordDynamicWorkflowRunProgress", () => {
       (event) => event.type === SessionEventType.DynamicWorkflowRunProgress,
     );
     expect(appended.map((event) => event.sequenceNumber)).toEqual([1, 2]);
-    // 载荷里的 sequence 是 **journal** sequence，与会话事件的 sequenceNumber 是两把不同的尺。
+    // The sequence inside the payload is the **journal** sequence — a different ruler from the
+    // session event's sequenceNumber.
     expect(appended.map((event) => (event.payload as typeof progress).sequence)).toEqual([3, 4]);
   });
 
@@ -75,11 +79,13 @@ describe("recordDynamicWorkflowRunProgress", () => {
 });
 
 // ————————————————————————————————————————————————
-// run 中的升级通知（apps/zcode-cli/packages/dynamic-workflow/docs/execution-engine.md「How progress and completion reach the app and the main agent」）。
+// In-run escalation notifications (apps/zcode-cli/packages/dynamic-workflow/docs/execution-engine.md "How progress and completion reach the app and the main agent").
 //
-// 这是主代理**唯一**会主动收到的「有人在等你」的信号：actor 停驻在自己那次 escalate 调用上，
-// 没有超时会替它兜底。所以三件事被钉死：恰好一条通知、载有 qid 与逐字的下一步、
-// escalation-resolved 不再发第二条（作答方就是主代理自己，回执已经是那次工具调用的结果）。
+// This is the **only** "someone is waiting for you" signal the main agent proactively receives:
+// the actor is parked inside its own escalate call, and no timeout backstops it. Three things are
+// therefore pinned: exactly one notification, carrying the qid and the verbatim next step, and
+// escalation-resolved sends no second one (the responder is the main agent itself; the receipt is
+// already that tool call's result).
 // ————————————————————————————————————————————————
 
 interface CapturedEscalationMeta {
@@ -102,7 +108,7 @@ interface CapturedNotification {
   };
 }
 
-/** 通知在 runtime 上产出（enqueueBackgroundTaskNotification 是原型方法），实例桩即可截获。 */
+/** Notifications are produced on the runtime (enqueueBackgroundTaskNotification is a prototype method), so an instance stub can intercept them. */
 function captureNotifications(runtime: AgentRuntime): CapturedNotification[] {
   const captured: CapturedNotification[] = [];
   (runtime as unknown as { enqueueBackgroundTaskNotification: (n: CapturedNotification) => void })
@@ -137,13 +143,14 @@ describe("escalation-raised → run 中通知", () => {
     expect(text).toContain("dwfq-esc12345-1");
     expect(text).toContain("评分上限是 95，通过线是 96，这个门不可能过。");
     expect(text).toContain("已经试了 6 轮，最高 95。");
-    // 逐字的下一步：模型读完这条通知就该知道要调哪个工具、传什么。
+    // Verbatim next step: after reading this notification the model must know which tool to call and with what.
     expect(text).toContain('ResolveWorkflowQuestion with question_id="dwfq-esc12345-1"');
-    // run 没有停：缺了这句，模型会以为整条工作流在等它，从而放下手上一切事。
+    // The run has not stopped: without this sentence the model would think the whole workflow is
+    // waiting on it and drop everything else it is doing.
     expect(text).toContain("The run is still running");
-    // 通知丢弃后的查询兜底（GetWorkflowRun 的 pendingQuestions）。
+    // Query fallback after a dropped notification (GetWorkflowRun's pendingQuestions).
     expect(text).toContain("GetWorkflowRun");
-    // 合成 user 消息不得被误读成用户发言。
+    // The synthetic user message must not be misread as user speech.
     expect(text).toContain("[SYSTEM NOTIFICATION - NOT USER INPUT]");
   });
 
@@ -159,7 +166,8 @@ describe("escalation-raised → run 中通知", () => {
     });
 
     expect(captured[0]?.text).toContain("implementer");
-    // 引擎刻意不合成兜底标签（匿名 actor 缺席 actorName），渲染兜底在读侧。
+    // The engine deliberately does not synthesize a fallback label for anonymous actors (actorName
+    // absent); the rendering fallback lives on the read side.
     expect(captured[1]?.text).toContain("actor#1@2");
   });
 
@@ -167,15 +175,16 @@ describe("escalation-raised → run 中通知", () => {
     const { runtime } = makeRuntime("dwf-progress-escalation-label");
     const captured = captureNotifications(runtime);
 
-    // registry 里没有这个 run（还没登记 / 已退场）→ 展示名回落到 runId，绝不留空。
+    // The registry has no such run (not yet registered / already exited) -> the display name falls
+    // back to the runId, never left empty.
     await runtime.recordDynamicWorkflowRunProgress(raised);
     expect(captured[0]?.text).toContain("dwfrun-esc");
     expect(captured[0]?.originMeta).toEqual({
       backgroundSource: "workflow",
       title: "dwfrun-esc",
-      // workId ≡ runId：与该 run 的终态通知同一个展示锚点。
+      // workId ≡ runId: the same display anchor as the run's terminal notification.
       workId: "dwfrun-esc",
-      // manifest 载荷（escalation 判别分支）随 originMeta 走全管线。
+      // The manifest payload (escalation discriminated branch) travels the whole pipeline inside originMeta.
       workflowNotification: {
         kind: "escalation",
         qid: "dwfq-esc12345-1",
@@ -191,12 +200,12 @@ describe("escalation-raised → run 中通知", () => {
     const { runtime } = makeRuntime("dwf-progress-escalation-manifest");
     const captured = captureNotifications(runtime);
 
-    // askedAt 在场：作为数字直读进载荷（stringField 读不出数字）。
+    // askedAt present: read into the payload directly as a number (stringField cannot read a number).
     await runtime.recordDynamicWorkflowRunProgress({
       ...raised,
       payload: { ...raised.payload, askedAt: 1_725_000_000_000 },
     });
-    // askedAt 缺席：整字段缺席，不置 0。
+    // askedAt absent: the whole field is absent, not set to 0.
     await runtime.recordDynamicWorkflowRunProgress({
       ...raised,
       sequence: 8,
@@ -253,7 +262,8 @@ describe("escalation-raised → run 中通知", () => {
     });
 
     expect(captured).toHaveLength(0);
-    // 事件本身照常落库（GUI 的事件日志要渲染它）——不发通知与不记事件是两件事。
+    // The event itself still lands in the store as usual (the GUI's event log must render it) —
+    // not sending a notification and not recording the event are two different things.
     expect(
       events.filter((event) => event.type === SessionEventType.DynamicWorkflowRunProgress),
     ).toHaveLength(1);
@@ -282,7 +292,8 @@ describe("escalation-raised → run 中通知", () => {
       payload: { actor: { siteId: "actor#1", ordinal: 1 } },
     });
 
-    // 进度面是观察面：载荷形状不对只跳过通知并留痕，绝不打挂一个正在跑的 run。
+    // The progress surface is an observation surface: a malformed payload only skips the
+    // notification and leaves a trace; it must never take down a running run.
     expect(captured).toHaveLength(0);
     expect(logged).toHaveBeenCalledTimes(1);
     expect(
@@ -292,7 +303,7 @@ describe("escalation-raised → run 中通知", () => {
 });
 
 // ————————————————————————————————————————————————
-// run 级停滞（apps/zcode-cli/packages/dynamic-workflow/docs/execution-engine.md「Terminal states」）：`run-stalled` → 一条 run 中通知。
+// Run-level stall (apps/zcode-cli/packages/dynamic-workflow/docs/execution-engine.md "Terminal states"): `run-stalled` -> one in-run notification.
 // ————————————————————————————————————————————————
 
 const stalled = {
@@ -355,9 +366,11 @@ describe("run-stalled → run 中通知", () => {
 });
 
 // ————————————————————————————————————————————————
-// 留白（docs/dynamic-workflow/transcript-and-notifications.md 的 `hole` 载荷与「What the model reads」）：
-// `hole-reached` → 恰好一条 run 中通知，载荷从快照的 `holes[]` 补齐类型 / 行号 / 前后阶段，草稿路径
-// 来自快照的 `scriptPath`；`hole-filled` 不发通知（补全方就是主代理自己，回执已在工具结果里）。
+// Holes (the `hole` payload in docs/dynamic-workflow/transcript-and-notifications.md and "What the
+// model reads"): `hole-reached` -> exactly one in-run notification, with the payload filled in from
+// the snapshot's `holes[]` for type / line / surrounding phases, and the draft path from the
+// snapshot's `scriptPath`; `hole-filled` sends no notification (the filler is the main agent
+// itself; the receipt is already in the tool result).
 // ————————————————————————————————————————————————
 
 interface CapturedHoleMeta {
@@ -462,7 +475,7 @@ describe("hole-reached → run 中通知", () => {
     expect(text).toContain("<line>12</line>");
     expect(text).toContain("<before>收集</before>");
     expect(text).toContain("<after>汇总</after>");
-    // 逐字的下一步：读草稿、写函数体、带 hole_id 调 FillWorkflowHole。
+    // Verbatim next step: read the draft, write the function body, call FillWorkflowHole with hole_id.
     expect(text).toContain('FillWorkflowHole with run_id="dwfrun-hole" and hole_id="hole#1"');
     expect(text).toContain("Only this branch of the script is parked");
     expect(text).toContain("nothing times out");
@@ -521,8 +534,9 @@ describe("hole-reached → run 中通知", () => {
   });
 });
 
-// 递归留白：嵌套站点 id（`hole#1/hole#1`）在载荷与文本里逐字出现，模型才能原样抄回 FillWorkflowHole。
-describe("hole-reached → 嵌套 id 逐字透传", () => {
+// Recursive holes: nested site ids (`hole#1/hole#1`) appear verbatim in the payload and the text so
+// the model can copy them back into FillWorkflowHole exactly.
+describe("hole-reached -> nested ids pass through verbatim", () => {
   it("载荷 siteId 与 <hole-id> / hole_id 都是嵌套 id 原文", async () => {
     const { runtime } = makeRuntime("dwf-progress-hole-nested");
     const captured = captureNotifications(runtime);

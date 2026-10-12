@@ -34,7 +34,7 @@ import {
 } from "@zcode/shared/zcode-protocol-v4";
 
 let tempDir: string;
-// 跟踪当前测试的 env，用于 afterEach 清理
+// Track the current test's env for afterEach cleanup
 let currentEnv: TestEnv | undefined;
 
 beforeEach(() => {
@@ -43,19 +43,20 @@ beforeEach(() => {
 });
 
 afterEach(async () => {
-  // 先关闭 repo 确保 SQLite 连接释放，避免 Windows EPERM
+  // Close the repo first so the SQLite connection is released, avoiding Windows EPERM
   currentEnv?.repo?.close();
   currentEnv = undefined;
   setDataBaseDir(null);
-  // 所有平台都等待一小段真实时间：被测 syncer 的失败/清理链路里存在跨用例存活的异步
-  // continuation，事件循环饥饿的 CI runner（2 核 4 worker）上会在下一个用例装好
-  // console.warn spy 之后才落地，导致「持续订阅故障…限频」用例计数多出 1（PR #22 上
-  // 5 次 CI 3 次复现）。50ms 的代价远小于整场全量重跑；Windows 另需它释放 SQLite 句柄。
+  // Wait a short real time on all platforms: the syncer under test has failure/cleanup paths with async
+  // continuations that survive across cases; on an event-loop-starved CI runner (2 cores, 4 workers) they
+  // would only land after the next case installed its console.warn spy, making the "persistent subscription
+  // failure… rate limit" case count one extra (reproduced 3 of 5 CI runs on PR #22). 50ms costs far less than
+  // a full rerun of the whole suite; Windows additionally needs it to release SQLite handles.
   await new Promise((resolve) => setTimeout(resolve, 50));
   try {
     rmSync(tempDir, { recursive: true, force: true });
   } catch {
-    // Windows 有时仍会有权限问题，忽略即可
+    // Windows can still hit permission issues occasionally; ignoring is fine
   }
 });
 
@@ -214,8 +215,9 @@ function setupEnv(
         mode: "snapshot" as const,
         logEpoch: "epoch-test",
       };
-      // 04A 真链路：response 与 initial 在同一 read；Promise continuation 尚未运行时
-      // notification 已同步 fire，syncer 必须先 staging，ACK 后再按 subId 释放。
+      // 04A real link: the response and the initial arrive in the same read; when the Promise continuation has
+      // not run yet the notification has already fired synchronously, so the syncer must stage first and
+      // release by subId only after the ACK.
       indexEmitter.fire(
         indexSnapshotFrame(options.initialSessions ?? [], 1, options.workspaceKey),
         "initial",
@@ -268,12 +270,12 @@ function setupEnv(
   return env;
 }
 
-/** 等待 workspace v4 订阅建立完成（subscribe promise resolve + 初始帧静默入基线）。 */
+/** Wait for the workspace v4 subscription to be established (subscribe promise resolve + the initial frame silently entering the baseline). */
 async function subscribed(env: TestEnv): Promise<void> {
   await vi.waitFor(() => {
     expect(env.agent.subscribeSessionsIndexV4).toHaveBeenCalled();
   });
-  // establishWorkspaceSubscriptions 里 Promise.all 之后才写 subscriptionId；多让一拍。
+  // In establishWorkspaceSubscriptions the subscriptionId is written only after Promise.all; give it one extra beat.
   await new Promise((resolve) => setImmediate(resolve));
 }
 
@@ -440,7 +442,7 @@ describe("createZCodeTaskIndexSyncer", () => {
       expect(meta?.status).toBe("completed");
     });
 
-    // 终态迁移同时给 host runtime command queue 发终态 + ready（先 terminal 后 ready）。
+    // A terminal transition also sends terminal + ready to the host runtime command queue (terminal first, ready after).
     expect(terminals).toEqual([{ kind: "turn.completed", sessionId: seedTarget.sessionId }]);
     expect(readies).toEqual([{ reason: "prompt_completed", sessionId: seedTarget.sessionId }]);
     expect(env.agent.readSession).toHaveBeenCalledWith({
@@ -538,7 +540,7 @@ describe("createZCodeTaskIndexSyncer", () => {
 
     env.indexEmitter.fire(indexUpsertFrame(summaryOf("sess_v4_search", "completedSuccess")));
 
-    // 行由回源 snapshot 创建（v4 命令路径没有 op 驱动的 snapshot 同步），正文可搜。
+    // The row is created by the source-fetch snapshot (the v4 command path has no op-driven snapshot sync); the body is searchable.
     await vi.waitFor(async () => {
       const result = await env.repo.queryTaskList({
         workspaceScopes: [{ workspacePath: "/repo" }],
@@ -587,7 +589,7 @@ describe("createZCodeTaskIndexSyncer", () => {
 
     env.indexEmitter.fire(indexUpsertFrame(summaryOf(seedTarget.sessionId, "error")));
 
-    // sessions-index 摘要没有错误详情：status 先收敛，lastError 由回源 snapshot 补权威值。
+    // The sessions-index summary has no error details: status settles first, and lastError is filled with the authoritative value by the source-fetch snapshot.
     await vi.waitFor(async () => {
       const meta = await env.repo.getTaskMeta({
         workspacePath: seedTarget.workspacePath,
@@ -668,7 +670,7 @@ describe("createZCodeTaskIndexSyncer", () => {
     syncer.ensureSessionSubscription(target);
     await subscribed(env);
 
-    // v4 命令路径首发：会话以带首标题的 upsert 出现，sqlite 尚无行 → 回源完整 snapshot。
+    // First delivery on the v4 command path: the session appears as an upsert carrying its first title, sqlite has no row yet → fetch the full snapshot.
     env.indexEmitter.fire(
       indexUpsertFrame(summaryOf("sess_missing", "running", { title: "first prompt title" })),
     );
@@ -768,7 +770,7 @@ describe("createZCodeTaskIndexSyncer", () => {
     });
     await subscribed(env);
 
-    // 冷启动 snapshot 不回放历史终态/广播，但必须补齐缺失索引行，避免远端新库永远为空。
+    // A cold-start snapshot does not replay historical terminal states/broadcasts, but it must fill in missing index rows so a fresh remote database is not forever empty.
     await vi.waitFor(async () => {
       const meta = await env.repo.getTaskMeta({ workspacePath: "/repo", taskId: "sess_history" });
       expect(meta).toMatchObject({
@@ -779,7 +781,7 @@ describe("createZCodeTaskIndexSyncer", () => {
       });
     });
 
-    // draft 会话（纯内存态）不进 task index。
+    // draft sessions (pure in-memory state) do not enter the task index.
     env.indexEmitter.fire(indexUpsertFrame(summaryOf("sess_draft", "draft", { title: "草稿" })));
     await new Promise((resolve) => setImmediate(resolve));
     expect(await env.repo.getTaskMeta({ workspacePath: "/repo", taskId: "sess_draft" })).toBeNull();
@@ -827,7 +829,7 @@ describe("createZCodeTaskIndexSyncer", () => {
     syncer.onSessionTerminalEvent((event) => terminals.push(event.kind));
     syncer.onSessionReadyEvent((event) => readies.push(event.reason));
 
-    // 生产中 task adapter 会先 notify/ensure session，再由实际命令启动名单外 runtime。
+    // In production the task adapter first notifies/ensures the session, and the actual command then starts a runtime outside the roster.
     syncer.ensureSessionSubscription(seedTarget);
     await Promise.resolve();
     expect(env.agent.subscribeSessionsIndexV4).not.toHaveBeenCalled();
@@ -846,8 +848,9 @@ describe("createZCodeTaskIndexSyncer", () => {
     });
     await subscribed(env);
 
-    // 回归根因：首次 available 必须先挂 listener，subscribe response resolve 后、await
-    // continuation 前同步到达的 initial frame 才能写入 task index；旧实现只重订阅。
+    // Root cause revisited: the first available must attach the listener first, so that an initial frame
+    // arriving synchronously after the subscribe response resolves but before the await continuation can write
+    // into the task index; the old implementation only re-subscribed.
     expect(env.agent.onDynamicSessionsIndexFrame).toHaveBeenCalledTimes(1);
     expect(env.agent.onDynamicWorkspaceConfigFrame).toHaveBeenCalledTimes(1);
     expect(env.agent.subscribeWorkspaceConfigV4).toHaveBeenCalledTimes(1);
@@ -1195,7 +1198,7 @@ describe("createZCodeTaskIndexSyncer", () => {
     syncer.ensureWorkspaceSubscription({ workspacePath: "/repo" });
     await subscribed(env);
 
-    // 空目录（无 live session 的订阅种子）不下发，避免清掉工具栏模型目录。
+    // Empty catalogs (subscription seeds with no live sessions) are not forwarded, avoiding wiping the toolbar model catalog.
     env.configEmitter.fire(configFrame({ configOptions: [], slashCommands: [] }));
     expect(broadcasts.length).toBe(0);
 
@@ -1253,7 +1256,7 @@ describe("createZCodeTaskIndexSyncer", () => {
       { broadcastReason: "task_meta_changed" },
     );
 
-    // 期望从首条 user message 推断 title
+    // The title is expected to be derived from the first user message
     expect(meta.title).toBe("fix the bug in checkout flow");
     expect(meta.updatedAt).toBe(999);
 
@@ -1286,7 +1289,7 @@ describe("createZCodeTaskIndexSyncer", () => {
       sessionStatus: "completed",
       updatedAt: 60,
     });
-    // 固定 traceId：缺省时 buildMetaFromSnapshot 会随机生成，与裁剪无关。
+    // Pin the traceId: when absent, buildMetaFromSnapshot generates one randomly, unrelated to elision.
     full.session.traceId = "trace_profile";
     const assistant = full.messages.find((message) => message.info.role === "assistant");
     if (!assistant) throw new Error("fixture assistant missing");
@@ -1571,8 +1574,9 @@ describe("createZCodeTaskIndexSyncer", () => {
       { broadcastReason: "task_meta_changed" },
     );
 
-    // Bugfix: /goal 自动续跑的内部 reminder wrapper 只是模型输入，不是用户可见 query。
-    // 标题可以回退到真实 goal objective，但正文搜索索引不能写入内部安全封装文本。
+    // Bugfix: the internal reminder wrapper of /goal auto-continuation is model input, not a user-visible
+    // query. The title may fall back to the real goal objective, but the body search index must not contain
+    // the internal safety-wrapper text.
     expect(meta.title).toBe("优化性能到 60fps");
     expect(meta.target).toMatchObject({
       objective: "优化性能到 60fps",
@@ -1669,9 +1673,11 @@ describe("createZCodeTaskIndexSyncer", () => {
   });
 
   it("syncSnapshotAndBroadcast writes sqlite but skips broadcast when snapshot has no user content", async () => {
-    // Bugfix: createSession 刚返回时 snapshot 既没有 title 也没有 user message，
-    // 此时不应该广播 workspace_task_list_changed，否则侧边栏会先闪一下 "New session" 占位符。
-    // sqlite 行仍然要写，让后续 session.titleUpdated (source="first_input") 的 applyAgentPatch 能找到行。
+    // Bugfix: right after createSession returns, the snapshot has neither a title nor a user message; at that
+    // point workspace_task_list_changed must not be broadcast, otherwise the sidebar flashes a "New session"
+    // placeholder first.
+    // The sqlite row must still be written so that the later applyAgentPatch of session.titleUpdated
+    // (source="first_input") can find the row.
     const env = setupEnv();
     const syncer = createZCodeTaskIndexSyncer({
       agentService: env.agent,
@@ -1685,14 +1691,14 @@ describe("createZCodeTaskIndexSyncer", () => {
     await syncer.syncSnapshotAndBroadcast(
       snapshotWith("sess_empty", "/repo", {
         title: "",
-        // 不带 userMessageText → snapshot.messages 为空
+        // No userMessageText → snapshot.messages is empty
         updatedAt: 1,
       }),
       { broadcastReason: "task_meta_changed" },
     );
 
     expect(broadcasts.length).toBe(0);
-    // sqlite 行应该已经写入，等待后续 applyAgentPatch 找得到
+    // The sqlite row should already be written, findable by a later applyAgentPatch
     const persisted = await env.repo.getTaskMeta({
       workspacePath: "/repo",
       taskId: "sess_empty",
@@ -1765,7 +1771,7 @@ describe("createZCodeTaskIndexSyncer", () => {
       agentService: env.agent,
       taskIndexRepo: env.repo,
     });
-    // 先完成空 workspace 的一次性 grouped bootstrap，后续 task 才按真实新建路径进入 root。
+    // First complete the one-time grouped bootstrap of the empty workspace, so later tasks enter root via the real creation path.
     await env.repo.queryGroupedTaskView({
       workspaceScopes: [{ workspacePath: "/repo" }],
     });
@@ -1790,8 +1796,9 @@ describe("createZCodeTaskIndexSyncer", () => {
       moveGroupedTaskToTop: true,
       broadcastReason: "task_status_changed",
     });
-    // Bugfix 回归：可见状态与首标题缺行可能让 first-task 的重复回源晚于 second-task 完成。
-    // 重复 snapshot 只能更新 meta，不能再次给 first-task 分配更小的顶层 sort_order。
+    // Bugfix regression: visible state and a missing first-title row can make first-task's duplicate source
+    // fetch finish later than second-task. The duplicate snapshot may only update meta; it must not assign
+    // first-task a smaller top-level sort_order again.
     await syncer.syncSnapshotAndBroadcast(firstTask, {
       moveGroupedTaskToTop: true,
       broadcastReason: "task_status_changed",
@@ -1809,17 +1816,18 @@ describe("createZCodeTaskIndexSyncer", () => {
   });
 
   it("syncSnapshotAndBroadcast preserves a newer sqlite updated_at (no regression)", async () => {
-    // Bugfix: snapshot 的 session.updatedAt 是 runtime sessionStore 里的"结构变更时间"，
-    // 不一定包含 session.titleUpdated / turn.completed 这些事件触发的 Date.now() 增量。
-    // 如果直接用 snapshot.updatedAt 覆盖会让刚被 applyAgentPatch 写入的更新时间倒退，
-    // 表现就是新会话第一次 prompt 后又被压到列表底部。
+    // Bugfix: the snapshot's session.updatedAt is the "structural change time" in the runtime sessionStore;
+    // it does not necessarily include the Date.now() increments triggered by events like session.titleUpdated
+    // or turn.completed. Overwriting directly with snapshot.updatedAt would roll back the update time just
+    // written by applyAgentPatch; the symptom is a new session being pushed back to the bottom of the list
+    // after its first prompt.
     const env = setupEnv();
     const syncer = createZCodeTaskIndexSyncer({
       agentService: env.agent,
       taskIndexRepo: env.repo,
     });
 
-    // 先写一条 sqlite 行，updated_at 是较新的时间戳（模拟 applyAgentPatch 已经写过一次 Date.now()）
+    // First write a sqlite row whose updated_at is a newer timestamp (simulating applyAgentPatch having written a Date.now() once)
     await env.repo.syncTaskMeta({
       meta: {
         taskId: "sess_regress",
@@ -1832,13 +1840,13 @@ describe("createZCodeTaskIndexSyncer", () => {
       },
     });
 
-    // 用一个较旧的 snapshot.updatedAt 触发 sync
+    // Trigger the sync with an older snapshot.updatedAt
     await syncer.syncSnapshotAndBroadcast(
       snapshotWith("sess_regress", "/repo", {
         title: "你好",
         userMessageText: "你好",
         createdAt: 100,
-        updatedAt: 100, // 远小于 sqlite 已有的 99999
+        updatedAt: 100, // Far smaller than the sqlite value of 99999
       }),
       { broadcastReason: "task_meta_changed" },
     );
@@ -1847,7 +1855,7 @@ describe("createZCodeTaskIndexSyncer", () => {
       workspacePath: "/repo",
       taskId: "sess_regress",
     });
-    // 期望 updated_at 不会倒退
+    // updated_at is expected not to regress
     expect(persisted?.updatedAt).toBe(99999);
 
     syncer.disposeAll();
@@ -1996,7 +2004,7 @@ describe("createZCodeTaskIndexSyncer", () => {
 
     expect(env.agent.subscribeSessionsIndexV4).toHaveBeenCalledTimes(1);
     expect(env.agent.subscribeWorkspaceConfigV4).toHaveBeenCalledTimes(1);
-    // 与 renderer 侧栏共 topic 不同代际：syncer 必须带独立 subscriberScope。
+    // Same topic as the renderer sidebar but a different generation: the syncer must carry an independent subscriberScope.
     expect(env.agent.subscribeSessionsIndexV4).toHaveBeenCalledWith(
       expect.objectContaining({ subscriberScope: "task-index" }),
     );
@@ -2333,7 +2341,7 @@ describe("createZCodeTaskIndexSyncer", () => {
       },
     });
     await new Promise((resolve) => setImmediate(resolve));
-    // pre-ACK overflow 没有可证明 base，必须仅换代 index topic 的 fresh snapshot。
+    // A pre-ACK overflow has no provable base; it must do only a fresh snapshot that rolls the index topic over to a new generation.
     await vi.waitFor(() => expect(env.agent.subscribeSessionsIndexV4).toHaveBeenCalledTimes(2));
     expect(env.agent.resyncSessionsIndexV4).not.toHaveBeenCalled();
     expect(env.agent.subscribeWorkspaceConfigV4).toHaveBeenCalledTimes(1);
@@ -2365,8 +2373,9 @@ describe("createZCodeTaskIndexSyncer", () => {
     const env = setupEnv();
     await seedRunningTask(env.repo);
     vi.mocked(env.agent.subscribeSessionsIndexV4).mockImplementationOnce(async () => {
-      // ACK 前到达但 logical payload 非法：activation 后 assembler 产 typed fault，
-      // 这时客户端尚未原子 apply 任何 snapshot，ACK 本身不能证明 base=(epoch,0)。
+      // Arrived before the ACK but with an illegal logical payload: after activation the assembler produces a
+      // typed fault; at that point the client has not atomically applied any snapshot, so the ACK itself
+      // cannot prove base=(epoch,0).
       env.indexEmitter.fire(
         {
           topic: "sessions-index//repo",
@@ -2418,7 +2427,7 @@ describe("createZCodeTaskIndexSyncer", () => {
         }),
       ),
     );
-    // 整个 initial batch 丢失后，数值上衔接的 online delta 也不能抢先建立 baseline。
+    // After the whole initial batch is lost, a numerically contiguous online delta must not establish the baseline ahead of it either.
     env.indexEmitter.fire(indexUpsertFrame(summaryOf(seedTarget.sessionId, "completedSuccess"), 1));
     await new Promise((resolve) => setImmediate(resolve));
     expect(
@@ -2605,11 +2614,11 @@ describe("createZCodeTaskIndexSyncer", () => {
     syncer.ensureWorkspaceSubscription({ workspacePath: "/repo" });
     await subscribed(env);
 
-    // online gap 启动 same-sub recovery。
+    // An online gap starts the same-sub recovery.
     env.indexEmitter.fire(indexUpsertFrame(summaryOf(seedTarget.sessionId, "running"), 99));
     await vi.waitFor(() => expect(env.agent.resyncSessionsIndexV4).toHaveBeenCalledTimes(1));
 
-    // 同 ordinal 不同 logical id 产生 typed fault；deliveryKind 在 fault.fault 层。
+    // The same ordinal with a different logical id produces a typed fault; the deliveryKind lives on fault.fault.
     const invalidRecoveryFrame = indexUpsertFrame(
       summaryOf(seedTarget.sessionId, "completedSuccess"),
       100,
@@ -2657,7 +2666,7 @@ describe("createZCodeTaskIndexSyncer", () => {
     env.indexEmitter.fireWire({
       wireVersion: 3,
       kind: "complete",
-      // candidate 允许先进 owned assembler 再产生 typed fault；此处故意伪造非法值。
+      // A candidate is allowed to enter the owned assembler first and only then produce a typed fault; an illegal value is forged here on purpose.
       deliveryKind: "invalid-kind",
       logicalFrameId: "invalid-delivery-kind",
       logicalFrameOrdinal: 3,
@@ -3018,8 +3027,9 @@ describe("createZCodeTaskIndexSyncer", () => {
 
     vi.useFakeTimers();
     try {
-      // 只统计本用例两个 topic 的订阅失败 warn：worker 的 console 是跨文件共享的，
-      // 全量并发时任何相邻文件/残留链路的杂散 warn 都不应影响本用例的限频断言。
+      // Count only the two subscription-failure warns of this case's topics: the worker's console is shared
+      // across files, and under full concurrency any stray warn from neighboring files or leftover paths must
+      // not affect this case's rate-limit assertion.
       const topicWarnMessages = () =>
         warnSpy.mock.calls
           .map((call) => String(call[1]))
@@ -3046,8 +3056,8 @@ describe("createZCodeTaskIndexSyncer", () => {
     }
   });
 
-  // M5 ③-2（CLI 重连重订）：进程换代后订阅静默失活，syncer 必须重发 subscribe
-  // 并按新 subscriptionId 闸门继续摄入帧。
+  // M5 ③-2 (CLI reconnect re-subscribe): after a process generation change the subscription silently goes
+  // stale; the syncer must resend subscribe and keep ingesting frames behind the new subscriptionId gate.
   it("re-subscribes workspace topics after an agent runtime restart and accepts new-generation frames", async () => {
     const env = setupEnv({
       initialSessions: [summaryOf(seedTarget.sessionId, "running")],
@@ -3056,7 +3066,7 @@ describe("createZCodeTaskIndexSyncer", () => {
     const restartEmitter = new Emitter<{ workspaceKey: string }>();
     (env.agent as { onAgentRuntimeRestarted?: unknown }).onAgentRuntimeRestarted =
       restartEmitter.event;
-    // 第二代订阅换 id：重启后旧 id 的帧必须被闸门丢弃，新 id 的帧被接受。
+    // The second-generation subscription uses a new id: after the restart, frames with the old id must be dropped by the gate and frames with the new id accepted.
     vi.mocked(env.agent.subscribeSessionsIndexV4)
       .mockImplementationOnce(async () => {
         env.indexEmitter.fire(indexSnapshotFrame([summaryOf(seedTarget.sessionId, "running")]));
@@ -3096,7 +3106,7 @@ describe("createZCodeTaskIndexSyncer", () => {
     });
     await new Promise((resolve) => setImmediate(resolve));
 
-    // 新代际帧（新 subscriptionId）驱动终态写入。
+    // The new-generation frame (new subscriptionId) drives the terminal write.
     env.indexEmitter.fire({
       ...indexUpsertFrame(summaryOf(seedTarget.sessionId, "completedSuccess")),
       subscriptionId: "six-test-2",
@@ -3165,7 +3175,7 @@ describe("createZCodeTaskIndexSyncer", () => {
       expect(env.agent.subscribeSessionsIndexV4).toHaveBeenCalledTimes(3);
       expect(env.agent.subscribeWorkspaceConfigV4).toHaveBeenCalledTimes(2);
     });
-    // config 一次就成功，不跟随 index retry 重订。
+    // config succeeded on the first attempt and does not re-subscribe along with the index retry.
     await new Promise((resolve) => setTimeout(resolve, 75));
     expect(env.agent.subscribeWorkspaceConfigV4).toHaveBeenCalledTimes(2);
 
@@ -3199,7 +3209,7 @@ describe("createZCodeTaskIndexSyncer", () => {
       workspacePath: "/repo",
     })((event) => received.push(event));
 
-    // adapter 通过 getWorkspaceEmitter 直接 fire 其他类型事件时，订阅者也应该能收到
+    // When the adapter fires other event types directly via getWorkspaceEmitter, subscribers should receive them too
     syncer.getWorkspaceEmitter({ workspacePath: "/repo" }).fire({
       type: "workspace_config_options_update",
       workspacePath: "/repo",

@@ -160,8 +160,10 @@ vi.mock("node:fs/promises", () => ({
   readFile: readFileMock,
 }));
 
-// Bugfix: 这里之前把模块路径写死成开发者本机绝对路径，换一台机器跑单测就会直接找不到模块。
-// 改成相对测试文件的可移植导入后，macOS / Linux / Windows 下都能按当前工作区正确解析。
+// Bugfix: this previously hard-coded the module path as a developer-machine absolute path, so running the
+// unit test on another machine could not find the module at all.
+// After switching to an import relative to the test file, macOS / Linux / Windows all resolve correctly
+// against the current workspace.
 vi.mock("../src/main/logger.js", () => ({
   logger: {
     info: loggerInfoMock,
@@ -262,8 +264,9 @@ describe("autoUpdater ready state sync", () => {
   });
 
   it("Preview 禁用更新器后，漏改的手动检查入口也不能触碰未初始化的 updater", async () => {
-    // Bugfix: 托盘/命令入口若仍按 ZCODE_ENV 放行，会对占位 feed 发真实 checkForUpdates；
-    // 禁用语义必须在 autoUpdater 模块内 fail-closed，而不是依赖每个调用点各自判断。
+    // Bugfix: if the tray/command entry still let requests through based on ZCODE_ENV, it would send a real
+    // checkForUpdates against the placeholder feed; the disabled semantics must fail closed inside the
+    // autoUpdater module instead of relying on each call site to judge for itself.
     const win = {
       isDestroyed: () => false,
       webContents: {
@@ -385,8 +388,9 @@ describe("autoUpdater ready state sync", () => {
     });
     await new Promise((resolve) => setTimeout(resolve, 0));
 
-    // Bugfix: 冷启动时 provider 还没提前 resolveReleaseChannel，begin 阶段不能继续用默认 stable
-    // 作为 expected channel，否则合法 preview manifest 会被 shouldIgnoreStaleAvailableUpdate 丢弃。
+    // Bugfix: on a cold start the provider has not resolved the release channel ahead of time, so the begin
+    // phase must not keep using the default stable as the expected channel, otherwise a legitimate preview
+    // manifest would be dropped by shouldIgnoreStaleAvailableUpdate.
     expect(getAutoUpdaterState()).toMatchObject({
       kind: "update-available",
       version: "3.3.3",
@@ -559,8 +563,9 @@ describe("autoUpdater ready state sync", () => {
 
     refreshAutoUpdaterReleaseChannel(true, "test preview setting changed");
 
-    // Bugfix: 有 settingService 时，启动检查会先预热 channel 再真正请求 provider。
-    // pending settings 阶段仍处于 in-flight，通道切换必须被延后，但请求尚未发出。
+    // Bugfix: with a settingService, the startup check warms the channel first before actually requesting from
+    // the provider. During the pending-settings phase it is still in-flight; the channel switch must be
+    // deferred, but no request has gone out yet.
     expect(autoUpdaterMock.checkForUpdates).not.toHaveBeenCalled();
     expect(getAutoUpdaterState()).toMatchObject({
       kind: "checking",
@@ -611,10 +616,10 @@ describe("autoUpdater ready state sync", () => {
     });
     await new Promise((resolve) => setTimeout(resolve, 0));
 
-    // Bugfix: pendingPostUpdateReleaseNotes 只能恢复展示文案，不能证明当前进程的
-    // electron-updater / Squirrel.Mac 已经重建 native staging。遇到同版本 manifest
-    // 时仍要重新走 downloadUpdate，让缓存命中或重新下载后的 update-downloaded
-    // 事件把真实可安装状态带回来。
+    // Bugfix: pendingPostUpdateReleaseNotes can only restore the display copy; it cannot prove that this
+    // process's electron-updater / Squirrel.Mac has rebuilt the native staging. On a same-version manifest it
+    // must still go through downloadUpdate again, letting the update-downloaded event after a cache hit or a
+    // fresh download bring back the real installable state.
     expect(autoUpdaterMock.downloadUpdate).toHaveBeenCalledTimes(1);
     expect(getAutoUpdaterState()).toMatchObject({
       kind: "update-available",
@@ -651,9 +656,9 @@ describe("autoUpdater ready state sync", () => {
     )?.[1] as (() => Promise<void>) | undefined;
     await quitAndInstallHandler?.();
 
-    // Bugfix: 从 pending release notes 恢复出的 ready 没有当前进程内的
-    // Squirrel.Mac staging 上下文，不能执行退出准备。用户点击时应先恢复为
-    // 可下载更新并重新 downloadUpdate，等真实 update-downloaded 后再允许安装。
+    // Bugfix: a ready state restored from pending release notes has no in-process Squirrel.Mac staging
+    // context and must not run quit preparation. When the user clicks, it should first revert to a
+    // downloadable update and downloadUpdate again, allowing install only after a real update-downloaded.
     expect(onBeforeQuitAndInstall).not.toHaveBeenCalled();
     expect(autoUpdaterMock.quitAndInstall).not.toHaveBeenCalled();
     expect(autoUpdaterMock.downloadUpdate).toHaveBeenCalledTimes(1);
@@ -857,8 +862,9 @@ describe("autoUpdater ready state sync", () => {
     );
     await Promise.resolve();
 
-    // Bugfix: Squirrel.Mac 可能在 update-downloaded 后才发现 zip 不能 stage。
-    // 此时不能继续补发 ready 或保留“重启以更新”，否则用户再次点击仍然没有安装器接管。
+    // Bugfix: Squirrel.Mac may discover only after update-downloaded that the zip cannot be staged.
+    // At that point ready must not be re-sent or "restart to update" kept, otherwise clicking again still
+    // finds no installer in charge.
     expect(win.webContents.send).toHaveBeenCalledWith(PlatformChannels.UpdateStateChanged, {
       kind: "idle",
       enabled: true,
@@ -915,9 +921,9 @@ describe("autoUpdater ready state sync", () => {
     });
     await Promise.resolve();
 
-    // 修复原因：开发态验证真实测试环境 manifest 时，Squirrel.Mac 仍可能在
-    // update-downloaded 后补一个 code=2。生产 staging error 仍要清 ready，
-    // 但开发态不能因此让弹窗自动关闭。
+    // Reason for the fix: while verifying a real test-environment manifest in dev, Squirrel.Mac may still emit
+    // a late code=2 after update-downloaded. A production staging error must still clear ready,
+    // but dev must not let the dialog auto-close because of it.
     expect(win.webContents.send).not.toHaveBeenCalledWith(PlatformChannels.UpdateStateChanged, {
       kind: "idle",
       enabled: true,
@@ -987,15 +993,19 @@ describe("autoUpdater ready state sync", () => {
 
     const { downloadAvailableUpdate, initAutoUpdater } = await importAutoUpdaterWithLocale();
 
-    // Bugfix: autoUpdater 菜单文案已经改成跟随当前 locale。
-    // 这个单测之前直接断言英文常量，实际却没有像 main 进程那样先同步应用语言，
-    // 于是模块会落回 DEFAULT_LOCALE，导致“下载中”文案在测试环境里变成中文。
-    // 这里显式设成 en-US，让断言验证的是“下载进度状态”本身，而不是隐式依赖默认语言。
+    // Bugfix: the autoUpdater menu copy now follows the current locale.
+    // This unit test previously asserted English constants directly without first syncing the app language the
+    // way the main process does, so the module fell back to DEFAULT_LOCALE and the "downloading" copy turned
+    // Chinese in the test environment.
+    // It is explicitly set to en-US here so the assertions verify the "download progress state" itself rather
+    // than implicitly depending on the default language.
     initAutoUpdater();
 
-    // 回归保护：按钮显示完全依赖 renderer 收到 PlatformChannels.UpdateReady。
-    // 如果这里在 update-available / download-progress 阶段就提前发事件，
-    // UI 会误以为“更新已可安装”，用户看到的就是下载尚未完成却已经出现重启更新按钮。
+    // Regression guard: the button's display depends entirely on the renderer receiving
+    // PlatformChannels.UpdateReady.
+    // If the event were sent early during update-available / download-progress, the UI would mistake the state
+    // for "update installable", and the user would see a restart-to-update button while the download has not
+    // finished.
     autoUpdaterMock.emit("update-available", releaseNotes);
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(autoUpdaterMock.downloadUpdate).not.toHaveBeenCalled();
@@ -1304,8 +1314,9 @@ describe("autoUpdater ready state sync", () => {
     autoUpdaterMock.emit("error", new Error("download failed before progress"));
     await Promise.resolve();
 
-    // Bugfix: 下载失败不是跳过版本。不能广播 idle 让主入口和弹窗一起消失，
-    // 应退回可更新状态，保留同一版本供用户重试。
+    // Bugfix: a download failure is not a skipped version. idle must not be broadcast making the main entry
+    // and the dialog vanish together; it should revert to the updatable state, keeping the same version for
+    // the user to retry.
     expect(getAutoUpdaterState()).toEqual({
       kind: "update-available",
       enabled: true,
@@ -1490,8 +1501,9 @@ describe("autoUpdater ready state sync", () => {
     autoUpdaterMock.emit("update-available", { version: "0.1.25" });
     await new Promise((resolve) => setTimeout(resolve, 0));
 
-    // Bugfix: 手动检查代表用户重新关注被跳过版本。
-    // 只清当前 stable 通道的缓存，避免误删 preview 跳过记录，同时要让同版本更新重新展示。
+    // Bugfix: a manual check means the user is interested again in a skipped version.
+    // Only the current stable channel's cache is cleared, avoiding an accidental deletion of the preview skip
+    // record, while the same-version update must be shown again.
     expect(getAutoUpdaterState()).toEqual({
       kind: "update-available",
       enabled: true,
@@ -1587,8 +1599,8 @@ describe("autoUpdater ready state sync", () => {
       },
     });
 
-    // 安装后再次启动时，当前 app 版本才等于 pending 版本；这时 pending payload
-    // 才应作为 post-update release notes 同步给 renderer。
+    // Only on the next launch after installation does the current app version equal the pending version; only
+    // then should the pending payload be synced to the renderer as post-update release notes.
     appMock.getVersion.mockImplementation(() => "0.1.25");
     syncPostUpdateReleaseNotesToWindow(firstWindow as never);
     syncPostUpdateReleaseNotesToWindow(secondWindow as never);
@@ -1747,8 +1759,9 @@ describe("autoUpdater ready state sync", () => {
 
     await hydratePendingPostUpdateReleaseNotes(settingServiceMock);
 
-    // Bugfix: 已下载但未安装时重启，pending release notes 的版本仍高于当前 app。
-    // 此时应恢复“重启以更新”，不能重新提示下载同一个已缓存版本。
+    // Bugfix: restarting while downloaded but not installed leaves the pending release notes version still
+    // above the current app. In that case "restart to update" must be restored, not a fresh prompt to download
+    // the same cached version.
     expect(getAutoUpdaterState()).toEqual({
       kind: "update-downloaded",
       enabled: true,
@@ -1839,8 +1852,10 @@ describe("autoUpdater ready state sync", () => {
     expect(quitHandler).toBeTypeOf("function");
     await expect(quitHandler!()).rejects.toBe(prepareError);
 
-    // Bugfix: 安装前准备负责释放 Windows resources/glm 等随包资源锁。
-    // 如果准备失败还继续启动安装器，会再次形成 bundled runtime 半更新。
+    // Bugfix: the pre-install preparation is responsible for releasing bundled resource locks such as Windows
+    // resources/glm.
+    // Continuing to launch the installer after a failed preparation would create another half-updated bundled
+    // runtime.
     expect(onBeforeQuitAndInstall).toHaveBeenCalledTimes(1);
     expect(autoUpdaterMock.quitAndInstall).not.toHaveBeenCalled();
     expect(appMock.relaunch).not.toHaveBeenCalled();
@@ -1865,8 +1880,9 @@ describe("autoUpdater ready state sync", () => {
     expect(quitHandler).toBeTypeOf("function");
     await expect(quitHandler!()).rejects.toThrow("Update is not ready to install: state=idle");
 
-    // Bugfix: renderer 的旧 ready 缓存可能残留，但 main 已经因为 staging error
-    // 回到 idle。此时不能清理 host 或调用 quitAndInstall，否则按钮表现为无响应。
+    // Bugfix: the renderer's stale ready cache may linger, but main has already gone back to idle because of
+    // the staging error. The host must not be cleaned up nor quitAndInstall called, otherwise the button
+    // appears unresponsive.
     expect(onBeforeQuitAndInstall).not.toHaveBeenCalled();
     expect(autoUpdaterMock.quitAndInstall).not.toHaveBeenCalled();
     expect(loggerWarnMock).toHaveBeenCalledWith(
@@ -1892,8 +1908,8 @@ describe("autoUpdater ready state sync", () => {
     await Promise.resolve();
 
     expect(onBeforeQuitAndInstall).toHaveBeenCalledTimes(1);
-    // Bugfix: 3.3.0 的 detached hidden PowerShell launcher 只证明 powershell.exe
-    // 创建成功，不能证明安装器脚本实际执行。Windows 也必须回到 electron-updater 原生入口。
+    // Bugfix: 3.3.0's detached hidden PowerShell launcher only proved that powershell.exe was created, not that
+    // the installer script actually ran. Windows must also return to electron-updater's native entry point.
     expect(spawnMock).not.toHaveBeenCalled();
     expect(appMock.exit).not.toHaveBeenCalled();
     expect(autoUpdaterMock.quitAndInstall).toHaveBeenCalledTimes(1);
@@ -1921,8 +1937,9 @@ describe("autoUpdater ready state sync", () => {
     await Promise.resolve();
     await Promise.resolve();
 
-    // Bugfix: 菜单文案是“重启以更新”时，点击应和更新按钮一样真的安装；
-    // 旧逻辑只给 renderer 发 ready toast，用户看到的是“重启”但实际没有重启。
+    // Bugfix: when the menu copy says "restart to update", clicking must really install just like the update
+    // button; the old logic only sent a ready toast to the renderer, so the user saw "restart" without any
+    // actual restart.
     expect(onBeforeQuitAndInstall).toHaveBeenCalledTimes(1);
     expect(autoUpdaterMock.quitAndInstall).toHaveBeenCalledTimes(1);
     expect(win.webContents.send).not.toHaveBeenCalledWith(PlatformChannels.UpdateCheckResult, {
@@ -1946,8 +1963,9 @@ describe("autoUpdater ready state sync", () => {
 
     initAutoUpdater();
 
-    // 非 Windows 也不再让 electron-updater 在退出时直接装 staged 包。
-    // ready 包仍等于当前目标时，由 before-quit 主动安装；目标已经更高则跳过。
+    // Non-Windows also no longer lets electron-updater install the staged package directly at quit.
+    // When the ready package still equals the current target, before-quit installs proactively; if the target
+    // has moved higher, it is skipped.
     expect(autoUpdaterMock.autoDownload).toBe(false);
     expect(autoUpdaterMock.autoInstallOnAppQuit).toBe(false);
   });
@@ -1956,10 +1974,10 @@ describe("autoUpdater ready state sync", () => {
     mockProcessPlatform("win32");
     const { initAutoUpdater } = await import("../src/main/autoUpdater.js");
 
-    // initAutoUpdater 现在立即返回，不等待更新检查完成
+    // initAutoUpdater now returns immediately, without waiting for the update check to finish
     await expect(initAutoUpdater()).resolves.toBeUndefined();
 
-    // 更新检查应该在后台触发
+    // The update check should be triggered in the background
     expect(autoUpdaterMock.checkForUpdates).toHaveBeenCalledTimes(1);
   });
 
@@ -2209,8 +2227,9 @@ describe("autoUpdater ready state sync", () => {
 
     autoUpdaterMock.emit("update-not-available", { version: "0.1.24" });
 
-    // Bugfix: 第二次手动点击只应该收到“正在检查中”的即时反馈，
-    // 不能把第一次手动检查真正的完成结果抢走；否则第一次点击的用户会一直等不到结论。
+    // Bugfix: the second manual click should only receive the immediate "already checking" feedback and must
+    // not steal the real completion result of the first manual check; otherwise the user who clicked first
+    // would never see a conclusion.
     expect(firstWindow.webContents.send).toHaveBeenCalledWith(PlatformChannels.UpdateCheckResult, {
       kind: "up-to-date",
       currentVersion: "0.1.24",
@@ -2258,8 +2277,9 @@ describe("autoUpdater ready state sync", () => {
     )?.[1] as (() => Promise<void>) | undefined;
     await quitAndInstallHandler?.();
 
-    // 修复原因：开发态没有真实发布包安装上下文可接管，不能继续依赖
-    // electron-updater.quitAndInstall()；否则按钮会执行退出准备但应用不重启。
+    // Reason for the fix: in dev there is no real release-package install context to hand over to, so we cannot
+    // keep relying on electron-updater.quitAndInstall(); otherwise the button runs quit preparation but the
+    // app never restarts.
     expect(onBeforeQuitAndInstall).toHaveBeenCalledTimes(1);
     expect(autoUpdaterMock.quitAndInstall).not.toHaveBeenCalled();
     expect(appMock.relaunch).toHaveBeenCalledTimes(1);
@@ -2319,7 +2339,7 @@ describe("autoUpdater ready state sync", () => {
 
     autoUpdaterMock.emit("update-not-available", { version: "0.1.24" });
 
-    // Bugfix: 启动期检查被强更弹窗复用后，无更新也必须通知弹窗，避免一直停留在 checking。
+    // Bugfix: once the startup check is reused by the force-update dialog, "no update" must also notify the dialog, avoiding a forever-checking state.
     expect(onStateChange).toHaveBeenCalledWith({
       kind: "error",
       message: "未找到可安装更新，请使用手动升级。",
@@ -2338,8 +2358,9 @@ describe("autoUpdater ready state sync", () => {
     await Promise.resolve();
     await Promise.resolve();
 
-    // Bugfix: 强更弹窗复用启动期后台检查时，checkForUpdates 直接 reject 也必须反馈给弹窗，
-    // 否则用户会一直看到 checking，无法判断自动升级已经失败。
+    // Bugfix: when the force-update dialog reuses the startup background check, a direct checkForUpdates
+    // rejection must also be reported to the dialog, otherwise the user keeps seeing checking and cannot tell
+    // the automatic upgrade has failed.
     expect(onStateChange).toHaveBeenCalledWith({ kind: "checking" });
     expect(onStateChange).toHaveBeenCalledWith({
       kind: "error",

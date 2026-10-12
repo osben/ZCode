@@ -976,9 +976,9 @@ describe("ZCodeProtocolAgentServer", () => {
   });
 
   it("promotes a deferred record to immediate once the runtime reports the session persisted", () => {
-    // 2026-09-14 实机：中枢直接启动的会话由 runtime 落行（controlOnly 启动轮，没有首发），record 一直
-    // 是 deferred，sessions-index 视其为 draft 而跳过——侧栏永远不出现。record.persistence 是 runtime
-    // 事实的镜像，在事件入口对齐一次即覆盖所有持久化路径。
+    // 2026-09-14, real machine: a session launched directly from the hub has its row written by the runtime (controlOnly
+    // startup turn, no first message), so the record stays deferred and sessions-index treats it as a draft and skips it —
+    // it never appears in the sidebar. record.persistence mirrors the runtime fact; aligning once at the event entry covers every persistence path.
     const ingest = vi.fn();
     let persisted = false;
     const record = {
@@ -1000,11 +1000,11 @@ describe("ZCodeProtocolAgentServer", () => {
       type: SessionEventType.SessionTitleUpdated,
     } satisfies SessionEvent;
 
-    // runtime 尚未持久化：仍是 draft。
+    // runtime has not persisted yet: still a draft.
     onSessionEvent(context, record, event);
     expect(record.persistence).toBe("deferred");
 
-    // runtime 持久化之后的第一条事件：离开 draft，且对齐发生在 ingest 之前（同一条事件就能进列表）。
+    // First event after the runtime persisted: leaves draft, and the alignment happens before ingest (the same event can enter the list).
     persisted = true;
     ingest.mockImplementation(() => {
       expect(record.persistence).toBe("immediate");
@@ -1068,7 +1068,7 @@ describe("ZCodeProtocolAgentServer", () => {
 
     expect(record.updatedAt).toBe(1_700);
     expect(ingest).toHaveBeenCalledTimes(1);
-    // 保留 source detached child publisher 生命周期：路由 child 时同时登记 parent 归属。
+    // Preserve the source-detached child publisher lifecycle: routing the child also registers parent attribution.
     expect(ingest).toHaveBeenCalledWith("sess_child", event, "sess_parent");
   });
 
@@ -1188,8 +1188,8 @@ describe("ZCodeProtocolAgentServer", () => {
     });
   });
 
-  // M5 ③-3：usage query 的 v4 名字空间分派（L2）。数据访问层与旧 usage/stats、
-  // session/usage 共用（usage store 聚合），这里锁定 v4 方法名可达且结果过 v4 schema。
+  // M5 ③-3: v4 namespace dispatch for usage query (L2). The data access layer is shared with the old
+  // usage/stats and session/usage (aggregated in the usage store); here we pin that the v4 method names are reachable and the result passes the v4 schema.
   it("serves v4/usage/stats through the usage data access layer", async () => {
     const server = new ZCodeProtocolAgentServer({
       createZCodeApp: (options) => createFakeApp(options),
@@ -1205,7 +1205,7 @@ describe("ZCodeProtocolAgentServer", () => {
       }),
     );
 
-    // 无 usage store 的兜底路径：返回空快照而非抛错（与旧 op 语义一致）。
+    // Fallback path without a usage store: return an empty snapshot instead of throwing (same semantics as the old op).
     expect(result.range).toBe("7d");
     expect(result.timeZone).toBe("UTC");
     expect(result.source).toBe("agent-db");
@@ -1262,8 +1262,8 @@ describe("ZCodeProtocolAgentServer", () => {
           clientMode: "desktop-continuous",
         },
       });
-      // staging 已在 ACK 内加入可选 openTiming 诊断；这里守住 response 仍只承载 ACK，
-      // 初始 frame 仍必须进入 request-scoped outbox，不把诊断字段误判成 initial payload。
+      // staging already added the optional openTiming diagnostics inside the ACK; here we guard that the response
+      // still carries only the ACK, the initial frame must still go into the request-scoped outbox, and the diagnostics field is not mistaken for the initial payload.
       expect(response).toMatchObject({
         id,
         result: {
@@ -1271,8 +1271,8 @@ describe("ZCodeProtocolAgentServer", () => {
             subscriptionId: expect.any(String),
             mode: "snapshot",
             logEpoch: expect.any(String),
-            // 会话主题的 ACK 额外携带 session open 计时遥测（staging 的 ARMS 面）；
-            // 列表/配置主题没有会话可计时，不带这个键。
+            // The session topic's ACK additionally carries session open timing telemetry (staging's ARMS surface);
+            // the list/config topics have no session to time and do not carry this key.
             ...(index === 0 ? { openTiming: expect.any(Object) } : {}),
           },
         },
@@ -1540,7 +1540,7 @@ describe("ZCodeProtocolAgentServer", () => {
       throw new Error("Expected subscribe response");
     }
     const subscribed = v4ConversationSubscribeResultSchema.parse(subscribedResponse.result);
-    // 初始 batch admission 后才开始 same-sub recovery。
+    // same-sub recovery starts only after the initial batch admission.
     expect(server.takePostResponseMessages("subscribe-before-resync").length).toBeGreaterThan(0);
 
     const input = new PassThrough();
@@ -3336,7 +3336,7 @@ describe("ZCodeProtocolAgentServer", () => {
         .flatMap((message) => message.parts)
         .find((part) => part.type === "tool");
       expect(indexTool).toMatchObject({ state: { status: "completed", input: {}, output: "" } });
-      // index 读取不能污染后续 full 读取（CLI 侧不得原地改写缓存消息）。
+      // An index read must not pollute a later full read (the CLI side must not rewrite cached messages in place).
       const fullAgain = await readWith(4, { contentProfile: "full" });
       expect(JSON.stringify(fullAgain.messages)).toBe(JSON.stringify(full.messages));
     } finally {
@@ -3787,7 +3787,7 @@ describe("ZCodeProtocolAgentServer", () => {
     expect(createdAppOptions[0]?.runtimeConfig?.modelContextBudgetStrategy).toBe("preflight-v1");
     expect(createdAppOptions[1]?.runtimeConfig?.nativeSearchEnhancementsEnabled).toBe(true);
     expect(createdAppOptions[1]?.runtimeConfig?.modelContextBudgetStrategy).toBe("preflight-v1");
-    // 开启 Settings 只解除总开关，不覆盖底层 features.memory/use 配置。
+    // Turning on Settings only releases the master switch; it does not override the underlying features.memory/use configuration.
     expect(createdAppOptions[1]?.runtimeConfig?.memory?.enabled).toBeUndefined();
   });
 
@@ -4009,7 +4009,7 @@ describe("ZCodeProtocolAgentServer", () => {
       version: "test-version",
     });
     server.setNotificationSink(() => {
-      // 保持 Host 连接但故意不响应，覆盖 transport 不断开时的生命周期收口。
+      // Keep the Host connection but deliberately do not respond, covering the lifecycle wrap-up when the transport does not disconnect.
     });
 
     try {
@@ -4673,9 +4673,9 @@ describe("ZCodeProtocolAgentServer", () => {
       );
 
       expect(appOptions[0]?.runtimeConfig).toMatchObject({ mode: "plan" });
-      // 当前结构只能来自 Session 当前选择 entry；Protocol 不再把历史消息伪装成当前选择。
+      // The current structure can only come from the Session's current-selection entry; Protocol no longer disguises history messages as the current selection.
       expect(appOptions[0]?.runtimeConfig?.modelSelection).toBeUndefined();
-      // Process Registry 在协议入口启动时已经就绪，冷恢复不再创建旧 deferred adapter。
+      // The Process Registry is already ready when the protocol entry starts; cold restore no longer creates the old deferred adapter.
       expect(appOptions[0]?.modelAdapter).toBeUndefined();
       expect(resumed.settings).toMatchObject({
         mode: { current: "plan" },
@@ -4715,10 +4715,10 @@ describe("ZCodeProtocolAgentServer", () => {
   });
 
   it("resume 回填持久化 taskType：workflow_child 绝不落回缺省 interactive", async () => {
-    // Bug 根因（2026-08-24 实测）：resume 物化 record 时丢掉了持久化的 taskType（fork 路径
-    // 一直带着，resume 路径没带），createRecord 落回缺省 "interactive"。于是被 resume 的
-    // dwf actor 会话通过 isTaskListSessionType 的筛，经 getSessionWorkspaceId 漏进
-    // sessions-index，desktop 任务列表里长出 25 条「workflow actor actor#N@k」假任务。
+    // Bug root cause (observed 2026-08-24): materializing the record on resume dropped the persisted taskType (the fork
+    // path always carried it, the resume path did not), so createRecord fell back to the default "interactive". The resumed
+    // dwf actor session then passed the isTaskListSessionType filter and, via getSessionWorkspaceId, leaked into
+    // sessions-index, growing 25 fake "workflow actor actor#N@k" tasks in the desktop task list.
     const store = createSqliteSessionStore({ dbPath: ":memory:" });
     const sessionId = "sess_dwf_actor_tasktype" as SessionId;
     try {
@@ -5611,9 +5611,9 @@ describe("ZCodeProtocolAgentServer", () => {
     }
   });
 
-  // M5 ③-4：session/rewind、session/rewindCascade 旧协议词已删除（v4 fork/edit/retry
-  // 经原生 handler 直发 `/rewind conversation <messageId>` slash command，见
-  // zcode-protocol-v4/commands/handlers/fork-edit-retry.ts）；本用例收敛为 compact 单验证。
+  // M5 ③-4: the old protocol words session/rewind and session/rewindCascade have been removed (v4 fork/edit/retry
+  // sends the `/rewind conversation <messageId>` slash command directly through the native handler, see
+  // zcode-protocol-v4/commands/handlers/fork-edit-retry.ts); this case narrows down to compact-only verification.
   it("runs compact through the explicit session protocol method", async () => {
     const submittedPrompts: string[] = [];
     const server = new ZCodeProtocolAgentServer({
@@ -7556,8 +7556,8 @@ describe("ZCodeProtocolAgentServer", () => {
                 targetMessageId: target?.targetMessageId,
               });
               const forkedSessionId = "sess_forked" as SessionId;
-              // fake 必须遵守 core fork 契约：返回前 child 已落 store。旧夹具只返回 id，
-              // registerForkedSession 按生产语义回读时必然报 Persisted child not found。
+              // The fake must honor the core fork contract: the child is already in the store before returning. The old fixture
+              // returned only the id, so registerForkedSession, reading back with production semantics, would inevitably report Persisted child not found.
               if (!(await store.getSession(forkedSessionId))) {
                 await store.createSession({
                   id: forkedSessionId,

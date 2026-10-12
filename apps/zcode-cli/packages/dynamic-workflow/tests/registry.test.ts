@@ -13,12 +13,12 @@ import {
 } from "../src/facade/registry.js";
 
 /**
- * world-read 注册表：(facade 容器, 成员) → op 的唯一真源（docs/execution-engine.md 的
- * "The world-read registry"）。这里钉住的核心性质是**身份按声明容器判定，不按裸名字**——
- * `git.log` 与顶层 `log()` 撞名，这是下一步加 `git.*` 时唯一会伤人的地方。
+ * world-read registry: the single source of truth for (facade container, member) → op (docs/execution-engine.md's
+ * "The world-read registry"). The core property pinned here is **identity is decided by declaring container, not by bare name** —
+ * `git.log` and top-level `log()` share a name, which is the only place adding `git.*` next could hurt.
  */
 
-/** 编译一份脚本，返回一个"按名字找到该标识符/属性名节点的 symbol"的查询器。 */
+/** Compile a script and return a lookup that finds the symbol of nodes matching a given identifier/property name. */
 function symbols(scriptText: string): (name: string) => ts.Symbol | undefined {
   const { program, scriptFile } = createWorkflowProgram(scriptText);
   const checker = program.getTypeChecker();
@@ -43,21 +43,22 @@ describe("world-read registry — pure lookup", () => {
     expect(worldReadOp("git", "diff")).toBe("git-diff");
     expect(worldReadOp("git", "status")).toBe("git-status");
     expect(worldReadOp("git", "log")).toBe("git-log");
-    // 无容器（顶层函数）永不命中：world-read 一律挂在 facade 容器对象上。
+    // No container (top-level function) never matches: world-reads always hang off facade container objects.
     expect(worldReadOp(undefined, "glob")).toBeUndefined();
-    // 同名成员挂在别的容器上就不是同一个 op —— 这正是 `git.log` vs 顶层 `log()` 的形状。
+    // The same member name on a different container is simply not the same op — exactly the `git.log` vs top-level `log()` shape.
     expect(worldReadOp("git", "glob")).toBeUndefined();
     expect(worldReadOp("files", "log")).toBeUndefined();
     expect(worldReadOp("files", "nope")).toBeUndefined();
   });
 
   it("gives every op a distinct name and every member a distinct one too", () => {
-    // op 名唯一：它是 journal 的 inputHash 与 Boundary A 的线上词汇表。
+    // op names are unique: they are the journal's inputHash and Boundary A's wire vocabulary.
     const ops = WORLD_READ_REGISTRY.map((row) => row.op);
     expect(new Set(ops).size).toBe(ops.length);
-    // 成员名跨容器唯一：facade-misuse 的 retyping 关卡按裸名字反查候选，只为把名字填进
-    // 诊断文案。重名不会让判定出错，但会让文案引出的名字二义（见 facade-misuse 的
-    // facadeSiteMember 注释）。破坏它就得把容器也穿进那一层。
+    // member names are unique across containers: facade-misuse's retyping gate looks candidates up by bare
+    // name only to fill the name into diagnostic copy. A collision would not break the decision, but it would
+    // make the name quoted in the copy ambiguous (see the facadeSiteMember comment in facade-misuse).
+    // Breaking this property would mean threading the container into that layer too.
     const members = WORLD_READ_REGISTRY.map((row) => row.member);
     expect(new Set(members).size).toBe(members.length);
   });
@@ -65,23 +66,23 @@ describe("world-read registry — pure lookup", () => {
   it("derives the site-producing member set from the table (plus ask)", () => {
     for (const row of WORLD_READ_REGISTRY) {
       expect(SITE_MEMBER_NAMES.has(row.member)).toBe(true);
-      // 每一行的 op 都能被 (容器, 成员) 反查出来 —— 表就是唯一真源。
+      // Every row's op can be looked back up by (container, member) — the table is the single source of truth.
       expect(worldReadOp(row.container, row.member)).toBe(row.op);
     }
     expect(SITE_MEMBER_NAMES.has("ask")).toBe(true);
-    // `"log"` **在**这个集合里，因为 `git.log` 在表里——而顶层 `log()` 依然不产生站点。
-    // 这一条就是这份裸名字清单只能当候选键、绝不能当身份依据的证明。
+    // `"log"` **is** in this set, because `git.log` is in the table — while the top-level `log()` still produces no site.
+    // This is precisely the proof that this bare-name list can only serve as a candidate key, never as an identity criterion.
     expect(SITE_MEMBER_NAMES.has("log")).toBe(true);
     expect(isSiteProducing(undefined, "log")).toBe(false);
   });
 
   it("treats report as a site-producing top-level function and log as not", () => {
-    // report 与 log 都是**顶层无容器**的 facade 函数，分野只有一条：report 有一行按站点
-    // 建键的 journal，所以 facade-siting 规则（只许直接调用）必须约束它。
+    // report and log are both **top-level containerless** facade functions; the only dividing line is that report
+    // has a journal keyed by site, so the facade-siting rule (direct calls only) must constrain it.
     expect(isSiteProducing(undefined, "report")).toBe(true);
     expect(isSiteProducing(undefined, "log")).toBe(false);
     expect(siteProducingFunctionOfSymbol(undefined)).toBeUndefined();
-    // report 不是 world-read，也不是任何容器的成员——不该出现在那两张表里。
+    // report is not a world-read and not a member of any container — it must not appear in those two tables.
     expect(worldReadOp(undefined, "report")).toBeUndefined();
     expect(SITE_MEMBER_NAMES.has("report")).toBe(false);
   });
@@ -93,8 +94,8 @@ describe("world-read registry — pure lookup", () => {
     expect(isSiteProducing("files", "grep")).toBe(true);
     expect(isSiteProducing("git", "log")).toBe(true);
     expect(isSiteProducing(undefined, "log")).toBe(false);
-    // 关键防线：一个**没有容器**的 `log` 不产生站点。`git.log` 已经落地，所以这一条正在
-    // 现役地阻止"每条进度消息都铸出一个 world-read 站点"。
+    // Key defense: a `log` **without a container** produces no site. `git.log` has already landed, so this line is
+    // actively preventing "every progress message minting a world-read site".
     expect(worldReadOp(undefined, "log")).toBeUndefined();
   });
 });
@@ -111,9 +112,9 @@ describe("world-read registry — declaration-based resolution", () => {
   it("resolves a facade member's declaring container from its declaration", () => {
     expect(facadeMemberOf(lookup("glob"))).toEqual({ container: "files", member: "glob" });
     expect(facadeMemberOf(lookup("read"))).toEqual({ container: "files", member: "read" });
-    // `ask` 声明在 `declare interface Agent` 里 → 容器是 Agent（接口容器）。
+    // `ask` is declared in `declare interface Agent` → its container is Agent (an interface container).
     expect(facadeMemberOf(lookup("ask"))).toEqual({ container: "Agent", member: "ask" });
-    // 顶层 facade 函数无容器 —— 这就是 `git.log` 不会与它相撞的原因。
+    // Top-level facade functions have no container — that is why `git.log` cannot collide with them.
     expect(facadeMemberOf(lookup("log"))).toEqual({ container: undefined, member: "log" });
     expect(facadeMemberOf(lookup("agent"))).toEqual({ container: undefined, member: "agent" });
   });
@@ -125,7 +126,7 @@ describe("world-read registry — declaration-based resolution", () => {
     expect(siteProducingFunctionOfSymbol(fns("report"))).toBe("report");
     expect(siteProducingFunctionOfSymbol(fns("agent"))).toBe("agent");
     expect(siteProducingFunctionOfSymbol(fns("log"))).toBeUndefined();
-    // 容器成员走另一条路（worldReadOp / ASK_MEMBER），不该从这个入口命中。
+    // Container members take the other path (worldReadOp / ASK_MEMBER) and must not match through this entry.
     expect(siteProducingFunctionOfSymbol(fns("ask"))).toBeUndefined();
   });
 
@@ -146,9 +147,9 @@ describe("world-read registry — declaration-based resolution", () => {
   });
 
   it("resolves the two `log` declarations to different identities in one script", () => {
-    // 同一份脚本里两个 `log`：`git.log` 的容器是 git（→ "git-log" op），顶层 `log` 无容器
-    // （→ 不是 world-read）。symbols() 的查询器按名字取**首次**出现的 symbol，所以两侧要
-    // 分开取：先只放顶层 log，再只放 git.log。
+    // Two `log`s in the same script: `git.log`'s container is git (→ "git-log" op), the top-level `log` has no container
+    // (→ not a world-read). symbols()' lookup takes the **first** symbol seen per name, so the two sides must be
+    // fetched separately: first with only the top-level log, then with only git.log.
     const topLevel = symbols(`log("progress");\nreturn 1;\n`);
     expect(facadeMemberOf(topLevel("log"))).toEqual({ container: undefined, member: "log" });
     expect(worldReadOpOfSymbol(topLevel("log"))).toBeUndefined();
@@ -185,7 +186,7 @@ describe("world-read registry — declaration-based resolution", () => {
   });
 
   it("does not resolve a script-local `git`-shaped object (shadowing the facade)", () => {
-    // 一个自建的 `myGit.status()`：名字与容器形状都对得上，但声明不在 facade .d.ts 里。
+    // A hand-built `myGit.status()`: name and container shape both line up, but the declaration is not in the facade .d.ts.
     const local = symbols(
       `const myGit = { status(): string { return "clean"; }, log(n: number): number { return n; } };\n` +
         `return myGit.status() + String(myGit.log(1));\n`,
@@ -206,7 +207,7 @@ describe("world-read registry — site collection uses it", () => {
     );
     expect(table.worldReads.map((site) => site.op)).toEqual(["glob", "read"]);
     expect(table.worldReads.map((site) => site.id)).toEqual(["world-read#1", "world-read#2"]);
-    // 实参按位置收集（多参 op 的接缝；1 参 op 就是单元素数组）。
+    // Args are collected positionally (the seam for multi-arg ops; a 1-arg op is a single-element array).
     expect(table.worldReads[0]?.args).toHaveLength(1);
   });
 
@@ -228,7 +229,7 @@ describe("world-read registry — site collection uses it", () => {
       "git-status",
       "git-log",
     ]);
-    // 一个**共享的** per-kind 计数器（`world-read#N` 带 op 字段），不是 `grep#N`/`git-log#N`。
+    // A **shared** per-kind counter (`world-read#N` with an op field), not `grep#N`/`git-log#N`.
     expect(table.worldReads.map((site) => site.id)).toEqual([
       "world-read#1",
       "world-read#2",
@@ -236,7 +237,7 @@ describe("world-read registry — site collection uses it", () => {
       "world-read#4",
       "world-read#5",
     ]);
-    // 元数按位置原样收集：可选实参缺席就是更短的数组（journal 键因此可区分）。
+    // Arity is collected positionally as-is: an absent optional argument is just a shorter array (which keeps journal keys distinguishable).
     expect(table.worldReads.map((site) => site.args.length)).toEqual([2, 0, 2, 0, 1]);
   });
 
@@ -252,9 +253,9 @@ describe("world-read registry — site collection uses it", () => {
   });
 
   it("mints a site for git.log and none for the top-level log, in one script", () => {
-    // 这是注册表按容器建键的可执行证明。裸名字集合的两种下场都会在这里露出来：
-    // 要么 `log("progress")` 也被铸成 world-read 站点（站点数 2），要么 `git.log` 一个站点
-    // 都没有（站点数 0）——而没有站点的 facade 调用就没有 journal 键。
+    // This is the executable proof of the registry being keyed by container. Either fate of the bare-name set
+    // would show up here: either `log("progress")` also gets minted as a world-read site (2 sites), or `git.log`
+    // gets no site at all (0 sites) — and a facade call without a site has no journal key.
     const table = collectSites(
       createWorkflowProgram(
         `log("progress");\n` +

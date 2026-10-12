@@ -45,15 +45,16 @@ describe("会话区 background subagent 429 错误展示 E2E", () => {
 
     const telemetryCapture = await beginConversationTelemetryCapture();
     const prompt = `${PARENT_MARKER}: launch one background Agent and finish after its failed task notification with ${PARENT_DONE}.`;
-    // Bug 原因：v4 已删除 chat-input/chat-view，旧 formal case 在 before hook 等待
-    // legacy composer，真实场景从未执行。发送、timeline、session 切换统一走 v4 contract。
+    // Bug cause: v4 has removed chat-input/chat-view, so the old formal case waited in the before hook for the legacy
+    // composer and the real scenario never executed. Sending, timeline, and session switching all go through the v4
+    // contract.
     await sendV4Prompt(prompt);
     await waitForV4TimelineContaining(PARENT_MARKER, 60000);
     await waitForToolCallBlockByToolCallId(TOOL_CALL_ID, 60000);
 
-    // Bug 根因：旧断言直接等待 parent notification；失败时无法判断 child 物理请求
-    // 是否到达 replay server。先建立 child request 屏障，让 shard 日志明确区分网络
-    // 发送停滞与 429 terminal/notification 投影停滞。
+    // Bug root cause: the old assertion waited directly on the parent notification; on failure there was no way to
+    // tell whether the child's physical request reached the replay server. Establish the child request barrier first,
+    // so shard logs clearly separate a network send stall from a 429 terminal/notification projection stall.
     await waitForUpstreamRequest(
       { lastUserMessageIncludes: [CHILD_MARKER] },
       "background subagent child 请求没有到达 replay server",
@@ -76,8 +77,9 @@ describe("会话区 background subagent 429 错误展示 E2E", () => {
       message_completion: 2,
     });
     const reports = await readConversationReportRequests(telemetryCapture);
-    // 早期 staging 断言没有后台 step；后续首终态结算已要求失败也报告零用量 Agent 汇总。
-    // 请求返回 429 没有 usage，不能把失败调用计成已确认的计费用量。
+    // Early staging assertions had no background step; the later first-terminal-state settlement already requires a
+    // zero-usage Agent summary to be reported even on failure.
+    // A 429 response carries no usage, so a failed call must not be counted as confirmed billable usage.
     expect(
       reports.filter(
         (report) =>
@@ -137,15 +139,16 @@ describe("会话区 background subagent 429 错误展示 E2E", () => {
 });
 
 async function assertFailedAgentSurface(stage: "live" | "restored") {
-  // Bug 原因：child 429 与 parent failed notification 已持久化成功，但 v4 Agent
-  // 卡片投影仍保留 completed。这里直接约束用户可见状态，避免继续依赖已删除的
-  // legacy renderer store 投影而掩盖真实产品回归。
+  // Bug cause: the child 429 and the parent failed notification persisted successfully, but the v4 Agent card
+  // projection still kept completed. Constrain the user-visible state directly here, instead of continuing to rely on
+  // the deleted legacy renderer store projection and masking a real product regression.
   let latestDiagnostics: Awaited<ReturnType<typeof getToolCallDiagnostics>> | null = null;
   try {
     await browser.waitUntil(
       async () => {
-        // Bug 根因：恢复后的 completed turn 默认折叠，失败 Agent 行尚未挂载；旧断言
-        // 先查 block 再展开 history，因而把已持久化的 429 状态误报为 restore 丢失。
+        // Bug root cause: a restored completed turn is collapsed by default and the failed Agent row is not mounted
+        // yet; the old assertion checked the block before expanding history, misreporting the already-persisted 429
+        // state as lost on restore.
         await expandAssistantHistoriesWithContent();
         latestDiagnostics = await getToolCallDiagnostics({
           type: "toolCallId",
@@ -166,9 +169,10 @@ async function assertFailedAgentSurface(stage: "live" | "restored") {
   }
 
   const blockSnapshot = await waitForToolCallBlockByToolCallId(TOOL_CALL_ID, 30000);
-  // Bug 根因：Agent 卡产品合同已改成“父对话单行摘要 + 右侧 child session”，
-  // canToggle=false，不再渲染可展开的 tool-summary-trigger。旧 E2E 继续展开必然
-  // 假失败；429 原始错误由 provider request 与失败状态 tooltip 两层证据约束。
+  // Bug root cause: the Agent card product contract has become "a one-line summary in the parent conversation + a
+  // child session on the right", with canToggle=false, so the expandable tool-summary-trigger is no longer rendered.
+  // The old E2E expanding it is a guaranteed false failure; the raw 429 error is constrained by two layers of
+  // evidence: the provider request and the failed-status tooltip.
   const sidePaneAction = await $(`[data-testid="${blockSnapshot.testId}"]`).$(
     `[data-testid^="${TID_V4_SUBAGENT_OPEN_SIDE_PANE}-"]`,
   );
@@ -176,7 +180,7 @@ async function assertFailedAgentSurface(stage: "live" | "restored") {
     timeout: 10000,
     timeoutMsg: `${stage} Agent 卡没有右侧 child session 入口`,
   });
-  // tooltip trigger 可能只渲染图标而没有可读文本；可见文案以整张 Agent 卡为准。
+  // The tooltip trigger may render only an icon with no readable text; judge the visible copy by the whole Agent card.
   expect(["执行失败", "Failed"].some((label) => blockSnapshot.text.includes(label))).toBe(true);
   const block = await $(`[data-testid="${blockSnapshot.testId}"]`);
   const failedStatus = await block.$('[data-slot="tooltip-trigger"]');
@@ -184,7 +188,8 @@ async function assertFailedAgentSurface(stage: "live" | "restored") {
     timeout: 10000,
     timeoutMsg: `${stage} Agent 卡没有失败 tooltip trigger`,
   });
-  // E2E 的系统语言跟随 runner；两种受支持语言都必须保留既有失败文案与同一 hover 交互。
+  // The E2E system language follows the runner; both supported languages must keep the existing failure copy and the
+  // same hover interaction.
   await hoverFailedAgentStatus(blockSnapshot.testId, stage);
   await $('[data-testid^="v4-session-pane-"]').moveTo({
     xOffset: 20,
@@ -200,9 +205,10 @@ async function hoverFailedAgentStatus(
   stage: "live" | "restored",
   attempt = 1,
 ): Promise<void> {
-  // Bug 根因：卡片展开和流式收口会让 Radix trigger 重挂载；长批次里单次 moveTo
-  // 可能落在旧节点上，或者指针仍在相同坐标而没有新的 pointerenter。每次都从当前
-  // DOM 重新取 trigger，先移出卡片再做真实 hover，并只接受当前可见的 tooltip。
+  // Bug root cause: card expansion and streaming close-out can remount the Radix trigger; in a long batch a single
+  // moveTo may land on a stale node, or the pointer may sit at the same coordinates without a fresh pointerenter.
+  // Each attempt re-fetches the trigger from the current DOM, moves off the card first, then does a real hover, and
+  // only accepts a currently visible tooltip.
   const pane = await $('[data-testid^="v4-session-pane-"]');
   await pane.moveTo({ xOffset: 20, yOffset: 20 });
   const currentBlock = await $(`[data-testid="${blockTestId}"]`);
@@ -228,8 +234,9 @@ async function hoverFailedAgentStatus(
           });
           return visibleTooltip?.innerText ?? null;
         });
-        // Radix 会同时维护展示内容和可访问性镜像，innerText 在部分 Chromium
-        // 时序下会返回两份相同文案；产品约束是可见 tooltip 完整包含原始错误。
+        // Radix maintains both the displayed content and an accessibility mirror, and innerText can return two copies
+        // of the same text under some Chromium timings; the product constraint is that the visible tooltip fully
+        // contains the original error.
         return normalizeText(latestTooltipText ?? "").includes(normalizeText(PROVIDER_ERROR));
       },
       {

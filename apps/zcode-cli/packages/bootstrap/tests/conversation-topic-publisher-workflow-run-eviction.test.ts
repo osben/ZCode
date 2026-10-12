@@ -1,13 +1,18 @@
-// ConversationTopicPublisher × 淘汰（DESIGN-2 §2/§3）。
-// 归约在表满时不再只是"拒新"，而是**摘掉**终态条目给活的新人腾位，于是键级增量第一次带上
-// `removedActors` / `removedNodes`。这一套钉的是三件此前不可能发生、也因此从未被测过的事：
-//   1. ingest 快路径的字节上界在「一条 op 既删又加、还第一次带上 unlistedByPhase / truncated」
-//      之后仍然是上界——它算松了就等于把 16MiB 闸门算松了；
-//   2. 旧消费者收的是整键 patch（它连 `workflowRun.*` 的判别式都不认），一批淘汰之后它必须仍与
-//      权威态收敛到同一份旧界裁剪；
-//   3. 溢出过的 run 重臂时**一条 op 清空两张表**（各 1024 条删除）——这是全协议最大的一条 op，
-//      它撞破 wire schema 的 .max、订阅者 500 op / 1 MiB 任何一道，那条订阅就此静默。
-// 界不从 CLI 这一侧注入（投影调归约时不传 limits），所以这里跑的是**真界 1024**。
+// ConversationTopicPublisher × eviction (DESIGN-2 §2/§3).
+// When the table is full the reducer no longer just "rejects new" but **removes** terminal entries to make room
+// for live newcomers, so key-level deltas carry `removedActors` / `removedNodes` for the first time. This suite
+// pins three things that previously could not happen and were therefore never tested:
+//   1. The ingest fast path's byte upper bound remains an upper bound after "one op both deletes and adds, and
+//      carries unlistedByPhase / truncated for the first time" — if it were computed loosely, the 16MiB gate
+//      would be computed loosely too;
+//   2. A legacy consumer receives whole-key patches (it doesn't even recognize the `workflowRun.*` discriminant),
+//      and after a batch of evictions it must still converge with the authoritative state onto the same legacy-cap
+//      clamp;
+//   3. When an overflowed run re-arms, **one op clears both tables** (1024 deletions each) — the largest single op
+//      in the whole protocol; if it breaches the wire schema's .max or either subscriber bound of 500 ops / 1 MiB,
+//      that subscription goes silent.
+// The cap isn't injected from the CLI side (the projection calls the reducer without limits), so what runs here is
+// the **real cap of 1024**.
 import { describe, expect, it } from "vitest";
 import type { EventId, SessionEvent, SessionId, TraceId } from "@zcode/contracts";
 import { SessionEventType } from "@zcode/contracts";
@@ -31,21 +36,22 @@ import {
 import { ConversationTopicPublisher } from "../src/zcode-protocol-v4/index.js";
 
 const RUN_ID = "dwfrun-1";
-/** 填满之后再来这么多个活的新人：每一个都要归约摘掉一个已完成组才坐得下。 */
+/** This many live newcomers arrive after the table is full: each needs the reducer to remove one finished group to fit. */
 const EVICTION_ROUNDS = 16;
 const MODERN = "sub-epoch-1-1";
 const LEGACY = "sub-epoch-1-2";
 
-/** 保守上界是私有字段；断言它的**方向**没有别的观察面（与既有那一组同一个口子）。 */
+/** The conservative upper bound is a private field; asserting its **direction** has no other observation surface (the same opening as the existing suite). */
 function upperBoundOf(publisher: ConversationTopicPublisher): number {
   return (publisher as unknown as { wireSnapshotBytesUpperBound: number })
     .wireSnapshotBytesUpperBound;
 }
 
 /**
- * 取样前把上界**按回真值**。不按回去这条测试就不咬人：快路径只加不减，跑到腾位窗口时上界已经
- * 漂到精确值的四倍上，那时候 `上界 ≥ 精确值` 连一个错得离谱的记账都拦不住。按回真值之后，
- * `上界 ≥ 精确值` 恰好就是这一步要证的那句话——这一条 op 报出来的增长盖得住快照真的长了多少。
+ * Pin the upper bound **back to truth** before sampling. Without pinning, this test can't bite: the fast path only
+ * adds and never removes, so by the eviction window the bound has drifted to about four times the exact value, at
+ * which point `bound ≥ exact` couldn't stop even a wildly wrong accounting. After pinning to truth, `bound ≥ exact`
+ * is precisely the statement this step proves — the growth one op reports covers how much the snapshot really grew.
  */
 function pinUpperBoundToTruth(publisher: ConversationTopicPublisher): void {
   (publisher as unknown as { wireSnapshotBytesUpperBound: number }).wireSnapshotBytesUpperBound =
@@ -58,7 +64,8 @@ function snapshotOf(frame: ConversationTopicFrame | null): ConversationSnapshot 
 }
 
 function deltasOf(frame: ConversationTopicFrame | null): ConversationDelta[] {
-  // deltas 帧本身就是"没有 overflow"的可观察面：任一道兜底响了，这里来的会是 snapshot。
+  // The deltas frame is itself the observable surface of "no overflow": if any fallback fired, what arrives here
+  // would be a snapshot.
   expect(frame?.payload.kind).toBe("deltas");
   return (frame!.payload as { kind: "deltas"; deltas: ConversationDelta[] }).deltas;
 }
@@ -69,11 +76,13 @@ function onlyUpdate(deltas: readonly ConversationDelta[]): WorkflowRunUpdatedDel
 }
 
 /**
- * 同一批 op，但两张删除表被抹掉——「删除是**承重**的」这句话的反证。
+ * The same set of ops, but with both removal tables wiped — the counter-proof of "removals are **load-bearing**".
  *
- * 为什么每条收敛断言都配一条：一个把 op 拆开重装、却漏掉这两个新键的消费者（投影、旧消费者
- * 编码、hydration 记账，任何一处），产出的状态在别处一切正常，只是表上多出几条本该走掉的条目。
- * 不摆出这个反面，`施加后与权威态一致` 在删除被丢掉时照样能过——它证明不了自己在证明什么。
+ * Why every convergence assertion gets a companion: a consumer that takes the op apart and reassembles it but
+ * misses these two new keys (the projection, legacy consumer encoding, hydration accounting — anywhere) produces
+ * a state that looks fine everywhere else, except the table carries a few entries that should have left. Without
+ * this negative, "applied state equals the authoritative state" would still pass when removals are dropped — it
+ * couldn't prove what it claims to prove.
  */
 function withoutRemovals(deltas: readonly ConversationDelta[]): ConversationDelta[] {
   return deltas.map((delta) => {
@@ -85,9 +94,9 @@ function withoutRemovals(deltas: readonly ConversationDelta[]): ConversationDelt
 
 interface EvictionScenario {
   events: readonly SessionEvent[];
-  /** 腾位窗口里逐条事件取样的 (保守上界, 精确字节数)，取样前上界已按回真值。 */
+  /** (conservative upper bound, exact bytes) sampled event by event across the eviction window; the bound is pinned to truth before sampling. */
   boundSamples: readonly { upper: number; exact: number }[];
-  /** 重臂那一条事件的同一组读数，外加它之前的精确字节数（这一步快照是**变小**的）。 */
+  /** The same readings for the re-arm event, plus the exact bytes before it (this step's snapshot **shrinks**). */
   resumeSample: { upper: number; exact: number; before: number };
   modernBase: ConversationSnapshot;
   legacyBase: ConversationSnapshot;
@@ -102,8 +111,9 @@ interface EvictionScenario {
 let cached: EvictionScenario | undefined;
 
 /**
- * 填满 → 腾位 → 重臂的一整段。跑一遍三千多条事件要半秒，所以按模块记忆一次，三条测试各看
- * 自己那一面；它们读的都是这一次运行录下来的事实，没有一条会回头改它。
+ * The whole fill → evict → re-arm stretch. One pass over three thousand events takes half a second, so it is
+ * memoized per module and each of the three tests looks at its own side; they all read facts recorded by this
+ * single run, and none of them writes back.
  */
 function scenario(): EvictionScenario {
   if (cached) return cached;
@@ -131,7 +141,7 @@ function scenario(): EvictionScenario {
       payload,
     });
   };
-  /** 一个子代理干完一件活：这三条事件恰好造出一个**已完成组**（腾位的受害者）。 */
+  /** One subagent finishing one unit of work: these three events create exactly one **finished group** (the eviction victim). */
   const finishedGroup = (ordinal: number, phaseName: string): void => {
     const actor = { siteId: "agent#1", ordinal };
     const instance = { siteId: "ask#1", ordinal };
@@ -146,14 +156,15 @@ function scenario(): EvictionScenario {
     finishedGroup(ordinal, `phase-${ordinal % 4}`);
   }
 
-  // 订阅在填满之后、腾位之前：两个订阅者手上的基线是"一条都还没被摘掉"的那张表。
+  // Subscription happens after the fill, before the evictions: both subscribers' baselines are the table with
+  // "not a single entry removed yet".
   const modernBase = snapshotOf(
     publisher.subscribe({ connectionId: "modern", workflowRunDeltas: true }).frame,
   );
   const legacyBase = snapshotOf(publisher.subscribe({ connectionId: "legacy" }).frame);
 
   const boundSamples: { upper: number; exact: number }[] = [];
-  /** 一条事件一次取样，取样前把上界按回真值（见 {@link pinUpperBoundToTruth}）。 */
+  /** One sample per event; the bound is pinned to truth before sampling (see {@link pinUpperBoundToTruth}). */
   const sampled = (eventType: string, payload: Record<string, unknown>): void => {
     pinUpperBoundToTruth(publisher);
     progress(eventType, payload);
@@ -165,8 +176,9 @@ function scenario(): EvictionScenario {
   for (let round = 1; round <= EVICTION_ROUNDS; round += 1) {
     const ordinal = WORKFLOW_RUNS_LIMITS.maxNodes + round;
     const actor = { siteId: "agent#1", ordinal };
-    // actor 表满 → 摘掉一个已完成组（actor 与它那条节点同时离场），新人坐进来；
-    // 随后这条 node-queued 落在刚空出来的节点位子上。
+    // actor table full → one finished group is removed (the actor and its node leave together), the newcomer
+    // takes the seat;
+    // this node-queued then lands on the just-freed node slot.
     sampled("actor-created", { actor, name: `agent-${ordinal}`, phaseName: "late" });
     sampled("node-queued", {
       instance: { siteId: "ask#1", ordinal },
@@ -179,7 +191,7 @@ function scenario(): EvictionScenario {
   const evictionLegacy = deltasOf(publisher.flush(LEGACY));
   const evictedRuns = publisher.getSnapshot().workflowRuns!;
 
-  // 重臂：溢出过的 run 在新的一世里从空表重开（workflowRunTablesForNewLife）。
+  // Re-arm: the overflowed run restarts from empty tables in a new life (workflowRunTablesForNewLife).
   pinUpperBoundToTruth(publisher);
   const resumeExactBefore = publisher.getWireSnapshotLogicalBytes();
   progress("run-started", { runId: RUN_ID });
@@ -208,14 +220,16 @@ function scenario(): EvictionScenario {
   return cached;
 }
 
-describe("ingest 快路径 × 腾位", () => {
+describe("ingest fast path × eviction", () => {
   /**
-   * 快路径把「这批 op 的字节数」当成快照增长的上界。腾位给这条论证添了两处新形状：一条 op 同时
-   * 带删除与 upsert，以及 `unlistedByPhase` / `truncated` 两个 header 键在某一步**第一次**出现。
-   * 这里在真界 1024 上逐步比对上界与精确值——上界一旦低于精确值，16MiB 闸门就被算松了，而那道闸
-   * 关不住的后果是整帧发不出去。
+   * The fast path treats "this batch of ops' bytes" as an upper bound on snapshot growth. Eviction adds two new
+   * shapes to that argument: one op carrying both deletions and upserts, and the two header keys `unlistedByPhase`
+   * / `truncated` appearing **for the first time** at some step. Here the bound and the exact value are compared
+   * step by step on the real cap of 1024 — the moment the bound dips below the exact value, the 16MiB gate has
+   * been computed loosely, and the consequence of that gate failing to hold is the whole frame never going out.
    *
-   * （同一条论证在小界上的逐字节形态见 conversation-workflow-run-deltas.test.ts 的 property 测试。）
+   * (The byte-by-byte form of the same argument on a small cap is in the property tests of
+   * conversation-workflow-run-deltas.test.ts.)
    */
   it("真界 1024 上的每一次腾位：保守上界都不低于精确字节数", () => {
     const { boundSamples } = scenario();
@@ -223,17 +237,21 @@ describe("ingest 快路径 × 腾位", () => {
     for (const sample of boundSamples) {
       expect(sample.upper).toBeGreaterThanOrEqual(sample.exact);
     }
-    // 取样前上界按回了真值，所以富余就是「这条 op 报的增长」减去「快照真的长了多少」——一条腾位
-    // op 只带一个 actor、一条节点和两条删除，富余是几百字节量级。把它钉住，这条测试才咬得住：
-    // 记账要是把量级算错，上面那串断言立刻翻；要是有人把上界改宽成整份快照，这一条翻。
+    // The bound was pinned back to truth before sampling, so the slack is "the growth this op reports" minus "how
+    // much the snapshot really grew" — an eviction op carries one actor, one node, and two deletions, so the slack
+    // is on the order of a few hundred bytes. Pinning it is what makes this test bite: if the accounting gets the
+    // magnitude wrong, the assertions above flip immediately; if someone widens the bound to the whole snapshot,
+    // this one flips.
     const slack = boundSamples.map((sample) => sample.upper - sample.exact);
     expect(Math.max(...slack)).toBeLessThan(2048);
   });
 
   /**
-   * 删除只会让快照变小，所以带 1024 + 1024 条删除的重臂 op 上界**极度**宽松（它把两千条删除的
-   * 字节加进了一份刚缩掉二十多万字节的快照）。宽松的方向是安全的那一边——这一条钉的就是方向：
-   * 它只多量一次，绝不会把一条其实很小的 run 判成超限（快路径失手时 ingest 落回精确测量）。
+   * Deletion only shrinks the snapshot, so the re-arm op carrying 1024 + 1024 deletions has an **extremely** loose
+   * bound (it adds two thousand deletions' bytes onto a snapshot that just shrank by over two hundred thousand
+   * bytes). The loose direction is the safe side — and that direction is exactly what this pins:
+   * it only ever over-measures once, and never judges a actually-small run as over-limit (when the fast path
+   * misfires, ingest falls back to exact measurement).
    */
   it("重臂那一条 op：快照缩了，上界只会偏保守", () => {
     const { resumeSample } = scenario();
@@ -246,21 +264,24 @@ describe("ingest 快路径 × 腾位", () => {
     expect(run.actors).toHaveLength(WORKFLOW_RUNS_LIMITS.maxActors);
     expect(run.nodes).toHaveLength(WORKFLOW_RUNS_LIMITS.maxNodes);
     expect(run.truncated).toBe(true);
-    // 每一轮摘掉一个已完成组 = 一个 actor + 它那一条已结算节点。
+    // Each round removes one finished group = one actor + its settled node.
     expect(run.usage.nodesUnlisted).toBe(EVICTION_ROUNDS);
     expect(run.usage.nodesUnlistedSettled).toBe(EVICTION_ROUNDS);
     const byPhase = run.unlistedByPhase ?? [];
     expect(byPhase.reduce((sum, bucket) => sum + bucket.actors, 0)).toBe(EVICTION_ROUNDS);
-    // 新人自己那一格不在里面：被摘掉的是已完成的旧组，不是刚坐下的这些。
+    // The newcomers' own bucket isn't in there: what was removed are finished old groups, not the ones that just
+    // sat down.
     expect(byPhase.some((bucket) => bucket.phaseName === "late")).toBe(false);
   });
 });
 
-describe("旧消费者 × 腾位", () => {
+describe("legacy consumer × eviction", () => {
   /**
-   * 旧消费者连 `workflowRun.*` 的判别式都不认（discriminatedUnion 解析失败 → 整帧被丢），所以
-   * 它收到的是整键 patch。删除因此对它是**免费**的——它拿的本来就是当前投影的整份裁剪。这一条
-   * 钉的就是"免费"不是想当然：一批淘汰之后它的终态必须逐字节等于 clampWorkflowRunsForLegacy(权威态)。
+   * A legacy consumer doesn't even recognize the `workflowRun.*` discriminant (discriminatedUnion parse failure →
+   * whole frame dropped), so what it receives is the whole-key patch. Deletions are therefore **free** for it —
+   * what it gets is already the full clamp of the current projection. This pins that "free" isn't taken for
+   * granted: after a batch of evictions its terminal state must be byte-equal to
+   * clampWorkflowRunsForLegacy(authoritative state).
    */
   it("一批淘汰之后，旧订阅者的终态 = clampWorkflowRunsForLegacy(权威态)", () => {
     const { legacyBase, evictionLegacy, evictedRuns } = scenario();
@@ -272,21 +293,24 @@ describe("旧消费者 × 腾位", () => {
     const run = settled.workflowRuns!.runs[0]!;
     expect(run.actors).toHaveLength(WORKFLOW_RUNS_LEGACY_LIMITS.maxActors);
     expect(run.nodes).toHaveLength(WORKFLOW_RUNS_LEGACY_LIMITS.maxNodes);
-    // 裁剪先留还在动的：腾位腾出来的位子上坐的正是这些，它们不能被"前 256 条"挡在外面。
+    // The clamp keeps the still-moving ones first: these are exactly who sits in the seats freed by eviction, and
+    // they must not be shut out by "the first 256".
     expect(run.nodes.filter((node) => node.phase !== "settled").length).toBe(EVICTION_ROUNDS);
   });
 
   it("增量订阅者施加同一批 op 之后与权威态逐字节一致", () => {
     const { modernBase, evictionModern, evictedRuns } = scenario();
     const op = onlyUpdate(evictionModern);
-    // 合并（规则 6）把这一窗口的 16 次腾位并成一条：删除取并集，upsert 后来者覆盖。
+    // Merging (rule 6) folds this window's 16 evictions into one op: removals take the union, later upserts
+    // override.
     expect(op.removedActors).toHaveLength(EVICTION_ROUNDS);
     expect(op.removedNodes).toHaveLength(EVICTION_ROUNDS);
     expect(workflowRunUpdateWithinWireBounds(op)).toBe(true);
     const settled = applyConversationDeltas(modernBase, evictionModern);
     expect(JSON.stringify(settled.workflowRuns)).toBe(JSON.stringify(evictedRuns));
 
-    // 删除是承重的：丢掉这两个键，表上就多出 16 条本该走掉的条目（见 withoutRemovals）。
+    // Removals are load-bearing: drop these two keys and the table gains 16 entries that should have left (see
+    // withoutRemovals).
     const dropped = applyConversationDeltas(modernBase, withoutRemovals(evictionModern));
     expect(dropped.workflowRuns!.runs[0]!.actors).toHaveLength(
       WORKFLOW_RUNS_LIMITS.maxActors + EVICTION_ROUNDS,
@@ -295,18 +319,20 @@ describe("旧消费者 × 腾位", () => {
   });
 });
 
-describe("重臂：一条 op 清空两张表", () => {
+describe("re-arm: one op clears both tables", () => {
   /**
-   * 溢出过的 run 的 `run-started` 是全协议最大的一条 op：两张满表整个离场，1024 + 1024 条删除
-   * 挤在一条 `workflowRun.updated` 里。它要过四道闸——wire schema 的 `.max(1024)`（已知键上的解析
-   * 错误不会只剥掉一个键，它让整帧被丢）、订阅者的 500 op 与 1 MiB，以及快路径的字节上界。
+   * The overflowed run's `run-started` is the largest single op in the whole protocol: two full tables exit
+   * entirely, 1024 + 1024 deletions packed into one `workflowRun.updated`. It must pass four gates — the wire
+   * schema's `.max(1024)` (a parse error on a known key doesn't just strip one key; it drops the whole frame),
+   * the subscriber's 500 ops and 1 MiB, and the fast path's byte upper bound.
    */
   it("1024 + 1024 条删除仍在 wire 与订阅者两道兜底之内", () => {
     const { resumeModern } = scenario();
     const op = onlyUpdate(resumeModern);
     expect(op.removedActors).toHaveLength(WORKFLOW_RUNS_LIMITS.maxActors);
     expect(op.removedNodes).toHaveLength(WORKFLOW_RUNS_LIMITS.maxNodes);
-    // `unlistedByPhase` 是上一世的"界花在哪里"，随两张表一起离场——增量得说得出它变成了缺席。
+    // `unlistedByPhase` is the previous life's "where the cap was spent"; it leaves with the two tables — the
+    // delta must be able to say it became absent.
     expect(op.cleared).toContain("unlistedByPhase");
     expect(workflowRunUpdateWithinWireBounds(op)).toBe(true);
     expect(() =>
@@ -342,7 +368,8 @@ describe("重臂：一条 op 清空两张表", () => {
     expect(JSON.stringify(modern.workflowRuns)).toBe(JSON.stringify(resumedRuns));
     expect(modern.workflowRuns!.runs[0]!.actors).toHaveLength(0);
     expect(modern.workflowRuns!.runs[0]!.nodes).toHaveLength(0);
-    // 丢掉删除表，新的一世就带着上一世的两张满表开跑——每条实例既被列又被计。
+    // Drop the removal tables and the new life starts carrying the previous life's two full tables — every
+    // instance both listed and counted.
     const dropped = applyConversationDeltas(
       applyConversationDeltas(modernBase, evictionModern),
       withoutRemovals(resumeModern),
@@ -359,9 +386,11 @@ describe("重臂：一条 op 清空两张表", () => {
   });
 
   /**
-   * 冷重物化走的是另一条记账（tryBatchHydration 按 op 逐类累计 wire 字节，而不是每条事件量一次
-   * 整份快照）。一条带两千条删除的 op 在那条路径上是**减小**快照却**增加**估值的唯一形状——
-   * 估值只会偏保守（大不了多量一次），但终态必须一个字节都不差。
+   * Cold re-materialization walks different accounting (tryBatchHydration accumulates wire bytes per op class
+   * instead of measuring the whole snapshot once per event). One op carrying two thousand deletions is the only
+   * shape on that path that **shrinks** the snapshot while **growing** the estimate —
+   * the estimate only errs conservative (worst case it measures once more), but the terminal state must match to
+   * the byte.
    */
   it("冷重物化同一段日志：终态与逐事件 live 逐字节一致", () => {
     const { events, resumedRuns } = scenario();

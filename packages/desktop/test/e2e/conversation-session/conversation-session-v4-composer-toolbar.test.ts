@@ -1,11 +1,11 @@
-// M5 门禁：composer 工具条（模型选择器 / 思考深度 / 模式 / slash 候选面板）。
-// 证据层 L3：
-// 1) slash 面板——展示 CLI builtin 与 App Composer-only catalog（compact/goal/init/plan；无 resume-goal）、模糊过滤、选中插入命令 pill；
-// 2) 模型选择器——切到另一注册模型 + 思考深度后，Composer Draft 立即更新；
-// 3) 模式选择——ChatModeSwitchControl 立即更新同一 Composer Draft；
-// 4) context usage——首轮 ModelComplete 后 usage.contextWindow 投影（data-usage-used>0）。
-// 5) task → draft——已有模型目录时仍独立重新水合 slash 目录，自定义命令继续出现。
-// 6) draft → 已知 task——同一 workspace 的 slash 目录不被 task 导航清空。
+// M5 gate: the composer toolbar (model selector / thought level / mode / slash candidate panel).
+// Evidence tier L3:
+// 1) slash panel — shows the CLI builtin and App Composer-only catalog (compact/goal/init/plan; no resume-goal), fuzzy filtering, and inserting a command pill on selection;
+// 2) model selector — after switching to another registered model + thought level, the Composer Draft updates immediately;
+// 3) mode selection — ChatModeSwitchControl immediately updates the same Composer Draft;
+// 4) context usage — the usage.contextWindow projection after the first ModelComplete (data-usage-used>0).
+// 5) task -> draft — even with a model catalog present, the slash catalog rehydrates independently and custom commands keep appearing.
+// 6) draft -> known task — the same workspace's slash catalog is not cleared by task navigation.
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
@@ -210,7 +210,7 @@ describe("v4 M5 门禁：composer 工具条与 slash 候选面板", () => {
   it("slash 面板：/ 触发目录候选，过滤后选中插入命令", async () => {
     await prepareV4ConversationE2E();
 
-    // `/` 触发：CLI protocol catalog 的内建命令全部出现，UI 私有 alias 不出现。
+    // `/` trigger: all builtin commands of the CLI protocol catalog appear; UI-private aliases do not.
     await setInputValueByTestIdDom(TID_V4_COMPOSER_INPUT, "/", {
       timeout: 15000,
       timeoutMsg: "v4 composer 输入框没有出现或不可输入",
@@ -225,7 +225,7 @@ describe("v4 M5 门禁：composer 工具条与 slash 候选面板", () => {
     expect(optionIds).toContain("slash:plan");
     expect(optionIds).not.toContain("slash:resume-goal");
 
-    // App-only `/plan` 仍按普通 slash catalog mention 插入，允许用户继续填写任务参数。
+    // The App-only `/plan` is still inserted as an ordinary slash catalog mention, letting the user keep filling in task parameters.
     await setInputValueByTestIdDom(TID_V4_COMPOSER_INPUT, "/plan", {
       timeout: 15000,
       timeoutMsg: "v4 composer 输入框没有出现或不可输入",
@@ -241,14 +241,14 @@ describe("v4 M5 门禁：composer 工具条与 slash 候选面板", () => {
       timeoutMsg: "选中 /plan 后没有清空 composer",
     });
 
-    // 模糊过滤：/goa → goal 仍在候选中
+    // Fuzzy filtering: /goa -> goal still among candidates
     await setInputValueByTestIdDom(TID_V4_COMPOSER_INPUT, "/goa", {
       timeout: 15000,
       timeoutMsg: "v4 composer 输入框没有出现或不可输入",
     });
     await waitForV4SlashOption("slash:goal");
 
-    // 选中：插入 `/goal ` 命令文本（mention pill 的 markdown），面板关闭
+    // On selection: the `/goal ` command text is inserted (the mention pill's markdown) and the panel closes
     expect(await clickV4SlashOption("slash:goal")).toBe(true);
     await browser.waitUntil(async () => ((await getV4ComposerText()) ?? "").startsWith("/goal"), {
       timeout: 15000,
@@ -259,7 +259,7 @@ describe("v4 M5 门禁：composer 工具条与 slash 候选面板", () => {
       timeoutMsg: "选中 slash 候选后面板没有关闭",
     });
 
-    // 清空草稿，避免影响后续用例
+    // Clear the draft so later cases are unaffected
     await setInputValueByTestIdDom(TID_V4_COMPOSER_INPUT, "", {
       timeout: 15000,
       timeoutMsg: "v4 composer 输入框没有出现或不可输入",
@@ -269,7 +269,7 @@ describe("v4 M5 门禁：composer 工具条与 slash 候选面板", () => {
   it("模型选择器/思考深度/模式切换 → config 投影更新；usage 投影非零", async () => {
     await ensureCompletedTask();
 
-    // 带最新投影值的分段等待（超时报文里带上 config 现值，便于定位卡在哪一段）。
+    // Segmented waits carrying the latest projection values (the timeout message includes the config's current value, making it easy to locate which segment is stuck).
     const waitForModelConfig = async (
       predicate: (cfg: {
         provider: string | null;
@@ -289,7 +289,7 @@ describe("v4 M5 门禁：composer 工具条与 slash 候选面板", () => {
           { timeout: 30000, timeoutMsg: label },
         );
       } catch (error) {
-        // 失败诊断：v4 命令 ack 环形缓冲（生产 renderer 日志关闭，这是唯一 probe 面）。
+        // Failure diagnostics: the v4 command ack ring buffer (production renderer logging is off; this is the only probe surface).
         const acks = await browser
           .execute(() =>
             JSON.stringify(
@@ -304,7 +304,7 @@ describe("v4 M5 门禁：composer 工具条与 slash 候选面板", () => {
       }
     };
 
-    // 模型选择器：切到已注册的第二个模型 + thought=max
+    // Model selector: switch to the second registered model + thought=max
     await switchV4Model(UPSTREAM_PROVIDER_ID, UPSTREAM_SECONDARY_MODEL, "max");
     await waitForModelConfig(
       (cfg) => cfg.model === UPSTREAM_SECONDARY_MODEL,
@@ -317,7 +317,7 @@ describe("v4 M5 门禁：composer 工具条与 slash 候选面板", () => {
     const cfg = await getV4ModelConfig();
     expect(cfg.provider).toBe(UPSTREAM_PROVIDER_ID);
 
-    // 模式选择：build → plan（只观察 Composer 当前状态）
+    // Mode selection: build -> plan (observing the Composer's current state only)
     await switchV4Mode("plan");
     let latestMode: string | null = null;
     try {
@@ -334,7 +334,7 @@ describe("v4 M5 门禁：composer 工具条与 slash 候选面板", () => {
       });
     }
 
-    // context usage：首轮 ModelComplete 后 usage.contextWindow 投影非零
+    // context usage: the usage.contextWindow projection is non-zero after the first ModelComplete
     const projection = await getV4ConfigProjection();
     expect(projection.usageUsed).toBeGreaterThan(0);
   });
@@ -371,19 +371,23 @@ describe("v4 M5 门禁：composer 工具条与 slash 候选面板", () => {
   });
 
   it("completed task → draft 后独立重新水合自定义 slash command", async () => {
-    // Bug 原因：task → draft 会保留模型目录但清空 slashCommands；旧水合门禁只检查
-    // 模型目录，导致真实 user-scope 自定义命令永远不会重新进入 composer 候选。
+    // Bug cause: task -> draft kept the model catalog but cleared slashCommands; the old
+    // hydration gate only checked the model catalog, so real user-scope custom commands never
+    // re-entered the composer candidates.
     await ensureCompletedTask();
     await ensureCustomSlashHydratedInDraft();
   });
 
   it("draft → 已知 completed task 后保留自定义 slash command", async () => {
-    // Bug 原因：Mocha grep 会跳过负责建 task 与水合 draft 的前置 it；依赖 describe 内
-    // 变量会让本 case 无法独立回放。这里幂等补齐 S03 自身的前置状态，整组运行仍复用已有状态。
+    // Bug cause: Mocha grep skips the prerequisite its that build the task and hydrate the draft;
+    // depending on describe-scoped variables made this case impossible to replay independently.
+    // Here S03's own prerequisite state is idempotently completed, while a full-group run still
+    // reuses the existing state.
     const taskId = await ensureCompletedTask();
     await ensureCustomSlashHydratedInDraft();
-    // Bug 原因：旧 task 导航把 workspace 级 slashCommands 清空，但 session projection
-    // 只恢复会话状态，不会回填 composer 消费的 workspace catalog。
+    // Bug cause: the old task navigation cleared the workspace-level slashCommands, but the
+    // session projection only restores session state and never back-fills the workspace catalog
+    // the composer consumes.
     await selectV4TaskById(taskId);
     await setInputValueByTestIdDom(TID_V4_COMPOSER_INPUT, "/", {
       stabilizeLexicalCaretAtEnd: true,

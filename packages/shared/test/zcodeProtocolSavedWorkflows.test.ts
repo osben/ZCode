@@ -1,5 +1,5 @@
-// 已保存工作流的协议 schema（docs/dynamic-workflow/launch.md「Data path」+
-// docs/dynamic-workflow/launch.md「Data path」）。
+// Protocol schema for saved workflows (docs/dynamic-workflow/launch.md "Data path" +
+// docs/dynamic-workflow/launch.md "Data path").
 import { describe, expect, it } from "vitest";
 import {
   ZCODE_WORKFLOWS_RUNS_MAX_LIMIT,
@@ -25,7 +25,7 @@ import {
   zcodeWorkflowsSaveResultSchema,
 } from "../src/zcode-protocol/index.js";
 
-// workspace ref 要带 workspaceKey（services 层 resolveWorkspaceKey 补上；协议层不猜）。
+// The workspace ref must carry workspaceKey (the services layer fills it in via resolveWorkspaceKey; the protocol layer does not guess).
 const workspace = { workspacePath: "/repo", workspaceKey: "/repo" };
 
 describe("zcode-protocol saved workflows", () => {
@@ -41,13 +41,13 @@ describe("zcode-protocol saved workflows", () => {
   it("scope 枚举两档：project / global，拒绝别的值", () => {
     expect(zcodeSavedWorkflowScopeSchema.parse("project")).toBe("project");
     expect(zcodeSavedWorkflowScopeSchema.parse("global")).toBe("global");
-    // skills / subagents 那一档叫 user，本特性有意分道——不接受 user。
+    // The skills / subagents tier is called user; this feature intentionally diverges — user is not accepted.
     expect(() => zcodeSavedWorkflowScopeSchema.parse("user")).toThrow();
   });
 
   it("list：结果里的条目不含脚本正文，坏文件单列 invalid，dir 必填", () => {
     expect(zcodeWorkflowsListParamsSchema.parse({ workspace })).toEqual({ workspace });
-    // scope 可选，接受 global，拒绝未知值。
+    // scope is optional: global is accepted, unknown values are rejected.
     expect(zcodeWorkflowsListParamsSchema.parse({ workspace, scope: "global" }).scope).toBe(
       "global",
     );
@@ -67,14 +67,14 @@ describe("zcode-protocol saved workflows", () => {
     });
     expect(result.workflows[0]?.args?.branch?.required).toBe(true);
     expect(result.dir).toBe("/home/me/.zcode/workflows");
-    // dir 缺席即拒（GUI 的文件监听没有它就无处可 watch）。
+    // Reject when dir is missing (the GUI's file watching has nowhere to watch without it).
     expect(() =>
       zcodeWorkflowsListResultSchema.parse({
         workflows: [],
         invalid: [],
       }),
     ).toThrow();
-    // 条目里混进脚本正文仍拒。
+    // Entries that mix in script content are still rejected.
     expect(() =>
       zcodeWorkflowsListResultSchema.parse({
         workflows: [{ name: "x", description: "d", scope: "project", path: "/p", script: "…" }],
@@ -195,7 +195,7 @@ describe("zcode-protocol saved workflows", () => {
       truncated: true,
     });
     expect(result.runs).toHaveLength(2);
-    // 全局变体的行带 cwd（GUI 用它标项目）；老行 / 项目变体可缺。
+    // Rows of the global variant carry cwd (the GUI uses it to label the project); old rows / the project variant may omit it.
     expect(result.runs[0]?.cwd).toBe("/repo/one");
     expect(result.runs[1]).not.toHaveProperty("cwd");
     expect(result.truncated).toBe(true);
@@ -203,8 +203,8 @@ describe("zcode-protocol saved workflows", () => {
     expect(zcodeWorkflowsRunsResultSchema.parse({ runs: [] })).toEqual({ runs: [] });
   });
 
-  // 用户面产物的中枢摘要（docs/dynamic-workflow/authoring.md「How the user sees them」）。
-  // optional，照 `cwd` 的先例：老 CLI 不发这个键，少一个键是退化不是错误。
+  // Central summary of the user-facing artifacts (docs/dynamic-workflow/authoring.md "How the user sees them").
+  // optional, following the precedent of `cwd`: older CLIs do not send this key; a missing key is degradation, not an error.
   it("runs：行的 artifacts 可选、≤ 8 件、只认六个 kind，老行缺席仍可解析", () => {
     const withArtifacts = zcodeWorkflowsRunsResultSchema.parse({
       runs: [
@@ -216,11 +216,11 @@ describe("zcode-protocol saved workflows", () => {
           spentTokens: 0,
           artifacts: [
             { id: "report", kind: "file", title: "审计报告", version: 2, contentType: "application/pdf" },
-            // 预置看板没有 contentType；title 也可缺（facade 的默认标题就是 id）。
+            // Preset boards have no contentType; title may also be missing (the facade's default title is the id).
             { id: "perf", kind: "chart", version: 1 },
           ],
         },
-        // 老 CLI / 无产物的 run：整字段缺席，不是空数组。
+        // Old CLI / runs without artifacts: the whole field is absent, not an empty array.
         { runId: "r2", status: "errored", createdAt: 1, updatedAt: 2, spentTokens: 10 },
       ],
     });
@@ -232,7 +232,7 @@ describe("zcode-protocol saved workflows", () => {
     const row = (artifacts: unknown) => ({
       runs: [{ runId: "r1", status: "completed", createdAt: 1, updatedAt: 2, spentTokens: 0, artifacts }],
     });
-    // 上界 8：chips 一行画得下的数量，与通知载荷同值。
+    // Upper bound of 8: how many chips fit on one row, same value as the notification payload.
     const nine = Array.from({ length: 9 }, (_, index) => ({
       id: `a${index}`,
       kind: "markdown" as const,
@@ -240,12 +240,12 @@ describe("zcode-protocol saved workflows", () => {
     }));
     expect(() => zcodeWorkflowsRunsResultSchema.parse(row(nine))).toThrow();
     expect(zcodeWorkflowsRunsResultSchema.parse(row(nine.slice(0, 8))).runs[0]?.artifacts).toHaveLength(8);
-    // 未知 kind 与未知键都拒（元素 strict）：GUI 按 kind 画图标，没有兜底图标可用。
+    // Reject both unknown kinds and unknown keys (elements are strict): the GUI draws icons by kind and has no fallback icon.
     expect(() => zcodeWorkflowsRunsResultSchema.parse(row([{ id: "a", kind: "video", version: 1 }]))).toThrow();
     expect(() =>
       zcodeWorkflowsRunsResultSchema.parse(row([{ id: "a", kind: "file", version: 1, bytes: 12 }])),
     ).toThrow();
-    // id 非空、version 必填。
+    // id must be non-empty, version is required.
     expect(() => zcodeWorkflowsRunsResultSchema.parse(row([{ id: "", kind: "file", version: 1 }]))).toThrow();
     expect(() => zcodeWorkflowsRunsResultSchema.parse(row([{ id: "a", kind: "file" }]))).toThrow();
   });
@@ -255,7 +255,7 @@ describe("zcode-protocol saved workflows", () => {
       workspace,
       name: "x",
     });
-    // 2026-09-04 追记：项目→全局改为模型概括，`to` 参数删除；带上即 strict 拒。
+    // Addendum 2026-09-04: project→global became a model summary instead, and the `to` parameter was removed; including it is rejected as strict.
     expect(() =>
       zcodeWorkflowsMoveParamsSchema.parse({ workspace, name: "x", to: "global" }),
     ).toThrow();
@@ -284,13 +284,13 @@ describe("zcode-protocol saved workflows", () => {
         zcodeWorkflowsMoveResultSchema.parse({ ok: false, reason, path: "/p", detail: "why" }),
       ).toEqual({ ok: false, reason, path: "/p", detail: "why" });
     }
-    // path / detail 可缺；未知 reason 拒。
+    // path / detail may be missing; unknown reasons are rejected.
     expect(zcodeWorkflowsMoveResultSchema.parse({ ok: false, reason: "target_exists" })).toEqual({
       ok: false,
       reason: "target_exists",
     });
     expect(() => zcodeWorkflowsMoveResultSchema.parse({ ok: false, reason: "boom" })).toThrow();
-    // ok 分支缺 from/to 即拒；多出旧的 scope 也拒（strict）。
+    // The ok branch is rejected when from/to are missing; an extra legacy scope is also rejected (strict).
     expect(() => zcodeWorkflowsMoveResultSchema.parse({ ok: true, from: "/a" })).toThrow();
     expect(() =>
       zcodeWorkflowsMoveResultSchema.parse({ ok: true, from: "/a", to: "/b", scope: "project" }),
@@ -298,8 +298,8 @@ describe("zcode-protocol saved workflows", () => {
   });
 });
 
-// 完成卡的两个方法（docs/dynamic-workflow/transcript-and-notifications.md「Saving the run, and
-// running it again」）。
+// The two methods of the completion card (docs/dynamic-workflow/transcript-and-notifications.md "Saving the run, and
+// running it again").
 describe("zcode-protocol saving a run", () => {
   it("方法名固定", () => {
     expect(zcodeProtocolMethods.workflowsSave).toBe("workflows/save");

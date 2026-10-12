@@ -1,9 +1,11 @@
-// Conversation row 结构共享（docs/performance/conversation-row-structural-sharing.md）。
+// Conversation row structural sharing (docs/performance/conversation-row-structural-sharing.md).
 //
-// Bug 原因：store 收到整份 snapshot / row.upserted 时换上新反序列化的行对象，历史
-// snapshot 之间零共享；SessionPane 闭包链又会留住上百份历史 snapshot，同一个 200KB
-// 工具 inputText 因此在 heap 里存了一百多份。这里在 UI store 层把“值深相等”的部分换回
-// 旧引用，只复用身份、不改语义，所以不进 @zcode/shared 的 apply（客户端 apply 不加语义分支）。
+// Bug cause: when the store receives a whole snapshot / row.upserted it swaps in freshly deserialized row
+// objects, with zero sharing between historical snapshots; the SessionPane closure chain also retains
+// hundreds of historical snapshots, so a single 200KB tool inputText ended up stored a hundred-plus times
+// in the heap. Here, at the UI store layer, we swap the "deeply equal by value" parts back to the old
+// references. Only identity is reused, semantics unchanged, so this does not go into @zcode/shared's apply
+// (the client-side apply takes no semantic branches).
 import type { ConversationRow } from "@zcode/shared/zcode-protocol-v4";
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -13,9 +15,10 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 }
 
 /**
- * 返回与 next 深相等的值，尽量复用 prev 中相等的部分：整体相等返回 prev，部分相等时
- * 新建外壳挂回 prev 的子值（包括内容相同的旧字符串引用）。绝不修改 next——它可能与
- * apply 产出的其他快照共享结构。只递归 JSON 形态（plain object / 数组）。
+ * Returns a value deeply equal to next, reusing as much of prev as possible: if fully equal, prev is
+ * returned; on partial equality a new shell is created with prev's child values hung back on (including
+ * old string references with identical content). Never mutates next — it may share structure with other
+ * snapshots produced by apply. Only recurses into JSON shapes (plain objects / arrays).
  */
 export function shareStructure<T>(prev: unknown, next: T): T {
   if (Object.is(prev, next)) return prev as T;
@@ -49,13 +52,14 @@ export function shareStructure<T>(prev: unknown, next: T): T {
     if (allPrev) return prev as T;
     return (changed ? out : next) as T;
   }
-  // 原始值：内容相同的字符串换回 prev 引用，让 next 的副本可被 GC。
+  // Primitives: strings with identical content are swapped back to the prev reference so next's copy can be GC'd.
   return (typeof next === "string" && prev === next ? prev : next) as T;
 }
 
 /**
- * 跨 store 的行池：SessionDataLayer 持有，生命周期长于单个 store（keep-warm 过期冷打开
- * 会新建 store，但旧 snapshot 可能仍被留住，要让新行复用它们）。只持 WeakRef，不延长行寿命。
+ * A row pool across stores: held by SessionDataLayer with a lifetime longer than a single store (a cold
+ * open after keep-warm expiry creates a new store, but old snapshots may still be retained, and new rows
+ * should reuse them). Holds only WeakRef, never extends a row's lifetime.
  */
 export class ConversationRowPool {
   private readonly rows = new Map<string, WeakRef<ConversationRow>>();
@@ -63,7 +67,8 @@ export class ConversationRowPool {
     key: string;
     ref: WeakRef<ConversationRow>;
   }>(({ key, ref }) => {
-    // 只删仍指向已回收行的条目，避免误删同 key 后来登记的新行。
+    // Only delete entries still pointing at the collected row, to avoid wrongly deleting a new row
+    // registered later under the same key.
     if (this.rows.get(key) === ref) this.rows.delete(key);
   });
 
@@ -71,7 +76,7 @@ export class ConversationRowPool {
     return `${topic}\u0000${rowId}`;
   }
 
-  /** 只登记不比较：流式 row.delta 的新字符串本来就是新的，逐帧深比较是纯开销。 */
+  /** Registers without comparing: the new strings of a streaming row.delta are new anyway; per-frame deep comparison is pure overhead. */
   remember(topic: string, row: ConversationRow): void {
     const key = this.key(topic, row.rowId);
     if (this.rows.get(key)?.deref() === row) return;
@@ -87,7 +92,7 @@ export class ConversationRowPool {
     return shared;
   }
 
-  /** 逐行共享；每行都与 prevWindow 同位行相同时复用 prevWindow 数组。 */
+  /** Shares row by row; reuses the prevWindow array when every row equals its position-matched prevWindow row. */
   shareWindow(
     topic: string,
     rows: ConversationRow[],

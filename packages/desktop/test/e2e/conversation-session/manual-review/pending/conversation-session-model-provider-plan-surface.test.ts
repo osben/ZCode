@@ -49,9 +49,9 @@ const START_MODEL = "GLM-5.2";
 const PLAN_MODEL_VALUE = encodeCustomModelValue(PLAN_PROVIDER_ID, PLAN_MODEL);
 const START_MODEL_VALUE = encodeCustomModelValue(START_PROVIDER_ID, START_MODEL);
 /**
- * 定时任务的模型选择是 task-local 记录，不能因为聊天默认计划改变而被重写。
- * 这里用服务端下发的 BigModel Coding/Start Plan provider，并从只读任务索引对账
- * 完整 providerId/modelId；运行时请求由已有 Cron E2E 覆盖。
+ * An automation task's model selection is a task-local record; it must not be rewritten because the chat default plan changes.
+ * This uses the server-delivered BigModel Coding/Start Plan providers and reconciles the full providerId/modelId
+ * from the read-only task index; runtime requests are covered by the existing Cron E2E.
  */
 describe("Automation 在 Start/Coding Plan 间保存模型身份 E2E", () => {
   afterEach(async () => {
@@ -86,8 +86,8 @@ describe("Automation 在 Start/Coding Plan 间保存模型身份 E2E", () => {
       name: "BigModel Start Plan E2E",
     });
     await restartIntoWorkspace();
-    // 先走正式 上游 provider 初始化，确保 Automation 表单的本地 Host
-    // 已有可执行模型；随后再从真实下拉菜单切到两个 case-local 计划 provider。
+    // First run the formal upstream provider initialization so the Automation form's local Host
+    // already has an executable model; then switch to the two case-local plan providers from the real dropdown menu.
     await prepareConversationE2E();
 
     const codingTitle = `E2E_AUTOMATION_CODING_PLAN_${Date.now()}`;
@@ -97,19 +97,19 @@ describe("Automation 在 Start/Coding Plan 间保存模型身份 E2E", () => {
       providerId: PLAN_PROVIDER_ID,
       modelId: PLAN_MODEL,
     });
-    // 编辑与模型无关的 prompt 后重新读取持久化值，覆盖“保存其他字段不会
-    // 清掉模型身份”的路径；先编辑第一张卡片，避免同时创建第二张卡片后列表排序
-    // 让用户点击落到另一张任务上。
+    // Re-read the persisted value after editing a model-unrelated prompt, covering the path of "saving other fields does
+    // not clear the model identity"; edit the first card first, so that after the second card is created the list ordering
+    // does not land the user's click on a different task.
     await editAutomationPrompt(codingTitle, "只修改 prompt，不修改模型");
     expect(await readAutomationModel(codingTitle)).toEqual({
       providerId: PLAN_PROVIDER_ID,
       modelId: PLAN_MODEL,
     });
 
-    // 两个计划 provider 都是真实模型菜单项；这里直接在 Automation 表单中切换，
-    // 验证任务保存的是完整 providerId，而不是把同名 GLM-5.2 按当前聊天连接重写。
-    // Family 连接选择与 Automation 的显式模型选择是两个正交事实；本 case 只验证
-    // Automation 保存完整 Provider/Model 身份，避免把产品状态耦合成不可诊断的失败。
+    // Both plan providers are real model menu items; switch directly in the Automation form here,
+    // verifying that the task saves the full providerId instead of rewriting the same-named GLM-5.2 per the current chat connection.
+    // The Family connection selection and Automation's explicit model selection are two orthogonal facts; this case only verifies
+    // that Automation saves the full Provider/Model identity, avoiding coupling product state into an undiagnosable failure.
     const startTitle = `E2E_AUTOMATION_START_PLAN_${Date.now()}`;
     await createAutomation(startTitle, "固定 Start Plan 模型", START_MODEL_VALUE);
     const startRecord = await waitForAutomationModel(startTitle);
@@ -118,14 +118,14 @@ describe("Automation 在 Start/Coding Plan 间保存模型身份 E2E", () => {
       modelId: START_MODEL,
     });
 
-    // 创建第二个任务并不会改写第一个任务；这是“同名模型按完整计划身份区分”的关键断言。
+    // Creating the second task does not rewrite the first; this is the key assertion of "same-named models distinguished by full plan identity".
     expect(await readAutomationModel(codingTitle)).toEqual({
       providerId: PLAN_PROVIDER_ID,
       modelId: PLAN_MODEL,
     });
 
-    // 同一个用户在聊天草稿中切换连接时，菜单必须保留完整 provider 身份，不能只按
-    // 模型名称去重；Automation 的两个已保存值也必须继续保持不变。
+    // When the same user switches connections in a chat draft, the menu must retain the full provider identity and not deduplicate
+    // by model name alone; Automation's two saved values must also remain unchanged.
     await startNewTask();
     await selectAutomationModel(START_MODEL_VALUE);
     expect(
@@ -135,8 +135,8 @@ describe("Automation 在 Start/Coding Plan 间保存模型身份 E2E", () => {
     expect(
       await $(sel(TID_CHAT_MODEL_SELECT_TRIGGER)).getAttribute("data-model-current-value"),
     ).toBe(PLAN_MODEL_VALUE);
-    // 当前连接切回 Coding Plan 后，之前保存的 Start Plan 任务仍保留原身份；
-    // 这也是任务等待期间套餐失效时“不静默改绑另一计划”的最小可观察边界。
+    // After the current connection switches back to the Coding Plan, the previously saved Start Plan task keeps its original identity;
+    // this is also the minimal observable boundary of "no silent rebinding to another plan" when a plan expires while a task is waiting.
     expect(await readAutomationModel(startTitle)).toEqual({
       providerId: START_PROVIDER_ID,
       modelId: START_MODEL,
@@ -151,8 +151,8 @@ describe("Automation 在 Start/Coding Plan 间保存模型身份 E2E", () => {
     await prepareConversationE2E({ skipProvider: true });
     await waitForSelectedModel(E2E_BIGMODEL_PLAN_PROVIDER_ID, PLAN_MODEL);
 
-    // 目录不可用期间只保留当前选择，不把草稿静默改成 上游；目录恢复后
-    // 再重启一次，验证同一个选择仍可继续作为下一次发送的初始配置。
+    // While the catalog is unavailable, only the current selection is kept; the draft is not silently changed to upstream. After the
+    // catalog recovers, restart once more and verify the same selection can still serve as the initial configuration for the next send.
     await setCatalogMode("full");
     await restartIntoWorkspacePreservingProfile();
     await prepareConversationE2E({ skipProvider: true });
@@ -193,9 +193,9 @@ async function prepareBigModelCatalogWorkspace(model: string): Promise<void> {
   await restartIntoWorkspace();
   await prepareConversationE2E({ skipProvider: true });
   await selectAutomationModel(encodeCustomModelValue(E2E_BIGMODEL_PLAN_PROVIDER_ID, model));
-  // 选择动作本身更新草稿态；为“重启后恢复最近模型”准备已落盘的用户偏好，
-  // 等待目录状态切换后由真正的应用启动逻辑读取并断言，而不是在测试里直接改
-  // 重启后的运行时状态。
+  // The selection action itself only updates draft state; to prepare a persisted user preference for "restore the most recent model
+  // after restart", wait for the catalog state switch and let the real app startup logic read and assert it, instead of directly mutating
+  // the post-restart runtime state from the test.
   await seedPersistedModelSelection({
     modelId: model,
     providerId: E2E_BIGMODEL_PLAN_PROVIDER_ID,
@@ -236,8 +236,8 @@ async function selectAutomationModel(modelValue: string): Promise<void> {
   const decoded = decodeModelValue(modelValue);
   const trigger = $(sel(TID_CHAT_MODEL_SELECT_TRIGGER));
   await trigger.waitForClickable({ timeout: 15000 });
-  // 当前模型不会重复出现在菜单项里；Automation 新建表单继承聊天默认模型时，
-  // 已命中目标就是有效的用户态结果，不应把“菜单里没有当前项”误判成失败。
+  // The current model does not appear again among the menu items; when the Automation create form inherits the chat default model,
+  // already matching the target is a valid user-facing result, and "the current item is not in the menu" must not be misjudged as failure.
   if ((await trigger.getAttribute("data-model-current-value")) === modelValue) {
     return;
   }

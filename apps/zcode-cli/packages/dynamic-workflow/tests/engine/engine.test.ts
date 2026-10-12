@@ -26,7 +26,7 @@ function inst(siteId: string, ordinal = 1): InstanceRef {
   return { siteId, ordinal };
 }
 
-/** 一个基于 schema.required 的最小校验器（模拟真实 validator 的违规输出）。 */
+/** A minimal validator based on schema.required (mimics a real validator's violation output). */
 const requireFields: ValidateFn = (schema, value) => {
   const required = (schema as { required?: string[] } | undefined)?.required ?? [];
   const obj = (value ?? {}) as Record<string, unknown>;
@@ -48,7 +48,7 @@ interface SetupOpts {
   cwd?: string;
   toolCallId?: string;
   resumedFrom?: string;
-  /** 模拟 driver 侧的模型档位解析（会话创建时把解析结果写进 actor 记录）。 */
+  /** Mimics the driver-side model tier resolution (writes the resolution into the actor record at session creation). */
   resolveModel?: (persona: { model?: string }) => string;
 }
 
@@ -62,8 +62,8 @@ function setup(opts: SetupOpts = {}) {
     runId: RUN,
     driver,
     caps: opts.caps ?? { maxConcurrency: 16 },
-    // askSpecs 必须覆盖脚本里的每个 ask 站点（miss 是硬错误），fixture 默认把本文件
-    // 用到的两个站点显式记为 untyped。
+    // askSpecs must cover every ask site in the script (a miss is a hard error); the fixture by
+    // default explicitly records the two sites used in this file as untyped.
     askSpecs: opts.askSpecs ?? untypedSpecs("ask#1", "ask#2"),
     validate: opts.validate ?? (() => []),
     ...(opts.name === undefined ? {} : { name: opts.name }),
@@ -77,7 +77,7 @@ function setup(opts: SetupOpts = {}) {
   return { journal, driver, engine };
 }
 
-/** 把若干 ask 站点显式记为 untyped（引擎不再把缺席当 untyped）。 */
+/** Explicitly records ask sites as untyped (the engine no longer treats absence as untyped). */
 const untypedSpecs = (...siteIds: string[]): Map<string, AskSpec> =>
   new Map(siteIds.map((id) => [id, { typed: false } as AskSpec]));
 
@@ -125,7 +125,7 @@ describe("WorkflowEngine — validation + repair", () => {
     const p = engine.ask("ask#1", actor, "do it");
     await flush();
 
-    // 4 次无效提交：前 3 次拒绝（repair），第 4 次预算耗尽 → 失败。
+    // 4 invalid submits: the first 3 are rejected (repair), the 4th exhausts the budget → fail.
     for (let i = 0; i < 4; i++) engine.askSubmitAttempted(inst("ask#1"), {});
 
     const rejects = driver.submitResponses.filter((r) => r.verdict.kind === "reject");
@@ -179,7 +179,7 @@ describe("WorkflowEngine — nudge policy", () => {
 
 describe("WorkflowEngine — untyped ask", () => {
   it("settles on turn end with the final text and offers no submit tool", async () => {
-    const { engine, driver, journal } = setup(); // 站点显式记为 untyped
+    const { engine, driver, journal } = setup(); // sites explicitly recorded as untyped
     const actor = engine.createActor("actor#1");
     const p = engine.ask("ask#1", actor, "summarize");
     await flush();
@@ -198,7 +198,7 @@ describe("WorkflowEngine — per-actor FIFO", () => {
     const p2 = engine.ask("ask#2", actor, "B");
     await flush();
 
-    // 只有队首派发，第二个 ask 等待第一个结算。
+    // Only the head of the queue dispatches; the second ask waits for the first to settle.
     expect(driver.startAskCount()).toBe(1);
     expect(driver.startAsks[0]?.instance).toEqual(inst("ask#1"));
 
@@ -264,7 +264,7 @@ describe("WorkflowEngine — replay", () => {
       actorSiteId: "actor#1",
       actorOrdinal: 1,
       actorSeq: 0,
-      inputHash: "deadbeef", // 与重放时计算出的 hash 不符
+      inputHash: "deadbeef", // does not match the hash computed at replay time
       status: "completed",
       result: { x: 1 },
     });
@@ -278,11 +278,13 @@ describe("WorkflowEngine — replay", () => {
       error: { code: "InputHashMismatch" },
     });
 
-    // 两个哈希结构化随错误走（与 ScriptHashMismatch 同一个 mismatch 字段）：一个只在
-    // 两种哈希不匹配错误之一上出现的结构化字段，对读端就是个陷阱。
+    // Both hashes are carried structurally on the error (the same mismatch field as
+    // ScriptHashMismatch): a structured field that appears on only one of the two hash-mismatch
+    // errors is a trap for readers.
     const err = await p.catch((e: unknown) => e as WorkflowError);
     expect(err.mismatch).toEqual({ expected: "deadbeef", got: inputHash("do it") });
-    // 落 journal 的可序列化形态同样带着它（failure_json 是 app 侧读的持久记录）。
+    // The serializable form persisted to the journal carries it too (failure_json is the durable
+    // record the app side reads).
     expect(err.toJSON()).toMatchObject({
       code: "InputHashMismatch",
       mismatch: { expected: "deadbeef", got: inputHash("do it") },
@@ -302,7 +304,7 @@ describe("WorkflowEngine — replay", () => {
       status: "running",
     });
     journal.putActor({ runId: RUN, siteId: "actor#1", ordinal: 1 });
-    // 记录顺序：ask#1@1 = seq0，ask#2@1 = seq1。
+    // Recorded order: ask#1@1 = seq0, ask#2@1 = seq1.
     journal.putNode({
       runId: RUN,
       siteId: "ask#1",
@@ -330,20 +332,23 @@ describe("WorkflowEngine — replay", () => {
 
     const { engine, driver } = setup({ journal });
     const actor = engine.createActor("actor#1");
-    // 到达顺序与记录相反：先 ask#2（seq1，应被 hold），后 ask#1（seq0，触发释放）。
+    // Arrival order is the reverse of the recorded order: ask#2 first (seq1, should be held), then
+    // ask#1 (seq0, triggers the release).
     const pB = engine.ask("ask#2", actor, "B");
     const pA = engine.ask("ask#1", actor, "A");
     await expect(Promise.all([pA, pB])).resolves.toEqual(["r1", "r2"]);
 
-    // 释放顺序遵循记录的 actorSeq，而非到达顺序。
+    // The release order follows the recorded actorSeq, not the arrival order.
     expect(driver.cachedSettleOrder()).toEqual(["ask#1@1", "ask#2@1"]);
     expect(driver.startAskCount()).toBe(0);
   });
 
   it("turns the same-site nondeterministic-ordinal gap into a loud inputHash failure (not wrong results)", async () => {
-    // v1 局限的设计后盾：同站点、被非确定前驱门控的 ask，其 ordinal 依到达顺序而非确定。
-    // journal 记录了 ask#1@1=「plan A」、ask#1@2=「plan B」；replay 若把两者次序调换，
-    // 第一个到达者拿到 ordinal 1 却带「plan B」→ 与记录的 hash 不符 → run 大声失败，绝不给出错误结果。
+    // Design backstop for a v1 limitation: for a same-site ask gated by a nondeterministic
+    // predecessor, its ordinal depends on arrival order and is not deterministic.
+    // The journal records ask#1@1="plan A" and ask#1@2="plan B"; if replay swapped their order, the
+    // first arrival would get ordinal 1 carrying "plan B" → hash mismatch with the record → the run
+    // fails loudly and never returns a wrong result.
     const journal = new InMemoryJournalStore();
     journal.createRun({
       runId: RUN,
@@ -379,7 +384,7 @@ describe("WorkflowEngine — replay", () => {
 
     const { engine } = setup({ journal });
     const actor = engine.createActor("actor#1");
-    const pB = engine.ask("ask#1", actor, "plan B"); // 得到 ordinal 1，但记录的是 plan A → mismatch
+    const pB = engine.ask("ask#1", actor, "plan B"); // gets ordinal 1, but the record holds plan A → mismatch
     await expect(pB).rejects.toMatchObject({ code: "InputHashMismatch" });
     await expect(engine.settled).resolves.toMatchObject({
       status: "errored",
@@ -392,7 +397,7 @@ describe("WorkflowEngine — mid-run crash + resume", () => {
   it("resumes over the same journal, short-circuiting finished nodes and finishing the rest", async () => {
     const journal = new InMemoryJournalStore();
 
-    // run1：结算 ask#1，随后"崩溃"（ask#2 未执行）。
+    // run1: settles ask#1, then "crashes" (ask#2 never ran).
     {
       const driver1 = new FakeDriver(journal);
       const e1 = new WorkflowEngine({
@@ -409,7 +414,7 @@ describe("WorkflowEngine — mid-run crash + resume", () => {
       await expect(p1).resolves.toBe("RA");
     }
 
-    // run2：同一 journal 上重放。
+    // run2: replays over the same journal.
     const driver2 = new FakeDriver(journal);
     const e2 = new WorkflowEngine({
       runId: RUN,
@@ -420,11 +425,11 @@ describe("WorkflowEngine — mid-run crash + resume", () => {
     });
     const a2 = e2.createActor("actor#1");
 
-    const r1 = await e2.ask("ask#1", a2, "A"); // journal 命中
+    const r1 = await e2.ask("ask#1", a2, "A"); // journal hit
     expect(r1).toBe("RA");
-    expect(driver2.startAskCount(inst("ask#1"))).toBe(0); // 未重新执行
+    expect(driver2.startAskCount(inst("ask#1"))).toBe(0); // not re-executed
 
-    const p2 = e2.ask("ask#2", a2, "B"); // 新节点，实际派发
+    const p2 = e2.ask("ask#2", a2, "B"); // new node, actually dispatched
     await flush();
     expect(driver2.startAskCount(inst("ask#2"))).toBe(1);
     e2.askTurnEnded(inst("ask#2"), "RB");
@@ -443,7 +448,7 @@ describe("WorkflowEngine — mid-run crash + resume", () => {
       status: "running",
     });
     journal.putActor({ runId: RUN, siteId: "actor#1", ordinal: 1 });
-    // ask#1 已完结（seq0），ask#2 崩溃于执行中（seq1, status running）。
+    // ask#1 finished (seq0); ask#2 crashed mid-execution (seq1, status running).
     journal.putNode({
       runId: RUN,
       siteId: "ask#1",
@@ -470,28 +475,31 @@ describe("WorkflowEngine — mid-run crash + resume", () => {
 
     const { engine, journal: j, driver } = setup({ journal });
     const actor = engine.createActor("actor#1");
-    const p1 = engine.ask("ask#1", actor, "A"); // 完结命中，短路
-    const p2 = engine.ask("ask#2", actor, "B"); // running → 重新 live 派发
+    const p1 = engine.ask("ask#1", actor, "A"); // finished hit, short-circuits
+    const p2 = engine.ask("ask#2", actor, "B"); // running → re-dispatched live
     await flush();
 
     expect(await p1).toBe("RA");
-    expect(driver.startAskCount(inst("ask#1"))).toBe(0); // 完结节点未重跑
-    expect(driver.startAskCount(inst("ask#2"))).toBe(1); // running 节点重新 live 执行
+    expect(driver.startAskCount(inst("ask#1"))).toBe(0); // finished node not re-run
+    expect(driver.startAskCount(inst("ask#2"))).toBe(1); // running node re-executed live
 
     engine.askTurnEnded(inst("ask#2"), "RB");
     expect(await p2).toBe("RB");
-    // running 记录被更新为 completed，且 actorSeq 保持记录值。
+    // The running record is updated to completed, and actorSeq keeps the recorded value.
     expect(j.getNode(RUN, "ask#2", 1)?.status).toBe("completed");
     expect(j.getNode(RUN, "ask#2", 1)?.actorSeq).toBe(1);
   });
 
   it("re-creates the actor session via the driver even when the journal records a sessionId", async () => {
-    // Bug 根因（resume 重派发在生产 driver 上必炸）：registerActor 原先把 journal 里记录的
-    // sessionId 预解析成 actor.sessionPromise，让 ensureSession 跳过 driver.createActorSession；
-    // 而生产 driver 的 sessions map **只**在 createActorSession 里填充，startAsk 按 map 查会话
-    // → 每个重新派发的 ask 都以 DriverError「未知会话」立即失败。纯 replay（零派发）与
-    // fake driver（startAsk 不查 map）都测不出它，所以这里直接钉 createActorSession 的调用次数。
-    // 会话身份是 driver 所有的（生产铸造函数按 (runId, actorRef) 纯确定），journal 值只是记录。
+    // Bug root cause (re-dispatch on resume must blow up on a production driver): registerActor
+    // used to pre-resolve the sessionId recorded in the journal into actor.sessionPromise, letting
+    // ensureSession skip driver.createActorSession; the production driver's sessions map is **only**
+    // populated inside createActorSession, and startAsk looks the session up by map
+    // → every re-dispatched ask failed immediately with DriverError "unknown session". Pure replay
+    // (zero dispatches) and the fake driver (startAsk does not consult the map) both fail to catch
+    // this, so the createActorSession call count is pinned directly here.
+    // Session identity is driver-owned (the production minting function is purely deterministic on
+    // (runId, actorRef)); the journal value is only a record.
     const journal = new InMemoryJournalStore();
     journal.createRun({
       runId: RUN,
@@ -517,20 +525,22 @@ describe("WorkflowEngine — mid-run crash + resume", () => {
     const p = engine.ask("ask#1", actor, "A");
     await flush();
 
-    // 关键断言：会话经 driver 重建（恰好一次），且派发用的是 driver 造出的会话。
+    // Key assertion: the session was rebuilt through the driver (exactly once), and the dispatch
+    // used the driver-created session.
     expect(driver.sessionCreations).toEqual([{ siteId: "actor#1", ordinal: 1 }]);
     expect(driver.startAskCount(inst("ask#1"))).toBe(1);
     expect(driver.startAsks[0]?.session.id).toBe("session:actor#1@1");
 
     engine.askTurnEnded(inst("ask#1"), "RA");
     await expect(p).resolves.toBe("RA");
-    // ensureSession 的 putActor 把（生产上必然相同的）sessionId 重新记录回去。
+    // ensureSession's putActor records the (necessarily identical in production) sessionId back.
     expect(j.getActor(RUN, "actor#1", 1)?.sessionId).toBe("session:actor#1@1");
   });
 
   it("restores the tokens already spent by the crashed run instead of starting from zero", async () => {
-    // 回归：用量原先只在 createRun(0) 落库一次，askStats 的累加从不回写，
-    // 于是 resume 出来的引擎从零开始计数，run 级用量跨生命周期不连续。
+    // Regression: usage used to be persisted only once at createRun(0); askStats accumulations were
+    // never written back, so a resumed engine started counting from zero and run-level usage was
+    // discontinuous across lifecycles.
     const caps: Caps = { maxConcurrency: 16 };
     const journal = new InMemoryJournalStore();
 
@@ -564,7 +574,8 @@ describe("WorkflowEngine — mid-run crash + resume", () => {
     void e2.ask("ask#2", b, "B").catch(() => {});
     await flush();
     e2.askStats(inst("ask#2"), { tokens: 100, toolCalls: 0, turns: 1 });
-    // 事件载荷与列值在同一同步步骤产生：resume 后继续累计，而不是从 0 重来。
+    // The event payload and the column value are produced in the same synchronous step: after
+    // resume the count keeps accumulating rather than starting from 0 again.
     expect(driver2.events.at(-1)).toEqual({ type: "usage-updated", spentTokens: 400 });
     expect(journal.getRun(RUN)?.spentTokens).toBe(400);
   });
@@ -577,7 +588,7 @@ describe("WorkflowEngine — cancellation", () => {
 
     const pDone = engine.ask("ask#1", actor, "A");
     await flush();
-    engine.askTurnEnded(inst("ask#1"), "RA"); // 结算完成，落 journal
+    engine.askTurnEnded(inst("ask#1"), "RA"); // settles as completed, journaled
     await expect(pDone).resolves.toBe("RA");
 
     const pInFlight = engine.ask("ask#2", actor, "B");
@@ -595,16 +606,18 @@ describe("WorkflowEngine — cancellation", () => {
       stopReason: "user",
     });
 
-    // 完结节点保留为 completed；在飞节点停在准入时的 running 记录（非"完结"结果），resume 可据此重跑。
+    // Finished nodes stay completed; the in-flight node stays at the running record from admission
+    // (not a "finished" outcome), which resume can use to re-run it.
     expect(journal.getNode(RUN, "ask#1", 1)?.status).toBe("completed");
     expect(journal.getNode(RUN, "ask#2", 1)?.status).toBe("running");
   });
 });
 
 describe("WorkflowEngine — complete() with in-flight asks", () => {
-  // 脚本可以在 ask 仍在飞时返回（Promise.race 的输家、没有 await 的 ask）。complete 对它们的处置
-  // 必须与 cancel 逐字节同形，否则 scheduler 永远握着节点、driver 侧 turn 继续烧 token、事件
-  // 日志里一个 node-dispatched 永远等不到 node-settled。见 docs/execution-engine.md。
+  // A script may return while asks are still in flight (the Promise.race loser, an ask nobody
+  // awaited). complete() must handle them byte-for-byte the same way as cancel(), otherwise the
+  // scheduler holds the node forever, the driver-side turn keeps burning tokens, and a
+  // node-dispatched in the event log never sees its node-settled. See docs/execution-engine.md.
   it("aborts the in-flight ask like stop() does, then settles completed with the artifact", async () => {
     const { engine, driver, journal } = setup();
     const actor = engine.createActor("actor#1");
@@ -624,7 +637,7 @@ describe("WorkflowEngine — complete() with in-flight asks", () => {
     await expect(engine.settled).resolves.toEqual({ status: "completed", artifact: "done" });
     expect(engine.status()).toBe("completed");
 
-    // 事件序列：在飞节点先 cancelled，再 run-settled(completed)。
+    // Event order: the in-flight node is cancelled first, then run-settled(completed).
     const types = driver.events.map((e) => e.type);
     const settledIdx = types.lastIndexOf("node-settled");
     const runIdx = types.lastIndexOf("run-settled");
@@ -635,7 +648,8 @@ describe("WorkflowEngine — complete() with in-flight asks", () => {
     expect(driver.events[runIdx]).toMatchObject({ status: "completed" });
     expect(settledIdx).toBeLessThan(runIdx);
 
-    // journal 与 cancel 路径同形：完结节点 completed，在飞节点停在 running；run 带产物 completed。
+    // The journal mirrors the cancel path: finished nodes completed, in-flight nodes stopped at
+    // running; the run is completed with its artifact.
     expect(journal.getNode(RUN, "ask#1", 1)?.status).toBe("completed");
     expect(journal.getNode(RUN, "ask#2", 1)?.status).toBe("running");
     expect(journal.getRun(RUN)?.status).toBe("completed");
@@ -668,8 +682,9 @@ describe("WorkflowEngine — complete() with in-flight asks", () => {
     engine.complete("won");
 
     const eventCount = driver.events.length;
-    // 真实 actor 的用量在 turn 解析后才知道：最后的 stats 常晚于 complete 到达。
-    // 记账要保留（用量行 + 节点回填都是 journal 行更新），事件流不能再追加——run-settled 是最后一条。
+    // A real actor's usage is only known after the turn resolves: final stats often arrive after
+    // complete(). The accounting must survive (both the usage row and the node backfill are journal
+    // row updates), but the event stream must not grow again — run-settled is the last event.
     engine.askStats(inst("ask#2"), { tokens: 7, toolCalls: 0, turns: 1 });
     expect(driver.events.length).toBe(eventCount);
     expect(journal.getRun(RUN)?.spentTokens).toBe(7);
@@ -678,7 +693,8 @@ describe("WorkflowEngine — complete() with in-flight asks", () => {
 });
 
 describe("WorkflowEngine — driver dispose at settlement", () => {
-  // 引擎契约：三条终态路径各调 driver.dispose 恰好一次，晚于 run-settled；first-wins 下不重复。
+  // Engine contract: all three terminal paths call driver.dispose exactly once, after run-settled;
+  // under first-wins it is not repeated.
   async function withInFlightAsk() {
     const { engine, driver } = setup();
     const actor = engine.createActor("actor#1");
@@ -738,7 +754,8 @@ describe("WorkflowEngine — driver dispose at settlement", () => {
 
 describe("WorkflowEngine — usage (no caps)", () => {
   it("never caps the node count: well past the old limit of 100 the run is still running", async () => {
-    // docs/dynamic-workflow/authoring.md：节点上限整体移除，取消是唯一的停止手段。
+    // docs/dynamic-workflow/authoring.md: the node cap was removed entirely; cancellation is the
+    // only means of stopping.
     const { engine, driver, journal } = setup({ caps: { maxConcurrency: 200 } });
     for (let i = 1; i <= 120; i++) {
       const actor = engine.createActor(`actor#${i}`);
@@ -774,16 +791,16 @@ describe("WorkflowEngine — fail() (harness-driven run failure)", () => {
     const { engine, driver, journal } = setup();
     const actor = engine.createActor("actor#1");
     const p = engine.ask("ask#1", actor, "A");
-    void p.catch(() => {}); // run 失败会 reject 该 ask
+    void p.catch(() => {}); // the run failure will reject this ask
     await flush();
     expect(driver.startAskCount(inst("ask#1"))).toBe(1);
 
-    // harness 把子进程抛出/崩溃/超时归为 run 失败。
+    // The harness classifies a child process throw/crash/timeout as a run failure.
     const boom = new WorkflowError("DriverError", "child crashed");
     engine.fail(boom);
 
-    expect(driver.cancels).toContainEqual(inst("ask#1")); // 在飞 ask driver 侧取消
-    await expect(p).rejects.toBe(boom); // 在飞 ask 以 run 错误 reject
+    expect(driver.cancels).toContainEqual(inst("ask#1")); // in-flight ask cancelled on the driver side
+    await expect(p).rejects.toBe(boom); // the in-flight ask rejects with the run error
     await expect(engine.settled).resolves.toEqual({ status: "errored", error: boom });
     expect(engine.status()).toBe("errored");
 
@@ -792,7 +809,7 @@ describe("WorkflowEngine — fail() (harness-driven run failure)", () => {
     expect(run?.failure).toEqual({ code: "DriverError", message: "child crashed" });
     expect(run?.stopReason).toBeUndefined();
 
-    // first-wins：后续 complete()/再次 fail()/stop() 均为 no-op。
+    // first-wins: later complete(), a second fail(), and stop() are all no-ops.
     engine.complete("late");
     engine.fail(new WorkflowError("Cancelled", "ignored"));
     engine.stop("interrupted", new WorkflowError("Interrupted", "late"));
@@ -800,14 +817,15 @@ describe("WorkflowEngine — fail() (harness-driven run failure)", () => {
   });
 
   it("createActorSession rejection surfaces the cause text in the DriverError (journal + reject)", async () => {
-    // 2026-09-03 实机：直接启动的首个 actor 在建 session_task_link 时撞 FOREIGN KEY，run 只留下
-    // 「创建 actor 会话失败」——cause 不进 toJSON、也无人记日志，无从诊断。这里钉住 message 必须
-    // 带上 cause 的文本。
+    // 2026-09-03, on a real machine: the directly started first actor hit a FOREIGN KEY constraint
+    // creating session_task_link, and the run only kept "failed to create the actor session" —
+    // the cause did not go into toJSON and nobody logged it, leaving nothing to diagnose from. This
+    // pins that the message must carry the cause's text.
     const { engine, journal, driver } = setup({ deferSessions: true });
     const actor = engine.createActor("actor#1");
     const p = engine.ask("ask#1", actor, "A");
     driver.sessionDeferrals[0]!.reject(new Error("FOREIGN KEY constraint failed"));
-    // 钉的是 cause 文本（可变部分）在场，不钉整句措辞。
+    // What is pinned is the presence of the cause text (the variable part), not the full wording.
     await expect(p).rejects.toMatchObject({
       code: "DriverError",
       message: expect.stringContaining("FOREIGN KEY constraint failed"),
@@ -828,15 +846,17 @@ describe("WorkflowEngine — fail() (harness-driven run failure)", () => {
   it("createActor throws synchronously once the run has failed (harness can catch → fail())", async () => {
     const { engine } = setup();
     engine.fail(new WorkflowError("DriverError", "boom"));
-    // 同步抛出（无 async 泄漏），harness 的 try/catch 能直接兜住并转成 fail()。
+    // Thrown synchronously (no async leak), so the harness's try/catch can catch it directly and
+    // turn it into fail().
     expect(() => engine.createActor("actor#1")).toThrow();
   });
 });
 
 describe("WorkflowEngine — stats backfill after settle", () => {
   it("backfills stats onto a typed ask journaled at settle when askStats arrives after the submit", async () => {
-    // typed-accept 路径（主导路径）：submit 停 turn 并在 settle 时落库；真实 actor 的用量在
-    // turn 解析后（submit 之后）才知道，故 askStats 在节点已离开 liveNodes 后才到达。引擎回填。
+    // The typed-accept path (the dominant path): submit ends the turn and is journaled at settle;
+    // a real actor's usage is only known after the turn resolves (after the submit), so askStats
+    // arrives after the node has already left liveNodes. The engine backfills.
     const { engine, journal } = setup({ askSpecs: typedSpecs(), validate: requireFields });
     const actor = engine.createActor("actor#1", "planner");
     const p = engine.ask("ask#1", actor, "do it");
@@ -847,13 +867,14 @@ describe("WorkflowEngine — stats backfill after settle", () => {
 
     const settled = journal.getNode(RUN, "ask#1", 1);
     expect(settled?.status).toBe("completed");
-    expect(settled?.stats).toBeUndefined(); // settle 时 stats 尚未到达
+    expect(settled?.stats).toBeUndefined(); // stats had not arrived at settle time
 
     engine.askStats(inst("ask#1"), { tokens: 42, toolCalls: 2, turns: 1 });
 
     const node = journal.getNode(RUN, "ask#1", 1);
     expect(node?.stats).toEqual({ tokens: 42, toolCalls: 2, turns: 1 });
-    // 只新增 stats，其余字段保持不变（status/result/actorSeq/inputHash/actor 身份）。
+    // Only stats are added; every other field is unchanged (status/result/actorSeq/inputHash/actor
+    // identity).
     expect(node?.status).toBe("completed");
     expect(node?.result).toEqual({ x: 1 });
     expect(node?.actorSeq).toBe(0);
@@ -877,7 +898,8 @@ describe("WorkflowEngine — stats backfill after settle", () => {
   });
 
   it("is a no-op when the node was never journaled (defensive, best-effort)", async () => {
-    // 从未准入的实例上报 stats：既无 live 节点也无 journal 记录，回填静默跳过（不抛错、不建记录）。
+    // Stats reported for an instance that was never admitted: no live node and no journal record;
+    // the backfill silently skips (no throw, no record created).
     const { engine, journal } = setup({ askSpecs: typedSpecs(), validate: requireFields });
     engine.createActor("actor#1");
     engine.askStats(inst("ask#404"), { tokens: 5, toolCalls: 0, turns: 1 });
@@ -887,9 +909,10 @@ describe("WorkflowEngine — stats backfill after settle", () => {
 
 describe("WorkflowEngine — run metadata", () => {
   it("persists scriptText / scriptHash / parentSessionId / cwd / toolCallId through createRun", async () => {
-    // 前四个字段 RunRecord 早就声明了，但 createRun 从不填——于是 resume 的 script_hash
-    // 校验没有比对对象。落库是那条校验唯一的前提。toolCallId 是 cancel & resume 特性
-    // 追加的第五个：重启后工具卡 join 与 resume 通知锚点的唯一持久来源。
+    // RunRecord declared the first four fields long ago, but createRun never populated them — so
+    // the resume script_hash check had nothing to compare against. Persisting them is that check's
+    // only precondition. toolCallId is the fifth, added by the cancel & resume feature: the only
+    // durable source for the tool-card join and resume notification anchor after a restart.
     const { journal } = setup({
       scriptText: 'await agent("a").ask("hi");',
       scriptHash: "hash-a",
@@ -908,46 +931,52 @@ describe("WorkflowEngine — run metadata", () => {
     });
   });
 
-  // name 走的是与上面四个字段**完全相同**的那条元数据路（EngineConfig → createRun，
-  // 此后没有任何写入者碰它）。它纯展示：引擎不读，宿主的枚举面拿它当标签——缺了这一步，
-  // 跨会话列出来的 run 只能是一串裸 runId（docs/dynamic-workflow/launch.md）。
+  // name travels the exact same metadata path as the four fields above (EngineConfig → createRun,
+  // and no writer touches it afterwards). It is purely presentational: the engine does not read it;
+  // the host's enumeration surface uses it as a label — without this step, runs listed across
+  // sessions would just be a string of bare runIds (docs/dynamic-workflow/launch.md).
   it("persists the run name through createRun", async () => {
     const { journal } = setup({ name: "nightly triage" });
     expect(journal.getRun(RUN)).toMatchObject({ runId: RUN, name: "nightly triage" });
   });
 
   it("omits the metadata fields entirely when the config carries none", async () => {
-    // 缺省不得落成 undefined 键：存储实现按"字段缺席"与"字段为 null"区分（见契约测）。
+    // Absent fields must not be persisted as undefined keys: storage implementations distinguish
+    // "field absent" from "field is null" (see the contract tests).
     const { journal } = setup();
     const run = journal.getRun(RUN)!;
     expect("scriptText" in run).toBe(false);
     expect("scriptHash" in run).toBe(false);
     expect("parentSessionId" in run).toBe(false);
     expect("cwd" in run).toBe(false);
-    // 未命名的 run 必须是**缺席的键**而不是 null/undefined 值：读侧据此走脚本首行兜底。
+    // An unnamed run must be an **absent key**, not a null/undefined value: the read side uses this
+    // to fall back to the first line of the script.
     expect("name" in run).toBe(false);
     expect("toolCallId" in run).toBe(false);
-    // 绝大多数 run 不是修订：lineage 指针同样必须缺席，而不是落成空值
-    // （docs/execution-engine.md）。
+    // The overwhelming majority of runs are not revisions: the lineage pointer must likewise be
+    // absent rather than persisted as an empty value
+    // (docs/execution-engine.md).
     expect("resumedFrom" in run).toBe(false);
   });
 
-  // resumedFrom 走的也是这条只写一次的元数据路。引擎不读它：导入缓存的构建在 run service。
-  // 它落库的意义在崩溃之后——修订 run 的 plain resume 靠读回这个指针重建 ImportedCache。
+  // resumedFrom travels the same write-once metadata path. The engine does not read it: the
+  // imported cache is built in the run service. Its meaning on disk shows up after a crash — a
+  // revision run's plain resume reads this pointer back to rebuild ImportedCache.
   it("persists the amend-resume lineage pointer through createRun", async () => {
     const { journal } = setup({ resumedFrom: "run-predecessor" });
     expect(journal.getRun(RUN)).toMatchObject({ runId: RUN, resumedFrom: "run-predecessor" });
   });
 });
 
-// 具名 actor 是修订续跑（amend-resume）缓存导入的身份键，而**任何** run 都是未来修订的
-// 潜在前驱——所以这条唯一性规则对所有 run 生效，不只是修订 run
-// （docs/execution-engine.md「Amend-resume」）。
+// A named actor is the identity key for amend-resume cache import, and **any** run is a potential
+// predecessor of a future revision — so this uniqueness rule applies to all runs, not just revision
+// runs (docs/execution-engine.md "Amend-resume").
 describe("WorkflowEngine — actor name uniqueness", () => {
   it("fails the run when a non-empty name repeats (both sites via the name argument)", async () => {
     const { engine, journal } = setup();
     engine.createActor("actor#1", "planner");
-    // createActor 是同步表面（无 promise 可拒），所以与 assertRunning 同姿态：抛。
+    // createActor is a synchronous surface (no promise to reject), so it takes the same posture as
+    // assertRunning: throw.
     expect(() => engine.createActor("actor#2", "planner")).toThrow(
       expect.objectContaining({ code: "DuplicateActorName" }),
     );
@@ -959,8 +988,9 @@ describe("WorkflowEngine — actor name uniqueness", () => {
   });
 
   it("compares the effective name, so persona.name collides with a plain name argument", async () => {
-    // 有效名 = normalizePersona 后的 spec.name，persona.name 压过 name 实参。查重必须看
-    // 那个值，否则「name 写 b、persona.name 写 a」能绕过规则并在前驱里造出两个 a。
+    // The effective name = spec.name after normalizePersona; persona.name overrides the name
+    // argument. Dedup must look at that value, otherwise "name=b, persona.name=a" could bypass the
+    // rule and produce two a's in the predecessor.
     const { engine } = setup();
     engine.createActor("actor#1", "reviewer");
     expect(() => engine.createActor("actor#2", "second", { name: "reviewer" })).toThrow(
@@ -969,7 +999,8 @@ describe("WorkflowEngine — actor name uniqueness", () => {
   });
 
   it("does not collide when persona.name renames one of two identical name arguments", async () => {
-    // 同一条规则的另一侧：name 实参相同但 persona.name 覆盖了其中一个，有效名就不同。
+    // The other side of the same rule: identical name arguments but persona.name overrides one of
+    // them, so the effective names differ.
     const { engine, journal } = setup();
     engine.createActor("actor#1", "worker");
     engine.createActor("actor#2", "worker", { name: "worker-2" });
@@ -983,7 +1014,8 @@ describe("WorkflowEngine — actor name uniqueness", () => {
   });
 
   it("allows any number of anonymous actors (absent or empty names)", async () => {
-    // 匿名合法且不查——代价已裁决：没有缓存资格。空串与缺席同属匿名。
+    // Anonymous is legal and not checked — the tradeoff has already been adjudicated: no cache
+    // eligibility. The empty string and absence both count as anonymous.
     const { engine, journal } = setup();
     engine.createActor("actor#1");
     engine.createActor("actor#2");
@@ -1001,8 +1033,9 @@ describe("WorkflowEngine — actor name uniqueness", () => {
   });
 
   it("does not false-positive on a byte-identical resume (fresh engine, names re-registered once)", async () => {
-    // replay 安全性：查重表是纯内存的、随引擎实例而生。resume 在一个全新引擎里从头重跑
-    // 同一串 createActor 调用，每个名字因此恰好被登记一次。这也是它不能落 journal 的理由。
+    // Replay safety: the dedup table is purely in-memory and lives with the engine instance. Resume
+    // re-runs the same sequence of createActor calls from scratch in a brand-new engine, so each
+    // name gets registered exactly once. This is also why it cannot be persisted to the journal.
     const journal = new InMemoryJournalStore();
     {
       const e1 = setup({ journal }).engine;
@@ -1020,9 +1053,11 @@ describe("WorkflowEngine — actor name uniqueness", () => {
 });
 
 describe("WorkflowEngine — actor persona and resolved model", () => {
-  // persona 对引擎是**纯透传数据**：引擎不解读它，但必须把它原样送到 driver、事件与 journal——
-  // 它是冻结身份，resume 时按同一份重建。模型不在 persona 里（2026-09-11 起没有模型档位）：
-  // 子代理跑在哪个模型上是宿主事实，由 driver 写进 resolvedModel。
+  // The persona is **pure pass-through data** to the engine: the engine does not interpret it but
+  // must deliver it verbatim to the driver, the events, and the journal —
+  // it is a frozen identity, rebuilt from the same copy at resume time. The model is not in the
+  // persona (no model tiers since 2026-09-11): which model a subagent runs on is a host fact,
+  // written into resolvedModel by the driver.
   it("carries the persona through to the driver, the actor-created event and the journal", async () => {
     const { engine, driver, journal } = setup();
     const actor = engine.createActor("actor#1", "judge", {
@@ -1048,8 +1083,9 @@ describe("WorkflowEngine — actor persona and resolved model", () => {
     await expect(p).resolves.toBe("ok");
   });
 
-  // docs/dynamic-workflow/authoring.md「Choosing a model per subagent」：persona 可以点名一个模型。
-  // 引擎只记这个名字、原样交给 driver——查绑定表与建会话都是宿主的事。
+  // docs/dynamic-workflow/authoring.md "Choosing a model per subagent": a persona may name a model.
+  // The engine only records the name and hands it to the driver verbatim — looking up the binding
+  // table and creating the session are the host's business.
   it("carries a persona model name verbatim to the driver, the event and the journal", async () => {
     const { engine, driver, journal } = setup();
     const actor = engine.createActor("actor#1", "judge", {
@@ -1065,7 +1101,8 @@ describe("WorkflowEngine — actor persona and resolved model", () => {
       persona: expected,
     });
     expect(journal.getActor(RUN, "actor#1", 1)?.persona).toEqual(expected);
-    // 派发重复出生事实，persona 的模型名也在其中（读面收回表的子代理要带着它）。
+    // The dispatch repeats the birth facts, and the persona's model name is among them (the bounded
+    // read surface that lists subagents needs to carry it).
     expect(driver.events.find((e) => e.type === "node-dispatched")).toMatchObject({
       actorName: "judge",
       actorPersonaModel: "GLM-5.3-Flash$high",
@@ -1088,7 +1125,8 @@ describe("WorkflowEngine — actor persona and resolved model", () => {
   });
 
   it("keeps only the known string fields of an object persona off the wire", async () => {
-    // 沙箱经类型断言塞进来的怪值不该一路搬进 journal 与宿主的建会话路径。
+    // Weird values smuggled in via type assertions from the sandbox must not travel all the way
+    // into the journal and the host's session creation path.
     const { engine, journal } = setup();
     engine.createActor("actor#1", "judge", {
       system: "You judge.",
@@ -1109,10 +1147,11 @@ describe("WorkflowEngine — actor persona and resolved model", () => {
   });
 
   it("does not clobber the driver-written resolvedModel when journaling the session", async () => {
-    // resolvedModel 是 **driver 拥有**的字段：子代理跑在哪个模型上只有宿主知道，所以它在
-    // createActorSession 内部才被写下。而 putActor 是整条记录的替换，引擎在会话创建返回后
-    // 还要再写一次（补 sessionId）——那一次必须把它带过去，否则成本审计与 resume 的 pin
-    // 依据在正常路径上就丢了。
+    // resolvedModel is a **driver-owned** field: only the host knows which model the subagent runs
+    // on, so it is written inside createActorSession. putActor, however, replaces the whole record,
+    // and the engine writes once more after session creation returns (to add the sessionId) — that
+    // write must carry resolvedModel over, otherwise the basis for cost auditing and the resume pin
+    // is lost on the normal path.
     const { engine, journal } = setup({
       resolveModel: (persona) =>
         persona.name === "judge" ? "anthropic/haiku" : "anthropic/sonnet",
@@ -1123,7 +1162,7 @@ describe("WorkflowEngine — actor persona and resolved model", () => {
 
     const record = journal.getActor(RUN, "actor#1", 1);
     expect(record?.resolvedModel).toBe("anthropic/haiku");
-    // 同一条记录上，引擎自己的字段照旧完整。
+    // On the same record, the engine's own fields remain intact.
     expect(record?.sessionId).toBe("session:actor#1@1");
     expect(record?.persona).toEqual({ name: "judge", system: "You judge." });
 
@@ -1132,8 +1171,9 @@ describe("WorkflowEngine — actor persona and resolved model", () => {
   });
 
   it("preserves a journaled resolvedModel across a replayed createActor", async () => {
-    // resume 路径：同一个 (siteId, ordinal) 再次 createActor 时，引擎的 putActor 不得把上一次
-    // run 解析出的模型抹掉——它正是「resume 重新附着到同一个模型」的依据。
+    // Resume path: when createActor runs again for the same (siteId, ordinal), the engine's
+    // putActor must not erase the model resolved by the previous
+    // run — it is precisely the basis for "resume re-attaching to the same model".
     const journal = new InMemoryJournalStore();
     journal.createRun({
       runId: RUN,
@@ -1161,7 +1201,7 @@ describe("WorkflowEngine — actor persona and resolved model", () => {
 });
 
 describe("WorkflowEngine — resume script identity", () => {
-  /** 造一个已存在的 run 记录（模拟前一次 run 留下的 journal）。 */
+  /** Builds a pre-existing run record (simulating a journal left behind by a previous run). */
   function seedRun(journal: InMemoryJournalStore, scriptHash?: string): void {
     journal.createRun({
       runId: RUN,
@@ -1174,8 +1214,9 @@ describe("WorkflowEngine — resume script identity", () => {
   }
 
   it("refuses to resume when the journaled scriptHash differs from the config's", () => {
-    // V1 的 resume 限制是「逐字节相同的脚本文本」。哈希不一致意味着调用方拿另一份脚本
-    // 复用了同一个 runId：拒绝这次 resume，而不是接受后再让 run 失败。
+    // V1's resume restriction is "byte-identical script text". A hash mismatch means the caller is
+    // reusing the same runId with a different script: refuse this resume instead of accepting it and
+    // letting the run fail later.
     const journal = new InMemoryJournalStore();
     seedRun(journal, "hash-old");
     const driver = new FakeDriver(journal);
@@ -1191,8 +1232,9 @@ describe("WorkflowEngine — resume script identity", () => {
       });
     expect(construct).toThrowError(expect.objectContaining({ code: "ScriptHashMismatch" }));
 
-    // 两个哈希必须结构化随错误走：排查 resume 被拒的人要看出是哪一侧变了，
-    // 而不是从 message 里正则抠值（流程判断不依赖错误文本）。
+    // Both hashes must travel structurally with the error: whoever debugs a refused resume needs to
+    // see which side changed,
+    // not scrape values out of the message with a regex (flow decisions must not depend on error text).
     let thrown: WorkflowError | undefined;
     try {
       construct();
@@ -1200,7 +1242,8 @@ describe("WorkflowEngine — resume script identity", () => {
       thrown = error as WorkflowError;
     }
     expect(thrown?.mismatch).toEqual({ expected: "hash-old", got: "hash-new" });
-    // 落 journal 的可序列化形态同样带着它（failure_json 是 app 侧读的持久记录）。
+    // The serializable form persisted to the journal carries it too (failure_json is the durable
+    // record the app side reads).
     expect(thrown?.toJSON()).toMatchObject({
       code: "ScriptHashMismatch",
       mismatch: { expected: "hash-old", got: "hash-new" },
@@ -1210,13 +1253,14 @@ describe("WorkflowEngine — resume script identity", () => {
       got: "hash-new",
     });
 
-    // 既有 journal 记录不得被这次拒绝改写——它仍可用正确的脚本 resume。
+    // The existing journal record must not be rewritten by this rejection — it is still resumable
+    // with the correct script.
     expect(journal.getRun(RUN)).toMatchObject({
       status: "stopped",
       scriptHash: "hash-old",
       spentTokens: 7,
     });
-    // 拒绝发生在任何事件之前：没有 run-started，也没有 run-settled。
+    // The rejection happens before any events: no run-started, no run-settled.
     expect(driver.events).toEqual([]);
     expect(journal.listEvents(RUN, { types: "all", reportItems: "all" })).toEqual([]);
   });
@@ -1234,11 +1278,12 @@ describe("WorkflowEngine — resume script identity", () => {
       scriptHash: "hash-same",
     });
     expect(engine.status()).toBe("running");
-    expect(journal.getRun(RUN)?.spentTokens).toBe(7); // 预算仍从记录恢复
+    expect(journal.getRun(RUN)?.spentTokens).toBe(7); // the budget is still restored from the record
   });
 
   it("resumes when either side has no hash (records predating run metadata)", () => {
-    // 只有"两侧都有且不同"才拒绝：缺一侧就没有可比对的对象，此时不得凭空判定不匹配。
+    // Only "both present and different" rejects: with one side missing there is nothing to compare,
+    // and no mismatch may be invented in that case.
     const withoutRecordHash = new InMemoryJournalStore();
     seedRun(withoutRecordHash);
     expect(
@@ -1268,17 +1313,19 @@ describe("WorkflowEngine — resume script identity", () => {
 
 describe("WorkflowEngine — askSpecs completeness", () => {
   it("fails the run loudly instead of degrading an unlisted ask site to untyped", async () => {
-    // 站点表与 schema 合成来自同一次编译，所以 miss 只可能是接线错误。旧的
-    // `?? { typed: false }` 兜底会把 typed ask 静默降级：不注册 submit_result、
-    // 拿末轮文本当结果、schema 校验整个消失——「结果永远合法」的类型系统比没有更糟。
+    // The site table and schema synthesis come from the same compilation, so a miss can only be a
+    // wiring error. The old
+    // `?? { typed: false }` fallback would silently downgrade a typed ask: no submit_result
+    // registration, the final turn's text taken as the result, schema validation gone entirely — a
+    // type system where "the result is always valid" is worse than none.
     const { engine, driver } = setup({ askSpecs: typedSpecs(), validate: requireFields });
     const actor = engine.createActor("actor#1");
 
-    const p = engine.ask("ask#2", actor, "unlisted site"); // askSpecs 里只有 ask#1
+    const p = engine.ask("ask#2", actor, "unlisted site"); // askSpecs only has ask#1
     await expect(p).rejects.toMatchObject({ code: "MissingAskSpec" });
     await flush();
 
-    // 关键断言：绝不曾以 untyped 形态派发出去。
+    // Key assertion: it was never dispatched in untyped form.
     expect(driver.startAsks).toEqual([]);
     await expect(engine.settled).resolves.toMatchObject({
       status: "errored",
@@ -1287,7 +1334,8 @@ describe("WorkflowEngine — askSpecs completeness", () => {
   });
 
   it("still honours an explicit untyped entry", async () => {
-    // untyped ask 依然是一等公民——它只是必须被显式记为 { typed: false }。
+    // An untyped ask is still a first-class citizen — it just must be explicitly recorded as
+    // { typed: false }.
     const { engine, driver } = setup({ askSpecs: new Map([["ask#1", { typed: false }]]) });
     const actor = engine.createActor("actor#1");
     const p = engine.ask("ask#1", actor, "summarize");
@@ -1300,8 +1348,9 @@ describe("WorkflowEngine — askSpecs completeness", () => {
 
 describe("WorkflowEngine — world reads", () => {
   it("journals a world.run dispatch under kind world-run (effects are not reads)", async () => {
-    // docs/dynamic-workflow/authoring.md「Running commands: `world.run`」：op "run" 与其余 world-read
-    // 机制同构，但落 journal 的 kind 是 world-run——审计面不把效应伪装成读。
+    // docs/dynamic-workflow/authoring.md "Running commands: `world.run`": the op "run" is
+    // isomorphic to the other world-read mechanisms, but the journal kind is world-run — the audit
+    // surface does not disguise effects as reads.
     const { engine, driver, journal } = setup();
     const p = engine.worldRead("world-read#1", "run", ["lean", ["a.lean"], { timeoutMs: 60000 }]);
     expect(driver.worldReads[0]?.op).toBe("run");
@@ -1313,7 +1362,7 @@ describe("WorkflowEngine — world reads", () => {
     expect(node?.inputHash).toBe(
       inputHash({ op: "run", args: ["lean", ["a.lean"], { timeoutMs: 60000 }] }),
     );
-    // 事件流的 node-queued 同样携带 world-run。
+    // The event stream's node-queued carries world-run as well.
     const queued = driver.events.find(
       (event) => event.type === "node-queued" && event.instance.siteId === "world-read#1",
     );
@@ -1326,7 +1375,8 @@ describe("WorkflowEngine — world reads", () => {
     const { engine, driver, journal } = setup();
     const p = engine.worldRead("world-read#1", "glob", ["src/**"]);
     expect(driver.worldReads).toHaveLength(1);
-    // 实参按位置原样送到 driver（引擎不看 op、不校验元数）。
+    // Arguments are passed to the driver verbatim and positionally (the engine does not look at op
+    // or validate arity).
     expect(driver.worldReads[0]?.args).toEqual(["src/**"]);
     driver.worldReads[0]?.deferred.resolve(["a.ts", "b.ts"]);
     await expect(p).resolves.toEqual(["a.ts", "b.ts"]);
@@ -1334,16 +1384,18 @@ describe("WorkflowEngine — world reads", () => {
     const node = journal.getNode(RUN, "world-read#1", 1);
     expect(node?.kind).toBe("world-read");
     expect(node?.result).toEqual(["a.ts", "b.ts"]);
-    // inputHash 覆盖 {op, args}（此前是 {op, arg}）：载荷形变是有意的，早于此的 journal
-    // 会在第一个 world-read 命中处以 InputHashMismatch 大声失败（见 engine.worldRead 的注释）。
+    // inputHash covers {op, args} (previously {op, arg}): the payload shape change is intentional,
+    // and journals predating it fail loudly with InputHashMismatch on the first world-read hit (see
+    // the comment on engine.worldRead).
     expect(node?.inputHash).toBe(inputHash({ op: "glob", args: ["src/**"] }));
     expect(node?.actorSeq).toBeUndefined();
   });
 
   it("hashes multi-argument world reads positionally (arg order is part of identity)", async () => {
     const { engine, driver, journal } = setup();
-    // 用 glob 承载一个多参调用：引擎对 args 完全不解释，所以这条断言钉的是"位置数组进 hash"，
-    // 而不是某个 op 的元数（元数归 driver）。
+    // Uses glob to carry a multi-argument call: the engine does not interpret args at all, so this
+    // assertion pins "the positional array goes into the hash",
+    // not any particular op's arity (arity belongs to the driver).
     const p = engine.worldRead("world-read#1", "glob", ["a", "b"]);
     expect(driver.worldReads[0]?.args).toEqual(["a", "b"]);
     driver.worldReads[0]?.deferred.resolve(["hit"]);
@@ -1351,7 +1403,7 @@ describe("WorkflowEngine — world reads", () => {
     expect(journal.getNode(RUN, "world-read#1", 1)?.inputHash).toBe(
       inputHash({ op: "glob", args: ["a", "b"] }),
     );
-    // 顺序敏感：交换实参就是另一次读取。
+    // Order-sensitive: swapping the arguments is a different read.
     expect(inputHash({ op: "glob", args: ["a", "b"] })).not.toBe(
       inputHash({ op: "glob", args: ["b", "a"] }),
     );
@@ -1398,7 +1450,8 @@ describe("WorkflowEngine — world reads", () => {
       result: ["x.ts"],
     });
     const { engine } = setup({ journal });
-    // 同 op、实参不同：纯度契约被破坏，整个 run 大声失败而不是返回旧结果。
+    // Same op, different arguments: the purity contract is broken, so the whole run fails loudly
+    // instead of returning the old result.
     await expect(
       engine.worldRead("world-read#1", "glob", ["src/**", "extra"]),
     ).rejects.toMatchObject({
@@ -1408,9 +1461,10 @@ describe("WorkflowEngine — world reads", () => {
   });
 
   it("journals a multi-arg op's inputHash over {op, args} and short-circuits its replay", async () => {
-    // 多参 op 的完整往返：`files.grep(pattern, glob?)` 的 args 是位置数组，键就是
-    // `{op, args}`。第二段证明 replay 命中零 driver 调用——journal 化世界读取正是这样让
-    // resume 免疫于 run 与 resume 之间的磁盘变化。
+    // The full round trip of a multi-arg op: `files.grep(pattern, glob?)` has a positional args
+    // array, and the key is
+    // `{op, args}`. The second half proves a replay hit makes zero driver calls — journalized world
+    // reads are exactly what makes resume immune to disk changes between the run and the resume.
     const hits = [{ path: "src/a.ts", line: 12, text: "// TODO" }];
     const journal = new InMemoryJournalStore();
     journal.createRun({
@@ -1437,10 +1491,11 @@ describe("WorkflowEngine — world reads", () => {
   });
 
   it("distinguishes an omitted trailing optional from a present one (shorter args array)", async () => {
-    // `grep("TODO")` 与 `grep("TODO", "*.ts")` 必须是两个不同的 journal 键。lowering 在
-    // 缺省时打包**更短的数组**（不是 undefined 洞），而 canonicalJson 让长度进 hash，所以
-    // 这条性质是自动的——钉住它是因为一旦丢掉，一次"加了 glob 的 grep"会命中一次
-    // "没加 glob 的 grep"的记录，而故障点在 resume，离原因很远。
+    // `grep("TODO")` and `grep("TODO", "*.ts")` must be two different journal keys. The lowering
+    // packs a **shorter array** when the default is omitted (not an undefined hole), and
+    // canonicalJson feeds the length into the hash, so this property is automatic — it is pinned
+    // because if it were lost, a "grep with a glob added" would hit a
+    // "grep without a glob" record, and the failure point is in the resume, far from the cause.
     expect(inputHash({ op: "grep", args: ["TODO"] })).not.toBe(
       inputHash({ op: "grep", args: ["TODO", "*.ts"] }),
     );
@@ -1467,8 +1522,10 @@ describe("WorkflowEngine — world reads", () => {
   });
 
   it("settles the node failed on a driver WorldReadCapExceeded, keeping the run alive", async () => {
-    // 上限溢出是 **node 级**：脚本可以 catch 它并缩窄 pattern，所以 run 必须还活着，
-    // 而且这个码绝不能被折成 DriverError——两者的可操作性不同（见 WorkflowErrorCode 注释）。
+    // The cap overflow is **node-level**: the script can catch it and narrow the pattern, so the run
+    // must stay alive,
+    // and this code must never be folded into DriverError — the two have different operability (see
+    // the WorkflowErrorCode comment).
     const { engine, driver, journal } = setup();
     const p = engine.worldRead("world-read#1", "grep", [".", undefined]);
     driver.worldReads[0]?.deferred.reject(
@@ -1481,12 +1538,14 @@ describe("WorkflowEngine — world reads", () => {
     const node = journal.getNode(RUN, "world-read#1", 1);
     expect(node?.status).toBe("failed");
     expect(node?.error?.code).toBe("WorldReadCapExceeded");
-    // run 未被这次拒绝拖死；脚本可以继续（这才是 node 级的意义）。
+    // The run is not dragged down by this rejection; the script can continue (that is the whole
+    // point of node-level).
     expect(journal.getRun(RUN)?.status).toBe("running");
   });
 
   it("replays a journaled cap failure as the same structured rejection", async () => {
-    // 失败节点也落 journal（replay 可靠性要求：脚本可能已经观察过这次拒绝并据此分支）。
+    // Failed nodes are journaled too (a replay reliability requirement: the script may already have
+    // observed this rejection and branched on it).
     const journal = new InMemoryJournalStore();
     journal.createRun({
       runId: RUN,
@@ -1512,9 +1571,10 @@ describe("WorkflowEngine — world reads", () => {
 });
 
 describe("WorkflowEngine — lenient submit decode (real-model stringifies tool args)", () => {
-  // 用真实子集校验器：这些场景要真正的类型判定（object/number/anyOf），fake 的 required-only
-  // 校验器表达不了。真实模型（实盘 GLM-5.3）常把 submit_result 的 result 传成 JSON 字符串而非对象，
-  // 引擎需 schema-aware 地宽松解析——见 scheduler.normalizeSubmit。
+  // Uses a real subset validator: these scenarios need real type decisions (object/number/anyOf),
+  // which the fake required-only validator cannot express. Real models (GLM-5.3 in production)
+  // often pass submit_result's result as a JSON string instead of an object;
+  // the engine must leniently parse it schema-aware — see scheduler.normalizeSubmit.
   const realValidate: ValidateFn = (schema, value) => validate(schema as JsonSchema, value);
 
   const objectSchema: JsonSchema = {
@@ -1544,7 +1604,7 @@ describe("WorkflowEngine — lenient submit decode (real-model stringifies tool 
 
     const node = journal.getNode(RUN, "ask#1", 1);
     expect(node?.status).toBe("completed");
-    // 落库的是解析后的对象，而非原始字符串。
+    // What is persisted is the parsed object, not the raw string.
     expect(node?.result).toEqual({ title: "x", bullet_points: ["a"] });
     expect(typeof node?.result).toBe("object");
   });
@@ -1556,32 +1616,35 @@ describe("WorkflowEngine — lenient submit decode (real-model stringifies tool 
     });
     const actor = engine.createActor("actor#1");
     const p = engine.ask("ask#1", actor, "do it");
-    void p.catch(() => {}); // 最终会因 repair 耗尽而 reject
+    void p.catch(() => {}); // eventually rejects due to repair exhaustion
     await flush();
 
-    engine.askSubmitAttempted(inst("ask#1"), '{"unexpected":1}'); // 解析出对象但缺 required 字段
+    engine.askSubmitAttempted(inst("ask#1"), '{"unexpected":1}'); // parses to an object but misses a required field
 
     const last = driver.submitResponses.at(-1)?.verdict;
     expect(last?.kind).toBe("reject");
     expect(last?.kind === "reject" && last.violations.length).toBeGreaterThan(0);
-    // 尚未结算：仍是准入时的 running 记录。
+    // Not yet settled: still the running record from admission.
     expect(journal.getNode(RUN, "ask#1", 1)?.status).toBe("running");
   });
 
   it("reports POST-parse violations when a stringified object misses a required field", async () => {
-    // bug：JSON.parse 成功但解析值仍不过时，repair 曾上报解析前违规（`$: expected object, got string`），
-    // 模型无从修起（再引号/双重编码/退化成 "{}"），3 次后 ValidationFailed 失败（dwfrun-60c20069）。
+    // bug: when JSON.parse succeeded but the parsed value still failed validation, repair used to
+    // report pre-parse violations (`$: expected object, got string`),
+    // leaving the model nothing to fix (re-quote / double-encode / degenerate to "{}"), failing with
+    // ValidationFailed after 3 attempts (dwfrun-60c20069).
     const { engine, driver } = setup({ askSpecs: specs(objectSchema), validate: realValidate });
     const actor = engine.createActor("actor#1");
     const p = engine.ask("ask#1", actor, "do it");
     void p.catch(() => {});
     await flush();
 
-    engine.askSubmitAttempted(inst("ask#1"), '{"title":"x"}'); // 解析出对象但缺 bullet_points
+    engine.askSubmitAttempted(inst("ask#1"), '{"title":"x"}'); // parses to an object but misses bullet_points
 
     const last = driver.submitResponses.at(-1)?.verdict;
     expect(last?.kind).toBe("reject");
-    // 违规必须指向解析后对象的路径，而不是根级「expected object, got string」。
+    // The violation must point at the parsed object's path, not the root-level
+    // "expected object, got string".
     expect(last?.kind === "reject" && last.violations).toContainEqual({
       path: "$.bullet_points",
       expected: "present",
@@ -1594,8 +1657,10 @@ describe("WorkflowEngine — lenient submit decode (real-model stringifies tool 
   });
 
   it("reports POST-parse violations on the nested path when a stringified array field has wrong item shape", async () => {
-    // 镜像实盘 Critique/gaps 失败（dwfrun-bc01726f）：schema 要 string[]，模型提交嵌套数组，
-    // 且整体被序列化成字符串。违规须落在嵌套路径 $.bullet_points[0]，而不是根级 string。
+    // Mirrors a production Critique/gaps failure (dwfrun-bc01726f): the schema wants string[], the
+    // model submitted a nested array,
+    // and the whole thing was serialized into a string. The violation must land on the nested path
+    // $.bullet_points[0], not the root-level string.
     const { engine, driver } = setup({ askSpecs: specs(objectSchema), validate: realValidate });
     const actor = engine.createActor("actor#1");
     const p = engine.ask("ask#1", actor, "do it");
@@ -1627,11 +1692,11 @@ describe("WorkflowEngine — lenient submit decode (real-model stringifies tool 
     void p.catch(() => {});
     await flush();
 
-    engine.askSubmitAttempted(inst("ask#1"), "hello"); // JSON.parse 抛出
+    engine.askSubmitAttempted(inst("ask#1"), "hello"); // JSON.parse throws
 
     const last = driver.submitResponses.at(-1)?.verdict;
     expect(last?.kind).toBe("reject");
-    // 报的是原始 raw-value 违规（object 期望却拿到 string）。
+    // Reports the original raw-value violation (expected object but got string).
     expect(last?.kind === "reject" && last.violations.some((v) => v.expected === "object")).toBe(
       true,
     );
@@ -1639,7 +1704,8 @@ describe("WorkflowEngine — lenient submit decode (real-model stringifies tool 
   });
 
   it("preserves a legitimately-string result: raw string that validates is NOT parsed", async () => {
-    // anyOf string|null 接受裸字符串 → 直接过 → 不解析。"42" 必须留 "42"，绝不变成数字 42。
+    // anyOf string|null accepts a bare string → straight accept → no parsing. "42" must stay "42"
+    // and never become the number 42.
     const stringSchema: JsonSchema = { anyOf: [{ type: "string" }, { type: "null" }] };
     const { engine, driver, journal } = setup({
       askSpecs: specs(stringSchema),
@@ -1678,15 +1744,17 @@ describe("WorkflowEngine — lenient submit decode (real-model stringifies tool 
   });
 });
 
-// report（execution-engine.md 的 "Progressive results"）：即发即忘、无 driver 往返，但**落 journal**。
-// 这一组钉住三件事：一次写的节点形状、replay 去重、两个上限。
+// report (execution-engine.md's "Progressive results"): fire-and-forget, no driver round trip, but
+// **persisted to the journal**.
+// This group pins three things: the write-once node shape, replay dedup, and the two caps.
 describe("WorkflowEngine — report", () => {
   it("journals one already-settled node and emits one event", () => {
     const { engine, journal, driver } = setup();
     engine.report("report#1", { finding: "dup impl", paths: ["a.ts", "b.ts"] });
 
     const node = journal.getNode(RUN, "report#1", 1);
-    // 一次写、已结算、无 actor 字段、result 即 item——「两次写」规则唯一的例外。
+    // Written once, already settled, no actor fields, result is the item — the sole exception to
+    // the "two writes" rule.
     expect(node).toMatchObject({
       kind: "report",
       status: "completed",
@@ -1725,8 +1793,10 @@ describe("WorkflowEngine — report", () => {
   });
 
   it("skips a journaled report on replay: no event, no re-append", () => {
-    // 脚本重跑，所以每个 report 调用都会再执行一次。已 journal 的 (siteId, ordinal) 静默跳过——
-    // 否则 resume 之后 Results 面板会把同一条发现显示两次，而那正是 report 要 journal 的理由。
+    // The script re-runs, so every report call executes again. Journaled (siteId, ordinal) pairs
+    // are silently skipped —
+    // otherwise after a resume the Results panel would show the same finding twice, which is
+    // precisely why report journals at all.
     const journal = new InMemoryJournalStore();
     const first = setup({ journal });
     first.engine.report("report#1", { n: 1 });
@@ -1742,13 +1812,14 @@ describe("WorkflowEngine — report", () => {
     expect(
       journal.listNodes(RUN, { kinds: "all", withResult: true }).filter((n) => n.kind === "report"),
     ).toHaveLength(2);
-    // resume 只多出一条 run-started，report 一条事件都没再 append。
+    // Resume adds exactly one run-started; report appends not a single event again.
     expect(journal.listEvents(RUN, { types: "all", reportItems: "all" }).length).toBe(before + 1);
   });
 
   it("fails the run with InputHashMismatch when a replayed item differs", () => {
-    // 这条比对是**防御性的**（一条报告派生自 journal 已钉住的值），但这里的偏移意味着整个
-    // replay 不可靠——Results 面板的读者绝不该在不知情的情况下看到那种东西。
+    // This comparison is **defensive** (a report derives from values already pinned in the
+    // journal), but an offset here means the whole
+    // replay is unreliable — readers of the Results panel must never see that unknowingly.
     const journal = new InMemoryJournalStore();
     setup({ journal }).engine.report("report#1", { n: 1 });
 
@@ -1762,8 +1833,9 @@ describe("WorkflowEngine — report", () => {
   });
 
   it("hashes canonically, so key order in the item is not a mismatch", () => {
-    // inputHash 走 canonicalJson（键按 code point 排序），所以脚本里字面量键序变化不会
-    // 被当成纯度违约。这是"防御性而非承重"该有的松紧度。
+    // inputHash goes through canonicalJson (keys sorted by code point), so a changed literal key
+    // order in the script is not
+    // treated as a purity violation. That is the right tolerance for "defensive, not load-bearing".
     const journal = new InMemoryJournalStore();
     setup({ journal }).engine.report("report#1", { a: 1, b: 2 });
 
@@ -1793,7 +1865,8 @@ describe("WorkflowEngine — report", () => {
     const { engine, journal } = setup();
     engine.report("report#1", "x".repeat(REPORT_CAPS.maxItemSerializedBytes));
 
-    // 上限先于落库：溢出的那条 item 一个字节都不该进 journal。
+    // The cap applies before persistence: not a single byte of the overflowing item should reach
+    // the journal.
     expect(journal.getNode(RUN, "report#1", 1)).toBeUndefined();
     return expect(engine.settled).resolves.toMatchObject({
       status: "errored",
@@ -1804,7 +1877,8 @@ describe("WorkflowEngine — report", () => {
   it("accepts an item of exactly the per-item limit", () => {
     const { engine, journal } = setup();
     expect(REPORT_CAPS.maxItemSerializedBytes).toBe(1024 * 1024);
-    // JSON 的两个引号也算在字节里：正文少两个字节，序列化后恰好等于上限。
+    // JSON's two quotes also count in the bytes: the body is two bytes short, and serialized it is
+    // exactly at the limit.
     engine.report("report#1", "x".repeat(REPORT_CAPS.maxItemSerializedBytes - 2));
 
     expect(journal.getNode(RUN, "report#1", 1)?.status).toBe("completed");
@@ -1812,8 +1886,9 @@ describe("WorkflowEngine — report", () => {
   });
 
   it("fails the run with ReportCapExceeded when its reports would pass the per-run byte limit, counted across resume", () => {
-    // 一个真正攒满 1 GiB 的 run 在单测里造不起，所以让 journal 在 resume 时报一个接近上限的
-    // 字节和：这同时钉住两件事——计数从 sumResultBytes 恢复，以及上限按 run 累计、拦在落库之前。
+    // A run genuinely filling 1 GiB cannot be built in a unit test, so the journal reports a
+    // near-cap byte sum at resume: this pins two things at once — the count is restored from
+    // sumResultBytes, and the cap accumulates per run and blocks before persistence.
     const nearlyFull = REPORT_CAPS.maxBytesPerRun - 50;
     class NearlyFullJournal extends InMemoryJournalStore {
       override sumResultBytes(runId: string, kind: NodeKind): number {
@@ -1822,15 +1897,15 @@ describe("WorkflowEngine — report", () => {
     }
     const journal = new NearlyFullJournal();
     const first = setup({ journal });
-    first.engine.report("report#1", "a"); // 3 字节，第一世不读 sumResultBytes
+    first.engine.report("report#1", "a"); // 3 bytes; the first life does not read sumResultBytes
     first.engine.stop("user");
 
     const resumed = setup({ journal });
-    resumed.engine.report("report#1", "a"); // 命中，跳过
-    // 3 + nearlyFull + 42 = 上限 - 5：放得下。
+    resumed.engine.report("report#1", "a"); // hit, skipped
+    // 3 + nearlyFull + 42 = cap - 5: it fits.
     resumed.engine.report("report#1", "x".repeat(40));
     expect(journal.getRun(RUN)?.status).toBe("running");
-    // 再来 10 字节就超过：整个 run 失败，这一条不落库。
+    // 10 more bytes would exceed it: the whole run fails, and this one is not persisted.
     resumed.engine.report("report#1", "y".repeat(8));
 
     expect(journal.countNodes(RUN, "report")).toBe(2);
@@ -1841,9 +1916,10 @@ describe("WorkflowEngine — report", () => {
   });
 
   it("measures the cap in UTF-8 bytes, not characters", () => {
-    // 一份中文 findings 的字符数只有字节数的三分之一；按字符计会让上限形同虚设。
+    // A CJK findings document's character count is one third of its byte count; counting characters
+    // would render the cap meaningless.
     const { engine, journal } = setup();
-    // 每个字符 3 字节，加上 JSON 的两个引号：刚好越界。
+    // 3 bytes per character plus JSON's two quotes: just over the line.
     const chars = Math.ceil(REPORT_CAPS.maxItemSerializedBytes / 3);
     engine.report("report#1", "结".repeat(chars));
 
@@ -1855,13 +1931,15 @@ describe("WorkflowEngine — report", () => {
   });
 
   it("restores the report count across resume so the cap is run-level", () => {
-    // 上限是 run 级的，所以计数必须跨 resume 连续——否则一个反复 resume 的 run 可以无限报告。
+    // The cap is run-level, so the count must stay continuous across resumes — otherwise a run
+    // resumed over and over could report without limit.
     const journal = new InMemoryJournalStore();
     const first = setup({ journal });
     for (let i = 0; i < REPORT_CAPS.maxItemsPerRun; i += 1) first.engine.report("report#1", i);
     first.engine.stop("user");
 
-    // resume：脚本重跑，前 65,536 条全部命中并跳过，下一条是**新**的——上限必须仍然拦住它。
+    // Resume: the script re-runs, the first 65,536 all hit and skip, and the next one is **new** —
+    // the cap must still block it.
     const resumed = setup({ journal });
     for (let i = 0; i < REPORT_CAPS.maxItemsPerRun; i += 1) resumed.engine.report("report#1", i);
     expect(resumed.driver.eventsOfType("report")).toEqual([]);
@@ -1874,9 +1952,10 @@ describe("WorkflowEngine — report", () => {
   });
 
   it("fails the run loudly when the item is not a JSON value", () => {
-    // 运行期护栏（编译期的可序列化诊断是 suspenders）。canonicalJson 是全函数的——它会把
-    // undefined 静默折成 "null"，那会把一条残缺的 item 悄悄落进 journal。所以探针用
-    // JSON.stringify：返回 undefined / 抛错都能被抓成一次大声的失败。
+    // Runtime guardrail (the compile-time serializability diagnostics are suspenders). canonicalJson
+    // is total — it would
+    // silently fold undefined into "null", quietly landing a broken item in the journal. So the probe
+    // uses JSON.stringify: returning undefined / throwing both get caught as one loud failure.
     const { engine, journal } = setup();
     engine.report("report#1", undefined);
 
@@ -1885,8 +1964,9 @@ describe("WorkflowEngine — report", () => {
   });
 
   it("fails the run loudly on a cyclic item instead of blowing the stack", () => {
-    // canonicalJson 遇到环会无限递归爆栈——那是一次崩溃而不是一次可读的失败，所以探针
-    // 必须先跑。这条用例就是那个顺序的证明。
+    // canonicalJson recurses infinitely on a cycle and blows the stack — that is a crash, not a
+    // readable failure, so the probe
+    // must run first. This case is the proof of that ordering.
     const { engine, journal } = setup();
     const cyclic: Record<string, unknown> = { name: "loop" };
     cyclic.self = cyclic;
@@ -1900,8 +1980,9 @@ describe("WorkflowEngine — report", () => {
   });
 });
 
-// enterPhase（docs/dynamic-workflow/presentation.md）：控制流经过一个
-// `phase("…")` 标记。与 log 同一副姿态——同步、无 driver 往返、结算后 no-op——但按名字计数。
+// enterPhase (docs/dynamic-workflow/presentation.md): control flow passes through a
+// `phase("…")` marker. Same posture as log — synchronous, no driver round trip, no-op after
+// settlement — but counted by name.
 describe("WorkflowEngine — enterPhase", () => {
   it("emits phase-entered with a per-name ordinal and writes no journal row", () => {
     const { engine, journal, driver } = setup();
@@ -1911,10 +1992,11 @@ describe("WorkflowEngine — enterPhase", () => {
     expect(driver.eventsOfType("phase-entered")).toEqual([
       { type: "phase-entered", name: "plan", ordinal: 1 },
       { type: "phase-entered", name: "verify", ordinal: 1 },
-      // 同名再入就是第二轮：分析器也把第二个同名标记读成回边。
+      // Re-entering the same name is the second round: the analyzer also reads the second
+      // same-name marker as a back edge.
       { type: "phase-entered", name: "plan", ordinal: 2 },
     ]);
-    // 标记不是站点：没有 dwf_node 行，也不消耗任何站点的序号。
+    // Markers are not sites: no dwf_node rows, and no site's ordinal is consumed.
     expect(journal.listNodes(RUN, { kinds: "all", withResult: true })).toEqual([]);
   });
 
@@ -1926,7 +2008,8 @@ describe("WorkflowEngine — enterPhase", () => {
     engine.enterPhase("report#1");
     expect(driver.eventsOfType("phase-entered")).toEqual([
       { type: "phase-entered", name: "plan", ordinal: 1 },
-      // 一个恰好长得像 site id 的阶段名：它的计数从 1 起，report#1 的节点序号不受影响。
+      // A phase name that happens to look like a site id: its count starts at 1, and report#1's
+      // node ordinals are unaffected.
       { type: "phase-entered", name: "report#1", ordinal: 1 },
     ]);
   });
@@ -1940,9 +2023,11 @@ describe("WorkflowEngine — enterPhase", () => {
 });
 
 /**
- * 一层薄包装：把 `appendEvent` 收到的**原始对象**留下引用（内存 journal 自己会 clone，
- * 存进去的那份已经不是引擎传的那个）。用于钉住「journal 与 emit 拿到同一个对象」——
- * bootstrap 的 createJournalSequenceCapture 正是按引用相等核对序号的。
+ * A thin wrapper: keeps a reference to the **raw object** received by `appendEvent` (the in-memory
+ * journal clones on its own,
+ * so the stored copy is no longer the one the engine passed in). Used to pin "the journal and emit
+ * receive the same object" —
+ * bootstrap's createJournalSequenceCapture checks ordinals precisely by reference equality.
  */
 class CapturingJournal extends InMemoryJournalStore {
   readonly appended: RunEvent[] = [];
@@ -1953,9 +2038,10 @@ class CapturingJournal extends InMemoryJournalStore {
   }
 }
 
-// 出生阶段坐标（docs/dynamic-workflow/presentation.md）：实例在**铸造
-// ordinal 的那一刻**记下当时的阶段，出生事件带 `phaseName`。铸造点与事件发出点可以隔开
-// （hold 规则），所以戳只能取自铸造那一刻。
+// Birth phase coordinates (docs/dynamic-workflow/presentation.md): an instance records the phase
+// current **at the moment its ordinal is minted**,
+// and the birth event carries `phaseName`. The minting point and the event emission point can be
+// separated (the hold rule), so the stamp can only come from the minting moment.
 describe("WorkflowEngine — 出生阶段坐标（phaseName）", () => {
   it("stamps the actor and the nodes minted after a phase marker", async () => {
     const { engine, driver } = setup();
@@ -1966,7 +2052,8 @@ describe("WorkflowEngine — 出生阶段坐标（phaseName）", () => {
     await flush();
 
     expect(driver.eventsOfType("actor-created")[0]).toMatchObject({ phaseName: "规划" });
-    // ask 与 world-read 走两条不同的准入路径（调度器 / 引擎自己），戳都出自同一个铸造点。
+    // ask and world-read take two different admission paths (scheduler / the engine itself), and
+    // both stamps come from the same minting point.
     expect(
       driver.eventsOfType("node-queued").map((e) => [refToString(e.instance), e.phaseName]),
     ).toEqual([
@@ -1982,7 +2069,8 @@ describe("WorkflowEngine — 出生阶段坐标（phaseName）", () => {
     engine.enterPhase("规划");
     await flush();
 
-    // 「无戳」是键整个缺席，不是 undefined：读端（schema / reducer）区分这两者。
+    // "Unstamped" means the whole key is absent, not undefined: readers (schema / reducer)
+    // distinguish the two.
     expect(driver.eventsOfType("actor-created")[0]).not.toHaveProperty("phaseName");
     expect(driver.eventsOfType("node-queued")[0]).not.toHaveProperty("phaseName");
   });
@@ -1996,8 +2084,9 @@ describe("WorkflowEngine — 出生阶段坐标（phaseName）", () => {
       status: "running",
     });
     journal.putActor({ runId: RUN, siteId: "actor#1", ordinal: 1 });
-    // 前一世只记下 seq0 = ask#2@1。本次重跑先发的 ask#1 是 fresh，被 hold 规则扣住，
-    // 直到 seq0 被释放才入队——那时控制流已经走到 B 了。
+    // The previous life only recorded seq0 = ask#2@1. This run's earlier ask#1 is fresh and gets
+    // held by the hold rule,
+    // only enqueueing once seq0 is released — by then control flow has already moved past B.
     journal.putNode({
       runId: RUN,
       siteId: "ask#2",
@@ -2014,21 +2103,22 @@ describe("WorkflowEngine — 出生阶段坐标（phaseName）", () => {
     const { engine, driver } = setup({ journal });
     const actor = engine.createActor("actor#1");
     engine.enterPhase("A");
-    const pA = engine.ask("ask#1", actor, "A"); // ordinal 铸于 A，但没有入队
+    const pA = engine.ask("ask#1", actor, "A"); // ordinal minted at A, but not enqueued
     expect(driver.eventsOfType("node-queued")).toEqual([]);
     engine.enterPhase("B");
-    const pB = engine.ask("ask#2", actor, "B"); // 命中 seq0 → 释放它，随后才轮到 ask#1
+    const pB = engine.ask("ask#2", actor, "B"); // hits seq0 → releases it, then ask#1's turn
     await flush();
 
     const queued = driver.eventsOfType("node-queued");
     expect(queued).toHaveLength(1);
     expect(refToString(queued[0]!.instance)).toBe("ask#1@1");
-    // 事件晚于 B 的标记发出，戳仍是出生时的 A：戳取自铸造点，不是发出点。
+    // The event is emitted after B's marker, yet the stamp is still the birth-time A: the stamp
+    // comes from the minting point, not the emission point.
     expect(driver.events.indexOf(queued[0]!)).toBeGreaterThan(
       driver.events.findIndex((e) => e.type === "phase-entered" && e.name === "B"),
     );
     expect(queued[0]!.phaseName).toBe("A");
-    // 同一次重跑里出生于 B 的命中节点，戳是 B。
+    // The hit node born at B within the same re-run is stamped B.
     expect(driver.eventsOfType("node-settled")[0]).toMatchObject({
       cached: true,
       phaseName: "B",
@@ -2061,14 +2151,15 @@ describe("WorkflowEngine — 出生阶段坐标（phaseName）", () => {
     });
 
     const { engine, driver } = setup({ journal });
-    // 重跑沿同一轨迹重走标记，于是命中的节点在这一世拿到与前一世相同的戳。
+    // The re-run walks the markers along the same trajectory, so the hit node gets the same stamp
+    // as in the previous life.
     engine.enterPhase("规划");
     const actor = engine.createActor("actor#1");
     await expect(engine.ask("ask#1", actor, "A")).resolves.toBe("r1");
 
     expect(driver.startAskCount()).toBe(0);
     expect(driver.eventsOfType("actor-created")[0]).toMatchObject({ phaseName: "规划" });
-    // 命中的节点没有 node-queued，这条 cached settle 就是它的出生事件。
+    // A hit node has no node-queued; this cached settle is its birth event.
     expect(driver.eventsOfType("node-queued")).toEqual([]);
     expect(driver.eventsOfType("node-settled")[0]).toMatchObject({
       cached: true,
@@ -2077,9 +2168,12 @@ describe("WorkflowEngine — 出生阶段坐标（phaseName）", () => {
   });
 
   it("a replayed ask's cached node-settled repeats its birth facts and names no predecessor session", async () => {
-    // 普通 resume（没有导入缓存）：命中的行是本 run 自己跑出来的，交换在本 run 的会话里，
-    // 所以不带 sourceSessionId；出生事实照带——读面据它把节点归到子代理名下
-    // （docs/execution-engine.md「Events」）。失败的行同样短路复现，也同样带。
+    // Plain resume (no imported cache): the hit rows were produced by this run itself, and the
+    // exchange happened in this run's session,
+    // so there is no sourceSessionId; the birth facts are still carried — the read surface uses
+    // them to attribute nodes to subagents
+    // (docs/execution-engine.md "Events"). Failed rows are likewise short-circuit-replayed, and
+    // likewise carry them.
     const journal = new InMemoryJournalStore();
     journal.createRun({ runId: RUN, caps: { maxConcurrency: 16 }, spentTokens: 0, status: "running" });
     journal.putActor({ runId: RUN, siteId: "actor#1", ordinal: 1 });
@@ -2141,17 +2235,20 @@ describe("WorkflowEngine — 出生阶段坐标（phaseName）", () => {
     engine.askTurnEnded(inst("ask#1"), "RA");
     await expect(p).resolves.toBe("RA");
 
-    // 派发重复出生事实，两个阶段名都在场（各自取自实例 / actor 的铸造点）。
+    // The dispatch repeats the birth facts, and both phase names are present (each taken from the
+    // instance's / actor's minting point).
     expect(driver.eventsOfType("node-dispatched")[0]).toMatchObject({
       phaseName: "规划",
       actorPhaseName: "规划",
     });
-    // 其余 node-* 事件仍不带（reducer 沿用 actorSiteId 的先例向前携带）。
+    // The other node-* events still do not carry it (the reducer carries them forward following the
+    // actorSiteId precedent).
     expect(driver.eventsOfType("node-settled")[0]).not.toHaveProperty("phaseName");
   });
 
   it("dispatches with the birth phases even after the script walked into later phases", async () => {
-    // 派发被会话创建扣住，其间脚本走过两个标记：戳必须还是出生时的那个，不是当前阶段。
+    // The dispatch is held up by session creation while the script walks through two markers: the
+    // stamp must still be the birth-time one, not the current phase.
     const { engine, driver } = setup({ deferSessions: true });
     engine.enterPhase("A");
     const actor = engine.createActor("actor#1", "planner");
@@ -2167,7 +2264,8 @@ describe("WorkflowEngine — 出生阶段坐标（phaseName）", () => {
     const dispatched = driver.eventsOfType("node-dispatched");
     expect(dispatched).toHaveLength(1);
     expect(dispatched[0]).toMatchObject({ phaseName: "A", actorPhaseName: "A" });
-    // 派发确实晚于 C 的标记（否则上面的断言只是恰好成立）。
+    // The dispatch genuinely lands after C's marker (otherwise the assertion above would only hold
+    // by coincidence).
     expect(driver.events.indexOf(dispatched[0]!)).toBeGreaterThan(
       driver.events.findIndex((e) => e.type === "phase-entered" && e.name === "C"),
     );
@@ -2181,11 +2279,13 @@ describe("WorkflowEngine — 出生阶段坐标（phaseName）", () => {
     const actor = engine.createActor("actor#1");
     const p = engine.ask("ask#1", actor, "do it");
     void engine.worldRead("world-read#1", "glob", ["src/**"]);
-    // 标记在两个实例出生之后：出生表里没有它们，两条派发都不该长出阶段名。
+    // The marker comes after both instances were born: they are not in the birth table, so neither
+    // dispatch may grow a phase name.
     engine.enterPhase("规划");
     await flush();
 
-    // world-read 同步派发，ask 要等一轮微任务建会话，所以世界读取在前。
+    // world-read dispatches synchronously while the ask waits a microtask round to create its
+    // session, so the world read comes first.
     const dispatched = driver.eventsOfType("node-dispatched");
     expect(dispatched.map((e) => refToString(e.instance))).toEqual(["world-read#1@1", "ask#1@1"]);
     for (const event of dispatched) {
@@ -2209,8 +2309,9 @@ describe("WorkflowEngine — 出生阶段坐标（phaseName）", () => {
     journal.appended.forEach((event, i) => {
       expect(event).toBe(driver.events[i]);
     });
-    // 被打戳的那条尤其要是同一个对象：打戳建的是新对象，两条路径必须共用它。
-    // 三条：actor-created、node-queued，以及重复出生事实的 node-dispatched。
+    // The stamped ones must especially be the same object: stamping builds a new object, and both
+    // paths must share it.
+    // Three: actor-created, node-queued, and the birth-fact-repeating node-dispatched.
     expect(journal.appended.filter((e) => "phaseName" in e && e.phaseName === "规划")).toHaveLength(
       3,
     );
@@ -2218,8 +2319,10 @@ describe("WorkflowEngine — 出生阶段坐标（phaseName）", () => {
 });
 
 /**
- * 派发重复出生事实（docs/execution-engine.md「Events」的 `node-dispatched` 行）：有界读面按
- * 「开跑」而不是「排队」收实例进表，这条事件因此必须自足——实例的出生事实 + 它那个子代理的。
+ * The dispatch repeats the birth facts (the `node-dispatched` row of docs/execution-engine.md
+ * "Events"): the bounded read surface admits instances by
+ * "started running" rather than "queued", so this event must be self-sufficient — the instance's
+ * birth facts plus its subagent's.
  */
 describe("WorkflowEngine — node-dispatched 重复出生事实", () => {
   it("repeats exactly what the instance's node-queued and its actor-created carried", async () => {
@@ -2242,7 +2345,8 @@ describe("WorkflowEngine — node-dispatched 重复出生事实", () => {
       phaseName: queued.phaseName,
       instructionsHead: queued.instructionsHead,
     });
-    // 逐字相同，而不只是形状相同：指令开头是准入时刻算的那一份（去两端空白、无省略号）。
+    // Verbatim identical, not merely shape-identical: the instruction head is the one computed at
+    // admission (trimmed on both ends, no ellipsis).
     expect(dispatched.instructionsHead).toBe("写一份调研大纲");
     expect(dispatched.actorName).toBe("planner");
 
@@ -2257,7 +2361,8 @@ describe("WorkflowEngine — node-dispatched 重复出生事实", () => {
     void engine.worldRead("world-read#1", "glob", ["src/**"]);
     await flush();
 
-    // 匿名 actor：`actor-created` 的 name 是空的（序列化后整个键不在），派发同样不许凭空造一个。
+    // Anonymous actor: `actor-created`'s name is empty (the whole key absent once serialized), and
+    // the dispatch likewise must not invent one.
     expect(driver.eventsOfType("actor-created")[0]!.name).toBeUndefined();
     const [world, ask] = driver.eventsOfType("node-dispatched");
     expect(ask).toEqual({
@@ -2267,7 +2372,8 @@ describe("WorkflowEngine — node-dispatched 重复出生事实", () => {
       actor: { siteId: "actor#1", ordinal: 1 },
       instructionsHead: "do it",
     });
-    // world-read 的派发不带任何出生事实：它紧跟自己的 node-queued，也没有子代理。
+    // A world-read's dispatch carries no birth facts: it directly follows its own node-queued and
+    // has no subagent.
     expect(world).toEqual({ type: "node-dispatched", instance: inst("world-read#1") });
 
     engine.askTurnEnded(inst("ask#1"), "RA");
@@ -2278,7 +2384,8 @@ describe("WorkflowEngine — node-dispatched 重复出生事实", () => {
     const journal = new InMemoryJournalStore();
     journal.createRun({ runId: RUN, caps: { maxConcurrency: 16 }, spentTokens: 0, status: "running" });
     journal.putActor({ runId: RUN, siteId: "actor#1", ordinal: 1 });
-    // 上一世崩在执行中：这一行是 running，重跑要按记录的 actorSeq 重新派发。
+    // The previous life crashed mid-execution: this row is running, and the re-run must re-dispatch
+    // it by its recorded actorSeq.
     journal.putNode({
       runId: RUN,
       siteId: "ask#1",
@@ -2297,7 +2404,8 @@ describe("WorkflowEngine — node-dispatched 重复出生事实", () => {
     const p = engine.ask("ask#1", actor, "do it");
     await flush();
 
-    // 新的一世重新出生一次，派发带的就是这一世的 node-queued 带的那一份。
+    // The new life is born once more, and the dispatch carries the copy this life's node-queued
+    // carried.
     const queued = driver.eventsOfType("node-queued")[0]!;
     const dispatched = driver.eventsOfType("node-dispatched")[0]!;
     expect(queued.phaseName).toBe("重跑");
@@ -2388,9 +2496,12 @@ describe("run-launched：发起 run 那一轮的锚点（docs/execution-engine.m
     });
   });
 
-  // 本 run 的子代理模型（docs/dynamic-workflow/launch.md）与锚点、阶段表同车：零 SQL，只在建 run
-  // 那一世记进这条事件。引擎**不读它**——子代理会话的模型面整个在宿主侧（bootstrap 的
-  // workflow-actor-model.ts），宿主从事件头读回同一个规范串，resume 与两条读面都据此还原。
+  // The subagent model of this run (docs/dynamic-workflow/launch.md) rides with the anchor and the
+  // phase table: zero SQL, recorded only in the life that
+  // creates the run. The engine **does not read it** — the model surface of a subagent session is
+  // entirely host-side (bootstrap's
+  // workflow-actor-model.ts); the host reads the same canonical string back from the event header,
+  // and both resume and the two read surfaces restore from it.
   it("launch 携 subagentModel 时 run-launched 原样带上规范串（档位段在内），resume 不再记第二条", () => {
     const journal = new InMemoryJournalStore();
     const withModel = () =>
@@ -2406,11 +2517,13 @@ describe("run-launched：发起 run 那一轮的锚点（docs/execution-engine.m
     expect(journal.listEvents(RUN, { types: "all", reportItems: "all" })[1]?.event).toEqual({
       type: "run-launched",
       inputId: "launch-input-3",
-      // 档位段原样带着走：`$high` 是用户说出口的那一半，引擎逐字转录、不解析。
+      // The tier segment travels verbatim: `$high` is the half the user spoke aloud; the engine
+      // transcribes it literally without parsing.
       subagentModel: "zhipu/glm-5.3-flash$high",
     });
 
-    // 续跑那一世不再记（与锚点同一道门）：同一个 run 的子代理模型因此跨生命周期唯一。
+    // The resumed life does not record it again (the same gate as the anchor): a run's subagent
+    // model is therefore unique across lifecycles.
     withModel();
     expect(
       journal
@@ -2419,8 +2532,10 @@ describe("run-launched：发起 run 那一轮的锚点（docs/execution-engine.m
     ).toHaveLength(1);
   });
 
-  // 脚本点名的模型绑定表（docs/dynamic-workflow/launch.md「Models the script names」）与子代理模型
-  // 同车同规：提交方给出、建 run 那一世记一次、引擎不读；宿主建会话时按 persona 的名字查它。
+  // The script-named model binding table (docs/dynamic-workflow/launch.md "Models the script names")
+  // rides with the subagent model
+  // under the same rules: provided by the submitter, recorded once in the run-creating life, not
+  // read by the engine; the host consults it by persona name when creating sessions.
   it("launch 携 modelBindings 时 run-launched 原样带上整张表，resume 不再记第二条", () => {
     const journal = new InMemoryJournalStore();
     const bindings = {
@@ -2461,15 +2576,18 @@ describe("run-launched：发起 run 那一轮的锚点（docs/execution-engine.m
   it("launch 不带 subagentModel 时整个键缺席（缺席即子代理跑在会话模型上）", () => {
     const journal = new InMemoryJournalStore();
     make(journal);
-    // 落成值为 undefined 的键会让读侧把「没设」读成「设了一个空模型」，两者在 AmendWorkflow
-    // 的三态里是不同的意思。
+    // A key persisted with an undefined value would make the read side interpret "not set" as "set
+    // to an empty model"; in AmendWorkflow's
+    // three states those are different meanings.
     expect(
       "subagentModel" in journal.listEvents(RUN, { types: "all", reportItems: "all" })[1]!.event,
     ).toBe(false);
   });
 
-  // 本 run 的脚本文件（docs/dynamic-workflow/launch.md「Script files」的 Provenance）与子代理
-  // 模型逐条同规：零 SQL、引擎不读、只在建 run 那一世记一次。宿主从事件头读回它交给模型面。
+  // This run's script file (the Provenance of docs/dynamic-workflow/launch.md "Script files") follows
+  // the same per-item rules as the subagent
+  // model: zero SQL, not read by the engine, recorded once in the run-creating life. The host reads
+  // it back from the event header and hands it to the model surface.
   it("launch 携 scriptPath 时 run-launched 原样带上绝对路径，resume 不再记第二条", () => {
     const journal = new InMemoryJournalStore();
     const withPath = () =>
@@ -2491,7 +2609,8 @@ describe("run-launched：发起 run 那一轮的锚点（docs/execution-engine.m
       scriptPath: "/repo/.zcode/workflow-drafts/audit.dwf.ts",
     });
 
-    // 续跑那一世不再记（与锚点、子代理模型同一道门）：一个 run 的脚本文件跨生命周期唯一。
+    // The resumed life does not record it again (the same gate as the anchor and the subagent
+    // model): a run's script file is unique across lifecycles.
     withPath();
     expect(
       journal
@@ -2503,8 +2622,9 @@ describe("run-launched：发起 run 那一轮的锚点（docs/execution-engine.m
   it("launch 不带 scriptPath 时整个键缺席（缺席即这个 run 没有可编辑的脚本文件）", () => {
     const journal = new InMemoryJournalStore();
     make(journal);
-    // 与 subagentModel 同一条论证：落成值为 undefined 的键会让读侧把「没有文件」读成
-    // 「有文件但路径是空的」，而模型面据此决定说哪一句话。
+    // Same argument as subagentModel: a key persisted with an undefined value would make the read
+    // side interpret "no file" as
+    // "a file with an empty path", and the model surface decides which sentence to say based on that.
     expect(
       "scriptPath" in journal.listEvents(RUN, { types: "all", reportItems: "all" })[1]!.event,
     ).toBe(false);
@@ -2605,7 +2725,8 @@ describe("用量沿 lineage 累计（docs/execution-engine.md「Usage across the
       type: "usage-updated",
       spentTokens: 300,
     });
-    // 投影靠 driver.emit 拿到同一条：run-started 把用量清零，这条紧跟着把继承值放回去。
+    // The projection gets the same event via driver.emit: run-started zeroes the usage, and this one
+    // immediately puts the inherited value back.
     expect(driver.events.at(-1)).toEqual({ type: "usage-updated", spentTokens: 300 });
   });
 

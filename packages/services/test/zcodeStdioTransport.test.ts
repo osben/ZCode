@@ -24,8 +24,8 @@ function isPidRunning(pid: number): boolean {
     return false;
   }
   if (process.platform === "win32") {
-    // Windows 没有系统 ps；Git 附带的 ps 既不保证 stdout，也不能可靠查询原生 PID。
-    // process.kill(pid, 0) 已完成当前平台的存活探测。
+    // Windows has no system ps; the ps bundled with Git neither guarantees stdout nor can reliably query native PIDs.
+    // process.kill(pid, 0) has already done the liveness probe for the current platform.
     return true;
   }
   const result = spawnSync("ps", ["-o", "stat=", "-p", String(pid)], {
@@ -89,8 +89,9 @@ describe("ZCodeStdioTransport", () => {
     const lines: string[] = [];
     const transport = new ZCodeStdioTransport(child, { onStderrLine: (line) => lines.push(line) });
     await new Promise<void>((resolve) => transport.onMessage(() => resolve()));
-    // 修复原因：退出后的进程身份复核可能阻塞事件循环，让 250ms drain timer
-    // 先于 stderr EOF 投递。本用例只验证尾行收集，真实退出时限由后续用例验证。
+    // Fix rationale: the post-exit process identity re-check can block the event loop, letting the 250ms drain
+    // timer fire before the stderr EOF is delivered. This case only verifies final-line collection; the real exit
+    // deadline is verified by later cases.
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     try {
       await transport.disposeAndWait();
@@ -123,17 +124,17 @@ setInterval(() => {}, 1000);
     await delay(50);
 
     const startedAt = Date.now();
-    // Bugfix: app-server --stdio 的自然关闭边界是 stdin EOF，不能每次关闭都直接
-    // 进入进程树强杀等待，否则即使 agent 可正常收尾也会带来几秒关窗延迟。
+    // Bugfix: the natural shutdown boundary of app-server --stdio is stdin EOF; every close must not go straight
+    // into a process-tree force-kill wait, otherwise even an agent that can finish cleanly adds seconds of window-close latency.
     await transport.disposeAndWait();
     const durationMs = Date.now() - startedAt;
 
     expect(child.exitCode).toBe(0);
-    // 阈值依据：产品约束是 Windows 清理落在 Host 3.5s service phase 预算内
-    // （disposeAndWaitOnce 的绝对 deadline 即按它构造）。原 1s 紧断言在部分
-    // Windows 机器上不稳定——stdin 管道拆除 + 进程树快照（WMI/CIM 查询）合计
-    // 可合法耗时 ~2s 且优雅退出仍然成立（exitCode=0），属机器性能差异而非回归；
-    // Linux/mac 保留 1s 紧阈值不变。
+    // Threshold basis: the product constraint is that Windows cleanup lands within the Host's 3.5s service phase
+    // budget (disposeAndWaitOnce's absolute deadline is constructed from it). The original tight 1s assertion was
+    // flaky on some Windows machines — stdin pipe teardown + process-tree snapshot (WMI/CIM queries) together can
+    // legitimately take ~2s while graceful exit still holds (exitCode=0); that is machine performance variance, not
+    // a regression. Linux/mac keep the tight 1s threshold unchanged.
     const shutdownBudgetMs = process.platform === "win32" ? 3_500 : 1_000;
     expect(durationMs).toBeLessThan(shutdownBudgetMs);
     activeChildren.delete(child);
@@ -180,8 +181,8 @@ setInterval(() => {}, 1000);
       expect(isPidRunning(descendantPid)).toBe(true);
 
       try {
-        // 修复原因：EOF 正常关闭期间根进程可能先退出，但 detached MCP 不会随之退出。
-        // disposeAndWait 必须使用 EOF 前保存的进程树快照完成后代回收。
+        // Fix rationale: during normal EOF shutdown the root process may exit first, but a detached MCP does not
+        // exit with it. disposeAndWait must finish descendant reclamation using the process-tree snapshot saved before EOF.
         await transport.disposeAndWait();
         expect(isPidRunning(descendantPid)).toBe(false);
       } finally {
@@ -236,9 +237,9 @@ descendant.once("message", () => {
       expect(isPidRunning(descendantPid)).toBe(true);
 
       try {
-        // 修复原因：运行期协议热路径不能为了异常退出兜底扫描进程表。
-        // POSIX Host 已把 Agent 放进独立进程组；root 退出后应在 cleanup 边界
-        // 按已拥有的 PGID 找回同组后代，而不是依赖某条运行期 notification。
+        // Fix rationale: the runtime protocol hot path must not scan the process table as an abnormal-exit fallback.
+        // The POSIX Host has already put the Agent in its own process group; after root exits, cleanup should
+        // reclaim same-group descendants by the owned PGID at the cleanup boundary, not rely on some runtime notification.
         await transport.disposeAndWait();
         expect(isPidRunning(descendantPid)).toBe(false);
       } finally {
@@ -288,9 +289,9 @@ descendant.once("message", () => {
       await waitForExit(child);
 
       try {
-        // 修复原因：Windows 没有 POSIX PGID；root 先退出时不能重新 taskkill 裸 root。
-        // cleanup 只沿 Win32_Process 保留的 ParentProcessId 找回成员，并用 CreationDate
-        // 固定 descendant 身份，确保 app quit 仍能回收原 task tree。
+        // Fix rationale: Windows has no POSIX PGID; when root exits first you cannot re-taskkill the bare root.
+        // cleanup only follows ParentProcessId preserved via Win32_Process and pins descendant identity with
+        // CreationDate, so app quit can still reclaim the original task tree.
         await transport.disposeAndWait();
         expect(isPidRunning(descendantPid)).toBe(false);
       } finally {
@@ -339,9 +340,9 @@ setInterval(() => {}, 1000);
     await allFramesPromise;
 
     try {
-      // 修复原因：进程清理曾在每条 telemetry 前同步 spawnSync("ps")，300 条消息
-      // 会阻塞 Host 数秒并让 subagent 面板空白。运行期帧必须直接交付；完整树扫描
-      // 只允许在 disposeAndWait 已进入退出阶段后执行。
+      // Fix rationale: process cleanup once ran spawnSync("ps") before every telemetry frame; 300 messages would
+      // block the Host for seconds and blank the subagent panel. Runtime frames must be delivered directly; the
+      // full tree scan is only allowed after disposeAndWait has entered the exit stage.
       expect(Date.now() - firstFrameAt).toBeLessThan(750);
       expect(receivedIndexes).toEqual(Array.from({ length: frameCount }, (_, index) => index));
       expect(isPidRunning(agentPid)).toBe(true);
@@ -416,7 +417,7 @@ process.stdout.write(frame, () => setTimeout(() => process.exit(0), 10));
   });
 });
 
-// 用 PassThrough 模拟 child 的 stdio，便于精确控制 stdout 分块边界。
+// Use PassThrough to fake the child's stdio, allowing precise control of stdout chunk boundaries.
 function createFakeChild() {
   const child = Object.assign(new EventEmitter(), {
     stdin: new PassThrough(),
@@ -456,7 +457,7 @@ describe("ZCodeStdioTransport stdout 分帧", () => {
       `${JSON.stringify(small[0])}\n${JSON.stringify(big)}\r\n${JSON.stringify(small[1])}\n\n${JSON.stringify(small[2])}\n${JSON.stringify(tail)}`,
       "utf8",
     );
-    // 7 字节的奇数分块会切开 UTF-8 多字节序列与 CRLF。
+    // 7-byte odd chunks cut through UTF-8 multibyte sequences and CRLF.
     writeInChunks(child.stdout, bytes, 7);
     child.stdout.end();
 
@@ -473,9 +474,10 @@ describe("ZCodeStdioTransport stdout 分帧", () => {
       "utf8",
     );
 
-    // Bug 原因：旧实现每个 chunk 都对累积 buffer 整体 indexOf("\n")，V8 需把 cons string
-    // 整体拍平，15MB 的 session/read 响应按 64KB 到达时每轮分配数 GB（host CPU 100%）。
-    // 这里统计对 "\n" 的扫描字符数，线性实现应与帧长同量级。
+    // Bug cause: the old implementation ran indexOf("\n") over the whole accumulated buffer on every chunk, so V8
+    // had to flatten the cons string entirely; a 15MB session/read response arriving in 64KB chunks allocated
+    // gigabytes per pass (host CPU 100%). This counts the characters scanned for "\n"; a linear implementation
+    // should stay on the order of the frame length.
     let scannedChars = 0;
     const originalIndexOf = String.prototype.indexOf;
     String.prototype.indexOf = function (this: string, search: string, position?: number) {

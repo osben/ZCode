@@ -1,34 +1,37 @@
 // ============================================================
-// 确认窗里可调的两项 run 设置（CreateWorkflow / AmendWorkflow 共用）
+// The two adjustable run settings in the confirmation window (shared by CreateWorkflow / AmendWorkflow)
 // ============================================================
-// docs/dynamic-workflow/launch.md「Adjusting the settings in the window」。
+// docs/dynamic-workflow/launch.md "Adjusting the settings in the window".
 //
-// 两个 schema，一去一回：
-//   - `WorkflowAdjustableSettingsSchema`：`resolveInput` 回填进入参的事实，告诉确认窗「这个 agent 会应用
-//     你在窗里改的值」以及本机天花板。
-//   - `WorkflowSettingsAdjustmentSchema`：用户按 Allow 时应答 `content` 里带回来的改动。
+// Two schemas, one out and one back:
+//   - `WorkflowAdjustableSettingsSchema`: facts backfilled into the arguments by `resolveInput`, telling the
+//     confirmation window "this agent will apply the values you changed in the window" plus the local ceilings.
+//   - `WorkflowSettingsAdjustmentSchema`: the changes the user's Allow reply carries back in `content`.
 //
-// 回填块走**入参通道**而不是 `create_workflow` display：display 的字段集是冻结的（见
-// tool-result-metadata.ts 上的警告），多一个键会让严格解析它的客户端把整块连图一起丢掉；入参通道对
-// 每个客户端版本都没有 schema。旧客户端不认这块就照旧画纯文本条件行，旧 agent 不写这块，新客户端
-// 也就不提供一个它会丢掉的改动。
+// The backfill block travels through the **argument channel** rather than the `create_workflow` display: the display's
+// field set is frozen (see the warning on tool-result-metadata.ts); one extra key would make clients that strictly
+// parse it drop the whole block along with the graph, while the argument channel is schema-free for every client
+// version. Old clients that do not recognize the block keep drawing the plain-text condition lines; old agents do not
+// write it, so new clients never see an adjustment they would drop.
 
 import { z } from "zod";
 
-/** 规范形 `providerId/modelId[$level]` 的长度上限（团队套餐的 providerId 是 UUID）。 */
+/** Length cap for the canonical `providerId/modelId[$level]` form (team plans use a UUID as the providerId). */
 const WORKFLOW_SETTINGS_MAX_MODEL_CHARS = 512;
 
 /**
- * `resolveInput` 回填的「确认窗可调」事实。与 `script_line_offset`、`AmendWorkflow.predecessor` 同一个
- * 姿态：解析结果而不是可填的参数，模型的 JSON schema 不列它，模型硬填会被无条件覆盖。
+ * The "adjustable in the confirmation window" facts backfilled by `resolveInput`. Same stance as
+ * `script_line_offset` and `AmendWorkflow.predecessor`: a parsed result rather than a fillable argument — the model's
+ * JSON schema does not list it, and anything the model hard-fills is unconditionally overwritten.
  */
 export const WorkflowAdjustableSettingsSchema = z
   .object({
-    /** 宿主有模型目录、能解析确认窗里选的模型。false 时确认窗只让调上界，模型那一行是一句话。 */
+    /** The host has a model catalog and can resolve a model picked in the confirmation window. When false, the window only allows adjusting the bound and the model line is one sentence. */
     subagent_model: z.boolean(),
     /**
-     * 默认并发 D（键名早于「默认并发」这个概念，为兼容旧端保留）；端口说不出来时缺席。它不是上限：
-     * 步进器没有上界，只拿它写「默认 N」的提示与判「等于默认 = 不设自己的界」。
+     * The default concurrency D (the key name predates the "default concurrency" concept and is kept for old-client
+     * compatibility); absent when the port cannot say. It is not a cap: the stepper has no upper bound; D only writes
+     * the "default N" hint and the "equal to default = no own bound" judgment.
      */
     concurrency_ceiling: z.number().int().positive().optional(),
   })
@@ -36,18 +39,21 @@ export const WorkflowAdjustableSettingsSchema = z
 
 export type WorkflowAdjustableSettings = z.infer<typeof WorkflowAdjustableSettingsSchema>;
 
-/** 一个脚本最多能点名多少个不同的模型名（绑定表的条目上限）。远超任何真实脚本，只为让表有界。 */
+/** How many distinct model names a script may name at most (the binding table's entry cap). Far beyond any real script; it only keeps the table bounded. */
 export const WORKFLOW_MODEL_BINDINGS_MAX_ENTRIES = 64;
-/** 脚本里一个模型名的长度上限（名字是模型 id 或 `providerId/modelId[$level]`）。 */
+/** Length cap for a model name in the script (the name is a model id or `providerId/modelId[$level]`). */
 const WORKFLOW_MODEL_NAME_MAX_CHARS = 512;
 
 /**
- * 脚本点名的模型 → 规范形（docs/dynamic-workflow/launch.md「Models the script names」）：键是脚本
- * **逐字**写下的名字（不 trim：运行期 persona 里带的就是这个串），值是 `providerId/modelId[$level]`。
+ * Models named by the script → canonical form (docs/dynamic-workflow/launch.md "Models the script names"): the key is
+ * the name the script wrote **verbatim** (not trimmed: that is exactly the string carried into the runtime persona),
+ * the value is `providerId/modelId[$level]`.
  *
- * 与 {@link WorkflowAdjustableSettingsSchema} 同一个姿态、同一条通道：`resolveInput` 回填进入参，
- * 模型的 JSON schema 不列它，模型硬填会被无条件覆盖。确认窗不逐名画它（脚本的选择就是作者模型的
- * 决定），只据它在场把模型那一句改口成「子代理默认运行在」；应答里也没有改它的字段。
+ * Same stance, same channel as {@link WorkflowAdjustableSettingsSchema}: backfilled into the arguments by
+ * `resolveInput`, not listed in the model's JSON schema, and hard-filled values are unconditionally overwritten. The
+ * confirmation window does not draw it name by name (the script's choice is the author's decision about its model);
+ * its presence only rewords the model sentence to "subagents run on by default"; the reply has no field to change it
+ * either.
  */
 export const WorkflowModelBindingsSchema = z
   .record(
@@ -61,12 +67,13 @@ export const WorkflowModelBindingsSchema = z
 export type WorkflowModelBindings = z.infer<typeof WorkflowModelBindingsSchema>;
 
 /**
- * 用户在确认窗里改过的设置，即 Allow 应答的 `content`。用工具自己的字段名与三态：省略 = 没改，
- * `null` = 回到默认（会话模型 / 默认并发），值 = 设定——与 `AmendWorkflow` 模型面的三态逐字同规，
- * 所以 agent 侧只有一套解析。
+ * The settings the user changed in the confirmation window — the Allow reply's `content`. Uses the tool's own field
+ * names and a three-state: omitted = unchanged, `null` = back to default (session model / default concurrency),
+ * value = set — verbatim the same three-state as `AmendWorkflow`'s model surface, so the agent side has a single
+ * parser.
  *
- * 刻意**不** strict：应答来自客户端，broker 只取认得的两个键、丢掉其余，而不是因为一个它不认识的
- * 键就把用户的两项改动一起作废。
+ * Deliberately **not** strict: the reply comes from a client, and the broker takes only the two keys it knows and
+ * drops the rest, rather than voiding both of the user's changes because of one key it does not recognize.
  */
 export const WorkflowSettingsAdjustmentSchema = z.object({
   subagent_model: z
@@ -86,7 +93,7 @@ export const WorkflowSettingsAdjustmentSchema = z.object({
 
 export type WorkflowSettingsAdjustment = z.infer<typeof WorkflowSettingsAdjustmentSchema>;
 
-/** 解析一份应答 `content`：认得的键组成的改动；不合形状或一个键都没有即 `undefined`。 */
+/** Parses a reply `content`: the adjustment made of recognized keys; a bad shape or no keys at all yields `undefined`. */
 export function parseWorkflowSettingsAdjustment(
   content: unknown,
 ): WorkflowSettingsAdjustment | undefined {

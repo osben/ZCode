@@ -141,7 +141,8 @@ describe("框选文字副屏会话 manual review", () => {
     }
     await expectComposerState(createdForSelection.paneTestId, "", 1);
 
-    // SSC28：/side 与 /btw App 层命令选中即开新辅助 tab，并移除输入中的命令 token。
+    // SSC28: the /side and /btw App-level commands open a new auxiliary tab as soon as selected, and remove the
+    // command token from the input.
     const mainPaneTestId = testId(TID_V4_SESSION_PANE, "workspace-main");
     const sidesBeforeSlashCommand = await waitForSelectionSidePanes(3);
     const knownChildIds = new Set(sidesBeforeSlashCommand.map((side) => side.childSessionId));
@@ -159,7 +160,7 @@ describe("框选文字副屏会话 manual review", () => {
     await waitForSelectionSidePanes(5);
     await expectComposerPlainText(mainPaneTestId, "");
 
-    // SSC30：带参数的 `/side` 直接创建 child，并把参数作为首条普通输入提交。
+    // SSC30: `/side` with an argument creates the child directly and submits the argument as the first plain input.
     const childrenBeforeArgument = await waitForSelectionSidePanes(5);
     const childrenBeforeArgumentIds = new Set(
       childrenBeforeArgument.map((side) => side.childSessionId),
@@ -178,8 +179,8 @@ describe("框选文字副屏会话 manual review", () => {
     );
     await expectComposerPlainText(mainPaneTestId, "");
 
-    // SSC31：父会话启动新 turn 后立即发送 `/btw <text>`，参数命令只启动 child，
-    // 不把父会话当前 turn 改成 queue/guide。
+    // SSC31: sending `/btw <text>` right after the parent session starts a new turn — the argument command only
+    // starts the child and does not change the parent session's current turn to queue/guide.
     await setComposerText(mainPaneTestId, "Reply with exactly E2E_SSC_RUNNING_PARENT");
     await clickComposerSend(mainPaneTestId);
     const childrenBeforeRunningArgument = await waitForSelectionSidePanes(6);
@@ -200,13 +201,14 @@ describe("框选文字副屏会话 manual review", () => {
     );
     await expectComposerPlainText(mainPaneTestId, "");
 
-    // SSC29：辅助对话自身 composer 的 `/` 面板不提供 App 层命令，CLI 命令展示不受影响。
+    // SSC29: the auxiliary conversation's own composer `/` panel offers no App-level commands, and CLI command
+    // display is unaffected.
     const activeSideAfterBtw = await waitForActiveSelectionSidePane();
     await typeIntoComposerByKeyboard(activeSideAfterBtw.paneTestId, "/");
     await expectSlashPanelWithoutAppCommands();
     await dismissSlashPanel(activeSideAfterBtw.paneTestId);
 
-    // SSC29：草稿态（未创建 session）不提供 App 层命令。
+    // SSC29: the draft state (no session created yet) offers no App-level commands.
     await openNewTaskDraft();
     await typeIntoComposerByKeyboard(mainPaneTestId, "/");
     await expectSlashPanelWithoutAppCommands();
@@ -220,10 +222,10 @@ async function selectMainTimelineText(text: string): Promise<void> {
     document.dispatchEvent(new Event("selectionchange"));
   });
   await browser.pause(50);
-  // 修复原因：选区浮层 enabled 依赖主 pane focused；点击侧栏 tab / 新建终端后主 pane
-  // 失焦（xterm 挂载还会异步抢焦点）。真实划词的 pointerdown 会经 ChatPaneShell 的
-  // onPointerDownCapture 重新聚焦，合成选区没有这一步。这里循环补发 pointerdown，
-  // 直到 pane 外壳 data-focused="true" 稳定为止。
+  // Reason for the fix: the selection overlay's enabled state depends on the main pane being focused; clicking a
+  // sidebar tab / creating a terminal blurs the main pane (xterm mounting also grabs focus asynchronously). A real
+  // text-selection pointerdown refocuses via ChatPaneShell's onPointerDownCapture, which a synthetic selection
+  // lacks. Here we re-dispatch pointerdown in a loop until the pane shell's data-focused="true" is stable.
   await browser.waitUntil(
     async () =>
       browser.execute((paneTestId) => {
@@ -277,9 +279,9 @@ async function selectMainTimelineText(text: string): Promise<void> {
       testId(TID_V4_SESSION_PANE, "workspace-main"),
       text,
     );
-  // 修复原因：mouseup 后浮层在 rAF 中检查 enabled；若此刻主 pane 焦点仍被异步交互
-  // （xterm/tab 切换动画）抢走，本次检查会静默丢弃。整体重试"派发选区 + 等浮层"，
-  // 避免单次时序竞争造成 flake。
+  // Reason for the fix: after mouseup, the overlay checks enabled inside a rAF; if the main pane's focus is stolen
+  // at that moment by an async interaction (xterm/tab switch animation), this check silently drops. Retry the whole
+  // "dispatch selection + wait for overlay" sequence to avoid a one-shot timing race causing flakes.
   let tooltipVisible = false;
   for (let attempt = 0; attempt < 3 && !tooltipVisible; attempt += 1) {
     expect(await dispatchSelection()).toBe(true);
@@ -338,8 +340,9 @@ async function waitForSelectableMainTimelineText(
 }
 
 async function clickSelectionAction(action: "add-to-task" | "ask-in-side-chat"): Promise<void> {
-  // 修复原因：浮层在 selectionchange/rAF 中可能短暂重挂载；"先检查后点击"两次往返之间
-  // 按钮会消失一瞬导致 flake。这里把检查与点击合成单个原子脚本并整体重试。
+  // Reason for the fix: the overlay may remount briefly inside selectionchange/rAF; between the two round trips of
+  // "check first, then click", the button can vanish for an instant and cause flakes. Here the check and the click
+  // are fused into a single atomic script and retried as a whole.
   await browser.waitUntil(
     async () =>
       browser.execute((nextAction) => {
@@ -435,9 +438,9 @@ async function clickAddSelectionSideConversation(): Promise<void> {
 async function clickAddSidePaneItem(
   itemId: "selection-side-conversation" | "terminal",
 ): Promise<void> {
-  // 修复原因：Radix DropdownMenu trigger 依赖 pointerdown 手势，element.click()
-  // 或单独的 WebDriver click 在 Electron 下不稳定；与 e2ecase-regression 同口径，
-  // 派发完整 pointer/mouse/click 事件序列激活 trigger 与 menu item。
+  // Reason for the fix: the Radix DropdownMenu trigger depends on a pointerdown gesture; element.click() or a lone
+  // WebDriver click is unreliable under Electron. Same approach as e2ecase-regression: dispatch the full
+  // pointer/mouse/click event sequence to activate the trigger and menu item.
   const dispatchActivationScript = (selector: string) => {
     const target = document.querySelector<HTMLElement>(selector);
     if (!target) return false;
@@ -680,12 +683,13 @@ async function waitForSelectionSidePaneContaining(
 }
 
 /**
- * 斜杠面板依赖真实键入（programmatic setText 不触发）。
- * 修复原因：
- * 1. WebDriver click 落在 composer 包装层不保证把焦点交给 Lexical 编辑器；
- * 2. `__zcodeLexicalInputE2E` bridge 按共享 testid 单点挂载，多 composer 长流程后
- *    可能从当前输入框脱落。因此这里不依赖 bridge：直接对 contenteditable 原生
- *    focus + 光标置末，键入后用 textContent 校验，失败重试。
+ * The slash panel depends on real keystrokes (programmatic setText does not trigger it).
+ * Reason for the fix:
+ * 1. A WebDriver click landing on the composer wrapper does not guarantee that focus reaches the Lexical editor;
+ * 2. the `__zcodeLexicalInputE2E` bridge is mounted at a single point per shared testid, and after long
+ *    multi-composer flows it may detach from the current input. So this does not rely on the bridge: natively
+ *    focus the contenteditable directly and move the caret to the end, type, then verify with textContent and
+ *    retry on failure.
  */
 async function typeIntoComposerByKeyboard(paneTestId: string, text: string): Promise<void> {
   const inputSelector = `[data-testid="${paneTestId}"] [data-testid="${TID_V4_COMPOSER_INPUT}"]`;
@@ -721,7 +725,7 @@ async function typeIntoComposerByKeyboard(paneTestId: string, text: string): Pro
   throw new Error(`键盘输入没有进入 composer: ${paneTestId} <- ${text}`);
 }
 
-/** 不依赖 bridge 的清空：全选 + Backspace（真实键序，Lexical 正常处理）。 */
+/** Bridge-free clearing: select all + Backspace (real key sequence, handled normally by Lexical). */
 async function clearComposerByKeyboard(paneTestId: string): Promise<void> {
   const inputSelector = `[data-testid="${paneTestId}"] [data-testid="${TID_V4_COMPOSER_INPUT}"]`;
   await browser.execute((selector) => {
@@ -741,7 +745,7 @@ async function clearComposerByKeyboard(paneTestId: string): Promise<void> {
   );
 }
 
-/** 不依赖 bridge 的 composer 文本断言（bridge 在多 composer 场景可能脱落）。 */
+/** Bridge-free composer text assertion (the bridge can detach in multi-composer scenarios). */
 async function expectComposerPlainText(paneTestId: string, text: string): Promise<void> {
   const inputSelector = `[data-testid="${paneTestId}"] [data-testid="${TID_V4_COMPOSER_INPUT}"]`;
   await browser.waitUntil(
@@ -758,9 +762,10 @@ async function expectComposerPlainText(paneTestId: string, text: string): Promis
 }
 
 async function clickSlashSuggestionOption(optionId: string): Promise<void> {
-  // 修复原因：面板可能因编辑器失焦（新辅助 tab autofocus）瞬时关闭；"先查后点"两次
-  // 往返之间选项会消失。这里把查找与 mousedown 合成单个原子脚本并整体重试。
-  // MentionPanel 选项在 onMouseDown 触发 onSelect，element.click() 不会命中。
+  // Reason for the fix: the panel may close momentarily when the editor loses focus (new auxiliary tab autofocus);
+  // between the two round trips of "check first, then click", the option can disappear. Here the lookup and the
+  // mousedown are fused into a single atomic script and retried as a whole.
+  // MentionPanel options trigger onSelect in onMouseDown; element.click() does not hit it.
   await browser.waitUntil(
     async () =>
       browser.execute((nextOptionId) => {

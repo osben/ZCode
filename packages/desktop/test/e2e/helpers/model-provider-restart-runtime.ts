@@ -16,7 +16,7 @@ export interface ModelProviderRestartOptions {
 }
 
 export async function seedTurboAgentStartupModel(providerId: string, modelId: string) {
-  // 默认选择与 Provider 共用同一份 Personal 文件，seed 必须保留已有模型配置。
+  // The default selection shares the same Personal file as the Provider, so seeding must preserve the existing model config.
   const repository = new NodePersonalProviderConfigRepository({
     filePath: paths.configFile,
     pollingIntervalMs: false,
@@ -53,17 +53,17 @@ export async function restartIntoWorkspacePreservingProfile(
     ],
   };
 
-  // Bug 根因：旧实现只在第一次重启 flush；第二、三次依赖固定 pause，进程退出可能
-  // 早于 Chromium DOMStorage 异步落盘，下一 case 会恢复上一条 thoughtLevel。
-  // reload helper 已在每次新 session 后重建并探测 Electron service bridge，因此每次
-  // 退出都通过当前 bridge 建立真实持久化屏障，不能再用机器负载相关的 sleep 代替。
+  // Bug root cause: the old implementation flushed only on the first restart; the second and third relied on a fixed pause, and process exit could
+  // happen before Chromium flushed DOMStorage asynchronously, so the next case would restore the previous case's thoughtLevel.
+  // The reload helper already rebuilds and probes the Electron service bridge after every new session, so every
+  // exit must establish a real persistence barrier through the current bridge; a load-dependent sleep can no longer substitute.
   await flushElectronStorageData(browser);
   await reloadElectronSessionSafely(browser, {
     afterElectronProcessExit: options.afterElectronProcessExit,
   });
-  // Bug 根因：Puppeteer targetId 不保证同时是 ChromeDriver window handle，
-  // 长批次直接 switchToWindow(targetId) 会破坏 CDP bridge。复用共享 helper 的
-  // BrowserWindow URL + handle/target 交集切换，和 WDIO preflight 保持同一合同。
+  // Bug root cause: a Puppeteer targetId is not guaranteed to also be a ChromeDriver window handle,
+  // and switchToWindow(targetId) in long batches breaks the CDP bridge. Reuse the shared helper's
+  // BrowserWindow URL + handle/target intersection switching to keep the same contract as the WDIO preflight.
   await waitForDefaultWorkspaceReady(60000);
   await waitForWorkspaceApp(workspacePath, 60000);
 }
@@ -78,16 +78,16 @@ export async function restartIntoWorkspaceRestoringPreferences(
         Object.entries(window.localStorage).filter(
           ([key]) =>
             key.startsWith("zcode-last-agent-") ||
-            // Bug 根因：重启 helper 只恢复旧的 agent 键，遗漏当前唯一结构化
-            // Model Selection recent 键，导致冷启动断言看到 storedConfig=null 并
-            // 回退 preferredSelection。两类键必须在同一退出屏障后一起恢复。
+            // Bug root cause: the restart helper restored only the old agent keys and missed the only currently structured
+            // Model Selection recent key, so the cold-start assertion saw storedConfig=null and
+            // fell back to preferredSelection. Both key families must be restored together after the same exit barrier.
             key.startsWith(modelSelectionRecentKeyPrefix),
         ),
       ),
     MODEL_SELECTION_RECENT_KEY_PREFIX,
   );
-  // Bug 根因：SQLite/provider fixture 若在旧 Host/Agent 存活时写入，会被退出阶段的
-  // 迟到持久化覆盖。只把调用方写操作放进 reload 的进程退出屏障，不用 pause 猜时序。
+  // Bug root cause: if the SQLite/provider fixture is written while the old Host/Agent is still alive, late persistence
+  // during the exit phase overwrites it. Only put the caller's writes inside the reload's process-exit barrier; do not guess timing with pauses.
   await reloadElectronSessionSafely(browser, {
     afterElectronProcessExit: options.afterElectronProcessExit,
   });
@@ -99,7 +99,7 @@ export async function restartIntoWorkspaceRestoringPreferences(
     }
     window.location.reload();
   }, persistedModelPreferences);
-  // 通用回退 case 需要在新 renderer 启动后恢复“待判定偏好”，不能把无效模型
-  // 提前写成 Agent 启动模型。它们只验证偏好回退，不验证首个 deferred session。
+  // The generic fallback case needs the "pending preferences" restored after the new renderer starts; an invalid model
+  // must not be written ahead of time as the Agent's launch model. They only verify preference fallback, not the first deferred session.
   await waitForWorkspaceApp(workspacePath, 60000);
 }

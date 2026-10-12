@@ -1,4 +1,4 @@
-/* eslint-disable max-lines -- Upstream E2E 初始化包含设置页、provider store、模型选择三段探针，集中维护方便失败诊断 */
+/* eslint-disable max-lines -- Upstream E2E initialization spans the settings page, provider store, and model selection probes; keeping them together eases failure diagnosis */
 import {
   TID_CHAT_MODEL_SELECT_GROUP,
   TID_CHAT_MODEL_SELECT_ITEM,
@@ -42,7 +42,8 @@ export const UPSTREAM_ALTERNATE_PROVIDER_ID =
   process.env.E2E_PROVIDER_ALTERNATE_PROVIDER_ID?.trim() || "e2e-upstream-alt";
 export const UPSTREAM_ALTERNATE_PROVIDER_NAME =
   process.env.E2E_PROVIDER_ALTERNATE_PROVIDER_NAME?.trim() || "Upstream E2E Alt";
-// 模型名由 E2E_PROVIDER_MODEL / E2E_PROVIDER_SECONDARY_MODEL 控制，未设置时使用回放夹具的录制模型。
+// Model names are controlled by E2E_PROVIDER_MODEL / E2E_PROVIDER_SECONDARY_MODEL; when unset, the recorded
+// models of the replay fixture are used.
 export const { model: UPSTREAM_MODEL, secondaryModel: UPSTREAM_SECONDARY_MODEL } =
   resolveUpstreamModels();
 export const UPSTREAM_ALTERNATE_MODEL =
@@ -76,9 +77,9 @@ export function getUpstreamApiKey() {
 
   const apiKey = process.env.E2E_PROVIDER_API_KEY?.trim();
   if (!apiKey || apiKey === "xxx") {
-    // 修复原因：只有 capture 模式会访问真实 上游；采集 fixture 时不能用
-    // placeholder，否则后续 replay 会固化一份失败响应。真实录制可切到 GLM highspeed
-    // preset，但测试 helper 仍复用这组历史 env 名以保持旧 case 兼容。
+    // Why: only capture mode hits the real upstream; a placeholder must not be used when capturing a fixture,
+    // otherwise a later replay would bake in a failed response. Real recording can switch to the GLM highspeed
+    // preset, but the test helper still reuses these historical env names to keep old cases compatible.
     throw new Error("E2E_PROVIDER_HTTP_MODE=capture requires E2E_PROVIDER_API_KEY");
   }
   return apiKey;
@@ -86,9 +87,11 @@ export function getUpstreamApiKey() {
 
 interface EnsureUpstreamProviderOptions {
   /**
-   * v4 竖切（M3）：旧 ChatInputToolbar 已删除，模型/思考深度选择 UI 尚未在 v4 pane 重建。
-   * 此时依赖 seedUpstreamToolbarPreferences 的 localStorage 偏好 + CLI workspace catalog
-   * 默认模型解析，跳过所有 toolbar 交互步骤。模型选择 UI 归 M4 后移除该开关。
+   * v4 vertical slice (M3): the old ChatInputToolbar has been deleted, and the model/thinking-level selection
+   * UI has not yet been rebuilt in the v4 pane.
+   * This relies on seedUpstreamToolbarPreferences' localStorage preferences + the CLI workspace catalog's
+   * default model resolution, skipping all toolbar interaction steps. Remove this switch once the model
+   * selection UI lands in M4.
    */
   skipToolbarSelection?: boolean;
 }
@@ -292,8 +295,8 @@ function hasUpstreamModel(
   provider: NonNullable<Awaited<ReturnType<typeof readModelProvider>>>,
   modelId: string,
 ) {
-  // 修复原因：v2 provider store 的 models 是 ModelProviderModelConfig 对象数组，
-  // 旧 helper 只用 string includes，会把已经存在的模型误判为缺失。
+  // Why: the v2 provider store's models is an array of ModelProviderModelConfig objects;
+  // the old helper only used string includes and would misjudge an existing model as missing.
   return provider.models.some((model) =>
     typeof model === "string" ? model === modelId : model.id === modelId,
   );
@@ -320,8 +323,9 @@ async function addUpstreamProviderModel(modelId: string, nextModelIndex: number)
     return;
   }
 
-  // 修复原因：设置页新增模型已从内联空行改成 metadata 弹窗。
-  // E2E helper 需要兼容新旧两种形态，否则只在新增第二模型/变体时失败。
+  // Why: adding a model on the settings page has moved from an inline empty row to a metadata dialog.
+  // The E2E helper must support both old and new shapes, otherwise it fails only when adding a second
+  // model/variant.
   await addUpstreamProviderModelThroughMetadataDialog(modelId);
 }
 
@@ -476,9 +480,11 @@ async function clickUpstreamProviderNavItem() {
           return true;
         }
 
-        // 修复原因：设置页的 provider registry 来自 host 异步快照。
-        // e2e 每个 session 都会重置 HOME，刚进设置页时左侧导航可能还在旧 section
-        // 或 loading。周期性重新进入模型供应商页，避免把初始化窗口误报成业务失败。
+        // Why: the settings page's provider registry comes from a host async snapshot.
+        // Each e2e session resets HOME, so right after entering the settings page the left navigation may
+        // still be on the old section
+        // or loading. Periodically re-enter the model provider page, avoiding misreporting the initialization
+        // window as a business failure.
         await clickTestIdByDom(testId(TID_SETTINGS_SECTION_NAV, "modelProvider"), {
           timeout: 2000,
           timeoutMsg: "设置页模型供应商分区入口不可点击",
@@ -559,8 +565,10 @@ async function waitForModelProviderNavSelected(navKey: string) {
         const element = Array.from(document.querySelectorAll<HTMLElement>("[data-testid]")).find(
           (item) => item.dataset.testid === currentTestId,
         );
-        // 修复原因：模型供应商导航选中态是产品状态，不应依赖具体 CSS class。
-        // UI 现在通过 aria-selected / data-state 暴露稳定协议，E2E 读取语义字段。
+        // Why: the model provider nav's selected state is product state and must not depend on specific CSS
+        // classes.
+        // The UI now exposes a stable protocol via aria-selected / data-state, and the E2E reads the semantic
+        // fields.
         return (
           element?.getAttribute("aria-selected") === "true" ||
           element?.getAttribute("data-state") === "selected"
@@ -625,8 +633,9 @@ export async function selectRegistryProviderModelById(
       try {
         await browser.waitUntil(
           async () =>
-            // Bug 原因：catalog hydration 可能在菜单打开后把目标模型设为当前值，
-            // 此时产品会卸载当前菜单项；已选中与菜单项出现都代表等待完成。
+            // Bug cause: catalog hydration may set the target model as the current value after the menu opens,
+            // in which case the product unmounts the current menu item; either "already selected" or "menu item
+            // visible" means the wait is done.
             (await isUpstreamModelSelected(modelId, {
               includePlainModelFallback,
               providerId,
@@ -665,8 +674,9 @@ export async function selectRegistryProviderModelById(
             return;
           }
         }
-        // 修复原因：Radix Select 的下拉项在 portal 中会随 focus/scroll 重新挂载。
-        // 等待阶段已经确认选项出现后，WebDriver 再次用 selector scroll/click 可能取到空元素。
+        // Why: Radix Select's dropdown items remount in the portal with focus/scroll.
+        // After the wait phase already confirmed the option appeared, WebDriver scrolling/clicking again by
+        // selector may grab an empty element.
         throw new Error(
           `${providerName} e2e 模型选项在等待后仍不存在: ${modelId}\n${JSON.stringify(
             await collectModelDropdownDiagnostics(modelItemTestIds, providerId),
@@ -707,8 +717,9 @@ export async function selectRegistryProviderModelById(
   );
 }
 
-// 兼容现有 上游 场景的测试 helper 名称；跨 Provider 的新场景统一使用上面的
-// Registry 命名，避免把通用模型选择能力误解成 上游 特化逻辑。
+// Legacy test helper name kept for existing upstream scenarios; new cross-provider scenarios should use the
+// Registry naming above,
+// avoiding mistaking the general model-selection capability for upstream-specific logic.
 export const selectUpstreamProviderModelById = selectRegistryProviderModelById;
 
 export async function waitForUpstreamModelSelected(
@@ -745,9 +756,11 @@ async function isUpstreamModelSelected(
       if (currentValue && modelValues.includes(currentValue)) {
         return true;
       }
-      // 修复原因：自定义模型已被选中时，Radix 二级菜单可能只展示 provider 分组，
-      // 不再稳定挂载当前模型项。E2E 以工具栏当前选择作为最终语义，避免误判。
-      // 若组件尚未暴露 data-model-current-value，才退回可见文本；新组件优先用严格 value。
+      // Why: when a custom model is already selected, the Radix secondary menu may show only the provider
+      // group without stably mounting the current model item. The E2E treats the toolbar's current selection
+      // as the final semantics, avoiding misjudgment.
+      // Fall back to visible text only if the component hasn't exposed data-model-current-value; new
+      // components prefer the strict value.
       return !currentValue && (trigger?.innerText ?? "").includes(expectedModel);
     },
     TID_CHAT_MODEL_SELECT_TRIGGER,
@@ -826,8 +839,8 @@ export async function selectUpstreamThoughtLevelValue(thoughtLevel: string) {
       return;
     }
 
-    // 修复原因：小宽度/特定 toolbar 形态下思考深度是循环按钮，不会挂载
-    // Radix SelectItem。此时一次 click 就是一次真实的用户切换动作。
+    // Why: at narrow widths / in certain toolbar shapes, thinking depth is a cycle button and never mounts
+    // a Radix SelectItem. One click there is a real user switch action.
     if (await isUpstreamThoughtLevelSelected(thoughtLevel)) {
       await waitForModelSwitchIdle(`上游 思考深度 ${thoughtLevel} 切换持久化没有完成`);
       return;
@@ -938,8 +951,8 @@ async function isUpstreamThoughtLevelSelected(thoughtLevel: string) {
       const trigger = document.querySelector<HTMLElement>(`[data-testid="${triggerTestId}"]`);
       const expected = [expectedValue, ...expectedLabels].map(normalize);
       if (currentValue) {
-        // 修复原因：Select 打开/动画期间 trigger 文本可能同时包含多个选项。
-        // store 的 currentValue 才是首发请求会读取的真实思考深度。
+        // Why: while the Select is opening/animating, the trigger text may contain multiple options at once.
+        // The store's currentValue is the real thinking depth that the first outgoing request reads.
         return expected.includes(normalize(currentValue));
       }
 
@@ -949,8 +962,8 @@ async function isUpstreamThoughtLevelSelected(thoughtLevel: string) {
         trigger?.textContent ?? "",
       ].map(normalize);
 
-      // 修复原因：产品语义是“当前思考深度已选中 high”，不是“某个下拉项存在”。
-      // 这里读取 trigger 的可访问标签，兼容 select 与 cycle 两种 UI 形态。
+      // Why: the product semantics are "the current thinking depth is high", not "some dropdown item exists".
+      // Read the trigger's accessible label here, compatible with both the select and cycle UI shapes.
       return candidates.some((value) => expected.includes(value));
     },
     TID_CHAT_THOUGHT_LEVEL_SELECT_TRIGGER,
@@ -1027,8 +1040,10 @@ export function getSelectedUpstreamThoughtLevelLabel() {
       const trigger = document.querySelector<HTMLElement>(`[data-testid="${triggerTestId}"]`);
       return {
         ariaLabel: trigger?.getAttribute("aria-label") ?? "",
-        // 修复原因：V4 投影已确认切换后，legacy store 可能仍保留上一档位；
-        // 诊断 helper 必须与实际选择 helper 使用同一个权威事实源。
+        // Why: after the V4 projection has confirmed the switch, the legacy store may still hold the previous
+        // level;
+        // the diagnostic helper must use the same authoritative source of truth as the actual selection
+        // helper.
         currentValue: v4CurrentValue || readCurrentValue(),
         text: trigger?.innerText.trim() ?? "",
         title: trigger?.getAttribute("title") ?? "",
@@ -1091,8 +1106,10 @@ async function openModelMenuUntilModelVisible(
   providerGroupTestIds: string[],
   modelItemTestIds: string[],
 ) {
-  // 修复原因：模型菜单有两种形态：宽屏下可能按 provider 分组，窄屏/特定状态下会
-  // 直接展开为模型项列表。用例的语义是“用户能选择目标模型”，不能强绑某一种菜单层级。
+  // Why: the model menu has two shapes: on wide screens it may be grouped by provider; at narrow widths /
+  // in certain states it
+  // expands directly into a model-item list. The case's semantics are "the user can select the target model",
+  // so it must not be hard-bound to one menu hierarchy.
   if (await hasAnyExactTestId(modelItemTestIds)) {
     return true;
   }
@@ -1132,8 +1149,9 @@ async function openModelProviderGroup(providerGroupTestId: string) {
     timeout: 15000,
     timeoutMsg: "聊天工具栏没有出现 上游 provider 分组",
   });
-  // 修复原因：自定义 provider 模型在二级菜单里，不能只打开一级模型菜单后等待模型项。
-  // 这里先触发 provider 子菜单，再用模型项 test id 判断是否可选。
+  // Why: custom provider models live in the secondary menu; only opening the first-level model menu and
+  // waiting for the model item is not enough.
+  // Trigger the provider submenu first, then use the model item's test id to decide whether it is selectable.
   await browser.execute((currentTestId) => {
     const element = Array.from(document.querySelectorAll<HTMLElement>("[data-testid]")).find(
       (item) => item.dataset.testid === currentTestId,

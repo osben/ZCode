@@ -1,9 +1,11 @@
 /**
- * amend-resume 的引擎侧：导入缓存的命中、分歧、会话种子与 world 内容匹配
- * （docs/execution-engine.md「Amend-resume」）。
+ * Engine side of amend-resume: imported-cache hits, divergence, session seeds, and world content matching
+ * (docs/execution-engine.md "Amend-resume").
  *
- * 全部用 fake driver：缓存是纯数据注入，引擎这一侧要验的只有「命中了什么、传了什么、落了什么行」。
- * driver 拿到种子之后怎么复制转录是 bootstrap 侧的事（幂等性在那边验）。
+ * All cases use a fake driver: the cache is pure data injection; the only things to verify on the engine side
+ * are "what hit, what was passed, and what rows were written".
+ * How the driver copies the transcript after receiving a seed is the bootstrap side's business (idempotency is
+ * verified there).
  */
 
 import { describe, expect, it } from "vitest";
@@ -26,7 +28,7 @@ import { FakeDriver, flush } from "./fake-driver.js";
 
 const RUN = "run-b";
 
-/** 把若干 ask 站点显式记为 untyped（引擎不再把缺席当 untyped）。 */
+/** Explicitly mark several ask sites as untyped (the engine no longer treats absence as untyped). */
 const untypedSpecs = (...siteIds: string[]): Map<string, AskSpec> =>
   new Map(siteIds.map((id) => [id, { typed: false } as AskSpec]));
 
@@ -55,7 +57,7 @@ function setup(opts: SetupOpts = {}) {
   return { journal, driver, engine };
 }
 
-/** 一条导入 ask 条目：哈希由指令正文推出（与引擎的 inputHash 同源）。 */
+/** One imported ask entry: the hash is derived from the instruction body (same source as the engine's inputHash). */
 function entry(
   instructions: string,
   result: unknown,
@@ -83,7 +85,7 @@ function candidate(
   };
 }
 
-/** world 节点的内容键：与引擎的 `inputHash({op, args})` 同源。 */
+/** Content key of a world node: same source as the engine's `inputHash({op, args})`. */
 const worldKey = (op: WorldReadOp, args: unknown[]): string => inputHash({ op, args });
 
 function worldEntry(op: WorldReadOp, args: unknown[], result: unknown): ImportedWorldEntry {
@@ -127,7 +129,7 @@ describe("导入缓存 — 全命中", () => {
     await expect(p2).resolves.toBe("r2");
     await expect(w).resolves.toEqual(["a.ts"]);
 
-    // 零 token、零副作用：会话都没建过。
+    // Zero tokens, zero side effects: no session was ever created.
     expect(driver.sessionCreations).toHaveLength(0);
     expect(driver.startAskCount()).toBe(0);
     expect(driver.worldReads).toHaveLength(0);
@@ -135,7 +137,7 @@ describe("导入缓存 — 全命中", () => {
     const settled = driver.eventsOfType("node-settled");
     expect(settled).toHaveLength(3);
     expect(settled.every((e) => e.cached === true)).toBe(true);
-    // cached settle 与 replay 命中同一副姿态：不排队、不派发。
+    // A cached settle takes the same posture as a replay hit: no queueing, no dispatch.
     expect(driver.eventsOfType("node-queued")).toHaveLength(0);
     expect(driver.eventsOfType("node-dispatched")).toHaveLength(0);
 
@@ -179,8 +181,9 @@ describe("导入缓存 — 命中的结算重发出生事实（docs/execution-en
     await flush();
     await Promise.all([p1, p2, w]);
 
-    // 命中没有 node-queued，这条结算就是出生事件：读面据它把节点归到子代理名下；答案读自前驱的
-    // 那条会话（本 run 没有为它建会话），transcript 要去那里看。
+    // A hit has no node-queued, so this settle is the birth event: the read surface uses it to attribute the
+    // node to the subagent; the answer is read from the predecessor's session (this run did not create a
+    // session for it), and the transcript must be looked at there.
     expect(driver.eventsOfType("node-settled")).toEqual([
       {
         type: "node-settled",
@@ -190,7 +193,7 @@ describe("导入缓存 — 命中的结算重发出生事实（docs/execution-en
         kind: "ask",
         actor: { siteId: "actor#1", ordinal: 1 },
         actorSeq: 0,
-        // 与 node-queued 同一条摘要规则：去两端空白、不加省略号。
+        // Same summarization rule as node-queued: trim both ends, no ellipsis.
         instructionsHead: "step 1",
         sourceSessionId: "sess-a",
       },
@@ -226,7 +229,7 @@ describe("导入缓存 — 命中的结算重发出生事实（docs/execution-en
     ]);
     engine.askTurnEnded({ siteId: "ask#2", ordinal: 1 }, "live-1");
     await expect(p1).resolves.toBe("live-1");
-    // live 结算不带出生事实，也不带前驱会话：答案在本 run 自己的会话里。
+    // A live settle carries no birth facts and no predecessor session: the answer is in this run's own session.
     const liveSettle = driver.eventsOfType("node-settled").find((e) => e.instance.siteId === "ask#2");
     expect(liveSettle).toEqual({
       type: "node-settled",
@@ -238,8 +241,9 @@ describe("导入缓存 — 命中的结算重发出生事实（docs/execution-en
 
 describe("导入缓存 — 分歧", () => {
   it("中途分歧：命中前缀保留，分歧点起全 live，后缀即便哈希相符也不再查", async () => {
-    // entries[1] 的指令与新脚本不同（"旧指令" vs "s1"）→ seq 1 分歧；
-    // entries[2] **故意**与新脚本的 seq 2 指令同哈希，用来证明分歧后不再查缓存。
+    // entries[1]'s instructions differ from the new script ("旧指令" vs "s1") → seq 1 diverges;
+    // entries[2] **deliberately** hashes the same as the new script's seq 2 instructions, to prove the cache
+    // is no longer consulted after a divergence.
     const cache = cacheOf([
       ["planner", candidate([entry("s0", "r0", 4), entry("旧指令", "r1", 9), entry("s2", "r2", 14)])],
     ]);
@@ -254,7 +258,7 @@ describe("导入缓存 — 分歧", () => {
     await expect(p0).resolves.toBe("r0");
     expect(journal.getNode(RUN, "ask#1", 1)).toMatchObject({ status: "completed", result: "r0" });
 
-    // 会话按最后一条**被消费**的条目截断：seq 1 分歧 ⇒ 复制的转录 = seq 0 的完整交换。
+    // The session is truncated at the last **consumed** entry: seq 1 diverges ⇒ the copied transcript = seq 0's complete exchange.
     expect(driver.sessionCreations).toHaveLength(1);
     expect(driver.sessionSeeds[0]).toEqual({
       sourceSessionId: "sess-a",
@@ -262,7 +266,7 @@ describe("导入缓存 — 分歧", () => {
       resolvedModel: "zhipu/glm-5.3",
     });
 
-    // actor 串行：分歧后的两个 ask 依次 live 派发，第二个绝不吃 entries[2]。
+    // Actors are serial: after the divergence the two asks are live-dispatched one by one; the second never consumes entries[2].
     expect(driver.startAskCount()).toBe(1);
     expect(driver.startAsks[0]?.instance.siteId).toBe("ask#2");
     engine.askTurnEnded({ siteId: "ask#2", ordinal: 1 }, "live-1");
@@ -274,7 +278,7 @@ describe("导入缓存 — 分歧", () => {
     engine.askTurnEnded({ siteId: "ask#3", ordinal: 1 }, "live-2");
     await expect(p2).resolves.toBe("live-2");
     expect(journal.getNode(RUN, "ask#3", 1)?.result).toBe("live-2");
-    // 只有 seq 0 是缓存命中。
+    // Only seq 0 is a cache hit.
     expect(driver.eventsOfType("node-settled").filter((e) => e.cached === true)).toHaveLength(1);
   });
 
@@ -331,7 +335,7 @@ describe("导入缓存 — actor 附着", () => {
     expect(driver.startAskCount()).toBe(0);
   });
 
-  // docs/dynamic-workflow/authoring.md「Choosing a model per subagent」：模型不是缓存身份的一部分。
+  // docs/dynamic-workflow/authoring.md "Choosing a model per subagent": the model is not part of the cache identity.
   it("只改 persona 的 model：照样附着、照样命中；持久化的 persona 带新模型名", async () => {
     const cache = cacheOf([
       [
@@ -405,13 +409,13 @@ describe("导入缓存 — world 节点", () => {
     await expect(engine.worldRead("world#1", "grep", ["x"])).resolves.toBe("第二次");
     expect(driver.worldReads).toHaveLength(0);
 
-    // 队列耗尽 → live。
+    // Queue exhausted → live.
     const third = engine.worldRead("world#1", "grep", ["x"]);
     expect(driver.worldReads).toHaveLength(1);
     driver.worldReads[0]?.deferred.resolve("现读");
     await expect(third).resolves.toBe("现读");
 
-    // 参数变更 → 内容键不同 → live。
+    // Args changed → different content key → live.
     const other = engine.worldRead("world#2", "grep", ["y"]);
     expect(driver.worldReads).toHaveLength(2);
     driver.worldReads[1]?.deferred.resolve("y 的结果");
@@ -438,9 +442,10 @@ describe("导入缓存 — world 节点", () => {
 
 describe("导入缓存 — 崩溃后 resume 的分歧重建", () => {
   it("据 journal 行逐 seq 重推分歧点：原次已分歧的 actor 不会被后缀哈希意外命中", async () => {
-    // 修订 run 的原次执行：seq 0 命中导入，seq 1 分歧（指令与 entries[1] 不同）后全 live，
-    // 三行都已完结落库，然后进程没了。resume 时缓存被整表重建——若不重推分歧，
-    // 下面 entries[3] 与 seq 3 的新 ask 同哈希，就会把一段无关历史错误地导回来。
+    // The amended run's original execution: seq 0 hit the import, seq 1 diverged (instructions differ from
+    // entries[1]) and everything after went live; all three rows are completed and persisted, then the process
+    // died. On resume the cache is rebuilt wholesale — if divergence were not re-derived, entries[3] below
+    // hashes the same as the new ask at seq 3 and would wrongly import a piece of unrelated history.
     const journal = new InMemoryJournalStore();
     journal.createRun({
       runId: RUN,
@@ -485,13 +490,14 @@ describe("导入缓存 — 崩溃后 resume 的分歧重建", () => {
     const p3 = engine.ask("ask#4", planner, "s3");
     await flush();
 
-    // 三行 replay 短路（结果来自 journal，不是导入条目）。
+    // The three rows short-circuit via replay (results come from the journal, not the imported entries).
     await expect(p0).resolves.toBe("journal-0");
     await expect(p1).resolves.toBe("journal-1");
     await expect(p2).resolves.toBe("journal-2");
 
-    // 重放的结算同样重发出生事实。seq 0 那一行原次是导入命中，交换只在前驱的会话里；
-    // seq 1 起原次已分歧、live 跑过，本 run 自己的会话持有它们（种子已抄入前缀）。
+    // Replayed settles re-emit the birth facts too. The seq 0 row was an import hit in the original run, so the
+    // exchange lives only in the predecessor's session; from seq 1 on, the original run had diverged and ran
+    // live, and this run's own sessions hold them (the seed already copied the prefix).
     expect(
       driver
         .eventsOfType("node-settled")
@@ -503,10 +509,10 @@ describe("导入缓存 — 崩溃后 resume 的分歧重建", () => {
       { seq: 2, actor: { siteId: "actor#1", ordinal: 1 }, kind: "ask", source: undefined },
     ]);
 
-    // 关键断言：seq 3 与 entries[3] 同哈希，但原次已在 seq 1 分歧 → 必须 live。
+    // Key assertion: seq 3 hashes the same as entries[3], but the original run had already diverged at seq 1 → must go live.
     expect(driver.startAskCount()).toBe(1);
     expect(driver.startAsks[0]?.instance.siteId).toBe("ask#4");
-    // 消费计数只到 seq 0（entries[0] 的边界），种子据此截断。
+    // The consumption count only reaches seq 0 (entries[0]'s boundary); the seed is truncated accordingly.
     expect(driver.sessionSeeds[0]).toEqual({
       sourceSessionId: "sess-a",
       messageCount: 4,
@@ -521,12 +527,12 @@ describe("导入缓存 — 崩溃后 resume 的分歧重建", () => {
 describe("导入缓存 — 关闭（第一笔写入之前，不是第一个 live ask）", () => {
   const NPM_TEST = ["npm", ["test"]];
   const README = ["README.md"];
-  // 纯条目：只作答，没碰过外部世界（`submit_result` 这类协议工具计入 toolCalls，不计入 worldToolCalls）。
+  // Pure entry: only answered, never touched the outside world (protocol tools like `submit_result` count toward toolCalls, not worldToolCalls).
   const PURE: AskStats = { tokens: 10, toolCalls: 1, turns: 1, worldToolCalls: 0 };
-  // 碰过外部世界的条目：读过文件 / 跑过命令，关门后即便同哈希也不再命中。
+  // Entry that touched the outside world: read files / ran commands; after the gate closes, even identical hashes no longer hit.
   const TOOLED: AskStats = { tokens: 10, toolCalls: 3, turns: 1, worldToolCalls: 2 };
 
-  /** 四个子代理 + 两条 world 记录的前驱表。planner / summarizer 是纯 ask；fixer / reviewer 带工具。 */
+  /** Predecessor table with four subagents + two world records. planner / summarizer are pure asks; fixer / reviewer use tools. */
   function closingCache(): ImportedRunCache {
     return cacheOf(
       [
@@ -567,8 +573,9 @@ describe("导入缓存 — 关闭（第一笔写入之前，不是第一个 live
     const planner = engine.createActor("actor#1", "planner");
     const reviewer = engine.createActor("actor#3", "reviewer");
 
-    // 同一个 tick 里按 fixer → planner → reviewer → world-run 的顺序发出：fixer 未命中（前驱没做完它），
-    // 其余三个在前驱表里都有。旧规则在 fixer 排队的那一刻关门，后三个全部重跑。
+    // Issued within the same tick in the order fixer → planner → reviewer → world-run: fixer misses (the
+    // predecessor never finished it), the other three are all in the predecessor table. The old rule closed the
+    // gate the moment fixer was queued, forcing all three later ones to rerun.
     const fix = engine.ask("ask#3", fixer, "修好 parser");
     const plan = engine.ask("ask#1", planner, "plan");
     const review = engine.ask("ask#2", reviewer, "review-1");
@@ -593,10 +600,10 @@ describe("导入缓存 — 关闭（第一笔写入之前，不是第一个 live
     const reviewer = engine.createActor("actor#3", "reviewer");
     const summarizer = engine.createActor("actor#4", "summarizer");
 
-    // 关门之前：reviewer 的第一次 ask 命中。
+    // Before the gate closes: reviewer's first ask hits.
     await expect(engine.ask("ask#2", reviewer, "review-1")).resolves.toBe("r-review-1");
 
-    // fixer 未命中转 live；它的子代理即将写文件 —— driver 上报 askMutating ⇒ 门关，事件点名 fixer。
+    // fixer misses and goes live; its subagent is about to write a file — the driver reports askMutating ⇒ the gate closes, and the event names fixer.
     const fix = engine.ask("ask#3", fixer, "修好 parser");
     await flush();
     expect(driver.startAskCount()).toBe(1);
@@ -609,23 +616,24 @@ describe("导入缓存 — 关闭（第一笔写入之前，不是第一个 live
       cause: "mutating-tool",
       actorName: "fixer",
     });
-    // 再报一次是 no-op（关门单调）。
+    // Reporting again is a no-op (closing is monotonic).
     engine.askMutating({ siteId: "ask#3", ordinal: 1 });
     expect(closedEvents(driver)).toHaveLength(1);
 
-    // 关门之后：同哈希的 world-run 第二条记录仍在表里，但绝不再命中——live 执行。
+    // After the gate closes: the second same-hash world-run record is still in the table but never hits again — live execution.
     const rerun = engine.worldRead("world#1", "run", NPM_TEST);
     expect(driver.worldReads).toHaveLength(1);
     driver.worldReads[0]?.deferred.resolve({ exitCode: 1, round: "live" });
     await expect(rerun).resolves.toEqual({ exitCode: 1, round: "live" });
-    // world-read 同理。
+    // Same for world-read.
     const readme = engine.worldRead("world#2", "read", README);
     expect(driver.worldReads).toHaveLength(2);
     driver.worldReads[1]?.deferred.resolve("new readme");
     await expect(readme).resolves.toBe("new readme");
 
-    // reviewer 带工具：第二次 ask 与 entries[1] 同哈希，关门后照样 live（它读的是被改写过的仓库）；
-    // 种子按已消费前缀（entries[0] 的边界 6）截断，不是 entries[1] 的 11。
+    // reviewer uses tools: its second ask hashes the same as entries[1] and still goes live after the gate
+    // closes (it reads the rewritten repository); the seed is truncated at the consumed prefix (entries[0]'s
+    // boundary of 6), not entries[1]'s 11.
     const review2 = engine.ask("ask#4", reviewer, "review-2");
     await flush();
     expect(driver.startAskCount()).toBe(2);
@@ -633,7 +641,7 @@ describe("导入缓存 — 关闭（第一笔写入之前，不是第一个 live
     const reviewerSeed = driver.sessionSeeds[driver.sessionCreations.findIndex((ref) => ref.siteId === "actor#3")];
     expect(reviewerSeed).toEqual({ sourceSessionId: "sess-a", messageCount: 6, resolvedModel: "zhipu/glm-5.3" });
 
-    // summarizer 是纯 ask（toolCalls 0）：两条都在关门后命中——它只依赖指令与转录前缀，与工作区无关。
+    // summarizer is a pure ask (toolCalls 0): both hit after the gate closes — it depends only on the instructions and the transcript prefix, not on the workspace.
     await expect(engine.ask("ask#5", summarizer, "summarize")).resolves.toBe("r-sum");
     await expect(engine.ask("ask#5", summarizer, "summarize-2")).resolves.toBe("r-sum-2");
     expect(driver.startAskCount()).toBe(2);
@@ -657,7 +665,7 @@ describe("导入缓存 — 关闭（第一笔写入之前，不是第一个 live
     await flush();
     engine.askMutating({ siteId: "ask#3", ordinal: 1 });
 
-    // planner 的条目哈希相符、也没写过东西，但那一版 journal 还没有 worldToolCalls 这个键 ⇒ 按碰过处理。
+    // planner's entry hashes match and it wrote nothing, but that journal version did not have the worldToolCalls key yet ⇒ treated as touched.
     const plan = engine.ask("ask#1", planner, "plan");
     await flush();
     expect(driver.startAskCount()).toBe(2);
@@ -676,8 +684,9 @@ describe("导入缓存 — 关闭（第一笔写入之前，不是第一个 live
     await flush();
     engine.askMutating({ siteId: "ask#3", ordinal: 1 });
 
-    // summarizer 的第一条改了指令 ⇒ 未命中转 live ⇒ 分歧；第二条与 entries[1] 同哈希且是纯条目，
-    // 但它的转录前缀已经是 live 的那一轮，不能拿前驱的答案。
+    // summarizer's first ask changed the instructions ⇒ miss goes live ⇒ divergence; the second hashes the same
+    // as entries[1] and is a pure entry, but its transcript prefix is already the live round, so it cannot take
+    // the predecessor's answer.
     const sum1 = engine.ask("ask#5", summarizer, "换一种总结");
     await flush();
     expect(driver.startAskCount()).toBe(2);
@@ -696,7 +705,7 @@ describe("导入缓存 — 关闭（第一笔写入之前，不是第一个 live
   it("askMutating 对不在飞的实例是 no-op：迟到的观察不关门", async () => {
     const { engine, driver } = setup({ importedCache: closingCache() });
     const planner = engine.createActor("actor#1", "planner");
-    // 命中的 ask 从未 live，拿它的实例上报不算。
+    // The hit ask never went live; reporting against its instance does not count.
     await expect(engine.ask("ask#1", planner, "plan")).resolves.toBe("r-plan");
     engine.askMutating({ siteId: "ask#1", ordinal: 1 });
     engine.askMutating({ siteId: "ask#9", ordinal: 1 });
@@ -709,7 +718,7 @@ describe("导入缓存 — 关闭（第一笔写入之前，不是第一个 live
     const summarizer = engine.createActor("actor#4", "summarizer");
     const reviewer = engine.createActor("actor#3", "reviewer");
 
-    // 新参数的 world-read 自己 live（表里没有），之后同哈希的 world-read 仍命中：读不关门。
+    // The world-read with new args goes live on its own (not in the table); afterwards a same-hash world-read still hits: reads do not close the gate.
     const peek = engine.worldRead("world#4", "read", ["CHANGELOG.md"]);
     expect(driver.worldReads).toHaveLength(1);
     driver.worldReads[0]?.deferred.resolve("changelog");
@@ -717,7 +726,7 @@ describe("导入缓存 — 关闭（第一笔写入之前，不是第一个 live
     await expect(engine.worldRead("world#2", "read", README)).resolves.toBe("old readme");
     expect(closedEvents(driver)).toHaveLength(0);
 
-    // 新哈希的 world-run live ⇒ 关门（事件在 node-queued 之前：先关门再动手）。
+    // A world-run with a new hash going live ⇒ the gate closes (the event precedes node-queued: close the gate before acting).
     const patch = engine.worldRead("world#3", "run", ["sed", ["-i", "s/a/b/", "x.ts"]]);
     expect(driver.worldReads).toHaveLength(2);
     const closedAt = driver.events.findIndex((e) => e.type === "import-cache-closed");
@@ -730,7 +739,7 @@ describe("导入缓存 — 关闭（第一笔写入之前，不是第一个 live
     driver.worldReads[1]?.deferred.resolve({ exitCode: 0 });
     await expect(patch).resolves.toEqual({ exitCode: 0 });
 
-    // 关门之后：同哈希的 world-run 记录仍在表里，但不再命中——live；带工具的 reviewer 也 live；纯 summarizer 仍命中。
+    // After the gate closes: the same-hash world-run record is still in the table but no longer hits — live; the tool-using reviewer also goes live; the pure summarizer still hits.
     const rerun = engine.worldRead("world#1", "run", NPM_TEST);
     expect(driver.worldReads).toHaveLength(3);
     driver.worldReads[2]?.deferred.resolve({ exitCode: 1, round: "live" });
@@ -744,8 +753,9 @@ describe("导入缓存 — 关闭（第一笔写入之前，不是第一个 live
   });
 
   it("崩溃后 resume：从 import-cache-closed 事件恢复「已关闭」；曾 live 的 ask 行不推进消费游标", async () => {
-    // 原次执行：reviewer seq0 命中；fixer seq0 live 并写了文件（关门）；reviewer seq1 与 entries[1] 同哈希但因
-    // 关门而 live；然后进程没了。三行都 completed。事件里有两条 node-queued（命中不排队）和一条关门。
+    // Original execution: reviewer seq0 hit; fixer seq0 went live and wrote a file (gate closed); reviewer seq1
+    // hashed the same as entries[1] but went live because of the gate; then the process died. All three rows
+    // are completed. The events contain two node-queued (hits do not queue) and one gate closure.
     const journal = new InMemoryJournalStore();
     journal.createRun({ runId: RUN, caps: { maxConcurrency: 16 }, spentTokens: 0, status: "running", resumedFrom: "run-a" });
     journal.putActor({ runId: RUN, siteId: "actor#2", ordinal: 1, name: "fixer", persona: { name: "fixer" } });
@@ -796,14 +806,15 @@ describe("导入缓存 — 关闭（第一笔写入之前，不是第一个 live
     const fixer = engine.createActor("actor#2", "fixer");
     const reviewer = engine.createActor("actor#3", "reviewer");
 
-    // 前缀按 journal 短路。
+    // The prefix short-circuits via the journal.
     await expect(engine.ask("ask#2", reviewer, "review-1")).resolves.toBe("journal-ask#2");
     await expect(engine.ask("ask#3", fixer, "修好 parser")).resolves.toBe("journal-ask#3");
     await expect(engine.ask("ask#4", reviewer, "review-2")).resolves.toBe("journal-ask#4");
-    // resume 不重发关门事件：判定是恢复出来的，不是新发生的。
+    // resume does not re-emit the gate-closed event: the verdict is restored, not newly occurring.
     expect(closedEvents(driver)).toHaveLength(0);
-    // 前驱会话只跟着**原次导入命中**的那一行：reviewer seq0。fixer seq0 与 reviewer seq1 原次都是
-    // live 跑的（后者即便与导入条目同哈希），它们的交换在本 run 自己的会话里。
+    // The predecessor session only follows the row that was an **import hit in the original run**: reviewer
+    // seq0. fixer seq0 and reviewer seq1 both ran live originally (the latter even though it hashed the same as
+    // the imported entry); their exchanges are in this run's own sessions.
     expect(
       driver
         .eventsOfType("node-settled")
@@ -815,14 +826,14 @@ describe("导入缓存 — 关闭（第一笔写入之前，不是第一个 live
       ["ask#4", undefined],
     ]);
 
-    // 前缀之外：表里有的 world-run 不再命中。
+    // Beyond the prefix: a world-run present in the table no longer hits.
     const rerun = engine.worldRead("world#1", "run", NPM_TEST);
     expect(driver.worldReads).toHaveLength(1);
     driver.worldReads[0]?.deferred.resolve({ exitCode: 0, round: "live" });
     await expect(rerun).resolves.toEqual({ exitCode: 0, round: "live" });
 
-    // reviewer 的 seq2 live；种子边界 = 关门前最后一条命中（entries[0] 的 6），
-    // 不是 seq1 那行碰巧同哈希的 entries[1]（11）——那一行原次是 live 跑的。
+    // reviewer's seq2 goes live; the seed boundary = the last hit before the gate closed (entries[0]'s 6), not
+    // entries[1] (11), which happens to hash the same as the seq1 row — that row ran live originally.
     const review3 = engine.ask("ask#5", reviewer, "review-3");
     await flush();
     expect(driver.startAskCount()).toBe(1);
@@ -833,7 +844,7 @@ describe("导入缓存 — 关闭（第一笔写入之前，不是第一个 live
   });
 
   it("崩溃后 resume：只有 live ask、没有关门事件 ⇒ 门仍开着，表里的条目照常命中", async () => {
-    // 原次：fixer seq0 live（未命中）但没写任何文件；进程没了。旧规则会把这一条 node-queued 读成「门已关」。
+    // Original run: fixer seq0 went live (a miss) but wrote no files; the process died. The old rule would read this node-queued as "the gate is closed".
     const journal = new InMemoryJournalStore();
     journal.createRun({ runId: RUN, caps: { maxConcurrency: 16 }, spentTokens: 0, status: "running", resumedFrom: "run-a" });
     journal.putActor({ runId: RUN, siteId: "actor#2", ordinal: 1, name: "fixer", persona: { name: "fixer" } });
@@ -869,7 +880,7 @@ describe("导入缓存 — 关闭（第一笔写入之前，不是第一个 live
 });
 
 describe("导入缓存 — 续跑前驱的在飞 ask（docs/execution-engine.md「How the engine consumes the cache」）", () => {
-  /** 前驱停在飞时的那条 ask：哈希由指令正文推出，边界是前驱**整个会话**的消息数。 */
+  /** The ask the predecessor left in flight: the hash is derived from the instruction body, and the boundary is the message count of the predecessor's **entire session**. */
   const inFlightOf = (instructions: string, messageBoundary: number) => ({
     inputHash: inputHash(instructions),
     messageBoundary,
@@ -890,11 +901,11 @@ describe("导入缓存 — 续跑前驱的在飞 ask（docs/execution-engine.md�
     const p1 = engine.ask("ask#2", planner, "s1");
     await flush();
 
-    // 续跑不是命中：没有结果可导入，这一条照样派发。
+    // Carry-over is not a hit: there is no result to import, so this one is dispatched as usual.
     expect(driver.startAskCount()).toBe(1);
     expect(driver.startAsks[0]?.instance.siteId).toBe("ask#2");
     expect(cachedSettles(driver)).toHaveLength(1);
-    // 种子取 inFlight 的边界（12），不是前缀最后一条的 4。
+    // The seed takes inFlight's boundary (12), not the last prefix entry's 4.
     expect(driver.sessionSeeds[0]).toEqual({
       sourceSessionId: "sess-a",
       messageCount: 12,
@@ -916,7 +927,7 @@ describe("导入缓存 — 续跑前驱的在飞 ask（docs/execution-engine.md�
 
     expect(driver.startAskCount()).toBe(1);
     expect(cachedSettles(driver)).toHaveLength(0);
-    // 消费数为 0 也有种子——这正是续跑与「分歧前缀截断」的分水岭。
+    // There is a seed even with a consumption count of 0 — exactly the dividing line between carry-over and "diverged-prefix truncation".
     expect(driver.sessionSeeds[0]).toEqual({
       sourceSessionId: "sess-a",
       messageCount: 6,
@@ -944,7 +955,7 @@ describe("导入缓存 — 续跑前驱的在飞 ask（docs/execution-engine.md�
     first.engine.askTurnEnded({ siteId: "ask#2", ordinal: 1 }, "live");
     await expect(p1).resolves.toBe("live");
 
-    // 空前缀 + 哈希不符 ⇒ 全新会话，连种子都没有。
+    // Empty prefix + hash mismatch ⇒ a brand-new session, not even a seed.
     const noPrefix = cacheOf([
       ["planner", candidate([], { inFlight: inFlightOf("旧的第一问", 6) })],
     ]);
@@ -969,7 +980,7 @@ describe("导入缓存 — 续跑前驱的在飞 ask（docs/execution-engine.md�
     const planner = engine.createActor("actor#1", "planner");
     await expect(engine.ask("ask#1", planner, "s0")).resolves.toBe("r0");
 
-    // fixer 未命中转 live 并写文件 ⇒ 关门。
+    // fixer misses, goes live and writes a file ⇒ the gate closes.
     const fix = engine.ask("ask#3", fixer, "修好 parser");
     await flush();
     engine.askMutating({ siteId: "ask#3", ordinal: 1 });
@@ -992,7 +1003,7 @@ describe("导入缓存 — 续跑前驱的在飞 ask（docs/execution-engine.md�
   });
 
   it("actor 更早就分歧：到达在飞位置时已不在同一条转录上，即便哈希相符也不续跑", async () => {
-    // entries[0] 的指令与新脚本不同 ⇒ seq 0 分歧；seq 2 恰与 inFlight 同哈希，不能因此复活。
+    // entries[0]'s instructions differ from the new script ⇒ seq 0 diverges; seq 2 happens to hash the same as inFlight but must not be revived because of that.
     const cache = cacheOf([
       [
         "planner",
@@ -1023,7 +1034,7 @@ describe("导入缓存 — 续跑前驱的在飞 ask（docs/execution-engine.md�
   });
 
   describe("崩溃后 resume：据事件顺序精确复原「当时门开着吗」", () => {
-    /** 修订 run 的原次执行：seq 0 命中（真行 + 无 node-queued），seq 1 续跑（live 行 + node-queued）。 */
+    /** The amended run's original execution: seq 0 hit (a real row + no node-queued), seq 1 carried over (a live row + node-queued). */
     function recordedFirstLife(closeBeforeCarry: boolean): InMemoryJournalStore {
       const journal = new InMemoryJournalStore();
       journal.createRun({
@@ -1217,7 +1228,7 @@ describe("导入缓存 — 用量沿 lineage 累计（docs/execution-engine.md�
     const { engine, driver, journal } = setup({ importedCache: cache, inheritedTokens: 500 });
     const planner = engine.createActor("actor#1", "planner");
     await expect(engine.ask("ask#1", planner, "step 1")).resolves.toBe("r1");
-    // 命中之后行值不变，也没有第二条 usage-updated（只有 run-started 之后那条继承值）。
+    // After a hit the run value is unchanged and there is no second usage-updated (only the inherited value right after run-started).
     expect(journal.getRun(RUN)?.spentTokens).toBe(500);
     const hitStats = { tokens: 100, toolCalls: 0, turns: 1 };
     expect(journal.getNode(RUN, "ask#1", 1)?.stats).toEqual(hitStats);
@@ -1225,7 +1236,7 @@ describe("导入缓存 — 用量沿 lineage 累计（docs/execution-engine.md�
       { type: "usage-updated", spentTokens: 500 },
     ]);
 
-    // 分歧：第二问的指令变了 → live；它的 stats 才在 500 之上累加。
+    // Divergence: the second question's instructions changed → live; only its stats accumulate on top of 500.
     void engine.ask("ask#2", planner, "step 2, revised").catch(() => {});
     await flush();
     expect(driver.startAskCount()).toBe(1);

@@ -1,12 +1,12 @@
-// dwf 产物「作为文件打开」的宿主副本（docs/dynamic-workflow/authoring.md「How the user sees them」）。
+// Host-side copy of "open dwf artifact as a file" (docs/dynamic-workflow/authoring.md "How the user sees them").
 //
-// ⚠ 术语：artifact = 脚本经 `artifact.*` 发布给用户看的产出，不是引擎的 `RunSettlement.artifact`。
+// ⚠ Terminology: artifact = the output a script publishes to the user via `artifact.*`, not the engine's `RunSettlement.artifact`.
 //
-// 钉四件事：
-//   1. 落点：~/.zcode/tmp/workflow-artifacts/<runId>-<digest>/<artifactId>-<digest>/v<N>/<name>，一版一份；
-//   2. 只在路径为空时写——一版的字节永不变，已有副本要么同字节要么是用户自己的编辑，都保留；
-//   3. 渲染器给的每个路径片段都清洗过，写不出这个目录；
-//   4. 形状与上限（20 MiB，同 `artifact.file`）在宿主侧再校验一次。
+// Pinning down four things:
+//   1. Location: ~/.zcode/tmp/workflow-artifacts/<runId>-<digest>/<artifactId>-<digest>/v<N>/<name>, one copy per version;
+//   2. Write only when the path is empty — the bytes of a version never change; an existing copy is either the same bytes or the user's own edit, and both are kept;
+//   3. Every path segment provided by the renderer is sanitized, so nothing can be written outside this directory;
+//   4. Shape and the cap (20 MiB, same as `artifact.file`) are validated once more on the host side.
 import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { createHash } from "node:crypto";
@@ -24,7 +24,7 @@ function artifactsRoot(): string {
   return join(tempRoot, ".zcode", "tmp", "workflow-artifacts");
 }
 
-/** run / 产物目录名：清洗后的 id 加原始 id 的 sha256 前 8 位（与实现同一规则）。 */
+/** run / artifact directory name: sanitized id plus the first 8 hex chars of the raw id's sha256 (same rule as the implementation). */
 function segmentDir(id: string): string {
   return `${id}-${createHash("sha256").update(id, "utf8").digest("hex").slice(0, 8)}`;
 }
@@ -127,7 +127,7 @@ describe("materializeWorkflowArtifactFile", () => {
     expect(result.localPath.startsWith(artifactsRoot() + sep)).toBe(true);
     const segments = relative(artifactsRoot(), result.localPath).split(sep);
     expect(segments).toHaveLength(4);
-    // 没有一个片段是 `.` / `..`，也没有隐藏目录。
+    // No segment is `.` / `..`, and there are no hidden directories.
     expect(segments.every((segment) => !segment.startsWith("."))).toBe(true);
     expect(segments.at(-1)).toBe("evil.md");
   });
@@ -164,9 +164,10 @@ describe("materializeWorkflowArtifactFile", () => {
     expect(empty.localPath.endsWith(`${sep}b`)).toBe(true);
   });
 
-  // 修复原因（MR !2837 评审 CR-02）：目录名曾只是清洗后的产物 id。引擎认为不同的两个 id 可以落进同一个
-  // 目录——macOS / Windows 的文件系统默认不分大小写（`Report` 与 `report`），清洗又去掉开头的点
-  // （`.notes` 与 `notes`）——同名文件随即以 EEXIST 命中对方的副本，打开的是另一个产物（连同用户的编辑）。
+  // Reason for the fix (MR !2837 review CR-02): the directory name used to be just the sanitized artifact id. Two ids the engine
+  // considers different could land in the same directory — macOS / Windows filesystems are case-insensitive by default (`Report` vs `report`),
+  // and sanitization strips leading dots (`.notes` vs `notes`) — so a same-named file would hit the other's copy with EEXIST,
+  // opening a different artifact (along with the user's edits).
   it("引擎认为不同的产物 id 各落各的目录：大小写不同、只差开头的点", async () => {
     for (const [first, second] of [
       ["Report", "report"],
@@ -193,8 +194,8 @@ describe("materializeWorkflowArtifactFile", () => {
     }
   });
 
-  // 同一条规则也盖住 runId：CLI 铸的 id 是 `dwfrun-<uuid>`，撞不上；但 IPC 边界只校验非空字符串，
-  // 目录的唯一性不该靠这条注释。
+  // The same rule also covers runId: ids minted by the CLI are `dwfrun-<uuid>` and cannot collide; but the IPC boundary only
+  // validates a non-empty string, and directory uniqueness should not rely on that comment.
   it("只差大小写的两个 run id 各落各的目录", async () => {
     const a = await materializeWorkflowArtifactFile({
       runId: "Run-1",

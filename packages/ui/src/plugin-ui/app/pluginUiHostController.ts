@@ -48,10 +48,11 @@ export function createPluginUiHostController(
   let preparation: Promise<void> | null = null;
   let recycling = false;
   let closedDuringRecycle = false;
-  // initialized 已到：可以直接 send*；之前的 notify* 不排队——initialized 时按 getToolFeed 读最新值。
+  // initialized has arrived: send* can be used directly; earlier notify* calls are not queued — at
+  // initialized time the latest value is read via getToolFeed.
   let attached = false;
   let cancelHandshakeTimer: (() => void) | null = null;
-  // 进行中的页面工具调用 id，dispose 时逐个取消到 agent。
+  // Ids of in-flight page tool calls; each is cancelled to the agent on dispose.
   const activeCalls = new Set<string>();
   let unregisterNotifications: (() => void) | null = null;
   const createCallId = deps.createCallId ?? (() => crypto.randomUUID());
@@ -82,7 +83,7 @@ export function createPluginUiHostController(
     setPhase("error", { error: message });
   };
 
-  /** 经桥的请求共用的归属范围：workspace + session + 本插件 server。 */
+  /** Ownership scope shared by all bridged requests: workspace + session + this plugin server. */
   const baseScope = () => ({
     workspacePath: deps.scope.workspacePath,
     ...(deps.scope.workspaceIdentity ? { workspaceIdentity: deps.scope.workspaceIdentity } : {}),
@@ -115,7 +116,8 @@ export function createPluginUiHostController(
     isDisposed: () => disposed,
   });
 
-  // App-Provided Tools：握手后发现页面工具并登记；信箱投递到达时认领并让页面执行。没有通道时整段跳过。
+  // App-Provided Tools: after the handshake, discover page tools and register them; when a mailbox
+  // delivery arrives, claim it and let the page execute. Skipped entirely when there is no channel.
   const appTools = deps.appTools
     ? createPluginUiAppTools({
         bridge: deps.appTools,
@@ -142,11 +144,13 @@ export function createPluginUiHostController(
     void transport?.close().catch(() => undefined);
     attached = false;
     cancelHandshakeTimer?.();
-    // 新端口 = 页面重载或重挂载：旧代际的订阅退掉、旧实例的工具登记注销；通知入口按新代际重新登记。
+    // New port = page reload or remount: unsubscribe the old generation, unregister the old instance's
+    // tools; notification entry points re-register under the new generation.
     resources.unsubscribeAll();
     appTools?.resetForAttach();
     const widgetState = deps.getWidgetState();
-    // widgetState 初值随握手经 hostContext 的扩展键下发（hostContext 允许附加键）；之后不再从宿主推送。
+    // The initial widgetState is delivered with the handshake via a hostContext extension key
+    // (hostContext allows extra keys); afterwards it is no longer pushed from the host.
     const contextAtCreate: McpUiHostContext =
       widgetState === undefined
         ? hostContext
@@ -158,7 +162,8 @@ export function createPluginUiHostController(
     );
     const baseContext = hostContext;
     bridge = active;
-    // 同一页面里两个 App（页面自建 + 别名）会各发一次 initialize / initialized：只按第一次进入 running 并投喂。
+    // Two Apps in the same page (page-built + alias) each send initialize / initialized: only the first
+    // one enters running and gets fed.
     let initializedOnce = false;
     active.oninitialized = () => {
       if (disposed || bridge !== active || initializedOnce) return;
@@ -173,7 +178,8 @@ export function createPluginUiHostController(
         active.getAppCapabilities(),
         () => !disposed && bridge === active,
       );
-      // 握手窗口内的更新不能丢弃：只补当前实例的最新值，不新增会话状态 owner。
+      // Updates inside the handshake window must not be dropped: only patch the current instance's
+      // latest value; no new session-state owner is added.
       if (hostContext !== baseContext) active.setHostContext(hostContext);
       sendFeed(active, deps.getToolFeed());
     };
@@ -227,7 +233,8 @@ export function createPluginUiHostController(
         return closed;
       } finally {
         recycling = false;
-        // 回收 RPC 失败也不能吞掉等待期间已经收到的来源撤销通知。
+        // Even if the recycle RPC fails, the source-revoked notification received while waiting must
+        // not be swallowed.
         if (!closed && closedDuringRecycle && !disposed) deps.onInstanceClosed?.();
         closedDuringRecycle = false;
       }
@@ -249,7 +256,8 @@ export function createPluginUiHostController(
               ? { prefersBorder: deps.presentation.prefersBorder }
               : {}),
           });
-          // prepare 已在 Host/Main 完成登记时，卸载不能只忽略回包，否则沙箱无人释放。
+          // When prepare has already completed registration in Host/Main, unmounting must not just ignore
+          // the reply, otherwise nobody releases the sandbox.
           if (disposed) {
             await deps.bridge.closeInstance({ ...baseScope(), instance: prepared.instance });
             await deps.platform.disposeSandbox(prepared.sandboxId, prepared.initId);
@@ -273,11 +281,12 @@ export function createPluginUiHostController(
           }
           handle = prepared;
           boundScope = { ...baseScope(), instance: prepared.instance };
-          // 先订阅端口再挂 webview：main 在 guest dom-ready 后投递端口，挂载后订阅可能错过。
+          // Subscribe to ports before mounting the webview: main delivers the port after guest dom-ready,
+          // so subscribing after mounting can miss it.
           unsubscribePorts?.();
           unsubscribePorts = deps.platform.onPorts((event) => {
             if (disposed || !handle || event.sandboxId !== handle.sandboxId) return;
-            // 旧 initId 的端口一律丢弃（guest reload / 重复挂载防串线）。
+            // Ports from an older initId are always dropped (guard against crosstalk on guest reload / remount).
             if (event.initId < handle.initId) return;
             handle = { ...handle, initId: event.initId };
             attachPort(event.port);
@@ -346,7 +355,8 @@ export function createPluginUiHostController(
       const active = bridge,
         activeTransport = transport,
         wasAttached = attached;
-      // 注销请求捕获原凭证，不能在 await 后从新句柄读取代际。
+      // The unregister request captures the original credentials; the generation must not be read from
+      // the new handle after the await.
       bridge = null;
       transport = null;
       attached = false;

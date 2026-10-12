@@ -65,18 +65,19 @@ describe("TSL19/TSL28：fork child Project row 与冷启动 membership", () => {
       taskType: "fork",
     });
 
-    // Bug 根因：fork child 的 conversation hydration 会把 pane 恢复出来，但旧 gateway
-    // 没有把 hydration 后的非 draft summary 发布给 sessions-index。于是当前 pane 正常，
-    // task-index syncer 却永远收不到 child，Project 只能在重启回源后补出 task row。
-    // 这里必须在不重启、不续发的窗口先证明持久行和唯一 DOM row 都已出现。
+    // Root cause of the bug: the fork child's conversation hydration restores the pane, but the old
+    // gateway never published the post-hydration non-draft summary to sessions-index. So the current pane
+    // looks fine while the task-index syncer never receives the child, and Project can only add the task
+    // row after a restart re-reads the source. Within the no-restart, no-continuation window, this must
+    // first prove that both the persisted row and the unique DOM row have appeared.
     await waitForPersistedProjectTask(childId);
     await waitForSingleProjectRow(
       childId,
       "TSL28 fork child hydration 后 tasks-index 已落库，但 Project 没有唯一 child row",
     );
 
-    // 先离开 active child，再从 Project row 点回来，排除 active pane/optimistic overlay
-    // 临时保留同一行造成的假绿。
+    // Leave the active child first, then click back in from the Project row, to rule out a false green
+    // caused by the active pane/optimistic overlay temporarily keeping the same row.
     await selectV4TaskById(parentId);
     await waitForSingleProjectRow(
       childId,
@@ -85,8 +86,9 @@ describe("TSL19/TSL28：fork child Project row 与冷启动 membership", () => {
     await selectV4TaskById(childId);
     await waitForV4TimelineContaining(PARENT_REPLY, 30_000);
 
-    // Bug 根因：旧冷启动查询用 parent_id is null 代替 task type membership。
-    // 先切回未发送 draft，避免 App 重启自动 resume 当前 child 后把缺失的冷种子掩盖掉。
+    // Root cause of the bug: the old cold-start query used parent_id is null instead of task type
+    // membership. Switch back to the unsent draft first, so that the App restart's automatic resume of
+    // the current child cannot mask the missing cold seed.
     await startNewV4Draft();
     await waitForV4Pane(
       (snapshot) => snapshot.sessionId === "draft",
@@ -100,8 +102,9 @@ describe("TSL19/TSL28：fork child Project row 与冷启动 membership", () => {
       60_000,
     );
 
-    // mention 目录直接读取 sessions-index；在点击 child 前先看到精确 session id，
-    // 证明 parented fork 来自冷启动 membership，而不是 select 后按需 resume 才补进内存。
+    // The mention directory reads sessions-index directly; seeing the exact session id before clicking
+    // the child proves the parented fork came from cold-start membership, not from an on-demand resume
+    // that only fills memory after selection.
     await setInputValueByTestIdDom(TID_V4_COMPOSER_INPUT, "#", {
       timeout: 15_000,
       timeoutMsg: "TSL19 冷启动后 composer 不可输入",
@@ -144,7 +147,8 @@ async function waitForSingleProjectRow(
 }
 
 function readWorkspaceTaskIds(): string[] {
-  // Node 当前内置 SQLite 只提供 DatabaseSync；E2E 轮询每次都立即关闭只读句柄。
+  // Node's built-in SQLite only provides DatabaseSync; the E2E poll closes the read-only handle
+  // immediately on every iteration.
   const database = new DatabaseSync(
     join(homedir(), ".zcode", "v2", "tasks-index.sqlite"),
     {
@@ -174,7 +178,7 @@ function readCliSession(sessionId: string): {
   parentId: string | null;
   taskType: string | null;
 } | null {
-  // Node 当前内置 SQLite 只提供 DatabaseSync；E2E 只读一次并立即关闭句柄。
+  // Node's built-in SQLite only provides DatabaseSync; the E2E reads once and closes the handle immediately.
   const database = new DatabaseSync(
     join(homedir(), ".zcode", "cli", "db", "db.sqlite"),
     {

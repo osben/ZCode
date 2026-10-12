@@ -695,7 +695,7 @@ description: Diagnose plugin discovery and enablement problems
 ---
 diagnosing-body`,
     );
-    // browser、documents 和 zcode-guide 被卸载（suppressed），skill-creator 保持默认启用。
+    // browser, documents, and zcode-guide are uninstalled (suppressed); skill-creator stays enabled by default.
     writeCliConfig(home, {
       plugins: {
         suppressedBuiltins: [
@@ -766,9 +766,10 @@ amazon-body`,
     ]);
   });
 
-  // Bugfix 回归（差一层目录）：Claude 插件规范里 manifest skills 数组项指向「技能目录本身」
-  // （项内直接是 SKILL.md），agent 端扫描已支持（adapters/src/skills/scan.ts）；这里验证
-  // 桌面 services 端技能列表对同一形态的消费，两端语义保持一致。
+  // Bugfix regression (one directory level deeper): in the Claude plugin spec, a manifest skills array entry points at
+  // "the skill directory itself" (SKILL.md sits directly inside the entry); agent-side scanning already supports this
+  // (adapters/src/skills/scan.ts). This verifies that the desktop services-side skill list consumes the same shape,
+  // keeping the two ends semantically consistent.
   it("读取 manifest skills 数组声明的插件技能（数组项即技能目录）", async () => {
     const home = makeTempHome();
     const workspacePath = join(home, "workspace");
@@ -782,8 +783,8 @@ amazon-body`,
       skills: ["./skills/engineering/tdd", "./skills/productivity/tdd", "./skills/bundle-root"],
       version: "1.0.0",
     });
-    // 数组项内直接是 SKILL.md；engineering/tdd 与 productivity/tdd 叶子同名但 frontmatter
-    // name 不同，验证不被提前按目录名去重；bundle-root 验证「根自身即技能」规则。
+    // SKILL.md sits directly inside the array entries; engineering/tdd and productivity/tdd have same-named leaves but
+    // different frontmatter names, verifying they are not deduplicated early by directory name; bundle-root verifies the "root itself is a skill" rule.
     writeSkill(
       join(pluginRoot, "skills", "engineering", "tdd"),
       "tdd",
@@ -861,7 +862,7 @@ body`,
     expect(result.skills).toEqual([]);
   });
 
-  // Windows 跳过：此测试失败原因是 CLI config 写入逻辑问题，非 Windows 特定
+  // Skipped on Windows: this test fails due to a CLI config write-logic issue, not something Windows-specific
   const isWindows = process.platform === "win32";
 
   (isWindows ? it.skip : it)("setEnabled 会把技能开关按路径写入 CLI config 且不按 workspaceIdentity 隔离", async () => {
@@ -1254,9 +1255,9 @@ body`,
 
       await service.deleteSkill({ workspacePath, skillId: skill.id });
 
-      // 软链本体被删除
+      // The symlink itself is deleted
       expect(existsSync(linkedSkillDir)).toBe(false);
-      // 外部目标目录及其 SKILL.md 完好无损
+      // The external target directory and its SKILL.md are intact
       expect(existsSync(sourceSkillDir)).toBe(true);
       expect(existsSync(join(sourceSkillDir, "SKILL.md"))).toBe(true);
       const after = await service.list({ workspacePath, provider: "glm" });
@@ -1300,9 +1301,10 @@ body`,
   it.skipIf(process.platform === "win32")(
     "deleteSkill 拒绝经由“软链祖先目录”删除，保护外部目标数据",
     async () => {
-      // 用户把一整个外部目录软链进 ~/.zcode/skills（分组软链），
-      // 其下的技能扫描时会被发现。删除时若顺着分组软链 rm，会删掉外部真实目录里的子技能——数据丢失。
-      // 本用例断言这种情况被安全拦截：抛错、且外部目标完好。
+      // The user symlinks an entire external directory into ~/.zcode/skills (a group symlink),
+      // and the skills under it get discovered during scanning. If deletion followed the group symlink with rm,
+      // it would delete the child skills inside the real external directory — data loss.
+      // This case asserts that such a deletion is safely blocked: it throws, and the external target stays intact.
       const home = makeTempHome();
       const workspacePath = join(home, "workspace");
       const externalGroup = join(home, "external-agent", "group");
@@ -1327,7 +1329,7 @@ body`,
         service.deleteSkill({ workspacePath, skillId: skill.id }),
       ).rejects.toThrow();
 
-      // 外部目标目录及其 SKILL.md 必须完好无损
+      // The external target directory and its SKILL.md must remain intact
       expect(existsSync(join(externalGroup, "nested-skill", "SKILL.md"))).toBe(true);
     },
   );
@@ -1401,7 +1403,7 @@ amazon-body`,
     expect(skill.scope).toBe("plugin");
 
     await expect(service.deleteSkill({ workspacePath, skillId: skill.id })).rejects.toThrow();
-    // 插件技能目录不应被删除。
+    // The plugin skill directory must not be deleted.
     expect(existsSync(pluginSkillDir)).toBe(true);
   });
 
@@ -1428,7 +1430,7 @@ body`,
     const home = makeTempHome();
     const workspacePath = join(home, "workspace");
     const root = workspaceSkillRoot(workspacePath);
-    // 真实技能。
+    // A real skill.
     writeSkill(
       root,
       "real-skill",
@@ -1438,8 +1440,8 @@ description: real
 ---
 real-body`,
     );
-    // Bugfix（ZCT-2070384010482601984）：node_modules 里携带的 SKILL.md 不应被发现，
-    // 旧实现会整棵递归 node_modules，在 Windows 上把扫描放大到数十秒。
+    // Bugfix (ZCT-2070384010482601984): a SKILL.md carried inside node_modules must not be discovered;
+    // the old implementation recursed the whole node_modules tree, inflating scans to tens of seconds on Windows.
     writeSkill(
       join(root, "real-skill", "node_modules", "some-dep"),
       "skill",
@@ -1449,7 +1451,7 @@ description: should be ignored
 ---
 dep-body`,
     );
-    // dist 同理排除。
+    // dist is excluded for the same reason.
     writeSkill(
       join(root, "dist"),
       "built",
@@ -1490,7 +1492,7 @@ grouped-body`,
     const home = makeTempHome();
     const workspacePath = join(home, "workspace");
     const root = workspaceSkillRoot(workspacePath);
-    // 构造一条超过 MAX_SKILL_SCAN_DEPTH 的目录链，末端放一个 SKILL.md。
+    // Build a directory chain longer than MAX_SKILL_SCAN_DEPTH and put a SKILL.md at the end.
     const segments = Array.from({ length: MAX_SKILL_SCAN_DEPTH + 2 }, (_, index) => `lvl-${index}`);
     writeSkill(join(root, ...segments), "too-deep", `---
 name: too-deep
@@ -1519,14 +1521,14 @@ description: cyclic
 ---
 cyclic-body`,
       );
-      // 在技能根内放一个指回根的软链，制造潜在环路。
+      // Place a symlink pointing back at the root inside the skill root to create a potential cycle.
       mkdirSync(root, { recursive: true });
       symlinkSync(root, join(root, "loop-back"), "dir");
 
       const service = await createSkillsServiceInEnv(home, { isDesktopRuntime: true });
       const result = await service.list({ workspacePath, provider: "glm" });
 
-      // 不应卡死、不应重复列出同一技能。
+      // Must not hang and must not list the same skill twice.
       expect(result.skills.map((skill) => skill.name)).toEqual(["cyclic-skill"]);
     },
   );

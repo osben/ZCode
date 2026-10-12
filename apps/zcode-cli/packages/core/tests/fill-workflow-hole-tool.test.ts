@@ -37,12 +37,13 @@ import type {
   ToolInputResolutionContext,
 } from "../src/tool/types.js";
 
-// docs/dynamic-workflow/launch.md「The `FillWorkflowHole` tool」：resolveInput 把 run_id + hole_id 解析成
-// `hole` 事实块（归属、名字、类型、草稿路径）→ 权限服务据它放行本会话的 run / 照常 ask 别的 →
-// handler 先把内联函数体写进 fill 文件、再调 port.fillHole，诊断按「落在哪个文件」锚定。
+// docs/dynamic-workflow/launch.md "The `FillWorkflowHole` tool": resolveInput resolves run_id + hole_id into a
+// `hole` facts block (ownership, name, type, draft path) → the permission service uses it to admit this session's
+// run for free / ask as usual for others → the handler first writes the inline body into the fill file, then calls
+// port.fillHole, with diagnostics anchored to "which file they landed in".
 
 const BODY = 'const verdict = await agent("judge").ask<string>("judge it");\nreturn verdict;';
-/** 端口在成功时交回的有效脚本：能编译、带一个阶段，好让 display 与 phasesAdded 都有内容。 */
+/** A valid script the port hands back on success: it compiles and carries one phase so both display and phasesAdded have content. */
 const EFFECTIVE_SCRIPT = [
   'phase("判定");',
   'const verdict = await agent("judge").ask<string>("judge it");',
@@ -79,7 +80,7 @@ interface StubPortOptions {
   fill?:
     | FillWorkflowHoleResult
     | ((request: DynamicWorkflowRunFillHoleRequest) => FillWorkflowHoleResult);
-  /** 端口**没有** fillHole（老宿主）。 */
+  /** The port has **no** fillHole (old host). */
   withoutFillHole?: boolean;
 }
 
@@ -306,7 +307,7 @@ describe("FillWorkflowHole — resolveInput", () => {
       result: true,
       input: { hole: { owned_by_this_session: false } },
     });
-    // 没记过草稿的 run：`draft_path` 缺席而不是空串。
+    // A run with no recorded draft: `draft_path` is absent rather than an empty string.
     expect("draft_path" in (resolved as { input: { hole: object } }).input.hole).toBe(false);
   });
 
@@ -430,15 +431,15 @@ describe("FillWorkflowHole — handler", () => {
     expect(output.response).toContain(
       `${join(WORKFLOW_DRAFTS_DIR, "review.dwf.ts")}:L30:C1 Subagent name 'judge' is declared twice.`,
     );
-    // 函数体之外有诊断：指明那是 run 记录在案的脚本、改草稿没用、出路是 AmendWorkflow。
+    // Diagnostics exist outside the function body: state that it is the run's recorded script, editing the draft is useless, and the way out is AmendWorkflow.
     expect(output.response).toContain("run's recorded script");
     expect(output.response).toContain("AmendWorkflow");
     expect(output.response).toContain("still waiting");
     expect("status" in output).toBe(false);
-    // 编译反馈行由 CreateWorkflow 的 display 构造器铸出，按工具名选中本工具。
+    // The compile feedback row is minted by CreateWorkflow's display builder, selected for this tool by its tool name.
     const display = createCreateWorkflowDisplay(FILL_WORKFLOW_HOLE_TOOL_NAME, output);
     expect(display?.kind).toBe("create_workflow");
-    // 被拒的行也要有名字：反馈行的标题不能退成站点 id。
+    // The rejected row also needs a name: the feedback row's title must not degrade to a site id.
     expect(display?.fill).toMatchObject({ siteId: "hole#1", name: "决定分组" });
   });
 
@@ -478,7 +479,7 @@ describe("FillWorkflowHole — handler", () => {
     expect(again.errorCode).toBe(FILL_WORKFLOW_HOLE_ERROR_CODE.FILL_UNCHANGED);
     expect(fills).toHaveLength(1);
 
-    // 改过一个字节就放行。
+    // Changing a single byte lets it through.
     writeFileSync(fillFile, `${BODY}\n`);
     const edited = await resolve(
       { run_id: "dwfrun-1", hole_id: "hole#1", path: fillFile },
@@ -538,7 +539,7 @@ describe("FillWorkflowHole — handler", () => {
       executionContext(port, "ok"),
     )) as CreateWorkflowOutput;
     expect(output.ok).toBe(true);
-    // 行给自己起名的那一块：名字来自解析出的留白，随输出与 display 走（transcript 不存回填的入参）。
+    // The block that names itself: the name comes from the resolved hole and travels with the output and display (the transcript does not store the fill's input args).
     expect(output.fill).toEqual({
       siteId: "hole#1",
       name: "决定分组",
@@ -574,8 +575,8 @@ describe("FillWorkflowHole — handler", () => {
   });
 });
 
-// 审批（docs/dynamic-workflow/launch.md「Approval」）：与 AmendWorkflow 同一条 owner 规则——本会话的 run
-// 免确认，别的会话的 run 开窗；窗的 optionsPolicy 是会话级 always-allow。
+// Approval (docs/dynamic-workflow/launch.md "Approval"): the same owner rule as AmendWorkflow — this session's
+// run skips the window, another session's run opens one; the window's optionsPolicy is the session-level always-allow.
 interface RunOutcome {
   brokerRequests: PermissionBrokerRequest[];
   permissionRequested: PermissionRequestedPayload[];
@@ -658,14 +659,15 @@ describe("FillWorkflowHole — owner rule", () => {
       hole_id: "hole#1",
       hole: { name: "决定分组", type: "Verdict", owned_by_this_session: false },
     });
-    // Allow → 补全照常。
+    // Allow → the fill proceeds as usual.
     expect(fills).toHaveLength(1);
     expect(outcome.result.success).toBe(true);
   });
 });
 
-// 确认窗：函数体点名了 run 绑定表之外的模型，端口必回 9011（bootstrap 的 unboundFillModelDiagnostics），
-// 所以不开一个注定作废的窗，与编不过的有效脚本同规（MR !2837 评审 CR-01）。
+// Confirmation window: the body names a model outside the run's binding table, so the port necessarily returns 9011
+// (bootstrap's unboundFillModelDiagnostics); therefore do not open a window destined to be void — same rule as a
+// valid script that does not compile (MR !2837 review CR-01).
 describe("FillWorkflowHole — approval gate for models the body names", () => {
   const STORED = [
     'phase("准备");',
@@ -705,8 +707,9 @@ describe("FillWorkflowHole — approval gate for models the body names", () => {
   });
 });
 
-// 递归留白（站点 id `hole#1/hole#1`）：早期的 hole_not_waiting 判定按 siteId 逐字比对，`fill_unchanged` 的键
-// 以 `\0` 拼接（id 里的 `/` 不参与切分），fill 文件按留白**名字**铸名（名字在全部留白里唯一）。
+// Recursive holes (site id `hole#1/hole#1`): the early hole_not_waiting verdict compared siteIds verbatim, the
+// `fill_unchanged` key is joined with `\0` (the `/` inside an id does not participate in splitting), and fill files
+// are minted by the hole's **name** (names are unique across all holes).
 describe("FillWorkflowHole — nested hole ids", () => {
   const NESTED_ID = "hole#1/hole#1";
   const nestedHole = { ...WAITING_HOLE, siteId: NESTED_ID, name: "内层裁决", type: "Inner" };
@@ -727,7 +730,7 @@ describe("FillWorkflowHole — nested hole ids", () => {
         diagnostics: [{ line: 1, column: 1, message: "bad", code: 1, inFill: true }],
       },
     });
-    // 外层 hole#1 已补过 → hole_not_waiting；内层 hole#1/hole#1 在等 → 放行，事实块是内层的。
+    // Outer hole#1 is already filled → hole_not_waiting; inner hole#1/hole#1 is waiting → admitted, with the inner hole's facts block.
     const outer = asFailure(
       await resolve(
         { run_id: "dwfrun-1", hole_id: "hole#1", script: BODY },
@@ -754,7 +757,7 @@ describe("FillWorkflowHole — nested hole ids", () => {
       },
     });
 
-    // fill 文件按名字铸：`nested.内层裁决.dwf.ts`；端口收到的 holeId 是嵌套 id 原文。
+    // The fill file is minted by name: `nested.内层裁决.dwf.ts`; the holeId the port receives is the nested id verbatim.
     const output = (await fillWorkflowHoleToolEntry.handler(
       (resolved as { input: unknown }).input,
       executionContext(port, name),
@@ -764,7 +767,7 @@ describe("FillWorkflowHole — nested hole ids", () => {
     expect(readFileSync(fillFile, "utf8")).toBe(BODY);
     expect(output.response).toContain(`hole ${NESTED_ID} of run dwfrun-1 is still waiting`);
 
-    // 同一份字节经 path 交回来 → fill_unchanged，键里的嵌套 id 没被 `/` 切坏。
+    // The same bytes handed back via path → fill_unchanged; the nested id in the key was not cut apart by `/`.
     const again = asFailure(
       await resolve(
         { run_id: "dwfrun-1", hole_id: NESTED_ID, path: fillFile },
@@ -773,7 +776,7 @@ describe("FillWorkflowHole — nested hole ids", () => {
     );
     expect(again.message).toContain("fill_unchanged");
     expect(again.message).toContain(NESTED_ID);
-    // 另一个留白 id 不共享这条记录。
+    // Another hole id does not share this record.
     const other = await resolve(
       { run_id: "dwfrun-1", hole_id: "hole#1/hole#3", path: fillFile },
       resolutionContext(port, name),

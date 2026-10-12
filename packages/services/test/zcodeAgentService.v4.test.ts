@@ -1,7 +1,7 @@
 import { channelReplyHostRequestSchema, type ChannelReplyHostRequest } from "@zcode/shared";
-// v4 conversation 通道 host 转发面测试（M3 竖切，docs/v4-refactor/01-topology §host 通道层）。
-// 验证 host 只做透传：subscribe/unsubscribe/command 转发给 CLI v4 方法，
-// v4/conversation/frame 通知按 workspace fan-out 给 onDynamicConversationFrame 订阅者。
+// Host forwarding-surface tests for the v4 conversation channel (M3 vertical slice, docs/v4-refactor/01-topology §host channel layer).
+// Verifies the host only forwards: subscribe/unsubscribe/command go to the CLI v4 methods,
+// and v4/conversation/frame notifications fan out per workspace to onDynamicConversationFrame subscribers.
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -22,11 +22,11 @@ import {
 import { setDataBaseDir } from "../src/paths.js";
 import { TaskIndexRepo } from "../src/session/taskIndexRepo.js";
 
-// 最小 v4 fake agent：
-// - v4/conversation/subscribe → 一次 stdout.write 连续写 ACK-only response + initial notification；
-// - v4/conversation/unsubscribe → 返回 {}；
-// - v4/command → 返回 CommandAck accepted。
-// 所有入站请求写入 logPath 供断言转发参数。
+// Minimal v4 fake agent:
+// - v4/conversation/subscribe -> a single stdout.write emits the ACK-only response + initial notification back to back;
+// - v4/conversation/unsubscribe -> returns {};
+// - v4/command -> returns a CommandAck accepted.
+// All inbound requests are appended to logPath for asserting forwarded parameters.
 const V4_FAKE_AGENT = `
 const fs = require("node:fs");
 const logPath = process.argv[2];
@@ -333,12 +333,14 @@ describe("zcodeAgentService v4 conversation channel", () => {
   afterEach(() => {
     setDataBaseDir(null);
     for (const dir of createdDirs.splice(0).reverse()) {
-      // 根因：Windows 不允许删除仍有打开句柄的目录，而 runtime/子进程与 watcher 的句柄
-      // 是异步收口的；`force: true` 只吞 ENOENT，不做任何重试。于是 afterEach 稳定抛
-      // `EPERM, Permission denied: \\?\C:\...\Temp\zcode-agent-v4-xxxx`，把已经通过断言
-      // 的用例判成失败（POSIX 允许删除仍被打开的 inode，所以只在 Windows 上出现）。
-      // 先用 rm 自带的有界重试等句柄释放；真的等不到也不该让清理决定用例成败，
-      // 临时目录由操作系统回收。
+      // Root cause: Windows refuses to delete a directory that still has open handles, while the
+      // runtime/child-process and watcher handles settle asynchronously; `force: true` only
+      // swallows ENOENT and does no retries. So afterEach reliably threw
+      // `EPERM, Permission denied: \\?\C:\...\Temp\zcode-agent-v4-xxxx`, failing cases whose
+      // assertions had already passed (POSIX allows deleting still-open inodes, so this only
+      // appears on Windows). First wait for handles to release using rm's built-in bounded
+      // retries; if they truly never release, cleanup must not decide the case's outcome — the
+      // operating system reclaims the temp directory.
       try {
         rmSync(dir, {
           recursive: true,
@@ -347,7 +349,7 @@ describe("zcodeAgentService v4 conversation channel", () => {
           retryDelay: 100,
         });
       } catch {
-        /* 清理失败不影响断言结论，交给操作系统回收临时目录。 */
+        /* Cleanup failure does not affect the assertion outcome; leave the temp directory to the OS. */
       }
     }
   });
@@ -411,7 +413,7 @@ describe("zcodeAgentService v4 conversation channel", () => {
     "projects only channel reply scope from a live V4 connection (remote=%s)",
     async (remote) => {
       const reply = vi.fn(async (value: ChannelReplyHostRequest) => {
-        // 与实际 Host executor 一样执行严格校验，不能用宽松 spy 掩盖额外连接字段。
+        // Run the same strict validation as the real Host executor; a loose spy must not mask extra connection fields.
         channelReplyHostRequestSchema.parse(value);
         return { status: "sent" as const, deliveryId: "delivery", providerMessageId: "om_sent" };
       });
@@ -551,7 +553,7 @@ describe("zcodeAgentService v4 conversation channel", () => {
           result: { type: "createSession", sessionId: "created-session" },
         });
         const commands = readRequests(logPath).filter((item) => item.method === "v4/command");
-        // 根因：为不存在的版本错配补写 mode、补发无 revision 的模式命令，改变了原创建合同。
+        // Root cause: back-filling mode for a version mismatch that does not exist and re-issuing a mode command without a revision changed the original creation contract.
         expect(commands).toHaveLength(1);
         expect(commands[0]?.params.type).toBe("createSession");
         expect(commands[0]?.params.payload).toEqual(payload);
@@ -583,8 +585,9 @@ describe("zcodeAgentService v4 conversation channel", () => {
       });
       expect(commandResolver).toHaveBeenCalledTimes(1);
 
-      // 修复原因：只读 topic 已经登记 active client，旧 fast path 会直接返回它并绕过
-      // provider/model 门禁。createSession 必须仍在写入协议前确定性拒绝。
+      // Fix reason: the read-only topic had already registered an active client, and the old fast
+      // path returned it directly, bypassing the provider/model gates. createSession must still be
+      // deterministically rejected before anything is written to the protocol.
       await expect(service.createSession({ workspacePath })).rejects.toMatchObject({
         code: "ZCODE_AGENT_PROVIDER_NOT_READY",
         data: expect.objectContaining({ reason: "provider_not_ready" }),
@@ -610,8 +613,8 @@ describe("zcodeAgentService v4 conversation channel", () => {
         sessionId: "cold-registry-session",
       });
 
-      // Worker 已经持有进程级 Registry；Host 读取 Registry View 只用于启动门禁，
-      // 不能把完整 Registry 下发成另一份执行事实源。
+      // The Worker already holds the process-level Registry; the Host reads the Registry View only
+      // as a startup gate, and must not push the full Registry down as another source of execution truth.
       expect(readRequests(logPath).map((entry) => entry.method)).toEqual([
         "v4/conversation/subscribe",
       ]);
@@ -720,8 +723,9 @@ describe("zcodeAgentService v4 conversation channel", () => {
     }
   });
 
-  // `workflowRunDeltas` 与 `clientMode` 同族（10 §3.1）：可信 host 从连接的 clientHello 注入，
-  // UI 面的 subscribe 入参碰不到它——一个客户端认不认得 `workflowRun.*` 增量是**连接**的事实。
+  // `workflowRunDeltas` belongs to the same family as `clientMode` (10 §3.1): the trusted host
+  // injects it from the connection's clientHello, and the UI-side subscribe input cannot touch it —
+  // whether a client understands `workflowRun.*` deltas is a fact of the **connection**.
   it.each([true, false])(
     "subscribe 的 workflowRunDeltas 只由 clientHello 声明决定（declared=%s）",
     async (declared) => {
@@ -743,7 +747,7 @@ describe("zcodeAgentService v4 conversation channel", () => {
         await scope.service.subscribeConversationV4({
           workspacePath,
           sessionId: "workflow-run-deltas-session",
-          // 调用方自报的同名字段：必须被可信值整个顶掉，两种声明下都不能生效。
+          // The caller's self-reported same-named field: it must be entirely overridden by the trusted value and take effect under neither declaration.
           workflowRunDeltas: !declared,
         } as never);
 
@@ -852,7 +856,7 @@ describe("zcodeAgentService v4 conversation channel", () => {
       expect(subscribeRequest?.params.topic).toBe("conversation/s1");
       expect(subscribeRequest?.params.clientMode).toBe("desktop-continuous");
       expect(subscribeRequest?.params).not.toHaveProperty("deliveryProfile");
-      // 这条 clientHello 没有 capabilities：订阅就不能带增量位，CLI 按旧消费者发整键 patch。
+      // This clientHello carries no capabilities: the subscription must not include the deltas bit, and the CLI sends whole-key patches for legacy consumers.
       expect(subscribeRequest?.params).not.toHaveProperty("workflowRunDeltas");
       expect(typeof subscribeRequest?.params.connectionId).toBe("string");
       expect(String(subscribeRequest?.params.connectionId)).toMatch(/^host-/);
@@ -1478,8 +1482,8 @@ describe("zcodeAgentService v4 conversation channel", () => {
         },
         issuedAt: 1700000000000,
       });
-      // 同一 workspaceIdentity 的 subscribe + command 复用同一 host child，
-      // 手机端不单独创建 Agent runtime，relay/main 也不持有 rewind 状态。
+      // subscribe + command with the same workspaceIdentity reuse the same host child; the mobile
+      // side does not create its own Agent runtime, and relay/main hold no rewind state either.
       expect(commandResolver).toHaveBeenCalledTimes(1);
     } finally {
       await scope.dispose();

@@ -249,10 +249,10 @@ describe("getSidePaneTabTitle", () => {
   });
 
   it("titles an actor transcript with its name and always with its instance ordinal", () => {
-    // 同一车道族的实例名字相同（脚本里只写了一次 `agent("reviewer")`），所以序号是标题里
-    // 唯一能区分它们的东西——tab 条上两个「reviewer」是无法辨认的。序号用拼接而不是
-    // 本地化模板：照 selection-side-chat 的先例（`${label} ${ordinal}`），标签映射表因此
-    // 仍然是「id → 串」，不必背插值。
+    // Instances of the same lane family share a name (the script wrote `agent("reviewer")` only once), so the ordinal is
+    // the only thing in the title that can tell them apart — two "reviewer" tabs on the tab strip would be indistinguishable.
+    // The ordinal uses concatenation rather than a localized template: following the selection-side-chat precedent
+    // (`${label} ${ordinal}`), the label mapping table therefore stays "id → string" with no interpolation to carry.
     expect(getSidePaneTabTitle(workflowActorTab, ({ id }) => id)).toBe("reviewer #2");
   });
 
@@ -266,7 +266,7 @@ describe("getSidePaneTabTitle", () => {
   });
 
   it("titles a workspace transcript with the run name: one run, one workspace transcript", () => {
-    // docs/dynamic-workflow/transcript-and-notifications.md「Opening the tab」：标题是 run 名，类型词在 tooltip 里。
+    // docs/dynamic-workflow/transcript-and-notifications.md "Opening the tab": the title is the run name; the type word lives in the tooltip.
     expect(getSidePaneTabTitle(workflowWorkspaceTab, ({ id }) => id)).toBe("Three-way review");
   });
 
@@ -285,8 +285,8 @@ describe("SortableSidePaneTabTrigger", () => {
     const html = renderSidePaneTab(true);
     const tabMarkup = html.match(/<div data-side-pane-tab-id="browser:test"[^>]*>/)?.[0] ?? "";
 
-    // Bugfix: ContextMenuTrigger + TabsTrigger asChild 会让 Radix 状态落点不稳定。
-    // 右侧面板 tab 的 active 样式依赖 data-active，所以必须由受控 isActive 补到真实 DOM。
+    // Bugfix: ContextMenuTrigger + TabsTrigger asChild makes the Radix state landing point unstable.
+    // The side pane tab's active styling depends on data-active, so the controlled isActive must patch it onto the real DOM.
     expect(tabMarkup).toContain('data-side-pane-tab-id="browser:test"');
     expect(tabMarkup).toMatch(/\sdata-active(=|\s|>)/);
     expect(tabMarkup).toContain('data-state="active"');
@@ -490,10 +490,10 @@ describe("SidePaneTabIcon browser-use operation state", () => {
   });
 });
 
-// Bug 原因：plan-detail tab 由 switch-mode（ExitPlanMode）工具调用卡片打开，
-// 来源卡片用 NotepadTextIcon。tab 图标之前误用 ListChecksIcon，导致用户点击
-// 卡片打开 tab 时图标跳变，且 ListChecksIcon 与状态面板 Todo section 撞图标。
-// 固化约定：plan-detail tab 图标必须与来源卡片一致，用 NotepadTextIcon。
+// Bug cause: the plan-detail tab is opened by the switch-mode (ExitPlanMode) tool call card,
+// and the source card uses NotepadTextIcon. The tab icon previously misused ListChecksIcon, causing the icon
+// to jump when the user clicked the card to open the tab, and ListChecksIcon clashed with the status panel's Todo section icon.
+// Convention pinned here: the plan-detail tab icon must match the source card — NotepadTextIcon.
 describe("SidePaneTabIcon plan-detail", () => {
   it("uses NotepadTextIcon to match the switch-mode source card", () => {
     const html = renderToStaticMarkup(
@@ -511,13 +511,13 @@ describe("SidePaneTabIcon plan-detail", () => {
     );
 
     expect(html).toContain("lucide-notepad-text");
-    // 防止回退到与 Todo 撞图的 ListChecksIcon
+    // Prevent falling back to ListChecksIcon, which clashes with Todo
     expect(html).not.toContain("lucide-list-checks");
   });
 });
 
-// 同一条约定：workflow-run tab 由 CreateWorkflow 工具卡打开，来源卡片用 lucide Workflow，
-// tab 必须与它一致，否则点击卡片进详情时图标会跳变。
+// Same convention: the workflow-run tab is opened by the CreateWorkflow tool card, whose source card uses the lucide Workflow
+// icon; the tab must match it, otherwise the icon jumps when clicking the card into the detail view.
 describe("SidePaneTabIcon workflow-run", () => {
   it("uses the same Workflow icon as the CreateWorkflow source card", () => {
     const html = renderToStaticMarkup(
@@ -528,9 +528,9 @@ describe("SidePaneTabIcon workflow-run", () => {
   });
 });
 
-// actor transcript 是「一个 actor 的对话记录」，所以它既不能用 run 的 Workflow 图标
-// （那是整次运行），也不能用 subagent 的 Bot 图标——tab 条上分不清这两类会话，而它们的
-// 可见性与回收语义完全不同。
+// An actor transcript is "one actor's conversation record", so it can use neither the run's Workflow icon
+// (that is the whole run) nor the subagent's Bot icon — on the tab strip those two conversation kinds are
+// indistinguishable, yet their visibility and recycling semantics are completely different.
 describe("SidePaneTabIcon workflow-actor-session", () => {
   it("is visually distinct from both the run tab and a subagent tab", () => {
     const html = renderToStaticMarkup(
@@ -542,8 +542,8 @@ describe("SidePaneTabIcon workflow-actor-session", () => {
   });
 });
 
-// 脚本 transcript 是「这个 run 对工作区做过什么」，所以用终端图标：既不是 run 的 Workflow
-// （整次运行），也不是 actor 的对话气泡（那是一个子代理的 transcript）。
+// A script transcript is "what this run did to the workspace", so it uses the terminal icon: neither the run's Workflow
+// (the whole run) nor an actor's chat bubble (that is a subagent's transcript).
 describe("SidePaneTabIcon workflow-workspace", () => {
   it("uses the terminal icon, distinct from run and actor tabs", () => {
     const html = renderToStaticMarkup(

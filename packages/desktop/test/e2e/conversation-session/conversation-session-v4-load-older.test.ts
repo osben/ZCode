@@ -1,11 +1,12 @@
-// HLP02/M5④ 门禁：长历史无感分页（顶部历史可达 + prepend 不跳）。
-// 证据层 L3：21 个 completed turn 产出 >60 raw rows，越过快照尾窗；
-// 切走再切回（keep-warm 过期 → 全新 subscribe）拿到截断快照，验证：
-// ① 截断可见：data-window-row-count=60 < data-total-row-count，但不显示「加载更早」；
-// ② 用户向更早历史滚动时自动触发 loadOlder → 全部历史可达（首个 turn 可见）；
-// ③ prepend 锚定不跳：补页前视口首行在补页后仍停留在视口附近（不弹回顶部/底部）。
-// 合并/游标语义的完整覆盖在 L1（v4SessionDataLayer.test.ts loadOlder 组 +
-// bootstrap conversation-topic-publisher rows/range 黄金组）。
+// HLP02/M5④ gate: seamless pagination of long history (top of history reachable + prepend doesn't jump).
+// Evidence layer L3: 21 completed turns produce >60 raw rows, exceeding the snapshot tail window;
+// switching away and back (keep-warm expired → a fresh subscribe) yields a truncated snapshot, verifying:
+// ① Truncation is visible: data-window-row-count=60 < data-total-row-count, but no "load older" button shows;
+// ② Scrolling toward older history automatically triggers loadOlder → all history reachable (first turn visible);
+// ③ Prepend anchoring doesn't jump: the viewport's first row before the backfill stays near the viewport after
+// it (no snapping to top/bottom).
+// Full coverage of merge/cursor semantics lives in L1 (the loadOlder group in v4SessionDataLayer.test.ts +
+// the bootstrap conversation-topic-publisher rows/range golden group).
 import { TID_V4_TIMELINE, TID_V4_TIMELINE_LOAD_OLDER } from "@zcode/shared";
 import { clearAppData } from "../helpers/desktop-app.js";
 import {
@@ -22,7 +23,7 @@ import {
   waitForV4TimelineContaining,
 } from "../helpers/v4-conversation.js";
 
-/** E2E build 的 SessionDataLayer keep-warm 窗口（1s）+ 余量。 */
+/** The E2E build's SessionDataLayer keep-warm window (1s) plus margin. */
 const KEEP_WARM_EXPIRY_MS = 2_000;
 
 const HISTORY_TURNS = 21;
@@ -46,11 +47,12 @@ function hasV4LoadOlderButton(): Promise<boolean> {
 }
 
 /**
- * 在切回 session 前从 renderer 内观察 timeline 属性变化。
+ * Observe timeline attribute changes from inside the renderer before switching back to the session.
  *
- * 修复原因：冷快照 60 行到自动预取完成可能只持续几十毫秒，WDIO 全量并发时下一次
- * execute 往返会直接读到 63 行。MutationObserver 留住真实中间态，避免把机器负载
- * 当成 rows.window 是否截断的产品结论。
+ * Why: the cold 60-row snapshot until auto-prefetch completes may last only tens of milliseconds; under
+ * full WDIO concurrency the next execute round trip reads 63 rows directly. A MutationObserver preserves
+ * the real intermediate state, avoiding mistaking machine load for a product conclusion about whether
+ * rows.window is truncated.
  */
 function startV4TimelineWindowObservation(): Promise<void> {
   return browser.execute((timelineTestId) => {
@@ -175,9 +177,11 @@ function getObservedPrependAnchorState(fullRawRows: number): Promise<{
       if (truncatedIndex < 0 || prefetchedIndex <= truncatedIndex) {
         return { samples: state.samples.slice(-12), stable: false };
       }
-      // React 同一 commit 中可能先替换虚拟行 DOM、再刷新 data-window-row-count；
-      // 因此最后一个“60 行”样本不一定仍属于旧窗口。按稳定 turnId 在截断阶段
-      // 与补页阶段的所有样本间配对，避免把属性/DOM 的过渡帧当成锚定基准。
+      // Within a single React commit, the virtual row DOM may be replaced before data-window-row-count is
+      // refreshed;
+      // so the last "60 rows" sample may not still belong to the old window. Pair samples across the
+      // truncated and backfill phases by stable turnId, avoiding treating attribute/DOM transition frames
+      // as the anchoring baseline.
       const stable = state.samples
         .slice(truncatedIndex, prefetchedIndex)
         .some((anchorBefore) =>
@@ -210,7 +214,8 @@ describe("v4 HLP02 门禁：长历史无感分页（R-06）", () => {
     this.timeout(180000);
     await prepareV4ConversationE2E();
 
-    // 多 completed turn 是 live/cold 都稳定的持久语义；不再靠单 turn text-block segmentation。
+    // Multiple completed turns are persistent semantics stable in both live and cold paths; no longer relying
+    // on single-turn text-block segmentation.
     for (let index = 1; index <= HISTORY_TURNS; index += 1) {
       const marker = String(index).padStart(3, "0");
       await sendV4Prompt(`E2E_V4_OLDER_HISTORY_${marker} 历史轮次`);
@@ -218,8 +223,10 @@ describe("v4 HLP02 门禁：长历史无感分页（R-06）", () => {
         async () => (await getV4TimelineScrollState()).renderUnitCount >= index,
         { timeout: 30000, timeoutMsg: `第 ${index} 个历史 turn 没有完成投影` },
       );
-      // 修复原因：row 数达到阈值只证明 projection 已追加，不能证明上一轮的
-      // command/composer 收口已完成；紧接着写下一轮会被迟到的清空提交覆盖。
+      // Why: the row count reaching a threshold only proves the projection was appended, not that the
+      // previous turn's
+      // command/composer closeout finished; immediately writing the next turn would be overwritten by a late
+      // clearing submission.
       await waitForV4ConversationState(
         (snapshot) => snapshot.state === "idle" && snapshot.queueCount === 0,
         `第 ${index} 个历史 turn 没有回到 idle`,
@@ -231,17 +238,17 @@ describe("v4 HLP02 门禁：长历史无感分页（R-06）", () => {
     const sessionId = (await getV4PaneSnapshot()).sessionId as string;
     expect(sessionId).not.toBe("draft");
 
-    // live 订阅期间行是流式追加的，客户端窗口=全量；不截断、无「加载更早」。
+    // During a live subscription rows stream in and the client window = full set; no truncation, no "load older".
     const live = await getV4TimelineScrollState();
-    // 修复原因：分页合同以 logical turn 和 60-row 窗口为边界；provider 可以把
-    // 同一 logical turn 投影成不同数量的 raw rows，不能再硬编码 3 rows/turn。
+    // Why: the pagination contract is bounded by logical turns and the 60-row window; a provider may project
+    // the same logical turn into a different number of raw rows, so 3 rows/turn can no longer be hardcoded.
     const fullRawRows = live.totalRowCount;
     expect(fullRawRows).toBeGreaterThan(SNAPSHOT_TAIL_RAW_ROWS);
     expect(live.windowRowCount).toBe(live.totalRowCount);
     expect(live.renderUnitCount).toBe(HISTORY_TURNS);
     expect(await hasV4LoadOlderButton()).toBe(false);
 
-    // ── 切走 + keep-warm 过期 → 切回拿全新 subscribe（快照尾窗截断） ──
+    // ── Switch away + keep-warm expires → switching back gets a fresh subscribe (snapshot tail truncated) ──
     await startNewV4Draft();
     await browser.pause(KEEP_WARM_EXPIRY_MS);
     await startV4TimelineWindowObservation();
@@ -252,15 +259,17 @@ describe("v4 HLP02 门禁：长历史无感分页（R-06）", () => {
       30000,
     );
 
-    // ① 冷快照必须经过 60/全量截断态。若恢复布局已经进入顶部预取区，补页可能在
-    // WDIO 下一次采样前完成；renderer observer 仍会保留该中间态。
+    // ① The cold snapshot must pass through the 60/full truncation state. If layout recovery already entered
+    // the top prefetch zone, the backfill may complete before WDIO's next sample; the renderer observer still
+    // preserves that intermediate state.
     const stateAfterSubscribe = await getV4TimelineScrollState();
     expect(await hasV4LoadOlderButton()).toBe(false);
 
     if (stateAfterSubscribe.windowRowCount === SNAPSHOT_TAIL_RAW_ROWS) {
-      // ── ② 用户向更早历史滚动时自动触发 loadOlder ──
-      // scrollV4TimelineToTop 内部已等虚拟化窗口对齐（scroll 事件下一帧才派发，
-      // 对齐前 DOM 仍是旧的底部窗口，采样会拿到过期行）。
+      // ── ② Scrolling toward older history automatically triggers loadOlder ──
+      // scrollV4TimelineToTop already waits for the virtualized window to align (the scroll event only
+      // dispatches on the next frame; before alignment the DOM still shows the old bottom window and
+      // sampling would capture stale rows).
       await scrollV4TimelineToTop();
 
       await browser.waitUntil(
@@ -280,10 +289,12 @@ describe("v4 HLP02 门禁：长历史无感分页（R-06）", () => {
       );
     }
 
-    // ③ prepend 锚定不跳：不能在 scroll helper 返回后才读取 anchorBefore；补页可能
-    // 已在 WDIO 往返期间提交，此时读到的是新 prepend 的 turn，它本来就应留在视口
-    // 上方。以 renderer observer 留下的截断阶段稳定 turnId 为基准，条件等待 DOM
-    // 锚点收敛；属性与虚拟 DOM 同 commit 的过渡帧由下方配对逻辑排除。
+    // ③ Prepend anchoring doesn't jump: anchorBefore must not be read only after the scroll helper returns;
+    // the backfill may already have committed during WDIO's round trip, in which case what's read is the
+    // newly prepended turn, which belongs above the viewport anyway. Use the truncated-phase stable turnId
+    // left by the renderer observer as the baseline and wait on the condition for the DOM anchor to converge;
+    // transition frames where attributes and virtual DOM share a commit are excluded by the pairing logic
+    // below.
     let observedAnchorState = await getObservedPrependAnchorState(fullRawRows);
     try {
       await browser.waitUntil(
@@ -318,14 +329,15 @@ describe("v4 HLP02 门禁：长历史无感分页（R-06）", () => {
     );
     expect(prefetchedIndex).toBeGreaterThan(truncatedIndex);
 
-    // 全部历史已并入：窗口 = 全序，且始终没有手动补页按钮。
+    // All history merged in: window = full order, and there was never a manual backfill button.
     const complete = await getV4TimelineScrollState();
     expect(complete.windowRowCount).toBe(complete.totalRowCount);
     expect(complete.renderUnitCount).toBe(HISTORY_TURNS);
     expect(await hasV4LoadOlderButton()).toBe(false);
 
-    // 顶部可达：滚到顶后最早的 turn 进入 DOM（逐字节同全量重放前缀，
-    // 服务端等价性由 bootstrap rows/range 黄金测试背书，这里验证用户可达性）。
+    // Top reachable: after scrolling to the top, the earliest turn enters the DOM (byte-identical to the
+    // full-replay prefix; server equivalence is backed by the bootstrap rows/range golden tests — here we
+    // verify user reachability).
     await scrollV4TimelineToTop();
     await waitForV4TimelineContaining("E2E_V4_OLDER_HISTORY_001", 15000);
   });

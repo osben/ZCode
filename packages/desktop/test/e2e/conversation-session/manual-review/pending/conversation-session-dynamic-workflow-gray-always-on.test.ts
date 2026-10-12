@@ -22,11 +22,11 @@ import {
   setComposerDraft,
 } from "../../../helpers/dynamic-workflow-gray.js";
 
-// DWG-08（alwaysOn 档）：服务端 /client/configs 下发 dynamicWorkflow.mode = "alwaysOn"，
-// 三个入口同时在场——`+` 菜单的「工作流」、`/` 面板的 workflow、自动化页的「工作流」标签。
-// 与 disabled 档共用同一组动作，只是断言相反；服务端形状按本文件名选档。
-// 契约见 docs/dynamic-workflow/launch.md「Gray release: the `dynamicWorkflow` feature key」。
-// E2E_DWF_GRAY：只读入口，不发送 prompt；空 provider fixture 是有意的合同。
+// DWG-08 (alwaysOn tier): the server's /client/configs sends down dynamicWorkflow.mode = "alwaysOn",
+// so all three entries are present at once — the "Workflow" item in the `+` menu, workflow in the `/` panel, and the "Workflow" tab on the automations page.
+// Shares the same set of actions as the disabled tier, only with reversed assertions; the server shape picks the tier by this file's name.
+// Contract: docs/dynamic-workflow/launch.md "Gray release: the `dynamicWorkflow` feature key".
+// E2E_DWF_GRAY: read-only entries, no prompt sent; the empty provider fixture is an intentional contract.
 describe("动态工作流灰度命中（alwaysOn）", () => {
   before(async () => {
     await prepareV4ConversationE2E();
@@ -44,7 +44,7 @@ describe("动态工作流灰度命中（alwaysOn）", () => {
   it("DWG-08 命中时 + 菜单、/ 面板与自动化页都提供工作流入口", async function () {
     this.timeout(180000);
 
-    // 0) 确认本轮用的是同一台 case-local 网关，且它下发的是 alwaysOn。
+    // 0) Confirm this round uses the same case-local gateway and that it sends down alwaysOn.
     const status = await readDynamicWorkflowGrayMockStatus();
     expect(status.scenario).toBe("alwaysOn");
     expect(status.mode).toBe("alwaysOn");
@@ -53,8 +53,8 @@ describe("动态工作流灰度命中（alwaysOn）", () => {
       { timeout: 60000, timeoutMsg: "Host 没有向 case-local 配置网关请求 /client/configs" },
     );
 
-    // 1) `/` 面板：workflow 在场，并按产品要求紧随 goal（APP_PROTOCOL_VISIBLE_BUILTIN_SLASH_COMMAND_NAMES 的顺序）。
-    //    先用 goal 当 catalog 屏障，再在同一个面板里等 workflow 到齐，不重复改写草稿。
+    // 1) `/` panel: workflow is present and, per product requirements, immediately follows goal (the order of APP_PROTOCOL_VISIBLE_BUILTIN_SLASH_COMMAND_NAMES).
+    //    Use goal as the catalog barrier first, then wait for workflow to arrive in the same panel without rewriting the draft again.
     await openSlashPanelWithCatalogReady();
     await waitForV4SlashOption(SLASH_WORKFLOW_OPTION_ID, 60000);
     const slashIds = await getV4SlashOptionIds();
@@ -63,7 +63,7 @@ describe("动态工作流灰度命中（alwaysOn）", () => {
     );
     await closeSlashPanel();
 
-    // 2) `+` 菜单：工作流在场且排在目标之后。
+    // 2) `+` menu: Workflow is present and ordered after Goal.
     await setComposerDraft("");
     await openPlusMenu();
     await $(`[data-trigger="+"] [data-option-id="${PLUS_WORKFLOW_OPTION_ID}"]`).waitForDisplayed();
@@ -71,7 +71,7 @@ describe("动态工作流灰度命中（alwaysOn）", () => {
     expect(addIds.indexOf(PLUS_WORKFLOW_OPTION_ID)).toBe(addIds.indexOf(PLUS_GOAL_OPTION_ID) + 1);
     await closePlusMenu();
 
-    // 3) 自动化页：标题即切换，「自动化 / 工作流」两个标签都在场。
+    // 3) Automations page: the title itself switches; both the "Automation / Workflow" tabs are present.
     await openAutomationsPage();
     expect(await $(AUTOMATIONS_CONTENT_SELECTOR).isDisplayed()).toBe(true);
     await waitForTestIdByDom(automationsPageTabTestId("workflow"), {

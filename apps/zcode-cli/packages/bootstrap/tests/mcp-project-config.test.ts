@@ -20,21 +20,22 @@ import {
   resolveTrustedOfficialCuaServerNames,
 } from "../src/mcp-config.js";
 
-// 遗留 bearer token 的环境变量名。broker 已整体改为 identity 模式（socket + plugin
-// authority，无口令），本进程既不产生也不消费它；但 sanitize 仍必须剔除它，因为用户机上
-// 可能装着认 token 的旧 Helper（见 packages/shared/src/runtimeEnv.ts 同名注释）。
+// Env var name of the legacy bearer token. The broker has moved entirely to identity mode (socket + plugin
+// authority, no secret); this process neither produces nor consumes it, but sanitize must still strip it because
+// the user's machine may have an old token-recognizing Helper installed (see the same-named comment in packages/shared/src/runtimeEnv.ts).
 //
-// 刻意写字面量而不是从 src/mcp-config.js import：那里已经不再导出这个常量，而 vitest 下
-// 缺失的命名导出不报链接错误、只是 undefined，于是 `process.env[undefined]` 变成读
-// `"undefined"` 键，`toBeUndefined()` 之类断言全部永真。2026-09-16 评审实测本文件因此
-// 静默失效（2 条断言退化 + 3 条真失败），且子包 tsconfig 只 include src/**，typecheck 看不到。
+// Deliberately a literal rather than imported from src/mcp-config.js: that module no longer exports this constant,
+// and under vitest a missing named export raises no link error — it is just undefined — so `process.env[undefined]`
+// becomes reading the `"undefined"` key and assertions like `toBeUndefined()` pass unconditionally. A 2026-09-16
+// review measured this file silently failing because of it (2 assertions degraded + 3 real failures), and the
+// sub-package tsconfig only includes src/**, so typecheck cannot see it.
 const LEGACY_BROKER_TOKEN_ENV = "ZCODE_CUA_PERMISSION_BROKER_TOKEN";
 
 describe("project MCP config", () => {
-  // CUA 已不再声明任何 MCP server（.zcode-plugin/plugin.json 去掉 mcpServers，执行面搬到
-  // 共享 node_repl 宿主），因此官方 CUA server 不出现在任何默认连接集合里。
-  // 「用户同名配置不得获产品凭据」这条不变量改由本文件下方的 zcode-cua 用例覆盖
-  //（"fails closed by omitting the global zcode-cua..." 与 "retired direct-CLI ..."）。
+  // CUA no longer declares any MCP server (the .zcode-plugin/plugin.json dropped mcpServers; execution moved to
+  // the shared node_repl host), so the official CUA server appears in no default connection set.
+  // The "a user config with the same name must not receive product credentials" invariant is now covered by the
+  // zcode-cua cases further down in this file ("fails closed by omitting the global zcode-cua..." and "retired direct-CLI ...").
   it("lists project MCP servers as trusted and auto-connects on startup", async () => {
     const root = await mkdtemp(join(tmpdir(), "zcode-bootstrap-mcp-"));
     const cwd = join(root, "workspace");
@@ -536,9 +537,10 @@ describe("project MCP config", () => {
   });
 
   it("re-injects the product broker into shared node_repl after CLI env sanitization", () => {
-    // 复现 Critical：CLI 入口 sanitize 会先从 process.env 删除 broker socket/token，若定向注入只读
-    // process.env，全局 ~/.zcode/cli/config.json 的 zcode-cua 会 fail-open 绕过 broker，让
-    // Python/uvx 成为 TCC 主体。修复后 sanitize 前的凭据被捕获到进程内私有存储并仍能定向注入。
+    // Reproduces the Critical: the CLI entry sanitize removes the broker socket/token from process.env first; if
+    // targeted injection only reads process.env, the global ~/.zcode/cli/config.json zcode-cua fails open around
+    // the broker, making Python/uvx the TCC principal. After the fix, pre-sanitize credentials are captured into
+    // in-process private storage and can still be injected in a targeted way.
     const socketPath = "/tmp/zcode-cua-broker.sock";
     const token = "broker-token-abc";
     const previousSocket = process.env[ZCODE_CUA_BROKER_SOCKET_ENV];
@@ -555,7 +557,7 @@ describe("project MCP config", () => {
         `${socketPath}.permission-refresh.json`;
       delete process.env[ZCODE_CUA_BROKER_UNAVAILABLE_ENV];
 
-      // 模拟真实 CLI 入口：sanitize 剔除凭据（剔除前捕获到进程内私有存储）。
+      // Simulate the real CLI entry: sanitize strips the credentials (captured into in-process private storage before stripping).
       sanitizeZCodeRuntimeEnvInPlace(process.env);
       expect(process.env[ZCODE_CUA_BROKER_SOCKET_ENV]).toBeUndefined();
       expect(process.env[LEGACY_BROKER_TOKEN_ENV]).toBeUndefined();
@@ -570,9 +572,9 @@ describe("project MCP config", () => {
 
       expect(nodeRepl?.type === "stdio" ? nodeRepl.args : undefined).toEqual(["server.js"]);
       expect(env[ZCODE_CUA_BROKER_SOCKET_ENV]).toBe(socketPath);
-      // identity 模式：凭据只有 socket + authority(+ refresh marker)。遗留 token 即使存在于
-      // process.env 也必须止步于 sanitize，不得被重新注入给 node_repl —— 否则等于把一个
-      // 旧 Helper 认的口令又发给了子进程。
+      // Identity mode: credentials are only socket + authority (+ refresh marker). Even if the legacy token exists
+      // in process.env it must stop at sanitize and must not be re-injected into node_repl — otherwise we would be
+      // handing a password the old Helper recognizes to a child process again.
       expect(env[LEGACY_BROKER_TOKEN_ENV]).toBeUndefined();
       expect(env[ZCODE_CUA_PLUGIN_AUTHORITY_ENV_KEY]).toBe("dev.zcode.cua-helper/dev");
       expect(env["ZCODE_CUA_PERMISSION_BROKER_REFRESH_MARKER"]).toBe(
@@ -659,14 +661,14 @@ describe("project MCP config", () => {
     const previousUnavailable = process.env[ZCODE_CUA_BROKER_UNAVAILABLE_ENV];
     resetCapturedZCodeCuaBrokerCredentialsForTest();
     try {
-      // 捕获可信凭据（模拟 CLI 入口 sanitize 从 ZCode 下发的 spawn env 捕获）。
+      // Capture trusted credentials (simulating the CLI entry sanitize capturing from the spawn env ZCode issued).
       const spawnEnv: Record<string, string | undefined> = {
         [ZCODE_CUA_BROKER_SOCKET_ENV]: "/tmp/captured.sock",
         [LEGACY_BROKER_TOKEN_ENV]: "captured-token",
         [ZCODE_CUA_PLUGIN_AUTHORITY_ENV_KEY]: "dev.zcode.cua-helper/captured",
       };
       sanitizeZCodeRuntimeEnvInPlace(spawnEnv);
-      // 运行时 env 里残留/被注入了不同的 broker 值：绝不能覆盖 captured。
+      // Different broker values linger in / were injected into the runtime env: they must never override captured.
       process.env[ZCODE_CUA_BROKER_SOCKET_ENV] = "/tmp/stale.sock";
       process.env[LEGACY_BROKER_TOKEN_ENV] = "stale-token";
       delete process.env[ZCODE_CUA_BROKER_UNAVAILABLE_ENV];
@@ -681,7 +683,7 @@ describe("project MCP config", () => {
 
       expect(nodeRepl?.type === "stdio" ? nodeRepl.args : undefined).toEqual(["server.js"]);
       expect(env[ZCODE_CUA_BROKER_SOCKET_ENV]).toBe("/tmp/captured.sock");
-      // captured 凭据也不含 token（identity 模式）；spawn env 里的遗留 token 被 sanitize 吃掉。
+      // The captured credentials carry no token either (identity mode); the legacy token in the spawn env was eaten by sanitize.
       expect(env[LEGACY_BROKER_TOKEN_ENV]).toBeUndefined();
       expect(env[ZCODE_CUA_PLUGIN_AUTHORITY_ENV_KEY]).toBe("dev.zcode.cua-helper/captured");
     } finally {
@@ -818,7 +820,7 @@ function createRecordingMcpPort(
 
 function createStopModelExecutor() {
   return {
-    // 根因：createZCodeApp 初始化时会同步配置模型 I/O 保留策略；旧测试夹具缺少该方法会在用例逻辑前崩溃。
+    // Root cause: createZCodeApp synchronously configures the model I/O retention policy during initialization; old test fixtures missing this method crashed before the case logic ran.
     setModelIoFullRetentionEnabled() {},
     async generateText() {
       return {

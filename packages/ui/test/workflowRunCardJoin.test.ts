@@ -1,10 +1,12 @@
-// 工具卡 → dwf run 的联接（docs/dynamic-workflow/presentation.md「Joining cards to runs」那一行）。
+// Join from tool card → dwf run (the "Joining cards to runs" line in docs/dynamic-workflow/presentation.md).
 //
-// 值从裸 runId 加宽成 `{runId, status, nodesSettled, nodesTotal}`：聊天区的紧凑卡要直接
-// 渲染状态词与步数进度，所以联接一次就把摘要算完，卡片不再自己去翻投影。
+// The value widened from a bare runId to `{runId, status, nodesSettled, nodesTotal}`: the compact card in the
+// chat area renders the status word and step progress directly, so the join computes the summary once and the
+// card no longer digs through the projection itself.
 //
-// 计数语义写明：**动态工作流没有静态总数**，`nodesTotal` 是**已排程**（observed）节点数，
-// 进度读作「已排程的里结算了几个」，绝不冒充全程百分比。
+// Count semantics spelled out: **dynamic workflows have no static total**; `nodesTotal` is the number of
+// **scheduled** (observed) nodes,
+// and progress reads as "how many of the scheduled have settled" — never posing as a full-run percentage.
 import { describe, expect, it } from "vitest";
 import type { WorkflowRunNode, WorkflowRunState } from "@zcode/shared/zcode-protocol-v4";
 import { workflowRunStepCounts } from "@zcode/shared/zcode-protocol-v4";
@@ -54,7 +56,7 @@ describe("buildWorkflowRunByToolCallId", () => {
         nodes: [
           node({ phase: "settled", outcome: "ok" }),
           node({ ordinal: 2, phase: "settled", outcome: "failed" }),
-          // 取消同样是结算：终态就是终态，进度不该把它算成「还在跑」。
+          // Cancellation is also a settlement: terminal is terminal; progress must not count it as "still running".
           node({ ordinal: 3, phase: "settled", outcome: "cancelled" }),
           node({ ordinal: 4, phase: "dispatched" }),
           node({ ordinal: 5, phase: "repairing" }),
@@ -95,16 +97,16 @@ describe("buildWorkflowRunByToolCallId", () => {
   });
 
   it("活投影命中时整条 run 随摘要带上：卡片内联的时间线要灯、药丸与墨迹", () => {
-    // docs/dynamic-workflow/presentation.md「Joining cards to runs」：renderer 仍然不翻投影，
-    // 联接一次把整条 run 交给它。
+    // docs/dynamic-workflow/presentation.md "Joining cards to runs": the renderer still doesn't dig through
+    // the projection; the join hands the whole run to it in one shot.
     const state = run({ actors: [{ siteId: "actor#1", ordinal: 1, status: "running" }] });
     const map = buildWorkflowRunByToolCallId([state]);
     expect(map.get("tool-wf-1")?.run).toBe(state);
   });
 
   it("可恢复性只读投影的 resumable 状态位，不按 status 推导", () => {
-    // docs/dynamic-workflow/presentation.md：CLI 在 run-settled 载荷上按 resume 门裁定，
-    // reducer 搬运；一个 stopped 但没带该位的 run（旧 CLI）不可恢复。
+    // docs/dynamic-workflow/presentation.md: the CLI adjudicates by the resume gate on the run-settled
+    // payload and the reducer carries it over; a stopped run without that bit (old CLI) is not resumable.
     expect(
       buildWorkflowRunByToolCallId([run({ status: "stopped", resumable: true })]).get("tool-wf-1")
         ?.resumable,
@@ -129,9 +131,11 @@ describe("buildWorkflowRunByToolCallId", () => {
   });
 });
 
-// 计数规则本身住在 @zcode/shared（表内 + 表外，唯一实现）；这里钉的是**建表读的是它**——
-// 联接表与状态胶囊、时间线摘要必须报同一个数，此前三处各数一遍，撞过界的 run 在三个地方
-// 显示三个都偏小的数字。
+// The counting rules themselves live in @zcode/shared (in-table + out-of-table, single implementation);
+// what's pinned here is that **the table is built by reading it** —
+// the join table, the state capsule, and the timeline summary must report the same number. Previously three
+// places counted separately, and a run that hit the truncation cap showed three different, all-understated
+// numbers.
 describe("步数来源", () => {
   it("建表的两个计数就是 workflowRunStepCounts 的两个数", () => {
     const sample = run({
@@ -162,9 +166,9 @@ describe("步数来源", () => {
   });
 });
 
-// byRunId 联接（docs/dynamic-workflow/presentation.md「Joining cards to runs」二轮）：
-// ResumeWorkflowRun 行的 display 带 runId，投影的 toolCallId 跨 resume 沿用原始 CreateWorkflow
-// 行，所以 resume 行只能按 runId 联接同一份投影。
+// byRunId join (docs/dynamic-workflow/presentation.md "Joining cards to runs", round two):
+// ResumeWorkflowRun rows carry runId in their display, and the projection's toolCallId keeps pointing at the
+// original CreateWorkflow row across resumes, so a resume row can only join the same projection by runId.
 describe("buildWorkflowRunByRunId", () => {
   it("按 runId 建表，摘要与 byToolCallId 表同构（同一份投影的两个索引）", () => {
     const map = buildWorkflowRunByRunId([
@@ -193,9 +197,10 @@ describe("buildWorkflowRunByRunId", () => {
     expect(map.get("dwfrun-x")?.runId).toBe("dwfrun-x");
   });
 });
-// bug 修复的钉子（spec「工具卡 display」三轮修订）：打开请求的 toolCallId 必须是**发起
-// CreateWorkflow 行**的 id——WorkflowRunSidePane 拿它找 causalityGraph 与脚本；resume 行
-// 自己的 id 会让详情页落「可见历史里没有这张工作流图」。
+// Pin for a bug fix (spec "tool card display", round three of revisions): the toolCallId of an open request
+// must be the id of the **initiating CreateWorkflow row** — WorkflowRunSidePane uses it to find the
+// causalityGraph and the script; using the resume row's own id would land the detail page on "no such
+// workflow graph in the visible history".
 describe("byRunId 摘要的 toolCallId 传播", () => {
   it("摘要携带投影里 run 的 toolCallId（原始 create 行 id，跨 resume 不变）", () => {
     const map = buildWorkflowRunByRunId([run({ runId: "dwfrun-r", toolCallId: "tool-create-1" })]);
@@ -256,7 +261,8 @@ describe("buildWorkflowRunPendingQuestionsByRunId", () => {
           { qid: "q_b", question: "问题 B" },
         ],
       }),
-      // pendingQuestions 零条时整个键缺席（schema 惯例）→ 坍缩成空 Set = Answered。
+      // When pendingQuestions is empty the whole key is absent (schema convention) → collapses to an empty
+      // Set = Answered.
       run({ runId: "dwfrun-answered" }),
     ]);
 
@@ -264,7 +270,7 @@ describe("buildWorkflowRunPendingQuestionsByRunId", () => {
     expect(map.get("dwfrun-waiting")?.has("q_b")).toBe(true);
     expect(map.has("dwfrun-answered")).toBe(true);
     expect(map.get("dwfrun-answered")?.size).toBe(0);
-    // run 不在场 → 键缺席（中性 Question，绝不谎报 Answered）。
+    // Run absent → key absent (neutral Question; never falsely report Answered).
     expect(map.has("dwfrun-absent")).toBe(false);
   });
 
@@ -273,8 +279,9 @@ describe("buildWorkflowRunPendingQuestionsByRunId", () => {
   });
 });
 
-// 发起 toolCallId → 图（docs/dynamic-workflow/presentation.md「The run card」）：图是 run 的属性，按发起行找，
-// 不问它挂在 CreateWorkflow 工具行上还是直接启动轮的元数据上；空图按无图。
+// Initiating toolCallId → graph (docs/dynamic-workflow/presentation.md "The run card"): the graph is a
+// property of the run, looked up by the initiating row, regardless of whether it hangs on a CreateWorkflow
+// tool row or on the direct-launch turn's metadata; an empty graph counts as no graph.
 describe("buildWorkflowGraphByToolCallId", () => {
   const GRAPH = {
     steps: [{ id: "ask#1", kind: "ask", label: "a", line: 1, column: 21, lane: "actor#1" }],

@@ -10,16 +10,16 @@ import {
 import { loginWithApiKey } from "./helpers/conversation-session.js";
 
 /**
- * 闲时任务「服务端额度快照前置置灰」端到端（D39）。
+ * Off-peak task "server quota snapshot pre-gating" end-to-end (D39).
  *
- * 由进程内 mock 网关驱动（wdio.conf startOffPeakE2EMock：本 spec 命中时额外设
- * ZCODE_OFFPEAK_MOCK_AVAILABILITY_BLOCK_MS=3600000）。client/configs 不再下发 limit，
- * UI 通过 GET /ticket/availability 得到 can_take_number=false + next_take_at。
+ * Driven by the in-process mock gateway (wdio.conf startOffPeakE2EMock: when this spec matches it additionally sets
+ * ZCODE_OFFPEAK_MOCK_AVAILABILITY_BLOCK_MS=3600000). client/configs no longer sends down limit;
+ * the UI gets can_take_number=false + next_take_at from GET /ticket/availability.
  *
- * 断言：入口加载后创建按钮提前置灰，Tooltip 同时说明额度耗尽和服务端恢复时间。
- * 全程带 pause 并在关键态截图（ZCODE_OFFPEAK_SHOT_DIR）供录屏 review。
+ * Assertions: after the entry loads, the create button is greyed out ahead of time, and the Tooltip explains both quota exhaustion and the server-side recovery time.
+ * Pauses are kept throughout and key states are screenshotted (ZCODE_OFFPEAK_SHOT_DIR) for screen-recording review.
  */
-// Bugfix：硬编码系统临时目录在 Windows 不可用，默认截图目录必须跟随运行平台。
+// Bugfix: a hardcoded system temp directory is unusable on Windows; the default screenshot directory must follow the running platform.
 const SHOT_DIR =
   process.env.ZCODE_OFFPEAK_SHOT_DIR ?? join(tmpdir(), "zc-offpeak-verify-shots");
 let shotSeq = 0;
@@ -29,7 +29,7 @@ async function shot(label: string): Promise<void> {
   try {
     await browser.saveScreenshot(join(SHOT_DIR, name));
   } catch {
-    // 截图失败不阻塞断言（录屏为辅）。
+    // A screenshot failure does not block assertions (screen recording is auxiliary).
   }
 }
 
@@ -50,8 +50,8 @@ describe("闲时任务服务端额度快照置灰 E2E（D39）", () => {
   it("availability 不可创建时按钮置灰并显示 next_take_at", async function () {
     this.timeout(150000);
 
-    // 会话就绪：登录（若停在欢迎页）+ 默认工作区就绪即可进 Automations（在 Settings 内），
-    // 不走 startNewTask 的对话草稿流程（与 off-peak 无关）。off-peak mock 网关免真实模型请求。
+    // Session readiness: log in (if stuck on the welcome page) + wait for the default workspace to be ready, then Automations (inside Settings) can be opened;
+    // do not go through startNewTask's conversation draft flow (unrelated to off-peak). The off-peak mock gateway avoids real model requests.
     try {
       await waitForDefaultWorkspaceReady(30000);
     } catch {
@@ -59,19 +59,19 @@ describe("闲时任务服务端额度快照置灰 E2E（D39）", () => {
       await waitForDefaultWorkspaceReady(30000);
     }
 
-    // 1) 打开 Automations 主视图。
+    // 1) Open the Automations main view.
     await clickTestIdByDom(TID_AUTOMATIONS_OPEN, {
       timeoutMsg: "侧栏没有出现 Automations 入口",
     });
-    await browser.pause(2500); // 录屏：停在主视图，展示初始按钮态
+    await browser.pause(2500); // recording: stay on the main view to show the initial button state
     await shot("automations-open");
 
-    // 2) availability=false：按钮应在实际 POST /ticket 前置灰。
+    // 2) availability=false: the button should be greyed out before the actual POST /ticket.
     await browser.waitUntil(async () => (await offPeakCreateButtonState()).present, {
       timeout: 10000,
       timeoutMsg: "闲时任务创建按钮没有出现（灰度未命中？）",
     });
-    // 回归用户截图中的大字号场景，确保相对时长文案仍完整落在 Tooltip 背景内。
+    // Covers the large-font scenario from the user's screenshot, ensuring the relative-duration text still fits fully inside the Tooltip background.
     await browser.execute(() => {
       document.documentElement.style.setProperty("--ui-font-size", "20px");
     });
@@ -92,11 +92,11 @@ describe("闲时任务服务端额度快照置灰 E2E（D39）", () => {
       throw new Error("额度 Tooltip 文案必须完整包含在背景内");
     }
     await shot("create-button-quota-disabled");
-    await browser.pause(3000); // 录屏：停在额度置灰态，展示最终效果
+    await browser.pause(3000); // recording: stay on the quota-gated state to show the final effect
   });
 });
 
-/** 创建按钮当前态：是否存在 / 是否 disabled / Radix Tooltip 文案。 */
+/** Current state of the create button: presence / disabled / Radix Tooltip text. */
 async function offPeakCreateButtonState(): Promise<{
   present: boolean;
   disabled: boolean;
@@ -121,8 +121,8 @@ async function offPeakCreateButtonState(): Promise<{
   }
   const button = await $(`[data-testid="${TID_OFFPEAK_CREATE_BUTTON}"]`);
   const trigger = await button.$("..");
-  // Radix Tooltip 依赖真实 pointer enter/leave 生命周期；合成的单个 pointermove 不会更新其
-  // 内部 hover 状态，所以用 WebDriver 悬停并等待 portal 进入 open 状态。
+  // Radix Tooltip depends on a real pointer enter/leave lifecycle; a single synthesized pointermove does not update its
+  // internal hover state, so hover via WebDriver and wait for the portal to enter the open state.
   await trigger.moveTo();
   await browser.waitUntil(
     () =>
@@ -137,8 +137,8 @@ async function offPeakCreateButtonState(): Promise<{
     const content = Array.from(
       document.querySelectorAll<HTMLElement>("[data-slot='tooltip-content']"),
     ).find((item) => item.dataset.state !== "closed");
-    // ControlHintTooltip 的正文令牌已从 text-ui-base 收敛到 text-ui-sm；tooltip 已经
-    // 真实打开，旧 E2E 因查询旧 class 而把有效文案误判为空。
+    // ControlHintTooltip's body token has been consolidated from text-ui-base to text-ui-sm; the tooltip is
+    // genuinely open, and the old E2E misjudged valid text as empty because it queried the old class.
     const title = content?.querySelector<HTMLElement>(":scope > span.text-ui-sm");
     if (!content || !title) {
       return { text: null, contentContained: false };

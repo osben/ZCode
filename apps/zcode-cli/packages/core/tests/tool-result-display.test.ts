@@ -74,7 +74,7 @@ describe("tool result display", () => {
       toolName: "search_image",
       unavailable: { code: "quota_exceeded" },
     });
-    // strict schema 必须接受该字段，否则整条 row 会被拒。
+    // The strict schema must accept this field, otherwise the entire row is rejected.
     expect(parseToolResultDisplayPayload(display)).toEqual(display);
   });
 
@@ -92,7 +92,7 @@ describe("tool result display", () => {
   });
 
   it("ignores the unavailable payload from a non-official MCP server", () => {
-    // 不判来源的话，任何第三方 MCP 都能伪造一条 Coding Plan 提示误导用户去购买。
+    // Without checking the origin, any third-party MCP could forge a Coding Plan notice to mislead users into purchasing.
     const display = createToolResultDisplay(
       "mcp__evil__whatever",
       {
@@ -126,7 +126,7 @@ describe("tool result display", () => {
       { mcp },
     );
 
-    // internal_error 是服务端的兜底掩码，用户无法自助解决，不该弹提示。
+    // internal_error is the server-side fallback mask; users cannot resolve it themselves, so no prompt should be shown.
     expect(unknownCode).not.toHaveProperty("unavailable");
     expect(plainText).not.toHaveProperty("unavailable");
     expect(successful).not.toHaveProperty("unavailable");
@@ -226,8 +226,8 @@ describe("tool result display", () => {
   });
 
   it("projects the node_repl CUA app identity even when the cell produced no image", () => {
-    // 纯动作 cell（点击、输入）没有截图，但工具卡仍要显示目标 App 图标 —— 旧实现只在有图时
-    // 才产生 display，身份被整块丢掉，卡片只剩通用图标。
+    // Pure-action cells (clicks, typing) produce no screenshot, but the tool card still shows the target app icon — the old
+    // implementation only produced a display when an image existed, dropping the identity entirely and leaving the card with a generic icon.
     const display = createToolResultDisplay("mcp__node_repl__js", {
       content: [{ type: "text", text: "clicked" }],
       _meta: {
@@ -649,8 +649,8 @@ describe("tool result display", () => {
   });
 
   it("carries may-set lane-expansion copies (`source`) through to the display", () => {
-    // display 走 .strict() 解析：契约里少一个 source 不是「字段被丢掉」，而是整张图被拒、
-    // GUI 一张卡片都拿不到。所以这条路径必须与工具输出一起钉住。
+    // display goes through .strict() parsing: missing one `source` in the contract is not "a dropped field" but the
+    // whole graph being rejected, with the GUI getting no card at all. So this path must be pinned together with the tool output.
     const copy = {
       id: "ask#1~actor#1",
       kind: "ask",
@@ -690,8 +690,8 @@ describe("tool result display", () => {
   });
 
   it("rejects a CreateWorkflow output whose causality graph exceeds the contract bounds", () => {
-    // 越界图不该出现（handler 已限长），但如果出现，输出解析失败 → 不产出 display，
-    // 而不是把无界载荷放进实时事件。
+    // An out-of-bounds graph should never appear (the handler already caps the length), but if it does, output parsing fails → no display is produced,
+    // rather than putting an unbounded payload into live events.
     const display = createToolResultDisplay("CreateWorkflow", {
       diagnostics: [],
       ok: true,
@@ -801,7 +801,7 @@ describe("workflow observation tool displays", () => {
     ],
     logTail: [
       { sequence: 1, message: "started" },
-      // 带落库时刻的一条：卡上的日志年龄对 generatedAt 算，所以 `at` 必须原样过卡。
+      // The one entry carrying its journal time: log age on the card is computed against generatedAt, so `at` must pass through the card unchanged.
       { sequence: 2, message: "fan-out complete", at: Date.UTC(2026, 7, 21, 9, 4, 0) },
     ],
     phases: [
@@ -854,7 +854,7 @@ describe("workflow observation tool displays", () => {
       generatedAt: 2_400,
       usage: getWorkflowRunRunningOutput.usage,
       phases: getWorkflowRunRunningOutput.phases,
-      // 嵌套的 currentAsk / wait 在卡面上摊平成一行；等待原因的自由文本不上卡。
+      // The nested currentAsk / wait are flattened into one row on the card; the wait reason's free text does not appear on the card.
       subagents: [
         {
           siteId: "agent#1",
@@ -891,8 +891,8 @@ describe("workflow observation tool displays", () => {
     expect(parseToolResultDisplayPayload(display)).toEqual(display);
   });
 
-  // 卡上的年龄必须对快照时刻算，不能对渲染时刻算：一条三天前的 transcript 重新打开时，
-  // 卡上的「40 秒前」必须仍是当时那个 40 秒前。
+  // Ages on the card must be computed against the snapshot time, not the render time: when a transcript from three
+  // days ago is reopened, the "40 seconds ago" on the card must still be that same 40 seconds from back then.
   it("carries the snapshot clock and the assembled summary onto the card", () => {
     const display = createToolResultDisplay("GetWorkflowRun", getWorkflowRunRunningOutput);
     if (display?.kind !== "get_workflow_run") throw new Error("Expected get_workflow_run display payload");
@@ -900,8 +900,8 @@ describe("workflow observation tool displays", () => {
     expect(display.summary).toBe(getWorkflowRunRunningOutput.summary);
   });
 
-  // 情势上线之前持久化的载荷没有这五件；display schema 是 strict 的，设成必填会让升级后
-  // 打开的每一条历史会话里这张卡整块被剥、退化成纯文本。
+  // Payloads persisted before the situation report shipped lack these five fields; the display schema is strict, so
+  // making them required would strip this card entirely — degrading it to plain text — in every historical session opened after the upgrade.
   it("still parses a payload persisted before the situation report existed", () => {
     const legacy = {
       kind: "get_workflow_run" as const,
@@ -915,7 +915,7 @@ describe("workflow observation tool displays", () => {
     expect(parseToolResultDisplayPayload(legacy)).toEqual(legacy);
   });
 
-  // phases「无则缺席」（空数组读起来像「阶段表是空的」）；subagents 恒在场。
+  // phases is "absent when empty" (an empty array would read like "the phase table is empty"); subagents is always present.
   it("omits an empty phase table but keeps an empty roster", () => {
     const display = createToolResultDisplay("GetWorkflowRun", {
       ...getWorkflowRunRunningOutput,
@@ -927,8 +927,8 @@ describe("workflow observation tool displays", () => {
     expect(display.subagents).toEqual([]);
   });
 
-  // 工具面已在 handler 里裁到 64 并打了 subagentsTruncated；卡面继承那个标记，
-  // 因为卡上也只该有它真的画出来的那些行。
+  // The tool side already caps the roster at 64 in the handler and sets subagentsTruncated; the card inherits that flag,
+  // because the card should only contain the rows it actually renders.
   it("inherits the roster's truncation flag onto the card", () => {
     const subagent = getWorkflowRunRunningOutput.subagents[1]!;
     const display = createToolResultDisplay("GetWorkflowRun", {
@@ -955,7 +955,7 @@ describe("workflow observation tool displays", () => {
       throw new Error("Expected get_workflow_run display payload");
     }
     expect(display.logTail).toHaveLength(40);
-    // 截头不截尾：留下的必须是 sequence 11..50。
+    // Trim the head, keep the tail: what remains must be sequence 11..50.
     expect(display.logTail[0]?.sequence).toBe(11);
     expect(display.logTail.at(-1)?.sequence).toBe(50);
     expect(display.truncated).toBe(true);
@@ -967,7 +967,7 @@ describe("workflow observation tool displays", () => {
     if (display?.kind !== "get_workflow_run") {
       throw new Error("Expected get_workflow_run display payload");
     }
-    // 没有时钟的行不合成一个：`at` 缺席就是缺席，卡上不给它年龄。
+    // Do not synthesize a clock for rows without one: `at` absent means absent; the card gives it no age.
     expect(display.logTail[0]).toEqual({ sequence: 1, message: "started" });
     expect(display.logTail[1]).toEqual({
       sequence: 2,
@@ -992,10 +992,10 @@ describe("workflow observation tool displays", () => {
     expect(parseToolResultDisplayPayload(display)).toEqual(display);
   });
 
-  // 回归（docs/dynamic-workflow/launch.md「Their cards」）：工具输出的 `error.providerStop`
-  // 一度被原样搬进工具卡 display，而渲染端按 packages/shared 的镜像 schema 严格校验每一帧，
-  // 多一个键就是整条 row 被拒——一个会话因此停在 fault.subscription.recoveryFailed 上。
-  // 第二条断言就是那道两侧同步的闸：卡片载荷必须过得了渲染端的那把尺。
+  // Regression (docs/dynamic-workflow/launch.md "Their cards"): the tool output's `error.providerStop` was once copied
+  // verbatim into the tool card display, while the renderer strictly validates every frame against the mirror schema in
+  // packages/shared — one extra key and the entire row is rejected — leaving a session stuck on fault.subscription.recoveryFailed.
+  // The second assertion is that synchronization gate between the two sides: the card payload must pass the renderer's ruler.
   it("keeps the GetWorkflowRun card error at code and message, matching the renderer mirror", () => {
     const display = createToolResultDisplay("GetWorkflowRun", {
       ...getWorkflowRunRunningOutput,
@@ -1026,7 +1026,7 @@ describe("workflow observation tool displays", () => {
     });
     expect(parseToolResultDisplayPayload(display)).toEqual(display);
 
-    // 渲染端的那把尺：两侧不同步时这里先红。
+    // The renderer's ruler: this goes red first when the two sides drift out of sync.
     const mirrored = toolCallGetWorkflowRunDisplaySchema.strict().safeParse(display);
     expect(mirrored.success ? [] : mirrored.error.issues).toEqual([]);
   });
@@ -1115,8 +1115,8 @@ describe("workflow observation tool displays", () => {
     expect(parseToolResultDisplayPayload(display)).toEqual(display);
   });
 
-  // spec：docs/dynamic-workflow/launch.md「The model catalog」——目录行原样透传，
-  // 「当前」保留，超 100 行截断并打 truncated。
+  // Spec: docs/dynamic-workflow/launch.md "The model catalog" — catalog rows pass through verbatim,
+  // "current" is kept, and beyond 100 rows the list is truncated with truncated set.
   it("projects ListModels rows and keeps the session's current model", () => {
     const display = createToolResultDisplay("ListModels", {
       current: "account:bigmodel-team-coding-plan/GLM-5.3-Flash",
@@ -1153,7 +1153,7 @@ describe("workflow observation tool displays", () => {
       defaultReasoningLevel: "high",
       contextWindow: 128_000,
     });
-    // 没有档位的行给空数组、不可选用的行带理由——两者都是读侧要分辨的状态。
+    // Rows without levels get an empty array; unusable rows carry a reason — both are states the read side must distinguish.
     expect(display.models[1]?.reasoningLevels).toEqual([]);
     expect(display.models[1]?.disabledReason).toBe("no API key");
     expect(display.truncated).toBeUndefined();
@@ -1176,7 +1176,7 @@ describe("workflow observation tool displays", () => {
     expect(display.models).toHaveLength(100);
     expect(display.models[0]?.providerLabel!.length).toBeLessThanOrEqual(2_048);
     expect(display.truncated).toBe(true);
-    // current 在目录里对不上时缺席——造一个空串会被读成「当前模型叫空」。
+    // current is absent when it does not match anything in the catalog — fabricating an empty string would read as "the current model is named empty".
     expect(display.current).toBeUndefined();
     expect(parseToolResultDisplayPayload(display)).toEqual(display);
   });
@@ -1193,8 +1193,8 @@ describe("workflow observation tool displays", () => {
     expect(createToolResultDisplay("ListModels", null)).toBeUndefined();
   });
 
-  // spec：docs/dynamic-workflow/presentation.md「The run card」——
-  // 载荷刻意最小 {runId}，坏输出回 undefined 走文本兜底。
+  // Spec: docs/dynamic-workflow/presentation.md "The run card" —
+  // the payload is intentionally minimal {runId}; bad output returns undefined and falls back to text.
   it("builds the ResumeWorkflowRun display payload from a successful output", () => {
     const display = createToolResultDisplay("ResumeWorkflowRun", {
       ok: true,
@@ -1208,7 +1208,7 @@ describe("workflow observation tool displays", () => {
   });
 
   it("returns undefined for malformed ResumeWorkflowRun outputs", () => {
-    // 失败路径走 ToolHandlerFailure，不构造 display——这里钉住「绝不产出半张卡」。
+    // The failure path goes through ToolHandlerFailure and builds no display — pinned here: never produce half a card.
     expect(createToolResultDisplay("ResumeWorkflowRun", { ok: false })).toBeUndefined();
     expect(createToolResultDisplay("ResumeWorkflowRun", { runId: "" })).toBeUndefined();
   });

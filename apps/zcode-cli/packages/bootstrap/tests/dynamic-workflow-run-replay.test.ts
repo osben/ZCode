@@ -1,10 +1,13 @@
-// dwf run 冷回放的结算来源（docs/dynamic-workflow/presentation.md「Cold replay」）：
-// 行是终态时，回放的尾部 `run-settled` 一律按行铸造——journal 里存着的那条（无论新旧词表）让位；
-// 尾部没有结算（进程死亡 / 孤儿收敛只改行）时追加。
+// Settlement source for cold replay of a dwf run (docs/dynamic-workflow/presentation.md "Cold replay"):
+// when the row is in a terminal state, the trailing `run-settled` of the replay is always minted from the row —
+// the one stored in the journal (old or new vocabulary alike) yields;
+// when the tail has no settlement (process death / orphan convergence only touched the row), one is appended.
 //
-// 修复原因（2026-09-15，桌面实测）：2026-09-14 终态词表重构之前写下的 `run-settled` 带旧词
-// cancelled / failed，事件载荷原样回放，reducer 认不出，run 被留在 running。这里用真实 SQLite
-// journal 落下一模一样的字节（appendEvent 原样存 JSON），钉住回放 + reducer 之后 run 必须是终态。
+// Why this was fixed (2026-09-15, verified on desktop): a `run-settled` written before the 2026-09-14
+// terminal-vocabulary refactor carries the old terms
+// cancelled / failed; the event payload is replayed verbatim, the reducer cannot recognize it, and the run stays in running.
+// Here we persist byte-identical bytes into a real SQLite journal (appendEvent stores JSON as-is),
+// pinning that after replay + reducer the run must be terminal.
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -18,8 +21,10 @@ import { mintActorSessionId } from "../src/app/workflow-driver.js";
 import { resolveDynamicWorkflowJournalStore } from "../src/app/dynamic-workflow-run-service.js";
 
 const PARENT = "sess_replay_parent";
-// 冷回放的第三个参数：本进程的并发天花板，只落在 `run-started` 载荷上（docs/dynamic-workflow/concurrency.md「Two bounds on a run」）。
-// 这里的用例只看结算，取一个固定值即可；live 侧（toProgressPayload）传同一个值，逐字节契约才成立。
+// Third argument of cold replay: this process's concurrency ceiling, which only lands on the `run-started` payload
+// (docs/dynamic-workflow/concurrency.md "Two bounds on a run").
+// The cases here only look at settlement, so a fixed value suffices; the live side (toProgressPayload) passes
+// the same value so the byte-for-byte contract holds.
 const CEILING = 6;
 
 type Journal = JournalStorePort & {
@@ -67,7 +72,7 @@ function createRun(runId: string): void {
   } as RunEvent);
 }
 
-/** 旧词表的结算事件：`appendEvent` 原样存 JSON，落下的就是 2026-09-14 之前的字节。 */
+/** Settlement event in the old vocabulary: `appendEvent` stores JSON as-is, so what lands is the pre-2026-09-14 bytes. */
 function appendLegacySettle(runId: string, status: "cancelled" | "failed", error?: unknown): void {
   journal.appendEvent(runId, {
     type: "run-settled",
@@ -103,7 +108,8 @@ describe("replayRunProgress — 结算按行铸造", () => {
       types: "all",
       reportItems: "all",
     });
-    // 一进一出：存着的结算被替换，不是追加——条数与 journal 一致，水位沿用被替换那条的 sequence。
+    // One in, one out: the stored settlement is replaced, not appended — the count matches the journal,
+    // and the watermark reuses the replaced entry's sequence.
     expect(payloads).toHaveLength(stored.length);
     const last = payloads.at(-1);
     expect(last).toMatchObject({
@@ -196,10 +202,11 @@ describe("replayRunProgress — 结算按行铸造", () => {
     expect(reduce("dwfrun-resumed").status).toBe("completed");
   });
 
-  // ── 本 run 的子代理模型（docs/dynamic-workflow/launch.md）───────────────────
-  // 它与发起锚点同住 `run-launched`（零 SQL，dwf_run 上没有这一列）：live 侧从 launch 入参拿到
-  // 规范串并挂在 `run-started` 载荷上，冷回放从同一条事件读回。两侧必须给出同一个键，
-  // 否则重启前后的投影就不再逐字节一致。
+  // ── Subagent model of this run (docs/dynamic-workflow/launch.md) ───────────
+  // It lives in the same `run-launched` as the launch anchor (zero SQL; the dwf_run table has no such column):
+  // the live side takes the canonical string from the launch input and hangs it on the `run-started` payload,
+  // and cold replay reads it back from the same event. Both sides must produce the same key,
+  // otherwise the projection before and after a restart would no longer be byte-identical.
   it("run-launched 上的 subagentModel 进 run-started 载荷；冷回放与 live 逐字节相等", () => {
     const SUBAGENT = "zhipu/glm-5.3-flash$high";
     createRun("dwfrun-subagent");
@@ -221,14 +228,16 @@ describe("replayRunProgress — 结算按行铸造", () => {
       subagentModel: SUBAGENT,
       concurrencyCeiling: CEILING,
     });
-    // 派生字段只挂在 run-started 上：其余事件带着它只会让每一条载荷都重复同一条 run 级事实。
-    // `run-launched` 自己不算——那条载荷是事件的原样内容，模型串本来就写在里面。
+    // Derived fields hang only on run-started: attaching them to other events would just repeat the same
+    // run-level fact in every payload.
+    // `run-launched` itself doesn't count — that payload is the verbatim event content, and the model
+    // string was already written into it.
     for (const payload of payloads) {
       if (payload.eventType === "run-started" || payload.eventType === "run-launched") continue;
       expect("subagentModel" in payload.payload).toBe(false);
     }
 
-    // live 侧同一条铸造链、同一个值 → 逐字节相等（本模块唯一的契约）。
+    // The live side uses the same minting chain and the same value → byte-identical (the only contract of this module).
     const live = journal
       .listEvents("dwfrun-subagent", { types: "all", reportItems: "all" })
       .map((entry) =>
@@ -254,13 +263,14 @@ describe("replayRunProgress — 结算按行铸造", () => {
     const started = replayRunProgress(rowOf("dwfrun-no-subagent"), journal, CEILING).find(
       (payload) => payload.eventType === "run-started",
     );
-    // 缺席而不是空串：读侧据此判断这个 run 有没有设过子代理模型。
+    // Absent rather than an empty string: readers use this to tell whether the run ever set a subagent model.
     expect("subagentModel" in started!.payload).toBe(false);
   });
 
-  // ── 脚本点名的模型（docs/dynamic-workflow/launch.md「Models the script names」）──────────
-  // 绑定表同住 `run-launched`；actor-created 的派生 `model` 据它把 persona 的名字映射成规范串。
-  // 冷回放从同一条事件读回同一张表，两侧载荷逐字节相等。
+  // ── Models named by the script (docs/dynamic-workflow/launch.md "Models the script names") ──────────
+  // The binding table lives in the same `run-launched`; the derived `model` of actor-created uses it to map
+  // a persona's name to the canonical string.
+  // Cold replay reads the same table back from the same event; payloads on both sides are byte-identical.
   it("actor-created 载荷的派生 model 来自 run-launched 的绑定表；冷回放与 live 逐字节相等", () => {
     const BINDINGS = { "GLM-5.3-Flash": "zhipu/GLM-5.3-Flash" };
     createRun("dwfrun-bindings");
@@ -284,7 +294,7 @@ describe("replayRunProgress — 结算按行铸造", () => {
 
     const row = rowOf("dwfrun-bindings");
     const payloads = replayRunProgress(row, journal, CEILING);
-    // createRun 自己也建了一个子代理（无模型）；这里只看本用例加的两个。
+    // createRun itself also creates a subagent (no model); here we only look at the two added by this case.
     const created = payloads.filter(
       (payload) =>
         payload.eventType === "actor-created" &&
@@ -309,9 +319,11 @@ describe("replayRunProgress — 结算按行铸造", () => {
     expect(JSON.stringify(payloads)).toBe(JSON.stringify(live));
   });
 
-  // ── ask 的 node-dispatched（apps/zcode-cli/packages/dynamic-workflow/docs/execution-engine.md「Events」）─────
-  // 它重复实例的出生事实并点名子代理，所以与 actor-created 一样在接缝上补 `actorSessionId`。
-  // 冷回放走的是同一条铸造链，envelope 必须一字不差——否则重启前后投影就能收不同的实例进表。
+  // ── node-dispatched of ask (apps/zcode-cli/packages/dynamic-workflow/docs/execution-engine.md "Events") ─────
+  // It repeats the instance's birth facts and names a subagent, so like actor-created it gets `actorSessionId`
+  // filled in at the seam.
+  // Cold replay walks the same minting chain, so the envelope must match exactly — otherwise the projection
+  // before and after a restart could admit different instances into the table.
   it("ask 的 node-dispatched 带出生事实与 actorSessionId；冷回放与 live 逐字节相等", () => {
     const actor = { siteId: "actor#1", ordinal: 1 };
     createRun("dwfrun-dispatch");
@@ -325,7 +337,7 @@ describe("replayRunProgress — 结算按行铸造", () => {
       phaseName: "Work",
       instructionsHead: "写一份调研大纲",
     } as RunEvent);
-    // 同一条 journal 上的 world-read 派发：没有 actor，就不该长出会话 id。
+    // world-read dispatch on the same journal: no actor, so it must not grow a session id.
     journal.appendEvent("dwfrun-dispatch", {
       type: "node-dispatched",
       instance: { siteId: "world-read#1", ordinal: 1 },
@@ -346,7 +358,7 @@ describe("replayRunProgress — 结算按行铸造", () => {
         instructionsHead: "写一份调研大纲",
       },
     });
-    // 铸的是与 actor-created 同一个 id：两条事件说的是同一个子代理的同一份转录。
+    // Mints the same id as actor-created: the two events describe the same subagent's same transcript.
     const created = payloads.find((payload) => payload.eventType === "actor-created");
     expect(ask?.actorSessionId).toBe(created?.actorSessionId);
     expect(world).toMatchObject({ payload: { instance: { siteId: "world-read#1", ordinal: 1 } } });
@@ -369,7 +381,7 @@ describe("replayRunProgress — 结算按行铸造", () => {
   it("ask 的缓存结算带出生事实与 actorSessionId；world 与 live 的结算不补；冷回放与 live 逐字节相等", () => {
     const actor = { siteId: "actor#1", ordinal: 1 };
     createRun("dwfrun-cached");
-    // 导入命中：答案读自前驱的会话。
+    // Import hit: the answer is read from the predecessor's session.
     journal.appendEvent("dwfrun-cached", {
       type: "node-settled",
       instance: { siteId: "ask#1", ordinal: 1 },
@@ -381,7 +393,7 @@ describe("replayRunProgress — 结算按行铸造", () => {
       instructionsHead: "调研",
       sourceSessionId: "sess-predecessor",
     } as RunEvent);
-    // 重放命中：答案是本 run 自己跑出来的。
+    // Replay hit: the answer was produced by this run itself.
     journal.appendEvent("dwfrun-cached", {
       type: "node-settled",
       instance: { siteId: "ask#2", ordinal: 1 },
@@ -391,7 +403,8 @@ describe("replayRunProgress — 结算按行铸造", () => {
       actor,
       actorSeq: 1,
     } as RunEvent);
-    // 没有子代理的两条：world-read 的缓存结算，以及 live 的结算（不是出生事件，不点名子代理）。
+    // Two without a subagent: world-read's cached settlement, and a live settlement (not a birth event,
+    // so no subagent is named).
     journal.appendEvent("dwfrun-cached", {
       type: "node-settled",
       instance: { siteId: "world-read#1", ordinal: 1 },
@@ -414,7 +427,8 @@ describe("replayRunProgress — 结算按行铸造", () => {
       undefined,
       undefined,
     ]);
-    // 载荷原样：前驱会话留在载荷里（引擎发了什么），派生字段在载荷之外。
+    // Payload verbatim: the predecessor session stays in the payload (what the engine sent); the derived
+    // field sits outside the payload.
     expect(settles[0]).toMatchObject({
       payload: { kind: "ask", actor, actorSeq: 0, sourceSessionId: "sess-predecessor" },
     });
@@ -434,7 +448,8 @@ describe("replayRunProgress — 结算按行铸造", () => {
       );
     expect(JSON.stringify(payloads)).toBe(JSON.stringify(live));
 
-    // 归约面：两条缓存结算都归到子代理名下；最后一条是本 run 的重放命中，sessionId 指回本 run。
+    // Reduction surface: both cached settlements are attributed to the subagent; the last one is this run's
+    // own replay hit, and its sessionId points back to this run.
     const run = reduce("dwfrun-cached");
     expect(run.nodes.filter((node) => node.actorSiteId === "actor#1").map((node) => node.siteId)).toEqual([
       "ask#1",

@@ -60,9 +60,10 @@ function createReadyZCodeAgentService(options?: Parameters<typeof createZCodeAge
   });
 }
 
-// 一个最小的 ZCode Protocol stdio fake agent：
-// 第一次收到 session/subscribe 返回错误（模拟 "Session is not active" 之类的瞬时失败），
-// 第二次返回成功并带一条 session.titleUpdated 事件。用来验证订阅建立失败后会重试。
+// A minimal ZCode Protocol stdio fake agent:
+// the first session/subscribe returns an error (simulating a transient failure like "Session is
+// not active"), the second returns success with one session.titleUpdated event. Used to verify
+// that subscription setup retries after a failure.
 const FLAKY_SUBSCRIBE_FAKE_AGENT = `
 let buf = "";
 let subscribeCount = 0;
@@ -506,7 +507,7 @@ process.stdin.on("data", (chunk) => {
     let msg;
     try { msg = JSON.parse(line); } catch { continue; }
     if (msg.method === "session/create" && msg.id !== undefined) {
-      // Worker 进程已经自持 Registry，runtime preferences 在 session 创建时物化。
+      // The Worker process already holds its own Registry; runtime preferences are materialized at session creation.
       pendingCreate = msg;
       send({
         id: "runtime-preferences-1",
@@ -997,8 +998,9 @@ process.stdin.on("data", (chunk) => {
 });
 `;
 
-// 模拟真实 CLI transport 的串行队列：同一进程内 mcp/list 一直不返回，
-// 排在它后面的所有请求都拿不到响应（Bug：卸载插件被 30s 的 MCP 探测卡死）。
+// Simulates the real CLI transport's serial queue: within the same process mcp/list never
+// returns, so every request queued behind it gets no response (Bug: plugin uninstall stalled
+// by a 30s MCP probe).
 const SERIAL_QUEUE_HANG_ON_MCP_LIST_FAKE_AGENT = `
 const fs = require("node:fs");
 const markerPath = process.argv[2];
@@ -1268,8 +1270,9 @@ describe("createZCodeAgentService", () => {
   afterEach(() => {
     setDataBaseDir(null);
     for (const dir of createdDirs.splice(0).reverse()) {
-      // 根因同 zcodeAgentService.v4.test.ts：Windows 上仍有打开句柄的目录删不掉，
-      // `force: true` 不重试，afterEach 会以 EPERM 把断言已通过的用例判成失败。
+      // Same root cause as zcodeAgentService.v4.test.ts: on Windows a directory with open handles
+      // cannot be deleted, `force: true` does not retry, and afterEach would fail cases whose
+      // assertions had already passed with EPERM.
       try {
         rmSync(dir, {
           recursive: true,
@@ -1278,7 +1281,7 @@ describe("createZCodeAgentService", () => {
           retryDelay: 100,
         });
       } catch {
-        /* 清理失败不影响断言结论，交给操作系统回收临时目录。 */
+        /* Cleanup failure does not affect the assertion outcome; leave the temp directory to the OS. */
       }
     }
   });
@@ -1674,8 +1677,9 @@ describe("createZCodeAgentService", () => {
     const scriptPath = join(workspacePath, "tool-list-agent.cjs");
     const logPath = join(workspacePath, "protocol.log");
     writeFileSync(scriptPath, SHELL_SETTINGS_SNAPSHOT_FAKE_AGENT);
-    // 修复原因：本用例只验证 session/create 的工具列表透传，不验证 provider readiness。
-    // 门禁启用后必须复用标准 ready registry fixture，否则测试会在协议请求前被正确拦截。
+    // Fix reason: this case only verifies the session/create tool list passthrough, not provider
+    // readiness. After the gate was enabled it must reuse the standard ready registry fixture,
+    // otherwise the test is correctly blocked before the protocol request.
     const service = createReadyZCodeAgentService({
       commandResolver: () => ({ command: process.execPath, args: [scriptPath, logPath] }),
     });
@@ -2328,7 +2332,7 @@ describe("createZCodeAgentService", () => {
       includeSnapshot: false,
     })((event) => received.push(event));
 
-    // 第一次 subscribe 失败后必须重试，最终把成功响应里的事件投递出来。
+    // After the first subscribe failure it must retry and eventually deliver the events from the successful response.
     await vi.waitFor(
       () => {
         expect(received.some((event) => event.type === "session.event")).toBe(true);
@@ -2379,7 +2383,7 @@ describe("createZCodeAgentService", () => {
       { timeout: 5000, interval: 50 },
     );
 
-    // Bugfix: 第二个订阅者自己的 replay 缺口不能广播回第一个订阅者。
+    // Bugfix: the second subscriber's own replay gap must not be broadcast back to the first subscriber.
     expect(firstReceived.filter((event) => event.type === "session.event")).toHaveLength(1);
 
     firstSubscription.dispose();
@@ -2515,8 +2519,9 @@ describe("createZCodeAgentService", () => {
     }));
     const service = createReadyZCodeAgentService({
       commandResolver,
-      // Bugfix: 该用例只需要首个 fake agent 超时，full suite 并发时第二个进程启动到响应可能超过 500ms。
-      // 局部放宽 request timeout，避免把重启后成功恢复的路径误判成第二次 stale。
+      // Bugfix: this case only needs the first fake agent to time out; under full-suite concurrency
+      // the second process may take over 500ms from startup to response. Relax the request timeout
+      // locally so the successful recovery after restart is not misjudged as a second stale client.
       requestTimeoutMs: 1_500,
     });
 
@@ -2673,7 +2678,7 @@ describe("createZCodeAgentService", () => {
     const service = createReadyZCodeAgentService({ commandResolver });
 
     try {
-      // connect 模式的 mcp/list 在真实环境里会因坏 MCP server 吃满 30s 超时；这里让它永不返回。
+      // In connect mode a real mcp/list would burn the full 30s timeout on a bad MCP server; here it never returns.
       const mcpListPromise = service.listMcpServerStatuses({ workspacePath: sandboxRoot });
       mcpListPromise.catch(() => undefined);
       await vi.waitFor(() => expect(existsSync(markerPath)).toBe(true), { timeout: 5_000 });
@@ -2686,7 +2691,7 @@ describe("createZCodeAgentService", () => {
       ]);
 
       expect(result.diagnostics).toEqual([]);
-      // 两类请求必须落在不同的 agent 进程上
+      // The two kinds of requests must land on different agent processes
       expect(commandResolver).toHaveBeenCalledTimes(2);
     } finally {
       await service.disposeAllAndWait();
@@ -2712,14 +2717,14 @@ describe("createZCodeAgentService", () => {
     });
 
     try {
-      // 只走 mcp-status lane：该进程是本 lane 新增的长驻 agent，进程监控器必须能看到它。
+      // Only the mcp-status lane runs here: this process is a long-lived agent added for this lane, and the process monitor must see it.
       const mcpListPromise = service.listMcpServerStatuses({ workspacePath: sandboxRoot });
       mcpListPromise.catch(() => undefined);
       await vi.waitFor(() => expect(existsSync(markerPath)).toBe(true), { timeout: 5_000 });
 
       await vi.waitFor(() => expect(processLifecycleReporter.onSpawn).toHaveBeenCalledTimes(1));
-      // macOS tmpdir 会被 realpath 成 /private/var，这里不比对 workspacePath 字面值。
-      // 评审 SG-02：mcp-status 与 plugin lane 共用同一 workspacePath/command，事件必须带 lane 才可归因。
+      // macOS tmpdirs realpath to /private/var, so the workspacePath literal is not compared here.
+      // Review SG-02: the mcp-status and plugin lanes share the same workspacePath/command, so events must carry the lane to be attributable.
       expect(processLifecycleReporter.onSpawn.mock.calls[0]![0]).toMatchObject({
         pid: expect.any(Number),
         provider: "glm",
@@ -2755,7 +2760,7 @@ describe("createZCodeAgentService", () => {
       await service.listMcpServerStatuses({ workspacePath: sandboxRoot });
       expect(commandResolver).toHaveBeenCalledTimes(1);
 
-      // 探测完成后无请求在飞，超过空闲阈值必须主动回收，且以 expected/idle-timeout 归因。
+      // After probing completes no request is in flight; past the idle threshold the process must be recycled proactively, attributed as expected/idle-timeout.
       await vi.waitFor(() => expect(processLifecycleReporter.onExit).toHaveBeenCalledTimes(1), {
         timeout: 5_000,
       });
@@ -2765,7 +2770,7 @@ describe("createZCodeAgentService", () => {
         terminationReason: "idle-timeout",
       });
 
-      // 回收后再次探测要透明地重新拉起进程，而不是拿到已回收的 client 报错。
+      // Probing again after recycling must transparently relaunch the process instead of erroring on the recycled client.
       await service.listMcpServerStatuses({ workspacePath: sandboxRoot });
       expect(commandResolver).toHaveBeenCalledTimes(2);
     } finally {
@@ -2793,20 +2798,20 @@ describe("createZCodeAgentService", () => {
     const service = createReadyZCodeAgentService({
       commandResolver,
       processLifecycleReporter,
-      // 覆盖 fake agent 冷启动（node 进程拉起 + 首个响应），又足够短让两次超时在秒级完成。
+      // Covers the fake agent's cold start (node process launch + first response) while staying short enough for both timeouts to finish within seconds.
       requestTimeoutMs: 1_500,
     });
 
     try {
-      // 先让 plugin lane 起一个进程，作为“不受影响”的对照（该 fake agent 只应答 plugins/uninstall）。
+      // First let the plugin lane start a process as the "unaffected" control (this fake agent only answers plugins/uninstall).
       await service.uninstallPlugin({ workspacePath: sandboxRoot, pluginId: "pick-funds" });
       expect(commandResolver).toHaveBeenCalledTimes(1);
 
-      // mcp/list 永不返回：首次超时 → watchdog 回收 mcp-status 进程 → 重试一次 → 再超时 → 抛错。
+      // mcp/list never returns: first timeout -> the watchdog recycles the mcp-status process -> one retry -> timeout again -> throw.
       await expect(service.listMcpServerStatuses({ workspacePath: sandboxRoot })).rejects.toThrow(
         /timed out/u,
       );
-      // plugin lane 1 次 + mcp-status lane 首发 1 次 + 重试重新拉起 1 次
+      // plugin lane once + mcp-status lane first attempt once + retry relaunch once
       expect(commandResolver).toHaveBeenCalledTimes(3);
 
       await vi.waitFor(
@@ -2817,12 +2822,13 @@ describe("createZCodeAgentService", () => {
                 event.lane === "mcp-status" && event.terminationKind === "watchdog_recycle",
             ),
           ).toHaveLength(2),
-        // 修复原因：第二次 watchdog 与 mcp/list 的 reject 同 tick 触发，exit 事件要等
-        // Windows 进程树回收（taskkill /T + 重试）完成后才上报；vi.waitFor 默认 1000ms
-        // 在慢盘/高负载本机会先超时，把环境慢误报成用例失败。CI 快机器不受影响。
+        // Fix reason: the second watchdog fires in the same tick as mcp/list's reject, and the exit
+        // event is only reported after the Windows process-tree teardown (taskkill /T + retries)
+        // completes; vi.waitFor's default 1000ms can time out first on slow-disk/high-load local
+        // machines, misreporting a slow environment as a case failure. Fast CI machines are unaffected.
         { timeout: 8_000 },
       );
-      // plugin lane 进程从未被回收，且仍能正常服务。
+      // The plugin lane process was never recycled and still serves normally.
       expect(
         processLifecycleReporter.onExit.mock.calls.filter(([event]) => event.lane !== "mcp-status"),
       ).toHaveLength(0);

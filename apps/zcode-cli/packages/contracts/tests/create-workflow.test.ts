@@ -34,7 +34,7 @@ const DIAGNOSTICS_ONLY: CreateWorkflowOutput = {
 
 describe("CreateWorkflowOutputSchema — backgrounded run", () => {
   it("keeps accepting the diagnostics-only result unchanged", () => {
-    // 坏脚本路径完全不变：handler 直接回诊断，不启动、不建 run，因此两个新字段缺席。
+    // The broken-script path is completely unchanged: the handler returns diagnostics directly, starts nothing, builds no run, hence both new fields absent.
     const parsed = CreateWorkflowOutputSchema.parse(DIAGNOSTICS_ONLY);
     expect(parsed).toEqual(DIAGNOSTICS_ONLY);
     expect("status" in parsed).toBe(false);
@@ -53,8 +53,9 @@ describe("CreateWorkflowOutputSchema — backgrounded run", () => {
   });
 
   it("admits only the backgrounded literal as a status", () => {
-    // status 是"这次调用启动了一个后台 run"的唯一信号，不是通用状态字段：
-    // running/completed 等值必须被拒，否则 executor 侧的分派要靠猜。
+    // status is the only signal of "this call started a background run", not a generic status
+    // field: values like running/completed must be rejected, otherwise the executor side's
+    // dispatch would have to guess.
     for (const status of ["running", "completed", "failed", ""]) {
       expect(CreateWorkflowOutputSchema.safeParse({ ...DIAGNOSTICS_ONLY, status }).success).toBe(
         false,
@@ -71,7 +72,7 @@ describe("CreateWorkflowOutputSchema — backgrounded run", () => {
   });
 
   it("stays strict about unknown keys", () => {
-    // .strict() 的意义就是形状变更必须是一次显式的 schema 提交，而不是经 raw 夹带。
+    // The point of .strict() is that a shape change must be an explicit schema commit, not smuggled through raw.
     expect(
       CreateWorkflowOutputSchema.safeParse({ ...DIAGNOSTICS_ONLY, runId: "smuggled" }).success,
     ).toBe(false);
@@ -83,16 +84,16 @@ describe("CreateWorkflowOutputSchema — backgrounded run", () => {
     expect(Object.keys(properties ?? {})).toEqual(
       expect.arrayContaining(["diagnostics", "ok", "response", "status", "backgroundTaskId"]),
     );
-    // 两个字段都是可选的：required 只保留今天的三个。
+    // Both fields are optional: required keeps today's three.
     const required = (CreateWorkflowOutputJsonSchema as { required?: string[] }).required ?? [];
     expect(required).not.toContain("status");
     expect(required).not.toContain("backgroundTaskId");
   });
 });
 
-// docs/dynamic-workflow/launch.md「The `CreateWorkflow` tool」：修订是 AmendWorkflow 的工作，CreateWorkflow
-// 没有前驱字段——`.strict()` 让旧写法 `resume_from` 成为可见的 schema 错误，而不是被静默忽略后变成
-// 一次全价重跑。
+// docs/dynamic-workflow/launch.md "The `CreateWorkflow` tool": revision is AmendWorkflow's job;
+// CreateWorkflow has no predecessor field — `.strict()` makes the old spelling `resume_from` a
+// visible schema error rather than silently ignored and turned into a full-price rerun.
 describe("CreateWorkflowInputSchema — no predecessor field", () => {
   const SCRIPT = 'return await agent("a").ask<string>("go");';
 
@@ -113,8 +114,9 @@ describe("CreateWorkflowInputSchema — no predecessor field", () => {
     expect(properties).not.toHaveProperty("resume_from");
   });
 
-  // 子代理选型（docs/dynamic-workflow/launch.md）：模型面收一个宽松的字符串，规范化留给
-  // resolveInput。空白串是错——它会让「设了但没说清」与「没设」在确认窗上长得一样。
+  // Subagent selection (docs/dynamic-workflow/launch.md): the model face takes a lenient
+  // string, normalization is left to resolveInput. A blank string is an error — it would make
+  // "set but unclear" look identical to "unset" in the confirmation window.
   it("takes subagent_model as an optional trimmed non-empty string", () => {
     expect(CreateWorkflowInputSchema.parse({ script: SCRIPT })).toEqual({ script: SCRIPT });
     expect(
@@ -129,9 +131,10 @@ describe("CreateWorkflowInputSchema — no predecessor field", () => {
   });
 });
 
-// docs/dynamic-workflow/launch.md「Script files」：第三条来源 `path` 与只跟它走的顶层 `args`，
-// 外加两处回填事实。XOR 与「args 只跟 path」都住在 validateInput——归一化之后 `script` 与
-// `path` / `saved` 同时在场是合法执行态，schema 必须容得下它。
+// docs/dynamic-workflow/launch.md "Script files": the third source `path` with the top-level
+// `args` that only follows it, plus two backfill facts. Both the XOR and "args only follows
+// path" live in validateInput — after normalization, `script` and `path` / `saved` coexisting is
+// a legal execution state, and the schema must accommodate it.
 describe("CreateWorkflowInputSchema — the file sources", () => {
   const SCRIPT = 'return await agent("a").ask<string>("go");';
 
@@ -147,7 +150,7 @@ describe("CreateWorkflowInputSchema — the file sources", () => {
       "script",
       "subagent_model",
     ]);
-    // 回填项与 `AmendWorkflow.predecessor` 同一姿态：运行时认它们，模型面不列它们。
+    // Backfilled items share `AmendWorkflow.predecessor`'s posture: the runtime accepts them, the model face does not list them.
     expect(properties).not.toHaveProperty("script_line_offset");
     const saved = (properties?.saved as { properties?: Record<string, unknown> } | undefined)
       ?.properties;
@@ -187,7 +190,7 @@ describe("CreateWorkflowInputSchema — the file sources", () => {
 
 describe("BackgroundResultOriginMeta", () => {
   it("admits workflow as a background source", () => {
-    // 完成通知复用整条后台管线，所以 workflow run 的终态要能标注来源。
+    // Completion notifications reuse the whole background pipeline, so a workflow run's terminal state must be able to label its source.
     const meta: BackgroundResultOriginMeta = {
       backgroundSource: "workflow",
       workId: "dwf_run_01H",
@@ -199,8 +202,9 @@ describe("BackgroundResultOriginMeta", () => {
 
 describe("DynamicWorkflowRunPort", () => {
   it("is implementable over JSON-able shapes alone", () => {
-    // 端口只承载 JSON 形状：引擎的词汇表（RunEvent / StoredEvent / RunStatus）留在领域包里，
-    // contracts 绝不 import dynamic-workflow。这个 fake 就是那条规则的可执行证明。
+    // The port carries only JSON shapes: the engine's vocabulary (RunEvent / StoredEvent /
+    // RunStatus) stays in the domain package; contracts never imports dynamic-workflow. This
+    // fake is that rule's executable proof.
     const events: DynamicWorkflowRunEvent[] = [
       { sequence: 0, type: "run-started", payload: { runId: "run_1" } },
       { sequence: 1, type: "node-settled", payload: { instance: { siteId: "ask#1", ordinal: 1 } } },
@@ -250,9 +254,10 @@ describe("DynamicWorkflowRunPort", () => {
 });
 
 describe("CreateWorkflowCausalityGraphSchema — withdrawn refined display names", () => {
-  // docs/dynamic-workflow/presentation.md：模型精炼整条撤回，
-  // `refinedLabel` / `refinedName` 从四层 schema 删除。带它们的旧持久化载荷在进入严格
-  // 解析前由 tool-result-metadata 剥离；schema 本身对它们一无所知，.strict() 直接拒绝。
+  // docs/dynamic-workflow/presentation.md: the model-refined names are withdrawn wholesale;
+  // `refinedLabel` / `refinedName` are deleted from the four schema layers. Old persisted
+  // payloads carrying them are stripped by tool-result-metadata before strict parsing; the
+  // schema itself knows nothing of them and .strict() rejects them outright.
   const graph = {
     steps: [
       {
@@ -291,8 +296,9 @@ describe("CreateWorkflowCausalityGraphSchema — withdrawn refined display names
 });
 
 describe("CreateWorkflowCausalityGraphSchema — phase vocabulary", () => {
-  // docs/dynamic-workflow/presentation.md：phases / phaseEdges / exits / Step.phase 是
-  // **全有或全无**的一套词汇表，全部 additive 可选——零标记脚本的载荷照常通过 .strict()。
+  // docs/dynamic-workflow/presentation.md: phases / phaseEdges / exits / Step.phase are one
+  // **all-or-nothing** vocabulary, entirely additive and optional — a zero-marker script's
+  // payload passes .strict() as usual.
   const unphasedGraph = {
     steps: [
       {
@@ -311,16 +317,16 @@ describe("CreateWorkflowCausalityGraphSchema — phase vocabulary", () => {
       },
     ],
     lanes: [{ id: "workspace" }, { id: "actor#1", name: "planner" }],
-    // 第二层：每阶段一张参与者卡，交接边在卡之间（docs/dynamic-workflow/presentation.md）。
+    // Second layer: one participant card per phase, handoff edges between cards (docs/dynamic-workflow/presentation.md).
     participants: [
       { id: "unphased:workspace", phase: "unphased", lane: "workspace", steps: ["world-read#1"] },
       { id: "phase#1:actor#1", phase: "phase#1", lane: "actor#1", steps: ["ask#1"] },
     ],
     handoffs: [{ from: "unphased:workspace", to: "phase#1:actor#1" }],
-    // `unphased` 排在最前且**无 name**（UI 本地化）；作者的阶段带 name 与首个标记的位置。
+    // `unphased` sorts first and has **no name** (UI localizes); authored phases carry the name and the first marker's position.
     phases: [{ id: "unphased" }, { id: "phase#1", name: "preflight", line: 3, column: 1 }],
     phaseEdges: [{ from: "unphased", to: "phase#1" }],
-    // 控制流可在其后正常完成的阶段（阶段视图的「阶段 → 返回物」箭头）。
+    // Phases after which control flow can complete normally (the "phase → returns" arrow of the phase view).
     exits: ["phase#1"],
   };
 
@@ -329,11 +335,11 @@ describe("CreateWorkflowCausalityGraphSchema — phase vocabulary", () => {
   });
 
   it("keeps accepting a payload with no phase field at all", () => {
-    // 零标记脚本 = 词汇表整体缺席的载荷，逐字节通过。
+    // Zero-marker script = a payload with the vocabulary entirely absent; passes byte for byte.
     const legacy = {
       steps: [{ ...unphasedGraph.steps[1]!, phase: undefined }],
       lanes: unphasedGraph.lanes,
-      // 无阶段词汇时参与者的 phase 恒为 `unphased`（此时 `phases` 缺席）。
+      // Without phase vocabulary a participant's phase is always `unphased` (with `phases` absent).
       participants: [
         { id: "unphased:actor#1", phase: "unphased", lane: "actor#1", steps: ["ask#1"] },
       ],
@@ -349,10 +355,12 @@ describe("CreateWorkflowCausalityGraphSchema — phase vocabulary", () => {
   });
 
   it("represents an empty-but-present vocabulary", () => {
-    // 有标记却零 step 的脚本会产出在场但空的三个数组。UI 的视图切换是「在场**且非空**」，
-    // 所以空词汇表必须是**可表示**的——数组只有 .max() 上界，绝不能加 .min(1)，否则
-    // handler 那条诚实的直通路径会在契约边界上被打回。`exits` 在组内也可以是空数组
-    // （脚本没有正常完成路径，例如无条件 throw）。
+    // A script with markers but zero steps produces three arrays that are present but empty.
+    // The UI's view toggle is "present **and non-empty**", so an empty vocabulary must be
+    // **representable** — the arrays carry only a .max() bound and must never gain .min(1),
+    // otherwise the handler's honest pass-through path would bounce off the contract boundary.
+    // `exits` may also be an empty array within the group (the script has no normal-completion
+    // path, e.g. an unconditional throw).
     const empty = {
       steps: [],
       lanes: [],
@@ -370,7 +378,7 @@ describe("CreateWorkflowCausalityGraphSchema — phase vocabulary", () => {
   });
 
   it("round-trips exits and bounds them at 32 phase ids", () => {
-    // exits 与阶段表同一上界：它是阶段 id 的子集，最多与阶段表一样长。
+    // exits shares the phase table's bound: it is a subset of phase ids, at most as long as the phase table.
     const exits = Array.from(
       { length: CREATE_WORKFLOW_GRAPH_MAX_PHASES },
       (_, i) => `phase#${i + 1}`,
@@ -383,7 +391,7 @@ describe("CreateWorkflowCausalityGraphSchema — phase vocabulary", () => {
         exits: [...exits, "phase#33"],
       }).success,
     ).toBe(false);
-    // 元素走同一组 id 上界。
+    // Elements share the same set of id bounds.
     for (const bad of [[""], ["p".repeat(65)], [42]]) {
       expect(
         CreateWorkflowCausalityGraphSchema.safeParse({ ...unphasedGraph, exits: bad }).success,
@@ -404,40 +412,42 @@ describe("CreateWorkflowCausalityGraphSchema — phase vocabulary", () => {
   });
 
   it("rejects every field of the pre-single-arrow shape", () => {
-    // docs/dynamic-workflow/presentation.md「The display contract」：硬断，不留可选过渡。
-    // 分析器的边种类 / certainty / exact 见证位、step 的 region / certainty、车道的 families
-    // 与顶层 regions 表都不再是载荷的一部分——.strict() 把每一个都挡回去，防止生产侧悄悄
-    // 加回来（旧载荷在 UI 侧走 safeParse 失败的既有兜底：整个 display 视为不在场）。
-    // docs/dynamic-workflow/presentation.md 再砍一刀：step 级 `edges` 与 `Lane.nesting`
-    // 没有读者了，同样硬断。
+    // docs/dynamic-workflow/presentation.md "The display contract": hard cut, no optional
+    // transition. The analyzer's edge kind / certainty / exact witness bits, the step's region /
+    // certainty, the lanes' families, and the top-level regions table are no longer part of the
+    // payload — .strict() blocks each one, preventing production from quietly adding them back
+    // (old payloads take the existing UI-side fallback of safeParse failing: the whole display
+    // is treated as absent).
+    // docs/dynamic-workflow/presentation.md cuts again: step-level `edges` and `Lane.nesting`
+    // have no readers left; also hard cut.
     const [step0, step1] = unphasedGraph.steps;
     const [lane0, lane1] = unphasedGraph.lanes;
     const edge = { from: "world-read#1", to: "ask#1" };
     const handoff = unphasedGraph.handoffs[0]!;
     const phaseEdge = { from: "unphased", to: "phase#1" };
     const rejected: unknown[] = [
-      // step 级边整个字段都不在了——空数组也是多出来的键。
+      // Step-level edges is gone as a whole field — an empty array is also an extra key.
       { ...unphasedGraph, edges: [] },
       { ...unphasedGraph, edges: [edge] },
       { ...unphasedGraph, edges: [{ ...edge, kind: "data" }] },
-      // 交接边上的旧字段。
+      // Legacy fields on handoff edges.
       { ...unphasedGraph, handoffs: [{ ...handoff, kind: "data" }] },
       { ...unphasedGraph, handoffs: [{ ...handoff, kind: "carry" }] },
       { ...unphasedGraph, handoffs: [{ ...handoff, certainty: "always" }] },
       { ...unphasedGraph, handoffs: [{ ...handoff, exact: true }] },
       { ...unphasedGraph, handoffs: [{ ...handoff, count: 2 }] },
-      // 阶段边上的旧字段。
+      // Legacy fields on phase edges.
       { ...unphasedGraph, phaseEdges: [{ ...phaseEdge, kind: "seq" }] },
       { ...unphasedGraph, phaseEdges: [{ ...phaseEdge, certainty: "maybe" }] },
       { ...unphasedGraph, phaseEdges: [{ ...phaseEdge, exact: true }] },
-      // step 上的旧字段。
+      // Legacy fields on steps.
       { ...unphasedGraph, steps: [{ ...step0, region: "seq#1" }, step1] },
       { ...unphasedGraph, steps: [{ ...step0, certainty: "always" }, step1] },
-      // 车道上的旧字段：families（单一箭头之前）与 nesting（交接栈之前）。
+      // Legacy fields on lanes: families (before the single arrow) and nesting (before the handoff stack).
       { ...unphasedGraph, lanes: [lane0, { ...lane1, families: ["loop#1"] }] },
       { ...unphasedGraph, lanes: [lane0, { ...lane1, nesting: 1 }] },
       { ...unphasedGraph, lanes: [lane0, { ...lane1, nesting: 0 }] },
-      // 顶层 regions 表——空表也一样是多出来的键。
+      // Top-level regions table — an empty table is equally an extra key.
       { ...unphasedGraph, regions: [] },
       { ...unphasedGraph, regions: [{ id: "seq#1", kind: "seq" }] },
     ];
@@ -447,8 +457,9 @@ describe("CreateWorkflowCausalityGraphSchema — phase vocabulary", () => {
   });
 
   it("accepts only the literal true for `back` on either edge layer", () => {
-    // `back` 是回边标记，不是布尔状态：false / "yes" 都不是「没标回边」的另一种拼法。
-    // 缺席就是前向边；两层边同一形状，所以两层都要钉。
+    // `back` is a back-edge marker, not a boolean state: neither false nor "yes" is another
+    // spelling of "no back edge marked".
+    // Absence means a forward edge; both edge layers share one shape, so both must be pinned.
     const edge = { from: "phase#1:actor#1", to: "unphased:workspace" };
     const phaseEdge = { from: "phase#1", to: "unphased" };
     expect(
@@ -509,8 +520,9 @@ describe("CreateWorkflowCausalityGraphSchema — phase vocabulary", () => {
   });
 
   it("round-trips phase streams and keeps them to {from, to}, at most 128", () => {
-    // docs/dynamic-workflow/presentation.md「Streams」：channel 串起来的两个 future 阶段是一条
-    // 阶段流——不是 runs after，所以没有 `back`，也不带分析器的边种类。
+    // docs/dynamic-workflow/presentation.md "Streams": two future phases chained by a channel
+    // form one phase stream — not runs after, hence no `back` and none of the analyzer's edge
+    // kinds.
     const streams = [
       { from: "phase#1", to: "phase#2" },
       { from: "phase#2", to: "phase#3" },
@@ -556,10 +568,11 @@ describe("CreateWorkflowCausalityGraphSchema — phase vocabulary", () => {
 });
 
 describe("CreateWorkflowCausalityGraphSchema — participants and handoffs", () => {
-  // docs/dynamic-workflow/presentation.md「The display contract」：第二层是子代理导向——每阶段一张参与者
-  // 卡（`${phase}:${lane}`，家族成员再带 `[index]`）+ 卡之间的交接边。两个字段**必填**：
-  // 零参与者的图是空数组，不是缺席——step 级 `edges` 就是这样悄悄退出的，新字段不给缺席
-  // 一条可通过的路。
+  // docs/dynamic-workflow/presentation.md "The display contract": the second layer is
+  // subagent-oriented — one participant card per phase (`${phase}:${lane}`, family members add
+  // `[index]`) plus handoff edges between cards. Both fields are **required**: a graph with zero
+  // participants is an empty array, not absence — that is exactly how step-level `edges` quietly
+  // exited; new fields get no passable path via absence.
   const step = (id: string, lane: string, phase: string) => ({
     id,
     kind: "ask" as const,
@@ -599,7 +612,7 @@ describe("CreateWorkflowCausalityGraphSchema — participants and handoffs", () 
     delete noHandoffs.handoffs;
     expect(CreateWorkflowCausalityGraphSchema.safeParse(noParticipants).success).toBe(false);
     expect(CreateWorkflowCausalityGraphSchema.safeParse(noHandoffs).success).toBe(false);
-    // 空图：两个数组在场且为空。
+    // Empty graph: both arrays present and empty.
     expect(
       CreateWorkflowCausalityGraphSchema.parse({
         steps: [],
@@ -611,7 +624,7 @@ describe("CreateWorkflowCausalityGraphSchema — participants and handoffs", () 
   });
 
   it("requires at least one step per participant and bounds the list at 64", () => {
-    // 一张没有 step 的卡不代表任何子代理——运行状态无从聚合，检视器无 ask 可列。
+    // A card with no steps represents no subagent — there is no run state to aggregate and no ask for the inspector to list.
     expect(CreateWorkflowParticipantSchema.safeParse({ ...p0, steps: [] }).success).toBe(false);
     expect(
       CreateWorkflowCausalityGraphSchema.safeParse({
@@ -626,7 +639,7 @@ describe("CreateWorkflowCausalityGraphSchema — participants and handoffs", () 
     expect(
       CreateWorkflowParticipantSchema.safeParse({ ...p0, steps: [...manySteps, "ask#64"] }).success,
     ).toBe(false);
-    // step id 走同一组 id 上界。
+    // Step ids share the same set of id bounds.
     for (const bad of [[""], ["s".repeat(65)], [42]]) {
       expect(CreateWorkflowParticipantSchema.safeParse({ ...p0, steps: bad }).success).toBe(false);
     }
@@ -638,11 +651,11 @@ describe("CreateWorkflowCausalityGraphSchema — participants and handoffs", () 
       delete partial[key];
       expect(CreateWorkflowParticipantSchema.safeParse(partial).success).toBe(false);
     }
-    // 卡的展示名从车道表查，不进参与者；step 级 edges 的残留键也一样。
+    // A card's display name is looked up in the lane table, not carried on the participant; leftover keys of step-level edges are the same.
     for (const extra of [{ name: "planner" }, { edges: [] }, { nesting: 1 }, { region: "seq#1" }]) {
       expect(CreateWorkflowParticipantSchema.safeParse({ ...p0, ...extra }).success).toBe(false);
     }
-    // 无阶段词汇的脚本：phase 恒为 `unphased`，与 `phases` 缺席同时成立。
+    // Script without phase vocabulary: phase is always `unphased`, holding simultaneously with `phases` absent.
     expect(
       CreateWorkflowCausalityGraphSchema.safeParse({
         steps: [step("ask#1", "actor#1", "unphased")],
@@ -656,7 +669,7 @@ describe("CreateWorkflowCausalityGraphSchema — participants and handoffs", () 
   });
 
   it("shapes fan-out members as `member: {index ≥ 0, of ≥ 1}` and `many: true`", () => {
-    // 字面量基数的家族每成员一张卡（id 带 `[index]`）；基数未知时一张 `many` 卡代表全部。
+    // A family with a literal cardinality gets one card per member (id carries `[index]`); an unknown cardinality gets one `many` card for all.
     const member = { ...p1, id: "phase#1:actor#2[0]", member: { index: 0, of: 3 } };
     expect(CreateWorkflowParticipantSchema.parse(member)).toEqual(member);
     const many = { ...p1, many: true as const };
@@ -673,7 +686,7 @@ describe("CreateWorkflowCausalityGraphSchema — participants and handoffs", () 
     ]) {
       expect(CreateWorkflowParticipantSchema.safeParse({ ...p1, member: bad }).success).toBe(false);
     }
-    // `many` 是标记，不是布尔状态：false 不是「不是 many」的另一种拼法。
+    // `many` is a marker, not a boolean state: false is not another spelling of "not many".
     for (const many of [false, "yes", 1, null]) {
       expect(CreateWorkflowParticipantSchema.safeParse({ ...p1, many }).success).toBe(false);
     }
@@ -714,7 +727,7 @@ describe("CreateWorkflowCausalityGraphSchema — participants and handoffs", () 
   });
 
   it("carries 1..8 artifact type names on a handoff, each within the name bound", () => {
-    // `types` 只进检视器，不上箭头；在场就至少一个，最多 8 个，每个走名字上界。
+    // `types` goes to the inspector only, not onto the arrow; when present, at least one and at most 8, each under the name bound.
     const withTypes = { ...h0, types: ["Plan", "Report"] };
     expect(CreateWorkflowHandoffSchema.parse(withTypes)).toEqual(withTypes);
     expect(CreateWorkflowHandoffSchema.parse({ ...h0, back: true })).toEqual({ ...h0, back: true });
@@ -729,7 +742,7 @@ describe("CreateWorkflowCausalityGraphSchema — participants and handoffs", () 
         }).success,
       ).toBe(false);
     }
-    // 阶段边没有 types——它是控制流商，不携带产物。
+    // Phase edges have no types — they broker control flow and carry no artifacts.
     expect(
       CreateWorkflowCausalityGraphSchema.safeParse({
         ...graph,
@@ -787,8 +800,9 @@ describe("createWorkflowPhaseAlongside — the phases a phase was entered beside
   const empty = { steps: [], lanes: [], participants: [], handoffs: [] };
 
   it("indexes into the named-phase table, dropping references to unnamed phases", () => {
-    // 下标空间是**有名阶段**的：合成的 `unphased` 排在表首却不占位，所以 Research 是 0、
-    // Write 是 1，而指向 `unphased` 的引用无处可落，只能丢掉。
+    // The index space is that of **named** phases: the synthetic `unphased` heads the table
+    // without taking a slot, so Research is 0 and Write is 1, while a reference pointing at
+    // `unphased` has nowhere to land and is dropped.
     const graph = {
       ...empty,
       phases: [
@@ -814,8 +828,8 @@ describe("createWorkflowPhaseAlongside — the phases a phase was entered beside
   });
 
   it("returns undefined when no phase was entered beside another", () => {
-    // 缺席就是「这条轨道是一条直线」，所以一串空数组也要塌成 undefined——包括每个引用都被
-    // 丢光的情形。
+    // Absence means "this track is a straight line", so even a series of empty arrays must
+    // collapse to undefined — including the case where every reference was dropped.
     expect(createWorkflowPhaseAlongside(undefined)).toBeUndefined();
     expect(createWorkflowPhaseAlongside(empty)).toBeUndefined();
     expect(
@@ -848,7 +862,8 @@ describe("createWorkflowPhaseAlongside — the phases a phase was entered beside
     expect(alongside).toHaveLength(CREATE_WORKFLOW_GRAPH_MAX_PHASES);
     expect(createWorkflowPhaseNames({ ...empty, phases })).toHaveLength(alongside!.length);
     expect(alongside![0]).toEqual([1]);
-    // 最后一站指向的是被截掉的那个阶段：越界下标会把侧栏连到不存在的站上，所以它一起走。
+    // The last station points at the phase that was truncated: an out-of-bounds index would
+    // wire the sidebar to a nonexistent station, so it goes too.
     expect(alongside![CREATE_WORKFLOW_GRAPH_MAX_PHASES - 1]).toEqual([]);
   });
 });

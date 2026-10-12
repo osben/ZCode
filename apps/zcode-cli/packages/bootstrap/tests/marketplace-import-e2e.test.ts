@@ -1,14 +1,16 @@
-// E2E: 验证「自定义市场导入」最新 commit (feat: add custom marketplace source import popover)
-// 触达的真实 agent 链路。
+// E2E: verify the real agent path reached by the "custom marketplace import" latest commit
+// (feat: add custom marketplace source import popover).
 //
-// UI 侧链路：AddMarketplacePopover -> PluginsSection.onAddMarketplace
+// UI-side path: AddMarketplacePopover -> PluginsSection.onAddMarketplace
 //   -> pluginManagementStore.addMarketplace(source) -> agentService.addPluginMarketplace
-//   -> 协议 plugins/marketplace/add -> server.ts dispatch -> 本文件验证的 facade。
+//   -> protocol plugins/marketplace/add -> server.ts dispatch -> the facade verified in this file.
 //
-// 本测试直接驱动 agent 侧 facade addZCodePluginMarketplace，喂入 popover 会原样下发的「自由文本字符串」，
-// 覆盖 parseMarketplaceSourceInput -> loadMarketplaceFromSource(读 manifest / 真实 git clone) -> 落盘，
-// 再用 getZCodePluginsOverview 复核（等价 popover 关闭后 UI refresh 能看到新市场）。
-// 每个用例独立临时 storageRoot 隔离。GitHub 用例先探测可达性，不可达则 skip 而非误判失败。
+// This test drives the agent-side facade addZCodePluginMarketplace directly, feeding it the "free-text string"
+// the popover passes down verbatim, covering parseMarketplaceSourceInput -> loadMarketplaceFromSource (reads the
+// manifest / real git clone) -> persistence, then re-checks with getZCodePluginsOverview (equivalent to the UI
+// refresh seeing the new marketplace after the popover closes).
+// Each case uses its own isolated temporary storageRoot. GitHub cases probe reachability first and skip when
+// unreachable instead of failing by mistake.
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
@@ -20,8 +22,8 @@ import { addZCodePluginMarketplace, getZCodePluginsOverview } from "../src/plugi
 
 const execFileAsync = promisify(execFile);
 
-// popover 调用约定：source 为自由文本；pluginStorageRoot 真实运行时由 config 推导，
-// 这里显式覆盖到临时目录做隔离，等价「换一个干净工作区做导入」。
+// Popover call contract: source is free text; in the real runtime pluginStorageRoot is derived from the config,
+// here it is explicitly overridden to a temp directory for isolation — equivalent to "import in a fresh workspace".
 function addViaFacade(source: string, storageRoot: string, workingDirectory: string) {
   return addZCodePluginMarketplace({
     source,
@@ -76,7 +78,7 @@ describe("marketplace 自定义导入 E2E (真实 agent facade)", () => {
     try {
       await makeLocalMarketplace(market, "e2e-local-dir-market");
 
-      // popover 直接把目录路径作为 source 传入（未结构化）。
+      // The popover passes the directory path as source directly (unstructured).
       const summary = await addViaFacade(market, storageRoot, base);
       expect(summary.id).toBe("e2e-local-dir-market");
       expect(summary.pluginCount).toBe(1);
@@ -90,11 +92,11 @@ describe("marketplace 自定义导入 E2E (真实 agent facade)", () => {
       expect(rec?.source.source).toBe("directory");
       expect(rec?.source.path).toBe(market);
 
-      // manifest 复制进 storage，供后续 install 引用。
+      // The manifest is copied into storage for later install references.
       const manifestCopy = join(storageRoot, "marketplaces", "e2e-local-dir-market", "marketplace.json");
       expect(existsSync(manifestCopy)).toBe(true);
 
-      // 复核：overview 列出新市场（popover 关闭后 UI refresh 能看到它）。
+      // Re-check: overview lists the new marketplace (the UI refresh sees it after the popover closes).
       const ov = overview(storageRoot, base);
       expect(ov.marketplaces.some((m) => m.id === "e2e-local-dir-market")).toBe(true);
     } finally {
@@ -106,9 +108,9 @@ describe("marketplace 自定义导入 E2E (真实 agent facade)", () => {
     const base = await mkdtemp(join(tmpdir(), "zcode-e2e-invalid-"));
     const storageRoot = join(base, "storage");
     try {
-      // popover 里随手敲的一个不存在的本地路径。
+      // A nonexistent local path typed casually into the popover.
       await expect(addViaFacade("./definitely-not-a-real-marketplace-xyz", storageRoot, base)).rejects.toThrow();
-      // 失败时不应写 known_marketplaces.json。
+      // known_marketplaces.json must not be written on failure.
       expect(existsSync(join(storageRoot, "known_marketplaces.json"))).toBe(false);
     } finally {
       await rm(base, { force: true, recursive: true });
@@ -116,7 +118,7 @@ describe("marketplace 自定义导入 E2E (真实 agent facade)", () => {
   });
 
   it("GitHub 导入：raw git URL -> git 来源 -> 真实 clone -> 落盘", async () => {
-    // 选体积小且仓库根带 .claude-plugin/marketplace.json 的公开仓库，避免大仓库 clone 超时。
+    // Pick a small public repo whose root has .claude-plugin/marketplace.json, avoiding clone timeouts on large repos.
     const repoUrl = "https://github.com/wshobson/agents.git";
     if (!(await githubReachable(repoUrl))) {
       console.warn("[e2e] GitHub 不可达，跳过 git URL clone 用例");
@@ -125,9 +127,9 @@ describe("marketplace 自定义导入 E2E (真实 agent facade)", () => {
     const base = await mkdtemp(join(tmpdir(), "zcode-e2e-github-"));
     const storageRoot = join(base, "storage");
     try {
-      // https .git -> parseMarketplaceSourceInput 归类 source:"git" -> 真实 clone --depth 1。
+      // https .git -> parseMarketplaceSourceInput classifies it as source:"git" -> a real clone --depth 1.
       const summary = await addViaFacade(repoUrl, storageRoot, base);
-      // manifest.name 即市场 id（该仓库 manifest 名为 claude-code-workflows）。
+      // manifest.name is the marketplace id (that repo's manifest is named claude-code-workflows).
       expect(summary.id).toBe("claude-code-workflows");
       expect(summary.pluginCount).toBeGreaterThan(0);
 
@@ -138,7 +140,7 @@ describe("marketplace 自定义导入 E2E (真实 agent facade)", () => {
       expect(rec?.source.source).toBe("git");
       expect(rec?.source.url).toBe(repoUrl);
 
-      // clone 出的 manifest 复制进 storage。
+      // The cloned manifest is copied into storage.
       const manifestCopy = join(storageRoot, "marketplaces", summary.id, "marketplace.json");
       expect(existsSync(manifestCopy)).toBe(true);
     } finally {
@@ -155,7 +157,7 @@ describe("marketplace 自定义导入 E2E (真实 agent facade)", () => {
     const base = await mkdtemp(join(tmpdir(), "zcode-e2e-gh-short-"));
     const storageRoot = join(base, "storage");
     try {
-      // owner/repo 简写 -> parseMarketplaceSourceInput 归类 source:"github"。
+      // owner/repo shorthand -> parseMarketplaceSourceInput classifies it as source:"github".
       const summary = await addViaFacade(repo, storageRoot, base);
       expect(summary.id).toBe("claude-code-workflows");
 

@@ -1,4 +1,4 @@
-/* eslint-disable max-lines -- Upstream E2E 回放服务需要集中维护 fixture 匹配、capture artifact、chunk timeline 和 SSE 时间轴回放，拆开会让录制/回放协议更难追踪。 */
+/* eslint-disable max-lines -- The upstream E2E replay service needs to centrally maintain fixture matching, capture artifacts, the chunk timeline, and SSE timeline replay; splitting it apart would make the record/replay protocol harder to trace. */
 import { randomUUID } from "node:crypto";
 import { once } from "node:events";
 import { readFileSync } from "node:fs";
@@ -19,7 +19,7 @@ import {
 } from "./e2e-network-capture-redaction.js";
 import { resolveUpstreamModels } from "./upstream-recorded-models.js";
 
-// 夹具未写模型时，回放响应使用与 E2E 供应商相同的模型（环境变量或录制模型）。
+// When a fixture does not specify a model, replay responses use the same model as the E2E provider (env variable or recorded model).
 const DEFAULT_REPLAY_MODEL = resolveUpstreamModels().model;
 const LATEST_AGENT_ID_REPLAY_TOKEN = "{{latestAgentId}}";
 const LATEST_BASH_TASK_ID_REPLAY_TOKEN = "{{latestBashTaskId}}";
@@ -137,9 +137,10 @@ export async function startUpstreamReplayServer(
   const requestedPort = options.port ?? 0;
   const artifactPath = resolve(options.artifactPath);
   const artifactWriter = options.artifactWriter ?? writeE2EJsonFileAtomically;
-  // Bug 根因：provider fixture 里的绝对路径过去只能写死为 POSIX 临时目录，
-  // Windows Node 与 Git Bash 因而会访问不同文件。静态变量必须在 matcher 之前展开，
-  // 否则 response 虽能拿到正确路径，请求仍会先因 matcher 含 token 而 miss。
+  // Bug root cause: absolute paths in provider fixtures used to be hardcoded to POSIX temp
+  // directories, so Windows Node and Git Bash would access different files. Static variables
+  // must be expanded before matching; otherwise, although the response would get the correct
+  // path, the request would first miss because the matcher still contains the token.
   const fixtures = options.fixturePaths.flatMap((path) =>
     loadFixtureFile(path, options.fixtureVariables),
   );
@@ -162,8 +163,9 @@ export async function startUpstreamReplayServer(
       records: records.map(serializeRecord),
       version: 1,
     } satisfies E2ENetworkCaptureArtifact;
-    // 同一 replay server 内也必须串行替换 artifact；否则多个并发 child request
-    // 会让各自的临时文件竞争目标路径，并可能把较旧快照写到较新快照之后。
+    // Artifact replacement must also be serialized within the same replay server; otherwise
+    // multiple concurrent child requests would race their temp files for the target path and
+    // could write an older snapshot after a newer one.
     const nextWrite = artifactWriteQueue
       .catch(() => undefined)
       .then(() => artifactWriter(artifactPath, artifact));
@@ -179,8 +181,9 @@ export async function startUpstreamReplayServer(
       records,
       writeArtifact,
     }).catch((error: unknown) => {
-      // Bug 根因：旧 handler 是裸 `void Promise`，capture 写入抛错后没有任何人
-      // 收口 response，provider 只能一直等 socket。证据通道失败必须显式结束请求。
+      // Bug root cause: the old handler was a bare `void Promise`; once the capture write threw,
+      // nobody closed out the response and the provider just kept waiting on the socket. Evidence
+      // channel failures must explicitly end the request.
       closeReplayResponseAfterHandlerError(response, error);
     });
   });
@@ -201,9 +204,10 @@ export async function startUpstreamReplayServer(
   try {
     await writeArtifact();
   } catch (error) {
-    // Bug 根因：listen 成功后首次 artifact 写入失败会直接退出启动流程，
-    // 但旧实现没有关闭 HTTP server，导致端口和进程句柄跨测试泄漏。
-    // 清理错误不能覆盖原始写入错误；同时显式等待队列收口再向调用方失败。
+    // Bug root cause: when the first artifact write failed after a successful listen, startup
+    // exited directly but the old implementation never closed the HTTP server, leaking the port
+    // and process handles across tests. Cleanup errors must not override the original write
+    // error; also explicitly wait for the queue to settle before failing back to the caller.
     await closeServerListener(server).catch(() => undefined);
     await artifactWriteQueue.catch(() => undefined);
     throw error;
@@ -305,9 +309,10 @@ async function handleReplayRequest(
       extractReplayVariables(requestText, requestJson),
     );
     if (resolvedBody.body.includes(BROWSER_FIXTURE_URL_REPLAY_TOKEN)) {
-      // 修复原因：动态 URL marker 缺失或格式错误时保留模板会让 Browser tool
-      // 导航到字面量 `{{browserFixtureUrl}}`，随后可能被 compact 摘要掩盖成成功。
-      // replay 必须 fail closed，让 fixture/request 契约错误直接可见。
+      // Fix reason: if the dynamic URL marker is missing or malformed, keeping the template
+      // would make the Browser tool navigate to the literal `{{browserFixtureUrl}}`, which a
+      // compact summary could later mask as success. Replay must fail closed so fixture/request
+      // contract errors are directly visible.
       await writeResponse(response, record, {
         body: JSON.stringify({
           error: { message: "Missing E2E_BROWSER_FIXTURE_URL replay variable" },
@@ -316,9 +321,11 @@ async function handleReplayRequest(
         statusCode: 500,
         statusMessage: "Missing Replay Variable",
       });
-      // Bug 根因：artifact 写入改为异步后，这个 fail-closed 分支仍然 fire-and-forget；
-      // Windows 原子替换最终失败时 rejection 会逃出统一 handler catch。返回前等待，
-      // 让诊断落盘失败按请求生命周期收口，且不覆盖已经返回的 500 业务证据。
+      // Bug root cause: after artifact writes became async, this fail-closed branch was still
+      // fire-and-forget; when the Windows atomic replace ultimately failed, the rejection escaped
+      // the unified handler catch. Await it before returning so the diagnostic write failure is
+      // settled within the request lifecycle and does not override the 500 business evidence
+      // already returned.
       await context.writeArtifact();
       return;
     }
@@ -427,9 +434,10 @@ function readLatestBrowserTabIds(
   const names = Object.keys(ids) as Array<keyof typeof ids>;
   const visit = (candidate: unknown): void => {
     if (typeof candidate === "string") {
-      // Bug 根因：真实 Node REPL tool_result 是 `=> { ... }\nStructured content:`，
-      // 不是可直接 JSON.parse 的纯 JSON；只解析带 E2E 命名空间的显式字段，避免
-      // 从任意 tab 文本猜 id，让 replay 真正模拟模型读取上一条工具结果。
+      // Bug root cause: a real Node REPL tool_result is `=> { ... }\nStructured content:`,
+      // not pure JSON that can be JSON.parse'd directly. Parse only explicit fields with the E2E
+      // namespace instead of guessing ids from arbitrary tab text, so replay truly simulates the
+      // model reading the previous tool result.
       for (const name of names) {
         const pattern = new RegExp(`["']${name}["']\\s*:\\s*["']([^"']+)["']`, "gu");
         for (const match of candidate.matchAll(pattern)) {
@@ -460,8 +468,9 @@ function readLatestBrowserTabIds(
 }
 
 function readBrowserFixtureUrl(value: string): string | undefined {
-  // 修复原因：Browser Use E2E 的本地 HTTP server 使用随机端口，provider replay
-  // 必须从用户 marker 回填真实 URL，不能依赖固定端口或公网页面制造并发/网络抖动。
+  // Fix reason: the local HTTP server for Browser Use E2E uses a random port, so provider replay
+  // must backfill the real URL from the user marker instead of relying on a fixed port or public
+  // pages that introduce concurrency/network flakiness.
   const match = value.match(
     /E2E_BROWSER_FIXTURE_URL:(https?:\/\/(?:127\.0\.0\.1|localhost|\[::1\])(?::\d+)?\/[^\s"'<>),]*)/u,
   );
@@ -474,7 +483,7 @@ function readLatestAgentId(value: string): string | undefined {
 }
 
 function readLatestBashTaskId(value: string): string | undefined {
-  // Bash task ID 每次运行都不同；只从真实 launch result 回填，不能把 Agent ID 当作 Bash ID。
+  // The Bash task ID differs on every run; backfill only from the real launch result, and never treat an Agent ID as a Bash ID.
   const matches = [
     ...value.matchAll(/Command running in background with ID:\s*([A-Za-z0-9_-]+)\./gu),
   ];
@@ -482,8 +491,9 @@ function readLatestBashTaskId(value: string): string | undefined {
 }
 
 function readMemoryRoot(value: string): string | undefined {
-  // Memory root 由 Runtime 按 workspace 计算，fixture 不能硬编码本机绝对路径。
-  // 只从已经进入 provider request 的既有 Memory prompt 提取路径并回填 tool input。
+  // The memory root is computed by the Runtime per workspace; fixtures must not hardcode local
+  // absolute paths. Extract the path only from the existing Memory prompt already present in the
+  // provider request and backfill the tool input.
   const matches = [
     ...value.matchAll(/persistent(?:,\s*)? file-based memory(?: system)? at `([^`]+?)[/\\]`/giu),
   ];
@@ -500,7 +510,7 @@ function readLatestAutomationId(value: unknown): string | undefined {
           visit(JSON.parse(trimmed) as unknown);
           return;
         } catch {
-          // tool_result 可能是带前后说明的文本，继续用正则提取其中的 JSON 字段。
+          // The tool_result may be text with surrounding prose; keep using regex to extract the JSON fields inside it.
         }
       }
       for (const match of candidate.matchAll(
@@ -915,9 +925,10 @@ async function writeEventStreamResponse(
   };
 
   if (fixtureResponse.closeMode === "destroy") {
-    // 修复原因：SSE fault case 需要区分“provider 正常 EOF 但内容不完整”和
-    // “连接在流式响应中异常断开”。这里按 fixture 显式销毁 socket，artifact 也标记为 error，
-    // 让后续 E2E 能稳定构造断流语义，而不是依赖真实网络抖动。
+    // Fix reason: SSE fault cases need to distinguish "the provider EOF'd normally but the content
+    // is incomplete" from "the connection broke abnormally mid-stream". Here the socket is
+    // destroyed explicitly per the fixture and the artifact is marked as error, letting later E2E
+    // construct broken-stream semantics deterministically instead of relying on real network flakiness.
     record.error = "Replay fixture destroyed SSE response stream";
     response.destroy();
     return;
@@ -946,8 +957,9 @@ function findFixtureIndex(
   fixtureMatchCounts: ReadonlyMap<string, number>,
 ) {
   return fixtures.findIndex((fixture) => {
-    // 回放需要表达“同一类请求前 N 次失败、之后成功”的时序。
-    // maxMatches 只影响测试 fixture 匹配，不进入产品协议。
+    // Replay needs to express timing such as "the same kind of request fails the first N times
+    // and succeeds afterwards". maxMatches only affects test fixture matching and is not part of
+    // the product protocol.
     if (
       fixture.maxMatches !== undefined &&
       (fixtureMatchCounts.get(fixture.id) ?? 0) >= fixture.maxMatches
@@ -1026,9 +1038,10 @@ function readMessageContentText(content: unknown): string {
       if (typeof text === "string") {
         return text;
       }
-      // 修复原因：Anthropic Messages continuation 把工具结果放在 user/tool_result.content，
-      // 旧实现只读 text，导致 fixture 只能在整段 body 搜 marker；而 tool code 本身
-      // 也包含成功 marker，会把真实失败结果误匹配成成功 continuation。
+      // Fix reason: Anthropic Messages continuations put tool results in user/tool_result.content.
+      // The old implementation read only text, so fixtures had to search the whole body for the
+      // marker; since tool code itself contains the success marker, a genuinely failed result
+      // could be mismatched as a successful continuation.
       if ((part as { type?: unknown }).type === "tool_result") {
         return readMessageContentText((part as { content?: unknown }).content);
       }

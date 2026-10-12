@@ -70,9 +70,9 @@ describe("coding plan embedded webview bridge", () => {
   });
 
   it("exposes the purchase-complete channel and payload type", () => {
-    // 频道名固定，两端（App preload + 官网通过注入的 bridge）共享
+    // The channel name is fixed and shared by both sides (App preload + official site via the injected bridge)
     expect(CodingPlanWebviewChannels.PurchaseComplete).toBe("zcode:coding-plan-purchase-complete");
-    // payload 类型仅做编译期校验：provider 限定 zai/bigmodel，timestamp 为 number
+    // The payload type is only a compile-time check: provider limited to zai/bigmodel, timestamp is a number
     const payload: CodingPlanPurchaseCompletePayload = {
       provider: "zai",
       timestamp: Date.now(),
@@ -314,8 +314,8 @@ describe("coding plan embedded webview bridge", () => {
   });
 
   it("injects the zcode JWT for the bigmodel provider so the website can query Start Plan balance", () => {
-    // 修复原因：BigModel 分支此前显式清空 zcodejwttoken，官网内嵌页查不到
-    // billing/balance（该接口只认 zcode JWT），Start Plan 卡被误判为「已过期」。
+    // Reason for the fix: the BigModel branch previously cleared zcodejwttoken explicitly, so the embedded
+    // website page could not query billing/balance (that API only accepts the zcode JWT) and the Start Plan card was wrongly shown as "expired".
     const script = createCodingPlanAuthInjectionScript({
       provider: "bigmodel",
       theme: "zai-light",
@@ -425,7 +425,7 @@ describe("coding plan embedded webview bridge", () => {
       "utf8",
     );
 
-    // 三方支付页进入 webview 后没有 App 顶部导航，宿主需要暴露后退/前进/刷新控件。
+    // Once a third-party payment page enters the webview there is no App top navigation, so the host must expose back/forward/refresh controls.
     expect(source).toContain("navigationState");
     expect(source).toContain("handleGoBack");
     expect(source).toContain("handleGoForward");
@@ -452,7 +452,7 @@ describe("coding plan embedded webview bridge", () => {
       "utf8",
     );
 
-    // 改造原因：webview 加载失败/崩溃时，按用户决策只报错并引导去官网，不回退到老 Dialog。
+    // Reason for the change: when the webview fails to load or crashes, per the user's decision we only report the error and guide to the official site instead of falling back to the old Dialog.
     expect(source).toContain('addEventListener("did-fail-load"');
     expect(source).toContain('addEventListener("render-process-gone"');
     expect(source).toContain("handleDidFailLoad");
@@ -468,7 +468,7 @@ describe("coding plan embedded webview bridge", () => {
 
     expect(source).toContain("settings.modelProvider.codingPlan.webview.loadFailed");
     expect(source).toContain("settings.modelProvider.codingPlan.webview.openWebsite");
-    // 前往官网购买：通过 IPlatformService.openExternal 打开官网页
+    // Buy on the official site: open the website page via IPlatformService.openExternal
     expect(source).toContain("usePlatform");
     expect(source).toContain("platform.openExternal");
     expect(source).toContain("handleOpenWebsite");
@@ -480,7 +480,7 @@ describe("coding plan embedded webview bridge", () => {
       "utf8",
     );
 
-    // loadError 态下 webview 必须 hidden，避免一个坏掉的 webview 还占着视觉位
+    // In the loadError state the webview must be hidden so a broken webview no longer occupies visual space
     expect(source).toMatch(/loadError && "hidden"/);
   });
 
@@ -500,7 +500,7 @@ describe("coding plan embedded webview bridge", () => {
     h.theme = "zai-dark";
     view.rerender(createElement(CodingPlanEmbeddedWebviewDialog, props));
 
-    // 修复原因：支付授权可能持续数分钟，系统主题自动切换不能让 src 变化并重载 PayPal 流程。
+    // Reason for the fix: payment authorization can last several minutes; automatic system theme switching must not change the src and reload the PayPal flow.
     expect(view.getByTestId("coding-plan-embedded-webview").getAttribute("src")).toBe(initialSrc);
   });
 
@@ -510,10 +510,10 @@ describe("coding plan embedded webview bridge", () => {
       "utf8",
     );
 
-    // 完成回传协议：官网页通过 window.zcodeBridge.notifyPurchaseComplete
-    // → preload ipcRenderer.sendToHost(PurchaseComplete 频道)
+    // Completion callback protocol: the website page calls window.zcodeBridge.notifyPurchaseComplete
+    // → preload ipcRenderer.sendToHost(PurchaseComplete channel)
     // → host renderer webview.addEventListener("ipc-message")
-    // → onPurchaseCompleteRef.current?.() → CodingPlanUpgradeDialog 刷新+关闭
+    // → onPurchaseCompleteRef.current?.() → CodingPlanUpgradeDialog refresh + close
     expect(source).toContain("onPurchaseComplete");
     expect(source).toContain("onPurchaseCompleteRef");
     expect(source).toContain('addEventListener("ipc-message"');
@@ -521,7 +521,7 @@ describe("coding plan embedded webview bridge", () => {
     expect(source).toContain("CodingPlanPurchaseCompletePayload");
     expect(source).toContain("buildCodingPlanEmbeddedReportContext");
     expect(source).toContain("platform.getDeviceId()");
-    // provider payload 校验：只接受 zai / bigmodel
+    // provider payload validation: only zai / bigmodel accepted
     expect(source).toContain('raw?.provider !== "zai"');
     expect(source).toContain('raw?.provider !== "bigmodel"');
   });
@@ -561,8 +561,8 @@ describe("coding plan embedded webview bridge", () => {
       "utf8",
     );
 
-    // onPurchaseComplete 触发 closeAndRefreshCodingPlanUpgradeFromWebview：
-    // 先关闭升级 webview，再刷新 App 侧 provider/权益状态。
+    // onPurchaseComplete triggers closeAndRefreshCodingPlanUpgradeFromWebview:
+    // first close the upgrade webview, then refresh the App-side provider/entitlement state.
     expect(source).toContain("export async function refreshCodingPlanUpgradeCompletion");
     expect(source).toContain("export async function closeAndRefreshCodingPlanUpgradeFromWebview");
     expect(source).toContain("refreshTeamPlanProducts");

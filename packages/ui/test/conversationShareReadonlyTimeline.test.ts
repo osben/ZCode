@@ -3,8 +3,9 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it } from "vitest";
 import { ConversationShareReadonlyTimeline } from "@/v4/ConversationShareReadonlyTimeline.js";
 
-// SG-01 注入边界：时间线不再静态 import OpenSplitButton（避免 open-with 子树进公开页 bundle），
-// 改由消费方通过 artifactOpenAction 注入；测试用 stub 组件验证同一注入契约。
+// SG-01 injection boundary: the timeline no longer statically imports OpenSplitButton (keeping the
+// open-with subtree out of the public page bundle); consumers inject it via artifactOpenAction,
+// and the test verifies the same injection contract with a stub component.
 const openActionProps: { values: Array<Record<string, unknown>> } = { values: [] };
 
 function StubArtifactOpenAction(props: Record<string, unknown>) {
@@ -287,7 +288,7 @@ describe("ConversationShareReadonlyTimeline", () => {
   });
 
   it("marker 不再把枚举名当文案印出来", () => {
-    // Bug 根因：原本直接渲染 row.marker.type，分享页会出现一条写着字面量 compact 的分割线。
+    // Bug root cause: row.marker.type used to be rendered directly, so the share page showed a divider printed with the literal compact.
     const markerRows = [
       rows[0],
       rows[1],
@@ -321,7 +322,7 @@ describe("ConversationShareReadonlyTimeline", () => {
 
     expect(html).toContain("上下文已压缩");
     expect(html).not.toContain(">compact<");
-    // 识别不了的类型整行不渲染，而不是退化成打印枚举名。
+    // Unrecognizable types skip the whole row instead of degrading into printing the enum name.
     expect(html).not.toContain("goalVerify");
   });
 
@@ -355,21 +356,22 @@ describe("ConversationShareReadonlyTimeline", () => {
       }),
     );
 
-    // 与 AssistantPreviewCards.tsx 的容器一致：rounded-xl / p-3 pr-4 / gap-3。
+    // Same container as AssistantPreviewCards.tsx: rounded-xl / p-3 pr-4 / gap-3.
     expect(html).toContain(
       "flex w-full items-center gap-3 rounded-xl border border-card-border bg-card p-3 pr-4",
     );
-    // 时间线 turn 已提供正文 inset，artifact 行不能再叠加水平 padding，否则卡片会比正文窄。
+    // The timeline turn already provides the body inset; the artifact row must not stack horizontal padding on top, otherwise the card is narrower than the body.
     expect(html).toContain('data-conversation-share-row-kind="artifact" class="py-1"');
-    // 44px 图标底板 + 真实文件类型图标，而不是一个通用的 size-4 FileIcon。
+    // A 44px icon plate + a real file-type icon, not a generic size-4 FileIcon.
     expect(html).toContain("flex size-11 shrink-0 items-center justify-center rounded-md");
     expect(html).toContain("pdf.svg");
-    // 副标题复用正文同一套词汇，并且不再直接印裸字节数。
+    // The subtitle reuses the body's vocabulary and no longer prints the raw byte count.
     expect(html).toContain("文档 · PDF");
     expect(html).toContain("169 KB");
     expect(html).not.toContain("172974 bytes");
-    // 动作按钮与 OpenSplitButton 同一视觉，不再是蓝色文字链；语义锁定用结构性标记，
-    // 不锁 Tailwind 类字符串（类序/尺寸微调不应打断这条回归）。
+    // The action button shares OpenSplitButton's visuals instead of being a blue text link; the
+    // semantic lock uses structural markers, not Tailwind class strings (class reordering or size
+    // tweaks must not break this regression).
     expect(html).toContain('data-share-preview-button="true"');
     expect(html).not.toContain("text-icon-blue");
   });
@@ -429,10 +431,12 @@ describe("ConversationShareReadonlyTimeline", () => {
   });
 
   it("不注入 artifactOpenAction 时本地 artifact 不渲染任何打开控件", () => {
-    // 与静态守卫（conversationShareBundleBoundary.test.ts）互补的运行时负例：公开页
-    // （packages/web/src/share）不传 artifactOpenAction。锁住 ArtifactOpenContext 门控里的
-    // !artifactOpenAction 条件——即使 workspacePath、合法相对路径、打开回调齐备，也必须
-    // 退回纯只读卡片，防止后续加默认回退实现让公开页重新获得本地打开入口。
+    // A runtime negative case complementing the static guard (conversationShareBundleBoundary.test.ts):
+    // the public page (packages/web/src/share) passes no artifactOpenAction. This pins the
+    // !artifactOpenAction condition in the ArtifactOpenContext gating — even with workspacePath, a
+    // legal relative path, and an open callback all present, it must fall back to a pure read-only
+    // card, preventing a later default-fallback implementation from giving the public page a local
+    // open entry again.
     const artifactRows = [rows[0], rows[1], buildArtifactRow(80, "artifact-1")];
     const html = renderToStaticMarkup(
       createElement(ConversationShareReadonlyTimeline, {
@@ -491,7 +495,7 @@ describe("ConversationShareReadonlyTimeline", () => {
   });
 
   it("拒绝导入副本里的绝对路径 artifact path", () => {
-    // 公开页隐私边界：posix / Windows 盘符 / UNC 三种绝对路径形态都必须退回纯只读卡片。
+    // Public page privacy boundary: all three absolute path forms — posix / Windows drive letters / UNC — must fall back to a pure read-only card.
     const artifactRows = [
       rows[0],
       rows[1],
@@ -520,7 +524,7 @@ describe("ConversationShareReadonlyTimeline", () => {
   });
 
   it("拒绝导入副本里段数不为 4 或含 ./.. 段的 artifact path", () => {
-    // "../secret.pdf" 在段数校验就被拒了，这里专门补 4 段但段内含 .. 的逃逸形态。
+    // "../secret.pdf" is already rejected by the segment-count check; this specifically covers escape shapes with 4 segments that contain .. inside.
     const artifactRows = [
       rows[0],
       rows[1],
@@ -536,15 +540,15 @@ describe("ConversationShareReadonlyTimeline", () => {
         locale: "zh-CN",
         workspacePath: "/workspace",
         artifactWorkspaceRelativePaths: new Map([
-          // 嵌套子目录：5 段。
+          // Nested subdirectory: 5 segments.
           ["artifact-1", ".zcode-share/share-1/shared-artifacts/sub/a.pdf"],
-          // 浅路径：3 段。
+          // Shallow path: 3 segments.
           ["artifact-2", ".zcode-share/share-1/a.pdf"],
-          // 4 段但第 2 段是 ..：等价于跳出本 share 目录。
+          // 4 segments but segment 2 is ..: equivalent to escaping this share directory.
           ["artifact-3", ".zcode-share/../shared-artifacts/a.pdf"],
-          // 4 段但文件名是 .：不是合法产物文件。
+          // 4 segments but the file name is .: not a legal artifact file.
           ["artifact-4", ".zcode-share/share-1/shared-artifacts/."],
-          // 反斜杠分隔不能绕过段校验。
+          // Backslash separators must not bypass the segment check.
           ["artifact-5", ".zcode-share\\share-1\\shared-artifacts\\a.pdf\\..\\b.pdf"],
         ]),
         onOpenCodeViewer: () => undefined,
@@ -561,8 +565,9 @@ describe("ConversationShareReadonlyTimeline", () => {
     ["zh-CN", "下载文件"],
     ["en-US", "Download file"],
   ])("artifactUrls 与本地路径同时存在时 url 必须胜出（%s）", (locale, label) => {
-    // 公开页隐私边界的关键前提：ArtifactPresentation 只在 !url 时解析本地路径；
-    // url 存在时必须渲染 window.open 按钮，而不是能触达本地文件服务的 OpenSplitButton。
+    // The key premise of the public page's privacy boundary: ArtifactPresentation resolves the local
+    // path only when !url; when a url exists it must render a window.open button, not an
+    // OpenSplitButton that can reach the local file service.
     const artifactRows = [rows[0], rows[1], buildArtifactRow(80, "artifact-1")];
     const html = renderToStaticMarkup(
       createElement(ConversationShareReadonlyTimeline, {
@@ -578,7 +583,7 @@ describe("ConversationShareReadonlyTimeline", () => {
       }),
     );
 
-    // 资源 URL 实际下载文件，按钮文案必须对应下载，且注入的本地打开动作完全未挂载。
+    // The resource URL actually downloads the file, so the button label must correspond to downloading, and the injected local open action must be entirely unmounted.
     expect(html).toContain(label);
     expect(html).not.toContain("预览文件");
     expect(html).not.toContain("Preview file");
@@ -587,9 +592,10 @@ describe("ConversationShareReadonlyTimeline", () => {
     expect(openActionProps.values).toHaveLength(0);
   });
 
-  // Bug 回归：公开分享页不传 workspacePath/readAttachment，MarkdownImage 会 fallback 成
-  // <img src={远程}>，匿名访客一打开就自动向第三方发请求（泄露 IP/UA/Referer）。
-  // 正文与工具输出都必须只剩链接，不能出现自动加载的 <img>。
+  // Bug regression: the public share page passes no workspacePath/readAttachment, so MarkdownImage
+  // fell back to <img src={remote}> and an anonymous visitor's first open automatically sent
+  // requests to a third party (leaking IP/UA/Referer).
+  // Body and tool output must both be left with links only; no auto-loading <img> may appear.
   it("不为正文与工具输出里的远程图片渲染自动加载的 img", () => {
     const remoteImageRows = [
       {
@@ -635,11 +641,11 @@ describe("ConversationShareReadonlyTimeline", () => {
       }),
     );
 
-    // 关键不是 URL 是否出现在 HTML 里（链接的 title 属性带着它无害），
-    // 而是不能有任何自动发起请求的 <img src>。
+    // What matters is not whether the URL appears in the HTML (a link's title attribute carrying it
+    // is harmless) but that there is no auto-requesting <img src>.
     expect(html).not.toContain("<img");
     expect(html).not.toContain('src="https://tracker.invalid');
-    // 信息不丢：降级成外链后 URL 仍可被访客显式点击。
+    // No information is lost: after degrading to an external link the URL can still be clicked explicitly by the visitor.
     expect(html).toContain('title="https://tracker.invalid/pixel.png"');
     expect(html).toContain("tracker");
   });

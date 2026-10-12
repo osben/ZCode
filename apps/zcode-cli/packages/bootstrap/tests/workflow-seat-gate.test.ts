@@ -1,12 +1,13 @@
 /**
- * run 级座位闸门（docs/dynamic-workflow/concurrency.md「Retuning a live run」）：
- *   - 压低之后，工作中的子代理在**下一个 turn step** 上停驻（tryAcquire 未命中 → runner 发
- *     queued → driver 报 waiting(slot)），acquire 先等座位、再过治理器；
- *   - ask 结算或上界抬高按 FIFO 放行；abort 出队并以 signal.reason 拒绝；
- *   - 工具侧请求永不停驻（按子代理此刻的在飞工具数分辨）；
- *   - `activeAsks = working + parked`；上界 1 也不死锁；
- *   - 从未被压低过的 run 是纯直通：tryAcquire 逐次命中，治理器端口调用次数与没有闸门时相同。
- * 纯单元：不建 driver、不跑引擎，只喂闸门两条事实。
+ * Run-level seat gate (docs/dynamic-workflow/concurrency.md "Retuning a live run"):
+ *   - after a decrease, working subagents park at their **next turn step** (tryAcquire misses → the runner emits
+ *     queued → the driver reports waiting(slot)); acquire first waits for a seat, then goes through the governor;
+ *   - ask settlement or a raised bound admits in FIFO order; abort dequeues and rejects with signal.reason;
+ *   - tool-side requests never park (distinguished by the subagent's in-flight tool count at that moment);
+ *   - `activeAsks = working + parked`; a bound of 1 still does not deadlock;
+ *   - a run never decreased is pure pass-through: tryAcquire hits each time, and the governor port gets exactly the
+ *     calls it would without the gate.
+ * Pure unit: no driver is built, no engine runs; the gate is fed just those two facts.
  */
 
 import { describe, expect, it } from "vitest";
@@ -24,7 +25,7 @@ import {
 
 const MODEL = { providerId: "prov", modelId: "alpha" } as ModelRequestTarget;
 
-/** 治理器端口的替身：只数调用次数，永远发得出票。 */
+/** A stand-in for the governor port: counts calls only and always issues a ticket. */
 function fakeGovernor(): {
   admission: ModelRequestAdmission;
   tryAcquireCalls: number;
@@ -48,7 +49,7 @@ function fakeGovernor(): {
   return state;
 }
 
-/** 一个子代理的替身：在飞工具数可手动拨动（0 = 它的下一个请求是 turn step）。 */
+/** A stand-in for a subagent: the in-flight tool count is settable by hand (0 = its next request is a turn step). */
 function fakeSubagent(toolsInFlight = 0): SeatGateSubagent & { tools: number } {
   const subagent = {
     tools: toolsInFlight,
@@ -59,12 +60,12 @@ function fakeSubagent(toolsInFlight = 0): SeatGateSubagent & { tools: number } {
 
 const instanceOf = (ordinal: number): InstanceRef => ({ siteId: "ask#1", ordinal });
 
-/** 放行是解开一个 promise：让它的 then 链跑完（acquire 自身也是 async，不止一跳）。 */
+/** Admission resolves a promise: let its then chain finish (acquire itself is async too, more than one hop). */
 const flush = async (): Promise<void> => {
   await new Promise<void>((resolve) => setImmediate(resolve));
 };
 
-/** 把 n 个子代理登记成「工作中」，并各自包一份准入端口。 */
+/** Registers n subagents as "working" and wraps an admission port for each. */
 function seatWorkers(gate: WorkflowRunSeatGate, count: number) {
   return Array.from({ length: count }, (_unused, index) => {
     const key = `actor#1@${index + 1}`;
@@ -109,7 +110,8 @@ describe("workflow seat gate", () => {
 
     const parked: Promise<unknown>[] = [];
     for (const worker of workers) {
-      // 快路径未命中正是 runner 发 `model_request_queued` 的条件 → driver 报 waiting(slot)。
+      // A fast-path miss is exactly the runner's condition for emitting `model_request_queued` → the driver reports
+      // waiting(slot).
       if (gate.stats().working > 1) {
         expect(worker.admission.tryAcquire?.({ model: MODEL })).toBeUndefined();
         parked.push(worker.admission.acquire({ model: MODEL }));
@@ -119,9 +121,9 @@ describe("workflow seat gate", () => {
     }
 
     expect(gate.stats()).toEqual({ limit: 1, working: 1, parked: 3 });
-    // 每个停驻者都还没碰到治理器：座位在前、治理器在后。
+    // No parker has touched the governor yet: seat first, governor second.
     expect(workers.slice(0, 3).every((worker) => worker.governor.acquireCalls === 0)).toBe(true);
-    // activeAsks（调度器那一侧）= 4 = working + parked，所以调度器此刻一个新 ask 也派不出去。
+    // activeAsks (the scheduler side) = 4 = working + parked, so the scheduler cannot dispatch any new ask right now.
     expect(gate.stats().working + gate.stats().parked).toBe(4);
     expect(parked.length).toBe(3);
   });
@@ -194,12 +196,14 @@ describe("workflow seat gate", () => {
 
     controller.abort(reason);
     await expect(aborted).rejects.toBe(reason);
-    // 回到 working：一时超过上界是合法瞬态，下一个提出 turn 请求的人照常停驻。
+    // Back to working: momentarily exceeding the bound is a legal transient; the next one to raise a turn request
+    // parks as usual.
     expect(gate.stats()).toEqual({ limit: 1, working: 2, parked: 1 });
   });
 
-  // abort 的是**这次请求**，不一定是这个 ask（driver 的瞬态重驱、流恢复都会这样）。ask 还活着，
-  // 它此后的每一个 turn step 就必须照旧过座位——否则这一位再也不被计入，上界会悄悄往上漂。
+  // What is aborted is **this request**, not necessarily the ask (the driver's transient re-drives and stream
+  // recoveries both look like this). The ask is still alive, so every later turn step of it must still pass the seat —
+  // otherwise it is never counted again and the bound quietly drifts upward.
   it("只是请求被 abort、ask 还活着：下一个 turn step 照旧受闸门约束并被计数", async () => {
     const gate = createWorkflowRunSeatGate({ limit: 3 });
     const workers = seatWorkers(gate, 3);
@@ -211,7 +215,7 @@ describe("workflow seat gate", () => {
     await expect(aborted).rejects.toThrow();
     expect(gate.stats()).toEqual({ limit: 1, working: 2, parked: 1 });
 
-    // 同一个子代理的下一次 turn 请求：快路径未命中、随后停驻，计数收敛回上界。
+    // The same subagent's next turn request: fast-path miss, then parks, and the count converges back to the bound.
     expect(workers[0]!.admission.tryAcquire?.({ model: MODEL })).toBeUndefined();
     void workers[0]!.admission.acquire({ model: MODEL });
     await flush();
@@ -233,11 +237,11 @@ describe("workflow seat gate", () => {
 
     gate.askSettled(workers[0]!.instance);
     await flush();
-    // working 2 → 1 = 上界：unpark 的 `working.size < limit` 守卫挡住了那一次放行。
+    // working 2 → 1 = the bound: unpark's `working.size < limit` guard blocked that admission.
     expect(granted).toEqual([]);
     expect(gate.stats()).toEqual({ limit: 1, working: 1, parked: 1 });
 
-    // 真正在跑的那个结算才轮到队首。
+    // Only when the one actually running settles does the queue head get its turn.
     gate.askSettled(workers[2]!.instance);
     await flush();
     expect(granted).toEqual([workers[1]!.key]);
@@ -271,14 +275,14 @@ describe("workflow seat gate", () => {
     const workers = seatWorkers(gate, 3);
     gate.setLimit(1);
     const busy = workers[0]!;
-    busy.subagent.tools = 2; // 一轮里并行的两次 WebSearch
+    busy.subagent.tools = 2; // two parallel WebSearch calls within one turn
 
     expect(busy.admission.tryAcquire?.({ model: MODEL })).toBeDefined();
     await busy.admission.acquire({ model: MODEL });
     expect(busy.governor.acquireCalls).toBe(1);
     expect(gate.stats()).toEqual({ limit: 1, working: 3, parked: 0 });
 
-    busy.subagent.tools = 0; // 工具都回来了，下一次请求是这个 ask 的下一个 turn step
+    busy.subagent.tools = 0; // all tools are back; the next request is this ask's next turn step
     expect(busy.admission.tryAcquire?.({ model: MODEL })).toBeUndefined();
     void busy.admission.acquire({ model: MODEL });
     expect(gate.stats()).toEqual({ limit: 1, working: 2, parked: 1 });
@@ -306,8 +310,9 @@ describe("workflow seat gate", () => {
     await flush();
     expect(gate.stats()).toEqual({ limit: 1, working: 1, parked: 1 });
 
-    // 三种从不经 startAsk 的 `node-settled`：命中缓存的 ask（`cached: true`，没有 queued/dispatched）、
-    // world-read / world.run 节点（另一套站点），以及会话创建失败而从未派发的那一个。
+    // Three kinds of `node-settled` that never went through startAsk: a cache-hit ask (`cached: true`, no
+    // queued/dispatched), world-read / world.run nodes (a different set of sites), and the one whose session creation
+    // failed so it was never dispatched.
     gate.askSettled({ siteId: "ask#1", ordinal: 99 });
     gate.askSettled({ siteId: "world#3", ordinal: 1 });
     gate.askSettled({ siteId: "run#2", ordinal: 1 });
@@ -316,9 +321,10 @@ describe("workflow seat gate", () => {
     expect(gate.stats()).toEqual({ limit: 1, working: 1, parked: 1 });
   });
 
-  // 调度器在 pumpActor 就 activeAsks++，而闸门要等 driver.startAsk 才把人算进 working——夹在
-  // 中间的是 `ensureSession`（建 actor 会话、落库、建 task link）。压低正好落在这个窗口里时，
-  // 那个子代理随后的 startAsk 会让 working 再次越过上界，它的第一个 turn step 因此必须停驻。
+  // The scheduler bumps activeAsks at pumpActor, while the gate only counts someone into working at driver.startAsk —
+  // in between sits `ensureSession` (create the actor session, persist it, build the task link). When a decrease
+  // lands exactly in that window, that subagent's subsequent startAsk pushes working over the bound again, so its
+  // first turn step must park.
   it("压低落在 ensureSession 窗口里：后到的子代理照样停驻，没有人被停驻两次，计数收敛到上界", async () => {
     const gate = createWorkflowRunSeatGate({ limit: 3 });
     const workers = seatWorkers(gate, 3);
@@ -330,7 +336,7 @@ describe("workflow seat gate", () => {
     await flush();
     expect(gate.stats()).toEqual({ limit: 1, working: 1, parked: 2 });
 
-    // 第四个子代理此刻才从 ensureSession 里出来（它的 activeAsks 早在压低之前就记上了）。
+    // The fourth subagent only now comes out of ensureSession (its activeAsks was recorded long before the decrease).
     const late = "actor#1@4";
     const lateGovernor = fakeGovernor();
     const lateSubagent = fakeSubagent();
@@ -341,11 +347,11 @@ describe("workflow seat gate", () => {
     expect(lateAdmission.tryAcquire?.({ model: MODEL })).toBeUndefined();
     void lateAdmission.acquire({ model: MODEL }).then(() => granted.push(late));
     await flush();
-    // 三个人排在队里，一个人在跑：working 收敛回上界，谁都没有被数两次。
+    // Three are queued, one is running: working converges back to the bound and nobody is counted twice.
     expect(gate.stats()).toEqual({ limit: 1, working: 1, parked: 3 });
     expect(lateGovernor.acquireCalls).toBe(0);
 
-    // 在跑的那个结算：队首放行，队列减一，working 仍是上界。
+    // The running one settles: the queue head is admitted, the queue shrinks by one, working stays at the bound.
     gate.askSettled(workers[2]!.instance);
     await flush();
     expect(granted).toEqual([workers[0]!.key]);

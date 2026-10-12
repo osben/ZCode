@@ -30,11 +30,12 @@ import { seedPersistedModelSelection } from "./helpers/model-provider-restart.js
 import { sel } from "./helpers/selectors.js";
 import { skipOccupationOnboardingIfPresent } from "./helpers/occupation-onboarding.js";
 
-// 修复原因：WDIO 为每个 run 注入隔离 HOME，但 os.homedir() 在 Node 进程中不会
-// 随环境变量动态变化。沿用 homedir() 会把场景设置和 provider seed 写到开发机的
-// ~/.zcode，Electron 读取的却是本轮隔离 HOME；同时新版 Personal Config 文件名是
-// provider_config.json，不是旧的 config.json。统一复用 desktop-app 的路径合同，确保
-// 测试写入和应用读取的是同一份 fixture。
+// Why the fix: WDIO injects an isolated HOME per run, but os.homedir() in a Node process does
+// not change dynamically with the environment variable. Sticking with homedir() would write
+// scenario settings and the provider seed to the developer machine's ~/.zcode while Electron
+// reads this run's isolated HOME; also, the new Personal Config file name is
+// provider_config.json, not the old config.json. Reuse desktop-app's path contract uniformly to
+// ensure the test writes and the app read the same fixture.
 const E2E_APP_DATA_PATHS = getE2EAppDataPaths();
 const E2E_STORAGE_ROOT = E2E_APP_DATA_PATHS.storageRoot;
 const SETTINGS_FILE = join(E2E_APP_DATA_PATHS.appDataDir, "setting.json");
@@ -43,7 +44,7 @@ const TEAM_PLAN_KEY = "team:bigmodel:product-team-a:org-team-a:proj-team-a";
 const PERSONAL_PLAN_KEY = "account:bigmodel-individual-coding-plan";
 const PERSONAL_PLAN_CONNECTION_KEY = `coding-plan:${PERSONAL_PLAN_KEY}`;
 const BIGMODEL_ACCOUNT_NAV_KEY = `preset:${BUILTIN_MODEL_PROVIDER_IDS.bigmodelStartPlan}`;
-// 与本轮 Builtin catalog 一致；旧 GLM-5.2 已不在 Account Provider 的可选模型中。
+// Matches this round's Builtin catalog; the old GLM-5.2 is no longer among the Account Provider's selectable models.
 const BIGMODEL_E2E_MODEL = "GLM-5.3";
 
 type CodingPlanScenario = "personalOnly" | "teamOnly" | "both";
@@ -98,7 +99,7 @@ describe("Team Plan 设置与使用统计 E2E", () => {
       "暂时无法确认 Coding Plan 权益，请重新连接后再试。",
     ]);
     await setMockScenario("personalOnly", "startBalance");
-    // 失败结果也有明确的一秒复用窗口；在窗口结束后验证用户重试恢复。
+    // A failed result also has a clear one-second reuse window; verify the user's retry recovery after the window ends.
     await browser.pause(1000);
     await clickVisibleButtonByText(["Retry", "重试"]);
     await assertBodyTextIncludes(["GLM-5-Turbo"]);
@@ -174,7 +175,7 @@ describe("Team Plan 设置与使用统计 E2E", () => {
         timeout: 30000,
         timeoutMsg: "侧栏头像入口没有出现",
       });
-      // 英文 UI 的套餐标签为 Team；只断言徽标本身，避免用户名包含团队文字时误通过。
+      // The English UI's plan label is Team; assert only the badge itself to avoid a false pass when the username contains team text.
       const teamLabel = locale === "zh-CN" ? "团队" : "Team";
       const badge = profileTrigger.$(`span[title="${teamLabel}"]`);
       await badge.waitForDisplayed({ timeout: 30000 });
@@ -277,7 +278,7 @@ describe("Team Plan 设置与使用统计 E2E", () => {
       await waitForBigModelConnectionSelection("individual-coding-plan");
       await openUsageCodingPlanTab(PERSONAL_PLAN_KEY);
       await assertBodyTextIncludes(["70%", "glm-credit-e2e"]);
-      // 使用统计的个人页签是 Individual Plan，不是设置页左侧的 Coding Plan。
+      // The usage stats personal tab is Individual Plan, not the settings page's left-side Coding Plan.
       const personalTab = $(sel(testId(TID_SETTINGS_USAGE_TAB, `codingPlan:${PERSONAL_PLAN_KEY}`)));
       await expect(personalTab).toHaveText(locale === "zh-CN" ? "个人套餐" : "Individual Plan");
       await expect(personalTab).toHaveAttribute("aria-pressed", "true");
@@ -372,8 +373,9 @@ describe("Team Plan 设置与使用统计 E2E", () => {
     this.timeout(120000);
     await setRendererViewport(430, 760);
     try {
-      // 本 Case 只验证窄窗口交互，不额外绑定“个人 + Team 同时存在时启动恢复
-      // 自动选择哪个套餐”的产品规则；使用单一个人权益保持夹具职责清晰。
+      // This case only verifies the narrow-window interaction; it does not additionally bind to
+      // the product rule of "when personal + Team both exist, which plan startup recovery auto-
+      // selects". Using a single personal entitlement keeps the fixture's responsibility clear.
       await prepareScenario("personalOnly", PERSONAL_PLAN_KEY);
       await setSettingsTheme("zai-dark");
       await openUsageCodingPlanTab(PERSONAL_PLAN_KEY);
@@ -432,8 +434,9 @@ describe("Team Plan 设置与使用统计 E2E", () => {
       await prepareScenario(scenario, planKey, "quotaBusinessFailure");
       await openUsageSection();
       await setRendererViewport(width, 900);
-      // 订阅查询保持成功，quota 业务失败不能撤销权益，确认 tab 不消失；
-      // 详情加载再切传输失败，覆盖 fatal 文案与后续恢复。
+      // The subscription query stays successful and a quota business failure must not revoke
+      // the entitlement, so the tab does not disappear; detail loading then switches to a
+      // transport failure, covering the fatal copy and subsequent recovery.
       await setMockScenario(scenario, "quotaFailure");
       await clickUsageCodingPlanTab(planKey);
       await assertBodyTextIncludesAny([
@@ -473,7 +476,7 @@ describe("Team Plan 设置与使用统计 E2E", () => {
       true,
     );
 
-    // QR-E2E-05：单机会徽标同样可点击并打开重置弹框（单机会不展示次数药丸，仅交互升级为按钮）。
+    // QR-E2E-05: the single-opportunity badge is likewise clickable and opens the reset dialog (a single opportunity shows no count pill; only the interaction is upgraded to a button).
     await clickResetOpportunityBadge();
     await assertBodyTextIncludesAny(["可重置额度", "Resettable quota"]);
     await assertBodyTextIncludesAny(["5 小时额度重置", "5-hour quota reset"]);
@@ -493,7 +496,7 @@ describe("Team Plan 设置与使用统计 E2E", () => {
     await assertBodyTextIncludesAny(["可重置额度", "Resettable quota"]);
     await assertBodyTextIncludesAny(["5 小时额度重置", "5-hour quota reset"]);
     await assertBodyTextIncludesAny(["周额度重置", "Weekly quota reset"]);
-    // 次数不再汇总到标题；FIVE_HOUR 持有 2 张机会，改由该行的次数药丸展示。
+    // Counts are no longer aggregated into the title; FIVE_HOUR holds 2 opportunities, now shown by the row's count pill.
     await assertBodyTextIncludesAny(["2 次", "×2"]);
   });
 
@@ -587,15 +590,16 @@ describe("Team Plan 设置与使用统计 E2E", () => {
         request.body.reset_type === "FIVE_HOUR",
       "五小时重置没有发送 reset_type=FIVE_HOUR",
     );
-    // 双 JWT 契约：Authorization 传 Bearer zcode JWT，X-Bigmodel-Authorization 直传 MaaS JWT。
+    // Dual-JWT contract: Authorization carries the Bearer zcode JWT; X-Bigmodel-Authorization passes the MaaS JWT straight through.
     const useRequest = (await readMockRequests()).find((request) =>
       request.path.endsWith("/api/v1/coding-plan/reset/use"),
     );
     expect(useRequest?.headers.authorization).toBe("Bearer e2e-zcode-jwt");
     expect(useRequest?.headers["x-bigmodel-authorization"]).toBe("e2e-bigmodel-oauth-token");
-    // 时序约束：客户端 use 后的 status 确认重试窗口只有约 2.5 秒，confirm 前的每次检查
-    // 必须是单次 execute 往返，不能逐按钮发 WebDriver 命令，否则慢机器上会先触发客户端
-    // 失败分支，confirm 之后成功态永远不会出现。
+    // Timing constraint: after the client's use, the status confirmation retry window is only
+    // about 2.5 seconds. Every check before confirm must be a single execute round trip —
+    // issuing WebDriver commands button by button would trip the client's failure branch on
+    // slow machines first, and the success state would never appear after confirm.
     const processingState = await readDialogResetState();
     if (processingState.resetDisabled !== true || processingState.successVisible) {
       throw new Error(
@@ -629,8 +633,10 @@ describe("Team Plan 设置与使用统计 E2E", () => {
       timeoutMsg: "第一次五小时重置没有发送 /use",
     });
 
-    // 回归点：成功反馈结束后该行留在弹框内，直接展示余下 1 张的真实倒计时并恢复可点击；
-    // 旧实现在这里显示「0 分 0 秒后过期」，且再次点击被静默忽略，只能关闭重开弹框。
+    // Regression point: after the success feedback ends, the row stays inside the dialog,
+    // showing the real countdown of the remaining 1 opportunity and becoming clickable again;
+    // the old implementation showed "expires in 0 minutes 0 seconds" here and silently ignored
+    // further clicks, forcing the user to close and reopen the dialog.
     await waitForDialogResetState(
       (state) =>
         state.resetDisabled === false &&
@@ -651,7 +657,7 @@ describe("Team Plan 设置与使用统计 E2E", () => {
     );
     expect(new Set(idempotencyKeys).size).toBe(2);
 
-    // 机会耗尽后五小时行收起，周额度行不受影响、也不会被误核销。
+    // After opportunities are exhausted the five-hour row collapses; the weekly-quota row is unaffected and not wrongly redeemed.
     await waitForDialogResetState(
       (state) => state.resetDisabled === null && !state.successVisible && state.weekResetVisible,
       "五小时机会耗尽后该行没有收起",
@@ -668,7 +674,7 @@ describe("Team Plan 设置与使用统计 E2E", () => {
 
   it("QR-E2E-15: 完成态再次核销时 status 仍是上一张 used_at，读到新 used_at 才确认成功", async function () {
     this.timeout(120000);
-    // mock 让 /use 结果延迟 600ms 才在 /status 可见，窗口内 /status 仍返回上一张的 used_at。
+    // The mock delays the /use result by 600ms before it becomes visible in /status; within the window /status still returns the previous card's used_at.
     await prepareScenario("personalOnly", PERSONAL_PLAN_KEY, "none", "multiFiveHourUseLagging");
     await openUsageCodingPlanTab(PERSONAL_PLAN_KEY);
     await waitForResetOpportunityCount(3);
@@ -691,8 +697,10 @@ describe("Team Plan 设置与使用统计 E2E", () => {
       timeoutMsg: "余下机会的再次点击没有真实发送 /use",
     });
 
-    // 回归点：旧实现把滞后快照里上一张的 used_at 当作第二次成功，提前播放成功反馈后该行
-    // 回到「余 1 张可点击」，直到下一次 60s 轮询才收起。修复后保持处理中，读到新 used_at 才完成。
+    // Regression point: the old implementation treated the previous card's used_at in the
+    // lagging snapshot as a second success; after playing the success feedback early, the row
+    // went back to "1 remaining, clickable" and only collapsed at the next 60s poll. After the
+    // fix it stays processing and only completes once the new used_at is read.
     let revertedToClickable = false;
     await waitForDialogResetState((state) => {
       revertedToClickable ||= state.resetDisabled === false;
@@ -710,13 +718,16 @@ async function prepareScenario(
   resetScenario: CodingPlanResetScenario = "none",
   locale?: "zh-CN" | "en-US",
 ) {
-  // 修复原因：同一 spec 会连续切换个人/团队套餐场景。必须在旧 Electron 退出前清理
-  // file:// origin 的 entitlement 缓存；退出后再执行 browser.execute 会被异常吞掉，
-  // 上一场景的 Team 快照就会污染下一场景。
+  // Why the fix: the same spec switches personal/team plan scenarios consecutively. The
+  // file:// origin's entitlement cache must be cleared before the old Electron exits; running
+  // browser.execute after exit gets swallowed by an exception, and the previous scenario's Team
+  // snapshot would pollute the next scenario.
   await clearUsageEntitlementCache();
-  // Bug 根因：旧 Electron/host 仍存活时直接改 setting.json，退出阶段的异步写回
-  // 会把下一场景的夹具覆盖成上一场景。先等进程完整退出，再写持久化夹具，最后
-  // 让 reloadSession 只负责创建新应用，场景边界才是确定的。
+  // Bug root cause: editing setting.json directly while the old Electron/host is still alive
+  // lets the exit-phase async write-back overwrite the next scenario's fixture with the
+  // previous scenario's. Wait for the process to fully exit first, then write the persisted
+  // fixture, and finally let reloadSession only create the new app — only then is the scenario
+  // boundary deterministic.
   await quitElectronAppGracefully();
   await setMockScenario(scenario, faultMode);
   await setResetMockScenario(resetScenario);
@@ -739,9 +750,10 @@ async function prepareScenario(
     },
     providerFamilyDomain: "bigmodel",
     providerFamilyDomainMigrated: true,
-    // Bug 根因：同一 spec 多次 reloadSession 会继承前一场景关闭时写回的 workspace。
-    // Team Plan case 的 model-resolution seed 明确写 DEFAULT_WORKSPACE，因此启动入口也
-    // 必须固定到同一个 project workspace，不能偶发落入 conversation workspace。
+    // Bug root cause: multiple reloadSession calls in one spec inherit the workspace written
+    // back when the previous scenario closed. The Team Plan case's model-resolution seed
+    // explicitly writes DEFAULT_WORKSPACE, so the launch entry must also be pinned to the same
+    // project workspace and must not occasionally fall into the conversation workspace.
     lastWorkspaceSession: [
       {
         kind: "local",
@@ -751,12 +763,13 @@ async function prepareScenario(
     ],
     lastActiveTabIndex: 0,
   });
-  // 修复原因：Electron E2E 的 file:// renderer 直接 browser.refresh()
-  // 偶发落到 chrome-error://chromewebdata，后续等待会每条 case 慢 30s。
-  // 场景切换需要让 main/host 重新读取磁盘设置，因此使用 reloadSession 重建应用。
+  // Why the fix: in Electron E2E the file:// renderer hitting browser.refresh() directly
+  // occasionally lands on chrome-error://chromewebdata, making every subsequent wait 30s slower
+  // per case. Scenario switching needs main/host to re-read the on-disk settings, so
+  // reloadSession rebuilds the app.
   await browser.reloadSession();
-  // Escape 只临时关闭职业引导；重载 Renderer 会再次遮住 Composer。
-  // 复用真实 Skip 流程完成隔离账号的引导，保证重载类 case 的前置状态持久化。
+  // Escape only temporarily closes the occupation onboarding; reloading the Renderer covers the Composer again.
+  // Reuse the real Skip flow to finish the isolated account's onboarding so the prerequisite state of reload-style cases persists.
   await skipOccupationOnboardingIfPresent();
   await waitForDefaultWorkspaceReady(60000);
   await waitForWorkspaceApp(DEFAULT_WORKSPACE, 60000);
@@ -797,9 +810,9 @@ async function waitForBigModelConnectionSelection(
 }
 
 async function clearUsageEntitlementCache() {
-  // 修复原因：本 spec 会在同一 file:// origin 内切换 personalOnly/teamOnly mock。
-  // useUsageEntitlement 的短 TTL localStorage 缓存会保留上个场景的 no_plan，
-  // 导致下一次打开 Usage 页时 Coding Plan tab 被误判为不存在。
+  // Why the fix: this spec switches personalOnly/teamOnly mocks within the same file:// origin.
+  // useUsageEntitlement's short-TTL localStorage cache keeps the previous scenario's no_plan,
+  // so the next time the Usage page opens the Coding Plan tab is wrongly judged as absent.
   try {
     await browser.execute(() => {
       const prefix = "zcode:usage-entitlement:";
@@ -810,7 +823,7 @@ async function clearUsageEntitlementCache() {
       }
     });
   } catch {
-    // reloadSession 前后偶发没有可执行 renderer；缓存清理失败不阻塞场景重建。
+    // Occasionally there is no executable renderer just before or after reloadSession; a failed cache clear must not block scenario rebuilding.
   }
 }
 
@@ -878,8 +891,9 @@ async function openUsageSection() {
 async function ensureSettingsPageOpen() {
   const settingsPage = $(sel(TID_SETTINGS_PAGE));
   if (!(await settingsPage.isDisplayed().catch(() => false))) {
-    // Bug 根因：设置新架构会同时保留响应式导航的隐藏副本，旧 helper 取第一个
-    // test-id 时可能点中不可见节点并关闭设置页，导致后续误报 Coding Plan tab 消失。
+    // Bug root cause: the new settings architecture keeps a hidden copy of the responsive
+    // navigation; the old helper's first test-id pick could hit the invisible node and close
+    // the settings page, causing later false reports of the Coding Plan tab disappearing.
     await clickVisibleTestIdByDom(TID_TASK_SETTINGS_BUTTON, {
       timeout: 10000,
       timeoutMsg: "没有找到设置入口按钮",
@@ -906,8 +920,8 @@ async function closeTransientOverlays() {
 }
 
 async function clickUsageCodingPlanTab(sourceId?: string) {
-  // 修复原因：使用统计页从单个 "codingPlan" tab 改为按来源生成
-  // "codingPlan:<sourceId>"，测试不能再写死旧 test id。
+  // Why the fix: the usage stats page changed from a single "codingPlan" tab to per-source
+  // "codingPlan:<sourceId>"; tests can no longer hardcode the old test id.
   const staticTabId = testId(TID_SETTINGS_USAGE_TAB, "codingPlan");
   const prefix = `${testId(TID_SETTINGS_USAGE_TAB, "codingPlan:")}`;
   const preferredTabId = sourceId ? testId(TID_SETTINGS_USAGE_TAB, `codingPlan:${sourceId}`) : null;
@@ -923,9 +937,10 @@ async function clickUsageCodingPlanTab(sourceId?: string) {
               const current = element.dataset.testid ?? "";
               return current === legacyTestId || current.startsWith(dynamicPrefix);
             });
-            // 修复原因：传入 sourceId 时验证的就是该套餐身份。旧 helper
-            // 找不到目标时会静默点击第一个可见 tab，把“个人套餐缺失”伪装成
-            // 后续 Team 数据断言失败。指定目标时必须精确命中。
+            // Why the fix: when sourceId is passed, what is verified is exactly that plan's
+            // identity. The old helper silently clicked the first visible tab when it could not
+            // find the target, disguising "the personal plan is missing" as a later Team data
+            // assertion failure. With a specified target the hit must be exact.
             const ordered = targetTestId
               ? candidates.filter((element) => element.dataset.testid === targetTestId)
               : candidates;
@@ -1037,8 +1052,9 @@ async function clickVisibleTestIdByDom(
   currentTestId: string,
   { timeout = 10000, timeoutMsg = `页面没有可见的 test id: ${currentTestId}` } = {},
 ) {
-  // 修复原因：头像菜单内容用了 forceMount，隐藏菜单项也会留在 DOM 里。
-  // 这里必须等真正可见的菜单项再触发，否则会点到隐藏节点。
+  // Why the fix: the avatar menu content uses forceMount, so hidden menu items also stay in
+  // the DOM. We must wait for a genuinely visible menu item before triggering, otherwise a
+  // hidden node gets clicked.
   let latestReason = "not-started";
   await browser.waitUntil(
     async () => {
@@ -1115,9 +1131,10 @@ async function selectBigModelCodingPlanRuntime(
     planKind === "team-coding-plan"
       ? "account:bigmodel-team-coding-plan"
       : "account:bigmodel-individual-coding-plan";
-  // Bug 根因：只写 selectedSupplierKey 只更新了供应商导航解析状态，并不会更新
-  // Composer 的 Effective Model。Context 用量按真实 Effective Provider 判断套餐类型，
-  // 因此测试必须和用户一样完成一次 Provider/Model 选择。
+  // Bug root cause: writing only selectedSupplierKey updated the provider navigation resolution
+  // state but not the Composer's Effective Model. Context usage judges the plan type by the
+  // real Effective Provider, so the test must complete a Provider/Model selection just like the
+  // user.
   await selectRegistryProviderModelById(BIGMODEL_E2E_MODEL, {
     includePlainModelFallback: false,
     providerId,
@@ -1126,10 +1143,12 @@ async function selectBigModelCodingPlanRuntime(
 }
 
 async function reloadRendererWithBigModelCodingPlanSelection() {
-  // Bug 根因：QR-09/10 验证的是 Renderer 首次挂载时的常驻提醒。通过模型菜单选择会
-  // 产生提醒外部 pointerdown，从而按产品规则把刚出现的提醒标记为已读；在退出应用前
-  // seed 又会被旧 Renderer 的关闭写回覆盖。直接写正式选择存储并只重载 Renderer，
-  // 既使用真实 ModelSelection，又不引入测试专用运行时入口或额外 Host 重启。
+  // Bug root cause: QR-09/10 verify the persistent reminder at the Renderer's first mount.
+  // Selecting via the model menu produces a pointerdown outside the reminder, which per product
+  // rules marks the just-appeared reminder as read; before the app exits, the seed is again
+  // overwritten by the old Renderer's close write-back. Writing the official selection store
+  // directly and reloading only the Renderer uses the real ModelSelection without introducing a
+  // test-only runtime entry or an extra Host restart.
   await seedPersistedModelSelection({
     modelId: BIGMODEL_E2E_MODEL,
     providerId: BUILTIN_MODEL_PROVIDER_IDS.bigmodelIndividualCodingPlan,
@@ -1140,10 +1159,12 @@ async function reloadRendererWithBigModelCodingPlanSelection() {
   await waitForWorkspaceApp(DEFAULT_WORKSPACE, 60000);
   await waitForProviderConfigPolling();
 
-  // Bug 根因：直接写 recent selection 只覆盖了草稿的持久化入口；如果当前
-  // ModelSelectionView 尚未包含该 Account Provider，Composer 会按现有契约回退到
-  // preferredSelection。先通过真实选择控件完成一次有效选择，再重载一次，验证的才是
-  // 用户实际会走的 selection -> opportunity 链路，而不是测试专用的 localStorage 假设。
+  // Bug root cause: writing the recent selection directly only covers the draft's persistence
+  // entry; if the current ModelSelectionView does not yet contain that Account Provider, the
+  // Composer falls back to preferredSelection per the existing contract. Complete one valid
+  // selection through the real selection control first, then reload once — only then is what is
+  // verified the user's actual selection -> opportunity path, not a test-specific localStorage
+  // assumption.
   await selectRegistryProviderModelById(BIGMODEL_E2E_MODEL, {
     includePlainModelFallback: false,
     providerId: BUILTIN_MODEL_PROVIDER_IDS.bigmodelIndividualCodingPlan,
@@ -1268,8 +1289,9 @@ async function waitForContextResetReminder(phase: "initial" | "urgent", expected
       },
     );
   } catch (error) {
-    // Bug 调查：提醒缺失不能只留下一个 waitUntil 超时。机会接口、Context 触发器和
-    // 实际 DOM 一并进入失败证据，才能区分“没有数据”和“已有机会但提醒被收起”。
+    // Bug investigation: a missing reminder must not be left as just a waitUntil timeout. The
+    // opportunity API, the Context trigger, and the actual DOM all go into the failure evidence
+    // so that "no data" can be distinguished from "opportunity exists but the reminder is collapsed".
     const reminderDiagnostics = await browser.execute(
       (contextTriggerTestId) => ({
         bodyText: document.body?.innerText?.slice(-2500) ?? "",
@@ -1339,8 +1361,9 @@ async function findVisibleButtonByAriaLabels(
   return undefined;
 }
 
-/** 单次 execute 往返读取弹框内 FIVE_HOUR 重置按钮与成功态；QR-E2E-03 的 confirm
- *  窗口只有约 2.5 秒，逐按钮 isDisplayed/getAttribute 的多次 WebDriver 往返会超窗。 */
+/** One execute round trip reads the FIVE_HOUR reset button and success state inside the dialog;
+ *  QR-E2E-03's confirm window is only about 2.5 seconds, and per-button isDisplayed/getAttribute
+ *  needs multiple WebDriver round trips that would exceed the window. */
 async function readFiveHourUseRequests() {
   return (await readMockRequests()).filter(
     (request) =>
@@ -1373,7 +1396,7 @@ async function readDialogResetState() {
       const resetButton = findByLabels(resetLabels);
       return {
         resetDisabled: resetButton ? resetButton.disabled : null,
-        // 重置按钮与类型名、次数药丸、倒计时同处一个行容器，用于断言该行展示内容。
+        // The reset button shares a row container with the type name, count pill, and countdown, used to assert the row's displayed content.
         resetRowText: resetButton?.parentElement?.innerText ?? null,
         successVisible: findByLabels(successLabels) !== null,
         weekResetVisible: findByLabels(weekResetLabels) !== null,
@@ -1583,7 +1606,8 @@ type ReminderNavigationWindow = Window & {
 };
 
 async function assertContextReminderHiddenInSettings(phase: "initial" | "urgent") {
-  // 通过真实导航 store 切层，避免打开入口的 pointerdown 把提醒预先标已读，掩盖 Portal 泄漏。
+  // Switch layers via the real navigation store so the entry-opening pointerdown does not
+  // pre-mark the reminder as read and mask the Portal leak.
   const workspaceTabId = await browser.execute(() => {
     const store = (window as unknown as ReminderNavigationWindow).__zcodeTabStoreE2E;
     const id = store.getState().activeTabId;
@@ -1595,7 +1619,7 @@ async function assertContextReminderHiddenInSettings(phase: "initial" | "urgent"
     timeout: 5000,
     timeoutMsg: "Composer 提醒穿透到设置页",
   });
-  // 设置页点击不能消耗后台工作区的提醒状态。
+  // Settings page clicks must not consume the background workspace's reminder state.
   await browser.execute(() =>
     document
       .querySelector('[data-testid="settings-page"]')!

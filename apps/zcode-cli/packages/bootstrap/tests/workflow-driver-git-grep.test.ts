@@ -1,20 +1,24 @@
 /**
- * git.* / files.glob / files.grep world reads（driver 侧）。见 docs/execution-engine.md 的
- * "World-read execution, per op family" 与 "Cap enforcement sits in the driver, with the
- * constants in the pure package"。
+ * git.* / files.glob / files.grep world reads (driver side). See docs/execution-engine.md's
+ * "World-read execution, per op family" and "Cap enforcement sits in the driver, with the
+ * constants in the pure package".
  *
- * 这份用例钉三件事，每一件都是"只读按构造"的一部分：
+ * This test pins three things, each part of "read-only by construction":
  *
- *   1. **每个 op 的 argv 逐元素精确**。argv 就是这个原语的安全边界——没有 shell 字符串，
- *      path 总在 `--` 之后，base 缺省是 HEAD。所以断言不是"包含 diff"，而是整个数组相等：
- *      多一个元素、少一个 `--`，都是一次真实的语义变化。
- *   2. **实参校验在 driver**（Boundary A 只承诺按位置原样送达）。尾部可选的接受/拒绝矩阵，
- *      以及 base / path 的字符集拒绝，都在这里。
- *   3. **上限溢出拒绝节点**（`WorldReadCapExceeded`），既不截断也不折成 DriverError。
+ *   1. **argv for every op is element-for-element exact**. argv is this primitive's security
+ *      boundary — no shell strings; path always comes after `--`; base defaults to HEAD. So the
+ *      assertion is not "contains a diff" but whole-array equality: one extra element or one
+ *      missing `--` is a real semantic change.
+ *   2. **Argument validation lives in the driver** (Boundary A only promises positional
+ *      pass-through). The optional accept/reject matrix at the tail, and the character-set
+ *      rejection for base / path, all live here.
+ *   3. **Cap overflow is rejected as its own node** (`WorldReadCapExceeded`), neither truncated
+ *      nor folded into DriverError.
  *
- * 为什么独立成文件而不并入 workflow-driver.test.ts：那份用例经 helpers 在运行时 import
- * `@zcode/core`（真实 AgentRuntime），而本文件只碰 driver 的世界读取面（它对 `@zcode/core`
- * 只有类型导入），因此不依赖模型侧的任何东西。同 workflow-driver-world-read-args.test.ts。
+ * Why a separate file instead of merging into workflow-driver.test.ts: that test imports
+ * `@zcode/core` (real AgentRuntime) at runtime via helpers, while this file only touches the
+ * driver's world-read surface (its `@zcode/core` imports are type-only), so it depends on nothing
+ * from the model side. Same as workflow-driver-world-read-args.test.ts.
  */
 
 import { describe, expect, it } from "vitest";
@@ -38,17 +42,17 @@ import { createAgentRuntimeWorkflowDriver } from "../src/app/workflow-driver.js"
 
 const CWD = "/ws";
 
-/** 一次被记录下来的 git 调用（argv 与 cwd 都要能断言）。 */
+/** One recorded git call (both argv and cwd must be assertable). */
 interface GitCall {
   argv: string[];
   cwd?: string;
   maxInlineBytes?: number;
 }
 
-/** 一条脚本化的 git 响应；按调用顺序取用。 */
+/** One scripted git reply; consumed in call order. */
 interface GitReply {
   stdout?: string;
-  /** stdout 的总字节数；缺省按 stdout 算。用于伪造"被截断的大输出"。 */
+  /** Total byte count of stdout; defaults to stdout's length. Used to fake "a big truncated output". */
   bytes?: number;
   truncated?: boolean;
   exitCode?: number;
@@ -57,14 +61,15 @@ interface GitReply {
 }
 
 /**
- * 拼一段 `-z` 输出：段以 NUL **终止**（不是分隔），所以末尾也有一个 NUL——真 git 就是这样，
- * 而它会在 split 后留下一个空段，解析器必须容得下。
+ * Assemble a piece of `-z` output: segments are NUL **terminated** (not separated), so there is
+ * a trailing NUL as well — real git does exactly that, and it leaves an empty segment after
+ * split that the parser must tolerate.
  */
 function nul(...segments: string[]): string {
   return segments.map((segment) => `${segment}\u0000`).join("");
 }
 
-/** `rev-parse --show-prefix` 在仓库根的回复：空前缀（只有一个换行）。 */
+/** The `rev-parse --show-prefix` reply at the repo root: an empty prefix (just a newline). */
 const PREFIX_AT_ROOT: GitReply = { stdout: "\n" };
 
 function fakeExecutionPort(replies: GitReply[]): {
@@ -76,7 +81,7 @@ function fakeExecutionPort(replies: GitReply[]): {
   const port: ExecutionPort = {
     async run(request: ExecutionRequest): Promise<ExecutionResult> {
       if (request.command.mode !== "argv") {
-        // 只读按构造的核心：driver 绝不构造 shell 命令。走到这里就是回归。
+        // The core of read-only by construction: the driver never builds a shell command. Reaching here is a regression.
         throw new Error(`world-read git 必须用 argv 模式，收到 ${request.command.mode}`);
       }
       expect(request.command.file).toBe("git");
@@ -110,7 +115,7 @@ function fakeExecutionPort(replies: GitReply[]): {
   return { calls, port };
 }
 
-/** fs 端口：只实现 searchText（grep），其余被触及即失败。 */
+/** fs port: implements only searchText (grep); every other method fails on touch. */
 function fakeFileSystemPort(
   entries: FileSystemSearchTextEntry[],
   options: { truncated?: boolean; globFiles?: string[]; globTruncated?: boolean } = {},
@@ -130,7 +135,7 @@ function fakeFileSystemPort(
     async searchFiles(request: FileSystemSearchFilesRequest) {
       globRequests.push(request);
       const all = options.globFiles ?? [];
-      // 复刻真适配器的截断语义：maxResults 之内切片，truncated 表示还有剩余。
+      // Mirrors the real adapter's truncation semantics: slice within maxResults; truncated means more remain.
       const files =
         request.maxResults === undefined ? [...all] : all.slice(0, request.maxResults);
       return {
@@ -227,13 +232,15 @@ function makeDriver(input: {
 }
 
 // ————————————————————————————————————————————————————————————————
-// argv：只读的边界就是这几个数组
+// argv: the read-only boundary is exactly these arrays
 // ————————————————————————————————————————————————————————————————
 
 describe("git world reads — exact argv", () => {
   it("changedFiles with no base unions tracked changes with untracked files", async () => {
-    // 两条命令的并集。未跟踪文件对读者而言就是改动——漏掉它们会让这个原语在一条刚开的
-    // feature 分支上毫无用处。前面还有一次 rev-parse：线上路径是仓库根相对的，要剥前缀。
+    // A union of two commands. Untracked files are changes as far as a reader is concerned —
+    // missing them would make this primitive useless on a freshly opened feature branch. There
+    // is also a rev-parse up front: the wire paths are repo-root-relative, so the prefix must
+    // be stripped.
     const { driver, gitCalls } = makeDriver({
       git: [PREFIX_AT_ROOT, { stdout: nul("b.ts", "a.ts") }, { stdout: nul("c.ts", "a.ts") }],
     });
@@ -247,13 +254,13 @@ describe("git world reads — exact argv", () => {
       ["diff", "--name-only", "-z", "HEAD", "--", "."],
       ["ls-files", "--others", "--exclude-standard", "-z", "--full-name", "--", "."],
     ]);
-    // 每次调用都以工作区根为 cwd。
+    // Every call runs with the workspace root as cwd.
     expect(gitCalls.every((c) => c.cwd === CWD)).toBe(true);
   });
 
   it("changedFiles with a base asks only about tracked history", async () => {
-    // "相对某个 ref 改了什么"是关于已跟踪历史的问题——一个从未进过 git 的文件与任何 ref
-    // 都无从比较，所以这一路**没有** ls-files。
+    // "What changed relative to some ref" is a question about tracked history — a file never
+    // committed to git cannot be compared against any ref, so this path has **no** ls-files.
     const { driver, gitCalls } = makeDriver({
       git: [PREFIX_AT_ROOT, { stdout: nul("src/a.ts") }],
     });
@@ -267,16 +274,18 @@ describe("git world reads — exact argv", () => {
   });
 
   it("diff defaults base to HEAD and pathspec to the workspace, always after --", async () => {
-    // 无 path 时 pathspec 缺省为 `.`：否则 changedFiles 说"只有 a.md 变了"，而 diff 交出
-    // 一段仓库级补丁——两个原语会对"什么算改动"给出不同答案。
+    // Without a path the pathspec defaults to `.`: otherwise changedFiles says "only a.md
+    // changed" while diff hands back a repo-wide patch — the two primitives would answer
+    // "what counts as a change" differently.
     const noPath = makeDriver({ git: [{ stdout: "@@ -1 +1 @@\n" }] });
     await expect(noPath.driver.executeWorldRead("git-diff", [])).resolves.toContain("@@");
     expect(noPath.gitCalls[0]?.argv).toEqual(["diff", "--relative", "HEAD", "--", "."]);
 
     const withPath = makeDriver({ git: [{ stdout: "diff" }] });
     await withPath.driver.executeWorldRead("git-diff", ["main", "src/a.ts"]);
-    // `--` 是契约的一部分：一个恰好与分支同名的路径不能被 git 解读成 ref（也不能反过来）。
-    // 显式 path **取代**缺省 pathspec。
+    // `--` is part of the contract: a path that happens to share a branch's name must not be
+    // read by git as a ref (nor the other way around). An explicit path **replaces** the
+    // default pathspec.
     expect(withPath.gitCalls[0]?.argv).toEqual([
       "diff",
       "--relative",
@@ -297,8 +306,9 @@ describe("git world reads — exact argv", () => {
   });
 
   it("does not need a prefix lookup for the patch diff (git --relative does that base)", async () => {
-    // 补丁文本不是我们解析的路径列表，没法事后剥前缀，所以这一条靠 git 自己的 --relative
-    // 对齐基准——也因此不必多跑一次 rev-parse。
+    // The patch text is not a path list we parse, so the prefix cannot be stripped after the
+    // fact; this one leans on git's own --relative to align the base — and therefore skips the
+    // extra rev-parse.
     const { driver, gitCalls } = makeDriver({ git: [{ stdout: "diff" }] });
     await driver.executeWorldRead("git-diff", []);
     expect(gitCalls).toHaveLength(1);
@@ -306,7 +316,7 @@ describe("git world reads — exact argv", () => {
   });
 
   it("normalizes a windows-style relative path into a git pathspec", async () => {
-    // 模型写 windows 风格的相对路径是常事；git 的 pathspec 在三个平台上都吃 `/`。
+    // Models writing Windows-style relative paths is routine; git pathspecs accept `/` on all three platforms.
     const { driver, gitCalls } = makeDriver({ git: [{ stdout: "diff" }] });
     await driver.executeWorldRead("git-diff", ["HEAD", "src\\app\\a.ts"]);
     expect(gitCalls[0]?.argv).toEqual(["diff", "--relative", "HEAD", "--", "src/app/a.ts"]);
@@ -324,8 +334,9 @@ describe("git world reads — exact argv", () => {
 
     const dflt = makeDriver({ git: [{ stdout: "" }] });
     await dflt.driver.executeWorldRead("git-log", []);
-    // log 刻意**不带** pathspec 也不带 -z：commit 是仓库级对象，给它加 pathspec 会把语义改成
-    // "碰过工作区的那些 commit"；而 %s 按定义单行，所以按行切记录是可靠的。
+    // log deliberately carries **no** pathspec and no -z: a commit is a repo-level object, and
+    // adding a pathspec would change the semantics to "commits that touched the workspace"; %s
+    // is single-line by definition, so splitting records by line is reliable.
     expect(dflt.gitCalls[0]?.argv).toEqual([
       "log",
       `-n${WORLD_READ_CAPS.gitLogDefaultCount}`,
@@ -344,14 +355,16 @@ describe("git world reads — exact argv", () => {
 });
 
 // ————————————————————————————————————————————————————————————————
-// 工作区收束：线上是仓库根相对，交出去是工作区相对
+// Workspace containment: on the wire repo-root-relative, handed out workspace-relative
 // ————————————————————————————————————————————————————————————————
 
 describe("git world reads — workspace-relative paths", () => {
   it("strips the workspace prefix when the workspace is a repo subdirectory", async () => {
-    // 实测事实：`-z` 让 porcelain status 输出**仓库根相对**路径，且没有任何 flag/config 能
-    // 改回 cwd 相对；`diff --name-only` 默认也是根相对。所以基准统一在线上取根相对，由这一侧
-    // 剥一次前缀——三条命令各依赖一个不同的 git 默认值，才是那个会吐出两种基准路径的 bug。
+    // Measured fact: `-z` makes porcelain status emit **repo-root-relative** paths, and no
+    // flag/config can switch it back to cwd-relative; `diff --name-only` is root-relative by
+    // default too. So the base is uniformly taken root-relative on the wire and the prefix is
+    // stripped once on this side — the three commands each rely on a different git default,
+    // which is exactly the bug that would emit two kinds of base paths.
     const { driver } = makeDriver({
       git: [
         { stdout: "sub/nested/\n" },
@@ -389,8 +402,9 @@ describe("git world reads — workspace-relative paths", () => {
   });
 
   it("fails loudly if git reports a path outside the workspace prefix", async () => {
-    // pathspec 已经保证了范围，所以走到这里说明某个假设塌了。此时把一个带 ../ 的路径交给
-    // 脚本，正是这套收束要防的那件事——而脚本会拿它去 files.read。
+    // The pathspec already guarantees the scope, so reaching here means some assumption broke.
+    // Handing a ../ path to the script at that point is exactly what this containment guards
+    // against — and the script would feed it to files.read.
     const { driver } = makeDriver({
       git: [{ stdout: "sub/\n" }, { stdout: nul("outside/elsewhere.ts") }],
     });
@@ -411,17 +425,17 @@ describe("git world reads — workspace-relative paths", () => {
 });
 
 // ————————————————————————————————————————————————————————————————
-// porcelain v2 解析
+// porcelain v2 parsing
 // ————————————————————————————————————————————————————————————————
 
 describe("git status — porcelain v2 -z parsing", () => {
-  /** 一次 status 读取：先一条根前缀回复，再一段 `-z` porcelain。 */
+  /** One status read: first a root-prefix reply, then a `-z` porcelain segment. */
   function statusDriver(...segments: string[]) {
     return makeDriver({ git: [PREFIX_AT_ROOT, { stdout: nul(...segments) }] });
   }
 
   it("reports a clean tree with its branch", async () => {
-    // 头信息段同样以 NUL 终止（不是换行）——实测确认。
+    // The header segments are NUL-terminated too (not newline-terminated) — confirmed empirically.
     const { driver } = statusDriver(
       "# branch.oid 1111111111111111111111111111111111111111",
       "# branch.head main",
@@ -438,8 +452,9 @@ describe("git status — porcelain v2 -z parsing", () => {
   });
 
   it("splits staged / unstaged / untracked, and reports a file in both when it is", async () => {
-    // `XY` 的两位分别是暂存区与工作区状态，`.` 表示未变。所以"改了、暂存了、又接着改"的
-    // 文件同时出现在 staged 与 unstaged——这不是重复，是两条不同的事实。
+    // The two `XY` characters are the index and worktree states; `.` means unchanged. So a file
+    // "changed, staged, then changed again" shows up in both staged and unstaged — that is not a
+    // duplicate, it is two different facts.
     const { driver } = statusDriver(
       "# branch.head feature/x",
       "1 M. N... 100644 100644 100644 aaa bbb staged-only.ts",
@@ -451,7 +466,7 @@ describe("git status — porcelain v2 -z parsing", () => {
     await expect(driver.executeWorldRead("git-status", [])).resolves.toEqual({
       branch: "feature/x",
       clean: false,
-      // 路径可以含空格：解析按"跳过 N 个定长字段取余文"，绝不整段 split。
+      // Paths may contain spaces: parsing "skips N fixed-width fields and takes the rest", never splitting the whole segment.
       staged: ["both.ts", "staged-only.ts"],
       unstaged: ["both.ts", "worktree only.ts"],
       untracked: ["another.ts", "untracked one.ts"],
@@ -459,9 +474,11 @@ describe("git status — porcelain v2 -z parsing", () => {
   });
 
   it("consumes a rename entry's second segment instead of misreading it as a record", async () => {
-    // `-z` 下 rename/copy 项占**两段**：`2 … R100 <新路径>\0<原路径>`（不带 -z 时用 TAB 分隔）。
-    // 少消费那一段，原路径就会被当成下一条记录——它不以类型字符开头，于是被静默丢掉，而紧随
-    // 其后的真记录会被错位读取。这里用 rename 后面紧跟一条真记录来抓住这种错位。
+    // Under `-z` a rename/copy entry takes **two segments**: `2 … R100 <new path>\0<old path>`
+    // (TAB-separated without -z). Consuming one segment too few makes the old path be read as
+    // the next record — it does not start with a type character, so it is silently dropped,
+    // while the real record right after it is read misaligned. A real record immediately after
+    // the rename is used here to catch that misalignment.
     const { driver } = statusDriver(
       "# branch.head main",
       "2 R. N... 100644 100644 100644 aaa bbb R100 new/name.ts",
@@ -471,7 +488,7 @@ describe("git status — porcelain v2 -z parsing", () => {
     await expect(driver.executeWorldRead("git-status", [])).resolves.toEqual({
       branch: "main",
       clean: false,
-      // 只交出**新**路径：facade 报告的是"现在哪些路径变了"。原路径不出现在任何桶里。
+      // Only the **new** path is handed out: the facade reports "which paths changed now". The old path appears in no bucket.
       staged: ["new/name.ts"],
       unstaged: ["after-rename.ts"],
       untracked: [],
@@ -479,8 +496,8 @@ describe("git status — porcelain v2 -z parsing", () => {
   });
 
   it("carries a non-ASCII filename through verbatim", async () => {
-    // 不加 `-z` 时 core.quotePath 会把它 C 引用成 `"\346\226\207..."`。在本仓库的用户身上
-    // 这是常态而不是边角，所以这条是 `-z` 存在的第一个理由。
+    // Without `-z`, core.quotePath would C-quote it as `"\346\226\207..."`. For this repo's
+    // users that is the norm, not an edge case, so this is the first reason `-z` exists.
     const { driver } = statusDriver(
       "# branch.head main",
       "1 .M N... 100644 100644 100644 aaa bbb 文档 中文.md",
@@ -493,8 +510,9 @@ describe("git status — porcelain v2 -z parsing", () => {
   });
 
   it("carries a newline-containing filename through intact", async () => {
-    // `-z` 存在的第二个理由：按行切会把这个文件名劈成两个不存在的路径，且不报任何错——
-    // "少见且静默错误"正是这套代码不接受的失败形态。
+    // The second reason `-z` exists: splitting by lines would cleave this filename into two
+    // non-existent paths without reporting any error — "rare and silent" is exactly the failure
+    // shape this code does not accept.
     const { driver } = statusDriver("# branch.head main", "? has\nnewline.txt");
     await expect(driver.executeWorldRead("git-status", [])).resolves.toMatchObject({
       untracked: ["has\nnewline.txt"],
@@ -502,7 +520,7 @@ describe("git status — porcelain v2 -z parsing", () => {
   });
 
   it("omits branch entirely on a detached HEAD", async () => {
-    // git 写字面量 "(detached)"。把它当分支名交出去，脚本就会拿它去 diff。
+    // git writes the literal "(detached)". Hand it out as a branch name and the script will diff against it.
     const { driver } = statusDriver("# branch.oid abc", "# branch.head (detached)");
     const status = (await driver.executeWorldRead("git-status", [])) as Record<string, unknown>;
     expect(status.branch).toBeUndefined();
@@ -511,7 +529,7 @@ describe("git status — porcelain v2 -z parsing", () => {
   });
 
   it("counts an unmerged entry as unstaged work", async () => {
-    // 冲突文件确实"有待办"，但它不是"已经准备好提交"，所以落 unstaged 而不是 staged。
+    // A conflicted file does have "work to do", but it is not "ready to commit", so it lands in unstaged, not staged.
     const { driver } = statusDriver(
       "# branch.head main",
       "u UU N... 100644 100644 100644 100644 aaa bbb ccc conflicted.ts",
@@ -569,7 +587,7 @@ describe("git log — NUL field parsing", () => {
       { hash: "aaa", subject: "feat: add thing", author: "Ada", date: "2026-08-20T10:00:00+08:00" },
       {
         hash: "bbb",
-        // NUL 分隔而不是别的分隔符，正是为了让 subject 里的 `|` / `:` / 连续空格都安全。
+        // NUL separation rather than any other separator is precisely so that `|` / `:` / runs of spaces inside a subject are all safe.
         subject: "fix: a | pipe, a: colon and  spaces",
         author: "Bob Builder",
         date: "2026-08-19T09:00:00+08:00",
@@ -583,8 +601,9 @@ describe("git log — NUL field parsing", () => {
   });
 
   it("fails loudly on a record whose field count is wrong", async () => {
-    // 格式串与解析器在同一个模块里，两者不一致只可能是本地改动出了岔子；一条只填了一半的
-    // commit 会一路流进 journal 与模型的上下文。
+    // The format string and the parser live in the same module; a mismatch between them can
+    // only come from a local change going wrong, and a half-filled commit would flow all the
+    // way into the journal and the model's context.
     const { driver } = makeDriver({ git: [{ stdout: "aaa\u0000only-two" }] });
     await expect(driver.executeWorldRead("git-log", [])).rejects.toMatchObject({
       code: "DriverError",
@@ -593,7 +612,7 @@ describe("git log — NUL field parsing", () => {
 });
 
 // ————————————————————————————————————————————————————————————————
-// 实参校验：base / path / count
+// Argument validation: base / path / count
 // ————————————————————————————————————————————————————————————————
 
 describe("git world reads — argument validation", () => {
@@ -602,13 +621,13 @@ describe("git world reads — argument validation", () => {
     await expect(driver.executeWorldRead(op, args)).rejects.toMatchObject({
       code: "DriverError",
     });
-    // 校验失败**不得**已经 spawn 出一个 git：argv 在跑任何东西之前就构造好，所以坏 base /
-    // 坏 path 连 rev-parse 都不该发生。
+    // A validation failure must **not** have already spawned a git: argv is assembled before
+    // anything runs, so a bad base / bad path should not even reach rev-parse.
     expect(gitCalls).toEqual([]);
   };
 
   it("rejects a base that would be read as an option", async () => {
-    // `-foo` 会被 git 当成选项而不是 ref，而"哪些选项存在"不由我们决定。
+    // `-foo` would be read by git as an option rather than a ref, and "which options exist" is not our call.
     await rejects("git-diff", ["-foo"]);
     await rejects("git-changed-files", ["--cached"]);
   });
@@ -649,18 +668,18 @@ describe("git world reads — argument validation", () => {
 
   it("rejects an absolute or escaping path", async () => {
     await rejects("git-diff", ["HEAD", "/etc/passwd"]);
-    // 平台无关：posix 的 isAbsolute 认不出 `C:\x`，而这道校验要在三个平台上给同一个答案。
+    // Platform-independent: posix isAbsolute does not recognize `C:\x`, yet this check must give the same answer on all three platforms.
     await rejects("git-diff", ["HEAD", "C:\\Windows\\x"]);
     await rejects("git-diff", ["HEAD", "\\\\server\\share"]);
     await rejects("git-diff", ["HEAD", "../outside/a.ts"]);
     await rejects("git-diff", ["HEAD", "src/../../a.ts"]);
-    // `--` 之后 `-foo` 已经安全，但仍然拒绝：`--` 一旦哪天漏掉，它就是一个选项。
+    // After `--` a `-foo` is already safe, but it is still rejected: if `--` is ever dropped, it becomes an option.
     await rejects("git-diff", ["HEAD", "-foo"]);
     await rejects("git-diff", ["HEAD", ""]);
   });
 
   it("rejects a log count above the cap rather than silently clamping it", async () => {
-    // 请求 500 条却拿到 100 条，会在脚本自己的逻辑里变成一个查不明白的"历史怎么这么短"。
+    // Asking for 500 and getting 100 would turn into an inexplicable "why is the history so short" inside the script's own logic.
     await rejects("git-log", [WORLD_READ_CAPS.gitLogMaxCount + 1]);
     await rejects("git-log", [1000]);
     await rejects("git-log", [0]);
@@ -689,19 +708,19 @@ describe("git world reads — argument validation", () => {
 });
 
 // ————————————————————————————————————————————————————————————————
-// 失败与上限
+// Failures and caps
 // ————————————————————————————————————————————————————————————————
 
 describe("git world reads — failure and caps", () => {
   it("turns a non-repository / missing-binary failure into a catchable DriverError", async () => {
-    // spec 的 fall-back-to-files.glob 惯用法就是一个纯 try/catch，所以这条失败必须是
-    // **node 级**且带上 stderr 的线索。
+    // The spec's fall-back-to-files.glob idiom is a plain try/catch, so this failure must be
+    // **node-level** and carry the stderr clue.
     const failed: GitReply = {
       exitCode: 128,
       status: "failed",
       stderr: "fatal: not a git repository\n",
     };
-    // 非仓库时**第一条**命令（rev-parse）就已经失败，所以两次断言各只消耗一条回复。
+    // For a non-repo the **first** command (rev-parse) already fails, so each of the two assertions consumes exactly one reply.
     const { driver } = makeDriver({ git: [failed, failed] });
     await expect(driver.executeWorldRead("git-status", [])).rejects.toMatchObject({
       code: "DriverError",
@@ -726,7 +745,7 @@ describe("git world reads — failure and caps", () => {
       code: "WorldReadCapExceeded",
     });
     await expect(driver.executeWorldRead("git-diff", [])).rejects.toThrow(/path/);
-    // cap + 1 的 inline 上限是溢出探测的手法：刚好 cap 字节与"被截断"必须可区分。
+    // The cap + 1 inline limit is the overflow-probing trick: exactly cap bytes and "truncated" must be distinguishable.
     expect(gitCalls[0]?.maxInlineBytes).toBe(cap + 1);
   });
 
@@ -741,15 +760,17 @@ describe("git world reads — failure and caps", () => {
 // files.glob
 // ————————————————————————————————————————————————————————————————
 
-// 这组用例钉的是 2026-08-26 的一次真实事故（seq-map bug 扫描 run dwfrun-00cefbcb）：
-// worldGlob 曾把文件系统端口的结果原样交出——绝对路径、mtime 降序、并静默继承端口
-// 面向 UI 工具的 100 条默认上限。绝对路径让脚本的 `startsWith("apps/…")` 路由全部
-// 落空，6 路扇出坍缩成 1 路；mtime 序让同一脚本两次提交扇出次序不同；100 条静默截断
-// 则违反 caps 的"拒绝、绝不截断"总则。三条契约在此各有一枚钉子。
+// This group of tests pins a real incident from 2026-08-26 (seq-map bug scan run dwfrun-00cefbcb):
+// worldGlob used to hand the filesystem port's results straight through — absolute paths,
+// mtime-descending order, silently inheriting the port's UI-tool-oriented default cap of 100
+// entries. Absolute paths made the script's `startsWith("apps/…")` routing all miss, collapsing
+// a 6-way fan-out into 1 way; mtime ordering gave the same script a different fan-out order on
+// each submission; and the silent 100-entry truncation violated the caps' overarching rule of
+// "reject, never truncate". Each of the three contracts gets a pin here.
 describe("files.glob world read", () => {
   it("maps the port's mtime-ordered absolute paths to lexicographic workspace-relative", async () => {
     const { driver, globRequests } = makeDriver({
-      // 端口按 mtime 降序、绝对/相对混合（真适配器给绝对路径；形状归一是 driver 的事）。
+      // Port returns mtime-descending, a mix of absolute/relative (the real adapter gives absolute paths; shape normalization is the driver's job).
       glob: ["/ws/src/z.ts", "/ws/a.ts", "src/m.ts"],
     });
     await expect(driver.executeWorldRead("glob", ["**/*.ts"])).resolves.toEqual([
@@ -760,13 +781,13 @@ describe("files.glob world read", () => {
     expect(globRequests[0]).toMatchObject({
       path: CWD,
       pattern: "**/*.ts",
-      // cap+1 惯用法（与 grep 同族）：恰好 cap 条无从区分"正好"与"截掉了一百万条"。
+      // The cap+1 idiom (same family as grep): at exactly cap entries there is no way to tell "exactly full" from "a million dropped".
       maxResults: WORLD_READ_CAPS.globMaxFiles + 1,
     });
   });
 
   it("rejects over-cap file counts with actionable guidance, never a truncated view", async () => {
-    // 截断的世界视图会被 journal 记录、被 resume 原样重放，脚本还会拿它去扇出。
+    // A truncated world view would be journaled, replayed verbatim by resume, and fanned out on by the script.
     const cap = WORLD_READ_CAPS.globMaxFiles;
     const tooMany = Array.from({ length: cap + 1 }, (_, i) => `/ws/f${i}.ts`);
     const { driver } = makeDriver({ glob: tooMany });
@@ -785,7 +806,7 @@ describe("files.glob world read", () => {
   });
 
   it("rejects when the port reports truncation even under the count cap", async () => {
-    // 与 grep 同一条线：端口若因别的原因截断，我们手上就不是完整结果了。
+    // Same line as grep: if the port truncates for some other reason, we are no longer holding a complete result.
     const { driver } = makeDriver({ glob: ["/ws/a.ts"], globTruncated: true });
     await expect(driver.executeWorldRead("glob", ["*.ts"])).rejects.toMatchObject({
       code: "WorldReadCapExceeded",
@@ -803,7 +824,7 @@ describe("files.grep world read", () => {
       grep: [
         { path: "/ws/src/a.ts", lineNumber: 12, text: "// TODO: fix" },
         { path: "src/b.ts", lineNumber: 3, text: "// TODO: later" },
-        // 端口在别的 outputMode 下会产出没有行号的条目；那不是一条内容命中。
+        // The port produces line-number-less entries under other outputModes; that is not a content hit.
         { path: "/ws/src/c.ts", count: 4 },
       ],
     });
@@ -825,14 +846,14 @@ describe("files.grep world read", () => {
     const { driver, grepRequests } = makeDriver({ grep: [] });
     await expect(driver.executeWorldRead("grep", ["TODO"])).resolves.toEqual([]);
     expect("glob" in grepRequests[0]!).toBe(false);
-    // 显式 undefined 是脚本可写的（`grep(p, undefined)`），归一成同一个"缺席"。
+    // An explicit undefined is writable by the script (`grep(p, undefined)`); it normalizes to the same "absent".
     const explicit = makeDriver({ grep: [] });
     await explicit.driver.executeWorldRead("grep", ["TODO", undefined]);
     expect("glob" in explicit.grepRequests[0]!).toBe(false);
   });
 
   it("rejects over-cap match counts with actionable guidance, never a truncated view", async () => {
-    // 截断把一份悄悄残缺的世界视图交给脚本，而脚本接下来会拿它去扇出——扇出才是贵的那一步。
+    // Truncation hands the script a quietly incomplete world view, and the script will then fan out on it — the fan-out is the expensive step.
     const cap = WORLD_READ_CAPS.grepMaxMatches;
     const tooMany = Array.from({ length: cap + 1 }, (_, i) => ({
       path: `/ws/f${i}.ts`,
@@ -859,7 +880,7 @@ describe("files.grep world read", () => {
   });
 
   it("rejects when the port reports truncation even under the count cap", async () => {
-    // 端口若因别的原因截断，我们手上就不是完整结果了——这与"命中数超限"是同一件事。
+    // If the port truncates for some other reason we no longer hold a complete result — the same thing as "match count over the cap".
     const { driver } = makeDriver({
       grep: [{ path: "a.ts", lineNumber: 1, text: "h" }],
       grepTruncated: true,
@@ -870,7 +891,7 @@ describe("files.grep world read", () => {
   });
 
   it("rejects an over-cap serialized size even when the match count is fine", async () => {
-    // 两个上限**先到先拒**：少量命中也可以很大（一行 minified bundle）。
+    // The two caps reject **whichever is hit first**: few matches can still be huge (one line of minified bundle).
     const bigLine = "x".repeat(WORLD_READ_CAPS.grepMaxSerializedBytes);
     const { driver } = makeDriver({
       grep: [{ path: "bundle.js", lineNumber: 1, text: bigLine }],
@@ -898,14 +919,14 @@ describe("files.grep world read", () => {
 });
 
 // ————————————————————————————————————————————————————————————————
-// facade 与 driver 的形状一致性
+// Shape agreement between facade and driver
 // ————————————————————————————————————————————————————————————————
 
 describe("facade / driver shape agreement", () => {
   it("returns exactly the fields the facade declares", () => {
-    // driver 侧的 GrepMatch / GitStatus / GitCommit 是 FACADE_DTS 的 TS 镜像（facade 是一个
-    // 字符串资产，没法直接 import 它的类型）。这条断言让"镜像走形"在这里失败，而不是在
-    // 某个脚本读到 undefined 字段的时候。
+    // The driver-side GrepMatch / GitStatus / GitCommit are TS mirrors of FACADE_DTS (the facade
+    // is a string asset, so its types cannot be imported directly). This assertion makes "mirror
+    // drift" fail here instead of when some script reads an undefined field.
     for (const declaration of [
       "declare interface GrepMatch",
       "declare interface GitStatus",
@@ -924,7 +945,7 @@ describe("facade / driver shape agreement", () => {
 });
 
 // ————————————————————————————————————————————————————————————————
-// 工作区收束：files.read 的路径必须落在工作区之内
+// Workspace containment: files.read paths must land inside the workspace
 // ————————————————————————————————————————————————————————————————
 
 describe("files.read — workspace containment", () => {
@@ -935,16 +956,17 @@ describe("files.read — workspace containment", () => {
   });
 
   it("rejects a path that escapes the workspace with ..", async () => {
-    // 这道检查是 git.* 落地才变得要紧的：`changedFiles() → files.read(p)` 是那个最显然的
-    // 两行组合，而 git 的原生输出在工作区是仓库子目录时会带 ../ 前缀。一个原语的显然组合
-    // 不该是个陷阱。
+    // This check only became critical once git.* landed: `changedFiles() → files.read(p)` is
+    // the most obvious two-line composition, and git's native output carries a ../ prefix when
+    // the workspace is a repo subdirectory. An obvious composition of primitives must not be a
+    // trap.
     const { driver, readPaths } = makeDriver({});
     for (const escape of ["../outside.ts", "sub/../../outside.ts", "../../etc/passwd"]) {
       await expect(driver.executeWorldRead("read", [escape])).rejects.toMatchObject({
         code: "DriverError",
       });
     }
-    // 一次都没打到端口：拒绝发生在解析之后、读取之前。
+    // The port was never hit: rejection happens after resolution, before the read.
     expect(readPaths).toEqual([]);
   });
 
@@ -957,8 +979,8 @@ describe("files.read — workspace containment", () => {
   });
 
   it("accepts a path that normalizes back inside the workspace", async () => {
-    // `sub/../a.ts` 归一成 `a.ts`，仍在工作区内——判据是**解析之后**的位置，不是字面量里
-    // 有没有出现过 `..`。
+    // `sub/../a.ts` normalizes to `a.ts`, still inside the workspace — the criterion is the
+    // location **after resolution**, not whether `..` appeared in the literal.
     const { driver } = makeDriver({});
     await expect(driver.executeWorldRead("read", ["sub/../a.ts"])).resolves.toBe("body");
   });

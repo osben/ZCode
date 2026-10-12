@@ -113,7 +113,7 @@ it("Start 独立后移除套餐数量快捷入口与切换按钮", () => {
       }),
     );
   expect(render(coding, 2)).not.toContain('data-testid="model-provider-start-plan-count-shortcut"');
-  // 数量不再驱动切换入口，也不保留旧快捷入口的文案与标签。
+  // The count no longer drives a switch entry, and the old shortcut entry's copy and labels are not kept.
   expect(render(coding, 2)).not.toContain("Start Plan × 2");
   expect(render(coding, 2)).not.toContain('aria-label="Switch to Start Plan"');
   expect(render(coding, 2)).not.toContain("lucide-tickets");
@@ -410,7 +410,7 @@ function createProvider(overrides: LegacyProviderOverrides = {}): ProviderSettin
       return model as ProviderSettingsFormProvider["models"][number];
     }
     if (typeof model === "string") {
-      // Settings View 总会提供 Personal 空覆盖；不完整模型也应遵循完整 DTO 外壳。
+      // Settings View always provides a Personal empty override; incomplete models should also follow the full DTO shell.
       return {
         kind: "candidate" as const,
         modelId: model,
@@ -4674,8 +4674,8 @@ describe("model provider coding plan", () => {
   });
 
   it("Z.ai Coding Plan 已购买时显示 Plan Card、用量卡和解绑入口", () => {
-    // Bugfix：用例运行日在 8 月 10 日时，产品会把额度重置时间识别为“今天”并省略日期。
-    // 只在同步渲染期间固定到同年的 1 月 15 日，稳定验证“日期 + 时间”展示，并保证断言失败时恢复时钟。
+    // Bugfix: when the case's run date is August 10, the product recognizes the quota reset time as "today" and omits the date.
+    // Freeze to January 15 of the same year only during synchronous rendering, to stably verify the "date + time" display and guarantee the clock is restored when an assertion fails.
     const currentYear = 2026;
     vi.useFakeTimers();
     let html = "";
@@ -4752,7 +4752,7 @@ describe("model provider coding plan", () => {
 
     expect(html).not.toContain("settings.modelProvider.codingPlan.status.purchased");
     expect(html).not.toContain("settings.modelProvider.enabledStatus");
-    // 套餐卡不提供 Provider 启停；下方模型行仍应提供自己的启停控件。
+    // The plan card provides no Provider enable/disable; the model rows below should still provide their own enable/disable controls.
     expect(html.split("settings.modelProvider.models")[0]).not.toContain(
       "settings.modelProvider.disableAction",
     );
@@ -5569,7 +5569,7 @@ describe("model provider coding plan", () => {
       expect(html).not.toContain("Jul 10 00:23");
       expect(html).not.toContain("Today 00:23");
       expect(html).not.toContain("settings.modelProvider.codingPlan.title");
-      // 语义变更:体验套餐卡片不再提供「管理」「解绑」操作,只保留升级 Coding Plan 入口。
+      // Semantic change: the trial plan card no longer offers "Manage"/"Disconnect" actions, keeping only the upgrade Coding Plan entry.
       expect(html).not.toContain("settings.modelProvider.codingPlan.manage");
       expect(html).not.toContain("settings.modelProvider.codingPlan.disconnect");
       expect(html).toContain("settings.modelProvider.codingPlan.upgrade");
@@ -5635,7 +5635,7 @@ describe("model provider coding plan", () => {
       planLevel: "Start",
       subscriptionRenewTime: new Date(2026, 5, 8, 23, 2).toISOString(),
       subscriptionExpireTime: new Date(2026, 5, 8, 23, 59).toISOString(),
-      // 生产数据形态：purchased 快照必带 active 套餐详情，额度桶带 plan_id。
+      // Production data shape: a purchased snapshot always carries active plan details, and quota buckets carry plan_id.
       subscriptionDetails: [
         {
           productId: "zcode-v3-start-plan",
@@ -5693,12 +5693,12 @@ describe("model provider coding plan", () => {
     });
 
     expect(html).toContain("settings.modelProvider.startPlan.balance.title");
-    // 体验套餐用量卡片不展示「管理」「解绑」操作,只保留升级 Coding Plan 入口。
+    // The trial plan usage card does not show "Manage"/"Disconnect" actions, keeping only the upgrade Coding Plan entry.
     expect(html).not.toContain("settings.modelProvider.codingPlan.manage");
     expect(html).not.toContain("settings.modelProvider.codingPlan.disconnect");
     expect(html).toContain("settings.modelProvider.codingPlan.upgrade");
-    // 多卡路径下套餐到期时间只在 StartPlanStatusMeta 渲染一次；
-    // 余额卡不再重复展示套餐级 expireTime。
+    // On the multi-card path, the plan expiry time renders only once in StartPlanStatusMeta;
+    // the balance card no longer repeats the plan-level expireTime.
     expect(html.match(/settings\.modelProvider\.startPlan\.expiresAt/g)?.length).toBe(1);
     expect(html).not.toContain("settings.modelProvider.startPlan.balance.remaining");
     expect(html).toContain("GLM-5.2");
@@ -5708,7 +5708,7 @@ describe("model provider coding plan", () => {
     expect(html.indexOf("GLM-5.2")).toBeLessThan(html.indexOf("GLM-5-Turbo"));
     expect(html).not.toContain("GLM-5Turbo");
     expect(html).toContain("83%");
-    // 桶刷新时间非当日仅展示日期（Jun 8），与 Coding Plan 重置时间格式对齐。
+    // Bucket refresh time on a non-current day shows only the date (Jun 8), aligned with the Coding Plan reset time format.
     expect(html).not.toContain("23:02");
     expect(html).toContain("2,500,000 / 3,000,000");
     expect(html).toContain("1,000,000 / 1,000,000");
@@ -5780,7 +5780,7 @@ describe("model provider coding plan", () => {
     expect(html.indexOf("Welcome Plan")).toBeLessThan(html.indexOf("Bonus Plan"));
     expect(html).toContain("Jun 8");
     expect(html).toContain("Jun 15");
-    // 桶刷新时间与 Coding Plan 对齐：非当日仅展示日期，不携带小时分钟。
+    // Bucket refresh time aligns with Coding Plan: non-current days show only the date, without hours and minutes.
     expect(html).not.toContain("10:11");
     expect(html).not.toContain("12:22");
     expect(html).toContain("GLM-5.2");
@@ -5896,7 +5896,7 @@ describe("model provider coding plan", () => {
       status: "purchased",
       planLevel: "Start",
       subscriptionExpireTime: new Date(2026, 5, 8, 23, 59).toISOString(),
-      // 生产数据形态：purchased 快照必带 active 套餐详情，额度桶带 plan_id。
+      // Production data shape: a purchased snapshot always carries active plan details, and quota buckets carry plan_id.
       subscriptionDetails: [
         {
           productId: "zcode-v3-start-plan",
@@ -5987,9 +5987,9 @@ describe("model provider coding plan", () => {
   });
 
   it("Start Plan 兜底单卡不再渲染额度桶，余额未落定时仅保留查询占位", () => {
-    // 服务端契约保证 balances 只属于 active plans：purchased 快照必有套餐详情，
-    // 多卡路径必然可用。兜底分支（nav item 无套餐详情）不得把全量桶塞进单卡，
-    // 否则违背 spec「无匹配 plan_id 的桶不得附着到任何卡片」。
+    // The server contract guarantees balances belong only to active plans: a purchased snapshot always has plan details,
+    // so the multi-card path is always available. The fallback branch (nav item without plan details) must not cram all buckets into a single card,
+    // otherwise it violates the spec "buckets with no matching plan_id must not attach to any card".
     const quotaLimits = [
       {
         type: "ent_zcode_v3_glm_52",
@@ -6011,7 +6011,7 @@ describe("model provider coding plan", () => {
     );
     expect(settledHtml).not.toContain("settings.modelProvider.startPlan.balance.title");
     expect(settledHtml).not.toContain("2,734,000 / 3,000,000");
-    // 兜底分支的套餐卡本体仍在（标题 + 升级按钮），只是不再渲染额度桶。
+    // The fallback branch's plan card body remains (title + upgrade button); only the quota buckets are no longer rendered.
     expect(settledHtml).toContain("settings.modelProvider.planCard.startPlan");
     expect(settledHtml).toContain("settings.modelProvider.codingPlan.upgrade");
 
@@ -6754,7 +6754,7 @@ describe("model provider coding plan", () => {
         status: "purchased",
         planLevel: "Start",
         subscriptionExpireTime: new Date(2026, 5, 8, 23, 59).toISOString(),
-        // 生产数据形态：purchased 快照必带 active 套餐详情，额度桶带 plan_id。
+        // Production data shape: a purchased snapshot always carries active plan details, and quota buckets carry plan_id.
         subscriptionDetails: [
           {
             productId: "zcode-v3-start-plan",
@@ -7214,8 +7214,8 @@ describe("model provider coding plan", () => {
     });
 
     expect(calls).toContain("team-products");
-    // 改造原因：购买流程迁到 webview 后，App 不再维护 purchase token 状态
-    // （oauth:active_provider 那套登录态由官网页内部处理），刷新列表里不再有 "token"。
+    // Reason for the change: after the purchase flow moved to the webview, the App no longer maintains purchase token state
+    // (the oauth:active_provider login state is handled inside the official website page), so the refresh list no longer has "token".
     expect(calls.sort()).toEqual(["entitlements", "registry", "team-products"]);
   });
 

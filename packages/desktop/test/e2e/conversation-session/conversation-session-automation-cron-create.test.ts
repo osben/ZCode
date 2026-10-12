@@ -46,8 +46,9 @@ import {
   waitForV4TimelineContaining,
 } from "../helpers/v4-conversation.js";
 
-// 与 fixtures/upstream/conversation-session/conversation-session-automation-cron-create.json 对齐：
-// prompt 里的 marker 触发回放的 CronCreate 工具调用；title 是工具入参里固定的定时任务标题。
+// Aligned with fixtures/upstream/conversation-session/conversation-session-automation-cron-create.json:
+// the marker in the prompt triggers the replayed CronCreate tool call; the title is the fixed automation
+// title in the tool input.
 const MARKER = "E2E_AUTOMATION_CRON_CREATE";
 const AUTOMATION_TITLE = "E2E_CRON_STANDUP";
 const INTERVAL = 31;
@@ -55,10 +56,11 @@ const INTERVAL_MINUTE = 49;
 const COMPATIBLE_CRON = "49 * * * *";
 
 /**
- * 会话内 CronCreate → 聊天卡片 → 派生轮尾顺序 → 管理页详情 端到端。
+ * In-session CronCreate → chat card → derived turn-tail order → management page detail, end to end.
  *
- * 模型响应走 upstream 回放（同名 fixture 自动加载），CronCreate 工具真实执行并落库；
- * 不依赖 20s 轮询调度器，因此是确定性的。
+ * The model response goes through upstream replay (the same-named fixture loads automatically); the
+ * CronCreate tool really executes and persists; no dependence on the 20s polling scheduler, so it is
+ * deterministic.
  */
 describe("会话内 CronCreate 定时任务卡片与派生轮尾 E2E", () => {
   after(async () => {
@@ -71,11 +73,12 @@ describe("会话内 CronCreate 定时任务卡片与派生轮尾 E2E", () => {
 
     await prepareV4ConversationE2E({ resetDraftBeforeProvider: true });
 
-    // 触发回放的 CronCreate 工具调用（prompt 内容不重要，靠 marker 命中 fixture）。
+    // Trigger the replayed CronCreate tool call (prompt content doesn't matter; the fixture is matched by marker).
     await sendV4Prompt(`${MARKER} remind me every 31 hours at minute 49`);
     await waitForV4TimelineContaining(MARKER);
-    // 回归边界：contract 必须真实进入 provider request；仅断言本地 ToolEntry 会漏掉
-    // adapter 序列化时 description/input schema 丢失的链路问题。
+    // Regression boundary: the contract must actually reach the provider request; asserting only the local
+    // ToolEntry would miss
+    // link problems where description/input schema is lost during adapter serialization.
     const cronCreateRequest = {
       lastUserMessageIncludes: [MARKER],
     };
@@ -95,8 +98,9 @@ describe("会话内 CronCreate 定时任务卡片与派生轮尾 E2E", () => {
     expect(serializedCronCreateContract).toContain(
       "do not ask it to create or schedule another automation",
     );
-    // 修复原因：V4 会把 CronCreate 的副作用权限请求停在 composer dock；
-    // 旧 case 直接等待 idle 会永远阻塞，必须显式批准后工具才会真实执行并落库。
+    // Why: V4 parks CronCreate's side-effect permission request at the composer dock;
+    // the old case waited for idle directly and would block forever — the tool only really executes and
+    // persists after explicit approval.
     await approveV4Permission();
     const parent = await waitForV4Pane(
       (snapshot) =>
@@ -108,9 +112,10 @@ describe("会话内 CronCreate 定时任务卡片与派生轮尾 E2E", () => {
     );
     const parentSessionId = parent.sessionId;
 
-    // 1) 聊天里出现 CronCreate 卡片，且显示定时任务标题（而不是回退成普通工具块）。
-    // Bug 根因：完成态 V4 会把工具调用收进折叠的 assistant history；旧 case
-    // 直接查询未挂载的 portal 内容，误报 CronCreate 卡片丢失。
+    // 1) The CronCreate card appears in chat and shows the automation title (instead of falling back to a
+    // plain tool block).
+    // Bug root cause: in the completed state V4 folds tool calls into the assistant history; the old case
+    // queried unmounted portal content directly and falsely reported the CronCreate card as missing.
     await expandAssistantHistoriesWithContent();
     try {
       await waitForTestIdByDom(TID_CRON_CREATE_CARD, {
@@ -118,8 +123,10 @@ describe("会话内 CronCreate 定时任务卡片与派生轮尾 E2E", () => {
         timeoutMsg: "会话内没有渲染 CronCreate 定时任务卡片",
       });
     } catch (error) {
-      // 修复原因：专用卡片缺失时若只保留 selector 超时，无法区分 fixture 没有触发、
-      // tool 投影丢失和 renderer 回退。把同一时刻的工具块/store 证据带进错误。
+      // Why: when the dedicated card is missing, keeping only the selector timeout cannot distinguish
+      // "fixture didn't trigger",
+      // "tool projection lost", and "renderer fallback". Bring the tool block/store evidence from the same
+      // moment into the error.
       const diagnostics = await getToolCallDiagnostics({
         type: "toolName",
         value: "CronCreate",
@@ -152,8 +159,9 @@ describe("会话内 CronCreate 定时任务卡片与派生轮尾 E2E", () => {
       minute: INTERVAL_MINUTE,
     });
 
-    // 2) 从完成态 assistant 派生并切到 child。fork 不产生新的 provider request，
-    // 所以沿用同一份确定性 fixture 即可覆盖真实会话恢复后的渲染顺序。
+    // 2) Derive from the completed-state assistant and switch to the child. The fork produces no new provider
+    // request, so reusing the same deterministic fixture covers the render order after a real session
+    // recovery.
     await waitForV4Fork();
     expect(await clickFirstV4Fork()).toBe(true);
     await waitForV4Pane(
@@ -171,18 +179,22 @@ describe("会话内 CronCreate 定时任务卡片与派生轮尾 E2E", () => {
       timeoutMsg: "派生会话没有恢复 CronCreate 定时任务卡片",
     });
 
-    // Bug 根因：turnTailBoundary 虽然从工作历史中拆出，却曾在 turn-local 卡片、
-    // summary 与操作栏之前渲染。这里锁定 live DOM 全序，确保“从对话中派生”始终
-    // 位于 CronCreate 卡片和点赞/点踩/派生操作栏之后。
+    // Bug root cause: turnTailBoundary, although split out of the work history, used to render before the
+    // turn-local cards,
+    // summary, and action bar. Lock the live DOM's full order here to make sure "derived from conversation"
+    // always sits after the CronCreate card and the like/dislike/derive action bar.
     await waitForForkTailOrder();
 
-    // 3) 在派生会话点“去到定时任务” → 携带 automationId 进入管理页详情。
+    // 3) In the derived session, click "go to the automation" → enter the management page detail carrying
+    // automationId.
     await clickTestIdByDom(TID_CRON_CREATE_OPEN, {
       timeoutMsg: "CronCreate 卡片没有可点击的「去到定时任务」按钮",
     });
 
-    // 修复原因：产品已改为列表 RPC 完成后直接打开目标详情；旧 case 仍等待只在 list
-    // view 存在的 DOM，会把正确跳转稳定误报为失败。这里改为锁定详情标题输入的持久化值。
+    // Why: the product now opens the target detail directly after the list RPC completes; the old case still
+    // waited for DOM that only exists in the
+    // list view, which would stably misreport the correct navigation as a failure. Instead, lock the persisted
+    // value of the detail title input.
     await waitForTestIdByDom(TID_AUTOMATION_FORM_TITLE, {
       timeout: 15000,
       timeoutMsg: "没有跳转到会话创建的定时任务详情",
@@ -196,15 +208,18 @@ describe("会话内 CronCreate 定时任务卡片与派生轮尾 E2E", () => {
       },
     );
 
-    // 3.5) 回归：会话创建任务的详情页未做任何修改时，返回必须直接回列表，不得把
-    // Radix Select 注册竞争发出的系统回调误判成用户修改而弹“未保存”确认框。
-    // 先等权限模式选择器挂载完成，确保断言覆盖工具栏控件初始化之后的竞争窗口。
+    // 3.5) Regression: when the detail page of a session-created task has no modifications, going back must
+    // return straight to the list and must not misjudge the system callbacks emitted by Radix Select
+    // registration races as user edits and pop the "unsaved" confirm dialog.
+    // First wait for the permission-mode selector to mount, ensuring the assertion covers the race window
+    // after toolbar control initialization.
     await waitForTestIdByDom(TID_CHAT_MODE_SELECT_TRIGGER, {
       timeout: 10000,
       timeoutMsg: "任务详情没有渲染权限模式选择器",
     });
-    // 详情页回退已迁到 Settings header breadcrumb；它挂载在编辑页之外，侧栏 test id
-    // 在当前承载面并不存在，必须点击真实 breadcrumb 返回列表。
+    // The detail page's back navigation has moved to the Settings header breadcrumb; it mounts outside the
+    // edit page, the sidebar test id
+    // doesn't exist on the current surface, so the real breadcrumb must be clicked to return to the list.
     await clickAutomationsBreadcrumbBack();
     expect(await hasVisibleTestId(TID_CONFIRM_DIALOG_CONFIRM)).toBe(false);
     await waitForTestIdByDom(TID_AUTOMATIONS_LIST, {
@@ -212,7 +227,7 @@ describe("会话内 CronCreate 定时任务卡片与派生轮尾 E2E", () => {
       timeoutMsg: "无修改返回没有直接回到任务列表（疑似误弹未保存确认框）",
     });
 
-    // 重新进入详情，继续验证只读调度摘要与调度重设闭环。
+    // Re-enter the detail and keep verifying the read-only schedule summary and the schedule-reset loop.
     await clickTestIdByDom(TID_AUTOMATION_CARD, {
       timeoutMsg: "返回列表后无法重新进入任务详情",
     });
@@ -225,8 +240,9 @@ describe("会话内 CronCreate 定时任务卡片与派生轮尾 E2E", () => {
       },
     );
 
-    // 4) interval carrier 的兼容 cron 虽然只是每小时候选，但详情必须优先回显权威
-    // scheduleRule，不能退化为“每小时的第 49 分”。
+    // 4) The interval carrier's compatible cron is only an hourly candidate, but the detail page must echo the
+    // authoritative
+    // scheduleRule first and must not degrade to "the 49th minute of every hour".
     await waitForTestIdByDom(TID_AUTOMATION_SCHEDULE_PREVIEW, {
       timeout: 10000,
       timeoutMsg: "会话创建任务没有显示调度摘要",
@@ -251,7 +267,7 @@ describe("会话内 CronCreate 定时任务卡片与派生轮尾 E2E", () => {
       timeoutMsg: "会话创建的 interval 调度无法关闭自定义重复编辑",
     });
 
-    // 5) 删除旧会话调度后进入标准 UI 添加流程，选择每天并保存。
+    // 5) Delete the old session schedule, then enter the standard UI add flow, pick daily, and save.
     await clickTestIdByDom(TID_AUTOMATION_SCHEDULE_DELETE, {
       timeoutMsg: "会话创建任务的自定义调度没有删除按钮",
     });
@@ -265,7 +281,8 @@ describe("会话内 CronCreate 定时任务卡片与派生轮尾 E2E", () => {
       timeoutMsg: "重新设置 UI 调度后无法保存",
     });
 
-    // 6) 再次进入详情后应恢复标准 UI 调度控件，证明新 cron 替换了旧会话 cron。
+    // 6) Re-entering the detail should restore the standard UI schedule controls, proving the new cron replaced
+    // the old session cron.
     await waitForTestIdByDom(TID_AUTOMATIONS_LIST, {
       timeout: 15000,
       timeoutMsg: "保存 UI 调度后没有回到任务列表",
@@ -284,7 +301,7 @@ describe("会话内 CronCreate 定时任务卡片与派生轮尾 E2E", () => {
   });
 });
 
-/** Settings header 的 Automations breadcrumb 是任务详情返回列表的真实入口。 */
+/** The Settings header's Automations breadcrumb is the real entry from task detail back to the list. */
 async function clickAutomationsBreadcrumbBack(): Promise<void> {
   const buttons = await browser.$$('nav[aria-label] button');
   for (const button of buttons) {
@@ -320,7 +337,8 @@ async function waitForAutomationRecordByTitle(
 }
 
 function readAutomationRecordByTitle(title: string): AutomationRecord | null {
-  // Node 内置 SQLite 当前只提供同步 DatabaseSync；E2E 每次仅做一行只读查询并立即关闭。
+  // Node's builtin SQLite currently only offers the synchronous DatabaseSync; the E2E does a single read-only
+  // one-row query each time and closes immediately.
   const database = new DatabaseSync(
     join(getE2EAppDataPaths().storageRoot, "v2", "tasks-index.sqlite"),
     { readOnly: true },
@@ -345,7 +363,7 @@ function readAutomationRecordByTitle(title: string): AutomationRecord | null {
   }
 }
 
-/** 读取某个 test id 元素的可见文本。 */
+/** Read the visible text of a test id element. */
 async function readTestIdText(currentTestId: string): Promise<string> {
   return browser.execute((tid) => {
     const el = Array.from(
@@ -355,7 +373,7 @@ async function readTestIdText(currentTestId: string): Promise<string> {
   }, currentTestId);
 }
 
-/** 某个 test id 元素当前是否挂载（用于断言确认弹窗没有出现）。 */
+/** Whether a test id element is currently mounted (used to assert the confirm dialog did not appear). */
 async function hasVisibleTestId(currentTestId: string): Promise<boolean> {
   return browser.execute(
     (tid) => Boolean(document.querySelector(`[data-testid="${tid}"]`)),
@@ -371,7 +389,7 @@ interface ForkTailOrderSnapshot {
   ordered: boolean;
 }
 
-/** 等待同一 turn 内卡片、操作栏与 fork 分割线按完成态视觉顺序挂载。 */
+/** Wait for the card, action bar, and fork divider within the same turn to mount in the completed-state visual order. */
 async function waitForForkTailOrder(): Promise<void> {
   let latest: ForkTailOrderSnapshot | null = null;
   try {
@@ -393,7 +411,7 @@ async function waitForForkTailOrder(): Promise<void> {
   }
 }
 
-/** 读取派生 child 中 CronCreate 所在 turn 的关键节点顺序。 */
+/** Read the key node order of the turn containing CronCreate in the derived child. */
 async function readForkTailOrder(): Promise<ForkTailOrderSnapshot> {
   return browser.execute(
     (cardTid, dislikePrefix, forkPrefix) => {
@@ -437,7 +455,7 @@ async function readForkTailOrder(): Promise<ForkTailOrderSnapshot> {
   );
 }
 
-/** 读取 input/textarea 的当前值，避免用 textContent 误判受控表单。 */
+/** Read the current value of an input/textarea, avoiding misjudging controlled forms via textContent. */
 async function readTestIdValue(currentTestId: string): Promise<string> {
   return browser.execute((tid) => {
     const element = document.querySelector<

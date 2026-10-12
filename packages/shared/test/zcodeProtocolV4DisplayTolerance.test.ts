@@ -1,15 +1,16 @@
-// display 载荷在信封层不设门（docs/v4-refactor/10-protocol-spec.md §4.4.5、
-// docs/v4-refactor/04-sync-and-recovery.md 封闭规则 11）。
+// Display payloads face no gate at the envelope layer (docs/v4-refactor/10-protocol-spec.md §4.4.5,
+// docs/v4-refactor/04-sync-and-recovery.md closure rule 11).
 //
-// 回归来源（2026-09-21，sess_4142de31）：CLI 给 `list_workflow_runs` 的 run 行加了
-// `resumedFrom` / `supersededBy` 两个 lineage 键（contracts 侧 display 复用了工具**输出**的行
-// schema，输出长字段就等于 wire 长字段），本侧镜像没跟上。旧行为是整帧被
-// `proto.frameAssemblyInvalidPayload` 拒 → 恢复阶梯在同一份内容上重试 → 会话停在
-// fault.subscription.recoveryFailed，而每次快照都重放同一份存量载荷，永不自愈。
-// 2026-09-17 的 `providerStop` 是同款事故的第一次。
+// Regression source (2026-09-21, sess_4142de31): the CLI added two lineage keys `resumedFrom` / `supersededBy`
+// to `list_workflow_runs` run rows (the contracts-side display reuses the tool **output** row schema, so a long
+// output field is a long wire field), and this side's mirror did not keep up. The old behavior was the whole
+// frame rejected by `proto.frameAssemblyInvalidPayload` → the recovery ladder retried on the same content →
+// the session stuck on fault.subscription.recoveryFailed, with every snapshot replaying the same stale payload, never self-healing.
+// The 2026-09-17 `providerStop` was the first incident of this kind.
 //
-// 现在的契约：**装饰载荷不决定 row / 帧 / 订阅的生死**。认不出来的 display 被丢掉（卡片退化成
-// 纯文本，这正是 spec 一直承诺的行为），其余字段照常投影。本文件钉四个嵌入点 + 一条整帧路径。
+// The contract now: **decorative payloads do not decide the life or death of a row / frame / subscription**.
+// Unrecognized display is dropped (the card degrades to plain text, exactly what the spec has always promised)
+// while the remaining fields project as usual. This file pins four embedding points + one whole-frame path.
 
 import { describe, expect, it } from "vitest";
 import {
@@ -26,7 +27,7 @@ import {
 const TOPIC = "conversation/session-display-tolerance";
 const SUBSCRIPTION_ID = "sub-display-tolerance";
 
-/** 事故当天真的躺在库里的那张卡：20 行里 5 行带 lineage 键，此处取其中两行。 */
+/** The card that genuinely sat in the store on the day of the incident: 5 of 20 rows carry lineage keys; two are reproduced here. */
 const POISONED_LIST_RUNS_DISPLAY = {
   kind: "list_workflow_runs",
   runs: [
@@ -39,7 +40,7 @@ const POISONED_LIST_RUNS_DISPLAY = {
       createdAt: 1_758_000_000_000,
       updatedAt: 1_758_000_100_000,
       spentTokens: 12_345,
-      // ↓ 本侧镜像不认识的两个键（CLI 侧输出 schema 在 980e257bff 长出来的）
+      // ↓ The two keys this side's mirror does not know (grown on the CLI-side output schema in 980e257bff)
       resumedFrom: "dwfrun-3eadf667-8c25-43da-83b1-0e26e7f4897c",
     },
     {
@@ -58,7 +59,7 @@ const POISONED_LIST_RUNS_DISPLAY = {
   truncated: true,
 } as const;
 
-/** 本端认得的合法载荷，用来证明"不设门"不等于"不解析"。 */
+/** A payload this end recognizes, proving "no gate" does not mean "no parsing". */
 const VALID_DISPLAY = {
   kind: "task_output",
   retrievalStatus: "success",
@@ -86,7 +87,7 @@ describe("display 载荷在信封层不设门", () => {
     const parsed = toolCallRowSchema.safeParse(toolRow(POISONED_LIST_RUNS_DISPLAY));
     expect(parsed.success).toBe(true);
     if (!parsed.success) return;
-    // 卡没了（渲染侧据此退化成纯文本），但 row 本身完好——这才是"装饰载荷"该有的分量。
+    // The card is gone (the renderer degrades to plain text on that basis), but the row itself is intact — this is the weight a "decorative payload" should carry.
     expect(parsed.data.display).toBeUndefined();
     expect(parsed.data.toolCallId).toBe("call-1");
     expect(parsed.data.status).toBe("success");
@@ -113,8 +114,9 @@ describe("display 载荷在信封层不设门", () => {
     if (output.success) expect(output.data.display).toEqual(VALID_DISPLAY);
   });
 
-  // 新 display kind 曾是比新字段更硬的墙：discriminated union 对未知 discriminator 直接失败，
-  // 于是"加一个卡种"对版本锁定的旧客户端等于一次破坏性变更（presentation.md 因此放弃过这个方案）。
+  // A new display kind was once a harder wall than a new field: a discriminated union fails outright on an unknown
+  // discriminator, so "adding a card kind" was effectively a breaking change for version-locked old clients
+  // (presentation.md abandoned that approach for this reason).
   it("未来 CLI 新增的 display kind 只是这张卡没有载荷，不是解析失败", () => {
     const parsed = toolCallRowSchema.safeParse(
       toolRow({ kind: "some_future_card_kind_from_a_newer_cli", whatever: 1 }),
@@ -166,9 +168,9 @@ describe("display 载荷在信封层不设门", () => {
     if (parsed.success) expect(parsed.data.display).toBeUndefined();
   });
 
-  // 这一条是事故本身：整帧走一遍真实的 physical reassembly。修复前这里会拿到
-  // { kind: "rejected", reasonCode: "proto.frameAssemblyInvalidPayload" }，
-  // 而 store 收到该 fault 后会在同一份内容上重试并最终 fail closed。
+  // This one is the incident itself: the whole frame goes through a real physical reassembly. Before the fix this
+  // returned { kind: "rejected", reasonCode: "proto.frameAssemblyInvalidPayload" },
+  // and on that fault the store would retry on the same content and eventually fail closed.
   it("承载被污染卡片的整帧仍然完整重组，不产生 InvalidPayload fault", () => {
     const frame: ConversationTopicFrame = {
       topic: TOPIC,
@@ -199,7 +201,7 @@ describe("display 载荷在信封层不设门", () => {
     expect(delta?.op).toBe("row.upserted");
     const row = delta?.op === "row.upserted" ? delta.row : null;
     expect(row?.kind).toBe("toolCall");
-    // 帧活下来了，代价只是这张卡没有结构化载荷。
+    // The frame survived; the only cost is that this card has no structured payload.
     expect(row?.kind === "toolCall" ? row.display : "unreachable").toBeUndefined();
   });
 

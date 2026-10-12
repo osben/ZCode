@@ -41,22 +41,25 @@ import {
   waitForV4TimelineContaining,
 } from "../../../helpers/v4-conversation.js";
 
-// 与 fixtures/upstream/conversation-session/conversation-session-offpeak-create.json 对齐：
-// prompt 里的 marker 触发回放的 OffPeakCreate 工具调用；title 是工具入参里固定的闲时任务标题。
+// Aligned with fixtures/upstream/conversation-session/conversation-session-offpeak-create.json:
+// the marker in the prompt triggers the replayed OffPeakCreate tool call; title is the fixed idle-task title in the
+// tool arguments.
 const CASE_NAME = "conversation-session-offpeak-create";
 const MARKER = "E2E_OFFPEAK_CHAT_CREATE";
 const TASK_TITLE = "E2E_OFFPEAK_DIGEST";
 const UPDATED_TASK_TITLE = "E2E_OFFPEAK_DIGEST_EDITED";
-// wdio.conf startOffPeakE2EMock：spec 名含 offpeak → ZCODE_OFFPEAK_MOCK=1，
-// 隔离 Built-in 单模型白名单 GLM-5.2，票据 60s 内保持 queued，位次为 1。
+// wdio.conf startOffPeakE2EMock: a spec name containing offpeak → ZCODE_OFFPEAK_MOCK=1,
+// isolating the Built-in single-model whitelist to GLM-5.2; the ticket stays queued within 60s, in position 1.
 const MOCK_ALLOWED_MODEL = "GLM-5.2";
 
 /**
- * D49 会话内创建闲时任务核心体验端到端：
- * prompt → OffPeakCreate 进入 provider 工具面 → 审批 → 轮尾卡（标题 + 位次快照）
- * → 落库缺省（yolo / 白名单末位 / 最高档）→ 点「去到闲时任务」直达编辑表单 → 改标题保存 → 列表回显。
+ * D49 end-to-end core experience of creating an idle-time task inside a session:
+ * prompt → OffPeakCreate enters the provider tool surface → approval → end-of-turn card (title + queue-position
+ * snapshot) → storage defaults (yolo / last in whitelist / top reasoning tier) → click "去到闲时任务" to jump
+ * straight to the edit form → change the title and save → the list shows it back.
  *
- * 模型响应走 upstream 回放；取号走进程内 mock 网关；创建与编辑真实落库，确定性。
+ * Model responses go through upstream replay; ticketing goes through the in-process mock gateway; creation and edit
+ * really hit storage — deterministic.
  */
 describe("会话内 OffPeakCreate 闲时任务卡片与直达编辑 E2E", () => {
   after(async () => {
@@ -74,13 +77,15 @@ describe("会话内 OffPeakCreate 闲时任务卡片与直达编辑 E2E", () => 
     });
 
     try {
-      // 1) 用户用自然语言要求闲时执行；marker 命中 fixture 固定返回 OffPeakCreate tool_use。
+      // 1) The user asks in natural language to run during idle time; the marker hits the fixture's fixed
+      // OffPeakCreate tool_use response.
       await sendV4Prompt(
         `${MARKER} 帮我建一个闲时任务：整理今天改动的文件并生成一份摘要写到 DIGEST.md`,
       );
       await waitForV4TimelineContaining(MARKER);
 
-      // 2) 回归边界：OffPeakCreate 契约必须真实进入 provider request（工具面已按 D49-8 门禁下发）。
+      // 2) Regression boundary: the OffPeakCreate contract must really enter the provider request (the tool surface
+      // is already gated down per D49-8).
       const createRequest = { lastUserMessageIncludes: [MARKER] };
       await waitForUpstreamRequest(
         createRequest,
@@ -92,7 +97,8 @@ describe("会话内 OffPeakCreate 闲时任务卡片与直达编辑 E2E", () => 
       expect(serializedContract).toContain("OffPeakCreate has no clock");
       expect(serializedContract).toContain("full-automatic mode");
 
-      // 3) needsApproval：审批停在 composer dock，显式批准后工具才真实取号并落库。
+      // 3) needsApproval: the approval parks at the composer dock; only after explicit approval does the tool really
+      // take a ticket and persist.
       await approveV4Permission();
       const donePane = await waitForV4Pane(
         (snapshot) =>
@@ -102,7 +108,7 @@ describe("会话内 OffPeakCreate 闲时任务卡片与直达编辑 E2E", () => 
       );
       const creatingSessionId = donePane.sessionId!;
 
-      // 4) 轮尾卡：月亮卡片展示任务标题 + 创建时位次快照。
+      // 4) End-of-turn card: the moon card shows the task title + the queue-position snapshot at creation.
       await expandAssistantHistoriesWithContent();
       try {
         await waitForTestIdByDom(TID_OFFPEAK_CREATE_CARD, {
@@ -130,21 +136,23 @@ describe("会话内 OffPeakCreate 闲时任务卡片与直达编辑 E2E", () => 
         },
       );
 
-      // 验收录像：让卡片在画面上停留可辨的时长（不影响断言）。
+      // Acceptance recording: let the card stay visible on screen for a discernible duration (does not affect
+      // assertions).
       await browser.pause(1500);
 
-      // 5) 落库缺省（D49-4）：yolo / 白名单末位模型 / 推理档非空；状态 queued。
+      // 5) Storage defaults (D49-4): yolo / last model in the whitelist / non-empty reasoning tier; status queued.
       const created = await waitForOffPeakRecordByTitle(TASK_TITLE);
       expect(created.permissionMode).toBe("yolo");
       expect(created.modelSelection.modelId).toBe(MOCK_ALLOWED_MODEL);
       expect(Object.values(OFF_PEAK_PROVIDER_IDS)).toContain(created.modelSelection.providerId);
       expect(created.modelSelection.options?.reasoningLevel).toEqual(expect.any(String));
       expect(created.status).toBe("queued");
-      // D50：会话内创建绑定当前会话（session_id 即创建会话），conversation_id 留空等首跑回填。
+      // D50: in-session creation binds the current session (session_id is the creating session); conversation_id is
+      // left empty for the first run to backfill.
       expect(created.sessionId).toBe(creatingSessionId);
       expect(created.conversationId).toBeNull();
 
-      // 6) 「去到闲时任务」→ Automations idle tab 直接落到该任务的编辑表单。
+      // 6) "去到闲时任务" → the Automations idle tab lands directly on that task's edit form.
       await clickTestIdByDom(TID_OFFPEAK_CREATE_OPEN, {
         timeoutMsg: "闲时卡片没有「去到闲时任务」按钮",
       });
@@ -154,7 +162,8 @@ describe("会话内 OffPeakCreate 闲时任务卡片与直达编辑 E2E", () => 
           timeoutMsg: "点击卡片后没有进入闲时任务编辑视图",
         });
       } catch (error) {
-        // 诊断：区分「没跳转」「跳到列表但没进编辑」「toast 未找到」三种失败形态。
+        // Diagnostics: distinguish three failure shapes — "no navigation", "navigated to the list but not into
+        // edit", "toast not found".
         const dom = await readDomDiagnostics();
         throw new Error(`点击卡片后没有进入闲时任务编辑视图；dom=${JSON.stringify(dom)}`, {
           cause: error,
@@ -170,7 +179,7 @@ describe("会话内 OffPeakCreate 闲时任务卡片与直达编辑 E2E", () => 
 
       await browser.pause(1500);
 
-      // 7) queued 可编辑：改标题保存，列表回显新标题，落库同步。
+      // 7) queued is editable: change the title and save, the list echoes the new title, storage syncs.
       await setInputValueByTestIdDom(TID_OFFPEAK_FORM_TITLE, UPDATED_TASK_TITLE, {
         timeoutMsg: "闲时任务标题输入不可编辑",
       });
@@ -188,7 +197,7 @@ describe("会话内 OffPeakCreate 闲时任务卡片与直达编辑 E2E", () => 
       );
       const updated = await waitForOffPeakRecordByTitle(UPDATED_TASK_TITLE);
       expect(updated.offPeakTaskId).toBe(created.offPeakTaskId);
-      // D50：闲时卡片脚注露出绑定会话的当前标题（list 联查 tasks-index）。
+      // D50: the idle card footer shows the bound session's current title (the list joins against tasks-index).
       const boundSessionTitle = readTaskTitleById(creatingSessionId);
       expect(boundSessionTitle).toBeTruthy();
       await browser.waitUntil(
@@ -201,7 +210,7 @@ describe("会话内 OffPeakCreate 闲时任务卡片与直达编辑 E2E", () => 
           timeoutMsg: `闲时卡片没有展示绑定会话标题：${boundSessionTitle}`,
         },
       );
-      // 让录像尾部停留在列表回显画面，便于验收时看清最终态。
+      // Let the recording tail rest on the list echo screen, so the final state is legible during acceptance review.
       await browser.pause(1500);
     } finally {
       const result = await recording.stop({ tailDurationMs: 500 });
@@ -248,7 +257,7 @@ async function waitForOffPeakRecordByTitle(title: string): Promise<OffPeakRecord
 }
 
 function readOffPeakRecordByTitle(title: string): OffPeakRecord | null {
-  // off_peak_tasks 与 tasks 同库；E2E 每次只做一行只读查询并立即关闭。
+  // off_peak_tasks shares the database with tasks; E2E does one read-only row query per call and closes immediately.
   const database = new DatabaseSync(
     join(getE2EAppDataPaths().storageRoot, "v2", "tasks-index.sqlite"),
     { readOnly: true },
@@ -287,12 +296,13 @@ function readOffPeakRecordByTitle(title: string): OffPeakRecord | null {
   }
 }
 
-/** 保存后若回到列表默认 tab，切到闲时任务 tab；已在闲时 tab 时按钮可能不存在，忽略。 */
+/** After saving, if back on the list's default tab, switch to the idle-task tab; when already on the idle tab the button may not exist — ignore. */
 async function ensureIdleTabSelected(): Promise<void> {
   try {
     await clickTestIdByDom(TID_OFFPEAK_TAB, { timeout: 5000, timeoutMsg: "" });
   } catch {
-    // 已在闲时 tab 或 tab 栏未渲染；后续列表断言会给出真实失败原因。
+    // Already on the idle tab, or the tab bar is not rendered; the later list assertions will give the real failure
+    // reason.
   }
 }
 

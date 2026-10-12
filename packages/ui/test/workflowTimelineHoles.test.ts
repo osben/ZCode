@@ -1,12 +1,16 @@
-// 留白在时间线模型上的派生（docs/dynamic-workflow/presentation.md「Holes on the timeline」）：
-// 留白是一站（虚线灯、两侧虚线轨道、尾巴留白的 40px 残段）；等待时是当前站；补全后体的阶段站在它的
-// 位置上、头（笔 · 名）悬在它们之上；无阶段的补全不抬头，站自己带笔标。类型从不上界面。
-// 卡、确认窗与侧板都从这一个模型出发，所以规则钉在这里。
+// How holes are derived onto the timeline model (docs/dynamic-workflow/presentation.md "Holes on the
+// timeline"): a hole is one station (dashed lamp, dashed rails on both sides, a 40px tail stub for
+// a tail hole); while waiting it is the current station; after a fill the body's phases stand at
+// its position with the head (pen · name) hovering above them; a fill without phases raises no
+// head, and the station keeps its own pen mark. Types never reach the UI.
+// The card, the confirmation dialog, and the side pane all start from this one model, so the rules
+// are pinned here.
 //
-// 夹具照分析器的真实输出写（apps/zcode-cli/packages/dynamic-workflow/docs/analysis.md「Sites」）：
-// 留白 id 是名字键 `hole#<8 位十六进制>`，不随嵌套增长；留白**自己的**阶段带 `fill: <包着它的留白>`
-// （顶层没有），补全过的留白即使体以标记开头也留着自己的阶段。这里的十六进制是随手写的形状，
-// 渲染器只认形状，不重算哈希。
+// Fixtures follow the analyzer's real output (apps/zcode-cli/packages/dynamic-workflow/docs/analysis.md
+// "Sites"): hole ids are name-keyed `hole#<8 hex digits>` and do not grow with nesting; a hole's
+// **own** phase carries `fill: <the hole wrapping it>` (top-level phases do not), and a filled hole
+// keeps its own phase even when its body starts with a marker. The hex here is arbitrary shape;
+// the renderer only checks shape and never recomputes hashes.
 import { describe, expect, it } from "vitest";
 import type { WorkflowRunState } from "@zcode/shared/zcode-protocol-v4";
 import type { WorkflowCausalityGraphData } from "@/components/workflow-graph/types.js";
@@ -19,17 +23,17 @@ import {
   withoutHeadedHolePhases,
 } from "@/components/workflow-timeline/timeline-holes.js";
 
-const H1 = "hole#a0000001"; // 决定分组
-const H2 = "hole#a0000002"; // 评判
-const H11 = "hole#a0000011"; // 挑选（在 H1 的体里）
-const H7 = "hole#a0000007"; // 不存在
-const H10 = "hole#a0000010"; // 与 H1 无关的另一个留白
+const H1 = "hole#a0000001"; // grouping decision
+const H2 = "hole#a0000002"; // verdict
+const H11 = "hole#a0000011"; // pick (inside H1's body)
+const H7 = "hole#a0000007"; // does not exist
+const H10 = "hole#a0000010"; // another hole unrelated to H1
 
 type Step = WorkflowCausalityGraphData["steps"][number];
 function participantsOf(steps: readonly Step[]) {
   const byId = new Map<string, { id: string; phase: string; lane: string; steps: string[] }>();
   for (const step of steps) {
-    // 留白自己的站点（kind hole、车道 main）不是参与者：留白的阶段没有成员。
+    // The hole's own site (kind hole, lane main) is not a participant: the hole's phase has no members.
     if (step.kind === "hole") continue;
     const phase = step.phase ?? "unphased";
     const id = `${phase}:${step.lane}`;
@@ -40,7 +44,7 @@ function participantsOf(steps: readonly Step[]) {
   return [...byId.values()];
 }
 
-/** 探索 → hole 决定分组 : Plan → 执行 → tail hole 评判 : Verdict（设计画布的 flaky-hunt）。 */
+/** explore -> hole grouping decision : Plan -> execute -> tail hole verdict : Verdict (the design canvas's flaky-hunt). */
 const OPEN_STEPS: Step[] = [
   { id: "ask#1", kind: "ask", label: "scout", lane: "actor#1", phase: "phase#1" },
   { id: H1, kind: "hole", label: "决定分组", lane: "main", phase: H1 },
@@ -73,8 +77,10 @@ const OPEN: WorkflowCausalityGraphData = {
 };
 
 /**
- * 第一处补全之后的有效脚本：体以标记开头、声明了两个阶段。留白自己的阶段没有成员，但分析器留着它
- * （侧栏靠它念出「决定分组」）；时间线把它交给头，不成站（withoutHeadedHolePhases）。
+ * A valid script after the first fill: the body starts with a marker and declares two phases. The
+ * hole's own phase has no members, but the analyzer keeps it (the sidebar reads "grouping decision"
+ * from it); the timeline hands it to the head and does not make it a station
+ * (withoutHeadedHolePhases).
  */
 const FILLED_STEPS: Step[] = [
   { id: "ask#1", kind: "ask", label: "scout", lane: "actor#1", phase: "phase#1" },
@@ -124,7 +130,7 @@ const FILLED: WorkflowCausalityGraphData = {
   holes: [{ siteId: H2, name: "评判", type: "Verdict", tail: true }],
 };
 
-/** 第二处补全没有声明阶段：一次 ask 给评委，落在留白自己的阶段里。 */
+/** The second fill declared no phases: one ask to the judge, landing in the hole's own phase. */
 const TAIL_FILLED_STEPS: Step[] = [
   ...FILLED_STEPS,
   { id: `${H2}/ask#1`, kind: "ask", label: "judge", lane: `${H2}/actor#1`, phase: H2, fill: H2 },
@@ -199,7 +205,7 @@ describe("留白站（活）", () => {
     expect(hole.visited).toBe(true);
     expect(model.runningIndex).toBe(1);
     expect(model.rails[0]!.ink).toBe("march");
-    // 还没走到的尾巴留白照旧是 open。
+    // The tail hole not yet reached stays open.
     expect(model.stations[3]!.hole?.state).toBe("open");
     expect(model.stations[3]!.status).toBe("pending");
   });
@@ -263,7 +269,7 @@ describe("补全后的时间线", () => {
       H2,
     ]);
     expect(model.fills).toEqual([{ holeId: H1, name: "决定分组", from: 1, to: 2, filledAt: 99 }]);
-    // 体里的站是普通站：没有 hole 记号，进入它们的轨道段不是虚线。
+    // Stations inside the body are ordinary stations: no hole mark, and the rail segments entering them are not dashed.
     expect(model.stations[1]!.hole).toBeUndefined();
     expect(model.stations[1]!.fill).toBe(H1);
     expect(model.rails[0]!.dashed).toBeUndefined();
@@ -296,7 +302,7 @@ describe("补全后的时间线", () => {
     expect(judge.pills.map((pill) => pill.lane.id)).toEqual([`${H2}/actor#1`]);
     expect(model.fills.map((fill) => fill.holeId)).toEqual([H1]);
     expect(model.tailStub).toBe("filled");
-    // 进入它的段不再是虚线：脚本的尾巴已经写下。
+    // The segment entering it is no longer dashed: the script's tail has been written.
     expect(model.rails[3]!.dashed).toBeUndefined();
   });
 });
@@ -339,11 +345,13 @@ describe("narrowTimelineToFill · 补全行的草稿阶段线", () => {
 });
 
 /**
- * 嵌套（docs/dynamic-workflow/presentation.md「Holes on the timeline」）：外层补全里再留白。id 不拼接，
- * 包含关系只在留白自己的阶段 / 站的 `fill` 上（H11 的阶段带 `fill: H1`）。
- *   1. 外层开着：H1 一站。
- *   2. 外层补全、内层开着：体是「冒烟测试 → H11（挑选）→ 分组」，内层是外层体里的留白站。
- *   3. 两层都补全：内层的阶段带 `fill: H11`，仍在外层的跨度里。
+ * Nesting (docs/dynamic-workflow/presentation.md "Holes on the timeline"): a hole inside an outer
+ * fill. Ids are not concatenated; containment lives only on the `fill` of the hole's own phase /
+ * station (H11's phase carries `fill: H1`).
+ *   1. Outer open: H1 is one station.
+ *   2. Outer filled, inner open: the body is "smoke test -> H11 (pick) -> grouping"; the inner is a
+ *      hole station inside the outer body.
+ *   3. Both filled: the inner's phase carries `fill: H11`, still within the outer's span.
  */
 const INNER_OPEN_STEPS: Step[] = [
   { id: "ask#1", kind: "ask", label: "scout", lane: "actor#1", phase: "phase#1" },
@@ -449,9 +457,9 @@ describe("嵌套的留白", () => {
     expect(fillContains(H1, H11, parents)).toBe(true);
     expect(fillContains(H11, H1, parents)).toBe(false);
     expect(fillContains(H1, H10, parents)).toBe(false);
-    // 普通阶段 id 不是留白：不在任何补全里。
+    // An ordinary phase id is not a hole: it is in no fill.
     expect(fillContains(H1, `${H1}/phase#2`, parents)).toBe(false);
-    // 环（坏载荷）不会让它转圈。
+    // A cycle (bad payload) will not make it spin.
     expect(fillContains(H2, H1, { [H1]: H11, [H11]: H1 })).toBe(false);
   });
 
@@ -465,7 +473,7 @@ describe("嵌套的留白", () => {
       "phase#2",
       H2,
     ]);
-    // 边的次序不是契约：按集合比。
+    // Edge order is not part of the contract: compare as sets.
     const edgeKeys = (edges: readonly { from: string; to: string }[] | undefined) =>
       (edges ?? []).map((edge) => `${edge.from} > ${edge.to}`).sort();
     expect(edgeKeys(hidden.phaseEdges)).toEqual(
@@ -477,7 +485,7 @@ describe("嵌套的留白", () => {
         { from: "phase#2", to: H2 },
       ]),
     );
-    // 开着的内层（INNER_OPEN 的 H11）留着；外层 H1 被头代表，拿掉。
+    // The open inner hole (INNER_OPEN's H11) stays; the outer H1 is represented by the head and removed.
     expect(withoutHeadedHolePhases(INNER_OPEN).phases!.map((phase) => phase.id)).toEqual([
       "phase#1",
       `${H1}/phase#1`,
@@ -486,7 +494,7 @@ describe("嵌套的留白", () => {
       "phase#2",
       H2,
     ]);
-    // 无阶段的补全（H2 自己的阶段装着评委的 ask）留着；同一张图里被头代表的 H1 照样拿掉。
+    // The fill without phases (H2's own phase holding the judge's ask) stays; H1, represented by the head in the same graph, is still removed.
     expect(withoutHeadedHolePhases(TAIL_FILLED).phases!.map((phase) => phase.id)).toEqual([
       "phase#1",
       `${H1}/phase#1`,
@@ -494,7 +502,7 @@ describe("嵌套的留白", () => {
       "phase#2",
       H2,
     ]);
-    // 没有补全的图原样返回（同一个引用：调用方可以放心地每帧调用）。
+    // A graph with no fills is returned as-is (the same reference: callers can safely call it every frame).
     expect(withoutHeadedHolePhases(OPEN)).toBe(OPEN);
   });
 
@@ -536,7 +544,7 @@ describe("嵌套的留白", () => {
       [4, 5],
     ]);
     expect(model.fills).toEqual([{ holeId: H1, name: "决定分组", from: 1, to: 3, filledAt: 10 }]);
-    // 没有 run 的静态图（确认窗）：内层是开着的留白、外层的头名字取自 holeLabels。
+    // Static graph without a run (confirmation dialog): the inner is an open hole and the outer head's name comes from holeLabels.
     const stat = buildWorkflowTimeline(
       INNER_OPEN,
       undefined,
@@ -567,8 +575,10 @@ describe("嵌套的留白", () => {
       [`${H1}/phase#2`, true],
     ]);
     expect(narrowed.fills).toEqual([{ holeId: H11, name: "挑选", from: 1, to: 1, filledAt: 30 }]);
-    // 外层的体只有内层留白时，外层不被任何普通阶段点名，也算补全过：沿父表（H11 的阶段带
-    // `fill: H1`）读出。两个留白自己的阶段都没有成员、都被头代表，不成站。
+    // When the outer body contains only the inner hole, the outer is not named by any ordinary
+    // phase but still counts as filled: read along the parent table (H11's phase carries
+    // `fill: H1`). Both holes' own phases have no members and are both represented by heads, so
+    // neither becomes a station.
     const onlyInner: WorkflowCausalityGraphData = {
       ...BOTH,
       steps: BOTH_STEPS.filter((step) => step.fill !== H1),
@@ -595,10 +605,13 @@ describe("嵌套的留白", () => {
   });
 });
 
-// 修复原因（2026-09-29 testfield 实测）：分析器把开着的留白记成 `main` 车道上的一步，放在**含 `hole()`
-// 调用的那个阶段**里，还为它发一个参与者（`phase#1:main`）。上面的夹具把留白放进它自己的阶段、又不给它
-// 参与者，所以没测到：真实载荷下时间线把 `main` 当成一个没名字的子代理，那一站多出一枚「未命名子代理」。
-// 夹具照荒岛奶茶店 run（dwfrun-4d94062b）CreateWorkflow 那份 display 原样裁出。
+// Reason for the fix (observed live in testfield on 2026-09-29): the analyzer recorded an open hole
+// as a step on the `main` lane, placed inside **the phase containing the `hole()` call**, and also
+// emitted a participant for it (`phase#1:main`). The fixtures above put the hole in its own phase
+// and gave it no participants, so they never caught this: with a real payload the timeline treats
+// `main` as an unnamed subagent, and that station gains an extra "unnamed subagent" pill.
+// Fixture trimmed verbatim from the CreateWorkflow display of the desert-island bubble-tea run
+// (dwfrun-4d94062b).
 describe("the main agent's lane on the timeline", () => {
   const REAL: WorkflowCausalityGraphData = {
     steps: [
@@ -687,7 +700,7 @@ describe("the main agent's lane on the timeline", () => {
   });
 
   it("does not count the main lane when numbering anonymous subagents", () => {
-    // 唯一一条真匿名车道不该因为 `main` 在场就叫「未命名子代理 1」。
+    // The only truly anonymous lane must not be called "unnamed subagent 1" just because `main` is present.
     const refs = laneRefsById([{ id: "main" }, { id: "actor#1" }]);
     expect(refs.get("actor#1")?.anonymousIndex).toBeUndefined();
   });

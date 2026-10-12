@@ -1,8 +1,8 @@
-// M4 门禁：forkAssistant（catalog E 组）。
-// 证据层 L3：父会话完成态 assistant 行点 Fork → forkAssistant 命令 →
-// v4-bridge 经 resolveStableForkTarget 把 targetRowId 固定到 logical turn 边界 →
-// forkStableConversation → ACK.result.sessionId → pane 原地切到 child session（新
-// sessionId，但历史含父会话内容）。证明稳定边界解析与 conversation-only fork 打通。
+// M4 gate: forkAssistant (catalog group E).
+// Evidence layer L3: clicking Fork on a completed assistant row in the parent session → the forkAssistant command →
+// the v4-bridge pins targetRowId to a logical turn boundary via resolveStableForkTarget →
+// forkStableConversation → ACK.result.sessionId → the pane switches in place to the child session (a new
+// sessionId whose history contains the parent's content). Proves stable boundary resolution and conversation-only fork are wired end to end.
 import {
   TID_CHAT_THOUGHT_LEVEL_SELECT_ITEM,
   TID_CHAT_THOUGHT_LEVEL_SELECT_TRIGGER,
@@ -41,8 +41,8 @@ describe("v4 M4 门禁：forkAssistant", () => {
   });
 
   it("完成态 assistant 行 fork → 切到 child session，历史含父内容", async () => {
-    // 该 case 创建一个 case-local GLM-5.2 provider，既保留真实三档能力目录，
-    // 又让模型请求严格命中本用例 replay fixture。
+    // This case creates a case-local GLM-5.2 provider, both preserving the real three-level capability catalog
+    // and making model requests strictly hit this case's replay fixture.
     await prepareGlm52Draft();
 
     await sendV4Prompt("E2E_V4_FORK_PARENT 说一句话");
@@ -54,20 +54,20 @@ describe("v4 M4 门禁：forkAssistant", () => {
     );
     const parentSessionId = parent.sessionId;
 
-    // E11/FX11：父会话的 runtime 模型是 GLM-5.2，case-local provider 的能力是
-    // 非通用三档。先固定父侧基线，避免 child 与同一个错误 fallback 相等时产生假绿。
+    // E11/FX11: the parent session's runtime model is GLM-5.2 and the case-local provider's capabilities are the
+    // non-generic three levels. Pin the parent-side baseline first to avoid a false green when the child equals the same wrong fallback.
     const parentThoughtLevels = await readThoughtLevelValues();
     expect(parentThoughtLevels).toHaveLength(3);
     expect(parentThoughtLevels).toEqual(expect.arrayContaining(["high", "max"]));
 
-    // completedSuccess 最终 assistant 行出现 Fork；入口完全由 row.actions.canFork
-    // 与 availability.fork 投影决定，不再由 UI 猜 phase。
+    // The completedSuccess final assistant row shows Fork; entry is decided entirely by the row.actions.canFork
+    // and availability.fork projections, no longer by the UI guessing the phase.
     await waitForV4Fork();
     const clicked = await clickFirstV4Fork();
     expect(clicked).toBe(true);
 
-    // fork 成功 → forkAssistant ACK accepted，pane 原地切到 child（sessionId 变化）。
-    // 证明：stable target 解析 + conversation-only fork + child sessionId 回填 + 选择切换。
+    // Fork succeeds → forkAssistant ACK accepted, and the pane switches in place to the child (sessionId changes).
+    // Proves: stable target resolution + conversation-only fork + child sessionId backfill + selection switch.
     const child = await waitForV4Pane(
       (s) => s.sessionId !== null && s.sessionId !== "draft" && s.sessionId !== parentSessionId,
       "fork 后 pane 没有切到 child session",
@@ -75,9 +75,9 @@ describe("v4 M4 门禁：forkAssistant", () => {
     );
     expect(child.sessionId).not.toBe(parentSessionId);
 
-    // Bug 回归：fork child 没有 legacy task config cache。旧 UI 因 session snapshot 不带
-    // 模型能力，只能从 workspace catalog / 通用五档重建；线上表现为五档，本 fixture
-    // 会被 custom provider catalog 遮成 off/high/max，但都不是 runtime 的 nothink/high/max。
+    // Bug regression: a fork child has no legacy task config cache. The old UI, because the session snapshot carried
+    // no model capabilities, could only rebuild from the workspace catalog / generic five levels; in production that
+    // showed five levels, and in this fixture the custom provider catalog would mask it to off/high/max — but neither is the runtime's nothink/high/max.
     expect(await readThoughtLevelValues()).toEqual(["high", "max", "nothink"]);
     await browser.waitUntil(async () => (await getV4ModelConfig()).thought === "high", {
       timeout: 30000,
@@ -91,12 +91,12 @@ describe("v4 M4 门禁：forkAssistant", () => {
       expectedText: childPrompt,
       model: "GLM-5.2",
     });
-    // 修复原因：GLM-5.2 的 OpenAI-compatible 合同使用 reasoning_effort，
-    // upstream capture 默认的 Anthropic Messages thinking.type 断言会把已成功返回的 GLM 请求误判为失败。
+    // Fix rationale: GLM-5.2's OpenAI-compatible contract uses reasoning_effort;
+    // the upstream capture's default Anthropic Messages thinking.type assertion would misjudge a successfully returned GLM request as failed.
     const childRequestJson = childRequest.requestJson as Record<string, unknown>;
     expect(childRequestJson.reasoning_effort).toBe("high");
     expect(childRequestJson.thinking).toBeUndefined();
-    // 修复原因：fork notice 原先没有 Attachment metadata，实际请求把它当成无标签 user 文本。
+    // Fix rationale: the fork notice originally had no Attachment metadata, so the real request treated it as unlabeled user text.
     const boundaryText = "This session was forked from a previous session message.";
     const messages = childRequestJson.messages as Array<{ role: string; content: string }>;
     const boundaryIndex = messages.findIndex((message) => message.content.includes(boundaryText));
@@ -111,9 +111,9 @@ describe("v4 M4 门禁：forkAssistant", () => {
     expect(JSON.stringify(messages).split(boundaryText)).toHaveLength(2);
     await waitForV4TimelineContaining("V4_FORK_CHILD_REPLY", 30000);
 
-    // child 历史继承父会话内容：fork 复制 message 不复制 event，冷订阅 hydration 检测到
-    // 事件日志覆盖不了 transcript，改用 transcript→event 合成重建投影（transcript-hydration）。
-    // 这条断言验证 fork 复制到目标点 + transcript 合成 hydration 全链路。
+    // The child history inherits the parent's content: fork copies messages but not events; cold-subscription
+    // hydration detects that the event log cannot cover the transcript and rebuilds the projection by synthesizing
+    // transcript→events (transcript-hydration). This assertion verifies the full chain of fork-copy-to-target + transcript synthetic hydration.
     await waitForV4TimelineContaining("V4_FORK_PARENT_REPLY", 30000);
     const finalSnapshot = await getV4PaneSnapshot();
     expect(finalSnapshot.timelineText).toContain("E2E_V4_FORK_PARENT");
@@ -128,8 +128,8 @@ async function prepareGlm52Draft(): Promise<void> {
   const providerName = `V4 Fork GLM 5.2 E2E ${Date.now()}`;
   await prepareV4ConversationE2E({ skipProvider: true });
   await waitForWorkspaceApp(DEFAULT_WORKSPACE, 30000);
-  // 修复原因：设置页保存完成与 active workspace registry 刷新不是同一屏障，
-  // 紧接着发送会让真实请求仍落到旧 provider。进程退出后原子 seed App+CLI 再重启。
+  // Fix rationale: saving the settings page and refreshing the active workspace registry are not the same barrier;
+  // sending immediately after would still land the real request on the old provider. Exit the process, atomically seed App+CLI, then restart.
   const [provider] = await restartWithSeededOpenAIProviders([
     { modelId, providerId, providerName },
   ]);

@@ -1,20 +1,24 @@
-/* OMCP-005/006/009/021/023/024/026/027 —— 官方 MCP 凭证解析与身份头构造（spec §6.1 / §6.2.1 / §6.3.3）。
+/* OMCP-005/006/009/021/023/024/026/027 — official MCP credential resolution and identity header construction
+ * (spec §6.1 / §6.2.1 / §6.3.3).
  *
- * OMCP-025（Off-Peak 零回归，验证 §6.1.1 的隔离）不是本文件的用例，而是一条回归动作：
+ * OMCP-025 (Off-Peak zero regression, verifying §6.1.1's isolation) is not a case in this file but a regression
+ * action:
  *   npx vitest run packages/services/test/offPeakRuntimeModel.test.ts \
  *     packages/services/test/offPeakServerClient.test.ts \
  *     packages/services/test/offPeakTaskService.test.ts \
  *     packages/services/test/offPeakE2eIntegration.test.ts \
  *     packages/services/test/offPeakClientConfig.test.ts \
  *     packages/services/test/offPeakTaskRepo.test.ts
- * 本次实现后为 6 files / 77 tests 全绿，且未修改 offPeakRuntimeModel.ts 的任何导出。
+ * After this implementation it is 6 files / 77 tests all green, and no export of offPeakRuntimeModel.ts was
+ * modified.
  */
 import { describe, expect, it, vi } from "vitest";
 import { BUILTIN_MODEL_PROVIDER_IDS, type ZCodeAccountAccess } from "@zcode/shared";
 import type { ModelSelectionView } from "@zcode/provider";
 
-// 凭证解析日志的级别断言（OMCP-LOG-*）：mock 掉 serviceLogger 才能观察到模块级
-// `const log` 的调用；该文件其余用例不断言日志，mock 对它们是透明的。
+// Level assertions for credential-resolution logging (OMCP-LOG-*): serviceLogger must be mocked to observe the
+// module-level
+// `const log` calls; the file's other cases don't assert logs, and the mock is transparent to them.
 const { serviceInfo } = vi.hoisted(() => ({ serviceInfo: vi.fn() }));
 
 vi.mock("#src/logger/serviceLogger.js", () => ({
@@ -35,7 +39,7 @@ import {
 } from "../src/official-mcp/officialMcpCredentials.js";
 
 const JWT = "zcode-jwt-value";
-/** MaaS 登录 JWT：Coding Plan 凭证自 2026-08 起走这条通道（X-Bigmodel-Authorization）。 */
+/** MaaS login JWT: Coding Plan credentials have gone through this channel since 2026-08 (X-Bigmodel-Authorization). */
 const MAAS_JWT = "bigmodel-maas-jwt";
 const ZAI_MAAS_JWT = "zai-maas-jwt";
 
@@ -83,11 +87,11 @@ interface DepsOverrides {
   activeProvider?: string | null;
   activeProviderSequence?: Array<string | null>;
   jwt?: string | null;
-  /** 依次返回的 JWT，用于模拟 registry 读取期间的 token 轮换（SG-01）。 */
+  /** JWTs returned in sequence, simulating token rotation while the registry is read (SG-01). */
   jwtSequence?: Array<string | null>;
-  /** 覆盖 `oauth:<provider>:access_token`（MaaS 登录 JWT）。 */
+  /** Overrides `oauth:<provider>:access_token` (the MaaS login JWT). */
   maasJwt?: string | null;
-  /** 依次返回的 MaaS JWT，用于模拟它在 registry 读取期间轮换。 */
+  /** MaaS JWTs returned in sequence, simulating their rotation while the registry is read. */
   maasJwtSequence?: Array<string | null>;
   registry?: ModelSelectionView;
   registrySequence?: ModelSelectionView[];
@@ -146,7 +150,7 @@ function createDeps(overrides: DepsOverrides = {}): OfficialMcpCredentialResolve
           }
           return overrides.jwt === undefined ? JWT : overrides.jwt;
         }
-        // MaaS 登录 JWT 按 family 精确取键，禁止跨 family 回退。
+        // The MaaS login JWT is keyed exactly by family; cross-family fallback is forbidden.
         if (key === "oauth:bigmodel:access_token" || key === "oauth:zai:access_token") {
           if (overrides.maasJwtSequence) {
             const value =
@@ -188,8 +192,9 @@ describe("official mcp credential resolver", () => {
       "Bigmodel-Target-Type": "PERSONAL",
       "X-Bigmodel-Authorization": `Bearer ${MAAS_JWT}`,
     });
-    // 旧通道必须彻底消失：两个头同时发会让服务端额外校验 API key 归属，
-    // 一把过期 key 就能让整个请求 403。
+    // The legacy channel must be gone entirely: sending both headers would make the server additionally
+    // validate API key ownership,
+    // and one expired key could 403 the entire request.
     expect(buildOfficialMcpAuthHeaders(outcome.snapshot)["X-Coding-Plan-Api-Key"]).toBeUndefined();
   });
 
@@ -344,7 +349,8 @@ describe("official mcp credential resolver", () => {
   });
 
   it("rejects a login identity that does not match the selected family", async () => {
-    // ZAI JWT + BigModel key 拼进同一请求，服务端只能在业务校验时才拒绝，这里提前挡掉。
+    // A ZAI JWT + BigModel key stitched into the same request would only be rejected at server-side business
+    // validation; block it here up front.
     await expect(
       resolveOfficialMcpCredentials(createDeps({ activeProvider: "zai" })),
     ).resolves.toEqual({ ok: false, reason: "official_auth_unavailable" });
@@ -382,8 +388,9 @@ describe("official mcp credential resolver", () => {
   });
 
   it("still resolves when the connection exists but its business key is absent", async () => {
-    // 行为变更（2026-08）：业务 key 不再是凭证，因此不再当门槛。此前"key 正在刷新"的瞬态
-    // 会被误判成"没有套餐"，把一次本可成功的调用挡在本地。
+    // Behavior change (2026-08): the business key is no longer a credential and thus no longer a gate. The
+    // transient "key is refreshing" state
+    // used to be misjudged as "no plan", blocking a call that could have succeeded locally.
     const outcome = await resolveOfficialMcpCredentials(
       createDeps({
         registry: createRegistry([individualProvider("bigmodel")]),
@@ -397,8 +404,9 @@ describe("official mcp credential resolver", () => {
   });
 
   it("reports official_auth_unavailable when the MaaS login JWT is missing", async () => {
-    // 登录态不完整（需重新登录），不是"没有套餐"——两个 provider adapter 登录时都硬性要求
-    // 写入该 token，因此这主要出现在历史迁移过来的旧登录态上。
+    // The login state is incomplete (re-login needed), not "no plan" — both provider adapters hard-require
+    // writing this token at login,
+    // so this mainly shows up in old login states migrated from history.
     await expect(resolveOfficialMcpCredentials(createDeps({ maasJwt: "" }))).resolves.toEqual({
       ok: false,
       reason: "official_auth_unavailable",
@@ -420,13 +428,15 @@ describe("official mcp credential resolver", () => {
     );
     expect(outcome).toMatchObject({ ok: true });
     if (!outcome.ok) return;
-    // 跨 family 回退会发出一次注定失败的请求，且失败原因会指向"没有套餐"这种误导结论。
+    // Cross-family fallback would issue a request doomed to fail, and the failure reason would point at a
+    // misleading conclusion like "no plan".
     expect(outcome.snapshot.codingPlanAuthorization).toBe(ZAI_MAAS_JWT);
     expect(outcome.snapshot.codingPlanAuthorization).not.toBe(MAAS_JWT);
   });
 
   it("re-resolves once when the selection changes mid-flight, then gives up", async () => {
-    // 前后指纹不一致必须重来，绝不拼接两代凭证。两轮都不稳定则按不可用返回。
+    // Front/back fingerprint mismatch must restart; never stitch two generations of credentials. If both rounds
+    // are unstable, return unavailable.
     const flipping = [
       createRegistry([individualProvider("bigmodel")]),
       createRegistry([individualProvider("zai")]),
@@ -461,9 +471,9 @@ describe("official mcp credential resolver", () => {
   });
 
   it("SG-01: discards the round when the JWT rotates during the registry read", async () => {
-    // 读取顺序：每轮 首次 JWT -> registry -> 二次一致性检查再读 JWT。
-    // 四个互不相同的值让**两轮**的前后读取都不一致 => 按不可用返回，
-    // 绝不产出"旧 JWT + 新 key"的混代快照。
+    // Read order per round: first JWT -> registry -> second consistency check re-reads the JWT.
+    // Four distinct values make the front/back reads of **both rounds** inconsistent => return unavailable,
+    // never producing a mixed-generation "old JWT + new key" snapshot.
     const outcome = await resolveOfficialMcpCredentials(
       createDeps({
         jwtSequence: ["jwt-gen-1", "jwt-gen-2", "jwt-gen-3", "jwt-gen-4"],
@@ -473,8 +483,9 @@ describe("official mcp credential resolver", () => {
   });
 
   it("discards the round when the MaaS JWT rotates during the registry read", async () => {
-    // 与上一条同理：MaaS JWT 现在是真正的 Coding Plan 凭证，必须一起纳入前后一致性检查，
-    // 否则会拼出"旧 zcode JWT + 新 MaaS JWT"的混代快照。
+    // Same as the previous case: the MaaS JWT is now a real Coding Plan credential and must join the
+    // front/back consistency check,
+    // otherwise a mixed-generation "old zcode JWT + new MaaS JWT" snapshot could be stitched together.
     const outcome = await resolveOfficialMcpCredentials(
       createDeps({
         maasJwtSequence: ["maas-gen-1", "maas-gen-2", "maas-gen-3", "maas-gen-4"],
@@ -484,7 +495,7 @@ describe("official mcp credential resolver", () => {
   });
 
   it("SG-01: accepts the snapshot when the JWT stays stable across the registry read", async () => {
-    // 第 1、2 次读取一致（同一代），必须成功且快照使用该 JWT。
+    // Reads 1 and 2 agree (same generation); must succeed and the snapshot uses that JWT.
     const outcome = await resolveOfficialMcpCredentials(
       createDeps({ jwtSequence: ["jwt-stable", "jwt-stable"] }),
     );
@@ -494,7 +505,7 @@ describe("official mcp credential resolver", () => {
   });
 
   it("SG-01: recovers when the JWT rotates once and then settles", async () => {
-    // 第一轮不一致（gen1 -> gen2），第二轮稳定在 gen2 => 最终成功且用 gen2。
+    // Round 1 inconsistent (gen1 -> gen2), round 2 stable at gen2 => final success using gen2.
     const outcome = await resolveOfficialMcpCredentials(
       createDeps({ jwtSequence: ["jwt-gen-1", "jwt-gen-2", "jwt-gen-2", "jwt-gen-2"] }),
     );
@@ -504,7 +515,7 @@ describe("official mcp credential resolver", () => {
   });
 
   it("OMCP-024: has no mock credential branch at all", async () => {
-    // Off-Peak 的 ZCODE_OFFPEAK_MOCK 占位凭证分支不得在官方 MCP 路径复现。
+    // Off-Peak's ZCODE_OFFPEAK_MOCK placeholder credential branch must not reappear on the official MCP path.
     const previous = process.env["ZCODE_OFFPEAK_MOCK"];
     process.env["ZCODE_OFFPEAK_MOCK"] = "1";
     try {
@@ -543,7 +554,7 @@ describe("official mcp credential resolver", () => {
     const resolver = createOfficialMcpAuthHeadersResolver(deps);
     await resolver.resolveHeaders();
     await resolver.resolveHeaders();
-    // 无时间维度缓存：顺序两次调用必须各解析一遍
+    // No time-dimension caching: two sequential calls must each resolve afresh
     expect(spy).toHaveBeenCalledTimes(4);
   });
 
@@ -557,16 +568,18 @@ describe("official mcp credential resolver", () => {
     const resolver = createOfficialMcpAuthHeadersResolver(deps);
     await expect(resolver.resolveHeaders()).rejects.toThrow("registry unavailable");
     shouldThrow = false;
-    // 失败的 Promise 不得被后续请求永久复用
+    // A failed Promise must not be reused permanently by later requests
     await expect(resolver.resolveHeaders()).resolves.toMatchObject({ ok: true });
   });
 });
 
-/* OMCP-LOG —— 凭证解析成功日志：info 级 + 小时分桶去重（spec §4 审计规则）。
+/* OMCP-LOG — credential-resolution success log: info level + hour-bucketed dedup (spec §4 audit rules).
  *
- * 背景：MaaS JWT 无刷新链路，过期被服务端 3101 折叠成 "coding plan is required"（2026-09-12
- * 用户事故），剩余有效期是客户端唯一可自证的线索，因此必须 info（生产 debug 不落盘）；
- * 但解析与官方 MCP 请求数同数量级，必须去重（见 createCredentialResolvedLogKey）。
+ * Background: the MaaS JWT has no refresh path, and expiry gets folded by the server into
+ * "coding plan is required" via 3101 (user incident on 2026-09-12); the remaining validity is the client's only
+ * self-verifiable clue, so it must be info (production debug is not persisted);
+ * but resolutions are the same order of magnitude as official MCP requests, so dedup is required (see
+ * createCredentialResolvedLogKey).
  */
 describe("official mcp credential resolved log", () => {
   it("OMCP-LOG-01: dedup key buckets expiry by hour and separates family/scope", () => {
@@ -574,11 +587,12 @@ describe("official mcp credential resolved log", () => {
     expect(
       createCredentialResolvedLogKey({ ...personal, maasJwtExpiresInSeconds: 3600 }),
     ).toBe("bigmodel|PERSONAL|t1");
-    // 桶边界：3599 落在 t0，跨过 3600 进入 t1
+    // Bucket boundary: 3599 lands in t0, crossing 3600 enters t1
     expect(
       createCredentialResolvedLogKey({ ...personal, maasJwtExpiresInSeconds: 3599 }),
     ).toBe("bigmodel|PERSONAL|t0");
-    // 过期（≤0）与解析失败（undefined）是独立桶：跨过零点、token 形态变化必落新键
+    // Expired (≤0) and unparsable (undefined) are separate buckets: crossing zero or a token-shape change must
+    // land a new key
     expect(
       createCredentialResolvedLogKey({ ...personal, maasJwtExpiresInSeconds: -5 }),
     ).toBe("bigmodel|PERSONAL|expired");
@@ -592,7 +606,7 @@ describe("official mcp credential resolved log", () => {
         maasJwtExpiresInSeconds: 100,
       }),
     ).toBe("zai|none|t0");
-    // PERSONAL↔TEAM 切换是身份头语义变化，必须可分辨
+    // PERSONAL↔TEAM switches are an identity-header semantic change and must be distinguishable
     expect(
       createCredentialResolvedLogKey({
         providerFamily: "zai",
@@ -609,8 +623,9 @@ describe("official mcp credential resolved log", () => {
   });
 
   it("OMCP-LOG-02: logs jwt expiry at info level and dedupes same-bucket re-resolves", async () => {
-    // 123456s ≈ 34.3h → t34 桶：本文件其他用例都用解析不出 exp 的假 token（unparsable
-    // 桶），独特桶值保证本用例首调不被模块级去重键吞掉，用例间不依赖执行顺序。
+    // 123456s ≈ 34.3h → t34 bucket: the other cases in this file use fake tokens whose exp can't be parsed
+    // (the unparsable bucket); the unique bucket value guarantees this case's first call isn't swallowed by the
+    // module-level dedup key, so cases don't depend on execution order.
     const deps = createDeps({ maasJwt: makeMaasJwtWithExpiry(123456) });
     serviceInfo.mockClear();
     const first = await resolveOfficialMcpCredentials(deps);
@@ -630,8 +645,9 @@ describe("official mcp credential resolved log", () => {
     expect(fields["maasJwtExpiresInSeconds"]).toBeGreaterThan(123_000);
     expect(fields["maasJwtExpiresInSeconds"]).toBeLessThan(123_900);
 
-    // resolver 无时间缓存，同一桶内重复解析（两次构造 token 相差 0~1s，同落 t34）
-    // 不得重复记录——否则日志量与官方 MCP 请求数同数量级。
+    // The resolver has no time cache; repeated resolutions within the same bucket (the two constructed tokens
+    // differ by 0-1s, both landing in t34)
+    // must not log again — otherwise log volume would match the order of official MCP requests.
     const second = await resolveOfficialMcpCredentials(
       createDeps({ maasJwt: makeMaasJwtWithExpiry(123456) }),
     );
@@ -640,8 +656,9 @@ describe("official mcp credential resolved log", () => {
   });
 
   it("OMCP-LOG-03: identity-only degradation stays out of info logs", async () => {
-    // 已登录但 Registry 无 coding plan provider → identity-only 降级仍走 debug，
-    // 不产生 info 噪音（本次升级范围仅限带 MaaS JWT 的成功解析）。
+    // Logged in but the Registry has no coding plan provider → the identity-only degradation still logs at
+    // debug,
+    // producing no info noise (this upgrade's scope covers only successful resolutions carrying a MaaS JWT).
     const deps = createDeps({ registry: createRegistry([]) });
     const outcome = await resolveOfficialMcpCredentials(deps);
     expect(outcome).toMatchObject({ ok: true });
@@ -651,7 +668,7 @@ describe("official mcp credential resolved log", () => {
   });
 });
 
-/** 造一个能被 readJwtExpiresInSeconds 解析出 exp 的三段式 MaaS JWT（base64url payload）。 */
+/** Build a three-part MaaS JWT (base64url payload) whose exp readJwtExpiresInSeconds can parse. */
 function makeMaasJwtWithExpiry(expiresInSeconds: number): string {
   const payload = Buffer.from(
     JSON.stringify({ exp: Math.round(Date.now() / 1000) + expiresInSeconds }),
