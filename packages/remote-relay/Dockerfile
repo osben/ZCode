@@ -18,5 +18,5 @@ RUN mkdir /data && chown node:node /data
 USER node
 ENV ZCODE_RELAY_HOST=0.0.0.0 ZCODE_RELAY_PORT=3031 ZCODE_RELAY_DB_PATH=/data/relay.sqlite
 EXPOSE 3031
-VOLUME /data
+# Railway 构建器不支持 VOLUME 指令；持久化卷需在 Railway 服务设置中挂载到 /data
 CMD ["node", "dist/entry.js"]

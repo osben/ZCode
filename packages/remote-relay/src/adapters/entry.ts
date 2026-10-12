@@ -33,7 +33,8 @@ async function main() {
   process.once("SIGTERM", stop);
 }
 
-main().catch(() => {
-  logger.error("startup-failed");
+main().catch((error: unknown) => {
+  // не глотаем причину: без сообщения диагностика startup-failed невозможна
+  logger.error(`startup-failed: ${error instanceof Error ? error.stack : String(error)}`);
   process.exitCode = 1;
 });
