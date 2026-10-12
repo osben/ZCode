@@ -112,7 +112,8 @@ export async function executeWorktreeCreation({
     kind: "failed",
     message: issue
       ? formatMessage(resolveWorktreeIssueMessageId(issue.code), {
-          branchName: issue.detail ?? branchName,
+          branchName:
+            issue.code === "target-branch-not-found" ? (baseBranch ?? branchName) : branchName,
         })
       : formatMessage("commandCenter.worktree.error.unknown"),
     issueCodes: result.issues.map((entry) => entry.code),
