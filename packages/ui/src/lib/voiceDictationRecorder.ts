@@ -1,7 +1,7 @@
 import { VOICE_SAMPLE_RATE, concatFloat32Chunks, peakLevel } from "./voiceDictationAudio.js";
 
 export interface VoiceRecorderStartOptions {
-  /** 麦克风 deviceId；缺省或设备不存在时使用系统默认输入。 */
+  /** Microphone deviceId; when absent or the device does not exist, the system default input is used. */
   deviceId?: string | null;
   onLevel?: (level: number) => void;
   onChunk?: (samples: Float32Array) => void;
@@ -17,9 +17,10 @@ const MICROPHONE_CONSTRAINTS = {
 } as const;
 
 /**
- * 麦克风采集：以 16 kHz 单声道收集 Float32 采样，停止时一次性交给转写。
- * 使用 ScriptProcessorNode 而非 AudioWorklet，省去单独的 worklet 模块加载；
- * 输出经零增益节点接到 destination，只用于驱动回调，不会回放麦克风声音。
+ * Microphone capture: collects Float32 samples at 16 kHz mono and hands them to transcription in
+ * one shot on stop. Uses ScriptProcessorNode rather than AudioWorklet to skip loading a separate
+ * worklet module; output is routed through a zero-gain node to destination, only driving the
+ * callbacks, never playing the microphone back.
  */
 export class VoiceDictationRecorder {
   private stream: MediaStream | null = null;
@@ -66,7 +67,7 @@ export class VoiceDictationRecorder {
     }
   }
 
-  /** 结束采集并返回全部采样；未在采集时返回空数组。 */
+  /** Ends capture and returns all samples; returns an empty array when not recording. */
   stop(): Float32Array {
     const samples = concatFloat32Chunks(this.chunks);
     this.teardown();
@@ -99,14 +100,15 @@ async function requestMicrophone(deviceId: string | null | undefined): Promise<M
         audio: { ...MICROPHONE_CONSTRAINTS, deviceId: { exact: deviceId } },
       });
     } catch (error) {
-      // 已保存的设备被拔掉时回退到系统默认输入，而不是让整个语音输入失效。
+      // Fall back to the system default input when the saved device has been unplugged, instead of
+      // breaking voice input entirely.
       if (!(error instanceof DOMException) || error.name !== "OverconstrainedError") throw error;
     }
   }
   return navigator.mediaDevices.getUserMedia({ audio: MICROPHONE_CONSTRAINTS });
 }
 
-/** 列出系统当前公开的所有音频输入设备（包括虚拟输入）；需要授权才能拿到设备名称。 */
+/** Lists all audio input devices the system currently exposes (including virtual inputs); authorization is required to obtain device names. */
 export async function listAudioInputDevices(): Promise<MediaDeviceInfo[]> {
   const devices = await navigator.mediaDevices.enumerateDevices();
   return filterAudioInputDevices(devices);

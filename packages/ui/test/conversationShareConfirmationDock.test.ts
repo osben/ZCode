@@ -223,7 +223,7 @@ describe("ConversationShareConfirmationDock error details", () => {
     expect(screen.queryByTestId("conversation-share-review-hint")).toBeNull();
     expect(disclosure.className).not.toContain("ring-warning");
     expect(animate).toHaveBeenCalledTimes(1);
-    // 勾选复选框会取消仍在播放的提示动画，避免高亮残留到已确认状态。
+    // Checking the checkbox cancels the still-playing pulse animation so no highlight lingers into the confirmed state.
     fireEvent.click(screen.getByTestId("conversation-share-disclosure-checkbox"));
     expect(cancel).toHaveBeenCalledTimes(1);
     expect(onDisclosureAcceptedChange).toHaveBeenCalledWith(true);
@@ -235,7 +235,7 @@ describe("ConversationShareConfirmationDock error details", () => {
     );
     fireEvent.click(screen.getByTestId("conversation-share-confirm"));
     expect(animate).toHaveBeenCalledTimes(2);
-    // 减少动态效果时仍需定位与聚焦，只是不播放高亮动画。
+    // With reduced motion, positioning and focus still happen — only the highlight animation is skipped.
     expect(disclosure.scrollIntoView).toHaveBeenCalledTimes(3);
     rerender(
       createElement(ConversationShareConfirmationDock, { ...props, disclosureAccepted: true }),
@@ -257,12 +257,12 @@ describe("ConversationShareConfirmationDock error details", () => {
       }),
     );
 
-    // 根因：窗口断点无法反映侧栏挤压后的 Dock 实际宽度，必须按容器内容盒宽度响应。
+    // Root cause: window breakpoints cannot reflect the Dock's real width after sidebar squeeze; it must respond to the container's content-box width.
     const dock = screen.getByTestId("conversation-share-confirmation-dock");
     expect(dock.className).toContain("@container/share");
     expect(dock.className).toContain("max-h-[70dvh]");
     expect(dock.className).toContain("flex-col");
-    // 窄面板下表单增高由正文独立滚动吸收，操作区不能随正文滚出视口。
+    // In a narrow panel the taller form is absorbed by independent body scrolling; the action area must never scroll out of view with the body.
     const body = screen.getByTestId("conversation-share-confirmation-body");
     expect(body.className).toContain("overflow-y-auto");
     expect(body.className).toContain("min-h-0");
@@ -292,13 +292,13 @@ describe("ConversationShareConfirmationDock error details", () => {
     const confirm = screen.getByTestId("conversation-share-confirm");
     expect(confirm.className).toContain("col-span-2");
     expect(confirm.className).toContain("@min-[480px]/share:order-last");
-    // 主操作在 DOM 中先行：窄屏（主操作第一行）视觉顺序与键盘顺序一致；宽容器用
-    // order-last 把主操作视觉后置到最右，此时 Tab 序（主操作先）与视觉序（主操作最后）
-    // 方向相反，是 spec（docs/conversation-share-v1.md SHARE28）记录的已知取舍，非回归。
+    // The primary action comes first in the DOM: on narrow screens (primary action on the first row) visual order matches keyboard order; wide containers use
+    // order-last to push it visually to the far right, so Tab order (primary first) and visual order (primary last)
+    // point in opposite directions — a documented trade-off in the spec (docs/conversation-share-v1.md SHARE28), not a regression.
     expect(confirm.compareDocumentPosition(screen.getByTestId("conversation-share-back"))).toBe(
       Node.DOCUMENT_POSITION_FOLLOWING,
     );
-    // 窄屏文案允许换行，不再强制单行裁切。
+    // On narrow screens the copy may wrap instead of being clamped to a single truncated line.
     expect(confirm.className).toContain("whitespace-normal");
     expect(confirm.className).not.toContain("truncate");
   });
@@ -319,7 +319,7 @@ describe("ConversationShareConfirmationDock error details", () => {
     });
     expect(radiogroup.className).toContain("@min-[640px]/share:grid-cols-3");
     expect(radiogroup.className).not.toContain("md:grid-cols-3");
-    // 权限文案完整换行展示，不允许 truncate 截断。
+    // The permission copy wraps in full; truncation via truncate is not allowed.
     const option = screen.getByRole("radio", { name: "conversationShare.permission.linkEditor" });
     const textSpans = [...option.querySelectorAll<HTMLElement>("span > span")];
     expect(textSpans.length).toBeGreaterThan(0);
@@ -465,7 +465,7 @@ describe("ConversationShareConfirmationDock error details", () => {
             {
               code: "artifact_type_not_allowed",
               scope: "artifact",
-              // turnOrdinal 只用于文案；「取消该轮」按 productTurnId 定位。
+              // turnOrdinal is copy-only; "cancel this turn" targets by productTurnId.
               turnOrdinal: 2,
               productTurnId: "product-turn-2",
               artifactDisplayName: "晨报.pdf",

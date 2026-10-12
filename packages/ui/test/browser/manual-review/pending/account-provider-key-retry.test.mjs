@@ -104,7 +104,8 @@ for (const family of ["zai", "bigmodel"]) {
           assert.equal(await retry.isDisabled(), true);
           assert.equal(await page.getByTestId("requests").textContent(), String(count));
           assert.equal(await page.getByTestId("logins").textContent(), String(count));
-          // 响应由断言后释放，不用固定等待掩盖状态竞态。
+          // The response is released after the assertions; do not mask state races with fixed
+          // waits.
           release(status);
           if (status === 503)
             await page.waitForFunction(() => !document.querySelector("button").disabled);

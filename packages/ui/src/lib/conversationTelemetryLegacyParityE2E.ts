@@ -1,4 +1,4 @@
-/* eslint-disable max-lines -- 旧版临时驱动必须逐项翻译统一场景，并通过旧 production builder/reporter 发到最终出口。 */
+/* eslint-disable max-lines -- the legacy temporary driver must translate each unified scenario item and push it through the legacy production builder/reporter to the final outlets. */
 import {
   type IPlatformService,
   type ZCodeContextCompactionTimelineMeta,

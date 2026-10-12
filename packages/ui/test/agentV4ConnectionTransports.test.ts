@@ -582,7 +582,8 @@ describe("agent V4 connection transports", () => {
     expect(delivered).toEqual([]);
 
     decoder.recover(topic, subscriptionId);
-    // fault ordinal tombstone 仍在，旧片不能复活；更高 recovery ordinal 可以原子进入。
+    // The fault ordinal tombstone is still present, so stale fragments cannot revive; a higher
+    // recovery ordinal may enter atomically.
     decoder.accept(partial[1]!);
     decoder.accept(
       completeConversationWire(
@@ -656,12 +657,14 @@ describe("agent V4 connection transports", () => {
       },
     ) as ConversationTopicWireFrame[];
     agent.resyncConversationV4.mockImplementationOnce(async (params) => {
-      // 模拟 response 与 notification 同 read：request Promise continuation 尚未执行。
-      // 迟到 online duplicate 不能消费 recovery 身份；真正 recovery 由信封证明。
+      // Simulate a response and notification read in the same tick: the request Promise
+      // continuation has not run yet. A late online duplicate must not consume the recovery
+      // identity; genuine recovery is proven by the envelope.
       agent.conversationFrames.fire(
         completeConversationWire(recovery, "logical-stale-online", 3, "online"),
       );
-      // in-flight resync 期间迟到 online 残片 fault 不得永久关掉 recovery gate。
+      // A late online fragment fault during an in-flight resync must not permanently close the
+      // recovery gate.
       agent.conversationFrames.fire(lateOnline[0]!);
       agent.conversationFrames.fire(
         completeConversationWire({ ...recovery, toSeq: 4 }, "logical-online-fault", 5, "online"),
@@ -783,9 +786,11 @@ describe("agent V4 connection transports", () => {
     });
   });
 
-  // `workflowRunDeltas` 的声明是单向的（shared transport.ts）：clientHello 的 capabilities 是
-  // `.strict()` 的，向一台没宣告这个位的旧 Host 发它 = 整条 clientHello 解析失败、连接握不上手。
-  // 两条用例把「只在宣告之后才回声明」钉住，因为出错的代价不是降级而是会话打不开。
+  // The `workflowRunDeltas` declaration is one-way (shared transport.ts): clientHello capabilities
+  // are `.strict()`, so sending it to an older Host that never declared the bit means the entire
+  // clientHello fails to parse and the connection never handshakes. These two cases pin down
+  // "declare only after the Host announces it", because the cost of getting it wrong is not
+  // degradation but a session that cannot open.
   it("Host 未宣告 workflowRunDeltas 时 clientHello 不带这个键", async () => {
     const agent = setupAgent();
 
@@ -1200,7 +1205,8 @@ it("校准过期后收到 CLI 检查点或内容帧会重新探测时钟，有�
   setLocalTtftObserver(observer);
   const context = observer.start("/a", true)!;
   observer.dispatch(context, "/a", "c", "s");
-  // 发送时已校准；排队等待期间没有任何传输调用，旧逻辑不会再刷新校准。
+  // Calibrated at send time; while the observation sits queued no transport calls happen, so the
+  // old logic would never refresh the calibration.
   observer.calibrate("/a", { instanceId: "cli", offsetMs: 0, errorMs: 1, measuredAt: now });
   const transport = createAgentConversationTransport(service, { workspacePath: "/a" });
   const off = transport.onFrame(() => {});
@@ -1223,7 +1229,7 @@ it("校准过期后收到 CLI 检查点或内容帧会重新探测时钟，有�
     facts.fire({ ...checkpoint, executionAt: now });
     await Promise.resolve();
     expect(clockProbes()).toBe(1);
-    // 同一在途探测未返回前，再多检查点也只保留一次探测。
+    // Until the same in-flight probe returns, further checkpoints keep at most one probe.
     facts.fire({ ...checkpoint, executionAt: now, requestAt: now + 1 });
     expect(clockProbes()).toBe(1);
   } finally {

@@ -74,8 +74,10 @@ function createDialogConfig(overrides: Partial<CodingPlanQuotaResetDialogConfig>
   } satisfies CodingPlanQuotaResetDialogConfig;
 }
 
-// 模拟 useCodingPlanQuotaResetUi 的真实时序：onReset resolve 时 store 已写入完成态，弹框 config
-// 随之携带同一 status 快照里余下的机会（张数 − 1、到期取下一张；耗尽为 0 / null，但行仍在 config 中）。
+// Simulates the real timing of useCodingPlanQuotaResetUi: when onReset resolves, the store has
+// already written the completed state, and the dialog config then carries the remaining
+// opportunities from the same status snapshot (count − 1, expiry taken from the next one; 0/null
+// once exhausted, but the row stays in the config).
 function renderStatefulOpportunity(
   initialExpiries: Partial<Record<CodingPlanResetType, number[]>>,
 ) {
@@ -102,7 +104,7 @@ function renderStatefulOpportunity(
         };
       },
     );
-    // 入口徽标与真实入口一致：只合并仍有张数的类型。
+    // The entry badge matches the real entry: only merge types that still have remaining counts.
     const badge = mergeCodingPlanQuotaResetOpportunityBadges(
       resetItems.map((item) => ({ ...item, visible: item.count > 0 })),
     );
@@ -154,7 +156,8 @@ describe("CodingPlanQuotaResetOpportunity", () => {
     const countdown = screen.getByText("剩余 19 分 8 秒");
     expect(countdown.className).toContain("font-normal");
     expect(countdown.className).toContain("text-interaction-confirmation-foreground/80");
-    // 单机会不切换为「获得 N 次」的多机会文案，仅交互升级为按钮。
+    // A single opportunity does not switch to the "get N resets" multi-opportunity copy; only the
+    // interaction upgrades to a button.
     expect(screen.queryByRole("button", { name: "获得1次重置额度" })).toBeNull();
     expect(screen.queryByRole("dialog")).toBeNull();
 
@@ -178,7 +181,8 @@ describe("CodingPlanQuotaResetOpportunity", () => {
 
     expect(screen.getByRole("dialog")).toBeTruthy();
     expect(screen.getByRole("heading", { name: "可重置额度" })).toBeTruthy();
-    // 标题不再展示可用次数药丸，次数改由每行机会自行标注。
+    // The title no longer shows a remaining-count pill; the count is annotated per opportunity
+    // row instead.
     expect(screen.queryByText("2 次可用")).toBeNull();
     expect(screen.getByLabelText("剩余用量")).toBeTruthy();
     expect(screen.getByText("5 小时额度重置")).toBeTruthy();
@@ -233,7 +237,8 @@ describe("CodingPlanQuotaResetOpportunity", () => {
     expect(onReset.FIVE_HOUR).toHaveBeenCalledTimes(1);
     expect(onReset.WEEK).not.toHaveBeenCalled();
     expect(screen.getByRole("button", { name: "重置成功" })).toBeTruthy();
-    // 机会耗尽后到期为空：成功反馈与收起动画期间倒计时行留空，不渲染「0 分 0 秒」。
+    // After opportunities are exhausted the expiry is empty: the countdown row stays blank during
+    // the success feedback and collapse animation, never rendering "0m 0s".
     expect(within(screen.getByRole("dialog")).queryByText(/0 分 0 秒/)).toBeNull();
 
     act(() => vi.advanceTimersByTime(600));
@@ -253,7 +258,8 @@ describe("CodingPlanQuotaResetOpportunity", () => {
     });
 
     fireEvent.click(screen.getByRole("button", { name: "获得3次重置额度" }));
-    // 初始：五小时持有 2 张，展示「2 次」药丸与最早一张的「最快」倒计时。
+    // Initial: five hours holds 2 tickets, showing the "2" pill and the earliest ticket's
+    // "soonest" countdown.
     expect(screen.getByText("2 次")).toBeTruthy();
     expect(screen.getByText("最快 20 分 0 秒后过期")).toBeTruthy();
 
@@ -263,8 +269,10 @@ describe("CodingPlanQuotaResetOpportunity", () => {
     });
     expect(onReset.FIVE_HOUR).toHaveBeenCalledTimes(1);
 
-    // Bugfix 回归：成功反馈结束时按最新投影决定去留。同类型仍有余下机会时行保留且不进入收起
-    // 动画，倒计时切到下一张，而不是把完成态的空到期渲染成「0 分 0 秒」。
+    // Bugfix regression: when the success feedback ends, the row's fate follows the latest
+    // projection. If the same type still has remaining opportunities, the row stays and does not
+    // enter the collapse animation; the countdown switches to the next ticket instead of
+    // rendering the completed state's empty expiry as "0m 0s".
     act(() => vi.advanceTimersByTime(600));
     expect(screen.getByText("5 小时额度重置")).toBeTruthy();
     expect(screen.queryByText("2 次")).toBeNull();
@@ -276,7 +284,8 @@ describe("CodingPlanQuotaResetOpportunity", () => {
     act(() => vi.advanceTimersByTime(220));
     expect(screen.getByText("5 小时额度重置")).toBeTruthy();
 
-    // 不关闭弹框再次点击：真实调用第二次 onReset；机会耗尽后该行收起，周额度行不受影响。
+    // Clicking again without closing the dialog: onReset is really invoked a second time; once
+    // opportunities are exhausted the row collapses and the weekly quota row is unaffected.
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: "重置 5 小时额度" }));
       await Promise.resolve();
@@ -316,10 +325,11 @@ describe("CodingPlanQuotaResetOpportunity", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "获得3次重置额度" }));
 
-    // 多张：标题旁有「2 次」药丸，倒计时标注「最快」防止误读成统一期限。
+    // Multiple tickets: a "2" pill sits next to the title and the countdown is marked "soonest"
+    // to avoid being misread as a uniform deadline.
     expect(screen.getByText("2 次")).toBeTruthy();
     expect(screen.getByText("最快 4 小时 52 分后过期")).toBeTruthy();
-    // 单张：不出现「1 次」药丸，倒计时保持原文案。
+    // Single ticket: no "1" pill appears and the countdown keeps its original copy.
     expect(screen.queryByText("1 次")).toBeNull();
     expect(screen.getByText("4 小时 58 分后过期")).toBeTruthy();
   });

@@ -10,9 +10,9 @@ import { MCP_APPS_SET_WIDGET_STATE_METHOD, concatMcpAppsTextContent } from "@zco
 import { z } from "zod";
 import type { PluginUiHostBridge } from "./pluginUiHostBridge.js";
 
-/** 宿主实例注入的交互回调；缺省时对应请求回 -32601（能力声明与回调一一对应）。 */
+/** Interaction callbacks injected by the host instance; when absent, the corresponding requests return -32601 (capability declarations map one-to-one to the callbacks). */
 export interface PluginUiInteractionCallbacks {
-  /** sendFollowUpMessage 返回 reject 表示用户取消或无权限。 */
+  /** A rejection from sendFollowUpMessage means user cancellation or missing permission. */
   onSendFollowUpMessage?(
     payload: {
       prompt: string;
@@ -25,15 +25,16 @@ export interface PluginUiInteractionCallbacks {
     content: Array<Record<string, unknown>>;
     structuredContent?: unknown;
   }): Promise<void>;
-  /** 页面 `ui/set-widget-state { widgetState }`；宿主同步写内存 store 后回包。 */
+  /** Page `ui/set-widget-state { widgetState }`; the host writes the in-memory store synchronously, then replies. */
   onUpdateWidgetState?(widgetState: unknown): Promise<void>;
-  /** `ui/download-file`；逐项保存，取消 / 失败回 `{ isError: true }`。 */
+  /** `ui/download-file`; saves item by item; cancel / failure replies `{ isError: true }`. */
   onDownloadFile?(contents: McpAppsDownloadFileItem[]): Promise<{ isError?: boolean }>;
 }
 
 /**
- * `ui/message` 的参数：官方 schema 只认 role + content，会剥掉顶层未知键；扩展的 `structuredContent`
- * 要留下来（拼成 ```json 块随消息发出），所以宿主用自己的 loose schema 注册这个方法，而不是 `onmessage`。
+ * `ui/message` params: the official schema only accepts role + content and strips unknown top-level keys;
+ * the extended `structuredContent` must survive (it is appended to the message as a ```json block), so
+ * the host registers this method with its own loose schema instead of `onmessage`.
  */
 const pluginUiMessageParamsSchema = z
   .object({
@@ -44,7 +45,7 @@ const pluginUiMessageParamsSchema = z
   .loose();
 const pluginUiSetWidgetStateParamsSchema = z.object({ widgetState: z.unknown() }).loose();
 
-/** 回调抛出的带 `code` 的错误（-32601 / -32000 / -32602）翻译成 JSON-RPC 错误，其余按内部错误处理。 */
+/** Errors carrying a `code` thrown by callbacks (-32601 / -32000 / -32602) are translated to JSON-RPC errors; everything else is treated as an internal error. */
 function toProtocolError(error: unknown): unknown {
   const code = (error as { code?: unknown } | null)?.code;
   if (error instanceof ProtocolError) return error;
@@ -56,8 +57,9 @@ const unsupported = (method: string) =>
   new ProtocolError(METHOD_NOT_FOUND, `${method} is not available for this app`);
 
 /**
- * 会话交互（ui/message、ui/update-model-context、ui/download-file、ZCode 扩展 ui/set-widget-state）接到官方
- * AppBridge：缺省回调回 -32601；ui/message 的手势 token 由 main 在 guest input-event 记录、一次性消费，没有句柄视为无手势。
+ * Wires session interactions (ui/message, ui/update-model-context, ui/download-file, the ZCode extension
+ * ui/set-widget-state) to the official AppBridge: absent callbacks reply -32601; the ui/message gesture
+ * token is recorded by main on guest input events and consumed once; with no handle it counts as no gesture.
  */
 export function wirePluginUiInteractions(
   bridge: PluginUiHostBridge,

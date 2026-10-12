@@ -101,7 +101,8 @@ for (const [width, locale, theme] of [
     try {
       await page.goto(`${origin}fixture?locale=${locale}&theme=${theme}`);
       await page.getByTestId("plugin-store-list").waitFor();
-      // 配置尚未返回，默认分类已经可以展开和浏览。
+      // The config has not returned yet, yet the default categories are already expandable and
+      // browsable.
       assert.deepEqual(await cards(productSection()), ["p0", "p1", "p2", "p3", "p4", "p5"]);
       release();
       await page.waitForFunction(() =>
@@ -113,7 +114,7 @@ for (const [width, locale, theme] of [
           ?.startsWith("p7@"),
       );
       assert.deepEqual(await cards(productSection()), ["p7", "p6", "p0", "p1", "p2", "p3"]);
-      // 第一块是精选，其固定名单没有受排序配置影响。
+      // The first block is featured; its fixed list is unaffected by the ordering config.
       const sections = () =>
         page.locator("section").filter({ has: page.getByTestId("plugin-store-card") });
       assert.deepEqual(await cards(sections().nth(0)), ["p1", "p0"]);
@@ -147,7 +148,7 @@ for (const [width, locale, theme] of [
         await page.evaluate(() => localStorage.getItem("zcode-interface-mode")),
         "general",
       );
-      // 个人与全量搜索继续按各自原来的名称顺序。
+      // Personal and full search keep their original name-based ordering.
       await page.getByTestId("plugin-store-segment-personal").click();
       assert.deepEqual(await cards(page), ["personal-a", "personal-b"]);
       await page.getByTestId("code").click();
@@ -158,7 +159,8 @@ for (const [width, locale, theme] of [
       assert.deepEqual(await cards(page), searchOrder);
       await page.getByTestId("plugin-store-search").fill("");
       await page.getByTestId("plugin-store-segment-public").click();
-      // 失败刷新保留现有投影，成功撤销则恢复默认顺序。
+      // A failed refresh keeps the existing projection; a successful undo restores the default
+      // order.
       status = 503;
       const failed = page.waitForResponse((response) => response.url().endsWith("/order"));
       await page.getByTestId("refresh").click();
@@ -205,7 +207,8 @@ for (const [width, locale, theme] of [
         path: join(artifacts, `${width}-${locale}-${theme}.png`),
         fullPage: true,
       });
-      // 仅测试目录加入一条未来法律插件；当前真实目录仍没有法律插件。
+      // Add one future legal plugin only to the test catalog; the current real catalog still has
+      // no legal plugins.
       body = config;
       await page.goto(`${origin}fixture?locale=${locale}&theme=${theme}&legal=1`);
       const legalCard = page.locator(
@@ -228,7 +231,8 @@ for (const [width, locale, theme] of [
         );
       });
       assert.deepEqual(errors, []);
-      // 退出市场的官方插件即使已安装、被精选或仍在旧目录中也不可见；个人同名插件保留。
+      // Official plugins that left the store are invisible even if installed, featured, or still
+      // in an old category; personal plugins with the same name are kept.
       await page.goto(`${origin}fixture?locale=${locale}&theme=${theme}&retired=1`);
       await page.getByTestId("plugin-store-list").waitFor();
       const retired = page.locator(`[data-plugin-id="restore-legacy-sessions@${official}"]`);

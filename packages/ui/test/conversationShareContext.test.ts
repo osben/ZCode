@@ -5,7 +5,7 @@ import {
   resolveAttachableShareContext,
 } from "@/lib/conversationShareContext.js";
 
-/** 历史消息里可能残留的 share URL 尾块；写入端已删除，这里只验证读取端能剥干净。 */
+/** Trailing share URL blocks that may remain in historical messages; the writer side was removed, so this only verifies the reader strips them cleanly. */
 function withShareContextBlock(text: string, payload: Record<string, unknown>): string {
   const block = [
     "# zcode-share-context:",
@@ -52,12 +52,12 @@ describe("conversation share context reference", () => {
 });
 
 /**
- * 线上故障回归：composer 原本从一个平行的 sharedContextImport prop 读 handover context，
- * 而 SessionPane 从没传过它。结果首条消息永远不带 sharedContextRefs，CLI 侧
- * pending→reserved→attached 一步都走不了，shared_context 消息被 hydrator 永久跳过——
- * 会话顶部的只读块照常显示，模型却全程没拿到分享内容，肉眼完全看不出来。
+ * Production incident regression: the composer used to read handover context from a parallel
+ * sharedContextImport prop that SessionPane never passed. As a result the first message never carried
+ * sharedContextRefs, the CLI could not advance a single step of pending→reserved→attached, and the
+ * hydrator permanently skipped the shared_context message — the read-only block still showed at the top of the conversation while the model never received the shared content, invisible to the eye.
  *
- * 现在改成从 snapshot 推导。这组用例钉住「什么情况下应该带 refs」这个判定本身。
+ * It is now derived from the snapshot. These tests pin the "when should refs be attached" decision itself.
  */
 describe("resolveAttachableShareContext", () => {
   const pending = {

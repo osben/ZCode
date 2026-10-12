@@ -396,7 +396,7 @@ describe("ConversationTelemetryWorkspaceAttachment", () => {
     const root = mountAttachment({
       services: service.services,
       platform,
-      // 远程 identity 可能来自尚未升级的 host 或未来格式；此时仍不能退化成本地。
+      // The remote identity may come from a not-yet-upgraded host or a future format; it still must not degrade to local.
       workspaceIdentity: "remote:future:opaque:/same/path",
       onSupervisor: (nextSupervisor) => {
         supervisor = nextSupervisor;

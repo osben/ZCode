@@ -21,13 +21,17 @@ import {
 } from "@/components/workflow-timeline/WorkflowTimelineFills.js";
 
 /**
- * 侧板上补全的框（docs/dynamic-workflow/presentation.md「The pane」）：与卡上同一个框竖着画——同墨、同圆角、
- * 同一笔。卡上的框按列几何算得出；这里节的高随展开 / 折叠、名单开合而变，所以纵向位置从 DOM 量：
- * 标题行（`data-fill-heading`）的顶与补全最后一节（`data-phase-id`）的底，相对列表内容（算上滚动）。
- * 每次提交后量一遍，列表尺寸变了由 ResizeObserver 补量；量到的与上次相同就不动 state。
+ * Fill frames on the side pane (docs/dynamic-workflow/presentation.md "The pane"): the same frame as on
+ * the card, drawn vertically — same ink, same radius, same stroke. The card's frames come from column
+ * geometry; here section heights change with expand/collapse and list toggling, so vertical positions
+ * are measured from the DOM: the top of the heading row (`data-fill-heading`) and the bottom of the
+ * fill's last section (`data-phase-id`), relative to the list content (scroll included).
+ * Measured after every commit, re-measured by a ResizeObserver when the list resizes; if the measured
+ * values equal the previous ones, state is left untouched.
  *
- * 点亮只认头（`useFillHeadTarget`，与卡共用）：标题行与笔标带 `data-fill-head`。
- * 侧板不缩进（用户修订：嵌套由框套框说出），嵌套的框每层各收 4px。
+ * Lighting only tracks heads (`useFillHeadTarget`, shared with the card): the heading row and the pen
+ * mark carry `data-fill-head`. The pane does not indent (user revision: nesting is expressed by frames
+ * within frames); each nesting level insets its frame by 4px.
  */
 interface SpineFrameGeometry {
   width: number;
@@ -47,9 +51,9 @@ export function useSpineFillFrames(
   rootRef: RefObject<HTMLDivElement | null>,
   model: WorkflowTimelineModel,
 ): {
-  /** 挂在列表根上的委托（没有补全时为空对象）。 */
+  /** Delegation mounted on the list root (an empty object when there are no fills). */
   handlers: ReturnType<typeof useFillHeadTarget>["handlers"];
-  /** 此刻画出的框（指针或焦点所在的头）。 */
+  /** The frame currently drawn (the head under the pointer or focus). */
   active: string | undefined;
   fresh: ReadonlySet<string>;
   frames: ReactNode;
@@ -100,7 +104,8 @@ export function useSpineFillFrames(
       JSON.stringify(previous) === JSON.stringify(next) ? previous : next,
     );
   };
-  // 观察者只建一次，却总要调到最新的一版量法（它闭包里有这一帧的 fills 与站）。
+  // The observer is created once but must always call the latest version of the measure function
+  // (its closure holds this frame's fills and stations).
   const measureRef = useRef(measure);
   measureRef.current = measure;
   useLayoutEffect(() => measureRef.current());
@@ -109,7 +114,8 @@ export function useSpineFillFrames(
     if (root === null || !any || typeof ResizeObserver === "undefined") return undefined;
     const observer = new ResizeObserver(() => measureRef.current());
     observer.observe(root);
-    // 节展开 / 折叠时列表自己的盒子不变、内容高度变：连同每一节一起观察。框自己的 svg 不观察。
+    // When sections expand/collapse the list's own box stays the same while content height changes:
+    // observe every section too. The frame svg itself is not observed.
     for (const child of root.children) if (!(child instanceof SVGElement)) observer.observe(child);
     return () => observer.disconnect();
   }, [any, rootRef]);

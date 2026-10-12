@@ -132,7 +132,8 @@ for (const source of ["root", "recent", "default", "empty", "delayed"])
           );
           await page.getByRole("button", { name: "Reopen", exact: true }).click();
           assert.equal((await getConfig()).modelSelection.options.reasoningLevel, "low");
-          // 先前提交的快照不随之后改档位变化；重新打开也不重复初始化。
+          // The previously submitted snapshot does not change with the later level switch;
+          // reopening does not re-initialize it either.
           assert.equal(
             JSON.parse(await page.getByTestId("submission").textContent()).modelSelection.options
               .reasoningLevel,

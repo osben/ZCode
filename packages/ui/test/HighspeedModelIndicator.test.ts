@@ -28,7 +28,7 @@ function renderIndicator(sweepActive = false, animateEntrance = true) {
   );
 }
 
-/** 翻页动效挂在图标与文字外层的 motion 容器上。 */
+/** The flip animation is attached to the motion container wrapping the icon and label. */
 function readFlipContainerOpacity(container: HTMLElement): string | undefined {
   const flip = container.querySelector('[data-highspeed-model-icon="true"]')?.parentElement;
   return flip?.style.opacity;

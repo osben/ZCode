@@ -49,7 +49,8 @@ export function registerProviderPresentationCases(getEnvironment) {
           .filter({ hasText: "reasoning-level-missing" });
         await detail.waitFor();
         assert.match(await detail.innerText(), /未选择思考档位/);
-        // Radix 还生成一份 aria 隐藏描述，点击实际展示的复制按钮。
+        // Radix also generates an aria-hidden description; click the copy button that is actually
+        // shown.
         await detail.locator('button:not([role="tooltip"] button)').click();
         const copied = await page.evaluate(() => navigator.clipboard.readText());
         assert.match(copied, /reason=reasoning-level-missing/);

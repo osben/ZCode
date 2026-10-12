@@ -30,8 +30,9 @@ describe("AssistantCodeCommentCards", () => {
   });
 
   it("只保留当前卡片交互实际消费的本地化 key", () => {
-    // Bug 原因：早期“标题 + 数量 + 展开其余五条”的卡片已改成整卡折叠，旧文案却未同步删除，
-    // 容易让后续维护者误以为仍存在第二套展开交互。
+    // Bug cause: the early "title + count + expand remaining five items" card was changed to a
+    // whole-card collapse, but the old copy was never removed, which could mislead future
+    // maintainers into thinking a second expand interaction still exists.
     const expectedKeys = [
       "chat.codeCommentCards.collapseAll",
       "chat.codeCommentCards.expandAll",

@@ -48,9 +48,10 @@ vi.mock("@/components/ui/select.js", async () => {
     }) => {
       useEffect(() => {
         const timer = window.setTimeout(() => {
-          // 模拟 Radix Select 受控值与子项注册竞争、在表单初始化完成后发出的空值：
-          // 这不是用户操作，消费方必须丢弃值域外的回调
-          // （回归：仅打开详情返回就弹未保存提示）。
+          // Simulate the empty value a Radix Select emits after form initialization, racing the
+          // controlled value against child registration: this is not a user action, and consumers
+          // must discard out-of-domain callbacks
+          // (regression: merely opening the detail view popped the unsaved-changes prompt).
           onValueChange?.("");
           if (
             value &&
@@ -144,8 +145,10 @@ vi.mock("@/components/ui/tooltip.js", async () => {
 vi.mock("@/ControlHintTooltip.js", () => ({
   ControlHintTooltip: ({ children }: { children: ReactNode }) => children,
 }));
-// 权限选择器复用会话 composer 的 ConfigSelect：这里保留真实实现，让上方 Select mock
-// 发出的注册竞争空值穿过它，守住“值域外回调不得标记未保存修改”的防护。
+// The permission selector reuses the session composer's ConfigSelect: keep the real
+// implementation here so the registration-race empty value emitted by the Select mock above
+// passes through it, guarding the "out-of-domain callbacks must not mark unsaved changes"
+// protection.
 vi.mock("@/chat-input-toolbar/RollingToolbarLabel.js", () => ({
   RollingToolbarLabel: ({ label }: { label: string }) => label,
 }));
@@ -529,7 +532,8 @@ describe("AutomationEditView session-created dirty state", () => {
     expect(screen.queryByText("automations.customRepeat.compactFrequency")).not.toBeNull();
     expect(stableHookValues.selectRegistrations).toBe(0);
 
-    // 等 Select 注册竞争的空值回调发出后再返回，复现“仅打开详情就被标记未保存”的回归。
+    // Wait for the Select registration-race empty callback to fire before returning, reproducing
+    // the "merely opening the detail view marks unsaved changes" regression.
     await act(async () => {
       await new Promise((resolve) => setTimeout(resolve, 5));
     });

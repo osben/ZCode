@@ -2,8 +2,10 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { chromium } from "playwright-core";
 
-// 手工回归前置：启动未登录的 ZCode Dev，打开 BigModel 设置页；静态配置没有可用的 builtin/account 商品目录。
-// 连接真实 App 验证完整 hook/RPC/渲染链路，不注入套餐数据或修改登录态。
+// Manual regression prerequisite: start an unsigned-in ZCode Dev and open the BigModel settings
+// page; the static config has no usable builtin/account product catalog.
+// Connects to the real App to verify the full hook/RPC/render chain; no plan data is injected and
+// the sign-in state is not modified.
 test("未登录缺少静态套餐时隐藏购买横幅并保留外层卡片", async () => {
   const browser = await chromium.connectOverCDP(
     process.env.ZCODE_E2E_CDP_URL ?? "http://localhost:9229",

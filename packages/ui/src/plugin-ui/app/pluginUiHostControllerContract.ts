@@ -23,9 +23,10 @@ import type { PluginUiHostBridge } from "./pluginUiHostBridge.js";
 import { type PluginUiInteractionCallbacks } from "./pluginUiInteractionPorts.js";
 
 /**
- * 宿主侧编排：prepareSandbox → 拿句柄挂 webview → 等 initId 匹配的端口 → `AppBridge(null)` 接 Transport →
- * `initialized` 后投喂 tool-input / tool-result → 响应页面的 tools/call / resources/* / open-link / size-changed。
- * 所有 IO 经 deps 注入；页面管理器拥有 controller，hook 只登记展示锚点。
+ * Host-side orchestration: prepareSandbox → get the handle and mount the webview → wait for the port
+ * with a matching initId → `AppBridge(null)` over the Transport → after `initialized`, feed
+ * tool-input / tool-result → serve the page's tools/call / resources/* / open-link / size-changed.
+ * All IO is injected via deps; the page manager owns the controller, hooks only register display anchors.
  */
 export type PluginUiHostPhase = "idle" | "preparing" | "mounted" | "running" | "error" | "disposed";
 
@@ -34,11 +35,11 @@ export interface PluginUiHostScope {
   workspaceIdentity?: string;
   remoteSessionId?: string;
   sessionId: string;
-  /** 工具卡片 `{ kind: "toolCall" }` 或面板 `{ kind: "surface" }`；映射为沙箱 scopeId 参与幂等键。 */
+  /** Tool card `{ kind: "toolCall" }` or surface `{ kind: "surface" }`; mapped into the sandbox scopeId as part of the idempotency key. */
   scope: PluginUiScopeRef;
 }
 
-/** 页面侧投喂内容；`initialized` 时读一次最新值，之后的变化经 notify*。 */
+/** Page-side feed content; read once at `initialized` for the latest values, later changes go through notify*. */
 export interface PluginUiToolFeed {
   toolInput?: McpAppsToolInputPayload;
   toolResult?: McpAppsToolResultPayload;
@@ -63,13 +64,14 @@ export interface PluginUiHostControllerDeps extends PluginUiInteractionCallbacks
     | "subscribeResource"
     | "unsubscribeResource"
   >;
-  /** App-Provided Tools 通道；缺省（web / 远程）时不发现、不登记页面工具。 */
+  /** App-Provided Tools channel; when absent (web / remote), page tools are not discovered or registered. */
   sampling?: IPluginUiSamplingService;
   appTools?: IPluginUiAppToolsService;
   platform: PluginSandboxPlatformPort;
   /**
-   * 按 Agent 实例代际登记资源通知入口；宿主把投影里的 server 通知路由到这里。
-   * 缺省不登记（页面仍可 subscribe，但收不到通知）。
+   * Registers resource notification entries per Agent instance generation; the host routes server
+   * notifications from the projection here. When absent, nothing is registered (the page can still
+   * subscribe, but receives no notifications).
    */
   resourceNotifications?: {
     register(
@@ -78,17 +80,17 @@ export interface PluginUiHostControllerDeps extends PluginUiInteractionCallbacks
       instance: PluginSandboxHandle["instance"],
     ): () => void;
   };
-  /** UI 发起调用的 id 生成；缺省 crypto.randomUUID。 */
+  /** Id generator for UI-initiated calls; defaults to crypto.randomUUID. */
   createCallId?: () => string;
-  /** 握手超时 / teardown 等待的计时器；缺省 setTimeout。返回取消函数。 */
+  /** Timer for handshake timeout / teardown waits; defaults to setTimeout. Returns a cancel function. */
   setTimer?: (callback: () => void, ms: number) => () => void;
   scope: PluginUiHostScope;
   presentation: PluginUiPresentation;
-  /** `initialized` 时读一次，保证拿到最新工具输入 / 结果。 */
+  /** Read once at `initialized` to guarantee the latest tool input / result. */
   getToolFeed(): PluginUiToolFeed;
-  /** widgetState 初值（宿主内存 store，唯一 owner）；端口到达时读一次，undefined = 没有。 */
+  /** widgetState initial value (host in-memory store, single owner); read once when the port arrives, undefined = none. */
   getWidgetState(): unknown;
-  /** 端口到达创建 AppBridge 时读取，按当时真实可用的交互生成能力声明。 */
+  /** Read when creating the AppBridge on port arrival, generating the capability declaration from the interactions actually available at that moment. */
   getHostCapabilities(): McpUiHostCapabilities;
   initialHostContext: McpUiHostContext;
   hostVersion: string;
@@ -97,13 +99,13 @@ export interface PluginUiHostControllerDeps extends PluginUiInteractionCallbacks
     detail?: { handle?: PluginSandboxHandle; error?: string },
   ): void;
   onHeight(height: number): void;
-  /** `ui/request-display-mode`：宿主裁决后返回实际模式（内联实例打开侧栏、侧栏实例关闭 tab 都在这里发生）。 */
+  /** `ui/request-display-mode`: the host arbitrates and returns the actual mode (an inline instance opening the side pane and a side pane instance closing its tab both happen here). */
   onDisplayModeRequest(mode: McpUiDisplayMode): McpUiDisplayMode;
   onOpenExternal(url: string): void;
-  /** `initialized` 后一次：页面声明的 appCapabilities（可能 undefined）。 */
+  /** Once after `initialized`: the page-declared appCapabilities (may be undefined). */
   onAppCapabilities?: (capabilities: McpUiAppCapabilities | undefined) => void;
   log?: (message: string, detail?: Record<string, unknown>) => void;
-  /** 缺省 `new AppBridge(null, …)`；测试注入假桥。 */
+  /** Defaults to `new AppBridge(null, …)`; tests inject a fake bridge. */
   createAppBridge?: (
     hostInfo: { name: string; version: string },
     hostCapabilities: McpUiHostCapabilities,
@@ -118,10 +120,10 @@ export interface PluginUiHostController {
   tryRecycle(): Promise<boolean>;
   start(): void;
   updateHostContext(patch: Partial<McpUiHostContext>): void;
-  /** 面板换到新一次调用时推送 ui/notifications/tool-input。 */
+  /** Pushes ui/notifications/tool-input when the pane switches to a new call. */
   notifyToolInput(input: McpAppsToolInputPayload): void;
   notifyToolResult(result: McpAppsToolResultPayload): void;
-  /** 宿主工具被停止 → ui/notifications/tool-cancelled。 */
+  /** The host tool was stopped → ui/notifications/tool-cancelled. */
   notifyToolCancelled(): void;
   dispose(): Promise<void>;
   readonly phase: PluginUiHostPhase;

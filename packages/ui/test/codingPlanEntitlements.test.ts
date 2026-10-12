@@ -239,7 +239,8 @@ describe("useCodingPlanEntitlements", () => {
 
     expect(firstCacheKey).not.toBe(secondCacheKey);
     expect(String(firstCacheKey)).toContain(BUILTIN_MODEL_PROVIDER_IDS.zaiIndividualCodingPlan);
-    // 缓存键包含规范化的请求身份；不依赖其中快照 JSON 的转义/序列化层数。
+    // The cache key includes the normalized request identity; it does not depend on how many
+    // escaping/serialization layers the snapshot JSON inside went through.
     expect(String(firstCacheKey)).toContain('"planKind":"individual-coding-plan"');
     expect(String(secondCacheKey)).toContain(BUILTIN_MODEL_PROVIDER_IDS.zaiTeamCodingPlan);
     expect(String(secondCacheKey)).toContain('"organizationId":"org-a"');

@@ -5,9 +5,11 @@ import {
 } from "../domain/pluginUiToolFeed.js";
 
 /**
- * 面板投喂快照的 owner（renderer 内存，不持久化）。键为 `buildPluginUiSurfaceKey(target, surfaceScope)`，
- * 与 pluginUiSurfaceStore / pluginUiWidgetStateStore 同一套隔离。面板 model 从投影窗口归约出快照后合并到这里，
- * 关闭再打开面板、投影窗口裁掉旧行时都还能拿到"最后一次成功结果"。只按 rowId 单调合并，不接受回退。
+ * Owner of surface feed snapshots (renderer memory, not persisted). Key is
+ * `buildPluginUiSurfaceKey(target, surfaceScope)`, isolated the same way as pluginUiSurfaceStore /
+ * pluginUiWidgetStateStore. The surface model merges a snapshot reduced from the projection window into
+ * here, so reopening the pane or the projection window trimming old rows still yields the "last
+ * successful result". Merges monotonically by rowId only; regressions are not accepted.
  */
 const feeds = new Map<string, PluginUiSurfaceFeed>();
 const listeners = new Set<() => void>();
@@ -16,7 +18,7 @@ export function getPluginUiSurfaceFeed(key: string): PluginUiSurfaceFeed {
   return feeds.get(key) ?? EMPTY_PLUGIN_UI_SURFACE_FEED;
 }
 
-/** 合并后返回存储的快照；无变化时返回原引用且不通知。 */
+/** Merges and returns the stored snapshot; when nothing changed, returns the original reference without notifying. */
 export function offerPluginUiSurfaceFeed(
   key: string,
   candidate: PluginUiSurfaceFeed,
@@ -34,7 +36,7 @@ export function subscribePluginUiSurfaceFeeds(listener: () => void): () => void 
   return () => listeners.delete(listener);
 }
 
-/** 测试用：清空全部记录。 */
+/** For tests: clear all records. */
 export function resetPluginUiSurfaceFeedsForTest(): void {
   feeds.clear();
   listeners.clear();

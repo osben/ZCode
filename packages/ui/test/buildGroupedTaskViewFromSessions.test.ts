@@ -1,4 +1,5 @@
-// M5 ②：grouped 客户端 join（分组原始结构 + sessions-index 会话 → 旧 listGroupedTaskView 同形视图）。
+// M5 (2): grouped client-side join (group raw structure + sessions-index sessions → a view with
+// the same shape as the old listGroupedTaskView).
 import { describe, expect, it } from "vitest";
 import type { ZCodeGroupedTaskViewStructure, ZCodeTaskGroup } from "@zcode/services";
 import type { ZCodeTaskMeta } from "@zcode/shared";
@@ -70,7 +71,7 @@ describe("buildGroupedTaskViewFromSessions", () => {
       pinnedIds: new Set(["t4-pinned"]),
       archivedIds: new Set(["t5-archived"]),
     });
-    // t3 有顶层序 2000 在 g1（1000）之后。
+    // t3 has top-level order 2000, after g1 (1000).
     expect(describeView(view)).toEqual([["g1", "t2", "t1"], "t3"]);
   });
 
@@ -111,14 +112,16 @@ describe("buildGroupedTaskViewFromSessions", () => {
       pinnedIds: new Set(),
       archivedIds: new Set(),
     });
-    // 缺序成员 addedAt 降序（t3 先于 t2）追加在已有序成员之后。
+    // Members missing an order are appended after the ordered ones in addedAt-descending order
+    // (t3 before t2).
     expect(describeView(view)).toEqual([["g1", "t1", "t3", "t2"]]);
   });
 
   it("不可见 bootstrap 组的成员也不出现在顶层（服务端排除规则一致）", () => {
     const view = buildGroupedTaskViewFromSessions({
       structure: structure({
-        // groups 已被服务端按 workspaceScopes 过滤——g-hidden 不在其中，但成员仍在全量 members 里。
+        // groups were already filtered server-side by workspaceScopes — g-hidden is absent, but
+        // its member is still in the full members list.
         groups: [],
         members: [
           {
@@ -153,7 +156,8 @@ describe("buildGroupedTaskViewFromSessions", () => {
       pinnedIds: new Set(),
       archivedIds: new Set(),
     });
-    // 有序节点(500)在前；缺序节点（t-new createdAt 99 > g1 createdAt 10）按创建时间降序补在其后。
+    // The ordered node (500) comes first; unordered nodes (t-new createdAt 99 > g1 createdAt 10)
+    // are appended after it in createdAt-descending order.
     expect(describeView(view)).toEqual(["t-ordered", "t-new", ["g1"]]);
   });
 
@@ -174,7 +178,7 @@ describe("buildGroupedTaskViewFromSessions", () => {
         ],
         topLevelOrders: [{ type: "group", groupId: "g1", sortOrder: 1000 }],
       }),
-      // 本地 /ws 的 t1 与 remote::x 的成员不是同一个 task → 留在顶层。
+      // The local /ws t1 and the remote::x member are not the same task → it stays top-level.
       taskIndexItems: [task("t1")],
       sessions: [],
       pinnedIds: new Set(),

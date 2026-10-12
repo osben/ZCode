@@ -21,7 +21,7 @@ export function BotGroupDeliveryProvider({
   workspaceIdentity?: string;
   children: ReactNode;
 }) {
-  // 同一任务只订阅一次群状态，历史回复不各自请求全量 Bot 状态。
+  // Subscribe to group state once per task; historical replies do not each request the full bot state.
   const { context, provider, busyId, retry, reconcile, retryPreparation } = useBotGroupTask(
     taskId,
     workspacePath,
@@ -67,7 +67,7 @@ export function BotGroupDeliveryAction({
   onReconcile: (id: string, received: boolean) => void;
 }) {
   const { intl } = useZCodeIntl();
-  // Bug 原因：任务级恢复面板与队列浮层重叠，还重复展示正文；只在已关联轮次的操作栏展示。
+  // Bug cause: the task-level recovery panel overlapped the queue popover and repeated the body; show it only in the action bar of an associated turn.
   const unresolved = results.filter(
     (result) =>
       result.sourceCommandId &&

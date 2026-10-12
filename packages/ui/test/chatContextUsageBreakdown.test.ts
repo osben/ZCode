@@ -155,7 +155,8 @@ function renderFiveHourResetPanel() {
     createCodingPlanProvider(BUILTIN_MODEL_PROVIDER_IDS.zaiIndividualCodingPlan),
   ];
 
-  // 完成态会用 nextResetAt 兜底展示重置时间（带 Tooltip）；真实应用中面板总在 TooltipProvider 下。
+  // The completed state falls back to nextResetAt for the reset time display (with Tooltip); in
+  // the real app the panel always renders under a TooltipProvider.
   render(
     createElement(
       TooltipProvider,
@@ -355,9 +356,10 @@ describe("ChatCodingPlanUsageRemainingPanel MCP 额度", () => {
     );
     expect(html).not.toContain("zcode-mcp-gradient-text");
     expect(html).toContain("background-color:var(--color-usage-chart-5)");
-    // percentage 是已使用占比，展示时反转成剩余。
+    // percentage is the used share; the display inverts it into remaining.
     expect(html).toContain("75%");
-    // 重置日期按本地时区渲染（formatter 未固定 timeZone），期望值用同一规则生成，避免时区漂移。
+    // The reset date renders in the local timezone (the formatter does not pin timeZone); the
+    // expected value is generated with the same rule to avoid timezone drift.
     const expectedResetDay = new Intl.DateTimeFormat("en-US", {
       month: "short",
       day: "numeric",
@@ -1687,8 +1689,9 @@ describe("Start Plan context balance panel", () => {
     expect(html).not.toContain("settings.modelProvider.codingPlan.expiresAt");
     expect(html).toContain("GLM-5.2");
     expect(html).toContain("75%");
-    // 桶刷新时间只来自本桶 expires_at（nextResetTime），不再采用套餐级 renewTime；
-    // 非当日与 Coding Plan 对齐只展示日期，不携带时间。
+    // The bucket refresh time comes only from this bucket's expires_at (nextResetTime); the
+    // plan-level renewTime is no longer used. Non-same-day buckets align with Coding Plan and
+    // show only the date without a time.
     expect(html).toContain("Jun 14");
     expect(html).not.toContain("Jun 14 23:02");
     expect(html).not.toContain("Jun 13 10:00");
@@ -1703,8 +1706,10 @@ describe("Start Plan context balance panel", () => {
     expect(html).toContain("space-y-0.5");
     expect(html).toContain("h-1.5");
     expect(html).toContain("bg-success");
-    // 修复原因：hover 静默刷新返回后今日余额进度条原先瞬间跳变，与 Coding Plan 额度条的
-    // 500ms 宽度过渡不一致，导致"已刷新"完全无感；断言过渡与无障碍降级保持对齐。
+    // Fix rationale: after the hover's silent refresh returned, the today-balance progress bar
+    // used to jump instantly, inconsistent with the Coding Plan quota bar's 500ms width
+    // transition, making the refresh completely imperceptible; assert the transition and
+    // accessibility fallback stay aligned.
     expect(html).toContain("transition-[width]");
     expect(html).toContain("duration-500");
     expect(html).toContain("motion-reduce:transition-none");
@@ -1796,7 +1801,8 @@ describe("Start Plan context balance panel", () => {
               remaining: {
                 count: 1_750_000,
                 isShow: true,
-                // 全局聚合时间（最早桶时间）不得复制到每个桶。
+                // The global aggregate time (earliest bucket time) must not be copied to every
+                // bucket.
                 nextResetTime: new Date(2026, 5, 15, 20, 0).getTime(),
               },
               subscription: {
@@ -1856,12 +1862,14 @@ describe("Start Plan context balance panel", () => {
         }),
       );
 
-      // 每个 meter 只展示本桶的 expires_at：当日仅 HH:mm（对齐 Coding Plan 五小时窗口），
-      // 非当日仅日期（对齐 Coding Plan 周/月重置），互不串用。
+      // Each meter shows only its own bucket's expires_at: same-day shows HH:mm only (aligned
+      // with the Coding Plan five-hour window), non-same-day shows only the date (aligned with
+      // Coding Plan weekly/monthly resets); they must not be mixed.
       expect(html).toContain("18:45");
       expect(html).toContain("Jun 16");
       expect(html).not.toContain("Jun 16 09:30");
-      // 全局 remaining 聚合时间与套餐级 renewTime 不得串入任何桶。
+      // The global remaining aggregate time and plan-level renewTime must not leak into any
+      // bucket.
       expect(html).not.toContain("20:00");
       expect(html).not.toContain("Jun 13 10:00");
     } finally {

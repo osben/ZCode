@@ -146,11 +146,13 @@ describe("AppUsageLifetimeSummaryStrip", () => {
   });
 
   it("keeps the selected range for charts but removes the old range metric cards", async () => {
-    // Bugfix: 两张图表是 lazy(() => import(...))（产品侧为了不让 Recharts/decimal.js 拖慢
-    // 启动才按需加载），全量高负载下测试 worker 现场编译图表模块图会超过 waitFor 5s，
-    // 「正在统计中」Suspense fallback 消失不了（a7cade07fb 曾放宽到 5s 仍不够）。
-    // 渲染前用与组件内 lazy 完全一致的 specifier 预热模块，动态 import 命中缓存立即
-    // resolve，占位不再依赖机器负载；若图表模块本身加载失败，预热会在此处直接报错。
+    // Bugfix: both charts are lazy(() => import(...)) (loaded on demand so Recharts/decimal.js
+    // do not slow down startup); under full-suite load, a test worker compiling the chart module
+    // graph on the fly exceeds the waitFor 5s budget and the "calculating" Suspense fallback
+    // never disappears (a7cade07fb relaxed it to 5s and it still was not enough). Warm up the
+    // modules before rendering with the exact same specifiers the component's lazy calls use, so
+    // the dynamic imports hit the cache and resolve immediately and the placeholder no longer
+    // depends on machine load; if a chart module itself fails to load, the warm-up throws here.
     await Promise.all([
       import("@/settings/usage-stats/AppUsageDailyModelTrendChart.js"),
       import("@/settings/usage-stats/AppUsageModelUsagePieChart.js"),
@@ -164,9 +166,11 @@ describe("AppUsageLifetimeSummaryStrip", () => {
     );
 
     await screen.findByText("累计 Token 数");
-    // Bugfix: 加载过程中"正在统计中"占位会同时出现多个，queryByText 命中多元素时
-    // 直接抛错（全量负载下 waitFor 默认 1s 内未收敛就以 multiple elements 超时）。
-    // 改用 queryAllByText 断言占位全部消失，并放宽到 5s 容忍负载下慢收敛。
+    // Bugfix: while loading, multiple "calculating" placeholders can appear at once and
+    // queryByText throws when it matches more than one element (under full-suite load, waitFor's
+    // default 1s budget expires with a multiple elements error before things settle).
+    // Switch to queryAllByText to assert all placeholders are gone, and relax the timeout to 5s
+    // to tolerate slow convergence under load.
     await waitFor(
       () => {
         expect(screen.queryAllByText("正在统计中")).toHaveLength(0);

@@ -16,9 +16,10 @@ import type { WorkflowKindVocabulary } from "@/ToolCallBlocks/renderers/createWo
 import { isFillWorkflowHoleToolCall } from "@/lib/workflowToolNames.js";
 
 /**
- * 留白补全行在 create-workflow 渲染器里的那几样（docs/dynamic-workflow/presentation.md「The fill row」）。
- * 从 create-workflow.tsx 拆出（max-lines 门）：同一个渲染器换留白词汇；主文本是留白的名字（来自 display
- * 的 `fill` 块——行的入参没有名字）；草稿阶段线是父轨道上补全所在的那一截（新的站全墨、两侧邻站 ghost）。
+ * The fill-row slice of the create-workflow renderer (docs/dynamic-workflow/presentation.md "The fill row").
+ * Split out of create-workflow.tsx (max-lines gate): the same renderer with the hole vocabulary; the primary
+ * text is the hole's name (from the display's `fill` block — the row's input has no name); the draft phase
+ * line is the segment of the parent track where the fill sits (new sites in full ink, adjacent sites ghost).
  */
 export function useWorkflowHoleRow(
   toolCall: {
@@ -45,7 +46,7 @@ export function useWorkflowHoleRow(
   return { fill, holeTarget, vocabulary: fill ? "hole" : amend };
 }
 
-/** 卡上的时间线模型：有图按图（补全行收窄到补全那一截），流式中按草稿扫描，其余没有。 */
+/** Timeline model for the card: from the graph when present (fill rows narrow to the fill's segment), from draft scanning while streaming, none otherwise. */
 export function useWorkflowCardModel({
   graph,
   holeTarget,
@@ -61,7 +62,7 @@ export function useWorkflowCardModel({
 }): WorkflowTimelineModel | undefined {
   return useMemo(() => {
     if (graph !== undefined) {
-      // 补全行：有效脚本的图收窄到补全所在的那一截（邻站 ghost）；名字来自工具回填的入参。
+      // Fill row: narrow the valid script's graph to the segment containing the fill (adjacent sites ghost); the name comes from the tool-backfilled input.
       if (holeTarget?.holeId !== undefined) {
         const labels = new Map(
           holeTarget.name === undefined ? [] : [[holeTarget.holeId, { name: holeTarget.name }]],
@@ -71,15 +72,15 @@ export function useWorkflowCardModel({
       }
       return buildWorkflowTimeline(graph, run);
     }
-    // 流式草稿：display 还没到，站先从半截脚本里扫出来；display 一到整个模型被替换。
+    // Streaming draft: the display has not arrived yet, so sites are scanned from the partial script; the whole model is replaced once the display arrives.
     if (writing && scriptText !== undefined) return draftTimeline(scanWorkflowDraft(scriptText));
     return undefined;
   }, [graph, holeTarget, run, scriptText, writing]);
 }
 
 /**
- * 启动前 / 反馈行的主文本。ToolLayout 是 memo 组件：交给它的节点必须引用稳定。补全行是
- * `· <留白名>`；其余只有名字。留白的类型不上界面。
+ * Primary text for pre-launch / feedback rows. ToolLayout is a memo component: nodes handed to it must be
+ * reference-stable. Fill rows show `· <hole name>`; the rest show the name only. The hole's kind is not rendered.
  */
 export function useWorkflowRowPrimaryText(fill: boolean, name: string): ReactNode {
   return useMemo(

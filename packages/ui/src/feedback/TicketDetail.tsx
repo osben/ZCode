@@ -43,16 +43,21 @@ export function TicketDetailView({
   );
 
   const submittedLabel = formatSubmittedAt(ticket.created_at, formatMessage);
-  // Bugfix: 后端旧数据里可能已经持久化了中文系统摘要；详情页展示时按当前语言重新映射系统事件。
-  const timelineItems = getFeedbackTimelineItems(ticket.events ?? [], ticket.comments, formatMessage);
+  // Bugfix: older backend data may have persisted Chinese system summaries; the detail page remaps system events to the current language when displaying.
+  const timelineItems = getFeedbackTimelineItems(
+    ticket.events ?? [],
+    ticket.comments,
+    formatMessage,
+  );
   const latestTimelineItem = timelineItems.at(-1);
   const issueCopyLabel = formatMessage({
     id: issueIdCopied ? "feedback.detail.issueCopied" : "feedback.detail.issueCopy",
   });
 
   useEffect(() => {
-    // Bugfix: TicketsView 切换工单详情时会复用当前组件实例，复制成功态必须按工单 id 失效，
-    // 否则用户复制 A 后切到 B，会在 B 上短暂看到 A 的“已复制”状态。
+    // Bugfix: TicketsView reuses the current component instance when switching ticket details, so the
+    // copy-succeeded state must be invalidated per ticket id; otherwise after copying A and switching
+    // to B, the user briefly sees A's "copied" state on B.
     setCopiedIssueId(null);
     if (copiedResetTimerRef.current !== null) {
       globalThis.clearTimeout(copiedResetTimerRef.current);
@@ -150,10 +155,10 @@ export function TicketDetailView({
             <div className="min-w-0">
               <p className="truncate text-ui-base font-medium text-foreground">
                 {latestTimelineItem
-                  ? latestTimelineItem.summary ??
+                  ? (latestTimelineItem.summary ??
                     (latestTimelineItem.isStaff
                       ? formatMessage({ id: "feedback.timeline.officialReply" })
-                      : formatMessage({ id: "feedback.timeline.yourSupplement" }))
+                      : formatMessage({ id: "feedback.timeline.yourSupplement" })))
                   : formatMessage({ id: "feedback.detail.noActivity" })}
               </p>
               <p className="mt-0.5 truncate text-ui-xs text-foreground-subtle">
@@ -220,7 +225,6 @@ export function TicketDetailView({
           ) : null}
         </section>
       ) : null}
-
     </div>
   );
 }

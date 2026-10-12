@@ -1,6 +1,8 @@
 // @vitest-environment jsdom
-// 跨窗口自动完成提示抑制：一个窗口播放后，其他窗口不得再播放（Tooltip/撒花）。
-// 覆盖 store 广播/接收、hook 创建期抑制、history/read 提前上报与撒花 arm 清理。
+// Cross-window auto-completion notification suppression: once one window plays it, other windows
+// must not play it again (Tooltip/confetti).
+// Covers store broadcast/receive, hook creation-time suppression, history/read early reporting,
+// and confetti arm cleanup.
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { createElement, type ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -636,7 +638,8 @@ describe("coding plan quota reset autoplay broadcast (hook)", () => {
           sourceKey: "src",
           preferredProviderId: "p",
           accountAccess: TEST_ACCOUNT_ACCESS,
-          // 永不 resolve：旧实现 await 刷新后才上报已读，此测试会超时失败。
+          // Never resolves: the old implementation awaited the refresh before reporting read,
+          // which would make this test fail with a timeout.
           onEntitlementRefresh: () => new Promise<void>(() => {}),
         }),
       { wrapper: wrapperFor(store) },

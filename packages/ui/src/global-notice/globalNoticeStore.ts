@@ -76,9 +76,11 @@ function readState(
     };
     if (!isLegacyHighspeedMockNotice(state.latest)) return state;
 
-    // Bug 根因：早期 Highspeed mock 通知使用 latest-only 持久化，关闭 mock 后重启仍会恢复假分享数据。
+    // Bug root cause: early Highspeed mock notices used latest-only persistence, so restarting
+    // after the mock was dismissed still restored fake share data.
     const cleaned = { ...state, latest: null };
-    // 清理写失败不能把整份状态（含 24h 静默）打回空：内存态照常用 cleaned。
+    // A failed cleanup write must not reset the whole state (including 24h cooldowns) to empty:
+    // keep using cleaned as the in-memory state.
     try {
       storage.setItem(STORAGE_KEY, JSON.stringify(cleaned));
     } catch (error) {
@@ -93,7 +95,7 @@ function readState(
 export function createGlobalNoticeStore(options: {
   storage: GlobalNoticeStorage;
   now?: () => number;
-  /** 持久化失败（QuotaExceeded、存储被禁用）的受控回调；缺省静默，浏览器入口接 logger.warn。 */
+  /** Controlled callback for persistence failures (QuotaExceeded, storage disabled); silent by default, the browser entry wires it to logger.warn. */
   onPersistError?: (error: unknown) => void;
 }): GlobalNoticeStore {
   const now = options.now ?? Date.now;
@@ -101,10 +103,12 @@ export function createGlobalNoticeStore(options: {
   const listeners = new Set<() => void>();
 
   const persist = () => {
-    // Bug 根因：setItem 抛错会让 publish/dismiss 抛出，订阅者收不到已更新的内存态；而调用方
-    // （SessionPane 自动分享）已先 claim 再 publish，异常会留下不可重试的 claim，用户看不到分享卡且
-    // 当前 Renderer 生命周期内无法恢复。持久化只是展示增强：内存态先更新、写存储 best-effort、
-    // 无论成败都通知订阅者（spec §6）。
+    // Bug root cause: a throwing setItem would make publish/dismiss throw, so subscribers would
+    // never see the updated in-memory state. The caller (SessionPane auto-share) claims first and
+    // then publishes, so the error would leave a non-retryable claim: the user sees no share card
+    // and it cannot be recovered within the current Renderer lifetime. Persistence is only a
+    // display enhancement: update the in-memory state first, write to storage best-effort, and
+    // notify subscribers regardless of success (spec §6).
     try {
       options.storage.setItem(STORAGE_KEY, JSON.stringify(state));
     } catch (error) {
@@ -176,7 +180,7 @@ function describeError(error: unknown): string {
   return error instanceof Error ? `${error.name}: ${error.message}` : String(error);
 }
 
-/** localStorage 在隐私模式、被禁用或沙箱 iframe 中访问即抛 SecurityError；退回内存存储，通知在本次会话内仍可用。 */
+/** Accessing localStorage in private mode, when disabled, or inside a sandboxed iframe throws SecurityError; fall back to in-memory storage so notices remain usable for this session. */
 function resolveBrowserNoticeStorage(): GlobalNoticeStorage {
   try {
     const storage = window.localStorage;

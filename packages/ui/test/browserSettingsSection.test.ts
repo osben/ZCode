@@ -121,7 +121,8 @@ describe("BrowserSettingsSection", () => {
     const toggle = screen.getByRole("switch", {
       name: "settings.embeddedBrowserAllowInsecureCertificates",
     });
-    // 降低安全性的开关必须默认关闭，用户升级新版本不能被动获得放行行为。
+    // A security-reducing toggle must default to off; upgrading users must not passively gain
+    // the allow behavior.
     expect(toggle.getAttribute("aria-checked")).toBe("false");
 
     fireEvent.click(toggle);
@@ -177,9 +178,11 @@ describe("BrowserSettingsSection", () => {
     const importButton = screen.getByRole("button", { name: "settings.browser.import.action" });
     const controlCard = controlSwitch.closest('[data-slot="card"]');
 
-    // 断言前先确认取到了卡片容器，避免 closest 返回 null 时后续断言退化成永真
+    // Confirm the card container was actually found before asserting; otherwise, when closest
+    // returns null, later assertions degenerate into always-true checks.
     expect(controlCard).not.toBeNull();
-    // 导入登录状态是"开启内置浏览器控制"之后的配套动作，同卡片才能表达先后关系
+    // Importing sign-in state is the companion action after "enable built-in browser control";
+    // only the same card can express that ordering.
     expect(controlCard?.contains(importButton)).toBe(true);
     expect(
       controlSwitch.compareDocumentPosition(importButton) & Node.DOCUMENT_POSITION_FOLLOWING,
@@ -236,9 +239,7 @@ describe("BrowserSettingsSection", () => {
     renderSection(true, true);
 
     expect(screen.queryByRole("button", { name: "settings.browser.import.action" })).toBeNull();
-    expect(
-      screen.getByRole("button", { name: "settings.browser.clearCache.action" }),
-    ).toBeTruthy();
+    expect(screen.getByRole("button", { name: "settings.browser.clearCache.action" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "settings.browser.clearAll.action" })).toBeTruthy();
     expect(
       screen.queryByRole("checkbox", { name: "settings.browser.import.adminConsent" }),

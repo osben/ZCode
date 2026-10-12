@@ -183,8 +183,9 @@ describe("CodingPlanQuotaResetAction", () => {
 
     expect(screen.queryByRole("button", { name: "重置 5 小时额度" })).toBeNull();
     expect(screen.getByText("已重置")).toBeTruthy();
-    // 回归:已重置文案必须与「重置」按钮的 xs 尺寸(h-5)等高。曾经的 min-h-6 会把
-    // 所在额度条的标签行撑高,导致同排没有动作的额度条数值与进度条错位。
+    // Regression: the "reset done" label must match the xs size (h-5) of the "Reset" button. A
+    // former min-h-6 stretched the label row of its quota bar, misaligning the value and progress
+    // bar of quota bars in the same row that have no action.
     expect(screen.getByText("已重置").className).toContain("min-h-5");
     expect(screen.getByText("已重置").className).not.toContain("min-h-6");
   });
@@ -210,7 +211,8 @@ describe("CodingPlanQuotaResetAction", () => {
 
     const view = render(createElement(CodingPlanQuotaResetAction, props));
 
-    // 回归：浮层刚打开的提交阶段不能提前消费 arm，否则撒花会在面板可见前结束。
+    // Regression: the submit phase right after the overlay opens must not consume the arm early,
+    // otherwise the confetti would finish before the panel is visible.
     expect(celebrate).not.toHaveBeenCalled();
     expect(onAutoCelebrated).not.toHaveBeenCalled();
 
@@ -220,7 +222,7 @@ describe("CodingPlanQuotaResetAction", () => {
     expect(onAutoCelebrated).toHaveBeenCalledTimes(1);
     expect(onAutoCelebrated).toHaveBeenCalledWith(completedAt);
 
-    // 同一 used_at 重复渲染不重播。
+    // Re-rendering with the same used_at does not replay.
     view.rerender(createElement(CodingPlanQuotaResetAction, props));
     expect(celebrate).toHaveBeenCalledTimes(1);
   });

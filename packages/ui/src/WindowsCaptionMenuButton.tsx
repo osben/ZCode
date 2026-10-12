@@ -150,8 +150,9 @@ export function WindowsCaptionMenuButton({
     void (async () => {
       await platform.executeDesktopCommand(command);
       if (command === DesktopCommandIds.CheckForUpdates) {
-        // Bugfix: 这个 Windows 合并菜单才是截图里的入口。
-        // 点击后菜单会关闭，重新打开前主动拉取 main 中的 updater 状态，避免一直显示静态“检查更新”。
+        // Bugfix: this Windows merged menu is the entry shown in the screenshot. The menu closes on
+        // click, so pull the updater state from main before it reopens, instead of showing a static
+        // "Check for updates" forever.
         await syncUpdateState();
       }
     })();
@@ -195,8 +196,9 @@ export function WindowsCaptionMenuButton({
       </DropdownMenuTrigger>
       <DropdownMenuContent
         align="end"
-        // Bugfix: Windows titleBarOverlay 的原生窗口按钮宽度会受 DPI / 系统主题 / Electron 取整影响，
-        // 菜单右对齐到 45px 自绘入口时，浮层边缘可能压到最小化按钮下方；轻微左移只影响这颗 caption 菜单。
+        // Bugfix: the native window button width of Windows titleBarOverlay varies with DPI / system
+        // theme / Electron rounding, so right-aligning the menu to the 45px custom entry can push the
+        // popover edge under the minimize button; a slight left shift affects only this caption menu.
         alignOffset={WINDOWS_CAPTION_MENU_ALIGN_OFFSET}
         side="bottom"
         sideOffset={8}
@@ -297,7 +299,7 @@ export function WindowsCaptionMenuButton({
             </DropdownMenuItem>
           </>
         ) : null}
-        {/* Bugfix: 批量会话压测下线后，Windows 自绘标题栏菜单不能再暴露旧开关。 */}
+        {/* Bugfix: after bulk session load testing was retired, the Windows custom title bar menu must no longer expose the old toggle. */}
 
         <DropdownMenuSeparator />
 

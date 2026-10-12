@@ -8,8 +8,9 @@ export interface ConversationGoalBannerProps {
 }
 
 /**
- * M4 goal 横幅：展示 sendGoalCommand/resumeGoal 的 goal 状态投影（objective/status/iteration）。
- * memo：goal 不变时不随 SessionPane 其他状态重渲染。
+ * M4 goal banner: displays the goal state projection of sendGoalCommand/resumeGoal
+ * (objective/status/iteration).
+ * memo: does not re-render with other SessionPane state while goal is unchanged.
  */
 function ConversationGoalBannerImpl({ goal }: ConversationGoalBannerProps) {
   const { intl } = useZCodeIntl();

@@ -202,7 +202,8 @@ for (const [width, locale, theme] of [
         const on = await tile.evaluate(style);
         await checkIndicator(tile, true);
         assert.notEqual(on.background, off.background, "same-pointer click must change background");
-        // Todo134：选中时出现勾选图标是新预期，外层控件的文字/边框/尺寸仍不得跳变。
+        // Todo134: a checkmark icon appearing when selected is the new expectation; the outer
+        // control's text/border/size must still not jump.
         for (const key of ["color", "border", "width", "height"])
           assert.equal(on[key], off[key], key);
         await page.screenshot({
@@ -388,7 +389,8 @@ for (const [width, locale, theme] of [
       assert.equal(await success.locator("button").count(), 1);
       await success.locator("button").click();
       await success.waitFor({ state: "hidden" });
-      // 清空 Key 会触发异步草稿保存，放在独立操作完成后，避免与删除回归竞争保存门禁。
+      // Clearing the Key triggers an async draft save; do it after the standalone operations so it
+      // does not race the delete regression against the save gate.
       const keyInput = page.getByPlaceholder(locale === "zh-CN" ? "输入 API Key" : "Enter API key");
       await keyInput.fill("");
       assert.equal(await allKeyLinks.count(), 1);

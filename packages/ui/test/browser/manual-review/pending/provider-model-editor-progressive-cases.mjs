@@ -143,7 +143,8 @@ export function registerProgressiveModelEditorCases(getEnvironment) {
               );
           });
           assert.deepEqual(spacing, [16, 16]);
-          // 基础区最大输出错误不展开高级配置，但仍把焦点交还给错误输入。
+          // A basic-section max-output error does not expand the advanced config, but still hands
+          // focus back to the errored input.
           await max.fill("0");
           await save.click();
           await page.waitForFunction(
@@ -153,7 +154,8 @@ export function registerProgressiveModelEditorCases(getEnvironment) {
           assert.equal(await summary.getAttribute("aria-expanded"), "false");
           assert.deepEqual(writes, []);
           await max.fill("");
-          // 高级仅控制可见性，不能清草稿或丢掉原有覆盖高亮。
+          // Advanced only controls visibility; it must not clear drafts or drop existing override
+          // highlights.
           await page.locator('[data-model-settings-group="tokens"] input').first().fill("654321");
           await summary.click();
           const textOption = advanced.locator('[data-model-input-modality="text"]');
@@ -163,7 +165,8 @@ export function registerProgressiveModelEditorCases(getEnvironment) {
           const reasoning = advanced.locator('[data-model-settings-group="reasoning"]');
           assert.equal(await reasoning.locator("[data-model-reasoning-level-editor]").count(), 1);
           assert.equal(await reasoning.locator("[data-model-json-slot]").count(), 1);
-          // 重复值在失焦时不能提交，收起再展开仍要保留该局部编辑，而非卸载丢弃。
+          // A duplicate value must not commit on blur; collapsing and re-expanding must keep that
+          // local edit rather than unmount and discard it.
           await reasoning.getByRole("button", { name: "low", exact: true }).click();
           const levelInput = reasoning.locator("[data-model-reasoning-level-input]");
           await levelInput.fill("high");
@@ -182,7 +185,8 @@ export function registerProgressiveModelEditorCases(getEnvironment) {
           await summary.click();
           assert.equal(await max.inputValue(), "54321");
           assert.deepEqual(writes, []);
-          // 收起后保存仍校验高级字段，自动展开并聚焦；重复同一错误也有效。
+          // Saving while collapsed still validates advanced fields, auto-expanding and focusing;
+          // repeating the same error also works.
           for (let attempt = 0; attempt < 2; attempt++) {
             await save.click();
             await page.waitForFunction(

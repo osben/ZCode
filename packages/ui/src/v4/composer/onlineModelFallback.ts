@@ -6,10 +6,12 @@ export interface ModelConfigProjectionObservation {
 }
 
 /**
- * 只确认当前目标 Session 的在线 fallback 已经落到权威投影。
+ * Only confirms that the online fallback for the current target session has landed in the
+ * authoritative projection.
  *
- * 旧实现同时生成一份全局字符串模型偏好，导致 Session 事实反向污染下一次 Workspace Draft。
- * App Recent 现在只在普通用户 Submission 被接受时写入结构化 ModelSelection；这里不再持久化选择。
+ * The old implementation also generated a global string model preference, letting session
+ * facts pollute the next workspace draft in reverse. App Recent now writes a structured
+ * ModelSelection only when a regular user submission is accepted; nothing is persisted here.
  */
 export function isOnlineModelFallbackAuthoritative(params: {
   targetSessionId: string | null;
