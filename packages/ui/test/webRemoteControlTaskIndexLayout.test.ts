@@ -239,8 +239,9 @@ describe("WebRemoteControlTaskIndex layout", () => {
     );
 
     expect(source).toContain("shouldRetryWebRemoteControlTaskIndexLoad");
-    expect(source).toContain(
-      "}, [activeTaskId, activeWorkspaceIdentity, activeWorkspacePath, switcher]);",
+    // Format-agnostic: oxfmt may wrap the useCallback dependency array onto separate lines.
+    expect(source).toMatch(
+      /\}\s*,?\s*\[\s*activeTaskId,\s*activeWorkspaceIdentity,\s*activeWorkspacePath,\s*switcher\s*\]\s*,?\s*\)/,
     );
   });
 
