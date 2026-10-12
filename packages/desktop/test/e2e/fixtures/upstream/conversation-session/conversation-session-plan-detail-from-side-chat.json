@@ -1,0 +1,90 @@
+{
+  "version": 1,
+  "caseName": "conversation-session-plan-detail-from-side-chat",
+  "spec": "./test/e2e/conversation-session/conversation-session-plan-detail-from-side-chat.test.ts",
+  "fixtures": [
+    {
+      "id": "upstream-plan-side-chat-root",
+      "description": "Создать root task для вспомогательного side chat.",
+      "metadata": {
+        "kind": "main",
+        "timingPolicy": "fast-text",
+        "source": "synthetic",
+        "syntheticReason": "Root task нужен как владелец visibility scope дочернего selection side chat."
+      },
+      "maxMatches": 1,
+      "match": {
+        "method": "POST",
+        "pathIncludes": "/messages",
+        "lastUserMessageIncludes": ["E2E_PLAN_SIDE_CHAT_ROOT"],
+        "bodyIncludes": ["E2E_PLAN_SIDE_CHAT_ROOT"],
+        "bodyExcludes": ["Generate a concise title", "CRITICAL: Respond with TEXT ONLY"]
+      },
+      "response": {
+        "statusCode": 200,
+        "text": "E2E_PLAN_SIDE_CHAT_ROOT"
+      }
+    },
+    {
+      "id": "upstream-plan-side-chat-enter",
+      "description": "Selection side chat 稳定进入 plan mode。",
+      "metadata": {
+        "kind": "main",
+        "timingPolicy": "fast-text",
+        "source": "synthetic",
+        "syntheticReason": "需要稳定制造 child session plan mode 状态，避免依赖真实模型是否选择 EnterPlanMode。"
+      },
+      "maxMatches": 1,
+      "match": {
+        "method": "POST",
+        "pathIncludes": "/messages",
+        "lastUserMessageIncludes": ["E2E_PLAN_SIDE_CHAT_PROMPT"],
+        "bodyIncludes": [
+          "E2E_PLAN_SIDE_CHAT_PROMPT",
+          "E2E_PLAN_SIDE_CHAT_ENTER",
+          "E2E_PLAN_SIDE_CHAT_EXIT"
+        ],
+        "bodyExcludes": ["Generate a concise title", "CRITICAL: Respond with TEXT ONLY"]
+      },
+      "response": {
+        "statusCode": 200,
+        "toolUse": {
+          "id": "toolu_e2e_plan_side_chat_enter",
+          "name": "EnterPlanMode",
+          "input": {}
+        }
+      }
+    },
+    {
+      "id": "upstream-plan-side-chat-exit",
+      "description": "Selection side chat возвращает ExitPlanMode с marker в полном плане.",
+      "metadata": {
+        "kind": "main",
+        "timingPolicy": "fast-text",
+        "source": "synthetic",
+        "syntheticReason": "Нужен предсказуемый ExitPlanMode в child session для проверки открытия Plan Detail."
+      },
+      "maxMatches": 1,
+      "match": {
+        "method": "POST",
+        "pathIncludes": "/messages",
+        "bodyIncludes": [
+          "E2E_PLAN_SIDE_CHAT_EXIT",
+          "E2E_PLAN_SIDE_CHAT_BODY",
+          "toolu_e2e_plan_side_chat_enter"
+        ],
+        "bodyExcludes": ["Generate a concise title", "CRITICAL: Respond with TEXT ONLY"]
+      },
+      "response": {
+        "statusCode": 200,
+        "toolUse": {
+          "id": "toolu_e2e_plan_side_chat_exit",
+          "name": "ExitPlanMode",
+          "input": {
+            "plan": "# E2E_PLAN_SIDE_CHAT_BODY\n\n1. Inspect the side-chat plan projection.\n2. Open the full plan in the side pane."
+          }
+        }
+      }
+    }
+  ]
+}
