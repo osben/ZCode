@@ -8,7 +8,8 @@
     "build": "tsup",
     "start": "node dist/entry.js",
     "typecheck": "tsc -b",
-    "test": "vitest run packages/remote-relay"
+    "test": "vitest run packages/remote-relay",
+    "test:bundle": "node test/bundleSmoke.mjs"
   },
   "dependencies": { "@zcode/shared": "workspace:*", "ws": "^8.20.0" },
   "devDependencies": {

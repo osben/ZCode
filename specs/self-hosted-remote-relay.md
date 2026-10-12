@@ -3,6 +3,9 @@
 ## Status and audience
 
 Implementation authorized on 2026-10-11 after review of this design. Production deployment/publication is not authorized by that implementation request.
+The server package, shared transport contract and Dockerfile are now implemented;
+operator configuration is in [the relay README](../packages/remote-relay/README.md).
+Independent Desktop window registrations and release URL defaults remain pending.
 Audience: maintainers implementing and operating the fork's public remote-control service.
 The implementation boundary is a separate relay executable, its shared wire contract, and the existing Desktop/Web clients. This is not a replacement Agent or standalone cloud workspace server.
 
