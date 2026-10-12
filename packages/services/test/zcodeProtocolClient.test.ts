@@ -93,20 +93,20 @@ const snapshot = {
 
 describe("ZCodeProtocolClient", () => {
   it("dispose 批量拒绝不会把 fire-and-forget 请求的外层 Promise 判为 unhandled", async () => {
-    // CR 复现：request() 返回的外层 Promise 才是 unhandledRejection 判定对象；
-    // 调用方在启动后、挂靠 .catch 前 dispose，内外两层都必须已有兜底 handler。
+    // CR reproduction: the outer Promise returned by request() is what unhandledRejection judges;
+    // when the caller disposes after starting but before attaching .catch, both the inner and outer layers must already have fallback handlers.
     const transport = new FakeZCodeTransport();
     const client = new ZCodeProtocolClient(transport);
     const unhandled: unknown[] = [];
     const onUnhandled = (reason: unknown) => unhandled.push(reason);
     process.on("unhandledRejection", onUnhandled);
     try {
-      // fire-and-forget：故意不挂任何 handler，模拟评审指出的调用方形态。
+      // fire-and-forget: deliberately attaching no handler, simulating the caller shape flagged in review.
       void client.request("session/read", { sessionId: "sess_1" }, undefined, {
         timeoutMs: 5_000,
       });
       client.dispose();
-      // 冲刷微任务与 macrotask，给 V8 的 unhandled 检测留出判定窗口。
+      // Flush microtasks and macrotasks, giving V8's unhandled detection its verdict window.
       await new Promise((resolve) => setTimeout(resolve, 20));
       expect(unhandled).toEqual([]);
     } finally {
@@ -400,7 +400,7 @@ describe("ZCodeProtocolClient", () => {
 
     await expect(request).rejects.toMatchObject({ name: "AbortError" });
 
-    // 迟到的服务端响应不能重新结算已经取消的请求。
+    // A late server response must not re-settle an already-cancelled request.
     transport.receive({ id: 1, result: { ignored: true } });
   });
 
@@ -434,9 +434,9 @@ describe("ZCodeProtocolClient", () => {
     expect(transport.sent).toEqual([{ id: "permission-1", result: { decision: "allow" } }]);
   });
 
-  // Bug 根因：wiki stop 的取消 RPC 超时会触发 processManager 回收 client/进程，但进程异步退出，
-  // client.onClose 尚未触发时 activeClientsByWorkspaceKey 仍指向已 disposed 的 client。
-  // getClient 必须能在复用前通过 isDisposed 判断，避免对 disposed client 发请求秒败。
+  // Bug root cause: the wiki stop cancel RPC timing out makes processManager recycle the client/process, but the process
+  // exits asynchronously; before client.onClose fires, activeClientsByWorkspaceKey still points at the disposed client.
+  // getClient must be able to detect disposal via isDisposed before reuse, avoiding instant request failures against a disposed client.
   it("exposes isDisposed so callers can detect a recycled client before reuse", async () => {
     const transport = new FakeZCodeTransport();
     const client = new ZCodeProtocolClient(transport);
@@ -446,7 +446,7 @@ describe("ZCodeProtocolClient", () => {
     client.dispose();
     expect(client.isDisposed).toBe(true);
 
-    // disposed 后 request 应立即拒绝（assertNotDisposed），不能静默吞掉。
+    // After disposal, request should reject immediately (assertNotDisposed); it must not be silently swallowed.
     await expect(client.request("session/read", {})).rejects.toThrow(/disposed/);
   });
 });

@@ -1833,8 +1833,9 @@ describe("botsService messageFlow", () => {
         repo: f.createMemoryRepo(config) as never,
       });
 
-      // Bot 配置可能在任务创建后被删除、禁用或改成其他 provider；这些变化只跳过回推，
-      // 不能建立无效监听，更不能让 scheduler 的桌面执行失败。
+      // The Bot config may be deleted, disabled, or switched to another provider after task creation;
+      // such changes only skip the callback push — they must not establish an invalid listener, and must
+      // not make the scheduler's desktop execution fail.
       await expect(
         service.watchAutomationRun({
           target,

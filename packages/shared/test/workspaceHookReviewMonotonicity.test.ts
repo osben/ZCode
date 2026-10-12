@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-// Bugfix(2026-08-07)：D16 单一来源要求直连 monotonicity 模块；discovery barrel 的该
-// re-export 曾使 packages/ui 的 Desktop 构建链解析失败（App 重启后打不开），已删除。
+// Bugfix(2026-08-07): D16 single-source-of-truth requires importing the monotonicity module directly; this
+// re-export through the discovery barrel once broke the packages/ui Desktop build chain (app failed to reopen after restart), so it was removed.
 import {
   verdictWorkspaceHookReviewRequest,
   type WorkspaceHookReviewIdentity,
@@ -64,8 +64,8 @@ describe("workspace Hook review 单调性裁决（D16 单一来源）", () => {
   });
 
   it("跨 flow 一律 cross_flow，即便 generation 更高或更低", () => {
-    // Runtime 换代后 generation 从 1 重计，跨 flow 的 generation 没有可比性；
-    // 是否放行由调用方按 own epoch 证据（SessionResumed 等）裁决。
+    // After a Runtime generation change, generation restarts at 1, so generations across flows are not comparable;
+    // whether to admit is decided by the caller based on own-epoch evidence (SessionResumed etc.).
     expect(
       verdictWorkspaceHookReviewRequest(current, {
         reviewFlowId: "flow-b",

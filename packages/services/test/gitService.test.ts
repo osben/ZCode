@@ -89,9 +89,10 @@ function createDetachedGitEnv(): NodeJS.ProcessEnv {
     ...process.env,
   };
 
-  // Bugfix: pre-push hook 触发测试时，Git 会注入 GIT_DIR/GIT_WORK_TREE 等本地环境变量。
-  // 如果不清理，这个 helper 即便传了临时仓库 cwd，也会误操作当前工作仓库（例如把分支重命名成 main）。
-  // 这里统一移除 Git local env，确保测试里的每条 git 命令只作用于显式传入的仓库目录。
+  // Bugfix: when tests are triggered by the pre-push hook, Git injects local env vars such as
+  // GIT_DIR/GIT_WORK_TREE. Without clearing them, this helper would operate on the current working repo
+  // even when given a temp repo cwd (e.g. renaming its branch to main). Removing the Git local env here
+  // ensures every git command in tests only acts on the explicitly passed repository directory.
   for (const variableName of gitLocalEnvVars) {
     delete env[variableName];
   }
@@ -153,8 +154,9 @@ async function createRepo(options?: { withRemote?: boolean }) {
     throw new Error("Git test repository template is not initialized");
   }
 
-  // Bugfix: 每个 case 原本都通过 8 个同步 Git 子进程从零建库；related 测试并发时会耗尽
-  // macOS 的进程启动队列。复用一次性模板并复制独立工作树，保留真实 Git 行为与 case 隔离。
+  // Bugfix: each test used to build a repo from scratch via 8 synchronous Git subprocesses, exhausting
+  // macOS's process launch queue when related tests run concurrently. Reuse a one-time template and copy
+  // an independent worktree, preserving real Git behavior and per-test isolation.
   const repoContainer = makeTempDir("zcode-git-repo-");
   const repoPath = join(repoContainer, "repo");
   await cp(repoTemplatePath, repoPath, { recursive: true });
@@ -234,8 +236,9 @@ describeIfGit("gitService", () => {
     expect(listLocalBranches).toHaveBeenCalledWith(workspacePath);
   });
 
-  // Bugfix: 该用例真实创建/切换/merge Git 仓库，pre-push 全量并发时偶尔超过默认 5s。
-  // 这里仅放宽这个集成用例，避免把 Git 进程调度抖动误判成业务失败。
+  // Bugfix: this test really creates/switches/merges Git repos and can occasionally exceed the default
+  // 5s under full pre-push parallelism. Only this integration test's timeout is relaxed, so Git process
+  // scheduling jitter is not misjudged as a business failure.
   it("returns real commit graph history with parents, refs, and max-count", async () => {
     const { repoPath, workspacePath } = await createRepo();
     const service = createGitService();
@@ -679,10 +682,11 @@ describeIfGit("gitService", () => {
   });
 
   it("supports stage, unstage, discard and commit via the Git service", async () => {
-    // Bugfix: 这条用例会串行执行多次真实 git CLI 调用（stage/unstage/discard/commit/status）。
-    // 全量测试并发时，磁盘 I/O 和子进程调度偶发超过默认 5 秒，Vitest 会先超时中断，
-    // 随后 afterEach 清理临时仓库又触发额外未处理拒绝，最终把 pre-push 挡住。
-    // 这里放宽超时，只消除环境抖动，不改变 Git 服务行为断言。
+    // Bugfix: this test serially performs multiple real git CLI calls (stage/unstage/discard/commit/status).
+    // Under full test parallelism, disk I/O and subprocess scheduling occasionally exceed the default
+    // 5 seconds; Vitest then interrupts on timeout, and the afterEach temp-repo cleanup triggers extra
+    // unhandled rejections, ultimately blocking pre-push. The timeout is relaxed here only to remove
+    // environment jitter; the Git service behavior assertions are unchanged.
     const { workspacePath } = await createRepo();
     const service = createGitService();
     const trackedPath = join(workspacePath, "tracked.txt");

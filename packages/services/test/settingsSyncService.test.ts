@@ -327,7 +327,7 @@ describe("settingsSyncService commands import", () => {
       },
     ]);
     expect(existsSync(importedPath)).toBe(true);
-    // Windows 使用硬链接（普通文件），非 Windows 使用 symlink
+    // Windows uses a hard link (regular file); non-Windows uses a symlink
     if (process.platform === "win32") {
       expect(lstatSync(importedPath).isFile()).toBe(true);
     } else {

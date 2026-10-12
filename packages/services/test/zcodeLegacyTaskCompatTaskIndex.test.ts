@@ -341,7 +341,7 @@ function createAgentMock() {
           workspaceIdentity: params.workspaceIdentity,
         }),
     ),
-    // M5 ③-2：send/stop/交互回执主路径收敛 v4 命令面（旧 sendPrompt 仅剩附件回退分支）。
+    // M5 3-2: the send/stop/interaction-receipt main paths converge on the v4 command surface (legacy sendPrompt keeps only the attachment fallback branch).
     sendConversationCommandV4: vi.fn(async (params) => ({
       commandId: params.envelope.commandId,
       status: "accepted" as const,
@@ -386,11 +386,13 @@ function createAgentMock() {
         }),
     ),
     onDynamicSessionEvent: vi.fn(() => eventEmitter.event),
-    // M5 删波次 2：syncer 的终态/ready 摄入换到 v4 sessions-index 帧，
-    // 真实 syncer 会在首个 session 激活信号时建立 workspace 级订阅。
+    // M5 removal wave 2: the syncer ingests terminal/ready from v4 sessions-index frames;
+    // the real syncer establishes the workspace-level subscription at the first session
+    // activation signal.
     subscribeSessionsIndexV4: vi.fn(async () => {
-      // fresh subscribe 必须先给 syncer 一份完整 initial snapshot；后续 ready deltas
-      // 才能在同一 log epoch/seq 链上作为权威状态迁移被消费。
+      // A fresh subscribe must first hand the syncer a complete initial snapshot; only then can
+      // subsequent ready deltas be consumed as authoritative state transitions on the same
+      // log epoch/seq chain.
       fireIndexSnapshot(indexFrameEmitter);
       return {
         ack: {
@@ -436,7 +438,7 @@ function createService(options?: {
         ),
       }
     : undefined;
-  // adapter 现在要求注入 syncer；测试里给一个真实的 syncer（agent 上面已经 mock 了 onDynamicSessionEvent）。
+  // The adapter now requires an injected syncer; the test wires a real one (the agent above already mocks onDynamicSessionEvent).
   const taskIndexRepo = new TaskIndexRepo();
   const taskIndexSyncer = createZCodeTaskIndexSyncer({
     agentService: agent,
@@ -540,8 +542,8 @@ function fireIndexUpsert(
 }
 
 /**
- * M5 删波次 2：prompt ready 边界改由 v4 sessions-index 的 phase 终态迁移驱动
- * （running → completedSuccess），替代旧 state.updated prompt_completed 通知。
+ * M5 removal wave 2: the prompt-ready boundary is now driven by v4 sessions-index phase terminal transitions
+ * (running → completedSuccess), replacing the legacy state.updated prompt_completed notification.
  */
 async function firePromptCompletedState(
   indexFrameEmitter: Emitter<SessionsIndexTopicWireFrame>,
@@ -551,7 +553,7 @@ async function firePromptCompletedState(
     workspaceIdentity?: string;
   },
 ): Promise<void> {
-  // 等 syncer 的 workspace v4 订阅建立完（subscriptionId 闸门就位）。
+  // Wait for the syncer's workspace v4 subscription to be established (subscriptionId gate in place).
   await flushMicrotasks();
   fireIndexUpsert(indexFrameEmitter, compatSummary(params.sessionId, "running"));
   fireIndexUpsert(indexFrameEmitter, compatSummary(params.sessionId, "completedSuccess"));
@@ -618,8 +620,8 @@ async function seedLegacyAcpSessionId(
     resolveWorkspaceKey(params),
     params.taskId,
   );
-  // Bugfix: 老库的 acp_session_id 只在初始化迁移阶段读取。
-  // 测试里手工补列后重开 repo，验证迁移不是运行时 facade 兜底。
+  // Bugfix: the legacy database's acp_session_id is only read during the initialization migration.
+  // The test adds the column manually and reopens the repo, verifying migration is not a runtime facade fallback.
   repo.close();
   await repo.ensureReady();
 }
@@ -663,7 +665,7 @@ describe("ZCode legacy task compat task index", () => {
       });
       await flushMicrotasks();
       const completedBeforeAdmission = cancelled;
-      // 总是释放挂起请求，失败断言也不能遗留正在写入临时任务的异步工作。
+      // Always release the pending request so failed assertions do not leave async work writing temp tasks behind.
       release();
       await Promise.all([sending, cancellation]);
       expect(completedBeforeAdmission).toBe(false);
@@ -822,7 +824,7 @@ describe("ZCode legacy task compat task index", () => {
     };
     vi.mocked(readBotGroupRuntimeSnapshot).mockClear();
     vi.mocked(agent.sendConversationCommandV4).mockImplementation(async (params) => {
-      // 冷启动时先恢复同一任务，不能依赖 Desktop 曾经打开过它。
+      // On cold start the same task is restored first; it must not depend on Desktop having opened it before.
       expect(readBotGroupRuntimeSnapshot).toHaveBeenCalledWith(expect.any(Object), {
         workspacePath: "/repo",
         workspaceIdentity: "ssh://host/repo",
@@ -1057,8 +1059,9 @@ describe("ZCode legacy task compat task index", () => {
             heldQueueDisposition: "keepQueueAndSend",
             offPeakTaskId: "offpeak-stable-1",
             offPeakRunType: "init",
-            // D49-2：闲时派发轮在调用方 CronCreate 之外，纵深补 OffPeakCreate
-            // （免费池自我放大）；OffPeakList 只读保留。
+            // D49-2: the off-peak dispatch round runs outside the caller's CronCreate, so
+            // OffPeakCreate is added for defense in depth (free-pool self-amplification);
+            // OffPeakList stays allowed as read-only.
             toolDisallowlist: ["CronCreate", "OffPeakCreate"],
           },
         }),
@@ -1097,7 +1100,7 @@ describe("ZCode legacy task compat task index", () => {
             heldQueueDisposition: "keepQueueAndSend",
             offPeakTaskId: "offpeak-stable-1",
             offPeakRunType: "resume",
-            // D49-2：续跑段与首跑同语义。
+            // D49-2: the resume segment keeps the same semantics as the first run.
             toolDisallowlist: ["CronCreate", "OffPeakCreate"],
           },
         }),
@@ -1107,13 +1110,13 @@ describe("ZCode legacy task compat task index", () => {
 
   it("restores automation mutation tools for a user turn in a cron-owned session", async () => {
     const { agent, service } = createService();
-    // 会话因用户在其中创建过定时任务而归属 automation：DB meta 带 cronAutomationId。
+    // The session belongs to automation because the user created a scheduled task in it: the DB meta carries cronAutomationId.
     const task = await service.createTask({
       workspacePath: "/repo",
       provider: "glm",
       automationId: "automation-owned",
     });
-    // 复刻打开已有定时任务会话：归属仍保存在 DB，但普通用户轮不携带 automationId。
+    // Mirror opening an existing scheduled-task session: ownership stays in the DB, but a normal user turn carries no automationId.
     await service.resumeTask({ workspacePath: "/repo", taskId: task.taskId });
     service.onDynamicTaskEvent({
       workspacePath: "/repo",
@@ -1122,7 +1125,7 @@ describe("ZCode legacy task compat task index", () => {
     })(() => undefined);
     vi.mocked(agent.sendConversationCommandV4).mockClear();
 
-    // 普通用户后续输入：不带 automationId。
+    // A normal follow-up user input: no automationId.
     await service.sendPrompt({
       taskId: task.taskId,
       traceId: "trace-followup",
@@ -1175,8 +1178,8 @@ describe("ZCode legacy task compat task index", () => {
   });
 
   it("injects product CUA helper broker config before legacy createTask session creation", async () => {
-    // services 只负责建会话前把 MCP 配置交给 producer 的 resolver；改写细节由 producer 自己的测试覆盖。
-    // 这里用测试自己的 resolver，不依赖私有 producer 的注入实现（开源占位包不改写配置）。
+    // services only hands the MCP config to the producer's resolver before session creation; rewrite details are covered by the producer's own tests.
+    // This test uses its own resolver instead of the private producer's injected implementation (the open-source placeholder package does not rewrite config).
     const resolver = {
       resolveMcpServers: vi.fn(async (servers) =>
         servers?.map((server) =>
@@ -1230,8 +1233,8 @@ describe("ZCode legacy task compat task index", () => {
       provider: "glm",
     });
 
-    // Bugfix: restartWorkspaceProcess 是切模型/配置后的 workspace 级重启，
-    // 不能调用 disposeAll 把整个 agent manager 永久关闭。
+    // Bugfix: restartWorkspaceProcess is a workspace-level restart after a model/config switch;
+    // it must not call disposeAll and permanently close the whole agent manager.
     expect(agent.disposeWorkspace).toHaveBeenCalledWith({
       workspacePath: "/repo",
       workspaceIdentity: "remote:ssh:dev:/repo",
@@ -1721,8 +1724,9 @@ describe("ZCode legacy task compat task index", () => {
     }
   });
 
-  // M5 ③ 删除：listWorkspaceTaskLists（workspace 行分组查询）——列表面（本机 + remote shard）
-  // 已切 sessions-index，分组结果在客户端由 sessions + tasks-index 归属 join 构建。
+  // M5 3 removal: listWorkspaceTaskLists (workspace row-grouped query) is gone — the list surface
+  // (local + remote shards) now runs on sessions-index, and grouped results are built client-side
+  // by joining sessions with tasks-index ownership.
 
   it("broadcasts task_created when createTask inserts a new indexed task", async () => {
     const { service } = createService();
@@ -2416,7 +2420,7 @@ describe("ZCode legacy task compat task index", () => {
       await flushMicrotasks();
 
       expect(agent.sendConversationCommandV4).toHaveBeenCalledTimes(2);
-      // 幂等键 inputId→commandId：drain 落 v4 sendText，终态收口仍按 traceId 对账。
+      // Idempotency key inputId→commandId: drain lands as v4 sendText; terminal settlement still reconciles by traceId.
       expect(agent.sendConversationCommandV4).toHaveBeenLastCalledWith({
         workspacePath: "/repo",
         workspaceIdentity: undefined,
@@ -2551,7 +2555,7 @@ describe("ZCode legacy task compat task index", () => {
     await flushMicrotasks();
 
     expect(agent.sendConversationCommandV4).toHaveBeenCalledTimes(2);
-    // 幂等键 inputId→commandId：drain 落 v4 sendText，终态收口仍按 traceId 对账。
+    // Idempotency key inputId→commandId: drain lands as v4 sendText; terminal settlement still reconciles by traceId.
     expect(agent.sendConversationCommandV4).toHaveBeenLastCalledWith({
       workspacePath: "/repo",
       workspaceIdentity: undefined,
@@ -2611,7 +2615,7 @@ describe("ZCode legacy task compat task index", () => {
     await flushMicrotasks();
 
     expect(agent.sendConversationCommandV4).toHaveBeenCalledTimes(2);
-    // 幂等键 inputId→commandId：drain 落 v4 sendText，终态收口仍按 traceId 对账。
+    // Idempotency key inputId→commandId: drain lands as v4 sendText; terminal settlement still reconciles by traceId.
     expect(agent.sendConversationCommandV4).toHaveBeenLastCalledWith({
       workspacePath: "/repo",
       workspaceIdentity: undefined,
@@ -2891,7 +2895,7 @@ describe("ZCode legacy task compat task index", () => {
       ],
     });
 
-    // 附件命令面未建模（v4 attachmentRef 引用模型缺上传面）：带附件输入仍走旧 session/send。
+    // The attachment command surface is not modeled (the v4 attachmentRef reference model lacks an upload surface): attachment-bearing input still goes through the legacy session/send.
     expect(agent.sendConversationCommandV4).not.toHaveBeenCalled();
     expect(agent.sendPrompt).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -2995,7 +2999,7 @@ describe("ZCode legacy task compat task index", () => {
 
     await service.stopGeneration({ taskId: task.taskId });
 
-    // M5 ③-4：agentService.stopSession 已删除（v4 stop 命令唯一路径），断言收敛为 v4 面。
+    // M5 3-4: agentService.stopSession is removed (the v4 stop command is the only path); assertions converge on the v4 surface.
     expect(agent.sendConversationCommandV4).toHaveBeenLastCalledWith({
       workspacePath: "/repo",
       workspaceIdentity: undefined,
@@ -3007,7 +3011,7 @@ describe("ZCode legacy task compat task index", () => {
     });
   });
 
-  // M5 ③-3：模式切换（手机远控语义入口 setMode/setConfigOption）收敛 v4 switchCollaborationMode。
+  // M5 3-3: mode switching (the mobile-remote semantic entry points setMode/setConfigOption) converges on v4 switchCollaborationMode.
   it("routes setMode through the v4 switchCollaborationMode command", async () => {
     const { agent, service } = createService();
     const task = await service.createTask({ workspacePath: "/repo", provider: "glm" });
@@ -3026,7 +3030,7 @@ describe("ZCode legacy task compat task index", () => {
     });
   });
 
-  // M5 ③-3：host 无本地 v4 投影，CAS 首发 baseRevision=0 探测，stale 用 revisionAtDecision 收敛。
+  // M5 3-3: the host has no local v4 projection, so the first CAS send probes with baseRevision=0 and stale results converge via revisionAtDecision.
   it("retries a stale switchCollaborationMode ACK with the server revision", async () => {
     const { agent, service } = createService();
     const task = await service.createTask({ workspacePath: "/repo", provider: "glm" });
@@ -3048,7 +3052,7 @@ describe("ZCode legacy task compat task index", () => {
     expect(envelopes[1]).toMatchObject({ baseRevision: 7, payload: { mode: "yolo" } });
   });
 
-  // M5 ③-3 残留保真：v4 switchCollaborationMode 值域刻意排除 auto，auto 继续走旧 op。
+  // M5 3-3 legacy-behavior fidelity: the v4 switchCollaborationMode value range deliberately excludes auto; auto keeps using the legacy op.
   it("keeps mode=auto on the legacy session/setMode fallback", async () => {
     const { agent, service } = createService();
     const task = await service.createTask({ workspacePath: "/repo", provider: "glm" });
@@ -3065,7 +3069,7 @@ describe("ZCode legacy task compat task index", () => {
     ).toBe(false);
   });
 
-  // M5 ③-3：思考深度收敛 v4 switchModelConfig（thought 字段承载，provider/model 取当前选型）。
+  // M5 3-3: thought level converges on v4 switchModelConfig (carried in the thought field; provider/model take the current selection).
   it("routes thought level config through v4 switchModelConfig with the current model", async () => {
     const { agent, service } = createService();
     const task = await service.createTask({ workspacePath: "/repo", provider: "glm" });
@@ -3089,8 +3093,8 @@ describe("ZCode legacy task compat task index", () => {
     expect(configOptions.some((option) => option.id === "thought_level")).toBe(true);
   });
 
-  // M5 ③-3 评估标注保真：setModel 仍走旧 op（v4 switchModelConfig 无 runtimeModel 解析，
-  // 迁移会让手机远控的 custom provider 跨切失效）。
+  // M5 3-3 annotated-for-eval fidelity: setModel still uses the legacy op (v4 switchModelConfig has no runtimeModel resolution;
+  // migrating would break custom-provider switches across sessions for mobile remote control).
   it("keeps setModel on the legacy session/setModel op", async () => {
     const { agent, service } = createService();
     const task = await service.createTask({ workspacePath: "/repo", provider: "glm" });
@@ -3199,7 +3203,7 @@ describe("ZCode legacy task compat task index", () => {
     });
 
     expect(submitted).toBe(true);
-    // M5 ③-4：agentService.respondPermission 已删除（v4 resolveInteraction 唯一路径）。
+    // M5 3-4: agentService.respondPermission is removed (v4 resolveInteraction is the only path).
     expect(agent.sendConversationCommandV4).toHaveBeenLastCalledWith({
       workspacePath: "/repo",
       workspaceIdentity: undefined,
@@ -3251,8 +3255,8 @@ describe("ZCode legacy task compat task index", () => {
           },
         }),
       });
-      // 语义保真：replayable 应答后 observer 弹窗按 elicitation_response 清理（原
-      // respondUserInput 的 web-remote-replayable 分支，现由 adapter 本地补投）。
+      // Semantic fidelity: after a replayable answer, the observer dialog clears via elicitation_response (the former
+      // web-remote-replayable branch of respondUserInput, now re-delivered locally by the adapter).
       expect(received).toContainEqual(
         expect.objectContaining({
           type: "elicitation_response",
@@ -3914,8 +3918,8 @@ describe("ZCode legacy task compat task index", () => {
       workspaceScopes: [{ workspacePath: "/repo" }],
       sortBy: "updated",
     });
-    // M5 ②：listGroupedTaskView（tasks 表 join 的 grouped 查询）已删除；grouped 任务内容
-    // 改由 sessions-index 提供，provider 过滤断言只保留仍存在的 sqlite 列表面。
+    // M5 2: listGroupedTaskView (the tasks-table join grouped query) is removed; grouped task content
+    // now comes from sessions-index, and provider-filter assertions keep only the sqlite list surface that still exists.
     expect(active.map((task) => task.taskId)).toEqual(["glm_active"]);
     expect(pinned.map((task) => task.taskId)).toEqual(["glm_pinned"]);
     expect(pinnedIds).toEqual(["glm_pinned"]);
@@ -4009,7 +4013,7 @@ describe("ZCode legacy task compat task index", () => {
       updatedAt: now - 8 * 24 * 60 * 60 * 1000,
     });
 
-    // M5 ②：grouped 入口改为结构读取（listGroupedTaskViewStructure），auto-archive 触发口径不变。
+    // M5 2: the grouped entry point switched to structural reads (listGroupedTaskViewStructure); the auto-archive trigger semantics are unchanged.
     await service.listGroupedTaskViewStructure({
       workspaceScopes: [{ workspacePath: "/repo" }],
     });
@@ -4042,7 +4046,7 @@ describe("ZCode legacy task compat task index", () => {
       updatedAt: now - 8 * 24 * 60 * 60 * 1000,
     });
 
-    // M5 ②：grouped 入口改为结构读取（listGroupedTaskViewStructure），auto-archive 触发口径不变。
+    // M5 2: the grouped entry point switched to structural reads (listGroupedTaskViewStructure); the auto-archive trigger semantics are unchanged.
     await service.listGroupedTaskViewStructure({
       workspaceScopes: [{ workspacePath: "/repo" }],
     });
@@ -4348,8 +4352,8 @@ describe("ZCode legacy task compat task index", () => {
   });
 
   it("stamps offPeakTaskId on normal snapshot resume (D48)", async () => {
-    // SG-01：legacy 分支已补写闲时标记，正常 snapshot 续跑路径必须同语义，
-    // 否则 pre-D48 会话被闲时续跑后月亮标识与系统分组归属不会出现。
+    // SG-01: the legacy branch already stamps the off-peak marker, so the normal snapshot resume path must keep the same
+    // semantics, or pre-D48 sessions resumed off-peak would never show the moon badge or the system group ownership.
     const { agent, service, taskIndexRepo } = createService();
     const taskId = "resume_offpeak_stamp_task";
     const workspacePath = "/repo";

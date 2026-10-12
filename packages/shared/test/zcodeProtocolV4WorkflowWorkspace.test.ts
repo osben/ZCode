@@ -1,5 +1,5 @@
-// 工作区 transcript 的协议面（docs/dynamic-workflow/transcript-and-notifications.md「Two read queries」）：
-// 两条只读 query 的参数 / 结果形状与上界。
+// Protocol surface of the workspace transcript (docs/dynamic-workflow/transcript-and-notifications.md "Two read queries"):
+// params / result shapes and bounds of the two read-only queries.
 import { describe, expect, it } from "vitest";
 import {
   V4_METHODS,
@@ -36,7 +36,7 @@ describe("v4 conversation workflowRunWorkspace query", () => {
     );
     const params = { sessionId: "s", runId: "r" };
     expect(v4ConversationWorkflowRunWorkspaceParamsSchema.parse(params)).toEqual(params);
-    // 不带 atSeq / atLogEpoch：读的是 journal，没有陈旧可防。
+    // No atSeq / atLogEpoch: this reads the journal, so there is no staleness to guard against.
     expect(
       v4ConversationWorkflowRunWorkspaceParamsSchema.safeParse({ ...params, atSeq: 1 }).success,
     ).toBe(false);
@@ -54,9 +54,9 @@ describe("v4 conversation workflowRunWorkspace query", () => {
       createdAt: 1_700_000_000_000,
       updatedAt: 1_700_000_001_300,
     });
-    // 正文永不进清单：多一个 result 键整行拒收。
+    // Body content never enters the listing: one extra result key rejects the whole row.
     expect(workflowRunWorkspaceNodeSchema.safeParse(node({ result: "x" })).success).toBe(false);
-    // `inputTruncated` 只有 true 一个值：false 就该缺席。
+    // `inputTruncated` has exactly one value, true: false must be absent.
     expect(workflowRunWorkspaceNodeSchema.safeParse(node({ inputTruncated: false })).success).toBe(
       false,
     );
@@ -136,7 +136,7 @@ describe("v4 conversation workflowRunNodeResult query", () => {
       totalBytes: 0,
     };
     expect(v4ConversationWorkflowRunNodeResultResultSchema.parse(failed)).toEqual(failed);
-    // truncated 必填：调用方要据此在页脚说「只显示前 …」。
+    // truncated is required: callers use it to render "showing first … only" in the footer.
     const { truncated: _t, ...withoutTruncated } = completed;
     expect(
       v4ConversationWorkflowRunNodeResultResultSchema.safeParse(withoutTruncated).success,

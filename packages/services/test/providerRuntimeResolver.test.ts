@@ -104,9 +104,9 @@ describe("providerRuntimeResolver glm workdir discovery", () => {
     process.env.HOME = sandboxRoot;
 
     const appRepoDir = join(sandboxRoot, "z-code-2");
-    // Bugfix: GLM 生产态二进制名会按平台解析，Windows 下实际查找的是 zcode-agent.exe。
-    // 之前测试固定写成无后缀文件，导致 findBinary("glm") 返回 null，
-    // 最终被 realpathSync(null) 表现成对 ...\\null 的 lstat，掩盖了真实原因。
+    // Bugfix: the GLM production binary name resolves per platform; on Windows the actual lookup target is zcode-agent.exe.
+    // The test previously hardcoded the suffix-less name, making findBinary("glm") return null,
+    // which surfaced via realpathSync(null) as an lstat on ...\\null and masked the real cause.
     const binaryName = process.platform === "win32" ? "zcode-agent.exe" : "zcode-agent";
     const binaryPath = join(appRepoDir, "bundled-resources", "glm", binaryName);
     mkdirSync(join(appRepoDir, "bundled-resources", "glm"), { recursive: true });
@@ -148,7 +148,7 @@ describe("providerRuntimeResolver workspace config dir identity", () => {
     const home = mkdtempSync(join(tmpdir(), "zcode-agent-resolver-home-"));
     createdDirs.push(home);
     process.env.HOME = home;
-    // Bugfix: paths.ts 会在模块加载时固定默认 dataBaseDir，测试不能只改 HOME。
+    // Bugfix: paths.ts pins the default dataBaseDir at module load; tests cannot only change HOME.
     setDataBaseDir(home);
 
     const workspacePath = "/home/dev";
@@ -163,7 +163,7 @@ describe("providerRuntimeResolver workspace config dir identity", () => {
     const home = mkdtempSync(join(tmpdir(), "zcode-agent-resolver-home-"));
     createdDirs.push(home);
     process.env.HOME = home;
-    // Bugfix: paths.ts 会在模块加载时固定默认 dataBaseDir，测试不能只改 HOME。
+    // Bugfix: paths.ts pins the default dataBaseDir at module load; tests cannot only change HOME.
     setDataBaseDir(home);
 
     const workspacePath = "/Users/demo/project";

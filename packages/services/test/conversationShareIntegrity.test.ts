@@ -96,8 +96,9 @@ describe("conversation share RFC 8785 integrity", () => {
 });
 
 /**
- * 跨版本完整性：摘要必须对服务端原样发来的值算，否则「给 row 加一个 optional 字段」这种
- * 纯 additive 演进会被老客户端误报成「分享文件校验失败」。
+ * Cross-version integrity: the digest must be computed over the values exactly as sent by the server,
+ * otherwise purely additive evolution such as "adding one optional field to a row" would be misreported
+ * by older clients as "share file verification failed".
  */
 describe("verifyConversationShareIntegrity", () => {
   const descriptor = {
@@ -132,7 +133,7 @@ describe("verifyConversationShareIntegrity", () => {
     expect(
       verifyConversationShareIntegrity({
         rawRows: futureRows,
-        // 服务端读取时附加的 signed URL 字段不参与摘要。
+        // Signed URL fields attached at server read time do not participate in the digest.
         rawArtifacts: [
           { ...futureDescriptor, download_url: "https://x/y", download_url_expires_at: 9 },
         ],

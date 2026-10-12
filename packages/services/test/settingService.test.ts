@@ -397,8 +397,9 @@ describe("settingService", () => {
     await new Promise((resolve) => setTimeout(resolve, 150));
     expect(blockedUpdateSettled).toBe(false);
 
-    // Bugfix: 100ms 超时只为证明 rename 提交阶段会压制超时；后续写继承同一超时的话，
-    // 高负载下会在等待临界区收口时先超时导致偶发失败，这里放宽回默认量级。
+    // Bugfix: the 100ms timeout only proves the rename commit phase suppresses the timeout; if later
+    // writes inherited it, high load could time out first while waiting for the critical section to
+    // settle, causing flaky failures. Relaxed back to the default magnitude here.
     process.env.ZCODE_SETTING_WRITE_QUEUE_TIMEOUT_MS = "30000";
     const latestUpdate = service.update({
       locale: "zh-CN",
@@ -472,8 +473,9 @@ describe("settingService", () => {
     });
 
     const service = await createSettingServiceInHome(home);
-    // 修复原因：真实 50ms 计时可能在准备 I/O 时到期，旧写因此根本不会进入
-    // writeFile mock，等待 started 的 Promise 永远不收口。到写入屏障后再推进时钟。
+    // Fix reason: the real 50ms timer could expire while I/O is still being prepared, so the old write
+    // never reached the writeFile mock and the promise awaiting started never settled. Advance the
+    // clock only after the write barrier.
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     try {
       const staleUpdate = service.update({
@@ -495,8 +497,10 @@ describe("settingService", () => {
       vi.useRealTimers();
     }
 
-    // Bugfix: 后续写继承 50ms 超时的话，全量跑测试的高负载会让它在拿到文件锁前先超时，
-    // 造成偶发失败；本用例只需第一笔写超时，第二笔写放宽到默认量级避免计时抖动。
+    // Bugfix: if later writes inherited the 50ms timeout, the load of running the full test suite
+    // could time them out before they acquired the file lock, causing flaky failures. Only the first
+    // write needs to time out in this case; the second is relaxed to the default magnitude to avoid
+    // timing jitter.
     process.env.ZCODE_SETTING_WRITE_QUEUE_TIMEOUT_MS = "30000";
     const latestUpdate = service.update({
       locale: "zh-CN",
@@ -855,8 +859,9 @@ describe("settingService", () => {
     });
 
     await service.update({
-      // Bugfix: UI 清空代理时传空串，服务层必须把它归一成未配置，
-      // 否则旧 httpProxy 会继续留在 setting.json，重启 Agent 又会注入代理环境。
+      // Bugfix: when the UI clears the proxy it sends an empty string; the service layer must normalize
+      // it to unconfigured, or the old httpProxy would linger in setting.json and the proxy environment
+      // would be injected again after restarting the Agent.
       httpProxy: "",
     });
 
@@ -878,7 +883,7 @@ describe("settingService", () => {
     });
 
     await service.update({
-      // Bugfix: No Proxy 清空时要删除旧值，避免重启后 renderer/agent 继续绕过代理。
+      // Bugfix: clearing No Proxy must delete the old value, or the renderer/agent keeps bypassing the proxy after restart.
       httpProxyNoProxy: "",
     });
 
@@ -887,8 +892,8 @@ describe("settingService", () => {
     expect(settings.httpProxyNoProxy).toBeUndefined();
   });
 
-  // DWG-19（docs/dynamic-workflow/launch.md「The user's choice」）：选回服务端提供的模式时，
-  // UI 发空串删除选择，未改动的安装才能继续跟随服务端翻转。
+  // DWG-19 (docs/dynamic-workflow/launch.md "The user's choice"): when selecting back a server-provided mode,
+  // the UI sends an empty string to delete the choice so untouched installs keep following server-side flips.
   it("会持久化动态工作流模式选择，空串删除旧字段", async () => {
     const home = makeTempHome();
     const service = await createSettingServiceInHome(home);
@@ -916,8 +921,9 @@ describe("settingService", () => {
     });
 
     await service.update({
-      // Bugfix: UI 清空自定义证书时传空串，服务层必须把它归一成未配置，
-      // 否则下次启动 agent 仍会把旧路径注入 NODE_EXTRA_CA_CERTS。
+      // Bugfix: when the UI clears the custom certificate it sends an empty string; the service layer must
+      // normalize it to unconfigured, or the next agent startup would still inject the old path into
+      // NODE_EXTRA_CA_CERTS.
       httpProxyCaCertPath: "",
     });
 

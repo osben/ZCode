@@ -28,14 +28,14 @@ describe("parseOfficialMcpToolError", () => {
   });
 
   it("internal_error 与未知 code 一律不识别", () => {
-    // internal_error 是服务端的兜底掩码，用户无法自助解决，不该驱动任何界面提示。
+    // internal_error is the server-side fallback mask; users cannot resolve it themselves, so it must not drive any UI messaging.
     expect(parseOfficialMcpToolError('{"error_code":"internal_error"}')).toBeUndefined();
     expect(parseOfficialMcpToolError('{"error_code":"whatever"}')).toBeUndefined();
     expect(parseOfficialMcpToolError('{"message":"no code"}')).toBeUndefined();
   });
 
   it("非 JSON 文本不做文案匹配兜底", () => {
-    // 靠文案匹配会让服务端改一句话就静默失效。
+    // Relying on message-text matching would silently break whenever the server rewords one sentence.
     expect(parseOfficialMcpToolError("daily quota exceeded for bucket search_image")).toBeUndefined();
     expect(parseOfficialMcpToolError("")).toBeUndefined();
     expect(parseOfficialMcpToolError("{ not json")).toBeUndefined();

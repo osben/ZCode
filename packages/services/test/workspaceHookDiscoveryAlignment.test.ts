@@ -129,9 +129,9 @@ describe("workspace hook Settings/Runtime discovery alignment", () => {
     });
     const digest = first.workspaceHookSnapshot?.hooks[0]?.hookDeclarationDigest;
     if (!digest) throw new Error("expected declaration digest");
-    // 修复原因：CR-01 后 trust store 使用完整 strict schema（单源在 shared 的
-    // workspace-hook-trust-store-file.ts），record 必须包含全部必填字段；旧用例只写
-    // identity+digest 恰好依赖了被修复的局部校验 bug，会被 fail-closed 判为 invalid。
+    // Fix reason: after CR-01 the trust store uses the complete strict schema (single source in shared's
+    // workspace-hook-trust-store-file.ts), and records must include all required fields; the old case wrote only
+    // identity+digest, relying on the partial-validation bug that was fixed, and would be judged invalid fail-closed.
     writeJson(join(home, ".zcode", "security", "workspace-hook-trust-v1.json"), {
       schemaVersion: 1,
       records: [

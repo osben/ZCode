@@ -120,8 +120,9 @@ describe("resolveDefaultZCodeAgentCommand", () => {
 
   beforeEach(() => {
     delete process.env.ZCODE_DESKTOP_AGENT_BYTECODE;
-    // 修复原因：stdio tap 开关持久化在用户真实配置目录中。测试若直接读取该目录，
-    // 本机开启抓包后会意外包装临时 Node agent，导致用例结果依赖用户环境。
+    // Fix reason: the stdio tap switch persists in the user's real config directory. If tests read that directory
+    // directly, a locally enabled tap would unexpectedly wrap the temp Node agent, making case results depend on the
+    // user's environment.
     const dataBaseDir = mkdtempSync(join(tmpdir(), "zcode-agent-manager-data-"));
     createdDirs.push(dataBaseDir);
     setDataBaseDir(dataBaseDir);
@@ -141,14 +142,14 @@ describe("resolveDefaultZCodeAgentCommand", () => {
     else delete process.versions.electron;
     setDataBaseDir(null);
 
-    // Windows: 等待子进程退出后再删除目录
+    // Windows: wait for child processes to exit before deleting directories
     await new Promise((resolve) => setTimeout(resolve, 100));
 
     for (const dir of createdDirs.splice(0).reverse()) {
       try {
         rmSync(dir, { recursive: true, force: true });
       } catch {
-        // Windows 有时仍会有权限问题，忽略即可
+        // Windows can still hit permission issues here; safe to ignore
       }
     }
   });
@@ -309,11 +310,11 @@ describe("resolveDefaultZCodeAgentCommand", () => {
     delete process.env.ZCODE_AGENT_SERVER_ARGS_JSON;
     delete process.env.ZCODE_AGENT_SERVER_CWD;
 
-    // Bugfix: SSH 远端把 zcode-server.cjs 部署到 ~/.zcode/server/，cwd 不在仓库内、
-    // ZCODE_AGENT_SERVER_COMMAND 也没设；旧 resolver 只识别 env 和 monorepo 源码树，
-    // 即使 zcode-agent 已部署到 ~/.zcode/server/agents/glm/，resolver 也找不到。
-    // 这里用 GLM_BINARY_PATH（=runtime.binaryEnvVar）模拟该部署场景，
-    // 验证 resolver 复用 findZCodeAgentRuntimeBinary 命中已部署 binary。
+    // Bugfix: an SSH remote deploys zcode-server.cjs under ~/.zcode/server/, where cwd is outside the repo and
+    // ZCODE_AGENT_SERVER_COMMAND is unset; the old resolver only recognized env and the monorepo source tree, so even
+    // with zcode-agent deployed to ~/.zcode/server/agents/glm/ the resolver could not find it.
+    // This simulates that deployment via GLM_BINARY_PATH (=runtime.binaryEnvVar), verifying the resolver reuses
+    // findZCodeAgentRuntimeBinary to hit the deployed binary.
     const sandboxRoot = mkdtempSync(join(tmpdir(), "zcode-agent-deployed-binary-"));
     createdDirs.push(sandboxRoot);
 
@@ -587,8 +588,9 @@ describe("resolveDefaultZCodeAgentCommand", () => {
     manager.disposeAll();
   });
 
-  // M5 ③-2（CLI 重连重订）：进程换代要广播 onRuntimeRestarted，v4 订阅方据此重订；
-  // 首次拉起（generation=1）不广播，避免启动期误触发无意义的重订。
+  // M5 3-2 (CLI reconnect re-subscribe): a process generation change must broadcast onRuntimeRestarted so v4
+  // subscribers re-subscribe; the first launch (generation=1) does not broadcast, avoiding meaningless re-subscribes
+  // triggered during startup.
   it("进程换代（generation>1）广播 onRuntimeRestarted，首次拉起不广播", async () => {
     const workspacePath = mkdtempSync(join(tmpdir(), "zcode-agent-manager-restart-evt-"));
     createdDirs.push(workspacePath);
@@ -672,8 +674,9 @@ setInterval(() => {}, 1000);
       cwd: workspacePath,
     });
 
-    // Bugfix: app 关闭期间 warmup 仍可能卡在 command/env resolve。
-    // disposeAllAndWait 之后不允许这个启动 promise 继续 spawn，否则会绕过关闭快照留下孤儿进程。
+    // Bugfix: during app close, warmup can still be stuck in command/env resolve.
+    // After disposeAllAndWait this startup promise must not keep spawning, or it would bypass the shutdown snapshot
+    // and leave orphan processes.
     await expect(starting).rejects.toThrow("ZCode agent process manager is disposed.");
     expect(existsSync(markerPath)).toBe(false);
   });
@@ -718,12 +721,13 @@ setInterval(() => {}, 1000);
       expect(spawnedPids).toHaveLength(2);
       expect(new Set(spawnedPids).size).toBe(2);
 
-      // 修复原因：protocol close 只表示该 client 不再可复用，不表示
-      // OS 进程已退出。Host dispose 必须同时等待两代已启动进程完成回收。
+      // Fix reason: protocol close only means this client is no longer reusable, not that the OS process has exited.
+      // Host dispose must wait for both generations of started processes to finish reclamation.
       await manager.disposeAllAndWait();
 
-      // 修复原因：进程树回收按 OS 存活状态完成，Node exit 事件及 stderr
-      // 收尾后的生命周期上报可能稍晚投递；断言应等待上报，不能假定同步发生。
+      // Fix reason: process-tree reclamation completes by OS liveness, and the lifecycle report after the Node exit
+      // event and stderr wrap-up may be delivered slightly late; assertions should await the report instead of
+      // assuming synchronous delivery.
       await vi.waitFor(() => expect(reporter.onExit).toHaveBeenCalledTimes(2));
       expect(reporter.onExit.mock.calls.map(([event]) => event.pid).sort((a, b) => a - b)).toEqual(
         [...spawnedPids].sort((a, b) => a - b),
@@ -738,7 +742,7 @@ setInterval(() => {}, 1000);
         try {
           process.kill(process.platform === "win32" ? pid : -pid, "SIGKILL");
         } catch {
-          /* 测试兜底清理，进程已退出时忽略。 */
+          /* Test-fallback cleanup; ignored when the process has already exited. */
         }
       }
     }
@@ -767,8 +771,8 @@ setInterval(() => {}, 1000);
     });
 
     try {
-      // 修复原因：旧实现永久缓存失败的 cleanup Promise，app quit 再次等待时
-      // 只会取得同一个 rejection，既不会 force 重试，也会提前释放退出边界。
+      // Fix reason: the old implementation permanently cached the failed cleanup Promise; waiting again on app quit
+      // would only retrieve the same rejection, neither force-retrying nor releasing the exit boundary early.
       await manager.disposeAllAndWait();
       expect(cleanupAttemptCount).toBe(2);
     } finally {
@@ -801,8 +805,9 @@ setInterval(() => {}, 1000);
 
     try {
       await manager.getClient({ workspacePath });
-      // 修复原因：前序进程树回收会在低负载余量环境中短暂占用 spawn/ps；
-      // 这里验证的是子进程 env，不应使用 Vitest 默认 1 秒调度窗口制造时序失败。
+      // Fix reason: preceding process-tree reclamation briefly occupies spawn/ps in low-load-margin environments;
+      // this verifies subprocess env and should not use Vitest's default 1-second scheduling window to create timing
+      // failures.
       await vi.waitFor(() => expect(existsSync(nodeEnvPath)).toBe(true), {
         timeout: 5_000,
       });
@@ -917,8 +922,9 @@ setInterval(() => {}, 1000);
     const manager = new ZCodeAgentProcessManager({
       commandResolver: () => ({
         command: process.execPath,
-        // 测试只验证 protocol-close 根因；让 stdin EOF 可收尾，避免完整测试并发时
-        // PowerShell/CIM 定向复核受系统负载影响，把该用例误变成 cleanup deadline 测试。
+        // The test only verifies the protocol-close root cause; let stdin EOF settle so that under full-suite
+        // concurrency the PowerShell/CIM targeted re-check is not affected by system load, which would wrongly turn
+        // this case into a cleanup deadline test.
         args: [
           "-e",
           'process.stdout.write("invalid-ndjson\\n"); process.stdin.resume(); process.stdin.on("end", () => process.exit(1));',
@@ -940,8 +946,9 @@ setInterval(() => {}, 1000);
         }
         await disposeAndWait();
       });
-      // Bug 根因：进程树回收包含有界 SIGTERM 等待窗口；全量并发单测下默认 1 秒
-      // waitFor 会在真实 exit 事件到达前超时，造成仅在整套测试中出现的假失败。
+      // Bug root cause: process-tree reclamation includes a bounded SIGTERM wait window; under full concurrent unit
+      // runs, the default 1-second waitFor times out before the real exit event arrives, creating failures that only
+      // appear in the whole-suite run.
       await vi.waitFor(() => expect(reporter.onExit).toHaveBeenCalledTimes(1), {
         timeout: 5_000,
       });

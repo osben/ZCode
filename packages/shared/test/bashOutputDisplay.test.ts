@@ -44,12 +44,12 @@ describe("Bash output display wire contract", () => {
       expect(JSON.stringify(parsed)).toContain(JSON.stringify(display));
     }
   });
-  // 两条通道对"读不懂的 display"给出同一个产品结果——**这张卡没有载荷**——但拒收的位置不同，
-  // 而位置决定代价：
-  //   v3 `session/event`：整条事件被丢，consumer 记 zod issues 后继续（zcodeAgentService.ts）。
-  //   v4 row：display 在信封层不设门（`.catch(undefined)`），载荷被丢、row/帧照常投影。
-  // v4 曾经也在信封层拒收，但那一层的"拒"是拒整帧，会连带打掉订阅（见
-  // zcodeProtocolV4DisplayTolerance.test.ts 的事故说明）。有界性没有放松：越界载荷同样到不了 UI。
+  // Both channels give the same product result for an unreadable display — **the card has no payload** — but the rejection
+  // point differs, and the point decides the cost:
+  //   v3 `session/event`: the whole event is dropped; the consumer logs zod issues and continues (zcodeAgentService.ts).
+  //   v4 row: display is not gated at the envelope layer (`.catch(undefined)`); the payload is dropped while the row/frame still projects.
+  // v4 used to reject at the envelope layer too, but a rejection at that layer rejects the entire frame and tears down the
+  // subscription (see the incident notes in zcodeProtocolV4DisplayTolerance.test.ts). Boundedness is not relaxed: out-of-bounds payloads still never reach the UI.
   it.each([
     { ...display, output: "x".repeat(150001) },
     { ...display, truncated: "true" },

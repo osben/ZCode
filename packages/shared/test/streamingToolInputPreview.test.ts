@@ -58,7 +58,7 @@ describe("streaming tool input preview", () => {
   });
 
   it("extracts a CreateWorkflow name and growing script from partial JSON", () => {
-    // 工作流卡的流式草稿靠半截 script 扫站；name 先到就先显示名字而不是兜底词。
+    // The workflow card's streaming draft scans for tool-call stations via a partial script; once name arrives, show the name instead of the fallback label.
     const preview = buildZCodeStreamingToolInputPreview(
       '{"name":"Research pipeline","script":"phase(\\"plan\\");\\nconst p = agent(\\"pl',
     );

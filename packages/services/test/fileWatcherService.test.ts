@@ -25,7 +25,7 @@ afterEach(() => {
 describe("fileWatcherService", () => {
   it("resolves a changed child path and keeps unknown watcher paths conservative", () => {
     const watchedPath = resolve("workspace", "slides");
-    // 修复原因：旧断言写死 POSIX 路径；产品使用宿主 path.resolve，Windows 会返回盘符与反斜杠。
+    // Fix rationale: the old assertion hardcoded a POSIX path; the product uses the host path.resolve, which returns a drive letter and backslashes on Windows.
     expect(resolveFileWatchChangedPath(watchedPath, "deck.pptx")).toBe(
       resolve(watchedPath, "deck.pptx"),
     );

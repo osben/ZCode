@@ -9,18 +9,17 @@ import {
 } from "@zcode/shared/workspace-hook-trust-store-file";
 
 /**
- * Trust store schema parity（CR-01 回归）。
+ * Trust store schema parity (CR-01 regression).
  *
- * Bug 背景：services 层曾用手写的局部字段校验读 trust store，而 runtime/adapters
- * 用 contracts 的完整 strict schema。同一份"JSON 合法但结构非法"的文件，services
- * 会把其中形似合法的 digest 当作 trusted_persistent 展示，runtime 却 fail-closed
- * 全部阻断——UI 与执行层状态分裂。信任存储是权限边界，所有消费者必须对同一
- * 文件得出同一结论。
+ * Bug background: the services layer used to read the trust store with hand-written partial field validation, while
+ * runtime/adapters use the complete strict schema from contracts. Given the same "valid JSON but invalid structure"
+ * file, services would display a plausible-looking digest as trusted_persistent while runtime fail-closed blocked
+ * everything — splitting UI and execution-layer state. The trust store is a permission boundary; all consumers must
+ * reach the same conclusion about the same file.
  *
- * 本测试以 shared 的 parseWorkspaceHookTrustStoreContent（与 adapters 使用的
- * contracts schema 同源 re-export）作为 runtime 侧判定基准，对一组损坏样本
- * 断言：runtime 判 invalid ⇔ services 必须 corrupt 且不产出任何 trusted 展示；
- * runtime 判 ok ⇔ services 采纳其中匹配的 digest。
+ * This test uses shared's parseWorkspaceHookTrustStoreContent (a re-export from the same source as the contracts
+ * schema used by adapters) as the runtime-side verdict baseline, and asserts over a set of corrupted samples:
+ * runtime invalid ⇔ services must be corrupt and produce no trusted display; runtime ok ⇔ services adopt the matching digest.
  */
 
 const roots: string[] = [];
@@ -63,7 +62,7 @@ function runtimeVerdict(content: string): WorkspaceHookTrustStoreParseResult {
   return parseWorkspaceHookTrustStoreContent(content);
 }
 
-/** CR-01 原始症状样本：JSON 合法、digest 形似合法，但结构不符合 schema。 */
+/** CR-01 original symptom samples: valid JSON, digest looks valid, but the structure does not match the schema. */
 const STRUCTURALLY_INVALID_SAMPLES: Array<{ name: string; file: unknown }> = [
   {
     name: "缺少 schemaVersion",
@@ -157,19 +156,21 @@ describe("trust store schema parity：services 与 runtime 对同一文件必须
     it(`结构非法样本（${sample.name}）：runtime 判 invalid ⇔ services 必须 corrupt 且不展示 trusted`, async () => {
       const { home, workspace } = setupWorkspaceWithHook();
 
-      // 先拿到该 workspace 声明的真实 digest，替换样本占位符，确保"digest 本应匹配"。
+      // First obtain the real digest declared for this workspace and substitute it for the sample
+      // placeholder, ensuring "the digest should have matched".
       const first = await createHooksService().loadHooks({ workspacePath: workspace });
       const digest = first.workspaceHookSnapshot?.hooks[0]?.hookDeclarationDigest;
       expect(digest).toBeTruthy();
-      // Bugfix 原因：直接把 workspace 路径 replaceAll 进 JSON 字符串，在 Windows 上
-      // 会注入未转义的反斜杠，产生非法 JSON（Bad escaped character），样本构造直接崩。
-      // 改为连引号一起替换成 JSON.stringify 的产物，保持任意平台的路径转义合法。
+      // Bugfix reason: replacing the workspace path directly into the JSON string via replaceAll
+      // injects unescaped backslashes on Windows, producing invalid JSON (Bad escaped character)
+      // and crashing sample construction. Replacing the quotes too with JSON.stringify's output
+      // keeps the path escaping valid on any platform.
       const serialized = JSON.stringify(sample.file).replaceAll(
         '"PLACEHOLDER"',
         JSON.stringify(workspace),
       );
 
-      // 基准：runtime 侧（shared schema，与 adapters 同源）判 invalid。
+      // Baseline: the runtime side (shared schema, same source as adapters) judges it invalid.
       expect(runtimeVerdict(serialized).status).toBe("invalid");
 
       writeJson(trustStorePath(home), JSON.parse(serialized));
@@ -177,7 +178,7 @@ describe("trust store schema parity：services 与 runtime 对同一文件必须
 
       const loaded = await createHooksService().loadHooks({ workspacePath: workspace });
 
-      // services 必须 fail-closed：不展示 trusted、标记 corrupt、发出诊断。
+      // services must fail closed: no trusted display, marked corrupt, diagnostic emitted.
       expect(loaded.hooks[0]?.workspaceHook?.trustState).toBe("pending_trust");
       expect(loaded.trustStoreCorrupt).toBe(true);
       expect(warnSpy).toHaveBeenCalled();

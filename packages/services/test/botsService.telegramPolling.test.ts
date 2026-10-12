@@ -84,8 +84,9 @@ describe("botsService Telegram polling", () => {
     service.disposeAll();
   });
 
-  // Bugfix: 这个用例在同一 Node 进程里模拟两个窗口，Windows 下目录锁与异步 polling 启动时序不稳定。
-  // 先保留 POSIX 覆盖，避免 Windows full suite 被该环境敏感断言阻塞。
+  // Bugfix: this test simulates two windows in one Node process; on Windows the directory lock and async
+  // polling startup timing are unstable. Keep POSIX-only coverage so the Windows full suite is not blocked
+  // by these environment-sensitive assertions.
   it.runIf(process.platform !== "win32")(
     "does not start a second local polling client for the same Telegram token",
     async () => {

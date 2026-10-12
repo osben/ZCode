@@ -38,8 +38,8 @@ const TEST_DESKTOP_OAUTH_LOGIN_REDIRECT_URI = buildDesktopOAuthLoginRedirectUri(
   "https://zcode.z.ai/",
 );
 
-// Windows 机器上设置了 ZAI_TEST_OAUTH_ORIGIN 等环境变量，会覆盖测试预期的 test 端点值
-// 过滤掉这些可能污染测试的环境变量
+// Windows machines may set ZAI_TEST_OAUTH_ORIGIN and similar env vars, overriding the test-endpoint values the tests expect.
+// Filter out these potentially test-polluting environment variables.
 const OAUTH_ENV_KEYS_TO_OMIT = new Set([
   "ZCODE_ENV",
   "ZCODE_ENDPOINT_ORIGIN",
@@ -1137,7 +1137,7 @@ describe("oauthService", () => {
     ).rejects.toThrow("OAuth state 不匹配或已过期");
   });
 
-  // Windows 机器上设置了 ZAI_TEST_OAUTH_ORIGIN 等环境变量，会覆盖测试预期的 test 端点值
+  // Windows machines may set ZAI_TEST_OAUTH_ORIGIN and similar env vars, overriding the test-endpoint values the tests expect.
   it("uses testZAI endpoints from runtime ZCODE_ENV without explicit origin overrides", async () => {
     const service = createBigModelService({
       env: {
@@ -2002,7 +2002,7 @@ describe("oauthService", () => {
     );
   });
 
-  // Windows 机器上设置了 ZCODE_TEST_BASE_URL 等环境变量，会覆盖测试预期的 test 端点值
+  // Windows machines may set ZCODE_TEST_BASE_URL and similar env vars, overriding the test-endpoint values the tests expect.
   it("uses test product endpoints for bigmodel token exchange and userinfo", async () => {
     const fetchMock = vi.fn<typeof fetch>();
     const service = createBigModelService({

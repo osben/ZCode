@@ -467,8 +467,8 @@ describe("parseWebRemoteControlAppPayload", () => {
   });
 
   it("bounds rpc-frame transport ids so the physical envelope meter is authoritative", () => {
-    // 生成器使用 prefix + UUID / Date / Math.random，只产生这组 JSON-safe ASCII。
-    // 所有合法字符均为单字节且无需 JSON escaping；`~` 覆盖字符集边界。
+    // The generator uses prefix + UUID / Date / Math.random, producing only this set of JSON-safe ASCII.
+    // Every legal character is single-byte and needs no JSON escaping; `~` covers the character-set boundary.
     const boundary = "~".repeat(256);
     const [boundaryFrame] = encodeWebRemoteControlRpcTransportMessage(new Uint8Array([1, 2, 3]), {
       bridgeSessionId: boundary,
@@ -543,7 +543,7 @@ describe("parseWebRemoteControlAppPayload", () => {
       recoveryId: "recovery-1",
       reason: "rpc-transport-fault",
     });
-    // 兼容旧 desktop 在原子升级窗口内仍可能发送的细分枚举。
+    // Compatibility with the finer-grained enums that older desktops may still send during the atomic upgrade window.
     expect(
       parseWebRemoteControlAppPayload({
         zcode_type: "bridge-degraded",

@@ -7,8 +7,8 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createSkillSyncService } from "../src/skill-sync/skillSyncService.js";
 
 async function symlinkSkillDirectory(target: string, linkPath: string) {
-  // 修复原因：Windows 普通目录 symlink 依赖开发者模式或管理员权限，CI/本机 pre-push
-  // 可能直接 EPERM；junction 能覆盖同样的 realpath 去重语义且不需要额外权限。
+  // Fix reason: plain directory symlinks on Windows require developer mode or admin rights, and CI/local pre-push can
+  // hit EPERM directly; a junction covers the same realpath dedup semantics without extra privileges.
   await symlink(target, linkPath, process.platform === "win32" ? "junction" : "dir");
 }
 

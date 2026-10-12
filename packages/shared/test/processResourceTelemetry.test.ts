@@ -42,12 +42,12 @@ describe("processResourceTelemetry 事件契约", () => {
     expect(resolveCliProcessResourceRole("chat")).toBe("cli_chat");
     expect(resolveCliProcessResourceRole("plugin")).toBe("cli_aux");
     expect(resolveCliProcessResourceRole("mcp-status")).toBe("cli_aux");
-    // 无 lane 只可能来自版本落后的远端 server：远端 workspace 上产生持续资源占用的是 chat lane。
+    // A missing lane can only come from an outdated remote server: on remote workspaces it is the chat lane that consumes sustained resources.
     expect(resolveCliProcessResourceRole(undefined)).toBe("cli_chat");
   });
 
   it("属性 key 白名单条数与 spec 事件契约一致", () => {
-    // spec：Node 角色 20（含 heap 两项）、mcp 19（含 mcp_id 无 heap）、gpu 18。
+    // Spec: Node roles 20 (including two heap items), mcp 19 (mcp_id but no heap), gpu 18.
     expect(PERF_PROCESS_WINDOW_PROPERTY_KEYS).toHaveLength(21);
     expect(PERF_SYSTEM_WINDOW_PROPERTY_KEYS).toHaveLength(17);
     expect(PERF_TOOL_EXEC_RESOURCE_PROPERTY_KEYS).toHaveLength(12);
@@ -89,7 +89,7 @@ describe("processResourceTelemetry 事件契约", () => {
           .filter((line) => line.startsWith("|"))
           .flatMap((line) => [...(line.split("|")[2] ?? "").matchAll(/`([^`]+)`/g)])
           .map((match) => match[1]);
-        // 全局四项与事件属性合并才是最终 ARMS 契约；重复列出属性同样应失败。
+        // The four global items merged with event properties form the final ARMS contract; duplicated properties must also fail.
         expect(["platform", "app_version", "arms_env", "device_mid", ...properties].sort()).toEqual(
           [...keys].sort(),
         );
@@ -107,7 +107,7 @@ describe("processResourceTelemetry 事件契约", () => {
   });
 
   it("CLI 样本的 instanceToken 不在任何事件的属性白名单里", () => {
-    // instanceToken 只在 main 内存里用于统计进程数与最大单进程，不进 ARMS。
+    // instanceToken stays in main's memory only, for counting processes and the max per process; it never goes to ARMS.
     for (const key of ["instanceToken", "instance_token", "lane", "cli_lane"]) {
       const result = checkProcessResourceEventProperties("perf_process_window", {
         process_role: "cli_chat",

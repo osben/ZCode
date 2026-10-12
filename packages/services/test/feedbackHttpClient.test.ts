@@ -895,13 +895,15 @@ describe("createFeedbackService", () => {
 
   it("uses the test ZCode API base by default when ZCODE_ENV=test", async () => {
     vi.stubEnv("ZCODE_ENV", "test");
-    // Bugfix: 开发机 shell 可能导出 ZCODE_BASE_URL / ZCODE_ENDPOINT_ORIGIN（resolver 最高优先级覆盖），
-    // 会压过 ZCODE_ENV=test 的默认域推断，把「默认 base」用例变成环境敏感；置空恢复封闭性。
+    // Bugfix: a dev machine's shell may export ZCODE_BASE_URL / ZCODE_ENDPOINT_ORIGIN (the resolver's
+    // highest-priority override), which beats the ZCODE_ENV=test default-domain inference and makes the
+    // "default base" test environment-sensitive; clearing them restores hermeticity.
     vi.stubEnv("ZCODE_BASE_URL", "");
     vi.stubEnv("ZCODE_ENDPOINT_ORIGIN", "");
     const fetchMock = vi.fn(async (url: string | URL | Request) => {
-      // Bugfix: feedback 默认 base 已收敛到统一 ZCode endpoint resolver；
-      // ZCODE_ENV=test 不能继续断言生产域，否则会掩盖测试环境请求边界。
+      // Bugfix: the feedback default base has converged on the unified ZCode endpoint resolver;
+      // ZCODE_ENV=test must no longer assert the production domain, or the test-environment request
+      // boundary gets masked.
       expect(String(url)).toBe("https://zcode.z.ai/api/v1/feedback/ticket");
       return new Response(JSON.stringify({ code: 0, msg: "ok", data: { items: [] } }), {
         status: 200,
@@ -925,7 +927,7 @@ describe("createFeedbackService", () => {
 
   it("uses the production ZCode API base by default when ZCODE_ENV=production", async () => {
     vi.stubEnv("ZCODE_ENV", "production");
-    // 同上：屏蔽开发机 ambient 覆盖，保持「默认 base」语义封闭
+    // Same as above: block dev-machine ambient overrides to keep the "default base" semantics hermetic.
     vi.stubEnv("ZCODE_BASE_URL", "");
     vi.stubEnv("ZCODE_ENDPOINT_ORIGIN", "");
     const fetchMock = vi.fn(async (url: string | URL | Request) => {

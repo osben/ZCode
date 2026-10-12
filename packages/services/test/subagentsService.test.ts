@@ -21,7 +21,7 @@ async function makeTempHome(prefix = "zcode-subagents-home-"): Promise<string> {
   return home;
 }
 
-/** 在临时 HOME 下构造一个内置官方插件缓存目录（无 installed_plugins.json 记录），返回版本根目录。 */
+/** Builds a built-in official plugin cache directory under a temp HOME (no installed_plugins.json record) and returns the version root. */
 async function writeOfficialPluginFixture(
   home: string,
   pluginName: string,
@@ -112,8 +112,9 @@ describe("subagent markdown helpers", () => {
   });
 
   it("lists built-in official plugin agents from the official cache without an install record", async () => {
-    // Bug 根因：discoverPluginAgents 只读 installed_plugins.json，内置官方插件由 CLI seed 到
-    // cache/zcode-plugins-official 且没有安装记录，documents:visual-judge 在 Settings 永远不可见。
+    // Bug root cause: discoverPluginAgents only reads installed_plugins.json, but built-in official
+    // plugins are seeded by the CLI into cache/zcode-plugins-official without an install record, so
+    // documents:visual-judge was never visible in Settings.
     const home = await makeTempHome();
     const workspacePath = join(home, "workspace");
     const oldRoot = await writeOfficialPluginFixture(home, "documents", "0.1.9", "visual-judge");
@@ -126,9 +127,9 @@ describe("subagent markdown helpers", () => {
     await writeOfficialPluginFixture(home, "documents", "99.0.backup-1", "visual-judge");
     await mkdir(join(newRoot, "..", "0.1.4.backup-1"), { recursive: true });
     await mkdir(join(newRoot, "..", ".seed-lock"), { recursive: true });
-    // ios-simulator 不在默认启用集合里，且 config 没有显式启用，必须被忽略。
+    // ios-simulator is not in the default-enabled set and config does not enable it explicitly; it must be ignored.
     await writeOfficialPluginFixture(home, "ios-simulator", "0.2.0", "simulator-runner");
-    // browser-use 默认启用，但被用户「卸载」进入 suppressedBuiltins，同样不能贡献 agent。
+    // browser-use is enabled by default but "uninstalled" by the user into suppressedBuiltins; it must not contribute an agent either.
     await writeOfficialPluginFixture(home, "browser-use", "0.5.0", "browser-auditor");
     await writeFile(
       join(home, ".zcode", "cli", "config.json"),
@@ -148,7 +149,7 @@ describe("subagent markdown helpers", () => {
       id: "plugin:documents@zcode-plugins-official:visual-judge",
       pluginId: "documents@zcode-plugins-official",
       pluginName: "documents",
-      // 多版本缓存共存时取数字感知最新的版本目录，而不是字典序首项。
+      // When multiple version caches coexist, pick the numerically latest version directory, not the first in lexicographic order.
       path: join(newRoot, "agents", "visual-judge.md"),
       scope: "user",
       source: "plugin",
@@ -848,8 +849,8 @@ describe("createSubagentsService", () => {
     ]);
     expect(result.agents.every((agent) => agent.scope !== "workspace")).toBe(true);
 
-    // Bugfix 回归：workspace profile 曾被 parser 标为 readOnly，于是在设置页既不可编辑
-    // 也不可删除，还被归入“内置”分组。只有内置 agent 才是真正只读的。
+    // Bugfix regression: the workspace profile was marked readOnly by the parser, so it could be neither
+    // edited nor deleted in the settings page and was grouped under "built-in". Only built-in agents are truly read-only.
     const allScopes = await service.list({
       workspacePath,
       provider: "glm",
@@ -945,17 +946,18 @@ tools:
   });
 
   it("lists built-in official plugin agents from the official cache without an install record", async () => {
-    // Bug 根因：discoverPluginAgents 只读 installed_plugins.json，内置官方插件由 CLI seed 到
-    // cache/zcode-plugins-official 且没有安装记录，documents:visual-judge 在 Settings 永远不可见。
+    // Bug root cause: discoverPluginAgents only reads installed_plugins.json, but built-in official
+    // plugins are seeded by the CLI into cache/zcode-plugins-official without an install record, so
+    // documents:visual-judge was never visible in Settings.
     const home = await makeTempHome();
     const workspacePath = join(home, "workspace");
     const oldRoot = await writeOfficialPluginFixture(home, "documents", "0.1.2", "visual-judge");
     const newRoot = await writeOfficialPluginFixture(home, "documents", "0.1.4", "visual-judge");
     await mkdir(join(newRoot, "..", "0.1.4.backup-1"), { recursive: true });
     await mkdir(join(newRoot, "..", ".seed-lock"), { recursive: true });
-    // ios-simulator 不在默认启用集合里，且 config 没有显式启用，必须被忽略。
+    // ios-simulator is not in the default-enabled set and config does not enable it explicitly; it must be ignored.
     await writeOfficialPluginFixture(home, "ios-simulator", "0.2.0", "simulator-runner");
-    // browser-use 默认启用，但被用户「卸载」进入 suppressedBuiltins，同样不能贡献 agent。
+    // browser-use is enabled by default but "uninstalled" by the user into suppressedBuiltins; it must not contribute an agent either.
     await writeOfficialPluginFixture(home, "browser-use", "0.5.0", "browser-auditor");
     await writeFile(
       join(home, ".zcode", "cli", "config.json"),
@@ -975,7 +977,7 @@ tools:
       id: "plugin:documents@zcode-plugins-official:visual-judge",
       pluginId: "documents@zcode-plugins-official",
       pluginName: "documents",
-      // 多版本缓存共存时取数字感知最新的版本目录，而不是字典序首项。
+      // When multiple version caches coexist, pick the numerically latest version directory, not the first in lexicographic order.
       path: join(newRoot, "agents", "visual-judge.md"),
       scope: "user",
       source: "plugin",
@@ -1073,12 +1075,12 @@ tools:
       modelSelection: selection,
       modelSelectionOverride: selection,
     });
-    // 运行时投影（规范名 + 裸名别名）与设置页资源投影必须回显同一覆盖，否则 @ 提及与设置页不一致。
+    // The runtime projections (canonical name + bare-name alias) and the settings-page resource projection must echo the same override, or @ mentions and the settings page would disagree.
     expect(
       overridden.agents.filter((agent) => agent.source === "plugin").map((agent) => agent.modelSelection),
     ).toEqual([selection, selection]);
 
-    // 清除完整选择时一并清掉档位，回落到 md 声明；不恢复旧双 map 保存入口。
+    // Clearing the full selection also clears the tier and falls back to the md declaration; the old dual-map save entry is not restored.
     await service.setPluginAgentModelOverride({ agentId });
     const cleared = await service.list({ workspacePath, provider: "glm" });
     expect(cleared.pluginAgents[0]).toMatchObject({

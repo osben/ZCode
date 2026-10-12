@@ -3,8 +3,9 @@ import { ZCODE_DYNAMIC_WORKFLOW_MODE_ENV, type ApiClient } from "@zcode/shared";
 import { BigModelCodingPlanSubscriptionProvider } from "../src/coding-plan-subscription/bigmodelCodingPlanSubscriptionProvider.js";
 import { createCodingPlanSubscriptionService } from "../src/coding-plan-subscription/codingPlanSubscriptionService.js";
 
-// 动态工作流灰度快照的 Host 侧读取（docs/dynamic-workflow/launch.md「Gray release」）：
-// 复用 client/configs 通道，本地覆盖短路远端，失败 fail-closed 且不抛给调用方。
+// Host-side reads of the dynamic workflow gray-release snapshot (docs/dynamic-workflow/launch.md, "Gray release"):
+// reuses the client/configs channel; local overrides short-circuit the remote value, and failures are
+// fail-closed without throwing to the caller.
 
 function createConfigsResponse(dynamicWorkflow: unknown): Response {
   return new Response(

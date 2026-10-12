@@ -41,7 +41,7 @@ describe("createMemorySampleWriteGate", () => {
     const gate = createMemorySampleWriteGate();
     gate.evaluate(base, 0);
     expect(gate.evaluate({ ...base, heapUsedKb: 106_000 }, 60_000)).toBe("changed");
-    // 相对新基线 106000 只涨 3%，不写。
+    // Only 3% above the new baseline 106000, so no write.
     expect(gate.evaluate({ ...base, heapUsedKb: 109_000 }, 120_000)).toBeNull();
   });
 

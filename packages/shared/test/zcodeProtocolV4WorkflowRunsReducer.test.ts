@@ -1,10 +1,10 @@
-// workflowRuns 的纯归约（workflow-runs-reducer.ts）。
-// 这份归约此前长在 bootstrap 的 v4 product-projection 里，抽出来给 TUI 镜像共用
-// （docs/dynamic-workflow/launch.md「The inline card」）。
+// workflowRuns' pure reducer (workflow-runs-reducer.ts).
+// This reducer previously grew inside bootstrap's v4 product-projection and was extracted for the TUI mirror to share
+// (docs/dynamic-workflow/launch.md "The inline card").
 //
-// 桌面/协议侧的等价性由 bootstrap 的 product-projection*.test.ts 背书（断言未改）；
-// 本文件钉的是 reducer 自己的契约：逐事件归约、有界化、淘汰、revision 单调、派生 actor 状态、
-// 幂等重放。所有 case 都只调纯函数，不涉及投影、时钟或 I/O。
+// Equivalence with the desktop/protocol side is backed by bootstrap's product-projection*.test.ts (assertions unchanged);
+// what this file pins is the reducer's own contract: per-event reduction, bounding, eviction, monotonic revision, derived
+// actor status, idempotent replay. Every case calls only pure functions — no projection, no clock, no I/O.
 import { describe, expect, it } from "vitest";
 import {
   WORKFLOW_RUNS_LIMITS,
@@ -16,7 +16,7 @@ import {
 
 const RUN_ID = "dwfrun-1";
 
-/** 逐条归约一串事件；null（无变化）时保持上一态，与投影"不产 delta"同义。 */
+/** Reduces a stream of events one by one; on null (no change) keeps the previous state, synonymous with the projection producing no delta. */
 function reduceAll(
   envelopes: readonly WorkflowRunProgressEnvelope[],
   initial?: WorkflowRunsState,
@@ -29,10 +29,10 @@ function reduceAll(
 }
 
 /**
- * 归约一条**预期确实产生变化**的事件。
+ * Reduces one event that is **expected to produce a change**.
  *
- * reducer 的 `previous` 收 `| undefined` 而返回 `| null`，链式调用因此不能直接接——这是刻意的：
- * "无变化"必须被调用方显式处理，不能顺手当成空态传下去（那会把状态整片抹掉）。
+ * The reducer takes `previous: | undefined` but returns `| null`, so calls cannot be chained directly — deliberate:
+ * "no change" must be handled explicitly by the caller, never passed along as an empty state (that would wipe the whole state).
  */
 function step(
   state: WorkflowRunsState | undefined,
@@ -43,7 +43,7 @@ function step(
   return next;
 }
 
-/** 事件信封工厂：sequence 按调用序自增，模拟 journal 的单调分配。 */
+/** Event envelope factory: sequence auto-increments per call, mimicking the journal's monotonic assignment. */
 function progressLog(runId = RUN_ID) {
   let sequence = -1;
   return function progress(
@@ -90,7 +90,7 @@ describe("reduceWorkflowRunsState：逐事件归约", () => {
     const state = reduceWorkflowRunsState(undefined, progress("run-started", started()));
     expect(state?.runs[0]?.usage).toEqual({ spentTokens: 0, nodesUsed: 0 });
     expect(state?.runs[0]).not.toHaveProperty("budget");
-    // 载荷不带 concurrencyCeiling（老 CLI）：读不出天花板就无从判断这个 run 是否被压低。
+    // The payload has no concurrencyCeiling (old CLI): without a readable ceiling there is no way to tell whether this run was throttled.
     expect(state?.runs[0]).not.toHaveProperty("concurrency");
   });
 
@@ -111,11 +111,11 @@ describe("reduceWorkflowRunsState：逐事件归约", () => {
       {
         siteId: "ask#1",
         ordinal: 1,
-        // kind 只在 queued 上携带，后续相位从上一条继承。
+        // kind is carried only on queued; later phases inherit it from the previous entry.
         kind: "ask",
         phase: "settled",
         outcome: "ok",
-        // actor 归属同理继承——dispatched/settled 不重复带 actor。
+        // actor attribution is inherited the same way — dispatched/settled do not repeat it.
         actorSiteId: "actor#1",
         actorOrdinal: 1,
       },
@@ -123,7 +123,7 @@ describe("reduceWorkflowRunsState：逐事件归约", () => {
   });
 
   it("cached 命中直接发 node-settled（不经 queued），kind 缺省而条目仍成立", () => {
-    // engine.ts:228/232 —— resume 的完结命中短路，kind 因此不可观察。
+    // engine.ts:228/232 — resume's completed-hit short-circuit, so kind is unobservable.
     const progress = progressLog();
     const state = reduceAll([
       progress("run-started", started()),
@@ -139,7 +139,7 @@ describe("reduceWorkflowRunsState：逐事件归约", () => {
   });
 
   it("用量：spentTokens 直接取 usage-updated 载荷，nodesUsed 按首次派发计步", () => {
-    // docs/dynamic-workflow/authoring.md：事件携带已花总量（与 dwf_run.spent_tokens 同步写入）。
+    // docs/dynamic-workflow/authoring.md: events carry the spent total (written in sync with dwf_run.spent_tokens).
     const progress = progressLog();
     const dispatched = (siteId: string) => [
       progress("node-queued", {
@@ -190,8 +190,8 @@ describe("reduceWorkflowRunsState：逐事件归约", () => {
     expect(workflowRunsStateSchema.safeParse(state).success).toBe(true);
   });
 
-  // 修复原因（2026-09-15）：闭集之外的词过去「一律忽略」，2026-09-14 之前 journal 里的
-  // run-settled{cancelled|failed} 冷回放后把 run 留在 running。结算到了 run 就不能再活着。
+  // Fix rationale (2026-09-15): words outside the closed set used to be "always ignored", so a pre-2026-09-14 journal's
+  // run-settled{cancelled|failed} left the run in running after cold replay. Once settled, a run must not still be alive.
   it("run-settled 的未知 status → errored 落终态，文案说明是哪个词，不亮 Resume", () => {
     const progress = progressLog();
     const state = reduceAll([
@@ -232,7 +232,7 @@ describe("reduceWorkflowRunsState：逐事件归约", () => {
     expect(state?.runs[0]).toMatchObject({ runId: RUN_ID, status: "running" });
     expect(state?.runs[0]?.error).toBeUndefined();
     expect(state?.runs[0]?.resultPreview).toBeUndefined();
-    // 上一世的停止原因同属结算残影。
+    // The previous life's stop reason is settlement residue too.
     expect(state?.runs[0]?.stopReason).toBeUndefined();
   });
 
@@ -258,7 +258,7 @@ describe("reduceWorkflowRunsState：逐事件归约", () => {
     const progress = progressLog();
     const state = reduceAll([
       progress("run-started", started()),
-      // ordinal 缺席 → 无法定位。
+      // ordinal absent → cannot locate.
       progress("node-queued", { instance: { siteId: "ask#1" }, kind: "ask" }),
       progress("actor-created", { actor: { ordinal: 1 }, name: "planner" }),
     ]);
@@ -267,9 +267,9 @@ describe("reduceWorkflowRunsState：逐事件归约", () => {
     expect(state?.runs[0]?.lastEventSequence).toBe(2);
   });
 
-  // Bugfix 2026-09-04：脚本把文件路径拼成 131 字的子代理名，reducer 原样透传，而线上 schema 把
-  // `actor.name` 钉在 128——于是父会话之后的每一帧（online / recovery / initial）都被渲染端拒收，
-  // 订阅以 fault.subscription.recoveryFailed 失效。生产者必须先按 schema 界裁剪。
+  // Bugfix 2026-09-04: a script assembled a 131-char subagent name from a file path, the reducer passed it through, but the
+  // wire schema pins `actor.name` at 128 — so every frame after the parent session (online / recovery / initial) was rejected
+  // by the renderer and the subscription died with fault.subscription.recoveryFailed. Producers must trim to the schema bound first.
   it("子代理名超过线上上界时按上界裁剪，归约结果始终通过 schema", () => {
     const progress = progressLog();
     const longName = `reader-${"sections-x.tex+".repeat(12)}`;
@@ -330,8 +330,8 @@ describe("reduceWorkflowRunsState：逐事件归约", () => {
   });
 });
 
-// lineage 的两端（docs/dynamic-workflow/presentation.md「The run card」）：`run-started` 带 resumedFrom，
-// `run-settled` 只在 superseded 时带 supersededBy；reducer 只搬运，两者都过 strict schema。
+// Both ends of lineage (docs/dynamic-workflow/presentation.md "The run card"): `run-started` carries resumedFrom,
+// `run-settled` carries supersededBy only when superseded; the reducer merely transports, both pass strict schemas.
 describe("reduceWorkflowRunsState：lineage", () => {
   it("run-started 的 resumedFrom 与 run-settled 的 supersededBy 都进状态", () => {
     const progress = progressLog();
@@ -349,7 +349,7 @@ describe("reduceWorkflowRunsState：lineage", () => {
       resumedFrom: "dwfrun-prev",
       supersededBy: "dwfrun-next",
     });
-    // 被替代的 run 不可恢复：CLI 不发 resumable，这里也没有。
+    // A superseded run is not resumable: the CLI sends no resumable, and none appears here either.
     expect(state?.runs[0]?.resumable).toBeUndefined();
     expect(workflowRunsStateSchema.safeParse(state).success).toBe(true);
   });
@@ -365,8 +365,8 @@ describe("reduceWorkflowRunsState：lineage", () => {
   });
 });
 
-// resumable 状态位（docs/dynamic-workflow/presentation.md「Cold replay」）：CLI 在 run-settled
-// 载荷上按 resume 门裁定，reducer 只搬运——为真才在场，UI 与 TUI 绝不按 status 重推导。
+// The resumable status bit (docs/dynamic-workflow/presentation.md "Cold replay"): the CLI decides by the resume gate on
+// the run-settled payload and the reducer only transports — present only when true; UI and TUI never re-derive it from status.
 describe("reduceWorkflowRunsState：resumable 状态位", () => {
   it("run-settled 携 resumable: true → 状态位在场，且过 strict schema", () => {
     const progress = progressLog();
@@ -401,8 +401,8 @@ describe("reduceWorkflowRunsState：resumable 状态位", () => {
     expect(explicit?.runs[0]?.resumable).toBeUndefined();
   });
 
-  // 停止原因（apps/zcode-cli/packages/dynamic-workflow/docs/execution-engine.md）：只在 stopped 上搬运，闭集之外与其余
-  // 终态上的 stopReason 一律丢弃——reducer 不替 CLI 编原因。
+  // Stop reason (apps/zcode-cli/packages/dynamic-workflow/docs/execution-engine.md): transported only on stopped; outside the
+  // closed set and on other terminal states it is always dropped — the reducer does not invent reasons for the CLI.
   it("run-settled 的 stopReason 只在 stopped 上搬运，且只收四个值", () => {
     const progress = progressLog();
     for (const stopReason of ["user", "model", "provider", "interrupted"] as const) {
@@ -451,7 +451,7 @@ describe("reduceWorkflowRunsState：resumable 状态位", () => {
 
 describe("reduceWorkflowRunsState：派生 actor 状态", () => {
   it("actor 状态由自己名下节点的相位派生（有在飞节点 → running）", () => {
-    // Boundary C 除 actor-created 外不发 actor 生命周期事件，所以状态只能派生。
+    // Boundary C emits no actor lifecycle events besides actor-created, so status can only be derived.
     const progress = progressLog();
     const created = reduceAll([
       progress("run-started", started()),
@@ -467,7 +467,7 @@ describe("reduceWorkflowRunsState：派生 actor 状态", () => {
         ordinal: 1,
         name: "planner",
         sessionId: "sess_dwf-1-actor.1",
-        // 建了还没被 ask、run 未终态：等待中（决策 39）。
+        // Created but never asked, run not terminal: waiting (decision 39).
         status: "waiting",
       },
     ]);
@@ -483,7 +483,7 @@ describe("reduceWorkflowRunsState：派生 actor 状态", () => {
       ],
       created,
     );
-    // dispatched 只是「会话就绪、首个请求尚未准入」：仍是等待；真正在跑由 node-executing 说。
+    // dispatched only means "session ready, first request not yet admitted": still waiting; actually running is said by node-executing.
     expect(dispatched?.runs[0]?.actors[0]?.status).toBe("waiting");
 
     const executing = reduceAll(
@@ -593,16 +593,16 @@ describe("reduceWorkflowRunsState：派生 actor 状态", () => {
   });
 
   it("派生键有分隔符：(a,12) 与 (a1,2) 是两个 actor，不互相点亮", () => {
-    // 这一对是**裸拼接会撞车**的最小反例："a"+12 与 "a1"+2 都等于 "a12"。
-    // 归约用 `${siteId}\0${ordinal}` 做键（搬移时保留原实现的 NUL 分隔符语义，只把源码里的
-    // 裸 NUL 字节写成转义 `\0`——同一个运行时字符。上面那条同 siteId 用例换成任何分隔符、
-    // 甚至不加分隔符都能过，所以真正钉住分隔符存在的是这一条）。
+    // This pair is the minimal counterexample where **naive concatenation collides**: "a"+12 and "a1"+2 both equal "a12".
+    // The reducer keys on `${siteId}\0${ordinal}` (keeping the original implementation's NUL-separator semantics when moved,
+    // writing the raw NUL byte as the escaped `\0` — the same runtime character. The same-siteId case above would pass with any
+    // separator, even none, so what truly pins the separator's existence is this one).
     const progress = progressLog();
     const state = reduceAll([
       progress("run-started", started()),
       progress("actor-created", { actor: { siteId: "a", ordinal: 12 } }),
       progress("actor-created", { actor: { siteId: "a1", ordinal: 2 } }),
-      // 只有 ("a1", 2) 名下有在跑节点。
+      // Only ("a1", 2) owns a running node.
       progress("node-executing", {
         instance: { siteId: "ask#1", ordinal: 1 },
         actor: { siteId: "a1", ordinal: 2 },
@@ -630,7 +630,7 @@ describe("reduceWorkflowRunsState：有界化与淘汰", () => {
     expect(state?.runs[0]?.nodes).toHaveLength(WORKFLOW_RUNS_LIMITS.maxNodes);
     expect(state?.runs[0]?.truncated).toBe(true);
 
-    // 超界只拒绝**新**实例：把在跑的实例冻结在 queued 上比少列一个更误导人。
+    // Over the bound only **new** instances are rejected: freezing a running instance at queued is more misleading than listing one fewer.
     const updated = reduceAll(
       [progress("node-dispatched", { instance: { siteId: "ask#1", ordinal: 1 } })],
       state,
@@ -732,9 +732,9 @@ describe("reduceWorkflowRunsState：revision 与 sequence 单调", () => {
   });
 
   it("lastEventSequence 单调：迟到/乱序事件仍归约内容，但水位不回退", () => {
-    // 界之下**照单全收**：冷物化会把 journal 重放与在线事件喂进同一个归约，在线事件先给一条
-    // run 开了头的话，它整段前缀就全在水位之下——丢掉就等于卡片空着。收紧只发生在溢出过的
-    // run 上，见下一条。
+    // Below the bound everything is **accepted as-is**: cold materialization feeds journal replay and online events into the same
+    // reduction, and if an online event opens a run first its entire prefix lies below the watermark — dropping it would leave the
+    // card empty. Tightening only happens on overflowed runs; see the next case.
     const state = reduceAll([
       { runId: RUN_ID, sequence: 5, eventType: "run-started", payload: started() },
       {
@@ -749,8 +749,8 @@ describe("reduceWorkflowRunsState：revision 与 sequence 单调", () => {
   });
 
   it("溢出过的 run 才收紧：水位之下的事件开不出新条目，但照常更新已有的", () => {
-    // 理由在 admitsNewEntry：腾位让表会变短，一个空出来的位子可能把一条早已计进
-    // nodesUnlisted 的实例放回来，那条实例就既列又计。
+    // Rationale lives in admitsNewEntry: making room shortens the table, and a freed slot could let an instance already
+    // counted in nodesUnlisted back in, leaving it both listed and counted.
     const progress = progressLog();
     const seeded = reduceAll([
       progress("run-started", started()),
@@ -793,7 +793,7 @@ describe("reduceWorkflowRunsState：幂等重放", () => {
   });
 
   it("每一条事件在它自己刚归约完之后立刻重放都是 no-op（逐步幂等）", () => {
-    // 幂等的作用域是"刚到的那条"：journal 有序投递，重传只会重传队尾。
+    // Idempotence is scoped to "the event that just arrived": the journal delivers in order, retransmission only retransmits the tail.
     const progress = progressLog();
     const events = [
       progress("run-started", started()),
@@ -816,9 +816,9 @@ describe("reduceWorkflowRunsState：幂等重放", () => {
   });
 
   it("整串事件从终态再跑一遍不是 no-op：run-started 就是重开一世（记录在案）", () => {
-    // 幂等**不**延伸到乱序/整串重放：run-started 会清结算残影并把 run 拉回 running，
-    // node-queued 也没有相位单调守卫，会把已 dispatched 的节点拉回 queued。
-    // journal 有序投递让这两条不会在生产上发生；这里钉住它们，免得日后误以为有守卫。
+    // Idempotence does **not** extend to out-of-order / whole-stream replay: run-started clears settlement residue and pulls the run
+    // back to running, and node-queued has no phase-monotonic guard, so it would drag an already-dispatched node back to queued.
+    // Ordered journal delivery keeps both from happening in production; they are pinned here so no one later assumes a guard exists.
     const progress = progressLog();
     const events = [
       progress("run-started", started()),
@@ -832,7 +832,7 @@ describe("reduceWorkflowRunsState：幂等重放", () => {
     const replayed = reduceAll(events, once)!;
     expect(replayed.runs[0]?.status).toBe("completed");
     expect(replayed.revision).toBe(once.revision + events.length);
-    // 水位是唯一有单调守卫的量：整串重放也不会让它回退。
+    // The watermark is the only quantity with a monotonic guard: even a whole-stream replay cannot pull it back.
     expect(replayed.runs[0]?.lastEventSequence).toBe(once.runs[0]?.lastEventSequence);
   });
 
@@ -853,9 +853,9 @@ describe("reduceWorkflowRunsState：幂等重放", () => {
   });
 });
 
-// ── 升级问答（apps/zcode-cli/packages/dynamic-workflow/docs/execution-engine.md）──────────────────────────────
-// 两个事件维护同一张「现在还欠谁一个答案」的表：raised 加、resolved 减。身份是 qid（全局唯一、
-// 跨 run），不是站点实例——升级没有 site 身份，不写 dwf_node 行、不占 maxNodes。
+// ── Escalations (apps/zcode-cli/packages/dynamic-workflow/docs/execution-engine.md) ──────────────────────────────
+// Two events maintain one "who is still owed an answer" table: raised adds, resolved removes. Identity is the qid
+// (globally unique, across runs), not a site instance — escalations have no site identity, write no dwf_node row, and consume no maxNodes.
 describe("reduceWorkflowRunsState：升级问答", () => {
   const ASKED_AT = 1_756_000_000_000;
   const raised = (overrides: Record<string, unknown> = {}) => ({
@@ -881,7 +881,7 @@ describe("reduceWorkflowRunsState：升级问答", () => {
         actorName: "poet",
         question: "评分上限是 95，但通过门槛是 96，这个门是不是坏了？",
         context: "已经试过 4 轮，最高分 95。",
-        // 提问时刻只能由事件携带——本模块是纯归约，没有时钟可用。
+        // The ask time can only come from the event — this module is a pure reduction with no clock available.
         askedAt: ASKED_AT,
       },
     ]);
@@ -889,8 +889,8 @@ describe("reduceWorkflowRunsState：升级问答", () => {
   });
 
   it("askedAt 缺席（老 journal 重放出的事件）时字段整个不落，其余照常成条", () => {
-    // 事件侧 askedAt 是必填的，但老开发机上的 journal 可能重放出加字段之前的事件。
-    // 缺席不是错误：渲染侧据此不显示等待时长，而不是编一个"刚刚"出来。
+    // The event-side askedAt is required, but a journal from an older dev machine may replay events from before the field was added.
+    // Absence is not an error: the renderer hides the wait duration accordingly instead of inventing a "just now".
     const progress = progressLog();
     const { askedAt: _legacy, ...preAmendment } = raised();
     const state = reduceAll([
@@ -914,13 +914,13 @@ describe("reduceWorkflowRunsState：升级问答", () => {
     for (const pending of state?.runs[0]?.pendingQuestions ?? []) {
       expect(pending).not.toHaveProperty("askedAt");
     }
-    // JSON 承载不了 NaN/Infinity，落进去会让整帧 patch 在协议线上变成 null。
+    // JSON cannot carry NaN/Infinity; letting them in would turn the whole frame patch into null on the wire.
     expect(workflowRunsStateSchema.safeParse(state).success).toBe(true);
   });
 
   it("匿名 actor 与无补充说明时字段整个缺席，不落空串", () => {
-    // 事件侧刻意不合成兜底标签（engine/types.ts 的 actorName 注释），归约也不替它编一个：
-    // 「无名」的渲染是消费者的决定。
+    // The event side deliberately does not synthesize fallback labels (engine/types.ts's actorName comment), and the reduction does not invent one:
+    // rendering "unnamed" is the consumer's decision.
     const progress = progressLog();
     const { actorName: _anonymous, ...anonymous } = raised();
     const state = reduceAll([
@@ -934,8 +934,8 @@ describe("reduceWorkflowRunsState：升级问答", () => {
   });
 
   it("actor ref 读不动时**仍然**建条目：身份是 qid，actor 只是属性", () => {
-    // 与 node/actor 那三张表刻意不同（那里无法定位即不建条目）：为了一个残缺的 ref 把问题
-    // 藏起来，恰好毁掉「被卡住的问题必须可见」这个唯一的兜底价值。
+    // Deliberately unlike the node/actor tables (where an unlocatable ref means no entry): hiding a question over a broken
+    // ref would destroy the one fallback value "a stuck question must stay visible".
     const progress = progressLog();
     const state = reduceAll([
       progress("run-started", started()),
@@ -976,9 +976,9 @@ describe("reduceWorkflowRunsState：升级问答", () => {
       progress("escalation-raised", raised()),
     ]);
     expect(state?.runs[0]?.nodes).toHaveLength(1);
-    // 那一次 ask 派发计了一步；升级本身不再加。
+    // That ask's dispatch already counted a step; the escalation adds no more.
     expect(state?.runs[0]?.usage.nodesUsed).toBe(1);
-    // 提问的 actor 仍然在跑——它那次 ask 还是 executing 的，停驻不等于空闲。
+    // The asking actor is still running — its ask is still executing; being parked does not mean idle.
     expect(state?.runs[0]?.actors[0]?.status).toBe("running");
   });
 
@@ -997,7 +997,7 @@ describe("reduceWorkflowRunsState：升级问答", () => {
       progress("escalation-raised", raised()),
       progress("escalation-resolved", { qid: "dwfq-dwfrun1-1", answer: "门确实坏了，跳过它。" }),
     ]);
-    // 「零条 ⇒ 键缺席」是协议约定：侧栏据此整区不渲染，而不是留一节空壳。
+    // "Zero entries ⇒ key absent" is a protocol convention: the sidebar skips the whole section accordingly instead of leaving an empty shell.
     expect(state?.runs[0]).not.toHaveProperty("pendingQuestions");
     expect(workflowRunsStateSchema.safeParse(state).success).toBe(true);
   });
@@ -1021,8 +1021,8 @@ describe("reduceWorkflowRunsState：升级问答", () => {
   });
 
   it("resolve 一个不在表里的 qid 不动那张表，只抬水位（与 log 同族）", () => {
-    // qid 全局唯一（跨 run），所以一条串错 run 的 resolved 事件必然找不到条目。它仍然是一条
-    // 到达过的事件，水位照抬——「无变化」只对**内容**成立（幂等的那一条见下一例）。
+    // qids are globally unique (across runs), so a resolved event serialized onto the wrong run necessarily finds no entry. It is still an
+    // event that arrived, so the watermark advances — "no change" only holds for **content** (the idempotence case is the next one).
     const progress = progressLog();
     const state = reduceAll([
       progress("run-started", started()),
@@ -1042,8 +1042,8 @@ describe("reduceWorkflowRunsState：升级问答", () => {
   });
 
   it("同一条 resolved 重放是 no-op：不抬 revision、不改状态", () => {
-    // 重放同一条事件时 sequence 也一样，水位不动，于是整条 run 逐字节相同 → null。
-    // 这才是「幂等」真正落地的地方（journal 有序投递，重传只会重传队尾）。
+    // When replaying the same event the sequence matches too, so the watermark does not move and the whole run is byte-identical → null.
+    // This is where "idempotent" actually lands (ordered journal delivery; retransmission only retransmits the tail).
     const progress = progressLog();
     const parked = reduceAll([
       progress("run-started", started()),
@@ -1070,8 +1070,8 @@ describe("reduceWorkflowRunsState：升级问答", () => {
   it.each(["completed", "errored", "stopped"] as const)(
     "run-settled（%s）清空停驻问题：终态 run 没有在听的人",
     (status) => {
-      // 真相是进程内的停驻 deferred。cancel 时它们随 cancelAsk 被拒，进程亡故则整张注册表
-      // 消失——`resolved` 事件永远不会来。留着等于摆出一个不可能被作答的问题。
+      // The truth is the in-process parked deferreds. On cancel they are rejected with cancelAsk; if the process dies the whole
+      // registry disappears — a `resolved` event will never come. Keeping them would display a question that can never be answered.
       const progress = progressLog();
       const state = reduceAll([
         progress("run-started", started()),
@@ -1084,8 +1084,8 @@ describe("reduceWorkflowRunsState：升级问答", () => {
   );
 
   it("同 runId 再收 run-started 也清掉上一世的停驻问题（进程内 cancel→resume）", () => {
-    // 新的一世里那个 ask 会重跑、actor 重新提问、得一个新 qid；旧的留着只会是永远等不到
-    // 答案、也再没有人在等它的残影。
+    // In the new life that ask will re-run, the actor will ask again and get a new qid; keeping the old one would only be a
+    // residue no one will ever answer or wait for.
     const progress = progressLog();
     const state = reduceAll([
       progress("run-started", started()),
@@ -1128,7 +1128,7 @@ describe("reduceWorkflowRunsState：升级问答", () => {
     ]);
     const pending = state?.runs[0]?.pendingQuestions?.[0];
     expect(pending?.question).toHaveLength(WORKFLOW_RUNS_LIMITS.maxQuestionLength);
-    // 省略号让截断在 UI 上可见（与 report 预览同一个习语）。
+    // The ellipsis makes truncation visible in the UI (same idiom as the report preview).
     expect(pending?.question.endsWith("…")).toBe(true);
     expect(pending?.context).toHaveLength(WORKFLOW_RUNS_LIMITS.maxQuestionLength);
     expect(workflowRunsStateSchema.safeParse(state).success).toBe(true);
@@ -1179,9 +1179,9 @@ describe("reduceWorkflowRunsState：纯度", () => {
   });
 });
 
-// ── 自适应并发（docs/dynamic-workflow/concurrency.md「Protocol and UI」）：node-waiting / node-executing /
-// concurrency-changed 三条观察事件。它们与 escalation 同族——引擎不据其决策，只是 driver /
-// 治理器观察到的事实经 record() 落下来；归约侧同样只做"记下它"，不推导任何时钟。
+// ── Adaptive concurrency (docs/dynamic-workflow/concurrency.md "Protocol and UI"): the node-waiting / node-executing /
+// concurrency-changed observation events. They are the same family as escalations — the engine makes no decisions from
+// them; they are facts observed by the driver / governor recorded via record(); the reduction likewise only "writes it down" and derives no clocks.
 describe("reduceWorkflowRunsState：自适应并发", () => {
   const ASK = { siteId: "ask#1", ordinal: 1 };
   const ACTOR = { siteId: "actor#1", ordinal: 1 };
@@ -1358,10 +1358,10 @@ describe("reduceWorkflowRunsState：自适应并发", () => {
     expect(reduceWorkflowRunsState(changed, changeEvent)).toBeNull();
   });
 
-  // ── 本 run 自己的那条界（docs/dynamic-workflow/concurrency.md「Two bounds on a run」）──
-  // `run-started` 载荷带引擎的 `caps.maxConcurrency` 与 CLI 铸载荷那一刻的默认并发 D
-  // （线上键名 `concurrencyCeiling` 早于「默认并发」，为兼容旧端保留）。两条界互不相干：治理器
-  // 压共享桶，用户调这一条——高于或低于 D 都行。
+  // ── This run's own bound (docs/dynamic-workflow/concurrency.md "Two bounds on a run") ──
+  // The `run-started` payload carries the engine's `caps.maxConcurrency` and the default concurrency D at the moment the CLI
+  // forged the payload (the wire key `concurrencyCeiling` predates "default concurrency" and is kept for old-client compatibility).
+  // The two bounds are unrelated: the governor squeezes the shared bucket, the user sets this one — above or below D, either is fine.
 
   const LIMITED = { ...started({ maxConcurrency: 3 }), concurrencyCeiling: 8 };
 
@@ -1409,7 +1409,7 @@ describe("reduceWorkflowRunsState：自适应并发", () => {
       progress("concurrency-changed", { key: "k", previous: 12, next: 9, reason: "limit_lowered" }),
     );
     expect(lowered.runs[0]?.concurrency).toEqual({ key: "k", cap: 9, ceiling: 8, limit: 20 });
-    // 默认跑的 run 同理：水位不再是「见过的最大 cap」。
+    // Runs at default are the same: the ceiling is no longer "the largest cap ever seen".
     const plain = progressLog();
     const atDefault = step(
       undefined,
@@ -1430,7 +1430,7 @@ describe("reduceWorkflowRunsState：自适应并发", () => {
       progress("concurrency-changed", { previous: 8, next: 6, reason: "rate_limited" }),
     );
     expect(cut.runs[0]?.concurrency).toEqual({ cap: 6, ceiling: 8, limit: 3 });
-    // 终态只摘冷却；两条界都是「这次 run 跑在什么并发下」的历史事实，照留。
+    // Terminal state only strips the cooldown; both bounds are historical facts of "what concurrency this run ran at" and are kept.
     const settled = step(cut, progress("run-settled", { status: "completed" }));
     expect(settled.runs[0]?.concurrency).toEqual({ cap: 6, ceiling: 8, limit: 3 });
   });
@@ -1447,8 +1447,8 @@ describe("reduceWorkflowRunsState：自适应并发", () => {
     expect(resumed.runs[0]?.concurrency).toEqual({ key: "k", cap: 2, ceiling: 8, limit: 3 });
   });
 
-  // 天花板单独记一份（docs/dynamic-workflow/concurrency.md「Protocol state」）：「配置」弹层的步进器
-  // 停在这里，而跑在天花板上的 run 没有 `concurrency` 可挂。
+  // The ceiling is recorded separately (docs/dynamic-workflow/concurrency.md "Protocol state"): the "settings" popover's
+  // stepper rests there, while runs running at the ceiling have no `concurrency` to hang it on.
   it("run-started 记下 concurrencyCeiling，不论本 run 是否低于它", () => {
     const progress = progressLog();
     const atCeiling = step(
@@ -1475,12 +1475,12 @@ describe("reduceWorkflowRunsState：自适应并发", () => {
     expect(again.runs[0]?.concurrencyCeiling).toBe(8);
   });
 
-  // ── 在飞改界（docs/dynamic-workflow/concurrency.md）──────────────────────────────────
-  // 只改 `max_concurrency` 的修订就地生效：不停这次 run、不另起一次，引擎改完 caps 发
-  // `run-caps-changed`。载荷与 `run-started` 同形（`caps` + CLI 拼进来的 `concurrencyCeiling`），
-  // 所以归约必须与 `run-started` 得出同一份状态——同一个数经两条路进来不能有两份读数。
+  // ── In-flight bound changes (docs/dynamic-workflow/concurrency.md) ──────────────────────────────────
+  // Revisions that only change `max_concurrency` take effect in place: they do not stop the run or start another; the engine
+  // changes caps and emits `run-caps-changed`. The payload has the same shape as `run-started` (`caps` + the CLI-assembled
+  // `concurrencyCeiling`), so the reduction must reach the same state as `run-started` — one number entering via two paths must not yield two readings.
 
-  /** `run-caps-changed` 的载荷；`ceiling: null` = 这条载荷不带天花板（与 run-started 同一种老 CLI）。 */
+  /** The `run-caps-changed` payload; `ceiling: null` = this payload carries no ceiling (the same old-CLI case as run-started). */
   const capsChanged = (maxConcurrency: unknown, previous = 3, ceiling: unknown = 8) => ({
     runId: RUN_ID,
     caps: { maxConcurrency },
@@ -1498,7 +1498,7 @@ describe("reduceWorkflowRunsState：自适应并发", () => {
     const retuned = step(throttled, progress("run-caps-changed", capsChanged(2)));
     expect(retuned.runs[0]?.concurrency).toEqual({ key: "k", cap: 6, ceiling: 8, limit: 2 });
     expect(() => workflowRunsStateSchema.parse(retuned)).not.toThrow();
-    // 之后的共享桶涨落照旧不碰新界（与 run-started 带来的界同一条规则）。
+    // Later shared-bucket swings still do not touch the new bound (the same rule as a bound delivered via run-started).
     const recovered = step(
       retuned,
       progress("concurrency-changed", { key: "k", previous: 6, next: 8, reason: "recovered" }),
@@ -1544,7 +1544,7 @@ describe("reduceWorkflowRunsState：自适应并发", () => {
     const state = step(undefined, progress("run-started", LIMITED));
     expect(state.runs[0]?.concurrency).toEqual({ cap: 8, ceiling: 8, limit: 3 });
     const lifted = step(state, progress("run-caps-changed", capsChanged(8)));
-    // 与一个从没被压低过的 run 逐字节相同（天花板另记在 concurrencyCeiling 上）。
+    // Byte-identical to a run that was never throttled (the ceiling is recorded separately on concurrencyCeiling).
     expect(lifted.runs[0]).not.toHaveProperty("concurrency");
     expect(lifted.runs[0]?.concurrencyCeiling).toBe(8);
   });
@@ -1581,7 +1581,7 @@ describe("reduceWorkflowRunsState：自适应并发", () => {
     const state = step(undefined, progress("run-started", LIMITED));
     const retuned = step(state, progress("run-caps-changed", capsChanged(2, 3, null)));
     expect(retuned.runs[0]?.concurrency).toEqual({ cap: 8, ceiling: 8, limit: 2 });
-    // 天花板从未知过（老 CLI 的 run）：判不出这个数是否被压低，界一个字不改。
+    // The ceiling was never known (an old CLI's run): whether this number was throttled cannot be judged, so the bound is untouched.
     const blind = progressLog();
     const unknown = step(undefined, blind("run-started", started({ maxConcurrency: 3 })));
     const after = step(unknown, blind("run-caps-changed", capsChanged(2, 3, null)));
@@ -1607,11 +1607,11 @@ describe("reduceWorkflowRunsState：自适应并发", () => {
   });
 });
 
-// ── 子代理模型（docs/dynamic-workflow/launch.md）─────────────────────────────────────────
-// `CreateWorkflow` / `AmendWorkflow` 的 `subagent_model` 落到 `run-started` 载荷的
-// `subagentModel`（规范串 `providerId/modelId`，可带 `$reasoningLevel` 后缀）。与
-// `concurrency.limit` 同族：用户给这次 run 定下的条件，整条 run 不动。主代理始终留在会话模型上，
-// 所以这个键说的只是子代理那一侧。
+// ── Subagent model (docs/dynamic-workflow/launch.md) ─────────────────────────────────────────
+// `CreateWorkflow` / `AmendWorkflow`'s `subagent_model` lands on the `run-started` payload as
+// `subagentModel` (the canonical `providerId/modelId` string, optionally with a `$reasoningLevel` suffix). Same family as
+// `concurrency.limit`: a condition the user set for this run, immutable for its whole life. The main agent always stays on
+// the session model, so this key speaks only of the subagent side.
 describe("reduceWorkflowRunsState：子代理模型", () => {
   const withModel = (subagentModel: unknown) => ({ ...started(), subagentModel });
 
@@ -1648,7 +1648,7 @@ describe("reduceWorkflowRunsState：子代理模型", () => {
   });
 
   it("重臂不带这个键时保留已知值，而不是让 run 看上去换回了会话模型", () => {
-    // 老 CLI 不发它；把已经显示出来的模型抹掉是退化里最坏的一种（读数变了，事实没变）。
+    // Old CLIs do not send it; erasing an already-displayed model is the worst kind of degradation (the reading changed, the fact did not).
     const progress = progressLog();
     const first = step(undefined, progress("run-started", withModel("zhipu/glm-5.3-flash")));
     const resumed = step(first, progress("run-started", started()));
@@ -1673,14 +1673,14 @@ describe("reduceWorkflowRunsState：子代理模型", () => {
   });
 });
 
-// ── 用户面产物（docs/dynamic-workflow/authoring.md「How the user sees them」）─────────────────
-// ⚠ 术语：这里的 artifact 是脚本经 `artifact.*` 发布给**用户**看的产出，不是 resultPreview
-// 背后那个「脚本顶层返回值」（引擎内部也叫 artifact，给模型看）。见 workflow-artifacts.ts。
+// ── User-facing artifacts (docs/dynamic-workflow/authoring.md "How the user sees them") ─────────────────
+// ⚠ Terminology: the artifact here is output a script published to the **user** via `artifact.*`, not the "script top-level
+// return value" behind resultPreview (also called artifact inside the engine, shown to the model). See workflow-artifacts.ts.
 //
-// 三条归约规则，各有各的键：
-//   artifact-published ⇒ 按**产物 id** upsert（同 id 再发布 = 新版本覆盖同一张卡）
-//   artifact-failed    ⇒ 不动状态（失败的发布不认领 id / 种类 / 版本，只进事件日志）
-//   report(artifactId) ⇒ 该 id 的 itemCount 加一（去重键仍是 (siteId, ordinal)）
+// Three reduction rules, each with its own key:
+//   artifact-published ⇒ upsert by **artifact id** (republishing the same id = a new version overwriting the same card)
+//   artifact-failed    ⇒ touches no state (a failed publish claims no id / kind / version; it only enters the event log)
+//   report(artifactId) ⇒ that id's itemCount +1 (the dedup key is still (siteId, ordinal))
 describe("reduceWorkflowRunsState：用户面产物", () => {
   const PUBLISHED_AT = 1_756_100_000_000;
   const record = (overrides: Record<string, unknown> = {}) => ({
@@ -1705,7 +1705,7 @@ describe("reduceWorkflowRunsState：用户面产物", () => {
         artifact: record(),
       }),
     ]);
-    // 裁剪是这个键的全部理由：高频状态帧只回答「有哪些、第几版、变了没有」。
+    // Trimming is this key's entire reason to exist: high-frequency state frames only answer "what exists, which version, did it change".
     expect(state?.runs[0]?.artifacts).toEqual([
       {
         id: "book",
@@ -1772,7 +1772,7 @@ describe("reduceWorkflowRunsState：用户面产物", () => {
         instance: { siteId: "artifact#1", ordinal: 1 },
         artifact: record(),
       }),
-      // 第二次发布来自**另一个**站点实例——按实例去重会长出第二张卡，那是错的。
+      // The second publish comes from a **different** site instance — deduping by instance would grow a second card, which is wrong.
       progress("artifact-published", {
         instance: { siteId: "artifact#2", ordinal: 1 },
         artifact: record({ version: 2, bytes: 5_000_000, title: "注意力之书（第二版）" }),
@@ -1808,8 +1808,8 @@ describe("reduceWorkflowRunsState：用户面产物", () => {
         item: { round: 2 },
         artifactId: "perf",
       }),
-      // 同 spec 的重复声明在引擎侧是 no-op，但版本记录若真的再来一条，计数必须活下来：
-      // 清零会让刷新信号归零，看板从此不再增量取数。
+      // A duplicate declaration of the same spec is a no-op on the engine side, but if a version record really arrives again the count must survive:
+      // zeroing it would zero the refresh signal and the board would stop fetching incrementally.
       progress("artifact-published", {
         instance: { siteId: "artifact#1", ordinal: 2 },
         artifact: { id: "perf", kind: "chart", version: 1, publishedAt: PUBLISHED_AT },
@@ -1832,10 +1832,10 @@ describe("reduceWorkflowRunsState：用户面产物", () => {
         error: { code: "ArtifactSourceMissing", message: "out/book.pdf does not exist" },
       }),
     );
-    // 卡片整个不出现——为一件并不存在的交付物摆一张失败卡会让用户看见不存在的东西，
-    // 而脚本很可能已经 catch 住它、让子代理补写后重新发布成功了。
+    // The card never appears — showing a failure card for a deliverable that does not exist would make the user see something
+    // that is not there, and the script very likely caught it and republished successfully after the subagent rewrote it.
     expect(failed.runs[0]?.artifacts).toBeUndefined();
-    // 但水位照抬：事件日志需要知道有新内容。
+    // But the watermark still advances: the event log needs to know there is new content.
     expect(failed.runs[0]?.lastEventSequence).toBeGreaterThan(started1.runs[0]!.lastEventSequence);
   });
 
@@ -1907,13 +1907,13 @@ describe("reduceWorkflowRunsState：用户面产物", () => {
         item: { round: 2 },
         artifactId: "perf",
       }),
-      // 未打标签的条目照旧只进 Results 区，不碰任何产物。
+      // Untagged entries still go only to the Results section and touch no artifacts.
       progress("report", { instance: { siteId: "report#2", ordinal: 1 }, item: "plain" }),
     ]);
     expect(state?.runs[0]?.artifacts).toEqual([
       { id: "perf", kind: "chart", version: 1, itemCount: 2 },
     ]);
-    // 一条通道一套上限：打标签只是多一个去处，不是改道。
+    // One channel, one bound set: tagging only adds a destination, it does not reroute.
     expect(state?.runs[0]?.reports).toEqual([
       { siteId: "report#1", ordinal: 1, preview: '{\n  "round": 1\n}', artifactId: "perf" },
       { siteId: "report#1", ordinal: 2, preview: '{\n  "round": 2\n}', artifactId: "perf" },
@@ -1938,7 +1938,7 @@ describe("reduceWorkflowRunsState：用户面产物", () => {
     });
     const once = step(declared, event);
     expect(once.runs[0]?.artifacts?.[0]?.itemCount).toBe(1);
-    // 逐字节相同 ⇒ 顶层比对返回 null ⇒ 不抬 revision、不改状态。
+    // Byte-identical ⇒ the top-level comparison returns null ⇒ no revision bump, no state change.
     expect(reduceWorkflowRunsState(once, event)).toBeNull();
     expect(once.runs[0]?.artifacts?.[0]?.itemCount).toBe(1);
   });
@@ -2006,7 +2006,7 @@ describe("reduceWorkflowRunsState：用户面产物", () => {
     );
     expect(overflowed.runs[0]?.artifacts).toHaveLength(WORKFLOW_RUNS_LIMITS.maxArtifacts);
     expect(overflowed.runs[0]?.truncated).toBe(true);
-    // 拒新、仍更新已有：把一张卡的版本冻在第 1 版比少列一张卡更误导。
+    // Reject-new but keep updating existing ones: freezing a card's version at v1 is more misleading than listing one fewer card.
     const updated = step(
       overflowed,
       progress("artifact-published", {
@@ -2045,8 +2045,8 @@ describe("reduceWorkflowRunsState：用户面产物", () => {
     });
     const published = step(base, publishEvent);
     expect(reduceWorkflowRunsState(published, publishEvent)).toBeNull();
-    // artifact-failed 不改任何**展示**状态，但仍抬水位（事件日志要知道有新内容），
-    // 所以它的第一次不是 null，重放才是。
+    // artifact-failed changes no **display** state but still advances the watermark (the event log must know there is new content),
+    // so its first occurrence is not null; only the replay is.
     const failEvent = progress("artifact-failed", {
       instance: { siteId: "artifact#2", ordinal: 1 },
       id: "gone",
@@ -2058,7 +2058,7 @@ describe("reduceWorkflowRunsState：用户面产物", () => {
   });
 });
 
-// ── 阶段进入记录（docs/dynamic-workflow/presentation.md）──────────
+// ── Phase entry records (docs/dynamic-workflow/presentation.md) ──────────
 describe("workflowRuns reducer · run-launched（声明阶段表）", () => {
   it("run-launched 携 phaseNames → run.phaseNames 按声明序落位，裁到 maxPhases × maxPhaseNameLength", () => {
     const progress = progressLog();
@@ -2092,12 +2092,12 @@ describe("workflowRuns reducer · run-launched（声明阶段表）", () => {
       progress("run-launched", {
         inputId: "in-1",
         phaseNames: ["A", "B", "C"],
-        // B 与 A 并行；其余每一项都该被丢掉：自指、越界、负数、小数、重复，以及名字表之外的第四行。
+        // B runs in parallel with A; every other item must be dropped: self-reference, out of range, negative, fractional, duplicate, and a fourth row outside the name table.
         phaseAlongside: [[], [0, 1, 7, -1, 1.5, 0], [3], [0]],
       }),
     );
     const run = state.runs[0]!;
-    // 表按被接受的名字表裁齐——下标指向的就是它，多出来的一行没有站可依。
+    // The table is trimmed to the accepted name table — the indexes point at it; an extra row has no site to hang on.
     expect(run.phaseAlongside).toHaveLength(3);
     expect(run.phaseAlongside).toEqual([[], [0], []]);
     expect(workflowRunsStateSchema.safeParse(state).success).toBe(true);
@@ -2106,14 +2106,14 @@ describe("workflowRuns reducer · run-launched（声明阶段表）", () => {
   it("phaseNames 不在场、或没有一项并行 → phaseAlongside 一起不建键", () => {
     const progress = progressLog();
     const base = step(undefined, progress("run-started", started()));
-    // 名字表被拒（缺席）时下标没有可指的表，整张表一起丢。
+    // When the name table is rejected (absent) the indexes have no table to point at; the whole table is dropped.
     const nameless = step(
       base,
       progress("run-launched", { inputId: "in-1", phaseAlongside: [[1], [0]] }),
     );
     expect(nameless.runs[0]?.phaseNames).toBeUndefined();
     expect(nameless.runs[0]?.phaseAlongside).toBeUndefined();
-    // 名字表立住但一项都不剩：缺席就是「这条轨道是一条直线」，不是一串空数组。
+    // The name table stands but nothing remains: absence means "this track is a straight line", not an array of empty arrays.
     const straight = step(
       base,
       progress("run-launched", {
@@ -2169,7 +2169,7 @@ describe("workflowRuns reducer · phase-entered", () => {
       progress("phase-entered", { name: "plan", ordinal: 1 }),
       progress("phase-entered", { name: "plan", ordinal: 2 }),
     ]);
-    // 引擎在 resume 时从 1 数起再发一遍：rounds 不能变成 3、4。
+    // The engine counts from 1 and resends on resume: rounds must not become 3, 4.
     const replayed = reduceAll(
       [
         progress("phase-entered", { name: "plan", ordinal: 1 }),
@@ -2205,15 +2205,15 @@ describe("workflowRuns reducer · phase-entered", () => {
     expect(state?.runs[0]?.phases).toHaveLength(WORKFLOW_RUNS_LIMITS.maxPhases);
     expect(state?.runs[0]?.phases?.[0]).toEqual({ name: "p0", rounds: 2 });
     expect(state?.runs[0]?.truncated).toBe(true);
-    // 当前阶段仍然跟着最后一条走——越界的阶段进不了表，但「控制流在哪」是事实。
+    // currentPhase still follows the last one — an out-of-bound phase cannot enter the table, but "where control flow is" is a fact.
     expect(state?.runs[0]?.currentPhase).toBe("p0");
   });
 });
 
-// ── 实例的出生阶段坐标（docs/dynamic-workflow/presentation.md）──────
-// 静态因果图按阶段拷贝共享站点，运行时实例必须带同一个坐标，否则每张卡都认领全部实例
-// （「所有子代理出现在所有阶段」）。引擎只在**出生事件**上打戳：actor-created / node-queued /
-// node-settled { cached }；其余节点事件不带，由本 reducer 沿用 actorSiteId 的先例向前携带。
+// ── Birth-phase coordinates of instances (docs/dynamic-workflow/presentation.md) ──────
+// The static causality graph shares sites across phases, so runtime instances must carry the same coordinate, otherwise every
+// card would claim every instance ("all subagents appear in all phases"). The engine stamps only on **birth events**:
+// actor-created / node-queued / node-settled { cached }; other node events do not carry it, and this reducer carries it forward following the actorSiteId precedent.
 describe("workflowRuns reducer · phaseName（实例的出生阶段）", () => {
   it("actor 从 actor-created 取 phaseName", () => {
     const progress = progressLog();
@@ -2225,7 +2225,7 @@ describe("workflowRuns reducer · phaseName（实例的出生阶段）", () => {
         name: "reader",
         phaseName: "调查",
       }),
-      // 标记之前出生的实例不带戳（引擎的 currentPhase 当时是 undefined）。
+      // Instances born before the marker carry no stamp (the engine's currentPhase was undefined at the time).
       progress("actor-created", { actor: { siteId: "actor#0", ordinal: 1 } }),
     ]);
     expect(state?.runs[0]?.actors).toEqual([
@@ -2268,7 +2268,7 @@ describe("workflowRuns reducer · phaseName（实例的出生阶段）", () => {
     const progress = progressLog();
     const state = reduceAll([
       progress("run-started", started()),
-      // resume / amend-resume 的完结命中短路：不经 node-queued，settled 就是它的出生事件。
+      // resume / amend-resume's completed-hit short-circuit: never through node-queued, so the settle is its birth event.
       progress("node-settled", {
         instance: { siteId: "ask#1", ordinal: 2 },
         actor: { siteId: "actor#1", ordinal: 2 },
@@ -2306,7 +2306,7 @@ describe("workflowRuns reducer · phaseName（实例的出生阶段）", () => {
     ]);
     expect(state?.runs[0]?.actors[0]?.phaseName).toBe(bounded);
     expect(state?.runs[0]?.nodes[0]?.phaseName).toBe(bounded);
-    // 截断后仍在界内：一个 138 字的阶段名不该让父会话之后的每一帧被渲染端拒收。
+    // Still within bounds after trimming: a 138-char phase name must not get every frame after the parent session rejected by the renderer.
     expect(workflowRunsStateSchema.parse(state)).toEqual(state);
   });
 
@@ -2322,7 +2322,7 @@ describe("workflowRuns reducer · phaseName（实例的出生阶段）", () => {
       }),
       progress("node-settled", { instance: { siteId: "ask#1", ordinal: 1 }, outcome: "ok" }),
     ]);
-    // 投影按 JSON 逐字节比对快照判「有无变化」：一个 undefined 值的键也不许出现。
+    // The projection compares snapshots byte-wise as JSON to decide "changed or not": not even a key with an undefined value may appear.
     expect(JSON.stringify(state)).not.toContain("phaseName");
     expect(state?.runs[0]?.actors).toEqual([
       { siteId: "actor#1", ordinal: 1, name: "reader", status: "completed" },
@@ -2375,13 +2375,13 @@ describe("run-launched：发起锚点事件只抬水位（apps/zcode-cli/package
   });
 });
 
-// ── 一次 ask 的进度读数（docs/dynamic-workflow/presentation.md「The run state the pane draws」）──
-// 相位只说得出「在跑」，说不出在跑什么、跑到哪；这几个键是 GetWorkflowRun 那份态势报告的底料。
+// ── One ask's progress readings (docs/dynamic-workflow/presentation.md "The run state the pane draws") ──
+// A phase can only say "running", not what is running or how far along; these keys are the raw material for GetWorkflowRun's situation report.
 describe("workflowRuns reducer · node-progress（ask 的任务与进度读数）", () => {
   const ASK = { siteId: "ask#1", ordinal: 1 };
   const ACTOR = { siteId: "actor#1", ordinal: 1 };
 
-  /** 一个已派发的 ask：带任务摘要出生，随后 dispatched。 */
+  /** A dispatched ask: born with a task summary, then dispatched. */
   function assignedState(instructionsHead = "把 packages/shared 下的协议测试跑一遍并修掉红的") {
     const progress = progressLog();
     const state = reduceAll([
@@ -2437,7 +2437,7 @@ describe("workflowRuns reducer · node-progress（ask 的任务与进度读数�
       toolCalls: 7,
       lastTool: { name: "Bash", target: "pnpm exec vitest run packages/shared" },
     });
-    // 只抬水位，别的 run 级事实一个字不动。
+    // Only the watermark advances; not one other run-level fact moves.
     expect(next.runs[0]?.usage).toEqual(before.usage);
     expect(next.runs[0]?.actors).toEqual(before.actors);
     expect(next.runs[0]?.lastEventSequence).toBe(before.lastEventSequence + 1);
@@ -2491,8 +2491,7 @@ describe("workflowRuns reducer · node-progress（ask 的任务与进度读数�
     expect(node).not.toHaveProperty("turn");
     expect(node).not.toHaveProperty("toolCalls");
     expect(node).not.toHaveProperty("lastTool");
-    // 新一世的第一条进度就是第 1 轮：取 max 的话这里会显示 7，读面据此把一个刚开跑的 ask
-    // 当成跑了半天的。
+    // The new life's first progress event is round 1: with max this would show 7, and the UI would read a freshly started ask as one running for ages.
     const restarted = step(
       requeued,
       progress("node-progress", { instance: ASK, turn: 1, toolCalls: 0 }),
@@ -2506,8 +2505,8 @@ describe("workflowRuns reducer · node-progress（ask 的任务与进度读数�
   });
 
   it("缓存命中的结算也是出生事件：读数清空，任务摘要留着（完结缓存按输入哈希命中，指令逐字相同）", () => {
-    // 这条钉的是「一步没走的节点不许显示上一世的读数」。走的是 resume 的完结命中短路
-    // （engine.ts:228/232）：那条 node-settled 没有前序 queued，它自己就是出生事件。
+    // This pins "a node that did zero steps must not display the previous life's readings". It exercises resume's completed-hit
+    // short-circuit (engine.ts:228/232): that node-settled has no preceding queued — it is itself the birth event.
     const { progress, state } = assignedState();
     const lived = step(
       state,
@@ -2625,14 +2624,14 @@ describe("workflowRuns reducer · node-progress（ask 的任务与进度读数�
         lastTool: { name: "Edit", target: "packages/shared/src/index.ts" },
       }),
     );
-    // 只带 toolCalls 的一条：turn 与 lastTool 保持，不被擦掉。
+    // The one carrying only toolCalls: turn and lastTool are kept, not erased.
     const second = step(first, progress("node-progress", { instance: ASK, toolCalls: 12 }));
     expect(second.runs[0]?.nodes[0]).toMatchObject({
       turn: 4,
       toolCalls: 12,
       lastTool: { name: "Edit", target: "packages/shared/src/index.ts" },
     });
-    // 取 max 会把这里冻在 4；后来者覆盖才让重跑的 ask 能退回 1。
+    // Taking max would freeze this at 4; last-writer-wins is what lets a re-run's ask go back to 1.
     const third = step(second, progress("node-progress", { instance: ASK, turn: 1, toolCalls: 0 }));
     expect(third.runs[0]?.nodes[0]).toMatchObject({ turn: 1, toolCalls: 0 });
   });
@@ -2670,7 +2669,7 @@ describe("workflowRuns reducer · node-progress（ask 的任务与进度读数�
     const first = step(state, progress("node-progress", payload));
     const second = step(first, progress("node-progress", payload));
     expect(second.runs[0]?.nodes).toEqual(first.runs[0]?.nodes);
-    // 同一条事件（同 sequence）重放才是真的无变化：水位不动，reducer 返回 null。
+    // Only replaying the same event (same sequence) is true "no change": the watermark does not move and the reducer returns null.
     const replay = reduceWorkflowRunsState(first, {
       runId: RUN_ID,
       toolCallId: "tc-1",

@@ -44,7 +44,7 @@ test("voice dictation service round-trips PCM bytes and model list over the RPC 
       idleUnloadMs: 60_000,
     });
 
-    // 两端通过内存事件总线连接，行为与 IPC 通道一致：消息以 VSBuffer 序列化传输。
+    // Both ends connect through an in-memory event bus, behaving like the IPC channel: messages are serialized as VSBuffer.
     const toServer = new Emitter<VSBuffer>();
     const toClient = new Emitter<VSBuffer>();
     const serverProtocol = {
@@ -55,7 +55,7 @@ test("voice dictation service round-trips PCM bytes and model list over the RPC 
       send: (buffer: VSBuffer) => toServer.fire(buffer),
       onMessage: toClient.event,
     };
-    // 客户端必须先于服务端订阅：ChannelServer 构造时会立即发出 Initialize 握手。
+    // The client must subscribe before the server: ChannelServer sends the Initialize handshake immediately on construction.
     const client = new ChannelClient(clientProtocol);
     const server = new ChannelServer(serverProtocol, "test");
     server.registerChannel(
@@ -72,7 +72,7 @@ test("voice dictation service round-trips PCM bytes and model list over the RPC 
       "ready",
     );
 
-    // 320 个采样 = 640 字节 PCM16，走 RPC 后应仍为 Uint8Array 并被完整解码。
+    // 320 samples = 640 bytes of PCM16; after the RPC round-trip it should still be a Uint8Array and decode fully.
     const pcm = new Uint8Array(640);
     const result = await remote.transcribe({ modelId: descriptor.id, pcm, language: "auto" });
 

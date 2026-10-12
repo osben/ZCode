@@ -18,7 +18,7 @@ describe("services package entry boundaries", () => {
   });
 
   it("keeps the conversation-share test double out of both published entries", async () => {
-    // Mock 只服务单测；一旦被 re-export 就会随 @zcode/services 进入桌面端产物。
+    // The mock only serves unit tests; once re-exported it would ship into desktop artifacts via @zcode/services.
     const [browserSafeEntry, nodeEntry] = await Promise.all([
       import("@zcode/services"),
       import("@zcode/services/node"),

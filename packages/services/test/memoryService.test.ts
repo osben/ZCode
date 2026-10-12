@@ -275,9 +275,10 @@ describe("memoryService Project Memory catalog", () => {
     const filePath = join(workspaceMemoryRoot(workspaceId), fileName);
     await writeMemoryFile(workspaceId, fileName, "before");
     fsMocks.open.mockImplementationOnce(async (path, flags, mode) => {
-      // Bugfix: Windows 上持打开句柄期间 rename 同一目标必然 EPERM（POSIX 允许）。
-      // mock 顺序改为"先完成原子替换、再打开句柄"，双平台语义一致：句柄指向新
-      // inode，stable read 的三段 stat 校验仍能识别文件已变化，无需 win32 skip。
+      // Bugfix: on Windows, renaming onto the same target while an open handle is held always fails with
+      // EPERM (POSIX allows it). The mock order was changed to "complete the atomic replacement first,
+      // then open the handle"; semantics are identical on both platforms: the handle points at the new
+      // inode, the stable read's three-stage stat check still detects the file changed, and no win32 skip is needed.
       const replacementPath = `${filePath}.replacement`;
       await writeFile(replacementPath, "after", "utf-8");
       await actualFs.rename(replacementPath, filePath);
@@ -304,8 +305,8 @@ describe("memoryService Project Memory catalog", () => {
     const fileName = "fact.md";
     const filePath = join(workspaceMemoryRoot(workspaceId), fileName);
     await writeMemoryFile(workspaceId, fileName, "before");
-    // 同长度紧邻写入可能落在同一个文件系统时钟刻度；固定旧 mtime，确保构造出可观测的版本变化。
-    // 不用 sleep，也不绕过真实句柄读取及服务的最终 stat 校验。
+    // Same-length back-to-back writes can land on the same filesystem clock tick; pin the old mtime to guarantee an observable version change.
+    // No sleep is used, and neither the real handle read nor the service's final stat check is bypassed.
     await utimes(filePath, new Date("2020-01-01T00:00:00Z"), new Date("2020-01-01T00:00:00Z"));
     fsMocks.open.mockImplementationOnce(async (path, flags, mode) => {
       const handle = await actualFs.open(path, flags, mode);

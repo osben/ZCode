@@ -26,8 +26,8 @@ function writeClaudeJsonl(path: string, records: unknown[]): void {
 
 afterEach(() => {
   process.env.HOME = originalHome;
-  // Bugfix: 并发单测时若恢复到文件加载时捕获的 originalDataBaseDir，
-  // 可能把别的用例临时注入的值带回去，最终污染真实数据目录。
+  // Bugfix: when running unit tests concurrently, restoring an originalDataBaseDir captured at file-load
+  // time could carry back a value temporarily injected by another test and pollute the real data directory.
   delete process.env.ZCODE_DATA_BASE_DIR;
   vi.doUnmock("node:os");
   while (tempDirs.length > 0) {

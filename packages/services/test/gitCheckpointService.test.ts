@@ -10,8 +10,9 @@ import { setDataBaseDir } from "../src/paths.js";
 const gitAvailable = spawnSync("git", ["--version"], { stdio: "ignore" }).status === 0;
 const describeIfGit = gitAvailable ? describe : describe.skip;
 const tempDirs: string[] = [];
-// 修复原因：这些用例会创建真实临时仓库并执行多次 Git 子进程；全量并发时磁盘与
-// 子进程调度会超过 15 秒，但聚焦运行时业务断言稳定通过，统一保留合理的调度余量。
+// Fix rationale: these tests create real temp repositories and run multiple Git subprocesses; under full
+// parallel runs disk and subprocess scheduling can exceed 15 seconds, while the business assertions pass
+// reliably on focused runs, so a uniform scheduling margin is kept.
 const GIT_INTEGRATION_TEST_TIMEOUT_MS = 30_000;
 const gitLocalEnvVars = gitAvailable
   ? execFileSync("git", ["rev-parse", "--local-env-vars"], {
@@ -27,9 +28,9 @@ function createDetachedGitEnv(): NodeJS.ProcessEnv {
     ...process.env,
   };
 
-  // Bugfix: pre-push hook 会携带当前仓库的 GIT_DIR/GIT_WORK_TREE。
-  // 这些变量会让临时仓库测试命令“串仓”，把真实工作分支误改名。
-  // 测试 helper 在这里清理 Git local env，保证命令只作用于目标 cwd 仓库。
+  // Bugfix: the pre-push hook carries the current repo's GIT_DIR/GIT_WORK_TREE.
+  // These variables make temp-repo test commands "cross repos" and could rename the real working branch.
+  // The test helper clears the Git local env here so commands only act on the repo at the target cwd.
   for (const variableName of gitLocalEnvVars) {
     delete env[variableName];
   }

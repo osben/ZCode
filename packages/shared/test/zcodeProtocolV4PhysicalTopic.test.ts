@@ -636,8 +636,8 @@ describe("TopicWireFrameAssembler incremental 原子状态机", () => {
       { kind: "fault", fault: { reasonCode: "proto.frameAssemblySuperseded" } },
     ]);
 
-    // consumer 对 [fault, possible complete] 整批 fail closed；abort 不能调用 discard，
-    // 否则迟到旧片/当前片会从 ordinal 1 重新建 assembly 并复活已判坏序列。
+    // The consumer fail-closes the whole [fault, possible complete] batch; abort must not call discard,
+    // otherwise late old fragments / current fragments would rebuild the assembly from ordinal 1 and revive a sequence already judged bad.
     assembler.abort(TOPIC, SUBSCRIPTION_ID);
     expect(assembler.getStats()).toEqual({ assemblies: 0, stagedDecodedBytes: 0 });
     expect(assembler.accept(old[1]!, 2)).toEqual([]);

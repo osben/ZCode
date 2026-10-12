@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { createSystemService } from "../src/system/systemService.js";
 
-// 探测目标只是被测入参：用保留域名与文档网段 IP，不绑定内网真实地址（开源导出里内网默认地址为空）。
+// The probe target is only a parameter under test: reserved domains and documentation-range IPs are used, never bound to real intranet addresses (the open-source export leaves the intranet default address empty).
 const PROBE_HOST = "intranet-probe.example";
 const PROBE_SERVICE_URL = "http://intranet-probe.example:3850/api/intranet/probe";
 const SECONDARY_PROBE_IP = "192.0.2.151";

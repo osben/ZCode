@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { userInputRowSchema } from "../src/zcode-protocol-v4/index.js";
 
-// docs/dynamic-workflow/transcript-and-notifications.md：userInput 行的 epilogueStart 是一个非负整数
-// 下标（0 = 整条都是引擎文本），可缺席（老转录 / 非工作流会话）。
+// docs/dynamic-workflow/transcript-and-notifications.md: epilogueStart on userInput rows is a non-negative integer
+// index (0 = the whole row is engine text) and may be absent (old transcripts / non-workflow sessions).
 const base = {
   rowId: 1,
   entityId: "message-1",

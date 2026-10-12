@@ -340,7 +340,7 @@ describe("commandsService", () => {
     const workspacePath = join(makeTempRoot(), "workspace");
     mkdirSync(join(workspacePath, ".zcode", "commands"), { recursive: true });
     mkdirSync(join(workspacePath, ".agents", "commands"), { recursive: true });
-    // 同一 scope 中 .zcode 读到命令后，.agents 不再参与，即便包含不同命令名。
+    // Once .zcode yields any command in the same scope, .agents no longer participates, even with different command names.
     writeFileSync(
       join(workspacePath, ".zcode", "commands", "dup.md"),
       "---\ndescription: from zcode\n---\n\nzcode body",
@@ -480,7 +480,7 @@ describe("commandsService", () => {
       "---\ndescription: Create skill\n---\n\nCreate a skill",
       "utf-8",
     );
-    // document-skills 被卸载（suppressed），skill-creator 保持默认启用。
+    // document-skills is uninstalled (suppressed); skill-creator stays enabled by default.
     writeCliConfig(home, {
       plugins: {
         suppressedBuiltins: ["document-skills@zcode-plugins-official"],

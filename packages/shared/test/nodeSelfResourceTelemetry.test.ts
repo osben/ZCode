@@ -21,7 +21,7 @@ const usage = (rssMb: number, heapUsedMb: number): NodeJS.MemoryUsage => ({
   arrayBuffers: 1024 * 1024,
 });
 
-/** 依次返回给定读数的桩，用完后停在最后一个值。 */
+/** Stub that returns the given readings in order, then keeps returning the last value. */
 function sequence<T>(values: readonly T[]): () => T {
   let index = 0;
   return () => values[Math.min(index++, values.length - 1)] as T;
@@ -31,7 +31,7 @@ describe("createNodeSelfResourceSampler", () => {
   it("构造即建立 CPU 基线，第一次采样就产出整机归一化 CPU 与 KB 口径内存", () => {
     const sampler = createNodeSelfResourceSampler({
       logicalCpuCount: 8,
-      // 60 秒墙钟内占用 4.8 秒 CPU → 0.08 核 → 8 核机器上 1%。
+      // 4.8s of CPU within a 60s wall clock → 0.08 cores → 1% on an 8-core machine.
       readCpuUsage: sequence([
         { user: 0, system: 0 },
         { user: 3_600_000, system: 1_200_000 },
@@ -51,7 +51,7 @@ describe("createNodeSelfResourceSampler", () => {
       logicalCpuCount: 4,
       readCpuUsage: sequence([
         { user: 1_000_000, system: 0 },
-        // CPU 计数回退（不该发生，但读数异常时不能算出负值）。
+        // CPU counters went backwards (should not happen, but anomalous readings must not produce negative values).
         { user: 0, system: 0 },
         { user: 800_000, system: 0 },
       ]),
@@ -59,7 +59,7 @@ describe("createNodeSelfResourceSampler", () => {
     });
 
     expect(sampler.sample(usage(100, 20))).toBeNull();
-    // 基线已挪到上一次读数：0.8 秒 CPU / 60 秒 / 4 核 = 0.3333%。
+    // Baseline moved to the previous reading: 0.8s CPU / 60s / 4 cores = 0.3333%.
     expect(sampler.sample(usage(100, 20))).toEqual({
       cpuPercent: 0.3333,
       rssKb: 102_400,

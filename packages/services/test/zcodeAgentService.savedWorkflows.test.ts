@@ -1,5 +1,5 @@
-// 已保存工作流五个 v3 方法（docs/dynamic-workflow/launch.md「Data path」）：经 read-only client 调对应方法名与 params 形状。
-// 全局作用域与 move（docs/dynamic-workflow/launch.md「Data path」）：scope 下推、载体运行时选择、workflows/move。
+// The five saved-workflow v3 methods (docs/dynamic-workflow/launch.md "Data path"): via the read-only client, verifying method names and params shapes.
+// Global scope and move (docs/dynamic-workflow/launch.md "Data path"): scope push-down, carrier runtime selection, workflows/move.
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -156,7 +156,7 @@ describe("ZCodeAgentService saved workflows", () => {
   });
 });
 
-// 各方法的 schema 校验发生在真实 client；这里 request 是 stub，只回够断言的形状即可。
+// Schema validation for each method happens in the real client; request here is a stub that only needs to return enough shape for the assertions.
 function replyForMethod(method: string): unknown {
   switch (method) {
     case zcodeProtocolMethods.workflowsList:
@@ -239,7 +239,7 @@ describe("ZCodeAgentService saved workflows scope 下推", () => {
 });
 
 describe("ZCodeAgentService moveSavedWorkflow", () => {
-  // 只有全局→项目一向（docs/dynamic-workflow/launch.md「Promote to global」），请求体没有 to。
+  // Only global→project is one-directional (docs/dynamic-workflow/launch.md "Promote to global"); the request body has no `to`.
   it("→ workflows/move，带 workspace / name（无 to），解析 ok 分支", async () => {
     const request = vi.fn(async (method: string) => {
       if (method === zcodeProtocolMethods.workflowsMove) {
@@ -304,10 +304,10 @@ describe("ZCodeAgentService 全局档载体运行时选择（无 workspace）", 
   it("(a) 复用任一已活跃的本地 runtime 当载体（不新拉进程）", async () => {
     const request = vi.fn(async (method: string) => replyForMethod(method));
     const { service, getClient } = await createServiceWithRequest(request);
-    // 先让 /repo 有一个活跃的本地 runtime。
+    // First give /repo an active local runtime.
     await service.listSavedWorkflows({ workspacePath: "/repo" });
     expect(getClient).toHaveBeenCalledTimes(1);
-    // 全局档不带 workspace：复用 /repo 的 client，不再 getClient。
+    // Global scope carries no workspace: reuse /repo's client instead of calling getClient again.
     await service.listSavedWorkflows({ scope: "global" });
     expect(getClient).toHaveBeenCalledTimes(1);
     expect(request).toHaveBeenLastCalledWith(
@@ -322,7 +322,7 @@ describe("ZCodeAgentService 全局档载体运行时选择（无 workspace）", 
     process.env.ZCODE_DATA_BASE_DIR = mkdtempSync(join(tmpdir(), "zcode-svc-carrier-"));
     const request = vi.fn(async (method: string) => replyForMethod(method));
     const { service, getClient } = await createServiceWithRequest(request);
-    // 唯一活跃 runtime 是远程的（SSH identity + remoteSessionId）。
+    // The only active runtime is remote (SSH identity + remoteSessionId).
     await service.listSavedWorkflows({
       workspacePath: "/remote",
       workspaceIdentity: "remote:ssh:host",
@@ -330,7 +330,7 @@ describe("ZCodeAgentService 全局档载体运行时选择（无 workspace）", 
     });
     expect(getClient).toHaveBeenCalledTimes(1);
     await service.listSavedWorkflows({ scope: "global" });
-    // 远程不能当载体：拉管理面 client（第二次 getClient）。
+    // A remote runtime cannot be the carrier: pull the management-plane client (second getClient).
     expect(getClient).toHaveBeenCalledTimes(2);
     const lastParams = request.mock.calls.at(-1)?.[1] as {
       scope?: string;
@@ -357,9 +357,9 @@ describe("ZCodeAgentService 全局档载体运行时选择（无 workspace）", 
   });
 });
 
-// 完成卡的两个方法（docs/dynamic-workflow/transcript-and-notifications.md「Saving the run, and
-// running it again」）：都**必带 workspace**，全局档也不例外——脚本在那个 agent 的 journal 里，
-// 载体不能由 services 另选一个本机运行时。
+// The two completion-card methods (docs/dynamic-workflow/transcript-and-notifications.md "Saving the run, and
+// running it again"): both **must carry a workspace**, global scope included — the script lives in that agent's
+// journal, so services must not pick a different local runtime as the carrier.
 describe("ZCodeAgentService saving a run", () => {
   it("saveSavedWorkflowFromRun → workflows/save，runId / meta / scope / overwrite 原样透传", async () => {
     const request = vi.fn(async (method: string) => {
@@ -385,7 +385,7 @@ describe("ZCodeAgentService saving a run", () => {
         overwrite: true,
       }),
     ).resolves.toMatchObject({ ok: true, scope: "global", overwritten: true });
-    // 全局档也走这条 workspace 的 client：不经载体选择。
+    // Global scope also goes through this workspace's client: no carrier selection.
     expect(getClient).toHaveBeenCalledTimes(1);
     expect(request).toHaveBeenCalledWith(
       zcodeProtocolMethods.workflowsSave,
