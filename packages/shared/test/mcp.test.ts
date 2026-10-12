@@ -14,7 +14,12 @@ describe("zcode-cua MCP matcher (single source of truth for services + CLI boots
   });
 
   it("matches uvx/pip package spec forms", () => {
-    for (const arg of ["zcode-cua", "zcode-cua[macos]", "zcode-cua@v0.1.3", "zcode-cua[macos]@v0.1.3"]) {
+    for (const arg of [
+      "zcode-cua",
+      "zcode-cua[macos]",
+      "zcode-cua@v0.1.3",
+      "zcode-cua[macos]@v0.1.3",
+    ]) {
       expect(isZCodeCuaMcpPackageArg(arg)).toBe(true);
     }
   });
@@ -34,7 +39,12 @@ describe("zcode-cua MCP matcher (single source of truth for services + CLI boots
 
   it("recognizes a package spec placed in COMMAND position (command/arg matchers stay consistent)", () => {
     // Previously the command matcher only accepted the exact leaf zcode-cua, missing configs that put a package spec directly as command → broker not injected.
-    for (const command of ["zcode-cua@1.2.3", "zcode-cua[macos]", "zcode-cua.git", "/opt/tools/zcode-cua@1.2.3"]) {
+    for (const command of [
+      "zcode-cua@1.2.3",
+      "zcode-cua[macos]",
+      "zcode-cua.git",
+      "/opt/tools/zcode-cua@1.2.3",
+    ]) {
       expect(isZCodeCuaMcpCommand(command), command).toBe(true);
     }
   });
@@ -55,7 +65,12 @@ describe("zcode-cua MCP matcher (single source of truth for services + CLI boots
 
   it("recognizes `python -m zcode_cua.server` submodule form (M1 fail-open fix)", () => {
     // `python -m zcode_cua.server` → the arg is `zcode_cua.server`; the old matcher missed it → broker not injected → fail-open.
-    for (const arg of ["zcode_cua.server", "zcode-cua.server", "zcode_cua.main", "zcode-cua.__main__"]) {
+    for (const arg of [
+      "zcode_cua.server",
+      "zcode-cua.server",
+      "zcode_cua.main",
+      "zcode-cua.__main__",
+    ]) {
       expect(isZCodeCuaMcpPackageArg(arg), arg).toBe(true);
     }
   });

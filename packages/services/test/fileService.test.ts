@@ -1,4 +1,12 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -8,9 +16,7 @@ import {
   isSkippableWorkspaceFileListError,
 } from "../src/file/fileService.js";
 import { setDataBaseDir } from "../src/paths.js";
-import {
-  unpackWorkspaceFileEntries,
-} from "@zcode/shared/workspaceFileEntriesCodec";
+import { unpackWorkspaceFileEntries } from "@zcode/shared/workspaceFileEntriesCodec";
 import type { IFileService } from "../src/file/file.js";
 
 // Pull the full listing in chunks (semantically equivalent to the old single-call listWorkspaceFiles).
@@ -908,7 +914,9 @@ describe("fileService", () => {
         },
       });
 
-      expect(unpackWorkspaceFileEntries(await readAllPacked(service, rootPath), rootPath)).toEqual([]);
+      expect(unpackWorkspaceFileEntries(await readAllPacked(service, rootPath), rootPath)).toEqual(
+        [],
+      );
     });
 
     it("returns empty array when hidden directory descendants and env files provide no candidates", async () => {
@@ -951,14 +959,13 @@ describe("fileService", () => {
         writeFileSync(join(rootPath, "src", "Program.cs"), "");
 
         const service = createFileService();
-        const entries = unpackWorkspaceFileEntries(await readAllPacked(service, rootPath), rootPath);
+        const entries = unpackWorkspaceFileEntries(
+          await readAllPacked(service, rootPath),
+          rootPath,
+        );
 
         // Auto-creation is temporarily disabled; the in-memory gitignore + default rules still prune obj/bin.
-        expect(entries.map((e) => e.relativePath)).toEqual([
-          "src",
-          ".gitignore",
-          "src/Program.cs",
-        ]);
+        expect(entries.map((e) => e.relativePath)).toEqual(["src", ".gitignore", "src/Program.cs"]);
         // The rule file itself is tool configuration and does not become a candidate.
         expect(existsSync(join(rootPath, ".zcodeignore"))).toBe(false);
       });
@@ -972,7 +979,10 @@ describe("fileService", () => {
         writeFileSync(join(rootPath, "dist", "bundle.js"), "");
 
         const service = createFileService();
-        const entries = unpackWorkspaceFileEntries(await readAllPacked(service, rootPath), rootPath);
+        const entries = unpackWorkspaceFileEntries(
+          await readAllPacked(service, rootPath),
+          rootPath,
+        );
 
         // .gitignore does not declare node_modules: the in-memory default section still prunes it (behavior compatible).
         expect(entries.map((e) => e.relativePath)).toEqual([".gitignore"]);
@@ -990,7 +1000,10 @@ describe("fileService", () => {
         const service = createFileService();
         const preview = await service.readWorkspaceFileSearchIgnore({ rootPath });
         await service.writeWorkspaceFileSearchIgnore({ rootPath, content: preview.content });
-        const entries = unpackWorkspaceFileEntries(await readAllPacked(service, rootPath), rootPath);
+        const entries = unpackWorkspaceFileEntries(
+          await readAllPacked(service, rootPath),
+          rootPath,
+        );
 
         // Dedup: the gitignore section already has node_modules/ and coverage, so the default section
         // does not repeat them — at most one copy of each rule in the file; deleting the gitignore-section
@@ -1009,7 +1022,10 @@ describe("fileService", () => {
         writeFileSync(join(rootPath, "keep.ts"), "");
 
         const service = createFileService();
-        const entries = unpackWorkspaceFileEntries(await readAllPacked(service, rootPath), rootPath);
+        const entries = unpackWorkspaceFileEntries(
+          await readAllPacked(service, rootPath),
+          rootPath,
+        );
 
         expect(entries.map((e) => e.relativePath)).toEqual(["keep.ts"]);
         expect(existsSync(join(rootPath, ".zcodeignore"))).toBe(false);
@@ -1032,7 +1048,10 @@ describe("fileService", () => {
         writeFileSync(join(rootPath, "main.ts"), "");
 
         const service = createFileService();
-        const entries = unpackWorkspaceFileEntries(await readAllPacked(service, rootPath), rootPath);
+        const entries = unpackWorkspaceFileEntries(
+          await readAllPacked(service, rootPath),
+          rootPath,
+        );
 
         // The ! negation restores logs/keep.log; the anchored /build only prunes the root build while
         // sub/build stays; *.tmp excludes files.
@@ -1055,7 +1074,10 @@ describe("fileService", () => {
         writeFileSync(join(rootPath, ".zcodeignore"), "!node_modules/\n");
 
         const service = createFileService();
-        const entries = unpackWorkspaceFileEntries(await readAllPacked(service, rootPath), rootPath);
+        const entries = unpackWorkspaceFileEntries(
+          await readAllPacked(service, rootPath),
+          rootPath,
+        );
 
         expect(entries.map((e) => e.relativePath)).toEqual([
           "node_modules",
@@ -1083,7 +1105,10 @@ describe("fileService", () => {
         mkdirSync(join(rootPath, "custom"));
         writeFileSync(join(rootPath, "custom", "x.txt"), "");
         writeFileSync(join(rootPath, "ok.txt"), "");
-        const entries = unpackWorkspaceFileEntries(await readAllPacked(service, rootPath), rootPath);
+        const entries = unpackWorkspaceFileEntries(
+          await readAllPacked(service, rootPath),
+          rootPath,
+        );
         // custom/ is pruned by the written rule; .gitignore itself stays searchable (existing behavior).
         expect(entries.map((e) => e.relativePath)).toEqual([".gitignore", "ok.txt"]);
       });

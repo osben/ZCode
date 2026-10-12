@@ -16,28 +16,23 @@ describe("zcode protocol v4 usage query", () => {
   });
 
   it("accepts the app usage stats params shape and rejects unknown keys", () => {
-    expect(
-      v4UsageStatsParamsSchema.parse({ range: "7d", timeZone: "Asia/Shanghai" }),
-    ).toEqual({ range: "7d", timeZone: "Asia/Shanghai" });
+    expect(v4UsageStatsParamsSchema.parse({ range: "7d", timeZone: "Asia/Shanghai" })).toEqual({
+      range: "7d",
+      timeZone: "Asia/Shanghai",
+    });
     expect(v4UsageStatsParamsSchema.parse({ range: "30d" })).toEqual({
       range: "30d",
     });
     // strict: same shape as the old usage/stats; unknown fields must not be carried silently (guards against old-param drift).
-    expect(
-      v4UsageStatsParamsSchema.safeParse({ range: "7d", extra: true }).success,
-    ).toBe(false);
-    expect(v4UsageStatsParamsSchema.safeParse({ range: "1y" }).success).toBe(
-      false,
-    );
+    expect(v4UsageStatsParamsSchema.safeParse({ range: "7d", extra: true }).success).toBe(false);
+    expect(v4UsageStatsParamsSchema.safeParse({ range: "1y" }).success).toBe(false);
   });
 
   it("validates conversation usage params and result round-trip", () => {
-    expect(
-      v4ConversationUsageParamsSchema.parse({ sessionId: "sess_1" }),
-    ).toEqual({ sessionId: "sess_1" });
-    expect(
-      v4ConversationUsageParamsSchema.safeParse({ sessionId: "" }).success,
-    ).toBe(false);
+    expect(v4ConversationUsageParamsSchema.parse({ sessionId: "sess_1" })).toEqual({
+      sessionId: "sess_1",
+    });
+    expect(v4ConversationUsageParamsSchema.safeParse({ sessionId: "" }).success).toBe(false);
 
     const result = {
       sessionId: "sess_1",

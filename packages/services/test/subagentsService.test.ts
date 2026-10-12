@@ -1041,9 +1041,15 @@ tools:
   it("persists plugin agent model overrides by agent id and echoes them in list", async () => {
     const home = await makeTempHome();
     const workspacePath = join(home, "workspace");
-    const pluginRoot = await writeOfficialPluginFixture(home, "documents", "0.1.4", "visual-judge", {
-      model: "custom:custom-openai:gpt-5.4",
-    });
+    const pluginRoot = await writeOfficialPluginFixture(
+      home,
+      "documents",
+      "0.1.4",
+      "visual-judge",
+      {
+        model: "custom:custom-openai:gpt-5.4",
+      },
+    );
     const agentId = "plugin:documents@zcode-plugins-official:visual-judge";
     const service = createSubagentsService({ homeDir: home, isDesktopRuntime: true });
 
@@ -1077,7 +1083,9 @@ tools:
     });
     // The runtime projections (canonical name + bare-name alias) and the settings-page resource projection must echo the same override, or @ mentions and the settings page would disagree.
     expect(
-      overridden.agents.filter((agent) => agent.source === "plugin").map((agent) => agent.modelSelection),
+      overridden.agents
+        .filter((agent) => agent.source === "plugin")
+        .map((agent) => agent.modelSelection),
     ).toEqual([selection, selection]);
 
     // Clearing the full selection also clears the tier and falls back to the md declaration; the old dual-map save entry is not restored.

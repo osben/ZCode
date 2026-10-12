@@ -577,17 +577,17 @@ describe("official mcp credential resolver", () => {
 describe("official mcp credential resolved log", () => {
   it("OMCP-LOG-01: dedup key buckets expiry by hour and separates family/scope", () => {
     const personal = { providerFamily: "bigmodel", planTargetType: "PERSONAL" } as const;
-    expect(
-      createCredentialResolvedLogKey({ ...personal, maasJwtExpiresInSeconds: 3600 }),
-    ).toBe("bigmodel|PERSONAL|t1");
+    expect(createCredentialResolvedLogKey({ ...personal, maasJwtExpiresInSeconds: 3600 })).toBe(
+      "bigmodel|PERSONAL|t1",
+    );
     // Bucket boundary: 3599 falls in t0, crossing 3600 moves to t1
-    expect(
-      createCredentialResolvedLogKey({ ...personal, maasJwtExpiresInSeconds: 3599 }),
-    ).toBe("bigmodel|PERSONAL|t0");
+    expect(createCredentialResolvedLogKey({ ...personal, maasJwtExpiresInSeconds: 3599 })).toBe(
+      "bigmodel|PERSONAL|t0",
+    );
     // Expired (≤0) and unparsable (undefined) are separate buckets: crossing zero or a token shape change always yields a new key
-    expect(
-      createCredentialResolvedLogKey({ ...personal, maasJwtExpiresInSeconds: -5 }),
-    ).toBe("bigmodel|PERSONAL|expired");
+    expect(createCredentialResolvedLogKey({ ...personal, maasJwtExpiresInSeconds: -5 })).toBe(
+      "bigmodel|PERSONAL|expired",
+    );
     expect(
       createCredentialResolvedLogKey({ ...personal, maasJwtExpiresInSeconds: undefined }),
     ).toBe("bigmodel|PERSONAL|unparsable");

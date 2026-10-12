@@ -36,7 +36,9 @@ describe("parseOfficialMcpToolError", () => {
 
   it("非 JSON 文本不做文案匹配兜底", () => {
     // Relying on message-text matching would silently break whenever the server rewords one sentence.
-    expect(parseOfficialMcpToolError("daily quota exceeded for bucket search_image")).toBeUndefined();
+    expect(
+      parseOfficialMcpToolError("daily quota exceeded for bucket search_image"),
+    ).toBeUndefined();
     expect(parseOfficialMcpToolError("")).toBeUndefined();
     expect(parseOfficialMcpToolError("{ not json")).toBeUndefined();
     expect(parseOfficialMcpToolError('["quota_exceeded"]')).toBeUndefined();

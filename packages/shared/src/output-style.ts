@@ -1,18 +1,18 @@
 export interface OutputStyle {
-    id: string;
-    name: string;
-    description: string;
-    content: string;
-    isBuiltIn: boolean;
-    enabled: boolean;
-    filePath?: string; // File path, used to open the file in edit mode
+  id: string;
+  name: string;
+  description: string;
+  content: string;
+  isBuiltIn: boolean;
+  enabled: boolean;
+  filePath?: string; // File path, used to open the file in edit mode
 }
 
 export interface OutputStyleConfig {
-    name: string;
-    description: string;
-    content: string;
-    enabled?: boolean;
+  name: string;
+  description: string;
+  content: string;
+  enabled?: boolean;
 }
 
-export type OutputStyleGenerationStatus = 'idle' | 'generating' | 'completed' | 'error';
+export type OutputStyleGenerationStatus = "idle" | "generating" | "completed" | "error";

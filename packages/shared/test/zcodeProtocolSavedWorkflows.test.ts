@@ -215,7 +215,13 @@ describe("zcode-protocol saved workflows", () => {
           updatedAt: 2,
           spentTokens: 0,
           artifacts: [
-            { id: "report", kind: "file", title: "审计报告", version: 2, contentType: "application/pdf" },
+            {
+              id: "report",
+              kind: "file",
+              title: "审计报告",
+              version: 2,
+              contentType: "application/pdf",
+            },
             // Preset boards have no contentType; title may also be absent (the facade's default title is the id).
             { id: "perf", kind: "chart", version: 1 },
           ],
@@ -230,7 +236,9 @@ describe("zcode-protocol saved workflows", () => {
     expect(withArtifacts.runs[1]).not.toHaveProperty("artifacts");
 
     const row = (artifacts: unknown) => ({
-      runs: [{ runId: "r1", status: "completed", createdAt: 1, updatedAt: 2, spentTokens: 0, artifacts }],
+      runs: [
+        { runId: "r1", status: "completed", createdAt: 1, updatedAt: 2, spentTokens: 0, artifacts },
+      ],
     });
     // Upper bound 8: what fits in one chips row, same value as the notification payload.
     const nine = Array.from({ length: 9 }, (_, index) => ({
@@ -239,14 +247,20 @@ describe("zcode-protocol saved workflows", () => {
       version: 1,
     }));
     expect(() => zcodeWorkflowsRunsResultSchema.parse(row(nine))).toThrow();
-    expect(zcodeWorkflowsRunsResultSchema.parse(row(nine.slice(0, 8))).runs[0]?.artifacts).toHaveLength(8);
+    expect(
+      zcodeWorkflowsRunsResultSchema.parse(row(nine.slice(0, 8))).runs[0]?.artifacts,
+    ).toHaveLength(8);
     // Unknown kinds and unknown keys are both rejected (element strict): the GUI picks icons by kind and has no fallback icon.
-    expect(() => zcodeWorkflowsRunsResultSchema.parse(row([{ id: "a", kind: "video", version: 1 }]))).toThrow();
+    expect(() =>
+      zcodeWorkflowsRunsResultSchema.parse(row([{ id: "a", kind: "video", version: 1 }])),
+    ).toThrow();
     expect(() =>
       zcodeWorkflowsRunsResultSchema.parse(row([{ id: "a", kind: "file", version: 1, bytes: 12 }])),
     ).toThrow();
     // id non-empty, version required.
-    expect(() => zcodeWorkflowsRunsResultSchema.parse(row([{ id: "", kind: "file", version: 1 }]))).toThrow();
+    expect(() =>
+      zcodeWorkflowsRunsResultSchema.parse(row([{ id: "", kind: "file", version: 1 }])),
+    ).toThrow();
     expect(() => zcodeWorkflowsRunsResultSchema.parse(row([{ id: "a", kind: "file" }]))).toThrow();
   });
 

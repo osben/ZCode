@@ -78,9 +78,7 @@ describe("conversation share route", () => {
     // Bug root cause 1: the banner was a direct child of ShareContentRail
     // without ShareContentInset, missing px-4 / @md:px-6 and rendering wider
     // than both the timestamp row above and the body below.
-    expect(source).toMatch(
-      /showContinueHelp \? \(\s*(?:\/\/[^\n]*\n\s*)*<ShareContentInset>/u,
-    );
+    expect(source).toMatch(/showContinueHelp \? \(\s*(?:\/\/[^\n]*\n\s*)*<ShareContentInset>/u);
     // Bug root cause 2: the site home page is itself the download entry, so the
     // /download path is a 404.
     expect(source).toContain('const ZCODE_DOWNLOAD_URL = "https://zcode.z.ai"');

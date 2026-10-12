@@ -1,8 +1,4 @@
-import {
-  spawn,
-  spawnSync,
-  type ChildProcessWithoutNullStreams,
-} from "node:child_process";
+import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -43,10 +39,7 @@ function isPidRunning(pid: number): boolean {
   return status.length > 0 && !status.startsWith("Z");
 }
 
-async function waitForPidExit(
-  pid: number,
-  timeoutMs = 4_000,
-): Promise<boolean> {
+async function waitForPidExit(pid: number, timeoutMs = 4_000): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     if (!isPidAlive(pid)) {
@@ -63,9 +56,9 @@ async function waitForProcessTreeSnapshotIdentity(
   timeoutMs = 4_000,
 ): Promise<
   | {
-    snapshot: ProcessTreeSnapshot;
-    identity: ProcessIdentity;
-  }
+      snapshot: ProcessTreeSnapshot;
+      identity: ProcessIdentity;
+    }
   | undefined
 > {
   const deadline = Date.now() + timeoutMs;
@@ -82,9 +75,7 @@ async function waitForProcessTreeSnapshotIdentity(
   return snapshot && identity ? { snapshot, identity } : undefined;
 }
 
-function readFirstStdoutLine(
-  child: ChildProcessWithoutNullStreams,
-): Promise<string> {
+function readFirstStdoutLine(child: ChildProcessWithoutNullStreams): Promise<string> {
   return new Promise((resolve, reject) => {
     let buffer = "";
     let stderrBuffer = "";
@@ -254,17 +245,15 @@ setInterval(() => {}, 1000);
     },
   );
 
-  it.runIf(process.platform !== "win32")(
-    "POSIX 下会兜底清理脱离原进程组的后代进程",
-    async () => {
-      const dir = await mkdtemp(join(tmpdir(), "zcode-runtime-terminator-"));
-      tempDirs.add(dir);
-      const grandchildPidPath = join(dir, "detached-grandchild.pid");
-      const child = spawn(
-        process.execPath,
-        [
-          "-e",
-          `
+  it.runIf(process.platform !== "win32")("POSIX 下会兜底清理脱离原进程组的后代进程", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "zcode-runtime-terminator-"));
+    tempDirs.add(dir);
+    const grandchildPidPath = join(dir, "detached-grandchild.pid");
+    const child = spawn(
+      process.execPath,
+      [
+        "-e",
+        `
 const { writeFileSync } = require("node:fs");
 const { spawn } = require("node:child_process");
 const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], {
@@ -276,28 +265,27 @@ writeFileSync(${JSON.stringify(grandchildPidPath)}, String(child.pid));
 process.stdout.write(String(child.pid) + "\\n");
 setInterval(() => {}, 1000);
 `,
-        ],
-        {
-          detached: shouldSpawnInDetachedProcessGroup(),
-          stdio: ["ignore", "pipe", "pipe"],
-          windowsHide: true,
-        },
-      );
-      activeChildren.add(child);
+      ],
+      {
+        detached: shouldSpawnInDetachedProcessGroup(),
+        stdio: ["ignore", "pipe", "pipe"],
+        windowsHide: true,
+      },
+    );
+    activeChildren.add(child);
 
-      const grandchildPid = await readReportedPid(child, grandchildPidPath);
-      expect(isPidAlive(grandchildPid)).toBe(true);
+    const grandchildPid = await readReportedPid(child, grandchildPidPath);
+    expect(isPidAlive(grandchildPid)).toBe(true);
 
-      // Bugfix: some runtimes or plugins detach descendant processes into their own process group;
-      // killing only the runtime wrapper's group leaves such descendants behind, so cleanup must fall
-      // back to the discovered process tree.
-      terminateProcessTree(child);
+    // Bugfix: some runtimes or plugins detach descendant processes into their own process group;
+    // killing only the runtime wrapper's group leaves such descendants behind, so cleanup must fall
+    // back to the discovered process tree.
+    terminateProcessTree(child);
 
-      expect(await waitForPidExit(child.pid!)).toBe(true);
-      expect(await waitForPidExit(grandchildPid)).toBe(true);
-      activeChildren.delete(child);
-    },
-  );
+    expect(await waitForPidExit(child.pid!)).toBe(true);
+    expect(await waitForPidExit(grandchildPid)).toBe(true);
+    activeChildren.delete(child);
+  });
 
   it.runIf(process.platform !== "win32")(
     "非等待式回收会强制结束忽略 SIGTERM 的 runtime 进程树",
@@ -352,15 +340,11 @@ setInterval(() => {}, 1000);
   it.runIf(process.platform !== "win32")(
     "查询 root 身份失败时记录 warn 且延迟 force 不沿裸 PID 重新发现",
     async () => {
-      const child = spawn(
-        process.execPath,
-        ["-e", "setInterval(() => {}, 1000)"],
-        {
-          detached: shouldSpawnInDetachedProcessGroup(),
-          stdio: ["ignore", "pipe", "pipe"],
-          windowsHide: true,
-        },
-      );
+      const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], {
+        detached: shouldSpawnInDetachedProcessGroup(),
+        stdio: ["ignore", "pipe", "pipe"],
+        windowsHide: true,
+      });
       activeChildren.add(child);
       await delay(50);
 
@@ -384,11 +368,9 @@ setInterval(() => {}, 1000);
         }
       }
 
-      expect(
-        warnMessages.some((message) =>
-          message.includes("查询 runtime 后代进程失败"),
-        ),
-      ).toBe(true);
+      expect(warnMessages.some((message) => message.includes("查询 runtime 后代进程失败"))).toBe(
+        true,
+      );
       // Fix reason: even after PATH is restored, the force timer must not re-claim the process tree from the bare PID
       // after the first query failed; ChildProcess.kill is likewise just a PID signal, not a stable OS handle.
       await delay(100);
@@ -396,40 +378,37 @@ setInterval(() => {}, 1000);
     },
   );
 
-  it.runIf(process.platform !== "win32")(
-    "等待式回收会撑到 SIGKILL 兜底完成",
-    async () => {
-      const child = spawn(
-        process.execPath,
-        [
-          "-e",
-          `
+  it.runIf(process.platform !== "win32")("等待式回收会撑到 SIGKILL 兜底完成", async () => {
+    const child = spawn(
+      process.execPath,
+      [
+        "-e",
+        `
 process.on("SIGTERM", () => {});
 console.log("ready");
 setInterval(() => {}, 1000);
 `,
-        ],
-        {
-          detached: shouldSpawnInDetachedProcessGroup(),
-          stdio: ["ignore", "pipe", "pipe"],
-          windowsHide: true,
-        },
-      );
-      activeChildren.add(child);
-      await readFirstStdoutLine(child);
+      ],
+      {
+        detached: shouldSpawnInDetachedProcessGroup(),
+        stdio: ["ignore", "pipe", "pipe"],
+        windowsHide: true,
+      },
+    );
+    activeChildren.add(child);
+    await readFirstStdoutLine(child);
 
-      // Bugfix: on app close the host must not schedule an unref'd SIGKILL fallback and exit;
-      // when facing a zcode-cli/app-server that ignores SIGTERM, it must wait for the fallback to run before ending.
-      const result = await terminateProcessTreeAndWait(child, {
-        forceAfterMs: 20,
-        waitAfterForceMs: 20,
-      });
+    // Bugfix: on app close the host must not schedule an unref'd SIGKILL fallback and exit;
+    // when facing a zcode-cli/app-server that ignores SIGTERM, it must wait for the fallback to run before ending.
+    const result = await terminateProcessTreeAndWait(child, {
+      forceAfterMs: 20,
+      waitAfterForceMs: 20,
+    });
 
-      expect(result).toEqual({ remainingPids: [] });
-      expect(await waitForPidExit(child.pid!, 1_000)).toBe(true);
-      activeChildren.delete(child);
-    },
-  );
+    expect(result).toEqual({ remainingPids: [] });
+    expect(await waitForPidExit(child.pid!, 1_000)).toBe(true);
+    activeChildren.delete(child);
+  });
 
   it.runIf(process.platform !== "win32")(
     "根进程先退出时仍等待 detached 后代完成强制回收",
@@ -545,14 +524,12 @@ process.stdout.write(String(descendant.pid) + "\\n");
     },
   );
 
-  it.runIf(process.platform !== "win32")(
-    "根进程已退出时仍按原进程组回收同组后代",
-    async () => {
-      const child = spawn(
-        process.execPath,
-        [
-          "-e",
-          `
+  it.runIf(process.platform !== "win32")("根进程已退出时仍按原进程组回收同组后代", async () => {
+    const child = spawn(
+      process.execPath,
+      [
+        "-e",
+        `
 const { spawn } = require("node:child_process");
 const descendant = spawn(
   process.execPath,
@@ -563,53 +540,46 @@ descendant.once("message", () => {
   process.stdout.write(String(descendant.pid) + "\\n", () => setTimeout(() => process.exit(0), 100));
 });
 `,
-        ],
-        {
-          detached: shouldSpawnInDetachedProcessGroup(),
-          stdio: ["ignore", "pipe", "pipe"],
-          windowsHide: true,
-        },
-      );
-      activeChildren.add(child);
-      const descendantPid = await readReportedPid(child);
-      const snapshot = captureProcessTreeSnapshot(child);
-      expect(
-        snapshot?.identities.some((identity) => identity.pid === descendantPid),
-      ).toBe(true);
-      expect(await waitForPidExit(child.pid!)).toBe(true);
-      expect(isPidRunning(descendantPid)).toBe(true);
+      ],
+      {
+        detached: shouldSpawnInDetachedProcessGroup(),
+        stdio: ["ignore", "pipe", "pipe"],
+        windowsHide: true,
+      },
+    );
+    activeChildren.add(child);
+    const descendantPid = await readReportedPid(child);
+    const snapshot = captureProcessTreeSnapshot(child);
+    expect(snapshot?.identities.some((identity) => identity.pid === descendantPid)).toBe(true);
+    expect(await waitForPidExit(child.pid!)).toBe(true);
+    expect(isPidRunning(descendantPid)).toBe(true);
 
-      try {
-        // Fix reason: after the CLI root process exits abnormally, same-group MCPs may still be alive; a pre-mortem
-        // snapshot of the root is required to prove the PGID still contains original members — signaling must not be
-        // based on the exited bare root PID alone.
-        await terminateProcessTreeAndWait(child, {
-          forceAfterMs: 30,
-          waitAfterForceMs: 30,
-          snapshot,
-        });
-        expect(isPidRunning(descendantPid)).toBe(false);
-      } finally {
-        if (isPidRunning(descendantPid)) {
-          process.kill(-child.pid!, "SIGKILL");
-        }
+    try {
+      // Fix reason: after the CLI root process exits abnormally, same-group MCPs may still be alive; a pre-mortem
+      // snapshot of the root is required to prove the PGID still contains original members — signaling must not be
+      // based on the exited bare root PID alone.
+      await terminateProcessTreeAndWait(child, {
+        forceAfterMs: 30,
+        waitAfterForceMs: 30,
+        snapshot,
+      });
+      expect(isPidRunning(descendantPid)).toBe(false);
+    } finally {
+      if (isPidRunning(descendantPid)) {
+        process.kill(-child.pid!, "SIGKILL");
       }
-      activeChildren.delete(child);
-    },
-  );
+    }
+    activeChildren.delete(child);
+  });
 
   it.runIf(process.platform !== "win32")(
     "健康 runtime 提前退出时不会固定等待兜底窗口",
     async () => {
-      const child = spawn(
-        process.execPath,
-        ["-e", "setInterval(() => {}, 1000)"],
-        {
-          detached: shouldSpawnInDetachedProcessGroup(),
-          stdio: ["ignore", "pipe", "pipe"],
-          windowsHide: true,
-        },
-      );
+      const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], {
+        detached: shouldSpawnInDetachedProcessGroup(),
+        stdio: ["ignore", "pipe", "pipe"],
+        windowsHide: true,
+      });
       activeChildren.add(child);
       await delay(50);
 
