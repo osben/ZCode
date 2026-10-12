@@ -1,16 +1,20 @@
 /**
- * 页面发起的 `resources/read`（`mcp/uiReadResource`）单次结果总大小上限，以及 mimeType 白名单。
- * 白名单项以 `/` 结尾表示前缀匹配（如 `text/`），否则精确匹配（忽略参数与大小写）。
+ * Total size limit for a single `resources/read` result initiated by the page
+ * (`mcp/uiReadResource`), plus the mimeType allowlist.
+ * An allowlist entry ending in `/` means prefix matching (e.g. `text/`); otherwise it is an exact
+ * match (parameters and case ignored).
  */
 export const MCP_APPS_UI_READ_RESOURCE_MAX_BYTES = 8 * 1024 * 1024;
-// 原列表遗漏 PDF 等常见资源，导致插件已握手却读不到文件；按明确 MIME 扩展，保留未知类型拒绝规则。
+// The original list omitted common resources such as PDF, so a plugin that had completed the
+// handshake still could not read files; extended by explicit MIME types, keeping the
+// deny-unknown-types rule.
 export const MCP_APPS_UI_READ_RESOURCE_MIME_ALLOWLIST: readonly string[] = [
   "text/",
   "application/json",
   "application/xml",
   "application/yaml",
   "application/x-yaml",
-  // 文档与办公文件。
+  // Documents and office files.
   "application/pdf",
   "application/rtf",
   "application/msword",
@@ -22,7 +26,7 @@ export const MCP_APPS_UI_READ_RESOURCE_MIME_ALLOWLIST: readonly string[] = [
   "application/vnd.oasis.opendocument.text",
   "application/vnd.oasis.opendocument.spreadsheet",
   "application/vnd.oasis.opendocument.presentation",
-  // 图片。
+  // Images.
   "image/png",
   "image/jpeg",
   "image/webp",
@@ -35,7 +39,7 @@ export const MCP_APPS_UI_READ_RESOURCE_MIME_ALLOWLIST: readonly string[] = [
   "image/vnd.microsoft.icon",
   "image/heic",
   "image/heif",
-  // 音视频。
+  // Audio and video.
   "audio/mpeg",
   "audio/mp4",
   "audio/ogg",
@@ -49,7 +53,7 @@ export const MCP_APPS_UI_READ_RESOURCE_MIME_ALLOWLIST: readonly string[] = [
   "video/ogg",
   "video/quicktime",
   "video/mpeg",
-  // 归档、字体与模型只传输内容，由插件决定如何使用。
+  // Archives, fonts, and models: content is transferred as-is; the plugin decides how to use it.
   "application/zip",
   "application/gzip",
   "application/x-gzip",

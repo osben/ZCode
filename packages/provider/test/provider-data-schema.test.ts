@@ -96,7 +96,7 @@ describe("Provider 数据校验与完整性使用同一合同", () => {
     });
   }
   it("未知 API type 不能凭借非空绕过 Registry 准入", () => {
-    // 模拟不可信 JS 调用；不能把 TS 静态类型当作运行时校验。
+    // Simulates untrusted JS callers; TS static types must not be treated as runtime validation.
     const config = new ProviderConfig({
       group: "standard-personal",
       access,

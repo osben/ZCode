@@ -31,8 +31,9 @@ export function normalizeZCodeSourceHeaderValue(value: string | undefined): stri
 export function buildZCodeSourceHeadersFromContext(
   options: BuildZCodeSourceHeadersFromContextOptions = {},
 ): Record<string, string> {
-  // 对外版本只发上游基线：fork 版本（3.15.1-fork.2）的 prerelease 后缀会被
-  // z.ai 后端的 semver 门控判为低于同基线正式版，这里统一在出口处剥离。
+  // Send only the upstream baseline version outward: the prerelease suffix of a fork version
+  // (e.g. 3.15.1-fork.2) makes the z.ai backend's semver gating classify it as lower than the
+  // official release of the same baseline, so it is stripped uniformly at the egress point.
   const appVersion = normalizeZCodeSourceHeaderValue(options.appVersion);
   const wireAppVersion = appVersion ? stripZcodeForkVersionSuffix(appVersion) : undefined;
   const arch = normalizeZCodeSourceHeaderValue(options.arch);

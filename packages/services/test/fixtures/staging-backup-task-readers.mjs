@@ -1,8 +1,10 @@
-// 冻结来源 staging_backup@790884b1ce4b990583ab40625b5f283e2169eb36；原读取函数仅擦除类型，不引用当前 Reader。
+// Frozen copy from staging_backup@790884b1ce4b990583ab40625b5f283e2169eb36; the original reader functions only erase types and do not reference the current Reader.
 import { z } from "zod";
-// 该 schema 同时被 validation 聚合入口和 legacy protocol 使用，必须放在无反向依赖的叶子模块。
-// 根因：protocol 从 validation 导入它，而 validation 又导入 protocol 的资源采样 schema，
-// ESM/Jiti 在 clean Docker 中会先读到尚未初始化的 binding，导致 `.optional()` 启动即崩溃。
+// This schema is used by both the validation aggregation entry point and the legacy protocol, so it must
+// live in a leaf module with no reverse dependencies.
+// Root cause: protocol imports it from validation, while validation imports protocol's resource sampling
+// schema; in a clean Docker environment ESM/Jiti would read a not-yet-initialized binding, making
+// `.optional()` crash at startup.
 export const zcodeTaskModeSchema = z.enum([
   "default",
   "yolo",
@@ -23,8 +25,9 @@ function rowToAutomation(row) {
     prompt: row.prompt,
     model: row.model ?? undefined,
     provider: row.provider ?? undefined,
-    // Bug 根因：历史版本曾把空字符串写进 mode，旧读取逻辑又直接强转为枚举，导致
-    // automation/list 在协议层校验整个数组时被单条脏数据拖垮。历史非法值按未设置兼容。
+    // Bug root cause: a historical version once wrote empty strings into mode, and the old reader cast it
+    // straight to the enum, so a single dirty row broke automation/list when the protocol layer validated
+    // the whole array. Historical invalid values are treated as unset for compatibility.
     mode: normalizeAutomationMode(row.mode),
     thoughtLevel: row.thought_level ?? undefined,
     workspaceKey: row.workspace_key,

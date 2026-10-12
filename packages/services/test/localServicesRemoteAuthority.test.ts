@@ -60,7 +60,7 @@ function writeZCodeBuiltinProviderConfig(home: string): string {
       schemaVersion: 1,
       revision: 1,
       config: {
-        // 装配测试必须使用当前发布合同；上面的 config.json 才是待迁移的旧数据。
+        // Composition tests must use the current release contract; the config.json above is the legacy data to migrate.
         providerConfigRules: { templateRules: [], providerRules: [] },
         modelConfigRules: {
           modelRules: [],
@@ -82,12 +82,14 @@ describe("createLocalServices remote authority", () => {
     vi.restoreAllMocks();
     vi.resetModules();
     for (const home of tempHomes.splice(0)) {
-      // 根因：Windows 删除目录必须先关闭其下所有句柄，而 service 释放（日志文件、
-      // 配置 watcher、SQLite 句柄）是异步收口的，`force: true` 并不会重试——它只吞
-      // ENOENT。于是 afterEach 稳定抛 `EPERM, Permission denied: \\?\C:\...\Temp\...`，
-      // 用例本身的断言其实都已通过。POSIX 上因为允许删除仍被打开的 inode 所以看不到。
-      // 用 rm 自带的有界重试等句柄收口；重试只对 EBUSY/EPERM/ENOTEMPTY 等生效，
-      // 真正的权限故障仍会在耗尽重试后抛出。
+      // Root cause: on Windows, deleting a directory requires all handles under it to be closed first,
+      // while service disposal (log files, config watcher, SQLite handles) drains asynchronously and
+      // `force: true` does not retry — it only swallows ENOENT. So afterEach would reliably throw
+      // `EPERM, Permission denied: \\?\C:\...\Temp\...` even though the test's own assertions had all
+      // passed. POSIX does not surface this because it allows deleting still-open inodes.
+      // Use rm's built-in bounded retries to wait for handles to drain; retries only apply to
+      // EBUSY/EPERM/ENOTEMPTY and similar codes, and genuine permission failures still throw after
+      // retries are exhausted.
       try {
         rmSync(home, {
           recursive: true,
@@ -96,8 +98,8 @@ describe("createLocalServices remote authority", () => {
           retryDelay: 100,
         });
       } catch {
-        // 极端情况下句柄仍未释放。临时目录由操作系统回收，清理失败不该把已经通过
-        // 断言的用例判为失败。
+        // In extreme cases handles may still be open. The OS reclaims the temp directory, and a cleanup
+        // failure must not fail a test whose assertions already passed.
       }
     }
   });
@@ -325,7 +327,7 @@ describe("createLocalServices remote authority", () => {
         JSON.stringify({ id: "account-a", username: "a", displayName: "Account A" }),
       );
       await credentialService.save("oauth:zai:access_token", "login-token");
-      // OAuth 只用登录态换 PAT；保留旧 Key 作为反例，防止组装退回历史 Secret。
+      // OAuth only exchanges the login session for a PAT; the old key is kept as a counterexample to prevent composition from falling back to the historical Secret.
       await credentialService.save(
         accountProviderCredentialKey({
           providerId: BUILTIN_MODEL_PROVIDER_IDS.zaiIndividualCodingPlan,

@@ -198,13 +198,13 @@ describe("offPeakServerClient × offPeakMockGateway 契约联测", () => {
     expect(admitted.status).toBe(200);
     expect(admitted.headers.get("x-upstream")).toBe("yes");
     expect(((await admitted.json()) as { id: string }).id).toBe("msg_mock");
-    // 上游收到了鉴权头与原始 body
+    // The upstream received the auth header and the original body
     expect(upstreamRequests).toHaveLength(1);
     expect(upstreamRequests[0]!.headers["authorization"]).toBe("Bearer upstream-key");
     expect(upstreamRequests[0]!.body).toContain("GLM-5.2");
 
     await client.settle(taken.ticketId);
-    await client.settle(taken.ticketId); // 幂等
+    await client.settle(taken.ticketId); // idempotent
     const after = await client.batchStatus([taken.ticketId]);
     expect(after.tickets[0]!.state).toBe("settled");
   });
@@ -233,8 +233,8 @@ describe("offPeakServerClient × offPeakMockGateway 契约联测", () => {
         body: JSON.stringify({ messages: [] }),
       });
 
-    expect((await send(taken.ticketId)).status).toBe(200); // 准入 → active
-    await new Promise((resolve) => setTimeout(resolve, 60)); // 超过 activeMs
+    expect((await send(taken.ticketId)).status).toBe(200); // admitted → active
+    await new Promise((resolve) => setTimeout(resolve, 60)); // past activeMs
     const expired = await send(taken.ticketId);
     expect(expired.status).toBe(400);
     expect(((await expired.json()) as { code: number }).code).toBe(3102);
@@ -244,7 +244,7 @@ describe("offPeakServerClient × offPeakMockGateway 契约联测", () => {
   });
 
   it("客户端错误映射：非 2xx 抛 OffPeakServerError 携带 bizCode", async () => {
-    // 手写一个只回 429/3103 的假服务端
+    // Hand-write a fake server that only answers 429/3103
     const denyServer = createServer((_req, res) => {
       res.writeHead(429, { "content-type": "application/json" });
       res.end(

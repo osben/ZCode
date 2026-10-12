@@ -141,11 +141,7 @@ function rewriteHttpHeadersAsInlineTable(options: {
 
   providerTableEnd = getTomlTableEndIndex(nextLines, providerHeaderIndex);
   if (providerTableEnd < nextLines.length && nextLines[providerTableEnd - 1] !== "") {
-    nextLines = [
-      ...nextLines.slice(0, providerTableEnd),
-      "",
-      ...nextLines.slice(providerTableEnd),
-    ];
+    nextLines = [...nextLines.slice(0, providerTableEnd), "", ...nextLines.slice(providerTableEnd)];
   }
 
   return nextLines.join("\n");
@@ -163,8 +159,9 @@ function stripNestedQueryParamHttpHeaders(providerConfig: Record<string, unknown
     };
   }
 
-  // Bugfix: 历史错误实现会把 provider 的 http_headers 写进 query_params.http_headers。
-  // Codex 只认 provider 主表的 http_headers；这里在序列化前剔除错误层级，避免持续污染 config.toml。
+  // Bugfix: a past faulty implementation wrote the provider's http_headers into query_params.http_headers.
+  // Codex only recognizes http_headers on the provider's main table; strip the wrong level before serialization
+  // so config.toml stops accumulating the pollution.
   const nextProviderConfig = { ...providerConfig };
   const nextQueryParams = { ...queryParams };
   delete nextQueryParams.http_headers;
@@ -182,9 +179,7 @@ function stripNestedQueryParamHttpHeaders(providerConfig: Record<string, unknown
 }
 
 export function stringifyCodexConfigToml(config: Record<string, unknown>): string {
-  const modelProviders = isObjectRecord(config.model_providers)
-    ? config.model_providers
-    : null;
+  const modelProviders = isObjectRecord(config.model_providers) ? config.model_providers : null;
 
   if (!modelProviders) {
     return stringifyToml(config);

@@ -49,7 +49,7 @@ describe("browser command schema", () => {
     expect(() => browserCommandSchema.parse({ method: "snapshot", bogus: 1 })).toThrow();
   });
 
-  // dwf 子代理关闭时连 tab 一起关；桌面中继按这份 schema 校验 params，漏了字段命令就到不了 main。
+  // Closing a dwf subagent also closes its tabs; the desktop relay validates params against this schema, and a missing field means the command never reaches main.
   it("closeSession 接受可选 closeTabs，拒绝非布尔值", () => {
     expect(browserCommandSchema.parse({ method: "closeSession" })).toEqual({
       method: "closeSession",
@@ -69,7 +69,7 @@ describe("browser command schema", () => {
   it("parses list method (agent 对象模型 browsers.list)", () => {
     const parsed = browserCommandSchema.parse({ method: "list" });
     expect(parsed.method).toBe("list");
-    // list 不带 tabId：作用于会话级别，多余字段被 strict 拒绝。
+    // list takes no tabId: it acts at session level; extra fields are rejected by strict parsing.
     expect(() => browserCommandSchema.parse({ method: "list", tabId: "t" })).toThrow();
   });
 
@@ -249,7 +249,7 @@ describe("browser command schema", () => {
     expect(nav.tabId).toBe("t-1");
     const state = browserCommandSchema.parse({ method: "getState", tabId: "t-2" });
     expect(state.tabId).toBe("t-2");
-    // 不带 tabId 仍合法（缺省作用于默认 view）。
+    // Omitting tabId is still valid (defaults to the active view).
     expect(browserCommandSchema.parse({ method: "getState" }).tabId).toBeUndefined();
   });
 });

@@ -1,6 +1,6 @@
-// workspace-config topic 黄金测试（M5 删波次 2 additive 演进纪律：新增 topic 必须带黄金测试）。
-// 覆盖：帧信封 round-trip（snapshot / deltas）、topic key 对偶、载荷与 host 侧
-// ZCodeConfigOption / ZCodeSlashCommand 的结构对齐（syncer 零映射直通的前提）。
+// workspace-config topic golden tests (M5 removal wave 2 additive evolution discipline: every new topic must ship with golden tests).
+// Coverage: frame envelope round-trip (snapshot / deltas), topic key duality, and structural alignment between the
+// payload and the host-side ZCodeConfigOption / ZCodeSlashCommand (the precondition for zero-mapping pass-through in the syncer).
 import { describe, expect, it } from "vitest";
 import { zcodeSessionSettingsToZCodeConfigOptions } from "../src/zcode-agent-model-state.js";
 import type { ZCodeSessionSettingsState } from "../src/zcode-protocol/index.js";
@@ -117,7 +117,7 @@ describe("zcode-protocol-v4 workspace-config topic", () => {
 
   it("载荷与 host 侧 ZCodeConfigOption / ZCodeSlashCommand 结构对齐（零映射直通）", () => {
     const state: WorkspaceConfigState = workspaceConfigStateSchema.parse(goldenState);
-    // 类型层面的对齐验证：v4 载荷可以直接赋给 host 侧下游消费类型。
+    // Type-level alignment proof: the v4 payload can be assigned directly to the host-side downstream consumer types.
     const configOptions: ZCodeConfigOption[] = state.configOptions;
     const slashCommands: ZCodeSlashCommand[] = state.slashCommands;
     expect(configOptions[0]?.id).toBe("model");

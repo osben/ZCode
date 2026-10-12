@@ -1,7 +1,8 @@
 /**
- * plugin-ui-bridge 模块清单（architecture-governance managed 模块）。
- * host 侧服务：读取并校验插件 `ui://` 资源、向 main 登记沙箱、代理 UI 发起的工具调用，
- * 以及 App-Provided Tools 的登记 / 认领 / 回传通道（appToolsContract.ts）。
+ * plugin-ui-bridge module manifest (architecture-governance managed module).
+ * Host-side service: reads and validates plugin `ui://` resources, registers sandboxes with main,
+ * proxies tool calls initiated by the UI, and provides the register/claim/return channel for
+ * App-Provided Tools (appToolsContract.ts).
  */
 export const pluginUiBridgeModule = {
   id: "plugin-ui-bridge",

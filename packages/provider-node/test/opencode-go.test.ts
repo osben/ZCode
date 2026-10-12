@@ -112,7 +112,7 @@ describe("Todo149 Go 模板与自建供应商共用站点规则", () => {
     }
   });
 
-  // 原因：GLM 落入通用四组参数兜底，Go 上游严格校验并拒绝 enable_thinking/reasoning。
+  // Reason: GLM falls into the generic four-option fallback, and the Go upstream strictly validates and rejects enable_thinking/reasoning.
   it.each(["glm-5.3", "glm-5.3-flash"])(
     "%s 每个档位仅发送 reasoning_effort，不修改其他站点",
     (modelId) => {

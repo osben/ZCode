@@ -36,7 +36,7 @@ describe("F98-01 Built-in 源 Map 结构排版", () => {
             for (const line of map.split("\n"))
               expect(line.match(/^ */)![0].length % 2, map).toBe(0);
           }
-          // 简单三目不拆行；结构分支由对象展开体现，不把规则变成一个 formatter。
+          // Simple ternaries stay on one line; structural branching is expressed by object spreading, without turning this into a formatter.
           tokens.forEach((token, index) => {
             if (token.value !== "?" || tokens[index + 2]?.value !== ":") return;
             if (!["string", "identifier", "number"].includes(tokens[index + 1]!.kind)) return;

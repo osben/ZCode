@@ -478,8 +478,9 @@ const appSettingsObjectSchema = z.object({
   // User shortcut overrides (semantic validation is tolerant in the effective map in ui/src/shortcuts; the schema validates shape only).
   shortcutBindings: z.record(z.string(), z.array(z.string())).optional(),
   localePreference: localePreferenceSchema.default("system").catch("system"),
-  // 非关键偏好：更新版本写入的未知 voiceDictation 值只应被丢弃，而不是让整个 setting.json
-  // 解析失败、settingService 回落默认值并在下次写回时清空全部设置；与 locale 的 catch 策略一致。
+  // Non-critical preference: an unknown voiceDictation value written by a newer version should only
+  // be dropped, not fail the entire setting.json parse, make settingService fall back to defaults,
+  // and erase all settings on the next write-back; same catch policy as locale.
   voiceDictation: voiceDictationSettingsSchema.optional().catch(undefined),
   terminalInheritSystemProfile: z.boolean().default(true),
   terminalFontFamily: nonEmptyStringSchema.optional(),

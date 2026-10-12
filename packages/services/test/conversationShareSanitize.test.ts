@@ -20,8 +20,9 @@ describe("sanitizeConversationShareIssues", () => {
     expect(result.omittedIssueCount).toBe(0);
   });
 
-  // Bug 根因：displayName 含路径/URL 或超长时，此前整条 issue 返回 null 被过滤——脱敏目标是
-  // 不泄露路径，而不是丢掉整条诊断。改为只剥离该字段，保留 code/scope 等定位信息。
+  // Bug root cause: when displayName contained a path/URL or was too long, the whole issue previously
+  // returned null and got filtered out — sanitization exists to keep paths from leaking, not to drop the
+  // entire diagnostic. Now only that field is stripped, preserving code/scope and other locating info.
   it.each([
     ["相对路径", "src/app.ts"],
     ["反斜杠路径", "src\\app.ts"],
@@ -40,7 +41,10 @@ describe("sanitizeConversationShareIssues", () => {
     ]);
 
     expect(result.issues).toHaveLength(1);
-    expect(result.issues[0]).toMatchObject({ code: "artifact_type_not_allowed", scope: "artifact" });
+    expect(result.issues[0]).toMatchObject({
+      code: "artifact_type_not_allowed",
+      scope: "artifact",
+    });
     expect(result.issues[0]).not.toHaveProperty("artifactDisplayName");
     expect(result.omittedIssueCount).toBe(0);
   });

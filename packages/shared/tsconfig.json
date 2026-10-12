@@ -4,9 +4,9 @@
     "outDir": "dist",
     "rootDir": "src",
     "types": ["node"],
-    // Bugfix: runtime feature helper 有意以 JS 形式存放，使 Node prepare 脚本与 TypeScript 包
-    // 在 shared 构建前即可导入同一份运行时契约。
-    // 允许 shared 编译复制该 JS，避免 dist/index.js 导出一个不存在的文件。
+    // Bugfix: the runtime feature helper is intentionally kept as JS so the Node prepare script
+    // and TypeScript packages can import the same runtime contract before shared is built.
+    // allowJs lets the shared build copy that JS, preventing dist/index.js from exporting a nonexistent file.
     "allowJs": true
   },
   "include": ["src"]

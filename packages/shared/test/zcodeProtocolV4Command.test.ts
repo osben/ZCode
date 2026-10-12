@@ -369,8 +369,8 @@ describe("zcode-protocol-v4 command", () => {
         issuedAt: 1_000,
         expiresAt: 60_000,
       };
-      // 显式重跑会重新抽卡，因此 Selection 与执行材料必须能整体刷新；加速轮永远是
-      // execution 作用域，不允许改写 Session Selection。
+      // An explicit rerun re-draws the card, so Selection and execution materials must be refreshable as a whole; the
+      // highspeed round is always execution-scoped and must not rewrite the Session Selection.
       const modelSelection = {
         providerId: "account:bigmodel-highspeed-card",
         modelId: "GLM-5.3",
@@ -387,7 +387,7 @@ describe("zcode-protocol-v4 command", () => {
             { reason: "highspeed_card_expired" as const, providerErrorCode: "3402" },
             { reason: "highspeed_request_failed" as const },
           ],
-          // 退回目标随声明下发：重跑时也必须带上当时的会话原模型，CLI 不再依赖运行态常驻选择。
+          // The fallback target is delivered with the declaration: a rerun must also carry the session's original model at that time; the CLI no longer depends on a runtime-resident selection.
           target: { providerId: "account:bigmodel-team-coding-plan", modelId: "GLM-5.3" },
         },
       };
@@ -636,7 +636,7 @@ describe("zcode-protocol-v4 command", () => {
         workspaceId: "ws-1",
         forkOf: "s-0",
       }).success,
-      // zod object 默认 strip 未知键——这里断言的是类型层没有 forkOf 定义
+      // zod objects strip unknown keys by default — this asserts there is no forkOf definition at the type level
     ).toBe(true);
     const parsed = commandPayloadSchemas.createSession.parse({
       workspaceId: "ws-1",
@@ -665,11 +665,11 @@ describe("zcode-protocol-v4 command", () => {
         "switchModelConfig",
       ].sort(),
     );
-    // stop 永不 stale：不在 CAS 集合
+    // stop never goes stale: not in the CAS set
     expect(COMMANDS_REQUIRING_BASE_REVISION.has("compact")).toBe(false);
     expect(COMMANDS_REQUIRING_BASE_REVISION.has("stop")).toBe(false);
     expect(COMMANDS_REQUIRING_BASE_REVISION.has("resolveInteraction")).toBe(false);
-    // 完成态统计是同一 user message 的幂等后台补写，不能被 Renderer revision 漂移丢弃。
+    // Completion-state metrics are an idempotent background write for the same user message and must not be dropped by Renderer revision drift.
     expect(COMMANDS_REQUIRING_BASE_REVISION.has("setHighspeedMetrics")).toBe(false);
   });
 
@@ -693,7 +693,7 @@ describe("zcode-protocol-v4 command", () => {
     expect(parsed.ok).toBe(true);
   });
 
-  // M5 additive：switchCollaborationMode——值域 = core CollaborationMode 可切换子集。
+  // M5 additive: switchCollaborationMode — value domain = the user-switchable subset of core CollaborationMode.
   it("parses switchCollaborationMode and rejects out-of-catalog mode", () => {
     const ok = parseCommandEnvelope({
       commandId: "cmd-mode-1",
@@ -711,15 +711,15 @@ describe("zcode-protocol-v4 command", () => {
       clientId: "client-1",
       sessionId: "s-1",
       type: "switchCollaborationMode",
-      // auto 非用户可切换模式，不进命令面
+      // auto is not a user-switchable mode and stays out of the command surface
       payload: { mode: "auto" },
       issuedAt: 1000,
     });
     expect(bad.ok).toBe(false);
   });
 
-  // M5 ③-2 additive：resolveInteraction answer 的 action/content——elicitation
-  // 回执收敛（多题答案/注解无损）。黄金断言：旧形态（仅 optionId/freeText）继续合法。
+  // M5 ③-2 additive: resolveInteraction answer action/content — converged elicitation
+  // receipts (multi-question answers/annotations lossless). Golden assertion: the legacy shape (optionId/freeText only) stays valid.
   it("parses resolveInteraction with additive action/content and keeps legacy answers valid", () => {
     const legacy = parseCommandEnvelope({
       commandId: "cmd-ri-1",
@@ -932,7 +932,7 @@ describe("zcode-protocol-v4 command", () => {
   });
 
   it("parses a startSavedWorkflow payload and rejects bad shapes", () => {
-    // 直接启动命令：不携 baseRevision，与 cancel / resume 同类。
+    // Direct start command: no baseRevision, same family as cancel / resume.
     expect(
       parseCommandEnvelope({
         commandId: "018f0000-0000-7000-8000-0000000000aa",
@@ -943,13 +943,13 @@ describe("zcode-protocol-v4 command", () => {
         issuedAt: 1000,
       }).ok,
     ).toBe(true);
-    // scope 可选：项目档缺省不传。
+    // scope optional: the project tier is omitted by default.
     expect(commandPayloadSchemas.startSavedWorkflow.parse({ name: "cleanup" })).toEqual({
       name: "cleanup",
     });
-    // 空名字被拒（invalid_name 属于运行时诊断，但 schema 先挡空串）。
+    // Empty name rejected (invalid_name is a runtime diagnostic, but the schema blocks empty strings first).
     expect(commandPayloadSchemas.startSavedWorkflow.safeParse({ name: "" }).success).toBe(false);
-    // scope 只认 project / global。
+    // scope accepts only project / global.
     expect(
       commandPayloadSchemas.startSavedWorkflow.safeParse({ name: "x", scope: "team" }).success,
     ).toBe(false);
@@ -971,7 +971,7 @@ describe("zcode-protocol-v4 command", () => {
       runId: "run-123",
       toolCallId: "launch-abc",
     });
-    // runId / toolCallId 必带且非空。
+    // runId / toolCallId required and non-empty.
     expect(
       commandResultSchema.safeParse({ type: "startSavedWorkflow", runId: "", toolCallId: "x" })
         .success,
@@ -990,16 +990,16 @@ describe("zcode-protocol-v4 command", () => {
       "session_busy",
       "start_failed",
     ]);
-    // 前缀 + reason 拼成完整 fault code；bootstrap 铸造、ui 前缀匹配。
+    // Prefix + reason compose the full fault code; bootstrap forges it, the UI prefix-matches.
     expect(`${SAVED_WORKFLOW_START_REJECTED_FAULT_PREFIX}not_found`).toBe(
       "fault.command.savedWorkflowStartRejected.not_found",
     );
   });
 
-  // 「配置」弹层的命令（docs/dynamic-workflow/launch.md「Changing a run's settings from the GUI」）。
+  // Commands of the "settings" popover (docs/dynamic-workflow/launch.md "Changing a run's settings from the GUI").
   it("parses amendWorkflowRunSettings payloads with the omit / null / value tri-state", () => {
     const schema = commandPayloadSchemas.amendWorkflowRunSettings;
-    // 不携 baseRevision，与 cancel / resume 同类。
+    // No baseRevision, same family as cancel / resume.
     expect(
       parseCommandEnvelope({
         commandId: "018f0000-0000-7000-8000-0000000000ab",

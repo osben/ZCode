@@ -29,7 +29,7 @@ describe("ensureTelemetryDeviceMid", () => {
   });
 
   it("远端主机没有 telemetry-state.json 时，确保后 ZCode 来源头才带上同一个 X-Device-Mid", async () => {
-    // 复现远端事故前提：全新主机没有任何进程写过 state 文件，来源头缺 X-Device-Mid。
+    // Reproducing the remote incident's precondition: a brand-new host where no process has written the state file, so the source header lacks X-Device-Mid.
     const { stateFile } = createIsolatedDataBaseDir();
     expect(existsSync(stateFile)).toBe(false);
     expect(buildZCodeSourceHeaders()["X-Device-Mid"]).toBeUndefined();
@@ -38,7 +38,7 @@ describe("ensureTelemetryDeviceMid", () => {
 
     expect(deviceMid).toMatch(UUID_PATTERN);
     expect(JSON.parse(readFileSync(stateFile, "utf-8"))).toEqual({ deviceMid });
-    // 与 NodeApiClient 实际注入来源头的同一读取路径必须拿到同一个值。
+    // The same read path used by NodeApiClient to inject the source header must obtain the same value.
     expect(buildZCodeSourceHeaders()["X-Device-Mid"]).toBe(deviceMid);
   });
 

@@ -20,18 +20,23 @@ import {
 } from "./contract.js";
 
 /**
- * 工具可见性与 UI 呈现解耦。只读 `_meta.ui.visibility`，缺省 `["model", "app"]`；
- * 没有 `ui://` 资源的纯数据工具同样按它决定进不进模型工具表，不再因为缺 resourceUri 而整体丢失。
+ * Tool visibility is decoupled from UI presentation. Reads only `_meta.ui.visibility`, defaulting
+ * to `["model", "app"]`;
+ * pure data tools without a `ui://` resource use it too to decide whether they enter the model's
+ * tool table, instead of being dropped wholesale for lacking a resourceUri.
  */
 export function readMcpToolVisibility(meta: unknown): McpAppsToolVisibility[] {
   return readVisibility(asRecord(asRecord(meta)?.ui)?.visibility);
 }
 
 /**
- * 工具 `_meta` → UI 描述的归一化。纯函数。resourceUri 来源按优先级：`_meta.ui.resourceUri` →
- * 弃用扁平键 `_meta["ui/resourceUri"]`（规范 MUST 兼容）→ 兼容接口的 `openai/outputTemplate`。
- * 兼容 `openai/*` 别名；任何一项非法只丢弃该项，唯独 resourceUri 非法则整体为 null
- * （此时可见性由 readMcpToolVisibility 单独给出）。
+ * Normalization from a tool's `_meta` to its UI descriptor. Pure function. resourceUri sources, by
+ * priority: `_meta.ui.resourceUri` →
+ * the deprecated flat key `_meta["ui/resourceUri"]` (spec MUST-compat) → the compat interface's
+ * `openai/outputTemplate`.
+ * Accepts the `openai/*` aliases; an invalid item only drops that item, except an invalid
+ * resourceUri invalidates the whole descriptor (visibility is then reported separately by
+ * readMcpToolVisibility).
  */
 export function normalizeMcpToolUiMeta(meta: unknown): McpToolUiDescriptor | null {
   const root = asRecord(meta);
@@ -65,10 +70,11 @@ export function normalizeMcpToolUiMeta(meta: unknown): McpToolUiDescriptor | nul
 }
 
 /**
- * `ui://` HTML 资源项自己的 `_meta`（以被选中内容项的 `_meta.ui` 为准）。
- * csp 与 prefersBorder 兼容 `openai/widgetCSP` / `openai/widgetPrefersBorder` 别名；
- * 尺寸提示只有 `openai/widgetHeightHint` / `openai/widgetMinFrameHeight`；`openai/widgetShowCodexWidgetInline` → showInline；
- * 什么都没声明返回 null。
+ * A `ui://` HTML resource item's own `_meta` (taken from the selected content item's `_meta.ui`).
+ * csp and prefersBorder accept the `openai/widgetCSP` / `openai/widgetPrefersBorder` aliases;
+ * size hints are only `openai/widgetHeightHint` / `openai/widgetMinFrameHeight`;
+ * `openai/widgetShowCodexWidgetInline` → showInline;
+ * returns null when nothing is declared.
  */
 export function normalizeMcpAppResourceMeta(meta: unknown): McpAppResourceMeta | null {
   const root = asRecord(meta);
@@ -94,7 +100,7 @@ export function normalizeMcpAppResourceMeta(meta: unknown): McpAppResourceMeta |
   return Object.keys(result).length > 0 ? result : null;
 }
 
-/** `_meta.ui.permissions`：只认规范四键且值为对象（`{}`），未知键丢弃；按固定顺序返回。 */
+/** `_meta.ui.permissions`: only the four spec keys with object values (`{}`) are accepted, unknown keys are dropped; returned in fixed order. */
 export function normalizeMcpAppResourcePermissions(value: unknown): McpAppsResourcePermission[] {
   const root = asRecord(value);
   if (!root) return [];
@@ -102,8 +108,9 @@ export function normalizeMcpAppResourcePermissions(value: unknown): McpAppsResou
 }
 
 /**
- * 资源级 `_meta["zcode/csp"]`：只认 `MCP_APPS_CSP_RELAXATION_FLAGS` 里的布尔键，未知键与非布尔值丢弃；
- * 没有任何为 true 的键返回 null（false 等于不声明）。
+ * Resource-level `_meta["zcode/csp"]`: only boolean keys from `MCP_APPS_CSP_RELAXATION_FLAGS` are
+ * accepted, unknown keys and non-boolean values are dropped;
+ * returns null when no key is true (false equals "not declared").
  */
 export function normalizeMcpAppCspRelaxations(meta: unknown): McpAppCspRelaxations | null {
   const root = asRecord(asRecord(meta)?.[MCP_APPS_CSP_RELAXATION_META_KEY]);
@@ -115,7 +122,7 @@ export function normalizeMcpAppCspRelaxations(meta: unknown): McpAppCspRelaxatio
   return Object.keys(result).length > 0 ? result : null;
 }
 
-/** 面板 id：长度与字符集受限，非法即丢弃（工具结果退回内联卡片，不报错）。 */
+/** Panel id: length and character set restricted; invalid values are dropped (the tool result falls back to an inline card, without an error). */
 export function readSurfaceId(value: unknown): string | undefined {
   if (typeof value !== "string") return undefined;
   const trimmed = value.trim();
@@ -124,12 +131,15 @@ export function readSurfaceId(value: unknown): string | undefined {
 }
 
 /**
- * 校验 CSP 允许列表中的单个 origin，返回归一化 origin（保留端口），非法返回 null。
- * - `https:` / `wss:`：任意 host。
- * - `http:` / `ws:`：仅当 hostname 恰为 `127.0.0.1`（openpencil H-B 回环放行），为的是插件自带的本机服务
- *   （例如插件 MCP server 进程里的 WebSocket 桥）能被沙箱页面连接。不放 `localhost`（可被 hosts 文件改写）、
- *   不放 `[::1]`（与我们 MCP 桥绑定的 127.0.0.1 不一致）、不放其他 IP。
- * - 一律不接受凭据、query、hash 与路径。
+ * Validate a single origin in a CSP allowlist; returns the normalized origin (port kept), or null
+ * when invalid.
+ * - `https:` / `wss:`: any host.
+ * - `http:` / `ws:`: only when the hostname is exactly `127.0.0.1` (loopback allowance for the
+ *   openpencil H-B), so that a plugin's own local services (e.g. the WebSocket bridge inside the
+ *   plugin's MCP server process) can be connected from sandboxed pages. Not `localhost` (can be
+ *   rewritten via the hosts file), not `[::1]` (inconsistent with the 127.0.0.1 our MCP bridge
+ *   binds to), and no other IPs.
+ * - Credentials, query, hash, and path are never accepted.
  */
 export function normalizeCspOrigin(value: unknown): string | null {
   if (typeof value !== "string") return null;
@@ -167,7 +177,7 @@ function readDisplayMode(value: unknown): McpAppsDisplayMode | undefined {
   return value === "inline" || value === "fullscreen" || value === "pip" ? value : undefined;
 }
 
-/** 四类域各自独立读取；`openai/widgetCSP` 同时接受 camelCase 与 snake_case。 */
+/** The four domain kinds are read independently; `openai/widgetCSP` accepts both camelCase and snake_case. */
 function readCsp(
   modern: Record<string, unknown> | null,
   legacy: Record<string, unknown> | null,

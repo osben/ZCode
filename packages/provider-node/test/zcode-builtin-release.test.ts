@@ -141,7 +141,7 @@ describe("ZCode Built-in Release", () => {
       zcodeEndpointOrigin: "https://staging.example.com",
     });
     expect(first).toEqual(equivalent);
-    // 路径断言保留全部隔离层级，不能用 POSIX 分隔符让 Windows 正确实现误报。
+    // Path assertions keep all isolation levels; do not use POSIX separators, which would make a correct Windows implementation report a false failure.
     expect(dirname(dirname(first.activeFilePath))).toBe(
       join("/environment", "runtime", "provider", "darwin-aarch64", "3.0.0"),
     );
@@ -462,7 +462,7 @@ describe("ZCode Built-in Release", () => {
       }
       endpoint = "https://A.example.com/";
       expect((await source.read()).revision).toBe(first.config.zcodeBuiltinRevision);
-      // 等待来源通知触发的刷新完成后再拆除临时目录，不与后台文件锁竞争清理。
+      // Wait for the source-notification-triggered refresh to finish before tearing down the temp directory; cleanup must not race the background file lock.
       await registry.refresh("endpoint-back");
     } finally {
       registry.dispose();

@@ -175,7 +175,7 @@ describe("authorized native channel reply", () => {
     expect(result.unresolved[0]?.candidates).toHaveLength(2);
     const candidateRef = result.unresolved[0]!.candidates[1]!.ref;
     expect(candidateRef).not.toContain("ou_b");
-    // 用户在下一条输入选择候选，标识应跨输入保留，但不能跨授权。
+    // The user selects a candidate in the next input; the marker must persist across inputs but not across authorizations.
     const group = f.state.bots.group!.group!;
     group.inputs!.followup = {
       ...structuredClone(group.inputs!.input!),

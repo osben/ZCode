@@ -213,14 +213,14 @@ describe("workspace Hook atomic mutation", () => {
       runtimeRoot: { enabled: true, timeoutMs: 5000, maxOutputBytes: 32_768 },
     });
 
-    // 磁盘上仅修改 root 级 hooks.timeoutMs，不触碰 declaration 本体。
+    // On disk only the root-level hooks.timeoutMs changes; the declaration body is untouched.
     writeJson(configPath, {
       hooks: { ...hooks, timeoutMs: 99_999 },
     });
 
-    // 该守卫把 entry.resolvedTimeoutMs（review 时解析到的旧值）回填为 digest 的 default，
-    // 因此重算 digest 必然与 entry.hookDeclarationDigest 相等——root default 变化不被捕获。
-    // 这是有意的已知边界，此处 LOCK 以防回归时误改。
+    // The guard backfills entry.resolvedTimeoutMs (the value resolved at review time) into the digest default,
+    // so recomputing the digest always equals entry.hookDeclarationDigest — root default changes are not caught.
+    // This is an intentional known boundary, LOCKed here to prevent accidental changes during regression work.
     await expect(
       writeWorkspaceHookConfiguredToggle({
         configPath,

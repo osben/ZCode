@@ -51,7 +51,7 @@ describe("shortcutCommands 序列化格式", () => {
     expect(parseShortcutBinding("+")).toBeNull();
     expect(parseShortcutBinding("CmdOrCtrl+ß")).toBeNull();
     expect(parseShortcutBinding("CmdOrCtrl+CmdOrCtrl+k")).toBeNull();
-    // Electron 的其他修饰名（Meta/Command/Super）不在本格式内
+    // Electron's other modifier names (Meta/Command/Super) are not part of this format
     expect(parseShortcutBinding("Meta+k")).toBeNull();
     expect(parseShortcutBinding("Command+k")).toBeNull();
   });
@@ -59,7 +59,7 @@ describe("shortcutCommands 序列化格式", () => {
   it("无修饰键单键格式上合法（spec §3：格式合法、匹配支持）", () => {
     expect(serializeShortcutBinding(parseShortcutBinding("F5")!)).toBe("F5");
     expect(serializeShortcutBinding(parseShortcutBinding("]")!)).toBe("]");
-    // 单 token 修饰键名不是合法键
+    // A lone modifier token is not a valid key
     expect(parseShortcutBinding("CmdOrCtrl")).toBeNull();
   });
 
@@ -75,7 +75,7 @@ describe("shortcutCommands 序列化格式", () => {
     expect(serializeShortcutBinding(parseShortcutBinding("CmdOrCtrl+Enter")!)).toBe(
       "CmdOrCtrl+Enter",
     );
-    // 大小写敏感不变
+    // Case sensitivity is unchanged
     expect(parseShortcutBinding("enter")).toBeNull();
   });
 });
@@ -116,7 +116,7 @@ describe("shortcutCommands 命令表", () => {
       "composerInsertNewline",
       "composerSend",
     ]);
-    // 其余命令缺省 global（未显式标注）
+    // Remaining commands default to global scope (not explicitly annotated)
     expect(
       SHORTCUT_COMMANDS.every((entry) => entry.scope === "composer" || entry.scope === undefined),
     ).toBe(true);

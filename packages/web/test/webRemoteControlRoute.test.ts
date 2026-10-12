@@ -31,7 +31,8 @@ describe("resolveWebRemoteControlRoutePath", () => {
   });
 
   it("源码保留发布脚本识别版本化 base 能力所依赖的变量引用", async () => {
-    // remote-frontend-build-source.mjs 通过该文件是否引用此变量决定旧 tag 是否回退 legacy base。
+    // remote-frontend-build-source.mjs decides whether an old tag falls back to
+    // the legacy base by checking whether this file references that variable.
     const source = await readFile(
       resolve(import.meta.dirname, "../src/webRemoteControlRoute.ts"),
       "utf8",

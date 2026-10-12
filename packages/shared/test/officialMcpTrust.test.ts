@@ -1,11 +1,12 @@
-/* 官方 MCP 信任判定（spec §5.1 / §5.2）。
+/* Official MCP trust decision (spec §5.1 / §5.2).
  *
- * 规则：目标 origin 等于当前 ZCode API origin（https）。
+ * Rule: the target origin equals the current ZCode API origin (https).
  *
- * 2026-08 决策变更：移除了「pluginId 必须以 `@zcode-plugins-official` 结尾」这道检查。
- * 它会让官方插件在发布到官方 marketplace 之前无法对真实端点自测（本地装的插件 id 是
- * `@inline` 或 `@<本地 marketplace>`），而 dev loopback 开关只放开 http loopback、救不了
- * https 端点。因此这里的承重项只剩 **origin 相等**（防外泄）。
+ * 2026-08 decision change: the "pluginId must end with `@zcode-plugins-official`" check was removed.
+ * It prevented official plugins from self-testing against the real endpoint before publishing to the official
+ * marketplace (locally installed plugin ids are `@inline` or `@<local marketplace>`), and the dev loopback
+ * switch only opens http loopback, which cannot help https endpoints. The only load-bearing check left is
+ * **origin equality** (anti-exfiltration).
  */
 import { describe, expect, it } from "vitest";
 import {
@@ -33,14 +34,14 @@ function check(input: {
 describe("isOfficialMcpOriginTrusted", () => {
   it("trusts the current ZCode API origin", () => {
     expect(check({ origin: ZCODE_ORIGIN })).toEqual({ detail: "ok", trusted: true });
-    // 带路径的 URL 归一化到同一 origin（真实端点形态：POST /api/v1/mcp/server/:mcp_group）
+    // A URL with a path normalizes to the same origin (real endpoint shape: POST /api/v1/mcp/server/:mcp_group)
     expect(check({ origin: `${ZCODE_ORIGIN}/api/v1/mcp/server/image_search` })).toMatchObject({
       trusted: true,
     });
   });
 
   it("accepts any plugin id at the correct origin", () => {
-    // pluginId 不再参与判定：inline、本地 marketplace、第三方一律按 origin 判断。
+    // pluginId no longer participates in the decision: inline, local marketplace, and third-party are all judged by origin alone.
     for (const pluginId of [
       "official-tools@zcode-plugins-local",
       "dev-official-mcp@inline",
@@ -52,7 +53,7 @@ describe("isOfficialMcpOriginTrusted", () => {
   });
 
   it("still rejects those same plugins at a wrong origin", () => {
-    // 移除 marketplace 检查后，origin 是唯一屏障——必须确认它没被一起放松。
+    // With the marketplace check removed, origin is the only barrier — confirm it was not loosened along with it.
     for (const pluginId of ["evil@third-party", "official-tools@zcode-plugins-local"]) {
       expect(check({ origin: "https://attacker.example", pluginId })).toEqual({
         detail: "origin_mismatch",
@@ -73,7 +74,7 @@ describe("isOfficialMcpOriginTrusted", () => {
   });
 
   it("rejects http even when the host matches", () => {
-    // origin 相等是承重项，但仍必须是 https——明文会让凭证在链路上暴露
+    // Origin equality is load-bearing, but https is still mandatory — plaintext exposes credentials on the wire
     expect(check({ origin: "http://zcode.z.ai" })).toMatchObject({ trusted: false });
   });
 
@@ -98,7 +99,7 @@ describe("isOfficialMcpOriginTrusted", () => {
   it("rejects malformed input without throwing", () => {
     expect(check({ origin: "" })).toEqual({ detail: "invalid_input", trusted: false });
     expect(check({ origin: "not-a-url" })).toMatchObject({ trusted: false });
-    // 空 pluginId 不再是拒绝理由，但空 origin 是
+    // An empty pluginId is no longer a rejection reason, but an empty origin is
     expect(check({ origin: ZCODE_ORIGIN, pluginId: "" })).toMatchObject({ trusted: true });
   });
 
@@ -110,7 +111,7 @@ describe("isOfficialMcpOriginTrusted", () => {
     });
 
     it("only opens loopback, never a remote origin", () => {
-      // 关键：dev 开关不得成为"一个环境变量把 JWT 导向任意站点"的通道
+      // Critical: the dev switch must never become a channel for "one env var steering JWTs to any site"
       for (const entry of ["https://attacker.example", "http://evil.example"]) {
         expect(check({ devTrustedOriginsRaw: entry, origin: entry })).toMatchObject({
           trusted: false,
@@ -129,7 +130,7 @@ describe("isOfficialMcpOriginTrusted", () => {
     });
 
     it("does not require an official plugin for loopback self-testing", () => {
-      // 本地 plugin 经 dirs 加载时 marketplace 是 inline，自测必须仍可用
+      // A local plugin loaded via dirs has marketplace "inline"; self-testing must keep working
       expect(
         check({
           devTrustedOriginsRaw: "http://127.0.0.1:3999",
@@ -144,7 +145,7 @@ describe("isOfficialMcpOriginTrusted", () => {
     });
 
     it("still rejects a loopback origin that is not listed", () => {
-      // 移除 marketplace 检查后，loopback 也必须逐条登记才放行，不能因 http loopback 就通过
+      // With the marketplace check removed, loopback origins must also be allowlisted entry by entry; http loopback alone must not pass
       expect(
         check({ devTrustedOriginsRaw: "http://127.0.0.1:3999", origin: "http://127.0.0.1:9999" }),
       ).toMatchObject({ trusted: false });
@@ -166,7 +167,7 @@ describe("createOfficialMcpTrustedOriginRegistry", () => {
       }),
     ).resolves.toMatchObject({ trusted: true });
 
-    // 切到 test 环境域名后，旧 origin 立即不再可信
+    // After switching to the test environment domain, the old origin immediately stops being trusted
     origin = "https://zcode-test.z.ai";
     await expect(
       registry.isTrusted({

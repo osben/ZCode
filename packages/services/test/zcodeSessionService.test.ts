@@ -44,8 +44,8 @@ describe("createZCodeSessionService", () => {
     const agentService = {
       createSession: vi.fn(async () => snapshot),
     } as unknown as IZCodeAgentService;
-    // services 只负责建会话前把 MCP 配置交给 producer 的 resolver；改写细节由 producer 自己的测试覆盖。
-    // 这里用测试自己的 resolver，不依赖私有 producer 的注入实现（开源占位包不改写配置）。
+    // services only hands the MCP config to the producer's resolver before session creation; rewrite details are covered by the producer's own tests.
+    // This test uses its own resolver instead of the private producer's injected implementation (the open-source placeholder package does not rewrite config).
     const resolver = {
       resolveMcpServers: vi.fn(async (servers: ZCodeAgentMcpServer[] | undefined) =>
         servers?.map((server) =>
@@ -125,8 +125,8 @@ describe("createZCodeSessionService", () => {
       }),
     ).resolves.toBe(snapshot);
 
-    // Bugfix: zcodeSessionService 会为 createSession 补 sessionTraceId 贯穿日志链路。
-    // 这个 deferred draft 用例只验证草稿不进入 task index，因此需要显式接受并校验 trace 字段。
+    // Bugfix: zcodeSessionService fills in sessionTraceId for createSession to thread the logging chain.
+    // This deferred-draft case only verifies the draft does not enter the task index, so it must explicitly accept and validate the trace field.
     expect(agentService.createSession).toHaveBeenCalledWith({
       workspacePath: "/workspace/app",
       workspaceIdentity: "remote:ssh:dev:/workspace/app",
@@ -275,7 +275,7 @@ describe("createZCodeSessionService", () => {
       workspaceIdentity: target.workspaceIdentity,
       persistence: "deferred",
     });
-    // 远程端首发会把同一个 session 原地提升；设置页异步闭包仍可能持有旧 draftSessionId。
+    // The remote side promotes the same session in place on first send; the settings page's async closure may still hold the old draftSessionId.
     persistence = "immediate";
     await service.promoteDeferredDraftSession(target);
 
@@ -470,7 +470,7 @@ describe("createZCodeSessionService", () => {
     });
     expect(taskIndexSyncer.syncSnapshotAndBroadcast).toHaveBeenCalledWith(
       repairedSnapshot,
-      // Bugfix: resume 收敛是状态同步，广播 reason 改为 task_status_changed，避免全局 membership 重拉。
+      // Bugfix: resume convergence is a state sync; the broadcast reason changed to task_status_changed to avoid a global membership re-pull.
       { broadcastReason: "task_status_changed" },
     );
   });

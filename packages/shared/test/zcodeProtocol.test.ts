@@ -154,7 +154,7 @@ describe("ZCode Protocol", () => {
     };
 
     expect(zcodeProtocolNotifications.processResourceSample).toBe("process/resourceSample");
-    // PRT-025：旧 CLI 发来的样本没有新字段，仍必须通过校验（新增字段全部可选，握手版本不递增）。
+    // PRT-025: samples from old CLIs lack the new fields and must still pass validation (all new fields optional; the handshake version does not bump).
     expect(zcodeProcessResourceSampleSchema.parse(sample)).toEqual(sample);
     const sampleWithTelemetryFields = {
       ...sample,
@@ -166,9 +166,9 @@ describe("ZCode Protocol", () => {
     expect(zcodeProcessResourceSampleSchema.parse(sampleWithTelemetryFields)).toEqual(
       sampleWithTelemetryFields,
     );
-    // lane 由 app 侧 services 按所属进程管理器打标，CLI 不知道自己的 lane，也不允许自报。
+    // lane is labeled by app-side services from the owning process manager; the CLI does not know its own lane and may not self-report.
     expect(() => zcodeProcessResourceSampleSchema.parse({ ...sample, lane: "chat" })).toThrow();
-    // instanceToken 只用于 main 统计进程数，绝不能被拿来夹带 pid、路径或 workspace 标识。
+    // instanceToken exists only for main to count processes; it must never smuggle pids, paths, or workspace identity.
     expect(() =>
       zcodeProcessResourceSampleSchema.parse({ ...sample, instanceToken: "/private/repo" }),
     ).toThrow();
@@ -515,7 +515,7 @@ describe("ZCode Protocol", () => {
       { ...base, sequenceNumber: -1, kind: "session-closed" },
       { ...base, kind: "turn-started" },
       { ...base, kind: "tool-scheduled", turnId: "turn-1", toolCallId: "call-1" },
-      // computerUse 是布尔事实，只有 true 有意义；false 与动作名都不在契约里。
+      // computerUse is a boolean fact where only true carries meaning; false and the action name are both outside the contract.
       {
         ...base,
         kind: "tool-scheduled",
@@ -524,7 +524,7 @@ describe("ZCode Protocol", () => {
         toolName: "mcp__node_repl__js",
         computerUse: false,
       },
-      // tool-started 拿不到模型源码（ToolCallStartedPayload 无 input），不允许携带该事实。
+      // tool-started cannot obtain the model source code (ToolCallStartedPayload has no input), so it may not carry this fact.
       {
         ...base,
         kind: "tool-started",
@@ -645,7 +645,7 @@ describe("ZCode Protocol", () => {
         interval: 1.5,
       }),
     ).toThrow();
-    // carrier 必须保持无限循环，避免 host 直接收到 recurring=false / 有限次数的矛盾状态。
+    // carrier must stay an endless loop, avoiding the host receiving a contradictory state of recurring=false / a finite count.
     expect(
       zcodeAutomationUpdateParamsSchema.parse({
         automationId: "automation-1",
@@ -952,7 +952,7 @@ describe("ZCode Protocol", () => {
   });
 
   it("accepts session RESUME tool lists too (cold resume keeps the same isolation)", () => {
-    // 冷恢复必须和 create 同边界地带工具面约束，否则 CUA 会话 resume 后会重新可见 Bash 等被禁工具。
+    // Cold resume must keep the same tool-surface constraints as create, otherwise a CUA session would re-expose Bash and other denied tools after resume.
     const parsed = zcodeSessionResumeParamsSchema.parse({
       sessionId: "sess_1",
       toolAllowlist: ["mcp__zcode-cua__request_access"],
@@ -960,7 +960,7 @@ describe("ZCode Protocol", () => {
     });
     expect(parsed.toolAllowlist).toEqual(["mcp__zcode-cua__request_access"]);
     expect(parsed.toolDenylist).toEqual(["Bash"]);
-    // 仍 strict：未知字段拒绝。
+    // Still strict: unknown fields rejected.
     expect(() =>
       zcodeSessionResumeParamsSchema.parse({
         sessionId: "sess_1",
@@ -979,7 +979,7 @@ describe("ZCode Protocol", () => {
       providerId: "account:zai-individual-coding-plan",
       reason: "model-request",
     });
-    // 当前请求期鉴权材料承接请求级 header；不能恢复旧 Registry revision 或裸 headers 协议。
+    // Current request-scoped auth material supersedes request-level headers; the old Registry revision or bare headers protocol cannot be restored.
     const runtimeProviderHeaders = {
       "X-Request-Scoped-Param": "request-token",
       "X-Request-Scoped-Region": "cn",
@@ -1242,7 +1242,7 @@ describe("ZCode Protocol", () => {
           },
         };
 
-        // 旧 CLI 没有消息归属字段时仍须兼容；新 CLI 的字段不能导致整条调度事件丢失。
+        // Old CLIs without message attribution fields must stay compatible; the new CLI's fields must not drop the whole scheduling event.
         expect(zcodeSessionEventSchema.parse(event).payload).toEqual(event.payload);
         const payload = { ...event.payload, assistantMessageId: "msg_assistant" };
         expect(zcodeSessionEventSchema.parse({ ...event, payload })).toEqual({ ...event, payload });
@@ -1579,8 +1579,8 @@ describe("ZCode Protocol", () => {
   });
 
   it("keeps the official MCP unavailable code in strict v4 tool rows", () => {
-    // 两个 strict schema（CLI contracts 的 display payload 与这里的 row）必须同步加字段，
-    // 少加一处整条 row 会被拒，输入框提示就永远拿不到事实。
+    // The two strict schemas (CLI contracts' display payload and the row here) must add fields in sync;
+    // missing one side rejects the whole row and the composer hint would never receive the fact.
     const row = conversationRowSchema.parse({
       rowId: 5,
       turnId: "turn-1",
@@ -1602,8 +1602,8 @@ describe("ZCode Protocol", () => {
     expect(row).toMatchObject({
       display: { kind: "mcp_tool", unavailable: { code: "quota_exceeded" } },
     });
-    // internal_error 不在 code 枚举里：它是服务端兜底掩码，不驱动界面提示。枚举外的值因此
-    // **不会被携带**——display 不设门后 row 仍然有效，但这张卡没有载荷（§4.4.5）。
+    // internal_error is not in the code enum: it is the server's fallback mask and does not drive UI messaging. Out-of-enum values
+    // are therefore **not carried** — with display ungated the row remains valid, but the card has no payload (§4.4.5).
     const maskedRow = conversationRowSchema.parse({
       rowId: 6,
       turnId: "turn-1",
@@ -1720,8 +1720,8 @@ describe("ZCode Protocol", () => {
           id: "ask#2",
           kind: "ask",
           label: "reviewer",
-          // 插值名的静态形状：v3 镜像曾漏掉这两个 pattern 字段（0a8b059f40 只改了
-          // contracts 与 v4），.strict() 之下整图验证失败——固定在这条双边界用例里。
+          // The static shape of an interpolated name: the v3 mirror once missed these two pattern fields (0a8b059f40 only
+          // touched contracts and v4), and under .strict() the whole graph failed validation — pinned in this dual-boundary case.
           labelPattern: { head: "研究员", tail: "号" },
           line: 3,
           column: 24,
@@ -1736,9 +1736,9 @@ describe("ZCode Protocol", () => {
         { id: "actor#2", name: "reviewer", line: 3, column: 17 },
         { id: "actor#3", namePattern: { head: "研究员" }, line: 4, column: 17 },
       ],
-      // 第二层是子代理导向（docs/dynamic-workflow/presentation.md）：每阶段一张参与者卡，
-      // 无阶段词汇时 phase 恒为 `unphased`。字面量基数的家族每成员一张 `member` 卡，
-      // 基数未知时一张 `many` 卡。同样钉在双边界用例里，防单边漏改。
+      // The second layer is subagent-oriented (docs/dynamic-workflow/presentation.md): one participant card per phase;
+      // with no phase vocabulary phase is always `unphased`. Families with literal cardinality get one `member` card each,
+      // unknown cardinality gets one `many` card. Also pinned in the dual-boundary case to prevent one-sided edits.
       participants: [
         { id: "unphased:workspace", phase: "unphased", lane: "workspace", steps: ["world-read#1"] },
         { id: "unphased:actor#1", phase: "unphased", lane: "actor#1", steps: ["ask#1"] },
@@ -1764,8 +1764,8 @@ describe("ZCode Protocol", () => {
           many: true,
         },
       ],
-      // 一种箭头：runs after；`back: true` 只标循环回边（single-arrow-contract spec）；
-      // `types` 是跨越这条交接的产物类型（检视器素材，不上箭头）。
+      // One arrow kind: runs after; `back: true` only marks loop-back edges (single-arrow-contract spec);
+      // `types` are the artifact types crossing this handoff (inspector material, not on the arrow).
       handoffs: [
         { from: "unphased:workspace", to: "unphased:actor#1" },
         { from: "unphased:actor#1", to: "unphased:actor#2[0]", types: ["Plan"] },
@@ -1830,9 +1830,9 @@ describe("ZCode Protocol", () => {
     });
   });
 
-  // 留白（docs/dynamic-workflow/authoring.md「Holes」）：`hole` 站点、step / 阶段上的 `fill`、图的
-  // `holes[]` 与 FillWorkflowHole 行的顶层 `fill`。dwf-recursive 只改了 contracts 与 v4，v3 镜像在
-  // .strict() 之下拒掉整条 tool.updated，桌面端的 v3 订阅便丢了那张卡——与上面 labelPattern 同一类。
+  // Typed holes (docs/dynamic-workflow/authoring.md "Holes"): `hole` sites, `fill` on steps / phases, the graph's
+  // `holes[]`, and the FillWorkflowHole row's top-level `fill`. dwf-recursive only touched contracts and v4; the v3 mirror
+  // rejected the whole tool.updated under .strict() and the desktop's v3 subscription lost that card — same class as labelPattern above.
   it("carries typed-hole fields through both the legacy event and v4 rows", () => {
     const causalityGraph = {
       steps: [
@@ -1955,10 +1955,11 @@ describe("ZCode Protocol", () => {
       participants: [participant],
       handoffs: [],
     };
-    // v4 行上的 display 不设门（docs/v4-refactor/10-protocol-spec.md §4.4.5）：认不出来的载荷被
-    // 丢掉、row 本身仍然有效，而不是把整帧拒掉。所以本 helper 断言的是「这份图被携带了」——被丢
-    // 时主动抛错，好让下面每条 toThrow / not.toThrow 继续表达原来的意思。有界性没有放松：越界
-    // 载荷同样到不了 UI，变的只是代价（拒整帧、连带打掉订阅 → 卡片退化成纯文本）。
+    // display on v4 rows is ungated (docs/v4-refactor/10-protocol-spec.md §4.4.5): an unrecognized payload is
+    // dropped while the row itself stays valid, instead of rejecting the whole frame. So this helper asserts "the graph
+    // was carried" — it throws proactively when dropped, so each toThrow / not.toThrow below keeps its original meaning.
+    // Boundedness is not relaxed: out-of-bounds payloads still never reach the UI; only the cost changes (reject the frame,
+    // tearing down the subscription → the card degrades to plain text).
     const parseWith = (causalityGraph: unknown) => {
       const row = conversationRowSchema.parse({ ...base, display: { ...display, causalityGraph } });
       if (row.kind !== "toolCall" || row.display === undefined) {
@@ -1980,12 +1981,12 @@ describe("ZCode Protocol", () => {
     // A 129-char label exceeds the label bound.
     expect(() => parseWith({ ...graph, steps: [{ ...step, label: "n".repeat(129) }] })).toThrow();
 
-    // step 级 `edges` 与 `Lane.nesting` 已退出载荷（docs/dynamic-workflow/presentation.md）：
-    // 空数组也是多出来的键。
+    // step-level `edges` and `Lane.nesting` have exited the payload (docs/dynamic-workflow/presentation.md):
+    // even empty arrays are extra keys.
     expect(() => parseWith({ ...graph, edges: [] })).toThrow();
     expect(() => parseWith({ ...graph, lanes: [{ id: "actor#1", nesting: 1 }] })).toThrow();
 
-    // 参与者与交接必填——零参与者是空数组，不是缺席。
+    // Participants and handoffs are required — zero participants is an empty array, not absence.
     const { participants: _p, ...noParticipants } = graph;
     const { handoffs: _h, ...noHandoffs } = graph;
     expect(() => parseWith(noParticipants)).toThrow();
@@ -2003,7 +2004,7 @@ describe("ZCode Protocol", () => {
       }),
     ).toThrow();
 
-    // 一张卡至少一个 step；member = {index ≥ 0, of ≥ 1} strict；many 只接受字面量 true。
+    // A card needs at least one step; member = {index ≥ 0, of ≥ 1} strict; many accepts only the literal true.
     expect(() => parseWith({ ...graph, participants: [{ ...participant, steps: [] }] })).toThrow();
     expect(() =>
       parseWith({
@@ -2018,7 +2019,7 @@ describe("ZCode Protocol", () => {
       parseWith({ ...graph, participants: [{ ...participant, many: false }] }),
     ).toThrow();
 
-    // 交接边只有 {from, to, back?, types?}：分析器的 kind / certainty 不进展示载荷。
+    // Handoff edges carry only {from, to, back?, types?}: the analyzer's kind / certainty do not enter the display payload.
     const handoff = { from: "unphased:actor#1", to: "unphased:actor#1" };
     expect(() =>
       parseWith({
@@ -2032,7 +2033,7 @@ describe("ZCode Protocol", () => {
       parseWith({ ...graph, handoffs: Array.from({ length: 257 }, () => handoff) }),
     ).toThrow();
 
-    // `types` 在场就是 1..8 个名字，每个 ≤ 128 字符。
+    // `types`, when present, is 1..8 names, each ≤ 128 chars.
     expect(() =>
       parseWith({ ...graph, handoffs: [{ ...handoff, types: ["Flaky"] }] }),
     ).not.toThrow();
@@ -2045,13 +2046,13 @@ describe("ZCode Protocol", () => {
       expect(() => parseWith({ ...graph, handoffs: [{ ...handoff, types }] })).toThrow();
     }
 
-    // `back` 是字面量 true：false / 字符串都不是「没标回边」的另一种拼法。
+    // `back` is the literal true: false / strings are not another spelling of "no back edge marked".
     expect(() => parseWith({ ...graph, handoffs: [{ ...handoff, back: false }] })).toThrow();
   });
 
   it("accepts may-set lane-expansion copies with `source` on both protocol boundaries", () => {
-    // may-set 车道展开：一个 ask 站点变成每候选车道一份拷贝，`source` 记下展开自的站点 id
-    // （直播叠加的关联键）。字段是 additive 的，所以不带 source 的旧载荷照常验证。
+    // May-set lane expansion: one ask site becomes one copy per candidate lane, with `source` recording the site id it
+    // expanded from (the live overlay's correlation key). The field is additive, so old payloads without source still validate.
     const copy = {
       id: "ask#2~actor#1",
       kind: "ask",
@@ -2069,7 +2070,7 @@ describe("ZCode Protocol", () => {
         { id: "actor#1", name: "black" },
         { id: "actor#2", name: "white" },
       ],
-      // 每条候选车道一张参与者卡，卡的 steps 指向该车道的拷贝 id。
+      // One participant card per candidate lane; the card's steps point at that lane's copy ids.
       participants: [
         { id: "unphased:actor#1", phase: "unphased", lane: "actor#1", steps: ["ask#2~actor#1"] },
         { id: "unphased:actor#2", phase: "unphased", lane: "actor#2", steps: ["ask#2~actor#2"] },
@@ -2124,9 +2125,9 @@ describe("ZCode Protocol", () => {
       display: { causalityGraph },
     });
 
-    // 拷贝 id（`site~lane`）在 64 字符 id 上限内；source 走同一组上界。
+    // The copy id (`site~lane`) stays within the 64-char id cap; source shares the same bounds.
     expect(copy.id.length).toBeLessThanOrEqual(64);
-    // 65 字符的 source 越界，整份载荷因此不被携带（不设门 = 丢卡，不是拒帧；§4.4.5）。
+    // A 65-char source exceeds the bound, so the whole payload is not carried (ungated = drop the card, not reject the frame; §4.4.5).
     const overlongSourceRow = conversationRowSchema.parse({
       ...base,
       display: {
@@ -2145,10 +2146,10 @@ describe("ZCode Protocol", () => {
   });
 
   it("accepts the phase vocabulary on both protocol boundaries", () => {
-    // docs/dynamic-workflow/presentation.md：phases / phaseEdges / exits / step.phase 是一套
-    // 全有或全无的词汇表。四层 schema（contracts、tool-result-metadata、v4 rows、这份 v3
-    // 镜像）必须逐字段对齐——任一层漏改，.strict() 之下带阶段的工作流会整图验证失败、图
-    // 整块消失，正是 labelPattern/namePattern 在 0a8b059f40 上出过的事故。
+    // docs/dynamic-workflow/presentation.md: phases / phaseEdges / exits / step.phase are one all-or-nothing vocabulary.
+    // The four schema layers (contracts, tool-result-metadata, v4 rows, this v3 mirror) must align field by field — if any
+    // layer misses a change, a phased workflow fails whole-graph validation under .strict() and the graph vanishes entirely,
+    // exactly the incident labelPattern/namePattern had on 0a8b059f40.
     const causalityGraph = {
       steps: [
         {
@@ -2156,7 +2157,7 @@ describe("ZCode Protocol", () => {
           kind: "world-read",
           label: "glob *.ts",
           lane: "workspace",
-          // 首个标记之前的 step 落进保留的合成阶段。
+          // Steps before the first marker land in the reserved synthetic phase.
           phase: "unphased",
         },
         {
@@ -2167,7 +2168,7 @@ describe("ZCode Protocol", () => {
           phase: "phase#1",
         },
         {
-          // 跨阶段拷贝：共享 helper 的站点被两个阶段各认领一份，`source` 是运行时站点 id。
+          // Cross-phase copy: a site sharing a helper is claimed by both phases, `source` is the runtime site id.
           id: "ask#2~phase#1",
           kind: "ask",
           label: "bench",
@@ -2189,7 +2190,7 @@ describe("ZCode Protocol", () => {
         { id: "actor#1", name: "planner" },
         { id: "actor#2", name: "bench" },
       ],
-      // 参与者按阶段分卡：同一子代理在两个阶段各是一张卡（id 以阶段为前缀）。
+      // Participants are carded per phase: the same subagent is one card per phase (id prefixed by the phase).
       participants: [
         { id: "unphased:workspace", phase: "unphased", lane: "workspace", steps: ["world-read#1"] },
         { id: "phase#1:actor#1", phase: "phase#1", lane: "actor#1", steps: ["ask#1"] },
@@ -2201,21 +2202,21 @@ describe("ZCode Protocol", () => {
         { from: "phase#1:actor#1", to: "phase#1:actor#2", types: ["Plan"] },
       ],
       phases: [
-        // `unphased` 无 name（UI 本地化显示）；作者的阶段带原词与首个标记位置。
+        // `unphased` has no name (UI localizes the display); authored phases carry the original word and the first marker position.
         { id: "unphased" },
         { id: "phase#1", name: "preflight", line: 1, column: 1 },
         { id: "phase#2", name: "gate", line: 9, column: 3 },
       ],
-      // 阶段边与 step 边同形：{from, to, back?}。回边 phase#2 → phase#1 = 循环跨两个阶段。
+      // Phase edges share the step-edge shape: {from, to, back?}. The back edge phase#2 → phase#1 = a loop spanning two phases.
       phaseEdges: [
         { from: "unphased", to: "phase#1" },
         { from: "phase#1", to: "phase#2" },
         { from: "phase#2", to: "phase#1", back: true },
       ],
-      // 阶段流（docs/dynamic-workflow/presentation.md「Streams」）：channel 串起来的两个 future
-      // 阶段，只有 {from, to}——不是 runs after，没有 back。
+      // Phase streams (docs/dynamic-workflow/presentation.md "Streams"): two future phases chained by a channel,
+      // only {from, to} — not runs after, no back.
       phaseStreams: [{ from: "phase#1", to: "phase#2" }],
-      // 控制流可在其后正常完成的阶段（阶段视图的「阶段 → 返回物」箭头）。
+      // Phases control flow may normally finish after (the phase view's "phase → return artifact" arrows).
       exits: ["phase#2"],
       sink: ["ask#1"],
     };
@@ -2263,13 +2264,14 @@ describe("ZCode Protocol", () => {
       display: { causalityGraph },
     });
 
-    // 两种展开叠加的 id（`ask#2~actor#1~phase#2`）仍在 64 字符上限内。
+    // The two stackings' combined id (`ask#2~actor#1~phase#2`) still fits the 64-char cap.
     expect("ask#2~actor#1~phase#2".length).toBeLessThanOrEqual(64);
 
-    // v4 行上的 display 不设门（docs/v4-refactor/10-protocol-spec.md §4.4.5）：认不出来的载荷被
-    // 丢掉、row 本身仍然有效，而不是把整帧拒掉。所以本 helper 断言的是「这份图被携带了」——被丢
-    // 时主动抛错，好让下面每条 toThrow / not.toThrow 继续表达原来的意思。有界性没有放松：越界
-    // 载荷同样到不了 UI，变的只是代价（拒整帧、连带打掉订阅 → 卡片退化成纯文本）。
+    // display on v4 rows is ungated (docs/v4-refactor/10-protocol-spec.md §4.4.5): an unrecognized payload is
+    // dropped while the row itself stays valid, instead of rejecting the whole frame. So this helper asserts "the graph
+    // was carried" — it throws proactively when dropped, so each toThrow / not.toThrow below keeps its original meaning.
+    // Boundedness is not relaxed: out-of-bounds payloads still never reach the UI; only the cost changes (reject the frame,
+    // tearing down the subscription → the card degrades to plain text).
     const parseWith = (graph: unknown) => {
       const row = conversationRowSchema.parse({
         ...base,
@@ -2281,9 +2283,10 @@ describe("ZCode Protocol", () => {
       return row.display;
     };
 
-    // 有标记却零 step 的脚本产出**在场但空**的三个数组，handler 原样直通（不谎报
-    // truncated）。UI 的视图切换是「在场且非空」，所以空词汇表必须在两条边界上都可表示——
-    // 数组只有 .max() 上界，任何一层手滑加上 .min(1) 都会让那条直通路径整图验证失败。
+    // A script with markers but zero steps produces three arrays that are **present but empty**, and the handler passes them
+    // through verbatim (no lying about truncation). The UI's view switching is "present and non-empty", so an empty vocabulary
+    // must be representable on both boundaries — the arrays only have a .max() bound; any layer carelessly adding .min(1)
+    // would fail whole-graph validation on that pass-through path.
     const emptyVocabulary = {
       steps: [],
       lanes: [],
@@ -2346,7 +2349,7 @@ describe("ZCode Protocol", () => {
       expect(() => parseWith({ ...causalityGraph, phaseStreams: [stream] })).toThrow();
     }
 
-    // 33 exits exceed the 32-phase bound (exits 与阶段表同一上界).
+    // 33 exits exceed the 32-phase bound (exits share the phase table's bound).
     expect(() =>
       parseWith({
         ...causalityGraph,
@@ -2354,7 +2357,7 @@ describe("ZCode Protocol", () => {
       }),
     ).toThrow();
 
-    // 阶段边与 step 边同形：分析器的 kind / certainty / exact 一个都不进载荷。
+    // Phase edges share the step-edge shape: none of the analyzer's kind / certainty / exact enters the payload.
     expect(() =>
       parseWith({
         ...causalityGraph,
@@ -2366,13 +2369,12 @@ describe("ZCode Protocol", () => {
   });
 
   it("gives the same verdict on the single-arrow shape on both protocol boundaries", () => {
-    // docs/dynamic-workflow/presentation.md：硬断——旧形状（边带 kind /
-    // certainty / exact，step 带 region / certainty，车道带 families，顶层带 regions）在
-    // v3 / v4 两份镜像上**同时**被拒；新形状（{from, to, back?}、参与者 + 交接、exits）同时
-    // 通过。docs/dynamic-workflow/presentation.md 又砍掉 step 级 `edges` 与 `Lane.nesting`，
-    // 两者也在这里钉成同判。任一层漏改都会让同一份载荷在一条边界上通过、在另一条上整图消失。第三份
-    // （contracts）不在本包依赖里，由 contracts 自己的 create-workflow.test.ts 用同一组
-    // 样本钉住。
+    // docs/dynamic-workflow/presentation.md: hard cut — the old shapes (edges with kind /
+    // certainty / exact, steps with region / certainty, lanes with families, top-level regions) are rejected **simultaneously**
+    // on both v3 / v4 mirrors; the new shapes ({from, to, back?}, participants + handoffs, exits) pass simultaneously.
+    // docs/dynamic-workflow/presentation.md also removed step-level `edges` and `Lane.nesting`; both are pinned here as same-verdict.
+    // A missed layer would let the same payload pass on one boundary while the whole graph vanishes on the other. The third copy
+    // (contracts) is not in this package's dependency graph; contracts' own create-workflow.test.ts pins it with the same samples.
     const eventOf = (causalityGraph: unknown) => ({
       eventId: "evt_tool_workflow_single_arrow",
       seq: 22,
@@ -2415,8 +2417,8 @@ describe("ZCode Protocol", () => {
         causalityGraph,
       },
     });
-    // 第二个判定问的是「v4 行**携带了**这份图吗」，不是「row 解析成功吗」：display 不设门后，
-    // 读不懂的载荷被丢而 row 仍然有效，按 success 问每个负例都会变成 true（§4.4.5）。
+    // The second verdict asks "did the v4 row **carry** this graph", not "did the row parse": with display ungated an
+    // unreadable payload is dropped while the row stays valid, so asking by success would turn every negative case true (§4.4.5).
     const verdicts = (causalityGraph: unknown) => {
       const row = conversationRowSchema.safeParse(rowOf(causalityGraph));
       return [
@@ -2504,7 +2506,7 @@ describe("ZCode Protocol", () => {
     };
     expect(verdicts(legacy)).toEqual([false, false]);
 
-    // 逐个旧字段也各自被拒——不是只有整包旧载荷才拒。
+    // Each legacy field is rejected individually too — not just the full legacy payload.
     const [freshStep] = fresh.steps;
     const [freshLane] = fresh.lanes;
     const [freshParticipant] = fresh.participants;
@@ -2517,10 +2519,10 @@ describe("ZCode Protocol", () => {
       { ...fresh, lanes: [{ ...freshLane, families: ["loop#1"] }, fresh.lanes[1]] },
       { ...fresh, lanes: [freshLane, { ...fresh.lanes[1], nesting: 2 }] },
       { ...fresh, regions: [] },
-      // step 级 edges 整个字段都不在了。
+      // step-level edges is gone as a whole field.
       { ...fresh, edges: [] },
       { ...fresh, edges: [{ from: "ask#1", to: "ask#2" }] },
-      // 参与者 / 交接必填、strict、有界。
+      // Participants / handoffs required, strict, bounded.
       noParticipants,
       noHandoffs,
       {
@@ -2548,7 +2550,7 @@ describe("ZCode Protocol", () => {
     ]) {
       expect(verdicts(graph)).toEqual([false, false]);
     }
-    // 新字段的合法变体在两条边界上同时通过。
+    // Legal variants of the new fields pass on both boundaries simultaneously.
     for (const graph of [
       {
         ...fresh,
@@ -2887,8 +2889,8 @@ describe("v4 workflowLaunch rows (direct-launch)", () => {
     expect(workflowLaunchMetaSchema.safeParse({ ...meta, scope: "team" }).success).toBe(false);
   });
 
-  // 设置轮（docs/dynamic-workflow/launch.md「The settings turn」）：同一份元数据，没有保存文件可指，
-  // 多一块 `amend` 说改了什么。
+  // The settings turn (docs/dynamic-workflow/launch.md "The settings turn"): the same metadata with no save file to point
+  // at, plus an `amend` block saying what changed.
   it("parses a settings-turn meta: no scope or path, an amend block with from/to ends", () => {
     const settings = {
       runId: "run-b",
@@ -2902,7 +2904,7 @@ describe("v4 workflowLaunch rows (direct-launch)", () => {
       },
     };
     expect(workflowLaunchMetaSchema.parse(settings)).toEqual(settings);
-    // 无名 run 的设置轮不带名字（UI 换用兜底词，不拿 run id 当标题）。
+    // An unnamed run's settings turn carries no name (the UI falls back to a stock label rather than using the run id as a title).
     const { name: _name, ...unnamed } = settings;
     void _name;
     expect(workflowLaunchMetaSchema.parse(unnamed)).toEqual(unnamed);
@@ -2917,8 +2919,9 @@ describe("v4 workflowLaunch rows (direct-launch)", () => {
     ).toBe(false);
   });
 
-  // 就地生效的设置轮（docs/dynamic-workflow/concurrency.md）：只改并发上限、run 又在飞时没有前驱，
-  // `predecessorRunId` 因此缺席——缺席本身就是「改的就是 runId 这一条」的信号（渲染端据它只出行）。
+  // In-place settings turn (docs/dynamic-workflow/concurrency.md): only the concurrency cap changed and the run is still in
+  // flight, so there is no predecessor — `predecessorRunId` is therefore absent, and absence itself is the signal "the run being
+  // changed is this runId" (the renderer emits one row based on it).
   it("parses an in-place retune's settings-turn meta: no predecessorRunId at all", () => {
     const retune = {
       runId: "run-a",
@@ -2927,7 +2930,7 @@ describe("v4 workflowLaunch rows (direct-launch)", () => {
       amend: { maxConcurrency: { from: 13, to: 4 }, ceiling: 13 },
     };
     expect(workflowLaunchMetaSchema.parse(retune)).toEqual(retune);
-    // 在场时仍要是一个真 run id：可选不等于可空、也不等于可空串。
+    // When present it must still be a real run id: optional does not mean nullable, nor an empty string.
     expect(
       workflowLaunchMetaSchema.safeParse({
         ...retune,

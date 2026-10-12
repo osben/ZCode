@@ -43,7 +43,7 @@ describe("web Vite config", () => {
 
   it("loads during bootstrap without executing the shared root entry", async () => {
     const webRoot = resolve(import.meta.dirname, "..");
-    // normalize 确保路径分隔符一致，避免 Windows/Unix 不一致
+    // normalize keeps path separators consistent across Windows/Unix
     const configFile = normalize(resolve(webRoot, "vite.config.ts"));
 
     const result = await loadConfigFromFile(
@@ -57,7 +57,7 @@ describe("web Vite config", () => {
       webRoot,
       "silent",
     );
-    // 比较时统一路径格式
+    // compare with a unified path format
     expect(normalize(result!.path)).toBe(configFile);
   });
 
@@ -103,7 +103,8 @@ describe("web Vite config", () => {
     });
   });
 
-  // Windows 跳过：环境配置差异导致断言失败，需要 CI 环境统一配置
+  // Skipped on Windows: environment config differences break the assertions;
+  // requires a unified CI configuration
   const isWindows = process.platform === "win32";
 
   (isWindows ? it.skip : it)(

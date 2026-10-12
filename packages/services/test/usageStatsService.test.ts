@@ -149,8 +149,9 @@ function createUsageStatsServiceForTest(params: {
                 planKind: "individual-coding-plan",
               }),
       }),
-    // Highspeed 的普通 TPS 查询同样按 accountAccess 鉴权；默认补个人套餐访问上下文，
-    // 让用例专注缓存与诊断行为，需要 Team scope 的用例显式传入。
+    // Highspeed's regular TPS query also authenticates via accountAccess; a personal-plan access
+    // context is filled in by default so cases can focus on caching and diagnostics behavior,
+    // while cases needing Team scope pass it explicitly.
     getCodingPlanRegularTps: (
       request: Omit<
         Parameters<NonNullable<typeof service.getCodingPlanRegularTps>>[0],
@@ -248,8 +249,8 @@ describe("createUsageStatsService", () => {
     await expect(
       service.getCodingPlanRegularTps({ preferredProviderId, timeZone: "UTC" }),
     ).resolves.toBe(73);
-    // Team scope 已内含在 accountAccess 中；缓存键必须整体覆盖它，否则同一 provider 下
-    // 切换团队项目会读到上一个项目的基准 TPS。
+    // Team scope is already included in accountAccess; the cache key must cover it as a whole, or
+    // switching team projects under the same provider would read the previous project's base TPS.
     await expect(
       service.getCodingPlanRegularTps({
         preferredProviderId,
@@ -444,7 +445,7 @@ describe("createUsageStatsService", () => {
       timeZone: "UTC",
     });
 
-    // App Usage 不走 monitor HTTP，只走 agent 协议。
+    // App Usage does not go through monitor HTTP, only the agent protocol.
     expect(apiClient.request).not.toHaveBeenCalled();
     expect(getAppUsageStats).toHaveBeenCalledWith({
       range: "30d",
@@ -1260,7 +1261,7 @@ describe("createUsageStatsService", () => {
     });
 
     expect(requestUrls.some((url) => url.includes("/api_keys"))).toBe(false);
-    // monitor 接口用复制的团队项目 API Key + org/project header（与 bigmodel 同构）
+    // The monitor API uses the copied team project API key plus org/project headers (isomorphic with bigmodel)
     expect(requestHeaders.slice(-3)).toEqual([
       expect.objectContaining({
         authorization: "zai-team-ak.zai-team-secret",
@@ -1412,9 +1413,10 @@ describe("createUsageStatsService", () => {
     ).rejects.toThrow("token expired");
   });
 
-  // CR-01 回归：activity / usage-detail / model-performance-day 是可选数据面。
-  // 任一接口传输层失败（HTTP 非 2xx、超时、断网）时只清空对应区域，
-  // 不能让 Promise.all 提前 reject 拖垮整张 Coding Plan Usage 面板。
+  // CR-01 regression: activity / usage-detail / model-performance-day are optional data planes.
+  // When any of them fails at the transport layer (HTTP non-2xx, timeout, offline), only the
+  // corresponding section is cleared; Promise.all must not reject early and take down the whole
+  // Coding Plan Usage panel.
   it("可选 monitor 接口网络失败时只清空对应区域，quota 与其它区域正常返回", async () => {
     vi.useFakeTimers({ now: new Date("2026-05-19T10:00:00.000Z") });
     const apiClient: ApiClient = {
@@ -1439,7 +1441,7 @@ describe("createUsageStatsService", () => {
           });
         }
         if (url.includes("/api/monitor/credit-usage/activity")) {
-          // 传输层失败一：HTTP 非 2xx，readApiJson 会抛 ApiError。
+          // Transport failure 1: HTTP non-2xx; readApiJson throws ApiError.
           return new Response("Internal Server Error", { status: 500 });
         }
         if (url.includes("/api/monitor/credit-usage/usage-detail")) {
@@ -1456,7 +1458,7 @@ describe("createUsageStatsService", () => {
               },
             });
           }
-          // 传输层失败二：请求超时，request 直接 reject。
+          // Transport failure 2: request timeout; request rejects directly.
           throw new Error("Request timed out after 15000ms");
         }
         if (url.includes("/api/monitor/usage/model-performance-day")) {
@@ -1488,11 +1490,11 @@ describe("createUsageStatsService", () => {
       timeZone: "UTC",
     });
 
-    // 未失败的区域不受影响：quota 剩余、模型维度详情和 health 都正常。
+    // Sections that did not fail are unaffected: quota remaining, per-model details, and health are all normal.
     expect(snapshot.quota?.limits).toHaveLength(1);
     expect(snapshot.detail.model.totalCredits).toBe(28.95);
     expect(snapshot.health?.xTime).toEqual(["2026-05-18"]);
-    // 传输失败的区域清空为空统计，而不是拖垮整张面板。
+    // Transport-failed sections are cleared to empty stats instead of taking down the whole panel.
     expect(snapshot.activity.summary.totalTokens).toBe(0);
     expect(snapshot.detail.tool.totalCredits).toBe(0);
   });
@@ -1518,8 +1520,8 @@ describe("createUsageStatsService", () => {
       ],
     });
 
-    // quota 是面板核心数据，传输失败必须保留整体报错语义，
-    // 避免“查不到额度”被伪装成一张全空面板。
+    // quota is the panel's core data; a transport failure must keep the overall error semantics so
+    // "quota unavailable" is not disguised as an entirely empty panel.
     await expect(
       service.getCodingPlanUsageSnapshot({
         range: "7d",
@@ -1596,8 +1598,9 @@ describe("createUsageStatsService", () => {
       request: vi.fn(async (input) => {
         const url = input.toString();
         if (url.endsWith("/api_keys")) {
-          // 修复原因：list 无可用 key 时走 create；create 被远端拒绝并返回业务 msg，
-          // 原实现只抛错误码 bigmodel_coding_plan_api_key_required，UI 无法展示真实原因。
+          // Fix reason: when list has no usable key it falls through to create; create is rejected
+          // remotely with a business msg, but the original implementation only threw the
+          // bigmodel_coding_plan_api_key_required error code, so the UI could not show the real reason.
           return createJsonResponse({
             code: 500,
             success: false,

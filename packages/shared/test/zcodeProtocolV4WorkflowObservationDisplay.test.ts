@@ -1,15 +1,16 @@
-// GetWorkflowRun 工具卡载荷的**线上** schema（docs/dynamic-workflow/launch.md「Their cards」）。
+// The **wire** schema for the GetWorkflowRun tool card payload (docs/dynamic-workflow/launch.md "Their cards").
 //
-// 这一侧与 CLI 的 getWorkflowRunToolResultDisplayPayloadSchema 是两份独立的 zod，却必须逐字段
-// 同步：两侧都是 strict，少一个字段整条 display 校验失败、工具卡退化成纯文本；枚举多一个值，
-// 手机远控的 bundle 会拒收整帧（2026-09-04 曾因此让一条订阅永久失效）。所以这里钉的是
-// 「CLI 真的会发出来的那个形状，这一侧收得下」。
+// This side and the CLI's getWorkflowRunToolResultDisplayPayloadSchema are two independent zod schemas that must stay
+// field-by-field in sync: both are strict, so a missing field fails the whole display validation and degrades the tool
+// card to plain text; one extra enum value makes the mobile remote-control bundle reject the entire frame (on
+// 2026-09-04 this permanently killed a subscription). So what is pinned here is "the shape the CLI really sends
+// must be accepted on this side".
 
 import { describe, expect, it } from "vitest";
-// toolCall 与 toolOutput 两条 union 共用同一个成员 schema，所以从导出的那一条进就够了。
+// The toolCall and toolOutput unions share the same member schema, so entering through the exported one is enough.
 import { toolCallDisplaySchema } from "../src/zcode-protocol-v4/index.js";
 
-/** CLI 侧 createGetWorkflowRunDisplay 在一个情势完整的 run 上会发出的载荷。 */
+/** The payload the CLI-side createGetWorkflowRunDisplay emits for a run with a complete situation report. */
 const CARD = {
   kind: "get_workflow_run" as const,
   runId: "dwfrun-7f3a",
@@ -97,9 +98,9 @@ describe("v4 get_workflow_run display payload", () => {
     expect(toolCallDisplaySchema.parse({ ...withoutPhases, subagents: [] })).toBeTruthy();
   });
 
-  // 情势上线**之前**持久化的载荷：没有 summary / generatedAt / subagents / health。本 schema
-  // 是 strict 的，把这五件设成必填等于让升级后打开的每一条历史会话里这张卡整块被剥、
-  // 退化成纯文本——而 spec 承诺的文本兜底只针对完全没有载荷的行。
+  // Payloads persisted **before** the situation report existed: no summary / generatedAt / subagents / health. Because this schema
+  // is strict, making those five required would strip this card entirely and degrade it to plain text in every historical
+  // session opened after the upgrade — while the spec's text fallback only targets rows with no payload at all.
   it("still accepts a payload persisted before the situation report existed", () => {
     const legacy = {
       kind: "get_workflow_run" as const,
@@ -120,7 +121,7 @@ describe("v4 get_workflow_run display payload", () => {
     expect(toolCallDisplaySchema.parse(legacy)).toEqual(legacy);
   });
 
-  // 日志行的落库时刻是可选键：新载荷带它（卡上据它算年龄），旧载荷没有它，两者都要过。
+  // The journal time of a log line is an optional key: new payloads carry it (the card computes age from it), old ones lack it; both must pass.
   it("takes a log entry with or without its journal time", () => {
     const withTime = {
       ...CARD,
@@ -130,7 +131,7 @@ describe("v4 get_workflow_run display payload", () => {
     expect(toolCallDisplaySchema.parse(CARD)).toEqual(CARD);
   });
 
-  // 枚举闭集：一个未知的相位词会让这一侧拒收整帧，所以两侧的词表永远一起改。
+  // Closed enum sets: one unknown phase word makes this side reject the entire frame, so both vocabularies always change together.
   it("keeps the subagent state, phase state and wait cause closed", () => {
     for (const patch of [
       { subagents: [{ ...CARD.subagents[1], state: "thinking" }] },

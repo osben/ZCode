@@ -382,7 +382,7 @@ describe("ProviderConfigService", () => {
       refresh: registry.refresh.bind(registry),
     });
     try {
-      // 启停/编辑动态成员不创建根覆盖；随后仍必须能够首次添加个人模型。
+      // Toggling or editing dynamic members must not create a root overlay; a first personal model must still be addable afterwards.
       await facade.setPersonalModelEnabled("account", "glm-new", false);
       expect(personal.current.providers.has("account")).toBe(false);
       await facade.addPersonalModel("account", "personal-first", {});
@@ -398,7 +398,7 @@ describe("ProviderConfigService", () => {
         basedOnRevision: facade.getView().revision,
       });
       await facade.reorderPersonalModels("account", ["glm-next", "glm-new"]);
-      // 模拟磁盘上遗留的账号禁用：设置投影和真实 Registry 必须读取同一公共结果。
+      // Simulates a leftover account disable on disk: the settings projection and the real Registry must read the same public result.
       await personal.update((current) => ({
         ...current,
         providers: current.providers.setRule({

@@ -18,13 +18,13 @@ describe("ensureAppCaCert", () => {
 
     const cert = new X509Certificate(readFileSync(certPath));
     expect(cert.subject).toContain("ZCode Network CA");
-    // 自签：issuer == subject
+    // Self-signed: issuer == subject
     expect(cert.issuer).toBe(cert.subject);
     expect(cert.ca).toBe(true);
 
     const keyPem = readFileSync(keyPath, "utf8");
     expect(keyPem).toContain("PRIVATE KEY");
-    // 私钥权限收紧（POSIX）
+    // Private key permissions are restricted (POSIX)
     if (process.platform !== "win32") {
       expect(statSync(keyPath).mode & 0o077).toBe(0);
     }

@@ -99,7 +99,7 @@ describe("Todo104 Provider 规则身份与内容分离", () => {
         ],
       }),
     ).toThrow();
-    // Account 仍可从内部事实组装纯配置；该快捷构造不在磁盘建立第二种格式。
+    // Account can still assemble pure config from internal facts; this shortcut constructor does not create a second on-disk format.
     const account = new ProviderConfigMap([
       ["p", new ProviderConfig({ builtinModelIds: ["dynamic"] })],
     ]);

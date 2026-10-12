@@ -31,7 +31,9 @@ describe("createMemorySampleWriteGate", () => {
     const gate = createMemorySampleWriteGate();
     gate.evaluate({ ...base, externalKb: 18_000 }, 0);
     expect(gate.evaluate({ ...base, rssKb: 436_000, externalKb: 18_000 }, 60_000)).toBeNull();
-    expect(gate.evaluate({ ...base, rssKb: 1_534_000, externalKb: 18_000 }, 120_000)).toBe("changed");
+    expect(gate.evaluate({ ...base, rssKb: 1_534_000, externalKb: 18_000 }, 120_000)).toBe(
+      "changed",
+    );
     expect(gate.evaluate({ ...base, rssKb: 1_534_000, externalKb: 1_328_000 }, 180_000)).toBe(
       "changed",
     );
@@ -41,7 +43,7 @@ describe("createMemorySampleWriteGate", () => {
     const gate = createMemorySampleWriteGate();
     gate.evaluate(base, 0);
     expect(gate.evaluate({ ...base, heapUsedKb: 106_000 }, 60_000)).toBe("changed");
-    // 相对新基线 106000 只涨 3%，不写。
+    // Only 3% above the new baseline 106000, so no write.
     expect(gate.evaluate({ ...base, heapUsedKb: 109_000 }, 120_000)).toBeNull();
   });
 

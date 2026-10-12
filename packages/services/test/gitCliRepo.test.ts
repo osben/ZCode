@@ -303,10 +303,11 @@ describe("gitCliRepo", () => {
   });
 
   it("resolves a relative common git dir from the workspace command cwd", async () => {
-    // 根因：本用例是唯一走「相对 --git-common-dir + 宿主 resolve()」的分支，其它用例只做字面量
-    // 比较。原来用 POSIX 字面量 "/root/.git" 作断言，而 resolve("/root/demo-project","../.git")
-    // 在 win32 上得到 "C:\root\.git" —— 两者不相等，去重失败，watch 路径多出一条。
-    // 用宿主 path 组装 fixture，让断言在三个平台上表达同一个"仓库根下的 .git"。
+    // Root cause: this is the only test exercising the "relative --git-common-dir + host resolve()" branch;
+    // the others do literal comparisons. The assertion used to use the POSIX literal "/root/.git", but
+    // resolve("/root/demo-project","../.git") yields "C:\root\.git" on win32 — the two differ, dedup
+    // fails, and the watch path ends up with an extra entry. Build the fixture with the host path module
+    // so the assertion expresses the same ".git under the repo root" on all three platforms.
     const repoRoot = resolve("/root");
     const workspacePath = join(repoRoot, "demo-project");
     const absoluteGitDir = join(repoRoot, ".git");

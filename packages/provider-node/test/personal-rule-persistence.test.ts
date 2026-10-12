@@ -139,7 +139,7 @@ describe("Todo104 个人规则原子落盘", () => {
         );
       });
     });
-    // 从创建时就观察失败；子进程启动异常不能成为未处理的 rejection。
+    // Observe failures from creation time onward; a child process startup failure must not become an unhandled rejection.
     const completed = Promise.all(outcomes);
     void completed.catch(() => undefined);
     try {

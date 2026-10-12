@@ -102,7 +102,7 @@ function makeSnapshotFrame(title: string): ConversationTopicFrame {
     pendingInteractions: [],
     pendingCommands: [],
     backgroundWorks: [],
-    // 软门禁 additive 字段:归一化形态(带 default(null))
+    // Soft gate additive field: normalized shape (with default(null))
     workspaceHookAdmission: null,
     goal: null,
     plan: null,
@@ -312,8 +312,8 @@ describe("ZCode Protocol V4 wire v3", () => {
     expect(toolOutputSchema.safeParse({ text: "done", display }).success).toBe(true);
   });
 
-  // file_diff 仍然不是本端开放的 wire display kind——但"不开放"的代价只是这张卡没有载荷，
-  // 不再是整条 row 被拒（display 在信封层不设门，见 zcodeProtocolV4DisplayTolerance.test.ts）。
+  // file_diff is still not a wire display kind this side exposes — but the cost of "not exposed" is only that this card
+  // has no payload, not a rejected row (display is not gated at the envelope layer, see zcodeProtocolV4DisplayTolerance.test.ts).
   it("ToolCallRow wire 丢弃未开放的 file_diff display，但不拒整条 row", () => {
     const parsed = toolCallRowSchema.safeParse({
       rowId: 1,
@@ -518,7 +518,7 @@ describe("ZCode Protocol V4 wire v3", () => {
       fragmentCount: 2,
       logicalBytes: 100,
       checksum: { algorithm: "crc32" as const, value: "00000000" },
-      // 102 个零字节；即使其余分片尚未到达，也不能把超限 staging 留在内存。
+      // 102 zero bytes; even before the remaining fragments arrive, over-limit staging must not stay in memory.
       dataBase64: "A".repeat(136),
     };
     expect(
@@ -574,7 +574,7 @@ describe("ZCode Protocol V4 wire v3", () => {
         logicalFrameId: "encoder-fragment-limit",
         logicalFrameOrdinal: 1,
         maxPhysicalFrameBytes: 1,
-        // 强制每片只承载一个 logical byte，单独验证 encoder 的 admission guard。
+        // Forces each physical frame to carry exactly one logical byte, isolating the encoder's admission guard.
         measurePhysicalFrameBytes: (wire) => (wire.kind === "complete" ? 2 : 1),
       }),
     ).toThrowError(

@@ -111,8 +111,8 @@ describe("ZCodeAgentService process resource telemetry", () => {
         cpuPercent: 18.75,
         rssKb: 131_072,
       } as const;
-      // 第一条夹带 workspacePath、第二条自报 lane，两条都被协议层严格拒绝；
-      // 通过的两条（旧格式与带新字段）都由 services 补上 chat lane。
+      // The first sample smuggles workspacePath and the second self-reports lane; both are strictly rejected by the protocol layer.
+      // The two that pass (legacy format and with the new fields) get the chat lane filled in by services.
       expect(samples).toEqual([
         { ...base, lane: "chat" },
         {

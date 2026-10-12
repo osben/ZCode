@@ -108,10 +108,11 @@ describe("buildAgentRuntimeEnv", () => {
   });
 });
 
-/* CR-01：官方 MCP 信任判定的单源不变量。
-   两侧共用 @zcode/shared 的同一份实现，但只有"输入也相同"时结论才必然一致。
-   host 的输入是 env + settings 覆盖，agent 的输入只有 env——因此必须把 host 解析出的
-   权威 origin 通过 ZCODE_BASE_URL 下发，否则 test env + 自定义端点时两侧必然分叉。 */
+/* CR-01: single-source invariant for official MCP trust decisions.
+   Both sides share the same implementation from @zcode/shared, but the verdicts are only guaranteed to
+   match when "the inputs match too". The host's input is env + settings overrides while the agent's
+   input is env only — so the host-resolved authoritative origin must be passed down via ZCODE_BASE_URL,
+   otherwise, with a test env + custom endpoint, the two sides are guaranteed to diverge. */
 describe("buildAgentEndpointOriginEnv", () => {
   it("returns an empty patch when the origin is missing or blank", () => {
     expect(buildAgentEndpointOriginEnv(undefined)).toEqual({});
@@ -126,8 +127,8 @@ describe("buildAgentEndpointOriginEnv", () => {
   });
 
   it("outranks the inherited endpoint keys it must override", () => {
-    // ZCODE_BASE_URL 必须压过继承来的 ZCODE_ENDPOINT_ORIGIN / ZCODE_TEST_BASE_URL，
-    // 否则注入了也不生效。
+    // ZCODE_BASE_URL must outrank the inherited ZCODE_ENDPOINT_ORIGIN / ZCODE_TEST_BASE_URL,
+    // otherwise the injection has no effect.
     const hostEnv = {
       ZCODE_ENDPOINT_ORIGIN: "https://inherited-endpoint.example",
       ZCODE_ENV: "test",
@@ -153,19 +154,20 @@ describe("buildAgentWorkspaceIdentityEnv", () => {
 });
 
 describe("official MCP trust: host and agent must agree on the ZCode API origin", () => {
-  // 设置页自定义端点：任何不同于 env base URL 的 origin 都成立；用中性域名，避免开源导出把
-  // 测试环境域名改写成正式域名后与生产 base URL 重合。
+  // Settings-page custom endpoint: any origin different from the env base URL is valid; a neutral domain
+  // is used so an open-source export rewriting the test-environment domain to the official one cannot
+  // collide with the production base URL.
   const SETTINGS_ORIGIN = "https://custom-endpoint.example";
   const PLUGIN_ID = "official-tools@zcode-plugins-local";
 
-  /** host 口径：env + settings 覆盖（node.ts resolveCurrentZCodeEndpointOrigin）。 */
+  /** Host view: env + settings override (node.ts resolveCurrentZCodeEndpointOrigin). */
   function hostRegistry(env: Record<string, string>, overrideOrigin: string | undefined) {
     return createOfficialMcpTrustedOriginRegistry({
       resolveZCodeApiOrigin: () => resolveRuntimeZCodeEndpointOrigin(env, { overrideOrigin }),
     });
   }
 
-  /** agent 口径：只有 env（zcode-protocol-entrypoint.ts）。 */
+  /** Agent view: env only (zcode-protocol-entrypoint.ts). */
   function agentRegistry(env: Record<string, string>) {
     return createOfficialMcpTrustedOriginRegistry({
       resolveZCodeApiOrigin: () => resolveRuntimeZCodeEndpointOrigin(env),
@@ -181,7 +183,7 @@ describe("official MCP trust: host and agent must agree on the ZCode API origin"
   }
 
   it("agrees in test env once the resolved origin is injected", async () => {
-    // 复现场景：ZCODE_ENV=test（桌面测试包显式下发）+ 设置页自定义端点 ≠ env base URL。
+    // Reproduction scenario: ZCODE_ENV=test (delivered explicitly by the desktop test package) + a settings-page custom endpoint ≠ env base URL.
     const hostEnv = { ZCODE_ENV: "test", ZCODE_BASE_URL: "https://env-derived.example" };
     const agentEnv = {
       ...hostEnv,
@@ -199,13 +201,14 @@ describe("official MCP trust: host and agent must agree on the ZCode API origin"
     ]) {
       expect(await verdict(agent, origin)).toBe(await verdict(host, origin));
     }
-    // 且两侧都认设置页那个 origin——不是"一致地都拒绝"这种假通过。
+    // And both sides accept the settings-page origin — not a vacuous pass where "both consistently reject".
     expect(await verdict(host, SETTINGS_ORIGIN)).toBe(true);
     expect(await verdict(agent, SETTINGS_ORIGIN)).toBe(true);
   });
 
   it("would diverge without the injection (guards against silently dropping it)", async () => {
-    // 反向护栏：去掉注入后本用例必须观察到分叉，否则上面那条就是恒真的假护栏。
+    // Reverse guardrail: with the injection removed, this test must observe divergence; otherwise the
+    // test above would be an always-true fake guardrail.
     const hostEnv = { ZCODE_ENV: "test", ZCODE_BASE_URL: "https://env-derived.example" };
     const host = hostRegistry(hostEnv, SETTINGS_ORIGIN);
     const agentWithoutInjection = agentRegistry(hostEnv);
@@ -215,7 +218,7 @@ describe("official MCP trust: host and agent must agree on the ZCode API origin"
   });
 
   it("agrees in production, where the settings override is ignored on both sides", async () => {
-    // production 下 override 被忽略，注入值等于 env 派生值，行为不得改变。
+    // In production the override is ignored and the injected value equals the env-derived value; behavior must not change.
     const hostEnv = { ZCODE_ENV: "production", ZCODE_BASE_URL: "https://zcode.z.ai" };
     const injected = resolveRuntimeZCodeEndpointOrigin(hostEnv, {
       overrideOrigin: SETTINGS_ORIGIN,
@@ -234,13 +237,15 @@ describe("official MCP trust: host and agent must agree on the ZCode API origin"
   });
 });
 
-/* 上面的用例证明"注入之后两侧一致"，但证明不了 node.ts 真的注入了。
-   createNodeServices 是 1200+ 行、107 个 import 的容器，resolveSpawnEnv 又是其中的内联闭包，
-   为它搭 mock 不划算；这里退而对接线做源码断言，至少能挡住"整行被删/被接错解析器"。 */
+/* The tests above prove "the two sides agree after injection", but not that node.ts actually injects.
+   createNodeServices is a 1200+-line container with 107 imports, and resolveSpawnEnv is an inline
+   closure inside it, so mocking it is not worthwhile; this falls back to asserting on the wiring at the
+   source level, which at least blocks "the whole line deleted / wired to the wrong resolver". */
 describe("node.ts wires the authoritative origin into resolveSpawnEnv", () => {
   const source = readFileSync(resolve(process.cwd(), "packages/services/src/node.ts"), "utf8");
-  // 提取起点不写死参数列表：CUA 集成把闭包改成 `async (context) =>`（需要 workspace
-  // registry），写死 `async () =>` 会让 slice 取到空串、两条断言变成永假的空匹配。
+  // The extraction start does not hardcode the parameter list: the CUA integration changed the closure
+  // to `async (context) =>` (it needs the workspace registry); hardcoding `async () =>` would make the
+  // slice produce an empty string and turn both assertions into always-true empty matches.
   const spawnEnvStart = source.indexOf("resolveSpawnEnv: async (");
   const spawnEnvBlock = source.slice(
     spawnEnvStart,
@@ -248,7 +253,7 @@ describe("node.ts wires the authoritative origin into resolveSpawnEnv", () => {
   );
 
   it("locates the resolveSpawnEnv closure at all", () => {
-    // 守卫上面的 slice：起点或终点找不到时 block 会静默变空，让后续 toContain 失去意义。
+    // Guards the slice above: if the start or end marker is missing, the block silently becomes empty and the later toContain calls become meaningless.
     expect(spawnEnvStart).toBeGreaterThanOrEqual(0);
     expect(spawnEnvBlock.length).toBeGreaterThan(0);
   });
@@ -258,9 +263,9 @@ describe("node.ts wires the authoritative origin into resolveSpawnEnv", () => {
   });
 
   it("feeds it the settings-aware resolver, not the env-only one", () => {
-    // 承重项：必须用 resolveCurrentZCodeEndpointOrigin（含 settings 覆盖）。
-    // 接成 resolveRuntimeZCodeEndpointOrigin(process.env) 会让这次修复完全失效，
-    // 而两侧仍然"看起来"都在解析 origin。
+    // Load-bearing detail: resolveCurrentZCodeEndpointOrigin (with the settings override) must be used.
+    // Wiring resolveRuntimeZCodeEndpointOrigin(process.env) instead would completely defeat this fix
+    // while both sides still "appear" to resolve the origin.
     expect(spawnEnvBlock).toContain(
       "buildAgentEndpointOriginEnv(await resolveCurrentZCodeEndpointOrigin())",
     );

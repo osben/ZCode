@@ -14,7 +14,7 @@ import {
 
 const roots: string[] = [];
 const owners: NodePersonalProviderConfigRepository[] = [];
-// Windows 无开发者模式时创建 symlink 会 EPERM；symlink 主题用例按能力探测跳过
+// Creating symlinks fails with EPERM on Windows without developer mode; symlink-themed cases are skipped via capability probing.
 const canCreateSymlink = await (async () => {
   const probeRoot = await mkdtemp(join(tmpdir(), "zcode-symlink-probe-"));
   try {

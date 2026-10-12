@@ -16,7 +16,7 @@ afterEach(async () => {
   process.env.HOME = originalHome;
   delete process.env.ZCODE_DATA_BASE_DIR;
   vi.doUnmock("node:os");
-  // Windows:等待一下让文件句柄释放
+  // Windows: wait a moment to let file handles be released
   await new Promise((resolve) => setTimeout(resolve, 50));
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop();
@@ -24,7 +24,7 @@ afterEach(async () => {
       try {
         rmSync(dir, { recursive: true, force: true });
       } catch {
-        // Windows 有时仍会有权限问题，忽略即可
+        // Windows sometimes still has permission issues; safe to ignore
       }
     }
   }
@@ -134,11 +134,9 @@ describe("Claude native import flow", () => {
       taskIndexRepo: repo,
       sessionFile,
     });
-    // Bugfix: 重导入被删除/归档的 Claude 会话时，旧 index 行的 hidden 状态必须被清掉，
-    // 否则导入接口返回成功但普通任务列表仍查不到它。
-    await expect(
-      repo.listTaskMetas({ workspacePath, archived: false }),
-    ).resolves.toEqual([
+    // Bugfix: when re-importing a deleted/archived Claude session, the old index row's hidden state must
+    // be cleared, otherwise the import API reports success but the regular task list still cannot find it.
+    await expect(repo.listTaskMetas({ workspacePath, archived: false })).resolves.toEqual([
       expect.objectContaining({
         taskId,
         migrationSource: "claudeCode",
@@ -146,7 +144,7 @@ describe("Claude native import flow", () => {
     ]);
   });
 
-  // Windows 上跳过此测试：路径编码逻辑与 Unix 不兼容，需要重构路径处理逻辑
+  // Skip on Windows: the path encoding logic is incompatible with Unix and needs a path-handling refactor
   if (process.platform !== "win32") {
     it("导入为真实 ZCode session，保留续聊和切模型能力", async () => {
       const home = makeTempDir("zcode-claude-import-live-");
@@ -160,14 +158,14 @@ describe("Claude native import flow", () => {
       });
 
       const workspacePath = makeTempDir("zcode-claude-import-workspace-");
-      // Windows 上 workspacePath 是 C:\...格式，用posix 路径格式避免 Windows 路径解析问题
+      // On Windows workspacePath is in C:\... form; use POSIX-style path encoding to avoid Windows path parsing issues
       const encodedWorkspace = "ws_" + workspacePath.replace(/[\/\\]/g, "_");
-      const sessionId= "session-live";
-      // 先把 home转换为正斜杠格式
+      const sessionId = "session-live";
+      // First convert home to forward-slash form
       const homeSlash = home.replace(/\\/g, "/");
-      // 使用正斜杠路径（Unix风格），Node.js 可以识别
+      // Use forward-slash (Unix-style) paths, which Node.js recognizes
       const projectsDir = homeSlash + "/.claude/projects/" + encodedWorkspace;
-      const nativePath = projectsDir + "/" +sessionId + ".jsonl";
+      const nativePath = projectsDir + "/" + sessionId + ".jsonl";
       mkdirSync(projectsDir, { recursive: true });
       writeFileSync(
         nativePath,
@@ -182,24 +180,24 @@ describe("Claude native import flow", () => {
             type: "assistant",
             cwd: workspacePath,
             model: "claude-sonnet-4-5-20250929",
-            timestamp:"2026-04-16T11:01:00.000Z",
+            timestamp: "2026-04-16T11:01:00.000Z",
             message: { content: [{ type: "text", text: "可以继续" }] },
           }),
         ].join("\n") + "\n",
         "utf-8",
       );
 
-const { importClaudeNativeSessions } =
+      const { importClaudeNativeSessions } =
         await import("#src/session/claude-native/claudeNativeSessionImportService.js");
       const { TaskIndexRepo } = await import("#src/session/taskIndexRepo.js");
-      const { getLegacyTaskSessionSnapshotPath } =await import("#src/paths.js");
+      const { getLegacyTaskSessionSnapshotPath } = await import("#src/paths.js");
 
       const repo = new TaskIndexRepo();
       await repo.syncTaskMeta({
         meta: {
           taskId: "sess_imported_live",
           traceId: "trace_old_hidden_import",
-          title:"Hidden imported task",
+          title: "Hidden imported task",
           workspacePath,
           createdAt: 1,
           updatedAt: 2,
@@ -232,7 +230,7 @@ const { importClaudeNativeSessions } =
             migrationSource: "claudeCode",
             status: "completed",
           };
-},
+        },
         onTaskImported: () => {},
       });
 
@@ -258,7 +256,7 @@ const { importClaudeNativeSessions } =
       expect(persisted.messages[1]?.model).toBeUndefined();
 
       const listed = await repo.listTaskMetas({ workspacePath });
-expect(listed.find((item) => item.taskId === "sess_imported_live")).toMatchObject({
+      expect(listed.find((item) => item.taskId === "sess_imported_live")).toMatchObject({
         taskId: "sess_imported_live",
         model: "glm:glm-4.6",
         provider: "glm",
@@ -272,12 +270,10 @@ expect(listed.find((item) => item.taskId === "sess_imported_live")).toMatchObjec
           search: "可以继续",
         }),
       ).resolves.toMatchObject({
-items: [expect.objectContaining({ taskId: "sess_imported_live" })],
+        items: [expect.objectContaining({ taskId: "sess_imported_live" })],
         total: 1,
       });
-      await expect(
-        repo.listTaskMetas({ workspacePath, archived: false }),
-      ).resolves.toEqual([
+      await expect(repo.listTaskMetas({ workspacePath, archived: false })).resolves.toEqual([
         expect.objectContaining({
           taskId: "sess_imported_live",
           migrationSource: "claudeCode",

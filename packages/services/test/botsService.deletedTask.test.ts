@@ -167,7 +167,7 @@ describe("Bot deleted active task recovery", () => {
           payload: expect.objectContaining({ event: "created", taskId: "task-1", ...h.workspace }),
         }),
       );
-      // 后续消息可能因当前运行而被拒绝，但不得重复创建任务或重复发送切换通知。
+      // Follow-up messages may be rejected because of the current run, but no task may be re-created and no switch notification re-sent.
       await h.service.handleInboundMessage({ ...inbound, text: "第二条消息" });
       expect(h.taskService.createTask).toHaveBeenCalledTimes(1);
       expect(h.requests).toHaveLength(1);

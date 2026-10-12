@@ -72,7 +72,7 @@ export interface IServiceAccessor {
   readonly zcodeSessionService: IZCodeSessionService;
   // CUA is an opt-in beta feature provided by local macOS hosts but not other hosts. Keep it optional to avoid making it transitively required.
   readonly cuaPermissionService?: ICuaPermissionService;
-  /** 本机语音输入（模型下载与离线转写）；远端 host 不提供。 */
+  /** Local voice input (model downloads and offline transcription); remote hosts do not provide it. */
   readonly voiceDictationService?: IVoiceDictationService;
   readonly conversationShareService: IConversationShareService;
   readonly botsService: IBotsService;

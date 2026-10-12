@@ -1,6 +1,6 @@
 import type { IPluginUiBridgeService } from "./contract.js";
 
-/** UI 侧典型用法：先准备沙箱拿句柄，再把句柄交给 webview 挂载；面板作用域用 `surface:<id>`。 */
+/** Typical UI-side usage: prepare the sandbox to get a handle, then hand the handle to the webview for mounting; panel scopes use `surface:<id>`. */
 export async function examplePrepareAndMount(bridge: IPluginUiBridgeService) {
   const handle = await bridge.prepareSandbox({
     workspacePath: "/repo",
@@ -14,7 +14,7 @@ export async function examplePrepareAndMount(bridge: IPluginUiBridgeService) {
   return { src: handle.shellUrl, partition: handle.partition, initId: handle.initId };
 }
 
-/** 页面 `resources/read` 经桥读取同插件服务器的二进制资源；结果与 MCP 同形。 */
+/** The page's `resources/read` reads binary resources from the same plugin's server through the bridge; results are MCP-shaped. */
 export async function exampleReadBlob(bridge: IPluginUiBridgeService) {
   const result = await bridge.readResource({
     instance: {
@@ -32,7 +32,7 @@ export async function exampleReadBlob(bridge: IPluginUiBridgeService) {
   return result.contents[0]?.blob ?? null;
 }
 
-/** sampling 绑定已有页面身份，历史由 App 提交，结果只返回 App。 */
+/** Sampling binds to the existing page identity, history is submitted by the App, and results return only to the App. */
 export function exampleSample(
   service: import("./samplingContract.js").IPluginUiSamplingService,
   scope: import("./contract.js").PluginUiPluginScope,

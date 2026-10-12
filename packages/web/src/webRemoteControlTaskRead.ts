@@ -19,8 +19,10 @@ export interface WebRemoteControlTaskReadBridge {
 export type WebRemoteControlTaskReadResult = { ok: true } | { ok: false; error: unknown };
 
 /**
- * 手机任务首页的 unreadAt 来自 desktop 快照，不保证存在于当前 Root 的 query cache。
- * 已读写入因此必须直接使用当前 shared-host bridge 的 task service 和精确 workspace identity。
+ * The mobile task home page gets unreadAt from the desktop snapshot; it is not
+ * guaranteed to exist in the current Root's query cache. The read write must
+ * therefore use the current shared-host bridge's task service and the exact
+ * workspace identity.
  */
 export async function markWebRemoteControlTaskRead({
   service,
@@ -36,7 +38,8 @@ export async function markWebRemoteControlTaskRead({
     });
     return { ok: true };
   } catch (error) {
-    // 未读写入属于伴随动作；失败时保留权威 unreadAt，不能阻断用户打开任务。
+    // The read write is a side effect; on failure keep the authoritative
+    // unreadAt and never block the user from opening the task.
     return { ok: false, error };
   }
 }

@@ -44,7 +44,7 @@ export interface TopicResourceDependencies {
   ): Promise<{ attachment: BotInboundAttachment; data: Uint8Array }>;
 }
 
-/** 历史附件此前只有文字占位；下载必须从已接收输入反查身份，不能相信模型提供的群信息。 */
+/** History attachments previously existed only as text placeholders; downloads must resolve identity from admitted inputs and never trust group info supplied by the model. */
 export async function readAuthorizedTopicResource(
   request: TopicResourceRequest,
   deps: TopicResourceDependencies,
@@ -64,7 +64,7 @@ export async function readAuthorizedTopicResource(
   if (!Number.isSafeInteger(index) || index < 0 || !native.attachments[index])
     throw new Error("Topic resource index unavailable");
   const check = async () => {
-    // 停用、换绑及历史开关可能在 I/O 期间变化，旧请求不能在下载后继续暴露内容。
+    // Disabling, rebinding, and the history toggle can all change during I/O; a stale request must not keep exposing content after the download.
     if ((await authorize()).identity !== initial.identity)
       throw new Error("Topic resource authorization changed");
   };

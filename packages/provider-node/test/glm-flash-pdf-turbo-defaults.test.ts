@@ -145,7 +145,7 @@ describe("Todo126 发布配置的 Flash PDF 和模板 Turbo 默认", () => {
           apiType: "anthropic-messages",
           baseUrl: "https://example.test",
         });
-        // 普通 API 早已有 Turbo 默认关闭，保持；无模板的第三方仍沿用通用默认开启。
+        // Standard APIs already have Turbo disabled by default; keep that. Third-party entries without a template still use the generic enabled default.
         expect(config.enabled, templateId).toBe(templateId === "custom");
         expect(config.overlay(new ModelConfig({ enabled: true })).enabled).toBe(true);
         expect(config.overlay(new ModelConfig({ enabled: false })).enabled).toBe(false);
