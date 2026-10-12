@@ -2,16 +2,12 @@
 // UnifiedBrowserView component tests (<webview> + CDP-on-guest architecture).
 //
 // Covers three core interaction contracts:
-//  1. did-attach → report the guest webContentsId to main as early as possible
-//     (browserViewAttachGuest);
-//  2. address bar Enter (form submit) → normalize via normalizeBrowserUrl, then call
-//     webview.loadURL;
-//  3. navigation buttons are driven by webview state (canGoBack) and call webview.goBack
-//     directly.
+//  1. did-attach → report the guest webContentsId to main as early as possible (browserViewAttachGuest);
+//  2. Address bar enter (form submit) → normalize via normalizeBrowserUrl, then call webview.loadURL;
+//  3. Navigation buttons are driven by webview state (canGoBack) and call webview.goBack directly.
 //
-// Note: the root vitest only picks up packages/*/test/**/*.test.ts (.ts, not .tsx), so this file
-// uses React.createElement instead of JSX and enables the jsdom environment via the file-top
-// docblock.
+// Note: the root vitest config only picks up packages/*/test/**/*.test.ts (.ts, not .tsx), so this
+// file uses React.createElement instead of JSX and enables the jsdom environment via this docblock.
 import { createElement, StrictMode, useState } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -44,7 +40,8 @@ import {
 } from "@zcode/shared";
 import { TooltipProvider } from "@/components/ui/tooltip.js";
 
-// Mock dependencies are defined with vi.hoisted to work around vi.mock factories' restriction on referencing outside variables.
+// Define mock dependencies with vi.hoisted to avoid vi.mock factory restrictions on referencing
+// outer variables.
 const h = vi.hoisted(() => {
   const attachGuest = vi.fn().mockResolvedValue(undefined);
   const detachGuest = vi.fn().mockResolvedValue(true);
@@ -121,7 +118,8 @@ vi.mock("@/hooks/useSettingService.js", () => ({
     update: h.updateSettings,
   }),
 }));
-// intl only needs to return the message id verbatim to satisfy the aria-label / placeholder assertions.
+// The intl mock only needs to return message ids as-is to satisfy aria-label / placeholder
+// assertions.
 vi.mock("@/i18n/IntlProvider.js", () => ({
   useZCodeIntl: () => ({
     intl: {
@@ -135,7 +133,8 @@ vi.mock("@/i18n/IntlProvider.js", () => ({
   }),
 }));
 
-// Static imports sit after the mocks: vi.mock gets hoisted, so the component under test loads the mocked dependencies.
+// Static imports come after the mocks: vi.mock is hoisted, so the component under test loads the
+// mocked dependencies.
 import { UnifiedBrowserView } from "@/browser-use/UnifiedBrowserView.js";
 import { HumanBrowserView } from "@/browser-use/HumanBrowserView.js";
 import { BrowserViewportSurface } from "@/browser-use/BrowserViewportSurface.js";
@@ -177,7 +176,8 @@ class FakeResizeObserver {
   }
 }
 
-// BrowserToolbar's icon buttons go through ControlHintTooltip (radix Tooltip), which requires a TooltipProvider wrapper.
+// BrowserToolbar's icon buttons use ControlHintTooltip (a radix Tooltip), so a TooltipProvider
+// wrapper is required.
 function createViewElement(
   browserKey = "session-1",
   sessionId?: string,
@@ -241,7 +241,7 @@ function renderHumanView(browserKey = "human-tab-1", agentOpened = false) {
   return render(createHumanViewElement(browserKey, agentOpened));
 }
 
-/** Under jsdom <webview> is a plain HTMLElement without Electron guest methods; stubbed here. */
+/** Under jsdom, <webview> is a plain HTMLElement without Electron guest methods; stub them here. */
 function stubWebview(el: HTMLElement, over: Record<string, unknown> = {}) {
   Object.assign(el, {
     getWebContentsId: vi.fn(() => 42),
@@ -455,9 +455,9 @@ describe("UnifiedBrowserView (<webview>)", () => {
       }),
     );
 
-    // Why the fix: the ref callback runs after Electron's guest attach, so asserting only the
-    // final mounted DOM would mask the problem of popup permission never reaching the guest
-    // creation params; a static marker constrains the creation-time attribute.
+    // Fix rationale: the ref callback runs after the Electron guest attaches, so asserting only the
+    // final mounted DOM would mask that popup permission never reached the guest creation params;
+    // a static marker constrains creation-time attributes.
     expect(markup).toContain('<webview allowpopups=""');
   });
 
@@ -504,8 +504,8 @@ describe("UnifiedBrowserView (<webview>)", () => {
     expect(viewport.style.width).toBe("393px");
     expect(viewport.style.height).toBe("852px");
 
-    // The same 20 screen visual pixels at +1 zoom correspond to 20 / 1.1 renderer client px;
-    // after reverse compensation only 20 CSS viewport px are added.
+    // The same 20 screen-visual pixels correspond to 20 / 1.1 renderer client px at the +1 level;
+    // after reverse compensation the CSS viewport still only gains 20 px.
     dragResizeHandle(screen.getByTestId(TID_BROWSER_RESPONSIVE_RESIZE_WIDTH), 20, {
       x: 20 / desktopZoomFactor,
       y: 0,
@@ -755,8 +755,8 @@ describe("UnifiedBrowserView (<webview>)", () => {
       key: "browser-use:tab-1",
       webContentsId: 42,
     });
-    // Electron's native DevToolsSession may still have in-flight notifications; destroying the
-    // old node before main's ACK would reopen the UAF window.
+    // Electron's native DevToolsSession may still have notifications in flight; destroying the old
+    // node before main ACKs would reopen a UAF window.
     expect(screen.getByTestId(TID_BROWSER_WEBVIEW)).toBe(originalWebview);
 
     await act(async () => {
@@ -811,9 +811,8 @@ describe("UnifiedBrowserView (<webview>)", () => {
     });
     expect(screen.getByTestId(TID_BROWSER_LOAD_ERROR_CERT_HINT)).toBeTruthy();
 
-    // The invalid-address error has no net error code; if loadErrorCode is not cleared, the
-    // previous -202 stays attached and the misleading "go enable ignore certificate errors"
-    // guidance is shown.
+    // The invalid-address error has no net error code; without clearing loadErrorCode, the previous
+    // -202 would stay around and show the misleading "go enable ignore-certificate" hint.
     const addressInput = screen.getByTestId(TID_BROWSER_ADDRESS_INPUT);
     fireEvent.change(addressInput, { target: { value: "javascript:alert(1)" } });
     fireEvent.submit(addressInput.closest("form")!);
@@ -833,7 +832,8 @@ describe("UnifiedBrowserView (<webview>)", () => {
     });
     expect(screen.getByTestId(TID_BROWSER_LOAD_ERROR)).toBeTruthy();
 
-    // The guest has not even got a picture; it must yield to the failure state with a rebuildable guest instead of continuing to draw "this navigation was refused".
+    // The guest does not even render a picture; it must yield to a failure state that can rebuild
+    // the guest instead of keep showing "this navigation was denied".
     fireRenderProcessGone(webview, "launch-failed");
 
     expect(screen.queryByTestId(TID_BROWSER_LOAD_ERROR)).toBeNull();
@@ -868,7 +868,8 @@ describe("UnifiedBrowserView (<webview>)", () => {
     fireEvent.click(screen.getByText("browser.loadError.retry"));
 
     expect(loadURL).toHaveBeenCalledWith(restoreUrl);
-    // The same guest keeps serving; one failed navigation must not rebuild it and throw away web history.
+    // The same guest stays in use; a single failed navigation must not rebuild it and drop the
+    // page's web history.
     expect(screen.getByTestId(TID_BROWSER_WEBVIEW)).toBe(webview);
   });
 
@@ -885,9 +886,9 @@ describe("UnifiedBrowserView (<webview>)", () => {
       validatedURL: "https://intranet.test/",
     });
 
-    // Bug cause: errorMessage used to be written only into state with no render consumer, the
-    // empty state was also switched off at the same time, and Electron `<webview>` has no
-    // Chrome-style security interstitial — leaving a pure black chrome-error page.
+    // Bug cause: errorMessage used to be written only into state with no render consumer, the empty
+    // state was turned off at the same time, and Electron `<webview>` has no Chrome-style security
+    // interstitial, leaving nothing but a solid black chrome-error page.
     expect(screen.getByTestId(TID_BROWSER_LOAD_ERROR)).toBeTruthy();
     expect(screen.getByTestId(TID_BROWSER_LOAD_ERROR_CERT_HINT)).toBeTruthy();
     expect(screen.getByTestId(TID_BROWSER_WEBVIEW).className).toContain("hidden");
@@ -1067,7 +1068,8 @@ describe("UnifiedBrowserView (<webview>)", () => {
       setZoomFactor,
     });
     fireDomReady(webview);
-    // Let useDesktopZoomFactor's initial async read settle first, so it does not overwrite the zoom step actively dispatched below.
+    // Let useDesktopZoomFactor's initial async read settle first, so it does not overwrite the zoom
+    // level dispatched below.
     await act(async () => {
       await Promise.resolve();
     });
@@ -1123,9 +1125,9 @@ describe("UnifiedBrowserView (<webview>)", () => {
       resolveViewportSync?.();
       await Promise.resolve();
     });
-    // Desktop page zoom propagation may land later than the React effect; the guest zoom must
-    // be normalized once more after main finishes metrics, locking in the race that used to
-    // leave blank space on the right and bottom.
+    // Desktop page zoom can propagate later than React effects; guest zoom must be normalized once
+    // more after main finishes the metrics, locking down the race that once caused blank space on
+    // the right and bottom.
     expect(setZoomFactor.mock.calls.length).toBeGreaterThan(zoomCallsBeforeMetricsResolved);
     expect(setZoomFactor).toHaveBeenLastCalledWith(1);
 
@@ -1191,19 +1193,22 @@ describe("UnifiedBrowserView (<webview>)", () => {
   it("地址栏回车触发 webview.loadURL（url 经 normalize）", () => {
     renderView();
     const el = stubWebview(screen.getByTestId(TID_BROWSER_WEBVIEW));
-    // dom-ready first so isReady=true; otherwise navigation queues instead of loadURL immediately.
+    // Fire dom-ready first so isReady=true; otherwise navigation is queued instead of calling
+    // loadURL immediately.
     fireDomReady(el);
 
     const input = screen.getByTestId(TID_BROWSER_ADDRESS_INPUT) as HTMLInputElement;
     fireEvent.change(input, { target: { value: "example.com" } });
-    // BrowserToolbar is a <form onSubmit>; jsdom does not implement implicit submission, so submitting the form directly is equivalent to pressing Enter.
+    // BrowserToolbar is a <form onSubmit>; jsdom does not implement implicit submission, so
+    // submitting the form directly equals pressing Enter.
     const form = input.closest("form");
     expect(form).not.toBeNull();
     fireEvent.submit(form as HTMLFormElement);
 
     const loadURL = (el as unknown as { loadURL: ReturnType<typeof vi.fn> }).loadURL;
     expect(loadURL).toHaveBeenCalledTimes(1);
-    // normalizeBrowserUrl completes the scheme for protocol-less input (a public domain → https://example.com).
+    // normalizeBrowserUrl completes the scheme for protocol-less input (public domain →
+    // https://example.com).
     expect(loadURL.mock.calls[0][0]).toBe("https://example.com");
   });
 
@@ -1213,7 +1218,7 @@ describe("UnifiedBrowserView (<webview>)", () => {
     // Initially: webview not ready → canGoBack unknown → back disabled.
     expect(back.disabled).toBe(true);
 
-    // After canGoBack returns true, dom-ready syncs the state → back enabled.
+    // Once canGoBack returns true, dom-ready syncs the state → back enabled.
     const el = stubWebview(screen.getByTestId(TID_BROWSER_WEBVIEW), {
       canGoBack: vi.fn(() => true),
     });
@@ -1296,12 +1301,13 @@ describe("UnifiedBrowserView (<webview>)", () => {
     const openExternalItem = screen.getByRole("menuitem", {
       name: "browser.openExternal",
     });
-    // Radix only sets aria-disabled="true" when disabled; the enabled state does not write the false attribute.
+    // Radix only sets aria-disabled="true" when disabled; the enabled state never writes the
+    // attribute.
     expect(openExternalItem.getAttribute("aria-disabled")).not.toBe("true");
     fireEvent.click(openExternalItem);
     expect(h.openExternal).toHaveBeenCalledWith("file:///workspace/index.html");
 
-    // After selecting an enabled menu item Radix closes the menu; reopen it before verifying DevTools.
+    // Selecting an enabled menu item closes the Radix menu; reopen it before verifying DevTools.
     fireEvent.pointerDown(screen.getByLabelText("browser.more"), {
       button: 0,
       ctrlKey: false,
@@ -2220,7 +2226,7 @@ describe("UnifiedBrowserView (<webview>)", () => {
     const observer = FakeResizeObserver.instances.at(-1);
     expect(observer).toBeDefined();
 
-    // When the browser is mounted in the background the previous non-zero observation may still be kept.
+    // A Browser mounted in the background may still hold the previous non-zero observation.
     act(() => observer?.emit(640, 480));
     view.rerender(createViewElement("tab-1", "task-1", operationUntil, true));
     act(() => observer?.emit(800, 600));
@@ -2241,9 +2247,9 @@ describe("UnifiedBrowserView (<webview>)", () => {
     view.rerender(createViewElement("tab-1", "task-1", operationUntil, true, 1));
     const settlingObserver = FakeResizeObserver.instances.at(-1);
     expect(settlingObserver).toBeDefined();
-    // On a real machine the newTab marker is followed by multi-frame convergence of guest
-    // mounting and side-pane animation; clearing the baseline only once would mistake the
-    // second frame for a user resize.
+    // On real hardware the newTab marker is followed by multiple frames of convergence from guest
+    // mounting and the side-pane animation; clearing the baseline only once would mistake the second
+    // frame for a user resize.
     act(() => {
       vi.advanceTimersByTime(220);
       settlingObserver?.emit(780, 600);
@@ -2256,7 +2262,8 @@ describe("UnifiedBrowserView (<webview>)", () => {
     });
     expect(screen.queryByRole("status")).toBeNull();
 
-    // Consecutive callbacks extend at most to 500ms; after the cap the marker does not consume the current active cycle's hint quota.
+    // Consecutive callbacks extend the window to at most 500ms; once capped, the marker does not
+    // consume the current active cycle's hint quota.
     act(() => {
       vi.advanceTimersByTime(11);
       settlingObserver?.emit(700, 600);
@@ -2298,7 +2305,8 @@ describe("UnifiedBrowserView (<webview>)", () => {
         });
       }
     });
-    // Entering free-size mounts the control bar and changes the browser region height; this time only establish the new baseline.
+    // Entering free-size mode mounts the control bar and changes the browser region height; this
+    // only establishes a new baseline.
     act(() => observer?.emit(800, 568));
     expect(screen.queryByRole("status")).toBeNull();
 
@@ -2358,9 +2366,8 @@ describe("UnifiedBrowserView (<webview>)", () => {
     });
     expect(screen.queryByRole("status")).toBeNull();
 
-    // Free-size mode did not toggle, so the model event does not reopen the stabilization
-    // period; after the current mode switch's stabilization period ends, a real pane resize
-    // still warns.
+    // Free-size mode was not toggled, so model events do not restart the settling period; once the
+    // settling period of the current mode switch ends, a real pane resize still warns.
     act(() => {
       vi.advanceTimersByTime(301);
       observer?.emit(760, 568);
@@ -2390,7 +2397,7 @@ describe("UnifiedBrowserView (<webview>)", () => {
     expect(warning.querySelector("svg")?.classList).toContain("text-warning");
     expect(screen.getByTestId(TID_BROWSER_WEBVIEW).dataset.browserResizeDimmed).toBe("true");
 
-    // Consecutive drags neither refresh the 3-second timer nor stack a second hint.
+    // Continuous dragging neither refreshes the 3-second timer nor stacks a second warning.
     act(() => {
       vi.advanceTimersByTime(1_000);
       observer?.emit(650, 600);
@@ -2461,7 +2468,8 @@ describe("UnifiedBrowserView (<webview>)", () => {
         value: Math.round(720 * layoutScale),
       },
     });
-    // The Fit preview keeps scaling the transformed rect, so the logical viewport can only be recovered from the raw layout.
+    // The Fit preview keeps scaling the transformed rect, so the logical viewport can only be
+    // recovered from the raw layout.
     vi.spyOn(webview, "getBoundingClientRect").mockReturnValue({
       x: 0,
       y: 0,
@@ -2509,7 +2517,8 @@ describe("UnifiedBrowserView (<webview>)", () => {
     const writes = h.updateSettings.mock.calls.length;
     const logicalSize = () => {
       const frame = screen.getByTestId(TID_BROWSER_RESPONSIVE_VIEWPORT);
-      // Derive the size from the component's actual layout; feeding request.viewport straight to the webview would mask the normal mode's defect.
+      // Derive the size from the component's actual layout; feeding request.viewport straight to
+      // the webview would mask the normal-mode defect.
       return {
         width: Number.parseFloat(frame.style.width) || canvas.width,
         height: Number.parseFloat(frame.style.height) || canvas.height,
@@ -2574,7 +2583,8 @@ describe("UnifiedBrowserView (<webview>)", () => {
       const frame = screen.getByTestId(TID_BROWSER_RESPONSIVE_VIEWPORT);
       expect(frame.style.width).toBe("508px");
       expect(frame.style.height).toBe("855px");
-      // The natural viewport has no metrics-fixed size; expanding the webview and reverse-transforming afterwards must not pretend the logical size is unchanged.
+      // The natural viewport has no metrics-pinned size; do not enlarge the webview and then
+      // reverse-transform to pretend the logical size is unchanged.
       expect(Number(webview.dataset.browserLayoutScale)).toBeCloseTo(
         viewportMode === "natural" ? 1 : 1 / resolveDesktopZoomFactor(-2),
       );
@@ -2604,7 +2614,8 @@ describe("UnifiedBrowserView (<webview>)", () => {
     const request = createScreenshotSurfaceRequest({ viewport: { width: 1280, height: 720 } });
     view.rerender(createViewElement("tab-1", "sess-1", undefined, false, undefined, request));
     view.rerender(createViewElement("tab-1", "sess-1", undefined, false, undefined, null));
-    // The fallback metrics are still valid; exiting the temporary layout must not restore desktop zoom as if the user's free-size mode had exited.
+    // The fallback metrics are still valid; exiting the temporary layout must not restore desktop
+    // zoom the way leaving user free-size mode does.
     expect(setZoomFactor).not.toHaveBeenCalled();
   });
 
@@ -2656,9 +2667,9 @@ describe("UnifiedBrowserView (<webview>)", () => {
   });
 
   it("窗口被遮挡导致 rAF 冻结时，timer 兜底仍然能 ready", () => {
-    // Regression (3.5.2 browser use screenshot 1500ms timeout): ready used to hook only rAF;
-    // when the main window is not foregrounded Chromium freezes the renderer's rAF and ready is
-    // never sent. Here rAF is simulated to never call back.
+    // Regression (3.5.2 browser use screenshot 1500ms timeout): ready used to rely only on rAF; when
+    // the main window is not in the foreground, Chromium freezes the renderer's rAF and ready is
+    // never sent out. This test simulates rAF callbacks that never fire.
     vi.useFakeTimers();
     const rafQueue = new Map<number, FrameRequestCallback>();
     let nextRafId = 0;
@@ -2779,9 +2790,9 @@ describe("UnifiedBrowserView (<webview>)", () => {
   });
 
   it("viewport 起初不匹配且没有 resize/dom-ready 时，也会重试到 ready", () => {
-    // Regression: a misaligned viewport used to return directly, waiting on
-    // ResizeObserver / dom-ready to restart; if the size no longer changes after
-    // setViewportSize there is no second verification chance — a wasted 1500ms timeout.
+    // Regression: a misaligned viewport used to return immediately, waiting only for
+    // ResizeObserver / dom-ready to restart; if the size never changed again after setViewportSize
+    // there was no second validation chance, burning the full 1500ms timeout.
     const rafQueue = new Map<number, FrameRequestCallback>();
     let nextRafId = 0;
     vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
@@ -2819,7 +2830,8 @@ describe("UnifiedBrowserView (<webview>)", () => {
 
     flushOneAnimationFrame();
     expect(h.screenshotSurfaceReady).not.toHaveBeenCalled();
-    // Only the size changes; ResizeObserver / dom-ready are not triggered: verifies the retry chain itself is still alive.
+    // Change only the size without triggering ResizeObserver / dom-ready: verify the retry chain
+    // itself is still alive.
     size = { width: 1274, height: 720 };
     flushOneAnimationFrame();
     expect(h.screenshotSurfaceReady).not.toHaveBeenCalled();

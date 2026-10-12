@@ -1,10 +1,10 @@
-// Pure reduction for workflowRuns (workflow-runs-reducer.ts).
-// This reducer used to live in bootstrap's v4 product-projection and was extracted so the TUI mirror can share it
-// (docs/dynamic-workflow/launch.md, "The inline card").
+// workflowRuns' pure reducer (workflow-runs-reducer.ts).
+// This reducer previously grew inside bootstrap's v4 product-projection and was extracted for the TUI mirror to share
+// (docs/dynamic-workflow/launch.md "The inline card").
 //
-// Desktop/protocol-side equivalence is backed by bootstrap's product-projection*.test.ts (assertions unchanged);
-// this file pins the reducer's own contract: per-event reduction, bounding, eviction, revision monotonicity,
-// derived actor state, and idempotent replay. Every case calls pure functions only — no projection, clock, or I/O.
+// Equivalence with the desktop/protocol side is backed by bootstrap's product-projection*.test.ts (assertions unchanged);
+// what this file pins is the reducer's own contract: per-event reduction, bounding, eviction, monotonic revision, derived
+// actor status, idempotent replay. Every case calls only pure functions — no projection, no clock, no I/O.
 import { describe, expect, it } from "vitest";
 import {
   WORKFLOW_RUNS_LIMITS,
@@ -16,7 +16,7 @@ import {
 
 const RUN_ID = "dwfrun-1";
 
-/** Reduce a series of events one by one; on null (no change) keep the previous state, synonymous with the projection producing no delta. */
+/** Reduces a stream of events one by one; on null (no change) keeps the previous state, synonymous with the projection producing no delta. */
 function reduceAll(
   envelopes: readonly WorkflowRunProgressEnvelope[],
   initial?: WorkflowRunsState,
@@ -29,10 +29,10 @@ function reduceAll(
 }
 
 /**
- * Reduce a single event **expected to actually produce a change**.
+ * Reduces one event that is **expected to produce a change**.
  *
- * The reducer's `previous` accepts `| undefined` but returns `| null`, so chained calls cannot wire it directly — this is deliberate:
- * "no change" must be handled explicitly by the caller, not casually passed down as an empty state (that would wipe out the whole state).
+ * The reducer takes `previous: | undefined` but returns `| null`, so calls cannot be chained directly — deliberate:
+ * "no change" must be handled explicitly by the caller, never passed along as an empty state (that would wipe the whole state).
  */
 function step(
   state: WorkflowRunsState | undefined,
@@ -43,7 +43,7 @@ function step(
   return next;
 }
 
-/** Event envelope factory: sequence increments per call, simulating the journal's monotonic allocation. */
+/** Event envelope factory: sequence auto-increments per call, mimicking the journal's monotonic assignment. */
 function progressLog(runId = RUN_ID) {
   let sequence = -1;
   return function progress(
@@ -90,7 +90,7 @@ describe("reduceWorkflowRunsState：逐事件归约", () => {
     const state = reduceWorkflowRunsState(undefined, progress("run-started", started()));
     expect(state?.runs[0]?.usage).toEqual({ spentTokens: 0, nodesUsed: 0 });
     expect(state?.runs[0]).not.toHaveProperty("budget");
-    // Payload carries no concurrencyCeiling (old CLI): without a readable ceiling there is no way to tell whether this run is throttled.
+    // The payload has no concurrencyCeiling (old CLI): without a readable ceiling there is no way to tell whether this run was throttled.
     expect(state?.runs[0]).not.toHaveProperty("concurrency");
   });
 
@@ -111,11 +111,11 @@ describe("reduceWorkflowRunsState：逐事件归约", () => {
       {
         siteId: "ask#1",
         ordinal: 1,
-        // kind is only carried on queued; later phases inherit it from the previous entry.
+        // kind is carried only on queued; later phases inherit it from the previous entry.
         kind: "ask",
         phase: "settled",
         outcome: "ok",
-        // actor attribution is inherited the same way — dispatched/settled do not repeat the actor.
+        // actor attribution is inherited the same way — dispatched/settled do not repeat it.
         actorSiteId: "actor#1",
         actorOrdinal: 1,
       },
@@ -123,7 +123,7 @@ describe("reduceWorkflowRunsState：逐事件归约", () => {
   });
 
   it("cached 命中直接发 node-settled（不经 queued），kind 缺省而条目仍成立", () => {
-    // engine.ts:228/232 — the resume completion-cache hit short-circuits, so kind is unobservable.
+    // engine.ts:228/232 — resume's completed-hit short-circuit, so kind is unobservable.
     const progress = progressLog();
     const state = reduceAll([
       progress("run-started", started()),
@@ -139,7 +139,7 @@ describe("reduceWorkflowRunsState：逐事件归约", () => {
   });
 
   it("用量：spentTokens 直接取 usage-updated 载荷，nodesUsed 按首次派发计步", () => {
-    // docs/dynamic-workflow/authoring.md: the event carries the total spent (written in sync with dwf_run.spent_tokens).
+    // docs/dynamic-workflow/authoring.md: events carry the spent total (written in sync with dwf_run.spent_tokens).
     const progress = progressLog();
     const dispatched = (siteId: string) => [
       progress("node-queued", {
@@ -190,8 +190,8 @@ describe("reduceWorkflowRunsState：逐事件归约", () => {
     expect(workflowRunsStateSchema.safeParse(state).success).toBe(true);
   });
 
-  // Fix rationale (2026-09-15): words outside the closed set used to be "always ignored", so run-settled{cancelled|failed}
-  // in journals from before 2026-09-14 left the run in running after a cold replay. Once a run has settled it must not stay alive.
+  // Fix rationale (2026-09-15): words outside the closed set used to be "always ignored", so a pre-2026-09-14 journal's
+  // run-settled{cancelled|failed} left the run in running after cold replay. Once settled, a run must not still be alive.
   it("run-settled 的未知 status → errored 落终态，文案说明是哪个词，不亮 Resume", () => {
     const progress = progressLog();
     const state = reduceAll([
@@ -232,7 +232,7 @@ describe("reduceWorkflowRunsState：逐事件归约", () => {
     expect(state?.runs[0]).toMatchObject({ runId: RUN_ID, status: "running" });
     expect(state?.runs[0]?.error).toBeUndefined();
     expect(state?.runs[0]?.resultPreview).toBeUndefined();
-    // The previous life's stop reason is part of the settlement residue too.
+    // The previous life's stop reason is settlement residue too.
     expect(state?.runs[0]?.stopReason).toBeUndefined();
   });
 
@@ -258,7 +258,7 @@ describe("reduceWorkflowRunsState：逐事件归约", () => {
     const progress = progressLog();
     const state = reduceAll([
       progress("run-started", started()),
-      // ordinal missing → cannot be located.
+      // ordinal absent → cannot locate.
       progress("node-queued", { instance: { siteId: "ask#1" }, kind: "ask" }),
       progress("actor-created", { actor: { ordinal: 1 }, name: "planner" }),
     ]);
@@ -267,10 +267,9 @@ describe("reduceWorkflowRunsState：逐事件归约", () => {
     expect(state?.runs[0]?.lastEventSequence).toBe(2);
   });
 
-  // Bugfix 2026-09-04: a script concatenated file paths into a 131-character subagent name and the reducer passed it through
-  // verbatim, while the wire schema pins `actor.name` at 128 — so every frame after the parent session (online / recovery /
-  // initial) was rejected by the renderer, and the subscription failed with fault.subscription.recoveryFailed. Producers must
-  // clip to the schema bound first.
+  // Bugfix 2026-09-04: a script assembled a 131-char subagent name from a file path, the reducer passed it through, but the
+  // wire schema pins `actor.name` at 128 — so every frame after the parent session (online / recovery / initial) was rejected
+  // by the renderer and the subscription died with fault.subscription.recoveryFailed. Producers must trim to the schema bound first.
   it("子代理名超过线上上界时按上界裁剪，归约结果始终通过 schema", () => {
     const progress = progressLog();
     const longName = `reader-${"sections-x.tex+".repeat(12)}`;
@@ -331,8 +330,8 @@ describe("reduceWorkflowRunsState：逐事件归约", () => {
   });
 });
 
-// Both ends of lineage (docs/dynamic-workflow/presentation.md, "The run card"): `run-started` carries resumedFrom,
-// `run-settled` carries supersededBy only when superseded; the reducer just transports them, and both pass strict schema.
+// Both ends of lineage (docs/dynamic-workflow/presentation.md "The run card"): `run-started` carries resumedFrom,
+// `run-settled` carries supersededBy only when superseded; the reducer merely transports, both pass strict schemas.
 describe("reduceWorkflowRunsState：lineage", () => {
   it("run-started 的 resumedFrom 与 run-settled 的 supersededBy 都进状态", () => {
     const progress = progressLog();
@@ -350,7 +349,7 @@ describe("reduceWorkflowRunsState：lineage", () => {
       resumedFrom: "dwfrun-prev",
       supersededBy: "dwfrun-next",
     });
-    // A superseded run is not resumable: the CLI does not send resumable, so there is none here either.
+    // A superseded run is not resumable: the CLI sends no resumable, and none appears here either.
     expect(state?.runs[0]?.resumable).toBeUndefined();
     expect(workflowRunsStateSchema.safeParse(state).success).toBe(true);
   });
@@ -366,8 +365,8 @@ describe("reduceWorkflowRunsState：lineage", () => {
   });
 });
 
-// resumable status flag (docs/dynamic-workflow/presentation.md, "Cold replay"): the CLI decides it on the run-settled
-// payload via the resume gate, and the reducer only transports it — present when true; UI and TUI never re-derive it from status.
+// The resumable status bit (docs/dynamic-workflow/presentation.md "Cold replay"): the CLI decides by the resume gate on
+// the run-settled payload and the reducer only transports — present only when true; UI and TUI never re-derive it from status.
 describe("reduceWorkflowRunsState：resumable 状态位", () => {
   it("run-settled 携 resumable: true → 状态位在场，且过 strict schema", () => {
     const progress = progressLog();
@@ -402,8 +401,8 @@ describe("reduceWorkflowRunsState：resumable 状态位", () => {
     expect(explicit?.runs[0]?.resumable).toBeUndefined();
   });
 
-  // Stop reason (apps/zcode-cli/packages/dynamic-workflow/docs/execution-engine.md): transported only on stopped;
-  // a stopReason outside the closed set or on any other terminal state is dropped — the reducer does not invent reasons for the CLI.
+  // Stop reason (apps/zcode-cli/packages/dynamic-workflow/docs/execution-engine.md): transported only on stopped; outside the
+  // closed set and on other terminal states it is always dropped — the reducer does not invent reasons for the CLI.
   it("run-settled 的 stopReason 只在 stopped 上搬运，且只收四个值", () => {
     const progress = progressLog();
     for (const stopReason of ["user", "model", "provider", "interrupted"] as const) {
@@ -468,7 +467,7 @@ describe("reduceWorkflowRunsState：派生 actor 状态", () => {
         ordinal: 1,
         name: "planner",
         sessionId: "sess_dwf-1-actor.1",
-        // Created but not yet asked, run not terminal: waiting (Decision 39).
+        // Created but never asked, run not terminal: waiting (decision 39).
         status: "waiting",
       },
     ]);
@@ -484,7 +483,7 @@ describe("reduceWorkflowRunsState：派生 actor 状态", () => {
       ],
       created,
     );
-    // dispatched only means "session ready, first request not yet admitted": still waiting; actually running is declared by node-executing.
+    // dispatched only means "session ready, first request not yet admitted": still waiting; actually running is said by node-executing.
     expect(dispatched?.runs[0]?.actors[0]?.status).toBe("waiting");
 
     const executing = reduceAll(
@@ -594,10 +593,10 @@ describe("reduceWorkflowRunsState：派生 actor 状态", () => {
   });
 
   it("派生键有分隔符：(a,12) 与 (a1,2) 是两个 actor，不互相点亮", () => {
-    // This pair is the minimal counterexample where **raw concatenation collides**: "a"+12 and "a1"+2 both equal "a12".
-    // The reduction keys on `${siteId}\0${ordinal}` (the move preserved the original implementation's NUL separator semantics,
-    // only writing the source's raw NUL byte as the escaped `\0` — the same runtime character. The same-siteId case above
-    // would pass with any separator, or with none at all, so this is the case that actually pins the separator's existence).
+    // This pair is the minimal counterexample where **naive concatenation collides**: "a"+12 and "a1"+2 both equal "a12".
+    // The reducer keys on `${siteId}\0${ordinal}` (keeping the original implementation's NUL-separator semantics when moved,
+    // writing the raw NUL byte as the escaped `\0` — the same runtime character. The same-siteId case above would pass with any
+    // separator, even none, so what truly pins the separator's existence is this one).
     const progress = progressLog();
     const state = reduceAll([
       progress("run-started", started()),
@@ -631,7 +630,7 @@ describe("reduceWorkflowRunsState：有界化与淘汰", () => {
     expect(state?.runs[0]?.nodes).toHaveLength(WORKFLOW_RUNS_LIMITS.maxNodes);
     expect(state?.runs[0]?.truncated).toBe(true);
 
-    // Over the bound, only **new** instances are rejected: freezing a running instance at queued is more misleading than listing one fewer.
+    // Over the bound only **new** instances are rejected: freezing a running instance at queued is more misleading than listing one fewer.
     const updated = reduceAll(
       [progress("node-dispatched", { instance: { siteId: "ask#1", ordinal: 1 } })],
       state,
@@ -733,9 +732,9 @@ describe("reduceWorkflowRunsState：revision 与 sequence 单调", () => {
   });
 
   it("lastEventSequence 单调：迟到/乱序事件仍归约内容，但水位不回退", () => {
-    // Below the watermark, **accept everything**: cold materialization feeds journal replay and online events into the same
-    // reduction, so if an online event starts a run first, its whole prefix sits below the watermark — dropping it would leave
-    // the card empty. Tightening only applies to runs that have overflowed; see the next case.
+    // Below the bound everything is **accepted as-is**: cold materialization feeds journal replay and online events into the same
+    // reduction, and if an online event opens a run first its entire prefix lies below the watermark — dropping it would leave the
+    // card empty. Tightening only happens on overflowed runs; see the next case.
     const state = reduceAll([
       { runId: RUN_ID, sequence: 5, eventType: "run-started", payload: started() },
       {
@@ -750,8 +749,8 @@ describe("reduceWorkflowRunsState：revision 与 sequence 单调", () => {
   });
 
   it("溢出过的 run 才收紧：水位之下的事件开不出新条目，但照常更新已有的", () => {
-    // The reason is in admitsNewEntry: evicting to make room shortens the table, and a freed slot could readmit an instance
-    // already counted in nodesUnlisted, which would leave that instance both listed and counted.
+    // Rationale lives in admitsNewEntry: making room shortens the table, and a freed slot could let an instance already
+    // counted in nodesUnlisted back in, leaving it both listed and counted.
     const progress = progressLog();
     const seeded = reduceAll([
       progress("run-started", started()),
@@ -794,7 +793,7 @@ describe("reduceWorkflowRunsState：幂等重放", () => {
   });
 
   it("每一条事件在它自己刚归约完之后立刻重放都是 no-op（逐步幂等）", () => {
-    // Idempotence is scoped to "the just-arrived event": the journal delivers in order, and retransmission only retransmits the tail.
+    // Idempotence is scoped to "the event that just arrived": the journal delivers in order, retransmission only retransmits the tail.
     const progress = progressLog();
     const events = [
       progress("run-started", started()),
@@ -817,9 +816,9 @@ describe("reduceWorkflowRunsState：幂等重放", () => {
   });
 
   it("整串事件从终态再跑一遍不是 no-op：run-started 就是重开一世（记录在案）", () => {
-    // Idempotence does **not** extend to out-of-order/whole-stream replay: run-started clears settlement residue and pulls the
-    // run back to running, and node-queued has no phase monotonicity guard either, pulling an already dispatched node back to queued.
-    // The journal's in-order delivery keeps both from happening in production; they are pinned here so no one later assumes a guard exists.
+    // Idempotence does **not** extend to out-of-order / whole-stream replay: run-started clears settlement residue and pulls the run
+    // back to running, and node-queued has no phase-monotonic guard, so it would drag an already-dispatched node back to queued.
+    // Ordered journal delivery keeps both from happening in production; they are pinned here so no one later assumes a guard exists.
     const progress = progressLog();
     const events = [
       progress("run-started", started()),
@@ -833,7 +832,7 @@ describe("reduceWorkflowRunsState：幂等重放", () => {
     const replayed = reduceAll(events, once)!;
     expect(replayed.runs[0]?.status).toBe("completed");
     expect(replayed.revision).toBe(once.revision + events.length);
-    // The watermark is the only quantity with a monotonicity guard: whole-stream replay cannot roll it back either.
+    // The watermark is the only quantity with a monotonic guard: even a whole-stream replay cannot pull it back.
     expect(replayed.runs[0]?.lastEventSequence).toBe(once.runs[0]?.lastEventSequence);
   });
 
@@ -854,9 +853,9 @@ describe("reduceWorkflowRunsState：幂等重放", () => {
   });
 });
 
-// ── Escalation Q&A (apps/zcode-cli/packages/dynamic-workflow/docs/execution-engine.md) ──
-// Two events maintain the same "who is still owed an answer" table: raised adds, resolved removes. Identity is the qid
-// (globally unique, across runs), not a site instance — escalations have no site identity, write no dwf_node row, and do not count against maxNodes.
+// ── Escalations (apps/zcode-cli/packages/dynamic-workflow/docs/execution-engine.md) ──────────────────────────────
+// Two events maintain one "who is still owed an answer" table: raised adds, resolved removes. Identity is the qid
+// (globally unique, across runs), not a site instance — escalations have no site identity, write no dwf_node row, and consume no maxNodes.
 describe("reduceWorkflowRunsState：升级问答", () => {
   const ASKED_AT = 1_756_000_000_000;
   const raised = (overrides: Record<string, unknown> = {}) => ({
@@ -882,7 +881,7 @@ describe("reduceWorkflowRunsState：升级问答", () => {
         actorName: "poet",
         question: "评分上限是 95，但通过门槛是 96，这个门是不是坏了？",
         context: "已经试过 4 轮，最高分 95。",
-        // The asking time can only be carried by the event — this module is a pure reduction with no clock available.
+        // The ask time can only come from the event — this module is a pure reduction with no clock available.
         askedAt: ASKED_AT,
       },
     ]);
@@ -890,8 +889,8 @@ describe("reduceWorkflowRunsState：升级问答", () => {
   });
 
   it("askedAt 缺席（老 journal 重放出的事件）时字段整个不落，其余照常成条", () => {
-    // askedAt is required on the event side, but journals on old dev machines may replay events emitted before the field was added.
-    // Absence is not an error: the renderer uses it to skip showing the wait duration rather than fabricating a "just now".
+    // The event-side askedAt is required, but a journal from an older dev machine may replay events from before the field was added.
+    // Absence is not an error: the renderer hides the wait duration accordingly instead of inventing a "just now".
     const progress = progressLog();
     const { askedAt: _legacy, ...preAmendment } = raised();
     const state = reduceAll([
@@ -920,8 +919,8 @@ describe("reduceWorkflowRunsState：升级问答", () => {
   });
 
   it("匿名 actor 与无补充说明时字段整个缺席，不落空串", () => {
-    // The event side deliberately does not synthesize a fallback label (see the actorName comment in engine/types.ts), and the
-    // reduction does not invent one either: rendering "unnamed" is the consumer's decision.
+    // The event side deliberately does not synthesize fallback labels (engine/types.ts's actorName comment), and the reduction does not invent one:
+    // rendering "unnamed" is the consumer's decision.
     const progress = progressLog();
     const { actorName: _anonymous, ...anonymous } = raised();
     const state = reduceAll([
@@ -935,8 +934,8 @@ describe("reduceWorkflowRunsState：升级问答", () => {
   });
 
   it("actor ref 读不动时**仍然**建条目：身份是 qid，actor 只是属性", () => {
-    // Deliberately different from the three node/actor tables (which skip entries that cannot be located): hiding a question
-    // over a broken ref would destroy the one fallback value — a stuck question must stay visible.
+    // Deliberately unlike the node/actor tables (where an unlocatable ref means no entry): hiding a question over a broken
+    // ref would destroy the one fallback value "a stuck question must stay visible".
     const progress = progressLog();
     const state = reduceAll([
       progress("run-started", started()),
@@ -977,9 +976,9 @@ describe("reduceWorkflowRunsState：升级问答", () => {
       progress("escalation-raised", raised()),
     ]);
     expect(state?.runs[0]?.nodes).toHaveLength(1);
-    // That ask dispatch already counted one step; the escalation itself adds no more.
+    // That ask's dispatch already counted a step; the escalation adds no more.
     expect(state?.runs[0]?.usage.nodesUsed).toBe(1);
-    // The asking actor is still running — its ask is still executing; being parked is not being idle.
+    // The asking actor is still running — its ask is still executing; being parked does not mean idle.
     expect(state?.runs[0]?.actors[0]?.status).toBe("running");
   });
 
@@ -998,7 +997,7 @@ describe("reduceWorkflowRunsState：升级问答", () => {
       progress("escalation-raised", raised()),
       progress("escalation-resolved", { qid: "dwfq-dwfrun1-1", answer: "门确实坏了，跳过它。" }),
     ]);
-    // "Zero entries ⇒ key absent" is a protocol convention: the sidebar skips the whole section instead of leaving an empty shell.
+    // "Zero entries ⇒ key absent" is a protocol convention: the sidebar skips the whole section accordingly instead of leaving an empty shell.
     expect(state?.runs[0]).not.toHaveProperty("pendingQuestions");
     expect(workflowRunsStateSchema.safeParse(state).success).toBe(true);
   });
@@ -1022,8 +1021,8 @@ describe("reduceWorkflowRunsState：升级问答", () => {
   });
 
   it("resolve 一个不在表里的 qid 不动那张表，只抬水位（与 log 同族）", () => {
-    // qid is globally unique (across runs), so a resolved event mixed into the wrong run necessarily finds no entry. It is
-    // still an event that arrived, and the watermark still advances — "no change" only holds for **content** (see the next case for idempotence).
+    // qids are globally unique (across runs), so a resolved event serialized onto the wrong run necessarily finds no entry. It is still an
+    // event that arrived, so the watermark advances — "no change" only holds for **content** (the idempotence case is the next one).
     const progress = progressLog();
     const state = reduceAll([
       progress("run-started", started()),
@@ -1043,8 +1042,8 @@ describe("reduceWorkflowRunsState：升级问答", () => {
   });
 
   it("同一条 resolved 重放是 no-op：不抬 revision、不改状态", () => {
-    // When the same event replays, its sequence matches too, the watermark does not move, and the whole run is byte-identical → null.
-    // This is where "idempotent" actually lands (the journal delivers in order; retransmission only retransmits the tail).
+    // When replaying the same event the sequence matches too, so the watermark does not move and the whole run is byte-identical → null.
+    // This is where "idempotent" actually lands (ordered journal delivery; retransmission only retransmits the tail).
     const progress = progressLog();
     const parked = reduceAll([
       progress("run-started", started()),
@@ -1071,8 +1070,8 @@ describe("reduceWorkflowRunsState：升级问答", () => {
   it.each(["completed", "errored", "stopped"] as const)(
     "run-settled（%s）清空停驻问题：终态 run 没有在听的人",
     (status) => {
-      // The truth is in-process parked deferreds. On cancel they are rejected with cancelAsk, and if the process dies the whole
-      // registry disappears — the `resolved` event will never come. Keeping them would put a question that can never be answered on display.
+      // The truth is the in-process parked deferreds. On cancel they are rejected with cancelAsk; if the process dies the whole
+      // registry disappears — a `resolved` event will never come. Keeping them would display a question that can never be answered.
       const progress = progressLog();
       const state = reduceAll([
         progress("run-started", started()),
@@ -1085,8 +1084,8 @@ describe("reduceWorkflowRunsState：升级问答", () => {
   );
 
   it("同 runId 再收 run-started 也清掉上一世的停驻问题（进程内 cancel→resume）", () => {
-    // In the new life that ask reruns, the actor asks again and gets a new qid; keeping the old one would only leave a residue
-    // whose answer never arrives and that no one is waiting for anymore.
+    // In the new life that ask will re-run, the actor will ask again and get a new qid; keeping the old one would only be a
+    // residue no one will ever answer or wait for.
     const progress = progressLog();
     const state = reduceAll([
       progress("run-started", started()),
@@ -1180,9 +1179,9 @@ describe("reduceWorkflowRunsState：纯度", () => {
   });
 });
 
-// ── Adaptive concurrency (docs/dynamic-workflow/concurrency.md, "Protocol and UI"): node-waiting / node-executing /
-// concurrency-changed, three observation events. They are in the escalation family — the engine makes no decisions from them;
-// facts observed by the driver / governor land via record(), and the reduction likewise only "takes note", deriving no clock.
+// ── Adaptive concurrency (docs/dynamic-workflow/concurrency.md "Protocol and UI"): the node-waiting / node-executing /
+// concurrency-changed observation events. They are the same family as escalations — the engine makes no decisions from
+// them; they are facts observed by the driver / governor recorded via record(); the reduction likewise only "writes it down" and derives no clocks.
 describe("reduceWorkflowRunsState：自适应并发", () => {
   const ASK = { siteId: "ask#1", ordinal: 1 };
   const ACTOR = { siteId: "actor#1", ordinal: 1 };
@@ -1359,10 +1358,10 @@ describe("reduceWorkflowRunsState：自适应并发", () => {
     expect(reduceWorkflowRunsState(changed, changeEvent)).toBeNull();
   });
 
-  // ── This run's own bound (docs/dynamic-workflow/concurrency.md, "Two bounds on a run") ──
-  // The `run-started` payload carries the engine's `caps.maxConcurrency` plus the default concurrency D at the moment the
-  // CLI mints the payload (the wire key `concurrencyCeiling` predates "default concurrency" and is kept for old-client
-  // compatibility). The two bounds are independent: the governor squeezes the shared bucket, the user tunes this one — above or below D.
+  // ── This run's own bound (docs/dynamic-workflow/concurrency.md "Two bounds on a run") ──
+  // The `run-started` payload carries the engine's `caps.maxConcurrency` and the default concurrency D at the moment the CLI
+  // forged the payload (the wire key `concurrencyCeiling` predates "default concurrency" and is kept for old-client compatibility).
+  // The two bounds are unrelated: the governor squeezes the shared bucket, the user sets this one — above or below D, either is fine.
 
   const LIMITED = { ...started({ maxConcurrency: 3 }), concurrencyCeiling: 8 };
 
@@ -1410,7 +1409,7 @@ describe("reduceWorkflowRunsState：自适应并发", () => {
       progress("concurrency-changed", { key: "k", previous: 12, next: 9, reason: "limit_lowered" }),
     );
     expect(lowered.runs[0]?.concurrency).toEqual({ key: "k", cap: 9, ceiling: 8, limit: 20 });
-    // Same for a run at the default: the watermark is no longer "the largest cap ever seen".
+    // Runs at default are the same: the ceiling is no longer "the largest cap ever seen".
     const plain = progressLog();
     const atDefault = step(
       undefined,
@@ -1448,8 +1447,8 @@ describe("reduceWorkflowRunsState：自适应并发", () => {
     expect(resumed.runs[0]?.concurrency).toEqual({ key: "k", cap: 2, ceiling: 8, limit: 3 });
   });
 
-  // The ceiling is recorded separately (docs/dynamic-workflow/concurrency.md, "Protocol state"): the stepper in the settings
-  // popover stops here, and a run running at the ceiling has no `concurrency` to hang it on.
+  // The ceiling is recorded separately (docs/dynamic-workflow/concurrency.md "Protocol state"): the "settings" popover's
+  // stepper rests there, while runs running at the ceiling have no `concurrency` to hang it on.
   it("run-started 记下 concurrencyCeiling，不论本 run 是否低于它", () => {
     const progress = progressLog();
     const atCeiling = step(
@@ -1476,13 +1475,12 @@ describe("reduceWorkflowRunsState：自适应并发", () => {
     expect(again.runs[0]?.concurrencyCeiling).toBe(8);
   });
 
-  // ── Changing the bound in flight (docs/dynamic-workflow/concurrency.md) ──
-  // A revision that only changes `max_concurrency` takes effect in place: the run is not stopped and no new one starts; the
-  // engine sends `run-caps-changed` after updating caps. The payload has the same shape as `run-started` (`caps` plus the
-  // CLI-spliced `concurrencyCeiling`), so the reduction must reach the same state as `run-started` — one number entering via
-  // two paths must not yield two readings.
+  // ── In-flight bound changes (docs/dynamic-workflow/concurrency.md) ──────────────────────────────────
+  // Revisions that only change `max_concurrency` take effect in place: they do not stop the run or start another; the engine
+  // changes caps and emits `run-caps-changed`. The payload has the same shape as `run-started` (`caps` + the CLI-assembled
+  // `concurrencyCeiling`), so the reduction must reach the same state as `run-started` — one number entering via two paths must not yield two readings.
 
-  /** Payload of `run-caps-changed`; `ceiling: null` = this payload carries no ceiling (the same old-CLI case as run-started). */
+  /** The `run-caps-changed` payload; `ceiling: null` = this payload carries no ceiling (the same old-CLI case as run-started). */
   const capsChanged = (maxConcurrency: unknown, previous = 3, ceiling: unknown = 8) => ({
     runId: RUN_ID,
     caps: { maxConcurrency },
@@ -1500,7 +1498,7 @@ describe("reduceWorkflowRunsState：自适应并发", () => {
     const retuned = step(throttled, progress("run-caps-changed", capsChanged(2)));
     expect(retuned.runs[0]?.concurrency).toEqual({ key: "k", cap: 6, ceiling: 8, limit: 2 });
     expect(() => workflowRunsStateSchema.parse(retuned)).not.toThrow();
-    // Later shared-bucket fluctuations still leave the new bound alone (the same rule as a bound arriving via run-started).
+    // Later shared-bucket swings still do not touch the new bound (the same rule as a bound delivered via run-started).
     const recovered = step(
       retuned,
       progress("concurrency-changed", { key: "k", previous: 6, next: 8, reason: "recovered" }),
@@ -1546,7 +1544,7 @@ describe("reduceWorkflowRunsState：自适应并发", () => {
     const state = step(undefined, progress("run-started", LIMITED));
     expect(state.runs[0]?.concurrency).toEqual({ cap: 8, ceiling: 8, limit: 3 });
     const lifted = step(state, progress("run-caps-changed", capsChanged(8)));
-    // Byte-identical to a run that was never throttled (the ceiling is kept separately on concurrencyCeiling).
+    // Byte-identical to a run that was never throttled (the ceiling is recorded separately on concurrencyCeiling).
     expect(lifted.runs[0]).not.toHaveProperty("concurrency");
     expect(lifted.runs[0]?.concurrencyCeiling).toBe(8);
   });
@@ -1583,7 +1581,7 @@ describe("reduceWorkflowRunsState：自适应并发", () => {
     const state = step(undefined, progress("run-started", LIMITED));
     const retuned = step(state, progress("run-caps-changed", capsChanged(2, 3, null)));
     expect(retuned.runs[0]?.concurrency).toEqual({ cap: 8, ceiling: 8, limit: 2 });
-    // The ceiling was never known (an old-CLI run): there is no way to tell whether the number is throttled, so the bound is untouched.
+    // The ceiling was never known (an old CLI's run): whether this number was throttled cannot be judged, so the bound is untouched.
     const blind = progressLog();
     const unknown = step(undefined, blind("run-started", started({ maxConcurrency: 3 })));
     const after = step(unknown, blind("run-caps-changed", capsChanged(2, 3, null)));
@@ -1609,11 +1607,11 @@ describe("reduceWorkflowRunsState：自适应并发", () => {
   });
 });
 
-// ── Subagent model (docs/dynamic-workflow/launch.md) ──
-// The `subagent_model` of `CreateWorkflow` / `AmendWorkflow` lands in the `run-started` payload as
-// `subagentModel` (canonical string `providerId/modelId`, optionally with a `$reasoningLevel` suffix). Same family as
-// `concurrency.limit`: a condition the user set for this run, untouched for the whole run. The main agent always stays
-// on the session model, so this key speaks only for the subagent side.
+// ── Subagent model (docs/dynamic-workflow/launch.md) ─────────────────────────────────────────
+// `CreateWorkflow` / `AmendWorkflow`'s `subagent_model` lands on the `run-started` payload as
+// `subagentModel` (the canonical `providerId/modelId` string, optionally with a `$reasoningLevel` suffix). Same family as
+// `concurrency.limit`: a condition the user set for this run, immutable for its whole life. The main agent always stays on
+// the session model, so this key speaks only of the subagent side.
 describe("reduceWorkflowRunsState：子代理模型", () => {
   const withModel = (subagentModel: unknown) => ({ ...started(), subagentModel });
 
@@ -1650,7 +1648,7 @@ describe("reduceWorkflowRunsState：子代理模型", () => {
   });
 
   it("重臂不带这个键时保留已知值，而不是让 run 看上去换回了会话模型", () => {
-    // Old CLIs do not send it; erasing an already displayed model is the worst kind of degradation (the reading changed, the fact did not).
+    // Old CLIs do not send it; erasing an already-displayed model is the worst kind of degradation (the reading changed, the fact did not).
     const progress = progressLog();
     const first = step(undefined, progress("run-started", withModel("zhipu/glm-5.3-flash")));
     const resumed = step(first, progress("run-started", started()));
@@ -1675,15 +1673,14 @@ describe("reduceWorkflowRunsState：子代理模型", () => {
   });
 });
 
-// ── User-facing artifacts (docs/dynamic-workflow/authoring.md, "How the user sees them") ──
-// ⚠ Terminology: an artifact here is output a script publishes via `artifact.*` for the **user** to see, not the
-// "script top-level return value" behind resultPreview (the engine also calls that an artifact internally, for the model).
-// See workflow-artifacts.ts.
+// ── User-facing artifacts (docs/dynamic-workflow/authoring.md "How the user sees them") ─────────────────
+// ⚠ Terminology: the artifact here is output a script published to the **user** via `artifact.*`, not the "script top-level
+// return value" behind resultPreview (also called artifact inside the engine, shown to the model). See workflow-artifacts.ts.
 //
 // Three reduction rules, each with its own key:
-//   artifact-published ⇒ upsert by **artifact id** (republishing the same id = a new version overwrites the same card)
-//   artifact-failed    ⇒ touches no state (a failed publish claims no id / kind / version and goes only to the event log)
-//   report(artifactId) ⇒ increments that id's itemCount (the dedup key is still (siteId, ordinal))
+//   artifact-published ⇒ upsert by **artifact id** (republishing the same id = a new version overwriting the same card)
+//   artifact-failed    ⇒ touches no state (a failed publish claims no id / kind / version; it only enters the event log)
+//   report(artifactId) ⇒ that id's itemCount +1 (the dedup key is still (siteId, ordinal))
 describe("reduceWorkflowRunsState：用户面产物", () => {
   const PUBLISHED_AT = 1_756_100_000_000;
   const record = (overrides: Record<string, unknown> = {}) => ({
@@ -1708,7 +1705,7 @@ describe("reduceWorkflowRunsState：用户面产物", () => {
         artifact: record(),
       }),
     ]);
-    // Trimming is the whole point of this key: high-frequency state frames only answer "what exists, which version, did it change".
+    // Trimming is this key's entire reason to exist: high-frequency state frames only answer "what exists, which version, did it change".
     expect(state?.runs[0]?.artifacts).toEqual([
       {
         id: "book",
@@ -1811,8 +1808,8 @@ describe("reduceWorkflowRunsState：用户面产物", () => {
         item: { round: 2 },
         artifactId: "perf",
       }),
-      // A duplicate declaration of the same spec is a no-op on the engine side, but if a version record really arrives again,
-      // the count must survive: zeroing it would zero the refresh signal, and the dashboard would stop fetching incrementally.
+      // A duplicate declaration of the same spec is a no-op on the engine side, but if a version record really arrives again the count must survive:
+      // zeroing it would zero the refresh signal and the board would stop fetching incrementally.
       progress("artifact-published", {
         instance: { siteId: "artifact#1", ordinal: 2 },
         artifact: { id: "perf", kind: "chart", version: 1, publishedAt: PUBLISHED_AT },
@@ -1835,8 +1832,8 @@ describe("reduceWorkflowRunsState：用户面产物", () => {
         error: { code: "ArtifactSourceMissing", message: "out/book.pdf does not exist" },
       }),
     );
-    // The card does not appear at all — showing a failure card for a deliverable that does not exist would make the user see
-    // something that does not exist, and the script may well have caught it and successfully republished after the subagent rewrote it.
+    // The card never appears — showing a failure card for a deliverable that does not exist would make the user see something
+    // that is not there, and the script very likely caught it and republished successfully after the subagent rewrote it.
     expect(failed.runs[0]?.artifacts).toBeUndefined();
     // But the watermark still advances: the event log needs to know there is new content.
     expect(failed.runs[0]?.lastEventSequence).toBeGreaterThan(started1.runs[0]!.lastEventSequence);
@@ -1910,13 +1907,13 @@ describe("reduceWorkflowRunsState：用户面产物", () => {
         item: { round: 2 },
         artifactId: "perf",
       }),
-      // Untagged entries still go only to the Results section and touch no artifact.
+      // Untagged entries still go only to the Results section and touch no artifacts.
       progress("report", { instance: { siteId: "report#2", ordinal: 1 }, item: "plain" }),
     ]);
     expect(state?.runs[0]?.artifacts).toEqual([
       { id: "perf", kind: "chart", version: 1, itemCount: 2 },
     ]);
-    // One channel, one set of limits: tagging just adds a destination, it does not reroute.
+    // One channel, one bound set: tagging only adds a destination, it does not reroute.
     expect(state?.runs[0]?.reports).toEqual([
       { siteId: "report#1", ordinal: 1, preview: '{\n  "round": 1\n}', artifactId: "perf" },
       { siteId: "report#1", ordinal: 2, preview: '{\n  "round": 2\n}', artifactId: "perf" },
@@ -2009,7 +2006,7 @@ describe("reduceWorkflowRunsState：用户面产物", () => {
     );
     expect(overflowed.runs[0]?.artifacts).toHaveLength(WORKFLOW_RUNS_LIMITS.maxArtifacts);
     expect(overflowed.runs[0]?.truncated).toBe(true);
-    // Reject new, keep updating existing: freezing a card's version at v1 is more misleading than listing one card fewer.
+    // Reject-new but keep updating existing ones: freezing a card's version at v1 is more misleading than listing one fewer card.
     const updated = step(
       overflowed,
       progress("artifact-published", {
@@ -2048,8 +2045,8 @@ describe("reduceWorkflowRunsState：用户面产物", () => {
     });
     const published = step(base, publishEvent);
     expect(reduceWorkflowRunsState(published, publishEvent)).toBeNull();
-    // artifact-failed changes no **display** state but still advances the watermark (the event log must know there is new
-    // content), so its first occurrence is not null — only its replay is.
+    // artifact-failed changes no **display** state but still advances the watermark (the event log must know there is new content),
+    // so its first occurrence is not null; only the replay is.
     const failEvent = progress("artifact-failed", {
       instance: { siteId: "artifact#2", ordinal: 1 },
       id: "gone",
@@ -2061,7 +2058,7 @@ describe("reduceWorkflowRunsState：用户面产物", () => {
   });
 });
 
-// ── Phase-entry records (docs/dynamic-workflow/presentation.md) ──
+// ── Phase entry records (docs/dynamic-workflow/presentation.md) ──────────
 describe("workflowRuns reducer · run-launched（声明阶段表）", () => {
   it("run-launched 携 phaseNames → run.phaseNames 按声明序落位，裁到 maxPhases × maxPhaseNameLength", () => {
     const progress = progressLog();
@@ -2095,12 +2092,12 @@ describe("workflowRuns reducer · run-launched（声明阶段表）", () => {
       progress("run-launched", {
         inputId: "in-1",
         phaseNames: ["A", "B", "C"],
-        // B runs alongside A; every other item should be dropped: self-reference, out of range, negative, fractional, duplicate, and a fourth row beyond the name table.
+        // B runs in parallel with A; every other item must be dropped: self-reference, out of range, negative, fractional, duplicate, and a fourth row outside the name table.
         phaseAlongside: [[], [0, 1, 7, -1, 1.5, 0], [3], [0]],
       }),
     );
     const run = state.runs[0]!;
-    // The table is clipped to the accepted name table — the indices point at it, and the extra row has no phase to attach to.
+    // The table is trimmed to the accepted name table — the indexes point at it; an extra row has no site to hang on.
     expect(run.phaseAlongside).toHaveLength(3);
     expect(run.phaseAlongside).toEqual([[], [0], []]);
     expect(workflowRunsStateSchema.safeParse(state).success).toBe(true);
@@ -2109,14 +2106,14 @@ describe("workflowRuns reducer · run-launched（声明阶段表）", () => {
   it("phaseNames 不在场、或没有一项并行 → phaseAlongside 一起不建键", () => {
     const progress = progressLog();
     const base = step(undefined, progress("run-started", started()));
-    // When the name table is rejected (absent), the indices have no table to point at and the whole table is dropped with it.
+    // When the name table is rejected (absent) the indexes have no table to point at; the whole table is dropped.
     const nameless = step(
       base,
       progress("run-launched", { inputId: "in-1", phaseAlongside: [[1], [0]] }),
     );
     expect(nameless.runs[0]?.phaseNames).toBeUndefined();
     expect(nameless.runs[0]?.phaseAlongside).toBeUndefined();
-    // The name table stands but nothing remains in it: absence means "this track is a straight line", not a list of empty arrays.
+    // The name table stands but nothing remains: absence means "this track is a straight line", not an array of empty arrays.
     const straight = step(
       base,
       progress("run-launched", {
@@ -2135,13 +2132,20 @@ describe("workflowRuns reducer · run-launched（声明阶段表）", () => {
       step(undefined, progress("run-started", started())),
       progress("run-launched", { inputId: "in-1", phaseNames: ["plan", "verify"] }),
     );
-    const settled = step(launched, progress("run-settled", { status: "stopped", stopReason: "user" }));
+    const settled = step(
+      launched,
+      progress("run-settled", { status: "stopped", stopReason: "user" }),
+    );
     const resumed = step(settled, progress("run-started", started()));
     expect(resumed.runs[0]?.phaseNames).toEqual(["plan", "verify"]);
     expect(
       reduceWorkflowRunsState(
         resumed,
-        progress("run-launched", { inputId: "in-1", phaseNames: ["plan", "verify"] }, { sequence: 3 }),
+        progress(
+          "run-launched",
+          { inputId: "in-1", phaseNames: ["plan", "verify"] },
+          { sequence: 3 },
+        ),
       ),
     ).toBeNull();
   });
@@ -2172,7 +2176,7 @@ describe("workflowRuns reducer · phase-entered", () => {
       progress("phase-entered", { name: "plan", ordinal: 1 }),
       progress("phase-entered", { name: "plan", ordinal: 2 }),
     ]);
-    // On resume the engine re-emits them counting from 1 again: rounds must not become 3 or 4.
+    // The engine counts from 1 and resends on resume: rounds must not become 3, 4.
     const replayed = reduceAll(
       [
         progress("phase-entered", { name: "plan", ordinal: 1 }),
@@ -2208,16 +2212,15 @@ describe("workflowRuns reducer · phase-entered", () => {
     expect(state?.runs[0]?.phases).toHaveLength(WORKFLOW_RUNS_LIMITS.maxPhases);
     expect(state?.runs[0]?.phases?.[0]).toEqual({ name: "p0", rounds: 2 });
     expect(state?.runs[0]?.truncated).toBe(true);
-    // The current phase still follows the last event — an out-of-range phase cannot enter the table, but "where control flow is" is a fact.
+    // currentPhase still follows the last one — an out-of-bound phase cannot enter the table, but "where control flow is" is a fact.
     expect(state?.runs[0]?.currentPhase).toBe("p0");
   });
 });
 
-// ── An instance's birth-phase coordinate (docs/dynamic-workflow/presentation.md) ──
-// The static causal graph copies shared sites per phase, and runtime instances must carry the same coordinate, otherwise
-// every card would claim all instances ("all subagents appear in all phases"). The engine stamps it only on **birth events**:
-// actor-created / node-queued / node-settled { cached }; other node events do not carry it, and this reducer carries it
-// forward, following the actorSiteId precedent.
+// ── Birth-phase coordinates of instances (docs/dynamic-workflow/presentation.md) ──────
+// The static causality graph shares sites across phases, so runtime instances must carry the same coordinate, otherwise every
+// card would claim every instance ("all subagents appear in all phases"). The engine stamps only on **birth events**:
+// actor-created / node-queued / node-settled { cached }; other node events do not carry it, and this reducer carries it forward following the actorSiteId precedent.
 describe("workflowRuns reducer · phaseName（实例的出生阶段）", () => {
   it("actor 从 actor-created 取 phaseName", () => {
     const progress = progressLog();
@@ -2272,7 +2275,7 @@ describe("workflowRuns reducer · phaseName（实例的出生阶段）", () => {
     const progress = progressLog();
     const state = reduceAll([
       progress("run-started", started()),
-      // The resume / amend-resume completion-hit short circuit: it skips node-queued, so settled is its own birth event.
+      // resume / amend-resume's completed-hit short-circuit: never through node-queued, so the settle is its birth event.
       progress("node-settled", {
         instance: { siteId: "ask#1", ordinal: 2 },
         actor: { siteId: "actor#1", ordinal: 2 },
@@ -2310,7 +2313,7 @@ describe("workflowRuns reducer · phaseName（实例的出生阶段）", () => {
     ]);
     expect(state?.runs[0]?.actors[0]?.phaseName).toBe(bounded);
     expect(state?.runs[0]?.nodes[0]?.phaseName).toBe(bounded);
-    // Still within the bound after truncation: a 138-character phase name must not get every frame after the parent session rejected by the renderer.
+    // Still within bounds after trimming: a 138-char phase name must not get every frame after the parent session rejected by the renderer.
     expect(workflowRunsStateSchema.parse(state)).toEqual(state);
   });
 
@@ -2326,7 +2329,7 @@ describe("workflowRuns reducer · phaseName（实例的出生阶段）", () => {
       }),
       progress("node-settled", { instance: { siteId: "ask#1", ordinal: 1 }, outcome: "ok" }),
     ]);
-    // The projection compares JSON snapshots byte by byte to detect change: not even a key with an undefined value may appear.
+    // The projection compares snapshots byte-wise as JSON to decide "changed or not": not even a key with an undefined value may appear.
     expect(JSON.stringify(state)).not.toContain("phaseName");
     expect(state?.runs[0]?.actors).toEqual([
       { siteId: "actor#1", ordinal: 1, name: "reader", status: "completed" },
@@ -2379,9 +2382,8 @@ describe("run-launched：发起锚点事件只抬水位（apps/zcode-cli/package
   });
 });
 
-// ── An ask's progress readings (docs/dynamic-workflow/presentation.md, "The run state the pane draws") ──
-// The phase can only say "running", not what is running or how far along; these keys are the raw material for the
-// GetWorkflowRun situation report.
+// ── One ask's progress readings (docs/dynamic-workflow/presentation.md "The run state the pane draws") ──
+// A phase can only say "running", not what is running or how far along; these keys are the raw material for GetWorkflowRun's situation report.
 describe("workflowRuns reducer · node-progress（ask 的任务与进度读数）", () => {
   const ASK = { siteId: "ask#1", ordinal: 1 };
   const ACTOR = { siteId: "actor#1", ordinal: 1 };
@@ -2442,7 +2444,7 @@ describe("workflowRuns reducer · node-progress（ask 的任务与进度读数�
       toolCalls: 7,
       lastTool: { name: "Bash", target: "pnpm exec vitest run packages/shared" },
     });
-    // Only the watermark advances; no other run-level fact is touched.
+    // Only the watermark advances; not one other run-level fact moves.
     expect(next.runs[0]?.usage).toEqual(before.usage);
     expect(next.runs[0]?.actors).toEqual(before.actors);
     expect(next.runs[0]?.lastEventSequence).toBe(before.lastEventSequence + 1);
@@ -2496,8 +2498,7 @@ describe("workflowRuns reducer · node-progress（ask 的任务与进度读数�
     expect(node).not.toHaveProperty("turn");
     expect(node).not.toHaveProperty("toolCalls");
     expect(node).not.toHaveProperty("lastTool");
-    // The first progress of the new life is round 1: with max it would show 7 here, and the pane would read a freshly
-    // started ask as one that has been running for ages.
+    // The new life's first progress event is round 1: with max this would show 7, and the UI would read a freshly started ask as one running for ages.
     const restarted = step(
       requeued,
       progress("node-progress", { instance: ASK, turn: 1, toolCalls: 0 }),
@@ -2511,8 +2512,8 @@ describe("workflowRuns reducer · node-progress（ask 的任务与进度读数�
   });
 
   it("缓存命中的结算也是出生事件：读数清空，任务摘要留着（完结缓存按输入哈希命中，指令逐字相同）", () => {
-    // This pins "a node that never took a step must not show the previous life's readings". The path taken is the resume
-    // completion-hit short circuit (engine.ts:228/232): that node-settled has no preceding queued — it is its own birth event.
+    // This pins "a node that did zero steps must not display the previous life's readings". It exercises resume's completed-hit
+    // short-circuit (engine.ts:228/232): that node-settled has no preceding queued — it is itself the birth event.
     const { progress, state } = assignedState();
     const lived = step(
       state,
@@ -2630,14 +2631,14 @@ describe("workflowRuns reducer · node-progress（ask 的任务与进度读数�
         lastTool: { name: "Edit", target: "packages/shared/src/index.ts" },
       }),
     );
-    // An event carrying only toolCalls: turn and lastTool are kept, not wiped.
+    // The one carrying only toolCalls: turn and lastTool are kept, not erased.
     const second = step(first, progress("node-progress", { instance: ASK, toolCalls: 12 }));
     expect(second.runs[0]?.nodes[0]).toMatchObject({
       turn: 4,
       toolCalls: 12,
       lastTool: { name: "Edit", target: "packages/shared/src/index.ts" },
     });
-    // Taking max would freeze this at 4; last-writer-wins is what lets a rerun ask fall back to 1.
+    // Taking max would freeze this at 4; last-writer-wins is what lets a re-run's ask go back to 1.
     const third = step(second, progress("node-progress", { instance: ASK, turn: 1, toolCalls: 0 }));
     expect(third.runs[0]?.nodes[0]).toMatchObject({ turn: 1, toolCalls: 0 });
   });
@@ -2675,7 +2676,7 @@ describe("workflowRuns reducer · node-progress（ask 的任务与进度读数�
     const first = step(state, progress("node-progress", payload));
     const second = step(first, progress("node-progress", payload));
     expect(second.runs[0]?.nodes).toEqual(first.runs[0]?.nodes);
-    // Only replaying the same event (same sequence) is a true no-change: the watermark does not move and the reducer returns null.
+    // Only replaying the same event (same sequence) is true "no change": the watermark does not move and the reducer returns null.
     const replay = reduceWorkflowRunsState(first, {
       runId: RUN_ID,
       toolCallId: "tc-1",

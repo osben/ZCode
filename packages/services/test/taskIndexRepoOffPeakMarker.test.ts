@@ -1,6 +1,7 @@
-// D48 first-class row marker: repository contract for offPeakTaskId as a persisted task meta field (MR1, no UI behavior change).
-// Mirrors the three invariants of cronAutomationId: meta_json is the source of truth + the index column as fallback,
-// preserving the existing value when a runtime snapshot lacks the marker, and bootstrap idempotently backfilling existing off-peak sessions.
+// D48 first-class row stamping: repository contract for offPeakTaskId as a persisted task meta field (MR1, no UI behavior change).
+// Mirrors the three cronAutomationId invariants: meta_json is authoritative with the index column as
+// fallback, runtime snapshots without the marker preserve the existing value, and bootstrap idempotently
+// backfills existing off-peak sessions.
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -23,7 +24,7 @@ afterEach(async () => {
   repo.close();
   setDataBaseDir(null);
   if (process.platform === "win32") {
-    // Windows needs to wait for SQLite to release the file handle to avoid EPERM during temp dir cleanup.
+    // Windows needs to wait for SQLite to release the file handle, avoiding EPERM during temp dir cleanup.
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
   rmSync(tempDir, { recursive: true, force: true });
@@ -79,7 +80,7 @@ describe("TaskIndexRepo off-peak marker (D48)", () => {
 
   it("运行态快照不带标记时保全已有 offPeakTaskId", async () => {
     await repo.syncTaskMeta({ meta: task({ taskId: "s-2", offPeakTaskId: "offpeak-2" }) });
-    // The runtime protocol snapshot's meta carries no off-peak marker; the sync must not wipe out the ownership.
+    // A runtime protocol snapshot's meta carries no off-peak marker; syncing must not wash away the ownership.
     await repo.syncTaskMeta({ meta: task({ taskId: "s-2" }) });
 
     const meta = await repo.getTaskMeta({
@@ -103,8 +104,8 @@ describe("TaskIndexRepo off-peak marker (D48)", () => {
   });
 
   it("bootstrap 幂等回填存量 off-peak 会话的标记", async () => {
-    // Legacy shape: off_peak_tasks is already bound to the session, but the tasks row predates the marker and has none.
-    // Do one repo operation first to trigger lazy initialization so getRepoDatabase can get a handle.
+    // Legacy shape: off_peak_tasks has a bound session, but the tasks row predates the stamp and has no marker.
+    // Run one repo operation first to trigger lazy initialization so getRepoDatabase can get a handle.
     await repo.syncTaskMeta({ meta: task({ taskId: "s-legacy" }) });
     const offPeakRepo = new OffPeakTaskRepo();
     await offPeakRepo.create(
@@ -125,7 +126,7 @@ describe("TaskIndexRepo off-peak marker (D48)", () => {
       .run("s-legacy");
     repo.close();
 
-    // Re-run bootstrap (equivalent to the first start after an upgrade): the backfill must hit and be repeatable.
+    // Bootstrap again (equivalent to first launch after upgrade): the backfill must hit and be repeatable.
     repo = new TaskIndexRepo();
     const meta = await repo.getTaskMeta({
       workspacePath: "/workspace/project",
@@ -137,7 +138,7 @@ describe("TaskIndexRepo off-peak marker (D48)", () => {
   });
 
   it("回填不覆盖已有标记且对无关任务无副作用", async () => {
-    // Tasks with an existing explicit marker (different value) and plain tasks must not be rewritten by the backfill.
+    // Tasks with an explicit marker (a different value) and plain tasks must not be rewritten by the backfill.
     await repo.syncTaskMeta({ meta: task({ taskId: "s-4", offPeakTaskId: "offpeak-explicit" }) });
     await repo.syncTaskMeta({ meta: task({ taskId: "s-plain" }) });
     const offPeakRepo = new OffPeakTaskRepo();
@@ -172,8 +173,8 @@ describe("TaskIndexRepo off-peak marker (D48)", () => {
   });
 });
 
-// D48-A: put a task into the off-peak system group when it first gains the marker (mirroring ensureCronGroupMembership),
-// plus bootstrap completing membership for existing rows backfilled by the MR1 column.
+// D48-A: on first acquiring the marker the task joins the off-peak system group (mirroring ensureCronGroupMembership),
+// and bootstrap completes membership for legacy rows backfilled via the MR1 column.
 describe("TaskIndexRepo off-peak group membership (D48-A)", () => {
   const OFF_PEAK_GROUP_ID = "zcode-default-group-off-peak";
 
@@ -216,14 +217,14 @@ describe("TaskIndexRepo off-peak group membership (D48-A)", () => {
         ) VALUES ('custom-group', '/workspace/project', '/workspace/project', NULL, 'm-2', NULL, 1, 1, 1)`,
       )
       .run();
-    // First time gaining the marker: OR IGNORE must not override the membership the user arranged manually.
+    // First acquisition of the marker: OR IGNORE must not overwrite membership the user arranged manually.
     await repo.syncTaskMeta({ meta: task({ taskId: "m-2", offPeakTaskId: "offpeak-m2" }) });
 
     expect(membershipRow("m-2")?.group_id).toBe("custom-group");
   });
 
   it("bootstrap 为 MR1 列回填的存量标记行补成员关系", async () => {
-    // Legacy shape: the marker exists only in the projected column (MR1 backfill); meta_json has no field and membership was never written.
+    // Legacy shape: the marker exists only in the projection column (MR1 backfill); meta_json has no field and membership was never written.
     await repo.syncTaskMeta({ meta: task({ taskId: "m-3" }) });
     getRepoDatabase(repo)
       .prepare(`UPDATE tasks SET off_peak_task_id = ? WHERE task_id = ?`)
@@ -237,8 +238,9 @@ describe("TaskIndexRepo off-peak group membership (D48-A)", () => {
   });
 
   it("远程 workspace 存量行不回填成员关系（暂不支持远程闲时任务）", async () => {
-    // CR-01 scenario: the legacy remote row's workspace_key is already a remote identity, but the workspace_identity
-    // column is missing. If the backfill did not skip it, recomputing a local key from workspacePath would cross-write membership.
+    // CR-01 scenario: a legacy remote row has workspace_key already set to the remote identity, but the
+    // workspace_identity column is missing. If the backfill did not skip it, it would recompute a local
+    // key from workspacePath and write membership to the wrong rows.
     const remoteKey = "remote:ssh:10.0.0.8:2222:dev:/workspace/project";
     await repo.syncTaskMeta({ meta: task({ taskId: "m-remote" }) });
     getRepoDatabase(repo)
@@ -250,7 +252,8 @@ describe("TaskIndexRepo off-peak group membership (D48-A)", () => {
     repo.close();
 
     repo = new TaskIndexRepo();
-    // Trigger lazy initialization so the bootstrap backfill finishes; assert there is no remote-key membership and no cross-written local-key membership.
+    // Trigger lazy initialization so the bootstrap backfill finishes; assert there is neither a remote-key
+    // member nor a miswritten local-key member.
     await repo.getTaskMeta({ workspacePath: "/workspace/project", taskId: "m-remote" });
     expect(membershipRow("m-remote")).toBeUndefined();
   });

@@ -21,7 +21,7 @@ const logger = createServiceLogger("off-peak-service-test", {
   isDebugEnabled: false,
 });
 
-/** Programmable fake client: issues tickets in sequence / with a customizable batch status response. */
+/** Programmable fake client: issues tickets in sequence / custom batch status responses. */
 class FakeClient implements OffPeakServerClient {
   takeCalls: string[] = [];
   settleCalls: string[] = [];
@@ -399,14 +399,14 @@ describe("OffPeakTaskService 编排", () => {
     const cancelled = await service.cancelTask(created.offPeakTaskId);
     expect(cancelled?.status).toBe("cancelled");
     expect(stops).toEqual([{ conversationId: "conv-1" }]);
-    // A late terminal write-back from the loop cannot reverse out of a terminal state
+    // A late loop terminal write-back cannot leave the terminal state
     expect(
       await repo.markTerminal(created.offPeakTaskId, {
         status: "failed",
         endedAt: NOW + 1,
       }),
     ).toBeNull();
-    // settle outbox: cancellation reports settlement right away
+    // Settle outbox: cancellation reports settlement immediately
     expect(client.settleCalls).toEqual(["t-1"]);
     expect((await repo.get(created.offPeakTaskId))?.settledAt).toBe(NOW);
   });
@@ -415,15 +415,15 @@ describe("OffPeakTaskService 编排", () => {
     const created = await createTask();
     expect((await service.pauseTask(created.offPeakTaskId))?.status).toBe("paused");
 
-    // Ticket alive (queued): no re-taking of a number
+    // Ticket alive (queued): no re-ticketing
     client.statusResponse = {
       tickets: [{ ticketId: "t-1", state: "queued", position: 2 }],
     };
     await service.continueTask(created.offPeakTaskId);
-    expect(client.takeCalls).toHaveLength(1); // still only the one from creation
+    expect(client.takeCalls).toHaveLength(1); // still only the creation call
     expect((await repo.get(created.offPeakTaskId))?.queuePosition).toBe(2);
 
-    // Ticket voided (expired): Continue triggers re-taking a number
+    // Ticket voided (expired): Continue triggers re-ticketing
     await service.pauseTask(created.offPeakTaskId);
     client.statusResponse = {
       tickets: [{ ticketId: "t-1", state: "expired" }],
@@ -445,19 +445,19 @@ describe("OffPeakTaskService 编排", () => {
       tickets: [
         { ticketId: "t-1", state: "ready" },
         { ticketId: "t-2", state: "queued", position: 5 },
-        { ticketId: "t-3", state: "expired" }, // paused: must not re-take a number
+        { ticketId: "t-3", state: "expired" }, // paused: must not be re-ticketed
       ],
     };
     await service.runSyncCycle();
 
     expect((await repo.get(a.offPeakTaskId))?.schedulable).toBe(true);
     expect((await repo.get(b.offPeakTaskId))?.queuePosition).toBe(5);
-    expect((await repo.get(c.offPeakTaskId))?.serverTicketId).toBe("t-3"); // not re-taken
-    expect(client.takeCalls).toHaveLength(3); // only the three creation take-number calls
+    expect((await repo.get(c.offPeakTaskId))?.serverTicketId).toBe("t-3"); // not re-ticketed
+    expect(client.takeCalls).toHaveLength(3); // only the three creation calls
     expect(wakes).toBe(1);
 
-    // A voided queued ticket automatically re-takes a number on the next round
-    await service.continueTask(c.offPeakTaskId); // ticket voided → re-take immediately (the 4th)
+    // A queued voided ticket is automatically re-ticketed on the next round
+    await service.continueTask(c.offPeakTaskId); // ticket voided, re-take immediately (4th call)
     expect(client.takeCalls).toHaveLength(4);
   });
 
@@ -496,7 +496,7 @@ describe("OffPeakTaskService 编排", () => {
     expect(after?.serverTicketId).toBe("t-2"); // new ticket
     expect(client.takeCalls).toEqual([created.offPeakTaskId, created.offPeakTaskId]);
 
-    // A cancelled task does not re-enter the queue
+    // Cancelled tasks are not requeued
     await service.cancelTask(created.offPeakTaskId);
     await service.handleTicketExpiredDuringRun(created.offPeakTaskId);
     expect((await repo.get(created.offPeakTaskId))?.status).toBe("cancelled");
@@ -513,7 +513,7 @@ describe("OffPeakTaskService 编排", () => {
       providerId: "account:zai-offpeak-idle-plan",
       modelId: "GLM-5.2",
     });
-    // Off-Peak is already a Submission; it cannot be cleared back to "choose later".
+    // Off-Peak already uses a Submission; it cannot be cleared to "decide later".
     expect(await service.updateTask(created.offPeakTaskId, { modelSelection: null })).toBeNull();
 
     await repo.updateSchedulingSnapshot(created.offPeakTaskId, {

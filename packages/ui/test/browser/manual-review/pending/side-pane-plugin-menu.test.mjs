@@ -118,7 +118,7 @@ for (const [width, locale, theme] of [
       await page.getByRole("menu").waitFor({ state: "hidden" });
       assert.deepEqual(await read("request"), expected);
       assert.equal((await read("opened")).tabs.length, 1);
-      // End/Enter 必须走菜单自己的键盘选择；最后一项是 Canvas。
+      // End/Enter must go through the menu's own keyboard selection; the last item is Canvas.
       await page.locator(add).focus();
       await page.keyboard.press("Enter");
       await page.locator(menuItems).last().waitFor();

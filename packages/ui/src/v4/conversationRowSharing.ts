@@ -1,11 +1,11 @@
 // Conversation row structural sharing (docs/performance/conversation-row-structural-sharing.md).
 //
-// Bug cause: when the store receives a whole snapshot / row.upserted it swaps in freshly deserialized row
-// objects, with zero sharing between historical snapshots; the SessionPane closure chain also retains
-// hundreds of historical snapshots, so a single 200KB tool inputText ended up stored a hundred-plus times
-// in the heap. Here, at the UI store layer, we swap the "deeply equal by value" parts back to the old
-// references. Only identity is reused, semantics unchanged, so this does not go into @zcode/shared's apply
-// (the client-side apply takes no semantic branches).
+// Bug cause: when the store received a full snapshot / row.upserted, it swapped in freshly
+// deserialized row objects with zero sharing between historical snapshots; the SessionPane
+// closure chain also retained hundreds of historical snapshots, so a single 200KB tool
+// inputText ended up stored more than a hundred times in the heap. This swaps deeply-equal
+// values back to old references at the UI store layer — reusing identity only, no semantic
+// change — so it stays out of @zcode/shared's apply (client-side apply takes no semantic branches).
 import type { ConversationRow } from "@zcode/shared/zcode-protocol-v4";
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -15,10 +15,11 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 }
 
 /**
- * Returns a value deeply equal to next, reusing as much of prev as possible: if fully equal, prev is
- * returned; on partial equality a new shell is created with prev's child values hung back on (including
- * old string references with identical content). Never mutates next — it may share structure with other
- * snapshots produced by apply. Only recurses into JSON shapes (plain objects / arrays).
+ * Returns a value deeply equal to next, reusing equal parts of prev where possible: returns
+ * prev when fully equal; on partial equality builds a new shell re-attaching prev's child
+ * values (including old string references with identical content). Never mutates next — it
+ * may share structure with other snapshots produced by apply. Recurses only through JSON
+ * shapes (plain objects / arrays).
  */
 export function shareStructure<T>(prev: unknown, next: T): T {
   if (Object.is(prev, next)) return prev as T;
@@ -52,14 +53,14 @@ export function shareStructure<T>(prev: unknown, next: T): T {
     if (allPrev) return prev as T;
     return (changed ? out : next) as T;
   }
-  // Primitives: strings with identical content are swapped back to the prev reference so next's copy can be GC'd.
+  // Primitives: identical strings swap back to the prev reference so next's copy can be GCed.
   return (typeof next === "string" && prev === next ? prev : next) as T;
 }
 
 /**
- * A row pool across stores: held by SessionDataLayer with a lifetime longer than a single store (a cold
- * open after keep-warm expiry creates a new store, but old snapshots may still be retained, and new rows
- * should reuse them). Holds only WeakRef, never extends a row's lifetime.
+ * Cross-store row pool: owned by SessionDataLayer with a lifetime longer than a single store
+ * (a cold open after keep-warm expiry creates a new store, but old snapshots may still be
+ * retained and new rows should reuse them). Holds WeakRefs only; never extends row lifetime.
  */
 export class ConversationRowPool {
   private readonly rows = new Map<string, WeakRef<ConversationRow>>();
@@ -67,7 +68,7 @@ export class ConversationRowPool {
     key: string;
     ref: WeakRef<ConversationRow>;
   }>(({ key, ref }) => {
-    // Only delete entries still pointing at the collected row, to avoid wrongly deleting a new row
+    // Only delete entries still pointing at the collected row, to avoid removing a newer row
     // registered later under the same key.
     if (this.rows.get(key) === ref) this.rows.delete(key);
   });
@@ -76,7 +77,7 @@ export class ConversationRowPool {
     return `${topic}\u0000${rowId}`;
   }
 
-  /** Registers without comparing: the new strings of a streaming row.delta are new anyway; per-frame deep comparison is pure overhead. */
+  /** Registers without comparing: strings from streaming row.delta are new anyway; per-frame deep comparison is pure overhead. */
   remember(topic: string, row: ConversationRow): void {
     const key = this.key(topic, row.rowId);
     if (this.rows.get(key)?.deref() === row) return;
@@ -92,7 +93,7 @@ export class ConversationRowPool {
     return shared;
   }
 
-  /** Shares row by row; reuses the prevWindow array when every row equals its position-matched prevWindow row. */
+  /** Shares row by row; reuses the prevWindow array when every row equals its prevWindow counterpart. */
   shareWindow(
     topic: string,
     rows: ConversationRow[],

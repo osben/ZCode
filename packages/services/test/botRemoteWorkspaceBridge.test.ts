@@ -219,7 +219,7 @@ describe("createBotRemoteWorkspaceService", () => {
 
     await bridge.getZCodeTaskService(target);
 
-    // settings 未配置 modelIoFullRetentionEnabled 时按默认关闭（=== true → false）下发
+    // When settings does not configure modelIoFullRetentionEnabled, it is delivered as disabled by default (=== true → false)
     expect(remoteZCodeAgentService.syncAppRuntimePreferences).toHaveBeenCalledWith({
       askUserQuestionAutoResolutionEnabled: false,
       modelIoFullRetentionEnabled: false,

@@ -12,8 +12,7 @@ function isSameWebRemoteControlStatus(
     left.sessionId === right.sessionId &&
     left.windowControlSessionId === right.windowControlSessionId &&
     left.mobileConnected === right.mobileConnected &&
-    left.mobileViewState?.activeWorkspaceKey ===
-      right.mobileViewState?.activeWorkspaceKey &&
+    left.mobileViewState?.activeWorkspaceKey === right.mobileViewState?.activeWorkspaceKey &&
     left.mobileViewState?.activeTaskId === right.mobileViewState?.activeTaskId &&
     left.mobileViewState?.updatedAt === right.mobileViewState?.updatedAt &&
     left.mobileDeviceInfo?.updatedAt === right.mobileDeviceInfo?.updatedAt &&
@@ -51,9 +50,7 @@ export function useWebRemoteControlStatus({
         return;
       }
       setStatus((currentStatus) =>
-        isSameWebRemoteControlStatus(currentStatus, nextStatus)
-          ? currentStatus
-          : nextStatus,
+        isSameWebRemoteControlStatus(currentStatus, nextStatus) ? currentStatus : nextStatus,
       );
     };
 
@@ -63,8 +60,10 @@ export function useWebRemoteControlStatus({
         applyStatus(nextStatus);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        // Bugfix: 远控连接状态来自 main/relay，桌面 UI 必须轮询才能感知手机打开的 task。
-        // 轮询失败属于高频诊断信息，只走 debug，避免生产日志随刷新频率增长。
+        // Bugfix: remote-control connection status comes from main/relay; the desktop UI must
+        // poll to notice tasks opened from the phone. Polling failure is high-frequency
+        // diagnostic info and goes only to debug, keeping production logs from growing with the
+        // refresh rate.
         logger.debug("[useWebRemoteControlStatus] 同步 Web 远程控制状态失败", {
           error: message,
         });
@@ -72,13 +71,13 @@ export function useWebRemoteControlStatus({
     };
 
     void syncStatus();
-    const disposeStatusChanged = platform.onWebRemoteControlStatusChanged?.(
-      (nextStatus) => {
-        // Bugfix: start/refresh 后如果只等 1s 轮询，手机立刻扫码时 main 还没拿到 renderer 同步的 task 快照。
-        // main 已经是远控 session/transport 状态事实源，这里优先消费事件推送，轮询只保留为旧平台兜底。
-        applyStatus(nextStatus);
-      },
-    );
+    const disposeStatusChanged = platform.onWebRemoteControlStatusChanged?.((nextStatus) => {
+      // Bugfix: if only the 1s poll is awaited after start/refresh, main may not yet have the
+      // renderer-synced task snapshot when the phone scans right away. main is already the
+      // source of truth for remote-control session/transport state, so event pushes are
+      // consumed first here and polling remains only as a legacy-platform fallback.
+      applyStatus(nextStatus);
+    });
     const intervalId = window.setInterval(() => {
       void syncStatus();
     }, intervalMs);

@@ -25,7 +25,7 @@ function isPidRunning(pid: number): boolean {
   }
   if (process.platform === "win32") {
     // Windows has no system ps; the ps bundled with Git neither guarantees stdout nor can reliably query native PIDs.
-    // process.kill(pid, 0) has already done the liveness probe for the current platform.
+    // process.kill(pid, 0) already covers liveness probing on this platform.
     return true;
   }
   const result = spawnSync("ps", ["-o", "stat=", "-p", String(pid)], {
@@ -89,9 +89,9 @@ describe("ZCodeStdioTransport", () => {
     const lines: string[] = [];
     const transport = new ZCodeStdioTransport(child, { onStderrLine: (line) => lines.push(line) });
     await new Promise<void>((resolve) => transport.onMessage(() => resolve()));
-    // Fix rationale: the post-exit process identity re-check can block the event loop, letting the 250ms drain
-    // timer fire before the stderr EOF is delivered. This case only verifies final-line collection; the real exit
-    // deadline is verified by later cases.
+    // Fix reason: post-exit process identity re-verification can block the event loop, letting the 250ms
+    // drain timer fire before stderr EOF is delivered. This case only verifies tail-line collection; the
+    // real exit deadline is verified by later cases.
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     try {
       await transport.disposeAndWait();
@@ -124,17 +124,19 @@ setInterval(() => {}, 1000);
     await delay(50);
 
     const startedAt = Date.now();
-    // Bugfix: the natural shutdown boundary of app-server --stdio is stdin EOF; every close must not go straight
-    // into a process-tree force-kill wait, otherwise even an agent that can finish cleanly adds seconds of window-close latency.
+    // Bugfix: the natural shutdown boundary of app-server --stdio is stdin EOF; every close must not go
+    // straight into process-tree force-kill waiting, or even an agent that can shut down cleanly adds
+    // seconds of window-close latency.
     await transport.disposeAndWait();
     const durationMs = Date.now() - startedAt;
 
     expect(child.exitCode).toBe(0);
-    // Threshold basis: the product constraint is that Windows cleanup lands within the Host's 3.5s service phase
-    // budget (disposeAndWaitOnce's absolute deadline is constructed from it). The original tight 1s assertion was
-    // flaky on some Windows machines — stdin pipe teardown + process-tree snapshot (WMI/CIM queries) together can
-    // legitimately take ~2s while graceful exit still holds (exitCode=0); that is machine performance variance, not
-    // a regression. Linux/mac keep the tight 1s threshold unchanged.
+    // Threshold rationale: the product constraint is that Windows cleanup fits within the Host's 3.5s
+    // service phase budget (disposeAndWaitOnce's absolute deadline is built from it). The original tight
+    // 1s assertion was unstable on some Windows machines — stdin pipe teardown plus a process-tree
+    // snapshot (WMI/CIM query) can legitimately take ~2s combined while a graceful exit still holds
+    // (exitCode=0); that is machine performance variance, not a regression. Linux/mac keep the tight 1s
+    // threshold unchanged.
     const shutdownBudgetMs = process.platform === "win32" ? 3_500 : 1_000;
     expect(durationMs).toBeLessThan(shutdownBudgetMs);
     activeChildren.delete(child);
@@ -181,8 +183,8 @@ setInterval(() => {}, 1000);
       expect(isPidRunning(descendantPid)).toBe(true);
 
       try {
-        // Fix rationale: during normal EOF shutdown the root process may exit first, but a detached MCP does not
-        // exit with it. disposeAndWait must finish descendant reclamation using the process-tree snapshot saved before EOF.
+        // Fix reason: during EOF-based normal shutdown the root process may exit first, but a detached MCP does
+        // not exit with it. disposeAndWait must finish descendant cleanup using the process tree snapshot saved before EOF.
         await transport.disposeAndWait();
         expect(isPidRunning(descendantPid)).toBe(false);
       } finally {
@@ -237,9 +239,10 @@ descendant.once("message", () => {
       expect(isPidRunning(descendantPid)).toBe(true);
 
       try {
-        // Fix rationale: the runtime protocol hot path must not scan the process table as an abnormal-exit fallback.
-        // The POSIX Host has already put the Agent in its own process group; after root exits, cleanup should
-        // reclaim same-group descendants by the owned PGID at the cleanup boundary, not rely on some runtime notification.
+        // Fix reason: the runtime protocol hot path must not scan the process table as an abnormal-exit fallback.
+        // The POSIX Host already puts the Agent in its own process group; after the root exits, cleanup should
+        // recover same-group descendants by the PGID it already owns at the cleanup boundary, not rely on some
+        // runtime notification.
         await transport.disposeAndWait();
         expect(isPidRunning(descendantPid)).toBe(false);
       } finally {
@@ -289,9 +292,9 @@ descendant.once("message", () => {
       await waitForExit(child);
 
       try {
-        // Fix rationale: Windows has no POSIX PGID; when root exits first you cannot re-taskkill the bare root.
-        // cleanup only follows ParentProcessId preserved via Win32_Process and pins descendant identity with
-        // CreationDate, so app quit can still reclaim the original task tree.
+        // Fix reason: Windows has no POSIX PGID; when the root exits first you cannot re-taskkill the bare root PID.
+        // cleanup only recovers members along the ParentProcessId kept by Win32_Process and pins descendant identity
+        // with CreationDate, so app quit can still recycle the original task tree.
         await transport.disposeAndWait();
         expect(isPidRunning(descendantPid)).toBe(false);
       } finally {
@@ -340,9 +343,9 @@ setInterval(() => {}, 1000);
     await allFramesPromise;
 
     try {
-      // Fix rationale: process cleanup once ran spawnSync("ps") before every telemetry frame; 300 messages would
-      // block the Host for seconds and blank the subagent panel. Runtime frames must be delivered directly; the
-      // full tree scan is only allowed after disposeAndWait has entered the exit stage.
+      // Fix reason: process cleanup used to synchronously spawnSync("ps") before every telemetry frame; 300 messages
+      // would block the Host for seconds and leave the subagent panel blank. Runtime frames must be delivered directly;
+      // the full tree scan is only allowed once disposeAndWait has entered the exit phase.
       expect(Date.now() - firstFrameAt).toBeLessThan(750);
       expect(receivedIndexes).toEqual(Array.from({ length: frameCount }, (_, index) => index));
       expect(isPidRunning(agentPid)).toBe(true);
@@ -417,7 +420,7 @@ process.stdout.write(frame, () => setTimeout(() => process.exit(0), 10));
   });
 });
 
-// Use PassThrough to fake the child's stdio, allowing precise control of stdout chunk boundaries.
+// Uses PassThrough to fake the child's stdio so stdout chunk boundaries can be controlled precisely.
 function createFakeChild() {
   const child = Object.assign(new EventEmitter(), {
     stdin: new PassThrough(),
@@ -457,7 +460,7 @@ describe("ZCodeStdioTransport stdout 分帧", () => {
       `${JSON.stringify(small[0])}\n${JSON.stringify(big)}\r\n${JSON.stringify(small[1])}\n\n${JSON.stringify(small[2])}\n${JSON.stringify(tail)}`,
       "utf8",
     );
-    // 7-byte odd chunks cut through UTF-8 multibyte sequences and CRLF.
+    // The odd 7-byte chunks cut through UTF-8 multi-byte sequences and CRLF.
     writeInChunks(child.stdout, bytes, 7);
     child.stdout.end();
 
@@ -474,10 +477,10 @@ describe("ZCodeStdioTransport stdout 分帧", () => {
       "utf8",
     );
 
-    // Bug cause: the old implementation ran indexOf("\n") over the whole accumulated buffer on every chunk, so V8
-    // had to flatten the cons string entirely; a 15MB session/read response arriving in 64KB chunks allocated
-    // gigabytes per pass (host CPU 100%). This counts the characters scanned for "\n"; a linear implementation
-    // should stay on the order of the frame length.
+    // Bug cause: the old implementation ran indexOf("\n") over the whole accumulated buffer for every chunk;
+    // V8 has to flatten the cons string entirely, so a 15MB session/read response arriving in 64KB chunks
+    // allocated gigabytes per pass (host CPU 100%).
+    // This counts characters scanned for "\n"; a linear implementation should stay on the order of the frame length.
     let scannedChars = 0;
     const originalIndexOf = String.prototype.indexOf;
     String.prototype.indexOf = function (this: string, search: string, position?: number) {

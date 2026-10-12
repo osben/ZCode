@@ -1,16 +1,16 @@
-// Display payloads face no gate at the envelope layer (docs/v4-refactor/10-protocol-spec.md §4.4.5,
-// docs/v4-refactor/04-sync-and-recovery.md closure rule 11).
+// Display payloads are not gated at the envelope layer (docs/v4-refactor/10-protocol-spec.md §4.4.5,
+// docs/v4-refactor/04-sync-and-recovery.md closed rule 11).
 //
-// Regression source (2026-09-21, sess_4142de31): the CLI added two lineage keys `resumedFrom` / `supersededBy`
-// to `list_workflow_runs` run rows (the contracts-side display reuses the tool **output** row schema, so a long
-// output field is a long wire field), and this side's mirror did not keep up. The old behavior was the whole
-// frame rejected by `proto.frameAssemblyInvalidPayload` → the recovery ladder retried on the same content →
-// the session stuck on fault.subscription.recoveryFailed, with every snapshot replaying the same stale payload, never self-healing.
-// The 2026-09-17 `providerStop` was the first incident of this kind.
+// Regression source (2026-09-21, sess_4142de31): the CLI added the `resumedFrom` / `supersededBy` lineage keys to the run
+// rows of `list_workflow_runs` (the contracts-side display reuses the tool **output** row schema, so a long output field is
+// a long wire field), and the mirror on this side did not keep up. The old behavior was the whole frame being rejected
+// with `proto.frameAssemblyInvalidPayload` → the recovery ladder retried on the same content → the session stuck at
+// fault.subscription.recoveryFailed, and every snapshot replayed the same stored payload, never self-healing.
+// The 2026-09-17 `providerStop` incident was the first of this kind.
 //
-// The contract now: **decorative payloads do not decide the life or death of a row / frame / subscription**.
-// Unrecognized display is dropped (the card degrades to plain text, exactly what the spec has always promised)
-// while the remaining fields project as usual. This file pins four embedding points + one whole-frame path.
+// The contract now: **decorative payloads do not decide the life or death of a row / frame / subscription**. An
+// unrecognized display is dropped (the card degrades to plain text, which is what the spec always promised), and the
+// remaining fields project as usual. This file pins four embed points + one whole-frame path.
 
 import { describe, expect, it } from "vitest";
 import {
@@ -27,7 +27,7 @@ import {
 const TOPIC = "conversation/session-display-tolerance";
 const SUBSCRIPTION_ID = "sub-display-tolerance";
 
-/** The card that genuinely sat in the store on the day of the incident: 5 of 20 rows carry lineage keys; two are reproduced here. */
+/** The card that really sat in the store on the incident day: 5 of 20 rows carried lineage keys; two of them are used here. */
 const POISONED_LIST_RUNS_DISPLAY = {
   kind: "list_workflow_runs",
   runs: [
@@ -40,7 +40,7 @@ const POISONED_LIST_RUNS_DISPLAY = {
       createdAt: 1_758_000_000_000,
       updatedAt: 1_758_000_100_000,
       spentTokens: 12_345,
-      // ↓ The two keys this side's mirror does not know (grown on the CLI-side output schema in 980e257bff)
+      // ↓ The two keys this side's mirror does not know (they grew on the CLI-side output schema in 980e257bff)
       resumedFrom: "dwfrun-3eadf667-8c25-43da-83b1-0e26e7f4897c",
     },
     {
@@ -59,7 +59,7 @@ const POISONED_LIST_RUNS_DISPLAY = {
   truncated: true,
 } as const;
 
-/** A payload this end recognizes, proving "no gate" does not mean "no parsing". */
+/** A valid payload this side recognizes, proving that "ungated" does not mean "unparsed". */
 const VALID_DISPLAY = {
   kind: "task_output",
   retrievalStatus: "success",
@@ -87,7 +87,7 @@ describe("display 载荷在信封层不设门", () => {
     const parsed = toolCallRowSchema.safeParse(toolRow(POISONED_LIST_RUNS_DISPLAY));
     expect(parsed.success).toBe(true);
     if (!parsed.success) return;
-    // The card is gone (the renderer degrades to plain text on that basis), but the row itself is intact — this is the weight a "decorative payload" should carry.
+    // The card is gone (the renderer degrades to plain text accordingly), but the row itself is intact — that is the proper weight of a "decorative payload".
     expect(parsed.data.display).toBeUndefined();
     expect(parsed.data.toolCallId).toBe("call-1");
     expect(parsed.data.status).toBe("success");
@@ -114,9 +114,8 @@ describe("display 载荷在信封层不设门", () => {
     if (output.success) expect(output.data.display).toEqual(VALID_DISPLAY);
   });
 
-  // A new display kind was once a harder wall than a new field: a discriminated union fails outright on an unknown
-  // discriminator, so "adding a card kind" was effectively a breaking change for version-locked old clients
-  // (presentation.md abandoned that approach for this reason).
+  // A new display kind used to be a harder wall than a new field: a discriminated union fails outright on an unknown
+  // discriminator, so "adding a card kind" amounted to a breaking change for version-locked old clients (presentation.md dropped this approach for that reason).
   it("未来 CLI 新增的 display kind 只是这张卡没有载荷，不是解析失败", () => {
     const parsed = toolCallRowSchema.safeParse(
       toolRow({ kind: "some_future_card_kind_from_a_newer_cli", whatever: 1 }),
@@ -168,9 +167,9 @@ describe("display 载荷在信封层不设门", () => {
     if (parsed.success) expect(parsed.data.display).toBeUndefined();
   });
 
-  // This one is the incident itself: the whole frame goes through a real physical reassembly. Before the fix this
-  // returned { kind: "rejected", reasonCode: "proto.frameAssemblyInvalidPayload" },
-  // and on that fault the store would retry on the same content and eventually fail closed.
+  // This one is the incident itself: the whole frame goes through real physical reassembly. Before the fix this would
+  // get { kind: "rejected", reasonCode: "proto.frameAssemblyInvalidPayload" },
+  // and upon receiving that fault the store would retry on the same content and eventually fail closed.
   it("承载被污染卡片的整帧仍然完整重组，不产生 InvalidPayload fault", () => {
     const frame: ConversationTopicFrame = {
       topic: TOPIC,

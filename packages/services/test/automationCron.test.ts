@@ -13,8 +13,7 @@ import {
 
 describe("automationCron", () => {
   it("isOneShotAutomation：只有非循环且至多一次的任务是纯一次性", () => {
-    // One-shot semantics is a definite target time: after a scheduler misfire the task is finalized based on it and
-    // must not be rescheduled.
+    // One-shot semantics mean a deterministic target time; the scheduler uses it to settle a misfired run and must not reschedule it.
     expect(isOneShotAutomation({ recurring: false })).toBe(true);
     expect(isOneShotAutomation({ recurring: false, maxRuns: 1 })).toBe(true);
     expect(isOneShotAutomation({ recurring: false, maxRuns: 3 })).toBe(false);
@@ -35,7 +34,7 @@ describe("automationCron", () => {
   });
 
   it("computeNextRunAt：每天 09:00 的下一次严格晚于基准且命中 09:00", () => {
-    // Baseline: local 2023-11-14T20:00-ish (fixed timestamp, to avoid depending on the current time).
+    // Baseline: local 2023-11-14T20:00-ish (fixed timestamp, avoiding dependence on the current time).
     const from = new Date(2023, 10, 14, 20, 0, 0).getTime();
     const next = computeNextRunAt("0 9 * * *", from);
     expect(next).not.toBeNull();
@@ -119,43 +118,31 @@ describe("automationCron", () => {
     const nextYear = new Date(2027, 6, 16, 17, 31, 0).getTime();
 
     expect(
-      computeInitialAutomationNextRunAt(
-        { cronExpr: "31 17 16 7 *", recurring: true },
-        from,
-      ),
+      computeInitialAutomationNextRunAt({ cronExpr: "31 17 16 7 *", recurring: true }, from),
     ).toBe(nextYear);
     expect(
-      computeInitialAutomationNextRunAt(
-        { cronExpr: "32 17 16 7 *", recurring: false },
-        from,
-      ),
+      computeInitialAutomationNextRunAt({ cronExpr: "32 17 16 7 *", recurring: false }, from),
     ).toBe(new Date(2026, 6, 16, 17, 32, 0).getTime());
   });
 
   it("一次性固定月日 cron 目标已过去 6 分钟（模型时钟漂移）时拒绝创建，不静默滚到下一年", () => {
-    // Regression: 'in 8 minutes' was self-computed by the model into a fixed calendar cron; at creation the target
-    // minute had already passed by a few minutes, and the old 5-minute window let it through → silently rolled to
-    // next year (the next run showed 2027). The 30-minute window covers the drift and rejects instead.
+    // Regression: 'in 8 minutes' was self-computed by the model into a fixed calendar cron, with the target
+    // minute already a few minutes past at creation; the old 5-minute window let it through → silently
+    // rolling to next year (next run showing 2027). A 30-minute window covers the drift; it is now rejected.
     const from = new Date(2026, 6, 16, 17, 37, 0).getTime();
 
     expect(() =>
-      computeInitialAutomationNextRunAt(
-        { cronExpr: "31 17 16 7 *", recurring: false },
-        from,
-      ),
+      computeInitialAutomationNextRunAt({ cronExpr: "31 17 16 7 *", recurring: false }, from),
     ).toThrow(StaleOneShotAutomationScheduleError);
   });
 
   it("一次性日历任务在目标月份之后创建时保留下一年语义", () => {
-    // Created in August, targeting July 16: the target passed about a month ago, far beyond the staleness window —
-    // this is the user explicitly asking for next year, not a model-miscalculated approximation of "now".
+    // Created in August for a July 16 target: the target passed about a month ago, far beyond the
+    // staleness window, so this is the user explicitly scheduling for next year — not a model miscalculation of the approximate current moment.
     const from = new Date(2026, 7, 16, 12, 0, 0).getTime();
 
     expect(
-      computeInitialAutomationNextRunAt(
-        { cronExpr: "31 17 16 7 *", recurring: false },
-        from,
-      ),
+      computeInitialAutomationNextRunAt({ cronExpr: "31 17 16 7 *", recurring: false }, from),
     ).toBe(new Date(2027, 6, 16, 17, 31, 0).getTime());
   });
 
@@ -171,9 +158,7 @@ describe("automationCron", () => {
 
     const first = computeScheduleRuleNextRunAt(rule, anchorAt);
     expect(first).toBe(new Date(2026, 7, 4, 18, 49).getTime());
-    expect(computeScheduleRuleNextRunAt(rule, first!)).toBe(
-      new Date(2026, 7, 6, 1, 49).getTime(),
-    );
+    expect(computeScheduleRuleNextRunAt(rule, first!)).toBe(new Date(2026, 7, 6, 1, 49).getTime());
   });
 
   it("computeScheduleRuleNextRunAt：每 2 周保持锚点周序", () => {
@@ -240,7 +225,7 @@ describe("automationCron", () => {
   });
 
   it("computeScheduleRuleNextRunAt：months 覆盖锚点月份", () => {
-    // The anchor is in July, but the rule specifies March 5 → the next run should land in March (of the next year).
+    // Anchor is in July but the rule specifies March 5 → next occurrence falls in March (of the following year).
     const anchorAt = new Date(2026, 6, 12, 8, 0).getTime();
     const next = computeScheduleRuleNextRunAt(
       {
@@ -271,21 +256,21 @@ describe("automationCron", () => {
       },
       new Date(2025, 5, 1, 0, 0).getTime(),
     );
-    // 2026/2027 are not leap years and are skipped by the guard, landing on 2028-02-29.
+    // 2026/2027 are non-leap years skipped by the guard, falling through to 2028-02-29.
     expect(next).toBe(new Date(2028, 1, 29, 9, 30).getTime());
   });
 
   describe("buildIntervalScheduleRule：会话侧长间隔 carrier 归一化", () => {
-    // Bug background: each cron field has a step cap (minute 59, hour 24, day-of-month 31, month 12), so "every
-    // 50 hours / 40 days / 13 months" cannot be expressed directly with a five-field cron. The session side uses an
-    // intervalUnit+interval controlled carrier, and the host side uses this function to parse the compatible cron's
-    // fields into the authoritative scheduleRule; the real interval is carried by scheduleRule while cronExpr is
-    // display-only. anchorAt is passed in by the caller (the service) as the real creation/modification time.
+    // Bug background: each cron field has a step ceiling (minute 59, hour 24, day-of-month 31, month 12),
+    // so "every 50 hours / 40 days / 13 months" cannot be expressed directly in a five-field cron. The
+    // session side uses intervalUnit+interval as a controlled carrier, and the host side uses this
+    // function to parse each compatible cron field into the authoritative scheduleRule; the real interval
+    // is carried by scheduleRule while cronExpr is display-only. anchorAt is passed in by the caller
+    // (service) as the real creation/modification time.
     const anchorAt = new Date(2026, 7, 4, 10, 30, 0).getTime();
 
     it("hourly：从兼容 cron 解析 minute，间隔 50 落入 scheduleRule", () => {
-      // The compatible cron '15 * * * *' means "the 15th minute of every hour"; the real 50-hour interval is carried
-      // by the carrier.
+      // Compatible cron '15 * * * *' means "minute 15 of every hour"; the real 50-hour interval is carried by the carrier.
       const rule = buildIntervalScheduleRule("hourly", 50, "15 * * * *", anchorAt);
       expect(rule).toMatchObject({
         unit: "hourly",
@@ -295,7 +280,7 @@ describe("automationCron", () => {
         anchorAt,
       });
       expect(rule!.weekdays).toBeUndefined();
-      // Next: the first :15 after the 10:30 anchor, then +50 hours.
+      // Next: first minute-15 after the 10:30 anchor, then +50 hours.
       expect(computeScheduleRuleNextRunAt(rule!, anchorAt)).toBe(
         new Date(2026, 7, 4, 10, 15).getTime() + 50 * 3_600_000,
       );
@@ -310,15 +295,15 @@ describe("automationCron", () => {
         minute: 9,
         anchorAt,
       });
-      // Next: the anchor 8/4 10:30 has passed that day's 09:09, so advance by the 40-day interval; the next round is
-      // 8/4 + 40 = 9/13 09:09.
+      // Next: the anchor 8/4 10:30 is past that day's 09:09, so advance by the 40-day interval; the next
+      // round is 8/4 + 40 = 9/13 09:09.
       expect(computeScheduleRuleNextRunAt(rule!, anchorAt)).toBe(
         new Date(2026, 8, 13, 9, 9).getTime(),
       );
     });
 
     it("weekly：从 dow 解析 weekdays，间隔 8 落入 scheduleRule", () => {
-      // The compatible cron '0 9 * * 1,3,5' means Mon/Wed/Fri 09:00; the real interval is 8 weeks.
+      // Compatible cron '0 9 * * 1,3,5' means Mon/Wed/Fri 09:00; the real interval is 8 weeks.
       const rule = buildIntervalScheduleRule("weekly", 8, "0 9 * * 1,3,5", anchorAt);
       expect(rule).toMatchObject({
         unit: "weekly",
@@ -331,7 +316,7 @@ describe("automationCron", () => {
     });
 
     it("monthly：从 dom 解析 monthDays，间隔 13 落入 scheduleRule", () => {
-      // The compatible cron '0 9 15 * *' means the 15th of every month at 09:00; the real interval is 13 months.
+      // Compatible cron '0 9 15 * *' means the 15th of every month at 09:00; the real interval is 13 months.
       const rule = buildIntervalScheduleRule("monthly", 13, "0 9 15 * *", anchorAt);
       expect(rule).toMatchObject({
         unit: "monthly",
@@ -345,7 +330,7 @@ describe("automationCron", () => {
     });
 
     it("yearly：从 dom+month 解析 months+monthDays，间隔 2 落入 scheduleRule", () => {
-      // The compatible cron '0 9 15 6 *' means June 15 every year at 09:00; the real interval is 2 years.
+      // Compatible cron '0 9 15 6 *' means June 15 every year at 09:00; the real interval is 2 years.
       const rule = buildIntervalScheduleRule("yearly", 2, "0 9 15 6 *", anchorAt);
       expect(rule).toMatchObject({
         unit: "yearly",
@@ -359,7 +344,7 @@ describe("automationCron", () => {
     });
 
     it("minute：直接以 anchorAt 的时分作展示锚点，间隔 90 落入 scheduleRule", () => {
-      // The compatible cron '* * * * *' is a display placeholder only; the real interval is 90 minutes.
+      // Compatible cron '* * * * *' is a display placeholder only; the real interval is 90 minutes.
       const rule = buildIntervalScheduleRule("minute", 90, "* * * * *", anchorAt);
       expect(rule).toMatchObject({
         unit: "minute",
@@ -371,10 +356,10 @@ describe("automationCron", () => {
     });
 
     it("兼容 cron 字段缺失时回退到安全默认值，不抛错", () => {
-      // The model may pass a '* * * * *' placeholder cron for weekly/monthly/yearly; when parsing fails, give
-      // sensible defaults (weekday=[1], monthDays=[1], months=[anchor month]) so the scheduling engine can still
-      // compute. hour/minute take the anchor's time ('*' parses to undefined and falls back to the anchor's
-      // hour/minute).
+      // A model may pass the '* * * * *' placeholder cron for weekly/monthly/yearly; on parse failure,
+      // sensible defaults are used (weekday=[1], monthDays=[1], months=[anchor month]) so the scheduling
+      // engine can still compute. hour/minute take the anchor's time-of-day ('*' parses to undefined and
+      // falls back to anchorAt's hour/minute).
       const rule = buildIntervalScheduleRule("weekly", 5, "* * * * *", anchorAt);
       expect(rule).toMatchObject({
         unit: "weekly",

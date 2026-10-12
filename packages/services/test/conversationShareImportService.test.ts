@@ -272,9 +272,9 @@ describe("ConversationShareService import", () => {
         importedHistory: expect.objectContaining({ title: "From Share: Shared Research" }),
       }),
     );
-    // sharedContextImportV2StateSchema hardcodes /^\/cn\/share\/[^/]+$/; the persisted share link
-    // must never follow the UI language and become /share/<code>, otherwise importing from the
-    // English UI would fail directly on the schema.
+    // sharedContextImportV2StateSchema hardcodes /^\/cn\/share\/[^/]+$/; the persisted share link must
+    // never follow the UI language into /share/<code>, otherwise imports from an English UI would fail
+    // outright on the schema.
     expect(new URL(imported.shareUrl).pathname).toMatch(/^\/cn\/share\/[^/]+$/u);
     const provenanceUrl = (
       createSession.mock.calls[0]![0] as {
@@ -365,7 +365,7 @@ describe("ConversationShareService import", () => {
     });
     expect(loaded?.rows.map((row) => row.kind)).toEqual(["turnHeader", "userInput"]);
     expect(loaded?.title).toBe("Shared Research");
-    // The directory name is the share_id, not the contextId: a wrong contextId must come up empty instead of returning someone else's copy.
+    // The directory name is the share_id, not the contextId: a wrong contextId must miss rather than return someone else's copy.
     await expect(
       service.getImportedConversation({
         workspacePath: imported.workspacePath,
@@ -529,7 +529,7 @@ describe("ConversationShareService import", () => {
         },
       });
 
-    // Object storage/CDNs often label .md as text/plain, unrelated to the text/markdown used at publish time.
+    // Object storage/CDNs often label .md as text/plain, regardless of the text/markdown used at publish time.
     const mislabeled = createService(
       async () => new Response(mdBytes, { status: 200, headers: { "content-type": "text/plain" } }),
     );
@@ -557,9 +557,9 @@ describe("ConversationShareService import", () => {
     );
     expect(await readdir(artifactDir)).toHaveLength(1);
 
-    // The integrity gate is still on SHA-256: tampered bytes must be rejected.
-    // A different share is required — the same share + same workspace hits the completion index
-    // and reuses directly, so the download never happens.
+    // The integrity gate is still SHA-256: tampered bytes must be rejected.
+    // A different share must be used — the same share + same workspace would hit the completed index and
+    // be reused outright, never downloading.
     const tampered = createService(
       async () =>
         new Response(new TextEncoder().encode("tampered"), {
@@ -598,15 +598,15 @@ describe("ConversationShareService import", () => {
       baseUrl: "https://api.example.com/api/v1",
       tokenProvider: async () => "owner",
     });
-    // Bug root cause: integrity validation (size + SHA-256) previously ran only after
-    // response.arrayBuffer(), so tampered/corrupted storage could make the client read the entire
-    // oversized payload into memory before discovering the mismatch. The precheck must happen
-    // before reading the body: if the declared Content-Length exceeds size_bytes, abort the download.
+    // Bug root cause: integrity checks (size + SHA-256) previously ran after response.arrayBuffer(),
+    // letting tampered/corrupted storage make the client read an oversized payload fully into memory
+    // before discovering the mismatch. The pre-check must run before reading the body: abort the
+    // download as soon as the declared Content-Length exceeds size_bytes.
     const arrayBuffer = vi.fn(async () => {
       throw new Error("body must not be read when Content-Length exceeds the manifest size");
     });
-    // The markdown preview candidate requires active fileChanges as existence evidence; otherwise
-    // no artifact is generated and download is never called at all.
+    // A markdown preview candidate must have active fileChanges as existence evidence; otherwise no
+    // artifact is generated and download is never called.
     const fileChanges = async () => ({
       files: 1,
       additions: 1,
@@ -712,9 +712,9 @@ describe("ConversationShareService import", () => {
       baseUrl: "https://api.example.com/api/v1",
       tokenProvider: async () => "owner",
     });
-    // Bug root cause: the download fallback was a bare fetch without AbortSignal/timeout; when the
-    // object storage connection hung, the import stayed in the downloading phase until undici's
-    // default ~300s backstop, which feels like a freeze.
+    // Bug root cause: the download fallback was a bare fetch with no AbortSignal/timeout; when an object
+    // storage connection hung, the import would stay in the downloading stage until undici's default
+    // ~300s fallback — effectively frozen from the user's perspective.
     const fileChanges = async () => ({
       files: 1,
       additions: 1,
@@ -811,9 +811,8 @@ describe("ConversationShareService import", () => {
   });
 
   it("回链跟随环境，不再写死生产站", async () => {
-    // Bug root cause: the fallback hardcoded https://zcode.z.ai/cn/share; in the test environment
-    // (whose API base goes through zcode.z.ai) clicking the divider after import would open the
-    // share page of another environment.
+    // Bug root cause: the fallback hardcoded https://zcode.z.ai/cn/share, so in the test environment
+    // (API base on zcode.z.ai) clicking the divider after import opened another environment's share page.
     const root = await mkdtemp(join(tmpdir(), "zcode-share-import-endpoint-"));
     roots.push(root);
     const apiClient = new ConversationShareMockApiClient({ now: () => 10_000 });
@@ -886,11 +885,10 @@ describe("ConversationShareService import", () => {
       `https://zcode.example.test/cn/share/${encodeURIComponent(share.share_code)}`,
     );
 
-    // When not specified explicitly, derive from the environment: the origin must match the same
-    // resolver used for the API base, and the path stays the canonical /cn/share/<code>
-    // (required by the sharedContextImport schema).
-    // A genuinely non-production endpoint must be switched to; otherwise the derived value happens
-    // to equal the old hardcoded value and the regression cannot be detected.
+    // When not specified explicitly, derive from the environment: the origin must come from the same
+    // resolver used for the API base, and the path stays the canonical /cn/share/<code> (required by the
+    // sharedContextImport schema). A genuinely non-production endpoint must be used, otherwise the
+    // derived value coincides with the old hardcoded one and the regression cannot be detected.
     vi.stubEnv("ZCODE_BASE_URL", "https://zcode.z.ai");
     const derived = build();
     const secondShare = await derived.publish(
@@ -916,10 +914,10 @@ describe("ConversationShareService import", () => {
     vi.unstubAllEnvs();
   });
 
-  // Bug regression (CR-02): after createSession succeeded, rm(markerPath) / reportImportProgress
-  // still lived in the same try, and the catch would rm -rf importRoot, deleting artifacts already
-  // installed into the workspace and referenced by the new session's provenance — the user ended
-  // up with a session referencing missing files. The failure radius must stop before createSession.
+  // Bug regression (CR-02): rm(markerPath) / reportImportProgress still ran in the same try after
+  // createSession succeeded, and the catch did rm -rf importRoot, deleting artifacts already installed
+  // into the workspace and referenced by the new session's provenance — leaving the user a session that
+  // references missing files. The failure radius must end before createSession.
   it("createSession 成功后的失败不再删除已提交的 importRoot", async () => {
     const root = await mkdtemp(join(tmpdir(), "zcode-share-import-commit-radius-"));
     roots.push(root);
@@ -979,7 +977,7 @@ describe("ConversationShareService import", () => {
       "publish-op-commit-radius",
     );
 
-    // Emitter.fire does not swallow listener exceptions; this reproduces "failure after createSession" precisely.
+    // Emitter.fire does not swallow listener exceptions; this precisely reproduces "failure after createSession".
     const subscription = service.onDynamicImportProgress("operation-commit-radius")((progress) => {
       if (progress.phase === "complete") {
         throw new Error("injected post-commit failure");
@@ -1005,10 +1003,10 @@ describe("ConversationShareService import", () => {
     );
   });
 
-  // Bug regression (CR-03): importIndexWriteChain originally did not catch; after the first write
-  // failed the chain stayed rejected forever, every later persistCompletedImportIndex became a
-  // silent no-op, the import index was permanently lost with no self-healing path (the marker is
-  // deleted on success), and re-importing the same share would report already in progress forever.
+  // Bug regression (CR-03): importIndexWriteChain originally did not catch, so after the first write
+  // failure the chain stayed permanently rejected and every later persistCompletedImportIndex became a
+  // silent no-op — the import index was permanently lost with no self-healing path (the marker is deleted
+  // on success), and re-importing the same share would permanently report "already in progress".
   it("索引写入失败一次后不会永久毒化写入链", async () => {
     const root = await mkdtemp(join(tmpdir(), "zcode-share-import-index-chain-"));
     roots.push(root);
@@ -1070,7 +1068,7 @@ describe("ConversationShareService import", () => {
         `publish-op-index-${suffix}`,
       );
 
-    // Make rename fail with a real filesystem conflict: occupy the index path with a non-empty directory first.
+    // Use a real filesystem conflict to fail the rename: occupy the index path with a non-empty directory first.
     const indexPath = join(root, ".zcode-share-imports.json");
     await mkdir(indexPath, { recursive: true });
     await writeFile(join(indexPath, "blocker"), "blocked", "utf8");
@@ -1090,7 +1088,7 @@ describe("ConversationShareService import", () => {
       "operation-index-b",
     );
 
-    // After the chain recovers, the index must actually be persisted, with both imports inside.
+    // After the chain recovers, the index must actually be persisted, with both imports in it.
     const persisted = JSON.parse(await readFile(indexPath, "utf8")) as Record<string, unknown>;
     const keys = Object.keys(persisted);
     expect(keys.some((key) => key.startsWith(firstShare.share_code))).toBe(true);
@@ -1098,16 +1096,16 @@ describe("ConversationShareService import", () => {
   });
 
   /**
-   * Cross-version import: the share was published by a Desktop newer than this side.
+   * Cross-version import: the share was published by a newer Desktop than this client.
    *
-   * Before this hardening this scenario failed hard — one extra optional field on a row was enough
-   * for this side to recompute a different projection_sha256, reporting "share file verification
-   * failed, import stopped" with a retry button that could never succeed.
+   * Before this hardening, this scenario failed hard — one extra optional field on a row was enough for
+   * this client to recompute a different projection_sha256, report "share file verification failed,
+   * import stopped", and offer a retry button that could never succeed.
    */
   it("导入更新版本发布的分享：未知字段不破坏完整性，未知 row kind 只被跳过", async () => {
     const root = await mkdtemp(join(tmpdir(), "zcode-share-import-future-"));
     roots.push(root);
-    // One row carries an optional field that only exists in the future; one row has a kind this side does not know at all.
+    // One row carrying an optional field that only exists in the future, and one row with a kind this client does not recognize at all.
     const rawRows = [
       {
         rowId: 1,
@@ -1155,7 +1153,7 @@ describe("ConversationShareService import", () => {
       },
       rows: rawRows,
       artifacts: [],
-      // The server computes the digest over the raw bytes; this side must be able to match it.
+      // The server computes the digest over the raw bytes; this client must be able to match it.
       integrity: {
         projection_sha256: sha256ConversationShareJson(rawRows),
         artifact_set_sha256: sha256ConversationShareJson([]),
@@ -1206,11 +1204,12 @@ describe("ConversationShareService import", () => {
       workspacePath: imported.workspacePath,
       contextId: imported.contextId,
     });
-    // The two recognized rows render as usual; the unrecognized one is skipped and counted (the UI shows a soft notice based on it).
+    // The two recognized rows render as usual; the unrecognized row is skipped and counted (the UI surfaces a soft notice from this).
     expect(loaded?.rows.map((row) => row.kind)).toEqual(["turnHeader", "userInput"]);
     expect(loaded?.unsupportedRowCount).toBe(1);
 
-    // The persisted copy keeps the raw rows: after upgrading, the user can see content that was unrecognized at the time instead of it being erased forever.
+    // The persisted copy keeps the original rows: after upgrading, the user can still see content that
+    // was unrecognized at the time instead of having it permanently erased.
     const shareDirs = await readdir(join(imported.workspacePath, ".zcode-share"));
     const persistedCopy = JSON.parse(
       await readFile(

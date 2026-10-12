@@ -1,5 +1,5 @@
-// Protocol surface of the workflowRuns state key + the event-log query.
-// See docs/dynamic-workflow/presentation.md "The run state the pane draws", "Event log", and "v4 wire version skew".
+// Protocol surface of the workflowRuns state key + event-log query.
+// See docs/dynamic-workflow/presentation.md "The run state the pane draws", "Event log", "v4 wire version skew".
 import { describe, expect, it } from "vitest";
 import {
   V4_METHODS,
@@ -64,19 +64,19 @@ describe("workflowRuns 状态键", () => {
   });
 
   it("用量只记已花 token 与步数：没有上限、没有剩余量、没有 budget 键", () => {
-    // docs/dynamic-workflow/authoring.md: the budget construct was removed wholesale; usage is the observation surface.
+    // docs/dynamic-workflow/authoring.md: the budget construct was removed entirely; usage is an observation surface.
     const usage = run({ usage: { spentTokens: 42, nodesUsed: 1 } });
     expect(workflowRunsStateSchema.parse({ revision: 1, runs: [usage] })).toEqual({
       revision: 1,
       runs: [usage],
     });
-    // Old-shaped cap keys get stripped (zod non-strict: skew between old desktops and new agents is handled by stripping, not by dropping the whole frame).
+    // Old-shape bound keys are stripped (zod non-strict: skew between old desktops and new agents is handled by stripping, not frame rejection).
     const stale = run({ usage: { spentTokens: 1, nodesUsed: 1, maxNodes: 100, budgetTotal: 10 } });
     expect(workflowRunsStateSchema.parse({ revision: 1, runs: [stale] }).runs[0]?.usage).toEqual({
       spentTokens: 1,
       nodesUsed: 1,
     });
-    // A shape with only remaining values and no spent values is invalid; `budget` is no longer a key that can substitute for `usage` either.
+    // Remaining-only shapes without spent values are invalid; `budget` is also no longer a key that can substitute for `usage`.
     for (const invalid of [
       run({ usage: { remainingTokens: 1, remainingNodes: 1 } }),
       { ...run(), usage: undefined, budget: { spentTokens: 1, nodesUsed: 1 } },
@@ -86,7 +86,7 @@ describe("workflowRuns 状态键", () => {
   });
 
   it("actors 与 nodes 同界：每个节点都属于某个 actor，压低 actors 只会让平常的 fan-out 静默丢子代理", () => {
-    // Used to be 32: a 50-way fan-out lost 18 subagents in the inspector, while the node table, the engine, and the graph all had room.
+    // Used to be 32: a 50-way fan-out would lose 18 subagents in the inspector, while the node table, the engine, and the graph all had room.
     expect(WORKFLOW_RUNS_LIMITS.maxActors).toBe(WORKFLOW_RUNS_LIMITS.maxNodes);
   });
 
@@ -146,7 +146,7 @@ describe("workflowRuns 状态键", () => {
     ).toThrow();
   });
 
-  // ── Data surface of the Results pane (docs/dynamic-workflow/presentation.md "The run pane") ──
+  // ── Data surface of the Results section (docs/dynamic-workflow/presentation.md "The run pane") ──
 
   it("reports 是渐进产物的有序列表，每条带身份与有界预览", () => {
     const withReports = run({
@@ -162,8 +162,8 @@ describe("workflowRuns 状态键", () => {
   });
 
   it("reports 零条时整个键缺席，而不是空数组（Results 区据此整区不渲染）", () => {
-    // An absent key is a legal shape: optional is exactly the skew-safe half — an old CLI that
-    // sends no reports will not make the whole state.updated patch fail to parse on a known key (skew tier three).
+    // Key absence is a legal shape: optional is precisely the skew-safe half — an old CLI that sends no reports
+    // will not make the whole state.updated patch fail to parse on a known key (skew tier three).
     expect(workflowRunsStateSchema.safeParse({ revision: 1, runs: [run()] }).success).toBe(true);
     expect(
       workflowRunsStateSchema.parse({ revision: 1, runs: [run()] }).runs[0],
@@ -171,8 +171,8 @@ describe("workflowRuns 状态键", () => {
   });
 
   it("单条 report 的预览有界（展示预算，不是引擎契约）", () => {
-    // The engine's run-level report cap (REPORT_CAPS) is the contract; 64 entries / 2KB on the wire is a **display** budget.
-    // They need not match: entries beyond the display budget still live on the journal's kind="report" lines.
+    // The engine's run-level report cap (REPORT_CAPS) is the contract; the 64 items / 2KB on the protocol line is a **display** budget.
+    // They need not match: entries beyond the display bound still live on the journal's kind="report" rows.
     expect(WORKFLOW_RUNS_LIMITS.maxReports).toBe(64);
     expect(
       workflowRunsStateSchema.safeParse({
@@ -285,7 +285,7 @@ describe("v4 conversation workflowRunEvents query", () => {
         limit: 50,
       }),
     ).toEqual({ sessionId: "session-1", runId: "dwfrun-1", afterSequence: 4, limit: 50 });
-    // cursor is optional (defaults to fetching from the start), but unknown fields are always rejected.
+    // cursor is optional (defaults to reading from the start), but unknown fields are always rejected.
     expect(
       v4ConversationWorkflowRunEventsParamsSchema.parse({ sessionId: "s", runId: "r" }),
     ).toEqual({ sessionId: "s", runId: "r" });
@@ -299,16 +299,15 @@ describe("v4 conversation workflowRunEvents query", () => {
   });
 
   it("**刻意不带** atSeq / atLogEpoch —— journal cursor 永不失效，没有陈旧可防", () => {
-    // Sibling rows/range and plans queries carry these two fields as stale-read protection because they read the
-    // conversation projection, where a rowId only means something within one log epoch. This query reads the journal:
-    // sequences are append-only, continue from the existing maximum across resumes, and never renumber (proven by the
-    // journal contract tests), so the (runId, sequence) cursor is valid forever.
-    // Including it would actually be harmful: a session rewind unrelated to the run would make the detail page drop a legitimate journal page.
+    // The sibling rows/range and plans queries carry those two fields for stale-read protection because they read the conversation projection,
+    // where a rowId only means something within one log epoch. This query reads the journal: sequence only appends, continues from the
+    // existing max across resumes, and numbering never changes (proven by the journal contract tests), so the (runId, sequence) cursor is forever valid.
+    // Carrying those fields would actually hurt: an unrelated session rewind would make the detail page lose a legitimate journal page.
     expect(Object.keys(v4ConversationWorkflowRunEventsResultSchema.shape).sort()).toEqual([
       "events",
       "hasMore",
     ]);
-    // strict: one extra field is rejected outright, so "casually adding atLogEpoch later" will go red here first.
+    // strict: one extra field is rejected outright, so "casually adding atLogEpoch later" turns red here first.
     expect(
       v4ConversationWorkflowRunEventsResultSchema.safeParse({
         events: [],
@@ -331,10 +330,9 @@ describe("v4 conversation workflowRunEvents query", () => {
 });
 
 // ── Summary shape of the dwf run enumeration query (docs/dynamic-workflow/launch.md "`/dwf`") ──
-// The new label / updatedAt fields are additive optional: old CLIs do not send these keys, and readers
-// fall back to runId and "no time shown". What is pinned here is exactly that skew posture — both sides
-// of the schema live in one module (shared by server-side v4-gateway.parse and desktop zcodeAgentService.parse),
-// so adding an optional key breaks neither side.
+// The new label / updatedAt are additive optional: old CLIs do not send them, and the read side falls back to runId and
+// "no time shown". What is pinned here is exactly that skew posture — the schema is one module on both sides (the server's
+// v4-gateway.parse and the desktop's zcodeAgentService.parse share it), so adding optional keys breaks neither side.
 describe("v4 conversation workflowRuns query 的 run 摘要", () => {
   function summary(overrides: Record<string, unknown> = {}) {
     return {
@@ -365,9 +363,8 @@ describe("v4 conversation workflowRuns query 的 run 摘要", () => {
   });
 
   it("lineage 两键可选：修订出来的 run 带 resumedFrom，被替代的 run 带 supersededBy（docs/dynamic-workflow/presentation.md「The run card」）", () => {
-    // Observed live on 2026-09-14: this strict schema was missing these two keys plus the word "superseded",
-    // the desktop's whole run catalog page was rejected ("failed to read run summaries"), and the task island's
-    // ended count went blank as a result. Pinned: both the successor and the superseded run must pass.
+    // Field-tested 2026-09-14: this strict schema lacked those two keys + the superseded word, and the desktop's whole run catalog page was
+    // rejected ("failed to read run summaries"), leaving the task island's finished count blank. Pinned: both successor and superseded pass.
     const successor = summary({ resumedFrom: "dwfrun-predecessor" });
     expect(v4ConversationWorkflowRunSummarySchema.parse(successor)).toEqual(successor);
     const predecessor = summary({
@@ -433,8 +430,8 @@ describe("v4 conversation workflowRuns query 的 run 摘要", () => {
 });
 
 // ── User-facing artifacts (docs/dynamic-workflow/authoring.md "How the user sees them") ─────────────────
-// ⚠ Terminology: the artifact in this section is what the script publishes to the **user** via `artifact.*`,
-// unrelated to `serializeWorkflowArtifact` (the engine's internal name for "the script's top-level return value", shown to the model).
+// ⚠ Terminology: the artifact in this section is output a script published to the **user** via `artifact.*`; it has
+// nothing to do with `serializeWorkflowArtifact` (the engine's internal name for the "script top-level return value", shown to the model).
 describe("workflowRuns[].artifacts 状态键", () => {
   const summary = (overrides: Record<string, unknown> = {}) => ({
     id: "book",
@@ -449,7 +446,7 @@ describe("workflowRuns[].artifacts 状态键", () => {
 
   it("摘要元素只带最新版元数据：spec / versions / uri / sourcePath 一律拒收", () => {
     expect(workflowRunArtifactSummarySchema.parse(summary())).toEqual(summary());
-    // strict: sneaking full metadata into this high-frequency state key goes red here first.
+    // strict: casually stuffing full metadata into this high-frequency state key turns red here first.
     for (const extra of [
       { spec: { x: { field: "round" } } },
       { versions: [{ version: 1, publishedAt: 1 }] },
@@ -481,7 +478,7 @@ describe("workflowRuns[].artifacts 状态键", () => {
     expect(workflowRunArtifactSummarySchema.parse(summary({ primary: true }))).toEqual(
       summary({ primary: true }),
     );
-    // Not a deliverable = key absent, not false: all three schemas share this convention, and the UI only tests `=== true`.
+    // Not a deliverable = key absent, not false: one convention across the three schemas; the UI only tests `=== true`.
     expect(workflowRunArtifactSummarySchema.safeParse(summary({ primary: false })).success).toBe(
       false,
     );
@@ -491,8 +488,8 @@ describe("workflowRuns[].artifacts 状态键", () => {
   });
 
   it("artifacts 是 optional（老 CLI 不发这个键的整帧仍可解析——偏斜第三档）", () => {
-    // This is the entire reason the field is optional: adding a required field to an existing state key would make
-    // any old CLI that does not send it lose the whole state.updated patch frame instead of just one key.
+    // This is the entire reason the field is optional: adding a required field to an existing state key would make the
+    // state.updated patch of any old CLI that does not send it lose the whole frame, not just one key.
     const { artifacts: _omitted, ...withoutKey } = { ...run(), artifacts: [summary()] };
     expect(workflowRunsStateSchema.parse({ revision: 1, runs: [withoutKey] })).toEqual({
       revision: 1,
@@ -580,7 +577,7 @@ describe("v4 conversation workflowRunArtifacts query", () => {
     expect(v4ConversationWorkflowRunArtifactsResultSchema.parse({ artifacts: [artifact] })).toEqual(
       { artifacts: [artifact] },
     );
-    // strict on two levels: both the result and its elements reject unknown fields.
+    // strict at both layers: result and element both reject unknown fields.
     expect(
       v4ConversationWorkflowRunArtifactsResultSchema.safeParse({
         artifacts: [artifact],
@@ -599,7 +596,9 @@ describe("v4 conversation workflowRunArtifacts query", () => {
       primary: true as const,
     };
     expect(workflowRunArtifactSchema.parse(artifact)).toEqual(artifact);
-    expect(workflowRunArtifactSchema.safeParse({ ...artifact, primary: false }).success).toBe(false);
+    expect(workflowRunArtifactSchema.safeParse({ ...artifact, primary: false }).success).toBe(
+      false,
+    );
     expect(
       workflowRunArtifactSchema.safeParse({ ...artifact, versions: [version({ primary: false })] })
         .success,
@@ -681,8 +680,8 @@ describe("v4 conversation workflowRunArtifactData query", () => {
   });
 
   it("条目带**原值**而不是预览文本：看板的纯函数要按字段路径取数", () => {
-    // Preview-ification (strings verbatim, everything else pretty JSON) is the contract of the Results pane row.
-    // The board reads spec.x.field paths like "timing.after"; given a JSON text blob, those values cannot be extracted.
+    // Preview-ification (strings as-is, everything else pretty JSON) is the contract of the Results section's row. A board needs to read
+    // spec.x.field paths like "timing.after", which cannot be extracted from a JSON text blob.
     const result = {
       items: [
         { sequence: 12, siteId: "report#1", ordinal: 3, item: { round: 3, timing: { after: 41 } } },
@@ -727,7 +726,7 @@ describe("v4 conversation workflowRunArtifactRead query", () => {
         limit: PROTOCOL_V4_LIMITS.attachmentChunkMaxBytes + 1,
       }).success,
     ).toBe(false);
-    // version is required and must be a positive integer: the authorization chain looks up completed rows by (artifactId, version) in the journal.
+    // version required and a positive integer: the authorization chain looks up the completed row in the journal by (artifactId, version).
     expect(
       v4ConversationWorkflowRunArtifactReadParamsSchema.safeParse({ ...params, version: 0 })
         .success,
@@ -765,8 +764,8 @@ describe("v4 conversation workflowRunArtifactRead query", () => {
   });
 
   it("mediaType **不**限死在 image/video/pdf——限死会让 markdown 与 office 文件整条读不出来", () => {
-    // The attachmentRead refine was written for the preview surface of sent messages; legal artifact types are
-    // the driver's 17-entry extension table plus application/octet-stream.
+    // attachmentRead's refine was written for the preview surface of already-sent messages; an artifact's legal types are the driver's
+    // 17-entry extension table plus application/octet-stream.
     for (const mediaType of [
       "text/markdown",
       "text/html",
@@ -850,9 +849,9 @@ describe("workflowRuns[].actors/nodes 的 phaseName 状态键", () => {
       workflowRunActorSchema.safeParse({ ...actor, phaseName: "x".repeat(limit + 1) }).success,
     ).toBe(false);
     expect(workflowRunActorSchema.safeParse({ ...actor, phaseName: "" }).success).toBe(false);
-    expect(
-      workflowRunNodeSchema.safeParse({ ...node, phaseName: "x".repeat(limit) }).success,
-    ).toBe(true);
+    expect(workflowRunNodeSchema.safeParse({ ...node, phaseName: "x".repeat(limit) }).success).toBe(
+      true,
+    );
     expect(
       workflowRunNodeSchema.safeParse({ ...node, phaseName: "x".repeat(limit + 1) }).success,
     ).toBe(false);
@@ -871,7 +870,7 @@ describe("workflowRuns[].actors/nodes 的 phaseName 状态键", () => {
   });
 });
 
-// ── Task and progress readings of one ask (docs/dynamic-workflow/presentation.md) ──────
+// ── One ask's task and progress readings (docs/dynamic-workflow/presentation.md) ──────
 describe("workflowRuns[].nodes 的 instructionsHead / turn / toolCalls / lastTool", () => {
   const node = { siteId: "ask#1", ordinal: 1, phase: "executing" as const };
 

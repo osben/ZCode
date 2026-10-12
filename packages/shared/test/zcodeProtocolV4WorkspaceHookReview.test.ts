@@ -123,8 +123,8 @@ function snapshotWithReview() {
   };
 }
 
-// workflowRunDeltas 能力位（docs/v4-refactor/10-protocol-spec §4.5）：与 workspaceHookReview 同族的
-// fail-closed 握手，钉在同一处是因为踩坑点也是同一个——clientHello.capabilities 是 .strict() 的。
+// workflowRunDeltas capability bit (docs/v4-refactor/10-protocol-spec §4.5): the same family of fail-closed
+// handshake as workspaceHookReview; pinned here because the pitfall is also the same — clientHello.capabilities is .strict().
 describe("workflowRunDeltas capability handshake", () => {
   const hello = (capabilities: Record<string, unknown>) =>
     helloMessageSchema.parse({
@@ -168,7 +168,7 @@ describe("workflowRunDeltas capability handshake", () => {
       false,
     );
     expect(clientSupportsWorkflowRunDeltas(clientHello({ workflowRunDeltas: true }))).toBe(true);
-    // 两个能力位互不干扰（同一个 strict 对象里的两个可选键）。
+    // The two capability bits do not interfere (two optional keys in the same strict object).
     expect(
       clientSupportsWorkspaceHookReview(
         clientHello({ workspaceHookReviewUi: true, workflowRunDeltas: true }),
@@ -177,8 +177,8 @@ describe("workflowRunDeltas capability handshake", () => {
   });
 
   it("clientHello.capabilities 是 .strict()：这正是「Host 没广播就不许声明」的由来", () => {
-    // 老 Host 的 schema 里没有 workflowRunDeltas 这个键，客户端贸然带上会让**整条 clientHello**
-    // 解析失败、连接握不上手——不是少一个键那么轻。这条断言用一个假想的未来键复现那个形状。
+    // The old Host schema has no workflowRunDeltas key; a client sending it would make the **entire clientHello**
+    // fail to parse and the handshake fail — not as mild as merely missing one key. This assertion reproduces that shape with a hypothetical future key.
     expect(
       clientHelloSchema.safeParse({
         kind: "clientHello",
@@ -198,7 +198,7 @@ describe("workflowRunDeltas capability handshake", () => {
       workflowRunDeltas: true,
     });
     expect(params.workflowRunDeltas).toBe(true);
-    // 缺席 = 按旧消费者处理（整键 patch + 旧界裁剪），不是解析失败。
+    // Absent = treated as an old consumer (whole-key patch + old-UI trimming), not a parse failure.
     expect(
       v4ConversationSubscribeParamsSchema.parse({
         topic: "conversation/session-1",
@@ -375,11 +375,11 @@ describe("workspaceHookReview protocol contracts", () => {
     ).toBe(false);
   });
 
-  // —— 软门禁(Soft Gate) S1 契约测试 ——
+  // —— Soft Gate S1 contract tests ——
 
   it("snapshot 旧数据(无 workspaceHookAdmission 字段)解析得 null", () => {
     const raw = snapshotWithReview();
-    // 模拟旧发送端:不带 workspaceHookAdmission 字段
+    // Simulates an old sender: no workspaceHookAdmission field
     const parsed = conversationSnapshotSchema.parse(raw);
     expect(parsed.workspaceHookAdmission).toBeNull();
   });

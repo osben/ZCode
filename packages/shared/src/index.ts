@@ -34,6 +34,8 @@ export type {
   RemoteTargetSnapshot,
   RemoteWorkspaceSessionEntry,
   PersistedWorkspaceSessionEntry,
+  WorktreeLocationMode,
+  WorktreeProjectOverrideSettings,
 } from "./protocol.js";
 export type { WorkspacePurpose } from "./workspacePurpose.js";
 export { DEFAULT_LOCALE } from "./protocol.js";
@@ -94,6 +96,8 @@ export {
   ZCODE_ARMS_RUM_ENDPOINT,
   ZCODE_TELEMETRY_REPORT_ENDPOINT,
   ZCODE_AUTO_UPDATE_ENABLED,
+  ZCODE_WEB_REMOTE_CONTROL_RELAY_WS_URL_DEFAULT,
+  ZCODE_WEB_REMOTE_CONTROL_URL_DEFAULT,
   mapZCodeEnvToArmsRumEnv,
   normalizeZCodeEnv,
   normalizeZCodeProductFlavor,

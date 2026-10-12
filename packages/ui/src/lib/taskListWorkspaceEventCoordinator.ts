@@ -51,11 +51,7 @@ function buildCoordinatedEventKey(event: ZCodeWorkspaceTaskListChanged): string 
 
   const workspaceKey = buildTaskWorkspaceKey(event.workspacePath, event.workspaceIdentity);
   const metaRevision = event.taskMeta
-    ? [
-        event.taskMeta.updatedAt,
-        event.taskMeta.createdAt,
-        event.taskMeta.status ?? "",
-      ].join(":")
+    ? [event.taskMeta.updatedAt, event.taskMeta.createdAt, event.taskMeta.status ?? ""].join(":")
     : "";
   return [workspaceKey, event.reason, taskId, metaRevision].join("\u0000");
 }
@@ -87,15 +83,15 @@ export function handleTaskListWorkspaceEventCacheSync(
       workspacePath: event.taskMeta.workspacePath,
       workspaceIdentity: event.taskMeta.workspaceIdentity,
       task: event.taskMeta,
-      ...(syncMode === "insert-active"
-        ? { membership: { pinned: false, archived: false } }
-        : {}),
-      // Bugfix: 这类事件只表示 task meta/status 变化，不携带 pinned/archived 变更语义。
-      // 手机远控现在常驻 pinned 查询，必须保留任务原本所在列表，否则置顶任务会被误移出 pinned 区。
+      ...(syncMode === "insert-active" ? { membership: { pinned: false, archived: false } } : {}),
+      // Bugfix: these events only signal task meta/status changes and carry no pinned/archived
+      // semantics. Mobile remote control keeps a persistent pinned query, so the task's original
+      // list must be preserved or pinned tasks would be wrongly moved out of the pinned section.
       preserveListMembership: syncMode === "preserve-membership",
     });
-    // Bugfix: 普通 meta/status 更新是幂等写入，不能用不完整的 meta revision 去重。
-    // 2 秒内连续标题、错误详情或 change summary 更新被吞掉，比重复应用同一份 meta 风险更高。
+    // Bugfix: ordinary meta/status updates are idempotent writes and must not be deduplicated by
+    // an incomplete meta revision. Swallowing consecutive title, error-detail, or change-summary
+    // updates within 2s is riskier than applying the same meta twice.
     return {
       handledIncrementally: true,
       reused: false,
@@ -108,8 +104,9 @@ export function handleTaskListWorkspaceEventCacheSync(
   pruneCoordinatedResults(currentTime);
   const cached = eventKey ? coordinatedResults.get(eventKey) : undefined;
   if (cached && cached.expiresAt > currentTime) {
-    // Bugfix: 同一个 workspace_task_list_changed 会被 timeline/pinned/archived/workspace 行多个 hook 收到。
-    // 全局 query cache mutation 只能按 membership/delete 广播处理一次，否则后续 listener 会看到已变更状态并误判。
+    // Bugfix: the same workspace_task_list_changed reaches multiple hooks (timeline / pinned /
+    // archived / workspace rows). The global query cache mutation may be broadcast only once per
+    // membership/delete event, otherwise later listeners would see the mutated state and misjudge.
     return {
       handledIncrementally: cached.handledIncrementally,
       reused: true,

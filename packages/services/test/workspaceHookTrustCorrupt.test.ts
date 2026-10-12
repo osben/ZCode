@@ -50,7 +50,7 @@ describe("readPersistentWorkspaceHookTrustDigests corrupt 检测（#7）", () =>
       workspacePath: workspace,
     });
 
-    // File missing ⇒ reasonably no record; the hook is marked pending_trust (not persistently trusted), not corrupt.
+    // Missing file, so a reasonable no-record case: the hook is marked pending_trust (not persistently trusted) but not corrupt.
     expect(loaded.hooks[0]?.workspaceHook?.trustState).toBe("pending_trust");
     expect(loaded.trustStoreCorrupt).toBeUndefined();
     expect(warnSpy).not.toHaveBeenCalled();
@@ -69,7 +69,7 @@ describe("readPersistentWorkspaceHookTrustDigests corrupt 检测（#7）", () =>
       },
     });
 
-    // Load once first to get the declaration digest, then write a malformed trust store.
+    // Load once to obtain the declaration digest before writing a malformed trust store.
     vi.stubEnv("HOME", home);
     vi.stubEnv("USERPROFILE", home);
 
@@ -79,10 +79,9 @@ describe("readPersistentWorkspaceHookTrustDigests corrupt 检测（#7）", () =>
     const digest = first.workspaceHookSnapshot?.hooks[0]?.hookDeclarationDigest;
     expect(digest).toBeTruthy();
 
-    // Write a valid complete trust record to prove: if the trust store is malformed, valid records are
-    // not adopted. After CR-01, services use the same complete strict schema as the runtime — the record
-    // must contain all required fields (the old test only wrote identity+digest, which happened to rely
-    // on the partially-validating bug that has since been fixed).
+    // Write a valid, complete trust record to prove that if the trust store is malformed, even a valid record is not adopted.
+    // After CR-01, services use the same complete strict schema as runtime — records must include all
+    // required fields (the old test wrote only identity+digest, relying on the partial-validation bug that was fixed).
     writeJson(join(home, ".zcode", "security", "workspace-hook-trust-v1.json"), {
       schemaVersion: 1,
       records: [
@@ -117,14 +116,13 @@ describe("readPersistentWorkspaceHookTrustDigests corrupt 检测（#7）", () =>
       workspacePath: workspace,
     });
 
-    // Fail-closed: even though the record would have matched, the corrupted file returns no digest and
-    // the hook falls back to pending_trust.
+    // Fail closed: even though the record would match, the corrupted file returns no digest and the hook falls back to pending_trust.
     expect(loaded.hooks[0]?.workspaceHook?.trustState).toBe("pending_trust");
     expect(loaded.trustStoreCorrupt).toBe(true);
     expect(warnSpy).toHaveBeenCalled();
     // The unified ServiceLogger splits scope, message, and structured path into three arguments.
-    // After CR-01, illegal JSON uniformly goes through the schema-parsing branch with the message
-    // "结构不符合 schema" (aligned with how runtime/adapters judge the same kind of file corrupt).
+    // After CR-01, invalid JSON uniformly goes through the schema-parse branch with the message
+    // "structure does not match the schema" (aligned with runtime/adapters' corrupt verdict for the same file kinds).
     expect(warnSpy.mock.calls[0]).toEqual([
       expect.stringContaining("[hooks-service]"),
       expect.stringContaining("Workspace Hook Trust store 结构不符合 schema"),

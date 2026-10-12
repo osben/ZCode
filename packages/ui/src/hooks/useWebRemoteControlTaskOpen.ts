@@ -63,7 +63,8 @@ export async function openWebRemoteControlTask({
     if (markTaskReadOnOpen && typeof task.unreadAt === "number" && switcher.markTaskRead) {
       const logReadFailure = (err: unknown) => {
         const message = err instanceof Error ? err.message : String(err);
-        // 未读写入失败不能阻止用户打开任务；返回首页后由权威 tasks-index 快照恢复蓝点。
+        // A failed mark-read must not block opening the task; the authoritative tasks-index
+        // snapshot restores the blue dot after returning home.
         logger.warn("[useWebRemoteControlTaskOpen] 标记手机端 task 已读失败", {
           error: message,
           taskId: task.taskId,
@@ -71,8 +72,9 @@ export async function openWebRemoteControlTask({
         });
       };
       try {
-        // 修复原因：手机首页蓝点来自 desktop 推送快照，当前 Root 的 query cache
-        // 可能尚未水合。这里显式表达“用户已查看”，不能继续依赖桌面选择逻辑的 cache 命中。
+        // Fix reason: the phone home blue dot comes from the desktop-pushed snapshot, and the
+        // current Root's query cache may not be hydrated yet. "User has viewed" is expressed
+        // explicitly here instead of continuing to rely on the desktop selection logic's cache hit.
         void switcher.markTaskRead(task).catch(logReadFailure);
       } catch (err) {
         logReadFailure(err);
@@ -120,9 +122,10 @@ export async function openWebRemoteControlTask({
     setSwitchingTaskKey?.(null);
     onSwitchingChange?.(false);
     if (isDisconnectedRemoteWorkspaceBridgeError(message)) {
-      // Bugfix: 手机端重连后 workspace list 可能还没同步到新的 remoteSessionId，
-      // 此时打开 task 会被 desktop main 拒绝创建 bridge。这里退回任务首页，
-      // 让用户看到断开态和重连按钮，而不是停在聊天页错误提示里。
+      // Bugfix: after the phone reconnects, the workspace list may not have synced to the new
+      // remoteSessionId yet, and opening a task is then rejected by desktop main when creating
+      // the bridge. Fall back to the task home page so the user sees the disconnected state and
+      // the reconnect button instead of being stuck on the chat page's error message.
       onNavigateHome?.();
       return;
     }

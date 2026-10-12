@@ -104,15 +104,13 @@ export function TaskSearchDialog({
   const [expandedTaskKeys, setExpandedTaskKeys] = useState<Set<string>>(() => new Set());
   const shortcutLabel = formatCommandShortcutLabel("G");
   const trimmedQuery = query.trim();
-  const searchWorkspaceTabs = useMemo(
-    () => (open ? workspaceTabs : []),
-    [open, workspaceTabs],
-  );
+  const searchWorkspaceTabs = useMemo(() => (open ? workspaceTabs : []), [open, workspaceTabs]);
   const taskList = useGlobalTaskList({
     kind: "active",
-    // 修复原因：搜索弹窗组件常驻在 App 里，但未打开时不需要 recent/search 结果。
-    // 传空 workspace 可以复用 useGlobalTaskList 的空态路径，避免空闲时多一组 listTaskList
-    // 和 workspace 事件订阅，减轻启动期 renderer/RPC 压力。
+    // Fix rationale: the search dialog component stays mounted in the App, but does not need
+    // recent/search results while closed. Passing an empty workspace reuses useGlobalTaskList's
+    // empty-state path, avoiding an extra listTaskList subscription plus workspace event
+    // subscriptions while idle, reducing renderer/RPC pressure during startup.
     workspaceTabs: searchWorkspaceTabs,
     sortBy: "updated",
     searchQuery: trimmedQuery,
@@ -143,8 +141,9 @@ export function TaskSearchDialog({
         continue;
       }
 
-      // Bugfix: 搜索结果可能从查询缓存和跨工作区聚合路径带入同一个 task。
-      // 这里先按会话 key 合并，再按片段文本去重，避免列表里出现重复标题或重复摘要。
+      // Bugfix: search results can bring in the same task from the query cache and the
+      // cross-workspace aggregation path. Merge by session key first, then dedupe by snippet
+      // text, so the list shows no duplicate titles or summaries.
       taskByKey.set(taskKey, {
         ...existingTask,
         searchSnippets: [
@@ -156,9 +155,7 @@ export function TaskSearchDialog({
 
     for (const task of taskByKey.values()) {
       const taskKey = getTaskResultKey(task);
-      const snippets = hasQuery
-        ? getUniqueTaskSearchSnippets(task)
-        : [];
+      const snippets = hasQuery ? getUniqueTaskSearchSnippets(task) : [];
       if (snippets.length === 0) {
         rows.push({
           key: taskKey,
@@ -235,8 +232,9 @@ export function TaskSearchDialog({
       return;
     }
 
-    // Bugfix: 正文搜索上线后，旧的空搜索结果可能已经被 task query cache 记为 fresh。
-    // 弹窗输入查询词时主动刷新一次，确保服务层新补的正文索引和按需回填逻辑能够生效。
+    // Bugfix: after body-text search shipped, stale empty search results may already be marked
+    // fresh in the task query cache. Refresh once when a query is typed so the service layer's
+    // new body index and on-demand backfill take effect.
     void taskList.refresh();
   }, [open, taskList.refresh, trimmedQuery]);
 
@@ -364,7 +362,11 @@ export function TaskSearchDialog({
                     ) : null}
                     <CommandItem
                       value={`${title} ${workspaceLabel} ${searchSnippet ?? ""}`}
-                      className={isExpandRow ? "min-h-7 items-center px-2.5 text-ui-base" : quickPickItemClassName}
+                      className={
+                        isExpandRow
+                          ? "min-h-7 items-center px-2.5 text-ui-base"
+                          : quickPickItemClassName
+                      }
                       onSelect={() => selectTask(result)}
                     >
                       {isExpandRow ? (
@@ -379,11 +381,7 @@ export function TaskSearchDialog({
                         </span>
                       ) : (
                         <>
-                          <span
-                            className={
-                              "flex min-w-0 flex-1 flex-col justify-center py-0.5"
-                            }
-                          >
+                          <span className={"flex min-w-0 flex-1 flex-col justify-center py-0.5"}>
                             {searchSnippet ? (
                               <span className="min-w-0 truncate text-ui-base font-normal leading-4 text-foreground-subtle">
                                 <HighlightedMatchText text={searchSnippet} query={query} />

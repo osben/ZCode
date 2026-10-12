@@ -1671,6 +1671,7 @@ nodes:
       - "docs/web-remote-control/web-remote-control-architecture.md"
       - "docs/web-remote-control/task-realtime-sync.md"
       - "docs/web-remote-control-task-command-queue.md"
+      - "docs/web-remote-control/self-hosted-remote-relay.md"
 
   - id: "capability.workspace-identity"
     kind: "capability"

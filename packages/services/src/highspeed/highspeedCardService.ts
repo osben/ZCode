@@ -25,11 +25,11 @@ export interface HighspeedServiceTransport {
 }
 
 /**
- * Dynamic auth material for accelerated inference. Acceleration goes through the /api/v1/highspeed/ gateway and
- * reuses draw's Coding Plan dual-JWT contract: the zcode JWT identifies the session identity, while the Coding
- * Plan business JWT + Team identity headers verify plan entitlements.
- * These fields must come from the same selected connection resolution; splicing across Families is forbidden
- * (a ZAI JWT with a BigModel key is only rejected when the server fetches the credential).
+ * Dynamic auth material for accelerated inference. Acceleration goes through the /api/v1/highspeed/ gateway
+ * and shares draw's Coding Plan dual-JWT contract: the zcode JWT identifies session identity, while the Coding
+ * Plan business JWT plus Team identity headers verify plan entitlement.
+ * These fields must come from the same selected-connection resolution; splicing across families is forbidden
+ * (pairing a ZAI JWT with a BigModel key is rejected server-side at token issuance).
  */
 export interface HighspeedInferenceAuth {
   zcodeJwt: string;
@@ -45,19 +45,18 @@ export interface HighspeedCardServiceOptions {
   now?: () => number;
   wait?: (milliseconds: number) => Promise<void>;
   /**
-   * Dynamic auth material for accelerated inference. Acceleration cards are partitioned by account Family and
-   * never silently migrate across Families; it must reuse draw's same selected connection resolution. The default
-   * fixture serves local tests only.
+   * Dynamic auth material for accelerated inference. Acceleration cards are split by account family and never
+   * migrate silently across families; must reuse the same selected-connection resolution as draw.
+   * The default fixture serves local tests only.
    */
   resolveInferenceAuth?: () => Promise<HighspeedInferenceAuth>;
-  /** On a mock draw, only the business state is verified; messages keep going through the session's current ordinary inference route. */
+  /** A mocked draw only verifies business state; messages still go through the session's ordinary inference routing. */
   inferenceMode?: "highspeed" | "session-default";
-  /** draw is only open to Coding Plan users; the default treats it as supported, keeping mock and existing test semantics. */
+  /** draw is only available to Coding Plan users; the default treats it as supported to keep mock and existing-test semantics. */
   resolveCodingPlanSupported?: () => Promise<boolean>;
   /**
-   * The session model must belong to the selected Coding Plan Provider's model catalog before a new draw may be
-   * issued (spec §3 rule 14); the default treats it as covered, keeping mock and existing test semantics. Check
-   * exceptions are treated as failing, so a stale combination never reaches the draw endpoint.
+   * The session model must belong to the selected Coding Plan provider's model catalog before a new draw may start (spec §3 rule 14);
+   * the default treats it as covered to keep mock and existing-test semantics. Resolution errors count as not covered, preventing stale combinations from hitting the draw API.
    */
   resolveModelCovered?: (providerId: string, modelId: string) => Promise<boolean>;
 }
@@ -65,13 +64,13 @@ export interface HighspeedCardServiceOptions {
 const DEFAULT_WAIT_BUDGET_MS = 1000;
 
 type SendBudgetOutcome<T> = { kind: "settled"; value: T } | { kind: "timeout" };
-/** Races one await against this prepareTurn's send budget; exhausting the budget only ends the wait and never cancels the request. */
+/** Races an await against the current prepareTurn's send budget; exhausting the budget only ends the wait and never cancels the request. */
 type SendBudget = <T>(task: Promise<T>) => Promise<SendBudgetOutcome<T>>;
 
 /**
- * Coding Plan dual JWTs + Team identity headers. draw and accelerated inference go through the same
- * /api/v1/highspeed/ gateway and the same auth middleware: both must carry exactly identical Coding Plan
- * credentials, with acceleration merely attaching the card ID in addition.
+ * Coding Plan dual JWT + Team identity headers. draw and accelerated inference share the same /api/v1/highspeed/
+ * gateway and the same auth middleware: both must carry exactly identical Coding Plan credentials; accelerated
+ * inference only adds the card ID on top.
  */
 export function buildHighspeedCodingPlanAuthHeaders(params: {
   zcodeJwt: string;
@@ -116,16 +115,16 @@ function toSnapshot(card: HighspeedCardApi): HighspeedCardSnapshot {
 
 /**
  * Builds the selection and dynamic auth material for one accelerated execution. Static facts such as endpoint,
- * API shape, and model capabilities are provided by the ZCode Built-in Provider Config; sending provider
- * definitions along with each send is forbidden.
+ * API shape, and model capabilities come from the ZCode Built-in Provider Config; provider definitions must never
+ * be sent down again per individual message.
  */
 export function buildHighspeedTurnExecution(params: {
   card: HighspeedCardSnapshot;
   auth: HighspeedInferenceAuth;
   /**
-   * The selection submitted at draw time (the session's original model + thought level). Acceleration swaps the
-   * endpoint, not the model; the execution selection inherits its reasoning level, otherwise the CLI Registry
-   * would reject the turn for a missing level; it is also the fallback target for degradation and must be sent with selectionFallback.
+   * The submit-time selection at draw time (session's original model + reasoning level). Acceleration swaps the
+   * endpoint, not the model, so the execution selection reuses that level; otherwise the CLI Registry rejects the
+   * turn for a missing level. It is also the downgrade return target and must be sent along with selectionFallback.
    */
   sessionSelection: ModelSelection;
 }): HighspeedTurnExecution {
@@ -134,19 +133,18 @@ export function buildHighspeedTurnExecution(params: {
   return {
     modelSelection: {
       providerId,
-      // The card echoes the model submitted at request time: acceleration comes from swapping the endpoint, not the model.
+      // The card echoes the model submitted at request time: acceleration comes from switching endpoints, not models.
       modelId: params.card.model,
-      // An execution-scoped selection must be complete: carry the session's reasoning level, otherwise the CLI Registry rejects the turn for a missing level.
+      // The execution-scoped selection must be complete: include the session's reasoning level, otherwise the CLI Registry rejects the turn for a missing level.
       ...(reasoningLevel ? { options: { reasoningLevel } } : {}),
     },
     requestAuth: {
-      // Anthropic-compatible clients send x-api-key; the server still adjudicates with Authorization, the Coding Plan dual JWTs, and the card ID.
+      // Anthropic-compatible clients send x-api-key; the server still adjudicates with Authorization, the Coding Plan dual JWT, and the card ID.
       apiKey: params.auth.zcodeJwt,
       headers: {
-        // Bug cause: accelerated inference once sent only the zcode JWT + card ID, and since it goes through the
-        // same highspeed gateway and the same auth middleware as draw, without the Coding Plan dual JWTs + Team
-        // identity headers the gateway could not verify plan entitlements and returned 401 auth_failed. Here we
-        // reuse exactly the Coding Plan headers from draw and attach this execution's card ID.
+        // Bug cause: accelerated inference used to send only the zcode JWT + card ID, but it shares draw's highspeed
+        // gateway and auth middleware. Without the Coding Plan dual JWT + Team identity headers the gateway cannot
+        // verify plan entitlement and returns 401 auth_failed. Reuse headers identical to draw's and add this execution's card ID.
         ...buildHighspeedCodingPlanAuthHeaders({
           zcodeJwt: params.auth.zcodeJwt,
           codingPlanAuthorization: params.auth.codingPlanAuthorization,
@@ -157,11 +155,11 @@ export function buildHighspeedTurnExecution(params: {
         "X-Highspeed-Card-ID": params.card.cardId,
       },
     },
-    // Any failure of the accelerated request falls back to the session model to finish the turn (spec §2.2): rules
-    // match in order; card expiry (3402) gets its own reason so the Renderer can distinguish the prompt; the catch-all
-    // rule carries no error code and covers auth, rate limits, 5xx, network, timeout, and stream interruption.
-    // The CLI only matches on the declaration and never interprets error codes itself; an execution handle carrying
-    // this declaration gets 0 adapter-level retries and falls back on the first failure.
+    // Any accelerated-request failure falls back to the session model to finish the turn (spec §2.2): rules match in order,
+    // card expiry (3402) gets its own reason so the Renderer can show a distinct message; the catch-all rule carries no error
+    // code and covers auth, rate limits, 5xx, network, timeouts, and stream interruptions.
+    // The CLI matches only on declarations and never interprets error codes itself; execution handles carrying these
+    // declarations get 0 retries in the adapter layer and fall back on the first failure.
     selectionFallback: {
       providerId,
       rules: [
@@ -171,12 +169,12 @@ export function buildHighspeedTurnExecution(params: {
         },
         { reason: "highspeed_request_failed" },
       ],
-      // Bug root cause: the fallback target once depended only on the CLI's in-memory resident session selection.
-      // If cold recovery after a desktop restart landed in the window where the Registry had just become ready and
-      // account entitlements were unresolved, the persisted selection failed validation and did not bind; later
-      // accelerated-only turns would not bind either, so on card expiry (3402) the degradation was silently skipped
-      // and the whole turn surfaced "highspeed card is invalid". The initiator knows the original model explicitly
-      // here and must send it as the fallback target with the declaration (spec §2.2) instead of betting on runtime state.
+      // Bug root cause: the fallback target used to rely only on the CLI's in-memory session-resident selection. After a desktop
+      // restart, cold recovery could land in a window where the Registry was just ready but account entitlement was unresolved, so
+      // the persisted-selection validation failed and no binding happened; afterwards only accelerated turns were sent, so no binding
+      // ever happened either, and card expiry (3402) downgraded silently and the whole turn failed with "highspeed card is invalid".
+      // The initiator knows the original model here, so it must send it as the fallback target with the declaration (spec §2.2)
+      // instead of betting on runtime state.
       target: params.sessionSelection,
     },
   };
@@ -214,19 +212,19 @@ export class HighspeedCardService implements IHighspeedCardService {
   }
 
   async prepareTurn(params: HighspeedPrepareTurnParams): Promise<HighspeedPrepareTurnResult> {
-    // Bug cause: scheduled tasks are background input turns and must not participate in the user-facing proactive
-    // draw; the gate must look only at this turn's automationId and never read the sticky cronAutomationId on the
-    // Task, otherwise manual input in the same session would also lose acceleration.
+    // Bug cause: scheduled jobs are background input turns and must not participate in draws for user-initiated sends; the gate
+    // must look only at this turn's automationId, never the sticky cronAutomationId on the Task, otherwise manual inputs in the
+    // same session would lose acceleration too.
     if (params.automationId?.trim()) {
       return { kind: "fallback", reason: "automation", nextDrawAt: this.nextDrawAt };
     }
 
     const now = this.now();
     this.expireCard(now);
-    // Bug root cause: the 1s budget once only wrapped the draw wait, while the gate checks (the model catalog must
-    // wait for Provider Runtime initialization) and the accelerated auth resolution were separately awaited outside
-    // the budget, so a send could hang indefinitely when the Registry was not ready or credential resolution stalled.
-    // The budget starts on entering prepareTurn and all awaits share one deadline (spec §3 rule 12).
+    // Bug root cause: the 1s budget used to cover only the draw wait, while the gate checks (the model catalog waits for Provider
+    // Runtime initialization) and accelerated-auth resolution each awaited outside the budget, so sends hung indefinitely whenever
+    // the Registry was not ready or credential resolution stalled.
+    // The budget starts when prepareTurn is entered; every await shares the same deadline (spec §3 rule 12).
     const withinBudget = this.createSendBudget(now, params.waitBudgetMs ?? DEFAULT_WAIT_BUDGET_MS);
 
     if (this.card) {
@@ -236,21 +234,20 @@ export class HighspeedCardService implements IHighspeedCardService {
       return { kind: "fallback", reason: "cooldown", nextDrawAt: this.nextDrawAt };
     }
 
-    // The draw body's provider contract is the Coding Plan builtin identity on the server whitelist
-    // (builtin:zai-coding-plan / builtin:bigmodel-coding-plan); Start/Off-Peak/API Key/custom providers cannot
-    // resolve to a whitelist value, so degrade directly rather than firing a request the server will surely reject.
+    // The draw body's provider contract requires Coding Plan builtin identities from the server's allowlist
+    // (builtin:zai-coding-plan / builtin:bigmodel-coding-plan); Start/Off-Peak/API Key/custom providers cannot resolve to an
+    // allowlisted value, so downgrade directly instead of sending a request that will certainly be rejected.
     // Regression constraint: never pass the session selection's full providerId (e.g. account:bigmodel-team-coding-plan)
-    // or the account Family (bigmodel) into the body — the whitelist rejects both with parameter error 3001.
+    // or the account family (bigmodel) into the body; both are rejected by the allowlist with a 3001 parameter error.
     const drawProviderId = resolveHighspeedDrawProviderId(params.providerId);
     if (!drawProviderId) {
       return { kind: "fallback", reason: "unavailable", nextDrawAt: this.nextDrawAt };
     }
 
-    // The gate only blocks new draws; in-flight is a request legitimately started earlier and is not affected by the gate.
+    // The gate only blocks new draws; in-flight requests were legitimately started earlier and are unaffected by the gate.
     if (!this.inFlightDraw) {
       const gate = await withinBudget(this.checkDrawGates(params.providerId, params.model));
-      // A gate that exceeds the budget degrades as not-ready (rule 14) without drawing; the check itself is not
-      // cancelled and warms the next round once it completes.
+      // A gate that overruns the budget downgrades as not ready (rule 14) without starting a draw; the check itself is not cancelled and warms up the next turn once it finishes.
       if (gate.kind === "timeout") {
         return { kind: "fallback", reason: "unavailable", nextDrawAt: this.nextDrawAt };
       }
@@ -286,11 +283,10 @@ export class HighspeedCardService implements IHighspeedCardService {
   }
 
   /**
-   * Gates for a new draw: rule 14 model catalog and rule 11 Coding Plan support, evaluated in order, returning
-   * the fallback reason, or null when all pass. Check exceptions are treated as failing; card, cooldown, and
-   * in-flight state are unchanged. A stale (coding-plan provider, delisted model) combination recovered from a
-   * session passes the provider whitelist as usual and must be stopped by the model catalog, keeping invalid
-   * combinations or invalid credentials away from the draw endpoint.
+   * Gates for a new draw: rule 14 model catalog and rule 11 Coding Plan support, evaluated in order; returns the fallback reason,
+   * or null when all pass. Resolution errors count as failing; card, cooldown, and in-flight state stay untouched.
+   * A stale (coding-plan provider, retired model) combination restored from session recovery still passes the provider allowlist
+   * and must be caught by the model catalog, so invalid combinations or credentials never hit the draw API.
    */
   private async checkDrawGates(
     providerId: string,
@@ -302,8 +298,8 @@ export class HighspeedCardService implements IHighspeedCardService {
   }
 
   /**
-   * The deadline is fixed when entering prepareTurn; the timer is created lazily on demand and only once, with
-   * later awaits reusing it. Synchronous degradation paths such as automation / cooldown / off-whitelist never register a timer.
+   * The deadline is fixed on entering prepareTurn; the timer is lazily created once on demand and reused by every
+   * subsequent await. Synchronous downgrade paths (automation / cooldown / outside the allowlist) never create it.
    */
   private createSendBudget(startedAt: number, budgetMs: number): SendBudget {
     const deadline = startedAt + budgetMs;
@@ -376,14 +372,12 @@ export class HighspeedCardService implements IHighspeedCardService {
       };
     }
     const auth = await withinBudget(this.resolveInferenceAuth());
-    // Auth resolution exceeded the budget: send normally this turn, reusing the draw-timeout semantics ("the card
-    // could not become ready within the budget"); the card is kept and returned with the result, and acceleration
-    // is reused directly once auth is ready next turn.
+    // Auth resolution overran the budget: send this turn normally, reusing draw-timeout semantics ("card was not ready within budget");
+    // the card is kept and returned with the result, and the next turn reuses acceleration once auth is ready.
     if (auth.kind === "timeout") {
       return { kind: "fallback", reason: "draw-timeout", card, nextDrawAt: this.nextDrawAt };
     }
-    // The fallback target is exactly the session selection submitted this time (provider / model / level): it is
-    // independent of the card and does not depend on CLI runtime state.
+    // The fallback target is the session selection submitted this turn (provider / model / level): it is independent of the card and does not depend on CLI runtime state.
     const sessionSelection: ModelSelection = {
       providerId: params.providerId,
       modelId: params.model,

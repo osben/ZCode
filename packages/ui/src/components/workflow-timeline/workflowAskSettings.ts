@@ -1,13 +1,13 @@
 // ============================================================
 // The two adjustable run settings in the confirmation window: pure rules
 // ============================================================
-// docs/dynamic-workflow/launch.md "Adjusting the settings in the window"; see
-// docs/dynamic-workflow/presentation.md "The confirmation window" for the appearance.
+// docs/dynamic-workflow/launch.md "Adjusting the settings in the window"; for appearance see
+// docs/dynamic-workflow/presentation.md "The confirmation window".
 //
-// Same draft and the same "what changed" judgment as the "configure" popover (workflowRunSettings.ts);
-// the difference is only the starting point and the exit: the start reads **this call's input** (values
-// normalized by the CLI's resolveInput), the exit is the Allow reply's `content`, using the tool's own
-// field names and three states — so the agent side has exactly one parser (contracts'
+// Same draft and same "what changed" judgment as the "configure" popover (workflowRunSettings.ts);
+// only the entry point and exit differ: the entry reads **this invocation's input** (values normalized
+// by the CLI's resolveInput), the exit is the Allow response's `content`, using the tool's own field
+// names and tri-state — so the agent side needs only one parser (contracts'
 // WorkflowSettingsAdjustmentSchema).
 
 import {
@@ -20,16 +20,16 @@ import {
   type WorkflowRunSettingsDraft,
 } from "./workflowRunSettings.js";
 
-/** The Allow reply's `content`: only changed fields; `null` = back to the default (session model / default concurrency). */
+/** The Allow response's `content`: only changed fields; `null` = back to default (session model / default concurrency). */
 export interface WorkflowAskSettingsContent {
   subagent_model?: string | null;
   max_concurrency?: number | null;
 }
 
 /**
- * Starting point: the values in the input. Missing model means the session model; missing upper bound
- * means the default concurrency ("no bound of its own" is exactly that number on the stepper). If the
- * default is also unknown, null (the stepper stays empty; only typing a number sets a bound).
+ * Entry point: the values from the input. No model means the session model; no upper bound means the
+ * default concurrency ("no bound of its own" is that number on the stepper); when even the default is
+ * unknown, null (the stepper stays empty; typing a number is what sets a bound).
  */
 export function initialWorkflowAskSettingsDraft(
   input: unknown,
@@ -42,10 +42,10 @@ export function initialWorkflowAskSettingsDraft(
 }
 
 /**
- * Exit: changed fields → reply content; nothing changed means undefined (Allow keeps carrying only
- * optionId). All the rules belong to the popover: changing only the thinking tier still counts as
- * changing the model; an upper bound equal to the default concurrency sends `null` (above the default
- * is a real number).
+ * Exit: changed fields → response content; nothing changed means undefined (Allow keeps carrying only
+ * the optionId). The rules are all the popover's: changing only the thinking level counts as changing
+ * the model, an upper bound equal to the default concurrency sends `null` (above default is a real
+ * number).
  */
 export function workflowAskSettingsContent(
   initial: WorkflowRunSettingsDraft,
@@ -60,7 +60,7 @@ export function workflowAskSettingsContent(
   };
 }
 
-/** Which line changed (the changed line is bolded with a "was …" note). */
+/** Which row changed (the changed row is bolded and carries "was …"). */
 export function workflowAskSettingsChangedLines(
   initial: WorkflowRunSettingsDraft,
   draft: WorkflowRunSettingsDraft,

@@ -65,6 +65,12 @@ const enabledBuiltinAgentCliProvidersSchema = z
   .transform(() => [...ZCODE_ENABLED_AGENT_PROVIDERS]);
 const providerFamilyDomainSchema = z.enum(["zai", "bigmodel"]);
 
+const worktreeLocationModeSchema = z.enum(["sibling", "inside", "global", "custom"]);
+const worktreeProjectOverrideSchema = z.object({
+  defaultBaseBranch: nonEmptyStringSchema.optional(),
+  branchPrefix: nonEmptyStringSchema.optional(),
+});
+
 export const postUpdateReleaseNotesPayloadSchema = z.object({
   version: nonEmptyStringSchema,
   title: nonEmptyStringSchema,
@@ -478,8 +484,9 @@ const appSettingsObjectSchema = z.object({
   // User shortcut overrides (semantic validation is tolerant in the effective map in ui/src/shortcuts; the schema validates shape only).
   shortcutBindings: z.record(z.string(), z.array(z.string())).optional(),
   localePreference: localePreferenceSchema.default("system").catch("system"),
-  // 非关键偏好：更新版本写入的未知 voiceDictation 值只应被丢弃，而不是让整个 setting.json
-  // 解析失败、settingService 回落默认值并在下次写回时清空全部设置；与 locale 的 catch 策略一致。
+  // Non-critical preference: an unknown voiceDictation value written by a newer version should only
+  // be dropped, not fail the entire setting.json parse, make settingService fall back to defaults,
+  // and erase all settings on the next write-back; same catch policy as locale.
   voiceDictation: voiceDictationSettingsSchema.optional().catch(undefined),
   terminalInheritSystemProfile: z.boolean().default(true),
   terminalFontFamily: nonEmptyStringSchema.optional(),
@@ -539,6 +546,14 @@ const appSettingsObjectSchema = z.object({
   webRemoteControlExternalRelayDevice: webRemoteControlExternalRelayDeviceSchema.optional(),
   webRemoteControlLastEnabledContext: webRemoteControlLastEnabledContextSchema.optional(),
   zcodeEndpointOrigin: zcodeEndpointOriginSchema.optional(),
+  // 与 locale/voiceDictation 相同的读取容错：单个坏值（例如更新版本写入的枚举）不应让整份 setting.json 解析失败回退默认值；写入侧 patch schema 保持严格。
+  worktreeLocationMode: worktreeLocationModeSchema.optional().catch(undefined),
+  worktreeCustomLocationPath: nonEmptyStringSchema.optional().catch(undefined),
+  worktreeBranchPrefix: nonEmptyStringSchema.optional().catch(undefined),
+  worktreeProjectOverrides: z
+    .record(z.string(), worktreeProjectOverrideSchema)
+    .optional()
+    .catch(undefined),
 });
 
 export const appSettingsSchema = z.preprocess(
@@ -635,4 +650,8 @@ export const appSettingsPatchSchema = z.object({
   webRemoteControlExternalRelayDevice: webRemoteControlExternalRelayDeviceSchema.optional(),
   webRemoteControlLastEnabledContext: webRemoteControlLastEnabledContextSchema.optional(),
   zcodeEndpointOrigin: zcodeEndpointOriginSchema.optional(),
+  worktreeLocationMode: worktreeLocationModeSchema.optional(),
+  worktreeCustomLocationPath: nonEmptyStringSchema.optional(),
+  worktreeBranchPrefix: nonEmptyStringSchema.optional(),
+  worktreeProjectOverrides: z.record(z.string(), worktreeProjectOverrideSchema).optional(),
 });

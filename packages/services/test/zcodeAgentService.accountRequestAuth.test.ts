@@ -7,7 +7,7 @@ import {
 import type { AccountRequestAuthMaterial } from "../src/model-provider/accountRequestAuthService.js";
 import { offPeakSelectionView } from "./fixtures/offPeakSelection.js";
 
-// 账号套餐的 provider runtime headers 由 Host 自动应答，不依赖 Renderer。
+// Account-plan provider runtime headers are answered automatically by the Host, without depending on the Renderer.
 const target = {
   workspacePath: "/test/account-auth",
   sessionId: "sess-account-auth",

@@ -26,7 +26,7 @@ import {
   type ZCodeAutomationLifecycleStatus,
 } from "@zcode/shared";
 
-// Fixed base time so backoff / reschedule assertions are reproducible.
+// Fixed baseline time so backoff / rescheduling assertions are reproducible.
 const NOW = 1_700_000_000_000;
 const MINUTE = 60_000;
 
@@ -43,14 +43,12 @@ function makeParams(
   };
 }
 
-// Why: tests used to redirect the global _dataBaseDir to a temp dir via setDataBaseDir(tempDir),
-// but when vitest's threads pool runs test files concurrently, the global value got overwritten by other
-// files' setDataBaseDir,
-// causing repo and raw SQL operations to write into the real database ~/.zcode/v2 within concurrency windows
-// (that's where the /tmp/ws-series dirty data came from).
-// Switched to dependency injection: each describe holds its own tempDir, the repo receives dbPath via a
-// constructor argument,
-// and raw SQL uses the same dbPath, fully decoupling from the global singleton.
+// Fix rationale: tests previously used setDataBaseDir(tempDir) to redirect the global _dataBaseDir to a
+// temp directory, but when vitest's threads pool runs test files concurrently, other files'
+// setDataBaseDir calls overwrite the global value, so repo and raw-SQL operations could write into the
+// real database ~/.zcode/v2 within a concurrency window (that is where the /tmp/ws dirty data came from).
+// Switched to dependency injection: each describe owns an isolated tempDir, the repo receives dbPath via
+// a constructor argument, and raw SQL uses the same dbPath — fully decoupled from the global singleton.
 function buildTempDbPath(tempDir: string): string {
   return join(tempDir, "tasks-index.sqlite");
 }
@@ -119,8 +117,8 @@ describe("AutomationRepo 调度状态机", () => {
           repo.getModelSelectionForDispatch(created.automationId, created.workspaceKey),
         ).rejects.toThrow("Automation 模型选择不可用");
       }
-      // The new version's explicit follow is a legitimate product intent; the retained legacy column is for
-      // rollback only and must not bring the old selection back.
+      // Explicit follow in the new version is a legitimate product intent; the retained legacy column is
+      // for rollback only and must not bring the old selection back.
       db.prepare("UPDATE automations SET model_selection = 'null' WHERE automation_id = ?").run(
         created.automationId,
       );
@@ -689,8 +687,7 @@ describe("AutomationRepo 调度状态机", () => {
     try {
       const created = await service.create(
         makeParams({
-          // Simulate the model mistakenly believing it's 16:39; this value must no longer be the scheduling
-          // truth for relative-time tasks.
+          // Simulate the model wrongly believing it is currently 16:39; that value must no longer be the scheduling truth for relative-time tasks.
           cronExpr: "42 16 28 7 *",
           relativeDelayMinutes: 3,
           recurring: false,
@@ -889,8 +886,7 @@ describe("AutomationRepo 调度状态机", () => {
       const created = await service.create(
         makeParams({
           title: "每200分钟提醒",
-          // cron is only a legal compatibility expression; the real frequency must be carried by the carrier's
-          // normalized scheduleRule.
+          // cron is only a valid compatibility expression; the real frequency must be carried by the carrier-normalized scheduleRule.
           cronExpr: "* * * * *",
           intervalUnit: "minute",
           interval: 200,
@@ -925,8 +921,7 @@ describe("AutomationRepo 调度状态机", () => {
         scheduleRule: { unit: "hourly", interval: 200, minute: 49, anchorAt: updatedAt },
       });
 
-      // The domain layer must also guard carrier=unbounded; old clients or internal calls must not write
-      // contradictory state.
+      // The domain layer must also guard carrier=infinite-loop; legacy clients or internal callers must not write contradictory state.
       await expect(
         service.create(
           makeParams({
@@ -945,8 +940,7 @@ describe("AutomationRepo 调度状态机", () => {
         }),
       ).rejects.toBeInstanceOf(InvalidAutomationIntervalCarrierError);
 
-      // The domain layer must not trust protocol validation alone: out-of-range carriers must also be rejected
-      // when old clients or internal calls bypass the protocol.
+      // The domain layer must not trust protocol validation alone: out-of-range carriers must be rejected even when legacy clients or internal callers bypass protocol.
       await expect(
         service.create(
           makeParams({
@@ -988,7 +982,7 @@ describe("AutomationRepo 调度状态机", () => {
         intervalUnit: "daily",
         interval: 40,
       });
-      // The first run keeps that day's not-yet-arrived 17:49; only later rounds advance by the 40-day interval.
+      // The first run keeps that day's not-yet-reached 17:49; only later rounds advance by the 40-day interval.
       const firstNextRunAt = new Date(2026, 7, 4, 17, 49).getTime();
       const secondNextRunAt = new Date(2026, 8, 13, 17, 49).getTime();
 
@@ -1065,7 +1059,7 @@ describe("AutomationRepo 调度状态机", () => {
     expect(first.map((x) => x.automationId)).toEqual([a.automationId]);
     expect(first[0]!.dispatchStatus).toBe("claimed");
 
-    // Already running, so the second claim is empty (single-flight).
+    // Already running; the second claim should be empty (single-flight).
     const second = await repo.claimDue(NOW);
     expect(second).toHaveLength(0);
   });
@@ -1155,7 +1149,7 @@ describe("AutomationRepo 调度状态机", () => {
     expect(got?.retryAt).toBe(NOW + DISPATCH_RETRY_BASE_MS);
     expect(got?.enabled).toBe(true);
 
-    // Not claimed before the backoff elapses; claimed by retry_at once due.
+    // Not claimed before the backoff elapses; claimed at retry_at once due.
     expect(await repo.claimDue(NOW + DISPATCH_RETRY_BASE_MS - 1)).toHaveLength(0);
     const retried = await repo.claimDue(NOW + DISPATCH_RETRY_BASE_MS);
     expect(retried.map((x) => x.automationId)).toEqual([a.automationId]);
@@ -1221,9 +1215,9 @@ describe("AutomationRepo 调度状态机", () => {
   });
 
   it("skipAndReschedule（finalize）：一次性任务错过窗口即 completed 终态，不再被认领", async () => {
-    // Relative-time tasks (delayMinutes) persist as a minute scheduleRule; the generic recompute can always
-    // produce a future cycle of anchorAt + k*interval, and a missed one-shot reminder must never be revived
-    // through it.
+    // Relative-time tasks (delayMinutes) persist as a minute scheduleRule; the generic recomputation can
+    // always produce a future anchorAt + k*interval cycle, and a missed one-shot reminder must never be
+    // revived through it.
     const a = await repo.create(
       makeParams({
         recurring: false,
@@ -1255,7 +1249,7 @@ describe("AutomationRepo 调度状态机", () => {
     expect(got?.enabled).toBe(false);
     expect(got?.nextRunAt).toBeUndefined();
 
-    // The skipped run ledger is retained; no later tick may claim the task again.
+    // The skipped run ledger is kept; no later tick may claim this task again.
     const runs = await repo.listRuns(a.automationId);
     expect(runs).toHaveLength(1);
     expect(runs[0]!.dispatchStatus).toBe("skipped");
@@ -1535,8 +1529,7 @@ describe("AutomationRepo 调度状态机", () => {
     expect(got?.nextRunAt).toBe(NOW + 10 * MINUTE);
     expect(got?.enabled).toBe(false);
     expect(got?.lifecycleStatus).toBe("paused");
-    // After prompt accepted/queued, the claim is still released by the real turn's terminal state; it must not
-    // be unlocked early due to counting.
+    // After prompt accepted/queued, the claim is still released by the real turn's terminal state; it must not unlock early based on counts.
     expect(await repo.runNow(a.automationId, { now: NOW + 3 })).toBeNull();
 
     const runs = await repo.listRuns(a.automationId);
@@ -1632,8 +1625,7 @@ describe("AutomationRepo 调度状态机", () => {
     expect(await repo.claimDue(NOW)).toHaveLength(0);
     expect(await repo.claimManualRuns(NOW + 1)).toHaveLength(0);
 
-    // sendPrompt accepted/queued only writes back dispatched; the claim must still be held until the turn's
-    // terminal state.
+    // sendPrompt accepted/queued only writes back dispatched; the claim must still be held until the turn's terminal state.
     await repo.markManualRunDispatched({
       runId: first!.run.runId,
       sessionId: "busy-task",
@@ -1701,10 +1693,10 @@ describe("AutomationRepo 调度状态机", () => {
 
   it("claimDue：僵尸认领（持有者崩溃）超过 CLAIM_STALE 后被回收重认领", async () => {
     const a = await repo.create(makeParams(), { nextRunAt: NOW - 1 });
-    await repo.claimDue(NOW); // After claiming: running=1, claimed_at=NOW
-    // Not reclaimed before the timeout (still running).
+    await repo.claimDue(NOW); // after claiming: running=1, claimed_at=NOW
+    // Not reclaimed before the stale threshold (still running).
     expect(await repo.claimDue(NOW + CLAIM_STALE_MS - 1)).toHaveLength(0);
-    // After CLAIM_STALE, reclaimed and re-claimed.
+    // After CLAIM_STALE elapses, the claim is reclaimed and re-claimed.
     const reclaimed = await repo.claimDue(NOW + CLAIM_STALE_MS + 1);
     expect(reclaimed.map((x) => x.automationId)).toEqual([a.automationId]);
   });
@@ -1753,7 +1745,7 @@ describe("automation workspace 隔离", () => {
       nextRunAt: NOW + MINUTE,
     });
 
-    // Wrong workspace can't read it; the correct workspace can.
+    // Wrong workspace: not readable; correct workspace: readable.
     expect(await repo.get(a.automationId, KEY_B)).toBeNull();
     expect((await repo.get(a.automationId, KEY_A))?.automationId).toBe(a.automationId);
 
@@ -1761,21 +1753,20 @@ describe("automation workspace 隔离", () => {
     expect(await repo.update(a.automationId, { title: "hacked" }, undefined, KEY_B)).toBeNull();
     expect((await repo.get(a.automationId, KEY_A))?.title).toBe(a.title);
 
-    // setEnabled: wrong workspace doesn't change enabled.
+    // setEnabled: wrong workspace does not change enabled.
     await repo.setEnabled(a.automationId, false, KEY_B);
     expect((await repo.get(a.automationId, KEY_A))?.enabled).toBe(true);
 
-    // restart: first pause in the correct workspace, then restart via the wrong workspace must be a no-op
-    // (still paused).
+    // restart: first set paused in the correct workspace, then a wrong-workspace restart must be a no-op (still paused).
     await repo.setEnabled(a.automationId, false, KEY_A);
     await repo.restart(a.automationId, { nextRunAt: NOW + 2 * MINUTE }, KEY_B);
     expect((await repo.get(a.automationId, KEY_A))?.lifecycleStatus).toBe("paused");
 
-    // runNow: wrong workspace returns null and creates no run.
+    // runNow: wrong workspace returns null and records no run.
     expect(await repo.runNow(a.automationId, { now: NOW }, KEY_B)).toBeNull();
     expect(await repo.listRuns(a.automationId, KEY_A)).toHaveLength(0);
 
-    // delete: wrong workspace doesn't delete; the correct workspace can.
+    // delete: wrong workspace does not delete; the correct workspace can.
     await repo.delete(a.automationId, KEY_B);
     expect(await repo.get(a.automationId, KEY_A)).not.toBeNull();
     await repo.delete(a.automationId, KEY_A);
@@ -1823,7 +1814,7 @@ describe("automation workspace 隔离", () => {
   });
 
   it("repo：相同 workspacePath 但不同 workspaceIdentity 互相隔离", async () => {
-    // workspaceKey = workspaceIdentity?.trim() || workspacePath.
+    // workspaceKey = workspaceIdentity?.trim() || workspacePath。
     const a = await repo.create(
       makeParams({ workspacePath: "/tmp/shared", workspaceIdentity: "remote-A" }),
       { nextRunAt: NOW + MINUTE },

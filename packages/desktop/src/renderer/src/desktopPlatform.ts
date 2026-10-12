@@ -19,6 +19,11 @@ export function createDesktopPlatform(options: {
     createLocalMediaPreviewUrl: buildLocalMediaPreviewUrl,
     isLocalDevelopmentRuntime: options.isLocalDevelopmentRuntime,
     selectDirectory: () => window.zcode.selectDirectory(),
+    // Expose only when the (possibly older) preload bridge actually has the method,
+    // so consumers' capability gating cannot offer a mode that would throw.
+    ...(window.zcode.getAppWorktreesDir
+      ? { getAppWorktreesDir: () => window.zcode.getAppWorktreesDir() }
+      : {}),
     selectFile: () => window.zcode.selectFile(),
     selectFiles: () => window.zcode.selectFiles?.() ?? Promise.resolve([]),
     createTempTextAttachment: (payload) => window.zcode.createTempTextAttachment(payload),

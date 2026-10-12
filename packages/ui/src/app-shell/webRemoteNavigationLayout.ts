@@ -38,9 +38,10 @@ export function getActiveWorkspaceShellPanelIds(
   shellPanelIds: string[],
   _renderWebRemoteNavigationPanel: boolean,
 ) {
-  // Bugfix: 远控顶部区域折叠时如果把 sidebar panel 从布局树里移除，
-  // React 会卸载整块导航组件，展开后触发任务索引重新加载。
-  // 这里保持 panelIds 稳定，改为“保活 + 视觉折叠”，避免反复 mount/unmount。
+  // Bugfix: if the sidebar panel were removed from the layout tree when the remote's top area
+  // collapses, React would unmount the whole navigation component and expanding would retrigger the
+  // task index load. panelIds stay stable here — "keep alive + visual collapse" — avoiding repeated
+  // mount/unmount.
   return shellPanelIds;
 }
 

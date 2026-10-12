@@ -144,6 +144,7 @@ import {
 import { isAppleKeyboardPlatform } from "@/lib/keyboardShortcuts.js";
 import { usePrimaryFollowupModifier } from "@/v4/composer/usePrimaryFollowupModifier.js";
 import { consumeV4ComposerDraftWorkspaceTransferRequest } from "@/v4/composer/composerDraftWorkspaceTransfer.js";
+import { useComposerDraftWorktreeIntentSlot } from "@/v4/composer/composerDraftWorktreeIntent.js";
 import { useComposerAttachments } from "@/v4/composer/useComposerAttachments.js";
 import type { ConversationDropTargetController } from "@/v4/composer/conversationDropTarget.js";
 import { CodeCommentAttachmentChip } from "@/v4/composer/CodeCommentAttachmentChip.js";
@@ -506,7 +507,7 @@ export interface ConversationComposerProps {
   appSlashCommands?: readonly AppSlashCommand[];
   /** Expose the composer's drop routing to the full conversation pane / desktop draft title bar. */
   onDropTargetControllerChange?: (controller: ConversationDropTargetController | null) => void;
-  /** 语音输入仅本机桌面端可用（转写在 Desktop Host 执行）；Web/远端入口不显示麦克风。 */
+  /** Voice input is available only on the local desktop (transcription runs in the Desktop Host); Web / remote entries show no microphone. */
   voiceDictationEnabled?: boolean;
 }
 
@@ -525,7 +526,7 @@ function VoiceDictationComposerControl({
   scopeRef: RefObject<HTMLElement | null>;
 }) {
   const voiceDictation = useVoiceDictation({ enabled: true, onTranscript, scopeRef });
-  // V4ComposerVoiceButton 是 memo 组件；内联箭头函数会让 memo 失效（见 reactStableReferences 测试）。
+  // V4ComposerVoiceButton is a memo component; an inline arrow function would defeat the memo (see the reactStableReferences tests).
   const handleToggle = useCallback(() => void voiceDictation.toggle(), [voiceDictation.toggle]);
   return (
     <V4ComposerVoiceButton
@@ -609,6 +610,8 @@ function ConversationComposerImpl({
   });
   const draftScopeId = sessionId ?? V4_DRAFT_SCOPE_ROOT;
   const workspaceKey = workspaceIdentity?.trim() || workspacePath;
+  // Empty-state “New worktree”首发拦截槽位（稳定对象，值变化不触发重渲染）。
+  const worktreeIntentSlot = useComposerDraftWorktreeIntentSlot();
   const configPickerScopeKey = `${workspaceKey}\0${draftScopeId}`;
   const [text, setText] = useState("");
   const [pending, setPending] = useState(false);
@@ -695,7 +698,7 @@ function ConversationComposerImpl({
   const insertVoiceTranscript = useCallback((text: string) => {
     const api = inputApiRef.current;
     if (!api) return;
-    // 必须走 appendText：getText/setText 会把编辑器重建为纯文本节点，已有的结构化 mention 会被打平。
+    // Must go through appendText: getText/setText rebuild the editor as plain text nodes, flattening existing structured mentions.
     api.appendText(text);
     api.focus();
   }, []);
@@ -1314,6 +1317,36 @@ function ConversationComposerImpl({
       ) {
         return;
       }
+      // Empty-state “New worktree” interception (review 6c): before the draft's first send
+      // creates any runtime session, hand the send to the registered intent so it can create
+      // the worktree and redirect the draft there first. Handled sends never claim the draft —
+      // the text stays in the editor and follows the workspace switch via the existing
+      // draft-transfer machinery; errors surface inline in the worktree form.
+      const worktreeIntent = worktreeIntentSlot?.current;
+      if (
+        draftMode &&
+        sessionId === null &&
+        worktreeIntent &&
+        worktreeIntent.workspaceKey === workspaceKey
+      ) {
+        pendingRef.current = true;
+        setPending(true);
+        let handledByWorktreeIntent = true;
+        try {
+          handledByWorktreeIntent = await worktreeIntent.interceptFirstSend();
+        } catch (error) {
+          logger.warn(
+            `[v4-composer] worktree 发送拦截失败: ${error instanceof Error ? error.message : String(error)}`,
+          );
+          handledByWorktreeIntent = true;
+        } finally {
+          pendingRef.current = false;
+          setPending(false);
+        }
+        if (handledByWorktreeIntent) {
+          return;
+        }
+      }
       const sendAction = startUserAction({
         featureId: "conversation.composer.message",
         action: "send",
@@ -1591,6 +1624,7 @@ function ConversationComposerImpl({
       conversationSelectionReferences,
       conversationTelemetry,
       draftConfig,
+      draftMode,
       createSubmissionFromComposer,
       submissionReady,
       getCodeCommentContexts,
@@ -1611,6 +1645,7 @@ function ConversationComposerImpl({
       updateText,
       updateComposerContent,
       webElementContexts,
+      worktreeIntentSlot,
       pptxElementReferences,
       workspaceIdentity,
       workspacePath,

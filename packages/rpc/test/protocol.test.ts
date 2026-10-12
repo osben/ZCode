@@ -51,9 +51,9 @@ describe("ChunkStream", () => {
   });
 });
 
-// ── The two PersistentProtocol patches (docs/v4-refactor/05 §@zcode/rpc) ──
+// ── PersistentProtocol's two patches (docs/v4-refactor/05 §@zcode/rpc) ──
 
-/** Fake socket with injectable data: write collects outbound frames, emitData simulates packets arriving from the peer. */
+/** Fake socket with injectable data: write collects outbound frames, emitData simulates incoming peer packets. */
 class FakeSocket implements ISocket {
   private readonly _onData = new Emitter<VSBuffer>();
   onData = this._onData.event;
@@ -106,7 +106,7 @@ describe("PersistentProtocol 拥塞信号（补丁 1）", () => {
     protocol.send(VSBuffer.fromString("aaaa"));
     protocol.send(VSBuffer.fromString("bb"));
     expect(protocol.unacknowledgedBytes).toBe(6);
-    // The peer acknowledged up to the 1st message.
+    // The peer acknowledges message 1.
     socket.emitData(ackFrame(1));
     expect(protocol.unacknowledgedBytes).toBe(2);
     socket.emitData(ackFrame(2));
@@ -127,12 +127,12 @@ describe("PersistentProtocol 拥塞信号（补丁 1）", () => {
 
     protocol.send(VSBuffer.fromString("12345678")); // 8B, below the watermark
     expect(saturatedCount).toBe(0);
-    protocol.send(VSBuffer.fromString("1234")); // 12B, crosses the high watermark
+    protocol.send(VSBuffer.fromString("1234")); // 12B, crosses the high water mark
     expect(saturatedCount).toBe(1);
-    protocol.send(VSBuffer.fromString("x")); // staying saturated does not notify again
+    protocol.send(VSBuffer.fromString("x")); // still saturated, no duplicate notification
     expect(saturatedCount).toBe(1);
 
-    socket.emitData(ackFrame(1)); // 5B left, still above the low watermark
+    socket.emitData(ackFrame(1)); // 5B left, still above the low water mark
     expect(drainedCount).toBe(0);
     socket.emitData(ackFrame(2)); // 1B left ≤ 4 → drained
     expect(drainedCount).toBe(1);
@@ -158,7 +158,7 @@ describe("PersistentProtocol 重放缓冲有界（补丁 2）", () => {
     expect(closed).toBe(1);
     expect(lastWrittenType(socket)).toBe(ProtocolMessageType.Disconnect);
 
-    protocol.send(VSBuffer.fromString("more")); // already abandoned, no repeated trigger
+    protocol.send(VSBuffer.fromString("more")); // already abandoned, does not fire again
     expect(closed).toBe(1);
     protocol.dispose();
   });
@@ -174,7 +174,7 @@ describe("PersistentProtocol 重放缓冲有界（补丁 2）", () => {
     protocol.send(VSBuffer.fromString("hello"));
     vi.advanceTimersByTime(20_000); // first ackCheck: age 20s < 30s
     expect(closed).toBe(0);
-    vi.advanceTimersByTime(20_000); // second one: age 40s > 30s → abandon
+    vi.advanceTimersByTime(20_000); // second: age 40s > 30s → abandon
     expect(closed).toBe(1);
     protocol.dispose();
   });
@@ -225,11 +225,17 @@ class FakeMessagePort implements MessagePortLike {
   peer?: FakeMessagePort;
   readonly posted: unknown[] = [];
 
-  addEventListener(_type: "message", listener: (event: { data: MessagePortPayload }) => void): void {
+  addEventListener(
+    _type: "message",
+    listener: (event: { data: MessagePortPayload }) => void,
+  ): void {
     this.listeners.add(listener);
   }
 
-  removeEventListener(_type: "message", listener: (event: { data: MessagePortPayload }) => void): void {
+  removeEventListener(
+    _type: "message",
+    listener: (event: { data: MessagePortPayload }) => void,
+  ): void {
     this.listeners.delete(listener);
   }
 

@@ -203,8 +203,8 @@ describe("当前 App 登录凭据的 HTTP 401 识别", () => {
     ],
   ])("%s URL 配置边界", (provider, baseKey, userinfoKey, customerInfoUrl) => {
     it.each(["production", "test"])("%s 环境仅识别当前配置的身份接口", async (environment) => {
-      // 原用例依赖真实测试域名与生产域名不同，导出地址改写后会把否定用例变成肯定用例。
-      // 用独立示例域名注入两套环境，开闭源保留相同的 origin 隔离断言。
+      // The original case relied on the real test domain differing from the production domain; after the export address rewrite, negative cases would turn positive.
+      // Two environments are injected with standalone example domains, keeping the same origin isolation assertions for the open/closed-source builds.
       const currentOrigin = `https://${environment}.example`;
       const otherOrigin = `https://${environment === "test" ? "production" : "test"}.example`;
       const fixture = createFixture(provider, {

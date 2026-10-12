@@ -619,7 +619,7 @@ describe("hostResponseMessageSchema", () => {
       embeddedBrowserAllowInsecureCertificates: true,
     });
 
-    // 降低安全性的开关必须默认关闭，升级到新版本的用户不能被动获得放行行为。
+    // Security-lowering switches must default to off; users upgrading to a new version must not passively gain the relaxed behavior.
     expect(parsed.embeddedBrowserAllowInsecureCertificates).toBe(false);
     expect(enabled.embeddedBrowserAllowInsecureCertificates).toBe(true);
     expect(patch.embeddedBrowserAllowInsecureCertificates).toBe(true);
@@ -630,8 +630,8 @@ describe("hostResponseMessageSchema", () => {
     const shown = appSettingsSchema.parse({ computerUseComposerEntryHidden: false });
     const patch = appSettingsPatchSchema.parse({ computerUseComposerEntryHidden: false });
 
-    // 2026-08-21 产品决定输入框入口默认不展示，设置项保留、默认关闭。
-    // 显式存过 false 的用户保持展示——default 只对缺省字段生效，不覆盖既有选择。
+    // 2026-08-21 product decision: the composer entry is hidden by default; the setting is kept and defaults to hidden.
+    // Users who explicitly stored false keep showing it — the default only applies to absent fields and never overrides an existing choice.
     expect(parsed.computerUseComposerEntryHidden).toBe(true);
     expect(shown.computerUseComposerEntryHidden).toBe(false);
     expect(patch.computerUseComposerEntryHidden).toBe(false);

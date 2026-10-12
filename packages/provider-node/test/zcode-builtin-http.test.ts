@@ -46,7 +46,7 @@ it("真实 HTTP 响应头已返回但正文不结束时，20 秒总预算关闭�
   server.listen(0, "127.0.0.1");
   await once(server, "listening");
   const origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
-  // 只替换测试传输目的地，不放宽生产 CDN 的 HTTPS 校验；本例验证真实 socket/body 取消。
+  // Only redirect the test transport destination; do not relax the production CDN's HTTPS validation. This case verifies real socket/body cancellation.
   const options = {
     endpointOrigin: origin,
     appVersion: "test",

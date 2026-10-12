@@ -1,9 +1,9 @@
-// Key-level deltas for workflowRuns (two ops from workflow-runs-delta.ts + delta.ts, plus apply's two twins).
+// Key-level deltas for workflowRuns (workflow-runs-delta.ts + the two ops in delta.ts + apply's two twins).
 //
-// This file pins **one** contract, and every other assertion serves it: for any reducer-produced pair (prior, next),
+// This file pins **one** contract; all other assertions serve it: for any reducer-produced (prior, next) pair,
 //   JSON.stringify(apply(snapshot with prior, diff(prior, next)).workflowRuns) === JSON.stringify(next)
-// byte-for-byte, not deep-equal — if key order ever diverged, the desktop's and the CLI's two copies of the state
-// would silently fork elsewhere (snapshot hashes, replay comparisons), and such forks only look like "an occasional refresh".
+// byte-for-byte, not deep-equal — if key order differed, the desktop's and CLI's two copies of state would silently
+// diverge elsewhere (snapshot hashes, replay comparisons), and such divergence only looks like "an occasional refresh".
 import { describe, expect, it } from "vitest";
 import {
   WORKFLOW_RUNS_LIMITS,
@@ -29,9 +29,8 @@ import {
 const RUN_ID = "dwfrun-1";
 
 /**
- * Carries only the two places apply touches: the rows window (the mutable accumulator reads it to build its index)
- * and the state key. The remaining fields are irrelevant to this file's contract; writing a full one would drown
- * the real assertions in fixture.
+ * Contains only the two spots apply touches: the rows window (the mutable accumulator reads it to build its index) and the state key.
+ * The other fields are irrelevant to this file's contract; writing them all out would drown the real assertions in fixtures.
  */
 function snapshotWith(workflowRuns: WorkflowRunsState | undefined): ConversationSnapshot {
   const base = {
@@ -47,7 +46,7 @@ function snapshotWith(workflowRuns: WorkflowRunsState | undefined): Conversation
     : { ...base, workflowRuns }) as unknown as ConversationSnapshot;
 }
 
-/** Event envelope factory: sequence increments per call, mimicking the journal's monotonic allocation (same idiom as the reducer tests). */
+/** Event envelope factory: sequence auto-increments per call, mimicking the journal's monotonic assignment (same idiom as the reducer tests). */
 function progressLog(runId = RUN_ID) {
   let sequence = -1;
   return function progress(
@@ -64,9 +63,9 @@ const ASK = { siteId: "ask#1", ordinal: 1 };
 const ACTOR = { siteId: "actor#1", ordinal: 1 };
 
 /**
- * A run that walks the whole lifecycle: birth, phases, subagent, node in every phase, progress readings, usage,
- * report, artifact, escalation Q&A (the only source of the `cleared` path: once pendingQuestions drops to zero the
- * whole key goes absent), a cached-hit settlement, a second subagent, and the terminal state.
+ * One run that walks the full lifecycle: birth, phases, subagents, all node phases, progress readings, usage, a report,
+ * an artifact, an escalation (`cleared` path's only source: pendingQuestions drops to zero so the whole key goes absent),
+ * a cache-hit settle, a second subagent, and the terminal state.
  */
 function fullRunEvents(): WorkflowRunProgressEnvelope[] {
   const progress = progressLog();
@@ -112,10 +111,10 @@ function fullRunEvents(): WorkflowRunProgressEnvelope[] {
       question: "门是不是坏了？",
       askedAt: 1_756_000_000_000,
     }),
-    // Crossing off the last parked question → the whole key goes absent; this is diff's `cleared` path.
+    // Striking the last parked question → the whole key goes absent; this is diff's `cleared` path.
     progress("escalation-resolved", { qid: "dwfq-1", answer: "坏了，跳过。" }),
     progress("node-settled", { instance: ASK, outcome: "ok" }),
-    // resume's completed-hit short-circuit: straight to settled, never through queued, and it is the node's birth event.
+    // Resume's completed-hit short-circuit: straight to settled, never through queued, and it is this node's birth event.
     progress("node-settled", {
       instance: { siteId: "world-read#1", ordinal: 1 },
       outcome: "ok",
@@ -140,7 +139,7 @@ function fullRunEvents(): WorkflowRunProgressEnvelope[] {
   ];
 }
 
-/** Minimal lifecycle of a second run: two runs coexist in one state, and diff may only touch the changed one. */
+/** A second run's minimal lifecycle: two runs coexist in one state; diff may only touch the changed one. */
 function secondRunEvents(): WorkflowRunProgressEnvelope[] {
   const progress = progressLog("dwfrun-2");
   return [
@@ -152,7 +151,7 @@ function secondRunEvents(): WorkflowRunProgressEnvelope[] {
   ];
 }
 
-/** Squeeze out the oldest run: maxRuns + 2 new runs, each with one run-started. */
+/** Squeezes out the oldest runs: maxRuns + 2 new runs, each with one run-started. */
 function evictionEvents(): WorkflowRunProgressEnvelope[] {
   return Array.from({ length: WORKFLOW_RUNS_LIMITS.maxRuns + 2 }, (_, index) => ({
     runId: `dwfrun-evict-${index}`,
@@ -163,9 +162,8 @@ function evictionEvents(): WorkflowRunProgressEnvelope[] {
 }
 
 /**
- * Contract referee: reduce entry by entry, at every step pushing prior to next with the diff-produced deltas; both
- * apply twins must yield a workflowRuns **byte-for-byte** identical to next. Returns every delta traversed so the
- * caller can make further assertions.
+ * Contract referee: reduce one by one, and at each step push prior to next with the diff's deltas; both apply twins must
+ * yield workflowRuns **byte-identical** to next. Returns every delta produced so callers can assert further.
  */
 function expectRoundTrip(envelopes: readonly WorkflowRunProgressEnvelope[]): ConversationDelta[] {
   let state: WorkflowRunsState | undefined;
@@ -194,7 +192,7 @@ function expectRoundTrip(envelopes: readonly WorkflowRunProgressEnvelope[]): Con
 describe("diffWorkflowRunsState × apply：逐事件往返", () => {
   it("一条走完全程的 run：每一步的终态逐字节一致", () => {
     const deltas = expectRoundTrip(fullRunEvents());
-    // Not one full-key resend the whole way — one would mean diff failed to recognize some structural change and byte counts regressed to before the rework.
+    // Not a single whole-key resend on the way — one would mean diff failed to recognize some structural change and byte counts regressed to pre-rework levels.
     expect(deltas.some((delta) => delta.op === "state.updated")).toBe(false);
   });
 
@@ -202,7 +200,7 @@ describe("diffWorkflowRunsState × apply：逐事件往返", () => {
     const deltas = expectRoundTrip([...fullRunEvents(), ...secondRunEvents(), ...evictionEvents()]);
     expect(deltas.some((delta) => delta.op === "state.updated")).toBe(false);
     const removed = deltas.filter((delta) => delta.op === "workflowRun.removed");
-    // Two old runs + maxRuns + 2 new runs come in; the oldest four are squeezed out in arrival order.
+    // Two old runs + maxRuns + 2 new runs arrive; the four oldest are squeezed out in arrival order.
     expect(removed.map((delta) => (delta.op === "workflowRun.removed" ? delta.runId : ""))).toEqual(
       [RUN_ID, "dwfrun-2", "dwfrun-evict-0", "dwfrun-evict-1"],
     );
@@ -246,14 +244,13 @@ describe("diffWorkflowRunsState × apply：逐事件往返", () => {
     if (op.op !== "workflowRun.updated") return;
     expect(op.nodes).toEqual([{ siteId: "ask#1", ordinal: 7, kind: "ask", phase: "dispatched" }]);
     expect(op.actors).toBeUndefined();
-    // Dispatch step-counting changed usage, so the header carries only that key + the watermark.
+    // Dispatch step-counting changed usage, so the header carries only this key + the watermark.
     expect(Object.keys(op.run ?? {}).sort()).toEqual(["lastEventSequence", "usage"]);
   });
 
-  // Deletion has vocabulary (removedActors / removedNodes, used for eviction), **reordering does not**. So the
-  // first input below takes the keyed path and the second can only fall back to a full-key resend — the round-trip
-  // case above asserts "not a single state.updated the whole way"; the day someone makes the reducer reorder
-  // entries, that assertion goes red immediately.
+  // Deletion has a vocabulary (removedActors / removedNodes, used for making room), **reordering does not**. So the first
+  // input below takes the keyed path and the second can only fall back to a whole-key resend — the round-trip cases above
+  // assert "not a single state.updated on the way"; the day someone makes the reducer reorder entries, those turn red immediately.
   it("条目被删走键化路径，被重排则退回整键重发", () => {
     const state = expectRoundTripFinal(fullRunEvents());
     const run = state.runs[0]!;
@@ -283,7 +280,7 @@ describe("diffWorkflowRunsState × apply：逐事件往返", () => {
     expect(diffWorkflowRunsState(state, reordered)).toEqual([
       { op: "state.updated", patch: { workflowRuns: reordered } },
     ]);
-    // The fallback itself is still correct: after the full-key replacement, byte-for-byte identical.
+    // The fallback itself stays correct: byte-identical after the whole-key replacement.
     const applied = applyConversationDeltas(
       snapshotWith(state),
       diffWorkflowRunsState(state, reordered),
@@ -304,7 +301,7 @@ describe("diffWorkflowRunsState × apply：逐事件往返", () => {
   });
 });
 
-/** Run the whole event stream and return the final state (the round-trip assertions live in expectRoundTrip; here only the state matters). */
+/** Runs the full event sequence and returns the final state (the round-trip assertions live in expectRoundTrip; only the state is needed here). */
 function expectRoundTripFinal(
   envelopes: readonly WorkflowRunProgressEnvelope[],
 ): WorkflowRunsState {
@@ -314,7 +311,7 @@ function expectRoundTripFinal(
 }
 
 describe("coalesce 规则 6 × diff 产出的真实增量", () => {
-  /** Interleave two runs' events into one flush window and collect every delta produced by step-by-step diffing. */
+  /** Interleaves two runs' events into one flush window and collects every delta step-wise diffing produces. */
   function windowOf(...streams: readonly WorkflowRunProgressEnvelope[][]): {
     deltas: ConversationDelta[];
     final: WorkflowRunsState;
@@ -346,9 +343,9 @@ describe("coalesce 规则 6 × diff 产出的真实增量", () => {
     expect(JSON.stringify(applyConversationDeltas(base, coalesced).workflowRuns)).toBe(
       JSON.stringify(direct.workflowRuns),
     );
-    // Entry-by-entry delivery should already converge to the reducer's final state; coalescing merely must not change it.
+    // One-by-one delivery should converge to the reducer's final state anyway; coalescing is merely forbidden from changing it.
     expect(JSON.stringify(direct.workflowRuns)).toBe(JSON.stringify(final));
-    // Collapse: dozens of engine events → one delta per run, regardless of fan-out width (the origin of the 500-frame bound).
+    // Collapse: dozens of engine events → one delta per run, independent of fan-out width (the origin of the 500-frame bound).
     expect(deltas.length).toBeGreaterThan(20);
     expect(coalesced).toHaveLength(2);
   });
@@ -384,9 +381,8 @@ describe("coalesce 规则 6 × diff 产出的真实增量", () => {
       JSON.stringify(direct.workflowRuns),
     );
     expect(JSON.stringify(direct.workflowRuns)).toBe(JSON.stringify(final));
-    // Evicted run: the deltas before the barrier are swallowed clean (birth + eviction in one window = the client never saw it).
-    // After the barrier another one may still appear — a late event brings this runId back to the tail as a **new
-    // entry**; that is a different thing and must not be swallowed.
+    // The evicted run: deltas before the barrier are swallowed cleanly (birth + eviction in one window = the client never saw it). One more
+    // delta may appear after the barrier — a late event brings this runId back as a **new entry** at the tail; that is a different matter and must not be swallowed.
     const removedAt = coalesced.findIndex(
       (delta) => delta.op === "workflowRun.removed" && delta.runId === RUN_ID,
     );
@@ -435,7 +431,7 @@ describe("apply：workflowRun.* 的边界语义", () => {
       { op: "workflowRun.updated", runId: "dwfrun-ghost", revision: 6, nodes: [ASK_NODE] },
     ]);
     expect(applied.workflowRuns?.runs).toEqual([]);
-    // The container revision still catches up: the producer's claim about the version and whether it can place this run are two different things.
+    // The container revision still keeps up: the producer's claim about the version and whether it can place this run are two different things.
     expect(applied.workflowRuns?.revision).toBe(6);
   });
 
@@ -480,7 +476,7 @@ describe("apply：workflowRun.* 的边界语义", () => {
 
     expect(after).not.toBe(before);
     expect(after.runs[0]).not.toBe(before.runs[0]);
-    // The untouched run and the untouched node inside the changed run both keep their references — the GUI's two-level memo depends on exactly this.
+    // The other run and the untouched node inside the changed run keep their references — the GUI's two-level memo relies on exactly this.
     expect(after.runs[1]).toBe(before.runs[1]);
     expect(after.runs[0]!.nodes[0]).toBe(before.runs[0]!.nodes[0]);
     expect(after.runs[0]!.nodes[1]).not.toBe(before.runs[0]!.nodes[1]);
@@ -496,7 +492,7 @@ describe("apply：workflowRun.* 的边界语义", () => {
       run: { ...born.run, runId: `dwfrun-${index}` },
     })) as ConversationDelta[];
     const applied = applyConversationDeltas(snapshotWith(undefined), births);
-    // Client-side self-trimming would only make the two sides silently fork: a run the producer believes it sent would not exist here at all.
+    // Client-side trimming would only make the two sides silently diverge: runs the producer believes it sent would not exist here at all.
     expect(applied.workflowRuns?.runs).toHaveLength(WORKFLOW_RUNS_LIMITS.maxRuns + 3);
   });
 
@@ -529,12 +525,12 @@ const ASK_NODE = { siteId: "ask#1", ordinal: 1, phase: "queued" } as const;
 
 // ── Wire expression of entry eviction: removedActors / removedNodes ────────────────────────
 //
-// Once reduction hits the cap, terminal entries are evicted to make room for live newcomers (workflow-runs-eviction.ts),
-// so this model needs to say "this one left" for the first time. What is pinned below is still the header contract
-// (diff applied to prior equals next byte-for-byte); the inputs simply gain deletions. Plus one more: merging two
+// After reduction hits a bound, terminal entries are evicted to make room for live newcomers (workflow-runs-eviction.ts),
+// so for the first time this model needs to say "this one left". What is pinned below is still the file-header contract
+// (diff applied to prior equals next byte-for-byte), only with deletions added to the inputs; plus one more: merging two
 // deltas must equal applying them in order.
 
-/** Hand-built run: this section tests diff/apply/merge algebra; walking through reduction would only obscure the inputs. */
+/** Hand-built run: this section tests the algebra of diff/apply/merge; running the reducer would only obscure the inputs. */
 function runWithNodes(
   nodes: readonly { siteId: string; ordinal: number; phase: string }[],
   actors: readonly { siteId: string; ordinal: number; status: string }[] = [],
@@ -553,7 +549,7 @@ const queued = (siteId: string) => ({ siteId, ordinal: 1, phase: "queued" as con
 const settled = (siteId: string) => ({ siteId, ordinal: 1, phase: "settled" as const });
 const waiting = (siteId: string) => ({ siteId, ordinal: 1, status: "waiting" as const });
 
-/** Diff of a single run, extracting the updated op (this section's inputs never trigger a full-key resend). */
+/** Single-run diff that extracts the updated op (none of this section's inputs trigger a whole-key resend). */
 function updateBetween(before: WorkflowRunState, after: WorkflowRunState) {
   const deltas = diffWorkflowRunsState(
     { revision: 1, runs: [before] },
@@ -562,7 +558,7 @@ function updateBetween(before: WorkflowRunState, after: WorkflowRunState) {
   expect(deltas).toHaveLength(1);
   const op = deltas[0]!;
   if (op.op !== "workflowRun.updated") throw new Error("应当是一条 workflowRun.updated");
-  // Contract: after applying to prior, byte-for-byte identical to next.
+  // Contract: applying to prior is byte-identical to next.
   const applied = applyConversationDeltas(snapshotWith({ revision: 1, runs: [before] }), deltas);
   expect(JSON.stringify(applied.workflowRuns)).toBe(JSON.stringify({ revision: 2, runs: [after] }));
   return op;
@@ -692,7 +688,7 @@ describe("merge（coalesce 规则 6 的载荷）：合并必须等于顺序施�
     nodes: [queued("a"), queued("b"), queued("c")],
   };
 
-  /** Referee: apply-after-merge and apply-in-order are byte-for-byte identical (both ops start from the tables birth built). */
+  /** Referee: apply-after-merge and sequential application are byte-identical (both ops sit on the table birth built). */
   function expectMergeEqualsSequential(
     earlier: ConversationDelta,
     later: ConversationDelta,
@@ -780,7 +776,7 @@ describe("merge（coalesce 规则 6 的载荷）：合并必须等于顺序施�
   });
 
   it("合并出来会超界时**不合并**：超界的帧会被整帧丢掉，订阅从此静默", () => {
-    // Before eviction, "distinct keys touched in one window ≤ table cap" was structural (the table only grew); after eviction it no longer is.
+    // Before eviction, "distinct keys touched in one window ≤ table bound" was structural (the table only grew); after eviction it is not.
     const ref = (ordinal: number) => ({ siteId: "ask#1", ordinal });
     const wide = (revision: number, from: number, count: number): ConversationDelta => ({
       op: "workflowRun.updated",
@@ -794,7 +790,7 @@ describe("merge（coalesce 规则 6 的载荷）：合并必须等于顺序施�
     for (const delta of coalesced) {
       expect(conversationDeltaSchema.safeParse(delta).success).toBe(true);
     }
-    // Not merging does not change the final state: applying the delivered-one-by-one sequence and the "merged" sequence yields the same state.
+    // Not merging does not change the final state: one-by-one delivery and the "merged" sequence apply to the same state.
     const base = applyConversationDeltas(snapshotWith(undefined), [
       {
         op: "workflowRun.updated",
@@ -812,7 +808,7 @@ describe("merge（coalesce 规则 6 的载荷）：合并必须等于顺序施�
     expect(JSON.stringify(applyConversationDeltas(base, coalesced).workflowRuns)).toBe(
       JSON.stringify(applyConversationDeltas(base, deltas).workflowRuns),
     );
-    // Two in-bounds deltas still merge normally (this gate only blocks when it truly cannot fit).
+    // Two in-bound ones still merge as usual (this gate only blocks when it genuinely does not fit).
     expect(coalesceConversationDeltas([wide(2, 0, 10), wide(3, 100, 10)])).toHaveLength(1);
   });
 
@@ -833,8 +829,8 @@ describe("merge（coalesce 规则 6 的载荷）：合并必须等于顺序施�
         nodes: [queued("ask#1"), queued("x")],
       },
     ]);
-    // A stuffs the removal table up to the cap → B cannot merge into it and must start a new one; if C skipped past
-    // B and merged back into A, its upsert would land **before** B's removal and ask#1 would vanish into thin air.
+    // A pushes the removal table onto the bound → B cannot merge in and must stand alone; if C crossed B back into A,
+    // C's upsert would land **before** B's removal and ask#1 would vanish into thin air.
     const deltas: ConversationDelta[] = [
       {
         op: "workflowRun.updated",
@@ -935,7 +931,7 @@ describe("conversationDeltaSchema：两条新 op", () => {
       removedNodes: [{ siteId: "ask#1", ordinal: 1 }],
     });
     expect(parsed).toMatchObject({ removedNodes: [{ siteId: "ask#1", ordinal: 1 }] });
-    // The eviction payload carries **identity**, not entries: extra keys are stripped, and the op must not turn into an upsert.
+    // Eviction payloads carry **identity**, not entries: extra keys are stripped and do not turn the op into an upsert.
     expect(
       conversationDeltaSchema.safeParse({
         op: "workflowRun.updated",
@@ -981,7 +977,7 @@ describe("conversationDeltaSchema：两条新 op", () => {
         cleared: ["nodes"],
       }).success,
     ).toBe(false);
-    // Bad values on the state key are equally rejected (run is a partial of the header, not an arbitrary object).
+    // Bad values on the state key are equally excluded (run is a partial of the header, not an arbitrary object).
     expect(
       conversationDeltaSchema.safeParse({
         op: "workflowRun.updated",

@@ -103,7 +103,7 @@ export const ServiceChannels = {
   Credential: "credential",
   /** Computer Use Helper macOS permission service */
   CuaPermission: "cua-permission",
-  /** 语音输入：本机模型目录、下载与转写 */
+  /** Voice dictation: on-device model catalog, downloads, and transcription */
   VoiceDictation: "voice-dictation",
   /** producer-owned PiP session presentation client */
   CuaPipSession: "cua-pip-session",
@@ -199,6 +199,8 @@ export const PlatformChannels = {
   PluginSandboxOwnerWebContentsId: "zcode:plugin-sandbox-owner-web-contents-id",
   /** Open the system directory picker */
   SelectDirectory: "zcode:select-directory",
+  /** App-managed worktree storage directory for the "global" location mode */
+  GetAppWorktreesDir: "zcode:get-app-worktrees-dir",
   /** Open the system file picker */
   SelectFile: "zcode:select-file",
   /** Open the system multi-file picker */
@@ -759,6 +761,10 @@ export interface PlatformChannelMap {
   [PlatformChannels.SelectDirectory]: {
     request: void;
     response: string | null;
+  };
+  [PlatformChannels.GetAppWorktreesDir]: {
+    request: void;
+    response: string;
   };
   [PlatformChannels.SelectFile]: {
     request: void;

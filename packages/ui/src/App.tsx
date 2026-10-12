@@ -51,7 +51,7 @@ import {
 import { runWorkspaceVisibleCommand } from "@/lib/workspaceVisibleCommand.js";
 import { ZCODE_PRODUCT_DOCS_URL } from "@/lib/productDocs.js";
 import appLogoUrl from "@/assets/provider-icons/logo-zai.svg";
-import { resolveTheme } from "@/useTheme.js";
+import { resolveTheme, type ResolvedTheme } from "@/useTheme.js";
 import { WorkspaceShellLayout } from "@/app-shell/WorkspaceShellLayout.js";
 import { useAppChromeState } from "@/app-shell/useAppChromeState.js";
 import { useWorkspaceSessionReload } from "@/app-shell/useWorkspaceSessionReload.js";
@@ -373,6 +373,32 @@ export function App({
   });
   const theme = useZCodeStore((s) => s.theme);
   const setTheme = useZCodeStore((s) => s.setTheme);
+  const palette = useZCodeStore((s) => s.palette);
+  const setPalette = useZCodeStore((s) => s.setPalette);
+  const [systemResolvedTheme, setSystemResolvedTheme] = useState<ResolvedTheme>(() =>
+    typeof window !== "undefined" && typeof window.matchMedia === "function"
+      ? window.matchMedia("(prefers-color-scheme: dark)").matches
+        ? "dark"
+        : "light"
+      : "dark",
+  );
+  useEffect(() => {
+    if (typeof window.matchMedia !== "function") {
+      return;
+    }
+    const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
+    const syncSystemTheme = () => {
+      setSystemResolvedTheme(mediaQuery.matches ? "dark" : "light");
+    };
+    syncSystemTheme();
+    if (typeof mediaQuery.addEventListener === "function") {
+      mediaQuery.addEventListener("change", syncSystemTheme);
+      return () => mediaQuery.removeEventListener("change", syncSystemTheme);
+    }
+    mediaQuery.addListener(syncSystemTheme);
+    return () => mediaQuery.removeListener(syncSystemTheme);
+  }, []);
+  const resolvedTheme = theme === "system" ? systemResolvedTheme : resolveTheme(theme);
   const {
     isMacFullscreen,
     desktopWindowChromeState,
@@ -712,7 +738,7 @@ export function App({
   const handleOpenProductDocs = useCallback(() => {
     platform.openExternal(ZCODE_PRODUCT_DOCS_URL);
   }, [platform]);
-  const themeTarget = resolveTheme(theme) === "dark" ? "light" : "dark";
+  const themeTarget = resolvedTheme === "dark" ? "light" : "dark";
   const handleSwitchTheme = useCallback(() => {
     setTheme(themeTarget);
   }, [setTheme, themeTarget]);
@@ -821,6 +847,23 @@ export function App({
       workspaceShellZCodeState.selectedProvider,
       webRemoteControlWorkspaceSwitcher,
     ],
+  );
+
+  /**
+   * Command Center “New task in worktree” open contract: reuse the shared
+   * workspace-open + startDraft path. Worktree results are explicit project-scope
+   * creations, so never inherit the current workspace's grouped-draft placement.
+   */
+  const handleCreateTaskInWorkspace = useCallback(
+    (targetWorkspacePath: string, targetWorkspaceIdentity?: string) => {
+      handleStartDraftInWorkspace(
+        targetWorkspacePath,
+        targetWorkspaceIdentity,
+        undefined,
+        "project",
+      );
+    },
+    [handleStartDraftInWorkspace],
   );
 
   useWorkspaceShellLifecycle({
@@ -1072,6 +1115,7 @@ export function App({
         supportsTerminal: !isOfficeMode,
         supportsReview: !isOfficeMode,
         allowOpenWorkspace,
+        supportsWorktreeTasks: isDesktop === true,
         canOpenCommunity: canOpenCommunityFromQuickPick,
         isSidebarVisible,
         supportsEmbeddedBrowser,
@@ -1079,6 +1123,9 @@ export function App({
         // Depending on the full user object recreates all command/run closures when the auth store returns an equivalent new reference.
         isLoggedIn,
         themeTarget,
+        themeMode: theme,
+        themePalette: palette,
+        resolvedTheme,
         shortcuts: {
           newTask: newTaskShortcutLabel,
           openWorkspace: openWorkspaceShortcutLabel,
@@ -1098,6 +1145,8 @@ export function App({
             openSettingsTab();
           },
           switchTheme: handleSwitchTheme,
+          setThemeMode: setTheme,
+          setThemePalette: setPalette,
           openFeedback: handleOpenFeedback,
           openCommunity: handleOpenCommunity,
           openProductDocs: handleOpenProductDocs,
@@ -1114,6 +1163,7 @@ export function App({
     [
       allowOpenWorkspace,
       isOfficeMode,
+      isDesktop,
       canOpenCommunityFromQuickPick,
       handleOpenCommunity,
       handleOpenFeedback,
@@ -1133,10 +1183,15 @@ export function App({
       onLogin,
       onLogout,
       onOpenWorkspace,
+      palette,
       runVisibleWorkspaceCommand,
       openSettingsTab,
       openWorkspaceShortcutLabel,
+      setPalette,
+      setTheme,
       supportsEmbeddedBrowser,
+      theme,
+      resolvedTheme,
       toggleSidebarShortcutLabel,
       toggleTerminalShortcutLabel,
       themeTarget,
@@ -1191,6 +1246,7 @@ export function App({
         workspaceTabs={commandCenterWorkspaceTabs}
         onOpenChange={setIsQuickPickOpen}
         onSelectTask={handleSelectTask}
+        onCreateTaskInWorkspace={handleCreateTaskInWorkspace}
         onSearchResultHighlightRequest={handleSearchResultHighlightRequest}
         onOpenCodeViewer={handleOpenCodeViewerIfWritable}
       />

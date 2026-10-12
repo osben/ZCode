@@ -1,5 +1,39 @@
+import type {
+  WebRemoteControlRelayDeviceMeta,
+  WebRemoteControlRelayPairStatus,
+  WebRemoteControlRelayDeviceRegisterInit,
+  WebRemoteControlRelayDeviceRegisterAck,
+  WebRemoteControlRelayAuthInit,
+  WebRemoteControlRelayAuthChallenge,
+  WebRemoteControlRelayAuthResponse,
+  WebRemoteControlRelayAuthAck,
+  WebRemoteControlRelayPairStatusQuery,
+  WebRemoteControlRelayPairStatusAck,
+  WebRemoteControlRelayDataMessage,
+  WebRemoteControlRelayError,
+} from "./web-remote-relay/index.js";
+export type {
+  WebRemoteControlRelayDeviceMeta,
+  WebRemoteControlRelayRole,
+  WebRemoteControlRelayPairStatus,
+  WebRemoteControlRelayErrorCode,
+  WebRemoteControlRelayOutgoingBase,
+  WebRemoteControlRelayIncomingBase,
+  WebRemoteControlRelayDeviceRegisterInit,
+  WebRemoteControlRelayDeviceRegisterAck,
+  WebRemoteControlRelayAuthInit,
+  WebRemoteControlRelayAuthChallenge,
+  WebRemoteControlRelayAuthResponse,
+  WebRemoteControlRelayAuthAck,
+  WebRemoteControlRelayPairStatusQuery,
+  WebRemoteControlRelayPairStatusAck,
+  WebRemoteControlRelayDataMessage,
+  WebRemoteControlRelayError,
+  WebRemoteControlRelayAuthProofVector,
+} from "./web-remote-relay/index.js";
+export { WEB_REMOTE_CONTROL_RELAY_AUTH_PROOF_VECTORS } from "./web-remote-relay/index.js";
 import type { MobileSessionCreateTelemetry } from "./sessionCreateTelemetry.js";
-/* eslint-disable max-lines -- The web remote control shared protocol keeps both the legacy /web-remote types and the new external relay types; split into files by transport/app payload when that refactor happens. */
+/* eslint-disable max-lines -- the web remote-control shared protocol keeps both the legacy /web-remote types and the new external relay types; split by transport/app payload when it is broken up later. */
 import type { DockerContainerInfo, SSHConfigAliasOption, WSLDistro } from "./platform.js";
 import type {
   CreateTempTextAttachmentRequest,
@@ -60,18 +94,12 @@ export function createWebRemoteControlConnectionRecoveryTimeoutFailure(
   message: string,
 ): WebRemoteControlFailure {
   return {
-    // Bugfix: the recovery timeout after the phone spends a long time in the background is really about the phone's
-    // connection not being restored; it must not be mapped to desktop-disconnected, otherwise the error page would
-    // mislead the user into thinking the desktop is offline.
+    // Bugfix: recovery timing out after the phone was backgrounded for a long time means the
+    // phone's connection was not recovered; it must not be mapped to desktop-disconnected,
+    // otherwise the error page misleads the user into thinking the desktop is offline.
     reason: "connection-recovery-timeout",
     message,
   };
-}
-
-export interface WebRemoteControlRelayDeviceMeta {
-  platform: string;
-  version: string;
-  name: string;
 }
 
 export interface WebRemoteControlMobileViewportInfo {
@@ -97,86 +125,6 @@ export interface WebRemoteControlMobileDeviceInfo extends WebRemoteControlRelayD
   updatedAt: number;
 }
 
-export type WebRemoteControlRelayRole = "device" | "terminal";
-// Bugfix: zcode-remote-hub currently only expresses the pairing status as waiting/matched;
-// KICKED, WRONG_PARAM and the like are error codes, not pair_status. This narrows the shared type
-// so clients do not mistake the nonexistent rejected/kicked pairing statuses for "the desktop WS needs closing".
-export type WebRemoteControlRelayPairStatus = "waiting" | "matched";
-export type WebRemoteControlRelayErrorCode =
-  | "AUTH_FAILED"
-  | "DEVICE_OFFLINE"
-  | "KICKED"
-  | "WRONG_PARAM"
-  | "INTERNAL";
-
-export interface WebRemoteControlRelayOutgoingBase {
-  client_ts?: number;
-}
-
-export interface WebRemoteControlRelayIncomingBase {
-  server_ts?: number;
-}
-
-export interface WebRemoteControlRelayDeviceRegisterInit extends WebRemoteControlRelayOutgoingBase {
-  type: "device_register_init";
-  device_mid: string;
-  pass_hash: string;
-  meta: WebRemoteControlRelayDeviceMeta;
-}
-
-export interface WebRemoteControlRelayDeviceRegisterAck extends WebRemoteControlRelayIncomingBase {
-  type: "device_register_ack";
-  device_sid: string;
-}
-
-export interface WebRemoteControlRelayAuthInit extends WebRemoteControlRelayOutgoingBase {
-  type: "auth_init";
-  role: WebRemoteControlRelayRole;
-  device_sid: string;
-  meta: WebRemoteControlRelayDeviceMeta;
-}
-
-export interface WebRemoteControlRelayAuthChallenge extends WebRemoteControlRelayIncomingBase {
-  type: "auth_challenge";
-  nonce: string;
-}
-
-export interface WebRemoteControlRelayAuthResponse extends WebRemoteControlRelayOutgoingBase {
-  type: "auth_response";
-  device_sid: string;
-  proof: string;
-}
-
-export interface WebRemoteControlRelayAuthAck extends WebRemoteControlRelayIncomingBase {
-  type: "auth_ack";
-  device_sid: string;
-  terminal_sid?: string;
-  pair_status: WebRemoteControlRelayPairStatus;
-}
-
-export interface WebRemoteControlRelayPairStatusQuery extends WebRemoteControlRelayOutgoingBase {
-  type: "pair_status_query";
-  device_sid: string;
-}
-
-export interface WebRemoteControlRelayPairStatusAck extends WebRemoteControlRelayIncomingBase {
-  type: "pair_status_ack";
-  terminal_sid?: string;
-  pair_status: WebRemoteControlRelayPairStatus;
-}
-
-export interface WebRemoteControlRelayDataMessage<TPayload = unknown>
-  extends WebRemoteControlRelayOutgoingBase, WebRemoteControlRelayIncomingBase {
-  type: "data";
-  payload: TPayload;
-}
-
-export interface WebRemoteControlRelayError extends WebRemoteControlRelayIncomingBase {
-  type: "error";
-  code: WebRemoteControlRelayErrorCode;
-  message: string;
-}
-
 export type WebRemoteControlRelayOutgoingMessage =
   | WebRemoteControlRelayDeviceRegisterInit
   | WebRemoteControlRelayAuthInit
@@ -191,31 +139,6 @@ export type WebRemoteControlRelayIncomingMessage =
   | WebRemoteControlRelayPairStatusAck
   | WebRemoteControlRelayDataMessage<WebRemoteControlAppPayload>
   | WebRemoteControlRelayError;
-
-export interface WebRemoteControlRelayAuthProofVector {
-  passHash: string;
-  nonce: string;
-  role: WebRemoteControlRelayRole;
-  deviceSid: string;
-  proof: string;
-}
-
-export const WEB_REMOTE_CONTROL_RELAY_AUTH_PROOF_VECTORS: WebRemoteControlRelayAuthProofVector[] = [
-  {
-    passHash: "dGVzdF9oYXNo",
-    nonce: "nonce-1",
-    role: "device",
-    deviceSid: "device-1",
-    proof: "XK0m7u-26VS88uk7ISAX5Z_9pjzq8jqyP77N-HkCsPE",
-  },
-  {
-    passHash: "dGVzdF9oYXNo",
-    nonce: "nonce-1",
-    role: "terminal",
-    deviceSid: "device-1",
-    proof: "YkqkJy-p-iZK1g1AcoGd0Q83REOggX1EygWkcxW4oLU",
-  },
-];
 
 export interface WebRemoteControlExternalQrParams {
   deviceSid: string;
@@ -264,8 +187,9 @@ export function resolveWebRemoteControlRoutePathFromBaseUrl(baseUrl: string): st
 }
 
 export function matchesWebRemoteControlRoutePath(pathname: string, routePath: string): boolean {
-  // Bugfix: the dev / production entry path may carry a trailing slash like /remote/;
-  // the route check must accept both /remote and /remote/, but must not treat /remote/favicon.ico as the app entry.
+  // Bugfix: dev / production entry paths may carry a trailing /remote/ slash;
+  // route matching must accept both /remote and /remote/, but must not treat /remote/favicon.ico
+  // as the app entry.
   const normalizeRoutePath = (value: string) => value.replace(/\/+$/, "") || "/";
   return normalizeRoutePath(pathname) === normalizeRoutePath(routePath);
 }
@@ -295,10 +219,12 @@ export function buildWebRemoteControlExternalQrUrl({
     url.searchParams.set("app_version", appVersion);
   }
   void theme;
-  // Bugfix: the phone's theme is now fixed to the local default dark and is no longer passed through the QR URL.
-  // The theme parameter used to couple the desktop theme to the phone's first-entry behavior, making maintenance and
-  // troubleshooting harder. The argument is kept only for backward compatibility, avoiding a one-shot large change at
-  // old call sites.
+  // Bugfix: the phone theme is now always the local default dark; theme is no longer passed
+  // through the QR URL.
+  // Previously the theme parameter coupled the desktop theme to the phone's first-entry behavior,
+  // complicating later maintenance and debugging.
+  // The parameter is kept only for backward compatibility, to avoid a sweeping change of old call
+  // sites.
 
   return url.toString();
 }
@@ -386,7 +312,7 @@ export interface WebRemoteControlStartCancelledResult {
   status: "cancelled";
 }
 
-/** Compatibility for platform implementations that can still return the cancelled terminal state; the current Desktop start and refresh paths never produce it. */
+/** Compat with platform implementations that can still return the cancelled terminal state; the current Desktop start and refresh paths never produce it. */
 export type WebRemoteControlStartOperationResult =
   | WebRemoteControlStartResult
   | WebRemoteControlStartCancelledResult;
@@ -759,13 +685,15 @@ export interface WebRemoteControlTaskTarget {
   provider?: ZCodeProvider;
   unreadAt?: number;
   displayStatus?: WebRemoteControlTaskDisplayStatus;
-  // The session has background work attached (dynamic workflow run / background bash / detached subagent). It only
-  // feeds the list's run-layer ordering and does not affect the displayStatus icon; absent means false, and old
-  // desktop snapshots still parse.
+  // The session has background work attached (dynamic workflow run / background bash / detached
+  // subagent). Participates only in list run-level ordering,
+  // not the displayStatus icon; absent is treated as false, and older desktop snapshots parse as
+  // usual.
   hasBackgroundWork?: boolean;
-  // Workflow run summaries (docs/dynamic-workflow/presentation.md "The sidebar run line"): the phone row draws the
-  // same run line as the desktop beneath the title. Draw-only; it takes no part in ordering or the status pill, is
-  // absent when there is no run, and old desktop snapshots still parse.
+  // Workflow run summary (docs/dynamic-workflow/presentation.md, "The sidebar run line"): the
+  // phone row draws the same run line as the desktop under the title.
+  // Draw-only; it does not participate in sorting or the status pill; absent when there is no run,
+  // and older desktop snapshots parse as usual.
   workflowActivity?: SessionWorkflowActivity;
   pinned?: boolean;
   archived?: boolean;
@@ -783,7 +711,7 @@ export type WebRemoteControlMobileNavigationIntent = "chat";
 export interface WebRemoteControlWorkspaceSwitchOptions {
   taskId?: string;
   mobileNavigationIntent?: WebRemoteControlMobileNavigationIntent;
-  /** Used only by the phone's task home; after the target bridge is established, clears only the unread count matching this snapshot. */
+  /** Used only by the phone's task home; after the target bridge is established, only the unread matching this snapshot is cleared. */
   markTaskReadExpectedUnreadAt?: number;
 }
 
@@ -823,7 +751,7 @@ export type WebRemoteControlWorkspaceBridge =
 
 export interface WebRemoteControlWindowBootstrapResult {
   windowControlSessionId: string;
-  /** The actual version of the currently connected desktop; when an old desktop omits it, the phone keeps the original URL. */
+  /** The desktop's actual current version; when an older desktop omits it, the phone keeps the original URL. */
   desktopAppVersion?: string;
   workspaces: WebRemoteControlWorkspaceTarget[];
   tasks: WebRemoteControlTaskTarget[];
@@ -879,9 +807,10 @@ export function resolveWebRemoteControlInitialWorkspaceSelection({
     };
   }
 
-  // Bugfix: the phone's list shows disconnected SSH workspaces, but such items have no remoteSessionId and cannot be
-  // the initial bridge target. Otherwise, while the reconnection state has not synced yet, the user repeatedly lands
-  // on the "not yet connected" error page.
+  // Bugfix: the phone's list may show a disconnected SSH workspace, but such entries have no
+  // remoteSessionId and
+  // must not become the initial bridge target. Otherwise, before reconnect state has synced, the
+  // user repeatedly lands on the "not yet connected" error page.
   const firstWorkspace = bridgeableWorkspaces[0];
   if (!firstWorkspace) {
     if (selectedWorkspaceKey && allWorkspaceKeys.has(selectedWorkspaceKey)) {

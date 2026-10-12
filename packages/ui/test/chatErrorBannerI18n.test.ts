@@ -77,7 +77,8 @@ describe("ChatErrorBanner i18n", () => {
       ),
     ).toBe("已超过单次最长运行时间，请创建新的闲时任务继续。");
 
-    // 外层 code 被压成包装码时靠适配层写入的稳定标记兜底。
+    // When the outer code has been collapsed into a wrapper code, fall back to the stable marker
+    // written by the adapter layer.
     expect(
       resolveChatErrorBannerDisplayMessage(
         {

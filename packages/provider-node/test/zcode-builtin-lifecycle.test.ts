@@ -24,8 +24,10 @@ const disposers: (() => void)[] = [];
 afterEach(async () => {
   for (const dispose of disposers.splice(0)) dispose();
   vi.useRealTimers();
-  // dispose 中止进行中的下载后，同步器仍会异步加锁写 control.json 释放租约（cancelled）；
-  // 直接删除临时目录会与锁文件和原子写竞争，偶发 ENOTEMPTY。以控制文件的租约释放为准等收尾完成。
+  // After dispose aborts an in-flight download, the synchronizer still locks and writes control.json
+  // asynchronously to release the lease (cancelled). Deleting the temp directory directly races with
+  // the lock file and atomic write, occasionally failing with ENOTEMPTY. Wait for the control-file
+  // lease release before cleanup.
   await Promise.all(roots.map((root) => vi.waitFor(() => expectLeaseReleased(root))));
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });

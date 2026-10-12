@@ -1,12 +1,14 @@
-// physical assembly fault 的分类（docs/v4-refactor/04-sync-and-recovery.md 封闭规则 11）。
+// Classification of physical assembly faults (docs/v4-refactor/04-sync-and-recovery.md closed rule 11).
 //
-// 恢复阶梯默认把 fault 当瞬态：resync → resume → 强制 snapshot → fail closed。schema 拒收不是
-// 瞬态的——字节已经过了 length/checksum/UTF-8/JSON 四道关，被拒说明本端读不懂对端发来的**内容**，
-// 而 resume 档只会把同一批 delta 再投一遍。2026-09-21（sess_4142de31）就是这条：一个工具卡载荷
-// 多带两个键，阶梯在同一份内容上烧掉三帧后 fail closed，用户手动重连两次、每次再烧三帧。
+// The recovery ladder treats faults as transient by default: resync → resume → forced snapshot → fail closed. A schema
+// rejection is not transient — the bytes already passed the four gates of length/checksum/UTF-8/JSON, so being rejected
+// means this side cannot read the **content** the peer sent, and the resume rung would only redeliver the same deltas.
+// 2026-09-21 (sess_4142de31) was exactly this: a tool card payload carried two extra keys, the ladder burned three
+// frames on the same content before failing closed, and the user manually reconnected twice, burning three frames each time.
 //
-// 本文件钉两件事：分类函数的边界，以及**产出侧与判定侧用的是同一个词**——两处分叉的症状正是
-// 这套机制要修的那类静默失配，所以常量化之后要有一条测试真的走一遍 assembler。
+// This file pins two things: the boundaries of the classification function, and the fact that **the producer and the
+// classifier use the same word** — the symptom of those two diverging is precisely the class of silent mismatch this
+// mechanism exists to fix, so after constantizing them a test must actually run the assembler end to end.
 
 import { describe, expect, it } from "vitest";
 import {
@@ -22,7 +24,7 @@ import {
 const TOPIC = "conversation/session-wire-fault";
 const SUBSCRIPTION_ID = "sub-wire-fault";
 
-/** schema 过不了的帧：payload.kind 不是任何已知分支。 */
+/** A frame the schema cannot accept: payload.kind matches no known branch. */
 function schemaInvalidWire(): ConversationTopicWireFrame {
   return {
     wireVersion: 3,
@@ -48,8 +50,8 @@ describe("确定性内容 fault 的分类", () => {
     expect(isDeterministicContentFault(WIRE_FAULT_INVALID_PAYLOAD)).toBe(true);
   });
 
-  // 刻意不把这些算进来：它们可能来自传输或组装路径本身，重投确实可能不同。把瞬态误判成确定性
-  // 会让本该自愈的 gap 停在原地，那比多一次无用重试更坏。
+  // Deliberately excluded: these can originate in the transport or assembly path itself, so a redelivery may genuinely differ. Misjudging
+  // a transient as deterministic would freeze a gap that should self-heal, which is worse than one useless retry.
   it.each([
     "proto.frameAssemblyInvalidJson",
     "proto.frameAssemblyChecksumMismatch",
@@ -68,8 +70,8 @@ describe("确定性内容 fault 的分类", () => {
 
   it("两个终态 code 是不同的词：内容失败不该被聚合成一次链路抖动", () => {
     expect(SUBSCRIPTION_CONTENT_REJECTED).not.toBe("fault.subscription.recoveryFailed");
-    // 遥测按 /^fault\.[A-Za-z0-9._-]+$/ 抽 code（useSessionSubscriptionErrorTelemetry），
-    // 新 code 必须落在该形状里才会被单独聚合，而不是退成 fault.subscribe.unknown。
+    // Telemetry extracts codes via /^fault\.[A-Za-z0-9._-]+$/ (useSessionSubscriptionErrorTelemetry);
+    // a new code must fit that shape to be aggregated separately instead of degrading to fault.subscribe.unknown.
     expect(SUBSCRIPTION_CONTENT_REJECTED).toMatch(/^fault\.[A-Za-z0-9._-]+$/);
   });
 });

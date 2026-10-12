@@ -86,14 +86,14 @@ describe("conversation share API revision 23 contract", () => {
     expect(localizeConversationShareUrl("https://zcode.z.ai/share/abc", "zh-CN")).toBe(
       "https://zcode.z.ai/cn/share/abc",
     );
-    // Already in the target language: keep as is; port and query are unaffected.
+    // Already in the target language: kept as-is; port and query are unaffected.
     expect(
       localizeConversationShareUrl("https://zcode.z.ai:8443/cn/share/a.b~c?x=1", "zh-CN"),
     ).toBe("https://zcode.z.ai:8443/cn/share/a.b~c?x=1");
   });
 
   it("形状不认识的链接原样返回，绝不猜着改", () => {
-    // If the server later changes the URL shape or moves to a separate domain, this must quietly do nothing instead of making a wrong change.
+    // If the server ever changes URL shape or moves to a separate domain, this must quietly do nothing rather than rewrite wrongly.
     for (const url of [
       "https://zcode.z.ai/s/abc",
       "https://zcode.z.ai/cn/share/abc/extra",
@@ -106,8 +106,8 @@ describe("conversation share API revision 23 contract", () => {
   });
 
   it("sharedContextImport 只接受规范 /cn/share/ 回链", () => {
-    // Regression guard: if the share link gets localized to /share/<code> per UI language on import, this rejects it outright,
-    // and imports from the English UI would break. So persistence must store the canonical path; localization happens only at display time.
+    // Regression guard: if import localized the callback link by UI language into /share/<code>, this would reject it
+    // outright and imports from the English UI would break. Persistence must store the canonical path; localization happens only at display time.
     const base = {
       contextId: "shared-context-1",
       title: "来自分享：Shared Research",
@@ -150,8 +150,8 @@ describe("conversation share API revision 23 contract", () => {
   });
 
   it("tolerates artifact types the client does not know yet", () => {
-    // Production incident: after the backend added a new type to allowed_artifacts, strict enumeration made the entire
-    // capabilities parse fail and publishing threw invalid_contract during the collecting phase. The capability discovery list must be forward compatible.
+    // Production incident: after the backend added a type to allowed_artifacts, the strict enum made the whole
+    // capabilities parse fail and publishing threw invalid_contract during the collecting phase. Capability discovery lists must be forward compatible.
     const wire = conversationShareCapabilitiesWireSchema.parse({
       schema_version: 1,
       ttl_ms: 604_800_000,
@@ -174,8 +174,8 @@ describe("conversation share API revision 23 contract", () => {
   });
 
   it("保留服务端的 md 结果物类型，不再把它当未知类型削掉", () => {
-    // Bug root cause: the local enum lacked md → the server-allowed md was dropped → the trimmed allowlist
-    // then told the user ".md is not supported, please cancel this turn". If the local side can extract .md candidates, this type must be recognized.
+    // Bug root cause: the local enum lacked md → the server-allowed md was dropped → the trimmed allowlist then told
+    // users ".md is not supported, please cancel this round". If .md candidates can be extracted locally, the type must be recognized.
     const wire = conversationShareCapabilitiesWireSchema.parse({
       schema_version: 1,
       ttl_ms: 604_800_000,
@@ -419,8 +419,8 @@ describe("conversation share API revision 23 contract", () => {
       }),
     ).toThrow();
 
-    // Inbound preview rows are unknown[]: a broken row no longer kills the whole share; instead
-    // decodeConversationShareRows skips it individually (see the cases in the "cross-version forward compatibility" section).
+    // Inbound preview rows are unknown[]: a broken row no longer kills the whole share; decodeConversationShareRows
+    // skips it individually (see the cases in the "cross-version forward compatibility" section).
     const previewWithBrokenRow = conversationSharePreviewDataSchema.parse({
       schema_version: 1,
       share: {
@@ -463,10 +463,10 @@ describe("conversation share API revision 23 contract", () => {
 /**
  * Cross-version forward compatibility.
  *
- * Shared content flows between 4 independently upgradeable/rollback-able components (the publishing Desktop, the
- * Share API backend, independently deployed landing-page mirrors, and the importing Desktop); they cannot all be on
- * the same version. This section pins down "which kinds of evolution are forbidden from killing old consumers" as
- * regressions, so compatibility does not have to be re-reasoned every time shared content changes.
+ * Shared content flows between 4 independently upgradeable/rollback-able parts (publishing Desktop, Share API backend,
+ * independently deployed landing-page mirror, importing Desktop); they can never be on the same version. This section
+ * pins "which kinds of evolution must not kill old consumers" as regressions, so compatibility does not need to be
+ * re-derived from scratch on every future change to shared content.
  */
 describe("conversation share cross-version forward compatibility", () => {
   const share = {
@@ -524,7 +524,7 @@ describe("conversation share cross-version forward compatibility", () => {
       sha256: SHA_256,
       url: "https://example.com/a",
       url_expires_at: 3,
-      // Security scan field the backend may add in the future
+      // Security-scan field the backend may add in the future
       virus_scan: "clean",
     };
     expect(() =>
@@ -558,7 +558,7 @@ describe("conversation share cross-version forward compatibility", () => {
       max_artifact_bytes: 1,
       max_total_artifact_bytes: 1,
       allowed_artifacts: [],
-      // Quota the backend may add in the future
+      // Limit the backend may add in the future
       max_title_length: 100,
     });
     const narrowed = narrowConversationShareCapabilities(wire);
@@ -570,8 +570,8 @@ describe("conversation share cross-version forward compatibility", () => {
     expect(narrowed.unsupportedAccessModes).toEqual(["public_team"]);
   });
 
-  // This is the core regression of this hardening: additive row evolution once made all old importers compute
-  // different projection_sha256 values, misreporting "added an optional field" as "share file verification failed".
+  // Core regression of this hardening: additive row evolution used to make every old importing Desktop compute a
+  // different projection_sha256, misreporting "an optional field was added" as "share file verification failed".
   it("row 多一个未知 optional 字段时，原始值原样保留（哈希才能对得上）", () => {
     const futureRow = { ...assistantRow, futureField: "x" };
     const parsed = conversationSharePreviewDataSchema.parse(previewOf({ rows: [futureRow] }));

@@ -25,7 +25,7 @@ import {
   zcodeWorkflowsSaveResultSchema,
 } from "../src/zcode-protocol/index.js";
 
-// The workspace ref must carry workspaceKey (the services layer fills it in via resolveWorkspaceKey; the protocol layer does not guess).
+// The workspace ref must carry workspaceKey (filled in by the services layer's resolveWorkspaceKey; the protocol layer does not guess).
 const workspace = { workspacePath: "/repo", workspaceKey: "/repo" };
 
 describe("zcode-protocol saved workflows", () => {
@@ -47,7 +47,7 @@ describe("zcode-protocol saved workflows", () => {
 
   it("list：结果里的条目不含脚本正文，坏文件单列 invalid，dir 必填", () => {
     expect(zcodeWorkflowsListParamsSchema.parse({ workspace })).toEqual({ workspace });
-    // scope is optional: global is accepted, unknown values are rejected.
+    // scope is optional: global accepted, unknown values rejected.
     expect(zcodeWorkflowsListParamsSchema.parse({ workspace, scope: "global" }).scope).toBe(
       "global",
     );
@@ -67,14 +67,14 @@ describe("zcode-protocol saved workflows", () => {
     });
     expect(result.workflows[0]?.args?.branch?.required).toBe(true);
     expect(result.dir).toBe("/home/me/.zcode/workflows");
-    // Reject when dir is missing (the GUI's file watching has nowhere to watch without it).
+    // A missing dir is rejected (without it the GUI's file watcher has nothing to watch).
     expect(() =>
       zcodeWorkflowsListResultSchema.parse({
         workflows: [],
         invalid: [],
       }),
     ).toThrow();
-    // Entries that mix in script content are still rejected.
+    // Script bodies smuggled into entries are still rejected.
     expect(() =>
       zcodeWorkflowsListResultSchema.parse({
         workflows: [{ name: "x", description: "d", scope: "project", path: "/p", script: "…" }],
@@ -195,7 +195,7 @@ describe("zcode-protocol saved workflows", () => {
       truncated: true,
     });
     expect(result.runs).toHaveLength(2);
-    // Rows of the global variant carry cwd (the GUI uses it to label the project); old rows / the project variant may omit it.
+    // Global-variant rows carry cwd (the GUI uses it to label the project); old rows / project variants may omit it.
     expect(result.runs[0]?.cwd).toBe("/repo/one");
     expect(result.runs[1]).not.toHaveProperty("cwd");
     expect(result.truncated).toBe(true);
@@ -203,8 +203,8 @@ describe("zcode-protocol saved workflows", () => {
     expect(zcodeWorkflowsRunsResultSchema.parse({ runs: [] })).toEqual({ runs: [] });
   });
 
-  // Central summary of the user-facing artifacts (docs/dynamic-workflow/authoring.md "How the user sees them").
-  // optional, following the precedent of `cwd`: older CLIs do not send this key; a missing key is degradation, not an error.
+  // Hub summary of user-facing artifacts (docs/dynamic-workflow/authoring.md "How the user sees them").
+  // Optional, following the `cwd` precedent: old CLIs do not send this key; a missing key is degradation, not an error.
   it("runs：行的 artifacts 可选、≤ 8 件、只认六个 kind，老行缺席仍可解析", () => {
     const withArtifacts = zcodeWorkflowsRunsResultSchema.parse({
       runs: [
@@ -215,8 +215,14 @@ describe("zcode-protocol saved workflows", () => {
           updatedAt: 2,
           spentTokens: 0,
           artifacts: [
-            { id: "report", kind: "file", title: "审计报告", version: 2, contentType: "application/pdf" },
-            // Preset boards have no contentType; title may also be missing (the facade's default title is the id).
+            {
+              id: "report",
+              kind: "file",
+              title: "审计报告",
+              version: 2,
+              contentType: "application/pdf",
+            },
+            // Preset boards have no contentType; title may also be absent (the facade's default title is the id).
             { id: "perf", kind: "chart", version: 1 },
           ],
         },
@@ -230,23 +236,31 @@ describe("zcode-protocol saved workflows", () => {
     expect(withArtifacts.runs[1]).not.toHaveProperty("artifacts");
 
     const row = (artifacts: unknown) => ({
-      runs: [{ runId: "r1", status: "completed", createdAt: 1, updatedAt: 2, spentTokens: 0, artifacts }],
+      runs: [
+        { runId: "r1", status: "completed", createdAt: 1, updatedAt: 2, spentTokens: 0, artifacts },
+      ],
     });
-    // Upper bound of 8: how many chips fit on one row, same value as the notification payload.
+    // Upper bound 8: what fits in one chips row, same value as the notification payload.
     const nine = Array.from({ length: 9 }, (_, index) => ({
       id: `a${index}`,
       kind: "markdown" as const,
       version: 1,
     }));
     expect(() => zcodeWorkflowsRunsResultSchema.parse(row(nine))).toThrow();
-    expect(zcodeWorkflowsRunsResultSchema.parse(row(nine.slice(0, 8))).runs[0]?.artifacts).toHaveLength(8);
-    // Reject both unknown kinds and unknown keys (elements are strict): the GUI draws icons by kind and has no fallback icon.
-    expect(() => zcodeWorkflowsRunsResultSchema.parse(row([{ id: "a", kind: "video", version: 1 }]))).toThrow();
+    expect(
+      zcodeWorkflowsRunsResultSchema.parse(row(nine.slice(0, 8))).runs[0]?.artifacts,
+    ).toHaveLength(8);
+    // Unknown kinds and unknown keys are both rejected (element strict): the GUI picks icons by kind and has no fallback icon.
+    expect(() =>
+      zcodeWorkflowsRunsResultSchema.parse(row([{ id: "a", kind: "video", version: 1 }])),
+    ).toThrow();
     expect(() =>
       zcodeWorkflowsRunsResultSchema.parse(row([{ id: "a", kind: "file", version: 1, bytes: 12 }])),
     ).toThrow();
-    // id must be non-empty, version is required.
-    expect(() => zcodeWorkflowsRunsResultSchema.parse(row([{ id: "", kind: "file", version: 1 }]))).toThrow();
+    // id non-empty, version required.
+    expect(() =>
+      zcodeWorkflowsRunsResultSchema.parse(row([{ id: "", kind: "file", version: 1 }])),
+    ).toThrow();
     expect(() => zcodeWorkflowsRunsResultSchema.parse(row([{ id: "a", kind: "file" }]))).toThrow();
   });
 
@@ -255,7 +269,7 @@ describe("zcode-protocol saved workflows", () => {
       workspace,
       name: "x",
     });
-    // Addendum 2026-09-04: project→global became a model summary instead, and the `to` parameter was removed; including it is rejected as strict.
+    // 2026-09-04 addendum: project→global became model summarization and the `to` param was removed; sending it is rejected by strict.
     expect(() =>
       zcodeWorkflowsMoveParamsSchema.parse({ workspace, name: "x", to: "global" }),
     ).toThrow();
@@ -284,13 +298,13 @@ describe("zcode-protocol saved workflows", () => {
         zcodeWorkflowsMoveResultSchema.parse({ ok: false, reason, path: "/p", detail: "why" }),
       ).toEqual({ ok: false, reason, path: "/p", detail: "why" });
     }
-    // path / detail may be missing; unknown reasons are rejected.
+    // path / detail optional; unknown reason rejected.
     expect(zcodeWorkflowsMoveResultSchema.parse({ ok: false, reason: "target_exists" })).toEqual({
       ok: false,
       reason: "target_exists",
     });
     expect(() => zcodeWorkflowsMoveResultSchema.parse({ ok: false, reason: "boom" })).toThrow();
-    // The ok branch is rejected when from/to are missing; an extra legacy scope is also rejected (strict).
+    // The ok branch without from/to is rejected; a leftover scope is also rejected (strict).
     expect(() => zcodeWorkflowsMoveResultSchema.parse({ ok: true, from: "/a" })).toThrow();
     expect(() =>
       zcodeWorkflowsMoveResultSchema.parse({ ok: true, from: "/a", to: "/b", scope: "project" }),

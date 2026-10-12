@@ -15,9 +15,9 @@ export interface VoiceModelListItem {
 
 export interface VoiceTranscriptionRequest {
   modelId: string;
-  /** 16 kHz 单声道 PCM16 小端字节。 */
+  /** 16 kHz mono PCM16 little-endian bytes. */
   pcm: Uint8Array;
-  /** 缺省或 `auto` 表示由模型自动识别语言。 */
+  /** Omitted or `auto` means the model detects the language automatically. */
   language?: string;
 }
 
@@ -46,7 +46,7 @@ export interface IVoiceDictationService {
   listModels(): Promise<VoiceModelListItem[]>;
   getRuntimeState(): Promise<VoiceDictationRuntimeState>;
   setIdleUnloadMinutes(minutes: VoiceModelIdleUnloadMinutes): Promise<void>;
-  /** 下载进度通过 listModels() 的 downloading 状态读取；同一模型重复调用共享同一任务。 */
+  /** Download progress is read via listModels()'s downloading state; repeated calls for the same model share one task. */
   downloadModel(modelId: string): Promise<void>;
   cancelDownload(modelId: string): Promise<void>;
   removeModel(modelId: string): Promise<void>;

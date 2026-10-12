@@ -50,7 +50,7 @@ async function readBinding(request: ChannelReplyHostRequest, deps: ChannelReplyD
     group.topicActive === false
   )
     throw new Error("Channel reply authorization changed");
-  // 输入来源不是发送授权：从任务唯一绑定中解析可信目标，禁止拿另一任务/旧授权兜底。
+  // The input source is not the sending authorization: resolve the trusted target from the task's unique binding, never fall back to another task or a stale authorization.
   const nativeInputs = Object.entries(group.inputs ?? {}).filter(([, input]) => {
     const source = input.source;
     return (
@@ -69,7 +69,7 @@ async function readBinding(request: ChannelReplyHostRequest, deps: ChannelReplyD
       input.taskId === request.taskId &&
       !["cancelled", "discarded", "stopped"].includes(input.progress?.status ?? ""),
   );
-  // 原生身份不随任务切换失效；历史节点只作为名字候选，不能扩大当前发送 ref 的授权。
+  // Native identity does not expire when the task switches; historical mentions are name candidates only and must not widen the authorization of the current send ref.
   const nameCandidates = nativeInputs.flatMap(
     ([, { source }]) =>
       source.messages?.flatMap((message) => message.contentParts ?? []) ??
@@ -152,8 +152,8 @@ export async function replyToBotChannel(
     if (!saved?.channelReplyRequestHash) return undefined;
     if (saved.channelReplyRequestHash !== requestHash)
       throw new Error("Channel reply idempotency conflict");
-    // unknown 是崩溃恢复标记，不代表活跃发送已结束；复用投递 owner 等待，
-    // 无活跃发送的持久记录由 owner 保持不重发，不能另建重试队列。
+    // "unknown" is a crash-recovery marker, not proof the active send finished; reuse the delivery owner to wait.
+    // A persisted record without an active send stays unre-sent by its owner; never build a separate retry queue.
     if (saved.status !== "sent" && saved.status !== "invalidated") {
       await deps.deliver(bot, binding.group.chatId, binding.group.threadId, saved);
       saved = (await deps.readState()).bots[binding.key]?.group?.deliveries?.[id];
@@ -170,9 +170,9 @@ export async function replyToBotChannel(
     try {
       members = await deps.listMembers?.(bot, binding.group.chatId);
     } catch {
-      /* 目录失败作为可解释的待澄清结果，不暴露不完整名单。 */
+      /* Directory failure becomes an explainable needs-clarification result; never expose an incomplete member list. */
     }
-    // 外部查询期间可能停用/换绑或停止执行；查询结果绝不能延续旧授权。
+    // The bot may be disabled, rebound, or stopped during the external lookup; the lookup result must never carry over the old authorization.
     const fresh = await readBinding(request, deps);
     if (
       fresh.scope !== binding.scope ||

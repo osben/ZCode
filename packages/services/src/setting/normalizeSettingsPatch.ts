@@ -99,5 +99,26 @@ export function normalizeSettingsPatch(patch: Partial<AppSettings>): Partial<App
     normalizedPatch.dynamicWorkflowMode = undefined;
   }
 
+  if (
+    "worktreeCustomLocationPath" in normalizedPatch &&
+    typeof normalizedPatch.worktreeCustomLocationPath === "string"
+  ) {
+    // The custom worktree location must be an explicit path; clearing the field returns the flow
+    // to the sibling convention. RPC drops undefined, so an empty string is normalized to deletion.
+    const trimmedWorktreeCustomLocationPath = normalizedPatch.worktreeCustomLocationPath.trim();
+    normalizedPatch.worktreeCustomLocationPath =
+      trimmedWorktreeCustomLocationPath.length > 0 ? trimmedWorktreeCustomLocationPath : undefined;
+  }
+
+  if (
+    "worktreeBranchPrefix" in normalizedPatch &&
+    typeof normalizedPatch.worktreeBranchPrefix === "string"
+  ) {
+    // “Reset to default” clears the branch prefix; keep the old value out of setting.json.
+    const trimmedWorktreeBranchPrefix = normalizedPatch.worktreeBranchPrefix.trim();
+    normalizedPatch.worktreeBranchPrefix =
+      trimmedWorktreeBranchPrefix.length > 0 ? trimmedWorktreeBranchPrefix : undefined;
+  }
+
   return normalizedPatch;
 }

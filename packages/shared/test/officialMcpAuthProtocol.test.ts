@@ -1,5 +1,5 @@
-/* OMCP-011 相关 —— 官方 MCP 身份头协议 schema（spec §7.2）。
-   请求侧不得携带任何秘密；响应侧失败原因必须可枚举且无自由文本。 */
+/* OMCP-011 related — official MCP identity header protocol schema (spec §7.2).
+   The request side must carry no secrets; the failure reasons on the response side must be enumerable with no free text. */
 import { describe, expect, it } from "vitest";
 import {
   zcodeOfficialMcpAuthHeadersRequestParamsSchema,
@@ -71,9 +71,10 @@ describe("official mcp auth headers protocol", () => {
       }),
     ).toMatchObject({ ok: true });
     for (const reason of ["official_auth_unavailable", "official_auth_plan_required"]) {
-      expect(
-        zcodeOfficialMcpAuthHeadersResponseSchema.parse({ ok: false, reason }),
-      ).toMatchObject({ ok: false, reason });
+      expect(zcodeOfficialMcpAuthHeadersResponseSchema.parse({ ok: false, reason })).toMatchObject({
+        ok: false,
+        reason,
+      });
     }
   });
 

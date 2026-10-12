@@ -57,7 +57,7 @@ it("DB109-01/09/10/13：八表内容保留，旧版读取新增/更新任务无�
     });
 
     const selection = { providerId: "proxy", modelId: "next", options: { reasoningLevel: "high" } };
-    // 两个独立 Repo 逆序首次打开同一库，必须都在统一迁移门禁之后工作。
+    // Two independent repos first-open the same database in reverse order; both must work behind the unified migration gate.
     const idle = await offPeak.create(
       {
         title: "新闲时",
@@ -89,7 +89,7 @@ it("DB109-01/09/10/13：八表内容保留，旧版读取新增/更新任务无�
     expect(oldAutomation(rawTask).prompt).toBe("新定时正文");
     expect(oldOffPeak(rawIdle).prompt).toBe("新闲时正文");
 
-    // 模拟回滚后的旧 Writer 更新，保留一次迁移账本；再升级不能拿旧选择恢复默认执行。
+    // Simulate a pre-rollback legacy Writer update that leaves one migration ledger entry; a re-upgrade must not restore the default selection from the old choice.
     automation.close();
     offPeak.close();
     const ledger = db.prepare("SELECT * FROM tasks_schema_migration").all();

@@ -10,7 +10,7 @@ type UploadAgent = Pick<
   "attachmentBeginV4" | "attachmentChunkV4" | "attachmentCommitV4" | "attachmentAbortV4"
 >;
 
-/** 内容寄存在目标 CLI，群队列只保存引用；远端不能直接使用桌面临时路径。 */
+/** Content is deposited into the target CLI; the group queue only stores references. Remote sessions cannot use desktop temporary paths directly. */
 export async function uploadBotGroupAttachments(
   agent: UploadAgent,
   target: ZCodeAgentSessionTarget,
@@ -43,7 +43,7 @@ export async function uploadBotGroupAttachments(
         : {}),
     });
     try {
-      // begin 的确认也可能丢失；从发送起就按 uploadId 清理，不等待确认后才标记。
+      // The begin acknowledgement itself may be lost; clean up by uploadId from the moment of sending instead of waiting for the confirmation.
       const begin = await agent.attachmentBeginV4({
         ...common,
         fileName: attachment.filename,
@@ -70,7 +70,7 @@ export async function uploadBotGroupAttachments(
         if (chunk.nextChunkIndex !== index + 1)
           throw new Error("Invalid attachment upload progress");
       }
-      // 取消可能在最后一个分块期间发生；提交前再次检查，避免交付已取消的资源。
+      // Cancellation may occur during the last chunk; check again before committing so a cancelled resource is never delivered.
       signal?.throwIfAborted();
       const committed = await agent.attachmentCommitV4(common);
       signal?.throwIfAborted();

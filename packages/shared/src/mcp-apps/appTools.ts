@@ -1,39 +1,40 @@
 import { z } from "zod";
 
 /**
- * App-Provided Tools (MCP Apps spec "App-Provided Tools"): after the page declares the `tools` capability
- * in `ui/initialize`, the host discovers page tools via `tools/list`, registers them with the agent to
- * expose to the model; model calls reach the renderer through the "instance mailbox" (live-only projected
- * incremental `pluginUi.appToolCall`, delivered by scopeId + generation), the page executes `tools/call`
- * and returns the result. This module only holds quotas, descriptor normalization, and model-side naming;
- * pure domain, zero IO.
+ * App-Provided Tools (the MCP Apps spec's "App-Provided Tools"): once the page declares the
+ * `tools` capability in `ui/initialize`, the host discovers page tools via `tools/list` and
+ * registers them with the agent to expose to the model; model calls reach the renderer through
+ * the "instance mailbox" (live-only projected increments `pluginUi.appToolCall`, delivered by
+ * scopeId + generation), and after the page executes `tools/call` the result is sent back.
+ * This module holds only the limits, descriptor normalization, and model-side naming; pure
+ * domain, zero IO.
  */
 
-/** Maximum number of tools registered per page instance (spec-recommended value). */
+/** Maximum tools registered per page instance (spec-recommended value). */
 export const MCP_APPS_APP_TOOLS_MAX_PER_INSTANCE = 50;
 export const MCP_APPS_APP_TOOL_NAME_MAX_CHARS = 128;
 export const MCP_APPS_APP_TOOL_TITLE_MAX_CHARS = 256;
 export const MCP_APPS_APP_TOOL_DESCRIPTION_MAX_CHARS = 4096;
-/** Upper bound for serialized inputSchema / outputSchema (UTF-8 bytes). */
+/** Serialized size limit of inputSchema / outputSchema (UTF-8 bytes). */
 export const MCP_APPS_APP_TOOL_SCHEMA_MAX_BYTES = 64 * 1024;
-/** Deadline for the renderer to claim a pending call; on timeout the page is treated as not running (mailbox delivery is not resent). */
+/** Deadline for the renderer to claim a pending call; on timeout the page is considered not running (mailbox deliveries are not resent). */
 export const MCP_APPS_APP_TOOL_CLAIM_TIMEOUT_MS = 5_000;
 /** Deadline for the page to execute tools/call after claiming (spec-recommended value). */
 export const MCP_APPS_APP_TOOL_CALL_TIMEOUT_MS = 30_000;
-/** Serialization cap for a single result (spec-recommended value). */
+/** Serialized size limit for a single result (spec-recommended value). */
 export const MCP_APPS_APP_TOOL_RESULT_MAX_BYTES = 10 * 1024 * 1024;
-/** Cap on model call arguments before they enter the mailbox; over the cap the call ends with an error immediately and is not delivered. */
+/** Size limit for model call arguments before they enter the mailbox; oversized calls end with an error instead of being delivered. */
 export const MCP_APPS_APP_TOOL_ARGUMENTS_MAX_BYTES = 1024 * 1024;
-/** Minimum interval for re-registration triggered by list_changed. */
+/** Minimum interval between re-registrations triggered by list_changed. */
 export const MCP_APPS_APP_TOOLS_REFRESH_INTERVAL_MS = 1_000;
 export const MCP_APPS_APP_TOOL_ERROR_MESSAGE_MAX_CHARS = 4096;
 export const MCP_APPS_APP_TOOL_CALL_ID_MAX_CHARS = 128;
-/** Model-side name prefix: naturally does not collide with server tools' `mcp__`. */
+/** Model-side name prefix: naturally collision-free with the `mcp__` prefix of server tools. */
 export const MCP_APPS_APP_TOOL_MODEL_NAME_PREFIX = "app__";
 
 const utf8Bytes = (value: string) => new TextEncoder().encode(value).length;
 
-/** Same sanitization rule as the agent's MCP tool names: characters outside `[A-Za-z0-9_-]` become `_`, consecutive underscores merged. */
+/** Same sanitization rule as the agent's MCP tool names: replace anything outside `[A-Za-z0-9_-]` with `_` and collapse consecutive underscores. */
 export function sanitizeMcpAppsModelNamePart(name: string): string {
   const sanitized = name.replace(/[^a-zA-Z0-9_-]/g, "_").replace(/_+/g, "_");
   return sanitized.length > 0 ? sanitized : "unknown";
@@ -78,9 +79,9 @@ const ANNOTATION_BOOLEAN_KEYS = [
 ] as const;
 
 /**
- * Renderer side: narrows the page's `tools/list` result into registrable descriptors. Non-conforming
- * items are skipped (without failing the whole registration); over 50, only the first 50 are taken.
- * Returns the skipped names and reasons for logging.
+ * Renderer-side: narrow the page's `tools/list` result into registrable descriptors. Non-compliant
+ * items are skipped (so one bad item does not fail the whole registration) and only the first 50
+ * are kept; skipped names and reasons are returned for logging.
  */
 export function normalizeMcpAppsAppTools(tools: readonly unknown[]): {
   tools: McpAppsAppToolDescriptor[];
@@ -132,7 +133,7 @@ export function normalizeMcpAppsAppTools(tools: readonly unknown[]): {
   return { tools: accepted, skipped };
 }
 
-/** Result of the page's `tools/call` (MCP CallToolResult shape, loose field set: content items kept as-is). */
+/** Result of the page's `tools/call` (MCP CallToolResult shape, lenient field set: content items are kept as-is). */
 export const mcpAppsAppToolCallResultSchema = z.object({
   content: z.array(z.record(z.string(), z.unknown())),
   structuredContent: z.unknown().optional(),
@@ -141,7 +142,7 @@ export const mcpAppsAppToolCallResultSchema = z.object({
 });
 export type McpAppsAppToolCallResult = z.infer<typeof mcpAppsAppToolCallResultSchema>;
 
-/** One pending call in the mailbox: delivered to the unique instance by (scopeId, generation). */
+/** One pending call in the mailbox: delivered to the single instance identified by (scopeId, generation). */
 export interface McpAppsAppToolCallRequest {
   activity?: boolean;
   cancelled?: boolean;

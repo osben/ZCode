@@ -16,7 +16,7 @@ import {
 import { VoiceModelStore } from "./voiceModelStore.js";
 import { VoiceTranscriber, decodePcm16LeToFloat32 } from "./voiceTranscriber.js";
 
-/** 模型闲置超过该时长后卸载，释放数百 MB 的推理内存；下次转写会按需重新加载。 */
+/** Unloads the model after it sits idle for this long, freeing hundreds of MB of inference memory; the next transcription reloads it on demand. */
 export const VOICE_MODEL_IDLE_UNLOAD_MS = 5 * 60 * 1000;
 const logger = createServiceLogger("voice-dictation");
 
@@ -27,8 +27,8 @@ export interface VoiceDictationServiceOptions {
 }
 
 /**
- * 语音输入的 Node 实现：把模型存储与转写器组合为 RPC 面。
- * 模型状态归 VoiceModelStore、模型和 stream lease 归 VoiceTranscriber；本服务负责 RPC stream id 与空闲卸载。
+ * Node implementation for voice input: combines the model store and transcriber into an RPC surface.
+ * Model state belongs to VoiceModelStore, and models and stream leases belong to VoiceTranscriber; this service owns RPC stream IDs and idle unloading.
  */
 export class VoiceDictationService implements IVoiceDictationService {
   private readonly store: VoiceModelStore;
@@ -120,8 +120,8 @@ export class VoiceDictationService implements IVoiceDictationService {
     } catch (error) {
       if (this.activeStreamId === streamId) {
         this.activeStreamId = null;
-        // beginStream 里 load 可能已成功而 stream 初始化抛错；此时 idle 计时器已在入口清掉，
-        // 不重启会让已加载的原生模型常驻内存，绕过 idle-unload 策略（与 !started 分支一致）。
+        // Inside beginStream the load may already have succeeded while stream initialization threw; the idle timer was cleared on entry,
+        // so skipping the reschedule would leave the loaded native model resident in memory and bypass the idle-unload policy (same as the !started branch).
         this.scheduleIdleUnload();
       }
       throw error;
@@ -164,7 +164,7 @@ export class VoiceDictationService implements IVoiceDictationService {
         });
       });
     }, this.idleUnloadMs);
-    // 空闲计时器不应阻止进程退出。
+    // The idle timer must not keep the process alive.
     this.idleTimer.unref?.();
   }
 
@@ -182,7 +182,7 @@ export class VoiceDictationService implements IVoiceDictationService {
   }
 }
 
-/** `auto`、空串都交给模型自动识别；其余值按语言码透传。 */
+/** `auto` and empty strings both defer to the model's automatic detection; other values pass through as language codes. */
 function normalizeLanguage(language: string | undefined): string | undefined {
   const trimmed = language?.trim();
   return trimmed && trimmed !== "auto" ? trimmed : undefined;
@@ -194,7 +194,7 @@ export function createVoiceDictationService(
   const store = new VoiceModelStore({
     getModelsDir: () => join(getZCodeDataRootDir(), "voice-models"),
     handyModelDirs: getHandyModelDirectories(),
-    // 模型下载必须走 host 统一网络栈（代理、自签证书），否则依赖代理访问 huggingface.co 的用户无法下载。
+    // Model downloads must go through the host's unified network stack (proxy, self-signed certificates); otherwise users who need a proxy to reach huggingface.co cannot download.
     fetchImpl: options.fetchImpl,
   });
   const transcriber = new VoiceTranscriber({ store });

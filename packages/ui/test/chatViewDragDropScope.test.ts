@@ -38,8 +38,9 @@ describe("ConversationComposer drag and drop scope", () => {
     expect(promptEditorSource).toContain("event.stopPropagation()");
     expect(attachmentSource).toContain('types.includes("Files")');
     expect(attachmentSource).toContain('? "workspace" : "attachment"');
-    // Bugfix: v4 composer 的 workspace drop 仍由主 drop controller 消费；源码格式化可能换行，
-    // 这里断言语义调用而不是固定单行文本，避免测试只因排版变化误报。
+    // Bugfix: the v4 composer's workspace drop is still consumed by the main drop controller;
+    // source formatting may wrap lines, so assert the semantic call instead of a fixed one-line
+    // text to avoid false positives from formatting-only changes.
     expect(composerSource).toMatch(
       /readWorkspaceFileDragPayload\(\s*event\.dataTransfer\s*,?\s*\)/u,
     );

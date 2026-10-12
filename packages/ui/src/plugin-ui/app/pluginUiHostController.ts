@@ -48,11 +48,10 @@ export function createPluginUiHostController(
   let preparation: Promise<void> | null = null;
   let recycling = false;
   let closedDuringRecycle = false;
-  // initialized has arrived: send* can be used directly; earlier notify* calls are not queued — at
-  // initialized time the latest value is read via getToolFeed.
+  // initialized has arrived: send* may be used directly; earlier notify* calls are not queued — at initialized the latest values are read via getToolFeed.
   let attached = false;
   let cancelHandshakeTimer: (() => void) | null = null;
-  // Ids of in-flight page tool calls; each is cancelled to the agent on dispose.
+  // In-flight page tool call ids, each cancelled to the agent on dispose.
   const activeCalls = new Set<string>();
   let unregisterNotifications: (() => void) | null = null;
   const createCallId = deps.createCallId ?? (() => crypto.randomUUID());
@@ -83,7 +82,7 @@ export function createPluginUiHostController(
     setPhase("error", { error: message });
   };
 
-  /** Ownership scope shared by all bridged requests: workspace + session + this plugin server. */
+  /** Attribution scope shared by all requests through the bridge: workspace + session + this plugin's server. */
   const baseScope = () => ({
     workspacePath: deps.scope.workspacePath,
     ...(deps.scope.workspaceIdentity ? { workspaceIdentity: deps.scope.workspaceIdentity } : {}),
@@ -116,8 +115,7 @@ export function createPluginUiHostController(
     isDisposed: () => disposed,
   });
 
-  // App-Provided Tools: after the handshake, discover page tools and register them; when a mailbox
-  // delivery arrives, claim it and let the page execute. Skipped entirely when there is no channel.
+  // App-Provided Tools: after the handshake, discover page tools and register them; when mailbox deliveries arrive, claim and let the page execute. Skipped entirely without a channel.
   const appTools = deps.appTools
     ? createPluginUiAppTools({
         bridge: deps.appTools,
@@ -144,13 +142,11 @@ export function createPluginUiHostController(
     void transport?.close().catch(() => undefined);
     attached = false;
     cancelHandshakeTimer?.();
-    // New port = page reload or remount: unsubscribe the old generation, unregister the old instance's
-    // tools; notification entry points re-register under the new generation.
+    // New port = page reload or remount: unsubscribe the old generation's subscriptions, unregister the old instance's tools; notification entries re-register under the new generation.
     resources.unsubscribeAll();
     appTools?.resetForAttach();
     const widgetState = deps.getWidgetState();
-    // The initial widgetState is delivered with the handshake via a hostContext extension key
-    // (hostContext allows extra keys); afterwards it is no longer pushed from the host.
+    // widgetState initial value ships with the handshake via a hostContext extension key (hostContext allows extra keys); it is never pushed from the host afterwards.
     const contextAtCreate: McpUiHostContext =
       widgetState === undefined
         ? hostContext
@@ -162,8 +158,7 @@ export function createPluginUiHostController(
     );
     const baseContext = hostContext;
     bridge = active;
-    // Two Apps in the same page (page-built + alias) each send initialize / initialized: only the first
-    // one enters running and gets fed.
+    // Two Apps in the same page (page-created + alias) each send initialize / initialized: only the first enters running and gets fed.
     let initializedOnce = false;
     active.oninitialized = () => {
       if (disposed || bridge !== active || initializedOnce) return;
@@ -178,8 +173,7 @@ export function createPluginUiHostController(
         active.getAppCapabilities(),
         () => !disposed && bridge === active,
       );
-      // Updates inside the handshake window must not be dropped: only patch the current instance's
-      // latest value; no new session-state owner is added.
+      // Updates inside the handshake window must not be lost: replay only the current instance's latest value without adding another session-state owner.
       if (hostContext !== baseContext) active.setHostContext(hostContext);
       sendFeed(active, deps.getToolFeed());
     };
@@ -233,8 +227,7 @@ export function createPluginUiHostController(
         return closed;
       } finally {
         recycling = false;
-        // Even if the recycle RPC fails, the source-revoked notification received while waiting must
-        // not be swallowed.
+        // A failed recycle RPC must not swallow a source-revocation notification already received while waiting.
         if (!closed && closedDuringRecycle && !disposed) deps.onInstanceClosed?.();
         closedDuringRecycle = false;
       }
@@ -256,8 +249,7 @@ export function createPluginUiHostController(
               ? { prefersBorder: deps.presentation.prefersBorder }
               : {}),
           });
-          // When prepare has already completed registration in Host/Main, unmounting must not just ignore
-          // the reply, otherwise nobody releases the sandbox.
+          // prepare already registered with Host/Main; unloading must not just ignore the reply, otherwise the sandbox would leak.
           if (disposed) {
             await deps.bridge.closeInstance({ ...baseScope(), instance: prepared.instance });
             await deps.platform.disposeSandbox(prepared.sandboxId, prepared.initId);
@@ -281,12 +273,11 @@ export function createPluginUiHostController(
           }
           handle = prepared;
           boundScope = { ...baseScope(), instance: prepared.instance };
-          // Subscribe to ports before mounting the webview: main delivers the port after guest dom-ready,
-          // so subscribing after mounting can miss it.
+          // Subscribe to ports before mounting the webview: main delivers the port after the guest's dom-ready, so subscribing after mount could miss it.
           unsubscribePorts?.();
           unsubscribePorts = deps.platform.onPorts((event) => {
             if (disposed || !handle || event.sandboxId !== handle.sandboxId) return;
-            // Ports from an older initId are always dropped (guard against crosstalk on guest reload / remount).
+            // Ports with an older initId are always dropped (guards against cross-wiring on guest reload / duplicate mounts).
             if (event.initId < handle.initId) return;
             handle = { ...handle, initId: event.initId };
             attachPort(event.port);
@@ -355,8 +346,7 @@ export function createPluginUiHostController(
       const active = bridge,
         activeTransport = transport,
         wasAttached = attached;
-      // The unregister request captures the original credentials; the generation must not be read from
-      // the new handle after the await.
+      // Unregister requests captured the original credentials; the generation must not be read from a new handle after await.
       bridge = null;
       transport = null;
       attached = false;

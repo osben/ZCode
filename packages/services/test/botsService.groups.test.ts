@@ -69,7 +69,7 @@ function setup(
   const repo = f.createMemoryRepo(structuredClone(f.feishuConfig));
   const taskService = f.createLegacyTaskService();
   if (uniqueTaskIds) {
-    // 通用夹具固定返回 task-1，会掩盖跨话题任务校验；隔离用例必须分配不同任务。
+    // The shared fixture always returns task-1, which would mask cross-topic task validation; isolated tests must assign distinct tasks.
     const createTask = taskService.createTask;
     let taskSequence = 0;
     taskService.createTask = vi.fn(async () => ({
@@ -170,7 +170,7 @@ describe("Feishu group sessions", () => {
     expect(saved.inputs).toEqual(before.bots[key]!.group!.inputs);
     expect(saved.autoReplyGuard).toEqual(before.bots[key]!.group!.autoReplyGuard);
     expect(saved.backgroundHistory?.checkpoint).toBe("om_start_ou_user");
-    // 重建 service 和 repo，确认补读边界不依赖内存。
+    // Rebuild the service and repo to confirm the backfill boundary does not depend on memory.
     await service.disposeAllAndWait();
     repo = f.createMemoryRepo(
       structuredClone(f.feishuConfig),
@@ -222,7 +222,7 @@ describe("Feishu group sessions", () => {
       actor: { ...message.actor, providerMessageId: "om_accepting" },
     });
     await ready;
-    // 补读期间的新背景不能被旧 revision 清除，且保留最早检查点。
+    // New background arriving during backfill must not be cleared by the old revision, and the earliest checkpoint is kept.
     await restarted.handleInboundMessage({
       ...message,
       actor: { ...message.actor, providerMessageId: "om_background_3" },
@@ -321,7 +321,7 @@ describe("Feishu group sessions", () => {
       );
       expect((await inputs()).filter((id) => id.startsWith("bot-"))).toHaveLength(5);
       const calls = taskService.submitBotGroupInput.mock.calls.length;
-      // 旧真人事件重投不能给自动互答续命。
+      // Redelivered legacy human events must not extend the auto-cross-reply lifetime.
       await send("start", "oc_a", "ou_user", threadId);
       await service.handleInboundMessage(message("blocked"));
       expect(taskService.submitBotGroupInput).toHaveBeenCalledTimes(calls);
@@ -347,7 +347,7 @@ describe("Feishu group sessions", () => {
       const resumedCalls = taskService.submitBotGroupInput.mock.calls.length;
       await restarted.handleInboundMessage(message("blocked-again"));
       expect(taskService.submitBotGroupInput).toHaveBeenCalledTimes(resumedCalls);
-      // 同群另一个话题使用自己的上限。
+      // Another topic in the same group uses its own limit.
       await restarted.handleInboundMessage({
         ...message("other-human", "user"),
         actor: {
@@ -2469,7 +2469,7 @@ describe("Feishu group sessions", () => {
     const config = await repo.readConfig();
     config.bots[0]!.webhookSecretRef = "verification-secret";
     await repo.writeConfig(config);
-    // 测试凭据服务对未登记的引用返回 null；下面使用实际登记凭据的独立服务。
+    // The test credential service returns null for unregistered refs; the separate service below uses actually registered credentials.
     const secured = f.createBotsService({
       zcodeTaskService: f.createLegacyTaskService(),
       repo: repo as never,

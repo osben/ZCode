@@ -154,7 +154,7 @@ describe("ZCode Protocol", () => {
     };
 
     expect(zcodeProtocolNotifications.processResourceSample).toBe("process/resourceSample");
-    // PRT-025: samples from old CLIs lack the new fields and must still pass validation (all new fields optional, handshake version not bumped).
+    // PRT-025: samples from old CLIs lack the new fields and must still pass validation (all new fields optional; the handshake version does not bump).
     expect(zcodeProcessResourceSampleSchema.parse(sample)).toEqual(sample);
     const sampleWithTelemetryFields = {
       ...sample,
@@ -166,9 +166,9 @@ describe("ZCode Protocol", () => {
     expect(zcodeProcessResourceSampleSchema.parse(sampleWithTelemetryFields)).toEqual(
       sampleWithTelemetryFields,
     );
-    // lane is tagged by app-side services via the owning process manager; the CLI does not know its own lane and may not self-report it.
+    // lane is labeled by app-side services from the owning process manager; the CLI does not know its own lane and may not self-report.
     expect(() => zcodeProcessResourceSampleSchema.parse({ ...sample, lane: "chat" })).toThrow();
-    // instanceToken exists only for main to count processes; it must never be used to smuggle a pid, path, or workspace identifier.
+    // instanceToken exists only for main to count processes; it must never smuggle pids, paths, or workspace identity.
     expect(() =>
       zcodeProcessResourceSampleSchema.parse({ ...sample, instanceToken: "/private/repo" }),
     ).toThrow();
@@ -515,7 +515,7 @@ describe("ZCode Protocol", () => {
       { ...base, sequenceNumber: -1, kind: "session-closed" },
       { ...base, kind: "turn-started" },
       { ...base, kind: "tool-scheduled", turnId: "turn-1", toolCallId: "call-1" },
-      // computerUse is a boolean fact; only true is meaningful. false and action names are both outside the contract.
+      // computerUse is a boolean fact where only true carries meaning; false and the action name are both outside the contract.
       {
         ...base,
         kind: "tool-scheduled",
@@ -524,7 +524,7 @@ describe("ZCode Protocol", () => {
         toolName: "mcp__node_repl__js",
         computerUse: false,
       },
-      // tool-started cannot access the model source (ToolCallStartedPayload has no input), so carrying that fact is not allowed.
+      // tool-started cannot obtain the model source code (ToolCallStartedPayload has no input), so it may not carry this fact.
       {
         ...base,
         kind: "tool-started",
@@ -645,7 +645,7 @@ describe("ZCode Protocol", () => {
         interval: 1.5,
       }),
     ).toThrow();
-    // The carrier must remain an infinite loop, so the host never receives the contradictory state of recurring=false / a finite count.
+    // carrier must stay an endless loop, avoiding the host receiving a contradictory state of recurring=false / a finite count.
     expect(
       zcodeAutomationUpdateParamsSchema.parse({
         automationId: "automation-1",
@@ -952,7 +952,7 @@ describe("ZCode Protocol", () => {
   });
 
   it("accepts session RESUME tool lists too (cold resume keeps the same isolation)", () => {
-    // Cold recovery must carry the same tool-surface constraints as create, otherwise a CUA session would re-expose banned tools such as Bash after resume.
+    // Cold resume must keep the same tool-surface constraints as create, otherwise a CUA session would re-expose Bash and other denied tools after resume.
     const parsed = zcodeSessionResumeParamsSchema.parse({
       sessionId: "sess_1",
       toolAllowlist: ["mcp__zcode-cua__request_access"],
@@ -960,7 +960,7 @@ describe("ZCode Protocol", () => {
     });
     expect(parsed.toolAllowlist).toEqual(["mcp__zcode-cua__request_access"]);
     expect(parsed.toolDenylist).toEqual(["Bash"]);
-    // Still strict: unknown fields are rejected.
+    // Still strict: unknown fields rejected.
     expect(() =>
       zcodeSessionResumeParamsSchema.parse({
         sessionId: "sess_1",
@@ -979,7 +979,7 @@ describe("ZCode Protocol", () => {
       providerId: "account:zai-individual-coding-plan",
       reason: "model-request",
     });
-    // The current request-scoped auth material carries over request-scoped headers; the old Registry revision or bare-headers protocol cannot be restored.
+    // Current request-scoped auth material supersedes request-level headers; the old Registry revision or bare headers protocol cannot be restored.
     const runtimeProviderHeaders = {
       "X-Request-Scoped-Param": "request-token",
       "X-Request-Scoped-Region": "cn",
@@ -1242,7 +1242,7 @@ describe("ZCode Protocol", () => {
           },
         };
 
-        // Must stay compatible when an old CLI sends no message attribution fields; the new CLI's fields must not cause the whole scheduling event to be dropped.
+        // Old CLIs without message attribution fields must stay compatible; the new CLI's fields must not drop the whole scheduling event.
         expect(zcodeSessionEventSchema.parse(event).payload).toEqual(event.payload);
         const payload = { ...event.payload, assistantMessageId: "msg_assistant" };
         expect(zcodeSessionEventSchema.parse({ ...event, payload })).toEqual({ ...event, payload });
@@ -1579,9 +1579,8 @@ describe("ZCode Protocol", () => {
   });
 
   it("keeps the official MCP unavailable code in strict v4 tool rows", () => {
-    // Two strict schemas (the CLI contracts' display payload and the row here) must gain fields
-    // in sync; missing one side rejects the whole row and the input-box hint never gets the
-    // fact.
+    // The two strict schemas (CLI contracts' display payload and the row here) must add fields in sync;
+    // missing one side rejects the whole row and the composer hint would never receive the fact.
     const row = conversationRowSchema.parse({
       rowId: 5,
       turnId: "turn-1",
@@ -1603,9 +1602,8 @@ describe("ZCode Protocol", () => {
     expect(row).toMatchObject({
       display: { kind: "mcp_tool", unavailable: { code: "quota_exceeded" } },
     });
-    // internal_error is not in the code enum: it is the server-side catch-all mask and does not
-    // drive UI hints. Values outside the enum are therefore **not carried** — once display has
-    // no gate the row remains valid, but the card has no payload (§4.4.5).
+    // internal_error is not in the code enum: it is the server's fallback mask and does not drive UI messaging. Out-of-enum values
+    // are therefore **not carried** — with display ungated the row remains valid, but the card has no payload (§4.4.5).
     const maskedRow = conversationRowSchema.parse({
       rowId: 6,
       turnId: "turn-1",
@@ -1722,9 +1720,8 @@ describe("ZCode Protocol", () => {
           id: "ask#2",
           kind: "ask",
           label: "reviewer",
-          // The static shape of interpolated names: the v3 mirror once missed these two pattern
-          // fields (0a8b059f40 only changed contracts and v4), and under .strict() the whole
-          // graph failed validation — pinned in this dual-boundary test.
+          // The static shape of an interpolated name: the v3 mirror once missed these two pattern fields (0a8b059f40 only
+          // touched contracts and v4), and under .strict() the whole graph failed validation — pinned in this dual-boundary case.
           labelPattern: { head: "研究员", tail: "号" },
           line: 3,
           column: 24,
@@ -1739,11 +1736,9 @@ describe("ZCode Protocol", () => {
         { id: "actor#2", name: "reviewer", line: 3, column: 17 },
         { id: "actor#3", namePattern: { head: "研究员" }, line: 4, column: 17 },
       ],
-      // The second layer is subagent-oriented (docs/dynamic-workflow/presentation.md): one
-      // participant card per phase, phase is always `unphased` when there is no phase
-      // vocabulary. A family with a literal cardinality gets one `member` card per member, and
-      // one `many` card when the cardinality is unknown. Also pinned in the dual-boundary test
-      // to prevent a one-sided miss.
+      // The second layer is subagent-oriented (docs/dynamic-workflow/presentation.md): one participant card per phase;
+      // with no phase vocabulary phase is always `unphased`. Families with literal cardinality get one `member` card each,
+      // unknown cardinality gets one `many` card. Also pinned in the dual-boundary case to prevent one-sided edits.
       participants: [
         { id: "unphased:workspace", phase: "unphased", lane: "workspace", steps: ["world-read#1"] },
         { id: "unphased:actor#1", phase: "unphased", lane: "actor#1", steps: ["ask#1"] },
@@ -1769,9 +1764,8 @@ describe("ZCode Protocol", () => {
           many: true,
         },
       ],
-      // One kind of arrow: runs after; `back: true` only marks a cyclic back edge
-      // (single-arrow-contract spec); `types` are the artifact types crossing this handoff
-      // (inspector material, not on the arrow).
+      // One arrow kind: runs after; `back: true` only marks loop-back edges (single-arrow-contract spec);
+      // `types` are the artifact types crossing this handoff (inspector material, not on the arrow).
       handoffs: [
         { from: "unphased:workspace", to: "unphased:actor#1" },
         { from: "unphased:actor#1", to: "unphased:actor#2[0]", types: ["Plan"] },
@@ -1836,11 +1830,9 @@ describe("ZCode Protocol", () => {
     });
   });
 
-  // Holes (docs/dynamic-workflow/authoring.md "Holes"): the `hole` site, `fill` on steps /
-  // phases, the graph's `holes[]`, and the top-level `fill` of a FillWorkflowHole row.
-  // dwf-recursive only changed contracts and v4, so under .strict() the v3 mirror rejected the
-  // whole tool.updated and the desktop's v3 subscription lost that card — same class as the
-  // labelPattern above.
+  // Typed holes (docs/dynamic-workflow/authoring.md "Holes"): `hole` sites, `fill` on steps / phases, the graph's
+  // `holes[]`, and the FillWorkflowHole row's top-level `fill`. dwf-recursive only touched contracts and v4; the v3 mirror
+  // rejected the whole tool.updated under .strict() and the desktop's v3 subscription lost that card — same class as labelPattern above.
   it("carries typed-hole fields through both the legacy event and v4 rows", () => {
     const causalityGraph = {
       steps: [
@@ -1963,13 +1955,11 @@ describe("ZCode Protocol", () => {
       participants: [participant],
       handoffs: [],
     };
-    // On v4 rows the display has no gate (docs/v4-refactor/10-protocol-spec.md §4.4.5):
-    // unrecognized payloads are dropped and the row itself stays valid, rather than rejecting
-    // the whole frame. So this helper asserts "this graph was carried" — it throws actively when
-    // dropped, so that every toThrow / not.toThrow below keeps expressing its original meaning.
-    // Boundedness is not relaxed: out-of-bounds payloads equally never reach the UI; only the
-    // cost changes (rejecting the frame also kills the subscription → the card degrades to
-    // plain text).
+    // display on v4 rows is ungated (docs/v4-refactor/10-protocol-spec.md §4.4.5): an unrecognized payload is
+    // dropped while the row itself stays valid, instead of rejecting the whole frame. So this helper asserts "the graph
+    // was carried" — it throws proactively when dropped, so each toThrow / not.toThrow below keeps its original meaning.
+    // Boundedness is not relaxed: out-of-bounds payloads still never reach the UI; only the cost changes (reject the frame,
+    // tearing down the subscription → the card degrades to plain text).
     const parseWith = (causalityGraph: unknown) => {
       const row = conversationRowSchema.parse({ ...base, display: { ...display, causalityGraph } });
       if (row.kind !== "toolCall" || row.display === undefined) {
@@ -1991,8 +1981,8 @@ describe("ZCode Protocol", () => {
     // A 129-char label exceeds the label bound.
     expect(() => parseWith({ ...graph, steps: [{ ...step, label: "n".repeat(129) }] })).toThrow();
 
-    // Step-level `edges` and `Lane.nesting` have left the payload
-    // (docs/dynamic-workflow/presentation.md): an empty array is also an extra key.
+    // step-level `edges` and `Lane.nesting` have exited the payload (docs/dynamic-workflow/presentation.md):
+    // even empty arrays are extra keys.
     expect(() => parseWith({ ...graph, edges: [] })).toThrow();
     expect(() => parseWith({ ...graph, lanes: [{ id: "actor#1", nesting: 1 }] })).toThrow();
 
@@ -2014,7 +2004,7 @@ describe("ZCode Protocol", () => {
       }),
     ).toThrow();
 
-    // A card has at least one step; member = {index ≥ 0, of ≥ 1} strict; many only accepts the literal true.
+    // A card needs at least one step; member = {index ≥ 0, of ≥ 1} strict; many accepts only the literal true.
     expect(() => parseWith({ ...graph, participants: [{ ...participant, steps: [] }] })).toThrow();
     expect(() =>
       parseWith({
@@ -2029,7 +2019,7 @@ describe("ZCode Protocol", () => {
       parseWith({ ...graph, participants: [{ ...participant, many: false }] }),
     ).toThrow();
 
-    // Handoff edges are only {from, to, back?, types?}: the analyzer's kind / certainty never enter the display payload.
+    // Handoff edges carry only {from, to, back?, types?}: the analyzer's kind / certainty do not enter the display payload.
     const handoff = { from: "unphased:actor#1", to: "unphased:actor#1" };
     expect(() =>
       parseWith({
@@ -2043,7 +2033,7 @@ describe("ZCode Protocol", () => {
       parseWith({ ...graph, handoffs: Array.from({ length: 257 }, () => handoff) }),
     ).toThrow();
 
-    // `types` when present is 1..8 names, each ≤ 128 characters.
+    // `types`, when present, is 1..8 names, each ≤ 128 chars.
     expect(() =>
       parseWith({ ...graph, handoffs: [{ ...handoff, types: ["Flaky"] }] }),
     ).not.toThrow();
@@ -2056,14 +2046,13 @@ describe("ZCode Protocol", () => {
       expect(() => parseWith({ ...graph, handoffs: [{ ...handoff, types }] })).toThrow();
     }
 
-    // `back` is the literal true: false / a string are not alternative spellings of "no back edge marked".
+    // `back` is the literal true: false / strings are not another spelling of "no back edge marked".
     expect(() => parseWith({ ...graph, handoffs: [{ ...handoff, back: false }] })).toThrow();
   });
 
   it("accepts may-set lane-expansion copies with `source` on both protocol boundaries", () => {
-    // may-set lane expansion: one ask site becomes a copy per candidate lane, with `source`
-    // recording the site id it expanded from (the correlation key for the live overlay). The
-    // field is additive, so old payloads without source still validate.
+    // May-set lane expansion: one ask site becomes one copy per candidate lane, with `source` recording the site id it
+    // expanded from (the live overlay's correlation key). The field is additive, so old payloads without source still validate.
     const copy = {
       id: "ask#2~actor#1",
       kind: "ask",
@@ -2081,7 +2070,7 @@ describe("ZCode Protocol", () => {
         { id: "actor#1", name: "black" },
         { id: "actor#2", name: "white" },
       ],
-      // One participant card per candidate lane; the card's steps point at that lane's copy id.
+      // One participant card per candidate lane; the card's steps point at that lane's copy ids.
       participants: [
         { id: "unphased:actor#1", phase: "unphased", lane: "actor#1", steps: ["ask#2~actor#1"] },
         { id: "unphased:actor#2", phase: "unphased", lane: "actor#2", steps: ["ask#2~actor#2"] },
@@ -2136,9 +2125,9 @@ describe("ZCode Protocol", () => {
       display: { causalityGraph },
     });
 
-    // A copy id (`site~lane`) fits within the 64-character id cap; source shares the same bounds.
+    // The copy id (`site~lane`) stays within the 64-char id cap; source shares the same bounds.
     expect(copy.id.length).toBeLessThanOrEqual(64);
-    // A 65-character source is out of bounds, so the whole payload is not carried (no gate = drop the card, not reject the frame; §4.4.5).
+    // A 65-char source exceeds the bound, so the whole payload is not carried (ungated = drop the card, not reject the frame; §4.4.5).
     const overlongSourceRow = conversationRowSchema.parse({
       ...base,
       display: {
@@ -2157,11 +2146,10 @@ describe("ZCode Protocol", () => {
   });
 
   it("accepts the phase vocabulary on both protocol boundaries", () => {
-    // docs/dynamic-workflow/presentation.md: phases / phaseEdges / exits / step.phase are one
-    // all-or-nothing vocabulary. The four schema layers (contracts, tool-result-metadata, v4
-    // rows, and this v3 mirror) must align field for field — if any layer misses a change, a
-    // workflow with phases fails whole-graph validation under .strict() and the graph vanishes
-    // as one block, exactly the labelPattern/namePattern incident from 0a8b059f40.
+    // docs/dynamic-workflow/presentation.md: phases / phaseEdges / exits / step.phase are one all-or-nothing vocabulary.
+    // The four schema layers (contracts, tool-result-metadata, v4 rows, this v3 mirror) must align field by field — if any
+    // layer misses a change, a phased workflow fails whole-graph validation under .strict() and the graph vanishes entirely,
+    // exactly the incident labelPattern/namePattern had on 0a8b059f40.
     const causalityGraph = {
       steps: [
         {
@@ -2180,8 +2168,7 @@ describe("ZCode Protocol", () => {
           phase: "phase#1",
         },
         {
-          // Cross-phase copy: a site sharing a helper is claimed once by each of two phases;
-          // `source` is the runtime site id.
+          // Cross-phase copy: a site sharing a helper is claimed by both phases, `source` is the runtime site id.
           id: "ask#2~phase#1",
           kind: "ask",
           label: "bench",
@@ -2203,8 +2190,7 @@ describe("ZCode Protocol", () => {
         { id: "actor#1", name: "planner" },
         { id: "actor#2", name: "bench" },
       ],
-      // Participants are split into cards per phase: the same subagent is one card in each of
-      // two phases (id prefixed by the phase).
+      // Participants are carded per phase: the same subagent is one card per phase (id prefixed by the phase).
       participants: [
         { id: "unphased:workspace", phase: "unphased", lane: "workspace", steps: ["world-read#1"] },
         { id: "phase#1:actor#1", phase: "phase#1", lane: "actor#1", steps: ["ask#1"] },
@@ -2216,22 +2202,21 @@ describe("ZCode Protocol", () => {
         { from: "phase#1:actor#1", to: "phase#1:actor#2", types: ["Plan"] },
       ],
       phases: [
-        // `unphased` has no name (UI localizes the display); authored phases carry the
-        // verbatim name and the first marker's position.
+        // `unphased` has no name (UI localizes the display); authored phases carry the original word and the first marker position.
         { id: "unphased" },
         { id: "phase#1", name: "preflight", line: 1, column: 1 },
         { id: "phase#2", name: "gate", line: 9, column: 3 },
       ],
-      // Phase edges share the step-edge shape: {from, to, back?}. A back edge phase#2 → phase#1 = a loop spanning two phases.
+      // Phase edges share the step-edge shape: {from, to, back?}. The back edge phase#2 → phase#1 = a loop spanning two phases.
       phaseEdges: [
         { from: "unphased", to: "phase#1" },
         { from: "phase#1", to: "phase#2" },
         { from: "phase#2", to: "phase#1", back: true },
       ],
-      // Phase streams (docs/dynamic-workflow/presentation.md "Streams"): two future phases
-      // chained by a channel, carrying only {from, to} — not runs after, no back.
+      // Phase streams (docs/dynamic-workflow/presentation.md "Streams"): two future phases chained by a channel,
+      // only {from, to} — not runs after, no back.
       phaseStreams: [{ from: "phase#1", to: "phase#2" }],
-      // Phases after which control flow can complete normally (the "phase → returns" arrow of the phase view).
+      // Phases control flow may normally finish after (the phase view's "phase → return artifact" arrows).
       exits: ["phase#2"],
       sink: ["ask#1"],
     };
@@ -2279,16 +2264,14 @@ describe("ZCode Protocol", () => {
       display: { causalityGraph },
     });
 
-    // The id of a stacked expansion (`ask#2~actor#1~phase#2`) is still within the 64-character cap.
+    // The two stackings' combined id (`ask#2~actor#1~phase#2`) still fits the 64-char cap.
     expect("ask#2~actor#1~phase#2".length).toBeLessThanOrEqual(64);
 
-    // On v4 rows the display has no gate (docs/v4-refactor/10-protocol-spec.md §4.4.5):
-    // unrecognized payloads are dropped and the row itself stays valid, rather than rejecting
-    // the whole frame. So this helper asserts "this graph was carried" — it throws actively when
-    // dropped, so that every toThrow / not.toThrow below keeps expressing its original meaning.
-    // Boundedness is not relaxed: out-of-bounds payloads equally never reach the UI; only the
-    // cost changes (rejecting the frame also kills the subscription → the card degrades to
-    // plain text).
+    // display on v4 rows is ungated (docs/v4-refactor/10-protocol-spec.md §4.4.5): an unrecognized payload is
+    // dropped while the row itself stays valid, instead of rejecting the whole frame. So this helper asserts "the graph
+    // was carried" — it throws proactively when dropped, so each toThrow / not.toThrow below keeps its original meaning.
+    // Boundedness is not relaxed: out-of-bounds payloads still never reach the UI; only the cost changes (reject the frame,
+    // tearing down the subscription → the card degrades to plain text).
     const parseWith = (graph: unknown) => {
       const row = conversationRowSchema.parse({
         ...base,
@@ -2300,11 +2283,10 @@ describe("ZCode Protocol", () => {
       return row.display;
     };
 
-    // A script with markers but zero steps produces three arrays that are **present but
-    // empty**, and the handler passes them straight through (no lying about truncated). The
-    // UI's view toggle is "present and non-empty", so an empty vocabulary must be representable
-    // on both boundaries — the arrays only carry a .max() bound; any layer carelessly adding
-    // .min(1) would break whole-graph validation on that pass-through path.
+    // A script with markers but zero steps produces three arrays that are **present but empty**, and the handler passes them
+    // through verbatim (no lying about truncation). The UI's view switching is "present and non-empty", so an empty vocabulary
+    // must be representable on both boundaries — the arrays only have a .max() bound; any layer carelessly adding .min(1)
+    // would fail whole-graph validation on that pass-through path.
     const emptyVocabulary = {
       steps: [],
       lanes: [],
@@ -2367,7 +2349,7 @@ describe("ZCode Protocol", () => {
       expect(() => parseWith({ ...causalityGraph, phaseStreams: [stream] })).toThrow();
     }
 
-    // 33 exits exceed the 32-phase bound (exits share the phase-table bound).
+    // 33 exits exceed the 32-phase bound (exits share the phase table's bound).
     expect(() =>
       parseWith({
         ...causalityGraph,
@@ -2375,7 +2357,7 @@ describe("ZCode Protocol", () => {
       }),
     ).toThrow();
 
-    // Phase edges share the step-edge shape: none of the analyzer's kind / certainty / exact enter the payload.
+    // Phase edges share the step-edge shape: none of the analyzer's kind / certainty / exact enters the payload.
     expect(() =>
       parseWith({
         ...causalityGraph,
@@ -2387,14 +2369,12 @@ describe("ZCode Protocol", () => {
   });
 
   it("gives the same verdict on the single-arrow shape on both protocol boundaries", () => {
-    // docs/dynamic-workflow/presentation.md: hard assert — the legacy shape (edges with kind /
-    // certainty / exact, steps with region / certainty, lanes with families, top-level regions)
-    // is rejected **simultaneously** on both the v3 and v4 mirrors; the new shape ({from, to,
-    // back?}, participants + handoffs, exits) passes simultaneously. The same doc also cut
-    // step-level `edges` and `Lane.nesting`, both pinned here to the same verdict. If any layer
-    // misses a change, the same payload passes on one boundary and the whole graph vanishes on
-    // the other. A third copy (contracts) is not in this package's dependency graph; contracts'
-    // own create-workflow.test.ts pins it with the same samples.
+    // docs/dynamic-workflow/presentation.md: hard cut — the old shapes (edges with kind /
+    // certainty / exact, steps with region / certainty, lanes with families, top-level regions) are rejected **simultaneously**
+    // on both v3 / v4 mirrors; the new shapes ({from, to, back?}, participants + handoffs, exits) pass simultaneously.
+    // docs/dynamic-workflow/presentation.md also removed step-level `edges` and `Lane.nesting`; both are pinned here as same-verdict.
+    // A missed layer would let the same payload pass on one boundary while the whole graph vanishes on the other. The third copy
+    // (contracts) is not in this package's dependency graph; contracts' own create-workflow.test.ts pins it with the same samples.
     const eventOf = (causalityGraph: unknown) => ({
       eventId: "evt_tool_workflow_single_arrow",
       seq: 22,
@@ -2437,9 +2417,8 @@ describe("ZCode Protocol", () => {
         causalityGraph,
       },
     });
-    // The second verdict asks "did the v4 row **carry** this graph", not "did the row parse":
-    // after display lost its gate, unreadable payloads are dropped while the row stays valid,
-    // so every negative case would read true if asked as success (§4.4.5).
+    // The second verdict asks "did the v4 row **carry** this graph", not "did the row parse": with display ungated an
+    // unreadable payload is dropped while the row stays valid, so asking by success would turn every negative case true (§4.4.5).
     const verdicts = (causalityGraph: unknown) => {
       const row = conversationRowSchema.safeParse(rowOf(causalityGraph));
       return [
@@ -2527,7 +2506,7 @@ describe("ZCode Protocol", () => {
     };
     expect(verdicts(legacy)).toEqual([false, false]);
 
-    // Each legacy field is rejected on its own too — not only the full legacy payload.
+    // Each legacy field is rejected individually too — not just the full legacy payload.
     const [freshStep] = fresh.steps;
     const [freshLane] = fresh.lanes;
     const [freshParticipant] = fresh.participants;
@@ -2540,10 +2519,10 @@ describe("ZCode Protocol", () => {
       { ...fresh, lanes: [{ ...freshLane, families: ["loop#1"] }, fresh.lanes[1]] },
       { ...fresh, lanes: [freshLane, { ...fresh.lanes[1], nesting: 2 }] },
       { ...fresh, regions: [] },
-      // Step-level edges is gone as a whole field.
+      // step-level edges is gone as a whole field.
       { ...fresh, edges: [] },
       { ...fresh, edges: [{ from: "ask#1", to: "ask#2" }] },
-      // Participants / handoffs are required, strict, and bounded.
+      // Participants / handoffs required, strict, bounded.
       noParticipants,
       noHandoffs,
       {
@@ -2910,8 +2889,8 @@ describe("v4 workflowLaunch rows (direct-launch)", () => {
     expect(workflowLaunchMetaSchema.safeParse({ ...meta, scope: "team" }).success).toBe(false);
   });
 
-  // The settings turn (docs/dynamic-workflow/launch.md "The settings turn"): the same
-  // metadata with no saved file to point at, plus an `amend` block saying what changed.
+  // The settings turn (docs/dynamic-workflow/launch.md "The settings turn"): the same metadata with no save file to point
+  // at, plus an `amend` block saying what changed.
   it("parses a settings-turn meta: no scope or path, an amend block with from/to ends", () => {
     const settings = {
       runId: "run-b",
@@ -2925,7 +2904,7 @@ describe("v4 workflowLaunch rows (direct-launch)", () => {
       },
     };
     expect(workflowLaunchMetaSchema.parse(settings)).toEqual(settings);
-    // An unnamed run's settings turn carries no name (the UI falls back to other wording rather than using the run id as a title).
+    // An unnamed run's settings turn carries no name (the UI falls back to a stock label rather than using the run id as a title).
     const { name: _name, ...unnamed } = settings;
     void _name;
     expect(workflowLaunchMetaSchema.parse(unnamed)).toEqual(unnamed);
@@ -2940,10 +2919,9 @@ describe("v4 workflowLaunch rows (direct-launch)", () => {
     ).toBe(false);
   });
 
-  // The in-place settings turn (docs/dynamic-workflow/concurrency.md): only the concurrency
-  // ceiling changed and the run is still in flight, so there is no predecessor —
-  // `predecessorRunId` is absent for that reason, and the absence itself signals "the thing
-  // changed is this very runId" (the renderer uses it to render only that row).
+  // In-place settings turn (docs/dynamic-workflow/concurrency.md): only the concurrency cap changed and the run is still in
+  // flight, so there is no predecessor — `predecessorRunId` is therefore absent, and absence itself is the signal "the run being
+  // changed is this runId" (the renderer emits one row based on it).
   it("parses an in-place retune's settings-turn meta: no predecessorRunId at all", () => {
     const retune = {
       runId: "run-a",
@@ -2952,7 +2930,7 @@ describe("v4 workflowLaunch rows (direct-launch)", () => {
       amend: { maxConcurrency: { from: 13, to: 4 }, ceiling: 13 },
     };
     expect(workflowLaunchMetaSchema.parse(retune)).toEqual(retune);
-    // When present it still must be a real run id: optional does not mean nullable, nor an empty string.
+    // When present it must still be a real run id: optional does not mean nullable, nor an empty string.
     expect(
       workflowLaunchMetaSchema.safeParse({
         ...retune,

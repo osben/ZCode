@@ -19,6 +19,7 @@ import {
   Keyboard,
   FileSearch,
   ScrollText,
+  GitBranchPlus,
   Mic,
 } from "lucide-react";
 import { isSettingsSectionEnabled, type SettingsSectionId } from "@/lib/settingsNavigation.js";
@@ -130,6 +131,16 @@ const BASE_SETTINGS_SECTIONS: SettingsSectionDefinition[] = [
     titleId: "settings.hooks.title",
     groupId: "agentCapabilities",
   },
+  // Worktree defaults configure the “New task in worktree” flow (location, branch prefix,
+  // per-project overrides); they sit with agent capabilities next to Commands and Hooks.
+  // Desktop-only, mirroring the flow's supportsWorktreeTasks boundary; filtered for Web in
+  // createSettingsPageConfig.
+  {
+    id: "worktrees",
+    icon: GitBranchPlus,
+    titleId: "settings.worktrees.title",
+    groupId: "agentCapabilities",
+  },
   {
     id: "browser",
     icon: Globe2,
@@ -151,7 +162,7 @@ const BASE_SETTINGS_SECTIONS: SettingsSectionDefinition[] = [
     titleId: "settings.shortcuts.title",
     groupId: "basics",
   },
-  // 语音输入紧跟快捷键：录音快捷键在快捷键分区可改，这里管理模型、麦克风与录音方式。
+  // Voice input follows shortcuts: the recording shortcut can be changed in the Shortcuts section, while models, microphone, and recording mode are managed here.
   {
     id: "voiceDictation",
     icon: Mic,
@@ -175,8 +186,12 @@ const BASE_SETTINGS_SECTIONS: SettingsSectionDefinition[] = [
 
 // Compatibility for existing readonly consumers: the default config represents a Web view without Desktop platform capabilities;
 // macOS/Windows/Linux must continue to add Computer Use dynamically through createSettingsPageConfig.
+// Worktrees follows the same Desktop-only boundary as the “New task in worktree” flow (supportsWorktreeTasks).
 export const SETTINGS_SECTIONS = BASE_SETTINGS_SECTIONS.filter(
-  (section) => section.id !== "computerUse" && isSettingsSectionEnabled(section.id),
+  (section) =>
+    section.id !== "computerUse" &&
+    section.id !== "worktrees" &&
+    isSettingsSectionEnabled(section.id),
 );
 
 export interface SettingsPageConfigOptions {
@@ -191,8 +206,10 @@ export function createSettingsPageConfig({
   isWindowsDesktop = false,
 }: SettingsPageConfigOptions = {}) {
   const showComputerUse = isDesktop || isMacDesktop || isWindowsDesktop;
+  const showWorktrees = isDesktop || isMacDesktop || isWindowsDesktop;
   const settingsSections = BASE_SETTINGS_SECTIONS.filter((section) => {
     if (section.id === "computerUse" && !showComputerUse) return false;
+    if (section.id === "worktrees" && !showWorktrees) return false;
     return isSettingsSectionEnabled(section.id);
   });
   const settingsSectionGroups = BASE_SETTINGS_SECTION_GROUPS.map((group) => ({

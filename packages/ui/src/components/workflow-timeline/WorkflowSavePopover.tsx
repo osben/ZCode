@@ -1,12 +1,13 @@
-// The completion card's "save" popover (docs/dynamic-workflow/transcript-and-notifications.md "The popover").
+// The completion card's "save" popover (docs/dynamic-workflow/transcript-and-notifications.md
+// "The popover").
 //
-// The two paths are ordered by **value**, not cost: first the full-width "let ZCode distill and save it for me", and
-// only under a thin divider the three fields of "save as-is directly". A just-finished script is one-off; extracting
-// the values that change between runs into args and writing a clear description and usage moment — only someone who
-// has read the script can do that, so it comes first.
+// The two paths are ordered by **value**, not cost: first the full-width "let ZCode distill and save
+// it", and only under a thin divider the three fields of "save as-is". A just-finished script is a
+// one-off; extracting the values that change between runs into args and writing a clear description
+// and usage timing is something only someone who read the script can do — so it comes first.
 //
-// The three fields serve both paths: whatever is filled in both travels to ZCode with the message and is the copy the
-// direct save writes down.
+// The three fields serve both paths: what is filled in is handed to ZCode with the message and is
+// also the copy that direct save writes.
 import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { SparkleIcon } from "lucide-react";
 import type { ZCodeSavedWorkflowScope, ZCodeWorkflowsSaveResult } from "@zcode/shared";
@@ -22,15 +23,15 @@ import {
   type WorkflowSaveDraft,
 } from "./workflowRunSave.js";
 
-/** Merge window for the taken-name probe: querying the disk on every keystroke is meaningless; the moment the person pauses is what counts. */
+/** Debounce window for the occupancy probe: querying the disk on every keystroke is meaningless; the moment the person pauses is the one that counts. */
 const NAME_PROBE_DEBOUNCE_MS = 320;
 
 export interface WorkflowSavePopoverHost {
-  /** Used to prefill the name and description at the moment the popover opens. */
+  /** Used to pre-fill the name and description at the moment the popover opens. */
   runName?: string;
-  /** Old agents lack `workflows/save`: only the ZCode path remains. */
+  /** Older agents lack `workflows/save`: only the ZCode path remains. */
   directSaveUnsupported: boolean;
-  /** Remote projects do not get the global scope: `~` lives on the agent machine and the hub never reads it. */
+  /** Remote projects get no global scope: `~` lives on the agent machine, which the hub never reads. */
   scopeLocked: boolean;
   saving: boolean;
   save: (input: {
@@ -41,12 +42,12 @@ export interface WorkflowSavePopoverHost {
   }) => Promise<ZCodeWorkflowsSaveResult>;
   checkNameTaken: (name: string, scope: ZCodeSavedWorkflowScope) => Promise<boolean>;
   /**
-   * Sends that user message (each host has its own send path: the card in this session, the side pane in the parent
-   * session).
-   * Absent means this path is unreachable — the popover keeps only its half below the divider.
+   * Sends that user message (each host has its own send path: card in this session, pane in the
+   * parent session). Absent means this path is unreachable — the popover keeps only the half below
+   * the divider.
    */
   sendLead?: (draft: WorkflowSaveDraft) => Promise<void>;
-  /** After a successful save: the parent uses this to flip to "run again" and fire one aria-live announcement. */
+  /** After a successful save: the parent uses this to flip to "run again" and announce once via aria-live. */
   onSaved: (saved: { name: string; scope: ZCodeSavedWorkflowScope }) => void;
 }
 
@@ -66,13 +67,14 @@ export function WorkflowSavePopover({
       <PopoverAnchor virtualRef={anchorRef as RefObject<HTMLElement>} />
       <PopoverContent
         align="end"
-        // On mobile the card is narrower than the popover: keep 8px from the screen edge, and the width stays within
-        // the viewport (fits a 320px screen too).
+        // On mobile the card is narrower than the popover: leave 8px from the screen edge and keep
+        // the width within the viewport (it fits on a 320px screen).
         className="w-80 max-w-[calc(100vw-16px)] gap-2.5"
         collisionPadding={8}
         data-testid="workflow-save-popover"
-        // Same as the "configure" popover: the portal is outside yet React events still bubble along the component
-        // tree; without stopping them, clicking blank space would be taken by the card as a click on the card itself.
+        // Same as the "configure" popover: the portal lives outside, but React events still bubble
+        // along the component tree; without stopping them, clicking blank space would be treated as
+        // clicking the card itself.
         onClick={(event) => event.stopPropagation()}
         onKeyDown={(event) => {
           if (event.key === "Enter" || event.key === " ") event.stopPropagation();
@@ -82,8 +84,7 @@ export function WorkflowSavePopover({
           if (target instanceof Node && anchorRef.current?.contains(target)) event.preventDefault();
         }}
       >
-        {/* Mounted only while open: the draft therefore starts at the moment of **this** opening, and closing discards
-        it (the Esc semantics). */}
+        {/* Mount only while open: the draft's starting point is therefore this opening moment, and closing discards it (the Esc semantics). */}
         {open ? <WorkflowSaveForm host={host} onClose={() => onOpenChange(false)} /> : null}
       </PopoverContent>
     </Popover>
@@ -99,8 +100,8 @@ function WorkflowSaveForm({
 }) {
   const { intl } = useZCodeIntl();
   const format = useCallback((id: string) => intl.formatMessage({ id }), [intl]);
-  // The starting point is fixed at open time (same as the "configure" popover): if the run changes while the popover
-  // is open, the form the user is editing must not be yanked back.
+  // The starting point is fixed at open time (same as the "configure" popover): if the run changes
+  // while the popover is open, the form the user is editing must not be dragged back.
   const [draft, setDraft] = useState<WorkflowSaveDraft>(() =>
     initialWorkflowSaveDraft({
       ...(host.runName === undefined ? {} : { runName: host.runName }),
@@ -112,7 +113,7 @@ function WorkflowSaveForm({
   const [sending, setSending] = useState(false);
   const nameRef = useRef<HTMLInputElement | null>(null);
 
-  // Focus the name field on open (the Tab order is still lead → name → scope → description → direct save).
+  // Focus the name field on open (Tab order remains lead → name → scope → description → direct save).
   useEffect(() => {
     nameRef.current?.focus();
   }, []);
@@ -124,9 +125,9 @@ function WorkflowSaveForm({
 
   const { checkNameTaken, directSaveUnsupported, scopeLocked } = host;
   const { scope } = draft;
-  // Taken-name probe: debounced 320 ms, asking both scopes at once — the target one decides "overwrite", the other
-  // decides "shadowing".
-  // Any change to name or scope invalidates the conclusions first, so a stale answer never sticks to a new name.
+  // Occupancy probe: debounced 320ms, both scopes asked together — the target one decides "overwrite",
+  // the other decides "shadowing". Invalidate the conclusion as soon as the name or scope changes, so
+  // a stale answer never survives onto a new name.
   useEffect(() => {
     setProbe({ taken: false, shadowing: false });
     if (directSaveUnsupported || name.length === 0 || !isValidSavedWorkflowNameText(name)) return;
@@ -135,8 +136,7 @@ function WorkflowSaveForm({
     const timer = window.setTimeout(() => {
       void Promise.all([
         checkNameTaken(name, scope),
-        // A remote project only has the project scope; asking about the other scope is pointless (the hub never reads
-        // the agent machine's `~`).
+        // Remote projects have only the project scope; asking about the other scope is pointless (the hub never reads the agent machine's `~`).
         scopeLocked ? Promise.resolve(false) : checkNameTaken(name, other),
       ]).then(([taken, shadowing]) => {
         if (!cancelled) setProbe({ taken, shadowing });
@@ -169,7 +169,7 @@ function WorkflowSaveForm({
       .save({
         name,
         scope,
-        // Fall back to the name when the description is empty: that line on the hub's card must not be blank.
+        // Fall back to the name when the description is empty: the hub card's line cannot be empty.
         meta: { description: draft.description.trim() || name },
         ...(probe.taken ? { overwrite: true } : {}),
       })
@@ -180,8 +180,8 @@ function WorkflowSaveForm({
             onClose();
             return;
           }
-          // The target already exists: not a failure, just an unconfirmed overwrite — surface the warning and switch
-          // the button to "overwrite and save directly".
+          // Target already exists: not a failure, just an unconfirmed overwrite — surface the warning
+          // and switch the button to "overwrite and save as-is".
           if (result.reason === "target_exists") {
             setProbe((current) => ({ ...current, taken: true }));
             return;
@@ -213,7 +213,7 @@ function WorkflowSaveForm({
   return (
     <div
       className="flex flex-col gap-2.5"
-      // `⌘↩` / `Ctrl↩` from any field triggers the main path: the popover's whole claim is that one button.
+      // `⌘↩` / `Ctrl↩` from any field triggers the main path: the popover's claim is that one button.
       onKeyDown={(event) => {
         if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
           event.preventDefault();

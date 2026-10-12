@@ -10,7 +10,7 @@ import {
 } from "../src/session/offPeakTaskRepo.js";
 import type { ZCodeOffPeakTaskCreateParams } from "@zcode/shared";
 
-// 固定基准时间，保证认领 / 回收断言可复现。
+// Fixed base time so claim / reclaim assertions are reproducible.
 const NOW = 1_700_000_000_000;
 const MINUTE = 60_000;
 
@@ -27,9 +27,11 @@ function makeParams(
   };
 }
 
-// 修复原因：同 automationRepo.test.ts，此前用 setDataBaseDir(tempDir) 重定向全局 _dataBaseDir，
-// 但 vitest threads 并发跑测试文件时全局值被互相覆盖，存在写进真实库的并发窗口。
-// 改为依赖注入：repo 通过构造参数接收 dbPath，裸 SQL 用同一 dbPath，脱离全局单例。
+// Reason for the fix (same as automationRepo.test.ts): this previously used setDataBaseDir(tempDir)
+// to redirect the global _dataBaseDir, but when vitest threads run test files concurrently the
+// global value is overwritten between files, leaving a concurrency window where writes could land
+// in the real database. Switched to dependency injection: the repo receives dbPath as a constructor
+// argument and raw SQL uses the same dbPath, avoiding the global singleton.
 function buildTempDbPath(tempDir: string): string {
   return join(tempDir, "tasks-index.sqlite");
 }
@@ -90,7 +92,7 @@ describe("OffPeakTaskRepo 状态机与调度守卫", () => {
 
     expect(await repo.list()).toHaveLength(1);
     expect((await repo.get(created.offPeakTaskId))?.offPeakTaskId).toBe(created.offPeakTaskId);
-    // Selection options 可稀疏编辑：round-trip 后删除 reasoning 叶子不会写回默认值。
+    // Selection options support sparse edits: after a round-trip, removing the reasoning leaf must not write back the default value.
     expect((await repo.get(created.offPeakTaskId))?.modelSelection?.options?.reasoningLevel).toBe(
       "high",
     );
@@ -112,7 +114,7 @@ describe("OffPeakTaskRepo 状态机与调度守卫", () => {
       { now: NOW + 6 },
     );
     expect(cleared?.modelSelection.options?.reasoningLevel).toBeUndefined();
-    // 未取号的 mock 先行创建同样允许
+    // Mock-first creation without a ticket is allowed too
     const bare = await repo.create(makeParams(), { now: NOW + 1 });
     expect(bare.serverTicketId).toBeUndefined();
   });
@@ -146,7 +148,7 @@ describe("OffPeakTaskRepo 状态机与调度守卫", () => {
         options: { reasoningLevel: "max" },
       };
       await repo.updateEditableFields(created.offPeakTaskId, { modelSelection: selection });
-      // 冻结 staging@790884b1ce 的 rowToTask 按旧列读取；不能用新版 codec 往返代替原值证据。
+      // Freezes staging@790884b1ce, where rowToTask reads the old columns; a round-trip through the new codec must not replace the original-value evidence.
       expect(readLegacy()).toEqual(legacy);
       expect(
         await repo.updateEditableFields(created.offPeakTaskId, { modelSelection: null }),
@@ -211,10 +213,10 @@ describe("OffPeakTaskRepo 状态机与调度守卫", () => {
     expect(bound.conversationId).toBeUndefined();
     expect(bound.sessionTitle).toBeUndefined();
 
-    // 库级迁移已建空 tasks 表：尚无绑定行时不报错。
+    // The database-level migration already created an empty tasks table: no error when no bound rows exist.
     expect((await repo.list())[0]?.sessionTitle).toBeUndefined();
 
-    // 同库出现 tasks-index 的 tasks 表后，list 按 (workspace_key, task_id) 联出当前标题；get 单行不带。
+    // Once the tasks-index tasks table exists in the same database, list joins the current title by (workspace_key, task_id); the single-row get does not.
     const db = new DatabaseSync(dbPath);
     try {
       db.prepare(
@@ -229,7 +231,7 @@ describe("OffPeakTaskRepo 状态机与调度守卫", () => {
     );
     expect((await repo.get(bound.offPeakTaskId))?.sessionTitle).toBeUndefined();
 
-    // 首跑 markRunning：conversation_id 回填为会话 id，session_id 保持绑定值。
+    // First-run markRunning: conversation_id is backfilled with the session id, session_id keeps its bound value.
     const running = await repo.markRunning(bound.offPeakTaskId, {
       startedAt: NOW + 1,
       conversationId: "sess-bound",
@@ -254,7 +256,7 @@ describe("OffPeakTaskRepo 状态机与调度守卫", () => {
     expect(isOffPeakBoundSessionConflict(conflict)).toBe(true);
     expect(isOffPeakBoundSessionConflict(new Error("other"))).toBe(false);
 
-    // 非绑定任务（session_id NULL）互不冲突。
+    // Unbound tasks (session_id NULL) never conflict with each other.
     await repo.create(makeParams(), { now: NOW + 2 });
     await repo.create(makeParams(), { now: NOW + 3 });
 
@@ -269,18 +271,18 @@ describe("OffPeakTaskRepo 状态机与调度守卫", () => {
     const b = await repo.create(makeParams({ title: "B" }), { now: NOW + 1 });
     const c = await repo.create(makeParams({ title: "C" }), { now: NOW + 2 });
 
-    // schedulable=0 时一个都不认领（粗阀关，§7.6）
+    // With schedulable=0 nothing is claimed (coarse valve off, §7.6)
     expect(await repo.claimDue(NOW + MINUTE)).toHaveLength(0);
 
     await repo.updateSchedulingSnapshot(b.offPeakTaskId, { schedulable: true });
     await repo.updateSchedulingSnapshot(a.offPeakTaskId, { schedulable: true });
     await repo.updateSchedulingSnapshot(c.offPeakTaskId, { schedulable: true });
-    // paused 不认领
+    // paused tasks are not claimed
     await repo.setPaused(c.offPeakTaskId, true);
 
     const claimed = await repo.claimDue(NOW + MINUTE);
     expect(claimed.map((t) => t.title)).toEqual(["A", "B"]); // FIFO by queued_at
-    // 已认领在途，二次认领为空（single-flight）
+    // Already claimed in-flight; a second claim returns nothing (single-flight)
     expect(await repo.claimDue(NOW + MINUTE + 1)).toHaveLength(0);
   });
 
@@ -309,10 +311,10 @@ describe("OffPeakTaskRepo 状态机与调度守卫", () => {
     expect(running?.conversationId).toBe("conv-1");
     expect(running?.sessionId).toBe("sess-1");
     expect(running?.serverTicketId).toBe("ticket-1");
-    // 认领已释放：running 状态本身挡住重复认领
+    // Claim already released: the running status itself blocks duplicate claims
     expect(await repo.claimDue(NOW + 2 * MINUTE)).toHaveLength(0);
 
-    // 3h 到期自动续跑（D26）：running→queued→重新 markRunning，session 复用、started_at 保留首段
+    // 3h expiry auto-resume (D26): running→queued→markRunning again; session reused, started_at keeps the first segment
     const backToQueue = await repo.recoverInterrupted(NOW + 10 * MINUTE);
     expect(backToQueue).toBe(1);
     await repo.updateSchedulingSnapshot(a.offPeakTaskId, {
@@ -323,9 +325,9 @@ describe("OffPeakTaskRepo 状态机与调度守卫", () => {
     const resumed = await repo.markRunning(a.offPeakTaskId, {
       startedAt: NOW + 12 * MINUTE,
     });
-    expect(resumed?.startedAt).toBe(NOW + MINUTE); // 保留首段
-    expect(resumed?.sessionId).toBe("sess-1"); // session 不丢
-    expect(resumed?.serverTicketId).toBe("ticket-2"); // 新段新票
+    expect(resumed?.startedAt).toBe(NOW + MINUTE); // keeps the first segment
+    expect(resumed?.sessionId).toBe("sess-1"); // session is not lost
+    expect(resumed?.serverTicketId).toBe("ticket-2"); // new segment, new ticket
   });
 
   it("markRunning 守卫：paused/终态不可入 running（迟到派发结果作废）", async () => {
@@ -354,7 +356,7 @@ describe("OffPeakTaskRepo 状态机与调度守卫", () => {
     expect(done?.filesChanged).toBe(5);
     expect(done?.schedulable).toBe(false);
 
-    // 终态之间不可互迁（OffPeakRunResult 迟到兜底：返回 null 丢弃）
+    // Terminal states cannot transition into each other (late OffPeakRunResult fallback: return null and drop)
     expect(
       await repo.markTerminal(a.offPeakTaskId, {
         status: "failed",
@@ -362,7 +364,7 @@ describe("OffPeakTaskRepo 状态机与调度守卫", () => {
       }),
     ).toBeNull();
     expect((await repo.get(a.offPeakTaskId))?.status).toBe("completed");
-    // 终态不再被认领
+    // Terminal states are no longer claimed
     await repo.updateSchedulingSnapshot(a.offPeakTaskId, { schedulable: true });
     expect(await repo.claimDue(NOW + 3 * MINUTE)).toHaveLength(0);
   });
@@ -408,17 +410,17 @@ describe("OffPeakTaskRepo 状态机与调度守卫", () => {
     const a = await repo.create(makeParams(), { now: NOW });
     const paused = await repo.setPaused(a.offPeakTaskId, true);
     expect(paused?.status).toBe("paused");
-    // paused 重复 Pause 无效
+    // A repeated Pause on a paused task is a no-op
     expect(await repo.setPaused(a.offPeakTaskId, true)).toBeNull();
     const continued = await repo.setPaused(a.offPeakTaskId, false);
     expect(continued?.status).toBe("queued");
 
-    // 认领在途不可 Pause（派发窗口竞态）
+    // In-flight claims cannot be paused (dispatch window race)
     await repo.updateSchedulingSnapshot(a.offPeakTaskId, { schedulable: true });
     await repo.claimDue(NOW);
     expect(await repo.setPaused(a.offPeakTaskId, true)).toBeNull();
 
-    // running 不可 Pause（running 只有取消）
+    // running cannot be paused (running only supports cancel)
     await repo.markRunning(a.offPeakTaskId, { startedAt: NOW });
     expect(await repo.setPaused(a.offPeakTaskId, true)).toBeNull();
   });
@@ -434,7 +436,7 @@ describe("OffPeakTaskRepo 状态机与调度守卫", () => {
 
     const got = await repo.get(a.offPeakTaskId);
     expect(got?.status).toBe("queued");
-    // 立即可重新认领（退避策略在 scheduler 层，仓库不做时间闸）
+    // Immediately claimable again (backoff policy lives in the scheduler layer; the repo has no time gate)
     const reclaimed = await repo.claimDue(NOW + 2);
     expect(reclaimed).toHaveLength(1);
   });
@@ -467,8 +469,8 @@ describe("OffPeakTaskRepo 状态机与调度守卫", () => {
 
     const r = await repo.get(running.offPeakTaskId);
     expect(r?.status).toBe("queued");
-    expect(r?.queuedAt).toBe(NOW); // 保留原队列位置
-    expect(r?.sessionId).toBe("sess-r"); // resume 续跑依赖
+    expect(r?.queuedAt).toBe(NOW); // keeps the original queue position
+    expect(r?.sessionId).toBe("sess-r"); // resume depends on it
     expect((await repo.get(untouched.offPeakTaskId))?.status).toBe("queued");
     expect((await repo.get(done.offPeakTaskId))?.status).toBe("completed");
   });
@@ -476,7 +478,7 @@ describe("OffPeakTaskRepo 状态机与调度守卫", () => {
   it("markSettled + listUnsettledTerminal：终态核销 outbox（D22）", async () => {
     const a = await repo.create(makeParams({ title: "A" }), { now: NOW });
     const b = await repo.create(makeParams({ title: "B" }), { now: NOW + 1 });
-    // 非终态不可核销
+    // Non-terminal states cannot be settled
     await repo.markSettled(a.offPeakTaskId, NOW + 1);
     expect((await repo.get(a.offPeakTaskId))?.settledAt).toBeUndefined();
 
@@ -543,7 +545,7 @@ describe("OffPeakTaskRepo 状态机与调度守卫", () => {
   it("countNonTerminal：终态与已删除不计入（创建上限本地预判）", async () => {
     const a = await repo.create(makeParams(), { now: NOW });
     const b = await repo.create(makeParams(), { now: NOW + 1 });
-    await repo.setPaused(b.offPeakTaskId, true); // paused 计入（D30-2 额度含 Paused）
+    await repo.setPaused(b.offPeakTaskId, true); // paused counts (the D30-2 quota includes Paused)
     const c = await repo.create(makeParams(), { now: NOW + 2 });
     expect(await repo.countNonTerminal()).toBe(3);
 
@@ -562,7 +564,7 @@ describe("OffPeakTaskRepo 状态机与调度守卫", () => {
       now: NOW,
       offPeakTaskId: "offpeak-fixed-id",
     });
-    expect(a.offPeakTaskId).toBe("offpeak-fixed-id"); // 外部指定主键（先取号后落库）
+    expect(a.offPeakTaskId).toBe("offpeak-fixed-id"); // externally specified primary key (ticket first, persisted second)
     await repo.updateSchedulingSnapshot(a.offPeakTaskId, {
       schedulable: true,
       queuePosition: 1,
@@ -579,17 +581,17 @@ describe("OffPeakTaskRepo 状态机与调度守卫", () => {
       now: NOW + 1,
     });
     expect(requeued?.status).toBe("queued");
-    expect(requeued?.sessionId).toBe("sess-1"); // resume 依赖
+    expect(requeued?.sessionId).toBe("sess-1"); // resume depends on it
     expect(requeued?.conversationId).toBe("conv-1");
-    expect(requeued?.startedAt).toBe(NOW); // 首段开始时间保留
-    expect(requeued?.schedulable).toBe(false); // 等重新取号后由轮询刷新
+    expect(requeued?.startedAt).toBe(NOW); // keeps the first segment's start time
+    expect(requeued?.schedulable).toBe(false); // refreshed by polling after the next ticket is taken
     expect(requeued?.queuePosition).toBeUndefined();
 
-    // paused 不可回队
+    // paused tasks cannot be requeued
     await repo.setPaused(a.offPeakTaskId, true);
     expect(await repo.requeueForContinuation(a.offPeakTaskId)).toBeNull();
     await repo.setPaused(a.offPeakTaskId, false);
-    // 终态不可回队
+    // Terminal states cannot be requeued
     await repo.markTerminal(a.offPeakTaskId, {
       status: "cancelled",
       endedAt: NOW + 2,
@@ -615,7 +617,7 @@ describe("OffPeakTaskRepo 状态机与调度守卫", () => {
     });
 
     expect((await repo.listNonTerminal()).map((t) => t.title)).toEqual(["R", "W"]);
-    // 取号即 ready 的任务无需等轮询即可被认领
+    // Tasks that are ready at ticket time can be claimed without waiting for the poller
     const claimed = await repo.claimDue(NOW + 4);
     expect(claimed.map((t) => t.offPeakTaskId)).toEqual([ready.offPeakTaskId]);
     expect(waiting.schedulable).toBe(false);
@@ -632,11 +634,11 @@ describe("OffPeakTaskRepo 状态机与调度守卫", () => {
       nextPollAt: NOW + MINUTE,
     });
     let got = await repo.get(a.offPeakTaskId);
-    expect(got?.serverTicketId).toBe("ticket-1"); // 未传字段不动
+    expect(got?.serverTicketId).toBe("ticket-1"); // fields not passed stay untouched
     expect(got?.queuePosition).toBe(2);
     expect(got?.nextPollAt).toBe(NOW + MINUTE);
 
-    // 票过期重新取号（D26 同 task_id 新 ticket）
+    // Expired ticket gets a new one (D26: same task_id, new ticket)
     await repo.updateSchedulingSnapshot(a.offPeakTaskId, {
       serverTicketId: "ticket-2",
       registeredAt: NOW + 2 * MINUTE,

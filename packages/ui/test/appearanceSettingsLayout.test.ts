@@ -28,7 +28,8 @@ describe("appearance settings layout", () => {
   });
 
   it("语言选项除系统默认外使用对应语言自名", () => {
-    // Bugfix: 固定语言项表示目标语言本身，不能随当前 UI locale 翻译成另一种写法。
+    // Bugfix: fixed locale items represent the target language itself and must not be translated
+    // into another script by the current UI locale.
     expect(zhCN["settings.locale.system"]).toBe("系统默认");
     expect(enUS["settings.locale.system"]).toBe("System default");
     expect(zhCN["settings.locale.zh-CN"]).toBe("中文简体");
@@ -38,9 +39,7 @@ describe("appearance settings layout", () => {
   });
 
   it("文案描述可见效果，不再声称修改 rem 布局或显示右侧单一预览", () => {
-    expect(zhCN["settings.appearance.interfaceDescription"]).toBe(
-      "设置应用主题和界面文字大小。",
-    );
+    expect(zhCN["settings.appearance.interfaceDescription"]).toBe("设置应用主题和界面文字大小。");
     expect(zhCN["settings.uiFontSizeDescription"]).toContain("图标和布局尺寸不受影响");
     expect(zhCN["settings.previewDescription"]).toContain("同时预览浅色与深色代码主题");
     expect(enUS["settings.uiFontSizeDescription"]).toContain(

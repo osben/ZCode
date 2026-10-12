@@ -104,7 +104,8 @@ export function persistWebRemoteControlMobileTaskHomePreferences(
       JSON.stringify(preferences),
     );
   } catch {
-    // localStorage 在隐私模式或容量异常时可能不可写，忽略失败以免阻断远控主流程。
+    // localStorage may be unwritable in private mode or under capacity errors; ignore the failure
+    // so the remote-control main flow is not blocked.
   }
 }
 
@@ -127,8 +128,9 @@ export function buildWebRemoteControlMobileTaskHomeModel({
   });
   const resolvedActiveWorkspaceKey = result.activeWorkspaceKey ?? fallbackWorkspaceKey;
   const resolvedActiveTaskId = result.activeTaskId ?? activeTaskId;
-  // Bugfix: 远控任务首页以前只把所有 task 交给 workspace/timeline 分组。
-  // pinned 任务现在来自独立 sqlite 查询，需要先拆出已置顶分区，避免在普通列表里重复出现。
+  // Bugfix: the remote-control task home previously handed all tasks to workspace/timeline
+  // grouping. Pinned tasks now come from a separate sqlite query, so the pinned section must be
+  // split out first to keep them from reappearing in the regular list.
   const allTasks = (result.tasks ?? []).filter((task) => !task.archived);
   const pinnedTasks = sortWebRemoteControlTasksByTime(
     allTasks.filter((task) => task.pinned),
@@ -165,8 +167,9 @@ export function hasWebRemoteControlMobileTaskHomeActiveTaskMatch(
     return true;
   }
 
-  // Bugfix: pinned 任务会被拆到独立分区，不再出现在 workspace group.tasks。
-  // 初始选中态校验必须同时看 pinned 分区，否则正常的 active pinned task 会被误记为未匹配。
+  // Bugfix: pinned tasks are split into their own section and no longer appear in
+  // workspace group.tasks. The initial selection check must also look at the pinned section,
+  // otherwise a legitimate active pinned task is wrongly recorded as unmatched.
   return (
     model.pinnedTasks.some(
       (task) =>

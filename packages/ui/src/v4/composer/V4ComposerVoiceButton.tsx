@@ -16,7 +16,7 @@ interface V4ComposerVoiceButtonProps {
   onToggle: () => void;
 }
 
-/** 输入框内的语音输入按钮：点击开始/结束录音（与快捷键共用同一套录音状态）。 */
+/** Voice input button inside the composer: click to start/stop recording (shares the same recording state as the shortcut). */
 function V4ComposerVoiceButtonImpl({
   phase,
   level,
@@ -39,8 +39,9 @@ function V4ComposerVoiceButtonImpl({
   const tooltip = shortcutLabel ? `${label} (${shortcutLabel})` : label;
   const Icon = recording ? Square : busy ? LoaderCircle : Mic;
   const levelPercent = Math.round(Math.max(0, Math.min(1, level)) * 100);
-  // 持久化 polite live region：焦点不在按钮上时（如正在录音）也能播报阶段变化；
-  // 预览面板只在 recording 且有文本时渲染，不能承担空闲/转写阶段的播报。
+  // Persistent polite live region: announces phase changes even when focus is elsewhere
+  // (e.g. while recording); the preview panel only renders while recording with text, so it
+  // cannot cover the idle/transcribing announcements.
   const statusAnnouncement = intl.formatMessage({
     id:
       phase === "loading"

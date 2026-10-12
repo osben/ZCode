@@ -10,11 +10,11 @@ import { V4_METHODS } from "@zcode/shared/zcode-protocol-v4";
 import { offPeakSelectionView } from "./fixtures/offPeakSelection.js";
 
 // DWG-02 (docs/dynamic-workflow/launch.md "Gray release"): the Host is the sole arbiter of the gray release.
-// The decision is made once when the workspace client becomes ready: only when enabled does it send
-// workspace/updateDynamicWorkflowPolicy, and it stamps dynamicWorkflowEnabled:true on session create / resume /
-// v4 createSession; when disabled, none of the three write the field (the CLI defaults to fail-closed). The old
-// CLI's -32601 is downgraded and ignored.
-// Unlike Off-Peak: remote workspaces are served the same, and the criteria do not look at
+// The decision is made once when the workspace client is ready: only when enabled is
+// workspace/updateDynamicWorkflowPolicy sent, and dynamicWorkflowEnabled:true is stamped on
+// session create / resume / v4 createSession; when disabled, none of the three carry the field
+// (the CLI defaults to fail-closed). Legacy CLIs' -32601 is ignored as a downgrade.
+// Unlike Off-Peak: remote workspaces are supported too; the criteria do not look at
 // workspaceIdentity / remoteSessionId.
 
 const WORKSPACE_PATH = "/workspace/app";
@@ -38,7 +38,7 @@ function sessionSnapshot(sessionId: string) {
 }
 
 async function setup(params: {
-  /** undefined = no resolver assembled (pure CLI / not-yet-wired assembly). */
+  /** undefined = no resolver wired (pure CLI / not-yet-integrated wiring). */
   enabled?: boolean;
   configResolver?: () => Promise<DynamicWorkflowClientConfig | undefined>;
   policyResponse?: (request: unknown) => unknown | Promise<unknown>;
@@ -287,15 +287,14 @@ describe("session create / resume / v4 createSession 的 flag（DWG-02）", () =
       expect(paramsOf(request, V4_METHODS.command)[0]).toMatchObject({
         payload: { dynamicWorkflowEnabled: true, dynamicWorkflowMode: "alwaysOn" },
       });
-      // The decision is fixed for the client's lifetime: three creations reuse one read, not one remote call per
-      // session creation.
+      // The decision is fixed to the client lifecycle: three creations reuse a single read, not one remote call per session.
       expect(resolveConfig).toHaveBeenCalledTimes(1);
     } finally {
       service.disposeAll();
     }
   });
 
-  // launch.md "On demand: activation" / "How the mode travels": onDemand arrives verbatim on all three creation paths.
+  // launch.md "On demand: activation" / "How the mode travels": onDemand reaches all three creation paths unchanged.
   it("onDemand 时三条创建路径都带 dynamicWorkflowMode:onDemand", async () => {
     const { service, request } = await setup({
       configResolver: async () => createDynamicWorkflowClientConfig("onDemand", "remote"),
@@ -418,16 +417,15 @@ describe("session create / resume / v4 createSession 的 flag（DWG-02）", () =
       expect(creates).toHaveLength(2);
       expect(creates[0]).toMatchObject({ dynamicWorkflowEnabled: true });
       expect(creates[1]).not.toHaveProperty("dynamicWorkflowEnabled");
-      // When the boolean is omitted, mode must not appear alone: it is meaningless to the CLI, and old CLIs' strict
-      // schema rejects it too.
+      // When the boolean is omitted, mode must not appear alone either: meaningless for the CLI, and legacy CLIs' strict schema rejects it too.
       expect(creates[1]).not.toHaveProperty("dynamicWorkflowMode");
     } finally {
       service.disposeAll();
     }
   });
 
-  // launch.md "How the mode travels": a CLI that only knows the boolean, not mode (versions before this rule) —
-  // retry with mode omitted, keep the boolean, and the session behaves as alwaysOn.
+  // launch.md "How the mode travels": a CLI that only knows the boolean, not mode (a version before
+  // this rule) — the retry omits mode, keeps the boolean, and the session behaves as alwaysOn.
   it("旧 CLI 只拒绝 dynamicWorkflowMode 时省略它重试，布尔保留", async () => {
     const { service, request } = await setup({
       configResolver: async () => createDynamicWorkflowClientConfig("onDemand", "remote"),
@@ -472,9 +470,8 @@ describe("session create / resume / v4 createSession 的 flag（DWG-02）", () =
   });
 });
 
-// DWG-20 (launch.md "The user's choice"): the Host only latches the server-side "provision"; the user's choice is
-// re-applied on every use; after a choice change the policy is re-sent serially per workspace, and only when the
-// effective mode actually changed.
+// DWG-20 (launch.md "The user's choice"): the Host only latches the server's "offering"; the user's choice is re-applied on every use.
+// After a choice change, per-workspace serial re-sends happen, and only when the effective mode really changed.
 describe("用户选择（DWG-20）", () => {
   it("闩住的提供 + 每次读取的用户选择：两次建会话之间改选择，第二次就带新模式", async () => {
     let choice: DynamicWorkflowMode | undefined = "onDemand";
@@ -591,7 +588,7 @@ describe("用户选择（DWG-20）", () => {
       await vi.waitFor(() => expect(releaseFirst).toBeDefined());
       choice = "onDemand";
       const fast = service.syncDynamicWorkflowUserMode({ mode: "onDemand" });
-      // The second sync queues behind the first: while the first has not returned, no third request is issued.
+      // The second sync is queued behind the first: no third request goes out while the first is unresolved.
       expect(policyCalls(request)).toHaveLength(2);
       releaseFirst?.();
       await Promise.all([slow, fast]);
@@ -611,7 +608,7 @@ describe("用户选择（DWG-20）", () => {
       forwardUserMode,
     });
     try {
-      // The passed-in value is only a signal: when a local settings authority exists, the settings file wins.
+      // The passed-in value is only a signal: with a local settings authority, the settings file wins.
       await service.syncDynamicWorkflowUserMode({ mode: "disabled" });
       expect(forwardUserMode).toHaveBeenCalledWith("onDemand");
     } finally {

@@ -1,10 +1,14 @@
-// Trimming for contentProfile="index" of session/read.
-// Background: the task index reads the session existing-only once for every turn completion / title change / visibility change.
-// The old implementation fetched the full history (a single row of a long session can reach ~15MB), saturating host stdio and JSON parsing,
-// while the index only needs title / searchableText / hasUserVisibleContent / status / model.
-// This only strips the large payload fields none of those derivations read, keeping message / part count, order, id, type, and metadata unchanged,
-// so visibility and projection policy decisions stay exactly identical to the full snapshot (spec: docs/task/task-sqlite-index.md "Index read profile").
-// messageLimit cannot be used instead: searchableText takes the first 200K characters and the title falls back to the first real user input — both depend on the start of the history.
+// Trimming for session/read with contentProfile="index".
+// Background: the task index performs an existing-only session read on every turn completion /
+// title change / visibility change. The old implementation fetched the full history (a single
+// line of a long session can reach ~15MB), saturating the host stdio pipe and JSON parsing, while
+// the index only needs title / searchableText / hasUserVisibleContent / status / model.
+// This strips only the large payload fields none of those projections read, keeping message /
+// part counts, order, ids, types, and metadata unchanged, so visibility and projection policy
+// decisions match the full snapshot exactly (spec: docs/task/task-sqlite-index.md, "Index read
+// profile").
+// messageLimit cannot be used instead: searchableText takes the first 200K characters and the
+// title falls back to the first real user input — both depend on the start of the history.
 import type { ZCodeSessionStateSnapshot } from "./zcode-protocol/index.js";
 import type { ZCodeMessagePart, ZCodeMessageWithParts } from "./zcode-protocol-legacy-types.js";
 
@@ -56,7 +60,7 @@ function elideMessageForIndex(message: ZCodeMessageWithParts): ZCodeMessageWithP
   return changed ? { ...message, parts } : message;
 }
 
-/** Build the lightweight snapshot dedicated to the task index; does not modify the input (CLI-side messages may come from a shared cache). */
+/** Produces the lightweight snapshot dedicated to the task index; does not mutate the input (CLI-side messages may come from a shared cache). */
 export function elideSessionSnapshotForIndex<T extends ZCodeSessionStateSnapshot>(snapshot: T): T {
   return { ...snapshot, messages: snapshot.messages.map(elideMessageForIndex) };
 }

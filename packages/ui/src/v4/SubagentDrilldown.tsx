@@ -1,14 +1,14 @@
-// M5④ subagent 输出预览：内嵌 childSessionId 的只读轻量输出区。
-// 轻量实现（P9：不内嵌 child rows，靠订阅 conversation/<childSessionId> 自取）：
-// - 数据：复用 SessionDataLayer 租约（引用计数天然支持同会话多订阅视图），
-//   展开挂 lease、折叠卸载即释放（keep-warm 由数据层统一处理）；
-// - 展示：不虚拟化，只取窗口最近 N 条 assistant 文本输出；工具调用由 Agent 摘要/子工具列表表达；
-// - 只读：不下发 onFork/onRetry/onEdit，行内动作面不出现。
+// M5④ subagent output preview: a read-only lightweight output area embedding a childSessionId.
+// Lightweight implementation (P9: child rows are not embedded; it subscribes to conversation/<childSessionId>
+// and fetches on its own):
+// - Data: reuses SessionDataLayer leases (reference counting naturally supports multiple subscription views
+//   of the same session); expanding acquires a lease, collapsing unmounts and releases it (keep-warm is
+//   handled uniformly by the data layer);
+// - Display: no virtualization, only the last N assistant text outputs in the window; tool calls are
+//   expressed via the Agent summary / sub-tool list;
+// - Read-only: does not pass down onFork/onRetry/onEdit, so no inline action surface appears.
 import { memo, useEffect, useMemo, useState } from "react";
-import {
-  TID_V4_SUBAGENT_DRILLDOWN,
-  testId,
-} from "@zcode/shared";
+import { TID_V4_SUBAGENT_DRILLDOWN, testId } from "@zcode/shared";
 import type { ConversationRow } from "@zcode/shared/zcode-protocol-v4";
 import { ConversationRowView } from "@/v4/ConversationRowView.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
@@ -17,12 +17,12 @@ import type { SessionLease } from "@/v4/sessionDataLayer.js";
 import { useConversationProjection } from "@/v4/useConversationProjection.js";
 import { useV4Conversation } from "@/v4/V4ConversationContext.js";
 
-/** 输出预览只展示最近 N 条文本输出（更早历史请在右侧 tab 里看全量）。 */
+/** The output preview shows only the last N text outputs (see the right tab for the full earlier history). */
 export const SUBAGENT_DRILLDOWN_MAX_ROWS = 20;
 
 export interface SubagentDrilldownProps {
   childSessionId: string;
-  /** 父行渲染上下文（theme/codePreviewSettings 沿用；宿主保证引用稳定）。 */
+  /** Parent row render context (theme/codePreviewSettings reused; the host keeps the reference stable). */
   context: ConversationRowRenderContext;
 }
 
@@ -31,8 +31,8 @@ function isSubagentOutputRow(row: ConversationRow): boolean {
 }
 
 /**
- * 挂载即订阅、卸载即释放。memo：props 为字符串 + 稳定 context，
- * 父行重渲染不牵动已展开的输出预览。
+ * Subscribe on mount, release on unmount. memo: props are a string plus a stable context, so parent row
+ * re-renders do not disturb an already-expanded output preview.
  */
 export const SubagentDrilldown = memo(function SubagentDrilldown({
   childSessionId,
@@ -48,7 +48,7 @@ export const SubagentDrilldown = memo(function SubagentDrilldown({
   }, [layer, childSessionId]);
   const state = useConversationProjection(lease);
 
-  // 嵌套抑制：迷你 timeline 里的 subagent 行不再提供下钻入口。
+  // Nesting suppression: subagent rows inside the mini timeline no longer offer a drilldown entry.
   const drilldownContext = useMemo<ConversationRowRenderContext>(
     () => ({ ...context, inSubagentDrilldown: true }),
     [context],
@@ -57,9 +57,7 @@ export const SubagentDrilldown = memo(function SubagentDrilldown({
   const sourceRows = state.snapshot?.rows.window ?? [];
   const rows = sourceRows.filter(isSubagentOutputRow);
   const visibleRows =
-    rows.length > SUBAGENT_DRILLDOWN_MAX_ROWS
-      ? rows.slice(-SUBAGENT_DRILLDOWN_MAX_ROWS)
-      : rows;
+    rows.length > SUBAGENT_DRILLDOWN_MAX_ROWS ? rows.slice(-SUBAGENT_DRILLDOWN_MAX_ROWS) : rows;
   const hiddenCount = rows.length - visibleRows.length;
   const statusText =
     state.status === "connecting"
@@ -92,9 +90,7 @@ export const SubagentDrilldown = memo(function SubagentDrilldown({
           {intl.formatMessage({ id: "chat.toolCall.agent.output" })}
         </h4>
         {statusText ? (
-          <span className="min-w-0 truncate text-ui-sm text-foreground-subtle">
-            {statusText}
-          </span>
+          <span className="min-w-0 truncate text-ui-sm text-foreground-subtle">{statusText}</span>
         ) : null}
       </div>
       {visibleRows.length === 0 ? (
@@ -114,11 +110,7 @@ export const SubagentDrilldown = memo(function SubagentDrilldown({
             </div>
           ) : null}
           {visibleRows.map((row) => (
-            <ConversationRowView
-              key={row.rowId}
-              row={row}
-              context={drilldownContext}
-            />
+            <ConversationRowView key={row.rowId} row={row} context={drilldownContext} />
           ))}
         </div>
       )}

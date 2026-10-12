@@ -77,7 +77,8 @@ for (const width of [390, 1200]) {
               element.getAnimations().map((animation) => animation.finished),
             );
           });
-          // Radix 在内容测量后更新碰撞位置；等待定位与入场动画完成再检查几何边界。
+          // Radix updates the collision position after measuring content; wait for positioning
+          // and the entrance animation to finish before checking geometric bounds.
           await page.waitForFunction(() => {
             const element = document.querySelector('[data-slot="dropdown-menu-sub-content"]');
             if (!element) return false;

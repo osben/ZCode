@@ -4,12 +4,13 @@ import enUS from "@/i18n/locales/en-US.js";
 import zhCN from "@/i18n/locales/zh-CN.js";
 
 /**
- * 读取仓库源码用于文本契约断言。
+ * Reads repository source for text-contract assertions.
  *
- * Bugfix：下面断言里有跨行片段（`<AutomationCreateDropdown\n ...`），而仓库只对 *.mjs / *.sh
- * 声明了 `eol=lf`，其余源码在 `core.autocrlf=true` 的 Windows 检出里是 CRLF，`toContain`
- * 的 `\n` 匹配不到 `\r\n`，用例在 Windows 上必然失败。它想断言的是源码内容契约，
- * 与换行字节无关，统一归一成 LF 再比对。
+ * Bugfix: some assertions below contain multi-line fragments (`<AutomationCreateDropdown\n
+ * ...`), but the repo only declares `eol=lf` for *.mjs / *.sh; all other sources are CRLF in a
+ * Windows checkout with `core.autocrlf=true`, so `toContain`'s `\n` never matches `\r\n` and the
+ * case would always fail on Windows. What it asserts is a source-content contract, independent
+ * of line-ending bytes; normalize to LF before comparing.
  */
 const automationsSectionSource = readFileSync(
   new URL("../src/settings/AutomationsSection.tsx", import.meta.url),
@@ -18,8 +19,9 @@ const automationsSectionSource = readFileSync(
 
 describe("Automations populated-list Figma contract", () => {
   it("removes the All tab and its unified mixed grid", () => {
-    // 规范出处：docs/off-peak-task/decisions.md D47（2026-07-28）——主视图只保留
-    // Scheduled / Idle 两个 tab，All 混排总览及其统一 grid 删除；任务区锚点保留供布局断言使用。
+    // Spec source: docs/off-peak-task/decisions.md D47 (2026-07-28) — the main view keeps only
+    // the Scheduled / Idle tabs; the mixed All overview and its unified grid are removed. The
+    // task-area anchor is kept for layout assertions.
     expect(automationsSectionSource).not.toContain('"all"');
     expect(automationsSectionSource).not.toContain("showUnifiedAllTaskGrid");
     expect(automationsSectionSource).toContain("data-automations-task-grid");
@@ -34,7 +36,8 @@ describe("Automations populated-list Figma contract", () => {
 
     expect(bannerStart).toBeGreaterThanOrEqual(0);
     expect(gridStart).toBeGreaterThan(bannerStart);
-    // D47：keep-awake 是全局开关，Scheduled / Idle 两个 tab 都展示；有任务时提示条与 action row 收紧到 20px。
+    // D47: keep-awake is a global switch shown on both Scheduled / Idle tabs; with tasks
+    // present, the banner and action row tighten to 20px.
     expect(automationsSectionSource).toMatch(/hasAnyTasks \? "mt-5" : "mt-8"/);
   });
 
@@ -119,12 +122,13 @@ describe("Automations populated-list Figma contract", () => {
 
   it("appends next-run time only for active non-failing cards", () => {
     expect(automationsSectionSource).toContain("`${scheduleText} · ${intl.formatMessage(");
-    // 列表 grid 已嵌入筛选空态的三目分支，缩进会随结构变化；断言只关心调用形态。
+    // The list grid is embedded in a ternary branch of the filter empty state, so indentation
+    // varies with structure; the assertion only cares about the call shape.
     expect(automationsSectionSource).toMatch(
       /formatAutomationCardNextRun\(\s*automation\.nextRunAt/,
     );
-    // completed/paused/失败态调度不再推进；有限次任务跑完后 nextRunAt 仍可能指向
-    // 未来时刻，不能再拼进卡片文案。
+    // completed/paused/failed schedules no longer advance; for finite tasks that finished, the
+    // nextRunAt can still point to a future time and must not be appended to the card copy.
     expect(automationsSectionSource).toContain(
       'status === "active" && !hasFailure && formattedNextRun',
     );

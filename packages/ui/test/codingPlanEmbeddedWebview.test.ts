@@ -70,9 +70,11 @@ describe("coding plan embedded webview bridge", () => {
   });
 
   it("exposes the purchase-complete channel and payload type", () => {
-    // The channel name is fixed and shared by both sides (App preload + official site via the injected bridge)
+    // The channel name is fixed and shared by both ends (App preload + the website via the
+    // injected bridge).
     expect(CodingPlanWebviewChannels.PurchaseComplete).toBe("zcode:coding-plan-purchase-complete");
-    // The payload type is only a compile-time check: provider limited to zai/bigmodel, timestamp is a number
+    // The payload type is compile-time checked only: provider is limited to zai/bigmodel and
+    // timestamp is a number.
     const payload: CodingPlanPurchaseCompletePayload = {
       provider: "zai",
       timestamp: Date.now(),
@@ -314,8 +316,9 @@ describe("coding plan embedded webview bridge", () => {
   });
 
   it("injects the zcode JWT for the bigmodel provider so the website can query Start Plan balance", () => {
-    // Reason for the fix: the BigModel branch previously cleared zcodejwttoken explicitly, so the embedded
-    // website page could not query billing/balance (that API only accepts the zcode JWT) and the Start Plan card was wrongly shown as "expired".
+    // Fix rationale: the BigModel branch used to explicitly clear zcodejwttoken, so the embedded
+    // website page could not query billing/balance (that API only accepts the zcode JWT) and the
+    // Start Plan card was misjudged as "expired".
     const script = createCodingPlanAuthInjectionScript({
       provider: "bigmodel",
       theme: "zai-light",
@@ -332,10 +335,7 @@ describe("coding plan embedded webview bridge", () => {
   });
 
   it("loads the zcode JWT credential key for both website providers", () => {
-    expect(getCodingPlanCredentialKeys("zai")).toEqual([
-      "oauth:zai:access_token",
-      "zcodejwttoken",
-    ]);
+    expect(getCodingPlanCredentialKeys("zai")).toEqual(["oauth:zai:access_token", "zcodejwttoken"]);
     expect(getCodingPlanCredentialKeys("bigmodel")).toEqual([
       "oauth:bigmodel:access_token",
       "zcodejwttoken",
@@ -409,7 +409,9 @@ describe("coding plan embedded webview bridge", () => {
     expect(source).not.toContain("useCodingPlanBillingDiscount");
     expect(source).toContain("<EmbeddedWebsiteHeader");
     expect(source).toContain("onClose={() => onOpenChange(false)}");
-    expect(readFileSync(resolve("packages/ui/src/components/EmbeddedWebsiteHeader.tsx"), "utf8")).toContain("common.close");
+    expect(
+      readFileSync(resolve("packages/ui/src/components/EmbeddedWebsiteHeader.tsx"), "utf8"),
+    ).toContain("common.close");
     expect(source).toContain("webviewCleanupRef");
     expect(source).toContain("injectAuthRef");
     expect(source).toContain("createCodingPlanCredentialClearScript");
@@ -425,7 +427,8 @@ describe("coding plan embedded webview bridge", () => {
       "utf8",
     );
 
-    // Once a third-party payment page enters the webview there is no App top navigation, so the host must expose back/forward/refresh controls.
+    // Third-party payment pages entering the webview have no App top navigation, so the host must
+    // expose back/forward/refresh controls.
     expect(source).toContain("navigationState");
     expect(source).toContain("handleGoBack");
     expect(source).toContain("handleGoForward");
@@ -437,7 +440,10 @@ describe("coding plan embedded webview bridge", () => {
     expect(source).toContain('addEventListener("did-stop-loading"');
     expect(source).toContain('addEventListener("did-navigate"');
     expect(source).toContain('addEventListener("did-navigate-in-page"');
-    const header = readFileSync(resolve("packages/ui/src/components/EmbeddedWebsiteHeader.tsx"), "utf8");
+    const header = readFileSync(
+      resolve("packages/ui/src/components/EmbeddedWebsiteHeader.tsx"),
+      "utf8",
+    );
     expect(source).toContain("onBack={handleGoBack}");
     expect(source).toContain("onForward={handleGoForward}");
     expect(source).toContain("onReload={handleReloadWebview}");
@@ -452,7 +458,8 @@ describe("coding plan embedded webview bridge", () => {
       "utf8",
     );
 
-    // Reason for the change: when the webview fails to load or crashes, per the user's decision we only report the error and guide to the official site instead of falling back to the old Dialog.
+    // Redesign rationale: when the webview fails to load or crashes, per a user decision we only
+    // report the error and guide to the website; no fallback to the old Dialog.
     expect(source).toContain('addEventListener("did-fail-load"');
     expect(source).toContain('addEventListener("render-process-gone"');
     expect(source).toContain("handleDidFailLoad");
@@ -468,7 +475,7 @@ describe("coding plan embedded webview bridge", () => {
 
     expect(source).toContain("settings.modelProvider.codingPlan.webview.loadFailed");
     expect(source).toContain("settings.modelProvider.codingPlan.webview.openWebsite");
-    // Buy on the official site: open the website page via IPlatformService.openExternal
+    // Purchase on the official website: open the website page via IPlatformService.openExternal
     expect(source).toContain("usePlatform");
     expect(source).toContain("platform.openExternal");
     expect(source).toContain("handleOpenWebsite");
@@ -480,7 +487,8 @@ describe("coding plan embedded webview bridge", () => {
       "utf8",
     );
 
-    // In the loadError state the webview must be hidden so a broken webview no longer occupies visual space
+    // In the loadError state the webview must be hidden, so a broken webview does not keep
+    // occupying the visual slot
     expect(source).toMatch(/loadError && "hidden"/);
   });
 
@@ -500,7 +508,8 @@ describe("coding plan embedded webview bridge", () => {
     h.theme = "zai-dark";
     view.rerender(createElement(CodingPlanEmbeddedWebviewDialog, props));
 
-    // Reason for the fix: payment authorization can last several minutes; automatic system theme switching must not change the src and reload the PayPal flow.
+    // Fix rationale: payment authorization can take minutes; an automatic system theme switch
+    // must not change the src and reload the PayPal flow.
     expect(view.getByTestId("coding-plan-embedded-webview").getAttribute("src")).toBe(initialSrc);
   });
 
@@ -521,7 +530,7 @@ describe("coding plan embedded webview bridge", () => {
     expect(source).toContain("CodingPlanPurchaseCompletePayload");
     expect(source).toContain("buildCodingPlanEmbeddedReportContext");
     expect(source).toContain("platform.getDeviceId()");
-    // provider payload validation: only zai / bigmodel accepted
+    // Provider payload validation: only zai / bigmodel are accepted
     expect(source).toContain('raw?.provider !== "zai"');
     expect(source).toContain('raw?.provider !== "bigmodel"');
   });
@@ -562,7 +571,7 @@ describe("coding plan embedded webview bridge", () => {
     );
 
     // onPurchaseComplete triggers closeAndRefreshCodingPlanUpgradeFromWebview:
-    // first close the upgrade webview, then refresh the App-side provider/entitlement state.
+    // close the upgrade webview first, then refresh the App-side provider/entitlement state.
     expect(source).toContain("export async function refreshCodingPlanUpgradeCompletion");
     expect(source).toContain("export async function closeAndRefreshCodingPlanUpgradeFromWebview");
     expect(source).toContain("refreshTeamPlanProducts");

@@ -98,8 +98,8 @@ describe("app settings", () => {
   });
 
   it("drops the removed CUA overlay/pip/background settings keys from stored configs", () => {
-    // 2026-08-17 设置面收敛：三个 key 已从 schema 删除；存量配置里的旧值被 zod strip 静默忽略，
-    // 不报错也不回流（overlay/PiP 由 services 装配层恒传 true，见 cuaGhostCursorSettingsWiring）。
+    // 2026-08-17 settings surface cleanup: the three keys were removed from the schema; old values in stored configs are
+    // silently stripped by zod — no error, no round-trip (overlay/PiP is always true via the services assembly layer, see cuaGhostCursorSettingsWiring).
     const stale = appSettingsSchema.parse({
       cuaGhostCursorEnabled: false,
       cuaPipMode: false,
@@ -207,7 +207,7 @@ describe("app settings", () => {
   });
 
   it("discards a damaged voiceDictation value without resetting other settings", () => {
-    // 非关键偏好：损坏或更新版本写入的值只应丢弃自身，不能让整份 setting.json 解析失败。
+    // Non-critical preference: a damaged value or one written by a newer version should only discard itself, never fail parsing the whole settings.json.
     const settings = appSettingsSchema.parse({
       locale: "en-US",
       recentProjects: ["/workspace/demo"],
@@ -218,7 +218,7 @@ describe("app settings", () => {
     expect(settings.recentProjects).toEqual(["/workspace/demo"]);
     expect(settings.voiceDictation).toBeUndefined();
 
-    // 补丁面保持严格：写入非法值仍要在保存时被拒绝，而不是静默吞掉。
+    // The patch surface stays strict: invalid values must still be rejected at save time instead of being silently swallowed.
     expect(
       appSettingsPatchSchema.safeParse({ voiceDictation: { pushToTalk: "yes" } }).success,
     ).toBe(false);
@@ -281,8 +281,8 @@ describe("app settings", () => {
   });
 });
 
-// DWG-19（docs/dynamic-workflow/launch.md「The user's choice」）：空串是删除选择的哨兵，
-// 读文件时的未知取值按「跟随」处理，不能把整份设置读坏。
+// DWG-19 (docs/dynamic-workflow/launch.md "The user's choice"): the empty string is the sentinel for deleting a choice;
+// an unknown value read from the file is treated as "follow" and must not corrupt reading the whole settings.
 describe("dynamicWorkflowMode 设置（DWG-19）", () => {
   it("补丁接受三个模式与空串哨兵，拒绝其它值", () => {
     for (const value of ["disabled", "onDemand", "alwaysOn", ""]) {

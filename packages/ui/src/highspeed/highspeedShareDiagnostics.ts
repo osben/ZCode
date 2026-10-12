@@ -6,9 +6,10 @@ import {
 import { isHighspeedShareEligible } from "@/highspeed/highspeedShare.js";
 
 /**
- * 诊断：这张卡为什么还不是自动分享候选，空数组表示已就绪。
- * 门禁条件与 turnStore.listHighspeedCardAutoShareCandidates 保持一致，
- * 由单测交叉断言两者结论不漂移；本模块只服务 debug 日志，不参与业务决策。
+ * Diagnostics: why this card is not yet an auto-share candidate; an empty array means ready.
+ * The gate conditions match turnStore.listHighspeedCardAutoShareCandidates; unit tests
+ * cross-assert that the two never drift. This module only serves debug logging and takes no part
+ * in business decisions.
  */
 export function collectHighspeedCardShareBlockers(cardId: string): string[] {
   const cardRecords = listHighspeedTurnsByCard(cardId);
@@ -34,10 +35,12 @@ export function collectHighspeedCardShareBlockers(cardId: string): string[] {
   if (blockers.length === 0) {
     const metrics = aggregateHighspeedCardMetrics(cardId);
     if (metrics.outputTokens <= 0) {
-      // 与候选判定同口径：没有生成内容的卡不得分享，也不得把 token_usage 强制成 1。
+      // Same policy as the candidate check: a card with no generated output must not be shared,
+      // and token_usage must not be forced to 1.
       blockers.push("zero-output");
     } else if (!isHighspeedShareEligible(metrics)) {
-      // 与候选判定同口径：总体加速倍率 ≤1.2x 不发布左下角卡（spec §9），此处点名原因供 debug。
+      // Same policy as the candidate check: an overall speedup of <=1.2x does not publish the
+      // bottom-left card (spec §9); the reason is named here for debugging.
       blockers.push("below-min-speedup");
     }
   }
@@ -45,13 +48,13 @@ export function collectHighspeedCardShareBlockers(cardId: string): string[] {
 }
 
 /**
- * 诊断：会话内已到期、但还没有尝试过自动分享的卡。
- * 用于 debug 日志回答“左下角分享卡为什么没更新”；不改变分享行为。
+ * Diagnostics: cards in a session that have expired but have not yet attempted an auto-share.
+ * Used by debug logs to answer "why has the bottom-left share card not updated"; does not change
+ * sharing behavior.
  */
 export function listHighspeedCardsAwaitingAutoShare(sessionId: string, now: number): string[] {
   const pendingRecords = listHighspeedTurnsBySession(sessionId).filter(
-    (record) =>
-      record.autoShareAttemptedAt === undefined && record.autoSharedAt === undefined,
+    (record) => record.autoShareAttemptedAt === undefined && record.autoSharedAt === undefined,
   );
   const cardsById = new Map<string, typeof pendingRecords>();
   for (const record of pendingRecords) {

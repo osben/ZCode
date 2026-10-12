@@ -1,6 +1,6 @@
 import { channelReplyHostRequestSchema, type ChannelReplyHostRequest } from "@zcode/shared";
-// Host forwarding-surface tests for the v4 conversation channel (M3 vertical slice, docs/v4-refactor/01-topology §host channel layer).
-// Verifies the host only forwards: subscribe/unsubscribe/command go to the CLI v4 methods,
+// v4 conversation channel host forwarding-surface tests (M3 vertical slice, docs/v4-refactor/01-topology §host channel layer).
+// Verifies the host only forwards: subscribe/unsubscribe/command pass through to the CLI v4 methods,
 // and v4/conversation/frame notifications fan out per workspace to onDynamicConversationFrame subscribers.
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -23,10 +23,10 @@ import { setDataBaseDir } from "../src/paths.js";
 import { TaskIndexRepo } from "../src/session/taskIndexRepo.js";
 
 // Minimal v4 fake agent:
-// - v4/conversation/subscribe -> a single stdout.write emits the ACK-only response + initial notification back to back;
-// - v4/conversation/unsubscribe -> returns {};
-// - v4/command -> returns a CommandAck accepted.
-// All inbound requests are appended to logPath for asserting forwarded parameters.
+// - v4/conversation/subscribe → a single stdout.write that consecutively emits an ACK-only response + initial notification;
+// - v4/conversation/unsubscribe → returns {};
+// - v4/command → returns CommandAck accepted.
+// All inbound requests are written to logPath for asserting forwarded params.
 const V4_FAKE_AGENT = `
 const fs = require("node:fs");
 const logPath = process.argv[2];
@@ -333,14 +333,12 @@ describe("zcodeAgentService v4 conversation channel", () => {
   afterEach(() => {
     setDataBaseDir(null);
     for (const dir of createdDirs.splice(0).reverse()) {
-      // Root cause: Windows refuses to delete a directory that still has open handles, while the
-      // runtime/child-process and watcher handles settle asynchronously; `force: true` only
-      // swallows ENOENT and does no retries. So afterEach reliably threw
-      // `EPERM, Permission denied: \\?\C:\...\Temp\zcode-agent-v4-xxxx`, failing cases whose
-      // assertions had already passed (POSIX allows deleting still-open inodes, so this only
-      // appears on Windows). First wait for handles to release using rm's built-in bounded
-      // retries; if they truly never release, cleanup must not decide the case's outcome — the
-      // operating system reclaims the temp directory.
+      // Root cause: Windows refuses to delete directories that still have open handles, while the runtime/subprocess
+      // and watcher handles close asynchronously; `force: true` only swallows ENOENT and does no retries. So afterEach
+      // reliably threw `EPERM, Permission denied: \\?\C:\...\Temp\zcode-agent-v4-xxxx`, marking already-passing cases
+      // as failed (POSIX allows deleting inodes that are still open, so this only happens on Windows).
+      // Use rm's built-in bounded retries to wait for handle release; if the wait truly fails, cleanup must still not
+      // decide the case's outcome — the OS reclaims temp directories.
       try {
         rmSync(dir, {
           recursive: true,
@@ -349,7 +347,7 @@ describe("zcodeAgentService v4 conversation channel", () => {
           retryDelay: 100,
         });
       } catch {
-        /* Cleanup failure does not affect the assertion outcome; leave the temp directory to the OS. */
+        /* Cleanup failure does not affect the assertion outcome; the OS reclaims the temp directory. */
       }
     }
   });
@@ -413,7 +411,7 @@ describe("zcodeAgentService v4 conversation channel", () => {
     "projects only channel reply scope from a live V4 connection (remote=%s)",
     async (remote) => {
       const reply = vi.fn(async (value: ChannelReplyHostRequest) => {
-        // Run the same strict validation as the real Host executor; a loose spy must not mask extra connection fields.
+        // Runs the same strict validation as the real Host executor; a loose spy must not mask extra connection fields.
         channelReplyHostRequestSchema.parse(value);
         return { status: "sent" as const, deliveryId: "delivery", providerMessageId: "om_sent" };
       });
@@ -553,7 +551,7 @@ describe("zcodeAgentService v4 conversation channel", () => {
           result: { type: "createSession", sessionId: "created-session" },
         });
         const commands = readRequests(logPath).filter((item) => item.method === "v4/command");
-        // Root cause: back-filling mode for a version mismatch that does not exist and re-issuing a mode command without a revision changed the original creation contract.
+        // Root cause: backfilling mode for a nonexistent version mismatch and re-sending a revision-less mode command changed the original creation contract.
         expect(commands).toHaveLength(1);
         expect(commands[0]?.params.type).toBe("createSession");
         expect(commands[0]?.params.payload).toEqual(payload);
@@ -585,9 +583,8 @@ describe("zcodeAgentService v4 conversation channel", () => {
       });
       expect(commandResolver).toHaveBeenCalledTimes(1);
 
-      // Fix reason: the read-only topic had already registered an active client, and the old fast
-      // path returned it directly, bypassing the provider/model gates. createSession must still be
-      // deterministically rejected before anything is written to the protocol.
+      // Fix reason: the read-only topic had already registered an active client, and the old fast path returned it
+      // directly, bypassing the provider/model gate. createSession must still deterministically reject before writing the protocol.
       await expect(service.createSession({ workspacePath })).rejects.toMatchObject({
         code: "ZCODE_AGENT_PROVIDER_NOT_READY",
         data: expect.objectContaining({ reason: "provider_not_ready" }),
@@ -613,8 +610,8 @@ describe("zcodeAgentService v4 conversation channel", () => {
         sessionId: "cold-registry-session",
       });
 
-      // The Worker already holds the process-level Registry; the Host reads the Registry View only
-      // as a startup gate, and must not push the full Registry down as another source of execution truth.
+      // The Worker already holds the process-level Registry; the Host reading the Registry View is only for the startup
+      // gate and must not push down the full Registry as a second execution source of truth.
       expect(readRequests(logPath).map((entry) => entry.method)).toEqual([
         "v4/conversation/subscribe",
       ]);
@@ -723,9 +720,9 @@ describe("zcodeAgentService v4 conversation channel", () => {
     }
   });
 
-  // `workflowRunDeltas` belongs to the same family as `clientMode` (10 §3.1): the trusted host
-  // injects it from the connection's clientHello, and the UI-side subscribe input cannot touch it —
-  // whether a client understands `workflowRun.*` deltas is a fact of the **connection**.
+  // `workflowRunDeltas` is in the same family as `clientMode` (10 §3.1): the trusted host injects it from the connected
+  // clientHello, and the UI-side subscribe params cannot touch it — whether a client understands `workflowRun.*` deltas
+  // is a fact of the **connection**.
   it.each([true, false])(
     "subscribe 的 workflowRunDeltas 只由 clientHello 声明决定（declared=%s）",
     async (declared) => {
@@ -747,7 +744,7 @@ describe("zcodeAgentService v4 conversation channel", () => {
         await scope.service.subscribeConversationV4({
           workspacePath,
           sessionId: "workflow-run-deltas-session",
-          // The caller's self-reported same-named field: it must be entirely overridden by the trusted value and take effect under neither declaration.
+          // A caller self-reporting the same-named field: the trusted value must fully override it, under both declarations.
           workflowRunDeltas: !declared,
         } as never);
 
@@ -856,7 +853,7 @@ describe("zcodeAgentService v4 conversation channel", () => {
       expect(subscribeRequest?.params.topic).toBe("conversation/s1");
       expect(subscribeRequest?.params.clientMode).toBe("desktop-continuous");
       expect(subscribeRequest?.params).not.toHaveProperty("deliveryProfile");
-      // This clientHello carries no capabilities: the subscription must not include the deltas bit, and the CLI sends whole-key patches for legacy consumers.
+      // This clientHello has no capabilities: the subscription must not carry the deltas bit, and the CLI sends whole-key patches as for a legacy consumer.
       expect(subscribeRequest?.params).not.toHaveProperty("workflowRunDeltas");
       expect(typeof subscribeRequest?.params.connectionId).toBe("string");
       expect(String(subscribeRequest?.params.connectionId)).toMatch(/^host-/);
@@ -1482,8 +1479,8 @@ describe("zcodeAgentService v4 conversation channel", () => {
         },
         issuedAt: 1700000000000,
       });
-      // subscribe + command with the same workspaceIdentity reuse the same host child; the mobile
-      // side does not create its own Agent runtime, and relay/main hold no rewind state either.
+      // subscribe + command for the same workspaceIdentity reuse the same host child;
+      // mobile does not create its own Agent runtime, and relay/main holds no rewind state.
       expect(commandResolver).toHaveBeenCalledTimes(1);
     } finally {
       await scope.dispose();

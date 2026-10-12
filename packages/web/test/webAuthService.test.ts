@@ -261,11 +261,13 @@ describe("WebAuthService", () => {
 });
 
 /**
- * BigModel 登录。
+ * BigModel login.
  *
- * 起因：private 分享的 owner 判定用的是 provider 自己的 user id（BigModel 是
- * CustomerNumber 数字串，Z.ai 是 sub UUID），所以桌面端用 BigModel 发布的私享分享，
- * 在只能 z.ai 登录的分享页上永远匹配不到 owner，服务端按存在性隐匿返回 404/3211。
+ * Origin: the owner check for private shares uses the provider's own user id
+ * (BigModel is a CustomerNumber numeric string, Z.ai is a sub UUID), so a
+ * private share published from the desktop with BigModel could never match the
+ * owner on a share page that only supported z.ai login; the server hides
+ * existence with 404/3211.
  */
 describe("WebAuthService BigModel provider", () => {
   afterEach(() => {
@@ -284,11 +286,12 @@ describe("WebAuthService BigModel provider", () => {
     expect(url.pathname).toBe("/login");
     expect(url.searchParams.get("redirect")).toBe("https://zcode.z.ai/cn/share/callback");
     expect(url.searchParams.get("appId")).toBe("zcode");
-    // ZAI 专用参数不能出现，否则 BigModel 侧会忽略 redirect 直接回默认地址
+    // ZAI-specific params must be absent, otherwise the BigModel side ignores
+    // redirect and returns to its default address
     expect(url.searchParams.get("redirect_uri")).toBeNull();
     expect(url.searchParams.get("client_id")).toBeNull();
     expect(url.searchParams.get("response_type")).toBeNull();
-    // 回调页要靠它知道用哪个 provider 换 token
+    // the callback page relies on this to know which provider to exchange the token with
     expect(sessionStorage.getItem("oauth_pending_provider")).toBe("bigmodel");
   });
 
@@ -319,7 +322,7 @@ describe("WebAuthService BigModel provider", () => {
     expect(localStorage.getItem("oauth:active_provider")).toBe("bigmodel");
     expect(localStorage.getItem("oauth:bigmodel:access_token")).toBe("bigmodel-token");
     expect(localStorage.getItem("zcodejwttoken")).toBe("jwt-token");
-    // pending provider 用完即清，避免污染下一次登录
+    // pending provider is cleared right after use to avoid polluting the next login
     expect(sessionStorage.getItem("oauth_pending_provider")).toBeNull();
   });
 

@@ -3,10 +3,12 @@ import type { ToolCallCreateWorkflowCausalityGraph } from "@zcode/shared/zcode-p
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 
 /**
- * 确认窗的留白行（docs/dynamic-workflow/presentation.md「Holes on the timeline」的「The hole station」）：
- * 还开着的留白按源码序排成一行芯片（笔、名字；类型不上界面），后面一句「运行到留白处会暂停，等主代理
- * 补全后继续。」——用户批准的是一个会停下来等代码的 run，这一句要在按下允许之前读到。没有留白时整行缺席。
- * 从 WorkflowPermissionBlock.tsx 拆出（max-lines 门）。
+ * The confirmation dialog's hole row (docs/dynamic-workflow/presentation.md "Holes on the timeline",
+ * section "The hole station"): holes still open are laid out as a row of chips in source order
+ * (pen, name; kind is not rendered), followed by "the run pauses at each hole and waits for the main
+ * agent to fill it before continuing." The user is approving a run that will stop and wait for code,
+ * and that sentence must be readable before Allow is pressed. The whole row is absent when there are
+ * no holes. Split out of WorkflowPermissionBlock.tsx (max-lines gate).
  */
 export function WorkflowPermissionHoles({
   holes,

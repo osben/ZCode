@@ -59,7 +59,7 @@ export function createGenUiStateStorage(root: string): GenUiStateStorage {
     changes.fire({ target, state });
   }
   function publish(file: string) {
-    // watch 事件与写入 ACK 可以同时触发；串行读取防止较早快照迟到覆盖较新通知。
+    // watch events and write ACKs can fire concurrently; serializing reads prevents an earlier snapshot arriving late from overwriting a newer notification.
     const next = (notifications.get(file) ?? Promise.resolve())
       .catch(() => undefined)
       .then(() => publishLatest(file));
@@ -118,7 +118,7 @@ export function createGenUiStateStorage(root: string): GenUiStateStorage {
       await observe(target);
       const record = await readRecord(fileFor(target));
       const state = record?.state ?? null;
-      // 读取不能吞掉其他页面等待的变更通知；只为首次观察建立比较基线。
+      // Reads must not swallow change notifications other pages are waiting for; establish the comparison baseline only on first observation.
       if (!lastPublished.has(fileFor(target)))
         lastPublished.set(fileFor(target), JSON.stringify(state));
       return state;
@@ -131,7 +131,7 @@ export function createGenUiStateStorage(root: string): GenUiStateStorage {
         .catch(() => {})
         .then(async () => {
           await observe(target);
-          // 所有窗口复用同一会话锁；完整快照写入与容量淘汰属于同一个提交，不能各自读改写目录清单。
+          // All windows share the same session lock; the full-snapshot write and capacity eviction form one commit, and must not each read-modify-write the directory listing.
           const release = await acquireFileLock(
             join(directory(target), "state"),
             LOCK_RETRIES,

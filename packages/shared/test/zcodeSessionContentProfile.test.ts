@@ -64,7 +64,7 @@ function base(messageId: string, partId: string) {
   return { partId, sessionId: SESSION_ID, messageId };
 }
 
-/** 覆盖 task index 所有判定分支会看的 part 类型与 metadata 形态。 */
+/** Covers the part types and metadata shapes that every task index decision branch looks at. */
 function fixtureMessages(): ZCodeMessageWithParts[] {
   return [
     user("m_u1", 10, [
@@ -129,12 +129,12 @@ function fixtureMessages(): ZCodeMessageWithParts[] {
       },
       { ...base("m_a1", "p9"), type: "text", text: "订单查询在 orderService 里" },
     ]),
-    // compact summary（compaction 无 timelineStatus）必须仍被识别为不可见。
+    // A compact summary (compaction without timelineStatus) must still be recognized as invisible.
     user("m_u2", 30, [
       { ...base("m_u2", "p10"), type: "compaction", auto: true },
       { ...base("m_u2", "p11"), type: "text", text: "summary of history" },
     ]),
-    // model-only tool part metadata 让整条消息变成 providerContextOnly。
+    // model-only tool part metadata turns the whole message into providerContextOnly.
     user("m_u3", 40, [
       {
         ...base("m_u3", "p12"),
@@ -231,7 +231,7 @@ describe("elideSessionSnapshotForIndex", () => {
     expect(byId.get("p6")).toMatchObject({ state: { status: "error", input: {}, error: "" } });
     expect(byId.get("p7")).toMatchObject({ state: { status: "pending", input: {}, raw: "" } });
     expect(byId.get("p8")).toMatchObject({ state: { status: "running", input: {}, metadata: {} } });
-    // 非大载荷 part 原样保留（同一引用即可证明未改写）。
+    // Non-large-payload parts are kept as-is (being the same reference proves they were not rewritten).
     expect(byId.get("p3")).toBe(full.messages[1]?.parts[0]);
     expect(byId.get("p16")).toBe(full.messages[5]?.parts[1]);
   });

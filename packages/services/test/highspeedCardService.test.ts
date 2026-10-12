@@ -22,9 +22,9 @@ function deferred<T>() {
 }
 
 /**
- * Drain microtasks until the condition holds, so tests don't bind to an internal number of awaits; an upper
- * bound prevents an infinite idle spin if the implementation regresses
- * (a pure microtask loop starves timers, and vitest's case timeout cannot interrupt it).
+ * Drains microtasks until the condition holds, avoiding coupling tests to the internal number of awaits;
+ * an upper bound prevents an infinite spin if the implementation regresses
+ * (a pure microtask loop starves timers, and vitest's per-test timeout cannot interrupt it).
  */
 async function drainUntil(condition: () => boolean, label: string): Promise<void> {
   for (let turn = 0; turn < 1_000; turn += 1) {
@@ -107,9 +107,9 @@ describe("HighspeedCardService", () => {
       model: "GLM-5.3",
     });
 
-    // Regression: the full session-selected providerId used to be passed through into the draw body and was
-    // rejected by the server-side allowlist
-    // with a 3001 parameter error; the contract requires the body's provider to be builtin:*-coding-plan.
+    // Regression: the session selection's full providerId used to be passed through into the draw body
+    // and was rejected by the server allowlist with 3001 invalid parameter; the contract requires the
+    // body's provider to be a builtin:*-coding-plan.
     expect(result.kind).toBe("accelerated");
     expect(calls).toHaveLength(1);
     expect(calls[0]).toMatchObject({
@@ -155,10 +155,9 @@ describe("HighspeedCardService", () => {
       resolveModelCovered: async () => covered,
     });
 
-    // Regression: a stale (coding-plan provider, decommissioned model) pair restored from a session used to
-    // draw anyway;
-    // the contract requires no API call when the model isn't in the selected provider's model catalog
-    // (spec §3 rule 14).
+    // Regression: a stale (coding-plan provider, retired model) combination restored from a session used
+    // to still send draw; the contract requires no API call when the model is not in the selected
+    // provider's catalog (spec §3 rule 14).
     const staleModel = await service.prepareTurn({
       taskId: "task-1",
       providerId: "account:bigmodel-team-coding-plan",
@@ -167,8 +166,7 @@ describe("HighspeedCardService", () => {
     expect(staleModel).toMatchObject({ kind: "fallback", reason: "unavailable" });
     expect(calls).toHaveLength(0);
 
-    // The gate doesn't enter cooldown or change card state; after switching back to a covered model the next
-    // turn can draw immediately.
+    // The gate neither starts a cooldown nor changes card state; switching back to a cataloged model allows drawing on the next turn.
     covered = true;
     const coveredModel = await service.prepareTurn({
       taskId: "task-1",
@@ -221,8 +219,7 @@ describe("HighspeedCardService", () => {
     expect(gatedResult).toMatchObject({ kind: "fallback", reason: "no-coding-plan" });
     expect(calls).toHaveLength(0);
 
-    // The gate doesn't enter cooldown or change card state; once the user enables Coding Plan the next turn
-    // can draw immediately.
+    // The gate neither starts a cooldown nor changes card state; once the user activates a Coding Plan, drawing works on the next turn.
     supported = true;
     const entitledResult = await service.prepareTurn({
       taskId: "task-1",
@@ -263,8 +260,7 @@ describe("HighspeedCardService", () => {
         cardResponse(request.task_id, now),
       );
       const waits: Array<() => void> = [];
-      // Simulate Provider Runtime initialization blocking: the model selection view / Coding Plan decision
-      // takes forever to return.
+      // Simulate Provider Runtime initialization blocking: the model selection view / Coding Plan check is slow to return.
       const blocked = deferred<boolean>();
       const service = new HighspeedCardService({
         transport,
@@ -281,16 +277,14 @@ describe("HighspeedCardService", () => {
         waitBudgetMs: 1,
       };
 
-      // Regression (CR-02): the gate await used to be unconstrained by the 1s send budget, so sends hung
-      // indefinitely when the Registry wasn't ready.
+      // Regression (CR-02): the gate await used to be unconstrained by the 1s send budget, so sending hung indefinitely when the Registry was not ready.
       const first = service.prepareTurn(params);
       await drainUntil(() => waits.length > 0, "send budget timer registered");
       waits.shift()?.();
       expect(await first).toMatchObject({ kind: "fallback", reason: "unavailable" });
       expect(calls).toHaveLength(0);
 
-      // The decision isn't cancelled: a late result neither backfills a draw nor changes card or cooldown
-      // state; the next turn's decision hitting means a normal draw.
+      // The check is not cancelled; the late result neither back-fills a draw nor changes card or cooldown state; the next turn's check hitting draws normally.
       blocked.resolve(true);
       await new Promise<void>((resolve) => setTimeout(resolve, 0));
       expect(calls).toHaveLength(0);
@@ -319,9 +313,9 @@ describe("HighspeedCardService", () => {
       model: "glm-5",
       waitBudgetMs: 1000,
     });
-    // After the gates pass within budget, the draw wait begins: both segments share the same deadline set
-    // when prepareTurn was entered,
-    // and the draw must not get a fresh full 1s, otherwise the total wait could reach "gate time + 1s".
+    // After the gate passes within budget, the draw wait begins: both segments share the same deadline
+    // from entering prepareTurn, and draw must not regain a full 1s; otherwise total waiting can reach
+    // "gate time + 1s".
     await drainUntil(() => waits.length > 0, "send budget timer registered");
     catalog.resolve(true);
     await drainUntil(() => calls.length > 0, "draw started");
@@ -359,8 +353,8 @@ describe("HighspeedCardService", () => {
     expect((await service.prepareTurn(params)).kind).toBe("accelerated");
     waits.length = 0;
 
-    // Regression (CR-02): accelerated auth resolution when reusing a card used to be awaited outside the
-    // budget, so a stuck credential resolution hung the send indefinitely.
+    // Regression (CR-02): when reusing a card, accelerated-auth resolution used to be awaited separately
+    // outside the budget, so a stuck credential resolution hung sending indefinitely.
     pendingAuth = deferred<HighspeedInferenceAuth>();
     const blocked = service.prepareTurn(params);
     await drainUntil(() => waits.length > 0, "send budget timer registered");
@@ -372,7 +366,7 @@ describe("HighspeedCardService", () => {
     });
     expect((await service.getSnapshot()).card?.cardId).toBe("hsc-1");
 
-    // Card retained: the next turn after auth recovery reuses the card for acceleration without redrawing.
+    // Card retained: the next turn after auth recovery reuses this card for acceleration without redrawing.
     pendingAuth.resolve(auth);
     pendingAuth = null;
     const next = await service.prepareTurn(params);
@@ -429,19 +423,19 @@ describe("HighspeedCardService", () => {
 
     expect(result.kind).toBe("accelerated");
     expect(result.card?.taskId).toBe("task-1");
-    // Accelerated turns point at the hidden accelerated-card builtin provider via the standard Selection;
-    // static facts like the endpoint come from the Provider
-    // Config, and only the card JWT and card ID go out with modelExecution as this execution's dynamic auth.
+    // The accelerated turn points at the hidden accelerated-card builtin provider through the standard
+    // Selection; static facts such as endpoints come from Provider Config, and only the card JWT and
+    // card ID go down with modelExecution as this execution's dynamic auth.
     expect(result.execution?.modelSelection).toEqual({
       providerId: "account:zai-highspeed-card",
       modelId: "glm-5",
     });
     expect(result.execution?.requestAuth.headers["X-Highspeed-Card-ID"]).toBe("hsc-1");
-    // Any failure of the accelerated request falls back to the session model (spec §2.2): card expiry gets
-    // its own reason via 3402, and the catch-all rule carries no error code.
-    // The CLI matches only by declaration, and the declaration here is the single source of truth for the
-    // fallback's coverage; the fallback target = the session selection submitted this time,
-    // not the resident selection in CLI memory (it may be unbound under a cold-recovery race).
+    // Any accelerated-request failure falls back to the session model (spec §2.2): card expiry gets its
+    // own reason via 3402 while the catch-all rule carries no error code.
+    // The CLI matches by declaration only, so the declaration here is the single source of truth for
+    // fallback coverage; the fallback target = the session selection submitted this time, not the CLI's
+    // in-memory resident selection (which may be unbound under cold-recovery races).
     expect(result.execution?.selectionFallback).toEqual({
       providerId: "account:zai-highspeed-card",
       rules: [
@@ -455,8 +449,7 @@ describe("HighspeedCardService", () => {
 
   it("carries the session reasoning level into the accelerated selection options", async () => {
     const now = 10_000;
-    // Reproduce the user-hit BigModel scenario: the card echoes GLM-5.3, and the accelerated provider lands
-    // on bigmodel by account family.
+    // Reproduce the BigModel scenario a user hit: the card echoes GLM-5.3, and the accelerated provider resolves to bigmodel by account family.
     const { transport } = createTransport(async (request) => ({
       code: 0,
       msg: "success",
@@ -490,18 +483,16 @@ describe("HighspeedCardService", () => {
       reasoningLevel: "enabled",
     });
 
-    // Regression: the accelerated card used to drop the session reasoning level, and the CLI Registry failed
-    // the whole send with
-    // "Reasoning level is required" because the execution selection lacked a level. Acceleration swaps the
-    // endpoint, not the model; the level must stay consistent.
+    // Regression: the accelerated card used to drop the session's reasoning level, and the CLI Registry
+    // failed the whole turn with "Reasoning level is required" because the execution selection lacked a
+    // level. Acceleration only swaps the endpoint, not the model, so the level must be identical.
     expect(result.kind).toBe("accelerated");
     expect(result.execution?.modelSelection).toEqual({
       providerId: "account:bigmodel-highspeed-card",
       modelId: "GLM-5.3",
       options: { reasoningLevel: "enabled" },
     });
-    // The fallback target carries the same level: the degraded original-model request must not be rejected
-    // by the Registry for a missing level either.
+    // The fallback target carries the same level: the downgraded original-model request must not be rejected by the Registry for a missing level either.
     expect(result.execution?.selectionFallback.target).toEqual({
       providerId: "account:bigmodel-team-coding-plan",
       modelId: "GLM-5.3",
@@ -529,9 +520,8 @@ describe("HighspeedCardService", () => {
     const service = new HighspeedCardService({
       transport,
       now: () => now,
-      // BigModel Team: accelerated inference and draw go through the same highspeed gateway, so both the
-      // Coding Plan business JWT
-      // and the Team identity headers must be attached, from the same selected-connection resolution.
+      // BigModel Team: accelerated inference and draw go through the same highspeed gateway and must carry
+      // the Coding Plan business JWT and Team identity headers, resolved from the same selected connection.
       resolveInferenceAuth: async () => ({
         zcodeJwt: "zcode-jwt",
         family: "bigmodel",
@@ -549,9 +539,8 @@ describe("HighspeedCardService", () => {
     });
 
     // Regression: accelerated inference used to send only the zcode JWT + card ID, missing the Coding Plan
-    // dual JWT + Team identity headers,
-    // and the accelerated gateway returned 401 auth_failed. The Coding Plan headers must exactly match what
-    // draw carries, plus the card ID.
+    // dual JWT + Team identity headers, and the highspeed gateway returned 401 auth_failed. The Coding Plan
+    // headers must be exactly identical to draw's, plus the card ID.
     expect(result.kind).toBe("accelerated");
     expect(result.execution?.requestAuth.apiKey).toBe("zcode-jwt");
     expect(result.execution?.requestAuth.headers).toEqual({
@@ -600,10 +589,9 @@ describe("HighspeedCardService", () => {
       model: "glm-5",
       waitBudgetMs: 1000,
     });
-    // The budget is counted from entering prepareTurn and covers the async gates (rules 11/14); drain
-    // microtasks until the draw is actually issued
-    // before letting the budget expire, so the test doesn't bind to an internal number of awaits and the
-    // expiry doesn't land in the gate phase.
+    // The budget starts when prepareTurn is entered and covers the async gates (rules 11/14); drain
+    // microtasks until draw has actually started before letting the budget expire, so the test is not
+    // coupled to the internal number of awaits and the expiry does not land in the gate phase.
     await drainUntil(() => calls.length > 0, "draw started");
     waits.shift()?.();
     expect(await firstPromise).toMatchObject({ kind: "fallback", reason: "draw-timeout" });
@@ -625,10 +613,9 @@ describe("HighspeedCardService", () => {
 
   it("releases the in-flight draw when the background request fails and draws again next turn", async () => {
     // CR-01 regression: when a draw request never returns, the 1s race only ends "this wait"; inFlightDraw
-    // can only be released in the finally of the draw Promise's
-    // settle. The transport must reject the timed-out request; otherwise every later send reuses the same
-    // permanently pending Promise, waits 1s, and degrades —
-    // no new draw is ever issued for the rest of the app's lifetime, and only a restart recovers.
+    // can only be released in the finally of the draw Promise settling. The transport must reject the
+    // timed-out request; otherwise every later send reuses the same permanently pending Promise, waits 1s
+    // and degrades, no new draw is ever started for the rest of the app's lifetime, and only a restart recovers.
     let now = 40_000;
     const pending = deferred<HighspeedDrawResponse>();
     let drawCalls = 0;
@@ -655,8 +642,7 @@ describe("HighspeedCardService", () => {
     expect(await first).toMatchObject({ kind: "fallback", reason: "draw-timeout" });
     expect((await service.getSnapshot()).drawing).toBe(true);
 
-    // Simulate the transport aborting → rejecting after the background lifetime is exhausted (instead of
-    // pending forever).
+    // Simulate the transport aborting → rejecting after the background lifetime expires (instead of pending forever).
     pending.reject(new Error("highspeed draw request timed out after 20000ms"));
     await new Promise<void>((resolve) => setTimeout(resolve, 0));
     expect((await service.getSnapshot()).drawing).toBe(false);
@@ -744,8 +730,7 @@ describe("Highspeed HTTP contract", () => {
       }),
     ).toEqual({
       Authorization: "Bearer zcode-jwt",
-      // The API contract requires X-Bigmodel-Authorization to carry the Bearer prefix; the credential store
-      // may hold a bare token.
+      // The API contract requires X-Bigmodel-Authorization to carry the Bearer prefix; the credential store may hold a bare token.
       "X-Bigmodel-Authorization": "Bearer maas-jwt",
       "Bigmodel-Target-Type": "PERSONAL",
     });
@@ -920,7 +905,7 @@ describe("Highspeed HTTP contract", () => {
 
     expect(warn).toHaveBeenCalledWith(
       undefined,
-      "Highspeed API network request failed",
+      "Highspeed 接口网络请求失败",
       expect.objectContaining({
         operation: "share",
         method: "POST",
@@ -993,7 +978,7 @@ describe("Highspeed HTTP contract", () => {
 
     expect(warn).toHaveBeenCalledWith(
       undefined,
-      "Highspeed API response schema validation failed",
+      "Highspeed 接口响应结构校验失败",
       expect.objectContaining({
         operation: "share",
         status: 200,
@@ -1037,10 +1022,9 @@ describe("Highspeed HTTP contract", () => {
   });
 
   it("aborts a request that never returns so the in-flight draw can be released", async () => {
-    // CR-01 regression: fetch used to have no deadline at all; when a proxy/server accepted the connection
-    // and never returned, the Promise stayed pending forever.
-    // The request lifetime must be bounded and clearly greater than the 1s send-wait budget; after the
-    // timeout, abort → reject lets the caller's finally run.
+    // CR-01 regression: fetch previously had no deadline; when a proxy/server accepted the connection but
+    // never responded, the Promise stayed pending forever. The request lifetime must be bounded and
+    // strictly larger than the 1s send-wait budget; on timeout abort → reject so the caller's finally runs.
     vi.useFakeTimers();
     try {
       const warn = vi.fn();
@@ -1054,7 +1038,7 @@ describe("Highspeed HTTP contract", () => {
         fetchImpl: (_input, init) =>
           new Promise<Response>((_resolve, reject) => {
             observedSignal = init?.signal;
-            // Only abort can end this Promise, simulating a connection that never returns.
+            // Only abort can settle this Promise, simulating a connection that never responds.
             init?.signal?.addEventListener("abort", () => reject(init.signal?.reason), {
               once: true,
             });

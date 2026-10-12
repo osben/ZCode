@@ -86,7 +86,7 @@ async function withTempDir(run: (dir: string) => Promise<void>): Promise<void> {
   }
 }
 
-/** 在模型目录中放置一个与目录大小一致的文件，跳过网络下载。 */
+/** Places a file matching the directory's expected size into the models directory, skipping the network download. */
 async function installFakeModel(
   modelsDir: string,
   descriptor: VoiceModelDescriptor,
@@ -335,7 +335,7 @@ test("cancelling a download removes the partial file", async () => {
         return;
       }
       res.writeHead(200, { "content-length": MODEL_BYTES.length });
-      // 先发送一半数据并保持连接，模拟慢速下载。
+      // Send half the data first and keep the connection open, simulating a slow download.
       res.write(MODEL_BYTES.subarray(0, MODEL_BYTES.length / 2));
     });
     try {
@@ -638,7 +638,7 @@ test("beginStream failure reschedules idle unload so a loaded model is not left 
     const engine: VoiceEngineModel = {
       ...makeFakeEngine([]),
       supportsStreaming: () => true,
-      // Load 已成功（ensureLoaded 完成后）stream 初始化才失败：这正是 catch 分支要兜住的路径。
+      // Load succeeded (ensureLoaded finished) and only then stream init failed: exactly the path the catch branch must cover.
       // Полная стрим-поверхность обязательна, иначе транскрайбер отклонит streaming до вызова beginStream.
       beginStream: async () => {
         throw new Error("stream slot init failed");
@@ -882,7 +882,7 @@ test("service removes a loaded model by unloading it first", async () => {
   });
 });
 
-// 真实模型端到端验证：需要显式提供已下载的 GGUF 与 16 kHz 单声道 WAV，否则跳过。
+// Real-model end-to-end verification: requires an explicitly provided downloaded GGUF and a 16 kHz mono WAV; skipped otherwise.
 const e2eModelPath = process.env.ZCODE_VOICE_E2E_MODEL;
 const e2eWavPath = process.env.ZCODE_VOICE_E2E_WAV;
 test(

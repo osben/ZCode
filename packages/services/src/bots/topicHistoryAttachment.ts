@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { PROTOCOL_V4_LIMITS } from "@zcode/shared/zcode-protocol-v4";
 import type { BotTopicHistoryBatch, ZCodePromptFileAttachment } from "@zcode/shared";
 
-/** 历史正文只写一份附件；服务端归档用于权限和检查点，不再生成模型隐藏消息。 */
+/** History content becomes exactly one attachment; server-side archiving covers permissions and checkpoints, and no model-hidden messages are generated. */
 export function createTopicHistoryAttachment(
   batch: BotTopicHistoryBatch,
   inputId: string,

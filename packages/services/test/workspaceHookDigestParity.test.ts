@@ -42,13 +42,13 @@ afterEach(async () => {
 });
 
 /**
- * D17/M1 digest parity 哨兵（Settings 侧自一致校验）：
- * 比较的是 Settings builder（hooksService.loadHooks）与其装配公式的 shared-API 镜像，
- * 锁定 hooksService 内部装配与 shared 公开 API 的一致性（防内部漂移）。
- * 注意：本测试**不覆盖 Runtime（config-factory）装配**——Runtime 入口的 parity 由
- * adapters 侧 tests/workspace-hook-digest-parity.test.ts 用真实 createConfig 产物对比，
- * 双 builder 分叉由那边负责转红；两处测试配套，改名/删除任一侧都必须同步另一侧。
- * 若 env/CLI 未来支持 hooks 或 OR-merge 语义变动导致双 builder 分叉，adapters 侧转红。
+ * D17/M1 digest parity sentinel (Settings-side self-consistency check):
+ * compares the Settings builder (hooksService.loadHooks) against the shared-API mirror of its assembly formula,
+ * locking hooksService's internal assembly to the shared public API (guarding against internal drift).
+ * Note: this test does **not cover the Runtime (config-factory) assembly** — parity for the Runtime entry is covered by
+ * adapters-side tests/workspace-hook-digest-parity.test.ts comparing real createConfig output;
+ * divergence between the two builders turns red over there. The two tests are a pair; renaming/removing either side
+ * requires syncing the other. If env/CLI later supports hooks or OR-merge semantics change and the builders fork, the adapters side turns red.
  */
 describe("workspace hook dual builder digest parity (D17)", () => {
   it("hooksService snapshot 与 shared 装配规则镜像产出一致 digest", async () => {
@@ -84,7 +84,7 @@ describe("workspace hook dual builder digest parity (D17)", () => {
     vi.stubEnv("HOME", home);
     vi.stubEnv("USERPROFILE", home);
 
-    // ── 参照侧：镜像 loadHooksImpl 的装配（project sources + user source → runtimeRoot）──
+    // -- Reference side: mirror loadHooksImpl's assembly (project sources + user source → runtimeRoot) --
     const { sources: projectSources } = await readWorkspaceHookProjectSources({
       workingDirectory: workspace,
     });
@@ -107,7 +107,7 @@ describe("workspace hook dual builder digest parity (D17)", () => {
       runtimeRoot,
     });
 
-    // ── 实测侧：Settings / hooksService ──
+    // -- Measured side: Settings / hooksService --
     const loaded = await createHooksService().loadHooks({ workspacePath: workspace });
     const actual = loaded.workspaceHookSnapshot;
 
@@ -123,7 +123,7 @@ describe("workspace hook dual builder digest parity (D17)", () => {
     expect(actual?.hooks.map((hook) => hook.configuredEnabled)).toEqual(
       reference?.hooks.map((hook) => hook.configuredEnabled),
     );
-    // user hooks.enabled=true 必须传导为 runtimeHooksEnabled=true（否则两边都静默关闭）
+    // user hooks.enabled=true must translate into runtimeHooksEnabled=true (otherwise both sides silently disable)
     expect(reference?.hooks.every((hook) => hook.runtimeHooksEnabled)).toBe(true);
   });
 });

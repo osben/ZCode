@@ -2,12 +2,13 @@ import { readFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
 
 /**
- * 读取仓库源码用于文本契约断言。
+ * Reads repository source for text-contract assertions.
  *
- * Bugfix：本文件的断言里有跨行片段（例如 `TOKEN =\n  "..."`），而仓库只对 *.mjs / *.sh
- * 声明了 `eol=lf`，其余源码在 `core.autocrlf=true` 的 Windows 检出里是 CRLF。
- * 直接 `toContain` 跨行片段时 `\n` 匹配不到 `\r\n`，用例在 Windows 上必然失败，
- * 而它想断言的其实是源码内容契约，与换行字节无关。统一归一成 LF 再比对。
+ * Bugfix: some assertions in this file contain multi-line fragments (e.g. `TOKEN =\n  "..."`),
+ * but the repo only declares `eol=lf` for *.mjs / *.sh; all other sources are CRLF in a Windows
+ * checkout with `core.autocrlf=true`. When `toContain` matches a multi-line fragment directly,
+ * `\n` never matches `\r\n` and the case would always fail on Windows. What it asserts is really
+ * a source-content contract, independent of line-ending bytes. Normalize to LF before comparing.
  */
 async function readSource(url: URL): Promise<string> {
   return (await readFile(url, "utf8")).replaceAll("\r\n", "\n");
@@ -137,10 +138,12 @@ describe("automation typography tokens", () => {
     );
     expect(offPeakEditSource).not.toContain("renderDescription={(value)");
     expect(automationEditSource).not.toContain("权限 trigger 曾固定 160px");
-    // 闲时与定时任务共享 builder、provider 和会话权限词表，避免配置文案漂移。
+    // Off-peak and scheduled tasks share the builder, provider, and session permission
+    // vocabulary to keep the config copy from drifting.
     expect(offPeakEditSource).toContain("buildAutomationModeOption(mode)");
     expect(offPeakEditSource).not.toContain("offPeak.mode.");
-    // 手写复刻已删除：两页都不再自行维护权限菜单结构与 warning 语义。
+    // Handwritten replicas were removed: neither page maintains its own permission menu
+    // structure or warning semantics anymore.
     expect(automationEditSource).not.toContain('mode === "yolo"');
     expect(offPeakEditSource).not.toContain('mode === "yolo"');
     expect(offPeakEditSource).not.toContain("OffPeakToolbarSelect");
@@ -166,8 +169,9 @@ describe("automation typography tokens", () => {
     expect(
       automationEditSource.match(/className=\{AUTOMATION_FORM_FIELD_CLASSNAME\}/g)?.length ?? 0,
     ).toBeGreaterThanOrEqual(5);
-    // 修复原因：45a0078032（会话内创建闲时任务）新增了条件渲染的「绑定会话」字段，
-    // 表单字段从 2 个变为 3 个（绑定会话 / 任务标题 / 任务指令），旧断言未同步导致 staging 红测。
+    // Fix rationale: 45a0078032 (creating off-peak tasks inside a session) added a conditionally
+    // rendered "bind session" field, taking the form fields from 2 to 3 (bind session / task
+    // title / task prompt); the old assertion was not updated, causing a staging red test.
     expect(
       offPeakEditSource.match(/className=\{AUTOMATION_FORM_FIELD_CLASSNAME\}/g)?.length ?? 0,
     ).toBe(3);
@@ -178,7 +182,8 @@ describe("automation typography tokens", () => {
     const offPeakEditSource = sourceByFile.get("OffPeakEditView.tsx") ?? "";
     const instructionsSource = sourceByFile.get("AutomationInstructionsComposer.tsx") ?? "";
 
-    // 只校验常量取值，不绑定换行格式；格式化工具可能把声明折到一行。
+    // Only verify the constant value, not the line wrapping; formatters may fold the declaration
+    // onto one line.
     expect(instructionsSource).toMatch(
       /AUTOMATION_FORM_INPUT_TYPOGRAPHY_CLASSNAME =\s*"text-ui-base leading-5"/,
     );

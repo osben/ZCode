@@ -19,7 +19,8 @@ export function shouldContextCompactionTimelineCompleteTask(
     return true;
   }
 
-  // 修复原因：本地 `/compact` 失败兜底事件可能早于 agent 回填 phase。
-  // 这类手动命令本身就是独立 turn，终态仍应收口 task。
+  // Fix reason: the local `/compact` failure fallback event may arrive before the agent backfills
+  // the phase. Such a manual command is its own standalone turn, so its terminal state should
+  // still settle the task.
   return timeline.trigger === "manual" && timeline.phase === undefined;
 }

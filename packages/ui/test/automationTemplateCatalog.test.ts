@@ -42,7 +42,8 @@ function createScenes(cronExpr = "0 9 * * 1-5"): ClientSceneConfig[] {
               id: "item-morningDevBrief-cronExpr",
               type: "cronExpr",
               contents: { cn: cronExpr, en: cronExpr },
-              // 服务端 label 只作配置说明，外显必须由 contents 中的 cron 本地解析。
+              // The server-side label is config documentation only; the visible display must be
+              // resolved locally from the cron in contents.
               labels: { cn: "错误的服务端外显", en: "Wrong server display" },
               on_finish: null,
               img: null,

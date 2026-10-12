@@ -50,10 +50,10 @@ describe("ZCodeStdioTransport process tree result", () => {
     const transport = new ZCodeStdioTransport(child);
     const startedAt = performance.now();
 
-    // Bug 回归：Windows taskkill 已完成且 waiter 根据 OS 存活事实返回成功时，
-    // Node 的 exit 事件仍可能晚一轮投递，child.exitCode 此刻合法地保持 null。
+    // Bug regression: when Windows taskkill has completed and the waiter returns success based on OS liveness,
+    // Node's exit event may still be delivered a tick later, and child.exitCode legitimately stays null at that point.
     await expect(transport.disposeAndWait()).resolves.toBeUndefined();
-    // stderr drain 只能使用 250ms，不能重新借到整个 Windows 进程树窗口。
+    // stderr drain only gets 250ms; it cannot borrow the whole Windows process-tree window again.
     expect(performance.now() - startedAt).toBeLessThan(3_500);
     expect(terminateProcessTreeAndWaitMock).toHaveBeenCalledOnce();
     expect(terminateProcessTreeAndWaitMock).toHaveBeenCalledWith(

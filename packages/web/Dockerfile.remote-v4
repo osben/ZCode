@@ -1,0 +1,30 @@
+FROM node:24.14.0-bookworm-slim AS build
+WORKDIR /workspace
+RUN corepack enable && corepack prepare pnpm@10.33.2 --activate
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.base.json LICENSE .npmrc THIRD-PARTY-NOTICES.md ./
+COPY patches ./patches
+COPY scripts ./scripts
+COPY third-party ./third-party
+COPY config ./config
+COPY public ./public
+COPY packages/web ./packages/web
+COPY packages/ui ./packages/ui
+COPY packages/shared ./packages/shared
+COPY packages/client ./packages/client
+COPY packages/services ./packages/services
+COPY packages/rpc ./packages/rpc
+COPY packages/provider ./packages/provider
+COPY packages/provider-node ./packages/provider-node
+COPY packages/zcode-cua ./packages/zcode-cua
+COPY packages/model-option-map ./packages/model-option-map
+RUN pnpm install --frozen-lockfile --filter @zcode/web... --ignore-scripts
+# Deployment inputs, not secrets: the relay address is public and baked into the browser bundle.
+ARG ZCODE_ENV=production
+ARG VITE_ZCODE_WEB_REMOTE_CONTROL_RELAY_WS_URL
+ENV ZCODE_ENV=$ZCODE_ENV VITE_ZCODE_WEB_REMOTE_CONTROL_RELAY_WS_URL=$VITE_ZCODE_WEB_REMOTE_CONTROL_RELAY_WS_URL
+RUN pnpm --filter @zcode/web exec vite build --base=/remote/v4/
+
+FROM nginx:1.29-alpine
+COPY packages/web/nginx.remote-v4.conf /etc/nginx/conf.d/default.conf
+COPY --from=build /workspace/packages/web/dist /usr/share/nginx/html/remote/v4
+EXPOSE 8080

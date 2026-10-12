@@ -110,9 +110,9 @@ describe("resolvePlanIdentitySnapshot", () => {
   });
 
   it("uses the first active Start Plan in server order as plan_product_id and follows server reordering", () => {
-    // 口径快照（供数据侧评审）：Start Plan subscription.details 现在是全部 active 套餐
-    // 按服务端优先级排序；plan_product_id 固定取 details[0]。服务端调整排序或套餐
-    // 增减时，该维度会跟随翻转——这是有意的口径，不是回归。
+    // Semantics snapshot (for data-side review): Start Plan subscription.details now lists all active plans
+    // sorted by server priority; plan_product_id always takes details[0]. If the server reorders or the plan
+    // set changes, this dimension flips accordingly — intentional semantics, not a regression.
     const buildStartPlanDetails = (firstId: string, secondId: string) => ({
       identityType: "unknown" as const,
       identityMasked: null,

@@ -252,21 +252,21 @@ describe("R1 window Host control protocol", () => {
         sample: { cpuPercent: 3.5, rssKb: 380_000, heapUsedKb: 91_234 },
       }).success,
     ).toBe(true);
-    // 字段缺失：main 入口直接丢弃该样本。
+    // Missing field: the main entry drops the sample outright.
     expect(
       hostResponseMessageSchema.safeParse({
         type: HostResponseTypes.HostResourceSample,
         sample: { cpuPercent: 3.5, rssKb: 380_000 },
       }).success,
     ).toBe(false);
-    // 类型错误。
+    // Type error.
     expect(
       hostResponseMessageSchema.safeParse({
         type: HostResponseTypes.HostResourceSample,
         sample: { cpuPercent: "3.5", rssKb: 380_000, heapUsedKb: 91_234 },
       }).success,
     ).toBe(false);
-    // 多余字段：Host 自采样本只带这三项，隐私红线不允许夹带 pid 之类的维度。
+    // Extra fields: host self-samples carry only these three items; the privacy bar forbids dimensions such as pid.
     expect(
       hostResponseMessageSchema.safeParse({
         type: HostResponseTypes.HostResourceSample,

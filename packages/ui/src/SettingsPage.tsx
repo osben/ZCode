@@ -79,6 +79,7 @@ import { PluginsSection } from "@/settings/PluginsSection.js";
 import { HooksSection } from "@/settings/HooksSection.js";
 import { WorkspaceFileSearchSection } from "@/settings/WorkspaceFileSearchSection.js";
 import { MemorySettingsSection } from "@/settings/MemorySettingsSection.js";
+import { WorktreesSection } from "@/settings/WorktreesSection.js";
 import { UserInstructionsSettingsSection } from "@/settings/UserInstructionsSettingsSection.js";
 import type { UserInstructionsHostTarget } from "@/settings/userInstructionsEditorModel.js";
 import { useConfirmDialogStore } from "@/store/confirmDialogStore.js";
@@ -1976,7 +1977,7 @@ export function SettingsPage({
                         ) : activeSection === "voiceDictation" ? (
                           isDesktop ? (
                             <ServiceProvider services={localHostServices}>
-                              {/* 语音模型与麦克风属于本机设备；与模型配置同样固定使用本机 Host。 */}
+                              {/* Voice model and microphone belong to the local device; like model configuration, always use the local Host. */}
                               <VoiceDictationSection isDesktop />
                             </ServiceProvider>
                           ) : (
@@ -2103,6 +2104,15 @@ export function SettingsPage({
                           <HooksSection
                             workspacePath={activeWorkspacePath}
                             workspaceIdentity={activeWorkspaceIdentity}
+                          />
+                        ) : activeSection === "worktrees" ? (
+                          <WorktreesSection
+                            settings={sharedSettings}
+                            onUpdate={updateSharedSettings}
+                            workspaceTabs={workspaceTabs}
+                            recentProjects={sharedSettings?.recentProjects ?? []}
+                            onSelectDirectory={selectDirectory}
+                            gitService={localHostServices.gitService}
                           />
                         ) : activeSection === "workspaceFileSearch" ? (
                           <WorkspaceFileSearchSection

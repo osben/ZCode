@@ -1,4 +1,5 @@
-// Share 只读时间线复用已验证的 presentation 实现，但不暴露完整 @zcode/ui 包边界。
+// The Share read-only timeline reuses the validated presentation implementation
+// without exposing the full @zcode/ui package boundary.
 export {
   ConversationShareReadonlyTimeline,
   type ConversationShareReadonlyTimelineProps,

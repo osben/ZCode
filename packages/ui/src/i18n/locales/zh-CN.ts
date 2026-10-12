@@ -39,7 +39,8 @@ const zhCN: Record<string, string> = {
   "occupationOnboarding.accounting": "财务/审计/税务",
   "occupationOnboarding.legal": "法律/行政/人力资源",
   "occupationOnboarding.skip": "跳过",
-  // 引导组件直接引用这些 key；缺失时会显示原始 key，并影响复用该文案的界面。
+  // Onboarding components reference these keys directly; a missing entry renders the raw key
+  // and also breaks every screen reusing that copy.
   "occupationOnboarding.start": "开始使用",
   "occupationOnboarding.continue": "下一步",
   "occupationOnboarding.saving": "正在保存…",
@@ -265,7 +266,7 @@ const zhCN: Record<string, string> = {
   "manualClaimPlan.claim.share.twitterText":
     "我在 ZCode 领取了 {subtitle}。邀请你也来下载安装即可领取。\nhttps://zcode.z.ai",
   "manualClaimPlan.claim.share.twitterTextLabel": "Twitter/X 分享文案",
-  // 通用
+  // Common
   "common.loading": "加载中...",
   "common.listSeparator": "、",
   "common.generating": "生成中...",
@@ -549,6 +550,9 @@ const zhCN: Record<string, string> = {
   "quickPick.command.goForward": "前进",
   "quickPick.command.switchThemeToDark": "切换主题到深色",
   "quickPick.command.switchThemeToLight": "切换主题到浅色",
+  "quickPick.command.newTaskWorktree": "在 worktree 中新建任务",
+  "quickPick.command.themeMode": "切换主题模式",
+  "quickPick.command.themePalette": "切换配色方案",
   "quickPick.command.mcpServers": "MCP 服务器",
   "quickPick.command.personalization": "个性化",
   "quickPick.command.skills": "技能",
@@ -568,6 +572,10 @@ const zhCN: Record<string, string> = {
   "quickPick.command.login": "连接",
   "quickPick.command.logout": "断开连接",
   "commandCenter.placeholder": "搜索操作、任务或文件",
+  "commandCenter.placeholder.themeMode": "选择主题模式",
+  "commandCenter.placeholder.themePalette": "选择配色方案",
+  "commandCenter.placeholder.newTaskProject": "选择项目…",
+  "commandCenter.placeholder.newTaskSetup": "搜索基准分支…",
   "commandCenter.open": "搜索",
   "commandCenter.noResults": "暂无相关结果",
   "commandCenter.scopeTabs": "命令中心范围",
@@ -587,6 +595,45 @@ const zhCN: Record<string, string> = {
   "commandCenter.empty.recentChanges": "当前任务暂无最近变更",
   "commandCenter.empty.recentTasks": "暂无最近任务",
   "commandCenter.moreResults": "查看更多结果",
+  "commandCenter.section.openWorkspaces": "已打开的工作区",
+  "commandCenter.section.recentProjects": "最近的项目",
+  "commandCenter.worktree.alreadyOpen": "已打开",
+  "commandCenter.worktree.noProjects": "暂无项目",
+  "commandCenter.worktree.destination": "任务位置",
+  "commandCenter.worktree.destination.worktree": "新建 worktree",
+  "commandCenter.worktree.destination.worktree.description": "在独立的 worktree 目录中创建任务",
+  "commandCenter.worktree.destination.checkout": "当前检出",
+  "commandCenter.worktree.destination.checkout.description": "在项目现有检出中工作",
+  "commandCenter.worktree.branchName": "分支名",
+  "commandCenter.worktree.branchName.placeholder": "输入分支名…",
+  "commandCenter.worktree.branchName.invalid": "不是有效的分支名。",
+  "commandCenter.worktree.branchName.exists": "该分支已存在。",
+  "commandCenter.worktree.branchName.final": "最终分支名：{name}",
+  "commandCenter.worktree.baseBranch": "基准分支",
+  "commandCenter.worktree.baseBranch.loading": "正在加载分支…",
+  "commandCenter.worktree.baseBranch.empty": "没有匹配的分支",
+  "commandCenter.worktree.targetPath": "目标路径",
+  "commandCenter.worktree.start": "开始",
+  "commandCenter.worktree.starting": "正在启动…",
+  "commandCenter.worktree.openExisting": "打开 worktree",
+  "commandCenter.worktree.openFailed": "worktree 已创建，但打开失败：{path}",
+  "commandCenter.worktree.error.invalid-branch-name": "“{branchName}”不是有效的分支名。",
+  "commandCenter.worktree.error.branch-already-exists": "分支 {branchName} 已存在。",
+  "commandCenter.worktree.error.target-branch-not-found": "未找到基准分支 {branchName}。",
+  "commandCenter.worktree.error.branch-in-other-worktree":
+    "分支 {branchName} 已在另一个 worktree 中检出，请换一个分支名。",
+  "commandCenter.worktree.error.target-path-invalid": "计算出的目标路径无效。",
+  "commandCenter.worktree.error.target-path-exists": "目标路径已存在。",
+  "commandCenter.worktree.error.target-path-exists.existing":
+    "分支 {branchName} 的 worktree 已存在于 {path}。",
+  "commandCenter.worktree.error.not-a-repository": "该项目不是 Git 仓库。",
+  "commandCenter.worktree.error.git-unavailable": "当前环境不可用 Git。",
+  "commandCenter.worktree.error.custom-location-invalid":
+    "设置中的自定义 worktree 位置必须是绝对路径。",
+  "commandCenter.worktree.error.global-location-unavailable":
+    "当前平台不支持全局 worktree 存储，请在设置中选择其他位置。",
+  "commandCenter.worktree.error.unknown": "无法创建 worktree。",
+  "commandCenter.worktree.error.requestFailed": "Git 请求失败：{error}",
   "confirmDialog.taskDeleteTitle": "删除这个任务？",
   "confirmDialog.taskDeleteDescription": "任务“{taskTitle}”会从当前工作区移除，现有记录无法恢复。",
   "confirmDialog.archivedTaskDeleteTitle": "删除这个归档任务？",
@@ -885,7 +932,7 @@ const zhCN: Record<string, string> = {
   "bots.unbindFailed": "解绑机器人失败：{error}",
   "bots.deleteFailed": "删除机器人失败：{error}",
 
-  // 登录
+  // Login
   "welcome.title": "Welcome to ZCode",
   "welcome.username": "用户名",
   "welcome.password": "密码",
@@ -929,7 +976,7 @@ const zhCN: Record<string, string> = {
     "重新选择职业、界面模式和使用偏好。数据迁移可在迁移设置中操作。",
   "settings.onboardingOpen": "打开引导",
 
-  // 应用头部
+  // App header
   "app.currentTheme": "当前: {theme}",
   "app.login": "连接使用",
   "app.logout": "断开连接",
@@ -1067,11 +1114,12 @@ const zhCN: Record<string, string> = {
   "subagentDirectory.status.cancelled": "已取消",
   "subagentDirectory.status.lost": "已丢失",
   "chat.statusPanel.endedAgents": "已结束",
-  // workflow run 目录（任务页脚行 → 这一页 → 详情页）。状态词复用
-  // chat.toolCall.workflow.run.status.*，这里只有页面自己的结构文案。
+  // Workflow run directory (task footer row → this page → detail page). Status words reuse
+  // chat.toolCall.workflow.run.status.*; this page only has its own structural copy.
   //
-  // 页脚行刻意是「已结束的工作流」而不是「已完成」：这个桶里也有失败与取消的 run，
-  // 而恰恰是它们最值得回去看（可恢复的那些）。
+  // The footer row deliberately says "ended workflows" rather than "completed": this bucket also
+  // holds failed and cancelled runs, and those are precisely the ones worth returning to (the
+  // resumable ones).
   "chat.statusPanel.endedWorkflows": "已结束的工作流",
   "chat.statusPanel.workflowsLive": "{count} 个运行中",
   "workflowDirectory.title": "工作流实例",
@@ -1614,7 +1662,7 @@ const zhCN: Record<string, string> = {
   "titleBar.menu.help.toggleZCodeStdioTap": "抓取 Agent stdio 通信",
   "titleBar.menu.help.clearAllData": "清除所有数据",
 
-  // 目录浏览
+  // Directory browser
   "directoryBrowser.title": "浏览文件夹",
   "directoryBrowser.pathPlaceholder": "输入路径",
   "directoryBrowser.go": "前往",
@@ -1625,7 +1673,7 @@ const zhCN: Record<string, string> = {
   "directoryBrowser.errorSystem": "无法获取系统信息",
   "directoryBrowser.errorReadDir": "无法读取目录：{error}",
 
-  // 更新按钮
+  // Update button
   "updateReady.shortTitle": "更新",
   "updateReady.title": "更新 v{version}",
   "updateReady.releaseNotesTitle": "v{version} 更新日志",
@@ -1767,7 +1815,7 @@ const zhCN: Record<string, string> = {
   "workspaceFileTree.addToChat": "添加到聊天",
   "workspaceFileTree.gitStatus.ignored": "已忽略",
 
-  // SSH 对话框
+  // SSH dialog
   "ssh.trigger": "SSH 连接",
   "ssh.title": "SSH 远程连接",
   "ssh.host": "主机",
@@ -2012,14 +2060,14 @@ const zhCN: Record<string, string> = {
   "docker.noContainers": "未检测到运行中容器",
   "docker.validation.required": "容器名或 ID 不能为空",
 
-  // 语言切换
+  // Language switch
   "locale.switchLanguage": "切换语言",
 
-  // 文件树
+  // File tree
   "fileTree.loading": "加载中...",
   "fileTree.error": "加载失败",
 
-  // 终端
+  // Terminal
   "terminal.exited": "[进程已退出]",
   "terminal.title": "终端",
   "terminal.show": "打开终端",
@@ -2035,12 +2083,12 @@ const zhCN: Record<string, string> = {
   "chat.pendingCommand.discarded": "CLI 重启前已提交的输入没有进入对话。请确认是否重新发送。",
   "chat.pendingCommand.resend": "重新发送",
   "chat.pendingCommand.dismiss": "稍后",
-  // 软门禁：工作区 Hook 待审核时底部常驻提示条
+  // Soft gate: persistent bottom banner while a workspace Hook is pending review
   "chat.workspaceHookPending.message": "{count} 个工作区 Hook 待审核，本会话暂未启用",
   "chat.workspaceHookPending.review": "去审核",
   "chat.workspaceHookPending.dismiss": "忽略",
 
-  // 任务列表
+  // Task list
   "taskList.newTask": "新建任务",
   "taskList.cronTaskLabel": "定时任务",
   "taskList.offPeakTaskLabel": "闲时任务",
@@ -2161,7 +2209,8 @@ const zhCN: Record<string, string> = {
   "chat.changeSummary.collapse": "收起已更改文件",
   "chat.changeSummary.diffUnavailable": "暂时无法预览这份 Diff。",
   "chat.changeSummary.review": "审查",
-  // 该中文词条新增时误复制了英文值，导致预览面板在未选择编辑器时显示英文提示。
+  // This Chinese entry was mistakenly seeded with the English value when added, so the preview
+  // panel showed the English hint when no editor was selected.
   "chat.changeSummary.openInEditor": "在编辑器中打开",
   "chat.changeSummary.rewind": "撤销",
   "chat.changeSummary.reapply": "重新应用",
@@ -2226,7 +2275,7 @@ const zhCN: Record<string, string> = {
   "sidebar.exportLogs.error": "导出日志失败：{error}",
   "sidebar.newTask": "新建任务",
 
-  // 设置页
+  // Settings page
   "settings.title": "设置",
   "settings.breadcrumbLabel": "设置路径",
   "settings.subtitle": "从左侧切换主要设置项，右侧查看详细配置。",
@@ -2356,6 +2405,37 @@ const zhCN: Record<string, string> = {
   "settings.memory.workspaceMemory": "工作区记忆",
   "settings.memoryDescription":
     "在工作区中保存并复用长期上下文，新会话生效。开启后可能增加模型调用和 Token 成本。",
+  "settings.worktrees.title": "Worktrees",
+  "settings.worktrees.location": "Worktree 位置",
+  "settings.worktrees.location.description":
+    "「在 worktree 中开始新任务」创建新 worktree 的位置。修改位置不会移动或创建任何目录。",
+  "settings.worktrees.location.sibling": "仓库旁边",
+  "settings.worktrees.location.inside": "仓库内部",
+  "settings.worktrees.location.global": "全局存储",
+  "settings.worktrees.location.global.description": "将新 worktree 存放在 ~/.zcode/worktrees 下。",
+  "settings.worktrees.location.custom": "自定义",
+  "settings.worktrees.location.customPath": "自定义位置",
+  "settings.worktrees.location.customPathPlaceholder": "绝对路径…",
+  "settings.worktrees.location.customPathInvalid": "请输入非空绝对路径。",
+  "settings.worktrees.chooseFolder": "选择文件夹",
+  "settings.worktrees.location.example": "Worktree 路径示例",
+  "settings.worktrees.branchPrefix": "默认分支前缀",
+  "settings.worktrees.branchPrefix.description":
+    "自动添加到新 worktree 分支名前（分支名已带有该前缀时不重复添加）。仅对之后创建的 worktree 生效。",
+  "settings.worktrees.branchPrefix.placeholder": "例如 dev/",
+  "settings.worktrees.branchPrefix.example": "分支名示例：{name}",
+  "settings.worktrees.branchPrefix.reset": "恢复默认",
+  "settings.worktrees.projects": "项目覆盖",
+  "settings.worktrees.projects.description":
+    "按项目覆盖默认基准分支和分支前缀。仅对之后创建的 worktree 生效。",
+  "settings.worktrees.projects.empty": "暂无本地项目",
+  "settings.worktrees.projects.customBadge": "自定义",
+  "settings.worktrees.projects.defaultBaseBranch": "默认基准分支",
+  "settings.worktrees.projects.defaultBaseBranchPlaceholder": "例如 main",
+  "settings.worktrees.projects.defaultBaseBranchUnknown": "该分支不在仓库的本地分支中。",
+  "settings.worktrees.projects.branchPrefix": "分支前缀覆盖",
+  "settings.worktrees.projects.branchPrefixPlaceholder": "继承全局前缀",
+  "settings.worktrees.projects.resetToGlobal": "恢复全局",
   "settings.memory.viewer.localOnly":
     "记忆详情仅支持在本地桌面端查看，请前往本地桌面端的“记忆”设置。",
   "settings.memory.viewer.title": "已保存的工作区记忆",
@@ -2396,8 +2476,10 @@ const zhCN: Record<string, string> = {
   "settings.httpProxyDescription":
     "模型、MCP、命令工具与应用渲染层的出口流量将经此代理，不读取系统环境变量。留空时这些流量直连，内置浏览器则跟随系统代理设置。修改后需重启应用生效。",
   "settings.httpProxyPlaceholder": "留空则内置浏览器跟随系统代理，例如 http://127.0.0.1:7890",
-  // 中文词条曾在批量文案调整中被误改为英文，导致中文设置页混入未翻译标签。
-  // 文案原因：「代理例外」含义模糊，沿用 Windows 系统代理的标准表述「不使用代理的地址」。
+  // This Chinese entry was mistakenly switched to English during a bulk copy pass, leaking an
+  // untranslated label into the Chinese settings page.
+  // Copy rationale: "proxy exceptions" is ambiguous; keep the standard Windows phrasing "addresses
+  // that bypass the proxy".
   "settings.httpProxyNoProxy": "不使用代理的地址",
   "settings.httpProxyNoProxyDescription":
     "匹配这些主机的请求将直连，不经过 HTTP 代理。多个规则用英文逗号分隔。修改后需重启应用生效。",
@@ -2747,7 +2829,8 @@ const zhCN: Record<string, string> = {
   "settings.mcp.remoteSync.selectionCount": "已选 {selected}/{total}",
   "settings.mcp.remoteSync.noSelection": "请至少选择一个远端缺失的 MCP 服务器。",
   "settings.plugins.remoteContext": "当前远端工作区：{target}",
-  // 远程同步入口由独立文案演进，曾混用小写；并排展示时统一为 Skill/MCP/Plugin。
+  // The remote sync entry evolved from separate copy and once mixed lowercase; Skill/MCP/Plugin
+  // are capitalized consistently where they appear side by side.
   "settings.plugins.remoteSync.open": "同步 Plugin",
   "settings.plugins.remoteSync.title": "同步 Plugins 到远端目标",
   "settings.plugins.remoteSync.warningTitle": "远端执行提醒",
@@ -3035,7 +3118,8 @@ const zhCN: Record<string, string> = {
   "settings.modelProvider.codingPlan.bigmodel.unregisteredHint":
     "该 BigModel 账号尚未注册，请先完成注册。",
   "settings.modelProvider.codingPlan.bigmodel.registerAction": "去注册",
-  // Coding Plan 卡片直接使用这些 id，中文漏配会把 key 原样渲染到界面。
+  // The Coding Plan cards reference these ids directly; a missing Chinese entry renders the raw
+  // key into the UI.
   "settings.modelProvider.codingPlan.description.disconnected": "请连接后查看 Coding Plan 权益。",
   "settings.modelProvider.codingPlan.description.checking":
     "正在使用当前供应商 API Key 查询 Coding Plan 权益。",
@@ -3923,7 +4007,8 @@ const zhCN: Record<string, string> = {
   "settings.skills.import.resultEmpty": "暂无技能导入结果。",
   "settings.skills.import.completeDescription": "技能列表已刷新。同名技能会保留现有版本。",
   "settings.skills.import.finish": "完成",
-  // skill 入口曾保留小写，与 MCP/Plugin 并排时不一致；统一技术名词首字母大写。
+  // The Skill entry once stayed lowercase, inconsistent with MCP/Plugin beside it; technical nouns
+  // are capitalized consistently.
   "settings.skills.remoteSync.open": "同步 Skill",
   "settings.skills.remoteSync.title": "同步 Skills 到远端目标",
   "settings.skills.remoteSync.warningTitle": "数据和环境可用性提醒",
@@ -4602,7 +4687,7 @@ const zhCN: Record<string, string> = {
   "onboarding.finish.summary.settings.detail":
     "已导入 {imported}，已跳过 {skipped}，失败 {failed}。",
 
-  // 对话
+  // Conversation
   "chat.empty.title": "开始对话",
   "chat.empty.description": "开始在 {workspace} 项目新建任务",
   "chat.empty.description.beforeWorkspace": "开始在",
@@ -4642,6 +4727,10 @@ const zhCN: Record<string, string> = {
   "chat.empty.workspaceSearchEmpty": "没有匹配的工作区",
   "chat.empty.cliMenu": "选择 CLI",
   "chat.empty.home": "主目录",
+  "chat.empty.worktree.newWorktree": "新建 worktree",
+  "chat.empty.worktree.branchNameRequired": "发送前请输入分支名。",
+  "chat.empty.worktree.baseBranch": "基准分支：{branch}",
+  "chat.empty.worktree.creating": "正在创建 worktree…",
   "chat.empty.createWorkspace.title": "创建工作区",
   "chat.empty.createWorkspace.placeholder": "工作区名称",
   "chat.empty.createWorkspace.locationHint": "位置：{path}",
@@ -4692,7 +4781,7 @@ const zhCN: Record<string, string> = {
   "chat.message.mailbox.from": "来自 {sessionId} 的新消息",
   "chat.message.expand": "展开",
   "chat.message.collapse": "收起",
-  // 子代理 transcript 里折起来的引擎尾注。
+  // Collapsed engine epilogue inside a subagent transcript.
   "chat.userInput.epilogue.label": "工作流引擎附加说明",
   "chat.message.bodyPreview.notice":
     "这条回复较大，当前只显示预览（{previewBytes} / {fullBytes}）。",
@@ -4739,7 +4828,8 @@ const zhCN: Record<string, string> = {
   "chat.queue.title": "待发送消息（{count}）",
   "chat.queue.drag": "拖拽排序",
   "chat.queue.sendNow": "立即",
-  // compact 队列项曾单独显示“立即执行”，与同一队列中的即时动作文案不一致。
+  // Compact queue items once showed a standalone "run now", inconsistent with the immediate
+  // action copy used by the rest of the queue.
   "chat.queue.runNow": "立即",
   "chat.queue.edit": "编辑",
   "chat.queue.editDraftConflict": "请先发送或清空当前草稿，再编辑队列消息。",
@@ -4859,10 +4949,11 @@ const zhCN: Record<string, string> = {
   "chat.summaryPanel.openRunningSubagentSession": "打开子智能体会话",
   "chat.composer.backgroundWorks.tooltipTerminal": "运行中的终端",
   "chat.composer.backgroundWorks.tooltipAgent": "打开运行中的智能体",
-  // workflow 从 bash 拆出后 badge 有三类：
-  // 恰好一类时用该类文案，混合仍走 tooltipMixed——三类两两组合再各写一句只会堆出六条同义句。
+  // After workflow split out of bash, the badge has three kinds:
+  // exactly one kind uses that kind's copy; mixed cases still use tooltipMixed — writing one line
+  // per pairwise combination would just pile up six synonymous strings.
   "chat.composer.backgroundWorks.tooltipWorkflow": "打开运行中的工作流",
-  // 唯一在跑的工作流直达详情页时，徽标如实说出落点。
+  // When the only running workflow links straight to its detail page, the badge says so.
   "chat.composer.backgroundWorks.tooltipWorkflowDetails": "打开工作流详情",
   "chat.composer.backgroundWorks.tooltipMixed": "打开运行中的终端与智能体",
   "chat.composer.backgroundWorks.ariaLabel":
@@ -4888,8 +4979,8 @@ const zhCN: Record<string, string> = {
   "chat.statusPanel.todoWaitingFold": "待处理 {count} 项",
   "chat.statusPanel.terminals": "终端",
   "chat.statusPanel.agents": "智能体",
-  // Workflows 分区：与 Terminals / Agents 并列的
-  // 第三类实时活动。行内的状态词与步数复用 chat.toolCall.workflow.* 那一组，不另造词汇。
+  // Workflows section: the third live activity alongside Terminals / Agents. Row status words and
+  // step counts reuse the chat.toolCall.workflow.* set instead of inventing new vocabulary.
   "chat.statusPanel.workflows": "工作流",
   "chat.statusPanel.runningStatusValue": "{count} 个后台运行",
   "chat.statusPanel.runningStatusValuePlural": "{count} 个后台运行",
@@ -4923,13 +5014,14 @@ const zhCN: Record<string, string> = {
   "chat.modelSwitch.contextWindowGuard.description":
     "当前会话已使用 {used} tokens，已超过目标模型 {modelName} 预留最大输出后的可用上下文 {target} tokens。\n请先使用当前模型压缩上下文。压缩完成且上下文用量小于目标模型可用上下文后，会继续切换模型。",
   "chat.modelSwitch.contextWindowGuard.compress": "压缩",
-  // guard 比较的是 effectiveContextWindow，运行中 toast 不能继续描述成原始 contextWindow 过小。
+  // The guard compares effectiveContextWindow, so the running toast must not keep describing the
+  // raw contextWindow as too small.
   "chat.modelSwitch.contextWindowGuard.runningBlocked":
     "当前会话已使用的上下文超过目标模型预留最大输出后的可用上下文，需要先压缩当前会话后才能切换。但当前任务正在运行，无法执行上下文压缩。请等待任务结束后再切换模型。",
   "chat.modelSwitch.contextWindowGuard.stillTooLarge":
     "压缩完成后，当前会话已使用的上下文仍大于目标模型预留最大输出后的可用上下文，模型切换已取消。",
   "chat.toolbar.mode.label": "切换模式",
-  // CUA 输入框常驻入口按钮
+  // Persistent CUA input entry button
   "chat.toolbar.computerUse.label": "电脑操作",
   "chat.toolbar.computerUse.tooltip.idle": "电脑操作空闲——首次使用时自动启动",
   "chat.toolbar.computerUse.tooltip.starting": "正在启用电脑操作插件…",
@@ -5093,13 +5185,14 @@ const zhCN: Record<string, string> = {
   "chat.toolCall.skill.args": "参数",
   "chat.toolCall.skill.unknown": "未知技能",
   "chat.toolCall.skill.noOutput": "没有输出。",
-  // kind 文案按行状态分相：「校验」只在 running 相成立（脚本早在确认弹窗前就被
-  // analyze 过），模型写脚本与等用户确认各有自己的说法。
+  // Kind copy is phased by row state: "verify" only holds in the running phase (the script was
+  // analyzed long before the confirmation dialog); the model writing the script and waiting for
+  // user confirmation each have their own wording.
   "chat.toolCall.workflow.writing": "正在编写工作流",
   "chat.toolCall.workflow.revising": "正在修改工作流",
   "chat.toolCall.workflow.draft": "工作流草稿",
   "chat.toolCall.workflow.draftOrdinal": "第 {ordinal} 稿",
-  // ── AmendWorkflow 行的修订词汇──
+  // ── Revision vocabulary for AmendWorkflow rows ──
   "chat.toolCall.workflow.amend.writing": "正在调整工作流",
   "chat.toolCall.workflow.amend.revising": "正在修改工作流调整",
   "chat.toolCall.workflow.amend.draft": "工作流调整草稿",
@@ -5126,28 +5219,31 @@ const zhCN: Record<string, string> = {
   "chat.toolCall.workflow.truncated": "部分诊断已省略。",
   "chat.toolCall.workflow.noScript": "未提供工作流脚本。",
   "chat.toolCall.workflow.graph.truncated": "图过大，部分参与者已省略。",
-  // 车道与药丸的文案。车道名是结构，作者原词原样显示。
+  // Copy for lanes and pills. Lane names are structure; the author's words are shown verbatim.
   "chat.toolCall.workflow.graph.lane.script": "脚本",
   "chat.toolCall.workflow.graph.lane.unresolved": "未解析",
-  // 分析拿不到名字时的兜底：站点 id（actor#3）是身份，不能当名字显示。并存多条才编号。
+  // Fallback when analysis cannot produce a name: the site id (actor#3) is identity, not a display
+  // name. Numbering only when several coexist.
   "chat.toolCall.workflow.graph.lane.anonymous": "未命名子代理",
   "chat.toolCall.workflow.graph.lane.anonymousIndexed": "未命名子代理 {index}",
-  // 侧栏子代理行的计数：一枚药丸代表该子代理在阶段内的全部 ask；脚本药丸数读取。
-  // 展示词是「任务」：脚本里的 .ask() 是派给子代理的任务，
-  // 「问题」只留给 escalate（子代理向主代理提问），两者不能同用一个词。
+  // Sidebar subagent row counts: one pill stands for all of that subagent's asks within the phase;
+  // script pill counts are read out. The display word is "task": .ask() in the script is a task
+  // handed to a subagent, while "question" is reserved for escalate (a subagent asking the main
+  // agent); the two must not share a word.
   "chat.toolCall.workflow.graph.card.tasks": "{count} 个任务",
   "chat.toolCall.workflow.graph.card.reads": "{count} 次读取",
-  // 药丸状态标记的 aria-label：状态永不只靠颜色或图形。
+  // aria-label for pill status markers: status must never rely on color or shape alone.
   "chat.toolCall.workflow.graph.status.running": "运行中",
   "chat.toolCall.workflow.graph.status.done": "已完成",
   "chat.toolCall.workflow.graph.status.failed": "已失败",
   "chat.toolCall.workflow.graph.status.pending": "待开始",
-  // ── 阶段名兜底──
-  // `unphased` 是合成阶段：它装的是首个 `phase()` 标记之前的 step，不是作者写下的名字。
+  // ── Phase-name fallbacks ──
+  // `unphased` is a synthetic phase: it holds steps before the first `phase()` marker, not a name
+  // the author wrote.
   "chat.toolCall.workflow.graph.phase.unphased": "未分组",
-  // 无 `phase()` 标记的脚本的隐式唯一阶段：整个脚本就是一个阶段。
+  // The implicit single phase of a script without any `phase()` marker: the whole script is one phase.
   "chat.toolCall.workflow.graph.phase.workflow": "工作流",
-  // ── 时间线──
+  // ── Timeline ──
   "chat.toolCall.workflow.timeline.rounds": "已到访 {count} 次",
   "chat.toolCall.workflow.timeline.openAgent": "打开 {name} 的会话记录",
   "chat.toolCall.workflow.timeline.openScript": "打开 {phase} 处的脚本步骤",
@@ -5160,22 +5256,25 @@ const zhCN: Record<string, string> = {
     "还有 {count} 个子代理 · 在运行侧栏里列出全部",
   "chat.toolCall.workflow.timeline.roster.door.list": "还有 {count} 个子代理 · 在这里列出",
   "chat.toolCall.workflow.timeline.roster.door.fold": "还有 {count} 个子代理 · 收起",
-  // 门后名单末尾的那一行：被淘汰的子代理没有行，差额在这里说明。
+  // The row at the end of the roster behind the door: evicted subagents have no rows; the
+  // difference is explained here.
   "chat.toolCall.workflow.timeline.roster.unlisted.one": "另有 1 个子代理未列出",
   "chat.toolCall.workflow.timeline.roster.unlisted.other": "另有 {count} 个子代理未列出",
   "chat.toolCall.workflow.timeline.ledge.earlier": "{count} 个更早的阶段已滚出视野",
   "chat.toolCall.workflow.timeline.ledge.later": "{count} 个更晚的阶段已滚出视野",
   "chat.toolCall.workflow.timeline.scrollbar": "时间线滚动位置",
-  // ── 工具卡表头 / 页脚──
-  // 种类词按实例状态说话；steps 读作「已排程的里结算了几个」——动态工作流没有静态总数。
+  // ── Tool-card header / footer ──
+  // Kind words speak to the instance state; steps read as "how many of the scheduled have
+  // settled" — dynamic workflows have no static total.
   "chat.toolCall.workflow.card.started": "工作流已启动",
   "chat.toolCall.workflow.card.running": "工作流运行中",
   "chat.toolCall.workflow.card.completed": "工作流已完成",
   "chat.toolCall.workflow.card.errored": "工作流出错",
   "chat.toolCall.workflow.card.stopped": "工作流已停止",
-  // lineage：被修订替代的 run 与修订出来的 run。
+  // Lineage: the run replaced by a revision, and the run the revision produced.
   "chat.toolCall.workflow.card.superseded": "工作流已被替代",
-  // run 不在活投影里（八条上限淘汰 / 冷恢复无 journal 命中）的中性种类词：不冒充某个终态。
+  // Neutral kind word for a run absent from the live projection (evicted by the eight-run cap /
+  // cold restore with no journal hit): it never impersonates a terminal state.
   "chat.toolCall.workflow.card.ended": "工作流已结束",
   "chat.toolCall.workflow.card.steps": "{done}/{total} 步",
   "chat.toolCall.workflow.card.phases.one": "{count} 个阶段",
@@ -5187,18 +5286,21 @@ const zhCN: Record<string, string> = {
   "chat.toolCall.workflow.card.tokens": "{count} tokens",
   "chat.toolCall.workflow.card.round": "第 {count} 轮",
   "chat.toolCall.workflow.card.rounds": "{count} 轮",
-  // 末段数产物（脚本经 artifact.* 交付给用户的产出），不是 report 条目——Results 区已撤走。
+  // Counts tail-phase artifacts (deliverables the script hands the user via artifact.*), not
+  // report entries — the Results section has been removed.
   "chat.toolCall.workflow.card.artifact": "{count} 个产物",
   "chat.toolCall.workflow.card.artifacts": "{count} 个产物",
   "chat.toolCall.workflow.card.artifacts.one": "{count} 个产物",
   "chat.toolCall.workflow.card.artifacts.other": "{count} 个产物",
-  // ── 轮尾摘要──
-  // 种类词、状态词与计数复用上面的 run 卡词汇表；这里只有芯片与 chevron 的文案。
+  // ── Round-tail digest ──
+  // Kind words, status words, and counts reuse the run-card vocabulary above; only the chip and
+  // chevron copy lives here.
   "chat.toolCall.workflow.digest.questions.one": "{count} 个待答问题",
   "chat.toolCall.workflow.digest.questions.other": "{count} 个待答问题",
   "chat.toolCall.workflow.digest.question": "{count} 个待答问题",
   "chat.toolCall.workflow.digest.questions": "{count} 个待答问题",
-  // ── 留白（docs/dynamic-workflow/presentation.md「Holes on the timeline」、transcript-and-notifications.md「The hole row's live state」）──
+  // ── Holes (docs/dynamic-workflow/presentation.md "Holes on the timeline",
+  // transcript-and-notifications.md "The hole row's live state") ──
   "chat.toolCall.workflow.digest.hole": "{count} 处留白待补全",
   "chat.toolCall.workflow.digest.holes": "{count} 处留白待补全",
   "chat.toolCall.workflow.card.hole": "{count} 处留白",
@@ -5209,7 +5311,7 @@ const zhCN: Record<string, string> = {
   "chat.toolCall.workflow.hole.head.title": "留白「{name}」· 由主代理补全 · {time}",
   "chat.toolCall.workflow.hole.head.title.untimed": "留白「{name}」· 由主代理补全",
   "chat.toolCall.workflow.hole.open": "打开补全「{name}」",
-  // FillWorkflowHole 行的种类词（与 CreateWorkflow / AmendWorkflow 同一张词表）。
+  // Kind words for FillWorkflowHole rows (same vocabulary as CreateWorkflow / AmendWorkflow).
   "chat.toolCall.workflow.hole.writing": "正在补全留白",
   "chat.toolCall.workflow.hole.revising": "正在修改留白补全",
   "chat.toolCall.workflow.hole.draft": "留白补全草稿",
@@ -5217,7 +5319,7 @@ const zhCN: Record<string, string> = {
   "chat.toolCall.workflow.hole.ran": "留白补全",
   "chat.toolCall.workflow.hole.filled": "留白已补全",
   "chat.toolCall.workflow.hole.phasesAdded": "{count} 个阶段",
-  // 通知行展开体。
+  // Notification row expanded body.
   "chat.toolCall.workflow.hole.stands.between": "留白位于「{before}」之后、「{after}」之前；",
   "chat.toolCall.workflow.hole.stands.after": "留白位于「{before}」之后；",
   "chat.toolCall.workflow.hole.stands.before": "留白位于「{after}」之前；",
@@ -5226,43 +5328,46 @@ const zhCN: Record<string, string> = {
   "chat.backgroundResult.workflow.hole.waiting": "工作流留白 · 等待补全",
   "chat.backgroundResult.workflow.hole.filled": "留白已补全",
   "chat.backgroundResult.workflow.hole.left": "工作流留白",
-  // 侧板。
+  // Side pane.
   "chat.toolCall.workflow.run.hole.waitingFor": "等待主代理补全",
   "chat.toolCall.workflow.run.hole.filledAt": "已补全 · {time}",
-  // 确认窗。
+  // Confirmation dialog.
   "chat.permission.workflow.hole.title": "补全此留白？",
   "chat.permission.workflow.holes.label": "留白",
   "chat.permission.workflow.holes.note": "运行到留白处会暂停，等主代理补全后继续。",
-  // 侧栏运行行。
+  // Sidebar run rows.
   "taskList.workflowRun.holeWaiting": "{name} · 等待补全",
   "chat.toolCall.workflow.digest.showAgents": "显示子代理",
   "chat.toolCall.workflow.digest.hideAgents": "隐藏子代理",
-  // ── 完成卡──
-  // 种类词、状态词与产物文案复用既有词汇表；这里只有四格的标签与「拿不到」的无障碍名。
+  // ── Completion card ──
+  // Kind words, status words, and artifact copy reuse the existing vocabulary; only the four-cell
+  // labels and the "unavailable" accessibility name live here.
   "chat.toolCall.workflow.completion.time": "时间",
   "chat.toolCall.workflow.completion.tokens": "tokens",
   "chat.toolCall.workflow.completion.subagents": "子代理",
   "chat.toolCall.workflow.completion.phases": "阶段",
   "chat.toolCall.workflow.completion.unavailable": "暂无数据",
-  // 交付物行之后放不下的其余产物：`+N` 格的说明行；点开实例侧板看全部（title 复用 openRunDetails）。
+  // Remaining artifacts that do not fit after the deliverables row: the `+N` cell's explanation
+  // line; open the instance side pane for all of them (title reuses openRunDetails).
   "chat.toolCall.workflow.completion.moreArtifacts": "还有 {count} 个",
-  // ── 侧栏阶段清单──
+  // ── Sidebar phase list ──
   "chat.toolCall.workflow.run.phase.expand": "展开阶段 {name}",
   "chat.toolCall.workflow.run.phase.collapse": "收起阶段 {name}",
-  // ── 直接启动的来龙去脉：run 详情侧板的 provenance 节。
+  // ── Direct-launch provenance: the provenance section of the run detail side pane.
   "chat.workflowLaunch.scope.project": "项目",
   "chat.workflowLaunch.scope.global": "全局",
   "chat.workflowLaunch.startedByYou": "由你从工作流中枢启动",
-  // 「配置」修订出来的 run 的来龙去脉块。
+  // Provenance block for a run produced by a "settings" revision.
   "chat.workflowLaunch.settingsChangedByYou": "由你调整设置",
   "chat.workflowLaunch.settings.model": "子代理模型",
   "chat.workflowLaunch.settings.limit": "最大并发数",
   "chat.workflowLaunch.settings.sessionModel": "会话模型",
   "chat.workflowLaunch.settings.defaultLimit": "默认",
   "chat.workflowLaunch.settings.defaultLimitValue": "默认 {n}",
-  // ── 可复用工作流（docs/dynamic-workflow/launch.md）：SaveWorkflow / ListSavedWorkflows
-  // 的聊天卡。「覆盖」这个词由保存确认窗共用——同一次保存在两个面上必须同名，
-  // 照 run 卡复用 chat.toolCall.workflow.run.status.* 词汇表的同一条先例。
+  // ── Reusable workflows (docs/dynamic-workflow/launch.md): chat cards for SaveWorkflow /
+  // ListSavedWorkflows. The word "overwrite" is shared with the save confirmation dialog — the
+  // same save must be named the same on both surfaces, following the same precedent as the run
+  // card reusing the chat.toolCall.workflow.run.status.* vocabulary.
   "chat.toolCall.workflow.save.saving": "正在保存工作流",
   "chat.toolCall.workflow.save.saved": "已保存工作流",
   "chat.toolCall.workflow.save.overwrite": "覆盖",
@@ -5279,7 +5384,7 @@ const zhCN: Record<string, string> = {
   "chat.toolCall.workflow.list.empty": "这个项目里还没有保存过工作流",
   "chat.toolCall.workflow.list.invalid.other": "{count} 个文件无法解析",
   "chat.toolCall.workflow.list.invalid.one": "{count} 个文件无法解析",
-  // ListModels 的目录卡。
+  // Catalog card for ListModels.
   "chat.toolCall.workflow.models.listing": "正在列出模型",
   "chat.toolCall.workflow.models.listed": "可用模型",
   "chat.toolCall.workflow.models.count.other": "{count} 个模型",
@@ -5292,8 +5397,8 @@ const zhCN: Record<string, string> = {
   "chat.toolCall.workflow.models.noLevels": "没有思考强度档位",
   "chat.toolCall.workflow.models.truncated": "未显示全部模型",
 
-  // ── 已保存工作流的 GUI 中枢：自动化页「工作流」标签、
-  // 卡片、实参窗、详情页、运行历史。术语（run = 实例）。
+  // ── GUI hub for saved workflows: the automations page "Workflows" tab, cards, args dialog,
+  // detail page, run history. Terminology: run = instance.
   "automations.pageTab.ariaLabel": "自动化页面",
   "automations.pageTab.automation": "自动化",
   "automations.pageTab.workflow": "工作流",
@@ -5398,8 +5503,9 @@ const zhCN: Record<string, string> = {
   "workflows.hub.history.note":
     "运行记录来自本项目的工作流日志，重启后仍然保留；「查看实例」会回到发起它的对话并打开实例详情。",
   "workflows.hub.history.tokens": "{tokens} tokens",
-  // 中枢的产物条：详情页头部那条「最近产物」。
-  // 取的是**最近一次 completed run** 的产物，所以措辞不能读成"这个工作流的产物"。
+  // The hub's artifact strip: the "recent artifacts" line in the detail page header.
+  // It shows artifacts of the **most recent completed run**, so the wording must not read as
+  // "this workflow's artifacts".
   "workflows.hub.artifacts.latest": "最近产物",
   "workflows.hub.reason.invalid_name": "名字不合法",
   "workflows.hub.reason.not_found": "文件不存在",
@@ -5407,7 +5513,7 @@ const zhCN: Record<string, string> = {
   "workflows.hub.reason.read_error": "文件无法读取",
   "workflows.hub.time.duration.seconds": "{seconds} 秒",
   "workflows.hub.time.duration.minutes": "{minutes} 分 {seconds} 秒",
-  // ── 观察类工具卡──
+  // ── Observability tool cards ──
   "chat.toolCall.workflow.getRun.fetching": "正在获取工作流状态",
   "chat.toolCall.workflow.getRun.runningNodes": "{count} 个节点运行中",
   "chat.toolCall.workflow.getRun.fetched": "工作流状态",
@@ -5420,8 +5526,9 @@ const zhCN: Record<string, string> = {
   "chat.toolCall.workflow.getRun.logEmpty": "还没有日志",
   "chat.toolCall.workflow.getRun.interruptedHint":
     "本会话无法证实这个实例仍在运行：它可能已被中断。",
-  // 情势截面的词与读数（「Their cards」）。
-  // 词表与运行侧栏一致：子代理、阶段、运行中、已完成、等待槽位；年龄是裸时长 + 「前」。
+  // Words and readings for the situation snapshot ("Their cards").
+  // Vocabulary matches the run sidebar: subagents, phases, running, completed, waiting for slot;
+  // age is a bare duration + "ago".
   "chat.toolCall.workflow.getRun.age": "{age} 前",
   "chat.toolCall.workflow.getRun.truncated": "卡上省略了部分行。",
   "chat.toolCall.workflow.getRun.questionsUnknown":
@@ -5493,15 +5600,16 @@ const zhCN: Record<string, string> = {
   "chat.toolCall.workflow.snippet.section.logs": "日志",
   "chat.toolCall.workflow.snippet.section.response": "返回值",
   "chat.toolCall.workflow.snippet.logsEmpty": "没有日志",
-  // ── Workflow 通知行──
-  // 后台 workflow 通知走既有工具卡语法（ToolLayout 行），这里只有 kindLabel：终态三状态 +
-  // 升级三态（按 pendingQuestions 联查活翻转）。run 名 / 问题正文 / 结果都不需要新键——
-  // 结果面板复用 submit-result 惯例，问题/背景标题复用 escalate 的 question/context，
-  // 侧板入口复用 chat.toolCall.workflow.openRunDetails。
+  // ── Workflow notification rows ──
+  // Background workflow notifications reuse the existing tool-card syntax (ToolLayout rows);
+  // only kindLabels live here: three terminal states plus three escalation states (flipping live
+  // via a pendingQuestions join). Run name / question body / result need no new keys — the result
+  // panel reuses the submit-result convention, question/context titles reuse escalate's
+  // question/context, and the side-pane entry reuses chat.toolCall.workflow.openRunDetails.
   "chat.backgroundResult.workflow.completed": "工作流已完成",
   "chat.backgroundResult.workflow.errored": "工作流出错",
   "chat.backgroundResult.workflow.stopped": "工作流已停止",
-  // run 级停滞通知：run 还在跑，只是没有进展。
+  // Run-level stall notification: the run is still going, just without progress.
   "chat.backgroundResult.workflow.stall": "工作流等待模型",
   "chat.backgroundResult.workflow.stall.body":
     "本实例已有 {minutes} 分钟没有一次成功的模型请求。它仍在运行并按退避重试；不再需要时可在运行卡上停止。",
@@ -5510,58 +5618,62 @@ const zhCN: Record<string, string> = {
   "chat.backgroundResult.workflow.waiting": "子代理正在等待回答",
   "chat.backgroundResult.workflow.answered": "子代理的问题已回答",
   "chat.backgroundResult.workflow.asked": "子代理提出了问题",
-  // 通知行折叠头部的产物 chips 溢出计数（≤ 3 枚 chip + 「+N」）。
+  // Artifact chip overflow count in the collapsed notification header (<= 3 chips + "+N").
   "chat.backgroundResult.workflow.artifacts.more": "+{count}",
-  // ── 升级问答工具卡 ──
-  // escalate：子代理把阻塞问题升级给主代理，停驻等答案。asking 相可能持续很久，措辞要平静。
+  // ── Escalation Q&A tool cards ──
+  // escalate: a subagent escalates a blocking question to the main agent and parks waiting for an
+  // answer. The asking phase can last a long time, so the wording stays calm.
   "chat.toolCall.workflow.escalate.asking": "正在询问主代理",
   "chat.toolCall.workflow.escalate.asked": "已询问主代理",
   "chat.toolCall.workflow.escalate.question": "问题",
   "chat.toolCall.workflow.escalate.context": "背景",
   "chat.toolCall.workflow.escalate.answer": "答复",
   "chat.toolCall.workflow.escalate.fallbackName": "问题",
-  // ResolveWorkflowQuestion：主代理按 qid 作答。outcome 段既承载成功确认，也承载结构化拒绝。
+  // ResolveWorkflowQuestion: the main agent answers by qid. The outcome slot carries both success
+  // confirmations and structured rejections.
   "chat.toolCall.workflow.resolveQuestion.answering": "正在回答问题",
   "chat.toolCall.workflow.resolveQuestion.answered": "已回答问题",
   "chat.toolCall.workflow.resolveQuestion.questionId": "问题 ID",
   "chat.toolCall.workflow.resolveQuestion.answer": "答复",
   "chat.toolCall.workflow.resolveQuestion.outcome": "结果",
   "chat.toolCall.workflow.resolveQuestion.fallbackName": "回答",
-  // ── workflow run 详情页──
+  // ── Workflow run detail page ──
   "chat.toolCall.workflow.openRunDetails": "查看实例详情",
   "chat.toolCall.workflow.run.status.pending": "待启动",
   "chat.toolCall.workflow.run.status.running": "运行中",
   "chat.toolCall.workflow.run.status.completed": "已完成",
   "chat.toolCall.workflow.run.status.errored": "出错",
   "chat.toolCall.workflow.run.status.stopped": "已停止",
-  // stopped 的原因词，跟在状态词后。
+  // Stop reason word for stopped, following the status word.
   "chat.toolCall.workflow.run.stopReason.user": "你停止的",
   "chat.toolCall.workflow.run.stopReason.model": "代理停止的",
   "chat.toolCall.workflow.run.stopReason.provider": "模型侧错误",
   "chat.toolCall.workflow.run.stopReason.interrupted": "进程已退出",
   "chat.toolCall.workflow.run.stopReason.superseded": "已被替代",
-  // 状态词与原因词之后的第三个词：由 CLI 用
-  // `resumable` 状态位发过来，UI 绝不自行推导——它是「停止 ≠ 丢弃」在状态行上的那一半。
+  // The third word after the status and reason words: sent by the CLI via the `resumable` status
+  // bit, never derived by the UI — it is the "stopped ≠ discarded" half of the status line.
   "chat.toolCall.workflow.run.resumable": "可恢复",
-  // 详情页状态头下的 lineage 行。
+  // Lineage row under the detail page status header.
   "chat.toolCall.workflow.run.amends": "调整自 run",
   "chat.toolCall.workflow.run.supersededBy": "已被替代，后继 run",
   "chat.toolCall.workflow.run.outcome.ok": "成功",
   "chat.toolCall.workflow.run.outcome.failed": "失败",
   "chat.toolCall.workflow.run.outcome.cancelled": "取消",
-  // 用量是观察面，没有上限：只报已花 token 与步数。
+  // Usage is an observation surface with no cap: only spent tokens and steps are reported.
   "chat.toolCall.workflow.run.usage.label": "用量",
   "chat.toolCall.workflow.run.usage.tokens": "{tokens} tokens",
   "chat.toolCall.workflow.run.usage.value": "{tokens} tokens · {steps} 步",
-  // 实例表撞界后卡与详情页各有的那一句：停的是每一步的**详情**，不是 run，
-  // 它上面那些计数已经把表外的实例算进来了（docs/dynamic-workflow/presentation.md）。
+  // The sentence shared by card and detail page after the instance table overflows: what stops is
+  // per-step **detail**, not the run — the counts above already include out-of-table instances
+  // (docs/dynamic-workflow/presentation.md).
   "chat.toolCall.workflow.run.truncated": "仅展示 {shown}/{total} 步的详情",
   "chat.toolCall.workflow.run.cancel": "停止运行",
   "chat.toolCall.workflow.run.cancelling": "正在停止…",
   "chat.toolCall.workflow.run.cancelDisabled": "只有正在运行的工作流可以停止。",
-  // 停止钮提示的第二行：在做决定的那一刻就说清楚——停下的运行可以恢复。
+  // Second line of the stop button hint: say it at the moment of decision — a stopped run can be
+  // resumed.
   "chat.toolCall.workflow.run.stopHint": "停止后可以随时恢复，已完成的步骤会保留。",
-  // Stop / Resume 被拒时状态头下的一句话。
+  // Sentence under the status header when Stop / Resume is rejected.
   "chat.toolCall.workflow.run.rejection.cancel.not_found":
     "这个运行并不在当前 agent 里执行，没有任何东西被停止。",
   "chat.toolCall.workflow.run.rejection.cancel.not_running":
@@ -5583,10 +5695,12 @@ const zhCN: Record<string, string> = {
   "chat.toolCall.workflow.run.resume": "恢复运行",
   "chat.toolCall.workflow.run.resumeHint":
     "从停下的地方继续：已完成的步骤直接复用，被打断的步骤重新执行。",
-  // 「配置」弹层（docs/dynamic-workflow/presentation.md「The settings popover」）：改子代理模型与最大并发数，
-  // 应用即一次 GUI 修订（新 run 接着跑，旧 run 停下，已完成的步骤作缓存带过去）。
-  // 完成卡与 run 侧板上的「保存 / 再次运行」（docs/dynamic-workflow/transcript-and-notifications.md
-  // 「Saving the run, and running it again」）。两条路：交给 ZCode 提炼，或按原样直接写下去。
+  // "Settings" popover (docs/dynamic-workflow/presentation.md "The settings popover"): change the
+  // subagent model and max concurrency; applying is one GUI revision (a new run takes over, the
+  // old run stops, and completed steps carry over as cache).
+  // "Save / Run again" on the completion card and run side pane
+  // (docs/dynamic-workflow/transcript-and-notifications.md "Saving the run, and running it
+  // again"). Two paths: let ZCode distill it, or write it down as-is.
   "chat.toolCall.workflow.saveRun.action": "保存",
   "chat.toolCall.workflow.saveRun.runAgain": "再次运行",
   "chat.toolCall.workflow.saveRun.starting": "启动中…",
@@ -5645,7 +5759,8 @@ const zhCN: Record<string, string> = {
     "将以新设置另起一次运行接着跑，已完成的步骤会保留。",
   "chat.toolCall.workflow.run.settings.consequence.errored":
     "将以新设置另起一次运行重试，已完成的步骤会保留。",
-  // 只改并发上限、而且运行正在跑：就地生效（docs/dynamic-workflow/concurrency.md）。
+  // Concurrency-only change while the run is still going: takes effect in place
+  // (docs/dynamic-workflow/concurrency.md).
   "chat.toolCall.workflow.run.settings.consequence.concurrencyLive":
     "立即应用到当前运行，不会新起一次运行。",
   "chat.toolCall.workflow.run.settings.apply": "应用",
@@ -5665,83 +5780,97 @@ const zhCN: Record<string, string> = {
   "chat.toolCall.workflow.run.settings.rejection.unsupported":
     "当前 agent 不支持从这里调整工作流设置。",
   "chat.toolCall.workflow.run.settings.rejection.generic": "设置没能调整（{code}）。",
-  // 设置轮在转写里的那一行。
+  // The settings row as it appears in the transcript.
   "chat.toolCall.workflow.settingsChange.kind": "已调整设置",
   "chat.toolCall.workflow.settingsChange.model": "子代理改用 {model}",
   "chat.toolCall.workflow.settingsChange.modelSession": "子代理改回会话模型",
   "chat.toolCall.workflow.settingsChange.limit": "最多 {n} 个同时运行",
   "chat.toolCall.workflow.settingsChange.limitDefault": "上限恢复为默认",
   "chat.toolCall.workflow.run.result.title": "结果",
-  // resultPreview 本阶段恒缺席：产物只在 RunSettlement.artifact 里，不在事件也不在 journal。
-  // 所以完成态只能指路，绝不编造一个结果视图。
+  // resultPreview is absent throughout this phase: artifacts live only in RunSettlement.artifact,
+  // in neither events nor the journal. The completed state can only point the way; it must never
+  // fabricate a result view.
   "chat.toolCall.workflow.run.result.completedHint":
     "本实例已完成，结果以后台结果消息的形式投递到会话里。",
   "chat.toolCall.workflow.run.result.erroredTitle": "实例出错",
   "chat.toolCall.workflow.run.result.stoppedTitle": "实例已停止",
   "chat.toolCall.workflow.run.result.noError": "没有记录到错误详情。",
-  // Artifacts 区（用户面产物）：与上面那个「结果」
-  // **不是同一件事**——`result.title`（结果）是脚本的顶层返回值（给模型的），这一节（产物）
-  // 是脚本用 `artifact.*` 交付给**用户**的产出。两者在屏幕上必须可区分，措辞刻意不重叠。
+  // Artifacts section (user-facing deliverables): **not the same thing** as the "result" above —
+  // `result.title` (result) is the script's top-level return value (for the model), while this
+  // section (artifacts) is output the script delivers to the **user** via `artifact.*`. The two
+  // must be distinguishable on screen, with deliberately non-overlapping wording.
   "chat.toolCall.workflow.run.artifacts.title": "产物",
-  // 折叠 aria-label。这一节**默认展开**（产物是交付物，紧贴图之下常开）。
+  // Collapsible aria-label. This section is **expanded by default** (artifacts are deliverables,
+  // shown open right under the graph).
   "chat.toolCall.workflow.run.artifacts.expand": "展开产物",
   "chat.toolCall.workflow.run.artifacts.collapse": "收起产物",
-  // 六个 kind 词 = facade `artifact.*` 的六个成员。file/markdown 是内容产物（有字节与版本），
-  // 其余四个是 journal 投影出来的看板（没有字节）。
+  // Six kind words = the six members of the facade `artifact.*`. file/markdown are content
+  // artifacts (with bytes and versions); the other four are boards projected from the journal
+  // (no bytes).
   "chat.toolCall.workflow.run.artifacts.kind.file": "文件",
   "chat.toolCall.workflow.run.artifacts.kind.markdown": "文档",
   "chat.toolCall.workflow.run.artifacts.kind.chart": "图表",
   "chat.toolCall.workflow.run.artifacts.kind.table": "表格",
   "chat.toolCall.workflow.run.artifacts.kind.metrics": "指标",
   "chat.toolCall.workflow.run.artifacts.kind.board": "看板",
-  // 版本号。中文用「第 {n} 版」，英文用紧凑的 v{n}——两边各自读起来自然，不强行同形。
+  // Version number. Chinese uses "第 {n} 版", English the compact v{n} — each reads naturally in
+  // its own language; no forced symmetry.
   "chat.toolCall.workflow.run.artifacts.version": "第 {version} 版",
-  // 药丸尾槽里的紧凑版号（14px 的格子；长写在 tooltip 里）。
+  // Compact version in the pill's tail slot (14px cell; the long form lives in the tooltip).
   "chat.toolCall.workflow.run.artifacts.versionTail": "v{version}",
   "chat.toolCall.workflow.run.artifacts.versionOf": "第 {version} 版 / 共 {total} 版",
   "chat.toolCall.workflow.run.artifacts.previousVersion": "上一版",
   "chat.toolCall.workflow.run.artifacts.nextVersion": "下一版",
   "chat.toolCall.workflow.run.artifacts.open": "打开产物",
-  // 动作。「下载」（存到用户挑的位置）仍缺席；「作为文件打开」
-  // 落的是宿主 ~/.zcode/tmp 下的副本，不是用户挑的位置。
+  // Actions. "Download" (save to a user-picked location) is still absent; "open as file" lands on
+  // a copy under the host's ~/.zcode/tmp, not a user-picked location.
   "chat.toolCall.workflow.run.artifacts.reveal": "在工作区显示",
   "chat.toolCall.workflow.run.artifacts.copy": "复制",
   "chat.toolCall.workflow.run.artifacts.copied": "已复制",
   "chat.toolCall.workflow.run.artifacts.openAsFile": "作为文件打开",
   "chat.toolCall.workflow.run.artifacts.openAsFileFailed": "无法作为文件打开此产物",
   "chat.toolCall.workflow.run.artifacts.openInBrowser": "在浏览器中打开",
-  // 打开的是**工作区里的原文件**，不是这一版被钉住的字节（协议不给 renderer store 路径）。
-  // 卡上必须写明这件事，否则用户会以为自己在看历史版本。
+  // This opens the **original file in the workspace**, not the bytes pinned for this version (the
+  // protocol gives the renderer store no path). The card must state this, or users will think they
+  // are viewing a historical version.
   "chat.toolCall.workflow.run.artifacts.openInBrowserNote":
     "打开的是工作区里的那一份，不是这一版钉住的字节。",
-  // 远程工作区（SSH/WSL/Docker）拿不到本地文件路径，html 预览与「在工作区显示」都不可用。
+  // Remote workspaces (SSH/WSL/Docker) have no local file path, so the html preview and "reveal in
+  // workspace" are unavailable.
   "chat.toolCall.workflow.run.artifacts.localOnly": "仅本地工作区可预览。",
   "chat.toolCall.workflow.run.artifacts.loading": "正在读取产物…",
-  // 元数据读完了但这个 id 不在清单里（run 的记录已被清理 / chip 指向一个不存在的产物）。
+  // Metadata read fine but the id is not in the manifest (the run's record was cleaned up / the
+  // chip points at a nonexistent artifact).
   "chat.toolCall.workflow.run.artifacts.missing": "这个产物已经不在了。",
   "chat.toolCall.workflow.run.artifacts.loadError": "这个产物读取失败。",
-  // 没有任何查看器认得这个类型时的兜底卡：只报事实（类型 / 大小），不假装能渲染。
+  // Fallback card when no viewer recognizes the type: report the facts (type / size) only; do not
+  // pretend to render.
   "chat.toolCall.workflow.run.artifacts.unsupported":
     "这个文件类型没有内置预览，它仍然留在工作区里。",
-  // 看板 spec 解析不出来（老 CLI 写的形状 / 手工改坏的 journal 行）时的降级卡。
+  // Degraded card when the board spec cannot be parsed (a shape written by an old CLI / a
+  // hand-broken journal line).
   "chat.toolCall.workflow.run.artifacts.presetInvalid": "这个看板的定义无法渲染。",
-  // 产物元数据整个读不到（老 CLI 没有 workflowRunArtifacts 查询）时，预置卡退回这句。
+  // When artifact metadata is unreadable entirely (old CLIs lack the workflowRunArtifacts query),
+  // the preset card falls back to this line.
   "chat.toolCall.workflow.run.artifacts.unavailable": "当前会话读不到产物详情。",
-  // 三句喂给预置渲染器的译文（PresetLabels）。渲染器自己不查 i18n。
+  // Three strings fed to the preset renderer (PresetLabels); the renderer does no i18n lookups itself.
   "chat.toolCall.workflow.run.artifacts.preset.otherColumn": "其他",
   "chat.toolCall.workflow.run.artifacts.preset.empty": "暂无数据",
   "chat.toolCall.workflow.run.artifacts.preset.items": "{count} 条",
-  // 待答问题区（升级问答）：actor 停驻在自己那次 ask 里等
-  // 主代理回话。只读——应答者是主代理，不是用户，所以文案不能读起来像在请用户作答。
+  // Pending questions section (escalation Q&A): the actor parks inside its own ask waiting for the
+  // main agent to answer. Read-only — the responder is the main agent, not the user, so the copy
+  // must not read like the user is being asked to answer.
   "chat.toolCall.workflow.run.questions.title": "待答问题",
   "chat.toolCall.workflow.run.graph.unavailable": "当前会话的可见历史里没有这张工作流图。",
-  // 被 8-run 上限淘汰后的措辞必须诚实：丢的是实时状态，run 本身与它的记录都还在。
+  // Wording after eviction by the 8-run cap must be honest: what is lost is live state; the run
+  // itself and its record both remain.
   "chat.toolCall.workflow.run.untracked.title": "已不在实时跟踪范围内",
   "chat.toolCall.workflow.run.untracked.body":
     "这个实例不在保留实时状态的最近若干实例之内，但它的运行记录仍然完整。",
-  // Transcript 的未启动态：actor 会话在首个 ask 派发时才创建，提前订阅只会失败。
-  // 措辞不能说「没有会话记录」——它只是还没开始，而且面板会自己接上。
-  // ── 脚本步骤（脚本 transcript）──
+  // Transcript's not-started state: the actor session is created only when the first ask is
+  // dispatched; subscribing earlier would just fail. The wording must not say "no session record"
+  // — it simply has not started, and the panel will attach on its own.
+  // ── Script steps (script transcript) ──
   "chat.toolCall.workflow.script.title": "脚本",
   "chat.toolCall.workflow.script.notStarted.title": "脚本还没执行任何步骤",
   "chat.toolCall.workflow.script.notStarted.body":
@@ -5778,9 +5907,10 @@ const zhCN: Record<string, string> = {
   "chat.toolCall.workflow.run.actor.notStarted.title": "尚未启动",
   "chat.toolCall.workflow.run.actor.notStarted.body":
     "这个子代理还没有被问过任何问题。它的首个步骤一派发，会话记录就会出现在这里。",
-  // 逐条引擎事件的标签（`workflowRunEventLines` 的词汇表）。run 侧板的事件日志区已撤走，
-  // 分区自己的表头与空/错文案随之删除；这一族**保留**——它是
-  // journal 事件的展示规则，回放导出桶（replay.ts）仍在静态数据上用它。
+  // Labels for individual engine events (the `workflowRunEventLines` vocabulary). The run side
+  // pane's event-log section was removed, along with its own header and empty/error copy; this
+  // family **stays** — it is the display rule for journal events, and the replay export bucket
+  // (replay.ts) still uses it on static data.
   "chat.toolCall.workflow.run.event.runStarted": "实例启动",
   "chat.toolCall.workflow.run.event.actorCreated": "创建子代理",
   "chat.toolCall.workflow.run.event.nodeQueued": "入队",
@@ -5791,41 +5921,49 @@ const zhCN: Record<string, string> = {
   "chat.toolCall.workflow.run.event.nodeSettledCached": "结算 · {outcome}（命中缓存）",
   "chat.toolCall.workflow.run.event.usageUpdated": "用量更新",
   "chat.toolCall.workflow.run.event.log": "日志",
-  // amend-resume：第一笔工作区写入关闭了前驱缓存，此后的步骤全部实跑。
+  // amend-resume: the first workspace write closes the predecessor cache; every later step runs for real.
   "chat.toolCall.workflow.run.event.importCacheClosed": "工作区写入，前驱缓存已关闭",
-  // report 与 log 都是 fire-and-forget，但 report 有 site 身份、进 journal，所以自成一类。
+  // report and log are both fire-and-forget, but report carries a site identity and enters the
+  // journal, hence its own kind.
   "chat.toolCall.workflow.run.event.report": "报告",
   "chat.toolCall.workflow.run.event.phaseEntered": "进入阶段",
-  // 升级问答：两行都以 qid 打头（它们通常隔着几十行，qid 是唯一的关联键）。措辞与专用工具卡
-  // （chat.toolCall.workflow.escalate.* / resolveQuestion.*）对齐：日志行与卡面说同一件事。
+  // Escalation Q&A: both lines lead with the qid (they are usually dozens of lines apart; qid is
+  // the only join key). Wording aligns with the dedicated tool cards
+  // (chat.toolCall.workflow.escalate.* / resolveQuestion.*): the log lines and the card faces say
+  // the same thing.
   "chat.toolCall.workflow.run.event.escalationRaised": "询问主代理",
   "chat.toolCall.workflow.run.event.escalationResolved": "已回答",
   "chat.toolCall.workflow.run.event.runSettled": "实例结算 · {status}",
   "chat.toolCall.workflow.run.event.unknown": "{type}",
-  // 自适应并发：被限流的 ask 与进程级并发闸门。
+  // Adaptive concurrency: throttled asks and the process-level concurrency gate.
   "chat.toolCall.workflow.run.event.nodeWaitingSlot": "等待槽位",
   "chat.toolCall.workflow.run.event.nodeWaitingBackoff":
     "等待 provider（{reason}）· {seconds}s 后重试",
   "chat.toolCall.workflow.run.event.nodeExecuting": "请求已发出",
   "chat.toolCall.workflow.run.event.concurrencyChanged": "并发 {previous} → {next}",
-  // 上一条是治理器在压共享桶；这一条是用户改了这次 run 自己的上限（就地生效，不另起一次运行）。
+  // The previous entry is the governor squeezing the shared bucket; this one is the user changing
+  // this run's own cap (takes effect in place, no new run).
   "chat.toolCall.workflow.run.event.runCapsChanged": "并发上限 {previous} → {next}",
   "chat.toolCall.workflow.run.throttle.reason.rateLimited": "限流",
   "chat.toolCall.workflow.run.throttle.reason.overloaded": "过载",
   "chat.toolCall.workflow.run.throttle.reason.offpeak": "闲时排队",
   "chat.toolCall.workflow.run.throttle.reason.transient": "瞬态错误",
-  // 芯片上的数是一条界（min(共享 cap, 本 run 的 limit)），不是此刻在跑的个数；
-  // 旧词「并发数」读起来像实时读数，子代理少于它、或 run 已完成时都显得自相矛盾。
+  // The number on the chip is a bound (min(shared cap, this run's limit)), not the count running
+  // right now; the old word "concurrency" read like a live reading and looked self-contradictory
+  // when subagents were below it or the run had finished.
   "chat.toolCall.workflow.run.concurrency.label": "最大并发数 {cap}",
   "chat.toolCall.workflow.run.concurrency.cooldown": "冷却至 {time}",
-  // 子代理模型：只在这次 run 被指定过模型时在场。
-  // 详情侧板摘要行的第一段——这一行本来就是「这条 run 的几个数」，模型是它的第一个词。
-  // `{model}` 是**解析过的模型名**（describeWorkflowSubagentModel），不是规范串：规范串里的
-  // providerId 可能是一个 UUID，它只住在 tooltip 里。
+  // Subagent model: present only when this run had a model designated for it.
+  // First segment of the detail side-pane summary line — that line is "this run's numbers", and
+  // the model is its first word.
+  // `{model}` is the **resolved model name** (describeWorkflowSubagentModel), not the canonical
+  // string: the canonical string's providerId may be a UUID and lives only in the tooltip.
   "chat.toolCall.workflow.run.subagentModel.label": "子代理 {model}",
-  // 模型名 + 思考强度：确认窗与 tooltip 说整句，卡与侧板只取模型名。
+  // Model name + reasoning level: the confirmation dialog and tooltip say the full sentence; the
+  // card and side pane take only the model name.
   "chat.toolCall.workflow.subagentModel.withLevel": "{model} · 思考 {level}",
-  // 三个面共用的 tooltip：一句解释 + 换行 + 规范串（规范串由代码接在后面，不进词条）。
+  // Tooltip shared by three surfaces: one explanation + newline + canonical string (the code
+  // appends the canonical string; it is not part of the entry).
   "chat.toolCall.workflow.subagentModel.tooltip": "子代理运行在 {model}。主代理仍使用会话模型。",
   "chat.toolCall.todo.updating": "正在更新待办",
   "chat.toolCall.todo.updated": "已更新待办",
@@ -5853,7 +5991,7 @@ const zhCN: Record<string, string> = {
   "chat.toolCall.explore.bucket.items": "项",
   "chat.toolCall.explore.emptySummary": "0 个文件",
   "chat.toolCall.source.subAgent": "子智能体",
-  // agent 工具块缺少 fallback 文案时会把内部 i18n id 直接渲染到界面。
+  // An agent tool block missing fallback copy would render internal i18n ids straight into the UI.
   "chat.toolCall.agent.label": "子智能体",
   "chat.toolCall.agent.prompt": "提示词",
   "chat.toolCall.agent.fallback": "子智能体",
@@ -5973,7 +6111,7 @@ const zhCN: Record<string, string> = {
   "chat.slash.subagents.empty": "没有匹配的子智能体",
   "chat.slash.emptyUnavailable": "没有匹配的命令",
   "chat.slash.emptyResults": "没有匹配的 slash command",
-  // 错误
+  // Errors
   "chat.error.connectionLost": "与代理的连接已断开",
   "chat.error.processExited": "代理进程意外退出",
   "chat.error.dismiss": "关闭错误提示",
@@ -5998,7 +6136,7 @@ const zhCN: Record<string, string> = {
   "chat.error.modelSettings": "模型设置",
   "chat.error.setModels": "配置",
 
-  // Start Plan 单桶额度提醒
+  // Start Plan single-bucket quota reminders
   "chat.quota.startPlan.bucketDailyLow": "{model} 今日额度剩余 {percent}（{remaining} tokens）。",
   "chat.quota.startPlan.bucketActivityLow":
     "{model} 活动额度剩余 {percent}（{remaining} tokens）。",
@@ -6020,7 +6158,7 @@ const zhCN: Record<string, string> = {
   "chat.quota.action.switchProvider": "切换供应商",
   "chat.quota.action.refresh": "刷新额度",
 
-  // 权限请求
+  // Permission requests
   "chat.permission.title": "需要权限",
   "chat.permission.awaitingApproval": "等待确认",
   "chat.permission.approve": "允许",
@@ -6045,28 +6183,33 @@ const zhCN: Record<string, string> = {
   "chat.permission.workflow.hideScript": "收起完整脚本",
   "chat.permission.workflow.refine": "提出修改",
   "chat.permission.workflow.refine.placeholder": "描述这个工作流应该怎么改…",
-  // 会话免确认：只活在本次会话，重启后再问。
+  // Allow for session: lives only in this session; asks again after restart.
   "chat.permission.workflow.allowForSession": "本会话内始终允许",
   "chat.permission.workflow.allowForSession.description": "本会话内运行工作流不再询问",
-  // ── 修订──
-  // 修订的确认窗只对别的会话的 run 出现：问句换词，多一行 lineage（前驱还在跑时再多一句）。
-  // 不导入预览、不放脚本 diff。
+  // ── Revisions ──
+  // The revision confirmation dialog only appears for runs from other sessions: reworded question,
+  // one extra lineage row (plus one more sentence when the predecessor is still running). No
+  // import preview, no script diff.
   "chat.permission.workflow.amend.title": "调整此工作流？",
   "chat.permission.workflow.amends": "调整 run",
   "chat.permission.workflow.amends.running": "仍在运行，将被停止",
   "chat.permission.workflow.amends.scriptUnchanged": "脚本不变",
-  // 并发上限：模型只在用户要求时才写
-  // 这个字段，所以这一行说的是用户自己提的条件。单位是「同时在跑的子代理」，不是请求数。
+  // Max concurrency: the model writes this field only when the user asked for it, so this line
+  // states a condition the user set. The unit is "subagents running at once", not request count.
   "chat.permission.workflow.maxConcurrency": "最多 {count} 个子代理同时运行",
-  // 子代理模型：模型只在用户开口要求时才写 `subagent_model`，
-  // 所以这一行也是用户自己提的条件。只说子代理——主代理无论如何都留在会话模型上。
-  // `{model}` 是解析过的模型名（必要时带思考强度），不是规范串；规范串在这一行的 tooltip 里。
+  // Subagent model: the model writes `subagent_model` only when the user asked for it, so this
+  // line is also a user-set condition. Subagents only — the main agent stays on the session model
+  // regardless.
+  // `{model}` is the resolved model name (with reasoning level when present), not the canonical
+  // string; the canonical string is in this row's tooltip.
   "chat.permission.workflow.subagentModel": "子代理运行在 {model}",
-  // 脚本给某些子代理点名了模型时（docs/dynamic-workflow/launch.md「Models the script names」）：那些
-  // 名字不列（作者模型的选择），这一句只改口「默认」——它不再替每一个子代理说话。
+  // When the script named models for some subagents (docs/dynamic-workflow/launch.md "Models the
+  // script names"): those names are not listed (the author's model choice), and this line only
+  // says "default" — it no longer speaks for every subagent.
   "chat.permission.workflow.subagentModelDefault": "子代理默认运行在 {model}",
-  // 确认窗里可调的两句（docs/dynamic-workflow/presentation.md「The confirmation window」）：句中的值
-  // 就是控件，所以句子被拆成控件前后的两截；改过的那一行句尾多一截「· 原为 X ↺」。
+  // The two adjustable sentences in the confirmation dialog (docs/dynamic-workflow/presentation.md
+  // "The confirmation window"): the value inside the sentence is the control, so each sentence is
+  // split around the control; a changed row gains a trailing "· was X ↺".
   "chat.permission.workflow.settings.model.lead": "子代理运行在",
   "chat.permission.workflow.settings.model.noCatalog": "子代理沿用会话模型",
   "chat.permission.workflow.settings.model.noCatalogReason": "当前 agent 没有模型目录",
@@ -6077,18 +6220,21 @@ const zhCN: Record<string, string> = {
   "chat.permission.workflow.settings.limit.none": "不设上限",
   "chat.permission.workflow.settings.was": "原为 {value}",
   "chat.permission.workflow.settings.reset": "恢复原值",
-  // 改过设置后前两个选项换描述（docs/dynamic-workflow/launch.md「The options」）：会话免确认只管
-  // 「以后不再问」，调整只随这一次应答走。
+  // After settings change, the first two options swap descriptions (docs/dynamic-workflow/launch.md
+  // "The options"): allow-for-session only covers "don't ask again"; the adjustment applies only to
+  // this one response.
   "chat.permission.workflow.allowOnce.adjusted": "按调整后的设置运行一次",
   "chat.permission.workflow.allowForSession.adjusted":
     "本次按调整后的设置运行；之后的工作流不再询问，各用各的设置",
-  // ── 可复用工作流（docs/dynamic-workflow/launch.md）──
-  // saved 来源徽标（运行确认窗）：只说明脚本来自哪个文件、带了什么实参。
-  // 它不表达任何信任——保存不产生信任，已保存的工作流照样过完整的运行确认。
+  // ── Reusable workflows (docs/dynamic-workflow/launch.md) ──
+  // Saved-source badge (run confirmation dialog): states only which file the script came from and
+  // which args it carries. It expresses no trust — saving creates no trust, and a saved workflow
+  // still goes through the full run confirmation.
   "chat.permission.workflow.saved.badge": "已保存的工作流",
   "chat.permission.workflow.saved.scope.project": "project",
   "chat.permission.workflow.saved.args": "实参",
-  // 保存确认窗：覆盖与新建是两句不同的问句，不是同一句话加个标记。
+  // Save confirmation dialog: overwrite and create are two different questions, not one question
+  // with a flag.
   "chat.permission.workflow.save.title": "把这个工作流保存到项目里？",
   "chat.permission.workflow.save.overwriteTitle": "覆盖已保存的同名工作流？",
   "chat.permission.workflow.save.overwriteHint":
@@ -6112,7 +6258,7 @@ const zhCN: Record<string, string> = {
   "chat.cuaPermission.opening": "正在打开...",
   "chat.cuaPermission.openFailed": "无法打开 CUA 权限引导：{error}",
 
-  // 用户问答
+  // User elicitation
   "chat.elicitation.title": "需要确认",
   "chat.elicitation.keyboardHint": "使用 Tab / 上下键选择，回车或空格选中",
   "chat.elicitation.customAnswer": "自定义回答",
@@ -6151,7 +6297,7 @@ const zhCN: Record<string, string> = {
   "chat.permission.fileChange.updateMany": "编辑 {count} 个文件",
   "chat.permission.fileChange.mixedMany": "更新 {count} 个文件",
 
-  // 模式
+  // Modes
   "mode.default": "默认",
   "mode.plan": "计划",
   "mode.acceptEdits": "接受编辑",
@@ -6223,14 +6369,14 @@ const zhCN: Record<string, string> = {
   "zcode.error.providerBusiness.2007": "上游服务暂时不可用，请稍后重试。",
   "zcode.error.providerBusiness.429": "请求过于频繁，请稍后重试。",
 
-  // 调试信息栏
+  // Debug info bar
   "debugInfo.taskId": "Task ID",
   "debugInfo.traceId": "Trace ID",
   "debugInfo.sessionId": "Session ID",
   "debugInfo.provider": "Provider",
   "debugInfo.copied": "已复制",
 
-  // 资源管理器
+  // Resource manager
   "resourceManager.title": "资源管理器",
   "resourceManager.loading": "正在读取资源占用...",
   "resourceManager.unavailable": "资源管理器接口不可用",
@@ -6261,7 +6407,7 @@ const zhCN: Record<string, string> = {
   "resourceManager.column.process": "进程",
   "resourceManager.column.pid": "PID",
 
-  // 反馈
+  // Feedback
   "feedback.center.title": "问题上报",
   "feedback.center.description": "描述问题即可，提交后可查看处理进展。",
   "feedback.center.submitTitle": "提交反馈",
@@ -6567,7 +6713,7 @@ const zhCN: Record<string, string> = {
   "feedback.submission.logUploadPausedLabel": "已暂停日志上传",
   "feedback.submission.logUploadPausedDetail": "日志是定位问题的必需材料，请继续上传。",
   "feedback.submission.preparingUploadDetail": "准备上传",
-  // 表单通用
+  // Form common
   "forms.labels.name": "名称",
   "forms.labels.description": "描述",
   "forms.labels.color": "颜色",
@@ -6586,15 +6732,17 @@ const zhCN: Record<string, string> = {
   "forms.validation.agentSystemPromptHint": "定义子智能体的行为和能力",
   "forms.validation.fileExists": "文件 {fileName} 已存在",
 
-  // ---- 自动化 / Automations ----
-  // Automations 同时包含定时任务和闲时任务，顶层入口不能误用其中一个子类型的名称。
+  // ---- Automations ----
+  // Automations covers both scheduled and off-peak tasks; the top-level entry must not borrow the
+  // name of either subtype.
   "workspace.openScheduledSettings": "自动化",
   "settings.automations.title": "自动化",
   "automations.breadcrumbLabel": "自动化路径",
   "settings.automations.betaBadge": "Beta",
   "automations.noWorkspace": "打开一个工作区以管理它的定时任务。",
   "automations.workspace.label": "项目",
-  // 页头只说明任务创建方式，避免把服务端滚动配额频次固化在全局空态文案中。
+  // The page header only explains how tasks are created, keeping the server's rolling quota
+  // frequency out of the global empty-state copy.
   "automations.description": "创建定时任务，或排队在闲时算力空闲时后台执行。",
   "automations.description.populated": "按计划运行任务，或在需要时随时执行。",
   "automations.refresh": "刷新",
@@ -6767,7 +6915,8 @@ const zhCN: Record<string, string> = {
   "automations.schedule.customMonthlyWeekday": "每 {interval} 个月的第一个周{day}，{time}",
   "automations.schedule.customYearly": "每 {interval} 年的 {month} 月 {day} 日，{time}",
   "automations.schedule.once": "一次性",
-  // 该值会填入“下次运行”模板；使用明确时间短语，避免拼成不通顺的“下次运行 即将”。
+  // This value fills the "next run" template; use an explicit time phrase to avoid awkward
+  // combinations like "next run within 1 minute".
   "automations.time.soon": "1 分钟内",
   "automations.time.justNow": "刚刚",
   "automations.time.minutes": "{value} 分钟",

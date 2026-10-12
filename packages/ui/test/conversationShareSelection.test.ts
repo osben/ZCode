@@ -67,7 +67,7 @@ describe("conversation partial share selection store", () => {
     const store = useConversationShareSelectionStore.getState();
 
     store.setScope("task-a", "partial");
-    // product-turn-1 含两条 steer query，UI 目录里是两项，但「取消该轮」必须整轮生效。
+    // product-turn-1 carries two steer queries — two entries in the UI catalog — but "cancel this turn" must apply to the whole turn.
     store.syncAvailableTurns("task-a", [
       { rowId: 11, productTurnId: "product-turn-1" },
       { rowId: 12, productTurnId: "product-turn-1" },
@@ -80,7 +80,7 @@ describe("conversation partial share selection store", () => {
     expect(getConversationShareSelectedRowIds(state, "task-a")).toEqual([21]);
     expect(getConversationShareSelectedProductTurnIds(state, "task-a")).toEqual(["product-turn-2"]);
 
-    // 幂等：重复取消不改变状态，也不会把已排除的行再翻回来（toggle 语义的老 bug）。
+    // Idempotent: repeated cancels change nothing and never flip already-excluded rows back (an old toggle-semantics bug).
     store.deselectProductTurn("task-a", "product-turn-1");
     state = useConversationShareSelectionStore.getState();
     expect(getConversationShareSelectedRowIds(state, "task-a")).toEqual([21]);
@@ -340,7 +340,7 @@ describe("ConversationShareSelectionPanel", () => {
     expect(expanded.maxHeightPx).toBeGreaterThan(shrunk.maxHeightPx);
     expect(shrunk.bottomPx).toBeLessThanOrEqual(484);
 
-    // 短视口/高 dock 下先回收顶部安全距，再保底最小高度，不允许压成零高度薄片。
+    // With a short viewport or tall dock, the top safe-area space is reclaimed first while keeping a minimum height; collapsing to a zero-height sliver is not allowed.
     const collided = resolveConversationShareSelectionPanelLayout({
       containerHeightPx: 400,
       dockStartPx: 100,
@@ -348,7 +348,7 @@ describe("ConversationShareSelectionPanel", () => {
     expect(collided.topPx).toBe(0);
     expect(collided.maxHeightPx).toBe(120);
 
-    // 容器本身比最小高度还矮时，面板仍必须留在容器内。
+    // When the container itself is shorter than the minimum height, the panel must still stay inside the container.
     const tiny = resolveConversationShareSelectionPanelLayout({
       containerHeightPx: 100,
       dockStartPx: 60,
@@ -721,7 +721,7 @@ describe("ConversationShareSelectionDock", () => {
           logEpoch: "epoch-1",
           capabilitiesFingerprint: "fingerprint",
           blockingIssues: [
-            // turnOrdinal 只用于文案；「取消该轮」按 productTurnId 定位。
+            // turnOrdinal is copy-only; "cancel this turn" targets by productTurnId.
             {
               code: "running_turn",
               scope: "turn",
@@ -786,13 +786,13 @@ describe("ConversationShareSelectionDock", () => {
       }),
     );
 
-    // 固定宽度（w-12）会把英文标签拆开；改为按内容宽度保持单行。
+    // A fixed width (w-12) breaks English labels across lines; width follows the content to keep one line.
     const label = screen.getByTestId("conversation-share-bulk-label");
     expect(label.className).toContain("whitespace-nowrap");
     expect(label.className).not.toContain("w-12");
     const bulk = screen.getByTestId("conversation-share-bulk-actions");
     expect(bulk.className).toContain("shrink-0");
-    // 空间不足时取消/下一步整组换行并右对齐，而不是被挤压裁切。
+    // When space runs out, the Cancel/Next group wraps as a unit and right-aligns instead of being squeezed and clipped.
     const actionRow = bulk.nextElementSibling!;
     expect(actionRow.className).toContain("ml-auto");
     expect(actionRow.className).toContain("shrink-0");
@@ -1078,8 +1078,8 @@ describe("ConversationBottomDockTransition", () => {
     expect(layer.className).toContain("self-end");
     expect(layer.className).toContain("origin-bottom");
     expect(layer.className).toContain("will-change-transform");
-    // 回归护栏：grid 子项默认 min-width:auto 会把隐式列轨道顶在 composer 的
-    // min-content 宽度上，面板收窄时右侧被裁掉。min-w-0 是可收缩的前提。
+    // Regression guard: a grid item's default min-width:auto pushes the implicit column track out to the
+    // composer's min-content width, clipping the right side as the panel narrows. min-w-0 is the prerequisite for shrinking.
     expect(layer.className).toContain("min-w-0");
   });
 });

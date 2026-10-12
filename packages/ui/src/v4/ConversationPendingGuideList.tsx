@@ -38,7 +38,7 @@ function ConversationPendingGuideListImpl({
 
   if (rows.length === 0) return null;
   return (
-    // 待引导消息直接渲染行，绕过了普通轮容器；补齐输入框 dock 的水平留白，避免气泡和状态贴边。
+    // Pending guide messages render rows directly, bypassing the normal turn container; add the input dock's horizontal padding so bubbles and the status do not hug the edges.
     <div data-v4-pending-guide-list="true" className="flex flex-col gap-5 px-4 pt-5">
       {rows.map((row) => (
         <ConversationTurnRow

@@ -73,7 +73,8 @@ for (const width of [390, 1200])
         );
         await options.first().focus();
         await page.keyboard.press("5");
-        // 权限选项通过 RAF 转移焦点，等待真实焦点落点，避免在同帧抢先断言。
+        // Permission options move focus via RAF; wait for the real focus landing spot to avoid
+        // asserting too early in the same frame.
         await page.waitForFunction(() => document.activeElement?.tagName === "TEXTAREA");
         assert.equal(
           await page.getByRole("textbox").evaluate((el) => document.activeElement === el),

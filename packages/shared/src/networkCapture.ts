@@ -34,7 +34,7 @@ export interface NetworkCaptureBridge {
   clear(): Promise<void>;
 }
 
-/** 不保留凭据、fragment 或查询值；仍保留路径和查询键用于辨认请求。 */
+/** Credentials, fragment, and query values are removed; path and query keys are kept to identify the request. */
 export function sanitizeNetworkCaptureUrl(value: string): string | undefined {
   try {
     const url = new URL(value);

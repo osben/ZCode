@@ -4,8 +4,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { ConversationShareReadonlyTimeline } from "@/v4/ConversationShareReadonlyTimeline.js";
 
 // SG-01 injection boundary: the timeline no longer statically imports OpenSplitButton (keeping the
-// open-with subtree out of the public page bundle); consumers inject it via artifactOpenAction,
-// and the test verifies the same injection contract with a stub component.
+// open-with subtree out of the public page bundle); consumers inject it via artifactOpenAction. This test verifies the same injection contract with a stub component.
 const openActionProps: { values: Array<Record<string, unknown>> } = { values: [] };
 
 function StubArtifactOpenAction(props: Record<string, unknown>) {
@@ -288,7 +287,7 @@ describe("ConversationShareReadonlyTimeline", () => {
   });
 
   it("marker 不再把枚举名当文案印出来", () => {
-    // Bug root cause: row.marker.type used to be rendered directly, so the share page showed a divider printed with the literal compact.
+    // Bug root cause: row.marker.type was rendered directly, so the share page showed a divider labeled with the literal "compact".
     const markerRows = [
       rows[0],
       rows[1],
@@ -322,7 +321,7 @@ describe("ConversationShareReadonlyTimeline", () => {
 
     expect(html).toContain("上下文已压缩");
     expect(html).not.toContain(">compact<");
-    // Unrecognizable types skip the whole row instead of degrading into printing the enum name.
+    // Unrecognized types render nothing for the row instead of degrading into a printed enum name.
     expect(html).not.toContain("goalVerify");
   });
 
@@ -356,22 +355,21 @@ describe("ConversationShareReadonlyTimeline", () => {
       }),
     );
 
-    // Same container as AssistantPreviewCards.tsx: rounded-xl / p-3 pr-4 / gap-3.
+    // Matches the AssistantPreviewCards.tsx container: rounded-xl / p-3 pr-4 / gap-3.
     expect(html).toContain(
       "flex w-full items-center gap-3 rounded-xl border border-card-border bg-card p-3 pr-4",
     );
-    // The timeline turn already provides the body inset; the artifact row must not stack horizontal padding on top, otherwise the card is narrower than the body.
+    // Timeline turns already provide the body inset; artifact rows must not stack horizontal padding on top, or the card ends up narrower than the body.
     expect(html).toContain('data-conversation-share-row-kind="artifact" class="py-1"');
-    // A 44px icon plate + a real file-type icon, not a generic size-4 FileIcon.
+    // A 44px icon plate with a real file-type icon, not a generic size-4 FileIcon.
     expect(html).toContain("flex size-11 shrink-0 items-center justify-center rounded-md");
     expect(html).toContain("pdf.svg");
-    // The subtitle reuses the body's vocabulary and no longer prints the raw byte count.
+    // The subtitle reuses the body's vocabulary and no longer prints raw byte counts.
     expect(html).toContain("文档 · PDF");
     expect(html).toContain("169 KB");
     expect(html).not.toContain("172974 bytes");
-    // The action button shares OpenSplitButton's visuals instead of being a blue text link; the
-    // semantic lock uses structural markers, not Tailwind class strings (class reordering or size
-    // tweaks must not break this regression).
+    // The action button shares OpenSplitButton's look instead of being a blue text link; semantics are pinned
+    // via structural markers, not Tailwind class strings (class order or size tweaks must not break this regression).
     expect(html).toContain('data-share-preview-button="true"');
     expect(html).not.toContain("text-icon-blue");
   });
@@ -431,12 +429,10 @@ describe("ConversationShareReadonlyTimeline", () => {
   });
 
   it("不注入 artifactOpenAction 时本地 artifact 不渲染任何打开控件", () => {
-    // A runtime negative case complementing the static guard (conversationShareBundleBoundary.test.ts):
-    // the public page (packages/web/src/share) passes no artifactOpenAction. This pins the
-    // !artifactOpenAction condition in the ArtifactOpenContext gating — even with workspacePath, a
-    // legal relative path, and an open callback all present, it must fall back to a pure read-only
-    // card, preventing a later default-fallback implementation from giving the public page a local
-    // open entry again.
+    // Runtime negative case complementing the static guard (conversationShareBundleBoundary.test.ts): the
+    // public page (packages/web/src/share) passes no artifactOpenAction. Pins the !artifactOpenAction
+    // condition in the ArtifactOpenContext gate — even with workspacePath, a valid relative path, and an open
+    // callback all present, it must fall back to the pure read-only card, so a default fallback added later cannot hand the public page a local open path again.
     const artifactRows = [rows[0], rows[1], buildArtifactRow(80, "artifact-1")];
     const html = renderToStaticMarkup(
       createElement(ConversationShareReadonlyTimeline, {
@@ -495,7 +491,7 @@ describe("ConversationShareReadonlyTimeline", () => {
   });
 
   it("拒绝导入副本里的绝对路径 artifact path", () => {
-    // Public page privacy boundary: all three absolute path forms — posix / Windows drive letters / UNC — must fall back to a pure read-only card.
+    // Public page privacy boundary: all three absolute path forms — posix, Windows drive letters, UNC — must fall back to the pure read-only card.
     const artifactRows = [
       rows[0],
       rows[1],
@@ -524,7 +520,7 @@ describe("ConversationShareReadonlyTimeline", () => {
   });
 
   it("拒绝导入副本里段数不为 4 或含 ./.. 段的 artifact path", () => {
-    // "../secret.pdf" is already rejected by the segment-count check; this specifically covers escape shapes with 4 segments that contain .. inside.
+    // "../secret.pdf" is already rejected by the segment-count check; this adds 4-segment escapes that carry ".." inside a segment.
     const artifactRows = [
       rows[0],
       rows[1],
@@ -540,15 +536,15 @@ describe("ConversationShareReadonlyTimeline", () => {
         locale: "zh-CN",
         workspacePath: "/workspace",
         artifactWorkspaceRelativePaths: new Map([
-          // Nested subdirectory: 5 segments.
+          // Nested subdirectories: 5 segments.
           ["artifact-1", ".zcode-share/share-1/shared-artifacts/sub/a.pdf"],
           // Shallow path: 3 segments.
           ["artifact-2", ".zcode-share/share-1/a.pdf"],
-          // 4 segments but segment 2 is ..: equivalent to escaping this share directory.
+          // 4 segments with ".." as segment 2: equivalent to escaping this share directory.
           ["artifact-3", ".zcode-share/../shared-artifacts/a.pdf"],
-          // 4 segments but the file name is .: not a legal artifact file.
+          // 4 segments with "." as the file name: not a valid artifact file.
           ["artifact-4", ".zcode-share/share-1/shared-artifacts/."],
-          // Backslash separators must not bypass the segment check.
+          // Backslash separators must not bypass segment validation.
           ["artifact-5", ".zcode-share\\share-1\\shared-artifacts\\a.pdf\\..\\b.pdf"],
         ]),
         onOpenCodeViewer: () => undefined,
@@ -565,9 +561,8 @@ describe("ConversationShareReadonlyTimeline", () => {
     ["zh-CN", "下载文件"],
     ["en-US", "Download file"],
   ])("artifactUrls 与本地路径同时存在时 url 必须胜出（%s）", (locale, label) => {
-    // The key premise of the public page's privacy boundary: ArtifactPresentation resolves the local
-    // path only when !url; when a url exists it must render a window.open button, not an
-    // OpenSplitButton that can reach the local file service.
+    // Key premise of the public page privacy boundary: ArtifactPresentation resolves local paths only when !url;
+    // when a url exists it must render the window.open button, not the OpenSplitButton that reaches the local file service.
     const artifactRows = [rows[0], rows[1], buildArtifactRow(80, "artifact-1")];
     const html = renderToStaticMarkup(
       createElement(ConversationShareReadonlyTimeline, {
@@ -583,7 +578,7 @@ describe("ConversationShareReadonlyTimeline", () => {
       }),
     );
 
-    // The resource URL actually downloads the file, so the button label must correspond to downloading, and the injected local open action must be entirely unmounted.
+    // The resource URL actually downloads a file, so the button copy must say download, and the injected local open action must be fully unmounted.
     expect(html).toContain(label);
     expect(html).not.toContain("预览文件");
     expect(html).not.toContain("Preview file");
@@ -592,10 +587,9 @@ describe("ConversationShareReadonlyTimeline", () => {
     expect(openActionProps.values).toHaveLength(0);
   });
 
-  // Bug regression: the public share page passes no workspacePath/readAttachment, so MarkdownImage
-  // fell back to <img src={remote}> and an anonymous visitor's first open automatically sent
-  // requests to a third party (leaking IP/UA/Referer).
-  // Body and tool output must both be left with links only; no auto-loading <img> may appear.
+  // Bug regression: without workspacePath/readAttachment the public share page's MarkdownImage falls back to
+  // <img src={remote}>, firing third-party requests automatically the moment an anonymous visitor opens it (leaking IP/UA/Referer).
+  // Both body and tool output must be reduced to links; no auto-loading <img> may appear.
   it("不为正文与工具输出里的远程图片渲染自动加载的 img", () => {
     const remoteImageRows = [
       {
@@ -641,11 +635,11 @@ describe("ConversationShareReadonlyTimeline", () => {
       }),
     );
 
-    // What matters is not whether the URL appears in the HTML (a link's title attribute carrying it
-    // is harmless) but that there is no auto-requesting <img src>.
+    // What matters is not whether the URL appears in the HTML (a link's title attribute carrying it is harmless)
+    // but that there is no auto-requesting <img src> at all.
     expect(html).not.toContain("<img");
     expect(html).not.toContain('src="https://tracker.invalid');
-    // No information is lost: after degrading to an external link the URL can still be clicked explicitly by the visitor.
+    // No information is lost: once downgraded, the URL stays an external link visitors can click explicitly.
     expect(html).toContain('title="https://tracker.invalid/pixel.png"');
     expect(html).toContain("tracker");
   });

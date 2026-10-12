@@ -3,11 +3,7 @@ import { MessageResponse } from "@/components/ai-elements/message.js";
 import { Button } from "@/components/ui/button.js";
 import { cn } from "@/components/lib/utils.js";
 import { GlmMonochromeIcon } from "@/components/ui/GlmMonochromeIcon.js";
-import {
-  Dialog,
-  DialogContent,
-  DialogTitle,
-} from "@/components/ui/dialog.js";
+import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { useZCodeStoreWithDefault } from "@/store/StoreProvider.js";
 import { DEFAULT_CODE_PREVIEW_SETTINGS } from "@/lib/codePreviewSettings.js";
@@ -24,7 +20,7 @@ export function PostUpdateReleaseNotesDialog({
   onOpenExternalUrl,
 }: PostUpdateReleaseNotesDialogProps) {
   const { intl } = useZCodeIntl();
-  // M5②.5 store 耦合剥离：MessageResponse 不再自取 store，主题/代码预览设置由调用方传入。
+  // M5②.5 store coupling removal: MessageResponse no longer fetches the store itself; theme / code preview settings are passed in by the caller.
   const theme = useZCodeStoreWithDefault((state) => state.theme, "system");
   const codePreviewSettings = useZCodeStoreWithDefault(
     (state) => state.codePreviewSettings,
@@ -63,7 +59,7 @@ export function PostUpdateReleaseNotesDialog({
                 <MessageResponse
                   className={cn(
                     "prose prose-sm max-w-none text-foreground dark:prose-invert",
-                    // Typography 默认标题偏大；用 prose-h* 逐级压小，避免 changelog 里 # / ## 抢视觉
+                    // Typography's default headings run large; shrink each level with prose-h* so # / ## do not dominate the changelog.
                     "prose-headings:font-semibold prose-headings:tracking-tight",
                     "prose-h1:text-lg prose-h2:text-ui-lg prose-h3:text-ui-base prose-h4:text-ui-base prose-h5:text-ui-base prose-h6:text-ui-base",
                   )}

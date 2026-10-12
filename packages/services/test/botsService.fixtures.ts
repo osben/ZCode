@@ -1,4 +1,4 @@
-/* eslint-disable max-lines -- Bot service 的共享测试桩集中维护协议、任务和模型 registry 能力。 */
+/* eslint-disable max-lines -- Shared Bot service test stubs keep protocol, task, and model registry capabilities in one place. */
 import { afterEach, vi } from "vitest";
 import type {
   ZCodeConfigOption,
@@ -168,11 +168,11 @@ export function createModelSelectionService(providers: readonly TestModelSelecti
   return {
     getView: vi.fn(async (input?: { selection: ModelSelection | null }) => ({
       revision: 1,
-      // 服务桩显式支持按输入返回结果；账号转换/失效分支由各自用例注入权威结果。
+      // The service stub explicitly supports input-dependent results; account conversion/invalidation branches are injected as authoritative results by their own tests.
       ...(input ? { effectiveSelection: input.selection } : {}),
       providers: providers.map((provider) => ({
         providerId: provider.id,
-        // 名称是 View 元数据；放进旧 config.label 会让展示测试错误回落到 ID。
+        // The name is View metadata; putting it in the legacy config.label would make display tests fall back to the ID incorrectly.
         providerName: provider.name,
         config: {},
         models: provider.models.map((model) => ({
@@ -334,7 +334,7 @@ export function createBotsService(
     "zcodeSessionService" | "zcodeTaskService"
   > & {
     zcodeTaskService?: IZCodeTaskService;
-    /** 旧测试名保留为别名；真实注入的是 ZCode task service。 */
+    /** Legacy test-name alias; the real injection is the ZCode task service. */
     legacyTaskService?: IZCodeTaskService;
     zcodeSessionService?: IZCodeSessionService;
   },
@@ -351,7 +351,7 @@ export function createBotsService(
     deps.modelSelectionService ??
     createModelSelectionService([{ id: "glm", name: "GLM", models: ["default"] }]);
   return createBotsServiceImpl({
-    // Bots 不再持久化 workspace 候选项；测试默认从 settings.lastWorkspaceSession 提供当前工作区。
+    // Bots no longer persist workspace candidates; tests provide the current workspace via settings.lastWorkspaceSession by default.
     settingService: createSettingService({
       locale: "zh-CN",
       lastWorkspaceSession: [

@@ -61,9 +61,9 @@ function createReadyZCodeAgentService(options?: Parameters<typeof createZCodeAge
 }
 
 // A minimal ZCode Protocol stdio fake agent:
-// the first session/subscribe returns an error (simulating a transient failure like "Session is
-// not active"), the second returns success with one session.titleUpdated event. Used to verify
-// that subscription setup retries after a failure.
+// the first session/subscribe returns an error (simulating a transient failure like "Session is not
+// active"), the second succeeds with a session.titleUpdated event. Verifies that subscription setup
+// is retried after a failure.
 const FLAKY_SUBSCRIBE_FAKE_AGENT = `
 let buf = "";
 let subscribeCount = 0;
@@ -507,7 +507,7 @@ process.stdin.on("data", (chunk) => {
     let msg;
     try { msg = JSON.parse(line); } catch { continue; }
     if (msg.method === "session/create" && msg.id !== undefined) {
-      // The Worker process already holds its own Registry; runtime preferences are materialized at session creation.
+      // The Worker process already owns its Registry; runtime preferences are materialized at session creation.
       pendingCreate = msg;
       send({
         id: "runtime-preferences-1",
@@ -998,9 +998,8 @@ process.stdin.on("data", (chunk) => {
 });
 `;
 
-// Simulates the real CLI transport's serial queue: within the same process mcp/list never
-// returns, so every request queued behind it gets no response (Bug: plugin uninstall stalled
-// by a 30s MCP probe).
+// Simulates a real CLI transport's serial queue: within the same process, mcp/list never returns,
+// so every request queued behind it gets no response (bug: plugin uninstall was stuck for 30s by the MCP probe).
 const SERIAL_QUEUE_HANG_ON_MCP_LIST_FAKE_AGENT = `
 const fs = require("node:fs");
 const markerPath = process.argv[2];
@@ -1270,9 +1269,9 @@ describe("createZCodeAgentService", () => {
   afterEach(() => {
     setDataBaseDir(null);
     for (const dir of createdDirs.splice(0).reverse()) {
-      // Same root cause as zcodeAgentService.v4.test.ts: on Windows a directory with open handles
-      // cannot be deleted, `force: true` does not retry, and afterEach would fail cases whose
-      // assertions had already passed with EPERM.
+      // Same root cause as zcodeAgentService.v4.test.ts: on Windows, directories with open handles
+      // cannot be deleted, `force: true` does not retry, and afterEach would mark already-passing
+      // cases as failed with EPERM.
       try {
         rmSync(dir, {
           recursive: true,
@@ -1281,7 +1280,7 @@ describe("createZCodeAgentService", () => {
           retryDelay: 100,
         });
       } catch {
-        /* Cleanup failure does not affect the assertion outcome; leave the temp directory to the OS. */
+        /* Cleanup failure does not affect the assertion outcome; the OS reclaims the temp directory. */
       }
     }
   });
@@ -1677,9 +1676,9 @@ describe("createZCodeAgentService", () => {
     const scriptPath = join(workspacePath, "tool-list-agent.cjs");
     const logPath = join(workspacePath, "protocol.log");
     writeFileSync(scriptPath, SHELL_SETTINGS_SNAPSHOT_FAKE_AGENT);
-    // Fix reason: this case only verifies the session/create tool list passthrough, not provider
-    // readiness. After the gate was enabled it must reuse the standard ready registry fixture,
-    // otherwise the test is correctly blocked before the protocol request.
+    // Fix reason: this case only verifies the tool-list passthrough of session/create, not provider readiness.
+    // With the gate enabled, the standard ready registry fixture must be reused, or the test is (correctly)
+    // intercepted before the protocol request.
     const service = createReadyZCodeAgentService({
       commandResolver: () => ({ command: process.execPath, args: [scriptPath, logPath] }),
     });
@@ -2519,9 +2518,9 @@ describe("createZCodeAgentService", () => {
     }));
     const service = createReadyZCodeAgentService({
       commandResolver,
-      // Bugfix: this case only needs the first fake agent to time out; under full-suite concurrency
-      // the second process may take over 500ms from startup to response. Relax the request timeout
-      // locally so the successful recovery after restart is not misjudged as a second stale client.
+      // Bugfix: this case only needs the first fake agent to time out; under full-suite concurrency the
+      // second process's startup-to-response can exceed 500ms.
+      // Relax the request timeout locally so a successful recovery after restart is not misjudged as a second stale.
       requestTimeoutMs: 1_500,
     });
 
@@ -2678,7 +2677,7 @@ describe("createZCodeAgentService", () => {
     const service = createReadyZCodeAgentService({ commandResolver });
 
     try {
-      // In connect mode a real mcp/list would burn the full 30s timeout on a bad MCP server; here it never returns.
+      // In connect mode, mcp/list would consume the full 30s timeout against a broken MCP server in a real environment; here it never returns.
       const mcpListPromise = service.listMcpServerStatuses({ workspacePath: sandboxRoot });
       mcpListPromise.catch(() => undefined);
       await vi.waitFor(() => expect(existsSync(markerPath)).toBe(true), { timeout: 5_000 });
@@ -2691,7 +2690,7 @@ describe("createZCodeAgentService", () => {
       ]);
 
       expect(result.diagnostics).toEqual([]);
-      // The two kinds of requests must land on different agent processes
+      // The two request kinds must land on different agent processes
       expect(commandResolver).toHaveBeenCalledTimes(2);
     } finally {
       await service.disposeAllAndWait();
@@ -2717,14 +2716,14 @@ describe("createZCodeAgentService", () => {
     });
 
     try {
-      // Only the mcp-status lane runs here: this process is a long-lived agent added for this lane, and the process monitor must see it.
+      // Only the mcp-status lane is used: this process is a long-lived agent newly added by this lane, and the process monitor must see it.
       const mcpListPromise = service.listMcpServerStatuses({ workspacePath: sandboxRoot });
       mcpListPromise.catch(() => undefined);
       await vi.waitFor(() => expect(existsSync(markerPath)).toBe(true), { timeout: 5_000 });
 
       await vi.waitFor(() => expect(processLifecycleReporter.onSpawn).toHaveBeenCalledTimes(1));
-      // macOS tmpdirs realpath to /private/var, so the workspacePath literal is not compared here.
-      // Review SG-02: the mcp-status and plugin lanes share the same workspacePath/command, so events must carry the lane to be attributable.
+      // The macOS tmpdir is realpath'ed to /private/var, so the workspacePath literal is not compared.
+      // Review SG-02: mcp-status and the plugin lane share the same workspacePath/command; events must carry the lane to be attributable.
       expect(processLifecycleReporter.onSpawn.mock.calls[0]![0]).toMatchObject({
         pid: expect.any(Number),
         provider: "glm",
@@ -2760,7 +2759,7 @@ describe("createZCodeAgentService", () => {
       await service.listMcpServerStatuses({ workspacePath: sandboxRoot });
       expect(commandResolver).toHaveBeenCalledTimes(1);
 
-      // After probing completes no request is in flight; past the idle threshold the process must be recycled proactively, attributed as expected/idle-timeout.
+      // After probing there are no in-flight requests; exceeding the idle threshold must recycle proactively, attributed as expected/idle-timeout.
       await vi.waitFor(() => expect(processLifecycleReporter.onExit).toHaveBeenCalledTimes(1), {
         timeout: 5_000,
       });
@@ -2770,7 +2769,7 @@ describe("createZCodeAgentService", () => {
         terminationReason: "idle-timeout",
       });
 
-      // Probing again after recycling must transparently relaunch the process instead of erroring on the recycled client.
+      // Probing again after recycling must transparently relaunch the process, not error out on the recycled client.
       await service.listMcpServerStatuses({ workspacePath: sandboxRoot });
       expect(commandResolver).toHaveBeenCalledTimes(2);
     } finally {
@@ -2798,20 +2797,20 @@ describe("createZCodeAgentService", () => {
     const service = createReadyZCodeAgentService({
       commandResolver,
       processLifecycleReporter,
-      // Covers the fake agent's cold start (node process launch + first response) while staying short enough for both timeouts to finish within seconds.
+      // Covers the fake agent's cold start (node process launch + first response) while being short enough for both timeouts to complete within seconds.
       requestTimeoutMs: 1_500,
     });
 
     try {
-      // First let the plugin lane start a process as the "unaffected" control (this fake agent only answers plugins/uninstall).
+      // First spin up a plugin lane process as the "unaffected" control (this fake agent only answers plugins/uninstall).
       await service.uninstallPlugin({ workspacePath: sandboxRoot, pluginId: "pick-funds" });
       expect(commandResolver).toHaveBeenCalledTimes(1);
 
-      // mcp/list never returns: first timeout -> the watchdog recycles the mcp-status process -> one retry -> timeout again -> throw.
+      // mcp/list never returns: first timeout → watchdog recycles the mcp-status process → one retry → timeout again → throws.
       await expect(service.listMcpServerStatuses({ workspacePath: sandboxRoot })).rejects.toThrow(
         /timed out/u,
       );
-      // plugin lane once + mcp-status lane first attempt once + retry relaunch once
+      // plugin lane 1 call + mcp-status lane first attempt 1 call + retry relaunch 1 call
       expect(commandResolver).toHaveBeenCalledTimes(3);
 
       await vi.waitFor(
@@ -2822,10 +2821,10 @@ describe("createZCodeAgentService", () => {
                 event.lane === "mcp-status" && event.terminationKind === "watchdog_recycle",
             ),
           ).toHaveLength(2),
-        // Fix reason: the second watchdog fires in the same tick as mcp/list's reject, and the exit
-        // event is only reported after the Windows process-tree teardown (taskkill /T + retries)
-        // completes; vi.waitFor's default 1000ms can time out first on slow-disk/high-load local
-        // machines, misreporting a slow environment as a case failure. Fast CI machines are unaffected.
+        // Fix reason: the second watchdog fires in the same tick as mcp/list's reject; the exit event is only
+        // reported after Windows process-tree cleanup (taskkill /T + retries) completes. vi.waitFor's default
+        // 1000ms would time out first on slow-disk/high-load machines, misreporting a slow environment as a
+        // case failure. Fast CI machines are unaffected.
         { timeout: 8_000 },
       );
       // The plugin lane process was never recycled and still serves normally.

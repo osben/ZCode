@@ -11,9 +11,9 @@ import {
 const HIGHSPEED_DIFFUSION_DELAY_MS = 500;
 const HIGHSPEED_DIFFUSION_FRAME_INTERVAL_MS = 1_000 / 30;
 
-// The reference mock's mosaic grain is about 6px; a higher internal pixel density adds no visible detail
-// and instead makes the widescreen Composer process tens of thousands of pixels per frame and block the
-// renderer.
+// The reference mock uses ~6px mosaic grain; higher internal pixel density adds no visible
+// detail and instead makes the widescreen composer process tens of thousands of pixels per
+// frame, blocking the renderer.
 const PIXEL_SIZE_CSS_PX = 6;
 const SURFACE_FALLBACK: Rgb = [21, 21, 21];
 const ACCENT_FALLBACK: Rgb = [179, 146, 255];
@@ -77,10 +77,10 @@ export const HighSpeedDiffusionCanvas = memo(function HighSpeedDiffusionCanvas({
     (event: TransitionEvent<HTMLCanvasElement>) => {
       if (event.propertyName !== "opacity") return;
 
-      // Root cause of the bug: the old implementation started timing the Canvas unmount from the diffusion
-      // callback, but React's commit handoff phase may be later; when the renderer is busy it compresses or
-      // even swallows the real fade-out window. The CSS opacity transition completion event is the only
-      // unmount boundary.
+      // Root cause: the old implementation started an unload timer from the diffusion callback,
+      // but React may commit the handoff phase later, and a busy renderer compresses or even
+      // swallows the real fade-out window. Use the CSS opacity transitionend event as the only
+      // unload boundary.
       onComplete();
     },
     [onComplete],
@@ -150,9 +150,10 @@ export const HighSpeedDiffusionCanvas = memo(function HighSpeedDiffusionCanvas({
         }
       }
 
-      // Root cause of the bug: the old implementation recomputed distance and two sets of multi-layer noise
-      // for every pixel on every frame, producing 1s-scale long tasks on widescreen. The static field is
-      // cached once on size change; the playback phase only moves the diffusion threshold.
+      // Root cause: the old implementation recomputed the distance field and two multi-octave
+      // noise fields for every pixel on every frame, producing second-long tasks on wide
+      // screens. Cache the static fields once on resize; playback only moves the diffusion
+      // threshold.
       for (let y = 0; y < height; y += 1) {
         for (let x = 0; x < width; x += 1) {
           const fieldIndex = y * width + x;
@@ -210,10 +211,10 @@ export const HighSpeedDiffusionCanvas = memo(function HighSpeedDiffusionCanvas({
       const elapsed = now - startTime;
       const progress = resolveHighSpeedDiffusionProgress(elapsed);
       if (!modelTransitionStarted && shouldStartHighSpeedModelSwitch(progress)) {
-        // Root cause of the bug: the toolbar used to read the active boolean directly, so the model paged
-        // over before the noise diffusion and the two visual events lost their causal order. The Canvas's
-        // same progress clock emits a one-shot signal in the tail segment, ensuring the page-over starts
-        // early but still completes before the noise ends.
+        // Root cause: the toolbar previously read the active boolean directly, flipping the
+        // model before the noise diffusion and losing causal order between the two visual
+        // events. The canvas's own progress clock emits a one-shot signal near the end so the
+        // flip starts early but still completes before the noise ends.
         modelTransitionStarted = true;
         onModelTransitionStart();
       }
@@ -247,9 +248,10 @@ export const HighSpeedDiffusionCanvas = memo(function HighSpeedDiffusionCanvas({
 
       context.putImageData(imageData, 0, 0);
       if (shouldCompleteHighSpeedDiffusion(progress)) {
-        // Root cause of the bug: the completion frame used to unload the Canvas with a fixed timer; any
-        // slight React commit delay made the fade-out an almost hard cut. Here we only stop the
-        // per-pixel loop and switch the handoff; the Canvas is unmounted by the real opacity transitionend.
+        // Root cause: the completion frame previously unloaded the canvas on a fixed timer, so
+        // any React commit delay turned the fade-out into a near hard cut. Only stop the
+        // per-pixel loop and switch to handoff here; the canvas unloads on the real opacity
+        // transitionend.
         onHandoffStart();
         return;
       }

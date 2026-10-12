@@ -63,7 +63,7 @@ const markdown = (name: string, prompt = name) =>
   `---\nname: ${name}\ndescription: Test\n---\n${prompt}`;
 const until = (assertion: () => unknown) => vi.waitFor(assertion, { timeout: 5000, interval: 10 });
 function initialWatcherFor(path: string): ReturnType<typeof watch> {
-  // 各 scope 并行 stat，注册顺序不固定；按监听路径取得初始实例，避免向其他 scope 发事件。
+  // Scopes are statted in parallel, so registration order is not fixed; pick the initial instance by watched path to avoid emitting events to other scopes.
   const index = vi.mocked(watch).mock.calls.findIndex(([root]) => root === path);
   expect(index).toBeGreaterThanOrEqual(0);
   return vi.mocked(watch).mock.results[index]!.value;
@@ -96,7 +96,7 @@ async function fixture() {
 
 describe("Host incremental subagent snapshots", () => {
   it("keeps the filesystem root observable when the configuration directory does not exist", async () => {
-    // 使用当前平台的真实根路径，但 mock watcher，避免写入盘符根目录或监听整个文件系统。
+    // Use the real root path of the current platform but mock the watcher, avoiding writes to the drive root or watching the whole filesystem.
     const volumeRoot = parse(resolve(tmpdir())).root;
     const parent = join(volumeRoot, `subagent-missing-${randomUUID()}`);
     const root = join(parent, "agents");
@@ -237,12 +237,12 @@ describe("Host incremental subagent snapshots", () => {
     f.emit(path);
     await until(() => expect(vi.mocked(fs.readFile).mock.results.at(-1)?.value).toBe(gate.promise));
     const obsolete = initialWatcherFor(f.userRoot);
-    // CI 调度可能晚于 chokidar 就绪才启动父目录 fs.watch；先等订阅建立，避免替换目录时丢掉合成事件。
+    // CI scheduling may start the parent directory fs.watch later than chokidar readiness; wait for the subscription first to avoid losing synthetic events when replacing the directory.
     await until(() => expect(parentEvents.get(dirname(f.userRoot))?.size).toBeGreaterThan(0));
     await rm(f.userRoot, { recursive: true });
     await mkdir(f.userRoot);
     await writeFile(path, markdown("aaa", "replacement"));
-    // 快速替换时可能只有原生事件；路径仍存在，也必须关闭旧目录对象的监听。
+    // With a fast replacement only native events may arrive; the path still exists, and the old directory object's watcher must still be closed.
     for (const events of parentEvents.get(dirname(f.userRoot)) ?? [])
       events.emit("change", { eventType: "rename", filename: "user" });
     await until(() =>
@@ -266,7 +266,7 @@ describe("Host incremental subagent snapshots", () => {
     await f.cache.prepare(f.workspace);
     const obsolete = initialWatcherFor(f.userRoot);
     await rm(f.userRoot, { recursive: true });
-    // 原生库可先发文件 unlink；目录检查完成前就重建，会让它不再发 unlinkDir。
+    // The native library may deliver the file unlink first; recreating before the directory check completes would stop it from emitting unlinkDir.
     obsolete.emit("all", "unlink", path);
     await until(async () => expect(await f.read()).toMatchObject({ profiles: [] }));
     expect((obsolete as unknown as { close: unknown }).close).toHaveBeenCalledOnce();
@@ -342,7 +342,7 @@ describe("Host incremental subagent snapshots", () => {
       for (const events of parentEvents.get(dirname(f.userRoot)) ?? [])
         events.emit("change", { eventType: "rename", filename: "unrelated" });
       await vi.advanceTimersByTimeAsync(100);
-      // 父目录检查不应重新开始文件批次的 300ms 合并窗口。
+      // The parent directory check must not restart the file batch's 300ms coalescing window.
       expect(fs.readFile).toHaveBeenCalledWith(path, "utf8");
       await until(async () =>
         expect(await f.read()).toMatchObject({ profiles: [{ systemPrompt: "new" }] }),
@@ -410,7 +410,7 @@ describe("Host incremental subagent snapshots", () => {
     try {
       f.emit(f.statePath, "change", join(f.root, "state"));
       await until(() => expect(f.readState).toHaveBeenCalledTimes(calls + 1));
-      // 真正读取失败后，重载完成前仍不可用，不能因允许临时回退恢复而重新启用旧值。
+      // After a real read failure it stays unavailable until the reload completes; it must not re-enable the old value via the temporary-fallback recovery.
       expect(await Promise.all([f.read(), f.read()])).toEqual([
         { kind: "built-in-fallback" },
         { kind: "built-in-fallback" },
@@ -481,7 +481,7 @@ describe("Host incremental subagent snapshots", () => {
       );
       if (mode === "ready") project.resolve(markdown("bbb", "project"));
       const completed: string[] = [];
-      // 与 service 写队列一样顺序准备，不能为同一共享后台刷新反复等待。
+      // Prepare sequentially like the service write queue; must not wait repeatedly for the same shared background refresh.
       const preparing = (async () => {
         for (const workspace of others) {
           await f.cache.prepare(workspace);
@@ -499,7 +499,7 @@ describe("Host incremental subagent snapshots", () => {
         await vi.waitFor(() => expect(completed).toHaveLength(2), { timeout: 4000 });
         expect(await f.read()).toEqual(before);
         expect(await f.cache.read(others[1]!)).toEqual(before);
-        // B 超时过也应和 C 一样复用共享完整结果，不能等共享后台刷新结束才恢复。
+        // Even though B timed out, it must reuse the shared complete result like C; it must not wait for the shared background refresh to finish before recovering.
         await until(async () =>
           expect(await f.cache.read(others[0]!)).toMatchObject({
             kind: "ready",
@@ -597,10 +597,10 @@ describe("Host incremental subagent snapshots", () => {
         expect(await f.read()).toMatchObject({ profiles: [{ systemPrompt: "replacement" }] });
       }
     } finally {
-      // 已替换的读取不能用旧禁用状态覆盖新范围；销毁后不能重新发布。
+      // A replaced read must not overwrite the new scope with the old disabled state; after disposal it must not republish.
       gate.resolve({ ...f.state, disabledAgentIds: ["user:user:aaa"] });
       await preparing;
-      // preparing 已提前返回；让迟到读取的微任务链完成后再检查隔离结果。
+      // preparing returned early; let the late read's microtask chain finish before checking the isolation result.
       await new Promise<void>((resolve) => setImmediate(resolve));
     }
     if (action === "dispose") await expect(f.read()).rejects.toThrow(/disposed/i);

@@ -4,8 +4,9 @@ import type { ConversationProjectionStore } from "@/v4/conversationProjectionSto
 import { useEffect } from "react";
 
 /**
- * 把一个会话投影 store 的 live-only 增量接到资源通知路由表。
- * 同一 store 可能被 SessionPane 与多个侧栏 tab 同时持有，按 store 引用计数只挂一个监听，避免重复投递。
+ * Wires a session projection store's live-only deltas into the resource notification routing table.
+ * The same store may be held by SessionPane and multiple side pane tabs at once; reference-count the
+ * store and attach a single listener to avoid duplicate delivery.
  */
 const feeds = new Map<ConversationProjectionStore, { count: number; off: () => void }>();
 
@@ -50,6 +51,6 @@ export function usePluginUiResourceDeltaFeed(
   useEffect(() => {
     if (!store || !scope) return;
     return attachPluginUiResourceDeltaFeed(store, scope);
-    // scope 按会话键比较（SessionPane 每次渲染可能新建对象），不把对象本身放进依赖。
+    // Compare scope by session key (SessionPane may create a new object each render); do not put the object itself in deps.
   }, [store, sessionKey]);
 }

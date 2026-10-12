@@ -1,4 +1,4 @@
-/* eslint-disable max-lines -- the external relay terminal transport needs to centrally maintain the handshake, pairing, request waiting, and reconnection state machines. */
+/* eslint-disable max-lines -- the external relay terminal transport keeps the handshake, pairing, request-wait, and reconnect state machines in one place. */
 import {
   WebRemoteControlRelayPayloadSerializer,
   type WebRemoteControlPayloadSendResult,
@@ -165,7 +165,9 @@ function webSocketDataByteLength(data: unknown): number {
   return new TextEncoder().encode(String(data)).byteLength;
 }
 
-async function parseRelayMessage(data: unknown): Promise<WebRemoteControlRelayIncomingMessage | null> {
+async function parseRelayMessage(
+  data: unknown,
+): Promise<WebRemoteControlRelayIncomingMessage | null> {
   try {
     const text = await readWebSocketData(data);
     if (text === null) return null;
@@ -176,7 +178,10 @@ async function parseRelayMessage(data: unknown): Promise<WebRemoteControlRelayIn
   }
 }
 
-function createFailure(reason: WebRemoteControlFailure["reason"], message?: string): WebRemoteControlFailure {
+function createFailure(
+  reason: WebRemoteControlFailure["reason"],
+  message?: string,
+): WebRemoteControlFailure {
   return { reason, message };
 }
 
@@ -278,9 +283,11 @@ export class WebRemoteControlTerminalTransport {
         return;
       }
       const negotiatedExtensions = typeof socket.extensions === "string" ? socket.extensions : "";
-      // Bugfix: on mobile, the browser WebSocket API cannot proactively pass the perMessageDeflate config.
-      // We can only confirm whether the relay actually completed compression negotiation via the standard
-      // extensions field, avoiding the mistaken belief that business code can force it on.
+      // Bugfix: the mobile side runs on the browser WebSocket API and cannot
+      // pass perMessageDeflate configuration proactively. The standard
+      // extensions field is the only way to confirm the relay actually
+      // negotiated compression, avoiding the mistaken belief that business code
+      // can force it on.
       this.emitDiagnostic({
         type: "socket-extensions",
         state: this.state,
@@ -339,11 +346,11 @@ export class WebRemoteControlTerminalTransport {
         return;
       }
       if (this.hadPairedSession) {
-        // Bugfix: backgrounding the mobile browser, network switching, or a brief relay hiccup can close
-        // an already-paired socket.
-        // The old logic refreshed the whole page, making the user lose the current workspace/task view;
-        // here we reconnect in place instead, letting the upper layer restore from mobile view state
-        // once paired again.
+        // Bugfix: mobile-browser background resume, network switching, or a
+        // brief relay hiccup can close an already-paired socket. The old logic
+        // reloaded the whole page, losing the user's current workspace/task
+        // view; reconnect in place instead so the upper layer can restore from
+        // mobile view state once paired again.
         this.scheduleReconnect();
         return;
       }
@@ -403,18 +410,19 @@ export class WebRemoteControlTerminalTransport {
       this.wasPaired &&
       this.socket?.readyState === this.WebSocketCtor.OPEN
     ) {
-      // Bugfix: hidden/pagehide only means the mobile page was paused; it doesn't mean the WebSocket is
-      // necessarily broken.
-      // First probe with the original socket via pair_status, avoiding forcing a disconnect+reconnect for
-      // a brief backgrounding.
+      // Bugfix: hidden/pagehide only means the phone page was paused, not that
+      // the WebSocket is necessarily broken. Probe with a pair_status query on
+      // the existing socket first, so a brief background switch does not force a
+      // disconnect and reconnect.
       this.setState("reconnecting");
       if (this.sendPairStatusQuery()) {
         try {
           await this.waitForPaired(this.options.healthCheckTimeoutMs ?? 3_000);
           return;
         } catch {
-          // Rebuild the socket after the probe times out; don't fail directly here, to avoid misjudging
-          // a briefly slow recovery as the desktop being disconnected.
+          // Rebuild the socket only after the probe times out; do not fail
+          // directly here, so a briefly slow recovery is not misread as the
+          // desktop being disconnected.
         }
       }
     }
@@ -427,10 +435,10 @@ export class WebRemoteControlTerminalTransport {
     if (this.intentionallyClosed || this.state === "paired" || this.state === "kicked") {
       return;
     }
-    // Bugfix: a mobile device recovering from a long time in the background may exceed the single wait
-    // window of recoverConnection.
-    // Keep reconnecting in place here instead of switching the current page to an error page, so the draft
-    // the user is typing is not unmounted.
+    // Bugfix: a mobile client resuming after a long background stay can exceed
+    // recoverConnection's single wait window. Keep reconnecting in place and do
+    // not switch the current page to an error page, so the user's in-progress
+    // draft is not unmounted.
     this.clearReconnectTimer();
     this.clearWaitingTimer();
     this.clearStaleWaitingRecoveryTimer();
@@ -454,7 +462,9 @@ export class WebRemoteControlTerminalTransport {
   }
 
   private async handleMessage(data: unknown): Promise<void> {
-    if (webSocketDataByteLength(data) > WEB_REMOTE_CONTROL_RPC_TRANSPORT_LIMITS.maxPhysicalFrameBytes) {
+    if (
+      webSocketDataByteLength(data) > WEB_REMOTE_CONTROL_RPC_TRANSPORT_LIMITS.maxPhysicalFrameBytes
+    ) {
       this.options.onRawTransportFault?.("remote.rpcFrame.envelopeTooLarge");
       return;
     }
@@ -497,11 +507,12 @@ export class WebRemoteControlTerminalTransport {
     this.emitDiagnostic({ type: "pair-status", pairStatus: status, state: this.state });
     if (status === "waiting") {
       if (this.wasPaired) {
-        // Bugfix: zcode-remote-hub's waiting is a legitimate pairing state, meaning the current device is
-        // not in the hub,
-        // not a broken terminal WS signal. After being paired, when degrading to waiting, keep the same
-        // mobile WS and continue lightweight queries, avoiding amplifying a brief desktop reconnect into
-        // the mobile side repeatedly kicking old connections.
+        // Bugfix: zcode-remote-hub's waiting is a legitimate pairing state meaning
+        // the device is currently not in the hub, not a signal that the terminal
+        // WS is broken. After having paired, degrade to waiting while keeping the
+        // same mobile WS and keep lightweight queries running, so a brief desktop
+        // reconnect is not amplified into the mobile side repeatedly kicking old
+        // connections.
         this.staleWaitingCount = 0;
         this.clearStaleWaitingRecoveryTimer();
         this.clearReconnectTimer();
@@ -550,12 +561,12 @@ export class WebRemoteControlTerminalTransport {
       return;
     }
     if (code === "DEVICE_OFFLINE") {
-      // Bugfix: when the desktop opens remote control or the relay briefly reconnects, the mobile side may
-      // receive DEVICE_OFFLINE once first.
-      // The old logic immediately rendered the "desktop offline" terminal page, but the desktop actually
-      // returned to paired 1-2 seconds later.
-      // Here we first enter a recoverable reconnect window, and only conclude the desktop is truly offline
-      // if pairing hasn't happened after the grace period.
+      // Bugfix: while the desktop opens remote control or the relay reconnects
+      // briefly, the phone may receive one DEVICE_OFFLINE first. The old logic
+      // immediately rendered the terminal "desktop offline" page, but the desktop
+      // usually returns to paired within 1-2 seconds. Enter a recoverable
+      // reconnect window first; only treat the desktop as truly offline if
+      // pairing is not restored within the grace period.
       this.recoverFromDeviceOffline(message || code);
       return;
     }
@@ -568,9 +579,10 @@ export class WebRemoteControlTerminalTransport {
         this.enterWaitingForDeviceAfterRelayError(message || code);
         return;
       }
-      // Bugfix: the relay briefly returns INTERNAL during rapid desktop/mobile reconnect switching.
-      // Most of these errors are recoverable; throwing a failure page directly would force the user to
-      // manually reopen remote control; reconnect in place instead.
+      // Bugfix: the relay briefly returns INTERNAL during fast desktop/phone
+      // reconnect switches. Most of these errors are recoverable; throwing a
+      // failure page would force the user to reopen remote control manually, so
+      // recover by reconnecting in place instead.
       this.recoverFromRelayInternal(message || code);
       return;
     }
@@ -604,10 +616,10 @@ export class WebRemoteControlTerminalTransport {
           return;
         }
         this.sendPairStatusQuery();
-        // Bugfix: a fixed setInterval makes devices paired at the same time send heartbeats in phase
-        // indefinitely;
-        // re-sampling bounded jitter after each send only scatters the scheduling phase and doesn't change
-        // the average 10-second period.
+        // Bugfix: a fixed setInterval keeps devices that paired at the same time
+        // sending heartbeats in phase forever. Re-sample a bounded jitter after
+        // each send to spread out the scheduling phase only; the ~10s average
+        // period is unchanged.
         this.scheduleHeartbeat();
       },
       getWebRemoteControlHeartbeatDelayMs(
@@ -629,9 +641,9 @@ export class WebRemoteControlTerminalTransport {
       if (this.state !== "paired" && this.state !== "waiting") {
         return;
       }
-      // Bugfix: the ACK deadline must be independent of the next jittered heartbeat; otherwise random
-      // intervals drift
-      // what should be a 30-second loss detection to 32-36 seconds, and keep black-holing sends on a
+      // Bugfix: the ACK deadline must be independent of the next jittered
+      // heartbeat; otherwise the random interval drifts the lost-connection
+      // verdict from 30s to 32-36s and keeps black-hole sending on a
       // half-open WebSocket.
       this.reconnectAfterStaleWaiting(this.getReconnectJitterMs());
     }, this.options.heartbeatAckTimeoutMs ?? WEB_REMOTE_CONTROL_HEARTBEAT_ACK_TIMEOUT_MS);
@@ -699,12 +711,10 @@ export class WebRemoteControlTerminalTransport {
     this.staleWaitingRecoveryTimer = setTimeout(() => {
       this.staleWaitingRecoveryTimer = undefined;
       if (
-        (
-          this.state === "paired" ||
+        (this.state === "paired" ||
           this.state === "reconnecting" ||
           this.state === "connecting" ||
-          this.state === "authenticating"
-        ) &&
+          this.state === "authenticating") &&
         this.staleWaitingCount > 0
       ) {
         this.reconnectAfterStaleWaiting();
@@ -726,11 +736,11 @@ export class WebRemoteControlTerminalTransport {
     this.clearWaitingTimer();
     this.clearReconnectTimer();
     this.staleWaitingCount = 0;
-    // Bugfix: a paired phone may first receive auth_ack: waiting during recovery.
-    // We must not clear wasPaired here, otherwise the next waiting hop would be treated as a first-time
-    // unmatched state and enter the failure page;
-    // keep the paired semantics so the state machine keeps retrying as a recoverable short disconnect
-    // until matched.
+    // Bugfix: a paired phone may first receive auth_ack: waiting on resume. Do
+    // not clear wasPaired here, otherwise the next waiting hop would be treated
+    // as a first-time unmatched state and enter the failure page; keep the
+    // paired semantics so the state machine keeps retrying the recoverable
+    // short disconnect until matched.
     if (reconnectDelayMs > 0) {
       const staleSocket = this.socket;
       this.socket = undefined;
@@ -762,9 +772,7 @@ export class WebRemoteControlTerminalTransport {
     if (this.reconnectTimer) {
       return;
     }
-    const delayMs = options?.immediate
-      ? 0
-      : Math.min(10_000, 500 * 2 ** this.reconnectAttempt);
+    const delayMs = options?.immediate ? 0 : Math.min(10_000, 500 * 2 ** this.reconnectAttempt);
     this.reconnectAttempt += 1;
     this.setState("reconnecting");
     this.emitDiagnostic({ type: "recover-scheduled", state: this.state });
@@ -815,11 +823,11 @@ export class WebRemoteControlTerminalTransport {
   }
 
   private enterWaitingForDeviceAfterRelayError(message: string): void {
-    // Bugfix: on an already-authenticated connection, zcode-remote-hub only returns INTERNAL when
-    // forwarding data to a device it cannot find,
-    // without closing the current terminal WS. Here we keep the mobile WS, degrade to waiting, and keep
-    // querying the pairing status,
-    // avoiding amplifying "desktop temporarily absent" into the mobile side repeatedly reconnecting.
+    // Bugfix: when zcode-remote-hub cannot find the device while forwarding data
+    // on an authenticated connection it only returns INTERNAL and does not close
+    // the current terminal WS. Keep the mobile WS, degrade to waiting, and keep
+    // querying pair status, so "desktop temporarily away" is not amplified into
+    // the mobile side reconnecting repeatedly.
     this.options.onError(new Error(message));
     this.clearWaitingTimer();
     this.clearStaleWaitingRecoveryTimer();
@@ -943,9 +951,10 @@ export class WebRemoteControlTerminalTransport {
     if (!this.traceRelayMessages) {
       return;
     }
-    // Bugfix: relay message volume is high; printing bodies in production would quickly inflate log size
-    // and expose sensitive content.
-    // Only output summary fields in dev mode — enough to debug the link without polluting production logs.
+    // Bugfix: relay messages are high-volume; printing bodies in production
+    // quickly inflates log size and leaks sensitive content. Emit summary
+    // fields only in dev, enough for link debugging without polluting
+    // production logs.
     console.info("[web-remote-control][relay-message]", {
       direction,
       ...fields,
@@ -960,8 +969,7 @@ export class WebRemoteControlTerminalTransport {
       }
       this.lastPairStatusDiagnostic = nextPairStatusDiagnostic;
     }
-    const visibilityState =
-      typeof document === "undefined" ? "unknown" : document.visibilityState;
+    const visibilityState = typeof document === "undefined" ? "unknown" : document.visibilityState;
     const hiddenDurationMs =
       this.hiddenStartedAt && visibilityState !== "hidden"
         ? Date.now() - this.hiddenStartedAt
@@ -1010,17 +1018,15 @@ function isRecoverableRelayRequestFailure(
   );
 }
 
-export function createWebRemoteControlRelayRequestRecovery(
-  recoverConnection: () => Promise<void>,
-) {
+export function createWebRemoteControlRelayRequestRecovery(recoverConnection: () => Promise<void>) {
   let recoveryPromise: Promise<void> | undefined;
 
   async function recoverRelayRequestPath(): Promise<void> {
     if (!recoveryPromise) {
-      // Bugfix: when multiple requests hit the relay suspect window at the same time, they must share one
-      // recovery.
-      // Otherwise every request would trigger recoverConnection, easily amplifying a brief hiccup into
-      // continuous reconnects.
+      // Bugfix: when multiple requests hit the relay-suspect window at once they
+      // must share a single recovery. Otherwise each request triggers
+      // recoverConnection, amplifying a brief hiccup into continuous
+      // reconnects.
       recoveryPromise = recoverConnection().finally(() => {
         recoveryPromise = undefined;
       });
@@ -1079,10 +1085,11 @@ export function createWebRemoteControlAppPayloadRequester({
           timer,
         });
         if (!sendPayload(payload)) {
-          // Bugfix: previously, in non-paired / suspect states sendPayload would silently drop the payload,
-          // and the requester would still wait until timeout and falsely report "desktop did not respond".
-          // Fail immediately as link-not-sendable here, letting the upper layer choose to wait for
-          // reconnection or replay the idempotent request.
+          // Bugfix: previously sendPayload silently dropped payloads in
+          // non-paired/suspect states while the requester kept waiting until
+          // timeout and misreported "desktop did not respond". Fail immediately
+          // as link-unavailable so the upper layer can wait for reconnect or
+          // replay idempotent requests.
           clearTimeout(timer);
           pending.delete(payload.requestId);
           reject(
@@ -1100,15 +1107,12 @@ export function createWebRemoteControlAppPayloadRequester({
         (payload.zcode_type === "app-error" || payload.zcode_type === "workspace-bridge-error") &&
         payload.requestId
       ) {
-        // Bugfix: async bridge errors such as remote session closing carry a synthetic requestId,
-        // but they are not the response to any pending request. Only consume it when a pending request is
-        // actually matched;
-        // otherwise hand it to the upper layer to trigger reconnect/degraded UI via the bridge invalidation
-        // event.
-        return rejectRequest(
-          payload.requestId,
-          createFailure(payload.reason, payload.error),
-        );
+        // Bugfix: async bridge errors such as remote session close carry a
+        // synthetic requestId, but they are not the response to any pending
+        // request. Only consume when a pending request actually matches;
+        // otherwise hand off to the upper layer to trigger reconnect/degraded
+        // UI via the bridge-invalidated event.
+        return rejectRequest(payload.requestId, createFailure(payload.reason, payload.error));
       }
 
       for (const [requestId, request] of pending) {

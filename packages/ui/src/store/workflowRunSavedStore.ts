@@ -1,10 +1,11 @@
-// Read cache for "which saved workflow this run corresponds to" (docs/dynamic-workflow/transcript-and-notifications.md
+// Read cache for "which saved workflow this run corresponds to" (docs/dynamic-workflow/transcript-and-notifications.md,
 // "Which workflow a run is saved as").
 //
-// The determination lives in the agent (`workflows/forRun`): both facts — the run's journal record and the on-disk definition —
-// are over there, and the card records nothing itself. This is only a cache: completion cards hang in a virtual list and remount
-// on every scroll, so each remount must not fire another RPC. Same discipline as the hub's read cache (savedWorkflowStore):
-// the disk remains the sole authority, and any change invalidates everything.
+// The decision lives in the agent (`workflows/forRun`): both facts — the run's journal record and the
+// definition on disk — are over there, and the card records nothing itself. This is only a cache: the
+// completion card is mounted in the virtual list and remounts on every scroll, and each remount must not
+// issue another RPC. Same discipline as the hub's read cache (savedWorkflowStore): disk stays the sole
+// authority, and everything is invalidated after any change.
 import { create } from "zustand";
 import type {
   ZCodeSavedWorkflowEntry,
@@ -14,10 +15,10 @@ import type {
 import { logger } from "@/logger.js";
 
 /**
- * `unsupported` is a **capability**, not an error: old agents simply lack this method (JSON-RPC -32601),
- * and based on that the card keeps only the "let ZCode summarize and save for me" path. All other failures are treated as `error` —
- * not finding an answer is not the same as not saved,
- * so in that state the card draws neither the chip nor "run again", while "save" stays clickable.
+ * `unsupported` is a **capability**, not an error: older agents simply lack the method (JSON-RPC -32601),
+ * and the card keeps only the "let ZCode distill and save it" path accordingly. All other failures are
+ * treated as `error` — an inconclusive lookup does not mean it was not saved, so in that state the card
+ * draws neither a chip nor "run again", but "save" stays clickable.
  */
 export type WorkflowRunSavedStatus = "loading" | "ready" | "unsupported" | "error";
 
@@ -26,21 +27,22 @@ export interface WorkflowRunSavedState {
   /** The matched definition; absent means this run has no corresponding saved workflow yet. */
   entry?: ZCodeSavedWorkflowEntry;
   match?: ZCodeWorkflowsForRunResult["match"];
-  /** The args this run ran with, used to prefill the args form for "run again". */
+  /** The actual arguments this run executed with, for prefilling the "run again" arguments dialog. */
   runArgs?: Record<string, unknown>;
 }
 
-/** JSON-RPC "method not found": old-agent capability detection relies on it (the hub uses -32602 to distinguish legacy scopes, the same precedent). */
+/** JSON-RPC "method not found": capability detection on older agents relies on it (the hub uses -32602 to distinguish old scopes, the same precedent). */
 const METHOD_NOT_FOUND = -32601;
 
 interface WorkflowRunSavedStoreState {
-  /** Invalidation generation (incremented by invalidate): the hook puts it in its deps, so one invalidation makes all mounted cards re-query. */
+  /** Invalidation generation (incremented by invalidate): hooks put it in deps, so one invalidation makes every mounted card re-query. */
   generation: number;
   byKey: Record<string, WorkflowRunSavedState>;
   load: (key: string, loader: () => Promise<ZCodeWorkflowsForRunResult>) => Promise<void>;
   /**
-   * The one this client just saved: that card flips over immediately (keeping the already-fetched args), everything else is
-   * invalidated and re-queried — a same-name overwrite may simultaneously change other runs' answers (the match-by-name rule).
+   * The copy this client just wrote: this one card flips immediately (keeping the queried arguments)
+   * while everything else is invalidated and re-queried — an overwrite by the same name can change the
+   * answer for other runs too (the matched-by-name rule).
    */
   applySaved: (key: string, entry: ZCodeSavedWorkflowEntry) => void;
   /** Invalidate after save / delete / hub refresh: the next render re-queries. */
@@ -61,17 +63,19 @@ export const useWorkflowRunSavedStore = create<WorkflowRunSavedStoreState>((set,
   async load(key, loader) {
     const current = inFlight.get(key);
     if (current) return current;
-    // Don't ask again when a conclusion exists: the row window rebuilds the candidates table on every projection update (a new array,
-    // same content), so the card's effect reruns frequently — without a guard here, every beat of streaming output would fire one RPC
-    // per completion card on screen. Conclusions are invalidated only by invalidate (save, delete, hub refresh); a genuinely changed
-    // candidate set is a different key.
+    // Skip asking when a conclusion already exists: the row window rebuilds the candidate table on every
+    // projection update (new array, same content), so card effects re-run frequently — without a guard
+    // here, every beat of streamed output would send one RPC per mounted completion card.
+    // Conclusions are only invalidated by invalidate (save, delete, hub refresh); a genuinely changed
+    // candidate list is a different key.
     if (get().byKey[key] !== undefined) return;
     set((state) => ({
       byKey: { ...state.byKey, [key]: { ...state.byKey[key], status: "loading" } },
     }));
-    // The generation at the moment of sending: when an invalidation happens mid-flight, the returning answer is a fact from **before**
-    // the invalidation; drop it and let the next render re-query at the new generation (otherwise the entry the hub just deleted would
-    // be written back onto the card by a late reply).
+    // The generation at issue time: when an invalidation happens mid-flight, the returned answer is a
+    // fact from **before** the invalidation — drop it and let the next render re-query under the new
+    // generation (otherwise a just-deleted entry at the hub would be written back onto the card by a
+    // late reply).
     const issuedAt = get().generation;
     const request = loader()
       .then((result) => {
@@ -108,9 +112,10 @@ export const useWorkflowRunSavedStore = create<WorkflowRunSavedStoreState>((set,
   },
   applySaved(key, entry) {
     inFlight.clear();
-    // Invalidating first and then landing this entry would lose it (invalidate clears the whole table), and the card would flash back to "save"
-    // until the re-query returns; so both things are done in one set: the generation bump makes other cards re-query, while this card keeps
-    // its answer and is not re-queried.
+    // Invalidating first and then writing this entry would lose it (invalidate clears the whole table)
+    // and the card would flash back to "save" until the re-query returns;
+    // so both steps happen in one set: the generation bump makes other cards re-query, while this card
+    // keeps its answer and is not re-queried.
     set((state) => ({
       generation: state.generation + 1,
       byKey: { [key]: { ...state.byKey[key], status: "ready", entry } },
@@ -118,8 +123,9 @@ export const useWorkflowRunSavedStore = create<WorkflowRunSavedStoreState>((set,
   },
   invalidate() {
     inFlight.clear();
-    // Clear the whole table rather than a single key: one save may affect other runs of the same name at once (the match-by-name rule),
-    // and this table's scale is "the number of completion cards on screen" — re-querying costs far less than one card saying the wrong thing.
+    // Clear the whole table rather than one key: a single save can affect other runs of the same name
+    // (the matched-by-name rule), and this table's scale is "completion cards on screen" — re-querying
+    // costs far less than one card stating something wrong.
     set((state) => ({ generation: state.generation + 1, byKey: {} }));
   },
   reset() {
@@ -128,7 +134,7 @@ export const useWorkflowRunSavedStore = create<WorkflowRunSavedStoreState>((set,
   },
 }));
 
-/** Cache key: workspace + run + candidate signature. A changed candidate set (just saved once in the conversation) is a different question and must re-query. */
+/** Cache key: workspace + run + candidate signature. A changed candidate list (something was just saved in this conversation) is a different question and must be re-queried. */
 export function workflowRunSavedKey(
   workspaceKey: string,
   runId: string,

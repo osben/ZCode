@@ -27,7 +27,8 @@ export function getWebRemoteControlHeartbeatJitterMs(
   if (!Number.isFinite(requestedJitterMs) || requestedJitterMs <= 0) {
     return 0;
   }
-  // 心跳 jitter 必须小于基准间隔，避免把合法的 transport heartbeat 变成 0ms 风暴。
+  // Heartbeat jitter must stay below the base interval, otherwise a legitimate transport
+  // heartbeat degenerates into a 0ms storm.
   return Math.min(Math.floor(requestedJitterMs), Math.max(0, normalizedBase - 1));
 }
 

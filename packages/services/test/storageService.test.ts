@@ -21,7 +21,7 @@ function rootUsage(bytes: number) {
   };
 }
 
-/** 可手动推进的 runner：测试控制何时上报进度、何时结束。 */
+/** A manually advanced runner: the test controls when progress is reported and when it finishes. */
 function createManualRunner() {
   const runs: Array<{
     request: StorageScanRunRequest;

@@ -19,9 +19,10 @@ export function shouldSyncWebRemoteControlTaskSnapshot({
     return false;
   }
 
-  // Bugfix: syncWebRemoteControlTasks 在 main 进程里是整快照替换。
-  // useGlobalTaskList 会先发布 partial shard 结果，非空数组也可能只是局部任务。
-  // loading 未结束前暂不同步，避免手机端把缺 task 的 partial 当成权威列表。
+  // Bugfix: syncWebRemoteControlTasks is a whole-snapshot replacement in the main process.
+  // useGlobalTaskList publishes partial shard results first, and even a non-empty array may hold
+  // only part of the tasks. Defer syncing until loading finishes so the phone does not treat a
+  // task-less partial as the authoritative list.
   if (archivedLoading || pinnedLoading || timelineLoading) {
     return false;
   }
@@ -31,14 +32,12 @@ export function shouldSyncWebRemoteControlTaskSnapshot({
 
 export function logDeferredWebRemoteControlTaskSnapshot(
   logger: {
-    debug: (
-      message: string,
-      details: DeferredWebRemoteControlTaskSnapshotLogOptions,
-    ) => void;
+    debug: (message: string, details: DeferredWebRemoteControlTaskSnapshotLogOptions) => void;
   },
   details: DeferredWebRemoteControlTaskSnapshotLogOptions,
 ): void {
-  // Bugfix: loading 期间暂缓的可能是非空 partial 快照，不是“空任务快照”。
-  // 这类日志会随 partial 列表刷新重复出现，降到 debug 避免生产 info 日志刷屏。
+  // Bugfix: what is deferred during loading may be a non-empty partial snapshot, not an "empty
+  // task snapshot". Such logs repeat with every partial list refresh; demote to debug to keep
+  // them from flooding production info logs.
   logger.debug("[Root] 暂缓同步 Web 远控任务快照，等待任务列表加载完成", details);
 }

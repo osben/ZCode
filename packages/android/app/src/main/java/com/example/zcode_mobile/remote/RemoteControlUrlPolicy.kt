@@ -58,8 +58,10 @@ object RemoteControlUrlPolicy {
             return false
         }
 
-        // Bugfix: 开发机真机调试时二维码会指向局域网 Vite 地址。
-        // 生产包仍只允许 zcode.z.ai，debug 包才放开测试域、本机和局域网 http/https，避免远控壳变成任意浏览器。
+        // Bugfix: on real-device debugging the QR code points at a LAN Vite URL.
+        // Release builds still only allow zcode.z.ai; only debug builds open up
+        // test domains, localhost, and LAN http/https, so the remote-control
+        // shell never becomes an arbitrary browser.
         if (!path.startsWith("/remote")) {
             return false
         }

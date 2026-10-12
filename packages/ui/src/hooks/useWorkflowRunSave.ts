@@ -1,12 +1,14 @@
-// 完成卡与 run 侧板共用的「保存 / 再次运行」控制器（docs/dynamic-workflow/transcript-and-notifications.md
-// 「Saving the run, and running it again」）。
+// Shared "Save / Run again" controller for the completion card and the run side pane
+// (docs/dynamic-workflow/transcript-and-notifications.md, "Saving the run, and running it again").
 //
-// 一个 hook 而不是两份接线：同一个 run 在卡上与侧板上必须说同一句话、走同一条命令。它负责
-//   1. 这次 run 对应哪个已保存工作流（推导，缓存在 workflowRunSavedStore）；
-//   2. 「直接保存」= `workflows/save`（按 runId 取脚本，无模型回合）；
-//   3. 「再次运行」= 中枢那台启动器（`useSavedWorkflowLauncher`），实参取这次 run 跑过的那份。
-// 「让 ZCode 帮我提炼保存」不在这里：它只是把一条用户消息交回宿主发出去（卡在会话里、侧板在父
-// 会话里），宿主各有各的发送路径。
+// One hook instead of two wirings: the same run must say the same thing and go through the same
+// command on both the card and the side pane. It handles:
+//   1. which saved workflow this run corresponds to (derived, cached in workflowRunSavedStore);
+//   2. "save directly" = `workflows/save` (fetches the script by runId, no model turns);
+//   3. "run again" = the hub's launcher (`useSavedWorkflowLauncher`), with the args this run used.
+// "Let ZCode distill and save" is not here: it only hands a user message back to the host to send
+// (the card sends in its session, the side pane in the parent session); each host has its own
+// send path.
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   resolveWorkspaceKey,
@@ -37,9 +39,9 @@ export interface WorkflowRunSaveTarget {
 
 export interface WorkflowRunSaveHost extends WorkflowRunSaveTarget {
   runId: string;
-  /** 转写自对话的候选（`buildWorkflowSaveCandidatesByRunId`）。 */
+  /** Candidates transcribed from the conversation (`buildWorkflowSaveCandidatesByRunId`). */
   candidates?: readonly ZCodeWorkflowsForRunCandidate[];
-  /** 启动成功后切到新会话；缺席即宿主不会导航（手机远控首页、静态渲染）。 */
+  /** Switch to the new session after a successful launch; absent means the host does not navigate (mobile remote-control home, static rendering). */
   onNavigateToRun?: (target: SavedWorkflowLaunchTarget, sessionId: string) => void;
 }
 
@@ -51,24 +53,24 @@ export interface WorkflowRunSaveSubmit {
 }
 
 export interface WorkflowRunSaveController {
-  /** 这次 run 的已保存工作流（推导）。`undefined` = 还没查回来。 */
+  /** The saved workflow for this run (derived). `undefined` = not fetched yet. */
   saved: WorkflowRunSavedState | undefined;
-  /** 已保存的那一份；缺席即没有。 */
+  /** The saved entry; absent means none. */
   entry: ZCodeSavedWorkflowEntry | undefined;
-  /** 这次 run 跑过的实参，给「再次运行」的实参窗做预填。 */
+  /** The args this run executed, used to prefill the "Run again" args form. */
   runArgs: Record<string, unknown> | undefined;
-  /** 老 agent 没有 `workflows/save`：弹层只留 ZCode 那条路。 */
+  /** Older agents lack `workflows/save`: the dialog only keeps the ZCode path. */
   directSaveUnsupported: boolean;
-  /** 远程项目不给全局档：`~` 在 agent 机器上，中枢从不读它。 */
+  /** Remote projects get no global scope: `~` lives on the agent machine, which the hub never reads. */
   scopeLocked: boolean;
   saving: boolean;
   save: (input: WorkflowRunSaveSubmit) => Promise<ZCodeWorkflowsSaveResult>;
-  /** 名字是否已被占用（弹层输入时的前置探测）；查不动时按「不占用」处理，最终裁决在 agent。 */
+  /** Whether the name is taken (upfront probe while typing in the dialog); treated as "not taken" when the probe fails — the agent has the final say. */
   checkNameTaken: (name: string, scope: ZCodeSavedWorkflowScope) => Promise<boolean>;
   launching: boolean;
   launchError: SavedWorkflowLaunchError | null;
   clearLaunchError: () => void;
-  /** 「再次运行」：按 entry 启动；实参缺省用这次 run 跑过的那份。 */
+  /** "Run again": launch by entry; args default to those this run executed. */
   launch: (
     entry: ZCodeSavedWorkflowEntry,
     args: Record<string, unknown>,
@@ -115,7 +117,8 @@ export function useWorkflowRunSave(host: WorkflowRunSaveHost): WorkflowRunSaveCo
 
   useEffect(() => {
     if (!rpcReady) return;
-    // `generation` 在依赖里：一次作废让所有在场的卡片重查（保存、删除、中枢刷新都会作废）。
+    // `generation` is in the deps: one invalidation makes all mounted cards re-query (save,
+    // delete, and hub refresh all invalidate).
     void generation;
     void load(key, () =>
       agentService.findSavedWorkflowForRun({
@@ -140,7 +143,8 @@ export function useWorkflowRunSave(host: WorkflowRunSaveHost): WorkflowRunSaveCo
           ...(input.overwrite === undefined ? {} : { overwrite: input.overwrite }),
         });
         if (result.ok) {
-          // 刚写成的那一份立刻摆上去（卡片翻成「已保存 / 再次运行」），同时作废别的卡的答案。
+          // Put the just-saved entry in place immediately (the card flips to "Saved / Run again")
+          // and invalidate other cards' answers.
           applySaved(key, {
             name: result.name,
             description: input.meta.description,
@@ -164,7 +168,7 @@ export function useWorkflowRunSave(host: WorkflowRunSaveHost): WorkflowRunSaveCo
         const result = await agentService.getSavedWorkflow({ ...target, name, scope });
         return result.ok;
       } catch {
-        // 探测失败不该挡住保存：agent 仍会用 `target_exists` 给出最终答案。
+        // A failed probe must not block saving: the agent still gives the final answer via `target_exists`.
         return false;
       }
     },

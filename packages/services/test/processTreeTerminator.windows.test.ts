@@ -125,8 +125,8 @@ describe("terminateProcessTree Windows", () => {
       signalCode: null,
     } as ChildProcess;
 
-    // Reason for the fix: the Node exit callback may arrive after the OS-level exit and PID reuse; without a fresh
-    // CreationDate recheck at the deadline, /F must not be sent to the bare root PID based on the stale snapshot.
+    // Fix reason: the Node exit callback may land after the OS exit and PID reuse; without a fresh CreationDate
+    // re-check at the deadline, /F must not be sent to the bare root PID based on the old snapshot.
     terminateProcessTree(child, { forceAfterMs: 20 });
     await vi.advanceTimersByTimeAsync(20);
 
@@ -243,9 +243,9 @@ describe("terminateProcessTree Windows", () => {
     });
     await vi.advanceTimersByTimeAsync(250);
 
-    // Safety contract: the live root handle of a managed ChildProcess is root-only ownership evidence; when the CIM
-    // targeted recheck fails, the root may still be closed out, but unverified descendants must not be added to the
-    // explicit /F targets.
+    // Safety contract: a managed ChildProcess's live root handle is root-only ownership evidence; if the CIM
+    // targeted re-check fails, the root may still be settled, but unverified descendants must not be added to
+    // the explicit /F target list.
     expect(windowsTaskkillRunner).toHaveBeenCalledWith({
       force: true,
       pid: 4242,
@@ -291,8 +291,7 @@ describe("terminateProcessTree Windows", () => {
     });
     await vi.advanceTimersByTimeAsync(250);
 
-    // Bug regression: the old deadlineSnapshotOnly branch kept only the root, so verified descendants never got an
-    // /F flight.
+    // Bug regression: the old deadlineSnapshotOnly branch kept only the root, so verified descendants never got an /F flight.
     expect(windowsTaskkillRunner).toHaveBeenCalledWith({
       force: true,
       pid: 4242,
@@ -353,8 +352,8 @@ describe("terminateProcessTree Windows", () => {
       expect.objectContaining({ windowsHide: true }),
       expect.any(Function),
     );
-    // A mismatch can be PID reuse or a degraded query. The safety boundary is to not force-kill, and to keep
-    // reporting the old identity as unconfirmed residue; a failed recheck must never be misjudged as cleanup success.
+    // A mismatch may be PID reuse or a query downgrade. The safety boundary is to not force-kill and keep reporting
+    // the old identity as unconfirmed leftovers; a failed re-check must never be misread as cleanup success.
     await vi.advanceTimersByTimeAsync(880);
     await expect(resultPromise).resolves.toEqual({ remainingPids: [5000] });
   });
@@ -456,12 +455,12 @@ describe("terminateProcessTree Windows", () => {
     expect(settled).toBe(false);
     await vi.advanceTimersByTimeAsync(1);
 
-    // The old implementation kept waiting for PowerShell until 60ms; once the absolute deadline is reached it must
-    // degrade to unavailable immediately, letting the transport proceed into its bounded fail-closed close-out.
+    // The old implementation kept waiting on PowerShell until 60ms; once the absolute deadline hits it must degrade to
+    // unavailable immediately, letting the transport proceed into bounded fail-closed settlement.
     expect(settled).toBe(true);
     await expect(snapshotPromise).resolves.toBeUndefined();
-    // Let the underlying mock query truncated by the absolute-deadline race finish, so the module-level shared flight
-    // does not pollute later cases.
+    // Let the underlying mock query truncated by the absolute-deadline race finish, avoiding module-level shared
+    // flight state polluting later cases.
     await vi.advanceTimersByTimeAsync(20);
   });
 
@@ -522,7 +521,7 @@ describe("terminateProcessTree Windows", () => {
     });
 
     // Bug regression: the old waiter reported remaining PIDs on a fixed force-wait window while the graceful taskkill
-    // had not settled; a real process may deliver the ChildProcess exit only a few milliseconds later.
+    // had not settled; real processes may deliver ChildProcess exit only a few milliseconds late.
     await vi.advanceTimersByTimeAsync(31);
     expect(result).toBeUndefined();
 
@@ -631,8 +630,8 @@ describe("terminateProcessTree Windows", () => {
       result = value;
     });
 
-    // When the query fails and there are no verified identities, both graceful/force targets are empty; there is no
-    // actual taskkill to wait for, so the deadline must not unconditionally reserve the taskkill timeout.
+    // When the query fails and no verified identity exists, graceful/force targets are both empty; there is no actual
+    // taskkill to wait for, so the deadline should not unconditionally reserve the taskkill timeout.
     await vi.advanceTimersByTimeAsync(49);
     expect(result).toBeUndefined();
     await vi.advanceTimersByTimeAsync(1);
@@ -676,8 +675,8 @@ describe("terminateProcessTree Windows", () => {
       child.emit("exit", 0, null);
     }, 600);
 
-    // Bug regression: with no identity safe to taskkill, the old waiter compressed the 1s absolute budget down to
-    // waitAfterForceMs=30ms, misreporting the subsequent normal code=0 exit as residue.
+    // Bug regression: with no identity that can safely receive taskkill, the old waiter compressed the 1s absolute
+    // budget into waitAfterForceMs=30ms, misreporting a subsequent normal code=0 exit as leftovers.
     await vi.advanceTimersByTimeAsync(30);
     expect(result).toBeUndefined();
     await vi.advanceTimersByTimeAsync(570);
@@ -715,9 +714,8 @@ describe("terminateProcessTree Windows", () => {
       result = value;
     });
 
-    // Worst case, the first cleanup takes 3.25s; the final retry can only observe for 750ms more, and it must report
-    // the real residue before the Local Host's 4s forced-exit point — the full 1.25s retry budget must not be
-    // serially stacked on top.
+    // Worst case for the first cleanup is 3.25s; the final retry may only observe another 750ms and must return a
+    // truthful leftover verdict before the Local Host's 4s forced-exit point, not serially stack the full 1.25s retry budget.
     await vi.advanceTimersByTimeAsync(749);
     expect(result).toBeUndefined();
     await vi.advanceTimersByTimeAsync(1);
@@ -757,8 +755,8 @@ describe("terminateProcessTree Windows", () => {
       result = value;
     });
 
-    // Even when the root cannot be verified, as long as a verified descendant exists the graceful taskkill is a real
-    // flight; keep the full budget and do not report early at the force + grace 50ms boundary.
+    // Even if the root cannot be verified, as long as verified descendants exist the graceful taskkill is a real flight;
+    // keep the full budget and do not report early at the 50ms force + grace boundary.
     await vi.advanceTimersByTimeAsync(50);
     expect(result).toBeUndefined();
     await vi.advanceTimersByTimeAsync(20);
@@ -794,8 +792,7 @@ describe("terminateProcessTree Windows", () => {
         ],
       },
       waitAfterForceMs: 30,
-      // Simulate snapshot + EOF having already consumed 3,210ms: only 40ms of the transport's 3,250ms end-to-end
-      // budget remains.
+      // Simulate snapshot + EOF already consuming 3,210ms: only 40ms remain of the transport's 3,250ms full-chain budget.
       windowsCleanupDeadlineAtMs: Date.now() + 40,
       windowsTaskkillRunner,
       windowsTaskkillTimeoutMs: 100,
@@ -808,8 +805,8 @@ describe("terminateProcessTree Windows", () => {
     expect(result).toBeUndefined();
     await vi.advanceTimersByTimeAsync(1);
 
-    // The old implementation would still be undefined here and wrongly extend the window to 130ms; the assertion must
-    // fail fast instead of waiting on the old deadline and timing out the fake-timer case itself.
+    // The old implementation would still return undefined here and wrongly extend the window to 130ms; the assertion
+    // must fail fast instead of waiting for the old deadline and timing out the fake-timer case itself.
     expect(result).toEqual({ remainingPids: [4242] });
     await expect(resultPromise).resolves.toEqual(result);
     expect(windowsTaskkillRunner).toHaveBeenCalledWith({

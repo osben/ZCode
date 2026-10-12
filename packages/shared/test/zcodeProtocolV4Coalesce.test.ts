@@ -102,8 +102,8 @@ function makeSnapshot(): ConversationSnapshot {
       resumeGoal: { allowed: false, reasonCode: "guard.stopPausesActiveGoalTarget" },
     },
     inputRouting: { mode: "enqueue" },
-    // meta was added additively after freeze-m2 (with a schema default); the fixture writes the normalized form,
-    // so the round-trip assertion of deep-equality before and after parse holds.
+    // meta is additive after freeze-m2 (with a schema default); the fixture writes the normalized shape,
+    // so the round-trip assertion holds as deep-equal before and after parse.
     meta: { title: "", titleSource: "default" },
     config: {
       provider: "glm",
@@ -122,7 +122,7 @@ function makeSnapshot(): ConversationSnapshot {
     pendingInteractions: [],
     pendingCommands: [],
     backgroundWorks: [],
-    // soft-gate additive field: has a default (null); round-trip normalized form
+    // Soft gate additive field: has default(null); round-trip normalized shape
     workspaceHookAdmission: null,
     goal: null,
     plan: null,
@@ -130,18 +130,18 @@ function makeSnapshot(): ConversationSnapshot {
   };
 }
 
-/** Semantics-preservation judge: the final state of coalesce-then-apply must be byte-identical to applying one by one. */
+/** Semantics-preservation referee: the final state after coalesce-then-apply must be byte-identical to applying one by one. */
 function expectSemanticsPreserved(deltas: ConversationDelta[]) {
   const base = makeSnapshot();
   const direct = applyConversationDeltas(base, deltas);
   const coalesced = applyConversationDeltas(base, coalesceConversationDeltas(deltas));
   expect(coalesced).toEqual(direct);
-  // Rule 6 allows merging a later op into an earlier position, so key order is no longer "naturally identical on both paths" —
-  // this law demands **byte-for-byte** equality, not just deep equality.
+  // Rule 6 allows merging a later op into an earlier position, so key order is no longer "naturally identical on both
+  // paths" — this law requires **byte-for-byte** equality, not just deep equality.
   expect(JSON.stringify(coalesced.workflowRuns)).toBe(JSON.stringify(direct.workflowRuns));
 }
 
-/** Run birth delta: one complete header; without it the client could not build the table. */
+/** Run birth delta: one complete header; the client needs it to build the table. */
 function makeRunBirth(runId: string, revision: number): ConversationDelta {
   return {
     op: "workflowRun.updated",
@@ -156,7 +156,7 @@ function makeRunBirth(runId: string, revision: number): ConversationDelta {
   };
 }
 
-/** One node-phase-advance delta (the common shape of engine events on the wire). */
+/** One node phase-advance delta (the routine shape of engine events on the wire). */
 function makeNodePhase(
   runId: string,
   revision: number,
@@ -250,7 +250,7 @@ describe("zcode-protocol-v4 coalesce", () => {
       { op: "row.delta", rowId: 1, path: "text", append: "b" },
     ];
     const result = coalesceConversationDeltas(deltas);
-    // Non-adjacent deltas are not merged (order preservation outranks compression).
+    // Non-adjacent ops do not merge (order preservation beats compression)
     expect(result.filter((d) => d.op === "row.delta")).toHaveLength(3);
     expectSemanticsPreserved(deltas);
   });
@@ -299,8 +299,8 @@ describe("zcode-protocol-v4 coalesce", () => {
   });
 
   it("row.upserted does not swallow deltas beyond the row's own appended (previous generation)", () => {
-    // row 1 streams a segment → row 1 is replaced whole → another segment streams → replaced again:
-    // the second upserted may only swallow the second delta segment; it must not reach past the first upserted.
+    // row 1 streams a bit → row 1 is replaced whole → streams again → replaced again:
+    // the second upserted may only swallow the second delta segment, never crossing the first upserted.
     const gen1: AssistantTextRow = { ...makeAssistantRow(1, "第一代"), state: "streaming" };
     const gen2: AssistantTextRow = { ...makeAssistantRow(1, "第二代"), state: "complete" };
     const deltas: ConversationDelta[] = [
@@ -323,7 +323,7 @@ describe("zcode-protocol-v4 coalesce", () => {
       { op: "row.upserted", row: { ...makeAssistantRow(2, "新"), state: "complete" } },
     ];
     const result = coalesceConversationDeltas(deltas);
-    // Barrier preserved; the delta before the barrier is not swallowed by the upserted after it
+    // The barrier is preserved; deltas before it are not swallowed by the upserted after it
     expect(result.some((d) => d.op === "row.removed")).toBe(true);
     expect(result.findIndex((d) => d.op === "row.delta" && d.rowId === 1)).toBeGreaterThanOrEqual(
       0,
@@ -348,8 +348,8 @@ describe("zcode-protocol-v4 coalesce", () => {
   });
 
   // ── Rule 6: workflowRun.updated merges into the earliest same-runId delta within the window ──────────────
-  // A wide fan-out run produces one delta per engine event, and within the window they are separated by other runs
-  // and row operations; merging only adjacent ones would merge nothing, yet it is exactly these deltas that fill the 500-frame-per-subscriber bound.
+  // Wide fan-out runs emit one delta per engine event, and within the window they get separated by other runs and row
+  // operations; merging only adjacent ones would merge none, and these deltas are exactly what fills the 500-frames-per-subscriber bound.
   it("规则 6：同 runId 的增量合并到最早那条，op 数从 N 塌成 1", () => {
     const deltas: ConversationDelta[] = [
       makeRunBirth("dwfrun-1", 1),
@@ -379,7 +379,7 @@ describe("zcode-protocol-v4 coalesce", () => {
     const result = coalesceConversationDeltas(deltas);
     const perRun = result.filter((delta) => delta.op === "workflowRun.updated");
     expect(perRun).toHaveLength(2);
-    // Birth order is preserved: merging lands on the **earliest** one, so the order of runs[] matches per-item delivery.
+    // Birth order is preserved: merging lands on the **earliest** delta, so runs[] order matches one-by-one delivery.
     expect(perRun.map((delta) => (delta.op === "workflowRun.updated" ? delta.runId : ""))).toEqual([
       "dwfrun-1",
       "dwfrun-2",
@@ -396,7 +396,7 @@ describe("zcode-protocol-v4 coalesce", () => {
         revision: 2,
         run: { pendingQuestions: [{ qid: "q-1", question: "门坏了吗？" }], resultPreview: "草稿" },
       },
-      // The later entry clears pendingQuestions into absence and gives resultPreview a new value.
+      // The later entry clears pendingQuestions to absent and gives resultPreview a new value.
       {
         op: "workflowRun.updated",
         runId: "dwfrun-1",
@@ -414,7 +414,7 @@ describe("zcode-protocol-v4 coalesce", () => {
     expect(merged.cleared).toEqual(["pendingQuestions"]);
     expectSemanticsPreserved(deltas);
 
-    // The reverse: clear first, set later — the key moves back into run and no longer stays in cleared.
+    // Reverse: clear first, set later — the key returns into run and no longer stays in cleared.
     const reversed: ConversationDelta[] = [
       makeRunBirth("dwfrun-1", 1),
       { op: "workflowRun.updated", runId: "dwfrun-1", revision: 2, cleared: ["pendingQuestions"] },
@@ -436,7 +436,7 @@ describe("zcode-protocol-v4 coalesce", () => {
     const deltas: ConversationDelta[] = [
       makeRunBirth("dwfrun-1", 1),
       makeNodePhase("dwfrun-1", 2, 1, "queued"),
-      // Whole-key resend (diff's fallback): deltas after it act on a brand-new table.
+      // Whole-key resend (the diff fallback): deltas after it apply to a brand-new table.
       {
         op: "state.updated",
         patch: {
@@ -459,7 +459,7 @@ describe("zcode-protocol-v4 coalesce", () => {
       makeNodePhase("dwfrun-1", 5, 9, "dispatched"),
     ];
     const result = coalesceConversationDeltas(deltas);
-    // Each side of the barrier collapses into one, with the barrier itself staying in the middle.
+    // Each side of the barrier collapses into one delta; the barrier itself stays in the middle.
     expect(result.map((delta) => delta.op)).toEqual([
       "workflowRun.updated",
       "state.updated",
@@ -482,7 +482,7 @@ describe("zcode-protocol-v4 coalesce", () => {
     expect(result[0]).toMatchObject({ runId: "dwfrun-2", revision: 6 });
     expectSemanticsPreserved(deltas);
 
-    // After removal the run comes back (a late event): the new delta is not swallowed and does not merge with anything before the barrier.
+    // The run comes back after eviction (late event): the new delta is not swallowed and does not merge across the barrier.
     const revived: ConversationDelta[] = [...deltas, makeRunBirth("dwfrun-1", 7)];
     expect(coalesceConversationDeltas(revived).map((delta) => delta.op)).toEqual([
       "workflowRun.updated",
@@ -496,7 +496,7 @@ describe("zcode-protocol-v4 coalesce", () => {
     const deltas: ConversationDelta[] = [
       makeRunBirth("dwfrun-1", 1),
       makeRunBirth("dwfrun-2", 2),
-      // The last entry belongs to dwfrun-1; after merging it gets moved to the first position — apply's max settles the revision.
+      // The last delta belongs to dwfrun-1 and will be moved to the first position after merging — settled by apply's max.
       makeNodePhase("dwfrun-1", 9, 1, "settled"),
     ];
     const coalesced = applyConversationDeltas(makeSnapshot(), coalesceConversationDeltas(deltas));
@@ -574,8 +574,8 @@ describe("zcode-protocol-v4 apply", () => {
     expect(truncated.rows.totalCount).toBe(1);
     expect(truncated.rows.firstRowId).toBe(1);
 
-    // Bugfix regression: after truncating from the active branch's first row, rowId allocation keeps incrementing; the pagination anchor
-    // must be cleared first and then established from the new branch's first row — the 1..4 hole must not be treated as unloaded history.
+    // Bugfix regression: after truncating from the active branch's first row, rowId allocation keeps incrementing; the
+    // pagination anchor must be cleared first and re-established by the new branch's first row, not treating the 1..4 hole as unloaded history.
     const removedFromHead = applyConversationDeltas(afterAppend, [
       { op: "row.removed", fromRowId: 1 },
     ]);
@@ -611,7 +611,7 @@ describe("zcode-protocol-v4 apply", () => {
       },
     ]);
     expect(next.control.phase).toBe("completedInterrupted");
-    // Other zone-A keys are unaffected
+    // Other section-A keys are unaffected
     expect(next.config).toEqual(base.config);
   });
 });

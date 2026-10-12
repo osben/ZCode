@@ -187,7 +187,8 @@ function parseTaskModelForDisplay(value: string) {
       reasoningLevel: selection.options?.reasoningLevel,
     };
   } catch {
-    // 历史 task meta 可能保存了旧格式；展示时从 provider/model 中取模型名，不阻断侧栏渲染。
+    // Historical task meta may store an older format; when displaying, derive the model name from
+    // provider/model without blocking sidebar rendering.
     const [model = "", reasoningLevel] = value.split("$", 2);
     return {
       modelId: model.slice(model.lastIndexOf("/") + 1),

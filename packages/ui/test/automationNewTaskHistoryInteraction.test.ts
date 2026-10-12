@@ -2,12 +2,13 @@ import { readFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
 
 /**
- * 读取仓库源码用于文本契约断言。
+ * Reads repository source for text-contract assertions.
  *
- * Bugfix：下面断言里有跨行片段（`) : showCreateSettingsAction ? (\n ...`），而仓库只对
- * *.mjs / *.sh 声明了 `eol=lf`，其余源码在 `core.autocrlf=true` 的 Windows 检出里是 CRLF，
- * `toContain` 的 `\n` 匹配不到 `\r\n`，用例在 Windows 上必然失败。它想断言的是源码内容
- * 契约，与换行字节无关，统一归一成 LF 再比对。
+ * Bugfix: some assertions below contain multi-line fragments (`) : showCreateSettingsAction ? (\n
+ * ...`), but the repo only declares `eol=lf` for *.mjs / *.sh; all other sources are CRLF in a
+ * Windows checkout with `core.autocrlf=true`, so `toContain`'s `\n` never matches `\r\n` and the
+ * case would always fail on Windows. What it asserts is a source-content contract, independent of
+ * line-ending bytes, so everything is normalized to LF before comparison.
  */
 async function readSource(url: URL): Promise<string> {
   return (await readFile(url, "utf8")).replaceAll("\r\n", "\n");

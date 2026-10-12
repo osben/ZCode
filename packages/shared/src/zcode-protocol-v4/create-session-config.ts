@@ -7,9 +7,10 @@ export const createSessionRequestedConfigSchema = z.object({
   model: z.string().optional(),
   thought: z.string().optional(),
   followupMode: z.enum(["queue", "guide"]).optional(),
-  // Bugfix：createSession.config 表达“请求覆盖字段”，不能复用 snapshot 的
-  // sessionConfigStateSchema.partial()；snapshot 为兼容旧快照给 mode 设了 default("build")，
-  // 会把“没传 mode”误变成“请求切回 build”，覆盖 workspace 默认 yolo。
+  // Bugfix: createSession.config expresses "requested override fields" and must not reuse the
+  // snapshot's sessionConfigStateSchema.partial(); the snapshot schema sets default("build") for
+  // mode to stay compatible with old snapshots, which would turn "mode not provided" into
+  // "request to switch back to build", overriding the workspace default yolo.
   mode: z.string().optional(),
   planEnabled: z.boolean().optional(),
 });
