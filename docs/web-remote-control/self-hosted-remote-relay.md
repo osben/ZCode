@@ -212,6 +212,16 @@ Use structured event logs and bounded counters for connections, registrations, f
 
 Current QR material can authorize both roles because the existing protocol uses the same key for `device` and `terminal`; role binding in HMAC prevents proof reuse across roles but does not create separate role credentials. Retaining this compatibility model is not device attestation. Separating role credentials is a distinct protocol/security change to approve before extending v1.
 
+Desktop derives `passHash` with SHA-256 from `randomBytes(24)`: a 192-bit random
+pairing secret, not a user-entered password. The legacy `createPassword` and
+`createPassHash` names do not describe a password-storage flow. CodeQL's
+`js/insufficient-password-hash` finding is a false positive for this production
+call path. Human passwords must use an appropriate password-hashing algorithm;
+this helper must not be reused for them. The resulting `passHash` is itself the
+HMAC credential carried in the QR URL, so possession authorizes access without
+recovering the original random secret. A slower derivation would not protect a
+leaked QR key. See [OWASP on random token hashing](https://cheatsheetseries.owasp.org/cheatsheets/Session_Management_Cheat_Sheet.html#server-side-session-token-storage).
+
 WSS protects the two connections, but relay can read their payloads; there is no endpoint-to-endpoint encryption in the inspected transport. The QR timestamp is not included in relay authorization, so a server cannot enforce QR-specific expiry from it without a contract change. Do not claim E2EE, QR TTL or physical-device identity.
 
 ## Deployment and endpoint configuration
