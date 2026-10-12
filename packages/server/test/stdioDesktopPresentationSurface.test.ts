@@ -71,9 +71,10 @@ describe("stdio Desktop presentation surface", () => {
     tempHomes.push(home);
     process.env.HOME = home;
     setDataBaseDir(home);
-    // Bugfix: 开发机可能导出 ZCODE_DESKTOP_CONTEXT_PROMPT_ENABLED=0（如本机 ZCode 安装的 shell 集成），
-    // 会把 desktop-attached-remote 推导出的 presentationSurface 灭成 undefined，
-    // 让「surface 贯穿装配」断言变成环境敏感；显式置 1 恢复用例封闭性。
+    // Bugfix: dev machines may export ZCODE_DESKTOP_CONTEXT_PROMPT_ENABLED=0 (e.g. from a local
+    // ZCode install's shell integration), which collapses the presentationSurface derived for
+    // desktop-attached-remote into undefined and makes the "surface flows through assembly"
+    // assertion environment-sensitive. Setting it to 1 explicitly restores case isolation.
     process.env[ZCODE_DESKTOP_CONTEXT_PROMPT_ENABLED_ENV] = "1";
     process.env.ZCODE_AGENT_SERVER_COMMAND = process.execPath;
     process.env.ZCODE_AGENT_SERVER_ARGS_JSON = JSON.stringify([
@@ -103,7 +104,7 @@ describe("stdio Desktop presentation surface", () => {
               },
             ],
           },
-          // 使用正式信封与分组；旧中间态会在装配前被拒绝，无法覆盖本例的远端行为。
+          // Use the official envelope and grouping; legacy intermediate states are rejected before assembly and cannot cover this case's remote behavior.
           modelConfigRules: { providerModelRules: [], manualProviderModelRules: [] },
         },
       }),
@@ -182,7 +183,7 @@ describe("stdio Desktop presentation surface", () => {
     let resolvedCommand: ZCodeAgentCommand | null = null;
     const commandResolver = vi.fn((context: ZCodeAgentCommandResolverContext) => {
       resolvedCommand = resolveDefaultZCodeAgentCommand(context);
-      // 集成测试只验证入口装配与最终命令，不启动长驻 Agent 子进程。
+      // The integration test only verifies entry assembly and the final command; it does not start a long-lived Agent child process.
       return null;
     });
     const bootstrap = createStdioServices({
@@ -230,7 +231,7 @@ describe("stdio Desktop presentation surface", () => {
         cwd: "/workspace/project",
       });
     } finally {
-      // 等待服务异步落盘与回收结束，避免清理临时目录时后台重新创建文件。
+      // Wait for services to finish async persistence and reclamation so cleanup of the temp directory does not race with files being recreated in the background.
       await disposeServiceResourcesAndWait(bootstrap.services);
       setDataBaseDir(null);
     }

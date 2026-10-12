@@ -17,8 +17,9 @@ describe("conversation share route", () => {
   });
 
   it("英文站的裸 /share/ 不再被拒绝，两种前缀都能解析出 code", () => {
-    // 此前 /share/<code> 走 isRejectedConversationSharePath，直接渲染 not_found，
-    // 等于英文分享页根本不存在。
+    // Previously /share/<code> went through isRejectedConversationSharePath and
+    // rendered not_found directly, meaning the English share page did not exist
+    // at all.
     expect(resolveConversationShareCodeFromPath("/cn/share/share-1")).toBe("share-1");
     expect(resolveConversationShareCodeFromPath("/share/share-1")).toBe("share-1");
     expect(resolveConversationShareCodeFromPath("/cn/share/share-1/extra")).toBeNull();
@@ -31,8 +32,9 @@ describe("conversation share route", () => {
   });
 
   it("结果物计数跟随语言，不再中英混排", () => {
-    // Bug 根因：原本硬编码英文 artifact/artifacts 且手写复数，中文页会渲染成
-    // 「2026年9月3日 11:55 · 1 artifact」。
+    // Bug root cause: the source hardcoded English artifact/artifacts with a
+    // handwritten plural, so the Chinese page rendered
+    // "2026年9月3日 11:55 · 1 artifact".
     const source = readFileSync("packages/web/src/share/ConversationShareLandingPage.tsx", "utf8");
     expect(source).toContain("artifactCountOne");
     expect(source).toContain("artifactCountOther");
@@ -52,16 +54,20 @@ describe("conversation share route", () => {
   });
 
   it("分享页同步 html lang 与浏览器标签标题", () => {
-    // index.html 固定 lang="en"；不同步会让中文分享页对无障碍与浏览器翻译都报错语言。
-    // 而 document.title 此前从未设置，标签只显示 index.html 的通用标题。
+    // index.html is fixed to lang="en"; without syncing, the Chinese share page
+    // reports the wrong language to accessibility tools and browser translation.
+    // document.title was never set before, so the tab only showed index.html's
+    // generic title.
     const source = readFileSync("packages/web/src/main.tsx", "utf8");
     expect(source).toContain("document.documentElement.lang = routeLocale");
     expect(source).toMatch(/document\.title =\s*routeLocale === "zh-CN"/u);
   });
 
   it("dev server base 不能写死 /cn/share/，否则英文路由本地不可达", () => {
-    // Bug 根因：dev 脚本写死 --base=/cn/share/，Vite 只服务该前缀，访问 /share/<code>
-    // 会被 dev server 直接拒掉（"server is configured with a public base URL of /cn/share/"）。
+    // Bug root cause: the dev script hardcoded --base=/cn/share/, so Vite only
+    // served that prefix and requests to /share/<code> were rejected outright
+    // by the dev server ("server is configured with a public base URL of
+    // /cn/share/").
     const source = readFileSync("scripts/dev-web-share-env.mjs", "utf8");
     expect(source).toContain('"--base=/"');
     expect(source).not.toContain('"--base=/cn/share/"');
@@ -69,12 +75,14 @@ describe("conversation share route", () => {
 
   it("continue-help 横幅与正文同宽，下载链接不带 /download", () => {
     const source = readFileSync("packages/web/src/share/ConversationShareLandingPage.tsx", "utf8");
-    // Bug 根因一：横幅原本是 ShareContentRail 的直接子元素，没套 ShareContentInset，
-    // 缺了 px-4 / @md:px-6，比上方时间行和下方正文都宽出一截。
+    // Bug root cause 1: the banner was a direct child of ShareContentRail
+    // without ShareContentInset, missing px-4 / @md:px-6 and rendering wider
+    // than both the timestamp row above and the body below.
     expect(source).toMatch(
       /showContinueHelp \? \(\s*(?:\/\/[^\n]*\n\s*)*<ShareContentInset>/u,
     );
-    // Bug 根因二：站点首页本身就是下载入口，/download 这个 path 是 404。
+    // Bug root cause 2: the site home page is itself the download entry, so the
+    // /download path is a 404.
     expect(source).toContain('const ZCODE_DOWNLOAD_URL = "https://zcode.z.ai"');
     expect(source).not.toContain("zcode.z.ai/download");
   });

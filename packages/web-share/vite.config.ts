@@ -22,27 +22,34 @@ export default defineConfig(({ mode }) => {
   const endpointOrigin = resolveRuntimeZCodeEndpointOrigin(endpointEnv);
   const oauthOrigin = resolveZaiOAuthOrigin(endpointEnv);
   const oauthClientId = resolveZaiOAuthClientId(endpointEnv);
-  // BigModel 授权入口必须跟随 ZCODE_ENV，否则测试环境会把测试账号带到生产授权页。
+  // The BigModel OAuth entry must follow ZCODE_ENV, otherwise the test
+  // environment sends test accounts to the production authorization page.
   const bigmodelOAuthOrigin = resolveBigModelApiOrigin(endpointEnv);
 
   return {
     root: resolve(HERE),
     base: "/cn/share/",
-    // Share 复用 Web 的 material-icons 素材，但不复制完整 Web 源码/依赖。
-    // 这样 dev:web-share 与 Docker 生产构建都从同一份 public 资源读取图标。
+    // Share reuses Web's material-icons assets instead of copying the full Web
+    // source/dependencies, so dev:web-share and the Docker production build both
+    // read icons from the same public assets.
     publicDir: resolve(REPO_ROOT, "packages/web/public"),
     plugins: [react(), tailwindcss()],
     resolve: {
       alias: [
         { find: "@", replacement: resolve(REPO_ROOT, "packages/ui/src") },
-        // 字符串别名按前缀匹配，会把 "@zcode/shared/mcp-apps" 等子路径导入重写成
-        // ".../shared/src/index.ts/mcp-apps"（文件路径后拼子目录，ENOTDIR），web-share 构建因此失败。
-        // 改用正则精确匹配根导入；子路径导入交由 @zcode/shared 的 exports 映射解析（同样指向 TS 源码）。
+        // String aliases match by prefix, which rewrites subpath imports such as
+        // "@zcode/shared/mcp-apps" into ".../shared/src/index.ts/mcp-apps"
+        // (subdirectory appended after a file path, ENOTDIR), breaking the
+        // web-share build. Use a regex that matches exactly the root import;
+        // subpath imports are resolved by @zcode/shared's exports map (also
+        // pointing at TS sources).
         {
           find: /^@zcode\/shared$/,
           replacement: resolve(REPO_ROOT, "packages/shared/src/index.ts"),
         },
-        // Share 镜像不安装 @zcode/ui（它会带入 services/rpc 闭包），子路径导入必须显式指向源码。
+        // The share image does not install @zcode/ui (it would pull in the
+        // services/rpc closure), so subpath imports must point at source files
+        // explicitly.
         {
           find: "@zcode/ui/useTheme",
           replacement: resolve(REPO_ROOT, "packages/ui/src/useTheme.ts"),
@@ -51,8 +58,10 @@ export default defineConfig(({ mode }) => {
           find: "@zcode/ui/conversation-share-readonly",
           replacement: resolve(REPO_ROOT, "packages/share-ui/src/index.ts"),
         },
-        // 登录卡片要用 provider 图标（svg 走 @ -> packages/ui/src 别名解析）。
-        // 该模块只依赖 shared/lucide/cn，不会把 services/rpc 闭包带进 share 镜像。
+        // The login card needs provider icons (svg resolved via the
+        // @ -> packages/ui/src alias). This module only depends on
+        // shared/lucide/cn, keeping the services/rpc closure out of the share
+        // image.
         {
           find: "@zcode/ui/oauth-provider-icon",
           replacement: resolve(REPO_ROOT, "packages/ui/src/lib/oauthProviderIcon.tsx"),

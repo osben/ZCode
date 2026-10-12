@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { DataRootLock } from "../src/runtime/lock.js";
 
-// 超出常见平台 pid 上限的值：process.kill(pid, 0) 必然 ESRCH，模拟已死的持锁进程。
+// A value beyond common platform pid limits: process.kill(pid, 0) always yields ESRCH, simulating a dead lock holder.
 const DEAD_PID = 2 ** 30;
 
 describe("DataRootLock", () => {
@@ -67,7 +67,7 @@ describe("DataRootLock", () => {
     await lockB.acquire();
     await lockA.release();
     await lockB.release();
-    // 释放后可重新获取。
+    // Can be re-acquired after release.
     await lockA.acquire();
     await lockA.release();
   });
@@ -100,7 +100,7 @@ describe("DataRootLock", () => {
     const readyDir = join(root, "ready");
     await mkdir(readyDir);
     await writeFile(lockFile, `${JSON.stringify({ pid: DEAD_PID, acquiredAt: 0 })}\n`, "utf8");
-    // 根目录 Vitest 与 package 脚本的 cwd 不同，不能用 cwd 推导源码路径，否则子进程会导入不存在的 root/src/runtime/lock.ts。
+    // Root-level Vitest and the package script run with different cwd values; the source path cannot be derived from cwd, or children would import a nonexistent root/src/runtime/lock.ts.
     const moduleUrl = new URL("../src/runtime/lock.ts", import.meta.url).href;
     const childProgram = `
       import { access, appendFile, writeFile } from "node:fs/promises";
@@ -136,8 +136,9 @@ describe("DataRootLock", () => {
       child.once("error", reject);
       child.once("exit", (code) => code === 0 ? resolve() : reject(new Error(childError || `lock child exited ${code}`)));
     }));
-    // 先等待所有子进程进入 barrier；只按固定时间放行会让慢启动的子进程在首个 owner
-    // 释放后再次成功获取锁，导致“一个 success”断言随机出现多个 success。
+    // Wait for all children to reach the barrier first. Releasing after a fixed delay would let a
+    // slow-starting child acquire the lock again after the first owner releases, making the
+    // "exactly one success" assertion intermittently see multiple successes.
     const readyDeadline = Date.now() + 20_000;
     let allChildrenReady = false;
     while (Date.now() < readyDeadline) {

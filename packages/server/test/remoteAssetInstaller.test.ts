@@ -191,8 +191,9 @@ function toLocalShellPath(filePath: string): string {
     return filePath;
   }
 
-  // Bugfix: Git Bash 的 sha256sum 读取 C:\... 这类反斜杠路径时，会为了转义文件名在校验值前输出反斜杠，
-  // 导致测试误判为 sha mismatch。远端真实路径是 POSIX 风格，这里把 Windows 临时路径转成 /c/... 来贴近远端形态。
+  // Bugfix: Git Bash's sha256sum, when reading backslash paths like C:\..., outputs a backslash
+  // before the checksum to escape the filename, making tests misreport a sha mismatch. Real remote
+  // paths are POSIX-style, so convert Windows temp paths to /c/... here to match the remote shape.
   const normalized = filePath.replaceAll("\\", "/");
   return normalized.replace(
     /^([A-Za-z]):\//u,
@@ -203,8 +204,9 @@ function toLocalShellPath(filePath: string): string {
 async function detectLocalShellSha256Tool(
   shellCommand: string,
 ): Promise<RemoteSha256Tool> {
-  // Bugfix: Windows Git Bash 环境常有 sha256sum/openssl 但没有 shasum；测试硬编码 shasum
-  // 会让“备用 URL 校验失败后重试”的用例在真正执行到重试逻辑前就失败。
+  // Bugfix: Windows Git Bash environments usually have sha256sum/openssl but no shasum; hardcoding
+  // shasum in tests would make the "retry after fallback URL verification fails" case fail before
+  // the retry logic is even reached.
   const { stdout } = await execFileAsync(shellCommand, [
     "-c",
     "if command -v sha256sum >/dev/null 2>&1; then printf sha256sum; elif command -v shasum >/dev/null 2>&1; then printf shasum; elif command -v openssl >/dev/null 2>&1; then printf openssl; else exit 1; fi",

@@ -149,8 +149,10 @@ afterEach(async () => {
       const sockets = serverSockets.get(server);
       serverSockets.delete(server);
       for (const socket of sockets ?? []) {
-        // Bugfix: 失败的异步断言会跳过 transport.dispose()，只 close server 会等待仍存活的 WS。
-        // 测试清理阶段直接终止客户端连接，避免全量单测里 afterEach 因悬挂连接超时。
+        // Bugfix: failed async assertions skip transport.dispose(); closing only
+        // the server would wait on still-live WS connections. Terminate client
+        // connections directly during cleanup so afterEach does not time out on
+        // dangling connections in the full unit-test run.
         socket.terminate();
       }
       return new Promise<void>((resolve) => {
@@ -336,8 +338,10 @@ describe("WebRemoteControlTerminalTransport", () => {
     });
 
     transport.start();
-    // Bugfix: permessage-deflate 握手和大 payload 压缩都走真实 ws/socket，CI 全量并发时
-    // event loop 可能被其它用例挤压；这里放宽等待并标注阶段，避免 500ms 抖动误报且便于定位。
+    // Bugfix: the permessage-deflate handshake and large-payload compression run
+    // on real ws/socket; under full concurrent CI load other cases can squeeze
+    // the event loop. Relax the waits and label the phases to avoid 500ms flake
+    // and make failures easier to locate.
     await waitUntil(
       () => relay.messages.some((message) => message.type === "auth_response"),
       2_000,
@@ -459,8 +463,10 @@ describe("WebRemoteControlTerminalTransport", () => {
     });
 
     transport.start();
-    // Bugfix: 服务端收到第 2 次 heartbeat 不代表客户端已经处理 matched ACK。
-    // 这里直接等待 onSendReady，避免全量并发测试时断言抢在 WebSocket message 回调前执行。
+    // Bugfix: the server receiving the 2nd heartbeat does not mean the client has
+    // processed the matched ACK. Wait on onSendReady directly, otherwise under
+    // full concurrent test load the assertion can run before the WebSocket
+    // message callback.
     await waitUntil(() => sendReady.mock.calls.length === 1, 2_000);
 
     expect(sendReady).toHaveBeenCalledOnce();

@@ -13,7 +13,7 @@ import {
 import { describe, expect, it } from "vitest";
 import { NodeZCodeBuiltinProviderConfigSource } from "../src/index.js";
 
-// 发布验证必须指向最终上传的那份文件，而不是默认悄悄检查仓库源文件。
+// Release verification must point at the exact file that gets uploaded, not silently check the repository source file by default.
 const zcodeBuiltinProviderConfigFilePath =
   process.env.ZCODE_BUILTIN_RELEASE_TEST_FILE?.trim() ||
   fileURLToPath(new URL("../../../config/provider/zcode-builtin.json", import.meta.url));
@@ -150,8 +150,10 @@ describe("ZCode Built-in Provider Config 完整性", () => {
         });
       }
 
-      // 加速卡换端点不换模型，能力事实必须与同 Family Coding Plan 站点逐项一致；
-      // 否则同一会话里普通轮与加速轮的 system 折叠、WebSearch 暴露和附件合法性会互相打脸。
+      // The highspeed card swaps the endpoint but not the models; capability facts must match the
+      // same-family Coding Plan site item by item. Otherwise, within one session, the normal and
+      // highspeed turns would contradict each other on system folding, WebSearch exposure, and
+      // attachment validity.
       for (const [highspeedProviderId, planProviderId] of [
         ["account:zai-highspeed-card", "account:zai-individual-coding-plan"],
         ["account:bigmodel-highspeed-card", "account:bigmodel-individual-coding-plan"],
@@ -190,7 +192,7 @@ describe("ZCode Built-in Provider Config 完整性", () => {
           templateId: "zai-api",
           modelId,
           apiType: "anthropic-messages",
-          // 模型层自身能力与 §6.3.1 已批准的站点覆盖分开验证。
+          // Model-level capabilities are verified separately from the §6.3.1 approved site overrides.
           baseUrl: "https://other.example.com/anthropic",
         });
       const glm53 = resolve("glm-5.3").toJSON();
@@ -670,8 +672,9 @@ describe("ZCode Built-in Provider Config 完整性", () => {
       );
       expect(new Set(selectorKeys).size).toBe(selectorKeys.length);
 
-      // 分组后“模型家族连续”只约束 Model Rule 本组；把 Model/API/Site 三组拼起来会
-      // 人为制造重复家族，无法再验证原本想检查的书写顺序。
+      // After grouping, "model families are contiguous" constrains only the Model Rule group itself.
+      // Concatenating the Model/API/Site groups would artificially create duplicate families and make
+      // the intended authoring-order check impossible.
       const rawRelease = JSON.parse(await readFile(zcodeBuiltinProviderConfigFilePath, "utf8")) as {
         config: { modelConfigRules: { modelRules: readonly { modelMatch: string }[] } };
       };
@@ -826,7 +829,7 @@ describe("ZCode Built-in Provider Config 完整性", () => {
       });
       expect(grok43.properties?.contextWindow).toBe(1_000_000);
       expect(grok43.optionSpecs?.reasoningLevel?.toJSON()).toMatchObject({
-        // 此模型未声明专用档位，继续继承 Model 通用兜底。
+        // This model declares no dedicated levels, so it keeps inheriting the Model generic fallback.
         values: ["disabled", "enabled"],
       });
       expect(reasoningPatch(grok43.optionSpecs!.reasoningLevel!.map!, "disabled")).toEqual({
@@ -1069,7 +1072,7 @@ describe("ZCode Built-in Provider Config 完整性", () => {
     expect(keys).not.toContain("modalities");
     expect(keys).not.toContain("magic_name");
     expect(keys).not.toContain("supportsImages");
-    // Todo104：supportsPdf/Video 是 inputFormat 内的正式字段，不能因同名误判成旧扁平能力。
+    // Todo104: supportsPdf/Video are official fields inside inputFormat and must not be misjudged as legacy flat capabilities by name collision.
     for (const key of [
       "input_format",
       "output_format",

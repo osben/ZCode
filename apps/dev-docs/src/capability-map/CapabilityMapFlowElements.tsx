@@ -212,7 +212,8 @@ function CapabilityMapEdge({
       />
       {data?.showLabel ? (
         <EdgeLabelRenderer>
-          {/* Bug 原因：节点自身使用 z-index，标签未声明层级时会被相邻节点盖住。 */}
+          {/* Bug cause: nodes carry their own z-index, so a label without an
+              explicit layer gets covered by adjacent nodes. */}
           <span
             className="pointer-events-none absolute z-10 rounded-md border border-border bg-card px-1.5 py-0.5 text-ui-xs text-foreground"
             style={{

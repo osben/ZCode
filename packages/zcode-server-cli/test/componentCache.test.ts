@@ -163,8 +163,9 @@ describe("component cache", () => {
     ).resolves.toBeNull();
   });
 
-  // Bugfix: Windows 普通用户无 symlink 权限，junction 会被 bsdtar 归档成普通目录
-  // （不产生 POSIX symlink 条目），无法在归档内构造出待拒绝的符号链接场景，仅 POSIX 宿主运行。
+  // Bugfix: Windows users without symlink permission get junctions archived by bsdtar as plain
+  // directories (no POSIX symlink entries), so the reject-a-symlink scenario cannot be built
+  // inside the archive; run on POSIX hosts only.
   it.skipIf(process.platform === "win32")("rejects symbolic links in component archives before extraction", async () => {
     const root = await mkdtemp(join(tmpdir(), "zcode-component-link-"));
     const layout = resolveServerLayout(join(root, "server"));

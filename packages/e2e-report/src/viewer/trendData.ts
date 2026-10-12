@@ -243,8 +243,8 @@ async function fetchTextFromCandidates(candidates: string[]) {
         return await response.text();
       }
     } catch {
-      // 读趋势数据允许 fallback：容器产物里的 /workspace 路径在宿主机查看时
-      // 不存在，需要回退到 summary.json 旁边的 perf 目录。
+      // Trend data reads allow fallback: the /workspace path inside container artifacts does not
+      // exist when viewed on the host, so fall back to the perf directory next to summary.json.
     }
   }
   return null;

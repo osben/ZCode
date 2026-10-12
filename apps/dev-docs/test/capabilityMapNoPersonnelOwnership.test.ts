@@ -17,8 +17,9 @@ const capabilityMapInteractionFiles = [
 
 describe("能力图不承载具体人员分工", () => {
   it("只保留角色型 owner，不在能力群数据中写入具体人名", () => {
-    // 开源前移除了真实人名黑名单：改为正向约束，owner 必须是“<职责>负责人（<Role> Owner）”形态的角色描述，
-    // 具体人名无法满足该形态。
+    // The real-names blacklist was removed before open-sourcing; replaced with a
+    // positive constraint: an owner must be a role description of the form
+    // "<duty>负责人（<Role> Owner）", which real personal names cannot satisfy.
     const roleOwnerPattern = /^\S.*负责人（[A-Za-z][A-Za-z &-]* Owner）$/;
 
     for (const group of capabilityGroups) {

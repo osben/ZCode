@@ -30,9 +30,11 @@ function resolveThemePreference(): Theme {
   return resolveWebRemoteControlInitialTheme({ storedTheme: saved, defaultTheme: "zai-light" });
 }
 
-// Share 是独立入口，不会经过完整 Web 的 bootstrap；必须在渲染前同步根主题 class，
-// 否则页面外壳使用默认浅色 token，而 MessageResponse 会按 zai-dark 选择 github-dark，
-// 最终产生浅色页面套深色 Markdown 代码块的混合样式。
+// Share is a standalone entry that never goes through the full Web bootstrap;
+// the root theme class must be applied synchronously before rendering. Otherwise
+// the page shell uses default light tokens while MessageResponse picks
+// github-dark for zai-dark, producing light pages wrapping dark Markdown code
+// blocks.
 const INITIAL_THEME = resolveThemePreference();
 applyTheme(INITIAL_THEME);
 

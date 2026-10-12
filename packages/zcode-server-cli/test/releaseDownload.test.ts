@@ -70,7 +70,7 @@ describe("release downloader", () => {
 
   it("aborts a JSON request at the application timeout", async () => {
     const server = createServer((_request, _response) => {
-      // 保持请求打开，确保测试验证的是 AbortSignal 而不是服务端返回错误。
+      // Keep the request open so the test verifies the AbortSignal, not a server-side error.
     });
     servers.push(server);
     await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
@@ -80,7 +80,7 @@ describe("release downloader", () => {
     await expect(fetchReleaseJson(
       `http://127.0.0.1:${address.port}/manifest.json`,
       z.object({ answer: z.number() }),
-      // 留出本地 fetch 建连和 CI 调度余量，避免 25ms 下先得到连接错误而不是 AbortError。
+      // Allow margin for local fetch connection setup and CI scheduling so a 25ms run does not produce a connection error instead of an AbortError.
       1_000,
     )).rejects.toMatchObject({ name: "AbortError" });
   });
@@ -111,7 +111,7 @@ describe("release downloader", () => {
       destination: join(dir, "release.tar.gz"),
       sha256,
       expectedSizeBytes: payload.byteLength,
-      // CI 负载可能推迟单个事件循环 tick；加大间隔余量仍能验证有数据时重置 idle timeout。
+      // CI load may delay a single event loop tick; the larger interval margin still verifies that the idle timeout resets when data flows.
       timeoutMs: 300,
       overallTimeoutMs: 2_000,
       maxAttempts: 1,

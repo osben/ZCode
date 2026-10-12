@@ -483,8 +483,10 @@ private fun RemoteControlLauncher(
                 OutlinedButton(
                     modifier = Modifier.fillMaxWidth(),
                     onClick = {
-                        // Bugfix: 二维码链接很长，用户重启 App 后手输容易出错。
-                        // 这里复用本地已校验过的历史记录，但打开前仍走 onOpenUrl 的白名单校验。
+                        // Bugfix: QR-code links are long and error-prone to retype
+                        // by hand after the app restarts. Reuse the locally
+                        // validated recent link, but still route the open through
+                        // onOpenUrl's whitelist check.
                         if (!onOpenUrl(link.url)) {
                             localError = invalidUrlMessage
                         }

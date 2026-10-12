@@ -74,10 +74,10 @@ describe("acquireRemoteDeployLock", () => {
     expect(resolved).toBe(false);
 
     const command = backend.commands[0]!;
-    // WSL 会在 bash -lc 参数边界提前展开未转义的局部 `$var`；lock-holder 必须先落盘再执行。
+    // WSL expands unescaped local `$var` early, at bash -lc argument boundaries; the lock-holder must write to disk before executing.
     expect(command).toContain("printf '%b'");
     expect(command).toContain(".holder-owner-test.sh");
-    // Alpine/BusyBox 只有 POSIX sh；锁脚本不能把 bash 当成远端必备依赖。
+    // Alpine/BusyBox only has POSIX sh; the lock script must not assume bash exists on the remote.
     expect(command).toMatch(/\nsh .*\.holder-owner-test\.sh'/u);
     expect(command).not.toMatch(/\nbash .*\.holder-owner-test\.sh'/u);
     expect(command).not.toContain('owner_file="$lock_dir/owner"');

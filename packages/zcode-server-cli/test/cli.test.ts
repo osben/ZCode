@@ -42,10 +42,11 @@ async function createTestReleaseArchive(root: string, version: string): Promise<
   const archivePath = join(root, "release.tar.gz");
   const { execFile } = await import("node:child_process");
   await new Promise<void>((resolve, reject) => {
-    // Bugfix：绝对路径 `C:\...\release.tar.gz` 会被 GNU tar 当成 `host:path` 远程规格，
-    // 在 Windows 上报 `Cannot connect to C: resolve failed`。cwd 已经是 root，改传相对
-    // 归档名即可绕开盘符解析；不用 --force-local，因为那是 GNU 独有选项，Windows 自带
-    // 的 bsdtar（System32\tar.exe）不认。
+    // Bugfix: an absolute path like `C:\...\release.tar.gz` is interpreted by GNU tar as a
+    // `host:path` remote spec and fails on Windows with `Cannot connect to C: resolve failed`.
+    // cwd is already root, so passing the relative archive name bypasses drive-letter parsing.
+    // Avoid --force-local: it is GNU-only and the bsdtar shipped with Windows
+    // (System32\tar.exe) does not recognize it.
     execFile("tar", ["-czf", "release.tar.gz", archiveRoot.slice(root.length + 1)], { cwd: root }, (error) => {
       if (error) reject(error);
       else resolve();
@@ -467,7 +468,7 @@ describe("Server CLI routing", () => {
       });
       expect(exit).toBe(1);
       expect(errors.join("")).toContain("Uninstall cancelled");
-      // 第二次确认失败时不得触碰任何数据。
+      // No data may be touched when the second confirmation fails.
       await expect(readFile(join(layout.serverRoot, "current.json"), "utf8")).resolves.toBe("{}");
     } finally {
       vi.unstubAllEnvs();
@@ -499,7 +500,7 @@ describe("Server CLI routing", () => {
       await new ReleaseManager(layout).ensure();
       await writeFile(join(layout.serverRoot, "current.json"), "{}", "utf8");
       await writeFile(join(layout.serverRoot, "taxes.pdf"), "user data inside custom root", "utf8");
-      // serverRoot 之外的目录代表 Workspace/用户文件，卸载后必须原样保留。
+      // Directories outside serverRoot represent Workspace/user files and must be preserved as-is after uninstall.
       const workspaceDir = join(root, "workspace");
       await mkdir(workspaceDir, { recursive: true });
       await writeFile(join(workspaceDir, "keep.txt"), "user data", "utf8");
@@ -515,7 +516,7 @@ describe("Server CLI routing", () => {
         uninstalled: true,
         preservedPaths: ["taxes.pdf"],
       });
-      // spec §8：卸载后写出 uninstalled 标记，供后续 Controller/Transport 读取。
+      // spec §8: after uninstall, write the uninstalled marker for later Controller/Transport reads.
       const marker = JSON.parse(await readFile(join(layout.serverRoot, "uninstalled.json"), "utf8")) as {
         uninstalled: boolean;
       };

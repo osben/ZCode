@@ -122,9 +122,10 @@ describe("Supervisor lifecycle", () => {
     await waitForState(supervisor, "ready");
     const apply = requestControl(layout.controlEndpoint, { command: "apply-update", force: true }, 10_000);
 
-    // Bugfix: Windows 不允许 rename 覆盖正被 readFile 打开的 current.json；轮询文件会与
-    // atomicWriteJson 争抢句柄并制造 EPERM。candidate 启动发生在 transaction/current
-    // 写入完成之后，以生命周期信号等待同一个稳定观察点，不改变锁竞争语义。
+    // Bugfix: Windows does not allow rename to overwrite a current.json held open by readFile;
+    // polling the file races atomicWriteJson for the handle and produces EPERM. Candidate launch
+    // happens after the transaction/current writes complete, so wait on the lifecycle signal for
+    // the same stable observation point without changing lock-contention semantics.
     await Promise.race([
       candidateLaunched,
       new Promise<never>((_, reject) =>
@@ -174,10 +175,11 @@ describe("Supervisor lifecycle", () => {
   });
 
   it("keeps applying the update after a client timeout while rollback finishes", async () => {
-    // Bugfix: Windows 上 `/tmp` 会解析到当前盘根目录且普通用户通常无写权限；
-    // 使用系统临时目录，让用例只验证客户端超时后的 update 生命周期。
-    // macOS AF_UNIX endpoint 有较短的路径上限；系统临时目录已经包含随机前缀，
-    // 这里保持 fixture 前缀短，避免测试自身把 control.sock 路径推过上限。
+    // Bugfix: on Windows `/tmp` resolves to the current drive's root and normal users usually have
+    // no write permission there; use the system temp directory so the case only verifies the update
+    // lifecycle after a client timeout. macOS AF_UNIX endpoints have a shorter path limit; the
+    // system temp dir already contains a random prefix, so keep the fixture prefix short to avoid
+    // pushing control.sock past the limit.
     const root = await mkdtemp(join(tmpdir(), "z2-"));
     const layout = resolveServerLayout(join(root, "server"));
     const releases = new ReleaseManager(layout);
@@ -201,8 +203,8 @@ describe("Supervisor lifecycle", () => {
         },
       },
       version: "test",
-      // waitForUpdateReady 以 50ms 轮询；留出一个完整轮询周期，确保旧 release
-      // rollback 的 ready 终态也被观察到，而不是只观察到短暂的 starting/ready 窗口。
+      // waitForUpdateReady polls every 50ms; leave one full polling cycle so the old release
+      // rollback's terminal ready state is observed too, not just the brief starting/ready window.
       coreReadyTimeoutMs: 120,
       coreStopGraceTimeoutMs: 20,
       coreKillTimeoutMs: 5,
@@ -296,14 +298,14 @@ describe("Supervisor lifecycle", () => {
     for (let crashIndex = 0; crashIndex < CRASH_BACKOFF_MS.length; crashIndex++) {
       cores[crashIndex]?.emit("exit", 1, null);
       expect(supervisor.status().state).toBe("crashed");
-      // 退避序列必须与 spec 的 1/2/4/8/16 秒一致：提前一毫秒不应重启。
+      // The backoff sequence must match the spec's 1/2/4/8/16 seconds: restarting one millisecond early must not happen.
       await vi.advanceTimersByTimeAsync((CRASH_BACKOFF_MS[crashIndex] ?? 0) - 1);
       expect(cores.length).toBe(crashIndex + 1);
       await vi.advanceTimersByTimeAsync(1);
       expect(cores.length).toBe(crashIndex + 2);
     }
 
-    // 第六次 crash 超出 5 次/5 分钟预算，熔断且不再拉起新 Core。
+    // The sixth crash exceeds the 5-crashes-per-5-minutes budget; trip the breaker and stop launching new Cores.
     cores[CRASH_BACKOFF_MS.length]?.emit("exit", 1, null);
     expect(supervisor.status().state).toBe("crash-loop-stopped");
     await vi.advanceTimersByTimeAsync(60_000);
@@ -345,16 +347,16 @@ describe("Supervisor lifecycle", () => {
       runningTaskCount: 2,
     });
     await expect(requestControl(layout.controlEndpoint, { command: "apply-update" })).rejects.toThrow(/--force/);
-    // guard 拒绝时不得中断 Core（R2-CLI-09）。
+    // The guard must not interrupt the Core when it rejects (R2-CLI-09).
     expect(supervisor.status().state).toBe("ready");
 
-    // R2-CLI-10：有运行任务时 confirm-uninstall 必须被拒绝并保持原状态。
+    // R2-CLI-10: confirm-uninstall must be rejected while tasks are running and the state preserved.
     await expect(
       requestControl(layout.controlEndpoint, { command: "confirm-uninstall", confirmation: "DELETE" }),
     ).rejects.toThrow(/Cannot uninstall/);
     expect(supervisor.status().state).toBe("ready");
 
-    // --force 明确允许中断运行任务后应用 release。
+    // --force explicitly allows interrupting running tasks to apply the release.
     await expect(requestControl(layout.controlEndpoint, { command: "apply-update", force: true })).resolves.toMatchObject({
       applied: true,
       version: "2.0.0",
@@ -362,7 +364,7 @@ describe("Supervisor lifecycle", () => {
     expect(supervisor.status().state).toBe("ready");
     expect(cores.length).toBe(2);
 
-    // 任务清零后 uninstall 放行并停止 Server。
+    // Once tasks drop to zero, uninstall proceeds and stops the Server.
     cores[1]?.emit("message", { type: "task-activity", runningTaskCount: 0 });
     await new Promise<void>((resolve) => setImmediate(resolve));
     await expect(
@@ -433,8 +435,9 @@ describe("Supervisor lifecycle", () => {
     await supervisor.start();
     await waitForState(supervisor, "ready");
 
-    // 回滚文件操作可能被慢盘/杀毒软件拖过首个 crash backoff；期间不得让旧的
-    // crashed 状态放行自动重启，否则坏 release 会再次启动并丢失 Supervisor 所有权。
+    // Rollback file operations may be dragged past the first crash backoff by slow disks or
+    // antivirus; during that window the stale crashed state must not authorize an automatic
+    // restart, or the bad release would boot again and Supervisor would lose ownership.
     const internal = supervisor as unknown as { releaseManager: ReleaseManager };
     const originalRestoreCurrent = internal.releaseManager.restoreCurrent.bind(internal.releaseManager);
     internal.releaseManager.restoreCurrent = async (manifest) => {
@@ -509,7 +512,7 @@ describe("Supervisor lifecycle", () => {
       launcher: {
         launch: (generation, release) => {
           if (release?.version === "new") {
-            // 使用真实 ChildProcess 复现 Node 的 spawn 失败序列：error + close，无 exit。
+            // Use a real ChildProcess to reproduce Node's spawn-failure sequence: error + close, no exit.
             return fork(join(root, "never-loaded.js"), [], {
               execPath: join(root, "nonexistent-node"),
               stdio: ["ignore", "ignore", "ignore", "ipc"],

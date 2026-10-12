@@ -18,7 +18,7 @@ import {
   extractTarGzArchive,
 } from "@zcode/server/remote/localTarGz.js";
 
-// Windows 上 symlink 需要管理员权限或开发者模式，跳过相关用例
+// Symlinks on Windows require administrator privileges or developer mode; skip the related cases.
 const isWindows = process.platform === "win32";
 
 const gzipAsync = promisify(gzip);

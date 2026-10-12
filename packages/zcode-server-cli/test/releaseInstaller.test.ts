@@ -47,8 +47,8 @@ describe("release installer", () => {
     await writeFile(join(archiveRoot, "manifest.json"), JSON.stringify({ product: "zcode-server", target: "win32-x64", appVersion: "1.2.4", nodeVersion: "22.16.0", entrypoints: { cli: "runtime/server-cli.js", core: "runtime/server-core.js", agent: "runtime/zcode.cjs" }, native: ["node-pty"] }), "utf8");
     const archivePath = join(root, "release.zip");
     const { execFile } = await import("node:child_process");
-    // Bugfix: Windows 本机没有 Info-ZIP 的 `zip` 命令；System32 自带 bsdtar，`tar -a`
-    // 可按 .zip 后缀写归档，与产品 stageRelease 在 Windows 上的产包方式一致。
+    // Bugfix: Windows has no Info-ZIP `zip` command; the bundled System32 bsdtar can write an
+    // archive by extension with `tar -a`, matching how product stageRelease packages on Windows.
     await new Promise<void>((resolve, reject) => execFile(
       process.platform === "win32" ? "tar" : "zip",
       process.platform === "win32"
@@ -63,8 +63,9 @@ describe("release installer", () => {
     expect(launcher).toContain("Invalid current ZCode Server release");
   });
 
-  // Bugfix: 该用例验证 POSIX shell 版 stable launcher 的 fail-closed 输出，靠 shebang
-  // 直接执行 shell 脚本；Windows 无法 spawn 无扩展名脚本（ENOENT），只在 POSIX 宿主运行。
+  // Bugfix: this case verifies the POSIX shell stable launcher's fail-closed output by executing
+  // the shell script directly via its shebang. Windows cannot spawn an extensionless script
+  // (ENOENT), so run on POSIX hosts only.
   it.skipIf(process.platform === "win32")("fails closed when the POSIX stable launcher reads an external current release", async () => {
     const root = await mkdtemp(join(tmpdir(), "zcode-release-launcher-boundary-"));
     const layout = resolveServerLayout(join(root, "server"));

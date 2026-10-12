@@ -215,8 +215,8 @@ describe("stageRelease", () => {
     expect(launcher).toContain('"$DIR/runtime/node"');
     expect(launcher).toContain('"$DIR/runtime/server-cli.js"');
     const launcherStat = await stat(join(releaseDir, "bin", "zcode"));
-    // Bugfix: NTFS 不保留 POSIX exec 位（Windows 上 stat.mode 恒无 0o111 位），
-    // 可执行性断言只在 POSIX 宿主上生效；Windows 宿主仍验证文件存在与内容。
+    // Bugfix: NTFS does not preserve the POSIX exec bit (stat.mode never has 0o111 on Windows);
+    // executability assertions apply only on POSIX hosts. Windows hosts still verify file presence and content.
     if (process.platform !== "win32") expect(launcherStat.mode & 0o111).not.toBe(0);
 
     const runtimePackageJson = JSON.parse(
@@ -243,16 +243,16 @@ describe("stageRelease", () => {
     }
 
     const nodeStat = await stat(join(releaseDir, "runtime", "node"));
-    // Bugfix: 同上，NTFS 无 POSIX exec 位，可执行性断言只在 POSIX 宿主生效。
+    // Bugfix: same as above, NTFS has no POSIX exec bit; executability assertions apply only on POSIX hosts.
     if (process.platform !== "win32") expect(nodeStat.mode & 0o111).not.toBe(0);
 
-    // 交叉打包安全性：宿主编译产物与非目标平台 prebuilds 不进入发行包。
+    // Cross-packaging safety: host build artifacts and prebuilds for non-target platforms must not enter the release package.
     await expect(stat(join(releaseDir, "runtime/node_modules/node-pty/build"))).rejects.toThrow();
     await expect(
       stat(join(releaseDir, "runtime/node_modules/node-pty/prebuilds/darwin-arm64")),
     ).rejects.toThrow();
 
-    // linux 平台 pty.node 由 @lydell 平台包补齐。
+    // On linux, pty.node is supplied by the @lydell platform package.
     const linuxPty = await readFile(
       join(releaseDir, "runtime/node_modules/node-pty/prebuilds/linux-x64/pty.node"),
       "utf8",
@@ -294,7 +294,7 @@ describe("stageRelease", () => {
     );
     await expect(stat(join(prebuildDir, "pty.node"))).resolves.toBeTruthy();
     const helperStat = await stat(join(prebuildDir, "spawn-helper"));
-    // Bugfix: 同上，NTFS 无 POSIX exec 位，可执行性断言只在 POSIX 宿主生效。
+    // Bugfix: same as above, NTFS has no POSIX exec bit; executability assertions apply only on POSIX hosts.
     if (process.platform !== "win32") expect(helperStat.mode & 0o111).not.toBe(0);
   });
 
