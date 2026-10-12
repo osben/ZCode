@@ -1089,7 +1089,10 @@ export const CommandCenterDialog = memo(function CommandCenterDialogComponent({
       }
       setWorktreeIssueMessage(outcome.message);
     } finally {
-      setWorktreeStartBusy(false);
+      // 旧请求的 finally 不能解锁更新的 Start；busy 由当前 attempt 独占清理。
+      if (worktreeStartAttemptRef.current === attempt) {
+        setWorktreeStartBusy(false);
+      }
     }
   }, [
     baseServices.gitService,

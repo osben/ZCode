@@ -31,7 +31,7 @@ interface GitRepositoryRequest {
 ### 命令
 
 ```
-git worktree list --porcelain
+git worktree list --porcelain -z
 ```
 
 于 `resolveRepository` 得到的 `repoRoot` 下执行，沿用默认命令超时与输出上限。
@@ -58,7 +58,7 @@ interface GitWorktreeEntry {
 
 ### 解析规则
 
-- porcelain 条目以空行分隔；属性行 `worktree` / `HEAD` / `branch` / `bare` / `detached` 逐行读取；`locked` / `prunable` 带可选原因参数，本阶段忽略。
+- NUL 分隔属性记录；记录以 `worktree` / `HEAD` / `branch` / `bare` / `detached` 开头；`locked` / `prunable` 带可选原因参数，本阶段忽略。路径字段按字节边界读取，不做 C-quote 解码或空白裁剪。
 - bare 条目没有 `HEAD` / `branch` 行，`headCommitHash` 与 `branchName` 置 null。
 - `isMain` 取首个条目（Git 文档保证主工作树列在最前）。
 - `isCurrent` 通过与 `git rev-parse --show-toplevel` 结果比较得出；两个路径都来自 Git 自身输出，规范化斜杠后直接比较。
@@ -125,5 +125,5 @@ interface GitWorktreeCreateResult {
 
 ## 测试要求
 
-- `listWorktrees`：仅主工作树 → 单条目；经真实 `createWorktree` 创建关联 worktree 后 → 两条目且路径/分支正确；detached worktree 的 `branchName=null`；非仓库路径 → 空结果。
+- `listWorktrees`：仅主工作树 → 单条目；经真实 `createWorktree` 创建关联 worktree 后 → 两条目且路径/分支正确；detached worktree 的 `branchName=null`；包含空格、非 ASCII 字符及换行的 worktree 路径原样保留；非仓库路径 → 空结果。
 - `createWorktree`：成功创建目录与分支且 HEAD 指向新分支、起点为 baseBranch；分支被其它 worktree 占用 → `branch-in-other-worktree`；targetPath 已存在 → `target-path-exists`；非法分支名 → `invalid-branch-name`。

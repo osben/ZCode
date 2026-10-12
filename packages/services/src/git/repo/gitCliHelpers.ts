@@ -247,19 +247,18 @@ export function parseWorktreeListPorcelain(
     entry = null;
   };
 
-  // `git worktree list --porcelain` emits one blank-line-separated block per worktree
-  // with `worktree <path>` first, followed by HEAD/branch/bare/detached attribute lines.
-  // locked/prunable carry optional reasons and have no consumer yet.
-  for (const line of stdout.replace(/\r\n/g, "\n").split("\n")) {
-    if (line.length === 0) {
+  // 非 -z porcelain 会对部分路径做 C-quote，按行解析也无法表示路径中的换行。
+  // `-z` 以 NUL 分隔属性记录，因此可逐字保留 worktree 路径。
+  for (const record of stdout.split("\0")) {
+    if (record.length === 0) {
       finishEntry();
       continue;
     }
 
-    if (line.startsWith("worktree ")) {
+    if (record.startsWith("worktree ")) {
       finishEntry();
       entry = {
-        path: line.slice("worktree ".length).trim(),
+        path: record.slice("worktree ".length),
         headCommitHash: null,
         branchName: null,
         isBare: false,
@@ -272,15 +271,15 @@ export function parseWorktreeListPorcelain(
       continue;
     }
 
-    if (line.startsWith("HEAD ")) {
-      entry.headCommitHash = line.slice("HEAD ".length).trim() || null;
-    } else if (line.startsWith("branch ")) {
-      const ref = line.slice("branch ".length).trim();
+    if (record.startsWith("HEAD ")) {
+      entry.headCommitHash = record.slice("HEAD ".length).trim() || null;
+    } else if (record.startsWith("branch ")) {
+      const ref = record.slice("branch ".length).trim();
       const headsPrefix = "refs/heads/";
       entry.branchName = ref.startsWith(headsPrefix) ? ref.slice(headsPrefix.length) : ref;
-    } else if (line === "bare") {
+    } else if (record === "bare") {
       entry.isBare = true;
-    } else if (line === "detached") {
+    } else if (record === "detached") {
       entry.isDetached = true;
     }
   }

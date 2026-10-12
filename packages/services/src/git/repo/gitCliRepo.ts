@@ -1073,11 +1073,11 @@ export function createGitCliRepo(options?: { commandProvider?: GitCommandProvide
 
       const result = await commandProvider.run({
         cwd: resolution.repoRoot,
-        args: ["worktree", "list", "--porcelain"],
+        args: ["worktree", "list", "--porcelain", "-z"],
         timeoutMs: DEFAULT_GIT_COMMAND_TIMEOUT_MS,
         maxOutputBytes: DEFAULT_GIT_OUTPUT_BYTES,
       });
-      ensureGitCommandSucceeded("git worktree list --porcelain", result);
+      ensureGitCommandSucceeded("git worktree list --porcelain -z", result);
 
       const currentWorktreePath = toComparableWorktreePath(resolution.repoRoot);
       return {

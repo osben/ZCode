@@ -301,6 +301,80 @@ describe("CommandCenterDialog worktree flow", () => {
     expect(onCreateTaskInWorkspace).toHaveBeenCalledWith("/dev/alpha-worktrees/task-9", undefined);
   });
 
+  it("keeps the newer Start busy when an older request finishes after reopening the palette", async () => {
+    stubRepositoryData();
+    let resolveOld!: (result: GitWorktreeCreateResult) => void;
+    let resolveNew!: (result: GitWorktreeCreateResult) => void;
+    const oldRequest = new Promise<GitWorktreeCreateResult>((resolve) => {
+      resolveOld = resolve;
+    });
+    const newRequest = new Promise<GitWorktreeCreateResult>((resolve) => {
+      resolveNew = resolve;
+    });
+    createWorktree.mockReturnValueOnce(oldRequest).mockReturnValueOnce(newRequest);
+    const props = {
+      open: true,
+      commands: [WORKTREE_COMMAND],
+      workspaceAbsPath: "/dev/alpha",
+      workspaceIdentity: "alpha-id",
+      workspaceTabs: LOCAL_TABS,
+      onOpenChange: vi.fn(),
+      onSelectTask: vi.fn(),
+      onCreateTaskInWorkspace: vi.fn(),
+      onOpenCodeViewer: vi.fn(),
+    };
+    const view = render(createElement(CommandCenterDialog, props));
+
+    const enterTask = async () => {
+      openSetupPage(view.container);
+      await waitFor(() => expect(getRow(view.container, "base main")).toBeTruthy());
+      fireEvent.change(screen.getByLabelText("commandCenter.worktree.branchName"), {
+        target: { value: "task-9" },
+      });
+      await waitFor(() => {
+        expect(screen.getByRole("button", { name: "commandCenter.worktree.start" })).toHaveProperty(
+          "disabled",
+          false,
+        );
+      });
+    };
+
+    await enterTask();
+    fireEvent.click(screen.getByRole("button", { name: "commandCenter.worktree.start" }));
+    await waitFor(() => expect(createWorktree).toHaveBeenCalledTimes(1));
+
+    view.rerender(createElement(CommandCenterDialog, { ...props, open: false }));
+    view.rerender(createElement(CommandCenterDialog, props));
+    await enterTask();
+    fireEvent.click(screen.getByRole("button", { name: "commandCenter.worktree.start" }));
+    await waitFor(() => expect(createWorktree).toHaveBeenCalledTimes(2));
+
+    await act(async () => {
+      resolveOld({
+        ok: true,
+        worktreePath: "/dev/alpha-worktrees/old",
+        branchName: "task-9",
+        issues: [],
+      });
+      await oldRequest;
+    });
+
+    expect(screen.getByRole("button", { name: /commandCenter\.worktree\.start/ })).toHaveProperty(
+      "disabled",
+      true,
+    );
+
+    await act(async () => {
+      resolveNew({
+        ok: true,
+        worktreePath: "/dev/alpha-worktrees/new",
+        branchName: "task-9",
+        issues: [],
+      });
+      await newRequest;
+    });
+  });
+
   it("target-path-exists with an existing worktree offers recovery instead of a second directory", async () => {
     stubRepositoryData();
     createWorktree.mockResolvedValue({

@@ -633,6 +633,29 @@ describeIfGit("gitCliRepo worktree operations", () => {
   );
 
   it(
+    "preserves worktree paths containing non-ASCII characters and newlines",
+    async () => {
+      const { container, repoPath } = createWorktreeTestRepo();
+      const repo = createGitCliRepo();
+      const linkedPath = join(container, "linked café\nworktree");
+
+      const created = await repo.createWorktree(
+        repoPath,
+        "feature/path-record",
+        linkedPath,
+        "release",
+      );
+      expect(created.ok).toBe(true);
+
+      const result = await repo.listWorktrees(repoPath);
+      expect(
+        result.worktrees.find((entry) => entry.branchName === "feature/path-record")?.path,
+      ).toBe(realpathSync(linkedPath));
+    },
+    GIT_INTEGRATION_TEST_TIMEOUT_MS,
+  );
+
+  it(
     "creates the worktree directory and branch from the base branch",
     async () => {
       const { container, repoPath, mainTip, baseTip } = createWorktreeTestRepo();

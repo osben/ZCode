@@ -79,9 +79,12 @@ vi.mock("@/components/ui/select.js", () => ({
 
 const LOCAL_TABS = [{ workspacePath: "/dev/alpha", label: "alpha" }];
 
-function renderSection(initial: Partial<AppSettings> = {}) {
+function renderSection(initial: Partial<AppSettings> = {}, beforeUpdate?: () => Promise<void>) {
   let applyPatch: ((patch: Partial<AppSettings>) => void) | undefined;
   const update = vi.fn(async (patch: Partial<AppSettings>) => {
+    if (beforeUpdate) {
+      await beforeUpdate();
+    }
     applyPatch?.(patch);
   });
 
@@ -287,6 +290,34 @@ describe("WorktreesSection project overrides", () => {
       screen.getByRole("button", { name: "settings.worktrees.projects.resetToGlobal" }),
     );
     expect(update).toHaveBeenLastCalledWith({ worktreeProjectOverrides: {} });
+  });
+
+  it("keeps an in-progress prefix draft when a base-branch save refreshes settings", async () => {
+    stubBranches(["main", "dev"]);
+    let finishUpdate!: () => void;
+    const updateGate = new Promise<void>((resolve) => {
+      finishUpdate = resolve;
+    });
+    renderSection(
+      { worktreeProjectOverrides: { "/dev/alpha": { defaultBaseBranch: "main" } } },
+      () => updateGate,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /alpha/ }));
+    const baseBranchInput = await screen.findByLabelText(
+      "settings.worktrees.projects.defaultBaseBranch",
+    );
+    const prefixInput = screen.getByLabelText("settings.worktrees.projects.branchPrefix");
+
+    fireEvent.change(baseBranchInput, { target: { value: "dev" } });
+    fireEvent.blur(baseBranchInput);
+    fireEvent.change(prefixInput, { target: { value: "task/" } });
+
+    await act(async () => {
+      finishUpdate();
+      await updateGate;
+    });
+
+    expect(prefixInput).toHaveProperty("value", "task/");
   });
 
   it("warns mildly when the default base branch is not among the local branches", async () => {

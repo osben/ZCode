@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { ChevronDown, TriangleAlert } from "lucide-react";
 import type { IGitService } from "@zcode/services";
 import type { AppSettings, WorktreeProjectOverrideSettings } from "@zcode/shared";
@@ -53,8 +53,27 @@ function WorktreesProjectRow({
   // blur on a still-empty draft cannot delete a saved override (CodeRabbit data-integrity).
   const savedDefaultBaseBranch = override?.defaultBaseBranch ?? "";
   const savedBranchPrefix = override?.branchPrefix ?? "";
+  const previousSavedDraftRef = useRef({
+    defaultBaseBranch: savedDefaultBaseBranch,
+    branchPrefix: savedBranchPrefix,
+  });
   useEffect(() => {
-    setDraft({ defaultBaseBranch: savedDefaultBaseBranch, branchPrefix: savedBranchPrefix });
+    const previousSaved = previousSavedDraftRef.current;
+    setDraft((current) => ({
+      // 仅同步未被用户修改的字段，避免另一个字段保存时覆盖正在编辑的草稿。
+      defaultBaseBranch:
+        current.defaultBaseBranch === previousSaved.defaultBaseBranch
+          ? savedDefaultBaseBranch
+          : current.defaultBaseBranch,
+      branchPrefix:
+        current.branchPrefix === previousSaved.branchPrefix
+          ? savedBranchPrefix
+          : current.branchPrefix,
+    }));
+    previousSavedDraftRef.current = {
+      defaultBaseBranch: savedDefaultBaseBranch,
+      branchPrefix: savedBranchPrefix,
+    };
   }, [savedDefaultBaseBranch, savedBranchPrefix]);
   /** Lazily probed local branch names; undefined until the row is expanded and probed. */
   const [localBranchNames, setLocalBranchNames] = useState<ReadonlySet<string> | null>(null);
