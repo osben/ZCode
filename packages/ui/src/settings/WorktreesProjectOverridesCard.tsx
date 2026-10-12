@@ -73,10 +73,8 @@ function WorktreesProjectRow({
         }
       })
       .catch((error) => {
-        // 分支探测只服务于温和告警；失败时静默降级为“未知分支列表”，不打扰用户。
-        if (!cancelled) {
-          setLocalBranchNames(new Set<string>());
-        }
+        // Keep the branch list unknown on probe failure so a transient Git error does not
+        // incorrectly report every configured default branch as missing.
         logger.warn("[WorktreesSection] 获取本地分支失败", {
           workspacePath,
           error: getErrorMessage(error),
