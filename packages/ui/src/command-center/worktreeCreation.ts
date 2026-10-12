@@ -7,13 +7,13 @@
  * 与 worktreeTaskFlow 的纯函数不同：本模块调用 gitService 并记录日志；gitService 与
  * 文案格式化均通过参数注入，两个入口（palette、empty-state）共享同一语义。
  */
-import type {
-  GitWorktreeCreateResult,
-  GitWorktreeListResult,
-} from "@zcode/shared";
+import type { GitWorktreeCreateResult, GitWorktreeListResult } from "@zcode/shared";
 import { getErrorMessage } from "@/lib/errorMessage.js";
 import { logger } from "@/logger.js";
-import { findWorktreeForBranch, resolveWorktreeIssueMessageId } from "@/command-center/worktreeTaskFlow.js";
+import {
+  findWorktreeForBranch,
+  resolveWorktreeIssueMessageId,
+} from "@/command-center/worktreeTaskFlow.js";
 
 /** Git service surface consumed by the shared creation orchestration (injected for tests). */
 export interface WorktreeCreationGitService {

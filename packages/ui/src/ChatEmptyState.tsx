@@ -742,6 +742,15 @@ export function ChatEmptyWorktreeTaskToggle({
     if (busy) {
       return true;
     }
+    // Ветки ещё грузятся или их загрузка упала: без списка baseBranch уйдёт undefined и
+    // проектный default-base-branch override молча игнорируется — блокируем отправку.
+    if (!branchesResult) {
+      setSubmitError(
+        (current) =>
+          current ?? intl.formatMessage({ id: "commandCenter.worktree.baseBranch.loading" }),
+      );
+      return true;
+    }
     // 发送前校验（镜像 palette Start 门槛）：空名 / 客户端预校验问题 / Custom 位置无效都拦截在内联表单。
     if (!trimmedBranchName) {
       setSubmitError(intl.formatMessage({ id: "chat.empty.worktree.branchNameRequired" }));
@@ -829,6 +838,7 @@ export function ChatEmptyWorktreeTaskToggle({
   }, [
     baseServices.gitService,
     branchNameIssue,
+    branchesResult,
     busy,
     composedBranchNameValue,
     customLocationInvalid,

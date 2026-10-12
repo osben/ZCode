@@ -1158,21 +1158,21 @@ export function createGitCliRepo(options?: { commandProvider?: GitCommandProvide
       const branchAlreadyExists = await localBranchExists(resolution, normalizedBranchName);
       const result = await commandProvider.run({
         cwd: resolution.repoRoot,
+        // `--` ends option parsing before the positionals: the target path and the
+        // external baseBranch/branchName cannot be consumed as worktree options.
         args: branchAlreadyExists
           ? ["worktree", "add", "--", normalizedTargetPath, normalizedBranchName]
           : normalizedBaseBranch
             ? [
                 "worktree",
                 "add",
-                normalizedTargetPath,
                 "-b",
                 normalizedBranchName,
-                // baseBranch is external input; `--` ends option parsing so a value
-                // starting with `-` cannot be consumed as a worktree option.
                 "--",
+                normalizedTargetPath,
                 normalizedBaseBranch,
               ]
-            : ["worktree", "add", normalizedTargetPath, "-b", normalizedBranchName],
+            : ["worktree", "add", "-b", normalizedBranchName, "--", normalizedTargetPath],
         timeoutMs: DEFAULT_GIT_COMMAND_TIMEOUT_MS,
         maxOutputBytes: DEFAULT_GIT_OUTPUT_BYTES,
       });

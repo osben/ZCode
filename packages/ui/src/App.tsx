@@ -832,7 +832,12 @@ export function App({
    */
   const handleCreateTaskInWorkspace = useCallback(
     (targetWorkspacePath: string, targetWorkspaceIdentity?: string) => {
-      handleStartDraftInWorkspace(targetWorkspacePath, targetWorkspaceIdentity, undefined, "project");
+      handleStartDraftInWorkspace(
+        targetWorkspacePath,
+        targetWorkspaceIdentity,
+        undefined,
+        "project",
+      );
     },
     [handleStartDraftInWorkspace],
   );

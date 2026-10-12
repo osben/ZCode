@@ -134,9 +134,7 @@ export function registerPlatformIpcHandlers(options: {
 
   // Pure path computation for the worktree location mode "global"; the directory itself is
   // created by `git worktree add`, not here.
-  ipcMain.handle(PlatformChannels.GetAppWorktreesDir, () =>
-    join(homedir(), ".zcode", "worktrees"),
-  );
+  ipcMain.handle(PlatformChannels.GetAppWorktreesDir, () => join(homedir(), ".zcode", "worktrees"));
 
   ipcMain.handle(PlatformChannels.SelectFile, async () => {
     const result = await dialog.showOpenDialog({

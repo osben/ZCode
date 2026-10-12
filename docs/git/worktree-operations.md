@@ -82,9 +82,9 @@ interface GitCreateWorktreeRequest extends GitRepositoryRequest {
 ### 命令
 
 - 分支不存在（`git show-ref --verify --quiet refs/heads/<branchName>` 探测）：
-  - 有 base：`git worktree add <targetPath> -b <branchName> -- <baseBranch>`
-  - 无 base：`git worktree add <targetPath> -b <branchName>`
-- 分支已存在：`git worktree add <targetPath> -- <branchName>`（直接检出已有分支；此时 `baseBranch` 被忽略）。该路径使「分支已被其他 worktree 占用」能被 Git 原生错误捕获并分类。
+  - 有 base：`git worktree add -b <branchName> -- <targetPath> <baseBranch>`
+  - 无 base：`git worktree add -b <branchName> -- <targetPath>`
+- 分支已存在：`git worktree add -- <targetPath> <branchName>`（直接检出已有分支；此时 `baseBranch` 被忽略）。该路径使「分支已被其他 worktree 占用」能被 Git 原生错误捕获并分类。
 
 `--` 用于终止选项解析，防止外部输入以 `-` 开头被解析为选项。
 

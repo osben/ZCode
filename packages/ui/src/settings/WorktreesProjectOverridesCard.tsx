@@ -49,6 +49,13 @@ function WorktreesProjectRow({
     defaultBaseBranch: override?.defaultBaseBranch ?? "",
     branchPrefix: override?.branchPrefix ?? "",
   });
+  // The override entry arrives with the async settings snapshot; sync the draft so a
+  // blur on a still-empty draft cannot delete a saved override (CodeRabbit data-integrity).
+  const savedDefaultBaseBranch = override?.defaultBaseBranch ?? "";
+  const savedBranchPrefix = override?.branchPrefix ?? "";
+  useEffect(() => {
+    setDraft({ defaultBaseBranch: savedDefaultBaseBranch, branchPrefix: savedBranchPrefix });
+  }, [savedDefaultBaseBranch, savedBranchPrefix]);
   /** Lazily probed local branch names; undefined until the row is expanded and probed. */
   const [localBranchNames, setLocalBranchNames] = useState<ReadonlySet<string> | null>(null);
 
@@ -89,17 +96,28 @@ function WorktreesProjectRow({
     !localBranchNames.has(trimmedBaseBranch);
 
   const commitDraft = useCallback(() => {
+    const trimmedPrefix = draft.branchPrefix.trim();
+    // No-op guard: a blur without changes must not rewrite the settings file.
+    if (trimmedBaseBranch === savedDefaultBaseBranch && trimmedPrefix === savedBranchPrefix) {
+      return;
+    }
     const entry: WorktreeProjectOverrideSettings = {};
     if (trimmedBaseBranch) {
       entry.defaultBaseBranch = trimmedBaseBranch;
     }
-    const trimmedPrefix = draft.branchPrefix.trim();
     if (trimmedPrefix) {
       entry.branchPrefix = trimmedPrefix;
     }
     // WTS-02：两个字段都清空即删除条目，回到全局继承（与 Reset to global 同语义）。
     void writeOverride(workspacePath, Object.keys(entry).length > 0 ? entry : null);
-  }, [draft.branchPrefix, trimmedBaseBranch, writeOverride, workspacePath]);
+  }, [
+    draft.branchPrefix,
+    savedBranchPrefix,
+    savedDefaultBaseBranch,
+    trimmedBaseBranch,
+    writeOverride,
+    workspacePath,
+  ]);
 
   const handleReset = useCallback(() => {
     setDraft({ defaultBaseBranch: "", branchPrefix: "" });

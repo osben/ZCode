@@ -545,10 +545,14 @@ const appSettingsObjectSchema = z.object({
   webRemoteControlExternalRelayDevice: webRemoteControlExternalRelayDeviceSchema.optional(),
   webRemoteControlLastEnabledContext: webRemoteControlLastEnabledContextSchema.optional(),
   zcodeEndpointOrigin: zcodeEndpointOriginSchema.optional(),
-  worktreeLocationMode: worktreeLocationModeSchema.optional(),
-  worktreeCustomLocationPath: nonEmptyStringSchema.optional(),
-  worktreeBranchPrefix: nonEmptyStringSchema.optional(),
-  worktreeProjectOverrides: z.record(z.string(), worktreeProjectOverrideSchema).optional(),
+  // 与 locale/voiceDictation 相同的读取容错：单个坏值（例如更新版本写入的枚举）不应让整份 setting.json 解析失败回退默认值；写入侧 patch schema 保持严格。
+  worktreeLocationMode: worktreeLocationModeSchema.optional().catch(undefined),
+  worktreeCustomLocationPath: nonEmptyStringSchema.optional().catch(undefined),
+  worktreeBranchPrefix: nonEmptyStringSchema.optional().catch(undefined),
+  worktreeProjectOverrides: z
+    .record(z.string(), worktreeProjectOverrideSchema)
+    .optional()
+    .catch(undefined),
 });
 
 export const appSettingsSchema = z.preprocess(

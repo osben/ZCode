@@ -188,7 +188,10 @@ const BASE_SETTINGS_SECTIONS: SettingsSectionDefinition[] = [
 // macOS/Windows/Linux must continue to add Computer Use dynamically through createSettingsPageConfig.
 // Worktrees follows the same Desktop-only boundary as the “New task in worktree” flow (supportsWorktreeTasks).
 export const SETTINGS_SECTIONS = BASE_SETTINGS_SECTIONS.filter(
-  (section) => section.id !== "computerUse" && section.id !== "worktrees" && isSettingsSectionEnabled(section.id),
+  (section) =>
+    section.id !== "computerUse" &&
+    section.id !== "worktrees" &&
+    isSettingsSectionEnabled(section.id),
 );
 
 export interface SettingsPageConfigOptions {

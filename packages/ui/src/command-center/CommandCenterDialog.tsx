@@ -517,6 +517,10 @@ export const CommandCenterDialog = memo(function CommandCenterDialogComponent({
   /** Stage F：懒加载的全局存储目录（仅 global 模式取，缓存于组件 state；失败静默保持 null）。 */
   const [appWorktreesDir, setAppWorktreesDir] = useState<string | null>(null);
   const searchInputRef = useRef<HTMLInputElement | null>(null);
+  // In-flight worktree Start attempts: incremented on dialog close and on every new Start,
+  // so a result resolving after the user closed the palette cannot switch workspaces or
+  // write state into the already-reset flow (CodeRabbit: ignore late creation results).
+  const worktreeStartAttemptRef = useRef(0);
   const [workspaceFiles, setWorkspaceFiles] = useState<WorkspaceFileEntry[]>([]);
   const [workspaceFilesLoading, setWorkspaceFilesLoading] = useState(false);
   const [workspaceFilesError, setWorkspaceFilesError] = useState<string | null>(null);
@@ -767,6 +771,8 @@ export const CommandCenterDialog = memo(function CommandCenterDialogComponent({
     setWorktreeStartBusy(false);
     setWorktreeIssueMessage(null);
     setWorktreeRecoveryPath(null);
+    // An in-flight Start result must not reopen/switch anything after dismissal.
+    worktreeStartAttemptRef.current += 1;
   }, [open, workspaceKey]);
 
   const setupWorkspacePath = worktreeProject?.workspacePath ?? null;
@@ -1036,6 +1042,8 @@ export const CommandCenterDialog = memo(function CommandCenterDialogComponent({
     setWorktreeStartBusy(true);
     setWorktreeIssueMessage(null);
     setWorktreeRecoveryPath(null);
+    // A new Start invalidates any previous in-flight attempt; dialog close does the same.
+    const attempt = ++worktreeStartAttemptRef.current;
     try {
       // 创建编排（请求、issue 映射、target-path-exists 恢复）与 empty-state 发送拦截共用。
       const outcome = await executeWorktreeCreation({
@@ -1046,6 +1054,11 @@ export const CommandCenterDialog = memo(function CommandCenterDialogComponent({
         targetPath,
         formatMessage: (id, values) => intl.formatMessage({ id }, values),
       });
+      if (worktreeStartAttemptRef.current !== attempt) {
+        // The palette was closed (or another Start began) while the request was in flight:
+        // do not reopen it, switch the workspace, or write into the reset flow state.
+        return;
+      }
       if (outcome.kind === "created") {
         logger.info("[CommandCenter] worktree 创建成功", {
           workspacePath: project.workspacePath,

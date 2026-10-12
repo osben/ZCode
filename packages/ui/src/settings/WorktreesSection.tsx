@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { FolderOpen } from "lucide-react";
 import type { AppSettings, WorktreeLocationMode } from "@zcode/shared";
 import { Button } from "@/components/ui/button.js";
@@ -68,6 +68,14 @@ export function WorktreesSection({
     customPathDraft.trim().length > 0 &&
     !isValidCustomWorktreeLocationPath(customPathDraft);
   const [branchPrefixDraft, setBranchPrefixDraft] = useState(branchPrefix);
+  // Settings arrive asynchronously; keep the drafts in sync with the saved values so a
+  // blur on a still-empty draft cannot delete a saved setting (CodeRabbit data-integrity).
+  useEffect(() => {
+    setCustomPathDraft(settings?.worktreeCustomLocationPath ?? "");
+  }, [settings?.worktreeCustomLocationPath]);
+  useEffect(() => {
+    setBranchPrefixDraft(branchPrefix);
+  }, [branchPrefix]);
 
   const handleLocationModeChange = useCallback(
     (nextMode: string) => {

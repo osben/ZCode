@@ -572,7 +572,7 @@ const ukUA: Record<string, string> = {
   "commandCenter.worktree.error.target-branch-not-found":
     "Базову гілку «{branchName}» не знайдено.",
   "commandCenter.worktree.error.branch-in-other-worktree":
-    "Гілка «{branchName}» уже перевірена в іншому worktree. Виберіть іншу назву.",
+    "Гілка «{branchName}» уже активна в іншому worktree. Виберіть іншу назву.",
   "commandCenter.worktree.error.target-path-invalid": "Обчислений цільовий шлях некоректний.",
   "commandCenter.worktree.error.target-path-exists": "Цільовий шлях уже існує.",
   "commandCenter.worktree.error.target-path-exists.existing":

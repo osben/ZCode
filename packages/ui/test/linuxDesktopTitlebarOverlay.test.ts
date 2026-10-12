@@ -95,6 +95,7 @@ function renderCommandCenterDialog() {
         workspaceTabs: [],
         onOpenChange: vi.fn(),
         onSelectTask: vi.fn(),
+        onCreateTaskInWorkspace: vi.fn(),
         onOpenCodeViewer: vi.fn(),
       }),
     ),
