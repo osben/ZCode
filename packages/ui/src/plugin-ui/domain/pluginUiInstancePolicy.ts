@@ -56,10 +56,15 @@ export function deriveLogicalUiInstances(
   rows: readonly ConversationRow[],
   options: { autoExpandTurns?: number } = {},
 ): PluginUiInstanceDerivation {
-  // domain 不用 Map / Set（模块边界约束），全部用数组与普通对象。
+  // Domain constraints prohibit Map/Set; use arrays and plain objects instead.
   const turnOrder: string[] = [];
+  // Repeated includes scans make history deduplication quadratic; a null-prototype index keeps it linear and handles keys such as __proto__.
+  const seenTurns: Record<string, true> = Object.create(null);
   for (const row of rows) {
-    if (!turnOrder.includes(row.turnId)) turnOrder.push(row.turnId);
+    if (!seenTurns[row.turnId]) {
+      seenTurns[row.turnId] = true;
+      turnOrder.push(row.turnId);
+    }
   }
   const recentTurns = turnOrder.slice(-(options.autoExpandTurns ?? PLUGIN_UI_AUTO_EXPAND_TURNS));
   const groupKeys: string[] = [];
