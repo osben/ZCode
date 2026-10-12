@@ -1,6 +1,8 @@
 import { decorateRequestSecurityLogArgs } from "./request-security-edition/index.js";
 /* eslint-disable max-lines -- Desktop platform IPC is assembled centrally because splitting it would make permission boundaries harder to audit; this file grows with platform capabilities. */
 import { BrowserWindow, dialog, ipcMain, nativeTheme } from "electron";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { readZCodeStdioTapDevState } from "@zcode/services/node";
 import {
   DesktopCommandIds,
@@ -129,6 +131,10 @@ export function registerPlatformIpcHandlers(options: {
     }
     return result.filePaths[0];
   });
+
+  // Pure path computation for the worktree location mode "global"; the directory itself is
+  // created by `git worktree add`, not here.
+  ipcMain.handle(PlatformChannels.GetAppWorktreesDir, () => join(homedir(), ".zcode", "worktrees"));
 
   ipcMain.handle(PlatformChannels.SelectFile, async () => {
     const result = await dialog.showOpenDialog({

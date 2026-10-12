@@ -424,4 +424,37 @@ export interface AppSettings {
   };
   /** Temporary endpoint override from Settings; production/test default base URL is managed by the ZCODE_BASE_URL env variable. */
   zcodeEndpointOrigin?: string;
+  /**
+   * Where the "New task in worktree" flow creates new worktrees (spec:
+   * docs/superpowers/specs/2026-10-11-command-center-worktrees-themes-design.md, «Настройки Worktree»).
+   * Unset means the sibling convention `<parent>/<repo>-worktrees/<branch>`.
+   */
+  worktreeLocationMode?: WorktreeLocationMode;
+  /** Absolute directory used when worktreeLocationMode is "custom". */
+  worktreeCustomLocationPath?: string;
+  /**
+   * Literal branch-name prefix for new worktree branches; stored as a template string so a future
+   * `%username%` syntax does not break the format, but the MVP expands the literal text only.
+   */
+  worktreeBranchPrefix?: string;
+  /**
+   * Per-project overrides for the worktree flow, keyed by workspacePath; nothing is written into
+   * the project repository. A missing entry or field inherits the global default.
+   */
+  worktreeProjectOverrides?: Record<string, WorktreeProjectOverrideSettings>;
+}
+
+/**
+ * Where new task worktrees are created; "sibling" is the default.
+ * "global" uses the app-managed `~/.zcode/worktrees/<repoName>/<branch>` directory
+ * (renderer resolves the directory through IPlatformService.getAppWorktreesDir).
+ */
+export type WorktreeLocationMode = "sibling" | "inside" | "global" | "custom";
+
+/** Per-project worktree defaults stored in AppSettings.worktreeProjectOverrides (keyed by workspacePath). */
+export interface WorktreeProjectOverrideSettings {
+  /** Base branch preselected by the "New task in worktree" flow for this project. */
+  defaultBaseBranch?: string;
+  /** Project-level branch prefix; overrides the global worktreeBranchPrefix when set. */
+  branchPrefix?: string;
 }

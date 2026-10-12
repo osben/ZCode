@@ -16,6 +16,9 @@ import type {
   GitLocalBranch,
   GitLocalBranchListResult,
   GitWorkspaceRepositoryInfo,
+  GitWorktreeCreateResult,
+  GitWorktreeListResult,
+  GitWorktreeMutationIssue,
   GitPushResult,
 } from "@zcode/shared";
 import { createServiceLogger } from "#src/logger/serviceLogger.js";
@@ -46,9 +49,12 @@ import {
   normalizeInputPath,
   parseGitBranchMutationIssues,
   parseGitConfigValue,
+  parseGitWorktreeIssues,
   parseNumstat,
   parseStatusPorcelain,
+  parseWorktreeListPorcelain,
   toInvalidBranchNameIssue,
+  toInvalidWorktreeBranchNameIssue,
   toDiffResult,
 } from "./gitCliHelpers.js";
 import {
@@ -362,6 +368,20 @@ function toBranchMutationSuccess(params: {
   };
 }
 
+function toWorktreeMutationFailure(issues: GitWorktreeMutationIssue[]): GitWorktreeCreateResult {
+  return {
+    ok: false,
+    worktreePath: null,
+    branchName: null,
+    issues,
+  };
+}
+
+function toComparableWorktreePath(path: string): string {
+  const normalized = normalizeGitPath(path).replace(/\/+$/, "");
+  return normalized.length > 0 ? normalized : "/";
+}
+
 function parseBranchRefRecords(stdout: string, currentBranchName: string | null): GitLocalBranch[] {
   return stdout
     .replace(/\r\n/g, "\n")
@@ -626,6 +646,24 @@ export function createGitCliRepo(options?: { commandProvider?: GitCommandProvide
     }
 
     return result.exitCode === 0 ? null : toInvalidBranchNameIssue(result.stderr);
+  }
+
+  async function localBranchExists(
+    resolution: GitResolvedRepository,
+    branchName: string,
+  ): Promise<boolean> {
+    const result = await commandProvider.run({
+      cwd: resolution.repoRoot,
+      args: ["show-ref", "--verify", "--quiet", `refs/heads/${branchName}`],
+      timeoutMs: DEFAULT_GIT_COMMAND_TIMEOUT_MS,
+    });
+    if (result.timedOut || result.outputTruncated) {
+      ensureGitCommandSucceeded("git show-ref --verify", result);
+    }
+
+    // Exit code 1 means the ref is missing; any other unexpected failure falls through to
+    // "does not exist" so the subsequent `worktree add` surfaces the real Git error.
+    return result.exitCode === 0;
   }
 
   async function hasOperationInProgress(resolution: GitResolvedRepository): Promise<boolean> {
@@ -1018,6 +1056,139 @@ export function createGitCliRepo(options?: { commandProvider?: GitCommandProvide
           result.stdout,
           status.summary.headRefType === "branch" ? status.summary.branchName : null,
         ),
+      };
+    },
+
+    async listWorktrees(workspacePath: string): Promise<GitWorktreeListResult> {
+      const resolution = await this.resolveRepository(workspacePath);
+      if (!resolution.isGitAvailable || !resolution.isRepository) {
+        // Mirror listLocalBranches: a non-repository / Git-less workspace is a structured
+        // empty result, not an exception, so the UI can render its dedicated empty state.
+        return {
+          isGitAvailable: resolution.isGitAvailable,
+          isRepository: false,
+          worktrees: [],
+        };
+      }
+
+      const result = await commandProvider.run({
+        cwd: resolution.repoRoot,
+        args: ["worktree", "list", "--porcelain", "-z"],
+        timeoutMs: DEFAULT_GIT_COMMAND_TIMEOUT_MS,
+        maxOutputBytes: DEFAULT_GIT_OUTPUT_BYTES,
+      });
+      ensureGitCommandSucceeded("git worktree list --porcelain -z", result);
+
+      const currentWorktreePath = toComparableWorktreePath(resolution.repoRoot);
+      return {
+        isGitAvailable: true,
+        isRepository: true,
+        worktrees: parseWorktreeListPorcelain(result.stdout).map((entry, index) => ({
+          ...entry,
+          // Git documents the main worktree as always being the first porcelain entry.
+          isMain: index === 0,
+          // Both paths come from Git's own output (rev-parse / worktree list), so they
+          // share one normalization and can be compared without an extra realpath probe.
+          isCurrent: toComparableWorktreePath(entry.path) === currentWorktreePath,
+        })),
+      };
+    },
+
+    async createWorktree(
+      workspacePath: string,
+      branchName: string,
+      targetPath: string,
+      baseBranch?: string,
+    ): Promise<GitWorktreeCreateResult> {
+      const resolution = await this.resolveRepository(workspacePath);
+      if (!resolution.isGitAvailable) {
+        return toWorktreeMutationFailure([
+          {
+            code: "git-unavailable",
+            message: "Git binary is not available in the current environment.",
+          },
+        ]);
+      }
+
+      if (!resolution.isRepository) {
+        return toWorktreeMutationFailure([
+          {
+            code: "not-a-repository",
+            message: "Workspace is not inside a Git repository.",
+          },
+        ]);
+      }
+
+      const normalizedBranchName = branchName.trim();
+      if (normalizedBranchName.length === 0) {
+        return toWorktreeMutationFailure([toInvalidWorktreeBranchNameIssue()]);
+      }
+
+      const normalizedTargetPath = targetPath.trim();
+      if (normalizedTargetPath.length === 0 || !isAbsolute(normalizedTargetPath)) {
+        return toWorktreeMutationFailure([
+          {
+            code: "target-path-invalid",
+            message: "Target path must be a non-empty absolute path.",
+          },
+        ]);
+      }
+
+      const invalidBranchIssue = await validateBranchName(resolution, normalizedBranchName);
+      if (invalidBranchIssue) {
+        return toWorktreeMutationFailure([
+          toInvalidWorktreeBranchNameIssue(invalidBranchIssue.detail),
+        ]);
+      }
+
+      // Git accepts an already-existing empty directory as a worktree target; the composer
+      // flow needs a deterministic failure instead, so reject any existing path up front.
+      if (await fileExists(normalizedTargetPath)) {
+        return toWorktreeMutationFailure([
+          {
+            code: "target-path-exists",
+            message: "Target path already exists.",
+          },
+        ]);
+      }
+
+      const normalizedBaseBranch = baseBranch?.trim();
+      // An existing branch is checked out as-is (baseBranch only applies to a new branch);
+      // this path also lets Git report "is already used by worktree at" for occupied branches.
+      const branchAlreadyExists = await localBranchExists(resolution, normalizedBranchName);
+      const result = await commandProvider.run({
+        cwd: resolution.repoRoot,
+        // `--` ends option parsing before the positionals: the target path and the
+        // external baseBranch/branchName cannot be consumed as worktree options.
+        args: branchAlreadyExists
+          ? ["worktree", "add", "--", normalizedTargetPath, normalizedBranchName]
+          : normalizedBaseBranch
+            ? [
+                "worktree",
+                "add",
+                "-b",
+                normalizedBranchName,
+                "--",
+                normalizedTargetPath,
+                normalizedBaseBranch,
+              ]
+            : ["worktree", "add", "-b", normalizedBranchName, "--", normalizedTargetPath],
+        timeoutMs: DEFAULT_GIT_COMMAND_TIMEOUT_MS,
+        maxOutputBytes: DEFAULT_GIT_OUTPUT_BYTES,
+      });
+      if (result.timedOut || result.outputTruncated) {
+        ensureGitCommandSucceeded("git worktree add", result);
+      }
+
+      if (result.exitCode !== 0) {
+        return toWorktreeMutationFailure(parseGitWorktreeIssues(result));
+      }
+
+      return {
+        ok: true,
+        worktreePath: normalizedTargetPath,
+        branchName: normalizedBranchName,
+        issues: [],
       };
     },
 
