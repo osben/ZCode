@@ -207,8 +207,14 @@ function replaceEditorText(editor: LexicalEditor, text: string) {
   );
 }
 
+// 修复依据：排除普通字符分支中的反斜杠，避免与转义分支产生重叠回溯。
 const INLINE_PLUGIN_MENTION_PATTERN =
-  /\[@((?:\\.|[^\]])+)\]\(plugin:\/\/([a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+)\)/g;
+  /\[@((?:\\.|[^\\\]])+)\]\(plugin:\/\/([a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+)\)/g;
+
+export function findInlinePluginMentionMatches(text: string): RegExpMatchArray[] {
+  INLINE_PLUGIN_MENTION_PATTERN.lastIndex = 0;
+  return Array.from(text.matchAll(INLINE_PLUGIN_MENTION_PATTERN));
+}
 
 function replaceEditorTextWithPluginMentions(editor: LexicalEditor, text: string) {
   editor.update(
@@ -218,7 +224,7 @@ function replaceEditorTextWithPluginMentions(editor: LexicalEditor, text: string
       for (const line of text.split("\n\n")) {
         const paragraph = $createParagraphNode();
         let cursor = 0;
-        for (const match of line.matchAll(INLINE_PLUGIN_MENTION_PATTERN)) {
+        for (const match of findInlinePluginMentionMatches(line)) {
           const start = match.index ?? 0;
           if (start > cursor) paragraph.append($createTextNode(line.slice(cursor, start)));
           const markdown = match[0];

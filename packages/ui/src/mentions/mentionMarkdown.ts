@@ -1,7 +1,8 @@
 import type { MentionItem } from "./mentionTypes.js";
 
+// 修复依据：反斜杠只由转义分支消费，避免与普通字符分支重叠后触发灾难性回溯。
 const LINK_MENTION_MARKDOWN_PATTERN =
-  /\[((?:\\.|[^\\\]])*)\]\((?:<((?:\\.|[^>])*?)>|((?:\\.|[^)])*))\)/g;
+  /\[((?:\\.|[^\\\]])*)\]\((?:<((?:\\.|[^>\\])*?)>|((?:\\.|[^)\\])*))\)/g;
 const INLINE_MENTION_TOKEN_PATTERN =
   /(^|\s)(\$[a-zA-Z0-9._-]+|\/[a-zA-Z0-9._-]+|@[a-zA-Z0-9._-]+|#sess_[a-zA-Z0-9._-]+)(?=$|\s)/g;
 

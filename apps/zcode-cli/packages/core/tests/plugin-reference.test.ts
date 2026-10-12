@@ -73,6 +73,14 @@ const DEMO_SUBAGENT: LivePluginSubagent = {
 };
 
 describe("plugin reference strict URI parser", () => {
+  it("ignores a Markdown link whose destination escape has no following character", () => {
+    expect(extractPluginReferences(String.raw`[@x](plugin://demo@mkt\)`)).toEqual({
+      references: [],
+      truncatedCount: 0,
+      invalidCount: 0,
+    });
+  });
+
   it("extracts stable ids from canonical markdown links in first-appearance order", () => {
     const { references, invalidCount, truncatedCount } = extractPluginReferences(
       "check [@B](plugin://b@mkt) then [@A](plugin://a@mkt) and [@B again](plugin://b@mkt)",

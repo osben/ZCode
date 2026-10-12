@@ -124,6 +124,7 @@ ProcessManager 只负责把首次 ready 与当前 `runtime_instance_id` 绑定�
 仅保留在脱敏后的 `error_stack` 中，不得成为 `error_message`。OOM 使用
 `AgentOutOfMemory / ERR_OUT_OF_MEMORY`；errno 必须把 `EPERM`、`EPIPE` 等写入
 `error_code`；SQLite 即使没有 SQLite code，也通过 `diagnostic_class=sqlite` 聚合。
+识别重复的 `[Object]` 噪声行时必须使用线性扫描，避免恶意或损坏的 stderr 把 Desktop 主进程阻塞在正则回溯中。
 
 ### `perf_agent_spawn_error`
 

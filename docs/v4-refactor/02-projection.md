@@ -27,6 +27,8 @@ runtime SessionEvent / persisted transcript
 - `packages/ui/src/v4/conversationProjectionStore.ts`
 - `packages/ui/src/v4/sessionDataLayer.ts`
 
+Имя hook в projection берёт executable из `commandDisplay`; для quoted token обратный слеш экранирует следующий символ. Разбор произвольного `commandDisplay` должен оставаться линейным по длине входа.
+
 ## 投影拥有的状态
 
 snapshot 的 A 区显式承载：

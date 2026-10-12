@@ -12,6 +12,7 @@ import {
   createEditor,
 } from "lexical";
 import {
+  findInlinePluginMentionMatches,
   insertEditorMention,
   prependEditorMentionIfMissing,
   replaceEditorWithMention,
@@ -51,6 +52,16 @@ async function prefill(trailingText?: string) {
 }
 
 describe("Plugin 商店试用预填后的输入框可继续编辑", () => {
+  it("does not close an inline Plugin mention on an escaped bracket", () => {
+    expect(findInlinePluginMentionMatches(String.raw`[@demo\](plugin://demo@mkt)`)).toEqual([]);
+    expect(
+      findInlinePluginMentionMatches(String.raw`[@demo\]name](plugin://demo@mkt)`).map((match) => [
+        match[1],
+        match[2],
+      ]),
+    ).toEqual([[String.raw`demo\]name`, "demo@mkt"]]);
+  });
+
   // 生产路径传的是显式 ""（ConversationComposer 把 request.text 切掉 markdown 前缀后为空串），
   // 不是缺省参数，所以这里必须用 "" 而不是 undefined，否则默认参数单独就能让测试变绿。
   it("空提示词试用也会在 mention token 后留下文本节点并把光标放在 token 之外", async () => {
@@ -122,9 +133,7 @@ describe("前置 Plugin mention 保留现有 Lexical 节点", () => {
     editor.getEditorState().read(() => {
       const paragraphs = $getRoot().getChildren();
       expect(paragraphs).toHaveLength(2);
-      const mentionNodes = $getRoot()
-        .getAllTextNodes()
-        .filter($isPromptMentionNode);
+      const mentionNodes = $getRoot().getAllTextNodes().filter($isPromptMentionNode);
       expect(mentionNodes.map((node) => node.getMention().id)).toEqual([
         SECOND_PLUGIN_MENTION.id,
         TRY_NOW_MENTION.id,

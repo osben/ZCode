@@ -234,7 +234,7 @@ function normalizeAgentDiagnosticSummary(value: string): string {
 
 function isAgentDiagnosticNoise(line: string): boolean {
   return (
-    /^(?:\[Object\]\s*,?\s*)+$/i.test(line) ||
+    // 修复依据：后续子串判断已覆盖重复 [Object] 行，移除冗余且会灾难性回溯的分支。
     /\[Object\]/i.test(line) ||
     /^node:(?:events|internal)\b/i.test(line) ||
     /^at\s+/i.test(line) ||

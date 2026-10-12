@@ -8270,6 +8270,34 @@ describe("Desktop Hook invocation projection", () => {
     timeoutMs: 5_000,
   };
 
+  it("bounds parsing of a quoted Hook command with an unterminated escaped token", () => {
+    const log = new EventLog();
+    log.push(SessionEventType.SessionCreated, { mode: "default", contextWindow: 1_000 });
+    log.push(SessionEventType.TurnStarted, { turnNumber: 1, input: "run" }, { turnId: "turn-1" });
+    log.push(
+      SessionEventType.HookRunStarted,
+      {
+        descriptor: { ...descriptor, commandDisplay: `"${"\\x".repeat(24)}` },
+        hookEventName: "PreToolUse",
+        hookIndex: 0,
+        hookCount: 1,
+        hookInvocationId: "redos-hook",
+        hookRunId: "redos-run",
+        startedAt: 1_700_000_003_000,
+      },
+      { turnId: "turn-1" },
+    );
+    const startedAt = performance.now();
+
+    const { projection } = runAll(log.events);
+
+    expect(
+      projection.getSnapshot().rows.window.find((row) => row.kind === "hookInvocation")?.executions[0]
+        ?.displayName,
+    ).toBe("x");
+    expect(performance.now() - startedAt).toBeLessThan(1_000);
+  });
+
   it("HK08/HK10 projects safe Hook summaries into the authoritative real turn", () => {
     const log = new EventLog();
     log.push(SessionEventType.SessionCreated, { mode: "default", contextWindow: 1_000 });

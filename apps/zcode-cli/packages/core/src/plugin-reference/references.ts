@@ -7,8 +7,9 @@
 
 const PLUGIN_REFERENCE_SCHEME = "plugin://";
 // Match mentionMarkdown's link syntax: labels support backslash escapes, and destinations support <...> or bare form.
+// 修复依据：普通 destination 字符分支排除反斜杠，避免与转义分支重叠并产生灾难性回溯。
 const MARKDOWN_LINK_PATTERN =
-  /\[(?:\\.|[^\\\]])*\]\((?:<((?:\\.|[^>])*?)>|((?:\\.|[^)\s])*))\)/g;
+  /\[(?:\\.|[^\\\]])*\]\((?:<((?:\\.|[^>\\])*?)>|((?:\\.|[^)\s\\])*))\)/g;
 const PLUGIN_ID_SEGMENT_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 
 export const MAX_PLUGIN_REFERENCES_PER_TURN = 8;

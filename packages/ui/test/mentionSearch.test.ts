@@ -102,6 +102,18 @@ describe("buildSkillMentionMarkdown", () => {
 });
 
 describe("parseMentionMarkdown", () => {
+  it("bounds parsing of a malformed escaped Markdown destination", () => {
+    const malformed = String.raw`[label](./path\)`;
+    expect(renderMentionMarkdownAsPlainText(malformed)).toBe(malformed);
+
+    const input = `[label](<${"\\x".repeat(24)})`;
+    const startedAt = performance.now();
+
+    renderMentionMarkdownAsPlainText(input);
+
+    expect(performance.now() - startedAt).toBeLessThan(1_000);
+  });
+
   it("parses skill links and keeps old inline skill syntax compatible", () => {
     expect(
       parseMentionMarkdown(

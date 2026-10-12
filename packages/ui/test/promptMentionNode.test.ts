@@ -173,4 +173,9 @@ describe("PromptMentionNode", () => {
       "code-review",
     );
   });
+
+  it("does not treat a dangling destination escape as a closed Markdown link", () => {
+    const malformed = String.raw`[@demo](./path\)`;
+    expect(normalizePromptMentionDisplayLabel("files", malformed, "fallback")).toBe(malformed);
+  });
 });

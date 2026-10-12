@@ -209,7 +209,8 @@ function unquoteHookDisplayToken(token: string): string {
 }
 
 function hookCommandLabel(commandDisplay: string): string | undefined {
-  const tokens = commandDisplay.match(/"(?:\\.|[^"])*"|'[^']*'|\S+/gu) ?? [];
+  // 修复依据：quoted token 的普通字符分支不再消费反斜杠，避免与转义分支重叠回溯。
+  const tokens = commandDisplay.match(/"(?:\\.|[^"\\])*"|'[^']*'|\S+/gu) ?? [];
   const executableToken = tokens[0];
   if (!executableToken) return undefined;
   const executable = unquoteHookDisplayToken(executableToken).split(/[\\/]/u).at(-1);
