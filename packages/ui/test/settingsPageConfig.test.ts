@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { BarChart3, Blocks, Cable, Package, WandSparkles } from "lucide-react";
+import { BarChart3, Blocks, Cable, GitBranchPlus, Package, WandSparkles } from "lucide-react";
 import enUS from "../src/i18n/locales/en-US.js";
 import zhCN from "../src/i18n/locales/zh-CN.js";
 
@@ -117,6 +117,40 @@ describe("settingsPageConfig", () => {
     expect(SETTINGS_SECTIONS.find((section) => section.id === "plugin")?.icon).toBe(Blocks);
     expect(SETTINGS_SECTIONS.find((section) => section.id === "mcp")?.icon).toBe(Cable);
     expect(SETTINGS_SECTIONS.find((section) => section.id === "skill")?.icon).toBe(WandSparkles);
+  });
+
+  it("Worktrees 分区仅桌面平台注册，排在 Hooks 之后并提供中英文标题", async () => {
+    const { createSettingsPageConfig, SETTINGS_SECTIONS } = await loadSettingsPageConfig("test");
+    const { settingsSections, settingsSectionGroups } = createSettingsPageConfig({
+      isDesktop: true,
+    });
+    const worktreesSection = settingsSections.find((section) => section.id === "worktrees");
+
+    expect(worktreesSection?.icon).toBe(GitBranchPlus);
+    expect(worktreesSection?.titleId).toBe("settings.worktrees.title");
+    expect(enUS["settings.worktrees.title"]).toBe("Worktrees");
+    expect(zhCN["settings.worktrees.title"]).toBe("Worktrees");
+    // Desktop: Worktrees follows Hooks inside agent capabilities.
+    expect(
+      settingsSectionGroups
+        .find((group) => group.id === "agentCapabilities")
+        ?.sections.map((section) => section.id),
+    ).toEqual([
+      "instructions",
+      "memory",
+      "subagents",
+      "plugin",
+      "mcp",
+      "skill",
+      "commands",
+      "hooks",
+      "worktrees",
+    ]);
+    // Web default config (same boundary as the supportsWorktreeTasks Command Center command).
+    expect(SETTINGS_SECTIONS.some((section) => section.id === "worktrees")).toBe(false);
+    expect(
+      createSettingsPageConfig({}).settingsSections.some((section) => section.id === "worktrees"),
+    ).toBe(false);
   });
 
   it("Usage 分区文案和头像菜单使用统计入口保持一致", async () => {

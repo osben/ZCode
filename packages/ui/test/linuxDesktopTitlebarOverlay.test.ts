@@ -49,6 +49,16 @@ vi.mock("@/hooks/useServices.js", () => ({
   }),
 }));
 
+// 自 Stage B 起 CommandCenterDialog 渲染时读取设置快照；真实 useSettings 依赖
+// PlatformProvider（静态渲染没有 provider），与 commandCenterWorktreeDialog.test.ts 同构 mock。
+vi.mock("@/hooks/useSettingService.js", () => ({
+  useSettings: () => ({
+    settings: { recentProjects: [] },
+    loading: false,
+    error: null,
+  }),
+}));
+
 function renderTaskFindDialog(options: {
   isLinuxDesktop?: boolean;
   isMacDesktop?: boolean;
@@ -85,6 +95,7 @@ function renderCommandCenterDialog() {
         workspaceTabs: [],
         onOpenChange: vi.fn(),
         onSelectTask: vi.fn(),
+        onCreateTaskInWorkspace: vi.fn(),
         onOpenCodeViewer: vi.fn(),
       }),
     ),

@@ -125,6 +125,8 @@ declare global {
       log(level: "info" | "warn" | "error", args: unknown[]): void;
       /** Open the system directory picker and return the selected path, or null. */
       selectDirectory(): Promise<string | null>;
+      /** App-managed worktree storage directory for the "global" location mode. */
+      getAppWorktreesDir(): Promise<string>;
       /** Open the system file picker and return the selected file path, or null. */
       selectFile(): Promise<string | null>;
       /** Open the system multi-file picker and return the selected paths, or an empty array if canceled. */

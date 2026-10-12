@@ -664,6 +664,12 @@ export interface IPlatformService {
   /** Open the system directory picker and return the selected path or null. */
   selectDirectory(): Promise<string | null>;
 
+  /**
+   * App-managed directory for the worktree location mode "global" (`~/.zcode/worktrees`).
+   * Implemented on Desktop only; web/mobile leave it undefined so the option stays hidden there.
+   */
+  getAppWorktreesDir?(): Promise<string>;
+
   /** Open the system file picker and return the selected file path or null. */
   selectFile(): Promise<string | null>;
 

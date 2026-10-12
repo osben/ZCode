@@ -21,6 +21,7 @@ export type SettingsSectionId =
   | "computerUse"
   | "automations"
   | "shortcuts"
+  | "worktrees"
   | "voiceDictation";
 
 export type SettingsUsageTabTarget = "app" | "codingPlan";
@@ -80,6 +81,7 @@ function isSettingsSectionId(value: string): value is SettingsSectionId {
     value === "computerUse" ||
     value === "automations" ||
     value === "shortcuts" ||
+    value === "worktrees" ||
     value === "voiceDictation"
   );
 }

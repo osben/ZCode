@@ -6,6 +6,7 @@ import type {
   GitCommitGraphRequest,
   GitCommitGraphResult,
   GitCreateBranchRequest,
+  GitCreateWorktreeRequest,
   GitChangesRequest,
   GitCommitRequest,
   GitCommitResult,
@@ -25,6 +26,8 @@ import type {
   GitRepositoryRequest,
   GitRepositorySummary,
   GitWorkspaceRepositoryInfo,
+  GitWorktreeCreateResult,
+  GitWorktreeListResult,
   GitFileChange,
   GitSwitchBranchRequest,
 } from "@zcode/shared";
@@ -38,6 +41,8 @@ export interface IGitService {
   getCommitGraph(params: GitCommitGraphRequest): Promise<GitCommitGraphResult>;
   switchBranch(params: GitSwitchBranchRequest): Promise<GitBranchMutationResult>;
   createBranchAndSwitch(params: GitCreateBranchRequest): Promise<GitBranchMutationResult>;
+  listWorktrees(params: GitRepositoryRequest): Promise<GitWorktreeListResult>;
+  createWorktree(params: GitCreateWorktreeRequest): Promise<GitWorktreeCreateResult>;
   getChanges(params: GitChangesRequest): Promise<GitFileChange[]>;
   getIgnoredPaths(params: GitIgnoredPathsRequest): Promise<string[]>;
   getDiff(params: GitDiffQuery): Promise<GitDiffResult>;

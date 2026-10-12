@@ -19,6 +19,7 @@ import {
   Keyboard,
   FileSearch,
   ScrollText,
+  GitBranchPlus,
   Mic,
 } from "lucide-react";
 import { isSettingsSectionEnabled, type SettingsSectionId } from "@/lib/settingsNavigation.js";
@@ -130,6 +131,16 @@ const BASE_SETTINGS_SECTIONS: SettingsSectionDefinition[] = [
     titleId: "settings.hooks.title",
     groupId: "agentCapabilities",
   },
+  // Worktree defaults configure the “New task in worktree” flow (location, branch prefix,
+  // per-project overrides); they sit with agent capabilities next to Commands and Hooks.
+  // Desktop-only, mirroring the flow's supportsWorktreeTasks boundary; filtered for Web in
+  // createSettingsPageConfig.
+  {
+    id: "worktrees",
+    icon: GitBranchPlus,
+    titleId: "settings.worktrees.title",
+    groupId: "agentCapabilities",
+  },
   {
     id: "browser",
     icon: Globe2,
@@ -175,8 +186,12 @@ const BASE_SETTINGS_SECTIONS: SettingsSectionDefinition[] = [
 
 // Compatibility for existing readonly consumers: the default config represents a Web view without Desktop platform capabilities;
 // macOS/Windows/Linux must continue to add Computer Use dynamically through createSettingsPageConfig.
+// Worktrees follows the same Desktop-only boundary as the “New task in worktree” flow (supportsWorktreeTasks).
 export const SETTINGS_SECTIONS = BASE_SETTINGS_SECTIONS.filter(
-  (section) => section.id !== "computerUse" && isSettingsSectionEnabled(section.id),
+  (section) =>
+    section.id !== "computerUse" &&
+    section.id !== "worktrees" &&
+    isSettingsSectionEnabled(section.id),
 );
 
 export interface SettingsPageConfigOptions {
@@ -191,8 +206,10 @@ export function createSettingsPageConfig({
   isWindowsDesktop = false,
 }: SettingsPageConfigOptions = {}) {
   const showComputerUse = isDesktop || isMacDesktop || isWindowsDesktop;
+  const showWorktrees = isDesktop || isMacDesktop || isWindowsDesktop;
   const settingsSections = BASE_SETTINGS_SECTIONS.filter((section) => {
     if (section.id === "computerUse" && !showComputerUse) return false;
+    if (section.id === "worktrees" && !showWorktrees) return false;
     return isSettingsSectionEnabled(section.id);
   });
   const settingsSectionGroups = BASE_SETTINGS_SECTION_GROUPS.map((group) => ({

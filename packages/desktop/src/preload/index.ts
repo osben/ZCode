@@ -316,6 +316,9 @@ contextBridge.exposeInMainWorld("zcode", {
   /** Open the system directory picker and return the selected path or null. */
   selectDirectory: (): Promise<string | null> =>
     ipcRenderer.invoke(PlatformChannels.SelectDirectory),
+  /** App-managed worktree storage directory for the "global" location mode. */
+  getAppWorktreesDir: (): Promise<string> =>
+    ipcRenderer.invoke(PlatformChannels.GetAppWorktreesDir),
   /** Open the system file picker and return the selected file path or null. */
   selectFile: (): Promise<string | null> => ipcRenderer.invoke(PlatformChannels.SelectFile),
   /** Open the system multi-file picker and return selected paths; return an empty array when cancelled. */
