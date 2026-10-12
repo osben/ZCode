@@ -109,7 +109,7 @@ describe("compact log archive", () => {
       await mkdir(join(sourceDir, "checkpoints", "workspace-a"), {
         recursive: true,
       });
-      // 退役 Repo 功能的历史数据目录：升级用户数据根可能残留，必须永不进入归档。
+      // Historical data directory of the retired Repo feature: upgraded user data roots may still contain it, and it must never enter the archive.
       await mkdir(join(sourceDir, "repo-snapshots", "workspace-a", "pending"), {
         recursive: true,
       });
@@ -314,8 +314,9 @@ describe("反馈归档隐私边界", () => {
     });
   });
 
-  // 普通文件的脱敏/编码/过滤规则无平台依赖，fixture 与断言跨平台共用；
-  // 符号链接相关写入与逃逸断言单独拆到 POSIX 用例（见下）。
+  // The sanitization/encoding/filter rules for regular files have no platform dependency, so fixtures and
+  // assertions are shared across platforms; symlink-related writes and escape assertions are split into
+  // separate POSIX tests (see below).
   async function writePrivacyFixtureFiles(dataBaseDir: string): Promise<string> {
     setDataBaseDir(dataBaseDir);
     const root = getAppConfigDir();
@@ -407,9 +408,10 @@ describe("反馈归档隐私边界", () => {
     });
   });
 
-  // Windows 普通用户无 SeCreateSymbolicLinkPrivilege（开发者模式才赋予），fs.symlink 直接
-  // EPERM；只有符号链接逃逸需要该能力，单独拆到本组让普通隐私规则在 Windows 真实执行，
-  // skipped 在报告里可见，逃逸覆盖由 CI Linux 承担。
+  // Windows regular users lack SeCreateSymbolicLinkPrivilege (granted only in developer mode), so
+  // fs.symlink fails with EPERM directly; only symlink escape tests need that privilege. Splitting them
+  // into this group lets the ordinary privacy rules actually run on Windows, keeps the skips visible in
+  // reports, and leaves escape coverage to CI Linux.
   describe.skipIf(process.platform === "win32")("符号链接逃逸边界", () => {
     it.each([false, true])("full=%s 指向归档根之外的链接文件不得进入 ZIP", async (full) => {
       await withTempDir(async (dataBaseDir) => {

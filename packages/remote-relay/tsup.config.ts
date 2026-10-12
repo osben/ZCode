@@ -21,7 +21,13 @@ export default defineConfig({
     const notices = resolve(import.meta.dirname, "dist/notices");
     await mkdir(notices, { recursive: true });
     await cp(resolve(import.meta.dirname, "../../LICENSE"), resolve(notices, "ZCode-LICENSE"));
-    await cp(resolve(dirname(require.resolve("ws/package.json")), "LICENSE"), resolve(notices, "ws-LICENSE"));
-    await cp(resolve(dirname(require.resolve("zod/package.json")), "LICENSE"), resolve(notices, "zod-LICENSE"));
+    await cp(
+      resolve(dirname(require.resolve("ws/package.json")), "LICENSE"),
+      resolve(notices, "ws-LICENSE"),
+    );
+    await cp(
+      resolve(dirname(require.resolve("zod/package.json")), "LICENSE"),
+      resolve(notices, "zod-LICENSE"),
+    );
   },
 });

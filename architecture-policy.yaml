@@ -6,7 +6,8 @@ modules:
     roots: [packages/remote-relay/src]
     managed: true
     requires: [remote-relay-protocol]
-    publicEntrypoints: [packages/remote-relay/src/contract.ts, packages/remote-relay/src/adapters/nodeServer.ts]
+    publicEntrypoints:
+      [packages/remote-relay/src/contract.ts, packages/remote-relay/src/adapters/nodeServer.ts]
     layers: { domain: domain, app: app, adapters: adapters }
     layerOrder: [domain, app, adapters]
     owner: remote-control
@@ -14,7 +15,11 @@ modules:
     roots: [packages/shared/src/web-remote-relay]
     managed: true
     requires: []
-    publicEntrypoints: [packages/shared/src/web-remote-relay/index.ts, packages/shared/src/web-remote-relay/contract.ts]
+    publicEntrypoints:
+      [
+        packages/shared/src/web-remote-relay/index.ts,
+        packages/shared/src/web-remote-relay/contract.ts,
+      ]
     layers: { domain: "." }
     owner: remote-control
   - id: rpc

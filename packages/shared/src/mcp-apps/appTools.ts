@@ -1,43 +1,46 @@
 import { z } from "zod";
 
 /**
- * App-Provided Tools（MCP Apps 规范「App-Provided Tools」）：页面在 `ui/initialize` 声明 `tools` 能力后，
- * 宿主 `tools/list` 发现页面工具、登记到 agent 暴露给模型；模型调用经"实例信箱"（live-only 投影增量
- * `pluginUi.appToolCall`，按 scopeId + generation 投递）到达渲染端，页面 `tools/call` 执行后回传。
- * 这里只有限额、描述符归一化与模型侧命名；纯 domain，零 IO。
+ * App-Provided Tools (the MCP Apps spec's "App-Provided Tools"): once the page declares the
+ * `tools` capability in `ui/initialize`, the host discovers page tools via `tools/list` and
+ * registers them with the agent to expose to the model; model calls reach the renderer through
+ * the "instance mailbox" (live-only projected increments `pluginUi.appToolCall`, delivered by
+ * scopeId + generation), and after the page executes `tools/call` the result is sent back.
+ * This module holds only the limits, descriptor normalization, and model-side naming; pure
+ * domain, zero IO.
  */
 
-/** 每个页面实例最多登记的工具数（规范推荐值）。 */
+/** Maximum tools registered per page instance (spec-recommended value). */
 export const MCP_APPS_APP_TOOLS_MAX_PER_INSTANCE = 50;
 export const MCP_APPS_APP_TOOL_NAME_MAX_CHARS = 128;
 export const MCP_APPS_APP_TOOL_TITLE_MAX_CHARS = 256;
 export const MCP_APPS_APP_TOOL_DESCRIPTION_MAX_CHARS = 4096;
-/** inputSchema / outputSchema 序列化后的上限（UTF-8 字节）。 */
+/** Serialized size limit of inputSchema / outputSchema (UTF-8 bytes). */
 export const MCP_APPS_APP_TOOL_SCHEMA_MAX_BYTES = 64 * 1024;
-/** 渲染端认领待执行调用的期限；超时视为页面未运行（信箱投递不重发）。 */
+/** Deadline for the renderer to claim a pending call; on timeout the page is considered not running (mailbox deliveries are not resent). */
 export const MCP_APPS_APP_TOOL_CLAIM_TIMEOUT_MS = 5_000;
-/** 认领后页面执行 tools/call 的期限（规范推荐值）。 */
+/** Deadline for the page to execute tools/call after claiming (spec-recommended value). */
 export const MCP_APPS_APP_TOOL_CALL_TIMEOUT_MS = 30_000;
-/** 单次结果序列化上限（规范推荐值）。 */
+/** Serialized size limit for a single result (spec-recommended value). */
 export const MCP_APPS_APP_TOOL_RESULT_MAX_BYTES = 10 * 1024 * 1024;
-/** 模型调用参数进信箱前的上限；超限直接以错误结束，不下发。 */
+/** Size limit for model call arguments before they enter the mailbox; oversized calls end with an error instead of being delivered. */
 export const MCP_APPS_APP_TOOL_ARGUMENTS_MAX_BYTES = 1024 * 1024;
-/** list_changed 触发的重新登记最小间隔。 */
+/** Minimum interval between re-registrations triggered by list_changed. */
 export const MCP_APPS_APP_TOOLS_REFRESH_INTERVAL_MS = 1_000;
 export const MCP_APPS_APP_TOOL_ERROR_MESSAGE_MAX_CHARS = 4096;
 export const MCP_APPS_APP_TOOL_CALL_ID_MAX_CHARS = 128;
-/** 模型侧名字前缀：与 server 工具的 `mcp__` 天然不冲突。 */
+/** Model-side name prefix: naturally collision-free with the `mcp__` prefix of server tools. */
 export const MCP_APPS_APP_TOOL_MODEL_NAME_PREFIX = "app__";
 
 const utf8Bytes = (value: string) => new TextEncoder().encode(value).length;
 
-/** 与 agent 的 MCP 工具名同一清洗规则：非 `[A-Za-z0-9_-]` 替换为 `_` 并合并连续下划线。 */
+/** Same sanitization rule as the agent's MCP tool names: replace anything outside `[A-Za-z0-9_-]` with `_` and collapse consecutive underscores. */
 export function sanitizeMcpAppsModelNamePart(name: string): string {
   const sanitized = name.replace(/[^a-zA-Z0-9_-]/g, "_").replace(/_+/g, "_");
   return sanitized.length > 0 ? sanitized : "unknown";
 }
 
-/** 模型侧名字 `app__<server>__<tool>`。 */
+/** Model-side name `app__<server>__<tool>`. */
 export function buildMcpAppsAppToolModelName(serverName: string, toolName: string): string {
   return `${MCP_APPS_APP_TOOL_MODEL_NAME_PREFIX}${sanitizeMcpAppsModelNamePart(serverName)}__${sanitizeMcpAppsModelNamePart(toolName)}`;
 }
@@ -76,8 +79,9 @@ const ANNOTATION_BOOLEAN_KEYS = [
 ] as const;
 
 /**
- * 渲染端用：把页面 `tools/list` 的结果收窄成可登记的描述符。不合规的项跳过（不让整次登记失败），
- * 超过 50 个只取前 50 个；返回被跳过的名字与原因供日志。
+ * Renderer-side: narrow the page's `tools/list` result into registrable descriptors. Non-compliant
+ * items are skipped (so one bad item does not fail the whole registration) and only the first 50
+ * are kept; skipped names and reasons are returned for logging.
  */
 export function normalizeMcpAppsAppTools(tools: readonly unknown[]): {
   tools: McpAppsAppToolDescriptor[];
@@ -129,7 +133,7 @@ export function normalizeMcpAppsAppTools(tools: readonly unknown[]): {
   return { tools: accepted, skipped };
 }
 
-/** 页面 `tools/call` 的结果（MCP CallToolResult 形状，字段集宽松：content 项原样保留）。 */
+/** Result of the page's `tools/call` (MCP CallToolResult shape, lenient field set: content items are kept as-is). */
 export const mcpAppsAppToolCallResultSchema = z.object({
   content: z.array(z.record(z.string(), z.unknown())),
   structuredContent: z.unknown().optional(),
@@ -138,7 +142,7 @@ export const mcpAppsAppToolCallResultSchema = z.object({
 });
 export type McpAppsAppToolCallResult = z.infer<typeof mcpAppsAppToolCallResultSchema>;
 
-/** 信箱里的一次待执行调用：按 (scopeId, generation) 投递给唯一实例。 */
+/** One pending call in the mailbox: delivered to the single instance identified by (scopeId, generation). */
 export interface McpAppsAppToolCallRequest {
   activity?: boolean;
   cancelled?: boolean;

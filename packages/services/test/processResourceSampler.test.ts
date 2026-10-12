@@ -132,7 +132,7 @@ describe("createProcessResourceSampler", () => {
     const tables: ProcessResourceRow[][] = [
       [{ pid: 10, ppid: 1, rssKb: 100, cpuTimeMs: 1_000, command: "node" }],
       [{ pid: 10, ppid: 1, rssKb: 120, cpuTimeMs: 1_400, command: "node" }],
-      // pid 复用：command 变了 → 重新建立基线
+      // pid reuse: the command changed, so re-establish the baseline
       [{ pid: 10, ppid: 1, rssKb: 50, cpuTimeMs: 5, command: "bash" }],
     ];
     const sampler = createProcessResourceSampler({
@@ -141,7 +141,7 @@ describe("createProcessResourceSampler", () => {
       logicalCpuCount: 4,
     });
     expect((await sampler.sample())?.get(10)?.cpuPercent).toBe(0);
-    // 400ms CPU / 1000ms wall = 40% 单核 → 整机 4 核 = 10%
+    // 400ms CPU / 1000ms wall = 40% of one core → 10% of a 4-core machine
     expect((await sampler.sample())?.get(10)).toEqual({
       pid: 10,
       ppid: 1,
@@ -177,14 +177,14 @@ describe("attributeHostProcessTree", () => {
       sample(1, 0, "launchd"),
       sample(50, 1, "/Applications/ZCode.app/Contents/MacOS/ZCode"),
       sample(60, 50, "zcode-host"),
-      sample(70, 60, "/usr/bin/zsh"), // 终端 shell
+      sample(70, 60, "/usr/bin/zsh"), // terminal shell
       sample(100, 60, "/Applications/ZCode.app/Contents/MacOS/ZCode", 5, 2048), // agent
-      sample(110, 100, "/usr/local/bin/pnpm"), // agent 工具子进程
-      sample(120, 100, "ZCode Helper (Plugin)"), // 内置插件 MCP 根
-      sample(121, 120, "/usr/bin/node"), // 内置插件的孙进程
-      sample(130, 100, "/opt/acme/mcp"), // 社区插件 MCP 根
-      sample(140, 100, "uvx"), // custom MCP 根
-      sample(150, 60, "CUA Helper.exe"), // Host 直管的内置插件进程
+      sample(110, 100, "/usr/local/bin/pnpm"), // agent tool subprocess
+      sample(120, 100, "ZCode Helper (Plugin)"), // built-in plugin MCP root
+      sample(121, 120, "/usr/bin/node"), // grandchild of the built-in plugin
+      sample(130, 100, "/opt/acme/mcp"), // community plugin MCP root
+      sample(140, 100, "uvx"), // custom MCP root
+      sample(150, 60, "CUA Helper.exe"), // built-in plugin process managed directly by Host
       sample(999, 1, "unrelated"),
     ]);
     const rows = attributeHostProcessTree({
@@ -229,7 +229,7 @@ describe("attributeHostProcessTree", () => {
   it("CLI 映射缺失时 Agent 全部后代都归 cli；不在 Host 子树下的 Agent 也补进来", () => {
     const samples = new Map<number, ProcessResourceSample>([
       sample(60, 1, "zcode-host"),
-      sample(100, 1, "node"), // ppid 已被重排
+      sample(100, 1, "node"), // ppid has been re-parented
       sample(101, 100, "mcp-server"),
     ]);
     const rows = attributeHostProcessTree({

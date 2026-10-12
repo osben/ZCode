@@ -11,13 +11,13 @@ The implementation boundary is a separate relay executable, its shared wire cont
 
 ## Confirmed product decisions
 
-| Decision | Rule | Source |
-| --- | --- | --- |
-| Registration | Public registration for users of the fork; no invitation or account requirement in v1 | User, 2026-10-11 |
-| Browser replacement | A newly authenticated browser replaces the previous browser for the same target | User, 2026-10-11 |
-| Desktop targets | Several independent Desktop windows can be controlled simultaneously | User, 2026-10-11 |
-| Isolation unit | Each window has its own registration, key and browser pair; workspaces remain owned by that window's existing Host | Derived from independent-window requirement and current Host boundary |
-| QR lifetime | Pending: window-lifetime identity versus persistent identity restored across application restarts | User question pending |
+| Decision            | Rule                                                                                                               | Source                                                                |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------- |
+| Registration        | Public registration for users of the fork; no invitation or account requirement in v1                              | User, 2026-10-11                                                      |
+| Browser replacement | A newly authenticated browser replaces the previous browser for the same target                                    | User, 2026-10-11                                                      |
+| Desktop targets     | Several independent Desktop windows can be controlled simultaneously                                               | User, 2026-10-11                                                      |
+| Isolation unit      | Each window has its own registration, key and browser pair; workspaces remain owned by that window's existing Host | Derived from independent-window requirement and current Host boundary |
+| QR lifetime         | Pending: window-lifetime identity versus persistent identity restored across application restarts                  | User question pending                                                 |
 
 All proposal values below are implementation recommendations, not evidence of deployed behavior or measured capacity. The QR-lifetime decision is a stop gate for Desktop identity/persistence implementation; independent server contracts and package boundaries can be prepared before it is resolved.
 
@@ -65,16 +65,16 @@ Add the shared package export `@zcode/shared/web-remote-relay`. Relay must not i
 
 ## Stack, build and packaging
 
-| Concern | Decision |
-| --- | --- |
-| Runtime | Node 24, pinned through the repository toolchain; TypeScript/ESM |
-| Socket transport | `ws`, following the version already used by this repository |
-| HTTP | `node:http`; no new HTTP framework |
-| Validation | Shared transport schemas using the existing `zod` version |
-| Durable storage | `node:sqlite` in one dedicated worker, accessed through Promise-based ports |
-| Packaging | Node executable bundled with the existing `tsup` toolchain; standalone Docker image |
-| Initial topology | One relay replica with a persistent database volume, behind an HTTPS reverse proxy |
-| Compression | WebSocket compression off initially; enabling it requires workload measurements |
+| Concern          | Decision                                                                            |
+| ---------------- | ----------------------------------------------------------------------------------- |
+| Runtime          | Node 24, pinned through the repository toolchain; TypeScript/ESM                    |
+| Socket transport | `ws`, following the version already used by this repository                         |
+| HTTP             | `node:http`; no new HTTP framework                                                  |
+| Validation       | Shared transport schemas using the existing `zod` version                           |
+| Durable storage  | `node:sqlite` in one dedicated worker, accessed through Promise-based ports         |
+| Packaging        | Node executable bundled with the existing `tsup` toolchain; standalone Docker image |
+| Initial topology | One relay replica with a persistent database volume, behind an HTTPS reverse proxy  |
+| Compression      | WebSocket compression off initially; enabling it requires workload measurements     |
 
 The registration table contains SID, machine MID, a server-computed key fingerprint, encrypted verifier material, creation time and last successful authentication time. Enforce uniqueness for `(MID, key fingerprint)`. Store writes happen on registration/authentication, not on every heartbeat or forwarded message. SQLite initialization/migration and key validation complete before readiness; a failed store is a failed startup, not an in-memory fallback.
 
@@ -92,16 +92,16 @@ Web remains `packages/web`, built under `/remote/v4/` and served separately by t
 
 ## Owners and dependency directions
 
-| State/fact | Single authority | Persistence | Boundary |
-| --- | --- | --- | --- |
-| Registration SID and verifier material | Relay registration store | Relay SQLite | Transport authentication only |
-| Socket authentication, challenge, active pair, pair generation | Relay application registry | None | Per SID and connection generation |
-| Outbound pressure/queued transport bytes | Socket adapter | None, bounded | Per receiver plus process-wide cap |
-| Window registration/key and enabled state | Desktop Main remote-control manager | Depends on pending QR-lifetime decision | Per window and relay origin; never app-wide shared key |
-| Last-enabled startup target | Existing Main startup-intent owner | Existing non-secret setting, selected from enabled windows | A window's stop cannot clear another window's selected intent |
-| QR/status and selected remote target | Existing Desktop status projection / browser local view | Existing owners | UI does not own relay or Host facts |
-| Workspace service scope | Existing window Host / attachment owner | Existing owners | `workspaceIdentity` and `remoteSessionId` remain end-to-end |
-| Tasks, accepted commands, Agent execution, stream recovery | Existing Host/CLI runtime | Existing stores | Never copied into relay |
+| State/fact                                                     | Single authority                                        | Persistence                                                | Boundary                                                      |
+| -------------------------------------------------------------- | ------------------------------------------------------- | ---------------------------------------------------------- | ------------------------------------------------------------- |
+| Registration SID and verifier material                         | Relay registration store                                | Relay SQLite                                               | Transport authentication only                                 |
+| Socket authentication, challenge, active pair, pair generation | Relay application registry                              | None                                                       | Per SID and connection generation                             |
+| Outbound pressure/queued transport bytes                       | Socket adapter                                          | None, bounded                                              | Per receiver plus process-wide cap                            |
+| Window registration/key and enabled state                      | Desktop Main remote-control manager                     | Depends on pending QR-lifetime decision                    | Per window and relay origin; never app-wide shared key        |
+| Last-enabled startup target                                    | Existing Main startup-intent owner                      | Existing non-secret setting, selected from enabled windows | A window's stop cannot clear another window's selected intent |
+| QR/status and selected remote target                           | Existing Desktop status projection / browser local view | Existing owners                                            | UI does not own relay or Host facts                           |
+| Workspace service scope                                        | Existing window Host / attachment owner                 | Existing owners                                            | `workspaceIdentity` and `remoteSessionId` remain end-to-end   |
+| Tasks, accepted commands, Agent execution, stream recovery     | Existing Host/CLI runtime                               | Existing stores                                            | Never copied into relay                                       |
 
 No accepted command queue, RPC assembly, cumulative ACK generation, transcript cache, snapshot store or model/provider service belongs in relay. The existing endpoint adapters retain retransmission and delivery acknowledgement. Socket buffers do not become a durable offline mailbox.
 
@@ -135,13 +135,13 @@ sequenceDiagram
 
 Preserve the current relay envelope and HMAC calculation: `base64url(HMAC-SHA256(pass_hash string, nonce + "|" + role + "|" + device_sid))`. The key is the UTF-8 string supplied by the current clients, not its Base64-decoded bytes. Use existing shared proof vectors as compatibility fixtures.
 
-| Request | Reply | Rule |
-| --- | --- | --- |
-| `device_register_init {device_mid, pass_hash, meta, client_ts?}` | `device_register_ack {device_sid, server_ts?}` | Commit before ACK; rate limited; no overwrite by machine ID |
-| `auth_init {role, device_sid, meta, client_ts?}` | `auth_challenge {nonce, server_ts?}` | Bind challenge to this socket, SID and role |
-| `auth_response {device_sid, proof, client_ts?}` | `auth_ack {device_sid, terminal_sid?, pair_status, server_ts?}` | Challenge is single use and expires; fixed-length constant-time proof comparison |
-| `pair_status_query {device_sid, client_ts?}` | `pair_status_ack {terminal_sid?, pair_status, server_ts?}` | SID must equal the authenticated socket's SID |
-| `data {payload, client_ts?}` | Peer receives `data` envelope | Forward only for current authenticated pair; payload remains opaque |
+| Request                                                          | Reply                                                           | Rule                                                                             |
+| ---------------------------------------------------------------- | --------------------------------------------------------------- | -------------------------------------------------------------------------------- |
+| `device_register_init {device_mid, pass_hash, meta, client_ts?}` | `device_register_ack {device_sid, server_ts?}`                  | Commit before ACK; rate limited; no overwrite by machine ID                      |
+| `auth_init {role, device_sid, meta, client_ts?}`                 | `auth_challenge {nonce, server_ts?}`                            | Bind challenge to this socket, SID and role                                      |
+| `auth_response {device_sid, proof, client_ts?}`                  | `auth_ack {device_sid, terminal_sid?, pair_status, server_ts?}` | Challenge is single use and expires; fixed-length constant-time proof comparison |
+| `pair_status_query {device_sid, client_ts?}`                     | `pair_status_ack {terminal_sid?, pair_status, server_ts?}`      | SID must equal the authenticated socket's SID                                    |
+| `data {payload, client_ts?}`                                     | Peer receives `data` envelope                                   | Forward only for current authenticated pair; payload remains opaque              |
 
 The only pair statuses are `waiting` and `matched`. Errors retain `{type: "error", code, message, server_ts?}` with `AUTH_FAILED`, `DEVICE_OFFLINE`, `KICKED`, `WRONG_PARAM`, `INTERNAL`. Malformed/order-invalid requests use `WRONG_PARAM`; invalid proof/unknown registration uses `AUTH_FAILED`; database/transport failures must not be reported as invalid credentials.
 
@@ -214,13 +214,13 @@ Add a separate relay container build/smoke CI path at implementation time. Follo
 
 ## Implementation slices
 
-| Order | Deliverable | Done evidence |
-| --- | --- | --- |
-| 1 | Transport-only shared contract and managed module boundaries | Existing type imports compile; HMAC vectors and envelope schemas pass; no Agent/RPC dependency |
-| 2 | Relay executable: registration store, authentication, registry, forwarding and bounds | Real socket integration, restart persistence, isolation and malformed-input cases |
-| 3 | Window-scoped Desktop registration and lifecycle, public fork URLs | Two real windows/registrations and QR flows; selected lifetime policy; no cross-window effects |
-| 4 | Standalone container and local relay/Web/Desktop development entry | Image runs outside repo with persistent fixture volume; no native Agent assets; readiness/shutdown smoke |
-| 5 | Browser/Desktop recovery and publication readiness | E2E evidence below; load/pressure measurements; operator configuration; deployment still requires authorization |
+| Order | Deliverable                                                                           | Done evidence                                                                                                   |
+| ----- | ------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| 1     | Transport-only shared contract and managed module boundaries                          | Existing type imports compile; HMAC vectors and envelope schemas pass; no Agent/RPC dependency                  |
+| 2     | Relay executable: registration store, authentication, registry, forwarding and bounds | Real socket integration, restart persistence, isolation and malformed-input cases                               |
+| 3     | Window-scoped Desktop registration and lifecycle, public fork URLs                    | Two real windows/registrations and QR flows; selected lifetime policy; no cross-window effects                  |
+| 4     | Standalone container and local relay/Web/Desktop development entry                    | Image runs outside repo with persistent fixture volume; no native Agent assets; readiness/shutdown smoke        |
+| 5     | Browser/Desktop recovery and publication readiness                                    | E2E evidence below; load/pressure measurements; operator configuration; deployment still requires authorization |
 
 No implementation slice may erase owner/lease, stale-run or workspace guards to make a happy-path test pass.
 
@@ -228,24 +228,24 @@ No implementation slice may erase owner/lease, stale-run or workspace guards to 
 
 Status `accepted` means required by confirmed product rules or an existing invariant; it does not mean implemented/tested. `undefined` cases require the pending product decision. All evidence is planned.
 
-| Case | Setup/action | Required assertions | Status / evidence |
-| --- | --- | --- | --- |
-| RELAY-01 | New Desktop window registers and browser scans its QR | Store commits before ACK; both real HMAC providers authenticate; existing Host attachment serves its scope | accepted; socket + Desktop/browser E2E |
-| RELAY-02 | Window A and B on one machine; separate browsers | Distinct SID/key; same MID allowed; no A/B command or payload crossover | accepted; socket + two-window E2E |
-| RELAY-03 | Same workspace path in both windows; local and remote scopes | Window isolation still holds; identity/session guards preserved | accepted; attachment fixture + E2E |
-| RELAY-04 | Invalid/replayed proof, SID substitution, data before auth | No forwarding/registration overwrite; bounded errors; challenge cannot be reused | accepted; protocol integration |
-| RELAY-05 | Browser 2 authenticates; browser 1 closes late | Browser 1 receives KICKED and stops auto-retry; browser 2 works; late callbacks cannot detach it | accepted; socket + browser E2E |
-| RELAY-06 | Unauthenticated/invalid browser attempts replacement | Existing pair remains active | accepted; protocol integration |
-| RELAY-07 | Desktop reconnect races old close; duplicate live Desktop SID | No mutual replacement loop; eventual recovery after old slot is released; other windows unaffected | accepted; real socket barriers |
-| RELAY-08 | Refresh browser, reload renderer, lose/recover network | Existing window registration retained as required by lifetime policy; fresh attachment; no new Host/Agent | accepted; socket + lifecycle E2E |
-| RELAY-09 | Restart relay with the same durable store | Same registrations authenticate; live pairs rebuilt; endpoint RPC recovery owns replay | accepted; process/store integration |
-| RELAY-10 | Full Desktop restart and true window close | Apply the selected QR identity/lifetime policy without assigning an old link to another window | undefined; lifecycle E2E |
-| RELAY-11 | Stop/refresh QR/close window A while B is active | Only A is affected; old A link cannot control its replacement registration; enable intent follows explicit action | accepted; two-window E2E |
-| RELAY-12 | 1 MiB boundary, oversize/malformed input, slow receiver | Full uncompressed envelope checked; bounded memory; no false command/RPC ACK; Desktop execution unaffected | accepted; socket/pressure integration |
-| RELAY-13 | DB write failure, lost registration ACK, retry | No false success; no overwrite by MID; retry can recover committed registration | accepted; store fault injection |
-| RELAY-14 | Registration floods/quota limit/proxy headers | Resource caps enforced; untrusted headers cannot bypass admission; active registrations not evicted | accepted; bounded local fixtures |
+| Case     | Setup/action                                                   | Required assertions                                                                                                 | Status / evidence                                                    |
+| -------- | -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------- |
+| RELAY-01 | New Desktop window registers and browser scans its QR          | Store commits before ACK; both real HMAC providers authenticate; existing Host attachment serves its scope          | accepted; socket + Desktop/browser E2E                               |
+| RELAY-02 | Window A and B on one machine; separate browsers               | Distinct SID/key; same MID allowed; no A/B command or payload crossover                                             | accepted; socket + two-window E2E                                    |
+| RELAY-03 | Same workspace path in both windows; local and remote scopes   | Window isolation still holds; identity/session guards preserved                                                     | accepted; attachment fixture + E2E                                   |
+| RELAY-04 | Invalid/replayed proof, SID substitution, data before auth     | No forwarding/registration overwrite; bounded errors; challenge cannot be reused                                    | accepted; protocol integration                                       |
+| RELAY-05 | Browser 2 authenticates; browser 1 closes late                 | Browser 1 receives KICKED and stops auto-retry; browser 2 works; late callbacks cannot detach it                    | accepted; socket + browser E2E                                       |
+| RELAY-06 | Unauthenticated/invalid browser attempts replacement           | Existing pair remains active                                                                                        | accepted; protocol integration                                       |
+| RELAY-07 | Desktop reconnect races old close; duplicate live Desktop SID  | No mutual replacement loop; eventual recovery after old slot is released; other windows unaffected                  | accepted; real socket barriers                                       |
+| RELAY-08 | Refresh browser, reload renderer, lose/recover network         | Existing window registration retained as required by lifetime policy; fresh attachment; no new Host/Agent           | accepted; socket + lifecycle E2E                                     |
+| RELAY-09 | Restart relay with the same durable store                      | Same registrations authenticate; live pairs rebuilt; endpoint RPC recovery owns replay                              | accepted; process/store integration                                  |
+| RELAY-10 | Full Desktop restart and true window close                     | Apply the selected QR identity/lifetime policy without assigning an old link to another window                      | undefined; lifecycle E2E                                             |
+| RELAY-11 | Stop/refresh QR/close window A while B is active               | Only A is affected; old A link cannot control its replacement registration; enable intent follows explicit action   | accepted; two-window E2E                                             |
+| RELAY-12 | 1 MiB boundary, oversize/malformed input, slow receiver        | Full uncompressed envelope checked; bounded memory; no false command/RPC ACK; Desktop execution unaffected          | accepted; socket/pressure integration                                |
+| RELAY-13 | DB write failure, lost registration ACK, retry                 | No false success; no overwrite by MID; retry can recover committed registration                                     | accepted; store fault injection                                      |
+| RELAY-14 | Registration floods/quota limit/proxy headers                  | Resource caps enforced; untrusted headers cannot bypass admission; active registrations not evicted                 | accepted; bounded local fixtures                                     |
 | RELAY-15 | Local and SSH/WSL/Docker workspace sends during phone recovery | One existing runtime/CommandInbox; no duplicate admission; Desktop continuous stays separate from mobile replayable | accepted; existing protocol/attachment fixtures + representative E2E |
-| RELAY-16 | Production bundle/container without workspace fallbacks | Fork clients resolve approved public URLs; relay artifact contains only its closure; no secret payload logging | accepted; build/container smoke |
+| RELAY-16 | Production bundle/container without workspace fallbacks        | Fork clients resolve approved public URLs; relay artifact contains only its closure; no secret payload logging      | accepted; build/container smoke                                      |
 
 Existing client transport tests often use mocked proof providers/server ACKs; they are supporting recovery evidence, not authentication coverage for a new relay. The existing manual-review mobile onboarding scenario explicitly excludes real relay pairing; new real-relay/two-window cases need their own admission and evidence before CI promotion.
 
@@ -253,41 +253,41 @@ Existing client transport tests often use mocked proof providers/server ACKs; th
 
 ### Feature Summary
 
-| Field | Value |
-| --- | --- |
-| Intent / capability | Operate the fork's public remote relay with independent Desktop windows |
-| Change layers / mode | validation, commit-effect, persistence, recovery; planning |
-| Primary seeds | Shared relay types; Desktop manager/auth storage; Desktop QR dialog; Web terminal transport; endpoint/build configuration |
-| Out of scope | Agent/session logic, new cloud runtimes, device/account dashboard, invitation/OAuth registration, multi-browser fanout, E2EE, multi-replica topology, auto-deployment |
+| Field                | Value                                                                                                                                                                 |
+| -------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Intent / capability  | Operate the fork's public remote relay with independent Desktop windows                                                                                               |
+| Change layers / mode | validation, commit-effect, persistence, recovery; planning                                                                                                            |
+| Primary seeds        | Shared relay types; Desktop manager/auth storage; Desktop QR dialog; Web terminal transport; endpoint/build configuration                                             |
+| Out of scope         | Agent/session logic, new cloud runtimes, device/account dashboard, invitation/OAuth registration, multi-browser fanout, E2EE, multi-replica topology, auto-deployment |
 
 ### UI Surface Matrix
 
-| Scenario / entry | Projection/default owner | Guard and commit path | Authority / isolation |
-| --- | --- | --- | --- |
+| Scenario / entry                                                                        | Projection/default owner                                                                                  | Guard and commit path                                                      | Authority / isolation                                                                  |
+| --------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
 | Enable/stop/refresh QR: `WebRemoteControlDialog` via `WorkspaceWebRemoteControlTrigger` | Dialog local loading; status from `useWebRemoteControlStatus`; public URLs from Main build/runtime config | `usePlatform -> IPlatformService -> desktopWebRemoteControlIpc -> manager` | Main owns window registration; existing refresh confirmation; other windows unaffected |
-| Desktop sidebar/Root remote status | Existing status hook and window-specific status events | Read projection only; no registration write | Main status authority; workspace/task selection stays independent |
-| Browser `/remote/v4`: bootstrap/home/chat | Browser terminal transport and local view state; relay URL from Web build | QR parser -> terminal auth -> existing workspace bridge | Relay pair authority; Host validates workspace scope; no independent browser Agent |
-| Automatic remote-control enablement after app startup | Existing last-enabled intent and synchronized window workspaces | Existing `tryRestoreEnabledState`, subject to selected lifecycle policy | No window creation or guessed persistent window mapping |
+| Desktop sidebar/Root remote status                                                      | Existing status hook and window-specific status events                                                    | Read projection only; no registration write                                | Main status authority; workspace/task selection stays independent                      |
+| Browser `/remote/v4`: bootstrap/home/chat                                               | Browser terminal transport and local view state; relay URL from Web build                                 | QR parser -> terminal auth -> existing workspace bridge                    | Relay pair authority; Host validates workspace scope; no independent browser Agent     |
+| Automatic remote-control enablement after app startup                                   | Existing last-enabled intent and synchronized window workspaces                                           | Existing `tryRestoreEnabledState`, subject to selected lifecycle policy    | No window creation or guessed persistent window mapping                                |
 
 ### Shared And Divergent Behavior
 
-| Concern | Shared | Deliberate difference |
-| --- | --- | --- |
-| Wire/authentication | Same envelope, schemas and HMAC vectors | Device registration versus terminal attachment |
-| Replacement | Generation-bound cleanup | New terminal wins; live Desktop slot is not displaced |
-| UI/defaults | Existing platform boundary and shared remote UI | Desktop status per window; browser selection local; Web URL compiled separately |
-| Persistence/recovery | Durable server registrations; endpoint recovery | Window key persistence depends on QR decision; no relay business replay |
+| Concern              | Shared                                          | Deliberate difference                                                           |
+| -------------------- | ----------------------------------------------- | ------------------------------------------------------------------------------- |
+| Wire/authentication  | Same envelope, schemas and HMAC vectors         | Device registration versus terminal attachment                                  |
+| Replacement          | Generation-bound cleanup                        | New terminal wins; live Desktop slot is not displaced                           |
+| UI/defaults          | Existing platform boundary and shared remote UI | Desktop status per window; browser selection local; Web URL compiled separately |
+| Persistence/recovery | Durable server registrations; endpoint recovery | Window key persistence depends on QR decision; no relay business replay         |
 
 ### Feature Relationships
 
-| Rank | Edge / target | Why / evidence |
-| --- | --- | --- |
-| must-inspect | Relay contract -> Desktop/Web transports | Wire compatibility and different KICKED recovery; shared/transport tests |
-| must-inspect | Window lifecycle -> manager -> auth storage | Current window map conflicts with app-wide auth storage; Main manager/storage source |
-| must-inspect | Public build URLs -> fork Desktop/Web | Runtime env alone does not configure packaged apps; Desktop tsup + Web Vite |
-| should-inspect | QR reset/stop -> window status projections | Scope changes must not break existing confirmation/enable intent; dialog/hook/IPC |
-| invariant-only | Shared Host attachment -> task runtime/CommandInbox | Existing continuous/replayable and workspace isolation boundaries remain owners |
-| evidence-only | Client transport mocks and onboarding E2E | Useful regression sources, not proof of production relay authentication |
+| Rank           | Edge / target                                       | Why / evidence                                                                       |
+| -------------- | --------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| must-inspect   | Relay contract -> Desktop/Web transports            | Wire compatibility and different KICKED recovery; shared/transport tests             |
+| must-inspect   | Window lifecycle -> manager -> auth storage         | Current window map conflicts with app-wide auth storage; Main manager/storage source |
+| must-inspect   | Public build URLs -> fork Desktop/Web               | Runtime env alone does not configure packaged apps; Desktop tsup + Web Vite          |
+| should-inspect | QR reset/stop -> window status projections          | Scope changes must not break existing confirmation/enable intent; dialog/hook/IPC    |
+| invariant-only | Shared Host attachment -> task runtime/CommandInbox | Existing continuous/replayable and workspace isolation boundaries remain owners      |
+| evidence-only  | Client transport mocks and onboarding E2E           | Useful regression sources, not proof of production relay authentication              |
 
 ### Must-Preserve Invariants
 
@@ -297,13 +297,13 @@ One registration/pair per window; opaque payload forwarding; no task/session sta
 
 The installed `codegraph` CLI reports this worktree is **not initialized**. No graph index was created and no graph-derived completeness is claimed. Focused source searches traced the following declared seeds to their direct callers and one meaningful semantic neighbor (depth-2 planning scope):
 
-| Seed | Observed path / interpretation |
-| --- | --- |
-| `WebRemoteControlDialog` | `WorkspaceWebRemoteControlTrigger -> usePlatform -> IPlatformService -> registerWebRemoteControlIpcHandlers` |
-| `createWebRemoteControlManager` | Main composition; per-window runtime, QR/reset, single global auth/startup persistence |
-| `createWebRemoteControlSharedHostAttachments` | Main/Host attachment boundary; no new Host permitted |
-| `bootstrapExternalRelayWebRemoteControl` | Web entry -> terminal transport -> window bootstrap/workspace bridge |
-| `resolveWebRemoteControlRelayWsUrl` | Desktop Main and Web entry; custom API origin alone does not select our relay |
+| Seed                                          | Observed path / interpretation                                                                               |
+| --------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| `WebRemoteControlDialog`                      | `WorkspaceWebRemoteControlTrigger -> usePlatform -> IPlatformService -> registerWebRemoteControlIpcHandlers` |
+| `createWebRemoteControlManager`               | Main composition; per-window runtime, QR/reset, single global auth/startup persistence                       |
+| `createWebRemoteControlSharedHostAttachments` | Main/Host attachment boundary; no new Host permitted                                                         |
+| `bootstrapExternalRelayWebRemoteControl`      | Web entry -> terminal transport -> window bootstrap/workspace bridge                                         |
+| `resolveWebRemoteControlRelayWsUrl`           | Desktop Main and Web entry; custom API origin alone does not select our relay                                |
 
 ### Graph Drift Candidates and Graph Delta
 

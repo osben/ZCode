@@ -133,7 +133,7 @@ describe("resolveTelemetryProviderScope", () => {
   });
 
   it("旧报表身份 builtin:* 是 ZCode 固定 ID，判为内置并原样保留", () => {
-    // supervisor 投影 /report detail 时会把 account:* 映射成这些旧身份，plan_ttft / perf_ui_* 复用同一份 detail。
+    // When the supervisor projects /report detail it maps account:* to these legacy ids; plan_ttft / perf_ui_* reuse the same detail.
     for (const legacyId of [
       "builtin:zai",
       "builtin:bigmodel",

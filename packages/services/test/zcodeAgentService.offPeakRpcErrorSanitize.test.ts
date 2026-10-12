@@ -7,8 +7,9 @@ import {
 } from "@zcode/shared";
 import { offPeakSelectionView } from "./fixtures/offPeakSelection.js";
 
-// review CR-01：offPeak/create、offPeak/list 兜底 catch 不得把底层异常文本（路径/SQL/上游片段）
-// 跨 RPC 回传；对外固定稳定错误码 + 通用文案，原始错误只进服务端日志。
+// review CR-01: the fallback catches of offPeak/create and offPeak/list must not send underlying exception text
+// (paths/SQL/upstream snippets) back across RPC; outward they fix a stable error code + generic message, and the raw
+// error goes only to server logs.
 
 const SENSITIVE = "/Users/alice/.zcode/private.db: SQLITE_BUSY database is locked";
 

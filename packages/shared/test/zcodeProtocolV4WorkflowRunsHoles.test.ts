@@ -1,8 +1,8 @@
-// 留白（typed holes）在 shared 协议层的三份契约（docs/dynamic-workflow/presentation.md「Holes on the timeline」、
-// docs/dynamic-workflow/transcript-and-notifications.md「The hole row's live state」）：
-//   1. display 载荷的 `holes` / `fill` 字段与通知载荷的 `hole` 种类过 strict schema；
-//   2. reducer 把 `hole-reached` / `hole-filled` 归约成 run 的 `holes[]`、并同步 `phaseNames` 与对齐的 `phaseHoles`；
-//   3. sessions-index 的侧栏摘要把留白站标成 open / waiting，并交出「等待补全」的那个名字。
+// The three contracts for typed holes at the shared protocol layer (docs/dynamic-workflow/presentation.md "Holes on the timeline",
+// docs/dynamic-workflow/transcript-and-notifications.md "The hole row's live state"):
+//   1. the display payload's `holes` / `fill` fields and the notification payload's `hole` kind pass strict schemas;
+//   2. the reducer reduces `hole-reached` / `hole-filled` into the run's `holes[]` and keeps `phaseNames` and the aligned `phaseHoles` in sync;
+//   3. the sessions-index sidebar summary marks hole sites open / waiting and exposes the name being awaited.
 import { describe, expect, it } from "vitest";
 import {
   WORKFLOW_RUNS_LIMITS,
@@ -270,7 +270,7 @@ describe("workflowRuns reducer · hole-reached / hole-filled", () => {
     const again = step(base, second);
     expect(again.runs[0]?.holes).toHaveLength(1);
     expect(again.runs[0]?.holes?.[0]?.ordinal).toBe(2);
-    // 同一条事件（同 sequence）重放：逐字节无变化 → null。
+    // Replaying the same event (same sequence): byte-identical → null.
     expect(reduceWorkflowRunsState(again, second)).toBeNull();
   });
 
@@ -349,7 +349,8 @@ describe("workflowRuns reducer · hole-reached / hole-filled", () => {
     ]);
     expect(run?.phaseNames).toEqual(["探索", "决定分组", "冒烟测试", "分组", "执行", "评判"]);
     expect(run?.phaseHoles).toEqual([5]);
-    // 「同时在跑」表按插入位置右移：原来 执行(2) ∥ 评判(3) → 执行(4) ∥ 评判(5)。
+    // The "running in parallel" table shifts right by insertion position: the two phases that used to sit at indexes 2 ∥ 3
+    // (execution ∥ verdict) now sit at 4 ∥ 5, shifted by the two inserted entries.
     expect(run?.phaseAlongside).toEqual([[], [], [], [], [5], []]);
     expect(workflowRunsStateSchema.safeParse(state).success).toBe(true);
   });
@@ -385,7 +386,7 @@ describe("workflowRuns reducer · hole-reached / hole-filled", () => {
     expect(filled.runs[0]).not.toHaveProperty("holes");
     expect(filled.runs[0]?.phaseNames).toEqual(["a", "h", "x"]);
     expect(filled.runs[0]).not.toHaveProperty("phaseHoles");
-    // siteId 缺席：只抬水位——除了 lastEventSequence 之外什么都不变。
+    // siteId absent: only advances the watermark — nothing changes except lastEventSequence.
     const bare = step(filled, progress("hole-filled", { filledAt: 2 }));
     expect(bare.runs[0]).toEqual({
       ...filled.runs[0],

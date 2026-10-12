@@ -326,8 +326,9 @@ describe("telegram channel runtime", () => {
 
     await runtime.refresh(f.telegramConfig);
     await vi.waitFor(() => expect(events).toContain("acquire:old-token"));
-    // Bugfix 回归：fetch 已返回 headers 但 body 永不结束时，40 秒 deadline 仍需中断读取；
-    // 退避结束后 finally 释放锁，配置刷新才能启动新 credential 的 runtime。
+    // Bugfix regression: when fetch has returned headers but the body never ends, the 40-second deadline
+    // must still interrupt the read; after backoff ends, the finally block releases the lock so a config
+    // refresh can start a runtime with the new credential.
     await vi.advanceTimersByTimeAsync(45_000);
     await vi.waitFor(() => expect(release).toHaveBeenCalledOnce());
 
@@ -772,7 +773,8 @@ describe("bot channel runtime lock", () => {
     tempDir = mkdtempSync(join(tmpdir(), "zcode-bot-runtime-lock-"));
     setDataBaseDir(tempDir);
 
-    // 回归：旧实现先发布空锁目录再写 owner，并发请求会把初始化中的锁当成 stale 删除。
+    // Regression: the old implementation published an empty lock directory before writing the owner, so
+    // concurrent requests could delete a lock still being initialized as if it were stale.
     const locks = await Promise.all(
       Array.from({ length: 20 }, (_, index) =>
         acquireTelegramPollingLock("shared-token", `bot-${index}`),

@@ -9,6 +9,8 @@ import {
 
 const SELECTION = "0020_provider_model_selection";
 const REASONING = "0022_backfilled_session_reasoning";
+const PRE_TRANSLATION_SELECTION_CHECKSUM =
+  "681180b4fcb497e13289b6970021678f24c975efdf3538777541105c5b2b444e";
 const APPLIED_AT = 1_000;
 const databases: DatabaseSync[] = [];
 const checksum = (sql: string) => createHash("sha256").update(sql.trim()).digest("hex");
@@ -158,6 +160,28 @@ describe("Todo144：启动 runner 保持冻结迁移合同", () => {
     runSqliteSessionMigrations(db, ":memory:");
     applyFrozen(db);
     expect(snapshot(db)).toEqual(before);
+  });
+
+  it("接受 0020 翻译注释前的账本 checksum，且不重跑或改写已应用迁移", () => {
+    const db = createFixture();
+    seedSelections(db);
+    const selectionMigration = SQLITE_MIGRATIONS.find((migration) => migration.id === SELECTION);
+    expect(selectionMigration).toBeDefined();
+    db.exec(selectionMigration!.sql);
+    db.prepare("INSERT INTO schema_migration VALUES(?,?,?,?)").run(
+      SELECTION,
+      PRE_TRANSLATION_SELECTION_CHECKSUM,
+      selectionMigration!.appVersion,
+      APPLIED_AT,
+    );
+    const partsBefore = db.prepare("SELECT * FROM part ORDER BY id").all();
+
+    runSqliteSessionMigrations(db, ":memory:");
+
+    expect(db.prepare("SELECT checksum FROM schema_migration WHERE id=?").get(SELECTION)).toEqual({
+      checksum: PRE_TRANSLATION_SELECTION_CHECKSUM,
+    });
+    expect(db.prepare("SELECT * FROM part ORDER BY id").all()).toEqual(partsBefore);
   });
 
   it("checksum 不符仍失败并回滚，不篡改账本", () => {

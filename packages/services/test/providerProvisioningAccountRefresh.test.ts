@@ -62,8 +62,8 @@ interface SettingUpdateEvent {
 }
 
 /**
- * 把 Target 接到真实的 AccountProviderService、账号连接解析器和设置失效绑定上。
- * 远端 Setting/Credential 用内存实现并带落盘延迟，套餐查询用固定延迟代替网络。
+ * Wires the Target to the real AccountProviderService, account connection resolver, and settings invalidation binding.
+ * Remote Setting/Credential use in-memory implementations with persistence delay; plan queries use a fixed delay instead of the network.
  */
 async function createRemoteTarget() {
   const directory = await mkdtemp(join(tmpdir(), "provider-provisioning-account-refresh-"));
@@ -105,16 +105,18 @@ async function createRemoteTarget() {
       return () => settingListeners.delete(listener);
     },
   };
-  // 远端上一次同步留下的账号身份；本次同步会替换整个 allowlist，从而改变身份。
+  // Account identity left by the remote's previous sync; this sync replaces the whole allowlist and thereby changes the identity.
   const credentials = new Map<string, string>([
     ["oauth:active_provider", "zai"],
     ["oauth:zai:user_info", JSON.stringify({ id: "zai-user" })],
     ["zcodejwttoken", "jwt-old"],
   ]);
-  // 评审 SG-01：竞态不再依赖真实调度（delay(40) vs delay(2) 的胜负在 Windows 与 Linux
-  // 上不同）。gate 只拦"写入期间启动、已捕获旧身份"的第一轮 availability 查询——进入
-  // 该调用即代表本轮 loadAccountIdentity 已完成捕获；用例在凭据切换完成后放行，让身份
-  // 守卫确定性地丢弃过期轮。后续轮（apply 自己的刷新）直通。
+  // Review SG-01: the race no longer depends on real scheduling (delay(40) vs delay(2) resolves
+  // differently on Windows and Linux). The gate only blocks the first round of availability queries —
+  // "started during the write, already captured the old identity". Entering that call means this
+  // round's loadAccountIdentity has finished capturing; the test releases after the credential
+  // switch so the identity guard deterministically discards the stale round. Later rounds (apply's
+  // own refresh) pass through.
   let availabilityGateArmed = false;
   let notifyAvailabilityCaptured: (() => void) | undefined;
   const availabilityCaptured = new Promise<void>((resolve) => {
@@ -258,10 +260,10 @@ describe("Provider Provisioning Target 与真实账号刷新链路", () => {
 
     availabilityGate.arm();
     const applyPromise = target.apply(createEnvelope() as never);
-    // 写入 Settings 触发的失效刷新必须先于凭据切换捕获旧身份；gate 进入点即证明捕获完成。
+    // The invalidation refresh triggered by writing Settings must capture the old identity before the credential switch; entering the gate proves the capture completed.
     await availabilityGate.captured;
-    // 等 apply 写完凭据、身份事实切换（zai 的 user_info 被删除——身份守卫比较的正是它），
-    // 再放行过期轮。
+    // Wait for apply to finish writing credentials and the identity fact to change (zai's user_info is
+    // deleted — exactly what the identity guard compares), then release the stale round.
     await vi.waitFor(() => {
       expect(credentials.has("oauth:zai:user_info")).toBe(false);
     });
@@ -270,8 +272,8 @@ describe("Provider Provisioning Target 与真实账号刷新链路", () => {
       status: "applied",
       rolledBack: false,
     });
-    // 写入期间开始的那一轮刷新捕获的是旧身份，被身份变化守卫丢弃属于预期，但不能成为本次同步的结果。
-    // apply 等待的自身刷新在串行 refresh loop 中排在过期轮之后，因此此刻错误必然已上报。
+    // The refresh round that started during the write captured the old identity and is expected to be discarded by the identity-change guard, but it must not become this sync's result.
+    // The refresh apply waits for comes after the stale round in the serial refresh loop, so the error must already be reported at this point.
     expect(refreshErrors).toEqual([
       ["settings:providerFamilyDomain,providerFamilyConnectionSelections"],
     ]);

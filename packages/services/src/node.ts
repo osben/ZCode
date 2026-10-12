@@ -13,12 +13,14 @@ import {
   PERSONAL_PROVIDER_CONFIG_FILE_NAME,
 } from "@zcode/provider-node";
 import { getAppConfigDir as resolveAppConfigDir } from "./paths.js";
+import { createVoiceDictationService, IVoiceDictationService } from "./voice-dictation/index.js";
 import {
   buildLocalMediaPreviewUrl,
   type DynamicWorkflowMode,
   type ProviderProvisioningTrigger,
 } from "@zcode/shared";
 
+export * from "./voice-dictation/index.js";
 export {
   materializeZCodeBuiltinProviderConfig,
   ZCODE_BUILTIN_PROVIDER_CONFIG_FILE_ENV,
@@ -2724,6 +2726,18 @@ export function createLocalServices(options: {
       }),
     )
     .register(IPromptAttachmentTransferService, createLocalPromptAttachmentTransferService());
+
+  // Voice dictation depends on the local microphone and a local transcription model (koffi native library), so per the
+  // accessor contract it is provided only by the desktop-local host; remote/standalone servers do not register it, and
+  // callers fail cleanly through the optional accessor with an RPC "not found".
+  // Downloads go through the host's unified network stack, inheriting proxy and self-signed certificate settings; otherwise
+  // users who need a proxy cannot download models at all.
+  if (options?.serviceAuthorityMode === "desktop-local") {
+    services.register(
+      IVoiceDictationService,
+      createVoiceDictationService({ fetchImpl: hostApiNetworkTransport.fetch }),
+    );
+  }
 
   // Register the lifecycle disposer even when initially disabled. The terminal fence must precede any
   // delayed settings/acquire continuation; do not treat "no Helper now" as "no lifecycle owner needed".

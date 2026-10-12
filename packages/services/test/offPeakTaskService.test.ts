@@ -21,7 +21,7 @@ const logger = createServiceLogger("off-peak-service-test", {
   isDebugEnabled: false,
 });
 
-/** 可编程假客户端：按序出票 / 定制批量状态应答。 */
+/** Programmable fake client: issues tickets in sequence / custom batch status responses. */
 class FakeClient implements OffPeakServerClient {
   takeCalls: string[] = [];
   settleCalls: string[] = [];
@@ -301,7 +301,7 @@ describe("OffPeakTaskService 编排", () => {
     });
     expect(client.takeCalls).toHaveLength(1);
     expect(await repo.list()).toHaveLength(1);
-    // 他会话不受影响。
+    // Other sessions are unaffected.
     expect((await service.createTask({ ...createParams, boundSessionId: "sess-y" })).ok).toBe(true);
   });
 
@@ -399,14 +399,14 @@ describe("OffPeakTaskService 编排", () => {
     const cancelled = await service.cancelTask(created.offPeakTaskId);
     expect(cancelled?.status).toBe("cancelled");
     expect(stops).toEqual([{ conversationId: "conv-1" }]);
-    // 迟到的 loop 终态回写不可逆出终态
+    // A late loop terminal write-back cannot leave the terminal state
     expect(
       await repo.markTerminal(created.offPeakTaskId, {
         status: "failed",
         endedAt: NOW + 1,
       }),
     ).toBeNull();
-    // settle outbox：取消即上报核销
+    // Settle outbox: cancellation reports settlement immediately
     expect(client.settleCalls).toEqual(["t-1"]);
     expect((await repo.get(created.offPeakTaskId))?.settledAt).toBe(NOW);
   });
@@ -415,15 +415,15 @@ describe("OffPeakTaskService 编排", () => {
     const created = await createTask();
     expect((await service.pauseTask(created.offPeakTaskId))?.status).toBe("paused");
 
-    // 票活着（queued）：不重取号
+    // Ticket alive (queued): no re-ticketing
     client.statusResponse = {
       tickets: [{ ticketId: "t-1", state: "queued", position: 2 }],
     };
     await service.continueTask(created.offPeakTaskId);
-    expect(client.takeCalls).toHaveLength(1); // 仍只有创建那次
+    expect(client.takeCalls).toHaveLength(1); // still only the creation call
     expect((await repo.get(created.offPeakTaskId))?.queuePosition).toBe(2);
 
-    // 票已废（expired）：Continue 触发重取号
+    // Ticket voided (expired): Continue triggers re-ticketing
     await service.pauseTask(created.offPeakTaskId);
     client.statusResponse = {
       tickets: [{ ticketId: "t-1", state: "expired" }],
@@ -445,19 +445,19 @@ describe("OffPeakTaskService 编排", () => {
       tickets: [
         { ticketId: "t-1", state: "ready" },
         { ticketId: "t-2", state: "queued", position: 5 },
-        { ticketId: "t-3", state: "expired" }, // paused：不得重取号
+        { ticketId: "t-3", state: "expired" }, // paused: must not be re-ticketed
       ],
     };
     await service.runSyncCycle();
 
     expect((await repo.get(a.offPeakTaskId))?.schedulable).toBe(true);
     expect((await repo.get(b.offPeakTaskId))?.queuePosition).toBe(5);
-    expect((await repo.get(c.offPeakTaskId))?.serverTicketId).toBe("t-3"); // 未重取
-    expect(client.takeCalls).toHaveLength(3); // 只有三次创建取号
+    expect((await repo.get(c.offPeakTaskId))?.serverTicketId).toBe("t-3"); // not re-ticketed
+    expect(client.takeCalls).toHaveLength(3); // only the three creation calls
     expect(wakes).toBe(1);
 
-    // queued 的废票在下一轮自动重取号
-    await service.continueTask(c.offPeakTaskId); // 票废 → 立即重取（第 4 次）
+    // A queued voided ticket is automatically re-ticketed on the next round
+    await service.continueTask(c.offPeakTaskId); // ticket voided, re-take immediately (4th call)
     expect(client.takeCalls).toHaveLength(4);
   });
 
@@ -493,10 +493,10 @@ describe("OffPeakTaskService 编排", () => {
     const after = await repo.get(created.offPeakTaskId);
     expect(after?.status).toBe("queued");
     expect(after?.sessionId).toBe("sess-1");
-    expect(after?.serverTicketId).toBe("t-2"); // 新票
+    expect(after?.serverTicketId).toBe("t-2"); // new ticket
     expect(client.takeCalls).toEqual([created.offPeakTaskId, created.offPeakTaskId]);
 
-    // 已取消的任务不回队
+    // Cancelled tasks are not requeued
     await service.cancelTask(created.offPeakTaskId);
     await service.handleTicketExpiredDuringRun(created.offPeakTaskId);
     expect((await repo.get(created.offPeakTaskId))?.status).toBe("cancelled");
@@ -513,7 +513,7 @@ describe("OffPeakTaskService 编排", () => {
       providerId: "account:zai-offpeak-idle-plan",
       modelId: "GLM-5.2",
     });
-    // Off-Peak 已经是 Submission，不能清空成“以后再选”。
+    // Off-Peak already uses a Submission; it cannot be cleared to "decide later".
     expect(await service.updateTask(created.offPeakTaskId, { modelSelection: null })).toBeNull();
 
     await repo.updateSchedulingSnapshot(created.offPeakTaskId, {

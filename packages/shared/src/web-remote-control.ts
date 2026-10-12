@@ -33,7 +33,7 @@ export type {
 } from "./web-remote-relay/index.js";
 export { WEB_REMOTE_CONTROL_RELAY_AUTH_PROOF_VECTORS } from "./web-remote-relay/index.js";
 import type { MobileSessionCreateTelemetry } from "./sessionCreateTelemetry.js";
-/* eslint-disable max-lines -- Web 远程控制共享协议同时保留旧 /web-remote 类型和新外部 relay 类型，后续拆分时再按 transport/app payload 分文件。 */
+/* eslint-disable max-lines -- the web remote-control shared protocol keeps both the legacy /web-remote types and the new external relay types; split by transport/app payload when it is broken up later. */
 import type { DockerContainerInfo, SSHConfigAliasOption, WSLDistro } from "./platform.js";
 import type {
   CreateTempTextAttachmentRequest,
@@ -94,13 +94,13 @@ export function createWebRemoteControlConnectionRecoveryTimeoutFailure(
   message: string,
 ): WebRemoteControlFailure {
   return {
-    // Bugfix: 手机端长时间后台后恢复超时，真实问题是手机连接未恢复，
-    // 不能映射成 desktop-disconnected，否则错误页会误导用户以为电脑端离线。
+    // Bugfix: recovery timing out after the phone was backgrounded for a long time means the
+    // phone's connection was not recovered; it must not be mapped to desktop-disconnected,
+    // otherwise the error page misleads the user into thinking the desktop is offline.
     reason: "connection-recovery-timeout",
     message,
   };
 }
-
 
 export interface WebRemoteControlMobileViewportInfo {
   width: number;
@@ -187,8 +187,9 @@ export function resolveWebRemoteControlRoutePathFromBaseUrl(baseUrl: string): st
 }
 
 export function matchesWebRemoteControlRoutePath(pathname: string, routePath: string): boolean {
-  // Bugfix: dev / production 入口可能带 /remote/ 尾斜杠；
-  // 路由判断需要接受 /remote 与 /remote/，但不能把 /remote/favicon.ico 当成应用入口。
+  // Bugfix: dev / production entry paths may carry a trailing /remote/ slash;
+  // route matching must accept both /remote and /remote/, but must not treat /remote/favicon.ico
+  // as the app entry.
   const normalizeRoutePath = (value: string) => value.replace(/\/+$/, "") || "/";
   return normalizeRoutePath(pathname) === normalizeRoutePath(routePath);
 }
@@ -218,9 +219,12 @@ export function buildWebRemoteControlExternalQrUrl({
     url.searchParams.set("app_version", appVersion);
   }
   void theme;
-  // Bugfix: 手机端主题现在固定走本地默认 dark，不再通过二维码 URL 透传 theme。
-  // 之前 theme 参数会把桌面端主题耦合到手机首次进入行为，后续维护和排障都更复杂。
-  // 这里保留入参仅做向后兼容，避免旧调用点一次性改动过大。
+  // Bugfix: the phone theme is now always the local default dark; theme is no longer passed
+  // through the QR URL.
+  // Previously the theme parameter coupled the desktop theme to the phone's first-entry behavior,
+  // complicating later maintenance and debugging.
+  // The parameter is kept only for backward compatibility, to avoid a sweeping change of old call
+  // sites.
 
   return url.toString();
 }
@@ -308,7 +312,7 @@ export interface WebRemoteControlStartCancelledResult {
   status: "cancelled";
 }
 
-/** 兼容仍可返回取消终态的平台实现；当前 Desktop 启动和刷新链路不会产生该结果。 */
+/** Compat with platform implementations that can still return the cancelled terminal state; the current Desktop start and refresh paths never produce it. */
 export type WebRemoteControlStartOperationResult =
   | WebRemoteControlStartResult
   | WebRemoteControlStartCancelledResult;
@@ -561,7 +565,7 @@ export type WebRemoteControlPlatformResponsePayload =
       error: string;
     };
 
-/** @deprecated 仅供 legacy adapter 单测/迁移使用；production parser 自 04D-3 起拒绝。 */
+/** @deprecated Only for legacy adapter unit tests/migration; the production parser has rejected it since 04D-3. */
 export interface WebRemoteControlRpcFramePayload {
   zcode_type: "rpc-frame";
   bridgeSessionId: string;
@@ -681,11 +685,15 @@ export interface WebRemoteControlTaskTarget {
   provider?: ZCodeProvider;
   unreadAt?: number;
   displayStatus?: WebRemoteControlTaskDisplayStatus;
-  // 会话挂着后台工作（动态工作流 run / 后台 bash / 分离子代理）。只参与列表运行层排序，
-  // 不影响 displayStatus 图标；缺省视为 false，旧 desktop 快照照常解析。
+  // The session has background work attached (dynamic workflow run / background bash / detached
+  // subagent). Participates only in list run-level ordering,
+  // not the displayStatus icon; absent is treated as false, and older desktop snapshots parse as
+  // usual.
   hasBackgroundWork?: boolean;
-  // 工作流运行摘要（docs/dynamic-workflow/presentation.md「The sidebar run line」）：手机行在标题下
-  // 画与桌面一致的运行行。只绘制，不参与排序或状态 pill；无 run 时缺席，旧 desktop 快照照常解析。
+  // Workflow run summary (docs/dynamic-workflow/presentation.md, "The sidebar run line"): the
+  // phone row draws the same run line as the desktop under the title.
+  // Draw-only; it does not participate in sorting or the status pill; absent when there is no run,
+  // and older desktop snapshots parse as usual.
   workflowActivity?: SessionWorkflowActivity;
   pinned?: boolean;
   archived?: boolean;
@@ -703,7 +711,7 @@ export type WebRemoteControlMobileNavigationIntent = "chat";
 export interface WebRemoteControlWorkspaceSwitchOptions {
   taskId?: string;
   mobileNavigationIntent?: WebRemoteControlMobileNavigationIntent;
-  /** 仅由手机任务首页使用；目标 bridge 建立后只清除这次快照对应的未读。 */
+  /** Used only by the phone's task home; after the target bridge is established, only the unread matching this snapshot is cleared. */
   markTaskReadExpectedUnreadAt?: number;
 }
 
@@ -743,7 +751,7 @@ export type WebRemoteControlWorkspaceBridge =
 
 export interface WebRemoteControlWindowBootstrapResult {
   windowControlSessionId: string;
-  /** 当前连接的桌面实际版本；旧桌面缺失时手机保留原 URL。 */
+  /** The desktop's actual current version; when an older desktop omits it, the phone keeps the original URL. */
   desktopAppVersion?: string;
   workspaces: WebRemoteControlWorkspaceTarget[];
   tasks: WebRemoteControlTaskTarget[];
@@ -799,8 +807,10 @@ export function resolveWebRemoteControlInitialWorkspaceSelection({
     };
   }
 
-  // Bugfix: 手机端列表会展示已断开的 SSH workspace，但这类项没有 remoteSessionId，
-  // 不能作为初始 bridge 目标。否则重连状态尚未同步时会反复进入“尚未连接”的错误页。
+  // Bugfix: the phone's list may show a disconnected SSH workspace, but such entries have no
+  // remoteSessionId and
+  // must not become the initial bridge target. Otherwise, before reconnect state has synced, the
+  // user repeatedly lands on the "not yet connected" error page.
   const firstWorkspace = bridgeableWorkspaces[0];
   if (!firstWorkspace) {
     if (selectedWorkspaceKey && allWorkspaceKeys.has(selectedWorkspaceKey)) {

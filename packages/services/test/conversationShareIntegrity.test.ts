@@ -11,19 +11,19 @@ describe("conversation share RFC 8785 integrity", () => {
   it("canonicalizes the RFC 8785 primitive sample", () => {
     const value = {
       numbers: [333_333_333.3333333, 1e30, 4.5, 2e-3, 1e-27],
-      string: "€$\u000f\nA'B\"\\\"/",
+      string: '€$\u000f\nA\'B"\\"/',
       literals: [null, true, false],
     };
 
     expect(canonicalizeConversationShareJson(value)).toBe(
-      "{\"literals\":[null,true,false],\"numbers\":[333333333.3333333,1e+30,4.5,0.002,1e-27],\"string\":\"€$\\u000f\\nA'B\\\"\\\\\\\"/\"}",
+      '{"literals":[null,true,false],"numbers":[333333333.3333333,1e+30,4.5,0.002,1e-27],"string":"€$\\u000f\\nA\'B\\"\\\\\\"/"}',
     );
   });
 
   it("sorts object keys recursively without reordering arrays", () => {
-    expect(
-      canonicalizeConversationShareJson({ z: { b: 1, a: 2 }, a: [3, { d: 4, c: 5 }] }),
-    ).toBe('{"a":[3,{"c":5,"d":4}],"z":{"a":2,"b":1}}');
+    expect(canonicalizeConversationShareJson({ z: { b: 1, a: 2 }, a: [3, { d: 4, c: 5 }] })).toBe(
+      '{"a":[3,{"c":5,"d":4}],"z":{"a":2,"b":1}}',
+    );
   });
 
   it("uses ECMAScript JSON number serialization", () => {
@@ -96,8 +96,9 @@ describe("conversation share RFC 8785 integrity", () => {
 });
 
 /**
- * 跨版本完整性：摘要必须对服务端原样发来的值算，否则「给 row 加一个 optional 字段」这种
- * 纯 additive 演进会被老客户端误报成「分享文件校验失败」。
+ * Cross-version integrity: the digest must be computed over the values exactly as sent by the server,
+ * otherwise purely additive evolution such as "adding one optional field to a row" would be misreported
+ * by older clients as "share file verification failed".
  */
 describe("verifyConversationShareIntegrity", () => {
   const descriptor = {
@@ -132,7 +133,7 @@ describe("verifyConversationShareIntegrity", () => {
     expect(
       verifyConversationShareIntegrity({
         rawRows: futureRows,
-        // 服务端读取时附加的 signed URL 字段不参与摘要。
+        // Signed URL fields attached at server read time do not participate in the digest.
         rawArtifacts: [
           { ...futureDescriptor, download_url: "https://x/y", download_url_expires_at: 9 },
         ],

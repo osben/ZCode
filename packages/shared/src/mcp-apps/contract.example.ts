@@ -7,7 +7,7 @@ import {
   buildMcpAppsCspExperimentalCapability,
 } from "./contract.js";
 
-/** 一个带 UI 资源的工具 `_meta` 归一化后应得到的描述。 */
+/** What a tool's `_meta` with a UI resource should yield after normalization. */
 export const exampleToolUiDescriptor: McpToolUiDescriptor = {
   resourceUri: "ui://example-plugin/widget.html",
   visibility: ["model", "app"],
@@ -16,7 +16,7 @@ export const exampleToolUiDescriptor: McpToolUiDescriptor = {
   prefersBorder: true,
 };
 
-/** main 登记成功后返回给 renderer 的句柄；partition 按 server 身份派生，同一 server 的页面共享。 */
+/** Handle main returns to the renderer after successful registration; the partition is derived from the server identity and shared by pages of the same server. */
 export const exampleSandboxHandle: PluginSandboxHandle = {
   instance: {
     runtimeId: "test-agent",
@@ -28,7 +28,8 @@ export const exampleSandboxHandle: PluginSandboxHandle = {
   initId: 1,
   shellUrl: "zcode-sandbox://shell-sb-01/",
   partition: "persist:plugin-sandbox-v1-0123456789abcdef",
-  // 句柄能带的全部资源级字段都写上：contract.test 用它过 host 的 strict 回包 schema，字段漏同步会在这里失败。
+  // Every resource-level field the handle can carry is set: contract.test uses it against the
+  // host's strict response schema, and a missed field sync fails right here.
   resourceMeta: {
     prefersBorder: true,
     heightHint: 320,
@@ -38,11 +39,11 @@ export const exampleSandboxHandle: PluginSandboxHandle = {
   },
 };
 
-/** agent 对 MCP server `initialize` 时宣告的 ui 扩展能力。 */
+/** UI extension capabilities the agent declares to the MCP server during `initialize`. */
 export const exampleClientCapabilities = buildMcpAppsClientCapabilities();
-/** 宿主在 hostCapabilities.experimental 里宣告的 CSP 放宽键。 */
+/** CSP relaxation key the host declares in hostCapabilities.experimental. */
 export const exampleCspExperimental = buildMcpAppsCspExperimentalCapability();
-/** 资源级 `_meta` 里声明放宽的写法。 */
+/** How to declare relaxations in resource-level `_meta`. */
 export const exampleResourceMetaWithRelaxations = {
   ui: { csp: { connectDomains: ["https://api.example.com"] } },
   [MCP_APPS_CSP_RELAXATION_META_KEY]: { unsafeEval: true },

@@ -8,7 +8,7 @@ function stubPlatform(platform: NodeJS.Platform) {
 describe("resolveHostTarCommand", () => {
   it("非 Windows 宿主原样返回 PATH 解析的 tar，不触碰 System32（CR 复审回归）", () => {
     stubPlatform("linux");
-    // 曾在平台判断前无条件解析 System32/tar.exe，POSIX 归档会直接抛错。
+    // System32/tar.exe was once resolved unconditionally before the platform check, so POSIX archiving would throw outright.
     expect(resolveHostTarCommand()).toBe("tar");
     stubPlatform("darwin");
     expect(resolveHostTarCommand()).toBe("tar");

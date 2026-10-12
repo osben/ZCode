@@ -33,8 +33,9 @@ type RegistryFixture = {
   }>;
 };
 class MockProcessManagerBase {
-  // Bug 原因：service 现在订阅 runtime unavailable 生命周期来清理旧 client；这些 provider
-  // 用例只验证 registry/model 语义，mock 必须提供同形状的空订阅，避免在业务断言前失败。
+  // Bug cause: the service now subscribes to the runtime unavailable lifecycle to clean up old clients; these
+  // provider cases only verify registry/model semantics, so the mock must provide an empty subscription of the
+  // same shape to avoid failing before the business assertions.
   onRuntimeLifecycle() {
     return { dispose() {} };
   }
@@ -43,8 +44,8 @@ class MockProcessManagerBase {
     return { dispose() {} };
   }
 
-  // Bug 根因：service 在 provider/model 门禁通过后会标记 runtime ready；共享 mock
-  // 缺少该生命周期方法会让所有进入模型执行路径的用例在业务断言前统一失败。
+  // Bug root cause: the service marks the runtime ready after the provider/model gate passes; the shared mock
+  // missing this lifecycle method would make every case entering the model execution path fail before its business assertions.
   markReady() {}
 }
 
@@ -546,7 +547,7 @@ describe("createZCodeAgentService provider registry", () => {
             issuedAt: 1,
           },
         });
-        // 旧实现会分别读取 readiness；预热先完成并删掉等待记录，再让首条输入的读取返回。
+        // The old implementation read readiness separately; the warmup finishes first and deletes the waiting record, then the first input's read returns.
         await expect(warmup).resolves.toMatchObject({ available: true });
         finishLateRead(ready);
         await expect(command).resolves.toMatchObject({ status: "accepted" });
@@ -696,7 +697,7 @@ describe("createZCodeAgentService provider registry", () => {
     });
     try {
       const initial = service.initialize({ workspacePath: "/workspace/ready-during-startup" });
-      // getView 已取到空列表，但 await continuation 尚未恢复；此时仅发出一次 ready。
+      // getView already got the empty list, but the await continuation has not resumed yet; at this point ready fires exactly once.
       selectionSource.emit(createModelSelectionViewFromRegistry(createStartPlanRegistry()));
       await expect(initial).resolves.toMatchObject({ available: false });
       await vi.waitFor(() => expect(getClient).toHaveBeenCalledTimes(1));
@@ -989,7 +990,7 @@ describe("createZCodeAgentService provider registry", () => {
       expect.anything(),
       expect.anything(),
     );
-    // Source 读取也必须串行；否则旧 read 晚返回会把旧快照排在新快照之后。
+    // Source reads must also be serialized; otherwise a late old read would order the old snapshot after the new one.
     const latest = await accountSource.source.read();
     let releaseOldRead!: (value: AccountProviderConfigSnapshot) => void;
     const read = vi.spyOn(accountSource.source, "read").mockImplementationOnce(
@@ -1189,13 +1190,14 @@ describe("createZCodeAgentService provider registry", () => {
     vi.doMock("../src/zcode-agent/zcodeAgentProcessManager.js", () => ({
       ZCodeAgentProcessManager: class {
         getClient = getClient;
-        // Bug 原因同共享 mock：service 构造期新增 runtime 生命周期订阅；本用例只驱动
-        // stdio 重试，因此用空 disposable 补齐局部测试桩契约。
+        // Same bug cause as the shared mock: the service added a runtime lifecycle subscription at construction; this case
+        // only drives stdio retries, so an empty disposable completes the local test stub's contract.
         onRuntimeLifecycle() {
           return { dispose() {} };
         }
-        // Bugfix: rebase 后 service 会在构造期订阅 runtime restart；局部 process manager 测试桩
-        // 必须保留该接口，否则尚未进入 stdio 重试断言就会因 mock 合约不完整失败。
+        // Bugfix: after the rebase the service subscribes to runtime restarts at construction; the local process
+        // manager test stub must keep this interface, or it fails on the incomplete mock contract before reaching
+        // the stdio retry assertions.
         onRuntimeRestarted() {
           return { dispose() {} };
         }

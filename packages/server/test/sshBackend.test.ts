@@ -299,7 +299,7 @@ describe("SSHBackend", () => {
       onClientError: (error: unknown) => void;
     };
     mutableBackend.client = fakeClient;
-    // 构造 ssh2 的两次 error 顺序：第一次由 ready timeout 触发，第二次由 socket close 触发。
+    // Construct ssh2's two-error sequence: the first is triggered by ready timeout, the second by socket close.
     fakeClient.on("error", mutableBackend.onClientError);
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
 
@@ -315,7 +315,7 @@ describe("SSHBackend", () => {
 
       backend.dispose();
 
-      // ssh2 在 timeout 后销毁 socket，close/end 阶段仍可能再发出 error；该迟到事件必须被吞掉。
+      // ssh2 destroys the socket after timeout, and close/end phases may still emit another error; the late event must be swallowed.
       expect(() =>
         fakeClient.emit("error", new Error("Connection lost before handshake")),
       ).not.toThrow();

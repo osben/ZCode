@@ -1,4 +1,4 @@
-/** Key 的创建用途；独立于 keyType，不包含仅供存量映射/缓存哨兵的 3 和 -1。 */
+/** Creation usage scene of a key; independent of keyType, excludes the 3 and -1 sentinels kept only for legacy mappings/caches. */
 export const API_KEY_USAGE_SCENE = {
   CODING_PLAN: 1,
   STANDARD: 2,

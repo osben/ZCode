@@ -8,7 +8,7 @@ interface WebRemoteControlVersionGuardOptions {
   onMismatch(desktopVersion: string): void;
 }
 
-/** 只管理当前手机连接的版本校验；资源路由由服务端处理。 */
+/** Only manages version validation for the current phone connection; asset routing is handled by the server. */
 export function createWebRemoteControlVersionGuard(options: WebRemoteControlVersionGuardOptions) {
   let generation = 0;
   let disposed = false;
@@ -42,7 +42,8 @@ export function createWebRemoteControlVersionGuard(options: WebRemoteControlVers
       const request = Promise.resolve()
         .then(() => options.requestBootstrap())
         .then((result) => {
-          // 重连可能让旧响应晚于新连接返回，不能用旧桌面的版本导航或初始化业务。
+          // A reconnect can let an old response arrive after the new connection;
+          // never navigate or bootstrap business state from a stale desktop.
           if (disposed || requestGeneration !== generation) return undefined;
           const version = result.desktopAppVersion?.trim();
           if (!version) return result;

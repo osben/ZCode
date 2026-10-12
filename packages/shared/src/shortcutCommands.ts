@@ -35,7 +35,8 @@ export type ShortcutCommandId =
   | "zoomOut"
   | "resetZoom"
   | "composerSend"
-  | "composerInsertNewline";
+  | "composerInsertNewline"
+  | "voiceDictation";
 
 /**
  * Command scope: global = dispatched globally (useAppKeyboard / menu accelerator);
@@ -97,6 +98,11 @@ export const SHORTCUT_COMMANDS: readonly ShortcutCommandEntry[] = [
   },
   { id: "toggleInterfaceMode", channel: "window", defaultBindings: ["CmdOrCtrl+Shift+u"] },
   { id: "openOnboarding", channel: "window", defaultBindings: ["CmdOrCtrl+Shift+o"] },
+  // Voice input: by default hold ⌘/Ctrl+Shift+D to record (in push-to-talk mode, releasing
+  // transcribes), handled by the UI layer's keydown/keyup.
+  // Note: the shortcut key-name allowlist does not include Space, so defaults like Option+Space
+  // cannot be used.
+  { id: "voiceDictation", channel: "window", defaultBindings: ["CmdOrCtrl+Shift+d"] },
 ];
 
 /** Get default bindings by command ID; unknown commands return an empty array (resolve ignores unknown commands in the active table). */

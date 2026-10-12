@@ -7368,6 +7368,89 @@ const enUS: Record<string, string> = {
   "cuaPermission.ready": "Permissions ready",
   "cuaPermission.ready.sessionValidationHint":
     "ZCode will verify the Computer Use tools against the exact session when your first session starts.",
+  "settings.voiceDictation.title": "Voice dictation",
+  "settings.shortcuts.command.voiceDictation": "Voice dictation",
+  "voiceDictation.inputDevice.title": "Input device",
+  "voiceDictation.inputDevice.description":
+    "Lists system-available audio inputs, including virtual devices. Use System default to follow your OS setting.",
+  "voiceDictation.inputDevice.default": "System default",
+  "voiceDictation.inputDevice.unnamed": "Microphone {index}",
+  "voiceDictation.inputDevice.unavailable": "Selected device unavailable",
+  "voiceDictation.micTest.title": "Test microphone",
+  "voiceDictation.micTest.description":
+    "Record 3 seconds to check that the selected input picks up sound.",
+  "voiceDictation.micTest.button": "Test mic",
+  "voiceDictation.micTest.recording": "Recording…",
+  "voiceDictation.micTest.result": "Peak level {level}%",
+  "voiceDictation.micTest.silent":
+    "No sound detected. Check the input device and microphone permission.",
+  "voiceDictation.shortcut.title": "Shortcut",
+  "voiceDictation.shortcut.description":
+    "Starts voice input in the composer. Change it in Keyboard Shortcuts.",
+  "voiceDictation.shortcut.unassigned": "Not assigned",
+  "voiceDictation.pushToTalk.title": "Push to talk",
+  "voiceDictation.pushToTalk.description":
+    "Hold the shortcut to record and release to transcribe. When off, press once to start and again to stop.",
+  "voiceDictation.language.title": "Language",
+  "voiceDictation.language.description":
+    "Spoken language. Auto-detect works with multilingual models.",
+  "voiceDictation.language.auto": "Auto-detect",
+  "voiceDictation.models.unloadDelay.title": "Unload from memory after",
+  "voiceDictation.models.unloadDelay.description":
+    "After dictation ends, keep the model ready for this long before releasing its memory.",
+  "voiceDictation.models.unloadDelay.option": "{count} min",
+  "voiceDictation.models.title": "Transcription models",
+  "voiceDictation.models.description":
+    "Runs entirely on this device. The highlighted model is selected for dictation; only one model is loaded at a time.",
+  "voiceDictation.models.languages": "{count} languages",
+  "voiceDictation.models.streaming": "Streaming",
+  "voiceDictation.models.license": "License: {license}",
+  "voiceDictation.models.download": "Download",
+  "voiceDictation.models.cancel": "Cancel",
+  "voiceDictation.models.use": "Use",
+  "voiceDictation.models.selected": "Active",
+  "voiceDictation.models.loading": "Loading into memory",
+  "voiceDictation.models.transcribing": "Transcribing",
+  "voiceDictation.models.streamingActive": "Streaming transcription",
+  "voiceDictation.models.loaded": "Loaded in memory",
+  "voiceDictation.models.remove": "Delete",
+  "voiceDictation.models.startingDownload": "Starting download…",
+  "voiceDictation.models.useWhenReady": "Use when ready",
+  "voiceDictation.models.cancelUseWhenReady": "Keep current model",
+  "voiceDictation.models.willUseWhenReady": "Will use when ready",
+  "voiceDictation.models.removeConfirm.title": "Delete this model?",
+  "voiceDictation.models.removeConfirm.description":
+    "{model} will be removed from this device. You can download it again later.",
+  "voiceDictation.models.fromHandy": "In Handy",
+  "voiceDictation.models.downloading": "Downloading {percent}%",
+  "voiceDictation.downloadComplete": "Model downloaded and ready to use.",
+  "voiceDictation.webUnavailable.title": "Available in ZCode Desktop",
+  "voiceDictation.webUnavailable.badge": "Desktop only",
+  "voiceDictation.webUnavailable.description":
+    "Web can capture microphone audio, but local transcription models run only in ZCode Desktop.",
+  "voiceDictation.noModelSelected":
+    "Choose a transcription model in Settings → Voice dictation first.",
+  "voiceDictation.microphoneFailed":
+    "Could not access the microphone. Check the input device and permissions.",
+  "voiceDictation.transcribeFailed": "Voice transcription failed.",
+  "voiceDictation.downloadFailed": "Model download failed.",
+  "voiceDictation.cancelDownloadFailed": "Failed to cancel the model download.",
+  "voiceDictation.models.description.whisper":
+    "Auto language detection and segment timestamps across {languages} languages.",
+  "voiceDictation.models.description.parakeetLive": "Fast, accurate live English transcription.",
+  "voiceDictation.models.description.parakeetMultilingual":
+    "Fast and accurate. Supports {languages} European languages.",
+  "voiceDictation.models.description.canary": "Tiny and instant, runs well on any hardware.",
+  "voiceDictation.models.description.nemotron":
+    "English speech-to-text with streaming and token-level timestamps.",
+  "voiceDictation.saveFailed": "Could not save voice dictation settings.",
+  "voiceDictation.composer.start": "Voice input",
+  "voiceDictation.composer.loading": "Loading speech model",
+  "voiceDictation.composer.stop": "Stop voice input",
+  "voiceDictation.composer.level": "Microphone input level",
+  "voiceDictation.composer.listening": "Listening",
+  "voiceDictation.composer.status.idle": "Voice input ready",
+  "voiceDictation.composer.status.transcribing": "Transcribing",
   "settings.computerUse.title": "Computer Use",
   "settings.computerUse.toggleLabel": "Enable Computer Use",
   "settings.computerUse.toggleDescription":

@@ -32,7 +32,7 @@ beforeAll(async () => {
 });
 afterAll(() => source.dispose());
 
-// 基线取自 a56dc32c26 的专用表达式，按相同表达式分组但逐条验证规则，不能随美化更新预期。
+// Baseline comes from the dedicated expressions at a56dc32c26. Rules are grouped by the same expression but verified one by one; expectations must not drift with reformatting.
 const levels = [
   ["low", "high", "max"],
   ["low", "high", "max"],
@@ -76,7 +76,7 @@ describe("Todo95 专用 Map 合法请求等价", () => {
   for (const [group, entry] of baseline.entries()) {
     for (const reference of entry.rules) {
       it(`${reference.scope}[${reference.index}] ${reference.modelMatch} ${reference.apiMatch}`, () => {
-        // 规则重组会改变下标；按完整匹配条件定位，基线表达式及请求断言不变。
+        // Rule reorganization shifts indices; locate by the full match conditions. Baseline expressions and request assertions stay unchanged.
         const matches = rules[reference.scope]!.filter(
           (rule) =>
             rule.modelMatch === reference.modelMatch &&
@@ -98,7 +98,7 @@ describe("Todo95 专用 Map 合法请求等价", () => {
         for (const reasoningLevel of levels[group]!) {
           for (const base of bases) {
             const options = { reasoningLevel, maxOutputTokens: 32000 };
-            // C 改名比较旧输入/旧 Map 与新输入/新 Map；A/B 的请求基线保持不变。
+            // C renames compare old input/old Map against new input/new Map; A/B request baselines stay unchanged.
             const renamed =
               reasoningLevel === "off" || reasoningLevel === "nothink"
                 ? "disabled"
@@ -114,7 +114,7 @@ describe("Todo95 专用 Map 合法请求等价", () => {
   }
   it("历史专用 Map 不遗漏；新增型号与 Go 站点由独立配置及 wire 验证承接", () => {
     const newModelMatchers = new Set([
-      // OpenRouter 的无预算 enabled 修复由 openrouter-reasoning-contract.test.ts 独立验收。
+      // OpenRouter's no-budget enabled fix is covered separately by openrouter-reasoning-contract.test.ts.
       ".*(?:glm-|deepseek-|kimi-k2|qwen|mimo-).*",
       ".*gpt-6-astra(?:[.\\-:/\\[].*)?",
       ".*claude-(?:fable|mythos)-5[.-]1(?:[.\\-:/\\[].*)?",
@@ -129,7 +129,7 @@ describe("Todo95 专用 Map 合法请求等价", () => {
       rules[scope]!.flatMap((rule) =>
         rule.modelMatch !== ".*" &&
         !newModelMatchers.has(rule.modelMatch) &&
-        // Go 新站点不属于 Todo95 历史基线；成员/档位/请求由 opencode-go 独立用例验证。
+        // Go's new site is not part of the Todo95 historical baseline; members/levels/requests are verified by the dedicated opencode-go cases.
         !(
           scope === "providerSiteRules" && rule.baseUrlMatch === "https://opencode\\.ai/zen/go/v1/?"
         ) &&

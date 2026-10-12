@@ -763,7 +763,7 @@ export function getV4QueueItems(): Promise<Array<{ queueItemId: string; text: st
       .filter((el) => el.hasAttribute("data-queue-item-id"))
       .map((el) => ({
         queueItemId: el.getAttribute("data-queue-item-id") ?? "",
-        text: (el.innerText || "").replace(/ /g, " ").trim(),
+        text: (el.innerText || "").trim(),
       })),
   );
 }

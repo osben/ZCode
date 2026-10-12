@@ -87,7 +87,6 @@ function htmlToMarkdown(html: string): string {
 function decodeHtmlEntities(value: string): string {
   return value
     .replace(/&nbsp;/g, " ")
-    .replace(/&amp;/g, "&")
     .replace(/&lt;/g, "<")
     .replace(/&gt;/g, ">")
     .replace(/&quot;/g, '"')
@@ -97,7 +96,10 @@ function decodeHtmlEntities(value: string): string {
     )
     .replace(/&#(\d+);/g, (_match, decimal: string) =>
       String.fromCodePoint(Number.parseInt(decimal, 10)),
-    );
+    )
+    // &amp; 必须最后解码：先解码会把双重编码实体（如 &amp;lt;）多解一次，
+    // 字面标签在送入模型的文本中"复活"（CodeQL js/double-escaping，告警 #66）。
+    .replace(/&amp;/g, "&");
 }
 
 function isTextLikeMime(mime: string): boolean {

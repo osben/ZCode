@@ -10,8 +10,8 @@ import {
   ZCODE_DYNAMIC_WORKFLOW_MODE_ENV,
 } from "../src/dynamic-workflow-feature.js";
 
-// DWG-01（docs/dynamic-workflow/launch.md「Gray release: the `dynamicWorkflow` feature key」）：
-// 远端取值、缺省 fail-closed、本地覆盖优先级三件事都由这个纯函数裁决，三端共用。
+// DWG-01 (docs/dynamic-workflow/launch.md "Gray release: the `dynamicWorkflow` feature key"):
+// this pure function alone decides remote values, fail-closed defaults, and local override precedence; shared by all three ends.
 
 function remote(mode: unknown) {
   return { mode };
@@ -112,7 +112,7 @@ describe("normalizeDynamicWorkflowMode / isDynamicWorkflowModeEnabled", () => {
   });
 });
 
-// DWG-18（launch.md「The user's choice」）：服务端给出可用性与默认值，用户只能在已提供的范围里选。
+// DWG-18 (launch.md "The user's choice"): the server supplies availability and the default; the user can only pick within the offered range.
 describe("applyDynamicWorkflowUserMode（DWG-18）", () => {
   const offer = (mode: "disabled" | "onDemand" | "alwaysOn") =>
     createDynamicWorkflowClientConfig(mode, "remote");
@@ -180,8 +180,8 @@ describe("applyDynamicWorkflowUserMode（DWG-18）", () => {
   });
 
   it("isDynamicWorkflowOffered：没有 offeredMode 的快照（旧 Host）或读不懂的值按未提供", () => {
-    // 新 UI（例如手机远控 bundle）连旧 Host 时，快照只有生效的 mode / enabled，没有 offeredMode；
-    // 旧 Host 不认用户选择，所以不能把设置行摆出来。
+    // When a new UI (e.g. the mobile remote-control bundle) connects to an old Host, the snapshot only has the effective mode / enabled, no offeredMode;
+    // the old Host does not honor user choice, so the settings row must not be shown.
     const legacy = { mode: "alwaysOn", enabled: true, source: "remote" } as unknown as Parameters<
       typeof isDynamicWorkflowOffered
     >[0];

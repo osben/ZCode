@@ -53,7 +53,7 @@ describe("forceUpdate", () => {
   });
 
   it("minimalVersion 只有主版本号时自动补齐次版本号和修订号", () => {
-    // "45" → 自动补齐为 "45.0.0"，本地 3.1.7 < 45.0.0 所以触发
+    // "45" → auto-completed to "45.0.0"; local 3.1.7 < 45.0.0 so it triggers
     expect(
       resolveForceUpdateRequirement({
         currentVersion: "3.1.7",
@@ -66,7 +66,7 @@ describe("forceUpdate", () => {
   });
 
   it("minimalVersion 只有主次版本号时自动补齐修订号", () => {
-    // "4.5" → 自动补齐为 "4.5.0"，本地 3.1.7 < 4.5.0 所以触发
+    // "4.5" → auto-completed to "4.5.0"; local 3.1.7 < 4.5.0 so it triggers
     expect(
       resolveForceUpdateRequirement({
         currentVersion: "3.1.7",
@@ -82,7 +82,7 @@ describe("forceUpdate", () => {
     expect(
       resolveForceUpdateRequirement({
         currentVersion: "4.6.0",
-        forceUpdate: { minimalVersion: "4.5" }, // 补齐为 4.5.0
+        forceUpdate: { minimalVersion: "4.5" }, // completed to 4.5.0
       }),
     ).toBeNull();
   });

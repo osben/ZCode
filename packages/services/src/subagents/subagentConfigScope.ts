@@ -39,7 +39,7 @@ async function waitForStableFile(path: string, signal: AbortSignal): Promise<boo
   }
 }
 
-/** 一个配置范围串行吸收文件变化，RPC 只消费上层已完成的 snapshot。 */
+/** One config scope absorbs file changes serially; RPC consumers only see snapshots the upper layer has already finished. */
 export function createSubagentConfigScope<T>(options: {
   root: string;
   file?: string;
@@ -84,8 +84,8 @@ export function createSubagentConfigScope<T>(options: {
     const changedPaths = new Set<string>();
     draining = (async () => {
       while (!disposed) {
-        // 子文件 unlink 可能早于 unlinkDir；发布空范围前确认目录，避免立即重建后
-        // 原生库不再识别旧目录已删除。每个删除批次仅检查一次，不额外读取 Markdown。
+        // A child file's unlink can arrive before unlinkDir; confirm the directory before publishing an empty scope, otherwise after an
+        // immediate rebuild the native library no longer recognizes that the old directory was deleted. Check once per deletion batch, no extra Markdown reads.
         if ([...pending.values()].includes("remove")) await checkWatch();
         await binding;
         if (disposed || (!reset && !pending.size)) break;
@@ -102,7 +102,7 @@ export function createSubagentConfigScope<T>(options: {
         try {
           const next = await options.load(value, full ? undefined : changes, {
             signal: controller.signal,
-            // 新 watcher 的初次扫描不经过 awaitWriteFinish；仅目录恢复补扫显式等待稳定。
+            // A new watcher's initial scan does not go through awaitWriteFinish; only directory-recovery rescans explicitly wait for stability.
             waitForStableFile: (path) =>
               needsStability ? waitForStableFile(path, controller.signal) : Promise.resolve(true),
           });
@@ -125,7 +125,7 @@ export function createSubagentConfigScope<T>(options: {
             });
           }
         } finally {
-          // 某个候选读取失败时，同时取消该补扫中其他文件的稳定等待。
+          // When one candidate read fails, also cancel the other files' stability waits in this rescan.
           controller.abort();
           if (loadController === controller) loadController = undefined;
         }
@@ -216,8 +216,8 @@ export function createSubagentConfigScope<T>(options: {
         anchorStats = stats;
         const direct = anchor === root;
         const parent = dirname(anchor);
-        // 祖先枚举会返回磁盘真实大小写，字符串筛选会误丢 AGENTS。直接以配置路径监听，
-        // 缺失时的浅层父监听只负责发现目录，不比较目标分支名称，也不扫描其内容。
+        // Ancestor enumeration returns the disk's real casing, and string filtering would wrongly drop AGENTS. Watch the config path
+        // directly; when missing, the shallow parent watch only discovers the directory — it compares no target branch names and scans no contents.
         const current = watch(anchor, {
           persistent: true,
           ignoreInitial: true,
@@ -240,8 +240,8 @@ export function createSubagentConfigScope<T>(options: {
         current.on("raw", () => {
           if (!direct && !disposed && watcher === current) void checkWatch();
         });
-        // Windows 不报告空目录自身的移动；父目录只订阅原生结构事件，不枚举其内容。
-        // 与 Chokidar 的文件索引分离，避免 AGENTS 被误当作逻辑 agents 的删除事件。
+        // Windows does not report moves of an empty directory itself; the parent subscription takes only native structural events, never enumerating contents.
+        // Kept separate from Chokidar's file index so AGENTS is not mistaken for a deletion event of the logical agents.
         if (parent !== anchor) {
           const controller = new AbortController();
           parentWatch = controller;
@@ -276,7 +276,7 @@ export function createSubagentConfigScope<T>(options: {
           });
         });
         releaseReady = undefined;
-        // 补上检查目录与监听就绪之间的空窗，不依赖轮询或延时猜测。
+        // Close the gap between the directory check and the watcher becoming ready, without relying on polling or delay guesses.
         checkRequested = true;
       }
     })()
@@ -289,7 +289,7 @@ export function createSubagentConfigScope<T>(options: {
       })
       .finally(() => {
         binding = undefined;
-        // 无关父目录事件只检查位置，不能反复推迟已经排队的配置更新。
+        // Irrelevant parent-directory events only re-check the location; they must not repeatedly defer an already-queued config update.
         if (!timer) schedule();
         if (!disposed) options.onSettled();
       });

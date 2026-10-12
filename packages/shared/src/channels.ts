@@ -103,6 +103,8 @@ export const ServiceChannels = {
   Credential: "credential",
   /** Computer Use Helper macOS permission service */
   CuaPermission: "cua-permission",
+  /** Voice dictation: on-device model catalog, downloads, and transcription */
+  VoiceDictation: "voice-dictation",
   /** producer-owned PiP session presentation client */
   CuaPipSession: "cua-pip-session",
   /** Cross-window broadcast */

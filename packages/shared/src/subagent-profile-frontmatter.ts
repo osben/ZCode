@@ -74,7 +74,8 @@ function parseLooseFrontmatter(frontmatter: string): {
     }
 
     if (pendingListKey && /^\s+/u.test(rawLine)) {
-      // 块状 mapping 不是 server-name 列表，不能被空数组吞掉后扩大 child MCP scope。
+      // A block-style mapping is not a server-name list; it must not be swallowed as an empty
+      // array, which would widen the child MCP scope.
       invalidNestedListKeys.add(pendingListKey);
       pendingListKey = undefined;
       continue;

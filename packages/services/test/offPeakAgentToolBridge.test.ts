@@ -16,8 +16,8 @@ import { offPeakSelectionView } from "./fixtures/offPeakSelection.js";
 
 describe("off-peak tool policy（D49）", () => {
   it("OffPeakCreate 绝不混入 AUTOMATION_MUTATION_TOOL_NAMES（cron 轮放行是产品定案 D49-3）", () => {
-    // 最大照抄陷阱回归锁：任何一份 automation 常量副本混入 OffPeakCreate 都会让
-    // cron automation 执行轮误 deny 组合玩法。
+    // Regression lock against the worst copy-paste trap: any copy of the automation constants leaking into OffPeakCreate
+    // would make the cron automation execution round wrongly deny the combined play.
     expect(AUTOMATION_MUTATION_TOOL_NAMES).not.toContain("OffPeakCreate");
     expect(OFF_PEAK_MUTATION_TOOL_NAMES).toEqual(["OffPeakCreate"]);
     expect(mergeAutomationMutationToolDenylist(undefined)).not.toContain("OffPeakCreate");
@@ -68,7 +68,7 @@ describe("Off-Peak 工具按当前 Selection View 创建", () => {
       resolveOffPeakToolSelection(offPeakSelectionView(["alpha", "beta"]), providerId, "GLM-5.2")
         ?.options?.reasoningLevel,
     ).toBe("beta");
-    // values 是语义顺序的唯一权威，不能另写按名字 max/high 排序的第二套规则。
+    // values is the sole authority for semantic ordering; a second rule sorting by the names max/high must not be written.
     expect(
       resolveOffPeakToolSelection(
         offPeakSelectionView(["max", "custom-strongest"]),

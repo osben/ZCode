@@ -19,7 +19,7 @@ import {
 import { sha256ConversationShareJson } from "../src/conversation-share/conversationShareIntegrity.js";
 
 const SHA_256 = "a".repeat(64);
-/** continuation 的完整性由 client 复核，所以 fixture 必须带真哈希而不是占位串。 */
+/** Continuation integrity is re-checked by the client, so the fixture must carry a real hash instead of a placeholder string. */
 const EMPTY_PROJECTION_SHA_256 = sha256ConversationShareJson([]);
 
 function success(data: unknown): Response {
@@ -117,9 +117,10 @@ describe("ConversationShareHttpClient", () => {
     );
   });
 
-  // 线上故障：后端在 allowed_artifacts 里新增了一种客户端枚举没有的类型，
-  // 整个 capabilities 响应校验失败并抛 invalid_contract，把发布打死在 collecting 阶段
-  // ——连不含任何结果物的发布也一起挂掉。未知类型必须丢弃而不是拒绝整份响应。
+  // Production incident: the backend added a type to allowed_artifacts that the client enum did not have,
+  // the whole capabilities response failed validation and threw invalid_contract, killing publishing at
+  // the collecting stage — even publishes containing no artifacts at all went down. Unknown types must be
+  // dropped rather than rejecting the entire response.
   it("drops unknown allowed artifact types instead of rejecting capabilities", async () => {
     const request = vi.fn(async () =>
       success({
@@ -146,7 +147,7 @@ describe("ConversationShareHttpClient", () => {
   });
 
   it("still rejects capabilities whose allowed artifact shape changed", async () => {
-    // 形状变化（字段改名/缺字段）仍要响亮失败，否则客户端会误以为「什么都不允许」。
+    // Shape changes (renamed/missing fields) must still fail loudly, otherwise the client would wrongly believe "nothing is allowed".
     const request = vi.fn(async () =>
       success({
         schema_version: 1,
@@ -384,9 +385,10 @@ describe("ConversationShareHttpClient", () => {
     );
   });
 
-  // Bug 根因：LB/网关返回的 5xx HTML 错误页（502/504）此前因 body 无法按 JSON 解析被归类为
-  // invalid_contract（语义：服务端违反契约）。这是基础设施故障，归类 network 才能给出正确的
-  // 用户提示与排障方向；request id 仍需保留用于对账。
+  // Bug root cause: 5xx HTML error pages from the LB/gateway (502/504) were previously classified as
+  // invalid_contract (meaning: server violated the contract) because the body could not be parsed as
+  // JSON. This is an infrastructure failure; classifying it as network gives the right user guidance and
+  // troubleshooting direction, while the request id is still kept for reconciliation.
   it("502 HTML 错误页归类 network 且保留 request id", async () => {
     const request = vi.fn(
       async () =>
@@ -421,8 +423,8 @@ describe("ConversationShareHttpClient", () => {
     });
   });
 
-  // Retry-After 只接受 delay-seconds 和 IMF-fixdate；其余取值一律当作「后端没给建议」，
-  // 由调用方回落到自己的重试节奏，不能解析成 0 或 NaN 毫秒。
+  // Retry-After only accepts delay-seconds and IMF-fixdate; any other value is treated as "the backend
+  // gave no advice", letting the caller fall back to its own retry cadence — never parsed as 0 or NaN ms.
   it.each([
     { label: "a positive delay-seconds value", header: "7", expected: 7_000 },
     {
@@ -546,9 +548,10 @@ describe("ConversationShareHttpClient", () => {
   });
 
   it("confirm 用更长的单次超时，其它端点保持 30s", async () => {
-    // Bug 根因：服务端在 confirm 里同步跑安全检查，请求被挂住 50s+ 撞上 30s 上限被 abort，
-    // 发布在 checking 阶段以 network 失败。轮询超时管的是「服务端已返回 pending」之后的重试，
-    // 救不了单次请求本身。
+    // Bug root cause: the server runs safety checks synchronously inside confirm, requests hung 50s+ and
+    // hit the 30s cap and were aborted, so publishing failed at the checking stage with network. The
+    // polling timeout only governs retries after "the server has returned pending"; it cannot save the
+    // single request itself.
     const request = vi.fn(async (_url: string, init?: { timeoutMs?: number }) => {
       void init;
       return success({
@@ -564,7 +567,7 @@ describe("ConversationShareHttpClient", () => {
     expect((request.mock.calls[0]![1] as { timeoutMs: number }).timeoutMs).toBe(120_000);
 
     request.mockClear();
-    // 只关心传下去的 timeoutMs；响应体不符合 preview schema 会在请求之后才报错，不影响断言。
+    // Only the timeoutMs passed down matters here; a response body failing the preview schema errors after the request and does not affect the assertion.
     await client.getPreview("share-1").catch(() => undefined);
     expect((request.mock.calls[0]![1] as { timeoutMs: number }).timeoutMs).toBe(30_000);
   });
@@ -589,9 +592,10 @@ describe("ConversationShareHttpClient", () => {
     expect((request.mock.calls[0]![1] as { timeoutMs: number }).timeoutMs).toBe(5_000);
   });
 
-  // Bug 根因：uploadArtifact 此前沿用 30s 默认超时——confirm 已实测过单请求被挂 50s+（见上），
-  // 更大的 artifact 在慢速上行上必然超时且上传无自动重试。超时按体积动态放宽：
-  // 30s 基础余量 + 保底 128KB/s 上行，下限仍为全局默认超时。
+  // Bug root cause: uploadArtifact previously reused the 30s default timeout — confirm was already
+  // observed hanging a single request 50s+ (see above), so larger artifacts over a slow uplink would
+  // surely time out with no automatic retry. The timeout scales dynamically with size:
+  // 30s base margin + a guaranteed 128KB/s uplink, still floored at the global default timeout.
   it("uploadArtifact 按文件体积动态放宽超时", async () => {
     const request = vi.fn(async () =>
       success({
@@ -618,12 +622,12 @@ describe("ConversationShareHttpClient", () => {
       sha256: SHA_256,
     };
 
-    // 小文件：基础余量 + 1s，仍高于 30s 默认值。
+    // Small file: base margin + 1s, still above the 30s default.
     await client.uploadArtifact("preparation-1", descriptor, new Blob(["abc"]));
     expect((request.mock.calls[0]![1] as { timeoutMs: number }).timeoutMs).toBe(31_000);
 
     request.mockClear();
-    // 5 MiB：30s + 40s（5 MiB ÷ 128KB/s 向上取整）= 70s。
+    // 5 MiB: 30s + 40s (5 MiB ÷ 128KB/s, rounded up) = 70s.
     const fiveMiB = new Uint8Array(5 * 1024 * 1024);
     await client.uploadArtifact("preparation-1", descriptor, new Blob([fiveMiB]));
     expect((request.mock.calls[0]![1] as { timeoutMs: number }).timeoutMs).toBe(70_000);

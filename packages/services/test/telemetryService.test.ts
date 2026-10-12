@@ -11,7 +11,7 @@ const tempHomes: string[] = [];
 function makeTempHome(): string {
   const home = mkdtempSync(join(tmpdir(), "zcode-telemetry-home-"));
   tempHomes.push(home);
-  // Bugfix: paths.ts 会在模块加载时固定默认 dataBaseDir，测试隔离必须显式覆盖。
+  // Bugfix: paths.ts pins the default dataBaseDir at module load; test isolation must override it explicitly.
   setDataBaseDir(home);
   return home;
 }
@@ -85,7 +85,7 @@ describe("telemetryCore", () => {
         eventText: "",
         eventExtraDetail: {},
       });
-      // 重建 Core 模拟进程重新加载，共用持久化设备标识，不由 UI 的 getDeviceId 代替。
+      // Recreate Core to simulate a process reload, sharing the persisted device identifier; the UI's getDeviceId does not substitute for it.
       await createTelemetryCore(dependencies).reportEvent({
         context,
         elementName: "onboarding_end",
@@ -216,8 +216,8 @@ describe("telemetryCore", () => {
       app_version: "0.25.1",
       device_os_category: "macos",
       device_os_version: "13.7.8",
-      // device_mid 现已独立于 event_id 生成（见 ensureDeviceMid）；此处因注入的
-      // randomUUID 为常量函数，两次调用同值，故与 event_id 恰好相等。
+      // device_mid is now generated independently of event_id (see ensureDeviceMid); because the injected
+      // randomUUID is a constant function here, both calls return the same value, so it happens to equal event_id.
       device_mid: "452a978b-d926-4a65-9c07-b04344a307d0",
       mac_id: "",
       marketing_params: "{}",
@@ -439,7 +439,7 @@ describe("telemetryCore", () => {
       app_version: "0.25.1",
       device_os_category: "macos",
       device_os_version: "13.7.8",
-      // device_mid 独立生成，此处因常量 mock 与 event_id 恰好相等（见上方说明）
+      // device_mid is generated independently; it happens to equal event_id here because of the constant mock (see note above)
       device_mid: "custom-event-id",
       mac_id: "",
       marketing_params: "{}",
@@ -803,8 +803,9 @@ describe("telemetryCore", () => {
       screenResolution: "3024x1964",
     };
 
-    // 每次实例用自增序列，使 event_id 与 device_mid 取到不同值：device_mid 已与首条
-    // 事件的 eventId 解耦（独立 randomUUID），仅靠落盘复用保持跨重启稳定。
+    // Each instance uses an incrementing sequence so event_id and device_mid get different values:
+    // device_mid is decoupled from the first event's eventId (separate randomUUID) and stays stable
+    // across restarts only via persisted-state reuse.
     function sequentialUuid(prefix: string): () => string {
       let counter = 0;
       return () => `${prefix}-${(counter += 1)}`;
@@ -831,11 +832,11 @@ describe("telemetryCore", () => {
     const firstBody = JSON.parse(String(fetchMock.mock.calls[0]![1]!.body));
     const secondBody = JSON.parse(String(fetchMock.mock.calls[1]![1]!.body));
 
-    // 首次：eventId=first-1，device_mid 是另一次独立调用 first-2（已解耦，不再相等）
+    // First launch: eventId=first-1, device_mid comes from a separate call first-2 (decoupled, no longer equal)
     expect(firstBody.event_id).toBe("first-1");
     expect(firstBody.device_mid).toBe("first-2");
     expect(firstBody.device_mid).not.toBe(firstBody.event_id);
-    // 重启：eventId 重新生成 second-1，device_mid 复用落盘值 first-2（跨重启稳定）
+    // Restart: eventId regenerates as second-1; device_mid reuses the persisted value first-2 (stable across restarts)
     expect(secondBody.event_id).toBe("second-1");
     expect(secondBody.device_mid).toBe("first-2");
 
@@ -850,7 +851,7 @@ describe("telemetryCore", () => {
     const home = makeTempHome();
     process.env.HOME = home;
 
-    // 老版本把首条事件的 eventId 当作 device_mid 落盘；新逻辑必须原样复用，不得突变
+    // Older versions persisted the first event's eventId as device_mid; the new logic must reuse it as-is, not mutate it
     const stateDir = join(home, ".zcode", "v2");
     mkdirSync(stateDir, { recursive: true });
     writeFileSync(

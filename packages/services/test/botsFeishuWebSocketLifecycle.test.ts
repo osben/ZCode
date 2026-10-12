@@ -63,7 +63,7 @@ describe("Feishu WebSocket lifecycle", () => {
 
   afterEach(() => {
     try {
-      // 先检查再兜底清理，避免清空虚拟时钟掩盖连接轮询未释放的回归。
+      // Assert first, then fall back to cleanup; clearing the virtual clock must not mask a regression where connection polling was not released.
       expect(vi.getTimerCount()).toBe(0);
     } finally {
       vi.clearAllTimers();
@@ -115,8 +115,9 @@ describe("Feishu WebSocket lifecycle", () => {
       expect(wsState.constructorParams).not.toHaveProperty("onReady");
       expect(wsState.constructorParams).not.toHaveProperty("onError");
     } finally {
-      // 连接成功后轮询仍属于该 client；不关闭会在下一用例重置共享 mock 后
-      // 误判重连耗尽，额外调用 close 并留下未处理的 terminated rejection。
+      // After connecting, polling still belongs to this client; leaving it open would, after the next test
+      // resets the shared mocks, misjudge reconnect exhaustion, trigger an extra close call, and leave an
+      // unhandled terminated rejection.
       client.close();
     }
     await expect(client.terminated).resolves.toBeUndefined();

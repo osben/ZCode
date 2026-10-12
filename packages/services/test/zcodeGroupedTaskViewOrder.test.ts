@@ -7,7 +7,7 @@ import { setDataBaseDir } from "../src/paths.js";
 import { TaskIndexRepo } from "../src/session/taskIndexRepo.js";
 
 let tempDir: string;
-// 跟踪所有创建的 repo 用于清理
+// Tracks all created repos for cleanup
 const allRepos: TaskIndexRepo[] = [];
 
 beforeEach(() => {
@@ -16,7 +16,7 @@ beforeEach(() => {
 });
 
 afterEach(async () => {
-  // 先关闭所有 repo 确保 SQLite 连接释放，避免 Windows EPERM
+  // Close all repos first so the SQLite connections are released, avoiding Windows EPERM
   for (const repo of allRepos) {
     try {
       repo.close();
@@ -26,16 +26,18 @@ afterEach(async () => {
   }
   allRepos.length = 0;
   setDataBaseDir(null);
-  // Windows 需要等待一下让文件句柄释放
-  await new Promise((resolve) => setTimeout(resolve, 50));
+  if (process.platform === "win32") {
+    // Windows needs to wait for SQLite to release the file handle, avoiding EPERM during temp dir cleanup.
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
   try {
     rmSync(tempDir, { recursive: true, force: true });
   } catch {
-    // Windows 有时仍会有权限问题，忽略即可
+    // Windows can still hit permission issues here; safe to ignore
   }
 });
 
-// 辅助函数：创建并跟踪repo
+// Helper: create and track a repo
 function createTrackedRepo(): TaskIndexRepo {
   const repo = new TaskIndexRepo();
   allRepos.push(repo);
@@ -136,7 +138,7 @@ function getRepoDatabase(repo: TaskIndexRepo): {
 
 it("rolls back the task row when grouped root admission cannot write its order", async () => {
   const repo = createTrackedRepo();
-  // 先初始化 schema，再用 trigger 模拟 grouped order 写失败，证明 task row 不会部分提交。
+  // Initialize the schema first, then simulate a grouped-order write failure with a trigger, proving the task row is not partially committed.
   await repo.queryGroupedTaskView({ workspaceScopes: [{ workspacePath: "/repo" }] });
   const database = getRepoDatabase(repo);
   database.exec(`
@@ -194,7 +196,7 @@ it.each([false, true])(
     ) VALUES ('task', ?, ?, ?, ?)`,
     );
     insertOrder.run(JSON.stringify(["/repo", task.taskId]), 2000, 100, 100);
-    // 早期 NUL node_key 经 node:sqlite 读取后只剩 workspace key，也一并验证清理。
+    // Early NUL node_key values retain only the workspace key after node:sqlite reads; cleanup is verified for this too.
     insertOrder.run("/repo", 3000, 100, 100);
 
     await (guarded
@@ -270,17 +272,18 @@ it.each([false, true])(
           }),
     ).rejects.toThrow("reject deleted task cleanup");
 
-  expect(
-    database
-      .prepare("SELECT deleted FROM tasks WHERE workspace_key = ? AND task_id = ?")
-      .get("/repo", task.taskId),
-  ).toEqual({ deleted: 0 });
-  expect(
-    database
-      .prepare("SELECT task_id FROM task_group_members WHERE workspace_key = ? AND task_id = ?")
-      .get("/repo", task.taskId),
-  ).toEqual({ task_id: task.taskId });
-});
+    expect(
+      database
+        .prepare("SELECT deleted FROM tasks WHERE workspace_key = ? AND task_id = ?")
+        .get("/repo", task.taskId),
+    ).toEqual({ deleted: 0 });
+    expect(
+      database
+        .prepare("SELECT task_id FROM task_group_members WHERE workspace_key = ? AND task_id = ?")
+        .get("/repo", task.taskId),
+    ).toEqual({ task_id: task.taskId });
+  },
+);
 
 it("cleans historical deleted task grouping references when the index reopens", async () => {
   const repo = createTrackedRepo();

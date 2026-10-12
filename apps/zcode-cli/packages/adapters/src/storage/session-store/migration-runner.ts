@@ -173,7 +173,13 @@ function* migrationSteps(
         const checksum = migrationChecksum(migration.sql);
         const applied = readAppliedMigration(db, migration.id);
         if (applied) {
-          ensureMigrationChecksum(migration.id, applied.checksum, checksum, dbPath);
+          ensureMigrationChecksum(
+            migration.id,
+            applied.checksum,
+            checksum,
+            dbPath,
+            migration.acceptedHistoricalChecksums,
+          );
           completed++;
           continue;
         }
@@ -302,8 +308,9 @@ function ensureMigrationChecksum(
   applied: string,
   current: string,
   dbPath: string,
+  acceptedHistoricalChecksums: readonly string[] = [],
 ): void {
-  if (applied === current) return;
+  if (applied === current || acceptedHistoricalChecksums.includes(applied)) return;
   throw new SqliteSessionMigrationError(
     `SQLite migration checksum mismatch for ${id}. Historical migrations are immutable; add a new migration instead.`,
     {
@@ -323,7 +330,13 @@ function inspectMigrationKind(db: DatabaseSync, dbPath: string): DatabaseMigrati
   for (const migration of SQLITE_MIGRATIONS) {
     const row = hasLedger ? readAppliedMigration(db, migration.id) : undefined;
     if (row)
-      ensureMigrationChecksum(migration.id, row.checksum, migrationChecksum(migration.sql), dbPath);
+      ensureMigrationChecksum(
+        migration.id,
+        row.checksum,
+        migrationChecksum(migration.sql),
+        dbPath,
+        migration.acceptedHistoricalChecksums,
+      );
     else pending = true;
   }
   if (!pending) return "none";

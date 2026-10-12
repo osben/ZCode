@@ -4,27 +4,39 @@ import { WebSocket } from "ws";
 import { createRelayServer } from "../src/adapters/nodeServer.js";
 
 const cleanup: Array<() => Promise<void>> = [];
-afterEach(async () => { for (const close of cleanup.splice(0).reverse()) await close(); });
+afterEach(async () => {
+  for (const close of cleanup.splice(0).reverse()) await close();
+});
 const meta = { platform: "fixture", version: "fixture", name: "fixture" };
 
 async function connect(url: string) {
   const socket = new WebSocket(url);
   const queued: any[] = [];
   const waiters: Array<(value: any) => void> = [];
-  socket.on("message", raw => {
+  socket.on("message", (raw) => {
     const value = JSON.parse(raw.toString());
     const waiter = waiters.shift();
-    if (waiter) waiter(value); else queued.push(value);
+    if (waiter) waiter(value);
+    else queued.push(value);
   });
-  await new Promise<void>((resolve, reject) => { socket.once("open", resolve); socket.once("error", reject); });
+  await new Promise<void>((resolve, reject) => {
+    socket.once("open", resolve);
+    socket.once("error", reject);
+  });
   cleanup.push(async () => {
     if (socket.readyState === WebSocket.CLOSED) return;
-    await new Promise<void>(resolve => { socket.once("close", resolve); socket.close(); });
+    await new Promise<void>((resolve) => {
+      socket.once("close", resolve);
+      socket.close();
+    });
   });
   return {
     socket,
     send: (value: unknown) => socket.send(JSON.stringify(value)),
-    next: () => queued.length ? Promise.resolve(queued.shift()) : new Promise<any>(resolve => waiters.push(resolve)),
+    next: () =>
+      queued.length
+        ? Promise.resolve(queued.shift())
+        : new Promise<any>((resolve) => waiters.push(resolve)),
   };
 }
 
@@ -39,7 +51,7 @@ async function fixtureServer(overrides: Record<string, unknown> = {}) {
         records.set(identity, record);
         return record;
       },
-      get: async (sid: string) => [...records.values()].find(record => record.sid === sid),
+      get: async (sid: string) => [...records.values()].find((record) => record.sid === sid),
       close: async () => {},
     },
     ...overrides,
@@ -53,24 +65,38 @@ async function registered(url: string, key = "fixture-key") {
   device.send({ type: "device_register_init", device_mid: "shared-machine", pass_hash: key, meta });
   const ack = await device.next();
   expect(ack.type).toBe("device_register_ack");
-  expect(await authenticate(device, ack.device_sid, key, "device")).toMatchObject({ pair_status: "waiting" });
+  expect(await authenticate(device, ack.device_sid, key, "device")).toMatchObject({
+    pair_status: "waiting",
+  });
   return { device, sid: ack.device_sid as string, key };
 }
 
 async function paired(url: string, key = "fixture-key") {
   const target = await registered(url, key);
   const terminal = await connect(url);
-  expect(await authenticate(terminal, target.sid, key, "terminal")).toMatchObject({ pair_status: "matched" });
+  expect(await authenticate(terminal, target.sid, key, "terminal")).toMatchObject({
+    pair_status: "matched",
+  });
   await target.device.next();
   return { ...target, terminal };
 }
 
-async function authenticate(peer: Awaited<ReturnType<typeof connect>>, sid: string, key: string, role: "device" | "terminal") {
+async function authenticate(
+  peer: Awaited<ReturnType<typeof connect>>,
+  sid: string,
+  key: string,
+  role: "device" | "terminal",
+) {
   peer.send({ type: "auth_init", role, device_sid: sid, meta });
   const challenge = await peer.next();
   expect(challenge.type).toBe("auth_challenge");
-  peer.send({ type: "auth_response", device_sid: sid,
-    proof: createHmac("sha256", key).update(`${challenge.nonce}|${role}|${sid}`).digest("base64url") });
+  peer.send({
+    type: "auth_response",
+    device_sid: sid,
+    proof: createHmac("sha256", key)
+      .update(`${challenge.nonce}|${role}|${sid}`)
+      .digest("base64url"),
+  });
   return peer.next();
 }
 
@@ -83,7 +109,10 @@ describe("relay through real WebSocket connections", () => {
     a.terminal.send({ type: "data", payload: { window: "a" } });
     expect(await a.device.next()).toEqual({ type: "data", payload: { window: "a" } });
     b.device.send({ type: "pair_status_query", device_sid: b.sid });
-    expect(await b.device.next()).toMatchObject({ type: "pair_status_ack", pair_status: "matched" });
+    expect(await b.device.next()).toMatchObject({
+      type: "pair_status_ack",
+      pair_status: "matched",
+    });
     b.terminal.send({ type: "data", payload: { window: "b" } });
     expect(await b.device.next()).toEqual({ type: "data", payload: { window: "b" } });
   });
@@ -92,11 +121,13 @@ describe("relay through real WebSocket connections", () => {
     const server = await fixtureServer();
     const target = await paired(server.url);
     const replacement = await connect(server.url);
-    expect(await authenticate(replacement, target.sid, target.key, "terminal")).toMatchObject({ pair_status: "matched" });
+    expect(await authenticate(replacement, target.sid, target.key, "terminal")).toMatchObject({
+      pair_status: "matched",
+    });
     expect(await target.terminal.next()).toMatchObject({ type: "error", code: "KICKED" });
     await target.device.next();
     if (target.terminal.socket.readyState !== WebSocket.CLOSED) {
-      await new Promise<void>(resolve => target.terminal.socket.once("close", resolve));
+      await new Promise<void>((resolve) => target.terminal.socket.once("close", resolve));
     }
     replacement.send({ type: "data", payload: { replacement: true } });
     expect(await target.device.next()).toEqual({ type: "data", payload: { replacement: true } });
@@ -106,7 +137,9 @@ describe("relay through real WebSocket connections", () => {
     const server = await fixtureServer();
     const target = await paired(server.url);
     const attacker = await connect(server.url);
-    expect(await authenticate(attacker, target.sid, "wrong-key", "terminal")).toMatchObject({ code: "AUTH_FAILED" });
+    expect(await authenticate(attacker, target.sid, "wrong-key", "terminal")).toMatchObject({
+      code: "AUTH_FAILED",
+    });
     target.terminal.send({ type: "data", payload: "still-active" });
     expect(await target.device.next()).toEqual({ type: "data", payload: "still-active" });
   });
@@ -115,7 +148,9 @@ describe("relay through real WebSocket connections", () => {
     const server = await fixtureServer();
     const target = await paired(server.url);
     const duplicate = await connect(server.url);
-    expect(await authenticate(duplicate, target.sid, target.key, "device")).toMatchObject({ code: "KICKED" });
+    expect(await authenticate(duplicate, target.sid, target.key, "device")).toMatchObject({
+      code: "KICKED",
+    });
     target.device.send({ type: "data", payload: "original-desktop" });
     expect(await target.terminal.next()).toEqual({ type: "data", payload: "original-desktop" });
   });
@@ -131,8 +166,13 @@ describe("relay through real WebSocket connections", () => {
     terminal.send({ type: "auth_init", device_sid: target.sid, role: "terminal", meta });
     const challenge = await terminal.next();
     time += 10_000;
-    terminal.send({ type: "auth_response", device_sid: target.sid,
-      proof: createHmac("sha256", target.key).update(`${challenge.nonce}|terminal|${target.sid}`).digest("base64url") });
+    terminal.send({
+      type: "auth_response",
+      device_sid: target.sid,
+      proof: createHmac("sha256", target.key)
+        .update(`${challenge.nonce}|terminal|${target.sid}`)
+        .digest("base64url"),
+    });
     expect(await terminal.next()).toMatchObject({ code: "AUTH_FAILED" });
   });
 
@@ -143,28 +183,43 @@ describe("relay through real WebSocket connections", () => {
     const payload = "x".repeat(1024 * 1024 - overhead);
     target.terminal.send({ type: "data", payload });
     expect(await target.device.next()).toEqual({ type: "data", payload });
-    const closed = new Promise<void>(resolve => target.terminal.socket.once("close", resolve));
+    const closed = new Promise<void>((resolve) => target.terminal.socket.once("close", resolve));
     target.terminal.send({ type: "data", payload: payload + "x" });
     await closed;
-    expect(await target.device.next()).toMatchObject({ type: "pair_status_ack", pair_status: "waiting" });
+    expect(await target.device.next()).toMatchObject({
+      type: "pair_status_ack",
+      pair_status: "waiting",
+    });
   });
 
   it("bounds outbound pressure without inventing a data acknowledgement", async () => {
     const server = await fixtureServer({ maxTotalBufferedBytes: 1024 });
     const target = await paired(server.url);
-    const closed = new Promise<void>(resolve => target.device.socket.once("close", resolve));
+    const closed = new Promise<void>((resolve) => target.device.socket.once("close", resolve));
     target.terminal.send({ type: "data", payload: "x".repeat(2000) });
     await closed;
-    expect(await target.terminal.next()).toMatchObject({ type: "pair_status_ack", pair_status: "waiting" });
+    expect(await target.terminal.next()).toMatchObject({
+      type: "pair_status_ack",
+      pair_status: "waiting",
+    });
   });
 
   it("does not let forged proxy headers bypass registration admission", async () => {
     const server = await fixtureServer({ registrationsPerMinute: 1 });
     await registered(server.url);
     const second = new WebSocket(server.url, { headers: { "X-Forwarded-For": "203.0.113.2" } });
-    const reply = new Promise<any>(resolve => second.once("message", raw => resolve(JSON.parse(raw.toString()))));
-    await new Promise<void>(resolve => second.once("open", resolve));
-    second.send(JSON.stringify({ type: "device_register_init", device_mid: "other", pass_hash: "other-key", meta }));
+    const reply = new Promise<any>((resolve) =>
+      second.once("message", (raw) => resolve(JSON.parse(raw.toString()))),
+    );
+    await new Promise<void>((resolve) => second.once("open", resolve));
+    second.send(
+      JSON.stringify({
+        type: "device_register_init",
+        device_mid: "other",
+        pass_hash: "other-key",
+        meta,
+      }),
+    );
     expect(await reply).toMatchObject({ type: "error", code: "INTERNAL" });
     second.terminate();
   });
@@ -185,14 +240,21 @@ describe("relay through real WebSocket connections", () => {
     });
     cleanup.push(server.close);
     const device = await connect(server.url);
-    device.send({ type: "device_register_init", device_mid: "machine-1", pass_hash: "fixture-key", meta });
+    device.send({
+      type: "device_register_init",
+      device_mid: "machine-1",
+      pass_hash: "fixture-key",
+      meta,
+    });
     const registered = await device.next();
     expect(registered).toMatchObject({ type: "device_register_ack", device_sid: "fixture-device" });
-    expect(await authenticate(device, registered.device_sid, "fixture-key", "device"))
-      .toMatchObject({ type: "auth_ack", pair_status: "waiting" });
+    expect(
+      await authenticate(device, registered.device_sid, "fixture-key", "device"),
+    ).toMatchObject({ type: "auth_ack", pair_status: "waiting" });
     const terminal = await connect(server.url);
-    expect(await authenticate(terminal, registered.device_sid, "fixture-key", "terminal"))
-      .toMatchObject({ type: "auth_ack", pair_status: "matched" });
+    expect(
+      await authenticate(terminal, registered.device_sid, "fixture-key", "terminal"),
+    ).toMatchObject({ type: "auth_ack", pair_status: "matched" });
     expect(await device.next()).toMatchObject({ type: "pair_status_ack", pair_status: "matched" });
     const payload = { arbitrary: ["opaque", 42], zcode_type: "future-payload" };
     terminal.send({ type: "data", payload });

@@ -249,6 +249,21 @@ export interface ResourceUsageSnapshot {
   processes: ResourceUsageProcess[];
 }
 
+export interface VoiceDictationSettings {
+  /** Selected voice model id (see the model catalog in services/voice-dictation); null/absent means nothing selected. */
+  modelId?: string | null;
+  /** Microphone deviceId; null/absent uses the system default input. */
+  microphoneDeviceId?: string | null;
+  /** Transcription language: `auto` means the model detects it, otherwise a language code (e.g. `en`, `ru`). */
+  language?: string;
+  /** true: hold the shortcut to record, release to transcribe; false: press once to start, press again to stop. */
+  pushToTalk?: boolean;
+  /** Minutes an idle model waits in memory before being unloaded automatically. */
+  idleUnloadMinutes?: VoiceModelIdleUnloadMinutes;
+}
+
+export type VoiceModelIdleUnloadMinutes = 1 | 5 | 10 | 15 | 30;
+
 export interface AppSettings {
   /** The current App/Host no longer shows pre-submission trial-plan recommendations; this does not change model selection at any entry point. */
   startPlanRecommendationDismissed?: boolean;
@@ -260,6 +275,8 @@ export interface AppSettings {
    * an override replaces the entire group (for example, overriding openCommandCenter disables both default bindings).
    */
   shortcutBindings?: Record<string, string[]>;
+  /** Voice dictation (on-device offline transcription) preferences; model files and the transcription engine are owned by services/voice-dictation. */
+  voiceDictation?: VoiceDictationSettings;
   /** UI language preference; locale stores the resolved language for non-browser contexts such as main/menu/remote control. */
   localePreference?: LocalePreference;
   /** Whether to inherit the system terminal profile, shell environment, and font where possible. */

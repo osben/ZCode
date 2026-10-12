@@ -22,7 +22,7 @@ describe("DEFAULT_PLUGIN_MARKETPLACES", () => {
   it("classifies only the ZCode-operated channels as public store marketplaces", () => {
     expect(isPublicStoreMarketplaceId("zcode-plugins-official")).toBe(true);
     expect(isPublicStoreMarketplaceId("zcode-plugins")).toBe(false);
-    // Claude 官方市场受信但不属于「公开」分段（归个人），见 CONTEXT.md 术语表。
+    // The Claude official marketplace is trusted but not in the "public" segment (it belongs to personal), see the CONTEXT.md glossary.
     expect(isPublicStoreMarketplaceId("claude-plugins-official")).toBe(false);
     expect(isPublicStoreMarketplaceId("inline")).toBe(false);
   });

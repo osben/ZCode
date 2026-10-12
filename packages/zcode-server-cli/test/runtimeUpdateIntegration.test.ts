@@ -19,7 +19,7 @@ async function waitForReady(
       };
       if (status.state === "ready") return status;
     } catch {
-      // Supervisor/Core 仍在真实启动，继续轮询 control endpoint。
+      // Supervisor/Core is still genuinely starting; keep polling the control endpoint.
     }
     await new Promise<void>((resolve) => setTimeout(resolve, 25));
   }
@@ -115,15 +115,15 @@ describe.skipIf(process.platform === "win32")("runtime update integration", () =
         try {
           process.kill(pid, "SIGKILL");
         } catch {
-          /* child 已退出 */
+          /* child already exited */
         }
       }
     }
   }, 20_000);
 
   it("launches real old/new Core processes with release-scoped Agent wiring", async () => {
-    // POSIX Unix socket 有路径长度限制，macOS 的 tmpdir() 可能位于很长的 /var/folders 路径；
-    // 保持短路径，Windows 则使用其可移植的系统临时目录。
+    // POSIX Unix sockets have a path length limit, and macOS tmpdir() may sit under a long /var/folders path;
+    // keep the path short. Windows uses its portable system temp directory.
     const root = await mkdtemp(
       join(process.platform === "win32" ? tmpdir() : "/tmp", "zcode-runtime-"),
     );
@@ -177,8 +177,8 @@ describe.skipIf(process.platform === "win32")("runtime update integration", () =
         state: "ready",
         serviceRegistered: false,
       });
-      // control socket 会比外层 serve 命令返回稍早；先等 CLI 完成自己的 ready barrier，
-      // 避免测试立即 update/stop 让启动调用方错过短暂的 ready 状态。
+      // The control socket becomes ready slightly before the outer serve command returns; wait for the CLI's own
+      // ready barrier so the test does not immediately update/stop and make the launching caller miss the brief ready state.
       await waitForCondition(() => diagnostics.includes('"state":"ready"'));
       await releases.writePending({ version: "new", releaseDir: join(layout.releasesDir, "new") });
       await expect(

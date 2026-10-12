@@ -1,5 +1,5 @@
-// M5 ②：grouped 原始结构读取（queryGroupedTaskViewStructure）——
-// 不 join tasks 表、无 normalize 写回；客户端与 sessions-index join 的服务端配套面。
+// M5 2: grouped raw structure read (queryGroupedTaskViewStructure) —
+// no tasks-table join, no normalize write-back; the server-side companion surface for clients joining with sessions-index.
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -26,11 +26,14 @@ afterEach(async () => {
   }
   allRepos.length = 0;
   setDataBaseDir(null);
-  await new Promise((resolve) => setTimeout(resolve, 50));
+  if (process.platform === "win32") {
+    // Windows needs to wait for SQLite to release the file handle, avoiding EPERM during temp dir cleanup.
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
   try {
     rmSync(tempDir, { recursive: true, force: true });
   } catch {
-    // Windows 偶发权限问题，忽略
+    // Occasional Windows permission issue; safe to ignore
   }
 });
 
@@ -104,7 +107,7 @@ describe("queryGroupedTaskViewStructure", () => {
     const second = await repo.queryGroupedTaskViewStructure({
       workspaceScopes: [{ workspacePath: "/repo" }],
     });
-    // 未经过 queryGroupedTaskView 的懒补序，顶层排序表保持为空（结构读取不落库）。
+    // No lazy backfill via queryGroupedTaskView, so the top-level order table stays empty (structure reads do not persist).
     expect(first.topLevelOrders).toEqual([]);
     expect(second).toEqual(first);
   });

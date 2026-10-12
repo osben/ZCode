@@ -8,21 +8,29 @@ export function readRelayConfig(env: Record<string, string | undefined>) {
   };
   const integer = (name: string, fallback: number) => {
     const value = env[name] === undefined ? fallback : Number(env[name]);
-    if (!Number.isSafeInteger(value) || value < 1) throw new Error(`Invalid relay configuration: ${name}`);
+    if (!Number.isSafeInteger(value) || value < 1)
+      throw new Error(`Invalid relay configuration: ${name}`);
     return value;
   };
-  const list = (name: string) => (env[name] ?? "").split(",").map(value => value.trim()).filter(Boolean);
+  const list = (name: string) =>
+    (env[name] ?? "")
+      .split(",")
+      .map((value) => value.trim())
+      .filter(Boolean);
   const host = env.ZCODE_RELAY_HOST?.trim() || "127.0.0.1";
   const port = integer("ZCODE_RELAY_PORT", 3031);
   if (port > 65535) throw new Error("Invalid relay port.");
   const origins = list("ZCODE_RELAY_ALLOWED_ORIGINS");
   for (const origin of origins) {
     const parsed = new URL(origin);
-    if (!['http:', 'https:'].includes(parsed.protocol) || parsed.origin !== origin) throw new Error("Invalid relay Web origin.");
+    if (!["http:", "https:"].includes(parsed.protocol) || parsed.origin !== origin)
+      throw new Error("Invalid relay Web origin.");
   }
-  if (host !== "127.0.0.1" && host !== "::1" && origins.length === 0) throw new Error("Public relay requires explicit Web origins.");
+  if (host !== "127.0.0.1" && host !== "::1" && origins.length === 0)
+    throw new Error("Public relay requires explicit Web origins.");
   const server: Omit<RelayServerOptions, "store"> = {
-    host, port,
+    host,
+    port,
     allowedOrigins: origins,
     trustedProxies: list("ZCODE_RELAY_TRUSTED_PROXIES"),
     maxConnections: integer("ZCODE_RELAY_MAX_CONNECTIONS", 2000),

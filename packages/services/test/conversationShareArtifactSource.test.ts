@@ -10,7 +10,7 @@ import {
 
 const temporaryDirectories: string[] = [];
 
-// Windows 无开发者模式时创建 symlink 会 EPERM；symlink 边界断言按能力探测跳过
+// Creating a symlink fails with EPERM on Windows without developer mode; symlink boundary assertions are skipped via capability probing.
 const canCreateSymlink = await (async () => {
   const probeRoot = await mkdtemp(join(tmpdir(), "zcode-symlink-probe-"));
   try {
@@ -78,7 +78,7 @@ describe("conversation share local artifact source", () => {
     temporaryDirectories.push(root);
     const source = createLocalConversationShareArtifactSource();
 
-    // 正文里的模板占位符会走到这里；调用方靠 reasonCode 决定跳过而不是打死整次发布。
+    // Template placeholders in the body reach here; the caller decides to skip via reasonCode instead of killing the whole publish.
     await expect(
       source.read({ workspacePath: root, ref: join(root, "报告.pdf"), maxBytes: 100 }),
     ).rejects.toMatchObject({

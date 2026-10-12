@@ -35,8 +35,8 @@ describe("Todo 72 已发布 config.json 首次升级", () => {
     const configDir = getAppConfigDir();
     await mkdir(configDir, { recursive: true });
     const customId = "00000000-0000-4000-8000-000000000001";
-    // 脱敏复刻同事附件：provider map、source=custom、Key 在 options，模型配置为 object。
-    // 不拷贝附件 Token、账号数据或私人 Endpoint。
+    // Sanitized reproduction of a colleague's attachment: provider map, source=custom, key in options, model config as an object.
+    // Does not copy the attachment's tokens, account data, or private endpoints.
     const ids = [
       "builtin:bigmodel",
       "builtin:zai",
@@ -111,7 +111,7 @@ describe("Todo 72 已发布 config.json 首次升级", () => {
         expect(provider.config.api?.baseUrl).toBe(
           builtin.providerTemplates?.get(id)?.config.api?.baseUrl,
         );
-        // Todo112 规范了当前模板的官方 ID；旧配置导入仍保留 Key 与旧文件，不沿用旧名单大小写。
+        // Todo112 standardized the official IDs of the current templates; legacy config import keeps the key and the old file and does not adopt the old list's casing.
         expect(provider.models.some((model) => model.modelId === "GLM-5.3")).toBe(true);
         expect(provider.models.find((model) => model.modelId === "GLM-5.3")?.executable).toBe(true);
         expect(personal.providers.get(id)?.toJSON()).toEqual({

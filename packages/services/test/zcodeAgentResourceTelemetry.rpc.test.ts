@@ -20,7 +20,7 @@ describe("ZCode Agent resource telemetry RPC", () => {
     const service = ProxyChannel.toService<IZCodeAgentService>(
       client.getChannel(IZCodeAgentService.channelName),
     );
-    // lane 与 heap 等新字段必须原样穿过 RPC：远端 workspace 的样本靠这条链路回到 main。
+    // New fields like lane and heap must pass through the RPC unchanged: remote workspace samples rely on this link to reach main.
     const sample: AgentLaneResourceSample = {
       arch: "x64",
       cpuCores: 2,

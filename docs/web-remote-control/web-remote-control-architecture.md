@@ -55,7 +55,7 @@
 | 输入 admission、队列与跨端命令路由 | [任务命令队列](../web-remote-control-task-command-queue.md)          |
 | V4 静态资源发布                    | [V4 部署](./remote-v4-static-deployment.md)                          |
 | 独立 OAuth 登录入口                | [Web Remote Login](./web-remote-login.md)                            |
-| 自托管公开 relay（设计，尚未实现） | [Self-hosted relay design](../../specs/self-hosted-remote-relay.md) |
+| 自托管公开 relay（设计，尚未实现） | [Self-hosted relay design](../../specs/self-hosted-remote-relay.md)  |
 
 下文描述当前技术实现；[最小跑通规划](./web-remote-control-minimal-plan.md)仅作为历史记录，
 其中的仓库内 relay、专用 mobile host 和旧联调命令不适用于当前链路。

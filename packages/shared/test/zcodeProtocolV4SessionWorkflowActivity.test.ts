@@ -1,6 +1,6 @@
-// sessions-index 的工作流运行摘要（sessions-index-workflow-activity.ts）：
-// 从 workflowRuns + backgroundWorks 派生侧栏运行行要画的有界数据（docs/dynamic-workflow/presentation.md
-// 「The sidebar run line」）。纯函数、无时钟。
+// Workflow run summary for sessions-index (sessions-index-workflow-activity.ts):
+// derives the bounded data for the sidebar run line from workflowRuns + backgroundWorks (docs/dynamic-workflow/presentation.md
+// "The sidebar run line"). Pure function, no clock.
 import { describe, expect, it } from "vitest";
 import {
   SESSION_WORKFLOW_ACTIVITY_MAX_RUNS,
@@ -150,7 +150,7 @@ describe("deriveSessionWorkflowActivity", () => {
         runs: [
           run({
             runId: "r1",
-            // 声明表缺席（旧 CLI / 无标记脚本）时下标无处可指，整个键不带。
+            // When the declaration table is absent (old CLI / unmarked script) the indexes have nowhere to point, so the whole key is omitted.
             phaseAlongside: [[1], [0]],
             phases: [{ name: "plan", rounds: 1 }],
             currentPhase: "verify",
@@ -165,8 +165,8 @@ describe("deriveSessionWorkflowActivity", () => {
     ]);
   });
 
-  // 并行阶段的灯（设计稿 Surfaces.png：A 与 B 同时在烧）：控制流只记得最后一个标记，
-  // 而 A 的子代理在 B 的标记之后仍在干活——成员节点比控制流更早说话，与卡片的规则 1 同构。
+  // Lamps for parallel phases (design Surfaces.png: A and B burning at the same time): control flow only remembers the
+  // last marker, while A's subagents may still be working after B's marker — member nodes speak earlier than control flow, isomorphic to the card's rule 1.
   function node(overrides: Partial<WorkflowRunNode> & { siteId: string }): WorkflowRunNode {
     return { ordinal: 1, phase: "executing", ...overrides };
   }
@@ -193,13 +193,13 @@ describe("deriveSessionWorkflowActivity", () => {
         backgroundWorks: [],
       })?.runs[0]?.phases.map((phase) => phase.status);
 
-    // A 已进入、B 是当前站，A 里有一个节点还在 executing → 两站都烧。
+    // A entered, B is the current site, and a node inside A is still executing → both sites burn.
     expect(phases([node({ siteId: "ask#1", phaseName: "A" })])).toEqual([
       "running",
       "running",
       "pending",
     ]);
-    // repairing / nudged 同算在跑；dispatched / waiting 不算（模型请求还没发出去）。
+    // repairing / nudged also count as running; dispatched / waiting do not (the model request has not been sent yet).
     expect(phases([node({ siteId: "ask#1", phaseName: "A", phase: "repairing" })])?.[0]).toBe(
       "running",
     );
@@ -209,17 +209,17 @@ describe("deriveSessionWorkflowActivity", () => {
     expect(phases([node({ siteId: "ask#1", phaseName: "A", phase: "dispatched" })])?.[0]).toBe(
       "done",
     );
-    // A 的节点全结算了 → A 回到 done（节点只会说「还在跑」，不改写其他三态）。
+    // All of A's nodes settled → A returns to done (nodes can only say "still running"; they never rewrite the other three states).
     expect(
       phases([node({ siteId: "ask#1", phaseName: "A", phase: "settled", outcome: "ok" })]),
     ).toEqual(["done", "running", "pending"]);
-    // 失败的节点同样不改灯：侧栏的失败词留给控制流。
+    // A failed node likewise does not flip lamps: failure wording in the sidebar is left to control flow.
     expect(
       phases([node({ siteId: "ask#1", phaseName: "A", phase: "settled", outcome: "failed" })]),
     ).toEqual(["done", "running", "pending"]);
-    // 没有出生戳的节点（旧 run / 首个标记之前出生）什么都点不亮。
+    // Nodes without a birth stamp (old runs / born before the first marker) light up nothing.
     expect(phases([node({ siteId: "ask#1" })])).toEqual(["done", "running", "pending"]);
-    // 指向未列出站的戳也点不亮。
+    // Stamps pointing at unlisted sites also light up nothing.
     expect(phases([node({ siteId: "ask#1", phaseName: "Z" })])).toEqual([
       "done",
       "running",
@@ -239,7 +239,7 @@ describe("deriveSessionWorkflowActivity", () => {
             phaseNames: ["A", "B"],
             phases: [{ name: "A", rounds: 1 }],
             currentPhase: "B",
-            // settled 事件没来得及落下：停下的 run 里没有人还在干活。
+            // The settled event never landed: nobody is still working inside a stopped run.
             nodes: [{ siteId: "ask#1", ordinal: 1, phase: "executing", phaseName: "A" }],
           }),
         ],

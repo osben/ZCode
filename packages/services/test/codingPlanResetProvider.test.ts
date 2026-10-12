@@ -191,7 +191,7 @@ describe("BigModelUsageQuotaProvider coding plan reset", () => {
     expect(String(url)).toBe("https://zcode.z.ai/api/v1/coding-plan/reset/status");
     const headers = new Headers(init?.headers);
     expect(headers.get("Authorization")).toBe("Bearer zcode-jwt");
-    // 后端契约:X-Bigmodel-Authorization 传 MaaS 登录态 JWT,不是 Coding Plan API key。
+    // Backend contract: X-Bigmodel-Authorization carries the MaaS login-session JWT, not the Coding Plan API key.
     expect(headers.get("X-Bigmodel-Authorization")).toBe("maas-login-jwt");
     expect(headers.get("Bigmodel-Target-Type")).toBe("PERSONAL");
     expect(headers.has("Bigmodel-Organization")).toBe(false);
@@ -225,7 +225,7 @@ describe("BigModelUsageQuotaProvider coding plan reset", () => {
       projectId: "project-team-a",
     });
 
-    // 团队凭证同样是 MaaS JWT + org/project header,不得再请求控制台复制项目 API Key。
+    // Team credentials are also a MaaS JWT plus org/project headers; no console request may be made to copy a project API key.
     expect(request).toHaveBeenCalledTimes(1);
     const [url, init] = request.mock.calls[0] ?? [];
     expect(String(url)).toBe("https://zcode.z.ai/api/v1/coding-plan/reset/status");
@@ -376,7 +376,7 @@ describe("BigModelUsageQuotaProvider coding plan reset", () => {
   });
 
   it("opportunity HTTP 429 限流映射为稳定的 throttled 错误码", async () => {
-    // 后端「请求过快或发卡锁被占用」直接回裸 429，不带 3301 信封；客户端要据此写兜底冷却。
+    // The backend returns a bare 429 for "requests too fast or card-issuing lock held", without the 3301 envelope; the client must implement fallback cooldown based on this.
     const throttledProvider = createProviderForTest({
       apiClient: {
         request: vi.fn(async () => jsonResponse({ message: "请求过快或发卡锁被占用" }, 429)),
@@ -393,7 +393,7 @@ describe("BigModelUsageQuotaProvider coding plan reset", () => {
       }),
     ).rejects.toThrow("coding_plan_reset_opportunity_throttled");
 
-    // 其他端点的 429 不做该映射，保持原始 ApiError 语义。
+    // 429s from other endpoints are not mapped, preserving the original ApiError semantics.
     const statusProvider = createProviderForTest({
       apiClient: {
         request: vi.fn(async () => jsonResponse({ message: "too fast" }, 429)),
@@ -497,8 +497,8 @@ describe("BigModelUsageQuotaProvider coding plan reset", () => {
     ).rejects.toThrow("coding_plan_reset_zcode_jwt_required");
     expect(missingJwtRequest).not.toHaveBeenCalled();
 
-    // 只有 zcode JWT、没有 MaaS 登录态 JWT 时同样拒绝且不发请求:后端要求
-    // X-Bigmodel-Authorization 必须是 MaaS JWT,不能回退 provider API key。
+    // With only the zcode JWT and no MaaS login-session JWT, the request is likewise rejected and not sent: the backend
+    // requires X-Bigmodel-Authorization to be a MaaS JWT and does not fall back to the provider API key.
     const missingMaasJwtRequest = vi.fn();
     const missingMaasJwtProvider = createProviderForTest({
       apiClient: { request: missingMaasJwtRequest },
@@ -545,8 +545,8 @@ describe("BigModelUsageQuotaProvider coding plan reset", () => {
   });
 
   it("envelope 业务错误时错误信息附带 x-request-id 便于联调对账", async () => {
-    // 2007 是后端 -> MAAS 依赖错误，客户端日志必须能带出后端 x-request-id，
-    // 否则只能拿毫秒级时间戳让后端反向捞日志。
+    // 2007 is a backend -> MAAS dependency error; client logs must carry the backend x-request-id,
+    // otherwise only a millisecond timestamp is left for the backend to search logs in reverse.
     const request = vi.fn(async () => {
       const response = jsonResponse({
         code: 2007,
@@ -571,10 +571,10 @@ describe("BigModelUsageQuotaProvider coding plan reset", () => {
         () => null,
         (err: Error) => err,
       );
-    // 前缀契约不变，仅追加诊断后缀；失败用例会展示实际 message 便于定位。
+    // The prefix contract is unchanged; only a diagnostic suffix is appended. Failure cases show the actual message for easier debugging.
     expect(error?.message).toBe("coding_plan_reset_api_error:2007 (x-request-id:req-abc-123)");
 
-    // 响应不带 x-request-id 时保持原 message，不产生空诊断括号。
+    // When the response has no x-request-id, the original message is kept; no empty diagnostic brackets are produced.
     const bareProvider = createProviderForTest({
       apiClient: {
         request: vi.fn(async () =>

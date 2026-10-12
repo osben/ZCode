@@ -1,26 +1,21 @@
 /* eslint-disable max-lines -- Grouped rows support both drag overlays and regular interactions, so state badges must share the same rendering semantics. */
-import { memo, useMemo, useState } from "react";
+import { memo, useState } from "react";
 import type { KeyboardEvent, MouseEvent } from "react";
 import { useDraggable, useDroppable } from "@dnd-kit/core";
 import type { UniqueIdentifier } from "@dnd-kit/core";
 import { isCronTask, isOffPeakTask, type ZCodeTaskMeta } from "@zcode/shared";
-import { ArrowUpToLine, Clock, Cloud, Folder, ListTree, LoaderIcon, Moon, X } from "lucide-react";
+import { ArrowUpToLine, Clock, ListTree, LoaderIcon, Moon, X } from "lucide-react";
 import { cn } from "@/components/lib/utils.js";
 import { Badge } from "@/components/ui/badge.js";
+import { BranchMergedBadge } from "@/components/BranchMergedBadge.js";
 import { toast } from "@/components/ui/toast.js";
 import { ContextMenu, ContextMenuTrigger } from "@/components/ui/context-menu.js";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from "@/components/ui/tooltip.js";
+import { Tooltip, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import {
   deriveTaskLeadingIndicator,
   formatTaskRelativeTime,
 } from "@/lib/taskListItemPresentation.js";
-import { getTaskChangeSummary } from "@/lib/taskChangeSummary.js";
 import { buildTaskWorkspaceKey } from "@/lib/taskQueryCache.js";
 import { buildTaskFeedbackDescription } from "@/lib/taskFeedbackDraft.js";
 import { useTaskListItemContextActions } from "@/useTaskListItemContextActions.js";
@@ -29,7 +24,6 @@ import { getTaskListAttention, getTaskListRowActivity } from "@/v4/taskListRowAc
 import { GroupedTaskContextMenuContent } from "@/workspace-grouped-tasks/task-context-menu-content.js";
 import { TaskRowActionButton } from "@/workspace-grouped-tasks/task-row-action-button.js";
 import { TaskInteractionBadge } from "@/TaskInteractionBadge.js";
-import { formatGroupedTaskHoverChangeParts } from "@/workspace-grouped-tasks/task-row-tooltip.js";
 import {
   TASK_GROUP_ROW_CLASS,
   TASK_GROUP_ROW_LINE_CLASS,
@@ -44,6 +38,7 @@ import {
 import { useOptionalTabStore } from "@/store/TabStoreProvider.js";
 import { isWorkspaceReadOnly } from "@/store/tabStore.js";
 import { TaskTitleOverflowText } from "@/components/TaskTitleOverflowText.js";
+import { TaskSidebarHoverCard } from "@/components/TaskSidebarHoverCard.js";
 
 function GroupedTaskRowComponent({
   task,
@@ -90,7 +85,7 @@ function GroupedTaskRowComponent({
   dragOverlay?: boolean;
   tooltipsDisabled?: boolean;
 }) {
-  const { intl, locale } = useZCodeIntl();
+  const { intl } = useZCodeIntl();
   const workspaceActionsDisabled = useOptionalTabStore((state) =>
     isWorkspaceReadOnly(state, task.workspacePath, task.workspaceIdentity),
   );
@@ -134,7 +129,6 @@ function GroupedTaskRowComponent({
     intl.formatMessage({
       id: task.forkedFromTaskId ? "taskList.forkedUntitled" : "taskList.untitled",
     });
-  const taskChangeParts = formatGroupedTaskHoverChangeParts(getTaskChangeSummary(task));
   const taskTimeLabel = formatTaskRelativeTime(task.updatedAt, intl);
   const isTaskCron = isCronTask(task);
   // Determine the moon identity from the persistent meta marker; looking it up in the off-peak store loses
@@ -153,26 +147,13 @@ function GroupedTaskRowComponent({
           "bg-sky-500 dark:bg-sky-400"
         : null;
   const canShowHoverActions = !dragOverlay;
-  const branchMergedCommitAtMs = branchMergeStatus?.lastCommitAt
-    ? Date.parse(branchMergeStatus.lastCommitAt)
-    : Number.NaN;
-  const mergedCommitAbsoluteFormatter = useMemo(
-    () => new Intl.DateTimeFormat(locale, { dateStyle: "medium", timeStyle: "short" }),
-    [locale],
-  );
   // Merged ranks below attention/interaction: the row keeps a single right-side
   // status badge, and the merged details always stay available in the popup.
   const branchMergedBadge =
     branchMergeStatus?.state === "merged" ? (
-      <Badge
-        data-branch-merged-badge="true"
-        className={cn(
-          "h-5 border-transparent bg-primary/14 px-2 text-ui-xs font-medium text-primary dark:bg-primary/18",
-          canShowHoverActions && "group-hover/task-row:hidden",
-        )}
-      >
-        {intl.formatMessage({ id: "taskList.branchMergedTag" })}
-      </Badge>
+      <BranchMergedBadge
+        className={canShowHoverActions ? "group-hover/task-row:hidden" : undefined}
+      />
     ) : null;
   // Workflow-run row: grouped rows also place it below the title;
   // the drag overlay is display-only and does not attach confirmation side effects or click actions.
@@ -511,65 +492,15 @@ function GroupedTaskRowComponent({
             <TooltipTrigger asChild>
               <ContextMenuTrigger asChild>{interactiveTaskRow}</ContextMenuTrigger>
             </TooltipTrigger>
-            <TooltipContent side="right" align="center" sideOffset={6}>
-              {remoteSessionId ? (
-                <Cloud aria-hidden="true" className="size-3.5 shrink-0" />
-              ) : (
-                <Folder aria-hidden="true" className="size-3.5 shrink-0" />
-              )}
-              <span className="min-w-0 max-w-48 truncate">{workspaceLabel}</span>
-              {branchMergeStatus?.state === "merged" && branchMergeStatus.baseRef ? (
-                <>
-                  <span className="text-tooltip-foreground/60">·</span>
-                  <span
-                    className="inline-flex min-w-0 shrink-0 flex-col gap-0.5"
-                    data-branch-merged-popup="true"
-                  >
-                    <span className="truncate">
-                      {intl.formatMessage(
-                        { id: "taskList.branchMergedInto" },
-                        { baseRef: branchMergeStatus.baseRef },
-                      )}
-                      {Number.isFinite(branchMergedCommitAtMs) ? (
-                        <>
-                          {" "}
-                          <span
-                            className="text-foreground-subtle"
-                            title={mergedCommitAbsoluteFormatter.format(branchMergedCommitAtMs)}
-                          >
-                            {formatTaskRelativeTime(branchMergedCommitAtMs, intl)}
-                          </span>
-                        </>
-                      ) : null}
-                    </span>
-                    <span className="truncate text-foreground-subtle">
-                      {intl.formatMessage(
-                        { id: "taskList.branchMergedRefLine" },
-                        {
-                          baseRef: branchMergeStatus.baseRef,
-                          headRef: branchMergeStatus.headRef ?? "HEAD",
-                        },
-                      )}
-                    </span>
-                  </span>
-                </>
-              ) : null}
-              {taskChangeParts.length > 0 ? (
-                <>
-                  <span className="text-tooltip-foreground/60">·</span>
-                  <span className="inline-flex shrink-0 items-center gap-1">
-                    {taskChangeParts.map((part) => (
-                      <span
-                        key={part}
-                        className={part.startsWith("+") ? "text-diff-added" : "text-diff-removed"}
-                      >
-                        {part}
-                      </span>
-                    ))}
-                  </span>
-                </>
-              ) : null}
-            </TooltipContent>
+            <TaskSidebarHoverCard
+              task={task}
+              workspaceLabel={workspaceLabel}
+              attentionLabel={taskAttentionDisplay}
+              activity={taskActivity}
+              branchMergeStatus={branchMergeStatus}
+              intl={intl}
+              isRemote={Boolean(task.workspaceIdentity?.trim())}
+            />
           </Tooltip>
         </TooltipProvider>
       )}

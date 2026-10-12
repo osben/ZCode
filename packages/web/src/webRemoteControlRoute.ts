@@ -6,9 +6,11 @@ interface WebRemoteControlRouteEnv {
 }
 
 /**
- * 页面路由与资源目录分离：OSS 多版本发布用 `/remote/v4/<version>/` 作为 Vite base，
- * 让每个子资源请求自带版本，但页面入口仍是 `/remote/v4`。构建时注入路由变量即可覆盖；
- * 未注入（Docker、v3、开发 `/remote`）时沿用 BASE_URL 推导，行为与历史一致。
+ * Page route and asset directory are decoupled: multi-version OSS releases use
+ * `/remote/v4/<version>/` as the Vite base so every sub-resource request carries
+ * the version, while the page entry stays at `/remote/v4`. Inject the route
+ * variable at build time to override; when it is not injected (Docker, v3, dev
+ * `/remote`), derive from BASE_URL, matching historical behavior.
  */
 export function resolveWebRemoteControlRoutePath(env: WebRemoteControlRouteEnv): string {
   const explicitRoutePath = env.VITE_WEB_REMOTE_CONTROL_ROUTE_PATH?.trim();

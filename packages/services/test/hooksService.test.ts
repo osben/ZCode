@@ -321,10 +321,12 @@ describe("hooksService", () => {
     const home = makeTempRoot();
     const workspacePath = join(makeTempRoot(), "workspace");
     mkdirSync(join(workspacePath, ".zcode"), { recursive: true });
-    // 修复原因：CR-01 后非法 JSON（如 "{broken"）统一走 schema 解析分支（文案"结构不符合
-    // schema"，已由 workspaceHookTrustCorrupt.test.ts 覆盖）；本用例验证的是 IO 不可读分支，
-    // 因此用目录占位 trust store 路径——readFile 对目录稳定返回 EISDIR/EPERM（非 ENOENT），
-    // 在 macOS/Linux/Windows 上都能触发"不可读"日志分支。
+    // Fix rationale: after CR-01, malformed JSON (e.g. "{broken") uniformly goes through the schema-parse
+    // branch (message "结构不符合 schema" / "structure does not match schema", already covered by
+    // workspaceHookTrustCorrupt.test.ts); this test
+    // covers the unreadable-IO branch, so a directory stands in for the trust store path — readFile
+    // reliably returns EISDIR/EPERM for a directory (not ENOENT), triggering the "unreadable" log branch
+    // on macOS/Linux/Windows alike.
     mkdirSync(join(home, ".zcode", "security", "workspace-hook-trust-v1.json"), {
       recursive: true,
     });

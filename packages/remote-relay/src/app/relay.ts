@@ -1,5 +1,7 @@
 import type {
-  RelayClientMessage, RelayServerMessage, WebRemoteControlRelayErrorCode,
+  RelayClientMessage,
+  RelayServerMessage,
+  WebRemoteControlRelayErrorCode,
   WebRemoteControlRelayRole,
 } from "@zcode/shared/web-remote-relay";
 import type { RelayCrypto, RelayDeviceStore, RelayPeer, RelayRegistration } from "../contract.js";
@@ -11,18 +13,31 @@ interface Connection {
   phase: ConnectionPhase;
   createdAt: number;
   registeredSid?: string;
-  challenge?: { nonce: string; role: WebRemoteControlRelayRole; record: RelayRegistration; expiresAt: number };
+  challenge?: {
+    nonce: string;
+    role: WebRemoteControlRelayRole;
+    record: RelayRegistration;
+    expiresAt: number;
+  };
   auth?: { sid: string; role: WebRemoteControlRelayRole };
 }
-interface Pair { device?: Connection; terminal?: Connection; }
+interface Pair {
+  device?: Connection;
+  terminal?: Connection;
+}
 
 export function createRelayRegistry(options: {
-  store: RelayDeviceStore; crypto: RelayCrypto; now: () => number; authTimeoutMs: number;
+  store: RelayDeviceStore;
+  crypto: RelayCrypto;
+  now: () => number;
+  authTimeoutMs: number;
 }) {
   const connections = new Map<string, Connection>();
   const pairs = new Map<string, Pair>();
 
-  function isCurrent(connection: Connection) { return connections.get(connection.id) === connection; }
+  function isCurrent(connection: Connection) {
+    return connections.get(connection.id) === connection;
+  }
 
   function send(connection: Connection, message: RelayServerMessage, serialized?: string) {
     if (!isCurrent(connection)) return;
@@ -32,7 +47,7 @@ export function createRelayRegistry(options: {
   function status(pair: Pair) {
     return {
       type: "pair_status_ack" as const,
-      pair_status: pair.device && pair.terminal ? "matched" as const : "waiting" as const,
+      pair_status: pair.device && pair.terminal ? ("matched" as const) : ("waiting" as const),
       ...(pair.terminal ? { terminal_sid: pair.terminal.id } : {}),
       server_ts: options.now(),
     };
@@ -55,7 +70,12 @@ export function createRelayRegistry(options: {
     }
   }
 
-  function fail(connection: Connection, code: WebRemoteControlRelayErrorCode, message: string, close = true) {
+  function fail(
+    connection: Connection,
+    code: WebRemoteControlRelayErrorCode,
+    message: string,
+    close = true,
+  ) {
     send(connection, { type: "error", code, message, server_ts: options.now() });
     if (close) {
       disconnect(connection.id);
@@ -76,7 +96,11 @@ export function createRelayRegistry(options: {
       if (!isCurrent(connection)) return;
       connection.registeredSid = record.sid;
       connection.phase = "new";
-      send(connection, { type: "device_register_ack", device_sid: record.sid, server_ts: options.now() });
+      send(connection, {
+        type: "device_register_ack",
+        device_sid: record.sid,
+        server_ts: options.now(),
+      });
       return;
     }
     if (message.type === "auth_init") {
@@ -87,9 +111,17 @@ export function createRelayRegistry(options: {
       connection.phase = "loading";
       const record = await options.store.get(message.device_sid);
       if (!isCurrent(connection)) return;
-      if (!record) { fail(connection, "AUTH_FAILED", "Authentication failed."); return; }
+      if (!record) {
+        fail(connection, "AUTH_FAILED", "Authentication failed.");
+        return;
+      }
       const nonce = options.crypto.randomId();
-      connection.challenge = { nonce, role: message.role, record, expiresAt: options.now() + options.authTimeoutMs };
+      connection.challenge = {
+        nonce,
+        role: message.role,
+        record,
+        expiresAt: options.now() + options.authTimeoutMs,
+      };
       connection.phase = "challenge";
       send(connection, { type: "auth_challenge", nonce, server_ts: options.now() });
       return;
@@ -97,8 +129,18 @@ export function createRelayRegistry(options: {
     if (message.type === "auth_response") {
       const challenge = connection.challenge;
       connection.challenge = undefined;
-      if (!challenge || challenge.expiresAt <= options.now() || challenge.record.sid !== message.device_sid ||
-          !options.crypto.verify(challenge.record.key, challenge.nonce, challenge.role, challenge.record.sid, message.proof)) {
+      if (
+        !challenge ||
+        challenge.expiresAt <= options.now() ||
+        challenge.record.sid !== message.device_sid ||
+        !options.crypto.verify(
+          challenge.record.key,
+          challenge.nonce,
+          challenge.role,
+          challenge.record.sid,
+          message.proof,
+        )
+      ) {
         fail(connection, "AUTH_FAILED", "Authentication failed.");
         return;
       }
@@ -115,8 +157,13 @@ export function createRelayRegistry(options: {
       // 新浏览器先成为唯一 owner，再关闭旧 socket；旧 close 回调不能删除新配对。
       if (previous) fail(previous, "KICKED", "Another browser replaced this connection.");
       const pairStatus = status(pair);
-      send(connection, { type: "auth_ack", device_sid: message.device_sid,
-        terminal_sid: pairStatus.terminal_sid, pair_status: pairStatus.pair_status, server_ts: options.now() });
+      send(connection, {
+        type: "auth_ack",
+        device_sid: message.device_sid,
+        terminal_sid: pairStatus.terminal_sid,
+        pair_status: pairStatus.pair_status,
+        server_ts: options.now(),
+      });
       const other = challenge.role === "device" ? pair.terminal : pair.device;
       if (other) send(other, pairStatus);
       return;
@@ -125,12 +172,18 @@ export function createRelayRegistry(options: {
     const pair = auth ? pairs.get(auth.sid) : undefined;
     if (!auth || !pair || pair[auth.role] !== connection) return;
     if (message.type === "pair_status_query") {
-      if (message.device_sid !== auth.sid) { fail(connection, "WRONG_PARAM", "Identity cannot change."); return; }
+      if (message.device_sid !== auth.sid) {
+        fail(connection, "WRONG_PARAM", "Identity cannot change.");
+        return;
+      }
       send(connection, status(pair));
       return;
     }
     const other = auth.role === "device" ? pair.terminal : pair.device;
-    if (!other) { fail(connection, "INTERNAL", "Peer is temporarily unavailable.", false); return; }
+    if (!other) {
+      fail(connection, "INTERNAL", "Peer is temporarily unavailable.", false);
+      return;
+    }
     send(other, message, serialized);
   }
 
@@ -148,7 +201,10 @@ export function createRelayRegistry(options: {
     },
     sweep() {
       for (const connection of connections.values()) {
-        if (connection.phase !== "authenticated" && options.now() - connection.createdAt >= options.authTimeoutMs) {
+        if (
+          connection.phase !== "authenticated" &&
+          options.now() - connection.createdAt >= options.authTimeoutMs
+        ) {
           fail(connection, "AUTH_FAILED", "Authentication deadline expired.");
         }
       }

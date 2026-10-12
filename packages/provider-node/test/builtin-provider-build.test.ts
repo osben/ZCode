@@ -4,7 +4,7 @@ import { promisify } from "node:util";
 import { expect, it } from "vitest";
 
 it("构建配置契约：builtin-provider-config-build", async () => {
-  // 构建工具直接运行于 Node；不让 Vitest 的模块转换掩盖打包入口的导入／文件路径问题。
+  // The build tool runs directly in Node; do not let Vitest's module transform mask import/file path issues in the packaged entry.
   const result = await promisify(execFile)(
     process.execPath,
     ["--test", "scripts/test/builtin-provider-config-build.test.mjs"],

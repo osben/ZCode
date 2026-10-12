@@ -211,7 +211,7 @@ describe("content bundle cache", () => {
     expect((await cache.read(next.leaseId, "index.html")).toString()).toBe("<h1>Hello</h1>");
   });
 
-  // Windows 普通用户无符号链接权限（需开发者模式），fs.symlink EPERM；覆盖由 CI Linux 承担。
+  // Windows regular users lack symlink privileges (developer mode required) and fs.symlink fails with EPERM; coverage is handled by CI Linux.
   it.skipIf(process.platform === "win32")(
     "rejects symlink replacement and files outside the published manifest",
     async () => {

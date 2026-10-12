@@ -17,7 +17,7 @@ import {
 afterEach(() => {
   vi.useRealTimers();
   vi.unstubAllGlobals();
-  // 卡片与 HTTP 路径不应为未启用的长连接加载整份 SDK。
+  // Card and HTTP paths must not load the whole SDK for a disabled long connection.
   expect(sdkLoaded).not.toHaveBeenCalled();
 });
 
@@ -2864,7 +2864,7 @@ describe("feishu bot provider", () => {
     expect(cardJson).toContain("☑ 基础玩法");
     expect(cardJson).toContain("☐ 分数系统");
     expect(cardJson).toContain("☐ 自定义回答");
-    // 当前题的“基础玩法”只应存在于待回答区的选中按钮，不能提前进入已回答历史。
+    // The current question's "基础玩法" (basic gameplay) option should only exist in the selected button of the pending-answer area, not prematurely in the answered history.
     expect(cardJson.match(/基础玩法/gu)).toHaveLength(1);
     expect(cardJson.indexOf("你想在哪里运行贪吃蛇游戏？")).toBeLessThan(
       cardJson.indexOf('"tag":"hr"'),

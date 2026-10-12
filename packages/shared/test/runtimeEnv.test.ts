@@ -84,8 +84,8 @@ describe("runtimeEnv", () => {
   });
 
   it("strips the CUA broker socket/authority/refresh marker from child env and tool passthrough", () => {
-    // Confused-deputy 防护：broker bearer 凭据只该定向注入目标 zcode-cua server，绝不能随全局 env
-    // 泄漏给其它 MCP / Bash / tool 子进程，也不能经 tool-env-passthrough 恢复。
+    // Confused-deputy protection: broker bearer credentials must be injected only into the target zcode-cua server,
+    // never leaked via the global env to other MCP / Bash / tool child processes, nor recovered via tool-env-passthrough.
     const sourceEnv = {
       PATH: "/usr/bin:/bin",
       ZCODE_CUA_PERMISSION_BROKER_SOCKET: "/tmp/zcode-cua-me/broker-abc.sock",

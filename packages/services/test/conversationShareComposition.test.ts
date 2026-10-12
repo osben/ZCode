@@ -13,8 +13,8 @@ async function createProviderFixture(prefix: string): Promise<string> {
   tempHomes.push(home);
   process.env.HOME = home;
   const filePath = join(home, "zcode-builtin.json");
-  // 修复原因：只传 {} 会让后台 Provider 初始化读取 undefined 路径并写出错误日志。
-  // 使用当前 Release 合同的空配置，让装配测试独立于真实用户配置和发布文件。
+  // Fix rationale: passing only {} made background provider initialization read an undefined path and emit error logs.
+  // Use an empty config matching the current Release contract so composition tests stay independent of real user config and release files.
   await writeFile(
     filePath,
     JSON.stringify({
@@ -38,7 +38,7 @@ async function createProviderFixture(prefix: string): Promise<string> {
 
 describe("conversation share service composition", () => {
   beforeEach(() => {
-    // 保留真实日志输出，同时让后台初始化错误也能使测试失败。
+    // Keep real log output while letting background initialization errors still fail the test.
     vi.spyOn(console, "error");
     vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
       Response.json({ code: 0, data: { configs: {} } }),
@@ -77,8 +77,9 @@ describe("conversation share service composition", () => {
       expect(typeof service.getCapabilities).toBe("function");
       expect(ServiceChannels.ConversationShare).toBe("conversation-share");
     } finally {
-      // 修复原因：同步 dispose 后删 HOME，会让尚未收口的初始化/释放任务晚到写日志，
-      // 与 Vitest worker 关闭日志 RPC 竞争；先等待服务释放，再由 afterEach 清理目录。
+      // Fix rationale: deleting HOME right after a synchronous dispose lets still-draining init/dispose
+      // tasks write logs late and race with the Vitest worker shutting down its log RPC; await service
+      // disposal first, then let afterEach clean up the directory.
       await nodeModule.disposeServiceResourcesAndWait(services);
     }
   });

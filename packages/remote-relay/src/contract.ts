@@ -1,6 +1,9 @@
 import type { RelayServerMessage, WebRemoteControlRelayRole } from "@zcode/shared/web-remote-relay";
 
-export interface RelayRegistration { sid: string; key: string; }
+export interface RelayRegistration {
+  sid: string;
+  key: string;
+}
 export interface RelayDeviceStore {
   register(mid: string, key: string): Promise<RelayRegistration>;
   get(sid: string): Promise<RelayRegistration | undefined>;
@@ -8,7 +11,13 @@ export interface RelayDeviceStore {
 }
 export interface RelayCrypto {
   randomId(): string;
-  verify(key: string, nonce: string, role: WebRemoteControlRelayRole, sid: string, proof: string): boolean;
+  verify(
+    key: string,
+    nonce: string,
+    role: WebRemoteControlRelayRole,
+    sid: string,
+    proof: string,
+  ): boolean;
 }
 export interface RelayPeer {
   send(message: RelayServerMessage, serialized?: string): boolean;

@@ -1,4 +1,4 @@
-// 冻结基线 0e40230d34 的旧协议/Target，防止新 schema 掩盖混版本破坏性删除回归。
+// Frozen copy of the old protocol/Target from baseline 0e40230d34, so a newer schema cannot mask mixed-version destructive-deletion regressions.
 import { z } from "zod";
 import { modelSelectionSchema } from "@zcode/shared";
 import { providerFamilyConnectionSelectionSettingsSchema } from "@zcode/shared";
@@ -14,7 +14,7 @@ export const providerProvisioningTriggerSchema = z.enum([
 ]);
 export type ProviderProvisioningTrigger = z.infer<typeof providerProvisioningTriggerSchema>;
 
-/** Provisioning 中允许跨 Environment 传输的凭据类别。 */
+/** Credential categories allowed to cross Environments during provisioning. */
 export const providerProvisioningCredentialScopeSchema = z.enum([
   "oauth-session",
   "account-provider",
@@ -24,13 +24,13 @@ export type ProviderProvisioningCredentialScope = z.infer<
   typeof providerProvisioningCredentialScopeSchema
 >;
 
-/** 只允许同步 Account Provider 的请求期 API key，不同步账号身份或未来其它扩展字段。 */
+/** Only request-scoped API keys of Account Providers may sync; account identities and other future extension fields do not. */
 export function isProviderProvisioningAccountCredentialKey(key: string): boolean {
   const normalized = key.trim();
   return normalized === key && /^account-provider:.+:api-key$/.test(normalized);
 }
 
-/** Personal Config 的 Envelope；具体字段由 @zcode/provider 在目标 Environment 再校验。 */
+/** Envelope for the Personal Config; concrete fields are re-validated by @zcode/provider in the target Environment. */
 export const providerProvisioningPersonalConfigSchema = z
   .object({
     providerConfigRules: z.object({ providerRules: z.array(z.unknown()) }).strict(),

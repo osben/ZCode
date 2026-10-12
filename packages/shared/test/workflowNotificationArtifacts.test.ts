@@ -1,11 +1,11 @@
-// 终态通知载荷里的**用户面产物** chips（docs/dynamic-workflow/authoring.md「How the user sees them」）。
+// **User-facing artifact** chips in terminal notification payloads (docs/dynamic-workflow/authoring.md "How the user sees them").
 //
-// ⚠ 术语：这里的 artifact 是脚本经 `artifact.*` 发布给用户看的产出，与同一载荷上的 `result`
-// （脚本顶层返回值，引擎内部也叫 artifact）是两件不同的东西——见 spec 的「术语」表。
+// ⚠ Terminology: "artifact" here means output a script published to the user via `artifact.*`, distinct from the
+// `result` on the same payload (the script's top-level return value, also called artifact inside the engine) — see the spec's terminology table.
 //
-// 这份 schema 是三处必须同步的其中一处（另两处：contracts 的 TS 镜像、bootstrap 的
-// `transcript-hydration.ts` 读取器）。它不是 `.strict()`——zod 默认**剥离**未声明的键，所以
-// 「忘了在这里加字段」的症状不是报错，而是载荷在冷恢复后无声少一半。
+// This schema is one of three places that must stay in sync (the others: the TS mirror in contracts, and the bootstrap
+// `transcript-hydration.ts` reader). It is not `.strict()` — zod **strips** undeclared keys by default, so the symptom
+// of "forgot to add a field here" is not an error but half the payload silently missing after cold recovery.
 import { describe, expect, it } from "vitest";
 import {
   backgroundResultOriginMetaSchema,
@@ -99,8 +99,8 @@ describe("workflowNotificationMeta.terminal.artifacts", () => {
     expect(one({ id: "a", kind: "file", version: 1.5 })).toThrow();
   });
 
-  // 交付物那一条例外地多带两个键（docs/dynamic-workflow/transcript-and-notifications.md
-  // 「The deliverable row」）：完成卡要把它画成带文字的一行，冷 transcript 上只有这份载荷可读。
+  // The deliverable entry exceptionally carries two extra keys (docs/dynamic-workflow/transcript-and-notifications.md
+  // "The deliverable row"): the completion card renders it as a row with text, and on a cold transcript only this payload is readable.
   it("primary 只能是 true；description 只在交付物上有意义，≤500（= ARTIFACT_CAPS.maxDescriptionLength）", () => {
     const one = (entry: Record<string, unknown>) => () =>
       workflowNotificationMetaSchema.parse(terminal({ artifacts: [entry] }));
@@ -114,7 +114,7 @@ describe("workflowNotificationMeta.terminal.artifacts", () => {
     };
     const parsed = workflowNotificationMetaSchema.parse(terminal({ artifacts: [deliverable] }));
     expect(parsed.kind === "terminal" && parsed.artifacts).toEqual([deliverable]);
-    // false 是每条都要带的噪音字段：缺席即「不是交付物」。
+    // false would be a noisy field on every payload: absence means "not the deliverable".
     expect(one({ id: "a", kind: "file", version: 1, primary: false })).toThrow();
     expect(one({ id: "a", kind: "file", version: 1, description: "d".repeat(500) })).not.toThrow();
     expect(one({ id: "a", kind: "file", version: 1, description: "d".repeat(501) })).toThrow();
@@ -135,7 +135,7 @@ describe("workflowNotificationMeta.terminal.artifacts", () => {
     expect(meta?.kind === "terminal" && meta.artifactsTruncated).toBe(true);
   });
 
-  // escalation 分支是另一支：它播报的是一个还没被满足的义务，与交付物无关。
+  // The escalation branch is separate: it announces an unmet obligation, unrelated to deliverables.
   it("escalation 分支不长出 artifacts", () => {
     expect(() =>
       workflowNotificationMetaSchema.parse({
@@ -153,7 +153,7 @@ describe("workflowNotificationMeta.terminal.artifacts", () => {
       question: "which branch?",
       artifacts: [{ id: "a", kind: "file", version: 1 }],
     });
-    // 未声明的键被剥离——escalation 载荷永远不带产物。
+    // Undeclared keys are stripped — escalation payloads never carry artifacts.
     expect(parsed).not.toHaveProperty("artifacts");
   });
 });
