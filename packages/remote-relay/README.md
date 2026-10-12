@@ -75,8 +75,12 @@ ZCODE_WEB_REMOTE_CONTROL_URL=https://<web-domain>/remote/v4/
 ```
 
 Variables set on the Railway relay service do not configure local Desktop.
-Public endpoint defaults for releases launched from Finder/Explorer are not
-implemented yet. Do not change `ZCODE_BASE_URL` to select the relay.
+Fork release builds can bake both values as defaults: set
+`ZCODE_WEB_REMOTE_CONTROL_RELAY_WS_URL` and `ZCODE_WEB_REMOTE_CONTROL_URL` in the
+release build environment (GitHub repository variables feed `fork-release.yml`).
+They are public deployment inputs, not secrets; both must be set together and a
+one-sided or malformed pair fails the build. Runtime environment variables still
+override the baked defaults. Do not change `ZCODE_BASE_URL` to select the relay.
 
 ## Limits and verification
 

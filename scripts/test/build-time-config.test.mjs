@@ -21,6 +21,8 @@ test("没有私有默认配置也没有环境变量时三项能力都关闭", as
     armsRumEndpoint: "",
     telemetryReportEndpoint: "",
     autoUpdateEnabled: false,
+    webRemoteControlRelayWsUrl: "",
+    webRemoteControlUrl: "",
   });
 });
 
@@ -34,6 +36,8 @@ test("私有默认配置启用三项能力", async () => {
     armsRumEndpoint: "https://rum.example.com/x",
     telemetryReportEndpoint: "https://report.example.com/event",
     autoUpdateEnabled: true,
+    webRemoteControlRelayWsUrl: "",
+    webRemoteControlUrl: "",
   });
 });
 
@@ -55,7 +59,71 @@ test("环境变量优先于私有默认配置，显式空字符串关闭单项�
     armsRumEndpoint: "",
     telemetryReportEndpoint: "https://other.example.com/event",
     autoUpdateEnabled: false,
+    webRemoteControlRelayWsUrl: "",
+    webRemoteControlUrl: "",
   });
+});
+
+test("remote-control 地址同时配置时解析为构建默认值", async () => {
+  const config = await resolveBuildTimeConfig(
+    {
+      ZCODE_WEB_REMOTE_CONTROL_RELAY_WS_URL: " wss://relay.example.com/ws ",
+      ZCODE_WEB_REMOTE_CONTROL_URL: "https://web.example.com/remote/v4/",
+    },
+    { defaultsPath: join(dir, "missing.json") },
+  );
+  assert.equal(config.webRemoteControlRelayWsUrl, "wss://relay.example.com/ws");
+  assert.equal(config.webRemoteControlUrl, "https://web.example.com/remote/v4/");
+});
+
+test("remote-control 地址只配置一项时构建失败", async () => {
+  await assert.rejects(
+    resolveBuildTimeConfig(
+      { ZCODE_WEB_REMOTE_CONTROL_RELAY_WS_URL: "wss://relay.example.com/ws" },
+      { defaultsPath: join(dir, "missing.json") },
+    ),
+    /set both/,
+  );
+  await assert.rejects(
+    resolveBuildTimeConfig(
+      { ZCODE_WEB_REMOTE_CONTROL_URL: "https://web.example.com/remote/v4/" },
+      { defaultsPath: join(dir, "missing.json") },
+    ),
+    /set both/,
+  );
+});
+
+test("remote-control 地址协议不符时构建失败", async () => {
+  await assert.rejects(
+    resolveBuildTimeConfig(
+      {
+        ZCODE_WEB_REMOTE_CONTROL_RELAY_WS_URL: "https://relay.example.com/ws",
+        ZCODE_WEB_REMOTE_CONTROL_URL: "https://web.example.com/remote/v4/",
+      },
+      { defaultsPath: join(dir, "missing.json") },
+    ),
+    /wss: scheme/,
+  );
+  await assert.rejects(
+    resolveBuildTimeConfig(
+      {
+        ZCODE_WEB_REMOTE_CONTROL_RELAY_WS_URL: "wss://relay.example.com/ws",
+        ZCODE_WEB_REMOTE_CONTROL_URL: "http://web.example.com/remote/v4/",
+      },
+      { defaultsPath: join(dir, "missing.json") },
+    ),
+    /https: scheme/,
+  );
+});
+
+test("remote-control 地址来自私有默认配置", async () => {
+  const defaultsPath = await writeDefaults("remote-defaults.json", {
+    ZCODE_WEB_REMOTE_CONTROL_RELAY_WS_URL: "wss://relay.example.com/ws",
+    ZCODE_WEB_REMOTE_CONTROL_URL: "https://web.example.com/remote/v4/",
+  });
+  const config = await resolveBuildTimeConfig({}, { defaultsPath });
+  assert.equal(config.webRemoteControlRelayWsUrl, "wss://relay.example.com/ws");
+  assert.equal(config.webRemoteControlUrl, "https://web.example.com/remote/v4/");
 });
 
 test("私有默认配置格式错误时直接报错，不静默关闭", async () => {
@@ -69,11 +137,15 @@ test("define 以 JSON 字面量注入", () => {
       armsRumEndpoint: "https://rum.example.com/x",
       telemetryReportEndpoint: "",
       autoUpdateEnabled: true,
+      webRemoteControlRelayWsUrl: "wss://relay.example.com/ws",
+      webRemoteControlUrl: "",
     }),
     {
       __ZCODE_ARMS_RUM_ENDPOINT__: '"https://rum.example.com/x"',
       __ZCODE_TELEMETRY_REPORT_ENDPOINT__: '""',
       __ZCODE_AUTO_UPDATE_ENABLED__: "true",
+      __ZCODE_WEB_REMOTE_CONTROL_RELAY_WS_URL__: '"wss://relay.example.com/ws"',
+      __ZCODE_WEB_REMOTE_CONTROL_URL__: '""',
     },
   );
 });

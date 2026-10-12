@@ -60,6 +60,12 @@ jobs:
       # Keep the "ZCode Preview" identity so releases upgrade existing fork installs in place and
       # stay side-by-side with a regular ZCode.app; identity is independent of backend environment.
       ZCODE_PREVIEW_IDENTITY: "1"
+      # Self-hosted remote-control defaults baked into the release (public deployment inputs, not
+      # secrets). Empty when the repository variables are absent: the build then keeps the upstream
+      # external-relay behavior. Both must be set together — one-sided or malformed values fail the
+      # build by design (scripts/build-time-config.mjs).
+      ZCODE_WEB_REMOTE_CONTROL_RELAY_WS_URL: ${{ vars.ZCODE_WEB_REMOTE_CONTROL_RELAY_WS_URL }}
+      ZCODE_WEB_REMOTE_CONTROL_URL: ${{ vars.ZCODE_WEB_REMOTE_CONTROL_URL }}
     steps:
       - uses: actions/checkout@v5
 
@@ -110,6 +116,9 @@ jobs:
       # Same rationale as build-macos-arm64: explicit production backend environment.
       ZCODE_ENV: production
       ZCODE_PREVIEW_IDENTITY: "1"
+      # Same self-hosted remote-control defaults as build-macos-arm64; see the comment there.
+      ZCODE_WEB_REMOTE_CONTROL_RELAY_WS_URL: ${{ vars.ZCODE_WEB_REMOTE_CONTROL_RELAY_WS_URL }}
+      ZCODE_WEB_REMOTE_CONTROL_URL: ${{ vars.ZCODE_WEB_REMOTE_CONTROL_URL }}
     steps:
       - uses: actions/checkout@v5
 

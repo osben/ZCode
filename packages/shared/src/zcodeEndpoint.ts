@@ -237,10 +237,17 @@ export function buildRuntimeZCodeApiUrl(env: RuntimeZCodeEndpointEnv = {}, path:
 export function resolveWebRemoteControlRelayWsUrl(options?: {
   endpointOrigin?: string | null | undefined;
   overrideUrl?: string | null | undefined;
+  /** Fork release baked default (public deployment input); wins over endpoint-derived defaults, loses to `overrideUrl`. */
+  defaultUrl?: string | null | undefined;
 }): string {
   const overrideUrl = options?.overrideUrl?.trim();
   if (overrideUrl) {
     return overrideUrl;
+  }
+
+  const defaultUrl = options?.defaultUrl?.trim();
+  if (defaultUrl) {
+    return defaultUrl;
   }
 
   // Bugfix: the standard test endpoint now has its own relay; pinning it to the production relay

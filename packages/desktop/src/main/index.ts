@@ -75,6 +75,8 @@ import {
   DEFAULT_LOCALE,
   TEST_ZCODE_ENDPOINT_ORIGIN,
   ZCODE_VERSION,
+  ZCODE_WEB_REMOTE_CONTROL_RELAY_WS_URL_DEFAULT,
+  ZCODE_WEB_REMOTE_CONTROL_URL_DEFAULT,
   buildZCodeEndpointUrls,
   resolveWebRemoteControlRelayWsUrl,
   resolveZCodeEndpointOrigin,
@@ -882,6 +884,11 @@ const defaultZCodeEndpointUrls = buildZCodeEndpointUrls(DEFAULT_ZCODE_ENDPOINT_O
 const webRemoteControlRelayWsEnvOverride =
   process.env["ZCODE_WEB_REMOTE_CONTROL_RELAY_WS_URL"]?.trim();
 const webRemoteControlUrlEnvOverride = process.env["ZCODE_WEB_REMOTE_CONTROL_URL"]?.trim();
+// Fork release builds bake public self-hosted defaults at build time so an app launched from
+// Finder/Explorer reaches its own relay without shell env; an explicit runtime env still wins,
+// keeping local repointing of a release build possible.
+const webRemoteControlReleaseRelayWsUrl = ZCODE_WEB_REMOTE_CONTROL_RELAY_WS_URL_DEFAULT || null;
+const webRemoteControlReleaseWebUrl = ZCODE_WEB_REMOTE_CONTROL_URL_DEFAULT || null;
 
 function extractOpenWorkspacePathFromDeepLinkUrl(url: string): string | null {
   try {
@@ -915,15 +922,21 @@ const webRemoteControlManager = createWebRemoteControlManager({
       relayWsUrl: resolveWebRemoteControlRelayWsUrl({
         endpointOrigin: derived.origin,
         overrideUrl: webRemoteControlRelayWsEnvOverride,
+        defaultUrl: webRemoteControlReleaseRelayWsUrl,
       }),
-      remoteUrl: webRemoteControlUrlEnvOverride || derived.remoteUrl,
+      remoteUrl:
+        webRemoteControlUrlEnvOverride || webRemoteControlReleaseWebUrl || derived.remoteUrl,
     };
   },
   relayWsUrl: resolveWebRemoteControlRelayWsUrl({
     endpointOrigin: DEFAULT_ZCODE_ENDPOINT_ORIGIN,
     overrideUrl: webRemoteControlRelayWsEnvOverride,
+    defaultUrl: webRemoteControlReleaseRelayWsUrl,
   }),
-  mobileRemoteControlUrl: webRemoteControlUrlEnvOverride || defaultZCodeEndpointUrls.remoteUrl,
+  mobileRemoteControlUrl:
+    webRemoteControlUrlEnvOverride ||
+    webRemoteControlReleaseWebUrl ||
+    defaultZCodeEndpointUrls.remoteUrl,
   deviceMid,
   deviceName: hostname(),
   appVersion: webRemoteControlAppVersion,
