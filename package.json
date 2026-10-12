@@ -4,6 +4,9 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "dev:relay": "pnpm --filter @zcode/remote-relay dev",
+    "build:relay": "pnpm --filter @zcode/remote-relay build",
+    "test:relay": "vitest run packages/remote-relay packages/shared/src/web-remote-relay",
     "dev:web": "concurrently -k -n server,web -c blue,green \"pnpm --filter @zcode/server dev\" \"pnpm --filter @zcode/web dev\"",
     "dev:docs": "pnpm --filter @zcode/dev-docs dev",
     "dev:desktop": "pnpm run dev:desktop:prod",
@@ -55,7 +58,7 @@
     "test:native-search:e2e": "node scripts/test-native-search-tools-e2e.mjs",
     "test:sea-runtime-tools:e2e": "node scripts/test-sea-runtime-tools-e2e.mjs",
     "clean": "node scripts/clean.mjs",
-    "typecheck": "tsc -b packages/rpc packages/provider packages/provider-node packages/shared packages/services packages/client packages/server packages/zcode-server-cli packages/ui packages/web apps/dev-docs packages/e2e-report packages/desktop/tsconfig.host.json packages/desktop/tsconfig.e2e.json",
+    "typecheck": "tsc -b packages/rpc packages/provider packages/provider-node packages/shared packages/services packages/client packages/server packages/zcode-server-cli packages/remote-relay packages/ui packages/web apps/dev-docs packages/e2e-report packages/desktop/tsconfig.host.json packages/desktop/tsconfig.e2e.json",
     "bundle:desktop": "pnpm --filter @zcode/desktop run bundle --",
     "fmt": "oxfmt",
     "fmt:check": "oxfmt --check",

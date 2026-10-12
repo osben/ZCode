@@ -1,0 +1,18 @@
+{
+  "name": "@zcode/remote-relay",
+  "private": true,
+  "type": "module",
+  "exports": { ".": "./src/contract.ts", "./node": "./src/adapters/nodeServer.ts" },
+  "scripts": {
+    "dev": "tsx src/adapters/entry.ts",
+    "build": "tsup",
+    "start": "node dist/entry.js",
+    "typecheck": "tsc -b",
+    "test": "vitest run packages/remote-relay"
+  },
+  "dependencies": { "@zcode/shared": "workspace:*", "ws": "^8.20.0" },
+  "devDependencies": {
+    "@types/node": "^25.5.0", "@types/ws": "^8.18.1", "tsup": "^8.4.0",
+    "tsx": "^4.19.4", "typescript": "^6.0.2", "vitest": "^4.1.1"
+  }
+}

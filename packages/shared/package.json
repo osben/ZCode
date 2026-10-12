@@ -3,6 +3,7 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./web-remote-relay": "./src/web-remote-relay/index.ts",
     ".": "./src/index.ts",
     "./runtime-env": "./src/runtimeEnv.ts",
     "./mcp": "./src/mcp.ts",

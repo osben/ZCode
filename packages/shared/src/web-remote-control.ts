@@ -1,3 +1,37 @@
+import type {
+  WebRemoteControlRelayDeviceMeta,
+  WebRemoteControlRelayPairStatus,
+  WebRemoteControlRelayDeviceRegisterInit,
+  WebRemoteControlRelayDeviceRegisterAck,
+  WebRemoteControlRelayAuthInit,
+  WebRemoteControlRelayAuthChallenge,
+  WebRemoteControlRelayAuthResponse,
+  WebRemoteControlRelayAuthAck,
+  WebRemoteControlRelayPairStatusQuery,
+  WebRemoteControlRelayPairStatusAck,
+  WebRemoteControlRelayDataMessage,
+  WebRemoteControlRelayError,
+} from "./web-remote-relay/index.js";
+export type {
+  WebRemoteControlRelayDeviceMeta,
+  WebRemoteControlRelayRole,
+  WebRemoteControlRelayPairStatus,
+  WebRemoteControlRelayErrorCode,
+  WebRemoteControlRelayOutgoingBase,
+  WebRemoteControlRelayIncomingBase,
+  WebRemoteControlRelayDeviceRegisterInit,
+  WebRemoteControlRelayDeviceRegisterAck,
+  WebRemoteControlRelayAuthInit,
+  WebRemoteControlRelayAuthChallenge,
+  WebRemoteControlRelayAuthResponse,
+  WebRemoteControlRelayAuthAck,
+  WebRemoteControlRelayPairStatusQuery,
+  WebRemoteControlRelayPairStatusAck,
+  WebRemoteControlRelayDataMessage,
+  WebRemoteControlRelayError,
+  WebRemoteControlRelayAuthProofVector,
+} from "./web-remote-relay/index.js";
+export { WEB_REMOTE_CONTROL_RELAY_AUTH_PROOF_VECTORS } from "./web-remote-relay/index.js";
 import type { MobileSessionCreateTelemetry } from "./sessionCreateTelemetry.js";
 /* eslint-disable max-lines -- Web 远程控制共享协议同时保留旧 /web-remote 类型和新外部 relay 类型，后续拆分时再按 transport/app payload 分文件。 */
 import type { DockerContainerInfo, SSHConfigAliasOption, WSLDistro } from "./platform.js";
@@ -67,11 +101,6 @@ export function createWebRemoteControlConnectionRecoveryTimeoutFailure(
   };
 }
 
-export interface WebRemoteControlRelayDeviceMeta {
-  platform: string;
-  version: string;
-  name: string;
-}
 
 export interface WebRemoteControlMobileViewportInfo {
   width: number;
@@ -96,86 +125,6 @@ export interface WebRemoteControlMobileDeviceInfo extends WebRemoteControlRelayD
   updatedAt: number;
 }
 
-export type WebRemoteControlRelayRole = "device" | "terminal";
-// Bugfix: zcode-remote-hub 当前只会把配对状态表示为 waiting/matched；
-// KICKED、WRONG_PARAM 等是 error code，不是 pair_status。这里收窄共享类型，
-// 避免客户端把不存在的 rejected/kicked 配对状态误判成桌面端 WS 需要关闭。
-export type WebRemoteControlRelayPairStatus = "waiting" | "matched";
-export type WebRemoteControlRelayErrorCode =
-  | "AUTH_FAILED"
-  | "DEVICE_OFFLINE"
-  | "KICKED"
-  | "WRONG_PARAM"
-  | "INTERNAL";
-
-export interface WebRemoteControlRelayOutgoingBase {
-  client_ts?: number;
-}
-
-export interface WebRemoteControlRelayIncomingBase {
-  server_ts?: number;
-}
-
-export interface WebRemoteControlRelayDeviceRegisterInit extends WebRemoteControlRelayOutgoingBase {
-  type: "device_register_init";
-  device_mid: string;
-  pass_hash: string;
-  meta: WebRemoteControlRelayDeviceMeta;
-}
-
-export interface WebRemoteControlRelayDeviceRegisterAck extends WebRemoteControlRelayIncomingBase {
-  type: "device_register_ack";
-  device_sid: string;
-}
-
-export interface WebRemoteControlRelayAuthInit extends WebRemoteControlRelayOutgoingBase {
-  type: "auth_init";
-  role: WebRemoteControlRelayRole;
-  device_sid: string;
-  meta: WebRemoteControlRelayDeviceMeta;
-}
-
-export interface WebRemoteControlRelayAuthChallenge extends WebRemoteControlRelayIncomingBase {
-  type: "auth_challenge";
-  nonce: string;
-}
-
-export interface WebRemoteControlRelayAuthResponse extends WebRemoteControlRelayOutgoingBase {
-  type: "auth_response";
-  device_sid: string;
-  proof: string;
-}
-
-export interface WebRemoteControlRelayAuthAck extends WebRemoteControlRelayIncomingBase {
-  type: "auth_ack";
-  device_sid: string;
-  terminal_sid?: string;
-  pair_status: WebRemoteControlRelayPairStatus;
-}
-
-export interface WebRemoteControlRelayPairStatusQuery extends WebRemoteControlRelayOutgoingBase {
-  type: "pair_status_query";
-  device_sid: string;
-}
-
-export interface WebRemoteControlRelayPairStatusAck extends WebRemoteControlRelayIncomingBase {
-  type: "pair_status_ack";
-  terminal_sid?: string;
-  pair_status: WebRemoteControlRelayPairStatus;
-}
-
-export interface WebRemoteControlRelayDataMessage<TPayload = unknown>
-  extends WebRemoteControlRelayOutgoingBase, WebRemoteControlRelayIncomingBase {
-  type: "data";
-  payload: TPayload;
-}
-
-export interface WebRemoteControlRelayError extends WebRemoteControlRelayIncomingBase {
-  type: "error";
-  code: WebRemoteControlRelayErrorCode;
-  message: string;
-}
-
 export type WebRemoteControlRelayOutgoingMessage =
   | WebRemoteControlRelayDeviceRegisterInit
   | WebRemoteControlRelayAuthInit
@@ -190,31 +139,6 @@ export type WebRemoteControlRelayIncomingMessage =
   | WebRemoteControlRelayPairStatusAck
   | WebRemoteControlRelayDataMessage<WebRemoteControlAppPayload>
   | WebRemoteControlRelayError;
-
-export interface WebRemoteControlRelayAuthProofVector {
-  passHash: string;
-  nonce: string;
-  role: WebRemoteControlRelayRole;
-  deviceSid: string;
-  proof: string;
-}
-
-export const WEB_REMOTE_CONTROL_RELAY_AUTH_PROOF_VECTORS: WebRemoteControlRelayAuthProofVector[] = [
-  {
-    passHash: "dGVzdF9oYXNo",
-    nonce: "nonce-1",
-    role: "device",
-    deviceSid: "device-1",
-    proof: "XK0m7u-26VS88uk7ISAX5Z_9pjzq8jqyP77N-HkCsPE",
-  },
-  {
-    passHash: "dGVzdF9oYXNo",
-    nonce: "nonce-1",
-    role: "terminal",
-    deviceSid: "device-1",
-    proof: "YkqkJy-p-iZK1g1AcoGd0Q83REOggX1EygWkcxW4oLU",
-  },
-];
 
 export interface WebRemoteControlExternalQrParams {
   deviceSid: string;
