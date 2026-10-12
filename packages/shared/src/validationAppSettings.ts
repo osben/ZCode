@@ -466,6 +466,16 @@ function migrateLegacyWorkspaceSession(value: unknown): unknown {
   return migrated;
 }
 
+const voiceDictationSettingsSchema = z.object({
+  modelId: nonEmptyStringSchema.nullable().optional(),
+  microphoneDeviceId: nonEmptyStringSchema.nullable().optional(),
+  language: nonEmptyStringSchema.optional(),
+  pushToTalk: z.boolean().optional(),
+  idleUnloadMinutes: z
+    .union([z.literal(1), z.literal(5), z.literal(10), z.literal(15), z.literal(30)])
+    .optional(),
+});
+
 const appSettingsObjectSchema = z.object({
   recentProjects: z.array(z.string()).default([]),
   // An unknown locale (such as a new language written by a newer version and then read by an older version) falls back only to the default:
@@ -474,6 +484,9 @@ const appSettingsObjectSchema = z.object({
   // User shortcut overrides (semantic validation is tolerant in the effective map in ui/src/shortcuts; the schema validates shape only).
   shortcutBindings: z.record(z.string(), z.array(z.string())).optional(),
   localePreference: localePreferenceSchema.default("system").catch("system"),
+  // 非关键偏好：更新版本写入的未知 voiceDictation 值只应被丢弃，而不是让整个 setting.json
+  // 解析失败、settingService 回落默认值并在下次写回时清空全部设置；与 locale 的 catch 策略一致。
+  voiceDictation: voiceDictationSettingsSchema.optional().catch(undefined),
   terminalInheritSystemProfile: z.boolean().default(true),
   terminalFontFamily: nonEmptyStringSchema.optional(),
   integratedTerminalShell: integratedTerminalShellSelectionSchema.optional(),
@@ -560,6 +573,7 @@ export const appSettingsPatchSchema = z.object({
   recentProjects: z.array(z.string()).optional(),
   locale: localeSchema.optional(),
   shortcutBindings: z.record(z.string(), z.array(z.string())).optional(),
+  voiceDictation: voiceDictationSettingsSchema.optional(),
   localePreference: localePreferenceSchema.optional(),
   terminalInheritSystemProfile: z.boolean().optional(),
   terminalFontFamily: nonEmptyStringSchema.optional(),

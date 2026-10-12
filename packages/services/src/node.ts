@@ -13,12 +13,14 @@ import {
   PERSONAL_PROVIDER_CONFIG_FILE_NAME,
 } from "@zcode/provider-node";
 import { getAppConfigDir as resolveAppConfigDir } from "./paths.js";
+import { createVoiceDictationService, IVoiceDictationService } from "./voice-dictation/index.js";
 import {
   buildLocalMediaPreviewUrl,
   type DynamicWorkflowMode,
   type ProviderProvisioningTrigger,
 } from "@zcode/shared";
 
+export * from "./voice-dictation/index.js";
 export {
   materializeZCodeBuiltinProviderConfig,
   ZCODE_BUILTIN_PROVIDER_CONFIG_FILE_ENV,
@@ -2724,6 +2726,16 @@ export function createLocalServices(options: {
       }),
     )
     .register(IPromptAttachmentTransferService, createLocalPromptAttachmentTransferService());
+
+  // 语音听写依赖本机麦克风与本地转写模型（koffi 原生库），按 accessor 契约只在 desktop-local
+  // host 提供；远端/独立 server 不注册，调用方经可选 accessor 与 RPC "not found" 干净失败。
+  // 下载走 host 统一网络栈，继承代理与自签证书设置，否则需要代理的用户完全无法下载模型。
+  if (options?.serviceAuthorityMode === "desktop-local") {
+    services.register(
+      IVoiceDictationService,
+      createVoiceDictationService({ fetchImpl: hostApiNetworkTransport.fetch }),
+    );
+  }
 
   // Register the lifecycle disposer even when initially disabled. The terminal fence must precede any
   // delayed settings/acquire continuation; do not treat "no Helper now" as "no lifecycle owner needed".

@@ -15,6 +15,8 @@ export type {
   WorkspaceFileEntry,
   SystemInfo,
   AppSettings,
+  VoiceDictationSettings,
+  VoiceModelIdleUnloadMinutes,
   ElectronReleaseChannel,
   IntegratedTerminalShellDialect,
   IntegratedTerminalShellOption,

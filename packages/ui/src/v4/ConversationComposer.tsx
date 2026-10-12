@@ -24,6 +24,7 @@ import {
   useState,
   type DragEvent,
   type MouseEvent as ReactMouseEvent,
+  type RefObject,
   type ReactNode,
 } from "react";
 import { cn } from "@/components/lib/utils.js";
@@ -166,6 +167,8 @@ import type { CodeViewerSource } from "@/lib/codeViewer.js";
 import { useConversationSelectionReferences } from "@/v4/composer/useConversationSelectionReferences.js";
 import { ConversationBackgroundWorkTrigger } from "@/v4/composer/ConversationBackgroundWorkTrigger.js";
 import { V4ComposerCuaEntry } from "@/v4/composer/V4ComposerCuaEntry.js";
+import { V4ComposerVoiceButton } from "@/v4/composer/V4ComposerVoiceButton.js";
+import { useVoiceDictation } from "@/hooks/useVoiceDictation.js";
 import {
   V4ComposerModeSwitch,
   V4ComposerModelControls,
@@ -504,11 +507,36 @@ export interface ConversationComposerProps {
   appSlashCommands?: readonly AppSlashCommand[];
   /** Expose the composer's drop routing to the full conversation pane / desktop draft title bar. */
   onDropTargetControllerChange?: (controller: ConversationDropTargetController | null) => void;
+  /** 语音输入仅本机桌面端可用（转写在 Desktop Host 执行）；Web/远端入口不显示麦克风。 */
+  voiceDictationEnabled?: boolean;
 }
 
 function formatAttachmentLineCount(attachment: ChatComposerAttachment, locale: string): string {
   const formatter = new Intl.NumberFormat(locale, { maximumFractionDigits: 0 });
   return formatter.format(typeof attachment.lineCount === "number" ? attachment.lineCount : 0);
+}
+
+function VoiceDictationComposerControl({
+  disabled,
+  onTranscript,
+  scopeRef,
+}: {
+  disabled: boolean;
+  onTranscript: (text: string) => void;
+  scopeRef: RefObject<HTMLElement | null>;
+}) {
+  const voiceDictation = useVoiceDictation({ enabled: true, onTranscript, scopeRef });
+  // V4ComposerVoiceButton 是 memo 组件；内联箭头函数会让 memo 失效（见 reactStableReferences 测试）。
+  const handleToggle = useCallback(() => void voiceDictation.toggle(), [voiceDictation.toggle]);
+  return (
+    <V4ComposerVoiceButton
+      phase={voiceDictation.phase}
+      level={voiceDictation.level}
+      preview={voiceDictation.preview}
+      disabled={disabled}
+      onToggle={handleToggle}
+    />
+  );
 }
 
 function ConversationComposerImpl({
@@ -571,6 +599,7 @@ function ConversationComposerImpl({
   suppressGoalCommands = false,
   appSlashCommands,
   onDropTargetControllerChange,
+  voiceDictationEnabled = false,
 }: ConversationComposerProps) {
   const { intl, locale } = useZCodeIntl();
   const services = useOptionalServices();
@@ -665,6 +694,14 @@ function ConversationComposerImpl({
   const activeShareContext = resolveAttachableShareContext(snapshot?.sharedContextImport);
   const pendingShareContext = activeShareContext?.status === "pending" ? activeShareContext : null;
   const inputApiRef = useRef<LexicalChatInputHandle | null>(null);
+  const voiceScopeRef = useRef<HTMLDivElement | null>(null);
+  const insertVoiceTranscript = useCallback((text: string) => {
+    const api = inputApiRef.current;
+    if (!api) return;
+    // 必须走 appendText：getText/setText 会把编辑器重建为纯文本节点，已有的结构化 mention 会被打平。
+    api.appendText(text);
+    api.focus();
+  }, []);
   const reportedErrorKeysRef = useRef(new Set<string>());
   const isMobileTextInputViewport = useIsMobileTextInputViewport();
   const primaryModifierPressed = usePrimaryFollowupModifier();
@@ -2342,6 +2379,13 @@ function ConversationComposerImpl({
           onOpen={onOpenRunningBackgroundWorks}
           openTarget={backgroundWorkOpenTarget}
         />
+        {voiceDictationEnabled ? (
+          <VoiceDictationComposerControl
+            disabled={disabled}
+            onTranscript={insertVoiceTranscript}
+            scopeRef={voiceScopeRef}
+          />
+        ) : null}
       </>
     ),
     [
@@ -2358,6 +2402,8 @@ function ConversationComposerImpl({
       remoteSessionId,
       runningSubagentCount,
       snapshot?.backgroundWorks,
+      voiceDictationEnabled,
+      insertVoiceTranscript,
       workspaceIdentity,
       workspacePath,
     ],
@@ -2411,6 +2457,7 @@ function ConversationComposerImpl({
       <div
         data-highspeed-composer={highspeedCard ? "true" : undefined}
         data-highspeed-entrance={highspeedCard ? highspeedEntrance : undefined}
+        ref={voiceScopeRef}
         className={cn(
           "chat-composer-input-surface relative w-full",
           contextHeader && "rounded-2xl bg-surface shadow-xl/5",

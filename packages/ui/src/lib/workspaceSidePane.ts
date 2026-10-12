@@ -204,6 +204,8 @@ export interface PlanDetailSidePaneTab {
   workspaceIdentity?: string;
   remoteSessionId?: string;
   parentSessionId: string;
+  /** 子会话提供计划 projection 时，根任务仍是 Side Pane tab 的可见范围所有者。 */
+  rootSessionId?: string;
   toolCallId: string;
   markdown: string;
   planFilePath?: string;
@@ -211,6 +213,7 @@ export interface PlanDetailSidePaneTab {
 
 export interface OpenPlanDetailSideTabRequest {
   parentSessionId: string;
+  rootSessionId?: string;
   toolCallId: string;
   markdown: string;
   planFilePath?: string;
@@ -722,6 +725,7 @@ export function createPlanDetailSidePaneTab(
     ...(options.workspaceIdentity ? { workspaceIdentity: options.workspaceIdentity } : {}),
     ...(options.remoteSessionId ? { remoteSessionId: options.remoteSessionId } : {}),
     parentSessionId: options.parentSessionId,
+    ...(options.rootSessionId ? { rootSessionId: options.rootSessionId } : {}),
     toolCallId: options.toolCallId,
     markdown: options.markdown,
     ...(options.planFilePath ? { planFilePath: options.planFilePath } : {}),
@@ -1052,7 +1056,6 @@ function getVisibleSidePaneTabsByScope(
     }
     if (
       tab.type === "selection-side-chat" ||
-      tab.type === "plan-detail" ||
       tab.type === "plugin-ui" ||
       tab.type === "workflow-run" ||
       tab.type === "workflow-actor-session" ||
@@ -1060,6 +1063,10 @@ function getVisibleSidePaneTabsByScope(
       tab.type === "workflow-artifact"
     ) {
       return tab.parentSessionId === scope.ownerTaskId;
+    }
+    if (tab.type === "plan-detail") {
+      // 计划正文来自 child session；tab 生命周期与可见性仍属于根任务的 Side Pane。
+      return (tab.rootSessionId ?? tab.parentSessionId) === scope.ownerTaskId;
     }
     return sidePaneOwnerKey(tab.ownerTaskId) === ownerKey;
   });
@@ -1807,7 +1814,10 @@ export function openPlanDetailSidePane(
   );
   // Keep one tab per toolCall. On another click, refresh the fallback from the card's current body; the
   // detail component still treats the parent conversation projection as the source of truth for live content.
-  return activateSidePaneTab(current, existing ? { ...existing, ...nextTab } : nextTab);
+  if (!existing) return activateSidePaneTab(current, nextTab);
+  const merged: PlanDetailSidePaneTab = { ...existing, ...nextTab };
+  if (nextTab.rootSessionId === undefined) delete merged.rootSessionId;
+  return activateSidePaneTab(current, merged);
 }
 
 /**
@@ -1982,7 +1992,6 @@ export function isSidePaneTabVisibleForParent(
   // Narrow tabs owned by a conversation (rather than the whole workspace) by parentSessionId.
   if (
     tab.type === "selection-side-chat" ||
-    tab.type === "plan-detail" ||
     tab.type === "plugin-ui" ||
     tab.type === "workflow-run" ||
     tab.type === "workflow-directory" ||
@@ -1991,6 +2000,10 @@ export function isSidePaneTabVisibleForParent(
     tab.type === "workflow-artifact"
   ) {
     return tab.parentSessionId === parentSessionId;
+  }
+  if (tab.type === "plan-detail") {
+    // 子会话 projection 标识不能替代 side chat 所属的根任务可见范围。
+    return (tab.rootSessionId ?? tab.parentSessionId) === parentSessionId;
   }
   if (
     tab.type === "subagent-session" ||

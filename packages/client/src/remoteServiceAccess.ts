@@ -15,6 +15,7 @@ import {
   IZCodeAgentService,
   IZCodeSessionService,
   ICuaPermissionService,
+  IVoiceDictationService,
   IConversationShareService,
   IBotsService,
   IFileWatcherService,
@@ -75,6 +76,7 @@ export class RemoteServiceAccess implements IServiceAccessor {
   // cuaPermissionService is optional on IServiceAccessor (remote/bots hosts do not provide it), but the Desktop renderer
   // can always access it through RPC (the main host always registers this descriptor; on non-macOS or when disabled, methods return available:false).
   readonly cuaPermissionService: ICuaPermissionService;
+  readonly voiceDictationService: IVoiceDictationService;
   readonly conversationShareService: IConversationShareService;
   readonly botsService: IBotsService;
   readonly fileWatcherService: IFileWatcherService;
@@ -158,6 +160,9 @@ export class RemoteServiceAccess implements IServiceAccessor {
     );
     this.cuaPermissionService = ProxyChannel.toService<ICuaPermissionService>(
       channelClient.getChannel(ICuaPermissionService.channelName),
+    );
+    this.voiceDictationService = ProxyChannel.toService<IVoiceDictationService>(
+      channelClient.getChannel(IVoiceDictationService.channelName),
     );
     this.conversationShareService = ProxyChannel.toService<IConversationShareService>(
       channelClient.getChannel(IConversationShareService.channelName),

@@ -1,0 +1,36 @@
+{
+  "version": 1,
+  "caseName": "conversation-session-plan-detail-from-side-chat",
+  "spec": "./test/e2e/conversation-session/conversation-session-plan-detail-from-side-chat.test.ts",
+  "providerFixtures": [
+    "./test/e2e/fixtures/upstream/common.json",
+    "./test/e2e/fixtures/upstream/conversation-session/conversation-session-plan-detail-from-side-chat.json"
+  ],
+  "fileFixtures": [],
+  "requests": [
+    {
+      "id": "upstream-plan-side-chat-root",
+      "description": "Создать root task для вспомогательного side chat.",
+      "kind": "main",
+      "source": "synthetic",
+      "timingPolicy": "fast-text",
+      "syntheticReason": "Root task нужен как владелец visibility scope дочернего selection side chat."
+    },
+    {
+      "id": "upstream-plan-side-chat-enter",
+      "description": "Selection side chat 首轮进入 plan mode。",
+      "kind": "main",
+      "source": "synthetic",
+      "timingPolicy": "fast-text",
+      "syntheticReason": "稳定触发 child session 的 plan mode，避免依赖真实模型选择 EnterPlanMode。"
+    },
+    {
+      "id": "upstream-plan-side-chat-exit",
+      "description": "Selection side chat 的 plan mode 返回 ExitPlanMode 计划。",
+      "kind": "main",
+      "source": "synthetic",
+      "timingPolicy": "fast-text",
+      "syntheticReason": "稳定触发 child session 的计划卡片与详情入口，复现 issue #956。"
+    }
+  ]
+}

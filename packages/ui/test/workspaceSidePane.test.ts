@@ -609,6 +609,37 @@ describe("workspaceSidePane", () => {
     expect(getVisibleSidePaneTabs(second, "parent-b")).toHaveLength(0);
   });
 
+  it("selection side chat 的计划来源保留 child session、可见范围归属 root task", () => {
+    const state = openPlanDetailSidePane(null, {
+      workspaceKey: "/workspace",
+      workspacePath: "/workspace",
+      parentSessionId: "child-session",
+      rootSessionId: "root-task",
+      toolCallId: "tool-plan-child",
+      markdown: "# Child plan",
+    });
+    const tab = state.tabs[0]!;
+
+    expect(tab).toMatchObject({
+      type: "plan-detail",
+      parentSessionId: "child-session",
+      rootSessionId: "root-task",
+      markdown: "# Child plan",
+    });
+    expect(isSidePaneTabVisibleForParent(tab, "root-task")).toBe(true);
+    expect(isSidePaneTabVisibleForParent(tab, "child-session")).toBe(false);
+    expect(isSidePaneTabVisibleForParent(tab, "another-root")).toBe(false);
+    expect(
+      getVisibleSidePaneTabs([tab], { workspaceKey: "/workspace", ownerTaskId: "root-task" }),
+    ).toEqual([tab]);
+    expect(
+      getVisibleSidePaneTabs([tab], {
+        workspaceKey: "/workspace",
+        ownerTaskId: "another-root",
+      }),
+    ).toEqual([]);
+  });
+
   it("run 详情 tab 的落点（追记「五枚药丸与一扇门」）：随请求落、再开不带就删键、openedAt 刷新", () => {
     const base = {
       workspaceKey: "/workspace",

@@ -20,6 +20,7 @@ import {
   FileSearch,
   ScrollText,
   GitBranchPlus,
+  Mic,
 } from "lucide-react";
 import { isSettingsSectionEnabled, type SettingsSectionId } from "@/lib/settingsNavigation.js";
 import type { Theme } from "@/useTheme.js";
@@ -159,6 +160,13 @@ const BASE_SETTINGS_SECTIONS: SettingsSectionDefinition[] = [
     id: "shortcuts",
     icon: Keyboard,
     titleId: "settings.shortcuts.title",
+    groupId: "basics",
+  },
+  // 语音输入紧跟快捷键：录音快捷键在快捷键分区可改，这里管理模型、麦克风与录音方式。
+  {
+    id: "voiceDictation",
+    icon: Mic,
+    titleId: "settings.voiceDictation.title",
     groupId: "basics",
   },
   // Workspace search scope (.zcodeignore) is a basic workspace-behavior setting for all users, placed at the end of Basic Settings.

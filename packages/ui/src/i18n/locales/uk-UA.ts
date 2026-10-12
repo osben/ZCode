@@ -7033,6 +7033,91 @@ const ukUA: Record<string, string> = {
   "cuaPermission.ready": "Дозволи готові",
   "cuaPermission.ready.sessionValidationHint":
     "Коли розпочнеться ваш перший сеанс, ZCode перевірить інструменти Computer Use саме для цього сеансу.",
+  "settings.voiceDictation.title": "Голосове введення",
+  "settings.shortcuts.command.voiceDictation": "Голосове введення",
+  "voiceDictation.inputDevice.title": "Пристрій введення",
+  "voiceDictation.inputDevice.description":
+    "Список доступних у системі аудіопристроїв, зокрема віртуальних. Виберіть системний пристрій за замовчуванням, щоб використовувати налаштування ОС.",
+  "voiceDictation.inputDevice.default": "Системний пристрій за замовчуванням",
+  "voiceDictation.inputDevice.unnamed": "Мікрофон {index}",
+  "voiceDictation.inputDevice.unavailable": "Вибраний пристрій недоступний",
+  "voiceDictation.micTest.title": "Перевірити мікрофон",
+  "voiceDictation.micTest.description":
+    "Записати 3 секунди, щоб перевірити, чи вловлює звук вибраний пристрій.",
+  "voiceDictation.micTest.button": "Перевірити мікрофон",
+  "voiceDictation.micTest.recording": "Запис…",
+  "voiceDictation.micTest.result": "Піковий рівень: {level}%",
+  "voiceDictation.micTest.silent":
+    "Звук не виявлено. Перевірте пристрій введення та дозвіл на використання мікрофона.",
+  "voiceDictation.shortcut.title": "Сполучення клавіш",
+  "voiceDictation.shortcut.description":
+    "Починає голосове введення в полі повідомлення. Змініть його в налаштуваннях сполучень клавіш.",
+  "voiceDictation.shortcut.unassigned": "Не призначено",
+  "voiceDictation.pushToTalk.title": "Утримуйте, щоб говорити",
+  "voiceDictation.pushToTalk.description":
+    "Утримуйте сполучення клавіш для запису й відпустіть, щоб розпізнати мовлення. Якщо вимкнути цей режим, натисніть один раз, щоб почати запис, і ще раз, щоб зупинити.",
+  "voiceDictation.language.title": "Мова",
+  "voiceDictation.language.description":
+    "Мова мовлення. Багатомовні моделі підтримують автоматичне визначення.",
+  "voiceDictation.language.auto": "Визначати автоматично",
+  "voiceDictation.models.unloadDelay.title": "Вивантажити з пам'яті через",
+  "voiceDictation.models.unloadDelay.description":
+    "Після диктування модель залишатиметься готовою протягом цього часу, а потім звільнить пам'ять.",
+  "voiceDictation.models.unloadDelay.option": "{count} хв",
+  "voiceDictation.models.title": "Моделі розпізнавання мовлення",
+  "voiceDictation.models.description":
+    "Усе працює на цьому пристрої. Виділена модель вибрана для диктування; у пам'яті одночасно може бути лише одна модель.",
+  "voiceDictation.models.languages": "Підтримує мов: {count}",
+  "voiceDictation.models.streaming": "Потокова",
+  "voiceDictation.models.license": "Ліцензія: {license}",
+  "voiceDictation.models.download": "Завантажити",
+  "voiceDictation.models.cancel": "Скасувати",
+  "voiceDictation.models.use": "Використовувати",
+  "voiceDictation.models.selected": "Активна",
+  "voiceDictation.models.loading": "Завантаження в пам'ять",
+  "voiceDictation.models.transcribing": "Розпізнавання мовлення",
+  "voiceDictation.models.streamingActive": "Потокове розпізнавання мовлення",
+  "voiceDictation.models.loaded": "Завантажена в пам'ять",
+  "voiceDictation.models.remove": "Видалити",
+  "voiceDictation.models.startingDownload": "Початок завантаження…",
+  "voiceDictation.models.useWhenReady": "Використати після завантаження",
+  "voiceDictation.models.cancelUseWhenReady": "Залишити поточну модель",
+  "voiceDictation.models.willUseWhenReady": "Буде вибрана після завантаження",
+  "voiceDictation.models.removeConfirm.title": "Видалити цю модель?",
+  "voiceDictation.models.removeConfirm.description":
+    "{model} буде видалено з цього пристрою. Пізніше її можна буде завантажити знову.",
+  "voiceDictation.models.fromHandy": "Установлено в Handy",
+  "voiceDictation.models.downloading": "Завантаження: {percent}%",
+  "voiceDictation.downloadComplete": "Модель завантажено, вона готова до використання.",
+  "voiceDictation.webUnavailable.title": "Доступно в ZCode Desktop",
+  "voiceDictation.webUnavailable.badge": "Лише для Desktop",
+  "voiceDictation.webUnavailable.description":
+    "У Web можна записувати звук із мікрофона, але локальні моделі розпізнавання працюють лише в ZCode Desktop.",
+  "voiceDictation.noModelSelected":
+    "Спочатку виберіть модель розпізнавання в Налаштуваннях → Голосове введення.",
+  "voiceDictation.microphoneFailed":
+    "Не вдалося отримати доступ до мікрофона. Перевірте пристрій введення та дозволи.",
+  "voiceDictation.transcribeFailed": "Не вдалося розпізнати мовлення.",
+  "voiceDictation.downloadFailed": "Не вдалося завантажити модель.",
+  "voiceDictation.cancelDownloadFailed": "Не вдалося скасувати завантаження моделі.",
+  "voiceDictation.models.description.whisper":
+    "Автовизначення мови й мітки сегментів для {languages} мов.",
+  "voiceDictation.models.description.parakeetLive":
+    "Швидке й точне живе розпізнавання англійської.",
+  "voiceDictation.models.description.parakeetMultilingual":
+    "Швидке й точне. Підтримує {languages} європейських мов.",
+  "voiceDictation.models.description.canary":
+    "Крихітна й миттєва, добре працює на будь-якому залізі.",
+  "voiceDictation.models.description.nemotron":
+    "Англійське розпізнавання мовлення з потоковим режимом і мітками токенів.",
+  "voiceDictation.saveFailed": "Не вдалося зберегти налаштування голосового введення.",
+  "voiceDictation.composer.start": "Голосове введення",
+  "voiceDictation.composer.loading": "Завантаження моделі мовлення",
+  "voiceDictation.composer.stop": "Зупинити голосове введення",
+  "voiceDictation.composer.level": "Рівень сигналу мікрофона",
+  "voiceDictation.composer.listening": "Слухаю",
+  "voiceDictation.composer.status.idle": "Голосове введення готове",
+  "voiceDictation.composer.status.transcribing": "Розпізнавання мовлення",
   "settings.computerUse.title": "Computer Use",
   "settings.computerUse.toggleLabel": "Увімкнути Computer Use",
   "settings.computerUse.toggleDescription": "Вмикає Computer Use — його сервер MCP і навички.",

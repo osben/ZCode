@@ -58,7 +58,7 @@ describe("app asar repack", () => {
         }
       ).node_modules.files["node-pty"].files.prebuilds.files["darwin-arm64"].files;
 
-      expect(ASAR_UNPACK_NATIVE_GLOB).toBe("*.{node,dll,dylib,exe}");
+      expect(ASAR_UNPACK_NATIVE_GLOB).toBe("*.{node,dll,dylib,exe,so}");
       expect(nativeHeader["pty.node"].unpacked).toBe(true);
       expect(nativeHeader["spawn-helper"].unpacked).toBe(true);
       expect(

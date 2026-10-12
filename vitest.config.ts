@@ -55,6 +55,10 @@ const forkNodeTestFiles = [
   "packages/services/test/userInstructionsService.test.ts",
   // 该文件使用 node:test；随 test:node 运行，避免被 Vitest 二次收集。
   "packages/services/test/zcodeUpstreamBaseVersion.test.ts",
+  // 语音听写的 node:test 用例（模型下载/转写/RPC 契约）；随 test:node 运行，避免被 Vitest 二次收集。
+  "packages/services/test/voiceDictation.test.ts",
+  "packages/services/test/voiceDictationRpc.test.ts",
+  "packages/ui/test/voiceDictation.test.ts",
   "packages/ui/test/chatErrorResume.test.ts",
   "packages/ui/test/branchMergeStatusProbeRunner.test.ts",
   "packages/ui/test/i18nCatalogParity.test.ts",

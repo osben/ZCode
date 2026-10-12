@@ -51,6 +51,15 @@ jobs:
       ZCODE_SKIP_REMOTE_ASSETS: "1"
       ZCODE_TARGET_OS: darwin
       ZCODE_TARGET_ARCH: arm64
+      # Production backend: without an explicit ZCODE_ENV the build silently defaults to the test
+      # backend environment (scripts/builtin-provider-config.mjs), baking X-Release-Channel: test
+      # into every model request; the z.ai backend rejects the production account token there, so
+      # every model call fails with 401 auth_failed. Job-level env covers both the bundle step and
+      # electron-builder (the config re-resolves the environment at packaging time).
+      ZCODE_ENV: production
+      # Keep the "ZCode Preview" identity so releases upgrade existing fork installs in place and
+      # stay side-by-side with a regular ZCode.app; identity is independent of backend environment.
+      ZCODE_PREVIEW_IDENTITY: "1"
     steps:
       - uses: actions/checkout@v5
 
@@ -98,6 +107,9 @@ jobs:
       ZCODE_SKIP_REMOTE_ASSETS: "1"
       ZCODE_TARGET_OS: win32
       ZCODE_TARGET_ARCH: x64
+      # Same rationale as build-macos-arm64: explicit production backend environment.
+      ZCODE_ENV: production
+      ZCODE_PREVIEW_IDENTITY: "1"
     steps:
       - uses: actions/checkout@v5
 
@@ -163,5 +175,5 @@ jobs:
           gh release create "v${VERSION}" \
             --target "$GITHUB_SHA" \
             --title "ZCode ${VERSION}" \
-            --notes "Unsigned fork build (upstream base ${VERSION%%-fork.*}). macOS arm64 + Windows x64. On macOS Gatekeeper may block the first launch; run \`xattr -cr /Applications/ZCode.app\` to allow it." \
+            --notes "Unsigned fork build (upstream base ${VERSION%%-fork.*}). macOS arm64 + Windows x64. On macOS Gatekeeper may block the first launch; run \`xattr -cr \"/Applications/ZCode Preview.app\"\` to allow it." \
             release-assets/*

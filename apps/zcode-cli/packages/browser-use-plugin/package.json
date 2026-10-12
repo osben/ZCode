@@ -20,7 +20,7 @@
     "@zcode/core": "workspace:*",
     "@zcode/node-repl-host": "workspace:*",
     "@zcode/shared": "workspace:*",
-    "zod": "4.6.5"
+    "zod": "4.6.6"
   },
   "devDependencies": {
     "@modelcontextprotocol/client": "2.2.0",
