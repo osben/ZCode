@@ -40,7 +40,7 @@ port.on(
   "message",
   (request: {
     id: number;
-    method: "register" | "get" | "close";
+    method: "register" | "get" | "touch" | "close";
     mid?: string;
     key?: string;
     sid?: string;
@@ -59,10 +59,16 @@ port.on(
           return;
         }
         const plaintext = decrypt(row);
-        database
+        port.postMessage({ id: request.id, result: { sid: row.sid, key: plaintext } });
+        return;
+      }
+      if (request.method === "touch") {
+        // A SID lookup must not count an abandoned challenge or invalid proof as authentication.
+        const result = database
           .prepare("UPDATE registrations SET authenticated_at = ? WHERE sid = ?")
           .run(Date.now(), request.sid!);
-        port.postMessage({ id: request.id, result: { sid: row.sid, key: plaintext } });
+        if (result.changes !== 1) throw new Error("Registration does not exist.");
+        port.postMessage({ id: request.id, result: null });
         return;
       }
       const fingerprint = createHash("sha256").update(request.key!).digest("hex");
@@ -88,7 +94,7 @@ port.on(
         .run(sid, request.mid!, fingerprint, iv, ciphertext, cipher.getAuthTag(), Date.now());
       port.postMessage({ id: request.id, result: { sid, key: request.key } });
     } catch {
-      // 错误只返回固定代码，SQLite 路径、注册密钥和密文不能进入客户端或日志。
+      // Return fixed errors so database paths, registration keys and ciphertext cannot leak.
       port.postMessage({ id: request.id, error: "Registration store operation failed." });
     }
   },

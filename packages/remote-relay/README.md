@@ -7,7 +7,7 @@ run an Agent. Desktop must remain running to execute commands.
 The server supports separate registration SIDs and authenticated browser
 replacement. Desktop still uses application-wide credentials: independent
 window registration and public URL defaults in Desktop releases remain pending.
-See [the design and acceptance catalog](../../specs/self-hosted-remote-relay.md).
+See [the design and acceptance catalog](../../docs/web-remote-control/self-hosted-remote-relay.md).
 
 ## Railway
 

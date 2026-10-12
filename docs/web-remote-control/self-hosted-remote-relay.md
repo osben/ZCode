@@ -1,13 +1,13 @@
-# Self-hosted remote relay
+# Self-hosted Remote Relay
 
-## Status and audience
+> **Status:** The relay server, shared transport contract and Docker image are implemented.
+> Independent Desktop window registration and public endpoint defaults in Desktop releases remain pending.
 
-Implementation authorized on 2026-10-11 after review of this design. Production deployment/publication is not authorized by that implementation request.
-The server package, shared transport contract and Dockerfile are now implemented;
-operator configuration is in [the relay README](../packages/remote-relay/README.md).
-Independent Desktop window registrations and release URL defaults remain pending.
-Audience: maintainers implementing and operating the fork's public remote-control service.
-The implementation boundary is a separate relay executable, its shared wire contract, and the existing Desktop/Web clients. This is not a replacement Agent or standalone cloud workspace server.
+The relay connects the existing Desktop and Web remote-control transports. It owns
+authentication and connection pairs; tasks, snapshots and Agent execution stay in
+the existing Desktop Host. This document describes the implemented server and the
+remaining client integration for contributors. Operators should use the
+[relay deployment guide](../../packages/remote-relay/README.md).
 
 ## Confirmed product decisions
 
@@ -19,19 +19,20 @@ The implementation boundary is a separate relay executable, its shared wire cont
 | Isolation unit      | Each window has its own registration, key and browser pair; workspaces remain owned by that window's existing Host | Derived from independent-window requirement and current Host boundary |
 | QR lifetime         | Pending: window-lifetime identity versus persistent identity restored across application restarts                  | User question pending                                                 |
 
-All proposal values below are implementation recommendations, not evidence of deployed behavior or measured capacity. The QR-lifetime decision is a stop gate for Desktop identity/persistence implementation; independent server contracts and package boundaries can be prepared before it is resolved.
+Server defaults below describe implementation limits, not measured service capacity. The QR-lifetime decision remains a gate for Desktop identity/persistence integration; it does not block operating the implemented server with the existing client credential scope.
 
 ## Repository placement
 
 Use `packages/remote-relay`, package name `@zcode/remote-relay`. `pnpm-workspace.yaml` already includes `packages/*`. This placement follows the existing executable `packages/zcode-server-cli`, but introduces no dependency on that package.
 
 ```text
-packages/remote-relay/                 # proposed, not created yet
+packages/remote-relay/                 # implemented server package
   package.json
   tsconfig.json
   tsup.config.ts
   README.md                           # operator configuration and local launch
   Dockerfile                          # standalone Node image
+  Dockerfile.dockerignore              # relay-only build context
   src/
     module.ts
     contract.ts                       # typed configuration and IO ports
@@ -41,12 +42,13 @@ packages/remote-relay/                 # proposed, not created yet
     domain/connectionState.ts         # pure guards and state transitions
     app/relay.ts                      # sole connection/pair registry owner
     adapters/nodeServer.ts            # HTTP/WebSocket, composition and shutdown
-    adapters/auth.ts                  # random identifiers, HMAC and key encryption
+    adapters/entry.ts                 # environment configuration and process lifecycle
+    adapters/auth.ts                  # random identifiers and HMAC proofs
     adapters/deviceStore.ts           # asynchronous SQLite port / worker client
     adapters/deviceStoreWorker.ts     # synchronous SQLite isolated from socket loop
   test/                               # protocol, persistence and real-client tests
 
-packages/shared/src/web-remote-relay/  # proposed transport-only public contract
+packages/shared/src/web-remote-relay/  # transport-only public contract
   index.ts
   module.ts
   contract.ts
@@ -54,14 +56,14 @@ packages/shared/src/web-remote-relay/  # proposed transport-only public contract
   contract.test.ts
   CONTRACT.md
 
-specs/self-hosted-remote-relay.md       # this design and acceptance catalog
+docs/web-remote-control/self-hosted-remote-relay.md # architecture and acceptance catalog
 ```
 
 The tree names responsibilities, not a requirement to add empty abstractions. Keep related operations together until an actual boundary requires a separate file. The managed-module contract files are required by repository architecture governance.
 
-Register `remote-relay-protocol` and `remote-relay` as managed modules in `architecture-policy.yaml` during implementation. Protocol requires no other workspace module; relay requires only the protocol. Relay layers are `domain -> app -> adapters`; domain performs no IO and imports no Node APIs. The executable/composition entry is in adapters. Both modules expose explicit public entry points and matching `module.ts` declarations.
+`architecture-policy.yaml` registers `remote-relay-protocol` and `remote-relay` as managed modules. Protocol requires no other workspace module; relay requires only the protocol. Relay layers are `domain -> app -> adapters`; domain performs no IO and imports no Node APIs. The executable/composition entry is in adapters. Both modules expose explicit public entry points and matching `module.ts` declarations.
 
-Add the shared package export `@zcode/shared/web-remote-relay`. Relay must not import the shared aggregate entry point, application payload schemas, Desktop, UI, services, server, client, RPC or Agent. Existing client-facing types remain available from their present entry points through aliases/re-exports, including their typed application payload specialization.
+The shared package exports `@zcode/shared/web-remote-relay`. Relay must not import the shared aggregate entry point, application payload schemas, Desktop, UI, services, server, client, RPC or Agent. Existing client-facing types remain available from their present entry points through aliases/re-exports, including their typed application payload specialization.
 
 ## Stack, build and packaging
 
@@ -78,13 +80,20 @@ Add the shared package export `@zcode/shared/web-remote-relay`. Relay must not i
 
 The registration table contains SID, machine MID, a server-computed key fingerprint, encrypted verifier material, creation time and last successful authentication time. Enforce uniqueness for `(MID, key fingerprint)`. Store writes happen on registration/authentication, not on every heartbeat or forwarded message. SQLite initialization/migration and key validation complete before readiness; a failed store is a failed startup, not an in-memory fallback.
 
-The proposed runtime configuration owns listen host/port, database path, storage encryption key, allowed Web origins, trusted proxy addresses, admission quotas, outbound byte budgets and liveness deadlines. Local development defaults to loopback; a container binds its private interface explicitly. Require finite production limits and a valid encryption key. These are relay-only configuration inputs; no secret uses a `VITE_` variable or enters Desktop/Web build defines. Exact quota values are deployment parameters to establish with the local acceptance/load fixtures, not a promised service capacity.
+SID lookup is read-only. After verifying proof and admitting the role, the registry
+awaits `touch(sid)` before publishing authenticated state or sending its ACK.
+A pending device admission reserves the SID's device slot. Failure or disconnect
+releases that reservation; a store failure returns `INTERNAL` and leaves an
+existing browser pair intact. A late store callback cannot resurrect a closed
+connection. Browser replacement reads the current pair after the store commit.
+
+The runtime configuration owns listen host/port, database path, storage encryption key, allowed Web origins, trusted proxy addresses, admission quotas, outbound byte budgets and liveness deadlines. Local development defaults to loopback; a container binds its private interface explicitly. Require finite production limits and a valid encryption key. These are relay-only configuration inputs; no secret uses a `VITE_` variable or enters Desktop/Web build defines. Exact quota values are deployment parameters to establish with the local acceptance/load fixtures, not a promised service capacity.
 
 New package manifest entries must be declared explicitly; workspace hoisting is not a dependency declaration. The user authorized the planned implementation, including the existing `ws` and shared protocol dependency. Any additional runtime library requires separate approval.
 
-Proposed package commands: `dev`, `build`, `start`, `typecheck`, `test`. Proposed root aliases: `dev:relay`, `build:relay`, `test:relay`. These commands do not exist yet.
+Package commands: `dev`, `build`, `start`, `typecheck`, `test`, `test:bundle`. Root aliases: `dev:relay`, `build:relay`, `test:relay`.
 
-Add the package to the root explicit TypeScript build list. Root Vitest already includes `packages/*/test/**/*.test.ts` and `packages/*/src/**/contract.test.ts`; confirm discovery rather than copying the root test configuration. Use real socket barriers in integration tests, fake clocks only for deadline behavior.
+The root explicit TypeScript build list includes the relay package. Root Vitest already includes `packages/*/test/**/*.test.ts` and `packages/*/src/**/contract.test.ts`; confirm discovery rather than copying the root test configuration. Use real socket barriers in integration tests, fake clocks only for deadline behavior.
 
 Desktop builds and `scripts/build-zcode.mjs` must not stage or start relay. The generic recursive root build may build its package normally, but that does not make it part of the Desktop/runtime artifact. The relay container is built separately from the repository root with a filtered dependency closure; it contains no Electron, CLI Agent, native PTY, SSH, browser-use runtime, model credentials or project files.
 
@@ -105,6 +114,11 @@ Web remains `packages/web`, built under `/remote/v4/` and served separately by t
 
 No accepted command queue, RPC assembly, cumulative ACK generation, transcript cache, snapshot store or model/provider service belongs in relay. The existing endpoint adapters retain retransmission and delivery acknowledgement. Socket buffers do not become a durable offline mailbox.
 
+The socket adapter reserves outgoing bytes before `send`, against both the socket
+and process budgets, and releases a frame once when its callback completes or the
+socket closes. Close releases only that socket's outstanding reservations; late
+callbacks are idempotent. These local write completions are not business ACKs.
+
 ```mermaid
 sequenceDiagram
     participant D as Desktop Main: window A
@@ -117,6 +131,8 @@ sequenceDiagram
     S-->>R: committed SID
     R-->>D: device_register_ack
     D->>R: challenge / proof as device
+    R->>S: touch SID after valid proof and device admission
+    S-->>R: authentication timestamp committed
     B1->>R: challenge / proof as terminal
     R-->>D: matched
     R-->>B1: matched
@@ -212,21 +228,21 @@ Keep relay/Web URLs independent from Z.AI OAuth, Coding Plan, provider and API e
 
 Add a separate relay container build/smoke CI path at implementation time. Follow repository workflow permissions; do not add registry publication, deployment credentials or automatic production rollout without authorization. Existing Desktop release jobs only need the approved public client URL configuration.
 
-## Implementation slices
+## Implementation Status
 
-| Order | Deliverable                                                                           | Done evidence                                                                                                   |
-| ----- | ------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
-| 1     | Transport-only shared contract and managed module boundaries                          | Existing type imports compile; HMAC vectors and envelope schemas pass; no Agent/RPC dependency                  |
-| 2     | Relay executable: registration store, authentication, registry, forwarding and bounds | Real socket integration, restart persistence, isolation and malformed-input cases                               |
-| 3     | Window-scoped Desktop registration and lifecycle, public fork URLs                    | Two real windows/registrations and QR flows; selected lifetime policy; no cross-window effects                  |
-| 4     | Standalone container and local relay/Web/Desktop development entry                    | Image runs outside repo with persistent fixture volume; no native Agent assets; readiness/shutdown smoke        |
-| 5     | Browser/Desktop recovery and publication readiness                                    | E2E evidence below; load/pressure measurements; operator configuration; deployment still requires authorization |
+| Area                                                | Current status     | Evidence / remaining work                                                                                   |
+| --------------------------------------------------- | ------------------ | ----------------------------------------------------------------------------------------------------------- |
+| Shared transport contract and module boundaries     | Implemented        | HMAC vectors, envelope schemas, shared type imports and architecture checks                                 |
+| Relay executable and encrypted registration store   | Implemented        | Real socket integration, store restart persistence, authentication rejection and pressure tests             |
+| Window-scoped Desktop registration and release URLs | Pending            | QR lifetime policy, two-window credential isolation, public release defaults and UI E2E                     |
+| Standalone container and operator configuration     | Implemented        | Final-image readiness/pairing/forwarding/restart smoke; Railway settings in the package README              |
+| Public-service readiness and client recovery        | Partially verified | Real client transports covered; browser/Desktop UI E2E, load measurement and live deployment remain pending |
 
 No implementation slice may erase owner/lease, stale-run or workspace guards to make a happy-path test pass.
 
 ## Acceptance catalog and coverage
 
-Status `accepted` means required by confirmed product rules or an existing invariant; it does not mean implemented/tested. `undefined` cases require the pending product decision. All evidence is planned.
+Status `accepted` means required by confirmed product rules or an existing invariant; it does not mean implemented/tested. `undefined` cases require the pending product decision. Server/store evidence is available; Desktop and browser interaction E2E evidence remains pending.
 
 | Case     | Setup/action                                                   | Required assertions                                                                                                 | Status / evidence                                                    |
 | -------- | -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------- |
@@ -256,7 +272,7 @@ Existing client transport tests often use mocked proof providers/server ACKs; th
 | Field                | Value                                                                                                                                                                 |
 | -------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Intent / capability  | Operate the fork's public remote relay with independent Desktop windows                                                                                               |
-| Change layers / mode | validation, commit-effect, persistence, recovery; planning                                                                                                            |
+| Change layers / mode | validation, commit-effect, persistence, recovery; server implemented, client integration pending                                                                      |
 | Primary seeds        | Shared relay types; Desktop manager/auth storage; Desktop QR dialog; Web terminal transport; endpoint/build configuration                                             |
 | Out of scope         | Agent/session logic, new cloud runtimes, device/account dashboard, invitation/OAuth registration, multi-browser fanout, E2EE, multi-replica topology, auto-deployment |
 
@@ -307,7 +323,7 @@ The installed `codegraph` CLI reports this worktree is **not initialized**. No g
 
 ### Graph Drift Candidates and Graph Delta
 
-The current feature graph declares remote delivery, the Desktop QR dialog and Host attachments, but no self-hosted relay package or independent window registration owner. These are proposed new nodes, not missing implemented features. Add this spec to the existing remote-delivery capability now; add an implemented relay capability, exact runtime seeds and owner edges only when implementation exists. Do not rename existing remote-delivery or shared-host nodes.
+The feature graph links this document from the existing remote-delivery capability. The relay and transport protocol are implemented managed modules; independent Desktop window registration remains pending. Extend runtime seeds and owner edges when that client integration is implemented, preserving the existing remote-delivery and shared-host nodes.
 
 ### Domain Scope, Dimensions and Pruning
 
@@ -325,15 +341,30 @@ Prune multiple concurrent browsers per SID because the user selected replacement
 
 This file is the spec, boundary worksheet, stable case catalog and initial coverage matrix. Finalize RELAY-10 and the persistence branch after the QR decision. Before interaction implementation, route accepted two-window/real-relay cases through `e2e-case-lifecycle`; do not treat the existing onboarding test as relay coverage. Use deterministic local Agent/provider fixtures with no paid model calls, real socket barriers, disposable relay DB/keys, and isolated per-window Desktop data. Record UI, socket and Host/process evidence separately. No E2E code or fixtures have been added yet.
 
-## Current verification and remaining gates
+## Verification and Remaining Work
 
-Workspace freshness passed: HEAD is 31 commits ahead of `origin/main`, zero behind; it has no tracking branch. Worktree already contained unrelated untracked `specs/command-center-worktrees-themes.md`; preserve it.
+The relay suite covers shared schemas, real Desktop/Web HMAC transports, SID
+isolation, browser replacement, authentication rejection, pressure limits and
+encrypted registration persistence. The bundle smoke checks readiness, pairing,
+opaque forwarding, graceful shutdown and SID persistence after process restart;
+it also runs inside the final Docker image without workspace fallbacks.
 
-`pnpm architecture:check --changed` failed before analysis because `typescript` is missing. `pnpm typecheck` failed because `tsc` is unavailable. `pnpm lint` failed because `oxlint` is unavailable. The worktree has no `node_modules`; `mise` is not installed and the available Node is 24.16.0 rather than pinned 24.14.0. These are environment limitations, not passing checks or evidence of source defects. No tests, builds, container, native/browser interaction or production relay checks were run.
+Run the current verification from the repository root:
 
-Document checks passed: all 16 acceptance IDs are unique, the three local Markdown links resolve, code fences balance, and there is no trailing whitespace. Feature graph YAML parsed with 374 unique node IDs and a valid new spec reference. Full graph edge validation found two unresolved endpoints (`persistence.desktop-user-data-root`, `capability.mcp-oauth-authorization`), both also present in HEAD; this change adds no unresolved endpoints and changes no node definitions or edges. `git diff --check` passed for tracked changes. A cold-reader pass clarified registration storage, production configuration, startup-intent isolation and activation of the fork-specific window policy. Codegraph source-seed validation remains unavailable without a worktree index.
+```bash
+pnpm test:relay
+pnpm typecheck
+pnpm lint
+pnpm architecture:check
+pnpm build:relay
+pnpm --filter @zcode/remote-relay test:bundle
+```
 
-Before implementation: resolve the QR-lifetime gate; obtain approval for new package runtime dependencies; make the pinned toolchain/dependency closure available. Before publication: provide real acceptance evidence, measured resource limits and approved deployment origins/infrastructure.
+The server is implemented; independent-window Desktop registration, QR lifetime
+and release URL defaults remain integration work. Real multi-window/browser E2E,
+public-service load measurements and a Railway deployment are not yet verified.
+The existing mobile onboarding case excludes real relay pairing and does not
+cover those remaining acceptance cases.
 
 ## Source map and upstream references
 
@@ -342,5 +373,5 @@ Before implementation: resolve the QR-lifetime gate; obtain approval for new pac
 - `packages/shared/src/protocol.ts`, `validationAppSettings.ts`: existing app-wide registration and last-enabled setting shapes.
 - `packages/ui/src/WebRemoteControlDialog.tsx`, `WorkspaceWebRemoteControlTrigger.tsx`, `hooks/useWebRemoteControlStatus.ts`; `packages/web/src/main.tsx`, `webRemoteControlTransport.ts`: current user entry paths.
 - `pnpm-workspace.yaml`, `architecture-policy.yaml`, `vitest.config.ts`, root `package.json`, `packages/desktop/tsup.config.ts`, `packages/web/vite.config.ts`, `scripts/build-time-config.mjs`, `scripts/build-zcode.mjs`, `.github/workflows/pr-checks.yml`, `.github/workflows/fork-release.yml`: integration and artifact boundaries.
-- [Current remote architecture](../docs/web-remote-control/web-remote-control-architecture.md), [realtime ownership](../docs/web-remote-control/task-realtime-sync.md), [managed module contract](../.agents/skills/architecture-governance/references/module-contract.md).
-- [ws 8.20 API](https://github.com/websockets/ws/blob/8.20.0/doc/ws.md), [Node 24.14 SQLite](https://nodejs.org/download/release/v24.14.0/docs/api/sqlite.html), [nginx WebSocket proxy](https://nginx.org/en/docs/http/websocket.html).
+- [Current remote architecture](./web-remote-control-architecture.md), [realtime ownership](./task-realtime-sync.md), [managed module contract](../../.agents/skills/architecture-governance/references/module-contract.md).
+- [ws API](https://github.com/websockets/ws/blob/8.22.0/doc/ws.md), [Node 24.14 SQLite](https://nodejs.org/download/release/v24.14.0/docs/api/sqlite.html), [nginx WebSocket proxy](https://nginx.org/en/docs/http/websocket.html).

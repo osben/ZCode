@@ -1,9 +1,42 @@
-import { mkdtemp, readFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { DatabaseSync } from "node:sqlite";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomBytes } from "node:crypto";
 import { expect, it } from "vitest";
 import { createRelayDeviceStore } from "../src/adapters/deviceStore.js";
+
+it("keeps SID lookups read-only and timestamps only explicit authenticated admissions", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "zcode-relay-auth-time-"));
+  const path = join(directory, "relay.sqlite");
+  const store = await createRelayDeviceStore({
+    path,
+    storageKey: randomBytes(32).toString("base64"),
+  });
+  const database = new DatabaseSync(path, { readOnly: true });
+  try {
+    const record = await store.register("fixture-machine", "fixture-key");
+    const timestamp = () =>
+      database.prepare("SELECT authenticated_at FROM registrations WHERE sid = ?").get(record.sid)!
+        .authenticated_at;
+    expect(timestamp()).toBeNull();
+    expect(await store.get(record.sid)).toEqual(record);
+    expect(await store.get(record.sid)).toEqual(record);
+    expect(timestamp()).toBeNull();
+    await store.touch(record.sid);
+    expect(timestamp()).toEqual(expect.any(Number));
+    const authenticatedAt = timestamp();
+    expect(await store.get(record.sid)).toEqual(record);
+    expect(timestamp()).toBe(authenticatedAt);
+    await expect(store.touch("missing-sid")).rejects.toThrow(
+      "Registration store operation failed.",
+    );
+  } finally {
+    database.close();
+    await store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
 
 it("persists an encrypted registration and reuses it after restart", async () => {
   const directory = await mkdtemp(join(tmpdir(), "zcode-relay-store-"));

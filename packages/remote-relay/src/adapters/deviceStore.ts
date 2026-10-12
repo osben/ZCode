@@ -17,7 +17,7 @@ export async function createRelayDeviceStore(options: {
     throw new Error("Registration limit must be positive.");
   const path = resolve(options.path);
   await mkdir(dirname(path), { recursive: true });
-  // 源码测试使用 Node 的 TS 支持；发行包只加载旁边独立构建的 JS worker。
+  // Source tests use Node's TypeScript support; bundles load the adjacent JavaScript worker.
   const extension = import.meta.url.endsWith(".ts") ? "ts" : "js";
   const worker = new Worker(new URL(`./deviceStoreWorker.${extension}`, import.meta.url), {
     workerData: { path, storageKey: options.storageKey, maxRecords },
@@ -77,7 +77,10 @@ export async function createRelayDeviceStore(options: {
     throw error;
   }
 
-  function request(method: "register" | "get" | "close", args: Record<string, string> = {}) {
+  function request(
+    method: "register" | "get" | "touch" | "close",
+    args: Record<string, string> = {},
+  ) {
     if (closing && method !== "close")
       return Promise.reject(new Error("Registration store is closed."));
     if (pending.size >= 64)
@@ -101,6 +104,9 @@ export async function createRelayDeviceStore(options: {
     },
     async get(sid) {
       return (await request("get", { sid })) ?? undefined;
+    },
+    async touch(sid) {
+      await request("touch", { sid });
     },
     close() {
       closePromise ??= (async () => {

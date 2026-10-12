@@ -12,7 +12,7 @@ export default defineConfig({
   format: "esm",
   platform: "node",
   target: "node24",
-  // tsup 默认移除 node: 前缀，但 sqlite 只能通过 node:sqlite 加载。
+  // tsup strips node: prefixes by default, but native SQLite requires node:sqlite.
   removeNodeProtocol: false,
   tsconfig: "tsconfig.json",
   noExternal: ["@zcode/shared", "zod"],

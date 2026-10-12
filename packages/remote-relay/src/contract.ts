@@ -7,6 +7,8 @@ export interface RelayRegistration {
 export interface RelayDeviceStore {
   register(mid: string, key: string): Promise<RelayRegistration>;
   get(sid: string): Promise<RelayRegistration | undefined>;
+  /** Persist a verified, admitted authentication; lookup alone never writes. */
+  touch(sid: string): Promise<void>;
   close(): Promise<void>;
 }
 export interface RelayCrypto {

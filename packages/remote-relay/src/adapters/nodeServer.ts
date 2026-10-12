@@ -27,6 +27,7 @@ export async function createRelayServer(options: RelayServerOptions): Promise<Re
   const heartbeatInterval = positive(options.heartbeatIntervalMs, 15_000);
   const heartbeatTimeout = positive(options.heartbeatTimeoutMs, 45_000);
   const sockets = new Set<WebSocket>();
+  let totalOutboundBytes = 0;
   const pongs = new Map<WebSocket, number>();
   const registrationRates = new Map<string, { count: number; until: number }>();
   const registry = createRelayRegistry({
@@ -95,29 +96,47 @@ export async function createRelayServer(options: RelayServerOptions): Promise<Re
       }
     }
     let pendingBytes = 0;
+    let outboundBytes = 0;
+    const pendingWrites = new Set<() => void>();
     let chain = Promise.resolve();
     const id = registry.connect({
       send(message, serialized) {
         if (socket.readyState !== WebSocket.OPEN) return false;
         const wire = serialized ?? JSON.stringify(message);
         const bytes = Buffer.byteLength(wire);
-        const total = [...sockets].reduce((sum, peer) => sum + peer.bufferedAmount, 0);
         if (
           bytes > RELAY_MAX_MESSAGE_BYTES ||
-          socket.bufferedAmount + bytes > maxBuffered ||
-          total + bytes > maxTotalBuffered
+          outboundBytes + bytes > maxBuffered ||
+          totalOutboundBytes + bytes > maxTotalBuffered
         ) {
           options.logger?.warn("transport-pressure");
           socket.close(1013, "Transport capacity exceeded.");
           return false;
         }
-        socket.send(wire, (error) => {
-          if (error) {
-            options.logger?.warn("transport-send-failed");
-            registry.disconnect(id);
-            socket.terminate();
-          }
-        });
+        // Reserve before IO; completion and close must release the same frame only once.
+        outboundBytes += bytes;
+        totalOutboundBytes += bytes;
+        const release = () => {
+          if (!pendingWrites.delete(release)) return;
+          outboundBytes -= bytes;
+          totalOutboundBytes -= bytes;
+        };
+        pendingWrites.add(release);
+        const failed = () => {
+          options.logger?.warn("transport-send-failed");
+          registry.disconnect(id);
+          socket.terminate();
+        };
+        try {
+          socket.send(wire, (error) => {
+            release();
+            if (error) failed();
+          });
+        } catch {
+          release();
+          failed();
+          return false;
+        }
         return true;
       },
       close: () => socket.close(),
@@ -129,6 +148,7 @@ export async function createRelayServer(options: RelayServerOptions): Promise<Re
       socket.terminate();
     });
     socket.on("close", () => {
+      for (const release of pendingWrites) release();
       sockets.delete(socket);
       pongs.delete(socket);
       registry.disconnect(id);

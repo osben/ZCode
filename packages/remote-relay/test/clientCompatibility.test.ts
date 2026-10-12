@@ -6,7 +6,7 @@ import { WebRemoteControlTerminalTransport } from "../../web/src/webRemoteContro
 import { createBrowserWebRemoteControlRelayAuthProvider } from "../../web/src/webRemoteControlRelayAuthProvider.js";
 import { createRelayServer } from "../src/adapters/nodeServer.js";
 
-// Desktop 的遥测间接读取 Electron app；Node 集成测试只替换原生边界，保留真实传输和认证。
+// Desktop telemetry reads Electron app indirectly; replace only native IO, keeping real transports and proofs.
 vi.mock("electron", async () => {
   const { tmpdir } = await import("node:os");
   return { app: { isPackaged: false, getPath: () => tmpdir() } };
@@ -28,6 +28,7 @@ it("pairs the unmodified Desktop and browser transports with real HMAC proofs", 
         return record;
       },
       get: async (sid) => records.get(sid),
+      touch: async () => {},
       close: async () => {},
     },
   });

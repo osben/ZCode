@@ -5,6 +5,7 @@ it("composes an explicitly supplied store without workspace services", () => {
   const store = {
     register: async () => ({ sid: "fixture", key: "fixture" }),
     get: async () => undefined,
+    touch: async () => {},
     close: async () => {},
   };
   expect(relayExample(store)).toEqual({ store, host: "127.0.0.1", port: 0 });

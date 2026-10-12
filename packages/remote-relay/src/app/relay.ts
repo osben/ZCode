@@ -13,6 +13,7 @@ interface Connection {
   phase: ConnectionPhase;
   createdAt: number;
   registeredSid?: string;
+  admittingSid?: string;
   challenge?: {
     nonce: string;
     role: WebRemoteControlRelayRole;
@@ -24,6 +25,7 @@ interface Connection {
 interface Pair {
   device?: Connection;
   terminal?: Connection;
+  pendingDevice?: Connection;
 }
 
 export function createRelayRegistry(options: {
@@ -59,12 +61,15 @@ export function createRelayRegistry(options: {
     connections.delete(id);
     connection.challenge = undefined;
     const auth = connection.auth;
-    if (!auth) return;
-    const pair = pairs.get(auth.sid);
-    if (!pair || pair[auth.role] !== connection) return;
-    delete pair[auth.role];
-    if (!pair.device && !pair.terminal) pairs.delete(auth.sid);
-    else {
+    const sid = auth?.sid ?? connection.admittingSid;
+    if (!sid) return;
+    const pair = pairs.get(sid);
+    if (!pair) return;
+    if (pair.pendingDevice === connection) delete pair.pendingDevice;
+    const removedActive = auth && pair[auth.role] === connection;
+    if (removedActive) delete pair[auth!.role];
+    if (!pair.device && !pair.terminal && !pair.pendingDevice) pairs.delete(sid);
+    else if (removedActive) {
       const other = pair.device ?? pair.terminal;
       if (other) send(other, status(pair));
     }
@@ -144,17 +149,41 @@ export function createRelayRegistry(options: {
         fail(connection, "AUTH_FAILED", "Authentication failed.");
         return;
       }
-      const pair = pairs.get(message.device_sid) ?? {};
-      if (challenge.role === "device" && pair.device) {
+      const admission = pairs.get(message.device_sid) ?? {};
+      if (challenge.role === "device" && (admission.device || admission.pendingDevice)) {
         fail(connection, "KICKED", "The device already has an active connection.");
         return;
       }
+      connection.phase = "loading";
+      if (challenge.role === "device") {
+        // Reserve the device slot across the store await so concurrent valid proofs cannot both win.
+        connection.admittingSid = message.device_sid;
+        admission.pendingDevice = connection;
+        pairs.set(message.device_sid, admission);
+      }
+      try {
+        await options.store.touch(message.device_sid);
+      } finally {
+        if (admission.pendingDevice === connection) delete admission.pendingDevice;
+        connection.admittingSid = undefined;
+        if (
+          !admission.device &&
+          !admission.terminal &&
+          !admission.pendingDevice &&
+          pairs.get(message.device_sid) === admission
+        ) {
+          pairs.delete(message.device_sid);
+        }
+      }
+      if (!isCurrent(connection)) return;
+      // Pair membership may change while persistence runs; never reuse a stale pair reference.
+      const pair = pairs.get(message.device_sid) ?? {};
       const previous = pair[challenge.role];
       connection.phase = "authenticated";
       connection.auth = { sid: message.device_sid, role: challenge.role };
       pair[challenge.role] = connection;
       pairs.set(message.device_sid, pair);
-      // 新浏览器先成为唯一 owner，再关闭旧 socket；旧 close 回调不能删除新配对。
+      // Bind the new browser before closing the old socket; its late close cannot detach the replacement.
       if (previous) fail(previous, "KICKED", "Another browser replaced this connection.");
       const pairStatus = status(pair);
       send(connection, {

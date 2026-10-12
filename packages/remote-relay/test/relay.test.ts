@@ -52,6 +52,7 @@ async function fixtureServer(overrides: Record<string, unknown> = {}) {
         return record;
       },
       get: async (sid: string) => [...records.values()].find((record) => record.sid === sid),
+      touch: async () => {},
       close: async () => {},
     },
     ...overrides,
@@ -101,6 +102,131 @@ async function authenticate(
 }
 
 describe("relay through real WebSocket connections", () => {
+  it("timestamps only valid admitted proofs, excluding invalid proofs and duplicate devices", async () => {
+    const record = { sid: "admitted-device", key: "fixture-key" };
+    const touches: string[] = [];
+    const server = await fixtureServer({
+      store: {
+        register: async () => record,
+        get: async () => record,
+        touch: async (sid: string) => {
+          touches.push(sid);
+        },
+        close: async () => {},
+      },
+    });
+    const invalid = await connect(server.url);
+    expect(await authenticate(invalid, record.sid, "invalid-key", "terminal")).toMatchObject({
+      code: "AUTH_FAILED",
+    });
+    expect(touches).toEqual([]);
+    const device = await connect(server.url);
+    expect(await authenticate(device, record.sid, record.key, "device")).toMatchObject({
+      type: "auth_ack",
+      pair_status: "waiting",
+    });
+    expect(touches).toEqual([record.sid]);
+    const duplicate = await connect(server.url);
+    expect(await authenticate(duplicate, record.sid, record.key, "device")).toMatchObject({
+      code: "KICKED",
+    });
+    expect(touches).toEqual([record.sid]);
+    const browser = await connect(server.url);
+    expect(await authenticate(browser, record.sid, record.key, "terminal")).toMatchObject({
+      type: "auth_ack",
+      pair_status: "matched",
+    });
+    expect(touches).toEqual([record.sid, record.sid]);
+  });
+
+  it("keeps the active browser when the authentication timestamp cannot be committed", async () => {
+    const record = { sid: "store-failure-device", key: "fixture-key" };
+    let failTouch = false;
+    const server = await fixtureServer({
+      store: {
+        register: async () => record,
+        get: async () => record,
+        touch: async () => {
+          if (failTouch) throw new Error("Fixture store unavailable");
+        },
+        close: async () => {},
+      },
+    });
+    const device = await connect(server.url);
+    await authenticate(device, record.sid, record.key, "device");
+    const browser = await connect(server.url);
+    await authenticate(browser, record.sid, record.key, "terminal");
+    await device.next();
+    failTouch = true;
+    const replacement = await connect(server.url);
+    expect(await authenticate(replacement, record.sid, record.key, "terminal")).toMatchObject({
+      type: "error",
+      code: "INTERNAL",
+    });
+    browser.send({ type: "data", payload: "original-browser-still-active" });
+    expect(await device.next()).toMatchObject({
+      type: "data",
+      payload: "original-browser-still-active",
+    });
+  });
+
+  it("reserves the device admission while persistence waits and ignores a late result after disconnect", async () => {
+    const record = { sid: "pending-device", key: "fixture-key" };
+    let complete: () => void;
+    let entered: () => void;
+    const pending = new Promise<void>((resolve) => {
+      complete = resolve;
+    });
+    const touching = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    let delayTouch = true;
+    const server = await fixtureServer({
+      store: {
+        register: async () => record,
+        get: async () => record,
+        touch: async () => {
+          if (delayTouch) {
+            entered();
+            await pending;
+          }
+        },
+        close: async () => {},
+      },
+    });
+    const first = await connect(server.url);
+    first.send({ type: "auth_init", role: "device", device_sid: record.sid, meta });
+    const challenge = await first.next();
+    first.send({
+      type: "auth_response",
+      device_sid: record.sid,
+      proof: createHmac("sha256", record.key)
+        .update(`${challenge.nonce}|device|${record.sid}`)
+        .digest("base64url"),
+    });
+    await touching;
+    const duplicate = await connect(server.url);
+    expect(await authenticate(duplicate, record.sid, record.key, "device")).toMatchObject({
+      code: "KICKED",
+    });
+    delayTouch = false;
+    // The pending socket closes while its store operation is still in flight.
+    const closed = new Promise<void>((resolve) => first.socket.once("close", resolve));
+    first.socket.close();
+    await closed;
+    const replacement = await connect(server.url);
+    expect(await authenticate(replacement, record.sid, record.key, "device")).toMatchObject({
+      type: "auth_ack",
+      pair_status: "waiting",
+    });
+    complete!();
+    replacement.send({ type: "pair_status_query", device_sid: record.sid });
+    expect(await replacement.next()).toMatchObject({
+      type: "pair_status_ack",
+      pair_status: "waiting",
+    });
+  });
+
   it("isolates two registrations sharing one machine ID", async () => {
     const server = await fixtureServer();
     const a = await paired(server.url, "key-a");
@@ -235,6 +361,7 @@ describe("relay through real WebSocket connections", () => {
           return record;
         },
         get: async (sid: string) => records.get(sid),
+        touch: async () => {},
         close: async () => {},
       },
     });

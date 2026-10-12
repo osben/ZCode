@@ -44,18 +44,18 @@
 
 ### 专题导航
 
-| 内容                               | 文档                                                                 |
-| ---------------------------------- | -------------------------------------------------------------------- |
-| 手机首页、聊天、新建任务与页面状态 | [手机任务首页](./mobile-task-home-design.md)                         |
-| 手机任务时间线与排序               | [移动端任务时间线](../ui/web-remote-control-mobile-task-timeline.md) |
-| 宽屏任务列表、搜索与归档           | [宽屏任务列表](./wide-screen-task-list.md)                           |
-| 手机主题与浏览器表面               | [主题控制](./mobile-theme-control.md)                                |
-| 远程工作区断开与重连               | [工作区重连](./mobile-remote-workspace-reconnect.md)                 |
-| 实时同步、snapshot 与 gap 恢复     | [任务实时同步](./task-realtime-sync.md)                              |
-| 输入 admission、队列与跨端命令路由 | [任务命令队列](../web-remote-control-task-command-queue.md)          |
-| V4 静态资源发布                    | [V4 部署](./remote-v4-static-deployment.md)                          |
-| 独立 OAuth 登录入口                | [Web Remote Login](./web-remote-login.md)                            |
-| 自托管公开 relay（设计，尚未实现） | [Self-hosted relay design](../../specs/self-hosted-remote-relay.md)  |
+| 内容                                                               | 文档                                                                 |
+| ------------------------------------------------------------------ | -------------------------------------------------------------------- |
+| 手机首页、聊天、新建任务与页面状态                                 | [手机任务首页](./mobile-task-home-design.md)                         |
+| 手机任务时间线与排序                                               | [移动端任务时间线](../ui/web-remote-control-mobile-task-timeline.md) |
+| 宽屏任务列表、搜索与归档                                           | [宽屏任务列表](./wide-screen-task-list.md)                           |
+| 手机主题与浏览器表面                                               | [主题控制](./mobile-theme-control.md)                                |
+| 远程工作区断开与重连                                               | [工作区重连](./mobile-remote-workspace-reconnect.md)                 |
+| 实时同步、snapshot 与 gap 恢复                                     | [任务实时同步](./task-realtime-sync.md)                              |
+| 输入 admission、队列与跨端命令路由                                 | [任务命令队列](../web-remote-control-task-command-queue.md)          |
+| V4 静态资源发布                                                    | [V4 部署](./remote-v4-static-deployment.md)                          |
+| 独立 OAuth 登录入口                                                | [Web Remote Login](./web-remote-login.md)                            |
+| Self-hosted relay: server implemented; Desktop integration pending | [Self-hosted Remote Relay](./self-hosted-remote-relay.md)            |
 
 下文描述当前技术实现；[最小跑通规划](./web-remote-control-minimal-plan.md)仅作为历史记录，
 其中的仓库内 relay、专用 mobile host 和旧联调命令不适用于当前链路。
