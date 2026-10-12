@@ -153,8 +153,8 @@ describe("V4 topic physical production envelopes", () => {
     expect(first?.kind).toBe("fragment");
     if (!first || first.kind !== "fragment") return;
     expect(actualMax(first)).toBeLessThanOrEqual(hardMax);
-    // encoder 以最坏 fragmentCount/index 位数选 chunk；再增加一个 base64 quantum
-    // 就必须越过真实 serializer 上限，证明生产 chunk budget 已取到可达最大值。
+    // The encoder picks the chunk size using worst-case fragmentCount/index digit widths; adding one
+    // more base64 quantum must exceed the real serializer limit, proving the production chunk budget is already maximal.
     const worstEnvelope = {
       ...first,
       fragmentIndex: first.logicalBytes - 1,

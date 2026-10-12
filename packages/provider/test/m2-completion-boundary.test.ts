@@ -51,7 +51,7 @@ let productionSnapshot: readonly SourceFileSnapshot[];
 let testSnapshot: readonly SourceFileSnapshot[];
 
 beforeAll(async () => {
-  // 原因：每个边界断言都重复遍历和读取整棵源码树；套件不修改源码，共享只读快照可保留全部检查。
+  // Reason: every boundary assertion would otherwise re-walk and re-read the whole source tree; the suite never mutates source, so a shared read-only snapshot preserves all checks.
   [productionSnapshot, testSnapshot] = await Promise.all([
     readSourceSnapshot(productionRoots),
     readSourceSnapshot(testRoots),
@@ -164,7 +164,7 @@ async function findFilesMatching(
   const matches: string[] = [];
   for (const file of snapshot) {
     if (pattern.test(file.content)) {
-      // 路径作为跨平台模块标识，统一 POSIX 分隔符比较（Windows readdir 产出 \）。
+      // Paths act as cross-platform module identifiers; compare with POSIX separators uniformly (Windows readdir produces \).
       matches.push(relative(repositoryRoot, file.path).replaceAll("\\", "/"));
     }
   }

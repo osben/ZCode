@@ -19,7 +19,7 @@ export class AcknowledgedRelayBatchQueue {
     return this.storage.length - this.headIndex;
   }
 
-  /** 内部有界性测试观察点；不从 @zcode/client public entry 导出。 */
+  /** Test observation point for internal boundedness; not exported from the @zcode/client public entry. */
   get retainedStorageSlots(): number {
     return this.storage.length;
   }
@@ -60,7 +60,7 @@ export class AcknowledgedRelayBatchQueue {
       if (batch.messageSeq > ackMessageSeq) break;
       releasedBytes += batch.outerBytes;
       releasedCount += 1;
-      // ACK 后立刻断开 payload/frame 引用；compact 只负责压缩轻量空槽，不能成为释放大数据的前提。
+      // Detach payload/frame references as soon as the ACK arrives; compact only shrinks lightweight empty slots and must not be a prerequisite for releasing large data.
       this.storage[this.headIndex] = undefined;
       this.headIndex += 1;
     }
@@ -76,8 +76,8 @@ export class AcknowledgedRelayBatchQueue {
   }
 
   private compactReleasedPrefix(): void {
-    // Bugfix：逐条 cumulative ACK 若每次 splice 队首，会在 tiny RPC 堆积后退化成 O(n²)。
-    // 平时只推进 head，达到阈值且释放过半时才批量 compact，保证搬移成本摊销有界。
+    // Bugfix: splicing the queue head on every individual cumulative ACK degrades to O(n²) once tiny RPCs pile up.
+    // Normally only advance head; batch-compact only when the threshold is reached and more than half has been released, keeping the amortized move cost bounded.
     if (
       this.headIndex < COMPACT_RELEASED_PREFIX_THRESHOLD ||
       this.headIndex * 2 < this.storage.length

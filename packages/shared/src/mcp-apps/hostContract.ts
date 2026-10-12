@@ -1,11 +1,12 @@
 /**
- * MCP Apps 宿主侧契约的第二半：ui/download-file 项、tool-input / tool-result 载荷、宿主提供的 titleBar 与样式变量。
- * hostInfo / hostCapabilities / hostContext 直接用官方 SDK 的 `McpUiHostCapabilities` / `McpUiHostContext`，不再重复定义。
+ * Second half of the MCP Apps host-side contract: ui/download-file items, tool-input / tool-result payloads, and the host-provided titleBar plus style variables.
+ * hostInfo / hostCapabilities / hostContext reuse the official SDK's `McpUiHostCapabilities` / `McpUiHostContext` instead of redefining them.
  */
 
 /**
- * `ui/download-file { contents }` 的一项——MCP 标准的 EmbeddedResource（内联 text / blob）
- * 或 ResourceLink（只有 uri，宿主经同插件 server `resources/read` 取内容）。
+ * One item of `ui/download-file { contents }` — either an MCP-standard EmbeddedResource (inline
+ * text / blob) or a ResourceLink (uri only; the host fetches the content via the same plugin
+ * server's `resources/read`).
  */
 export type McpAppsDownloadFileItem =
   | {
@@ -13,14 +14,14 @@ export type McpAppsDownloadFileItem =
       resource: { uri: string; name?: string; mimeType?: string; text?: string; blob?: string };
     }
   | { type: "resource_link"; uri: string; name?: string; mimeType?: string };
-/** 单次 ui/download-file 的项数上限与单个文件解码后上限（与桌面 saveFile 的 50 MiB 同值）。 */
+/** Per-call item limit and per-file decoded size limit for ui/download-file (same 50 MiB as the desktop saveFile). */
 export const MCP_APPS_DOWNLOAD_FILE_MAX_ITEMS = 16;
 export const MCP_APPS_DOWNLOAD_FILE_MAX_BYTES = 50 * 1024 * 1024;
 
-/** MCP 内容块（text / image / resource…）；宿主只透传，不解释非 text 块。 */
+/** MCP content block (text / image / resource…); the host only passes it through and does not interpret non-text blocks. */
 export type McpAppsContentBlock = Record<string, unknown>;
 
-/** `ui/notifications/tool-input` 与 `tool-result` 的载荷（与官方 SDK 通知参数同形）。 */
+/** Payloads of `ui/notifications/tool-input` and `tool-result` (same shape as the official SDK notification params). */
 export interface McpAppsToolInputPayload {
   arguments?: Record<string, unknown>;
 }
@@ -31,11 +32,11 @@ export interface McpAppsToolResultPayload {
   _meta?: Record<string, unknown>;
 }
 
-/** 宿主画在页面视口上方的面板头部；只在 fullscreen 给出（hostContext 允许附加键）。 */
+/** Panel header the host draws above the page viewport; provided only in fullscreen (hostContext allows extra keys). */
 export interface McpAppsHostTitleBar {
   height: number;
   leftInset: number;
   viewportLeftInset: number;
 }
-/** MCP Apps 标准样式变量（键名见官方 `McpUiStyleVariableKey`），值是页面可直接使用的 CSS 文本。 */
+/** Standard MCP Apps style variables (key names in the official `McpUiStyleVariableKey`); values are CSS text the page can use directly. */
 export type McpAppsStyleVariables = Record<string, string>;

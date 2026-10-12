@@ -51,9 +51,9 @@ describe("ChunkStream", () => {
   });
 });
 
-// ── PersistentProtocol 两个补丁（docs/v4-refactor/05 §@zcode/rpc）──
+// ── PersistentProtocol's two patches (docs/v4-refactor/05 §@zcode/rpc) ──
 
-/** 可注入数据的假 socket：write 收集出站帧，emitData 模拟对端来包。 */
+/** Fake socket with injectable data: write collects outbound frames, emitData simulates incoming peer packets. */
 class FakeSocket implements ISocket {
   private readonly _onData = new Emitter<VSBuffer>();
   onData = this._onData.event;
@@ -74,7 +74,7 @@ class FakeSocket implements ISocket {
   dispose(): void {}
 }
 
-/** 构造对端 ACK 帧（type=Ack, 13 字节 header, 无 payload）。 */
+/** Build a peer ACK frame (type=Ack, 13-byte header, no payload). */
 function ackFrame(ack: number): VSBuffer {
   const buffer = VSBuffer.alloc(13);
   buffer.writeUInt8(ProtocolMessageType.Ack, 0);
@@ -106,7 +106,7 @@ describe("PersistentProtocol 拥塞信号（补丁 1）", () => {
     protocol.send(VSBuffer.fromString("aaaa"));
     protocol.send(VSBuffer.fromString("bb"));
     expect(protocol.unacknowledgedBytes).toBe(6);
-    // 对端确认到第 1 条。
+    // The peer acknowledges message 1.
     socket.emitData(ackFrame(1));
     expect(protocol.unacknowledgedBytes).toBe(2);
     socket.emitData(ackFrame(2));
@@ -125,16 +125,16 @@ describe("PersistentProtocol 拥塞信号（补丁 1）", () => {
     protocol.onSaturated(() => saturatedCount++);
     protocol.onDrained(() => drainedCount++);
 
-    protocol.send(VSBuffer.fromString("12345678")); // 8B，未过水位
+    protocol.send(VSBuffer.fromString("12345678")); // 8B, below the watermark
     expect(saturatedCount).toBe(0);
-    protocol.send(VSBuffer.fromString("1234")); // 12B，越过高水位
+    protocol.send(VSBuffer.fromString("1234")); // 12B, crosses the high water mark
     expect(saturatedCount).toBe(1);
-    protocol.send(VSBuffer.fromString("x")); // 持续饱和不重复通知
+    protocol.send(VSBuffer.fromString("x")); // still saturated, no duplicate notification
     expect(saturatedCount).toBe(1);
 
-    socket.emitData(ackFrame(1)); // 剩 5B，仍高于低水位
+    socket.emitData(ackFrame(1)); // 5B left, still above the low water mark
     expect(drainedCount).toBe(0);
-    socket.emitData(ackFrame(2)); // 剩 1B ≤ 4 → drained
+    socket.emitData(ackFrame(2)); // 1B left ≤ 4 → drained
     expect(drainedCount).toBe(1);
     protocol.dispose();
   });
@@ -154,11 +154,11 @@ describe("PersistentProtocol 重放缓冲有界（补丁 2）", () => {
 
     protocol.send(VSBuffer.fromString("12345678"));
     expect(closed).toBe(0);
-    protocol.send(VSBuffer.fromString("1234")); // 12B > 10 → 放弃会话
+    protocol.send(VSBuffer.fromString("1234")); // 12B > 10 → abandon the session
     expect(closed).toBe(1);
     expect(lastWrittenType(socket)).toBe(ProtocolMessageType.Disconnect);
 
-    protocol.send(VSBuffer.fromString("more")); // 已放弃，不重复触发
+    protocol.send(VSBuffer.fromString("more")); // already abandoned, does not fire again
     expect(closed).toBe(1);
     protocol.dispose();
   });
@@ -172,9 +172,9 @@ describe("PersistentProtocol 重放缓冲有界（补丁 2）", () => {
     protocol.onClose(() => closed++);
 
     protocol.send(VSBuffer.fromString("hello"));
-    vi.advanceTimersByTime(20_000); // 首次 ackCheck：年龄 20s < 30s
+    vi.advanceTimersByTime(20_000); // first ackCheck: age 20s < 30s
     expect(closed).toBe(0);
-    vi.advanceTimersByTime(20_000); // 第二次：年龄 40s > 30s → 放弃
+    vi.advanceTimersByTime(20_000); // second: age 40s > 30s → abandon
     expect(closed).toBe(1);
     protocol.dispose();
   });
@@ -189,7 +189,7 @@ describe("PersistentProtocol 重放缓冲有界（补丁 2）", () => {
 
     protocol.send(VSBuffer.fromString("hello"));
     vi.advanceTimersByTime(10_000);
-    socket.emitData(ackFrame(1)); // 队列清空
+    socket.emitData(ackFrame(1)); // queue emptied
     vi.advanceTimersByTime(60_000);
     expect(closed).toBe(0);
     protocol.dispose();

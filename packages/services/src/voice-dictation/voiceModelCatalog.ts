@@ -1,5 +1,6 @@
-// 语音转写模型目录。数据取自 cjpais/Handy（MIT）的 src-tauri/src/catalog/catalog.json，
-// 只收录每个模型的默认量化（Q8_0）。sha256 是下载校验的信任锚，更新模型时必须同步核对。
+// Speech transcription model catalog. Data comes from src-tauri/src/catalog/catalog.json of
+// cjpais/Handy (MIT), including only each model's default quantization (Q8_0). The sha256 values
+// are the trust anchors for download verification and must be cross-checked whenever models are updated.
 
 export interface VoiceModelDescriptor {
   id: string;

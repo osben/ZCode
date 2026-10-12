@@ -5,7 +5,7 @@ export interface OutputStyle {
     content: string;
     isBuiltIn: boolean;
     enabled: boolean;
-    filePath?: string; // 文件路径，用于编辑模式下打开文件
+    filePath?: string; // File path, used to open the file in edit mode
 }
 
 export interface OutputStyleConfig {

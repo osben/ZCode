@@ -7,7 +7,7 @@
 //
 // These limits are **safety limits**, not display budgets. Names and phase names are arbitrary
 // strings assembled by script authors (`agent("reader-" + paths.join("+"))`,
-// `phase("检查 " + file)`), and while the CLI does not validate outbound frames, the renderer
+// `phase("check " + file)`), and while the CLI does not validate outbound frames, the renderer
 // strictly validates every frame — on 2026-09-04 a 131-character subagent name caused every frame
 // (online / recovery / initial snapshot) in the parent session after that actor appeared to be
 // rejected, and the subscription permanently failed with `fault.subscription.recoveryFailed`.

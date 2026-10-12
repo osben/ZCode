@@ -148,7 +148,7 @@ class AcknowledgedRelayProtocol implements AcknowledgedWebRemoteControlRelayProt
       return;
     }
     if (this.unacknowledgedByteCount + outerBytes > this.replayBufferMaxBytes) {
-      // Bugfix：必须在首片发送前对整批 final outer bytes 做 admission，不能给对端留下半条 RPC。
+      // Bugfix: the full batch of final outer bytes must be admitted before the first frame is sent; never leave the peer with half an RPC.
       this.enterDegraded({
         reasonCode: "remote.rpcFrame.replayBufferExceeded",
         terminal: true,

@@ -27,7 +27,7 @@ export interface TopicResourceBridgeDependencies {
   ): Promise<ZCodeTopicResourceReadResult>;
 }
 
-/** 每个实际 CLI 连接拥有独立取消域，不能取消另一工作区或另一任务的读取。 */
+/** Each actual CLI connection owns an independent cancellation domain; never cancel another workspace's or another task's reads. */
 export function createTopicResourceBridge(
   dependencies: TopicResourceBridgeDependencies | (() => TopicResourceBridgeDependencies),
 ) {
@@ -46,15 +46,15 @@ export function createTopicResourceBridge(
         RESOURCE_TIMEOUT_MS,
       );
       try {
-        // 固定本次请求的路由，异步下载期间不能被后续 workspace 访问改投其他 logical session。
+        // Pin this request's route; an async download must not be re-routed to another logical session by later workspace access.
         const deps = typeof dependencies === "function" ? dependencies() : dependencies;
         const attachment = await deps.read(request, controller.signal, trace);
         controller.signal.throwIfAborted();
         const result = await deps.upload(request, attachment, controller.signal, trace);
         controller.signal.throwIfAborted();
-        // 群可能在分块传输期间停用；返回引用前再核对授权，不暴露已失效请求的文件路径。
+        // The group may be disabled during chunked transfer; recheck authorization before returning references and never expose file paths of invalidated requests.
         await deps.validate(request, controller.signal, trace);
-        // 授权检查也包含异步 IO，检查期间取消的请求不能再返回附件引用。
+        // The authorization check itself performs async IO; requests cancelled during the check must not return attachment references.
         controller.signal.throwIfAborted();
         return zcodeTopicResourceReadResultSchema.parse(result);
       } finally {

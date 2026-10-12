@@ -86,7 +86,7 @@ async function writeJsonFile<T>(filePath: string, data: T): Promise<void> {
 }
 
 /**
- * 解析 markdown 格式的 output style 文件
+ * Parse a markdown-format output style file
  */
 function parseMarkdownStyle(
   content: string,
@@ -111,7 +111,7 @@ function parseMarkdownStyle(
 }
 
 /**
- * 创建 OutputStyle 服务实例
+ * Create an OutputStyle service instance
  */
 export function createOutputStyleService(): IOutputStyleService {
   async function getActiveStyle(): Promise<{ styleId: string | null }> {
@@ -177,13 +177,13 @@ export function createOutputStyleService(): IOutputStyleService {
         }
       }
     } catch {
-      // 目录不存在或无法访问，返回内置 styles
+      // The directory does not exist or is unreadable; return the built-in styles.
     }
 
-    // 按名称排序
+    // Sort by name
     customStyles.sort((a, b) => a.name.localeCompare(b.name));
 
-    // 合并内置和自定义 styles，标记激活状态
+    // Merge built-in and custom styles, marking the active state
     const allStyles: OutputStyle[] = [
       ...BUILT_IN_STYLES.map((style) => ({
         ...style,
@@ -211,7 +211,6 @@ export function createOutputStyleService(): IOutputStyleService {
     const filename = `${config.name.toLowerCase().replace(/\s+/g, "-")}.md`;
     const filePath = join(stylesDir, filename);
 
-    // 生成文件内容
     const content = `name: ${config.name}
 description: ${config.description}
 
@@ -226,13 +225,12 @@ ${config.content}`;
   }): Promise<void> {
     const { id, config } = params;
 
-    // 移除 'custom-' 前缀获取文件名
+    // Strip the 'custom-' prefix to get the filename
     const baseId = id.startsWith("custom-") ? id.slice(7) : id;
     const stylesDir = getUserOutputStylesDir();
     const filename = `${baseId}.md`;
     const filePath = join(stylesDir, filename);
 
-    // 生成文件内容
     const content = `name: ${config.name}
 description: ${config.description}
 
@@ -244,7 +242,7 @@ ${config.content}`;
   async function deleteStyle(params: { id: string }): Promise<void> {
     const { id } = params;
 
-    // 移除 'custom-' 前缀获取文件名
+    // Strip the 'custom-' prefix to get the filename
     const baseId = id.startsWith("custom-") ? id.slice(7) : id;
     const stylesDir = getUserOutputStylesDir();
     const filename = `${baseId}.md`;
@@ -259,7 +257,7 @@ ${config.content}`;
     try {
       await mkdir(stylesDir, { recursive: true });
     } catch {
-      // 目录已存在
+      // The directory already exists
     }
 
     return { path: stylesDir };

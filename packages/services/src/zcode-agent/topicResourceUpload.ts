@@ -14,7 +14,7 @@ import { uploadBotGroupAttachments } from "./groupAttachmentUpload.js";
 import type { ZCodeProtocolClient } from "./zcodeProtocolClient.js";
 import type { ZCodeAgentSessionTarget } from "./zcodeAgent.js";
 
-/** 反向请求绑定实际 CLI 连接；上传不能再次按路径选择运行时。 */
+/** Reverse requests are bound to the actual CLI connection; uploads must not select a runtime by path again. */
 export async function uploadTopicResourceToClient(
   client: Pick<ZCodeProtocolClient, "request">,
   connectionId: string,

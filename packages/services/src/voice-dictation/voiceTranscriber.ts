@@ -26,8 +26,9 @@ export interface VoiceTranscriberOptions {
 }
 
 /**
- * 当前加载模型和活动 stream lease 的唯一所有者。加载、转写、流操作、卸载共用队列串行执行，
- * 避免计算过程中模型被替换或释放。
+ * Sole owner of the currently loaded model and the active stream lease. Loading, transcription, stream
+ * operations, and unloading all execute serially through one queue, preventing the model from being
+ * replaced or released mid-computation.
  */
 export class VoiceTranscriber {
   private readonly store: VoiceModelStore;
@@ -63,7 +64,7 @@ export class VoiceTranscriber {
     });
   }
 
-  /** 按需加载 `modelId` 后转写；加载与转写在同一队列项内完成，避免中间被卸载或替换。 */
+  /** Loads `modelId` on demand and then transcribes; load and transcription complete within one queue item so they cannot be unloaded or swapped in between. */
   transcribe(
     modelId: string,
     samples: Float32Array,
@@ -192,8 +193,8 @@ export class VoiceTranscriber {
 }
 
 /**
- * 把渲染端送来的 16 kHz 单声道 PCM16 小端字节转换为 Float32 采样（范围 [-1, 1)）。
- * 字节长度必须是 2 的倍数，否则说明数据被截断。
+ * Converts the renderer's 16 kHz mono PCM16 little-endian bytes into Float32 samples (range [-1, 1)).
+ * The byte length must be a multiple of 2; otherwise the data was truncated.
  */
 export function decodePcm16LeToFloat32(bytes: Uint8Array): Float32Array {
   if (bytes.byteLength % 2 !== 0) {
@@ -208,8 +209,8 @@ export function decodePcm16LeToFloat32(bytes: Uint8Array): Float32Array {
 }
 
 async function loadTranscribeCppEngine(modelPath: string): Promise<VoiceEngineModel> {
-  // transcribe-cpp 的依赖 koffi 在模块求值期就加载平台原生库；必须推迟到真正加载模型时再 import，
-  // 否则没有对应平台二进制的 host（远端 server、CI 容器）会在启动 import 链上直接崩溃。
+  // transcribe-cpp's dependency koffi loads platform native libraries during module evaluation; the import must be deferred until a model is actually loaded,
+  // otherwise hosts without the matching platform binary (remote server, CI containers) crash on the startup import chain.
   const { TranscribeModel } = await import("transcribe-cpp");
   const model = await TranscribeModel.load(modelPath);
   const session = model.createSession();

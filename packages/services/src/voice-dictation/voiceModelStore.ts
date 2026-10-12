@@ -35,12 +35,12 @@ export class VoiceModelDownloadError extends Error {
 }
 
 export interface VoiceModelStoreOptions {
-  /** 模型根目录；每次访问时求值，跟随数据目录设置变化。 */
+  /** Model root directory; re-evaluated on each access to follow data-directory setting changes. */
   getModelsDir: () => string;
   /** Read-only model roots owned by another application. */
   handyModelDirs?: readonly string[];
   catalog?: readonly VoiceModelDescriptor[];
-  /** 下载源，按顺序尝试；每个源的 URL 形如 `${source}/${repo}/resolve/${revision}/${file}`。 */
+  /** Download sources, tried in order; each source's URL looks like `${source}/${repo}/resolve/${revision}/${file}`. */
   sources?: readonly string[];
   fetchImpl?: typeof fetch;
 }
@@ -53,8 +53,8 @@ interface ActiveDownload {
 }
 
 /**
- * 语音模型的唯一状态所有者：磁盘上的已安装文件与进行中的下载都只在这里维护。
- * 文件先写入 `.part`，大小与 sha256 校验通过后才原子重命名为最终文件，因此 `ready` 状态总是完整文件。
+ * Sole state owner for voice models: installed files on disk and in-progress downloads are maintained only here.
+ * Files are written to `.part` first and atomically renamed to the final name only after size and sha256 verification, so the `ready` state always refers to a complete file.
  */
 export class VoiceModelStore {
   private readonly getModelsDir: () => string;
@@ -95,7 +95,7 @@ export class VoiceModelStore {
     const path = this.modelFilePath(descriptor);
     try {
       const info = await stat(path);
-      // 列表只做大小检查，完整 sha256 在下载时已经验证过，避免每次打开设置都读取数百 MB 文件。
+      // The listing only checks size; full sha256 was verified at download time, avoiding reading hundreds of MB every time settings opens.
       if (info.isFile() && info.size === descriptor.sizeBytes) {
         return { status: "ready", path, sizeBytes: info.size, source: "zcode" };
       }
@@ -136,7 +136,7 @@ export class VoiceModelStore {
     return { status: "not_downloaded" };
   }
 
-  /** 返回已安装模型的文件路径；模型未就绪时抛错，调用方应先下载。 */
+  /** Returns the installed model's file path; throws when the model is not ready, so callers should download first. */
   async getReadyModelPath(id: string): Promise<string> {
     const state = await this.getState(id);
     if (state.status !== "ready") {
@@ -145,7 +145,7 @@ export class VoiceModelStore {
     return state.path;
   }
 
-  /** 同一模型的并发调用共享同一个下载任务。 */
+  /** Concurrent calls for the same model share a single download task. */
   download(id: string): Promise<void> {
     const descriptor = this.requireDescriptor(id);
     const inFlight = this.active.get(id);
@@ -169,7 +169,7 @@ export class VoiceModelStore {
     this.active.get(id)?.controller.abort();
   }
 
-  /** 删除已安装文件；若正在下载则先取消并等待下载结束。 */
+  /** Removes installed files; cancels and waits for an in-progress download first. */
   async remove(id: string): Promise<void> {
     const descriptor = this.requireDescriptor(id);
     const inFlight = this.active.get(id);
@@ -187,8 +187,8 @@ export class VoiceModelStore {
   ): Promise<void> {
     const dir = this.modelDir(descriptor);
     const finalPath = this.modelFilePath(descriptor);
-    // 每个下载任务使用唯一临时名：不同窗口各自持有 VoiceModelStore 进程，共享 `${finalPath}.part`
-    // 会互相覆盖字节，且一方失败时的清理会删掉另一方的半成品导致 rename 出错。
+    // Each download task uses a unique temp name: different windows each own a VoiceModelStore process, and sharing `${finalPath}.part`
+    // would overwrite each other's bytes, while one side's failure cleanup would delete the other's half-written file and break the rename.
     const partPath = `${finalPath}.${randomUUID()}.part`;
     await mkdir(dir, { recursive: true });
 
@@ -201,9 +201,9 @@ export class VoiceModelStore {
         try {
           await rename(partPath, finalPath);
         } catch (error) {
-          // 另一窗口的 VoiceModelStore 进程可能刚完成同一模型的校验并落位；Windows 的
-          // rename 不覆盖已存在目标。目标已是同尺寸文件（下载时已做过 sha256 校验）时，
-          // 视为下载成功并清理本任务残留的 .part，而不是向用户报一次假失败。
+          // Another window's VoiceModelStore process may just have verified and installed the same model; Windows
+          // rename does not overwrite an existing target. When the target is already a same-size file (sha256-verified
+          // at download time), treat it as success and clean up this task's leftover .part instead of reporting a false failure.
           const installed = await stat(finalPath).then(
             (info) => info.isFile() && info.size === descriptor.sizeBytes,
             () => false,
@@ -215,7 +215,7 @@ export class VoiceModelStore {
         return;
       } catch (error) {
         lastError = error;
-        // 校验失败的文件一律丢弃，不能让错误内容留在最终路径上。
+        // Files that fail verification are always discarded; erroneous content must never remain at the final path.
         await rm(partPath, { force: true });
         if (error instanceof VoiceModelDownloadError && error.reason === "cancelled") break;
         logger.warn(undefined, "voice model download source failed", {
@@ -267,8 +267,8 @@ export class VoiceModelStore {
 
     const hash = createHash("sha256");
     try {
-      // 用 pipeline 而非手写 write/drain：写流（ENOSPC/EACCES）的 error 事件必须被消费，
-      // 否则未监听的 error 会直接击穿 Desktop Host 进程；pipeline 同时负责背压与取消。
+      // Use pipeline instead of hand-written write/drain: the write stream's error events (ENOSPC/EACCES) must be consumed,
+      // otherwise an unlistened error crashes the Desktop Host process outright; pipeline also handles backpressure and cancellation.
       await pipeline(
         Readable.fromWeb(response.body as WebReadableStream),
         async function* (source) {
@@ -323,7 +323,7 @@ export class VoiceModelStore {
 }
 
 export function buildModelUrl(source: string, descriptor: VoiceModelDescriptor): string {
-  // CodeQL 对库输入上的回溯型正则告警；这里手写循环等价剥掉尾部斜杠，保持线性复杂度。
+  // CodeQL flags backtracking regexes on library input; this hand-written loop strips trailing slashes equivalently with linear complexity.
   let base = source;
   while (base.endsWith("/")) base = base.slice(0, -1);
   return `${base}/${descriptor.huggingFaceRepo}/resolve/${descriptor.revision}/${descriptor.fileName}`;

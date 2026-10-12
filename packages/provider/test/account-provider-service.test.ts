@@ -15,7 +15,7 @@ import {
   createApiKeyProviderConfig,
 } from "./provider-config-fixtures.js";
 
-// 此组专测刷新编排，账号状态行为由 account-provider-resolution 测试覆盖。
+// This suite covers refresh orchestration only; account state behavior is covered by the account-provider-resolution tests.
 function configOnlyResolver(
   resolve: (input: AccountProviderResolveInput) => Promise<ProviderConfigMap>,
 ): AccountProviderResolver {
@@ -427,7 +427,7 @@ describe("AccountProviderService", () => {
     const resolve = vi.fn(async ({ configuredProviders }: AccountProviderResolveInput) => {
       attempt += 1;
       if (attempt === 2) {
-        // 模拟进行中的一轮在收尾校验时发现账号身份被后来的写入改变而丢弃结果。
+        // Simulates an in-flight round whose final validation detects that the account identity was changed by a later write, discarding the stale result.
         await staleRefreshBlocked;
         throw new Error("账号查询期间连接或身份发生变化，丢弃过期结果");
       }
@@ -448,7 +448,7 @@ describe("AccountProviderService", () => {
 
     const stale = service.refresh("settings:providerFamilyDomain");
     await vi.waitFor(() => expect(resolve).toHaveBeenCalledTimes(2));
-    // 调用方在进行中轮开始之后才完成自己的写入并请求刷新，它需要的是覆盖这些写入的新一轮。
+    // The caller finished its own writes and requested a refresh only after the in-flight round started; it needs a new round covering those writes.
     const requested = service.refresh("provider-provisioning");
     releaseStaleRefresh();
 

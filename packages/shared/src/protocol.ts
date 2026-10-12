@@ -250,15 +250,15 @@ export interface ResourceUsageSnapshot {
 }
 
 export interface VoiceDictationSettings {
-  /** 选中的语音模型 id（见 services/voice-dictation 的模型目录）；null/缺省表示未选择。 */
+  /** Selected voice model id (see the model catalog in services/voice-dictation); null/absent means nothing selected. */
   modelId?: string | null;
-  /** 麦克风 deviceId；null/缺省使用系统默认输入。 */
+  /** Microphone deviceId; null/absent uses the system default input. */
   microphoneDeviceId?: string | null;
-  /** 转写语言：`auto` 表示由模型自动识别，否则为语言码（如 `en`、`ru`）。 */
+  /** Transcription language: `auto` means the model detects it, otherwise a language code (e.g. `en`, `ru`). */
   language?: string;
-  /** true：按住快捷键录音，松开即转写；false：按一下开始，再按一下结束。 */
+  /** true: hold the shortcut to record, release to transcribe; false: press once to start, press again to stop. */
   pushToTalk?: boolean;
-  /** 空闲模型自动从内存卸载前等待的分钟数。 */
+  /** Minutes an idle model waits in memory before being unloaded automatically. */
   idleUnloadMinutes?: VoiceModelIdleUnloadMinutes;
 }
 
@@ -275,7 +275,7 @@ export interface AppSettings {
    * an override replaces the entire group (for example, overriding openCommandCenter disables both default bindings).
    */
   shortcutBindings?: Record<string, string[]>;
-  /** 语音输入（本机离线转写）偏好；模型文件与转写引擎由 services/voice-dictation 持有。 */
+  /** Voice dictation (on-device offline transcription) preferences; model files and the transcription engine are owned by services/voice-dictation. */
   voiceDictation?: VoiceDictationSettings;
   /** UI language preference; locale stores the resolved language for non-browser contexts such as main/menu/remote control. */
   localePreference?: LocalePreference;

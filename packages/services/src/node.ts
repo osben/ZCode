@@ -2727,9 +2727,11 @@ export function createLocalServices(options: {
     )
     .register(IPromptAttachmentTransferService, createLocalPromptAttachmentTransferService());
 
-  // 语音听写依赖本机麦克风与本地转写模型（koffi 原生库），按 accessor 契约只在 desktop-local
-  // host 提供；远端/独立 server 不注册，调用方经可选 accessor 与 RPC "not found" 干净失败。
-  // 下载走 host 统一网络栈，继承代理与自签证书设置，否则需要代理的用户完全无法下载模型。
+  // Voice dictation depends on the local microphone and a local transcription model (koffi native library), so per the
+  // accessor contract it is provided only by the desktop-local host; remote/standalone servers do not register it, and
+  // callers fail cleanly through the optional accessor with an RPC "not found".
+  // Downloads go through the host's unified network stack, inheriting proxy and self-signed certificate settings; otherwise
+  // users who need a proxy cannot download models at all.
   if (options?.serviceAuthorityMode === "desktop-local") {
     services.register(
       IVoiceDictationService,

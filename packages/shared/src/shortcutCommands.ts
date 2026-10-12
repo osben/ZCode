@@ -98,8 +98,10 @@ export const SHORTCUT_COMMANDS: readonly ShortcutCommandEntry[] = [
   },
   { id: "toggleInterfaceMode", channel: "window", defaultBindings: ["CmdOrCtrl+Shift+u"] },
   { id: "openOnboarding", channel: "window", defaultBindings: ["CmdOrCtrl+Shift+o"] },
-  // 语音输入：默认按住 ⌘/Ctrl+Shift+D 录音（push-to-talk 模式下松开即转写），由 UI 层 keydown/keyup 处理。
-  // 注意：快捷键键名白名单不含 Space，因此不能用 Option+Space 这类默认值。
+  // Voice input: by default hold ⌘/Ctrl+Shift+D to record (in push-to-talk mode, releasing
+  // transcribes), handled by the UI layer's keydown/keyup.
+  // Note: the shortcut key-name allowlist does not include Space, so defaults like Option+Space
+  // cannot be used.
   { id: "voiceDictation", channel: "window", defaultBindings: ["CmdOrCtrl+Shift+d"] },
 ];
 

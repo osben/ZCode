@@ -1,8 +1,8 @@
 import type { IStorageService, StorageUsageSnapshot } from "./contract.js";
 
 /**
- * 契约用法示例：进入分区时订阅进度并开始扫描，离开时取消；清理后重新扫描。
- * 这是 UI hook 的最小骨架，不含任何实现细节。
+ * Contract usage example: subscribe to progress and start a scan when entering a section, cancel on leave; rescan after cleanup.
+ * This is the minimal skeleton of a UI hook with no implementation details.
  */
 export async function useStorageSection(
   storage: IStorageService,
@@ -10,7 +10,7 @@ export async function useStorageSection(
 ): Promise<{ leave: () => Promise<void>; cleanTrajectories: () => Promise<void> }> {
   let currentJobId: string | null = null;
   const subscription = storage.onScanProgress((snapshot) => {
-    // 只消费当前 job 的快照，旧 job 的尾包直接丢弃。
+    // Consume only the current job's snapshots; late packets from old jobs are dropped.
     if (snapshot.jobId === currentJobId) render(snapshot);
   });
   const start = async () => {
