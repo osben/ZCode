@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "revision": 32,
+  "revision": 33,
   "config": {
     "providerConfigRules": {
       "templateRules": [
@@ -909,22 +909,13 @@
           "config": {
             "group": "chatgpt-family",
             "builtinModelIds": [
-              "gpt-5.5",
-              "gpt-5.5-fast",
-              "gpt-5.6-luna",
-              "gpt-5.6-luna-fast",
-              "gpt-5.6-sol",
-              "gpt-5.6-sol-fast",
-              "gpt-5.6-terra",
-              "gpt-5.6-terra-fast",
-              "gpt-6-astra",
-              "gpt-6-astra-fast",
-              "gpt-6-luna",
-              "gpt-6-luna-fast",
-              "gpt-6-sol",
-              "gpt-6-sol-fast",
               "gpt-6.1-sol",
-              "gpt-6.1-sol-fast"
+              "gpt-6-astra",
+              "gpt-6-sol",
+              "gpt-6-luna",
+              "gpt-5.6-sol",
+              "gpt-5.6-terra",
+              "gpt-5.6-luna"
             ],
             "access": {
               "type": "chatgpt-account"
@@ -6339,114 +6330,72 @@
         },
         {
           "providerId": "account:chatgpt-plan",
-          "modelId": "gpt-5.5",
+          "modelId": "gpt-6.1-sol",
           "config": {
-            "enabled": true
-          }
-        },
-        {
-          "providerId": "account:chatgpt-plan",
-          "modelId": "gpt-5.5-fast",
-          "config": {
-            "enabled": true
-          }
-        },
-        {
-          "providerId": "account:chatgpt-plan",
-          "modelId": "gpt-5.6-luna",
-          "config": {
-            "enabled": true
-          }
-        },
-        {
-          "providerId": "account:chatgpt-plan",
-          "modelId": "gpt-5.6-luna-fast",
-          "config": {
-            "enabled": true
-          }
-        },
-        {
-          "providerId": "account:chatgpt-plan",
-          "modelId": "gpt-5.6-sol",
-          "config": {
-            "enabled": true
-          }
-        },
-        {
-          "providerId": "account:chatgpt-plan",
-          "modelId": "gpt-5.6-sol-fast",
-          "config": {
-            "enabled": true
-          }
-        },
-        {
-          "providerId": "account:chatgpt-plan",
-          "modelId": "gpt-5.6-terra",
-          "config": {
-            "enabled": true
-          }
-        },
-        {
-          "providerId": "account:chatgpt-plan",
-          "modelId": "gpt-5.6-terra-fast",
-          "config": {
-            "enabled": true
+            "enabled": true,
+            "properties": {
+              "contextWindow": 500000
+            }
           }
         },
         {
           "providerId": "account:chatgpt-plan",
           "modelId": "gpt-6-astra",
           "config": {
-            "enabled": true
-          }
-        },
-        {
-          "providerId": "account:chatgpt-plan",
-          "modelId": "gpt-6-astra-fast",
-          "config": {
-            "enabled": true
-          }
-        },
-        {
-          "providerId": "account:chatgpt-plan",
-          "modelId": "gpt-6-luna",
-          "config": {
-            "enabled": true
-          }
-        },
-        {
-          "providerId": "account:chatgpt-plan",
-          "modelId": "gpt-6-luna-fast",
-          "config": {
-            "enabled": true
+            "enabled": true,
+            "properties": {
+              "contextWindow": 272000
+            }
           }
         },
         {
           "providerId": "account:chatgpt-plan",
           "modelId": "gpt-6-sol",
           "config": {
-            "enabled": true
+            "enabled": true,
+            "properties": {
+              "contextWindow": 272000
+            }
           }
         },
         {
           "providerId": "account:chatgpt-plan",
-          "modelId": "gpt-6-sol-fast",
+          "modelId": "gpt-6-luna",
           "config": {
-            "enabled": true
+            "enabled": true,
+            "properties": {
+              "contextWindow": 272000
+            }
           }
         },
         {
           "providerId": "account:chatgpt-plan",
-          "modelId": "gpt-6.1-sol",
+          "modelId": "gpt-5.6-sol",
           "config": {
-            "enabled": true
+            "enabled": true,
+            "properties": {
+              "contextWindow": 272000
+            }
           }
         },
         {
           "providerId": "account:chatgpt-plan",
-          "modelId": "gpt-6.1-sol-fast",
+          "modelId": "gpt-5.6-terra",
           "config": {
-            "enabled": true
+            "enabled": true,
+            "properties": {
+              "contextWindow": 272000
+            }
+          }
+        },
+        {
+          "providerId": "account:chatgpt-plan",
+          "modelId": "gpt-5.6-luna",
+          "config": {
+            "enabled": true,
+            "properties": {
+              "contextWindow": 272000
+            }
           }
         }
       ]

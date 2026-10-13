@@ -188,7 +188,7 @@ describe("ChatGPT plan login (SIWC)", () => {
 
     expect(result.planUsageEntitled).toBe(true);
     expect(result.user).toMatchObject({ sub: "user-sub-1", email: "user@example.com" });
-    expect(result.model).toBe(`${CHATGPT_PLAN_PROVIDER_ID}/gpt-5.5`);
+    expect(result.model).toBe(`${CHATGPT_PLAN_PROVIDER_ID}/gpt-6.1-sol`);
     expect(result.providerId).toBe("chatgpt");
 
     const stored = await credentialStore.loadMany([
@@ -215,7 +215,7 @@ describe("ChatGPT plan login (SIWC)", () => {
       config?: { defaultModelSelection?: { providerId?: string; modelId?: string } };
     };
     expect(config.config?.defaultModelSelection?.providerId).toBe(CHATGPT_PLAN_PROVIDER_ID);
-    expect(config.config?.defaultModelSelection?.modelId).toBe("gpt-5.5");
+    expect(config.config?.defaultModelSelection?.modelId).toBe("gpt-6.1-sol");
   });
 
   it("reports identity-only sign-in when consent lacked the plan scope", async () => {
