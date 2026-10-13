@@ -13,13 +13,16 @@ const NOW_SECONDS = Math.floor(Date.now() / 1000);
 
 function createMemoryCredentialService(): ICredentialService & {
   dump(): Record<string, string>;
+  writes: Array<[string, string]>;
 } {
   const store = new Map<string, string>();
+  const writes: Array<[string, string]> = [];
   return {
     async load(key) {
       return store.get(key) ?? null;
     },
     async save(key, value) {
+      writes.push([key, value]);
       store.set(key, value);
     },
     async delete(key) {
@@ -28,6 +31,7 @@ function createMemoryCredentialService(): ICredentialService & {
     dump() {
       return Object.fromEntries(store);
     },
+    writes,
   };
 }
 
@@ -73,8 +77,9 @@ function createFakeAuthBackend(options: {
   nonceRef: { value: string };
   scope?: string;
   refresh?: () => { accessToken: string; refreshToken: string };
-}): { fetchFn: typeof fetch; refreshCalls: string[] } {
+}): { exchangeCalls: string[]; fetchFn: typeof fetch; refreshCalls: string[] } {
   const refreshCalls: string[] = [];
+  const exchangeCalls: string[] = [];
   const fetchFn: typeof fetch = async (input, init) => {
     const url = String(input);
     if (url.endsWith("/.well-known/openid-configuration")) {
@@ -93,6 +98,7 @@ function createFakeAuthBackend(options: {
     if (url.endsWith("/oauth/token")) {
       const body = new URLSearchParams(String(init?.body ?? ""));
       if (body.get("grant_type") === "authorization_code") {
+        exchangeCalls.push(body.get("code") ?? "");
         return Response.json({
           access_token: "host-access-1",
           refresh_token: "host-refresh-1",
@@ -117,7 +123,7 @@ function createFakeAuthBackend(options: {
     }
     throw new Error(`unexpected auth fetch: ${url}`);
   };
-  return { fetchFn, refreshCalls };
+  return { fetchFn, refreshCalls, exchangeCalls };
 }
 
 const tempDirs: string[] = [];
@@ -154,6 +160,20 @@ async function completeBrowserRedirect(start: {
   if (!response.ok) throw new Error(`loopback callback failed: ${response.status}`);
 }
 
+async function completeBrowserError(
+  start: {
+    authorizeUrl: string;
+    state: string;
+  },
+  error: string,
+): Promise<void> {
+  const url = new URL(start.authorizeUrl);
+  const redirect = new URL(url.searchParams.get("redirect_uri") ?? "");
+  redirect.searchParams.set("state", start.state);
+  redirect.searchParams.set("error", error);
+  await fetch(redirect);
+}
+
 describe("SiwcAuthService (host side)", () => {
   it("runs the full loopback login: PKCE URL, exchange, id-token verify, persistence", async () => {
     const fixture = await createFixture();
@@ -184,6 +204,37 @@ describe("SiwcAuthService (host side)", () => {
 
     const status = await fixture.service.getStatus();
     expect(status).toMatchObject({ signedIn: true, planUsageEntitled: true });
+  });
+
+  it("claims a completed login before exchanging its authorization code", async () => {
+    const fixture = await createFixture();
+    const start = await fixture.service.startLogin();
+    fixture.nonceRef.value = new URL(start.authorizeUrl).searchParams.get("nonce") ?? "";
+    await completeBrowserRedirect(start);
+
+    const [first, second] = await Promise.all([
+      fixture.service.pollLogin(),
+      fixture.service.pollLogin(),
+    ]);
+
+    expect([first, second].filter(Boolean)).toHaveLength(1);
+    expect(fixture.backend.exchangeCalls).toEqual(["host-auth-code"]);
+  });
+
+  it("closes the callback server and clears pending login when the callback rejects", async () => {
+    const fixture = await createFixture();
+    const start = await fixture.service.startLogin();
+    await completeBrowserError(start, "access_denied");
+
+    await expect(fixture.service.pollLogin()).rejects.toThrow();
+    await expect(fixture.service.pollLogin()).resolves.toBeNull();
+    const callbackUrl = new URL(new URL(start.authorizeUrl).searchParams.get("redirect_uri") ?? "");
+    callbackUrl.searchParams.set("state", start.state);
+    await expect(fetch(callbackUrl)).rejects.toThrow();
+    await expect(fixture.service.startLogin()).resolves.toMatchObject({
+      state: expect.any(String),
+    });
+    await fixture.service.cancelLogin();
   });
 
   it("reports identity-only sign-in when consent lacked the plan scope", async () => {
@@ -225,11 +276,16 @@ describe("SiwcAuthService (host side)", () => {
 
     // Expire the stored token; the resolver must refresh and persist rotation.
     fixture.credentials.save(SIWC_CREDENTIAL_KEYS.accessExpiresAt, String(NOW_SECONDS - 10));
+    fixture.credentials.writes.length = 0;
     expect(await fixture.service.resolveAccessToken()).toBe("host-access-2");
     expect(fixture.backend.refreshCalls).toContain("host-refresh-1");
     const stored = fixture.credentials.dump();
     expect(stored[SIWC_CREDENTIAL_KEYS.accessToken]).toBe("host-access-2");
     expect(stored[SIWC_CREDENTIAL_KEYS.refreshToken]).toBe("host-refresh-2");
+    expect(fixture.credentials.writes.slice(0, 2).map(([key]) => key)).toEqual([
+      SIWC_CREDENTIAL_KEYS.refreshToken,
+      SIWC_CREDENTIAL_KEYS.accessToken,
+    ]);
   });
 
   it("cancels a pending login and reports not signed in afterwards", async () => {

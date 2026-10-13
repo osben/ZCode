@@ -29,7 +29,7 @@ import { createCliModeState } from "../src/tui-command-state.js";
 import type { CommandCenterApp } from "../src/command-center.js";
 import type { RunDependencies } from "../src/cli-types.js";
 import type { TuiOptions } from "../../tui/src/types.js";
-import { runLoginCommand } from "../src/login-command.js";
+import { runLoginCommand, runLogoutCommand } from "../src/login-command.js";
 
 const authorizeUrl = "https://login.example.test/authorize?state=test-state";
 const pollToken = "test-private-poll-token";
@@ -517,4 +517,67 @@ test("standalone login accepts provider selection and keeps authorization URL ou
   assert.equal(JSON.parse(stdout).provider, "bigmodel");
   assert.match(stderr, /login\.example\.test/);
   assert.doesNotMatch(stdout, /authorize/);
+});
+
+
+test("ChatGPT plan login uses the injected bootstrap dependency", async () => {
+  let stdout = "";
+  let stderr = "";
+  let called = false;
+  const context = {
+    stdout: { write: (text: string) => (stdout += text) },
+    stderr: { write: (text: string) => (stderr += text) },
+  } as unknown as Parameters<typeof runLoginCommand>[0];
+  const deps = {
+    env: {},
+    cwd: () => process.cwd(),
+    loadDotenv: () => ({ keys: [], loaded: false, path: "" }),
+    loginChatGptPlan: async () => {
+      called = true;
+      return {
+        providerId: "chatgpt",
+        planUsageEntitled: true,
+        user: { sub: "test-subject" },
+        model: "gpt-6.1-sol",
+        configPath: "test-config",
+        credentialsPath: "test-credentials",
+      };
+    },
+  } as unknown as RunDependencies;
+
+  assert.equal(
+    await runLoginCommand(context, { json: true } as never, deps, true, ["chatgpt"]),
+    0,
+  );
+  assert.equal(called, true);
+  assert.equal(JSON.parse(stdout).provider, "chatgpt");
+  assert.equal(stderr, "");
+});
+
+test("ChatGPT logout failure does not fail completed Coding Plan logout", async () => {
+  let stdout = "";
+  let stderr = "";
+  let zaiLoggedOut = false;
+  const context = {
+    stdout: { write: (text: string) => (stdout += text) },
+    stderr: { write: (text: string) => (stderr += text) },
+  } as unknown as Parameters<typeof runLogoutCommand>[0];
+  const deps = {
+    env: {},
+    cwd: () => process.cwd(),
+    loadDotenv: () => ({ keys: [], loaded: false, path: "" }),
+    logoutZCodeCli: async () => {
+      zaiLoggedOut = true;
+      return { credentialsPath: "test-credentials" };
+    },
+    logoutChatGptPlan: async () => {
+      throw new Error("private-revocation-detail");
+    },
+  } as unknown as RunDependencies;
+
+  assert.equal(await runLogoutCommand(context, { json: true } as never, deps), 0);
+  assert.equal(zaiLoggedOut, true);
+  assert.equal(JSON.parse(stdout).chatgptPlan.error, "logout_failed");
+  assert.match(stderr, /ChatGPT plan logout failed/);
+  assert.doesNotMatch(`${stdout}${stderr}`, /private-revocation-detail/);
 });

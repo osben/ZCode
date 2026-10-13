@@ -115,8 +115,16 @@ export async function runLogoutCommand(
 
     // ChatGPT plan is an independent identity domain: revoke its refresh token and clear its
     // credentials in the same logout command, without touching zai/bigmodel state.
-    const bootstrap = await loadBootstrapModule();
-    const chatgpt = await bootstrap.logoutChatGptPlan({ env });
+    let chatgpt: Awaited<ReturnType<NonNullable<RunDependencies["logoutChatGptPlan"]>>> | undefined;
+    let chatgptLogoutFailed = false;
+    try {
+      const logoutChatGptPlan =
+        deps.logoutChatGptPlan ?? (await loadBootstrapModule()).logoutChatGptPlan;
+      chatgpt = await logoutChatGptPlan({ env });
+    } catch {
+      chatgptLogoutFailed = true;
+      ctx.stderr.write("Warning: ChatGPT plan logout failed; Coding Plan logout succeeded.\n");
+    }
 
     if (options.json) {
       ctx.stdout.write(
@@ -125,8 +133,9 @@ export async function runLogoutCommand(
           provider: "zai",
           credentialsPath: result.credentialsPath,
           chatgptPlan: {
-            signedOut: chatgpt.signedOut,
-            revoked: chatgpt.revoked,
+            signedOut: chatgpt?.signedOut ?? false,
+            revoked: chatgpt?.revoked ?? false,
+            ...(chatgptLogoutFailed ? { error: "logout_failed" } : {}),
           },
         }),
       );
@@ -136,7 +145,7 @@ export async function runLogoutCommand(
     ctx.stdout.write(
       `Logged out from Coding Plan accounts. Credentials: ${result.credentialsPath}\n`,
     );
-    if (chatgpt.signedOut) {
+    if (chatgpt?.signedOut) {
       ctx.stdout.write(
         chatgpt.revoked
           ? "Logged out from the ChatGPT plan (token revoked).\n"
@@ -161,8 +170,8 @@ async function runChatGptPlanLogin(
   env: Record<string, string | undefined>,
   noBrowser: boolean,
 ): Promise<number> {
-  const bootstrap = await loadBootstrapModule();
-  const result = await bootstrap.loginChatGptPlan({
+  const loginChatGptPlan = deps.loginChatGptPlan ?? (await loadBootstrapModule()).loginChatGptPlan;
+  const result = await loginChatGptPlan({
     env,
     noBrowser,
     onAuthorizeUrl: (data) => {

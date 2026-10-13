@@ -243,7 +243,7 @@ export async function hasStandaloneCodingPlanAccess(
 export function createStandaloneProviderRuntimeHeadersPort(
   credentialStore: Pick<
     SharedZCodeCredentialStore,
-    "load" | "loadMany" | "save" | "delete" | "saveMany" | "deleteIfValues"
+    "filePath" | "load" | "loadMany" | "save" | "delete" | "saveMany" | "deleteIfValues"
   >,
   env: Readonly<Record<string, string | undefined>>,
   injectedResolver?: ReturnType<typeof createCodingPlanApiKeyResolver>,

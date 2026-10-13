@@ -56,7 +56,7 @@ interface SiwcPendingLogin {
   callbackUrl: string;
   issuedClientId?: string;
   timeout: NodeJS.Timeout;
-  completion: Promise<SiwcLoginCompletion>;
+  completion: Promise<{ ok: true; value: SiwcLoginCompletion } | { ok: false; error: unknown }>;
 }
 
 export interface SiwcPlanUserSummary {
@@ -158,7 +158,12 @@ export class SiwcAuthService {
       callbackUrl: loopback.callbackUrl,
       ...(issuedClientId ? { issuedClientId } : {}),
       timeout: setTimeout(() => void this.cancelLogin(), SIWC_LOGIN_TIMEOUT_MS),
-      completion: loopback.completion,
+      // Convert rejection to a result immediately, so an OAuth denial does not become an
+      // unhandled rejection while the UI waits for its next poll.
+      completion: loopback.completion.then(
+        (value) => ({ ok: true as const, value }),
+        (error: unknown) => ({ ok: false as const, error }),
+      ),
     };
     return {
       authorizeUrl,
@@ -174,8 +179,15 @@ export class SiwcAuthService {
     // Poll semantics: return null while the redirect has not arrived (the completion
     // promise below resolves only via the loopback) instead of blocking the caller.
     if (!pending.isSettled()) return null;
-    const completion = await pending.completion;
+    // Claim the completed login before the token exchange so overlapping polls cannot
+    // redeem the same one-time authorization code more than once.
+    if (this.pending !== pending) return null;
+    this.pending = null;
+    clearTimeout(pending.timeout);
     try {
+      const result = await pending.completion;
+      if (!result.ok) throw result.error;
+      const completion = result.value;
       const tokenClient = createSiwcTokenClient({ fetchFn: this.fetchFn });
       const effectiveClientId =
         completion.issuedClientId?.trim() || pending.issuedClientId?.trim() || "";
@@ -230,7 +242,7 @@ export class SiwcAuthService {
         newUser: true,
       };
     } finally {
-      await this.cancelLogin();
+      await closeServer(pending.server);
     }
   }
 
@@ -381,10 +393,10 @@ export class SiwcAuthService {
         refreshToken: current.refreshToken,
       });
       await this.writeCredentials({
-        [SIWC_CREDENTIAL_KEYS.accessToken]: response.accessToken,
         ...(response.refreshToken
           ? { [SIWC_CREDENTIAL_KEYS.refreshToken]: response.refreshToken }
           : {}),
+        [SIWC_CREDENTIAL_KEYS.accessToken]: response.accessToken,
         ...(response.idToken ? { [SIWC_CREDENTIAL_KEYS.idToken]: response.idToken } : {}),
         ...(response.scope ? { [SIWC_CREDENTIAL_KEYS.scopes]: response.scope } : {}),
         [SIWC_CREDENTIAL_KEYS.accessExpiresAt]: String(

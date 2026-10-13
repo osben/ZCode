@@ -23,6 +23,7 @@ import type {
   loginZCodeCli,
   loginBigmodelCodingPlan,
   loginChatGptPlan,
+  logoutChatGptPlan,
   LoginBigmodelCodingPlanOptions,
   LoginChatGptPlanOptions,
   LoginZCodeCliOptions,
@@ -34,6 +35,7 @@ import type {
   ListZCodeSessionsOptions,
   ListZCodeSkillsOptions,
   logoutZCodeCli,
+  LogoutChatGptPlanOptions,
   LogoutZCodeCliOptions,
   resolveLatestSession,
   ResolveLatestSessionOptions,
@@ -110,6 +112,9 @@ export interface RunDependencies extends PluginsCommandOverrides {
     options: ResolveLatestSessionOptions,
   ) => ReturnType<typeof resolveLatestSession>;
   resolveWorkspaceGitBranch?: typeof resolveWorkspaceGitBranch;
+  logoutChatGptPlan?: (
+    options?: LogoutChatGptPlanOptions,
+  ) => ReturnType<typeof logoutChatGptPlan>;
   logoutZCodeCli?: (options?: LogoutZCodeCliOptions) => ReturnType<typeof logoutZCodeCli>;
   runZCodeProtocolAgent?: (options?: RunZCodeProtocolAgentOptions) => Promise<void>;
   runTui?: typeof import("@zcode/tui").runTui;

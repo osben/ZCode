@@ -2554,8 +2554,9 @@ export function createZCodeAgentService(
           const accountAccess = parsed.data.accountAccess;
           if (
             accountRequestAuthService &&
-            accountAccess &&
-            !requiresRequestVerification(accountAccess)
+            ((accountAccess && !requiresRequestVerification(accountAccess)) ||
+              (chatGptPlanRequestAuth &&
+                parsed.data.providerId === BUILTIN_MODEL_PROVIDER_IDS.chatgptPlan))
           ) {
             // Account API Keys and Team Runtime Keys require no Renderer interaction. The Host automatically responds using the Account Access fixed by the Model
             // to avoid making background tasks and sessions without a pane depend on UI subscribers.

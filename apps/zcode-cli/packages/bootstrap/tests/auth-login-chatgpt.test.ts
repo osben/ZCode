@@ -1,7 +1,7 @@
 import { createSign, generateKeyPairSync } from "node:crypto";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { createSharedZCodeCredentialStore, SIWC_CREDENTIAL_KEYS } from "@zcode/adapters/auth";
@@ -139,9 +139,11 @@ async function createWorkspace() {
 async function runLoginWithBrowserRedirect(options: {
   credentialStore: ReturnType<typeof createSharedZCodeCredentialStore>;
   dir: string;
+  env?: Record<string, string | undefined>;
   key: TestKey;
   scope?: string;
 }): Promise<ReturnType<typeof loginChatGptPlan>> {
+  const env = options.env ?? TEST_ENV;
   const nonceRef = { value: "" };
   const { exchangeCalls, tokenClient } = createFakeTokenClient({
     key: options.key,
@@ -150,7 +152,7 @@ async function runLoginWithBrowserRedirect(options: {
   });
   const loginPromise = loginChatGptPlan({
     credentialStore: options.credentialStore,
-    env: TEST_ENV,
+    env,
     noBrowser: true,
     fetchFn: createFakeAuthFetch(options.key),
     tokenClient,
@@ -216,6 +218,23 @@ describe("ChatGPT plan login (SIWC)", () => {
     };
     expect(config.config?.defaultModelSelection?.providerId).toBe(CHATGPT_PLAN_PROVIDER_ID);
     expect(config.config?.defaultModelSelection?.modelId).toBe("gpt-6.1-sol");
+  });
+
+  it("stores the host id beside an injected credential store even when env points elsewhere", async () => {
+    const { credentialStore, dir } = await createWorkspace();
+    const otherBaseDir = await mkdtemp(join(tmpdir(), "chatgpt-login-other-base-"));
+    tempDirs.push(otherBaseDir);
+    const key = createTestKey();
+
+    await runLoginWithBrowserRedirect({
+      credentialStore,
+      dir,
+      env: { ...TEST_ENV, ZCODE_DATA_BASE_DIR: otherBaseDir },
+      key,
+    });
+
+    const hostId = (await readFile(join(dirname(credentialStore.filePath), "siwc-host-id.txt"), "utf8")).trim();
+    expect(hostId).toMatch(/^urn:uuid:/u);
   });
 
   it("reports identity-only sign-in when consent lacked the plan scope", async () => {

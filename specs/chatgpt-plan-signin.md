@@ -113,6 +113,10 @@ chatgpt.tokens.use.direct`,
   `https://auth.openai.com/api/accounts/oauth/token` with
   `grant_type=authorization_code`, issued `client_id`, `code`,
   `code_verifier`, the same `redirect_uri` and `resource`. No client secret.
+- Once the loopback callback settles, the host claims that pending login before
+  exchanging the one-time authorization code. Concurrent polls must not redeem
+  the same code twice; callback errors must still clear pending state and close
+  the loopback server.
 - Response fields: `access_token`, `refresh_token`, `id_token`, `token_type`,
   `expires_in`, `scope`, `earliest_refresh_at`.
 - ID-token verification: RS256 against OpenAI's JWKS
@@ -139,7 +143,9 @@ chatgpt.tokens.use.direct`,
 - Refresh: form-encoded POST, `grant_type=refresh_token`, issued `client_id`,
   `refresh_token`, `resource=https://api.openai.com/v1`; omit `scope` to keep
   the grant. Every refresh returns a NEW refresh token (30-day rotation);
-  always store the latest replacement atomically.
+  always store the latest replacement atomically when the credential store
+  supports batch writes. The host credential service exposes sequential saves,
+  so it must save the replacement refresh token before the access token.
 - Refreshes are serialized across processes via a dedicated file lock
   (single-flight, imitating `mcp/oauth-refresh.ts`). Concurrent refresh =
   `refresh_token_reused` = fatal → forced re-auth.
@@ -284,6 +290,8 @@ request id.
   plan"**, primary action **"Got it"**, ChatGPT logo above the heading;
   explains that eligible AI requests use the ChatGPT plan and usage is managed
   in ChatGPT settings; dismissible; shown ONCE.
+- Login status polling is serialized: schedule the next poll only after the
+  current poll settles, and ignore completions after the settings view unmounts.
 - Active indicator: **"Using ChatGPT plan"** with logo, near the
   composer/model selector.
 - Usage-limit state: **"Manage usage"** primary (no "Buy app credits" — we do

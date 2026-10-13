@@ -1129,16 +1129,17 @@ test("command center handles login and logout locally", async () => {
     },
   } as never);
   const apiKeyResult = await commandCenter("/login bigmodel-coding-plan-api-key manual-key", {});
+  const fallbackResult = await commandCenter("/login invalid", {});
   const logoutResult = await commandCenter("/logout", {});
 
-  assert.equal(pickerResult.selection?.items.length, 4);
+  assert.equal(pickerResult.selection?.items.length, 5);
   assert.equal(pickerResult.selection?.filterable, false);
   assert.equal(
     pickerResult.selection?.items[0]?.pending?.primary,
     "Waiting for Z.AI authorization",
   );
-  assert.equal(pickerResult.selection?.items[2]?.input?.primary, "Enter Z.AI Coding Plan API Key");
-  assert.equal(pickerResult.selection?.items[2]?.input?.mask, true);
+  assert.equal(pickerResult.selection?.items[3]?.input?.primary, "Enter Z.AI Coding Plan API Key");
+  assert.equal(pickerResult.selection?.items[3]?.input?.mask, true);
   assert.equal(loginAbortSignal, loginAbort.signal);
   assert.equal(loginCalled, true);
   assert.equal(apiKeyCalled, true);
@@ -1156,6 +1157,7 @@ test("command center handles login and logout locally", async () => {
     /Model selection: \/home\/test\/\.zcode\/v2\/model-selection\.json/,
   );
   assert.match(apiKeyResult.response, /Configured BigModel Coding Plan/);
+  assert.match(fallbackResult.response, /chatgpt-plan/);
   assert.match(logoutResult.response, /Logged out from Coding Plan accounts/);
 });
 
@@ -1177,8 +1179,8 @@ test("command center localizes the Coding Plan setup picker", async () => {
   assert.equal(result.selection?.prompt, "选择登录或 API key 配置方式。");
   assert.equal(result.selection?.filterable, false);
   assert.match(result.selection?.items[0]?.secondary ?? "", /打开浏览器登录/);
-  assert.equal(result.selection?.items[2]?.input?.primary, "输入 Z.AI Coding Plan API Key");
-  assert.equal(result.selection?.items[2]?.input?.placeholder, "粘贴 API key");
+  assert.equal(result.selection?.items[3]?.input?.primary, "输入 Z.AI Coding Plan API Key");
+  assert.equal(result.selection?.items[3]?.input?.placeholder, "粘贴 API key");
 });
 
 test("command center keeps local commands usable before login", async () => {

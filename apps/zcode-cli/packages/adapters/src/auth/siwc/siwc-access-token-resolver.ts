@@ -65,7 +65,7 @@ export interface SiwcCredentialSnapshot {
 export interface SiwcAccessTokenResolverOptions {
   readonly credentialStore: Pick<
     SharedZCodeCredentialStore,
-    "loadMany" | "saveMany" | "deleteIfValues"
+    "filePath" | "loadMany" | "saveMany" | "deleteIfValues"
   >;
   readonly env?: Record<string, string | undefined>;
   readonly fetchFn?: typeof globalThis.fetch;
@@ -258,7 +258,7 @@ async function refreshUnderLock(
   abortSignal?: AbortSignal,
 ): Promise<SiwcTokenState> {
   const lockPath = join(
-    dirname((options.credentialStore as SharedZCodeCredentialStore).filePath),
+    dirname(options.credentialStore.filePath),
     "siwc-chatgpt.refresh",
   );
   try {

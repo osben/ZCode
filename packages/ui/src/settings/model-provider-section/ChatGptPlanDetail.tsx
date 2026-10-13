@@ -28,27 +28,29 @@ export function ChatGptPlanDetail() {
   const [loginPending, setLoginPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showFirstRunModal, setShowFirstRunModal] = useState(false);
-  const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const pollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const disposedRef = useRef(false);
 
   useEffect(() => {
-    let disposed = false;
+    disposedRef.current = false;
     void oauthService
       .getChatGptPlanStatus()
       .then((next) => {
-        if (!disposed) setStatus(next);
+        if (!disposedRef.current) setStatus(next);
       })
       .catch((caught: unknown) => {
         logger.error("[ChatGptPlanDetail] status load failed", { error: caught });
       });
     return () => {
-      disposed = true;
-      if (pollTimerRef.current) clearInterval(pollTimerRef.current);
+      disposedRef.current = true;
+      if (pollTimerRef.current) clearTimeout(pollTimerRef.current);
+      pollTimerRef.current = null;
     };
   }, [oauthService]);
 
   const stopPolling = useCallback(() => {
     if (pollTimerRef.current) {
-      clearInterval(pollTimerRef.current);
+      clearTimeout(pollTimerRef.current);
       pollTimerRef.current = null;
     }
   }, []);
@@ -59,47 +61,53 @@ export function ChatGptPlanDetail() {
     try {
       const start = await oauthService.startChatGptPlanLogin();
       await platform.openExternal(start.authorizeUrl);
+      if (disposedRef.current) return;
       const deadline = Date.now() + LOGIN_TIMEOUT_MS;
       stopPolling();
-      pollTimerRef.current = setInterval(() => {
-        void (async () => {
-          try {
-            const completion = await oauthService.pollChatGptPlanLogin();
-            if (!completion) {
-              if (Date.now() >= deadline) {
-                stopPolling();
-                setLoginPending(false);
-                setError(intl.formatMessage({ id: "settings.modelProvider.chatgpt.timeout" }));
-              }
+      const poll = async () => {
+        if (disposedRef.current) return;
+        try {
+          const completion = await oauthService.pollChatGptPlanLogin();
+          if (disposedRef.current) return;
+          if (!completion) {
+            if (Date.now() >= deadline) {
+              pollTimerRef.current = null;
+              setLoginPending(false);
+              setError(intl.formatMessage({ id: "settings.modelProvider.chatgpt.timeout" }));
               return;
             }
-            stopPolling();
-            setLoginPending(false);
-            setStatus({
-              signedIn: completion.signedIn,
-              planUsageEntitled: completion.planUsageEntitled,
-              user: completion.user,
-            });
-            if (
-              completion.newUser &&
-              completion.planUsageEntitled &&
-              !localStorage.getItem(FIRST_RUN_MODAL_STORAGE_KEY)
-            ) {
-              localStorage.setItem(FIRST_RUN_MODAL_STORAGE_KEY, "1");
-              setShowFirstRunModal(true);
-            }
-          } catch (caught) {
-            stopPolling();
-            setLoginPending(false);
-            setError(
-              caught instanceof Error
-                ? caught.message
-                : intl.formatMessage({ id: "settings.modelProvider.chatgpt.loginFailed" }),
-            );
+            pollTimerRef.current = setTimeout(() => void poll(), LOGIN_POLL_INTERVAL_MS);
+            return;
           }
-        })();
-      }, LOGIN_POLL_INTERVAL_MS);
+          pollTimerRef.current = null;
+          setLoginPending(false);
+          setStatus({
+            signedIn: completion.signedIn,
+            planUsageEntitled: completion.planUsageEntitled,
+            user: completion.user,
+          });
+          if (
+            completion.newUser &&
+            completion.planUsageEntitled &&
+            !localStorage.getItem(FIRST_RUN_MODAL_STORAGE_KEY)
+          ) {
+            localStorage.setItem(FIRST_RUN_MODAL_STORAGE_KEY, "1");
+            setShowFirstRunModal(true);
+          }
+        } catch (caught) {
+          if (disposedRef.current) return;
+          pollTimerRef.current = null;
+          setLoginPending(false);
+          setError(
+            caught instanceof Error
+              ? caught.message
+              : intl.formatMessage({ id: "settings.modelProvider.chatgpt.loginFailed" }),
+          );
+        }
+      };
+      pollTimerRef.current = setTimeout(() => void poll(), LOGIN_POLL_INTERVAL_MS);
     } catch (caught) {
+      if (disposedRef.current) return;
       setLoginPending(false);
       setError(
         caught instanceof Error
@@ -113,9 +121,10 @@ export function ChatGptPlanDetail() {
     setError(null);
     try {
       await oauthService.logoutChatGptPlan();
-      setStatus(await oauthService.getChatGptPlanStatus());
+      const next = await oauthService.getChatGptPlanStatus();
+      if (!disposedRef.current) setStatus(next);
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : String(caught));
+      if (!disposedRef.current) setError(caught instanceof Error ? caught.message : String(caught));
     }
   }, [oauthService]);
 
@@ -201,13 +210,17 @@ export function ChatGptPlanDetail() {
         <div
           role="dialog"
           aria-modal="true"
+          aria-labelledby="chatgpt-plan-first-run-title"
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
         >
           <div className="w-full max-w-sm rounded-lg border border-border bg-card p-6 text-card-foreground shadow-lg">
             <div className="mb-4 flex justify-center">
               <ProviderLogo logo={{ type: "builtin", key: "openai" }} className="size-10" />
             </div>
-            <h3 className="mb-2 text-center text-ui-lg font-medium">
+            <h3
+              id="chatgpt-plan-first-run-title"
+              className="mb-2 text-center text-ui-lg font-medium"
+            >
               {intl.formatMessage({ id: "settings.modelProvider.chatgpt.firstRun.title" })}
             </h3>
             <p className="mb-5 text-ui-sm text-muted-foreground">

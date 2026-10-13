@@ -1632,7 +1632,6 @@ export function createLocalServices(options: {
   const subagentsService = createSubagentsService({
     isDesktopRuntime: true,
   });
-  createCommandsService({ isDesktopRuntime: true });
   const hooksService = createHooksService({
     grantWorkspaceHookTrust: (params) => zcodeAgentService.grantWorkspaceHookTrust(params),
   });

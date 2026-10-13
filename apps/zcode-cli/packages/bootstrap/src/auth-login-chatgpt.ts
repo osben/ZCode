@@ -117,7 +117,9 @@ export async function loginChatGptPlan(
     const tokenClient =
       options.tokenClient ??
       createSiwcTokenClient(options.fetchFn ? { fetchFn: options.fetchFn } : {});
-    const hostId = await resolveSiwcHostId({ env });
+    const hostId = await resolveSiwcHostId({
+      filePath: join(dirname(credentialStore.filePath), "siwc-host-id.txt"),
+    });
     const previous = await credentialStore.loadMany([
       SIWC_CREDENTIAL_KEYS.clientId,
       SIWC_CREDENTIAL_KEYS.idToken,
