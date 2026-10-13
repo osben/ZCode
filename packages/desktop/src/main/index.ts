@@ -1259,11 +1259,12 @@ async function prepareAppQuit(reason: string, kind: AppShutdownKind = "normal"):
   await appQuitPreparationInFlight;
 }
 
-function exitPreparedApp(reason: string): never | void {
+async function exitPreparedApp(reason: string): Promise<never | void> {
   logger.info(`[app-quit] exiting prepared app (${reason})`);
-  // The quit is definitely happening now (before-quit cancellations are long past): release a
-  // pending dictation system mute so quitting mid-recording cannot leave the OS muted.
-  restoreDictationSystemMuteForShutdown();
+  // The quit is definitely happening now (before-quit cancellations are long past): drain any
+  // in-flight dictation mute command and release it so quitting mid-recording cannot leave the
+  // OS muted, then exit. Bounded by the drain timeout inside the restore.
+  await restoreDictationSystemMuteForShutdown();
   if (process.env.ZCODE_E2E_RUN_ID?.trim()) {
     flushMainE2ECoverage((error) => {
       logger.warn("[e2e-coverage] main coverage flush failed", error);
@@ -2688,7 +2689,7 @@ app.on("before-quit", (event) => {
       // reentrant app.quit; ChromeDriver then waits about 70 seconds. Bind the final exit to the actual closed event
       // instead of guessing with a timeout.
       if (remainingWindows.length === 0) {
-        exitPreparedApp("no-windows-after-preparation");
+        void exitPreparedApp("no-windows-after-preparation");
         return;
       }
 
@@ -2699,7 +2700,7 @@ app.on("before-quit", (event) => {
         }
         exitRequested = true;
         logger.info("[app-quit] all windows closed after preparation, exiting app");
-        exitPreparedApp("all-windows-closed-after-preparation");
+        void exitPreparedApp("all-windows-closed-after-preparation");
       };
       for (const win of remainingWindows) {
         win.once("closed", exitAfterLastWindowClosed);

@@ -498,7 +498,7 @@ async function quitAndInstallUpdate(rejectUnavailable = false) {
       logger.info("[auto-update] dev update install fallback: relaunch app");
       // quitAndInstall/relaunch bypass exitPreparedApp (and on macOS before-quit entirely), so the
       // dictation mute must be released here or installing during a recording stays muted.
-      restoreDictationSystemMuteForShutdown();
+      await restoreDictationSystemMuteForShutdown();
       app.relaunch();
       app.exit(0);
       return;
@@ -507,7 +507,7 @@ async function quitAndInstallUpdate(rejectUnavailable = false) {
     // In 3.3.0, the custom Windows PowerShell delayed launcher in detached/hidden mode could create powershell.exe without
     // reliably starting the installer, so users saw the app close while the version stayed unchanged.
     // Restore electron-updater's native install entry point; launcher process creation alone does not mean the update was handed off.
-    restoreDictationSystemMuteForShutdown();
+    await restoreDictationSystemMuteForShutdown();
     autoUpdater.quitAndInstall();
   } finally {
     quitAndInstallInFlight = false;

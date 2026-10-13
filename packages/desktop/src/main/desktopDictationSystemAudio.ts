@@ -13,6 +13,7 @@ import { PlatformChannels } from "@zcode/shared";
  */
 
 const COMMAND_TIMEOUT_MS = 2_000;
+const DRAIN_TIMEOUT_MS = 3_000;
 
 type ExecAsync = (file: string, args: string[]) => Promise<string>;
 type ExecSync = (file: string, args: string[]) => string;
@@ -150,16 +151,21 @@ export interface DictationSystemAudioLogger {
 }
 
 /**
- * Sync restore for the accepted shutdown path (`exitPreparedApp` right before `app.exit`). Must
- * not hang off `before-quit`: this app cancels that event for quit confirmation and async
- * shutdown preparation, and a canceled quit must keep the recording's mute session alive. Paths
- * that exit without going through the prepared funnel (auto-updater install quits, hard kills)
- * bypass the restore — documented residual risk in the spec.
+ * Sync restore for the accepted shutdown path (`exitPreparedApp` right before `app.exit`) and the
+ * updater handoff. Must not hang off `before-quit`: this app cancels that event for quit
+ * confirmation and async shutdown preparation, and a canceled quit must keep the recording's mute
+ * session alive. Paths that exit without going through the prepared funnel (hard kills) bypass
+ * the restore — documented residual risk in the spec.
  */
-let restoreForShutdown: (() => void) | null = null;
+let restoreForShutdown: (() => Promise<void>) | null = null;
 
-export function restoreDictationSystemMuteForShutdown(): void {
-  restoreForShutdown?.();
+/**
+ * Drain the mute command chain and release the session before the process exits. Resolves once
+ * the restore finished (or the bounded drain timeout elapsed). Setting this also blocks new mute
+ * applies, so a recording starting during shutdown cannot re-mute the output on exit.
+ */
+export function restoreDictationSystemMuteForShutdown(): Promise<void> {
+  return restoreForShutdown?.() ?? Promise.resolve();
 }
 
 export function registerDesktopDictationSystemAudioIpc(options: {
@@ -167,6 +173,8 @@ export function registerDesktopDictationSystemAudioIpc(options: {
   platform?: NodeJS.Platform;
   execAsync?: ExecAsync;
   execSync?: ExecSync;
+  /** Bounded wait for an in-flight mute command before giving up on the shutdown restore. */
+  drainTimeoutMs?: number;
 }) {
   const { logger } = options;
   const exec = {
@@ -195,26 +203,15 @@ export function registerDesktopDictationSystemAudioIpc(options: {
 
   /**
    * Drop the session and undo its mute. Returns the unmute promise so callers inside the chain can
-   * await it; the sync variant (quit) cannot return one because an async spawn would not outlive
-   * the quit. A failed async restore keeps the session alive (state stays "muted") so the next
-   * recording's release or the shutdown restore retries the unmute instead of leaving the output
-   * muted with nothing left to retry.
+   * await it. A failed restore keeps the session alive (state stays "muted") so the next
+   * recording's release, a re-apply, or the shutdown drain retries the unmute instead of leaving
+   * the output muted with nothing left to retry.
    */
-  const releaseSession = (current: MuteSession, sync: boolean): Promise<void> | undefined => {
+  const releaseSession = (current: MuteSession): Promise<void> | undefined => {
     for (const owner of current.owners.values()) detachOwner(owner);
     current.owners.clear();
     // Nothing was muted (already-muted input or a failed mute): forget the session outright.
     if (!backend || (current.state !== "muted" && current.state !== "muting")) {
-      if (session === current) session = null;
-      return undefined;
-    }
-    if (sync) {
-      try {
-        backend.setMutedSync(false);
-      } catch (error) {
-        logger.warn(`[dictation-audio] failed to restore output mute state: ${describe(error)}`);
-      }
-      // The process is exiting either way; a failed sync restore has no retry left.
       if (session === current) session = null;
       return undefined;
     }
@@ -238,6 +235,7 @@ export function registerDesktopDictationSystemAudioIpc(options: {
   ipcMain.handle(PlatformChannels.SetDictationSystemMute, (event, payload: { active: boolean }) => {
     if (!payload || typeof payload.active !== "boolean") return;
     if (!backend) return;
+    if (shuttingDown) return;
     const sender = event.sender;
     if (payload.active) {
       // The enqueue promise is returned so the renderer's invoke resolves only after the OS-level
@@ -256,7 +254,7 @@ export function registerDesktopDictationSystemAudioIpc(options: {
               if (current.owners.size === 0 && session === current) {
                 void enqueue(async () => {
                   if (session === current && current.owners.size === 0) {
-                    await releaseSession(current, false);
+                    await releaseSession(current);
                   }
                 });
               }
@@ -275,7 +273,7 @@ export function registerDesktopDictationSystemAudioIpc(options: {
           if (created.owners.size === 0 && session === created) {
             void enqueue(async () => {
               if (session === created && created.owners.size === 0) {
-                await releaseSession(created, false);
+                await releaseSession(created);
               }
             });
           }
@@ -300,7 +298,7 @@ export function registerDesktopDictationSystemAudioIpc(options: {
         }
         // The owner may have disappeared while the commands were in flight.
         if (created.owners.size === 0) {
-          await releaseSession(created, false);
+          await releaseSession(created);
         }
       });
     }
@@ -313,18 +311,41 @@ export function registerDesktopDictationSystemAudioIpc(options: {
       if (owner.count > 0) return;
       current.owners.delete(sender.id);
       detachOwner(owner);
-      if (current.owners.size === 0) await releaseSession(current, false);
+      if (current.owners.size === 0) await releaseSession(current);
     });
   });
 
-  // Quitting mid-recording must not leave the system muted: index.ts's exitPreparedApp calls
-  // restoreDictationSystemMuteForShutdown() right before app.exit, because before-quit is
-  // cancelable in this app (quit confirmation, async shutdown preparation). The sync restore is
-  // used because an async spawn would not outlive the quit. When the mute command is still in
-  // flight, the sync unmute races it — launch order favors the unmute, but exits that bypass the
-  // prepared funnel (updater install quits, hard kills) still leak the mute (documented residual
-  // risk in the spec).
+  // Quitting mid-recording must not leave the system muted: exitPreparedApp and the updater
+  // handoff call restoreDictationSystemMuteForShutdown() before exiting, because before-quit is
+  // cancelable in this app (quit confirmation, async shutdown preparation). The restore DRAINS the
+  // command chain first: an in-flight read/set finishes and settles the session state, so the
+  // sync unmute cannot race it (unmuting an already-muted user or losing to a completing mute).
+  // A hung subprocess falls to the bounded timeout and skips the restore rather than racing.
+  let shuttingDown = false;
   restoreForShutdown = () => {
-    if (session) releaseSession(session, true);
+    shuttingDown = true;
+    const drain = enqueue(async () => {
+      const current = session;
+      if (!current) return;
+      if (current.state === "muted") {
+        try {
+          backend.setMutedSync(false);
+        } catch (error) {
+          logger.warn(`[dictation-audio] failed to restore output mute state: ${describe(error)}`);
+        }
+      }
+      if (session === current) session = null;
+    });
+    return Promise.race([
+      drain,
+      new Promise<void>((resolve) => {
+        setTimeout(() => {
+          logger.warn(
+            "[dictation-audio] shutdown drain timed out; skipping the restore instead of racing the in-flight OS command",
+          );
+          resolve();
+        }, options.drainTimeoutMs ?? DRAIN_TIMEOUT_MS);
+      }),
+    ]).then(() => undefined);
   };
 }
