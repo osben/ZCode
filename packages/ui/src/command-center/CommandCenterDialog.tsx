@@ -1005,7 +1005,7 @@ export const CommandCenterDialog = memo(function CommandCenterDialogComponent({
         try {
           await onCreateTaskInWorkspace(targetWorkspacePath, targetWorkspaceIdentity);
         } catch (error) {
-          logger.error("[CommandCenter] 打开 worktree workspace 失败", {
+          logger.error("[CommandCenter] Failed to open worktree workspace", {
             targetWorkspacePath,
             error: getErrorMessage(error),
           });

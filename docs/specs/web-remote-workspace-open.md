@@ -1,86 +1,86 @@
-# Web 远程控制：在桌面打开新 worktree 工作区
+# Web Remote Control: Opening a New Worktree Workspace on the Desktop
 
-## 目标与范围
+## Goal and Scope
 
-手机 / 浏览器 Web 远程客户端可以完整走通命令中心 “在 worktree 中新建任务” 流程：
+The phone/browser web remote client can complete the full Command Center "New task in worktree" flow:
 
-1. 通过既有 RPC 通道（`gitService.createWorktree`，中继通用 RPC 访问器）创建 worktree；
-2. 通过**新增的 window-control 请求** `workspace-open-request` 让**桌面**把新 worktree 作为工作区打开（复用桌面 deep-link 打开链路，禁止并行实现）；
-3. 打开成功后刷新工作区列表并通过**既有** `workspace-bridge` 切换（`webRemoteControlWorkspaceSwitcher`）挂接到新工作区。
+1. Create the worktree over the existing RPC channel (`gitService.createWorktree`, the relay's generic RPC accessor);
+2. Ask the **desktop** to open the new worktree as a workspace via the **new window-control request** `workspace-open-request` (reusing the desktop deep-link open chain; a parallel implementation is forbidden);
+3. After a successful open, refresh the workspace list and attach to the new workspace through the **existing** `workspace-bridge` switch (`webRemoteControlWorkspaceSwitcher`).
 
-范围外：Web 客户端不得自建 Host（本地工作区归桌面窗口 Host 所有，硬性架构规则）；中继只转发与调度 attachment，不保存业务状态；`allowOpenWorkspace={false}` 保持不变——任意路径的 "打开工作区" 入口继续禁用，worktree 流程（用户显式创建的目录）是唯一豁免路径。
+Out of scope: the web client must not create its own Host (local workspaces are owned by desktop window Hosts — a hard architecture rule); the relay only forwards and schedules attachments and stores no business state; `allowOpenWorkspace={false}` stays as-is — arbitrary-path "open workspace" entries remain disabled, and the worktree flow (a directory the user explicitly created) is the single sanctioned path.
 
-## 所有者与事件顺序
+## Owners and Event Order
 
 ```text
 ┌──────────────┐   ┌──────────────┐   ┌────────────────────┐   ┌──────────────────────┐   ┌────────────────────────┐
-│ Web 客户端    │   │ 外部中继      │   │ Desktop Main       │   │ Desktop Renderer     │   │ Window Host (utility)  │
-│ main.tsx     │   │ (relay)      │   │ webRemoteControl   │   │ (Root / tab store)   │   │ 桌面窗口本地 Host       │
-│              │   │              │   │ Manager +          │   │                      │   │                        │
+│ Web client   │   │ External     │   │ Desktop Main       │   │ Desktop Renderer     │   │ Window Host (utility)  │
+│ main.tsx     │   │ relay        │   │ webRemoteControl   │   │ (Root / tab store)   │   │ desktop window local   │
+│              │   │              │   │ Manager +          │   │                      │   │ Host                   │
 │              │   │              │   │ handleOpenWorkspace│   │                      │   │                        │
 └──────┬───────┘   └──────┬───────┘   └─────────┬──────────┘   └──────────┬───────────┘   └───────────┬────────────┘
        │                   │                     │                         │                           │
-  [1] gitService.createWorktree ──(既有 RPC over bridge/relay)──────────────────────────────────────->│ 执行本地 git
+  [1] gitService.createWorktree ──(existing RPC over bridge/relay)──────────────────────────────────────>│ local git
        │<── created ───────────────────────────────────────────────────────────────────────────────────┘
        │                   │                     │                         │                           │
   [2] POST /api/remote-control/windows/{token}/workspace-open               │                           │
-       │ {workspacePath, workspaceIdentity?} ─>│ 转换为 window-control 消息 │                           │
+       │ {workspacePath, workspaceIdentity?} ─>│ convert to window-control │                           │
        │                   │── workspace-open-request (zcode_type) ───────>│                           │
-       │                   │                     │ 校验 runtime/window     │                           │
+       │                   │                     │ validate runtime/window │                           │
        │                   │                     │ handleOpenWorkspacePath │                           │
        │                   │                     │── OpenWorkspacePath IPC >│ handleSelectProject:      │
        │                   │                     │                         │ activateOrSetWorkspace /   │
        │                   │                     │                         │ addTab + startDraft        │
        │                   │                     │                         │── syncWebRemoteControl ──> │
-       │                   │<─ workspace-open-response {success} ──────────│   Workspaces (工作区快照)   │
+       │                   │<─ workspace-open-response {success} ──────────│   Workspaces (snapshot)   │
        │<── 200 {success} ─│                     │                         │                           │
        │                   │                     │                         │                           │
-  [3] GET /api/remote-control/windows/bootstrap/{token}（轮询，有限重试）    │                           │
+  [3] GET /api/remote-control/windows/bootstrap/{token} (bounded poll, limited retries)                  │
        │                   │── bootstrap-request ─> getAvailableWorkspaces │                           │
-       │<── workspaces 含新 key ────────────────────────────────────────────│                           │
+       │<── workspaces contains the new key ─────│                         │                           │
        │                   │                     │                         │                           │
-  [4] POST .../workspace-bridge {workspaceKey}（既有切换链路，不改）         │                           │
-       │                   │── workspace-bridge-open ──────────────────────>│ attachWorkspaceHost ─────>│ 复用/新建 attachment
+  [4] POST .../workspace-bridge {workspaceKey} (existing switch chain, unchanged)                        │
+       │                   │── workspace-bridge-open ──────────────────────>│ attachWorkspaceHost ─────>│ reuse/new attachment
        │<── bridge ────────│<─ workspace-bridge-ready ──────────────────────│                           │
-       │ connectViaWebSocket(bridge.wsUrl)  -> renderBridgeRoot(新 Root，initialWorkspaceAbsPath=worktree，
-       │ 无 initialTaskId -> 启动 draft)     [流程结束：新工作区 + 新任务草稿]
+       │ connectViaWebSocket(bridge.wsUrl)  -> renderBridgeRoot(new Root, initialWorkspaceAbsPath=worktree,
+       │ no initialTaskId -> starts a draft)       [flow ends: new workspace + new task draft]
 ```
 
-所有者划分：
+Ownership:
 
-- **创建 worktree**：Web 客户端编排，执行归桌面 Host 的 gitService（既有事实，不变）。
-- **打开工作区（桌面侧）**：Desktop Main `handleOpenWorkspacePath`（deep-link 既有入口）路由到目标窗口 renderer 的 `handleSelectProject`（与桌面命令中心一致的 activate/addTab + startDraft 契约）。Main 不保存任务/会话业务状态。
-- **打开工作区（Web 侧）**：新 window-control 请求只声明意图；成功响应表示“已派发到目标窗口”，不表示 renderer 已完成（见幂等边界）。
-- **挂接**：既有 `workspace-bridge` 通道，单活跃 bridge，跨 Host 路由与 stale run 保护全部保留。
+- **Worktree creation**: orchestrated by the web client; execution stays with the desktop Host's gitService (existing fact, unchanged).
+- **Workspace open (desktop side)**: Desktop Main `handleOpenWorkspacePath` (the existing deep-link entry) routes to the target window renderer's `handleSelectProject` (the same activate/addTab + startDraft contract as the desktop Command Center). Main keeps no task/session business state.
+- **Workspace open (web side)**: the new window-control request only declares intent; a success response means "dispatched to the target window", not "renderer finished" (see Idempotency Boundaries).
+- **Attachment**: the existing `workspace-bridge` channel, single active bridge; cross-Host routing and stale-run protections are all preserved.
 
-## 协议变更（packages/shared）
+## Protocol Changes (packages/shared)
 
-- `packages/shared/src/web-remote-control.ts`：
-  - `WebRemoteControlWorkspaceOpenRequest` / `WebRemoteControlWorkspaceOpenSuccessResponse` / `WebRemoteControlWorkspaceOpenErrorResponse`（`type: "workspace-open-request"` / `"workspace-open-response"`，携带 `requestId`、`windowControlSessionId`、`workspacePath`、可选 `workspaceIdentity`，字段与 `workspace-bridge-*` 兄弟消息一致），加入 `WebRemoteControlWindowControlRequest` / `Response` 联合。
-  - 中继↔桌面传输层：`WebRemoteControlWorkspaceOpenRequestPayload`（`zcode_type: "workspace-open-request"`）与 `ResponsePayload`（success / success:false + error），加入 `WebRemoteControlAppPayload` 联合。
-- `packages/shared/src/validation.ts`：上述 app payload 的 zod schema 加入 `webRemoteControlAppPayloadSchemas`（`workspacePath` 必填非空，`workspaceIdentity` 可选非空），未通过校验的载荷照旧在传输边界被拒绝。
-- UI 侧 API：`WebRemoteControlWorkspaceSwitcherApi.openWorkspace?(target: { workspacePath; workspaceIdentity? })`（仅 Web 远控 switcher 实现）。
+- `packages/shared/src/web-remote-control.ts`:
+  - `WebRemoteControlWorkspaceOpenRequest` / `WebRemoteControlWorkspaceOpenSuccessResponse` / `WebRemoteControlWorkspaceOpenErrorResponse` (`type: "workspace-open-request"` / `"workspace-open-response"`, carrying `requestId`, `windowControlSessionId`, `workspacePath`, optional `workspaceIdentity`, fields consistent with the `workspace-bridge-*` sibling messages), added to the `WebRemoteControlWindowControlRequest` / `Response` unions.
+  - Relay↔desktop transport: `WebRemoteControlWorkspaceOpenRequestPayload` (`zcode_type: "workspace-open-request"`) and `ResponsePayload` (success / success:false + error), added to the `WebRemoteControlAppPayload` union.
+- `packages/shared/src/validation.ts`: zod schemas for the app payloads above are added to `webRemoteControlAppPayloadSchemas` (`workspacePath` required non-empty, `workspaceIdentity` optional non-empty); payloads that fail validation keep being rejected at the transport boundary as before.
+- UI-side API: `WebRemoteControlWorkspaceSwitcherApi.openWorkspace?(target: { workspacePath; workspaceIdentity? })` (implemented only by the web remote-control switcher).
 
-身份规则：键统一为 `workspaceIdentity?.trim() || workspacePath`。worktree 是新建本地目录，无 identity，键即路径；协议仍透传可选 `workspaceIdentity` 以与兄弟消息一致，桥接匹配沿用 `resolveWebRemoteControlWorkspaceKey`，不允许“仅按路径”匹配带 identity 的目标。
+Identity rule: the key is uniformly `workspaceIdentity?.trim() || workspacePath`. A worktree is a freshly created local directory with no identity, so its key is the path; the protocol still carries the optional `workspaceIdentity` for consistency with the sibling messages, bridge matching keeps using `resolveWebRemoteControlWorkspaceKey`, and matching a target that has an identity "by path alone" is not allowed.
 
-## 验收场景
+## Acceptance Scenarios
 
-1. **正常流程**：Web 远控命令中心选择项目 → 输入分支 → Start；worktree 创建成功后自动向桌面派发 open，随后列表刷新出现新工作区并完成 bridge 切换，新 Root 以 draft 状态进入新工作区。
-2. **重复打开（已打开）**：目标路径已是桌面某窗口的已打开 tab：renderer `activateOrSetWorkspace`/`activateTabByPath` 激活既有 tab，不产生重复 tab；open 响应仍为 success；Web 侧切换到该工作区。
-3. **并发打开竞争**：同一客户端 Start 有 busy 门（`worktreeStartBusy` + attempt ref），不会并发派发两个 open；不同客户端同时 open 同一路径：renderer addTab 按身份键去重，双方最终收敛到同一 tab，各自 bridge 挂接（桌面单活跃 bridge 按 runtime 隔离）。
-4. **桌面窗口关闭中**：`BrowserWindow.fromId(windowId)` 为空或已销毁 → open 依赖抛错 → `workspace-open-response {success:false}`；Web 侧显示既有失败 toast，不残留本地 tab。
-5. **路径非法**：非绝对路径 / 网络路径（UNC）/ 不存在的目录：`handleOpenWorkspacePath` 的 `isValidLocalWorkspaceDirectory` 拒绝并返回 `success:false`。已配对的 Web 客户端本就持有本地 Host 的 RPC（可创建 worktree），open 不引入新的能力面；校验与 deep-link 相同。
-6. **中继未升级**：中继无该端点时 Web 侧 fetch 失败 → 走 Command Center 既有 `openFailed` toast（带重试），不做本地降级打开。
-7. **既有消息不受影响**：`window-bootstrap-request` / `workspace-bridge-request` / `mobile-view-state-update` 处理路径与 zod 校验保持不变（测试回归）。
+1. **Happy path**: the web remote Command Center picks a project → enters a branch → Start; after the worktree is created, the open is dispatched to the desktop automatically, the refreshed list shows the new workspace, the bridge switch completes, and the new Root lands in the new workspace with a draft.
+2. **Duplicate open (already open)**: the target path is already an open tab in a desktop window: the renderer's `activateOrSetWorkspace`/`activateTabByPath` activates the existing tab without creating a duplicate; the open response is still success; the web side switches to that workspace.
+3. **Concurrent open races**: the same client's Start has a busy gate (`worktreeStartBusy` + attempt ref), so two opens are never dispatched concurrently; different clients opening the same path concurrently: the renderer's addTab deduplicates by identity key, both converge to the same tab, each with its own bridge attachment (the desktop's single active bridge is isolated per runtime).
+4. **Desktop window closing**: `BrowserWindow.fromId(windowId)` is null or destroyed → the open dependency throws → `workspace-open-response {success:false}`; the web side shows the existing failure toast and keeps no leftover local tab.
+5. **Invalid path**: non-absolute path / network path (UNC) / missing directory: `handleOpenWorkspacePath`'s `isValidLocalWorkspaceDirectory` rejects it and returns `success:false`. A paired web client already holds local-Host RPC (it can create worktrees), so open introduces no new capability surface; validation is identical to the deep-link path.
+6. **Relay not upgraded**: when the relay lacks the endpoint, the web-side fetch fails → the Command Center's existing `openFailed` toast (with retry) is shown; no local fallback open.
+7. **Existing messages unaffected**: `window-bootstrap-request` / `workspace-bridge-request` / `mobile-view-state-update` handling paths and zod validation are unchanged (test regression).
 
-## 幂等边界
+## Idempotency Boundaries
 
-- open 请求按 `requestId` 一问一答；桌面不缓存、不排队重复 open（renderer 端 addTab/activate 本身幂等，重放安全）。
-- `workspace-open-response` 的 success 语义是“Main 已接受并派发到目标窗口 renderer”（deep-link 同语义）。renderer 完成 addTab 后由既有 `syncWebRemoteControlWorkspaces` 推送快照；因此 Web 侧在 success 后**轮询**工作区列表（有限次数），key 出现后才发 bridge 请求——bridge 匹配失败（“目标工作区不在当前桌面窗口中”）即视为打开未完成，重试耗尽后报错。
-- bridge 切换沿用既有单活跃 bridge 语义（先释放旧 attachment 再挂新）；失败时旧 bridge 保持，不产生半开状态。
+- An open request is one request/one response keyed by `requestId`; the desktop neither caches nor queues duplicate opens (the renderer's addTab/activate is itself idempotent, so replays are safe).
+- `workspace-open-response` success means "Main accepted and dispatched the open to the target window renderer" (same semantics as a deep link). After the renderer finishes addTab, the existing `syncWebRemoteControlWorkspaces` pushes the snapshot; therefore the web side **polls** the workspace list after success (bounded attempts) and only sends the bridge request once the key appears — a failed bridge match ("target workspace is not in the current desktop window") is treated as "open not finished", and exhausting the retries reports an error.
+- The bridge switch keeps the existing single-active-bridge semantics (release the old attachment before attaching the new one); on failure the old bridge stays, no half-open state is produced.
 
-## 验证
+## Verification
 
-- `pnpm typecheck` / `pnpm lint` / `npx oxfmt --check <changed>` / `pnpm architecture:check --changed`。
-- 单测（vitest）：新 zod schema（合法/非法/缺 identity）；desktop manager 分发（成功、依赖抛错传播、既有 window-control 消息不受影响）；Web 侧 open→刷新→bridge 切换编排（含列表延迟出现时的有限重试）。
-- 中继为外部部署，仓库内无对应转发实现：端到端联调（真机 + 中继升级）不在本仓库验证范围，记录于 PR "Not verified"。
+- `pnpm typecheck` / `pnpm lint` / `npx oxfmt --check <changed>` / `pnpm architecture:check --changed`.
+- Unit tests (vitest): the new zod schemas (valid / invalid / missing identity); desktop manager dispatch (success, dependency-throw propagation, existing window-control messages unaffected); the web-side open→refresh→bridge-switch orchestration (including the bounded retries when the list is delayed).
+- The relay is an external deployment with no forwarding implementation in this repository: end-to-end verification (real device + upgraded relay) is out of scope here and is recorded in the PR "Not verified" section.
